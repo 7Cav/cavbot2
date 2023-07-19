@@ -27,6 +27,8 @@ servers_dict = {
     "SQ Training": "7e1451cc",
 }
 
+discordID = os.getenv("DISCORD_ID")
+ownerID = os.getenv("OWNER_ID")
 # Retrieve the API key from the environment variable
 api_key = os.getenv("API_KEY")
 
@@ -44,7 +46,7 @@ async def on_command_error(
         )
     else:
         # Forward the error message to the bot owner and respond with a generic error message
-        sypolt = await client.fetch_user(130158049968128000)
+        sypolt = await client.fetch_user(ownerID)
         await sypolt.send(
             f"Someone broke your bot in a new and interesting way ```{error}```"
         )
@@ -60,7 +62,7 @@ Why don't you try whatever that was again but with less breaking things this tim
 @tree.command(
     name="restart_server",
     description="For SGT+ to restart Arma and Squad servers",
-    guild=discord.Object(id=109869242148491264),
+    guild=discord.Object(id=discordID),
 )
 @app_commands.describe(servers="Servers to choose from")
 @app_commands.choices(
@@ -127,10 +129,8 @@ async def restart_server(interaction, servers: discord.app_commands.Choice[int])
 async def on_ready():
     # Set the bot's status activity
     await client.change_presence(activity=status)
-
     # Sync the command tree with the guild
-    await tree.sync(guild=discord.Object(id=109869242148491264))
-
+    await tree.sync(guild=discord.Object(id=discordID))
     # Print a message to indicate the bot is ready
     print("Bot ready")
 
