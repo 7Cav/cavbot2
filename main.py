@@ -190,7 +190,7 @@ async def timestamp_builder(
     format: typing.Optional[str] = None,
     ephemeral: typing.Optional[bool] = True,
 ):
-    current_datetime = datetime.datetime.utcnow()
+    current_datetime = datetime.datetime.now(datetime.timezone.utc)
 
     if year is None:
         year = current_datetime.year
