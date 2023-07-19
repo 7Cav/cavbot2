@@ -24,10 +24,6 @@ servers_dict = {
 api_key = os.getenv("API_KEY")
 
 
-def can_restart_servers():
-    return app_commands.checks.has_any_role("General Staff", "Administrator")
-
-
 @tree.error
 async def on_command_error(
     interaction: discord.Interaction, error: discord.app_commands.AppCommandError
@@ -55,7 +51,6 @@ Why don't you try whatever that was again but with less breaking things this tim
     description="For SGT+ to restart Arma and Squad servers",
     guild=discord.Object(id=109869242148491264),
 )
-# @can_restart_servers()
 @app_commands.describe(servers="Servers to choose from")
 @app_commands.choices(
     servers=[
@@ -95,7 +90,7 @@ async def restart_server(interaction, servers: discord.app_commands.Choice[int])
                             )
             else:
                 await interaction.followup.send(
-                    f"Failed to stop server {servers.name} {response}."
+                    f"Failed to stop server {servers.name}."
                 )
 
 
