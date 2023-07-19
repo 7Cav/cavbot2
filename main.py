@@ -1,5 +1,7 @@
 import asyncio
+import datetime
 import os
+import typing
 
 import aiohttp
 import discord
@@ -122,6 +124,116 @@ async def restart_server(interaction, servers: discord.app_commands.Choice[int])
                 await interaction.followup.send(
                     f"Failed to stop server {servers.name}."
                 )
+
+
+@tree.command(
+    name="timestamp_builder",
+    description="Helps build discord timestamps to have proper countdowns and such",
+    guild=discord.Object(id=discordID),
+)
+@app_commands.describe(year="Specify the year (defaults to current year)")
+@app_commands.describe(month="Specify the month (defaults to current month)")
+@app_commands.describe(day="Specify the day (defaults to current day)")
+@app_commands.describe(hour="Specify the hour (defaults to current hour)")
+@app_commands.describe(minute="Specify the minute (defaults to current minute)")
+@app_commands.describe(second="Specify the second (defaults to 0)")
+@app_commands.describe(timezone="Specify the timezone (defaults to UTC)")
+@app_commands.describe(format="Specify a format (Shows all if not set)")
+@app_commands.describe(ephemeral="Set false to allow others to see")
+@app_commands.choices(
+    timezone=[
+        discord.app_commands.Choice(name="UTC-12", value=-12),
+        discord.app_commands.Choice(name="UTC-11", value=-11),
+        discord.app_commands.Choice(name="UTC-10", value=-10),
+        discord.app_commands.Choice(name="UTC-9", value=-9),
+        discord.app_commands.Choice(name="UTC-8", value=-8),
+        discord.app_commands.Choice(name="UTC-7", value=-7),
+        discord.app_commands.Choice(name="UTC-6", value=-6),
+        discord.app_commands.Choice(name="UTC-5", value=-5),
+        discord.app_commands.Choice(name="UTC-4", value=-4),
+        discord.app_commands.Choice(name="UTC-3", value=-3),
+        discord.app_commands.Choice(name="UTC-2", value=-2),
+        discord.app_commands.Choice(name="UTC-1", value=-1),
+        discord.app_commands.Choice(name="UTC+0", value=0),
+        discord.app_commands.Choice(name="UTC+1", value=1),
+        discord.app_commands.Choice(name="UTC+2", value=2),
+        discord.app_commands.Choice(name="UTC+3", value=3),
+        discord.app_commands.Choice(name="UTC+4", value=4),
+        discord.app_commands.Choice(name="UTC+5", value=5),
+        discord.app_commands.Choice(name="UTC+6", value=6),
+        discord.app_commands.Choice(name="UTC+7", value=7),
+        discord.app_commands.Choice(name="UTC+8", value=8),
+        discord.app_commands.Choice(name="UTC+9", value=9),
+        discord.app_commands.Choice(name="UTC+10", value=10),
+        discord.app_commands.Choice(name="UTC+11", value=11),
+        discord.app_commands.Choice(name="UTC+12", value=12),
+    ],
+    format=[
+        discord.app_commands.Choice(name="Short Date", value="d"),
+        discord.app_commands.Choice(name="Date and Time", value="f"),
+        discord.app_commands.Choice(name="Short Time", value="t"),
+        discord.app_commands.Choice(name="Long Date", value="D"),
+        discord.app_commands.Choice(name="Day, Date, and Time", value="F"),
+        discord.app_commands.Choice(name="Relative (countdown)", value="R"),
+        discord.app_commands.Choice(name="Long Time", value="T"),
+    ],
+)
+async def timestamp_builder(
+    interaction,
+    year: typing.Optional[int] = None,
+    month: typing.Optional[int] = None,
+    day: typing.Optional[int] = None,
+    hour: typing.Optional[int] = None,
+    minute: typing.Optional[int] = None,
+    second: typing.Optional[int] = 0,
+    timezone: typing.Optional[int] = 0,
+    format: typing.Optional[str] = None,
+    ephemeral: typing.Optional[bool] = True,
+):
+    current_datetime = datetime.datetime.utcnow()
+
+    if year is None:
+        year = current_datetime.year
+    if month is None:
+        month = current_datetime.month
+    if day is None:
+        day = current_datetime.day
+    if hour is None:
+        hour = current_datetime.hour
+    if minute is None:
+        minute = current_datetime.minute
+
+    adjusted_hour = hour + timezone
+    adjusted_hour %= 24
+
+    adjusted_datetime = datetime.datetime(
+        year, month, day, adjusted_hour, minute, second
+    )
+
+    formatted_date = adjusted_datetime.strftime("%Y-%m-%d")
+    formatted_time = adjusted_datetime.strftime("%H:%M:%S")
+
+    formatted_timestamps = [
+        f"`<t:{int(adjusted_datetime.timestamp())}:d>` → <t:{int(adjusted_datetime.timestamp())}:d>",
+        f"`<t:{int(adjusted_datetime.timestamp())}:f>` → <t:{int(adjusted_datetime.timestamp())}:f>",
+        f"`<t:{int(adjusted_datetime.timestamp())}:t>` → <t:{int(adjusted_datetime.timestamp())}:t>",
+        f"`<t:{int(adjusted_datetime.timestamp())}:D>` → <t:{int(adjusted_datetime.timestamp())}:D>",
+        f"`<t:{int(adjusted_datetime.timestamp())}:F>` → <t:{int(adjusted_datetime.timestamp())}:F>",
+        f"`<t:{int(adjusted_datetime.timestamp())}:R>` → <t:{int(adjusted_datetime.timestamp())}:R>",
+        f"`<t:{int(adjusted_datetime.timestamp())}:T>` → <t:{int(adjusted_datetime.timestamp())}:T>",
+    ]
+
+    if format is None:
+        formatted_output = "\n".join(formatted_timestamps)
+    else:
+        formatted_output = adjusted_datetime.strftime(
+            f"`<t:{int(adjusted_datetime.timestamp())}:{format}>` → <t:{int(adjusted_datetime.timestamp())}:{format}>"
+        )
+
+    await interaction.response.send_message(
+        f"📅 {formatted_date} • 🕒 {formatted_time} • 🌐 UTC\n" f"{formatted_output}",
+        ephemeral=ephemeral,
+    )
 
 
 # Event handler for when the bot is ready
