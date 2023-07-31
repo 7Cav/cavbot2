@@ -12,14 +12,12 @@ jobs:
       - name: Checkout the Repo
         uses: actions/checkout@v2
       - name: Build Image
-        run: docker build -t cavbot2 .
+        run: docker build -t registry.digitalocean.com/s6containers/cavbot2:${{ github.sha }} -t registry.digitalocean.com/s6containers/cavbot2:latest .
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
       - name: Log in to DO Container Registry
         run: doctl registry login --expiry-seconds 600
-      - name: Tag Image
-        run: docker tag cavbot2 registry.digitalocean.com/s6containers/cavbot2:${{ github.sha }}
       - name: Push image to DO Container Registry
-        run: docker push registry.digitalocean.com/s6containers/cavbot2:${{ github.sha }}
+        run: docker push registry.digitalocean.com/s6containers/cavbot2 --all-tags
