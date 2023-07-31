@@ -1,0 +1,25 @@
+name: DigialOcean Image Builder
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the Repo
+        uses: actions/checkout@v2
+      - name: Build Image
+        run: docker build -t cavbot2 .
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - name: Log in to DO Container Registry
+        run: doctl registry login --expiry-seconds 600
+      - name: Tag Image
+        run: docker tag cavbot2 registry.digitalocean.com/s6containers/cavbot2:${{GITHUB_SHA}}
+      - name: Push image to DO Container Registry
+        run: docker push registry.digitalocean.com/s6containers/cavbot2:${{GITHUB_SHA}}
