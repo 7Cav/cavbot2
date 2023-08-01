@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - develop
+    paths:
+      - ".github/workflows/**"
+      - "main.py"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "config/**"
 
 jobs:
   build_and_push:
@@ -11,13 +17,29 @@ jobs:
     steps:
       - name: Checkout the Repo
         uses: actions/checkout@v2
+
       - name: Build Image
-        run: docker build -t registry.digitalocean.com/s6containers/cavbot2:${{ github.sha }} -t registry.digitalocean.com/s6containers/cavbot2:latest .
+        run: docker build -t registry.digitalocean.com/s6containers/cavbot2:$(echo $GITHUB_SHA | head -c7).
+
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
       - name: Log in to DO Container Registry
         run: doctl registry login --expiry-seconds 600
+
       - name: Push image to DO Container Registry
-        run: docker push registry.digitalocean.com/s6containers/cavbot2 --all-tags
+        run: docker push registry.digitalocean.com/s6containers/cavbot2:$(echo $GITHUB_SHA | head -c7)
+
+      - name: Update Deployment File
+        run: TAG=$(echo $GITHUB_SHA | head -c7) && sed -i 's|<IMAGE>|registry.digitalocean.com/s6containers/cavbot2:'${TAG}'|' $GITHUB_WORKSPACE/config/deployment.yml
+
+      - name: Save DO kubeconfig with short-lived credentials
+        run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 cav-kube
+
+      - name: Deploy to DO Cluster
+        run: kubectl apply -f $GITHUB_WORKSPACE/config/deployment.yml
+
+      - name: Verify deployment
+        run: kubectl rollout status deployment/cavbot2-deployment
