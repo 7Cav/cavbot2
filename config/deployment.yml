@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: cavbot
-          image: registry.digitalocean.com/s6containers/cavbot2
+          image: registry.digitalocean.com/s6containers/cavbot2:latest
           imagePullPolicy: Always
           env:
             - name: BOT_TOKEN
