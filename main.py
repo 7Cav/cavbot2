@@ -24,7 +24,7 @@ servers_dict = {
     "A3 Training 1": "9fd28d83",
     "A3 Training 2": "6b20f439",
     "A3 Training 3": "7b217461",
-    "SQ Training": "7e1451cc",
+    "Sq Training": "7e1451cc",
 }
 
 # Retrieve the API key from the environment variable
