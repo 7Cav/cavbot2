@@ -1,3 +1,5 @@
+[![Server ADR Deployment](https://github.com/7Cav/cavbot2/actions/workflows/do-image-builder.yml/badge.svg)](https://github.com/7Cav/cavbot2/actions/workflows/do-image-builder.yml) 
+
 # CavBot2 Readme
 
 This code represents a Discord bot custom built for the 7th Cavalry Gaming Regiment that interacts with the Discord API using the `discord.py` library. The bot provides functionality to restart servers running on Pterodactyl through slash commands.
