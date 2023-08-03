@@ -38,7 +38,7 @@ async def on_command_error(
 ) -> None:
     if isinstance(error, app_commands.errors.MissingAnyRole):
         # Respond with an error message if the user doesn't have the required role
-        await interaction.response.send_message(
+        await interaction.response.send(
             f"You must have one of these roles: `{error.missing_roles}` in order to use this command",
             ephemeral=True,
         )
@@ -48,11 +48,11 @@ async def on_command_error(
         await sypolt.send(
             f"Someone broke your bot in a new and interesting way ```{error}```"
         )
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "You managed to break the bot in a way I didn't expect, good job. If the Cav \
-had an Army Bug Finder medal I'd give it to you. Anyway the error was forwarded to me, Sypolt.R. \
+had an Army Bug Finder medal I'd give it to you. Anyway, the error was forwarded to me, Sypolt.R. \
 Why don't you try whatever that was again but with less breaking things this time?",
-            ephemeral=True,
+            ephemeral=False,
         )
 
 
