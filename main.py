@@ -25,6 +25,7 @@ servers_dict = {
     "A3 Training 2": "6b20f439",
     "A3 Training 3": "7b217461",
     "Sq Training": "7e1451cc",
+    "Sq TacR": "0b493e80",
 }
 
 # Retrieve the API key from the environment variable
@@ -70,6 +71,7 @@ Why don't you try whatever that was again but with less breaking things this tim
         discord.app_commands.Choice(name="A3 Training 2", value=3),
         discord.app_commands.Choice(name="A3 Training 3", value=4),
         discord.app_commands.Choice(name="Sq Training", value=5),
+        discord.app_commands.Choice(name="Sq TacR", value=6),
     ]
 )
 async def restart_server(interaction, servers: discord.app_commands.Choice[int]):
