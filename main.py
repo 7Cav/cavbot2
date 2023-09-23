@@ -26,7 +26,7 @@ tree = app_commands.CommandTree(client)
 # Set the bot's status activity
 status = discord.Activity(name="https://7cav.us", type=3)
 
-discord_id = os.getenv("DISCORD_ID")
+discord_id = int(os.getenv("DISCORD_ID"))
 owner_id = int(os.getenv("OWNER_ID"))
 
 
