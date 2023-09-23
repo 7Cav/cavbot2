@@ -30,5 +30,9 @@ spec:
                 secretKeyRef:
                   name: cavbotenv
                   key: api_key
+            - name: DISCORD_ID
+              value: 109869242148491264
+            - name: OWNER_ID
+              value: 130158049968128000
       imagePullSecrets:
         - name: s6containers
