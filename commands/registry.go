@@ -13,6 +13,7 @@ func NewRegistry() *Registry {
 		Echo(),
 		Image(),
 		Milpac(),
+		AdrDeploy(),
 	)
 	return r
 }
