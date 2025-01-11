@@ -19,7 +19,7 @@ import (
 func AppsBetaDeploy() Command {
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
-			Name:        "apps-beta-deploy",
+			Name:        "apps_beta_deploy",
 			Description: "Deploy Apps Beta Version",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
@@ -59,6 +59,9 @@ func handleInitialCommand(s *discordgo.Session, i *discordgo.InteractionCreate) 
 	log.Printf("Initial command handler called")
 	branch := i.ApplicationCommandData().Options[0].StringValue()
 	log.Printf("Branch name received: %s", branch)
+	if len(fmt.Sprintf("apps_beta_deploy::confirm::%s", branch)) > 100 {
+		log.Printf("Warning: Button CustomID exceeds Discord's limit")
+	}
 	confirmButtonID := fmt.Sprintf("apps_beta_deploy::confirm::%s", branch)
 	cancelButtonID := fmt.Sprintf("apps_beta_deploy::cancel::%s", branch)
 
@@ -83,7 +86,7 @@ func handleInitialCommand(s *discordgo.Session, i *discordgo.InteractionCreate) 
 		},
 	}
 
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: fmt.Sprintf("⚠️ Are you sure you want to deploy branch `%s` to apps-beta?", branch),
@@ -92,6 +95,9 @@ func handleInitialCommand(s *discordgo.Session, i *discordgo.InteractionCreate) 
 			},
 		},
 	})
+	if err != nil {
+		log.Printf("Error responding to initial command: %v", err)
+	}
 }
 
 func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -149,9 +155,9 @@ func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 		return
 	}
 
-	clientID := os.Getenv("GITHUB_APP_ClIENT_ID")
+	clientID := os.Getenv("GITHUB_APP_CLIENT_ID")
 	if clientID == "" {
-		log.Printf("GITHUB_APP_ClIENT_ID environment variable is empty")
+		log.Printf("GITHUB_APP_CLIENT_ID environment variable is empty")
 		handleError(s, i, "❌ GitHub App client ID not configured")
 		return
 	}
