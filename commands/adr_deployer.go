@@ -12,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -32,69 +33,165 @@ func AdrDeploy() Command {
 
 		Handler: func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			log.Println("ADR Deployer called")
-			branch := i.ApplicationCommandData().Options[0].StringValue()
-			if err := validateBranchName(branch); err != nil {
-				log.Printf("Invalid branch name: %v", err)
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: fmt.Sprintf("❌ Invalid branch name: %v", err),
-					},
-				})
-				return
+			switch i.Type {
+			case discordgo.InteractionApplicationCommand:
+				branch := i.ApplicationCommandData().Options[0].StringValue()
+				if err := validateBranchName(branch); err != nil {
+					log.Printf("Invalid branch name: %v", err)
+					s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+						Type: discordgo.InteractionResponseChannelMessageWithSource,
+						Data: &discordgo.InteractionResponseData{
+							Content: fmt.Sprintf("❌ Invalid branch name: %v", err),
+						},
+					})
+					return
+				}
+				handleInitialCommand(s, i)
+			case discordgo.InteractionMessageComponent:
+				handleComponentInteraction(s, i)
 			}
 
-			encodedPrivateKey := os.Getenv("GITHUB_APP_KEY")
-			privateKeyPEM, err := base64.StdEncoding.DecodeString(encodedPrivateKey)
-			if err != nil {
-				log.Printf("Failed to decode private key: %v", err)
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: fmt.Sprintf("❌ Failed to decode private key: %v", err),
-					},
-				})
-				return
-			}
-			clientID := os.Getenv("GITHUB_APP_ClIENT_ID")
-
-			token, err := githubAuth(clientID, privateKeyPEM)
-			if err != nil {
-				log.Printf("Failed to generate JWT: %v", err)
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: fmt.Sprintf("❌ Failed to authenticate with GitHub: %v", err),
-					},
-				})
-				return
-			}
-
-			branch := i.ApplicationCommandData().Options[0].StringValue()
-			owner := "7cav"
-			repo := "adr"
-			workflow := "dev_deploy.yml"
-			ref := "main"
-			log.Printf("Deploying branch %s to %s/%s/%s", branch, owner, repo, workflow)
-			err = triggerGithubDeployment(branch, token, owner, repo, workflow, ref)
-			log.Printf("Triggered ADR deployment for branch %s", branch)
-			var response string
-			if err != nil {
-				response = fmt.Sprintf("❌ Failed to trigger ADR deployment: %v", err)
-			} else {
-				response = fmt.Sprintf("✅ ADR deployment started for branch `%s` \n Check status at: https://github.com/7cav/adr/actions/workflows/dev_deploy.yml", branch)
-			}
-			log.Printf(response)
-			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Content: response,
-				},
-			})
 		},
 	}
 }
 
+func handleInitialCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	log.Printf("Initial command handler called")
+	branch := i.ApplicationCommandData().Options[0].StringValue()
+	log.Printf("Branch name received: %s", branch)
+	confirmButtonID := fmt.Sprintf("adr_deploy::confirm::%s", branch)
+	cancelButtonID := fmt.Sprintf("adr_deploy::cancel::%s", branch)
+
+	log.Printf("Creating buttons with IDs - Confirm: %s, Cancel: %s", confirmButtonID, cancelButtonID)
+
+	confirmButton := discordgo.Button{
+		CustomID: confirmButtonID,
+		Label:    "Confirm Deploy",
+		Style:    discordgo.SuccessButton,
+	}
+
+	cancelButton := discordgo.Button{
+		CustomID: cancelButtonID,
+		Label:    "Cancel Deploy",
+		Style:    discordgo.DangerButton,
+	}
+
+	actionRow := discordgo.ActionsRow{
+		Components: []discordgo.MessageComponent{
+			confirmButton,
+			cancelButton,
+		},
+	}
+
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: fmt.Sprintf("⚠️ Are you sure you want to deploy branch `%s` to apps-beta?", branch),
+			Components: []discordgo.MessageComponent{
+				actionRow,
+			},
+		},
+	})
+}
+
+func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	log.Printf("Component interaction received")
+	customID := i.MessageComponentData().CustomID
+	log.Printf("CustomID received: %s", customID)
+
+	parts := strings.Split(customID, "::")
+	log.Printf("Split CustomID parts: %v", parts)
+
+	if len(parts) != 3 {
+		log.Printf("Invalid custom ID format: expected 3 parts, got %d parts: %v", len(parts), parts)
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "❌ Invalid interaction format",
+			},
+		})
+		return
+	}
+
+	command := parts[0]
+	action := parts[1]
+	branch := parts[2]
+
+	log.Printf("Parsed command: %s, action: %s, branch: %s", command, action, branch)
+
+	if action == "cancel" {
+		log.Printf("Processing cancel action for branch: %s", branch)
+		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseUpdateMessage,
+			Data: &discordgo.InteractionResponseData{
+				Content:    fmt.Sprintf("❌ Deployment cancelled for branch `%s`", branch),
+				Components: []discordgo.MessageComponent{},
+			},
+		})
+		if err != nil {
+			log.Printf("Error responding to cancel interaction: %v", err)
+		}
+		return
+	}
+
+	log.Printf("Starting deployment process for branch: %s", branch)
+	encodedPrivateKey := os.Getenv("GITHUB_APP_KEY")
+	if encodedPrivateKey == "" {
+		log.Printf("GITHUB_APP_KEY environment variable is empty")
+		handleError(s, i, "❌ GitHub App key not configured")
+		return
+	}
+
+	privateKeyPEM, err := base64.StdEncoding.DecodeString(encodedPrivateKey)
+	if err != nil {
+		log.Printf("Failed to decode private key: %v", err)
+		handleError(s, i, fmt.Sprintf("❌ Failed to decode private key: %v", err))
+		return
+	}
+
+	clientID := os.Getenv("GITHUB_APP_ClIENT_ID")
+	if clientID == "" {
+		log.Printf("GITHUB_APP_ClIENT_ID environment variable is empty")
+		handleError(s, i, "❌ GitHub App client ID not configured")
+		return
+	}
+
+	log.Printf("Starting GitHub authentication process")
+	token, err := githubAuth(clientID, privateKeyPEM)
+	if err != nil {
+		log.Printf("GitHub authentication failed: %v", err)
+		handleError(s, i, fmt.Sprintf("❌ Failed to authenticate with GitHub: %v", err))
+		return
+	}
+	log.Printf("GitHub authentication successful")
+
+	owner := "7cav"
+	repo := "adr"
+	workflow := "dev_deploy.yml"
+	ref := "main"
+	log.Printf("Triggering deployment - Owner: %s, Repo: %s, Workflow: %s, Branch: %s", owner, repo, workflow, branch)
+
+	err = triggerGithubDeployment(branch, token, owner, repo, workflow, ref)
+	var response string
+	if err != nil {
+		log.Printf("Deployment failed: %v", err)
+		response = fmt.Sprintf("❌ Failed to trigger ADR deployment: %v", err)
+	} else {
+		log.Printf("Deployment triggered successfully")
+		response = fmt.Sprintf("✅ ADR deployment started for branch `%s` \n Check status at: https://github.com/7cav/adr/actions/workflows/dev_deploy.yml", branch)
+	}
+
+	log.Printf("Sending response: %s", response)
+	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: response,
+		},
+	})
+	if err != nil {
+		log.Printf("Error sending interaction response: %v", err)
+	}
+}
 func githubAuth(clientID string, privateKey []byte) (string, error) {
 	now := time.Now()
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
@@ -198,10 +295,14 @@ func triggerGithubDeployment(branch string, token string, owner string, repo str
 }
 
 func validateBranchName(branch string) error {
-	validPattern := regexp.MustCompile(`^(?!\.)[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+	validPattern := regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
 	if len(branch) == 0 || len(branch) > 255 {
 		return fmt.Errorf("branch name must be between 1 and 255 characters")
+	}
+
+	if branch[0] == '.' {
+		return fmt.Errorf("invalid branch name: must not start with a dot")
 	}
 
 	if !validPattern.MatchString(branch) {
@@ -209,4 +310,17 @@ func validateBranchName(branch string) error {
 	}
 
 	return nil
+}
+
+func handleError(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
+	log.Printf("Handling error: %s", message)
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: message,
+		},
+	})
+	if err != nil {
+		log.Printf("Error sending error response: %v", err)
+	}
 }

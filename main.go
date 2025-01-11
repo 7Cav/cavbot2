@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/7cav/cavbot2/commands"
@@ -37,8 +38,19 @@ func main() {
 	registry := commands.NewRegistry()
 
 	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-		if h, ok := registry.GetHandler(i.ApplicationCommandData().Name); ok {
-			h(s, i)
+		switch i.Type {
+		case discordgo.InteractionApplicationCommand:
+			if h, ok := registry.GetHandler(i.ApplicationCommandData().Name); ok {
+				h(s, i)
+			}
+		case discordgo.InteractionMessageComponent:
+			customID := i.MessageComponentData().CustomID
+			parts := strings.Split(customID, "::")
+			if len(parts) > 0 {
+				if h, ok := registry.GetHandler(parts[0]); ok {
+					h(s, i)
+				}
+			}
 		}
 	})
 
