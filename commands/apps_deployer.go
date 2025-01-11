@@ -16,11 +16,11 @@ import (
 	"time"
 )
 
-func AdrDeploy() Command {
+func AppsBetaDeploy() Command {
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
-			Name:        "adr_deploy",
-			Description: "Deploy ADR Beta Version",
+			Name:        "apps-beta-deploy",
+			Description: "Deploy Apps Beta Version",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
@@ -32,7 +32,7 @@ func AdrDeploy() Command {
 		},
 
 		Handler: func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-			log.Println("ADR Deployer called")
+			log.Println("Apps Beta Deployer called")
 			switch i.Type {
 			case discordgo.InteractionApplicationCommand:
 				branch := i.ApplicationCommandData().Options[0].StringValue()
@@ -59,8 +59,8 @@ func handleInitialCommand(s *discordgo.Session, i *discordgo.InteractionCreate) 
 	log.Printf("Initial command handler called")
 	branch := i.ApplicationCommandData().Options[0].StringValue()
 	log.Printf("Branch name received: %s", branch)
-	confirmButtonID := fmt.Sprintf("adr_deploy::confirm::%s", branch)
-	cancelButtonID := fmt.Sprintf("adr_deploy::cancel::%s", branch)
+	confirmButtonID := fmt.Sprintf("apps_beta_deploy::confirm::%s", branch)
+	cancelButtonID := fmt.Sprintf("apps_beta_deploy::cancel::%s", branch)
 
 	log.Printf("Creating buttons with IDs - Confirm: %s, Cancel: %s", confirmButtonID, cancelButtonID)
 
@@ -175,10 +175,10 @@ func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 	var response string
 	if err != nil {
 		log.Printf("Deployment failed: %v", err)
-		response = fmt.Sprintf("❌ Failed to trigger ADR deployment: %v", err)
+		response = fmt.Sprintf("❌ Failed to trigger Apps Beta deployment: %v", err)
 	} else {
 		log.Printf("Deployment triggered successfully")
-		response = fmt.Sprintf("✅ ADR deployment started for branch `%s` \n Check status at: https://github.com/7cav/adr/actions/workflows/dev_deploy.yml", branch)
+		response = fmt.Sprintf("✅ Apps Beta deployment started for branch `%s` \n Check status at: https://github.com/7cav/adr/actions/workflows/dev_deploy.yml", branch)
 	}
 
 	log.Printf("Sending response: %s", response)

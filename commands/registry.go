@@ -10,7 +10,7 @@ func NewRegistry() *Registry {
 	r := &Registry{}
 	r.RegisterCommands(
 		Milpac(),
-		AdrDeploy(),
+		AppsBetaDeploy(),
 	)
 	return r
 }
