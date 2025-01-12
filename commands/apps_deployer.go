@@ -26,7 +26,7 @@ func AppsBetaDeploy() Command {
 		},
 
 		Handler: func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-			log.Printf("Apps Beta Deployer called by %s", i.Member.User.Username)
+			log.Printf("Apps Beta Deployer called by %s %s", i.Member.User.Username, i.Member.User.ID)
 			switch i.Type {
 			case discordgo.InteractionApplicationCommand:
 				handleInitialCommand(s, i)
