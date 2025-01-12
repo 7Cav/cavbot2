@@ -42,6 +42,7 @@ func AppsBetaDeploy() Command {
 						Type: discordgo.InteractionResponseChannelMessageWithSource,
 						Data: &discordgo.InteractionResponseData{
 							Content: fmt.Sprintf("❌ Invalid branch name: %v", err),
+							Flags:   discordgo.MessageFlagsEphemeral,
 						},
 					})
 					return
@@ -93,6 +94,7 @@ func handleInitialCommand(s *discordgo.Session, i *discordgo.InteractionCreate) 
 			Components: []discordgo.MessageComponent{
 				actionRow,
 			},
+			Flags: discordgo.MessageFlagsEphemeral,
 		},
 	})
 	if err != nil {
@@ -139,6 +141,14 @@ func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 		}
 		return
 	}
+	log.Printf("Sending please wait response")
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseUpdateMessage,
+		Data: &discordgo.InteractionResponseData{
+			Content:    fmt.Sprintf("✅ Deployment initiated, please wait..."),
+			Components: []discordgo.MessageComponent{},
+		},
+	})
 
 	log.Printf("Starting deployment process for branch: %s", branch)
 	encodedPrivateKey := os.Getenv("GITHUB_APP_KEY")
@@ -176,7 +186,12 @@ func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 	workflow := "dev_deploy.yml"
 	ref := "main"
 	log.Printf("Triggering deployment - Owner: %s, Repo: %s, Workflow: %s, Branch: %s", owner, repo, workflow, branch)
-
+	err = checkBranchExists(branch, token, owner, repo)
+	if err != nil {
+		log.Printf("Branch does not exist: %v", err)
+		handleError(s, i, fmt.Sprintf("❌ Branch does not exist: %v", err))
+		return
+	}
 	err = triggerGithubDeployment(branch, token, owner, repo, workflow, ref)
 	var response string
 	if err != nil {
@@ -184,20 +199,18 @@ func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 		response = fmt.Sprintf("❌ Failed to trigger Apps Beta deployment: %v", err)
 	} else {
 		log.Printf("Deployment triggered successfully")
-		response = fmt.Sprintf("✅ Apps Beta deployment started for branch `%s` \n Check status at: https://github.com/7cav/adr/actions/workflows/dev_deploy.yml", branch)
+		response = fmt.Sprintf("✅ Apps Beta deployment started for branch `%s` by <@%s> \nCheck status at: https://github.com/7cav/adr/actions/workflows/dev_deploy.yml", branch, i.Member.User.ID)
 	}
 
 	log.Printf("Sending response: %s", response)
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: response,
-		},
+	_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+		Content: response,
 	})
 	if err != nil {
 		log.Printf("Error sending interaction response: %v", err)
 	}
 }
+
 func githubAuth(clientID string, privateKey []byte) (string, error) {
 	now := time.Now()
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
@@ -321,12 +334,50 @@ func validateBranchName(branch string) error {
 func handleError(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
 	log.Printf("Handling error: %s", message)
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Type: discordgo.InteractionResponseUpdateMessage,
 		Data: &discordgo.InteractionResponseData{
 			Content: message,
 		},
 	})
 	if err != nil {
-		log.Printf("Error sending error response: %v", err)
+		if !strings.Contains(err.Error(), "already been acknowledged") {
+			log.Printf("Error sending initial response: %v", err)
+		}
+
+		_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &message,
+		})
+		if err != nil {
+			log.Printf("Error editing response: %v", err)
+		}
 	}
+}
+
+func checkBranchExists(branch, token, owner, repo string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	client := resty.New().
+		SetRetryCount(3).
+		SetRetryWaitTime(1 * time.Second)
+
+	resp, err := client.R().
+		SetContext(ctx).
+		SetHeader("Accept", "application/vnd.github+json").
+		SetHeader("Authorization", "Bearer "+token).
+		Get(fmt.Sprintf("https://api.github.com/repos/%s/%s/branches/%s", owner, repo, branch))
+
+	if err != nil {
+		return fmt.Errorf("failed to check branch: %w", err)
+	}
+
+	if resp.StatusCode() == 404 {
+		return fmt.Errorf("branch '%s' does not exist in repository %s/%s", branch, owner, repo)
+	}
+
+	if resp.StatusCode() != 200 {
+		return fmt.Errorf("github API returned unexpected status code: %d %s", resp.StatusCode(), resp.Body())
+	}
+
+	return nil
 }
