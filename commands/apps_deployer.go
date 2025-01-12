@@ -108,10 +108,14 @@ func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseUpdateMessage,
 		Data: &discordgo.InteractionResponseData{
-			Content:    fmt.Sprintf("✅ Deployment initiated, please wait..."),
+			Content:    "✅ Deployment initiated, please wait...",
 			Components: []discordgo.MessageComponent{},
 		},
 	})
+	if err != nil {
+		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to update initial message: %v", err))
+		return
+	}
 	encodedPrivateKey := os.Getenv("GITHUB_APP_KEY")
 	if encodedPrivateKey == "" {
 		utils.HandleError(s, i, "❌ GitHub App key not configured")
