@@ -149,7 +149,7 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			Value: fmt.Sprintf("%s (%s)\nPromoted: %s\nTime Since Promotion: %s", milpac.Rank.RankFull, milpac.Rank.RankShort, capitalizedPromotionDate, timeInGrade),
 		},
 		{
-			Name:  "Join Date",
+			Name:  "Time in Service",
 			Value: fmt.Sprintf("%s\nTime Since Enlistment: %s", capitalizedJoinDate, timeInService),
 		},
 	}
