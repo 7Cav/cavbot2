@@ -9,11 +9,9 @@ import (
 )
 
 func HandleError(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
-	log.Printf("HandleError called with message: %s", message)
-	log.Printf("Interaction type: %v", i.Type)
+	log.Printf("Error handling interaction: %s", message)
 
 	if i.Type == discordgo.InteractionApplicationCommand {
-		log.Printf("Handling application command error")
 		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
@@ -22,25 +20,19 @@ func HandleError(s *discordgo.Session, i *discordgo.InteractionCreate, message s
 			},
 		})
 		if err != nil {
-			log.Printf("Initial response failed with error: %v", err)
 			if strings.Contains(err.Error(), "already been acknowledged") {
-				log.Printf("Interaction already acknowledged, attempting edit")
+				log.Printf("Retrying error response as edit: %v", err)
 				_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 					Content: &message,
 				})
 				if err != nil {
-					log.Printf("Edit attempt failed with error: %v", err)
-				} else {
-					log.Printf("Edit successful")
+					log.Printf("Failed to send error message: %v", err)
 				}
 			} else {
-				log.Printf("Unexpected error occurred: %v", err)
+				log.Printf("Failed to send error message: %v", err)
 			}
-		} else {
-			log.Printf("Initial response successful")
 		}
 	} else {
-		log.Printf("Handling component interaction error")
 		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseUpdateMessage,
 			Data: &discordgo.InteractionResponseData{
@@ -48,27 +40,20 @@ func HandleError(s *discordgo.Session, i *discordgo.InteractionCreate, message s
 			},
 		})
 		if err != nil {
-			log.Printf("Update response failed with error: %v", err)
 			if strings.Contains(err.Error(), "already been acknowledged") {
-				log.Printf("Attempting edit as fallback")
+				log.Printf("Retrying error response as edit: %v", err)
 				_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 					Content: &message,
 				})
 				if err != nil {
-					log.Printf("Fallback edit failed with error: %v", err)
-				} else {
-					log.Printf("Fallback edit successful")
+					log.Printf("Failed to send error message: %v", err)
 				}
 			} else {
-				log.Printf("Unexpected error occurred: %v", err)
+				log.Printf("Failed to send error message: %v", err)
 			}
-		} else {
-			log.Printf("Update response successful")
 		}
 	}
-	log.Printf("HandleError completed")
 }
-
 func HandleValidateBranchName(branch string) error {
 	validPattern := regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
