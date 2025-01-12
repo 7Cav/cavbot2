@@ -9,10 +9,8 @@ type Registry struct {
 func NewRegistry() *Registry {
 	r := &Registry{}
 	r.RegisterCommands(
-		Ping(),
-		Echo(),
-		Image(),
 		Milpac(),
+		AppsBetaDeploy(),
 	)
 	return r
 }
