@@ -215,7 +215,7 @@ func githubAuth(clientID string, privateKey []byte) (string, error) {
 	now := time.Now()
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iat": now.Unix(),
-		"exp": now.Add(time.Minute * 9).Unix(),
+		"exp": now.Add(time.Minute * 5).Unix(),
 		"iss": clientID,
 	})
 
