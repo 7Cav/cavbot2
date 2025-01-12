@@ -138,7 +138,6 @@ func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 	ref := "main"
 	err = utils.CheckGithubBranchExists(branch, token, owner, repo)
 	if err != nil {
-		log.Printf("Branch does not exist: %v", err)
 		utils.HandleError(s, i, fmt.Sprintf("❌ Branch does not exist: %v", err))
 		return
 	}
