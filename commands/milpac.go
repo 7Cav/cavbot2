@@ -13,6 +13,15 @@ import (
 	"time"
 )
 
+var rosterMap = map[string]string{
+	"ROSTER_TYPE_COMBAT":        "Active Duty",
+	"ROSTER_TYPE_RESERVE":       "Reserves",
+	"ROSTER_TYPE_ELOA":          "Extended Leave of Absence",
+	"ROSTER_TYPE_WALL_OF_HONOR": "Wall of Honor",
+	"ROSTER_TYPE_ARLINGTON":     "Arlington National Cemetery",
+	"ROSTER_TYPE_PAST_MEMBERS":  "Past Members",
+}
+
 type CustomTime struct {
 	time.Time
 }
@@ -46,6 +55,14 @@ type Response struct {
 	} `json:"primary"`
 	JoinDate      string `json:"joinDate"`
 	PromotionDate string `json:"promotionDate"`
+}
+
+func (r *Response) GetRosterStatus() string {
+	if status, exists := rosterMap[r.Roster]; exists {
+		return status
+	}
+	log.Printf("Roster status not found for: %s", r.Roster)
+	return r.Roster
 }
 
 func Milpac() Command {
@@ -106,16 +123,6 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	}
 	formatJoinDate := joinDate.Format("02Jan2006")
 	capitalizedJoinDate := strings.ToUpper(formatJoinDate)
-	duration := time.Since(joinDate)
-	serviceDays := int(duration.Hours() / 24)
-	var timeInService string
-	if serviceDays >= 365 {
-		years := serviceDays / 365
-		remainingDays := serviceDays % 365
-		timeInService = fmt.Sprintf("%d years, %d days", years, remainingDays)
-	} else {
-		timeInService = fmt.Sprintf("%d days", serviceDays)
-	}
 	promotionDate, err := time.Parse("2006-01-02", milpac.PromotionDate)
 	if err != nil || promotionDate.IsZero() {
 		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to parse promotion date: %v", err))
@@ -123,26 +130,21 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	}
 	formatPromotionDate := promotionDate.Format("02Jan2006")
 	capitalizedPromotionDate := strings.ToUpper(formatPromotionDate)
-
-	duration = time.Since(promotionDate)
-	gradeDays := int(duration.Hours() / 24)
-	var timeInGrade string
-	if gradeDays >= 365 {
-		years := gradeDays / 365
-		remainingDays := gradeDays % 365
-		timeInGrade = fmt.Sprintf("%d years, %d days", years, remainingDays)
-	} else {
-		timeInGrade = fmt.Sprintf("%d days", gradeDays)
-	}
+	timeInService := utils.FormatTimeSinceDuration(joinDate)
+	timeInGrade := utils.FormatTimeSinceDuration(promotionDate)
 
 	fields := []*discordgo.MessageEmbedField{
 		{
-			Name:  "Primary Position",
-			Value: milpac.Primary.PositionTitle,
-		},
-		{
 			Name:  "Username",
 			Value: milpac.User.Username,
+		},
+		{
+			Name:  "Roster",
+			Value: milpac.GetRosterStatus(),
+		},
+		{
+			Name:  "Primary Position",
+			Value: milpac.Primary.PositionTitle,
 		},
 		{
 			Name:  "Rank",
