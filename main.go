@@ -79,14 +79,5 @@ func main() {
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-sc
-
-	if GuildID != "" {
-		log.Println("Removing commands...")
-		for _, cmd := range registeredCommands {
-			err := dg.ApplicationCommandDelete(dg.State.User.ID, GuildID, cmd.ID)
-			if err != nil {
-				log.Panicf("Cannot delete command %v: %v", cmd.Name, err)
-			}
-		}
-	}
+	log.Println("Shutting down...")
 }
