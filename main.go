@@ -12,6 +12,8 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+var Version = "0.3"
+
 var (
 	Token   string
 	GuildID string
@@ -30,6 +32,7 @@ func init() {
 }
 
 func main() {
+	log.Printf("CavBot2 v%s starting...", Version)
 	dg, err := discordgo.New("Bot " + Token)
 	if err != nil {
 		log.Fatalf("Error creating Discord session: %v", err)
