@@ -64,9 +64,30 @@ func main() {
 			log.Printf("Error closing Discord connection: %v", err)
 		}
 	}()
+	registeredCommandNames := make(map[string]struct{}, len(registry.GetCommands()))
+	for _, cmd := range registry.GetCommands() {
+		registeredCommandNames[cmd.Name] = struct{}{}
+	}
+	log.Println("Removing deprecated commands...")
+	existingCommands, err := dg.ApplicationCommands(dg.State.User.ID, GuildID)
+	if err != nil {
+		log.Printf("Warning: Could not fetch existing commands: %v", err)
+	} else {
+		for _, cmd := range existingCommands {
+			if _, exists := registeredCommandNames[cmd.Name]; !exists {
+				err := dg.ApplicationCommandDelete(dg.State.User.ID, GuildID, cmd.ID)
+				if err != nil {
+					log.Printf("Warning: Could not delete deprecated command %s: %v", cmd.Name, err)
+				} else {
+					log.Printf("Removed deprecated command: %s", cmd.Name)
+				}
+			}
+		}
+	}
 
 	log.Println("Registering commands...")
 	registeredCommands := make([]*discordgo.ApplicationCommand, len(registry.GetCommands()))
+
 	for i, cmd := range registry.GetCommands() {
 		rcmd, err := dg.ApplicationCommandCreate(dg.State.User.ID, GuildID, cmd)
 		if err != nil {
