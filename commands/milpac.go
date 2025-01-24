@@ -125,7 +125,8 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	capitalizedJoinDate := strings.ToUpper(formatJoinDate)
 	var promotionDate time.Time
 	if milpac.PromotionDate != "" {
-		promotionDate, err := time.Parse("2006-01-02", milpac.PromotionDate)
+		var err error
+		promotionDate, err = time.Parse("2006-01-02", milpac.PromotionDate)
 		if err != nil || promotionDate.IsZero() {
 			utils.HandleError(s, i, fmt.Sprintf("❌ Failed to parse promotion date: %v", err))
 			return
