@@ -17,7 +17,7 @@ type ProfileResponse struct {
 	UniformUrl        string     `json:"uniformUrl"`
 	Roster            string     `json:"roster"`
 	Primary           Position   `json:"primary"`
-	Secondary         []Position `json:"secondary"`
+	Secondary         []Position `json:"secondaries"`
 	Records           []Record   `json:"records"`
 	Awards            []Award    `json:"awards"`
 	JoinDate          string     `json:"joinDate"`
@@ -38,7 +38,7 @@ type LiteProfileResponse struct {
 	UniformUrl        string     `json:"uniformUrl"`
 	Roster            string     `json:"roster"`
 	Primary           Position   `json:"primary"`
-	Secondary         []Position `json:"secondary"`
+	Secondary         []Position `json:"secondaries"`
 	JoinDate          string     `json:"joinDate"`
 	PromotionDate     string     `json:"promotionDate"`
 	KeycloakID        string     `json:"keycloakId"`
