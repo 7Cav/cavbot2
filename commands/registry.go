@@ -12,6 +12,8 @@ func NewRegistry() *Registry {
 		Milpac(),
 		AppsBetaDeploy(),
 		Zulu(),
+		S6_AFSM(),
+		S6_IT_Check(),
 	)
 	return r
 }
