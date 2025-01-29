@@ -5,22 +5,11 @@ import (
 	"fmt"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
-	"github.com/go-resty/resty/v2"
 	"log"
-	"os"
 	"regexp"
 	"strings"
 	"time"
 )
-
-var rosterMap = map[string]string{
-	"ROSTER_TYPE_COMBAT":        "Active Duty",
-	"ROSTER_TYPE_RESERVE":       "Reserves",
-	"ROSTER_TYPE_ELOA":          "Extended Leave of Absence",
-	"ROSTER_TYPE_WALL_OF_HONOR": "Wall of Honor",
-	"ROSTER_TYPE_ARLINGTON":     "Arlington National Cemetery",
-	"ROSTER_TYPE_PAST_MEMBERS":  "Past Members",
-}
 
 type CustomTime struct {
 	time.Time
@@ -33,36 +22,6 @@ func (ct *CustomTime) UnmarshalJSON(b []byte) error {
 	}
 	ct.Time = t
 	return nil
-}
-
-type Response struct {
-	User struct {
-		UserID   string `json:"userId"`
-		Username string `json:"username"`
-	} `json:"user"`
-	Rank struct {
-		RankShort    string `json:"rankShort"`
-		RankFull     string `json:"rankFull"`
-		RankImageUrl string `json:"rankImageUrl"`
-		RankID       string `json:"rankId"`
-	} `json:"rank"`
-	RealName   string `json:"realName"`
-	UniformUrl string `json:"uniformUrl"`
-	Roster     string `json:"roster"`
-	Primary    struct {
-		PositionTitle string `json:"positionTitle"`
-		PositionID    string `json:"positionId"`
-	} `json:"primary"`
-	JoinDate      string `json:"joinDate"`
-	PromotionDate string `json:"promotionDate"`
-}
-
-func (r *Response) GetRosterStatus() string {
-	if status, exists := rosterMap[r.Roster]; exists {
-		return status
-	}
-	log.Printf("Roster status not found for: %s", r.Roster)
-	return r.Roster
 }
 
 func Milpac() Command {
@@ -111,7 +70,7 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	milpac, err := GetMilpac(ctx, user.ID)
+	milpac, err := utils.GetMilpacByDiscordID(ctx, user.ID)
 	if err != nil {
 		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to fetch milpac: %v", err))
 		return
@@ -193,32 +152,4 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	if err != nil {
 		log.Printf("Failed to edit response with embed: %v", err)
 	}
-}
-
-func GetMilpac(ctx context.Context, DiscordID string) (*Response, error) {
-	start := time.Now()
-	bearer := os.Getenv("BEARER")
-	client := resty.New()
-
-	var result Response
-	response, err := client.R().
-		SetContext(ctx).
-		SetAuthToken(bearer).
-		SetResult(&result).
-		Get(fmt.Sprintf("https://api.7cav.us/api/v1/milpac/discord/%s", DiscordID))
-	duration := time.Since(start)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch milpac: %w", err)
-	}
-	if response != nil && response.StatusCode() == 404 {
-		return nil, fmt.Errorf("no milpac associated with this user's Discord ID")
-	}
-	if response != nil {
-		log.Printf("API call finished in %v - Status: %d, Discord ID: %s",
-			duration,
-			response.StatusCode(),
-			DiscordID)
-	}
-	return &result, err
 }
