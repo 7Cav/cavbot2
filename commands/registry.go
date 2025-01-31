@@ -14,6 +14,7 @@ func NewRegistry() *Registry {
 		Zulu(),
 		S6Afsm(),
 		S6ITCheck(),
+		Awol(),
 	)
 	return r
 }
