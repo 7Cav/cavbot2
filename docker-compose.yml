@@ -4,7 +4,6 @@ services:
     container_name: cavbot2
 #    restart: unless-stopped
     environment:
-      ADR_GITHUB_TOKEN: ${ADR_GITHUB_TOKEN}
       GITHUB_APP_CLIENT_ID: ${GITHUB_APP_CLIENT_ID}
       BEARER: ${BEARER}
       DISCORD_TOKEN: ${DISCORD_TOKEN}
