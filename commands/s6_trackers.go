@@ -162,20 +162,19 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 
 	eligibleMembers := make([]string, 0)
 	currentDate := time.Now()
-	var errs []error
 
 	for _, member := range s6Members.LiteProfiles {
 		fullProfile, err := utils.GetMilpacByKeycloakID(ctx, member.KeycloakID)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("failed to fetch milpac for %s: %v", member.User.Username, err))
-			continue
+			utils.HandleError(s, i, fmt.Sprintf("❌ Failed to fetch milpac: %v", err))
+			return
 		}
 
 		if strings.Contains(fullProfile.Primary.PositionTitle, "IT") && strings.Contains(fullProfile.Primary.PositionTitle, "S6") {
 			position, timeInPosition, positionDate, err := determineITPositionTime(fullProfile.Primary.PositionTitle, fullProfile)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("failed to determine time in position: %v", err))
-				continue
+				utils.HandleError(s, i, fmt.Sprintf("❌ Failed to determine time in position: %v", err))
+				return
 			}
 			if positionDate.Before(currentDate.AddDate(0, -6, 0)) {
 				eligibleMembers = append(eligibleMembers, fmt.Sprintf("%s (%s) - %s", member.User.Username, position, timeInPosition))
@@ -186,8 +185,8 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 			if strings.Contains(secondary.PositionTitle, "IT") && strings.Contains(secondary.PositionTitle, "S6") {
 				position, timeInPosition, positionDate, err := determineITPositionTime(secondary.PositionTitle, fullProfile)
 				if err != nil {
-					errs = append(errs, fmt.Errorf("failed to determine time in position: %v", err))
-					continue
+					utils.HandleError(s, i, fmt.Sprintf("❌ Failed to determine time in position: %v", err))
+					return
 				}
 				if positionDate.Before(currentDate.AddDate(0, -6, 0)) {
 					eligibleMembers = append(eligibleMembers, fmt.Sprintf("%s (%s) - %s", member.User.Username, position, timeInPosition))
