@@ -15,6 +15,7 @@ type AwolUser struct {
 	Username          string
 	MilpacUrl         string
 	TimeSinceLastPost string
+	LastPostDate      time.Time
 }
 
 func Awol() Command {
@@ -36,7 +37,7 @@ func Awol() Command {
 }
 
 func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	fmt.Println("🚀 Starting AWOL check")
+	utils.Info("🚀 Starting AWOL check")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -58,12 +59,15 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 	awolUsers := []AwolUser{}
 	for _, member := range roster.LiteProfiles {
+		if member.User.Username == "Tester.B" || strings.Contains(member.Rank.RankFull, "General") {
+			continue
+		}
 		lastPostDate, err := time.Parse("2006-01-02 15:04:05", member.LastForumPostDate)
 		if err != nil {
 			utils.HandleError(s, i, fmt.Sprintf("❌ Failed to parse last forum post date: %v", err))
 			return
 		}
-		if lastPostDate.Before(time.Now().AddDate(0, 0, -7)) {
+		if lastPostDate.Before(time.Now().AddDate(0, 0, -8)) {
 			matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(member.UniformUrl)
 			if len(matches) < 2 {
 				utils.HandleError(s, i, "❌ Failed to parse uniform URL")
@@ -73,17 +77,23 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				Username:          member.User.Username,
 				MilpacUrl:         fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1]),
 				TimeSinceLastPost: utils.FormatTimeSinceDuration(lastPostDate),
+				LastPostDate:      lastPostDate,
 			})
 		}
 	}
 	sort.Slice(awolUsers, func(i, j int) bool {
-		return awolUsers[i].TimeSinceLastPost < awolUsers[j].TimeSinceLastPost
+		return awolUsers[i].LastPostDate.Before(awolUsers[j].LastPostDate)
 	})
-	awolUserOutput := make([]string, len(awolUsers))
+	awolUserOutput := make([]string, 0)
 	for _, user := range awolUsers {
-		awolUserOutput = append(awolUserOutput, fmt.Sprintf("%s (%s)", user.Username, user.TimeSinceLastPost))
+		awolUserOutput = append(awolUserOutput, fmt.Sprintf("[%s](<%s>) (%s)", user.Username, user.MilpacUrl, user.TimeSinceLastPost))
 	}
-	response := fmt.Sprintf("The following users are AWOL:\n%s", strings.Join(awolUserOutput, "\n"))
+	var response string
+	if len(awolUserOutput) > 0 {
+		response = fmt.Sprintf("The following users for search \"%s\" are AWOL:\n%s", position, strings.Join(awolUserOutput, "\n"))
+	} else {
+		response = fmt.Sprintf("No users for search \"%s\" are AWOL", position)
+	}
 	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &response,
 	})
@@ -91,5 +101,5 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		return
 	}
-	fmt.Println("✨ Done!")
+	utils.Info("✨ Done!")
 }
