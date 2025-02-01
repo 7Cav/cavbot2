@@ -134,18 +134,11 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 	utils.Info("✨ Done!", "command", "S6ITCheck")
 }
 
-func determineRecordType(details string) string {
-	if strings.Contains(details, "Relieved") || strings.Contains(details, "ELOA") || strings.Contains(details, "Discharge") || strings.Contains(details, "Retired") {
-		return "leave"
-	}
-	return "join"
-}
-
 func determineITPositionTime(positionName string, member *utils.ProfileResponse) (position string, timeInPosition string, positionDate time.Time, err error) {
 	var date time.Time
 
 	for _, record := range member.Records {
-		if record.RecordType == "RECORD_TYPE_ASSIGNMENT" || record.RecordType == "RECORD_TYPE_TRANSFER" || record.RecordType == "RECORD_TYPE_ELOA" {
+		if record.RecordType == "RECORD_TYPE_ASSIGNMENT" || record.RecordType == "RECORD_TYPE_TRANSFER" {
 			recordDate, err := time.Parse("2006-01-02", record.RecordDate)
 			if err != nil {
 				return "", "", time.Time{}, fmt.Errorf("failed to parse record date: %v", err)
