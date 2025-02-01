@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-var Logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
+var Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 func Info(msg string, args ...any) {
 	Logger.Info(msg, args...)
@@ -22,6 +22,10 @@ func Error(msg string, args ...any) {
 func Warn(msg string, args ...any) {
 	Logger.Warn(msg, args...)
 }
+func Debug(msg string, args ...any) {
+	Logger.Debug(msg, args...)
+}
+
 func HandleError(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
 	Info("Error handling interaction", "message", message)
 
