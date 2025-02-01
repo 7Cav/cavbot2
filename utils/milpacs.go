@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/go-resty/resty/v2"
-	"log"
 	"os"
 	"strings"
 	"time"
@@ -83,7 +82,7 @@ func (r *ProfileResponse) GetRosterStatus() string {
 	if status, exists := rosterMap[r.Roster]; exists {
 		return status
 	}
-	log.Printf("Roster status not found for: %s", r.Roster)
+	Info("Roster status not found", "roster", r.Roster)
 	return r.Roster
 }
 
@@ -108,11 +107,7 @@ func makeAPIRequest[T any](ctx context.Context, path string, identifier string) 
 		Get(fmt.Sprintf("https://api.7cav.us/api/v1/%s", path))
 
 	if response != nil {
-		log.Printf("API call finished in %v - Status: %d, %s: %s",
-			time.Since(start),
-			response.StatusCode(),
-			strings.Split(path, "/")[0],
-			identifier)
+		Info("API Call Finished", "duration", time.Since(start), "status", response.StatusCode(), "path", strings.Split(path, "/")[0], "identifier", identifier)
 	}
 
 	if err != nil {
