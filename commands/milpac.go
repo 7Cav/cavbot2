@@ -97,27 +97,58 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	timeInService := utils.FormatTimeSinceDuration(joinDate)
 	timeInGrade := utils.FormatTimeSinceDuration(promotionDate)
 
-	fields := []*discordgo.MessageEmbedField{
-		{
-			Name:  "Username",
-			Value: milpac.User.Username,
-		},
-		{
-			Name:  "Roster",
-			Value: milpac.GetRosterStatus(),
-		},
-		{
-			Name:  "Primary Position",
-			Value: milpac.Primary.PositionTitle,
-		},
-		{
-			Name:  "Rank",
-			Value: fmt.Sprintf("%s (%s)\nPromoted: %s\nTime Since Promotion: %s", milpac.Rank.RankFull, milpac.Rank.RankShort, capitalizedPromotionDate, timeInGrade),
-		},
-		{
-			Name:  "Time in Service",
-			Value: fmt.Sprintf("%s\nTime Since Enlistment: %s", capitalizedJoinDate, timeInService),
-		},
+	secondaryPositions := make([]string, 0)
+	for _, secondary := range milpac.Secondary {
+		secondaryPositions = append(secondaryPositions, secondary.PositionTitle)
+	}
+	var fields []*discordgo.MessageEmbedField
+	if len(secondaryPositions) > 0 {
+		fields = []*discordgo.MessageEmbedField{
+			{
+				Name:  "Username",
+				Value: milpac.User.Username,
+			},
+			{
+				Name:  "Roster",
+				Value: milpac.GetRosterStatus(),
+			},
+			{
+				Name:  "Primary Position",
+				Value: milpac.Primary.PositionTitle,
+			},
+			{Name: "Secondary Positions", Value: strings.Join(secondaryPositions, "\n")},
+			{
+				Name:  "Rank",
+				Value: fmt.Sprintf("%s (%s)\nPromoted: %s\nTime Since Promotion: %s", milpac.Rank.RankFull, milpac.Rank.RankShort, capitalizedPromotionDate, timeInGrade),
+			},
+			{
+				Name:  "Time in Service",
+				Value: fmt.Sprintf("%s\nTime Since Enlistment: %s", capitalizedJoinDate, timeInService),
+			},
+		}
+	} else {
+		fields = []*discordgo.MessageEmbedField{
+			{
+				Name:  "Username",
+				Value: milpac.User.Username,
+			},
+			{
+				Name:  "Roster",
+				Value: milpac.GetRosterStatus(),
+			},
+			{
+				Name:  "Primary Position",
+				Value: milpac.Primary.PositionTitle,
+			},
+			{
+				Name:  "Rank",
+				Value: fmt.Sprintf("%s (%s)\nPromoted: %s\nTime Since Promotion: %s", milpac.Rank.RankFull, milpac.Rank.RankShort, capitalizedPromotionDate, timeInGrade),
+			},
+			{
+				Name:  "Time in Service",
+				Value: fmt.Sprintf("%s\nTime Since Enlistment: %s", capitalizedJoinDate, timeInService),
+			},
+		}
 	}
 	matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(milpac.UniformUrl)
 	if len(matches) < 2 {

@@ -27,6 +27,7 @@ func InitLogger(levelStr string) {
 	}
 	opts := &slog.HandlerOptions{Level: level}
 	Logger = slog.New(slog.NewTextHandler(os.Stdout, opts))
+	Info("Logger initialized", "level", levelStr)
 }
 
 func Info(msg string, args ...any) {
