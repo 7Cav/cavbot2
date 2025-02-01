@@ -12,9 +12,9 @@ func NewRegistry() *Registry {
 		Milpac(),
 		AppsBetaDeploy(),
 		Zulu(),
-		S6Afsm(),
 		S6ITCheck(),
 		Awol(),
+		AFSM(),
 	)
 	return r
 }
