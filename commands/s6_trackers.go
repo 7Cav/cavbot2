@@ -172,7 +172,7 @@ func handleS6AFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	if len(AFSMUserOutput) > 0 {
 		response = fmt.Sprintf("The following S6 members are eligible for AFSM:\n%s", strings.Join(AFSMUserOutput, "\n"))
 	} else {
-		response = fmt.Sprintf("No S6 members found eligible for AFSM")
+		response = "No S6 members found eligible for AFSM"
 	}
 	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &response,
