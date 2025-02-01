@@ -6,6 +6,7 @@ import (
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -94,8 +95,55 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	}
 	formatPromotionDate := promotionDate.Format("02Jan2006")
 	capitalizedPromotionDate := strings.ToUpper(formatPromotionDate)
-	timeInService := utils.FormatTimeSinceDuration(joinDate)
+
 	timeInGrade := utils.FormatTimeSinceDuration(promotionDate)
+	var Assignments []map[string]interface{}
+	utils.Debug("📝 Checking assignments", "username", milpac.User.Username)
+	for _, record := range milpac.Records {
+		utils.Debug("📋 Processing record", "type", record.RecordType, "date", record.RecordDate)
+		if record.RecordType == "RECORD_TYPE_ASSIGNMENT" || record.RecordType == "RECORD_TYPE_TRANSFER" ||
+			record.RecordType == "RECORD_TYPE_ELOA" || record.RecordType == "RECORD_TYPE_DISCHARGE" {
+			utils.Debug("📋 Processing record", "type", record.RecordType, "date", record.RecordDate)
+			recordDate, err := time.Parse("2006-01-02", record.RecordDate)
+			if err != nil {
+				utils.HandleError(s, i, fmt.Sprintf("❌ Failed to parse record date: %v", err))
+				return
+			}
+			if strings.Contains(record.RecordDetails, "Retired") || strings.Contains(record.RecordDetails, "ELOA") ||
+				strings.Contains(record.RecordDetails, "Discharge") || strings.Contains(record.RecordDetails, "Returned") ||
+				strings.Contains(record.RecordDetails, "Enlisted") || strings.Contains(record.RecordDetails, "Reinstated") {
+				event := map[string]interface{}{
+					"record_date":    recordDate,
+					"record_type":    determineEnlistmentRecordType(record.RecordDetails),
+					"record_details": record.RecordDetails,
+				}
+				Assignments = append(Assignments, event)
+				utils.Debug("✍️ Added assignment record", "type", event["record_type"], "date", recordDate)
+			}
+		}
+	}
+	sort.Slice(Assignments, func(i, j int) bool {
+		return Assignments[i]["record_date"].(time.Time).Before(Assignments[j]["record_date"].(time.Time))
+	})
+	utils.Debug("📊 Sorted assignments", "count", len(Assignments))
+	var startDate time.Time
+	for _, assignment := range Assignments {
+		if assignment["record_type"].(string) == "join" {
+			if startDate.IsZero() {
+				startDate = assignment["record_date"].(time.Time)
+				utils.Debug("📅 Set start date", "date", startDate)
+			}
+		} else {
+			startDate = time.Time{}
+			utils.Debug("🔄 Reset start date due to interruption")
+		}
+	}
+	var timeInService string
+	if !startDate.IsZero() && startDate.After(time.Now().AddDate(-30, 0, -0)) {
+		timeInService = utils.FormatTimeSinceDuration(startDate)
+	} else {
+		timeInService = "Parse Failed, Milpac issue? Please @ Sypolt"
+	}
 
 	secondaryPositions := make([]string, 0)
 	for _, secondary := range milpac.Secondary {
@@ -123,7 +171,7 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			},
 			{
 				Name:  "Time in Service",
-				Value: fmt.Sprintf("%s\nTime Since Enlistment: %s", capitalizedJoinDate, timeInService),
+				Value: fmt.Sprintf("Initial Enlistment Date: %s\nCurrent Active Duty Time: %s", capitalizedJoinDate, timeInService),
 			},
 		}
 	} else {
@@ -146,7 +194,7 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			},
 			{
 				Name:  "Time in Service",
-				Value: fmt.Sprintf("%s\nTime Since Enlistment: %s", capitalizedJoinDate, timeInService),
+				Value: fmt.Sprintf("%s\nCurrent Active Duty Time: %s", capitalizedJoinDate, timeInService),
 			},
 		}
 	}
@@ -180,4 +228,12 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to edit response with embed: %v", err))
 	}
 	utils.Info("✨ Done!", "command", "Milpac")
+}
+
+func determineEnlistmentRecordType(details string) string {
+	if strings.Contains(details, "Retired") || strings.Contains(details, "Placed on ELOA") || strings.Contains(details, "Discharge") {
+		return "leave"
+	} else {
+		return "join"
+	}
 }
