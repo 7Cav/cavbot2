@@ -171,7 +171,7 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			},
 			{
 				Name:  "Time in Service",
-				Value: fmt.Sprintf("Initial Enlistment Date: %s\nCurrent Active Duty Time: %s", capitalizedJoinDate, timeInService),
+				Value: fmt.Sprintf("Initial Enlist Date: %s\nCurrent Service Duration: %s", capitalizedJoinDate, timeInService),
 			},
 		}
 	} else {
