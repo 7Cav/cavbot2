@@ -73,6 +73,7 @@ func handleS6AFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	currentDate := time.Now()
 
 	for _, member := range s6Members.LiteProfiles {
+
 		fullProfile, err := utils.GetMilpacByKeycloakID(ctx, member.KeycloakID)
 		if err != nil {
 			utils.HandleError(s, i, fmt.Sprintf("❌ Failed to fetch milpac: %v", err))
@@ -209,7 +210,6 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 	eligibleMembers := []ITMember{}
 	currentDate := time.Now()
 	var matches []string
-
 	for _, member := range s6Members.LiteProfiles {
 		fullProfile, err := utils.GetMilpacByKeycloakID(ctx, member.KeycloakID)
 		if err != nil {
