@@ -3,13 +3,27 @@ package utils
 import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
-	"log"
+	"log/slog"
+	"os"
 	"regexp"
 	"strings"
 )
 
+var Logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+func Info(msg string, args ...any) {
+	Logger.Info(msg, args...)
+}
+
+func Error(msg string, args ...any) {
+	Logger.Error(msg, args...)
+}
+
+func Warn(msg string, args ...any) {
+	Logger.Warn(msg, args...)
+}
 func HandleError(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
-	log.Printf("Error handling interaction: %s", message)
+	Info("Error handling interaction", "message", message)
 
 	if i.Type == discordgo.InteractionApplicationCommand {
 		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -21,15 +35,15 @@ func HandleError(s *discordgo.Session, i *discordgo.InteractionCreate, message s
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "already been acknowledged") {
-				log.Printf("Retrying error response as edit: %v", err)
+				Info("Retrying error response as edit", "error", err)
 				_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 					Content: &message,
 				})
 				if err != nil {
-					log.Printf("Failed to send error message: %v", err)
+					Error("Failed to send error message", "error", err)
 				}
 			} else {
-				log.Printf("Failed to send error message: %v", err)
+				Error("Failed to send error message", "error", err)
 			}
 		}
 	} else {
@@ -41,15 +55,15 @@ func HandleError(s *discordgo.Session, i *discordgo.InteractionCreate, message s
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "already been acknowledged") {
-				log.Printf("Retrying error response as edit: %v", err)
+				Info("Retrying error response as edit", "error", err)
 				_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 					Content: &message,
 				})
 				if err != nil {
-					log.Printf("Failed to send error message: %v", err)
+					Error("Failed to send error message", "error", err)
 				}
 			} else {
-				log.Printf("Failed to send error message: %v", err)
+				Error("Failed to send error message", "error", err)
 			}
 		}
 	}

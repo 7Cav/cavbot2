@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
-	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -60,7 +59,7 @@ func handleMilpacCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		optionMap[opt.Name] = opt
 	}
 
-	log.Printf("Milpac requested by %s %s", i.Member.User.Username, i.Member.User.ID)
+	utils.Info("Milpac requested", "command", "Milpac", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 	user := optionMap["user"].UserValue(s)
 
 	go processMilpacRequest(s, i, user)
@@ -140,16 +139,14 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			URL: milpac.UniformUrl,
 		},
 	}
-	log.Printf("Returning Milpac for: %s requested by %s %s",
-		embed.Title,
-		i.Member.User.Username,
-		i.Member.User.ID)
+	utils.Info("Returning Milpac", "command", "Milpac", "milpac_name", embed.Title, "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 	emptyContent := ""
 	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &emptyContent,
 		Embeds:  &[]*discordgo.MessageEmbed{embed},
 	})
 	if err != nil {
-		log.Printf("Failed to edit response with embed: %v", err)
+		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to edit response with embed: %v", err))
 	}
+	utils.Info("✨ Done!", "command", "Milpac")
 }
