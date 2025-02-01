@@ -9,7 +9,25 @@ import (
 	"strings"
 )
 
-var Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+var Logger *slog.Logger
+
+func InitLogger(levelStr string) {
+	var level slog.Level
+	switch levelStr {
+	case "DEBUG":
+		level = slog.LevelDebug
+	case "INFO":
+		level = slog.LevelInfo
+	case "WARN":
+		level = slog.LevelWarn
+	case "ERROR":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+	opts := &slog.HandlerOptions{Level: level}
+	Logger = slog.New(slog.NewTextHandler(os.Stdout, opts))
+}
 
 func Info(msg string, args ...any) {
 	Logger.Info(msg, args...)
