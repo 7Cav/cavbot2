@@ -37,7 +37,7 @@ func Awol() Command {
 }
 
 func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	utils.Info("🚀 Starting AWOL check")
+	utils.Info("🚀 Starting AWOL check", "command", "Awol", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -101,5 +101,5 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		return
 	}
-	utils.Info("✨ Done!")
+	utils.Info("✨ Done!", "command", "Awol")
 }
