@@ -11,6 +11,13 @@ import (
 	"time"
 )
 
+type AFSMMember struct {
+	Username  string
+	MilpacUrl string
+	TimeSince string
+	Date      time.Time
+}
+
 func AFSM() Command {
 	departments := []string{"S1", "S2", "S3", "S5", "S6", "S7", "WAG", "RTC", "RRD", "MP", "ODS", "NCOA"}
 

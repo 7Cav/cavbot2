@@ -11,13 +11,6 @@ import (
 	"time"
 )
 
-type AFSMMember struct {
-	Username  string
-	MilpacUrl string
-	TimeSince string
-	Date      time.Time
-}
-
 type ITMember struct {
 	Username     string
 	MilpacUrl    string
