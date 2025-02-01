@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
-	"log"
 	"strings"
 	"time"
 )
@@ -18,7 +17,7 @@ func Zulu() Command {
 		Handler: func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			zuluTime := time.Now().UTC().Format("15:04:05 02Jan06")
 			formattedZuluTime := strings.ToUpper(zuluTime)
-			log.Printf("Zulu time requested by %s %s", i.Member.User.Username, i.Member.User.ID)
+			utils.Info("Zulu time requested", "command", "Zulu", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{
@@ -29,6 +28,7 @@ func Zulu() Command {
 				utils.HandleError(s, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 				return
 			}
+			utils.Info("✨ Done!", "command", "Zulu")
 		},
 	}
 }

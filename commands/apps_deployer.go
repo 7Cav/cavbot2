@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
-	"log"
 	"os"
 	"strings"
 )
@@ -26,7 +25,7 @@ func AppsBetaDeploy() Command {
 		},
 
 		Handler: func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-			log.Printf("Apps Beta Deployer called by %s %s", i.Member.User.Username, i.Member.User.ID)
+			utils.Info("Apps Beta Deployer called", "command", "AppsBetaDeploy", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 			switch i.Type {
 			case discordgo.InteractionApplicationCommand:
 				handleInitialCommand(s, i)
@@ -39,7 +38,7 @@ func AppsBetaDeploy() Command {
 }
 
 func handleInitialCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	log.Printf("Initial command handler called")
+	utils.Info("Initial command handler called", "command", "Milpac")
 	branch := i.ApplicationCommandData().Options[0].StringValue()
 	if err := utils.HandleValidateBranchName(branch); err != nil {
 		utils.HandleError(s, i, fmt.Sprintf("❌ Invalid branch name: %v", err))
@@ -82,7 +81,7 @@ func handleInitialCommand(s *discordgo.Session, i *discordgo.InteractionCreate) 
 }
 
 func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	log.Printf("Component interaction received")
+	utils.Info("Component interaction received")
 	customID := i.MessageComponentData().CustomID
 	parts := strings.Split(customID, "::")
 	if len(parts) != 3 {
@@ -151,7 +150,7 @@ func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to trigger Apps Beta deployment: %v", err))
 		return
 	} else {
-		log.Printf("Deployment triggered successfully")
+		utils.Info("Deployment triggered successfully", "command", "AppsBetaDeploy")
 		response = fmt.Sprintf("✅ Apps Beta deployment started for branch `%s` by <@%s> \nCheck status at: https://github.com/7cav/adr/actions/workflows/dev_deploy.yml", branch, i.Member.User.ID)
 	}
 
@@ -162,4 +161,5 @@ func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 		utils.HandleError(s, i, fmt.Sprintf("❌ Error sending interaction response: %v", err))
 		return
 	}
+	utils.Info("✨ Done!", "command", "AppsBetaDeploy")
 }

@@ -5,10 +5,26 @@ import (
 	"fmt"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 )
+
+type AFSMMember struct {
+	Username  string
+	MilpacUrl string
+	TimeSince string
+	Date      time.Time
+}
+
+type ITMember struct {
+	Username     string
+	MilpacUrl    string
+	Position     string
+	TimeSince    string
+	PositionDate time.Time
+}
 
 func S6Afsm() Command {
 	return Command{
@@ -31,7 +47,7 @@ func S6ITCheck() Command {
 }
 
 func handleS6AFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	fmt.Println("🚀 Starting S6 AFSM check")
+	utils.Info("S6 AFSM Check requested", "command", "S6AFSM", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -53,11 +69,10 @@ func handleS6AFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	eligibleMembers := make([]string, 0)
+	eligibleMembers := []AFSMMember{}
 	currentDate := time.Now()
 
 	for _, member := range s6Members.LiteProfiles {
-
 		fullProfile, err := utils.GetMilpacByKeycloakID(ctx, member.KeycloakID)
 		if err != nil {
 			utils.HandleError(s, i, fmt.Sprintf("❌ Failed to fetch milpac: %v", err))
@@ -90,7 +105,7 @@ func handleS6AFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					}
 					if strings.Contains(record.RecordDetails, "S6") {
 						event := map[string]interface{}{
-							"recordDate":     recordDate,
+							"record_date":    recordDate,
 							"record_type":    determineRecordType(record.RecordDetails),
 							"record_details": record.RecordDetails,
 						}
@@ -116,17 +131,48 @@ func handleS6AFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 			if !startDate.IsZero() {
 				if startDate.Before(currentDate.AddDate(-1, 0, 0)) {
-					eligibleMembers = append(eligibleMembers, member.User.Username)
+					matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(member.UniformUrl)
+					if len(matches) < 2 {
+						utils.HandleError(s, i, "❌ Failed to parse uniform URL")
+						return
+					}
+					eligibleMembers = append(eligibleMembers, AFSMMember{
+						Username:  member.User.Username,
+						MilpacUrl: fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1]),
+						TimeSince: utils.FormatTimeSinceDuration(startDate),
+						Date:      startDate,
+					})
 				}
 			}
 		} else {
 			if latestAward.Before(currentDate.AddDate(-1, 0, 0)) {
-				eligibleMembers = append(eligibleMembers, member.User.Username)
+				matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(member.UniformUrl)
+				if len(matches) < 2 {
+					utils.HandleError(s, i, "❌ Failed to parse uniform URL")
+					return
+				}
+				eligibleMembers = append(eligibleMembers, AFSMMember{
+					Username:  member.User.Username,
+					MilpacUrl: fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1]),
+					TimeSince: utils.FormatTimeSinceDuration(latestAward),
+					Date:      latestAward,
+				})
 			}
 		}
 	}
-
-	response := fmt.Sprintf("The following S6 members are eligible for AFSM:\n%s", strings.Join(eligibleMembers, "\n"))
+	sort.Slice(eligibleMembers, func(i, j int) bool {
+		return eligibleMembers[i].Date.Before(eligibleMembers[j].Date)
+	})
+	AFSMUserOutput := make([]string, 0)
+	for _, user := range eligibleMembers {
+		AFSMUserOutput = append(AFSMUserOutput, fmt.Sprintf("[%s](<%s>) (%s)", user.Username, user.MilpacUrl, user.TimeSince))
+	}
+	var response string
+	if len(AFSMUserOutput) > 0 {
+		response = fmt.Sprintf("The following S6 members are eligible for AFSM:\n%s", strings.Join(AFSMUserOutput, "\n"))
+	} else {
+		response = fmt.Sprintf("No S6 members found eligible for AFSM")
+	}
 	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &response,
 	})
@@ -134,11 +180,11 @@ func handleS6AFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		return
 	}
-	fmt.Println("✨ Done!")
+	utils.Info("✨ Done!", "command", "S6AFSM")
 }
 
 func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	fmt.Println("🚀 Starting S6 IT Check")
+	utils.Info("🚀 Starting S6 IT Check", "command", "S6ITCheck", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -160,8 +206,9 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 		return
 	}
 
-	eligibleMembers := make([]string, 0)
+	eligibleMembers := []ITMember{}
 	currentDate := time.Now()
+	var matches []string
 
 	for _, member := range s6Members.LiteProfiles {
 		fullProfile, err := utils.GetMilpacByKeycloakID(ctx, member.KeycloakID)
@@ -176,8 +223,20 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 				utils.HandleError(s, i, fmt.Sprintf("❌ Failed to determine time in position: %v", err))
 				return
 			}
+
 			if positionDate.Before(currentDate.AddDate(0, -6, 0)) {
-				eligibleMembers = append(eligibleMembers, fmt.Sprintf("%s (%s) - %s", member.User.Username, position, timeInPosition))
+				matches = regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(member.UniformUrl)
+				if len(matches) < 2 {
+					utils.HandleError(s, i, "❌ Failed to parse uniform URL")
+					return
+				}
+				eligibleMembers = append(eligibleMembers, ITMember{
+					Username:     member.User.Username,
+					MilpacUrl:    fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1]),
+					Position:     position,
+					TimeSince:    timeInPosition,
+					PositionDate: positionDate,
+				})
 			}
 		}
 
@@ -189,12 +248,30 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 					return
 				}
 				if positionDate.Before(currentDate.AddDate(0, -6, 0)) {
-					eligibleMembers = append(eligibleMembers, fmt.Sprintf("%s (%s) - %s", member.User.Username, position, timeInPosition))
+					matches = regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(member.UniformUrl)
+					if len(matches) < 2 {
+						utils.HandleError(s, i, "❌ Failed to parse uniform URL")
+						return
+					}
+					eligibleMembers = append(eligibleMembers, ITMember{
+						Username:     member.User.Username,
+						MilpacUrl:    fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1]),
+						Position:     position,
+						TimeSince:    timeInPosition,
+						PositionDate: positionDate,
+					})
 				}
 			}
 		}
 	}
-	response := fmt.Sprintf("The following S6 members are eligible for Full Status:\n%s", strings.Join(eligibleMembers, "\n"))
+	sort.Slice(eligibleMembers, func(i, j int) bool {
+		return eligibleMembers[i].PositionDate.Before(eligibleMembers[j].PositionDate)
+	})
+	ITUserOutput := make([]string, 0)
+	for _, user := range eligibleMembers {
+		ITUserOutput = append(ITUserOutput, fmt.Sprintf("[%s](<%s>) (%s) - %s", user.Username, user.MilpacUrl, user.Position, user.TimeSince))
+	}
+	response := fmt.Sprintf("The following S6 members are eligible for Full Status:\n%s", strings.Join(ITUserOutput, "\n"))
 	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &response,
 	})
@@ -202,7 +279,7 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		return
 	}
-	fmt.Println("✨ Done!")
+	utils.Info("✨ Done!", "command", "S6ITCheck")
 }
 
 func determineRecordType(details string) string {
