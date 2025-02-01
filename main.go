@@ -15,21 +15,27 @@ import (
 var Version = "0.4.0"
 
 var (
-	Token   string
-	GuildID string
+	Token    string
+	GuildID  string
+	LogLevel string
 )
 
 func init() {
 	Token = os.Getenv("DISCORD_TOKEN")
 	GuildID = os.Getenv("GUILD_ID")
+	LogLevel = os.Getenv("LOG_LEVEL")
 
 	if Token == "" {
 		panic("No token provided. Please set DISCORD_TOKEN environment variable")
-
 	}
 	if GuildID == "" {
 		panic("No GuildID provided. Please set GUILD_ID environment variable")
 	}
+	if LogLevel == "" {
+		LogLevel = "default"
+	}
+
+	utils.InitLogger(LogLevel)
 }
 
 func main() {
