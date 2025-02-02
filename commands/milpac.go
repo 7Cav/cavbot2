@@ -239,7 +239,7 @@ func calculateTotalService(assignments []map[string]interface{}) time.Duration {
 	}
 
 	if !currentPeriodStart.IsZero() {
-		totalTime += time.Now().Sub(currentPeriodStart)
+		totalTime += time.Since(currentPeriodStart)
 	}
 
 	return totalTime
