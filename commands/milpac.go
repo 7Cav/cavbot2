@@ -126,24 +126,8 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		return Assignments[i]["record_date"].(time.Time).Before(Assignments[j]["record_date"].(time.Time))
 	})
 	utils.Debug("📊 Sorted assignments", "count", len(Assignments))
-	var startDate time.Time
-	for _, assignment := range Assignments {
-		if assignment["record_type"].(string) == "join" {
-			if startDate.IsZero() {
-				startDate = assignment["record_date"].(time.Time)
-				utils.Debug("📅 Set start date", "date", startDate)
-			}
-		} else {
-			startDate = time.Time{}
-			utils.Debug("🔄 Reset start date due to interruption")
-		}
-	}
-	var timeInService string
-	if !startDate.IsZero() && startDate.After(time.Now().AddDate(-30, 0, -0)) {
-		timeInService = utils.FormatTimeSinceDuration(startDate)
-	} else {
-		timeInService = "Parse Failed, Milpac issue? Please @ Sypolt"
-	}
+	totalTimeInService := calculateTotalService(Assignments)
+	timeInService := utils.FormatTimeSinceDuration(time.Now().Add(-totalTimeInService))
 
 	secondaryPositions := make([]string, 0)
 	for _, secondary := range milpac.Secondary {
@@ -171,7 +155,7 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			},
 			{
 				Name:  "Time in Service",
-				Value: fmt.Sprintf("Initial Enlist Date: %s\nCurrent Service Duration: %s", capitalizedJoinDate, timeInService),
+				Value: fmt.Sprintf("Initial Enlist Date: %s\nTime Spent Active: %s", capitalizedJoinDate, timeInService),
 			},
 		}
 	} else {
@@ -194,7 +178,7 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			},
 			{
 				Name:  "Time in Service",
-				Value: fmt.Sprintf("%s\nCurrent Active Duty Time: %s", capitalizedJoinDate, timeInService),
+				Value: fmt.Sprintf("%s\nTime Spent Active: %s", capitalizedJoinDate, timeInService),
 			},
 		}
 	}
@@ -236,4 +220,27 @@ func determineEnlistmentRecordType(details string) string {
 	} else {
 		return "join"
 	}
+}
+
+func calculateTotalService(assignments []map[string]interface{}) time.Duration {
+	var totalTime time.Duration
+	var currentPeriodStart time.Time
+
+	for _, assignment := range assignments {
+		recordDate := assignment["record_date"].(time.Time)
+		recordType := assignment["record_type"].(string)
+
+		if recordType == "join" {
+			currentPeriodStart = recordDate
+		} else if recordType == "leave" && !currentPeriodStart.IsZero() {
+			totalTime += recordDate.Sub(currentPeriodStart)
+			currentPeriodStart = time.Time{}
+		}
+	}
+
+	if !currentPeriodStart.IsZero() {
+		totalTime += time.Now().Sub(currentPeriodStart)
+	}
+
+	return totalTime
 }
