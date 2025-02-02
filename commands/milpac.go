@@ -226,20 +226,52 @@ func calculateTotalService(assignments []map[string]interface{}) time.Duration {
 	var totalTime time.Duration
 	var currentPeriodStart time.Time
 
-	for _, assignment := range assignments {
+	utils.Debug("🕒 Starting total service calculation", "assignments_count", len(assignments))
+
+	for i, assignment := range assignments {
 		recordDate := assignment["record_date"].(time.Time)
 		recordType := assignment["record_type"].(string)
+		details := assignment["record_details"].(string)
+
+		utils.Debug("📊 Processing assignment record",
+			"index", i,
+			"date", recordDate.Format("2006-01-02"),
+			"type", recordType,
+			"details", details)
 
 		if recordType == "join" {
-			currentPeriodStart = recordDate
+			if currentPeriodStart.IsZero() {
+				currentPeriodStart = recordDate
+				utils.Debug("✅ Started new service period",
+					"start_date", currentPeriodStart.Format("2006-01-02"))
+			} else {
+				utils.Debug("🔄 Found 2 consecutive joins, continuing service period")
+			}
 		} else if recordType == "leave" && !currentPeriodStart.IsZero() {
-			totalTime += recordDate.Sub(currentPeriodStart)
-			currentPeriodStart = time.Time{}
+			periodDuration := recordDate.Sub(currentPeriodStart)
+			totalTime += periodDuration
+
+			utils.Debug("⏸️ Ended service period",
+				"start_date", currentPeriodStart.Format("2006-01-02"),
+				"end_date", recordDate.Format("2006-01-02"),
+				"period_duration", periodDuration.String(),
+				"running_total", totalTime.String())
+
+			currentPeriodStart = time.Time{} // Reset start time
 		}
 	}
 
 	if !currentPeriodStart.IsZero() {
-		totalTime += time.Since(currentPeriodStart)
+		currentPeriod := time.Since(currentPeriodStart)
+		totalTime += currentPeriod
+
+		utils.Debug("🏃 Adding current active period",
+			"start_date", currentPeriodStart.Format("2006-01-02"),
+			"duration_so_far", currentPeriod.String(),
+			"final_total", totalTime.String())
+	} else {
+		utils.Debug("✋ No active service period",
+			"final_total", totalTime.String())
 	}
 
 	return totalTime
