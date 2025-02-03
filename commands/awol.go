@@ -94,9 +94,9 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 	var response string
 	if len(awolUserOutput) > 0 {
-		response = fmt.Sprintf("The following users for search \"%s\" are AWOL:\n%s", position, strings.Join(awolUserOutput, "\n"))
+		response = fmt.Sprintf("The following users matching \"%s\" are AWOL:\n%s", position, strings.Join(awolUserOutput, "\n"))
 	} else {
-		response = fmt.Sprintf("No users for search \"%s\" are AWOL", position)
+		response = fmt.Sprintf("Search completed successfully: no users matching \"%s\" are AWOL.", position)
 	}
 	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &response,
