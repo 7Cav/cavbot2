@@ -57,6 +57,10 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to fetch roster: %v", err))
 		return
 	}
+	if len(roster.LiteProfiles) == 0 {
+		utils.HandleError(s, i, fmt.Sprintf("❌ The search for \"%s\" returned no troopers. Please check your search for accuracy.", position))
+		return
+	}
 	awolUsers := []AwolUser{}
 	for _, member := range roster.LiteProfiles {
 		if member.User.Username == "Tester.B" || strings.Contains(member.Rank.RankFull, "General") {
