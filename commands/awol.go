@@ -22,12 +22,12 @@ func Awol() Command {
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
 			Name:        "awol",
-			Description: "Return the awol users for a position",
+			Description: "Return the AWOL users for a position.",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "position",
-					Description: "Position to check for awols",
+					Description: "Position to check for awols. (EX: 2/B/1-7 | Reserve | S1)",
 					Required:    true,
 				},
 			},
