@@ -15,6 +15,7 @@ func NewRegistry() *Registry {
 		S6ITCheck(),
 		Awol(),
 		AFSM(),
+		GamertagSearch(),
 	)
 	return r
 }

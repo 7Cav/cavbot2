@@ -137,3 +137,9 @@ func GetMilpacByKeycloakID(ctx context.Context, keycloakID string) (*ProfileResp
 		fmt.Sprintf("milpac/keycloak/%s", keycloakID),
 		keycloakID)
 }
+
+func GetUserByGamertag(ctx context.Context, gamertag string) (*ProfileResponse, error) {
+	return makeAPIRequest[ProfileResponse](ctx,
+		fmt.Sprintf("milpac/gamertag/%s", gamertag),
+		gamertag)
+}
