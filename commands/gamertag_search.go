@@ -37,6 +37,10 @@ func handleGamertagSearchCommand(s *discordgo.Session, i *discordgo.InteractionC
 			Content: fmt.Sprintf("Fetching milpac data for gamertag `%s`...", gamertag),
 		},
 	})
+	if err != nil {
+		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		return
+	}
 	utils.Info("Gamertag search requested", "command", "GamertagSearch", "gamertag", gamertag, "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 	user, err := utils.GetUserByGamertag(ctx, gamertag)
 	if err != nil {
