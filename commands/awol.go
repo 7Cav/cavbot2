@@ -41,6 +41,12 @@ func Awol() Command {
 					Description: "Position to check for awols. (EX: 2/B/1-7 | Reserve | S1)",
 					Required:    true,
 				},
+				{
+					Type:        discordgo.ApplicationCommandOptionBoolean,
+					Name:        "force_file_output",
+					Description: "Forces the output to be a file instead of an embed. This is useful for large AWOL lists.",
+					Required:    false,
+				},
 			},
 		},
 		Handler: handleAwolCommand,
@@ -58,6 +64,10 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			Content: fmt.Sprintf("Fetching AWOL data for %s...", i.ApplicationCommandData().Options[0].StringValue()),
 		},
 	})
+	forceFile := false
+	if len(i.ApplicationCommandData().Options) > 1 {
+		forceFile = i.ApplicationCommandData().Options[1].BoolValue()
+	}
 	if err != nil {
 		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 		return
@@ -135,7 +145,13 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	utils.Info("Debug chunks info", "chunks_length", len(chunks), "max_embeds", maxEmbedsPerMsg)
 	if len(chunks) > maxEmbedsPerMsg {
 		utils.Info("⚠️ Too many AWOL users for embeds, falling back to file upload", "count", len(awolUsers))
-		sendAwolFile(s, i, awolUsers, position)
+		sendAwolFile(s, i, awolUsers, position, forceFile)
+		utils.Info("✨ Done!", "command", "Awol")
+		return
+	} else if forceFile {
+		utils.Info("⚠️ Force file output enabled, falling back to embeds", "count", len(awolUsers))
+		sendAwolFile(s, i, awolUsers, position, forceFile)
+		utils.Info("✨ Done!", "command", "Awol")
 		return
 	}
 
@@ -165,7 +181,7 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	utils.Info("✨ Done!", "command", "Awol")
 }
 
-func sendAwolFile(s *discordgo.Session, i *discordgo.InteractionCreate, awolUsers []AwolUser, position string) {
+func sendAwolFile(s *discordgo.Session, i *discordgo.InteractionCreate, awolUsers []AwolUser, position string, forceFile bool) {
 	var content strings.Builder
 	content.WriteString(fmt.Sprintf("AWOL Report for %s\nGenerated: %s\n\n",
 		position,
@@ -183,13 +199,24 @@ func sendAwolFile(s *discordgo.Session, i *discordgo.InteractionCreate, awolUser
 		ContentType: "text/plain",
 		Reader:      strings.NewReader(content.String()),
 	}
-
-	_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-		Content: stringPtr(fmt.Sprintf("Large AWOL report for %s generated as file:", position)),
-		Files:   []*discordgo.File{file},
-	})
-	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to send file: %v", err))
-		return
+	if forceFile {
+		_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: stringPtr(fmt.Sprintf("Force File Set True, AWOL report for %s generated as file:", position)),
+			Files:   []*discordgo.File{file},
+		})
+		if err != nil {
+			utils.HandleError(s, i, fmt.Sprintf("❌ Failed to send file: %v", err))
+			return
+		}
+	} else {
+		_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: stringPtr(fmt.Sprintf("Large AWOL report for %s generated as file:", position)),
+			Files:   []*discordgo.File{file},
+		})
+		if err != nil {
+			utils.HandleError(s, i, fmt.Sprintf("❌ Failed to send file: %v", err))
+			return
+		}
 	}
+
 }
