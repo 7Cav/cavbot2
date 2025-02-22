@@ -144,7 +144,7 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		embed := &discordgo.MessageEmbed{
 			Title:       fmt.Sprintf("AWOL Users for %s (Page %d/%d)", position, i+1, len(chunks)),
 			Description: chunk,
-			Color:       0xff0000,
+			Color:       0xfbcc29,
 			Footer: &discordgo.MessageEmbedFooter{
 				Text: fmt.Sprintf("Total AWOL: %d", len(awolUsers)),
 			},
