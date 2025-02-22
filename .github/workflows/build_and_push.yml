@@ -5,7 +5,7 @@ on:
     types: [created]
 
 jobs:
-  build:
+  build_and_push:
     runs-on: ubuntu-latest
 
     steps:
@@ -26,6 +26,8 @@ jobs:
           tags: |
             7cav/cavbot2:${{ github.ref_name }}
             7cav/cavbot2:latest
+      - name: Wait for image to be available
+        run: sleep 10
 
       - name: Force Watchtower Update
         run: |
