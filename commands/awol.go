@@ -38,7 +38,7 @@ func Awol() Command {
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "position",
-					Description: "Position to check for awols. (EX: 2/B/1-7 | Reserve | S1)",
+					Description: "Position to check for awols. (EX: 2/B/1-7 | Reservist | S1)",
 					Required:    true,
 				},
 				{
