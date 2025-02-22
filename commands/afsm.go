@@ -217,7 +217,7 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	var response string
 	if len(AFSMUserOutput) > 0 {
-		response = fmt.Sprintf("⚠️ This command cannot be 100% accurate. Please check the output carefully.\nThe following %s members are eligible for AFSM:\n%s", choice, strings.Join(AFSMUserOutput, "\n"))
+		response = fmt.Sprintf("⚠️ This command cannot be made completely accurate. Please check the output carefully.\nThe following %s members are eligible for AFSM:\n%s", choice, strings.Join(AFSMUserOutput, "\n"))
 		utils.Info("✅ Found eligible members", "department", choice, "count", len(AFSMUserOutput))
 	} else {
 		response = fmt.Sprintf("No %s members found eligible for AFSM", choice)
