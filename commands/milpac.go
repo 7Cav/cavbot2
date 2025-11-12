@@ -141,10 +141,6 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 				Value: milpac.User.Username,
 			},
 			{
-				Name:  "Gamertag",
-				Value: milpac.Gamertag,
-			},
-			{
 				Name:  "Roster",
 				Value: milpac.GetRosterStatus(),
 			},

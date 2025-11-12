@@ -9,5 +9,4 @@ services:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
       GUILD_ID: ${GUILD_ID}
       GITHUB_APP_KEY: ${GITHUB_APP_KEY}
-      BM_TOKEN: ${BM_TOKEN}
       LOG_LEVEL: ${LOG_LEVEL}
