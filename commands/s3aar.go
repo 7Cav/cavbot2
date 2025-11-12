@@ -364,9 +364,12 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	sessions, err := fetchBattleMetricsSessions(serverID, start, stop, minAttendance)
 	if err != nil {
-		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+		_, sendErr := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: fmt.Sprintf("Failed to fetch BattleMetrics data: %v", err),
 		})
+		if sendErr != nil {
+			utils.HandleError(s, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
+		}
 		return
 	}
 
@@ -428,9 +431,12 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	if debug == "Yes" {
 		jsonData, err := json.MarshalIndent(sessions, "", "  ")
 		if err != nil {
-			s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+			_, sendErr := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 				Content: fmt.Sprintf("Failed to format session data: %v", err),
 			})
+			if sendErr != nil {
+				utils.HandleError(s, i, fmt.Sprintf("❌ Failed to send error message: %v", sendErr))
+			}
 			return
 		}
 
