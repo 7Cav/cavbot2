@@ -3,16 +3,14 @@ package utils
 import (
 	"context"
 	"fmt"
+	"github.com/go-resty/resty/v2"
 	"os"
 	"strings"
 	"time"
-
-	"github.com/go-resty/resty/v2"
 )
 
 type ProfileResponse struct {
 	User              User       `json:"user"`
-	Gamertag          string     `json:"gamertag"`
 	Rank              Rank       `json:"rank"`
 	RealName          string     `json:"realName"`
 	UniformUrl        string     `json:"uniformUrl"`
@@ -34,7 +32,6 @@ type LiteRosterResponse struct {
 
 type LiteProfileResponse struct {
 	User              User       `json:"user"`
-	Gamertag          string     `json:"gamertag"`
 	Rank              Rank       `json:"rank"`
 	RealName          string     `json:"realName"`
 	UniformUrl        string     `json:"uniformUrl"`
@@ -121,12 +118,6 @@ func makeAPIRequest[T any](ctx context.Context, path string, identifier string) 
 	}
 
 	return &result, nil
-}
-
-func GetMilpacByUsername(ctx context.Context, username string) (*ProfileResponse, error) {
-	return makeAPIRequest[ProfileResponse](ctx,
-		fmt.Sprintf("milpacs/profile/username/%s", username),
-		username)
 }
 
 func GetMilpacByDiscordID(ctx context.Context, discordID string) (*ProfileResponse, error) {
