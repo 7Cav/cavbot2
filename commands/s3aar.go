@@ -331,24 +331,34 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	start, err := parseDateTime(startDate, startTime)
 	if err != nil {
-		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+		_, sendErr := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: fmt.Sprintf("Invalid start date/time: %v", err),
 		})
+		if sendErr != nil {
+			utils.HandleError(s, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
+		}
 		return
 	}
+
 	stop, err := parseDateTime(endDate, endTime)
 	if err != nil {
-		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+		_, sendErr := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: fmt.Sprintf("Invalid end date/time: %v", err),
 		})
+		if sendErr != nil {
+			utils.HandleError(s, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
+		}
 		return
 	}
 
 	serverID, err := getServerID(server)
 	if err != nil {
-		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+		_, sendErr := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: fmt.Sprintf("Invalid server selection: %v", err),
 		})
+		if sendErr != nil {
+			utils.HandleError(s, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
+		}
 		return
 	}
 
