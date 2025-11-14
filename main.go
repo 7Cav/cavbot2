@@ -2,34 +2,40 @@ package main
 
 import (
 	"fmt"
-	"github.com/7cav/cavbot2/utils"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 
+	"github.com/7cav/cavbot2/utils"
+
 	"github.com/7cav/cavbot2/commands"
 	"github.com/bwmarrin/discordgo"
 )
 
-var Version = "0.5.1"
+var Version = "0.5.3"
 
 var (
 	Token    string
 	GuildID  string
 	LogLevel string
+	BMToken  string
 )
 
 func init() {
 	Token = os.Getenv("DISCORD_TOKEN")
 	GuildID = os.Getenv("GUILD_ID")
 	LogLevel = os.Getenv("LOG_LEVEL")
+	BMToken = os.Getenv("BM_TOKEN")
 
 	if Token == "" {
 		panic("No token provided. Please set DISCORD_TOKEN environment variable")
 	}
 	if GuildID == "" {
 		panic("No GuildID provided. Please set GUILD_ID environment variable")
+	}
+	if BMToken == "" {
+		panic("No BM_TOKEN provided. Please set BM_TOKEN environment variable")
 	}
 	if LogLevel == "" {
 		LogLevel = "default"
