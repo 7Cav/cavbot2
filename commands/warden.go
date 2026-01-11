@@ -44,6 +44,19 @@ func Warden() Command {
                         },
                     },
                 },
+                {
+                    Type: discordgo.ApplicationCommandOptionSubCommand,
+                    Name: "bulkadd",
+                    Description: "Add '" + ROLE_NAME + "' role to a list of users",
+                    Options: []*discordgo.ApplicationCommandOption{
+                        {
+                            Type:        discordgo.ApplicationCommandOptionString,
+                            Name:        "userlist",
+                            Description: "Comma-separated list of Discord usernames or nicknames to match (partial allowed)",
+                            Required:    true,
+                        },
+                    },
+                },
             },
         },
         Handler: handleWarden,
@@ -79,6 +92,8 @@ func handleWarden(session *discordgo.Session, interaction *discordgo.Interaction
     switch sub.Name {
         case "add":
             handleAddCommand(session, interaction, sub, guildID, query)
+        case "bulkadd":
+            handleBulkAddCommand(session, interaction, sub, guildID, query)
         case "remove":
             handleRemoveCommand(session, interaction, sub, guildID, query)
         default:
@@ -156,6 +171,49 @@ func handleRemoveCommand(
         return
     }
     utils.Info("Warden role removed", "user", member.User.ID)
+}
+
+func handleBulkAddCommand(
+    session *discordgo.Session,
+    interaction *discordgo.InteractionCreate,
+    sub *discordgo.ApplicationCommandInteractionDataOption,
+    guildID string,
+    query string,
+) {
+    queries := strings.Split(query, ",")
+
+    roleID := findRoleIDByName(session, interaction, guildID, ROLE_NAME)
+    if roleID == "" {
+        return
+    }
+
+    err := session.InteractionRespond(interaction.Interaction, &discordgo.InteractionResponse{
+        Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+    })
+
+    if err != nil {
+        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to acknowledge bulk add: %v", err))
+        return
+    }
+
+    var results []string
+    for _, q := range queries {
+        q = strings.TrimSpace(q)
+        utils.Info("Processing bulk add", "query", q)
+        if q == "" {
+            continue
+        }
+        results = append(results, addRoleForQuery(session, interaction, guildID, q, roleID))
+    }
+
+    content := strings.Join(results, "\n")
+    _, err = session.InteractionResponseEdit(interaction.Interaction, &discordgo.WebhookEdit{
+        Content: &content,
+    })
+    if err != nil {
+        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to send bulk add summary: %v", err))
+        return
+    }
 }
 
 func addRoleForQuery(
