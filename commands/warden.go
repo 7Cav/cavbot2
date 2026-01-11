@@ -11,17 +11,30 @@ const ROLE_NAME string = "Warden Verified"
 const ROLE_NAME_ADMIN string = "Warden Admin"
 
 func Warden() Command {
-	var required int64 = discordgo.PermissionManageRoles
+    var required int64 = discordgo.PermissionManageRoles
     return Command{
         Definition: &discordgo.ApplicationCommand{
             Name:        "warden",
             Description: "Warden role management",
-			DefaultMemberPermissions: &required,
+            DefaultMemberPermissions: &required,
             Options: []*discordgo.ApplicationCommandOption{
                 {
                     Type: discordgo.ApplicationCommandOptionSubCommand,
                     Name: "add",
                     Description: "Add '" + ROLE_NAME + "' role to a user",
+                    Options: []*discordgo.ApplicationCommandOption{
+                        {
+                            Type:        discordgo.ApplicationCommandOptionString,
+                            Name:        "discordname",
+                            Description: "Discord username or nickname to match (partial allowed)",
+                            Required:    true,
+                        },
+                    },
+                },
+                {
+                    Type: discordgo.ApplicationCommandOptionSubCommand,
+                    Name: "remove",
+                    Description: "Remove '" + ROLE_NAME + "' role from a user",
                     Options: []*discordgo.ApplicationCommandOption{
                         {
                             Type:        discordgo.ApplicationCommandOptionString,
@@ -46,7 +59,7 @@ func handleWarden(session *discordgo.Session, interaction *discordgo.Interaction
 
     sub := data.Options[0]
 
-	if len(sub.Options) == 0 {
+    if len(sub.Options) == 0 {
         utils.HandleError(session, interaction, "❌ Missing discordname argument")
         return
     }
@@ -59,39 +72,41 @@ func handleWarden(session *discordgo.Session, interaction *discordgo.Interaction
         return
     }
 
-	if !checkIfRequestedUserHasPermission(session, interaction, guildID) {
-		return
-	}
+    if !checkIfRequestedUserHasPermission(session, interaction, guildID) {
+        return
+    }
 
-	switch sub.Name {
-		case "add":
-			handleAddCommand(session, interaction, sub, guildID, query)
-		default:
-			utils.HandleError(session, interaction, "❌ Unknown subcommand")
-	}
+    switch sub.Name {
+        case "add":
+            handleAddCommand(session, interaction, sub, guildID, query)
+        case "remove":
+            handleRemoveCommand(session, interaction, sub, guildID, query)
+        default:
+            utils.HandleError(session, interaction, "❌ Unknown subcommand")
+    }
 }
 
 func handleAddCommand(
-	session *discordgo.Session,
-	interaction *discordgo.InteractionCreate,
-	sub *discordgo.ApplicationCommandInteractionDataOption,
-	guildID string,
-	query string,
+    session *discordgo.Session,
+    interaction *discordgo.InteractionCreate,
+    sub *discordgo.ApplicationCommandInteractionDataOption,
+    guildID string,
+    query string,
 ) {
-	member := retrieveMemberByName(session, guildID, query)
-	if member == nil {
-		return
-	}
+    member := retrieveMemberByName(session, guildID, query)
+    if member == nil {
+        return
+    }
 
-	roleID := findRoleIDByName(session, interaction, guildID, ROLE_NAME)
-	if roleID == "" {
-		utils.HandleError(session, interaction, "❌ 'Warden Verified' role not found in guild")
-		return
-	}
+    roleID := findRoleIDByName(session, interaction, guildID, ROLE_NAME)
+    if roleID == "" {
+        utils.HandleError(session, interaction, "❌ 'Warden Verified' role not found in guild")
+        return
+    }
 
     addRoleForQuery(session, interaction, guildID, query, roleID)
 
-	err := session.InteractionRespond(interaction.Interaction, &discordgo.InteractionResponse{
+    err := session.InteractionRespond(interaction.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
             Content: fmt.Sprintf("✅ Added '%s' role to %s#%s", ROLE_NAME,member.User.Username, member.User.Discriminator),
@@ -103,6 +118,44 @@ func handleAddCommand(
         return
     }
     utils.Info("Warden role assigned", "user", member.User.ID)
+}
+
+func handleRemoveCommand(
+    session *discordgo.Session,
+    interaction *discordgo.InteractionCreate,
+    sub *discordgo.ApplicationCommandInteractionDataOption,
+    guildID string,
+    query string,
+) {
+    member := retrieveMemberByName(session, guildID, query)
+    if member == nil {
+        return
+    }
+
+    roleID := findRoleIDByName(session, interaction, guildID, ROLE_NAME)
+    if roleID == "" {
+        utils.HandleError(session, interaction, "❌ 'Warden Verified' role not found in guild")
+        return
+    }
+
+    err := session.GuildMemberRoleRemove(guildID, member.User.ID, roleID)
+    if err != nil {
+        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to remove role: %v", err))
+        return
+    }
+
+    err = session.InteractionRespond(interaction.Interaction, &discordgo.InteractionResponse{
+        Type: discordgo.InteractionResponseChannelMessageWithSource,
+        Data: &discordgo.InteractionResponseData{
+            Content: fmt.Sprintf("✅ Removed '%s' role from %s#%s", ROLE_NAME, member.User.Username, member.User.Discriminator),
+            Flags:   discordgo.MessageFlagsEphemeral,
+        },
+    })
+    if err != nil {
+        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to send confirmation: %v", err))
+        return
+    }
+    utils.Info("Warden role removed", "user", member.User.ID)
 }
 
 func addRoleForQuery(
@@ -128,11 +181,11 @@ func addRoleForQuery(
 }
 
 func retrieveMemberByName(
-	session *discordgo.Session,
-	guildID string,
-	query string,
+    session *discordgo.Session,
+    guildID string,
+    query string,
 ) (*discordgo.Member) {
-	if strings.HasPrefix(query, "<@") && strings.HasSuffix(query, ">") {
+    if strings.HasPrefix(query, "<@") && strings.HasSuffix(query, ">") {
         userID := strings.TrimSuffix(strings.TrimPrefix(query, "<@"), ">")
         member, _ := session.GuildMember(guildID, userID)
 
@@ -156,25 +209,25 @@ func retrieveMemberByName(
 }
 
 func findRoleIDByName(
-	session *discordgo.Session,
-	interaction *discordgo.InteractionCreate,
-	guildID string,
-	roleName string,
+    session *discordgo.Session,
+    interaction *discordgo.InteractionCreate,
+    guildID string,
+    roleName string,
 ) (string) {
-	roles, err := session.GuildRoles(guildID)
+    roles, err := session.GuildRoles(guildID)
 
-	if err != nil {
-		utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to retrieve guild roles: %v", err))
-		return ""
-	}
+    if err != nil {
+        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to retrieve guild roles: %v", err))
+        return ""
+    }
 
-	for _, role := range roles {
-		if role.Name == roleName {
-			return role.ID
-		}
-	}
+    for _, role := range roles {
+        if role.Name == roleName {
+            return role.ID
+        }
+    }
 
-	return ""
+    return ""
 }
 
 func checkIfRequestedUserHasPermission(
