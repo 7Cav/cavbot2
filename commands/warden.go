@@ -8,15 +8,12 @@ import (
 )
 
 const ROLE_NAME string = "Warden Verified"
-const ROLE_NAME_ADMIN string = "Warden Admin"
 
 func Warden() Command {
-    var required int64 = discordgo.PermissionManageRoles
     return Command{
         Definition: &discordgo.ApplicationCommand{
             Name:        "warden",
             Description: "Warden role management",
-            DefaultMemberPermissions: &required,
             Options: []*discordgo.ApplicationCommandOption{
                 {
                     Type: discordgo.ApplicationCommandOptionSubCommand,
@@ -389,31 +386,4 @@ func findRoleIDByName(
     }
 
     return ""
-}
-
-func checkIfRequestedUserHasPermission(
-    session *discordgo.Session,
-    interaction *discordgo.InteractionCreate,
-    guildID string,
-) bool {
-    adminRoleID := findRoleIDByName(session, interaction, guildID, ROLE_NAME_ADMIN)
-    if adminRoleID == "" {
-        utils.HandleError(session, interaction, "❌ Admin role not found")
-        return false
-    }
-
-    member, err := session.GuildMember(guildID, interaction.Member.User.ID)
-    if err != nil {
-        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to retrieve your member info: %v", err))
-        return false
-    }
-
-    for _, rid := range member.Roles {
-        if rid == adminRoleID {
-            return true
-        }
-    }
-
-    utils.HandleError(session, interaction, "❌ You do not have permission to use this command")
-    return false
 }
