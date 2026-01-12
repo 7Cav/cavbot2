@@ -1,385 +1,447 @@
 package commands
 
 import (
-    "fmt"
-    "strings"
-    "github.com/7cav/cavbot2/utils"
-    "github.com/bwmarrin/discordgo"
+	"fmt"
+	"strings"
+
+	"slices"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+
+	"github.com/7cav/cavbot2/utils"
+	"github.com/bwmarrin/discordgo"
 )
 
-const ROLE_NAME string = "Warden Verified"
+const wardenRoleBaseName = "Verified Warden"
+
+var (
+	wardenRoleScopes  = []string{"internal", "external", "both"}
+	wardenSubcommands = []string{"add", "remove", "bulkadd", "purge"}
+
+	wardenTitleCaser = cases.Title(language.Und, cases.NoLower)
+)
 
 func Warden() Command {
-    return Command{
-        Definition: &discordgo.ApplicationCommand{
-            Name:        "warden",
-            Description: "Warden role management",
-            Options: []*discordgo.ApplicationCommandOption{
-                {
-                    Type: discordgo.ApplicationCommandOptionSubCommand,
-                    Name: "add",
-                    Description: "Add '" + ROLE_NAME + "' role to a user",
-                    Options: []*discordgo.ApplicationCommandOption{
-                        {
-                            Type:        discordgo.ApplicationCommandOptionString,
-                            Name:        "discordname",
-                            Description: "Discord username or nickname to match (partial allowed)",
-                            Required:    true,
-                        },
-                    },
-                },
-                {
-                    Type: discordgo.ApplicationCommandOptionSubCommand,
-                    Name: "remove",
-                    Description: "Remove '" + ROLE_NAME + "' role from a user",
-                    Options: []*discordgo.ApplicationCommandOption{
-                        {
-                            Type:        discordgo.ApplicationCommandOptionString,
-                            Name:        "discordname",
-                            Description: "Discord username or nickname to match (partial allowed)",
-                            Required:    true,
-                        },
-                    },
-                },
-                {
-                    Type: discordgo.ApplicationCommandOptionSubCommand,
-                    Name: "bulkadd",
-                    Description: "Add '" + ROLE_NAME + "' role to a list of users",
-                    Options: []*discordgo.ApplicationCommandOption{
-                        {
-                            Type:        discordgo.ApplicationCommandOptionString,
-                            Name:        "userlist",
-                            Description: "Comma-separated list of Discord usernames or nicknames to match (partial allowed)",
-                            Required:    true,
-                        },
-                    },
-                },
-                {
-                    Type: discordgo.ApplicationCommandOptionSubCommand,
-                    Name: "purge",
-                    Description: "Remove '" + ROLE_NAME + "' role from all users",
-                    Options: []*discordgo.ApplicationCommandOption{},
-                },
-            },
-        },
-        Handler: handleWarden,
-    }
+	return Command{
+		Definition: &discordgo.ApplicationCommand{
+			Name:        "warden",
+			Description: "Warden role management",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "command",
+					Description: "Choose between " + strings.Join(wardenSubcommands, ", "),
+					Required:    true,
+					Choices:     stringChoices(wardenSubcommands),
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "flag",
+					Description: "Internal/external scope, or both",
+					Required:    true,
+					Choices:     stringChoices(wardenRoleScopes),
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "discordname",
+					Description: "Mention/ID/partial name; for bulkadd use comma-separated list; optional for purge",
+					Required:    false,
+				},
+			},
+		},
+		Handler: handleWarden,
+	}
 }
 
 func handleWarden(session *discordgo.Session, interaction *discordgo.InteractionCreate) {
-    data := interaction.ApplicationCommandData()
-    if len(data.Options) == 0 {
-        utils.HandleError(session, interaction, "❌ Invalid warden command")
-        return
-    }
+	commandData := interaction.ApplicationCommandData()
 
-    sub := data.Options[0]
+	subcommand, ok := getOptionString(commandData, "command")
+	if !ok || !slices.Contains(wardenSubcommands, subcommand) {
+		utils.HandleError(session, interaction, "❌ Invalid warden command; must be "+strings.Join(wardenSubcommands, ", "))
+		return
+	}
 
-    if len(sub.Options) == 0 && sub.Name != "purge" {
-        utils.HandleError(session, interaction, "❌ Missing discordname argument")
-        return
-    }
+	roleScope, ok := getOptionString(commandData, "flag")
+	if !ok || !slices.Contains(wardenRoleScopes, roleScope) {
+		utils.HandleError(session, interaction, "❌ Missing or invalid flag argument; must be 'internal', 'external', or 'both'")
+		return
+	}
 
-    guildID := interaction.GuildID
+	guildID := interaction.GuildID
+	if guildID == "" {
+		utils.HandleError(session, interaction, "❌ This command can only be used in a server (guild).")
+		return
+	}
 
-    if guildID == "" {
-        utils.HandleError(session, interaction, "❌ GUILD_ID not configured")
-        return
-    }
+	query, _ := getOptionString(commandData, "discordname")
+	query = strings.TrimSpace(query)
 
-    query := ""
-    if sub.Name != "purge" {
-        query = sub.Options[0].StringValue()
-    }
-    switch sub.Name {
-        case "add":
-            handleAddCommand(session, interaction, sub, guildID, query)
-        case "bulkadd":
-            handleBulkAddCommand(session, interaction, sub, guildID, query)
-        case "remove":
-            handleRemoveCommand(session, interaction, sub, guildID, query)
-        case "purge":
-            handlePurgeCommand(session, interaction, guildID)
-        default:
-            utils.HandleError(session, interaction, "❌ Unknown subcommand")
-    }
+	if subcommand != "purge" && query == "" {
+		utils.HandleError(session, interaction, "❌ Missing discordname argument for this command")
+		return
+	}
+
+	utils.Info("Warden command invoked", "command", subcommand, "query", query, "flag", roleScope)
+
+	switch subcommand {
+	case "add":
+		handleWardenAdd(session, interaction, guildID, query, roleScope)
+	case "remove":
+		handleWardenRemove(session, interaction, guildID, query, roleScope)
+	case "bulkadd":
+		handleWardenBulkAdd(session, interaction, guildID, query, roleScope)
+	case "purge":
+		handleWardenPurge(session, interaction, guildID, roleScope)
+	default:
+		utils.HandleError(session, interaction, "❌ Unknown subcommand")
+	}
 }
 
-func handleAddCommand(
-    session *discordgo.Session,
-    interaction *discordgo.InteractionCreate,
-    sub *discordgo.ApplicationCommandInteractionDataOption,
-    guildID string,
-    query string,
-) {
-    member := retrieveMemberByName(session, guildID, query)
-    if member == nil {
-        return
-    }
+func handleWardenAdd(session *discordgo.Session, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
+	if err := deferEphemeral(session, interaction); err != nil {
+		utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to acknowledge: %v", err))
+		return
+	}
 
-    roleID := findRoleIDByName(session, interaction, guildID, ROLE_NAME)
-    if roleID == "" {
-        utils.HandleError(session, interaction, "❌ 'Warden Verified' role not found in guild")
-        return
-    }
+	member, err := findGuildMember(session, guildID, query)
+	if err != nil {
+		editEphemeral(session, interaction, err.Error())
+		return
+	}
 
-    addRoleForQuery(session, interaction, guildID, query, roleID)
+	roleIDs, roleNames, err := resolveWardenRoleIDs(session, guildID, roleScope)
+	if err != nil {
+		editEphemeral(session, interaction, err.Error())
+		return
+	}
 
-    err := session.InteractionRespond(interaction.Interaction, &discordgo.InteractionResponse{
-        Type: discordgo.InteractionResponseChannelMessageWithSource,
-        Data: &discordgo.InteractionResponseData{
-            Content: fmt.Sprintf("✅ Added '%s' role to %s#%s", ROLE_NAME,member.User.Username, member.User.Discriminator),
-            Flags:   discordgo.MessageFlagsEphemeral,
-        },
-    })
-    if err != nil {
-        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to send confirmation: %v", err))
-        return
-    }
-    utils.Info("Warden role assigned", "user", member.User.ID)
+	for index, roleID := range roleIDs {
+		roleName := roleNames[index]
+		if err := session.GuildMemberRoleAdd(guildID, member.User.ID, roleID); err != nil {
+			utils.Error("Failed to add warden role", "user", member.User.ID, "role", roleName, "error", err)
+			editEphemeral(session, interaction, fmt.Sprintf("❌ Failed to add '%s' role to %s: %v", roleName, formatUser(member), err))
+			return
+		}
+	}
+
+	utils.Info("Warden role(s) added", "user", member.User.ID, "roles", strings.Join(roleNames, ", "))
+	editEphemeral(session, interaction, fmt.Sprintf("✅ Added warden role(s) (%s) to %s", strings.Join(roleNames, ", "), formatUser(member)))
 }
 
-func handleRemoveCommand(
-    session *discordgo.Session,
-    interaction *discordgo.InteractionCreate,
-    sub *discordgo.ApplicationCommandInteractionDataOption,
-    guildID string,
-    query string,
-) {
-    member := retrieveMemberByName(session, guildID, query)
-    if member == nil {
-        return
-    }
+func handleWardenRemove(session *discordgo.Session, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
+	if err := deferEphemeral(session, interaction); err != nil {
+		utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to acknowledge: %v", err))
+		return
+	}
 
-    roleID := findRoleIDByName(session, interaction, guildID, ROLE_NAME)
-    if roleID == "" {
-        utils.HandleError(session, interaction, "❌ 'Warden Verified' role not found in guild")
-        return
-    }
+	member, err := findGuildMember(session, guildID, query)
+	if err != nil {
+		editEphemeral(session, interaction, err.Error())
+		return
+	}
 
-    removeRoleForQuery(session, interaction, guildID, query, roleID)
+	roleIDs, roleNames, err := resolveWardenRoleIDs(session, guildID, roleScope)
+	if err != nil {
+		editEphemeral(session, interaction, err.Error())
+		return
+	}
 
-    err := session.InteractionRespond(interaction.Interaction, &discordgo.InteractionResponse{
-        Type: discordgo.InteractionResponseChannelMessageWithSource,
-        Data: &discordgo.InteractionResponseData{
-            Content: fmt.Sprintf("✅ Removed '%s' role from %s#%s", ROLE_NAME, member.User.Username, member.User.Discriminator),
-            Flags:   discordgo.MessageFlagsEphemeral,
-        },
-    })
-    if err != nil {
-        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to send confirmation: %v", err))
-        return
-    }
-    utils.Info("Warden role removed", "user", member.User.ID)
+	for index, roleID := range roleIDs {
+		roleName := roleNames[index]
+		if err := session.GuildMemberRoleRemove(guildID, member.User.ID, roleID); err != nil {
+			utils.Error("Failed to remove warden role", "user", member.User.ID, "role", roleName, "error", err)
+			editEphemeral(session, interaction, fmt.Sprintf("❌ Failed to remove '%s' role from %s: %v", roleName, formatUser(member), err))
+			return
+		}
+	}
+
+	utils.Info("Warden role(s) removed", "user", member.User.ID, "roles", strings.Join(roleNames, ", "))
+	editEphemeral(session, interaction, fmt.Sprintf("✅ Removed warden role(s) (%s) from %s", strings.Join(roleNames, ", "), formatUser(member)))
 }
 
-func handleBulkAddCommand(
-    session *discordgo.Session,
-    interaction *discordgo.InteractionCreate,
-    sub *discordgo.ApplicationCommandInteractionDataOption,
-    guildID string,
-    query string,
-) {
-    queries := strings.Split(query, ",")
+func handleWardenBulkAdd(session *discordgo.Session, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
+	if err := deferEphemeral(session, interaction); err != nil {
+		utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to acknowledge bulk add: %v", err))
+		return
+	}
 
-    roleID := findRoleIDByName(session, interaction, guildID, ROLE_NAME)
-    if roleID == "" {
-        return
-    }
+	roleIDs, roleNames, err := resolveWardenRoleIDs(session, guildID, roleScope)
+	if err != nil {
+		editEphemeral(session, interaction, err.Error())
+		return
+	}
 
-    err := session.InteractionRespond(interaction.Interaction, &discordgo.InteractionResponse{
-        Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-    })
+	requestedQueries := splitCommaSeparated(query)
+	if len(requestedQueries) == 0 {
+		editEphemeral(session, interaction, "⚠️ Nothing to do.")
+		return
+	}
 
-    if err != nil {
-        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to acknowledge bulk add: %v", err))
-        return
-    }
+	var results []string
+	for _, singleQuery := range requestedQueries {
+		member, memberErr := findGuildMember(session, guildID, singleQuery)
+		if memberErr != nil {
+			results = append(results, memberErr.Error())
+			continue
+		}
 
-    var results []string
-    for _, q := range queries {
-        q = strings.TrimSpace(q)
-        utils.Info("Processing bulk add", "query", q)
-        if q == "" {
-            continue
-        }
-        results = append(results, addRoleForQuery(session, interaction, guildID, q, roleID))
-    }
+		for index, roleID := range roleIDs {
+			roleName := roleNames[index]
+			if err := session.GuildMemberRoleAdd(guildID, member.User.ID, roleID); err != nil {
+				utils.Error("Failed to add warden role in bulk", "user", member.User.ID, "role", roleName, "error", err)
+				results = append(results, fmt.Sprintf("❌ Failed to add '%s' role to %s: %v", roleName, formatUser(member), err))
+				continue
+			}
+			results = append(results, fmt.Sprintf("✅ Added '%s' role to %s", roleName, formatUser(member)))
+		}
+	}
 
-    content := strings.Join(results, "\n")
-    _, err = session.InteractionResponseEdit(interaction.Interaction, &discordgo.WebhookEdit{
-        Content: &content,
-    })
-    if err != nil {
-        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to send bulk add summary: %v", err))
-        return
-    }
+	editEphemeral(session, interaction, joinOrFallback(results, "⚠️ Nothing to do."))
 }
 
-func handlePurgeCommand(
-    session *discordgo.Session,
-    interaction *discordgo.InteractionCreate,
-    guildID string,
-) {
-    roleID := findRoleIDByName(session, interaction, guildID, ROLE_NAME)
-    if roleID == "" {
-        return
-    }
+func handleWardenPurge(session *discordgo.Session, interaction *discordgo.InteractionCreate, guildID, roleScope string) {
+	if err := deferEphemeral(session, interaction); err != nil {
+		utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to acknowledge purge: %v", err))
+		return
+	}
 
-    if err := session.InteractionRespond(interaction.Interaction, &discordgo.InteractionResponse{
-        Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-    }); err != nil {
-        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to acknowledge purge: %v", err))
-        return
-    }
+	roleIDs, roleNames, err := resolveWardenRoleIDs(session, guildID, roleScope)
+	if err != nil {
+		editEphemeral(session, interaction, err.Error())
+		return
+	}
 
-    var (
-        after   string
-        removed int
-        results []string
-    )
+	var (
+		afterUserID        string
+		removedAssignments int
+		results            []string
+	)
 
-    for {
-        members, err := session.GuildMembers(guildID, after, 1000)
-        if err != nil {
-            utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to retrieve guild members: %v", err))
-            return
-        }
-        if len(members) == 0 {
-            break
-        }
+	for {
+		members, err := session.GuildMembers(guildID, afterUserID, 1000)
+		if err != nil {
+			editEphemeral(session, interaction, fmt.Sprintf("❌ Failed to retrieve guild members: %v", err))
+			return
+		}
+		if len(members) == 0 {
+			break
+		}
 
-        for _, m := range members {
-            if m.User == nil {
-                continue
-            }
+		for _, member := range members {
+			if member == nil || member.User == nil {
+				continue
+			}
 
-            if memberHasRole(m, roleID) {
-                results = append(results, removeRoleForQuery(session, interaction, guildID, m.User.Username, roleID))
-                removed++
-            }
-        }
+			for index, roleID := range roleIDs {
+				roleName := roleNames[index]
+				if !memberHasRole(member, roleID) {
+					continue
+				}
 
-        after = members[len(members)-1].User.ID
-        if len(members) < 1000 {
-            break
-        }
-    }
+				if err := session.GuildMemberRoleRemove(guildID, member.User.ID, roleID); err != nil {
+					utils.Error("Failed to remove warden role during purge", "user", member.User.ID, "role", roleName, "error", err)
+					results = append(results, fmt.Sprintf("❌ Failed to remove '%s' role from %s: %v", roleName, formatUser(member), err))
+					continue
+				}
 
-    content := strings.Join(results, "\n")
-    if content == "" {
-        content = "✅ Purge complete: no members had the role."
-    }
+				removedAssignments++
+				results = append(results, fmt.Sprintf("✅ Removed '%s' role from %s", roleName, formatUser(member)))
+			}
+		}
 
-    _, err := session.InteractionResponseEdit(interaction.Interaction, &discordgo.WebhookEdit{
-        Content: &content,
-    })
-    if err != nil {
-        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to send purge summary: %v", err))
-        return
-    }
+		afterUserID = members[len(members)-1].User.ID
+		if len(members) < 1000 {
+			break
+		}
+	}
+
+	if removedAssignments == 0 {
+		editEphemeral(session, interaction, "✅ Purge complete: no members had the role(s).")
+		return
+	}
+
+	summary := fmt.Sprintf("✅ Purge complete: removed %d role assignment(s).\n\n%s", removedAssignments, joinOrFallback(results, ""))
+	editEphemeral(session, interaction, summary)
 }
 
-func memberHasRole(m *discordgo.Member, roleID string) bool {
-    for _, rid := range m.Roles {
-        if rid == roleID {
-            return true
-        }
-    }
-    return false
+func resolveWardenRoleNames(roleScope string) []string {
+	switch roleScope {
+	case "both":
+		return []string{
+			wardenRoleBaseName + " Internal",
+			wardenRoleBaseName + " External",
+		}
+	case "internal", "external":
+		return []string{
+			wardenRoleBaseName + " " + wardenTitleCaser.String(roleScope),
+		}
+	default:
+		return []string{
+			wardenRoleBaseName + " " + wardenTitleCaser.String(roleScope),
+		}
+	}
 }
 
+func resolveWardenRoleIDs(session *discordgo.Session, guildID, roleScope string) (roleIDs []string, roleNames []string, err error) {
+	roleNames = resolveWardenRoleNames(roleScope)
+	roleIDs = make([]string, 0, len(roleNames))
 
-func addRoleForQuery(
-    session *discordgo.Session,
-    interaction *discordgo.InteractionCreate,
-    guildID string,
-    query string,
-    roleID string,
-) string {
-    member := retrieveMemberByName(session, guildID, query)
-    if member == nil {
-        return fmt.Sprintf("❌ No member found matching '%s'", query)
-    }
+	for _, roleName := range roleNames {
+		roleID, findErr := findGuildRoleIDByName(session, guildID, roleName)
+		if findErr != nil {
+			return nil, nil, fmt.Errorf("❌ Failed to retrieve guild roles: %v", findErr)
+		}
+		if roleID == "" {
+			return nil, nil, fmt.Errorf("❌ '%s' role not found in guild", roleName)
+		}
+		roleIDs = append(roleIDs, roleID)
+	}
 
-    err := session.GuildMemberRoleAdd(guildID, member.User.ID, roleID)
-    if err != nil {
-        utils.Error("Failed to add role in bulk", "user", member.User.ID, "error", err)
-        return fmt.Sprintf("❌ Failed to add role to %s#%s: %v", member.User.Username, member.User.Discriminator, err)
-    }
-
-    utils.Info("Warden role assigned (bulk)", "user", member.User.ID)
-    return fmt.Sprintf("✅ Added '%s' role to %s#%s", ROLE_NAME, member.User.Username, member.User.Discriminator)
+	return roleIDs, roleNames, nil
 }
 
-func removeRoleForQuery(
-    session *discordgo.Session,
-    interaction *discordgo.InteractionCreate,
-    guildID string,
-    query string,
-    roleID string,
-) string {
-    member := retrieveMemberByName(session, guildID, query)
-    if member == nil {
-        return fmt.Sprintf("❌ No member found matching '%s'", query)
-    }
-
-    err := session.GuildMemberRoleRemove(guildID, member.User.ID, roleID)
-    if err != nil {
-        utils.Error("Failed to remove role in bulk", "user", member.User.ID, "error", err)
-        return fmt.Sprintf("❌ Failed to remove role from %s#%s: %v", member.User.Username, member.User.Discriminator, err)
-    }
-
-    utils.Info("Warden role removed ", "user", member.User.ID)
-    return fmt.Sprintf("✅ Removed '%s' role from %s#%s", ROLE_NAME, member.User.Username, member.User.Discriminator)
+func getOptionString(commandData discordgo.ApplicationCommandInteractionData, optionName string) (string, bool) {
+	for _, option := range commandData.Options {
+		if option != nil && option.Name == optionName {
+			return option.StringValue(), true
+		}
+	}
+	return "", false
 }
 
-func retrieveMemberByName(
-    session *discordgo.Session,
-    guildID string,
-    query string,
-) (*discordgo.Member) {
-    if strings.HasPrefix(query, "<@") && strings.HasSuffix(query, ">") {
-        userID := strings.TrimSuffix(strings.TrimPrefix(query, "<@"), ">")
-        member, _ := session.GuildMember(guildID, userID)
-
-        if member != nil {
-            return member
-        }
-    }
-
-    members, err := session.GuildMembersSearch(guildID, query, 10)
-
-    if err != nil {
-        utils.Error("Failed to search members (silent)", "error", err)
-        return nil
-    }
-
-    if len(members) != 1 {
-        return nil
-    }
-
-    return members[0]
+func stringChoices(values []string) []*discordgo.ApplicationCommandOptionChoice {
+	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(values))
+	for _, value := range values {
+		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{
+			Name:  value,
+			Value: value,
+		})
+	}
+	return choices
 }
 
-func findRoleIDByName(
-    session *discordgo.Session,
-    interaction *discordgo.InteractionCreate,
-    guildID string,
-    roleName string,
-) (string) {
-    roles, err := session.GuildRoles(guildID)
+func deferEphemeral(session *discordgo.Session, interaction *discordgo.InteractionCreate) error {
+	return session.InteractionRespond(interaction.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Flags: discordgo.MessageFlagsEphemeral,
+		},
+	})
+}
 
-    if err != nil {
-        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to retrieve guild roles: %v", err))
-        return ""
-    }
+func editEphemeral(session *discordgo.Session, interaction *discordgo.InteractionCreate, content string) {
+	_, err := session.InteractionResponseEdit(interaction.Interaction, &discordgo.WebhookEdit{
+		Content: &content,
+	})
+	if err != nil {
+		utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to edit response: %v", err))
+	}
+}
 
-    for _, role := range roles {
-        if role.Name == roleName {
-            return role.ID
-        }
-    }
+func memberHasRole(member *discordgo.Member, roleID string) bool {
+	return slices.Contains(member.Roles, roleID)
+}
 
-    return ""
+func formatUser(member *discordgo.Member) string {
+	if member == nil || member.User == nil {
+		return "<unknown>"
+	}
+
+	if member.User.Discriminator != "" && member.User.Discriminator != "0" {
+		return fmt.Sprintf("%s#%s", member.User.Username, member.User.Discriminator)
+	}
+
+	return member.User.Username
+}
+
+func findGuildMember(session *discordgo.Session, guildID, query string) (*discordgo.Member, error) {
+	trimmedQuery := strings.TrimSpace(query)
+	if trimmedQuery == "" {
+		return nil, fmt.Errorf("❌ Empty query")
+	}
+
+	// Mentions: <@123>, <@!123>
+	if strings.HasPrefix(trimmedQuery, "<@") && strings.HasSuffix(trimmedQuery, ">") {
+		userID := strings.TrimSuffix(strings.TrimPrefix(trimmedQuery, "<@"), ">")
+		userID = strings.TrimPrefix(userID, "!")
+		if userID != "" {
+			member, err := session.GuildMember(guildID, userID)
+			if err == nil && member != nil {
+				return member, nil
+			}
+		}
+	}
+
+	// Raw snowflake ID
+	if isSnowflakeID(trimmedQuery) {
+		member, err := session.GuildMember(guildID, trimmedQuery)
+		if err == nil && member != nil {
+			return member, nil
+		}
+	}
+
+	// Name search
+	members, err := session.GuildMembersSearch(guildID, trimmedQuery, 10)
+	if err != nil {
+		utils.Error("Failed to search members", "error", err)
+		return nil, fmt.Errorf("❌ Failed to search members: %v", err)
+	}
+
+	switch len(members) {
+	case 0:
+		return nil, fmt.Errorf("❌ No member found matching '%s'", query)
+	case 1:
+		return members[0], nil
+	default:
+		return nil, fmt.Errorf("❌ Too many matches for '%s' (be more specific, or use a mention/ID)", query)
+	}
+}
+
+func findGuildRoleIDByName(session *discordgo.Session, guildID, roleName string) (string, error) {
+	roles, err := session.GuildRoles(guildID)
+	if err != nil {
+		return "", err
+	}
+
+	for _, role := range roles {
+		if role != nil && role.Name == roleName {
+			return role.ID, nil
+		}
+	}
+
+	return "", nil
+}
+
+func splitCommaSeparated(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func joinOrFallback(lines []string, fallback string) string {
+	joined := strings.Join(lines, "\n")
+	if strings.TrimSpace(joined) == "" {
+		return fallback
+	}
+	return joined
+}
+
+func isSnowflakeID(value string) bool {
+	if len(value) < 15 {
+		return false
+	}
+	for _, runeValue := range value {
+		if runeValue < '0' || runeValue > '9' {
+			return false
+		}
+	}
+	return true
 }
