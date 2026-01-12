@@ -13,7 +13,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-var Version = "0.6.1"
+var Version = "0.6.2"
 
 var (
 	Token    string
