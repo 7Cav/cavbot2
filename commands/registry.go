@@ -10,6 +10,7 @@ func NewRegistry() *Registry {
 	r := &Registry{}
 	r.RegisterCommands(
 		Milpac(),
+		Warden(),
 		AppsBetaDeploy(),
 		Zulu(),
 		S6ITCheck(),
