@@ -17,7 +17,12 @@ const wardenRoleBaseName = "Verified Warden"
 
 var (
 	wardenRoleScopes  = []string{"internal", "external", "both"}
-	wardenSubcommands = []string{"add", "remove", "bulkadd", "purge"}
+	wardenSubcommands = []string{
+		"add",
+		"remove",
+		"bulkadd",
+		// "purge",
+	}
 
 	wardenTitleCaser = cases.Title(language.Und, cases.NoLower)
 )
@@ -92,8 +97,8 @@ func handleWarden(session *discordgo.Session, interaction *discordgo.Interaction
 		handleWardenRemove(session, interaction, guildID, query, roleScope)
 	case "bulkadd":
 		handleWardenBulkAdd(session, interaction, guildID, query, roleScope)
-	case "purge":
-		handleWardenPurge(session, interaction, guildID, roleScope)
+	// case "purge":
+	// 	handleWardenPurge(session, interaction, guildID, roleScope)
 	default:
 		utils.HandleError(session, interaction, "❌ Unknown subcommand")
 	}
