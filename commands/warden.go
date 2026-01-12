@@ -87,10 +87,6 @@ func handleWarden(session *discordgo.Session, interaction *discordgo.Interaction
         return
     }
 
-    if !checkIfRequestedUserHasPermission(session, interaction, guildID) {
-        return
-    }
-
     query := ""
     if sub.Name != "purge" {
         query = sub.Options[0].StringValue()
