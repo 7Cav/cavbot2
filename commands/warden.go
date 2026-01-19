@@ -2,10 +2,9 @@ package commands
 
 import (
 	"fmt"
-	"sort"
-	"strings"
-
 	"slices"
+	"strings"
+	"time"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -61,28 +60,28 @@ func Warden() Command {
 }
 
 func handleWarden(
-	session *discordgo.Session,
-	interaction *discordgo.InteractionCreate,
+    session *discordgo.Session,
+    interaction *discordgo.InteractionCreate,
 ) {
     commandData := interaction.ApplicationCommandData()
 
     subcommand, ok := getOptionString(commandData, "command")
     if !ok || !slices.Contains(wardenSubcommands, subcommand) {
         utils.HandleError(
-			session,
-			interaction,
-			"❌ Invalid warden command; must be "+strings.Join(wardenSubcommands, ", "),
-		)
+            session,
+            interaction,
+            "❌ Invalid warden command; must be "+strings.Join(wardenSubcommands, ", "),
+        )
         return
     }
 
     roleScope, ok := getOptionString(commandData, "flag")
     if !ok || !slices.Contains(wardenRoleScopes, roleScope) {
         utils.HandleError(
-			session,
-			interaction,
-			"❌ Missing or invalid flag argument; must be 'internal', 'external', or 'both'",
-		)
+            session,
+            interaction,
+            "❌ Missing or invalid flag argument; must be 'internal', 'external', or 'both'",
+        )
         return
     }
 
@@ -93,9 +92,9 @@ func handleWarden(
     }
 
     query, _ := getOptionString(
-		commandData,
-		"discordname",
-	)
+        commandData,
+        "discordname",
+    )
 
     query = strings.TrimSpace(query)
 
@@ -143,37 +142,37 @@ func handleWardenAdd(session *discordgo.Session, interaction *discordgo.Interact
         if err := session.GuildMemberRoleAdd(guildID, member.User.ID, roleID); err != nil {
             utils.Error("Failed to add warden role", "user", member.User.ID, "role", roleName, "error", err)
             editEphemeral(
-				session,
-				interaction,
-				fmt.Sprintf(
-					"❌ Failed to add '%s' role to %s: %v",
-					roleName,
-					formatUser(member),
-					err,
-				),
-			)
+                session,
+                interaction,
+                fmt.Sprintf(
+                    "❌ Failed to add '%s' role to %s: %v",
+                    roleName,
+                    formatUser(member),
+                    err,
+                ),
+            )
             return
         }
     }
 
     utils.Info("Warden role(s) added", "user", member.User.ID, "roles", strings.Join(roleNames, ", "))
     editEphemeral(
-		session,
-		interaction,
-		fmt.Sprintf(
-			"✅ Added warden role(s) (%s) to %s",
-			strings.Join(roleNames, ", "),
-			formatUser(member),
-		),
-	)
+        session,
+        interaction,
+        fmt.Sprintf(
+            "✅ Added warden role(s) (%s) to %s",
+            strings.Join(roleNames, ", "),
+            formatUser(member),
+        ),
+    )
 }
 
 func handleWardenRemove(
-	session *discordgo.Session,
-	interaction *discordgo.InteractionCreate,
-	guildID string,
-	query string,
-	roleScope string,
+    session *discordgo.Session,
+    interaction *discordgo.InteractionCreate,
+    guildID string,
+    query string,
+    roleScope string,
 ) {
     if err := deferEphemeral(session, interaction); err != nil {
         utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to acknowledge: %v", err))
@@ -206,11 +205,11 @@ func handleWardenRemove(
 }
 
 func handleWardenBulkAdd(
-	session *discordgo.Session,
-	interaction *discordgo.InteractionCreate,
-	guildID string,
-	query string,
-	roleScope string,
+    session *discordgo.Session,
+    interaction *discordgo.InteractionCreate,
+    guildID string,
+    query string,
+    roleScope string,
 ) {
     if err := deferEphemeral(session, interaction); err != nil {
         utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to acknowledge bulk add: %v", err))
@@ -262,61 +261,63 @@ func handleWardenPurge(
         return
     }
 
+    go func() {
     roleIDsToRecreate, roleNamesToRecreate, err := resolveWardenRoleIDs(session, guildID, roleScope)
-    if err != nil {
-        editEphemeral(session, interaction, err.Error())
-        return
-    }
-
-    if len(roleIDsToRecreate) == 0 {
-        editEphemeral(session, interaction, "❌ No roles resolved for purge scope.")
-        return
-    }
-
-    guildChannels, err := session.GuildChannels(guildID)
-    if err != nil {
-        editEphemeral(session, interaction, fmt.Sprintf("❌ Failed to retrieve guild channels: %v", err))
-        return
-    }
-
-    var summaryLines []string
-
-    for index, roleIDToRecreate := range roleIDsToRecreate {
-        roleName := roleNamesToRecreate[index]
-
-        newRoleID, reappliedOverwriteCount, recreateErr := recreateRoleWithChannelOverwrites(
-            session,
-            guildID,
-            roleIDToRecreate,
-            guildChannels,
-        )
-
-        if recreateErr != nil {
-            utils.Error(
-                "Warden purge role recreation failed",
-                "guild", guildID,
-                "roleName", roleName,
-                "roleID", roleIDToRecreate,
-                "error", recreateErr,
-            )
-
-            summaryLines = append(summaryLines, fmt.Sprintf("❌ Failed to recreate '%s': %v", roleName, recreateErr))
-            continue
+        if err != nil {
+            editEphemeral(session, interaction, err.Error())
+            return
         }
 
-        summaryLines = append(
-            summaryLines,
-            fmt.Sprintf(
-                "✅ Recreated '%s' (old: `%s`, new: `%s`), re-applied %d overwrite(s).",
-                roleName,
-                roleIDToRecreate,
-                newRoleID,
-                reappliedOverwriteCount,
-            ),
-        )
-    }
+        if len(roleIDsToRecreate) == 0 {
+            editEphemeral(session, interaction, "❌ No roles resolved for purge scope.")
+            return
+        }
 
-    editEphemeral(session, interaction, joinOrFallback(summaryLines, "✅ Purge complete."))
+        guildChannels, err := session.GuildChannels(guildID)
+        if err != nil {
+            editEphemeral(session, interaction, fmt.Sprintf("❌ Failed to retrieve guild channels: %v", err))
+            return
+        }
+
+        var summaryLines []string
+
+        for index, roleIDToRecreate := range roleIDsToRecreate {
+            roleName := roleNamesToRecreate[index]
+
+            newRoleID, reappliedOverwriteCount, recreateErr := recreateRoleWithChannelOverwrites(
+                session,
+                guildID,
+                roleIDToRecreate,
+                guildChannels,
+            )
+
+            if recreateErr != nil {
+                utils.Error(
+                    "Warden purge role recreation failed",
+                    "guild", guildID,
+                    "roleName", roleName,
+                    "roleID", roleIDToRecreate,
+                    "error", recreateErr,
+                )
+
+                summaryLines = append(summaryLines, fmt.Sprintf("❌ Failed to recreate '%s': %v", roleName, recreateErr))
+                continue
+            }
+
+            summaryLines = append(
+                summaryLines,
+                fmt.Sprintf(
+                    "✅ Recreated '%s' (old: `%s`, new: `%s`), re-applied %d overwrite(s).",
+                    roleName,
+                    roleIDToRecreate,
+                    newRoleID,
+                    reappliedOverwriteCount,
+                ),
+            )
+        }
+
+        editEphemeral(session, interaction, joinOrFallback(summaryLines, "✅ Purge complete."))
+    }()
 }
 
 func recreateRoleWithChannelOverwrites(
@@ -331,10 +332,6 @@ func recreateRoleWithChannelOverwrites(
     }
 
     channelOverwritesByChannelID := collectRoleOverwritesByChannelID(oldRoleID, guildChannels)
-
-    if err := session.GuildRoleDelete(guildID, oldRoleID); err != nil {
-        return "", 0, fmt.Errorf("delete role: %w", err)
-    }
 
     newRole, err := session.GuildRoleCreate(guildID, &discordgo.RoleParams{
         Name:        oldRole.Name,
@@ -352,8 +349,6 @@ func recreateRoleWithChannelOverwrites(
         return "", 0, fmt.Errorf("apply role properties: %w", err)
     }
 
-    _ = restoreRolePositionBestEffort(session, guildID, newRole.ID, oldRole.Position)
-
     reappliedOverwriteCount, err := reapplyRoleOverwrites(
         session,
         newRole.ID,
@@ -362,6 +357,10 @@ func recreateRoleWithChannelOverwrites(
 
     if err != nil {
         return "", reappliedOverwriteCount, fmt.Errorf("reapply overwrites: %w", err)
+    }
+
+    if err := session.GuildRoleDelete(guildID, oldRoleID); err != nil {
+        return newRole.ID, reappliedOverwriteCount, fmt.Errorf("delete old role: %w", err)
     }
 
     return newRole.ID, reappliedOverwriteCount, nil
@@ -429,7 +428,16 @@ func reapplyRoleOverwrites(
 ) (int, error) {
     reappliedCount := 0
 
-    for channelID, overwrite := range channelOverwritesByChannelID {
+    // Stable order (maps iterate randomly)
+    channelIDs := make([]string, 0, len(channelOverwritesByChannelID))
+    for channelID := range channelOverwritesByChannelID {
+        channelIDs = append(channelIDs, channelID)
+    }
+    slices.Sort(channelIDs)
+
+    for _, channelID := range channelIDs {
+        overwrite := channelOverwritesByChannelID[channelID]
+
         if err := session.ChannelPermissionSet(
             channelID,
             newRoleID,
@@ -441,6 +449,7 @@ func reapplyRoleOverwrites(
         }
 
         reappliedCount++
+        time.Sleep(200 * time.Millisecond)
     }
 
     return reappliedCount, nil
@@ -466,9 +475,9 @@ func resolveWardenRoleNames(roleScope string) []string {
 }
 
 func resolveWardenRoleIDs(
-	session *discordgo.Session,
-	guildID string,
-	roleScope string,
+    session *discordgo.Session,
+    guildID string,
+    roleScope string,
 ) (roleIDs []string, roleNames []string, err error) {
     roleNames = resolveWardenRoleNames(roleScope)
     roleIDs = make([]string, 0, len(roleNames))
@@ -488,8 +497,8 @@ func resolveWardenRoleIDs(
 }
 
 func getOptionString(
-	commandData discordgo.ApplicationCommandInteractionData,
-	optionName string,
+    commandData discordgo.ApplicationCommandInteractionData,
+    optionName string,
 ) (string, bool) {
     for _, option := range commandData.Options {
         if option != nil && option.Name == optionName {
@@ -628,57 +637,4 @@ func isSnowflakeID(value string) bool {
         }
     }
     return true
-}
-
-func restoreRolePositionBestEffort(
-    session *discordgo.Session,
-    guildID string,
-    roleID string,
-    targetPosition int,
-) error {
-    guildRoles, err := session.GuildRoles(guildID)
-    if err != nil {
-        return err
-    }
-
-    sort.Slice(guildRoles, func(i, j int) bool {
-        return guildRoles[i].Position < guildRoles[j].Position
-    })
-
-    var currentIndex = -1
-    for index, role := range guildRoles {
-        if role.ID == roleID {
-            currentIndex = index
-            break
-        }
-    }
-    if currentIndex == -1 {
-        return nil
-    }
-
-    roleToMove := guildRoles[currentIndex]
-    guildRoles = append(guildRoles[:currentIndex], guildRoles[currentIndex+1:]...)
-
-    if targetPosition < 0 {
-        targetPosition = 0
-    }
-    if targetPosition > len(guildRoles) {
-        targetPosition = len(guildRoles)
-    }
-
-    guildRoles = append(
-        guildRoles[:targetPosition],
-        append([]*discordgo.Role{roleToMove}, guildRoles[targetPosition:]...)...,
-    )
-
-    reorderPayload := make([]*discordgo.Role, 0, len(guildRoles))
-    for position, role := range guildRoles {
-        reorderPayload = append(reorderPayload, &discordgo.Role{
-            ID:       role.ID,
-            Position: position,
-        })
-    }
-
-    _, err = session.GuildRoleReorder(guildID, reorderPayload)
-    return err
 }
