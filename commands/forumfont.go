@@ -22,11 +22,12 @@ func ForumFont() Command {
 			queuePos := rand.Intn(200) + 350
 			hours := rand.Intn(6) + 22
 			minutes := rand.Intn(59) + 1
+			ticketNum := rand.Intn(9000) + 1000
+			ticketSuffix := string(rune('A' + rand.Intn(26)))
 			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{
-					Content: fmt.Sprintf("[CAVBOT]: Opt-out request for User [%s] received. Ticket #8821-B has been generated. Your current position in the processing queue: %d. Estimated time until font reversion: %d hours, %d minutes.", username, queuePos, hours, minutes),
-					Flags:   discordgo.MessageFlagsEphemeral,
+					Content: fmt.Sprintf("[CAVBOT]: Opt-out request for User [%s] received. Ticket #%d-%s has been generated. Your current position in the processing queue: %d. Estimated time until font reversion: %d hours, %d minutes.", username, ticketNum, ticketSuffix, queuePos, hours, minutes),
 				},
 			})
 			if err != nil {
