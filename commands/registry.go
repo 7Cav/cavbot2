@@ -18,6 +18,7 @@ func NewRegistry() *Registry {
 		AFSM(),
 		GamertagSearch(),
 		S3AAR(),
+		ForumFont(),
 	)
 	return r
 }
