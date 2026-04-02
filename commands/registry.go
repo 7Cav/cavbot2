@@ -19,6 +19,7 @@ func NewRegistry() *Registry {
 		GamertagSearch(),
 		S3AAR(),
 		ForumFont(),
+		FixTickets(),
 	)
 	return r
 }
