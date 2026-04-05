@@ -17,6 +17,7 @@ import (
 var Version = "0.6.8"
 
 
+
 var (
 	Token    string
 	GuildID  string
