@@ -228,26 +228,35 @@ func handleWardenBulkAdd(
         return
     }
 
-    var results []string
+    var addedMembers []*discordgo.Member
+    var failures []string
     for _, singleQuery := range requestedQueries {
         member, memberErr := findGuildMember(session, guildID, singleQuery)
         if memberErr != nil {
-            results = append(results, memberErr.Error())
+            failures = append(failures, memberErr.Error())
             continue
         }
 
+        allOK := true
         for index, roleID := range roleIDs {
             roleName := roleNames[index]
             if err := session.GuildMemberRoleAdd(guildID, member.User.ID, roleID); err != nil {
                 utils.Error("Failed to add warden role in bulk", "user", member.User.ID, "role", roleName, "error", err)
-                results = append(results, fmt.Sprintf("❌ Failed to add '%s' role to %s: %v", roleName, formatUser(member), err))
-                continue
+                failures = append(failures, fmt.Sprintf("❌ Failed to add '%s' role to %s: %v", roleName, formatUser(member), err))
+                allOK = false
             }
-            results = append(results, fmt.Sprintf("✅ Added '%s' role to %s", roleName, formatUser(member)))
+        }
+        if allOK {
+            addedMembers = append(addedMembers, member)
         }
     }
 
-    editEphemeral(session, interaction, joinOrFallback(results, "⚠️ Nothing to do."))
+    content := buildBulkAddSummary(len(addedMembers), failures)
+    var embed *discordgo.MessageEmbed
+    if len(addedMembers) > 0 {
+        embed = buildAddedMembersEmbed(addedMembers)
+    }
+    editEphemeralWithEmbed(session, interaction, content, embed)
 }
 
 func handleWardenPurge(
@@ -537,6 +546,35 @@ func editEphemeral(session *discordgo.Session, interaction *discordgo.Interactio
     }
 }
 
+func editEphemeralWithEmbed(session *discordgo.Session, interaction *discordgo.InteractionCreate, content string, embed *discordgo.MessageEmbed) {
+    edit := &discordgo.WebhookEdit{Content: &content}
+    if embed != nil {
+        edit.Embeds = &[]*discordgo.MessageEmbed{embed}
+    }
+    _, err := session.InteractionResponseEdit(interaction.Interaction, edit)
+    if err != nil {
+        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to edit response: %v", err))
+    }
+}
+
+func buildAddedMembersEmbed(members []*discordgo.Member) *discordgo.MessageEmbed {
+    const maxDescLen = 4096
+    var sb strings.Builder
+    for _, m := range members {
+        line := fmt.Sprintf("<@%s>\n", m.User.ID)
+        if sb.Len()+len(line) > maxDescLen {
+            sb.WriteString(fmt.Sprintf("... and %d more.", len(members)-strings.Count(sb.String(), "\n")))
+            break
+        }
+        sb.WriteString(line)
+    }
+    return &discordgo.MessageEmbed{
+        Title:       fmt.Sprintf("Added %d user(s)", len(members)),
+        Description: strings.TrimRight(sb.String(), "\n"),
+        Color:       0xfbcc29, // Cav Yellow
+    }
+}
+
 func formatUser(member *discordgo.Member) string {
     if member == nil || member.User == nil {
         return "<unknown>"
@@ -625,6 +663,41 @@ func joinOrFallback(lines []string, fallback string) string {
         return fallback
     }
     return joined
+}
+
+// buildBulkAddSummary composes the bulk-add response message.
+// Successes are collapsed into a count to keep the message short.
+// Failures are listed individually, then truncated if needed to stay
+// within Discord's 2000-character message limit.
+func buildBulkAddSummary(successCount int, failures []string) string {
+    const maxLen = 2000
+
+    var lines []string
+    if successCount > 0 {
+        lines = append(lines, fmt.Sprintf("✅ Added warden role(s) to %d user(s).", successCount))
+    }
+    lines = append(lines, failures...)
+
+    if len(lines) == 0 {
+        return "⚠️ Nothing to do."
+    }
+
+    msg := strings.Join(lines, "\n")
+    if len(msg) <= maxLen {
+        return msg
+    }
+
+    // Truncate: fit as many lines as possible, then append an overflow count.
+    var kept []string
+    for i, line := range lines {
+        overflowNote := fmt.Sprintf("\n... and %d more.", len(lines)-i)
+        if len(strings.Join(append(kept, line), "\n"))+len(overflowNote) > maxLen {
+            kept = append(kept, fmt.Sprintf("... and %d more.", len(lines)-i))
+            break
+        }
+        kept = append(kept, line)
+    }
+    return strings.Join(kept, "\n")
 }
 
 func isSnowflakeID(value string) bool {
