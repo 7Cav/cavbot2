@@ -27,6 +27,7 @@ type AwolUser struct {
 	MilpacUrl         string
 	TimeSinceLastPost string
 	LastPostDate      time.Time
+	OnLOA             bool
 }
 
 func Awol() Command {
@@ -105,6 +106,7 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				MilpacUrl:         fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1]),
 				TimeSinceLastPost: utils.FormatTimeSinceDuration(lastPostDate),
 				LastPostDate:      lastPostDate,
+				OnLOA:             utils.GlobalLOACache.IsOnLOA(member.User.Username),
 			})
 		}
 	}
@@ -124,10 +126,22 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
+	loaCount := 0
+	for _, u := range awolUsers {
+		if u.OnLOA {
+			loaCount++
+		}
+	}
+
 	var chunks []string
 	currentChunk := ""
 	for _, user := range awolUsers {
-		userLine := fmt.Sprintf("[%s](%s) (%s)\n",
+		prefix := ""
+		if user.OnLOA {
+			prefix = "**[LOA]** "
+		}
+		userLine := fmt.Sprintf("%s[%s](%s) (%s)\n",
+			prefix,
 			user.Username,
 			user.MilpacUrl,
 			user.TimeSinceLastPost)
@@ -162,7 +176,7 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			Description: chunk,
 			Color:       0xfbcc29,
 			Footer: &discordgo.MessageEmbedFooter{
-				Text: fmt.Sprintf("Total AWOL: %d", len(awolUsers)),
+				Text: fmt.Sprintf("Total AWOL: %d (%d on LOA)", len(awolUsers), loaCount),
 			},
 			Timestamp: time.Now().Format(time.RFC3339),
 		}
@@ -188,8 +202,13 @@ func sendAwolFile(s *discordgo.Session, i *discordgo.InteractionCreate, awolUser
 		time.Now().Format("2006-01-02 15:04:05")))
 
 	for _, user := range awolUsers {
-		content.WriteString(fmt.Sprintf("%s - %s\nMilpac: %s\n\n",
+		loaTag := ""
+		if user.OnLOA {
+			loaTag = " [LOA]"
+		}
+		content.WriteString(fmt.Sprintf("%s%s - %s\nMilpac: %s\n\n",
 			user.Username,
+			loaTag,
 			user.TimeSinceLastPost,
 			user.MilpacUrl))
 	}
