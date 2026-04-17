@@ -1,13 +1,18 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/7cav/cavbot2/utils"
+
+	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/7cav/cavbot2/commands"
 	"github.com/bwmarrin/discordgo"
@@ -47,8 +52,42 @@ func init() {
 	utils.InitLogger(LogLevel)
 }
 
+func initLOACache() {
+	dsn := os.Getenv("FORUM_DB_DSN")
+	if dsn == "" {
+		utils.Warn("FORUM_DB_DSN not set, LOA cache disabled")
+		return
+	}
+
+	nodeID := 180
+	if s := os.Getenv("LOA_NODE_ID"); s != "" {
+		if id, err := strconv.Atoi(s); err == nil {
+			nodeID = id
+		}
+	}
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		utils.Warn("Failed to open forum DB connection, LOA cache disabled", "error", err)
+		return
+	}
+	db.SetMaxOpenConns(2)
+	db.SetConnMaxIdleTime(30 * time.Second)
+
+	utils.GlobalLOACache.Refresh(db, nodeID)
+
+	go func() {
+		ticker := time.NewTicker(15 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			utils.GlobalLOACache.Refresh(db, nodeID)
+		}
+	}()
+}
+
 func main() {
 	utils.Info("CavBot2 starting", "version", Version)
+	initLOACache()
 	dg, err := discordgo.New("Bot " + Token)
 	if err != nil {
 		panic(fmt.Sprintf("Error creating Discord session: %v", err))
