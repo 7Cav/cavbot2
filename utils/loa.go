@@ -20,6 +20,7 @@ type LOAEntry struct {
 	Username  string
 	StartDate time.Time
 	EndDate   time.Time
+	ThreadID  int64
 }
 
 type LOACache struct {
@@ -30,6 +31,14 @@ type LOACache struct {
 
 var GlobalLOACache = &LOACache{
 	entries: make(map[string]LOAEntry),
+}
+
+// GetEntry returns the LOA entry for a username if one exists.
+func (c *LOACache) GetEntry(username string) (LOAEntry, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	e, ok := c.entries[strings.ToLower(username)]
+	return e, ok
 }
 
 // IsOnLOA returns true if the username has a currently active LOA.
@@ -56,7 +65,7 @@ func (c *LOACache) Refresh(db *sql.DB, nodeID int) {
 	}
 
 	rows, err := db.Query(`
-		SELECT p.message, t.post_date
+		SELECT p.message, t.post_date, t.thread_id
 		FROM xf_thread t
 		JOIN xf_post p ON p.post_id = t.first_post_id
 		WHERE t.node_id = ?
@@ -85,8 +94,8 @@ func (c *LOACache) Refresh(db *sql.DB, nodeID int) {
 	parsed := 0
 	for rows.Next() {
 		var message string
-		var postDate int64
-		if err := rows.Scan(&message, &postDate); err != nil {
+		var postDate, threadID int64
+		if err := rows.Scan(&message, &postDate, &threadID); err != nil {
 			Warn("LOA row scan failed", "error", err)
 			continue
 		}
@@ -95,6 +104,7 @@ func (c *LOACache) Refresh(db *sql.DB, nodeID int) {
 			Debug("LOA post skipped (parse failed)", "post_date", postDate)
 			continue
 		}
+		entry.ThreadID = threadID
 		c.entries[strings.ToLower(entry.Username)] = entry
 		if postDate > maxPostDate {
 			maxPostDate = postDate

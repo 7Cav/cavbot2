@@ -136,12 +136,16 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	var chunks []string
 	currentChunk := ""
 	for _, user := range awolUsers {
-		prefix := ""
+		loaTag := ""
 		if user.OnLOA {
-			prefix = "**[LOA]** "
+			if entry, ok := utils.GlobalLOACache.GetEntry(user.Username); ok && entry.ThreadID != 0 {
+				loaTag = fmt.Sprintf("**[[LOA]](https://7cav.us/threads/%d/)** ", entry.ThreadID)
+			} else {
+				loaTag = "**[LOA]** "
+			}
 		}
 		userLine := fmt.Sprintf("%s[%s](%s) (%s)\n",
-			prefix,
+			loaTag,
 			user.Username,
 			user.MilpacUrl,
 			user.TimeSinceLastPost)
