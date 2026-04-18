@@ -12,3 +12,11 @@ services:
       BM_TOKEN: ${BM_TOKEN}
 # Codespace and ENV level Secret for BM_TOKEN
       LOG_LEVEL: ${LOG_LEVEL}
+      FORUM_DB_DSN: ${FORUM_DB_DSN}
+      LOA_NODE_ID: ${LOA_NODE_ID}
+    networks:
+      - xenforo_internal
+
+networks:
+  xenforo_internal:
+    external: true
