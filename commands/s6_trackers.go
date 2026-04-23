@@ -62,54 +62,59 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 			return
 		}
 
-		if strings.Contains(fullProfile.Primary.PositionTitle, "IT") && strings.Contains(fullProfile.Primary.PositionTitle, "S6") {
-			position, timeInPosition, positionDate, err := determineITPositionTime(fullProfile.Primary.PositionTitle, fullProfile)
+		checkPosition := func(positionTitle string) bool {
+			position, timeInPosition, positionDate, err := determineITPositionTime(positionTitle, fullProfile)
 			if err != nil {
 				utils.HandleError(s, i, fmt.Sprintf("❌ Failed to determine time in position: %v", err))
-				return
+				return false
 			}
-
-			if positionDate.Before(currentDate.AddDate(0, -6, 0)) {
-				matches = regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(member.UniformUrl)
-				if len(matches) < 2 {
-					utils.HandleError(s, i, "❌ Failed to parse uniform URL")
-					return
-				}
+			matches = regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(member.UniformUrl)
+			if len(matches) < 2 {
+				utils.HandleError(s, i, "❌ Failed to parse uniform URL")
+				return false
+			}
+			milpacUrl := fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1])
+			if positionDate.IsZero() {
 				eligibleMembers = append(eligibleMembers, ITMember{
 					Username:     member.User.Username,
-					MilpacUrl:    fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1]),
+					MilpacUrl:    milpacUrl,
+					Position:     position,
+					TimeSince:    "⚠️ No matching assignment record found",
+					PositionDate: positionDate,
+				})
+			} else if positionDate.Before(currentDate.AddDate(0, -6, 0)) {
+				eligibleMembers = append(eligibleMembers, ITMember{
+					Username:     member.User.Username,
+					MilpacUrl:    milpacUrl,
 					Position:     position,
 					TimeSince:    timeInPosition,
 					PositionDate: positionDate,
 				})
 			}
+			return true
+		}
+
+		if strings.Contains(fullProfile.Primary.PositionTitle, "IT") && strings.Contains(fullProfile.Primary.PositionTitle, "S6") {
+			if !checkPosition(fullProfile.Primary.PositionTitle) {
+				return
+			}
 		}
 
 		for _, secondary := range fullProfile.Secondary {
 			if strings.Contains(secondary.PositionTitle, "IT") && strings.Contains(secondary.PositionTitle, "S6") {
-				position, timeInPosition, positionDate, err := determineITPositionTime(secondary.PositionTitle, fullProfile)
-				if err != nil {
-					utils.HandleError(s, i, fmt.Sprintf("❌ Failed to determine time in position: %v", err))
+				if !checkPosition(secondary.PositionTitle) {
 					return
-				}
-				if positionDate.Before(currentDate.AddDate(0, -6, 0)) {
-					matches = regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(member.UniformUrl)
-					if len(matches) < 2 {
-						utils.HandleError(s, i, "❌ Failed to parse uniform URL")
-						return
-					}
-					eligibleMembers = append(eligibleMembers, ITMember{
-						Username:     member.User.Username,
-						MilpacUrl:    fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1]),
-						Position:     position,
-						TimeSince:    timeInPosition,
-						PositionDate: positionDate,
-					})
 				}
 			}
 		}
 	}
 	sort.Slice(eligibleMembers, func(i, j int) bool {
+		if eligibleMembers[i].PositionDate.IsZero() {
+			return false
+		}
+		if eligibleMembers[j].PositionDate.IsZero() {
+			return true
+		}
 		return eligibleMembers[i].PositionDate.Before(eligibleMembers[j].PositionDate)
 	})
 	ITUserOutput := make([]string, 0)
@@ -127,8 +132,17 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 	utils.Info("✨ Done!", "command", "S6ITCheck")
 }
 
+func normalizePositionWords(s string) string {
+	words := strings.Fields(strings.ToLower(s))
+	for i, w := range words {
+		words[i] = strings.TrimSuffix(w, "s")
+	}
+	return strings.Join(words, " ")
+}
+
 func determineITPositionTime(positionName string, member *utils.ProfileResponse) (position string, timeInPosition string, positionDate time.Time, err error) {
 	var date time.Time
+	normalizedPosition := normalizePositionWords(positionName)
 
 	for _, record := range member.Records {
 		if record.RecordType == "RECORD_TYPE_ASSIGNMENT" || record.RecordType == "RECORD_TYPE_TRANSFER" {
@@ -137,7 +151,7 @@ func determineITPositionTime(positionName string, member *utils.ProfileResponse)
 				return "", "", time.Time{}, fmt.Errorf("failed to parse record date: %v", err)
 			}
 
-			if strings.Contains(record.RecordDetails, positionName) {
+			if strings.Contains(normalizePositionWords(record.RecordDetails), normalizedPosition) {
 
 				if date.IsZero() {
 					date = recordDate
