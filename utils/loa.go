@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	reUsername  = regexp.MustCompile(`\[B\]\[COLOR=rgb\(213,\s*185,\s*0\)\]Username\[/COLOR\]\[/B\]\s*:\s*(\S+)`)
+	reUsername  = regexp.MustCompile(`\[B\]\[COLOR=rgb\(213,\s*185,\s*0\)\]Username\[/COLOR\]\[/B\]\s*:?\s*(\S+)`)
 	reStartDate = regexp.MustCompile(`\[B\]\[COLOR=rgb\(213,\s*185,\s*0\)\]Start Date\[/COLOR\]\[/B\]\s*[\r\n]+([^\r\n]+)`)
 	reEndDate   = regexp.MustCompile(`\[B\]\[COLOR=rgb\(213,\s*185,\s*0\)\]End Date\[/COLOR\]\[/B\]\s*[\r\n]+([^\r\n]+)`)
 )
@@ -55,7 +55,9 @@ func (c *LOACache) IsOnLOA(username string) bool {
 
 // Refresh fetches LOA posts from the forum DB incrementally and updates the cache.
 // On first call it fetches posts from the past year; subsequent calls fetch only newer posts.
-func (c *LOACache) Refresh(db *sql.DB, nodeID int) {
+// Multiple node IDs are supported to cover all LOA forum sections; each node is queried
+// separately so per-node parse counts can be logged for diagnostics.
+func (c *LOACache) Refresh(db *sql.DB, nodeIDs []int) {
 	c.mu.RLock()
 	since := c.lastSyncedPostDate
 	c.mu.RUnlock()
@@ -63,21 +65,6 @@ func (c *LOACache) Refresh(db *sql.DB, nodeID int) {
 	if since == 0 {
 		since = time.Now().AddDate(-1, 0, 0).Unix()
 	}
-
-	rows, err := db.Query(`
-		SELECT p.message, t.post_date, t.thread_id
-		FROM xf_thread t
-		JOIN xf_post p ON p.post_id = t.first_post_id
-		WHERE t.node_id = ?
-		  AND t.discussion_state = 'visible'
-		  AND t.post_date > ?
-		ORDER BY t.post_date ASC
-	`, nodeID, since)
-	if err != nil {
-		Warn("LOA cache refresh failed", "error", err)
-		return
-	}
-	defer rows.Close()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -91,29 +78,51 @@ func (c *LOACache) Refresh(db *sql.DB, nodeID int) {
 	}
 
 	maxPostDate := c.lastSyncedPostDate
-	parsed := 0
-	for rows.Next() {
-		var message string
-		var postDate, threadID int64
-		if err := rows.Scan(&message, &postDate, &threadID); err != nil {
-			Warn("LOA row scan failed", "error", err)
+	totalParsed := 0
+
+	for _, nodeID := range nodeIDs {
+		rows, err := db.Query(`
+			SELECT p.message, t.post_date, t.thread_id
+			FROM xf_thread t
+			JOIN xf_post p ON p.post_id = t.first_post_id
+			WHERE t.node_id = ?
+			  AND t.discussion_state = 'visible'
+			  AND t.post_date > ?
+			ORDER BY t.post_date ASC
+		`, nodeID, since)
+		if err != nil {
+			Warn("LOA cache refresh failed", "node_id", nodeID, "error", err)
 			continue
 		}
-		entry, ok := parseLOAPost(message)
-		if !ok {
-			Debug("LOA post skipped (parse failed)", "post_date", postDate)
-			continue
+
+		nodeParsed := 0
+		for rows.Next() {
+			var message string
+			var postDate, threadID int64
+			if err := rows.Scan(&message, &postDate, &threadID); err != nil {
+				Warn("LOA row scan failed", "node_id", nodeID, "error", err)
+				continue
+			}
+			entry, ok := parseLOAPost(message)
+			if !ok {
+				Debug("LOA post skipped (parse failed)", "node_id", nodeID, "post_date", postDate)
+				continue
+			}
+			entry.ThreadID = threadID
+			c.entries[strings.ToLower(entry.Username)] = entry
+			if postDate > maxPostDate {
+				maxPostDate = postDate
+			}
+			nodeParsed++
 		}
-		entry.ThreadID = threadID
-		c.entries[strings.ToLower(entry.Username)] = entry
-		if postDate > maxPostDate {
-			maxPostDate = postDate
-		}
-		parsed++
+		rows.Close()
+
+		Info("LOA node refreshed", "node_id", nodeID, "new_parsed", nodeParsed)
+		totalParsed += nodeParsed
 	}
 
 	c.lastSyncedPostDate = maxPostDate
-	Info("LOA cache refreshed", "new_parsed", parsed, "total_active", len(c.entries))
+	Info("LOA cache refreshed", "new_parsed", totalParsed, "total_active", len(c.entries))
 }
 
 func parseLOAPost(msg string) (LOAEntry, bool) {
