@@ -15,6 +15,7 @@ func NewRegistry() *Registry {
 		Zulu(),
 		S6ITCheck(),
 		Awol(),
+		LOA(),
 		AFSM(),
 		GamertagSearch(),
 		S3AAR(),
