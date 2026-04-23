@@ -19,7 +19,7 @@ import (
 )
 
 
-var Version = "0.7.0"
+var Version = "0.7.1"
 
 
 
@@ -59,10 +59,13 @@ func initLOACache() {
 		return
 	}
 
-	nodeID := 180
-	if s := os.Getenv("LOA_NODE_ID"); s != "" {
-		if id, err := strconv.Atoi(s); err == nil {
-			nodeID = id
+	nodeIDs := []int{180}
+	if s := os.Getenv("LOA_NODE_IDS"); s != "" {
+		nodeIDs = nil
+		for _, part := range strings.Split(s, ",") {
+			if id, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
+				nodeIDs = append(nodeIDs, id)
+			}
 		}
 	}
 
@@ -74,13 +77,13 @@ func initLOACache() {
 	db.SetMaxOpenConns(2)
 	db.SetConnMaxIdleTime(30 * time.Second)
 
-	utils.GlobalLOACache.Refresh(db, nodeID)
+	utils.GlobalLOACache.Refresh(db, nodeIDs)
 
 	go func() {
 		ticker := time.NewTicker(15 * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			utils.GlobalLOACache.Refresh(db, nodeID)
+			utils.GlobalLOACache.Refresh(db, nodeIDs)
 		}
 	}()
 }
