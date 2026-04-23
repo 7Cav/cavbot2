@@ -19,7 +19,7 @@ import (
 )
 
 
-var Version = "0.6.10"
+var Version = "0.7.0"
 
 
 
