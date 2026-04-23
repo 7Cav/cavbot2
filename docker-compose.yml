@@ -1,6 +1,6 @@
 services:
   cavbot2:
-    image: cavbot2:dev
+    image: cavbot2:latest
     container_name: cavbot2
 #    restart: unless-stopped
     environment:
