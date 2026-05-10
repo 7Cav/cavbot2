@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -113,14 +114,32 @@ func makeAPIRequest[T any](ctx context.Context, path string, identifier string) 
 		Info("API Call Finished", "duration", time.Since(start), "status", response.StatusCode(), "path", strings.Split(path, "/")[0], "identifier", identifier)
 	}
 
+	pathPrefix := strings.Split(path, "/")[0]
+
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch %s: %w", strings.Split(path, "/")[0], err)
+		return nil, fmt.Errorf("failed to fetch %s: %w", pathPrefix, err)
 	}
-	if response != nil && response.StatusCode() == 404 {
-		return nil, fmt.Errorf("no %s found", strings.Split(path, "/")[0])
+	if response == nil {
+		return nil, fmt.Errorf("failed to fetch %s: no response received", pathPrefix)
 	}
 
-	return &result, nil
+	status := response.StatusCode()
+	if status >= 200 && status < 300 {
+		return &result, nil
+	}
+
+	if status == http.StatusNotFound {
+		return nil, fmt.Errorf("no %s found", pathPrefix)
+	}
+
+	const maxBodyLog = 512
+	body := string(response.Body())
+	if len(body) > maxBodyLog {
+		body = body[:maxBodyLog] + "...(truncated)"
+	}
+	Warn("API non-2xx response", "status", status, "path", pathPrefix, "identifier", identifier, "body", body)
+
+	return nil, fmt.Errorf("%s API returned %d %s", pathPrefix, status, http.StatusText(status))
 }
 
 func GetMilpacByUsername(ctx context.Context, username string) (*ProfileResponse, error) {
