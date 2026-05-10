@@ -2,3 +2,5 @@
 
 .env
 WARP.md
+CLAUDE.md
+.claude/
