@@ -23,6 +23,8 @@ jobs:
         with:
           context: .
           push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
           tags: |
             7cav/cavbot2:${{ github.ref_name }}
             7cav/cavbot2:latest
