@@ -563,7 +563,7 @@ func buildAddedMembersEmbed(members []*discordgo.Member) *discordgo.MessageEmbed
     for _, m := range members {
         line := fmt.Sprintf("<@%s>\n", m.User.ID)
         if sb.Len()+len(line) > maxDescLen {
-            sb.WriteString(fmt.Sprintf("... and %d more.", len(members)-strings.Count(sb.String(), "\n")))
+            _, _ = fmt.Fprintf(&sb, "... and %d more.", len(members)-strings.Count(sb.String(), "\n"))
             break
         }
         sb.WriteString(line)
