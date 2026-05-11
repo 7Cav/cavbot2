@@ -125,11 +125,11 @@ func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			if u.ThreadID != 0 {
 				threadTag = fmt.Sprintf(" [[Thread]](https://7cav.us/threads/%d/)", u.ThreadID)
 			}
-			desc.WriteString(fmt.Sprintf("[%s](%s) — %s → %s%s\n",
+			_, _ = fmt.Fprintf(&desc, "[%s](%s) — %s → %s%s\n",
 				u.Username, u.MilpacUrl,
 				u.StartDate.Format("Jan 2, 2006"),
 				u.EndDate.Format("Jan 2, 2006"),
-				threadTag))
+				threadTag)
 		}
 	}
 	if len(upcomingLOAs) > 0 {
@@ -142,11 +142,11 @@ func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			if u.ThreadID != 0 {
 				threadTag = fmt.Sprintf(" [[Thread]](https://7cav.us/threads/%d/)", u.ThreadID)
 			}
-			desc.WriteString(fmt.Sprintf("[%s](%s) — %s → %s%s\n",
+			_, _ = fmt.Fprintf(&desc, "[%s](%s) — %s → %s%s\n",
 				u.Username, u.MilpacUrl,
 				u.StartDate.Format("Jan 2, 2006"),
 				u.EndDate.Format("Jan 2, 2006"),
-				threadTag))
+				threadTag)
 		}
 	}
 

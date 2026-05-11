@@ -10,19 +10,21 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v2
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build and Push Docker Image
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
           tags: |
             7cav/cavbot2:${{ github.ref_name }}
             7cav/cavbot2:latest

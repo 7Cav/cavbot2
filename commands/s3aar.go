@@ -161,7 +161,7 @@ func fetchBattleMetricsSessions(serverID string, start, stop time.Time, minAtten
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("BattleMetrics API error: %s", resp.Status)

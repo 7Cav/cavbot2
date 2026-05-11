@@ -201,20 +201,20 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 func sendAwolFile(s *discordgo.Session, i *discordgo.InteractionCreate, awolUsers []AwolUser, position string, forceFile bool) {
 	var content strings.Builder
-	content.WriteString(fmt.Sprintf("AWOL Report for %s\nGenerated: %s\n\n",
+	_, _ = fmt.Fprintf(&content, "AWOL Report for %s\nGenerated: %s\n\n",
 		position,
-		time.Now().Format("2006-01-02 15:04:05")))
+		time.Now().Format("2006-01-02 15:04:05"))
 
 	for _, user := range awolUsers {
 		loaTag := ""
 		if user.OnLOA {
 			loaTag = " [LOA]"
 		}
-		content.WriteString(fmt.Sprintf("%s%s - %s\nMilpac: %s\n\n",
+		_, _ = fmt.Fprintf(&content, "%s%s - %s\nMilpac: %s\n\n",
 			user.Username,
 			loaTag,
 			user.TimeSinceLastPost,
-			user.MilpacUrl))
+			user.MilpacUrl)
 	}
 
 	file := &discordgo.File{

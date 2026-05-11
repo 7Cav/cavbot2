@@ -115,7 +115,7 @@ func (c *LOACache) Refresh(db *sql.DB, nodeIDs []int) {
 			}
 			nodeParsed++
 		}
-		rows.Close()
+		_ = rows.Close()
 
 		Info("LOA node refreshed", "node_id", nodeID, "new_parsed", nodeParsed)
 		totalParsed += nodeParsed
