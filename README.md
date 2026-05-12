@@ -18,13 +18,19 @@ TODO: Add setup steps and list out functionality
 
 ## Testing
 
-Run the suite:
+Run the tests:
 
 ```bash
 go test ./...
 ```
 
-CI enforces per-package coverage floors via `.github/scripts/check-coverage-floors.sh`. When a PR meaningfully raises a package's coverage, raise its floor in the same PR — that's how the suite ratchets up without the team having to think about it.
+Run tests with the coverage floor check (matches CI):
+
+```bash
+go test ./... -cover | .github/scripts/check-coverage-floors.sh
+```
+
+CI enforces per-package coverage floors via `.github/scripts/check-coverage-floors.sh`. When a PR raises a package's coverage by more than a point or two, raise its floor in the same PR — that's how the suite ratchets up without the team having to think about it.
 
 ## Contributing
 
