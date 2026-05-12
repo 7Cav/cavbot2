@@ -314,7 +314,7 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	})
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("Failed to defer interaction: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to defer interaction: %v", err))
 		return
 	}
 
@@ -335,7 +335,7 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			Content: fmt.Sprintf("Invalid start date/time: %v", err),
 		})
 		if sendErr != nil {
-			utils.HandleError(s, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to send error message: %v", sendErr))
 		}
 		return
 	}
@@ -346,7 +346,7 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			Content: fmt.Sprintf("Invalid end date/time: %v", err),
 		})
 		if sendErr != nil {
-			utils.HandleError(s, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to send error message: %v", sendErr))
 		}
 		return
 	}
@@ -357,7 +357,7 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			Content: fmt.Sprintf("Invalid server selection: %v", err),
 		})
 		if sendErr != nil {
-			utils.HandleError(s, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to send error message: %v", sendErr))
 		}
 		return
 	}
@@ -368,7 +368,7 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			Content: fmt.Sprintf("Failed to fetch BattleMetrics data: %v", err),
 		})
 		if sendErr != nil {
-			utils.HandleError(s, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to send error message: %v", sendErr))
 		}
 		return
 	}
@@ -395,7 +395,7 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		Embeds: []*discordgo.MessageEmbed{embed1},
 	})
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("Failed to send embeds: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to send embeds: %v", err))
 		return
 	}
 
@@ -425,7 +425,7 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		},
 	})
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("Failed to send AAR roster file: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to send AAR roster file: %v", err))
 	}
 
 	if debug == "Yes" {
@@ -435,7 +435,7 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				Content: fmt.Sprintf("Failed to format session data: %v", err),
 			})
 			if sendErr != nil {
-				utils.HandleError(s, i, fmt.Sprintf("❌ Failed to send error message: %v", sendErr))
+				utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to send error message: %v", sendErr))
 			}
 			return
 		}
@@ -450,7 +450,7 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			},
 		})
 		if err != nil {
-			utils.HandleError(s, i, fmt.Sprintf("Failed to send JSON file: %v", err))
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to send JSON file: %v", err))
 		}
 	}
 }

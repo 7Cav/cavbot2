@@ -38,19 +38,19 @@ func handleGamertagSearchCommand(s *discordgo.Session, i *discordgo.InteractionC
 		},
 	})
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 		return
 	}
 	utils.Info("Gamertag search requested", "command", "GamertagSearch", "gamertag", gamertag, "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 	user, err := utils.GetUserByGamertag(ctx, gamertag)
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to fetch user: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch user: %v", err))
 		return
 	}
 	utils.Info("User found", "command", "GamertagSearch", "gamertag", gamertag, "username", user.User.Username, "discord_id", user.DiscordID)
 	matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(user.UniformUrl)
 	if len(matches) < 2 {
-		utils.HandleError(s, i, "❌ Failed to parse uniform URL")
+		utils.HandleError(utils.NewSessionResponder(s), i, "❌ Failed to parse uniform URL")
 		return
 	}
 	id := matches[1]
@@ -62,7 +62,7 @@ func handleGamertagSearchCommand(s *discordgo.Session, i *discordgo.InteractionC
 	})
 
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		return
 	}
 	utils.Info("✨ Done!", "command", "GamertagSearch")

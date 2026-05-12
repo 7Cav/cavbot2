@@ -70,18 +70,18 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		forceFile = i.ApplicationCommandData().Options[1].BoolValue()
 	}
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 		return
 	}
 
 	position := i.ApplicationCommandData().Options[0].StringValue()
 	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, position)
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to fetch roster: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch roster: %v", err))
 		return
 	}
 	if len(roster.LiteProfiles) == 0 {
-		utils.HandleError(s, i, fmt.Sprintf("❌ The search for \"%s\" returned no troopers. Please check your search for accuracy.", position))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ The search for \"%s\" returned no troopers. Please check your search for accuracy.", position))
 		return
 	}
 
@@ -92,13 +92,13 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		}
 		lastPostDate, err := time.Parse("2006-01-02 15:04:05", member.LastForumPostDate)
 		if err != nil {
-			utils.HandleError(s, i, fmt.Sprintf("❌ Failed to parse last forum post date: %v", err))
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to parse last forum post date: %v", err))
 			return
 		}
 		if lastPostDate.Before(time.Now().AddDate(0, 0, -awolThresholdDays)) {
 			matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(member.UniformUrl)
 			if len(matches) < 2 {
-				utils.HandleError(s, i, "❌ Failed to parse uniform URL")
+				utils.HandleError(utils.NewSessionResponder(s), i, "❌ Failed to parse uniform URL")
 				return
 			}
 			awolUsers = append(awolUsers, AwolUser{
@@ -121,7 +121,7 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			Content: &response,
 		})
 		if err != nil {
-			utils.HandleError(s, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		}
 		return
 	}
@@ -192,7 +192,7 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		Embeds:  &embeds,
 	})
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		return
 	}
 
@@ -228,7 +228,7 @@ func sendAwolFile(s *discordgo.Session, i *discordgo.InteractionCreate, awolUser
 			Files:   []*discordgo.File{file},
 		})
 		if err != nil {
-			utils.HandleError(s, i, fmt.Sprintf("❌ Failed to send file: %v", err))
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to send file: %v", err))
 			return
 		}
 	} else {
@@ -237,7 +237,7 @@ func sendAwolFile(s *discordgo.Session, i *discordgo.InteractionCreate, awolUser
 			Files:   []*discordgo.File{file},
 		})
 		if err != nil {
-			utils.HandleError(s, i, fmt.Sprintf("❌ Failed to send file: %v", err))
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to send file: %v", err))
 			return
 		}
 	}

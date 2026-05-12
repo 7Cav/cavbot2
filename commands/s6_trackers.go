@@ -39,7 +39,7 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 		},
 	})
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 		return
 	}
 
@@ -48,7 +48,7 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 
 	s6Members, err := utils.GetRosterByFuzzyPositionSearch(ctx, "S6")
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to fetch S6 Members: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch S6 Members: %v", err))
 		return
 	}
 
@@ -58,19 +58,19 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 	for _, member := range s6Members.LiteProfiles {
 		fullProfile, err := utils.GetMilpacByKeycloakID(ctx, member.KeycloakID)
 		if err != nil {
-			utils.HandleError(s, i, fmt.Sprintf("❌ Failed to fetch milpac: %v", err))
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch milpac: %v", err))
 			return
 		}
 
 		checkPosition := func(positionTitle string) bool {
 			position, timeInPosition, positionDate, err := determineITPositionTime(positionTitle, fullProfile)
 			if err != nil {
-				utils.HandleError(s, i, fmt.Sprintf("❌ Failed to determine time in position: %v", err))
+				utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to determine time in position: %v", err))
 				return false
 			}
 			matches = regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(member.UniformUrl)
 			if len(matches) < 2 {
-				utils.HandleError(s, i, "❌ Failed to parse uniform URL")
+				utils.HandleError(utils.NewSessionResponder(s), i, "❌ Failed to parse uniform URL")
 				return false
 			}
 			milpacUrl := fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1])
@@ -126,7 +126,7 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 		Content: &response,
 	})
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		return
 	}
 	utils.Info("✨ Done!", "command", "S6ITCheck")
