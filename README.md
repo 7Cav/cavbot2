@@ -16,6 +16,16 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 Under Construction due to rewrite of bot
 TODO: Add setup steps and list out functionality
 
+## Testing
+
+Run the suite:
+
+```bash
+go test ./...
+```
+
+CI enforces per-package coverage floors via `.github/scripts/check-coverage-floors.sh`. When a PR meaningfully raises a package's coverage, raise its floor in the same PR — that's how the suite ratchets up without the team having to think about it.
+
 ## Contributing
 
 Contributions are welcome through issues and pull requests on our GitHub repository.
