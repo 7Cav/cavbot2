@@ -19,7 +19,5 @@ func TestMain(m *testing.M) {
 // the duration of the test, then restores the production URL on cleanup.
 func withTestAPIServer(t *testing.T, srv *httptest.Server) {
 	t.Helper()
-	prev := apiBaseURL
-	apiBaseURL = srv.URL
-	t.Cleanup(func() { apiBaseURL = prev })
+	t.Cleanup(SetAPIBaseURLForTest(srv.URL))
 }
