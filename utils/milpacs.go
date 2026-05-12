@@ -99,6 +99,8 @@ var rosterMap = map[string]string{
 	"ROSTER_TYPE_PAST_MEMBERS":  "Past Members",
 }
 
+var apiBaseURL = "https://api.7cav.us/api/v1"
+
 func makeAPIRequest[T any](ctx context.Context, path string, identifier string) (*T, error) {
 	start := time.Now()
 	client := resty.New()
@@ -108,7 +110,7 @@ func makeAPIRequest[T any](ctx context.Context, path string, identifier string) 
 		SetContext(ctx).
 		SetAuthToken(os.Getenv("BEARER")).
 		SetResult(&result).
-		Get(fmt.Sprintf("https://api.7cav.us/api/v1/%s", path))
+		Get(fmt.Sprintf("%s/%s", apiBaseURL, path))
 
 	if response != nil {
 		Info("API Call Finished", "duration", time.Since(start), "status", response.StatusCode(), "path", strings.Split(path, "/")[0], "identifier", identifier)
