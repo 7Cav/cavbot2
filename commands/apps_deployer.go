@@ -41,11 +41,11 @@ func handleInitialCommand(s *discordgo.Session, i *discordgo.InteractionCreate) 
 	utils.Info("Initial command handler called", "command", "Milpac")
 	branch := i.ApplicationCommandData().Options[0].StringValue()
 	if err := utils.HandleValidateBranchName(branch); err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Invalid branch name: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Invalid branch name: %v", err))
 		return
 	}
 	if len(fmt.Sprintf("apps_beta_deploy::confirm::%s", branch)) > 100 {
-		utils.HandleError(s, i, "❌ branch name exceeds Discord's limit")
+		utils.HandleError(utils.NewSessionResponder(s), i, "❌ branch name exceeds Discord's limit")
 		return
 	}
 	confirmButton := discordgo.Button{
@@ -75,7 +75,7 @@ func handleInitialCommand(s *discordgo.Session, i *discordgo.InteractionCreate) 
 		},
 	})
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to respond to initial command: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to respond to initial command: %v", err))
 		return
 	}
 }
@@ -85,7 +85,7 @@ func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 	customID := i.MessageComponentData().CustomID
 	parts := strings.Split(customID, "::")
 	if len(parts) != 3 {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Invalid custom ID format: expected 3 parts, got %d parts: %v", len(parts), parts))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Invalid custom ID format: expected 3 parts, got %d parts: %v", len(parts), parts))
 		return
 	}
 	action, branch := parts[1], parts[2]
@@ -99,7 +99,7 @@ func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 			},
 		})
 		if err != nil {
-			utils.HandleError(s, i, fmt.Sprintf("❌ Error responding to cancel interaction: %v", err))
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Error responding to cancel interaction: %v", err))
 			return
 		}
 		return
@@ -112,27 +112,27 @@ func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 		},
 	})
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to update initial message: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to update initial message: %v", err))
 		return
 	}
 	encodedPrivateKey := os.Getenv("GITHUB_APP_KEY")
 	if encodedPrivateKey == "" {
-		utils.HandleError(s, i, "❌ GitHub App key not configured")
+		utils.HandleError(utils.NewSessionResponder(s), i, "❌ GitHub App key not configured")
 		return
 	}
 	privateKeyPEM, err := base64.StdEncoding.DecodeString(encodedPrivateKey)
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to decode private key: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to decode private key: %v", err))
 		return
 	}
 	clientID := os.Getenv("GITHUB_APP_CLIENT_ID")
 	if clientID == "" {
-		utils.HandleError(s, i, "❌ GitHub App client ID not configured")
+		utils.HandleError(utils.NewSessionResponder(s), i, "❌ GitHub App client ID not configured")
 		return
 	}
 	token, err := utils.GithubAuth(clientID, privateKeyPEM)
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to authenticate with GitHub: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to authenticate with GitHub: %v", err))
 		return
 	}
 	owner := "7cav"
@@ -141,13 +141,13 @@ func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 	ref := "main"
 	err = utils.CheckGithubBranchExists(branch, token, owner, repo)
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Branch does not exist: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Branch does not exist: %v", err))
 		return
 	}
 	err = utils.TriggerGithubDeployment(branch, token, owner, repo, workflow, ref)
 	var response string
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to trigger Apps Beta deployment: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to trigger Apps Beta deployment: %v", err))
 		return
 	} else {
 		utils.Info("Deployment triggered successfully", "command", "AppsBetaDeploy")
@@ -158,7 +158,7 @@ func handleComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 		Content: response,
 	})
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Error sending interaction response: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Error sending interaction response: %v", err))
 		return
 	}
 	utils.Info("✨ Done!", "command", "AppsBetaDeploy")

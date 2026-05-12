@@ -50,7 +50,7 @@ func handleMilpacCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		},
 	})
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 		return
 	}
 
@@ -72,12 +72,12 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 
 	milpac, err := utils.GetMilpacByDiscordID(ctx, user.ID)
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to fetch milpac: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch milpac: %v", err))
 		return
 	}
 	joinDate, err := time.Parse("2006-01-02", milpac.JoinDate)
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to parse join date: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to parse join date: %v", err))
 		return
 	}
 	formatJoinDate := joinDate.Format("02Jan2006")
@@ -87,7 +87,7 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		var err error
 		promotionDate, err = time.Parse("2006-01-02", milpac.PromotionDate)
 		if err != nil || promotionDate.IsZero() {
-			utils.HandleError(s, i, fmt.Sprintf("❌ Failed to parse promotion date: %v", err))
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to parse promotion date: %v", err))
 			return
 		}
 	} else {
@@ -106,7 +106,7 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			utils.Debug("📋 Processing record", "type", record.RecordType, "date", record.RecordDate)
 			recordDate, err := time.Parse("2006-01-02", record.RecordDate)
 			if err != nil {
-				utils.HandleError(s, i, fmt.Sprintf("❌ Failed to parse record date: %v", err))
+				utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to parse record date: %v", err))
 				return
 			}
 			if strings.Contains(record.RecordDetails, "Retired") || strings.Contains(record.RecordDetails, "ELOA") ||
@@ -188,7 +188,7 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	}
 	matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(milpac.UniformUrl)
 	if len(matches) < 2 {
-		utils.HandleError(s, i, "❌ Failed to parse uniform URL")
+		utils.HandleError(utils.NewSessionResponder(s), i, "❌ Failed to parse uniform URL")
 		return
 	}
 	id := matches[1]
@@ -213,7 +213,7 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		Embeds:  &[]*discordgo.MessageEmbed{embed},
 	})
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to edit response with embed: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response with embed: %v", err))
 	}
 	utils.Info("✨ Done!", "command", "Milpac")
 }

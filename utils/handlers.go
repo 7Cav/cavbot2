@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"github.com/bwmarrin/discordgo"
 	"log/slog"
@@ -45,11 +46,11 @@ func Debug(msg string, args ...any) {
 	Logger.Debug(msg, args...)
 }
 
-func HandleError(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
+func HandleError(r InteractionResponder, i *discordgo.InteractionCreate, message string) {
 	Info("Error handling interaction", "message", message)
 
 	if i.Type == discordgo.InteractionApplicationCommand {
-		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
 				Content: message,
@@ -57,39 +58,52 @@ func HandleError(s *discordgo.Session, i *discordgo.InteractionCreate, message s
 			},
 		})
 		if err != nil {
-			if strings.Contains(err.Error(), "already been acknowledged") {
+			if isAlreadyAcknowledged(err) {
 				Info("Retrying error response as edit", "error", err)
-				_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 					Content: &message,
-				})
-				if err != nil {
+				}); err != nil {
 					Error("Failed to send error message", "error", err)
 				}
 			} else {
 				Error("Failed to send error message", "error", err)
 			}
 		}
-	} else {
-		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseUpdateMessage,
-			Data: &discordgo.InteractionResponseData{
-				Content: message,
-			},
-		})
-		if err != nil {
-			if strings.Contains(err.Error(), "already been acknowledged") {
-				Info("Retrying error response as edit", "error", err)
-				_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-					Content: &message,
-				})
-				if err != nil {
-					Error("Failed to send error message", "error", err)
-				}
-			} else {
+		return
+	}
+
+	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseUpdateMessage,
+		Data: &discordgo.InteractionResponseData{
+			Content: message,
+		},
+	})
+	if err != nil {
+		if isAlreadyAcknowledged(err) {
+			Info("Retrying error response as edit", "error", err)
+			if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: &message,
+			}); err != nil {
 				Error("Failed to send error message", "error", err)
 			}
+		} else {
+			Error("Failed to send error message", "error", err)
 		}
 	}
+}
+
+// alreadyAcknowledgedCode is Discord's error code for "Interaction has already
+// been acknowledged" (40060). discordgo wraps real API failures as *RESTError;
+// the string-match fallback catches synthetic errors (e.g. in tests) and any
+// future wrapping where the typed error isn't reachable via errors.As.
+const alreadyAcknowledgedCode = 40060
+
+func isAlreadyAcknowledged(err error) bool {
+	var restErr *discordgo.RESTError
+	if errors.As(err, &restErr) && restErr.Message != nil && restErr.Message.Code == alreadyAcknowledgedCode {
+		return true
+	}
+	return strings.Contains(err.Error(), "already been acknowledged")
 }
 func HandleValidateBranchName(branch string) error {
 	validPattern := regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)

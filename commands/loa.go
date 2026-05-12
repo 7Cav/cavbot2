@@ -53,17 +53,17 @@ func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		},
 	})
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 		return
 	}
 
 	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, position)
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to fetch roster: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch roster: %v", err))
 		return
 	}
 	if len(roster.LiteProfiles) == 0 {
-		utils.HandleError(s, i, fmt.Sprintf("❌ The search for \"%s\" returned no troopers. Please check your search for accuracy.", position))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ The search for \"%s\" returned no troopers. Please check your search for accuracy.", position))
 		return
 	}
 
@@ -105,7 +105,7 @@ func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			Content: &response,
 		})
 		if err != nil {
-			utils.HandleError(s, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		}
 		return
 	}
@@ -166,7 +166,7 @@ func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		Embeds:  &embeds,
 	})
 	if err != nil {
-		utils.HandleError(s, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		return
 	}
 

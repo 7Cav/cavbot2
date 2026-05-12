@@ -25,7 +25,7 @@ func Zulu() Command {
 				},
 			})
 			if err != nil {
-				utils.HandleError(s, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+				utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 				return
 			}
 			utils.Info("✨ Done!", "command", "Zulu")

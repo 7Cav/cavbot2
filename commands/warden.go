@@ -68,7 +68,7 @@ func handleWarden(
     subcommand, ok := getOptionString(commandData, "command")
     if !ok || !slices.Contains(wardenSubcommands, subcommand) {
         utils.HandleError(
-            session,
+            utils.NewSessionResponder(session),
             interaction,
             "❌ Invalid warden command; must be "+strings.Join(wardenSubcommands, ", "),
         )
@@ -78,7 +78,7 @@ func handleWarden(
     roleScope, ok := getOptionString(commandData, "flag")
     if !ok || !slices.Contains(wardenRoleScopes, roleScope) {
         utils.HandleError(
-            session,
+            utils.NewSessionResponder(session),
             interaction,
             "❌ Missing or invalid flag argument; must be 'internal', 'external', or 'both'",
         )
@@ -87,7 +87,7 @@ func handleWarden(
 
     guildID := interaction.GuildID
     if guildID == "" {
-        utils.HandleError(session, interaction, "❌ This command can only be used in a server (guild).")
+        utils.HandleError(utils.NewSessionResponder(session), interaction, "❌ This command can only be used in a server (guild).")
         return
     }
 
@@ -99,7 +99,7 @@ func handleWarden(
     query = strings.TrimSpace(query)
 
     if subcommand != "purge" && query == "" {
-        utils.HandleError(session, interaction, "❌ Missing discordname argument for this command")
+        utils.HandleError(utils.NewSessionResponder(session), interaction, "❌ Missing discordname argument for this command")
         return
     }
 
@@ -115,13 +115,13 @@ func handleWarden(
     case "purge":
         handleWardenPurge(session, interaction, guildID, roleScope)
     default:
-        utils.HandleError(session, interaction, "❌ Unknown subcommand")
+        utils.HandleError(utils.NewSessionResponder(session), interaction, "❌ Unknown subcommand")
     }
 }
 
 func handleWardenAdd(session *discordgo.Session, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
     if err := deferEphemeral(session, interaction); err != nil {
-        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to acknowledge: %v", err))
+        utils.HandleError(utils.NewSessionResponder(session), interaction, fmt.Sprintf("❌ Failed to acknowledge: %v", err))
         return
     }
 
@@ -175,7 +175,7 @@ func handleWardenRemove(
     roleScope string,
 ) {
     if err := deferEphemeral(session, interaction); err != nil {
-        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to acknowledge: %v", err))
+        utils.HandleError(utils.NewSessionResponder(session), interaction, fmt.Sprintf("❌ Failed to acknowledge: %v", err))
         return
     }
 
@@ -212,7 +212,7 @@ func handleWardenBulkAdd(
     roleScope string,
 ) {
     if err := deferEphemeral(session, interaction); err != nil {
-        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to acknowledge bulk add: %v", err))
+        utils.HandleError(utils.NewSessionResponder(session), interaction, fmt.Sprintf("❌ Failed to acknowledge bulk add: %v", err))
         return
     }
 
@@ -266,7 +266,7 @@ func handleWardenPurge(
     roleScope string,
 ) {
     if err := deferEphemeral(session, interaction); err != nil {
-        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to acknowledge purge: %v", err))
+        utils.HandleError(utils.NewSessionResponder(session), interaction, fmt.Sprintf("❌ Failed to acknowledge purge: %v", err))
         return
     }
 
@@ -542,7 +542,7 @@ func editEphemeral(session *discordgo.Session, interaction *discordgo.Interactio
         Content: &content,
     })
     if err != nil {
-        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to edit response: %v", err))
+        utils.HandleError(utils.NewSessionResponder(session), interaction, fmt.Sprintf("❌ Failed to edit response: %v", err))
     }
 }
 
@@ -553,7 +553,7 @@ func editEphemeralWithEmbed(session *discordgo.Session, interaction *discordgo.I
     }
     _, err := session.InteractionResponseEdit(interaction.Interaction, edit)
     if err != nil {
-        utils.HandleError(session, interaction, fmt.Sprintf("❌ Failed to edit response: %v", err))
+        utils.HandleError(utils.NewSessionResponder(session), interaction, fmt.Sprintf("❌ Failed to edit response: %v", err))
     }
 }
 
