@@ -60,7 +60,7 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		},
 	})
 	if err != nil {
-		utils.Error("❌ Interaction response failed", "error", err)
+		utils.CaptureError("❌ Interaction response failed", err)
 		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 		return
 	}
@@ -71,7 +71,7 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	utils.Debug("📊 Fetching roster data", "department", choice)
 	Members, err := utils.GetRosterByFuzzyPositionSearch(ctx, choice)
 	if err != nil {
-		utils.Error("❌ Roster fetch failed", "error", err)
+		utils.CaptureError("❌ Roster fetch failed", err)
 		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch Members: %v", err))
 		return
 	}
@@ -101,7 +101,7 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			utils.Info("🎯 Found eligible member", "username", member.User.Username)
 			fullProfile, err := utils.GetMilpacByKeycloakID(ctx, member.KeycloakID)
 			if err != nil {
-				utils.Error("❌ Milpac fetch failed", "error", err, "username", member.User.Username)
+				utils.CaptureError("❌ Milpac fetch failed", err, "username", member.User.Username)
 				utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch milpac: %v", err))
 				return
 			}
@@ -115,7 +115,7 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					utils.Debug("📋 Processing record", "type", record.RecordType, "date", record.RecordDate)
 					recordDate, err := time.Parse("2006-01-02", record.RecordDate)
 					if err != nil {
-						utils.Error("❌ Record date parse failed", "error", err, "date", record.RecordDate)
+						utils.CaptureError("❌ Record date parse failed", err, "date", record.RecordDate)
 						utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to parse record date: %v", err))
 						return
 					}
@@ -160,7 +160,7 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 						utils.Debug("🎖️ Found AFSM award", "date", award.AwardDate, "details", award.AwardDetails)
 						awardDate, err := time.Parse("2006-01-02", award.AwardDate)
 						if err != nil {
-							utils.Error("❌ Award date parse failed", "error", err, "date", award.AwardDate)
+							utils.CaptureError("❌ Award date parse failed", err, "date", award.AwardDate)
 							utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to parse award date: %v", err))
 							return
 						}
@@ -228,7 +228,7 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		Content: &response,
 	})
 	if err != nil {
-		utils.Error("❌ Response edit failed", "error", err)
+		utils.CaptureError("❌ Response edit failed", err)
 		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		return
 	}
