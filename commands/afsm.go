@@ -77,6 +77,16 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 	utils.Info("📋 Retrieved roster", "member_count", len(Members.LiteProfiles))
 
+	if len(Members.LiteProfiles) == 0 {
+		utils.CaptureError(
+			"AFSM roster lookup returned zero members",
+			fmt.Errorf("empty roster for department %q", choice),
+			"department", choice,
+		)
+		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("⚠️ The %s roster came back empty — this shouldn't happen for a preset department. The issue has been reported.", choice))
+		return
+	}
+
 	eligibleMembers := []AFSMMember{}
 	currentDate := time.Now()
 	utils.Debug("⏰ Current date set", "date", currentDate)
