@@ -14,6 +14,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL}
       FORUM_DB_DSN: ${FORUM_DB_DSN}
       LOA_NODE_IDS: ${LOA_NODE_IDS}
+      SENTRY_DSN: ${SENTRY_DSN}
+      APP_ENV: ${APP_ENV}
     networks:
       - xenforo_internal
 
