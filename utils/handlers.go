@@ -59,7 +59,7 @@ func HandleError(r InteractionResponder, i *discordgo.InteractionCreate, message
 		})
 		if err != nil {
 			if isAlreadyAcknowledged(err) {
-				Info("Retrying error response as edit", "error", err)
+				Debug("Retrying error response as edit", "error", err)
 				if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 					Content: &message,
 				}); err != nil {
@@ -80,7 +80,7 @@ func HandleError(r InteractionResponder, i *discordgo.InteractionCreate, message
 	})
 	if err != nil {
 		if isAlreadyAcknowledged(err) {
-			Info("Retrying error response as edit", "error", err)
+			Debug("Retrying error response as edit", "error", err)
 			if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 				Content: &message,
 			}); err != nil {
