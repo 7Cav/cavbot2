@@ -1,8 +1,6 @@
 module github.com/7cav/cavbot2
 
-go 1.24.0
-
-toolchain go1.24.3
+go 1.25.0
 
 require (
 	github.com/bwmarrin/discordgo v0.28.1
@@ -11,7 +9,10 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 )
 
-require filippo.io/edwards25519 v1.1.1 // indirect
+require (
+	filippo.io/edwards25519 v1.1.1 // indirect
+	github.com/getsentry/sentry-go v0.46.2 // indirect
+)
 
 require (
 	github.com/gorilla/websocket v1.5.3 // indirect
