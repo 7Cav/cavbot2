@@ -103,20 +103,17 @@ func TestCaptureError_SendsEvent(t *testing.T) {
 	if extras["query_id"] != 42 {
 		t.Errorf("extra[query_id] = %v, want 42", extras["query_id"])
 	}
-
 }
 
-func TestCaptureError_SentryDisabled_NoEvents(t *testing.T) {
+func TestCaptureError_SentryDisabled_NoPanic(t *testing.T) {
 	t.Setenv("SENTRY_DSN", "")
 	resetSentryHub(t)
 
-	tr := &mockTransport{}
-	// Do NOT init sentry — hub has no client.
-
+	// No sentry client bound — CaptureError must not panic.
 	CaptureError("safe error", errors.New("noop"))
 
-	if len(tr.Events()) != 0 {
-		t.Errorf("expected 0 events, got %d", len(tr.Events()))
+	if sentry.CurrentHub().Client() != nil {
+		t.Fatal("expected no Sentry client when DSN is empty")
 	}
 }
 
@@ -153,5 +150,22 @@ func TestRecoverPanic_NoPanic_NoEvent(t *testing.T) {
 
 	if len(tr.Events()) != 0 {
 		t.Errorf("expected 0 events, got %d", len(tr.Events()))
+	}
+}
+
+func TestRecoverPanic_TagsContextOnEvent(t *testing.T) {
+	tr := initSentryWithTransport(t)
+
+	func() {
+		defer RecoverPanic("test-goroutine")
+		panic("tag-test")
+	}()
+
+	events := tr.Events()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Tags["context"] != "test-goroutine" {
+		t.Errorf("tag context = %q, want %q", events[0].Tags["context"], "test-goroutine")
 	}
 }

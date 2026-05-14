@@ -9,6 +9,7 @@ import (
 	"github.com/getsentry/sentry-go"
 )
 
+// InitSentry configures the Sentry client; an empty SENTRY_DSN is a valid no-op (zero events, zero overhead).
 func InitSentry(release string) func() {
 	dsn := os.Getenv("SENTRY_DSN")
 	if dsn == "" {
@@ -68,6 +69,9 @@ func RecoverPanic(ctx string) {
 		return
 	}
 
-	sentry.CurrentHub().RecoverWithContext(context.TODO(), r)
+	sentry.WithScope(func(scope *sentry.Scope) {
+		scope.SetTag("context", ctx)
+		sentry.CurrentHub().RecoverWithContext(context.Background(), r)
+	})
 	sentry.Flush(2 * time.Second)
 }
