@@ -67,6 +67,7 @@ func handleMilpacCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, user *discordgo.User) {
+	defer utils.RecoverPanic("milpac-bg")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

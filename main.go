@@ -80,6 +80,7 @@ func initLOACache() {
 	utils.GlobalLOACache.Refresh(db, nodeIDs)
 
 	go func() {
+		defer utils.RecoverPanic("loa-refresh")
 		ticker := time.NewTicker(15 * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
@@ -89,6 +90,8 @@ func initLOACache() {
 }
 
 func main() {
+	defer utils.InitSentry(Version)()
+
 	utils.Info("CavBot2 starting", "version", Version)
 	initLOACache()
 	dg, err := discordgo.New("Bot " + Token)
@@ -99,6 +102,7 @@ func main() {
 	registry := commands.NewRegistry()
 
 	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		defer utils.RecoverPanic("interaction-handler")
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			if h, ok := registry.GetHandler(i.ApplicationCommandData().Name); ok {

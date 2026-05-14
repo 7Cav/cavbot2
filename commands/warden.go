@@ -140,7 +140,7 @@ func handleWardenAdd(session *discordgo.Session, interaction *discordgo.Interact
     for index, roleID := range roleIDs {
         roleName := roleNames[index]
         if err := session.GuildMemberRoleAdd(guildID, member.User.ID, roleID); err != nil {
-            utils.Error("Failed to add warden role", "user", member.User.ID, "role", roleName, "error", err)
+            utils.CaptureError("Failed to add warden role", err, "user", member.User.ID, "role", roleName)
             editEphemeral(
                 session,
                 interaction,
@@ -194,7 +194,7 @@ func handleWardenRemove(
     for index, roleID := range roleIDs {
         roleName := roleNames[index]
         if err := session.GuildMemberRoleRemove(guildID, member.User.ID, roleID); err != nil {
-            utils.Error("Failed to remove warden role", "user", member.User.ID, "role", roleName, "error", err)
+            utils.CaptureError("Failed to remove warden role", err, "user", member.User.ID, "role", roleName)
             editEphemeral(session, interaction, fmt.Sprintf("❌ Failed to remove '%s' role from %s: %v", roleName, formatUser(member), err))
             return
         }
@@ -241,7 +241,7 @@ func handleWardenBulkAdd(
         for index, roleID := range roleIDs {
             roleName := roleNames[index]
             if err := session.GuildMemberRoleAdd(guildID, member.User.ID, roleID); err != nil {
-                utils.Error("Failed to add warden role in bulk", "user", member.User.ID, "role", roleName, "error", err)
+                utils.CaptureError("Failed to add warden role in bulk", err, "user", member.User.ID, "role", roleName)
                 failures = append(failures, fmt.Sprintf("❌ Failed to add '%s' role to %s: %v", roleName, formatUser(member), err))
                 allOK = false
             }
@@ -271,6 +271,7 @@ func handleWardenPurge(
     }
 
     go func() {
+    defer utils.RecoverPanic("warden-purge")
     roleIDsToRecreate, roleNamesToRecreate, err := resolveWardenRoleIDs(session, guildID, roleScope)
         if err != nil {
             editEphemeral(session, interaction, err.Error())
@@ -301,12 +302,12 @@ func handleWardenPurge(
             )
 
             if recreateErr != nil {
-                utils.Error(
+                utils.CaptureError(
                     "Warden purge role recreation failed",
+                    recreateErr,
                     "guild", guildID,
                     "roleName", roleName,
                     "roleID", roleIDToRecreate,
-                    "error", recreateErr,
                 )
 
                 summaryLines = append(summaryLines, fmt.Sprintf("❌ Failed to recreate '%s': %v", roleName, recreateErr))
@@ -616,7 +617,7 @@ func findGuildMember(session *discordgo.Session, guildID, query string) (*discor
     // Name search
     members, err := session.GuildMembersSearch(guildID, trimmedQuery, 10)
     if err != nil {
-        utils.Error("Failed to search members", "error", err)
+        utils.CaptureError("Failed to search members", err)
         return nil, fmt.Errorf("❌ Failed to search members: %v", err)
     }
 
