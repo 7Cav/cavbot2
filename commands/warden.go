@@ -271,6 +271,7 @@ func handleWardenPurge(
     }
 
     go func() {
+    defer utils.RecoverPanic("warden-purge")
     roleIDsToRecreate, roleNamesToRecreate, err := resolveWardenRoleIDs(session, guildID, roleScope)
         if err != nil {
             editEphemeral(session, interaction, err.Error())
