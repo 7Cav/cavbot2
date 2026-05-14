@@ -52,6 +52,15 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 		return
 	}
 
+	if len(s6Members.LiteProfiles) == 0 {
+		utils.CaptureError(
+			"S6 IT roster lookup returned zero members",
+			fmt.Errorf("empty roster for S6 fuzzy search"),
+		)
+		utils.HandleError(utils.NewSessionResponder(s), i, "⚠️ The S6 roster came back empty — this shouldn't happen. The issue has been reported.")
+		return
+	}
+
 	eligibleMembers := []ITMember{}
 	currentDate := time.Now()
 	var matches []string
