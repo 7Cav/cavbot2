@@ -29,16 +29,20 @@ func S6ITCheck() Command {
 }
 
 func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	runS6ITCheck(utils.NewSessionResponder(s), i)
+}
+
+func runS6ITCheck(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	utils.Info("🚀 Starting S6 IT Check", "command", "S6ITCheck", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: "Fetching S6 IT Check data...",
 		},
 	})
 	if err != nil {
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 		return
 	}
 
@@ -50,7 +54,7 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 
 	s6Members, err := utils.GetRosterByFuzzyPositionSearch(ctx, "S6")
 	if err != nil {
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch S6 Members: %v", err))
+		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to fetch S6 Members: %v", err))
 		return
 	}
 
@@ -59,7 +63,7 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 			"S6 IT roster lookup returned zero members",
 			fmt.Errorf("empty roster for S6 fuzzy search"),
 		)
-		utils.HandleError(utils.NewSessionResponder(s), i, "⚠️ The S6 roster came back empty — this shouldn't happen. The issue has been reported.")
+		utils.HandleError(r, i, "⚠️ The S6 roster came back empty — this shouldn't happen. The issue has been reported.")
 		return
 	}
 
@@ -105,11 +109,10 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 		utils.Info("⚠️ Members skipped during S6 IT evaluation", "count", skippedCount)
 	}
 
-	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+	if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &response,
-	})
-	if err != nil {
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+	}); err != nil {
+		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		return
 	}
 	utils.Info("✨ Done!", "command", "S6ITCheck")
