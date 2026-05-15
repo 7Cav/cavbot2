@@ -119,12 +119,17 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		AFSMUserOutput = append(AFSMUserOutput, fmt.Sprintf("[%s](<%s>) (%s)", user.Username, user.MilpacUrl, user.TimeSince))
 	}
 
+	// Disclaimer always renders. The command parses user-entered milpac data, so
+	// formatting drift on the roster side can silently skew results — the user
+	// needs the warning regardless of whether the eligibles list is empty.
+	const disclaimer = "⚠️ This command cannot be made completely accurate. Please check the output carefully."
+
 	var response string
 	if len(AFSMUserOutput) > 0 {
-		response = fmt.Sprintf("⚠️ This command cannot be made completely accurate. Please check the output carefully.\nThe following %s members are eligible for AFSM:\n%s", choice, strings.Join(AFSMUserOutput, "\n"))
+		response = fmt.Sprintf("%s\nThe following %s members are eligible for AFSM:\n%s", disclaimer, choice, strings.Join(AFSMUserOutput, "\n"))
 		utils.Info("✅ Found eligible members", "department", choice, "count", len(AFSMUserOutput))
 	} else {
-		response = fmt.Sprintf("No %s members found eligible for AFSM", choice)
+		response = fmt.Sprintf("%s\nNo %s members found eligible for AFSM", disclaimer, choice)
 		utils.Info("📭 No eligible members found", "department", choice)
 	}
 

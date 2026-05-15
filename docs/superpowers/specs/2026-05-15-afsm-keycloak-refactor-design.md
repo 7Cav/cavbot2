@@ -110,7 +110,7 @@ Single string, no per-member breakdown. Full detail (username, department, under
 
 Footer wording is identical for both commands. Pluralize correctly: `1 member skipped` vs `N members skipped` via a `skippedCount == 1` branch on the noun — cheap one-liner, avoids grating output in the common 1-skip case.
 
-The footer is **appended** to the existing response. For `/afsm`, that means the leading disclaimer (`⚠️ This command cannot be made completely accurate. Please check the output carefully.`) at `commands/afsm.go:230` is preserved verbatim and continues to present to the user. The skipped-count line lands at the end of the response, after the eligibles list.
+The footer is **appended** to the existing response. For `/afsm`, the leading disclaimer (`⚠️ This command cannot be made completely accurate. Please check the output carefully.`) is preserved verbatim — and additionally **promoted to always-render**: previously the disclaimer was gated on `len(AFSMUserOutput) > 0`, so it only rendered when at least one member was eligible. The accuracy concern is global (the command parses user-entered milpac data; roster-side formatting drift can silently skew results regardless of whether any members pass the eligibility ladder), so the disclaimer now prefixes both the eligibles-found and no-eligibles-found branches. The skipped-count line lands at the very end of the response, after the eligibles list (or after the "no members eligible" message).
 
 ### Sentry & logging
 
