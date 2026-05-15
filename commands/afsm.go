@@ -64,7 +64,10 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// 5min accommodates the current serial-fetch shape (~1.4s per eligible member,
+	// rosters of 50+); well under Discord's 15min interaction-token cliff.
+	// Parallelizing the per-member fetches would let this drop back to 60s — see #86.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	utils.Debug("📊 Fetching roster data", "department", choice)
