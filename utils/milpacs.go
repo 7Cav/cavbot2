@@ -24,7 +24,6 @@ type ProfileResponse struct {
 	Awards            []Award    `json:"awards"`
 	JoinDate          string     `json:"joinDate"`
 	PromotionDate     string     `json:"promotionDate"`
-	KeycloakID        string     `json:"keycloakId"`
 	DiscordID         string     `json:"discordId"`
 	LastForumPostDate string     `json:"lastForumPostDate"`
 }
@@ -44,7 +43,6 @@ type LiteProfileResponse struct {
 	Secondary         []Position `json:"secondaries"`
 	JoinDate          string     `json:"joinDate"`
 	PromotionDate     string     `json:"promotionDate"`
-	KeycloakID        string     `json:"keycloakId"`
 	DiscordID         string     `json:"discordId"`
 	AwardDate         string     `json:"awardDate"`
 	RecordDate        string     `json:"recordDate"`
@@ -160,12 +158,6 @@ func GetRosterByFuzzyPositionSearch(ctx context.Context, position string) (*Lite
 	return makeAPIRequest[LiteRosterResponse](ctx,
 		fmt.Sprintf("milpacs/position/search/%s", position),
 		position)
-}
-
-func GetMilpacByKeycloakID(ctx context.Context, keycloakID string) (*ProfileResponse, error) {
-	return makeAPIRequest[ProfileResponse](ctx,
-		fmt.Sprintf("milpac/keycloak/%s", keycloakID),
-		keycloakID)
 }
 
 func GetUserByGamertag(ctx context.Context, gamertag string) (*ProfileResponse, error) {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -43,7 +42,10 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// 5min accommodates the current serial-fetch shape; well under Discord's
+	// 15min interaction-token cliff. Parallelizing the per-member fetches would
+	// let this drop back to 60s — see #86.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	s6Members, err := utils.GetRosterByFuzzyPositionSearch(ctx, "S6")
@@ -61,62 +63,23 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 		return
 	}
 
-	eligibleMembers := []ITMember{}
 	currentDate := time.Now()
-	var matches []string
+	eligibleMembers := []ITMember{}
+	skippedCount := 0
 	for _, member := range s6Members.LiteProfiles {
-		fullProfile, err := utils.GetMilpacByKeycloakID(ctx, member.KeycloakID)
+		rows, err := evaluateS6Member(ctx, member, currentDate)
 		if err != nil {
-			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch milpac: %v", err))
-			return
+			utils.CaptureError(
+				"S6 IT member evaluation failed",
+				err,
+				"username", member.User.Username,
+			)
+			skippedCount++
+			continue
 		}
-
-		checkPosition := func(positionTitle string) bool {
-			position, timeInPosition, positionDate, err := determineITPositionTime(positionTitle, fullProfile)
-			if err != nil {
-				utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to determine time in position: %v", err))
-				return false
-			}
-			matches = regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(member.UniformUrl)
-			if len(matches) < 2 {
-				utils.HandleError(utils.NewSessionResponder(s), i, "❌ Failed to parse uniform URL")
-				return false
-			}
-			milpacUrl := fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1])
-			if positionDate.IsZero() {
-				eligibleMembers = append(eligibleMembers, ITMember{
-					Username:     member.User.Username,
-					MilpacUrl:    milpacUrl,
-					Position:     position,
-					TimeSince:    "⚠️ No matching assignment record found",
-					PositionDate: positionDate,
-				})
-			} else if positionDate.Before(currentDate.AddDate(0, -6, 0)) {
-				eligibleMembers = append(eligibleMembers, ITMember{
-					Username:     member.User.Username,
-					MilpacUrl:    milpacUrl,
-					Position:     position,
-					TimeSince:    timeInPosition,
-					PositionDate: positionDate,
-				})
-			}
-			return true
-		}
-
-		if strings.Contains(fullProfile.Primary.PositionTitle, "IT") && strings.Contains(fullProfile.Primary.PositionTitle, "S6") {
-			if !checkPosition(fullProfile.Primary.PositionTitle) {
-				return
-			}
-		}
-
-		for _, secondary := range fullProfile.Secondary {
-			if strings.Contains(secondary.PositionTitle, "IT") && strings.Contains(secondary.PositionTitle, "S6") {
-				if !checkPosition(secondary.PositionTitle) {
-					return
-				}
-			}
-		}
+		eligibleMembers = append(eligibleMembers, rows...)
 	}
+
 	sort.Slice(eligibleMembers, func(i, j int) bool {
 		if eligibleMembers[i].PositionDate.IsZero() {
 			return false
@@ -126,11 +89,22 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 		}
 		return eligibleMembers[i].PositionDate.Before(eligibleMembers[j].PositionDate)
 	})
+
 	ITUserOutput := make([]string, 0)
 	for _, user := range eligibleMembers {
 		ITUserOutput = append(ITUserOutput, fmt.Sprintf("[%s](<%s>) (%s) - %s", user.Username, user.MilpacUrl, user.Position, user.TimeSince))
 	}
 	response := fmt.Sprintf("The following S6 members are eligible for Full Status:\n%s", strings.Join(ITUserOutput, "\n"))
+
+	if skippedCount > 0 {
+		noun := "members"
+		if skippedCount == 1 {
+			noun = "member"
+		}
+		response += fmt.Sprintf("\n⚠️ %d %s skipped due to errors (reported)", skippedCount, noun)
+		utils.Info("⚠️ Members skipped during S6 IT evaluation", "count", skippedCount)
+	}
+
 	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &response,
 	})
@@ -139,6 +113,72 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 		return
 	}
 	utils.Info("✨ Done!", "command", "S6ITCheck")
+}
+
+// evaluateS6Member returns the zero-to-N ITMember rows produced by a single
+// roster entry (each matching IT/S6 position yields its own row, preserving
+// the previous primary-then-secondary behavior). Returns an error if any
+// internal step fails — caller should skip the member and report to Sentry.
+func evaluateS6Member(
+	ctx context.Context,
+	member utils.LiteProfileResponse,
+	currentDate time.Time,
+) ([]ITMember, error) {
+	fullProfile, err := utils.GetMilpacByUsername(ctx, member.User.Username)
+	if err != nil {
+		return nil, fmt.Errorf("milpac fetch failed: %w", err)
+	}
+
+	var rows []ITMember
+
+	appendIfMatch := func(positionTitle string) error {
+		position, timeInPosition, positionDate, err := determineITPositionTime(positionTitle, fullProfile)
+		if err != nil {
+			return fmt.Errorf("position time computation failed for %q: %w", positionTitle, err)
+		}
+		// URL parse stays inside this closure on purpose: a member with no IT/S6
+		// position never reaches this point, so a malformed URL there stays invisible.
+		// Hoisting to the top of evaluateS6Member would widen the skip-and-Sentry surface.
+		milpacID, err := utils.ExtractMilpacIDFromUniformURL(member.UniformUrl)
+		if err != nil {
+			return fmt.Errorf("uniform URL parse failed: %w", err)
+		}
+		milpacUrl := fmt.Sprintf("https://7cav.us/rosters/profile/%s", milpacID)
+		if positionDate.IsZero() {
+			rows = append(rows, ITMember{
+				Username:     member.User.Username,
+				MilpacUrl:    milpacUrl,
+				Position:     position,
+				TimeSince:    "⚠️ No matching assignment record found",
+				PositionDate: positionDate,
+			})
+		} else if positionDate.Before(currentDate.AddDate(0, -6, 0)) {
+			rows = append(rows, ITMember{
+				Username:     member.User.Username,
+				MilpacUrl:    milpacUrl,
+				Position:     position,
+				TimeSince:    timeInPosition,
+				PositionDate: positionDate,
+			})
+		}
+		return nil
+	}
+
+	if strings.Contains(fullProfile.Primary.PositionTitle, "IT") && strings.Contains(fullProfile.Primary.PositionTitle, "S6") {
+		if err := appendIfMatch(fullProfile.Primary.PositionTitle); err != nil {
+			return nil, err
+		}
+	}
+
+	for _, secondary := range fullProfile.Secondary {
+		if strings.Contains(secondary.PositionTitle, "IT") && strings.Contains(secondary.PositionTitle, "S6") {
+			if err := appendIfMatch(secondary.PositionTitle); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return rows, nil
 }
 
 func normalizePositionWords(s string) string {
