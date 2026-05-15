@@ -114,8 +114,8 @@ The footer is **appended** to the existing response. For `/afsm`, that means the
 
 ### Sentry & logging
 
-- The single `CaptureError` at the loop-call site replaces the four (AFSM) / two (S6) per-error-site `CaptureError`/`Error` calls inside the current loop. The helper returns `error` carrying the underlying cause; the loop attaches `username` (+ `department` for AFSM) as structured fields.
-- Sentry will fingerprint by error type + helper call site — distinct from current behavior (which fingerprints by the inner `CaptureError` call line). Acceptable churn: any existing Sentry issues for these handlers will close and reopen under new fingerprints. CAVBOT2-4 itself is already going away with the Keycloak removal.
+- The single `CaptureError` at the loop-call site replaces the four (AFSM) / two (S6) per-error-site `CaptureError`/`Error` calls inside the current loop. The helper returns `error` carrying the underlying cause (wrapped via `fmt.Errorf("...: %w", err)`); the loop attaches `username` (+ `department` for AFSM) as structured fields.
+- This consolidates Sentry fingerprints: all per-member failures inside a given command now group under a single issue (`"AFSM member evaluation failed"` / `"S6 IT member evaluation failed"`) instead of one issue per error site. The underlying error string (milpac fetch / record date parse / award date parse / uniform URL parse) remains visible in the captured exception, so triage is still fine — it just requires opening the issue's events rather than reading the title. Acceptable churn: existing Sentry issues for these handlers will close and reopen under the new fingerprints; CAVBOT2-4 itself is already going away with the Keycloak removal.
 - All `HandleError` calls *inside* the loop are removed — they existed only to communicate the abort to the user, which no longer happens. `HandleError` calls *outside* the loop (initial response, roster fetch failure, empty-roster early return, final response edit) are unchanged.
 
 ### Dead-code removal
