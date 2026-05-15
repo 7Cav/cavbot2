@@ -133,6 +133,9 @@ func evaluateS6Member(
 		if err != nil {
 			return fmt.Errorf("position time computation failed for %q: %w", positionTitle, err)
 		}
+		// URL parse stays inside this closure on purpose: a member with no IT/S6
+		// position never reaches this point, so a malformed URL there stays invisible.
+		// Hoisting to the top of evaluateS6Member would widen the skip-and-Sentry surface.
 		milpacID, err := utils.ExtractMilpacIDFromUniformURL(member.UniformUrl)
 		if err != nil {
 			return fmt.Errorf("uniform URL parse failed: %w", err)
