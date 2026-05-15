@@ -110,6 +110,8 @@ Single string, no per-member breakdown. Full detail (username, department, under
 
 Footer wording is identical for both commands. Pluralize correctly: `1 member skipped` vs `N members skipped` via a `skippedCount == 1` branch on the noun — cheap one-liner, avoids grating output in the common 1-skip case.
 
+The footer is **appended** to the existing response. For `/afsm`, that means the leading disclaimer (`⚠️ This command cannot be made completely accurate. Please check the output carefully.`) at `commands/afsm.go:230` is preserved verbatim and continues to present to the user. The skipped-count line lands at the end of the response, after the eligibles list.
+
 ### Sentry & logging
 
 - The single `CaptureError` at the loop-call site replaces the four (AFSM) / two (S6) per-error-site `CaptureError`/`Error` calls inside the current loop. The helper returns `error` carrying the underlying cause; the loop attaches `username` (+ `department` for AFSM) as structured fields.
