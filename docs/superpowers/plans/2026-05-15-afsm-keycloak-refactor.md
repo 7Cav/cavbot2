@@ -741,10 +741,14 @@ Expected: all PASS, coverage script exits 0. Floors are `utils=20%` / `commands=
 Run: `golangci-lint run --timeout=5m`
 Expected: exit 0, no output.
 
-- [ ] **Step 6: Final grep for `Keycloak`**
+- [ ] **Step 6: Final codebase-wide grep — no `keycloak` mentions remain outside spec/plan docs**
 
-Run: `grep -rn "Keycloak\|keycloak" /home/syniron/repos/cavbot2/ --include="*.go"`
-Expected: no matches. If anything turns up, audit and clean up.
+Run from the repo root: `rg -i keycloak --glob '!docs/superpowers/**'`
+Expected: **zero matches.**
+
+The `docs/superpowers/**` exclusion is intentional — the spec and plan deliberately document what was removed and why; those mentions are historical context, not live code references. Any hit outside that path (Go code, env files, Docker compose, README, CI scripts, anything) is a leftover from Tasks 1-3 that must be cleaned up before the PR opens. If anything fires, stop, audit each hit, fold the fix into the appropriate prior task, and re-run this step.
+
+Baseline before Tasks 1-3 (for reference) was 7 hits across `utils/milpacs.go`, `commands/afsm.go`, `commands/s6_trackers.go` — all targeted for removal in this PR.
 
 - [ ] **Step 7: Push and open PR**
 
