@@ -48,11 +48,15 @@ func AFSM() Command {
 }
 
 func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	runAFSM(utils.NewSessionResponder(s), i)
+}
+
+func runAFSM(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	utils.Info("🎯 AFSM Check requested", "command", "AFSM", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 	choice := i.ApplicationCommandData().Options[0].StringValue()
 	utils.Debug("🔍 Processing department choice", "department", choice)
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: fmt.Sprintf("Fetching AFSM data for %s...", choice),
@@ -60,7 +64,7 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	})
 	if err != nil {
 		utils.CaptureError("❌ Interaction response failed", err)
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 		return
 	}
 
@@ -74,7 +78,7 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	Members, err := utils.GetRosterByFuzzyPositionSearch(ctx, choice)
 	if err != nil {
 		utils.CaptureError("❌ Roster fetch failed", err)
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch Members: %v", err))
+		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to fetch Members: %v", err))
 		return
 	}
 	utils.Info("📋 Retrieved roster", "member_count", len(Members.LiteProfiles))
@@ -85,7 +89,7 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			fmt.Errorf("empty roster for department %q", choice),
 			"department", choice,
 		)
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("⚠️ The %s roster came back empty — this shouldn't happen for a preset department. The issue has been reported.", choice))
+		utils.HandleError(r, i, fmt.Sprintf("⚠️ The %s roster came back empty — this shouldn't happen for a preset department. The issue has been reported.", choice))
 		return
 	}
 
@@ -145,12 +149,11 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		utils.Info("⚠️ Members skipped during AFSM evaluation", "department", choice, "count", skippedCount)
 	}
 
-	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+	if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &response,
-	})
-	if err != nil {
+	}); err != nil {
 		utils.CaptureError("❌ Response edit failed", err)
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		return
 	}
 	utils.Info("✨ Command completed successfully", "command", "AFSM", "department", choice)
