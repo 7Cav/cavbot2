@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -87,130 +86,25 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	eligibleMembers := []AFSMMember{}
 	currentDate := time.Now()
 	utils.Debug("⏰ Current date set", "date", currentDate)
 
+	eligibleMembers := []AFSMMember{}
+	skippedCount := 0
 	for _, member := range Members.LiteProfiles {
-		utils.Debug("👤 Processing member", "username", member.User.Username)
-		eligible := false
-
-		for _, secondary := range member.Secondary {
-			utils.Debug("🔍 Checking secondary position", "position", secondary.PositionTitle, "department", choice)
-			if strings.Contains(secondary.PositionTitle, choice) {
-				eligible = true
-				utils.Debug("✅ Member eligible through secondary", "position", secondary.PositionTitle)
-			}
-			if strings.Contains(member.Primary.PositionTitle, choice) {
-				eligible = false
-				utils.Debug("❌ Member ineligible due to primary position", "position", member.Primary.PositionTitle)
-			}
+		result, err := evaluateAFSMMember(ctx, member, choice, currentDate)
+		if err != nil {
+			utils.CaptureError(
+				"AFSM member evaluation failed",
+				err,
+				"username", member.User.Username,
+				"department", choice,
+			)
+			skippedCount++
+			continue
 		}
-
-		if eligible {
-			utils.Info("🎯 Found eligible member", "username", member.User.Username)
-			fullProfile, err := utils.GetMilpacByKeycloakID(ctx, member.KeycloakID)
-			if err != nil {
-				utils.CaptureError("❌ Milpac fetch failed", err, "username", member.User.Username)
-				utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch milpac: %v", err))
-				return
-			}
-
-			utils.Debug("📝 Checking assignments", "username", member.User.Username)
-			var Assignments []map[string]interface{}
-
-			for _, record := range fullProfile.Records {
-				if record.RecordType == "RECORD_TYPE_ASSIGNMENT" || record.RecordType == "RECORD_TYPE_TRANSFER" ||
-					record.RecordType == "RECORD_TYPE_ELOA" || record.RecordType == "RECORD_TYPE_DISCHARGE" {
-					utils.Debug("📋 Processing record", "type", record.RecordType, "date", record.RecordDate)
-					recordDate, err := time.Parse("2006-01-02", record.RecordDate)
-					if err != nil {
-						utils.CaptureError("❌ Record date parse failed", err, "date", record.RecordDate)
-						utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to parse record date: %v", err))
-						return
-					}
-					if strings.Contains(record.RecordDetails, choice) || strings.Contains(record.RecordDetails, "ELOA") ||
-						strings.Contains(record.RecordDetails, "Discharge") || strings.Contains(record.RecordDetails, "Retired") {
-						event := map[string]interface{}{
-							"record_date":    recordDate,
-							"record_type":    determineRecordType(record.RecordDetails),
-							"record_details": record.RecordDetails,
-						}
-						Assignments = append(Assignments, event)
-						utils.Debug("✍️ Added assignment record", "type", event["record_type"], "date", recordDate)
-					}
-				}
-			}
-
-			sort.Slice(Assignments, func(i, j int) bool {
-				return Assignments[i]["record_date"].(time.Time).Before(Assignments[j]["record_date"].(time.Time))
-			})
-			utils.Debug("📊 Sorted assignments", "count", len(Assignments))
-
-			var startDate time.Time
-			for _, assignment := range Assignments {
-				if assignment["record_type"].(string) == "join" {
-					if startDate.IsZero() {
-						startDate = assignment["record_date"].(time.Time)
-						utils.Debug("📅 Set start date", "date", startDate)
-					}
-				} else {
-					startDate = time.Time{}
-					utils.Debug("🔄 Reset start date due to interruption")
-				}
-			}
-
-			if !startDate.IsZero() && startDate.Before(currentDate.AddDate(-1, 0, 0)) {
-				utils.Debug("✅ Member meets time requirement, checking awards", "username", member.User.Username)
-
-				var latestAward time.Time
-				utils.Debug("🏅 Checking awards", "username", member.User.Username)
-				for _, award := range fullProfile.Awards {
-					if (award.AwardName == "Armed Forces Service Medal") && strings.Contains(award.AwardDetails, choice) {
-						utils.Debug("🎖️ Found AFSM award", "date", award.AwardDate, "details", award.AwardDetails)
-						awardDate, err := time.Parse("2006-01-02", award.AwardDate)
-						if err != nil {
-							utils.CaptureError("❌ Award date parse failed", err, "date", award.AwardDate)
-							utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to parse award date: %v", err))
-							return
-						}
-						if latestAward.IsZero() || awardDate.After(latestAward) {
-							latestAward = awardDate
-							utils.Debug("📅 Updated latest award date", "date", latestAward)
-						}
-					}
-				}
-
-				if latestAward.IsZero() || latestAward.Before(currentDate.AddDate(-1, 0, 0)) {
-					utils.Info("✨ Member eligible", "username", member.User.Username, "start_date", startDate)
-					matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(member.UniformUrl)
-					if len(matches) < 2 {
-						utils.Error("❌ Uniform URL parse failed", "url", member.UniformUrl)
-						utils.HandleError(utils.NewSessionResponder(s), i, "❌ Failed to parse uniform URL")
-						return
-					}
-					eligibleMembers = append(eligibleMembers, AFSMMember{
-						Username:  member.User.Username,
-						MilpacUrl: fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1]),
-						TimeSince: func() string {
-							if latestAward.IsZero() {
-								return utils.FormatTimeSinceDuration(startDate)
-							}
-							return utils.FormatTimeSinceDuration(latestAward)
-						}(),
-						Date: func() time.Time {
-							if latestAward.IsZero() {
-								return startDate
-							}
-							return latestAward
-						}(),
-					})
-				} else {
-					utils.Debug("⏳ Member not yet eligible since last award", "username", member.User.Username, "last_award", latestAward)
-				}
-			} else {
-				utils.Debug("⏳ Member has not served long enough", "username", member.User.Username)
-			}
+		if result != nil {
+			eligibleMembers = append(eligibleMembers, *result)
 		}
 	}
 
@@ -234,6 +128,15 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		utils.Info("📭 No eligible members found", "department", choice)
 	}
 
+	if skippedCount > 0 {
+		noun := "members"
+		if skippedCount == 1 {
+			noun = "member"
+		}
+		response += fmt.Sprintf("\n⚠️ %d %s skipped due to errors (reported)", skippedCount, noun)
+		utils.Info("⚠️ Members skipped during AFSM evaluation", "department", choice, "count", skippedCount)
+	}
+
 	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &response,
 	})
@@ -244,6 +147,131 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 	utils.Info("✨ Command completed successfully", "command", "AFSM", "department", choice)
 }
+
+// evaluateAFSMMember returns (member, nil) when the roster entry is eligible
+// for the AFSM, (nil, nil) when it is not, and (nil, err) when the entry's
+// data could not be processed and should be skipped + reported.
+func evaluateAFSMMember(
+	ctx context.Context,
+	member utils.LiteProfileResponse,
+	dept string,
+	currentDate time.Time,
+) (*AFSMMember, error) {
+	utils.Debug("👤 Processing member", "username", member.User.Username)
+
+	eligible := false
+	for _, secondary := range member.Secondary {
+		utils.Debug("🔍 Checking secondary position", "position", secondary.PositionTitle, "department", dept)
+		if strings.Contains(secondary.PositionTitle, dept) {
+			eligible = true
+			utils.Debug("✅ Member eligible through secondary", "position", secondary.PositionTitle)
+		}
+		if strings.Contains(member.Primary.PositionTitle, dept) {
+			eligible = false
+			utils.Debug("❌ Member ineligible due to primary position", "position", member.Primary.PositionTitle)
+		}
+	}
+	if !eligible {
+		return nil, nil
+	}
+
+	utils.Info("🎯 Found eligible member", "username", member.User.Username)
+	fullProfile, err := utils.GetMilpacByUsername(ctx, member.User.Username)
+	if err != nil {
+		return nil, fmt.Errorf("milpac fetch failed: %w", err)
+	}
+
+	utils.Debug("📝 Checking assignments", "username", member.User.Username)
+	var assignments []map[string]interface{}
+	for _, record := range fullProfile.Records {
+		if record.RecordType != "RECORD_TYPE_ASSIGNMENT" &&
+			record.RecordType != "RECORD_TYPE_TRANSFER" &&
+			record.RecordType != "RECORD_TYPE_ELOA" &&
+			record.RecordType != "RECORD_TYPE_DISCHARGE" {
+			continue
+		}
+		utils.Debug("📋 Processing record", "type", record.RecordType, "date", record.RecordDate)
+		recordDate, err := time.Parse("2006-01-02", record.RecordDate)
+		if err != nil {
+			return nil, fmt.Errorf("record date parse failed for %q: %w", record.RecordDate, err)
+		}
+		if strings.Contains(record.RecordDetails, dept) ||
+			strings.Contains(record.RecordDetails, "ELOA") ||
+			strings.Contains(record.RecordDetails, "Discharge") ||
+			strings.Contains(record.RecordDetails, "Retired") {
+			event := map[string]interface{}{
+				"record_date":    recordDate,
+				"record_type":    determineRecordType(record.RecordDetails),
+				"record_details": record.RecordDetails,
+			}
+			assignments = append(assignments, event)
+			utils.Debug("✍️ Added assignment record", "type", event["record_type"], "date", recordDate)
+		}
+	}
+
+	sort.Slice(assignments, func(i, j int) bool {
+		return assignments[i]["record_date"].(time.Time).Before(assignments[j]["record_date"].(time.Time))
+	})
+	utils.Debug("📊 Sorted assignments", "count", len(assignments))
+
+	var startDate time.Time
+	for _, assignment := range assignments {
+		if assignment["record_type"].(string) == "join" {
+			if startDate.IsZero() {
+				startDate = assignment["record_date"].(time.Time)
+				utils.Debug("📅 Set start date", "date", startDate)
+			}
+		} else {
+			startDate = time.Time{}
+			utils.Debug("🔄 Reset start date due to interruption")
+		}
+	}
+
+	if startDate.IsZero() || !startDate.Before(currentDate.AddDate(-1, 0, 0)) {
+		utils.Debug("⏳ Member has not served long enough", "username", member.User.Username)
+		return nil, nil
+	}
+
+	utils.Debug("✅ Member meets time requirement, checking awards", "username", member.User.Username)
+	var latestAward time.Time
+	for _, award := range fullProfile.Awards {
+		if award.AwardName != "Armed Forces Service Medal" || !strings.Contains(award.AwardDetails, dept) {
+			continue
+		}
+		utils.Debug("🎖️ Found AFSM award", "date", award.AwardDate, "details", award.AwardDetails)
+		awardDate, err := time.Parse("2006-01-02", award.AwardDate)
+		if err != nil {
+			return nil, fmt.Errorf("award date parse failed for %q: %w", award.AwardDate, err)
+		}
+		if latestAward.IsZero() || awardDate.After(latestAward) {
+			latestAward = awardDate
+			utils.Debug("📅 Updated latest award date", "date", latestAward)
+		}
+	}
+
+	if !latestAward.IsZero() && !latestAward.Before(currentDate.AddDate(-1, 0, 0)) {
+		utils.Debug("⏳ Member not yet eligible since last award", "username", member.User.Username, "last_award", latestAward)
+		return nil, nil
+	}
+
+	milpacID, err := utils.ExtractMilpacIDFromUniformURL(member.UniformUrl)
+	if err != nil {
+		return nil, fmt.Errorf("uniform URL parse failed: %w", err)
+	}
+
+	utils.Info("✨ Member eligible", "username", member.User.Username, "start_date", startDate)
+	refDate := startDate
+	if !latestAward.IsZero() {
+		refDate = latestAward
+	}
+	return &AFSMMember{
+		Username:  member.User.Username,
+		MilpacUrl: fmt.Sprintf("https://7cav.us/rosters/profile/%s", milpacID),
+		TimeSince: utils.FormatTimeSinceDuration(refDate),
+		Date:      refDate,
+	}, nil
+}
+
 func determineRecordType(details string) string {
 	if strings.Contains(details, "Relieved") || strings.Contains(details, "ELOA") || strings.Contains(details, "Discharge") || strings.Contains(details, "Retired") {
 		return "leave"
