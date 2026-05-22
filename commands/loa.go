@@ -12,6 +12,17 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+// loaUnavailableMessage formats the user-facing string shown when GlobalLOACache
+// is unhealthy. lastRefresh is the cache's last successful refresh (zero == never);
+// now is passed in so callers can read time.Now() once and tests stay deterministic.
+func loaUnavailableMessage(lastRefresh, now time.Time) string {
+	if lastRefresh.IsZero() {
+		return "❌ LOA cache unavailable (never successfully refreshed). Try again shortly."
+	}
+	mins := int(now.Sub(lastRefresh).Minutes())
+	return fmt.Sprintf("❌ LOA cache unavailable (last refresh: %d minutes ago). Try again shortly.", mins)
+}
+
 type LOAUser struct {
 	Username  string
 	MilpacUrl string
@@ -54,6 +65,26 @@ func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	})
 	if err != nil {
 		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		return
+	}
+
+	const loaCacheMaxAge = 30 * time.Minute // 2× the 15-min refresh interval
+	healthy, lastRefresh := utils.GlobalLOACache.IsHealthy(loaCacheMaxAge)
+	if !healthy {
+		now := time.Now() // single read; reused for message + log
+		msg := loaUnavailableMessage(lastRefresh, now)
+		utils.Debug("LOA command served unavailable message",
+			"command", "LOA",
+			"username", i.Member.User.Username,
+			"discord_id", i.Member.User.ID,
+			"last_success", lastRefresh,
+			"served_at", now,
+			"staleness", now.Sub(lastRefresh),
+		)
+		_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		if err != nil {
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+		}
 		return
 	}
 

@@ -24,9 +24,10 @@ type LOAEntry struct {
 }
 
 type LOACache struct {
-	mu                 sync.RWMutex
-	entries            map[string]LOAEntry
-	lastSyncedPostDate int64
+	mu                    sync.RWMutex
+	entries               map[string]LOAEntry
+	lastSyncedPostDate    int64
+	lastSuccessfulRefresh time.Time // zero == never
 }
 
 var GlobalLOACache = &LOACache{
@@ -51,6 +52,19 @@ func (c *LOACache) IsOnLOA(username string) bool {
 	}
 	now := time.Now()
 	return !now.Before(entry.StartDate) && !now.After(entry.EndDate)
+}
+
+// IsHealthy reports whether the cache has been successfully refreshed within
+// maxAge. The returned timestamp is the last-successful-refresh time (zero if
+// the cache has never refreshed successfully) so callers can render diagnostic
+// messages without a second lock acquisition.
+func (c *LOACache) IsHealthy(maxAge time.Duration) (bool, time.Time) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.lastSuccessfulRefresh.IsZero() {
+		return false, time.Time{}
+	}
+	return time.Since(c.lastSuccessfulRefresh) <= maxAge, c.lastSuccessfulRefresh
 }
 
 // Refresh fetches LOA posts from the forum DB incrementally and updates the cache.
@@ -79,6 +93,7 @@ func (c *LOACache) Refresh(db *sql.DB, nodeIDs []int) {
 
 	maxPostDate := c.lastSyncedPostDate
 	totalParsed := 0
+	successfulNodes := 0
 
 	for _, nodeID := range nodeIDs {
 		rows, err := db.Query(`
@@ -115,14 +130,29 @@ func (c *LOACache) Refresh(db *sql.DB, nodeIDs []int) {
 			}
 			nodeParsed++
 		}
+		rowsErr := rows.Err()
 		_ = rows.Close()
+
+		if rowsErr != nil {
+			Warn("LOA cache refresh failed mid-stream", "node_id", nodeID, "error", rowsErr)
+			continue
+		}
 
 		Info("LOA node refreshed", "node_id", nodeID, "new_parsed", nodeParsed)
 		totalParsed += nodeParsed
+		successfulNodes++
 	}
 
 	c.lastSyncedPostDate = maxPostDate
-	Info("LOA cache refreshed", "new_parsed", totalParsed, "total_active", len(c.entries))
+	if successfulNodes > 0 {
+		c.lastSuccessfulRefresh = time.Now()
+	}
+	Info("LOA cache refreshed",
+		"new_parsed", totalParsed,
+		"total_active", len(c.entries),
+		"successful_nodes", successfulNodes,
+		"total_nodes", len(nodeIDs),
+	)
 }
 
 func parseLOAPost(msg string) (LOAEntry, bool) {
