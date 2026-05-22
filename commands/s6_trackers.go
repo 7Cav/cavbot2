@@ -42,6 +42,7 @@ func runS6ITCheck(r utils.InteractionResponder, i *discordgo.InteractionCreate) 
 		},
 	})
 	if err != nil {
+		utils.CaptureError("❌ Interaction response failed", err)
 		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 		return
 	}
@@ -54,6 +55,7 @@ func runS6ITCheck(r utils.InteractionResponder, i *discordgo.InteractionCreate) 
 
 	s6Members, err := utils.GetRosterByFuzzyPositionSearch(ctx, "S6")
 	if err != nil {
+		utils.CaptureError("❌ Roster fetch failed", err)
 		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to fetch S6 Members: %v", err))
 		return
 	}
@@ -112,6 +114,7 @@ func runS6ITCheck(r utils.InteractionResponder, i *discordgo.InteractionCreate) 
 	if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &response,
 	}); err != nil {
+		utils.CaptureError("❌ Response edit failed", err)
 		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		return
 	}
