@@ -52,7 +52,7 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func runAFSM(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
-	utils.Info("🎯 AFSM Check requested", "command", "AFSM", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
+	utils.Info("🚀 Starting AFSM Check", "command", "AFSM", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 	choice := i.ApplicationCommandData().Options[0].StringValue()
 	utils.Debug("🔍 Processing department choice", "department", choice)
 
@@ -156,7 +156,7 @@ func runAFSM(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		return
 	}
-	utils.Info("✨ Command completed successfully", "command", "AFSM", "department", choice)
+	utils.Info("✨ Done!", "command", "AFSM", "department", choice)
 }
 
 // evaluateAFSMMember returns (member, nil) when the roster entry is eligible
