@@ -93,6 +93,7 @@ func (c *LOACache) Refresh(db *sql.DB, nodeIDs []int) {
 
 	maxPostDate := c.lastSyncedPostDate
 	totalParsed := 0
+	successfulNodes := 0
 
 	for _, nodeID := range nodeIDs {
 		rows, err := db.Query(`
@@ -129,14 +130,29 @@ func (c *LOACache) Refresh(db *sql.DB, nodeIDs []int) {
 			}
 			nodeParsed++
 		}
+		rowsErr := rows.Err()
 		_ = rows.Close()
+
+		if rowsErr != nil {
+			Warn("LOA cache refresh failed mid-stream", "node_id", nodeID, "error", rowsErr)
+			continue
+		}
 
 		Info("LOA node refreshed", "node_id", nodeID, "new_parsed", nodeParsed)
 		totalParsed += nodeParsed
+		successfulNodes++
 	}
 
 	c.lastSyncedPostDate = maxPostDate
-	Info("LOA cache refreshed", "new_parsed", totalParsed, "total_active", len(c.entries))
+	if successfulNodes > 0 {
+		c.lastSuccessfulRefresh = time.Now()
+	}
+	Info("LOA cache refreshed",
+		"new_parsed", totalParsed,
+		"total_active", len(c.entries),
+		"successful_nodes", successfulNodes,
+		"total_nodes", len(nodeIDs),
+	)
 }
 
 func parseLOAPost(msg string) (LOAEntry, bool) {
