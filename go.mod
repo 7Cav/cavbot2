@@ -3,19 +3,19 @@ module github.com/7cav/cavbot2
 go 1.25.0
 
 require (
-	github.com/bwmarrin/discordgo v0.28.1
+	github.com/bwmarrin/discordgo v0.29.0
 	github.com/getsentry/sentry-go v0.46.2
-	github.com/go-resty/resty/v2 v2.16.2
-	github.com/go-sql-driver/mysql v1.9.3
-	github.com/golang-jwt/jwt/v5 v5.2.2
+	github.com/go-resty/resty/v2 v2.17.2
+	github.com/go-sql-driver/mysql v1.10.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 )
 
-require filippo.io/edwards25519 v1.1.1 // indirect
+require filippo.io/edwards25519 v1.2.0 // indirect
 
 require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/text v0.33.0
+	golang.org/x/text v0.37.0
 )
