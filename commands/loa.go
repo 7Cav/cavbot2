@@ -68,6 +68,26 @@ func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
+	const loaCacheMaxAge = 30 * time.Minute // 2× the 15-min refresh interval
+	healthy, lastRefresh := utils.GlobalLOACache.IsHealthy(loaCacheMaxAge)
+	if !healthy {
+		now := time.Now() // single read; reused for message + log
+		msg := loaUnavailableMessage(lastRefresh, now)
+		utils.Debug("LOA command served unavailable message",
+			"command", "LOA",
+			"username", i.Member.User.Username,
+			"discord_id", i.Member.User.ID,
+			"last_success", lastRefresh,
+			"served_at", now,
+			"staleness", now.Sub(lastRefresh),
+		)
+		_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		if err != nil {
+			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+		}
+		return
+	}
+
 	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, position)
 	if err != nil {
 		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch roster: %v", err))
