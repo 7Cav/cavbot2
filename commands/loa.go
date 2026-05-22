@@ -12,6 +12,17 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+// loaUnavailableMessage formats the user-facing string shown when GlobalLOACache
+// is unhealthy. lastRefresh is the cache's last successful refresh (zero == never);
+// now is passed in so callers can read time.Now() once and tests stay deterministic.
+func loaUnavailableMessage(lastRefresh, now time.Time) string {
+	if lastRefresh.IsZero() {
+		return "❌ LOA cache unavailable (never successfully refreshed). Try again shortly."
+	}
+	mins := int(now.Sub(lastRefresh).Minutes())
+	return fmt.Sprintf("❌ LOA cache unavailable (last refresh: %d minutes ago). Try again shortly.", mins)
+}
+
 type LOAUser struct {
 	Username  string
 	MilpacUrl string
