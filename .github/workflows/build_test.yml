@@ -1,6 +1,7 @@
 name: Lint and Build
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - develop
@@ -35,13 +36,17 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: stable
+          go-version-file: go.mod
 
-      - name: Install dependencies
-        run: go mod tidy
+      - name: Verify module files are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
 
       - name: Run tests with coverage
-        run: go test ./... -cover -covermode=atomic | tee /tmp/cover.log
+        run: |
+          set -euo pipefail
+          go test ./... -cover -covermode=atomic | tee /tmp/cover.log
 
       - name: Enforce coverage floors
         run: ./.github/scripts/check-coverage-floors.sh < /tmp/cover.log
