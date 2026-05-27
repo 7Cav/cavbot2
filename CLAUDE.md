@@ -88,3 +88,37 @@ Canonical names used verbatim (`needs-triage`, `needs-info`, `ready-for-agent`, 
 ### Domain docs
 
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
+
+## Agent-cycle config
+
+The headings below are consumed by `syni-run-on-issue`. Edit freely; the orchestrator re-reads them on every run.
+
+## CI gate
+
+```bash
+set -euo pipefail
+golangci-lint run --timeout=5m
+go mod tidy
+go test ./... -cover -covermode=atomic | tee /tmp/cover.log
+./.github/scripts/check-coverage-floors.sh < /tmp/cover.log
+go build -o cavbot2
+```
+
+Mirrors `.github/workflows/build_test.yml` exactly. `pipefail` ensures a `go test` failure isn't swallowed by `tee`.
+
+## Branch naming
+
+`<type>/<issue-N>-<short-slug>` — type is `feat|fix|chore|docs|test|refactor`, matching the commit prefix. Example: `feat/65-roster-search-hint`.
+
+## Commit prefix
+
+Conventional Commits with optional scope: `<type>(<scope>): <subject>`. Scope is the touched directory or feature (`commands`, `utils`, `loa`, etc.). Subject in imperative mood, lowercase first letter.
+
+## Land strategy
+
+`pr` — open a PR against `develop` (not `main`); human merges.
+
+## Manual review gates
+
+- **Smoke test on the test guild** for any user-facing command behavior change. CI cannot exercise the live Discord gateway. Skip only for pure refactors and non-command changes.
+- **Env-var parity check** when adding a new env var: both `.env.example` AND the `environment:` block in `docker-compose.yml` must list it (see "Docker compose `environment:` allowlist vs `.env`" quirk above).
