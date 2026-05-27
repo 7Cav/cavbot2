@@ -25,7 +25,14 @@ func TestEmptyRosterSearchMessage(t *testing.T) {
 		t.Errorf("message %q still asserts input was wrong", got)
 	}
 	if !strings.HasPrefix(got, "❌") {
-		t.Errorf("message %q missing the ❌ prefix used by other handle-error responses", got)
+		t.Errorf("message %q missing ❌ prefix", got)
 	}
 }
 
+func TestEmptyRosterSearchMessage_EmptyPosition(t *testing.T) {
+	// Defensive: empty input must not panic and must still render the hint.
+	got := emptyRosterSearchMessage("")
+	if !strings.Contains(got, "2/B/1-7") {
+		t.Errorf("message %q missing example for empty input", got)
+	}
+}

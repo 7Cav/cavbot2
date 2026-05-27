@@ -1,22 +1,22 @@
 package commands
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
-// positionFormatExamples mirrors the canonical *Position* entry in CONTEXT.md.
-// Keep these in sync if CONTEXT.md ever broadens the example set.
+// positionFormatExamples mirrors the *Position* entry in CONTEXT.md.
 var positionFormatExamples = []string{"2/B/1-7", "Reservist", "S1"}
 
 // emptyRosterSearchMessage builds the user-facing reply for /awol and /loa when
-// GetRosterByFuzzyPositionSearch returns zero profiles. The API returns
-// HTTP 200 {"profiles":{}} for both legitimately-empty positions AND
-// unparseable input (probed 2026-05-27), so the message acknowledges both
-// causes rather than asserting the user got it wrong.
+// GetRosterByFuzzyPositionSearch returns zero profiles. The upstream API
+// returns HTTP 200 {"profiles":{}} for both legitimately-empty positions and
+// unparseable input, so the message has to cover both causes — there is no
+// signal to distinguish them.
 func emptyRosterSearchMessage(position string) string {
 	return fmt.Sprintf(
-		"❌ No troopers found for \"%s\". The position may have no current members, or the input format may not be recognized. Examples of valid formats: `%s`, `%s`, `%s`.",
+		"❌ No troopers found for \"%s\". The position may have no current members, or the input format may not be recognized. Examples of valid formats: `%s`.",
 		position,
-		positionFormatExamples[0],
-		positionFormatExamples[1],
-		positionFormatExamples[2],
+		strings.Join(positionFormatExamples, "`, `"),
 	)
 }
