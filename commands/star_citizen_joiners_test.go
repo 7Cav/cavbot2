@@ -218,6 +218,107 @@ func TestWalkRecentJoinersWithRole_PropagatesError(t *testing.T) {
 	}
 }
 
+// TestWalkRecentJoinersWithRole_JoinedAtBoundary pins both sides of the
+// cutoff to catch silent .Before↔.After predicate flips on refactor.
+func TestWalkRecentJoinersWithRole_JoinedAtBoundary(t *testing.T) {
+	now := mustParseUTC(t, "2026-05-24T04:20:00Z")
+	cutoff := now.Add(-7 * 24 * time.Hour)
+	page := []*discordgo.Member{
+		{User: &discordgo.User{ID: "exact-cutoff"}, JoinedAt: cutoff, Roles: []string{starCitizenRoleID}},
+		{User: &discordgo.User{ID: "one-ns-before"}, JoinedAt: cutoff.Add(-time.Nanosecond), Roles: []string{starCitizenRoleID}},
+	}
+	fake := &fakeJoinerSession{pages: [][]*discordgo.Member{page}}
+	matches, err := walkRecentJoinersWithRole(fake, "g", now, 7*24*time.Hour, starCitizenRoleID)
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(matches) != 1 || matches[0].User.ID != "exact-cutoff" {
+		t.Fatalf("expected exactly [exact-cutoff], got %d matches: %+v", len(matches), matches)
+	}
+}
+
+// TestWalkRecentJoinersWithRole_ShortPageEndsWalk verifies the
+// len(page) < limit early-exit specifically, independent of the
+// empty-page branch (which terminates a different way).
+func TestWalkRecentJoinersWithRole_ShortPageEndsWalk(t *testing.T) {
+	now := mustParseUTC(t, "2026-05-24T04:20:00Z")
+	recent := now.Add(-2 * 24 * time.Hour)
+	full := fillMembers(guildMembersPageLimit, recent, []string{starCitizenRoleID})
+	short := []*discordgo.Member{
+		{User: &discordgo.User{ID: "tail-1"}, JoinedAt: recent, Roles: []string{starCitizenRoleID}},
+	}
+	// A third page is queued; the walker MUST NOT request it because page 2
+	// is shorter than the limit.
+	bonus := []*discordgo.Member{
+		{User: &discordgo.User{ID: "ghost"}, JoinedAt: recent, Roles: []string{starCitizenRoleID}},
+	}
+	fake := &fakeJoinerSession{pages: [][]*discordgo.Member{full, short, bonus}}
+	matches, err := walkRecentJoinersWithRole(fake, "g", now, 7*24*time.Hour, starCitizenRoleID)
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(fake.pageCalls) != 2 {
+		t.Fatalf("expected exactly 2 GuildMembers calls (short page 2 terminates), got %d: %v", len(fake.pageCalls), fake.pageCalls)
+	}
+	if len(matches) != guildMembersPageLimit+1 {
+		t.Fatalf("matches=%d want %d", len(matches), guildMembersPageLimit+1)
+	}
+	for _, m := range matches {
+		if m.User.ID == "ghost" {
+			t.Fatalf("page 3 was requested despite short page 2 — early-exit broken")
+		}
+	}
+}
+
+// TestWalkRecentJoinersWithRole_ZeroMatchesPageStillAdvancesCursor covers a
+// page that contains no matches but valid members — the cursor must still
+// advance via lastSeenID, otherwise pagination would deadlock on the page.
+func TestWalkRecentJoinersWithRole_ZeroMatchesPageStillAdvancesCursor(t *testing.T) {
+	now := mustParseUTC(t, "2026-05-24T04:20:00Z")
+	recent := now.Add(-2 * 24 * time.Hour)
+	// Page 1 is full but no member holds the role → 0 matches, but cursor
+	// must advance to the last valid ID.
+	page1 := fillMembers(guildMembersPageLimit, recent, []string{"unrelated-role"})
+	page2 := []*discordgo.Member{
+		{User: &discordgo.User{ID: "real-match"}, JoinedAt: recent, Roles: []string{starCitizenRoleID}},
+	}
+	fake := &fakeJoinerSession{pages: [][]*discordgo.Member{page1, page2}}
+	matches, err := walkRecentJoinersWithRole(fake, "g", now, 7*24*time.Hour, starCitizenRoleID)
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(matches) != 1 || matches[0].User.ID != "real-match" {
+		t.Fatalf("expected [real-match], got %+v", matches)
+	}
+	if len(fake.pageCalls) != 2 {
+		t.Fatalf("expected 2 page calls, got %d", len(fake.pageCalls))
+	}
+	if fake.pageCalls[1] != page1[len(page1)-1].User.ID {
+		t.Errorf("page 2 after-cursor = %q, want page1's last ID %q",
+			fake.pageCalls[1], page1[len(page1)-1].User.ID)
+	}
+}
+
+// TestWalkRecentJoinersWithRole_AllNilUserPageErrors verifies the safety net:
+// a page entirely of nil-User entries can't advance the cursor, so the walker
+// must surface an error instead of silently terminating (which would let an
+// upstream Discord regression masquerade as "0 new joiners").
+func TestWalkRecentJoinersWithRole_AllNilUserPageErrors(t *testing.T) {
+	page := []*discordgo.Member{
+		{User: nil},
+		nil,
+		{User: nil},
+	}
+	fake := &fakeJoinerSession{pages: [][]*discordgo.Member{page}}
+	_, err := walkRecentJoinersWithRole(fake, "g", time.Now(), time.Hour, starCitizenRoleID)
+	if err == nil {
+		t.Fatalf("expected error for all-nil-User page, got nil")
+	}
+	if !strings.Contains(err.Error(), "no usable User.ID") {
+		t.Errorf("error should mention 'no usable User.ID': %v", err)
+	}
+}
+
 func TestRunJoinerReport_EmptyStillDMs(t *testing.T) {
 	now := mustParseUTC(t, "2026-05-24T04:20:00Z")
 	fake := &fakeJoinerSession{pages: [][]*discordgo.Member{nil}}
@@ -233,6 +334,11 @@ func TestRunJoinerReport_EmptyStillDMs(t *testing.T) {
 	}
 	if !strings.Contains(fake.sentBody, "0 new joiners") {
 		t.Errorf("empty-case body missing zero-count: %q", fake.sentBody)
+	}
+	// Lock the rendered weekOf so a drift in the lookback math doesn't slip
+	// through silently (now=2026-05-24, lookback=7d ⇒ week of 2026-05-17).
+	if !strings.Contains(fake.sentBody, "week of 2026-05-17") {
+		t.Errorf("empty-case body missing weekOf header: %q", fake.sentBody)
 	}
 }
 

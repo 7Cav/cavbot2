@@ -98,6 +98,9 @@ func main() {
 	if err != nil {
 		panic(fmt.Sprintf("Error creating Discord session: %v", err))
 	}
+	// IntentsGuildMembers is a Privileged Gateway Intent — must be toggled on
+	// in the Discord Developer Portal for this bot application, otherwise
+	// dg.Open() fails at runtime with no compile-time signal.
 	dg.Identify.Intents = discordgo.IntentsAllWithoutPrivileged | discordgo.IntentsGuildMembers
 
 	registry := commands.NewRegistry()

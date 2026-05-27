@@ -13,18 +13,40 @@ import (
 // 7Cav-specific identifiers and cadence. Hardcoded rather than env-configured
 // because they're tenant-specific (matching the /warden role-ID precedent).
 const (
-	sparrowDiscordID   = "154035997187899392"
-	starCitizenRoleID  = "1385946179174531223"
-	joinerLookbackDays = 7
+	sparrowDiscordID  = "154035997187899392"
+	starCitizenRoleID = "1385946179174531223"
 
-	joinerFireWeekday = time.Sunday
-	joinerFireHourUTC = 4
-	joinerFireMinUTC  = 20
+	// joinerLookback must stay >= the cadence interval below, or members
+	// who joined between two fires would never be reported.
+	joinerLookback = 7 * 24 * time.Hour
 
 	// guildMembersPageLimit is the per-page max accepted by Discord's
 	// GET /guilds/{id}/members endpoint.
 	guildMembersPageLimit = 1000
 )
+
+// weeklyFireTime is a typed wrapper so an invalid combination like hour=25
+// can't be expressed silently — mustWeeklyFireTime validates at package init.
+type weeklyFireTime struct {
+	Weekday time.Weekday
+	Hour    int
+	Minute  int
+}
+
+func mustWeeklyFireTime(wd time.Weekday, hour, minute int) weeklyFireTime {
+	if wd < time.Sunday || wd > time.Saturday {
+		panic(fmt.Sprintf("weeklyFireTime: invalid weekday %d", wd))
+	}
+	if hour < 0 || hour > 23 {
+		panic(fmt.Sprintf("weeklyFireTime: invalid hour %d", hour))
+	}
+	if minute < 0 || minute > 59 {
+		panic(fmt.Sprintf("weeklyFireTime: invalid minute %d", minute))
+	}
+	return weeklyFireTime{Weekday: wd, Hour: hour, Minute: minute}
+}
+
+var joinerFireSchedule = mustWeeklyFireTime(time.Sunday, 4, 20)
 
 // joinerReportSession is the Discord REST surface the report uses. Narrow
 // interface so the walker is testable without a live gateway; *discordgo.Session
@@ -35,13 +57,14 @@ type joinerReportSession interface {
 	ChannelMessageSend(channelID string, content string, options ...discordgo.RequestOption) (*discordgo.Message, error)
 }
 
-// nextJoinerReportFire returns the next Sunday 04:20 UTC strictly after now.
+// nextJoinerReportFire returns the next scheduled fire strictly after now.
 // Strict-after avoids a double-fire if the scheduler starts at the exact
 // moment of a scheduled fire (or recomputes immediately after one).
 func nextJoinerReportFire(now time.Time) time.Time {
 	n := now.UTC()
-	candidate := time.Date(n.Year(), n.Month(), n.Day(), joinerFireHourUTC, joinerFireMinUTC, 0, 0, time.UTC)
-	daysUntilWeekday := (int(joinerFireWeekday) - int(candidate.Weekday()) + 7) % 7
+	candidate := time.Date(n.Year(), n.Month(), n.Day(),
+		joinerFireSchedule.Hour, joinerFireSchedule.Minute, 0, 0, time.UTC)
+	daysUntilWeekday := (int(joinerFireSchedule.Weekday) - int(candidate.Weekday()) + 7) % 7
 	candidate = candidate.AddDate(0, 0, daysUntilWeekday)
 	if !candidate.After(n) {
 		candidate = candidate.AddDate(0, 0, 7)
@@ -52,7 +75,8 @@ func nextJoinerReportFire(now time.Time) time.Time {
 // walkRecentJoinersWithRole paginates the full guild member list and returns
 // the subset that joined within `lookback` of `now` and currently holds
 // `roleID`. Results are sorted by JoinedAt ascending so the DM reads
-// chronologically.
+// chronologically. A `JoinedAt` exactly equal to the cutoff (now - lookback)
+// is included.
 func walkRecentJoinersWithRole(
 	s joinerReportSession,
 	guildID string,
@@ -74,6 +98,11 @@ func walkRecentJoinersWithRole(
 		var lastSeenID string
 		for _, m := range page {
 			if m == nil || m.User == nil {
+				// Nil-User entries should never appear from a healthy API
+				// response; log at DEBUG so a LOG_LEVEL=DEBUG run can detect
+				// upstream data-quality drift.
+				utils.Debug("joiner walk: skipping member with nil User",
+					"guild_id", guildID, "after", after)
 				continue
 			}
 			lastSeenID = m.User.ID
@@ -88,11 +117,17 @@ func walkRecentJoinersWithRole(
 			}
 		}
 		if lastSeenID == "" {
-			// Page contained no valid members — can't advance the cursor
-			// without risking an infinite loop, so stop here.
-			break
+			// Whole page had no usable User.ID — we can't advance the cursor
+			// without risking re-requesting the same page indefinitely. Stop
+			// and surface as an error so a clean-looking "0 joiners" report
+			// doesn't mask an upstream Discord regression.
+			err := fmt.Errorf("page of %d members had no usable User.ID; halting pagination at after=%q",
+				len(page), after)
+			return nil, err
 		}
 		after = lastSeenID
+		// Discord's documented terminator: a page shorter than the requested
+		// limit is the last page.
 		if len(page) < guildMembersPageLimit {
 			break
 		}
@@ -134,12 +169,11 @@ func formatJoinerReport(matches []*discordgo.Member, weekOf time.Time) string {
 // runJoinerReport performs one fire of the report: walk → format → DM. The
 // empty-match case still DMs so Sparrow can confirm the job ran.
 func runJoinerReport(s joinerReportSession, guildID string, now time.Time) error {
-	lookback := time.Duration(joinerLookbackDays) * 24 * time.Hour
-	matches, err := walkRecentJoinersWithRole(s, guildID, now, lookback, starCitizenRoleID)
+	matches, err := walkRecentJoinersWithRole(s, guildID, now, joinerLookback, starCitizenRoleID)
 	if err != nil {
 		return fmt.Errorf("walk members: %w", err)
 	}
-	body := formatJoinerReport(matches, now.Add(-lookback))
+	body := formatJoinerReport(matches, now.Add(-joinerLookback))
 	ch, err := s.UserChannelCreate(sparrowDiscordID)
 	if err != nil {
 		return fmt.Errorf("open DM: %w", err)
@@ -149,7 +183,7 @@ func runJoinerReport(s joinerReportSession, guildID string, now time.Time) error
 	}
 	utils.Info("Star Citizen joiner report sent",
 		"matches", len(matches),
-		"week_of", now.Add(-lookback).UTC().Format("2006-01-02"),
+		"week_of", now.Add(-joinerLookback).UTC().Format("2006-01-02"),
 	)
 	return nil
 }
@@ -175,7 +209,8 @@ func runJoinerReportSchedulerLoop(s joinerReportSession, guildID string, now fun
 			"next_fire_utc", fire.Format(time.RFC3339))
 		time.Sleep(time.Until(fire))
 		if err := runJoinerReport(s, guildID, now()); err != nil {
-			utils.CaptureError("Star Citizen joiner report failed", err)
+			utils.CaptureError("Star Citizen joiner report failed", err,
+				"guild_id", guildID, "fire_utc", fire.Format(time.RFC3339))
 		}
 	}
 }
