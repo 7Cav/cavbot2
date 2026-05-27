@@ -98,6 +98,7 @@ func main() {
 	if err != nil {
 		panic(fmt.Sprintf("Error creating Discord session: %v", err))
 	}
+	dg.Identify.Intents = discordgo.IntentsAllWithoutPrivileged | discordgo.IntentsGuildMembers
 
 	registry := commands.NewRegistry()
 
@@ -160,6 +161,8 @@ func main() {
 		}
 		registeredCommands[i] = rcmd
 	}
+
+	commands.StartJoinerReportScheduler(dg, GuildID)
 
 	utils.Info("Bot is now running. Press CTRL-C to exit")
 	sc := make(chan os.Signal, 1)
