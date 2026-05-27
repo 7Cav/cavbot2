@@ -94,7 +94,7 @@ func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 	if len(roster.LiteProfiles) == 0 {
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ The search for \"%s\" returned no troopers. Please check your search for accuracy.", position))
+		utils.HandleError(utils.NewSessionResponder(s), i, emptyRosterSearchMessage(position))
 		return
 	}
 
