@@ -25,12 +25,13 @@ const (
 	guildMembersPageLimit = 1000
 )
 
-// weeklyFireTime is a typed wrapper so an invalid combination like hour=25
-// can't be expressed silently — mustWeeklyFireTime validates at package init.
+// weeklyFireTime is a typed wrapper so invalid combinations (hour=25 etc.)
+// can't be expressed silently. Fields are lowercase so callers route through
+// mustWeeklyFireTime, which validates at package init.
 type weeklyFireTime struct {
-	Weekday time.Weekday
-	Hour    int
-	Minute  int
+	weekday time.Weekday
+	hour    int
+	minute  int
 }
 
 func mustWeeklyFireTime(wd time.Weekday, hour, minute int) weeklyFireTime {
@@ -43,7 +44,7 @@ func mustWeeklyFireTime(wd time.Weekday, hour, minute int) weeklyFireTime {
 	if minute < 0 || minute > 59 {
 		panic(fmt.Sprintf("weeklyFireTime: invalid minute %d", minute))
 	}
-	return weeklyFireTime{Weekday: wd, Hour: hour, Minute: minute}
+	return weeklyFireTime{weekday: wd, hour: hour, minute: minute}
 }
 
 var joinerFireSchedule = mustWeeklyFireTime(time.Sunday, 4, 20)
@@ -63,8 +64,8 @@ type joinerReportSession interface {
 func nextJoinerReportFire(now time.Time) time.Time {
 	n := now.UTC()
 	candidate := time.Date(n.Year(), n.Month(), n.Day(),
-		joinerFireSchedule.Hour, joinerFireSchedule.Minute, 0, 0, time.UTC)
-	daysUntilWeekday := (int(joinerFireSchedule.Weekday) - int(candidate.Weekday()) + 7) % 7
+		joinerFireSchedule.hour, joinerFireSchedule.minute, 0, 0, time.UTC)
+	daysUntilWeekday := (int(joinerFireSchedule.weekday) - int(candidate.Weekday()) + 7) % 7
 	candidate = candidate.AddDate(0, 0, daysUntilWeekday)
 	if !candidate.After(n) {
 		candidate = candidate.AddDate(0, 0, 7)
@@ -126,8 +127,9 @@ func walkRecentJoinersWithRole(
 			return nil, err
 		}
 		after = lastSeenID
-		// Discord's documented terminator: a page shorter than the requested
-		// limit is the last page.
+		// Optimization: a short page can't have a successor under current
+		// pagination behavior, so skip the unnecessary follow-up request.
+		// The empty-page check above is the actual walk-complete signal.
 		if len(page) < guildMembersPageLimit {
 			break
 		}
@@ -208,7 +210,11 @@ func runJoinerReportSchedulerLoop(s joinerReportSession, guildID string, now fun
 		utils.Info("Star Citizen joiner report scheduled",
 			"next_fire_utc", fire.Format(time.RFC3339))
 		time.Sleep(time.Until(fire))
-		if err := runJoinerReport(s, guildID, now()); err != nil {
+		// Anchor the rolling window to the scheduled fire time, not the
+		// wall clock at wakeup. Host suspend / GC delays would otherwise
+		// drift the cutoff forward across cycles and silently drop
+		// joiners who landed in the gap.
+		if err := runJoinerReport(s, guildID, fire); err != nil {
 			utils.CaptureError("Star Citizen joiner report failed", err,
 				"guild_id", guildID, "fire_utc", fire.Format(time.RFC3339))
 		}

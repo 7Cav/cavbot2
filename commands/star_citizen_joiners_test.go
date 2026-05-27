@@ -374,3 +374,90 @@ func TestRunJoinerReport_WalkErrorBlocksDM(t *testing.T) {
 		t.Errorf("DM should not be opened when walk fails; opened for %q", fake.openedDMFor)
 	}
 }
+
+// TestMustWeeklyFireTime_BoundsAndHappyPath locks each boundary so a typo
+// like `>` → `>=` in the validator ships red.
+func TestMustWeeklyFireTime_BoundsAndHappyPath(t *testing.T) {
+	panicCases := []struct {
+		name      string
+		wd        time.Weekday
+		hour, min int
+	}{
+		{"weekday-too-large", time.Weekday(7), 0, 0},
+		{"weekday-too-small", time.Weekday(-1), 0, 0},
+		{"hour-too-large", time.Sunday, 24, 0},
+		{"hour-too-small", time.Sunday, -1, 0},
+		{"minute-too-large", time.Sunday, 0, 60},
+		{"minute-too-small", time.Sunday, 0, -1},
+	}
+	for _, tc := range panicCases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Fatalf("expected panic for %s, got none", tc.name)
+				}
+			}()
+			mustWeeklyFireTime(tc.wd, tc.hour, tc.min)
+		})
+	}
+	t.Run("happy-path-boundary-values", func(t *testing.T) {
+		got := mustWeeklyFireTime(time.Saturday, 23, 59)
+		if got.weekday != time.Saturday || got.hour != 23 || got.minute != 59 {
+			t.Errorf("got %+v, want {Sat, 23, 59}", got)
+		}
+	})
+	t.Run("happy-path-low-boundary", func(t *testing.T) {
+		got := mustWeeklyFireTime(time.Sunday, 0, 0)
+		if got.weekday != time.Sunday || got.hour != 0 || got.minute != 0 {
+			t.Errorf("got %+v, want {Sun, 0, 0}", got)
+		}
+	})
+}
+
+// panickingFakeSession panics on the first GuildMembers call, used to
+// exercise the scheduler loop's defer-recover.
+type panickingFakeSession struct {
+	called bool
+}
+
+func (p *panickingFakeSession) GuildMembers(string, string, int, ...discordgo.RequestOption) ([]*discordgo.Member, error) {
+	p.called = true
+	panic("simulated discord-side panic")
+}
+
+func (p *panickingFakeSession) UserChannelCreate(string, ...discordgo.RequestOption) (*discordgo.Channel, error) {
+	panic("unreachable: panic should have fired before DM")
+}
+
+func (p *panickingFakeSession) ChannelMessageSend(string, string, ...discordgo.RequestOption) (*discordgo.Message, error) {
+	panic("unreachable: panic should have fired before DM")
+}
+
+// TestRunJoinerReportSchedulerLoop_PanicIsRecovered verifies the
+// defer utils.RecoverPanic at the top of the loop actually catches a
+// runJoinerReport panic so the goroutine exits cleanly rather than
+// crashing the process. Uses a year-old "now" so the computed fire time
+// is far in the past, making time.Sleep(time.Until(fire)) return
+// immediately.
+func TestRunJoinerReportSchedulerLoop_PanicIsRecovered(t *testing.T) {
+	fake := &panickingFakeSession{}
+	pastNow := func() time.Time {
+		return time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		runJoinerReportSchedulerLoop(fake, "g", pastNow)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Goroutine exited — recover fired, loop unwound, no process crash.
+	case <-time.After(2 * time.Second):
+		t.Fatalf("scheduler loop did not exit within 2s after panic — recover missing?")
+	}
+	if !fake.called {
+		t.Errorf("fake session was never invoked — loop body did not run")
+	}
+}
