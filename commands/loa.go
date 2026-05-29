@@ -12,6 +12,17 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+// loaCacheView is the minimal LOA-cache surface /loa consumes: per-member
+// entry lookup plus a health probe for the staleness guard. Production wires
+// *utils.LOACache (GlobalLOACache); tests substitute a fake with canned
+// entries and a forced health verdict so the handler stays deterministic
+// without touching the process-global singleton. Distinct from /awol's
+// loaCacheReader, which needs IsOnLOA but not IsHealthy.
+type loaCacheView interface {
+	GetEntry(username string) (utils.LOAEntry, bool)
+	IsHealthy(maxAge time.Duration) (bool, time.Time)
+}
+
 // loaUnavailableMessage formats the user-facing string shown when GlobalLOACache
 // is unhealthy. lastRefresh is the cache's last successful refresh (zero == never);
 // now is passed in so callers can read time.Now() once and tests stay deterministic.
@@ -51,27 +62,30 @@ func LOA() Command {
 }
 
 func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	runLoa(utils.NewSessionResponder(s), utils.GlobalLOACache, time.Now(), i)
+}
+
+func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *discordgo.InteractionCreate) {
 	utils.Info("🚀 Starting LOA check", "command", "LOA", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	position := i.ApplicationCommandData().Options[0].StringValue()
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: fmt.Sprintf("Fetching LOA data for %s...", position),
 		},
 	})
 	if err != nil {
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 		return
 	}
 
 	const loaCacheMaxAge = 30 * time.Minute // 2× the 15-min refresh interval
-	healthy, lastRefresh := utils.GlobalLOACache.IsHealthy(loaCacheMaxAge)
+	healthy, lastRefresh := cache.IsHealthy(loaCacheMaxAge)
 	if !healthy {
-		now := time.Now() // single read; reused for message + log
 		msg := loaUnavailableMessage(lastRefresh, now)
 		utils.Debug("LOA command served unavailable message",
 			"command", "LOA",
@@ -81,29 +95,27 @@ func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			"served_at", now,
 			"staleness", now.Sub(lastRefresh),
 		)
-		_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
-		if err != nil {
-			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+		if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg}); err != nil {
+			utils.HandleError(r, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		}
 		return
 	}
 
 	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, position)
 	if err != nil {
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch roster: %v", err))
+		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to fetch roster: %v", err))
 		return
 	}
 	if len(roster.LiteProfiles) == 0 {
-		utils.HandleError(utils.NewSessionResponder(s), i, emptyRosterSearchMessage(position))
+		utils.HandleError(r, i, emptyRosterSearchMessage(position))
 		return
 	}
 
 	urlRe := regexp.MustCompile(`/\d+/(\d+)\.jpg`)
-	now := time.Now()
 	var activeLOAs, upcomingLOAs []LOAUser
 
 	for _, member := range roster.LiteProfiles {
-		entry, ok := utils.GlobalLOACache.GetEntry(member.User.Username)
+		entry, ok := cache.GetEntry(member.User.Username)
 		if !ok {
 			continue
 		}
@@ -132,11 +144,10 @@ func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	if len(activeLOAs) == 0 && len(upcomingLOAs) == 0 {
 		response := fmt.Sprintf("No active or upcoming LOAs found for \"%s\".", position)
-		_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 			Content: &response,
-		})
-		if err != nil {
-			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+		}); err != nil {
+			utils.HandleError(r, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		}
 		return
 	}
@@ -192,12 +203,11 @@ func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 
 	embeds := []*discordgo.MessageEmbed{embed}
-	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+	if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: stringPtr(""),
 		Embeds:  &embeds,
-	})
-	if err != nil {
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+	}); err != nil {
+		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
 		return
 	}
 
