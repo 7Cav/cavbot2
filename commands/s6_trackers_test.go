@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -531,6 +532,93 @@ func TestRunS6ITCheck_HappyPathWithSkipped(t *testing.T) {
 	// /s6-it-check, unlike /afsm, has no disclaimer.
 	if strings.Contains(got, "This command cannot be made completely accurate") {
 		t.Fatalf("Edit content should NOT contain AFSM disclaimer; got: %s", got)
+	}
+}
+
+// serveS6RosterTrackingProfileConcurrency mirrors serveS6RosterAndProfiles but
+// instruments the per-profile endpoint to record peak concurrent fetches. A
+// serial loop peaks at 1; a fanned-out implementation peaks above 1.
+func serveS6RosterTrackingProfileConcurrency(
+	t *testing.T,
+	roster utils.LiteRosterResponse,
+	profilesByUsername map[string]utils.ProfileResponse,
+	peak *int32,
+) {
+	t.Helper()
+	rosterBody, err := json.Marshal(roster)
+	if err != nil {
+		t.Fatalf("marshal roster: %v", err)
+	}
+	encodedProfiles := make(map[string][]byte, len(profilesByUsername))
+	for name, p := range profilesByUsername {
+		b, err := json.Marshal(p)
+		if err != nil {
+			t.Fatalf("marshal profile %q: %v", name, err)
+		}
+		encodedProfiles[name] = b
+	}
+	var inFlight int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/milpacs/position/search/"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(rosterBody)
+		case strings.HasPrefix(r.URL.Path, "/milpacs/profile/username/"):
+			cur := atomic.AddInt32(&inFlight, 1)
+			for {
+				old := atomic.LoadInt32(peak)
+				if cur <= old || atomic.CompareAndSwapInt32(peak, old, cur) {
+					break
+				}
+			}
+			time.Sleep(50 * time.Millisecond)
+			atomic.AddInt32(&inFlight, -1)
+
+			name := strings.TrimPrefix(r.URL.Path, "/milpacs/profile/username/")
+			body, ok := encodedProfiles[name]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(utils.SetAPIBaseURLForTest(srv.URL))
+}
+
+func TestRunS6ITCheck_FetchesConcurrently(t *testing.T) {
+	// evaluateS6Member fetches the milpac for every roster entry up front, so
+	// four members force four fetches. A serial loop peaks at one in-flight
+	// fetch; the fanned-out implementation peaks above one.
+	roster := utils.LiteRosterResponse{LiteProfiles: map[string]utils.LiteProfileResponse{}}
+	profiles := map[string]utils.ProfileResponse{}
+	for _, id := range []string{"1", "2", "3", "4"} {
+		name := "Member." + id
+		m := utils.LiteProfileResponse{
+			User:       utils.User{Username: name},
+			UniformUrl: "https://7cav.us/data/roster_uniforms/0/" + id + ".jpg",
+		}
+		roster.LiteProfiles[id] = m
+		profiles[name] = utils.ProfileResponse{
+			User: m.User, UniformUrl: m.UniformUrl,
+			Primary: utils.Position{PositionTitle: "Trooper 3/2/A/1-7"},
+		}
+	}
+
+	var peak int32
+	serveS6RosterTrackingProfileConcurrency(t, roster, profiles, &peak)
+
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction()
+
+	runS6ITCheck(f, i)
+
+	if got := atomic.LoadInt32(&peak); got < 2 {
+		t.Fatalf("expected concurrent milpac fetches (peak >= 2), got peak %d — fetches ran serially", got)
 	}
 }
 
