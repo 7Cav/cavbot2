@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
+	"golang.org/x/sync/errgroup"
 	"sort"
 	"strings"
 	"time"
@@ -47,10 +48,9 @@ func runS6ITCheck(r utils.InteractionResponder, i *discordgo.InteractionCreate) 
 		return
 	}
 
-	// 5min accommodates the current serial-fetch shape; well under Discord's
-	// 15min interaction-token cliff. Parallelizing the per-member fetches would
-	// let this drop back to 60s — see #86.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// Per-member milpac fetches fan out concurrently (see below), so wall-clock
+	// is roughly one fetch latency rather than the serial sum — 60s is ample.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	s6Members, err := utils.GetRosterByFuzzyPositionSearch(ctx, "S6")
@@ -70,11 +70,33 @@ func runS6ITCheck(r utils.InteractionResponder, i *discordgo.InteractionCreate) 
 	}
 
 	currentDate := time.Now()
+
+	// Fan the per-member milpac fetches out concurrently — each takes ~1.4s and
+	// serial evaluation routinely blew past the timeout. Results and errors are
+	// collected per-slot so a failed member is skipped-and-reported without
+	// aborting the others (preserving the per-member skip semantics).
+	members := make([]utils.LiteProfileResponse, 0, len(s6Members.LiteProfiles))
+	for _, member := range s6Members.LiteProfiles {
+		members = append(members, member)
+	}
+	results := make([][]ITMember, len(members))
+	errs := make([]error, len(members))
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
+	for idx, member := range members {
+		idx, member := idx, member
+		g.Go(func() error {
+			results[idx], errs[idx] = evaluateS6Member(gctx, member, currentDate)
+			return nil
+		})
+	}
+	_ = g.Wait()
+
 	eligibleMembers := []ITMember{}
 	skippedCount := 0
-	for _, member := range s6Members.LiteProfiles {
-		rows, err := evaluateS6Member(ctx, member, currentDate)
-		if err != nil {
+	for idx, member := range members {
+		if err := errs[idx]; err != nil {
 			utils.CaptureError(
 				"S6 IT member evaluation failed",
 				err,
@@ -83,7 +105,7 @@ func runS6ITCheck(r utils.InteractionResponder, i *discordgo.InteractionCreate) 
 			skippedCount++
 			continue
 		}
-		eligibleMembers = append(eligibleMembers, rows...)
+		eligibleMembers = append(eligibleMembers, results[idx]...)
 	}
 
 	sort.Slice(eligibleMembers, func(i, j int) bool {

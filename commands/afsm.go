@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
+	"golang.org/x/sync/errgroup"
 	"sort"
 	"strings"
 	"time"
@@ -68,10 +69,9 @@ func runAFSM(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	// 5min accommodates the current serial-fetch shape (~1.4s per eligible member,
-	// rosters of 50+); well under Discord's 15min interaction-token cliff.
-	// Parallelizing the per-member fetches would let this drop back to 60s — see #86.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// Per-member milpac fetches fan out concurrently (see below), so wall-clock
+	// is roughly one fetch latency rather than the serial sum — 60s is ample.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	utils.Debug("📊 Fetching roster data", "department", choice)
@@ -96,11 +96,33 @@ func runAFSM(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	currentDate := time.Now()
 	utils.Debug("⏰ Current date set", "date", currentDate)
 
+	// Fan the per-member milpac fetches out concurrently — each takes ~1.4s and
+	// a department roster can hold 50+, so serial evaluation routinely blew past
+	// the timeout. errgroup with a concurrency cap bounds in-flight requests;
+	// results and errors are collected per-slot so a failed member is
+	// skipped-and-reported without aborting the others.
+	members := make([]utils.LiteProfileResponse, 0, len(Members.LiteProfiles))
+	for _, member := range Members.LiteProfiles {
+		members = append(members, member)
+	}
+	results := make([]*AFSMMember, len(members))
+	errs := make([]error, len(members))
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
+	for idx, member := range members {
+		idx, member := idx, member
+		g.Go(func() error {
+			results[idx], errs[idx] = evaluateAFSMMember(gctx, member, choice, currentDate)
+			return nil
+		})
+	}
+	_ = g.Wait()
+
 	eligibleMembers := []AFSMMember{}
 	skippedCount := 0
-	for _, member := range Members.LiteProfiles {
-		result, err := evaluateAFSMMember(ctx, member, choice, currentDate)
-		if err != nil {
+	for idx, member := range members {
+		if err := errs[idx]; err != nil {
 			utils.CaptureError(
 				"AFSM member evaluation failed",
 				err,
@@ -110,8 +132,8 @@ func runAFSM(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 			skippedCount++
 			continue
 		}
-		if result != nil {
-			eligibleMembers = append(eligibleMembers, *result)
+		if results[idx] != nil {
+			eligibleMembers = append(eligibleMembers, *results[idx])
 		}
 	}
 
