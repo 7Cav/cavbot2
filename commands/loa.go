@@ -23,6 +23,11 @@ type loaCacheView interface {
 	IsHealthy(maxAge time.Duration) (bool, time.Time)
 }
 
+// loaCacheMaxAge is the staleness threshold for the LOA cache health probe,
+// shared by /loa and /awol. 2× the 15-min refresh interval: one missed refresh
+// is tolerated, two consecutive misses mark the cache unhealthy.
+const loaCacheMaxAge = 30 * time.Minute
+
 // loaUnavailableMessage formats the user-facing string shown when GlobalLOACache
 // is unhealthy. lastRefresh is the cache's last successful refresh (zero == never);
 // now is passed in so callers can read time.Now() once and tests stay deterministic.
@@ -83,7 +88,6 @@ func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *
 		return
 	}
 
-	const loaCacheMaxAge = 30 * time.Minute // 2× the 15-min refresh interval
 	healthy, lastRefresh := cache.IsHealthy(loaCacheMaxAge)
 	if !healthy {
 		msg := loaUnavailableMessage(lastRefresh, now)

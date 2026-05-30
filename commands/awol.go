@@ -23,13 +23,22 @@ const (
 	awolThresholdDays = 8
 )
 
-// loaCacheReader is the minimal LOA-cache surface /awol (and /loa) consume.
-// Production wires *utils.LOACache (GlobalLOACache); tests substitute a fake
-// with canned entries so the handler stays deterministic without touching the
-// process-global singleton.
+// loaCacheUnavailableFooter is the warning appended to /awol output (#96) when
+// the LOA cache is unhealthy. Styled after loaUnavailableMessage; the On LOA
+// column is rendered "unknown" rather than a misleading "false" in this state.
+const loaCacheUnavailableFooter = "⚠️ LOA cache unavailable; On LOA column may be stale."
+
+// loaCacheReader is the minimal LOA-cache surface /awol consumes. Production
+// wires *utils.LOACache (GlobalLOACache); tests substitute a fake with canned
+// entries and a forced health verdict so the handler stays deterministic
+// without touching the process-global singleton. IsHealthy gates whether the
+// per-member On LOA column can be trusted (#96): when the cache is stale,
+// IsOnLOA/GetEntry silently return all-clear, so the column is rendered as
+// "unknown" rather than a misleading "false".
 type loaCacheReader interface {
 	IsOnLOA(username string) bool
 	GetEntry(username string) (utils.LOAEntry, bool)
+	IsHealthy(maxAge time.Duration) (bool, time.Time)
 }
 
 type AwolUser struct {
@@ -90,6 +99,23 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		return
 	}
 
+	// #96: probe cache health once per invocation. When unhealthy, IsOnLOA
+	// returns false for everyone silently, so the On LOA column would lie. We do
+	// NOT abort — /awol's primary signal (lastForumPostDate) is independent — but
+	// render the column as "unknown" and warn. No Sentry capture: operational
+	// degradation, not an internal error (ADR 0001).
+	cacheHealthy, lastRefresh := cache.IsHealthy(loaCacheMaxAge)
+	if !cacheHealthy {
+		utils.Debug("AWOL served with unhealthy LOA cache",
+			"command", "Awol",
+			"username", i.Member.User.Username,
+			"discord_id", i.Member.User.ID,
+			"last_success", lastRefresh,
+			"served_at", now,
+			"staleness", now.Sub(lastRefresh),
+		)
+	}
+
 	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, position)
 	if err != nil {
 		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to fetch roster: %v", err))
@@ -142,21 +168,25 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 	}
 
 	loaCount := 0
-	for _, u := range awolUsers {
-		if u.OnLOA {
-			loaCount++
+	if cacheHealthy {
+		for _, u := range awolUsers {
+			if u.OnLOA {
+				loaCount++
+			}
 		}
 	}
 
 	var chunks []string
 	currentChunk := ""
 	for _, user := range awolUsers {
-		loaTag := ""
-		if user.OnLOA {
-			// NOTE: #96 — when the LOA cache is empty/unhealthy, every
-			// IsOnLOA returns false and this branch silently never fires,
-			// so the "On LOA" column reports incorrect (all-clear) status.
-			// Tracked separately; not in scope for #112.
+		// #96: only trust the cache lookup when it's healthy. When unhealthy,
+		// mark every row "On LOA: unknown" and suppress the [LOA] decoration so
+		// the column never silently reads all-clear.
+		var loaTag string
+		switch {
+		case !cacheHealthy:
+			loaTag = "On LOA: unknown — "
+		case user.OnLOA:
 			if entry, ok := cache.GetEntry(user.Username); ok && entry.ThreadID != 0 {
 				loaTag = fmt.Sprintf("**[[LOA]](https://7cav.us/threads/%d/)** ", entry.ThreadID)
 			} else {
@@ -182,14 +212,21 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 	utils.Info("Debug chunks info", "chunks_length", len(chunks), "max_embeds", maxEmbedsPerMsg)
 	if len(chunks) > maxEmbedsPerMsg {
 		utils.Info("⚠️ Too many AWOL users for embeds, falling back to file upload", "count", len(awolUsers))
-		sendAwolFile(r, i, awolUsers, position, forceFile, now)
+		sendAwolFile(r, i, awolUsers, position, forceFile, cacheHealthy, now)
 		utils.Info("✨ Done!", "command", "Awol")
 		return
 	} else if forceFile {
 		utils.Info("⚠️ Force file output enabled, falling back to embeds", "count", len(awolUsers))
-		sendAwolFile(r, i, awolUsers, position, forceFile, now)
+		sendAwolFile(r, i, awolUsers, position, forceFile, cacheHealthy, now)
 		utils.Info("✨ Done!", "command", "Awol")
 		return
+	}
+
+	// #96: when the cache is unhealthy the loaCount is meaningless, so report
+	// the warning instead of a concrete "(N on LOA)" tally.
+	footerText := fmt.Sprintf("Total AWOL: %d (%d on LOA)", len(awolUsers), loaCount)
+	if !cacheHealthy {
+		footerText = fmt.Sprintf("Total AWOL: %d — %s", len(awolUsers), loaCacheUnavailableFooter)
 	}
 
 	var embeds []*discordgo.MessageEmbed
@@ -199,7 +236,7 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 			Description: chunk,
 			Color:       0xfbcc29,
 			Footer: &discordgo.MessageEmbedFooter{
-				Text: fmt.Sprintf("Total AWOL: %d (%d on LOA)", len(awolUsers), loaCount),
+				Text: footerText,
 			},
 			Timestamp: now.Format(time.RFC3339),
 		}
@@ -217,15 +254,24 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 	utils.Info("✨ Done!", "command", "Awol")
 }
 
-func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, awolUsers []AwolUser, position string, forceFile bool, now time.Time) {
+func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, awolUsers []AwolUser, position string, forceFile, cacheHealthy bool, now time.Time) {
 	var content strings.Builder
 	_, _ = fmt.Fprintf(&content, "AWOL Report for %s\nGenerated: %s\n\n",
 		position,
 		now.Format("2006-01-02 15:04:05"))
+	if !cacheHealthy {
+		// #96: surface the cache-unavailable warning in the file too.
+		_, _ = fmt.Fprintf(&content, "%s\n\n", loaCacheUnavailableFooter)
+	}
 
 	for _, user := range awolUsers {
+		// #96: only trust IsOnLOA when the cache is healthy; otherwise the
+		// column is unknown, not all-clear.
 		loaTag := ""
-		if user.OnLOA {
+		switch {
+		case !cacheHealthy:
+			loaTag = " (On LOA: unknown)"
+		case user.OnLOA:
 			loaTag = " [LOA]"
 		}
 		_, _ = fmt.Fprintf(&content, "%s%s - %s\nMilpac: %s\n\n",
