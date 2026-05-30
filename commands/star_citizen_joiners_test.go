@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -415,49 +416,123 @@ func TestMustWeeklyFireTime_BoundsAndHappyPath(t *testing.T) {
 }
 
 // panickingFakeSession panics on the first GuildMembers call, used to
-// exercise the scheduler loop's defer-recover.
+// exercise the scheduler loop's per-fire defer-recover. Subsequent calls
+// return cleanly so a test can assert the loop reached a later iteration.
 type panickingFakeSession struct {
-	called bool
+	mu    sync.Mutex
+	calls int
 }
 
 func (p *panickingFakeSession) GuildMembers(string, string, int, ...discordgo.RequestOption) ([]*discordgo.Member, error) {
-	p.called = true
-	panic("simulated discord-side panic")
+	p.mu.Lock()
+	p.calls++
+	n := p.calls
+	p.mu.Unlock()
+	if n == 1 {
+		panic("simulated discord-side panic")
+	}
+	return nil, nil
+}
+
+func (p *panickingFakeSession) callCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls
 }
 
 func (p *panickingFakeSession) UserChannelCreate(string, ...discordgo.RequestOption) (*discordgo.Channel, error) {
-	panic("unreachable: panic should have fired before DM")
+	return &discordgo.Channel{ID: "dm"}, nil
 }
 
 func (p *panickingFakeSession) ChannelMessageSend(string, string, ...discordgo.RequestOption) (*discordgo.Message, error) {
-	panic("unreachable: panic should have fired before DM")
+	return &discordgo.Message{ID: "m"}, nil
 }
 
-// TestRunJoinerReportSchedulerLoop_PanicIsRecovered verifies the
-// defer utils.RecoverPanic at the top of the loop actually catches a
-// runJoinerReport panic so the goroutine exits cleanly rather than
-// crashing the process. Uses a year-old "now" so the computed fire time
-// is far in the past, making time.Sleep(time.Until(fire)) return
-// immediately.
+// TestRunJoinerReportSchedulerLoop_PanicIsRecovered verifies the per-fire
+// defer utils.RecoverPanic catches a runJoinerReport panic WITHOUT exiting
+// the scheduler loop: the outer for survives and proceeds to the next
+// weekly fire.
+//
+// Determinism: the injected clock returns a far-past time on the first
+// call so the first time.Sleep returns immediately and the panicking fire
+// runs; on the second call it returns a far-FUTURE time so the second
+// time.Sleep blocks well past the test timeout. The test waits for the
+// second-iteration signal (the clock's 2nd invocation), proving the loop
+// advanced past the panic, then returns — leaving the goroutine parked in
+// its long sleep (harmless; no resources held, no process crash).
 func TestRunJoinerReportSchedulerLoop_PanicIsRecovered(t *testing.T) {
 	fake := &panickingFakeSession{}
-	pastNow := func() time.Time {
-		return time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	var nowMu sync.Mutex
+	nowCalls := 0
+	secondIter := make(chan struct{})
+	now := func() time.Time {
+		nowMu.Lock()
+		defer nowMu.Unlock()
+		nowCalls++
+		switch nowCalls {
+		case 1:
+			// Far past → first fire is overdue → sleep returns immediately.
+			return time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		case 2:
+			// Reaching here proves the loop survived the panic and looped
+			// back. Return a far-future time so the second sleep parks the
+			// goroutine well beyond the test deadline.
+			close(secondIter)
+			return time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)
+		default:
+			return time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)
+		}
 	}
 
-	done := make(chan struct{})
-	go func() {
-		runJoinerReportSchedulerLoop(fake, "g", pastNow)
-		close(done)
-	}()
+	go runJoinerReportSchedulerLoop(fake, "g", now)
 
 	select {
-	case <-done:
-		// Goroutine exited — recover fired, loop unwound, no process crash.
+	case <-secondIter:
+		// Loop reached its second iteration after recovering the panic.
 	case <-time.After(2 * time.Second):
-		t.Fatalf("scheduler loop did not exit within 2s after panic — recover missing?")
+		t.Fatalf("scheduler loop did not reach a 2nd iteration within 2s — panic killed the loop instead of being recovered per-fire")
 	}
-	if !fake.called {
+	if fake.callCount() < 1 {
 		t.Errorf("fake session was never invoked — loop body did not run")
+	}
+}
+
+// TestRunJoinerReportSchedulerLoop_OrdinaryErrorContinues verifies a
+// non-panic report error (e.g. a Discord API error) is captured/logged but
+// does not stop the loop: the scheduler proceeds to the next fire without
+// an immediate in-cycle retry.
+func TestRunJoinerReportSchedulerLoop_OrdinaryErrorContinues(t *testing.T) {
+	fake := &fakeJoinerSession{guildMembersErr: errors.New("rate-limited")}
+
+	var nowMu sync.Mutex
+	nowCalls := 0
+	secondIter := make(chan struct{})
+	now := func() time.Time {
+		nowMu.Lock()
+		defer nowMu.Unlock()
+		nowCalls++
+		switch nowCalls {
+		case 1:
+			return time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		case 2:
+			close(secondIter)
+			return time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)
+		default:
+			return time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)
+		}
+	}
+
+	go runJoinerReportSchedulerLoop(fake, "g", now)
+
+	select {
+	case <-secondIter:
+		// Loop advanced to the next fire after the ordinary error.
+	case <-time.After(2 * time.Second):
+		t.Fatalf("scheduler loop did not reach a 2nd iteration within 2s after an ordinary error")
+	}
+	// One fire = one GuildMembers attempt: no immediate in-cycle retry.
+	if got := len(fake.pageCalls); got != 1 {
+		t.Errorf("expected exactly 1 GuildMembers call (no in-cycle retry), got %d", got)
 	}
 }

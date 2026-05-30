@@ -203,20 +203,29 @@ func StartJoinerReportScheduler(s *discordgo.Session, guildID string) {
 // runJoinerReportSchedulerLoop is the body of the scheduler goroutine. Split
 // out for the testable seam on `now`; the loop itself never returns under
 // normal operation, so it's exercised end-to-end rather than unit-tested.
+//
+// Panic recovery is scoped to each per-fire execution (the inner func below),
+// NOT the outer loop. A panic in one report fire is captured to Sentry and the
+// loop survives to compute the next weekly fire — matching the ordinary-error
+// continuity policy (no in-cycle retry; next Sunday is the retry). If recover
+// were at the loop scope instead, a single panic would unwind the for and
+// permanently disable the weekly report until process restart (issue #119).
 func runJoinerReportSchedulerLoop(s joinerReportSession, guildID string, now func() time.Time) {
-	defer utils.RecoverPanic("star-citizen-joiner-report")
 	for {
 		fire := nextJoinerReportFire(now())
 		utils.Info("Star Citizen joiner report scheduled",
 			"next_fire_utc", fire.Format(time.RFC3339))
 		time.Sleep(time.Until(fire))
-		// Anchor the rolling window to the scheduled fire time, not the
-		// wall clock at wakeup. Host suspend / GC delays would otherwise
-		// drift the cutoff forward across cycles and silently drop
-		// joiners who landed in the gap.
-		if err := runJoinerReport(s, guildID, fire); err != nil {
-			utils.CaptureError("Star Citizen joiner report failed", err,
-				"guild_id", guildID, "fire_utc", fire.Format(time.RFC3339))
-		}
+		func() {
+			defer utils.RecoverPanic("star-citizen-joiner-report")
+			// Anchor the rolling window to the scheduled fire time, not the
+			// wall clock at wakeup. Host suspend / GC delays would otherwise
+			// drift the cutoff forward across cycles and silently drop
+			// joiners who landed in the gap.
+			if err := runJoinerReport(s, guildID, fire); err != nil {
+				utils.CaptureError("Star Citizen joiner report failed", err,
+					"guild_id", guildID, "fire_utc", fire.Format(time.RFC3339))
+			}
+		}()
 	}
 }
