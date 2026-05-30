@@ -18,7 +18,7 @@ set -euo pipefail
 # script before any check runs. Don't "clean up" the `|| true`.
 read -r -d '' FLOORS <<'EOF' || true
 github.com/7cav/cavbot2/utils	73
-github.com/7cav/cavbot2/commands	50
+github.com/7cav/cavbot2/commands	60
 EOF
 
 # Read `go test -cover` output from stdin.
