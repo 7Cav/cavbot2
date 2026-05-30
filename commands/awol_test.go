@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -54,8 +55,13 @@ func serveAwolRoster(t *testing.T, roster utils.LiteRosterResponse, rosterStatus
 // entries are keyed by lowercased username (matches the production cache's
 // case-folding); IsOnLOA returns true iff an entry exists, decoupling the test
 // from time.Now since the handler's "now" is already injected separately.
+// healthy/lastRefresh drive the IsHealthy staleness guard; the zero value is
+// unhealthy, so existing tests that want the original behavior should construct
+// via healthyCache.
 type fakeLOACache struct {
-	entries map[string]utils.LOAEntry
+	entries     map[string]utils.LOAEntry
+	healthy     bool
+	lastRefresh time.Time
 }
 
 func (f *fakeLOACache) GetEntry(username string) (utils.LOAEntry, bool) {
@@ -66,6 +72,16 @@ func (f *fakeLOACache) GetEntry(username string) (utils.LOAEntry, bool) {
 func (f *fakeLOACache) IsOnLOA(username string) bool {
 	_, ok := f.entries[strings.ToLower(username)]
 	return ok
+}
+
+func (f *fakeLOACache) IsHealthy(_ time.Duration) (bool, time.Time) {
+	return f.healthy, f.lastRefresh
+}
+
+// healthyCache builds a healthy fakeLOACache from the given entries (keyed by
+// lowercased username), with lastRefresh pinned at awolRefDate.
+func healthyCache(entries map[string]utils.LOAEntry) *fakeLOACache {
+	return &fakeLOACache{entries: entries, healthy: true, lastRefresh: awolRefDate}
 }
 
 func boolOption(name string, value bool) *discordgo.ApplicationCommandInteractionDataOption {
@@ -98,7 +114,7 @@ func TestRunAwol_SmallResultRendersEmbedChunks(t *testing.T) {
 	serveAwolRoster(t, roster, http.StatusOK)
 
 	f := &fakeResponder{}
-	cache := &fakeLOACache{}
+	cache := healthyCache(nil)
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
 
 	runAwol(f, cache, awolRefDate, i)
@@ -148,7 +164,7 @@ func TestRunAwol_LargeResultFallsBackToFile(t *testing.T) {
 	serveAwolRoster(t, roster, http.StatusOK)
 
 	f := &fakeResponder{}
-	cache := &fakeLOACache{}
+	cache := healthyCache(nil)
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
 
 	runAwol(f, cache, awolRefDate, i)
@@ -191,7 +207,7 @@ func TestRunAwol_ForceFileOutputWithSmallResult(t *testing.T) {
 	serveAwolRoster(t, roster, http.StatusOK)
 
 	f := &fakeResponder{}
-	cache := &fakeLOACache{}
+	cache := healthyCache(nil)
 	i := fakeAppCommandInteraction(
 		stringOption("position", "1-7"),
 		boolOption("force_file_output", true),
@@ -224,7 +240,7 @@ func TestRunAwol_EmptyRosterSurfacesFormatHint(t *testing.T) {
 	// simulates "already acknowledged" so its Edit fallback fires with the
 	// empty-roster format-hint message.
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	cache := &fakeLOACache{}
+	cache := healthyCache(nil)
 	i := fakeAppCommandInteraction(stringOption("position", "Q/Z/9-9"))
 
 	runAwol(f, cache, awolRefDate, i)
@@ -250,7 +266,7 @@ func TestRunAwol_RosterFetch500SurfacesError(t *testing.T) {
 	serveAwolRoster(t, utils.LiteRosterResponse{}, http.StatusInternalServerError)
 
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	cache := &fakeLOACache{}
+	cache := healthyCache(nil)
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
 
 	runAwol(f, cache, awolRefDate, i)
@@ -280,16 +296,14 @@ func TestRunAwol_OnLOAAnnotationRenders(t *testing.T) {
 	}
 	serveAwolRoster(t, roster, http.StatusOK)
 
-	cache := &fakeLOACache{
-		entries: map[string]utils.LOAEntry{
-			"trooper.a": {
-				Username:  "Trooper.A",
-				StartDate: mustParseAwolDate("2026-04-01 00:00:00"),
-				EndDate:   mustParseAwolDate("2026-06-01 00:00:00"),
-				ThreadID:  4242,
-			},
+	cache := healthyCache(map[string]utils.LOAEntry{
+		"trooper.a": {
+			Username:  "Trooper.A",
+			StartDate: mustParseAwolDate("2026-04-01 00:00:00"),
+			EndDate:   mustParseAwolDate("2026-06-01 00:00:00"),
+			ThreadID:  4242,
 		},
-	}
+	})
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
 
@@ -316,5 +330,115 @@ func TestRunAwol_OnLOAAnnotationRenders(t *testing.T) {
 			got = footer.Text
 		}
 		t.Fatalf("footer should report 1 on LOA; got %q", got)
+	}
+}
+
+// unhealthyCache builds an unhealthy fakeLOACache: entries may exist (and the
+// roster member may even have a "real" LOA) but the health probe reports stale,
+// so the handler must NOT trust IsOnLOA/GetEntry and must render "unknown".
+func unhealthyCache(entries map[string]utils.LOAEntry, lastRefresh time.Time) *fakeLOACache {
+	return &fakeLOACache{entries: entries, healthy: false, lastRefresh: lastRefresh}
+}
+
+func TestRunAwol_UnhealthyCacheRendersUnknownColumn(t *testing.T) {
+	// Two AWOL members. Trooper.A even has a (stale) cache entry with a thread,
+	// but because the cache is unhealthy the handler must treat On LOA as unknown
+	// for EVERY row: no [LOA]/[[LOA]] decoration, no loaCount, plus a footer
+	// warning line.
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
+			"200": awolMember("Trooper.B", "200", "2026-04-01 12:00:00"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	cache := unhealthyCache(map[string]utils.LOAEntry{
+		"trooper.a": {
+			Username:  "Trooper.A",
+			StartDate: mustParseAwolDate("2026-04-01 00:00:00"),
+			EndDate:   mustParseAwolDate("2026-06-01 00:00:00"),
+			ThreadID:  4242,
+		},
+	}, awolRefDate.Add(-45*time.Minute))
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+
+	runAwol(f, cache, awolRefDate, i)
+
+	calls := f.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 calls (placeholder + Edit), got %d: %+v", len(calls), calls)
+	}
+	edit := calls[1].Edit
+	if edit.Embeds == nil || len(*edit.Embeds) == 0 {
+		t.Fatalf("expected embeds even on unhealthy path; got Embeds=%v", edit.Embeds)
+	}
+	desc := (*edit.Embeds)[0].Description
+	// Members still listed.
+	for _, want := range []string{"Trooper.A", "Trooper.B"} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("embed description missing %q.\nGot:\n%s", want, desc)
+		}
+	}
+	// No LOA decoration leaks through on the unhealthy path.
+	if strings.Contains(desc, "[LOA]") || strings.Contains(desc, "threads/4242") {
+		t.Fatalf("expected no LOA decoration on unhealthy path.\nGot:\n%s", desc)
+	}
+	// An "unknown" marker is present.
+	if !strings.Contains(desc, "On LOA: unknown") {
+		t.Fatalf("expected per-row 'On LOA: unknown' marker.\nGot:\n%s", desc)
+	}
+	footer := (*edit.Embeds)[0].Footer
+	if footer == nil {
+		t.Fatalf("expected footer on unhealthy path")
+	}
+	// loaCount aggregate must NOT report a concrete number.
+	if strings.Contains(footer.Text, "on LOA)") {
+		t.Fatalf("footer must not report a concrete loaCount on unhealthy path; got %q", footer.Text)
+	}
+	if !strings.Contains(footer.Text, "LOA cache unavailable") {
+		t.Fatalf("footer should carry cache-unavailable warning; got %q", footer.Text)
+	}
+}
+
+func TestRunAwol_UnhealthyCacheFileOutputCarriesWarning(t *testing.T) {
+	// Force the file path; the unhealthy cache must surface the warning and an
+	// unknown marker in the generated report rather than silent [LOA]/all-clear.
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	cache := unhealthyCache(map[string]utils.LOAEntry{
+		"trooper.a": {Username: "Trooper.A", ThreadID: 4242},
+	}, time.Time{})
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(
+		stringOption("position", "1-7"),
+		boolOption("force_file_output", true),
+	)
+
+	runAwol(f, cache, awolRefDate, i)
+
+	edit := f.Calls()[1].Edit
+	if len(edit.Files) != 1 {
+		t.Fatalf("expected 1 file attachment, got %d", len(edit.Files))
+	}
+	raw, err := io.ReadAll(edit.Files[0].Reader)
+	if err != nil {
+		t.Fatalf("reading file: %v", err)
+	}
+	body := string(raw)
+	if strings.Contains(body, "[LOA]") {
+		t.Fatalf("file must not carry [LOA] tag on unhealthy path.\nGot:\n%s", body)
+	}
+	if !strings.Contains(body, "LOA cache unavailable") {
+		t.Fatalf("file should carry cache-unavailable warning.\nGot:\n%s", body)
+	}
+	if !strings.Contains(body, "unknown") {
+		t.Fatalf("file should mark On LOA unknown.\nGot:\n%s", body)
 	}
 }
