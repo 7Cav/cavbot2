@@ -17,6 +17,10 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+// bmBaseURL is the BattleMetrics API base. A package-level var (not a const) so
+// integration tests can point it at an httptest.Server. See s3aar_test.go.
+var bmBaseURL = "https://api.battlemetrics.com"
+
 type PlayerSession struct {
 	Name         string `json:"name"`
 	Playtime     int    `json:"playtime"`
@@ -144,7 +148,7 @@ func fetchBattleMetricsSessions(serverID string, start, stop time.Time, minAtten
 		return nil, fmt.Errorf("BM_TOKEN not set")
 	}
 
-	endpoint := fmt.Sprintf("https://api.battlemetrics.com/servers/%s/relationships/sessions", serverID)
+	endpoint := fmt.Sprintf("%s/servers/%s/relationships/sessions", bmBaseURL, serverID)
 	params := url.Values{}
 	params.Set("start", start.Format(time.RFC3339))
 	params.Set("stop", stop.Format(time.RFC3339))
@@ -299,22 +303,28 @@ func S3AAR() Command {
 				},
 			},
 		},
-		Handler: handleS3AARCommand,
+		Handler: handleS3aar,
 	}
 }
 
-func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+func handleS3aar(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	runS3aar(utils.NewSessionResponder(s), i)
+}
+
+func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
+	utils.Info("🚀 Starting S3 AAR", "command", "S3AAR", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
+
 	options := i.ApplicationCommandData().Options
 	optionMap := make(map[string]*discordgo.ApplicationCommandInteractionDataOption, len(options))
 	for _, opt := range options {
 		optionMap[opt.Name] = opt
 	}
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	})
 	if err != nil {
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to defer interaction: %v", err))
+		utils.HandleError(r, i, fmt.Sprintf("Failed to defer interaction: %v", err))
 		return
 	}
 
@@ -331,44 +341,40 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	start, err := parseDateTime(startDate, startTime)
 	if err != nil {
-		_, sendErr := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+		if sendErr := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: fmt.Sprintf("Invalid start date/time: %v", err),
-		})
-		if sendErr != nil {
-			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to send error message: %v", sendErr))
+		}); sendErr != nil {
+			utils.HandleError(r, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
 		}
 		return
 	}
 
 	stop, err := parseDateTime(endDate, endTime)
 	if err != nil {
-		_, sendErr := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+		if sendErr := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: fmt.Sprintf("Invalid end date/time: %v", err),
-		})
-		if sendErr != nil {
-			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to send error message: %v", sendErr))
+		}); sendErr != nil {
+			utils.HandleError(r, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
 		}
 		return
 	}
 
 	serverID, err := getServerID(server)
 	if err != nil {
-		_, sendErr := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+		if sendErr := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: fmt.Sprintf("Invalid server selection: %v", err),
-		})
-		if sendErr != nil {
-			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to send error message: %v", sendErr))
+		}); sendErr != nil {
+			utils.HandleError(r, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
 		}
 		return
 	}
 
 	sessions, err := fetchBattleMetricsSessions(serverID, start, stop, minAttendance)
 	if err != nil {
-		_, sendErr := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+		if sendErr := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: fmt.Sprintf("Failed to fetch BattleMetrics data: %v", err),
-		})
-		if sendErr != nil {
-			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to send error message: %v", sendErr))
+		}); sendErr != nil {
+			utils.HandleError(r, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
 		}
 		return
 	}
@@ -391,11 +397,11 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return rankI < rankJ
 	})
 
-	_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+	err = r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 		Embeds: []*discordgo.MessageEmbed{embed1},
 	})
 	if err != nil {
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to send embeds: %v", err))
+		utils.HandleError(r, i, fmt.Sprintf("Failed to send embeds: %v", err))
 		return
 	}
 
@@ -414,7 +420,7 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 	forumText := strings.Join(forumLines, "\n")
 
-	_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+	err = r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 		Content: "AAR Roster (Copy Text to Forum Post)",
 		Files: []*discordgo.File{
 			{
@@ -425,22 +431,21 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		},
 	})
 	if err != nil {
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to send AAR roster file: %v", err))
+		utils.HandleError(r, i, fmt.Sprintf("Failed to send AAR roster file: %v", err))
 	}
 
 	if debug == "Yes" {
 		jsonData, err := json.MarshalIndent(sessions, "", "  ")
 		if err != nil {
-			_, sendErr := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+			if sendErr := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 				Content: fmt.Sprintf("Failed to format session data: %v", err),
-			})
-			if sendErr != nil {
-				utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to send error message: %v", sendErr))
+			}); sendErr != nil {
+				utils.HandleError(r, i, fmt.Sprintf("❌ Failed to send error message: %v", sendErr))
 			}
 			return
 		}
 
-		_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+		err = r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Files: []*discordgo.File{
 				{
 					Name:        "attendance.json",
@@ -450,7 +455,9 @@ func handleS3AARCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			},
 		})
 		if err != nil {
-			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("Failed to send JSON file: %v", err))
+			utils.HandleError(r, i, fmt.Sprintf("Failed to send JSON file: %v", err))
 		}
 	}
+
+	utils.Info("✨ Done!", "command", "S3AAR")
 }
