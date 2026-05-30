@@ -12,3 +12,15 @@ func SetAPIBaseURLForTest(url string) (restore func()) {
 	apiBaseURL = url
 	return func() { apiBaseURL = prev }
 }
+
+// SetGithubBaseURLForTest replaces the GitHub Apps API base URL and returns a
+// function that restores the previous value. Tests call it to redirect
+// GithubAuth / TriggerGithubDeployment / CheckGithubBranchExists at an
+// httptest.Server.
+//
+// Production code MUST NOT call this. The ForTest suffix is the review signal.
+func SetGithubBaseURLForTest(url string) (restore func()) {
+	prev := ghAppsBaseURL
+	ghAppsBaseURL = url
+	return func() { ghAppsBaseURL = prev }
+}

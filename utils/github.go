@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+// ghAppsBaseURL is the GitHub REST API root. It's a package-level var (not a
+// const) so tests can redirect GithubAuth/TriggerGithubDeployment/
+// CheckGithubBranchExists at an httptest.Server via SetGithubBaseURLForTest.
+var ghAppsBaseURL = "https://api.github.com"
+
 func GithubAuth(clientID string, privateKey []byte) (string, error) {
 	now := time.Now()
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
@@ -40,7 +45,7 @@ func GithubAuth(clientID string, privateKey []byte) (string, error) {
 		SetContext(ctx).
 		SetHeader("Accept", "application/vnd.github+json").
 		SetHeader("Authorization", "Bearer "+signedToken).
-		Get("https://api.github.com/app/installations")
+		Get(ghAppsBaseURL + "/app/installations")
 
 	if err != nil {
 		return "", fmt.Errorf("failed to get installations: %w", err)
@@ -67,7 +72,7 @@ func GithubAuth(clientID string, privateKey []byte) (string, error) {
 		SetContext(ctx).
 		SetHeader("Accept", "application/vnd.github+json").
 		SetHeader("Authorization", "Bearer "+signedToken).
-		Post(fmt.Sprintf("https://api.github.com/app/installations/%s/access_tokens", installationID))
+		Post(fmt.Sprintf("%s/app/installations/%s/access_tokens", ghAppsBaseURL, installationID))
 
 	if err != nil {
 		return "", fmt.Errorf("failed to get installation jwtToken: %w", err)
@@ -107,7 +112,7 @@ func TriggerGithubDeployment(branch string, token string, owner string, repo str
 				"branch": branch,
 			},
 		}).
-		Post(fmt.Sprintf("https://api.github.com/repos/%s/%s/actions/workflows/%s/dispatches", owner, repo, workflow))
+		Post(fmt.Sprintf("%s/repos/%s/%s/actions/workflows/%s/dispatches", ghAppsBaseURL, owner, repo, workflow))
 
 	if err != nil {
 		return fmt.Errorf("failed to trigger github workflow: %w", err)
@@ -131,7 +136,7 @@ func CheckGithubBranchExists(branch, token, owner, repo string) error {
 		SetContext(ctx).
 		SetHeader("Accept", "application/vnd.github+json").
 		SetHeader("Authorization", "Bearer "+token).
-		Get(fmt.Sprintf("https://api.github.com/repos/%s/%s/branches/%s", owner, repo, branch))
+		Get(fmt.Sprintf("%s/repos/%s/%s/branches/%s", ghAppsBaseURL, owner, repo, branch))
 
 	if err != nil {
 		return fmt.Errorf("failed to check branch: %w", err)
