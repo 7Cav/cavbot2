@@ -536,3 +536,81 @@ func TestRunJoinerReportSchedulerLoop_OrdinaryErrorContinues(t *testing.T) {
 		t.Errorf("expected exactly 1 GuildMembers call (no in-cycle retry), got %d", got)
 	}
 }
+
+// toggleErrJoinerSession errors on its first GuildMembers call and succeeds
+// (empty roster → still DMs) thereafter, recording every call under a mutex so
+// the scheduler test can assert a fire actually re-executed across iterations.
+type toggleErrJoinerSession struct {
+	mu        sync.Mutex
+	calls     int
+	secondRun chan struct{}
+}
+
+func (g *toggleErrJoinerSession) GuildMembers(string, string, int, ...discordgo.RequestOption) ([]*discordgo.Member, error) {
+	g.mu.Lock()
+	g.calls++
+	n := g.calls
+	g.mu.Unlock()
+	if n == 1 {
+		return nil, errors.New("rate-limited")
+	}
+	if n == 2 {
+		// Second fire executed and got past the error — signal so the test can
+		// observe the loop didn't merely advance but actually ran a later fire.
+		close(g.secondRun)
+	}
+	return nil, nil
+}
+
+func (g *toggleErrJoinerSession) callCount() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.calls
+}
+
+func (g *toggleErrJoinerSession) UserChannelCreate(string, ...discordgo.RequestOption) (*discordgo.Channel, error) {
+	return &discordgo.Channel{ID: "dm"}, nil
+}
+
+func (g *toggleErrJoinerSession) ChannelMessageSend(string, string, ...discordgo.RequestOption) (*discordgo.Message, error) {
+	return &discordgo.Message{ID: "m"}, nil
+}
+
+// TestRunJoinerReportSchedulerLoop_ErrorDoesNotKillLoop strengthens the
+// ordinary-error coverage from #119: rather than only proving the clock was
+// re-read after an error (loop advanced), it drives TWO executed fires — the
+// first returns a report error, the second runs to completion — and asserts the
+// report itself re-ran (call count >= 2). That distinguishes "loop survived and
+// fired again" from "loop merely recomputed the next fire". Determinism: the
+// clock returns a far-past time on calls 1 and 2 so both fires are overdue and
+// their sleeps return immediately, then a far-future time so the third sleep
+// parks the goroutine past the test deadline.
+func TestRunJoinerReportSchedulerLoop_ErrorDoesNotKillLoop(t *testing.T) {
+	fake := &toggleErrJoinerSession{secondRun: make(chan struct{})}
+
+	var nowMu sync.Mutex
+	nowCalls := 0
+	now := func() time.Time {
+		nowMu.Lock()
+		defer nowMu.Unlock()
+		nowCalls++
+		if nowCalls <= 2 {
+			// Far past → fire is overdue → sleep returns immediately.
+			return time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		}
+		// Far future → park the goroutine well past the test deadline.
+		return time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+
+	go runJoinerReportSchedulerLoop(fake, "g", now)
+
+	select {
+	case <-fake.secondRun:
+		// Second fire executed after the first returned an error.
+	case <-time.After(2 * time.Second):
+		t.Fatalf("scheduler loop did not run a 2nd fire within 2s — the error killed the loop instead of continuing to the next fire")
+	}
+	if got := fake.callCount(); got < 2 {
+		t.Errorf("expected the report to re-run (call count >= 2) after an error, got %d", got)
+	}
+}
