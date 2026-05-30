@@ -67,11 +67,73 @@ func (c *LOACache) IsHealthy(maxAge time.Duration) (bool, time.Time) {
 	return time.Since(c.lastSuccessfulRefresh) <= maxAge, c.lastSuccessfulRefresh
 }
 
+// loaPostRow is one forum post row fetched for a node: the raw message body and
+// the post/thread identifiers the core refresh loop needs.
+type loaPostRow struct {
+	message  string
+	postDate int64
+	threadID int64
+}
+
+// loaPostFetcher abstracts the per-node forum fetch so the refresh/prune core can
+// be exercised with a fake instead of a live MySQL connection. The production
+// implementation (sqlLOAFetcher) wraps *sql.DB and preserves the exact query and
+// row/stream-error semantics the cache relies on. This is a narrow test seam only;
+// it does not replace the process-global GlobalLOACache singleton with DI.
+type loaPostFetcher interface {
+	// fetchLOAPosts returns all visible LOA posts in nodeID with post_date > since,
+	// ordered oldest-first. A non-nil error means the node fetch failed (including a
+	// mid-stream rows error) and must not count as a successful node.
+	fetchLOAPosts(nodeID int, since int64) ([]loaPostRow, error)
+}
+
+// sqlLOAFetcher is the production loaPostFetcher backed by the Xenforo forum DB.
+type sqlLOAFetcher struct {
+	db *sql.DB
+}
+
+func (f sqlLOAFetcher) fetchLOAPosts(nodeID int, since int64) ([]loaPostRow, error) {
+	rows, err := f.db.Query(`
+		SELECT p.message, t.post_date, t.thread_id
+		FROM xf_thread t
+		JOIN xf_post p ON p.post_id = t.first_post_id
+		WHERE t.node_id = ?
+		  AND t.discussion_state = 'visible'
+		  AND t.post_date > ?
+		ORDER BY t.post_date ASC
+	`, nodeID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []loaPostRow
+	for rows.Next() {
+		var r loaPostRow
+		if err := rows.Scan(&r.message, &r.postDate, &r.threadID); err != nil {
+			Warn("LOA row scan failed", "node_id", nodeID, "error", err)
+			continue
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Refresh fetches LOA posts from the forum DB incrementally and updates the cache.
 // On first call it fetches posts from the past year; subsequent calls fetch only newer posts.
 // Multiple node IDs are supported to cover all LOA forum sections; each node is queried
 // separately so per-node parse counts can be logged for diagnostics.
 func (c *LOACache) Refresh(db *sql.DB, nodeIDs []int) {
+	c.refresh(sqlLOAFetcher{db: db}, nodeIDs)
+}
+
+// refresh is the fetcher-agnostic core of Refresh: it computes the incremental
+// `since` cursor, prunes ended entries, then applies each node's fetched posts.
+// Refresh wires in the production sqlLOAFetcher; tests supply a fake.
+func (c *LOACache) refresh(fetcher loaPostFetcher, nodeIDs []int) {
 	c.mu.RLock()
 	since := c.lastSyncedPostDate
 	c.mu.RUnlock()
@@ -96,46 +158,25 @@ func (c *LOACache) Refresh(db *sql.DB, nodeIDs []int) {
 	successfulNodes := 0
 
 	for _, nodeID := range nodeIDs {
-		rows, err := db.Query(`
-			SELECT p.message, t.post_date, t.thread_id
-			FROM xf_thread t
-			JOIN xf_post p ON p.post_id = t.first_post_id
-			WHERE t.node_id = ?
-			  AND t.discussion_state = 'visible'
-			  AND t.post_date > ?
-			ORDER BY t.post_date ASC
-		`, nodeID, since)
+		posts, err := fetcher.fetchLOAPosts(nodeID, since)
 		if err != nil {
 			Warn("LOA cache refresh failed", "node_id", nodeID, "error", err)
 			continue
 		}
 
 		nodeParsed := 0
-		for rows.Next() {
-			var message string
-			var postDate, threadID int64
-			if err := rows.Scan(&message, &postDate, &threadID); err != nil {
-				Warn("LOA row scan failed", "node_id", nodeID, "error", err)
-				continue
-			}
-			entry, ok := parseLOAPost(message)
+		for _, p := range posts {
+			entry, ok := parseLOAPost(p.message)
 			if !ok {
-				Debug("LOA post skipped (parse failed)", "node_id", nodeID, "post_date", postDate)
+				Debug("LOA post skipped (parse failed)", "node_id", nodeID, "post_date", p.postDate)
 				continue
 			}
-			entry.ThreadID = threadID
+			entry.ThreadID = p.threadID
 			c.entries[strings.ToLower(entry.Username)] = entry
-			if postDate > maxPostDate {
-				maxPostDate = postDate
+			if p.postDate > maxPostDate {
+				maxPostDate = p.postDate
 			}
 			nodeParsed++
-		}
-		rowsErr := rows.Err()
-		_ = rows.Close()
-
-		if rowsErr != nil {
-			Warn("LOA cache refresh failed mid-stream", "node_id", nodeID, "error", rowsErr)
-			continue
 		}
 
 		Info("LOA node refreshed", "node_id", nodeID, "new_parsed", nodeParsed)
