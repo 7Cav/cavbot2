@@ -43,14 +43,25 @@ func Milpac() Command {
 }
 
 func handleMilpacCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	runMilpac(utils.NewSessionResponder(s), i)
+}
+
+// runMilpac is the Pattern A core: it takes a utils.InteractionResponder so
+// tests can substitute the discordgo session, and runs synchronously. The
+// previous goroutine'd processMilpacRequest was made inline — the interaction
+// dispatcher already wraps handlers in utils.RecoverPanic (see main.go), so the
+// background-goroutine boundary (and its own RecoverPanic) is no longer needed.
+func runMilpac(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
+	utils.Info("🚀 Starting Milpac", "command", "Milpac", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
+
+	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: "Fetching Milpac data...",
 		},
 	})
 	if err != nil {
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 		return
 	}
 
@@ -60,25 +71,21 @@ func handleMilpacCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		optionMap[opt.Name] = opt
 	}
 
-	utils.Info("Milpac requested", "command", "Milpac", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
-	user := optionMap["user"].UserValue(s)
+	// UserValue(nil) resolves the option to a *User carrying just the ID — which
+	// is all this command consumes. Passing nil avoids needing a live session.
+	user := optionMap["user"].UserValue(nil)
 
-	go processMilpacRequest(s, i, user)
-}
-
-func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, user *discordgo.User) {
-	defer utils.RecoverPanic("milpac-bg")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	milpac, err := utils.GetMilpacByDiscordID(ctx, user.ID)
 	if err != nil {
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to fetch milpac: %v", err))
+		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to fetch milpac: %v", err))
 		return
 	}
 	joinDate, err := time.Parse("2006-01-02", milpac.JoinDate)
 	if err != nil {
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to parse join date: %v", err))
+		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to parse join date: %v", err))
 		return
 	}
 	formatJoinDate := joinDate.Format("02Jan2006")
@@ -88,7 +95,7 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		var err error
 		promotionDate, err = time.Parse("2006-01-02", milpac.PromotionDate)
 		if err != nil || promotionDate.IsZero() {
-			utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to parse promotion date: %v", err))
+			utils.HandleError(r, i, fmt.Sprintf("❌ Failed to parse promotion date: %v", err))
 			return
 		}
 	} else {
@@ -107,7 +114,7 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			utils.Debug("📋 Processing record", "type", record.RecordType, "date", record.RecordDate)
 			recordDate, err := time.Parse("2006-01-02", record.RecordDate)
 			if err != nil {
-				utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to parse record date: %v", err))
+				utils.HandleError(r, i, fmt.Sprintf("❌ Failed to parse record date: %v", err))
 				return
 			}
 			if strings.Contains(record.RecordDetails, "Retired") || strings.Contains(record.RecordDetails, "ELOA") ||
@@ -189,7 +196,7 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	}
 	matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(milpac.UniformUrl)
 	if len(matches) < 2 {
-		utils.HandleError(utils.NewSessionResponder(s), i, "❌ Failed to parse uniform URL")
+		utils.HandleError(r, i, "❌ Failed to parse uniform URL")
 		return
 	}
 	id := matches[1]
@@ -209,12 +216,12 @@ func processMilpacRequest(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	}
 	utils.Info("Returning Milpac", "command", "Milpac", "milpac_name", embed.Title, "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 	emptyContent := ""
-	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+	err = r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &emptyContent,
 		Embeds:  &[]*discordgo.MessageEmbed{embed},
 	})
 	if err != nil {
-		utils.HandleError(utils.NewSessionResponder(s), i, fmt.Sprintf("❌ Failed to edit response with embed: %v", err))
+		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to edit response with embed: %v", err))
 	}
 	utils.Info("✨ Done!", "command", "Milpac")
 }
