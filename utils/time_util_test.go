@@ -34,31 +34,50 @@ func TestDaysInMonth(t *testing.T) {
 	}
 }
 
-func TestFormatTimeSinceDuration(t *testing.T) {
-	now := time.Now()
+func TestFormatTimeSince(t *testing.T) {
+	// Fixed dates keep boundary cases deterministic regardless of the run date.
+	// Anchoring to time.Now() (the old test) was flaky: on month-boundary days
+	// AddDate overflows, e.g. 31MAY - 1 month -> 01MAY, yielding "30 days".
+	date := func(y int, m time.Month, d int) time.Time {
+		return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+	}
 
 	tests := []struct {
 		name  string
 		start time.Time
+		end   time.Time
 		want  string
 	}{
-		{"zero duration", now, "0 days"},
-		{"one day", now.AddDate(0, 0, -1), "1 day"},
-		{"several days", now.AddDate(0, 0, -5), "5 days"},
-		{"one month", now.AddDate(0, -1, 0), "1 month"},
-		{"one year", now.AddDate(-1, 0, 0), "1 year"},
-		{"two years", now.AddDate(-2, 0, 0), "2 years"},
-		{"year plus month plus day", now.AddDate(-1, -1, -1), "1 year, 1 month, 1 day"},
-		{"large duration", now.AddDate(-10, -3, -2), "10 years, 3 months, 2 days"},
-		{"two months no days", now.AddDate(0, -2, 0), "2 months"},
-		{"year plus days", now.AddDate(-3, 0, -4), "3 years, 4 days"},
+		{"zero duration", date(2026, time.May, 15), date(2026, time.May, 15), "0 days"},
+		{"one day", date(2026, time.May, 14), date(2026, time.May, 15), "1 day"},
+		{"several days", date(2026, time.May, 10), date(2026, time.May, 15), "5 days"},
+		{"one month", date(2026, time.April, 15), date(2026, time.May, 15), "1 month"},
+		{"two months no days", date(2026, time.March, 15), date(2026, time.May, 15), "2 months"},
+		{"one year", date(2025, time.May, 15), date(2026, time.May, 15), "1 year"},
+		{"two years", date(2024, time.May, 15), date(2026, time.May, 15), "2 years"},
+		{"year plus month plus day", date(2024, time.April, 14), date(2025, time.May, 15), "1 year, 1 month, 1 day"},
+		{"large duration", date(2013, time.February, 13), date(2023, time.May, 15), "10 years, 3 months, 2 days"},
+		{"year plus days", date(2023, time.May, 11), date(2026, time.May, 15), "3 years, 4 days"},
+		// Boundary: 01MAY -> 31MAY is 30 days, NOT "1 month" — the exact case
+		// that flaked the old now.AddDate(0,-1,0) test on the 31st.
+		{"thirty days not one month", date(2026, time.May, 1), date(2026, time.May, 31), "30 days"},
+		// day borrow across a 30-day month (April)
+		{"day borrow across short month", date(2026, time.April, 20), date(2026, time.May, 10), "20 days"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := FormatTimeSinceDuration(tc.start); got != tc.want {
-				t.Fatalf("FormatTimeSinceDuration(%v) = %q, want %q", tc.start, got, tc.want)
+			if got := formatTimeSince(tc.start, tc.end); got != tc.want {
+				t.Fatalf("formatTimeSince(%v, %v) = %q, want %q", tc.start, tc.end, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestFormatTimeSinceDuration covers the public time.Now()-anchored wrapper.
+// Only the zero-duration case is stable against a live clock.
+func TestFormatTimeSinceDuration(t *testing.T) {
+	if got := FormatTimeSinceDuration(time.Now()); got != "0 days" {
+		t.Fatalf("FormatTimeSinceDuration(now) = %q, want %q", got, "0 days")
 	}
 }
