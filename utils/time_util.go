@@ -21,8 +21,14 @@ func daysInMonth(month, year int) int {
 }
 
 func FormatTimeSinceDuration(startDate time.Time) string {
-	endDate := time.Now()
+	return formatTimeSince(startDate, time.Now())
+}
 
+// formatTimeSince is the clock-injected core of FormatTimeSinceDuration. Tests
+// drive it with a fixed endDate so boundary cases stay deterministic — anchoring
+// to time.Now() makes the month-length AddDate math flaky near month boundaries
+// (e.g. on the 31st, "one month ago" overflows to the 1st of the current month).
+func formatTimeSince(startDate, endDate time.Time) string {
 	years := endDate.Year() - startDate.Year()
 	months := int(endDate.Month() - startDate.Month())
 	days := endDate.Day() - startDate.Day()
