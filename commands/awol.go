@@ -17,8 +17,6 @@ func stringPtr(s string) *string {
 }
 
 const (
-	maxEmbedLength    = 6000
-	maxFieldsPerEmbed = 25
 	maxEmbedsPerMsg   = 10
 	awolThresholdDays = 8
 )

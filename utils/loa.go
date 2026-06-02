@@ -42,6 +42,23 @@ func (c *LOACache) GetEntry(username string) (LOAEntry, bool) {
 	return e, ok
 }
 
+// isActiveAt reports whether the entry's LOA window is active at the instant
+// `now`. The window is inclusive at both bounds: an entry is active from its
+// StartDate through its EndDate (so Start==now and End==now both count as active).
+// Clock-injected so the boundary semantics are unit-testable at the exact edge
+// (cf. PR #135); the production callers pass time.Now().
+func (e LOAEntry) isActiveAt(now time.Time) bool {
+	return !now.Before(e.StartDate) && !now.After(e.EndDate)
+}
+
+// isExpiredAt reports whether the entry's LOA window has ended strictly before
+// `now` — the prune cutoff. It is the strict complement of the inclusive upper
+// bound in isActiveAt: an entry on its EndDate (End==now) is NOT yet expired and
+// survives a prune cycle; one whose EndDate is already past is pruned.
+func (e LOAEntry) isExpiredAt(now time.Time) bool {
+	return now.After(e.EndDate)
+}
+
 // IsOnLOA returns true if the username has a currently active LOA.
 func (c *LOACache) IsOnLOA(username string) bool {
 	c.mu.RLock()
@@ -50,8 +67,7 @@ func (c *LOACache) IsOnLOA(username string) bool {
 	if !ok {
 		return false
 	}
-	now := time.Now()
-	return !now.Before(entry.StartDate) && !now.After(entry.EndDate)
+	return entry.isActiveAt(time.Now())
 }
 
 // IsHealthy reports whether the cache has been successfully refreshed within
@@ -148,7 +164,7 @@ func (c *LOACache) refresh(fetcher loaPostFetcher, nodeIDs []int) {
 	// Prune entries whose LOA has ended.
 	now := time.Now()
 	for k, e := range c.entries {
-		if now.After(e.EndDate) {
+		if e.isExpiredAt(now) {
 			delete(c.entries, k)
 		}
 	}
