@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/7cav/cavbot2/utils"
+	"github.com/bwmarrin/discordgo"
 )
 
 // s6RefDate is the pinned "now" for all S6-IT unit tests; chosen so the
@@ -515,6 +516,9 @@ func TestRunS6ITCheck_HappyPathWithSkipped(t *testing.T) {
 	if calls[0].Method != "Respond" || calls[0].Response.Data.Content != "Fetching S6 IT Check data..." {
 		t.Fatalf("calls[0]: expected placeholder Respond, got %+v", calls[0])
 	}
+	if calls[0].Response.Type != discordgo.InteractionResponseChannelMessageWithSource {
+		t.Fatalf("calls[0]: expected placeholder Type ChannelMessageWithSource, got %v", calls[0].Response.Type)
+	}
 	if calls[1].Method != "Edit" || calls[1].Edit.Content == nil {
 		t.Fatalf("calls[1]: expected Edit with non-nil Content, got %+v", calls[1])
 	}
@@ -666,4 +670,19 @@ func TestRunS6ITCheck_RosterFetch500(t *testing.T) {
 		}
 		t.Fatalf("expected 'Failed to fetch S6 Members' in Edit fallback, got %q", got)
 	}
+}
+
+// TestRunS6ITCheck_FirstRespondFails_BailsBeforeAPI covers the early-bail branch
+// when the placeholder InteractionRespond fails: runS6ITCheck must call
+// HandleError once and return before fetching the roster (tripwire server fails
+// the test if hit).
+func TestRunS6ITCheck_FirstRespondFails_BailsBeforeAPI(t *testing.T) {
+	tripwireAPIServer(t)
+
+	f := &fakeResponder{RespondErrs: []error{errFirstRespond}}
+	i := fakeAppCommandInteraction()
+
+	runS6ITCheck(f, i)
+
+	assertPlaceholderFailedBailout(t, f.Calls())
 }
