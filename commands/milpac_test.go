@@ -180,6 +180,9 @@ func TestRunMilpac_SuccessByDiscordID(t *testing.T) {
 	if calls[0].Method != "Respond" {
 		t.Fatalf("calls[0]: expected Respond, got %q", calls[0].Method)
 	}
+	if calls[0].Response.Type != discordgo.InteractionResponseChannelMessageWithSource {
+		t.Fatalf("calls[0]: expected placeholder Type ChannelMessageWithSource, got %v", calls[0].Response.Type)
+	}
 	if !strings.Contains(calls[0].Response.Data.Content, "Fetching Milpac data") {
 		t.Fatalf("calls[0]: expected placeholder content, got %q", calls[0].Response.Data.Content)
 	}
@@ -391,4 +394,19 @@ func TestRunMilpac_MalformedPromotionDate_FallsThroughHandleError(t *testing.T) 
 		}
 		t.Fatalf("calls[2]: expected 'Failed to parse promotion date', got %q", got)
 	}
+}
+
+// TestRunMilpac_FirstRespondFails_BailsBeforeAPI covers the early-bail branch
+// when the placeholder InteractionRespond fails: runMilpac must call HandleError
+// once and return before fetching the milpac (tripwire server fails the test if
+// hit).
+func TestRunMilpac_FirstRespondFails_BailsBeforeAPI(t *testing.T) {
+	tripwireAPIServer(t)
+
+	f := &fakeResponder{RespondErrs: []error{errFirstRespond}}
+	i := fakeAppCommandInteraction(userOption("user", "111"))
+
+	runMilpac(f, i)
+
+	assertPlaceholderFailedBailout(t, f.Calls())
 }
