@@ -46,7 +46,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           set -euo pipefail
-          go test ./... -cover -covermode=atomic | tee /tmp/cover.log
+          go test ./... -race -cover -covermode=atomic | tee /tmp/cover.log
 
       - name: Enforce coverage floors
         run: ./.github/scripts/check-coverage-floors.sh < /tmp/cover.log

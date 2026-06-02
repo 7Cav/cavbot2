@@ -99,7 +99,7 @@ The headings below are consumed by `syni-run-on-issue`. Edit freely; the orchest
 set -euo pipefail
 golangci-lint run --timeout=5m
 go mod tidy
-go test ./... -cover -covermode=atomic | tee /tmp/cover.log
+go test ./... -race -cover -covermode=atomic | tee /tmp/cover.log
 ./.github/scripts/check-coverage-floors.sh < /tmp/cover.log
 go build -o cavbot2
 ```
