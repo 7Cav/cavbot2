@@ -405,15 +405,6 @@ func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	sort.SliceStable(combatRoster, func(i, j int) bool {
-		rankI, errI := strconv.Atoi(combatRoster[i].RankID)
-		rankJ, errJ := strconv.Atoi(combatRoster[j].RankID)
-		if errI != nil || errJ != nil {
-			return combatRoster[i].RankID < combatRoster[j].RankID
-		}
-		return rankI < rankJ
-	})
-
 	var forumLines []string
 	for _, s := range combatRoster {
 		forumLines = append(forumLines, fmt.Sprintf("[URL='%s']%s[/URL]", s.MilpacsLink, s.CavName))
