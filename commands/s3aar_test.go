@@ -809,6 +809,56 @@ func TestRunS3aar_MixedRosterFailuresWarningField(t *testing.T) {
 	}
 }
 
+// TestBuildEnrichmentFailureField_Truncation guards the Discord 1024-char field
+// limit: a mass-failure run must still produce a deliverable field rather than an
+// over-limit Value that Discord would reject (dropping the whole attendance embed).
+// It asserts the Value stays within the limit, that early names are listed, and
+// that the omitted tail is summarized with an accurate "…and N more" count.
+func TestBuildEnrichmentFailureField_Truncation(t *testing.T) {
+	// 200 names of ~24 chars each (~4800 chars) — far past the 1024 limit.
+	failures := make([]string, 200)
+	for i := range failures {
+		failures[i] = fmt.Sprintf("ABC.Player%03d.PlayerX", i)
+	}
+
+	field := buildEnrichmentFailureField(failures)
+
+	if got := len(field.Value); got > discordFieldValueLimit {
+		t.Fatalf("field Value length %d exceeds Discord limit %d", got, discordFieldValueLimit)
+	}
+	if !strings.Contains(field.Name, "(200)") {
+		t.Fatalf("field Name must report the full failure count; got %q", field.Name)
+	}
+	if !strings.Contains(field.Value, "ABC.Player000.PlayerX") {
+		t.Fatalf("field Value must list the first failure; got %q", field.Value)
+	}
+	// The omitted tail must be summarized, and the count must be accurate: total
+	// minus the number actually listed.
+	listed := strings.Count(field.Value, "ABC.Player")
+	wantNote := fmt.Sprintf("…and %d more", len(failures)-listed)
+	if !strings.Contains(field.Value, wantNote) {
+		t.Fatalf("field Value must summarize the omitted tail as %q; got %q", wantNote, field.Value)
+	}
+}
+
+// TestBuildEnrichmentFailureField_NoTruncation confirms a small list is rendered
+// in full with no "…and N more" note — the common case must be unaffected by the
+// truncation guard.
+func TestBuildEnrichmentFailureField_NoTruncation(t *testing.T) {
+	failures := []string{"ABC.Alpha.A", "ABC.Bravo.B", "ABC.Charlie.C"}
+
+	field := buildEnrichmentFailureField(failures)
+
+	for _, name := range failures {
+		if !strings.Contains(field.Value, name) {
+			t.Fatalf("field Value must list %q in full; got %q", name, field.Value)
+		}
+	}
+	if strings.Contains(field.Value, "more") {
+		t.Fatalf("small list must not be truncated; got %q", field.Value)
+	}
+}
+
 func TestGetServerID(t *testing.T) {
 	cases := []struct {
 		server  string

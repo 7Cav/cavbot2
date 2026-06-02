@@ -330,6 +330,54 @@ func handleS3aar(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	runS3aar(utils.NewSessionResponder(s), i)
 }
 
+// discordFieldValueLimit is Discord's hard cap on an embed field's Value length.
+// A field that exceeds it makes the API reject the ENTIRE message, so the
+// enrichment-failure list must be clamped to fit (see buildEnrichmentFailureField).
+const discordFieldValueLimit = 1024
+
+// buildEnrichmentFailureField renders the enrichment-failure warning field, clamping
+// the player list so the Value never exceeds Discord's 1024-char limit. When the full
+// list would overflow, as many names as fit are listed and the remainder is summarized
+// as a trailing "…and N more" line — so a mass-failure run (the exact case where
+// milpacs is down during a big op) still produces a deliverable message instead of a
+// rejected followup that would drop the whole attendance embed. Callers pass a
+// non-empty, already-sorted slice.
+func buildEnrichmentFailureField(failures []string) *discordgo.MessageEmbedField {
+	const prefix = "These players could not be matched to milpacs and were excluded from the combat roster. Verify manually:\n"
+
+	// Upper bound on the "…and N more" note width (N can't exceed the total),
+	// reserved while listing so the note itself can never push us over the limit.
+	maxMoreNote := fmt.Sprintf("\n…and %d more", len(failures))
+
+	var b strings.Builder
+	b.WriteString(prefix)
+	written := 0
+	for i, name := range failures {
+		sep := ""
+		if written > 0 {
+			sep = "\n"
+		}
+		reserve := 0
+		if i < len(failures)-1 {
+			reserve = len(maxMoreNote)
+		}
+		if b.Len()+len(sep)+len(name)+reserve > discordFieldValueLimit {
+			break
+		}
+		b.WriteString(sep)
+		b.WriteString(name)
+		written++
+	}
+	if written < len(failures) {
+		fmt.Fprintf(&b, "\n…and %d more", len(failures)-written)
+	}
+
+	return &discordgo.MessageEmbedField{
+		Name:  fmt.Sprintf("⚠️ Enrichment Failed (%d) — Excluded from Combat Roster", len(failures)),
+		Value: b.String(),
+	}
+}
+
 func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	utils.Info("🚀 Starting S3 AAR", "command", "S3AAR", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
 
@@ -420,13 +468,7 @@ func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	// the happy-path embed byte-for-byte unchanged.
 	if len(enrichFailures) > 0 {
 		sort.Strings(enrichFailures)
-		embed1.Fields = append(embed1.Fields, &discordgo.MessageEmbedField{
-			Name: fmt.Sprintf("⚠️ Enrichment Failed (%d) — Excluded from Combat Roster", len(enrichFailures)),
-			Value: fmt.Sprintf(
-				"These players could not be matched to milpacs and were excluded from the combat roster. Verify manually:\n%s",
-				strings.Join(enrichFailures, "\n"),
-			),
-		})
+		embed1.Fields = append(embed1.Fields, buildEnrichmentFailureField(enrichFailures))
 	}
 
 	sort.SliceStable(combatRoster, func(i, j int) bool {
