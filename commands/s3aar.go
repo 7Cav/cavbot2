@@ -29,6 +29,12 @@ type PlayerSession struct {
 	SearchString string `json:"search_string"`
 	Roster       string `json:"roster"`
 	RankID       string `json:"rank_id"`
+	// EnrichFailed records that milpacs enrichment errored for this player. It
+	// makes the empty-vs-failure distinction explicit: an empty Roster could mean
+	// "enrichment failed" OR "successfully enriched but not combat", and only the
+	// former is an operator-actionable problem. Never infer failure from an empty
+	// Roster string — read this flag.
+	EnrichFailed bool `json:"enrich_failed"`
 }
 
 type BMResponse struct {
@@ -198,7 +204,17 @@ func fetchBattleMetricsSessions(serverID string, start, stop time.Time, minAtten
 		minutes := int(duration.Minutes())
 		if minutes >= minAttendance {
 			cleaned := cleanName(name)
-			cavName, link, searchString, roster, rankID, _ := enrichPlayer(ctx, cleaned)
+			cavName, link, searchString, roster, rankID, enrichErr := enrichPlayer(ctx, cleaned)
+			if enrichErr != nil {
+				// A real combatant whose enrichment fails would otherwise vanish
+				// from the combat roster with no signal. Mark the failure explicitly
+				// and log the raw + cleaned name so the drop is observable.
+				utils.Warn("milpacs enrichment failed for /s3aar player",
+					"command", "S3AAR",
+					"raw_name", name,
+					"cleaned_name", cleaned,
+					"error", enrichErr.Error())
+			}
 			sessions = append(sessions, PlayerSession{
 				Name:         name,
 				Playtime:     minutes,
@@ -207,6 +223,7 @@ func fetchBattleMetricsSessions(serverID string, start, stop time.Time, minAtten
 				SearchString: searchString,
 				Roster:       roster,
 				RankID:       rankID,
+				EnrichFailed: enrichErr != nil,
 			})
 		}
 	}
@@ -381,10 +398,33 @@ func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 
 	embed1 := buildAttendanceEmbed(sessions)
 	var combatRoster []PlayerSession
+	var enrichFailures []string
 	for _, s := range sessions {
+		// Only true enrichment failures are surfaced. A successfully-enriched
+		// non-combat player has EnrichFailed == false and is silently (correctly)
+		// excluded from the combat roster without a warning.
+		if s.EnrichFailed {
+			enrichFailures = append(enrichFailures, s.Name)
+			continue
+		}
 		if s.Roster == "ROSTER_TYPE_COMBAT" {
 			combatRoster = append(combatRoster, s)
 		}
+	}
+
+	// When one or more players failed milpacs enrichment, surface them on the AAR
+	// embed so the S3 operator can chase them manually rather than have them
+	// silently vanish from the combat roster. Zero failures → no field, leaving
+	// the happy-path embed byte-for-byte unchanged.
+	if len(enrichFailures) > 0 {
+		sort.Strings(enrichFailures)
+		embed1.Fields = append(embed1.Fields, &discordgo.MessageEmbedField{
+			Name: fmt.Sprintf("⚠️ Enrichment Failed (%d) — Excluded from Combat Roster", len(enrichFailures)),
+			Value: fmt.Sprintf(
+				"These players could not be matched to milpacs and were excluded from the combat roster. Verify manually:\n%s",
+				strings.Join(enrichFailures, "\n"),
+			),
+		})
 	}
 
 	sort.SliceStable(combatRoster, func(i, j int) bool {

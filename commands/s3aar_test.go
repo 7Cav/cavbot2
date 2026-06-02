@@ -1,9 +1,11 @@
 package commands
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +15,33 @@ import (
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 )
+
+// captureWarnLogs swaps utils.Logger for a buffer-backed handler at WARN level
+// for the duration of the test, returning the buffer so callers can assert on
+// emitted warn lines. The previous logger is restored via t.Cleanup.
+func captureWarnLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := utils.Logger
+	utils.Logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	t.Cleanup(func() { utils.Logger = prev })
+	return &buf
+}
+
+// warningField returns the attendance embed's enrichment-failure warning field,
+// or nil if no such field is present. The warning field is identified by its
+// Name containing "enrich" (case-insensitive).
+func warningField(embed *discordgo.MessageEmbed) *discordgo.MessageEmbedField {
+	if embed == nil {
+		return nil
+	}
+	for _, f := range embed.Fields {
+		if strings.Contains(strings.ToLower(f.Name), "enrich") {
+			return f
+		}
+	}
+	return nil
+}
 
 // bmSession is one BattleMetrics session record as the fake API serializes it.
 // Fields mirror the subset s3aar.go decodes (BMResponse).
@@ -577,6 +606,126 @@ func assertNoRosterFollowup(t *testing.T, fups []recordedCall) {
 		if len(f.Params.Files) != 0 {
 			t.Fatalf("no file followup expected on this path; got %+v", f.Params)
 		}
+	}
+}
+
+// TestRunS3aar_EnrichmentFailureWarningFooter drives the all-404 milpacs seam
+// so enrichPlayer fails for the attending player. It asserts BOTH:
+//   - a utils.Warn is emitted carrying the raw BattleMetrics name AND the cleaned
+//     name, so the silent drop is observable in logs; and
+//   - the attendance embed gains a warning field listing the failed player and
+//     stating they were excluded from the combat roster.
+func TestRunS3aar_EnrichmentFailureWarningFooter(t *testing.T) {
+	logs := captureWarnLogs(t)
+
+	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
+	stop := start.Add(2 * time.Hour)
+	// cleanName("ABC.Ghost.G") == "Ghost.G"; all milpacs lookups 404 → failure.
+	serveBattleMetrics(t, []bmSession{
+		{Name: "ABC.Ghost.G", Start: start, Stop: stop},
+	})
+
+	r := &fakeResponder{}
+	i := s3aarOptions("Tac1", "10NOV25", "10NOV25", "1800", "2000", 30, "")
+	runS3aar(r, i)
+
+	// Warn emission: must carry both the raw and cleaned names.
+	logged := logs.String()
+	if !strings.Contains(logged, "level=WARN") {
+		t.Fatalf("expected a WARN log on enrichment failure; got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "ABC.Ghost.G") {
+		t.Fatalf("WARN log must carry the raw BattleMetrics name; got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "Ghost.G") {
+		t.Fatalf("WARN log must carry the cleaned name; got:\n%s", logged)
+	}
+
+	// Warning footer: the attendance embed must carry an enrichment-failure field
+	// naming the excluded player and stating they were excluded from the combat
+	// roster.
+	fups := followups(r.Calls())
+	if len(fups) == 0 || len(fups[0].Params.Embeds) == 0 {
+		t.Fatalf("expected attendance embed in first followup; got %+v", fups)
+	}
+	field := warningField(fups[0].Params.Embeds[0])
+	if field == nil {
+		t.Fatalf("expected an enrichment-failure warning field on the embed; got %+v", fups[0].Params.Embeds[0])
+	}
+	if !strings.Contains(field.Value, "ABC.Ghost.G") {
+		t.Fatalf("warning field must list the failed player; got %q", field.Value)
+	}
+	if !strings.Contains(strings.ToLower(field.Value+field.Name), "combat") {
+		t.Fatalf("warning field must state exclusion from the combat roster; got name=%q value=%q", field.Name, field.Value)
+	}
+}
+
+// TestRunS3aar_NonCombatNotInWarningFooter pins the empty-vs-failure invariant:
+// a player who enriches SUCCESSFULLY but is on a non-combat roster is filtered
+// from the combat roster (expected) yet must NOT be reported as an enrichment
+// failure — so no warning field appears at all when every player enriches.
+func TestRunS3aar_NonCombatNotInWarningFooter(t *testing.T) {
+	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
+	stop := start.Add(2 * time.Hour)
+
+	serveBattleMetricsWithProfiles(t,
+		[]bmSession{
+			{Name: "ABC.Combat.C", Start: start, Stop: stop},   // combat
+			{Name: "ABC.Reserve.R", Start: start, Stop: stop},  // reserve (non-combat)
+		},
+		map[string]utils.ProfileResponse{
+			"Combat.C":  combatProfile("CombatUser", "Sergeant", "5", "ROSTER_TYPE_COMBAT", "101"),
+			"Reserve.R": combatProfile("ReserveUser", "Private", "9", "ROSTER_TYPE_RESERVE", "303"),
+		},
+	)
+
+	r := &fakeResponder{}
+	i := s3aarOptions("Tac1", "10NOV25", "10NOV25", "1800", "2000", 30, "")
+	runS3aar(r, i)
+
+	fups := followups(r.Calls())
+	if len(fups) == 0 || len(fups[0].Params.Embeds) == 0 {
+		t.Fatalf("expected attendance embed in first followup; got %+v", fups)
+	}
+	embed := fups[0].Params.Embeds[0]
+
+	// No enrichment-failure field: every player enriched fine.
+	if field := warningField(embed); field != nil {
+		t.Fatalf("non-combat-but-enriched player must NOT appear in a warning field; got %+v", field)
+	}
+	// The reserve player must still be filtered from the combat roster file.
+	body := readAARFile(t, fups)
+	if strings.Contains(body, "ReserveUser") {
+		t.Fatalf("reserve player must be filtered from combat roster; body:\n%s", body)
+	}
+}
+
+// TestRunS3aar_HappyPathNoWarningField guards the byte-for-byte invariant: when
+// zero players fail enrichment, the attendance embed carries no warning field at
+// all (no Fields), matching today's happy-path output.
+func TestRunS3aar_HappyPathNoWarningField(t *testing.T) {
+	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
+	stop := start.Add(2 * time.Hour)
+
+	serveBattleMetricsWithProfiles(t,
+		[]bmSession{
+			{Name: "ABC.Solo.S", Start: start, Stop: stop},
+		},
+		map[string]utils.ProfileResponse{
+			"Solo.S": combatProfile("SoloUser", "Sergeant", "5", "ROSTER_TYPE_COMBAT", "101"),
+		},
+	)
+
+	r := &fakeResponder{}
+	i := s3aarOptions("Tac1", "10NOV25", "10NOV25", "1800", "2000", 30, "")
+	runS3aar(r, i)
+
+	fups := followups(r.Calls())
+	if len(fups) == 0 || len(fups[0].Params.Embeds) == 0 {
+		t.Fatalf("expected attendance embed in first followup; got %+v", fups)
+	}
+	if len(fups[0].Params.Embeds[0].Fields) != 0 {
+		t.Fatalf("happy path must carry no embed fields; got %+v", fups[0].Params.Embeds[0].Fields)
 	}
 }
 
