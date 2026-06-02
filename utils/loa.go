@@ -42,21 +42,32 @@ func (c *LOACache) GetEntry(username string) (LOAEntry, bool) {
 	return e, ok
 }
 
+// hasEnded reports whether the entry's EndDate is strictly before `now`. It is
+// the single source of truth for the upper boundary shared by isActiveAt and
+// isExpiredAt, so the two predicates can't drift: an entry on its EndDate
+// (End==now) has NOT ended (active, not yet prunable); one whose EndDate is
+// already past has ended.
+func (e LOAEntry) hasEnded(now time.Time) bool {
+	return now.After(e.EndDate)
+}
+
 // isActiveAt reports whether the entry's LOA window is active at the instant
 // `now`. The window is inclusive at both bounds: an entry is active from its
 // StartDate through its EndDate (so Start==now and End==now both count as active).
-// Clock-injected so the boundary semantics are unit-testable at the exact edge
-// (cf. PR #135); the production callers pass time.Now().
+// The upper bound is hasEnded (shared with isExpiredAt) — keep them coupled so
+// End==now stays both active here and not-yet-expired there. Clock-injected so
+// the boundary semantics are unit-testable at the exact edge (cf. PR #135); the
+// production callers pass time.Now().
 func (e LOAEntry) isActiveAt(now time.Time) bool {
-	return !now.Before(e.StartDate) && !now.After(e.EndDate)
+	return !now.Before(e.StartDate) && !e.hasEnded(now)
 }
 
 // isExpiredAt reports whether the entry's LOA window has ended strictly before
-// `now` — the prune cutoff. It is the strict complement of the inclusive upper
-// bound in isActiveAt: an entry on its EndDate (End==now) is NOT yet expired and
-// survives a prune cycle; one whose EndDate is already past is pruned.
+// `now` — the prune cutoff. It is the strict complement of isActiveAt's inclusive
+// upper bound (both via hasEnded): an entry on its EndDate (End==now) is NOT yet
+// expired and survives a prune cycle; one whose EndDate is already past is pruned.
 func (e LOAEntry) isExpiredAt(now time.Time) bool {
-	return now.After(e.EndDate)
+	return e.hasEnded(now)
 }
 
 // IsOnLOA returns true if the username has a currently active LOA.

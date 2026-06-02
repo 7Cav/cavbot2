@@ -175,8 +175,8 @@ func (e stubError) Error() string { return string(e) }
 // tripwireAPIServer stands up an httptest.Server that fails the test if it
 // receives ANY request, and points makeAPIRequest at it via
 // SetAPIBaseURLForTest. Used by the placeholder-fails tests to prove the command
-// bails before touching the upstream milpac API. Returns the server so callers
-// can assert hit count if needed (currently the t.Errorf is sufficient).
+// bails before touching the upstream milpac API. The t.Errorf on any request is
+// the assertion; the server and URL override are torn down via t.Cleanup.
 func tripwireAPIServer(t *testing.T) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
