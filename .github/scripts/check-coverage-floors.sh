@@ -17,8 +17,8 @@ set -euo pipefail
 # heredoc, read returns 1 at EOF. Without `|| true`, `set -e` would kill the
 # script before any check runs. Don't "clean up" the `|| true`.
 read -r -d '' FLOORS <<'EOF' || true
-github.com/7cav/cavbot2/utils	82
-github.com/7cav/cavbot2/commands	75
+github.com/7cav/cavbot2/utils	84
+github.com/7cav/cavbot2/commands	77
 EOF
 
 # Read `go test -cover` output from stdin.
