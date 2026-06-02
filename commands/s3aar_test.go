@@ -634,11 +634,15 @@ func TestRunS3aar_EnrichmentFailureWarningFooter(t *testing.T) {
 	if !strings.Contains(logged, "level=WARN") {
 		t.Fatalf("expected a WARN log on enrichment failure; got:\n%s", logged)
 	}
-	if !strings.Contains(logged, "ABC.Ghost.G") {
-		t.Fatalf("WARN log must carry the raw BattleMetrics name; got:\n%s", logged)
+	// Assert the structured keys, not bare substrings: "Ghost.G" is a substring of
+	// "ABC.Ghost.G", so a contains-check on the cleaned name alone would pass even
+	// if cleaned_name were dropped. Pinning key=value proves both fields are emitted
+	// distinctly (slog TextHandler renders attrs as key=value, unquoted when safe).
+	if !strings.Contains(logged, "raw_name=ABC.Ghost.G") {
+		t.Fatalf("WARN log must carry the raw BattleMetrics name as raw_name; got:\n%s", logged)
 	}
-	if !strings.Contains(logged, "Ghost.G") {
-		t.Fatalf("WARN log must carry the cleaned name; got:\n%s", logged)
+	if !strings.Contains(logged, "cleaned_name=Ghost.G") {
+		t.Fatalf("WARN log must carry the cleaned name as cleaned_name; got:\n%s", logged)
 	}
 
 	// Warning footer: the attendance embed must carry an enrichment-failure field
@@ -726,6 +730,82 @@ func TestRunS3aar_HappyPathNoWarningField(t *testing.T) {
 	}
 	if len(fups[0].Params.Embeds[0].Fields) != 0 {
 		t.Fatalf("happy path must carry no embed fields; got %+v", fups[0].Params.Embeds[0].Fields)
+	}
+}
+
+// TestRunS3aar_MixedRosterFailuresWarningField exercises the realistic case all
+// three player classes appear in ONE run: a combat player, a non-combat (reserve)
+// player, and two enrichment failures. It guards the loop's `continue` (a failed
+// player must be skipped for the combat-roster check, not fall through to it) plus
+// the multi-failure rendering (`(N)` count + sort.Strings ordering) that the
+// single-failure test leaves uncovered. Two failures with names that sort in a
+// known order pin the alphabetical ordering.
+func TestRunS3aar_MixedRosterFailuresWarningField(t *testing.T) {
+	logs := captureWarnLogs(t)
+
+	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
+	stop := start.Add(2 * time.Hour)
+
+	// Zulu.Z / Alpha.A are absent from the profile map → both 404 → enrichment
+	// fails for them; Combat.C and Reserve.R enrich successfully.
+	serveBattleMetricsWithProfiles(t,
+		[]bmSession{
+			{Name: "ABC.Combat.C", Start: start, Stop: stop},  // combat → roster
+			{Name: "ABC.Reserve.R", Start: start, Stop: stop},  // reserve → filtered, NOT a failure
+			{Name: "ABC.Zulu.Z", Start: start, Stop: stop},    // enrichment failure
+			{Name: "ABC.Alpha.A", Start: start, Stop: stop},    // enrichment failure
+		},
+		map[string]utils.ProfileResponse{
+			"Combat.C":  combatProfile("CombatUser", "Sergeant", "5", "ROSTER_TYPE_COMBAT", "101"),
+			"Reserve.R": combatProfile("ReserveUser", "Private", "9", "ROSTER_TYPE_RESERVE", "303"),
+		},
+	)
+
+	r := &fakeResponder{}
+	i := s3aarOptions("Tac1", "10NOV25", "10NOV25", "1800", "2000", 30, "")
+	runS3aar(r, i)
+
+	fups := followups(r.Calls())
+	if len(fups) == 0 || len(fups[0].Params.Embeds) == 0 {
+		t.Fatalf("expected attendance embed in first followup; got %+v", fups)
+	}
+	field := warningField(fups[0].Params.Embeds[0])
+	if field == nil {
+		t.Fatalf("expected an enrichment-failure warning field; got %+v", fups[0].Params.Embeds[0])
+	}
+
+	// Count: exactly the two failures, not the reserve player.
+	if !strings.Contains(field.Name, "(2)") {
+		t.Fatalf("warning field must report a count of 2 failures; got name=%q", field.Name)
+	}
+	// Both failed raw names listed; reserve and combat players are NOT.
+	if !strings.Contains(field.Value, "ABC.Alpha.A") || !strings.Contains(field.Value, "ABC.Zulu.Z") {
+		t.Fatalf("warning field must list both failed players; got %q", field.Value)
+	}
+	if strings.Contains(field.Value, "Reserve") || strings.Contains(field.Value, "Combat") {
+		t.Fatalf("warning field must list ONLY enrichment failures; got %q", field.Value)
+	}
+	// sort.Strings ordering: "ABC.Alpha.A" precedes "ABC.Zulu.Z".
+	if strings.Index(field.Value, "ABC.Alpha.A") > strings.Index(field.Value, "ABC.Zulu.Z") {
+		t.Fatalf("warning field must list failures in sorted order (Alpha before Zulu); got %q", field.Value)
+	}
+
+	// Combat roster: only the combat player survives — reserve filtered, failures
+	// skipped by the `continue` rather than mis-included.
+	body := readAARFile(t, fups)
+	wantLine := "[URL='https://7cav.us/rosters/profile/101']Sergeant CombatUser[/URL]"
+	if body != wantLine {
+		t.Fatalf("combat roster must contain only the combat player.\nwant: %s\ngot:  %s", wantLine, body)
+	}
+
+	// Both failures emit a WARN carrying their raw + cleaned names.
+	logged := logs.String()
+	if got := strings.Count(logged, "level=WARN"); got != 2 {
+		t.Fatalf("expected 2 WARN lines (one per failure); got %d:\n%s", got, logged)
+	}
+	if !strings.Contains(logged, "raw_name=ABC.Alpha.A") || !strings.Contains(logged, "cleaned_name=Alpha.A") ||
+		!strings.Contains(logged, "raw_name=ABC.Zulu.Z") || !strings.Contains(logged, "cleaned_name=Zulu.Z") {
+		t.Fatalf("each WARN must carry raw_name + cleaned_name for its failed player; got:\n%s", logged)
 	}
 }
 

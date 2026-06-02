@@ -29,11 +29,13 @@ type PlayerSession struct {
 	SearchString string `json:"search_string"`
 	Roster       string `json:"roster"`
 	RankID       string `json:"rank_id"`
-	// EnrichFailed records that milpacs enrichment errored for this player. It
-	// makes the empty-vs-failure distinction explicit: an empty Roster could mean
-	// "enrichment failed" OR "successfully enriched but not combat", and only the
-	// former is an operator-actionable problem. Never infer failure from an empty
-	// Roster string — read this flag.
+	// EnrichFailed is the authoritative enrichment-failure signal: it is set iff
+	// enrichPlayer returned an error. Read this flag — never proxy failure off
+	// Roster == "". Today a failure does leave Roster empty, but the two are NOT
+	// equivalent: a successfully-enriched non-combat player carries a populated
+	// non-combat Roster (e.g. ROSTER_TYPE_RESERVE), and a future change (or a 2xx
+	// with an empty roster) could decouple them. Only EnrichFailed players are
+	// operator-actionable.
 	EnrichFailed bool `json:"enrich_failed"`
 }
 
