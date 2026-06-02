@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
@@ -75,6 +76,91 @@ func milpacProfileWithSecondaries() utils.ProfileResponse {
 		Records: []utils.Record{
 			{RecordType: "RECORD_TYPE_ASSIGNMENT", RecordDate: "2023-01-15", RecordDetails: "Enlisted into the 7th Cavalry"},
 		},
+	}
+}
+
+// TestDetermineEnlistmentRecordType mirrors the afsm TestDetermineRecordType
+// table test. determineEnlistmentRecordType classifies a milpac record's detail
+// string as "leave" (Retired / Placed on ELOA / Discharge) or "join"
+// (everything else: Enlisted, Reinstated, Returned, Assigned, ...). The "join"
+// default is what feeds the start of a service period in calculateTotalService.
+func TestDetermineEnlistmentRecordType(t *testing.T) {
+	cases := []struct {
+		name    string
+		details string
+		want    string
+	}{
+		{"enlisted is join", "Enlisted into the 7th Cavalry", "join"},
+		{"reinstated is join", "Reinstated to active duty", "join"},
+		{"returned is join", "Returned from ELOA", "join"},
+		{"retired is leave", "Retired from the regiment", "leave"},
+		{"placed on eloa is leave", "Placed on ELOA", "leave"},
+		{"discharge is leave", "Discharged from the regiment", "leave"},
+		// "Returned from ELOA" contains the substring "ELOA" but NOT "Placed on
+		// ELOA" — it must classify as join, guarding the exact-phrase check.
+		{"eloa substring without 'Placed on' is join", "ELOA ended, member returned", "join"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := determineEnlistmentRecordType(tc.details); got != tc.want {
+				t.Fatalf("determineEnlistmentRecordType(%q) = %q, want %q", tc.details, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCalculateTotalService_MultiPeriod drives the multi-period accumulation:
+// join -> leave -> rejoin. The first closed period (2020-01-01 .. 2021-01-01)
+// contributes a fixed 366-day span (2020 is a leap year). The trailing rejoin
+// has no closing leave, so it accumulates time.Since(rejoin) — wall-clock
+// dependent — which is why only the closed-period contribution is asserted
+// exactly, and the trailing period is asserted as a lower bound.
+func TestCalculateTotalService_MultiPeriod(t *testing.T) {
+	date := func(s string) time.Time { return mustParseDate(s) }
+	rejoin := date("2022-06-01")
+
+	assignments := []map[string]interface{}{
+		{"record_date": date("2020-01-01"), "record_type": "join", "record_details": "Enlisted"},
+		{"record_date": date("2021-01-01"), "record_type": "leave", "record_details": "Discharged"},
+		{"record_date": rejoin, "record_type": "join", "record_details": "Reinstated"},
+	}
+
+	got := calculateTotalService(assignments)
+
+	closedPeriod := date("2021-01-01").Sub(date("2020-01-01")) // 366 days (leap)
+	trailing := time.Since(rejoin)
+	wantMin := closedPeriod + trailing - time.Minute // allow tiny exec slack
+	if got < wantMin {
+		t.Fatalf("calculateTotalService = %s, want >= %s (closed %s + trailing %s)",
+			got, wantMin, closedPeriod, trailing)
+	}
+	// Upper sanity bound: must not exceed closed + trailing + slack.
+	if got > closedPeriod+trailing+time.Minute {
+		t.Fatalf("calculateTotalService = %s, want <= %s", got, closedPeriod+trailing+time.Minute)
+	}
+}
+
+// TestCalculateTotalService_ConsecutiveJoinsAndTrailing covers the
+// "two consecutive joins" branch (second join does not reset the period start)
+// and the no-active-period branch (a leave with no open period is a no-op).
+func TestCalculateTotalService_ConsecutiveJoinsAndTrailing(t *testing.T) {
+	date := func(s string) time.Time { return mustParseDate(s) }
+
+	// leave-before-any-join is a no-op; two joins in a row keep the earlier
+	// start; final leave closes the single accumulated period.
+	assignments := []map[string]interface{}{
+		{"record_date": date("2019-01-01"), "record_type": "leave", "record_details": "Discharged"},
+		{"record_date": date("2020-01-01"), "record_type": "join", "record_details": "Enlisted"},
+		{"record_date": date("2020-03-01"), "record_type": "join", "record_details": "Reinstated"},
+		{"record_date": date("2020-06-01"), "record_type": "leave", "record_details": "Retired"},
+	}
+
+	got := calculateTotalService(assignments)
+	// Period start is the FIRST join (2020-01-01), not the second, because a
+	// second consecutive join must not overwrite currentPeriodStart.
+	want := date("2020-06-01").Sub(date("2020-01-01"))
+	if got != want {
+		t.Fatalf("calculateTotalService = %s, want %s (start at first join, single closed period)", got, want)
 	}
 }
 
@@ -237,5 +323,72 @@ func TestRunMilpac_BadUniformURL_FallsThroughHandleError(t *testing.T) {
 			got = *calls[2].Edit.Content
 		}
 		t.Fatalf("calls[2]: expected 'uniform URL' error, got %q", got)
+	}
+}
+
+// TestRunMilpac_EmptyPromotionDate_FallsBackToJoinDate exercises the
+// PromotionDate == "" branch: promotionDate is set to joinDate, so the embed's
+// "Promoted:" line renders the (uppercased) join date. The fixture also carries
+// a join -> leave -> rejoin record set so the full-handler service-math path
+// (assignment filtering -> sort -> calculateTotalService) runs end-to-end.
+func TestRunMilpac_EmptyPromotionDate_FallsBackToJoinDate(t *testing.T) {
+	profile := milpacProfileWithSecondaries()
+	profile.PromotionDate = "" // trigger fallback to JoinDate
+	profile.Records = []utils.Record{
+		{RecordType: "RECORD_TYPE_ASSIGNMENT", RecordDate: "2023-01-15", RecordDetails: "Enlisted into the 7th Cavalry"},
+		{RecordType: "RECORD_TYPE_DISCHARGE", RecordDate: "2023-06-15", RecordDetails: "Discharged from the regiment"},
+		{RecordType: "RECORD_TYPE_ASSIGNMENT", RecordDate: "2024-01-15", RecordDetails: "Reinstated to active duty"},
+	}
+	serveMilpacByDiscordID(t, profile)
+
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(userOption("user", "111"))
+
+	runMilpac(f, i)
+
+	calls := f.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 calls (placeholder + Edit), got %d: %+v", len(calls), calls)
+	}
+	embed := (*calls[1].Edit.Embeds)[0]
+	var rankField string
+	for _, fld := range embed.Fields {
+		if fld.Name == "Rank" {
+			rankField = fld.Value
+		}
+	}
+	if rankField == "" {
+		t.Fatalf("expected a Rank field, got fields %+v", embed.Fields)
+	}
+	// JoinDate 2023-01-15 -> "15JAN2023" (uppercased 02Jan2006). Fallback means
+	// the promotion line equals the join date.
+	if !strings.Contains(rankField, "15JAN2023") {
+		t.Fatalf("Rank field = %q, want promotion date to fall back to join date 15JAN2023", rankField)
+	}
+}
+
+// TestRunMilpac_MalformedPromotionDate_FallsThroughHandleError exercises the
+// PromotionDate parse-error path: a non-empty but unparseable value makes
+// time.Parse fail, surfacing "Failed to parse promotion date" via HandleError.
+func TestRunMilpac_MalformedPromotionDate_FallsThroughHandleError(t *testing.T) {
+	profile := milpacProfileWithSecondaries()
+	profile.PromotionDate = "not-a-date" // non-empty, unparseable
+	serveMilpacByDiscordID(t, profile)
+
+	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
+	i := fakeAppCommandInteraction(userOption("user", "111"))
+
+	runMilpac(f, i)
+
+	calls := f.Calls()
+	if len(calls) != 3 {
+		t.Fatalf("expected 3 calls (placeholder + HandleError Respond + Edit fallback), got %d: %+v", len(calls), calls)
+	}
+	if calls[2].Edit.Content == nil || !strings.Contains(*calls[2].Edit.Content, "Failed to parse promotion date") {
+		got := "<nil>"
+		if calls[2].Edit.Content != nil {
+			got = *calls[2].Edit.Content
+		}
+		t.Fatalf("calls[2]: expected 'Failed to parse promotion date', got %q", got)
 	}
 }

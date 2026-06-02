@@ -63,6 +63,14 @@ func TestFormatTimeSince(t *testing.T) {
 		{"thirty days not one month", date(2026, time.May, 1), date(2026, time.May, 31), "30 days"},
 		// day borrow across a 30-day month (April)
 		{"day borrow across short month", date(2026, time.April, 20), date(2026, time.May, 10), "20 days"},
+		// Cross-year month borrow: Dec 15 -> Feb 10. months = Feb-Dec = -10, days
+		// = 10-15 = -5. Day borrow: months-- (-11), days += daysInMonth(Jan) (31)
+		// -> 26. Month borrow: months < 0 so years-- (0), months += 12 -> 1.
+		// Exercises the previously-dead `months < 0` branch.
+		{"cross-year month borrow", date(2025, time.December, 15), date(2026, time.February, 10), "1 month, 26 days"},
+		// Cross-year borrow with no day borrow, exercising months<0 in isolation:
+		// Nov 15 2025 -> Feb 15 2026. months = Feb-Nov = -9 -> +12 = 3, years 1->0.
+		{"cross-year month borrow no day borrow", date(2025, time.November, 15), date(2026, time.February, 15), "3 months"},
 	}
 
 	for _, tc := range tests {
