@@ -5,7 +5,9 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,6 +42,13 @@ func setGithubEnv(t *testing.T) {
 	t.Setenv("GITHUB_APP_CLIENT_ID", "Iv1.testclientid")
 }
 
+// githubCapture records the dispatch request the fake server saw, so a test can
+// assert the command path sent the expected payload without a live GitHub call.
+type githubCapture struct {
+	dispatchBody []byte
+	dispatchPath string
+}
+
 // githubMux is a configurable fake GitHub Apps API. Each phase can be made to
 // fail by status code; the happy path returns the canonical success codes.
 type githubMux struct {
@@ -47,6 +56,7 @@ type githubMux struct {
 	tokenStatus    int // POST .../access_tokens            (want 201)
 	branchStatus   int // GET .../branches/<branch>         (want 200)
 	dispatchStatus int // POST .../dispatches               (want 204)
+	capture        *githubCapture
 }
 
 func (g githubMux) server(t *testing.T) *httptest.Server {
@@ -74,6 +84,10 @@ func (g githubMux) server(t *testing.T) *httptest.Server {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/branches/"):
 			w.WriteHeader(or(g.branchStatus, http.StatusOK))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/dispatches"):
+			if g.capture != nil {
+				g.capture.dispatchBody, _ = io.ReadAll(r.Body)
+				g.capture.dispatchPath = r.URL.Path
+			}
 			w.WriteHeader(or(g.dispatchStatus, http.StatusNoContent))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -94,6 +108,25 @@ func findRespond(t *testing.T, calls []recordedCall) recordedCall {
 	}
 	t.Fatalf("no Respond call recorded; got %d calls", len(calls))
 	return recordedCall{}
+}
+
+func TestAppsBetaDeploy_Definition(t *testing.T) {
+	cmd := AppsBetaDeploy()
+	if cmd.Definition == nil {
+		t.Fatal("AppsBetaDeploy must return a Definition")
+	}
+	if cmd.Definition.Name != "apps_beta_deploy" {
+		t.Fatalf("command name = %q, want apps_beta_deploy", cmd.Definition.Name)
+	}
+	if len(cmd.Definition.Options) != 1 || cmd.Definition.Options[0].Name != "branch" {
+		t.Fatalf("expected a required 'branch' option, got %+v", cmd.Definition.Options)
+	}
+	if !cmd.Definition.Options[0].Required {
+		t.Fatal("branch option must be required")
+	}
+	if cmd.Handler == nil {
+		t.Fatal("AppsBetaDeploy must wire a Handler")
+	}
 }
 
 func TestRunAppsBetaDeploy_SuccessfulDispatch(t *testing.T) {
@@ -122,6 +155,121 @@ func TestRunAppsBetaDeploy_SuccessfulDispatch(t *testing.T) {
 	}
 	if !strings.Contains(followup.Params.Content, "deployment started for branch `feature-x`") {
 		t.Fatalf("unexpected followup content: %q", followup.Params.Content)
+	}
+}
+
+// TestRunAppsBetaDeploy_DispatchPayloadAndAttribution drives the full confirm
+// path and asserts (a) the dispatch the command sent targets dev_deploy.yml on
+// 7cav/adr with ref=main and inputs.branch=<branch>, and (b) the success
+// followup attributes the deploy to the invoking user and links the status URL.
+func TestRunAppsBetaDeploy_DispatchPayloadAndAttribution(t *testing.T) {
+	setGithubEnv(t)
+	cap := &githubCapture{}
+	githubMux{capture: cap}.server(t)
+
+	r := &fakeResponder{}
+	i := fakeMessageComponentInteraction("apps_beta_deploy::confirm::feature-x")
+	runAppsBetaDeploy(r, i)
+
+	// Dispatch payload: targets the expected workflow with the right ref/branch.
+	if want := "/repos/7cav/adr/actions/workflows/dev_deploy.yml/dispatches"; cap.dispatchPath != want {
+		t.Fatalf("dispatch path = %q, want %q", cap.dispatchPath, want)
+	}
+	var payload struct {
+		Ref    string `json:"ref"`
+		Inputs struct {
+			Branch string `json:"branch"`
+		} `json:"inputs"`
+	}
+	if err := json.Unmarshal(cap.dispatchBody, &payload); err != nil {
+		t.Fatalf("dispatch body not JSON: %v (raw=%q)", err, cap.dispatchBody)
+	}
+	if payload.Ref != "main" || payload.Inputs.Branch != "feature-x" {
+		t.Fatalf("unexpected dispatch payload: ref=%q branch=%q", payload.Ref, payload.Inputs.Branch)
+	}
+
+	// Followup attributes the invoking user (ID 999, see fake interaction) and
+	// includes the workflow status URL.
+	var followup *recordedCall
+	for idx := range r.Calls() {
+		if r.Calls()[idx].Method == "Followup" {
+			followup = &r.Calls()[idx]
+		}
+	}
+	if followup == nil {
+		t.Fatalf("expected a Followup call on success; calls=%+v", r.Calls())
+	}
+	if !strings.Contains(followup.Params.Content, "<@999>") {
+		t.Fatalf("followup must attribute invoking user <@999>: %q", followup.Params.Content)
+	}
+	if !strings.Contains(followup.Params.Content, "https://github.com/7cav/adr/actions/workflows/dev_deploy.yml") {
+		t.Fatalf("followup must include status URL: %q", followup.Params.Content)
+	}
+}
+
+func TestRunAppsBetaDeploy_MissingAppKey(t *testing.T) {
+	// Client ID present, app key cleared → specific config error, no dispatch.
+	t.Setenv("GITHUB_APP_CLIENT_ID", "Iv1.testclientid")
+	t.Setenv("GITHUB_APP_KEY", "")
+	cap := &githubCapture{}
+	githubMux{capture: cap}.server(t)
+
+	r := &fakeResponder{}
+	i := fakeMessageComponentInteraction("apps_beta_deploy::confirm::feature-x")
+	runAppsBetaDeploy(r, i)
+
+	if !errorContent(r.Calls(), "GitHub App key not configured") {
+		t.Fatalf("expected missing-app-key error; calls=%+v", r.Calls())
+	}
+	if cap.dispatchBody != nil {
+		t.Fatalf("must not dispatch when app key is missing; body=%q", cap.dispatchBody)
+	}
+	if hasFollowup(r.Calls()) {
+		t.Fatalf("config error must not send a success followup")
+	}
+}
+
+func TestRunAppsBetaDeploy_BadBase64Key(t *testing.T) {
+	// App key set but not valid base64 → decode error, no dispatch.
+	t.Setenv("GITHUB_APP_CLIENT_ID", "Iv1.testclientid")
+	t.Setenv("GITHUB_APP_KEY", "not!valid!base64!")
+	cap := &githubCapture{}
+	githubMux{capture: cap}.server(t)
+
+	r := &fakeResponder{}
+	i := fakeMessageComponentInteraction("apps_beta_deploy::confirm::feature-x")
+	runAppsBetaDeploy(r, i)
+
+	if !errorContent(r.Calls(), "Failed to decode private key") {
+		t.Fatalf("expected base64-decode error; calls=%+v", r.Calls())
+	}
+	if cap.dispatchBody != nil {
+		t.Fatalf("must not dispatch on bad base64 key; body=%q", cap.dispatchBody)
+	}
+	if hasFollowup(r.Calls()) {
+		t.Fatalf("config error must not send a success followup")
+	}
+}
+
+func TestRunAppsBetaDeploy_MissingClientID(t *testing.T) {
+	// Valid app key, client ID cleared → specific config error, no dispatch.
+	t.Setenv("GITHUB_APP_KEY", testGithubPEM(t))
+	t.Setenv("GITHUB_APP_CLIENT_ID", "")
+	cap := &githubCapture{}
+	githubMux{capture: cap}.server(t)
+
+	r := &fakeResponder{}
+	i := fakeMessageComponentInteraction("apps_beta_deploy::confirm::feature-x")
+	runAppsBetaDeploy(r, i)
+
+	if !errorContent(r.Calls(), "GitHub App client ID not configured") {
+		t.Fatalf("expected missing-client-id error; calls=%+v", r.Calls())
+	}
+	if cap.dispatchBody != nil {
+		t.Fatalf("must not dispatch when client ID is missing; body=%q", cap.dispatchBody)
+	}
+	if hasFollowup(r.Calls()) {
+		t.Fatalf("config error must not send a success followup")
 	}
 }
 
