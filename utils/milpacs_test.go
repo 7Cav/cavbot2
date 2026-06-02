@@ -192,3 +192,113 @@ func TestMakeAPIRequest_TransportError(t *testing.T) {
 		t.Fatalf("expected wrapped 'failed to fetch milpacs' error, got: %v", err)
 	}
 }
+
+// TestTypedWrappers_RequestPaths asserts the EXACT request path each typed
+// wrapper issues. These are golden-path assertions pinned to current
+// production behaviour — note the deliberate `milpac/` vs `milpacs/` prefix
+// inconsistency between wrappers. The intent is to catch a future typo (wrong
+// prefix → 404 → "no X found"), not to assert which prefix is "correct".
+func TestTypedWrappers_RequestPaths(t *testing.T) {
+	tests := []struct {
+		name     string
+		arg      string
+		wantPath string
+		call     func(ctx context.Context, arg string) error
+	}{
+		{
+			name:     "GetMilpacByUsername",
+			arg:      "alice",
+			wantPath: "/milpacs/profile/username/alice",
+			call: func(ctx context.Context, arg string) error {
+				_, err := GetMilpacByUsername(ctx, arg)
+				return err
+			},
+		},
+		{
+			name:     "GetMilpacByDiscordID",
+			arg:      "123456789",
+			wantPath: "/milpac/discord/123456789",
+			call: func(ctx context.Context, arg string) error {
+				_, err := GetMilpacByDiscordID(ctx, arg)
+				return err
+			},
+		},
+		{
+			name:     "GetRosterByFuzzyPositionSearch",
+			arg:      "medic",
+			wantPath: "/milpacs/position/search/medic",
+			call: func(ctx context.Context, arg string) error {
+				_, err := GetRosterByFuzzyPositionSearch(ctx, arg)
+				return err
+			},
+		},
+		{
+			name:     "GetUserByGamertag",
+			arg:      "tag42",
+			wantPath: "/milpac/gamertag/tag42",
+			call: func(ctx context.Context, arg string) error {
+				_, err := GetUserByGamertag(ctx, arg)
+				return err
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, `{}`)
+			}))
+			t.Cleanup(srv.Close)
+			withTestAPIServer(t, srv)
+
+			if err := tc.call(context.Background(), tc.arg); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if gotPath != tc.wantPath {
+				t.Fatalf("request path = %q, want %q", gotPath, tc.wantPath)
+			}
+		})
+	}
+}
+
+func TestGetRosterStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		roster string
+		want   string
+	}{
+		{
+			name:   "known status maps to friendly label",
+			roster: "ROSTER_TYPE_COMBAT",
+			want:   "Active Duty",
+		},
+		{
+			name:   "another known status maps to friendly label",
+			roster: "ROSTER_TYPE_WALL_OF_HONOR",
+			want:   "Wall of Honor",
+		},
+		{
+			name:   "unknown status passes through raw",
+			roster: "ROSTER_TYPE_SOMETHING_NEW",
+			want:   "ROSTER_TYPE_SOMETHING_NEW",
+		},
+		{
+			name:   "empty status passes through raw",
+			roster: "",
+			want:   "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &ProfileResponse{Roster: tc.roster}
+			if got := r.GetRosterStatus(); got != tc.want {
+				t.Fatalf("GetRosterStatus() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
