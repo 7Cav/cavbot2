@@ -22,6 +22,16 @@ func loaPost(username, start, end string) string {
 		"[B][COLOR=rgb(213, 185, 0)]End Date[/COLOR][/B]\n" + end + "\n"
 }
 
+// mustLOATime parses a date in the canonical LOA layout ("Jan 2, 2006") for
+// fixed-instant boundary tests; it panics on a malformed literal in test code.
+func mustLOATime(s string) time.Time {
+	t, err := time.Parse(loaDateLayout, s)
+	if err != nil {
+		panic("mustLOATime: " + err.Error())
+	}
+	return t
+}
+
 // TestParseLOAPost locks in the CURRENT contract of the brittle BBCode regexes.
 // Each case asserts actual observed behavior of the existing regexes (verified by
 // probe), not aspirational behavior — so this catches Xenforo template drift.
@@ -276,6 +286,151 @@ func TestGetEntryAndIsOnLOA(t *testing.T) {
 	}
 	if c.IsOnLOA("missing") {
 		t.Errorf("IsOnLOA should be false for unknown user")
+	}
+}
+
+// TestLOAEntry_isActiveAt pins the inclusive active-window contract at the EXACT
+// boundary instants. isActiveAt is clock-injected (cf. PR #135) precisely so the
+// Start==now and End==now edges can be asserted against a fixed `now` — something
+// IsOnLOA's live time.Now() can never hit deterministically. The window is
+// inclusive at both bounds.
+func TestLOAEntry_isActiveAt(t *testing.T) {
+	now := mustLOATime("Jun 15, 2099")
+	entry := LOAEntry{
+		Username:  "Boundary",
+		StartDate: mustLOATime("Jun 10, 2099"),
+		EndDate:   mustLOATime("Jun 20, 2099"),
+	}
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want bool
+	}{
+		{"Start==now is active (inclusive lower bound)", entry.StartDate, true},
+		{"End==now is active (inclusive upper bound)", entry.EndDate, true},
+		{"strictly inside the window is active", now, true},
+		{"one tick before Start is not active", entry.StartDate.Add(-time.Nanosecond), false},
+		{"one tick after End is not active", entry.EndDate.Add(time.Nanosecond), false},
+		{"wholly before window is not active", entry.StartDate.AddDate(0, 0, -5), false},
+		{"wholly after window is not active", entry.EndDate.AddDate(0, 0, 5), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := entry.isActiveAt(tt.now); got != tt.want {
+				t.Errorf("isActiveAt(%s) = %v, want %v", tt.now.Format(loaDateLayout), got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLOAEntry_isExpiredAt pins the prune cutoff at the EXACT EndDate boundary:
+// expiry is strict (now.After(EndDate)), so an entry whose End==now is NOT yet
+// expired (survives the cycle) while one already one tick past End is pruned. This
+// is the strict complement of isActiveAt's inclusive upper bound.
+func TestLOAEntry_isExpiredAt(t *testing.T) {
+	entry := LOAEntry{Username: "Boundary", EndDate: mustLOATime("Jun 20, 2099")}
+
+	if entry.isExpiredAt(entry.EndDate) {
+		t.Errorf("End==now must NOT be expired (final day survives prune)")
+	}
+	if entry.isExpiredAt(entry.EndDate.Add(-time.Nanosecond)) {
+		t.Errorf("one tick before End must NOT be expired")
+	}
+	if !entry.isExpiredAt(entry.EndDate.Add(time.Nanosecond)) {
+		t.Errorf("one tick after End must be expired")
+	}
+}
+
+// TestIsOnLOA_ActiveWindowBoundaries cross-checks the live-clock IsOnLOA wrapper
+// (which delegates to isActiveAt with time.Now()) against entries positioned
+// relative to a captured `now`. The exact-edge contract is pinned by
+// TestLOAEntry_isActiveAt; this guards the wrapper's wiring (lock, lookup,
+// time.Now() delegation) end-to-end.
+func TestIsOnLOA_ActiveWindowBoundaries(t *testing.T) {
+	now := time.Now()
+	const slack = time.Minute // dwarfs the captured-now vs internal-now gap
+
+	c := &LOACache{entries: map[string]LOAEntry{}}
+	c.entries["active"] = LOAEntry{Username: "Active", StartDate: now.Add(-slack), EndDate: now.Add(slack)}
+	c.entries["past"] = LOAEntry{Username: "Past", StartDate: now.Add(-2 * slack), EndDate: now.Add(-slack)}
+	c.entries["futurewin"] = LOAEntry{Username: "FutureWin", StartDate: now.Add(slack), EndDate: now.Add(2 * slack)}
+
+	if !c.IsOnLOA("active") {
+		t.Errorf("IsOnLOA: entry within its window must be active")
+	}
+	if c.IsOnLOA("past") {
+		t.Errorf("IsOnLOA: wholly-past window must not be active")
+	}
+	if c.IsOnLOA("futurewin") {
+		t.Errorf("IsOnLOA: wholly-future window must not be active")
+	}
+}
+
+// TestRefresh_PruneBoundary cross-checks the prune step in refresh (which calls
+// isExpiredAt with time.Now()): an entry whose EndDate is still ahead of now
+// survives a refresh cycle, while one already past is pruned. The exact EndDate==now
+// edge is pinned by TestLOAEntry_isExpiredAt; this guards the prune wiring.
+func TestRefresh_PruneBoundary(t *testing.T) {
+	now := time.Now()
+	const slack = time.Minute
+
+	c := &LOACache{entries: map[string]LOAEntry{}}
+	c.entries["survivor"] = LOAEntry{Username: "Survivor", StartDate: now.Add(-slack), EndDate: now.Add(slack)}
+	c.entries["pruned"] = LOAEntry{Username: "Pruned", StartDate: now.Add(-2 * slack), EndDate: now.Add(-slack)}
+	c.lastSyncedPostDate = 100 // warm cache ⇒ deterministic since, no new posts
+
+	f := &fakeLOAFetcher{byNode: map[int][]loaPostRow{180: nil}}
+	c.refresh(f, []int{180})
+
+	if _, ok := c.GetEntry("survivor"); !ok {
+		t.Errorf("entry whose EndDate is still ahead of now must survive one refresh cycle")
+	}
+	if _, ok := c.GetEntry("pruned"); ok {
+		t.Errorf("entry whose EndDate is already past must be pruned")
+	}
+}
+
+// TestRefresh_LatestLOAWins pins the username-keyed overwrite in refresh: when a
+// later refresh observes a new valid post for an already-cached username, the new
+// entry replaces the old one ("latest LOA wins"). Keyed by lowercased username, so
+// the windows/threads must be distinct to prove the replacement actually happened.
+func TestRefresh_LatestLOAWins(t *testing.T) {
+	c := &LOACache{entries: map[string]LOAEntry{}}
+
+	// First post: an LOA for "delta" with one window/thread.
+	firstPost := time.Now().Add(-48 * time.Hour).Unix()
+	f1 := &fakeLOAFetcher{byNode: map[int][]loaPostRow{
+		180: {{message: loaPost("delta", "Jan 1, 2099", "Jan 31, 2099"), postDate: firstPost, threadID: 11}},
+	}}
+	c.refresh(f1, []int{180})
+
+	got, ok := c.GetEntry("delta")
+	if !ok {
+		t.Fatalf("expected delta entry after first refresh")
+	}
+	if got.ThreadID != 11 || got.EndDate.Format("2006-01-02") != "2099-01-31" {
+		t.Fatalf("first refresh entry = %+v, want thread 11 / end 2099-01-31", got)
+	}
+
+	// Second post: a NEW LOA for the same username with a later window and a
+	// different thread. After refresh the cache must hold ONLY the newer entry.
+	secondPost := time.Now().Add(-1 * time.Hour).Unix()
+	f2 := &fakeLOAFetcher{byNode: map[int][]loaPostRow{
+		180: {{message: loaPost("delta", "Feb 1, 2099", "Feb 28, 2099"), postDate: secondPost, threadID: 22}},
+	}}
+	c.refresh(f2, []int{180})
+
+	got, ok = c.GetEntry("delta")
+	if !ok {
+		t.Fatalf("expected delta entry after second refresh")
+	}
+	if got.ThreadID != 22 {
+		t.Errorf("latest LOA wins: ThreadID = %d, want 22 (newer post)", got.ThreadID)
+	}
+	if got.StartDate.Format("2006-01-02") != "2099-02-01" || got.EndDate.Format("2006-01-02") != "2099-02-28" {
+		t.Errorf("latest LOA wins: window = %s..%s, want 2099-02-01..2099-02-28",
+			got.StartDate.Format("2006-01-02"), got.EndDate.Format("2006-01-02"))
 	}
 }
 

@@ -84,6 +84,36 @@ func healthyCache(entries map[string]utils.LOAEntry) *fakeLOACache {
 	return &fakeLOACache{entries: entries, healthy: true, lastRefresh: awolRefDate}
 }
 
+// dateAwareLOACache is a loaCacheReader whose IsOnLOA respects each entry's
+// StartDate/EndDate window evaluated at a FIXED `at` instant — unlike fakeLOACache,
+// whose IsOnLOA returns true for any existing entry regardless of dates. This lets
+// an /awol test exercise the "entry exists but is not active today" path (upcoming
+// or expired), proving such a member is excluded from the (N on LOA) tally and the
+// [LOA] decoration on the healthy path. `at` is pinned to the same instant the
+// handler is given as `now`, so the cache's verdict and the handler agree on "today".
+type dateAwareLOACache struct {
+	entries map[string]utils.LOAEntry
+	at      time.Time
+}
+
+func (f *dateAwareLOACache) GetEntry(username string) (utils.LOAEntry, bool) {
+	e, ok := f.entries[strings.ToLower(username)]
+	return e, ok
+}
+
+func (f *dateAwareLOACache) IsOnLOA(username string) bool {
+	e, ok := f.entries[strings.ToLower(username)]
+	if !ok {
+		return false
+	}
+	// Mirror utils.LOACache's inclusive active window evaluated at `at`.
+	return !f.at.Before(e.StartDate) && !f.at.After(e.EndDate)
+}
+
+func (f *dateAwareLOACache) IsHealthy(_ time.Duration) (bool, time.Time) {
+	return true, f.at // always healthy: this fake exercises the date-window path
+}
+
 func boolOption(name string, value bool) *discordgo.ApplicationCommandInteractionDataOption {
 	return &discordgo.ApplicationCommandInteractionDataOption{
 		Name:  name,
@@ -330,6 +360,85 @@ func TestRunAwol_OnLOAAnnotationRenders(t *testing.T) {
 			got = footer.Text
 		}
 		t.Fatalf("footer should report 1 on LOA; got %q", got)
+	}
+}
+
+func TestRunAwol_InactiveLOAEntryNotCountedOrTagged(t *testing.T) {
+	// Three AWOL members on the healthy path, each with a cache entry, but only
+	// Trooper.B's window covers awolRefDate (2026-05-15):
+	//   - Trooper.A: UPCOMING (starts after now) → not active → no tag, not counted.
+	//   - Trooper.B: ACTIVE (window straddles now) → tagged + counted.
+	//   - Trooper.C: EXPIRED (ended before now) → not active → no tag, not counted.
+	// Asserts the (N on LOA) tally is exactly 1 and only the active member is tagged.
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
+			"200": awolMember("Trooper.B", "200", "2026-03-15 12:00:00"),
+			"300": awolMember("Trooper.C", "300", "2026-04-01 12:00:00"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	cache := &dateAwareLOACache{
+		at: awolRefDate,
+		entries: map[string]utils.LOAEntry{
+			"trooper.a": { // upcoming: starts AFTER awolRefDate
+				Username:  "Trooper.A",
+				StartDate: mustParseAwolDate("2026-06-01 00:00:00"),
+				EndDate:   mustParseAwolDate("2026-06-30 00:00:00"),
+				ThreadID:  1111,
+			},
+			"trooper.b": { // active: window straddles awolRefDate
+				Username:  "Trooper.B",
+				StartDate: mustParseAwolDate("2026-05-01 00:00:00"),
+				EndDate:   mustParseAwolDate("2026-05-31 00:00:00"),
+				ThreadID:  2222,
+			},
+			"trooper.c": { // expired: ended BEFORE awolRefDate
+				Username:  "Trooper.C",
+				StartDate: mustParseAwolDate("2026-04-01 00:00:00"),
+				EndDate:   mustParseAwolDate("2026-04-30 00:00:00"),
+				ThreadID:  3333,
+			},
+		},
+	}
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+
+	runAwol(f, cache, awolRefDate, i)
+
+	calls := f.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 calls, got %d: %+v", len(calls), calls)
+	}
+	edit := calls[1].Edit
+	if edit.Embeds == nil || len(*edit.Embeds) == 0 {
+		t.Fatalf("expected embeds; got Embeds=%v", edit.Embeds)
+	}
+	desc := (*edit.Embeds)[0].Description
+	// All three members still listed (AWOL is independent of LOA state).
+	for _, want := range []string{"Trooper.A", "Trooper.B", "Trooper.C"} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("embed description missing %q.\nGot:\n%s", want, desc)
+		}
+	}
+	// Only the ACTIVE member is decorated; the upcoming/expired threads must not appear.
+	if !strings.Contains(desc, "https://7cav.us/threads/2222/") {
+		t.Fatalf("active member Trooper.B should be LOA-tagged to thread 2222.\nGot:\n%s", desc)
+	}
+	for _, badThread := range []string{"threads/1111", "threads/3333"} {
+		if strings.Contains(desc, badThread) {
+			t.Fatalf("inactive (upcoming/expired) entry must NOT be LOA-tagged (%s leaked).\nGot:\n%s", badThread, desc)
+		}
+	}
+	// Footer tally counts ONLY the currently-active LOA: exactly 1 of 3.
+	footer := (*edit.Embeds)[0].Footer
+	if footer == nil || !strings.Contains(footer.Text, "Total AWOL: 3 (1 on LOA)") {
+		got := "<nil>"
+		if footer != nil {
+			got = footer.Text
+		}
+		t.Fatalf("footer should report exactly 1 on LOA (active only); got %q", got)
 	}
 }
 
