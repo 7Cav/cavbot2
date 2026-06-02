@@ -3,6 +3,9 @@ package utils
 import (
 	"database/sql"
 	"errors"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -431,6 +434,80 @@ func TestRefresh_RowsErrMidStream_DoesNotCount(t *testing.T) {
 		t.Fatalf("lastSuccessfulRefresh moved to %v, want unchanged %v "+
 			"(mid-stream failures must not count as success)",
 			c.lastSuccessfulRefresh, seed)
+	}
+}
+
+// concurrentLOAFetcher is a loaPostFetcher safe for concurrent refresh calls. It
+// returns a fresh, distinct post on every call (advancing post_date and rotating
+// the username) so each Refresh mutates the entries map and the lastSynced cursor
+// — maximizing the window for an unprotected read to observe a torn write. It holds
+// no lock of its own: the contention under test is on LOACache's own RWMutex, so a
+// thread-safe fetcher keeps any race the detector flags squarely in the cache.
+type concurrentLOAFetcher struct {
+	n atomic.Int64
+}
+
+func (f *concurrentLOAFetcher) fetchLOAPosts(_ int, _ int64) ([]loaPostRow, error) {
+	i := f.n.Add(1)
+	user := "user" + strconv.FormatInt(i%8, 10)
+	return []loaPostRow{{
+		message:  loaPost(user, "Jan 1, 2099", "Jan 31, 2099"),
+		postDate: time.Now().Unix() + i,
+		threadID: i,
+	}}, nil
+}
+
+// TestLOACache_ConcurrentRefreshAndReads fans out many goroutines that hammer
+// Refresh (writer path) alongside GetEntry / IsOnLOA / IsHealthy (reader paths) on
+// one cache. Its job is to fail under `go test -race` if the cache's locking ever
+// regresses — e.g. a dropped Lock/RLock or a read of a guarded field outside the
+// mutex. With locking intact it is a fast, deterministic no-op assertion (the cache
+// stays usable); under -race a lock regression trips the detector and fails the run.
+func TestLOACache_ConcurrentRefreshAndReads(t *testing.T) {
+	c := &LOACache{entries: map[string]LOAEntry{}}
+	fetcher := &concurrentLOAFetcher{}
+	nodeIDs := []int{180, 400, 540}
+
+	const (
+		writers      = 8
+		readers      = 16
+		opsPerWriter = 50
+		opsPerReader = 100
+	)
+
+	var wg sync.WaitGroup
+	wg.Add(writers + readers)
+
+	for i := 0; i < writers; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < opsPerWriter; j++ {
+				c.refresh(fetcher, nodeIDs)
+			}
+		}()
+	}
+
+	for i := 0; i < readers; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < opsPerReader; j++ {
+				// Touch every guarded read path; results are intentionally
+				// ignored — the race detector, not an assertion, is the oracle.
+				_, _ = c.GetEntry("user1")
+				_ = c.IsOnLOA("user2")
+				_, _ = c.IsHealthy(30 * time.Minute)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Sanity: after the storm the cache is still coherent and readable under lock.
+	if ok, _ := c.IsHealthy(time.Hour); !ok {
+		t.Fatalf("cache should report healthy after concurrent refreshes")
+	}
+	if _, ok := c.GetEntry("user1"); !ok {
+		t.Fatalf("expected at least one rotated user entry to be present")
 	}
 }
 

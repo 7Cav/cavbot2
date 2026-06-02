@@ -27,7 +27,7 @@ go test ./...
 Run tests with the coverage floor check (matches CI):
 
 ```bash
-go test ./... -cover | .github/scripts/check-coverage-floors.sh
+go test ./... -race -cover | .github/scripts/check-coverage-floors.sh
 ```
 
 CI enforces per-package coverage floors via `.github/scripts/check-coverage-floors.sh`. When a PR raises a package's coverage by more than a point or two, raise its floor in the same PR — that's how the suite ratchets up without the team having to think about it.
