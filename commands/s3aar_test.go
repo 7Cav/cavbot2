@@ -496,7 +496,8 @@ func TestRunS3aar_EmbedPlaytimeAndCount(t *testing.T) {
 // the specific followup and no embed/file.
 func TestRunS3aar_InvalidStartDate(t *testing.T) {
 	r := &fakeResponder{}
-	// "99XXX25" is the wrong-length-but-also-bad-month case; parseDateTime fails.
+	// "BADDATE" is 7 chars (passes parseDateTime's length check) but "DDA" is not
+	// a valid month abbreviation, so it fails on the month lookup.
 	i := s3aarOptions("Tac1", "BADDATE", "10NOV25", "1800", "2000", 30, "")
 	runS3aar(r, i)
 

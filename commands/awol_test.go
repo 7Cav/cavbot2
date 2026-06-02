@@ -89,8 +89,10 @@ func healthyCache(entries map[string]utils.LOAEntry) *fakeLOACache {
 // whose IsOnLOA returns true for any existing entry regardless of dates. This lets
 // an /awol test exercise the "entry exists but is not active today" path (upcoming
 // or expired), proving such a member is excluded from the (N on LOA) tally and the
-// [LOA] decoration on the healthy path. `at` is pinned to the same instant the
-// handler is given as `now`, so the cache's verdict and the handler agree on "today".
+// [LOA] decoration on the healthy path. This fake substitutes its own fixed clock
+// `at` for the wall clock that production's utils.LOACache.IsOnLOA reads internally
+// (the real method takes no time argument). The two are fidelity-equivalent only
+// because the test windows are weeks wide relative to the `at`-vs-wall-now skew.
 type dateAwareLOACache struct {
 	entries map[string]utils.LOAEntry
 	at      time.Time
