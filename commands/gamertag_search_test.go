@@ -162,6 +162,56 @@ func TestRunGamertagSearch_BadUniformURL_FallsThroughHandleError(t *testing.T) {
 // errAlreadyAcked simulates the SDK error string HandleError matches on.
 var errAlreadyAcked = stubError("HTTP 400 Bad Request, {\"message\": \"Interaction has already been acknowledged.\", \"code\": 40060}")
 
+// errFirstRespond is a plain (non-already-acknowledged) failure used to fail the
+// FIRST placeholder InteractionRespond. Because it does NOT match
+// isAlreadyAcknowledged, HandleError's own Respond succeeds and it does not fall
+// back to Edit — so the placeholder-fails path produces exactly 2 Respond calls.
+var errFirstRespond = stubError("HTTP 503 Service Unavailable: gateway temporarily down")
+
 type stubError string
 
 func (e stubError) Error() string { return string(e) }
+
+// tripwireAPIServer stands up an httptest.Server that fails the test if it
+// receives ANY request, and points makeAPIRequest at it via
+// SetAPIBaseURLForTest. Used by the placeholder-fails tests to prove the command
+// bails before touching the upstream milpac API. Returns the server so callers
+// can assert hit count if needed (currently the t.Errorf is sufficient).
+func tripwireAPIServer(t *testing.T) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("upstream API must not be called after placeholder respond fails; got request to %s", r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(utils.SetAPIBaseURLForTest(srv.URL))
+}
+
+// assertPlaceholderFailedBailout is the shared assertion for the
+// "first InteractionRespond fails" path: the command must call HandleError
+// exactly once (which itself emits a single Respond), yielding exactly two
+// Respond calls total and no Edit. errFirstRespond is non-acked, so HandleError
+// does not fall back to Edit.
+func assertPlaceholderFailedBailout(t *testing.T, calls []recordedCall) {
+	t.Helper()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 calls (placeholder Respond fails + single HandleError Respond), got %d: %+v", len(calls), calls)
+	}
+	if calls[0].Method != "Respond" {
+		t.Fatalf("calls[0]: expected placeholder Respond, got %q", calls[0].Method)
+	}
+	if calls[1].Method != "Respond" {
+		t.Fatalf("calls[1]: expected HandleError Respond (no Edit fallback for non-acked error), got %q", calls[1].Method)
+	}
+}
+
+func TestRunGamertagSearch_FirstRespondFails_BailsBeforeAPI(t *testing.T) {
+	tripwireAPIServer(t)
+
+	f := &fakeResponder{RespondErrs: []error{errFirstRespond}}
+	i := fakeAppCommandInteraction(stringOption("gamertag", "SpecOps"))
+
+	runGamertagSearch(f, i)
+
+	assertPlaceholderFailedBailout(t, f.Calls())
+}

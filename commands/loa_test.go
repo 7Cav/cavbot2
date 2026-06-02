@@ -48,6 +48,36 @@ func loaMember(username, milpacID string) utils.LiteProfileResponse {
 	}
 }
 
+// tripwireLOAView is a loaCacheView that fails the test if either method is
+// called. Used by the first-respond-fails test to prove runLoa bails before
+// touching the cache (the health probe / per-member lookups) as well as the API.
+type tripwireLOAView struct{ t *testing.T }
+
+func (v tripwireLOAView) GetEntry(string) (utils.LOAEntry, bool) {
+	v.t.Errorf("cache.GetEntry must not be called after placeholder respond fails")
+	return utils.LOAEntry{}, false
+}
+
+func (v tripwireLOAView) IsHealthy(time.Duration) (bool, time.Time) {
+	v.t.Errorf("cache.IsHealthy must not be called after placeholder respond fails")
+	return false, time.Time{}
+}
+
+// TestRunLoa_FirstRespondFails_BailsBeforeCacheAndAPI covers the early-bail
+// branch when the placeholder InteractionRespond fails: runLoa must call
+// HandleError once and return before probing the cache or fetching the roster
+// (both tripwires fail the test if touched).
+func TestRunLoa_FirstRespondFails_BailsBeforeCacheAndAPI(t *testing.T) {
+	tripwireAPIServer(t)
+
+	f := &fakeResponder{RespondErrs: []error{errFirstRespond}}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+
+	runLoa(f, tripwireLOAView{t: t}, loaRefDate, i)
+
+	assertPlaceholderFailedBailout(t, f.Calls())
+}
+
 func TestRunLoa_RosterFetch500SurfacesError(t *testing.T) {
 	serveAwolRoster(t, utils.LiteRosterResponse{}, http.StatusInternalServerError)
 

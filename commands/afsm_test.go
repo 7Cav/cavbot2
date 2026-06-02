@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/7cav/cavbot2/utils"
+	"github.com/bwmarrin/discordgo"
 )
 
 // afsmRefDate is the pinned "now" for all AFSM unit tests. Choosing a fixed
@@ -572,6 +573,9 @@ func TestRunAFSM_HappyPathWithSkipped(t *testing.T) {
 	if calls[0].Method != "Respond" {
 		t.Fatalf("calls[0]: expected Respond, got %q", calls[0].Method)
 	}
+	if calls[0].Response.Type != discordgo.InteractionResponseChannelMessageWithSource {
+		t.Fatalf("calls[0]: expected placeholder Type ChannelMessageWithSource, got %v", calls[0].Response.Type)
+	}
 	if !strings.Contains(calls[0].Response.Data.Content, "S6") {
 		t.Fatalf("placeholder content should mention S6, got %q", calls[0].Response.Data.Content)
 	}
@@ -741,4 +745,18 @@ func TestRunAFSM_RosterFetch500(t *testing.T) {
 		}
 		t.Fatalf("expected 'Failed to fetch Members' in Edit fallback, got %q", got)
 	}
+}
+
+// TestRunAFSM_FirstRespondFails_BailsBeforeAPI covers the early-bail branch when
+// the placeholder InteractionRespond fails: runAFSM must call HandleError once
+// and return before fetching the roster (tripwire server fails the test if hit).
+func TestRunAFSM_FirstRespondFails_BailsBeforeAPI(t *testing.T) {
+	tripwireAPIServer(t)
+
+	f := &fakeResponder{RespondErrs: []error{errFirstRespond}}
+	i := fakeAppCommandInteraction(stringOption("department", "S6"))
+
+	runAFSM(f, i)
+
+	assertPlaceholderFailedBailout(t, f.Calls())
 }
