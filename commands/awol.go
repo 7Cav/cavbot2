@@ -18,6 +18,11 @@ func stringPtr(s string) *string {
 
 const maxEmbedsPerMsg = 10
 
+// discordEmbedDescriptionLimit is Discord's hard cap on an embed description.
+// The rendered description is summaryLine + separator + chunk, so the per-chunk
+// budget is this minus the prefix length (see runAwol) to keep the total ≤ limit.
+const discordEmbedDescriptionLimit = 4096
+
 // awolReportFooter explains the displayed figure: days AWOL already has valid
 // LOA-covered days subtracted (ADR 0008). Rendered on the healthy path.
 const awolReportFooter = "AWOL days subtracts valid LOA days."
@@ -36,10 +41,12 @@ const awolDegradedFooter = "⚠️ LOA cache unavailable — accountable-day adj
 // (PR #161 clock-skew item). IsHealthy gates degraded mode (#96): an unhealthy
 // cache is stale, so /awol falls back to raw inactivity with no LOA subtraction.
 //
-// This is intentionally a SUPERSET of /loa's loaCacheView ({GetEntry,IsHealthy}):
-// /awol needs the full history to subtract LOA-covered dates, /loa renders a
-// single most-relevant window. Keeping them distinct keeps each command's
-// dependency scoped to what it reads.
+// This is intentionally a DIFFERENT surface from /loa's loaCacheView
+// ({GetEntry,IsHealthy}): both share IsHealthy, but /awol reads the full window
+// history via GetEntries (to subtract every LOA-covered date), whereas /loa reads
+// a single most-relevant window via GetEntry. It is not a superset of /loa's set —
+// the read methods differ (GetEntries vs GetEntry). Keeping the two interfaces
+// distinct scopes each command's dependency to exactly what it reads.
 type loaCacheReader interface {
 	GetEntries(username string) []utils.LOAEntry
 	IsHealthy(maxAge time.Duration) (bool, time.Time)
@@ -219,6 +226,13 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 
 	if len(awolUsers) == 0 {
 		response := fmt.Sprintf("Search completed successfully: no users matching \"%s\" are AWOL.", position)
+		if !cacheHealthy {
+			// Never a silent all-clear while degraded: raw figures are >= the
+			// LOA-adjusted figure so no AWOL member is hidden, but staff must still
+			// know the cache was down and the accountable-day adjustment was skipped
+			// (ADR 0008) — same wording as every other terminal degraded path.
+			response += "\n" + awolDegradedFooter
+		}
 		if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 			Content: &response,
 		}); err != nil {
@@ -234,11 +248,23 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		}
 	}
 
+	footerText := awolReportFooter
+	if !cacheHealthy {
+		footerText = awolDegradedFooter
+	}
+
+	// Discord caps an embed description at 4096 chars. The final description is
+	// summaryLine + "\n\n" + chunk, so the chunk budget must reserve room for that
+	// rendered prefix — otherwise a near-4096 chunk overflows once the summary is
+	// prepended (Discord 400). Reserve the longest prefix any embed could carry.
+	descPrefix := awolSummaryLine(len(awolUsers), loaCount, cacheHealthy) + "\n\n"
+	chunkBudget := discordEmbedDescriptionLimit - len(descPrefix)
+
 	var chunks []string
 	currentChunk := ""
 	for _, user := range awolUsers {
 		userLine := awolUserLine(user)
-		if len(currentChunk)+len(userLine) > 4096 {
+		if currentChunk != "" && len(currentChunk)+len(userLine) > chunkBudget {
 			chunks = append(chunks, currentChunk)
 			currentChunk = userLine
 		} else {
@@ -259,11 +285,6 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		sendAwolFile(r, i, awolUsers, position, forceFile, cacheHealthy, loaCount, now)
 		utils.Info("✨ Done!", "command", "Awol")
 		return
-	}
-
-	footerText := awolReportFooter
-	if !cacheHealthy {
-		footerText = awolDegradedFooter
 	}
 
 	var embeds []*discordgo.MessageEmbed
