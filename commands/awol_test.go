@@ -553,3 +553,56 @@ func TestRunAwol_UnhealthyCacheFileOutputCarriesWarning(t *testing.T) {
 		t.Fatalf("file should mark On LOA unknown.\nGot:\n%s", body)
 	}
 }
+
+// countingLOACache wraps fakeLOACache to count GetEntry calls per username,
+// proving the S4 single-snapshot invariant: /awol reads each member's LOA state
+// exactly ONCE (deriving both OnLOA and the [[LOA]] link from that one snapshot),
+// not once for the verdict and again for the link.
+type countingLOACache struct {
+	*fakeLOACache
+	getEntryCalls map[string]int
+}
+
+func (c *countingLOACache) GetEntry(username string) (utils.LOAEntry, bool) {
+	if c.getEntryCalls == nil {
+		c.getEntryCalls = map[string]int{}
+	}
+	c.getEntryCalls[strings.ToLower(username)]++
+	return c.fakeLOACache.GetEntry(username)
+}
+
+// TestRunAwol_S4_SingleSnapshotPerUser pins the #158/S4 fix: an active LOA member
+// with a thread renders the [[LOA]] link, and the handler reads the cache for that
+// member exactly once — so a concurrent refresh can't make the link and the OnLOA
+// verdict disagree.
+func TestRunAwol_S4_SingleSnapshotPerUser(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	cache := &countingLOACache{
+		fakeLOACache: healthyCache(map[string]utils.LOAEntry{
+			"trooper.a": {
+				Username:  "Trooper.A",
+				StartDate: mustParseAwolDate("2026-05-01 00:00:00"),
+				EndDate:   mustParseAwolDate("2026-06-01 00:00:00"), // active at awolRefDate
+				ThreadID:  4242,
+			},
+		}),
+	}
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+
+	runAwol(f, cache, awolRefDate, i)
+
+	if n := cache.getEntryCalls["trooper.a"]; n != 1 {
+		t.Fatalf("S4: GetEntry must be called exactly once per member, got %d", n)
+	}
+	desc := (*f.Calls()[1].Edit.Embeds)[0].Description
+	if !strings.Contains(desc, "**[[LOA]](https://7cav.us/threads/4242/)**") {
+		t.Fatalf("active member must render the [[LOA]] link from the single snapshot.\nGot:\n%s", desc)
+	}
+}

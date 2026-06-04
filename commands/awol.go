@@ -29,12 +29,14 @@ const loaCacheUnavailableFooter = "⚠️ LOA cache unavailable; On LOA column m
 // loaCacheReader is the minimal LOA-cache surface /awol consumes. Production
 // wires *utils.LOACache (GlobalLOACache); tests substitute a fake with canned
 // entries and a forced health verdict so the handler stays deterministic
-// without touching the process-global singleton. IsHealthy gates whether the
-// per-member On LOA column can be trusted (#96): when the cache is stale,
-// IsOnLOA/GetEntry silently return all-clear, so the column is rendered as
-// "unknown" rather than a misleading "false".
+// without touching the process-global singleton. /awol reads each member's LOA
+// state with a SINGLE GetEntry call and derives both the On LOA verdict
+// (entry.IsActive) and the [[LOA]] link from that one snapshot (#158/S4), so the
+// two can't disagree across a concurrent refresh. IsHealthy gates whether the
+// per-member On LOA column can be trusted (#96): when the cache is stale, GetEntry
+// silently returns all-clear, so the column is rendered as "unknown" rather than
+// a misleading "false".
 type loaCacheReader interface {
-	IsOnLOA(username string) bool
 	GetEntry(username string) (utils.LOAEntry, bool)
 	IsHealthy(maxAge time.Duration) (bool, time.Time)
 }
@@ -45,6 +47,12 @@ type AwolUser struct {
 	TimeSinceLastPost string
 	LastPostDate      time.Time
 	OnLOA             bool
+	// LOAEntry is the single cache snapshot read for this user (see the GetEntry
+	// call in runAwol). HasLOAEntry records whether that read found a window, so
+	// the [[LOA]] link can reuse the same snapshot instead of a second, possibly
+	// inconsistent, cache lookup. OnLOA is derived from this snapshot's window.
+	LOAEntry    utils.LOAEntry
+	HasLOAEntry bool
 }
 
 func Awol() Command {
@@ -97,8 +105,9 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		return
 	}
 
-	// #96: probe cache health once per invocation. When unhealthy, IsOnLOA
-	// returns false for everyone silently, so the On LOA column would lie. We do
+	// #96: probe cache health once per invocation. When unhealthy, the per-user
+	// GetEntry read returns no window for everyone, so the On LOA column would lie
+	// (every row reads all-clear). We do
 	// NOT abort — /awol's primary signal (lastForumPostDate) is independent — but
 	// render the column as "unknown" and warn. No Sentry capture: operational
 	// degradation, not an internal error (ADR 0001).
@@ -141,12 +150,19 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 				utils.HandleError(r, i, "❌ Failed to parse uniform URL")
 				return
 			}
+			// #158/S4: read the LOA cache ONCE per user. Deriving OnLOA from this
+			// same snapshot (rather than a separate IsOnLOA call) means the On LOA
+			// verdict and the [[LOA]] link below can never disagree, even if a
+			// 15-min refresh lands mid-loop now that ended windows are retained.
+			entry, hasEntry := cache.GetEntry(member.User.Username)
 			awolUsers = append(awolUsers, AwolUser{
 				Username:          member.User.Username,
 				MilpacUrl:         fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1]),
 				TimeSinceLastPost: utils.FormatTimeSinceDuration(lastPostDate),
 				LastPostDate:      lastPostDate,
-				OnLOA:             cache.IsOnLOA(member.User.Username),
+				OnLOA:             hasEntry && entry.IsActive(now),
+				LOAEntry:          entry,
+				HasLOAEntry:       hasEntry,
 			})
 		}
 	}
@@ -185,8 +201,10 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		case !cacheHealthy:
 			loaTag = "On LOA: unknown — "
 		case user.OnLOA:
-			if entry, ok := cache.GetEntry(user.Username); ok && entry.ThreadID != 0 {
-				loaTag = fmt.Sprintf("**[[LOA]](https://7cav.us/threads/%d/)** ", entry.ThreadID)
+			// Reuse the single per-user snapshot captured above — no second cache
+			// read — so the link can't point at a thread the row's OnLOA disagrees with.
+			if user.HasLOAEntry && user.LOAEntry.ThreadID != 0 {
+				loaTag = fmt.Sprintf("**[[LOA]](https://7cav.us/threads/%d/)** ", user.LOAEntry.ThreadID)
 			} else {
 				loaTag = "**[LOA]** "
 			}
@@ -263,8 +281,8 @@ func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, 
 	}
 
 	for _, user := range awolUsers {
-		// #96: only trust IsOnLOA when the cache is healthy; otherwise the
-		// column is unknown, not all-clear.
+		// #96: only trust the OnLOA snapshot when the cache is healthy; otherwise
+		// the column is unknown, not all-clear.
 		loaTag := ""
 		switch {
 		case !cacheHealthy:

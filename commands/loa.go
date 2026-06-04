@@ -119,6 +119,10 @@ func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *
 	var activeLOAs, upcomingLOAs []LOAUser
 
 	for _, member := range roster.LiteProfiles {
+		// #158/S3: /loa renders exactly one window per user via the single-value
+		// GetEntry (most-relevant) contract, deliberately NOT iterating GetEntries.
+		// This preserves the pre-history-store rendering; pinned by
+		// TestGetEntry_SingleWindowContract_ForLoaRendering in utils.
 		entry, ok := cache.GetEntry(member.User.Username)
 		if !ok {
 			continue

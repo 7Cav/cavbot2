@@ -502,24 +502,6 @@ func TestLOAEntry_isActiveAt(t *testing.T) {
 	}
 }
 
-// TestLOAEntry_isExpiredAt pins the prune cutoff at the EXACT EndDate boundary:
-// expiry is strict (now.After(EndDate)), so an entry whose End==now is NOT yet
-// expired (survives the cycle) while one already one tick past End is pruned. This
-// is the strict complement of isActiveAt's inclusive upper bound.
-func TestLOAEntry_isExpiredAt(t *testing.T) {
-	entry := LOAEntry{Username: "Boundary", EndDate: mustLOATime("Jun 20, 2099")}
-
-	if entry.isExpiredAt(entry.EndDate) {
-		t.Errorf("End==now must NOT be expired (final day survives prune)")
-	}
-	if entry.isExpiredAt(entry.EndDate.Add(-time.Nanosecond)) {
-		t.Errorf("one tick before End must NOT be expired")
-	}
-	if !entry.isExpiredAt(entry.EndDate.Add(time.Nanosecond)) {
-		t.Errorf("one tick after End must be expired")
-	}
-}
-
 // TestIsOnLOA_ActiveWindowBoundaries cross-checks the live-clock IsOnLOA wrapper
 // (which delegates to isActiveAt with time.Now()) against entries positioned
 // relative to a captured `now`. The exact-edge contract is pinned by
@@ -542,6 +524,163 @@ func TestIsOnLOA_ActiveWindowBoundaries(t *testing.T) {
 	}
 	if c.IsOnLOA("futurewin") {
 		t.Errorf("IsOnLOA: wholly-future window must not be active")
+	}
+}
+
+// TestGetEntry_TwoActiveWindows_LatestEndingWins pins the highest-value tie-break
+// mutation testing flagged hollow: when a user holds TWO simultaneously-active
+// windows, mostRelevant/GetEntry must surface the latest-ending one (state 3,
+// tie=EndDate). This is the exact selection that drives /awol's [[LOA]] link, so a
+// mutated `tie.After` → `tie.Before` must fail here.
+func TestGetEntry_TwoActiveWindows_LatestEndingWins(t *testing.T) {
+	now := time.Now()
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+
+	// Both windows straddle now (active). Thread 2 ends later, so it must win.
+	c.entries["dual"] = []LOAEntry{
+		{Username: "dual", StartDate: now.AddDate(0, 0, -5), EndDate: now.AddDate(0, 0, 3), ThreadID: 1},
+		{Username: "dual", StartDate: now.AddDate(0, 0, -2), EndDate: now.AddDate(0, 0, 9), ThreadID: 2},
+	}
+	got, ok := c.GetEntry("dual")
+	if !ok || got.ThreadID != 2 {
+		t.Fatalf("GetEntry must surface the latest-ending ACTIVE window (thread 2), got %+v ok=%v", got, ok)
+	}
+
+	// Order-independence: same windows, reversed slice order, same verdict.
+	c.entries["dual"] = []LOAEntry{
+		{Username: "dual", StartDate: now.AddDate(0, 0, -2), EndDate: now.AddDate(0, 0, 9), ThreadID: 2},
+		{Username: "dual", StartDate: now.AddDate(0, 0, -5), EndDate: now.AddDate(0, 0, 3), ThreadID: 1},
+	}
+	got, ok = c.GetEntry("dual")
+	if !ok || got.ThreadID != 2 {
+		t.Fatalf("latest-ending active must win regardless of slice order, got %+v ok=%v", got, ok)
+	}
+}
+
+// TestLOAEntry_isRetired_HorizonBoundary pins the retention cutoff at the EXACT
+// historyHorizon boundary. isRetired uses a strict Before, so a window whose
+// EndDate == historyHorizon(now) is RETAINED (not yet retired); one tick older is
+// retired, one tick newer is retained. There is no other direct test for either
+// isRetired or historyHorizon, so this guards a Before↔!After / ±tick mutation.
+func TestLOAEntry_isRetired_HorizonBoundary(t *testing.T) {
+	now := time.Now()
+	horizon := historyHorizon(now)
+
+	atHorizon := LOAEntry{EndDate: horizon}
+	if atHorizon.isRetired(now) {
+		t.Errorf("EndDate == historyHorizon must be RETAINED (strict Before), got retired")
+	}
+	oneTickNewer := LOAEntry{EndDate: horizon.Add(time.Nanosecond)}
+	if oneTickNewer.isRetired(now) {
+		t.Errorf("EndDate one tick after the horizon must be retained, got retired")
+	}
+	oneTickOlder := LOAEntry{EndDate: horizon.Add(-time.Nanosecond)}
+	if !oneTickOlder.isRetired(now) {
+		t.Errorf("EndDate one tick before the horizon must be retired, got retained")
+	}
+}
+
+// TestRefresh_MixedWindowCompaction exercises the in-place kept := windows[:0]
+// filter with a SINGLE user holding interleaved retired/retained windows — the
+// real-world multi-window case the single-window tests never reach. The two
+// survivors must remain, in their original relative order.
+func TestRefresh_MixedWindowCompaction(t *testing.T) {
+	now := time.Now()
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+
+	// [retired, retained, retired, retained] for one user.
+	c.entries["mixed"] = []LOAEntry{
+		{Username: "mixed", StartDate: now.AddDate(-2, 0, 0), EndDate: now.AddDate(-1, 0, -30), ThreadID: 1}, // retired
+		{Username: "mixed", StartDate: now.AddDate(0, 0, -40), EndDate: now.AddDate(0, 0, -30), ThreadID: 2}, // retained (recent)
+		{Username: "mixed", StartDate: now.AddDate(-2, 0, 0), EndDate: now.AddDate(-1, 0, -20), ThreadID: 3}, // retired
+		{Username: "mixed", StartDate: now.AddDate(0, 0, -10), EndDate: now.AddDate(0, 0, -2), ThreadID: 4},  // retained (recent)
+	}
+	c.lastSyncedPostDate = 100 // warm cache ⇒ no new posts, isolate the compaction
+
+	f := &fakeLOAFetcher{byNode: map[int][]loaPostRow{180: nil}}
+	c.refresh(f, []int{180})
+
+	got := c.GetEntries("mixed")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 surviving windows after compaction, got %d (%+v)", len(got), got)
+	}
+	if got[0].ThreadID != 2 || got[1].ThreadID != 4 {
+		t.Errorf("survivors must be threads [2, 4] in order, got [%d, %d]", got[0].ThreadID, got[1].ThreadID)
+	}
+}
+
+// TestGetEntry_SingleWindowContract_ForLoaRendering pins the S3 decision: /loa
+// renders exactly one window per user via the single-value GetEntry contract and
+// deliberately does NOT iterate GetEntries. Even when a user holds several
+// concurrent UPCOMING windows, GetEntry must collapse them to one (the soonest
+// start), so /loa shows a single row — matching the pre-history-store behavior.
+// If a future change wires /loa onto GetEntries, this test should be revisited
+// intentionally rather than silently.
+func TestGetEntry_SingleWindowContract_ForLoaRendering(t *testing.T) {
+	now := time.Now()
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+
+	// Two concurrent upcoming windows for one user.
+	c.entries["multi"] = []LOAEntry{
+		{Username: "multi", StartDate: now.AddDate(0, 0, 20), EndDate: now.AddDate(0, 0, 30), ThreadID: 1},
+		{Username: "multi", StartDate: now.AddDate(0, 0, 5), EndDate: now.AddDate(0, 0, 8), ThreadID: 2},
+	}
+
+	got, ok := c.GetEntry("multi")
+	if !ok {
+		t.Fatalf("GetEntry must return a window for a user with multiple windows")
+	}
+	if got.ThreadID != 2 {
+		t.Errorf("single-window contract: GetEntry must surface the soonest-upcoming window (thread 2), got %d", got.ThreadID)
+	}
+	// The full history is still two windows — GetEntry is the lossy one-per-user view.
+	if n := len(c.GetEntries("multi")); n != 2 {
+		t.Errorf("GetEntries must still expose the full history (2), got %d", n)
+	}
+}
+
+// TestGetEntries_CopyIsolation proves GetEntries returns a defensive copy: mutating
+// a returned window must not leak back into the cache.
+func TestGetEntries_CopyIsolation(t *testing.T) {
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+	c.entries["iso"] = []LOAEntry{
+		{Username: "iso", StartDate: time.Now().Add(-time.Hour), EndDate: time.Now().Add(time.Hour), ThreadID: 42},
+	}
+
+	got := c.GetEntries("iso")
+	if len(got) != 1 {
+		t.Fatalf("expected 1 window, got %d", len(got))
+	}
+	got[0].ThreadID = 9999 // mutate the returned copy
+
+	again := c.GetEntries("iso")
+	if again[0].ThreadID != 42 {
+		t.Errorf("mutating a GetEntries result must not alter the cache: ThreadID = %d, want 42", again[0].ThreadID)
+	}
+}
+
+// TestUpsertWindow_ZeroThreadIDNotDeduped guards the S1 defensive path: a window
+// with ThreadID 0 (impossible from the live non-null PK query, but a silent
+// data-folding hazard if it ever occurred) must be appended rather than dedup-
+// folded. Two distinct 0-thread windows for one user must both survive.
+func TestUpsertWindow_ZeroThreadIDNotDeduped(t *testing.T) {
+	now := time.Now()
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+
+	c.upsertWindow(LOAEntry{Username: "Zed", StartDate: now.AddDate(0, 0, 1), EndDate: now.AddDate(0, 0, 5), ThreadID: 0})
+	c.upsertWindow(LOAEntry{Username: "Zed", StartDate: now.AddDate(0, 0, 10), EndDate: now.AddDate(0, 0, 15), ThreadID: 0})
+
+	got := c.GetEntries("zed")
+	if len(got) != 2 {
+		t.Fatalf("two zero-ThreadID windows must NOT fold into one; got %d (%+v)", len(got), got)
+	}
+
+	// A non-zero thread still dedupes in place alongside the un-folded zeros.
+	c.upsertWindow(LOAEntry{Username: "Zed", StartDate: now.AddDate(0, 0, 20), EndDate: now.AddDate(0, 0, 25), ThreadID: 7})
+	c.upsertWindow(LOAEntry{Username: "Zed", StartDate: now.AddDate(0, 0, 20), EndDate: now.AddDate(0, 0, 26), ThreadID: 7})
+	got = c.GetEntries("zed")
+	if len(got) != 3 {
+		t.Fatalf("expected 3 windows (2 zero + 1 deduped thread 7), got %d (%+v)", len(got), got)
 	}
 }
 
