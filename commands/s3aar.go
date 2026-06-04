@@ -116,14 +116,35 @@ func cleanName(name string) string {
 	return name
 }
 
+// validateProfile rejects a milpacs 2xx that lacks usable enrichment data (#152).
+// Before this guard, a 200 carrying an empty RankFull/Username (and/or empty
+// Roster) could reach link construction and emit a ghost forum line
+// ([URL='...'] [/URL]) with a blank CavName (whenever UniformUrl happened to
+// match the ID regex). Returning an error here rejects it first, routing the
+// player into the ⚠️ warning field instead — so a non-failed player means
+// "usable enrichment", not merely "HTTP succeeded". The name is folded into the
+// error so it stays attributable even if a future caller logs only the error.
+func validateProfile(name string, profile *utils.ProfileResponse) error {
+	if profile.Rank.RankFull == "" || profile.User.Username == "" {
+		return fmt.Errorf("milpacs 2xx for %q with empty rank/username (unusable enrichment)", name)
+	}
+	if profile.Roster == "" {
+		return fmt.Errorf("milpacs 2xx for %q with empty roster (unusable enrichment)", name)
+	}
+	return nil
+}
+
 func enrichPlayer(ctx context.Context, rawName string) (string, string, string, string, string, error) {
 	cleaned := cleanName(rawName)
 
 	profile, err := utils.GetMilpacByUsername(ctx, cleaned)
 	if err == nil {
+		if err := validateProfile(cleaned, profile); err != nil {
+			return "", "", "", "", "", err
+		}
 		matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(profile.UniformUrl)
 		if len(matches) != 2 {
-			return "", "", "", "", "", fmt.Errorf("failed to extract ID from UniformUrl: %s", profile.UniformUrl)
+			return "", "", "", "", "", fmt.Errorf("failed to extract ID from username-lookup UniformUrl: %s", profile.UniformUrl)
 		}
 		id := matches[1]
 		cavName := fmt.Sprintf("%s %s", profile.Rank.RankFull, profile.User.Username)
@@ -135,9 +156,12 @@ func enrichPlayer(ctx context.Context, rawName string) (string, string, string, 
 
 	profile, err = utils.GetUserByGamertag(ctx, rawName)
 	if err == nil {
+		if err := validateProfile(rawName, profile); err != nil {
+			return "", "", "", "", "", err
+		}
 		matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(profile.UniformUrl)
 		if len(matches) != 2 {
-			return "", "", "", "", "", fmt.Errorf("failed to extract ID from UniformUrl: %s", profile.UniformUrl)
+			return "", "", "", "", "", fmt.Errorf("failed to extract ID from gamertag-lookup UniformUrl: %s", profile.UniformUrl)
 		}
 		id := matches[1]
 		cavName := fmt.Sprintf("%s %s", profile.Rank.RankFull, profile.User.Username)
@@ -205,8 +229,12 @@ func fetchBattleMetricsSessions(serverID string, start, stop time.Time, minAtten
 	for name, duration := range playtimeMap {
 		minutes := int(duration.Minutes())
 		if minutes >= minAttendance {
+			// Pass the ORIGINAL BattleMetrics name through to enrichPlayer, which
+			// owns the cleaning: the USERNAME lookup uses cleanName(name) while the
+			// GAMERTAG fallback receives the UNCLEANED raw in-game tag (#151). The
+			// cleaned form is still computed here only for the failure log line.
 			cleaned := cleanName(name)
-			cavName, link, searchString, roster, rankID, enrichErr := enrichPlayer(ctx, cleaned)
+			cavName, link, searchString, roster, rankID, enrichErr := enrichPlayer(ctx, name)
 			if enrichErr != nil {
 				// A real combatant whose enrichment fails would otherwise vanish
 				// from the combat roster with no signal. Mark the failure explicitly

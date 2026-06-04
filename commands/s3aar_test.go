@@ -287,9 +287,18 @@ func TestRunS3aar_SuccessFileOutput(t *testing.T) {
 func TestRunS3aar_DebugJSONOutput(t *testing.T) {
 	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
 	stop := start.Add(2 * time.Hour)
-	serveBattleMetrics(t, []bmSession{
-		{Name: "ABC.Jones.K", Start: start, Stop: stop},
-	})
+	// One player enriches successfully (Jones.K) and one fails (absent from the
+	// profile map → 404). This lets #153 assert EnrichFailed round-trips through
+	// the debug JSON for BOTH values, locking the json:"enrich_failed" tag too.
+	serveBattleMetricsWithProfiles(t,
+		[]bmSession{
+			{Name: "ABC.Jones.K", Start: start, Stop: stop}, // enriches OK
+			{Name: "ABC.Ghost.G", Start: start, Stop: stop}, // 404 → EnrichFailed
+		},
+		map[string]utils.ProfileResponse{
+			"Jones.K": combatProfile("JonesUser", "Sergeant", "5", "ROSTER_TYPE_COMBAT", "101"),
+		},
+	)
 
 	r := &fakeResponder{}
 	i := s3aarOptions("TS1", "10NOV25", "10NOV25", "1800", "2000", 30, "Yes")
@@ -322,8 +331,37 @@ func TestRunS3aar_DebugJSONOutput(t *testing.T) {
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatalf("attendance.json not valid PlayerSession JSON: %v\n%s", err, raw)
 	}
-	if len(decoded) != 1 || decoded[0].Name != "ABC.Jones.K" {
-		t.Fatalf("unexpected debug payload: %+v", decoded)
+	if len(decoded) != 2 {
+		t.Fatalf("expected 2 sessions in debug payload; got %+v", decoded)
+	}
+
+	// #153: EnrichFailed must round-trip through the debug JSON under the
+	// json:"enrich_failed" tag — true for the 404 player, false for the enriched
+	// one. Index by name since map iteration order isn't stable.
+	byName := make(map[string]PlayerSession, len(decoded))
+	for _, d := range decoded {
+		byName[d.Name] = d
+	}
+	jones, ok := byName["ABC.Jones.K"]
+	if !ok {
+		t.Fatalf("expected enriched player ABC.Jones.K in payload; got %+v", decoded)
+	}
+	if jones.EnrichFailed {
+		t.Fatalf("successfully-enriched player must have EnrichFailed==false; got %+v", jones)
+	}
+	ghost, ok := byName["ABC.Ghost.G"]
+	if !ok {
+		t.Fatalf("expected failed player ABC.Ghost.G in payload; got %+v", decoded)
+	}
+	if !ghost.EnrichFailed {
+		t.Fatalf("404 player must have EnrichFailed==true; got %+v", ghost)
+	}
+
+	// Lock the wire tag explicitly: the raw JSON must carry "enrich_failed":true
+	// for the failed player, proving the json:"enrich_failed" tag (not the Go
+	// field name) is what serializes.
+	if !strings.Contains(string(raw), `"enrich_failed": true`) {
+		t.Fatalf("debug JSON must serialize the enrich_failed tag as true for a failure; got:\n%s", raw)
 	}
 }
 
@@ -380,8 +418,8 @@ func TestRunS3aar_CombatRosterOutput(t *testing.T) {
 	serveBattleMetricsWithProfiles(t,
 		[]bmSession{
 			{Name: "ABC.Alpha.A", Start: start, Stop: stop},   // combat, rank 5
-			{Name: "ABC.Bravo.B", Start: start, Stop: stop},    // combat, rank 2
-			{Name: "ABC.Reserve.R", Start: start, Stop: stop},  // reserve → filtered out
+			{Name: "ABC.Bravo.B", Start: start, Stop: stop},   // combat, rank 2
+			{Name: "ABC.Reserve.R", Start: start, Stop: stop}, // reserve → filtered out
 		},
 		map[string]utils.ProfileResponse{
 			"Alpha.A":   combatProfile("AlphaUser", "Sergeant", "5", "ROSTER_TYPE_COMBAT", "101"),
@@ -455,12 +493,25 @@ func TestRunS3aar_EnrichGamertagFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal profile: %v", err)
 	}
+	// #151: the gamertag fallback must receive the UNCLEANED raw BattleMetrics
+	// tag, not the cleaned name. Pin that explicitly: the gamertag lookup only
+	// succeeds at the RAW path (/milpac/gamertag/ABC.Gamer.G). If enrichPlayer
+	// were to clean the tag before the gamertag lookup (the #151 bug), it would
+	// request /milpac/gamertag/Gamer.G, this server would 404 it, and the player
+	// would never land on the combat roster — failing the assertion below.
+	const rawTag = "ABC.Gamer.G"
+	var gamertagPaths []string
 	milpacSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Username lookup 404s; gamertag lookup succeeds → exercises fallback.
-		if strings.HasPrefix(r.URL.Path, "/milpac/gamertag/") {
+		// Username lookup 404s; gamertag lookup succeeds ONLY for the raw tag.
+		if r.URL.Path == "/milpac/gamertag/"+rawTag {
+			gamertagPaths = append(gamertagPaths, r.URL.Path)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(profBody)
 			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/milpac/gamertag/") {
+			// Record any non-raw gamertag lookup so we can assert it never happens.
+			gamertagPaths = append(gamertagPaths, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
@@ -474,6 +525,18 @@ func TestRunS3aar_EnrichGamertagFallback(t *testing.T) {
 	wantLine := "[URL='https://7cav.us/rosters/profile/404']Corporal GamerUser[/URL]"
 	if body := readAARFile(t, followups(r.Calls())); body != wantLine {
 		t.Fatalf("gamertag-fallback enrichment did not populate combat roster.\nwant: %s\ngot:  %s", wantLine, body)
+	}
+
+	// The gamertag fallback must have queried the RAW tag and never the cleaned one.
+	sawRaw := false
+	for _, p := range gamertagPaths {
+		if p != "/milpac/gamertag/"+rawTag {
+			t.Fatalf("gamertag fallback must query the RAW tag only; saw %q", p)
+		}
+		sawRaw = true
+	}
+	if !sawRaw {
+		t.Fatalf("expected a gamertag lookup against the raw tag %q; got none", rawTag)
 	}
 }
 
@@ -674,8 +737,8 @@ func TestRunS3aar_NonCombatNotInWarningFooter(t *testing.T) {
 
 	serveBattleMetricsWithProfiles(t,
 		[]bmSession{
-			{Name: "ABC.Combat.C", Start: start, Stop: stop},   // combat
-			{Name: "ABC.Reserve.R", Start: start, Stop: stop},  // reserve (non-combat)
+			{Name: "ABC.Combat.C", Start: start, Stop: stop},  // combat
+			{Name: "ABC.Reserve.R", Start: start, Stop: stop}, // reserve (non-combat)
 		},
 		map[string]utils.ProfileResponse{
 			"Combat.C":  combatProfile("CombatUser", "Sergeant", "5", "ROSTER_TYPE_COMBAT", "101"),
@@ -733,6 +796,219 @@ func TestRunS3aar_HappyPathNoWarningField(t *testing.T) {
 	}
 }
 
+// TestRunS3aar_EmptyFieldsTreatedAsFailure pins #152: a milpacs 200 carrying
+// empty RankFull/Username (and/or empty Roster) is NOT a usable enrichment. The
+// player must surface in the ⚠️ warning field and must NOT emit a blank/ghost
+// BBCode line ([URL='...'] [/URL]) on the combat roster.
+func TestRunS3aar_EmptyFieldsTreatedAsFailure(t *testing.T) {
+	logs := captureWarnLogs(t)
+
+	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
+	stop := start.Add(2 * time.Hour)
+
+	// A profile that returns HTTP 200 but with empty enrichment fields: no
+	// rank/username/roster. UniformUrl still matches the ID regex so the ONLY
+	// thing that makes this a failure is the empty fields (not a regex miss).
+	emptyProfile := utils.ProfileResponse{
+		UniformUrl: "https://7cav.us/data/roster_uniforms/0/999.jpg",
+	}
+	serveBattleMetricsWithProfiles(t,
+		[]bmSession{
+			{Name: "ABC.Ghost.G", Start: start, Stop: stop},
+		},
+		map[string]utils.ProfileResponse{
+			"Ghost.G": emptyProfile,
+		},
+	)
+
+	r := &fakeResponder{}
+	i := s3aarOptions("Tac1", "10NOV25", "10NOV25", "1800", "2000", 30, "")
+	runS3aar(r, i)
+
+	fups := followups(r.Calls())
+	if len(fups) == 0 || len(fups[0].Params.Embeds) == 0 {
+		t.Fatalf("expected attendance embed in first followup; got %+v", fups)
+	}
+
+	// The empty-fields player must surface as an enrichment failure.
+	field := warningField(fups[0].Params.Embeds[0])
+	if field == nil {
+		t.Fatalf("empty-fields 200 must surface as an enrichment failure; got no warning field")
+	}
+	if !strings.Contains(field.Value, "ABC.Ghost.G") {
+		t.Fatalf("warning field must list the empty-fields player; got %q", field.Value)
+	}
+
+	// The combat roster file must NOT carry a ghost BBCode line. With the only
+	// player excluded, the body is empty — and must never contain a blank
+	// [URL='...'] [/URL] entry.
+	body := readAARFile(t, fups)
+	if strings.Contains(body, "[URL=") {
+		t.Fatalf("empty-fields player must not emit a ghost BBCode line; body:\n%q", body)
+	}
+
+	// The failure must be observable in logs. Asserting the "unusable enrichment"
+	// text (not just level=WARN) pins the validateProfile branch vs an accidental
+	// 404, and "Ghost.G" pins the name folded into the error (the cleaned form the
+	// username lookup used).
+	if !strings.Contains(logs.String(), "level=WARN") {
+		t.Fatalf("expected a WARN log on empty-fields enrichment failure; got:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "unusable enrichment") {
+		t.Fatalf("WARN log must carry the validateProfile error text; got:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "Ghost.G") {
+		t.Fatalf("validateProfile error must attribute the player name; got:\n%s", logs.String())
+	}
+}
+
+// TestRunS3aar_EmptyRosterOnlyTreatedAsFailure pins validateProfile's SECOND
+// clause (#152): a 200 with a populated rank/username but an empty Roster string.
+// The empty-fields test above trips the first clause (rank/username), so without
+// this case dropping the `Roster == ""` check would pass CI. The player must still
+// surface in the ⚠️ warning field and emit no ghost BBCode line.
+func TestRunS3aar_EmptyRosterOnlyTreatedAsFailure(t *testing.T) {
+	logs := captureWarnLogs(t)
+
+	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
+	stop := start.Add(2 * time.Hour)
+
+	// Populated rank/username and a regex-matching UniformUrl, but an empty Roster
+	// — so the ONLY thing that makes this a failure is the empty roster string.
+	emptyRosterProfile := combatProfile("GhostUser", "Private", "9", "", "999")
+	serveBattleMetricsWithProfiles(t,
+		[]bmSession{
+			{Name: "ABC.Ghost.G", Start: start, Stop: stop},
+		},
+		map[string]utils.ProfileResponse{
+			"Ghost.G": emptyRosterProfile,
+		},
+	)
+
+	r := &fakeResponder{}
+	i := s3aarOptions("Tac1", "10NOV25", "10NOV25", "1800", "2000", 30, "")
+	runS3aar(r, i)
+
+	fups := followups(r.Calls())
+	if len(fups) == 0 || len(fups[0].Params.Embeds) == 0 {
+		t.Fatalf("expected attendance embed in first followup; got %+v", fups)
+	}
+
+	field := warningField(fups[0].Params.Embeds[0])
+	if field == nil {
+		t.Fatalf("empty-roster 200 must surface as an enrichment failure; got no warning field")
+	}
+	if !strings.Contains(field.Value, "ABC.Ghost.G") {
+		t.Fatalf("warning field must list the empty-roster player; got %q", field.Value)
+	}
+
+	body := readAARFile(t, fups)
+	if strings.Contains(body, "[URL=") {
+		t.Fatalf("empty-roster player must not emit a ghost BBCode line; body:\n%q", body)
+	}
+
+	if !strings.Contains(logs.String(), "level=WARN") {
+		t.Fatalf("expected a WARN log on empty-roster enrichment failure; got:\n%s", logs.String())
+	}
+	// Pin the empty-roster clause specifically (vs the empty-rank/username clause
+	// or a 404), and the attributed name.
+	if !strings.Contains(logs.String(), "empty roster") {
+		t.Fatalf("WARN log must carry the empty-roster error text; got:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "Ghost.G") {
+		t.Fatalf("validateProfile error must attribute the player name; got:\n%s", logs.String())
+	}
+}
+
+// TestRunS3aar_GamertagFallbackEmptyFieldsTreatedAsFailure pins the validateProfile
+// guard on the GAMERTAG fallback branch (s3aar.go:159) — a copy of the username
+// branch's guard that the other #152 tests never reach (they fail at the username
+// lookup). Here the username lookup 404s, the gamertag fallback returns a 200 with
+// empty fields, and the player must still surface as an enrichment failure rather
+// than emitting a ghost BBCode line. Dropping the gamertag-branch guard would let
+// this slip through, failing the warning-field assertion.
+func TestRunS3aar_GamertagFallbackEmptyFieldsTreatedAsFailure(t *testing.T) {
+	logs := captureWarnLogs(t)
+
+	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
+	stop := start.Add(2 * time.Hour)
+	t.Setenv("BM_TOKEN", "test-token")
+
+	payload := map[string]any{"data": []map[string]any{
+		{"attributes": map[string]any{"start": start, "stop": stop, "name": "ABC.Gamer.G"}},
+	}}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	bmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/relationships/sessions") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(bmSrv.Close)
+	prevBM := bmBaseURL
+	bmBaseURL = bmSrv.URL
+	t.Cleanup(func() { bmBaseURL = prevBM })
+
+	// Empty enrichment fields but a regex-matching UniformUrl, so the ONLY cause of
+	// failure is validateProfile on the gamertag branch (not a regex miss). If that
+	// guard were removed, this would reach link construction and emit a ghost line.
+	const rawTag = "ABC.Gamer.G"
+	emptyProfile := utils.ProfileResponse{
+		UniformUrl: "https://7cav.us/data/roster_uniforms/0/999.jpg",
+	}
+	profBody, err := json.Marshal(emptyProfile)
+	if err != nil {
+		t.Fatalf("marshal profile: %v", err)
+	}
+	milpacSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Username lookup 404s; gamertag lookup returns a 200-with-empty-fields.
+		if r.URL.Path == "/milpac/gamertag/"+rawTag {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(profBody)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(milpacSrv.Close)
+	t.Cleanup(utils.SetAPIBaseURLForTest(milpacSrv.URL))
+
+	r := &fakeResponder{}
+	i := s3aarOptions("Tac1", "10NOV25", "10NOV25", "1800", "2000", 30, "")
+	runS3aar(r, i)
+
+	fups := followups(r.Calls())
+	if len(fups) == 0 || len(fups[0].Params.Embeds) == 0 {
+		t.Fatalf("expected attendance embed in first followup; got %+v", fups)
+	}
+
+	field := warningField(fups[0].Params.Embeds[0])
+	if field == nil {
+		t.Fatalf("gamertag-branch empty 200 must surface as an enrichment failure; got no warning field")
+	}
+	if !strings.Contains(field.Value, rawTag) {
+		t.Fatalf("warning field must list the gamertag-fallback player; got %q", field.Value)
+	}
+
+	body2 := readAARFile(t, fups)
+	if strings.Contains(body2, "[URL=") {
+		t.Fatalf("gamertag-branch empty player must not emit a ghost BBCode line; body:\n%q", body2)
+	}
+
+	// The gamertag-branch validateProfile error carries the RAW tag (the gamertag
+	// lookup key) and the "unusable enrichment" text.
+	if !strings.Contains(logs.String(), "unusable enrichment") {
+		t.Fatalf("WARN log must carry the validateProfile error text; got:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), rawTag) {
+		t.Fatalf("gamertag-branch error must attribute the raw tag; got:\n%s", logs.String())
+	}
+}
+
 // TestRunS3aar_MixedRosterFailuresWarningField exercises the realistic case all
 // three player classes appear in ONE run: a combat player, a non-combat (reserve)
 // player, and two enrichment failures. It guards the loop's `continue` (a failed
@@ -751,9 +1027,9 @@ func TestRunS3aar_MixedRosterFailuresWarningField(t *testing.T) {
 	serveBattleMetricsWithProfiles(t,
 		[]bmSession{
 			{Name: "ABC.Combat.C", Start: start, Stop: stop},  // combat → roster
-			{Name: "ABC.Reserve.R", Start: start, Stop: stop},  // reserve → filtered, NOT a failure
+			{Name: "ABC.Reserve.R", Start: start, Stop: stop}, // reserve → filtered, NOT a failure
 			{Name: "ABC.Zulu.Z", Start: start, Stop: stop},    // enrichment failure
-			{Name: "ABC.Alpha.A", Start: start, Stop: stop},    // enrichment failure
+			{Name: "ABC.Alpha.A", Start: start, Stop: stop},   // enrichment failure
 		},
 		map[string]utils.ProfileResponse{
 			"Combat.C":  combatProfile("CombatUser", "Sergeant", "5", "ROSTER_TYPE_COMBAT", "101"),
@@ -859,6 +1135,69 @@ func TestBuildEnrichmentFailureField_NoTruncation(t *testing.T) {
 	}
 }
 
+// TestRunS3aar_UniformURLRegexFailure covers #154: enrichPlayer's branch where a
+// milpac lookup SUCCEEDS (2xx, fully populated fields) but UniformUrl does NOT
+// match /\d+/(\d+)\.jpg, so the milpac ID can't be extracted. That must surface
+// as an enrichment failure (warning field + WARN log), not a panic or a silently
+// included blank entry.
+func TestRunS3aar_UniformURLRegexFailure(t *testing.T) {
+	logs := captureWarnLogs(t)
+
+	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
+	stop := start.Add(2 * time.Hour)
+
+	// Populated rank/username/roster (so it passes the #152 empty-fields guard)
+	// but a UniformUrl that the ID regex can't match.
+	badURLProfile := utils.ProfileResponse{
+		User:       utils.User{Username: "BadURLUser"},
+		Rank:       utils.Rank{RankFull: "Sergeant", RankID: "5"},
+		Roster:     "ROSTER_TYPE_COMBAT",
+		UniformUrl: "https://7cav.us/data/roster_uniforms/no-numeric-id.png",
+	}
+	serveBattleMetricsWithProfiles(t,
+		[]bmSession{
+			{Name: "ABC.Badurl.B", Start: start, Stop: stop},
+		},
+		map[string]utils.ProfileResponse{
+			"Badurl.B": badURLProfile,
+		},
+	)
+
+	r := &fakeResponder{}
+	i := s3aarOptions("Tac1", "10NOV25", "10NOV25", "1800", "2000", 30, "")
+	runS3aar(r, i)
+
+	fups := followups(r.Calls())
+	if len(fups) == 0 || len(fups[0].Params.Embeds) == 0 {
+		t.Fatalf("expected attendance embed in first followup; got %+v", fups)
+	}
+
+	// The regex-miss player must surface as an enrichment failure.
+	field := warningField(fups[0].Params.Embeds[0])
+	if field == nil {
+		t.Fatalf("UniformUrl regex miss must surface as enrichment failure; got no warning field")
+	}
+	if !strings.Contains(field.Value, "ABC.Badurl.B") {
+		t.Fatalf("warning field must list the regex-miss player; got %q", field.Value)
+	}
+
+	// It must not slip onto the combat roster as a ghost line.
+	body := readAARFile(t, fups)
+	if strings.Contains(body, "[URL=") {
+		t.Fatalf("regex-miss player must not emit a BBCode roster line; body:\n%q", body)
+	}
+
+	// And it must be observable in logs — asserting the UniformUrl error text (not
+	// just level=WARN) pins THIS branch, distinguishing it from an empty-fields or
+	// 404 failure that would render an identical warning field.
+	if !strings.Contains(logs.String(), "level=WARN") {
+		t.Fatalf("expected a WARN log on UniformUrl regex failure; got:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "UniformUrl") {
+		t.Fatalf("WARN log must carry the UniformUrl error to pin the regex branch; got:\n%s", logs.String())
+	}
+}
+
 func TestGetServerID(t *testing.T) {
 	cases := []struct {
 		server  string
@@ -894,11 +1233,11 @@ func TestGetServerID(t *testing.T) {
 
 func TestParseDateTime(t *testing.T) {
 	cases := []struct {
-		name     string
-		date     string
-		time     string
-		wantErr  bool
-		wantISO  string // expected UTC time when no error, RFC3339
+		name    string
+		date    string
+		time    string
+		wantErr bool
+		wantISO string // expected UTC time when no error, RFC3339
 	}{
 		{"valid", "10NOV25", "1830", false, "2025-11-10T18:30:00Z"},
 		{"valid lowercase month", "10nov25", "0000", false, "2025-11-10T00:00:00Z"},
