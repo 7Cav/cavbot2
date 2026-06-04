@@ -235,7 +235,7 @@ func (f *fakeLOAFetcher) fetchLOAPosts(nodeID int, since int64) ([]loaPostRow, e
 }
 
 func TestRefresh_IncrementalAdvance(t *testing.T) {
-	c := &LOACache{entries: map[string]LOAEntry{}}
+	c := &LOACache{entries: map[string][]LOAEntry{}}
 
 	// First refresh: cold cache → since should be ~one year ago (non-zero), and
 	// lastSyncedPostDate should advance to the max post_date observed.
@@ -272,27 +272,146 @@ func TestRefresh_IncrementalAdvance(t *testing.T) {
 	}
 }
 
-func TestRefresh_PrunesExpiredEntries(t *testing.T) {
-	c := &LOACache{entries: map[string]LOAEntry{}}
-	// Seed: one expired (EndDate in the past) and one still-active entry.
-	c.entries["expired"] = LOAEntry{Username: "expired", StartDate: time.Now().Add(-72 * time.Hour), EndDate: time.Now().Add(-24 * time.Hour)}
-	c.entries["active"] = LOAEntry{Username: "active", StartDate: time.Now().Add(-24 * time.Hour), EndDate: time.Now().Add(24 * time.Hour)}
+// TestRefresh_RetainsEndedWindows replaces the old prune-on-expiry test: an ended
+// (recently) window is now RETAINED as history, and only a window past the
+// retention horizon is dropped. A still-active window survives regardless.
+func TestRefresh_RetainsEndedWindows(t *testing.T) {
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+	// recentlyEnded: EndDate in the past but well within the retention horizon.
+	c.entries["recentlyended"] = []LOAEntry{{Username: "recentlyEnded", StartDate: time.Now().Add(-72 * time.Hour), EndDate: time.Now().Add(-24 * time.Hour), ThreadID: 1}}
+	// retired: EndDate older than the retention horizon (~1y).
+	c.entries["retired"] = []LOAEntry{{Username: "retired", StartDate: time.Now().AddDate(-1, 0, -10), EndDate: time.Now().AddDate(-1, 0, -5), ThreadID: 2}}
+	// active: currently within its window.
+	c.entries["active"] = []LOAEntry{{Username: "active", StartDate: time.Now().Add(-24 * time.Hour), EndDate: time.Now().Add(24 * time.Hour), ThreadID: 3}}
 	c.lastSyncedPostDate = 100 // warm cache so since is deterministic
 
 	f := &fakeLOAFetcher{byNode: map[int][]loaPostRow{180: nil}}
 	c.refresh(f, []int{180})
 
-	if _, ok := c.GetEntry("expired"); ok {
-		t.Errorf("expired entry should have been pruned")
+	if got := c.GetEntries("recentlyended"); len(got) != 1 {
+		t.Errorf("recently-ended window must be RETAINED as history, got %d windows", len(got))
 	}
-	if _, ok := c.GetEntry("active"); !ok {
-		t.Errorf("active entry must survive prune")
+	if got := c.GetEntries("retired"); len(got) != 0 {
+		t.Errorf("window past the retention horizon must be dropped, got %d windows", len(got))
+	}
+	if got := c.GetEntries("active"); len(got) != 1 {
+		t.Errorf("active window must survive, got %d windows", len(got))
+	}
+}
+
+// TestRefresh_MultiWindowPerUser proves a username can hold multiple simultaneous
+// windows and that refresh appends rather than overwrites.
+func TestRefresh_MultiWindowPerUser(t *testing.T) {
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+
+	f1 := &fakeLOAFetcher{byNode: map[int][]loaPostRow{
+		180: {{message: loaPost("echo", "Jan 1, 2099", "Jan 31, 2099"), postDate: time.Now().Add(-48 * time.Hour).Unix(), threadID: 100}},
+	}}
+	c.refresh(f1, []int{180})
+
+	f2 := &fakeLOAFetcher{byNode: map[int][]loaPostRow{
+		180: {{message: loaPost("echo", "Mar 1, 2099", "Mar 31, 2099"), postDate: time.Now().Add(-1 * time.Hour).Unix(), threadID: 200}},
+	}}
+	c.refresh(f2, []int{180})
+
+	got := c.GetEntries("echo")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 retained windows for echo, got %d (%+v)", len(got), got)
+	}
+	threads := map[int64]bool{}
+	for _, w := range got {
+		threads[w.ThreadID] = true
+	}
+	if !threads[100] || !threads[200] {
+		t.Errorf("expected both thread 100 and 200 retained, got %+v", threads)
+	}
+}
+
+// TestRefresh_DedupesByThreadID proves re-scanning the same thread (cold-restart
+// backfill or overlapping fetch) updates the window in place instead of
+// duplicating it.
+func TestRefresh_DedupesByThreadID(t *testing.T) {
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+
+	post := loaPostRow{message: loaPost("foxtrot", "Jan 1, 2099", "Jan 31, 2099"), postDate: time.Now().Add(-48 * time.Hour).Unix(), threadID: 777}
+	f1 := &fakeLOAFetcher{byNode: map[int][]loaPostRow{180: {post}}}
+	c.refresh(f1, []int{180})
+
+	// Re-scan the SAME thread with an edited window (same threadID, later end).
+	post2 := loaPostRow{message: loaPost("foxtrot", "Jan 1, 2099", "Feb 15, 2099"), postDate: time.Now().Add(-1 * time.Hour).Unix(), threadID: 777}
+	f2 := &fakeLOAFetcher{byNode: map[int][]loaPostRow{180: {post2}}}
+	c.refresh(f2, []int{180})
+
+	got := c.GetEntries("foxtrot")
+	if len(got) != 1 {
+		t.Fatalf("re-scanning thread 777 must not duplicate; got %d windows (%+v)", len(got), got)
+	}
+	if got[0].EndDate.Format("2006-01-02") != "2099-02-15" {
+		t.Errorf("dedup must update in place: EndDate = %s, want 2099-02-15", got[0].EndDate.Format("2006-01-02"))
+	}
+}
+
+// TestGetEntries_EmptyWhenNone pins the empty-slice (not nil-panicking) contract
+// for an unknown username.
+func TestGetEntries_EmptyWhenNone(t *testing.T) {
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+	got := c.GetEntries("ghost")
+	if got == nil {
+		t.Fatalf("GetEntries must return a non-nil empty slice for unknown user")
+	}
+	if len(got) != 0 {
+		t.Errorf("GetEntries for unknown user = %d windows, want 0", len(got))
+	}
+}
+
+// TestGetEntry_MostRelevantWindow pins the most-relevant selection used by the
+// legacy GetEntry contract (active > upcoming > most-recently-ended) so /awol's
+// [[LOA]] link and /loa's active/upcoming split keep rendering identically with
+// multiple windows present.
+func TestGetEntry_MostRelevantWindow(t *testing.T) {
+	now := time.Now()
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+
+	// User with an ended, an active, and an upcoming window — active must win.
+	c.entries["mix"] = []LOAEntry{
+		{Username: "mix", StartDate: now.AddDate(0, 0, -20), EndDate: now.AddDate(0, 0, -10), ThreadID: 1}, // ended
+		{Username: "mix", StartDate: now.AddDate(0, 0, -2), EndDate: now.AddDate(0, 0, 2), ThreadID: 2},    // active
+		{Username: "mix", StartDate: now.AddDate(0, 0, 10), EndDate: now.AddDate(0, 0, 20), ThreadID: 3},   // upcoming
+	}
+	got, ok := c.GetEntry("mix")
+	if !ok || got.ThreadID != 2 {
+		t.Errorf("GetEntry must surface the active window (thread 2), got %+v ok=%v", got, ok)
+	}
+
+	// User with only ended + upcoming — upcoming (soonest start) must win.
+	c.entries["future"] = []LOAEntry{
+		{Username: "future", StartDate: now.AddDate(0, 0, -20), EndDate: now.AddDate(0, 0, -10), ThreadID: 4}, // ended
+		{Username: "future", StartDate: now.AddDate(0, 0, 30), EndDate: now.AddDate(0, 0, 40), ThreadID: 5},   // far upcoming
+		{Username: "future", StartDate: now.AddDate(0, 0, 5), EndDate: now.AddDate(0, 0, 8), ThreadID: 6},     // soon upcoming
+	}
+	got, ok = c.GetEntry("future")
+	if !ok || got.ThreadID != 6 {
+		t.Errorf("GetEntry must surface the soonest upcoming window (thread 6), got %+v ok=%v", got, ok)
+	}
+
+	// User with only ended windows — most recently ended (latest EndDate) must win.
+	c.entries["past"] = []LOAEntry{
+		{Username: "past", StartDate: now.AddDate(0, 0, -40), EndDate: now.AddDate(0, 0, -30), ThreadID: 7},
+		{Username: "past", StartDate: now.AddDate(0, 0, -15), EndDate: now.AddDate(0, 0, -5), ThreadID: 8},
+	}
+	got, ok = c.GetEntry("past")
+	if !ok || got.ThreadID != 8 {
+		t.Errorf("GetEntry must surface the most recently-ended window (thread 8), got %+v ok=%v", got, ok)
+	}
+
+	if _, ok := c.GetEntry("nobody"); ok {
+		t.Errorf("GetEntry for unknown user must be false")
 	}
 }
 
 func TestRefresh_NoNewPosts_IsNoOp(t *testing.T) {
-	c := &LOACache{entries: map[string]LOAEntry{}}
-	c.entries["keep"] = LOAEntry{Username: "keep", StartDate: time.Now().Add(-1 * time.Hour), EndDate: time.Now().Add(72 * time.Hour)}
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+	c.entries["keep"] = []LOAEntry{{Username: "keep", StartDate: time.Now().Add(-1 * time.Hour), EndDate: time.Now().Add(72 * time.Hour)}}
 	c.lastSyncedPostDate = 555
 
 	// Node returns no rows; the cursor must not move and the existing entry stays.
@@ -311,7 +430,7 @@ func TestRefresh_NoNewPosts_IsNoOp(t *testing.T) {
 }
 
 func TestRefresh_FetcherError_DoesNotAdvanceCursor(t *testing.T) {
-	c := &LOACache{entries: map[string]LOAEntry{}}
+	c := &LOACache{entries: map[string][]LOAEntry{}}
 	c.lastSyncedPostDate = 42
 	f := &fakeLOAFetcher{errByNode: map[int]error{180: errors.New("boom")}}
 
@@ -325,10 +444,9 @@ func TestRefresh_FetcherError_DoesNotAdvanceCursor(t *testing.T) {
 	}
 }
 
-func TestGetEntryAndIsOnLOA(t *testing.T) {
-	c := &LOACache{entries: map[string]LOAEntry{}}
-	c.entries["onloa"] = LOAEntry{Username: "OnLOA", StartDate: time.Now().Add(-1 * time.Hour), EndDate: time.Now().Add(1 * time.Hour)}
-	c.entries["future"] = LOAEntry{Username: "Future", StartDate: time.Now().Add(24 * time.Hour), EndDate: time.Now().Add(48 * time.Hour)}
+func TestGetEntry(t *testing.T) {
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+	c.entries["onloa"] = []LOAEntry{{Username: "OnLOA", StartDate: time.Now().Add(-1 * time.Hour), EndDate: time.Now().Add(1 * time.Hour)}}
 
 	// GetEntry is case-insensitive on the lookup key.
 	if _, ok := c.GetEntry("ONLOA"); !ok {
@@ -337,22 +455,13 @@ func TestGetEntryAndIsOnLOA(t *testing.T) {
 	if _, ok := c.GetEntry("missing"); ok {
 		t.Errorf("GetEntry for absent user should be false")
 	}
-	if !c.IsOnLOA("onloa") {
-		t.Errorf("IsOnLOA should be true for currently-active window")
-	}
-	if c.IsOnLOA("future") {
-		t.Errorf("IsOnLOA should be false before StartDate")
-	}
-	if c.IsOnLOA("missing") {
-		t.Errorf("IsOnLOA should be false for unknown user")
-	}
 }
 
 // TestLOAEntry_isActiveAt pins the inclusive active-window contract at the EXACT
 // boundary instants. isActiveAt is clock-injected (cf. PR #135) precisely so the
 // Start==now and End==now edges can be asserted against a fixed `now` — something
-// IsOnLOA's live time.Now() can never hit deterministically. The window is
-// inclusive at both bounds.
+// a live time.Now() could never hit deterministically. The window is inclusive at
+// both bounds. IsActive (the exported wrapper /awol reads) delegates here.
 func TestLOAEntry_isActiveAt(t *testing.T) {
 	now := mustLOATime("Jun 15, 2099")
 	entry := LOAEntry{
@@ -383,79 +492,196 @@ func TestLOAEntry_isActiveAt(t *testing.T) {
 	}
 }
 
-// TestLOAEntry_isExpiredAt pins the prune cutoff at the EXACT EndDate boundary:
-// expiry is strict (now.After(EndDate)), so an entry whose End==now is NOT yet
-// expired (survives the cycle) while one already one tick past End is pruned. This
-// is the strict complement of isActiveAt's inclusive upper bound.
-func TestLOAEntry_isExpiredAt(t *testing.T) {
-	entry := LOAEntry{Username: "Boundary", EndDate: mustLOATime("Jun 20, 2099")}
 
-	if entry.isExpiredAt(entry.EndDate) {
-		t.Errorf("End==now must NOT be expired (final day survives prune)")
+// TestGetEntry_TwoActiveWindows_LatestEndingWins pins the highest-value tie-break
+// mutation testing flagged hollow: when a user holds TWO simultaneously-active
+// windows, mostRelevant/GetEntry must surface the latest-ending one (state 3,
+// tie=EndDate). This is the exact selection that drives /awol's [[LOA]] link, so a
+// mutated `tie.After` → `tie.Before` must fail here.
+func TestGetEntry_TwoActiveWindows_LatestEndingWins(t *testing.T) {
+	now := time.Now()
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+
+	// Both windows straddle now (active). Thread 2 ends later, so it must win.
+	c.entries["dual"] = []LOAEntry{
+		{Username: "dual", StartDate: now.AddDate(0, 0, -5), EndDate: now.AddDate(0, 0, 3), ThreadID: 1},
+		{Username: "dual", StartDate: now.AddDate(0, 0, -2), EndDate: now.AddDate(0, 0, 9), ThreadID: 2},
 	}
-	if entry.isExpiredAt(entry.EndDate.Add(-time.Nanosecond)) {
-		t.Errorf("one tick before End must NOT be expired")
+	got, ok := c.GetEntry("dual")
+	if !ok || got.ThreadID != 2 {
+		t.Fatalf("GetEntry must surface the latest-ending ACTIVE window (thread 2), got %+v ok=%v", got, ok)
 	}
-	if !entry.isExpiredAt(entry.EndDate.Add(time.Nanosecond)) {
-		t.Errorf("one tick after End must be expired")
+
+	// Order-independence: same windows, reversed slice order, same verdict.
+	c.entries["dual"] = []LOAEntry{
+		{Username: "dual", StartDate: now.AddDate(0, 0, -2), EndDate: now.AddDate(0, 0, 9), ThreadID: 2},
+		{Username: "dual", StartDate: now.AddDate(0, 0, -5), EndDate: now.AddDate(0, 0, 3), ThreadID: 1},
+	}
+	got, ok = c.GetEntry("dual")
+	if !ok || got.ThreadID != 2 {
+		t.Fatalf("latest-ending active must win regardless of slice order, got %+v ok=%v", got, ok)
 	}
 }
 
-// TestIsOnLOA_ActiveWindowBoundaries cross-checks the live-clock IsOnLOA wrapper
-// (which delegates to isActiveAt with time.Now()) against entries positioned
-// relative to a captured `now`. The exact-edge contract is pinned by
-// TestLOAEntry_isActiveAt; this guards the wrapper's wiring (lock, lookup,
-// time.Now() delegation) end-to-end.
-func TestIsOnLOA_ActiveWindowBoundaries(t *testing.T) {
+// TestLOAEntry_isRetired_HorizonBoundary pins the retention cutoff at the EXACT
+// historyHorizon boundary. isRetired uses a strict Before, so a window whose
+// EndDate == historyHorizon(now) is RETAINED (not yet retired); one tick older is
+// retired, one tick newer is retained. There is no other direct test for either
+// isRetired or historyHorizon, so this guards a Before↔!After / ±tick mutation.
+func TestLOAEntry_isRetired_HorizonBoundary(t *testing.T) {
 	now := time.Now()
-	const slack = time.Minute // dwarfs the captured-now vs internal-now gap
+	horizon := historyHorizon(now)
 
-	c := &LOACache{entries: map[string]LOAEntry{}}
-	c.entries["active"] = LOAEntry{Username: "Active", StartDate: now.Add(-slack), EndDate: now.Add(slack)}
-	c.entries["past"] = LOAEntry{Username: "Past", StartDate: now.Add(-2 * slack), EndDate: now.Add(-slack)}
-	c.entries["futurewin"] = LOAEntry{Username: "FutureWin", StartDate: now.Add(slack), EndDate: now.Add(2 * slack)}
-
-	if !c.IsOnLOA("active") {
-		t.Errorf("IsOnLOA: entry within its window must be active")
+	atHorizon := LOAEntry{EndDate: horizon}
+	if atHorizon.isRetired(now) {
+		t.Errorf("EndDate == historyHorizon must be RETAINED (strict Before), got retired")
 	}
-	if c.IsOnLOA("past") {
-		t.Errorf("IsOnLOA: wholly-past window must not be active")
+	oneTickNewer := LOAEntry{EndDate: horizon.Add(time.Nanosecond)}
+	if oneTickNewer.isRetired(now) {
+		t.Errorf("EndDate one tick after the horizon must be retained, got retired")
 	}
-	if c.IsOnLOA("futurewin") {
-		t.Errorf("IsOnLOA: wholly-future window must not be active")
+	oneTickOlder := LOAEntry{EndDate: horizon.Add(-time.Nanosecond)}
+	if !oneTickOlder.isRetired(now) {
+		t.Errorf("EndDate one tick before the horizon must be retired, got retained")
 	}
 }
 
-// TestRefresh_PruneBoundary cross-checks the prune step in refresh (which calls
-// isExpiredAt with time.Now()): an entry whose EndDate is still ahead of now
-// survives a refresh cycle, while one already past is pruned. The exact EndDate==now
-// edge is pinned by TestLOAEntry_isExpiredAt; this guards the prune wiring.
-func TestRefresh_PruneBoundary(t *testing.T) {
+// TestRefresh_MixedWindowCompaction exercises the in-place kept := windows[:0]
+// filter with a SINGLE user holding interleaved retired/retained windows — the
+// real-world multi-window case the single-window tests never reach. The two
+// survivors must remain, in their original relative order.
+func TestRefresh_MixedWindowCompaction(t *testing.T) {
 	now := time.Now()
-	const slack = time.Minute
+	c := &LOACache{entries: map[string][]LOAEntry{}}
 
-	c := &LOACache{entries: map[string]LOAEntry{}}
-	c.entries["survivor"] = LOAEntry{Username: "Survivor", StartDate: now.Add(-slack), EndDate: now.Add(slack)}
-	c.entries["pruned"] = LOAEntry{Username: "Pruned", StartDate: now.Add(-2 * slack), EndDate: now.Add(-slack)}
+	// [retired, retained, retired, retained] for one user.
+	c.entries["mixed"] = []LOAEntry{
+		{Username: "mixed", StartDate: now.AddDate(-2, 0, 0), EndDate: now.AddDate(-1, 0, -30), ThreadID: 1}, // retired
+		{Username: "mixed", StartDate: now.AddDate(0, 0, -40), EndDate: now.AddDate(0, 0, -30), ThreadID: 2}, // retained (recent)
+		{Username: "mixed", StartDate: now.AddDate(-2, 0, 0), EndDate: now.AddDate(-1, 0, -20), ThreadID: 3}, // retired
+		{Username: "mixed", StartDate: now.AddDate(0, 0, -10), EndDate: now.AddDate(0, 0, -2), ThreadID: 4},  // retained (recent)
+	}
+	c.lastSyncedPostDate = 100 // warm cache ⇒ no new posts, isolate the compaction
+
+	f := &fakeLOAFetcher{byNode: map[int][]loaPostRow{180: nil}}
+	c.refresh(f, []int{180})
+
+	got := c.GetEntries("mixed")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 surviving windows after compaction, got %d (%+v)", len(got), got)
+	}
+	if got[0].ThreadID != 2 || got[1].ThreadID != 4 {
+		t.Errorf("survivors must be threads [2, 4] in order, got [%d, %d]", got[0].ThreadID, got[1].ThreadID)
+	}
+}
+
+// TestGetEntry_SingleWindowContract_ForLoaRendering pins the S3 decision: /loa
+// renders exactly one window per user via the single-value GetEntry contract and
+// deliberately does NOT iterate GetEntries. Even when a user holds several
+// concurrent UPCOMING windows, GetEntry must collapse them to one (the soonest
+// start), so /loa shows a single row — matching the pre-history-store behavior.
+// If a future change wires /loa onto GetEntries, this test should be revisited
+// intentionally rather than silently.
+func TestGetEntry_SingleWindowContract_ForLoaRendering(t *testing.T) {
+	now := time.Now()
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+
+	// Two concurrent upcoming windows for one user.
+	c.entries["multi"] = []LOAEntry{
+		{Username: "multi", StartDate: now.AddDate(0, 0, 20), EndDate: now.AddDate(0, 0, 30), ThreadID: 1},
+		{Username: "multi", StartDate: now.AddDate(0, 0, 5), EndDate: now.AddDate(0, 0, 8), ThreadID: 2},
+	}
+
+	got, ok := c.GetEntry("multi")
+	if !ok {
+		t.Fatalf("GetEntry must return a window for a user with multiple windows")
+	}
+	if got.ThreadID != 2 {
+		t.Errorf("single-window contract: GetEntry must surface the soonest-upcoming window (thread 2), got %d", got.ThreadID)
+	}
+	// The full history is still two windows — GetEntry is the lossy one-per-user view.
+	if n := len(c.GetEntries("multi")); n != 2 {
+		t.Errorf("GetEntries must still expose the full history (2), got %d", n)
+	}
+}
+
+// TestGetEntries_CopyIsolation proves GetEntries returns a defensive copy: mutating
+// a returned window must not leak back into the cache.
+func TestGetEntries_CopyIsolation(t *testing.T) {
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+	c.entries["iso"] = []LOAEntry{
+		{Username: "iso", StartDate: time.Now().Add(-time.Hour), EndDate: time.Now().Add(time.Hour), ThreadID: 42},
+	}
+
+	got := c.GetEntries("iso")
+	if len(got) != 1 {
+		t.Fatalf("expected 1 window, got %d", len(got))
+	}
+	got[0].ThreadID = 9999 // mutate the returned copy
+
+	again := c.GetEntries("iso")
+	if again[0].ThreadID != 42 {
+		t.Errorf("mutating a GetEntries result must not alter the cache: ThreadID = %d, want 42", again[0].ThreadID)
+	}
+}
+
+// TestUpsertWindow_ZeroThreadIDNotDeduped guards the S1 defensive path: a window
+// with ThreadID 0 (impossible from the live non-null PK query, but a silent
+// data-folding hazard if it ever occurred) must be appended rather than dedup-
+// folded. Two distinct 0-thread windows for one user must both survive.
+func TestUpsertWindow_ZeroThreadIDNotDeduped(t *testing.T) {
+	now := time.Now()
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+
+	c.upsertWindow(LOAEntry{Username: "Zed", StartDate: now.AddDate(0, 0, 1), EndDate: now.AddDate(0, 0, 5), ThreadID: 0})
+	c.upsertWindow(LOAEntry{Username: "Zed", StartDate: now.AddDate(0, 0, 10), EndDate: now.AddDate(0, 0, 15), ThreadID: 0})
+
+	got := c.GetEntries("zed")
+	if len(got) != 2 {
+		t.Fatalf("two zero-ThreadID windows must NOT fold into one; got %d (%+v)", len(got), got)
+	}
+
+	// A non-zero thread still dedupes in place alongside the un-folded zeros.
+	c.upsertWindow(LOAEntry{Username: "Zed", StartDate: now.AddDate(0, 0, 20), EndDate: now.AddDate(0, 0, 25), ThreadID: 7})
+	c.upsertWindow(LOAEntry{Username: "Zed", StartDate: now.AddDate(0, 0, 20), EndDate: now.AddDate(0, 0, 26), ThreadID: 7})
+	got = c.GetEntries("zed")
+	if len(got) != 3 {
+		t.Fatalf("expected 3 windows (2 zero + 1 deduped thread 7), got %d (%+v)", len(got), got)
+	}
+}
+
+// TestRefresh_RetentionBoundary cross-checks the retention step in refresh (which
+// calls isRetired with time.Now()): a recently-ended window (EndDate within the
+// retention horizon) survives a refresh cycle as history, while one whose EndDate
+// predates the horizon is dropped. Replaces the former prune-on-expiry boundary
+// test now that ended windows are retained.
+func TestRefresh_RetentionBoundary(t *testing.T) {
+	now := time.Now()
+
+	c := &LOACache{entries: map[string][]LOAEntry{}}
+	// survivor: ended yesterday — within the horizon, retained as history.
+	c.entries["survivor"] = []LOAEntry{{Username: "Survivor", StartDate: now.AddDate(0, 0, -3), EndDate: now.AddDate(0, 0, -1), ThreadID: 1}}
+	// retired: ended just past the retention horizon — dropped.
+	c.entries["retired"] = []LOAEntry{{Username: "Retired", StartDate: historyHorizon(now).AddDate(0, 0, -2), EndDate: historyHorizon(now).AddDate(0, 0, -1), ThreadID: 2}}
 	c.lastSyncedPostDate = 100 // warm cache ⇒ deterministic since, no new posts
 
 	f := &fakeLOAFetcher{byNode: map[int][]loaPostRow{180: nil}}
 	c.refresh(f, []int{180})
 
-	if _, ok := c.GetEntry("survivor"); !ok {
-		t.Errorf("entry whose EndDate is still ahead of now must survive one refresh cycle")
+	if got := c.GetEntries("survivor"); len(got) != 1 {
+		t.Errorf("recently-ended window must survive as history, got %d windows", len(got))
 	}
-	if _, ok := c.GetEntry("pruned"); ok {
-		t.Errorf("entry whose EndDate is already past must be pruned")
+	if got := c.GetEntries("retired"); len(got) != 0 {
+		t.Errorf("window ended past the retention horizon must be dropped, got %d windows", len(got))
 	}
 }
 
-// TestRefresh_LatestLOAWins pins the username-keyed overwrite in refresh: when a
-// later refresh observes a new valid post for an already-cached username, the new
-// entry replaces the old one ("latest LOA wins"). Keyed by lowercased username, so
-// the windows/threads must be distinct to prove the replacement actually happened.
-func TestRefresh_LatestLOAWins(t *testing.T) {
-	c := &LOACache{entries: map[string]LOAEntry{}}
+// TestRefresh_AccumulatesDistinctThreads pins the multi-window history behavior
+// that replaces the old "latest LOA wins" overwrite: a second valid post for the
+// same username on a NEW thread is retained alongside the first (deduped only by
+// ThreadID), and GetEntry still surfaces the single most-relevant window.
+func TestRefresh_AccumulatesDistinctThreads(t *testing.T) {
+	c := &LOACache{entries: map[string][]LOAEntry{}}
 
 	// First post: an LOA for "delta" with one window/thread.
 	firstPost := time.Now().Add(-48 * time.Hour).Unix()
@@ -464,32 +690,34 @@ func TestRefresh_LatestLOAWins(t *testing.T) {
 	}}
 	c.refresh(f1, []int{180})
 
-	got, ok := c.GetEntry("delta")
-	if !ok {
-		t.Fatalf("expected delta entry after first refresh")
-	}
-	if got.ThreadID != 11 || got.EndDate.Format("2006-01-02") != "2099-01-31" {
-		t.Fatalf("first refresh entry = %+v, want thread 11 / end 2099-01-31", got)
+	if got := c.GetEntries("delta"); len(got) != 1 {
+		t.Fatalf("expected 1 window after first refresh, got %d", len(got))
 	}
 
 	// Second post: a NEW LOA for the same username with a later window and a
-	// different thread. After refresh the cache must hold ONLY the newer entry.
+	// different thread. Both windows must now be retained (no overwrite).
 	secondPost := time.Now().Add(-1 * time.Hour).Unix()
 	f2 := &fakeLOAFetcher{byNode: map[int][]loaPostRow{
 		180: {{message: loaPost("delta", "Feb 1, 2099", "Feb 28, 2099"), postDate: secondPost, threadID: 22}},
 	}}
 	c.refresh(f2, []int{180})
 
-	got, ok = c.GetEntry("delta")
-	if !ok {
-		t.Fatalf("expected delta entry after second refresh")
+	got := c.GetEntries("delta")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 retained windows after second refresh, got %d (%+v)", len(got), got)
 	}
-	if got.ThreadID != 22 {
-		t.Errorf("latest LOA wins: ThreadID = %d, want 22 (newer post)", got.ThreadID)
+	threads := map[int64]bool{}
+	for _, w := range got {
+		threads[w.ThreadID] = true
 	}
-	if got.StartDate.Format("2006-01-02") != "2099-02-01" || got.EndDate.Format("2006-01-02") != "2099-02-28" {
-		t.Errorf("latest LOA wins: window = %s..%s, want 2099-02-01..2099-02-28",
-			got.StartDate.Format("2006-01-02"), got.EndDate.Format("2006-01-02"))
+	if !threads[11] || !threads[22] {
+		t.Errorf("both threads 11 and 22 must be retained, got %+v", threads)
+	}
+
+	// Both windows are far-future ⇒ upcoming; GetEntry surfaces the soonest start.
+	entry, ok := c.GetEntry("delta")
+	if !ok || entry.ThreadID != 11 {
+		t.Errorf("GetEntry must surface the soonest-upcoming window (thread 11), got %+v ok=%v", entry, ok)
 	}
 }
 
@@ -533,7 +761,7 @@ func TestIsHealthy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &LOACache{entries: map[string]LOAEntry{}}
+			c := &LOACache{entries: map[string][]LOAEntry{}}
 			c.lastSuccessfulRefresh = tt.seed
 
 			gotOK, gotTime := c.IsHealthy(tt.maxAge)
@@ -577,7 +805,7 @@ func validLOAMessage(username string) string {
 
 func TestRefresh_AllNodesFail_DoesNotUpdateTimestamp(t *testing.T) {
 	db, mock := newMockDB(t)
-	c := &LOACache{entries: map[string]LOAEntry{}}
+	c := &LOACache{entries: map[string][]LOAEntry{}}
 	seed := time.Now().Add(-2 * time.Hour)
 	c.lastSuccessfulRefresh = seed
 
@@ -599,7 +827,7 @@ func TestRefresh_AllNodesFail_DoesNotUpdateTimestamp(t *testing.T) {
 
 func TestRefresh_PartialSuccess_UpdatesTimestamp(t *testing.T) {
 	db, mock := newMockDB(t)
-	c := &LOACache{entries: map[string]LOAEntry{}}
+	c := &LOACache{entries: map[string][]LOAEntry{}}
 	seed := time.Now().Add(-2 * time.Hour)
 	c.lastSuccessfulRefresh = seed
 
@@ -626,7 +854,7 @@ func TestRefresh_PartialSuccess_UpdatesTimestamp(t *testing.T) {
 
 func TestRefresh_RowsErrMidStream_DoesNotCount(t *testing.T) {
 	db, mock := newMockDB(t)
-	c := &LOACache{entries: map[string]LOAEntry{}}
+	c := &LOACache{entries: map[string][]LOAEntry{}}
 	seed := time.Now().Add(-2 * time.Hour)
 	c.lastSuccessfulRefresh = seed
 
@@ -672,13 +900,13 @@ func (f *concurrentLOAFetcher) fetchLOAPosts(_ int, _ int64) ([]loaPostRow, erro
 }
 
 // TestLOACache_ConcurrentRefreshAndReads fans out many goroutines that hammer
-// Refresh (writer path) alongside GetEntry / IsOnLOA / IsHealthy (reader paths) on
+// Refresh (writer path) alongside GetEntry / IsHealthy (reader paths) on
 // one cache. Its job is to fail under `go test -race` if the cache's locking ever
 // regresses — e.g. a dropped Lock/RLock or a read of a guarded field outside the
 // mutex. With locking intact it is a fast, deterministic no-op assertion (the cache
 // stays usable); under -race a lock regression trips the detector and fails the run.
 func TestLOACache_ConcurrentRefreshAndReads(t *testing.T) {
-	c := &LOACache{entries: map[string]LOAEntry{}}
+	c := &LOACache{entries: map[string][]LOAEntry{}}
 	fetcher := &concurrentLOAFetcher{}
 	nodeIDs := []int{180, 400, 540}
 
@@ -708,7 +936,6 @@ func TestLOACache_ConcurrentRefreshAndReads(t *testing.T) {
 				// Touch every guarded read path; results are intentionally
 				// ignored — the race detector, not an assertion, is the oracle.
 				_, _ = c.GetEntry("user1")
-				_ = c.IsOnLOA("user2")
 				_, _ = c.IsHealthy(30 * time.Minute)
 			}
 		}()
@@ -727,7 +954,7 @@ func TestLOACache_ConcurrentRefreshAndReads(t *testing.T) {
 
 func TestRefresh_RowParseFailure_StillCountsNodeAsSuccess(t *testing.T) {
 	db, mock := newMockDB(t)
-	c := &LOACache{entries: map[string]LOAEntry{}}
+	c := &LOACache{entries: map[string][]LOAEntry{}}
 	seed := time.Now().Add(-2 * time.Hour)
 	c.lastSuccessfulRefresh = seed
 

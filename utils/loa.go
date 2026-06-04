@@ -43,30 +43,103 @@ type LOAEntry struct {
 	ThreadID  int64
 }
 
+// loaRetentionYears is the single shared horizon for both the cold-start backfill
+// lookback and retention pruning. The cold cache backfills posts from this far
+// back, and a window is retained until its EndDate is older than this same
+// horizon — so a warm cache and a freshly cold-started cache converge on the
+// identical retained window set (ADR 0008).
+const loaRetentionYears = 1
+
+// historyHorizon is the cutoff instant `loaRetentionYears` before `now`: the
+// cold-start backfill lower bound and the retention prune cutoff. A window whose
+// EndDate is before this instant is dropped; the cold backfill ignores posts
+// older than it. Both callers go through this one helper so the two can't drift.
+func historyHorizon(now time.Time) time.Time {
+	return now.AddDate(-loaRetentionYears, 0, 0)
+}
+
 type LOACache struct {
 	mu                    sync.RWMutex
-	entries               map[string]LOAEntry
+	entries               map[string][]LOAEntry
 	lastSyncedPostDate    int64
 	lastSuccessfulRefresh time.Time // zero == never
 }
 
 var GlobalLOACache = &LOACache{
-	entries: make(map[string]LOAEntry),
+	entries: make(map[string][]LOAEntry),
 }
 
-// GetEntry returns the LOA entry for a username if one exists.
+// mostRelevant picks the single window to surface for the legacy GetEntry
+// contract: an active window (latest-ending if several) wins; otherwise the
+// soonest upcoming window; otherwise the most recently ended. This preserves the
+// pre-history-store behavior of the [[LOA]] link in /awol and the active/upcoming
+// split in /loa now that a username can hold multiple windows.
+func mostRelevant(windows []LOAEntry, now time.Time) (LOAEntry, bool) {
+	var (
+		best  LOAEntry
+		found bool
+		state int // 0 none, 1 ended, 2 upcoming, 3 active
+	)
+	for _, w := range windows {
+		var (
+			s   int
+			tie time.Time
+		)
+		switch {
+		case w.isActiveAt(now):
+			s, tie = 3, w.EndDate // latest-ending active wins
+		case now.Before(w.StartDate):
+			s, tie = 2, w.StartDate // soonest upcoming wins (earliest start)
+		default:
+			s, tie = 1, w.EndDate // most recently ended wins (latest end)
+		}
+		if !found || s > state {
+			best, state, found = w, s, true
+			continue
+		}
+		if s != state {
+			continue
+		}
+		switch s {
+		case 2: // upcoming: prefer earliest start
+			if tie.Before(best.StartDate) {
+				best = w
+			}
+		default: // active or ended: prefer latest end
+			if tie.After(best.EndDate) {
+				best = w
+			}
+		}
+	}
+	return best, found
+}
+
+// GetEntry returns the most-relevant retained LOA window for a username if one
+// exists (see mostRelevant). Preserved unchanged for /awol's [[LOA]] link and
+// /loa's active/upcoming rendering; GetEntries exposes the full history.
 func (c *LOACache) GetEntry(username string) (LOAEntry, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	e, ok := c.entries[strings.ToLower(username)]
-	return e, ok
+	return mostRelevant(c.entries[strings.ToLower(username)], time.Now())
+}
+
+// GetEntries returns all retained LOA windows for a username, or an empty slice
+// when none. The returned slice is a copy — callers may not mutate cache state.
+func (c *LOACache) GetEntries(username string) []LOAEntry {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	windows := c.entries[strings.ToLower(username)]
+	out := make([]LOAEntry, len(windows))
+	copy(out, windows)
+	return out
 }
 
 // hasEnded reports whether the entry's EndDate is strictly before `now`. It is
-// the single source of truth for the upper boundary shared by isActiveAt and
-// isExpiredAt, so the two predicates can't drift: an entry on its EndDate
-// (End==now) has NOT ended (active, not yet prunable); one whose EndDate is
-// already past has ended.
+// the single source of truth for the active window's upper boundary used by
+// isActiveAt: an entry on its EndDate (End==now) has NOT ended and is still
+// active; one whose EndDate is already past has ended. Retention (drop on
+// horizon) is a separate, looser cutoff owned by isRetired — an ended window is
+// not dropped, only one past historyHorizon is.
 func (e LOAEntry) hasEnded(now time.Time) bool {
 	return now.After(e.EndDate)
 }
@@ -74,31 +147,29 @@ func (e LOAEntry) hasEnded(now time.Time) bool {
 // isActiveAt reports whether the entry's LOA window is active at the instant
 // `now`. The window is inclusive at both bounds: an entry is active from its
 // StartDate through its EndDate (so Start==now and End==now both count as active).
-// The upper bound is hasEnded (shared with isExpiredAt) — keep them coupled so
-// End==now stays both active here and not-yet-expired there. Clock-injected so
-// the boundary semantics are unit-testable at the exact edge (cf. PR #135); the
-// production callers pass time.Now().
+// The upper bound is hasEnded. Clock-injected so the boundary semantics are
+// unit-testable at the exact edge (cf. PR #135); the production callers pass
+// time.Now(). IsActive is the exported wrapper used by /awol's single-snapshot read.
 func (e LOAEntry) isActiveAt(now time.Time) bool {
 	return !now.Before(e.StartDate) && !e.hasEnded(now)
 }
 
-// isExpiredAt reports whether the entry's LOA window has ended strictly before
-// `now` — the prune cutoff. It is the strict complement of isActiveAt's inclusive
-// upper bound (both via hasEnded): an entry on its EndDate (End==now) is NOT yet
-// expired and survives a prune cycle; one whose EndDate is already past is pruned.
-func (e LOAEntry) isExpiredAt(now time.Time) bool {
-	return e.hasEnded(now)
+// IsActive reports whether the entry's LOA window is active at `now`. Exported so
+// /awol can derive its On LOA verdict from the same single GetEntry snapshot it
+// uses for the [[LOA]] link, instead of a second cache lock acquisition that a
+// concurrent refresh could make inconsistent (now that ended windows are retained).
+func (e LOAEntry) IsActive(now time.Time) bool {
+	return e.isActiveAt(now)
 }
 
-// IsOnLOA returns true if the username has a currently active LOA.
-func (c *LOACache) IsOnLOA(username string) bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	entry, ok := c.entries[strings.ToLower(username)]
-	if !ok {
-		return false
-	}
-	return entry.isActiveAt(time.Now())
+// isRetired reports whether the window's EndDate is older than the retention
+// horizon (loaRetentionYears before now) and so should be dropped from the
+// history store. This is the retention cutoff that replaces prune-on-expiry: a
+// recently-ended window is kept, one whose EndDate predates the horizon is gone.
+// Shares historyHorizon with the cold-start backfill so warm and cold caches
+// converge on the identical window set.
+func (e LOAEntry) isRetired(now time.Time) bool {
+	return e.EndDate.Before(historyHorizon(now))
 }
 
 // IsHealthy reports whether the cache has been successfully refreshed within
@@ -170,7 +241,8 @@ func (f sqlLOAFetcher) fetchLOAPosts(nodeID int, since int64) ([]loaPostRow, err
 }
 
 // Refresh fetches LOA posts from the forum DB incrementally and updates the cache.
-// On first call it fetches posts from the past year; subsequent calls fetch only newer posts.
+// On a cold cache it backfills from the shared retention horizon (loaRetentionYears
+// before now, via historyHorizon); subsequent calls fetch only newer posts.
 // Multiple node IDs are supported to cover all LOA forum sections; each node is queried
 // separately so per-node parse counts can be logged for diagnostics.
 func (c *LOACache) Refresh(db *sql.DB, nodeIDs []int) {
@@ -178,25 +250,37 @@ func (c *LOACache) Refresh(db *sql.DB, nodeIDs []int) {
 }
 
 // refresh is the fetcher-agnostic core of Refresh: it computes the incremental
-// `since` cursor, prunes ended entries, then applies each node's fetched posts.
-// Refresh wires in the production sqlLOAFetcher; tests supply a fake.
+// `since` cursor, drops windows past the retention horizon (keeping recently-ended
+// ones as history; see isRetired/historyHorizon), then applies each node's fetched
+// posts. Refresh wires in the production sqlLOAFetcher; tests supply a fake.
 func (c *LOACache) refresh(fetcher loaPostFetcher, nodeIDs []int) {
 	c.mu.RLock()
 	since := c.lastSyncedPostDate
 	c.mu.RUnlock()
 
+	now := time.Now()
 	if since == 0 {
-		since = time.Now().AddDate(-1, 0, 0).Unix()
+		// Cold start: backfill from the shared retention horizon so the cold cache
+		// holds the same window set a warm one would have retained.
+		since = historyHorizon(now).Unix()
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Prune entries whose LOA has ended.
-	now := time.Now()
-	for k, e := range c.entries {
-		if e.isExpiredAt(now) {
+	// Retention prune: drop only windows whose EndDate predates the horizon. Ended
+	// (but recent) windows are kept as history for the accountable-day calc (#159).
+	for k, windows := range c.entries {
+		kept := windows[:0]
+		for _, w := range windows {
+			if !w.isRetired(now) {
+				kept = append(kept, w)
+			}
+		}
+		if len(kept) == 0 {
 			delete(c.entries, k)
+		} else {
+			c.entries[k] = kept
 		}
 	}
 
@@ -219,7 +303,7 @@ func (c *LOACache) refresh(fetcher loaPostFetcher, nodeIDs []int) {
 				continue
 			}
 			entry.ThreadID = p.threadID
-			c.entries[strings.ToLower(entry.Username)] = entry
+			c.upsertWindow(entry)
 			if p.postDate > maxPostDate {
 				maxPostDate = p.postDate
 			}
@@ -233,14 +317,47 @@ func (c *LOACache) refresh(fetcher loaPostFetcher, nodeIDs []int) {
 
 	c.lastSyncedPostDate = maxPostDate
 	if successfulNodes > 0 {
-		c.lastSuccessfulRefresh = time.Now()
+		c.lastSuccessfulRefresh = now
+	}
+
+	totalWindows := 0
+	for _, w := range c.entries {
+		totalWindows += len(w)
 	}
 	Info("LOA cache refreshed",
 		"new_parsed", totalParsed,
-		"total_active", len(c.entries),
+		"total_windows", totalWindows,
+		"total_users", len(c.entries),
 		"successful_nodes", successfulNodes,
 		"total_nodes", len(nodeIDs),
 	)
+}
+
+// upsertWindow adds a parsed window to the per-username history, deduping by
+// ThreadID: one forum thread is exactly one LOA, so re-scanning the same thread
+// (cold-restart backfill or overlapping incremental fetch) updates the existing
+// window in place rather than appending a duplicate. Caller holds c.mu.
+//
+// ThreadID 0 is treated as non-dedupable: the live query keys on a non-null PK so
+// a real thread is never 0, but if one ever appeared, deduping on 0 would silently
+// fold every 0-thread LOA for a user into a single window. Such an entry is always
+// appended (never matched), and the anomaly is logged so it doesn't pass unnoticed.
+func (c *LOACache) upsertWindow(entry LOAEntry) {
+	key := strings.ToLower(entry.Username)
+	windows := c.entries[key]
+	if entry.ThreadID == 0 {
+		Warn("LOA window with zero ThreadID; appending without dedup", "username", entry.Username)
+		c.entries[key] = append(windows, entry)
+		return
+	}
+	for i := range windows {
+		if windows[i].ThreadID == entry.ThreadID {
+			windows[i] = entry
+			c.entries[key] = windows
+			return
+		}
+	}
+	c.entries[key] = append(windows, entry)
 }
 
 func parseLOAPost(msg string) (LOAEntry, bool) {

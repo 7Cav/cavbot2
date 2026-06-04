@@ -53,8 +53,8 @@ func serveAwolRoster(t *testing.T, roster utils.LiteRosterResponse, rosterStatus
 
 // fakeLOACache is a deterministic loaCacheReader for /awol integration tests.
 // entries are keyed by lowercased username (matches the production cache's
-// case-folding); IsOnLOA returns true iff an entry exists, decoupling the test
-// from time.Now since the handler's "now" is already injected separately.
+// case-folding). The handler derives OnLOA from GetEntry's window via
+// IsActive(now), so entries whose dates straddle the injected `now` read active.
 // healthy/lastRefresh drive the IsHealthy staleness guard; the zero value is
 // unhealthy, so existing tests that want the original behavior should construct
 // via healthyCache.
@@ -69,11 +69,6 @@ func (f *fakeLOACache) GetEntry(username string) (utils.LOAEntry, bool) {
 	return e, ok
 }
 
-func (f *fakeLOACache) IsOnLOA(username string) bool {
-	_, ok := f.entries[strings.ToLower(username)]
-	return ok
-}
-
 func (f *fakeLOACache) IsHealthy(_ time.Duration) (bool, time.Time) {
 	return f.healthy, f.lastRefresh
 }
@@ -84,15 +79,13 @@ func healthyCache(entries map[string]utils.LOAEntry) *fakeLOACache {
 	return &fakeLOACache{entries: entries, healthy: true, lastRefresh: awolRefDate}
 }
 
-// dateAwareLOACache is a loaCacheReader whose IsOnLOA respects each entry's
-// StartDate/EndDate window evaluated at a FIXED `at` instant — unlike fakeLOACache,
-// whose IsOnLOA returns true for any existing entry regardless of dates. This lets
-// an /awol test exercise the "entry exists but is not active today" path (upcoming
-// or expired), proving such a member is excluded from the (N on LOA) tally and the
-// [LOA] decoration on the healthy path. This fake substitutes its own fixed clock
-// `at` for the wall clock that production's utils.LOACache.IsOnLOA reads internally
-// (the real method takes no time argument). The two are fidelity-equivalent only
-// because the test windows are weeks wide relative to the `at`-vs-wall-now skew.
+// dateAwareLOACache is a loaCacheReader returning entries whose StartDate/EndDate
+// windows are meaningful relative to a FIXED `at` instant. The handler derives
+// OnLOA from GetEntry's window via IsActive(now), so this lets an /awol test
+// exercise the "entry exists but is not active today" path (upcoming or expired),
+// proving such a member is excluded from the (N on LOA) tally and the [LOA]
+// decoration on the healthy path. `at` is also returned as the IsHealthy
+// timestamp so the handler's injected `now` and the cache clock agree.
 type dateAwareLOACache struct {
 	entries map[string]utils.LOAEntry
 	at      time.Time
@@ -101,15 +94,6 @@ type dateAwareLOACache struct {
 func (f *dateAwareLOACache) GetEntry(username string) (utils.LOAEntry, bool) {
 	e, ok := f.entries[strings.ToLower(username)]
 	return e, ok
-}
-
-func (f *dateAwareLOACache) IsOnLOA(username string) bool {
-	e, ok := f.entries[strings.ToLower(username)]
-	if !ok {
-		return false
-	}
-	// Mirror utils.LOACache's inclusive active window evaluated at `at`.
-	return !f.at.Before(e.StartDate) && !f.at.After(e.EndDate)
 }
 
 func (f *dateAwareLOACache) IsHealthy(_ time.Duration) (bool, time.Time) {
@@ -446,7 +430,7 @@ func TestRunAwol_InactiveLOAEntryNotCountedOrTagged(t *testing.T) {
 
 // unhealthyCache builds an unhealthy fakeLOACache: entries may exist (and the
 // roster member may even have a "real" LOA) but the health probe reports stale,
-// so the handler must NOT trust IsOnLOA/GetEntry and must render "unknown".
+// so the handler must NOT trust GetEntry's window and must render "unknown".
 func unhealthyCache(entries map[string]utils.LOAEntry, lastRefresh time.Time) *fakeLOACache {
 	return &fakeLOACache{entries: entries, healthy: false, lastRefresh: lastRefresh}
 }
@@ -551,5 +535,58 @@ func TestRunAwol_UnhealthyCacheFileOutputCarriesWarning(t *testing.T) {
 	}
 	if !strings.Contains(body, "unknown") {
 		t.Fatalf("file should mark On LOA unknown.\nGot:\n%s", body)
+	}
+}
+
+// countingLOACache wraps fakeLOACache to count GetEntry calls per username,
+// proving the S4 single-snapshot invariant: /awol reads each member's LOA state
+// exactly ONCE (deriving both OnLOA and the [[LOA]] link from that one snapshot),
+// not once for the verdict and again for the link.
+type countingLOACache struct {
+	*fakeLOACache
+	getEntryCalls map[string]int
+}
+
+func (c *countingLOACache) GetEntry(username string) (utils.LOAEntry, bool) {
+	if c.getEntryCalls == nil {
+		c.getEntryCalls = map[string]int{}
+	}
+	c.getEntryCalls[strings.ToLower(username)]++
+	return c.fakeLOACache.GetEntry(username)
+}
+
+// TestRunAwol_S4_SingleSnapshotPerUser pins the #158/S4 fix: an active LOA member
+// with a thread renders the [[LOA]] link, and the handler reads the cache for that
+// member exactly once — so a concurrent refresh can't make the link and the OnLOA
+// verdict disagree.
+func TestRunAwol_S4_SingleSnapshotPerUser(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	cache := &countingLOACache{
+		fakeLOACache: healthyCache(map[string]utils.LOAEntry{
+			"trooper.a": {
+				Username:  "Trooper.A",
+				StartDate: mustParseAwolDate("2026-05-01 00:00:00"),
+				EndDate:   mustParseAwolDate("2026-06-01 00:00:00"), // active at awolRefDate
+				ThreadID:  4242,
+			},
+		}),
+	}
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+
+	runAwol(f, cache, awolRefDate, i)
+
+	if n := cache.getEntryCalls["trooper.a"]; n != 1 {
+		t.Fatalf("S4: GetEntry must be called exactly once per member, got %d", n)
+	}
+	desc := (*f.Calls()[1].Edit.Embeds)[0].Description
+	if !strings.Contains(desc, "**[[LOA]](https://7cav.us/threads/4242/)**") {
+		t.Fatalf("active member must render the [[LOA]] link from the single snapshot.\nGot:\n%s", desc)
 	}
 }
