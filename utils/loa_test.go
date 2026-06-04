@@ -461,7 +461,7 @@ func TestGetEntry(t *testing.T) {
 // boundary instants. isActiveAt is clock-injected (cf. PR #135) precisely so the
 // Start==now and End==now edges can be asserted against a fixed `now` — something
 // a live time.Now() could never hit deterministically. The window is inclusive at
-// both bounds. IsActive (the exported wrapper /awol reads) delegates here.
+// both bounds. utils.ActiveWindow (which /awol uses for selection) delegates here.
 func TestLOAEntry_isActiveAt(t *testing.T) {
 	now := mustLOATime("Jun 15, 2099")
 	entry := LOAEntry{

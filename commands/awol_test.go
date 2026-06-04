@@ -202,8 +202,7 @@ func TestRunAwol_SeverityGlyphs(t *testing.T) {
 		LiteProfiles: map[string]utils.LiteProfileResponse{
 			// last post 2026-04-20 → (04-20,05-15] = 25 dates → 18 AWOL → 🔴 (>14)
 			"100": awolMember("Red.R", "100", "2026-04-20 12:00:00"),
-			// last post 2026-05-02 → 13 dates → 6 AWOL → 🟠 (>7? no, 6) ... pick 05-01 → 14→7 not >7.
-			// Use 2026-04-28 → (04-28,05-15]=17 → 10 AWOL → 🟠 (>7)
+			// last post 2026-04-28 → (04-28,05-15] = 17 dates → 10 AWOL → 🟠 (>7)
 			"200": awolMember("Orange.O", "200", "2026-04-28 12:00:00"),
 			// last post 2026-05-06 → (05-06,05-15]=9 → 2 AWOL → 🟡 (>0)
 			"300": awolMember("Yellow.Y", "300", "2026-05-06 12:00:00"),
@@ -232,6 +231,32 @@ func TestRunAwol_SeverityGlyphs(t *testing.T) {
 	}
 }
 
+// TestSeverityGlyph_TierBoundaries pins the EXACT strict-> tier edges that the
+// inside-tier handler test (18/10/2) can't catch: 15→🔴, 14→🟠 (not 🔴), 8→🟠,
+// 7→🟡 (not 🟠), 1→🟡. An active LOA always overrides to ⚪ regardless of days.
+func TestSeverityGlyph_TierBoundaries(t *testing.T) {
+	cases := []struct {
+		days int
+		want string
+	}{
+		{15, "🔴"},
+		{14, "🟠"}, // exactly 14 is NOT >14
+		{8, "🟠"},
+		{7, "🟡"}, // exactly 7 is NOT >7
+		{1, "🟡"},
+	}
+	for _, c := range cases {
+		if got := (AwolUser{DaysAWOL: c.days}).severityGlyph(); got != c.want {
+			t.Fatalf("severityGlyph(%d) = %q, want %q", c.days, got, c.want)
+		}
+	}
+	// Active LOA overrides the tier.
+	w := utils.LOAEntry{}
+	if got := (AwolUser{DaysAWOL: 99, loaWindow: &w}).severityGlyph(); got != "⚪" {
+		t.Fatalf("active-LOA severityGlyph = %q, want ⚪", got)
+	}
+}
+
 // lineContaining returns the first line of s containing sub, or "".
 func lineContaining(s, sub string) string {
 	for _, ln := range strings.Split(s, "\n") {
@@ -240,6 +265,40 @@ func lineContaining(s, sub string) string {
 		}
 	}
 	return ""
+}
+
+// TestRunAwol_EmbedDescriptionWithinDiscordLimit pins item 1: the per-chunk
+// budget must leave room for the summary-line prefix + separator (and any footer
+// that rides along), so the FINAL embed description never exceeds Discord's 4096
+// limit. A single near-limit user line previously produced a chunk at ~4096 that,
+// once the summary + "\n\n" was prepended, overflowed → Discord 400.
+func TestRunAwol_EmbedDescriptionWithinDiscordLimit(t *testing.T) {
+	// Many moderately-padded users whose rendered lines accumulate into a chunk
+	// sitting just under the raw 4096 cap. Without the prefix-aware budget the
+	// summary line + "\n\n" prepended on top pushes the description past 4096.
+	// ~60-char usernames → ~110-byte lines; 36 of them ≈ 3960 bytes, the next
+	// fills toward the cap. Each line individually stays well under the budget.
+	pad := strings.Repeat("x", 60)
+	roster := utils.LiteRosterResponse{LiteProfiles: map[string]utils.LiteProfileResponse{}}
+	for n := range 40 {
+		id := fmt.Sprintf("%d", 100+n)
+		roster.LiteProfiles[id] = awolMember(fmt.Sprintf("U%02d_%s", n, pad), id, "2026-03-01 12:00:00")
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runAwol(f, healthyCache(nil), awolRefDate, i)
+
+	edit := f.Calls()[1].Edit
+	if edit.Embeds == nil {
+		t.Fatalf("expected embeds on Edit; got %+v", edit)
+	}
+	for idx, e := range *edit.Embeds {
+		if n := len([]rune(e.Description)); n > 4096 {
+			t.Fatalf("embed[%d] description = %d runes, exceeds Discord 4096 limit", idx, n)
+		}
+	}
 }
 
 func TestRunAwol_LargeResultFallsBackToFile(t *testing.T) {
@@ -431,7 +490,7 @@ func TestRunAwol_ActiveLOAStillAWOL(t *testing.T) {
 // on LOA (no ⚪, no thread link) since the window isn't active now.
 func TestRunAwol_ExpiredLOASubtractedNotTagged(t *testing.T) {
 	// Last post 2026-01-01. awolRefDate 2026-05-15. Candidate huge. Expired LOA
-	// 2026-01-03..2026-04-14 subtracts a big chunk but isn't active at now.
+	// 2026-01-03..2026-05-08 subtracts a big chunk but isn't active at now.
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
 			"100": awolMember("Tanner.K", "100", "2026-01-01 12:00:00"),
@@ -567,6 +626,58 @@ func TestRunAwol_UnhealthyCacheRendersRawFallback(t *testing.T) {
 	}
 	if embed.Footer == nil || !strings.Contains(embed.Footer.Text, "LOA NOT subtracted") {
 		t.Fatalf("degraded footer must say LOA NOT subtracted.\nGot: %q", embed.Footer.Text)
+	}
+}
+
+// TestRunAwol_UnhealthyCacheEmptyListWarns pins item 2: when the LOA cache is
+// unhealthy AND no member is raw-AWOL, the empty-result reply must still surface
+// the degraded/SKIPPED warning rather than a silent all-clear, so staff know the
+// cache was down (every other terminal degraded path warns; this one must too).
+func TestRunAwol_UnhealthyCacheEmptyListWarns(t *testing.T) {
+	// All members posted recently → no raw-AWOL, empty result. Cache unhealthy.
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Fresh.A", "100", "2026-05-14 12:00:00"),
+			"200": awolMember("Fresh.B", "200", "2026-05-13 12:00:00"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	cache := unhealthyCache(nil, awolRefDate.Add(-30*time.Minute))
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+
+	runAwol(f, cache, awolRefDate, i)
+
+	edit := f.Calls()[1].Edit
+	got := "<nil>"
+	if edit.Content != nil {
+		got = *edit.Content
+	}
+	if !strings.Contains(got, "SKIPPED") {
+		t.Fatalf("unhealthy-cache empty result must warn the adjustment was SKIPPED, not a silent all-clear.\nGot: %q", got)
+	}
+}
+
+func TestRunAwol_HealthyCacheEmptyListAllClear(t *testing.T) {
+	// Healthy cache + empty result → the plain all-clear (no degraded warning).
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Fresh.A", "100", "2026-05-14 12:00:00"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runAwol(f, healthyCache(nil), awolRefDate, i)
+
+	got := "<nil>"
+	if edit := f.Calls()[1].Edit; edit.Content != nil {
+		got = *edit.Content
+	}
+	if !strings.Contains(got, "no users matching") || strings.Contains(got, "SKIPPED") {
+		t.Fatalf("healthy empty result should be the plain all-clear without a degraded warning.\nGot: %q", got)
 	}
 }
 

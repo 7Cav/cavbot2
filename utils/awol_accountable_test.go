@@ -197,6 +197,48 @@ func TestAccountableDaysAWOL(t *testing.T) {
 	}
 }
 
+// TestValidLOAWindows_DropsZeroValueEntry pins item 9: a zero-value LOAEntry
+// (both dates zero) is malformed and must be filtered, never treated as covering
+// the epoch-zero UTC date. Unreachable from production (parseLOAPost only emits
+// when both dates parse) but cheap to harden.
+func TestValidLOAWindows_DropsZeroValueEntry(t *testing.T) {
+	got := validLOAWindows([]LOAEntry{{}})
+	if len(got) != 0 {
+		t.Fatalf("validLOAWindows should drop a zero-value entry; got %d kept", len(got))
+	}
+}
+
+// TestValidLOAWindows_MixedSliceKeepsValid pins that a mixed slice (one valid
+// window + one end-before-start window for the same user) keeps the valid one so
+// it still subtracts.
+func TestValidLOAWindows_MixedSliceKeepsValid(t *testing.T) {
+	valid := loa(d(2026, time.January, 3), d(2026, time.January, 10))
+	backwards := loa(d(2026, time.January, 20), d(2026, time.January, 5))
+	got := validLOAWindows([]LOAEntry{valid, backwards})
+	if len(got) != 1 || !got[0].StartDate.Equal(valid.StartDate) {
+		t.Fatalf("validLOAWindows should keep only the well-formed window; got %+v", got)
+	}
+}
+
+// TestAccountableDaysAWOL_MixedSliceValidStillSubtracts pins the same via the
+// public calc: one valid + one backwards window for the user → the valid one
+// still subtracts its covered dates.
+func TestAccountableDaysAWOL_MixedSliceValidStillSubtracts(t *testing.T) {
+	// Candidate (Jan 1, Jan 20] = Jan 2..20 (19). Valid LOA Jan 3..10 covers 8.
+	// Backwards LOA ignored. Accountable 11 → 11-7 = 4.
+	got := AccountableDaysAWOL(
+		d(2026, time.January, 1),
+		d(2026, time.January, 20),
+		[]LOAEntry{
+			loa(d(2026, time.January, 3), d(2026, time.January, 10)),
+			loa(d(2026, time.January, 20), d(2026, time.January, 5)),
+		},
+	)
+	if got != 4 {
+		t.Fatalf("AccountableDaysAWOL = %d, want 4", got)
+	}
+}
+
 // TestActiveWindow_UsesInjectedNow pins the PR #161 clock-skew fix: window
 // selection is decided against the caller's `now`, not an internal clock, and at
 // an exact boundary (now == EndDate is still active; now one tick past is not).
@@ -205,6 +247,10 @@ func TestActiveWindow_UsesInjectedNow(t *testing.T) {
 	w.ThreadID = 7
 	windows := []LOAEntry{w}
 
+	// On the StartDate (inclusive lower bound) → active.
+	if got, ok := ActiveWindow(windows, d(2026, time.January, 1)); !ok || got.ThreadID != 7 {
+		t.Fatalf("expected active window on StartDate (inclusive); got ok=%v id=%d", ok, got.ThreadID)
+	}
 	// On the EndDate (inclusive) → active.
 	if got, ok := ActiveWindow(windows, d(2026, time.January, 10)); !ok || got.ThreadID != 7 {
 		t.Fatalf("expected active window on EndDate; got ok=%v id=%d", ok, got.ThreadID)
@@ -219,6 +265,18 @@ func TestActiveWindow_UsesInjectedNow(t *testing.T) {
 	}
 }
 
+// TestActiveWindow_NoActiveReturnsFalse pins the empty/no-active return: an empty
+// history and a history with no window covering `now` both yield (_, false).
+func TestActiveWindow_NoActiveReturnsFalse(t *testing.T) {
+	if _, ok := ActiveWindow(nil, d(2026, time.January, 5)); ok {
+		t.Fatalf("empty history should yield no active window")
+	}
+	windows := []LOAEntry{loa(d(2026, time.January, 1), d(2026, time.January, 10))}
+	if _, ok := ActiveWindow(windows, d(2026, time.February, 1)); ok {
+		t.Fatalf("no window covers now → expected (_, false)")
+	}
+}
+
 func TestActiveWindow_LatestEndingWinsAmongOverlapping(t *testing.T) {
 	a := loa(d(2026, time.January, 1), d(2026, time.January, 10))
 	a.ThreadID = 1
@@ -227,6 +285,33 @@ func TestActiveWindow_LatestEndingWinsAmongOverlapping(t *testing.T) {
 	got, ok := ActiveWindow([]LOAEntry{a, b}, d(2026, time.January, 8))
 	if !ok || got.ThreadID != 2 {
 		t.Fatalf("expected latest-ending active window (id 2); got ok=%v id=%d", ok, got.ThreadID)
+	}
+}
+
+// TestDaysSinceLastPost_NoClampContract pins that DaysSinceLastPost is the raw
+// whole-date span with NO 7-day clamp, unlike RawDaysAWOL which subtracts the
+// requirement. 8 candidate dates → DaysSinceLastPost 8, RawDaysAWOL 1; 7 dates →
+// DaysSinceLastPost 7, RawDaysAWOL 0.
+func TestDaysSinceLastPost_NoClampContract(t *testing.T) {
+	// (Jan 1, Jan 8] = 7 candidate dates.
+	if got := DaysSinceLastPost(d(2026, time.January, 1), d(2026, time.January, 8)); got != 7 {
+		t.Fatalf("DaysSinceLastPost(Jan1,Jan8) = %d, want 7 (no clamp)", got)
+	}
+	if got := RawDaysAWOL(d(2026, time.January, 1), d(2026, time.January, 8)); got != 0 {
+		t.Fatalf("RawDaysAWOL(Jan1,Jan8) = %d, want 0 (clamped at requirement)", got)
+	}
+}
+
+// TestDaysSinceLastPost_EarlyReturnGuard exercises the rawAccountableDates
+// now<=lastPost guard via the raw path: posted today and a future-clock skew both
+// yield zero candidate dates.
+func TestDaysSinceLastPost_EarlyReturnGuard(t *testing.T) {
+	if got := DaysSinceLastPost(d(2026, time.January, 9), d(2026, time.January, 9)); got != 0 {
+		t.Fatalf("DaysSinceLastPost posted-today = %d, want 0", got)
+	}
+	// now before lastPost (clock skew) → still 0, not negative.
+	if got := DaysSinceLastPost(d(2026, time.January, 9), d(2026, time.January, 1)); got != 0 {
+		t.Fatalf("DaysSinceLastPost now<lastPost = %d, want 0", got)
 	}
 }
 
