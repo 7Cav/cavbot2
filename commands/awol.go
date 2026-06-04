@@ -33,9 +33,10 @@ const loaCacheUnavailableFooter = "⚠️ LOA cache unavailable; On LOA column m
 // state with a SINGLE GetEntry call and derives both the On LOA verdict
 // (entry.IsActive) and the [[LOA]] link from that one snapshot (#158/S4), so the
 // two can't disagree across a concurrent refresh. IsHealthy gates whether the
-// per-member On LOA column can be trusted (#96): when the cache is stale, GetEntry
-// silently returns all-clear, so the column is rendered as "unknown" rather than
-// a misleading "false".
+// per-member On LOA column can be trusted (#96): it is an age check on the last
+// successful refresh, so an unhealthy cache is stale, not empty — GetEntry may
+// still return (now possibly outdated) windows. When unhealthy, the render path
+// gates the column to "unknown" rather than trusting those stale reads.
 type loaCacheReader interface {
 	GetEntry(username string) (utils.LOAEntry, bool)
 	IsHealthy(maxAge time.Duration) (bool, time.Time)
@@ -105,12 +106,13 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		return
 	}
 
-	// #96: probe cache health once per invocation. When unhealthy, the per-user
-	// GetEntry read returns no window for everyone, so the On LOA column would lie
-	// (every row reads all-clear). We do
-	// NOT abort — /awol's primary signal (lastForumPostDate) is independent — but
-	// render the column as "unknown" and warn. No Sentry capture: operational
-	// degradation, not an internal error (ADR 0001).
+	// #96: probe cache health once per invocation. IsHealthy is an age check on
+	// the last successful refresh, so an unhealthy cache is stale, not empty —
+	// per-user GetEntry reads may still return (possibly outdated) windows that
+	// the On LOA column would otherwise present as current truth. We do NOT abort
+	// — /awol's primary signal (lastForumPostDate) is independent — but the render
+	// path below gates the column to "unknown" via cacheHealthy and warns. No
+	// Sentry capture: operational degradation, not an internal error (ADR 0001).
 	cacheHealthy, lastRefresh := cache.IsHealthy(loaCacheMaxAge)
 	if !cacheHealthy {
 		utils.Debug("AWOL served with unhealthy LOA cache",
@@ -151,8 +153,8 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 				return
 			}
 			// #158/S4: read the LOA cache ONCE per user. Deriving OnLOA from this
-			// same snapshot (rather than a separate IsOnLOA call) means the On LOA
-			// verdict and the [[LOA]] link below can never disagree, even if a
+			// same snapshot (rather than a separate active-window lookup) means the
+			// On LOA verdict and the [[LOA]] link below can never disagree, even if a
 			// 15-min refresh lands mid-loop now that ended windows are retained.
 			entry, hasEntry := cache.GetEntry(member.User.Username)
 			awolUsers = append(awolUsers, AwolUser{

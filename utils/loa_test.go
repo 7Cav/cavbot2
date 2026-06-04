@@ -444,10 +444,9 @@ func TestRefresh_FetcherError_DoesNotAdvanceCursor(t *testing.T) {
 	}
 }
 
-func TestGetEntryAndIsOnLOA(t *testing.T) {
+func TestGetEntry(t *testing.T) {
 	c := &LOACache{entries: map[string][]LOAEntry{}}
 	c.entries["onloa"] = []LOAEntry{{Username: "OnLOA", StartDate: time.Now().Add(-1 * time.Hour), EndDate: time.Now().Add(1 * time.Hour)}}
-	c.entries["future"] = []LOAEntry{{Username: "Future", StartDate: time.Now().Add(24 * time.Hour), EndDate: time.Now().Add(48 * time.Hour)}}
 
 	// GetEntry is case-insensitive on the lookup key.
 	if _, ok := c.GetEntry("ONLOA"); !ok {
@@ -456,22 +455,13 @@ func TestGetEntryAndIsOnLOA(t *testing.T) {
 	if _, ok := c.GetEntry("missing"); ok {
 		t.Errorf("GetEntry for absent user should be false")
 	}
-	if !c.IsOnLOA("onloa") {
-		t.Errorf("IsOnLOA should be true for currently-active window")
-	}
-	if c.IsOnLOA("future") {
-		t.Errorf("IsOnLOA should be false before StartDate")
-	}
-	if c.IsOnLOA("missing") {
-		t.Errorf("IsOnLOA should be false for unknown user")
-	}
 }
 
 // TestLOAEntry_isActiveAt pins the inclusive active-window contract at the EXACT
 // boundary instants. isActiveAt is clock-injected (cf. PR #135) precisely so the
 // Start==now and End==now edges can be asserted against a fixed `now` — something
-// IsOnLOA's live time.Now() can never hit deterministically. The window is
-// inclusive at both bounds.
+// a live time.Now() could never hit deterministically. The window is inclusive at
+// both bounds. IsActive (the exported wrapper /awol reads) delegates here.
 func TestLOAEntry_isActiveAt(t *testing.T) {
 	now := mustLOATime("Jun 15, 2099")
 	entry := LOAEntry{
@@ -502,30 +492,6 @@ func TestLOAEntry_isActiveAt(t *testing.T) {
 	}
 }
 
-// TestIsOnLOA_ActiveWindowBoundaries cross-checks the live-clock IsOnLOA wrapper
-// (which delegates to isActiveAt with time.Now()) against entries positioned
-// relative to a captured `now`. The exact-edge contract is pinned by
-// TestLOAEntry_isActiveAt; this guards the wrapper's wiring (lock, lookup,
-// time.Now() delegation) end-to-end.
-func TestIsOnLOA_ActiveWindowBoundaries(t *testing.T) {
-	now := time.Now()
-	const slack = time.Minute // dwarfs the captured-now vs internal-now gap
-
-	c := &LOACache{entries: map[string][]LOAEntry{}}
-	c.entries["active"] = []LOAEntry{{Username: "Active", StartDate: now.Add(-slack), EndDate: now.Add(slack)}}
-	c.entries["past"] = []LOAEntry{{Username: "Past", StartDate: now.Add(-2 * slack), EndDate: now.Add(-slack)}}
-	c.entries["futurewin"] = []LOAEntry{{Username: "FutureWin", StartDate: now.Add(slack), EndDate: now.Add(2 * slack)}}
-
-	if !c.IsOnLOA("active") {
-		t.Errorf("IsOnLOA: entry within its window must be active")
-	}
-	if c.IsOnLOA("past") {
-		t.Errorf("IsOnLOA: wholly-past window must not be active")
-	}
-	if c.IsOnLOA("futurewin") {
-		t.Errorf("IsOnLOA: wholly-future window must not be active")
-	}
-}
 
 // TestGetEntry_TwoActiveWindows_LatestEndingWins pins the highest-value tie-break
 // mutation testing flagged hollow: when a user holds TWO simultaneously-active
@@ -934,7 +900,7 @@ func (f *concurrentLOAFetcher) fetchLOAPosts(_ int, _ int64) ([]loaPostRow, erro
 }
 
 // TestLOACache_ConcurrentRefreshAndReads fans out many goroutines that hammer
-// Refresh (writer path) alongside GetEntry / IsOnLOA / IsHealthy (reader paths) on
+// Refresh (writer path) alongside GetEntry / IsHealthy (reader paths) on
 // one cache. Its job is to fail under `go test -race` if the cache's locking ever
 // regresses — e.g. a dropped Lock/RLock or a read of a guarded field outside the
 // mutex. With locking intact it is a fast, deterministic no-op assertion (the cache
@@ -970,7 +936,6 @@ func TestLOACache_ConcurrentRefreshAndReads(t *testing.T) {
 				// Touch every guarded read path; results are intentionally
 				// ignored — the race detector, not an assertion, is the oracle.
 				_, _ = c.GetEntry("user1")
-				_ = c.IsOnLOA("user2")
 				_, _ = c.IsHealthy(30 * time.Minute)
 			}
 		}()

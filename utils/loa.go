@@ -156,7 +156,7 @@ func (e LOAEntry) isActiveAt(now time.Time) bool {
 
 // IsActive reports whether the entry's LOA window is active at `now`. Exported so
 // /awol can derive its On LOA verdict from the same single GetEntry snapshot it
-// uses for the [[LOA]] link, instead of a second IsOnLOA lock acquisition that a
+// uses for the [[LOA]] link, instead of a second cache lock acquisition that a
 // concurrent refresh could make inconsistent (now that ended windows are retained).
 func (e LOAEntry) IsActive(now time.Time) bool {
 	return e.isActiveAt(now)
@@ -170,19 +170,6 @@ func (e LOAEntry) IsActive(now time.Time) bool {
 // converge on the identical window set.
 func (e LOAEntry) isRetired(now time.Time) bool {
 	return e.EndDate.Before(historyHorizon(now))
-}
-
-// IsOnLOA returns true if the username has any currently active LOA window.
-func (c *LOACache) IsOnLOA(username string) bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	now := time.Now()
-	for _, w := range c.entries[strings.ToLower(username)] {
-		if w.isActiveAt(now) {
-			return true
-		}
-	}
-	return false
 }
 
 // IsHealthy reports whether the cache has been successfully refreshed within

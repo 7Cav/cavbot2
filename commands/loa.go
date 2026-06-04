@@ -16,8 +16,13 @@ import (
 // entry lookup plus a health probe for the staleness guard. Production wires
 // *utils.LOACache (GlobalLOACache); tests substitute a fake with canned
 // entries and a forced health verdict so the handler stays deterministic
-// without touching the process-global singleton. Distinct from /awol's
-// loaCacheReader, which needs IsOnLOA but not IsHealthy.
+// without touching the process-global singleton. /awol's loaCacheReader is a
+// separate, per-command minimal surface over the same cache with the same
+// {GetEntry, IsHealthy} shape today; the two are kept distinct so each command's
+// dependency stays scoped to what it actually reads (and so they can diverge —
+// see #159, which adds GetEntries to loaCacheReader). /awol additionally gates on
+// IsHealthy to render its On-LOA column (#96); /loa uses it for the staleness
+// guard above.
 type loaCacheView interface {
 	GetEntry(username string) (utils.LOAEntry, bool)
 	IsHealthy(maxAge time.Duration) (bool, time.Time)
