@@ -144,7 +144,7 @@ func enrichPlayer(ctx context.Context, rawName string) (string, string, string, 
 		}
 		matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(profile.UniformUrl)
 		if len(matches) != 2 {
-			return "", "", "", "", "", fmt.Errorf("failed to extract ID from UniformUrl: %s", profile.UniformUrl)
+			return "", "", "", "", "", fmt.Errorf("failed to extract ID from username-lookup UniformUrl: %s", profile.UniformUrl)
 		}
 		id := matches[1]
 		cavName := fmt.Sprintf("%s %s", profile.Rank.RankFull, profile.User.Username)
@@ -161,7 +161,7 @@ func enrichPlayer(ctx context.Context, rawName string) (string, string, string, 
 		}
 		matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(profile.UniformUrl)
 		if len(matches) != 2 {
-			return "", "", "", "", "", fmt.Errorf("failed to extract ID from UniformUrl: %s", profile.UniformUrl)
+			return "", "", "", "", "", fmt.Errorf("failed to extract ID from gamertag-lookup UniformUrl: %s", profile.UniformUrl)
 		}
 		id := matches[1]
 		cavName := fmt.Sprintf("%s %s", profile.Rank.RankFull, profile.User.Username)
