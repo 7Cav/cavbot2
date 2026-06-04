@@ -116,11 +116,30 @@ func cleanName(name string) string {
 	return name
 }
 
+// validateProfile rejects a milpacs 2xx that lacks usable enrichment data (#152).
+// A 200 carrying an empty RankFull/Username (and/or empty Roster) yields a blank
+// CavName with a well-formed MilpacsLink, which would render a ghost forum line
+// ([URL='...'] [/URL]). Treating it as an error routes the player into the ⚠️
+// warning field instead — EnrichFailed must mean "usable enrichment", not merely
+// "HTTP succeeded".
+func validateProfile(profile *utils.ProfileResponse) error {
+	if profile.Rank.RankFull == "" || profile.User.Username == "" {
+		return fmt.Errorf("milpacs 2xx with empty rank/username (unusable enrichment)")
+	}
+	if profile.Roster == "" {
+		return fmt.Errorf("milpacs 2xx with empty roster (unusable enrichment)")
+	}
+	return nil
+}
+
 func enrichPlayer(ctx context.Context, rawName string) (string, string, string, string, string, error) {
 	cleaned := cleanName(rawName)
 
 	profile, err := utils.GetMilpacByUsername(ctx, cleaned)
 	if err == nil {
+		if err := validateProfile(profile); err != nil {
+			return "", "", "", "", "", err
+		}
 		matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(profile.UniformUrl)
 		if len(matches) != 2 {
 			return "", "", "", "", "", fmt.Errorf("failed to extract ID from UniformUrl: %s", profile.UniformUrl)
@@ -135,6 +154,9 @@ func enrichPlayer(ctx context.Context, rawName string) (string, string, string, 
 
 	profile, err = utils.GetUserByGamertag(ctx, rawName)
 	if err == nil {
+		if err := validateProfile(profile); err != nil {
+			return "", "", "", "", "", err
+		}
 		matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(profile.UniformUrl)
 		if len(matches) != 2 {
 			return "", "", "", "", "", fmt.Errorf("failed to extract ID from UniformUrl: %s", profile.UniformUrl)
@@ -205,8 +227,12 @@ func fetchBattleMetricsSessions(serverID string, start, stop time.Time, minAtten
 	for name, duration := range playtimeMap {
 		minutes := int(duration.Minutes())
 		if minutes >= minAttendance {
+			// Pass the ORIGINAL BattleMetrics name through to enrichPlayer, which
+			// owns the cleaning: the USERNAME lookup uses cleanName(name) while the
+			// GAMERTAG fallback receives the UNCLEANED raw in-game tag (#151). The
+			// cleaned form is still computed here only for the failure log line.
 			cleaned := cleanName(name)
-			cavName, link, searchString, roster, rankID, enrichErr := enrichPlayer(ctx, cleaned)
+			cavName, link, searchString, roster, rankID, enrichErr := enrichPlayer(ctx, name)
 			if enrichErr != nil {
 				// A real combatant whose enrichment fails would otherwise vanish
 				// from the combat roster with no signal. Mark the failure explicitly
