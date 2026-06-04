@@ -149,17 +149,10 @@ func (e LOAEntry) hasEnded(now time.Time) bool {
 // StartDate through its EndDate (so Start==now and End==now both count as active).
 // The upper bound is hasEnded. Clock-injected so the boundary semantics are
 // unit-testable at the exact edge (cf. PR #135); the production callers pass
-// time.Now(). IsActive is the exported wrapper used by /awol's single-snapshot read.
+// time.Now(). /awol selects the active window via utils.ActiveWindow, which
+// delegates here against its single injected `now`.
 func (e LOAEntry) isActiveAt(now time.Time) bool {
 	return !now.Before(e.StartDate) && !e.hasEnded(now)
-}
-
-// IsActive reports whether the entry's LOA window is active at `now`. Exported so
-// /awol can derive its On LOA verdict from the same single GetEntry snapshot it
-// uses for the [[LOA]] link, instead of a second cache lock acquisition that a
-// concurrent refresh could make inconsistent (now that ended windows are retained).
-func (e LOAEntry) IsActive(now time.Time) bool {
-	return e.isActiveAt(now)
 }
 
 // isRetired reports whether the window's EndDate is older than the retention

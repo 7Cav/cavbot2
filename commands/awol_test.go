@@ -14,8 +14,10 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// awolRefDate pins "now" for /awol tests. With awolThresholdDays=8 the AWOL
-// cutoff lands at 2026-05-07; LastForumPostDate values older than that are AWOL.
+// awolRefDate pins "now" for /awol tests at 2026-05-15 12:00 UTC. With the
+// accountable-day model, a member is flagged when accountable dates exceed 7,
+// so LastForumPostDate values more than 7 UTC dates before this (and not covered
+// by LOA) are AWOL.
 var awolRefDate = mustParseAwolDate("2026-05-15 12:00:00")
 
 func mustParseAwolDate(s string) time.Time {
@@ -53,52 +55,33 @@ func serveAwolRoster(t *testing.T, roster utils.LiteRosterResponse, rosterStatus
 
 // fakeLOACache is a deterministic loaCacheReader for /awol integration tests.
 // entries are keyed by lowercased username (matches the production cache's
-// case-folding). The handler derives OnLOA from GetEntry's window via
-// IsActive(now), so entries whose dates straddle the injected `now` read active.
-// healthy/lastRefresh drive the IsHealthy staleness guard; the zero value is
-// unhealthy, so existing tests that want the original behavior should construct
-// via healthyCache.
+// case-folding) and hold the FULL retained window history per user — /awol
+// applies its own injected `now` to that history for the accountable-day calc and
+// active-window selection. healthy/lastRefresh drive the IsHealthy staleness
+// guard; the zero value is unhealthy, so existing tests that want the original
+// behavior should construct via healthyCache.
 type fakeLOACache struct {
-	entries     map[string]utils.LOAEntry
+	entries     map[string][]utils.LOAEntry
 	healthy     bool
 	lastRefresh time.Time
 }
 
-func (f *fakeLOACache) GetEntry(username string) (utils.LOAEntry, bool) {
-	e, ok := f.entries[strings.ToLower(username)]
-	return e, ok
+func (f *fakeLOACache) GetEntries(username string) []utils.LOAEntry {
+	return f.entries[strings.ToLower(username)]
 }
 
 func (f *fakeLOACache) IsHealthy(_ time.Duration) (bool, time.Time) {
 	return f.healthy, f.lastRefresh
 }
 
-// healthyCache builds a healthy fakeLOACache from the given entries (keyed by
-// lowercased username), with lastRefresh pinned at awolRefDate.
-func healthyCache(entries map[string]utils.LOAEntry) *fakeLOACache {
+// healthyCache builds a healthy fakeLOACache from the given window history (keyed
+// by lowercased username), with lastRefresh pinned at awolRefDate.
+func healthyCache(entries map[string][]utils.LOAEntry) *fakeLOACache {
 	return &fakeLOACache{entries: entries, healthy: true, lastRefresh: awolRefDate}
 }
 
-// dateAwareLOACache is a loaCacheReader returning entries whose StartDate/EndDate
-// windows are meaningful relative to a FIXED `at` instant. The handler derives
-// OnLOA from GetEntry's window via IsActive(now), so this lets an /awol test
-// exercise the "entry exists but is not active today" path (upcoming or expired),
-// proving such a member is excluded from the (N on LOA) tally and the [LOA]
-// decoration on the healthy path. `at` is also returned as the IsHealthy
-// timestamp so the handler's injected `now` and the cache clock agree.
-type dateAwareLOACache struct {
-	entries map[string]utils.LOAEntry
-	at      time.Time
-}
-
-func (f *dateAwareLOACache) GetEntry(username string) (utils.LOAEntry, bool) {
-	e, ok := f.entries[strings.ToLower(username)]
-	return e, ok
-}
-
-func (f *dateAwareLOACache) IsHealthy(_ time.Duration) (bool, time.Time) {
-	return true, f.at // always healthy: this fake exercises the date-window path
-}
+// oneWindow is a convenience for the common single-window-per-user case.
+func oneWindow(e utils.LOAEntry) []utils.LOAEntry { return []utils.LOAEntry{e} }
 
 func boolOption(name string, value bool) *discordgo.ApplicationCommandInteractionDataOption {
 	return &discordgo.ApplicationCommandInteractionDataOption{
@@ -120,7 +103,7 @@ func awolMember(username, milpacID, lastForumPost string) utils.LiteProfileRespo
 }
 
 func TestRunAwol_SmallResultRendersEmbedChunks(t *testing.T) {
-	// Two AWOL members (last post >8d before awolRefDate); no LOA; no force_file.
+	// Two AWOL members (last post well over 7 dates before awolRefDate); no LOA.
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
 			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
@@ -155,10 +138,187 @@ func TestRunAwol_SmallResultRendersEmbedChunks(t *testing.T) {
 	if len(edit.Files) > 0 {
 		t.Fatalf("expected no files for small-result path; got %d files", len(edit.Files))
 	}
-	desc := (*edit.Embeds)[0].Description
+	embed := (*edit.Embeds)[0]
+	desc := embed.Description
 	for _, want := range []string{"Trooper.A", "Trooper.B"} {
 		if !strings.Contains(desc, want) {
 			t.Fatalf("embed description missing %q.\nGot:\n%s", want, desc)
+		}
+	}
+	// Title and footer match the agreed layout.
+	if embed.Title != "AWOL — 1-7" {
+		t.Fatalf("title = %q, want %q", embed.Title, "AWOL — 1-7")
+	}
+	if !strings.Contains(desc, "2 total · 0 LOA") {
+		t.Fatalf("summary line missing.\nGot:\n%s", desc)
+	}
+	if embed.Footer == nil || embed.Footer.Text != awolReportFooter {
+		got := "<nil>"
+		if embed.Footer != nil {
+			got = embed.Footer.Text
+		}
+		t.Fatalf("footer = %q, want %q", got, awolReportFooter)
+	}
+	// Days-AWOL secondary context present.
+	if !strings.Contains(desc, "d AWOL · last post") {
+		t.Fatalf("rows should show 'Nd AWOL · last post Md'.\nGot:\n%s", desc)
+	}
+}
+
+// TestRunAwol_NoLOARegressionAndSortOrder pins the common-case regression guard:
+// with no LOA, days AWOL == raw overage (accountable == raw), and rows sort
+// worst-first by days AWOL.
+func TestRunAwol_NoLOARegressionAndSortOrder(t *testing.T) {
+	// awolRefDate = 2026-05-15. UTC dates: last post 2026-05-01 → (05-01,05-15] =
+	// 14 dates → 7 AWOL. last post 2026-03-01 → many → larger.
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Closer.C", "100", "2026-05-01 12:00:00"), // 14 dates → 7 AWOL
+			"200": awolMember("Farther.F", "200", "2026-03-01 12:00:00"), // big AWOL
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runAwol(f, healthyCache(nil), awolRefDate, i)
+
+	desc := (*f.Calls()[1].Edit.Embeds)[0].Description
+	// Farther.F (worse) must appear before Closer.C.
+	iF := strings.Index(desc, "Farther.F")
+	iC := strings.Index(desc, "Closer.C")
+	if iF == -1 || iC == -1 || iF > iC {
+		t.Fatalf("expected Farther.F before Closer.C (worst-first).\nGot:\n%s", desc)
+	}
+	// Closer.C: 14 candidate dates, no LOA → 7d AWOL. Raw last post also 14d.
+	if !strings.Contains(desc, "Closer.C](") || !strings.Contains(desc, "— 7d AWOL · last post 14d") {
+		t.Fatalf("Closer.C should read '7d AWOL · last post 14d' (raw==accountable, no LOA).\nGot:\n%s", desc)
+	}
+}
+
+// TestRunAwol_SeverityGlyphs pins the glyph tiers: 🔴 >14, 🟠 >7, 🟡 >0.
+func TestRunAwol_SeverityGlyphs(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			// last post 2026-04-20 → (04-20,05-15] = 25 dates → 18 AWOL → 🔴 (>14)
+			"100": awolMember("Red.R", "100", "2026-04-20 12:00:00"),
+			// last post 2026-04-28 → (04-28,05-15] = 17 dates → 10 AWOL → 🟠 (>7)
+			"200": awolMember("Orange.O", "200", "2026-04-28 12:00:00"),
+			// last post 2026-05-06 → (05-06,05-15]=9 → 2 AWOL → 🟡 (>0)
+			"300": awolMember("Yellow.Y", "300", "2026-05-06 12:00:00"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runAwol(f, healthyCache(nil), awolRefDate, i)
+
+	desc := (*f.Calls()[1].Edit.Embeds)[0].Description
+	checks := []struct{ glyph, name string }{
+		{"🔴", "Red.R"},
+		{"🟠", "Orange.O"},
+		{"🟡", "Yellow.Y"},
+	}
+	for _, c := range checks {
+		line := lineContaining(desc, c.name)
+		if line == "" {
+			t.Fatalf("missing row for %s.\nGot:\n%s", c.name, desc)
+		}
+		if !strings.HasPrefix(line, c.glyph) {
+			t.Fatalf("row for %s should start with %s.\nGot line: %q", c.name, c.glyph, line)
+		}
+	}
+}
+
+// TestSeverityGlyph_TierBoundaries pins the EXACT strict-> tier edges that the
+// inside-tier handler test (18/10/2) can't catch: 15→🔴, 14→🟠 (not 🔴), 8→🟠,
+// 7→🟡 (not 🟠), 1→🟡. An active LOA always overrides to ⚪ regardless of days.
+func TestSeverityGlyph_TierBoundaries(t *testing.T) {
+	cases := []struct {
+		days int
+		want string
+	}{
+		{15, "🔴"},
+		{14, "🟠"}, // exactly 14 is NOT >14
+		{8, "🟠"},
+		{7, "🟡"}, // exactly 7 is NOT >7
+		{1, "🟡"},
+	}
+	for _, c := range cases {
+		if got := (AwolUser{DaysAWOL: c.days}).severityGlyph(); got != c.want {
+			t.Fatalf("severityGlyph(%d) = %q, want %q", c.days, got, c.want)
+		}
+	}
+	// Active LOA overrides the tier.
+	w := utils.LOAEntry{}
+	if got := (AwolUser{DaysAWOL: 99, loaWindow: &w}).severityGlyph(); got != "⚪" {
+		t.Fatalf("active-LOA severityGlyph = %q, want ⚪", got)
+	}
+}
+
+// lineContaining returns the first line of s containing sub, or "".
+func lineContaining(s, sub string) string {
+	for _, ln := range strings.Split(s, "\n") {
+		if strings.Contains(ln, sub) {
+			return ln
+		}
+	}
+	return ""
+}
+
+// TestRunAwol_EmbedDescriptionWithinDiscordLimit pins item 1: the per-chunk
+// budget must leave room for the summary-line prefix + separator, so the FINAL
+// rendered description (summaryLine + "\n\n" + chunk) never exceeds Discord's
+// 4096-byte cap. Production budgets on len(...) (bytes), so this test asserts on
+// bytes — the conservative measure — not runes.
+//
+// This is a genuine regression guard for the prefix-aware budget
+// (`chunkBudget := discordEmbedDescriptionLimit - len(descPrefix)`). To trip the
+// pre-fix bug a chunk must land in the danger band (4096 − prefixLen, 4096] =
+// (4077, 4096], where the raw chunk fits the bare 4096 budget but overflows once
+// the prefix is prepended. The earlier version stepped *over* that band with
+// coarse ~139-byte lines and so passed even against the un-fixed budget.
+//
+// Sizing math (all bytes):
+//   - Each no-LOA row renders as "🔴 [U%02d_x](https://7cav.us/rosters/profile/<id>) — 68d AWOL · last post 75d\n".
+//     With pad="x", 2-digit user index, 3-digit milpac id, and the 68/75 day
+//     figures this calc produces for a 2026-03-01 post at awolRefDate
+//     (DaysAWOL=68, raw=75 — both 2 digits), every row is exactly 80 bytes.
+//   - Summary prefix "51 total · 0 LOA\n\n" = 19 bytes → danger band (4077, 4096].
+//   - 51 rows = 4080 raw bytes. The buggy budget (4096) packs all 51 into one
+//     chunk; description = 19 + 4080 = 4099 > 4096 → FAILS pre-fix.
+//   - The fixed budget (4096 − 19 = 4077) flushes after 50 rows = 4000 bytes;
+//     description = 19 + 4000 = 4019 ≤ 4096 → PASSES. (2 chunks ≤ maxEmbedsPerMsg
+//     so we stay on the embed path, not the file fallback.)
+const (
+	embedLimitTestUsers = 51
+	embedLimitTestPad   = 1 // → 80-byte rows; see sizing math above
+)
+
+func TestRunAwol_EmbedDescriptionWithinDiscordLimit(t *testing.T) {
+	pad := strings.Repeat("x", embedLimitTestPad)
+	roster := utils.LiteRosterResponse{LiteProfiles: map[string]utils.LiteProfileResponse{}}
+	for n := range embedLimitTestUsers {
+		id := fmt.Sprintf("%d", 100+n)
+		roster.LiteProfiles[id] = awolMember(fmt.Sprintf("U%02d_%s", n, pad), id, "2026-03-01 12:00:00")
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runAwol(f, healthyCache(nil), awolRefDate, i)
+
+	edit := f.Calls()[1].Edit
+	if edit.Embeds == nil {
+		t.Fatalf("expected embeds on Edit (stay on embed path); got %+v", edit)
+	}
+	// Assert on bytes across EVERY emitted embed — the overflow can land in any
+	// chunk, and production budgets on bytes (len), not runes.
+	for idx, e := range *edit.Embeds {
+		if n := len(e.Description); n > discordEmbedDescriptionLimit {
+			t.Fatalf("embed[%d] description = %d bytes, exceeds Discord %d-byte limit",
+				idx, n, discordEmbedDescriptionLimit)
 		}
 	}
 }
@@ -246,6 +406,10 @@ func TestRunAwol_ForceFileOutputWithSmallResult(t *testing.T) {
 		}
 		t.Fatalf("expected 'Force File Set True' prefix, got %q", got)
 	}
+	raw, _ := io.ReadAll(edit.Files[0].Reader)
+	if !strings.Contains(string(raw), "d AWOL · last post") {
+		t.Fatalf("file should carry days-AWOL rows.\nGot:\n%s", string(raw))
+	}
 }
 
 func TestRunAwol_EmptyRosterSurfacesFormatHint(t *testing.T) {
@@ -300,206 +464,248 @@ func TestRunAwol_RosterFetch500SurfacesError(t *testing.T) {
 	}
 }
 
-func TestRunAwol_OnLOAAnnotationRenders(t *testing.T) {
-	// Two AWOL members; only Trooper.A has a matching LOA cache entry, with a
-	// non-zero ThreadID — so the row must render with **[[LOA]](...)** linked
-	// to that thread. Trooper.B has no entry → no LOA tag.
+// TestRunAwol_ActiveLOAStillAWOL pins the "on LOA, still AWOL" case: a trooper
+// with a pre-LOA unexcused gap is still flagged, rendered with the ⚪ glyph and a
+// [LOA] thread link (active LOA overrides the severity tier regardless of days).
+func TestRunAwol_ActiveLOAStillAWOL(t *testing.T) {
+	// awolRefDate = 2026-05-15. Last post 2026-04-20. Candidate (04-20,05-15] =
+	// 04-21..05-15 = 25 dates. Active LOA 2026-05-10..2026-05-31 covers 05-10..05-15
+	// (6 candidate dates). Accountable = 19 → 12 AWOL. Active window → ⚪ + link.
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
-			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
-			"200": awolMember("Trooper.B", "200", "2026-04-01 12:00:00"),
+			"100": awolMember("Reyes.J", "100", "2026-04-20 12:00:00"),
 		},
 	}
 	serveAwolRoster(t, roster, http.StatusOK)
 
-	cache := healthyCache(map[string]utils.LOAEntry{
-		"trooper.a": {
-			Username:  "Trooper.A",
-			StartDate: mustParseAwolDate("2026-04-01 00:00:00"),
-			EndDate:   mustParseAwolDate("2026-06-01 00:00:00"),
+	cache := healthyCache(map[string][]utils.LOAEntry{
+		"reyes.j": oneWindow(utils.LOAEntry{
+			Username:  "Reyes.J",
+			StartDate: mustParseAwolDate("2026-05-10 00:00:00"),
+			EndDate:   mustParseAwolDate("2026-05-31 00:00:00"),
 			ThreadID:  4242,
-		},
+		}),
 	})
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-
 	runAwol(f, cache, awolRefDate, i)
 
-	calls := f.Calls()
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 calls, got %d: %+v", len(calls), calls)
+	embed := (*f.Calls()[1].Edit.Embeds)[0]
+	desc := embed.Description
+	line := lineContaining(desc, "Reyes.J")
+	if !strings.HasPrefix(line, "⚪") {
+		t.Fatalf("active-LOA row must use ⚪ glyph regardless of days.\nGot line: %q", line)
 	}
-	edit := calls[1].Edit
-	if edit.Embeds == nil || len(*edit.Embeds) == 0 {
-		t.Fatalf("expected embeds; got Embeds=%v", edit.Embeds)
+	if !strings.Contains(line, "[[LOA]](https://7cav.us/threads/4242/)") {
+		t.Fatalf("active-LOA row must link the thread.\nGot line: %q", line)
 	}
-	desc := (*edit.Embeds)[0].Description
-	wantTag := "**[[LOA]](https://7cav.us/threads/4242/)**"
-	if !strings.Contains(desc, wantTag) {
-		t.Fatalf("expected LOA tag %q in description.\nGot:\n%s", wantTag, desc)
+	if !strings.Contains(line, "12d AWOL · last post 25d") {
+		t.Fatalf("expected '12d AWOL · last post 25d'.\nGot line: %q", line)
 	}
-	// Footer must reflect 1 of 2 on LOA.
-	footer := (*edit.Embeds)[0].Footer
-	if footer == nil || !strings.Contains(footer.Text, "Total AWOL: 2 (1 on LOA)") {
-		got := "<nil>"
-		if footer != nil {
-			got = footer.Text
-		}
-		t.Fatalf("footer should report 1 on LOA; got %q", got)
+	if !strings.Contains(desc, "1 total · 1 LOA") {
+		t.Fatalf("summary should report 1 LOA.\nGot:\n%s", desc)
 	}
 }
 
-func TestRunAwol_InactiveLOAEntryNotCountedOrTagged(t *testing.T) {
-	// Three AWOL members on the healthy path, each with a cache entry, but only
-	// Trooper.B's window covers awolRefDate (2026-05-15):
-	//   - Trooper.A: UPCOMING (starts after now) → not active → no tag, not counted.
-	//   - Trooper.B: ACTIVE (window straddles now) → tagged + counted.
-	//   - Trooper.C: EXPIRED (ended before now) → not active → no tag, not counted.
-	// Asserts the (N on LOA) tally is exactly 1 and only the active member is tagged.
+// TestRunAwol_ExpiredLOASubtractedNotTagged pins that an expired LOA still
+// subtracts its covered dates (lowering days AWOL) but does NOT mark the trooper
+// on LOA (no ⚪, no thread link) since the window isn't active now.
+func TestRunAwol_ExpiredLOASubtractedNotTagged(t *testing.T) {
+	// Last post 2026-01-01. awolRefDate 2026-05-15. Candidate huge. Expired LOA
+	// 2026-01-03..2026-05-08 subtracts a big chunk but isn't active at now.
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
-			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
-			"200": awolMember("Trooper.B", "200", "2026-03-15 12:00:00"),
-			"300": awolMember("Trooper.C", "300", "2026-04-01 12:00:00"),
+			"100": awolMember("Tanner.K", "100", "2026-01-01 12:00:00"),
+			"200": awolMember("Vasquez.A", "200", "2026-01-01 12:00:00"), // no LOA → much worse
 		},
 	}
 	serveAwolRoster(t, roster, http.StatusOK)
 
-	cache := &dateAwareLOACache{
-		at: awolRefDate,
-		entries: map[string]utils.LOAEntry{
-			"trooper.a": { // upcoming: starts AFTER awolRefDate
-				Username:  "Trooper.A",
-				StartDate: mustParseAwolDate("2026-06-01 00:00:00"),
-				EndDate:   mustParseAwolDate("2026-06-30 00:00:00"),
-				ThreadID:  1111,
-			},
-			"trooper.b": { // active: window straddles awolRefDate
-				Username:  "Trooper.B",
-				StartDate: mustParseAwolDate("2026-05-01 00:00:00"),
-				EndDate:   mustParseAwolDate("2026-05-31 00:00:00"),
-				ThreadID:  2222,
-			},
-			"trooper.c": { // expired: ended BEFORE awolRefDate
-				Username:  "Trooper.C",
-				StartDate: mustParseAwolDate("2026-04-01 00:00:00"),
-				EndDate:   mustParseAwolDate("2026-04-30 00:00:00"),
-				ThreadID:  3333,
-			},
-		},
-	}
+	cache := healthyCache(map[string][]utils.LOAEntry{
+		"tanner.k": oneWindow(utils.LOAEntry{
+			Username:  "Tanner.K",
+			StartDate: mustParseAwolDate("2026-01-03 00:00:00"),
+			EndDate:   mustParseAwolDate("2026-05-08 00:00:00"),
+			ThreadID:  9001,
+		}),
+	})
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-
 	runAwol(f, cache, awolRefDate, i)
 
-	calls := f.Calls()
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 calls, got %d: %+v", len(calls), calls)
+	desc := (*f.Calls()[1].Edit.Embeds)[0].Description
+	tanner := lineContaining(desc, "Tanner.K")
+	if strings.Contains(tanner, "⚪") || strings.Contains(tanner, "LOA]") {
+		t.Fatalf("expired LOA must not tag the row on-LOA.\nGot line: %q", tanner)
 	}
-	edit := calls[1].Edit
-	if edit.Embeds == nil || len(*edit.Embeds) == 0 {
-		t.Fatalf("expected embeds; got Embeds=%v", edit.Embeds)
+	// Expired LOA subtracted → Tanner.K has fewer days AWOL than the no-LOA Vasquez.A,
+	// so Vasquez.A sorts first.
+	if strings.Index(desc, "Vasquez.A") > strings.Index(desc, "Tanner.K") {
+		t.Fatalf("no-LOA Vasquez.A should outrank LOA-subtracted Tanner.K.\nGot:\n%s", desc)
 	}
-	desc := (*edit.Embeds)[0].Description
-	// All three members still listed (AWOL is independent of LOA state).
-	for _, want := range []string{"Trooper.A", "Trooper.B", "Trooper.C"} {
-		if !strings.Contains(desc, want) {
-			t.Fatalf("embed description missing %q.\nGot:\n%s", want, desc)
-		}
+	if !strings.Contains(desc, "1 LOA") && !strings.Contains(desc, "0 LOA") {
+		t.Fatalf("summary line missing.\nGot:\n%s", desc)
 	}
-	// Only the ACTIVE member is decorated; the upcoming/expired threads must not appear.
-	if !strings.Contains(desc, "https://7cav.us/threads/2222/") {
-		t.Fatalf("active member Trooper.B should be LOA-tagged to thread 2222.\nGot:\n%s", desc)
-	}
-	for _, badThread := range []string{"threads/1111", "threads/3333"} {
-		if strings.Contains(desc, badThread) {
-			t.Fatalf("inactive (upcoming/expired) entry must NOT be LOA-tagged (%s leaked).\nGot:\n%s", badThread, desc)
-		}
-	}
-	// Footer tally counts ONLY the currently-active LOA: exactly 1 of 3.
-	footer := (*edit.Embeds)[0].Footer
-	if footer == nil || !strings.Contains(footer.Text, "Total AWOL: 3 (1 on LOA)") {
-		got := "<nil>"
-		if footer != nil {
-			got = footer.Text
-		}
-		t.Fatalf("footer should report exactly 1 on LOA (active only); got %q", got)
+	// No active LOA → 0 LOA.
+	if !strings.Contains(desc, "· 0 LOA") {
+		t.Fatalf("expired LOA must not count toward active-LOA tally.\nGot:\n%s", desc)
 	}
 }
 
-// unhealthyCache builds an unhealthy fakeLOACache: entries may exist (and the
-// roster member may even have a "real" LOA) but the health probe reports stale,
-// so the handler must NOT trust GetEntry's window and must render "unknown".
-func unhealthyCache(entries map[string]utils.LOAEntry, lastRefresh time.Time) *fakeLOACache {
+// TestRunAwol_FullyCoveredMemberNotListed pins that a trooper whose entire gap is
+// covered by an active LOA (0 days AWOL) is not listed at all.
+func TestRunAwol_FullyCoveredMemberNotListed(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Covered.C", "100", "2026-05-01 12:00:00"),
+			"200": awolMember("Bare.B", "200", "2026-03-01 12:00:00"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	cache := healthyCache(map[string][]utils.LOAEntry{
+		// Covers (05-01, 05-15] entirely → 0 accountable → not listed.
+		"covered.c": oneWindow(utils.LOAEntry{
+			Username:  "Covered.C",
+			StartDate: mustParseAwolDate("2026-05-02 00:00:00"),
+			EndDate:   mustParseAwolDate("2026-05-31 00:00:00"),
+			ThreadID:  555,
+		}),
+	})
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runAwol(f, cache, awolRefDate, i)
+
+	desc := (*f.Calls()[1].Edit.Embeds)[0].Description
+	if strings.Contains(desc, "Covered.C") {
+		t.Fatalf("fully-covered member must not be listed.\nGot:\n%s", desc)
+	}
+	if !strings.Contains(desc, "Bare.B") {
+		t.Fatalf("uncovered member must be listed.\nGot:\n%s", desc)
+	}
+	if !strings.Contains(desc, "1 total") {
+		t.Fatalf("summary should count only listed members.\nGot:\n%s", desc)
+	}
+}
+
+// unhealthyCache builds an unhealthy fakeLOACache: windows may exist but the
+// health probe reports stale, so the handler must NOT subtract LOA and must warn
+// loudly that the accountable-day adjustment was skipped.
+func unhealthyCache(entries map[string][]utils.LOAEntry, lastRefresh time.Time) *fakeLOACache {
 	return &fakeLOACache{entries: entries, healthy: false, lastRefresh: lastRefresh}
 }
 
-func TestRunAwol_UnhealthyCacheRendersUnknownColumn(t *testing.T) {
-	// Two AWOL members. Trooper.A even has a (stale) cache entry with a thread,
-	// but because the cache is unhealthy the handler must treat On LOA as unknown
-	// for EVERY row: no [LOA]/[[LOA]] decoration, no loaCount, plus a footer
-	// warning line.
+func TestRunAwol_UnhealthyCacheRendersRawFallback(t *testing.T) {
+	// Two members. Trooper.A even has a (stale) window that would fully cover its
+	// gap — but because the cache is unhealthy the handler computes RAW inactivity
+	// (no subtraction), still flags, and warns that adjustment was skipped.
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
-			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
+			"100": awolMember("Trooper.A", "100", "2026-05-01 12:00:00"),
 			"200": awolMember("Trooper.B", "200", "2026-04-01 12:00:00"),
 		},
 	}
 	serveAwolRoster(t, roster, http.StatusOK)
 
-	cache := unhealthyCache(map[string]utils.LOAEntry{
-		"trooper.a": {
+	cache := unhealthyCache(map[string][]utils.LOAEntry{
+		"trooper.a": oneWindow(utils.LOAEntry{
 			Username:  "Trooper.A",
-			StartDate: mustParseAwolDate("2026-04-01 00:00:00"),
+			StartDate: mustParseAwolDate("2026-05-02 00:00:00"),
 			EndDate:   mustParseAwolDate("2026-06-01 00:00:00"),
 			ThreadID:  4242,
-		},
+		}),
 	}, awolRefDate.Add(-45*time.Minute))
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
 
 	runAwol(f, cache, awolRefDate, i)
 
-	calls := f.Calls()
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 calls (placeholder + Edit), got %d: %+v", len(calls), calls)
+	embed := (*f.Calls()[1].Edit.Embeds)[0]
+	desc := embed.Description
+	// Trooper.A would be fully covered if LOA were applied; raw fallback still
+	// lists it with raw days (14 dates → 7 AWOL).
+	if !strings.Contains(desc, "Trooper.A") {
+		t.Fatalf("raw fallback must still flag Trooper.A.\nGot:\n%s", desc)
 	}
-	edit := calls[1].Edit
-	if edit.Embeds == nil || len(*edit.Embeds) == 0 {
-		t.Fatalf("expected embeds even on unhealthy path; got Embeds=%v", edit.Embeds)
+	// No LOA decoration leaks through.
+	if strings.Contains(desc, "LOA]") || strings.Contains(desc, "threads/4242") || strings.Contains(desc, "⚪") {
+		t.Fatalf("no LOA decoration on degraded path.\nGot:\n%s", desc)
 	}
-	desc := (*edit.Embeds)[0].Description
-	// Members still listed.
-	for _, want := range []string{"Trooper.A", "Trooper.B"} {
-		if !strings.Contains(desc, want) {
-			t.Fatalf("embed description missing %q.\nGot:\n%s", want, desc)
+	// Summary must not assert a concrete LOA count.
+	if strings.Contains(desc, "· 0 LOA") || strings.Contains(desc, "· 1 LOA") {
+		t.Fatalf("degraded summary must not report a concrete LOA count.\nGot:\n%s", desc)
+	}
+	if !strings.Contains(desc, "LOA unknown") {
+		t.Fatalf("degraded summary should mark LOA unknown.\nGot:\n%s", desc)
+	}
+	// Footer must say the adjustment was SKIPPED, not merely "stale column".
+	if embed.Footer == nil || !strings.Contains(embed.Footer.Text, "SKIPPED") {
+		got := "<nil>"
+		if embed.Footer != nil {
+			got = embed.Footer.Text
 		}
+		t.Fatalf("degraded footer must say adjustment SKIPPED.\nGot: %q", got)
 	}
-	// No LOA decoration leaks through on the unhealthy path.
-	if strings.Contains(desc, "[LOA]") || strings.Contains(desc, "threads/4242") {
-		t.Fatalf("expected no LOA decoration on unhealthy path.\nGot:\n%s", desc)
+	if embed.Footer == nil || !strings.Contains(embed.Footer.Text, "LOA NOT subtracted") {
+		t.Fatalf("degraded footer must say LOA NOT subtracted.\nGot: %q", embed.Footer.Text)
 	}
-	// An "unknown" marker is present.
-	if !strings.Contains(desc, "On LOA: unknown") {
-		t.Fatalf("expected per-row 'On LOA: unknown' marker.\nGot:\n%s", desc)
+}
+
+// TestRunAwol_UnhealthyCacheEmptyListWarns pins item 2: when the LOA cache is
+// unhealthy AND no member is raw-AWOL, the empty-result reply must still surface
+// the degraded/SKIPPED warning rather than a silent all-clear, so staff know the
+// cache was down (every other terminal degraded path warns; this one must too).
+func TestRunAwol_UnhealthyCacheEmptyListWarns(t *testing.T) {
+	// All members posted recently → no raw-AWOL, empty result. Cache unhealthy.
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Fresh.A", "100", "2026-05-14 12:00:00"),
+			"200": awolMember("Fresh.B", "200", "2026-05-13 12:00:00"),
+		},
 	}
-	footer := (*edit.Embeds)[0].Footer
-	if footer == nil {
-		t.Fatalf("expected footer on unhealthy path")
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	cache := unhealthyCache(nil, awolRefDate.Add(-30*time.Minute))
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+
+	runAwol(f, cache, awolRefDate, i)
+
+	edit := f.Calls()[1].Edit
+	got := "<nil>"
+	if edit.Content != nil {
+		got = *edit.Content
 	}
-	// loaCount aggregate must NOT report a concrete number.
-	if strings.Contains(footer.Text, "on LOA)") {
-		t.Fatalf("footer must not report a concrete loaCount on unhealthy path; got %q", footer.Text)
+	if !strings.Contains(got, "SKIPPED") {
+		t.Fatalf("unhealthy-cache empty result must warn the adjustment was SKIPPED, not a silent all-clear.\nGot: %q", got)
 	}
-	if !strings.Contains(footer.Text, "LOA cache unavailable") {
-		t.Fatalf("footer should carry cache-unavailable warning; got %q", footer.Text)
+}
+
+func TestRunAwol_HealthyCacheEmptyListAllClear(t *testing.T) {
+	// Healthy cache + empty result → the plain all-clear (no degraded warning).
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Fresh.A", "100", "2026-05-14 12:00:00"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runAwol(f, healthyCache(nil), awolRefDate, i)
+
+	got := "<nil>"
+	if edit := f.Calls()[1].Edit; edit.Content != nil {
+		got = *edit.Content
+	}
+	if !strings.Contains(got, "no users matching") || strings.Contains(got, "SKIPPED") {
+		t.Fatalf("healthy empty result should be the plain all-clear without a degraded warning.\nGot: %q", got)
 	}
 }
 
 func TestRunAwol_UnhealthyCacheFileOutputCarriesWarning(t *testing.T) {
-	// Force the file path; the unhealthy cache must surface the warning and an
-	// unknown marker in the generated report rather than silent [LOA]/all-clear.
+	// Force the file path; the unhealthy cache must surface the skipped-adjustment
+	// warning and raw figures in the generated report rather than silent all-clear.
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
 			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
@@ -507,8 +713,8 @@ func TestRunAwol_UnhealthyCacheFileOutputCarriesWarning(t *testing.T) {
 	}
 	serveAwolRoster(t, roster, http.StatusOK)
 
-	cache := unhealthyCache(map[string]utils.LOAEntry{
-		"trooper.a": {Username: "Trooper.A", ThreadID: 4242},
+	cache := unhealthyCache(map[string][]utils.LOAEntry{
+		"trooper.a": oneWindow(utils.LOAEntry{Username: "Trooper.A", ThreadID: 4242}),
 	}, time.Time{})
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(
@@ -528,53 +734,49 @@ func TestRunAwol_UnhealthyCacheFileOutputCarriesWarning(t *testing.T) {
 	}
 	body := string(raw)
 	if strings.Contains(body, "[LOA]") {
-		t.Fatalf("file must not carry [LOA] tag on unhealthy path.\nGot:\n%s", body)
+		t.Fatalf("file must not carry [LOA] tag on degraded path.\nGot:\n%s", body)
 	}
-	if !strings.Contains(body, "LOA cache unavailable") {
-		t.Fatalf("file should carry cache-unavailable warning.\nGot:\n%s", body)
+	if !strings.Contains(body, "SKIPPED") {
+		t.Fatalf("file should carry skipped-adjustment warning.\nGot:\n%s", body)
 	}
-	if !strings.Contains(body, "unknown") {
-		t.Fatalf("file should mark On LOA unknown.\nGot:\n%s", body)
+	if !strings.Contains(body, "d AWOL · last post") {
+		t.Fatalf("file should carry raw days-AWOL rows.\nGot:\n%s", body)
 	}
 }
 
-// countingLOACache wraps fakeLOACache to count GetEntry calls per username,
-// proving the S4 single-snapshot invariant: /awol reads each member's LOA state
-// exactly ONCE (deriving both OnLOA and the [[LOA]] link from that one snapshot),
-// not once for the verdict and again for the link.
+// countingLOACache wraps fakeLOACache to count GetEntries calls per username,
+// proving /awol reads each member's LOA history exactly ONCE — deriving the
+// accountable-day figure AND the active-window link from that single read against
+// one injected `now` (PR #161 clock-skew item).
 type countingLOACache struct {
 	*fakeLOACache
-	getEntryCalls map[string]int
+	getEntriesCalls map[string]int
 }
 
-func (c *countingLOACache) GetEntry(username string) (utils.LOAEntry, bool) {
-	if c.getEntryCalls == nil {
-		c.getEntryCalls = map[string]int{}
+func (c *countingLOACache) GetEntries(username string) []utils.LOAEntry {
+	if c.getEntriesCalls == nil {
+		c.getEntriesCalls = map[string]int{}
 	}
-	c.getEntryCalls[strings.ToLower(username)]++
-	return c.fakeLOACache.GetEntry(username)
+	c.getEntriesCalls[strings.ToLower(username)]++
+	return c.fakeLOACache.GetEntries(username)
 }
 
-// TestRunAwol_S4_SingleSnapshotPerUser pins the #158/S4 fix: an active LOA member
-// with a thread renders the [[LOA]] link, and the handler reads the cache for that
-// member exactly once — so a concurrent refresh can't make the link and the OnLOA
-// verdict disagree.
-func TestRunAwol_S4_SingleSnapshotPerUser(t *testing.T) {
+func TestRunAwol_SingleHistoryReadPerUser(t *testing.T) {
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
-			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
+			"100": awolMember("Trooper.A", "100", "2026-04-20 12:00:00"),
 		},
 	}
 	serveAwolRoster(t, roster, http.StatusOK)
 
 	cache := &countingLOACache{
-		fakeLOACache: healthyCache(map[string]utils.LOAEntry{
-			"trooper.a": {
+		fakeLOACache: healthyCache(map[string][]utils.LOAEntry{
+			"trooper.a": oneWindow(utils.LOAEntry{
 				Username:  "Trooper.A",
 				StartDate: mustParseAwolDate("2026-05-01 00:00:00"),
 				EndDate:   mustParseAwolDate("2026-06-01 00:00:00"), // active at awolRefDate
 				ThreadID:  4242,
-			},
+			}),
 		}),
 	}
 	f := &fakeResponder{}
@@ -582,11 +784,40 @@ func TestRunAwol_S4_SingleSnapshotPerUser(t *testing.T) {
 
 	runAwol(f, cache, awolRefDate, i)
 
-	if n := cache.getEntryCalls["trooper.a"]; n != 1 {
-		t.Fatalf("S4: GetEntry must be called exactly once per member, got %d", n)
+	if n := cache.getEntriesCalls["trooper.a"]; n != 1 {
+		t.Fatalf("GetEntries must be called exactly once per member, got %d", n)
 	}
-	desc := (*f.Calls()[1].Edit.Embeds)[0].Description
-	if !strings.Contains(desc, "**[[LOA]](https://7cav.us/threads/4242/)**") {
-		t.Fatalf("active member must render the [[LOA]] link from the single snapshot.\nGot:\n%s", desc)
+	line := lineContaining((*f.Calls()[1].Edit.Embeds)[0].Description, "Trooper.A")
+	if !strings.Contains(line, "[[LOA]](https://7cav.us/threads/4242/)") {
+		t.Fatalf("active member must render the [[LOA]] link from the single history read.\nGot:\n%s", line)
+	}
+}
+
+// TestRunAwol_MultipleWindowsMergedNoDoubleCount pins that overlapping windows in
+// a user's history don't double-subtract.
+func TestRunAwol_MultipleWindowsMergedNoDoubleCount(t *testing.T) {
+	// Last post 2026-04-15. awolRefDate 2026-05-15. Candidate (04-15,05-15] = 30.
+	// Two overlapping windows 04-20..05-01 and 04-28..05-05 → union 04-20..05-05
+	// (16 dates). Accountable = 14 → 7 AWOL. Neither active now → 🟠 not ⚪.
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Multi.M", "100", "2026-04-15 12:00:00"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	cache := healthyCache(map[string][]utils.LOAEntry{
+		"multi.m": {
+			{Username: "Multi.M", StartDate: mustParseAwolDate("2026-04-20 00:00:00"), EndDate: mustParseAwolDate("2026-05-01 00:00:00"), ThreadID: 1},
+			{Username: "Multi.M", StartDate: mustParseAwolDate("2026-04-28 00:00:00"), EndDate: mustParseAwolDate("2026-05-05 00:00:00"), ThreadID: 2},
+		},
+	})
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runAwol(f, cache, awolRefDate, i)
+
+	line := lineContaining((*f.Calls()[1].Edit.Embeds)[0].Description, "Multi.M")
+	if !strings.Contains(line, "7d AWOL · last post 30d") {
+		t.Fatalf("overlapping windows must merge (7d AWOL, raw 30d).\nGot line: %q", line)
 	}
 }
