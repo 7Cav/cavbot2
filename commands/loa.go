@@ -17,10 +17,10 @@ import (
 // *utils.LOACache (GlobalLOACache); tests substitute a fake with canned
 // entries and a forced health verdict so the handler stays deterministic
 // without touching the process-global singleton. /awol's loaCacheReader is a
-// separate, per-command minimal surface over the same cache with the same
-// {GetEntry, IsHealthy} shape today; the two are kept distinct so each command's
-// dependency stays scoped to what it actually reads (and so they can diverge —
-// see #159, which adds GetEntries to loaCacheReader). /awol additionally gates on
+// separate, per-command minimal surface over the same cache; the two share
+// IsHealthy but read differently — /loa uses GetEntry (one most-relevant window)
+// while /awol uses GetEntries (the full history, #159). They are kept distinct so
+// each command's dependency stays scoped to what it actually reads. /awol gates on
 // IsHealthy to render its On-LOA column (#96); /loa uses it for the staleness
 // guard above.
 type loaCacheView interface {
