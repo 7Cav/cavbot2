@@ -268,19 +268,38 @@ func lineContaining(s, sub string) string {
 }
 
 // TestRunAwol_EmbedDescriptionWithinDiscordLimit pins item 1: the per-chunk
-// budget must leave room for the summary-line prefix + separator (and any footer
-// that rides along), so the FINAL embed description never exceeds Discord's 4096
-// limit. A single near-limit user line previously produced a chunk at ~4096 that,
-// once the summary + "\n\n" was prepended, overflowed → Discord 400.
+// budget must leave room for the summary-line prefix + separator, so the FINAL
+// rendered description (summaryLine + "\n\n" + chunk) never exceeds Discord's
+// 4096-byte cap. Production budgets on len(...) (bytes), so this test asserts on
+// bytes — the conservative measure — not runes.
+//
+// This is a genuine regression guard for the prefix-aware budget
+// (`chunkBudget := discordEmbedDescriptionLimit - len(descPrefix)`). To trip the
+// pre-fix bug a chunk must land in the danger band (4096 − prefixLen, 4096] =
+// (4077, 4096], where the raw chunk fits the bare 4096 budget but overflows once
+// the prefix is prepended. The earlier version stepped *over* that band with
+// coarse ~139-byte lines and so passed even against the un-fixed budget.
+//
+// Sizing math (all bytes):
+//   - Each no-LOA row renders as "🔴 [U%02d_x](https://7cav.us/rosters/profile/<id>) — 68d AWOL · last post 75d\n".
+//     With pad="x", 2-digit user index, 3-digit milpac id, and the 68/75 day
+//     figures this calc produces for a 2026-03-01 post at awolRefDate
+//     (DaysAWOL=68, raw=75 — both 2 digits), every row is exactly 80 bytes.
+//   - Summary prefix "51 total · 0 LOA\n\n" = 19 bytes → danger band (4077, 4096].
+//   - 51 rows = 4080 raw bytes. The buggy budget (4096) packs all 51 into one
+//     chunk; description = 19 + 4080 = 4099 > 4096 → FAILS pre-fix.
+//   - The fixed budget (4096 − 19 = 4077) flushes after 50 rows = 4000 bytes;
+//     description = 19 + 4000 = 4019 ≤ 4096 → PASSES. (2 chunks ≤ maxEmbedsPerMsg
+//     so we stay on the embed path, not the file fallback.)
+const (
+	embedLimitTestUsers = 51
+	embedLimitTestPad   = 1 // → 80-byte rows; see sizing math above
+)
+
 func TestRunAwol_EmbedDescriptionWithinDiscordLimit(t *testing.T) {
-	// Many moderately-padded users whose rendered lines accumulate into a chunk
-	// sitting just under the raw 4096 cap. Without the prefix-aware budget the
-	// summary line + "\n\n" prepended on top pushes the description past 4096.
-	// ~60-char usernames → ~110-byte lines; 36 of them ≈ 3960 bytes, the next
-	// fills toward the cap. Each line individually stays well under the budget.
-	pad := strings.Repeat("x", 60)
+	pad := strings.Repeat("x", embedLimitTestPad)
 	roster := utils.LiteRosterResponse{LiteProfiles: map[string]utils.LiteProfileResponse{}}
-	for n := range 40 {
+	for n := range embedLimitTestUsers {
 		id := fmt.Sprintf("%d", 100+n)
 		roster.LiteProfiles[id] = awolMember(fmt.Sprintf("U%02d_%s", n, pad), id, "2026-03-01 12:00:00")
 	}
@@ -292,11 +311,14 @@ func TestRunAwol_EmbedDescriptionWithinDiscordLimit(t *testing.T) {
 
 	edit := f.Calls()[1].Edit
 	if edit.Embeds == nil {
-		t.Fatalf("expected embeds on Edit; got %+v", edit)
+		t.Fatalf("expected embeds on Edit (stay on embed path); got %+v", edit)
 	}
+	// Assert on bytes across EVERY emitted embed — the overflow can land in any
+	// chunk, and production budgets on bytes (len), not runes.
 	for idx, e := range *edit.Embeds {
-		if n := len([]rune(e.Description)); n > 4096 {
-			t.Fatalf("embed[%d] description = %d runes, exceeds Discord 4096 limit", idx, n)
+		if n := len(e.Description); n > discordEmbedDescriptionLimit {
+			t.Fatalf("embed[%d] description = %d bytes, exceeds Discord %d-byte limit",
+				idx, n, discordEmbedDescriptionLimit)
 		}
 	}
 }

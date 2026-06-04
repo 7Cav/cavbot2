@@ -220,12 +220,18 @@ func TestValidLOAWindows_MixedSliceKeepsValid(t *testing.T) {
 	}
 }
 
-// TestAccountableDaysAWOL_MixedSliceValidStillSubtracts pins the same via the
-// public calc: one valid + one backwards window for the user → the valid one
-// still subtracts its covered dates.
+// TestAccountableDaysAWOL_MixedSliceValidStillSubtracts is a calc-level smoke
+// test of the public AccountableDaysAWOL path on a mixed slice (one valid + one
+// end-before-start window): the valid window still subtracts its covered dates
+// end-to-end.
+//
+// It does NOT pin the validLOAWindows end-before-start filter — that branch is
+// guarded directly by TestValidLOAWindows_MixedSliceKeepsValid (len==1). Removing
+// the filter here would still yield 4, because coveredByLOA's own range check
+// (!Before(start) && !After(end)) already covers nothing for a backwards window.
 func TestAccountableDaysAWOL_MixedSliceValidStillSubtracts(t *testing.T) {
 	// Candidate (Jan 1, Jan 20] = Jan 2..20 (19). Valid LOA Jan 3..10 covers 8.
-	// Backwards LOA ignored. Accountable 11 → 11-7 = 4.
+	// Backwards LOA covers nothing either way. Accountable 11 → 11-7 = 4.
 	got := AccountableDaysAWOL(
 		d(2026, time.January, 1),
 		d(2026, time.January, 20),
