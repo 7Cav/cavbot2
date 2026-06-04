@@ -27,9 +27,10 @@ func rawAccountableDates(lastPost, now time.Time) int {
 }
 
 // coveredByLOA reports whether a UTC date is covered by any LOA window. An LOA
-// covers the inclusive range [StartDate, EndDate]. A backwards/zero-after-trunc
-// range (end before start) covers nothing — those are filtered upstream by
-// validLOAWindows so they're also DEBUG-logged once, not silently per-date.
+// covers the inclusive range [StartDate, EndDate]; a zero-width range
+// (StartDate == EndDate) is valid and covers exactly that one day. Only an
+// end-before-start range covers nothing — those are filtered upstream by
+// validLOAWindows so they're DEBUG-logged once, not silently per-date.
 func coveredByLOA(date time.Time, windows []LOAEntry) bool {
 	for _, w := range windows {
 		s := utcDate(w.StartDate)
@@ -41,12 +42,24 @@ func coveredByLOA(date time.Time, windows []LOAEntry) bool {
 	return false
 }
 
-// validLOAWindows returns the windows whose UTC date range is well-formed
-// (EndDate not before StartDate). Backwards ranges are dropped and DEBUG-logged
-// so one malformed forum post can't crash or skew the count (ADR 0008).
+// validLOAWindows returns the windows whose UTC date range is well-formed: both
+// bounds set and EndDate not before StartDate. Backwards ranges and zero-date
+// entries are dropped and DEBUG-logged so one malformed forum post can't crash or
+// skew the count (ADR 0008). A zero-value entry is unreachable from production
+// (parseLOAPost only emits when both dates parse) but filtering it keeps the calc
+// from ever "covering" the epoch-zero UTC date.
 func validLOAWindows(windows []LOAEntry) []LOAEntry {
 	out := make([]LOAEntry, 0, len(windows))
 	for _, w := range windows {
+		if w.StartDate.IsZero() || w.EndDate.IsZero() {
+			Debug("LOA window ignored (zero-value date)",
+				"username", w.Username,
+				"thread_id", w.ThreadID,
+				"start", w.StartDate,
+				"end", w.EndDate,
+			)
+			continue
+		}
 		if utcDate(w.EndDate).Before(utcDate(w.StartDate)) {
 			Debug("LOA window ignored (end before start)",
 				"username", w.Username,
