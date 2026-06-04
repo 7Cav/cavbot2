@@ -241,13 +241,6 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		return
 	}
 
-	loaCount := 0
-	for _, u := range awolUsers {
-		if u.OnLOA() {
-			loaCount++
-		}
-	}
-
 	footerText := awolReportFooter
 	if !cacheHealthy {
 		footerText = awolDegradedFooter
@@ -257,7 +250,7 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 	// summaryLine + "\n\n" + chunk, so the chunk budget must reserve room for that
 	// rendered prefix — otherwise a near-4096 chunk overflows once the summary is
 	// prepended (Discord 400). Reserve the longest prefix any embed could carry.
-	descPrefix := awolSummaryLine(len(awolUsers), loaCount, cacheHealthy) + "\n\n"
+	descPrefix := awolSummaryLine(len(awolUsers)) + "\n\n"
 	chunkBudget := discordEmbedDescriptionLimit - len(descPrefix)
 
 	var chunks []string
@@ -277,12 +270,12 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 	utils.Info("Debug chunks info", "chunks_length", len(chunks), "max_embeds", maxEmbedsPerMsg)
 	if len(chunks) > maxEmbedsPerMsg {
 		utils.Info("⚠️ Too many AWOL users for embeds, falling back to file upload", "count", len(awolUsers))
-		sendAwolFile(r, i, awolUsers, position, forceFile, cacheHealthy, loaCount, now)
+		sendAwolFile(r, i, awolUsers, position, forceFile, cacheHealthy, now)
 		utils.Info("✨ Done!", "command", "Awol")
 		return
 	} else if forceFile {
 		utils.Info("⚠️ Force file output enabled, falling back to embeds", "count", len(awolUsers))
-		sendAwolFile(r, i, awolUsers, position, forceFile, cacheHealthy, loaCount, now)
+		sendAwolFile(r, i, awolUsers, position, forceFile, cacheHealthy, now)
 		utils.Info("✨ Done!", "command", "Awol")
 		return
 	}
@@ -292,7 +285,7 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		title := awolEmbedTitle(position, idx, len(chunks))
 		embed := &discordgo.MessageEmbed{
 			Title:       title,
-			Description: awolSummaryLine(len(awolUsers), loaCount, cacheHealthy) + "\n\n" + chunk,
+			Description: awolSummaryLine(len(awolUsers)) + "\n\n" + chunk,
 			Color:       0xfbcc29,
 			Footer: &discordgo.MessageEmbedFooter{
 				Text: footerText,
@@ -322,13 +315,12 @@ func awolEmbedTitle(position string, idx, total int) string {
 	return fmt.Sprintf("AWOL — %s (Page %d/%d)", position, idx+1, total)
 }
 
-// awolSummaryLine renders "N total · M LOA". On the degraded path the LOA count
-// is meaningless (no adjustment ran), so it is suppressed rather than shown as 0.
-func awolSummaryLine(total, loaCount int, cacheHealthy bool) string {
-	if !cacheHealthy {
-		return fmt.Sprintf("%d total · LOA unknown", total)
-	}
-	return fmt.Sprintf("%d total · %d LOA", total, loaCount)
+// awolSummaryLine renders "N flagged" — the count of AWOL-flagged members. The
+// LOA dimension is conveyed by the ⚪ rows and the footer, not a separate count:
+// a bare "M LOA" misread as "M LOAs subtracted" (it was really the number of
+// flagged troopers currently on an active LOA), so it is dropped on both paths.
+func awolSummaryLine(flagged int) string {
+	return fmt.Sprintf("%d flagged", flagged)
 }
 
 // awolUserLine renders one report row:
@@ -354,12 +346,12 @@ func awolUserLine(u AwolUser) string {
 	)
 }
 
-func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, awolUsers []AwolUser, position string, forceFile, cacheHealthy bool, loaCount int, now time.Time) {
+func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, awolUsers []AwolUser, position string, forceFile, cacheHealthy bool, now time.Time) {
 	var content strings.Builder
 	_, _ = fmt.Fprintf(&content, "AWOL Report for %s\nGenerated: %s\n%s\n\n",
 		position,
 		now.Format("2006-01-02 15:04:05"),
-		awolSummaryLine(len(awolUsers), loaCount, cacheHealthy))
+		awolSummaryLine(len(awolUsers)))
 	if !cacheHealthy {
 		// ADR 0008: surface the degraded warning in the file too — same figures
 		// (raw) and the same "adjustment skipped" wording as the embed.
