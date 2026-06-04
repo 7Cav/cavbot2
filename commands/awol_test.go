@@ -149,7 +149,7 @@ func TestRunAwol_SmallResultRendersEmbedChunks(t *testing.T) {
 	if embed.Title != "AWOL — 1-7" {
 		t.Fatalf("title = %q, want %q", embed.Title, "AWOL — 1-7")
 	}
-	if !strings.Contains(desc, "2 total · 0 LOA") {
+	if !strings.Contains(desc, "2 flagged") {
 		t.Fatalf("summary line missing.\nGot:\n%s", desc)
 	}
 	if embed.Footer == nil || embed.Footer.Text != awolReportFooter {
@@ -275,25 +275,26 @@ func lineContaining(s, sub string) string {
 //
 // This is a genuine regression guard for the prefix-aware budget
 // (`chunkBudget := discordEmbedDescriptionLimit - len(descPrefix)`). To trip the
-// pre-fix bug a chunk must land in the danger band (4096 − prefixLen, 4096] =
-// (4077, 4096], where the raw chunk fits the bare 4096 budget but overflows once
-// the prefix is prepended. The earlier version stepped *over* that band with
-// coarse ~139-byte lines and so passed even against the un-fixed budget.
+// pre-fix bug a chunk must land in the danger band (4096 − prefixLen, 4096], where
+// the raw chunk fits the bare 4096 budget but overflows once the prefix is
+// prepended. The summary prefix is now "N flagged\n\n"; for N=45 that is
+// "45 flagged\n\n" = 12 bytes, so the danger band is (4084, 4096]. Sizing targets
+// that band exactly so the test still exercises the prefix reservation.
 //
 // Sizing math (all bytes):
-//   - Each no-LOA row renders as "🔴 [U%02d_x](https://7cav.us/rosters/profile/<id>) — 68d AWOL · last post 75d\n".
-//     With pad="x", 2-digit user index, 3-digit milpac id, and the 68/75 day
+//   - Each no-LOA row renders as "🔴 [U%02d_<12x>](https://7cav.us/rosters/profile/<id>) — 68d AWOL · last post 75d\n".
+//     With a 12-char pad, 2-digit user index, 3-digit milpac id, and the 68/75 day
 //     figures this calc produces for a 2026-03-01 post at awolRefDate
-//     (DaysAWOL=68, raw=75 — both 2 digits), every row is exactly 80 bytes.
-//   - Summary prefix "51 total · 0 LOA\n\n" = 19 bytes → danger band (4077, 4096].
-//   - 51 rows = 4080 raw bytes. The buggy budget (4096) packs all 51 into one
-//     chunk; description = 19 + 4080 = 4099 > 4096 → FAILS pre-fix.
-//   - The fixed budget (4096 − 19 = 4077) flushes after 50 rows = 4000 bytes;
-//     description = 19 + 4000 = 4019 ≤ 4096 → PASSES. (2 chunks ≤ maxEmbedsPerMsg
+//     (DaysAWOL=68, raw=75 — both 2 digits), every row is exactly 91 bytes.
+//   - Summary prefix "45 flagged\n\n" = 12 bytes → danger band (4084, 4096].
+//   - 45 rows = 4095 raw bytes. The buggy budget (4096) packs all 45 into one
+//     chunk; description = 12 + 4095 = 4107 > 4096 → FAILS pre-fix.
+//   - The fixed budget (4096 − 12 = 4084) flushes after 44 rows = 4004 bytes;
+//     description = 12 + 4004 = 4016 ≤ 4096 → PASSES. (2 chunks ≤ maxEmbedsPerMsg
 //     so we stay on the embed path, not the file fallback.)
 const (
-	embedLimitTestUsers = 51
-	embedLimitTestPad   = 1 // → 80-byte rows; see sizing math above
+	embedLimitTestUsers = 45
+	embedLimitTestPad   = 12 // → 91-byte rows; see sizing math above
 )
 
 func TestRunAwol_EmbedDescriptionWithinDiscordLimit(t *testing.T) {
@@ -502,8 +503,8 @@ func TestRunAwol_ActiveLOAStillAWOL(t *testing.T) {
 	if !strings.Contains(line, "12d AWOL · last post 25d") {
 		t.Fatalf("expected '12d AWOL · last post 25d'.\nGot line: %q", line)
 	}
-	if !strings.Contains(desc, "1 total · 1 LOA") {
-		t.Fatalf("summary should report 1 LOA.\nGot:\n%s", desc)
+	if !strings.Contains(desc, "1 flagged") {
+		t.Fatalf("summary should report 1 flagged.\nGot:\n%s", desc)
 	}
 }
 
@@ -543,12 +544,8 @@ func TestRunAwol_ExpiredLOASubtractedNotTagged(t *testing.T) {
 	if strings.Index(desc, "Vasquez.A") > strings.Index(desc, "Tanner.K") {
 		t.Fatalf("no-LOA Vasquez.A should outrank LOA-subtracted Tanner.K.\nGot:\n%s", desc)
 	}
-	if !strings.Contains(desc, "1 LOA") && !strings.Contains(desc, "0 LOA") {
+	if !strings.Contains(desc, "2 flagged") {
 		t.Fatalf("summary line missing.\nGot:\n%s", desc)
-	}
-	// No active LOA → 0 LOA.
-	if !strings.Contains(desc, "· 0 LOA") {
-		t.Fatalf("expired LOA must not count toward active-LOA tally.\nGot:\n%s", desc)
 	}
 }
 
@@ -583,7 +580,7 @@ func TestRunAwol_FullyCoveredMemberNotListed(t *testing.T) {
 	if !strings.Contains(desc, "Bare.B") {
 		t.Fatalf("uncovered member must be listed.\nGot:\n%s", desc)
 	}
-	if !strings.Contains(desc, "1 total") {
+	if !strings.Contains(desc, "1 flagged") {
 		t.Fatalf("summary should count only listed members.\nGot:\n%s", desc)
 	}
 }
@@ -631,12 +628,12 @@ func TestRunAwol_UnhealthyCacheRendersRawFallback(t *testing.T) {
 	if strings.Contains(desc, "LOA]") || strings.Contains(desc, "threads/4242") || strings.Contains(desc, "⚪") {
 		t.Fatalf("no LOA decoration on degraded path.\nGot:\n%s", desc)
 	}
-	// Summary must not assert a concrete LOA count.
-	if strings.Contains(desc, "· 0 LOA") || strings.Contains(desc, "· 1 LOA") {
-		t.Fatalf("degraded summary must not report a concrete LOA count.\nGot:\n%s", desc)
+	// Summary is just the flagged count — no LOA token on either path.
+	if !strings.Contains(desc, "2 flagged") {
+		t.Fatalf("degraded summary should report the flagged count.\nGot:\n%s", desc)
 	}
-	if !strings.Contains(desc, "LOA unknown") {
-		t.Fatalf("degraded summary should mark LOA unknown.\nGot:\n%s", desc)
+	if strings.Contains(desc, "LOA unknown") || strings.Contains(desc, " LOA\n") || strings.Contains(desc, "· 0 LOA") || strings.Contains(desc, "· 1 LOA") {
+		t.Fatalf("degraded summary must not carry an LOA count/unknown token.\nGot:\n%s", desc)
 	}
 	// Footer must say the adjustment was SKIPPED, not merely "stale column".
 	if embed.Footer == nil || !strings.Contains(embed.Footer.Text, "SKIPPED") {
