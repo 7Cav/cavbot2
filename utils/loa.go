@@ -8,13 +8,33 @@ import (
 	"time"
 )
 
+// reFormatBBCode matches formatting-only BBCode tags (bold/italic/underline/
+// color/size/font, open or close, with or without an attribute). Forum LOA posts
+// wrap the field labels and values in an inconsistent mix of these — the canonical
+// template uses [B][COLOR=rgb(213, 185, 0)]…[/COLOR][/B], but real posts use plain
+// [B]…[/B], no formatting at all, a different color, or [SIZE]-wrapped values.
+// Stripping these tags before matching makes label/value extraction agnostic to the
+// formatting, which is the whole source of historical silent parse failures
+// (cf. the brittleness note in CLAUDE.md / utils/loa.go header).
+var reFormatBBCode = regexp.MustCompile(`(?i)\[/?(?:b|i|u|s|color|size|font)(?:=[^\]]*)?\]`)
+
 var (
-	reUsername  = regexp.MustCompile(`\[B\]\[COLOR=rgb\(213,\s*185,\s*0\)\]Username\[/COLOR\]\[/B\]\s*:?\s*(\S+)`)
-	reStartDate = regexp.MustCompile(`\[B\]\[COLOR=rgb\(213,\s*185,\s*0\)\]Start Date\[/COLOR\]\[/B\]\s*[\r\n]+([^\r\n]+)`)
-	reEndDate   = regexp.MustCompile(`\[B\]\[COLOR=rgb\(213,\s*185,\s*0\)\]End Date\[/COLOR\]\[/B\]\s*[\r\n]+([^\r\n]+)`)
+	reUsername  = regexp.MustCompile(`(?i)Username\s*:?\s*(\S+)`)
+	reStartDate = regexp.MustCompile(`(?i)Start Date\s*:?\s*[\r\n]+\s*([^\r\n]+)`)
+	reEndDate   = regexp.MustCompile(`(?i)End Date\s*:?\s*[\r\n]+\s*([^\r\n]+)`)
 )
 
-const loaDateLayout = "Jan 2, 2006"
+const loaDateLayout = "Jan 2, 2006" // canonical; also used by tests for fixed-instant boundary cases
+
+// loaDateLayouts are the date formats accepted for the Start/End values, tried in
+// order. The forum has no input mask, so troopers file dates in several shapes:
+// abbreviated or full month name, with or without the comma after the day.
+var loaDateLayouts = []string{
+	loaDateLayout,
+	"January 2, 2006",
+	"Jan 2 2006",
+	"January 2 2006",
+}
 
 type LOAEntry struct {
 	Username  string
@@ -224,6 +244,10 @@ func (c *LOACache) refresh(fetcher loaPostFetcher, nodeIDs []int) {
 }
 
 func parseLOAPost(msg string) (LOAEntry, bool) {
+	// Strip formatting-only BBCode first so label/value matching is agnostic to the
+	// post's bold/color/size wrapping (the source of historical silent failures).
+	msg = reFormatBBCode.ReplaceAllString(msg, "")
+
 	usernameMatch := reUsername.FindStringSubmatch(msg)
 	startMatch := reStartDate.FindStringSubmatch(msg)
 	endMatch := reEndDate.FindStringSubmatch(msg)
@@ -233,12 +257,12 @@ func parseLOAPost(msg string) (LOAEntry, bool) {
 	}
 
 	username := strings.TrimSpace(usernameMatch[1])
-	startDate, err := time.Parse(loaDateLayout, strings.TrimSpace(startMatch[1]))
-	if err != nil {
+	startDate, ok := parseLOADate(startMatch[1])
+	if !ok {
 		return LOAEntry{}, false
 	}
-	endDate, err := time.Parse(loaDateLayout, strings.TrimSpace(endMatch[1]))
-	if err != nil {
+	endDate, ok := parseLOADate(endMatch[1])
+	if !ok {
 		return LOAEntry{}, false
 	}
 
@@ -247,4 +271,17 @@ func parseLOAPost(msg string) (LOAEntry, bool) {
 		StartDate: startDate,
 		EndDate:   endDate,
 	}, true
+}
+
+// parseLOADate parses a Start/End date value against each accepted layout. The raw
+// value is trimmed first; a value that matches no layout (free-text like
+// "probably May 8, 2026") yields ok=false and the whole post is skipped.
+func parseLOADate(raw string) (time.Time, bool) {
+	v := strings.TrimSpace(raw)
+	for _, layout := range loaDateLayouts {
+		if t, err := time.Parse(layout, v); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }

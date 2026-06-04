@@ -42,7 +42,7 @@ For command registration, interaction routing, and error-handling conventions, s
 
 `utils.GlobalLOACache` is a process-global, mutex-guarded cache of forum LOA posts. `initLOACache()` in `main.go` does an initial refresh on startup, then runs `Refresh` every 15 minutes in a goroutine. Refresh is **incremental** — `lastSyncedPostDate` tracks the high-water mark and subsequent queries only pull newer posts. Entries whose `EndDate` has passed are pruned each refresh.
 
-Parsing depends on a specific Xenforo BBCode template (yellow `[COLOR=rgb(213, 185, 0)]` labels for `Username`, `Start Date`, `End Date`). If the forum template changes, the regexes in `utils/loa.go` will silently stop matching — `parseLOAPost` returns `false` and the post is logged at DEBUG level.
+Parsing keys off the `Username`, `Start Date`, and `End Date` field labels. `parseLOAPost` first strips formatting-only BBCode (`[B]`, `[COLOR=…]`, `[SIZE=…]`, etc.) so label/value matching is agnostic to the post's bold/color/size wrapping — real posts vary widely (plain `[B]Start Date[/B]`, no formatting, non-yellow colors, `[SIZE]`-wrapped dates). Date values accept abbreviated or full month names, with or without the comma (`loaDateLayouts`). Posts that still don't match (free-text dates, `Start:`/`End:` label variants, dates only in the title) return `false` and are logged at DEBUG. If the forum changes the *label wording* itself, matching breaks silently — the regression cases in `loa_test.go` are seeded from real forum bodies to catch drift.
 
 ### External integrations
 
