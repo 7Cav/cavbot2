@@ -115,8 +115,67 @@ func TestParseLOAPost(t *testing.T) {
 			wantOK: false,
 		},
 		{
-			name:   "legacy variant: wrong color (non-yellow label) does not match",
-			msg:    "[B][COLOR=rgb(0, 0, 0)]Username[/COLOR][/B]: Black\n[B][COLOR=rgb(0, 0, 0)]Start Date[/COLOR][/B]\nJan 1, 2099\n[B][COLOR=rgb(0, 0, 0)]End Date[/COLOR][/B]\nJan 31, 2099\n",
+			// Behavior change (issue: cross-month/non-canonical LOAs silently dropped):
+			// the yellow-color wrapper is no longer required. A well-formed post in any
+			// (or no) label color now parses — formatting BBCode is stripped before matching.
+			name:      "non-yellow label color still parses (color no longer required)",
+			msg:       "[B][COLOR=rgb(0, 0, 0)]Username[/COLOR][/B]: Black\n[B][COLOR=rgb(0, 0, 0)]Start Date[/COLOR][/B]\nJan 1, 2099\n[B][COLOR=rgb(0, 0, 0)]End Date[/COLOR][/B]\nJan 31, 2099\n",
+			wantOK:    true,
+			wantUser:  "Black",
+			wantStart: "2099-01-01",
+			wantEnd:   "2099-01-31",
+		},
+		{
+			// Real mirror variant (thread 87170): bold labels, NO color wrapper — the
+			// single most common cause of historical silent failures.
+			name:      "bold label without color wrapper parses",
+			msg:       "[B]Username[/B]: Alpine.A\n[B]Start Date[/B]\nDec 6, 2025\n[B]End Date[/B]\nDec 22, 2025\n",
+			wantOK:    true,
+			wantUser:  "Alpine.A",
+			wantStart: "2025-12-06",
+			wantEnd:   "2025-12-22",
+		},
+		{
+			// Real mirror variant (thread 83158): no formatting BBCode at all.
+			name:      "plain labels with no formatting parse",
+			msg:       "Username: Videnovic.Y\nStart Date\nOct 4, 2025\nEnd Date\nOct 17, 2025\n",
+			wantOK:    true,
+			wantUser:  "Videnovic.Y",
+			wantStart: "2025-10-04",
+			wantEnd:   "2025-10-17",
+		},
+		{
+			// Real mirror variant (thread 87307): the date value is wrapped in [SIZE].
+			name:      "size-wrapped date value parses",
+			msg:       "[B]Username[/B]: Lake.W\n[B][SIZE=4]Start Date[/SIZE][/B]\n[SIZE=4]Jan 3, 2026[/SIZE]\n[B][SIZE=4]End Date[/SIZE][/B]\n[SIZE=4]Jan 16, 2026[/SIZE]\n",
+			wantOK:    true,
+			wantUser:  "Lake.W",
+			wantStart: "2026-01-03",
+			wantEnd:   "2026-01-16",
+		},
+		{
+			// Real mirror variant (thread 93288): full month name instead of abbreviation.
+			name:      "full month name parses",
+			msg:       loaPost("Lawrie.A", "April 1, 2026", "April 23, 2026"),
+			wantOK:    true,
+			wantUser:  "Lawrie.A",
+			wantStart: "2026-04-01",
+			wantEnd:   "2026-04-23",
+		},
+		{
+			// Real mirror variant (thread 94302): day with no comma before the year.
+			name:      "date with no comma parses",
+			msg:       loaPost("Siervo.W", "Apr 12 2026", "Apr 19 2026"),
+			wantOK:    true,
+			wantUser:  "Siervo.W",
+			wantStart: "2026-04-12",
+			wantEnd:   "2026-04-19",
+		},
+		{
+			// Free-text date (thread 95564, "probably May 8, 2026") must still be rejected —
+			// leniency covers template variation, not unparseable prose.
+			name:   "free-text uncertain date is still rejected",
+			msg:    loaPost("Robinson.G", "May 3, 2026", "probably May 8, 2026"),
 			wantOK: false,
 		},
 		{
