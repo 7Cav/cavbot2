@@ -853,6 +853,56 @@ func TestRunS3aar_EmptyFieldsTreatedAsFailure(t *testing.T) {
 	}
 }
 
+// TestRunS3aar_EmptyRosterOnlyTreatedAsFailure pins validateProfile's SECOND
+// clause (#152): a 200 with a populated rank/username but an empty Roster string.
+// The empty-fields test above trips the first clause (rank/username), so without
+// this case dropping the `Roster == ""` check would pass CI. The player must still
+// surface in the ⚠️ warning field and emit no ghost BBCode line.
+func TestRunS3aar_EmptyRosterOnlyTreatedAsFailure(t *testing.T) {
+	logs := captureWarnLogs(t)
+
+	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
+	stop := start.Add(2 * time.Hour)
+
+	// Populated rank/username and a regex-matching UniformUrl, but an empty Roster
+	// — so the ONLY thing that makes this a failure is the empty roster string.
+	emptyRosterProfile := combatProfile("GhostUser", "Private", "9", "", "999")
+	serveBattleMetricsWithProfiles(t,
+		[]bmSession{
+			{Name: "ABC.Ghost.G", Start: start, Stop: stop},
+		},
+		map[string]utils.ProfileResponse{
+			"Ghost.G": emptyRosterProfile,
+		},
+	)
+
+	r := &fakeResponder{}
+	i := s3aarOptions("Tac1", "10NOV25", "10NOV25", "1800", "2000", 30, "")
+	runS3aar(r, i)
+
+	fups := followups(r.Calls())
+	if len(fups) == 0 || len(fups[0].Params.Embeds) == 0 {
+		t.Fatalf("expected attendance embed in first followup; got %+v", fups)
+	}
+
+	field := warningField(fups[0].Params.Embeds[0])
+	if field == nil {
+		t.Fatalf("empty-roster 200 must surface as an enrichment failure; got no warning field")
+	}
+	if !strings.Contains(field.Value, "ABC.Ghost.G") {
+		t.Fatalf("warning field must list the empty-roster player; got %q", field.Value)
+	}
+
+	body := readAARFile(t, fups)
+	if strings.Contains(body, "[URL=") {
+		t.Fatalf("empty-roster player must not emit a ghost BBCode line; body:\n%q", body)
+	}
+
+	if !strings.Contains(logs.String(), "level=WARN") {
+		t.Fatalf("expected a WARN log on empty-roster enrichment failure; got:\n%s", logs.String())
+	}
+}
+
 // TestRunS3aar_MixedRosterFailuresWarningField exercises the realistic case all
 // three player classes appear in ONE run: a combat player, a non-combat (reserve)
 // player, and two enrichment failures. It guards the loop's `continue` (a failed
@@ -1031,9 +1081,14 @@ func TestRunS3aar_UniformURLRegexFailure(t *testing.T) {
 		t.Fatalf("regex-miss player must not emit a BBCode roster line; body:\n%q", body)
 	}
 
-	// And it must be observable in logs.
+	// And it must be observable in logs — asserting the UniformUrl error text (not
+	// just level=WARN) pins THIS branch, distinguishing it from an empty-fields or
+	// 404 failure that would render an identical warning field.
 	if !strings.Contains(logs.String(), "level=WARN") {
 		t.Fatalf("expected a WARN log on UniformUrl regex failure; got:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "UniformUrl") {
+		t.Fatalf("WARN log must carry the UniformUrl error to pin the regex branch; got:\n%s", logs.String())
 	}
 }
 

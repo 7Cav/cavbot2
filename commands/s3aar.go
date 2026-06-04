@@ -117,17 +117,19 @@ func cleanName(name string) string {
 }
 
 // validateProfile rejects a milpacs 2xx that lacks usable enrichment data (#152).
-// A 200 carrying an empty RankFull/Username (and/or empty Roster) yields a blank
-// CavName with a well-formed MilpacsLink, which would render a ghost forum line
-// ([URL='...'] [/URL]). Treating it as an error routes the player into the ⚠️
-// warning field instead — EnrichFailed must mean "usable enrichment", not merely
-// "HTTP succeeded".
-func validateProfile(profile *utils.ProfileResponse) error {
+// Before this guard, a 200 carrying an empty RankFull/Username (and/or empty
+// Roster) could reach link construction and emit a ghost forum line
+// ([URL='...'] [/URL]) with a blank CavName (whenever UniformUrl happened to
+// match the ID regex). Returning an error here rejects it first, routing the
+// player into the ⚠️ warning field instead — so a non-failed player means
+// "usable enrichment", not merely "HTTP succeeded". The name is folded into the
+// error so it stays attributable even if a future caller logs only the error.
+func validateProfile(name string, profile *utils.ProfileResponse) error {
 	if profile.Rank.RankFull == "" || profile.User.Username == "" {
-		return fmt.Errorf("milpacs 2xx with empty rank/username (unusable enrichment)")
+		return fmt.Errorf("milpacs 2xx for %q with empty rank/username (unusable enrichment)", name)
 	}
 	if profile.Roster == "" {
-		return fmt.Errorf("milpacs 2xx with empty roster (unusable enrichment)")
+		return fmt.Errorf("milpacs 2xx for %q with empty roster (unusable enrichment)", name)
 	}
 	return nil
 }
@@ -137,7 +139,7 @@ func enrichPlayer(ctx context.Context, rawName string) (string, string, string, 
 
 	profile, err := utils.GetMilpacByUsername(ctx, cleaned)
 	if err == nil {
-		if err := validateProfile(profile); err != nil {
+		if err := validateProfile(cleaned, profile); err != nil {
 			return "", "", "", "", "", err
 		}
 		matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(profile.UniformUrl)
@@ -154,7 +156,7 @@ func enrichPlayer(ctx context.Context, rawName string) (string, string, string, 
 
 	profile, err = utils.GetUserByGamertag(ctx, rawName)
 	if err == nil {
-		if err := validateProfile(profile); err != nil {
+		if err := validateProfile(rawName, profile); err != nil {
 			return "", "", "", "", "", err
 		}
 		matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(profile.UniformUrl)
