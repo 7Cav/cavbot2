@@ -17,6 +17,9 @@ belong here, not inline in code comments.
   Canonicalized in `commands/afsm.go`.
 - **Position** — free-text string like `2/B/1-7`, `Reservist`, or a
   department name (`S1`).
+- **Regiment time (UTC)** — UTC is 7Cav standard time. Wherever the bot has to
+  decide what calendar day something falls on (e.g. AWOL day-counting), a
+  "day" is a **UTC calendar date**.
 
 ## Member records
 
@@ -39,7 +42,12 @@ belong here, not inline in code comments.
 - **LOA (Leave of Absence)** — a forum thread declaring a member away from
   duty for a date range. Parsed from a specific Xenforo BBCode template
   (yellow `[COLOR=rgb(213, 185, 0)]` labels around `Username`, `Start Date`,
-  `End Date`). Template drift silently breaks parsing.
+  `End Date`). Template drift silently breaks parsing. One thread is exactly
+  one LOA — a second LOA always means a new thread, so `ThreadID` uniquely
+  identifies an LOA. **Filing an LOA is itself a forum post**, so it resets the
+  trooper's last-post clock; this is why a long unexcused gap immediately
+  followed by an LOA is rare in practice (the accountable-day model still
+  handles it correctly if it occurs).
 - **LOA node** — a Xenforo forum section that hosts LOA threads. Production
   scans five (`180,400,540,178,369`); the code default is `180`.
 - **LOA cache** — `utils.GlobalLOACache`, the in-process cache populated by a
@@ -56,9 +64,20 @@ belong here, not inline in code comments.
   received it yet, scoped to one of the departments in the AFSM enum above.
 - **S6-IT full status** — promotion from probationary to full member of the
   S6 IT team. `/s6-it-check` enumerates eligible members.
-- **AWOL** — a trooper flagged absent without leave in their milpac. `/awol`
-  lists current AWOLs for a position, with an "On LOA" indicator sourced
+- **AWOL** — a trooper who has not posted on the 7Cav forums within the last
+  **7 days**. Active membership requires at least one forum post per week
+  (typically a roll-call post, but *any* post on the 7Cav forums qualifies a
+  trooper as not AWOL). AWOL is a bot-derived signal computed from forum
+  activity — it has **nothing to do with the milpac record**. `/awol` lists
+  current AWOL candidates for a position, with an "On LOA" indicator sourced
   from the LOA cache.
+- **Accountable day** — a UTC calendar date that counts toward a trooper's
+  AWOL total. The candidate dates are those strictly after the trooper's last
+  forum post up to and including today (`(lastPostDate, today]`); a date is
+  **accountable** unless it is covered by an LOA. A trooper is an AWOL
+  candidate when their accountable days exceed 7. Because coverage is a set of
+  dates, overlapping, adjacent, and future LOAs need no special handling — the
+  union of covered dates falls out naturally.
 - **Accuracy disclaimer** — because milpac records are user-entered free
   text, parsing can drift. `/afsm` always renders the disclaimer, regardless
   of whether the eligibles list is empty — see ADR 0002.
