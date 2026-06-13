@@ -168,15 +168,28 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		return
 	}
 
+	// Issue #163: a single unparseable record must not abort the whole report.
+	// Both parse failures below are genuine upstream errors (the forum should
+	// always return a parseable date; a roster profile should always carry a
+	// valid uniform URL), so each is captured to Sentry naming the member and
+	// the bad value (ADR 0001), then skipped — mirroring /afsm.
 	awolUsers := []AwolUser{}
+	skippedCount := 0
 	for _, member := range roster.LiteProfiles {
 		if member.User.Username == "Tester.B" || strings.Contains(member.Rank.RankFull, "General") {
 			continue
 		}
 		lastPostDate, err := time.Parse("2006-01-02 15:04:05", member.LastForumPostDate)
 		if err != nil {
-			utils.HandleError(r, i, fmt.Sprintf("❌ Failed to parse last forum post date: %v", err))
-			return
+			utils.CaptureError(
+				"AWOL member skipped: unparseable last forum post date",
+				err,
+				"username", member.User.Username,
+				"discord_id", member.DiscordID,
+				"last_forum_post_date", member.LastForumPostDate,
+			)
+			skippedCount++
+			continue
 		}
 
 		rawDays := utils.DaysSinceLastPost(lastPostDate, now)
@@ -201,8 +214,15 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		if daysAWOL > 0 {
 			matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(member.UniformUrl)
 			if len(matches) < 2 {
-				utils.HandleError(r, i, "❌ Failed to parse uniform URL")
-				return
+				utils.CaptureError(
+					"AWOL member skipped: unparseable uniform URL",
+					fmt.Errorf("uniform URL %q does not match milpac-ID pattern", member.UniformUrl),
+					"username", member.User.Username,
+					"discord_id", member.DiscordID,
+					"uniform_url", member.UniformUrl,
+				)
+				skippedCount++
+				continue
 			}
 			awolUsers = append(awolUsers, AwolUser{
 				Username:         member.User.Username,
@@ -213,6 +233,10 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 				loaWindow:        loaWindow,
 			})
 		}
+	}
+
+	if skippedCount > 0 {
+		utils.Info("⚠️ Members skipped during AWOL check", "position", position, "count", skippedCount)
 	}
 
 	// Sort worst-first by days AWOL; tie-break username ascending so the order is
@@ -226,6 +250,11 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 
 	if len(awolUsers) == 0 {
 		response := fmt.Sprintf("Search completed successfully: no users matching \"%s\" are AWOL.", position)
+		if note := awolSkippedNote(skippedCount); note != "" {
+			// Issue #163: never a silent all-clear when records were skipped — a
+			// skipped member could have been the one who was AWOL.
+			response += "\n" + note
+		}
 		if !cacheHealthy {
 			// Never a silent all-clear while degraded: raw figures are >= the
 			// LOA-adjusted figure so no AWOL member is hidden, but staff must still
@@ -247,10 +276,16 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 	}
 
 	// Discord caps an embed description at 4096 chars. The final description is
-	// summaryLine + "\n\n" + chunk, so the chunk budget must reserve room for that
-	// rendered prefix — otherwise a near-4096 chunk overflows once the summary is
-	// prepended (Discord 400). Reserve the longest prefix any embed could carry.
-	descPrefix := awolSummaryLine(len(awolUsers)) + "\n\n"
+	// the summary block + "\n\n" + chunk, so the chunk budget must reserve room
+	// for that rendered prefix — otherwise a near-4096 chunk overflows once the
+	// summary is prepended (Discord 400). Reserve the longest prefix any embed
+	// could carry. The block includes the skipped-records note when present
+	// (issue #163) so staff see the report is partial.
+	summaryBlock := awolSummaryLine(len(awolUsers))
+	if note := awolSkippedNote(skippedCount); note != "" {
+		summaryBlock += "\n" + note
+	}
+	descPrefix := summaryBlock + "\n\n"
 	chunkBudget := discordEmbedDescriptionLimit - len(descPrefix)
 
 	var chunks []string
@@ -270,12 +305,12 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 	utils.Info("Debug chunks info", "chunks_length", len(chunks), "max_embeds", maxEmbedsPerMsg)
 	if len(chunks) > maxEmbedsPerMsg {
 		utils.Info("⚠️ Too many AWOL users for embeds, falling back to file upload", "count", len(awolUsers))
-		sendAwolFile(r, i, awolUsers, position, forceFile, cacheHealthy, now)
+		sendAwolFile(r, i, awolUsers, position, forceFile, cacheHealthy, now, skippedCount)
 		utils.Info("✨ Done!", "command", "Awol")
 		return
 	} else if forceFile {
 		utils.Info("⚠️ Force file output enabled, falling back to embeds", "count", len(awolUsers))
-		sendAwolFile(r, i, awolUsers, position, forceFile, cacheHealthy, now)
+		sendAwolFile(r, i, awolUsers, position, forceFile, cacheHealthy, now, skippedCount)
 		utils.Info("✨ Done!", "command", "Awol")
 		return
 	}
@@ -285,7 +320,7 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		title := awolEmbedTitle(position, idx, len(chunks))
 		embed := &discordgo.MessageEmbed{
 			Title:       title,
-			Description: awolSummaryLine(len(awolUsers)) + "\n\n" + chunk,
+			Description: summaryBlock + "\n\n" + chunk,
 			Color:       0xfbcc29,
 			Footer: &discordgo.MessageEmbedFooter{
 				Text: footerText,
@@ -313,6 +348,20 @@ func awolEmbedTitle(position string, idx, total int) string {
 		return fmt.Sprintf("AWOL — %s", position)
 	}
 	return fmt.Sprintf("AWOL — %s (Page %d/%d)", position, idx+1, total)
+}
+
+// awolSkippedNote renders the visible partial-coverage annotation for the report
+// (issue #163): "⚠️ N record(s) skipped due to errors (reported)", mirroring
+// /afsm's wording. Returns "" when nothing was skipped.
+func awolSkippedNote(skipped int) string {
+	if skipped == 0 {
+		return ""
+	}
+	noun := "records"
+	if skipped == 1 {
+		noun = "record"
+	}
+	return fmt.Sprintf("⚠️ %d %s skipped due to errors (reported)", skipped, noun)
 }
 
 // awolSummaryLine renders "N flagged" — the count of AWOL-flagged members. The
@@ -346,12 +395,16 @@ func awolUserLine(u AwolUser) string {
 	)
 }
 
-func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, awolUsers []AwolUser, position string, forceFile, cacheHealthy bool, now time.Time) {
+func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, awolUsers []AwolUser, position string, forceFile, cacheHealthy bool, now time.Time, skippedCount int) {
 	var content strings.Builder
 	_, _ = fmt.Fprintf(&content, "AWOL Report for %s\nGenerated: %s\n%s\n\n",
 		position,
 		now.Format("2006-01-02 15:04:05"),
 		awolSummaryLine(len(awolUsers)))
+	if note := awolSkippedNote(skippedCount); note != "" {
+		// Issue #163: the file report must surface partial coverage too.
+		_, _ = fmt.Fprintf(&content, "%s\n\n", note)
+	}
 	if !cacheHealthy {
 		// ADR 0008: surface the degraded warning in the file too — same figures
 		// (raw) and the same "adjustment skipped" wording as the embed.

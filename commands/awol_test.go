@@ -818,3 +818,182 @@ func TestRunAwol_MultipleWindowsMergedNoDoubleCount(t *testing.T) {
 		t.Fatalf("overlapping windows must merge (7d AWOL, raw 30d).\nGot line: %q", line)
 	}
 }
+
+// TestRunAwol_MalformedDateSkipsMemberNotReport pins issue #163: one member with
+// an unparseable LastForumPostDate is skipped (and reported), the rest of the
+// roster still renders, and the report carries a visible skipped-count note.
+func TestRunAwol_MalformedDateSkipsMemberNotReport(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
+			"200": awolMember("Broken.B", "200", "not-a-date"),
+			"300": awolMember("Trooper.C", "300", "2026-04-01 12:00:00"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runAwol(f, healthyCache(nil), awolRefDate, i)
+
+	calls := f.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 calls (placeholder + Edit), got %d: %+v", len(calls), calls)
+	}
+	edit := calls[1].Edit
+	if edit.Embeds == nil || len(*edit.Embeds) == 0 {
+		t.Fatalf("report must still render as embeds; got Embeds=%v Content=%v", edit.Embeds, edit.Content)
+	}
+	desc := (*edit.Embeds)[0].Description
+	for _, want := range []string{"Trooper.A", "Trooper.C"} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("remaining member %q must still render.\nGot:\n%s", want, desc)
+		}
+	}
+	if strings.Contains(desc, "Broken.B") {
+		t.Fatalf("skipped member must not render.\nGot:\n%s", desc)
+	}
+	if !strings.Contains(desc, "⚠️ 1 record skipped due to errors (reported)") {
+		t.Fatalf("report must carry the skipped-count note.\nGot:\n%s", desc)
+	}
+}
+
+// TestRunAwol_MalformedUniformURLSkipsMemberNotReport pins the second issue #163
+// call site: an AWOL member whose uniform URL doesn't match the milpac-ID pattern
+// is skipped (and reported); the rest still render with the skipped note.
+func TestRunAwol_MalformedUniformURLSkipsMemberNotReport(t *testing.T) {
+	badUniform := awolMember("Badjpg.B", "999", "2026-03-01 12:00:00")
+	badUniform.UniformUrl = "https://7cav.us/data/roster_uniforms/no-milpac-id-here.png"
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
+			"200": badUniform,
+			"300": awolMember("Trooper.C", "300", "2026-04-01 12:00:00"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runAwol(f, healthyCache(nil), awolRefDate, i)
+
+	calls := f.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 calls (placeholder + Edit), got %d: %+v", len(calls), calls)
+	}
+	edit := calls[1].Edit
+	if edit.Embeds == nil || len(*edit.Embeds) == 0 {
+		t.Fatalf("report must still render as embeds; got Embeds=%v Content=%v", edit.Embeds, edit.Content)
+	}
+	desc := (*edit.Embeds)[0].Description
+	for _, want := range []string{"Trooper.A", "Trooper.C"} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("remaining member %q must still render.\nGot:\n%s", want, desc)
+		}
+	}
+	if strings.Contains(desc, "Badjpg.B") {
+		t.Fatalf("skipped member must not render.\nGot:\n%s", desc)
+	}
+	if !strings.Contains(desc, "⚠️ 1 record skipped due to errors (reported)") {
+		t.Fatalf("report must carry the skipped-count note.\nGot:\n%s", desc)
+	}
+}
+
+// TestRunAwol_BothMalformedRecordsSkippedTogether pins the issue #163 acceptance
+// scenario verbatim: one malformed date record AND one malformed uniform URL in
+// the same roster — both skipped, the rest render, plural note shows the count.
+func TestRunAwol_BothMalformedRecordsSkippedTogether(t *testing.T) {
+	badUniform := awolMember("Badjpg.B", "999", "2026-03-01 12:00:00")
+	badUniform.UniformUrl = "https://7cav.us/data/roster_uniforms/no-milpac-id-here.png"
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
+			"200": awolMember("Baddate.D", "200", "not-a-date"),
+			"300": badUniform,
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runAwol(f, healthyCache(nil), awolRefDate, i)
+
+	desc := (*f.Calls()[1].Edit.Embeds)[0].Description
+	if !strings.Contains(desc, "Trooper.A") {
+		t.Fatalf("remaining member must still render.\nGot:\n%s", desc)
+	}
+	for _, skipped := range []string{"Baddate.D", "Badjpg.B"} {
+		if strings.Contains(desc, skipped) {
+			t.Fatalf("skipped member %q must not render.\nGot:\n%s", skipped, desc)
+		}
+	}
+	if !strings.Contains(desc, "⚠️ 2 records skipped due to errors (reported)") {
+		t.Fatalf("report must carry the plural skipped-count note.\nGot:\n%s", desc)
+	}
+}
+
+// TestRunAwol_FileOutputCarriesSkippedNote pins that the file rendering path
+// (force_file_output) surfaces the same skipped-records note as the embed path —
+// the omission must not become silent just because the report went to a file.
+func TestRunAwol_FileOutputCarriesSkippedNote(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
+			"200": awolMember("Baddate.D", "200", "not-a-date"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(
+		stringOption("position", "1-7"),
+		boolOption("force_file_output", true),
+	)
+	runAwol(f, healthyCache(nil), awolRefDate, i)
+
+	edit := f.Calls()[1].Edit
+	if len(edit.Files) != 1 {
+		t.Fatalf("expected 1 file attachment, got %d", len(edit.Files))
+	}
+	raw, _ := io.ReadAll(edit.Files[0].Reader)
+	body := string(raw)
+	if !strings.Contains(body, "Trooper.A") {
+		t.Fatalf("remaining member must still render in file.\nGot:\n%s", body)
+	}
+	if strings.Contains(body, "Baddate.D") {
+		t.Fatalf("skipped member must not render in file.\nGot:\n%s", body)
+	}
+	if !strings.Contains(body, "⚠️ 1 record skipped due to errors (reported)") {
+		t.Fatalf("file report must carry the skipped-count note.\nGot:\n%s", body)
+	}
+}
+
+// TestRunAwol_SkippedNoteOnNoAwolPath pins that a "no users AWOL" outcome is not
+// a silent all-clear when records were skipped: the only flaggable member failed
+// to parse, so the response must carry the skipped-count note.
+func TestRunAwol_SkippedNoteOnNoAwolPath(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			// Recent post → not AWOL.
+			"100": awolMember("Active.A", "100", "2026-05-14 12:00:00"),
+			// Unparseable date → skipped.
+			"200": awolMember("Baddate.D", "200", "not-a-date"),
+		},
+	}
+	serveAwolRoster(t, roster, http.StatusOK)
+
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runAwol(f, healthyCache(nil), awolRefDate, i)
+
+	edit := f.Calls()[1].Edit
+	if edit.Content == nil {
+		t.Fatalf("expected text response on no-AWOL path")
+	}
+	if !strings.Contains(*edit.Content, "no users matching") {
+		t.Fatalf("expected no-AWOL message, got %q", *edit.Content)
+	}
+	if !strings.Contains(*edit.Content, "⚠️ 1 record skipped due to errors (reported)") {
+		t.Fatalf("no-AWOL response must carry the skipped-count note, got %q", *edit.Content)
+	}
+}
