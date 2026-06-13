@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -212,11 +211,11 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		}
 
 		if daysAWOL > 0 {
-			matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(member.UniformUrl)
-			if len(matches) < 2 {
+			milpacID, err := utils.ExtractMilpacIDFromUniformURL(member.UniformUrl)
+			if err != nil {
 				utils.CaptureError(
 					"AWOL member skipped: unparseable uniform URL",
-					fmt.Errorf("uniform URL %q does not match milpac-ID pattern", member.UniformUrl),
+					err,
 					"username", member.User.Username,
 					"discord_id", member.DiscordID,
 					"uniform_url", member.UniformUrl,
@@ -226,7 +225,7 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 			}
 			awolUsers = append(awolUsers, AwolUser{
 				Username:         member.User.Username,
-				MilpacUrl:        fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1]),
+				MilpacUrl:        fmt.Sprintf("https://7cav.us/rosters/profile/%s", milpacID),
 				LastPostDate:     lastPostDate,
 				DaysAWOL:         daysAWOL,
 				RawDaysSincePost: rawDays,
@@ -351,8 +350,10 @@ func awolEmbedTitle(position string, idx, total int) string {
 }
 
 // awolSkippedNote renders the visible partial-coverage annotation for the report
-// (issue #163): "⚠️ N record(s) skipped due to errors (reported)", mirroring
-// /afsm's wording. Returns "" when nothing was skipped.
+// (issue #163): "⚠️ N record(s) skipped due to errors (reported)" — same shape
+// and "(reported)" suffix as /afsm's note, but with a "record(s)" noun since
+// /awol skips raw roster records rather than evaluated members. Returns ""
+// when nothing was skipped.
 func awolSkippedNote(skipped int) string {
 	if skipped == 0 {
 		return ""
