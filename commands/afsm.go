@@ -53,7 +53,8 @@ func handleAFSMCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func runAFSM(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
-	utils.Info("🚀 Starting AFSM Check", "command", "AFSM", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
+	username, discordID := interactionUsernameAndID(i)
+	utils.Info("🚀 Starting AFSM Check", "command", "AFSM", "username", username, "discord_id", discordID)
 	choice := i.ApplicationCommandData().Options[0].StringValue()
 	utils.Debug("🔍 Processing department choice", "department", choice)
 

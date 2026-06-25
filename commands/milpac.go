@@ -52,7 +52,8 @@ func handleMilpacCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 // dispatcher already wraps handlers in utils.RecoverPanic (see main.go), so the
 // background-goroutine boundary (and its own RecoverPanic) is no longer needed.
 func runMilpac(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
-	utils.Info("🚀 Starting Milpac", "command", "Milpac", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
+	username, discordID := interactionUsernameAndID(i)
+	utils.Info("🚀 Starting Milpac", "command", "Milpac", "username", username, "discord_id", discordID)
 
 	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -214,7 +215,7 @@ func runMilpac(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 			URL: milpac.UniformUrl,
 		},
 	}
-	utils.Info("Returning Milpac", "command", "Milpac", "milpac_name", embed.Title, "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
+	utils.Info("Returning Milpac", "command", "Milpac", "milpac_name", embed.Title, "username", username, "discord_id", discordID)
 	emptyContent := ""
 	err = r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &emptyContent,

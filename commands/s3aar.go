@@ -407,7 +407,8 @@ func buildEnrichmentFailureField(failures []string) *discordgo.MessageEmbedField
 }
 
 func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
-	utils.Info("🚀 Starting S3 AAR", "command", "S3AAR", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
+	username, discordID := interactionUsernameAndID(i)
+	utils.Info("🚀 Starting S3 AAR", "command", "S3AAR", "username", username, "discord_id", discordID)
 
 	options := i.ApplicationCommandData().Options
 	optionMap := make(map[string]*discordgo.ApplicationCommandInteractionDataOption, len(options))

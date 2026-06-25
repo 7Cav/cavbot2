@@ -34,7 +34,8 @@ func handleAppsBetaDeploy(s *discordgo.Session, i *discordgo.InteractionCreate) 
 }
 
 func runAppsBetaDeploy(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
-	utils.Info("Apps Beta Deployer called", "command", "AppsBetaDeploy", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
+	username, discordID := interactionUsernameAndID(i)
+	utils.Info("Apps Beta Deployer called", "command", "AppsBetaDeploy", "username", username, "discord_id", discordID)
 	switch i.Type {
 	case discordgo.InteractionApplicationCommand:
 		runAppsBetaInitialCommand(r, i)
@@ -157,7 +158,8 @@ func runAppsBetaComponentInteraction(r utils.InteractionResponder, i *discordgo.
 		return
 	} else {
 		utils.Info("Deployment triggered successfully", "command", "AppsBetaDeploy")
-		response = fmt.Sprintf("✅ Apps Beta deployment started for branch `%s` by <@%s> \nCheck status at: https://github.com/7cav/adr/actions/workflows/dev_deploy.yml", branch, i.Member.User.ID)
+		_, invokerID := interactionUsernameAndID(i)
+		response = fmt.Sprintf("✅ Apps Beta deployment started for branch `%s` by <@%s> \nCheck status at: https://github.com/7cav/adr/actions/workflows/dev_deploy.yml", branch, invokerID)
 	}
 
 	if err = r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{

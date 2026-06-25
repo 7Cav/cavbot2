@@ -34,7 +34,8 @@ func handleS6ITCheckCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 }
 
 func runS6ITCheck(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
-	utils.Info("🚀 Starting S6 IT Check", "command", "S6ITCheck", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
+	username, discordID := interactionUsernameAndID(i)
+	utils.Info("🚀 Starting S6 IT Check", "command", "S6ITCheck", "username", username, "discord_id", discordID)
 
 	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
