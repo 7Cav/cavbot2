@@ -732,13 +732,15 @@ func wardenSubcommandOf(interaction *discordgo.InteractionCreate) string {
 func buildAddedMembersEmbed(members []*discordgo.Member) *discordgo.MessageEmbed {
 	const maxDescLen = 4096
 	var sb strings.Builder
+	rendered := 0
 	for _, m := range members {
 		line := fmt.Sprintf("<@%s>\n", m.User.ID)
 		if sb.Len()+len(line) > maxDescLen {
-			_, _ = fmt.Fprintf(&sb, "... and %d more.", len(members)-strings.Count(sb.String(), "\n"))
+			_, _ = fmt.Fprintf(&sb, "... and %d more.", len(members)-rendered)
 			break
 		}
 		sb.WriteString(line)
+		rendered++
 	}
 	return &discordgo.MessageEmbed{
 		Title:       fmt.Sprintf("Added %d user(s)", len(members)),
