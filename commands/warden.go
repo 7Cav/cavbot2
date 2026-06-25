@@ -638,11 +638,11 @@ func resolveWardenRoleIDs(
 
 	for _, roleName := range roleNames {
 		roleID, findErr := findGuildRoleIDByName(gm, guildID, roleName)
+		if errors.Is(findErr, errRoleNotFound) {
+			return nil, nil, fmt.Errorf("❌ '%s' role not found in guild", roleName)
+		}
 		if findErr != nil {
 			return nil, nil, fmt.Errorf("❌ Failed to retrieve guild roles: %v", findErr)
-		}
-		if roleID == "" {
-			return nil, nil, fmt.Errorf("❌ '%s' role not found in guild", roleName)
 		}
 		roleIDs = append(roleIDs, roleID)
 	}
@@ -847,6 +847,15 @@ func resolveMemberByID(gm GuildManager, guildID, userID string) (*discordgo.Memb
 	return member, nil
 }
 
+// errRoleNotFound is the sentinel findGuildRoleIDByName returns when no guild
+// role matches the requested name. It makes the not-found case explicit and
+// checkable (errors.Is) so a caller cannot misread it as success, and keeps it
+// distinct from a genuine GuildRoles API failure (which surfaces as a different,
+// wrapped error). See ADR 0002 / the "empty vs failure" invariant: ("",
+// errRoleNotFound) means definitively absent; ("", someOtherErr) means upstream
+// failure; (id, nil) means found.
+var errRoleNotFound = errors.New("role not found")
+
 func findGuildRoleIDByName(gm GuildManager, guildID, roleName string) (string, error) {
 	roles, err := gm.GuildRoles(guildID)
 	if err != nil {
@@ -859,7 +868,7 @@ func findGuildRoleIDByName(gm GuildManager, guildID, roleName string) (string, e
 		}
 	}
 
-	return "", nil
+	return "", fmt.Errorf("%q: %w", roleName, errRoleNotFound)
 }
 
 func splitCommaSeparated(value string) []string {
