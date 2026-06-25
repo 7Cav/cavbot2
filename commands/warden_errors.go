@@ -29,6 +29,11 @@ type discordErrorClass struct {
 	// bot lacks Manage Roles or the target role sits above the bot's own role.
 	// Callers use it to render a specific, actionable hierarchy hint.
 	MissingPermissions bool
+	// NotFound is true for a 404. On a targeted member-by-ID/mention lookup this
+	// means the user is genuinely absent from the guild — a clear, non-system
+	// condition the caller renders as "not in this server" rather than capturing
+	// or downgrading into a name search.
+	NotFound bool
 	// UserDetail is a short, body-free phrase safe to show an operator. It never
 	// contains the raw Discord error body.
 	UserDetail string
@@ -57,6 +62,11 @@ func classifyDiscordError(err error) discordErrorClass {
 		return discordErrorClass{
 			MissingPermissions: true,
 			UserDetail:         "missing permissions",
+		}
+	case status == http.StatusNotFound:
+		return discordErrorClass{
+			NotFound:   true,
+			UserDetail: "not found",
 		}
 	case status >= 400 && status < 500:
 		return discordErrorClass{

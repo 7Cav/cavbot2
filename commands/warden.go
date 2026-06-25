@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -636,24 +637,19 @@ func findGuildMember(gm GuildManager, guildID, query string) (*discordgo.Member,
 		return nil, fmt.Errorf("❌ Query too long (max 100 characters); use a mention/ID instead")
 	}
 
-	// Mentions: <@123>, <@!123>
-	if strings.HasPrefix(trimmedQuery, "<@") && strings.HasSuffix(trimmedQuery, ">") {
-		userID := strings.TrimSuffix(strings.TrimPrefix(trimmedQuery, "<@"), ">")
-		userID = strings.TrimPrefix(userID, "!")
-		if userID != "" {
-			member, err := gm.GuildMember(guildID, userID)
-			if err == nil && member != nil {
-				return member, nil
-			}
-		}
+	// Mentions: <@123>, <@!123>. A mention unambiguously names one user, so the
+	// targeted GuildMember lookup is authoritative — we never fall through to a
+	// name search of the raw "<@...>" string (which can't match a display name
+	// and would report a misleading "no member found" even for a transient API
+	// fault). A 404 means the user really isn't here; any other failure is
+	// surfaced (and captured if it's a genuine system fault).
+	if userID, ok := mentionUserID(trimmedQuery); ok {
+		return resolveMemberByID(gm, guildID, userID)
 	}
 
-	// Raw snowflake ID
+	// Raw snowflake ID: same authoritative treatment as a mention.
 	if isSnowflakeID(trimmedQuery) {
-		member, err := gm.GuildMember(guildID, trimmedQuery)
-		if err == nil && member != nil {
-			return member, nil
-		}
+		return resolveMemberByID(gm, guildID, trimmedQuery)
 	}
 
 	// Name search
@@ -670,6 +666,46 @@ func findGuildMember(gm GuildManager, guildID, query string) (*discordgo.Member,
 	default:
 		return nil, fmt.Errorf("❌ Too many matches for '%s' (be more specific, or use a mention/ID)", query)
 	}
+}
+
+// mentionUserID extracts the user snowflake from a Discord mention
+// (<@123> or <@!123>). It returns ("", false) for anything that isn't a
+// non-empty mention, so callers can branch on whether the input was a mention.
+func mentionUserID(query string) (string, bool) {
+	if !strings.HasPrefix(query, "<@") || !strings.HasSuffix(query, ">") {
+		return "", false
+	}
+	userID := strings.TrimSuffix(strings.TrimPrefix(query, "<@"), ">")
+	userID = strings.TrimPrefix(userID, "!")
+	if userID == "" {
+		return "", false
+	}
+	return userID, true
+}
+
+// resolveMemberByID performs the authoritative targeted member lookup used for
+// mentions and raw snowflakes. The result is trusted: it never falls through to
+// a name search. A 404 yields a clear "not in this server" message; any other
+// failure is routed through the shared classifier so a genuine system fault is
+// captured to Sentry and the raw Discord body never reaches the reply.
+func resolveMemberByID(gm GuildManager, guildID, userID string) (*discordgo.Member, error) {
+	member, err := gm.GuildMember(guildID, userID)
+	if err != nil {
+		class := classifyDiscordError(err)
+		switch {
+		case class.NotFound:
+			return nil, fmt.Errorf("❌ <@%s> is not in this server", userID)
+		case class.SystemFault:
+			captureError("Failed to look up guild member by ID", err, "user_id", userID)
+			return nil, errors.New("❌ Member lookup is temporarily unavailable (Discord error); please try again shortly")
+		default:
+			return nil, fmt.Errorf("❌ Could not look up <@%s> (%s)", userID, class.UserDetail)
+		}
+	}
+	if member == nil {
+		return nil, fmt.Errorf("❌ <@%s> is not in this server", userID)
+	}
+	return member, nil
 }
 
 func findGuildRoleIDByName(gm GuildManager, guildID, roleName string) (string, error) {
