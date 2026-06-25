@@ -16,7 +16,6 @@ import "github.com/bwmarrin/discordgo"
 type GuildManager interface {
 	GuildRoles(guildID string) ([]*discordgo.Role, error)
 	GuildRoleCreate(guildID string, data *discordgo.RoleParams) (*discordgo.Role, error)
-	GuildRoleEdit(guildID, roleID string, data *discordgo.RoleParams) (*discordgo.Role, error)
 	GuildRoleDelete(guildID, roleID string) error
 	GuildChannels(guildID string) ([]*discordgo.Channel, error)
 	ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64) error
@@ -49,10 +48,6 @@ func (g *sessionGuildManager) GuildRoles(guildID string) ([]*discordgo.Role, err
 
 func (g *sessionGuildManager) GuildRoleCreate(guildID string, data *discordgo.RoleParams) (*discordgo.Role, error) {
 	return g.s.GuildRoleCreate(guildID, data)
-}
-
-func (g *sessionGuildManager) GuildRoleEdit(guildID, roleID string, data *discordgo.RoleParams) (*discordgo.Role, error) {
-	return g.s.GuildRoleEdit(guildID, roleID, data)
 }
 
 func (g *sessionGuildManager) GuildRoleDelete(guildID, roleID string) error {
