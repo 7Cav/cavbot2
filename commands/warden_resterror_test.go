@@ -82,6 +82,169 @@ func TestClassifyDiscordError_RESTErrorNilResponseIsSystemFault(t *testing.T) {
 	}
 }
 
+// A 404 is a distinct, non-system client fault: the targeted member-by-ID
+// lookup proved the user is absent. It must set NotFound (so findGuildMember can
+// render a clear "not in this server" message) without setting SystemFault or
+// MissingPermissions, and never leak the raw body.
+func TestClassifyDiscordError_404IsNotFound(t *testing.T) {
+	err := restError(http.StatusNotFound, 10007, rawBodyMarker)
+	c := classifyDiscordError(err)
+	if c.SystemFault {
+		t.Fatalf("a 404 must not be a system fault")
+	}
+	if !c.NotFound {
+		t.Fatalf("a 404 must set NotFound so callers can show a clear absent-member message")
+	}
+	if strings.Contains(c.UserDetail, rawBodyMarker) {
+		t.Fatalf("classifier leaked the raw Discord body: %q", c.UserDetail)
+	}
+}
+
+// --- mention/ID lookup: authoritative, never falls through to name search ---
+
+// A valid mention for a present member resolves via the targeted GuildMember
+// lookup and never reaches GuildMembersSearch.
+func TestFindGuildMember_MentionSuccessResolvesAuthoritatively(t *testing.T) {
+	gm := &fakeGuildManager{
+		membersByID: map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
+	}
+
+	member, err := findGuildMember(gm, "guild-1", "<@123456789012345678>")
+	if err != nil {
+		t.Fatalf("expected the mention to resolve, got error %v", err)
+	}
+	if member == nil || member.User == nil || member.User.ID != "123456789012345678" {
+		t.Fatalf("expected the targeted member, got %+v", member)
+	}
+	if gm.countCalls("GuildMembersSearch") != 0 {
+		t.Fatalf("a resolved mention must not fall through to name search; got calls %v", gm.Calls())
+	}
+}
+
+// A mention whose targeted lookup 404s must yield a clear "not in this server"
+// message — never a name search of the raw "<@...>" string, and never a Sentry
+// capture (a 404 is an ordinary, non-system condition).
+func TestFindGuildMember_Mention404ClearMessageNoSearchNoCapture(t *testing.T) {
+	rec := &captureRecorder{}
+	rec.install(t)
+	gm := &fakeGuildManager{MemberErrs: []error{restError(http.StatusNotFound, 10007, rawBodyMarker)}}
+
+	_, err := findGuildMember(gm, "guild-1", "<@123456789012345678>")
+	if err == nil {
+		t.Fatal("expected an error when the mentioned member is absent")
+	}
+	if strings.Contains(err.Error(), rawBodyMarker) {
+		t.Fatalf("mention 404 leaked the raw Discord body: %q", err.Error())
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "not in this server") {
+		t.Fatalf("expected a clear absent-member message, got %q", err.Error())
+	}
+	if gm.countCalls("GuildMembersSearch") != 0 {
+		t.Fatalf("a 404 mention must NOT fall through to name search; got calls %v", gm.Calls())
+	}
+	if rec.count != 0 {
+		t.Fatalf("a 404 mention must NOT capture to Sentry; got %d", rec.count)
+	}
+}
+
+// A transient (non-404) failure on a mention lookup is a genuine system fault:
+// it must surface an error, capture to Sentry once, and must NOT downgrade into
+// a name search of the raw mention string (which would report a misleading
+// "no member found").
+func TestFindGuildMember_MentionTransientFaultSurfacedAndCaptured(t *testing.T) {
+	rec := &captureRecorder{}
+	rec.install(t)
+	gm := &fakeGuildManager{MemberErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)}}
+
+	_, err := findGuildMember(gm, "guild-1", "<@123456789012345678>")
+	if err == nil {
+		t.Fatal("expected an error from a transient mention-lookup failure")
+	}
+	if strings.Contains(err.Error(), rawBodyMarker) {
+		t.Fatalf("mention transient fault leaked the raw Discord body: %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "No member found") {
+		t.Fatalf("a transient fault must not be reported as 'no member found': %q", err.Error())
+	}
+	if gm.countCalls("GuildMembersSearch") != 0 {
+		t.Fatalf("a transient mention fault must NOT fall through to name search; got calls %v", gm.Calls())
+	}
+	if rec.count != 1 {
+		t.Fatalf("a transient (5xx) mention fault must capture to Sentry once; got %d", rec.count)
+	}
+}
+
+// A raw snowflake ID whose targeted lookup 404s is treated identically to a
+// mention: a clear absent-member message, no name search of the raw ID.
+func TestFindGuildMember_Snowflake404ClearMessageNoSearch(t *testing.T) {
+	gm := &fakeGuildManager{MemberErrs: []error{restError(http.StatusNotFound, 10007, rawBodyMarker)}}
+
+	_, err := findGuildMember(gm, "guild-1", "123456789012345678")
+	if err == nil {
+		t.Fatal("expected an error when the snowflake member is absent")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "not in this server") {
+		t.Fatalf("expected a clear absent-member message, got %q", err.Error())
+	}
+	if gm.countCalls("GuildMembersSearch") != 0 {
+		t.Fatalf("a 404 snowflake must NOT fall through to name search; got calls %v", gm.Calls())
+	}
+}
+
+// The raw-snowflake form must reach the same system-fault capture arm as the
+// mention form on a transient (non-404) failure: surface an error, capture once,
+// no name search, no misleading "no member found". Snowflakes were otherwise
+// only covered for 404, so this pins the two input forms to identical handling.
+func TestFindGuildMember_SnowflakeTransientFaultSurfacedAndCaptured(t *testing.T) {
+	rec := &captureRecorder{}
+	rec.install(t)
+	gm := &fakeGuildManager{MemberErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)}}
+
+	_, err := findGuildMember(gm, "guild-1", "123456789012345678")
+	if err == nil {
+		t.Fatal("expected an error from a transient snowflake-lookup failure")
+	}
+	if strings.Contains(err.Error(), rawBodyMarker) {
+		t.Fatalf("snowflake transient fault leaked the raw Discord body: %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "No member found") {
+		t.Fatalf("a transient fault must not be reported as 'no member found': %q", err.Error())
+	}
+	if gm.countCalls("GuildMembersSearch") != 0 {
+		t.Fatalf("a transient snowflake fault must NOT fall through to name search; got calls %v", gm.Calls())
+	}
+	if rec.count != 1 {
+		t.Fatalf("a transient (5xx) snowflake fault must capture to Sentry once; got %d", rec.count)
+	}
+}
+
+// A non-404 4xx (here a 400) on a targeted mention/ID lookup is an
+// operator/config-fixable client fault: it shows the generic "Discord rejected
+// the request" wording, never captures to Sentry, and never leaks the raw body.
+// Covers the default arm of resolveMemberByID.
+func TestFindGuildMember_MentionGeneric4xxNoCapture(t *testing.T) {
+	rec := &captureRecorder{}
+	rec.install(t)
+	gm := &fakeGuildManager{MemberErrs: []error{restError(http.StatusBadRequest, 50035, rawBodyMarker)}}
+
+	_, err := findGuildMember(gm, "guild-1", "<@123456789012345678>")
+	if err == nil {
+		t.Fatal("expected an error from a 400 mention lookup")
+	}
+	if strings.Contains(err.Error(), rawBodyMarker) {
+		t.Fatalf("mention generic 4xx leaked the raw Discord body: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "Discord rejected the request") {
+		t.Fatalf("expected the generic 4xx rejection wording, got %q", err.Error())
+	}
+	if gm.countCalls("GuildMembersSearch") != 0 {
+		t.Fatalf("a generic 4xx mention fault must NOT fall through to name search; got calls %v", gm.Calls())
+	}
+	if rec.count != 0 {
+		t.Fatalf("a generic 4xx mention fault must NOT capture to Sentry; got %d", rec.count)
+	}
+}
+
 // captureRecorder swaps the package-level captureError seam for the duration of
 // a test and counts how many times it fires, so a test can assert the
 // 4xx-vs-5xx Sentry split without a live Sentry client.
