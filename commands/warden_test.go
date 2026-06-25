@@ -27,6 +27,10 @@ type fakeGuildManager struct {
 	createdRole    *discordgo.Role // returned by GuildRoleCreate
 	nextCreatedNum int
 
+	// channelMessages records every ChannelMessageSend (the purge fallback
+	// surface) so a test can assert what was delivered, and where.
+	channelMessages []sentChannelMessage
+
 	RolesErrs            []error
 	RoleCreateErrs       []error
 	RoleEditErrs         []error
@@ -37,6 +41,13 @@ type fakeGuildManager struct {
 	MembersSearchErrs    []error
 	MemberRoleAddErrs    []error
 	MemberRoleRemoveErrs []error
+	ChannelMessageErrs   []error
+}
+
+// sentChannelMessage is one recorded ChannelMessageSend call.
+type sentChannelMessage struct {
+	channelID string
+	content   string
 }
 
 func (g *fakeGuildManager) record(name string) {
@@ -134,6 +145,14 @@ func (g *fakeGuildManager) GuildMemberRoleAdd(_, _, _ string) error {
 func (g *fakeGuildManager) GuildMemberRoleRemove(_, _, _ string) error {
 	g.record("GuildMemberRoleRemove")
 	return popErr(&g.MemberRoleRemoveErrs)
+}
+
+func (g *fakeGuildManager) ChannelMessageSend(channelID, content string) error {
+	g.record("ChannelMessageSend")
+	g.mu.Lock()
+	g.channelMessages = append(g.channelMessages, sentChannelMessage{channelID: channelID, content: content})
+	g.mu.Unlock()
+	return popErr(&g.ChannelMessageErrs)
 }
 
 // wardenInteraction builds an *InteractionCreate carrying the given option

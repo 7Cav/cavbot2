@@ -81,6 +81,34 @@ func classifyDiscordError(err error) discordErrorClass {
 	}
 }
 
+// isInteractionTokenExpired reports whether err is Discord's signal that the
+// interaction's 15-minute token window has closed, so the deferred-ephemeral
+// edit can no longer be delivered. It is deliberately narrow: only the specific
+// application error codes Discord returns once the webhook token is gone count
+// as expiry — a 5xx or a transport error is an unexpected fault, not expiry,
+// and must take the capture-to-Sentry path instead. A precise predicate keeps a
+// long purge from silently swallowing a genuine delivery fault as "just
+// expired".
+//
+//   - 50027 Invalid Webhook Token — the interaction-followup webhook token is no
+//     longer valid (the canonical post-window signal).
+//   - 10015 Unknown Webhook / 10062 Unknown Interaction — the webhook/interaction
+//     backing the deferred response is gone, the same end-of-window condition.
+func isInteractionTokenExpired(err error) bool {
+	var restErr *discordgo.RESTError
+	if !errors.As(err, &restErr) || restErr.Message == nil {
+		return false
+	}
+	switch restErr.Message.Code {
+	case discordgo.ErrCodeInvalidWebhookTokenProvided,
+		discordgo.ErrCodeUnknownWebhook,
+		discordgo.ErrCodeUnknownInteraction:
+		return true
+	default:
+		return false
+	}
+}
+
 // searchErrorReply classifies a GuildMembersSearch failure, captures it to
 // Sentry only when it is a genuine system fault, and returns a body-free,
 // operator-facing error. The raw Discord response body is never interpolated.

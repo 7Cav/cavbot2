@@ -364,7 +364,69 @@ func runWardenPurge(
 		)
 	}
 
-	editEphemeral(r, interaction, joinOrFallback(summaryLines, "✅ Purge complete."))
+	deliverPurgeSummary(r, gm, interaction, joinOrFallback(summaryLines, "✅ Purge complete."))
+}
+
+// deliverPurgeSummary delivers the purge summary, with a token-expiry fallback.
+// A purge re-applies channel overwrites with a per-channel throttle, so across
+// many channels it can outlive Discord's 15-minute interaction token. Once that
+// window closes the deferred-ephemeral edit can no longer be delivered, and the
+// operator would otherwise be left with a spinner that never resolves on a
+// destructive op — an unanswerable "did it finish?" that risks a re-run.
+//
+// On a successful edit nothing else happens (the normal ephemeral reply). When
+// the edit fails:
+//   - token expiry → post the summary to the invoking channel. This surface
+//     does not depend on the interaction token, so it reaches the operator even
+//     after the window. Trade-off: the channel message is NOT ephemeral, unlike
+//     the normal reply, but a "your destructive op finished" notice is an
+//     acceptable thing to leave visible.
+//   - any other (unexpected) failure → capture to Sentry with context via the
+//     shared seam, the same as the non-purge edit helpers.
+func deliverPurgeSummary(
+	r utils.InteractionResponder,
+	gm GuildManager,
+	interaction *discordgo.InteractionCreate,
+	summary string,
+) {
+	editErr := r.InteractionResponseEdit(interaction.Interaction, &discordgo.WebhookEdit{
+		Content: &summary,
+	})
+	if editErr == nil {
+		return
+	}
+
+	if isInteractionTokenExpired(editErr) {
+		if sendErr := gm.ChannelMessageSend(interaction.ChannelID, summary); sendErr != nil {
+			// Both surfaces failed: the operator can't be reached. This is a
+			// genuine delivery fault worth paging on. Carry the original edit
+			// error too, so on-call sees the full chain — the edit expired AND
+			// the channel send failed — not just the second failure.
+			captureError(
+				"Failed to deliver purge summary via channel fallback after token expiry",
+				sendErr,
+				"command", wardenSubcommandOf(interaction),
+				"guild_id", interaction.GuildID,
+				"channel_id", interaction.ChannelID,
+				"edit_error", editErr,
+			)
+			return
+		}
+		// Recovery, not a fault: the deferred edit expired but the channel
+		// fallback reached the operator. Log (don't capture, per ADR 0001) so
+		// "did the long purge ever surface its result?" is answerable from logs.
+		utils.Info(
+			"purge summary delivered via channel fallback after interaction token expired",
+			"command", wardenSubcommandOf(interaction),
+			"guild_id", interaction.GuildID,
+			"channel_id", interaction.ChannelID,
+		)
+		return
+	}
+
+	// Unexpected (non-expiry) edit failure: capture with context, same seam the
+	// other edit helpers funnel through.
+	captureEditFailure(interaction, editErr)
 }
 
 func recreateRoleWithChannelOverwrites(
