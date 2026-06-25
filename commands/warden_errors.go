@@ -191,6 +191,23 @@ func roleResolveErrorReply(err error, captureMsg string, kv ...any) error {
 	return fmt.Errorf("❌ Failed to retrieve guild roles (%s)", class.UserDetail)
 }
 
+// channelsResolveErrorReply classifies a GuildChannels lookup failure raised
+// while resolving a guild's channels for a warden purge, captures it to Sentry
+// only for genuine system faults (5xx/transport, per ADR 0001), and returns a
+// body-free, operator-facing error. It mirrors roleResolveErrorReply one call
+// site below, with wording tailored to channels rather than roles. The raw
+// Discord response body (discordgo's "HTTP <status>, <json>") is never
+// interpolated — only a sanitized classifier phrase is shown. captureMsg/kv
+// carry the call site's command/guild context to Sentry.
+func channelsResolveErrorReply(err error, captureMsg string, kv ...any) error {
+	class := classifyDiscordError(err)
+	if class.SystemFault {
+		captureError(captureMsg, err, kv...)
+		return errors.New("❌ Failed to retrieve guild channels (Discord error); please try again shortly")
+	}
+	return fmt.Errorf("❌ Failed to retrieve guild channels (%s)", class.UserDetail)
+}
+
 // roleMutationErrorReply classifies a role add/remove failure, captures it to
 // Sentry only for genuine system faults, and returns a body-free, actionable
 // message. A 403 yields a specific role-hierarchy hint — the common cause is the

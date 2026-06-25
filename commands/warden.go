@@ -353,7 +353,14 @@ func runWardenPurge(
 
 	guildChannels, err := gm.GuildChannels(guildID)
 	if err != nil {
-		editEphemeral(r, interaction, fmt.Sprintf("❌ Failed to retrieve guild channels: %v", err))
+		// A genuine GuildChannels fault (5xx/transport) is classified and captured
+		// to Sentry; a 4xx stays a non-captured actionable message. The raw Discord
+		// response body is never interpolated into the operator reply (#195).
+		editEphemeral(r, interaction, channelsResolveErrorReply(
+			err,
+			"Failed to retrieve guild channels for warden purge",
+			"command", "warden", "guild", guildID,
+		).Error())
 		return
 	}
 
