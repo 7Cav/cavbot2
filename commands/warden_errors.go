@@ -174,6 +174,23 @@ func purgePartialDeleteSummary(roleName, newRoleID, oldRoleID string, err error,
 	)
 }
 
+// roleResolveErrorReply classifies a GuildRoles lookup failure raised while
+// resolving a warden role by name, captures it to Sentry only for genuine system
+// faults (5xx/transport, per ADR 0001), and returns a body-free, operator-facing
+// error. The explicit not-found result is handled by the caller before this is
+// reached and is deliberately never routed here, so it stays non-captured. The
+// raw Discord response body (discordgo's "HTTP <status>, <json>") is never
+// interpolated — only a sanitized classifier phrase is shown. captureMsg/kv carry
+// the call site's command/guild context to Sentry.
+func roleResolveErrorReply(err error, captureMsg string, kv ...any) error {
+	class := classifyDiscordError(err)
+	if class.SystemFault {
+		captureError(captureMsg, err, kv...)
+		return errors.New("❌ Failed to retrieve guild roles (Discord error); please try again shortly")
+	}
+	return fmt.Errorf("❌ Failed to retrieve guild roles (%s)", class.UserDetail)
+}
+
 // roleMutationErrorReply classifies a role add/remove failure, captures it to
 // Sentry only for genuine system faults, and returns a body-free, actionable
 // message. A 403 yields a specific role-hierarchy hint — the common cause is the

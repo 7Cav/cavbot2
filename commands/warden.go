@@ -663,7 +663,14 @@ func resolveWardenRoleIDs(
 			return nil, nil, fmt.Errorf("❌ '%s' role not found in guild", roleName)
 		}
 		if findErr != nil {
-			return nil, nil, fmt.Errorf("❌ Failed to retrieve guild roles: %v", findErr)
+			// A genuine GuildRoles fault (5xx/transport) is classified and captured
+			// to Sentry; a 4xx stays a non-captured actionable message. The not-found
+			// branch above is handled first, so it never reaches here (#194).
+			return nil, nil, roleResolveErrorReply(
+				findErr,
+				"Failed to retrieve guild roles for warden role resolution",
+				"command", "warden", "guild", guildID, "role", roleName,
+			)
 		}
 		roleIDs = append(roleIDs, roleID)
 	}
