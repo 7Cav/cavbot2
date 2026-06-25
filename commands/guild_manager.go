@@ -3,9 +3,11 @@ package commands
 import "github.com/bwmarrin/discordgo"
 
 // GuildManager is the subset of *discordgo.Session that /warden uses to read
-// and mutate guild roles, members, and channel permission overwrites. Command
-// code depends on this interface so tests can substitute a fake that records
-// calls and injects per-call errors without touching the live Discord gateway.
+// and mutate guild roles, members, and channel permission overwrites, plus send
+// a plain channel message as the purge summary's token-independent fallback
+// surface. Command code depends on this interface so tests can substitute a fake
+// that records calls and injects per-call errors without touching the live
+// Discord gateway.
 //
 // Following the InteractionResponder precedent (utils/discord_responder.go),
 // the production wrapper is a thin pass-through; the variadic
@@ -22,6 +24,11 @@ type GuildManager interface {
 	GuildMembersSearch(guildID, query string, limit int) ([]*discordgo.Member, error)
 	GuildMemberRoleAdd(guildID, userID, roleID string) error
 	GuildMemberRoleRemove(guildID, userID, roleID string) error
+	// ChannelMessageSend posts a plain message to a channel. Unlike the
+	// interaction-response surfaces, it does not depend on the (15-minute)
+	// interaction token, so it is the fallback surface a long purge uses to
+	// deliver its summary once the deferred edit can no longer be delivered.
+	ChannelMessageSend(channelID, content string) error
 }
 
 // sessionGuildManager adapts *discordgo.Session to GuildManager. Each method is
@@ -74,4 +81,9 @@ func (g *sessionGuildManager) GuildMemberRoleAdd(guildID, userID, roleID string)
 
 func (g *sessionGuildManager) GuildMemberRoleRemove(guildID, userID, roleID string) error {
 	return g.s.GuildMemberRoleRemove(guildID, userID, roleID)
+}
+
+func (g *sessionGuildManager) ChannelMessageSend(channelID, content string) error {
+	_, err := g.s.ChannelMessageSend(channelID, content)
+	return err
 }
