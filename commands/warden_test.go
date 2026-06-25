@@ -464,3 +464,22 @@ func TestRunWarden_MissingDiscordnameForAdd(t *testing.T) {
 		t.Fatal("expected an error response for missing discordname")
 	}
 }
+
+// CAVBOT2-6: a name search longer than Discord's 100-char query limit must be
+// rejected locally, not forwarded to GuildMembersSearch (which 400s with
+// "Invalid Form Body" and gets captured to Sentry as an error).
+func TestFindGuildMember_OverLengthQueryRejectedBeforeSearch(t *testing.T) {
+	gm := &fakeGuildManager{
+		// Mimic Discord rejecting an over-length query with a 400.
+		MembersSearchErrs: []error{fmt.Errorf(`HTTP 400 Bad Request, {"message": "Invalid Form Body", "code": 50035}`)},
+	}
+	longQuery := strings.Repeat("a", 101)
+
+	_, err := findGuildMember(gm, "guild-1", longQuery)
+	if err == nil {
+		t.Fatal("expected an error for an over-length query")
+	}
+	if gm.countCalls("GuildMembersSearch") != 0 {
+		t.Fatalf("over-length query must be rejected before hitting Discord; got calls %v", gm.Calls())
+	}
+}
