@@ -416,8 +416,14 @@ func TestRunWarden_AddRoleAddFailureSurfaces(t *testing.T) {
 
 	runWarden(f, gm, i)
 
-	if got := lastEditContent(f.Calls()); !strings.Contains(got, "❌ Failed to add 'Verified Warden Internal' role") {
+	// A plain (non-REST) error is a transport-class fault: the reply names the
+	// role and surfaces the failure, but never the raw error text.
+	got := lastEditContent(f.Calls())
+	if !strings.Contains(got, "Could not add 'Verified Warden Internal'") {
 		t.Fatalf("expected role-add failure surfaced, got %q", got)
+	}
+	if strings.Contains(got, "forbidden") {
+		t.Fatalf("reply must not leak the raw error text, got %q", got)
 	}
 }
 
