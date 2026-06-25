@@ -118,7 +118,8 @@ func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, i *discordgo.InteractionCreate) {
-	utils.Info("🚀 Starting AWOL check", "command", "Awol", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
+	username, discordID := interactionUsernameAndID(i)
+	utils.Info("🚀 Starting AWOL check", "command", "Awol", "username", username, "discord_id", discordID)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -149,8 +150,8 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 	if !cacheHealthy {
 		utils.Debug("AWOL served with unhealthy LOA cache (accountable-day adjustment skipped)",
 			"command", "Awol",
-			"username", i.Member.User.Username,
-			"discord_id", i.Member.User.ID,
+			"username", username,
+			"discord_id", discordID,
 			"last_success", lastRefresh,
 			"served_at", now,
 			"staleness", now.Sub(lastRefresh),

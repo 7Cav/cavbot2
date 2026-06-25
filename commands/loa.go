@@ -76,7 +76,8 @@ func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *discordgo.InteractionCreate) {
-	utils.Info("🚀 Starting LOA check", "command", "LOA", "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
+	username, discordID := interactionUsernameAndID(i)
+	utils.Info("🚀 Starting LOA check", "command", "LOA", "username", username, "discord_id", discordID)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -98,8 +99,8 @@ func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *
 		msg := loaUnavailableMessage(lastRefresh, now)
 		utils.Debug("LOA command served unavailable message",
 			"command", "LOA",
-			"username", i.Member.User.Username,
-			"discord_id", i.Member.User.ID,
+			"username", username,
+			"discord_id", discordID,
 			"last_success", lastRefresh,
 			"served_at", now,
 			"staleness", now.Sub(lastRefresh),

@@ -46,7 +46,8 @@ func runGamertagSearch(r utils.InteractionResponder, i *discordgo.InteractionCre
 		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
 		return
 	}
-	utils.Info("Gamertag search requested", "command", "GamertagSearch", "gamertag", gamertag, "username", i.Member.User.Username, "discord_id", i.Member.User.ID)
+	username, discordID := interactionUsernameAndID(i)
+	utils.Info("Gamertag search requested", "command", "GamertagSearch", "gamertag", gamertag, "username", username, "discord_id", discordID)
 
 	user, err := utils.GetUserByGamertag(ctx, gamertag)
 	if err != nil {
