@@ -222,7 +222,7 @@ func runMilpac(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 		Embeds:  &[]*discordgo.MessageEmbed{embed},
 	})
 	if err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to edit response with embed: %v", err))
+		captureDeferredEditFailure(i, "Milpac", err)
 	}
 	utils.Info("✨ Done!", "command", "Milpac")
 }

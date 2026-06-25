@@ -137,8 +137,7 @@ func runS6ITCheck(r utils.InteractionResponder, i *discordgo.InteractionCreate) 
 	if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &response,
 	}); err != nil {
-		utils.CaptureError("❌ Response edit failed", err)
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+		captureDeferredEditFailure(i, "S6ITCheck", err)
 		return
 	}
 	utils.Info("✨ Done!", "command", "S6ITCheck")

@@ -265,7 +265,7 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 			Content: &response,
 		}); err != nil {
-			utils.HandleError(r, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+			captureDeferredEditFailure(i, "Awol", err)
 		}
 		return
 	}
@@ -334,7 +334,7 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		Content: nil,
 		Embeds:  &embeds,
 	}); err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+		captureDeferredEditFailure(i, "Awol", err)
 		return
 	}
 
@@ -444,6 +444,6 @@ func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, 
 		Content: stringPtr(prefix),
 		Files:   []*discordgo.File{file},
 	}); err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to send file: %v", err))
+		captureDeferredEditFailure(i, "Awol", err)
 	}
 }

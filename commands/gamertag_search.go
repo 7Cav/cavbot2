@@ -65,7 +65,7 @@ func runGamertagSearch(r utils.InteractionResponder, i *discordgo.InteractionCre
 	response := fmt.Sprintf("Found user for gamertag `%s`: [%s %s](%s)", gamertag, user.Rank.RankShort, user.User.Username, milpacUrl)
 
 	if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &response}); err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to edit response: %v", err))
+		captureDeferredEditFailure(i, "GamertagSearch", err)
 		return
 	}
 	utils.Info("✨ Done!", "command", "GamertagSearch")
