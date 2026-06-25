@@ -247,16 +247,33 @@ func TestFindGuildMember_MentionGeneric4xxNoCapture(t *testing.T) {
 
 // captureRecorder swaps the package-level captureError seam for the duration of
 // a test and counts how many times it fires, so a test can assert the
-// 4xx-vs-5xx Sentry split without a live Sentry client.
+// 4xx-vs-5xx Sentry split without a live Sentry client. lastKV holds the kv
+// varargs from the most recent capture, so a test can also pin the context
+// fields (command/guild/role) a site is required to forward.
 type captureRecorder struct {
-	count int
+	count  int
+	lastKV []any
 }
 
 func (c *captureRecorder) install(t *testing.T) {
 	t.Helper()
 	prev := captureError
-	captureError = func(msg string, err error, kv ...any) { c.count++ }
+	captureError = func(msg string, err error, kv ...any) {
+		c.count++
+		c.lastKV = kv
+	}
 	t.Cleanup(func() { captureError = prev })
+}
+
+// kvValue returns the value paired with key in a sequential key/value vararg
+// slice (k0, v0, k1, v1, ...), and whether it was present.
+func kvValue(kv []any, key string) (any, bool) {
+	for i := 0; i+1 < len(kv); i += 2 {
+		if k, ok := kv[i].(string); ok && k == key {
+			return kv[i+1], true
+		}
+	}
+	return nil, false
 }
 
 // --- search path: 4xx vs 5xx split ---
