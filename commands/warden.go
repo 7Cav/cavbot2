@@ -158,15 +158,12 @@ func handleWardenAdd(r utils.InteractionResponder, gm GuildManager, interaction 
 	for index, roleID := range roleIDs {
 		roleName := roleNames[index]
 		if err := gm.GuildMemberRoleAdd(guildID, member.User.ID, roleID); err != nil {
-			utils.CaptureError("Failed to add warden role", err, "user", member.User.ID, "role", roleName)
 			editEphemeral(
 				r,
 				interaction,
-				fmt.Sprintf(
-					"❌ Failed to add '%s' role to %s: %v",
-					roleName,
-					formatUser(member),
-					err,
+				roleMutationErrorReply(
+					"add", roleName, formatUser(member), err,
+					"Failed to add warden role", "user", member.User.ID, "role", roleName,
 				),
 			)
 			return
@@ -213,8 +210,10 @@ func handleWardenRemove(
 	for index, roleID := range roleIDs {
 		roleName := roleNames[index]
 		if err := gm.GuildMemberRoleRemove(guildID, member.User.ID, roleID); err != nil {
-			utils.CaptureError("Failed to remove warden role", err, "user", member.User.ID, "role", roleName)
-			editEphemeral(r, interaction, fmt.Sprintf("❌ Failed to remove '%s' role from %s: %v", roleName, formatUser(member), err))
+			editEphemeral(r, interaction, roleMutationErrorReply(
+				"remove", roleName, formatUser(member), err,
+				"Failed to remove warden role", "user", member.User.ID, "role", roleName,
+			))
 			return
 		}
 	}
@@ -261,8 +260,10 @@ func handleWardenBulkAdd(
 		for index, roleID := range roleIDs {
 			roleName := roleNames[index]
 			if err := gm.GuildMemberRoleAdd(guildID, member.User.ID, roleID); err != nil {
-				utils.CaptureError("Failed to add warden role in bulk", err, "user", member.User.ID, "role", roleName)
-				failures = append(failures, fmt.Sprintf("❌ Failed to add '%s' role to %s: %v", roleName, formatUser(member), err))
+				failures = append(failures, roleMutationErrorReply(
+					"add", roleName, formatUser(member), err,
+					"Failed to add warden role in bulk", "user", member.User.ID, "role", roleName,
+				))
 				allOK = false
 			}
 		}
@@ -658,8 +659,7 @@ func findGuildMember(gm GuildManager, guildID, query string) (*discordgo.Member,
 	// Name search
 	members, err := gm.GuildMembersSearch(guildID, trimmedQuery, 10)
 	if err != nil {
-		utils.CaptureError("Failed to search members", err)
-		return nil, fmt.Errorf("❌ Failed to search members: %v", err)
+		return nil, searchErrorReply(err)
 	}
 
 	switch len(members) {
