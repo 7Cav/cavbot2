@@ -78,7 +78,22 @@ func runWarden(
 	gm GuildManager,
 	interaction *discordgo.InteractionCreate,
 ) {
-	utils.Info("🚀 Starting Warden", "command", "Warden", "username", interaction.Member.User.Username, "discord_id", interaction.Member.User.ID)
+	// Guild-context guard runs FIRST, before any read of interaction.Member.
+	// Warden requires guild context, and Discord only populates Member for guild
+	// interactions; a DM-shaped or malformed interaction has a nil Member and a
+	// nil GuildID. Rejecting on the empty GuildID here both gives a clear
+	// server-only message and removes the latent nil-deref the entry log would
+	// otherwise hit (#177).
+	guildID := interaction.GuildID
+	if guildID == "" {
+		utils.HandleError(r, interaction, "❌ This command can only be used in a server (guild).")
+		return
+	}
+
+	// Entry log reads the invoking user through the nil-safe helper rather than
+	// interaction.Member.User directly, so it never panics regardless of context.
+	username, discordID := interactionUsernameAndID(interaction)
+	utils.Info("🚀 Starting Warden", "command", "Warden", "username", username, "discord_id", discordID)
 
 	commandData := interaction.ApplicationCommandData()
 
@@ -99,12 +114,6 @@ func runWarden(
 			interaction,
 			"❌ Missing or invalid flag argument; must be 'internal', 'external', or 'both'",
 		)
-		return
-	}
-
-	guildID := interaction.GuildID
-	if guildID == "" {
-		utils.HandleError(r, interaction, "❌ This command can only be used in a server (guild).")
 		return
 	}
 

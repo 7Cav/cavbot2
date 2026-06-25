@@ -198,6 +198,17 @@ func lastEditContent(calls []recordedCall) string {
 	return "<none>"
 }
 
+// lastResponseContent returns the Content of the last immediate Respond call
+// (the surface utils.HandleError uses for an un-deferred rejection), or "<none>".
+func lastResponseContent(calls []recordedCall) string {
+	for idx := len(calls) - 1; idx >= 0; idx-- {
+		if calls[idx].Method == "Respond" && calls[idx].Response != nil && calls[idx].Response.Data != nil {
+			return calls[idx].Response.Data.Content
+		}
+	}
+	return "<none>"
+}
+
 // --- runWarden routing / deferred-ephemeral acknowledge path ---
 
 func TestRunWarden_AddDeferredEphemeralAcknowledge(t *testing.T) {
@@ -271,6 +282,127 @@ func TestRunWarden_MissingGuildIDRejected(t *testing.T) {
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("DM-context must not touch guild; got %v", gm.Calls())
+	}
+}
+
+// A DM-shaped interaction has a nil Member (Discord populates interaction.User
+// instead). The entry-log read of Member.User must not panic, and the
+// guild-context guard must reject it with a clear server-only message before any
+// guild call. Regression for #177.
+func TestRunWarden_NilMemberDMContextRejectedWithoutPanic(t *testing.T) {
+	gm := &fakeGuildManager{}
+	f := &fakeResponder{}
+	// DM context: no Member, no GuildID, User set instead.
+	i := fakeAppCommandInteraction(
+		stringOption("command", "add"),
+		stringOption("flag", "internal"),
+		stringOption("discordname", "x"),
+	)
+	i.Member = nil
+	i.User = &discordgo.User{ID: "555", Username: "dmuser"}
+
+	runWarden(f, gm, i) // must not panic on the entry-log Member deref
+
+	if len(gm.Calls()) != 0 {
+		t.Fatalf("nil-Member DM context must not touch guild; got %v", gm.Calls())
+	}
+	if got := lastResponseContent(f.Calls()); !strings.Contains(got, "can only be used in a server") {
+		t.Fatalf("expected a clear server-only rejection, got %q", got)
+	}
+}
+
+// The fully malformed case: both Member and User are nil (e.g. a forwarded or
+// crafted interaction). The entry log must still not panic, and the command must
+// reject rather than mutate anything. Regression for #177.
+func TestRunWarden_NilMemberAndUserDoesNotPanic(t *testing.T) {
+	gm := &fakeGuildManager{}
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(
+		stringOption("command", "add"),
+		stringOption("flag", "internal"),
+		stringOption("discordname", "x"),
+	)
+	i.Member = nil
+	i.User = nil
+
+	runWarden(f, gm, i) // must not panic with both nil
+
+	if len(gm.Calls()) != 0 {
+		t.Fatalf("malformed interaction must not touch guild; got %v", gm.Calls())
+	}
+	if got := lastResponseContent(f.Calls()); !strings.Contains(got, "can only be used in a server") {
+		t.Fatalf("expected a clear server-only rejection, not a silent/empty response, got %q", got)
+	}
+}
+
+func TestInteractionUser(t *testing.T) {
+	member := &discordgo.User{ID: "1", Username: "guildy"}
+	dm := &discordgo.User{ID: "2", Username: "dmy"}
+
+	tests := []struct {
+		name     string
+		i        *discordgo.InteractionCreate
+		wantUser *discordgo.User
+	}{
+		{
+			name:     "guild interaction prefers Member.User",
+			i:        &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{Member: &discordgo.Member{User: member}, User: dm}},
+			wantUser: member,
+		},
+		{
+			name:     "DM interaction falls back to User",
+			i:        &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{User: dm}},
+			wantUser: dm,
+		},
+		{
+			name:     "Member present but its User nil falls back to User",
+			i:        &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{Member: &discordgo.Member{}, User: dm}},
+			wantUser: dm,
+		},
+		{
+			name:     "both nil yields nil",
+			i:        &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{}},
+			wantUser: nil,
+		},
+		{
+			name:     "nil interaction yields nil",
+			i:        nil,
+			wantUser: nil,
+		},
+		{
+			name:     "nil inner Interaction yields nil",
+			i:        &discordgo.InteractionCreate{},
+			wantUser: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := interactionUser(tc.i); got != tc.wantUser {
+				t.Fatalf("interactionUser = %v, want %v", got, tc.wantUser)
+			}
+		})
+	}
+}
+
+func TestInteractionUsernameAndID(t *testing.T) {
+	guild := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
+		Member: &discordgo.Member{User: &discordgo.User{ID: "1", Username: "guildy"}},
+	}}
+	if name, id := interactionUsernameAndID(guild); name != "guildy" || id != "1" {
+		t.Fatalf("guild: got (%q, %q), want (guildy, 1)", name, id)
+	}
+
+	dm := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
+		User: &discordgo.User{ID: "2", Username: "dmy"},
+	}}
+	if name, id := interactionUsernameAndID(dm); name != "dmy" || id != "2" {
+		t.Fatalf("dm: got (%q, %q), want (dmy, 2)", name, id)
+	}
+
+	none := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{}}
+	if name, id := interactionUsernameAndID(none); name != "" || id != "" {
+		t.Fatalf("none: got (%q, %q), want empty strings", name, id)
 	}
 }
 
