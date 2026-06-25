@@ -340,15 +340,39 @@ func runWardenPurge(
 		)
 
 		if recreateErr != nil {
-			utils.CaptureError(
+			// Two distinct failure shapes share recreateErr != nil:
+			//
+			//   - newRoleID == "": nothing usable was left behind (the create
+			//     failed, or an overwrite step failed and the new role was cleaned
+			//     up). Tell the operator the role was NOT recreated and they can
+			//     retry.
+			//   - newRoleID != "": the new role was created and configured, but
+			//     deleting the OLD role failed, so a duplicate now lingers. Tell the
+			//     operator the opposite — the recreate happened and the leftover old
+			//     role needs manual cleanup.
+			//
+			// Both route the underlying error through the classifier so no raw
+			// Discord body leaks and only genuine system faults page Sentry (ADR
+			// 0001), via the swappable capture seam.
+			if newRoleID != "" {
+				summaryLines = append(summaryLines, purgePartialDeleteSummary(
+					roleName, newRoleID, roleIDToRecreate, recreateErr,
+					"Warden purge could not delete the old role after recreation",
+					"guild", guildID,
+					"roleName", roleName,
+					"oldRoleID", roleIDToRecreate,
+					"newRoleID", newRoleID,
+				))
+				continue
+			}
+
+			summaryLines = append(summaryLines, purgeRecreateErrorReply(
+				roleName, recreateErr,
 				"Warden purge role recreation failed",
-				recreateErr,
 				"guild", guildID,
 				"roleName", roleName,
 				"roleID", roleIDToRecreate,
-			)
-
-			summaryLines = append(summaryLines, fmt.Sprintf("❌ Failed to recreate '%s': %v", roleName, recreateErr))
+			))
 			continue
 		}
 
@@ -442,6 +466,12 @@ func recreateRoleWithChannelOverwrites(
 
 	channelOverwritesByChannelID := collectRoleOverwritesByChannelID(oldRoleID, guildChannels)
 
+	// GuildRoleCreate's POST sets every field below (name, color, hoist,
+	// mentionable, permissions) in one call, so the role is fully configured the
+	// moment it exists. There is deliberately NO follow-up GuildRoleEdit: a
+	// redundant re-apply of these same fields could fail after the new role
+	// already existed, leaving a duplicate orphan with the old role still in
+	// place (#178). Dropping it removes that failure window entirely.
 	newRole, err := gm.GuildRoleCreate(guildID, &discordgo.RoleParams{
 		Name:        oldRole.Name,
 		Color:       &oldRole.Color,
@@ -454,10 +484,6 @@ func recreateRoleWithChannelOverwrites(
 		return "", 0, fmt.Errorf("create role: %w", err)
 	}
 
-	if err := applyRoleProperties(gm, guildID, newRole.ID, oldRole); err != nil {
-		return "", 0, fmt.Errorf("apply role properties: %w", err)
-	}
-
 	reappliedOverwriteCount, err := reapplyRoleOverwrites(
 		gm,
 		newRole.ID,
@@ -465,14 +491,41 @@ func recreateRoleWithChannelOverwrites(
 	)
 
 	if err != nil {
+		// The new role exists but its overwrites are incomplete and the old role
+		// is still present: that is the orphan-duplicate state #178 is about.
+		// Delete the new role so the guild is left with only the (untouched) old
+		// role, not a half-configured duplicate.
+		cleanupOrphanRole(gm, guildID, newRole.ID)
 		return "", reappliedOverwriteCount, fmt.Errorf("reapply overwrites: %w", err)
 	}
 
 	if err := gm.GuildRoleDelete(guildID, oldRoleID); err != nil {
+		// The new role is fully built and is the intended keeper; only the old
+		// role's deletion failed. Do NOT delete the new role here — that would
+		// throw away the completed recreation. Report the partial state up so the
+		// operator knows the old role lingers and may need a manual delete.
 		return newRole.ID, reappliedOverwriteCount, fmt.Errorf("delete old role: %w", err)
 	}
 
 	return newRole.ID, reappliedOverwriteCount, nil
+}
+
+// cleanupOrphanRole best-effort deletes a role created during a recreation that
+// then failed downstream, so a partial recreate does not leave a duplicate
+// orphan behind. A delete failure here is logged (not returned): the caller is
+// already returning the original downstream error, and the cleanup-delete
+// failing is a secondary fault — surfacing it would mask the real cause. If the
+// delete genuinely fails the role may still linger, which the purge summary's
+// "failed to recreate" line already warns the operator about.
+func cleanupOrphanRole(gm GuildManager, guildID, roleID string) {
+	if err := gm.GuildRoleDelete(guildID, roleID); err != nil {
+		utils.Warn(
+			"failed to clean up orphan role after a failed recreation",
+			"guild", guildID,
+			"roleID", roleID,
+			"error", err,
+		)
+	}
 }
 
 func fetchGuildRoleByID(gm GuildManager, guildID, roleID string) (*discordgo.Role, error) {
@@ -512,22 +565,6 @@ func collectRoleOverwritesByChannelID(
 	}
 
 	return channelOverwritesByChannelID
-}
-
-func applyRoleProperties(
-	gm GuildManager,
-	guildID string,
-	roleID string,
-	sourceRole *discordgo.Role,
-) error {
-	_, err := gm.GuildRoleEdit(guildID, roleID, &discordgo.RoleParams{
-		Name:        sourceRole.Name,
-		Color:       &sourceRole.Color,
-		Hoist:       &sourceRole.Hoist,
-		Mentionable: &sourceRole.Mentionable,
-		Permissions: &sourceRole.Permissions,
-	})
-	return err
 }
 
 func reapplyRoleOverwrites(

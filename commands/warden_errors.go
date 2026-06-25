@@ -121,6 +121,59 @@ func searchErrorReply(err error) error {
 	return fmt.Errorf("❌ Member search failed (%s); check the query or try a mention/ID instead", class.UserDetail)
 }
 
+// purgeRecreateErrorReply classifies a purge role-recreation failure where the
+// new role was NOT left behind (the create itself failed, or an overwrite step
+// failed and the new role was cleaned up). It captures to Sentry only for
+// genuine system faults (per ADR 0001) and returns a body-free summary line. The
+// raw Discord response body (discordgo's "HTTP <status>, <json>") is never
+// interpolated: only a sanitized phrase from the classifier is shown. The line
+// names the role and states it was not recreated, so the operator knows nothing
+// new lingers and can retry.
+//
+// The distinct partial-success case (new role created but the OLD role could not
+// be deleted, leaving a duplicate) is handled by purgePartialDeleteSummary, not
+// here — that path must tell the operator the opposite, that a role DOES linger.
+func purgeRecreateErrorReply(roleName string, err error, captureMsg string, kv ...any) string {
+	class := classifyDiscordError(err)
+
+	switch {
+	case class.SystemFault:
+		captureError(captureMsg, err, kv...)
+		return fmt.Sprintf(
+			"❌ Failed to recreate '%s': Discord error, the role was not recreated; please try again shortly.",
+			roleName,
+		)
+	case class.MissingPermissions:
+		return fmt.Sprintf(
+			"❌ Failed to recreate '%s': missing permissions. The bot needs Manage Roles and its own role must sit above '%s'. The role was not recreated.",
+			roleName, roleName,
+		)
+	default:
+		return fmt.Sprintf(
+			"❌ Failed to recreate '%s': Discord rejected the request (%s). The role was not recreated.",
+			roleName, class.UserDetail,
+		)
+	}
+}
+
+// purgePartialDeleteSummary renders the partial-success case: the new role was
+// created and fully configured, but deleting the OLD role failed, so a duplicate
+// now exists in the guild. This is the inverse of purgeRecreateErrorReply — the
+// recreate DID happen, and the operator must be told a role lingers and needs
+// manual cleanup, not that nothing was created. The underlying delete error is
+// routed through the classifier for capture (genuine system faults page Sentry,
+// per ADR 0001) but its raw body is never shown; the summary names both the new
+// and old role IDs so the operator can find and remove the leftover.
+func purgePartialDeleteSummary(roleName, newRoleID, oldRoleID string, err error, captureMsg string, kv ...any) string {
+	if classifyDiscordError(err).SystemFault {
+		captureError(captureMsg, err, kv...)
+	}
+	return fmt.Sprintf(
+		"⚠️ Recreated '%s' (new: `%s`), but the old role (`%s`) could not be deleted and still exists. Delete it manually to remove the duplicate.",
+		roleName, newRoleID, oldRoleID,
+	)
+}
+
 // roleMutationErrorReply classifies a role add/remove failure, captures it to
 // Sentry only for genuine system faults, and returns a body-free, actionable
 // message. A 403 yields a specific role-hierarchy hint — the common cause is the

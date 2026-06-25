@@ -31,9 +31,13 @@ type fakeGuildManager struct {
 	// surface) so a test can assert what was delivered, and where.
 	channelMessages []sentChannelMessage
 
+	// deletedRoleIDs records the roleID of every GuildRoleDelete call, so a test
+	// can assert WHICH role a recreate failure cleaned up (the new orphan, not
+	// the old role).
+	deletedRoleIDs []string
+
 	RolesErrs            []error
 	RoleCreateErrs       []error
-	RoleEditErrs         []error
 	RoleDeleteErrs       []error
 	ChannelsErrs         []error
 	ChannelPermSetErrs   []error
@@ -92,17 +96,24 @@ func (g *fakeGuildManager) GuildRoleCreate(_ string, _ *discordgo.RoleParams) (*
 	return &discordgo.Role{ID: fmt.Sprintf("new-role-%d", g.nextCreatedNum)}, nil
 }
 
-func (g *fakeGuildManager) GuildRoleEdit(_, _ string, _ *discordgo.RoleParams) (*discordgo.Role, error) {
-	g.record("GuildRoleEdit")
-	if err := popErr(&g.RoleEditErrs); err != nil {
-		return nil, err
-	}
-	return &discordgo.Role{}, nil
+func (g *fakeGuildManager) GuildRoleDelete(_, roleID string) error {
+	g.record("GuildRoleDelete")
+	g.mu.Lock()
+	g.deletedRoleIDs = append(g.deletedRoleIDs, roleID)
+	g.mu.Unlock()
+	return popErr(&g.RoleDeleteErrs)
 }
 
-func (g *fakeGuildManager) GuildRoleDelete(_, _ string) error {
-	g.record("GuildRoleDelete")
-	return popErr(&g.RoleDeleteErrs)
+// lastDeletedRoleID returns the roleID of the most recent GuildRoleDelete call,
+// or "" if none. Lets a test assert a recreate failure deleted the new orphan
+// role rather than the old role.
+func (g *fakeGuildManager) lastDeletedRoleID() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if len(g.deletedRoleIDs) == 0 {
+		return ""
+	}
+	return g.deletedRoleIDs[len(g.deletedRoleIDs)-1]
 }
 
 func (g *fakeGuildManager) GuildChannels(_ string) ([]*discordgo.Channel, error) {
@@ -283,7 +294,8 @@ func TestRunWardenPurge_HappyPath(t *testing.T) {
 
 	runWardenPurge(f, gm, i, "guild-1", "internal")
 
-	// Role recreated: create + edit + one overwrite reapply + delete old.
+	// Role recreated: create + one overwrite reapply + delete old. No redundant
+	// edit (the create sets every field) — see #178.
 	if gm.countCalls("GuildRoleCreate") != 1 {
 		t.Fatalf("expected 1 GuildRoleCreate, got %v", gm.Calls())
 	}
