@@ -17,6 +17,15 @@ import (
 
 const wardenRoleBaseName = "Verified Warden"
 
+// maxBulkAddEntries caps how many comma-separated entries a single /warden
+// bulkadd may carry. Each entry can trigger a GuildMembersSearch plus a per-role
+// GuildMemberRoleAdd, and Discord allows a multi-thousand-character string
+// option, so without a bound an operator could submit hundreds of names and fan
+// out a serial API storm that outruns the rate limiter and the 15-minute
+// interaction-token window (#173). The over-count is rejected up front, before
+// any Discord API call.
+const maxBulkAddEntries = 50
+
 // wardenOverwriteDelay throttles successive channel-permission writes during a
 // purge to stay under Discord's rate limit. A package var (not a const) so
 // tests can zero it out and avoid sleeping. See warden_test.go.
@@ -245,15 +254,27 @@ func handleWardenBulkAdd(
 		return
 	}
 
-	roleIDs, roleNames, err := resolveWardenRoleIDs(gm, guildID, roleScope)
-	if err != nil {
-		editEphemeral(r, interaction, err.Error())
-		return
-	}
-
+	// Parse and bound the entry list BEFORE any Discord API call (role
+	// resolution, member search, role-add). resolveWardenRoleIDs below issues a
+	// GuildRoles request, and the per-entry loop fans out a GuildMembersSearch +
+	// per-role GuildMemberRoleAdd for every entry, so the count check has to run
+	// ahead of all of it to actually prevent the storm (#173).
 	requestedQueries := splitCommaSeparated(query)
 	if len(requestedQueries) == 0 {
 		editEphemeral(r, interaction, "⚠️ Nothing to do.")
+		return
+	}
+	if len(requestedQueries) > maxBulkAddEntries {
+		editEphemeral(r, interaction, fmt.Sprintf(
+			"❌ Too many entries (%d). You can add at most %d at once; split this into smaller batches.",
+			len(requestedQueries), maxBulkAddEntries,
+		))
+		return
+	}
+
+	roleIDs, roleNames, err := resolveWardenRoleIDs(gm, guildID, roleScope)
+	if err != nil {
+		editEphemeral(r, interaction, err.Error())
 		return
 	}
 
