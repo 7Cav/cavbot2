@@ -464,3 +464,62 @@ func TestRunWarden_MissingDiscordnameForAdd(t *testing.T) {
 		t.Fatal("expected an error response for missing discordname")
 	}
 }
+
+// CAVBOT2-6: a name search longer than Discord's 100-char query limit must be
+// rejected locally, not forwarded to GuildMembersSearch (which 400s with
+// "Invalid Form Body" and gets captured to Sentry as an error).
+func TestFindGuildMember_OverLengthQueryRejectedBeforeSearch(t *testing.T) {
+	gm := &fakeGuildManager{}
+	longQuery := strings.Repeat("a", 101)
+
+	_, err := findGuildMember(gm, "guild-1", longQuery)
+	if err == nil {
+		t.Fatal("expected an error for an over-length query")
+	}
+	if !strings.Contains(err.Error(), "too long") {
+		t.Fatalf("expected an over-length rejection message, got %q", err.Error())
+	}
+	if gm.countCalls("GuildMembersSearch") != 0 {
+		t.Fatalf("over-length query must be rejected before hitting Discord; got calls %v", gm.Calls())
+	}
+}
+
+// A query at exactly Discord's 100-char limit is valid and must still reach the
+// name search. Pins the boundary so a future >=100 off-by-one is caught.
+func TestFindGuildMember_MaxLengthQueryStillSearches(t *testing.T) {
+	gm := &fakeGuildManager{}
+	maxQuery := strings.Repeat("a", 100)
+
+	_, _ = findGuildMember(gm, "guild-1", maxQuery)
+
+	if gm.countCalls("GuildMembersSearch") != 1 {
+		t.Fatalf("a 100-char query is valid and must reach search; got calls %v", gm.Calls())
+	}
+}
+
+// A multibyte name under 100 runes can exceed 100 bytes. The guard counts runes,
+// so it must reach search. This is the case that justifies utf8.RuneCountInString
+// over len() and would fail if the guard regressed to byte counting.
+func TestFindGuildMember_MultibyteNameUnderLimitStillSearches(t *testing.T) {
+	gm := &fakeGuildManager{}
+	multibyte := strings.Repeat("世", 80) // 80 runes, 240 bytes
+
+	_, _ = findGuildMember(gm, "guild-1", multibyte)
+
+	if gm.countCalls("GuildMembersSearch") != 1 {
+		t.Fatalf("a sub-limit multibyte name must reach search; got calls %v", gm.Calls())
+	}
+}
+
+// The length check runs on the trimmed query, so whitespace padding around a
+// 100-char core must not push it over the limit.
+func TestFindGuildMember_WhitespacePaddedMaxLengthStillSearches(t *testing.T) {
+	gm := &fakeGuildManager{}
+	padded := "  " + strings.Repeat("a", 100) + "  "
+
+	_, _ = findGuildMember(gm, "guild-1", padded)
+
+	if gm.countCalls("GuildMembersSearch") != 1 {
+		t.Fatalf("trimmed 100-char query must reach search; got calls %v", gm.Calls())
+	}
+}

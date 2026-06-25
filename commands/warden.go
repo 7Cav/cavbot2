@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -623,6 +624,15 @@ func findGuildMember(gm GuildManager, guildID, query string) (*discordgo.Member,
 	trimmedQuery := strings.TrimSpace(query)
 	if trimmedQuery == "" {
 		return nil, fmt.Errorf("❌ Empty query")
+	}
+
+	// Discord's member-search query must be 1-100 characters. Reject an
+	// over-length input here, before it reaches GuildMembersSearch and 400s
+	// (which gets captured to Sentry as an error). This runs ahead of the
+	// mention/ID branches below, but real mentions and snowflakes are well
+	// under 100 chars, so in practice only a long name search trips it.
+	if utf8.RuneCountInString(trimmedQuery) > 100 {
+		return nil, fmt.Errorf("❌ Query too long (max 100 characters); use a mention/ID instead")
 	}
 
 	// Mentions: <@123>, <@!123>
