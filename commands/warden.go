@@ -578,7 +578,7 @@ func editEphemeral(r utils.InteractionResponder, interaction *discordgo.Interact
 	if err := r.InteractionResponseEdit(interaction.Interaction, &discordgo.WebhookEdit{
 		Content: &content,
 	}); err != nil {
-		utils.HandleError(r, interaction, fmt.Sprintf("❌ Failed to edit response: %v", err))
+		captureEditFailure(interaction, err)
 	}
 }
 
@@ -588,8 +588,37 @@ func editEphemeralWithEmbed(r utils.InteractionResponder, interaction *discordgo
 		edit.Embeds = &[]*discordgo.MessageEmbed{embed}
 	}
 	if err := r.InteractionResponseEdit(interaction.Interaction, edit); err != nil {
-		utils.HandleError(r, interaction, fmt.Sprintf("❌ Failed to edit response: %v", err))
+		captureEditFailure(interaction, err)
 	}
+}
+
+// captureEditFailure handles a failed deferred-ephemeral edit. The interaction
+// is already acknowledged by the defer, so the identical InteractionResponseEdit
+// cannot be retried, and InteractionRespond would only be rejected as
+// already-acknowledged. That is the dead-end loop utils.HandleError walks into
+// here: Respond, get already-acknowledged, re-issue the same edit. So instead of
+// retrying, we treat the lost reply as a genuine delivery failure and capture it
+// to Sentry with the subcommand and guild read off the interaction, so on-call
+// can attribute it even though the command may already have mutated state. This
+// is the single failure-handling seam both edit helpers funnel through; future
+// fallback-delivery handling can extend this single seam.
+func captureEditFailure(interaction *discordgo.InteractionCreate, err error) {
+	captureError(
+		"Failed to deliver deferred-ephemeral edit",
+		err,
+		"command", wardenSubcommandOf(interaction),
+		"guild_id", interaction.GuildID,
+	)
+}
+
+// wardenSubcommandOf reads the chosen warden subcommand off the interaction's
+// `command` option for failure context, falling back to "unknown" when it can't
+// be resolved (e.g. a malformed interaction) so capture context is never blank.
+func wardenSubcommandOf(interaction *discordgo.InteractionCreate) string {
+	if sub, ok := getOptionString(interaction.ApplicationCommandData(), "command"); ok {
+		return sub
+	}
+	return "unknown"
 }
 
 func buildAddedMembersEmbed(members []*discordgo.Member) *discordgo.MessageEmbed {
