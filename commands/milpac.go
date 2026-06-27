@@ -142,59 +142,51 @@ func runMilpac(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	for _, secondary := range milpac.Secondary {
 		secondaryPositions = append(secondaryPositions, secondary.PositionTitle)
 	}
-	var fields []*discordgo.MessageEmbedField
-	if len(secondaryPositions) > 0 {
-		fields = []*discordgo.MessageEmbedField{
-			{
-				Name:  "Username",
-				Value: milpac.User.Username,
-			},
-			{
-				Name:  "Gamertag",
-				Value: milpac.Gamertag,
-			},
-			{
-				Name:  "Roster",
-				Value: milpac.GetRosterStatus(),
-			},
-			{
-				Name:  "Primary Position",
-				Value: milpac.Primary.PositionTitle,
-			},
-			{Name: "Secondary Positions", Value: strings.Join(secondaryPositions, "\n")},
-			{
-				Name:  "Rank",
-				Value: fmt.Sprintf("%s (%s)\nPromoted: %s\nTime Since Promotion: %s", milpac.Rank.RankFull, milpac.Rank.RankShort, capitalizedPromotionDate, timeInGrade),
-			},
-			{
-				Name:  "Time in Service",
-				Value: fmt.Sprintf("Initial Enlist Date: %s\nTime Spent Active: %s", capitalizedJoinDate, timeInService),
-			},
-		}
-	} else {
-		fields = []*discordgo.MessageEmbedField{
-			{
-				Name:  "Username",
-				Value: milpac.User.Username,
-			},
-			{
-				Name:  "Roster",
-				Value: milpac.GetRosterStatus(),
-			},
-			{
-				Name:  "Primary Position",
-				Value: milpac.Primary.PositionTitle,
-			},
-			{
-				Name:  "Rank",
-				Value: fmt.Sprintf("%s (%s)\nPromoted: %s\nTime Since Promotion: %s", milpac.Rank.RankFull, milpac.Rank.RankShort, capitalizedPromotionDate, timeInGrade),
-			},
-			{
-				Name:  "Time in Service",
-				Value: fmt.Sprintf("%s\nTime Spent Active: %s", capitalizedJoinDate, timeInService),
-			},
-		}
+	// One field list for every milpac. Secondary Positions is the only
+	// conditional field — appended in place so the surrounding fields keep their
+	// order. (Previously this was two hand-copied branches that drifted: the
+	// no-secondaries copy silently dropped the Gamertag field and the "Initial
+	// Enlist Date:" label.)
+	fields := []*discordgo.MessageEmbedField{
+		{
+			Name:  "Username",
+			Value: milpac.User.Username,
+		},
 	}
+	// Most members are PC-only and carry no console gamertag — omit the field
+	// rather than render a blank line for them.
+	if milpac.Gamertag != "" {
+		fields = append(fields, &discordgo.MessageEmbedField{
+			Name:  "Gamertag",
+			Value: milpac.Gamertag,
+		})
+	}
+	fields = append(fields,
+		&discordgo.MessageEmbedField{
+			Name:  "Roster",
+			Value: milpac.GetRosterStatus(),
+		},
+		&discordgo.MessageEmbedField{
+			Name:  "Primary Position",
+			Value: milpac.Primary.PositionTitle,
+		},
+	)
+	if len(secondaryPositions) > 0 {
+		fields = append(fields, &discordgo.MessageEmbedField{
+			Name:  "Secondary Positions",
+			Value: strings.Join(secondaryPositions, "\n"),
+		})
+	}
+	fields = append(fields,
+		&discordgo.MessageEmbedField{
+			Name:  "Rank",
+			Value: fmt.Sprintf("%s (%s)\nPromoted: %s\nTime Since Promotion: %s", milpac.Rank.RankFull, milpac.Rank.RankShort, capitalizedPromotionDate, timeInGrade),
+		},
+		&discordgo.MessageEmbedField{
+			Name:  "Time in Service",
+			Value: fmt.Sprintf("Initial Enlist Date: %s\nTime Spent Active: %s", capitalizedJoinDate, timeInService),
+		},
+	)
 	matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(milpac.UniformUrl)
 	if len(matches) < 2 {
 		utils.HandleError(r, i, "❌ Failed to parse uniform URL")
