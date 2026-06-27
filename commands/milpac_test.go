@@ -214,6 +214,11 @@ func TestRunMilpac_SuccessByDiscordID(t *testing.T) {
 	}
 }
 
+// TestRunMilpac_SuccessNoSecondaries pins the unified field list for a member
+// with NO secondary positions: the Secondary Positions field is omitted, but the
+// Gamertag field (non-empty here) and the "Initial Enlist Date:" label still
+// render — these used to be dropped because the no-secondaries branch was a
+// drifted hand-copy that never included them.
 func TestRunMilpac_SuccessNoSecondaries(t *testing.T) {
 	profile := milpacProfileWithSecondaries()
 	profile.Secondary = nil // exercise the no-secondaries embed branch
@@ -229,9 +234,43 @@ func TestRunMilpac_SuccessNoSecondaries(t *testing.T) {
 		t.Fatalf("expected 2 calls, got %d: %+v", len(calls), calls)
 	}
 	embed := (*calls[1].Edit.Embeds)[0]
+	fieldByName := make(map[string]string, len(embed.Fields))
 	for _, fld := range embed.Fields {
-		if fld.Name == "Gamertag" || fld.Name == "Secondary Positions" {
-			t.Fatalf("no-secondaries branch should omit %q field", fld.Name)
+		fieldByName[fld.Name] = fld.Value
+	}
+	if _, ok := fieldByName["Secondary Positions"]; ok {
+		t.Fatalf("no-secondaries member must omit the Secondary Positions field; fields: %+v", embed.Fields)
+	}
+	if got := fieldByName["Gamertag"]; got != "TestGamer" {
+		t.Fatalf("Gamertag field = %q, want %q to render even without secondaries", got, "TestGamer")
+	}
+	if tis := fieldByName["Time in Service"]; !strings.Contains(tis, "Initial Enlist Date:") {
+		t.Fatalf("Time in Service = %q, want it to carry the 'Initial Enlist Date:' label", tis)
+	}
+}
+
+// TestRunMilpac_EmptyGamertagOmitsField mirrors the PC-majority case (e.g.
+// West.R): a member with secondary positions but no console gamertag. The empty
+// value must omit the Gamertag field entirely rather than render a blank line —
+// the original symptom that prompted the fix.
+func TestRunMilpac_EmptyGamertagOmitsField(t *testing.T) {
+	profile := milpacProfileWithSecondaries()
+	profile.Gamertag = "" // PC member with no console gamertag
+	serveMilpacByDiscordID(t, profile)
+
+	f := &fakeResponder{}
+	i := fakeAppCommandInteraction(userOption("user", "111"))
+
+	runMilpac(f, i)
+
+	calls := f.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 calls, got %d: %+v", len(calls), calls)
+	}
+	embed := (*calls[1].Edit.Embeds)[0]
+	for _, fld := range embed.Fields {
+		if fld.Name == "Gamertag" {
+			t.Fatalf("empty gamertag must omit the Gamertag field, got value %q", fld.Value)
 		}
 	}
 }

@@ -302,3 +302,26 @@ func TestGetRosterStatus(t *testing.T) {
 		})
 	}
 }
+
+// TestGetMilpacByDiscordID_MapsConsoleGamertag pins the wire contract: the
+// canonical 7Cav API serializes the in-game tag under the key "consoleGamertag"
+// (not "gamertag"), so ProfileResponse.Gamertag must decode from that key. This
+// feeds a RAW JSON body (the literal key the API sends) — a marshaled-struct
+// fixture would round-trip through the same tag and hide a mismatch.
+func TestGetMilpacByDiscordID_MapsConsoleGamertag(t *testing.T) {
+	const body = `{"user":{"username":"Miller.L"},"consoleGamertag":"DrakenActual","roster":"ROSTER_TYPE_COMBAT"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	withTestAPIServer(t, srv)
+
+	got, err := GetMilpacByDiscordID(context.Background(), "111")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Gamertag != "DrakenActual" {
+		t.Fatalf("Gamertag = %q, want %q (decoded from consoleGamertag key)", got.Gamertag, "DrakenActual")
+	}
+}

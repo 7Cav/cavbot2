@@ -13,7 +13,7 @@ import (
 
 type ProfileResponse struct {
 	User              User       `json:"user"`
-	Gamertag          string     `json:"gamertag"`
+	Gamertag          string     `json:"consoleGamertag"`
 	Rank              Rank       `json:"rank"`
 	RealName          string     `json:"realName"`
 	UniformUrl        string     `json:"uniformUrl"`
@@ -34,7 +34,7 @@ type LiteRosterResponse struct {
 
 type LiteProfileResponse struct {
 	User              User       `json:"user"`
-	Gamertag          string     `json:"gamertag"`
+	Gamertag          string     `json:"consoleGamertag"`
 	Rank              Rank       `json:"rank"`
 	RealName          string     `json:"realName"`
 	UniformUrl        string     `json:"uniformUrl"`
