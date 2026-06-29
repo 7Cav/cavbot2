@@ -82,21 +82,112 @@ func TestClassifyDiscordError_RESTErrorNilResponseIsSystemFault(t *testing.T) {
 	}
 }
 
-// A 404 is a distinct, non-system client fault: the targeted member-by-ID
-// lookup proved the user is absent. It must set NotFound (so findGuildMember can
-// render a clear "not in this server" message) without setting SystemFault or
-// MissingPermissions, and never leak the raw body.
-func TestClassifyDiscordError_404IsNotFound(t *testing.T) {
+// A 404 carrying Unknown Member (10007) is a distinct, non-system client fault:
+// the targeted member-by-ID lookup proved the user is genuinely absent. It must
+// set NotFound (so findGuildMember can render a clear "not in this server"
+// message) without setting SystemFault or MissingPermissions, and never leak the
+// raw body.
+func TestClassifyDiscordError_404UnknownMemberIsNotFound(t *testing.T) {
 	err := restError(http.StatusNotFound, 10007, rawBodyMarker)
 	c := classifyDiscordError(err)
 	if c.SystemFault {
-		t.Fatalf("a 404 must not be a system fault")
+		t.Fatalf("a 404 Unknown Member must not be a system fault")
 	}
 	if !c.NotFound {
-		t.Fatalf("a 404 must set NotFound so callers can show a clear absent-member message")
+		t.Fatalf("a 404 Unknown Member must set NotFound so callers can show a clear absent-member message")
 	}
 	if strings.Contains(c.UserDetail, rawBodyMarker) {
 		t.Fatalf("classifier leaked the raw Discord body: %q", c.UserDetail)
+	}
+}
+
+// A 404 carrying Unknown Role (10011) is NOT a genuine absence — the role ID
+// went stale or the role was deleted, a config fault. It must classify as a
+// captured system fault (SystemFault), never as NotFound (which would misreport
+// the role's members as "not in this server"), and never leak the raw body.
+func TestClassifyDiscordError_404UnknownRoleIsSystemFault(t *testing.T) {
+	err := restError(http.StatusNotFound, discordgo.ErrCodeUnknownRole, rawBodyMarker)
+	c := classifyDiscordError(err)
+	if !c.SystemFault {
+		t.Fatalf("a 404 Unknown Role (stale/deleted role) must classify as a captured system fault")
+	}
+	if c.NotFound {
+		t.Fatalf("a 404 Unknown Role must NOT set NotFound — it is a config fault, not an absent member")
+	}
+	if strings.Contains(c.UserDetail, rawBodyMarker) {
+		t.Fatalf("classifier leaked the raw Discord body: %q", c.UserDetail)
+	}
+}
+
+// A 404 carrying Unknown Guild (10004) means the guild ID is wrong — a config
+// fault, not an absent member. Same treatment as Unknown Role: captured system
+// fault, never NotFound, never a body leak.
+func TestClassifyDiscordError_404UnknownGuildIsSystemFault(t *testing.T) {
+	err := restError(http.StatusNotFound, discordgo.ErrCodeUnknownGuild, rawBodyMarker)
+	c := classifyDiscordError(err)
+	if !c.SystemFault {
+		t.Fatalf("a 404 Unknown Guild (bad guild ID) must classify as a captured system fault")
+	}
+	if c.NotFound {
+		t.Fatalf("a 404 Unknown Guild must NOT set NotFound — it is a config fault, not an absent member")
+	}
+	if strings.Contains(c.UserDetail, rawBodyMarker) {
+		t.Fatalf("classifier leaked the raw Discord body: %q", c.UserDetail)
+	}
+}
+
+// A bare 404 with no application error code (Discord can answer a member lookup
+// with a 404 and no body code) must keep the genuine-absence behavior: NotFound,
+// no capture. This preserves the targeted member-lookup contract — only an
+// unexpected NON-zero 404 code is a config fault.
+func TestClassifyDiscordError_404BareCodeStaysNotFound(t *testing.T) {
+	err := restError(http.StatusNotFound, 0, rawBodyMarker)
+	c := classifyDiscordError(err)
+	if c.SystemFault {
+		t.Fatalf("a bare 404 (no application error code) must not be a system fault")
+	}
+	if !c.NotFound {
+		t.Fatalf("a bare 404 must stay NotFound so the member-lookup path keeps its absent-member message")
+	}
+}
+
+// classifyNotFound routes ANY non-zero 404 code that isn't Unknown Member through
+// a single catch-all into SystemFault, not just the named Unknown Role / Unknown
+// Guild codes. Pin that with an arbitrary, never-named code so a future refactor
+// to explicit `case` arms can't silently narrow the contract and let an
+// unexpected code fall back to NotFound.
+func TestClassifyDiscordError_404UnexpectedCodeIsSystemFault(t *testing.T) {
+	err := restError(http.StatusNotFound, 12345, rawBodyMarker)
+	c := classifyDiscordError(err)
+	if !c.SystemFault {
+		t.Fatalf("a 404 with an unexpected non-zero code must classify as a captured system fault")
+	}
+	if c.NotFound {
+		t.Fatalf("a 404 with an unexpected non-zero code must NOT set NotFound — only Unknown Member or a bare 404 is a genuine absence")
+	}
+	if strings.Contains(c.UserDetail, rawBodyMarker) {
+		t.Fatalf("classifier leaked the raw Discord body: %q", c.UserDetail)
+	}
+}
+
+// discordgo leaves RESTError.Message nil when a 404's response body isn't
+// parseable JSON, so there is no application error code to read. classifyNotFound's
+// restErr.Message == nil guard must treat that as a bare 404 — NotFound, no
+// capture — without dereferencing the nil Message. The restError helper always
+// sets a non-nil Message, so this RESTError is built inline to exercise the
+// genuine nil-Message branch.
+func TestClassifyDiscordError_404NilMessageStaysNotFound(t *testing.T) {
+	err := &discordgo.RESTError{
+		Response:     &http.Response{StatusCode: http.StatusNotFound, Status: "404 Not Found"},
+		ResponseBody: []byte("not parseable json"),
+		Message:      nil,
+	}
+	c := classifyDiscordError(err)
+	if c.SystemFault {
+		t.Fatalf("a 404 with a nil Message (unparseable body) must not be a system fault")
+	}
+	if !c.NotFound {
+		t.Fatalf("a 404 with a nil Message must stay NotFound, matching the bare-404 contract")
 	}
 }
 
@@ -144,6 +235,28 @@ func TestFindGuildMember_Mention404ClearMessageNoSearchNoCapture(t *testing.T) {
 	}
 	if rec.count != 0 {
 		t.Fatalf("a 404 mention must NOT capture to Sentry; got %d", rec.count)
+	}
+}
+
+// The targeted member lookup must keep its absent-member behavior for a bare 404
+// (no application error code) just as for Unknown Member: a clear "not in this
+// server" message, no name search, no Sentry capture. The new code-aware
+// classifier only treats an unexpected NON-zero 404 code as a config fault, so
+// the member-lookup contract is unchanged for the codeless case.
+func TestFindGuildMember_MentionBare404StaysNotInServerNoCapture(t *testing.T) {
+	rec := &captureRecorder{}
+	rec.install(t)
+	gm := &fakeGuildManager{MemberErrs: []error{restError(http.StatusNotFound, 0, rawBodyMarker)}}
+
+	_, err := findGuildMember(gm, "guild-1", "<@123456789012345678>")
+	if err == nil {
+		t.Fatal("expected an error when the mentioned member is absent")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "not in this server") {
+		t.Fatalf("a bare 404 must keep the clear absent-member message, got %q", err.Error())
+	}
+	if rec.count != 0 {
+		t.Fatalf("a bare 404 mention must NOT capture to Sentry; got %d", rec.count)
 	}
 }
 
@@ -389,14 +502,16 @@ func TestRunWardenAdd_RoleAdd5xxCapturesGenericRetry(t *testing.T) {
 	}
 }
 
-// A non-403 4xx (here a 404) is still an operator/config-fixable client fault:
-// it must show the generic "Discord rejected the request" wording, never the
-// raw body, and never capture to Sentry. Covers the default arm of
-// roleMutationErrorReply, which no other mutation-site test exercises.
+// A non-403 4xx (here a 400 with a non-permission code) is an
+// operator/config-fixable client fault: it must show the generic "Discord
+// rejected the request" wording, never the raw body, and never capture to
+// Sentry. Covers the default arm of roleMutationErrorReply, which no other
+// mutation-site test exercises. (A 404 no longer reaches this arm — Unknown Role
+// and Unknown Guild codes are captured system faults; see the tests below.)
 func TestRunWardenAdd_RoleAddGeneric4xxNoCapture(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
-	gm := wardenRoleAddGM(restError(http.StatusNotFound, 10011, rawBodyMarker))
+	gm := wardenRoleAddGM(restError(http.StatusBadRequest, 50035, rawBodyMarker))
 	f := &fakeResponder{}
 
 	runWarden(f, gm, wardenAddInteraction())
@@ -410,6 +525,68 @@ func TestRunWardenAdd_RoleAddGeneric4xxNoCapture(t *testing.T) {
 	}
 	if rec.count != 0 {
 		t.Fatalf("a generic 4xx role add must NOT capture to Sentry; got %d", rec.count)
+	}
+}
+
+// A role-add 404 carrying Unknown Role (10011) — the resolved role was deleted
+// between resolution and the add — is a config fault, not an absent member. It
+// must capture to Sentry exactly once, render an operator-facing line DISTINCT
+// from the plain "Discord rejected the request" not-found rendering, and never
+// leak the raw Discord body.
+func TestRunWardenAdd_RoleAddUnknownRole404CapturesDistinct(t *testing.T) {
+	rec := &captureRecorder{}
+	rec.install(t)
+	gm := wardenRoleAddGM(restError(http.StatusNotFound, discordgo.ErrCodeUnknownRole, rawBodyMarker))
+	f := &fakeResponder{}
+
+	runWarden(f, gm, wardenAddInteraction())
+
+	got := lastEditContent(f.Calls())
+	if strings.Contains(got, rawBodyMarker) {
+		t.Fatalf("role-add Unknown Role 404 leaked the raw Discord body: %q", got)
+	}
+	if strings.Contains(got, "Discord rejected the request") {
+		t.Fatalf("an Unknown Role 404 must surface a line distinct from the plain not-found rendering, got %q", got)
+	}
+	// Positively pin the SystemFault arm's wording the operator actually sees, so
+	// a regression rendering an empty-but-non-generic line still fails here.
+	if !strings.Contains(got, "Discord error") {
+		t.Fatalf("an Unknown Role 404 must render the system-fault wording (%q), got %q", "Discord error", got)
+	}
+	if rec.count != 1 {
+		t.Fatalf("an Unknown Role 404 (stale/deleted role) must capture to Sentry once; got %d", rec.count)
+	}
+}
+
+// The remove path shares the classifier, so a role-remove 404 carrying Unknown
+// Guild (10004) — a wrong guild ID — must capture exactly once and never leak
+// the raw body, mirroring the add path's Unknown Role coverage.
+func TestRunWardenRemove_RoleRemoveUnknownGuild404Captures(t *testing.T) {
+	rec := &captureRecorder{}
+	rec.install(t)
+	gm := &fakeGuildManager{
+		roles:                []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		membersByID:          map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
+		MemberRoleRemoveErrs: []error{restError(http.StatusNotFound, discordgo.ErrCodeUnknownGuild, rawBodyMarker)},
+	}
+	f := &fakeResponder{}
+
+	runWarden(f, gm, wardenRemoveInteraction())
+
+	got := lastEditContent(f.Calls())
+	if strings.Contains(got, rawBodyMarker) {
+		t.Fatalf("role-remove Unknown Guild 404 leaked the raw Discord body: %q", got)
+	}
+	if strings.Contains(got, "Discord rejected the request") {
+		t.Fatalf("an Unknown Guild 404 must surface a line distinct from the plain not-found rendering, got %q", got)
+	}
+	// Positively pin the SystemFault arm's wording the operator actually sees, so
+	// a regression rendering an empty-but-non-generic line still fails here.
+	if !strings.Contains(got, "Discord error") {
+		t.Fatalf("an Unknown Guild 404 must render the system-fault wording (%q), got %q", "Discord error", got)
+	}
+	if rec.count != 1 {
+		t.Fatalf("an Unknown Guild 404 (bad guild ID) must capture to Sentry once; got %d", rec.count)
 	}
 }
 

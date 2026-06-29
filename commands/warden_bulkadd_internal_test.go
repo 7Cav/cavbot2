@@ -345,6 +345,49 @@ func TestRunWardenBulkAddInternal_NotInGuild404ListedNotAddedNoCapture(t *testin
 	}
 }
 
+// The headline #209 scenario: the resolved role is deleted between resolution
+// and the add loop, so every add 404s with Unknown Role (10011). This must NOT
+// be misread as the members being absent ("Not in this Discord") — that conflates
+// a config fault with genuine absence. Each add is a captured system fault listed
+// under "Could not be added", and the raw Discord body never leaks.
+func TestRunWardenBulkAddInternal_DeletedRole404CapturedNotMisreportedAbsent(t *testing.T) {
+	rec := &captureRecorder{}
+	rec.install(t)
+	serveRosterAndProfiles(t, liteRoster(
+		liteMember("Present.A", "111111111111111111"),
+		liteMember("Present.B", "222222222222222222"),
+	), http.StatusOK, nil)
+
+	gm := internalRoleGM()
+	// Both present members 404 with Unknown Role: the role ID went stale.
+	gm.MemberRoleAddErrs = []error{
+		restError(http.StatusNotFound, discordgo.ErrCodeUnknownRole, rawBodyMarker),
+		restError(http.StatusNotFound, discordgo.ErrCodeUnknownRole, rawBodyMarker),
+	}
+	f := &fakeResponder{}
+
+	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+
+	got := lastEditContent(f.Calls())
+	// Present members must NOT be reported as absent.
+	if strings.Contains(got, "Not in this Discord") {
+		t.Fatalf("a deleted-role 404 must not misreport present members as 'Not in this Discord'; got %q", got)
+	}
+	if !strings.Contains(got, "Could not be added (2)") {
+		t.Fatalf("a stale-role 404 must list both members under 'Could not be added'; got %q", got)
+	}
+	// Both stale-role faults are genuine config faults: each captures to Sentry.
+	if rec.count != 2 {
+		t.Fatalf("two stale-role 404s must capture to Sentry once each; got %d", rec.count)
+	}
+	if unitVal, ok := kvValue(rec.lastKV, "unit"); !ok || unitVal != "D/ACD" {
+		t.Fatalf("the capture must be tagged with the unit value; got kv %v", rec.lastKV)
+	}
+	if strings.Contains(got, rawBodyMarker) {
+		t.Fatalf("must not leak the raw Discord body, got %q", got)
+	}
+}
+
 // A non-404 client fault on an add (here a 403 — bot lacks Manage Roles or the
 // role sits above it) is still surfaced, never silently dropped, but it is an
 // operator-fixable condition so it must NOT capture to Sentry.
