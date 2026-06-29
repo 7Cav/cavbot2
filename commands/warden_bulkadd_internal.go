@@ -185,6 +185,19 @@ func runWardenBulkAddInternal(
 	var noDiscordLinked []string
 	var faults []string
 	var sawMissingPermissions bool
+	// One collector per run collapses the per-member system-fault captures: a role
+	// deleted mid-run 404s every add with the same signature, which would
+	// otherwise page on-call once per member. Faults feed it during the loop and
+	// it flushes once after (#214). The flush is deferred immediately, so an early
+	// return or a panic between the loop and the flush can never silently drop
+	// pending captures (the exact per-member silent drop this collector fixes); the
+	// message and the unit tag are fixed for the run, so evaluating the deferred
+	// args here is exact.
+	faultCapture := newFaultCollector()
+	defer faultCapture.flush(
+		"Failed to add warden internal role in bulk",
+		"command", "warden-bulkadd-internal", "guild", guildID, "unit", unit.value,
+	)
 	for _, profile := range roster.LiteProfiles {
 		memberDiscordID := strings.TrimSpace(profile.DiscordID)
 		if memberDiscordID == "" {
@@ -213,14 +226,11 @@ func runWardenBulkAddInternal(
 			continue
 		}
 		if class.SystemFault {
-			// Genuine fault (5xx/transport): capture to Sentry tagged with the unit
-			// value so each registry entry fingerprints separately, list the member,
-			// and continue past it. The raw Discord body never reaches the reply.
-			captureError(
-				"Failed to add warden internal role in bulk",
-				err,
-				"command", "warden-bulkadd-internal", "guild", guildID, "user", memberDiscordID, "unit", unit.value,
-			)
+			// Genuine fault (5xx/transport, or a stale-role/guild config 404): hand it
+			// to the collector keyed by signature instead of capturing per member, so
+			// a role deleted mid-run pages once rather than once per trooper. List the
+			// member and continue past it. The raw Discord body never reaches the reply.
+			faultCapture.recordSystemFault(err, memberDiscordID)
 			faults = append(faults, profile.User.Username)
 			continue
 		}
@@ -285,7 +295,7 @@ func buildWardenInternalBulkAddSummary(
 }
 
 // wardenInternalPermissionsHint is the actionable line appended when a per-member
-// add failed on a 403. It reuses the substance of roleMutationErrorReply's
+// add failed on a 403. It reuses the substance of roleMutationErrorMessage's
 // missing-permissions branch (Manage Roles plus the role-hierarchy requirement)
 // without interpolating any raw Discord body.
 func wardenInternalPermissionsHint(roleName string) string {

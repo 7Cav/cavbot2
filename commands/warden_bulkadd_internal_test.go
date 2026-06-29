@@ -376,15 +376,82 @@ func TestRunWardenBulkAddInternal_DeletedRole404CapturedNotMisreportedAbsent(t *
 	if !strings.Contains(got, "Could not be added (2)") {
 		t.Fatalf("a stale-role 404 must list both members under 'Could not be added'; got %q", got)
 	}
-	// Both stale-role faults are genuine config faults: each captures to Sentry.
-	if rec.count != 2 {
-		t.Fatalf("two stale-role 404s must capture to Sentry once each; got %d", rec.count)
+	// Both members hit the SAME fault signature (404 Unknown Role), so the loop
+	// must collapse them into ONE Sentry event for the one root cause, not page
+	// once per member (#214). The collapsed event carries the affected count and a
+	// sample member, plus the unit tag the per-member captures used to carry.
+	if rec.count != 1 {
+		t.Fatalf("two same-signature stale-role 404s must collapse to ONE capture; got %d", rec.count)
+	}
+	if affected, ok := kvValue(rec.lastKV, "affected_count"); !ok || affected != 2 {
+		t.Fatalf("the collapsed capture must carry affected_count=2; got %v (kv %v)", affected, rec.lastKV)
+	}
+	sample, ok := kvValue(rec.lastKV, "sample_user")
+	if !ok {
+		t.Fatalf("the collapsed capture must carry a sample_user; got kv %v", rec.lastKV)
+	}
+	// Roster iteration order is map-nondeterministic, so the sample is whichever
+	// present member the loop reached first; it must be one of the two real IDs.
+	if sample != "111111111111111111" && sample != "222222222222222222" {
+		t.Fatalf("sample_user must be one of the failed members' Discord IDs; got %v", sample)
 	}
 	if unitVal, ok := kvValue(rec.lastKV, "unit"); !ok || unitVal != "D/ACD" {
 		t.Fatalf("the capture must be tagged with the unit value; got kv %v", rec.lastKV)
 	}
 	if strings.Contains(got, rawBodyMarker) {
 		t.Fatalf("must not leak the raw Discord body, got %q", got)
+	}
+}
+
+// Two members fail with DISTINCT fault signatures in one run — one stale-role
+// 404 (Unknown Role 10011), one transient 5xx. These are two different root
+// causes, so the collapse must NOT fold them together: each signature gets its
+// own Sentry event, with its own affected_count of 1. A 10011 storm alongside a
+// transient 5xx must surface as two events, never one (#214).
+func TestRunWardenBulkAddInternal_MixedSignaturesCaptureOncePerSignature(t *testing.T) {
+	rec := &captureRecorder{}
+	rec.install(t)
+	serveRosterAndProfiles(t, liteRoster(
+		liteMember("Present.A", "111111111111111111"),
+		liteMember("Present.B", "222222222222222222"),
+	), http.StatusOK, nil)
+
+	gm := internalRoleGM()
+	// One stale-role 404, one transient 5xx: two distinct signatures.
+	gm.MemberRoleAddErrs = []error{
+		restError(http.StatusNotFound, discordgo.ErrCodeUnknownRole, rawBodyMarker),
+		restError(http.StatusInternalServerError, 0, rawBodyMarker),
+	}
+	f := &fakeResponder{}
+
+	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+
+	// Two distinct signatures must produce exactly two captures, one per signature.
+	if rec.count != 2 {
+		t.Fatalf("two distinct fault signatures must capture once each (no folding); got %d", rec.count)
+	}
+	// Each event carries affected_count=1, and the two events carry distinct
+	// signatures (different http_status), proving the collapse keys on signature.
+	statuses := map[any]bool{}
+	for _, kv := range rec.kvs {
+		if affected, ok := kvValue(kv, "affected_count"); !ok || affected != 1 {
+			t.Fatalf("each distinct-signature event must carry affected_count=1; got %v (kv %v)", affected, kv)
+		}
+		if _, ok := kvValue(kv, "sample_user"); !ok {
+			t.Fatalf("each event must carry a sample_user; got kv %v", kv)
+		}
+		status, ok := kvValue(kv, "http_status")
+		if !ok {
+			t.Fatalf("each event must carry the http_status signature; got kv %v", kv)
+		}
+		statuses[status] = true
+	}
+	if len(statuses) != 2 {
+		t.Fatalf("the two events must carry distinct http_status signatures; got %v", statuses)
+	}
+	// Both members are still listed for the operator, unchanged by the collapse.
+	if got := lastEditContent(f.Calls()); !strings.Contains(got, "Could not be added (2)") {
+		t.Fatalf("both faulted members must still be listed; got %q", got)
 	}
 }
 
@@ -448,6 +515,22 @@ func TestRunWardenBulkAddInternal_PerMemberFaultCapturedAndRunContinues(t *testi
 	}
 	if rec.count != 1 {
 		t.Fatalf("a 5xx per-member fault must capture to Sentry exactly once; got %d", rec.count)
+	}
+	// Pin the "single fault → count 1" acceptance criterion directly on the payload,
+	// not just transitively via rec.count: the one collected fault carries an
+	// affected_count of 1 and a sample_user, so a regression that miscounts attempts
+	// or drops the sample fails here rather than only in the multi-fault tests.
+	if affected, ok := kvValue(rec.lastKV, "affected_count"); !ok || affected != 1 {
+		t.Fatalf("the single collected fault must carry affected_count=1; got %v (kv %v)", affected, rec.lastKV)
+	}
+	sample, ok := kvValue(rec.lastKV, "sample_user")
+	if !ok {
+		t.Fatalf("the single collected fault must carry a sample_user; got kv %v", rec.lastKV)
+	}
+	// Map iteration order decides which member drew the 5xx, so the sample is the
+	// faulted member's Discord ID — one of the two real roster IDs.
+	if sample != "111111111111111111" && sample != "222222222222222222" {
+		t.Fatalf("sample_user must be the faulted member's Discord ID; got %v", sample)
 	}
 	if unitVal, ok := kvValue(rec.lastKV, "unit"); !ok || unitVal != "D/ACD" {
 		t.Fatalf("the capture must be tagged with the unit value; got kv %v", rec.lastKV)
