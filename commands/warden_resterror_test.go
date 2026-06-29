@@ -170,6 +170,63 @@ func TestClassifyDiscordError_404UnexpectedCodeIsSystemFault(t *testing.T) {
 	}
 }
 
+// --- config-fault flag: a stale/deleted role or wrong guild is a CAPTURED
+// system fault that the render layer must tell apart from a transient one ---
+
+// A 404 Unknown Role (10011) is both a system fault (so it still captures) AND a
+// config fault, so the render layer can drop the transient "try again shortly"
+// hint that cannot fix a deleted role. The capture-on-SystemFault path is left
+// untouched; only the wording branches on the new flag.
+func TestClassifyDiscordError_404UnknownRoleIsConfigFault(t *testing.T) {
+	err := restError(http.StatusNotFound, discordgo.ErrCodeUnknownRole, rawBodyMarker)
+	c := classifyDiscordError(err)
+	if !c.SystemFault {
+		t.Fatalf("a 404 Unknown Role must stay a captured system fault")
+	}
+	if !c.ConfigFault {
+		t.Fatalf("a 404 Unknown Role must set ConfigFault so the render layer can drop the transient retry hint")
+	}
+}
+
+// A 404 Unknown Guild (10004) is a config fault for the same reason: a wrong
+// GUILD_ID will not clear on its own.
+func TestClassifyDiscordError_404UnknownGuildIsConfigFault(t *testing.T) {
+	err := restError(http.StatusNotFound, discordgo.ErrCodeUnknownGuild, rawBodyMarker)
+	c := classifyDiscordError(err)
+	if !c.SystemFault {
+		t.Fatalf("a 404 Unknown Guild must stay a captured system fault")
+	}
+	if !c.ConfigFault {
+		t.Fatalf("a 404 Unknown Guild must set ConfigFault")
+	}
+}
+
+// A genuine 5xx is a captured system fault but NOT a config fault: the operator
+// keeps the transient "try again shortly" wording, the right advice for a
+// Discord-side blip.
+func TestClassifyDiscordError_5xxIsNotConfigFault(t *testing.T) {
+	err := restError(http.StatusInternalServerError, 0, rawBodyMarker)
+	c := classifyDiscordError(err)
+	if !c.SystemFault {
+		t.Fatalf("a 500 must be a system fault")
+	}
+	if c.ConfigFault {
+		t.Fatalf("a 500 must NOT be a config fault — it is a transient Discord-side error")
+	}
+}
+
+// A transport error (no HTTP response) is a system fault but not a config fault,
+// same as a 5xx.
+func TestClassifyDiscordError_TransportIsNotConfigFault(t *testing.T) {
+	c := classifyDiscordError(fmt.Errorf("dial tcp: connection refused"))
+	if !c.SystemFault {
+		t.Fatalf("a transport error must be a system fault")
+	}
+	if c.ConfigFault {
+		t.Fatalf("a transport error must NOT be a config fault")
+	}
+}
+
 // discordgo leaves RESTError.Message nil when a 404's response body isn't
 // parseable JSON, so there is no application error code to read. classifyNotFound's
 // restErr.Message == nil guard must treat that as a bare 404 — NotFound, no
@@ -279,11 +336,54 @@ func TestFindGuildMember_MentionTransientFaultSurfacedAndCaptured(t *testing.T) 
 	if strings.Contains(err.Error(), "No member found") {
 		t.Fatalf("a transient fault must not be reported as 'no member found': %q", err.Error())
 	}
+	// A genuine 5xx is transient: the member-lookup reply keeps "try again shortly".
+	if !strings.Contains(strings.ToLower(err.Error()), "try again shortly") {
+		t.Fatalf("a transient member-lookup fault must keep the retry hint, got %q", err.Error())
+	}
 	if gm.countCalls("GuildMembersSearch") != 0 {
 		t.Fatalf("a transient mention fault must NOT fall through to name search; got calls %v", gm.Calls())
 	}
 	if rec.count != 1 {
 		t.Fatalf("a transient (5xx) mention fault must capture to Sentry once; got %d", rec.count)
+	}
+}
+
+// resolveMemberByID can see a 404 Unknown Guild (10004) when GUILD_ID is wrong.
+// That is a config fault, not a genuine absence: the operator must get a line
+// naming the wrong guild and surfacing the sanitized UserDetail phrase, with NO
+// "try again shortly" hint and NO "not in this server" wording, while it still
+// captures once, never leaks the raw body, and never falls through to a name
+// search. Covers the SystemFault/ConfigFault arm of resolveMemberByID.
+func TestFindGuildMember_MemberLookupUnknownGuild404ConfigFault(t *testing.T) {
+	rec := &captureRecorder{}
+	rec.install(t)
+	gm := &fakeGuildManager{MemberErrs: []error{restError(http.StatusNotFound, discordgo.ErrCodeUnknownGuild, rawBodyMarker)}}
+
+	_, err := findGuildMember(gm, "guild-1", "123456789012345678")
+	if err == nil {
+		t.Fatal("expected an error from an Unknown Guild member lookup")
+	}
+	got := err.Error()
+	if strings.Contains(got, rawBodyMarker) {
+		t.Fatalf("member-lookup Unknown Guild 404 leaked the raw Discord body: %q", got)
+	}
+	if strings.Contains(strings.ToLower(got), "try again shortly") {
+		t.Fatalf("a config-fault member lookup must NOT show the transient retry hint, got %q", got)
+	}
+	if strings.Contains(strings.ToLower(got), "not in this server") {
+		t.Fatalf("an Unknown Guild 404 is a config fault, not a genuine absence, got %q", got)
+	}
+	if !strings.Contains(strings.ToLower(got), "guild") {
+		t.Fatalf("a config-fault member lookup must name the wrong guild, got %q", got)
+	}
+	if !strings.Contains(got, "unknown role or guild") {
+		t.Fatalf("a config-fault member lookup must surface the sanitized UserDetail phrase, got %q", got)
+	}
+	if gm.countCalls("GuildMembersSearch") != 0 {
+		t.Fatalf("a config-fault member lookup must NOT fall through to name search; got %v", gm.Calls())
+	}
+	if rec.count != 1 {
+		t.Fatalf("a config-fault member lookup must capture to Sentry once; got %d", rec.count)
 	}
 }
 
@@ -439,6 +539,64 @@ func TestFindGuildMember_SearchTransportErrorCaptures(t *testing.T) {
 	}
 }
 
+// --- sibling SystemFault helpers: config-fault vs transient rendering split ---
+
+// A wrong GUILD_ID (Unknown Guild, 10004) can surface on any Discord call, so the
+// sibling SystemFault helpers (member search, role resolve, channels resolve,
+// purge recreate) must each render the config-fault line — no transient retry
+// hint, surfacing the sanitized UserDetail phrase, never the raw body — while
+// still capturing exactly once. A genuine 5xx keeps the transient "try again
+// shortly" wording and also captures. This pins the split across every helper a
+// config fault can reach, not just the role-mutation and member-lookup paths.
+func TestSystemFaultHelpers_ConfigFaultVsTransientRendering(t *testing.T) {
+	configErr := restError(http.StatusNotFound, discordgo.ErrCodeUnknownGuild, rawBodyMarker)
+	transientErr := restError(http.StatusInternalServerError, 0, rawBodyMarker)
+
+	cases := []struct {
+		name   string
+		render func(err error) string
+	}{
+		{"search", func(err error) string { return searchErrorReply(err).Error() }},
+		{"roleResolve", func(err error) string { return roleResolveErrorReply(err, "cap").Error() }},
+		{"channelsResolve", func(err error) string { return channelsResolveErrorReply(err, "cap").Error() }},
+		{"purgeRecreate", func(err error) string { return purgeRecreateErrorReply("Some Role", err, "cap") }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name+"/config", func(t *testing.T) {
+			rec := &captureRecorder{}
+			rec.install(t)
+			got := tc.render(configErr)
+			if strings.Contains(got, rawBodyMarker) {
+				t.Fatalf("config fault leaked the raw Discord body: %q", got)
+			}
+			if strings.Contains(strings.ToLower(got), "try again shortly") {
+				t.Fatalf("a config fault must NOT show the transient retry hint, got %q", got)
+			}
+			if !strings.Contains(got, "unknown role or guild") {
+				t.Fatalf("a config fault must surface the sanitized UserDetail phrase, got %q", got)
+			}
+			if rec.count != 1 {
+				t.Fatalf("a config fault must capture to Sentry exactly once; got %d", rec.count)
+			}
+		})
+		t.Run(tc.name+"/transient", func(t *testing.T) {
+			rec := &captureRecorder{}
+			rec.install(t)
+			got := tc.render(transientErr)
+			if strings.Contains(got, rawBodyMarker) {
+				t.Fatalf("transient fault leaked the raw Discord body: %q", got)
+			}
+			if !strings.Contains(strings.ToLower(got), "try again shortly") {
+				t.Fatalf("a transient fault must keep the retry hint, got %q", got)
+			}
+			if rec.count != 1 {
+				t.Fatalf("a transient fault must capture to Sentry exactly once; got %d", rec.count)
+			}
+		})
+	}
+}
+
 // --- role add/remove paths: 4xx vs 5xx split + 403 hierarchy hint ---
 
 func wardenAddInteraction() *discordgo.InteractionCreate {
@@ -497,6 +655,10 @@ func TestRunWardenAdd_RoleAdd5xxCapturesGenericRetry(t *testing.T) {
 	if strings.Contains(got, rawBodyMarker) {
 		t.Fatalf("role-add 5xx leaked the raw Discord body: %q", got)
 	}
+	// A genuine 5xx is transient: the operator keeps the "try again shortly" hint.
+	if !strings.Contains(strings.ToLower(got), "try again shortly") {
+		t.Fatalf("a 5xx role add must keep the transient retry hint, got %q", got)
+	}
 	if rec.count != 1 {
 		t.Fatalf("a 5xx role add must capture to Sentry once; got %d", rec.count)
 	}
@@ -531,9 +693,11 @@ func TestRunWardenAdd_RoleAddGeneric4xxNoCapture(t *testing.T) {
 // A role-add 404 carrying Unknown Role (10011) — the resolved role was deleted
 // between resolution and the add — is a config fault, not an absent member. It
 // must capture to Sentry exactly once, render an operator-facing line DISTINCT
-// from the plain "Discord rejected the request" not-found rendering, and never
-// leak the raw Discord body.
-func TestRunWardenAdd_RoleAddUnknownRole404CapturesDistinct(t *testing.T) {
+// from the plain "Discord rejected the request" not-found rendering, name the
+// stale/deleted role, surface the sanitized UserDetail phrase, drop the transient
+// "try again shortly" hint (retrying a deleted role only repeats the failure),
+// and never leak the raw Discord body.
+func TestRunWardenAdd_RoleAddUnknownRole404CapturesDistinctConfigFault(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := wardenRoleAddGM(restError(http.StatusNotFound, discordgo.ErrCodeUnknownRole, rawBodyMarker))
@@ -548,10 +712,17 @@ func TestRunWardenAdd_RoleAddUnknownRole404CapturesDistinct(t *testing.T) {
 	if strings.Contains(got, "Discord rejected the request") {
 		t.Fatalf("an Unknown Role 404 must surface a line distinct from the plain not-found rendering, got %q", got)
 	}
-	// Positively pin the SystemFault arm's wording the operator actually sees, so
-	// a regression rendering an empty-but-non-generic line still fails here.
-	if !strings.Contains(got, "Discord error") {
-		t.Fatalf("an Unknown Role 404 must render the system-fault wording (%q), got %q", "Discord error", got)
+	// A config fault must not send the operator down a retry path that cannot
+	// clear a deleted role.
+	if strings.Contains(strings.ToLower(got), "try again shortly") {
+		t.Fatalf("an Unknown Role 404 (config fault) must NOT show the transient retry hint, got %q", got)
+	}
+	// It must name a stale/deleted role and surface the sanitized UserDetail phrase.
+	if !strings.Contains(strings.ToLower(got), "stale") {
+		t.Fatalf("an Unknown Role 404 must name a stale/deleted role, got %q", got)
+	}
+	if !strings.Contains(got, "unknown role or guild") {
+		t.Fatalf("an Unknown Role 404 must surface the sanitized UserDetail phrase, got %q", got)
 	}
 	if rec.count != 1 {
 		t.Fatalf("an Unknown Role 404 (stale/deleted role) must capture to Sentry once; got %d", rec.count)
@@ -559,9 +730,11 @@ func TestRunWardenAdd_RoleAddUnknownRole404CapturesDistinct(t *testing.T) {
 }
 
 // The remove path shares the classifier, so a role-remove 404 carrying Unknown
-// Guild (10004) — a wrong guild ID — must capture exactly once and never leak
-// the raw body, mirroring the add path's Unknown Role coverage.
-func TestRunWardenRemove_RoleRemoveUnknownGuild404Captures(t *testing.T) {
+// Guild (10004) — a wrong guild ID — must capture exactly once, render the
+// config-fault line (naming the wrong guild, surfacing the sanitized UserDetail
+// phrase, no transient retry hint), and never leak the raw body, mirroring the
+// add path's Unknown Role coverage.
+func TestRunWardenRemove_RoleRemoveUnknownGuild404ConfigFault(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{
@@ -580,10 +753,14 @@ func TestRunWardenRemove_RoleRemoveUnknownGuild404Captures(t *testing.T) {
 	if strings.Contains(got, "Discord rejected the request") {
 		t.Fatalf("an Unknown Guild 404 must surface a line distinct from the plain not-found rendering, got %q", got)
 	}
-	// Positively pin the SystemFault arm's wording the operator actually sees, so
-	// a regression rendering an empty-but-non-generic line still fails here.
-	if !strings.Contains(got, "Discord error") {
-		t.Fatalf("an Unknown Guild 404 must render the system-fault wording (%q), got %q", "Discord error", got)
+	if strings.Contains(strings.ToLower(got), "try again shortly") {
+		t.Fatalf("an Unknown Guild 404 (config fault) must NOT show the transient retry hint, got %q", got)
+	}
+	if !strings.Contains(strings.ToLower(got), "guild") {
+		t.Fatalf("an Unknown Guild 404 must name the wrong guild, got %q", got)
+	}
+	if !strings.Contains(got, "unknown role or guild") {
+		t.Fatalf("an Unknown Guild 404 must surface the sanitized UserDetail phrase, got %q", got)
 	}
 	if rec.count != 1 {
 		t.Fatalf("an Unknown Guild 404 (bad guild ID) must capture to Sentry once; got %d", rec.count)

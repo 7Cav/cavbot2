@@ -871,6 +871,9 @@ func resolveMemberByID(gm GuildManager, guildID, userID string) (*discordgo.Memb
 			return nil, fmt.Errorf("❌ <@%s> is not in this server", userID)
 		case class.SystemFault:
 			captureError("Failed to look up guild member by ID", err, "user_id", userID)
+			if class.ConfigFault {
+				return nil, fmt.Errorf("❌ Could not look up <@%s>: %s", userID, configFaultHint(class))
+			}
 			return nil, errors.New("❌ Member lookup is temporarily unavailable (Discord error); please try again shortly")
 		default:
 			return nil, fmt.Errorf("❌ Could not look up <@%s> (%s)", userID, class.UserDetail)
