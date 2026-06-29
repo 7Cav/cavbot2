@@ -17,6 +17,10 @@ belong here, not inline in code comments.
   Canonicalized in `commands/afsm.go`.
 - **Position** — free-text string like `2/B/1-7`, `Reservist`, or a
   department name (`S1`).
+- **Position group** — the milpac's grouping of positions into named units
+  (e.g. `D/ACD`, `A/1-7`). `ACD` is a battalion-level group; `D/ACD` is a
+  company within it. Exposed by the API's position-group hierarchy and used as
+  the unit vocabulary for roster lookups.
 - **Regiment time (UTC)** — UTC is 7Cav standard time. Wherever the bot has to
   decide what calendar day something falls on (e.g. AWOL day-counting), a
   "day" is a **UTC calendar date**.
@@ -81,6 +85,23 @@ belong here, not inline in code comments.
 - **Accuracy disclaimer** — because milpac records are user-entered free
   text, parsing can drift. `/afsm` always renders the disclaimer, regardless
   of whether the eligibles list is empty — see ADR 0002.
+
+## Warden roles
+
+The `/warden` command family applies and removes a small set of Discord roles by
+name. The bot's concern ends at role membership — whatever access a Warden role
+grants is configured Discord-side and is out of scope here.
+
+- **Warden role** — a Discord role the `/warden` commands manage by exact name
+  (`Verified Warden Internal`, `Verified Warden External`). The bot guarantees a
+  member holds (or no longer holds) the named role per the command invoked; it
+  ascribes no meaning to what the role unlocks.
+- **Internal / External** — the two Warden role scopes (`internal`, `external`,
+  or `both`). Opaque named roles as far as the bot is concerned. _Avoid_:
+  treating these as access tiers in code — the distinction lives in Discord.
+- **Validated internal unit** — a position group whose current roster members
+  the regiment treats as automatically belonging in `Verified Warden Internal`
+  (e.g. `D/ACD`). A curated set; not every unit is one.
 
 ## External systems
 
