@@ -92,9 +92,9 @@ func runWardenBulkAddInternal(
 	gm GuildManager,
 	interaction *discordgo.InteractionCreate,
 ) {
-	// Guild-context guard first, before any read of interaction.Member: warden
-	// commands require guild context, and rejecting on an empty GuildID here both
-	// gives a clear server-only message and removes a latent nil-deref.
+	// Guild-context guard first: warden commands require guild context. Rejecting
+	// on an empty GuildID here gives a clear server-only message and guarantees a
+	// non-empty guildID for every downstream Discord role call.
 	guildID := interaction.GuildID
 	if guildID == "" {
 		utils.HandleError(r, interaction, "❌ This command can only be used in a server (guild).")
@@ -184,6 +184,7 @@ func runWardenBulkAddInternal(
 	var notInDiscord []string
 	var noDiscordLinked []string
 	var faults []string
+	var sawMissingPermissions bool
 	for _, profile := range roster.LiteProfiles {
 		memberDiscordID := strings.TrimSpace(profile.DiscordID)
 		if memberDiscordID == "" {
@@ -227,7 +228,12 @@ func runWardenBulkAddInternal(
 		// A non-404 client fault (e.g. 403 missing Manage Roles, or the role above
 		// the bot) is operator-fixable: surface it so it is never silently dropped,
 		// but do not capture (ADR 0001). Typically this hits every member at once,
-		// which is itself the signal the bot's permissions need fixing.
+		// which is itself the signal the bot's permissions need fixing. Remember a
+		// 403 so the summary can add an actionable hint instead of leaving the
+		// operator with only an opaque "Could not be added" list.
+		if class.MissingPermissions {
+			sawMissingPermissions = true
+		}
 		faults = append(faults, profile.User.Username)
 	}
 
@@ -238,7 +244,7 @@ func runWardenBulkAddInternal(
 	slices.Sort(noDiscordLinked)
 	slices.Sort(faults)
 
-	content := buildWardenInternalBulkAddSummary(unit.label, roleName, len(added), notInDiscord, noDiscordLinked, faults)
+	content := buildWardenInternalBulkAddSummary(unit.label, roleName, len(added), notInDiscord, noDiscordLinked, faults, sawMissingPermissions)
 	var embed *discordgo.MessageEmbed
 	if len(added) > 0 {
 		embed = buildAddedMembersEmbed(added)
@@ -251,11 +257,14 @@ func runWardenBulkAddInternal(
 // buildWardenInternalBulkAddSummary composes the ephemeral report. The
 // added-or-confirmed count always leads (the command never silently reports
 // nothing); the not-in-Discord, no-Discord-linked, and could-not-be-added
-// buckets are listed by forum username only when non-empty.
+// buckets are listed by forum username only when non-empty. When any fault was a
+// 403, a permissions hint trails the buckets so a misconfigured bot reads as an
+// actionable fix rather than an opaque list of failures.
 func buildWardenInternalBulkAddSummary(
 	unitLabel, roleName string,
 	addedCount int,
 	notInDiscord, noDiscordLinked, faults []string,
+	missingPermissions bool,
 ) string {
 	sections := []string{
 		fmt.Sprintf("✅ Added or confirmed %d %s member(s) in %s.", addedCount, unitLabel, roleName),
@@ -269,14 +278,31 @@ func buildWardenInternalBulkAddSummary(
 	if section := formatWardenInternalSection("Could not be added", faults); section != "" {
 		sections = append(sections, section)
 	}
+	if missingPermissions {
+		sections = append(sections, wardenInternalPermissionsHint(roleName))
+	}
 	return clampToDiscordMessageLimit(strings.Join(sections, "\n\n"))
 }
 
-// wardenInternalSummaryMaxLen is Discord's per-message character ceiling. The
-// success count is collapsed into one line and the added members ride in the
-// embed, so the content only grows with the by-username buckets; for a curated
-// company-sized unit this stays well under the limit, but clamp anyway so a
-// pathologically large bucket can never make the edit itself fail.
+// wardenInternalPermissionsHint is the actionable line appended when a per-member
+// add failed on a 403. It reuses the substance of roleMutationErrorReply's
+// missing-permissions branch (Manage Roles plus the role-hierarchy requirement)
+// without interpolating any raw Discord body.
+func wardenInternalPermissionsHint(roleName string) string {
+	return fmt.Sprintf(
+		"⚠️ Some members couldn't be added because the bot is missing permissions. It needs Manage Roles, and its own role must sit above '%s'.",
+		roleName,
+	)
+}
+
+// wardenInternalSummaryMaxLen is Discord's per-message limit. The success count
+// is collapsed into one line and the added members ride in the embed, so the
+// content only grows with the by-username buckets; for a curated company-sized
+// unit this stays well under the limit, but clamp anyway so a pathologically
+// large bucket can never make the edit itself fail. clampToDiscordMessageLimit
+// measures bytes (len), not runes: that is deliberate, since byte length >= rune
+// count it is a safe over-estimate of Discord's UTF-8 code-point limit, so don't
+// "fix" it into a rune count and weaken the margin.
 const wardenInternalSummaryMaxLen = 2000
 
 // clampToDiscordMessageLimit keeps as many whole lines as fit under the limit,
@@ -303,9 +329,10 @@ func clampToDiscordMessageLimit(message string) string {
 }
 
 // formatWardenInternalSection renders a labelled, count-headed list of forum
-// usernames, or "" when the bucket is empty. The count lives in the header so a
-// test can pin the section size deterministically even though the underlying
-// roster iterates in map order.
+// usernames, or "" when the bucket is empty. The slices.Sort calls at the call
+// site make the within-bucket username order deterministic; the header count is
+// what keeps the bucket *size* stable in a test even when which member lands in
+// the bucket is map-order-dependent.
 func formatWardenInternalSection(title string, usernames []string) string {
 	if len(usernames) == 0 {
 		return ""

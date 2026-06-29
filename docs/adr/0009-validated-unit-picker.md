@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Accepted. Implemented in #208 (issue #206).
 
 ## Decision
 
@@ -22,15 +22,17 @@ derive from the same slice, so there is no other code to touch.
 
 ## Why
 
-The command is a bulk role-grant with no cheap undo. The only way to take the
-role back is `/warden purge`, which wipes everyone in `Verified Warden Internal`
-and forces a full rebuild. So the cost of granting the wrong set of people is
-high and the recovery is disruptive.
+The command is a bulk role-grant with no cheap undo. `/warden remove` only takes
+the role off one member per call, so there is no cheap *bulk* undo: short of
+removing each member by hand, the only reset is `/warden purge`, which wipes
+everyone in `Verified Warden Internal` and forces a full rebuild. So the cost of
+granting the wrong set of people is high and the recovery is disruptive.
 
 The roster lookup is a fuzzy position-group substring search. With a free-text
-field, a one-character slip turns a safe query into a dangerous one: `7` instead
-of `D/ACD` substring-matches most of the regiment, and the command would happily
-add all of them. The blast radius of a typo is the whole server.
+field, a careless short query turns a safe lookup into a dangerous one: for
+example `7` instead of `D/ACD` substring-matches most of the regiment, and the
+command would happily add all of them. The blast radius of a typo is the whole
+server.
 
 A picker removes that input entirely. The operator can only emit a `value` the
 registry already holds, and each registry `query` is verified by the author to

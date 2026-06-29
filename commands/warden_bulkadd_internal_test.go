@@ -133,11 +133,37 @@ func TestLookupWardenInternalUnit(t *testing.T) {
 	}
 }
 
+// Every registry row must carry a non-empty value, query, and label, and values
+// must be unique. An empty value would shadow getOptionString's "" miss return,
+// and a duplicate value would let the first matching row silently shadow a later
+// one — both invisible to "add a row, no logic change". This pins the invariant
+// so a careless new row fails loudly here.
+func TestWardenInternalUnits_RegistryRowsValidAndUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for i, unit := range wardenInternalUnits {
+		if unit.value == "" {
+			t.Fatalf("registry row %d has an empty value", i)
+		}
+		if unit.query == "" {
+			t.Fatalf("registry row %d (%q) has an empty query", i, unit.value)
+		}
+		if unit.label == "" {
+			t.Fatalf("registry row %d (%q) has an empty label", i, unit.value)
+		}
+		if seen[unit.value] {
+			t.Fatalf("registry row %d has a duplicate value %q; the first match would shadow it", i, unit.value)
+		}
+		seen[unit.value] = true
+	}
+}
+
 // Happy path: every roster member has a linked, in-guild Discord. Each one is
 // added straight to Verified Warden Internal by ID (no member search), the run
 // is acknowledged with a deferred ephemeral, and the report carries the
 // added-or-confirmed count plus the success mention embed.
 func TestRunWardenBulkAddInternal_HappyPathAddsAllAndReportsCount(t *testing.T) {
+	rec := &captureRecorder{}
+	rec.install(t)
 	serveRosterAndProfiles(t, liteRoster(
 		liteMember("Trooper.A", "111111111111111111"),
 		liteMember("Trooper.B", "222222222222222222"),
@@ -156,6 +182,26 @@ func TestRunWardenBulkAddInternal_HappyPathAddsAllAndReportsCount(t *testing.T) 
 		t.Fatalf("expected 2 role adds, got %d (%v)", gm.countCalls("GuildMemberRoleAdd"), gm.Calls())
 	}
 
+	// The right IDs reach the right role: every add carries the run's guild and
+	// the resolved internal role id (r-int), and the user ids are exactly the
+	// roster members' Discord ids (map order is nondeterministic, so compare as a
+	// set).
+	gotUserIDs := map[string]bool{}
+	for _, add := range gm.roleAddCalls() {
+		if add.guildID != "guild-1" {
+			t.Fatalf("add must carry the run guild; got %q", add.guildID)
+		}
+		if add.roleID != "r-int" {
+			t.Fatalf("add must target the resolved internal role id r-int; got %q", add.roleID)
+		}
+		gotUserIDs[add.userID] = true
+	}
+	for _, want := range []string{"111111111111111111", "222222222222222222"} {
+		if !gotUserIDs[want] {
+			t.Fatalf("expected roster member %s to be added by Discord id; got adds %+v", want, gm.roleAddCalls())
+		}
+	}
+
 	calls := f.Calls()
 	if len(calls) == 0 {
 		t.Fatal("expected responder calls")
@@ -169,16 +215,55 @@ func TestRunWardenBulkAddInternal_HappyPathAddsAllAndReportsCount(t *testing.T) 
 	}
 
 	got := lastEditContent(calls)
-	if !strings.Contains(got, "2") {
-		t.Fatalf("expected the added-or-confirmed count in the summary, got %q", got)
+	if !strings.Contains(got, "Added or confirmed 2") {
+		t.Fatalf("expected the exact added-or-confirmed lead phrase, got %q", got)
+	}
+	// A clean run is not a permissions problem: no hint.
+	if strings.Contains(got, "Manage Roles") {
+		t.Fatalf("a clean run must not surface the missing-permissions hint; got %q", got)
 	}
 
 	embed := lastEditEmbed(calls)
 	if embed == nil {
 		t.Fatal("expected a success mention embed")
 	}
-	if !strings.Contains(embed.Title, "2") {
-		t.Fatalf("embed should report 2 users, got %q", embed.Title)
+	if embed.Title != "Added 2 user(s)" {
+		t.Fatalf("embed should report exactly 2 users, got %q", embed.Title)
+	}
+
+	// A clean run must never page Sentry.
+	if rec.count != 0 {
+		t.Fatalf("a clean happy-path run must not capture to Sentry; got %d", rec.count)
+	}
+}
+
+// Idempotency: re-adding a member who already holds the role is a no-op on
+// Discord's side (the role-add PUT returns success), so the fake returns nil and
+// the member must land in added/confirmed, not in any failure bucket. This is the
+// contract behind the "added or confirmed" wording — a nil error means the member
+// has the role whether or not this call is what put it there.
+func TestRunWardenBulkAddInternal_IdempotentReAddCountsAsConfirmed(t *testing.T) {
+	serveRosterAndProfiles(t, liteRoster(
+		liteMember("Already.In", "111111111111111111"),
+	), http.StatusOK, nil)
+
+	gm := internalRoleGM()
+	// No queued error: the add of an already-present member succeeds (nil), exactly
+	// as Discord's idempotent role-add PUT behaves.
+	f := &fakeResponder{}
+
+	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+
+	got := lastEditContent(f.Calls())
+	if !strings.Contains(got, "Added or confirmed 1") {
+		t.Fatalf("an idempotent re-add must count as confirmed, got %q", got)
+	}
+	if strings.Contains(got, "Could not be added") {
+		t.Fatalf("an idempotent re-add must not be reported as a failure, got %q", got)
+	}
+	embed := lastEditEmbed(f.Calls())
+	if embed == nil || !strings.Contains(embed.Description, "111111111111111111") {
+		t.Fatalf("the re-added member must appear in the success embed, got %+v", embed)
 	}
 }
 
@@ -201,6 +286,9 @@ func TestRunWardenBulkAddInternal_NoDiscordLinkedListedNotAdded(t *testing.T) {
 		t.Fatalf("expected exactly 1 role add (the linked member), got %d (%v)", gm.countCalls("GuildMemberRoleAdd"), gm.Calls())
 	}
 	got := lastEditContent(f.Calls())
+	if !strings.Contains(got, "Added or confirmed 1") {
+		t.Fatalf("expected the exact added-or-confirmed lead phrase for the one linked member, got %q", got)
+	}
 	if !strings.Contains(got, "No Discord linked") {
 		t.Fatalf("expected a 'No Discord linked' section, got %q", got)
 	}
@@ -237,6 +325,9 @@ func TestRunWardenBulkAddInternal_NotInGuild404ListedNotAddedNoCapture(t *testin
 		t.Fatalf("expected both members attempted, got %d (%v)", gm.countCalls("GuildMemberRoleAdd"), gm.Calls())
 	}
 	got := lastEditContent(f.Calls())
+	if !strings.Contains(got, "Added or confirmed 1") {
+		t.Fatalf("expected the exact added-or-confirmed lead phrase for the one present member, got %q", got)
+	}
 	if !strings.Contains(got, "Not in this Discord (1)") {
 		t.Fatalf("expected one member in the 'Not in this Discord' section, got %q", got)
 	}
@@ -280,6 +371,12 @@ func TestRunWardenBulkAddInternal_PerMemberClientFaultListedNotCaptured(t *testi
 	if strings.Contains(got, rawBodyMarker) {
 		t.Fatalf("must not leak the raw Discord body, got %q", got)
 	}
+	// A 403 is a missing-permissions fault: the summary must carry an actionable
+	// hint (Manage Roles + role position) so the operator isn't left with only an
+	// opaque "Could not be added" list and a misleading "added 0" lead.
+	if !strings.Contains(got, "Manage Roles") {
+		t.Fatalf("a missing-permissions fault must surface a 'Manage Roles' hierarchy hint; got %q", got)
+	}
 }
 
 // A genuine per-member fault (5xx) is listed, sent to Sentry tagged with the
@@ -316,8 +413,62 @@ func TestRunWardenBulkAddInternal_PerMemberFaultCapturedAndRunContinues(t *testi
 	if strings.Contains(got, rawBodyMarker) {
 		t.Fatalf("must not leak the raw Discord body, got %q", got)
 	}
+	// A pure-5xx fault is not a permissions problem, so the missing-permissions
+	// hint must NOT be appended.
+	if strings.Contains(got, "Manage Roles") {
+		t.Fatalf("a 5xx fault must not surface the missing-permissions hint; got %q", got)
+	}
 	if embed := lastEditEmbed(f.Calls()); embed == nil || !strings.Contains(embed.Title, "1") {
 		t.Fatal("expected the one successful add reported in the success embed")
+	}
+}
+
+// All four outcome buckets at once: one clean add, one linked-but-absent (404),
+// one with no Discord link, and one genuine fault (5xx). The lead count must
+// coexist with every section, and the sections must appear in a stable order
+// (lead, not-in-Discord, no-Discord-linked, could-not-be-added). Map iteration
+// order randomizes WHICH linked member draws which error, but the multiset of
+// outcomes — and therefore every bucket size — is fixed.
+func TestRunWardenBulkAddInternal_AllBucketsCoexistWithStableOrdering(t *testing.T) {
+	rec := &captureRecorder{}
+	rec.install(t)
+	serveRosterAndProfiles(t, liteRoster(
+		liteMember("Added.A", "111111111111111111"),
+		liteMember("Absent.B", "222222222222222222"),
+		liteMember("Linkless.C", ""),
+		liteMember("Boom.D", "333333333333333333"),
+	), http.StatusOK, nil)
+
+	gm := internalRoleGM()
+	// Three linked members draw these three outcomes (one each) in map order: a
+	// success, a 404 (not in this Discord), and a 5xx (a genuine fault).
+	gm.MemberRoleAddErrs = []error{
+		nil,
+		restError(http.StatusNotFound, 10007, rawBodyMarker),
+		restError(http.StatusInternalServerError, 0, rawBodyMarker),
+	}
+	f := &fakeResponder{}
+
+	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+
+	got := lastEditContent(f.Calls())
+	leadIdx := strings.Index(got, "Added or confirmed 1")
+	notInIdx := strings.Index(got, "Not in this Discord (1)")
+	noLinkIdx := strings.Index(got, "No Discord linked (1)")
+	faultIdx := strings.Index(got, "Could not be added (1)")
+	if leadIdx < 0 || notInIdx < 0 || noLinkIdx < 0 || faultIdx < 0 {
+		t.Fatalf("expected the lead count and all three buckets present, got %q", got)
+	}
+	ordered := leadIdx < notInIdx && notInIdx < noLinkIdx && noLinkIdx < faultIdx
+	if !ordered {
+		t.Fatalf("sections must keep a stable order (lead, not-in-Discord, no-link, could-not-be-added); got %q", got)
+	}
+	if strings.Contains(got, rawBodyMarker) {
+		t.Fatalf("must not leak the raw Discord body, got %q", got)
+	}
+	// Only the 5xx is a genuine fault; it captures exactly once.
+	if rec.count != 1 {
+		t.Fatalf("only the 5xx fault should capture to Sentry; got %d", rec.count)
 	}
 }
 
@@ -504,7 +655,7 @@ func TestBuildWardenInternalBulkAddSummary_ClampsToDiscordLimit(t *testing.T) {
 		many[i] = "Trooper.Placeholder.Name"
 	}
 
-	got := buildWardenInternalBulkAddSummary("D/ACD", wardenInternalRoleName, 0, nil, nil, many)
+	got := buildWardenInternalBulkAddSummary("D/ACD", wardenInternalRoleName, 0, nil, nil, many, false)
 
 	if len(got) > 2000 {
 		t.Fatalf("summary must stay within Discord's 2000-char limit, got %d", len(got))

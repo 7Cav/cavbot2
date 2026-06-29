@@ -36,6 +36,11 @@ type fakeGuildManager struct {
 	// the old role).
 	deletedRoleIDs []string
 
+	// roleAdds records the full argument tuple of every GuildMemberRoleAdd call,
+	// so a test can prove the right Discord IDs reached the right role (the bare
+	// Calls() log only keeps the method name).
+	roleAdds []roleAddCall
+
 	RolesErrs            []error
 	RoleCreateErrs       []error
 	RoleDeleteErrs       []error
@@ -52,6 +57,15 @@ type fakeGuildManager struct {
 type sentChannelMessage struct {
 	channelID string
 	content   string
+}
+
+// roleAddCall is one recorded GuildMemberRoleAdd call with every argument kept,
+// so a test can assert the exact (guildID, userID, roleID) tuples a command
+// emitted rather than only how many adds happened.
+type roleAddCall struct {
+	guildID string
+	userID  string
+	roleID  string
 }
 
 func (g *fakeGuildManager) record(name string) {
@@ -148,9 +162,19 @@ func (g *fakeGuildManager) GuildMembersSearch(_, query string, _ int) ([]*discor
 	return g.searchResults[query], nil
 }
 
-func (g *fakeGuildManager) GuildMemberRoleAdd(_, _, _ string) error {
+func (g *fakeGuildManager) GuildMemberRoleAdd(guildID, userID, roleID string) error {
 	g.record("GuildMemberRoleAdd")
+	g.mu.Lock()
+	g.roleAdds = append(g.roleAdds, roleAddCall{guildID: guildID, userID: userID, roleID: roleID})
+	g.mu.Unlock()
 	return popErr(&g.MemberRoleAddErrs)
+}
+
+// roleAddCalls returns a copy of every recorded GuildMemberRoleAdd tuple.
+func (g *fakeGuildManager) roleAddCalls() []roleAddCall {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]roleAddCall(nil), g.roleAdds...)
 }
 
 func (g *fakeGuildManager) GuildMemberRoleRemove(_, _, _ string) error {
