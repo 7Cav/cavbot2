@@ -26,6 +26,16 @@ type discordErrorClass struct {
 	// Only these should be sent to Sentry via utils.CaptureError; ordinary,
 	// operator-fixable 4xx client faults must not page on-call.
 	SystemFault bool
+	// ConfigFault is true only for the config-fault 404s (a stale/deleted role or
+	// a wrong guild ID; see NotFound). It is always set alongside SystemFault, so
+	// the capture-on-SystemFault path is unchanged and these still page on-call.
+	// It exists purely so the render layer can tell a config fault apart from a
+	// transient 5xx/transport fault: a config fault gets an operator line that
+	// names the stale role / wrong guild and surfaces UserDetail, dropping the
+	// "try again shortly" hint that cannot clear a condition which will not
+	// resolve on its own. A genuine 5xx/transport fault leaves it false and keeps
+	// the transient retry wording.
+	ConfigFault bool
 	// MissingPermissions is true for a 403 Forbidden, the common case where the
 	// bot lacks Manage Roles or the target role sits above the bot's own role.
 	// Callers use it to render a specific, actionable hierarchy hint.
@@ -112,8 +122,24 @@ func classifyNotFound(restErr *discordgo.RESTError) discordErrorClass {
 
 	return discordErrorClass{
 		SystemFault: true,
+		ConfigFault: true,
 		UserDetail:  "unknown role or guild",
 	}
+}
+
+// configFaultHint is the body-free operator hint for a config-fault 404 (a
+// stale/deleted role or a wrong guild ID; see classifyNotFound). It names the
+// misconfiguration and surfaces the classifier's sanitized UserDetail phrase, and
+// gives the real fix instead of the "try again shortly" advice that a transient
+// system fault gets — a deleted role or wrong guild ID will not clear by
+// retrying. It only interpolates UserDetail, never the raw Discord body. The
+// SystemFault render arms call this when class.ConfigFault is set; otherwise they
+// keep their own transient retry wording.
+func configFaultHint(class discordErrorClass) string {
+	return fmt.Sprintf(
+		"a stale or deleted role, or a wrong guild ID (%s). Re-resolve the role or correct the guild ID; retrying won't help",
+		class.UserDetail,
+	)
 }
 
 // isInteractionTokenExpired reports whether err is Discord's signal that the
@@ -151,6 +177,9 @@ func searchErrorReply(err error) error {
 	class := classifyDiscordError(err)
 	if class.SystemFault {
 		captureError("Failed to search members", err)
+		if class.ConfigFault {
+			return fmt.Errorf("❌ Member search failed: %s", configFaultHint(class))
+		}
 		return errors.New("❌ Member search is temporarily unavailable (Discord error); please try again shortly")
 	}
 	return fmt.Errorf("❌ Member search failed (%s); check the query or try a mention/ID instead", class.UserDetail)
@@ -174,6 +203,12 @@ func purgeRecreateErrorReply(roleName string, err error, captureMsg string, kv .
 	switch {
 	case class.SystemFault:
 		captureError(captureMsg, err, kv...)
+		if class.ConfigFault {
+			return fmt.Sprintf(
+				"❌ Failed to recreate '%s': %s. The role was not recreated.",
+				roleName, configFaultHint(class),
+			)
+		}
 		return fmt.Sprintf(
 			"❌ Failed to recreate '%s': Discord error, the role was not recreated; please try again shortly.",
 			roleName,
@@ -221,6 +256,9 @@ func roleResolveErrorReply(err error, captureMsg string, kv ...any) error {
 	class := classifyDiscordError(err)
 	if class.SystemFault {
 		captureError(captureMsg, err, kv...)
+		if class.ConfigFault {
+			return fmt.Errorf("❌ Failed to retrieve guild roles: %s", configFaultHint(class))
+		}
 		return errors.New("❌ Failed to retrieve guild roles (Discord error); please try again shortly")
 	}
 	return fmt.Errorf("❌ Failed to retrieve guild roles (%s)", class.UserDetail)
@@ -238,6 +276,9 @@ func channelsResolveErrorReply(err error, captureMsg string, kv ...any) error {
 	class := classifyDiscordError(err)
 	if class.SystemFault {
 		captureError(captureMsg, err, kv...)
+		if class.ConfigFault {
+			return fmt.Errorf("❌ Failed to retrieve guild channels: %s", configFaultHint(class))
+		}
 		return errors.New("❌ Failed to retrieve guild channels (Discord error); please try again shortly")
 	}
 	return fmt.Errorf("❌ Failed to retrieve guild channels (%s)", class.UserDetail)
@@ -255,6 +296,9 @@ func roleMutationErrorReply(action, roleName, userLabel string, err error, captu
 	switch {
 	case class.SystemFault:
 		captureError(captureMsg, err, kv...)
+		if class.ConfigFault {
+			return fmt.Sprintf("❌ Could not %s '%s' for %s: %s.", action, roleName, userLabel, configFaultHint(class))
+		}
 		return fmt.Sprintf("❌ Could not %s '%s' for %s: Discord error, please try again shortly.", action, roleName, userLabel)
 	case class.MissingPermissions:
 		return fmt.Sprintf(
