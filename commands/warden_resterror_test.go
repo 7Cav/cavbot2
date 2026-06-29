@@ -162,6 +162,14 @@ func TestClassifyDiscordError_404UnexpectedCodeIsSystemFault(t *testing.T) {
 	if !c.SystemFault {
 		t.Fatalf("a 404 with an unexpected non-zero code must classify as a captured system fault")
 	}
+	// The catch-all sets ConfigFault for EVERY non-zero, non-UnknownMember code,
+	// not just the named Unknown Role / Unknown Guild ones. Pin that here with the
+	// arbitrary code so a future refactor to explicit `case` arms can't silently
+	// narrow the config-fault rendering to only the named codes and drop an
+	// unexpected code back into the transient "try again shortly" wording.
+	if !c.ConfigFault {
+		t.Fatalf("a 404 with an unexpected non-zero code must set ConfigFault — the catch-all routes all such codes to the config-fault rendering")
+	}
 	if c.NotFound {
 		t.Fatalf("a 404 with an unexpected non-zero code must NOT set NotFound — only Unknown Member or a bare 404 is a genuine absence")
 	}
@@ -224,6 +232,37 @@ func TestClassifyDiscordError_TransportIsNotConfigFault(t *testing.T) {
 	}
 	if c.ConfigFault {
 		t.Fatalf("a transport error must NOT be a config fault")
+	}
+}
+
+// The render arms only ever read ConfigFault inside their SystemFault block, so
+// the whole design rests on an unwritten invariant: nothing returns
+// ConfigFault: true with SystemFault: false. If a future edit broke that, a
+// config fault would skip every SystemFault arm and fall through to the default
+// 4xx arm — rendering "Discord rejected the request" with NO Sentry capture, a
+// silent page-skip. Pin the implication (ConfigFault ⇒ SystemFault) across a
+// representative spread of inputs so that drift fails here instead of in prod.
+func TestClassifyDiscordError_ConfigFaultImpliesSystemFault(t *testing.T) {
+	inputs := []struct {
+		name string
+		err  error
+	}{
+		{"unknownRole404", restError(http.StatusNotFound, discordgo.ErrCodeUnknownRole, rawBodyMarker)},
+		{"unknownGuild404", restError(http.StatusNotFound, discordgo.ErrCodeUnknownGuild, rawBodyMarker)},
+		{"unexpectedCode404", restError(http.StatusNotFound, 12345, rawBodyMarker)},
+		{"unknownMember404", restError(http.StatusNotFound, 10007, rawBodyMarker)},
+		{"bare404", restError(http.StatusNotFound, 0, rawBodyMarker)},
+		{"forbidden403", restError(http.StatusForbidden, 50013, rawBodyMarker)},
+		{"badRequest400", restError(http.StatusBadRequest, 50035, rawBodyMarker)},
+		{"serverError5xx", restError(http.StatusInternalServerError, 0, rawBodyMarker)},
+		{"transport", fmt.Errorf("dial tcp: connection refused")},
+	}
+
+	for _, in := range inputs {
+		c := classifyDiscordError(in.err)
+		if c.ConfigFault && !c.SystemFault {
+			t.Fatalf("%s: ConfigFault must imply SystemFault — a config fault that is not a system fault would skip capture and render the generic 4xx rejection", in.name)
+		}
 	}
 }
 
