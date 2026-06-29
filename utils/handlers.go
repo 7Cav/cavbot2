@@ -12,6 +12,13 @@ import (
 
 var Logger *slog.Logger
 
+// captureError is the Sentry-capture seam used by HandleError's delivery-failure
+// paths. It points at CaptureError in production; tests swap it to assert that a
+// genuine failure to deliver an error reply pages Sentry while the expected
+// already-acknowledged case that succeeds on the edit fallback does not (ADR
+// 0001). This mirrors the swappable seam the warden error helpers use.
+var captureError = CaptureError
+
 func InitLogger(levelStr string) {
 	var level slog.Level
 	switch levelStr {
@@ -50,46 +57,81 @@ func HandleError(r InteractionResponder, i *discordgo.InteractionCreate, message
 	Info("Error handling interaction", "message", message)
 
 	if i.Type == discordgo.InteractionApplicationCommand {
-		err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		deliverErrorReply(r, i, message, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
 				Content: message,
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
-		if err != nil {
-			if isAlreadyAcknowledged(err) {
-				Debug("Retrying error response as edit", "error", err)
-				if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-					Content: &message,
-				}); err != nil {
-					Error("Failed to send error message", "error", err)
-				}
-			} else {
-				Error("Failed to send error message", "error", err)
-			}
-		}
 		return
 	}
 
-	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	deliverErrorReply(r, i, message, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseUpdateMessage,
 		Data: &discordgo.InteractionResponseData{
 			Content: message,
 		},
 	})
-	if err != nil {
-		if isAlreadyAcknowledged(err) {
-			Debug("Retrying error response as edit", "error", err)
-			if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-				Content: &message,
-			}); err != nil {
-				Error("Failed to send error message", "error", err)
-			}
-		} else {
-			Error("Failed to send error message", "error", err)
-		}
+}
+
+// deliverErrorReply sends the prepared error response and handles delivery
+// failure. The normal path — respond succeeds, or the already-acknowledged
+// respond falls back to an edit that succeeds — captures nothing. A genuine
+// delivery fault does page Sentry via captureError (ADR 0001):
+//
+//   - a respond failure that is NOT "already acknowledged" is a genuine system
+//     fault (the reply never reached Discord), and
+//   - a fallback-edit failure after an already-acknowledged respond means the
+//     user's error reply was lost.
+//
+// Only the sanitized `message` is ever shown to the user; the raw delivery error
+// goes to captureError, never into the user-facing content.
+//
+// The capture is intentionally unconditional on the failure's status class:
+// HandleError runs synchronously inside the interaction window, so any delivery
+// fault here is genuine. This differs from warden's post-window edit helpers,
+// which gate capture on a token-expiry predicate because their edits race the
+// interaction-token lifetime.
+func deliverErrorReply(r InteractionResponder, i *discordgo.InteractionCreate, message string, resp *discordgo.InteractionResponse) {
+	err := r.InteractionRespond(i.Interaction, resp)
+	if err == nil {
+		return
 	}
+
+	if isAlreadyAcknowledged(err) {
+		Debug("Retrying error response as edit", "error", err)
+		if editErr := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &message,
+		}); editErr != nil {
+			captureError("Failed to deliver interaction error reply via edit fallback", editErr,
+				"command", interactionCommandName(i), "guild_id", i.GuildID)
+		}
+		return
+	}
+
+	captureError("Failed to deliver interaction error reply", err,
+		"command", interactionCommandName(i), "guild_id", i.GuildID)
+}
+
+// interactionCommandName extracts a best-effort label for capture context: the
+// invoked application-command name, or — for a message component — its CustomID,
+// so component delivery failures don't page Sentry with a blank command. It
+// returns "" when neither is resolvable. The type assertions and nil checks are
+// purely defensive (capture context must never become a new failure mode); they
+// are not a nil-interaction guard for HandleError, which dereferences i.Type
+// before this helper ever runs.
+func interactionCommandName(i *discordgo.InteractionCreate) string {
+	if i == nil || i.Interaction == nil {
+		return ""
+	}
+	if data, ok := i.Data.(discordgo.ApplicationCommandInteractionData); ok {
+		return data.Name
+	}
+	if data, ok := i.Data.(discordgo.MessageComponentInteractionData); ok {
+		return data.CustomID
+	}
+	return ""
 }
 
 // alreadyAcknowledgedCode is Discord's error code for "Interaction has already
