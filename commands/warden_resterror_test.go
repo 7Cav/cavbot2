@@ -501,10 +501,14 @@ func TestFindGuildMember_MentionGeneric4xxNoCapture(t *testing.T) {
 // a test and counts how many times it fires, so a test can assert the
 // 4xx-vs-5xx Sentry split without a live Sentry client. lastKV holds the kv
 // varargs from the most recent capture, so a test can also pin the context
-// fields (command/guild/role) a site is required to forward.
+// fields (command/guild/role) a site is required to forward. kvs keeps every
+// capture's kv in fire order, so a test that expects more than one capture (the
+// bulk-loop fault collapse, #214) can assert per-event payloads, not just the
+// most recent.
 type captureRecorder struct {
 	count  int
 	lastKV []any
+	kvs    [][]any
 }
 
 func (c *captureRecorder) install(t *testing.T) {
@@ -513,6 +517,7 @@ func (c *captureRecorder) install(t *testing.T) {
 	captureError = func(msg string, err error, kv ...any) {
 		c.count++
 		c.lastKV = kv
+		c.kvs = append(c.kvs, kv)
 	}
 	t.Cleanup(func() { captureError = prev })
 }

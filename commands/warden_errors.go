@@ -284,18 +284,18 @@ func channelsResolveErrorReply(err error, captureMsg string, kv ...any) error {
 	return fmt.Errorf("❌ Failed to retrieve guild channels (%s)", class.UserDetail)
 }
 
-// roleMutationErrorReply classifies a role add/remove failure, captures it to
-// Sentry only for genuine system faults, and returns a body-free, actionable
-// message. A 403 yields a specific role-hierarchy hint — the common cause is the
-// target role sitting above the bot's own role, or the bot missing Manage Roles.
-// captureMsg/kv are forwarded to captureError so each site keeps its own log
-// context (action, user, role).
-func roleMutationErrorReply(action, roleName, userLabel string, err error, captureMsg string, kv ...any) string {
-	class := classifyDiscordError(err)
-
+// roleMutationErrorMessage builds the body-free, actionable user-facing message
+// for a role add/remove failure from its classification. It does NOT capture —
+// the caller decides whether and how to send the fault to Sentry. The single
+// add/remove sites capture immediately via roleMutationErrorReply; the bulk
+// loops build the message here and route the capture through faultCollector so a
+// per-member storm collapses to one event per signature (#214). A 403 yields a
+// specific role-hierarchy hint — the common cause is the target role sitting
+// above the bot's own role, or the bot missing Manage Roles. The raw Discord
+// body is never interpolated; only the classifier's sanitized phrase appears.
+func roleMutationErrorMessage(action, roleName, userLabel string, class discordErrorClass) string {
 	switch {
 	case class.SystemFault:
-		captureError(captureMsg, err, kv...)
 		if class.ConfigFault {
 			return fmt.Sprintf("❌ Could not %s '%s' for %s: %s.", action, roleName, userLabel, configFaultHint(class))
 		}
@@ -307,5 +307,112 @@ func roleMutationErrorReply(action, roleName, userLabel string, err error, captu
 		)
 	default:
 		return fmt.Sprintf("❌ Could not %s '%s' for %s: Discord rejected the request.", action, roleName, userLabel)
+	}
+}
+
+// roleMutationErrorReply is the immediate-capture entry point for the single
+// /warden add and remove sites: it classifies a role add/remove failure,
+// captures it to Sentry once when it is a genuine system fault, and returns the
+// same body-free message roleMutationErrorMessage builds. captureMsg/kv are
+// forwarded to captureError so each site keeps its own log context. The bulk
+// loops deliberately do NOT use this — they would capture once per member; they
+// classify, build the message via roleMutationErrorMessage, and feed the capture
+// to a faultCollector instead (#214).
+func roleMutationErrorReply(action, roleName, userLabel string, err error, captureMsg string, kv ...any) string {
+	class := classifyDiscordError(err)
+	if class.SystemFault {
+		captureError(captureMsg, err, kv...)
+	}
+	return roleMutationErrorMessage(action, roleName, userLabel, class)
+}
+
+// faultSignature identifies a distinct captured fault for collapse: the pair of
+// HTTP status and Discord application error code. It is read straight off the
+// *discordgo.RESTError (the same status and Message.Code the classifier branches
+// on), so the collector does not need classifyDiscordError's contract to change.
+// A transport/connection error has no HTTP response, so it keys on the zero
+// signature {0, 0}; that is distinct from a real 5xx (status 500, code 0), so
+// the two never fold together.
+type faultSignature struct {
+	status      int
+	discordCode int
+}
+
+// faultSignatureOf extracts the (status, Discord code) signature from a Discord
+// REST failure. Anything without a structured HTTP response (a transport error)
+// returns the zero signature.
+func faultSignatureOf(err error) faultSignature {
+	var restErr *discordgo.RESTError
+	if !errors.As(err, &restErr) || restErr.Response == nil {
+		return faultSignature{}
+	}
+	sig := faultSignature{status: restErr.Response.StatusCode}
+	if restErr.Message != nil {
+		sig.discordCode = restErr.Message.Code
+	}
+	return sig
+}
+
+// collectedFault is the running tally for one fault signature within a single
+// bulk run: how many add attempts hit it, a representative error for the Sentry
+// payload, and the Discord ID of the first member that hit it (the debugging
+// foothold the collapsed event carries as sample_user).
+type collectedFault struct {
+	count      int
+	firstErr   error
+	sampleUser string
+}
+
+// faultCollector collapses the per-member captured system faults of a bulk
+// role-add loop into one Sentry event per distinct fault signature, so a single
+// root cause that hits every iteration (a role deleted mid-run ⇒ N Unknown Role
+// 404s, or a 5xx storm) pages on-call once instead of N times (#214). Both bulk
+// loops feed it every captured fault during iteration via add, then flush once
+// after the loop. It is per-invocation only: a fresh collector per run, no
+// cross-run or time-windowed dedup. Only genuine system faults belong here — the
+// caller filters on class.SystemFault, since non-captured client faults (403,
+// not-in-server 404) must stay uncaptured per ADR 0001.
+type faultCollector struct {
+	// order preserves first-seen signature order so flush emits deterministically.
+	order   []faultSignature
+	entries map[faultSignature]*collectedFault
+}
+
+func newFaultCollector() *faultCollector {
+	return &faultCollector{entries: map[faultSignature]*collectedFault{}}
+}
+
+// add records one failed add attempt for the signature of err, attributed to the
+// member userID. The first member per signature is kept as the sample; every
+// subsequent same-signature failure only bumps the count. For /warden bulkadd,
+// which adds several roles per member, each failed member-role attempt is one
+// add call, so affected_count counts attempts rather than distinct members.
+func (fc *faultCollector) add(err error, userID string) {
+	sig := faultSignatureOf(err)
+	entry, ok := fc.entries[sig]
+	if !ok {
+		entry = &collectedFault{firstErr: err, sampleUser: userID}
+		fc.entries[sig] = entry
+		fc.order = append(fc.order, sig)
+	}
+	entry.count++
+}
+
+// flush emits one captureError per distinct signature collected this run, each
+// carrying the affected attempt count, the sample member, and the signature
+// (status + Discord code) as searchable values, appended to the caller's shared
+// run context (command/guild, plus unit for the internal command). Calling it on
+// a collector that saw no system faults is a no-op, so a clean run pages nothing.
+func (fc *faultCollector) flush(captureMsg string, baseKV ...any) {
+	for _, sig := range fc.order {
+		entry := fc.entries[sig]
+		kv := append([]any(nil), baseKV...)
+		kv = append(kv,
+			"affected_count", entry.count,
+			"sample_user", entry.sampleUser,
+			"http_status", sig.status,
+			"discord_code", sig.discordCode,
+		)
+		captureError(captureMsg, entry.firstErr, kv...)
 	}
 }

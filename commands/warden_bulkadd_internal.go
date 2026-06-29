@@ -185,6 +185,11 @@ func runWardenBulkAddInternal(
 	var noDiscordLinked []string
 	var faults []string
 	var sawMissingPermissions bool
+	// One collector per run collapses the per-member system-fault captures: a role
+	// deleted mid-run 404s every add with the same signature, which would
+	// otherwise page on-call once per member. Faults feed it during the loop and
+	// it flushes once after (#214).
+	faultCapture := newFaultCollector()
 	for _, profile := range roster.LiteProfiles {
 		memberDiscordID := strings.TrimSpace(profile.DiscordID)
 		if memberDiscordID == "" {
@@ -213,14 +218,11 @@ func runWardenBulkAddInternal(
 			continue
 		}
 		if class.SystemFault {
-			// Genuine fault (5xx/transport): capture to Sentry tagged with the unit
-			// value so each registry entry fingerprints separately, list the member,
-			// and continue past it. The raw Discord body never reaches the reply.
-			captureError(
-				"Failed to add warden internal role in bulk",
-				err,
-				"command", "warden-bulkadd-internal", "guild", guildID, "user", memberDiscordID, "unit", unit.value,
-			)
+			// Genuine fault (5xx/transport, or a stale-role/guild config 404): hand it
+			// to the collector keyed by signature instead of capturing per member, so
+			// a role deleted mid-run pages once rather than once per trooper. List the
+			// member and continue past it. The raw Discord body never reaches the reply.
+			faultCapture.add(err, memberDiscordID)
 			faults = append(faults, profile.User.Username)
 			continue
 		}
@@ -236,6 +238,13 @@ func runWardenBulkAddInternal(
 		}
 		faults = append(faults, profile.User.Username)
 	}
+
+	// Flush once after the loop: one capture per distinct fault signature, tagged
+	// with the unit value so each registry entry fingerprints separately.
+	faultCapture.flush(
+		"Failed to add warden internal role in bulk",
+		"command", "warden-bulkadd-internal", "guild", guildID, "unit", unit.value,
+	)
 
 	slices.SortFunc(added, func(a, b *discordgo.Member) int {
 		return strings.Compare(a.User.Username, b.User.Username)
