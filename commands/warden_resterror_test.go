@@ -711,9 +711,10 @@ func TestRunWardenAdd_RoleAdd5xxCapturesGenericRetry(t *testing.T) {
 // A non-403 4xx (here a 400 with a non-permission code) is an
 // operator/config-fixable client fault: it must show the generic "Discord
 // rejected the request" wording, never the raw body, and never capture to
-// Sentry. Covers the default arm of roleMutationErrorReply, which no other
-// mutation-site test exercises. (A 404 no longer reaches this arm — Unknown Role
-// and Unknown Guild codes are captured system faults; see the tests below.)
+// Sentry. Covers the default arm of roleMutationErrorMessage (reached here via
+// roleMutationErrorReply), which no other mutation-site test exercises. (A 404
+// no longer reaches this arm — Unknown Role and Unknown Guild codes are captured
+// system faults; see the tests below.)
 func TestRunWardenAdd_RoleAddGeneric4xxNoCapture(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)

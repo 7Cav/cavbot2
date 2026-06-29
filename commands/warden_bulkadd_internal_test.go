@@ -516,6 +516,22 @@ func TestRunWardenBulkAddInternal_PerMemberFaultCapturedAndRunContinues(t *testi
 	if rec.count != 1 {
 		t.Fatalf("a 5xx per-member fault must capture to Sentry exactly once; got %d", rec.count)
 	}
+	// Pin the "single fault → count 1" acceptance criterion directly on the payload,
+	// not just transitively via rec.count: the one collected fault carries an
+	// affected_count of 1 and a sample_user, so a regression that miscounts attempts
+	// or drops the sample fails here rather than only in the multi-fault tests.
+	if affected, ok := kvValue(rec.lastKV, "affected_count"); !ok || affected != 1 {
+		t.Fatalf("the single collected fault must carry affected_count=1; got %v (kv %v)", affected, rec.lastKV)
+	}
+	sample, ok := kvValue(rec.lastKV, "sample_user")
+	if !ok {
+		t.Fatalf("the single collected fault must carry a sample_user; got kv %v", rec.lastKV)
+	}
+	// Map iteration order decides which member drew the 5xx, so the sample is the
+	// faulted member's Discord ID — one of the two real roster IDs.
+	if sample != "111111111111111111" && sample != "222222222222222222" {
+		t.Fatalf("sample_user must be the faulted member's Discord ID; got %v", sample)
+	}
 	if unitVal, ok := kvValue(rec.lastKV, "unit"); !ok || unitVal != "D/ACD" {
 		t.Fatalf("the capture must be tagged with the unit value; got kv %v", rec.lastKV)
 	}

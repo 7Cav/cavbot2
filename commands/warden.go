@@ -284,8 +284,15 @@ func handleWardenBulkAdd(
 	// role deleted mid-run 404s every add with the same signature, which would
 	// otherwise page on-call once per member-role attempt. System faults feed it
 	// during the loop and it flushes once after; non-captured client faults (403,
-	// not-in-server 404) are listed but never routed here, per ADR 0001 (#214).
+	// not-in-server 404) are listed but never routed here, per ADR 0001 (#214). The
+	// flush is deferred immediately, so an early return or a panic between the loop
+	// and the flush can never silently drop pending captures; guildID is fixed for
+	// the run, so evaluating the deferred args here is exact.
 	faultCapture := newFaultCollector()
+	defer faultCapture.flush(
+		"Failed to add warden role in bulk",
+		"command", "warden", "guild", guildID,
+	)
 	for _, singleQuery := range requestedQueries {
 		member, memberErr := findGuildMember(gm, guildID, singleQuery)
 		if memberErr != nil {
@@ -302,7 +309,7 @@ func handleWardenBulkAdd(
 				// storm pages once per signature rather than once per member-role add.
 				class := classifyDiscordError(err)
 				if class.SystemFault {
-					faultCapture.add(err, member.User.ID)
+					faultCapture.recordSystemFault(err, member.User.ID)
 				}
 				failures = append(failures, roleMutationErrorMessage("add", roleName, formatUser(member), class))
 				allOK = false
@@ -312,12 +319,6 @@ func handleWardenBulkAdd(
 			addedMembers = append(addedMembers, member)
 		}
 	}
-
-	// Flush once after the loop: one capture per distinct fault signature.
-	faultCapture.flush(
-		"Failed to add warden role in bulk",
-		"command", "warden", "guild", guildID,
-	)
 
 	content := buildBulkAddSummary(len(addedMembers), failures)
 	var embed *discordgo.MessageEmbed

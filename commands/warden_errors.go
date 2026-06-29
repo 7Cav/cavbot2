@@ -287,12 +287,15 @@ func channelsResolveErrorReply(err error, captureMsg string, kv ...any) error {
 // roleMutationErrorMessage builds the body-free, actionable user-facing message
 // for a role add/remove failure from its classification. It does NOT capture —
 // the caller decides whether and how to send the fault to Sentry. The single
-// add/remove sites capture immediately via roleMutationErrorReply; the bulk
-// loops build the message here and route the capture through faultCollector so a
-// per-member storm collapses to one event per signature (#214). A 403 yields a
-// specific role-hierarchy hint — the common cause is the target role sitting
-// above the bot's own role, or the bot missing Manage Roles. The raw Discord
-// body is never interpolated; only the classifier's sanitized phrase appears.
+// add/remove sites capture immediately via roleMutationErrorReply; the PUBLIC
+// /warden bulkadd loop builds its per-member failure line here and routes the
+// capture through faultCollector so a per-member storm collapses to one event
+// per signature (#214). (The internal bulkadd loop also routes its captures
+// through the collector, but lists faulted members by forum username in bucketed
+// summaries rather than calling this.) A 403 yields a specific role-hierarchy
+// hint — the common cause is the target role sitting above the bot's own role,
+// or the bot missing Manage Roles. The raw Discord body is never interpolated;
+// only the classifier's sanitized phrase appears.
 func roleMutationErrorMessage(action, roleName, userLabel string, class discordErrorClass) string {
 	switch {
 	case class.SystemFault:
@@ -315,9 +318,11 @@ func roleMutationErrorMessage(action, roleName, userLabel string, class discordE
 // captures it to Sentry once when it is a genuine system fault, and returns the
 // same body-free message roleMutationErrorMessage builds. captureMsg/kv are
 // forwarded to captureError so each site keeps its own log context. The bulk
-// loops deliberately do NOT use this — they would capture once per member; they
-// classify, build the message via roleMutationErrorMessage, and feed the capture
-// to a faultCollector instead (#214).
+// loops deliberately do NOT use this — they would capture once per member; both
+// feed their system faults to a faultCollector instead (#214). The public
+// /warden bulkadd loop builds its per-member line via roleMutationErrorMessage;
+// the internal bulkadd loop lists faulted members by forum username in bucketed
+// summaries.
 func roleMutationErrorReply(action, roleName, userLabel string, err error, captureMsg string, kv ...any) string {
 	class := classifyDiscordError(err)
 	if class.SystemFault {
@@ -367,8 +372,8 @@ type collectedFault struct {
 // role-add loop into one Sentry event per distinct fault signature, so a single
 // root cause that hits every iteration (a role deleted mid-run ⇒ N Unknown Role
 // 404s, or a 5xx storm) pages on-call once instead of N times (#214). Both bulk
-// loops feed it every captured fault during iteration via add, then flush once
-// after the loop. It is per-invocation only: a fresh collector per run, no
+// loops feed it every captured fault during iteration via recordSystemFault, then
+// flush once after the loop. It is per-invocation only: a fresh collector per run, no
 // cross-run or time-windowed dedup. Only genuine system faults belong here — the
 // caller filters on class.SystemFault, since non-captured client faults (403,
 // not-in-server 404) must stay uncaptured per ADR 0001.
@@ -382,13 +387,24 @@ func newFaultCollector() *faultCollector {
 	return &faultCollector{entries: map[faultSignature]*collectedFault{}}
 }
 
-// add records one failed add attempt for the signature of err, attributed to the
-// member userID. The first member per signature is kept as the sample; every
-// subsequent same-signature failure only bumps the count. For /warden bulkadd,
-// which adds several roles per member, each failed member-role attempt is one
-// add call, so affected_count counts attempts rather than distinct members.
-func (fc *faultCollector) add(err error, userID string) {
+// recordSystemFault records one failed add attempt for the signature of err,
+// attributed to the member userID. It is for genuine system faults ONLY: every
+// error handed here is sent to Sentry by flush, so both bulk loops gate on
+// class.SystemFault before calling it — non-captured client faults (403,
+// not-in-server 404) must never reach the collector (ADR 0001, #214). The first
+// member per signature is kept as the sample; every subsequent same-signature
+// failure only bumps the count. For /warden bulkadd, which adds several roles per
+// member, each failed member-role attempt is one call, so affected_count counts
+// attempts rather than distinct members.
+//
+// The entries map is lazy-initialized here, so the zero-value faultCollector is
+// safe to record into even if a caller skipped newFaultCollector(); it can never
+// nil-panic on the first record.
+func (fc *faultCollector) recordSystemFault(err error, userID string) {
 	sig := faultSignatureOf(err)
+	if fc.entries == nil {
+		fc.entries = map[faultSignature]*collectedFault{}
+	}
 	entry, ok := fc.entries[sig]
 	if !ok {
 		entry = &collectedFault{firstErr: err, sampleUser: userID}
