@@ -134,10 +134,13 @@ func TestLookupWardenInternalUnit(t *testing.T) {
 }
 
 // Every registry row must carry a non-empty value, query, and label, and values
-// must be unique. An empty value would shadow getOptionString's "" miss return,
-// and a duplicate value would let the first matching row silently shadow a later
-// one — both invisible to "add a row, no logic change". This pins the invariant
-// so a careless new row fails loudly here.
+// must be unique. A genuine miss returns ("", false) from getOptionString and the
+// caller rejects it on the boolean before any lookup, but a present-but-empty
+// option (unit="") returns ("", true), so the guard passes and an empty-value
+// registry row would resolve that input instead of it being rejected as "Unknown
+// unit". A duplicate value would let the first matching row silently shadow a
+// later one. Both are invisible to "add a row, no logic change", so this pins the
+// invariant to fail loudly here.
 func TestWardenInternalUnits_RegistryRowsValidAndUnique(t *testing.T) {
 	seen := map[string]bool{}
 	for i, unit := range wardenInternalUnits {
@@ -420,6 +423,50 @@ func TestRunWardenBulkAddInternal_PerMemberFaultCapturedAndRunContinues(t *testi
 	}
 	if embed := lastEditEmbed(f.Calls()); embed == nil || !strings.Contains(embed.Title, "1") {
 		t.Fatal("expected the one successful add reported in the success embed")
+	}
+}
+
+// A generic non-403/404 4xx on an add (here a 400 with a non-permission code) is
+// the classifier's fall-through client fault. Like the 403 it is listed and not
+// captured, but unlike the 403 it carries no missing-permissions signal, so the
+// summary must NOT append the Manage Roles hint. The clean member still lands in
+// added/confirmed so the run is realistic.
+func TestRunWardenBulkAddInternal_PerMemberGeneric4xxListedNotCapturedNoHint(t *testing.T) {
+	rec := &captureRecorder{}
+	rec.install(t)
+	serveRosterAndProfiles(t, liteRoster(
+		liteMember("Ok.A", "111111111111111111"),
+		liteMember("Reject.B", "222222222222222222"),
+	), http.StatusOK, nil)
+
+	gm := internalRoleGM()
+	// One add 400s with a non-permission code (50035 Invalid Form Body), hitting the
+	// classifier's generic 4xx arm — not NotFound, not SystemFault, not
+	// MissingPermissions. Map order randomizes which member draws it, so assert on
+	// counts rather than which member lands in the bucket.
+	gm.MemberRoleAddErrs = []error{nil, restError(http.StatusBadRequest, 50035, rawBodyMarker)}
+	f := &fakeResponder{}
+
+	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+
+	got := lastEditContent(f.Calls())
+	// The clean member is added/confirmed; the 400 lands in the fault bucket.
+	if !strings.Contains(got, "Added or confirmed 1") {
+		t.Fatalf("expected the one clean add reported as added-or-confirmed, got %q", got)
+	}
+	if !strings.Contains(got, "Could not be added (1)") {
+		t.Fatalf("a generic 4xx fault must still be listed, not silently dropped; got %q", got)
+	}
+	// A generic 4xx is a client fault, not a system fault: it must not page Sentry.
+	if rec.count != 0 {
+		t.Fatalf("a generic 4xx client fault must NOT capture to Sentry; got %d", rec.count)
+	}
+	// It is not a 403 either, so no missing-permissions hint may be appended.
+	if strings.Contains(got, "Manage Roles") {
+		t.Fatalf("a non-403 4xx must not surface the missing-permissions hint; got %q", got)
+	}
+	if strings.Contains(got, rawBodyMarker) {
+		t.Fatalf("must not leak the raw Discord body, got %q", got)
 	}
 }
 
