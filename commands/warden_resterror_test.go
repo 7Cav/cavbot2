@@ -151,6 +151,46 @@ func TestClassifyDiscordError_404BareCodeStaysNotFound(t *testing.T) {
 	}
 }
 
+// classifyNotFound routes ANY non-zero 404 code that isn't Unknown Member through
+// a single catch-all into SystemFault, not just the named Unknown Role / Unknown
+// Guild codes. Pin that with an arbitrary, never-named code so a future refactor
+// to explicit `case` arms can't silently narrow the contract and let an
+// unexpected code fall back to NotFound.
+func TestClassifyDiscordError_404UnexpectedCodeIsSystemFault(t *testing.T) {
+	err := restError(http.StatusNotFound, 12345, rawBodyMarker)
+	c := classifyDiscordError(err)
+	if !c.SystemFault {
+		t.Fatalf("a 404 with an unexpected non-zero code must classify as a captured system fault")
+	}
+	if c.NotFound {
+		t.Fatalf("a 404 with an unexpected non-zero code must NOT set NotFound — only Unknown Member or a bare 404 is a genuine absence")
+	}
+	if strings.Contains(c.UserDetail, rawBodyMarker) {
+		t.Fatalf("classifier leaked the raw Discord body: %q", c.UserDetail)
+	}
+}
+
+// discordgo leaves RESTError.Message nil when a 404's response body isn't
+// parseable JSON, so there is no application error code to read. classifyNotFound's
+// restErr.Message == nil guard must treat that as a bare 404 — NotFound, no
+// capture — without dereferencing the nil Message. The restError helper always
+// sets a non-nil Message, so this RESTError is built inline to exercise the
+// genuine nil-Message branch.
+func TestClassifyDiscordError_404NilMessageStaysNotFound(t *testing.T) {
+	err := &discordgo.RESTError{
+		Response:     &http.Response{StatusCode: http.StatusNotFound, Status: "404 Not Found"},
+		ResponseBody: []byte("not parseable json"),
+		Message:      nil,
+	}
+	c := classifyDiscordError(err)
+	if c.SystemFault {
+		t.Fatalf("a 404 with a nil Message (unparseable body) must not be a system fault")
+	}
+	if !c.NotFound {
+		t.Fatalf("a 404 with a nil Message must stay NotFound, matching the bare-404 contract")
+	}
+}
+
 // --- mention/ID lookup: authoritative, never falls through to name search ---
 
 // A valid mention for a present member resolves via the targeted GuildMember
@@ -508,6 +548,11 @@ func TestRunWardenAdd_RoleAddUnknownRole404CapturesDistinct(t *testing.T) {
 	if strings.Contains(got, "Discord rejected the request") {
 		t.Fatalf("an Unknown Role 404 must surface a line distinct from the plain not-found rendering, got %q", got)
 	}
+	// Positively pin the SystemFault arm's wording the operator actually sees, so
+	// a regression rendering an empty-but-non-generic line still fails here.
+	if !strings.Contains(got, "Discord error") {
+		t.Fatalf("an Unknown Role 404 must render the system-fault wording (%q), got %q", "Discord error", got)
+	}
 	if rec.count != 1 {
 		t.Fatalf("an Unknown Role 404 (stale/deleted role) must capture to Sentry once; got %d", rec.count)
 	}
@@ -534,6 +579,11 @@ func TestRunWardenRemove_RoleRemoveUnknownGuild404Captures(t *testing.T) {
 	}
 	if strings.Contains(got, "Discord rejected the request") {
 		t.Fatalf("an Unknown Guild 404 must surface a line distinct from the plain not-found rendering, got %q", got)
+	}
+	// Positively pin the SystemFault arm's wording the operator actually sees, so
+	// a regression rendering an empty-but-non-generic line still fails here.
+	if !strings.Contains(got, "Discord error") {
+		t.Fatalf("an Unknown Guild 404 must render the system-fault wording (%q), got %q", "Discord error", got)
 	}
 	if rec.count != 1 {
 		t.Fatalf("an Unknown Guild 404 (bad guild ID) must capture to Sentry once; got %d", rec.count)
