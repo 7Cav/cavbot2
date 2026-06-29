@@ -87,6 +87,12 @@ func HandleError(r InteractionResponder, i *discordgo.InteractionCreate, message
 //
 // Only the sanitized `message` is ever shown to the user; the raw delivery error
 // goes to captureError, never into the user-facing content.
+//
+// The capture is intentionally unconditional on the failure's status class:
+// HandleError runs synchronously inside the interaction window, so any delivery
+// fault here is genuine. This differs from warden's post-window edit helpers,
+// which gate capture on a token-expiry predicate because their edits race the
+// interaction-token lifetime.
 func deliverErrorReply(r InteractionResponder, i *discordgo.InteractionCreate, message string, resp *discordgo.InteractionResponse) {
 	err := r.InteractionRespond(i.Interaction, resp)
 	if err == nil {
@@ -108,19 +114,24 @@ func deliverErrorReply(r InteractionResponder, i *discordgo.InteractionCreate, m
 		"command", interactionCommandName(i), "guild_id", i.GuildID)
 }
 
-// interactionCommandName returns the invoked application-command name for
-// capture context, or "" when none is resolvable (a message component, or a
-// malformed interaction). The type assertion is guarded so a nil or non-command
-// Data never panics — capture context is best-effort, never a new failure mode.
+// interactionCommandName extracts a best-effort label for capture context: the
+// invoked application-command name, or — for a message component — its CustomID,
+// so component delivery failures don't page Sentry with a blank command. It
+// returns "" when neither is resolvable. The type assertions and nil checks are
+// purely defensive (capture context must never become a new failure mode); they
+// are not a nil-interaction guard for HandleError, which dereferences i.Type
+// before this helper ever runs.
 func interactionCommandName(i *discordgo.InteractionCreate) string {
 	if i == nil || i.Interaction == nil {
 		return ""
 	}
-	data, ok := i.Data.(discordgo.ApplicationCommandInteractionData)
-	if !ok {
-		return ""
+	if data, ok := i.Data.(discordgo.ApplicationCommandInteractionData); ok {
+		return data.Name
 	}
-	return data.Name
+	if data, ok := i.Data.(discordgo.MessageComponentInteractionData); ok {
+		return data.CustomID
+	}
+	return ""
 }
 
 // alreadyAcknowledgedCode is Discord's error code for "Interaction has already

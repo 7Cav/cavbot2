@@ -210,7 +210,8 @@ type capturedError struct {
 // swapCaptureError replaces the package capture seam with a recorder for the
 // duration of the test and returns a pointer to the slice of recorded calls, so
 // a test can assert the capture / no-capture split without touching the global
-// Sentry hub.
+// Sentry hub. Tests using this seam must stay non-parallel: it mutates the
+// package-global captureError, so a t.Parallel() sibling would race the swap.
 func swapCaptureError(t *testing.T) *[]capturedError {
 	t.Helper()
 	var recorded []capturedError
@@ -392,5 +393,63 @@ func TestHandleError_Component_RespondSucceeds_NoCapture(t *testing.T) {
 
 	if len(*captured) != 0 {
 		t.Fatalf("expected 0 captures on the normal success path, got %d: %+v", len(*captured), *captured)
+	}
+}
+
+func TestHandleError_Component_AlreadyAck_EditSucceeds_NoCapture(t *testing.T) {
+	captured := swapCaptureError(t)
+	f := &fakeResponder{
+		RespondErrs: []error{errors.New("already been acknowledged")},
+	}
+	i := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
+		Type: discordgo.InteractionMessageComponent,
+	}}
+
+	HandleError(f, i, "cancelled")
+
+	if len(*captured) != 0 {
+		t.Fatalf("expected 0 captures when the edit fallback succeeds, got %d: %+v", len(*captured), *captured)
+	}
+}
+
+func TestHandleError_AppCommand_NonAckError_CapturesCommandName(t *testing.T) {
+	// Exercises interactionCommandName's happy path: a real
+	// ApplicationCommandInteractionData resolves to its command Name in the
+	// capture context. Every other test leaves i.Data nil, so this closes the
+	// gap on the type-assertion success branch.
+	captured := swapCaptureError(t)
+	f := &fakeResponder{RespondErrs: []error{errors.New("HTTP 503 Service Unavailable")}}
+	i := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
+		Type: discordgo.InteractionApplicationCommand,
+		Data: discordgo.ApplicationCommandInteractionData{Name: "milpac"},
+	}}
+
+	HandleError(f, i, "boom")
+
+	if len(*captured) != 1 {
+		t.Fatalf("expected 1 capture for a non-ack delivery failure, got %d: %+v", len(*captured), *captured)
+	}
+	if cmd, ok := kvValue((*captured)[0].kv, "command"); !ok || cmd != "milpac" {
+		t.Fatalf("expected command context %q in capture, got %v (ok=%v)", "milpac", cmd, ok)
+	}
+}
+
+func TestHandleError_Component_NonAckError_CapturesCustomID(t *testing.T) {
+	// Component interactions carry no command Name, so the capture context falls
+	// back to the component's CustomID — a blank command otherwise hurts triage.
+	captured := swapCaptureError(t)
+	f := &fakeResponder{RespondErrs: []error{errors.New("HTTP 502 Bad Gateway")}}
+	i := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
+		Type: discordgo.InteractionMessageComponent,
+		Data: discordgo.MessageComponentInteractionData{CustomID: "warden_purge_confirm"},
+	}}
+
+	HandleError(f, i, "cancelled")
+
+	if len(*captured) != 1 {
+		t.Fatalf("expected 1 capture for a non-ack delivery failure, got %d: %+v", len(*captured), *captured)
+	}
+	if cmd, ok := kvValue((*captured)[0].kv, "command"); !ok || cmd != "warden_purge_confirm" {
+		t.Fatalf("expected component CustomID %q as command context, got %v (ok=%v)", "warden_purge_confirm", cmd, ok)
 	}
 }
