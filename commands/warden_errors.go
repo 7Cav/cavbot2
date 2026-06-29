@@ -21,18 +21,23 @@ var captureError = utils.CaptureError
 // "HTTP <status>, <full JSON body>", which we must keep out of user-facing
 // replies (ADR 0001: CaptureError is for genuine internal failures only).
 type discordErrorClass struct {
-	// SystemFault is true for 5xx responses and transport errors. Only these
-	// should be sent to Sentry via utils.CaptureError; 4xx client/config faults
-	// must not page on-call for an ordinary, fixable condition.
+	// SystemFault is true for 5xx responses, transport errors, and the
+	// config-fault 404s (a stale/deleted role or a wrong guild ID — see NotFound).
+	// Only these should be sent to Sentry via utils.CaptureError; ordinary,
+	// operator-fixable 4xx client faults must not page on-call.
 	SystemFault bool
 	// MissingPermissions is true for a 403 Forbidden, the common case where the
 	// bot lacks Manage Roles or the target role sits above the bot's own role.
 	// Callers use it to render a specific, actionable hierarchy hint.
 	MissingPermissions bool
-	// NotFound is true for a 404. On a targeted member-by-ID/mention lookup this
-	// means the user is genuinely absent from the guild — a clear, non-system
-	// condition the caller renders as "not in this server" rather than capturing
-	// or downgrading into a name search.
+	// NotFound is true only for a 404 that means the targeted entity is genuinely
+	// absent: Discord's Unknown Member (10007) code, or a bare 404 with no
+	// application error code. On a member-by-ID/mention lookup the caller renders
+	// it as "not in this server" rather than capturing or downgrading into a name
+	// search. A 404 carrying Unknown Role (10011), Unknown Guild (10004), or any
+	// other unexpected code is NOT a genuine absence — it is a stale-ID/config
+	// fault routed to SystemFault instead, so a role deleted mid-operation pages
+	// on-call rather than misreporting every member as absent.
 	NotFound bool
 	// UserDetail is a short, body-free phrase safe to show an operator. It never
 	// contains the raw Discord error body.
@@ -64,10 +69,7 @@ func classifyDiscordError(err error) discordErrorClass {
 			UserDetail:         "missing permissions",
 		}
 	case status == http.StatusNotFound:
-		return discordErrorClass{
-			NotFound:   true,
-			UserDetail: "not found",
-		}
+		return classifyNotFound(restErr)
 	case status >= 400 && status < 500:
 		return discordErrorClass{
 			UserDetail: "Discord rejected the request",
@@ -78,6 +80,39 @@ func classifyDiscordError(err error) discordErrorClass {
 			SystemFault: true,
 			UserDetail:  "Discord returned a server error",
 		}
+	}
+}
+
+// classifyNotFound splits a 404 by its Discord application error code, because a
+// 404 alone is ambiguous: a role-add (PUT .../members/{user}/roles/{role}) can
+// 404 for an absent member, a stale/deleted role, or a wrong guild ID. Reading
+// restErr.Message.Code tells them apart, the same Message.Code pattern
+// isInteractionTokenExpired uses below.
+//
+//   - Unknown Member (10007), or a bare 404 with no application error code, is a
+//     genuine absence: NotFound, non-captured, rendered as "not in this server".
+//   - Unknown Role (10011), Unknown Guild (10004), or any other unexpected code
+//     is a stale-ID/config fault: SystemFault, so it pages on-call (ADR 0001)
+//     instead of a deleted role silently misreporting every member as absent.
+//
+// The raw response body is still discarded — only a sanitized UserDetail phrase
+// is carried, so nothing leaks into a user-facing reply.
+func classifyNotFound(restErr *discordgo.RESTError) discordErrorClass {
+	code := 0
+	if restErr.Message != nil {
+		code = restErr.Message.Code
+	}
+
+	if code == 0 || code == discordgo.ErrCodeUnknownMember {
+		return discordErrorClass{
+			NotFound:   true,
+			UserDetail: "not found",
+		}
+	}
+
+	return discordErrorClass{
+		SystemFault: true,
+		UserDetail:  "unknown role or guild",
 	}
 }
 
