@@ -62,7 +62,7 @@ func lastEditEmbed(calls []recordedCall) *discordgo.MessageEmbed {
 // The unit input is a validated, Choices-backed dropdown derived from the unit
 // registry — never free text. This is the safety decision the whole command
 // hangs on (see ADR 0009): the operator can only ever emit a value the registry
-// already contains, so a one-character slip can't substring-match the regiment.
+// already contains, so a careless short query can't substring-match the regiment.
 func TestWardenBulkAddInternalDefinition_SingleUnitPickerFromRegistry(t *testing.T) {
 	cmd := WardenBulkAddInternal()
 
@@ -562,7 +562,7 @@ func TestRunWardenBulkAddInternal_UnknownUnitRejectedBeforeAnything(t *testing.T
 	tripwireAPIServer(t)
 	gm := internalRoleGM()
 	f := &fakeResponder{}
-	i := wardenBulkAddInternalInteraction("7") // a one-character slip, not in the registry
+	i := wardenBulkAddInternalInteraction("7") // a careless short query, not in the registry
 
 	runWardenBulkAddInternal(f, gm, i)
 
