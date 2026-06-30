@@ -401,10 +401,10 @@ func faultSignatureOf(err error) faultSignature {
 // collectedFault is the running tally for one fault signature within a single
 // bulk run: how many faults hit it, a representative error for the Sentry
 // payload, and the first roster entry that hit it (the debugging foothold the
-// collapsed event carries as sample_user). The collector is shared by the
-// role-add and lookup phases, so sampleUser is NOT always a Discord ID: it is a
-// resolved Discord ID for the by-ID lookup and role-add sites, but the raw
-// search term (e.g. "alice") for a name lookup.
+// collapsed event carries as sample_user). The collector type serves both the
+// role-add and lookup phases (each phase using its own instance), so sampleUser
+// is NOT always a Discord ID: it is a resolved Discord ID for the by-ID lookup
+// and role-add sites, but the raw search term (e.g. "alice") for a name lookup.
 type collectedFault struct {
 	count      int
 	firstErr   error
@@ -434,30 +434,29 @@ func newFaultCollector() *faultCollector {
 }
 
 // recordSystemFault records one captured system fault for the signature of err,
-// attributed to the roster-entry sample (a resolved Discord ID for the by-ID
+// attributed to the roster-entry sampleUser (a resolved Discord ID for the by-ID
 // lookup and role-add callers, or the raw search term for a name lookup — see
-// collectedFault, the sample is not always a Discord ID). It is for genuine
-// system faults ONLY: every error handed here is sent to Sentry by flush, so
-// every caller gates on class.SystemFault before calling it — non-captured client
-// faults (403, not-in-server 404) must never reach the collector (ADR 0001, #214,
-// #216). The first sample per signature is kept; every subsequent same-signature
-// fault only bumps the count. The count's meaning depends on the caller: for the
-// role-add phase, which adds several roles per member, each failed member-role
-// attempt is one call, so affected_count counts attempts; for the lookup phase,
-// which resolves one entry per iteration, affected_count counts failed lookups
-// (one per entry).
+// collectedFault). It is for genuine system faults ONLY: every error handed here
+// is sent to Sentry by flush, so every caller gates on class.SystemFault before
+// calling it — non-captured client faults (403, not-in-server 404) must never
+// reach the collector (ADR 0001, #214, #216). The first sample per signature is
+// kept; every subsequent same-signature fault only bumps the count. The count's
+// meaning depends on the caller: for the role-add phase, which adds several roles
+// per member, each failed member-role attempt is one call, so affected_count
+// counts attempts; for the lookup phase, which resolves one entry per iteration,
+// affected_count counts failed lookups (one per entry).
 //
 // The entries map is lazy-initialized here, so the zero-value faultCollector is
 // safe to record into even if a caller skipped newFaultCollector(); it can never
 // nil-panic on the first record.
-func (fc *faultCollector) recordSystemFault(err error, userID string) {
+func (fc *faultCollector) recordSystemFault(err error, sampleUser string) {
 	sig := faultSignatureOf(err)
 	if fc.entries == nil {
 		fc.entries = map[faultSignature]*collectedFault{}
 	}
 	entry, ok := fc.entries[sig]
 	if !ok {
-		entry = &collectedFault{firstErr: err, sampleUser: userID}
+		entry = &collectedFault{firstErr: err, sampleUser: sampleUser}
 		fc.entries[sig] = entry
 		fc.order = append(fc.order, sig)
 	}
