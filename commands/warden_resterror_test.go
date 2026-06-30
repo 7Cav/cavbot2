@@ -504,11 +504,14 @@ func TestFindGuildMember_MentionGeneric4xxNoCapture(t *testing.T) {
 // fields (command/guild/role) a site is required to forward. kvs keeps every
 // capture's kv in fire order, so a test that expects more than one capture (the
 // bulk-loop fault collapse, #214) can assert per-event payloads, not just the
-// most recent.
+// most recent. msgs keeps every capture's message in the same fire order, so a
+// test can tell the two bulk collectors apart by their distinct flush messages
+// (the lookup vs role-add separation invariant, #216).
 type captureRecorder struct {
 	count  int
 	lastKV []any
 	kvs    [][]any
+	msgs   []string
 }
 
 func (c *captureRecorder) install(t *testing.T) {
@@ -518,6 +521,7 @@ func (c *captureRecorder) install(t *testing.T) {
 		c.count++
 		c.lastKV = kv
 		c.kvs = append(c.kvs, kv)
+		c.msgs = append(c.msgs, msg)
 	}
 	t.Cleanup(func() { captureError = prev })
 }
@@ -600,7 +604,7 @@ func TestSystemFaultHelpers_ConfigFaultVsTransientRendering(t *testing.T) {
 		name   string
 		render func(err error) string
 	}{
-		{"search", func(err error) string { return searchErrorReply(err).Error() }},
+		{"search", func(err error) string { return searchErrorReply(err, nil, "").Error() }},
 		{"roleResolve", func(err error) string { return roleResolveErrorReply(err, "cap").Error() }},
 		{"channelsResolve", func(err error) string { return channelsResolveErrorReply(err, "cap").Error() }},
 		{"purgeRecreate", func(err error) string { return purgeRecreateErrorReply("Some Role", err, "cap") }},

@@ -280,21 +280,36 @@ func handleWardenBulkAdd(
 
 	var addedMembers []*discordgo.Member
 	var failures []string
-	// One collector per run collapses the per-member-role system-fault captures: a
-	// role deleted mid-run 404s every add with the same signature, which would
-	// otherwise page on-call once per member-role attempt. System faults feed it
-	// during the loop and it flushes once after; non-captured client faults (403,
-	// not-in-server 404) are listed but never routed here, per ADR 0001 (#214). The
-	// flush is deferred immediately, so an early return or a panic between the loop
-	// and the flush can never silently drop pending captures; guildID is fixed for
-	// the run, so evaluating the deferred args here is exact.
+	// Two collectors per run, one per operation phase (member lookup vs role add),
+	// each collapsing its per-entry system-fault captures to one event per fault
+	// signature (#214, #216). They are kept SEPARATE rather than shared because a
+	// member LOOKUP (GuildMember/GuildMembersSearch) and a role ADD
+	// (GuildMemberRoleAdd) are distinct root causes with their own flush message: a
+	// lookup 500 and a role-add 500 carry the same signature but must not fold into
+	// one event. System faults feed the collectors during the loop and they flush
+	// once after; non-captured client faults (403, not-in-server 404) are listed but
+	// never routed here, per ADR 0001. Both flushes are deferred immediately, so an
+	// early return or a panic between the loop and the flush can never silently drop
+	// pending captures; guildID is fixed for the run, so the deferred args are exact.
+	//
+	// Each collector MUST keep its own matching deferred flush: records only reach
+	// Sentry at flush, so dropping one defer would silently discard that phase's
+	// pending captures (partial Sentry blindness for that phase).
+	lookupFaultCapture := newFaultCollector()
+	defer lookupFaultCapture.flush(
+		"Failed to look up guild member in bulk",
+		"command", "warden", "guild", guildID,
+	)
 	faultCapture := newFaultCollector()
 	defer faultCapture.flush(
 		"Failed to add warden role in bulk",
 		"command", "warden", "guild", guildID,
 	)
 	for _, singleQuery := range requestedQueries {
-		member, memberErr := findGuildMember(gm, guildID, singleQuery)
+		// A lookup system fault feeds the lookup collector keyed by signature
+		// instead of capturing once per entry, so a 5xx storm during resolution
+		// pages once per signature rather than once per roster entry (#216).
+		member, memberErr := findGuildMemberCollecting(gm, guildID, singleQuery, lookupFaultCapture.recordSystemFault)
 		if memberErr != nil {
 			failures = append(failures, memberErr.Error())
 			continue
@@ -813,7 +828,22 @@ func formatUser(member *discordgo.Member) string {
 	return member.User.Username
 }
 
+// findGuildMember resolves a single roster entry to a guild member, capturing any
+// genuine lookup system fault to Sentry inline. It is the entry point for the
+// single /warden add and /warden remove sites, which capture immediately; the
+// bulk loop uses findGuildMemberCollecting with a collector-backed sink instead.
 func findGuildMember(gm GuildManager, guildID, query string) (*discordgo.Member, error) {
+	return findGuildMemberCollecting(gm, guildID, query, nil)
+}
+
+// findGuildMemberCollecting is findGuildMember with the lookup-fault capture
+// decision delegated to faultSink. With a nil sink the leaf helpers capture each
+// genuine system fault to Sentry inline (the single add/remove behavior); with a
+// collector-backed sink the /warden bulkadd loop routes those captures through a
+// faultCollector so a lookup-fault storm collapses to one event per signature
+// (#216). The user-facing messages and the non-captured outcomes (empty/too-long
+// query, not-in-server, no match, too many matches, 4xx) are identical either way.
+func findGuildMemberCollecting(gm GuildManager, guildID, query string, faultSink lookupFaultSink) (*discordgo.Member, error) {
 	trimmedQuery := strings.TrimSpace(query)
 	if trimmedQuery == "" {
 		return nil, fmt.Errorf("❌ Empty query")
@@ -835,18 +865,18 @@ func findGuildMember(gm GuildManager, guildID, query string) (*discordgo.Member,
 	// fault). A 404 means the user really isn't here; any other failure is
 	// surfaced (and captured if it's a genuine system fault).
 	if userID, ok := mentionUserID(trimmedQuery); ok {
-		return resolveMemberByID(gm, guildID, userID)
+		return resolveMemberByID(gm, guildID, userID, faultSink)
 	}
 
 	// Raw snowflake ID: same authoritative treatment as a mention.
 	if isSnowflakeID(trimmedQuery) {
-		return resolveMemberByID(gm, guildID, trimmedQuery)
+		return resolveMemberByID(gm, guildID, trimmedQuery, faultSink)
 	}
 
 	// Name search
 	members, err := gm.GuildMembersSearch(guildID, trimmedQuery, 10)
 	if err != nil {
-		return nil, searchErrorReply(err)
+		return nil, searchErrorReply(err, faultSink, trimmedQuery)
 	}
 
 	switch len(members) {
@@ -878,8 +908,9 @@ func mentionUserID(query string) (string, bool) {
 // mentions and raw snowflakes. The result is trusted: it never falls through to
 // a name search. A 404 yields a clear "not in this server" message; any other
 // failure is routed through the shared classifier so a genuine system fault is
-// captured to Sentry and the raw Discord body never reaches the reply.
-func resolveMemberByID(gm GuildManager, guildID, userID string) (*discordgo.Member, error) {
+// captured (inline when faultSink is nil, or collected when the bulk loop supplies
+// a collector-backed sink) and the raw Discord body never reaches the reply.
+func resolveMemberByID(gm GuildManager, guildID, userID string, faultSink lookupFaultSink) (*discordgo.Member, error) {
 	member, err := gm.GuildMember(guildID, userID)
 	if err != nil {
 		class := classifyDiscordError(err)
@@ -887,7 +918,7 @@ func resolveMemberByID(gm GuildManager, guildID, userID string) (*discordgo.Memb
 		case class.NotFound:
 			return nil, fmt.Errorf("❌ <@%s> is not in this server", userID)
 		case class.SystemFault:
-			captureError("Failed to look up guild member by ID", err, "user_id", userID)
+			recordLookupFault(faultSink, err, userID, "Failed to look up guild member by ID", "user_id", userID)
 			if class.ConfigFault {
 				return nil, fmt.Errorf("❌ Could not look up <@%s>: %s", userID, configFaultHint(class))
 			}

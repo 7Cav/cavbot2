@@ -170,19 +170,59 @@ func isInteractionTokenExpired(err error) bool {
 	}
 }
 
-// searchErrorReply classifies a GuildMembersSearch failure, captures it to
-// Sentry only when it is a genuine system fault, and returns a body-free,
-// operator-facing error. The raw Discord response body is never interpolated.
-func searchErrorReply(err error) error {
-	class := classifyDiscordError(err)
+// lookupFaultSink receives a genuine member-lookup system fault (a 5xx/transport
+// error, or a wrong-guild config 404) together with the roster entry
+// that triggered it. The single /warden add and /warden remove sites pass nil,
+// which makes the lookup capture to Sentry inline with its own message and
+// context. The /warden bulkadd loop passes a sink backed by a faultCollector, so
+// a lookup-fault storm across an N-entry roster collapses to one Sentry event per
+// fault signature instead of N (#216). The leaf gates on class.SystemFault before
+// calling the sink, mirroring the inline capture, so non-captured client faults
+// (403, not-in-server 404) never reach it (ADR 0001).
+type lookupFaultSink func(err error, sampleUser string)
+
+// recordLookupFault routes a genuine member-lookup system fault. With a nil sink
+// (the single add/remove sites) it captures to Sentry immediately with the call
+// site's own message and context, preserving the pre-#216 inline behavior. With a
+// non-nil sink (the bulk loop) it hands the fault to the collector instead, so the
+// inline message/context is dropped in favor of the collector's collapsed
+// per-signature payload. Only call this for class.SystemFault errors, the same
+// gate the inline capture used.
+func recordLookupFault(sink lookupFaultSink, err error, sampleUser, captureMsg string, kv ...any) {
+	if sink != nil {
+		sink(err, sampleUser)
+		return
+	}
+	captureError(captureMsg, err, kv...)
+}
+
+// searchErrorMessage builds the body-free, operator-facing error for a
+// GuildMembersSearch failure from its classification. It does NOT capture — the
+// caller decides whether and how to send the fault to Sentry (inline for the
+// single lookup sites, via the faultCollector for the bulk loop). The raw Discord
+// response body is never interpolated.
+func searchErrorMessage(class discordErrorClass) error {
 	if class.SystemFault {
-		captureError("Failed to search members", err)
 		if class.ConfigFault {
 			return fmt.Errorf("❌ Member search failed: %s", configFaultHint(class))
 		}
 		return errors.New("❌ Member search is temporarily unavailable (Discord error); please try again shortly")
 	}
 	return fmt.Errorf("❌ Member search failed (%s); check the query or try a mention/ID instead", class.UserDetail)
+}
+
+// searchErrorReply classifies a GuildMembersSearch failure, routes a genuine
+// system fault through recordLookupFault (capturing inline when faultSink is nil,
+// or collecting it when the bulk loop supplies a collector-backed sink), and
+// returns the same body-free, operator-facing error searchErrorMessage builds.
+// sampleUser is the roster entry that triggered the lookup, carried into the
+// collapsed bulk event as sample_user; it is ignored on the inline path.
+func searchErrorReply(err error, faultSink lookupFaultSink, sampleUser string) error {
+	class := classifyDiscordError(err)
+	if class.SystemFault {
+		recordLookupFault(faultSink, err, sampleUser, "Failed to search members")
+	}
+	return searchErrorMessage(class)
 }
 
 // purgeRecreateErrorReply classifies a purge role-recreation failure where the
@@ -359,24 +399,30 @@ func faultSignatureOf(err error) faultSignature {
 }
 
 // collectedFault is the running tally for one fault signature within a single
-// bulk run: how many add attempts hit it, a representative error for the Sentry
-// payload, and the Discord ID of the first member that hit it (the debugging
-// foothold the collapsed event carries as sample_user).
+// bulk run: how many faults hit it, a representative error for the Sentry
+// payload, and the first roster entry that hit it (the debugging foothold the
+// collapsed event carries as sample_user). The collector type serves both the
+// role-add and lookup phases (each phase using its own instance), so sampleUser
+// is NOT always a Discord ID: it is a resolved Discord ID for the by-ID lookup
+// and role-add sites, but the raw search term (e.g. "alice") for a name lookup.
 type collectedFault struct {
 	count      int
 	firstErr   error
 	sampleUser string
 }
 
-// faultCollector collapses the per-member captured system faults of a bulk
-// role-add loop into one Sentry event per distinct fault signature, so a single
-// root cause that hits every iteration (a role deleted mid-run ⇒ N Unknown Role
-// 404s, or a 5xx storm) pages on-call once instead of N times (#214). Both bulk
-// loops feed it every captured fault during iteration via recordSystemFault, then
-// flush once after the loop. It is per-invocation only: a fresh collector per run, no
-// cross-run or time-windowed dedup. Only genuine system faults belong here — the
-// caller filters on class.SystemFault, since non-captured client faults (403,
-// not-in-server 404) must stay uncaptured per ADR 0001.
+// faultCollector collapses the per-entry captured system faults of a bulk run
+// into one Sentry event per distinct fault signature, so a single root cause
+// that hits every iteration (a role deleted mid-run ⇒ N Unknown Role 404s, or a
+// 5xx storm) pages on-call once instead of N times (#214, #216). It serves both
+// phases of the bulk loop — the member-lookup phase
+// (GuildMember/GuildMembersSearch) and the role-add phase (GuildMemberRoleAdd) —
+// each of which constructs its own collector, feeds it every captured fault during
+// iteration via recordSystemFault, and flushes once after the loop. It is
+// per-invocation only: a fresh collector per run, no cross-run or time-windowed
+// dedup. Only genuine system faults belong here — the caller filters on
+// class.SystemFault, since non-captured client faults (403, not-in-server 404)
+// must stay uncaptured per ADR 0001.
 type faultCollector struct {
 	// order preserves first-seen signature order so flush emits deterministically.
 	order   []faultSignature
@@ -387,27 +433,30 @@ func newFaultCollector() *faultCollector {
 	return &faultCollector{entries: map[faultSignature]*collectedFault{}}
 }
 
-// recordSystemFault records one failed add attempt for the signature of err,
-// attributed to the member userID. It is for genuine system faults ONLY: every
-// error handed here is sent to Sentry by flush, so both bulk loops gate on
-// class.SystemFault before calling it — non-captured client faults (403,
-// not-in-server 404) must never reach the collector (ADR 0001, #214). The first
-// member per signature is kept as the sample; every subsequent same-signature
-// failure only bumps the count. For /warden bulkadd, which adds several roles per
-// member, each failed member-role attempt is one call, so affected_count counts
-// attempts rather than distinct members.
+// recordSystemFault records one captured system fault for the signature of err,
+// attributed to the roster-entry sampleUser (a resolved Discord ID for the by-ID
+// lookup and role-add callers, or the raw search term for a name lookup — see
+// collectedFault). It is for genuine system faults ONLY: every error handed here
+// is sent to Sentry by flush, so every caller gates on class.SystemFault before
+// calling it — non-captured client faults (403, not-in-server 404) must never
+// reach the collector (ADR 0001, #214, #216). The first sample per signature is
+// kept; every subsequent same-signature fault only bumps the count. The count's
+// meaning depends on the caller: for the role-add phase, which adds several roles
+// per member, each failed member-role attempt is one call, so affected_count
+// counts attempts; for the lookup phase, which resolves one entry per iteration,
+// affected_count counts failed lookups (one per entry).
 //
 // The entries map is lazy-initialized here, so the zero-value faultCollector is
 // safe to record into even if a caller skipped newFaultCollector(); it can never
 // nil-panic on the first record.
-func (fc *faultCollector) recordSystemFault(err error, userID string) {
+func (fc *faultCollector) recordSystemFault(err error, sampleUser string) {
 	sig := faultSignatureOf(err)
 	if fc.entries == nil {
 		fc.entries = map[faultSignature]*collectedFault{}
 	}
 	entry, ok := fc.entries[sig]
 	if !ok {
-		entry = &collectedFault{firstErr: err, sampleUser: userID}
+		entry = &collectedFault{firstErr: err, sampleUser: sampleUser}
 		fc.entries[sig] = entry
 		fc.order = append(fc.order, sig)
 	}
