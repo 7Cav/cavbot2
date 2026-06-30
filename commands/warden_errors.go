@@ -170,19 +170,59 @@ func isInteractionTokenExpired(err error) bool {
 	}
 }
 
-// searchErrorReply classifies a GuildMembersSearch failure, captures it to
-// Sentry only when it is a genuine system fault, and returns a body-free,
-// operator-facing error. The raw Discord response body is never interpolated.
-func searchErrorReply(err error) error {
-	class := classifyDiscordError(err)
+// lookupFaultSink receives a genuine member-lookup system fault (a 5xx/transport
+// error, or a stale-role/wrong-guild config 404) together with the roster entry
+// that triggered it. The single /warden add and /warden remove sites pass nil,
+// which makes the lookup capture to Sentry inline with its own message and
+// context. The /warden bulkadd loop passes a sink backed by a faultCollector, so
+// a lookup-fault storm across an N-entry roster collapses to one Sentry event per
+// fault signature instead of N (#216). The leaf gates on class.SystemFault before
+// calling the sink, mirroring the inline capture, so non-captured client faults
+// (403, not-in-server 404) never reach it (ADR 0001).
+type lookupFaultSink func(err error, sampleUser string)
+
+// recordLookupFault routes a genuine member-lookup system fault. With a nil sink
+// (the single add/remove sites) it captures to Sentry immediately with the call
+// site's own message and context, preserving the pre-#216 inline behavior. With a
+// non-nil sink (the bulk loop) it hands the fault to the collector instead, so the
+// inline message/context is dropped in favor of the collector's collapsed
+// per-signature payload. Only call this for class.SystemFault errors, the same
+// gate the inline capture used.
+func recordLookupFault(sink lookupFaultSink, err error, sampleUser, captureMsg string, kv ...any) {
+	if sink != nil {
+		sink(err, sampleUser)
+		return
+	}
+	captureError(captureMsg, err, kv...)
+}
+
+// searchErrorMessage builds the body-free, operator-facing error for a
+// GuildMembersSearch failure from its classification. It does NOT capture — the
+// caller decides whether and how to send the fault to Sentry (inline for the
+// single lookup sites, via the faultCollector for the bulk loop). The raw Discord
+// response body is never interpolated.
+func searchErrorMessage(class discordErrorClass) error {
 	if class.SystemFault {
-		captureError("Failed to search members", err)
 		if class.ConfigFault {
 			return fmt.Errorf("❌ Member search failed: %s", configFaultHint(class))
 		}
 		return errors.New("❌ Member search is temporarily unavailable (Discord error); please try again shortly")
 	}
 	return fmt.Errorf("❌ Member search failed (%s); check the query or try a mention/ID instead", class.UserDetail)
+}
+
+// searchErrorReply classifies a GuildMembersSearch failure, routes a genuine
+// system fault through recordLookupFault (capturing inline when faultSink is nil,
+// or collecting it when the bulk loop supplies a collector-backed sink), and
+// returns the same body-free, operator-facing error searchErrorMessage builds.
+// sampleUser is the roster entry that triggered the lookup, carried into the
+// collapsed bulk event as sample_user; it is ignored on the inline path.
+func searchErrorReply(err error, faultSink lookupFaultSink, sampleUser string) error {
+	class := classifyDiscordError(err)
+	if class.SystemFault {
+		recordLookupFault(faultSink, err, sampleUser, "Failed to search members")
+	}
+	return searchErrorMessage(class)
 }
 
 // purgeRecreateErrorReply classifies a purge role-recreation failure where the

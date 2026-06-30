@@ -600,7 +600,7 @@ func TestSystemFaultHelpers_ConfigFaultVsTransientRendering(t *testing.T) {
 		name   string
 		render func(err error) string
 	}{
-		{"search", func(err error) string { return searchErrorReply(err).Error() }},
+		{"search", func(err error) string { return searchErrorReply(err, nil, "").Error() }},
 		{"roleResolve", func(err error) string { return roleResolveErrorReply(err, "cap").Error() }},
 		{"channelsResolve", func(err error) string { return channelsResolveErrorReply(err, "cap").Error() }},
 		{"purgeRecreate", func(err error) string { return purgeRecreateErrorReply("Some Role", err, "cap") }},
