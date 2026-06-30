@@ -10,10 +10,10 @@ import (
 
 // The headline #216 scenario for the PUBLIC bulkadd member-LOOKUP path: Discord
 // throws a 5xx storm during the per-entry name search, so every entry's lookup
-// fails with the same signature before any role is even attempted. Today each
-// entry fires its own captureError("Failed to search members", ...); the loop
-// must collapse them into ONE Sentry event carrying the affected lookup count
-// and a sample entry, while still listing every failure for the operator.
+// fails with the same signature before any role is even attempted. The invariant
+// this file guards: when every entry's lookup fails with the same signature, the
+// bulk loop emits exactly one Sentry event carrying the affected count and a
+// sample entry, while still listing every failure for the operator.
 func TestRunWardenBulkAdd_LookupSameSignatureCollapsesToOneCapture(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
@@ -270,4 +270,106 @@ func TestRunWardenRemove_MemberLookup5xxCapturesOnceInline(t *testing.T) {
 	if got := lastEditContent(f.Calls()); strings.Contains(got, rawBodyMarker) {
 		t.Fatalf("must not leak the raw Discord body, got %q", got)
 	}
+}
+
+// The headline #216 guarantee: the lookup collector and the role-add collector
+// must stay SEPARATE, never folding a same-signature fault from the two phases
+// into one event. Here one run hits both phases with the SAME signature {500,0}:
+// entry "alice"'s member LOOKUP 500s (it never reaches a role add), while entry
+// "bob" resolves but its ROLE ADD 500s. Two distinct root causes, one shared
+// signature — so a single shared collector would collapse them to ONE event.
+// Assert TWO events fire, carrying the two distinct flush messages, proving the
+// build breaks if a future edit cross-wires the two collectors.
+func TestRunWardenBulkAdd_LookupAndRoleAddSameSignatureDoNotFold(t *testing.T) {
+	rec := &captureRecorder{}
+	rec.install(t)
+
+	gm := &fakeGuildManager{
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		// alice (processed first) is a name search that 500s on lookup.
+		MembersSearchErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
+		// bob resolves cleanly, then its role add 500s — same {500,0} signature.
+		searchResults: map[string][]*discordgo.Member{
+			"bob": {{User: &discordgo.User{ID: "222", Username: "bob"}}},
+		},
+		MemberRoleAddErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
+	}
+	f := &fakeResponder{}
+
+	runWarden(f, gm, bulkAddInteraction("internal", "alice, bob"))
+
+	// A lookup fault and a role-add fault sharing {500,0} must NOT fold: two
+	// collectors, two events.
+	if rec.count != 2 {
+		t.Fatalf("a lookup fault and a role-add fault of the same signature must NOT fold into one event; got %d", rec.count)
+	}
+	// The two events must carry the two distinct collector flush messages, so a
+	// cross-wiring (both phases feeding one collector) fails here.
+	const lookupMsg = "Failed to look up guild member in bulk"
+	const roleAddMsg = "Failed to add warden role in bulk"
+	seen := map[string]bool{}
+	for _, m := range rec.msgs {
+		seen[m] = true
+	}
+	if !seen[lookupMsg] {
+		t.Fatalf("expected the lookup collector's flush message %q among the events; got %v", lookupMsg, rec.msgs)
+	}
+	if !seen[roleAddMsg] {
+		t.Fatalf("expected the role-add collector's flush message %q among the events; got %v", roleAddMsg, rec.msgs)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("the two events must carry two DISTINCT flush messages (lookup vs role-add); got %v", rec.msgs)
+	}
+}
+
+// A bulk by-ID member lookup that 404s with a config fault (Unknown Guild 10004,
+// a wrong GUILD_ID) IS a captured system fault: it must reach the lookup
+// collector and page once, contrasted with a genuine absence (Unknown Member
+// 10007) which stays uncaptured. This guards the lookup-by-ID classifier branch
+// where a config-404 falls through `case class.NotFound` into
+// `case class.SystemFault` — a narrowing edit that routed Unknown Guild back into
+// the absent-member arm would silence the page and only fail here.
+func TestRunWardenBulkAdd_LookupByIDConfig404CapturedAbsenceNot(t *testing.T) {
+	t.Run("unknownGuild404Captured", func(t *testing.T) {
+		rec := &captureRecorder{}
+		rec.install(t)
+		gm := &fakeGuildManager{
+			roles:      []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+			MemberErrs: []error{restError(http.StatusNotFound, discordgo.ErrCodeUnknownGuild, rawBodyMarker)},
+		}
+		f := &fakeResponder{}
+
+		runWarden(f, gm, bulkAddInteraction("internal", "<@111>"))
+
+		if rec.count != 1 {
+			t.Fatalf("a config-fault 404 (Unknown Guild) on the by-ID lookup must be collected and page once; got %d", rec.count)
+		}
+		// Routed through the lookup collector, not captured inline: the event
+		// carries the collapsed payload's affected_count.
+		if affected, ok := kvValue(rec.lastKV, "affected_count"); !ok || affected != 1 {
+			t.Fatalf("the collected config-404 lookup fault must carry affected_count=1; got %v (kv %v)", affected, rec.lastKV)
+		}
+		if got := lastEditContent(f.Calls()); strings.Contains(got, rawBodyMarker) {
+			t.Fatalf("must not leak the raw Discord body, got %q", got)
+		}
+	})
+
+	t.Run("unknownMember404NotCaptured", func(t *testing.T) {
+		rec := &captureRecorder{}
+		rec.install(t)
+		gm := &fakeGuildManager{
+			roles:      []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+			MemberErrs: []error{restError(http.StatusNotFound, discordgo.ErrCodeUnknownMember, rawBodyMarker)},
+		}
+		f := &fakeResponder{}
+
+		runWarden(f, gm, bulkAddInteraction("internal", "<@111>"))
+
+		if rec.count != 0 {
+			t.Fatalf("a genuine absence (Unknown Member 404) on the by-ID lookup must NOT capture; got %d", rec.count)
+		}
+		if got := lastEditContent(f.Calls()); !strings.Contains(got, "❌") {
+			t.Fatalf("the absent member must still be listed for the operator; got %q", got)
+		}
+	})
 }

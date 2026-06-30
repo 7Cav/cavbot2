@@ -280,17 +280,21 @@ func handleWardenBulkAdd(
 
 	var addedMembers []*discordgo.Member
 	var failures []string
-	// Two collectors per run, one per Discord call site, each collapsing its
-	// per-member system-fault captures to one event per fault signature (#214,
-	// #216). They are kept SEPARATE rather than shared because a member LOOKUP
-	// (GuildMember/GuildMembersSearch) and a role ADD (GuildMemberRoleAdd) are
-	// distinct root causes with their own flush message: a lookup 500 and a
-	// role-add 500 carry the same signature but must not fold into one event.
-	// System faults feed the collectors during the loop and they flush once after;
-	// non-captured client faults (403, not-in-server 404) are listed but never
-	// routed here, per ADR 0001. Both flushes are deferred immediately, so an early
-	// return or a panic between the loop and the flush can never silently drop
+	// Two collectors per run, one per operation phase (member lookup vs role add),
+	// each collapsing its per-entry system-fault captures to one event per fault
+	// signature (#214, #216). They are kept SEPARATE rather than shared because a
+	// member LOOKUP (GuildMember/GuildMembersSearch) and a role ADD
+	// (GuildMemberRoleAdd) are distinct root causes with their own flush message: a
+	// lookup 500 and a role-add 500 carry the same signature but must not fold into
+	// one event. System faults feed the collectors during the loop and they flush
+	// once after; non-captured client faults (403, not-in-server 404) are listed but
+	// never routed here, per ADR 0001. Both flushes are deferred immediately, so an
+	// early return or a panic between the loop and the flush can never silently drop
 	// pending captures; guildID is fixed for the run, so the deferred args are exact.
+	//
+	// Each collector MUST keep its own matching deferred flush: records only reach
+	// Sentry at flush, so dropping one defer would silently discard that phase's
+	// pending captures (partial Sentry blindness for that phase).
 	lookupFaultCapture := newFaultCollector()
 	defer lookupFaultCapture.flush(
 		"Failed to look up guild member in bulk",
