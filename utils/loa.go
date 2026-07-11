@@ -19,6 +19,7 @@ import (
 var reFormatBBCode = regexp.MustCompile(`(?i)\[/?(?:b|i|u|s|color|size|font)(?:=[^\]]*)?\]`)
 
 var (
+	// reUsername: the Subject is the LAST match — see parseLOAPost and ADR 0010.
 	reUsername  = regexp.MustCompile(`(?i)Username\s*:?\s*(\S+)`)
 	reStartDate = regexp.MustCompile(`(?i)Start Date\s*:?\s*[\r\n]+\s*([^\r\n]+)`)
 	reEndDate   = regexp.MustCompile(`(?i)End Date\s*:?\s*[\r\n]+\s*([^\r\n]+)`)
@@ -358,15 +359,21 @@ func parseLOAPost(msg string) (LOAEntry, bool) {
 	// post's bold/color/size wrapping (the source of historical silent failures).
 	msg = reFormatBBCode.ReplaceAllString(msg, "")
 
-	usernameMatch := reUsername.FindStringSubmatch(msg)
+	usernameMatches := reUsername.FindAllStringSubmatch(msg, -1)
 	startMatch := reStartDate.FindStringSubmatch(msg)
 	endMatch := reEndDate.FindStringSubmatch(msg)
 
-	if len(usernameMatch) < 2 || len(startMatch) < 2 || len(endMatch) < 2 {
+	if len(usernameMatches) == 0 || len(startMatch) < 2 || len(endMatch) < 2 {
 		return LOAEntry{}, false
 	}
 
-	username := strings.TrimSpace(usernameMatch[1])
+	// The LOA belongs to the Subject, not the Submitter. An on-behalf PAF lists
+	// the Submitter under a leading Username label and the Subject under a second
+	// one inside the Rank/Username/Primary Billet block, so the Subject is always
+	// the LAST Username match. A self-request has a single label (or a duplicate
+	// naming the same person), which this rule leaves unchanged. See ADR 0010.
+	subjectMatch := usernameMatches[len(usernameMatches)-1]
+	username := strings.TrimSpace(subjectMatch[1])
 	startDate, ok := parseLOADate(startMatch[1])
 	if !ok {
 		return LOAEntry{}, false
