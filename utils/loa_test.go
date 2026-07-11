@@ -172,6 +172,56 @@ func TestParseLOAPost(t *testing.T) {
 			wantEnd:   "2026-04-19",
 		},
 		{
+			// Real mirror shape (thread 100403): an on-behalf PAF carries TWO
+			// Username labels — the SUBMITTER first (auto-filled from the filing
+			// account), then the SUBJECT (the trooper actually on leave) inside
+			// the Rank/Username/Primary Billet block. The LOA belongs to the
+			// Subject, so the LAST label wins, not the first. This is the #221
+			// regression: the old first-match parser attributed the LOA to the
+			// submitter. See docs/adr/0010-loa-subject-attribution.md.
+			name: "on-behalf PAF: subject is the last Username label, not the submitter",
+			msg: "[COLOR=rgb(213, 185, 0)][B]Username:[/B] [/COLOR]Filer.S\n\n" +
+				"[B][COLOR=rgb(213, 185, 0)]Rank[/COLOR][/B]: SPC\n\n" +
+				"[B][COLOR=rgb(213, 185, 0)]Username[/COLOR][/B]: Leaver.T\n\n" +
+				"[B][COLOR=rgb(213, 185, 0)]Primary Billet[/COLOR][/B]: A/ACD\n\n" +
+				"[B][COLOR=rgb(213, 185, 0)]Start Date[/COLOR][/B] \nJul 10, 2099\n" +
+				"[B][COLOR=rgb(213, 185, 0)]End Date[/COLOR][/B] \nJul 24, 2099\n\n" +
+				"[HR][/HR]\n[B][COLOR=rgb(213, 185, 0)]Submitter Name[/COLOR][/B] \nSSG.Filer.S\n",
+			wantOK:    true,
+			wantUser:  "Leaver.T",
+			wantStart: "2099-07-10",
+			wantEnd:   "2099-07-24",
+		},
+		{
+			// Real mirror shape (thread 38835): an older PAF collapses Rank,
+			// Username, and Billet onto ONE line, so the Username label is not at
+			// the start of its line. The parser must still extract the Subject —
+			// this pins the decision NOT to anchor the label to line-start (which
+			// would silently drop this real LOA). See ADR 0010 Consequences.
+			name: "collapsed single-line Rank/Username/Billet still parses the subject",
+			msg: "[B]Rank[/B]: PVT [B]Username[/B]: Collapsed.C   [B]Billet[/B]: 2/B/ACD\n" +
+				"Reason:\nDeployment\n\nStart Date\nJan 1, 2099\nEnd Date\nJan 8, 2099\n",
+			wantOK:    true,
+			wantUser:  "Collapsed.C",
+			wantStart: "2099-01-01",
+			wantEnd:   "2099-01-08",
+		},
+		{
+			// Self PAF with the same two-label shape (submitter == subject): the
+			// last-label rule must still resolve to that one person, so self-LOAs
+			// stay correct after the on-behalf fix.
+			name: "self PAF: duplicate Username labels resolve to the same subject",
+			msg: "[COLOR=rgb(213, 185, 0)][B]Username:[/B] [/COLOR]Same.S\n\n" +
+				"[B][COLOR=rgb(213, 185, 0)]Rank[/COLOR][/B]: SPC\n\n" +
+				"[B][COLOR=rgb(213, 185, 0)]Username[/COLOR][/B]: Same.S\n\n" +
+				"[B][COLOR=rgb(213, 185, 0)]Start Date[/COLOR][/B] \nAug 1, 2099\n" +
+				"[B][COLOR=rgb(213, 185, 0)]End Date[/COLOR][/B] \nAug 8, 2099\n",
+			wantOK:    true,
+			wantUser:  "Same.S",
+			wantStart: "2099-08-01",
+			wantEnd:   "2099-08-08",
+		},
+		{
 			// Free-text date (thread 95564, "probably May 8, 2026") must still be rejected —
 			// leniency covers template variation, not unparseable prose.
 			name:   "free-text uncertain date is still rejected",

@@ -44,14 +44,30 @@ belong here, not inline in code comments.
 - **Xenforo forum** — the regiment's web forum. The bot reads its MySQL DB
   (`xf_thread`, `xf_post`) for LOA scanning.
 - **LOA (Leave of Absence)** — a forum thread declaring a member away from
-  duty for a date range. Parsed from a specific Xenforo BBCode template
-  (yellow `[COLOR=rgb(213, 185, 0)]` labels around `Username`, `Start Date`,
-  `End Date`). Template drift silently breaks parsing. One thread is exactly
+  duty for a date range. Filed via a **PAF** and parsed from its Xenforo
+  BBCode template (labels around the **Subject**'s username, `Start Date`, and
+  `End Date`). The PAF records both a **Submitter** and a **Subject**; the LOA
+  belongs to the **Subject** — that is who `/loa` and `/awol` key on, never the
+  Submitter. Template drift silently breaks parsing. One thread is exactly
   one LOA — a second LOA always means a new thread, so `ThreadID` uniquely
   identifies an LOA. **Filing an LOA is itself a forum post**, so it resets the
   trooper's last-post clock; this is why a long unexcused gap immediately
   followed by an LOA is rare in practice (the accountable-day model still
   handles it correctly if it occurs).
+- **PAF (Personnel Action Form)** — a forum form for filing a personnel
+  action. An LOA is filed via an LOA-request PAF, which records both a
+  Submitter and a Subject. A PAF's field labels are what the bot parses, so a
+  forum-side relabel is a change to the bot's parsing contract, not a cosmetic
+  edit.
+- **Subject** — the trooper an LOA is *for*; the person going on leave. The
+  LOA belongs to the Subject, and it is the only party the bot attributes the
+  LOA to. _Avoid_: bare "Username" — the PAF historically carries the Submitter
+  and the Subject under the same `Username` label, so "the username" is
+  ambiguous.
+- **Submitter** — the account that files a PAF. For an LOA this may be the
+  Subject themselves (a self-request) or someone acting on their behalf (e.g.
+  their squad lead). The bot never attributes the LOA to the Submitter.
+  _Avoid_: author, poster.
 - **LOA node** — a Xenforo forum section that hosts LOA threads. Production
   scans five (`180,400,540,178,369`); the code default is `180`.
 - **LOA cache** — `utils.GlobalLOACache`, the in-process cache populated by a
