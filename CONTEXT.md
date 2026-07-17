@@ -133,8 +133,26 @@ grants is configured Discord-side and is out of scope here.
 
 ## Observability
 
+Two channels, deliberately split: **usage** is answered by the 7Cav Grafana
+stack (`metrics.7cav.us`); **failures** are Sentry's alone. They never
+overlap — a failure is not telemetry, and a usage metric never carries an
+error signal. See ADR 0011.
+
+- **Command telemetry** — the per-invocation usage record for a slash command:
+  which command ran, how long it took, and who ran it. Lives in the Grafana /
+  Prometheus / Loki stack, derived from the bot's own logs; it deliberately
+  holds *no* failure signal (that is Sentry's). _Avoid_: treating it as error
+  tracking, or promoting caller identity to a metric label — the caller belongs
+  in the log line only, never a Prometheus label. See ADR 0011.
+- **`command_invoked` line** — the single structured log line the dispatch
+  wrapper emits once per slash-command invocation. Its message marker and field
+  keys (`command`, `latency_ms`, `discord_id`, `username`) are a contract
+  consumed off-box by the metrics host's log scraper; changing them is a
+  parsing-contract change, not a cosmetic edit — the same drift hazard as
+  PAF / LOA label wording. See ADR 0011 and `docs/command-telemetry.md`.
 - **Sentry** — wired in 0.7.7. Captured manually at `utils.CaptureError`
-  call sites — not via a blanket slog bridge. See ADR 0001.
+  call sites — not via a blanket slog bridge. See ADR 0001. Command telemetry
+  does not touch Sentry; Sentry does not touch usage metrics.
 - **`utils.Error` vs `utils.HandleError`** — load-bearing distinction.
   `utils.Error` is for genuine internal failures (Sentry-eligible).
   `utils.HandleError` is for user-facing responses (often expected outcomes
