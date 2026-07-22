@@ -17,7 +17,6 @@ func Enlist() Command {
 
 func handleEnlistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	const enlistImageURL = "https://wiki.7cav.us/images/3/38/Cav_Enlistment_Infographic_1000_2000px_1_1.png"
-
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
