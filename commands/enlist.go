@@ -1,16 +1,13 @@
 package commands
 
 import (
-	"context"
-	"fmt"
-	"github.com/7cav/cavbot2/utils"
+
+
 	"github.com/bwmarrin/discordgo"
-	"regexp"
-	"sort"
-	"strings"
+	"fmt"
+
 )
 
-// Enlist defines the global structure for the /enlist slash command
 func Enlist() Command {
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
@@ -20,16 +17,23 @@ func Enlist() Command {
 		Handler: handleEnlistCommand,
 	}
 }
-// handleEnlistCommand executes when someone triggers /enlist
-func handleEnlistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	// The 7th Cavalry attachment image URL
-	const enlistImageURL = "https://7cav.us/attachments/2078/"
 
-	// Construct the interaction response payload
+func handleEnlistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	const enlistImageURL = "https://wiki.7cav.us/images/3/38/Cav_Enlistment_Infographic_1000_2000px_1_1.png"
+
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
-			Content: enlistImageURL,
+// Passing the image inside the Embeds array forces Discord to render it
+			Embeds: []*discordgo.MessageEmbed{
+				{
+					Title:       "Enlistment Process",
+					Description: "Follow the steps below to enlist.",
+					Image: &discordgo.MessageEmbedImage{
+						URL: enlistImageURL,
+					},
+				},
+			},
 		},
 	})
 
