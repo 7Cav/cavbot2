@@ -1,11 +1,8 @@
 package commands
 
 import (
-
-
 	"github.com/bwmarrin/discordgo"
 	"fmt"
-
 )
 
 func Enlist() Command {
@@ -24,7 +21,6 @@ func handleEnlistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
-// Passing the image inside the Embeds array forces Discord to render it
 			Embeds: []*discordgo.MessageEmbed{
 				{
 					Title:       "Enlistment Process",
