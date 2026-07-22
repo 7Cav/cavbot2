@@ -11,6 +11,7 @@ func NewRegistry() *Registry {
 	r.RegisterCommands(
 		Milpac(),
 		Warden(),
+		Enlist(),
 		WardenBulkAddInternal(),
 		AppsBetaDeploy(),
 		Zulu(),
