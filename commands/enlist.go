@@ -33,6 +33,8 @@ func handleEnlistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	})
 
 	if err != nil {
-		fmt.Printf("Error sending enlist command response: %v\n", err)
+    utils.Error("❌ Interaction response failed", "error", err)
+    utils.HandleError(s, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+    return
 	}
 }
