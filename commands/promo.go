@@ -536,12 +536,12 @@ func formatPromoMessage(scope string, filter promoFilter, asOf time.Time, candid
 	b.WriteString("\n\n")
 
 	if len(candidates) == 0 {
-		b.WriteString(fmt.Sprintf("No %s members eligible for %s as of %s", scope, filter.phrase(), promoDate(asOf)))
+		fmt.Fprintf(&b, "No %s members eligible for %s as of %s", scope, filter.phrase(), promoDate(asOf))
 		b.WriteString(footer)
 		return strings.TrimRight(b.String(), "\n"), 0
 	}
 
-	b.WriteString(fmt.Sprintf("**%s members eligible for %s as of %s:**\n", upperFirst(scope), filter.phrase(), promoDate(asOf)))
+	fmt.Fprintf(&b, "**%s members eligible for %s as of %s:**\n", upperFirst(scope), filter.phrase(), promoDate(asOf))
 
 	// Reserve room for the footer and a worst-case overflow notice so the
 	// message cannot be pushed over the limit by what gets appended after
@@ -558,7 +558,7 @@ func formatPromoMessage(scope string, filter promoFilter, asOf time.Time, candid
 	}
 	omitted := len(candidates) - listed
 	if omitted > 0 {
-		b.WriteString(fmt.Sprintf("…and %d more. Full list in the attached report.", omitted))
+		fmt.Fprintf(&b, "…and %d more. Full list in the attached report.", omitted)
 	}
 	b.WriteString(footer)
 	return strings.TrimRight(b.String(), "\n"), omitted
@@ -576,7 +576,7 @@ func promoFooter(skippedCount int, viiActive bool) string {
 		if skippedCount == 1 {
 			noun = "member"
 		}
-		footer.WriteString(fmt.Sprintf("\n⚠️ %d %s skipped due to errors (reported)", skippedCount, noun))
+		fmt.Fprintf(&footer, "\n⚠️ %d %s skipped due to errors (reported)", skippedCount, noun)
 	}
 	return footer.String()
 }
