@@ -125,6 +125,14 @@ func main() {
 
 	registry := commands.NewRegistry()
 
+	// Temp voice channels (issue #100): handlers must be registered before
+	// dg.Open() so the initial GUILD_CREATE seeds voice-state tracking and
+	// sweeps orphaned temp channels. StartTempVC returns the /voice
+	// owner-management command bound to the runtime, which we add to the registry.
+	if tempVCCfg, ok := commands.LoadTempVCConfig(GuildID); ok {
+		registry.RegisterCommands(commands.StartTempVC(dg, tempVCCfg))
+	}
+
 	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		// Backstop only. Registered slash-command handlers are wrapped with
 		// their own recover that names the failing command (commands/telemetry.go),
