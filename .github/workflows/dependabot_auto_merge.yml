@@ -1,0 +1,33 @@
+name: Dependabot auto-merge
+
+on:
+  pull_request:
+    branches:
+      - develop
+
+# Workflows triggered by Dependabot get a read-only GITHUB_TOKEN regardless of
+# the repository default, so these have to be declared explicitly or the
+# `gh pr merge` step fails with a permissions error.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    name: Auto-merge
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v3.1.0
+
+      # Majors are deliberately excluded — dependabot.yml keeps them as
+      # individual PRs so they get scrutinized on their own.
+      - name: Enable auto-merge for minor and patch updates
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
