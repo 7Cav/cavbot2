@@ -41,14 +41,23 @@ At <https://discord.com/developers/applications>:
 1. 'New Application', then open the 'Bot' tab.
 2. 'Reset Token' and copy it. This is `DISCORD_TOKEN`. It is only shown once!
 3. On the same tab, enable the 'Server Members Intent' under Privileged Gateway
-   Intents. The bot requests `IntentsGuildMembers`; without this the gateway
-   connection fails at startup. A guild is a Discord server.
+   Intents. The bot requests `IntentsGuildMembers`, and Discord rejects the
+   connection without it — see the troubleshooting table for what that looks
+   like, because it is not an obvious error message. A guild is a Discord server.
 4. Create (if you don't have one already) a Discord server that will serve as your test environment for the bot.
 5. Under 'OAuth2 -> URL Generator', select the `bot` and `applications.commands`
-   scopes plus the 'View Channels', 'Send Messages', 'Attach Files' and 'Embed Links'
-   permissions, then open the generated URL to invite the bot to your test environment server.
+   scopes, then the permissions below, then open the generated URL to invite the
+   bot to your test environment server.
 
-`applications.commands` is what allows slash commands to register.
+| Permission | Needed for |
+|------------|-----------|
+| View Channels, Send Messages, Embed Links, Attach Files | Every command's response |
+| Manage Roles | `/warden` and `/warden-bulkadd-internal` add and remove roles, and `/warden` can create one |
+| Manage Channels | `/warden` sets per-channel permission overwrites |
+
+`applications.commands` is what allows slash commands to register. Discord will
+not let the bot grant a role positioned above its own, so drag the bot's role
+high in the server's role list before testing `/warden`.
 
 ### 2. IDs
 
@@ -80,10 +89,11 @@ Not checked at startup, but each one silently disables something:
 |----------|-----------------|
 | `BEARER` | API token for `api.7cav.us`. Every milpac lookup fails with no startup error — check this first if `/milpac`, `/awol` or `/afsm` come back empty. |
 | `GITHUB_APP_KEY`, `GITHUB_APP_CLIENT_ID` | `/apps_beta_deploy` cannot authenticate. The key is a base64-encoded PEM. |
-| `FORUM_DB_DSN` | LOA cache stays empty, so `/loa` returns nothing. Logs `FORUM_DB_DSN not set, LOA cache disabled` at startup. The production host `xenforo-db` only resolves inside the `xenforo_internal` Docker network. |
-| `LOA_NODE_IDS` | Defaults to `180`; production scans `180,400,540,178,369`. |
-| `LOG_LEVEL` | Defaults to `INFO`. Use `DEBUG` to see per-post LOA parse failures. |
-| `SENTRY_DSN`, `APP_ENV` | Sentry stays off; the bot logs `Sentry disabled (SENTRY_DSN not set)`. |
+| `FORUM_DB_DSN` | LOA cache stays empty, so `/loa` returns nothing. Left blank the bot logs `FORUM_DB_DSN not set, LOA cache disabled` once at startup — but `.env.example` ships a placeholder DSN, so after `cp` you instead get a `LOA cache refresh failed` warning every 15 minutes. Both mean the same thing. The production host `xenforo-db` resolves only inside the `xenforo_internal` Docker network. |
+| `LOA_NODE_IDS` | The code default is `180` alone, though `.env.example` already sets the five nodes production scans (`180,400,540,178,369`), so a copied `.env` never falls back. |
+| `LOG_LEVEL` | Defaults to `INFO`. Accepts `DEBUG`, `INFO`, `WARN`, `ERROR` — **uppercase only**, anything else silently means `INFO` (including the `default` that `.env.example` ships). `DEBUG` shows per-post LOA parse failures. |
+| `SENTRY_DSN` | Sentry stays off; the bot logs `Sentry disabled (SENTRY_DSN not set)`. |
+| `APP_ENV` | Only tags Sentry events with an environment. No effect unless `SENTRY_DSN` is also set. |
 
 When adding a new variable, add it to both `.env.example` and the
 `environment:` block in `docker-compose.yml`. Compose does not pass through
@@ -124,19 +134,30 @@ docker compose up
 Only the real `xenforo_internal` network reaches the forum database; a network
 you created yourself gets the bot running, but `/loa` stays empty.
 
-A healthy startup logs `CavBot2 starting`, `Removing deprecated commands`,
-`Registering commands`, then `Bot is now running. Press CTRL-C to exit`.
+A healthy startup logs `Logger initialized` and `Sentry disabled (SENTRY_DSN not
+set)`, then `CavBot2 starting`, `Removing deprecated commands`, `Registering
+commands`, and finally `Bot is now running. Press CTRL-C to exit`. Anything that
+stops before that last line is a failed start — see below.
+
+### One thing that is not a command
+
+`main.go` starts a weekly Star Citizen joiner report unconditionally, with no
+env var to disable it. It fires Sundays at 04:20 UTC and DMs a **hardcoded
+production user ID** (`commands/star_citizen_joiners.go`). Against your own test
+guild the DM simply fails, since the bot shares no server with that person. If
+you point `GUILD_ID` at the live 7Cav server and leave the bot running over a
+Sunday, a real person gets your test output. Prefer a test guild.
 
 ### Troubleshooting
 
 | Symptom | Likely cause |
 |---------|--------------|
 | Panic naming `DISCORD_TOKEN`, `GUILD_ID` or `BM_TOKEN` | The variable is not in the environment. Filling in `.env` is not enough for `go run .` — export it first (step 4) |
-| `nil pointer dereference` at `main.go` right after `Removing deprecated commands` | The token was rejected, so the session never received a user. Re-copy `DISCORD_TOKEN` — a stale or truncated token lands here rather than on a clean error |
-| Gateway connection fails | Server Members Intent not enabled |
+| `nil pointer dereference` at `main.go` right after `Removing deprecated commands` | Discord accepted the connection but never completed the handshake, so the session has no user to read. Two causes, same crash: a stale or truncated `DISCORD_TOKEN`, or the Server Members Intent left off in the Developer Portal. Check both — neither produces a readable error |
+| `FORUM_DB_DSN not set` at startup, or `LOA cache refresh failed` every 15 minutes | Expected without a reachable forum database; only affects `/loa` |
+| `/warden` fails with a permissions error | Bot invited without Manage Roles / Manage Channels, or its own role sits below the role it is editing |
 | Commands never appear | Bot invited without `applications.commands`, or `GUILD_ID` is not the server you are in |
 | Every milpac lookup fails | `BEARER` missing or expired |
-| `FORUM_DB_DSN not set` warning | Expected without a forum database; only affects `/loa` |
 | Compose says `pull access denied` for `cavbot2:latest` | The image was never built locally — run `docker build -t cavbot2:latest .` |
 | Compose says network `xenforo_internal` not found | Create it, or join the host that has it |
 | golangci-lint reports a Go version mismatch | Your golangci-lint was built with an older Go than `go.mod` targets; install a build made with Go 1.25+ |
