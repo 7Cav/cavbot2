@@ -41,9 +41,8 @@ At <https://discord.com/developers/applications>:
 1. 'New Application', then open the 'Bot' tab.
 2. 'Reset Token' and copy it. This is `DISCORD_TOKEN`. It is only shown once!
 3. On the same tab, enable the 'Server Members Intent' under Privileged Gateway
-   Intents. The bot requests `IntentsGuildMembers`, and Discord rejects the
-   connection without it — see the troubleshooting table for what that looks
-   like, because it is not an obvious error message. A guild is a Discord server.
+   Intents. The bot requests `IntentsGuildMembers` and will not start without
+   it. A guild is a Discord server.
 4. Create (if you don't have one already) a Discord server that will serve as your test environment for the bot.
 5. Under 'OAuth2 -> URL Generator', select the `bot` and `applications.commands`
    scopes, then the permissions below, then open the generated URL to invite the
@@ -153,7 +152,7 @@ Sunday, a real person gets your test output. Prefer a test guild.
 | Symptom | Likely cause |
 |---------|--------------|
 | Panic naming `DISCORD_TOKEN`, `GUILD_ID` or `BM_TOKEN` | The variable is not in the environment. Filling in `.env` is not enough for `go run .` — export it first (step 4) |
-| `nil pointer dereference` at `main.go` right after `Removing deprecated commands` | Discord accepted the connection but never completed the handshake, so the session has no user to read. Two causes, same crash: a stale or truncated `DISCORD_TOKEN`, or the Server Members Intent left off in the Developer Portal. Check both — neither produces a readable error |
+| Startup stops before `Bot is now running` | Discord refused the handshake. Re-copy `DISCORD_TOKEN` (it may be stale or truncated) and confirm the Server Members Intent is enabled |
 | `FORUM_DB_DSN not set` at startup, or `LOA cache refresh failed` every 15 minutes | Expected without a reachable forum database; only affects `/loa` |
 | `/warden` fails with a permissions error | Bot invited without Manage Roles / Manage Channels, or its own role sits below the role it is editing |
 | Commands never appear | Bot invited without `applications.commands`, or `GUILD_ID` is not the server you are in |
