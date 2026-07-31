@@ -7,9 +7,12 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 
 ## Prerequisites
 
-- Go 1.25.0 or higher (see `go` directive in `go.mod`)
-- [golangci-lint](https://golangci-lint.run/) 2.5.0+, built with Go 1.25 or newer
-- A C compiler (gcc) if you want to run the tests with `-race`
+- Go 1.25.0 or higher (see the `go` directive in `go.mod`)
+- [golangci-lint](https://golangci-lint.run/) — CI installs the latest release
+  (`.github/workflows/build_test.yml`), so track that. It must be built with a Go
+  at least as new as `go.mod` targets, or it refuses to run.
+- A C compiler (gcc/clang) if you want to run the tests with `-race`
+- Docker, only if you want the container path in step 4
 
 ## Commands
 
@@ -17,18 +20,17 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 |---------|---------|
 | `/milpac` | Return a user's milpac |
 | `/zulu` | Current Zulu time |
-| `/gamertag_search` | Find a user by gamertag |
+| `/gamertag_search` | Search for a user by gamertag |
 | `/awol` | AWOL troopers for a position |
 | `/loa` | Active and upcoming LOAs for a position |
-| `/afsm` | Members eligible for the AFSM in a department |
+| `/afsm` | Users eligible for the AFSM in a department |
 | `/s3aar` | Attendance list for events and operations |
-| `/promo` | Tools to gauge promotion eligibility across the regiment |
-| `/billetaudit` | Several audit tools to flag discrepancies in MILPAC |
-| `/apps_beta_deploy` | Deploy the Apps beta version |
 | `/s6-it-check` | S6 IT members eligible for full status |
 | `/warden` | Warden role management |
-| `/warden-bulkadd-internal` | Add a validated unit roster to Verified Warden Internal |
+| `/warden-bulkadd-internal` | Add a validated unit's roster to Verified Warden Internal |
 | `/apps_beta_deploy` | Deploy the Apps beta version |
+
+The registered set lives in `commands/registry.go` — update this table when it changes.
 
 ## Setup
 
@@ -58,9 +60,13 @@ Guild commands appear immediately.
 
 ### 3. Environment
 
-Rename `.env.example` to `.env` and fill it in.
+Copy the template — keep `.env.example` in place, it is tracked:
 
-Startup fails without these:
+```bash
+cp .env.example .env
+```
+
+Startup panics without these three:
 
 | Variable | Source |
 |----------|--------|
@@ -68,11 +74,16 @@ Startup fails without these:
 | `GUILD_ID` | Right-click the server -> Copy Server ID |
 | `BM_TOKEN` | [BattleMetrics](https://www.battlemetrics.com) -> Account -> Developers. Only `/s3aar` uses it; any non-empty placeholder works otherwise. |
 
-Not checked at startup, but required in practice:
+Not checked at startup, but each one silently disables something:
 
-| Variable | Source |
-|----------|--------|
-| `BEARER` | API token for `api.7cav.us`. Every api call fails without it, and there is no startup error. Check this if lookups fail. |
+| Variable | Effect if unset |
+|----------|-----------------|
+| `BEARER` | API token for `api.7cav.us`. Every milpac lookup fails with no startup error — check this first if `/milpac`, `/awol` or `/afsm` come back empty. |
+| `GITHUB_APP_KEY`, `GITHUB_APP_CLIENT_ID` | `/apps_beta_deploy` cannot authenticate. The key is a base64-encoded PEM. |
+| `FORUM_DB_DSN` | LOA cache stays empty, so `/loa` returns nothing. Logs `FORUM_DB_DSN not set, LOA cache disabled` at startup. The production host `xenforo-db` only resolves inside the `xenforo_internal` Docker network. |
+| `LOA_NODE_IDS` | Defaults to `180`; production scans `180,400,540,178,369`. |
+| `LOG_LEVEL` | Defaults to `INFO`. Use `DEBUG` to see per-post LOA parse failures. |
+| `SENTRY_DSN`, `APP_ENV` | Sentry stays off; the bot logs `Sentry disabled (SENTRY_DSN not set)`. |
 
 When adding a new variable, add it to both `.env.example` and the
 `environment:` block in `docker-compose.yml`. Compose does not pass through
@@ -81,24 +92,54 @@ reaches the container.
 
 ### 4. Run
 
+Nothing in the bot reads `.env` — there is no dotenv loader, `main.go` calls
+`os.Getenv` directly. `.env` is a file Docker Compose reads, not one Go reads. So
+pick a path:
+
+**Locally** — export the file into your shell first, or the bot panics on
+`DISCORD_TOKEN` even though `.env` is filled in:
+
 ```bash
-go build -o cavbot2 .
+set -a; source .env; set +a
 go run .
 ```
 
-A healthy startup logs `Registering commands`, then
-`Bot is now running. Press CTRL-C to exit`.
+`set -a` marks everything sourced for export; without it the values stay shell
+variables the process never sees. To run the compiled binary instead:
+
+```bash
+go build -o cavbot2 . && ./cavbot2
+```
+
+**In Docker** — Compose reads `.env` itself, so no exporting. It does not build
+the image (the service declares `image:` with no `build:`), and the network is
+external, so both exist before `up`:
+
+```bash
+docker build -t cavbot2:latest .
+docker network create xenforo_internal   # once, if you don't already have it
+docker compose up
+```
+
+Only the real `xenforo_internal` network reaches the forum database; a network
+you created yourself gets the bot running, but `/loa` stays empty.
+
+A healthy startup logs `CavBot2 starting`, `Removing deprecated commands`,
+`Registering commands`, then `Bot is now running. Press CTRL-C to exit`.
 
 ### Troubleshooting
 
 | Symptom | Likely cause |
 |---------|--------------|
-| Panic naming `DISCORD_TOKEN`, `GUILD_ID` or `BM_TOKEN` | Variable missing from `.env` |
+| Panic naming `DISCORD_TOKEN`, `GUILD_ID` or `BM_TOKEN` | The variable is not in the environment. Filling in `.env` is not enough for `go run .` — export it first (step 4) |
+| `nil pointer dereference` at `main.go` right after `Removing deprecated commands` | The token was rejected, so the session never received a user. Re-copy `DISCORD_TOKEN` — a stale or truncated token lands here rather than on a clean error |
 | Gateway connection fails | Server Members Intent not enabled |
 | Commands never appear | Bot invited without `applications.commands`, or `GUILD_ID` is not the server you are in |
 | Every milpac lookup fails | `BEARER` missing or expired |
-| `FORUM_DB_DSN not set` warning | Expected without a forum database; only affects LOA |
-| golangci-lint reports a Go version mismatch | Binary was built with an older Go than `go.mod` targets; reinstall 2.5.0+ |
+| `FORUM_DB_DSN not set` warning | Expected without a forum database; only affects `/loa` |
+| Compose says `pull access denied` for `cavbot2:latest` | The image was never built locally — run `docker build -t cavbot2:latest .` |
+| Compose says network `xenforo_internal` not found | Create it, or join the host that has it |
+| golangci-lint reports a Go version mismatch | Your golangci-lint was built with an older Go than `go.mod` targets; install a build made with Go 1.25+ |
 
 ## Testing
 
