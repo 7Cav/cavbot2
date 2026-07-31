@@ -91,6 +91,7 @@ Not checked at startup, but each one silently disables something:
 | `FORUM_DB_DSN` | LOA cache stays empty, so `/loa` returns nothing. Left blank the bot logs `FORUM_DB_DSN not set, LOA cache disabled` once at startup — but `.env.example` ships a placeholder DSN, which is syntactically valid, so after `cp` you instead get `LOA cache refresh failed` once per node ID, immediately at startup and every 15 minutes after. Both mean the same thing. The production host `xenforo-db` resolves only inside the `xenforo_internal` Docker network. |
 | `LOA_NODE_IDS` | The code default is `180` alone, though `.env.example` already sets the five nodes production scans (`180,400,540,178,369`), so a copied `.env` never falls back. |
 | `LOG_LEVEL` | Defaults to `INFO`. Accepts `DEBUG`, `INFO`, `WARN`, `ERROR` — **uppercase only**, anything else silently means `INFO` (including the `default` that `.env.example` ships). `DEBUG` shows per-post LOA parse failures. |
+| `DISCORDGO_LOG_LEVEL` | Defaults to `ERROR`, so discordgo reports only its own failures. Accepts `ERROR`, `WARN`, `INFO`, `DEBUG`; anything else means `ERROR`. `WARN` adds the frame the gateway sent when startup fails with `Discord session unavailable`. `DEBUG` also needs `LOG_LEVEL=DEBUG`, and logs every gateway event discordgo does not recognise with its full payload. |
 | `SENTRY_DSN` | Sentry stays off; the bot logs `Sentry disabled (SENTRY_DSN not set)`. |
 | `APP_ENV` | Only tags Sentry events with an environment. No effect unless `SENTRY_DSN` is also set. |
 

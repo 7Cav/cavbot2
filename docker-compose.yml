@@ -12,6 +12,7 @@ services:
       BM_TOKEN: ${BM_TOKEN}
 # Codespace and ENV level Secret for BM_TOKEN
       LOG_LEVEL: ${LOG_LEVEL}
+      DISCORDGO_LOG_LEVEL: ${DISCORDGO_LOG_LEVEL}
       FORUM_DB_DSN: ${FORUM_DB_DSN}
       LOA_NODE_IDS: ${LOA_NODE_IDS}
       SENTRY_DSN: ${SENTRY_DSN}
