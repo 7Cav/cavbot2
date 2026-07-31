@@ -51,7 +51,7 @@ At <https://discord.com/developers/applications>:
 | Permission | Needed for |
 |------------|-----------|
 | View Channels, Send Messages, Embed Links, Attach Files | Every command's response |
-| Manage Roles | `/warden` and `/warden-bulkadd-internal` add and remove roles, and `/warden` can create one |
+| Manage Roles | `/warden` adds, removes and creates roles; `/warden-bulkadd-internal` adds them |
 | Manage Channels | `/warden` sets per-channel permission overwrites |
 
 `applications.commands` is what allows slash commands to register. Discord will
@@ -88,7 +88,7 @@ Not checked at startup, but each one silently disables something:
 |----------|-----------------|
 | `BEARER` | API token for `api.7cav.us`. Every milpac lookup fails with no startup error — check this first if `/milpac`, `/awol` or `/afsm` come back empty. |
 | `GITHUB_APP_KEY`, `GITHUB_APP_CLIENT_ID` | `/apps_beta_deploy` cannot authenticate. The key is a base64-encoded PEM. |
-| `FORUM_DB_DSN` | LOA cache stays empty, so `/loa` returns nothing. Left blank the bot logs `FORUM_DB_DSN not set, LOA cache disabled` once at startup — but `.env.example` ships a placeholder DSN, so after `cp` you instead get a `LOA cache refresh failed` warning every 15 minutes. Both mean the same thing. The production host `xenforo-db` resolves only inside the `xenforo_internal` Docker network. |
+| `FORUM_DB_DSN` | LOA cache stays empty, so `/loa` returns nothing. Left blank the bot logs `FORUM_DB_DSN not set, LOA cache disabled` once at startup — but `.env.example` ships a placeholder DSN, which is syntactically valid, so after `cp` you instead get `LOA cache refresh failed` once per node ID, immediately at startup and every 15 minutes after. Both mean the same thing. The production host `xenforo-db` resolves only inside the `xenforo_internal` Docker network. |
 | `LOA_NODE_IDS` | The code default is `180` alone, though `.env.example` already sets the five nodes production scans (`180,400,540,178,369`), so a copied `.env` never falls back. |
 | `LOG_LEVEL` | Defaults to `INFO`. Accepts `DEBUG`, `INFO`, `WARN`, `ERROR` — **uppercase only**, anything else silently means `INFO` (including the `default` that `.env.example` ships). `DEBUG` shows per-post LOA parse failures. |
 | `SENTRY_DSN` | Sentry stays off; the bot logs `Sentry disabled (SENTRY_DSN not set)`. |
@@ -133,10 +133,12 @@ docker compose up
 Only the real `xenforo_internal` network reaches the forum database; a network
 you created yourself gets the bot running, but `/loa` stays empty.
 
-A healthy startup logs `Logger initialized` and `Sentry disabled (SENTRY_DSN not
-set)`, then `CavBot2 starting`, `Removing deprecated commands`, `Registering
-commands`, and finally `Bot is now running. Press CTRL-C to exit`. Anything that
-stops before that last line is a failed start — see below.
+A healthy startup logs, in order: `Logger initialized`, `Sentry disabled
+(SENTRY_DSN not set)`, `CavBot2 starting`, the LOA cache line for whichever
+`FORUM_DB_DSN` case you are in, `Removing deprecated commands`, `Registering
+commands`, `Starting Star Citizen joiner report scheduler`, and finally `Bot is
+now running. Press CTRL-C to exit`. That last line is the success signal —
+anything that stops earlier is a failed start.
 
 ### One thing that is not a command
 
@@ -152,7 +154,8 @@ Sunday, a real person gets your test output. Prefer a test guild.
 | Symptom | Likely cause |
 |---------|--------------|
 | Panic naming `DISCORD_TOKEN`, `GUILD_ID` or `BM_TOKEN` | The variable is not in the environment. Filling in `.env` is not enough for `go run .` — export it first (step 4) |
-| Startup stops before `Bot is now running` | Discord refused the handshake. Re-copy `DISCORD_TOKEN` (it may be stale or truncated) and confirm the Server Members Intent is enabled |
+| `Error opening connection: websocket: close 4004` | Discord rejected the token. Re-copy `DISCORD_TOKEN` — a truncated paste or a token reset since you last copied it both land here |
+| `Error opening connection: websocket: close 4014` | Disallowed intent. Enable the Server Members Intent in the Developer Portal |
 | `FORUM_DB_DSN not set` at startup, or `LOA cache refresh failed` every 15 minutes | Expected without a reachable forum database; only affects `/loa` |
 | `/warden` fails with a permissions error | Bot invited without Manage Roles / Manage Channels, or its own role sits below the role it is editing |
 | Commands never appear | Bot invited without `applications.commands`, or `GUILD_ID` is not the server you are in |
