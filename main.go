@@ -16,6 +16,7 @@ import (
 
 	"github.com/7cav/cavbot2/commands"
 	"github.com/bwmarrin/discordgo"
+	"github.com/joho/godotenv"
 )
 
 
@@ -31,6 +32,19 @@ var (
 )
 
 func init() {
+	// Load .env before the reads below so `go run .` works from a filled-in
+	// .env alone. godotenv.Load never overwrites a variable already in the
+	// environment, so Docker and CI — which inject env directly and ship no
+	// .env — behave exactly as they did before. A missing file is the normal
+	// case there and not an error; anything else means the file exists but
+	// could not be read, which is worth failing on rather than starting with
+	// half the configuration silently missing.
+	//
+	// This must stay in init(), not main(): the panics below run first.
+	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
+		panic(fmt.Sprintf("Found .env but could not load it: %v", err))
+	}
+
 	Token = os.Getenv("DISCORD_TOKEN")
 	GuildID = os.Getenv("GUILD_ID")
 	LogLevel = os.Getenv("LOG_LEVEL")

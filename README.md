@@ -101,28 +101,27 @@ reaches the container.
 
 ### 4. Run
 
-Nothing in the bot reads `.env` — there is no dotenv loader, `main.go` calls
-`os.Getenv` directly. `.env` is a file Docker Compose reads, not one Go reads. So
-pick a path:
-
-**Locally** — export the file into your shell first, or the bot panics on
-`DISCORD_TOKEN` even though `.env` is filled in:
+**Locally** — the bot reads `.env` from the working directory at startup, so
+having filled it in is enough:
 
 ```bash
-set -a; source .env; set +a
 go run .
 ```
 
-`set -a` marks everything sourced for export; without it the values stay shell
-variables the process never sees. To run the compiled binary instead:
+Or build and run the binary:
 
 ```bash
 go build -o cavbot2 . && ./cavbot2
 ```
 
-**In Docker** — Compose reads `.env` itself, so no exporting. It does not build
-the image (the service declares `image:` with no `build:`), and the network is
-external, so both exist before `up`:
+Anything already exported in your shell wins over the file, which is how the
+container gets its configuration. If you export `DISCORD_TOKEN` and then wonder
+why editing `.env` changes nothing, that is why.
+
+**In Docker** — Compose reads `.env` itself and injects the values, and `.env`
+is excluded from the image by `.dockerignore`, so nothing secret is baked in.
+Compose does not build the image (the service declares `image:` with no
+`build:`), and the network is external, so make sure both exist before `up`:
 
 ```bash
 docker build -t cavbot2:latest .
@@ -153,7 +152,8 @@ Sunday, a real person gets your test output. Prefer a test guild.
 
 | Symptom | Likely cause |
 |---------|--------------|
-| Panic naming `DISCORD_TOKEN`, `GUILD_ID` or `BM_TOKEN` | The variable is not in the environment. Filling in `.env` is not enough for `go run .` — export it first (step 4) |
+| Panic naming `DISCORD_TOKEN`, `GUILD_ID` or `BM_TOKEN` | The variable is blank in `.env`, or you are running from a directory that has no `.env` |
+| `Found .env but could not load it` | The file exists but is malformed — usually an unquoted value containing `#`, or a stray line with no `=` |
 | `Error opening connection: websocket: close 4004` | Discord rejected the token. Re-copy `DISCORD_TOKEN` — a truncated paste or a token reset since you last copied it both land here |
 | `Error opening connection: websocket: close 4014` | Disallowed intent. Enable the Server Members Intent in the Developer Portal |
 | `FORUM_DB_DSN not set` at startup, or `LOA cache refresh failed` every 15 minutes | Expected without a reachable forum database; only affects `/loa` |
