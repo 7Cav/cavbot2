@@ -111,13 +111,13 @@ func main() {
 
 	// Route discordgo's own logging through slog before the session exists, so
 	// nothing it emits escapes to the stdlib logger.
-	dgLogLevel := utils.InitDiscordgoLogging()
+	utils.InstallDiscordgoLogger()
 
 	dg, err := discordgo.New("Bot " + Token)
 	if err != nil {
 		panic(fmt.Sprintf("Error creating Discord session: %v", err))
 	}
-	dg.LogLevel = dgLogLevel
+	dg.LogLevel = utils.DiscordgoLogLevel()
 	// IntentsGuildMembers is a Privileged Gateway Intent — must be toggled on
 	// in the Discord Developer Portal for this bot application, otherwise
 	// dg.Open() fails at runtime with no compile-time signal.

@@ -29,9 +29,14 @@ func parseDiscordgoLogLevel(value string) int {
 	}
 }
 
-// InitDiscordgoLogging routes discordgo's internal logging through the same
-// slog wrappers as the rest of the bot and returns the level to apply to a
-// session.
+// DiscordgoLogLevel is the level to assign to a session's LogLevel field,
+// read from DISCORDGO_LOG_LEVEL.
+func DiscordgoLogLevel() int {
+	return parseDiscordgoLogLevel(os.Getenv("DISCORDGO_LOG_LEVEL"))
+}
+
+// InstallDiscordgoLogger routes discordgo's internal logging through the same
+// slog wrappers as the rest of the bot.
 //
 // Without this, discordgo writes straight to the stdlib log package: its
 // heartbeat and reconnect errors already bypass LOG_LEVEL and arrive in a
@@ -41,7 +46,7 @@ func parseDiscordgoLogLevel(value string) int {
 // discordgo's levels are mapped faithfully onto ours rather than flattened, so
 // LOG_LEVEL still applies on top: seeing discordgo's debug output needs both
 // DISCORDGO_LOG_LEVEL=DEBUG and LOG_LEVEL=DEBUG.
-func InitDiscordgoLogging() int {
+func InstallDiscordgoLogger() {
 	discordgo.Logger = func(msgL, _ int, format string, a ...interface{}) {
 		msg := fmt.Sprintf(format, a...)
 		switch msgL {
@@ -55,6 +60,4 @@ func InitDiscordgoLogging() int {
 			Debug("discordgo", "message", msg)
 		}
 	}
-
-	return parseDiscordgoLogLevel(os.Getenv("DISCORDGO_LOG_LEVEL"))
 }

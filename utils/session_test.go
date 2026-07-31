@@ -109,9 +109,7 @@ func TestOpenSessionRejectsSessionThatNeverBecameReady(t *testing.T) {
 	newFakeGateway(t, invalidSessionFrame)
 	dg := newFakeSession(t)
 
-	err := OpenSession(dg)
-
-	if err == nil && dg.State.User == nil {
-		t.Fatal("OpenSession reported success but State.User is nil; the caller would panic dereferencing it")
+	if err := OpenSession(dg); err == nil {
+		t.Fatal("OpenSession reported success for a session that never became ready; the caller would panic dereferencing State.User")
 	}
 }
