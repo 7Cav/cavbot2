@@ -108,10 +108,16 @@ func main() {
 
 	utils.Info("CavBot2 starting", "version", Version)
 	initLOACache()
+
+	// Route discordgo's own logging through slog before the session exists, so
+	// nothing it emits escapes to the stdlib logger.
+	dgLogLevel := utils.InitDiscordgoLogging()
+
 	dg, err := discordgo.New("Bot " + Token)
 	if err != nil {
 		panic(fmt.Sprintf("Error creating Discord session: %v", err))
 	}
+	dg.LogLevel = dgLogLevel
 	// IntentsGuildMembers is a Privileged Gateway Intent — must be toggled on
 	// in the Discord Developer Portal for this bot application, otherwise
 	// dg.Open() fails at runtime with no compile-time signal.
@@ -137,9 +143,10 @@ func main() {
 		}
 	})
 
-	err = dg.Open()
-	if err != nil {
-		panic(fmt.Sprintf("Error opening connection: %v", err))
+	// Not dg.Open() directly: a session can open without ever reaching READY,
+	// which leaves dg.State.User nil for the command registration below.
+	if err := utils.OpenSession(dg); err != nil {
+		panic(fmt.Sprintf("Discord session unavailable: %v", err))
 	}
 	defer func() {
 		err := dg.Close()
