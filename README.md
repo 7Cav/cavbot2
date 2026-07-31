@@ -139,6 +139,10 @@ commands`, `Starting Star Citizen joiner report scheduler`, and finally `Bot is
 now running. Press CTRL-C to exit`. That last line is the success signal —
 anything that stops earlier is a failed start.
 
+Expect a pause of roughly 40 seconds on `Registering commands`. The eleven
+commands are created one at a time and Discord rate-limits them, so a silent
+console there is normal, not a hang.
+
 ### One thing that is not a command
 
 `main.go` starts a weekly Star Citizen joiner report unconditionally, with no
