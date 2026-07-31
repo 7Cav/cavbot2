@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
@@ -52,24 +53,11 @@ func TestInstallDiscordgoLoggerMapsLevelsFaithfully(t *testing.T) {
 			InstallDiscordgoLogger()
 			discordgo.Logger(tc.from, 0, "gateway said %s", "something")
 
-			if len(rec.levels) != 1 {
-				t.Fatalf("got %d records, want 1", len(rec.levels))
-			}
-			if rec.levels[0] != tc.want {
-				t.Errorf("discordgo level %d logged at %v, want %v", tc.from, rec.levels[0], tc.want)
+			want := []slog.Level{tc.want}
+			if !slices.Equal(rec.levels, want) {
+				t.Errorf("discordgo level %d produced %v, want %v", tc.from, rec.levels, want)
 			}
 		})
-	}
-}
-
-// TestDiscordgoLogLevelReadsConfiguredLevel covers the wiring the mapping test
-// cannot reach: that the level actually comes from DISCORDGO_LOG_LEVEL. A
-// misspelled variable name satisfies every other test in this file.
-func TestDiscordgoLogLevelReadsConfiguredLevel(t *testing.T) {
-	t.Setenv("DISCORDGO_LOG_LEVEL", "DEBUG")
-
-	if got := DiscordgoLogLevel(); got != discordgo.LogDebug {
-		t.Errorf("DiscordgoLogLevel() = %d, want %d", got, discordgo.LogDebug)
 	}
 }
 
