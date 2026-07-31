@@ -13,7 +13,7 @@ go build -o cavbot2 .                     # build the binary (CI uses this exact
 go run .                                  # run locally (requires env vars; see below)
 go mod tidy                               # sync deps after changing imports
 golangci-lint run --timeout=5m            # lint (no .golangci config; uses defaults — same as CI)
-docker compose up --build                 # run via Docker (requires .env; image must be built locally first or pulled)
+docker build -t cavbot2:latest . && docker compose up   # run via Docker (see README step 4)
 ```
 
 Tests live in `*_test.go` files alongside the code they cover. Run them with `go test ./...`. CI runs the suite with coverage enforcement — see the Testing section of README.md and `.github/scripts/check-coverage-floors.sh` for the floor policy.
