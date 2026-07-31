@@ -13,7 +13,7 @@ go build -o cavbot2 .                     # build the binary (CI uses this exact
 go run .                                  # run locally (requires env vars; see below)
 go mod tidy                               # sync deps after changing imports
 golangci-lint run --timeout=5m            # lint (no .golangci config; uses defaults — same as CI)
-docker compose up --build                 # run via Docker (requires .env; image must be built locally first or pulled)
+docker build -t cavbot2:latest . && docker compose up   # run via Docker (see README step 4)
 ```
 
 Tests live in `*_test.go` files alongside the code they cover. Run them with `go test ./...`. CI runs the suite with coverage enforcement — see the Testing section of README.md and `.github/scripts/check-coverage-floors.sh` for the floor policy.
@@ -28,11 +28,11 @@ Optional but feature-gating:
 
 - `BEARER` — bearer token for `api.7cav.us` (milpacs lookups will fail without it)
 - `FORUM_DB_DSN` — MySQL DSN for the Xenforo forum DB. The production DSN points at host `xenforo-db`, which resolves **only inside the `xenforo_internal` Docker network** (declared `external: true` in `docker-compose.yml`). Running `go run .` outside that network won't error at startup — `sql.Open` defers the connection — but every `Refresh` will log `"LOA cache refresh failed"` at WARN and the cache will stay empty. To test LOA locally, either run via `docker compose` or substitute a reachable DSN.
-- `LOA_NODE_IDS` — comma-separated Xenforo node IDs to scan for LOA threads. Code default is `180`; **production scans 5 nodes** (`180,400,540,178,369`). `.env.example` is out of date here (it shows `LOA_NODE_ID=180`, singular and wrong-named).
+- `LOA_NODE_IDS` — comma-separated Xenforo node IDs to scan for LOA threads. Code default is `180`; **production scans 5 nodes** (`180,400,540,178,369`), which is what `.env.example` sets, so a copied `.env` never hits the code default.
 - `GITHUB_APP_KEY` (base64-encoded PEM), `GITHUB_APP_CLIENT_ID` — needed for `/apps_beta_deploy`
 - `LOG_LEVEL` — `DEBUG` / `INFO` / `WARN` / `ERROR` (default `INFO`)
 
-`.env.example` lists all of these but is partly stale (see `LOA_NODE_IDS` above). Copy to `.env` for local Docker runs.
+`.env.example` lists all of these. Copy it to `.env` — `init()` in `main.go` loads that file via `godotenv` before reading any variable, so it serves local `go run .` and `docker compose` alike. Anything already exported in the environment takes precedence over the file, and a missing file is not an error (that is the container and CI case). A malformed one panics rather than starting with partial configuration.
 
 ## Architecture
 
