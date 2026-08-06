@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,7 +14,7 @@ func Zulu() Command {
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
 			Name:        "zulu",
-			Description: "Returns the current Zulu time",
+			Description: "Current Zulu time, or a given Zulu time in your local time",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
@@ -37,17 +38,19 @@ func handleZuluCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	runZulu(utils.NewSessionResponder(s), time.Now(), i)
 }
 
-// resolveZuluInstant turns the supplied Zulu time (and optional Zulu date) into
-// an absolute instant. With no date the time is taken as the next occurrence:
-// today if it is still ahead of now, otherwise tomorrow. An explicit date is
-// used verbatim, so a past date stays in the past.
-func resolveZuluInstant(now time.Time, timeStr, dateStr string) (time.Time, error) {
+// resolveZuluInstant turns the supplied Zulu date and time into an absolute
+// instant. With no date the time is taken as the next occurrence: today if it
+// is still ahead of now, otherwise tomorrow. An explicit date is used verbatim,
+// so a past date stays in the past.
+//
+// The parameter order matches utils.ParseZuluDateTime deliberately — both take
+// two bare strings, so a flipped order between them would compile silently.
+func resolveZuluInstant(now time.Time, dateStr, timeStr string) (time.Time, error) {
 	if dateStr != "" {
 		return utils.ParseZuluDateTime(dateStr, timeStr)
 	}
 
-	today := now.UTC().Format("02Jan06")
-	instant, err := utils.ParseZuluDateTime(today, timeStr)
+	instant, err := utils.ParseZuluDateTime(now.UTC().Format("02Jan06"), timeStr)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -59,7 +62,7 @@ func resolveZuluInstant(now time.Time, timeStr, dateStr string) (time.Time, erro
 
 func runZulu(r utils.InteractionResponder, now time.Time, i *discordgo.InteractionCreate) {
 	username, discordID := interactionUsernameAndID(i)
-	utils.Info("Zulu time requested", "command", "Zulu", "username", username, "discord_id", discordID)
+	utils.Info("🚀 Starting Zulu time lookup", "command", "Zulu", "username", username, "discord_id", discordID)
 
 	options := i.ApplicationCommandData().Options
 	optionMap := make(map[string]*discordgo.ApplicationCommandInteractionDataOption, len(options))
@@ -76,7 +79,7 @@ func runZulu(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 	}
 
 	if timeStr == "" && dateStr != "" {
-		utils.HandleError(r, i, "❌ A date needs a time; add time (HHMM, e.g. 2300)")
+		utils.HandleError(r, i, "❌ Invalid arguments; a date needs a time (HHMM, e.g. 2300)")
 		return
 	}
 
@@ -84,8 +87,14 @@ func runZulu(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 		strings.ToUpper(now.UTC().Format("15:04:05 02Jan06")))
 
 	if timeStr != "" {
-		instant, err := resolveZuluInstant(now, timeStr, dateStr)
+		instant, err := resolveZuluInstant(now, dateStr, timeStr)
 		if err != nil {
+			// Naming the field the member got right is worse than saying nothing,
+			// so the two halves are reported apart. See utils.ErrInvalidZulu*.
+			if errors.Is(err, utils.ErrInvalidZuluDate) {
+				utils.HandleError(r, i, "❌ Invalid date; must be DDMMMYY (e.g. 01MAY26)")
+				return
+			}
 			utils.HandleError(r, i, "❌ Invalid time; must be HHMM in Zulu (e.g. 2300 or 2300z)")
 			return
 		}

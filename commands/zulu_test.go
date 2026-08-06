@@ -182,3 +182,40 @@ func TestRunZulu_UnparseableTimeIsRejected(t *testing.T) {
 
 	ephemeralRejection(t, r)
 }
+
+// TestRunZulu_InvalidDateIsRejectedDistinctlyFromInvalidTime covers the defect
+// where both parse failures collapsed into one message: /zulu 2300 BADDATE told
+// the member to fix the time, which was the field they got right. Asserting the
+// two rejections differ pins that behavior without pinning either wording.
+func TestRunZulu_InvalidDateIsRejectedDistinctlyFromInvalidTime(t *testing.T) {
+	now := time.Date(2026, time.August, 4, 17, 39, 1, 0, time.UTC)
+
+	badDate := &fakeResponder{}
+	runZulu(badDate, now, zuluOptions("2300", "BADDATE"))
+	ephemeralRejection(t, badDate)
+
+	badTime := &fakeResponder{}
+	runZulu(badTime, now, zuluOptions("half past six", ""))
+	ephemeralRejection(t, badTime)
+
+	dateMsg := respondCalls(badDate.Calls())[0].Response.Data.Content
+	timeMsg := respondCalls(badTime.Calls())[0].Response.Data.Content
+	if dateMsg == timeMsg {
+		t.Fatalf("a bad date and a bad time must not report the same message; both said %q", dateMsg)
+	}
+}
+
+// TestRunZulu_ResolvedTimeIsPublic guards the point of the whole feature: the
+// answer has to reach the channel. An ephemeral flag here would leave the member
+// still hand-writing the message they asked the bot to replace.
+func TestRunZulu_ResolvedTimeIsPublic(t *testing.T) {
+	r := &fakeResponder{}
+	now := time.Date(2026, time.August, 4, 17, 39, 1, 0, time.UTC)
+
+	runZulu(r, now, zuluOptions("2300", ""))
+
+	data := respondCalls(r.Calls())[0].Response.Data
+	if data.Flags&discordgo.MessageFlagsEphemeral != 0 {
+		t.Fatalf("resolved-time response must be public; got flags %d", data.Flags)
+	}
+}

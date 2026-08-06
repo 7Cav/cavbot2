@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -22,31 +23,48 @@ var zuluMonths = map[string]string{
 	"SEP": "09", "OCT": "10", "NOV": "11", "DEC": "12",
 }
 
+// Callers need to know WHICH half was bad so they can tell the member which
+// field to fix — naming the field they got right is worse than saying nothing.
+var (
+	ErrInvalidZuluDate = errors.New("invalid Zulu date")
+	ErrInvalidZuluTime = errors.New("invalid Zulu time")
+)
+
 // ParseZuluDateTime parses a regiment-style date and time pair as Zulu (UTC),
-// e.g. ("10NOV25", "1830"). The century is fixed at 20xx. Calendar validity —
-// 31FEB, hour 25, minute 61 — is left to time.Parse rather than re-implemented.
+// e.g. ("10NOV25", "1830"). The century is fixed at 20xx. Each half is validated
+// on its own — rather than assembling both and parsing once — so that calendar
+// range errors are attributed to the right field: 31FEB26 is a bad date, 2500
+// is a bad time, and a single combined parse cannot tell the two apart.
+// Errors wrap ErrInvalidZuluDate or ErrInvalidZuluTime; match with errors.Is.
 func ParseZuluDateTime(dateStr, timeStr string) (time.Time, error) {
 	dateParts := zuluDatePattern.FindStringSubmatch(dateStr)
 	if dateParts == nil {
-		return time.Time{}, fmt.Errorf("invalid date format: %s", dateStr)
+		return time.Time{}, fmt.Errorf("%w: %s", ErrInvalidZuluDate, dateStr)
 	}
-	timeParts := zuluTimePattern.FindStringSubmatch(timeStr)
-	if timeParts == nil {
-		return time.Time{}, fmt.Errorf("invalid time format: %s", timeStr)
-	}
-
 	month, ok := zuluMonths[strings.ToUpper(dateParts[2])]
 	if !ok {
-		return time.Time{}, fmt.Errorf("invalid month abbreviation: %s", dateParts[2])
+		return time.Time{}, fmt.Errorf("%w: unknown month %s", ErrInvalidZuluDate, dateParts[2])
 	}
-
 	day := dateParts[1]
 	if len(day) == 1 {
 		day = "0" + day
 	}
 
-	iso := fmt.Sprintf("20%s-%s-%sT%s:%s:00Z", dateParts[3], month, day, timeParts[1], timeParts[2])
-	return time.Parse(time.RFC3339, iso)
+	timeParts := zuluTimePattern.FindStringSubmatch(timeStr)
+	if timeParts == nil {
+		return time.Time{}, fmt.Errorf("%w: %s", ErrInvalidZuluTime, timeStr)
+	}
+
+	datePart := fmt.Sprintf("20%s-%s-%s", dateParts[3], month, day)
+	if _, err := time.Parse("2006-01-02", datePart); err != nil {
+		return time.Time{}, fmt.Errorf("%w: %s", ErrInvalidZuluDate, dateStr)
+	}
+	timePart := fmt.Sprintf("%s:%s", timeParts[1], timeParts[2])
+	if _, err := time.Parse("15:04", timePart); err != nil {
+		return time.Time{}, fmt.Errorf("%w: %s", ErrInvalidZuluTime, timeStr)
+	}
+
+	return time.Parse(time.RFC3339, datePart+"T"+timePart+":00Z")
 }
 
 func daysInMonth(month, year int) int {

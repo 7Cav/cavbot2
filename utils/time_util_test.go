@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -132,6 +133,36 @@ func TestParseZuluDateTime(t *testing.T) {
 			if got.UTC().Format(time.RFC3339) != tc.wantISO {
 				t.Fatalf("ParseZuluDateTime(%q, %q) = %s, want %s",
 					tc.date, tc.time, got.UTC().Format(time.RFC3339), tc.wantISO)
+			}
+		})
+	}
+}
+
+// TestParseZuluDateTime_AttributesErrorToTheRightField pins which half of the
+// pair a caller is told to fix. A single combined parse cannot distinguish
+// "31FEB26" (bad date) from "2500" (bad time), and reporting the wrong field
+// sends the member to correct the value they already got right.
+func TestParseZuluDateTime_AttributesErrorToTheRightField(t *testing.T) {
+	tests := []struct {
+		name    string
+		date    string
+		time    string
+		wantErr error
+	}{
+		{"malformed date", "BADDATE", "1830", ErrInvalidZuluDate},
+		{"unknown month", "10ZZZ25", "1830", ErrInvalidZuluDate},
+		{"day out of range", "31FEB26", "1830", ErrInvalidZuluDate},
+		{"malformed time", "10NOV25", "XX30", ErrInvalidZuluTime},
+		{"hour out of range", "10NOV25", "2500", ErrInvalidZuluTime},
+		{"minute out of range", "10NOV25", "1861", ErrInvalidZuluTime},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseZuluDateTime(tc.date, tc.time)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("ParseZuluDateTime(%q, %q) error = %v, want one wrapping %v",
+					tc.date, tc.time, err, tc.wantErr)
 			}
 		})
 	}
