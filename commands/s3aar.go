@@ -49,33 +49,6 @@ type BMResponse struct {
 	} `json:"data"`
 }
 
-func parseDateTime(dateStr, timeStr string) (time.Time, error) {
-	months := map[string]string{
-		"JAN": "01", "FEB": "02", "MAR": "03", "APR": "04",
-		"MAY": "05", "JUN": "06", "JUL": "07", "AUG": "08",
-		"SEP": "09", "OCT": "10", "NOV": "11", "DEC": "12",
-	}
-
-	if len(dateStr) != 7 || len(timeStr) != 4 {
-		return time.Time{}, fmt.Errorf("invalid date or time format")
-	}
-
-	day := dateStr[:2]
-	monAbbr := strings.ToUpper(dateStr[2:5])
-	year := dateStr[5:]
-
-	month, ok := months[monAbbr]
-	if !ok {
-		return time.Time{}, fmt.Errorf("invalid month abbreviation: %s", monAbbr)
-	}
-
-	hour := timeStr[:2]
-	min := timeStr[2:]
-
-	iso := fmt.Sprintf("20%s-%s-%sT%s:%s:00Z", year, month, day, hour, min)
-	return time.Parse(time.RFC3339, iso)
-}
-
 func getServerID(server string) (string, error) {
 	switch server {
 	case "Tac1":
@@ -435,7 +408,7 @@ func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 		debug = opt.StringValue()
 	}
 
-	start, err := parseDateTime(startDate, startTime)
+	start, err := utils.ParseZuluDateTime(startDate, startTime)
 	if err != nil {
 		if sendErr := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: fmt.Sprintf("Invalid start date/time: %v", err),
@@ -445,7 +418,7 @@ func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	stop, err := parseDateTime(endDate, endTime)
+	stop, err := utils.ParseZuluDateTime(endDate, endTime)
 	if err != nil {
 		if sendErr := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: fmt.Sprintf("Invalid end date/time: %v", err),

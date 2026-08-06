@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -87,5 +88,82 @@ func TestFormatTimeSince(t *testing.T) {
 func TestFormatTimeSinceDuration(t *testing.T) {
 	if got := FormatTimeSinceDuration(time.Now()); got != "0 days" {
 		t.Fatalf("FormatTimeSinceDuration(now) = %q, want %q", got, "0 days")
+	}
+}
+
+func TestParseZuluDateTime(t *testing.T) {
+	// Expected instants are hand-written literals, not recomputed from the
+	// inputs, so a parser that agrees with itself still fails these.
+	tests := []struct {
+		name    string
+		date    string
+		time    string
+		wantErr bool
+		wantISO string
+	}{
+		{"canonical", "10NOV25", "1830", false, "2025-11-10T18:30:00Z"},
+		{"lowercase month", "10nov25", "0000", false, "2025-11-10T00:00:00Z"},
+		{"single digit day", "1NOV25", "1830", false, "2025-11-01T18:30:00Z"},
+		{"lowercase zulu suffix", "10NOV25", "1830z", false, "2025-11-10T18:30:00Z"},
+		{"uppercase zulu suffix", "10NOV25", "1830Z", false, "2025-11-10T18:30:00Z"},
+		{"three digit day", "100NOV25", "1830", true, ""},
+		{"short time", "10NOV25", "183", true, ""},
+		{"unknown month", "10ZZZ25", "1830", true, ""},
+		{"non-numeric day", "XXNOV25", "1830", true, ""},
+		{"non-numeric time", "10NOV25", "XX30", true, ""},
+		{"single digit year", "11NOV5", "1830", true, ""},
+		{"all letters", "BADDATE", "1830", true, ""},
+		{"day out of range for month", "31FEB26", "1830", true, ""},
+		{"hour out of range", "10NOV25", "2500", true, ""},
+		{"minute out of range", "10NOV25", "1861", true, ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseZuluDateTime(tc.date, tc.time)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("ParseZuluDateTime(%q, %q) = %v, want error", tc.date, tc.time, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseZuluDateTime(%q, %q) unexpected error: %v", tc.date, tc.time, err)
+			}
+			if got.UTC().Format(time.RFC3339) != tc.wantISO {
+				t.Fatalf("ParseZuluDateTime(%q, %q) = %s, want %s",
+					tc.date, tc.time, got.UTC().Format(time.RFC3339), tc.wantISO)
+			}
+		})
+	}
+}
+
+// TestParseZuluDateTime_AttributesErrorToTheRightField pins which half of the
+// pair a caller is told to fix. A single combined parse cannot distinguish
+// "31FEB26" (bad date) from "2500" (bad time), and reporting the wrong field
+// sends the member to correct the value they already got right.
+func TestParseZuluDateTime_AttributesErrorToTheRightField(t *testing.T) {
+	tests := []struct {
+		name    string
+		date    string
+		time    string
+		wantErr error
+	}{
+		{"malformed date", "BADDATE", "1830", ErrInvalidZuluDate},
+		{"unknown month", "10ZZZ25", "1830", ErrInvalidZuluDate},
+		{"day out of range", "31FEB26", "1830", ErrInvalidZuluDate},
+		{"malformed time", "10NOV25", "XX30", ErrInvalidZuluTime},
+		{"hour out of range", "10NOV25", "2500", ErrInvalidZuluTime},
+		{"minute out of range", "10NOV25", "1861", ErrInvalidZuluTime},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseZuluDateTime(tc.date, tc.time)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("ParseZuluDateTime(%q, %q) error = %v, want one wrapping %v",
+					tc.date, tc.time, err, tc.wantErr)
+			}
+		})
 	}
 }

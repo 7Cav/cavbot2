@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -56,7 +58,7 @@ type bmSession struct {
 // enrichPlayer fails deterministically (its error is intentionally ignored in
 // s3aar.go, leaving CavName/Roster empty — no live network, no flake). It swaps
 // both bmBaseURL and utils apiBaseURL via t.Cleanup-registered restorers.
-func serveBattleMetrics(t *testing.T, sessions []bmSession) {
+func serveBattleMetrics(t *testing.T, sessions []bmSession) *bmCapture {
 	t.Helper()
 	t.Setenv("BM_TOKEN", "test-token")
 
@@ -75,8 +77,10 @@ func serveBattleMetrics(t *testing.T, sessions []bmSession) {
 		t.Fatalf("serveBattleMetrics marshal: %v", err)
 	}
 
+	capture := &bmCapture{}
 	bmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/relationships/sessions") {
+			capture.record(r.URL.Query())
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 			return
@@ -96,6 +100,29 @@ func serveBattleMetrics(t *testing.T, sessions []bmSession) {
 	}))
 	t.Cleanup(milpacSrv.Close)
 	t.Cleanup(utils.SetAPIBaseURLForTest(milpacSrv.URL))
+	return capture
+}
+
+// bmCapture records the query string of the BattleMetrics session request so a
+// test can assert which window /s3aar actually asked for. It only records —
+// asserting inside the shared handler would couple every caller to the query
+// shape. The mutex is load-bearing: the handler goroutine writes and the test
+// goroutine reads, and CI runs the suite under -race.
+type bmCapture struct {
+	mu    sync.Mutex
+	query url.Values
+}
+
+func (c *bmCapture) record(q url.Values) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.query = q
+}
+
+func (c *bmCapture) Query() url.Values {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.query
 }
 
 // serveBattleMetricsError stands up a BattleMetrics API that returns a non-200,
@@ -588,8 +615,7 @@ func TestRunS3aar_EmbedPlaytimeAndCount(t *testing.T) {
 // the specific followup and no embed/file.
 func TestRunS3aar_InvalidStartDate(t *testing.T) {
 	r := &fakeResponder{}
-	// "BADDATE" is 7 chars (passes parseDateTime's length check) but "DDA" is not
-	// a valid month abbreviation, so it fails on the month lookup.
+	// "BADDATE" has no leading digits, so it fails the date pattern outright.
 	i := s3aarOptions("Tac1", "BADDATE", "10NOV25", "1800", "2000", 30, "")
 	runS3aar(r, i)
 
@@ -604,7 +630,7 @@ func TestRunS3aar_InvalidStartDate(t *testing.T) {
 }
 
 // TestRunS3aar_InvalidEndDate asserts the bad-end-date path. Start date is valid
-// so parseDateTime fails only on the second call.
+// so parsing fails only on the second call.
 func TestRunS3aar_InvalidEndDate(t *testing.T) {
 	r := &fakeResponder{}
 	i := s3aarOptions("Tac1", "10NOV25", "10ZZZ25", "1800", "2000", 30, "")
@@ -1231,42 +1257,6 @@ func TestGetServerID(t *testing.T) {
 	}
 }
 
-func TestParseDateTime(t *testing.T) {
-	cases := []struct {
-		name    string
-		date    string
-		time    string
-		wantErr bool
-		wantISO string // expected UTC time when no error, RFC3339
-	}{
-		{"valid", "10NOV25", "1830", false, "2025-11-10T18:30:00Z"},
-		{"valid lowercase month", "10nov25", "0000", false, "2025-11-10T00:00:00Z"},
-		{"bad date length short", "1NOV25", "1830", true, ""},
-		{"bad date length long", "100NOV25", "1830", true, ""},
-		{"bad time length", "10NOV25", "183", true, ""},
-		{"bad month", "10ZZZ25", "1830", true, ""},
-		{"non-numeric day yields parse error", "XXNOV25", "1830", true, ""},
-		{"non-numeric time yields parse error", "10NOV25", "XX30", true, ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, err := parseDateTime(c.date, c.time)
-			if c.wantErr {
-				if err == nil {
-					t.Fatalf("parseDateTime(%q,%q) expected error, got %v", c.date, c.time, got)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("parseDateTime(%q,%q) unexpected error: %v", c.date, c.time, err)
-			}
-			if got.UTC().Format(time.RFC3339) != c.wantISO {
-				t.Fatalf("parseDateTime(%q,%q) = %s, want %s", c.date, c.time, got.UTC().Format(time.RFC3339), c.wantISO)
-			}
-		})
-	}
-}
-
 func TestCleanName(t *testing.T) {
 	cases := []struct {
 		name string
@@ -1286,5 +1276,39 @@ func TestCleanName(t *testing.T) {
 				t.Fatalf("cleanName(%q) = %q, want %q", c.in, got, c.want)
 			}
 		})
+	}
+}
+
+// TestRunS3aar_SendsResolvedWindowToBattleMetrics pins the instants /s3aar
+// actually asks BattleMetrics for. Without it nothing observes a successfully
+// parsed date: the two rejection tests only exercise the error wrapper, and the
+// green-path harness matches on URL path alone. It compares parsed instants
+// rather than the raw query string because the RFC3339 layout is our own
+// Format call, not something the vendor requires.
+func TestRunS3aar_SendsResolvedWindowToBattleMetrics(t *testing.T) {
+	capture := serveBattleMetrics(t, nil)
+	r := &fakeResponder{}
+
+	runS3aar(r, s3aarOptions("Tac1", "10NOV25", "11NOV25", "1800", "2000", 30, ""))
+
+	q := capture.Query()
+	if q == nil {
+		t.Fatal("no BattleMetrics request was made")
+	}
+
+	for _, c := range []struct {
+		param string
+		want  time.Time
+	}{
+		{"start", time.Date(2025, time.November, 10, 18, 0, 0, 0, time.UTC)},
+		{"stop", time.Date(2025, time.November, 11, 20, 0, 0, 0, time.UTC)},
+	} {
+		got, err := time.Parse(time.RFC3339, q.Get(c.param))
+		if err != nil {
+			t.Fatalf("%s=%q is not a parseable instant: %v", c.param, q.Get(c.param), err)
+		}
+		if !got.Equal(c.want) {
+			t.Fatalf("%s = %s, want %s", c.param, got.Format(time.RFC3339), c.want.Format(time.RFC3339))
+		}
 	}
 }
