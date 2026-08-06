@@ -28,7 +28,6 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/s6-it-check` | S6 IT members eligible for full status |
 | `/warden` | Warden role management |
 | `/warden-bulkadd-internal` | Add a validated unit's roster to Verified Warden Internal |
-| `/apps_beta_deploy` | Deploy the Apps beta version |
 
 The registered set lives in `commands/registry.go` — update this table when it changes.
 
@@ -87,7 +86,6 @@ Not checked at startup, but each one silently disables something:
 | Variable | Effect if unset |
 |----------|-----------------|
 | `BEARER` | API token for `api.7cav.us`. Every milpac lookup fails with no startup error — check this first if `/milpac`, `/awol` or `/afsm` come back empty. |
-| `GITHUB_APP_KEY`, `GITHUB_APP_CLIENT_ID` | `/apps_beta_deploy` cannot authenticate. The key is a base64-encoded PEM. |
 | `FORUM_DB_DSN` | LOA cache stays empty, so `/loa` returns nothing. Left blank the bot logs `FORUM_DB_DSN not set, LOA cache disabled` once at startup — but `.env.example` ships a placeholder DSN, which is syntactically valid, so after `cp` you instead get `LOA cache refresh failed` once per node ID, immediately at startup and every 15 minutes after. Both mean the same thing. The production host `xenforo-db` resolves only inside the `xenforo_internal` Docker network. |
 | `LOA_NODE_IDS` | The code default is `180` alone, though `.env.example` already sets the five nodes production scans (`180,400,540,178,369`), so a copied `.env` never falls back. |
 | `LOG_LEVEL` | Defaults to `INFO`. Accepts `DEBUG`, `INFO`, `WARN`, `ERROR` — **uppercase only**, anything else silently means `INFO` (including the `default` that `.env.example` ships). `DEBUG` shows per-post LOA parse failures. |

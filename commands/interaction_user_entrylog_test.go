@@ -114,18 +114,3 @@ func TestEntryLogsSurviveMemberlessInteraction(t *testing.T) {
 		})
 	}
 }
-
-// TestAppsDeployerEntryLogSurvivesMemberlessInteraction drives the apps-deployer
-// entry log with a member-less interaction. runAppsBetaDeploy reads the invoking
-// identity for its entry log before dispatching on interaction type; a raw
-// Member.User deref there would panic for a DM-shaped interaction.
-func TestAppsDeployerEntryLogSurvivesMemberlessInteraction(t *testing.T) {
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("apps-deployer entry log panicked on member-less interaction: %v", r)
-		}
-	}()
-	f := &fakeResponder{RespondErrs: []error{errStub}}
-	i := dmShapedInteraction(stringOption("branch", "feature/x"))
-	runAppsBetaDeploy(f, i)
-}

@@ -4,11 +4,9 @@ services:
     container_name: cavbot2
 #    restart: unless-stopped
     environment:
-      GITHUB_APP_CLIENT_ID: ${GITHUB_APP_CLIENT_ID}
       BEARER: ${BEARER}
       DISCORD_TOKEN: ${DISCORD_TOKEN}
       GUILD_ID: ${GUILD_ID}
-      GITHUB_APP_KEY: ${GITHUB_APP_KEY}
       BM_TOKEN: ${BM_TOKEN}
 # Codespace and ENV level Secret for BM_TOKEN
       LOG_LEVEL: ${LOG_LEVEL}

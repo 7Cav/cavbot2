@@ -128,9 +128,6 @@ grants is configured Discord-side and is out of scope here.
 - **Xenforo MySQL** — read-only access to the forum DB. Connection pool
   deliberately tiny (`SetMaxOpenConns(2)`) because this is a low-rate
   background scan.
-- **GitHub Apps API** — `utils.GithubAuth(clientID, pem)` mints an
-  installation token. Only consumer right now is `/apps_beta_deploy`,
-  dispatching a workflow on `7Cav/adr`.
 
 ## Observability
 

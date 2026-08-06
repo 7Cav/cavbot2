@@ -8,51 +8,6 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-func TestHandleValidateBranchName(t *testing.T) {
-	// Cases are written to the ACTUAL behavior of the current regex
-	// `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` plus the explicit length and leading-dot
-	// guards in HandleValidateBranchName. The regex does NOT reject git-forbidden
-	// patterns like a `..` sequence or a `.lock` suffix mid/end of string, so
-	// those "look-forbidden" names are accepted here — assert that real behavior,
-	// not git's rules.
-	tests := []struct {
-		name    string
-		branch  string
-		wantErr bool
-	}{
-		{"valid simple", "feature", false},
-		{"slash rejected by regex", "feat/issue-108", true},
-		{"valid dots hyphens underscores", "v1.2.3-rc_1", false},
-		{"valid single alphanumeric", "a", false},
-		{"valid leading digit", "9lives", false},
-		{"empty input", "", true},
-		{"too long 256 chars", strings.Repeat("a", 256), true},
-		{"max length 255 chars ok", strings.Repeat("a", 255), false},
-		{"leading dot", ".hidden", true},
-		{"leading hyphen rejected by regex", "-branch", true},
-		{"leading underscore rejected by regex", "_branch", true},
-		{"invalid slash character", "feature/foo", true},
-		{"invalid space character", "my branch", true},
-		{"leading whitespace", " branch", true},
-		{"trailing whitespace", "branch ", true},
-		{"invalid at sign", "br@nch", true},
-		{"double dot accepted by regex", "foo..bar", false},
-		{"dot-lock suffix accepted by regex", "release.lock", false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			err := HandleValidateBranchName(tc.branch)
-			if tc.wantErr && err == nil {
-				t.Fatalf("HandleValidateBranchName(%q) = nil, want error", tc.branch)
-			}
-			if !tc.wantErr && err != nil {
-				t.Fatalf("HandleValidateBranchName(%q) = %v, want nil", tc.branch, err)
-			}
-		})
-	}
-}
-
 func TestHandleError_AppCommand_RespondSucceeds(t *testing.T) {
 	f := &fakeResponder{}
 	i := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
@@ -455,18 +410,20 @@ func TestHandleError_Component_NonAckError_CapturesCustomID(t *testing.T) {
 }
 
 // A component CustomID is routed by its command-name prefix and can carry
-// free-form user input after it — /apps_beta_deploy builds
-// "apps_beta_deploy::confirm::<branch>" from a branch the caller typed. The
-// capture's command value is promoted to a Sentry tag, and tags are a bounded
-// dimension, so the value must be the routing prefix and not the whole ID. The
-// full CustomID is still worth having on the event, just not as the tag.
+// free-form user input in the payload segment, per the
+// "<command>::<action>::<payload>" convention (ADR 0007). The capture's command
+// value is promoted to a Sentry tag, and tags are a bounded dimension, so the
+// value must be the routing prefix and not the whole ID. The full CustomID is
+// still worth having on the event, just not as the tag. The fixture keeps three
+// segments and a payload carrying typed user input, so bounding to anything
+// wider than the first segment fails here.
 func TestHandleError_Component_CaptureBoundsCommandToRoutingPrefix(t *testing.T) {
 	captured := swapCaptureError(t)
 	f := &fakeResponder{RespondErrs: []error{errors.New("HTTP 503 Service Unavailable")}}
 	i := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
 		Type:    discordgo.InteractionMessageComponent,
 		GuildID: "guild-123",
-		Data:    discordgo.MessageComponentInteractionData{CustomID: "apps_beta_deploy::confirm::feature/some-user-branch"},
+		Data:    discordgo.MessageComponentInteractionData{CustomID: "somecmd::confirm::feature/some-user-branch"},
 	}}
 
 	HandleError(f, i, "boom")
@@ -474,10 +431,10 @@ func TestHandleError_Component_CaptureBoundsCommandToRoutingPrefix(t *testing.T)
 	if len(*captured) != 1 {
 		t.Fatalf("expected 1 capture, got %d", len(*captured))
 	}
-	if got, _ := kvValue((*captured)[0].kv, "command"); got != "apps_beta_deploy" {
-		t.Errorf("command = %v, want %q", got, "apps_beta_deploy")
+	if got, _ := kvValue((*captured)[0].kv, "command"); got != "somecmd" {
+		t.Errorf("command = %v, want %q", got, "somecmd")
 	}
-	if got, _ := kvValue((*captured)[0].kv, "custom_id"); got != "apps_beta_deploy::confirm::feature/some-user-branch" {
+	if got, _ := kvValue((*captured)[0].kv, "custom_id"); got != "somecmd::confirm::feature/some-user-branch" {
 		t.Errorf("custom_id = %v, want the full CustomID", got)
 	}
 }
