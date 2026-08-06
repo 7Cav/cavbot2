@@ -61,18 +61,15 @@ that is the wait the user actually felt, because the placeholder / defer /
 followup patterns (ADR 0004) do their upstream work synchronously inside the
 handler.
 
-Two commands break that assumption, and their latency panels should be read
+One command breaks that assumption, and its latency panel should be read
 accordingly:
 
 - **`/warden purge`** acknowledges, then hands the work to a goroutine
   (`handleWardenPurge`), so the measured latency is roughly the ack, not the
   multi-second purge.
-- **`/apps_beta_deploy`** does its real work in the confirm-button handler,
-  which is a component interaction and therefore deliberately uncounted. Its
-  measured latency covers only the initial prompt.
 
-Both are pre-existing structures, not something the instrumentation changed.
-Making their latency honest means moving the work back inside the handler (or
+That is a pre-existing structure, not something the instrumentation changed.
+Making its latency honest means moving the work back inside the handler (or
 counting a completion separately), which is its own change.
 
 ### Why caller identity is not a label

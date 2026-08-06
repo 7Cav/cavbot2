@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Go Discord bot (module `github.com/7cav/cavbot2`) for the 7th Cavalry Gaming Regiment, built on `bwmarrin/discordgo`. It exposes slash commands that integrate with the 7Cav milpacs API, the Xenforo forum MySQL DB, and the GitHub Apps API.
+A Go Discord bot (module `github.com/7cav/cavbot2`) for the 7th Cavalry Gaming Regiment, built on `bwmarrin/discordgo`. It exposes slash commands that integrate with the 7Cav milpacs API and the Xenforo forum MySQL DB.
 
 ## Common commands
 
@@ -29,7 +29,6 @@ Optional but feature-gating:
 - `BEARER` — bearer token for `api.7cav.us` (milpacs lookups will fail without it)
 - `FORUM_DB_DSN` — MySQL DSN for the Xenforo forum DB. The production DSN points at host `xenforo-db`, which resolves **only inside the `xenforo_internal` Docker network** (declared `external: true` in `docker-compose.yml`). Running `go run .` outside that network won't error at startup — `sql.Open` defers the connection — but every `Refresh` will log `"LOA cache refresh failed"` at WARN and the cache will stay empty. To test LOA locally, either run via `docker compose` or substitute a reachable DSN.
 - `LOA_NODE_IDS` — comma-separated Xenforo node IDs to scan for LOA threads. Code default is `180`; **production scans 5 nodes** (`180,400,540,178,369`), which is what `.env.example` sets, so a copied `.env` never hits the code default.
-- `GITHUB_APP_KEY` (base64-encoded PEM), `GITHUB_APP_CLIENT_ID` — needed for `/apps_beta_deploy`
 - `LOG_LEVEL` — `DEBUG` / `INFO` / `WARN` / `ERROR` (default `INFO`)
 - `DISCORDGO_LOG_LEVEL` — discordgo's *own* gateway logging, separate from `LOG_LEVEL`. `ERROR` (default) / `WARN` / `INFO` / `DEBUG`; unrecognised values mean `ERROR`. `WARN` is where discordgo names the frame the gateway sent instead of `READY`, so it is the level to set when startup fails with `Discord session unavailable`. Levels map faithfully onto the slog wrappers, so both gates apply: discordgo's debug output needs `LOG_LEVEL=DEBUG` as well. At `WARN` and above discordgo logs every gateway event it does not recognise with the event's full payload.
 
@@ -48,7 +47,6 @@ Parsing keys off the `Username`, `Start Date`, and `End Date` field labels. `par
 ### External integrations
 
 - **7Cav API** (`utils/milpacs.go`): generic `makeAPIRequest[T]` against `https://api.7cav.us/api/v1/`, auth via `BEARER`. Use this for any new milpac/profile lookup rather than rolling your own resty client.
-- **GitHub Apps** (`utils/github.go`): `GithubAuth(clientID, pem)` → installation token. Used by `/apps_beta_deploy` to dispatch the `dev_deploy.yml` workflow on `7cav/adr`. The PEM key is read from env as base64 and decoded at use site.
 - **Xenforo MySQL**: read-only queries against `xf_thread` / `xf_post`. Connection pool deliberately tiny (`SetMaxOpenConns(2)`) since this is a low-rate background scan.
 
 ## Versioning & deploy

@@ -15,8 +15,8 @@ name:
   **first segment** in the registry.
 
 Stateful component flows use `CustomID` like
-`apps_beta_deploy::confirm::<branch>`. Discord caps `CustomID` at 100 chars;
-validate at the call site (see `apps_deployer.go`).
+`<command>::confirm::<payload>`. Discord caps `CustomID` at 100 chars; validate
+the assembled ID at the call site that builds it.
 
 ## Why
 

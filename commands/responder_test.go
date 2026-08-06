@@ -132,25 +132,6 @@ func fakeAppCommandInteraction(opts ...*discordgo.ApplicationCommandInteractionD
 	}
 }
 
-// fakeMessageComponentInteraction builds the minimum *InteractionCreate that a
-// component (button/select) handler reads: type, a MessageComponentInteractionData
-// carrying the CustomID, and a Member with a User. Mirrors
-// fakeAppCommandInteraction for the component-interaction (Pattern D) path.
-func fakeMessageComponentInteraction(customID string) *discordgo.InteractionCreate {
-	return &discordgo.InteractionCreate{
-		Interaction: &discordgo.Interaction{
-			Type: discordgo.InteractionMessageComponent,
-			Data: discordgo.MessageComponentInteractionData{
-				CustomID:      customID,
-				ComponentType: discordgo.ButtonComponent,
-			},
-			Member: &discordgo.Member{
-				User: &discordgo.User{ID: "999", Username: "tester"},
-			},
-		},
-	}
-}
-
 func stringOption(name, value string) *discordgo.ApplicationCommandInteractionDataOption {
 	return &discordgo.ApplicationCommandInteractionDataOption{
 		Name:  name,

@@ -12,7 +12,6 @@ func NewRegistry() *Registry {
 		Milpac(),
 		Warden(),
 		WardenBulkAddInternal(),
-		AppsBetaDeploy(),
 		Zulu(),
 		S6ITCheck(),
 		Awol(),

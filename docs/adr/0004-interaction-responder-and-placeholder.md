@@ -11,7 +11,7 @@ directly. The interface exposes only the 3 hot-path methods actually used
 (`InteractionRespond`, `InteractionResponseEdit`, `FollowupMessageCreate`)
 and drops the universally-ignored `*Message` return values.
 
-Four response patterns coexist:
+Four response patterns are documented; three are in use:
 
 - **Placeholder** (most commands) — `InteractionRespond` immediately with
   `"Fetching X for Y..."`, then `InteractionResponseEdit` to replace.
@@ -25,13 +25,12 @@ Four response patterns coexist:
   result with `FollowupMessageCreate`. One run can fire several followups
   (debug output, per-step errors), which is why it follows up rather than
   editing a single deferred reply.
-- **Button confirmation** (`/apps_beta_deploy`) — does not defer at all. The
-  slash command replies immediately and ephemerally
-  (`InteractionResponseChannelMessageWithSource` + `MessageFlagsEphemeral`)
-  with Confirm/Cancel buttons. The button click swaps that message via
-  `InteractionResponseUpdateMessage`, and once the deploy fires the result goes
-  out as a *public* `FollowupMessageCreate` (no flags) so the channel can see
-  it.
+- **Button confirmation** — does not defer at all. The slash command replies
+  immediately and ephemerally (`InteractionResponseChannelMessageWithSource` +
+  `MessageFlagsEphemeral`) with Confirm/Cancel buttons. The button click swaps
+  that message via `InteractionResponseUpdateMessage`, and once the confirmed
+  action completes the result goes out as a *public* `FollowupMessageCreate`
+  (no flags) so the channel can see it.
 
 The placeholder pattern is a deliberate UX choice: echo back the parsed
 argument inside ~200ms so typos are visible before the long upstream call

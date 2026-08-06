@@ -2,11 +2,9 @@ package utils
 
 import (
 	"errors"
-	"fmt"
 	"github.com/bwmarrin/discordgo"
 	"log/slog"
 	"os"
-	"regexp"
 	"strings"
 )
 
@@ -121,8 +119,7 @@ func deliverErrorReply(r InteractionResponder, i *discordgo.InteractionCreate, m
 //
 // The prefix, not the whole CustomID, is what goes under "command" because that
 // value is promoted to a Sentry tag (see promoteCommandTag), and tags are a
-// bounded dimension. A CustomID can embed free user input — /apps_beta_deploy
-// builds "apps_beta_deploy::confirm::<branch>" from a typed branch name — so
+// bounded dimension. A CustomID's payload segment can embed free user input, so
 // tagging the whole thing would give the tag an unbounded value space and
 // scatter one command's failures across a new group per input. The separator
 // matches the one main.go's dispatcher splits on.
@@ -161,21 +158,4 @@ func isAlreadyAcknowledged(err error) bool {
 		return true
 	}
 	return strings.Contains(err.Error(), "already been acknowledged")
-}
-func HandleValidateBranchName(branch string) error {
-	validPattern := regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
-
-	if len(branch) == 0 || len(branch) > 255 {
-		return fmt.Errorf("branch name must be between 1 and 255 characters")
-	}
-
-	if branch[0] == '.' {
-		return fmt.Errorf("invalid branch name: must not start with a dot")
-	}
-
-	if !validPattern.MatchString(branch) {
-		return fmt.Errorf("invalid branch name: must start with alphanumeric and contain only alphanumeric, dots, hyphens, or underscores")
-	}
-
-	return nil
 }
