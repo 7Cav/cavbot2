@@ -175,7 +175,7 @@ func runAFSM(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: &response,
 	}); err != nil {
-		captureDeferredEditFailure(i, "AFSM", err)
+		captureDeferredEditFailure(i, "afsm", err)
 		return
 	}
 	utils.Info("✨ Done!", "command", "AFSM", "department", choice)

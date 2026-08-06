@@ -35,7 +35,7 @@ by name; renaming any of them is a parsing-contract change, not a cosmetic edit.
 | --- | --- | --- |
 | `msg` | string | Always `command_invoked`. The marker Alloy selects on. |
 | `command` | string | Top-level command name, as registered. The **only** value promoted to a Prometheus label. |
-| `latency_ms` | integer | Handler wall-time in **whole milliseconds**. Divided by 1000 on the collector side to feed a `_seconds` histogram. |
+| `latency_ms` | integer | Handler wall-time in **whole milliseconds**. Divided by 1000 on the collector side to feed a `_seconds` histogram. See the caveat below. |
 | `discord_id` | string | Invoking user's Discord snowflake. Loki only — never a metric label. |
 | `username` | string | Invoking user's Discord username. Loki only — never a metric label. |
 
@@ -53,6 +53,27 @@ metric or its cardinality.
 Option names come from the command definitions, so the `opt_*` key space is
 bounded by the registry — but do not promote any of them to a Prometheus label
 without checking the value space first. `opt_discordname` is free text.
+
+### Caveat: latency is handler wall-time, which is not always work time
+
+`latency_ms` measures how long the registered handler ran. For most commands
+that is the wait the user actually felt, because the placeholder / defer /
+followup patterns (ADR 0004) do their upstream work synchronously inside the
+handler.
+
+Two commands break that assumption, and their latency panels should be read
+accordingly:
+
+- **`/warden purge`** acknowledges, then hands the work to a goroutine
+  (`handleWardenPurge`), so the measured latency is roughly the ack, not the
+  multi-second purge.
+- **`/apps_beta_deploy`** does its real work in the confirm-button handler,
+  which is a component interaction and therefore deliberately uncounted. Its
+  measured latency covers only the initial prompt.
+
+Both are pre-existing structures, not something the instrumentation changed.
+Making their latency honest means moving the work back inside the handler (or
+counting a completion separately), which is its own change.
 
 ### Why caller identity is not a label
 
@@ -79,6 +100,26 @@ genuine fault already route to Sentry (ADR 0002), and panics reach Sentry via
 `RecoverPanic`. Sentry owns the whole failure signal, and per-command error rate
 is answerable there through the `command` tag that `CaptureError` and
 `RecoverPanic` now set.
+
+### The Sentry `command` tag
+
+`CaptureError` and `RecoverPanic` promote a `command` key/value to a Sentry
+**tag**, because Sentry groups and filters on tags, not on the extra context.
+The value must be the **registered slash-command name** — `warden`,
+`s6-it-check`, `gamertag_search` — since anything else splits one command's
+failures across several groups, or (for a component CustomID, which can embed
+free user input) gives a bounded dimension an unbounded value space.
+
+Two consequences worth knowing when adding a capture site:
+
+- Pass `"command", "<registered name>"`. If you also want the subcommand,
+  pass it separately as `"subcommand"` — that is why `/warden`'s captures no
+  longer put its subcommand under `command`.
+- Some capture sites still carry no `command` at all — the direct
+  `utils.CaptureError` calls in `afsm.go`, `s6_trackers.go`, `awol.go` and
+  `star_citizen_joiners.go`. Their events simply go untagged rather than
+  wrongly tagged. Adding the key at those sites would widen tag coverage and
+  is worth doing, but it was left out of the telemetry change.
 
 These names are chosen to survive a later move to a native `/metrics` endpoint
 on the bot, once #98 brings an HTTP server. Swapping the derivation from
