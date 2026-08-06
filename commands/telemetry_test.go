@@ -1,15 +1,12 @@
 package commands
 
 import (
-	"bytes"
 	"context"
-	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 	"github.com/getsentry/sentry-go"
 	"github.com/go-logfmt/logfmt"
@@ -27,17 +24,17 @@ import (
 // than string-searching keeps the expected values independent of the emitter:
 // a hand-rolled splitter would be this test's own re-reading of slog's encoder,
 // so a mistake shared between the two would pass here and still fail on the host.
+// It reads the package-wide sink rather than installing a logger of its own:
+// utils.Logger is written exactly once, in TestMain, because a leaked goroutine
+// reads it for the rest of the run and any later write is a data race.
 func captureTelemetryLines(t *testing.T) func() []map[string]string {
 	t.Helper()
 
-	var buf bytes.Buffer
-	prev := utils.Logger
-	utils.Logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	t.Cleanup(func() { utils.Logger = prev })
+	testLogs.Reset()
 
 	return func() []map[string]string {
 		var records []map[string]string
-		for _, raw := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+		for _, raw := range strings.Split(strings.TrimRight(testLogs.String(), "\n"), "\n") {
 			if raw == "" {
 				continue
 			}
