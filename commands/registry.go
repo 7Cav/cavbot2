@@ -24,8 +24,14 @@ func NewRegistry() *Registry {
 	return r
 }
 
+// RegisterCommands decorates every handler with telemetry on the way in, so a
+// new command is measured the moment it joins the registry and instrumentation
+// stays in the one place commands are declared (ADR 0006).
 func (r *Registry) RegisterCommands(cmds ...Command) {
-	r.commands = append(r.commands, cmds...)
+	for _, cmd := range cmds {
+		cmd.Handler = instrument(cmd.Definition.Name, cmd.Handler)
+		r.commands = append(r.commands, cmd)
+	}
 }
 
 func (r *Registry) GetCommands() []*discordgo.ApplicationCommand {
