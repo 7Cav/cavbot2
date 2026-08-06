@@ -22,6 +22,7 @@ type ProfileResponse struct {
 	Secondary         []Position `json:"secondaries"`
 	Records           []Record   `json:"records"`
 	Awards            []Award    `json:"awards"`
+	Mos               string     `json:"mos"`
 	JoinDate          string     `json:"joinDate"`
 	PromotionDate     string     `json:"promotionDate"`
 	DiscordID         string     `json:"discordId"`
@@ -142,6 +143,23 @@ func makeAPIRequest[T any](ctx context.Context, path string, identifier string) 
 	return nil, fmt.Errorf("%s API returned %d %s", pathPrefix, status, http.StatusText(status))
 }
 
+// RankInfo is one entry of the /milpacs/ranks reference list.
+type RankInfo struct {
+	RankShort        string `json:"rankShort"`
+	RankFull         string `json:"rankFull"`
+	RankDisplayOrder int    `json:"rankDisplayOrder"`
+	RankID           string `json:"rankId"`
+}
+
+type RanksResponse struct {
+	Ranks []RankInfo `json:"ranks"`
+}
+
+// GetRanks fetches the rank reference list (short/full names + display order).
+func GetRanks(ctx context.Context) (*RanksResponse, error) {
+	return makeAPIRequest[RanksResponse](ctx, "milpacs/ranks", "ranks")
+}
+
 func GetMilpacByUsername(ctx context.Context, username string) (*ProfileResponse, error) {
 	return makeAPIRequest[ProfileResponse](ctx,
 		fmt.Sprintf("milpacs/profile/username/%s", username),
@@ -152,6 +170,15 @@ func GetMilpacByDiscordID(ctx context.Context, discordID string) (*ProfileRespon
 	return makeAPIRequest[ProfileResponse](ctx,
 		fmt.Sprintf("milpac/discord/%s", discordID),
 		discordID)
+}
+
+// GetLiteRoster fetches a whole roster by RosterType enum name (e.g.
+// "ROSTER_TYPE_COMBAT" = Active Duty) with minimal per-profile data — same
+// response shape as the fuzzy position search.
+func GetLiteRoster(ctx context.Context, rosterType string) (*LiteRosterResponse, error) {
+	return makeAPIRequest[LiteRosterResponse](ctx,
+		fmt.Sprintf("roster/%s/lite", rosterType),
+		rosterType)
 }
 
 func GetRosterByFuzzyPositionSearch(ctx context.Context, position string) (*LiteRosterResponse, error) {
