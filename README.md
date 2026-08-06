@@ -19,7 +19,7 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | Command | Purpose |
 |---------|---------|
 | `/milpac` | Return a user's milpac |
-| `/zulu` | Current Zulu time |
+| `/zulu` | Current Zulu time, or a given Zulu time shown in each viewer's own local time |
 | `/gamertag_search` | Search for a user by gamertag |
 | `/awol` | AWOL troopers for a position |
 | `/loa` | Active and upcoming LOAs for a position |

@@ -21,9 +21,10 @@ belong here, not inline in code comments.
   (e.g. `D/ACD`, `A/1-7`). `ACD` is a battalion-level group; `D/ACD` is a
   company within it. Exposed by the API's position-group hierarchy and used as
   the unit vocabulary for roster lookups.
-- **Regiment time (UTC)** — UTC is 7Cav standard time. Wherever the bot has to
-  decide what calendar day something falls on (e.g. AWOL day-counting), a
-  "day" is a **UTC calendar date**.
+- **Regiment time (UTC) / Zulu** — UTC is 7Cav standard time; **Zulu** is its
+  member-facing name, written with a `z` suffix (`2300z`). Wherever the bot has
+  to decide what calendar day something falls on (e.g. AWOL day-counting), a
+  "day" is a **UTC calendar date**. _Avoid_: GMT.
 
 ## Member records
 
