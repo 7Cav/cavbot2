@@ -105,34 +105,49 @@ func deliverErrorReply(r InteractionResponder, i *discordgo.InteractionCreate, m
 			Content: &message,
 		}); editErr != nil {
 			captureError("Failed to deliver interaction error reply via edit fallback", editErr,
-				"command", interactionCommandName(i), "guild_id", i.GuildID)
+				append(interactionCaptureContext(i), "guild_id", i.GuildID)...)
 		}
 		return
 	}
 
 	captureError("Failed to deliver interaction error reply", err,
-		"command", interactionCommandName(i), "guild_id", i.GuildID)
+		append(interactionCaptureContext(i), "guild_id", i.GuildID)...)
 }
 
-// interactionCommandName extracts a best-effort label for capture context: the
-// invoked application-command name, or — for a message component — its CustomID,
-// so component delivery failures don't page Sentry with a blank command. It
-// returns "" when neither is resolvable. The type assertions and nil checks are
-// purely defensive (capture context must never become a new failure mode); they
-// are not a nil-interaction guard for HandleError, which dereferences i.Type
-// before this helper ever runs.
-func interactionCommandName(i *discordgo.InteractionCreate) string {
+// interactionCaptureContext builds the command attribution for a capture: the
+// invoked application-command name, or — for a message component — the
+// command-name prefix its CustomID routes on, with the full CustomID carried
+// alongside under its own key.
+//
+// The prefix, not the whole CustomID, is what goes under "command" because that
+// value is promoted to a Sentry tag (see promoteCommandTag), and tags are a
+// bounded dimension. A CustomID can embed free user input — /apps_beta_deploy
+// builds "apps_beta_deploy::confirm::<branch>" from a typed branch name — so
+// tagging the whole thing would give the tag an unbounded value space and
+// scatter one command's failures across a new group per input. The separator
+// matches the one main.go's dispatcher splits on.
+//
+// It returns a "command" of "" when nothing is resolvable. The type assertions
+// and nil checks are purely defensive (capture context must never become a new
+// failure mode); they are not a nil-interaction guard for HandleError, which
+// dereferences i.Type before this helper ever runs.
+func interactionCaptureContext(i *discordgo.InteractionCreate) []any {
 	if i == nil || i.Interaction == nil {
-		return ""
+		return []any{"command", ""}
 	}
 	if data, ok := i.Data.(discordgo.ApplicationCommandInteractionData); ok {
-		return data.Name
+		return []any{"command", data.Name}
 	}
 	if data, ok := i.Data.(discordgo.MessageComponentInteractionData); ok {
-		return data.CustomID
+		name, _, _ := strings.Cut(data.CustomID, customIDSeparator)
+		return []any{"command", name, "custom_id", data.CustomID}
 	}
-	return ""
+	return []any{"command", ""}
 }
+
+// customIDSeparator delimits a component CustomID's routing prefix from its
+// payload. Kept in step with the split in main.go's dispatcher; see ADR 0007.
+const customIDSeparator = "::"
 
 // alreadyAcknowledgedCode is Discord's error code for "Interaction has already
 // been acknowledged" (40060). discordgo wraps real API failures as *RESTError;

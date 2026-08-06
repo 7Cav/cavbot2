@@ -1,11 +1,9 @@
 package commands
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,16 +16,18 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// captureWarnLogs swaps utils.Logger for a buffer-backed handler at WARN level
-// for the duration of the test, returning the buffer so callers can assert on
-// emitted warn lines. The previous logger is restored via t.Cleanup.
-func captureWarnLogs(t *testing.T) *bytes.Buffer {
+// captureWarnLogs clears the package-wide log sink and returns it, so callers
+// can assert on the lines the code under test emits.
+//
+// It deliberately does NOT install a logger of its own. utils.Logger is written
+// exactly once, in TestMain, because a leaked goroutine reads it for the rest
+// of the run and any later write is a data race — see the comment on TestMain.
+// The sink therefore carries INFO as well as WARN lines; every assertion here
+// is a presence check, so the extra lines are inert.
+func captureWarnLogs(t *testing.T) *syncBuffer {
 	t.Helper()
-	var buf bytes.Buffer
-	prev := utils.Logger
-	utils.Logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	t.Cleanup(func() { utils.Logger = prev })
-	return &buf
+	testLogs.Reset()
+	return testLogs
 }
 
 // warningField returns the attendance embed's enrichment-failure warning field,

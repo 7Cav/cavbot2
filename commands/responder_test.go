@@ -1,7 +1,7 @@
 package commands
 
 import (
-	"io"
+	"bytes"
 	"log/slog"
 	"os"
 	"sync"
@@ -11,10 +11,53 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+// syncBuffer is a concurrency-safe sink for the package-wide test logger. The
+// mutex is load-bearing: TestRunJoinerReportSchedulerLoop_PanicIsRecovered
+// deliberately leaves its scheduler goroutine running past the end of the test
+// (see the comment there), and that goroutine keeps calling utils.Info, so the
+// sink has a live writer no test controls.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (b *syncBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf.Reset()
+}
+
+// testLogs is where every log line in this package's tests lands. Helpers that
+// assert on log output (captureWarnLogs, captureTelemetryLines) read it rather
+// than installing a logger of their own.
+var testLogs = &syncBuffer{}
+
 // TestMain initializes the utils package Logger so handlers don't panic on a
 // nil *slog.Logger when they call utils.Info/Warn/Debug.
+//
+// This is the ONLY assignment to utils.Logger in the package, and it must stay
+// that way. utils.Logger is an unsynchronized package global; the leaked
+// scheduler goroutine described on syncBuffer reads it for the rest of the
+// run, so a later write — even the restore half of a swap-and-restore helper —
+// is a data race that -race will fail the build on. Assigning once here, before
+// m.Run starts anything, happens-before every read.
+//
+// Level is INFO because that is the most verbose level any assertion needs
+// (the telemetry line is INFO, the s3aar enrichment warnings are WARN).
 func TestMain(m *testing.M) {
-	utils.Logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	utils.Logger = slog.New(slog.NewTextHandler(testLogs, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	os.Exit(m.Run())
 }
 

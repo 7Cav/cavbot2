@@ -126,6 +126,10 @@ func main() {
 	registry := commands.NewRegistry()
 
 	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		// Backstop only. Registered slash-command handlers are wrapped with
+		// their own recover that names the failing command (commands/telemetry.go),
+		// so what reaches here is a panic from the routing below or from a
+		// component interaction.
 		defer utils.RecoverPanic("interaction-handler")
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:

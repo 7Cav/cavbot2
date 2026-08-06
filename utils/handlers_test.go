@@ -453,3 +453,31 @@ func TestHandleError_Component_NonAckError_CapturesCustomID(t *testing.T) {
 		t.Fatalf("expected component CustomID %q as command context, got %v (ok=%v)", "warden_purge_confirm", cmd, ok)
 	}
 }
+
+// A component CustomID is routed by its command-name prefix and can carry
+// free-form user input after it — /apps_beta_deploy builds
+// "apps_beta_deploy::confirm::<branch>" from a branch the caller typed. The
+// capture's command value is promoted to a Sentry tag, and tags are a bounded
+// dimension, so the value must be the routing prefix and not the whole ID. The
+// full CustomID is still worth having on the event, just not as the tag.
+func TestHandleError_Component_CaptureBoundsCommandToRoutingPrefix(t *testing.T) {
+	captured := swapCaptureError(t)
+	f := &fakeResponder{RespondErrs: []error{errors.New("HTTP 503 Service Unavailable")}}
+	i := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
+		Type:    discordgo.InteractionMessageComponent,
+		GuildID: "guild-123",
+		Data:    discordgo.MessageComponentInteractionData{CustomID: "apps_beta_deploy::confirm::feature/some-user-branch"},
+	}}
+
+	HandleError(f, i, "boom")
+
+	if len(*captured) != 1 {
+		t.Fatalf("expected 1 capture, got %d", len(*captured))
+	}
+	if got, _ := kvValue((*captured)[0].kv, "command"); got != "apps_beta_deploy" {
+		t.Errorf("command = %v, want %q", got, "apps_beta_deploy")
+	}
+	if got, _ := kvValue((*captured)[0].kv, "custom_id"); got != "apps_beta_deploy::confirm::feature/some-user-branch" {
+		t.Errorf("custom_id = %v, want the full CustomID", got)
+	}
+}

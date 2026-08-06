@@ -498,7 +498,8 @@ func deliverPurgeSummary(
 			captureError(
 				"Failed to deliver purge summary via channel fallback after token expiry",
 				sendErr,
-				"command", wardenSubcommandOf(interaction),
+				"command", "warden",
+				"subcommand", wardenSubcommandOf(interaction),
 				"guild_id", interaction.GuildID,
 				"channel_id", interaction.ChannelID,
 				"edit_error", editErr,
@@ -510,7 +511,8 @@ func deliverPurgeSummary(
 		// "did the long purge ever surface its result?" is answerable from logs.
 		utils.Info(
 			"purge summary delivered via channel fallback after interaction token expired",
-			"command", wardenSubcommandOf(interaction),
+			"command", "warden",
+			"subcommand", wardenSubcommandOf(interaction),
 			"guild_id", interaction.GuildID,
 			"channel_id", interaction.ChannelID,
 		)
@@ -781,7 +783,8 @@ func captureEditFailure(interaction *discordgo.InteractionCreate, err error) {
 	captureError(
 		"Failed to deliver deferred-ephemeral edit",
 		err,
-		"command", wardenSubcommandOf(interaction),
+		"command", "warden",
+		"subcommand", wardenSubcommandOf(interaction),
 		"guild_id", interaction.GuildID,
 	)
 }
@@ -789,6 +792,11 @@ func captureEditFailure(interaction *discordgo.InteractionCreate, err error) {
 // wardenSubcommandOf reads the chosen warden subcommand off the interaction's
 // `command` option for failure context, falling back to "unknown" when it can't
 // be resolved (e.g. a malformed interaction) so capture context is never blank.
+//
+// It rides captures under the "subcommand" key, never "command": the latter is
+// promoted to a Sentry tag (see utils.promoteCommandTag) and must hold the
+// registered slash-command name, or /warden's failures split across one group
+// per subcommand and per-command error rate stops being answerable.
 func wardenSubcommandOf(interaction *discordgo.InteractionCreate) string {
 	if sub, ok := getOptionString(interaction.ApplicationCommandData(), "command"); ok {
 		return sub
