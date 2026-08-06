@@ -89,10 +89,20 @@ line).
 
 ## Derived metrics
 
-| Metric | Type | Labels |
-| --- | --- | --- |
-| `cavbot2_command_invocations_total` | counter | `command` |
-| `cavbot2_command_latency_seconds` | histogram | `command` |
+| Declared in Alloy as | Stored in Prometheus as | Type | Labels |
+| --- | --- | --- | --- |
+| `cavbot2_command_invocations_total` | `loki_process_custom_cavbot2_command_invocations_total` | counter | `command` |
+| `cavbot2_command_latency_seconds` | `loki_process_custom_cavbot2_command_latency_seconds` | histogram | `command` |
+
+**Always query the prefixed name.** Alloy namespaces every `stage.metrics`
+metric with `loki_process_custom_`, and the prefix is not configurable. Querying
+the declared name returns zero rows against a perfectly correct config — this is
+verified behaviour on the host, where `npm_requests_total` has no series but
+`loki_process_custom_npm_requests_total` has 404k.
+
+Each series also carries `component_id`, `component_path`, `instance` and
+`job="alloy"` from the collector. `sum`/`count by (command)` collapses them, but
+alert rules need to expect them.
 
 There is deliberately **no `status` or `error` label**. "No results found" is a
 successful outcome for the free-input commands; the cases where empty is a
@@ -121,53 +131,105 @@ Two consequences worth knowing when adding a capture site:
   wrongly tagged. Adding the key at those sites would widen tag coverage and
   is worth doing, but it was left out of the telemetry change.
 
-These names are chosen to survive a later move to a native `/metrics` endpoint
-on the bot, once #98 brings an HTTP server. Swapping the derivation from
-Alloy-side to in-process should reuse the same series names and leave dashboards
-untouched.
+### Correction to ADR 0011: these names are *not* drop-in portable
+
+ADR 0011 records that the metric names are "chosen to be drop-in portable to a
+native `/metrics` endpoint" later, so that "moving the counter from
+Alloy-derived to native reuses the same series names; dashboards do not change."
+
+**That is not true, and the reason is the `loki_process_custom_` prefix above.**
+A native endpoint on the bot would expose `cavbot2_command_invocations_total`;
+the Alloy-derived series is `loki_process_custom_cavbot2_command_invocations_total`.
+Those are different series, so a later swap either renames every dashboard query
+or needs a Prometheus recording rule / `metric_relabel_configs` to bridge them.
+
+The decision itself still stands — log-derived metrics remain the right call for
+a bot with no HTTP surface — but the portability rationale was written on a
+false premise and ADR 0011 should be amended to say so.
 
 ---
 
 ## Alloy configuration
 
-> **Not yet applied, and not verifiable from this repo.** This block was written
-> against ADR 0011 and the host's documented logs-to-metrics pattern, not
-> against the live `config.alloy`. Before applying it: reconcile the
-> `forward_to` target and the `container` label with what the existing cavbot2
-> pipeline already uses, and run `alloy fmt` plus a config check. Treat the
-> stage names and the receiver reference below as placeholders to match to the
-> real file.
+Written against the live `/etc/compose/monitoring/alloy/config.alloy` on
+`7cav-prod` (Alloy **v1.7.1**, Loki 3.4.2), not inferred. The syntax below —
+`stage.labels`' `values = {}` form, the `loki.write.default.receiver` reference,
+the `container` label — is copied from what that file already does. What is
+*not* verified is listed under "Before you apply this".
 
-Alloy already ships cavbot2's stdout to Loki labeled `container="cavbot2"`, so
-this adds a processing stage to an existing pipeline rather than a new source.
+### The wiring: insert, do not add a parallel reader
+
+There is no cavbot2-specific component on the host today. cavbot2 is picked up
+by the catch-all `loki.source.docker "containers"`, which forwards **straight to
+the sink** with no processing in between.
+
+So the change is to splice a `loki.process` into that existing path. Adding a
+second `discovery.docker` + `loki.source.docker` scoped to cavbot2 would give
+two independent readers of the same container's stdout — and because this
+pipeline attaches a `command` label, the copies land in *different* Loki
+streams, so Loki will not dedupe them. That doubles every cavbot2 log line and
+every count.
+
+One line changes in the existing source block:
 
 ```alloy
-loki.process "cavbot2_command_telemetry" {
-  // Reconcile with the receiver the existing cavbot2 pipeline forwards to.
-  forward_to = [loki.write.default.receiver]
+loki.source.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.docker.containers.targets
+  relabel_rules    = discovery.relabel.containers.rules
+  forward_to       = [loki.process.cavbot2.receiver]   // was: loki.write.default.receiver
+  refresh_interval = "10s"
+}
+```
 
+> **Blast radius: this touches every container on the host, not just cavbot2.**
+> All container logs now flow through the new component. A `stage.match` scopes
+> the processing to cavbot2 and everything else passes through untouched — but
+> if the new block fails to load, *all* container logging stops. After
+> restarting, check that an unrelated container still has recent lines
+> (`{container="prometheus"}`) before trusting the cavbot2 check.
+
+### The block
+
+```alloy
+// ---- 4. CAVBOT2 COMMAND TELEMETRY --------------------------------------------
+// Tapped off the shared container stream, NOT a second Docker reader.
+//
+// Sample line (bare logfmt — loki.source.docker reads the Engine API, so the
+// json-file driver's {"log":…,"stream":…} wrapper is already stripped and no
+// stage.docker / stage.cri is needed):
+//
+//   time=2026-08-06T14:22:31.884Z level=INFO msg=command_invoked command=warden
+//   latency_ms=843 discord_id=246813579 username=trooper.j opt_flag=internal
+
+loki.process "cavbot2" {
+  // Match on `container`, which discovery.relabel sets from the Docker name.
+  // Do NOT match on service_name or detected_level: Loki 3.x adds those at
+  // ingest, so they do not exist inside the Alloy pipeline.
+  //
+  // The marker is deliberately ASCII. Gating on a "✨ Done!"-style line would
+  // put a multi-byte emoji inside a quoted Alloy string inside a LogQL filter,
+  // and would also count the wrong thing — see "Why this line" below.
   stage.match {
     selector = "{container=\"cavbot2\"} |= \"command_invoked\""
 
-    // Pull only the keys the metrics need. Caller identity is deliberately
-    // NOT extracted here — it stays in the line body for Loki drill-down.
+    // Only what the metrics need. Caller identity is deliberately NOT
+    // extracted — it stays in the line body for Loki drill-down.
     stage.logfmt {
       mapping = {
-        msg        = "",
         command    = "",
         latency_ms = "",
       }
     }
 
-    // The line carries milliseconds; the histogram is in seconds so the metric
-    // name stays portable to a native /metrics endpoint later.
+    // The line carries whole milliseconds as a bare integer, so float64 parses
+    // it directly. sprig/v3 is linked into the v1.7.1 binary, so divf resolves.
     stage.template {
       source   = "latency_seconds"
       template = "{{ divf (float64 .latency_ms) 1000 }}"
     }
 
-    // `command` becomes a label on both the Loki stream and the derived
-    // metrics. Bounded by the command registry (~11 values today).
+    // Bounded label: one per registered command. Never username or discord_id.
     stage.labels {
       values = {
         command = "",
@@ -176,44 +238,115 @@ loki.process "cavbot2_command_telemetry" {
 
     stage.metrics {
       metric.counter {
-        name              = "command_invocations_total"
-        prefix            = "cavbot2_"
-        description       = "Slash command invocations, counted once per dispatch."
-        source            = "msg"
-        value             = "command_invoked"
-        action            = "inc"
-        max_idle_duration = "24h"
+        name        = "cavbot2_command_invocations_total"
+        description = "cavbot2 slash-command invocations, by command"
+        source      = "command"
+        action      = "inc"
+        // NOT optional, and deliberately not copied from the existing blocks,
+        // which omit it. On this host loki_process_custom_fail2ban_events_total
+        // is present at roughly 6% of scrapes because its series is reaped
+        // between events; every reappearance reads as a counter reset and
+        // rate()/increase() go unreliable. cavbot2 runs ~10 invocations/day and
+        // /s6-it-check about 3 per MONTH, so a week is not enough headroom.
+        max_idle_duration = "720h"
       }
 
       metric.histogram {
-        name        = "command_latency_seconds"
-        prefix      = "cavbot2_"
-        description = "Slash command handler wall-time in seconds."
+        name        = "cavbot2_command_latency_seconds"
+        description = "cavbot2 slash-command handler wall-time in seconds"
         source      = "latency_seconds"
-        // Spans sub-second to well past Discord's 3s ack deadline, which is the
+        // Sub-second through well past Discord's 3s ack deadline, which is the
         // reference line worth seeing on the latency panels.
-        buckets = [0.1, 0.25, 0.5, 1, 2, 3, 5, 10, 30]
+        buckets           = [0.1, 0.25, 0.5, 1, 2, 3, 5, 10, 30]
+        max_idle_duration = "720h"
       }
     }
   }
+
+  // Everything — cavbot2 and not — continues to the sink unchanged.
+  forward_to = [loki.write.default.receiver]
 }
 ```
 
+### Why this line, and not `✨ Done!`
+
+Worth stating, because gating on the existing house log lines is the obvious
+move and it is wrong twice over.
+
+`command=` already appears on `🚀 Starting …`, `Returning …` and `✨ Done!`.
+Measured over 30 days on the host: 680 lines carry `command=`, but only 302 are
+actual invocations. A counter keyed on "line has a command field" reads **2.25×
+high**, and the inflation varies per command — chattier commands inflate more —
+so it is not even a constant you could divide out.
+
+`✨ Done!` is the only reliable anchor among those, and it counts *completed*
+invocations, dropping any command that errors before its terminal line.
+
+`command_invoked` sidesteps both. It is emitted exactly once per invocation,
+from a `defer`, so it fires even when the handler panics — an honest
+denominator. It is also the only line carrying a machine-readable duration:
+`duration=` appears solely on `API Call Finished` lines, never co-occurs with
+`command=`, and is a Go `time.Duration` string whose unit varies with magnitude
+(`83.4µs`, `106.548123ms`, `1m30s`), so it cannot be scaled by a flat divide.
+
+One consequence of the registered-name convention: the historical `✨ Done!`
+lines carry display names (`Milpac`, `S6ITCheck`), while `command_invoked`
+carries registered names (`milpac`, `s6-it-check`). The metric is built fresh
+off `command_invoked`, so it is internally consistent — but a LogQL query
+spanning both line types needs to expect both spellings.
+
+### Before you apply this
+
+Verified: the receiver name, the `container` label, `stage.labels` syntax, the
+Alloy version, sprig availability, and that the line arrives bare.
+
+Still unproven, in rough order of how likely it is to bite:
+
+1. **`stage.match` is used nowhere in this stack.** Both existing pipelines have
+   a dedicated source per job, so they never needed to filter. This block
+   introduces the pattern; there is no working local example to copy. If the
+   counter stays empty, look here first — the fallback is to drop the selector
+   and instead `stage.logfmt` unconditionally, then `stage.drop` entries where
+   `command` is empty.
+2. **`stage.metrics` nested inside `stage.match`.** Both existing counters sit
+   at the top level of their `loki.process`. Nesting should be fine but is
+   untested here.
+3. **`metric.histogram` has never been defined on this host.** Both existing
+   derived metrics are counters. Buckets, and whether `max_idle_duration` is
+   accepted on a histogram, are unexercised.
+4. **That the whole file still parses.** Nothing has been run through
+   `alloy fmt` or a config check.
+
 ### Applying it
 
-1. Edit the monitoring host's `config.alloy`, merging the block above into the
-   existing cavbot2 pipeline.
-2. Validate before reloading: `alloy fmt config.alloy` and a config check.
-3. Reload Alloy (`SIGHUP`, or the container restart the host normally uses).
-4. Confirm the series exist in Prometheus:
-   `count by (command) (cavbot2_command_invocations_total)` should return one
-   row per command that has run since the reload.
-5. Confirm the drill-down still works in Loki:
+1. Edit `/etc/compose/monitoring/alloy/config.alloy` — add the block, change the
+   one `forward_to` line in `loki.source.docker "containers"`.
+2. `alloy fmt` the file and run a config check before restarting.
+3. **`docker compose restart alloy`.** The config is a single-file bind mount,
+   so the inode changes on edit and the container keeps the old one — a reload
+   signal will not pick it up.
+4. Confirm nothing else broke first:
+   `{container="prometheus"}` should still show recent lines in Loki.
+5. Then confirm the metric, **using the prefixed name**:
+
+   ```promql
+   count by (command) (loki_process_custom_cavbot2_command_invocations_total)
+   ```
+
+   Only commands invoked since the restart appear. For an immediate signal, run
+   `/zulu` yourself and watch for the row — `/s6-it-check` may take weeks.
+6. Confirm the drill-down:
    `{container="cavbot2"} | logfmt | msg="command_invoked" | username="..."`.
 
 Sequencing is low-risk in either order. The bot's line is inert until Alloy
 parses it, so the emitter can ship (and Watchtower can deploy it) well before
 this block is applied.
+
+For validating the dashboard once it is live, the true 30-day invocation counts
+measured from the host were: Awol 82, Warden 74, Milpac 71, Zulu 41, LOA 21,
+AFSM 10, S6ITCheck 3 — 302 total. Four registered commands
+(`gamertag_search`, `s3aar`, `apps_beta_deploy`, `warden-bulkadd-internal`) were
+not invoked at all in that window, so expect at most 7 rows initially.
 
 ---
 
@@ -236,7 +369,7 @@ panel 3 is the caller drill-down that intentionally has no metric behind it.
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
       "targets": [
         {
-          "expr": "sum by (command) (rate(cavbot2_command_invocations_total[1h]))",
+          "expr": "sum by (command) (rate(loki_process_custom_cavbot2_command_invocations_total[1h]))",
           "legendFormat": "{{command}}"
         }
       ]
@@ -247,7 +380,7 @@ panel 3 is the caller drill-down that intentionally has no metric behind it.
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
       "targets": [
         {
-          "expr": "sum by (command) (increase(cavbot2_command_invocations_total[$__range]))",
+          "expr": "sum by (command) (increase(loki_process_custom_cavbot2_command_invocations_total[$__range]))",
           "legendFormat": "{{command}}",
           "instant": true
         }
@@ -261,7 +394,7 @@ panel 3 is the caller drill-down that intentionally has no metric behind it.
       "fieldConfig": { "defaults": { "unit": "s" } },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (command, le) (rate(cavbot2_command_latency_seconds_bucket[1h])))",
+          "expr": "histogram_quantile(0.95, sum by (command, le) (rate(loki_process_custom_cavbot2_command_latency_seconds_bucket[1h])))",
           "legendFormat": "{{command}}"
         }
       ]
