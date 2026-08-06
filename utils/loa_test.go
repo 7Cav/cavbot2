@@ -542,7 +542,6 @@ func TestLOAEntry_isActiveAt(t *testing.T) {
 	}
 }
 
-
 // TestGetEntry_TwoActiveWindows_LatestEndingWins pins the highest-value tie-break
 // mutation testing flagged hollow: when a user holds TWO simultaneously-active
 // windows, mostRelevant/GetEntry must surface the latest-ending one (state 3,

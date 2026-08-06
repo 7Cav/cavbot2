@@ -1,0 +1,17 @@
+# golangci-lint v2 config.
+#
+# Only formatting is configured here. `linters.default` is left unset, so the
+# standard linter set (errcheck, govet, ineffassign, staticcheck, unused) stays
+# exactly as it was before this file existed.
+#
+# gofmt is a *formatter* in v2, not a linter: `golangci-lint run` reports diffs
+# as issues, and `golangci-lint fmt` rewrites them in place.
+#
+# Caveat: the default `uniq-by-line` processor keeps only the first issue per
+# line, so another linter firing on the same line hides the gofmt one until it
+# is fixed. Harmless as a gate — the masking issue fails the build on its own.
+version: "2"
+
+formatters:
+  enable:
+    - gofmt

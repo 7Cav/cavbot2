@@ -587,9 +587,9 @@ func TestRunAFSM_HappyPathWithSkipped(t *testing.T) {
 	}
 	got := *calls[1].Edit.Content
 	for _, want := range []string{
-		"⚠️ This command cannot be made completely accurate",   // disclaimer
-		"[Test.A](<https://7cav.us/rosters/profile/144>)",         // eligible row
-		"1 member skipped due to errors (reported)",               // skipped count
+		"⚠️ This command cannot be made completely accurate", // disclaimer
+		"[Test.A](<https://7cav.us/rosters/profile/144>)",    // eligible row
+		"1 member skipped due to errors (reported)",          // skipped count
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Edit content missing %q.\nGot:\n%s", want, got)

@@ -15,10 +15,10 @@ type mockTransport struct {
 	events []*sentry.Event
 }
 
-func (t *mockTransport) Configure(_ sentry.ClientOptions)      {}
-func (t *mockTransport) Flush(_ time.Duration) bool            { return true }
+func (t *mockTransport) Configure(_ sentry.ClientOptions)        {}
+func (t *mockTransport) Flush(_ time.Duration) bool              { return true }
 func (t *mockTransport) FlushWithContext(_ context.Context) bool { return true }
-func (t *mockTransport) Close()                                {}
+func (t *mockTransport) Close()                                  {}
 func (t *mockTransport) SendEvent(e *sentry.Event) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
