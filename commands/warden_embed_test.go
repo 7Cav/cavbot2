@@ -36,7 +36,7 @@ func TestBuildAddedMembersEmbedTruncationCount(t *testing.T) {
 
 	const lineLen = idLen + 4 // "<@" + id + ">\n"
 	const maxDescLen = 4096
-	wantRendered := maxDescLen / lineLen // 186
+	wantRendered := maxDescLen / lineLen  // 186
 	wantRemaining := total - wantRendered // 14
 
 	wantSuffix := fmt.Sprintf("... and %d more.", wantRemaining)

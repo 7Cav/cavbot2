@@ -173,7 +173,7 @@ func TestRunAwol_NoLOARegressionAndSortOrder(t *testing.T) {
 	// 14 dates → 7 AWOL. last post 2026-03-01 → many → larger.
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
-			"100": awolMember("Closer.C", "100", "2026-05-01 12:00:00"), // 14 dates → 7 AWOL
+			"100": awolMember("Closer.C", "100", "2026-05-01 12:00:00"),  // 14 dates → 7 AWOL
 			"200": awolMember("Farther.F", "200", "2026-03-01 12:00:00"), // big AWOL
 		},
 	}
