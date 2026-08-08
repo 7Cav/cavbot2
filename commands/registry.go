@@ -19,6 +19,7 @@ func NewRegistry() *Registry {
 		AFSM(),
 		GamertagSearch(),
 		S3AAR(),
+		Helpline(),
 	)
 	return r
 }

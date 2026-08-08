@@ -103,6 +103,16 @@ belong here, not inline in code comments.
   text, parsing can drift. `/afsm` always renders the disclaimer, regardless
   of whether the eligibles list is empty — see ADR 0002.
 
+## Member welfare
+
+- **Helpline card** — the set of crisis and mental-health support resources
+  `/helpline` renders, optionally addressed to a member. Every resource on it is
+  an **external, independent organisation**; the regiment designates no internal
+  crisis contact, because those services are staffed, trained, and continuously
+  available in a way a volunteer roster is not. The card's phone numbers and
+  dial sequences are an external contract with the same silent-drift hazard as
+  PAF labels — a changed number is a correctness change, not a copy edit.
+
 ## Warden roles
 
 The `/warden` command family applies and removes a small set of Discord roles by
