@@ -28,6 +28,7 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/s6-it-check` | S6 IT members eligible for full status |
 | `/warden` | Warden role management |
 | `/warden-bulkadd-internal` | Add a validated unit's roster to Verified Warden Internal |
+| `/helpline` | Crisis and mental health support resources, optionally addressed to a member |
 
 The registered set lives in `commands/registry.go` — update this table when it changes.
 
