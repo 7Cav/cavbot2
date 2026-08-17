@@ -104,6 +104,9 @@ func main() {
 	defer utils.InitSentry(Version)()
 
 	utils.Info("CavBot2 starting", "version", Version)
+
+	utils.Info("Warden role base name resolved", "base_name", commands.WardenRoleBaseName())
+
 	initLOACache()
 
 	// Route discordgo's own logging through slog before the session exists, so

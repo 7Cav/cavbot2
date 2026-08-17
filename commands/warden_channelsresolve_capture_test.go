@@ -21,7 +21,7 @@ import (
 // the purge reaches the GuildChannels lookup, then fails that lookup with err.
 func purgeChannelsGM(err error) *fakeGuildManager {
 	return &fakeGuildManager{
-		roles:        []*discordgo.Role{wardenRole("old-int", wardenRoleBaseName+" Internal")},
+		roles:        []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
 		ChannelsErrs: []error{err},
 	}
 }

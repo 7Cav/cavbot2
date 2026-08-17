@@ -27,7 +27,7 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/s3aar` | Attendance list for events and operations |
 | `/s6-it-check` | S6 IT members eligible for full status |
 | `/warden` | Warden role management |
-| `/warden-bulkadd-internal` | Add a validated unit's roster to Verified Warden Internal |
+| `/warden-bulkadd-internal` | Add a validated unit's roster to the internal Warden role |
 | `/helpline` | Crisis and mental health support resources, optionally addressed to a member |
 
 The registered set lives in `commands/registry.go` — update this table when it changes.
@@ -89,6 +89,7 @@ Not checked at startup, but each one silently disables something:
 | `BEARER` | API token for `api.7cav.us`. Every milpac lookup fails with no startup error — check this first if `/milpac`, `/awol` or `/afsm` come back empty. |
 | `FORUM_DB_DSN` | LOA cache stays empty, so `/loa` returns nothing. Left blank the bot logs `FORUM_DB_DSN not set, LOA cache disabled` once at startup — but `.env.example` ships a placeholder DSN, which is syntactically valid, so after `cp` you instead get `LOA cache refresh failed` once per node ID, immediately at startup and every 15 minutes after. Both mean the same thing. The production host `xenforo-db` resolves only inside the `xenforo_internal` Docker network. |
 | `LOA_NODE_IDS` | The code default is `180` alone, though `.env.example` already sets the five nodes production scans (`180,400,540,178,369`), so a copied `.env` never falls back. |
+| `WARDEN_ROLE_BASE_NAME` | The code default is `Verified Warden`, though `.env.example` sets what the roles are named in Discord now (`Verified Foxhole`), so a copied `.env` never falls back. Every `/warden` subcommand composes its role names from this and matches Discord **exactly**, so a value that doesn't reproduce the role name character for character fails all of them with `role not found` and changes nothing. The resolved value is logged at startup as `Warden role base name resolved`. |
 | `LOG_LEVEL` | Defaults to `INFO`. Accepts `DEBUG`, `INFO`, `WARN`, `ERROR` — **uppercase only**, anything else silently means `INFO` (including the `default` that `.env.example` ships). `DEBUG` shows per-post LOA parse failures. |
 | `DISCORDGO_LOG_LEVEL` | Defaults to `ERROR`, so discordgo reports only its own failures. Accepts `ERROR`, `WARN`, `INFO`, `DEBUG`; anything else means `ERROR`. `WARN` adds the frame the gateway sent when startup fails with `Discord session unavailable`. `DEBUG` also needs `LOG_LEVEL=DEBUG`, and logs every gateway event discordgo does not recognise with its full payload. |
 | `SENTRY_DSN` | Sentry stays off; the bot logs `Sentry disabled (SENTRY_DSN not set)`. |

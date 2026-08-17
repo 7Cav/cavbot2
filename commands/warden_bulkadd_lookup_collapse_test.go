@@ -19,7 +19,7 @@ func TestRunWardenBulkAdd_LookupSameSignatureCollapsesToOneCapture(t *testing.T)
 	rec.install(t)
 
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		// Every name search 500s with the same signature: a lookup-side storm.
 		MembersSearchErrs: []error{
 			restError(http.StatusInternalServerError, 0, rawBodyMarker),
@@ -62,7 +62,7 @@ func TestRunWardenBulkAdd_LookupMixedSignaturesCaptureOncePerSignature(t *testin
 	rec.install(t)
 
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		MembersSearchErrs: []error{
 			restError(http.StatusInternalServerError, 0, rawBodyMarker),
 			restError(http.StatusServiceUnavailable, 0, rawBodyMarker),
@@ -102,7 +102,7 @@ func TestRunWardenBulkAdd_LookupSingleFaultCapturesOnceCountOne(t *testing.T) {
 	rec.install(t)
 
 	gm := &fakeGuildManager{
-		roles:             []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles:             []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		MembersSearchErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
@@ -130,7 +130,7 @@ func TestRunWardenBulkAdd_LookupByIDFaultRoutesToCollector(t *testing.T) {
 	rec.install(t)
 
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		// Every GuildMember lookup 500s with the same signature.
 		MemberErrs: []error{
 			restError(http.StatusInternalServerError, 0, rawBodyMarker),
@@ -167,7 +167,7 @@ func TestRunWardenBulkAdd_LookupNonCapturedOutcomesListedNotCaptured(t *testing.
 	rec.install(t)
 
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		// The mention resolves by ID and 404s as a genuine absence (Unknown Member).
 		MemberErrs: []error{restError(http.StatusNotFound, discordgo.ErrCodeUnknownMember, rawBodyMarker)},
 		// "common" matches two members (too many); "ghost" is absent from the map (no match).
@@ -203,7 +203,7 @@ func TestRunWardenBulkAdd_Lookup4xxListedNotCaptured(t *testing.T) {
 	rec.install(t)
 
 	gm := &fakeGuildManager{
-		roles:             []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles:             []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		MembersSearchErrs: []error{restError(http.StatusBadRequest, 50035, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
@@ -231,7 +231,7 @@ func TestRunWardenAdd_MemberLookup5xxCapturesOnceInline(t *testing.T) {
 	rec.install(t)
 	// No membersByID: the snowflake lookup hits the injected 5xx instead of resolving.
 	gm := &fakeGuildManager{
-		roles:      []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles:      []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		MemberErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
@@ -257,7 +257,7 @@ func TestRunWardenRemove_MemberLookup5xxCapturesOnceInline(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{
-		roles:      []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles:      []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		MemberErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
@@ -285,7 +285,7 @@ func TestRunWardenBulkAdd_LookupAndRoleAddSameSignatureDoNotFold(t *testing.T) {
 	rec.install(t)
 
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		// alice (processed first) is a name search that 500s on lookup.
 		MembersSearchErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
 		// bob resolves cleanly, then its role add 500s — same {500,0} signature.
@@ -334,7 +334,7 @@ func TestRunWardenBulkAdd_LookupByIDConfig404CapturedAbsenceNot(t *testing.T) {
 		rec := &captureRecorder{}
 		rec.install(t)
 		gm := &fakeGuildManager{
-			roles:      []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+			roles:      []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 			MemberErrs: []error{restError(http.StatusNotFound, discordgo.ErrCodeUnknownGuild, rawBodyMarker)},
 		}
 		f := &fakeResponder{}
@@ -358,7 +358,7 @@ func TestRunWardenBulkAdd_LookupByIDConfig404CapturedAbsenceNot(t *testing.T) {
 		rec := &captureRecorder{}
 		rec.install(t)
 		gm := &fakeGuildManager{
-			roles:      []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+			roles:      []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 			MemberErrs: []error{restError(http.StatusNotFound, discordgo.ErrCodeUnknownMember, rawBodyMarker)},
 		}
 		f := &fakeResponder{}
