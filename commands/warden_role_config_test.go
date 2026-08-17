@@ -7,12 +7,10 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// The warden role base name is deployment configuration: the regiment renames
-// these roles between wars (Warden → Foxhole), and the bot has to follow
-// without a code release. These tests drive the configured name all the way to
-// the Discord role IDs the commands actually mutate, because a name that
-// resolves to nothing is exactly how the commands fail — silently to the code,
-// loudly to the operator.
+// These tests drive the configured base name all the way to the Discord role
+// IDs the commands actually mutate. Asserting on the composed names alone would
+// miss the failure that matters: a name that composes fine but matches no role
+// in the guild, which is how every /warden subcommand fails at once.
 
 // TestWardenRoleIDsResolveUnderConfiguredBaseName covers the shared
 // internal/external arm of the name composition.

@@ -19,17 +19,16 @@ import (
 const wardenRoleBaseNameDefault = "Verified Warden"
 
 // wardenRoleBaseNameEnv overrides the base name every warden role is composed
-// from. The regiment renames these roles between wars, so the name is
-// deployment configuration rather than a fixed identifier.
+// from.
 const wardenRoleBaseNameEnv = "WARDEN_ROLE_BASE_NAME"
 
-// WardenRoleBaseName is the base name in force for this deployment: the
-// configured override when set, otherwise the long-standing default. Read at
-// call time rather than cached in a package var, as s3aar.go reads BM_TOKEN at
-// the point of use — these are per-invocation Discord commands, so a getenv is
-// free next to the API calls that follow. Exported because main() logs the
-// resolved value at startup; a wrong name fails every warden subcommand
-// identically, so the operator needs to read it back without reproducing that.
+// WardenRoleBaseName returns the configured base name, or the default when the
+// variable is unset or empty. Read at call time rather than cached in a package
+// var, as s3aar.go reads BM_TOKEN at the point of use — these are
+// per-invocation Discord commands, so a getenv is free next to the API calls
+// that follow. Exported because main() logs the resolved value at startup; a
+// wrong name fails every warden subcommand identically, so the operator needs
+// to read it back without reproducing that.
 func WardenRoleBaseName() string {
 	if configured := os.Getenv(wardenRoleBaseNameEnv); configured != "" {
 		return configured

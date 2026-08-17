@@ -121,12 +121,10 @@ grants is configured Discord-side and is out of scope here.
 
 - **Warden role** — a Discord role the `/warden` commands manage by exact name.
   The name is composed as `<base> Internal` / `<base> External`, where the base
-  is deployment configuration (`WARDEN_ROLE_BASE_NAME`, default
-  `Verified Warden`). The regiment renames these roles between wars — Warden to
-  Foxhole on the Colonial change — so the base is a knob, not a fixed
-  identifier, and a rename is a config edit rather than a release. Matching is
+  comes from `WARDEN_ROLE_BASE_NAME` (default `Verified Warden`). Matching is
   exact: the configured base has to reproduce the Discord role name character
-  for character. The bot guarantees a member holds (or no longer holds) the
+  for character, and one that doesn't fails every `/warden` subcommand with
+  `role not found`. The bot guarantees a member holds (or no longer holds) the
   named role per the command invoked; it ascribes no meaning to what the role
   unlocks.
 - **Internal / External** — the two Warden role scopes (`internal`, `external`,
