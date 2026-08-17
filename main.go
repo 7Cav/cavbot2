@@ -104,6 +104,15 @@ func main() {
 	defer utils.InitSentry(Version)()
 
 	utils.Info("CavBot2 starting", "version", Version)
+
+	// The warden role base name is deployment configuration, and a wrong one
+	// fails every /warden subcommand identically with "role not found". Logging
+	// the resolved value here lets an operator confirm what the process actually
+	// read without reproducing the failure. slog quotes it, so stray padding is
+	// visible — Discord collapses whitespace when rendering the error reply, so
+	// this is the only place padding shows.
+	utils.Info("Warden role base name resolved", "base_name", commands.WardenRoleBaseName())
+
 	initLOACache()
 
 	// Route discordgo's own logging through slog before the session exists, so

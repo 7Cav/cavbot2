@@ -238,7 +238,7 @@ func TestDeliverPurgeSummary_BothSurfacesFailCaptures(t *testing.T) {
 func TestRunWardenPurge_TokenExpiryReachesChannelFallback(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
 	}
 	f := &fakeResponder{EditErrs: []error{tokenExpiredRESTError()}}
 	i := purgeInteractionWithChannel("guild-1", "chan-9")

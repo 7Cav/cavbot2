@@ -9,7 +9,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-const wardenInternalRoleName = wardenRoleBaseName + " Internal"
+const wardenInternalRoleName = wardenRoleBaseNameDefault + " Internal"
 
 // wardenBulkAddInternalInteraction builds a guild-context interaction carrying
 // the chosen unit value, mirroring what the Choices-backed picker emits.

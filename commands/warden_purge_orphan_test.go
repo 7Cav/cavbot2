@@ -16,7 +16,7 @@ import (
 func TestRecreateRole_OverwriteFailureCleansUpNewRole(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
 		channels: []*discordgo.Channel{
 			{
 				ID: "chan-1",
@@ -55,7 +55,7 @@ func TestRecreateRole_OverwriteFailureCleansUpNewRole(t *testing.T) {
 func TestRecreateRole_DoesNotReEditAfterCreate(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
 	}
 
 	_, _, err := recreateRoleWithChannelOverwrites(gm, "guild-1", "old-int", nil)
@@ -84,7 +84,7 @@ func TestRunWardenPurge_RecreateFailureSummaryHasNoRawBody(t *testing.T) {
 	noOverwriteDelay(t)
 	captureCount, _ := installCountingCapture(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
 		// Create fails with a 5xx carrying a raw body that must not leak.
 		RoleCreateErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
 	}
@@ -112,7 +112,7 @@ func TestRunWardenPurge_RecreateClientFaultNotCaptured(t *testing.T) {
 	noOverwriteDelay(t)
 	captureCount, _ := installCountingCapture(t)
 	gm := &fakeGuildManager{
-		roles:          []*discordgo.Role{wardenRole("old-int", wardenRoleBaseName+" Internal")},
+		roles:          []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
 		RoleCreateErrs: []error{restError(http.StatusForbidden, 0, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
@@ -144,7 +144,7 @@ func TestRunWardenPurge_OldRoleDeleteFailureReportsLingeringRole(t *testing.T) {
 	noOverwriteDelay(t)
 	captureCount, _ := installCountingCapture(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
 		// No channels -> no overwrites to re-apply; create succeeds, then the
 		// old-role delete fails with a 5xx carrying a raw body.
 		RoleDeleteErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
@@ -186,7 +186,7 @@ func TestRunWardenPurge_OldRoleDeleteFailureReportsLingeringRole(t *testing.T) {
 func TestRecreateRole_CleanupDeleteAlsoFailsReturnsOriginalError(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
 		channels: []*discordgo.Channel{
 			{
 				ID: "chan-1",
