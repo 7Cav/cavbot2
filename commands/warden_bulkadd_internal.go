@@ -65,10 +65,8 @@ func wardenInternalUnitChoices() []*discordgo.ApplicationCommandOptionChoice {
 }
 
 func WardenBulkAddInternal() Command {
-	// Both descriptions name the role the command actually writes to, so a
-	// renamed role does not leave the Discord picker advertising the old name
-	// while the command adds to the new one. Registered once at startup, which
-	// is also when the base name is resolved.
+	// Descriptions are baked in at registration, so compose them from the
+	// resolved name rather than a literal a rename would leave stale.
 	internalRoleName := resolveWardenRoleNames("internal")[0]
 
 	return Command{

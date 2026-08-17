@@ -23,12 +23,8 @@ const wardenRoleBaseNameDefault = "Verified Warden"
 const wardenRoleBaseNameEnv = "WARDEN_ROLE_BASE_NAME"
 
 // WardenRoleBaseName returns the configured base name, or the default when the
-// variable is unset or empty. Read at call time rather than cached in a package
-// var, as s3aar.go reads BM_TOKEN at the point of use — these are
-// per-invocation Discord commands, so a getenv is free next to the API calls
-// that follow. Exported because main() logs the resolved value at startup; a
-// wrong name fails every warden subcommand identically, so the operator needs
-// to read it back without reproducing that.
+// variable is unset or empty. Read at the point of use, as s3aar.go reads
+// BM_TOKEN. Exported so main() can log the resolved value at startup.
 func WardenRoleBaseName() string {
 	if configured := os.Getenv(wardenRoleBaseNameEnv); configured != "" {
 		return configured
@@ -701,9 +697,8 @@ func resolveWardenRoleNames(roleScope string) []string {
 		}
 	}
 
-	// Every other scope names one role. Callers validate the scope against
-	// wardenRoleScopes first, so in practice this is "internal" or "external";
-	// an unvalidated scope composes a name that simply won't match a role.
+	// Any other scope names one role; callers validate the scope first, so an
+	// unrecognised one just composes a name that matches nothing.
 	return []string{
 		base + " " + wardenTitleCaser.String(roleScope),
 	}

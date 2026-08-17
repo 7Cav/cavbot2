@@ -7,13 +7,11 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// These tests drive the configured base name all the way to the Discord role
-// IDs the commands actually mutate. Asserting on the composed names alone would
-// miss the failure that matters: a name that composes fine but matches no role
-// in the guild, which is how every /warden subcommand fails at once.
+// These tests drive the configured base name to the role IDs the commands
+// mutate. A name that composes fine but matches no role in the guild is the
+// failure that matters, and asserting on composed names would miss it.
 
-// TestWardenRoleIDsResolveUnderConfiguredBaseName covers the shared
-// internal/external arm of the name composition.
+// TestWardenRoleIDsResolveUnderConfiguredBaseName covers the single-role scopes.
 func TestWardenRoleIDsResolveUnderConfiguredBaseName(t *testing.T) {
 	t.Setenv(wardenRoleBaseNameEnv, "Verified Foxhole")
 
@@ -31,11 +29,9 @@ func TestWardenRoleIDsResolveUnderConfiguredBaseName(t *testing.T) {
 	}
 }
 
-// TestWardenBothScopeResolvesUnderConfiguredBaseName covers the "both" arm,
-// which composes its own pair of names rather than delegating to the arm above.
-// Converting one arm and not the other is the plausible half-fix, and it is
-// what this test exists to catch. Membership, not order: nothing downstream
-// depends on Internal preceding External.
+// TestWardenBothScopeResolvesUnderConfiguredBaseName covers the two-role scope.
+// Membership, not order: nothing downstream depends on Internal preceding
+// External.
 func TestWardenBothScopeResolvesUnderConfiguredBaseName(t *testing.T) {
 	t.Setenv(wardenRoleBaseNameEnv, "Verified Foxhole")
 
@@ -61,10 +57,8 @@ func TestWardenBothScopeResolvesUnderConfiguredBaseName(t *testing.T) {
 }
 
 // TestBulkAddInternalAppliesConfiguredRole covers /warden-bulkadd-internal,
-// which does its own lookup off resolveWardenRoleNames("internal")[0] rather
-// than going through resolveWardenRoleIDs — the one warden path that can break
-// independently of the four subcommands. The observable is the role actually
-// reaching the member, not the absence of an error reply.
+// which resolves its role independently of the four /warden subcommands. The
+// observable is the role reaching the member, not the absence of an error.
 func TestBulkAddInternalAppliesConfiguredRole(t *testing.T) {
 	t.Setenv(wardenRoleBaseNameEnv, "Verified Foxhole")
 
