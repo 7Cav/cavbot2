@@ -15,10 +15,10 @@ type mockTransport struct {
 	events []*sentry.Event
 }
 
-func (t *mockTransport) Configure(_ sentry.ClientOptions)      {}
-func (t *mockTransport) Flush(_ time.Duration) bool            { return true }
+func (t *mockTransport) Configure(_ sentry.ClientOptions)        {}
+func (t *mockTransport) Flush(_ time.Duration) bool              { return true }
 func (t *mockTransport) FlushWithContext(_ context.Context) bool { return true }
-func (t *mockTransport) Close()                                {}
+func (t *mockTransport) Close()                                  {}
 func (t *mockTransport) SendEvent(e *sentry.Event) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -105,6 +105,24 @@ func TestCaptureError_SendsEvent(t *testing.T) {
 	}
 }
 
+// Usage lives in Grafana and failures live in Sentry (ADR 0011), so "which
+// command is failing, and how often" has to be answerable on the Sentry side
+// alone. That needs command to be a tag: Sentry groups and filters on tags,
+// not on the extra context where it landed before.
+func TestCaptureError_CommandIsGroupable(t *testing.T) {
+	tr := initSentryWithTransport(t)
+
+	CaptureError("roster fetch failed", errors.New("upstream 500"), "command", "afsm", "guild_id", "9001")
+
+	events := tr.Events()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if got := events[0].Tags["command"]; got != "afsm" {
+		t.Errorf("tag command = %q, want %q", got, "afsm")
+	}
+}
+
 func TestCaptureError_SentryDisabled_NoPanic(t *testing.T) {
 	t.Setenv("SENTRY_DSN", "")
 	resetSentryHub(t)
@@ -150,6 +168,27 @@ func TestRecoverPanic_NoPanic_NoEvent(t *testing.T) {
 
 	if len(tr.Events()) != 0 {
 		t.Errorf("expected 0 events, got %d", len(tr.Events()))
+	}
+}
+
+// A panic is a failure like any other, so it has to be attributable to the
+// command that raised it — otherwise every handler panic groups under one
+// dispatcher-level context and per-command error rate goes blind exactly where
+// it matters most.
+func TestRecoverPanic_CommandIsGroupable(t *testing.T) {
+	tr := initSentryWithTransport(t)
+
+	func() {
+		defer RecoverPanic("slash-command", "command", "warden")
+		panic("nil map write")
+	}()
+
+	events := tr.Events()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if got := events[0].Tags["command"]; got != "warden" {
+		t.Errorf("tag command = %q, want %q", got, "warden")
 	}
 }
 

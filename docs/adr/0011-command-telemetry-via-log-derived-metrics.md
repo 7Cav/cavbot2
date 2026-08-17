@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Accepted. **Amended 2026-08-06** — the portability rationale below was written
+on a false premise; see *Amendment: metric names are not drop-in portable*. The
+decision itself is unchanged.
 
 ## Context
 
@@ -40,15 +42,15 @@ cavbot2 has no inbound HTTP surface today.
 - **Metric names are chosen to be drop-in portable to a native `/metrics`
   endpoint** later, when #98 (the web frontend) brings an HTTP server. Moving
   the counter/histogram from Alloy-derived to native then reuses the same series
-  names; dashboards do not change.
+  names; dashboards do not change. ⚠️ **Superseded — see the amendment below.**
 
 ## Considered options
 
 - **Native `/metrics` in the bot** (the `7cav-api:9090` pattern) — rejected for
   now. It adds an inbound HTTP surface to a bot that has none, and caller
   identity would *still* need the log path (cardinality), so it is strictly more
-  work. Deferred to the #98 era, when its HTTP server exists; the compatible
-  metric names keep that a clean swap.
+  work. Deferred to the #98 era, when its HTTP server exists — though the swap
+  is **not** as clean as this ADR originally claimed; see the amendment.
 - **Loki-only LogQL dashboards** — rejected. No first-class Prometheus metrics,
   weaker for long-range queries and (future) alerting.
 
@@ -68,3 +70,40 @@ cavbot2 has no inbound HTTP surface today.
 - **Only slash commands are counted.** Component (button) interactions are
   continuations of a command already counted; counting them would double-count
   one logical use.
+
+## Amendment: metric names are not drop-in portable (2026-08-06)
+
+Established when the Alloy block was written against the live host rather than
+against this ADR.
+
+**Alloy namespaces every `stage.metrics` metric with `loki_process_custom_`, and
+the prefix is not configurable.** A block declaring
+`name = "cavbot2_command_invocations_total"` stores
+`loki_process_custom_cavbot2_command_invocations_total` in Prometheus. This is
+observed behaviour on the host, where `npm_requests_total` has no series at all
+while `loki_process_custom_npm_requests_total` has 404k.
+
+So the portability rationale above is wrong. A native `/metrics` endpoint on the
+bot would expose the *unprefixed* name — a different series from the one the
+dashboards are built on. The later swap therefore costs either a rewrite of
+every dashboard query or a Prometheus recording rule / `metric_relabel_configs`
+bridging the two names.
+
+What this does **not** change:
+
+- **The decision stands.** Log-derived metrics are still right for a bot with no
+  inbound HTTP surface, and the alternative was rejected on the surface-area and
+  cardinality arguments, not on portability. Portability was a supporting
+  comfort, not the reason.
+- **The names stay as they are.** Choosing a name to pre-compensate for the
+  prefix would make the Alloy-side series read
+  `loki_process_custom_<something-mangled>`, which is worse to live with today
+  in exchange for a migration that may never happen.
+
+What it does change: **every query must use the prefixed name.** Querying the
+declared name returns zero rows against a perfectly correct config, which reads
+as "the instrumentation is broken" rather than "the query is wrong". The series
+also carry `component_id`, `component_path`, `instance` and `job="alloy"` from
+the collector, which alert rules need to expect.
+
+`docs/command-telemetry.md` carries the working queries.

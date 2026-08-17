@@ -51,14 +51,14 @@ func TestCaptureDeferredEditFailure_CapturesOnceWithContext(t *testing.T) {
 
 	i := appCommandInteractionWithGuild("guild-7")
 
-	captureDeferredEditFailure(i, "Milpac", errors.New("503 service unavailable"))
+	captureDeferredEditFailure(i, "milpac", errors.New("503 service unavailable"))
 
 	if rec.count != 1 {
 		t.Fatalf("expected exactly 1 Sentry capture, got %d", rec.count)
 	}
 	kvMap := kvToMap(rec.lastKV)
-	if kvMap["command"] != "Milpac" {
-		t.Fatalf("expected command=Milpac in capture context, got %v", kvMap["command"])
+	if kvMap["command"] != "milpac" {
+		t.Fatalf("expected command=milpac in capture context, got %v", kvMap["command"])
 	}
 	if kvMap["guild_id"] != "guild-7" {
 		t.Fatalf("expected guild_id=guild-7 in capture context, got %v", kvMap["guild_id"])
@@ -84,8 +84,8 @@ func TestRunGamertagSearch_EditFailureCapturesOnceNoRetry(t *testing.T) {
 	runGamertagSearch(f, i)
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
-	if kv := kvToMap(rec.lastKV); kv["command"] != "GamertagSearch" || kv["guild_id"] != "g-gt" {
-		t.Fatalf("expected command=GamertagSearch guild_id=g-gt, got %v", kv)
+	if kv := kvToMap(rec.lastKV); kv["command"] != "gamertag_search" || kv["guild_id"] != "g-gt" {
+		t.Fatalf("expected command=gamertag_search guild_id=g-gt, got %v", kv)
 	}
 }
 
@@ -103,8 +103,8 @@ func TestRunMilpac_EditFailureCapturesOnceNoRetry(t *testing.T) {
 	runMilpac(f, i)
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
-	if kv := kvToMap(rec.lastKV); kv["command"] != "Milpac" || kv["guild_id"] != "g-mp" {
-		t.Fatalf("expected command=Milpac guild_id=g-mp, got %v", kv)
+	if kv := kvToMap(rec.lastKV); kv["command"] != "milpac" || kv["guild_id"] != "g-mp" {
+		t.Fatalf("expected command=milpac guild_id=g-mp, got %v", kv)
 	}
 }
 
@@ -130,8 +130,8 @@ func TestRunLoa_UnavailableEditFailureCapturesOnceNoRetry(t *testing.T) {
 	runLoa(f, cache, loaRefDate, loaEditInteraction("g-loa1", "1-7"))
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
-	if kv := kvToMap(rec.lastKV); kv["command"] != "LOA" || kv["guild_id"] != "g-loa1" {
-		t.Fatalf("expected command=LOA guild_id=g-loa1, got %v", kv)
+	if kv := kvToMap(rec.lastKV); kv["command"] != "loa" || kv["guild_id"] != "g-loa1" {
+		t.Fatalf("expected command=loa guild_id=g-loa1, got %v", kv)
 	}
 }
 
@@ -154,8 +154,8 @@ func TestRunLoa_NoResultsEditFailureCapturesOnceNoRetry(t *testing.T) {
 	runLoa(f, cache, loaRefDate, loaEditInteraction("g-loa2", "1-7"))
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
-	if kv := kvToMap(rec.lastKV); kv["command"] != "LOA" || kv["guild_id"] != "g-loa2" {
-		t.Fatalf("expected command=LOA guild_id=g-loa2, got %v", kv)
+	if kv := kvToMap(rec.lastKV); kv["command"] != "loa" || kv["guild_id"] != "g-loa2" {
+		t.Fatalf("expected command=loa guild_id=g-loa2, got %v", kv)
 	}
 }
 
@@ -184,8 +184,8 @@ func TestRunLoa_ResultsEmbedEditFailureCapturesOnceNoRetry(t *testing.T) {
 	runLoa(f, cache, loaRefDate, loaEditInteraction("g-loa3", "1-7"))
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
-	if kv := kvToMap(rec.lastKV); kv["command"] != "LOA" || kv["guild_id"] != "g-loa3" {
-		t.Fatalf("expected command=LOA guild_id=g-loa3, got %v", kv)
+	if kv := kvToMap(rec.lastKV); kv["command"] != "loa" || kv["guild_id"] != "g-loa3" {
+		t.Fatalf("expected command=loa guild_id=g-loa3, got %v", kv)
 	}
 }
 
@@ -211,8 +211,8 @@ func TestRunAwol_NoResultsEditFailureCapturesOnceNoRetry(t *testing.T) {
 	runAwol(f, healthyCache(nil), awolRefDate, i)
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
-	if kv := kvToMap(rec.lastKV); kv["command"] != "Awol" || kv["guild_id"] != "g-awol1" {
-		t.Fatalf("expected command=Awol guild_id=g-awol1, got %v", kv)
+	if kv := kvToMap(rec.lastKV); kv["command"] != "awol" || kv["guild_id"] != "g-awol1" {
+		t.Fatalf("expected command=awol guild_id=g-awol1, got %v", kv)
 	}
 }
 
@@ -234,8 +234,8 @@ func TestRunAwol_EmbedEditFailureCapturesOnceNoRetry(t *testing.T) {
 	runAwol(f, healthyCache(nil), awolRefDate, i)
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
-	if kv := kvToMap(rec.lastKV); kv["command"] != "Awol" || kv["guild_id"] != "g-awol2" {
-		t.Fatalf("expected command=Awol guild_id=g-awol2, got %v", kv)
+	if kv := kvToMap(rec.lastKV); kv["command"] != "awol" || kv["guild_id"] != "g-awol2" {
+		t.Fatalf("expected command=awol guild_id=g-awol2, got %v", kv)
 	}
 }
 
@@ -262,8 +262,8 @@ func TestRunAwol_FileSendFailureCapturesOnceNoRetry(t *testing.T) {
 	runAwol(f, healthyCache(nil), awolRefDate, i)
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
-	if kv := kvToMap(rec.lastKV); kv["command"] != "Awol" || kv["guild_id"] != "g-awol3" {
-		t.Fatalf("expected command=Awol guild_id=g-awol3, got %v", kv)
+	if kv := kvToMap(rec.lastKV); kv["command"] != "awol" || kv["guild_id"] != "g-awol3" {
+		t.Fatalf("expected command=awol guild_id=g-awol3, got %v", kv)
 	}
 }
 
@@ -295,8 +295,8 @@ func TestRunAFSM_EditFailureCapturesOnceNoRetry(t *testing.T) {
 	runAFSM(f, i)
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
-	if kv := kvToMap(rec.lastKV); kv["command"] != "AFSM" || kv["guild_id"] != "g-afsm" {
-		t.Fatalf("expected command=AFSM guild_id=g-afsm, got %v", kv)
+	if kv := kvToMap(rec.lastKV); kv["command"] != "afsm" || kv["guild_id"] != "g-afsm" {
+		t.Fatalf("expected command=afsm guild_id=g-afsm, got %v", kv)
 	}
 }
 
@@ -327,7 +327,7 @@ func TestRunS6ITCheck_EditFailureCapturesOnceNoRetry(t *testing.T) {
 	runS6ITCheck(f, i)
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
-	if kv := kvToMap(rec.lastKV); kv["command"] != "S6ITCheck" || kv["guild_id"] != "g-s6" {
-		t.Fatalf("expected command=S6ITCheck guild_id=g-s6, got %v", kv)
+	if kv := kvToMap(rec.lastKV); kv["command"] != "s6-it-check" || kv["guild_id"] != "g-s6" {
+		t.Fatalf("expected command=s6-it-check guild_id=g-s6, got %v", kv)
 	}
 }

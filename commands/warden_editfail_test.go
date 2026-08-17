@@ -109,8 +109,11 @@ func TestEditEphemeral_CaptureCarriesCommandAndGuildContext(t *testing.T) {
 	editEphemeral(f, i, "content")
 
 	kvMap := kvToMap(*gotKV)
-	if kvMap["command"] != "remove" {
-		t.Fatalf("expected command=remove in capture context, got %v", kvMap["command"])
+	if kvMap["command"] != "warden" {
+		t.Fatalf("expected command=warden in capture context, got %v", kvMap["command"])
+	}
+	if kvMap["subcommand"] != "remove" {
+		t.Fatalf("expected subcommand=remove in capture context, got %v", kvMap["subcommand"])
 	}
 	if kvMap["guild_id"] != "guild-42" {
 		t.Fatalf("expected guild_id=guild-42 in capture context, got %v", kvMap["guild_id"])
@@ -130,8 +133,11 @@ func TestEditEphemeral_CaptureFallsBackToUnknownCommand(t *testing.T) {
 	editEphemeral(f, i, "content")
 
 	kvMap := kvToMap(*gotKV)
-	if kvMap["command"] != "unknown" {
-		t.Fatalf("expected command=unknown when no command option is present, got %v", kvMap["command"])
+	if kvMap["subcommand"] != "unknown" {
+		t.Fatalf("expected subcommand=unknown when no command option is present, got %v", kvMap["subcommand"])
+	}
+	if kvMap["command"] != "warden" {
+		t.Fatalf("expected command=warden even when the subcommand is unresolvable, got %v", kvMap["command"])
 	}
 }
 

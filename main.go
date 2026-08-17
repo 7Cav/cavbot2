@@ -16,12 +16,10 @@ import (
 
 	"github.com/7cav/cavbot2/commands"
 	"github.com/bwmarrin/discordgo"
+	"github.com/joho/godotenv"
 )
 
-
 var Version = "dev"
-
-
 
 var (
 	Token    string
@@ -31,6 +29,19 @@ var (
 )
 
 func init() {
+	// Load .env before the reads below so `go run .` works from a filled-in
+	// .env alone. godotenv.Load never overwrites a variable already in the
+	// environment, so Docker and CI — which inject env directly and ship no
+	// .env — behave exactly as they did before. A missing file is the normal
+	// case there and not an error; anything else means the file exists but
+	// could not be read, which is worth failing on rather than starting with
+	// half the configuration silently missing.
+	//
+	// This must stay in init(), not main(): the panics below run first.
+	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
+		panic(fmt.Sprintf("Found .env but could not load it: %v", err))
+	}
+
 	Token = os.Getenv("DISCORD_TOKEN")
 	GuildID = os.Getenv("GUILD_ID")
 	LogLevel = os.Getenv("LOG_LEVEL")
@@ -94,10 +105,16 @@ func main() {
 
 	utils.Info("CavBot2 starting", "version", Version)
 	initLOACache()
+
+	// Route discordgo's own logging through slog before the session exists, so
+	// nothing it emits escapes to the stdlib logger.
+	utils.InstallDiscordgoLogger()
+
 	dg, err := discordgo.New("Bot " + Token)
 	if err != nil {
 		panic(fmt.Sprintf("Error creating Discord session: %v", err))
 	}
+	dg.LogLevel = utils.DiscordgoLogLevel()
 	// IntentsGuildMembers is a Privileged Gateway Intent — must be toggled on
 	// in the Discord Developer Portal for this bot application, otherwise
 	// dg.Open() fails at runtime with no compile-time signal.
@@ -106,6 +123,10 @@ func main() {
 	registry := commands.NewRegistry()
 
 	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		// Backstop only. Registered slash-command handlers are wrapped with
+		// their own recover that names the failing command (commands/telemetry.go),
+		// so what reaches here is a panic from the routing below or from a
+		// component interaction.
 		defer utils.RecoverPanic("interaction-handler")
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
@@ -123,9 +144,10 @@ func main() {
 		}
 	})
 
-	err = dg.Open()
-	if err != nil {
-		panic(fmt.Sprintf("Error opening connection: %v", err))
+	// Not dg.Open() directly: a session can open without ever reaching READY,
+	// which leaves dg.State.User nil for the command registration below.
+	if err := utils.OpenSession(dg); err != nil {
+		panic(fmt.Sprintf("Discord session unavailable: %v", err))
 	}
 	defer func() {
 		err := dg.Close()

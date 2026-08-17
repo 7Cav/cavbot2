@@ -21,9 +21,10 @@ belong here, not inline in code comments.
   (e.g. `D/ACD`, `A/1-7`). `ACD` is a battalion-level group; `D/ACD` is a
   company within it. Exposed by the API's position-group hierarchy and used as
   the unit vocabulary for roster lookups.
-- **Regiment time (UTC)** — UTC is 7Cav standard time. Wherever the bot has to
-  decide what calendar day something falls on (e.g. AWOL day-counting), a
-  "day" is a **UTC calendar date**.
+- **Regiment time (UTC) / Zulu** — UTC is 7Cav standard time; **Zulu** is its
+  member-facing name, written with a `z` suffix (`2300z`). Wherever the bot has
+  to decide what calendar day something falls on (e.g. AWOL day-counting), a
+  "day" is a **UTC calendar date**. _Avoid_: GMT.
 
 ## Member records
 
@@ -102,6 +103,16 @@ belong here, not inline in code comments.
   text, parsing can drift. `/afsm` always renders the disclaimer, regardless
   of whether the eligibles list is empty — see ADR 0002.
 
+## Member welfare
+
+- **Helpline card** — the set of crisis and mental-health support resources
+  `/helpline` renders, optionally addressed to a member. Every resource on it is
+  an **external, independent organisation**; the regiment designates no internal
+  crisis contact, because those services are staffed, trained, and continuously
+  available in a way a volunteer roster is not. The card's phone numbers and
+  dial sequences are an external contract with the same silent-drift hazard as
+  PAF labels — a changed number is a correctness change, not a copy edit.
+
 ## Warden roles
 
 The `/warden` command family applies and removes a small set of Discord roles by
@@ -127,9 +138,6 @@ grants is configured Discord-side and is out of scope here.
 - **Xenforo MySQL** — read-only access to the forum DB. Connection pool
   deliberately tiny (`SetMaxOpenConns(2)`) because this is a low-rate
   background scan.
-- **GitHub Apps API** — `utils.GithubAuth(clientID, pem)` mints an
-  installation token. Only consumer right now is `/apps_beta_deploy`,
-  dispatching a workflow on `7Cav/adr`.
 
 ## Observability
 

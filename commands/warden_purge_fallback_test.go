@@ -183,8 +183,11 @@ func TestDeliverPurgeSummary_UnexpectedFailureCapturedNotFallback(t *testing.T) 
 		t.Fatalf("expected exactly 1 Sentry capture on an unexpected failure, got %d", *captures)
 	}
 	kvMap := kvToMap(*gotKV)
-	if kvMap["command"] != "purge" {
-		t.Fatalf("expected command=purge in capture context, got %v", kvMap["command"])
+	if kvMap["command"] != "warden" {
+		t.Fatalf("expected command=warden in capture context, got %v", kvMap["command"])
+	}
+	if kvMap["subcommand"] != "purge" {
+		t.Fatalf("expected subcommand=purge in capture context, got %v", kvMap["subcommand"])
 	}
 	if kvMap["guild_id"] != "guild-7" {
 		t.Fatalf("expected guild_id=guild-7 in capture context, got %v", kvMap["guild_id"])
@@ -211,8 +214,11 @@ func TestDeliverPurgeSummary_BothSurfacesFailCaptures(t *testing.T) {
 		t.Fatalf("expected exactly 1 Sentry capture when both surfaces fail, got %d", *captures)
 	}
 	kvMap := kvToMap(*gotKV)
-	if kvMap["command"] != "purge" {
-		t.Fatalf("expected command=purge in capture context, got %v", kvMap["command"])
+	if kvMap["command"] != "warden" {
+		t.Fatalf("expected command=warden in capture context, got %v", kvMap["command"])
+	}
+	if kvMap["subcommand"] != "purge" {
+		t.Fatalf("expected subcommand=purge in capture context, got %v", kvMap["subcommand"])
 	}
 	if kvMap["guild_id"] != "guild-3" {
 		t.Fatalf("expected guild_id=guild-3 in capture context, got %v", kvMap["guild_id"])

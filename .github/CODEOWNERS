@@ -1,0 +1,3 @@
+# Default owner for everything in the repo.
+# Routing only — `require_code_owner_review` is intentionally left off.
+*       @SyniRon

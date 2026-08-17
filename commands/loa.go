@@ -106,7 +106,7 @@ func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *
 			"staleness", now.Sub(lastRefresh),
 		)
 		if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg}); err != nil {
-			captureDeferredEditFailure(i, "LOA", err)
+			captureDeferredEditFailure(i, "loa", err)
 		}
 		return
 	}
@@ -161,7 +161,7 @@ func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *
 		if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 			Content: &response,
 		}); err != nil {
-			captureDeferredEditFailure(i, "LOA", err)
+			captureDeferredEditFailure(i, "loa", err)
 		}
 		return
 	}
@@ -221,7 +221,7 @@ func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *
 		Content: stringPtr(""),
 		Embeds:  &embeds,
 	}); err != nil {
-		captureDeferredEditFailure(i, "LOA", err)
+		captureDeferredEditFailure(i, "loa", err)
 		return
 	}
 

@@ -17,6 +17,11 @@ import "github.com/bwmarrin/discordgo"
 // its subcommand off the `command` option, whereas these commands each pass their
 // own fixed command name. Both funnel through the same captureError seam and
 // record the same {command, guild_id} context shape.
+//
+// `command` must be the REGISTERED slash-command name (`milpac`, `s6-it-check`),
+// not a display name. utils.CaptureError promotes it to a Sentry tag, so a
+// display name here would group the same command's failures separately from the
+// ones the telemetry decorator attributes. See docs/command-telemetry.md.
 func captureDeferredEditFailure(interaction *discordgo.InteractionCreate, command string, err error) {
 	guildID := ""
 	if interaction != nil {
