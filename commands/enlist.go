@@ -3,7 +3,7 @@ package commands
 import (
 	"github.com/bwmarrin/discordgo"
 	"fmt"
-	"utils"
+	"github.com/7cav/cavbot2/utils"
 )
 
 func Enlist() Command {
