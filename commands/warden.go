@@ -3,6 +3,7 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -16,6 +17,23 @@ import (
 )
 
 const wardenRoleBaseName = "Verified Warden"
+
+// wardenRoleBaseNameEnv overrides the base name every warden role is composed
+// from. The regiment renames these roles between wars, so the name is
+// deployment configuration rather than a fixed identifier.
+const wardenRoleBaseNameEnv = "WARDEN_ROLE_BASE_NAME"
+
+// wardenRoleBase is the base name in force for this deployment: the configured
+// override when set, otherwise the long-standing default. Read at call time
+// rather than cached at startup, matching how BM_TOKEN is read in s3aar.go —
+// these are per-invocation Discord commands, so a getenv is free next to the
+// API calls that follow, and nothing has to be re-wired through main().
+func wardenRoleBase() string {
+	if configured := os.Getenv(wardenRoleBaseNameEnv); configured != "" {
+		return configured
+	}
+	return wardenRoleBaseName
+}
 
 // maxBulkAddEntries caps how many comma-separated entries a single /warden
 // bulkadd may carry. Each entry can trigger a GuildMembersSearch plus a per-role
@@ -44,6 +62,14 @@ var (
 )
 
 func Warden() Command {
+	// Logged once at registry build, i.e. at startup. The name is deployment
+	// configuration and a wrong one fails every warden subcommand identically
+	// ("role not found"), so the operator needs to see which name the process
+	// actually resolved without reproducing the failure. Quoted by slog, which
+	// also makes stray padding visible — Discord collapses whitespace when it
+	// renders the error reply, so the log is where padding shows up.
+	utils.Info("Warden role base name", "base_name", wardenRoleBase())
+
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
 			Name:        "warden",
@@ -676,16 +702,16 @@ func resolveWardenRoleNames(roleScope string) []string {
 	switch roleScope {
 	case "both":
 		return []string{
-			wardenRoleBaseName + " Internal",
-			wardenRoleBaseName + " External",
+			wardenRoleBase() + " Internal",
+			wardenRoleBase() + " External",
 		}
 	case "internal", "external":
 		return []string{
-			wardenRoleBaseName + " " + wardenTitleCaser.String(roleScope),
+			wardenRoleBase() + " " + wardenTitleCaser.String(roleScope),
 		}
 	default:
 		return []string{
-			wardenRoleBaseName + " " + wardenTitleCaser.String(roleScope),
+			wardenRoleBase() + " " + wardenTitleCaser.String(roleScope),
 		}
 	}
 }

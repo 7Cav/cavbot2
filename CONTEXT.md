@@ -119,15 +119,21 @@ The `/warden` command family applies and removes a small set of Discord roles by
 name. The bot's concern ends at role membership — whatever access a Warden role
 grants is configured Discord-side and is out of scope here.
 
-- **Warden role** — a Discord role the `/warden` commands manage by exact name
-  (`Verified Warden Internal`, `Verified Warden External`). The bot guarantees a
-  member holds (or no longer holds) the named role per the command invoked; it
-  ascribes no meaning to what the role unlocks.
+- **Warden role** — a Discord role the `/warden` commands manage by exact name.
+  The name is composed as `<base> Internal` / `<base> External`, where the base
+  is deployment configuration (`WARDEN_ROLE_BASE_NAME`, default
+  `Verified Warden`). The regiment renames these roles between wars — Warden to
+  Foxhole on the Colonial change — so the base is a knob, not a fixed
+  identifier, and a rename is a config edit rather than a release. Matching is
+  exact: the configured base has to reproduce the Discord role name character
+  for character. The bot guarantees a member holds (or no longer holds) the
+  named role per the command invoked; it ascribes no meaning to what the role
+  unlocks.
 - **Internal / External** — the two Warden role scopes (`internal`, `external`,
   or `both`). Opaque named roles as far as the bot is concerned. _Avoid_:
   treating these as access tiers in code — the distinction lives in Discord.
 - **Validated internal unit** — a position group whose current roster members
-  the regiment treats as automatically belonging in `Verified Warden Internal`
+  the regiment treats as automatically belonging in the internal Warden role
   (e.g. `D/ACD`). A curated set; not every unit is one.
 
 ## External systems
