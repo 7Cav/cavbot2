@@ -1,10 +1,9 @@
 package commands
 
 import (
-
 	"fmt"
-	"github.com/bwmarrin/discordgo"
 	"github.com/7cav/cavbot2/utils"
+	"github.com/bwmarrin/discordgo"
 )
 
 func Enlist() Command {
@@ -16,6 +15,7 @@ func Enlist() Command {
 		Handler: handleEnlistCommand,
 	}
 }
+
 func handleEnlistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	runEnlist(utils.NewSessionResponder(s), i)
 }
