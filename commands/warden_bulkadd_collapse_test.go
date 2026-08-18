@@ -36,7 +36,7 @@ func TestRunWardenBulkAdd_SameSignatureCollapsesToOneCapture(t *testing.T) {
 	bobQ, bobM := searchMember("bob", "222")
 	carolQ, carolM := searchMember("carol", "333")
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			aliceQ: aliceM, bobQ: bobM, carolQ: carolM,
 		},
@@ -89,7 +89,7 @@ func TestRunWardenBulkAdd_ClientFaultsListedNotCaptured(t *testing.T) {
 	aliceQ, aliceM := searchMember("alice", "111")
 	bobQ, bobM := searchMember("bob", "222")
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			aliceQ: aliceM, bobQ: bobM,
 		},
@@ -131,7 +131,7 @@ func TestRunWardenBulkAdd_MixedSignaturesCaptureOncePerSignature(t *testing.T) {
 	aliceQ, aliceM := searchMember("alice", "111")
 	bobQ, bobM := searchMember("bob", "222")
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			aliceQ: aliceM, bobQ: bobM,
 		},
@@ -178,7 +178,7 @@ func TestRunWardenBulkAdd_SameStatusDifferentCodeCapturesPerCode(t *testing.T) {
 	aliceQ, aliceM := searchMember("alice", "111")
 	bobQ, bobM := searchMember("bob", "222")
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			aliceQ: aliceM, bobQ: bobM,
 		},
@@ -225,8 +225,8 @@ func TestRunWardenBulkAdd_BothScopeCountsRoleAttemptsNotMembers(t *testing.T) {
 	aliceQ, aliceM := searchMember("alice", "111")
 	gm := &fakeGuildManager{
 		roles: []*discordgo.Role{
-			wardenRole("r-int", wardenRoleBaseName+" Internal"),
-			wardenRole("r-ext", wardenRoleBaseName+" External"),
+			wardenRole("r-int", wardenRoleBaseNameDefault+" Internal"),
+			wardenRole("r-ext", wardenRoleBaseNameDefault+" External"),
 		},
 		searchResults: map[string][]*discordgo.Member{aliceQ: aliceM},
 		// Both the Internal and External adds for the one member fail 5xx.
@@ -290,7 +290,7 @@ func TestRunWardenBulkAdd_PanicMidLoopStillFlushesPendingCaptures(t *testing.T) 
 
 	aliceQ, aliceM := searchMember("alice", "111")
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			aliceQ: aliceM,
 			// A member with a nil User: dereferencing member.User.ID in the role-add

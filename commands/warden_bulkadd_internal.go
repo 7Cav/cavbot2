@@ -65,15 +65,19 @@ func wardenInternalUnitChoices() []*discordgo.ApplicationCommandOptionChoice {
 }
 
 func WardenBulkAddInternal() Command {
+	// Descriptions are baked in at registration, so compose them from the
+	// resolved name rather than a literal a rename would leave stale.
+	internalRoleName := resolveWardenRoleNames("internal")[0]
+
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
 			Name:        "warden-bulkadd-internal",
-			Description: "Add a validated unit's roster to Verified Warden Internal",
+			Description: "Add a validated unit's roster to " + internalRoleName,
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "unit",
-					Description: "Validated unit whose roster is added to Verified Warden Internal",
+					Description: "Validated unit whose roster is added to " + internalRoleName,
 					Required:    true,
 					Choices:     wardenInternalUnitChoices(),
 				},

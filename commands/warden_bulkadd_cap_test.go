@@ -28,7 +28,7 @@ func makeBulkAddEntries(n int) string {
 // token window (#173).
 func TestRunWarden_BulkAddOverLimitRejectedBeforeAnyAPICall(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 	}
 	f := &fakeResponder{}
 
@@ -76,7 +76,7 @@ func TestRunWarden_BulkAddAtLimitStillFansOut(t *testing.T) {
 		}
 	}
 	gm := &fakeGuildManager{
-		roles:         []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles:         []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		searchResults: search,
 	}
 	f := &fakeResponder{}
@@ -134,7 +134,7 @@ func TestRunWarden_BulkAddCountsParsedEntriesNotRawCommas(t *testing.T) {
 	}
 
 	gm := &fakeGuildManager{
-		roles:         []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles:         []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		searchResults: search,
 	}
 	f := &fakeResponder{}

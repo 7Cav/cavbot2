@@ -237,7 +237,7 @@ func lastResponseContent(calls []recordedCall) string {
 
 func TestRunWarden_AddDeferredEphemeralAcknowledge(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles:       []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles:       []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		membersByID: map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 	}
 	f := &fakeResponder{}
@@ -435,7 +435,7 @@ func TestInteractionUsernameAndID(t *testing.T) {
 func TestRunWardenPurge_HappyPath(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
 		channels: []*discordgo.Channel{
 			{
 				ID: "chan-1",
@@ -474,8 +474,8 @@ func TestRunWardenPurge_BothScopeRecreatesTwoRoles(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
 		roles: []*discordgo.Role{
-			wardenRole("old-int", wardenRoleBaseName+" Internal"),
-			wardenRole("old-ext", wardenRoleBaseName+" External"),
+			wardenRole("old-int", wardenRoleBaseNameDefault+" Internal"),
+			wardenRole("old-ext", wardenRoleBaseNameDefault+" External"),
 		},
 	}
 	f := &fakeResponder{}
@@ -498,8 +498,8 @@ func TestRunWardenPurge_PartialFailureContinues(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
 		roles: []*discordgo.Role{
-			wardenRole("old-int", wardenRoleBaseName+" Internal"),
-			wardenRole("old-ext", wardenRoleBaseName+" External"),
+			wardenRole("old-int", wardenRoleBaseNameDefault+" Internal"),
+			wardenRole("old-ext", wardenRoleBaseNameDefault+" External"),
 		},
 		// First create succeeds, second fails -> External role recreation errors,
 		// but the loop must continue and report a mixed summary.
@@ -528,7 +528,7 @@ func TestRunWardenPurge_PartialFailureContinues(t *testing.T) {
 func TestRunWardenPurge_GuildChannelsErrorSurfaces(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
-		roles:        []*discordgo.Role{wardenRole("old-int", wardenRoleBaseName+" Internal")},
+		roles:        []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
 		ChannelsErrs: []error{fmt.Errorf("missing access")},
 	}
 	f := &fakeResponder{}
@@ -568,7 +568,7 @@ func TestRunWardenPurge_RoleNotFoundSurfaces(t *testing.T) {
 
 func TestRunWarden_RemoveSuccess(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles:       []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles:       []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		membersByID: map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 	}
 	f := &fakeResponder{}
@@ -590,7 +590,7 @@ func TestRunWarden_RemoveSuccess(t *testing.T) {
 
 func TestRunWarden_AddRoleAddFailureSurfaces(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles:             []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles:             []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		membersByID:       map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 		MemberRoleAddErrs: []error{fmt.Errorf("forbidden")},
 	}
@@ -616,7 +616,7 @@ func TestRunWarden_AddRoleAddFailureSurfaces(t *testing.T) {
 
 func TestRunWarden_BulkAddMixedResults(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			"good": {{User: &discordgo.User{ID: "111", Username: "good"}}},
 			// "bad" has no search result -> findGuildMember returns not-found.

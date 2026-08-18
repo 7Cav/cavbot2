@@ -3,6 +3,7 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -15,7 +16,21 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-const wardenRoleBaseName = "Verified Warden"
+const wardenRoleBaseNameDefault = "Verified Warden"
+
+// wardenRoleBaseNameEnv overrides the base name every warden role is composed
+// from.
+const wardenRoleBaseNameEnv = "WARDEN_ROLE_BASE_NAME"
+
+// WardenRoleBaseName returns the configured base name, or the default when the
+// variable is unset or empty. Read at the point of use, as s3aar.go reads
+// BM_TOKEN. Exported so main() can log the resolved value at startup.
+func WardenRoleBaseName() string {
+	if configured := os.Getenv(wardenRoleBaseNameEnv); configured != "" {
+		return configured
+	}
+	return wardenRoleBaseNameDefault
+}
 
 // maxBulkAddEntries caps how many comma-separated entries a single /warden
 // bulkadd may carry. Each entry can trigger a GuildMembersSearch plus a per-role
@@ -673,20 +688,19 @@ func reapplyRoleOverwrites(
 }
 
 func resolveWardenRoleNames(roleScope string) []string {
-	switch roleScope {
-	case "both":
+	base := WardenRoleBaseName()
+
+	if roleScope == "both" {
 		return []string{
-			wardenRoleBaseName + " Internal",
-			wardenRoleBaseName + " External",
+			base + " Internal",
+			base + " External",
 		}
-	case "internal", "external":
-		return []string{
-			wardenRoleBaseName + " " + wardenTitleCaser.String(roleScope),
-		}
-	default:
-		return []string{
-			wardenRoleBaseName + " " + wardenTitleCaser.String(roleScope),
-		}
+	}
+
+	// Any other scope names one role; callers validate the scope first, so an
+	// unrecognised one just composes a name that matches nothing.
+	return []string{
+		base + " " + wardenTitleCaser.String(roleScope),
 	}
 }
 

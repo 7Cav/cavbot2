@@ -39,7 +39,7 @@ func TestResolveWardenRoleIDs_GuildRoles5xxCaptures(t *testing.T) {
 	for key, want := range map[string]string{
 		"command": "warden",
 		"guild":   "guild-1",
-		"role":    wardenRoleBaseName + " Internal",
+		"role":    wardenRoleBaseNameDefault + " Internal",
 	} {
 		got, ok := kvValue(rec.lastKV, key)
 		if !ok {

@@ -66,7 +66,7 @@ func TestFindGuildRoleIDByName_APIErrorIsNotNotFound(t *testing.T) {
 // Found: resolveWardenRoleIDs returns the resolved ids and names, no error.
 func TestResolveWardenRoleIDs_Found(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 	}
 
 	ids, names, err := resolveWardenRoleIDs(gm, "guild-1", "internal")
@@ -76,7 +76,7 @@ func TestResolveWardenRoleIDs_Found(t *testing.T) {
 	if len(ids) != 1 || ids[0] != "r-int" {
 		t.Fatalf("expected [r-int], got %v", ids)
 	}
-	if len(names) != 1 || names[0] != wardenRoleBaseName+" Internal" {
+	if len(names) != 1 || names[0] != wardenRoleBaseNameDefault+" Internal" {
 		t.Fatalf("unexpected names %v", names)
 	}
 }
@@ -96,7 +96,7 @@ func TestResolveWardenRoleIDs_NotFoundMessageUnchanged(t *testing.T) {
 	if !strings.Contains(got, "role not found in guild") {
 		t.Fatalf("expected role-not-found message, got %q", got)
 	}
-	if !strings.Contains(got, wardenRoleBaseName+" Internal") {
+	if !strings.Contains(got, wardenRoleBaseNameDefault+" Internal") {
 		t.Fatalf("not-found message must name the missing role, got %q", got)
 	}
 }

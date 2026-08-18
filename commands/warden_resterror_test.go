@@ -665,7 +665,7 @@ func wardenRemoveInteraction() *discordgo.InteractionCreate {
 
 func wardenRoleAddGM(addErr error) *fakeGuildManager {
 	return &fakeGuildManager{
-		roles:             []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles:             []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		membersByID:       map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 		MemberRoleAddErrs: []error{addErr},
 	}
@@ -787,7 +787,7 @@ func TestRunWardenRemove_RoleRemoveUnknownGuild404ConfigFault(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{
-		roles:                []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles:                []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		membersByID:          map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 		MemberRoleRemoveErrs: []error{restError(http.StatusNotFound, discordgo.ErrCodeUnknownGuild, rawBodyMarker)},
 	}
@@ -820,7 +820,7 @@ func TestRunWardenRemove_RoleRemove403ShowsHierarchyHintNoCapture(t *testing.T) 
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{
-		roles:                []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles:                []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		membersByID:          map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 		MemberRoleRemoveErrs: []error{restError(http.StatusForbidden, 50013, rawBodyMarker)},
 	}
@@ -844,7 +844,7 @@ func TestRunWardenRemove_RoleRemove5xxCaptures(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{
-		roles:                []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles:                []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		membersByID:          map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 		MemberRoleRemoveErrs: []error{restError(http.StatusBadGateway, 0, rawBodyMarker)},
 	}
@@ -867,7 +867,7 @@ func TestRunWardenBulkAdd_RoleAdd403NoCapture(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			"good": {{User: &discordgo.User{ID: "111", Username: "good"}}},
 		},
@@ -895,7 +895,7 @@ func TestRunWardenBulkAdd_RoleAdd5xxCaptures(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseName+" Internal")},
+		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			"good": {{User: &discordgo.User{ID: "111", Username: "good"}}},
 		},
