@@ -40,7 +40,7 @@ func runEnlist(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 			Embeds: []*discordgo.MessageEmbed{
 				{
 					Title: "Enlistment Process",
-					Description: fmt.Sprintf("Start your application at [%s](%s). The steps below show what to expect.",
+					Description: fmt.Sprintf("Start your application at [%s](%s).\nThe steps below show what to expect.",
 						strings.TrimPrefix(enlistFormURL, "https://"), enlistFormURL),
 					Color: 0xfbcc29, // Cav Yellow
 					Image: &discordgo.MessageEmbedImage{
