@@ -2,6 +2,8 @@ package commands
 
 import (
 	"errors"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
@@ -112,4 +114,49 @@ func TestRunEnlist_FailedResponseStillTellsTheInvoker(t *testing.T) {
 		}
 	}
 	t.Fatal("the invoker was told nothing after the response failed")
+}
+
+// deliveredCardText joins everything the invoker actually reads: message
+// content plus every embed's title and description, across whichever call
+// shape carried them.
+func deliveredCardText(calls []recordedCall) string {
+	var sb strings.Builder
+	for _, c := range calls {
+		sb.WriteString(deliveredText(c))
+		sb.WriteString("\n")
+	}
+	for _, e := range deliveredEmbeds(calls) {
+		sb.WriteString(e.Title)
+		sb.WriteString("\n")
+		sb.WriteString(e.Description)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// enlistLinkPattern matches the enlistment URL only where it ends at a
+// boundary. A plain substring check also matches a longer path that merely
+// starts with it (/enlistment, /enlist-now), so a divergent hardcoded URL
+// slips through. That is the same trap a bare "988" literal falls into in
+// helpline_test.go, and it was caught here by mutating the code and watching
+// the substring form stay green.
+var enlistLinkPattern = regexp.MustCompile(regexp.QuoteMeta(enlistFormURL) + `($|[^\w/-])`)
+
+// The infographic tells a recruit to head to the enlistment page, but that
+// address is pixels inside the image and cannot be clicked. The card has to
+// carry the URL as text for the client to make it reachable.
+//
+// What this holds: the URL reaches the rendered card. What it does not hold:
+// that Discord renders it as a clickable link, which is a live-client property
+// the test-guild smoke test covers, or that the URL is correct, which needs a
+// network fetch this does not make.
+func TestRunEnlist_CardCarriesTheEnlistmentLink(t *testing.T) {
+	f := &fakeResponder{}
+
+	runEnlist(f, fakeAppCommandInteraction())
+
+	card := deliveredCardText(f.Calls())
+	if !enlistLinkPattern.MatchString(card) {
+		t.Fatalf("card does not carry %s, so every route to enlisting exists only inside the image\ncard: %s", enlistFormURL, card)
+	}
 }
