@@ -29,6 +29,7 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/warden` | Warden role management |
 | `/warden-bulkadd-internal` | Add a validated unit's roster to the internal Warden role |
 | `/helpline` | Crisis and mental health support resources, optionally addressed to a member |
+| `/enlist` | The enlistment process, with a link to the application |
 
 The registered set lives in `commands/registry.go` — update this table when it changes.
 
@@ -140,7 +141,7 @@ commands`, `Starting Star Citizen joiner report scheduler`, and finally `Bot is
 now running. Press CTRL-C to exit`. That last line is the success signal —
 anything that stops earlier is a failed start.
 
-Expect a pause of roughly 40 seconds on `Registering commands`. The eleven
+Expect a pause of roughly 40 seconds on `Registering commands`. The twelve
 commands are created one at a time and Discord rate-limits them, so a silent
 console there is normal, not a hang.
 
