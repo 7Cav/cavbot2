@@ -1,6 +1,6 @@
 module github.com/7cav/cavbot2
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
@@ -8,9 +8,9 @@ require (
 	github.com/getsentry/sentry-go v0.49.0
 	github.com/go-logfmt/logfmt v0.6.1
 	github.com/go-resty/resty/v2 v2.17.2
-	github.com/go-sql-driver/mysql v1.10.0
+	github.com/go-sql-driver/mysql v1.10.1
 	github.com/joho/godotenv v1.5.1
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 )
 
 require filippo.io/edwards25519 v1.2.0 // indirect
