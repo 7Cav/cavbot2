@@ -13,7 +13,7 @@ Do not relitigate anything under "Settled", "Settled while charting", or "Alread
 
 - Both question rounds are answered. Nothing is in flight with the stakeholder.
 - The maintainer builds this, not the PR's author. PR #232 stays open as the base until a superseding PR exists.
-- One ticket is open under map #255, [Panel session lifetime and group re-check](https://github.com/7Cav/cavbot2/issues/280), added on 2026-09-15 by a readiness review. It is unblocked. The spec waits on it.
+- Every ticket under map #255 is closed as of 2026-09-15. The last was [Panel session lifetime and group re-check](https://github.com/7Cav/cavbot2/issues/280). Nothing is left to decide before the spec is written.
 - PR #232 is a draft, 3 files, +3677 lines, last pushed 2026-07-26. It forked 20 commits behind `develop`. The `main.go` anchors it patches moved (`NewRegistry()` is at line 126, `StartJoinerReportScheduler` at 193), and #245 added gofmt enforcement to CI.
 
 ## Sources
@@ -122,7 +122,7 @@ Deleting the owner overwrite also retires the review's most dangerous unverified
 4. `/voice-rename`: Discord-gated to Cav members, plus an in-bot owner check, targeting the invoker's current channel. A single command with a single string option. `ApplicationCommandOptionSubCommand` is no longer needed; that recommendation in the 2026-08-06 PR comment is superseded.
 5. Per-hub sequential naming from the configured base string.
 6. Hub-channel rename from the panel (R2 Q5): a `ChannelEdit` against a channel the bot does not own. A new seam method. No new permission requirement: the bot keeps Administrator (#268).
-7. The panel itself: sign-in, group check, layout, the hub page, and the service layer under it.
+7. The panel itself: sign-in, group check, layout, the hub page, and the service layer under it. Sign-in, the panel session and the group check are settled in [#280](https://github.com/7Cav/cavbot2/issues/280).
 8. Spawn failure handling: the hub chat message, the per-hub last failure in memory, and the broken hub state on the hub list. Settled in [#278](https://github.com/7Cav/cavbot2/issues/278).
 
 ## Settled on the map
@@ -160,10 +160,14 @@ Decisions made by working map #255's tickets. Each row links the ticket that hol
 | The category is never stored. The bot reads the hub channel's parent from discordgo's state cache at each spawn, and the panel reads it live at page load, so moving the hub channel in Discord moves spawning with it. A hub whose channel is gone or has no parent is a broken hub. The row stays; the panel derives the state from the guild's channel list at page load and offers Remove only. A join to a no-category hub spawns nothing, makes no API call, and counts as a create failure with cause "no category". The `CHANNEL_DELETE` handler stays spawned-only. Spawned channels of a broken hub keep their rows and die when empty. | [#278](https://github.com/7Cav/cavbot2/issues/278) |
 | One create per join. No retry within the join, no later retry, no backoff, no auto-disable. Every failure is one WARN line. The create and move-into calls pass `WithRetryOnRatelimit(false)`, as the rename call does, so a `429` is a failure and never a sleeping handler. The invalid request limit is 10,000 per 10 minutes and a join makes at most three, so a ban needs 55 joins per second on broken hubs. | [#278](https://github.com/7Cav/cavbot2/issues/278) |
 | Create failures Discord returns capture to Sentry: the cap, `403`, `429`, `5xx`, transport. Once per streak per hub: the first failure captures, and the next capture waits for a successful spawn from that hub. A refusal the bot makes itself, the no-category case, is a WARN line and the hub list, never a Sentry event. Delete and rename classification is still open. | [#278](https://github.com/7Cav/cavbot2/issues/278) |
+| A panel session lasts as long as its access token: 2 hours from sign-in, then the user signs in again through the forum. No refresh token is stored. The session and the pending sign-in (`state`, PKCE verifier, start time, dropped after 5 minutes) live in memory, keyed by random 128-bit IDs, pruned on a timer. A restart ends every session. No table, no signing key, no env var. | [#280](https://github.com/7Cav/cavbot2/issues/280) |
+| The group check runs on every request: one `GET /api/me` with the session's access token. It passes when `user_group_id` or `secondary_group_ids` holds an allowlisted group. A 401 ends the session and the sign-in page says the session ended. A 200 with no allowlisted group, or a 403, ends the session and the sign-in page says the account is not in a group that may use the panel. A transport error or 5xx keeps the session and shows an error page asking to try again. No read-only mode. | [#280](https://github.com/7Cav/cavbot2/issues/280) |
+| Two cookies, `__Host-panel_session` and `__Host-panel_signin`: `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, no `Domain`, no `Max-Age`, each holding an opaque key only. `Secure` stays on for local runs. Deletion repeats the same attributes with `Max-Age=0`. The panel reads no proxy header; every absolute URL comes from `PANEL_BASE_URL`, and no client IP is logged. `net/http.CrossOriginProtection` wraps the mux, no form tokens. Every state change is a POST; the OAuth callback is the one GET that creates state, defended by `state`. | [#280](https://github.com/7Cav/cavbot2/issues/280) |
+| Sign-out is a form button on every page. It ends the panel session and nothing else: no call to the forum's revoke endpoint, so `PANEL_OAUTH_REVOKE_URL` from #261 goes unused and the spec drops it. | [#280](https://github.com/7Cav/cavbot2/issues/280) |
 
 ## Open, as tickets on map #255
 
-1. [Panel session lifetime and group re-check](https://github.com/7Cav/cavbot2/issues/280). How long a panel session lives and when the group check runs again.
+None. Every ticket is closed as of 2026-09-15.
 
 Backing up the Postgres volume is out of scope for the map and tracked as [#281](https://github.com/7Cav/cavbot2/issues/281).
 

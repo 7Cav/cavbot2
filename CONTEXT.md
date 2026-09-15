@@ -199,6 +199,13 @@ moment it empties. Hub settings are edited in the panel, never in code.
   forum. Hub settings are its first page; later pages are out of this
   feature's scope.
   _Avoid_: dashboard, admin UI, settings screen, config.
+- **Panel session**: The panel's record that a browser is signed in as one
+  forum user. Created at the OAuth callback. Ended by sign-out, by a failed
+  group check, or by the forum refusing the token.
+  _Avoid_: login, token session, forum session, auth cookie.
+- **Group check**: The panel's test that the signed-in forum user holds an
+  allowlisted forum group, primary or secondary. Runs on every request.
+  _Avoid_: allowlist check, permission check, authorisation, role check.
 
 ## External systems
 
