@@ -29,6 +29,23 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
 
+    # The store package's tests run against a real Postgres and skip without
+    # one; skipped, the package covers about 37% against a floor of 80, so
+    # the floor check fails without this service. Same major as the compose
+    # file.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
@@ -44,6 +61,8 @@ jobs:
           git diff --exit-code go.mod go.sum
 
       - name: Run tests with coverage
+        env:
+          TEST_BOT_DB_DSN: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
         run: |
           set -euo pipefail
           go test ./... -race -cover -covermode=atomic | tee /tmp/cover.log

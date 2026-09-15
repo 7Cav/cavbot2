@@ -2,7 +2,12 @@ services:
   cavbot2:
     image: cavbot2:latest
     container_name: cavbot2
-#    restart: unless-stopped
+    # A failed startup migration exits the process; this retries it, and a
+    # transient database outage at boot heals itself (ADR 0012).
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       BEARER: ${BEARER}
       DISCORD_TOKEN: ${DISCORD_TOKEN}
@@ -16,9 +21,43 @@ services:
       WARDEN_ROLE_BASE_NAME: ${WARDEN_ROLE_BASE_NAME}
       SENTRY_DSN: ${SENTRY_DSN}
       APP_ENV: ${APP_ENV}
+      BOT_DB_DSN: ${BOT_DB_DSN}
     networks:
       - xenforo_internal
+      - cavbot2_internal
+
+  # The bot's own store (hubs, spawned channels). Pinned to a major because a
+  # Postgres major changes the on-disk format, so a floating tag would one day
+  # pull a server that cannot read the volume. The volume mounts at
+  # /var/lib/postgresql, the image's data path from 18 on.
+  postgres:
+    image: postgres:18-alpine
+    container_name: cavbot2-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cavbot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: cavbot
+    volumes:
+      - cavbot2_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cavbot -d cavbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # A bot release must not restart the database. Watchtower's /v1/update
+    # touches every container it monitors; this label removes this one.
+    # Postgres minor updates are a manual `docker compose pull postgres`.
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+    networks:
+      - cavbot2_internal
+
+volumes:
+  cavbot2_pgdata:
 
 networks:
   xenforo_internal:
     external: true
+  cavbot2_internal:

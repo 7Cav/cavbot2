@@ -9,6 +9,11 @@
 # The `main` package is intentionally not tracked: it's entrypoint wiring
 # (DISCORD_TOKEN check, gateway open, command registration) and is not
 # realistically unit-testable without a substantial refactor.
+#
+# The `store` floor assumes its Postgres tests ran. They skip when
+# TEST_BOT_DB_DSN is unset, and the Fake alone covers far less, so a local run
+# with no database fails this check for `store` alone. CI always sets the
+# variable; locally, start a Postgres and export the DSN (see README, Testing).
 
 set -euo pipefail
 
@@ -19,6 +24,7 @@ set -euo pipefail
 read -r -d '' FLOORS <<'EOF' || true
 github.com/7cav/cavbot2/utils	87
 github.com/7cav/cavbot2/commands	81
+github.com/7cav/cavbot2/store	80
 EOF
 
 # Read `go test -cover` output from stdin.
