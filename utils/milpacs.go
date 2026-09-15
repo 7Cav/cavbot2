@@ -80,6 +80,20 @@ type Award struct {
 	AwardUID      string `json:"awardUid"`
 }
 
+// RanksResponse is the milpacs ranks endpoint: every rank the roster knows,
+// with its display order.
+type RanksResponse struct {
+	Ranks []RankEntry `json:"ranks"`
+}
+
+// RankEntry is one rank as the ranks endpoint lists it.
+type RankEntry struct {
+	RankShort        string `json:"rankShort"`
+	RankFull         string `json:"rankFull"`
+	RankID           string `json:"rankId"`
+	RankDisplayOrder int    `json:"rankDisplayOrder"`
+}
+
 func (r *ProfileResponse) GetRosterStatus() string {
 	if status, exists := rosterMap[r.Roster]; exists {
 		return status
@@ -164,4 +178,9 @@ func GetUserByGamertag(ctx context.Context, gamertag string) (*ProfileResponse, 
 	return makeAPIRequest[ProfileResponse](ctx,
 		fmt.Sprintf("milpac/gamertag/%s", gamertag),
 		gamertag)
+}
+
+// GetRanks fetches every rank the roster knows, in the API's own order.
+func GetRanks(ctx context.Context) (*RanksResponse, error) {
+	return makeAPIRequest[RanksResponse](ctx, "milpacs/ranks", "ranks")
 }

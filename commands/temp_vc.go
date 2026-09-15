@@ -230,6 +230,13 @@ type TempVCManager interface {
 	// return value is dropped as the other write sites here do, matching
 	// /warden's GuildManager seam).
 	ChannelMessageSend(channelID, content string) error
+	// GuildMember reads one member with their role IDs. The Administrator
+	// startup check reads the bot's own member through it.
+	GuildMember(guildID, userID string) (*discordgo.Member, error)
+	// Guild reads the guild with its roles, owner and boost tier. The
+	// Administrator check resolves role permissions through it; the panel's
+	// bitrate bound reads the tier.
+	Guild(guildID string) (*discordgo.Guild, error)
 }
 
 // sessionTempVCManager adapts *discordgo.Session to TempVCManager. Each
@@ -259,6 +266,14 @@ func (m *sessionTempVCManager) GuildMemberMove(guildID, userID string, channelID
 func (m *sessionTempVCManager) ChannelMessageSend(channelID, content string) error {
 	_, err := m.s.ChannelMessageSend(channelID, content)
 	return err
+}
+
+func (m *sessionTempVCManager) GuildMember(guildID, userID string) (*discordgo.Member, error) {
+	return m.s.GuildMember(guildID, userID)
+}
+
+func (m *sessionTempVCManager) Guild(guildID string) (*discordgo.Guild, error) {
+	return m.s.Guild(guildID)
 }
 
 // TempVCConfig carries the settings for the feature: the guild it runs in, the

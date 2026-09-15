@@ -240,6 +240,11 @@ func main() {
 
 	commands.StartJoinerReportScheduler(dg, GuildID)
 
+	// Rank ladder drift and a missing Administrator are Sentry events, not log
+	// lines (#287). Off the main goroutine so the gateway handlers never wait
+	// on the milpacs API.
+	go commands.RunStartupChecks(commands.NewSessionTempVCManager(dg), GuildID, dg.State.User.ID)
+
 	utils.Info("Bot is now running. Press CTRL-C to exit")
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)

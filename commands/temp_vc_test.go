@@ -27,6 +27,12 @@ type fakeTempVCManager struct {
 	deleteErr  error
 	moveErr    error
 	messageErr error
+
+	// member and guild are what the two reads return; the errors win when set.
+	member    *discordgo.Member
+	memberErr error
+	guild     *discordgo.Guild
+	guildErr  error
 }
 
 type fakeMove struct {
@@ -116,6 +122,24 @@ func (f *fakeTempVCManager) ChannelMessageSend(channelID, content string) error 
 	}
 	f.messages = append(f.messages, fakeMessage{channelID: channelID, content: content})
 	return nil
+}
+
+func (f *fakeTempVCManager) GuildMember(_ string, _ string) (*discordgo.Member, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.memberErr != nil {
+		return nil, f.memberErr
+	}
+	return f.member, nil
+}
+
+func (f *fakeTempVCManager) Guild(_ string) (*discordgo.Guild, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.guildErr != nil {
+		return nil, f.guildErr
+	}
+	return f.guild, nil
 }
 
 func (f *fakeTempVCManager) recordedMessages() []fakeMessage {
