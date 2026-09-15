@@ -147,12 +147,20 @@ moment it empties. Hub settings are edited in the panel, never in code.
 - **Spawned channel**: The voice channel a hub creates for the member who
   joined it. Named from the hub's base string plus a per-hub number.
   _Avoid_: temp channel, temp VC, temporary channel, personal channel.
-- **Owner**: The one member who may rename a spawned channel. The creator at
-  first; when the creator leaves, the highest-ranked member still present. A
-  bot-internal marker that grants no Discord permission.
+- **Owner**: The one occupant who may rename a spawned channel, or nobody.
+  The owner always holds a rank role. The creator at first, if they hold one;
+  after a handover, whoever the handover named. A bot-internal marker that
+  grants no Discord permission.
   _Avoid_: interim controller, controller, creator (for the current owner).
+- **Handover**: The bot giving ownership of a spawned channel to an occupant.
+  When the owner leaves, the highest-ranked occupant with a rank role takes
+  over, ties broken by lowest user ID; with no such occupant the channel has
+  no owner. When a rank-role holder joins a channel with no owner, they take
+  over. A handover is final: a returning creator is an ordinary occupant.
+  _Avoid_: hand off, hand back, succession, transfer, loan.
 - **Adoption**: The bot taking charge of a spawned channel it finds occupied
-  at startup with no record of who created it.
+  at startup with no stored record of it. The adopted channel gets an owner
+  by the handover rule.
   _Avoid_: recovery, orphan handling, sweep (for the channel itself).
 - **Moderator role**: A Discord role, set per hub, with authority over every
   spawned channel of that hub whoever owns it. What that authority is remains
