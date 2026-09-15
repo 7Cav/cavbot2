@@ -20,3 +20,15 @@ Create a GitHub issue.
 ## When a skill says "fetch the relevant ticket"
 
 Run `gh issue view <number> --comments`.
+
+## Wayfinding operations
+
+A wayfinder map and its tickets are GitHub issues. GitHub's own features carry the structure; no body convention is needed.
+
+- **The map** is one issue labelled `wayfinder:map`. Make it a sub-issue of the feature issue it charts (`--parent <n>`), so the feature page shows it.
+- **Tickets** are sub-issues of the map: `gh issue create --parent <map>`. Each carries one `wayfinder:<type>` label: `research`, `prototype`, `grilling`, or `task`.
+- **Blocking** uses native relationships: `gh issue edit <ticket> --add-blocked-by <other>`. GitHub renders the edge on both issues.
+- **The frontier** is every open child of the map with nothing open in its `blockedBy` list and no assignee. Query it with `gh issue view <map> --json subIssues`, then `gh issue view <n> --json state,assignees,blockedBy` per child.
+- **Claiming** is assignment: `gh issue edit <n> --add-assignee @me` before any work. An open, unassigned ticket is unclaimed.
+- **Resolving** is a comment with the answer, then `gh issue close <n>`, then one line appended to the map's "Decisions so far" with `gh issue edit <map> --body-file`.
+- **Out of scope** is a closed ticket plus one line in the map's "Out of scope" section. It never appears in "Decisions so far".
