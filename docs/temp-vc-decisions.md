@@ -13,13 +13,13 @@ Do not relitigate anything under "Settled", "Settled while charting", or "Alread
 
 - Both question rounds are answered. Nothing is in flight with the stakeholder.
 - The maintainer builds this, not the PR's author. PR #232 stays open as the base until a superseding PR exists.
-- Every ticket under map #255 is closed. Nothing blocks the spec.
+- Three tickets are open under map #255, added on 2026-09-15 by a readiness review. Each is unblocked. The spec waits on them.
 - PR #232 is a draft, 3 files, +3677 lines, last pushed 2026-07-26. It forked 20 commits behind `develop`. The `main.go` anchors it patches moved (`NewRegistry()` is at line 126, `StartJoinerReportScheduler` at 193), and #245 added gofmt enforcement to CI.
 
 ## Sources
 
 - Round 1 questions went out on 2026-08-06 and came back on 2026-08-08. Round 2 went out on 2026-08-08 and came back on 2026-08-21. Both were forum conversations with Nex.
-- The #99 audit ran on 2026-08-06 and found 14 live hubs.
+- The #99 audit ran on 2026-08-06 and found 14 live hubs. [#262](https://github.com/7Cav/cavbot2/issues/262) counted 17 on 2026-09-15; three were added in six weeks.
 - A full code review of PR #232 at `0edfbb1` exists as a private artifact the maintainer holds. Its findings still describe that code, but much of that code is slated for deletion. Check the "Dies" table before acting on any finding.
 
 ## Who is who
@@ -51,9 +51,9 @@ Each row is closed. R1 and R2 are the two question rounds.
 | Config is live-editable, not a config file or env. Reached through forum sign-in. | R1 Q10, Q11: "somewhere live we can adjust as new companies come up, and or go dark. New Games, etc." |
 | If it can be configured in the panel, make it configurable. Apply this to anything not otherwise settled. | Maintainer, 2026-08-08 |
 | The panel can rename the hub channel itself. MEE6 makes you create the channel, rename it, refresh, then configure it. Nex also wants hub channels called `X Hub Channel` at rollout; the panel field is how he gets there. | R2 Q5, R1 preamble |
-| We transcribe the 14 hubs at cutover, not Nex. Current MEE6 state is the intended state. | R2 Q4: "I should have everything updated to what it should be at for the moment" |
+| We transcribe the hubs at cutover, not Nex. 17 at the last count (#262). Current MEE6 state is the intended state. | R2 Q4: "I should have everything updated to what it should be at for the moment" |
 | Rename abuse is policed by the Code of Conduct, not the bot. No name filter beyond Discord's own limits. | R1 preamble: "We can police this using the CoC" |
-| There are 14 live hubs, not one. All 14 stay. | #99 audit, 2026-08-06 |
+| There are many live hubs, not one: 14 at the audit, 17 by #262, and the count grows. All stay. | #99 audit, 2026-08-06; #262, 2026-09-15 |
 
 ## Settled while charting (2026-09-15)
 
@@ -74,15 +74,15 @@ Decisions the maintainer made while charting map #255. These are ours, not Nex's
 
 ## Already ruled out. Do not re-raise.
 
-- Multi-hub as scope creep. The #100 triage called it YAGNI and a later review repeated that. Both were wrong. Production runs 14. HWqs building a hub table was correct.
+- Multi-hub as scope creep. The #100 triage called it YAGNI and a later review repeated that. Both were wrong. Production ran 14 at the audit and 17 by #262. HWqs building a hub table was correct.
 - A MEE6 export. Settings move by hand. R2 Q4 settles who does it: we do.
 - `/voice-clean`. Dropped outright (R2 Q1). The `GUILD_CREATE` sweep already covers the bot-was-down case, which was the command's only real use.
 - `transfer`. Dropped by R1 Q7 ("Ideally would just be clean and rename"), and `clean` has since gone too.
 - A per-user channel cap. Not requested. Immediate deletion means the worst abuse is recreating the same channel repeatedly. If kept, it becomes a configurable field, not a hardcoded 4. Dropped by #266: not a hub field.
-- Per-hub user limit and bitrate as requirements. All 14 hubs sit at MEE6 defaults (unlimited, 64k). Configurable if cheap; nothing depends on them. Both are hub fields by #266.
+- Per-hub user limit and bitrate as requirements. The 14 audited hubs sat at MEE6 defaults (unlimited, 64k); the three added since are unchecked and get transcribed as found. Configurable if cheap; nothing depends on them. Both are hub fields by #266.
 - The status and position ladder (11 hardcoded role IDs, general staff to discharged). HWqs's addition, never asked for, superseded by "rank alone always". This kills only the tier, not the election.
 - Storing config in code. The hardcoded hub table is dead; R1 Q11 requires live editing.
-- Renaming the 14 hub channels as a migration step. The panel field that lets Nex rename one is in scope; the bulk rename is his to do through it.
+- Renaming the hub channels as a migration step. The panel field that lets Nex rename one is in scope; the bulk rename is his to do through it.
 - MEE6's ignored roles, the roles its `/voice-*` commands skip. With rename as the only command there is nothing to be exempt from. Not carried over (#265).
 - The Discord audit-log channel. Nobody asked for it, its hardcoded target is not in the live guild, and Loki plus Discord's own audit log carry the record. Dropped by #275.
 
@@ -121,7 +121,7 @@ Deleting the owner overwrite also retires the review's most dangerous unverified
 3. Moderator roles, a cross-channel authority concept the PR lacks. Settled in [#265](https://github.com/7Cav/cavbot2/issues/265).
 4. `/voice-rename`: Discord-gated to Cav members, plus an in-bot owner check, targeting the invoker's current channel. A single command with a single string option. `ApplicationCommandOptionSubCommand` is no longer needed; that recommendation in the 2026-08-06 PR comment is superseded.
 5. Per-hub sequential naming from the configured base string.
-6. Hub-channel rename from the panel (R2 Q5): a `ChannelEdit` against a channel the bot does not own. A new seam method and a new bot permission requirement.
+6. Hub-channel rename from the panel (R2 Q5): a `ChannelEdit` against a channel the bot does not own. A new seam method. No new permission requirement: the bot keeps Administrator (#268).
 7. The panel itself: sign-in, group check, layout, the hub page, and the service layer under it.
 
 ## Settled on the map
@@ -140,7 +140,7 @@ Decisions made by working map #255's tickets. Each row links the ticket that hol
 | A disabled hub keeps its channel and its settings and ignores joins. Its spawned channels stay tracked and are restored at restart from their rows like any other. Cutover order: register every hub disabled while MEE6 still runs, switch the MEE6 plugin off, then enable the hubs. #275 adds two hand steps around the last one. | [#266](https://github.com/7Cav/cavbot2/issues/266), cutover steps added by [#275](https://github.com/7Cav/cavbot2/issues/275) |
 | The panel creates a hub channel from a category and a name, synced to the category, or registers an existing voice channel as a hub. Remove deletes the row and leaves the Discord channel. Spawned channels of a removed hub keep their rows and die when empty. A changed hub channel name renames the channel before the row saves; a refused rename saves nothing and the form shows why. | [#266](https://github.com/7Cav/cavbot2/issues/266) |
 | An append-only change log per hub records every panel save: forum user ID and username, time, action, and a JSON diff of the changed fields. The hub page shows the last ten, newest first. The hub list shows each hub's live spawned channel count from the bot's memory. | [#266](https://github.com/7Cav/cavbot2/issues/266) |
-| The rank ladder stays in code as abbreviation plus Discord role ID. At startup the bot fetches `/api/v1/milpacs/ranks` and captures any drift in abbreviations or order to Sentry, not a WARN log. Election by API rank per occupant was rejected: a network call in every create and handover, and it breaks the rank-role rule. | [#266](https://github.com/7Cav/cavbot2/issues/266) |
+| The rank ladder stays in code as abbreviation plus Discord role ID. At startup the bot fetches `/api/v1/milpacs/ranks` and captures any drift in abbreviations or order to Sentry, not a WARN log. The endpoint returns 30 entries: the 29 ranks in the code ladder, same order, plus `Tester` (`rankId` 32, display order 1), which the check excludes (verified 2026-09-15). Election by API rank per occupant was rejected: a network call in every create and handover, and it breaks the rank-role rule. | [#266](https://github.com/7Cav/cavbot2/issues/266) |
 | The bot keeps Administrator. The spec names it as the deployment requirement, and the hub form checks no permissions. Dropping it is a separate, guild-wide effort: `/warden` role recreation and the ownership notice depend on it as much as spawning does. The numbers for that effort are on the ticket. | [#268](https://github.com/7Cav/cavbot2/issues/268) |
 | At startup the bot fetches its own roles and captures to Sentry when Administrator is missing. Same shape as the rank ladder check. | [#268](https://github.com/7Cav/cavbot2/issues/268) |
 | The bot writes at most six bits into any channel overwrite: Manage Channels, Move Members, Mute Members, Deafen Members, Connect, View Channel. The list is a constant in code, never a panel setting. What a moderator role gets is chosen from inside it. | [#268](https://github.com/7Cav/cavbot2/issues/268) |
@@ -156,7 +156,11 @@ Decisions made by working map #255's tickets. Each row links the ticket that hol
 
 ## Open, as tickets on map #255
 
-None. The last one, [What the restart sweep does with no-row channels, and whether the audit-log channel stays](https://github.com/7Cav/cavbot2/issues/275), closed on 2026-09-15.
+1. [What the bot does when the spawn path cannot proceed](https://github.com/7Cav/cavbot2/issues/278). Create failure as the member sees it, a hub channel deleted or moved, a category deleted, and the no-retry rule.
+2. [Name the Discord roles for the `/voice-rename` gate and add the restriction step to cutover](https://github.com/7Cav/cavbot2/issues/279). Which roles the Server Settings restriction names, and whether they equal the rank-role set #263 assumed.
+3. [Panel session lifetime and group re-check](https://github.com/7Cav/cavbot2/issues/280). How long a panel session lives and when the group check runs again.
+
+Backing up the Postgres volume is out of scope for the map and tracked as [#281](https://github.com/7Cav/cavbot2/issues/281).
 
 ## Fixes that hold regardless of every answer above
 

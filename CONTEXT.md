@@ -147,7 +147,8 @@ moment it empties. Hub settings are edited in the panel, never in code.
 - **Spawned channel**: The voice channel a hub creates for the member who
   joined it. Named from the hub's base string plus a per-hub number.
   _Avoid_: temp channel, temp VC, temporary channel, personal channel.
-- **Owner**: The one occupant who may rename a spawned channel, or nobody.
+- **Owner**: The occupant a spawned channel belongs to, or nobody. Owning
+  is what lets a member rename it; a moderator role renames without owning.
   The owner always holds a rank role. The creator at first, if they hold one;
   after a handover, whoever the handover named. A bot-internal marker that
   grants no Discord permission.
