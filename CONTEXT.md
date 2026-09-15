@@ -134,6 +134,39 @@ grants is configured Discord-side and is out of scope here.
   the regiment treats as automatically belonging in the internal Warden role
   (e.g. `D/ACD`). A curated set; not every unit is one.
 
+## Temporary voice channels
+
+The bot replaces MEE6's "Temporary Channels" plugin. A member joins a hub, the
+bot creates a spawned channel for them, and the spawned channel is deleted the
+moment it empties. Hub settings are edited in the panel, never in code.
+
+- **Hub**: A voice channel that, when a member joins it, causes the bot to
+  create a spawned channel and move the member into it. Each hub carries its
+  own settings. MEE6 calls this "join to create".
+  _Avoid_: join-to-create channel, creation trigger, hub voice channel.
+- **Spawned channel**: The voice channel a hub creates for the member who
+  joined it. Named from the hub's base string plus a per-hub number.
+  _Avoid_: temp channel, temp VC, temporary channel, personal channel.
+- **Owner**: The one member who may rename a spawned channel. The creator at
+  first; when the creator leaves, the highest-ranked member still present. A
+  bot-internal marker that grants no Discord permission.
+  _Avoid_: interim controller, controller, creator (for the current owner).
+- **Adoption**: The bot taking charge of a spawned channel it finds occupied
+  at startup with no record of who created it.
+  _Avoid_: recovery, orphan handling, sweep (for the channel itself).
+- **Moderator role**: A Discord role, set per hub, with authority over every
+  spawned channel of that hub whoever owns it. What that authority is remains
+  an open decision.
+  _Avoid_: staff role, admin role.
+- **Permission source**: The per-hub setting that chooses what a spawned
+  channel inherits its permissions from, the hub's category or the hub
+  channel itself.
+  _Avoid_: sync, category sync, synchronize permissions.
+- **Panel**: cavbot2's web UI at `cavbot2.7cav.us`, signed in through the
+  forum. Hub settings are its first page; later pages are out of this
+  feature's scope.
+  _Avoid_: dashboard, admin UI, settings screen, config.
+
 ## External systems
 
 - **7Cav API** (`https://api.7cav.us/api/v1/`) — bearer-auth REST API. All
