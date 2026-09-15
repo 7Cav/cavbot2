@@ -94,6 +94,8 @@ Not checked at startup, but each one silently disables something:
 | `LOG_LEVEL` | Defaults to `INFO`. Accepts `DEBUG`, `INFO`, `WARN`, `ERROR` — **uppercase only**, anything else silently means `INFO` (including the `default` that `.env.example` ships). `DEBUG` shows per-post LOA parse failures. |
 | `DISCORDGO_LOG_LEVEL` | Defaults to `ERROR`, so discordgo reports only its own failures. Accepts `ERROR`, `WARN`, `INFO`, `DEBUG`; anything else means `ERROR`. `WARN` adds the frame the gateway sent when startup fails with `Discord session unavailable`. `DEBUG` also needs `LOG_LEVEL=DEBUG`, and logs every gateway event discordgo does not recognise with its full payload. |
 | `SENTRY_DSN` | Sentry stays off; the bot logs `Sentry disabled (SENTRY_DSN not set)`. |
+| `BOT_DB_DSN` | The bot's own Postgres store (hubs and spawned channels for temporary voice channels) stays off; the bot logs `BOT_DB_DSN not set, bot store disabled` once and every command works as before. `.env.example` leaves it empty on purpose. Set it and the bot pings the database with a short retry, runs its migrations, and only then opens the Discord session; a database it cannot reach or migrate stops the bot with `Bot store unavailable`. Under compose the value is `postgres://cavbot:<POSTGRES_PASSWORD>@postgres:5432/cavbot?sslmode=disable`. |
+| `POSTGRES_PASSWORD` | Read by the `postgres` service in `docker-compose.yml`, not by the bot. `.env.example` ships `change-me`; a blank value makes the image refuse to start and the bot wait on its healthcheck forever. Only the first boot of an empty volume reads it. |
 | `APP_ENV` | Only tags Sentry events with an environment. No effect unless `SENTRY_DSN` is also set. |
 
 When adding a new variable, add it to both `.env.example` and the
@@ -134,12 +136,20 @@ docker compose up
 Only the real `xenforo_internal` network reaches the forum database; a network
 you created yourself gets the bot running, but `/loa` stays empty.
 
+Compose also starts a `postgres:18-alpine` service for the bot's own store,
+with its data in the `cavbot2_pgdata` volume. The bot waits for its healthcheck
+before it starts. Watchtower leaves the database alone (it carries the exclude
+label), so a Postgres minor update is a manual `docker compose pull postgres &&
+docker compose up -d postgres`.
+
 A healthy startup logs, in order: `Logger initialized`, `Sentry disabled
 (SENTRY_DSN not set)`, `CavBot2 starting`, the LOA cache line for whichever
-`FORUM_DB_DSN` case you are in, `Removing deprecated commands`, `Registering
-commands`, `Starting Star Citizen joiner report scheduler`, and finally `Bot is
-now running. Press CTRL-C to exit`. That last line is the success signal —
-anything that stops earlier is a failed start.
+`FORUM_DB_DSN` case you are in, either `BOT_DB_DSN not set, bot store disabled`
+or `Bot store configured` followed by `Bot database migrated`, `Removing
+deprecated commands`, `Registering commands`, `Starting Star Citizen joiner
+report scheduler`, and finally `Bot is now running. Press CTRL-C to exit`. That
+last line is the success signal — anything that stops earlier is a failed
+start.
 
 Expect a pause of roughly 40 seconds on `Registering commands`. The twelve
 commands are created one at a time and Discord rate-limits them, so a silent
@@ -163,6 +173,7 @@ Sunday, a real person gets your test output. Prefer a test guild.
 | `Error opening connection: websocket: close 4004` | Discord rejected the token. Re-copy `DISCORD_TOKEN` — a truncated paste or a token reset since you last copied it both land here |
 | `Error opening connection: websocket: close 4014` | Disallowed intent. Enable the Server Members Intent in the Developer Portal |
 | `FORUM_DB_DSN not set` at startup, or `LOA cache refresh failed` every 15 minutes | Expected without a reachable forum database; only affects `/loa` |
+| `Bot database not answering, retrying` ten times, then a panic `Bot store unavailable` | `BOT_DB_DSN` names a Postgres that is not there. The compose host `postgres` resolves only inside compose; for `go run .` blank the variable or point it at a local server |
 | `/warden` fails with a permissions error | Bot invited without Manage Roles / Manage Channels, or its own role sits below the role it is editing |
 | Commands never appear | Bot invited without `applications.commands`, or `GUILD_ID` is not the server you are in |
 | Every milpac lookup fails | `BEARER` missing or expired |
@@ -185,6 +196,23 @@ go test ./... -race -cover | .github/scripts/check-coverage-floors.sh
 ```
 
 CI enforces per-package coverage floors via `.github/scripts/check-coverage-floors.sh`. When a PR raises a package's coverage by more than a point or two, raise its floor in the same PR — that's how the suite ratchets up without the team having to think about it.
+
+The `store` package tests its Postgres implementation against a real server.
+They read `TEST_BOT_DB_DSN` and skip when it is unset, so `go test ./...`
+passes on a machine with no database, but the floor check then fails for
+`store` alone because only its in-memory Fake ran. CI starts a Postgres service
+container and sets the variable. To match it locally:
+
+```bash
+docker run --rm -d --name cavbot2-test-pg -e POSTGRES_PASSWORD=postgres -p 5433:5432 postgres:18-alpine
+```
+
+```bash
+export TEST_BOT_DB_DSN='postgres://postgres:postgres@localhost:5433/postgres?sslmode=disable'
+```
+
+The tests drop and recreate the `public` schema of that database before every
+case, so point the variable at a throwaway server only.
 
 ## Contributing
 

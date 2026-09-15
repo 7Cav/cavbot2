@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/7cav/cavbot2/commands"
+	"github.com/7cav/cavbot2/store"
 	"github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
 )
@@ -100,6 +102,28 @@ func initLOACache() {
 	}()
 }
 
+// initBotStore opens the bot's own Postgres database and runs its migrations,
+// or returns nil when BOT_DB_DSN is unset so the feature stays inert and the
+// bot runs as it did before the store existed. A configured database that
+// cannot be reached or migrated stops the bot here, before the Discord
+// session opens: with restart: unless-stopped the container retries, and a
+// binary never runs against a schema it does not understand (ADR 0012). The
+// DSN carries a password and is never logged.
+func initBotStore() *store.Postgres {
+	dsn := os.Getenv("BOT_DB_DSN")
+	if dsn == "" {
+		utils.Warn("BOT_DB_DSN not set, bot store disabled")
+		return nil
+	}
+	utils.Info("Bot store configured")
+
+	s, err := store.Open(context.Background(), dsn)
+	if err != nil {
+		panic(fmt.Sprintf("Bot store unavailable: %v", err))
+	}
+	return s
+}
+
 func main() {
 	defer utils.InitSentry(Version)()
 
@@ -108,6 +132,12 @@ func main() {
 	utils.Info("Warden role base name resolved", "base_name", commands.WardenRoleBaseName())
 
 	initLOACache()
+
+	// Database and migrations come before the Discord session opens, so a
+	// failed migration never leaves a half-started bot on the gateway.
+	if botStore := initBotStore(); botStore != nil {
+		defer func() { _ = botStore.Close() }()
+	}
 
 	// Route discordgo's own logging through slog before the session exists, so
 	// nothing it emits escapes to the stdlib logger.

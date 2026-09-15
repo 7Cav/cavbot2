@@ -215,6 +215,10 @@ moment it empties. Hub settings are edited in the panel, never in code.
 - **Xenforo MySQL** — read-only access to the forum DB. Connection pool
   deliberately tiny (`SetMaxOpenConns(2)`) because this is a low-rate
   background scan.
+- **Bot Postgres** — the bot's own database, the `postgres` service in
+  `docker-compose.yml`, reached through `BOT_DB_DSN`. Holds the hubs and the
+  spawned channel rows; the panel edits it, the runtime reads it at startup.
+  The store package (`store/`) is the only code that talks to it (ADR 0012).
 
 ## Observability
 
