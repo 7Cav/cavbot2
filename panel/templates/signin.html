@@ -1,0 +1,13 @@
+{{template "head" .}}
+{{template "header" .}}
+<main>
+  {{if .Cause}}<p class="notice" data-cause="{{.Cause}}">
+    {{if eq .Cause "expired"}}Your session ended. Sign in again to continue.{{end}}
+    {{if eq .Cause "no-group"}}Your forum account is not in a group that may use the panel.{{end}}
+  </p>{{end}}
+  <p>Sign in with your forum account to open the panel.</p>
+  <form method="post" action="/auth/start">
+    <button type="submit">Sign in through the forum</button>
+  </form>
+</main>
+{{template "foot" .}}

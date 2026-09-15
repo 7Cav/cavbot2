@@ -1,0 +1,27 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cavbot2 panel</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem 1.5rem; color: #1a1a1a; background: #f7f7f5; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding-bottom: .75rem; border-bottom: 1px solid #d8d8d3; }
+  header form { margin: 0; }
+  main { max-width: 60rem; margin: 1.5rem 0; }
+  button { font: inherit; padding: .4rem .9rem; border: 1px solid #555; border-radius: 4px; background: #fff; cursor: pointer; }
+  .notice { padding: .75rem 1rem; border-left: 4px solid #b45309; background: #fff7ed; }
+</style>
+</head>
+<body>{{end}}
+
+{{define "header"}}<header>
+  <strong>cavbot2 panel</strong>
+  {{if .Username}}<form method="post" action="/auth/signout">
+    <span data-field="username">{{.Username}}</span>
+    <button type="submit">Sign out</button>
+  </form>{{end}}
+</header>{{end}}
+
+{{define "foot"}}</body>
+</html>{{end}}

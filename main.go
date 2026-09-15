@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -11,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/7cav/cavbot2/panel"
 	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
 
@@ -134,6 +137,45 @@ func initStore() store.Store {
 	return store.NewPostgres(db)
 }
 
+// panelShutdownTimeout is how long in-flight panel requests get to finish at
+// exit before the listener is closed under them.
+const panelShutdownTimeout = 5 * time.Second
+
+// startPanel serves the panel on PANEL_ADDR until ctx ends. With PANEL_ADDR
+// unset it logs one line and returns; the panel is inert (#288). Called after
+// READY so the panel never answers before the bot can act on the guild.
+func startPanel(ctx context.Context) {
+	cfg, on := panel.ConfigFromEnv()
+	if !on {
+		utils.Info("PANEL_ADDR not set, panel disabled")
+		return
+	}
+	utils.Info("Panel configured",
+		"addr", cfg.Addr, "base_url", cfg.BaseURL, "group_ids", cfg.GroupIDs)
+
+	srv := panel.New(cfg)
+	httpServer := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go srv.Run(ctx)
+	go func() {
+		defer utils.RecoverPanic("panel-listener")
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			utils.CaptureError("Panel listener stopped", err, "addr", cfg.Addr)
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), panelShutdownTimeout)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			utils.Warn("Panel shutdown did not finish cleanly", "error", err)
+		}
+	}()
+}
+
 func main() {
 	defer utils.InitSentry(Version)()
 
@@ -244,6 +286,12 @@ func main() {
 	// lines (#287). Off the main goroutine so the gateway handlers never wait
 	// on the milpacs API.
 	go commands.RunStartupChecks(commands.NewSessionTempVCManager(dg), GuildID, dg.State.User.ID)
+
+	// The panel listens last, once the bot is on the gateway and its checks
+	// are running. runCtx ends at the shutdown signal and stops the listener.
+	runCtx, stopRun := context.WithCancel(context.Background())
+	defer stopRun()
+	startPanel(runCtx)
 
 	utils.Info("Bot is now running. Press CTRL-C to exit")
 	sc := make(chan os.Signal, 1)

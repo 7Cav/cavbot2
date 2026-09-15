@@ -20,9 +20,20 @@ services:
       SENTRY_DSN: ${SENTRY_DSN}
       APP_ENV: ${APP_ENV}
       BOT_DB_DSN: ${BOT_DB_DSN}
+      PANEL_ADDR: ${PANEL_ADDR}
+      PANEL_BASE_URL: ${PANEL_BASE_URL}
+      PANEL_OAUTH_CLIENT_ID: ${PANEL_OAUTH_CLIENT_ID}
+      PANEL_OAUTH_CLIENT_SECRET: ${PANEL_OAUTH_CLIENT_SECRET}
+      PANEL_OAUTH_AUTHORIZE_URL: ${PANEL_OAUTH_AUTHORIZE_URL}
+      PANEL_OAUTH_TOKEN_URL: ${PANEL_OAUTH_TOKEN_URL}
+      PANEL_OAUTH_USERINFO_URL: ${PANEL_OAUTH_USERINFO_URL}
+      PANEL_GROUP_IDS: ${PANEL_GROUP_IDS}
     networks:
       - xenforo_internal
       - cavbot_internal
+      # Nginx Proxy Manager reaches the panel's port over this network, so
+      # the port is never published on the host.
+      - edge
 
   # The bot's own database. Migrations run inside the bot at startup (ADR
   # 0012), so this service only has to be healthy before the bot starts.
@@ -56,5 +67,7 @@ volumes:
 
 networks:
   xenforo_internal:
+    external: true
+  edge:
     external: true
   cavbot_internal:
