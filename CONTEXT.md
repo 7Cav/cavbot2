@@ -184,6 +184,11 @@ moment it empties. Hub settings are edited in the panel, never in code.
   nothing. A join to it does nothing. Its spawned channels live on until
   empty.
   _Avoid_: paused hub, inactive hub, archived hub, hub off.
+- **Broken hub**: A hub whose channel is gone from Discord or has no category.
+  Discord's state makes it so, never a panel setting, and the panel reads that
+  state fresh each time it shows the hub. A join can reach only the
+  no-category kind, and it spawns nothing.
+  _Avoid_: orphaned hub, stale hub, dead hub, unhealthy hub.
 - **Change log**: The panel's per-hub record of who changed which setting,
   when, and from what to what. It records panel saves only.
   _Avoid_: audit trail, audit log (that is Discord's), history.
