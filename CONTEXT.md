@@ -166,10 +166,10 @@ moment it empties. Hub settings are edited in the panel, never in code.
   names the current owner, or says there is none. Posted when the channel is
   created and at every handover. It pings nobody.
   _Avoid_: announcement, banner, status line, welcome message.
-- **Moderator role**: A Discord role, set per hub, with authority over every
-  spawned channel of that hub whoever owns it. What that authority is remains
-  an open decision.
-  _Avoid_: staff role, admin role.
+- **Moderator role**: A Discord role that may rename any spawned channel it
+  covers without owning it. Set per hub, or once for every hub; a hub's
+  moderator roles are the union of the two. Grants no Discord permission.
+  _Avoid_: staff role, admin role, global moderator, default moderator.
 - **Permission source**: The per-hub setting that chooses what a spawned
   channel inherits its permissions from, the hub's category or the hub
   channel itself.

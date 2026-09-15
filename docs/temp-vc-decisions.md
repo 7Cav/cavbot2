@@ -13,7 +13,7 @@ Do not relitigate anything under "Settled", "Settled while charting", or "Alread
 
 - Both question rounds are answered. Nothing is in flight with the stakeholder.
 - The maintainer builds this, not the PR's author. PR #232 stays open as the base until a superseding PR exists.
-- The remaining decisions are tickets under map #255. Nothing else blocks the spec.
+- Every ticket under map #255 is closed. Nothing blocks the spec.
 - PR #232 is a draft, 3 files, +3677 lines, last pushed 2026-07-26. It forked 20 commits behind `develop`. The `main.go` anchors it patches moved (`NewRegistry()` is at line 126, `StartJoinerReportScheduler` at 193), and #245 added gofmt enforcement to CI.
 
 ## Sources
@@ -83,6 +83,7 @@ Decisions the maintainer made while charting map #255. These are ours, not Nex's
 - The status and position ladder (11 hardcoded role IDs, general staff to discharged). HWqs's addition, never asked for, superseded by "rank alone always". This kills only the tier, not the election.
 - Storing config in code. The hardcoded hub table is dead; R1 Q11 requires live editing.
 - Renaming the 14 hub channels as a migration step. The panel field that lets Nex rename one is in scope; the bulk rename is his to do through it.
+- MEE6's ignored roles, the roles its `/voice-*` commands skip. With rename as the only command there is nothing to be exempt from. Not carried over (#265).
 
 ## What this does to PR #232
 
@@ -113,7 +114,7 @@ Deleting the owner overwrite also retires the review's most dangerous unverified
 
 1. Per-hub config in Postgres with the panel as its editing surface. Fields so far: hub channel, hub channel name (writable), category, spawned-name base string, permission source (category or hub channel), moderator roles. The v1 list is settled in [#266](https://github.com/7Cav/cavbot2/issues/266).
 2. Permission source. When set to category, create with no explicit overwrites so the channel inherits its parent. When set to hub channel, copy the hub channel's own overwrite list. The PR always passes an explicit overwrite list, so today nothing ever inherits.
-3. Moderator roles, a cross-channel authority concept the PR lacks.
+3. Moderator roles, a cross-channel authority concept the PR lacks. Settled in [#265](https://github.com/7Cav/cavbot2/issues/265).
 4. `/voice-rename`: Discord-gated to Cav members, plus an in-bot owner check, targeting the invoker's current channel. A single command with a single string option. `ApplicationCommandOptionSubCommand` is no longer needed; that recommendation in the 2026-08-06 PR comment is superseded.
 5. Per-hub sequential naming from the configured base string.
 6. Hub-channel rename from the panel (R2 Q5): a `ChannelEdit` against a channel the bot does not own. A new seam method and a new bot permission requirement.
@@ -140,10 +141,13 @@ Decisions made by working map #255's tickets. Each row links the ticket that hol
 | At startup the bot fetches its own roles and captures to Sentry when Administrator is missing. Same shape as the rank ladder check. | [#268](https://github.com/7Cav/cavbot2/issues/268) |
 | The bot writes at most six bits into any channel overwrite: Manage Channels, Move Members, Mute Members, Deafen Members, Connect, View Channel. The list is a constant in code, never a panel setting. What a moderator role gets is chosen from inside it. | [#268](https://github.com/7Cav/cavbot2/issues/268) |
 | The test guild bot `bootybot` mirrors production: Administrator on. | [#268](https://github.com/7Cav/cavbot2/issues/268) |
+| A moderator role is a command bypass, as MEE6 defines the field. It passes the owner check on `/voice-rename` for every spawned channel it covers. The bot writes no overwrite for it, so it authors no overwrite of its own at all. The six-bit ceiling from #268 stands and bounds nothing yet. Discord-side moderation stays where it is today, on the categories, and permission source carries it into every spawned channel. | [#265](https://github.com/7Cav/cavbot2/issues/265) |
+| Moderator roles are set per hub and once for every hub. A hub's effective set is the union of the two, with no per-hub exclusion. The guild-wide list is a section at the top of the hub page with its own save, change-logged in the same shape as a hub save. Each hub form shows the guild-wide roles read-only, labelled "on every hub", above the hub's own multi-select. | [#265](https://github.com/7Cav/cavbot2/issues/265) |
+| A moderator renames the channel they are sitting in, like everyone else. No channel argument. The moderator check runs before the owner check and never reads the owner, so a moderator can rename an ownerless channel and no WARN fires on that path. The rename leaves the owner and the ownership notice untouched. The not-the-owner reply from #264 is unchanged. The Cav-member Discord gate and the two-renames-per-ten-minutes limit apply to moderators as to anyone. | [#265](https://github.com/7Cav/cavbot2/issues/265) |
 
 ## Open, as tickets on map #255
 
-- [What authority a moderator role carries](https://github.com/7Cav/cavbot2/issues/265)
+None. The last one, [What authority a moderator role carries](https://github.com/7Cav/cavbot2/issues/265), closed on 2026-09-15.
 
 ## Fixes that hold regardless of every answer above
 
