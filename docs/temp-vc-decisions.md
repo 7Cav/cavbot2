@@ -119,9 +119,18 @@ Deleting the owner overwrite also retires the review's most dangerous unverified
 6. Hub-channel rename from the panel (R2 Q5): a `ChannelEdit` against a channel the bot does not own. A new seam method and a new bot permission requirement.
 7. The panel itself: sign-in, group check, layout, the hub page, and the service layer under it.
 
+## Settled on the map
+
+Decisions made by working map #255's tickets. Each row links the ticket that holds the detail.
+
+| Decision | Provenance |
+|---|---|
+| The owner always holds a rank role, or the channel has no owner. The creator is owner at create if they hold one. When the owner leaves, the highest-ranked occupant with a rank role takes over, ties to the lowest user ID, and no candidate means no owner. A rank-role holder who joins a channel with no owner takes over. A handover is final. A returning creator is an ordinary occupant. | [#263](https://github.com/7Cav/cavbot2/issues/263) |
+| The store holds one row per spawned channel: channel ID, hub, number, owner. Written at create and at every handover, deleted with the channel. The restart sweep restores owner and number from the row. A failed write keeps the channel, captures the failure in Sentry, and leaves it to be adopted at the next restart. | [#263](https://github.com/7Cav/cavbot2/issues/263) |
+| An adopted channel gets an owner at the sweep by the handover rule. Adoption now covers only channels with no row, such as MEE6 channels live at cutover. | [#263](https://github.com/7Cav/cavbot2/issues/263) |
+
 ## Open, as tickets on map #255
 
-- [Who owns a spawned channel after adoption or the creator's return](https://github.com/7Cav/cavbot2/issues/263)
 - [What a member sees of ownership](https://github.com/7Cav/cavbot2/issues/264)
 - [What authority a moderator role carries](https://github.com/7Cav/cavbot2/issues/265)
 - [The hub form: v1 fields, hub creation, and an audit trail](https://github.com/7Cav/cavbot2/issues/266)
