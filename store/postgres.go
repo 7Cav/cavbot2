@@ -19,8 +19,8 @@ import (
 var migrationsFS embed.FS
 
 // openRetryInterval is the pause between pings while Open waits for the
-// database to answer. A var so a test can shorten it.
-var openRetryInterval = time.Second
+// database to answer.
+const openRetryInterval = time.Second
 
 // Open connects to the database at dsn and pings it until it answers or ctx
 // ends. sql.Open alone never connects, so without the ping a bad DSN or a

@@ -189,7 +189,7 @@ CI enforces per-package coverage floors via `.github/scripts/check-coverage-floo
 The `store` package tests run against a real Postgres and skip without one, so the floor check above reports `store` below its floor on a machine with no database. To match CI, start one and point the tests at it:
 
 ```bash
-docker run -d --rm --name cavbot2-test-pg -e POSTGRES_USER=cavbot -e POSTGRES_PASSWORD=cavbot -e POSTGRES_DB=cavbot_test -p 5432:5432 postgres:18-alpine
+docker run -d --name cavbot2-test-pg -e POSTGRES_USER=cavbot -e POSTGRES_PASSWORD=cavbot -e POSTGRES_DB=cavbot_test -p 5432:5432 postgres:18-alpine
 ```
 
 ```bash

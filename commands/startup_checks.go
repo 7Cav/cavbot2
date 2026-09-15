@@ -112,8 +112,7 @@ func ladderDiff(code, api []string) []string {
 var errAdministratorMissing = errors.New("bot member does not hold Administrator")
 
 // checkAdministrator reads the bot's own member and the guild's roles and
-// captures when no role the bot holds carries Administrator. The guild owner
-// holds every permission, so an owner bot passes without a role.
+// captures when no role the bot holds carries Administrator.
 func checkAdministrator(mgr TempVCManager, guildID, botUserID string) {
 	member, err := mgr.GuildMember(guildID, botUserID)
 	if err != nil {
@@ -125,7 +124,7 @@ func checkAdministrator(mgr TempVCManager, guildID, botUserID string) {
 		utils.Warn("Administrator check skipped: guild fetch failed", "error", err, "guild_id", guildID)
 		return
 	}
-	if guild.OwnerID == botUserID || holdsAdministrator(member, guild) {
+	if holdsAdministrator(member, guild) {
 		utils.Info("Administrator check passed", "guild_id", guildID)
 		return
 	}

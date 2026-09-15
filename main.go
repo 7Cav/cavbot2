@@ -141,18 +141,25 @@ func initStore() store.Store {
 // exit before the listener is closed under them.
 const panelShutdownTimeout = 5 * time.Second
 
-// startPanel serves the panel on PANEL_ADDR until ctx ends. With PANEL_ADDR
-// unset it logs one line and returns; the panel is inert (#288). Called after
-// READY so the panel never answers before the bot can act on the guild.
-func startPanel(ctx context.Context) {
+// loadPanelConfig reads the panel configuration in the configuration phase,
+// before the store opens and long before the Discord session, so a half-set
+// PANEL_ block fails the start here and never leaves a bot that identified
+// with Discord and then died. With PANEL_ADDR unset the panel is inert (#288)
+// and the second result is false.
+func loadPanelConfig() (panel.Config, bool) {
 	cfg, on := panel.ConfigFromEnv()
 	if !on {
 		utils.Info("PANEL_ADDR not set, panel disabled")
-		return
+		return cfg, false
 	}
 	utils.Info("Panel configured",
 		"addr", cfg.Addr, "base_url", cfg.BaseURL, "group_ids", cfg.GroupIDs)
+	return cfg, true
+}
 
+// startPanel serves the panel on cfg.Addr until ctx ends. Called after READY
+// so the panel never answers before the bot can act on the guild.
+func startPanel(ctx context.Context, cfg panel.Config) {
 	srv := panel.New(cfg)
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
@@ -182,6 +189,8 @@ func main() {
 	utils.Info("CavBot2 starting", "version", Version)
 
 	utils.Info("Warden role base name resolved", "base_name", commands.WardenRoleBaseName())
+
+	panelCfg, panelOn := loadPanelConfig()
 
 	// Opened and migrated before the Discord session, so a failed migration
 	// never leaves a half-started bot on the gateway. The temporary voice
@@ -291,7 +300,9 @@ func main() {
 	// are running. runCtx ends at the shutdown signal and stops the listener.
 	runCtx, stopRun := context.WithCancel(context.Background())
 	defer stopRun()
-	startPanel(runCtx)
+	if panelOn {
+		startPanel(runCtx, panelCfg)
+	}
 
 	utils.Info("Bot is now running. Press CTRL-C to exit")
 	sc := make(chan os.Signal, 1)

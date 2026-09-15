@@ -42,18 +42,31 @@ type contextKey int
 
 const sessionKey contextKey = iota
 
-// setCookie writes one panel cookie with the attributes the __Host- prefix
-// requires. No Max-Age: the cookie lives for the browser session, and the
-// server-side entry's expiry is what ends it.
-func setCookie(w http.ResponseWriter, name, value string) {
-	http.SetCookie(w, &http.Cookie{
+// panelCookie builds one panel cookie with the attributes the __Host- prefix
+// requires. maxAge 0 writes no Max-Age, so a set cookie lives for the
+// browser session and the server-side entry's expiry is what ends it; a
+// negative maxAge tells the browser to drop it.
+func panelCookie(name, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
 		Name:     name,
 		Value:    value,
 		Path:     "/",
 		Secure:   true,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-	})
+		MaxAge:   maxAge,
+	}
+}
+
+// setCookie writes a panel cookie holding an opaque key.
+func setCookie(w http.ResponseWriter, name, value string) {
+	http.SetCookie(w, panelCookie(name, value, 0))
+}
+
+// deleteCookie tells the browser to drop a panel cookie. The attributes
+// repeat the set cookie's, since a __Host- deletion without them is ignored.
+func deleteCookie(w http.ResponseWriter, name string) {
+	http.SetCookie(w, panelCookie(name, "", -1))
 }
 
 // handleAuthStart creates a pending sign-in and sends the browser to the
@@ -68,20 +81,6 @@ func (s *Server) handleAuthStart(w http.ResponseWriter, r *http.Request) {
 	})
 	setCookie(w, signInCookie, id)
 	http.Redirect(w, r, s.oauth.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier)), http.StatusSeeOther)
-}
-
-// deleteCookie tells the browser to drop a panel cookie. The attributes
-// repeat the set cookie's, since a __Host- deletion without them is ignored.
-func deleteCookie(w http.ResponseWriter, name string) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     name,
-		Value:    "",
-		Path:     "/",
-		Secure:   true,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
 }
 
 // handleAuthCallback is the one GET that creates state, defended by the
@@ -117,13 +116,8 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, outcome := s.groupCheck(r.Context(), token.AccessToken)
-	switch outcome {
-	case groupPass:
-	case groupUnavailable:
-		s.render(w, http.StatusBadGateway, "error.html", page{})
-		return
-	default:
-		http.Redirect(w, r, signInURL(causeFor(outcome)), http.StatusSeeOther)
+	if outcome != groupPass {
+		s.refuse(w, r, outcome, "")
 		return
 	}
 
@@ -168,21 +162,29 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 		}
 
 		user, outcome := s.groupCheck(r.Context(), sess.accessToken)
-		switch outcome {
-		case groupPass:
-		case groupUnavailable:
-			s.render(w, http.StatusBadGateway, "error.html", page{Username: sess.username})
-			return
-		default:
-			s.endSession(w, c.Value)
-			utils.Info("Panel session ended", "forum_user_id", sess.userID, "cause", causeFor(outcome))
-			http.Redirect(w, r, signInURL(causeFor(outcome)), http.StatusSeeOther)
+		if outcome != groupPass {
+			if outcome != groupUnavailable {
+				s.endSession(w, c.Value)
+				utils.Info("Panel session ended", "forum_user_id", sess.userID, "cause", outcome.cause())
+			}
+			s.refuse(w, r, outcome, sess.username)
 			return
 		}
 		// The forum's current username wins over the one stored at sign-in.
 		sess.username = user.Username
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sessionKey, sess)))
 	})
+}
+
+// refuse answers a failed group check: the error page for a forum outage,
+// otherwise a redirect to sign-in carrying the cause. Ending the session,
+// where one exists, is the caller's.
+func (s *Server) refuse(w http.ResponseWriter, r *http.Request, outcome groupOutcome, username string) {
+	if outcome == groupUnavailable {
+		s.render(w, http.StatusBadGateway, "error.html", page{Username: username})
+		return
+	}
+	http.Redirect(w, r, signInURL(outcome.cause()), http.StatusSeeOther)
 }
 
 // handleSignOut ends the panel session and nothing else: no call to the

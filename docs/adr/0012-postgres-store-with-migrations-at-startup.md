@@ -40,6 +40,11 @@ branch.
   release later, after every binary in the field stops reading the old shape.
 - **The feature is inert without `BOT_DB_DSN`.** One WARN line, a nil store,
   and the bot runs as before. CI needs no Postgres to build.
+- **`POSTGRES_PASSWORD` is the one variable in `.env.example` that is not in
+  the compose `environment:` allowlist.** Compose reads it for the `postgres`
+  service; the bot never reads it, and the same password rides inside
+  `BOT_DB_DSN`. Putting it in the bot's environment would hand the process a
+  secret it has no use for.
 - **One interface, two implementations.** `store.Store` is the seam.
   `store.Postgres` is production; `store.Fake` is the in-memory
   implementation other packages' tests bind. The store package's contract

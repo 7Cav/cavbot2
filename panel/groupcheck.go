@@ -77,8 +77,9 @@ func (s *Server) groupCheck(ctx context.Context, accessToken string) (forumUser,
 	case resp.StatusCode >= 500:
 		return forumUser{}, groupUnavailable
 	case resp.StatusCode != http.StatusOK:
-		// Any other answer is one the forum does not give a valid token; treat
-		// it like an outage so the session survives and the visitor retries.
+		// Any other status (a 429, a redirect) is unexpected from this
+		// endpoint. Treat it as an outage so the session survives and the next
+		// request retries; a revoked token answers 401 on that retry.
 		return forumUser{}, groupUnavailable
 	}
 
@@ -108,8 +109,9 @@ func (s *Server) allowlisted(u forumUser) bool {
 	return false
 }
 
-// causeFor maps an ending outcome to the sign-in page's cause value.
-func causeFor(o groupOutcome) string {
+// cause is the sign-in page's cause value for an outcome that ends the
+// session, empty for the others.
+func (o groupOutcome) cause() string {
 	switch o {
 	case groupExpired:
 		return causeExpired

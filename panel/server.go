@@ -88,7 +88,9 @@ func (s *Server) render(w http.ResponseWriter, status int, name string, data pag
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
-		utils.Error("Panel template render failed", "template", name, "error", err)
+		// The templates are embedded and parsed at startup, so a failure here
+		// is a code bug, not an expected outcome (ADR 0001).
+		utils.CaptureError("Panel template render failed", err, "template", name)
 	}
 }
 

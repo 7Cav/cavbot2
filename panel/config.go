@@ -48,8 +48,8 @@ const (
 )
 
 // defaultGroupIDs are the forum groups Genstaff (71), S6 HQ (47) and
-// Regimental Technical Aides (44) hold, from the forum groups research on the
-// map. The allowlist lives in the environment so a forum change can never lock
+// Regimental Technical Aides (44) hold, from the forum groups research
+// branch. The allowlist lives in the environment so a forum change can never lock
 // the maintainer out.
 var defaultGroupIDs = []int{71, 47, 44}
 

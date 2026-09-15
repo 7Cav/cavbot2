@@ -66,3 +66,16 @@ func TestConfigFromEnv_GroupIDs(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigFromEnv_MissingRequiredVariablePanics(t *testing.T) {
+	clearPanelEnv(t)
+	setPanelEnv(t)
+	t.Setenv("PANEL_OAUTH_CLIENT_SECRET", "")
+
+	defer func() {
+		if recover() == nil {
+			t.Fatalf("ConfigFromEnv did not panic with PANEL_ADDR set and the client secret missing")
+		}
+	}()
+	panel.ConfigFromEnv()
+}

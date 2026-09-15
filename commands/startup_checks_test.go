@@ -14,22 +14,14 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// apiRank is one entry of the milpacs ranks endpoint as the test serves it.
-type apiRank struct {
-	RankShort        string `json:"rankShort"`
-	RankFull         string `json:"rankFull"`
-	RankID           string `json:"rankId"`
-	RankDisplayOrder int    `json:"rankDisplayOrder"`
-}
-
 // apiLadder builds the ranks endpoint body from the code ladder: the 29
 // abbreviations in ladder order with ascending display orders, plus the
 // Tester entry the endpoint carries first, so a fixture never restates the
 // ladder by hand.
-func apiLadder() []apiRank {
-	ranks := []apiRank{{RankShort: "32", RankFull: "Tester", RankID: "32", RankDisplayOrder: 1}}
+func apiLadder() []utils.RankEntry {
+	ranks := []utils.RankEntry{{RankShort: "32", RankFull: "Tester", RankID: "32", RankDisplayOrder: 1}}
 	for i, rr := range tempVCRankRoles {
-		ranks = append(ranks, apiRank{
+		ranks = append(ranks, utils.RankEntry{
 			RankShort:        rr.abbrev,
 			RankFull:         rr.abbrev + " full",
 			RankID:           fmt.Sprint(i + 1),
@@ -41,7 +33,7 @@ func apiLadder() []apiRank {
 
 // serveRanks points the 7Cav API client at a server that answers the ranks
 // endpoint with status and body.
-func serveRanks(t *testing.T, status int, ranks []apiRank) {
+func serveRanks(t *testing.T, status int, ranks []utils.RankEntry) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/milpacs/ranks" {
@@ -83,12 +75,12 @@ func kvMentions(kv []any, needle string) bool {
 func TestCheckRankLadder_DriftCapturesOnceWithTheDifferingEntry(t *testing.T) {
 	cases := []struct {
 		name   string
-		mutate func([]apiRank)
+		mutate func([]utils.RankEntry)
 		expect string
 	}{
 		{
 			name: "abbreviation replaced",
-			mutate: func(ranks []apiRank) {
+			mutate: func(ranks []utils.RankEntry) {
 				for i := range ranks {
 					if ranks[i].RankShort == "SGT" {
 						ranks[i].RankShort = "SGX"
@@ -99,7 +91,7 @@ func TestCheckRankLadder_DriftCapturesOnceWithTheDifferingEntry(t *testing.T) {
 		},
 		{
 			name: "two adjacent display orders swapped",
-			mutate: func(ranks []apiRank) {
+			mutate: func(ranks []utils.RankEntry) {
 				var cpl, spc int
 				for i := range ranks {
 					switch ranks[i].RankShort {
@@ -150,26 +142,38 @@ func TestCheckAdministrator(t *testing.T) {
 	const botID = "bot-user"
 	adminRole := &discordgo.Role{ID: "role-admin", Permissions: discordgo.PermissionAdministrator}
 	plainRole := &discordgo.Role{ID: "role-plain", Permissions: discordgo.PermissionViewChannel}
-	guild := &discordgo.Guild{ID: testTempVCGuild, OwnerID: "someone-else", Roles: []*discordgo.Role{adminRole, plainRole}}
+	// The everyone role shares the guild's ID and every member holds it.
+	everyone := &discordgo.Role{ID: testTempVCGuild, Permissions: discordgo.PermissionViewChannel}
+	everyoneAdmin := &discordgo.Role{ID: testTempVCGuild, Permissions: discordgo.PermissionAdministrator}
 
 	cases := []struct {
 		name         string
+		roles        []*discordgo.Role
 		member       *discordgo.Member
 		memberErr    error
 		wantCaptures int
 	}{
 		{
 			name:         "a role with Administrator",
+			roles:        []*discordgo.Role{everyone, adminRole, plainRole},
 			member:       &discordgo.Member{User: &discordgo.User{ID: botID}, Roles: []string{"role-plain", "role-admin"}},
 			wantCaptures: 0,
 		},
 		{
+			name:         "the everyone role with Administrator",
+			roles:        []*discordgo.Role{everyoneAdmin, plainRole},
+			member:       &discordgo.Member{User: &discordgo.User{ID: botID}, Roles: []string{"role-plain"}},
+			wantCaptures: 0,
+		},
+		{
 			name:         "no role with Administrator",
+			roles:        []*discordgo.Role{everyone, adminRole, plainRole},
 			member:       &discordgo.Member{User: &discordgo.User{ID: botID}, Roles: []string{"role-plain"}},
 			wantCaptures: 1,
 		},
 		{
 			name:         "member fetch fails",
+			roles:        []*discordgo.Role{everyone, adminRole, plainRole},
 			memberErr:    errors.New("dial tcp: connection refused"),
 			wantCaptures: 0,
 		},
@@ -181,7 +185,7 @@ func TestCheckAdministrator(t *testing.T) {
 			mgr := newFakeTempVCManager()
 			mgr.member = tc.member
 			mgr.memberErr = tc.memberErr
-			mgr.guild = guild
+			mgr.guild = &discordgo.Guild{ID: testTempVCGuild, Roles: tc.roles}
 
 			checkAdministrator(mgr, testTempVCGuild, botID)
 
