@@ -174,6 +174,19 @@ moment it empties. Hub settings are edited in the panel, never in code.
   channel inherits its permissions from, the hub's category or the hub
   channel itself.
   _Avoid_: sync, category sync, synchronize permissions.
+- **Register**: To make an existing voice channel a hub through the panel.
+  The other way a hub comes to exist is the panel creating the channel itself.
+  _Avoid_: adopt (for a hub), import, link, attach.
+- **Disabled hub**: A hub that keeps its channel and its settings but spawns
+  nothing. A join to it does nothing. Its spawned channels live on until
+  empty.
+  _Avoid_: paused hub, inactive hub, archived hub, hub off.
+- **Change log**: The panel's per-hub record of who changed which setting,
+  when, and from what to what. It records panel saves only.
+  _Avoid_: audit trail, audit log (that is Discord's), history.
+- **Rank ladder**: The rank roles in seniority order, most senior first,
+  that the handover rule ranks occupants by.
+  _Avoid_: rank list, rank table, seniority list, role ladder.
 - **Panel**: cavbot2's web UI at `cavbot2.7cav.us`, signed in through the
   forum. Hub settings are its first page; later pages are out of this
   feature's scope.

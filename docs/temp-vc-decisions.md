@@ -78,8 +78,8 @@ Decisions the maintainer made while charting map #255. These are ours, not Nex's
 - A MEE6 export. Settings move by hand. R2 Q4 settles who does it: we do.
 - `/voice-clean`. Dropped outright (R2 Q1). The `GUILD_CREATE` sweep already covers the bot-was-down case, which was the command's only real use.
 - `transfer`. Dropped by R1 Q7 ("Ideally would just be clean and rename"), and `clean` has since gone too.
-- A per-user channel cap. Not requested. Immediate deletion means the worst abuse is recreating the same channel repeatedly. If kept, it becomes a configurable field, not a hardcoded 4.
-- Per-hub user limit and bitrate as requirements. All 14 hubs sit at MEE6 defaults (unlimited, 64k). Configurable if cheap; nothing depends on them.
+- A per-user channel cap. Not requested. Immediate deletion means the worst abuse is recreating the same channel repeatedly. If kept, it becomes a configurable field, not a hardcoded 4. Dropped by #266: not a hub field.
+- Per-hub user limit and bitrate as requirements. All 14 hubs sit at MEE6 defaults (unlimited, 64k). Configurable if cheap; nothing depends on them. Both are hub fields by #266.
 - The status and position ladder (11 hardcoded role IDs, general staff to discharged). HWqs's addition, never asked for, superseded by "rank alone always". This kills only the tier, not the election.
 - Storing config in code. The hardcoded hub table is dead; R1 Q11 requires live editing.
 - Renaming the 14 hub channels as a migration step. The panel field that lets Nex rename one is in scope; the bulk rename is his to do through it.
@@ -111,7 +111,7 @@ Deleting the owner overwrite also retires the review's most dangerous unverified
 
 ### New work
 
-1. Per-hub config in Postgres with the panel as its editing surface. Fields so far: hub channel, hub channel name (writable), category, spawned-name base string, permission source (category or hub channel), moderator roles, and whatever the hub form ticket adds.
+1. Per-hub config in Postgres with the panel as its editing surface. Fields so far: hub channel, hub channel name (writable), category, spawned-name base string, permission source (category or hub channel), moderator roles. The v1 list is settled in [#266](https://github.com/7Cav/cavbot2/issues/266).
 2. Permission source. When set to category, create with no explicit overwrites so the channel inherits its parent. When set to hub channel, copy the hub channel's own overwrite list. The PR always passes an explicit overwrite list, so today nothing ever inherits.
 3. Moderator roles, a cross-channel authority concept the PR lacks.
 4. `/voice-rename`: Discord-gated to Cav members, plus an in-bot owner check, targeting the invoker's current channel. A single command with a single string option. `ApplicationCommandOptionSubCommand` is no longer needed; that recommendation in the 2026-08-06 PR comment is superseded.
@@ -131,11 +131,16 @@ Decisions made by working map #255's tickets. Each row links the ticket that hol
 | `/voice-rename` replies are ephemeral. A non-owner is told who the owner is. A channel with no owner cannot be renamed, and that reply is logged at WARN because it means the Discord gate or the rank-role assumption failed. Discord allows two renames per channel per 10 minutes; the bot counts them and refuses the third with the wait time, and never lets discordgo sleep through a 429. | [#264](https://github.com/7Cav/cavbot2/issues/264) |
 | An ownership notice is posted in the spawned channel's chat at create and at every handover. It names the owner or says there is none, and pings nobody. The voice channel status line is not used. | [#264](https://github.com/7Cav/cavbot2/issues/264) |
 | At the restart sweep, a stored owner who is no longer in the channel counts as having left. The sweep elects by the handover rule. | [#264](https://github.com/7Cav/cavbot2/issues/264) |
+| The hub form's v1 fields: hub channel (set at create or register, fixed after), hub channel name (writable, renames the channel on save), category (read from the hub channel's parent, shown read-only, and a hub channel with no parent is refused), spawned-name base string (required, 1 to 90 characters), permission source (`category` or `hub_channel`, default `category`), moderator roles (zero or more of the guild's roles, as role IDs), user limit (0 to 99, default 0), bitrate (default 64000, bounded by the guild's boost tier at save), enabled (default on). No per-user cap. | [#266](https://github.com/7Cav/cavbot2/issues/266) |
+| A disabled hub keeps its channel and its settings and ignores joins. Its spawned channels stay tracked and are adopted at restart like any other. Cutover order: register every hub disabled while MEE6 still runs, switch the MEE6 plugin off, then enable the hubs. | [#266](https://github.com/7Cav/cavbot2/issues/266) |
+| The panel creates a hub channel from a category and a name, synced to the category, or registers an existing voice channel as a hub. Remove deletes the row and leaves the Discord channel. Spawned channels of a removed hub keep their rows and die when empty. A changed hub channel name renames the channel before the row saves; a refused rename saves nothing and the form shows why. | [#266](https://github.com/7Cav/cavbot2/issues/266) |
+| An append-only change log per hub records every panel save: forum user ID and username, time, action, and a JSON diff of the changed fields. The hub page shows the last ten, newest first. The hub list shows each hub's live spawned channel count from the bot's memory. | [#266](https://github.com/7Cav/cavbot2/issues/266) |
+| The rank ladder stays in code as abbreviation plus Discord role ID. At startup the bot fetches `/api/v1/milpacs/ranks` and captures any drift in abbreviations or order to Sentry, not a WARN log. Election by API rank per occupant was rejected: a network call in every create and handover, and it breaks the rank-role rule. | [#266](https://github.com/7Cav/cavbot2/issues/266) |
 
 ## Open, as tickets on map #255
 
 - [What authority a moderator role carries](https://github.com/7Cav/cavbot2/issues/265)
-- [The hub form: v1 fields, hub creation, and an audit trail](https://github.com/7Cav/cavbot2/issues/266)
+- [Does the bot keep Administrator, or does the spec name a per-category permission set](https://github.com/7Cav/cavbot2/issues/268)
 
 ## Fixes that hold regardless of every answer above
 
