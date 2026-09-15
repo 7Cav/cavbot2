@@ -5,26 +5,20 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
 
-// fakeTempVCManager records calls and injects per-call errors. Mutex-guarded:
-// grace timers invoke ChannelDelete from timer goroutines while the test
-// asserts, and the suite runs under -race.
+// fakeTempVCManager records calls and injects per-call errors. Mutex-guarded
+// because the suite runs under -race and the fake is shared with any goroutine
+// a test spawns.
 type fakeTempVCManager struct {
 	mu sync.Mutex
 
 	created     []discordgo.GuildChannelCreateData
 	deleted     []string
 	moves       []fakeMove
-	edits       []fakeEdit
 	messages    []fakeMessage
-	permSets    []fakePermSet
-	permDeletes []fakePermDelete
-	memberByID  map[string]*discordgo.Member
-	channelByID map[string]*discordgo.Channel
 	nextChannel *discordgo.Channel
 
 	deleteCalls int
@@ -32,34 +26,12 @@ type fakeTempVCManager struct {
 	createErr  error
 	deleteErr  error
 	moveErr    error
-	memberErr  error
-	channelErr error
-	editErr    error
 	messageErr error
-	permErr    error
-}
-
-type fakePermSet struct {
-	channelID  string
-	targetID   string
-	targetType discordgo.PermissionOverwriteType
-	allow      int64
-	deny       int64
-}
-
-type fakePermDelete struct {
-	channelID string
-	targetID  string
 }
 
 type fakeMove struct {
 	userID    string
 	channelID *string
-}
-
-type fakeEdit struct {
-	channelID string
-	name      string
 }
 
 type fakeMessage struct {
@@ -69,8 +41,6 @@ type fakeMessage struct {
 
 func newFakeTempVCManager() *fakeTempVCManager {
 	return &fakeTempVCManager{
-		memberByID:  map[string]*discordgo.Member{},
-		channelByID: map[string]*discordgo.Channel{},
 		nextChannel: &discordgo.Channel{ID: "new-chan", Name: "created"},
 	}
 }
@@ -84,39 +54,7 @@ func (f *fakeTempVCManager) GuildChannelCreateComplex(_ string, data discordgo.G
 	f.created = append(f.created, data)
 	ch := *f.nextChannel
 	ch.Name = data.Name
-	// Register the created channel so a later Channel(id) read reflects the
-	// name the bot assigned, the live-name comparison the retro-rename does.
-	reg := ch
-	f.channelByID[ch.ID] = &reg
 	return &ch, nil
-}
-
-func (f *fakeTempVCManager) Channel(channelID string) (*discordgo.Channel, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.channelErr != nil {
-		return nil, f.channelErr
-	}
-	if ch, ok := f.channelByID[channelID]; ok {
-		chCopy := *ch
-		return &chCopy, nil
-	}
-	return nil, errors.New("channel not found")
-}
-
-func (f *fakeTempVCManager) ChannelEdit(channelID string, data *discordgo.ChannelEdit) (*discordgo.Channel, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.editErr != nil {
-		return nil, f.editErr
-	}
-	f.edits = append(f.edits, fakeEdit{channelID: channelID, name: data.Name})
-	if ch, ok := f.channelByID[channelID]; ok {
-		ch.Name = data.Name
-	} else {
-		f.channelByID[channelID] = &discordgo.Channel{ID: channelID, Name: data.Name}
-	}
-	return f.channelByID[channelID], nil
 }
 
 func (f *fakeTempVCManager) ChannelDelete(channelID string) (*discordgo.Channel, error) {
@@ -146,18 +84,6 @@ func (f *fakeTempVCManager) GuildMemberMove(_ string, userID string, channelID *
 	return nil
 }
 
-func (f *fakeTempVCManager) GuildMember(_ string, userID string) (*discordgo.Member, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.memberErr != nil {
-		return nil, f.memberErr
-	}
-	if m, ok := f.memberByID[userID]; ok {
-		return m, nil
-	}
-	return nil, errors.New("member not found")
-}
-
 func (f *fakeTempVCManager) deletedIDs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -182,14 +108,6 @@ func (f *fakeTempVCManager) recordedMoves() []fakeMove {
 	return out
 }
 
-func (f *fakeTempVCManager) recordedEdits() []fakeEdit {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]fakeEdit, len(f.edits))
-	copy(out, f.edits)
-	return out
-}
-
 func (f *fakeTempVCManager) ChannelMessageSend(channelID, content string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -208,57 +126,22 @@ func (f *fakeTempVCManager) recordedMessages() []fakeMessage {
 	return out
 }
 
-func (f *fakeTempVCManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.permErr != nil {
-		return f.permErr
-	}
-	f.permSets = append(f.permSets, fakePermSet{channelID: channelID, targetID: targetID, targetType: targetType, allow: allow, deny: deny})
-	return nil
-}
-
-func (f *fakeTempVCManager) ChannelPermissionDelete(channelID, targetID string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.permErr != nil {
-		return f.permErr
-	}
-	f.permDeletes = append(f.permDeletes, fakePermDelete{channelID: channelID, targetID: targetID})
-	return nil
-}
-
-func (f *fakeTempVCManager) recordedPermSets() []fakePermSet {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]fakePermSet, len(f.permSets))
-	copy(out, f.permSets)
-	return out
-}
-
-func (f *fakeTempVCManager) recordedPermDeletes() []fakePermDelete {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]fakePermDelete, len(f.permDeletes))
-	copy(out, f.permDeletes)
-	return out
-}
-
 const (
 	testTempVCGuild    = "guild-1"
 	testTempVCHub      = "hub-1"
 	testTempVCCategory = "cat-1"
+	testTempVCHubName  = "Voice"
 	testTempVCLog      = "log-1"
 )
 
-func newTestTempVC(mgr TempVCManager, grace time.Duration) *tempVC {
+func newTestTempVC(mgr TempVCManager) *tempVC {
 	return newTempVC(mgr, TempVCConfig{
 		GuildID:      testTempVCGuild,
 		LogChannelID: testTempVCLog,
 		Hubs: []tempVCHub{{
 			HubChannelID: testTempVCHub,
 			CategoryID:   testTempVCCategory,
-			Grace:        grace,
+			Name:         testTempVCHubName,
 		}},
 	})
 }
@@ -294,19 +177,6 @@ func voiceEvent(userID, channelID string, member *discordgo.Member) *discordgo.V
 	}}
 }
 
-// eventually polls cond until it holds or the deadline passes.
-func eventually(t *testing.T, cond func() bool, msg string) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	t.Fatal(msg)
-}
-
 func TestLoadTempVCConfig(t *testing.T) {
 	// The hubs and log channel are hardcoded tenant identifiers, so the feature
 	// is always enabled and the config is built from the hardcoded table, no env
@@ -328,8 +198,8 @@ func TestLoadTempVCConfig(t *testing.T) {
 		if h != tempVCHubs[i] {
 			t.Errorf("hub[%d] = %+v, want %+v", i, h, tempVCHubs[i])
 		}
-		if h.HubChannelID == "" || h.CategoryID == "" || h.Grace <= 0 {
-			t.Errorf("hub[%d] has an empty ID or non-positive grace: %+v", i, h)
+		if h.HubChannelID == "" || h.CategoryID == "" || h.Name == "" {
+			t.Errorf("hub[%d] has an empty ID or name: %+v", i, h)
 		}
 	}
 }
@@ -340,18 +210,18 @@ func TestMustTempVCHubsRejectsMisconfig(t *testing.T) {
 		hubs []tempVCHub
 	}{
 		{"empty table", nil},
-		{"empty hub id", []tempVCHub{{HubChannelID: "", CategoryID: "c", Grace: time.Second}}},
-		{"empty category id", []tempVCHub{{HubChannelID: "h", CategoryID: "", Grace: time.Second}}},
-		{"hub equals category", []tempVCHub{{HubChannelID: "x", CategoryID: "x", Grace: time.Second}}},
-		{"non-positive grace", []tempVCHub{{HubChannelID: "h", CategoryID: "c", Grace: 0}}},
-		{"negative user limit", []tempVCHub{{HubChannelID: "h", CategoryID: "c", Grace: time.Second, UserLimit: -1}}},
+		{"empty hub id", []tempVCHub{{HubChannelID: "", CategoryID: "c", Name: "V"}}},
+		{"empty category id", []tempVCHub{{HubChannelID: "h", CategoryID: "", Name: "V"}}},
+		{"hub equals category", []tempVCHub{{HubChannelID: "x", CategoryID: "x", Name: "V"}}},
+		{"empty name", []tempVCHub{{HubChannelID: "h", CategoryID: "c", Name: ""}}},
+		{"negative user limit", []tempVCHub{{HubChannelID: "h", CategoryID: "c", Name: "V", UserLimit: -1}}},
 		{"duplicate hub", []tempVCHub{
-			{HubChannelID: "h", CategoryID: "c1", Grace: time.Second},
-			{HubChannelID: "h", CategoryID: "c2", Grace: time.Second},
+			{HubChannelID: "h", CategoryID: "c1", Name: "V"},
+			{HubChannelID: "h", CategoryID: "c2", Name: "V"},
 		}},
 		{"duplicate category", []tempVCHub{
-			{HubChannelID: "h1", CategoryID: "c", Grace: time.Second},
-			{HubChannelID: "h2", CategoryID: "c", Grace: time.Second},
+			{HubChannelID: "h1", CategoryID: "c", Name: "V"},
+			{HubChannelID: "h2", CategoryID: "c", Name: "V"},
 		}},
 	}
 	for _, tc := range cases {
@@ -367,8 +237,8 @@ func TestMustTempVCHubsRejectsMisconfig(t *testing.T) {
 
 	// A well-formed multi-hub table is accepted and returned unchanged.
 	good := []tempVCHub{
-		{HubChannelID: "h1", CategoryID: "c1", Grace: time.Second},
-		{HubChannelID: "h2", CategoryID: "c2", UserLimit: 9, Bitrate: 96000, Grace: 30 * time.Second},
+		{HubChannelID: "h1", CategoryID: "c1", Name: "A"},
+		{HubChannelID: "h2", CategoryID: "c2", Name: "B", UserLimit: 9, Bitrate: 96000},
 	}
 	if got := mustTempVCHubs(good); len(got) != 2 {
 		t.Fatalf("mustTempVCHubs returned %d hubs, want 2", len(got))
@@ -377,7 +247,7 @@ func TestMustTempVCHubsRejectsMisconfig(t *testing.T) {
 
 func TestTempVCHubJoinCreatesOwnedChannelAndMovesUser(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	member := &discordgo.Member{Nick: "CPL Smith.J", User: &discordgo.User{Username: "smithy"}}
 	tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member))
@@ -387,8 +257,8 @@ func TestTempVCHubJoinCreatesOwnedChannelAndMovesUser(t *testing.T) {
 		t.Fatalf("created %d channels, want 1", len(created))
 	}
 	data := created[0]
-	if data.Name != "CPL Smith.J's Channel" {
-		t.Errorf("name = %q", data.Name)
+	if data.Name != "Voice - 1" {
+		t.Errorf("name = %q, want the hub's name plus the first number", data.Name)
 	}
 	if data.Type != discordgo.ChannelTypeGuildVoice {
 		t.Errorf("type = %v", data.Type)
@@ -396,16 +266,10 @@ func TestTempVCHubJoinCreatesOwnedChannelAndMovesUser(t *testing.T) {
 	if data.ParentID != testTempVCCategory {
 		t.Errorf("parent = %q", data.ParentID)
 	}
-	if len(data.PermissionOverwrites) != 1 {
-		t.Fatalf("overwrites = %d, want 1", len(data.PermissionOverwrites))
-	}
-	ow := data.PermissionOverwrites[0]
-	if ow.ID != "user-1" || ow.Type != discordgo.PermissionOverwriteTypeMember {
-		t.Errorf("overwrite target = %+v", ow)
-	}
-	wantAllow := int64(discordgo.PermissionManageChannels | discordgo.PermissionVoiceMoveMembers | discordgo.PermissionManageRoles)
-	if ow.Allow != wantAllow {
-		t.Errorf("allow = %d, want %d", ow.Allow, wantAllow)
+	// No overwrites of its own: the channel inherits its category's, and the
+	// creator gets no permission. The bot holds channel permissions.
+	if len(data.PermissionOverwrites) != 0 {
+		t.Errorf("overwrites = %+v, want none (inherit the category)", data.PermissionOverwrites)
 	}
 
 	moves := fake.recordedMoves()
@@ -423,258 +287,71 @@ func TestTempVCHubJoinCreatesOwnedChannelAndMovesUser(t *testing.T) {
 	}
 }
 
-func TestTempVCChannelNameFallbacks(t *testing.T) {
-	t.Run("nil member falls back to REST fetch", func(t *testing.T) {
-		fake := newFakeTempVCManager()
-		fake.memberByID["user-2"] = &discordgo.Member{Nick: "SGT Jones.K"}
-		tv := newTestTempVC(fake, time.Hour)
-
-		tv.handleVoiceStateUpdate(voiceEvent("user-2", testTempVCHub, nil))
-		created := fake.createdData()
-		if len(created) != 1 || created[0].Name != "SGT Jones.K's Channel" {
-			t.Fatalf("created = %+v", created)
-		}
-	})
-
-	t.Run("no nick uses username, first letter capitalized", func(t *testing.T) {
-		fake := newFakeTempVCManager()
-		tv := newTestTempVC(fake, time.Hour)
-		member := &discordgo.Member{User: &discordgo.User{Username: "plainuser"}}
-
-		tv.handleVoiceStateUpdate(voiceEvent("user-3", testTempVCHub, member))
-		created := fake.createdData()
-		if len(created) != 1 || created[0].Name != "Plainuser's Channel" {
-			t.Fatalf("created = %+v", created)
-		}
-	})
-
-	t.Run("lowercase nick is cased to Last.F", func(t *testing.T) {
-		fake := newFakeTempVCManager()
-		tv := newTestTempVC(fake, time.Hour)
-		member := &discordgo.Member{Nick: "cpl smith.j"}
-
-		tv.handleVoiceStateUpdate(voiceEvent("user-6", testTempVCHub, member))
-		created := fake.createdData()
-		if len(created) != 1 || created[0].Name != "CPL Smith.J's Channel" {
-			t.Fatalf("created = %+v, want CPL Smith.J's Channel", created)
-		}
-	})
-
-	t.Run("multi-initial group is fully upper-cased", func(t *testing.T) {
-		fake := newFakeTempVCManager()
-		tv := newTestTempVC(fake, time.Hour)
-		member := &discordgo.Member{Nick: "1lt.smith.jw"}
-
-		tv.handleVoiceStateUpdate(voiceEvent("user-7", testTempVCHub, member))
-		created := fake.createdData()
-		if len(created) != 1 || created[0].Name != "1LT Smith.JW's Channel" {
-			t.Fatalf("created = %+v, want 1LT Smith.JW's Channel", created)
-		}
-	})
-
-	t.Run("fetch failure uses Trooper fallback", func(t *testing.T) {
-		fake := newFakeTempVCManager()
-		fake.memberErr = errors.New("boom")
-		tv := newTestTempVC(fake, time.Hour)
-
-		tv.handleVoiceStateUpdate(voiceEvent("user-4", testTempVCHub, nil))
-		created := fake.createdData()
-		if len(created) != 1 || created[0].Name != "Trooper's Channel" {
-			t.Fatalf("created = %+v", created)
-		}
-	})
-
-	t.Run("long nick truncated to discord limit", func(t *testing.T) {
-		fake := newFakeTempVCManager()
-		tv := newTestTempVC(fake, time.Hour)
-		member := &discordgo.Member{Nick: strings.Repeat("x", 120)}
-
-		tv.handleVoiceStateUpdate(voiceEvent("user-5", testTempVCHub, member))
-		created := fake.createdData()
-		if len(created) != 1 || len(created[0].Name) != discordChannelNameLimit {
-			t.Fatalf("name length = %d, want %d", len(created[0].Name), discordChannelNameLimit)
-		}
-	})
-}
-
-func TestSplitNick(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string // the "<rankFromNick> <nameCore>" composition
-	}{
-		// Canonical and separator drift all normalize to "<RANK> <Last>.<F>".
-		{"canonical dotted", "1LT.Laui.M", "1LT Laui.M"},
-		{"space separator", "1LT Laui.M", "1LT Laui.M"},
-		{"dot-space separator", "1LT. Laui.M", "1LT Laui.M"},
-		{"existing convention CPL", "CPL Smith.J", "CPL Smith.J"},
-		// Trailing callsign and unauthorized suffixes are dropped: quoted,
-		// bracketed, a known suffix keyword, or pure-symbol decoration.
-		{"aviation callsign dropped", "1LT.Laui.M \"Bobo\"", "1LT Laui.M"},
-		{"LOA suffix dropped", "1LT.Laui.M LOA", "1LT Laui.M"},
-		{"cadre suffix dropped", "1LT.Laui.M <cadre>", "1LT Laui.M"},
-		{"callsign on space-separated nick", "SGT Jones.K \"Ghost\"", "SGT Jones.K"},
-		{"trailing emoji dropped", "CPL Smith.J 🐎", "CPL Smith.J"},
-		{"multiple trailers dropped", "1LT.Laui.M \"Bobo\" <cadre>", "1LT Laui.M"},
-		// A multi-word name is KEPT, not collapsed to its first token (the
-		// "Sgt Major Smith" case), only recognized trailers are stripped.
-		{"multi-word name kept", "Sgt Major Smith", "SGT Major Smith"},
-		{"multi-word name with callsign", "SGT Major Smith \"Doc\"", "SGT Major Smith"},
-		// Case-insensitive rank match; name casing preserved.
-		{"lowercase rank", "1lt.laui.m", "1LT laui.m"},
-		// The 0/O look-alike typo is tolerated and normalized to the canonical rank.
-		{"WO1 zero typo", "W01.Laui.M", "WO1 Laui.M"},
-		{"COL zero typo", "C0L.Smith.J", "COL Smith.J"},
-		// Multi-character enlisted / warrant ranks.
-		{"warrant rank", "CW3.Rivera.T", "CW3 Rivera.T"},
-		{"recruit rank", "RCT.Newguy.A", "RCT Newguy.A"},
-		// Non-parsing inputs fall back to the trimmed raw display name.
-		{"no rank plain username", "plainuser", "plainuser"},
-		{"unknown leading token", "XYZ.Someone.B", "XYZ.Someone.B"},
-		{"bare rank only", "1LT", "1LT"},
-		{"empty", "", ""},
-		{"whitespace trimmed", "  1LT.Laui.M  ", "1LT Laui.M"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			rank, name := splitNick(tc.in)
-			got := strings.TrimSpace(rank + " " + name)
-			if got != tc.want {
-				t.Errorf("splitNick(%q) = (%q, %q) -> %q, want %q", tc.in, rank, name, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestSuffixNumber(t *testing.T) {
-	cases := []struct {
-		in   string
-		want int
-	}{
-		{"", 0},
-		{"b's Channel", 1},
-		{"b's Channel (2)", 2},
-		{"1LT Laui.M's Channel (10)", 10},
-		{"Bob (the builder)'s Channel", 1}, // trailing is not " (n)"
-		{"X (0)", 1},                       // (0) is not a valid slot
-		{"X (-1)", 1},
-	}
-	for _, tc := range cases {
-		if got := suffixNumber(tc.in); got != tc.want {
-			t.Errorf("suffixNumber(%q) = %d, want %d", tc.in, got, tc.want)
-		}
-	}
-}
-
-func TestTempVCChannelIndexAvoidsDuplicateAfterDelete(t *testing.T) {
+func TestTempVCLongHubNameTruncatedToDiscordLimit(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTempVC(fake, TempVCConfig{
+		GuildID:      testTempVCGuild,
+		LogChannelID: testTempVCLog,
+		Hubs: []tempVCHub{{
+			HubChannelID: testTempVCHub,
+			CategoryID:   testTempVCCategory,
+			Name:         strings.Repeat("x", 120),
+		}},
+	})
 
-	// User owns 4 channels: unsuffixed (slot 1), (2), (3), (4).
-	tv.mu.Lock()
-	for _, c := range []struct{ id, name string }{
-		{"c1", "b's Channel"},
-		{"c2", "b's Channel (2)"},
-		{"c3", "b's Channel (3)"},
-		{"c4", "b's Channel (4)"},
-	} {
-		tv.owners[c.id] = "b"
-		tv.occupants[c.id] = map[string]struct{}{}
-		tv.baseName[c.id] = "b's Channel"
-		tv.assignedName[c.id] = c.name
+	tv.handleVoiceStateUpdate(voiceEvent("user-5", testTempVCHub, nil))
+	created := fake.createdData()
+	if len(created) != 1 || len(created[0].Name) != discordChannelNameLimit {
+		t.Fatalf("name length = %d, want %d", len(created[0].Name), discordChannelNameLimit)
 	}
-	// Delete the unsuffixed channel, freeing slot 1.
-	delete(tv.owners, "c1")
-	delete(tv.occupants, "c1")
-	delete(tv.assignedName, "c1")
-	delete(tv.baseName, "c1")
-	idx := tv.nextChannelIndexLocked("b")
-	tv.mu.Unlock()
-
-	// The freed slot 1 is reused; it must NOT be 4 (which would duplicate the
-	// surviving "(4)"), the count-based bug that minted two "(4)" channels.
-	if idx != 1 {
-		t.Fatalf("next index = %d, want 1 (reuse freed slot, never collide with a live number)", idx)
-	}
-
-	// With slots 1..4 all in use, the next is 5.
-	tv.mu.Lock()
-	tv.owners["c1b"] = "b"
-	tv.occupants["c1b"] = map[string]struct{}{}
-	tv.assignedName["c1b"] = "b's Channel"
-	idx2 := tv.nextChannelIndexLocked("b")
-	tv.mu.Unlock()
-	if idx2 != 5 {
-		t.Fatalf("next index = %d, want 5 (slots 1-4 all in use)", idx2)
+	// The number survives the cut; the base is what is shortened.
+	if !strings.HasSuffix(created[0].Name, " - 1") {
+		t.Errorf("name = %q, want it to keep its number", created[0].Name)
 	}
 }
 
-func TestTempVCDemoteSoleChannelOnDelete(t *testing.T) {
+func TestTempVCNumbersPerHubAndReusesFreedNumber(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
-	// Owner has two channels, (1) and (2), both empty.
-	tv.mu.Lock()
-	for _, c := range []struct{ id, name string }{
-		{"c1", "b's Channel (1)"},
-		{"c2", "b's Channel (2)"},
-	} {
-		tv.owners[c.id] = "b"
-		tv.occupants[c.id] = map[string]struct{}{}
-		tv.baseName[c.id] = "b's Channel"
-		tv.assignedName[c.id] = c.name
-	}
-	tv.mu.Unlock()
+	// Two members spawn from the same hub: the hub numbers them 1 and 2, no
+	// matter who created them.
+	a := &discordgo.Member{Nick: "A"}
+	tv.handleVoiceStateUpdate(voiceEvent("user-a", testTempVCHub, a))
+	tv.handleVoiceStateUpdate(voiceEvent("user-a", "new-chan", a))
+
 	fake.mu.Lock()
-	fake.channelByID["c1"] = &discordgo.Channel{ID: "c1", Name: "b's Channel (1)"}
-	fake.channelByID["c2"] = &discordgo.Channel{ID: "c2", Name: "b's Channel (2)"}
+	fake.nextChannel = &discordgo.Channel{ID: "second-chan"}
 	fake.mu.Unlock()
+	b := &discordgo.Member{Nick: "B"}
+	tv.handleVoiceStateUpdate(voiceEvent("user-b", testTempVCHub, b))
+	tv.handleVoiceStateUpdate(voiceEvent("user-b", "second-chan", b))
 
-	// c1 is deleted; the owner is down to one channel (c2), which must be
-	// demoted from "(2)" back to the unnumbered base name.
-	tv.deleteIfStillEmpty("c1")
-
-	edits := fake.recordedEdits()
-	if len(edits) != 1 || edits[0].channelID != "c2" || edits[0].name != "b's Channel" {
-		t.Fatalf("edits = %+v, want c2 demoted to \"b's Channel\"", edits)
+	created := fake.createdData()
+	if len(created) != 2 || created[0].Name != "Voice - 1" || created[1].Name != "Voice - 2" {
+		t.Fatalf("created = %+v, want Voice - 1 then Voice - 2", created)
 	}
-	tv.mu.Lock()
-	defer tv.mu.Unlock()
-	if tv.assignedName["c2"] != "b's Channel" {
-		t.Errorf("assignedName[c2] = %q, want unnumbered base", tv.assignedName["c2"])
+
+	// The first channel empties and is deleted, freeing number 1. The next
+	// spawn reuses it rather than minting a 3.
+	tv.handleVoiceStateUpdate(voiceEvent("user-a", "", a))
+	if ids := fake.deletedIDs(); len(ids) != 1 || ids[0] != "new-chan" {
+		t.Fatalf("deleted = %v, want new-chan", ids)
 	}
-}
-
-func TestTempVCDemoteSkipsAlteredSoleChannel(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
-
-	tv.mu.Lock()
-	tv.owners["c1"] = "b"
-	tv.occupants["c1"] = map[string]struct{}{}
-	tv.baseName["c1"] = "b's Channel"
-	tv.assignedName["c1"] = "b's Channel (1)"
-	tv.owners["c2"] = "b"
-	tv.occupants["c2"] = map[string]struct{}{}
-	tv.baseName["c2"] = "b's Channel"
-	tv.assignedName["c2"] = "b's Channel (2)"
-	tv.mu.Unlock()
 	fake.mu.Lock()
-	fake.channelByID["c1"] = &discordgo.Channel{ID: "c1", Name: "b's Channel (1)"}
-	fake.channelByID["c2"] = &discordgo.Channel{ID: "c2", Name: "War Room"} // owner-renamed
+	fake.nextChannel = &discordgo.Channel{ID: "third-chan"}
 	fake.mu.Unlock()
+	tv.handleVoiceStateUpdate(voiceEvent("user-c", testTempVCHub, &discordgo.Member{Nick: "C"}))
 
-	tv.deleteIfStillEmpty("c1")
-
-	// The surviving channel was renamed by its owner, so its name is left alone.
-	if edits := fake.recordedEdits(); len(edits) != 0 {
-		t.Fatalf("edits = %+v, want none (altered channel must not be demoted)", edits)
+	created = fake.createdData()
+	if len(created) != 3 || created[2].Name != "Voice - 1" {
+		t.Fatalf("created = %+v, want the freed Voice - 1 reused", created)
 	}
 }
 
 func TestTempVCCapDisconnectsFifthJoin(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	tv.mu.Lock()
 	for _, id := range []string{"c1", "c2", "c3", "c4"} {
@@ -714,7 +391,7 @@ func TestTempVCCapDisconnectsFifthJoin(t *testing.T) {
 func TestTempVCCapDisconnectFailureIsCaptured(t *testing.T) {
 	fake := newFakeTempVCManager()
 	fake.moveErr = errors.New("gateway hiccup")
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	tv.mu.Lock()
 	for _, id := range []string{"c1", "c2", "c3", "c4"} {
@@ -729,25 +406,21 @@ func TestTempVCCapDisconnectFailureIsCaptured(t *testing.T) {
 	}
 }
 
-func TestTempVCEmptyChannelDeletedAfterGrace(t *testing.T) {
+func TestTempVCEmptyChannelDeletedAtOnce(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, 5*time.Millisecond)
+	tv := newTestTempVC(fake)
 
 	member := &discordgo.Member{Nick: "Owner"}
 	tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member))
 	// Simulate the gateway reporting the move into the new channel...
 	tv.handleVoiceStateUpdate(voiceEvent("user-1", "new-chan", member))
-	// ...then the owner disconnecting.
+	// ...then the owner disconnecting. The delete happens before the event
+	// handler returns: no grace, no timer.
 	tv.handleVoiceStateUpdate(voiceEvent("user-1", "", member))
 
-	eventually(t, func() bool {
-		for _, id := range fake.deletedIDs() {
-			if id == "new-chan" {
-				return true
-			}
-		}
-		return false
-	}, "empty temp channel was not deleted after grace")
+	if ids := fake.deletedIDs(); len(ids) != 1 || ids[0] != "new-chan" {
+		t.Fatalf("deleted = %v, want new-chan the moment it emptied", ids)
+	}
 
 	tv.mu.Lock()
 	defer tv.mu.Unlock()
@@ -759,31 +432,9 @@ func TestTempVCEmptyChannelDeletedAfterGrace(t *testing.T) {
 	}
 }
 
-func TestTempVCRejoinWithinGraceCancelsDeletion(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, 50*time.Millisecond)
-
-	member := &discordgo.Member{Nick: "Owner"}
-	tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member))
-	tv.handleVoiceStateUpdate(voiceEvent("user-1", "new-chan", member))
-	tv.handleVoiceStateUpdate(voiceEvent("user-1", "", member))
-	// Rejoin before the grace elapses.
-	tv.handleVoiceStateUpdate(voiceEvent("user-1", "new-chan", member))
-
-	time.Sleep(120 * time.Millisecond)
-	if ids := fake.deletedIDs(); len(ids) != 0 {
-		t.Fatalf("deleted %v despite rejoin within grace", ids)
-	}
-	tv.mu.Lock()
-	defer tv.mu.Unlock()
-	if _, ok := tv.occupants["new-chan"]; !ok {
-		t.Error("rejoined channel no longer tracked")
-	}
-}
-
 func TestTempVCOnlyLastLeaverTriggersDeletion(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, 5*time.Millisecond)
+	tv := newTestTempVC(fake)
 
 	owner := &discordgo.Member{Nick: "Owner"}
 	guest := &discordgo.Member{Nick: "Guest"}
@@ -793,20 +444,21 @@ func TestTempVCOnlyLastLeaverTriggersDeletion(t *testing.T) {
 
 	// Owner leaves; guest remains, no deletion.
 	tv.handleVoiceStateUpdate(voiceEvent("owner-1", "", owner))
-	time.Sleep(30 * time.Millisecond)
 	if ids := fake.deletedIDs(); len(ids) != 0 {
 		t.Fatalf("deleted %v while occupied", ids)
 	}
 
 	// Guest leaves; now it empties and deletes.
 	tv.handleVoiceStateUpdate(voiceEvent("guest-1", "", guest))
-	eventually(t, func() bool { return len(fake.deletedIDs()) == 1 }, "channel not deleted after last leaver")
+	if ids := fake.deletedIDs(); len(ids) != 1 {
+		t.Fatalf("deleted = %v, want the channel once its last occupant left", ids)
+	}
 }
 
 func TestTempVCMoveIntoFailureReapsChannel(t *testing.T) {
 	fake := newFakeTempVCManager()
 	fake.moveErr = errors.New("target user is not connected to voice")
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, &discordgo.Member{Nick: "Gone"}))
 
@@ -823,7 +475,7 @@ func TestTempVCMoveIntoFailureReapsChannel(t *testing.T) {
 func TestTempVCCreateFailureIsCaptured(t *testing.T) {
 	fake := newFakeTempVCManager()
 	fake.createErr = errors.New("missing permissions")
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	// Must not panic and must not move anyone.
 	tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, nil))
@@ -835,15 +487,16 @@ func TestTempVCCreateFailureIsCaptured(t *testing.T) {
 func TestTempVCDeleteFailureKeepsChannelTracked(t *testing.T) {
 	fake := newFakeTempVCManager()
 	fake.deleteErr = errors.New("HTTP 403 Missing Permissions")
-	tv := newTestTempVC(fake, 5*time.Millisecond)
+	tv := newTestTempVC(fake)
 
 	member := &discordgo.Member{Nick: "Owner"}
 	tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member))
 	tv.handleVoiceStateUpdate(voiceEvent("user-1", "new-chan", member))
 	tv.handleVoiceStateUpdate(voiceEvent("user-1", "", member))
 
-	// Wait for the grace timer to fire and attempt (and fail) the delete.
-	eventually(t, func() bool { return fake.deleteCallCount() >= 1 }, "delete was never attempted")
+	if fake.deleteCallCount() != 1 {
+		t.Fatalf("delete calls = %d, want 1 attempt", fake.deleteCallCount())
+	}
 
 	// A failed delete must leave the channel tracked and owned so it still
 	// counts toward the owner's cap (it is still live in Discord). Dropping it
@@ -861,15 +514,14 @@ func TestTempVCDeleteFailureKeepsChannelTracked(t *testing.T) {
 func TestTempVCFailedDeleteKeepsCapEnforced(t *testing.T) {
 	fake := newFakeTempVCManager()
 	fake.deleteErr = errors.New("HTTP 403 Missing Permissions") // deletes never succeed
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	// Owner already holds 4 empty channels whose deletes will 403.
 	tv.mu.Lock()
 	for _, id := range []string{"c1", "c2", "c3", "c4"} {
 		tv.owners[id] = "b"
 		tv.occupants[id] = map[string]struct{}{}
-		tv.baseName[id] = "b's Channel"
-		tv.assignedName[id] = "b's Channel"
+		tv.assignedName[id] = "Voice - 1"
 	}
 	tv.mu.Unlock()
 
@@ -901,7 +553,7 @@ func TestTempVCFailedDeleteKeepsCapEnforced(t *testing.T) {
 
 func TestTempVCAuditLogsLifecycle(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, 5*time.Millisecond)
+	tv := newTestTempVC(fake)
 
 	member := &discordgo.Member{Nick: "b"}
 	// Owner joins hub -> channel created -> owner moved in (join event).
@@ -912,17 +564,6 @@ func TestTempVCAuditLogsLifecycle(t *testing.T) {
 	tv.handleVoiceStateUpdate(voiceEvent("guest-1", "", nil))
 	tv.handleVoiceStateUpdate(voiceEvent("owner-1", "", member))
 
-	// The delete line is the last event; once it lands, the earlier lines
-	// (create/join/leave, all logged synchronously) are already recorded.
-	eventually(t, func() bool {
-		for _, m := range fake.logMessages() {
-			if strings.Contains(m.content, "Auto-deleted") {
-				return true
-			}
-		}
-		return false
-	}, "channel deletion was not audit-logged")
-
 	var b strings.Builder
 	for _, m := range fake.logMessages() {
 		b.WriteString(m.content)
@@ -930,12 +571,12 @@ func TestTempVCAuditLogsLifecycle(t *testing.T) {
 	}
 	got := b.String()
 	for _, want := range []string{
-		"created **B's Channel**",           // create (by name, survives deletion)
-		"<@owner-1> joined **B's Channel**", // owner moved in
-		"<@guest-1> joined **B's Channel**", // guest joins
-		"<@guest-1> left **B's Channel**",   // guest leaves
-		"<@owner-1> left **B's Channel**",   // owner leaves
-		"Auto-deleted **B's Channel**",      // channel deleted (by the bot)
+		"created **Voice - 1**",           // create (by name, survives deletion)
+		"<@owner-1> joined **Voice - 1**", // owner moved in
+		"<@guest-1> joined **Voice - 1**", // guest joins
+		"<@guest-1> left **Voice - 1**",   // guest leaves
+		"<@owner-1> left **Voice - 1**",   // owner leaves
+		"Auto-deleted **Voice - 1**",      // channel deleted (by the bot)
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("audit log missing %q\nfull log:\n%s", want, got)
@@ -959,7 +600,7 @@ func TestTempVCAuditLogsLifecycle(t *testing.T) {
 
 func TestTempVCMuteToggleIsNoOp(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, 5*time.Millisecond)
+	tv := newTestTempVC(fake)
 
 	member := &discordgo.Member{Nick: "Owner"}
 	tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member))
@@ -968,7 +609,6 @@ func TestTempVCMuteToggleIsNoOp(t *testing.T) {
 	// Same channel again = mute/deafen toggle; must not disturb tracking or
 	// spawn a second channel even though the channel ID matches nothing new.
 	tv.handleVoiceStateUpdate(voiceEvent("user-1", "new-chan", member))
-	time.Sleep(20 * time.Millisecond)
 
 	if created := fake.createdData(); len(created) != 1 {
 		t.Fatalf("created %d channels, want 1", len(created))
@@ -980,7 +620,7 @@ func TestTempVCMuteToggleIsNoOp(t *testing.T) {
 
 func TestTempVCIgnoresOtherGuilds(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	ev := &discordgo.VoiceStateUpdate{VoiceState: &discordgo.VoiceState{
 		GuildID:   "other-guild",
@@ -998,7 +638,7 @@ func TestTempVCHubJoinFromExistingTempChannel(t *testing.T) {
 	// spawn a second one (the operations-host flow). The old channel empties
 	// and must be reaped; the new one must be created.
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, 5*time.Millisecond)
+	tv := newTestTempVC(fake)
 
 	member := &discordgo.Member{Nick: "Host"}
 	tv.handleVoiceStateUpdate(voiceEvent("host-1", testTempVCHub, member))
@@ -1013,173 +653,69 @@ func TestTempVCHubJoinFromExistingTempChannel(t *testing.T) {
 	if created := fake.createdData(); len(created) != 2 {
 		t.Fatalf("created %d channels, want 2", len(created))
 	}
-	eventually(t, func() bool {
-		for _, id := range fake.deletedIDs() {
-			if id == "new-chan" {
-				return true
-			}
-		}
-		return false
-	}, "vacated first temp channel was not reaped")
-}
-
-func TestTempVCSecondChannelNumbersBothChannels(t *testing.T) {
-	fake := newFakeTempVCManager()
-	// Long grace so the first channel survives (empty of the host) long enough
-	// for the second-channel flow to run.
-	tv := newTestTempVC(fake, time.Hour)
-
-	member := &discordgo.Member{Nick: "1LT.Laui.M"}
-
-	// First channel: host joins hub, is moved into it.
-	tv.handleVoiceStateUpdate(voiceEvent("host-1", testTempVCHub, member))
-	tv.handleVoiceStateUpdate(voiceEvent("host-1", "new-chan", member))
-	// A guest joins the first channel so it stays occupied when the host hops
-	// back to the hub, an empty first channel would just be reaped, and there
-	// would be nothing to renumber.
-	tv.handleVoiceStateUpdate(voiceEvent("guest-1", "new-chan", &discordgo.Member{Nick: "Guest"}))
-
-	// Host hops to the hub to spawn a second channel.
-	fake.mu.Lock()
-	fake.nextChannel = &discordgo.Channel{ID: "second-chan"}
-	fake.mu.Unlock()
-	tv.handleVoiceStateUpdate(voiceEvent("host-1", testTempVCHub, member))
-
-	created := fake.createdData()
-	if len(created) != 2 {
-		t.Fatalf("created %d channels, want 2", len(created))
-	}
-	if created[0].Name != "1LT Laui.M's Channel" {
-		t.Errorf("first channel created as %q, want unsuffixed", created[0].Name)
-	}
-	if created[1].Name != "1LT Laui.M's Channel (2)" {
-		t.Errorf("second channel created as %q, want (2)", created[1].Name)
-	}
-	// The pre-existing first channel is retro-numbered to (1).
-	edits := fake.recordedEdits()
-	if len(edits) != 1 || edits[0].channelID != "new-chan" || edits[0].name != "1LT Laui.M's Channel (1)" {
-		t.Fatalf("edits = %+v, want first channel renamed to (1)", edits)
+	if ids := fake.deletedIDs(); len(ids) != 1 || ids[0] != "new-chan" {
+		t.Fatalf("deleted = %v, want the vacated first channel", ids)
 	}
 }
 
-func TestTempVCSecondChannelSkipsOwnerRenamedFirst(t *testing.T) {
+func TestTempVCChannelUpdateAuditLogsRename(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
-
-	// Pre-existing first channel: owned and still occupied, but the owner has
-	// renamed it since creation (live name != what the bot assigned).
-	tv.mu.Lock()
-	tv.owners["c1"] = "host-1"
-	tv.occupants["c1"] = map[string]struct{}{"guest-1": {}}
-	tv.baseName["c1"] = "1LT Laui.M's Channel"
-	tv.assignedName["c1"] = "1LT Laui.M's Channel"
-	tv.userChannel["host-1"] = "c1"
-	tv.mu.Unlock()
-
-	fake.mu.Lock()
-	fake.channelByID["c1"] = &discordgo.Channel{ID: "c1", Name: "War Room"} // owner-chosen name
-	fake.nextChannel = &discordgo.Channel{ID: "second-chan"}
-	fake.mu.Unlock()
-
-	tv.handleVoiceStateUpdate(voiceEvent("host-1", testTempVCHub, &discordgo.Member{Nick: "1LT.Laui.M"}))
-
-	// The second channel is still numbered...
-	created := fake.createdData()
-	if len(created) != 1 || created[0].Name != "1LT Laui.M's Channel (2)" {
-		t.Fatalf("created = %+v, want a single (2) channel", created)
-	}
-	// ...but the owner-renamed first channel is left exactly as the owner set it.
-	if edits := fake.recordedEdits(); len(edits) != 0 {
-		t.Fatalf("edits = %+v, want none (owner-renamed channel must be preserved)", edits)
-	}
-}
-
-func TestTempVCChannelUpdateAuditLogs(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	tv.mu.Lock()
 	tv.occupants["c1"] = map[string]struct{}{"u1": {}}
 	tv.owners["c1"] = "u1"
-	tv.assignedName["c1"] = "b's Channel"
+	tv.assignedName["c1"] = "Voice - 1"
 	tv.mu.Unlock()
 
-	mk := func(name string, limit int, deny int64) *discordgo.Channel {
-		ch := &discordgo.Channel{ID: "c1", GuildID: testTempVCGuild, Name: name, UserLimit: limit}
-		if deny != 0 {
-			ch.PermissionOverwrites = []*discordgo.PermissionOverwrite{
-				{ID: testTempVCGuild, Type: discordgo.PermissionOverwriteTypeRole, Deny: deny},
-			}
-		}
-		return ch
+	mk := func(name string, limit int) *discordgo.Channel {
+		return &discordgo.Channel{ID: "c1", GuildID: testTempVCGuild, Name: name, UserLimit: limit}
 	}
 	upd := func(before, after *discordgo.Channel) {
 		tv.handleChannelUpdate(&discordgo.ChannelUpdate{Channel: after, BeforeUpdate: before})
 	}
 
-	upd(mk("b's Channel", 0, 0), mk("War Room", 0, 0))                                                                                            // owner rename
-	upd(mk("War Room", 0, 0), mk("War Room", 5, 0))                                                                                               // user limit set
-	upd(mk("War Room", 5, 0), mk("War Room", 5, discordgo.PermissionVoiceConnect))                                                                // lock
-	upd(mk("War Room", 5, discordgo.PermissionVoiceConnect), mk("War Room", 5, discordgo.PermissionVoiceConnect|discordgo.PermissionViewChannel)) // hide
+	upd(mk("Voice - 1", 0), mk("War Room", 0)) // rename
+	upd(mk("War Room", 0), mk("War Room", 5))  // some other field: not a rename
 
-	got := strings.Join(func() []string {
-		var out []string
-		for _, m := range fake.logMessages() {
-			out = append(out, m.content)
-		}
-		return out
-	}(), "\n")
-
-	for _, want := range []string{
-		"**b's Channel** renamed to **War Room** by <@u1>", // attributed to the owner
-		"user limit set to 5 by <@u1>",
-		"locked (@everyone can no longer connect) by <@u1>",
-		"hidden (@everyone can no longer see it) by <@u1>",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("audit log missing %q\nfull log:\n%s", want, got)
-		}
+	msgs := fake.logMessages()
+	if len(msgs) != 1 {
+		t.Fatalf("audit lines = %+v, want exactly the rename", msgs)
+	}
+	if want := "**Voice - 1** renamed to **War Room** by <@u1>"; !strings.Contains(msgs[0].content, want) {
+		t.Errorf("audit line = %q, want it to contain %q", msgs[0].content, want)
 	}
 }
 
 func TestTempVCChannelUpdateIgnoredCases(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	tv.mu.Lock()
 	tv.occupants["c1"] = map[string]struct{}{}
 	tv.owners["c1"] = "u1"
-	tv.assignedName["c1"] = "b's Channel"
-	tv.pendingRename["c1"] = "b's Channel (1)" // our own disambiguation rename is inbound
+	tv.assignedName["c1"] = "Voice - 1"
 	tv.mu.Unlock()
 
 	ch := func(id, guild, name string) *discordgo.Channel {
 		return &discordgo.Channel{ID: id, GuildID: guild, Name: name}
 	}
 
-	// Our own rename: suppressed (marker consumed, no log).
-	tv.handleChannelUpdate(&discordgo.ChannelUpdate{Channel: ch("c1", testTempVCGuild, "b's Channel (1)"), BeforeUpdate: ch("c1", testTempVCGuild, "b's Channel")})
 	// Untracked channel: ignored.
 	tv.handleChannelUpdate(&discordgo.ChannelUpdate{Channel: ch("other", testTempVCGuild, "X"), BeforeUpdate: ch("other", testTempVCGuild, "Y")})
 	// Foreign guild: ignored.
-	tv.handleChannelUpdate(&discordgo.ChannelUpdate{Channel: ch("c1", "other-guild", "Z"), BeforeUpdate: ch("c1", "other-guild", "b's Channel")})
+	tv.handleChannelUpdate(&discordgo.ChannelUpdate{Channel: ch("c1", "other-guild", "Z"), BeforeUpdate: ch("c1", "other-guild", "Voice - 1")})
 	// No BeforeUpdate baseline: skipped.
 	tv.handleChannelUpdate(&discordgo.ChannelUpdate{Channel: ch("c1", testTempVCGuild, "Whatever")})
 
 	if msgs := fake.logMessages(); len(msgs) != 0 {
 		t.Fatalf("expected no audit lines, got %+v", msgs)
 	}
-	tv.mu.Lock()
-	_, marker := tv.pendingRename["c1"]
-	tv.mu.Unlock()
-	if marker {
-		t.Error("pendingRename marker was not consumed by the bot's own rename")
-	}
 }
 
 func TestTempVCGuildCreateSweep(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	guild := &discordgo.GuildCreate{Guild: &discordgo.Guild{
 		ID: testTempVCGuild,
@@ -1218,7 +754,7 @@ func TestTempVCGuildCreateSweep(t *testing.T) {
 
 func TestTempVCGuildCreateIgnoresOtherGuildsAndAdoptedLifecycle(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, 5*time.Millisecond)
+	tv := newTestTempVC(fake)
 
 	// Foreign guild: untouched.
 	tv.handleGuildCreate(&discordgo.GuildCreate{Guild: &discordgo.Guild{
@@ -1240,20 +776,15 @@ func TestTempVCGuildCreateIgnoresOtherGuildsAndAdoptedLifecycle(t *testing.T) {
 	}})
 
 	tv.handleVoiceStateUpdate(voiceEvent("user-a", "", nil))
-	eventually(t, func() bool {
-		for _, id := range fake.deletedIDs() {
-			if id == "survivor" {
-				return true
-			}
-		}
-		return false
-	}, "adopted survivor not reaped after emptying")
+	if ids := fake.deletedIDs(); len(ids) != 1 || ids[0] != "survivor" {
+		t.Fatalf("deleted = %v, want the adopted survivor once it emptied", ids)
+	}
 }
 
 func TestTempVCSweepDeleteFailureIsCaptured(t *testing.T) {
 	fake := newFakeTempVCManager()
 	fake.deleteErr = errors.New("permission denied")
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	// Must not panic; the orphan simply survives until the next sweep.
 	tv.handleGuildCreate(&discordgo.GuildCreate{Guild: &discordgo.Guild{
@@ -1269,26 +800,27 @@ func TestTempVCSweepDeleteFailureIsCaptured(t *testing.T) {
 const (
 	testTempVCHubB      = "hub-b"
 	testTempVCCategoryB = "cat-b"
+	testTempVCHubNameB  = "Briefing"
 )
 
 // newTestTempVCMultiHub builds a two-hub tempVC: hub A under category A (the
 // default test hub, unlimited/default bitrate) and hub B under category B with
-// its own user limit, bitrate, and grace, so per-hub routing and default
-// stamping can be asserted side by side.
-func newTestTempVCMultiHub(mgr TempVCManager, graceA, graceB time.Duration, limitB, bitrateB int) *tempVC {
+// its own user limit and bitrate, so per-hub routing and default stamping can
+// be asserted side by side.
+func newTestTempVCMultiHub(mgr TempVCManager, limitB, bitrateB int) *tempVC {
 	return newTempVC(mgr, TempVCConfig{
 		GuildID:      testTempVCGuild,
 		LogChannelID: testTempVCLog,
 		Hubs: []tempVCHub{
-			{HubChannelID: testTempVCHub, CategoryID: testTempVCCategory, Grace: graceA},
-			{HubChannelID: testTempVCHubB, CategoryID: testTempVCCategoryB, UserLimit: limitB, Bitrate: bitrateB, Grace: graceB},
+			{HubChannelID: testTempVCHub, CategoryID: testTempVCCategory, Name: testTempVCHubName},
+			{HubChannelID: testTempVCHubB, CategoryID: testTempVCCategoryB, Name: testTempVCHubNameB, UserLimit: limitB, Bitrate: bitrateB},
 		},
 	})
 }
 
 func TestTempVCStampsPerHubDefaults(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVCMultiHub(fake, time.Hour, time.Hour, 9, 96000)
+	tv := newTestTempVCMultiHub(fake, 9, 96000)
 
 	// A join on hub A (no per-hub limit/bitrate) spawns a plain channel under
 	// category A.
@@ -1319,49 +851,15 @@ func TestTempVCStampsPerHubDefaults(t *testing.T) {
 	if b.Bitrate != 96000 {
 		t.Errorf("hub B channel bitrate = %d, want 96000", b.Bitrate)
 	}
-}
-
-func TestTempVCPerHubGraceReapsIndependently(t *testing.T) {
-	fake := newFakeTempVCManager()
-	// Hub A reaps almost immediately; hub B effectively never (within the test).
-	tv := newTestTempVCMultiHub(fake, 5*time.Millisecond, time.Hour, 0, 0)
-
-	// Spawn one channel from each hub and move the owner into it.
-	memberA := &discordgo.Member{Nick: "A"}
-	tv.handleVoiceStateUpdate(voiceEvent("user-a", testTempVCHub, memberA))
-	tv.handleVoiceStateUpdate(voiceEvent("user-a", "new-chan", memberA))
-
-	fake.mu.Lock()
-	fake.nextChannel = &discordgo.Channel{ID: "chan-b"}
-	fake.mu.Unlock()
-	memberB := &discordgo.Member{Nick: "B"}
-	tv.handleVoiceStateUpdate(voiceEvent("user-b", testTempVCHubB, memberB))
-	tv.handleVoiceStateUpdate(voiceEvent("user-b", "chan-b", memberB))
-
-	// Both owners leave; only hub A's short grace should fire.
-	tv.handleVoiceStateUpdate(voiceEvent("user-a", "", memberA))
-	tv.handleVoiceStateUpdate(voiceEvent("user-b", "", memberB))
-
-	eventually(t, func() bool {
-		for _, id := range fake.deletedIDs() {
-			if id == "new-chan" {
-				return true
-			}
-		}
-		return false
-	}, "hub A channel not reaped on its short grace")
-
-	// Hub B's channel must still be alive, its hour-long grace has not elapsed.
-	for _, id := range fake.deletedIDs() {
-		if id == "chan-b" {
-			t.Fatal("hub B channel reaped despite its long grace")
-		}
+	// Each hub numbers its own channels from 1 under its own name.
+	if a.Name != "Voice - 1" || b.Name != "Briefing - 1" {
+		t.Errorf("names = %q / %q, want Voice - 1 / Briefing - 1", a.Name, b.Name)
 	}
 }
 
 func TestTempVCSweepSpansAllHubCategories(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVCMultiHub(fake, time.Hour, time.Hour, 0, 0)
+	tv := newTestTempVCMultiHub(fake, 0, 0)
 
 	tv.handleGuildCreate(&discordgo.GuildCreate{Guild: &discordgo.Guild{
 		ID: testTempVCGuild,
@@ -1394,15 +892,15 @@ func TestTempVCSweepSpansAllHubCategories(t *testing.T) {
 	if _, ok := tv.occupants["survivor-b"]; !ok {
 		t.Error("survivor under category B not adopted")
 	}
-	// The adopted survivor recovers hub B's grace.
-	if tv.channelGrace["survivor-b"] != time.Hour {
-		t.Errorf("adopted survivor grace = %v, want hub B's 1h", tv.channelGrace["survivor-b"])
+	// The adopted survivor is recorded as one of hub B's channels.
+	if tv.channelHub["survivor-b"] != testTempVCHubB {
+		t.Errorf("adopted survivor hub = %q, want hub B", tv.channelHub["survivor-b"])
 	}
 }
 
 func TestTempVCCapNoticePostsToJoinedHub(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVCMultiHub(fake, time.Hour, time.Hour, 0, 0)
+	tv := newTestTempVCMultiHub(fake, 0, 0)
 
 	// The user is already at the cap, then joins hub B.
 	tv.mu.Lock()
@@ -1432,27 +930,19 @@ func TestTempVCCapNoticePostsToJoinedHub(t *testing.T) {
 	}
 }
 
-// --- Interim ownership: hand control to the present member in the highest
-// status tier (rank role breaks ties within a tier; lowest user ID is the final
-// tiebreak), restore on the creator's return ---
+// --- Interim ownership: hand control to the present member with the highest
+// rank role (lowest user ID is the final tiebreak), restore on the creator's
+// return. Bookkeeping only; nothing changes in Discord. ---
 
-// Real status role IDs used to exercise tier ordering: general staff (highest)
-// > company staff > active member (lowest of the three).
-const (
-	testStatusGeneral = "109873149507555328"
-	testStatusCompany = "1104551737219620894"
-	testStatusActive  = "437748324960043009"
-)
-
-// Real rank role IDs (SGT outranks PVT) used to exercise the rank tiebreak within
-// a status tier.
+// Real rank role IDs (SGT outranks PVT) used to exercise the election.
 const (
 	testRankSGT = "899328273752928318"
 	testRankPVT = "899328617081864202"
+	testRankCPT = "899326238685024267"
 )
 
-// member builds a member with a nickname (used only for channel naming) and
-// optional role IDs (status and/or rank roles, which drive the election).
+// member builds a member with a nickname and optional rank role IDs, which
+// drive the election.
 func member(nick string, roleIDs ...string) *discordgo.Member {
 	return &discordgo.Member{Nick: nick, Roles: roleIDs}
 }
@@ -1472,9 +962,8 @@ func (t *tempVC) controllerOf(channelID string) string {
 	return t.controller[channelID]
 }
 
-// TestOutranksForInterim covers the election comparator directly, including the
-// rank-role dimension that the end-to-end tests cannot exercise until the rank
-// role IDs are configured. Smaller index = higher priority.
+// TestOutranksForInterim covers the election comparator directly. Smaller
+// index = higher priority.
 func TestOutranksForInterim(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -1484,18 +973,15 @@ func TestOutranksForInterim(t *testing.T) {
 		bID        string
 		aOutranksB bool
 	}{
-		{"higher status wins over higher rank",
-			memberRankMeta{statusIdx: 2, rankIdx: 20}, "z",
-			memberRankMeta{statusIdx: 5, rankIdx: 0}, "a", true},
-		{"same status, higher rank wins",
-			memberRankMeta{statusIdx: 3, rankIdx: 4}, "z",
-			memberRankMeta{statusIdx: 3, rankIdx: 9}, "a", true},
-		{"same status and rank, lowest ID wins",
-			memberRankMeta{statusIdx: 3, rankIdx: 4}, "a",
-			memberRankMeta{statusIdx: 3, rankIdx: 4}, "b", true},
-		{"lower status loses despite better rank",
-			memberRankMeta{statusIdx: 6, rankIdx: 0}, "a",
-			memberRankMeta{statusIdx: 4, rankIdx: 27}, "z", false},
+		{"higher rank wins",
+			memberRankMeta{rankIdx: 4}, "z",
+			memberRankMeta{rankIdx: 9}, "a", true},
+		{"same rank, lowest ID wins",
+			memberRankMeta{rankIdx: 4}, "a",
+			memberRankMeta{rankIdx: 4}, "b", true},
+		{"lower rank loses despite lower ID",
+			memberRankMeta{rankIdx: 27}, "a",
+			memberRankMeta{rankIdx: 0}, "z", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1506,8 +992,7 @@ func TestOutranksForInterim(t *testing.T) {
 	}
 }
 
-// TestLowestRoleIndex covers deriving a member's tier from their roles, the
-// mechanism both the status and rank keys use.
+// TestLowestRoleIndex covers deriving a member's rank index from their roles.
 func TestLowestRoleIndex(t *testing.T) {
 	idx := map[string]int{"hi": 0, "mid": 3, "lo": 7}
 	cases := []struct {
@@ -1533,81 +1018,47 @@ func TestLowestRoleIndex(t *testing.T) {
 	}
 }
 
-func TestTempVCInterimHigherStatusTierWins(t *testing.T) {
+func TestTempVCInterimHigherRankWins(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour) // long grace: channel survives the creator leaving
+	tv := newTestTempVC(fake)
 
 	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	// A company-staff member (higher tier) and an active-only member (lower tier).
-	tv.handleVoiceStateUpdate(voiceEvent("g-coy", "new-chan", member("PVT Company", testStatusCompany)))
-	tv.handleVoiceStateUpdate(voiceEvent("g-act", "new-chan", member("SGT Active", testStatusActive)))
+	// Two guests with different rank roles; the SGT outranks the PVT.
+	tv.handleVoiceStateUpdate(voiceEvent("g-pvt", "new-chan", member("Pvt", testRankPVT)))
+	tv.handleVoiceStateUpdate(voiceEvent("g-sgt", "new-chan", member("Sgt", testRankSGT)))
 
 	// No interim handoff happens while the creator is present.
-	if sets := fake.recordedPermSets(); len(sets) != 0 {
-		t.Fatalf("interim granted while creator present: %+v", sets)
+	if got := tv.controllerOf("new-chan"); got != "" {
+		t.Fatalf("controller = %q while creator present, want none", got)
 	}
 
-	// Creator leaves -> the higher status tier wins regardless of rank.
+	// Creator leaves -> the higher rank wins.
 	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
 
-	sets := fake.recordedPermSets()
-	if len(sets) != 1 {
-		t.Fatalf("perm sets = %+v, want exactly one interim grant", sets)
-	}
-	got := sets[0]
-	if got.channelID != "new-chan" || got.targetID != "g-coy" {
-		t.Errorf("interim granted to %+v, want g-coy (company staff) on new-chan", got)
-	}
-	if got.targetType != discordgo.PermissionOverwriteTypeMember {
-		t.Errorf("interim overwrite type = %v, want member", got.targetType)
-	}
-	if got.allow != int64(tempVCOwnerPerms) || got.deny != 0 {
-		t.Errorf("interim allow/deny = %d/%d, want %d/0", got.allow, got.deny, int64(tempVCOwnerPerms))
-	}
-	tv.mu.Lock()
-	if tv.controller["new-chan"] != "g-coy" {
-		t.Errorf("controller = %q, want g-coy", tv.controller["new-chan"])
-	}
-	tv.mu.Unlock()
-}
-
-func TestTempVCInterimStatusRoleBeatsNoRole(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
-
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	// A plain, role-less member and an active-member; the status holder wins.
-	tv.handleVoiceStateUpdate(voiceEvent("g-plain", "new-chan", member("Nobody")))
-	tv.handleVoiceStateUpdate(voiceEvent("g-act", "new-chan", member("Active One", testStatusActive)))
-
-	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
-
-	sets := fake.recordedPermSets()
-	if len(sets) != 1 || sets[0].targetID != "g-act" {
-		t.Fatalf("interim = %+v, want the active member over the role-less member", sets)
+	if got := tv.controllerOf("new-chan"); got != "g-sgt" {
+		t.Errorf("controller = %q, want g-sgt (the higher rank)", got)
 	}
 }
 
-func TestTempVCInterimRankBreaksTieWithinStatus(t *testing.T) {
+func TestTempVCInterimRankRoleBeatsNoRole(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	// Two active members with different rank roles; the SGT outranks the PVT.
-	tv.handleVoiceStateUpdate(voiceEvent("g-pvt", "new-chan", member("Pvt", testStatusActive, testRankPVT)))
-	tv.handleVoiceStateUpdate(voiceEvent("g-sgt", "new-chan", member("Sgt", testStatusActive, testRankSGT)))
+	// A plain, role-less member and a PVT; the rank holder wins.
+	tv.handleVoiceStateUpdate(voiceEvent("a-plain", "new-chan", member("Nobody")))
+	tv.handleVoiceStateUpdate(voiceEvent("z-pvt", "new-chan", member("Pvt", testRankPVT)))
 
 	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
 
-	sets := fake.recordedPermSets()
-	if len(sets) != 1 || sets[0].targetID != "g-sgt" {
-		t.Fatalf("interim = %+v, want the SGT (higher rank within the active tier)", sets)
+	if got := tv.controllerOf("new-chan"); got != "z-pvt" {
+		t.Errorf("controller = %q, want the rank holder over the role-less member", got)
 	}
 }
 
 func TestTempVCInterimAnyoneEligible(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	spawnOwnedChannel(tv, "owner", "CPL Owner")
 	// A single plain, role-less member still becomes interim owner: no gate.
@@ -1615,316 +1066,106 @@ func TestTempVCInterimAnyoneEligible(t *testing.T) {
 
 	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
 
-	sets := fake.recordedPermSets()
-	if len(sets) != 1 || sets[0].targetID != "plain" {
-		t.Fatalf("interim = %+v, want the sole plain member (anyone is eligible)", sets)
+	if got := tv.controllerOf("new-chan"); got != "plain" {
+		t.Errorf("controller = %q, want the sole plain member (anyone is eligible)", got)
 	}
 }
 
 func TestTempVCInterimOwnerRestoredOnCreatorReturn(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	tv.handleVoiceStateUpdate(voiceEvent("g-act", "new-chan", member("SGT Active", testStatusActive)))
+	tv.handleVoiceStateUpdate(voiceEvent("g-sgt", "new-chan", member("Sgt", testRankSGT)))
 	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
 
 	// Sanity: interim in place.
-	if sets := fake.recordedPermSets(); len(sets) != 1 {
-		t.Fatalf("expected one interim grant before return, got %+v", sets)
+	if got := tv.controllerOf("new-chan"); got != "g-sgt" {
+		t.Fatalf("controller = %q before return, want g-sgt", got)
 	}
 
-	// Creator returns -> interim grant revoked, control back to the creator's
-	// permanent overwrite.
+	// Creator returns -> the stand-in steps down; the creator's own claim holds.
 	tv.handleVoiceStateUpdate(voiceEvent("owner", "new-chan", member("CPL Owner")))
 
-	dels := fake.recordedPermDeletes()
-	if len(dels) != 1 || dels[0].channelID != "new-chan" || dels[0].targetID != "g-act" {
-		t.Fatalf("perm deletes = %+v, want revoke of g-act on new-chan", dels)
+	if got := tv.controllerOf("new-chan"); got != "" {
+		t.Errorf("controller = %q after creator returned, want none", got)
 	}
-	tv.mu.Lock()
-	if _, ok := tv.controller["new-chan"]; ok {
-		t.Error("controller still set after creator returned")
-	}
-	tv.mu.Unlock()
 }
 
 func TestTempVCInterimOwnerReelectedWhenStandInLeaves(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	// g-coy (company staff) outranks g-act (active) by status, so g-coy is elected
-	// first; when they leave, g-act is re-elected.
-	tv.handleVoiceStateUpdate(voiceEvent("g-coy", "new-chan", member("Coy", testStatusCompany)))
-	tv.handleVoiceStateUpdate(voiceEvent("g-act", "new-chan", member("Act", testStatusActive)))
-	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner"))) // g-coy elected
+	// g-sgt outranks g-pvt, so g-sgt is elected first; when they leave, g-pvt
+	// is re-elected.
+	tv.handleVoiceStateUpdate(voiceEvent("g-sgt", "new-chan", member("Sgt", testRankSGT)))
+	tv.handleVoiceStateUpdate(voiceEvent("g-pvt", "new-chan", member("Pvt", testRankPVT)))
+	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner"))) // g-sgt elected
+	if got := tv.controllerOf("new-chan"); got != "g-sgt" {
+		t.Fatalf("controller = %q, want g-sgt first", got)
+	}
 
-	tv.handleVoiceStateUpdate(voiceEvent("g-coy", "", member("Coy", testStatusCompany)))
+	tv.handleVoiceStateUpdate(voiceEvent("g-sgt", "", member("Sgt", testRankSGT)))
 
-	// The last perm set should now be a grant to g-act, and g-coy's grant revoked.
-	sets := fake.recordedPermSets()
-	if len(sets) != 2 || sets[1].targetID != "g-act" {
-		t.Fatalf("perm sets = %+v, want second grant to g-act", sets)
+	if got := tv.controllerOf("new-chan"); got != "g-pvt" {
+		t.Errorf("controller = %q, want g-pvt after re-election", got)
 	}
-	if dels := fake.recordedPermDeletes(); len(dels) != 1 || dels[0].targetID != "g-coy" {
-		t.Fatalf("perm deletes = %+v, want revoke of departed stand-in g-coy", dels)
-	}
-	tv.mu.Lock()
-	if tv.controller["new-chan"] != "g-act" {
-		t.Errorf("controller = %q, want g-act after re-election", tv.controller["new-chan"])
-	}
-	tv.mu.Unlock()
 }
 
-func TestTempVCInterimHigherTierJoinerTakesOver(t *testing.T) {
+func TestTempVCInterimHigherRankJoinerTakesOver(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	// Creator leaves with only an active-member present -> they hold interim.
-	tv.handleVoiceStateUpdate(voiceEvent("g-act", "new-chan", member("Act", testStatusActive)))
+	// Creator leaves with only a PVT present -> they hold interim.
+	tv.handleVoiceStateUpdate(voiceEvent("g-pvt", "new-chan", member("Pvt", testRankPVT)))
 	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
-	if tv.controllerOf("new-chan") != "g-act" {
-		t.Fatalf("controller = %q, want g-act initially", tv.controllerOf("new-chan"))
+	if got := tv.controllerOf("new-chan"); got != "g-pvt" {
+		t.Fatalf("controller = %q, want g-pvt initially", got)
 	}
 
-	// A general-staff member joins while the creator is away and takes over.
-	tv.handleVoiceStateUpdate(voiceEvent("g-gen", "new-chan", member("Gen", testStatusGeneral)))
+	// A CPT joins while the creator is away and takes over.
+	tv.handleVoiceStateUpdate(voiceEvent("g-cpt", "new-chan", member("Cpt", testRankCPT)))
 
-	if tv.controllerOf("new-chan") != "g-gen" {
-		t.Errorf("controller = %q, want g-gen after higher-tier join", tv.controllerOf("new-chan"))
-	}
-	// The takeover revokes the old stand-in and grants the new one.
-	if dels := fake.recordedPermDeletes(); len(dels) != 1 || dels[0].targetID != "g-act" {
-		t.Fatalf("perm deletes = %+v, want revoke of g-act", dels)
+	if got := tv.controllerOf("new-chan"); got != "g-cpt" {
+		t.Errorf("controller = %q, want g-cpt after a higher rank joined", got)
 	}
 }
 
 func TestTempVCInterimOwnerTieBreaksByLowestID(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
 	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	// Same status (active), no rank roles configured -> tie -> lowest ID wins.
-	tv.handleVoiceStateUpdate(voiceEvent("z-act", "new-chan", member("Zulu", testStatusActive)))
-	tv.handleVoiceStateUpdate(voiceEvent("a-act", "new-chan", member("Alpha", testStatusActive)))
+	// Same rank -> tie -> lowest ID wins.
+	tv.handleVoiceStateUpdate(voiceEvent("z-sgt", "new-chan", member("Zulu", testRankSGT)))
+	tv.handleVoiceStateUpdate(voiceEvent("a-sgt", "new-chan", member("Alpha", testRankSGT)))
 
 	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
 
-	sets := fake.recordedPermSets()
-	if len(sets) != 1 || sets[0].targetID != "a-act" {
-		t.Fatalf("interim = %+v, want deterministic lowest-ID a-act", sets)
+	if got := tv.controllerOf("new-chan"); got != "a-sgt" {
+		t.Errorf("controller = %q, want deterministic lowest-ID a-sgt", got)
 	}
 }
 
-func TestTempVCInterimGrantFailureIsCaptured(t *testing.T) {
+func TestTempVCAdoptedChannelGetsNoInterimOwner(t *testing.T) {
 	fake := newFakeTempVCManager()
-	fake.permErr = errors.New("HTTP 403 Missing Permissions")
-	tv := newTestTempVC(fake, time.Hour)
+	tv := newTestTempVC(fake)
 
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	tv.handleVoiceStateUpdate(voiceEvent("g-act", "new-chan", member("SGT Active", testStatusActive)))
-
-	// Must not panic even though the grant errors; controller state is still
-	// recorded (the next voice event reconciles again).
-	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
-}
-
-// voiceInteraction builds a /voice application-command interaction in the test
-// guild, invoked by invokerID, with the given subcommand and target user.
-func voiceInteraction(invokerID, sub, targetID string) *discordgo.InteractionCreate {
-	return &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
-		Type:    discordgo.InteractionApplicationCommand,
-		GuildID: testTempVCGuild,
-		Member:  &discordgo.Member{User: &discordgo.User{ID: invokerID, Username: invokerID}},
-		Data: discordgo.ApplicationCommandInteractionData{
-			Name: "voice",
-			Options: []*discordgo.ApplicationCommandInteractionDataOption{
-				stringOption("command", sub),
-				userOption("user", targetID),
-			},
+	// A restart survivor has occupants but no recorded creator, so nobody is
+	// ever elected for it, whoever comes and goes.
+	tv.handleGuildCreate(&discordgo.GuildCreate{Guild: &discordgo.Guild{
+		ID: testTempVCGuild,
+		Channels: []*discordgo.Channel{
+			{ID: "survivor", ParentID: testTempVCCategory, Type: discordgo.ChannelTypeGuildVoice},
 		},
-	}}
-}
+		VoiceStates: []*discordgo.VoiceState{{UserID: "user-a", ChannelID: "survivor"}},
+	}})
+	tv.handleVoiceStateUpdate(voiceEvent("g-sgt", "survivor", member("Sgt", testRankSGT)))
+	tv.handleVoiceStateUpdate(voiceEvent("user-a", "", nil))
 
-func TestVoiceBlockDeniesConnectAndDisconnectsPresentTarget(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
-
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	tv.handleVoiceStateUpdate(voiceEvent("bad", "new-chan", &discordgo.Member{Nick: "Bad Guy"}))
-
-	f := &fakeResponder{}
-	tv.runVoiceCommand(f, voiceInteraction("owner", "block", "bad"))
-
-	sets := fake.recordedPermSets()
-	if len(sets) != 1 {
-		t.Fatalf("perm sets = %+v, want one block overwrite", sets)
-	}
-	got := sets[0]
-	if got.channelID != "new-chan" || got.targetID != "bad" {
-		t.Errorf("block overwrite = %+v, want deny on bad@new-chan", got)
-	}
-	if got.allow != 0 || got.deny != int64(tempVCBlockDeny) {
-		t.Errorf("block allow/deny = %d/%d, want 0/%d (Connect)", got.allow, got.deny, int64(tempVCBlockDeny))
-	}
-	// Target was present, so they are disconnected (nil channel). The owner's
-	// move-into-channel during setup is also recorded, so look for bad's kick.
-	if !hasDisconnect(fake.recordedMoves(), "bad") {
-		t.Fatalf("moves = %+v, want a nil-channel disconnect of bad", fake.recordedMoves())
-	}
-	if c := lastEditContent(f.Calls()); !strings.Contains(c, "Blocked") || !strings.Contains(c, "<@bad>") {
-		t.Errorf("confirmation = %q, want a Blocked notice tagging the target", c)
-	}
-}
-
-func TestVoiceBlockAbsentTargetDoesNotDisconnect(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
-
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-
-	f := &fakeResponder{}
-	tv.runVoiceCommand(f, voiceInteraction("owner", "block", "somebody-else"))
-
-	if sets := fake.recordedPermSets(); len(sets) != 1 {
-		t.Fatalf("perm sets = %+v, want the block overwrite", sets)
-	}
-	// The absent target is never disconnected (only the owner's setup move exists).
-	if hasDisconnect(fake.recordedMoves(), "somebody-else") {
-		t.Fatalf("moves = %+v, want no disconnect of an absent target", fake.recordedMoves())
-	}
-}
-
-// hasDisconnect reports whether moves contains a disconnect (nil channel) of
-// userID.
-func hasDisconnect(moves []fakeMove, userID string) bool {
-	for _, m := range moves {
-		if m.userID == userID && m.channelID == nil {
-			return true
-		}
-	}
-	return false
-}
-
-func TestVoicePermitClearsOverwrite(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
-
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-
-	f := &fakeResponder{}
-	tv.runVoiceCommand(f, voiceInteraction("owner", "permit", "bad"))
-
-	dels := fake.recordedPermDeletes()
-	if len(dels) != 1 || dels[0].channelID != "new-chan" || dels[0].targetID != "bad" {
-		t.Fatalf("perm deletes = %+v, want clear of bad@new-chan", dels)
-	}
-	if c := lastEditContent(f.Calls()); !strings.Contains(c, "Permitted") {
-		t.Errorf("confirmation = %q, want a Permitted notice", c)
-	}
-}
-
-func TestVoiceRequiresBeingInOwnedChannel(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
-
-	// Invoker is not in any temp channel.
-	f := &fakeResponder{}
-	tv.runVoiceCommand(f, voiceInteraction("nobody", "block", "bad"))
-
-	if sets := fake.recordedPermSets(); len(sets) != 0 {
-		t.Fatalf("perm sets = %+v, want none when invoker owns no channel", sets)
-	}
-	if c := lastEditContent(f.Calls()); !strings.Contains(c, "temporary voice channel") {
-		t.Errorf("error = %q, want the 'must be in your channel' message", c)
-	}
-}
-
-func TestVoiceRejectsNonOwner(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
-
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	// A guest sits in the channel but does not own or control it.
-	tv.handleVoiceStateUpdate(voiceEvent("guest", "new-chan", &discordgo.Member{Nick: "Guest"}))
-
-	f := &fakeResponder{}
-	tv.runVoiceCommand(f, voiceInteraction("guest", "block", "bad"))
-
-	if sets := fake.recordedPermSets(); len(sets) != 0 {
-		t.Fatalf("perm sets = %+v, want none for a non-owner", sets)
-	}
-	if c := lastEditContent(f.Calls()); !strings.Contains(c, "owner") {
-		t.Errorf("error = %q, want an owner-only rejection", c)
-	}
-}
-
-func TestVoiceInterimOwnerMayBlock(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
-
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	// A status-holding member joins, then the creator leaves -> the guest becomes
-	// interim owner (highest status present) and should be allowed to block.
-	tv.handleVoiceStateUpdate(voiceEvent("standin", "new-chan", member("Standin", testStatusActive)))
-	tv.handleVoiceStateUpdate(voiceEvent("intruder", "new-chan", &discordgo.Member{Nick: "Intruder"}))
-	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
-
-	// Ignore the interim-grant permission set; assert the block adds another.
-	before := len(fake.recordedPermSets())
-	f := &fakeResponder{}
-	tv.runVoiceCommand(f, voiceInteraction("standin", "block", "intruder"))
-
-	sets := fake.recordedPermSets()
-	if len(sets) != before+1 {
-		t.Fatalf("perm sets = %d, want one more than %d after interim block", len(sets), before)
-	}
-	if c := lastEditContent(f.Calls()); !strings.Contains(c, "Blocked") {
-		t.Errorf("interim owner block confirmation = %q, want a Blocked notice", c)
-	}
-}
-
-func TestVoiceBlockSelfAndOwnerRejected(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-
-	f := &fakeResponder{}
-	tv.runVoiceCommand(f, voiceInteraction("owner", "block", "owner"))
-	if c := lastEditContent(f.Calls()); !strings.Contains(c, "yourself") {
-		t.Errorf("self-block error = %q, want a 'can't block yourself' message", c)
-	}
-	if sets := fake.recordedPermSets(); len(sets) != 0 {
-		t.Fatalf("perm sets = %+v, want none on a self-block", sets)
-	}
-}
-
-func TestVoiceBlockFailureSurfacedNotPanicked(t *testing.T) {
-	fake := newFakeTempVCManager()
-	fake.permErr = errors.New("HTTP 403 Missing Permissions")
-	tv := newTestTempVC(fake, time.Hour)
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-
-	f := &fakeResponder{}
-	tv.runVoiceCommand(f, voiceInteraction("owner", "block", "bad"))
-
-	if c := lastEditContent(f.Calls()); !strings.Contains(c, "Failed") {
-		t.Errorf("error surface = %q, want a failure notice", c)
-	}
-}
-
-func TestVoiceGuildOnly(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newTestTempVC(fake, time.Hour)
-
-	i := voiceInteraction("owner", "block", "bad")
-	i.GuildID = "" // DM-shaped
-
-	f := &fakeResponder{}
-	tv.runVoiceCommand(f, i)
-	if sets := fake.recordedPermSets(); len(sets) != 0 {
-		t.Fatalf("perm sets = %+v, want none outside a guild", sets)
+	if got := tv.controllerOf("survivor"); got != "" {
+		t.Errorf("controller = %q on an adopted channel, want none", got)
 	}
 }
