@@ -162,6 +162,10 @@ moment it empties. Hub settings are edited in the panel, never in code.
   at startup with no stored record of it. The adopted channel gets an owner
   by the handover rule.
   _Avoid_: recovery, orphan handling, sweep (for the channel itself).
+- **Ownership notice**: The bot message in a spawned channel's text chat that
+  names the current owner, or says there is none. Posted when the channel is
+  created and at every handover. It pings nobody.
+  _Avoid_: announcement, banner, status line, welcome message.
 - **Moderator role**: A Discord role, set per hub, with authority over every
   spawned channel of that hub whoever owns it. What that authority is remains
   an open decision.
