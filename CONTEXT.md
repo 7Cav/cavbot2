@@ -158,10 +158,12 @@ moment it empties. Hub settings are edited in the panel, never in code.
   no owner. When a rank-role holder joins a channel with no owner, they take
   over. A handover is final: a returning creator is an ordinary occupant.
   _Avoid_: hand off, hand back, succession, transfer, loan.
-- **Adoption**: The bot taking charge of a spawned channel it finds occupied
-  at startup with no stored record of it. The adopted channel gets an owner
-  by the handover rule.
-  _Avoid_: recovery, orphan handling, sweep (for the channel itself).
+- **Restart sweep**: The bot's check, when it connects, of every spawned
+  channel it holds a stored record of against the guild. A recorded channel
+  that is gone or empty is deleted with its record. An occupied one is
+  tracked again, its owner restored or elected by the handover rule. A
+  channel with no record is never touched.
+  _Avoid_: adoption, orphan sweep, recovery, reap, resync.
 - **Ownership notice**: The bot message in a spawned channel's text chat that
   names the current owner, or says there is none. Posted when the channel is
   created and at every handover. It pings nobody.
