@@ -19,6 +19,7 @@ set -euo pipefail
 read -r -d '' FLOORS <<'EOF' || true
 github.com/7cav/cavbot2/utils	87
 github.com/7cav/cavbot2/commands	81
+github.com/7cav/cavbot2/store	85
 EOF
 
 # Read `go test -cover` output from stdin.

@@ -29,6 +29,24 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
 
+    # The store package's tests run against a real Postgres (ADR 0012). The
+    # same major as production, reached on localhost because the job runs on
+    # the runner, not in a container.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: cavbot
+          POSTGRES_PASSWORD: cavbot
+          POSTGRES_DB: cavbot_test
+        options: >-
+          --health-cmd "pg_isready -U cavbot -d cavbot_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+        ports:
+          - 5432:5432
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
@@ -44,6 +62,8 @@ jobs:
           git diff --exit-code go.mod go.sum
 
       - name: Run tests with coverage
+        env:
+          TEST_BOT_DB_DSN: postgres://cavbot:cavbot@localhost:5432/cavbot_test?sslmode=disable
         run: |
           set -euo pipefail
           go test ./... -race -cover -covermode=atomic | tee /tmp/cover.log

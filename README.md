@@ -186,6 +186,16 @@ go test ./... -race -cover | .github/scripts/check-coverage-floors.sh
 
 CI enforces per-package coverage floors via `.github/scripts/check-coverage-floors.sh`. When a PR raises a package's coverage by more than a point or two, raise its floor in the same PR — that's how the suite ratchets up without the team having to think about it.
 
+The `store` package tests run against a real Postgres and skip without one, so the floor check above reports `store` below its floor on a machine with no database. To match CI, start one and point the tests at it:
+
+```bash
+docker run -d --rm --name cavbot2-test-pg -e POSTGRES_USER=cavbot -e POSTGRES_PASSWORD=cavbot -e POSTGRES_DB=cavbot_test -p 5432:5432 postgres:18-alpine
+```
+
+```bash
+TEST_BOT_DB_DSN='postgres://cavbot:cavbot@localhost:5432/cavbot_test?sslmode=disable' go test ./... -race -cover | .github/scripts/check-coverage-floors.sh
+```
+
 ## Contributing
 
 Contributions are welcome through issues and pull requests on our GitHub repository.

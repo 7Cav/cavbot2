@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -100,12 +102,51 @@ func initLOACache() {
 	}()
 }
 
+// storeStartupTimeout bounds the wait for the bot's database at startup: the
+// ping retry inside store.Open plus the migrations. Postgres restarting under
+// a compose `up` answers well inside it; a database that never answers fails
+// the start, and the restart policy retries.
+const storeStartupTimeout = 60 * time.Second
+
+// initStore opens the bot's Postgres database and applies its migrations
+// before anything else runs. Without BOT_DB_DSN the feature that needs the
+// store is inert: one WARN line and a nil store. With it, a database that
+// never answers or a migration that fails ends the process non-zero, so a
+// Watchtower pull never runs a binary against a schema it does not understand;
+// the next start retries (ADR 0012).
+func initStore() store.Store {
+	dsn := os.Getenv("BOT_DB_DSN")
+	if dsn == "" {
+		utils.Warn("BOT_DB_DSN not set, store disabled")
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), storeStartupTimeout)
+	defer cancel()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		panic(fmt.Sprintf("Bot database unavailable: %v", err))
+	}
+	if err := store.Migrate(ctx, db); err != nil {
+		panic(fmt.Sprintf("Bot database migration failed: %v", err))
+	}
+	utils.Info("Bot database migrations applied")
+	return store.NewPostgres(db)
+}
+
 func main() {
 	defer utils.InitSentry(Version)()
 
 	utils.Info("CavBot2 starting", "version", Version)
 
 	utils.Info("Warden role base name resolved", "base_name", commands.WardenRoleBaseName())
+
+	// Opened and migrated before the Discord session, so a failed migration
+	// never leaves a half-started bot on the gateway. The temporary voice
+	// channel runtime takes the store over in #289; until then main only
+	// reports whether one exists.
+	botStore := initStore()
+	utils.Info("Bot database resolved", "configured", botStore != nil)
 
 	initLOACache()
 
