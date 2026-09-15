@@ -13,7 +13,7 @@ Do not relitigate anything under "Settled", "Settled while charting", or "Alread
 
 - Both question rounds are answered. Nothing is in flight with the stakeholder.
 - The maintainer builds this, not the PR's author. PR #232 stays open as the base until a superseding PR exists.
-- Two tickets are open under map #255, added on 2026-09-15 by a readiness review. Each is unblocked. The spec waits on them.
+- One ticket is open under map #255, [Panel session lifetime and group re-check](https://github.com/7Cav/cavbot2/issues/280), added on 2026-09-15 by a readiness review. It is unblocked. The spec waits on it.
 - PR #232 is a draft, 3 files, +3677 lines, last pushed 2026-07-26. It forked 20 commits behind `develop`. The `main.go` anchors it patches moved (`NewRegistry()` is at line 126, `StartJoinerReportScheduler` at 193), and #245 added gofmt enforcement to CI.
 
 ## Sources
@@ -123,6 +123,7 @@ Deleting the owner overwrite also retires the review's most dangerous unverified
 5. Per-hub sequential naming from the configured base string.
 6. Hub-channel rename from the panel (R2 Q5): a `ChannelEdit` against a channel the bot does not own. A new seam method. No new permission requirement: the bot keeps Administrator (#268).
 7. The panel itself: sign-in, group check, layout, the hub page, and the service layer under it.
+8. Spawn failure handling: the hub chat message, the per-hub last failure in memory, and the broken hub state on the hub list. Settled in [#278](https://github.com/7Cav/cavbot2/issues/278).
 
 ## Settled on the map
 
@@ -154,11 +155,15 @@ Decisions made by working map #255's tickets. Each row links the ticket that hol
 | The Discord audit-log channel is dropped, with no panel field in its place. Create and delete already reach Loki as structured log lines; rename joins them. Join and leave get no record. Staff who need to know who renamed what read Discord's own audit log. | [#275](https://github.com/7Cav/cavbot2/issues/275) |
 | A rename is recorded at the `/voice-rename` handler: one structured log line with `command`, `discord_id`, `username`, `channel_id`, `before` and `after`, and `X-Audit-Log-Reason` naming the invoker on the edit call. Create and delete carry the same header, the hub and the creator on create, "empty" on delete. The `CHANNEL_UPDATE` handler goes. A rename made in Discord's UI is Discord's audit log's record, not the bot's. | [#275](https://github.com/7Cav/cavbot2/issues/275) |
 | The Cav-member gate on `/voice-rename` is a Server Settings restriction naming the 29 rank roles in the code ladder. "Cav member" and "holds a rank role" are one set, as #263 assumed. The maintainer applies the restriction at deploy, before the hubs are enabled; until then the command is visible to every member and a non-member in a spawned channel reaches the no-owner WARN from #264. Discord allows 100 entries per command per guild. No API check per member. | [#279](https://github.com/7Cav/cavbot2/issues/279) |
+| When a create fails, the member gets one message in the hub channel's text chat that mentions them, with `AllowedMentions` limited to that one user. The bot never deletes it. No DM, no disconnect. Two texts, copy spec-level: the category or guild cap says the area is full and to wait for a channel to empty; anything else says the channel could not be created and this has been reported. A create that succeeds and a move-into that fails is the same event: the bot deletes the new channel, and the message goes out only when the member is still in the hub. | [#278](https://github.com/7Cav/cavbot2/issues/278) |
+| A failed create writes nothing to the store. The bot keeps the last spawn failure per hub in memory, time and cause, and the hub list shows it beside the live spawned count. A successful spawn from that hub or a restart clears it. | [#278](https://github.com/7Cav/cavbot2/issues/278) |
+| The category is never stored. The bot reads the hub channel's parent from discordgo's state cache at each spawn, and the panel reads it live at page load, so moving the hub channel in Discord moves spawning with it. A hub whose channel is gone or has no parent is a broken hub. The row stays; the panel derives the state from the guild's channel list at page load and offers Remove only. A join to a no-category hub spawns nothing, makes no API call, and counts as a create failure with cause "no category". The `CHANNEL_DELETE` handler stays spawned-only. Spawned channels of a broken hub keep their rows and die when empty. | [#278](https://github.com/7Cav/cavbot2/issues/278) |
+| One create per join. No retry within the join, no later retry, no backoff, no auto-disable. Every failure is one WARN line. The create and move-into calls pass `WithRetryOnRatelimit(false)`, as the rename call does, so a `429` is a failure and never a sleeping handler. The invalid request limit is 10,000 per 10 minutes and a join makes at most three, so a ban needs 55 joins per second on broken hubs. | [#278](https://github.com/7Cav/cavbot2/issues/278) |
+| Create failures Discord returns capture to Sentry: the cap, `403`, `429`, `5xx`, transport. Once per streak per hub: the first failure captures, and the next capture waits for a successful spawn from that hub. A refusal the bot makes itself, the no-category case, is a WARN line and the hub list, never a Sentry event. Delete and rename classification is still open. | [#278](https://github.com/7Cav/cavbot2/issues/278) |
 
 ## Open, as tickets on map #255
 
-1. [What the bot does when the spawn path cannot proceed](https://github.com/7Cav/cavbot2/issues/278). Create failure as the member sees it, a hub channel deleted or moved, a category deleted, and the no-retry rule.
-2. [Panel session lifetime and group re-check](https://github.com/7Cav/cavbot2/issues/280). How long a panel session lives and when the group check runs again.
+1. [Panel session lifetime and group re-check](https://github.com/7Cav/cavbot2/issues/280). How long a panel session lives and when the group check runs again.
 
 Backing up the Postgres volume is out of scope for the map and tracked as [#281](https://github.com/7Cav/cavbot2/issues/281).
 
@@ -166,7 +171,7 @@ Backing up the Postgres volume is out of scope for the map and tracked as [#281]
 
 From the 2026-08-06 PR comment. All still apply to whatever survives.
 
-- `temp_vc.go:1125` returns silently when channel creation fails. The member sits in the hub with no signal.
+- `temp_vc.go:1125` returns silently when channel creation fails. The member sits in the hub with no signal. #278 names the replacement: one message in the hub chat, a per-hub last failure in memory, and one Sentry capture per streak.
 - `dg.SyncEvents` is never set, so discordgo dispatches handlers on unordered goroutines while `handleVoiceStateUpdate` is a sequential diff. Separately, `ownedCount` is read under the lock at `:650`, the lock drops at `:662`, and creation fires at `:1107`, so two fast joins can both pass the cap check. Unreproduced against a live bot. Moot if the cap is dropped, but the ordering hazard is not.
 - `logEvent:698` sends raw content with no `AllowedMentions`. Nothing in the repo sets it anywhere. `logEvent` goes with #275, but the ownership notice (#264) names the owner and must ping nobody, so the fix moves there.
 - `truncateChannelName:1394` and `nameWithIndex:1405` slice by byte while their comments say character. Largely moot once names stop carrying nicknames.
