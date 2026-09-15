@@ -8,10 +8,11 @@ import (
 )
 
 // Fake is the in-memory Store for other packages' tests. It lives in a
-// non-test file so commands and panel tests can import it, the same way
-// utils/testapi.go ships a test hook in the production package. The contract
-// suite in store_test.go runs against Fake and Postgres alike, which is what
-// makes a command test that passes against Fake mean something.
+// non-test file because Go test helpers cannot be imported across packages,
+// so commands and panel tests can reach it; production code never constructs
+// one, and the name is the review signal. The contract suite in store_test.go
+// runs against Fake and Postgres alike, so a case that passes against Fake
+// passes against Postgres with the same calls.
 //
 // Mutex-guarded because the suites run under -race and a test may drive the
 // store from the goroutine a gateway handler runs on.
@@ -19,7 +20,7 @@ type Fake struct {
 	mu      sync.Mutex
 	nextID  int64
 	hubs    map[int64]Hub
-	spawned map[string]Spawned
+	spawned map[string]SpawnedChannel
 }
 
 // NewFake returns an empty Fake.
@@ -27,7 +28,7 @@ func NewFake() *Fake {
 	return &Fake{
 		nextID:  1,
 		hubs:    make(map[int64]Hub),
-		spawned: make(map[string]Spawned),
+		spawned: make(map[string]SpawnedChannel),
 	}
 }
 
@@ -98,34 +99,34 @@ func (f *Fake) DeleteHub(_ context.Context, id int64) error {
 	return nil
 }
 
-// UpsertSpawned implements Store.
-func (f *Fake) UpsertSpawned(_ context.Context, s Spawned) error {
+// UpsertSpawnedChannel implements Store.
+func (f *Fake) UpsertSpawnedChannel(_ context.Context, sc SpawnedChannel) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if existing, ok := f.spawned[s.ChannelID]; ok {
-		s.CreatedAt = existing.CreatedAt
+	if existing, ok := f.spawned[sc.ChannelID]; ok {
+		sc.CreatedAt = existing.CreatedAt
 	} else {
-		s.CreatedAt = time.Now()
+		sc.CreatedAt = time.Now()
 	}
-	f.spawned[s.ChannelID] = s
+	f.spawned[sc.ChannelID] = sc
 	return nil
 }
 
-// DeleteSpawned implements Store.
-func (f *Fake) DeleteSpawned(_ context.Context, channelID string) error {
+// DeleteSpawnedChannel implements Store.
+func (f *Fake) DeleteSpawnedChannel(_ context.Context, channelID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.spawned, channelID)
 	return nil
 }
 
-// ListSpawned implements Store.
-func (f *Fake) ListSpawned(_ context.Context) ([]Spawned, error) {
+// ListSpawnedChannels implements Store.
+func (f *Fake) ListSpawnedChannels(_ context.Context) ([]SpawnedChannel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var out []Spawned
-	for _, sp := range f.spawned {
-		out = append(out, sp)
+	var out []SpawnedChannel
+	for _, sc := range f.spawned {
+		out = append(out, sc)
 	}
 	return out, nil
 }

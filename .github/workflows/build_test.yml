@@ -30,8 +30,9 @@ jobs:
     runs-on: ubuntu-latest
 
     # The store package's tests run against a real Postgres and skip without
-    # one, so this is what keeps its coverage floor honest. Same major as the
-    # compose file.
+    # one; skipped, the package covers about 37% against a floor of 80, so
+    # the floor check fails without this service. Same major as the compose
+    # file.
     services:
       postgres:
         image: postgres:18-alpine

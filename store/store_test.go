@@ -25,9 +25,9 @@ func TestMain(m *testing.M) {
 // happens on a laptop with no database; CI sets it.
 const testDSNVar = "TEST_BOT_DB_DSN"
 
-// forEachStore runs one contract case against every implementation. The suite
-// is the same for both, which is what makes the Fake trustworthy in other
-// packages' tests. Each case gets a fresh store.
+// forEachStore runs one contract case against every implementation, so the
+// Fake and Postgres are held to the same calls and results. Each case gets a
+// fresh store.
 func forEachStore(t *testing.T, run func(t *testing.T, s Store)) {
 	t.Helper()
 	t.Run("fake", func(t *testing.T) {
@@ -275,15 +275,15 @@ func storeHub(t *testing.T, s Store, hubChannelID string) int64 {
 }
 
 // findSpawned returns the row for a channel from a list, or fails the test.
-func findSpawned(t *testing.T, rows []Spawned, channelID string) Spawned {
+func findSpawned(t *testing.T, rows []SpawnedChannel, channelID string) SpawnedChannel {
 	t.Helper()
 	for _, r := range rows {
 		if r.ChannelID == channelID {
 			return r
 		}
 	}
-	t.Fatalf("ListSpawned has no row for %q, got %v", channelID, rows)
-	return Spawned{}
+	t.Fatalf("ListSpawnedChannels has no row for %q, got %v", channelID, rows)
+	return SpawnedChannel{}
 }
 
 // T6: a spawned row reads back with the fields it was written with, and a
@@ -292,31 +292,31 @@ func TestUpsertSpawnedThenList(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
 		hubID := storeHub(t, s, "hub-1")
-		want := Spawned{ChannelID: "chan-1", HubID: hubID, Number: 3, OwnerUserID: "user-creator"}
+		want := SpawnedChannel{ChannelID: "chan-1", HubID: hubID, Number: 3, OwnerUserID: "user-creator"}
 
-		if err := s.UpsertSpawned(ctx, want); err != nil {
-			t.Fatalf("UpsertSpawned: %v", err)
+		if err := s.UpsertSpawnedChannel(ctx, want); err != nil {
+			t.Fatalf("UpsertSpawnedChannel: %v", err)
 		}
-		rows, err := s.ListSpawned(ctx)
+		rows, err := s.ListSpawnedChannels(ctx)
 		if err != nil {
-			t.Fatalf("ListSpawned: %v", err)
+			t.Fatalf("ListSpawnedChannels: %v", err)
 		}
 		got := findSpawned(t, rows, "chan-1")
 		if got.HubID != want.HubID || got.Number != want.Number || got.OwnerUserID != want.OwnerUserID {
-			t.Errorf("ListSpawned row = %+v, want HubID %d, Number %d, OwnerUserID %q",
+			t.Errorf("ListSpawnedChannels row = %+v, want HubID %d, Number %d, OwnerUserID %q",
 				got, want.HubID, want.Number, want.OwnerUserID)
 		}
 
 		want.OwnerUserID = "user-next"
-		if err := s.UpsertSpawned(ctx, want); err != nil {
-			t.Fatalf("second UpsertSpawned: %v", err)
+		if err := s.UpsertSpawnedChannel(ctx, want); err != nil {
+			t.Fatalf("second UpsertSpawnedChannel: %v", err)
 		}
-		rows, err = s.ListSpawned(ctx)
+		rows, err = s.ListSpawnedChannels(ctx)
 		if err != nil {
-			t.Fatalf("ListSpawned: %v", err)
+			t.Fatalf("ListSpawnedChannels: %v", err)
 		}
 		if len(rows) != 1 {
-			t.Errorf("ListSpawned returned %d rows after a second upsert, want 1", len(rows))
+			t.Errorf("ListSpawnedChannels returned %d rows after a second upsert, want 1", len(rows))
 		}
 		if got := findSpawned(t, rows, "chan-1"); got.OwnerUserID != "user-next" {
 			t.Errorf("OwnerUserID after handover = %q, want %q", got.OwnerUserID, "user-next")
@@ -329,12 +329,12 @@ func TestUpsertSpawnedNoOwner(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
 		hubID := storeHub(t, s, "hub-1")
-		if err := s.UpsertSpawned(ctx, Spawned{ChannelID: "chan-1", HubID: hubID, Number: 1}); err != nil {
-			t.Fatalf("UpsertSpawned: %v", err)
+		if err := s.UpsertSpawnedChannel(ctx, SpawnedChannel{ChannelID: "chan-1", HubID: hubID, Number: 1}); err != nil {
+			t.Fatalf("UpsertSpawnedChannel: %v", err)
 		}
-		rows, err := s.ListSpawned(ctx)
+		rows, err := s.ListSpawnedChannels(ctx)
 		if err != nil {
-			t.Fatalf("ListSpawned: %v", err)
+			t.Fatalf("ListSpawnedChannels: %v", err)
 		}
 		if got := findSpawned(t, rows, "chan-1"); got.OwnerUserID != "" {
 			t.Errorf("OwnerUserID = %q, want empty", got.OwnerUserID)
@@ -342,28 +342,28 @@ func TestUpsertSpawnedNoOwner(t *testing.T) {
 	})
 }
 
-// T8: a deleted spawned row is gone from ListSpawned, and deleting it again is
+// T8: a deleted spawned row is gone from ListSpawnedChannels, and deleting it again is
 // not an error.
-func TestDeleteSpawned(t *testing.T) {
+func TestDeleteSpawnedChannel(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
 		hubID := storeHub(t, s, "hub-1")
-		if err := s.UpsertSpawned(ctx, Spawned{ChannelID: "chan-1", HubID: hubID, Number: 1}); err != nil {
-			t.Fatalf("UpsertSpawned: %v", err)
+		if err := s.UpsertSpawnedChannel(ctx, SpawnedChannel{ChannelID: "chan-1", HubID: hubID, Number: 1}); err != nil {
+			t.Fatalf("UpsertSpawnedChannel: %v", err)
 		}
 
-		if err := s.DeleteSpawned(ctx, "chan-1"); err != nil {
-			t.Fatalf("DeleteSpawned: %v", err)
+		if err := s.DeleteSpawnedChannel(ctx, "chan-1"); err != nil {
+			t.Fatalf("DeleteSpawnedChannel: %v", err)
 		}
-		rows, err := s.ListSpawned(ctx)
+		rows, err := s.ListSpawnedChannels(ctx)
 		if err != nil {
-			t.Fatalf("ListSpawned: %v", err)
+			t.Fatalf("ListSpawnedChannels: %v", err)
 		}
 		if len(rows) != 0 {
-			t.Errorf("ListSpawned after delete = %v, want none", rows)
+			t.Errorf("ListSpawnedChannels after delete = %v, want none", rows)
 		}
-		if err := s.DeleteSpawned(ctx, "chan-1"); err != nil {
-			t.Errorf("second DeleteSpawned error = %v, want nil", err)
+		if err := s.DeleteSpawnedChannel(ctx, "chan-1"); err != nil {
+			t.Errorf("second DeleteSpawnedChannel error = %v, want nil", err)
 		}
 	})
 }
@@ -375,16 +375,16 @@ func TestDeleteHubKeepsSpawned(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
 		hubID := storeHub(t, s, "hub-1")
-		if err := s.UpsertSpawned(ctx, Spawned{ChannelID: "chan-1", HubID: hubID, Number: 1, OwnerUserID: "user-1"}); err != nil {
-			t.Fatalf("UpsertSpawned: %v", err)
+		if err := s.UpsertSpawnedChannel(ctx, SpawnedChannel{ChannelID: "chan-1", HubID: hubID, Number: 1, OwnerUserID: "user-1"}); err != nil {
+			t.Fatalf("UpsertSpawnedChannel: %v", err)
 		}
 
 		if err := s.DeleteHub(ctx, hubID); err != nil {
 			t.Fatalf("DeleteHub: %v", err)
 		}
-		rows, err := s.ListSpawned(ctx)
+		rows, err := s.ListSpawnedChannels(ctx)
 		if err != nil {
-			t.Fatalf("ListSpawned: %v", err)
+			t.Fatalf("ListSpawnedChannels: %v", err)
 		}
 		findSpawned(t, rows, "chan-1")
 	})

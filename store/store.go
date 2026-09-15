@@ -53,9 +53,9 @@ type Hub struct {
 	UpdatedAt time.Time
 }
 
-// Spawned is one row of the spawned channels table, written at create and at
-// every handover so the restart sweep can restore number and owner.
-type Spawned struct {
+// SpawnedChannel is one row of the spawned channels table, written at create
+// and at every handover so the restart sweep can restore number and owner.
+type SpawnedChannel struct {
 	ChannelID string
 	// HubID is the hub's surrogate ID, or zero once the hub row is gone: the
 	// reference clears when the hub is deleted, so a spawned channel of a
@@ -81,16 +81,17 @@ type Store interface {
 	// UpdatedAt filled; the caller's values for those three are ignored.
 	UpsertHub(ctx context.Context, hub Hub) (Hub, error)
 	// DeleteHub removes the hub. Deleting a hub that does not exist is not an
-	// error. Spawned rows of the hub keep their rows with the hub reference
+	// error. Spawned channel rows of the hub keep their rows with the hub reference
 	// cleared.
 	DeleteHub(ctx context.Context, id int64) error
 
-	// UpsertSpawned inserts the row, or updates the existing row for the same
-	// ChannelID in place.
-	UpsertSpawned(ctx context.Context, s Spawned) error
-	// DeleteSpawned removes the row. Deleting a row that does not exist is not
-	// an error.
-	DeleteSpawned(ctx context.Context, channelID string) error
-	// ListSpawned returns every spawned row, in no promised order.
-	ListSpawned(ctx context.Context) ([]Spawned, error)
+	// UpsertSpawnedChannel inserts the row, or updates the existing row for
+	// the same ChannelID in place.
+	UpsertSpawnedChannel(ctx context.Context, sc SpawnedChannel) error
+	// DeleteSpawnedChannel removes the row. Deleting a row that does not exist
+	// is not an error.
+	DeleteSpawnedChannel(ctx context.Context, channelID string) error
+	// ListSpawnedChannels returns every spawned channel row, in no promised
+	// order.
+	ListSpawnedChannels(ctx context.Context) ([]SpawnedChannel, error)
 }

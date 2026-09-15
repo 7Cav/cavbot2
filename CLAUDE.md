@@ -39,7 +39,7 @@ Optional but feature-gating:
 - `FORUM_DB_DSN` — MySQL DSN for the Xenforo forum DB. The production DSN points at host `xenforo-db`, which resolves **only inside the `xenforo_internal` Docker network** (declared `external: true` in `docker-compose.yml`). Running `go run .` outside that network won't error at startup — `sql.Open` defers the connection — but every `Refresh` will log `"LOA cache refresh failed"` at WARN and the cache will stay empty. To test LOA locally, either run via `docker compose` or substitute a reachable DSN.
 - `LOA_NODE_IDS` — comma-separated Xenforo node IDs to scan for LOA threads. Code default is `180`; **production scans 5 nodes** (`180,400,540,178,369`), which is what `.env.example` sets, so a copied `.env` never hits the code default.
 - `WARDEN_ROLE_BASE_NAME` — base name the `/warden` roles are composed from (`<base> Internal`, `<base> External`). Code default is `Verified Warden`; **`.env.example` sets what the roles are named in Discord now** (`Verified Foxhole`), so a copied `.env` never hits the code default — same arrangement as `LOA_NODE_IDS`. Matching is **exact**: the configured base has to reproduce the role name character for character, and a value that doesn't fails every warden subcommand with `role not found` and changes nothing. Read per invocation, so it takes effect on restart with no rebuild. The resolved value is logged at startup (`Warden role base name resolved`), which is the fastest way to confirm it reached the process.
-- `BOT_DB_DSN` — Postgres DSN for the bot's own store (`store/`), the hubs and spawned channels of the temporary voice channel feature. Unset: one WARN at startup (`BOT_DB_DSN not set, bot store disabled`), no store, every command works as before. Set: the bot pings it with a short retry and runs the embedded migrations before it opens the Discord session; a database it cannot reach or migrate stops the bot with `Bot store unavailable` and a non-zero exit, and `restart: unless-stopped` retries. The DSN is never logged. `.env.example` leaves it empty so a copied `.env` stays inert; the compose value is in its comment. See ADR 0012.
+- `BOT_DB_DSN` is the Postgres DSN for the bot's own store (`store/`), the hubs and spawned channels of the temporary voice channel feature. Unset: one WARN at startup (`BOT_DB_DSN not set, bot store disabled`), no store, every command works as before. Set: the bot pings it with a short retry and runs the embedded migrations before it opens the Discord session. A database it cannot reach or migrate stops the bot with `Bot store unavailable` and a non-zero exit, and `restart: unless-stopped` retries. The DSN is never logged, and a DSN that does not parse is reported without echoing it. `.env.example` leaves it empty so a copied `.env` stays inert; the compose value is in its comment. See ADR 0012.
 - `LOG_LEVEL` — `DEBUG` / `INFO` / `WARN` / `ERROR` (default `INFO`)
 - `DISCORDGO_LOG_LEVEL` — discordgo's *own* gateway logging, separate from `LOG_LEVEL`. `ERROR` (default) / `WARN` / `INFO` / `DEBUG`; unrecognised values mean `ERROR`. `WARN` is where discordgo names the frame the gateway sent instead of `READY`, so it is the level to set when startup fails with `Discord session unavailable`. Levels map faithfully onto the slog wrappers, so both gates apply: discordgo's debug output needs `LOG_LEVEL=DEBUG` as well. At `WARN` and above discordgo logs every gateway event it does not recognise with the event's full payload.
 
@@ -57,7 +57,7 @@ Parsing keys off the `Username`, `Start Date`, and `End Date` field labels. `par
 
 ### Bot store (store/)
 
-`store.Store` is the one interface between the bot and its Postgres database: hubs get, list, upsert, delete; spawned channels upsert, delete, list. `store.Postgres` is production over `database/sql` with `jackc/pgx/v5`; `store.NewFake()` is the in-memory double for other packages' tests, and the same contract suite in `store/store_test.go` runs against both. `UpsertHub` is keyed on the hub channel ID and `UpsertSpawned` on the channel ID; both deletes are idempotent; `GetHub` of an unknown ID is `store.ErrNotFound`.
+`store.Store` is the one interface between the bot and its Postgres database: hubs get, list, upsert, delete; spawned channels upsert, delete, list. `store.Postgres` is production over `database/sql` with `jackc/pgx/v5`; `store.NewFake()` is the in-memory double for other packages' tests, and the same contract suite in `store/store_test.go` runs against both. `UpsertHub` is keyed on the hub channel ID and `UpsertSpawnedChannel` on the channel ID; both deletes are idempotent; `GetHub` of an unknown ID is `store.ErrNotFound`.
 
 Migrations are SQL files in `store/migrations/`, embedded and run by `store.Open` at startup under a Postgres session lock. Every migration stays compatible with the previous release: additive in the release that introduces it, drops and renames one release later. ADR 0012 has the rule and the file naming.
 
@@ -116,12 +116,19 @@ The headings below are consumed by `syni-run-on-issue`. Edit freely; the orchest
 set -euo pipefail
 golangci-lint run --timeout=5m
 go mod tidy
+if [[ -z "${TEST_BOT_DB_DSN:-}" ]]; then
+  docker rm -f cavbot2-gate-pg >/dev/null 2>&1 || true
+  docker run --rm -d --name cavbot2-gate-pg -e POSTGRES_PASSWORD=postgres -p 5433:5432 postgres:18-alpine >/dev/null
+  trap 'docker rm -f cavbot2-gate-pg >/dev/null 2>&1 || true' EXIT
+  until docker exec cavbot2-gate-pg pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
+  export TEST_BOT_DB_DSN='postgres://postgres:postgres@localhost:5433/postgres?sslmode=disable'
+fi
 go test ./... -race -cover -covermode=atomic | tee /tmp/cover.log
 ./.github/scripts/check-coverage-floors.sh < /tmp/cover.log
 go build -o cavbot2
 ```
 
-Mirrors `.github/workflows/build_test.yml` exactly. `pipefail` ensures a `go test` failure isn't swallowed by `tee`.
+Mirrors `.github/workflows/build_test.yml`, whose build job runs a `postgres:18-alpine` service container and sets `TEST_BOT_DB_DSN`; the `docker` block stands in for that service when the variable is not already exported. `pipefail` ensures a `go test` failure isn't swallowed by `tee`.
 
 ## Branch naming
 

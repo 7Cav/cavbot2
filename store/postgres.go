@@ -48,7 +48,9 @@ type Postgres struct {
 func Open(ctx context.Context, dsn string) (*Postgres, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open bot database: %w", err)
+		// Not wrapped: pgx's parse error echoes the connection string with a
+		// best-effort password redaction, and the DSN is never logged.
+		return nil, errors.New("open bot database: the DSN does not parse")
 	}
 	db.SetMaxOpenConns(maxOpenConns)
 	db.SetConnMaxIdleTime(30 * time.Second)
@@ -80,7 +82,7 @@ func pingWithRetry(ctx context.Context, db *sql.DB) error {
 			break
 		}
 		utils.Warn("Bot database not answering, retrying",
-			"attempt", attempt, "of", pingAttempts, "error", err)
+			"attempt", attempt, "max_attempts", pingAttempts, "error", err)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -119,12 +121,35 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
+// scanner is what scanHub and scanSpawnedChannel read from: a *sql.Row or a
+// *sql.Rows.
+type scanner interface{ Scan(dest ...any) error }
+
+// queryAll runs a query and scans every row with scan. The caller wraps the
+// error with what it was listing.
+func queryAll[T any](ctx context.Context, db *sql.DB, scan func(scanner) (T, error), query string, args ...any) ([]T, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []T
+	for rows.Next() {
+		v, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 // hubColumns is the select list every hub read shares, in scanHub's order.
 const hubColumns = `id, guild_id, hub_channel_id, base_string, permission_source,
 	moderator_role_ids, user_limit, bitrate, enabled, created_at, updated_at`
 
 // scanHub reads one hub row in hubColumns order.
-func scanHub(row interface{ Scan(dest ...any) error }) (Hub, error) {
+func scanHub(row scanner) (Hub, error) {
 	var (
 		h     Hub
 		roles []byte
@@ -155,20 +180,9 @@ func (p *Postgres) GetHub(ctx context.Context, id int64) (Hub, error) {
 
 // ListHubs implements Store.
 func (p *Postgres) ListHubs(ctx context.Context, guildID string) ([]Hub, error) {
-	rows, err := p.db.QueryContext(ctx, `SELECT `+hubColumns+` FROM hubs WHERE guild_id = $1 ORDER BY id`, guildID)
+	hubs, err := queryAll(ctx, p.db, scanHub,
+		`SELECT `+hubColumns+` FROM hubs WHERE guild_id = $1 ORDER BY id`, guildID)
 	if err != nil {
-		return nil, fmt.Errorf("list hubs of guild %q: %w", guildID, err)
-	}
-	defer func() { _ = rows.Close() }()
-	var hubs []Hub
-	for rows.Next() {
-		h, err := scanHub(rows)
-		if err != nil {
-			return nil, fmt.Errorf("list hubs of guild %q: %w", guildID, err)
-		}
-		hubs = append(hubs, h)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list hubs of guild %q: %w", guildID, err)
 	}
 	return hubs, nil
@@ -217,11 +231,11 @@ func (p *Postgres) DeleteHub(ctx context.Context, id int64) error {
 	return nil
 }
 
-// UpsertSpawned implements Store. The row is keyed on channel_id: a conflict
-// updates hub, number and owner in place and keeps created_at, which is what
-// the handover write relies on. A zero HubID and an empty OwnerUserID are
-// stored as NULL.
-func (p *Postgres) UpsertSpawned(ctx context.Context, s Spawned) error {
+// UpsertSpawnedChannel implements Store. The row is keyed on channel_id: a
+// conflict updates hub, number and owner in place and keeps created_at, which
+// is what the handover write relies on. A zero HubID and an empty OwnerUserID
+// are stored as NULL.
+func (p *Postgres) UpsertSpawnedChannel(ctx context.Context, sc SpawnedChannel) error {
 	_, err := p.db.ExecContext(ctx, `
 		INSERT INTO spawned_channels (channel_id, hub_id, number, owner_user_id)
 		VALUES ($1, $2, $3, $4)
@@ -229,48 +243,47 @@ func (p *Postgres) UpsertSpawned(ctx context.Context, s Spawned) error {
 			hub_id = EXCLUDED.hub_id,
 			number = EXCLUDED.number,
 			owner_user_id = EXCLUDED.owner_user_id`,
-		s.ChannelID,
-		sql.NullInt64{Int64: s.HubID, Valid: s.HubID != 0},
-		s.Number,
-		sql.NullString{String: s.OwnerUserID, Valid: s.OwnerUserID != ""})
+		sc.ChannelID,
+		sql.NullInt64{Int64: sc.HubID, Valid: sc.HubID != 0},
+		sc.Number,
+		sql.NullString{String: sc.OwnerUserID, Valid: sc.OwnerUserID != ""})
 	if err != nil {
-		return fmt.Errorf("upsert spawned channel %q: %w", s.ChannelID, err)
+		return fmt.Errorf("upsert spawned channel %q: %w", sc.ChannelID, err)
 	}
 	return nil
 }
 
-// DeleteSpawned implements Store.
-func (p *Postgres) DeleteSpawned(ctx context.Context, channelID string) error {
+// DeleteSpawnedChannel implements Store.
+func (p *Postgres) DeleteSpawnedChannel(ctx context.Context, channelID string) error {
 	if _, err := p.db.ExecContext(ctx, `DELETE FROM spawned_channels WHERE channel_id = $1`, channelID); err != nil {
 		return fmt.Errorf("delete spawned channel %q: %w", channelID, err)
 	}
 	return nil
 }
 
-// ListSpawned implements Store.
-func (p *Postgres) ListSpawned(ctx context.Context) ([]Spawned, error) {
-	rows, err := p.db.QueryContext(ctx, `
+// scanSpawnedChannel reads one spawned channel row: channel_id, hub_id,
+// number, owner_user_id, created_at. NULL hub and owner read back as zero and
+// empty.
+func scanSpawnedChannel(row scanner) (SpawnedChannel, error) {
+	var (
+		sc    SpawnedChannel
+		hubID sql.NullInt64
+		owner sql.NullString
+	)
+	if err := row.Scan(&sc.ChannelID, &hubID, &sc.Number, &owner, &sc.CreatedAt); err != nil {
+		return SpawnedChannel{}, err
+	}
+	sc.HubID = hubID.Int64
+	sc.OwnerUserID = owner.String
+	return sc, nil
+}
+
+// ListSpawnedChannels implements Store.
+func (p *Postgres) ListSpawnedChannels(ctx context.Context) ([]SpawnedChannel, error) {
+	out, err := queryAll(ctx, p.db, scanSpawnedChannel, `
 		SELECT channel_id, hub_id, number, owner_user_id, created_at
 		FROM spawned_channels ORDER BY channel_id`)
 	if err != nil {
-		return nil, fmt.Errorf("list spawned channels: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var out []Spawned
-	for rows.Next() {
-		var (
-			sp    Spawned
-			hubID sql.NullInt64
-			owner sql.NullString
-		)
-		if err := rows.Scan(&sp.ChannelID, &hubID, &sp.Number, &owner, &sp.CreatedAt); err != nil {
-			return nil, fmt.Errorf("list spawned channels: %w", err)
-		}
-		sp.HubID = hubID.Int64
-		sp.OwnerUserID = owner.String
-		out = append(out, sp)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list spawned channels: %w", err)
 	}
 	return out, nil
