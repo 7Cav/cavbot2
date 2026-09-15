@@ -13,7 +13,7 @@ Do not relitigate anything under "Settled", "Settled while charting", or "Alread
 
 - Both question rounds are answered. Nothing is in flight with the stakeholder.
 - The maintainer builds this, not the PR's author. PR #232 stays open as the base until a superseding PR exists.
-- Every ticket under map #255 is closed. Nothing blocks the spec.
+- Three tickets are open under map #255, added on 2026-09-15 by a readiness review. Each is unblocked. The spec waits on them.
 - PR #232 is a draft, 3 files, +3677 lines, last pushed 2026-07-26. It forked 20 commits behind `develop`. The `main.go` anchors it patches moved (`NewRegistry()` is at line 126, `StartJoinerReportScheduler` at 193), and #245 added gofmt enforcement to CI.
 
 ## Sources
@@ -156,7 +156,11 @@ Decisions made by working map #255's tickets. Each row links the ticket that hol
 
 ## Open, as tickets on map #255
 
-None. The last one, [What the restart sweep does with no-row channels, and whether the audit-log channel stays](https://github.com/7Cav/cavbot2/issues/275), closed on 2026-09-15.
+1. [What the bot does when the spawn path cannot proceed](https://github.com/7Cav/cavbot2/issues/278). Create failure as the member sees it, a hub channel deleted or moved, a category deleted, and the no-retry rule.
+2. [Name the Discord roles for the `/voice-rename` gate and add the restriction step to cutover](https://github.com/7Cav/cavbot2/issues/279). Which roles the Server Settings restriction names, and whether they equal the rank-role set #263 assumed.
+3. [Panel session lifetime and group re-check](https://github.com/7Cav/cavbot2/issues/280). How long a panel session lives and when the group check runs again.
+
+Backing up the Postgres volume is out of scope for the map and tracked as [#281](https://github.com/7Cav/cavbot2/issues/281).
 
 ## Fixes that hold regardless of every answer above
 
