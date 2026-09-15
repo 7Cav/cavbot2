@@ -13,7 +13,7 @@ Do not relitigate anything under "Settled", "Settled while charting", or "Alread
 
 - Both question rounds are answered. Nothing is in flight with the stakeholder.
 - The maintainer builds this, not the PR's author. PR #232 stays open as the base until a superseding PR exists.
-- Three tickets are open under map #255, added on 2026-09-15 by a readiness review. Each is unblocked. The spec waits on them.
+- Two tickets are open under map #255, added on 2026-09-15 by a readiness review. Each is unblocked. The spec waits on them.
 - PR #232 is a draft, 3 files, +3677 lines, last pushed 2026-07-26. It forked 20 commits behind `develop`. The `main.go` anchors it patches moved (`NewRegistry()` is at line 126, `StartJoinerReportScheduler` at 193), and #245 added gofmt enforcement to CI.
 
 ## Sources
@@ -153,12 +153,12 @@ Decisions made by working map #255's tickets. Each row links the ticket that hol
 | Cutover gains two hand steps for the maintainer, who transcribes the hubs. Before enabling the hubs, delete every empty channel with a `#` name in a hub category; MEE6 desync leftovers exist on the live guild today. After enabling, list the occupied MEE6 channels and delete each by hand once it empties, the same evening. Nobody is dropped from voice. | [#275](https://github.com/7Cav/cavbot2/issues/275) |
 | The Discord audit-log channel is dropped, with no panel field in its place. Create and delete already reach Loki as structured log lines; rename joins them. Join and leave get no record. Staff who need to know who renamed what read Discord's own audit log. | [#275](https://github.com/7Cav/cavbot2/issues/275) |
 | A rename is recorded at the `/voice-rename` handler: one structured log line with `command`, `discord_id`, `username`, `channel_id`, `before` and `after`, and `X-Audit-Log-Reason` naming the invoker on the edit call. Create and delete carry the same header, the hub and the creator on create, "empty" on delete. The `CHANNEL_UPDATE` handler goes. A rename made in Discord's UI is Discord's audit log's record, not the bot's. | [#275](https://github.com/7Cav/cavbot2/issues/275) |
+| The Cav-member gate on `/voice-rename` is a Server Settings restriction naming the 29 rank roles in the code ladder. "Cav member" and "holds a rank role" are one set, as #263 assumed. The maintainer applies the restriction at deploy, before the hubs are enabled; until then the command is visible to every member and a non-member in a spawned channel reaches the no-owner WARN from #264. Discord allows 100 entries per command per guild. No API check per member. | [#279](https://github.com/7Cav/cavbot2/issues/279) |
 
 ## Open, as tickets on map #255
 
 1. [What the bot does when the spawn path cannot proceed](https://github.com/7Cav/cavbot2/issues/278). Create failure as the member sees it, a hub channel deleted or moved, a category deleted, and the no-retry rule.
-2. [Name the Discord roles for the `/voice-rename` gate and add the restriction step to cutover](https://github.com/7Cav/cavbot2/issues/279). Which roles the Server Settings restriction names, and whether they equal the rank-role set #263 assumed.
-3. [Panel session lifetime and group re-check](https://github.com/7Cav/cavbot2/issues/280). How long a panel session lives and when the group check runs again.
+2. [Panel session lifetime and group re-check](https://github.com/7Cav/cavbot2/issues/280). How long a panel session lives and when the group check runs again.
 
 Backing up the Postgres volume is out of scope for the map and tracked as [#281](https://github.com/7Cav/cavbot2/issues/281).
 
