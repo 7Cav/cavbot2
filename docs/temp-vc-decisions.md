@@ -136,11 +136,14 @@ Decisions made by working map #255's tickets. Each row links the ticket that hol
 | The panel creates a hub channel from a category and a name, synced to the category, or registers an existing voice channel as a hub. Remove deletes the row and leaves the Discord channel. Spawned channels of a removed hub keep their rows and die when empty. A changed hub channel name renames the channel before the row saves; a refused rename saves nothing and the form shows why. | [#266](https://github.com/7Cav/cavbot2/issues/266) |
 | An append-only change log per hub records every panel save: forum user ID and username, time, action, and a JSON diff of the changed fields. The hub page shows the last ten, newest first. The hub list shows each hub's live spawned channel count from the bot's memory. | [#266](https://github.com/7Cav/cavbot2/issues/266) |
 | The rank ladder stays in code as abbreviation plus Discord role ID. At startup the bot fetches `/api/v1/milpacs/ranks` and captures any drift in abbreviations or order to Sentry, not a WARN log. Election by API rank per occupant was rejected: a network call in every create and handover, and it breaks the rank-role rule. | [#266](https://github.com/7Cav/cavbot2/issues/266) |
+| The bot keeps Administrator. The spec names it as the deployment requirement, and the hub form checks no permissions. Dropping it is a separate, guild-wide effort: `/warden` role recreation and the ownership notice depend on it as much as spawning does. The numbers for that effort are on the ticket. | [#268](https://github.com/7Cav/cavbot2/issues/268) |
+| At startup the bot fetches its own roles and captures to Sentry when Administrator is missing. Same shape as the rank ladder check. | [#268](https://github.com/7Cav/cavbot2/issues/268) |
+| The bot writes at most six bits into any channel overwrite: Manage Channels, Move Members, Mute Members, Deafen Members, Connect, View Channel. The list is a constant in code, never a panel setting. What a moderator role gets is chosen from inside it. | [#268](https://github.com/7Cav/cavbot2/issues/268) |
+| The test guild bot `bootybot` mirrors production: Administrator on. | [#268](https://github.com/7Cav/cavbot2/issues/268) |
 
 ## Open, as tickets on map #255
 
 - [What authority a moderator role carries](https://github.com/7Cav/cavbot2/issues/265)
-- [Does the bot keep Administrator, or does the spec name a per-category permission set](https://github.com/7Cav/cavbot2/issues/268)
 
 ## Fixes that hold regardless of every answer above
 
