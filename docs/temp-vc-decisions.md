@@ -128,10 +128,12 @@ Decisions made by working map #255's tickets. Each row links the ticket that hol
 | The owner always holds a rank role, or the channel has no owner. The creator is owner at create if they hold one. When the owner leaves, the highest-ranked occupant with a rank role takes over, ties to the lowest user ID, and no candidate means no owner. A rank-role holder who joins a channel with no owner takes over. A handover is final. A returning creator is an ordinary occupant. | [#263](https://github.com/7Cav/cavbot2/issues/263) |
 | The store holds one row per spawned channel: channel ID, hub, number, owner. Written at create and at every handover, deleted with the channel. The restart sweep restores owner and number from the row. A failed write keeps the channel, captures the failure in Sentry, and leaves it to be adopted at the next restart. | [#263](https://github.com/7Cav/cavbot2/issues/263) |
 | An adopted channel gets an owner at the sweep by the handover rule. Adoption now covers only channels with no row, such as MEE6 channels live at cutover. | [#263](https://github.com/7Cav/cavbot2/issues/263) |
+| `/voice-rename` replies are ephemeral. A non-owner is told who the owner is. A channel with no owner cannot be renamed, and that reply is logged at WARN because it means the Discord gate or the rank-role assumption failed. Discord allows two renames per channel per 10 minutes; the bot counts them and refuses the third with the wait time, and never lets discordgo sleep through a 429. | [#264](https://github.com/7Cav/cavbot2/issues/264) |
+| An ownership notice is posted in the spawned channel's chat at create and at every handover. It names the owner or says there is none, and pings nobody. The voice channel status line is not used. | [#264](https://github.com/7Cav/cavbot2/issues/264) |
+| At the restart sweep, a stored owner who is no longer in the channel counts as having left. The sweep elects by the handover rule. | [#264](https://github.com/7Cav/cavbot2/issues/264) |
 
 ## Open, as tickets on map #255
 
-- [What a member sees of ownership](https://github.com/7Cav/cavbot2/issues/264)
 - [What authority a moderator role carries](https://github.com/7Cav/cavbot2/issues/265)
 - [The hub form: v1 fields, hub creation, and an audit trail](https://github.com/7Cav/cavbot2/issues/266)
 
