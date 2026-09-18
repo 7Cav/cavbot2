@@ -2,14 +2,18 @@ package panel
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/7cav/cavbot2/commands"
 	"github.com/7cav/cavbot2/store"
@@ -30,7 +34,14 @@ type fakeDiscord struct {
 	// answering the panel's read.
 	listErr error
 	created []discordgo.GuildChannelCreateData
+	deleted []string
 	spawned int
+}
+
+// testGuildRoles are the guild's roles the moderator picker offers.
+var testGuildRoles = []*discordgo.Role{
+	{ID: "role-mp", Name: "Military Police"},
+	{ID: "role-hq", Name: "Regimental HQ"},
 }
 
 // newFakeDiscord returns a guild with one category holding a voice channel
@@ -75,6 +86,9 @@ func (f *fakeDiscord) GuildChannelCreateComplex(_ string, data discordgo.GuildCh
 }
 
 func (f *fakeDiscord) ChannelDelete(channelID, _ string) (*discordgo.Channel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = append(f.deleted, channelID)
 	return &discordgo.Channel{ID: channelID}, nil
 }
 
@@ -90,7 +104,9 @@ func (f *fakeDiscord) ChannelMessageSendComplex(channelID string, data *discordg
 
 func (f *fakeDiscord) GuildMember(_, _ string) (*discordgo.Member, error) { return nil, nil }
 
-func (f *fakeDiscord) Guild(_ string) (*discordgo.Guild, error) { return nil, nil }
+func (f *fakeDiscord) Guild(_ string) (*discordgo.Guild, error) {
+	return &discordgo.Guild{ID: testGuildID, Roles: testGuildRoles}, nil
+}
 
 func (f *fakeDiscord) setListErr(err error) {
 	f.mu.Lock()
@@ -99,9 +115,21 @@ func (f *fakeDiscord) setListErr(err error) {
 }
 
 func (f *fakeDiscord) createCount() int {
+	return len(f.creates())
+}
+
+// creates returns every create payload the runtime sent, in order.
+func (f *fakeDiscord) creates() []discordgo.GuildChannelCreateData {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return len(f.created)
+	return slices.Clone(f.created)
+}
+
+// deletes returns the ID of every channel the runtime deleted, in order.
+func (f *fakeDiscord) deletes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.deleted)
 }
 
 // testWorld is the panel with everything beneath it: the fake forum, the
@@ -372,5 +400,403 @@ func TestHubPageWithGuildReadFailingIsAServerError(t *testing.T) {
 
 	if !isServerError(res.StatusCode) {
 		t.Errorf("GET / status = %d, want 5xx", res.StatusCode)
+	}
+}
+
+// updateForm is the edit form as posted, every field carrying the value
+// testHub stores, so a test changes one field and posts the rest unchanged.
+func updateForm() url.Values {
+	return url.Values{
+		"base_string":       {"Arma Voice"},
+		"permission_source": {"category"},
+		"user_limit":        {"0"},
+		"bitrate":           {"64000"},
+		"enabled":           {"on"},
+	}
+}
+
+// hubPath is the update route of the stored hub on a channel.
+func hubPath(t *testing.T, st store.Store, hubChannelID string) string {
+	t.Helper()
+	return "/hubs/" + strconv.FormatInt(storedHubID(t, st, hubChannelID), 10)
+}
+
+func TestUpdateWritesTheRowAndReachesTheRuntime(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	form := updateForm()
+	form.Set("base_string", "Bravo Voice")
+	form.Set("permission_source", "hub_channel")
+	form["moderator_roles"] = []string{"role-mp"}
+	form.Set("user_limit", "5")
+	form.Set("bitrate", "96000")
+
+	res := w.b.postForm(hubPath(t, w.st, "hub-1"), form)
+
+	assertRedirect(t, res, "/")
+	hubs := storedHubs(t, w.st)
+	if len(hubs) != 1 {
+		t.Fatalf("stored %d hubs, want 1", len(hubs))
+	}
+	h := hubs[0]
+	if h.BaseString != "Bravo Voice" || h.PermissionSource != store.PermissionHubChannel ||
+		!slices.Equal(h.ModeratorRoleIDs, []string{"role-mp"}) || h.UserLimit != 5 || h.Bitrate != 96000 || !h.Enabled {
+		t.Errorf("stored hub = %+v, want Bravo Voice, hub_channel, [role-mp], limit 5, bitrate 96000, enabled", h)
+	}
+
+	w.join("user-a", "hub-1")
+	creates := w.discord.creates()
+	if len(creates) != 1 {
+		t.Fatalf("a join after the update made %d creates, want 1", len(creates))
+	}
+	if !strings.Contains(creates[0].Name, "Bravo Voice") || creates[0].UserLimit != 5 {
+		t.Errorf("create payload = name %q, user limit %d; want the new base string and limit 5", creates[0].Name, creates[0].UserLimit)
+	}
+}
+
+func TestDisabledHubStopsSpawningAtOnceAndKeepsItsSettings(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	path := hubPath(t, w.st, "hub-1")
+	off := updateForm()
+	off.Del("enabled")
+
+	assertRedirect(t, w.b.postForm(path, off), "/")
+	w.join("user-a", "hub-1")
+	if n := w.discord.createCount(); n != 0 {
+		t.Errorf("a join to the disabled hub made %d creates, want 0", n)
+	}
+	if h := storedHubs(t, w.st)[0]; h.Enabled || h.BaseString != "Arma Voice" {
+		t.Errorf("stored hub = %+v, want disabled with base string Arma Voice kept", h)
+	}
+
+	assertRedirect(t, w.b.postForm(path, updateForm()), "/")
+	w.join("user-b", "hub-1")
+	if n := w.discord.createCount(); n != 1 {
+		t.Errorf("a join to the re-enabled hub made %d creates in all, want 1", n)
+	}
+}
+
+// storedChangeLog lists the change log entries of a hub, newest first.
+func storedChangeLog(t *testing.T, st store.Store, hubID int64) []store.ChangeLogEntry {
+	t.Helper()
+	entries, err := st.ListChangeLog(context.Background(), hubID, 10)
+	if err != nil {
+		t.Fatalf("ListChangeLog(%d): %v", hubID, err)
+	}
+	return entries
+}
+
+// sameHubSettings reports whether two hubs carry the same settings, ignoring
+// the store-set times.
+func sameHubSettings(a, b store.Hub) bool {
+	return a.ID == b.ID && a.HubChannelID == b.HubChannelID && a.BaseString == b.BaseString &&
+		a.PermissionSource == b.PermissionSource && slices.Equal(a.ModeratorRoleIDs, b.ModeratorRoleIDs) &&
+		a.UserLimit == b.UserLimit && a.Bitrate == b.Bitrate && a.Enabled == b.Enabled
+}
+
+func TestUpdateRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
+	set := func(field, value string) url.Values {
+		form := updateForm()
+		form.Set(field, value)
+		return form
+	}
+	cases := []struct {
+		name  string
+		form  url.Values
+		field string
+	}{
+		{"an empty base string", set("base_string", "   "), "base_string"},
+		{"a base string of 91 characters", set("base_string", strings.Repeat("x", 91)), "base_string"},
+		{"a permission source outside the two", set("permission_source", "other"), "permission_source"},
+		{"a user limit below 0", set("user_limit", "-1"), "user_limit"},
+		{"a user limit above 99", set("user_limit", "100"), "user_limit"},
+		{"a user limit that is not a number", set("user_limit", "abc"), "user_limit"},
+		{"a bitrate below 8000", set("bitrate", "7999"), "bitrate"},
+		{"a bitrate that is not a number", set("bitrate", "abc"), "bitrate"},
+		{"a moderator role not in the guild", set("moderator_roles", "role-elsewhere"), "moderator_roles"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			before := storedHubs(t, w.st)[0]
+
+			res := w.b.postForm(hubPath(t, w.st, "hub-1"), tc.form)
+
+			if !isClientError(res.StatusCode) {
+				t.Errorf("status = %d, want 4xx", res.StatusCode)
+			}
+			if field, ok := errorField(t, res); !ok || field != tc.field {
+				t.Errorf("data-error = %q (present %v), want %q", field, ok, tc.field)
+			}
+			if after := storedHubs(t, w.st)[0]; !sameHubSettings(after, before) {
+				t.Errorf("stored hub = %+v, want it unchanged from %+v", after, before)
+			}
+			if entries := storedChangeLog(t, w.st, before.ID); len(entries) != 0 {
+				t.Errorf("a refused update appended %d change log entries, want 0", len(entries))
+			}
+			w.join("user-a", "hub-1")
+			creates := w.discord.creates()
+			if len(creates) != 1 || !strings.Contains(creates[0].Name, "Arma Voice") || creates[0].UserLimit != 0 || creates[0].Bitrate != 64000 {
+				t.Errorf("a join after the refusal made creates %+v, want one with the stored settings", creates)
+			}
+		})
+	}
+}
+
+func TestUnknownHubIsNotFound(t *testing.T) {
+	for _, path := range []string{"/hubs/999", "/hubs/999/remove"} {
+		t.Run(path, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+
+			res := w.b.postForm(path, updateForm())
+
+			if res.StatusCode != http.StatusNotFound {
+				t.Errorf("status = %d, want 404", res.StatusCode)
+			}
+			if hubs := storedHubs(t, w.st); len(hubs) != 1 || hubs[0].BaseString != "Arma Voice" {
+				t.Errorf("stored hubs = %+v, want the one pre-stored hub unchanged", hubs)
+			}
+			if entries := storedChangeLog(t, w.st, 0); len(entries) != 0 {
+				t.Errorf("appended %d entries under no hub, want 0", len(entries))
+			}
+		})
+	}
+}
+
+func TestRemoveDeletesTheRowLeavesTheChannelAndStopsSpawning(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	w.join("user-a", "hub-1")
+	if n := w.discord.createCount(); n != 1 {
+		t.Fatalf("the first join made %d creates, want 1", n)
+	}
+
+	res := w.b.postForm(hubPath(t, w.st, "hub-1")+"/remove", nil)
+
+	assertRedirect(t, res, "/")
+	if hubs := storedHubs(t, w.st); len(hubs) != 0 {
+		t.Errorf("stored hubs after remove = %+v, want none", hubs)
+	}
+	if deleted := w.discord.deletes(); len(deleted) != 0 {
+		t.Errorf("remove deleted channels %v, want none: the hub channel and its spawned channels stay", deleted)
+	}
+	rows, err := w.st.ListSpawnedChannels(context.Background())
+	if err != nil {
+		t.Fatalf("ListSpawnedChannels: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ChannelID != "spawn-1" {
+		t.Errorf("spawned rows after remove = %+v, want spawn-1 kept", rows)
+	}
+	w.join("user-b", "hub-1")
+	if n := w.discord.createCount(); n != 1 {
+		t.Errorf("a join after remove made %d creates in all, want 1: nothing spawns from a removed hub", n)
+	}
+}
+
+// fieldChange is one field of a diff as a reader decodes it: the values are
+// whatever JSON carried, null included.
+type fieldChange struct {
+	Before any `json:"before"`
+	After  any `json:"after"`
+}
+
+// decodeDiff decodes an entry's diff the way the page does.
+func decodeDiff(t *testing.T, e store.ChangeLogEntry) map[string]fieldChange {
+	t.Helper()
+	var diff map[string]fieldChange
+	if err := json.Unmarshal(e.Diff, &diff); err != nil {
+		t.Fatalf("decode diff %s: %v", e.Diff, err)
+	}
+	return diff
+}
+
+// wantDiffFields are the seven fields the spec says a register or remove entry
+// carries, written out here so the test does not read the list from the code.
+var wantDiffFields = []string{"hub_channel", "base_string", "permission_source", "moderator_roles", "user_limit", "bitrate", "enabled"}
+
+// assertActor checks an entry names the signed-in test user.
+func assertActor(t *testing.T, e store.ChangeLogEntry, action store.ChangeAction) {
+	t.Helper()
+	if e.Action != action || e.ForumUserID != testUserID || e.ForumUsername != testUsername {
+		t.Errorf("entry = action %q by %d %q, want %q by %d %q", e.Action, e.ForumUserID, e.ForumUsername, action, testUserID, testUsername)
+	}
+}
+
+func TestUpdateAppendsAnEntryWithTheChangedFieldsOnly(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	form := updateForm()
+	form.Set("base_string", "Bravo Voice")
+
+	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
+
+	entries := storedChangeLog(t, w.st, storedHubID(t, w.st, "hub-1"))
+	if len(entries) != 1 {
+		t.Fatalf("the hub has %d entries, want 1", len(entries))
+	}
+	assertActor(t, entries[0], store.ChangeUpdate)
+	diff := decodeDiff(t, entries[0])
+	if len(diff) != 1 {
+		t.Errorf("diff has keys %v, want base_string alone", slices.Sorted(maps.Keys(diff)))
+	}
+	if got := diff["base_string"]; got.Before != "Arma Voice" || got.After != "Bravo Voice" {
+		t.Errorf("diff base_string = %+v, want before Arma Voice, after Bravo Voice", got)
+	}
+}
+
+func TestRegisterAppendsAnEntryWithNullBefore(t *testing.T) {
+	w := newTestWorld(t)
+	signIn(t, w.forum, w.b)
+
+	assertRedirect(t, w.b.postForm("/hubs", registerForm("vc-2", "Squad Voice")), "/")
+
+	entries := storedChangeLog(t, w.st, storedHubID(t, w.st, "vc-2"))
+	if len(entries) != 1 {
+		t.Fatalf("the new hub has %d entries, want 1", len(entries))
+	}
+	assertActor(t, entries[0], store.ChangeRegister)
+	diff := decodeDiff(t, entries[0])
+	for _, field := range wantDiffFields {
+		c, ok := diff[field]
+		if !ok {
+			t.Errorf("diff lacks %s", field)
+			continue
+		}
+		if c.Before != nil {
+			t.Errorf("diff %s before = %v, want null", field, c.Before)
+		}
+	}
+	if diff["base_string"].After != "Squad Voice" || diff["hub_channel"].After != "vc-2" {
+		t.Errorf("diff after: base_string %v, hub_channel %v; want Squad Voice and vc-2", diff["base_string"].After, diff["hub_channel"].After)
+	}
+}
+
+func TestRemoveAppendsAnEntryWithNullAfter(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+
+	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1")+"/remove", nil), "/")
+
+	entries := storedChangeLog(t, w.st, 0)
+	if len(entries) != 1 {
+		t.Fatalf("%d entries under no hub, want 1", len(entries))
+	}
+	assertActor(t, entries[0], store.ChangeRemove)
+	diff := decodeDiff(t, entries[0])
+	for _, field := range wantDiffFields {
+		c, ok := diff[field]
+		if !ok {
+			t.Errorf("diff lacks %s", field)
+			continue
+		}
+		if c.After != nil {
+			t.Errorf("diff %s after = %v, want null", field, c.After)
+		}
+	}
+	if diff["base_string"].Before != "Arma Voice" {
+		t.Errorf("diff base_string before = %v, want Arma Voice", diff["base_string"].Before)
+	}
+}
+
+// editSection returns the edit area of one hub on the page: the section
+// under data-hub=id, distinct from the list row that carries the same ID.
+func editSection(t *testing.T, res *http.Response, hubID int64) *html.Node {
+	t.Helper()
+	sec := findElement(parseHTML(t, res), "section", "data-hub", strconv.FormatInt(hubID, 10))
+	if sec == nil {
+		t.Fatalf("page has no section under data-hub=%d", hubID)
+	}
+	return sec
+}
+
+// entryIDs returns the data-entry values under n, in document order.
+func entryIDs(t *testing.T, n *html.Node) []int64 {
+	t.Helper()
+	var ids []int64
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			if raw, ok := attrValue(n, "data-entry"); ok {
+				id, err := strconv.ParseInt(raw, 10, 64)
+				if err != nil {
+					t.Fatalf("data-entry %q is not an ID", raw)
+				}
+				ids = append(ids, id)
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return ids
+}
+
+func TestHubFormShowsTheLastTenEntriesNewestFirst(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	id := storedHubID(t, w.st, "hub-1")
+	for i := 1; i <= 11; i++ {
+		form := updateForm()
+		form.Set("user_limit", strconv.Itoa(i))
+		assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
+	}
+
+	res := w.b.get("/?hub=" + strconv.FormatInt(id, 10))
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /?hub= status = %d, want 200", res.StatusCode)
+	}
+	sec := editSection(t, res, id)
+	shown := entryIDs(t, sec)
+	var want []int64
+	for _, e := range storedChangeLog(t, w.st, id) {
+		want = append(want, e.ID)
+	}
+	if len(want) != 10 || !slices.Equal(shown, want) {
+		t.Fatalf("page shows entries %v, want the store's last ten in its order %v", shown, want)
+	}
+	first := findElement(sec, "", "data-entry", strconv.FormatInt(shown[0], 10))
+	if action, _ := attrValue(first, "data-action"); action != "update" {
+		t.Errorf("first entry data-action = %q, want update", action)
+	}
+	if findElement(first, "", "data-change", "user_limit") == nil {
+		t.Error("first entry has no data-change=user_limit element")
+	}
+	if got := fieldText(t, first, "username"); got != testUsername {
+		t.Errorf("first entry username = %q, want %q", got, testUsername)
+	}
+	at := findElement(first, "", "data-field", "at")
+	if at == nil {
+		t.Fatal("first entry has no data-field=at element")
+	}
+	if raw, _ := attrValue(at, "datetime"); raw == "" {
+		t.Error("first entry's time carries no datetime attribute")
+	} else if _, err := time.Parse(time.RFC3339, raw); err != nil {
+		t.Errorf("first entry datetime %q is not RFC 3339: %v", raw, err)
+	}
+}
+
+func TestUpdateAndRemoveWithoutSessionRedirectToSigninAndWriteNothing(t *testing.T) {
+	for _, suffix := range []string{"", "/remove"} {
+		t.Run("POST /hubs/{id}"+suffix, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			before := storedHubs(t, w.st)[0]
+			form := updateForm()
+			form.Set("base_string", "Bravo Voice")
+
+			res := w.b.postForm(hubPath(t, w.st, "hub-1")+suffix, form)
+
+			assertRedirect(t, res, "/signin")
+			if hubs := storedHubs(t, w.st); len(hubs) != 1 || !sameHubSettings(hubs[0], before) {
+				t.Errorf("stored hubs = %+v, want the one hub unchanged", hubs)
+			}
+			if n := len(storedChangeLog(t, w.st, before.ID)) + len(storedChangeLog(t, w.st, 0)); n != 0 {
+				t.Errorf("a signed-out post appended %d entries, want 0", n)
+			}
+		})
 	}
 }

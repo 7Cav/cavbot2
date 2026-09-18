@@ -48,11 +48,6 @@ Optional but feature-gating:
 
 ## Architecture
 
-### Panel (`panel/`)
-
-The hub page (`GET /`) lists every hub with its live spawned count and registers an existing voice channel as a hub (`POST /hubs`). A register writes the row and applies it to the runtime in-process through `ApplyHub`, so a join spawns from it with no restart. The service layer in `panel/hubs.go` owns validation, the store calls, the guild reads through `commands.TempVCManager` and the runtime updates; handlers parse the request, call one service function and render. Templates carry `data-hub="<id>"` and `data-field="<name>"` on the elements that show a hub's values and forms, and `data-error="<field>"` on a refusal; those attributes are the test contract, labels and order are not.
-
-
 ### External integrations
 
 - **7Cav API** (`utils/milpacs.go`): generic `makeAPIRequest[T]` against `https://api.7cav.us/api/v1/`, auth via `BEARER`. Use this for any new milpac/profile lookup rather than rolling your own resty client.

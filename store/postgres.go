@@ -331,3 +331,56 @@ func (p *Postgres) SetGuildModeratorRoles(ctx context.Context, guildID string, r
 	}
 	return nil
 }
+
+// AppendChangeLog implements Store. A zero HubID is stored as NULL, the same
+// as a spawned row's cleared reference. The diff goes in as JSONB, so a
+// caller's bytes that are not a JSON value are refused here.
+func (p *Postgres) AppendChangeLog(ctx context.Context, e ChangeLogEntry) error {
+	_, err := p.db.ExecContext(ctx, `
+		INSERT INTO change_log (hub_id, forum_user_id, forum_username, action, diff)
+		VALUES ($1, $2, $3, $4, $5)`,
+		sql.NullInt64{Int64: e.HubID, Valid: e.HubID != 0},
+		e.ForumUserID, e.ForumUsername, string(e.Action), []byte(e.Diff))
+	if err != nil {
+		return fmt.Errorf("append change log entry for hub %d: %w", e.HubID, err)
+	}
+	return nil
+}
+
+// scanChangeLogEntry reads one row: id, hub_id, forum_user_id,
+// forum_username, at, action, diff. A NULL hub reads back as zero.
+func scanChangeLogEntry(row scanner) (ChangeLogEntry, error) {
+	var (
+		e     ChangeLogEntry
+		hubID sql.NullInt64
+		diff  []byte
+	)
+	if err := row.Scan(&e.ID, &hubID, &e.ForumUserID, &e.ForumUsername, &e.At, &e.Action, &diff); err != nil {
+		return ChangeLogEntry{}, err
+	}
+	e.HubID = hubID.Int64
+	e.Diff = json.RawMessage(diff)
+	return e, nil
+}
+
+// ListChangeLog implements Store. Newest first is descending ID: the ID is
+// the append order, and the time is not, since two appends can share a
+// timestamp.
+func (p *Postgres) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]ChangeLogEntry, error) {
+	const columns = `id, hub_id, forum_user_id, forum_username, at, action, diff`
+	var (
+		entries []ChangeLogEntry
+		err     error
+	)
+	if hubID == 0 {
+		entries, err = queryAll(ctx, p.db, scanChangeLogEntry,
+			`SELECT `+columns+` FROM change_log WHERE hub_id IS NULL ORDER BY id DESC LIMIT $1`, limit)
+	} else {
+		entries, err = queryAll(ctx, p.db, scanChangeLogEntry,
+			`SELECT `+columns+` FROM change_log WHERE hub_id = $1 ORDER BY id DESC LIMIT $2`, hubID, limit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list change log of hub %d: %w", hubID, err)
+	}
+	return entries, nil
+}

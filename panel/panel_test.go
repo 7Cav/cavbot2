@@ -23,6 +23,7 @@ const (
 	testBaseURL      = "https://panel.test"
 	testAccessToken  = "access-token-1"
 	testCode         = "code-1"
+	testUserID       = 1234
 	testUsername     = "Doe.J"
 )
 
@@ -66,7 +67,7 @@ func newFakeForum(t *testing.T) *fakeForum {
 // scope adds.
 func userinfoJSON(primary int, secondary []int) string {
 	body, _ := json.Marshal(map[string]any{"me": map[string]any{
-		"user_id":             1234,
+		"user_id":             testUserID,
 		"username":            testUsername,
 		"user_group_id":       primary,
 		"secondary_group_ids": secondary,
