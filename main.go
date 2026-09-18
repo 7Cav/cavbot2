@@ -198,7 +198,7 @@ func main() {
 	// Temporary voice channels (spec #285): handlers must be registered before
 	// dg.Open() so the initial GUILD_CREATE seeds voice-state tracking and
 	// runs the restart sweep. Without a store there are no hubs, so the
-	// feature stays inert: no runtime, no panel, no /voice-rename.
+	// feature stays inert: no runtime, no panel, and /voice-rename refuses.
 	var (
 		tempVC   *commands.TempVC
 		webPanel *panel.Panel

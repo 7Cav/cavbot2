@@ -314,29 +314,30 @@ func TestVoiceRenameUnknownChannelUntracksQuietly(t *testing.T) {
 }
 
 // T10: the registry declares /voice-rename with its one required string
-// option when it has a runtime, and not at all without one, so a host with no
-// bot store never shows a command that could only refuse.
-func TestRegistryDeclaresVoiceRenameOnlyWithRuntime(t *testing.T) {
-	find := func(reg *Registry) *discordgo.ApplicationCommand {
-		for _, def := range reg.GetCommands() {
-			if def.Name == "voice-rename" {
-				return def
-			}
+// option. Always, whatever the runtime: a command that comes and goes with
+// configuration loses its Server Settings restriction each time the startup
+// sync deletes it, because Discord keys command permissions by command ID.
+func TestRegistryDeclaresVoiceRename(t *testing.T) {
+	var def *discordgo.ApplicationCommand
+	for _, d := range NewRegistry(nil).GetCommands() {
+		if d.Name == "voice-rename" {
+			def = d
 		}
-		return nil
 	}
-
-	tv := newSeededTempVC(t, newFakeTempVCManager())
-	def := find(NewRegistry(tv))
 	if def == nil {
-		t.Fatal("voice-rename is not registered with a runtime")
+		t.Fatal("voice-rename is not registered")
 	}
 	if len(def.Options) != 1 || def.Options[0].Name != "name" ||
 		def.Options[0].Type != discordgo.ApplicationCommandOptionString || !def.Options[0].Required {
 		t.Errorf("options = %+v, want one required string option named name", def.Options)
 	}
+}
 
-	if def := find(NewRegistry(nil)); def != nil {
-		t.Error("voice-rename is registered with no runtime")
-	}
+// T11: on a host with no bot store there is no runtime. The command still
+// exists, so the handler refuses with the same ephemeral shape instead of
+// dereferencing a nil runtime.
+func TestVoiceRenameNoRuntimeRefused(t *testing.T) {
+	f := &fakeResponder{}
+	runVoiceRename(f, nil, renameInteraction("user-1", nil, "Alpha"))
+	ephemeralReply(t, f)
 }

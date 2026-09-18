@@ -170,9 +170,15 @@ moment it empties. Hub settings are edited in the panel, never in code.
   created and at every handover. It pings nobody.
   _Avoid_: announcement, banner, status line, welcome message.
 - **Moderator role**: A Discord role that may rename any spawned channel it
-  covers without owning it. Set per hub, or once for every hub; a hub's
-  moderator roles are the union of the two. Grants no Discord permission.
+  covers without owning it. Set per hub, or guild-wide, once for every hub; a
+  hub's effective moderator roles are the union of the two. Grants no Discord
+  permission.
   _Avoid_: staff role, admin role, global moderator, default moderator.
+- **Cav member**: A Discord member holding one of the 29 rank roles. The only
+  members who can own a spawned channel, and the set the `/voice-rename`
+  Server Settings restriction names. "Cav member" and "holds a rank role" are
+  one set.
+  _Avoid_: trooper (for this set), verified member, ranked member.
 - **Permission source**: The per-hub setting that chooses what a spawned
   channel inherits its permissions from, the hub's category or the hub
   channel itself.

@@ -7,9 +7,12 @@ type Registry struct {
 }
 
 // NewRegistry declares every command (ADR 0006). tempVC is the temporary
-// voice channel runtime, nil on a host with no bot store; /voice-rename is
-// declared only when it exists, so the feature stays inert without one and
-// the startup sync removes the command from a guild the store left.
+// voice channel runtime, nil on a host with no bot store. /voice-rename is
+// declared either way: the startup sync deletes any guild command the
+// registry lacks, and Discord keys command permissions by command ID, so a
+// command that came and went with configuration would shed its Server
+// Settings restriction on every store-less start. With no runtime the
+// handler refuses.
 func NewRegistry(tempVC *TempVC) *Registry {
 	r := &Registry{}
 	r.RegisterCommands(
@@ -25,10 +28,8 @@ func NewRegistry(tempVC *TempVC) *Registry {
 		GamertagSearch(),
 		S3AAR(),
 		Helpline(),
+		VoiceRename(tempVC),
 	)
-	if tempVC != nil {
-		r.RegisterCommands(VoiceRename(tempVC))
-	}
 	return r
 }
 

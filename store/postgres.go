@@ -290,7 +290,7 @@ func (p *Postgres) ListSpawnedChannels(ctx context.Context) ([]SpawnedChannel, e
 }
 
 // GetGuildModeratorRoles implements Store. No row is an empty set, not an
-// error: a guild whose guild-wide roles were never saved has none.
+// error, since a guild whose guild-wide roles were never saved has none.
 func (p *Postgres) GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error) {
 	var raw []byte
 	err := p.db.QueryRowContext(ctx,

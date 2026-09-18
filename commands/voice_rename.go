@@ -15,17 +15,16 @@ import (
 // in. One required string option, the new name. Every reply is ephemeral,
 // through the deferred-ephemeral pattern /warden uses.
 //
-// The Cav-member gate is not in code: it is a Server Settings command
-// restriction naming the 29 rank roles, applied by the maintainer at deploy
-// before the hubs are enabled (README, Temporary voice channels).
+// No code limits the command to Cav members. The maintainer applies a Server
+// Settings command restriction naming the 29 rank roles at deploy, before the
+// hubs are enabled (README, Commands).
 
 // voiceRenameCommandName is the registered slash-command name, the value the
 // telemetry line and every capture carry under "command".
 const voiceRenameCommandName = "voice-rename"
 
-// VoiceRename declares the command over a runtime. The registry adds it only
-// when a runtime exists: with no bot store there are no spawned channels, and
-// a command that could only refuse would be noise.
+// VoiceRename declares the command over a runtime, nil on a host with no bot
+// store (see NewRegistry for why the command exists anyway).
 func VoiceRename(tv *TempVC) Command {
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
@@ -58,8 +57,15 @@ func runVoiceRename(r utils.InteractionResponder, tv *TempVC, interaction *disco
 	username, discordID := interactionUsernameAndID(interaction)
 	utils.Info("🚀 Starting VoiceRename", "command", voiceRenameCommandName, "username", username, "discord_id", discordID)
 
+	if tv == nil {
+		utils.Warn("Temp VC rename refused, no bot store configured",
+			"command", voiceRenameCommandName, "discord_id", discordID)
+		editEphemeral(r, interaction, "❌ Temporary voice channels are not enabled on this bot.")
+		return
+	}
+
 	// Trimmed, then bounded by Discord's channel name limit, counted in
-	// characters. No other filter: abuse is policed by the Code of Conduct.
+	// characters. No other filter. The Code of Conduct polices abuse.
 	name, _ := getOptionString(interaction.ApplicationCommandData(), "name")
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -75,7 +81,7 @@ func runVoiceRename(r utils.InteractionResponder, tv *TempVC, interaction *disco
 	if interaction.Member != nil {
 		roles = interaction.Member.Roles
 	}
-	res, err := tv.Rename(discordID, roles, name)
+	result, err := tv.Rename(discordID, roles, name)
 	if err != nil {
 		editEphemeral(r, interaction, renameRefusal(err, discordID))
 		return
@@ -83,8 +89,8 @@ func runVoiceRename(r utils.InteractionResponder, tv *TempVC, interaction *disco
 
 	utils.Info("Temp VC renamed",
 		"command", voiceRenameCommandName, "username", username, "discord_id", discordID,
-		"channel_id", res.ChannelID, "before", res.Before, "after", res.After)
-	editEphemeral(r, interaction, fmt.Sprintf("✅ Renamed to **%s**.", res.After))
+		"channel_id", result.ChannelID, "before", result.Before, "after", result.After)
+	editEphemeral(r, interaction, fmt.Sprintf("✅ Renamed to **%s**.", result.After))
 	utils.Info("✨ Done!", "command", voiceRenameCommandName)
 }
 

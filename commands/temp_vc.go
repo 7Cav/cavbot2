@@ -909,7 +909,7 @@ func (t *TempVC) deleteIfStillEmpty(channelID string) {
 		t.mu.Unlock()
 		utils.Warn("Temp VC delete failed, channel kept for the next attempt",
 			"channel_id", channelID, "hub_id", hubID, "error", err)
-		if fault.capturesOnDelete() {
+		if fault.capturesOnDeleteOrRename() {
 			t.captureOncePerStreak(t.deleteCaptured, hubID, "Temp VC delete failed", err,
 				"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
 		}
