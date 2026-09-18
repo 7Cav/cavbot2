@@ -3,10 +3,13 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -427,6 +430,151 @@ func TestGuildModeratorRolesRoundTrip(t *testing.T) {
 		}
 		if !slices.Equal(sortedRoles(got), []string{"role-hq"}) {
 			t.Errorf("GetGuildModeratorRoles after second set = %v, want [role-hq]", got)
+		}
+	})
+}
+
+// changeEntry is a change log fixture for one hub, its diff naming the
+// ordinal it was appended at so a test can tell the entries apart.
+func changeEntry(hubID int64, ordinal int) ChangeLogEntry {
+	return ChangeLogEntry{
+		HubID:         hubID,
+		ForumUserID:   1234,
+		ForumUsername: "Doe.J",
+		Action:        ChangeUpdate,
+		Diff:          json.RawMessage(fmt.Sprintf(`{"user_limit":{"before":%d,"after":%d}}`, ordinal-1, ordinal)),
+	}
+}
+
+// ordinalOf reads the ordinal back out of a changeEntry diff.
+func ordinalOf(t *testing.T, e ChangeLogEntry) int {
+	t.Helper()
+	var diff map[string]struct{ After int }
+	if err := json.Unmarshal(e.Diff, &diff); err != nil {
+		t.Fatalf("decode diff %s: %v", e.Diff, err)
+	}
+	return diff["user_limit"].After
+}
+
+// T11: ListChangeLog returns at most limit entries of the hub, newest first
+// in append order, and none of another hub's.
+func TestChangeLogListReturnsTheLastNNewestFirst(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		hubA, hubB := storeHub(t, s, "hub-a"), storeHub(t, s, "hub-b")
+		for i := 1; i <= 12; i++ {
+			if err := s.AppendChangeLog(ctx, changeEntry(hubA, i)); err != nil {
+				t.Fatalf("AppendChangeLog(%d): %v", i, err)
+			}
+		}
+		if err := s.AppendChangeLog(ctx, changeEntry(hubB, 99)); err != nil {
+			t.Fatalf("AppendChangeLog(hub-b): %v", err)
+		}
+
+		entries, err := s.ListChangeLog(ctx, hubA, 10)
+		if err != nil {
+			t.Fatalf("ListChangeLog: %v", err)
+		}
+		if len(entries) != 10 {
+			t.Fatalf("ListChangeLog returned %d entries, want 10", len(entries))
+		}
+		if got := ordinalOf(t, entries[0]); got != 12 {
+			t.Errorf("first entry is ordinal %d, want 12 (the newest)", got)
+		}
+		if got := ordinalOf(t, entries[9]); got != 3 {
+			t.Errorf("tenth entry is ordinal %d, want 3", got)
+		}
+		for _, e := range entries {
+			if e.HubID != hubA {
+				t.Errorf("entry %+v is not hub-a's", e)
+			}
+		}
+	})
+}
+
+// decodeDiff decodes a diff the way a reader would, so two diffs compare as
+// objects and never as bytes: JSONB reorders keys and drops whitespace.
+func decodeDiff(t *testing.T, raw json.RawMessage) map[string]any {
+	t.Helper()
+	var diff map[string]any
+	if err := json.Unmarshal(raw, &diff); err != nil {
+		t.Fatalf("decode diff %s: %v", raw, err)
+	}
+	return diff
+}
+
+// T12: an entry reads back with the forum user, the action and the diff it
+// was appended with, and a time the store set.
+func TestChangeLogEntryRoundTrips(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		hubID := storeHub(t, s, "hub-1")
+		want := ChangeLogEntry{
+			HubID:         hubID,
+			ForumUserID:   4321,
+			ForumUsername: "Roe.R",
+			Action:        ChangeRegister,
+			Diff:          json.RawMessage(`{"base_string": {"before": null, "after": "Arma Voice"}, "moderator_roles": {"before": null, "after": ["role-mp", "role-hq"]}}`),
+		}
+		if err := s.AppendChangeLog(ctx, want); err != nil {
+			t.Fatalf("AppendChangeLog: %v", err)
+		}
+
+		entries, err := s.ListChangeLog(ctx, hubID, 10)
+		if err != nil {
+			t.Fatalf("ListChangeLog: %v", err)
+		}
+		if len(entries) != 1 {
+			t.Fatalf("ListChangeLog returned %d entries, want 1", len(entries))
+		}
+		got := entries[0]
+		if got.ForumUserID != 4321 || got.ForumUsername != "Roe.R" || got.Action != ChangeRegister {
+			t.Errorf("entry = %+v, want forum user 4321 Roe.R and action register", got)
+		}
+		if got.At.IsZero() {
+			t.Error("At is zero, want a time set by the store")
+		}
+		if diff, wantDiff := decodeDiff(t, got.Diff), decodeDiff(t, want.Diff); !reflect.DeepEqual(diff, wantDiff) {
+			t.Errorf("diff = %v, want %v", diff, wantDiff)
+		}
+	})
+}
+
+// T13: deleting a hub keeps its entries and clears their hub reference, so
+// they list under no hub, the same as an entry appended with none.
+func TestDeleteHubClearsTheChangeLogReference(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		hubID := storeHub(t, s, "hub-1")
+		if err := s.AppendChangeLog(ctx, changeEntry(hubID, 1)); err != nil {
+			t.Fatalf("AppendChangeLog: %v", err)
+		}
+		if err := s.AppendChangeLog(ctx, changeEntry(0, 2)); err != nil {
+			t.Fatalf("AppendChangeLog with no hub: %v", err)
+		}
+
+		if err := s.DeleteHub(ctx, hubID); err != nil {
+			t.Fatalf("DeleteHub: %v", err)
+		}
+		byHub, err := s.ListChangeLog(ctx, hubID, 10)
+		if err != nil {
+			t.Fatalf("ListChangeLog(hub): %v", err)
+		}
+		if len(byHub) != 0 {
+			t.Errorf("ListChangeLog(hub) after delete = %v, want none", byHub)
+		}
+		noHub, err := s.ListChangeLog(ctx, 0, 10)
+		if err != nil {
+			t.Fatalf("ListChangeLog(0): %v", err)
+		}
+		if len(noHub) != 2 {
+			t.Fatalf("ListChangeLog(0) returned %d entries, want 2", len(noHub))
+		}
+		if got := ordinalOf(t, noHub[0]); got != 2 {
+			t.Errorf("first entry under no hub is ordinal %d, want 2", got)
+		}
+		if got := ordinalOf(t, noHub[1]); got != 1 {
+			t.Errorf("second entry under no hub is ordinal %d, want 1 (the removed hub's)", got)
 		}
 	})
 }

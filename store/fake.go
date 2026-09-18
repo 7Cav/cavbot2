@@ -23,15 +23,20 @@ type Fake struct {
 	spawned map[string]SpawnedChannel
 	// guildRoles holds each guild's guild-wide moderator role IDs.
 	guildRoles map[string][]string
+	// changes is the change log in append order; nextChangeID is the next
+	// entry's ID.
+	changes      []ChangeLogEntry
+	nextChangeID int64
 }
 
 // NewFake returns an empty Fake.
 func NewFake() *Fake {
 	return &Fake{
-		nextID:     1,
-		hubs:       make(map[int64]Hub),
-		spawned:    make(map[string]SpawnedChannel),
-		guildRoles: make(map[string][]string),
+		nextID:       1,
+		hubs:         make(map[int64]Hub),
+		spawned:      make(map[string]SpawnedChannel),
+		guildRoles:   make(map[string][]string),
+		nextChangeID: 1,
 	}
 }
 
@@ -99,6 +104,11 @@ func (f *Fake) DeleteHub(_ context.Context, id int64) error {
 			f.spawned[channelID] = sp
 		}
 	}
+	for i := range f.changes {
+		if f.changes[i].HubID == id {
+			f.changes[i].HubID = 0
+		}
+	}
 	return nil
 }
 
@@ -151,6 +161,34 @@ func (f *Fake) SetGuildModeratorRoles(_ context.Context, guildID string, roleIDs
 	defer f.mu.Unlock()
 	f.guildRoles[guildID] = slices.Clone(roleIDs)
 	return nil
+}
+
+// AppendChangeLog implements Store.
+func (f *Fake) AppendChangeLog(_ context.Context, e ChangeLogEntry) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e.ID = f.nextChangeID
+	f.nextChangeID++
+	e.At = time.Now()
+	e.Diff = slices.Clone(e.Diff)
+	f.changes = append(f.changes, e)
+	return nil
+}
+
+// ListChangeLog implements Store.
+func (f *Fake) ListChangeLog(_ context.Context, hubID int64, limit int) ([]ChangeLogEntry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []ChangeLogEntry
+	for i := len(f.changes) - 1; i >= 0 && len(out) < limit; i-- {
+		e := f.changes[i]
+		if e.HubID != hubID {
+			continue
+		}
+		e.Diff = slices.Clone(e.Diff)
+		out = append(out, e)
+	}
+	return out, nil
 }
 
 // cloneHub copies a hub so a caller's later edits to the slice do not reach

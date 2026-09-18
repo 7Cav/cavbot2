@@ -1,7 +1,8 @@
-// Package store is the bot's own database: the hubs the panel edits and the
-// spawned channels the runtime tracks across a restart. Postgres in production
-// (postgres.go), an in-memory Fake for other packages' tests (fake.go). The
-// forum's MySQL stays in utils; this package never touches it.
+// Package store is the bot's own database: the hubs the panel edits, the
+// spawned channels the runtime tracks across a restart, and the change log
+// of every panel save. Postgres in production (postgres.go), an in-memory
+// Fake for other packages' tests (fake.go). The forum's MySQL stays in utils;
+// this package never touches it.
 //
 // ADR 0012 records why migrations run at startup and the rule every migration
 // has to follow.
@@ -9,6 +10,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -68,9 +70,45 @@ type SpawnedChannel struct {
 	CreatedAt time.Time
 }
 
+// ChangeAction is what a change log entry records: which kind of panel save
+// made it.
+type ChangeAction string
+
+const (
+	// ChangeCreate is the panel creating a hub channel and its hub.
+	ChangeCreate ChangeAction = "create"
+	// ChangeRegister is the panel making an existing channel a hub.
+	ChangeRegister ChangeAction = "register"
+	// ChangeUpdate is a save of a hub's settings.
+	ChangeUpdate ChangeAction = "update"
+	// ChangeRemove is the panel deleting a hub row.
+	ChangeRemove ChangeAction = "remove"
+	// ChangeModerators is a save of the guild-wide moderator roles.
+	ChangeModerators ChangeAction = "moderators"
+)
+
+// ChangeLogEntry is one row of the change log: who saved what through the
+// panel, when, and from what to what.
+type ChangeLogEntry struct {
+	// ID is the surrogate key, set by the store.
+	ID int64
+	// HubID is the hub the save was about, or zero for a save about no hub:
+	// the guild-wide moderator roles, and every entry of a hub whose row has
+	// since been deleted, since the reference clears with the row.
+	HubID         int64
+	ForumUserID   int
+	ForumUsername string
+	// At is set by the store at append, never by the caller.
+	At     time.Time
+	Action ChangeAction
+	// Diff is a JSON object keyed by field name, each value an object with
+	// "before" and "after". The store keeps the bytes and never reads inside
+	// them; the panel's service layer decides the shape.
+	Diff json.RawMessage
+}
+
 // Store is the one seam between the bot and its database. Two implementations:
-// Postgres here and Fake for tests. The change log arrives with the ticket
-// that needs it.
+// Postgres here and Fake for tests.
 type Store interface {
 	// GetHub returns the hub with this ID, or ErrNotFound.
 	GetHub(ctx context.Context, id int64) (Hub, error)
@@ -102,4 +140,11 @@ type Store interface {
 	GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error)
 	// SetGuildModeratorRoles replaces the guild-wide moderator role IDs.
 	SetGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string) error
+
+	// AppendChangeLog adds one entry. The caller's ID and At are ignored.
+	AppendChangeLog(ctx context.Context, entry ChangeLogEntry) error
+	// ListChangeLog returns at most limit entries whose hub reference is
+	// hubID, newest first in append order. A hubID of zero lists the entries
+	// that reference no hub.
+	ListChangeLog(ctx context.Context, hubID int64, limit int) ([]ChangeLogEntry, error)
 }
