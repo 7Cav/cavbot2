@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel prototype</title>
+<!--
+  PROTOTYPE. Throwaway. Not production code.
+
+  Question: what should the panel pages from issue #288 look like?
+  Three variants of the sign-in page, the signed-in page and the error page,
+  switchable with ?variant= and the white bar at the bottom of the screen.
+  Open this file in a browser. Nothing is fetched and nothing is saved.
+
+  Design read: an internal admin panel for regiment staff, in the 7cav.us
+  brand, with a trust-first dark tactical language, built on the site's own
+  tokens (Roboto body, Teko display, gold accent, the site's map background).
+  Dials: DESIGN_VARIANCE 4, MOTION_INTENSITY 2, VISUAL_DENSITY 5.
+
+  Brand tokens and the three images are lifted from 7cav.us as it renders today.
+  The production panel embeds them in the binary the same way.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Teko:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #121212;
+    --surface: #171717;
+    --surface-2: #1b1b1b;
+    --surface-3: #212121;
+    --line: #2b2b2b;
+    --line-2: #353535;
+    --line-hi: #4d4d4d;
+    --text: #a1a1a1;
+    --text-hi: #f1f1f1;
+    --text-mute: #8d8d8d;
+    --gold: #ebc729;
+    --gold-hi: #edcd40;
+    --gold-lo: #e5bf15;
+    --btn: #2e2e2e;
+    --btn-hi: #424242;
+    --btn-edge-d: #212121;
+    --btn-edge-l: #3b3b3b;
+    --input: #1c1c1c;
+    --danger: #8c2d30;
+    --danger-hi: #c84448;
+    --ok: #509652;
+    --radius: 3px;
+    --sans: 'Roboto', 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif;
+    --display: 'Teko', 'Roboto Condensed', sans-serif;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { font: 15px/1.4 var(--sans); color: var(--text); background: var(--bg); -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background: var(--bg) url("page-bg2-c1.png") no-repeat top center / 100% auto fixed;
+  }
+  a { color: var(--gold); }
+  a:hover { color: var(--gold-hi); }
+  h1, h2, h3 { margin: 0; color: var(--text-hi); font-weight: 400; }
+  p { margin: 0 0 10px; }
+  p:last-child { margin-bottom: 0; }
+  form { margin: 0; }
+  img { max-width: 100%; }
+  /* Room under the page for the prototype switcher, so it hides nothing. */
+  #app { padding-bottom: 90px; }
+  .full { min-height: calc(100dvh - 90px); }
+
+  /* Buttons, as the forum draws them. */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: .5em;
+    padding: 8px 14px; font: inherit; font-size: 15px; line-height: 1.4;
+    color: #fff; background: var(--btn);
+    border: 1px solid; border-color: var(--btn-edge-d) var(--btn-edge-l) var(--btn-edge-l) var(--btn-edge-d);
+    border-radius: var(--radius); cursor: pointer; text-decoration: none; white-space: nowrap;
+    transition: background-color .075s ease;
+  }
+  .btn:hover { background: var(--btn-hi); color: #fff; }
+  .btn:active { transform: translateY(1px); }
+  .btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  .btn--cta { color: #000; background: var(--gold); border-color: var(--gold-lo) var(--gold-hi) var(--gold-hi) var(--gold-lo); }
+  .btn--cta:hover { background: #eed14e; color: #000; }
+  .btn--display { font-family: var(--display); font-weight: 700; font-size: 21px; line-height: 1; padding: 11px 22px 9px; text-transform: uppercase; letter-spacing: .02em; }
+
+  /* Blocks, as the forum draws them. */
+  .block { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 2px 2px 2px rgba(0,0,0,.04); }
+  .block-header {
+    padding: 12px 14px; font-size: 18px; color: var(--text-hi); background: var(--surface-2);
+    border-bottom: 2px solid var(--gold); box-shadow: inset 0 1px 0 0 var(--line-hi);
+    border-radius: var(--radius) var(--radius) 0 0; text-shadow: 0 0 4px #1f1f1f;
+  }
+  .block-row { padding: 12px 14px; }
+  .block-row + .block-row { border-top: 1px solid var(--line); }
+  .submit-row { padding: 12px 14px; background: rgba(23,23,23,.9); border-top: 1px solid var(--line-2); border-radius: 0 0 var(--radius) var(--radius); }
+
+  /* One note style for the ended-session causes and the forum error. */
+  .note {
+    padding: 12px 14px; color: var(--text-hi); background: var(--surface);
+    border: 1px solid var(--line); border-left: 3px solid var(--danger-hi); border-radius: var(--radius);
+  }
+  .note--warn { border-left-color: var(--gold); }
+
+  /* Mock hub rows from a later ticket, to judge each shell with content in it. */
+  .scroll { overflow-x: auto; }
+  .hublist { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 14px; }
+  .hublist th { text-align: left; font-weight: 500; color: var(--text-mute); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .hublist td { padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .hublist tr:last-child td { border-bottom: 0; }
+  .hublist .hub { color: var(--text-hi); font-weight: 500; }
+  .hublist .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .hublist .off { color: var(--text-mute); }
+  .hublist .bad { color: var(--danger-hi); }
+  .hublist .btn { padding: 4px 10px; font-size: 13px; }
+  .tag { display: inline-block; padding: 1px .4em; font-size: 12px; line-height: 1.3; border-radius: var(--radius); border: 1px solid var(--line-2); color: var(--text); }
+  .tag--on { color: #cfe5cf; border-color: var(--ok); }
+  .tag--broken { color: #f0c4c6; border-color: var(--danger-hi); }
+  .later-hint { font-size: 12px; color: var(--text-mute); padding: 8px 14px 0; }
+
+  /* ---------- Variant A: forum sibling ---------- */
+  .va .nav { padding: 7px 0; }
+  .va .nav-inner { max-width: 1300px; margin: 0 auto; padding: 0 15px; display: flex; align-items: center; gap: 12px; min-height: 56px; }
+  .va .nav-logo img { display: block; height: 30px; width: auto; }
+  .va .nav-tabs { display: flex; margin-left: 8px; }
+  .va .nav-tab { display: block; padding: 12px 20px; color: var(--text-hi); text-decoration: none; border-bottom: 2px solid transparent; }
+  .va .nav-tab.is-selected { font-weight: 700; border-bottom-color: var(--gold); }
+  .va .nav-user { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+  .va .who { color: var(--text-hi); text-align: right; line-height: 1.2; }
+  .va .who small { display: block; color: var(--text-mute); font-size: 12px; }
+  .va .body { max-width: 1300px; margin: 0 auto; padding: 10px 15px 20px; }
+  .va .title { font-size: 22px; margin: 18px 0 4px; }
+  .va .desc { font-size: 13px; color: var(--text-mute); margin: 0 0 12px; }
+  .va .block, .va .note { margin-bottom: 12px; }
+  .va .narrow { max-width: 720px; }
+  .va .footer { max-width: 1300px; margin: 0 auto; padding: 12px 15px 14px; font-size: 13px; display: flex; gap: 16px; justify-content: space-between; align-items: center; }
+  .va .footer .copy { font-size: 11px; color: #fff; }
+  @media (max-width: 767px) {
+    .va .nav-tabs { display: none; }
+    .va .who small { display: none; }
+  }
+
+  /* ---------- Variant B: gate ---------- */
+  .vb .gate { display: grid; place-items: center; padding: 24px 16px; }
+  .vb .gate-card { width: 100%; max-width: 440px; text-align: center; }
+  .vb .shield { width: 84px; height: 84px; display: block; margin: 0 auto 6px; }
+  .vb .gate-title { font-family: var(--display); font-weight: 700; font-size: 60px; line-height: .95; color: #fff; text-transform: uppercase; letter-spacing: .01em; }
+  .vb .gate-sub { font-family: var(--display); font-weight: 600; font-size: 26px; line-height: 1.1; color: #fff; text-transform: uppercase; }
+  .vb .gate p { margin: 14px auto 22px; max-width: 34ch; }
+  .vb .gate .note { text-align: left; margin: 0 0 18px; }
+  .vb .gate-foot { margin-top: 32px; font-size: 13px; color: var(--text-mute); }
+  .vb .bar { display: flex; align-items: center; gap: 14px; padding: 0 16px; min-height: 56px; background: var(--surface); border-bottom: 2px solid var(--gold); box-shadow: inset 0 1px 0 0 var(--line-hi); }
+  .vb .bar .brand { display: flex; align-items: center; gap: 10px; color: #fff; text-decoration: none; font-family: var(--display); font-size: 26px; font-weight: 600; text-transform: uppercase; line-height: 1; padding-top: 3px; }
+  .vb .bar .brand img { height: 32px; width: 32px; }
+  .vb .bar .who { margin-left: auto; color: var(--text-hi); text-align: right; line-height: 1.2; }
+  .vb .bar .who small { display: block; color: var(--text-mute); font-size: 12px; }
+  .vb .stage { max-width: 1100px; margin: 0 auto; padding: 32px 16px 48px; }
+  .vb .stage h1 { font-family: var(--display); font-size: 44px; font-weight: 600; text-transform: uppercase; line-height: 1; margin-bottom: 4px; }
+  .vb .stage .desc { color: var(--text-mute); margin-bottom: 18px; }
+  .vb .stage .block, .vb .stage .note { margin-bottom: 12px; }
+  .vb .stage-foot { font-size: 12px; color: var(--text-mute); margin-top: 24px; }
+  @media (max-width: 767px) {
+    .vb .gate-title { font-size: 48px; }
+    .vb .bar .who small { display: none; }
+  }
+
+  /* ---------- Variant C: console ---------- */
+  .vc .split { display: grid; grid-template-columns: minmax(360px, 480px) 1fr; }
+  .vc .split-left { background: var(--surface); border-right: 1px solid var(--line); padding: 36px 44px; display: flex; flex-direction: column; }
+  .vc .split-left .mark { height: 30px; width: auto; align-self: flex-start; }
+  .vc .fill { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 40px 0; }
+  .vc .fill h1 { font-family: var(--display); font-size: 52px; line-height: .95; font-weight: 700; text-transform: uppercase; color: #fff; margin-bottom: 10px; }
+  .vc .fill p { max-width: 38ch; margin-bottom: 22px; }
+  .vc .fill .note { margin-bottom: 18px; }
+  .vc .split-foot { font-size: 12px; color: var(--text-mute); }
+  .vc .split-right { padding: 36px 44px; display: flex; align-items: center; }
+  .vc .facts { display: grid; gap: 18px; max-width: 420px; margin: 0; }
+  .vc .facts dt { color: var(--text-hi); font-weight: 500; }
+  .vc .facts dd { margin: 2px 0 0; }
+  .vc .console { display: grid; grid-template-columns: 240px minmax(0, 1fr); }
+  .vc .rail { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; position: sticky; top: 0; height: calc(100dvh - 90px); }
+  .vc .rail .mark { padding: 20px 18px 18px; border-bottom: 1px solid var(--line); }
+  .vc .rail .mark img { height: 26px; width: auto; display: block; }
+  .vc .rail nav { padding: 10px 0; }
+  .vc .rail .item { display: block; padding: 10px 18px; color: var(--text-hi); text-decoration: none; border-left: 3px solid transparent; }
+  .vc .rail .item:hover { background: var(--surface-2); color: var(--text-hi); }
+  .vc .rail .item.is-selected { border-left-color: var(--gold); background: var(--surface-3); font-weight: 500; }
+  .vc .rail .me { margin-top: auto; padding: 16px 18px; border-top: 1px solid var(--line); }
+  .vc .rail .me small { display: block; color: var(--text-mute); font-size: 12px; }
+  .vc .rail .me .name { color: var(--text-hi); font-weight: 500; margin-bottom: 10px; }
+  .vc .rail .ver { padding: 10px 18px 16px; font-size: 11px; color: var(--text-mute); }
+  .vc .content { padding: 28px 32px 48px; max-width: 1100px; width: 100%; min-width: 0; }
+  .vc .content h1 { font-family: var(--display); font-size: 44px; font-weight: 600; text-transform: uppercase; line-height: 1; margin-bottom: 4px; }
+  .vc .content .desc { color: var(--text-mute); margin-bottom: 18px; }
+  .vc .content .block, .vc .content .note { margin-bottom: 12px; }
+  @media (max-width: 767px) {
+    .vc .split { grid-template-columns: 1fr; }
+    .vc .split-left { padding: 24px 16px; border-right: 0; }
+    .vc .split-right { display: none; }
+    .vc .console { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+    .vc .rail { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; border-right: 0; border-bottom: 1px solid var(--line); }
+    .vc .rail .mark { border-bottom: 0; padding: 12px 16px; }
+    .vc .rail nav { padding: 0; }
+    .vc .rail .item { border-left: 0; border-bottom: 3px solid transparent; }
+    .vc .rail .item.is-selected { border-bottom-color: var(--gold); background: transparent; }
+    .vc .rail .me { margin: 0 0 0 auto; border-top: 0; padding: 8px 16px; display: flex; align-items: center; gap: 10px; }
+    .vc .rail .me small { display: none; }
+    .vc .rail .me .name { margin: 0; }
+    .vc .rail .ver { display: none; }
+    .vc .content { padding: 20px 16px 40px; }
+  }
+
+  /* Prototype switcher. Not part of the design under review. */
+  #proto-bar {
+    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 100;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;
+    max-width: calc(100vw - 24px); padding: 6px 10px 6px 6px;
+    background: #fff; color: #111; border-radius: 22px; box-shadow: 0 8px 28px rgba(0,0,0,.55);
+    font: 13px/1 system-ui, -apple-system, sans-serif; white-space: nowrap;
+  }
+  #proto-bar .tag-proto { background: #1d4ed8; color: #fff; font-weight: 700; font-size: 11px; letter-spacing: .06em; padding: 6px 8px; border-radius: 16px; }
+  #proto-bar button { width: 30px; height: 30px; border-radius: 50%; border: 1px solid #ccc; background: #f4f4f4; color: #111; font: inherit; font-size: 16px; cursor: pointer; }
+  #proto-bar button:hover { background: #e6e6e6; }
+  #proto-bar .label { min-width: 150px; text-align: center; font-weight: 600; }
+  #proto-bar select { font: inherit; padding: 5px 6px; border: 1px solid #ccc; border-radius: 8px; background: #fff; color: #111; }
+  #proto-bar label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+  #proto-bar .keys { color: #666; font-size: 11px; }
+  @media (min-width: 768px) { #proto-bar { flex-wrap: nowrap; border-radius: 999px; } }
+  @media (max-width: 767px) { #proto-bar .keys { display: none; } }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="proto-bar" role="group" aria-label="Prototype switcher">
+  <span class="tag-proto">PROTOTYPE</span>
+  <button type="button" id="prev" aria-label="Previous variant">&#8249;</button>
+  <span class="label" id="label"></span>
+  <button type="button" id="next" aria-label="Next variant">&#8250;</button>
+  <select id="screen" aria-label="Screen">
+    <option value="signin">Sign-in page</option>
+    <option value="expired">Sign-in after expiry</option>
+    <option value="no-group">Sign-in after group loss</option>
+    <option value="home">Signed in</option>
+    <option value="error">Forum did not answer</option>
+  </select>
+  <label><input type="checkbox" id="later"> later content</label>
+  <span class="keys">&#8592; &#8594; switch variant</span>
+</div>
+
+<script>
+  // Shared fixture. No request leaves this page; the forms point at the routes issue #288 names.
+  const USER = 'Nex';
+  const VERSION = 'cavbot2 dev';
+  const FORUM = 'https://7cav.us/';
+  const CAUSE = {
+    'expired': 'Your session ended. A session lasts two hours from sign-in.',
+    'no-group': 'Your forum account is not in a group that can open the panel.',
+  };
+  const HUBS = [
+    { base: 'Arma Voice',    channel: 'Join to create', category: 'Arma Reforger', enabled: true,  spawned: 3, failure: null },
+    { base: 'Squad Voice',   channel: 'Join to create', category: 'Squad',         enabled: true,  spawned: 1, failure: { at: '14:02', cause: 'category full' } },
+    { base: 'Foxhole Voice', channel: 'Join to create', category: 'Foxhole',       enabled: false, spawned: 0, failure: null },
+    { base: 'RoN Voice',     channel: 'Join to create', category: null,            enabled: true,  spawned: 0, failure: { at: '09:41', cause: 'no category' }, broken: true },
+  ];
+
+  const VARIANTS = [
+    { key: 'a', name: 'Forum sibling', render: renderA },
+    { key: 'b', name: 'Gate',          render: renderB },
+    { key: 'c', name: 'Console',       render: renderC },
+  ];
+  const SCREENS = ['signin', 'expired', 'no-group', 'home', 'error'];
+
+  // ---- shared fragments ----
+  const signinForm = (cls) =>
+    `<form method="post" action="/auth/start"><button type="submit" class="btn btn--cta ${cls || ''}">Sign in with the forum</button></form>`;
+  const signoutForm = () =>
+    `<form method="post" action="/auth/signout"><button type="submit" class="btn">Sign out</button></form>`;
+  const causeNote = (cause) => cause ? `<div class="note">${CAUSE[cause]}</div>` : '';
+  const causeAttr = (cause) => cause ? ` data-cause="${cause}"` : '';
+  const emptyHubs = () => `<div class="block-row">The hub list arrives in a later release. Nothing to manage yet.</div>`;
+  const hubTable = () => `
+    <div class="later-hint">Mock rows from a later ticket, here to judge the shell with content in it.</div>
+    <div class="scroll"><table class="hublist">
+      <thead><tr><th>Hub</th><th>Channel</th><th>Category</th><th>State</th><th class="num">Spawned</th><th>Last failure</th><th></th></tr></thead>
+      <tbody>${HUBS.map(h => `
+        <tr>
+          <td class="hub">${h.base}</td>
+          <td>${h.channel}</td>
+          <td>${h.category ? h.category : '<span class="bad">none</span>'}</td>
+          <td>${h.broken ? '<span class="tag tag--broken">broken</span>' : h.enabled ? '<span class="tag tag--on">enabled</span>' : '<span class="tag">disabled</span>'}</td>
+          <td class="num">${h.spawned}</td>
+          <td>${h.failure ? `<span class="bad">${h.failure.cause}</span> <span class="off">at ${h.failure.at}</span>` : '<span class="off">none</span>'}</td>
+          <td>${h.broken ? '<button type="button" class="btn">Remove</button>' : '<a href="#">Edit</a>'}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>`;
+  const hubsBody = (later) => later ? hubTable() : emptyHubs();
+  const errorCopy = () =>
+    `<p>The panel checks your forum groups on every request. The forum did not answer this time, so nothing was changed. Your session is kept.</p>`;
+
+  // ---- Variant A: a page that could sit inside the forum ----
+  function renderA(screen, later) {
+    const signedIn = screen === 'home' || screen === 'error';
+    const cause = CAUSE[screen] ? screen : '';
+    const nav = `
+      <header class="nav"><div class="nav-inner">
+        <a class="nav-logo" href="${FORUM}"><img src="logo-m.png" alt="7th Cavalry Gaming"></a>
+        <nav class="nav-tabs"><a class="nav-tab is-selected" href="/">Panel</a></nav>
+        <div class="nav-user">${signedIn
+          ? `<div class="who"><small>Signed in as</small>${USER}</div>${signoutForm()}`
+          : `<a href="${FORUM}">Forum</a>`}</div>
+      </div></header>`;
+    const footer = `
+      <footer class="footer">
+        <span class="copy">${VERSION}</span>
+        <a href="${FORUM}">7cav.us</a>
+      </footer>`;
+    let main;
+    if (screen === 'home') {
+      main = `
+        <main class="body">
+          <h1 class="title">Panel</h1>
+          <p class="desc">Sessions end two hours after sign-in.</p>
+          <div class="block">
+            <h2 class="block-header">Hubs</h2>
+            ${hubsBody(later)}
+          </div>
+        </main>`;
+    } else if (screen === 'error') {
+      main = `
+        <main class="body">
+          <h1 class="title">The forum did not answer</h1>
+          <div class="block narrow">
+            <div class="block-row">${errorCopy()}</div>
+            <div class="submit-row"><a class="btn" href="/">Try again</a></div>
+          </div>
+        </main>`;
+    } else {
+      main = `
+        <main class="body"${causeAttr(cause)}>
+          <h1 class="title">Sign in</h1>
+          <p class="desc">The panel uses your 7cav.us forum account.</p>
+          <div class="narrow">
+            ${causeNote(cause)}
+            <div class="block">
+              <h2 class="block-header">Use your forum account</h2>
+              <div class="block-row"><p>The forum asks you to approve the sign-in, then sends you back here. Your forum groups decide whether you can open the panel.</p></div>
+              <div class="submit-row">${signinForm()}</div>
+            </div>
+          </div>
+        </main>`;
+    }
+    return `<div class="va">${nav}${main}${footer}</div>`;
+  }
+
+  // ---- Variant B: one centered gate, then a slim bar ----
+  function renderB(screen, later) {
+    const cause = CAUSE[screen] ? screen : '';
+    if (screen === 'signin' || cause) {
+      return `
+        <div class="vb"><main class="gate full"${causeAttr(cause)}>
+          <div class="gate-card">
+            <img class="shield" src="cav_logo.png" alt="">
+            <h1 class="gate-title">Panel</h1>
+            <div class="gate-sub">7th Cavalry Gaming</div>
+            <p>Use your 7cav.us forum account. Your forum groups decide whether the panel opens.</p>
+            ${causeNote(cause)}
+            ${signinForm('btn--display')}
+            <div class="gate-foot"><a href="${FORUM}">Back to the forum</a></div>
+          </div>
+        </main></div>`;
+    }
+    const bar = `
+      <header class="bar">
+        <a class="brand" href="/"><img src="cav_logo.png" alt="">Panel</a>
+        <div class="who"><small>Signed in as</small>${USER}</div>
+        ${signoutForm()}
+      </header>`;
+    const body = screen === 'home'
+      ? `<h1>Hubs</h1>
+         <p class="desc">Sessions end two hours after sign-in.</p>
+         <div class="block">${hubsBody(later)}</div>`
+      : `<h1>The forum did not answer</h1>
+         <div class="note">${errorCopy()}</div>
+         <a class="btn" href="/">Try again</a>`;
+    return `
+      <div class="vb">${bar}
+        <main class="stage">${body}
+          <div class="stage-foot">${VERSION}</div>
+        </main>
+      </div>`;
+  }
+
+  // ---- Variant C: split sign-in, then a left rail ----
+  function renderC(screen, later) {
+    const cause = CAUSE[screen] ? screen : '';
+    if (screen === 'signin' || cause) {
+      return `
+        <div class="vc"><main class="split full"${causeAttr(cause)}>
+          <section class="split-left">
+            <img class="mark" src="logo-m.png" alt="7th Cavalry Gaming">
+            <div class="fill">
+              <h1>Sign in</h1>
+              <p>Use your 7cav.us forum account. Your forum groups decide whether the panel opens.</p>
+              ${causeNote(cause)}
+              ${signinForm()}
+            </div>
+            <div class="split-foot"><a href="${FORUM}">Back to the forum</a></div>
+          </section>
+          <section class="split-right">
+            <dl class="facts">
+              <div><dt>Who can open the panel</dt><dd>Members of an allowlisted forum group. Genstaff, S6 HQ and Regimental Technical Aides at launch.</dd></div>
+              <div><dt>How long a session lasts</dt><dd>Two hours from sign-in. After that the forum asks again.</dd></div>
+              <div><dt>What sign-out does</dt><dd>Ends the panel session only. You stay signed in to the forum.</dd></div>
+            </dl>
+          </section>
+        </main></div>`;
+    }
+    const rail = `
+      <aside class="rail">
+        <div class="mark"><a href="/"><img src="logo-m.png" alt="7th Cavalry Gaming"></a></div>
+        <nav><a class="item is-selected" href="/">Hubs</a></nav>
+        <div class="me">
+          <small>Signed in as</small>
+          <div class="name">${USER}</div>
+          ${signoutForm()}
+        </div>
+        <div class="ver">${VERSION}</div>
+      </aside>`;
+    const body = screen === 'home'
+      ? `<h1>Hubs</h1>
+         <p class="desc">Sessions end two hours after sign-in.</p>
+         <div class="block">${hubsBody(later)}</div>`
+      : `<h1>The forum did not answer</h1>
+         <div class="note">${errorCopy()}</div>
+         <a class="btn" href="/">Try again</a>`;
+    return `<div class="vc"><div class="console full">${rail}<main class="content">${body}</main></div></div>`;
+  }
+
+  // ---- switcher ----
+  const params = new URLSearchParams(location.search);
+  let variant = VARIANTS.findIndex(v => v.key === (params.get('variant') || 'a'));
+  if (variant < 0) variant = 0;
+  let screen = SCREENS.includes(params.get('screen')) ? params.get('screen') : 'signin';
+  let later = params.get('later') === '1';
+
+  function sync() {
+    const v = VARIANTS[variant];
+    document.getElementById('app').innerHTML = v.render(screen, later);
+    document.getElementById('label').textContent = `${v.key.toUpperCase()} (${v.name})`;
+    document.getElementById('screen').value = screen;
+    document.getElementById('later').checked = later;
+    document.getElementById('later').disabled = screen !== 'home';
+    const q = new URLSearchParams({ variant: v.key, screen });
+    if (later) q.set('later', '1');
+    history.replaceState(null, '', `${location.pathname}?${q}`);
+    document.title = `Panel prototype: ${v.name}`;
+    // Every form and link here is a dead end. Keep the click on the page.
+    document.querySelectorAll('#app form').forEach(f => f.addEventListener('submit', e => e.preventDefault()));
+    document.querySelectorAll('#app a[href="/"], #app a[href="#"]').forEach(a => a.addEventListener('click', e => e.preventDefault()));
+  }
+  function step(d) { variant = (variant + d + VARIANTS.length) % VARIANTS.length; sync(); }
+
+  document.getElementById('prev').addEventListener('click', () => step(-1));
+  document.getElementById('next').addEventListener('click', () => step(1));
+  document.getElementById('screen').addEventListener('change', e => { screen = e.target.value; sync(); });
+  document.getElementById('later').addEventListener('change', e => { later = e.target.checked; sync(); });
+  document.addEventListener('keydown', e => {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+    if (e.key === 'ArrowLeft') step(-1);
+    if (e.key === 'ArrowRight') step(1);
+  });
+  sync();
+</script>
+</body>
+</html>
