@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -1092,5 +1093,41 @@ func TestTempVCConcurrentJoinsGetDistinctNumbers(t *testing.T) {
 	sort.Ints(numbers)
 	if len(numbers) != 2 || numbers[0] != 1 || numbers[1] != 2 {
 		t.Errorf("row numbers = %v, want 1 and 2", numbers)
+	}
+}
+
+// unknownChannelErr is the error discordgo returns when a channel is already
+// gone: HTTP 404 with Discord code 10003.
+func unknownChannelErr() error {
+	return &discordgo.RESTError{
+		Response: &http.Response{StatusCode: http.StatusNotFound},
+		Message:  &discordgo.APIErrorMessage{Code: discordgo.ErrCodeUnknownChannel, Message: "Unknown Channel"},
+	}
+}
+
+func TestTempVCUnknownChannelOnDeleteIsQuietCleanup(t *testing.T) {
+	fake := newFakeTempVCManager()
+	fake.deleteErr = unknownChannelErr()
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+	captures := countCaptures(t)
+
+	// The channel was deleted by hand; the member's disconnect arrives first.
+	a := member("A")
+	tv.handleVoiceStateUpdate(voiceEvent("user-a", testTempVCHub, a))
+	tv.handleVoiceStateUpdate(voiceEvent("user-a", "new-chan", a))
+	tv.handleVoiceStateUpdate(voiceEvent("user-a", "", a))
+
+	if *captures != 0 {
+		t.Errorf("captures = %d, want 0: an already-gone channel is not a failure", *captures)
+	}
+	if rows := spawnedRows(t, st); len(rows) != 0 {
+		t.Errorf("rows = %+v, want none", rows)
+	}
+	// Untracked, so its number is free again.
+	fake.setNextChannel("second-chan")
+	tv.handleVoiceStateUpdate(voiceEvent("user-b", testTempVCHub, member("B")))
+	if names := fake.createdNames(); len(names) != 2 || names[1] != "Voice - 1" {
+		t.Errorf("created = %v, want Voice - 1 reused", names)
 	}
 }

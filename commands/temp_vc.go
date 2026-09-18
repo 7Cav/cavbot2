@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -233,6 +234,10 @@ type TempVC struct {
 	channelHub map[string]int64
 	// channelIndex maps a spawned channel ID -> the number in its name.
 	channelIndex map[string]int
+	// deleting marks spawned channels whose delete call the bot has in
+	// flight. It decides one thing only: whether the CHANNEL_DELETE handler
+	// logs a hand delete. Tracking and rows are handled the same either way.
+	deleting map[string]struct{}
 	// pending holds, per hub row ID, the numbers reserved for creates in
 	// flight. The create is a network call made outside the lock, so without
 	// this two members joining one hub at the same moment would both take the
@@ -274,6 +279,7 @@ func newTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		channelHub:   make(map[string]int64),
 		channelIndex: make(map[string]int),
 		pending:      make(map[int64]map[int]struct{}),
+		deleting:     make(map[string]struct{}),
 		controller:   make(map[string]string),
 		memberMeta:   make(map[string]memberRankMeta),
 	}
@@ -358,6 +364,7 @@ func (t *TempVC) handleChannelDelete(c *discordgo.ChannelDelete) {
 	}
 	t.mu.Lock()
 	_, tracked := t.occupants[c.ID]
+	_, byBot := t.deleting[c.ID]
 	if tracked {
 		t.untrackLocked(c.ID)
 	}
@@ -366,7 +373,11 @@ func (t *TempVC) handleChannelDelete(c *discordgo.ChannelDelete) {
 		return
 	}
 	t.deleteRow(c.ID)
-	utils.Info("Temp VC spawned channel gone, untracked", "channel_id", c.ID)
+	// The gateway event for the bot's own delete can land before the delete
+	// call returns; that path logs the delete itself.
+	if !byBot {
+		utils.Info("Temp VC spawned channel deleted by hand, untracked", "channel_id", c.ID)
+	}
 }
 
 // handleGuildCreate seeds voice-state tracking from the GUILD_CREATE payload
@@ -644,9 +655,21 @@ func (t *TempVC) deleteIfStillEmpty(channelID string) {
 	// Tracking is kept until Discord confirms the delete: a channel that fails
 	// to delete is still live, and the next empty event or the restart sweep
 	// retries it.
+	t.deleting[channelID] = struct{}{}
 	t.mu.Unlock()
 
-	if _, err := t.mgr.ChannelDelete(channelID, "empty"); err != nil {
+	_, err := t.mgr.ChannelDelete(channelID, "empty")
+	switch {
+	case err == nil:
+		utils.Info("Temp VC deleted", "channel_id", channelID)
+	case isUnknownChannel(err):
+		// Already gone: someone deleted it by hand while the leave event was
+		// in flight. Nothing failed, so nothing is captured.
+		utils.Info("Temp VC channel already gone, untracked", "channel_id", channelID)
+	default:
+		t.mu.Lock()
+		delete(t.deleting, channelID)
+		t.mu.Unlock()
 		captureError("Temp VC delete failed", err,
 			"channel_id", channelID, "guild_id", t.guildID)
 		return
@@ -654,9 +677,20 @@ func (t *TempVC) deleteIfStillEmpty(channelID string) {
 
 	t.mu.Lock()
 	t.untrackLocked(channelID)
+	delete(t.deleting, channelID)
 	t.mu.Unlock()
 	t.deleteRow(channelID)
-	utils.Info("Temp VC deleted", "channel_id", channelID)
+}
+
+// isUnknownChannel reports whether a Discord error says the channel no longer
+// exists (HTTP 404, code 10003). The warden classifier is not used here: its
+// not-found branch treats every 404 that is not Unknown Member as a config
+// fault that pages, and for a spawned channel "already gone" is the normal
+// end of a hand delete.
+func isUnknownChannel(err error) bool {
+	var restErr *discordgo.RESTError
+	return errors.As(err, &restErr) && restErr.Message != nil &&
+		restErr.Message.Code == discordgo.ErrCodeUnknownChannel
 }
 
 // deleteRow removes a spawned channel's row once the channel is gone from
