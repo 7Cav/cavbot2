@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -33,6 +32,15 @@ import (
 // restart sweep on GUILD_CREATE reads the rows and touches no channel it
 // holds no row for.
 //
+// A spawn that fails is one create per join: no retry, no backoff, no
+// auto-disable. The member gets one message in the hub channel's text chat
+// that mentions them alone (the area is full, or the failure has been
+// reported), no DM and no disconnect. The runtime keeps each hub's last spawn
+// failure in memory for the panel, cleared by the next successful spawn from
+// that hub. A failure Discord returned reaches Sentry once per streak per
+// hub; a refusal the bot makes itself, a hub with no category, never does.
+// temp_vc_errors.go classifies the Discord errors on these paths.
+//
 // docs/temp-vc-decisions.md records what is settled and where each decision
 // came from. CONTEXT.md carries the vocabulary.
 //
@@ -58,6 +66,43 @@ const TempVCOverwriteCeiling = discordgo.PermissionManageChannels |
 // tempVCStoreTimeout bounds each store call the runtime makes, at startup and
 // from gateway handlers, so a stalled database never hangs a goroutine.
 const tempVCStoreTimeout = 5 * time.Second
+
+// tempVCNow is the runtime's clock. A package var rather than a direct
+// time.Now call so tests can pin the time a failure is recorded at, the same
+// arrangement as telemetryNow.
+var tempVCNow = time.Now
+
+// SpawnFailureCause says why a hub's last spawn failed, as a code the panel
+// renders however it likes. The values are stable; the panel's wording is not
+// pinned to them.
+type SpawnFailureCause string
+
+const (
+	// SpawnFailureNoCategory is the bot's own refusal: the hub channel has no
+	// parent, so there is nowhere to spawn under. No API call is made.
+	SpawnFailureNoCategory SpawnFailureCause = "no category"
+	// SpawnFailureFull is the category or guild channel cap.
+	SpawnFailureFull SpawnFailureCause = "full"
+	// SpawnFailureForbidden is a 403 on the create.
+	SpawnFailureForbidden SpawnFailureCause = "missing permissions"
+	// SpawnFailureRateLimited is a 429 on the create. The call is not retried.
+	SpawnFailureRateLimited SpawnFailureCause = "rate limited"
+	// SpawnFailureDiscordError is any other create failure: a 5xx, a
+	// transport error, or a 4xx that is none of the above.
+	SpawnFailureDiscordError SpawnFailureCause = "Discord error"
+	// SpawnFailureMove is a create that succeeded and a move-into that failed.
+	// The new channel was deleted.
+	SpawnFailureMove SpawnFailureCause = "move failed"
+)
+
+// SpawnFailure is the last failed spawn of one hub: when, and why. The panel
+// shows it beside the hub's live spawned count. It lives in memory only; a
+// successful spawn from the hub or a restart clears it, and the store never
+// holds it.
+type SpawnFailure struct {
+	At    time.Time
+	Cause SpawnFailureCause
+}
 
 // The election below is the branch's stand-in model: while the creator is out
 // of the channel, a present occupant is elected to act for them, and the
@@ -170,6 +215,10 @@ type TempVCManager interface {
 	// GuildMemberMove moves a member between voice channels with no retry on
 	// rate limit.
 	GuildMemberMove(guildID, userID string, channelID *string) error
+	// ChannelMessageSendComplex posts a message to a channel's text chat with
+	// no retry on rate limit. The allowed mentions travel in data, so a test
+	// can read who a message may ping.
+	ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error)
 	// GuildMember fetches one guild member from the API. The startup
 	// Administrator check reads the bot's own member through it.
 	GuildMember(guildID, userID string) (*discordgo.Member, error)
@@ -208,6 +257,10 @@ func (m *sessionTempVCManager) ChannelDelete(channelID, auditReason string) (*di
 
 func (m *sessionTempVCManager) GuildMemberMove(guildID, userID string, channelID *string) error {
 	return m.s.GuildMemberMove(guildID, userID, channelID, discordgo.WithRetryOnRatelimit(false))
+}
+
+func (m *sessionTempVCManager) ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error) {
+	return m.s.ChannelMessageSendComplex(channelID, data, discordgo.WithRetryOnRatelimit(false))
 }
 
 func (m *sessionTempVCManager) GuildMember(guildID, userID string) (*discordgo.Member, error) {
@@ -266,6 +319,19 @@ type TempVC struct {
 	// gateway events (which carry the acting member), so an election reads ranks
 	// without a REST call per occupant. Keyed by user ID.
 	memberMeta map[string]memberRankMeta
+	// lastFailure holds each hub's last spawn failure, keyed by hub row ID.
+	// Absent once a spawn from that hub succeeds. Never written to the store.
+	lastFailure map[int64]SpawnFailure
+	// createCaptured marks the hubs whose current streak of spawn failures
+	// has already reached Sentry. The first failure captures; the next capture
+	// waits for a successful spawn from that hub, so a day-long break is one
+	// event and not one per join. Keyed by hub row ID.
+	createCaptured map[int64]struct{}
+	// deleteCaptured is the same rule for delete failures: the first 403,
+	// 5xx or transport failure on a hub's channel captures, and a successful
+	// delete of one of that hub's channels opens the next. Keyed by hub row
+	// ID, zero for a channel whose hub row is gone.
+	deleteCaptured map[int64]struct{}
 }
 
 // memberRankMeta is the cached election input for a member, read from their
@@ -283,19 +349,22 @@ var worstMemberMeta = memberRankMeta{rankIdx: noRankIndex}
 // the bot must not run with no hubs when hubs exist.
 func newTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, error) {
 	t := &TempVC{
-		mgr:          mgr,
-		st:           st,
-		guildID:      guildID,
-		hubs:         make(map[string]store.Hub),
-		userChannel:  make(map[string]string),
-		occupants:    make(map[string]map[string]struct{}),
-		owners:       make(map[string]string),
-		channelHub:   make(map[string]int64),
-		channelIndex: make(map[string]int),
-		pending:      make(map[int64]map[int]struct{}),
-		deleting:     make(map[string]struct{}),
-		controller:   make(map[string]string),
-		memberMeta:   make(map[string]memberRankMeta),
+		mgr:            mgr,
+		st:             st,
+		guildID:        guildID,
+		hubs:           make(map[string]store.Hub),
+		userChannel:    make(map[string]string),
+		occupants:      make(map[string]map[string]struct{}),
+		owners:         make(map[string]string),
+		channelHub:     make(map[string]int64),
+		channelIndex:   make(map[string]int),
+		pending:        make(map[int64]map[int]struct{}),
+		deleting:       make(map[string]struct{}),
+		controller:     make(map[string]string),
+		memberMeta:     make(map[string]memberRankMeta),
+		lastFailure:    make(map[int64]SpawnFailure),
+		createCaptured: make(map[int64]struct{}),
+		deleteCaptured: make(map[int64]struct{}),
 	}
 	ctx, cancel := t.storeContext()
 	defer cancel()
@@ -326,7 +395,45 @@ func (t *TempVC) ApplyHub(hub store.Hub) {
 func (t *TempVC) RemoveHub(hubChannelID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if hub, ok := t.hubs[hubChannelID]; ok {
+		// A removed hub has no panel row to show a failure on, and a hub
+		// registered again gets a new row ID and a fresh streak.
+		delete(t.lastFailure, hub.ID)
+		delete(t.createCaptured, hub.ID)
+	}
 	delete(t.hubs, hubChannelID)
+}
+
+// LastSpawnFailure reports a hub's last spawn failure since the last
+// successful spawn from it, or false when there is none. The panel's hub list
+// reads it per hub row ID.
+func (t *TempVC) LastSpawnFailure(hubID int64) (SpawnFailure, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	f, ok := t.lastFailure[hubID]
+	return f, ok
+}
+
+// recordSpawnFailure notes why a hub's spawn just failed, stamped with the
+// clock. Each failure replaces the last.
+func (t *TempVC) recordSpawnFailure(hubID int64, cause SpawnFailureCause) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.lastFailure[hubID] = SpawnFailure{At: tempVCNow(), Cause: cause}
+}
+
+// captureSpawnFailure sends a Discord-side spawn failure to Sentry once per
+// streak per hub: the first failure of a streak captures, the rest of the
+// streak is WARN lines only, and a successful spawn from the hub ends the
+// streak.
+func (t *TempVC) captureSpawnFailure(hubID int64, msg string, err error, kv ...any) {
+	t.mu.Lock()
+	_, captured := t.createCaptured[hubID]
+	t.createCaptured[hubID] = struct{}{}
+	t.mu.Unlock()
+	if !captured {
+		captureError(msg, err, kv...)
+	}
 }
 
 // storeContext bounds one store call.
@@ -673,19 +780,36 @@ func (t *TempVC) deleteIfStillEmpty(channelID string) {
 	t.mu.Unlock()
 
 	_, err := t.mgr.ChannelDelete(channelID, "empty")
+	fault := classifySpawnedChannelError(err)
 	switch {
 	case err == nil:
 		utils.Info("Temp VC deleted", "channel_id", channelID)
-	case isUnknownChannel(err):
+		t.mu.Lock()
+		delete(t.deleteCaptured, t.channelHub[channelID])
+		t.mu.Unlock()
+	case fault.gone:
 		// Already gone: someone deleted it by hand while the leave event was
 		// in flight. Nothing failed, so nothing is captured.
 		utils.Info("Temp VC channel already gone, untracked", "channel_id", channelID)
 	default:
+		// The channel is still live: it stays tracked with its row, and the
+		// next empty event or the restart sweep retries. A 429 or any other
+		// 4xx is this WARN line only. A 403, 5xx or transport failure also
+		// captures, once per streak per hub.
 		t.mu.Lock()
 		delete(t.deleting, channelID)
+		hubID := t.channelHub[channelID]
+		_, captured := t.deleteCaptured[hubID]
+		if fault.outage {
+			t.deleteCaptured[hubID] = struct{}{}
+		}
 		t.mu.Unlock()
-		captureError("Temp VC delete failed", err,
-			"channel_id", channelID, "guild_id", t.guildID)
+		utils.Warn("Temp VC delete failed, channel kept for the next attempt",
+			"channel_id", channelID, "hub_id", hubID, "error", err)
+		if fault.outage && !captured {
+			captureError("Temp VC delete failed", err,
+				"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
+		}
 		return
 	}
 
@@ -694,17 +818,6 @@ func (t *TempVC) deleteIfStillEmpty(channelID string) {
 	delete(t.deleting, channelID)
 	t.mu.Unlock()
 	t.deleteRow(channelID)
-}
-
-// isUnknownChannel reports whether a Discord error says the channel no longer
-// exists (HTTP 404, code 10003). The warden classifier is not used here: its
-// not-found branch treats every 404 that is not Unknown Member as a config
-// fault that pages, and for a spawned channel "already gone" is the normal
-// end of a hand delete.
-func isUnknownChannel(err error) bool {
-	var restErr *discordgo.RESTError
-	return errors.As(err, &restErr) && restErr.Message != nil &&
-		restErr.Message.Code == discordgo.ErrCodeUnknownChannel
 }
 
 // deleteRow removes a spawned channel's row once the channel is gone from
@@ -737,6 +850,9 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		return
 	}
 	if hubChannel.ParentID == "" {
+		// The bot's own refusal: a WARN line and a note for the panel, never
+		// a Sentry event and no message to the member.
+		t.recordSpawnFailure(hub.ID, SpawnFailureNoCategory)
 		utils.Warn("Temp VC spawn refused, hub channel has no category",
 			"hub_channel_id", hub.HubChannelID, "user_id", vs.UserID)
 		return
@@ -772,8 +888,15 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		t.mu.Lock()
 		t.releaseChannelIndexLocked(hub.ID, index)
 		t.mu.Unlock()
-		captureError("Temp VC create failed", err,
-			"user_id", vs.UserID, "hub_channel_id", hub.HubChannelID, "guild_id", t.guildID)
+		fault := classifySpawnedChannelError(err)
+		t.recordSpawnFailure(hub.ID, fault.cause())
+		utils.Warn("Temp VC create failed",
+			"user_id", vs.UserID, "hub_channel_id", hub.HubChannelID, "cause", fault.cause(), "error", err)
+		if fault.capturesOnCreate() {
+			t.captureSpawnFailure(hub.ID, "Temp VC create failed", err,
+				"user_id", vs.UserID, "hub_channel_id", hub.HubChannelID, "guild_id", t.guildID)
+		}
+		t.messageHubJoiner(hub, vs.UserID, fault.full)
 		return
 	}
 
@@ -786,20 +909,35 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	t.mu.Unlock()
 
 	if err := t.mgr.GuildMemberMove(t.guildID, vs.UserID, &channel.ID); err != nil {
-		// The user vanished (disconnected mid-create) or the move was
-		// refused; without them the new channel would sit empty, so delete
-		// it now.
-		captureError("Temp VC move-into failed, deleting channel", err,
-			"user_id", vs.UserID, "channel_id", channel.ID)
+		// The member vanished (disconnected mid-create) or the move was
+		// refused. A create that succeeds and a move-into that fails is one
+		// spawn failure: the new channel is deleted at once through the
+		// empty-channel path, and the member hears about it only when the
+		// runtime's own occupancy map still has them in the hub. A member
+		// who left needs no ping about a channel that never was.
+		t.recordSpawnFailure(hub.ID, SpawnFailureMove)
+		utils.Warn("Temp VC move-into failed, deleting channel",
+			"user_id", vs.UserID, "channel_id", channel.ID, "hub_channel_id", hub.HubChannelID, "error", err)
+		if classifySpawnedChannelError(err).capturesOnCreate() {
+			t.captureSpawnFailure(hub.ID, "Temp VC move-into failed, deleting channel", err,
+				"user_id", vs.UserID, "channel_id", channel.ID, "hub_channel_id", hub.HubChannelID)
+		}
 		t.mu.Lock()
-		t.untrackLocked(channel.ID)
+		stillInHub := t.userChannel[vs.UserID] == hub.HubChannelID
 		t.mu.Unlock()
-		if _, delErr := t.mgr.ChannelDelete(channel.ID, "empty"); delErr != nil {
-			captureError("Temp VC post-move-failure delete failed", delErr,
-				"channel_id", channel.ID)
+		t.deleteIfStillEmpty(channel.ID)
+		if stillInHub {
+			t.messageHubJoiner(hub, vs.UserID, false)
 		}
 		return
 	}
+
+	// The spawn succeeded: the hub's last failure is cleared and its next
+	// Discord-side failure will capture again.
+	t.mu.Lock()
+	delete(t.lastFailure, hub.ID)
+	delete(t.createCaptured, hub.ID)
+	t.mu.Unlock()
 
 	ctx, cancel := t.storeContext()
 	defer cancel()
@@ -814,6 +952,27 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	utils.Info("Temp VC created",
 		"channel_id", channel.ID, "name", name, "number", index,
 		"hub_channel_id", hub.HubChannelID, "hub_id", hub.ID, "owner_id", vs.UserID)
+}
+
+// messageHubJoiner tells a member whose channel could not be created, in the
+// hub channel's text chat. The content mentions them and the allowed mentions
+// name them alone, so nobody else is pinged. No DM, no disconnect, and the
+// bot never deletes the message. Two texts only: the area is full, or the
+// failure has been reported. A failed send is a WARN line: the spawn failure
+// itself has already been handled.
+func (t *TempVC) messageHubJoiner(hub store.Hub, userID string, full bool) {
+	content := fmt.Sprintf("<@%s> your channel could not be created. The failure has been reported.", userID)
+	if full {
+		content = fmt.Sprintf("<@%s> this area is full. Wait for a channel to empty, then join again.", userID)
+	}
+	_, err := t.mgr.ChannelMessageSendComplex(hub.HubChannelID, &discordgo.MessageSend{
+		Content:         content,
+		AllowedMentions: &discordgo.MessageAllowedMentions{Users: []string{userID}},
+	})
+	if err != nil {
+		utils.Warn("Temp VC spawn failure message not sent",
+			"hub_channel_id", hub.HubChannelID, "user_id", userID, "error", err)
+	}
 }
 
 // nameWithIndex renders "<base> - <n>", first truncating the base so the whole

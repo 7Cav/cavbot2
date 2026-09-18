@@ -25,6 +25,7 @@ type fakeTempVCManager struct {
 	created     []fakeCreate
 	deleted     []fakeDelete
 	moves       []fakeMove
+	messages    []fakeMessage
 	nextChannel *discordgo.Channel
 	// member and guild are what GuildMember and Guild return; the startup
 	// Administrator check reads both.
@@ -37,6 +38,7 @@ type fakeTempVCManager struct {
 	createErr  error
 	deleteErr  error
 	moveErr    error
+	messageErr error
 	memberErr  error
 	guildErr   error
 
@@ -47,6 +49,11 @@ type fakeTempVCManager struct {
 	createStarted chan struct{}
 	createRelease chan struct{}
 	createSeq     int
+	// moveHook, when set, runs inside every move call before the fake
+	// answers, outside the fake's lock. The runtime holds no lock across the
+	// move either, so a test can feed a gateway event that lands while the
+	// move is in flight.
+	moveHook func()
 }
 
 type fakeCreate struct {
@@ -62,6 +69,11 @@ type fakeDelete struct {
 type fakeMove struct {
 	userID    string
 	channelID *string
+}
+
+type fakeMessage struct {
+	channelID string
+	data      *discordgo.MessageSend
 }
 
 const (
@@ -127,6 +139,9 @@ func (f *fakeTempVCManager) ChannelDelete(channelID, reason string) (*discordgo.
 }
 
 func (f *fakeTempVCManager) GuildMemberMove(_ string, userID string, channelID *string) error {
+	if f.moveHook != nil {
+		f.moveHook()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.moveErr != nil {
@@ -134,6 +149,16 @@ func (f *fakeTempVCManager) GuildMemberMove(_ string, userID string, channelID *
 	}
 	f.moves = append(f.moves, fakeMove{userID: userID, channelID: channelID})
 	return nil
+}
+
+func (f *fakeTempVCManager) ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.messageErr != nil {
+		return nil, f.messageErr
+	}
+	f.messages = append(f.messages, fakeMessage{channelID: channelID, data: data})
+	return &discordgo.Message{ChannelID: channelID, Content: data.Content}, nil
 }
 
 func (f *fakeTempVCManager) GuildMember(_, _ string) (*discordgo.Member, error) {
@@ -207,6 +232,14 @@ func (f *fakeTempVCManager) recordedMoves() []fakeMove {
 	defer f.mu.Unlock()
 	out := make([]fakeMove, len(f.moves))
 	copy(out, f.moves)
+	return out
+}
+
+func (f *fakeTempVCManager) recordedMessages() []fakeMessage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]fakeMessage, len(f.messages))
+	copy(out, f.messages)
 	return out
 }
 
@@ -700,6 +733,7 @@ func TestTempVCHubWithoutCategorySpawnsNothing(t *testing.T) {
 			tc.setup(fake)
 			st := seedStore(t, testHub())
 			tv := newTestTempVC(t, fake, st)
+			captures := countCaptures(t)
 
 			tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
 
@@ -711,6 +745,14 @@ func TestTempVCHubWithoutCategorySpawnsNothing(t *testing.T) {
 			}
 			if rows := spawnedRows(t, st); len(rows) != 0 {
 				t.Errorf("rows = %+v, want none", rows)
+			}
+			// The bot's own refusal: a log line and a panel note, never a
+			// Sentry event and no message.
+			if *captures != 0 {
+				t.Errorf("captures = %d, want 0", *captures)
+			}
+			if msgs := fake.recordedMessages(); len(msgs) != 0 {
+				t.Errorf("messages = %+v, want none (no API call)", msgs)
 			}
 		})
 	}
@@ -1121,11 +1163,58 @@ func TestTempVCConcurrentJoinsGetDistinctNumbers(t *testing.T) {
 }
 
 // unknownChannelErr is the error discordgo returns when a channel is already
-// gone: HTTP 404 with Discord code 10003.
+// gone: HTTP 404 with Discord code 10003. restError lives in
+// warden_resterror_test.go.
 func unknownChannelErr() error {
-	return &discordgo.RESTError{
-		Response: &http.Response{StatusCode: http.StatusNotFound},
-		Message:  &discordgo.APIErrorMessage{Code: discordgo.ErrCodeUnknownChannel, Message: "Unknown Channel"},
+	return restError(http.StatusNotFound, discordgo.ErrCodeUnknownChannel, "Unknown Channel")
+}
+
+// --- Spawn failures (#290): the member hears about it in the hub chat, the
+// panel reads the last failure per hub, Sentry hears once per streak. ---
+
+// hubMessagesMentioning returns the messages sent to the hub channel whose
+// content carries the user's ID and whose allowed mentions name only them.
+// Nobody else may be pinged, so Parse must be empty.
+func hubMessagesMentioning(t *testing.T, fake *fakeTempVCManager, userID string) []fakeMessage {
+	t.Helper()
+	var out []fakeMessage
+	for _, m := range fake.recordedMessages() {
+		if m.channelID != testTempVCHub {
+			t.Errorf("message sent to %q, want the hub channel %q", m.channelID, testTempVCHub)
+			continue
+		}
+		if !strings.Contains(m.data.Content, userID) {
+			t.Errorf("message content %q does not carry user %q", m.data.Content, userID)
+			continue
+		}
+		am := m.data.AllowedMentions
+		if am == nil || len(am.Parse) != 0 || len(am.Users) != 1 || am.Users[0] != userID {
+			t.Errorf("allowed mentions = %+v, want users [%s] and nothing parsed", am, userID)
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+func TestTempVCCreateFailureMessagesTheMemberInTheHubChat(t *testing.T) {
+	fake := newFakeTempVCManager()
+	fake.createErr = restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, "Missing Permissions")
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+	countCaptures(t)
+
+	tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+
+	if msgs := hubMessagesMentioning(t, fake, "user-1"); len(msgs) != 1 {
+		t.Errorf("messages = %d, want exactly one in the hub chat", len(msgs))
+	}
+	// No disconnect and no move: the member stays where they are.
+	if moves := fake.recordedMoves(); len(moves) != 0 {
+		t.Errorf("moves = %+v, want none", moves)
+	}
+	if rows := spawnedRows(t, st); len(rows) != 0 {
+		t.Errorf("rows = %+v, want none: a failure writes nothing", rows)
 	}
 }
 
@@ -1154,4 +1243,300 @@ func TestTempVCUnknownChannelOnDeleteIsQuietCleanup(t *testing.T) {
 	if names := fake.createdNames(); len(names) != 2 || names[1] != "Voice - 1" {
 		t.Errorf("created = %v, want Voice - 1 reused", names)
 	}
+}
+
+// categoryCapErr is the refusal Discord sends for a category holding its 50
+// channels: HTTP 400, Invalid Form Body, with the parent_id field carrying
+// CHANNEL_PARENT_MAX_CHANNELS. This body is authored from Discord's documented
+// form-error shape, not captured from a live refusal. The smoke test on the
+// test guild is where it gets compared with the real response.
+func categoryCapErr() error {
+	e := restError(http.StatusBadRequest, discordgo.ErrCodeInvalidFormBody, "Invalid Form Body")
+	e.ResponseBody = []byte(`{"message": "Invalid Form Body", "code": 50035, "errors": {"parent_id": {"_errors": [{"code": "CHANNEL_PARENT_MAX_CHANNELS", "message": "Maximum number of channels in category reached (50)"}]}}}`)
+	return e
+}
+
+// failedSpawnMessage runs one join against a create that fails with err, under
+// the one member and hub fixture, and returns the content of the hub chat
+// message. The fixture is the same for every call, so the error is the only
+// thing that can change the text.
+func failedSpawnMessage(t *testing.T, createErr error) string {
+	t.Helper()
+	fake := newFakeTempVCManager()
+	fake.createErr = createErr
+	tv := newSeededTempVC(t, fake)
+	countCaptures(t)
+
+	tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+
+	msgs := hubMessagesMentioning(t, fake, "user-1")
+	if len(msgs) != 1 {
+		t.Fatalf("messages = %d, want one", len(msgs))
+	}
+	return msgs[0].data.Content
+}
+
+func TestTempVCCapAndGenericMessagesAreTwoTexts(t *testing.T) {
+	guildCap := failedSpawnMessage(t, restError(http.StatusBadRequest, discordgo.ErrCodeMaximumNumberOfGuildChannelsReached, "Maximum number of guild channels reached (500)"))
+	categoryCap := failedSpawnMessage(t, categoryCapErr())
+	forbidden := failedSpawnMessage(t, restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, "Missing Permissions"))
+	serverError := failedSpawnMessage(t, restError(http.StatusInternalServerError, 0, "Internal Server Error"))
+
+	if guildCap != categoryCap {
+		t.Errorf("guild cap %q and category cap %q differ, want the one cap text", guildCap, categoryCap)
+	}
+	if forbidden != serverError {
+		t.Errorf("403 %q and 500 %q differ, want the one generic text", forbidden, serverError)
+	}
+	if guildCap == forbidden {
+		t.Errorf("cap and generic texts are both %q, want two texts", guildCap)
+	}
+}
+
+func TestTempVCMoveIntoFailureMessagesOnlyAMemberStillInTheHub(t *testing.T) {
+	t.Run("member still in the hub", func(t *testing.T) {
+		fake := newFakeTempVCManager()
+		fake.moveErr = restError(http.StatusInternalServerError, 0, "Internal Server Error")
+		tv := newSeededTempVC(t, fake)
+		countCaptures(t)
+
+		tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+
+		if ids := fake.deletedIDs(); len(ids) != 1 || ids[0] != "new-chan" {
+			t.Errorf("deleted = %v, want the new channel", ids)
+		}
+		if msgs := hubMessagesMentioning(t, fake, "user-1"); len(msgs) != 1 {
+			t.Errorf("messages = %d, want one: the member is still waiting in the hub", len(msgs))
+		}
+	})
+
+	t.Run("member left the hub during the move", func(t *testing.T) {
+		fake := newFakeTempVCManager()
+		fake.moveErr = restError(http.StatusBadRequest, discordgo.ErrCodeTargetIsNotConnectedToVoice, "Target user is not connected to voice")
+		tv := newSeededTempVC(t, fake)
+		countCaptures(t)
+		fake.moveHook = func() {
+			tv.handleVoiceStateUpdate(voiceEvent("user-1", "", member("A")))
+		}
+
+		tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+
+		if ids := fake.deletedIDs(); len(ids) != 1 || ids[0] != "new-chan" {
+			t.Errorf("deleted = %v, want the new channel", ids)
+		}
+		if msgs := fake.recordedMessages(); len(msgs) != 0 {
+			t.Errorf("messages = %+v, want none: the member is gone", msgs)
+		}
+	})
+}
+
+// pinClock fixes the runtime's clock at a known instant for the test.
+func pinClock(t *testing.T, at time.Time) {
+	t.Helper()
+	prev := tempVCNow
+	tempVCNow = func() time.Time { return at }
+	t.Cleanup(func() { tempVCNow = prev })
+}
+
+func TestTempVCLastSpawnFailureIsKeptPerHubAndClearedBySuccess(t *testing.T) {
+	at := time.Date(2026, time.September, 18, 20, 30, 0, 0, time.UTC)
+	pinClock(t, at)
+	fake := newFakeTempVCManager()
+	fake.channels[testTempVCHub].ParentID = ""
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+	hubID := storedHubID(t, st)
+
+	tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+
+	got, ok := tv.LastSpawnFailure(hubID)
+	if !ok {
+		t.Fatal("LastSpawnFailure = none, want the no-category refusal recorded")
+	}
+	if !got.At.Equal(at) || got.Cause != SpawnFailureNoCategory {
+		t.Errorf("LastSpawnFailure = %+v, want at %v with cause %q", got, at, SpawnFailureNoCategory)
+	}
+	if rows := spawnedRows(t, st); len(rows) != 0 {
+		t.Errorf("rows = %+v, want none: the store holds no failure", rows)
+	}
+
+	// The category comes back and the next join spawns: the failure clears.
+	fake.channels[testTempVCHub].ParentID = testTempVCCategory
+	tv.handleVoiceStateUpdate(voiceEvent("user-1", "", member("A")))
+	tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+
+	if got, ok := tv.LastSpawnFailure(hubID); ok {
+		t.Errorf("LastSpawnFailure = %+v after a successful spawn, want none", got)
+	}
+}
+
+// setCreateErr changes what the next creates return, under the fake's lock.
+func (f *fakeTempVCManager) setCreateErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.createErr = err
+}
+
+func TestTempVCCreateFailuresCaptureOncePerStreakPerHub(t *testing.T) {
+	t.Run("each capturing class captures on its first failure", func(t *testing.T) {
+		cases := []struct {
+			name string
+			err  error
+		}{
+			{"guild cap", restError(http.StatusBadRequest, discordgo.ErrCodeMaximumNumberOfGuildChannelsReached, "Maximum number of guild channels reached (500)")},
+			{"429", restError(http.StatusTooManyRequests, 0, "You are being rate limited.")},
+			{"500", restError(http.StatusInternalServerError, 0, "Internal Server Error")},
+			{"transport", errors.New("dial tcp: connection refused")},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				fake := newFakeTempVCManager()
+				fake.createErr = tc.err
+				tv := newSeededTempVC(t, fake)
+				captures := countCaptures(t)
+
+				tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+
+				if *captures != 1 {
+					t.Errorf("captures = %d, want 1", *captures)
+				}
+			})
+		}
+	})
+
+	t.Run("a streak captures once and a success opens the next", func(t *testing.T) {
+		fake := newFakeTempVCManager()
+		serverErr := restError(http.StatusInternalServerError, 0, "Internal Server Error")
+		fake.createErr = serverErr
+		tv := newSeededTempVC(t, fake)
+		captures := countCaptures(t)
+
+		tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+		tv.handleVoiceStateUpdate(voiceEvent("user-2", testTempVCHub, member("B")))
+		if *captures != 1 {
+			t.Fatalf("captures = %d after two failures, want 1", *captures)
+		}
+
+		fake.setCreateErr(nil)
+		tv.handleVoiceStateUpdate(voiceEvent("user-1", "", member("A")))
+		tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+		tv.handleVoiceStateUpdate(voiceEvent("user-1", "new-chan", member("A")))
+
+		fake.setCreateErr(serverErr)
+		tv.handleVoiceStateUpdate(voiceEvent("user-2", "", member("B")))
+		tv.handleVoiceStateUpdate(voiceEvent("user-2", testTempVCHub, member("B")))
+		if *captures != 2 {
+			t.Errorf("captures = %d after a success and a new failure, want 2", *captures)
+		}
+	})
+
+	t.Run("hubs streak independently", func(t *testing.T) {
+		fake := newFakeTempVCManager()
+		fake.channels["hub-2"] = &discordgo.Channel{ID: "hub-2", ParentID: testTempVCCategory, Type: discordgo.ChannelTypeGuildVoice}
+		fake.createErr = restError(http.StatusInternalServerError, 0, "Internal Server Error")
+		second := testHub()
+		second.HubChannelID = "hub-2"
+		second.BaseString = "Other"
+		tv := newTestTempVC(t, fake, seedStore(t, testHub(), second))
+		captures := countCaptures(t)
+
+		tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+		tv.handleVoiceStateUpdate(voiceEvent("user-2", testTempVCHub, member("B")))
+		tv.handleVoiceStateUpdate(voiceEvent("user-3", "hub-2", member("C")))
+
+		if *captures != 2 {
+			t.Errorf("captures = %d, want 2: one streak per hub", *captures)
+		}
+	})
+}
+
+// setDeleteErr changes what the next deletes return, under the fake's lock.
+func (f *fakeTempVCManager) setDeleteErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleteErr = err
+}
+
+// spawnAndLeave drives a member through the hub into a fresh spawned channel
+// and out again, so the runtime attempts one delete.
+func spawnAndLeave(tv *TempVC, fake *fakeTempVCManager, userID, channelID string) {
+	fake.setNextChannel(channelID)
+	m := member(userID)
+	tv.handleVoiceStateUpdate(voiceEvent(userID, testTempVCHub, m))
+	tv.handleVoiceStateUpdate(voiceEvent(userID, channelID, m))
+	tv.handleVoiceStateUpdate(voiceEvent(userID, "", m))
+}
+
+func TestTempVCDeleteFailuresClassify(t *testing.T) {
+	t.Run("429 is a WARN line and the channel stays tracked", func(t *testing.T) {
+		fake := newFakeTempVCManager()
+		fake.deleteErr = restError(http.StatusTooManyRequests, 0, "You are being rate limited.")
+		st := seedStore(t, testHub())
+		tv := newTestTempVC(t, fake, st)
+		captures := countCaptures(t)
+
+		spawnAndLeave(tv, fake, "user-a", "chan-a")
+
+		if *captures != 0 {
+			t.Errorf("captures = %d, want 0", *captures)
+		}
+		if rows := spawnedRows(t, st); len(rows) != 1 {
+			t.Fatalf("rows = %+v, want the row kept for the next attempt", rows)
+		}
+		fake.setDeleteErr(nil)
+		tv.handleGuildCreate(guildCreate([]*discordgo.Channel{
+			voiceChannel(testTempVCHub, testTempVCCategory, "Hub"),
+			voiceChannel("chan-a", testTempVCCategory, "Voice - 1"),
+		}))
+		if ids := fake.deletedIDs(); len(ids) != 1 || ids[0] != "chan-a" {
+			t.Errorf("deleted = %v, want chan-a on the sweep's retry", ids)
+		}
+	})
+
+	t.Run("403 captures once per streak and a success opens the next", func(t *testing.T) {
+		fake := newFakeTempVCManager()
+		forbidden := restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, "Missing Permissions")
+		fake.deleteErr = forbidden
+		st := seedStore(t, testHub())
+		tv := newTestTempVC(t, fake, st)
+		captures := countCaptures(t)
+
+		spawnAndLeave(tv, fake, "user-a", "chan-a")
+		spawnAndLeave(tv, fake, "user-b", "chan-b")
+		if *captures != 1 {
+			t.Fatalf("captures = %d after two failed deletes, want 1", *captures)
+		}
+		if rows := spawnedRows(t, st); len(rows) != 2 {
+			t.Fatalf("rows = %+v, want both kept", rows)
+		}
+
+		fake.setDeleteErr(nil)
+		tv.handleGuildCreate(guildCreate([]*discordgo.Channel{
+			voiceChannel(testTempVCHub, testTempVCCategory, "Hub"),
+			voiceChannel("chan-a", testTempVCCategory, "Voice - 1"),
+			voiceChannel("chan-b", testTempVCCategory, "Voice - 2"),
+		}))
+		if rows := spawnedRows(t, st); len(rows) != 0 {
+			t.Fatalf("rows = %+v, want none once the deletes go through", rows)
+		}
+
+		fake.setDeleteErr(forbidden)
+		spawnAndLeave(tv, fake, "user-c", "chan-c")
+		if *captures != 2 {
+			t.Errorf("captures = %d after a success and a new failure, want 2", *captures)
+		}
+	})
+
+	t.Run("transport captures", func(t *testing.T) {
+		fake := newFakeTempVCManager()
+		fake.deleteErr = errors.New("dial tcp: connection refused")
+		tv := newSeededTempVC(t, fake)
+		captures := countCaptures(t)
+
+		spawnAndLeave(tv, fake, "user-a", "chan-a")
+
+		if *captures != 1 {
+			t.Errorf("captures = %d, want 1", *captures)
+		}
+	})
 }
