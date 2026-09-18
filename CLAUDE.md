@@ -89,10 +89,6 @@ Canonical names used verbatim (`needs-triage`, `needs-info`, `ready-for-agent`, 
 
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
-## Agent-cycle config
-
-The headings below are consumed by `syni-run-on-issue`. Edit freely; the orchestrator re-reads them on every run.
-
 ## CI gate
 
 ```bash
