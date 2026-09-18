@@ -69,8 +69,8 @@ type SpawnedChannel struct {
 }
 
 // Store is the one seam between the bot and its database. Two implementations:
-// Postgres here and Fake for tests. Guild settings and the change log arrive
-// with the tickets that need them.
+// Postgres here and Fake for tests. The change log arrives with the ticket
+// that needs it.
 type Store interface {
 	// GetHub returns the hub with this ID, or ErrNotFound.
 	GetHub(ctx context.Context, id int64) (Hub, error)
@@ -94,4 +94,12 @@ type Store interface {
 	// ListSpawnedChannels returns every spawned channel row, in no promised
 	// order.
 	ListSpawnedChannels(ctx context.Context) ([]SpawnedChannel, error)
+
+	// GetGuildModeratorRoles returns the guild-wide moderator role IDs, the
+	// roles that may rename any spawned channel of every hub. A guild with no
+	// row reads back as an empty set with no error. Same set rule as
+	// Hub.ModeratorRoleIDs: no promised order, and nil and empty are one thing.
+	GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error)
+	// SetGuildModeratorRoles replaces the guild-wide moderator role IDs.
+	SetGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string) error
 }

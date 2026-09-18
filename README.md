@@ -30,6 +30,7 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/warden-bulkadd-internal` | Add a validated unit's roster to the internal Warden role |
 | `/helpline` | Crisis and mental health support resources, optionally addressed to a member |
 | `/enlist` | The enlistment process, with a link to the application |
+| `/voice-rename` | Rename the spawned voice channel you are in |
 
 The registered set lives in `commands/registry.go` — update this table when it changes.
 
@@ -94,7 +95,7 @@ Not checked at startup, but each one silently disables something:
 | `LOG_LEVEL` | Defaults to `INFO`. Accepts `DEBUG`, `INFO`, `WARN`, `ERROR` — **uppercase only**, anything else silently means `INFO` (including the `default` that `.env.example` ships). `DEBUG` shows per-post LOA parse failures. |
 | `DISCORDGO_LOG_LEVEL` | Defaults to `ERROR`, so discordgo reports only its own failures. Accepts `ERROR`, `WARN`, `INFO`, `DEBUG`; anything else means `ERROR`. `WARN` adds the frame the gateway sent when startup fails with `Discord session unavailable`. `DEBUG` also needs `LOG_LEVEL=DEBUG`, and logs every gateway event discordgo does not recognise with its full payload. |
 | `SENTRY_DSN` | Sentry stays off; the bot logs `Sentry disabled (SENTRY_DSN not set)`. |
-| `BOT_DB_DSN` | The bot's own Postgres store (hubs and spawned channels for temporary voice channels) stays off; the bot logs `BOT_DB_DSN not set, bot store disabled` once and every command works as before. `.env.example` leaves it empty on purpose. Set it and the bot pings the database with a short retry, runs its migrations, loads the hub rows for temporary voice channels (`Starting temp voice channels`), and only then opens the Discord session; a database it cannot reach or migrate stops the bot with `Bot store unavailable`. With no hub rows the feature does nothing; rows arrive through the panel. Under compose the value is `postgres://cavbot:<POSTGRES_PASSWORD>@postgres:5432/cavbot?sslmode=disable`. |
+| `BOT_DB_DSN` | The bot's own Postgres store (hubs and spawned channels for temporary voice channels) stays off; the bot logs `BOT_DB_DSN not set, bot store disabled` once, every other command works as before, and `/voice-rename` refuses every invocation. `.env.example` leaves it empty on purpose. Set it and the bot pings the database with a short retry, runs its migrations, loads the hub rows for temporary voice channels (`Starting temp voice channels`), and only then opens the Discord session; a database it cannot reach or migrate stops the bot with `Bot store unavailable`. With no hub rows the feature does nothing; rows arrive through the panel. Under compose the value is `postgres://cavbot:<POSTGRES_PASSWORD>@postgres:5432/cavbot?sslmode=disable`. |
 | `PANEL_ADDR` | The panel, the bot's web UI, does not listen; the bot logs `PANEL_ADDR not set, panel disabled` once. Set it (`:8080` under compose) and every other `PANEL_*` variable but `PANEL_GROUP_IDS` is required; a missing one stops the bot with `Panel misconfigured` before the Discord session opens. The panel also needs `BOT_DB_DSN`, because the hub page reads the store on every load; without it the bot logs `BOT_DB_DSN not set, panel disabled` and runs with no panel. The listener starts after READY and logs `Panel listening`. `.env.example` documents each `PANEL_*` variable. |
 | `POSTGRES_PASSWORD` | Read by the `postgres` service in `docker-compose.yml`, not by the bot. `.env.example` ships `change-me`; a blank value makes the image refuse to start and the bot wait on its healthcheck forever. Only the first boot of an empty volume reads it. |
 | `APP_ENV` | Only tags Sentry events with an environment. No effect unless `SENTRY_DSN` is also set. |
@@ -152,7 +153,7 @@ report scheduler`, and finally `Bot is now running. Press CTRL-C to exit`. That
 last line is the success signal — anything that stops earlier is a failed
 start.
 
-Expect a pause of roughly 40 seconds on `Registering commands`. The twelve
+Expect a pause of roughly 40 seconds on `Registering commands`. The thirteen
 commands are created one at a time and Discord rate-limits them, so a silent
 console there is normal, not a hang.
 

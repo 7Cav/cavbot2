@@ -12,7 +12,7 @@ import (
 // Registration is what makes the command exist: unregistered, Discord never
 // creates it and no interaction ever routes to the handler.
 func TestRegistry_RegistersEnlist(t *testing.T) {
-	reg := NewRegistry()
+	reg := NewRegistry(nil)
 
 	for _, def := range reg.GetCommands() {
 		if def.Name == "enlist" {

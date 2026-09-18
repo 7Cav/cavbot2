@@ -288,3 +288,46 @@ func (p *Postgres) ListSpawnedChannels(ctx context.Context) ([]SpawnedChannel, e
 	}
 	return out, nil
 }
+
+// GetGuildModeratorRoles implements Store. No row is an empty set, not an
+// error, since a guild whose guild-wide roles were never saved has none.
+func (p *Postgres) GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error) {
+	var raw []byte
+	err := p.db.QueryRowContext(ctx,
+		`SELECT moderator_role_ids FROM guild_settings WHERE guild_id = $1`, guildID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get guild moderator roles of guild %q: %w", guildID, err)
+	}
+	var roles []string
+	if err := json.Unmarshal(raw, &roles); err != nil {
+		return nil, fmt.Errorf("decode guild moderator roles of guild %q: %w", guildID, err)
+	}
+	if roles == nil {
+		roles = []string{}
+	}
+	return roles, nil
+}
+
+// SetGuildModeratorRoles implements Store. The row is keyed on guild_id: a
+// conflict replaces the set in place.
+func (p *Postgres) SetGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string) error {
+	if roleIDs == nil {
+		roleIDs = []string{}
+	}
+	rolesJSON, err := json.Marshal(roleIDs)
+	if err != nil {
+		return fmt.Errorf("encode guild moderator roles: %w", err)
+	}
+	_, err = p.db.ExecContext(ctx, `
+		INSERT INTO guild_settings (guild_id, moderator_role_ids)
+		VALUES ($1, $2)
+		ON CONFLICT (guild_id) DO UPDATE SET moderator_role_ids = EXCLUDED.moderator_role_ids`,
+		guildID, rolesJSON)
+	if err != nil {
+		return fmt.Errorf("set guild moderator roles of guild %q: %w", guildID, err)
+	}
+	return nil
+}

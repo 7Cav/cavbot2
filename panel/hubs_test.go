@@ -78,6 +78,10 @@ func (f *fakeDiscord) ChannelDelete(channelID, _ string) (*discordgo.Channel, er
 	return &discordgo.Channel{ID: channelID}, nil
 }
 
+func (f *fakeDiscord) ChannelEdit(channelID string, data *discordgo.ChannelEdit, _ string) (*discordgo.Channel, error) {
+	return &discordgo.Channel{ID: channelID, Name: data.Name}, nil
+}
+
 func (f *fakeDiscord) GuildMemberMove(_, _ string, _ *string) error { return nil }
 
 func (f *fakeDiscord) ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error) {
