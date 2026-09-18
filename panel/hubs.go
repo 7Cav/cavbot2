@@ -433,6 +433,23 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, _ ac
 	return stored, nil
 }
 
+// remove deletes a hub's row and drops it from the runtime, so a join to its
+// channel spawns nothing more. No Discord call: the hub channel stays, so a
+// removal is undone by registering the channel again. Spawned channels of
+// the hub keep their rows and die when empty, which the runtime does on its
+// own. store.ErrNotFound means no hub has the ID.
+func (s *hubService) remove(ctx context.Context, hubID int64, _ actor) (store.Hub, error) {
+	hub, err := s.deps.Store.GetHub(ctx, hubID)
+	if err != nil {
+		return store.Hub{}, err
+	}
+	if err := s.deps.Store.DeleteHub(ctx, hub.ID); err != nil {
+		return store.Hub{}, fmt.Errorf("delete hub: %w", err)
+	}
+	s.deps.Runtime.RemoveHub(hub.HubChannelID)
+	return hub, nil
+}
+
 // applyEdit validates the edit form and puts its values on the hub. The
 // first refusal wins, as a *fieldError naming the field; the hub is then
 // half written and must not be stored.

@@ -536,3 +536,54 @@ func TestUpdateRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
 		})
 	}
 }
+
+func TestUnknownHubIsNotFound(t *testing.T) {
+	for _, path := range []string{"/hubs/999", "/hubs/999/remove"} {
+		t.Run(path, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+
+			res := w.b.postForm(path, updateForm())
+
+			if res.StatusCode != http.StatusNotFound {
+				t.Errorf("status = %d, want 404", res.StatusCode)
+			}
+			if hubs := storedHubs(t, w.st); len(hubs) != 1 || hubs[0].BaseString != "Arma Voice" {
+				t.Errorf("stored hubs = %+v, want the one pre-stored hub unchanged", hubs)
+			}
+			if entries := storedChangeLog(t, w.st, 0); len(entries) != 0 {
+				t.Errorf("appended %d entries under no hub, want 0", len(entries))
+			}
+		})
+	}
+}
+
+func TestRemoveDeletesTheRowLeavesTheChannelAndStopsSpawning(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	w.join("user-a", "hub-1")
+	if n := w.discord.createCount(); n != 1 {
+		t.Fatalf("the first join made %d creates, want 1", n)
+	}
+
+	res := w.b.postForm(hubPath(t, w.st, "hub-1")+"/remove", nil)
+
+	assertRedirect(t, res, "/")
+	if hubs := storedHubs(t, w.st); len(hubs) != 0 {
+		t.Errorf("stored hubs after remove = %+v, want none", hubs)
+	}
+	if deleted := w.discord.deletes(); len(deleted) != 0 {
+		t.Errorf("remove deleted channels %v, want none: the hub channel and its spawned channels stay", deleted)
+	}
+	rows, err := w.st.ListSpawnedChannels(context.Background())
+	if err != nil {
+		t.Fatalf("ListSpawnedChannels: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ChannelID != "spawn-1" {
+		t.Errorf("spawned rows after remove = %+v, want spawn-1 kept", rows)
+	}
+	w.join("user-b", "hub-1")
+	if n := w.discord.createCount(); n != 1 {
+		t.Errorf("a join after remove made %d creates in all, want 1: nothing spawns from a removed hub", n)
+	}
+}

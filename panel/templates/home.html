@@ -121,6 +121,11 @@
     </div>
     <div class="submit-row"><button type="submit" class="btn btn--cta">Save</button> <a class="btn" href="/">Back to the list</a></div>
   </form>
+  <form method="post" action="/hubs/{{.ID}}/remove" class="block">
+    <h2 class="block-header">Remove this hub</h2>
+    <div class="block-row">The hub channel stays in Discord, so registering it again undoes this. Channels this hub spawned stay until they empty.</div>
+    <div class="submit-row"><button type="submit" class="btn btn--danger" data-field="remove">Remove hub</button></div>
+  </form>
   </section>
 {{end}}
 {{end}}

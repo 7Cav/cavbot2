@@ -164,6 +164,7 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", p.withSession(p.homePage))
 	mux.HandleFunc("POST /hubs", p.withSession(p.registerHub))
 	mux.HandleFunc("POST /hubs/{id}", p.withSession(p.updateHub))
+	mux.HandleFunc("POST /hubs/{id}/remove", p.withSession(p.removeHub))
 	protected := http.NewCrossOriginProtection().Handler(mux)
 	// A panic in a handler is recovered here, through the same path every
 	// other goroutine uses (ADR 0001), before net/http's own recovery would
@@ -469,4 +470,26 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 	utils.Info("Panel hub updated", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
 		"username", sess.username, "forum_user_id", sess.userID)
 	http.Redirect(w, r, "/?hub="+strconv.FormatInt(hub.ID, 10), http.StatusSeeOther)
+}
+
+// removeHub is POST /hubs/{id}/remove: one service call, then a redirect to
+// the list the hub is gone from.
+func (p *Panel) removeHub(w http.ResponseWriter, r *http.Request, sess session) {
+	id, ok := hubIDOf(r)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	hub, err := p.hubs.remove(r.Context(), id, actor{userID: sess.userID, username: sess.username})
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		p.serverError(w, "hub remove", err)
+		return
+	}
+	utils.Info("Panel hub removed", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
+		"base_string", hub.BaseString, "username", sess.username, "forum_user_id", sess.userID)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
