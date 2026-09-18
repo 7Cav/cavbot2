@@ -113,9 +113,12 @@ type fieldView struct {
 var diffFieldOrder = []string{fieldHubChannel, fieldBaseString, fieldPermissionSource,
 	fieldModeratorRoles, fieldUserLimit, fieldBitrate, fieldEnabled}
 
-// changeViews decodes stored entries for the form. An entry whose diff does
-// not decode is shown with no fields rather than dropped: the save happened.
-func changeViews(entries []store.ChangeLogEntry) []changeView {
+// changeViews decodes stored entries for the form. Moderator roles are
+// stored as IDs and shown by name where the guild still has the role;
+// roleNames maps the guild's roles as read at this page load. An entry
+// whose diff does not decode is shown with no fields rather than dropped:
+// the save happened.
+func changeViews(entries []store.ChangeLogEntry, roleNames map[string]string) []changeView {
 	views := make([]changeView, 0, len(entries))
 	for _, e := range entries {
 		v := changeView{ID: e.ID, Username: e.ForumUsername, At: e.At, Action: e.Action}
@@ -129,7 +132,11 @@ func changeViews(entries []store.ChangeLogEntry) []changeView {
 				if !ok {
 					continue
 				}
-				v.Fields = append(v.Fields, fieldView{Field: field, Before: valueText(c.Before), After: valueText(c.After)})
+				names := roleNames
+				if field != fieldModeratorRoles {
+					names = nil
+				}
+				v.Fields = append(v.Fields, fieldView{Field: field, Before: valueText(c.Before, names), After: valueText(c.After, names)})
 			}
 		}
 		views = append(views, v)
@@ -139,8 +146,9 @@ func changeViews(entries []store.ChangeLogEntry) []changeView {
 
 // valueText renders one diff value for the form: a string as itself, a
 // list joined with commas, a bool as on or off, null and an empty list as
-// none, a number as written.
-func valueText(raw json.RawMessage) string {
+// none, a number as written. names, when set, replaces each list item that
+// is a key of it; an item with no name shows as itself.
+func valueText(raw json.RawMessage, names map[string]string) string {
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return string(raw)
@@ -158,7 +166,11 @@ func valueText(raw json.RawMessage) string {
 	case []any:
 		parts := make([]string, 0, len(v))
 		for _, item := range v {
-			parts = append(parts, fmt.Sprint(item))
+			text := fmt.Sprint(item)
+			if name, ok := names[text]; ok {
+				text = name
+			}
+			parts = append(parts, text)
 		}
 		if len(parts) == 0 {
 			return "none"

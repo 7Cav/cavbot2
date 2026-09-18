@@ -2,8 +2,9 @@
 // signed in through the forum's OAuth2; the decision and its reasons are in
 // docs/temp-vc-decisions.md. It holds the sign-in, the panel session, the
 // group check, and the hub page: the hub list with each hub's live spawned
-// count, and the register form. Editing, removal and the change log arrive
-// with later tickets.
+// count, the register form, each hub's edit form with its change log, and
+// the remove action. Create, the hub channel name field, the broken hub
+// state and the last spawn failure arrive with a later ticket.
 package panel
 
 import (

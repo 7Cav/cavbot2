@@ -67,6 +67,8 @@ img { max-width: 100%; }
 .btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .btn--cta { color: #000; background: var(--gold); border-color: var(--gold-lo) var(--gold-hi) var(--gold-hi) var(--gold-lo); }
 .btn--cta:hover { background: #eed14e; color: #000; }
+.btn--danger { border-color: var(--danger-hi); color: #f1c9cb; }
+.btn--danger:hover { background: var(--danger-hi); color: #fff; }
 
 /* Blocks, as the forum draws them. */
 .block { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 2px 2px 2px rgba(0,0,0,.04); margin-bottom: 12px; }
@@ -107,6 +109,21 @@ img { max-width: 100%; }
   background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--radius);
 }
 .field input:focus, .field select:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); }
+fieldset.field { margin: 0; padding: 0; border: 0; min-width: 0; }
+fieldset.field legend { padding: 0; }
+.check { display: block; padding: 4px 0; color: var(--text-hi); }
+.check input { width: auto; display: inline; margin: 0 6px 0 0; vertical-align: middle; accent-color: var(--gold); }
+.field .check input { width: auto; display: inline; }
+
+/* The change log under a hub's form. */
+.change-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 6px; }
+.change-who { color: var(--text-hi); font-weight: 500; }
+.change-head time { font-size: 13px; color: var(--text-mute); }
+.change-fields { margin: 0; font-size: 14px; }
+.change-fields > div { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 8px; padding: 2px 0; }
+.change-fields dt { color: var(--text-mute); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.change-fields dd { margin: 0; color: var(--text-hi); overflow-wrap: anywhere; }
+.change-fields .arrow { color: var(--text-mute); padding: 0 4px; }
 
 /* The rail and the page beside it. */
 .console { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100dvh; }
@@ -138,6 +155,7 @@ img { max-width: 100%; }
   .rail .item.is-selected { border-bottom-color: var(--gold); background: transparent; }
   .rail .me { margin: 0 0 0 auto; border-top: 0; padding: 8px 16px; display: flex; align-items: center; gap: 10px; }
   .rail .me small { display: none; }
+  .change-fields > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .rail .me .name { margin: 0; }
   .rail .foot { margin: 0 0 0 auto; border-top: 0; padding: 8px 16px; }
   .rail .ver { display: none; }

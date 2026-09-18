@@ -299,7 +299,11 @@ func (s *hubService) form(ctx context.Context, hubID int64) (*editPage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list change log: %w", err)
 	}
-	page := &editPage{ID: hub.ID, Form: editInputOf(hub), Changes: changeViews(entries)}
+	roleNames := make(map[string]string, len(roles))
+	for _, r := range roles {
+		roleNames[r.ID] = r.Name
+	}
+	page := &editPage{ID: hub.ID, Form: editInputOf(hub), Changes: changeViews(entries, roleNames)}
 	if ch, ok := sn.guild.channel(hub.HubChannelID); ok {
 		page.ChannelName = ch.Name
 		page.CategoryName = sn.guild.categoryName(ch)
