@@ -67,21 +67,18 @@
       <div class="field">
         <span class="field-label">Hub channel</span>
         <span data-field="channel_name">{{if .ChannelName}}{{.ChannelName}}{{else}}<span class="off">not in the server</span>{{end}}</span>
-        <span class="field-hint">Fixed at register. To move a hub to another channel, remove it and register the other channel.</span>
       </div>
     </div>
     <div class="block-row">
       <div class="field">
         <span class="field-label">Category</span>
         <span data-field="category_name">{{if .CategoryName}}{{.CategoryName}}{{else}}<span class="off">none</span>{{end}}</span>
-        <span class="field-hint">Read from the hub channel's parent in Discord. Spawned channels go under it.</span>
       </div>
     </div>
     <div class="block-row">
       <label class="field">
         <span class="field-label">Base string</span>
         <input type="text" name="base_string" data-field="base_string" value="{{.Form.BaseString}}" maxlength="90" required>
-        <span class="field-hint">Cavbot2 names spawned channels from it: "Arma Voice" gives "Arma Voice - 1". Live channels keep their names.</span>
       </label>
     </div>
     <div class="block-row">
@@ -91,14 +88,13 @@
           <option value="category"{{if eq .Form.PermissionSource "category"}} selected{{end}}>Category</option>
           <option value="hub_channel"{{if eq .Form.PermissionSource "hub_channel"}} selected{{end}}>Hub channel</option>
         </select>
-        <span class="field-hint">Category: a spawned channel copies the category's permissions. Hub channel: it copies the hub channel's own, for a stricter hub inside a looser category.</span>
       </label>
     </div>
     <div class="block-row">
       <fieldset class="field" data-field="moderator_roles">
         <legend class="field-label">Moderator roles</legend>
         {{range .Roles}}<label class="check"><input type="checkbox" name="moderator_roles" value="{{.ID}}"{{if .Checked}} checked{{end}}> {{.Name}}</label>{{else}}<span class="off">The server has no roles to offer.</span>{{end}}
-        <span class="field-hint">Members with one of these roles may rename any channel this hub spawns.</span>
+        <span class="field-hint">These roles allow renaming regardless of ownership.</span>
       </fieldset>
     </div>
     <div class="block-row">
@@ -117,13 +113,11 @@
     </div>
     <div class="block-row">
       <label class="check"><input type="checkbox" name="enabled" data-field="enabled"{{if .Form.Enabled}} checked{{end}}> Enabled</label>
-      <span class="field-hint">A disabled hub keeps its channel and its settings and spawns nothing.</span>
     </div>
     <div class="submit-row"><button type="submit" class="btn btn--cta">Save</button> <a class="btn" href="/">Back to the list</a></div>
   </form>
   <form method="post" action="/hubs/{{.ID}}/remove" class="block">
     <h2 class="block-header">Remove this hub</h2>
-    <div class="block-row">The hub channel stays in Discord, so registering it again undoes this. Channels this hub spawned stay until they empty.</div>
     <div class="submit-row"><button type="submit" class="btn btn--danger" data-field="remove">Remove hub</button></div>
   </form>
   <div class="block">
