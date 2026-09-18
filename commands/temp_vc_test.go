@@ -328,7 +328,8 @@ func TestTempVCJoinSpawnsFromStoredHub(t *testing.T) {
 	st := seedStore(t, testHub())
 	tv := newTestTempVC(t, fake, st)
 
-	tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, &discordgo.Member{Nick: "Smith"}))
+	// The creator holds a rank role, so the row names them as owner.
+	tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("Smith", testRankSGT)))
 
 	creates := fake.recordedCreates()
 	if len(creates) != 1 {
@@ -371,11 +372,12 @@ func TestTempVCJoinSpawnsFromStoredHub(t *testing.T) {
 	}
 }
 
-// --- Interim ownership: hand control to the present member with the highest
-// rank role (lowest user ID is the final tiebreak), restore on the creator's
-// return. Bookkeeping only; nothing changes in Discord. ---
+// --- Ownership and handover (#291): the owner always holds a rank role, a
+// handover is final, and every change is one ownership notice in the spawned
+// channel's chat plus a row write. Bookkeeping only; ownership grants no
+// Discord permission. ---
 
-// Real rank role IDs (SGT outranks PVT) used to exercise the election.
+// Real rank role IDs from the ladder: CPT outranks SGT outranks PVT.
 const (
 	testRankSGT = "899328273752928318"
 	testRankPVT = "899328617081864202"
@@ -383,210 +385,73 @@ const (
 )
 
 // member builds a member with a nickname and optional rank role IDs, which
-// drive the election.
+// drive the handover rule.
 func member(nick string, roleIDs ...string) *discordgo.Member {
 	return &discordgo.Member{Nick: nick, Roles: roleIDs}
 }
 
-// spawnOwnedChannel drives the creator through hub join -> moved into "new-chan"
-// so the standard tracking (owner, occupants, memberMeta) is populated the same
-// way production would, then returns with the creator sitting in the channel.
-func spawnOwnedChannel(tv *TempVC, creatorID, nick string) {
-	tv.handleVoiceStateUpdate(voiceEvent(creatorID, testTempVCHub, member(nick)))
-	tv.handleVoiceStateUpdate(voiceEvent(creatorID, "new-chan", member(nick)))
+// spawnInto drives a member through hub join -> moved into channelID, so
+// tracking (owner, occupants, ranks) is populated the way production's event
+// sequence populates it, and returns with the member sitting in the channel.
+func spawnInto(tv *TempVC, fake *fakeTempVCManager, userID, channelID string, m *discordgo.Member) {
+	fake.setNextChannel(channelID)
+	tv.handleVoiceStateUpdate(voiceEvent(userID, testTempVCHub, m))
+	tv.handleVoiceStateUpdate(voiceEvent(userID, channelID, m))
 }
 
-// controllerOf reads the current interim controller of a channel under the lock.
-func (t *TempVC) controllerOf(channelID string) string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.controller[channelID]
+// noticesIn returns the messages sent to one channel's text chat, in order,
+// and checks each pings nobody: allowed mentions present, nothing parsed, no
+// users, no roles. Every ownership notice reads through here, so the check
+// is written once.
+func noticesIn(t *testing.T, fake *fakeTempVCManager, channelID string) []fakeMessage {
+	t.Helper()
+	var out []fakeMessage
+	for _, m := range fake.recordedMessages() {
+		if m.channelID != channelID {
+			continue
+		}
+		am := m.data.AllowedMentions
+		if am == nil || len(am.Parse) != 0 || len(am.Users) != 0 || len(am.Roles) != 0 {
+			t.Errorf("notice in %s has allowed mentions %+v, want nobody pingable", channelID, am)
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
-// TestOutranksForInterim covers the election comparator directly. Smaller
-// index = higher priority.
-func TestOutranksForInterim(t *testing.T) {
-	cases := []struct {
-		name       string
-		a          memberRankMeta
-		aID        string
-		b          memberRankMeta
-		bID        string
-		aOutranksB bool
-	}{
-		{"higher rank wins",
-			memberRankMeta{rankIdx: 4}, "z",
-			memberRankMeta{rankIdx: 9}, "a", true},
-		{"same rank, lowest ID wins",
-			memberRankMeta{rankIdx: 4}, "a",
-			memberRankMeta{rankIdx: 4}, "b", true},
-		{"lower rank loses despite lower ID",
-			memberRankMeta{rankIdx: 27}, "a",
-			memberRankMeta{rankIdx: 0}, "z", false},
+// rowFor reads one spawned channel row back from the store.
+func rowFor(t *testing.T, st store.Store, channelID string) (store.SpawnedChannel, bool) {
+	t.Helper()
+	for _, row := range spawnedRows(t, st) {
+		if row.ChannelID == channelID {
+			return row, true
+		}
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := outranksForInterim(tc.a, tc.aID, tc.b, tc.bID); got != tc.aOutranksB {
-				t.Errorf("outranksForInterim = %v, want %v", got, tc.aOutranksB)
-			}
-		})
-	}
+	return store.SpawnedChannel{}, false
 }
 
-// TestLowestRoleIndex covers deriving a member's rank index from their roles.
-func TestLowestRoleIndex(t *testing.T) {
-	idx := map[string]int{"hi": 0, "mid": 3, "lo": 7}
-	cases := []struct {
-		name  string
-		roles []string
-		want  int
-	}{
-		{"nil member -> fallback", nil, 99},
-		{"no matching role -> fallback", []string{"x", "y"}, 99},
-		{"single match", []string{"mid"}, 3},
-		{"best (lowest) of several", []string{"lo", "hi", "mid"}, 0},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var m *discordgo.Member
-			if tc.roles != nil {
-				m = &discordgo.Member{Roles: tc.roles}
-			}
-			if got := lowestRoleIndex(m, idx, 99); got != tc.want {
-				t.Errorf("lowestRoleIndex = %d, want %d", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestTempVCInterimHigherRankWins(t *testing.T) {
+func TestTempVCCreatorWithRankRoleOwnsAtCreate(t *testing.T) {
 	fake := newFakeTempVCManager()
-	tv := newSeededTempVC(t, fake)
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
 
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	// Two guests with different rank roles; the SGT outranks the PVT.
-	tv.handleVoiceStateUpdate(voiceEvent("g-pvt", "new-chan", member("Pvt", testRankPVT)))
-	tv.handleVoiceStateUpdate(voiceEvent("g-sgt", "new-chan", member("Sgt", testRankSGT)))
+	spawnInto(tv, fake, "user-1", "new-chan", member("Sgt", testRankSGT))
 
-	// No interim handoff happens while the creator is present.
-	if got := tv.controllerOf("new-chan"); got != "" {
-		t.Fatalf("controller = %q while creator present, want none", got)
+	if owner, tracked := tv.Owner("new-chan"); owner != "user-1" || !tracked {
+		t.Errorf("Owner(new-chan) = %q, %v, want the creator user-1, tracked", owner, tracked)
 	}
-
-	// Creator leaves -> the higher rank wins.
-	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
-
-	if got := tv.controllerOf("new-chan"); got != "g-sgt" {
-		t.Errorf("controller = %q, want g-sgt (the higher rank)", got)
+	if owner, tracked := tv.Owner(testTempVCHub); tracked {
+		t.Errorf("Owner(hub) = %q, tracked, want untracked: a hub channel is not a spawned channel", owner)
 	}
-}
-
-func TestTempVCInterimRankRoleBeatsNoRole(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newSeededTempVC(t, fake)
-
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	// A plain, role-less member and a PVT; the rank holder wins.
-	tv.handleVoiceStateUpdate(voiceEvent("a-plain", "new-chan", member("Nobody")))
-	tv.handleVoiceStateUpdate(voiceEvent("z-pvt", "new-chan", member("Pvt", testRankPVT)))
-
-	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
-
-	if got := tv.controllerOf("new-chan"); got != "z-pvt" {
-		t.Errorf("controller = %q, want the rank holder over the role-less member", got)
+	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "user-1" {
+		t.Errorf("row = %+v (present %v), want owner user-1", row, ok)
 	}
-}
-
-func TestTempVCInterimAnyoneEligible(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newSeededTempVC(t, fake)
-
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	// A single plain, role-less member still becomes interim owner: no gate.
-	tv.handleVoiceStateUpdate(voiceEvent("plain", "new-chan", member("just a name")))
-
-	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
-
-	if got := tv.controllerOf("new-chan"); got != "plain" {
-		t.Errorf("controller = %q, want the sole plain member (anyone is eligible)", got)
+	notices := noticesIn(t, fake, "new-chan")
+	if len(notices) != 1 {
+		t.Fatalf("notices in new-chan = %d, want one at create", len(notices))
 	}
-}
-
-func TestTempVCInterimOwnerRestoredOnCreatorReturn(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newSeededTempVC(t, fake)
-
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	tv.handleVoiceStateUpdate(voiceEvent("g-sgt", "new-chan", member("Sgt", testRankSGT)))
-	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
-
-	// Sanity: interim in place.
-	if got := tv.controllerOf("new-chan"); got != "g-sgt" {
-		t.Fatalf("controller = %q before return, want g-sgt", got)
-	}
-
-	// Creator returns -> the stand-in steps down; the creator's own claim holds.
-	tv.handleVoiceStateUpdate(voiceEvent("owner", "new-chan", member("CPL Owner")))
-
-	if got := tv.controllerOf("new-chan"); got != "" {
-		t.Errorf("controller = %q after creator returned, want none", got)
-	}
-}
-
-func TestTempVCInterimOwnerReelectedWhenStandInLeaves(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newSeededTempVC(t, fake)
-
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	// g-sgt outranks g-pvt, so g-sgt is elected first; when they leave, g-pvt
-	// is re-elected.
-	tv.handleVoiceStateUpdate(voiceEvent("g-sgt", "new-chan", member("Sgt", testRankSGT)))
-	tv.handleVoiceStateUpdate(voiceEvent("g-pvt", "new-chan", member("Pvt", testRankPVT)))
-	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner"))) // g-sgt elected
-	if got := tv.controllerOf("new-chan"); got != "g-sgt" {
-		t.Fatalf("controller = %q, want g-sgt first", got)
-	}
-
-	tv.handleVoiceStateUpdate(voiceEvent("g-sgt", "", member("Sgt", testRankSGT)))
-
-	if got := tv.controllerOf("new-chan"); got != "g-pvt" {
-		t.Errorf("controller = %q, want g-pvt after re-election", got)
-	}
-}
-
-func TestTempVCInterimHigherRankJoinerTakesOver(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newSeededTempVC(t, fake)
-
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	// Creator leaves with only a PVT present -> they hold interim.
-	tv.handleVoiceStateUpdate(voiceEvent("g-pvt", "new-chan", member("Pvt", testRankPVT)))
-	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
-	if got := tv.controllerOf("new-chan"); got != "g-pvt" {
-		t.Fatalf("controller = %q, want g-pvt initially", got)
-	}
-
-	// A CPT joins while the creator is away and takes over.
-	tv.handleVoiceStateUpdate(voiceEvent("g-cpt", "new-chan", member("Cpt", testRankCPT)))
-
-	if got := tv.controllerOf("new-chan"); got != "g-cpt" {
-		t.Errorf("controller = %q, want g-cpt after a higher rank joined", got)
-	}
-}
-
-func TestTempVCInterimOwnerTieBreaksByLowestID(t *testing.T) {
-	fake := newFakeTempVCManager()
-	tv := newSeededTempVC(t, fake)
-
-	spawnOwnedChannel(tv, "owner", "CPL Owner")
-	// Same rank -> tie -> lowest ID wins.
-	tv.handleVoiceStateUpdate(voiceEvent("z-sgt", "new-chan", member("Zulu", testRankSGT)))
-	tv.handleVoiceStateUpdate(voiceEvent("a-sgt", "new-chan", member("Alpha", testRankSGT)))
-
-	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("CPL Owner")))
-
-	if got := tv.controllerOf("new-chan"); got != "a-sgt" {
-		t.Errorf("controller = %q, want deterministic lowest-ID a-sgt", got)
+	if !strings.Contains(notices[0].data.Content, "user-1") {
+		t.Errorf("notice %q does not carry the owner's ID", notices[0].data.Content)
 	}
 }
 
@@ -1553,5 +1418,274 @@ func TestTempVCCapFailureRecordsTheFullCause(t *testing.T) {
 	got, ok := tv.LastSpawnFailure(storedHubID(t, st))
 	if !ok || got.Cause != SpawnFailureFull {
 		t.Errorf("LastSpawnFailure = %+v (present %v), want cause %q", got, ok, SpawnFailureFull)
+	}
+}
+
+func TestTempVCCreatorWithoutRankRoleMeansNoOwner(t *testing.T) {
+	fake := newFakeTempVCManager()
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+
+	spawnInto(tv, fake, "guest-1", "new-chan", member("Guest"))
+
+	if owner, tracked := tv.Owner("new-chan"); owner != "" || !tracked {
+		t.Errorf("Owner(new-chan) = %q, %v, want no owner, tracked", owner, tracked)
+	}
+	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "" {
+		t.Errorf("row = %+v (present %v), want an empty owner", row, ok)
+	}
+	notices := noticesIn(t, fake, "new-chan")
+	if len(notices) != 1 {
+		t.Fatalf("notices in new-chan = %d, want one at create", len(notices))
+	}
+	if strings.Contains(notices[0].data.Content, "guest-1") {
+		t.Errorf("notice %q names the guest creator, want no user ID", notices[0].data.Content)
+	}
+}
+
+func TestTempVCOwnerLeavesHighestRankTakesOver(t *testing.T) {
+	fake := newFakeTempVCManager()
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+
+	spawnInto(tv, fake, "owner", "new-chan", member("Sgt", testRankSGT))
+	tv.handleVoiceStateUpdate(voiceEvent("g-pvt", "new-chan", member("Pvt", testRankPVT)))
+	tv.handleVoiceStateUpdate(voiceEvent("g-cpt", "new-chan", member("Cpt", testRankCPT)))
+	if notices := noticesIn(t, fake, "new-chan"); len(notices) != 1 {
+		t.Fatalf("notices = %d while the owner is present, want the create notice alone", len(notices))
+	}
+
+	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("Sgt", testRankSGT)))
+
+	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "g-cpt" {
+		t.Errorf("row = %+v (present %v), want the CPT as owner", row, ok)
+	}
+	notices := noticesIn(t, fake, "new-chan")
+	if len(notices) != 2 {
+		t.Fatalf("notices = %d, want a second one for the handover", len(notices))
+	}
+	if !strings.Contains(notices[1].data.Content, "g-cpt") {
+		t.Errorf("handover notice %q does not carry the CPT's ID", notices[1].data.Content)
+	}
+}
+
+// A channel whose owner leaves with no rank holder present has no owner. That
+// is the none outcome inside CONTEXT.md's Handover entry ("with no such
+// occupant the channel has no owner"), so it is a handover: a row write with
+// an empty owner and a notice saying so.
+func TestTempVCOwnerLeavesWithNoRankHolderMeansNoOwner(t *testing.T) {
+	fake := newFakeTempVCManager()
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+
+	// IDs that no notice wording can contain by accident.
+	spawnInto(tv, fake, "sgt-1", "new-chan", member("Sgt", testRankSGT))
+	tv.handleVoiceStateUpdate(voiceEvent("guest-9", "new-chan", member("Guest")))
+
+	tv.handleVoiceStateUpdate(voiceEvent("sgt-1", "", member("Sgt", testRankSGT)))
+
+	if owner, tracked := tv.Owner("new-chan"); owner != "" || !tracked {
+		t.Errorf("Owner(new-chan) = %q, %v, want no owner, tracked", owner, tracked)
+	}
+	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "" {
+		t.Errorf("row = %+v (present %v), want an empty owner", row, ok)
+	}
+	notices := noticesIn(t, fake, "new-chan")
+	if len(notices) != 2 {
+		t.Fatalf("notices = %d, want a second one saying there is no owner", len(notices))
+	}
+	if c := notices[1].data.Content; strings.Contains(c, "sgt-1") || strings.Contains(c, "guest-9") {
+		t.Errorf("notice %q names an occupant, want no user ID", c)
+	}
+}
+
+func TestTempVCTieBreaksByLowestUserID(t *testing.T) {
+	fake := newFakeTempVCManager()
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+
+	// Two SGTs. The lowest user ID is the lowest snowflake: the 17 digit ID
+	// is the smaller number although it sorts after the 18 digit one as a
+	// string. The higher ID joins first, so taking the first occupant loses.
+	const older, newer = "99999999999999999", "100000000000000000"
+	spawnInto(tv, fake, "cpt-1", "new-chan", member("Cpt", testRankCPT))
+	tv.handleVoiceStateUpdate(voiceEvent(newer, "new-chan", member("Sgt", testRankSGT)))
+	tv.handleVoiceStateUpdate(voiceEvent(older, "new-chan", member("Sgt", testRankSGT)))
+
+	tv.handleVoiceStateUpdate(voiceEvent("cpt-1", "", member("Cpt", testRankCPT)))
+
+	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != older {
+		t.Errorf("row = %+v (present %v), want the lowest snowflake %s", row, ok, older)
+	}
+}
+
+func TestTempVCHandoverIsFinal(t *testing.T) {
+	fake := newFakeTempVCManager()
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+
+	// The creator outranks the SGT, so a rule that re-elected on every
+	// occupancy change would hand the channel back when they return.
+	spawnInto(tv, fake, "cpt-1", "new-chan", member("Cpt", testRankCPT))
+	tv.handleVoiceStateUpdate(voiceEvent("sgt-1", "new-chan", member("Sgt", testRankSGT)))
+	tv.handleVoiceStateUpdate(voiceEvent("cpt-1", "", member("Cpt", testRankCPT)))
+	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "sgt-1" {
+		t.Fatalf("row = %+v (present %v), want the SGT after the creator left", row, ok)
+	}
+
+	tv.handleVoiceStateUpdate(voiceEvent("cpt-1", "new-chan", member("Cpt", testRankCPT)))
+
+	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "sgt-1" {
+		t.Errorf("row = %+v (present %v), want the SGT kept: a returning creator is an ordinary occupant", row, ok)
+	}
+	if notices := noticesIn(t, fake, "new-chan"); len(notices) != 2 {
+		t.Errorf("notices = %d, want two (create and one handover), none for the return", len(notices))
+	}
+}
+
+func TestTempVCRankHolderJoiningOwnerlessChannelTakesOver(t *testing.T) {
+	fake := newFakeTempVCManager()
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+
+	spawnInto(tv, fake, "guest-1", "new-chan", member("Guest"))
+
+	tv.handleVoiceStateUpdate(voiceEvent("pvt-1", "new-chan", member("Pvt", testRankPVT)))
+
+	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "pvt-1" {
+		t.Errorf("row = %+v (present %v), want the PVT as owner", row, ok)
+	}
+	notices := noticesIn(t, fake, "new-chan")
+	if len(notices) != 2 {
+		t.Fatalf("notices = %d, want a second one for the handover", len(notices))
+	}
+	if !strings.Contains(notices[1].data.Content, "pvt-1") {
+		t.Errorf("handover notice %q does not carry the PVT's ID", notices[1].data.Content)
+	}
+}
+
+func TestTempVCHandoverRowWriteHealsAndCaptures(t *testing.T) {
+	t.Run("the handover upsert heals a channel whose create write failed", func(t *testing.T) {
+		fake := newFakeTempVCManager()
+		st := &failingStore{Fake: seedStore(t, testHub()), upsertSpawnedErr: errors.New("connection reset")}
+		tv := newTestTempVC(t, fake, st)
+		countCaptures(t)
+
+		spawnInto(tv, fake, "sgt-1", "new-chan", member("Sgt", testRankSGT))
+		if _, ok := rowFor(t, st, "new-chan"); ok {
+			t.Fatal("row present although the create write failed")
+		}
+		st.upsertSpawnedErr = nil
+		tv.handleVoiceStateUpdate(voiceEvent("pvt-1", "new-chan", member("Pvt", testRankPVT)))
+
+		tv.handleVoiceStateUpdate(voiceEvent("sgt-1", "", member("Sgt", testRankSGT)))
+
+		row, ok := rowFor(t, st, "new-chan")
+		if !ok || row.HubID != storedHubID(t, st) || row.Number != 1 || row.OwnerUserID != "pvt-1" {
+			t.Errorf("row = %+v (present %v), want the hub's ID, number 1 and owner pvt-1", row, ok)
+		}
+	})
+
+	t.Run("a failed handover write captures and the channel stays tracked", func(t *testing.T) {
+		fake := newFakeTempVCManager()
+		st := &failingStore{Fake: seedStore(t, testHub())}
+		tv := newTestTempVC(t, fake, st)
+		captures := countCaptures(t)
+
+		spawnInto(tv, fake, "sgt-1", "new-chan", member("Sgt", testRankSGT))
+		tv.handleVoiceStateUpdate(voiceEvent("pvt-1", "new-chan", member("Pvt", testRankPVT)))
+		st.upsertSpawnedErr = errors.New("connection reset")
+
+		tv.handleVoiceStateUpdate(voiceEvent("sgt-1", "", member("Sgt", testRankSGT)))
+
+		if *captures != 1 {
+			t.Errorf("captures = %d, want 1 for the failed handover write", *captures)
+		}
+		// The live owner is the PVT although the row still names the SGT.
+		if owner, tracked := tv.Owner("new-chan"); owner != "pvt-1" || !tracked {
+			t.Errorf("Owner(new-chan) = %q, %v, want pvt-1, tracked", owner, tracked)
+		}
+		if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "sgt-1" {
+			t.Errorf("row = %+v (present %v), want the stale create row kept", row, ok)
+		}
+		// Still tracked: the last occupant leaving deletes the channel.
+		tv.handleVoiceStateUpdate(voiceEvent("pvt-1", "", member("Pvt", testRankPVT)))
+		if ids := fake.deletedIDs(); len(ids) != 1 || ids[0] != "new-chan" {
+			t.Errorf("deleted = %v, want new-chan once it emptied", ids)
+		}
+	})
+}
+
+// guildMember builds a member with a user ID and optional rank role IDs, for
+// the member list a GUILD_CREATE payload carries.
+func guildMember(userID string, roleIDs ...string) *discordgo.Member {
+	return &discordgo.Member{User: &discordgo.User{ID: userID}, Roles: roleIDs}
+}
+
+// The sweep restores the owner from the row when they are present. An absent
+// owner counts as having left, and a row with no owner is a channel with no
+// owner, so both elect by the handover rule from the occupants, whose roles
+// come from the payload's member list. CONTEXT.md's Restart sweep entry: an
+// occupied channel's owner is "restored or elected by the handover rule".
+func TestTempVCRestartSweepRestoresOwnerOrElects(t *testing.T) {
+	fake := newFakeTempVCManager()
+	st := seedStore(t, testHub())
+	ctx := context.Background()
+	hubID := storedHubID(t, st)
+	for _, row := range []store.SpawnedChannel{
+		{ChannelID: "chan-p", HubID: hubID, Number: 1, OwnerUserID: "pvt-p"},
+		{ChannelID: "chan-q", HubID: hubID, Number: 2, OwnerUserID: "gone-q"},
+		{ChannelID: "chan-r", HubID: hubID, Number: 3},
+	} {
+		if err := st.UpsertSpawnedChannel(ctx, row); err != nil {
+			t.Fatalf("UpsertSpawnedChannel: %v", err)
+		}
+	}
+	tv := newTestTempVC(t, fake, st)
+
+	g := guildCreate(
+		[]*discordgo.Channel{
+			voiceChannel(testTempVCHub, testTempVCCategory, "Hub"),
+			voiceChannel("chan-p", testTempVCCategory, "Voice - 1"),
+			voiceChannel("chan-q", testTempVCCategory, "Voice - 2"),
+			voiceChannel("chan-r", testTempVCCategory, "Voice - 3"),
+		},
+		&discordgo.VoiceState{UserID: "pvt-p", ChannelID: "chan-p"},
+		&discordgo.VoiceState{UserID: "sgt-p", ChannelID: "chan-p"},
+		&discordgo.VoiceState{UserID: "guest-q", ChannelID: "chan-q"},
+		&discordgo.VoiceState{UserID: "sgt-q", ChannelID: "chan-q"},
+		&discordgo.VoiceState{UserID: "cpt-r", ChannelID: "chan-r"},
+	)
+	g.Members = []*discordgo.Member{
+		guildMember("pvt-p", testRankPVT),
+		guildMember("sgt-p", testRankSGT),
+		guildMember("guest-q"),
+		guildMember("sgt-q", testRankSGT),
+		guildMember("cpt-r", testRankCPT),
+	}
+	tv.handleGuildCreate(g)
+
+	// P: the row's owner is present and keeps the channel, outranked or not.
+	if owner, tracked := tv.Owner("chan-p"); owner != "pvt-p" || !tracked {
+		t.Errorf("Owner(chan-p) = %q, %v, want the row's owner pvt-p restored", owner, tracked)
+	}
+	if notices := noticesIn(t, fake, "chan-p"); len(notices) != 0 {
+		t.Errorf("notices in chan-p = %d, want none: a restored owner is no handover", len(notices))
+	}
+
+	// Q: the row's owner is absent, so the SGT takes over, ahead of the guest.
+	if row, ok := rowFor(t, st, "chan-q"); !ok || row.OwnerUserID != "sgt-q" {
+		t.Errorf("chan-q row = %+v (present %v), want owner sgt-q", row, ok)
+	}
+	if notices := noticesIn(t, fake, "chan-q"); len(notices) != 1 || !strings.Contains(notices[0].data.Content, "sgt-q") {
+		t.Errorf("notices in chan-q = %+v, want one carrying sgt-q", notices)
+	}
+
+	// R: no owner in the row, a CPT present: they take over.
+	if row, ok := rowFor(t, st, "chan-r"); !ok || row.OwnerUserID != "cpt-r" {
+		t.Errorf("chan-r row = %+v (present %v), want owner cpt-r", row, ok)
+	}
+	if notices := noticesIn(t, fake, "chan-r"); len(notices) != 1 || !strings.Contains(notices[0].data.Content, "cpt-r") {
+		t.Errorf("notices in chan-r = %+v, want one carrying cpt-r", notices)
 	}
 }

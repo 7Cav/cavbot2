@@ -26,10 +26,14 @@ import (
 // that grants no Discord permission.
 //
 // One row per spawned channel lives in the store: channel ID, hub, number,
-// owner. It is written after the create and deleted with the channel.
+// owner. It is written at create and at every handover and deleted with the
+// channel. Each create and each handover also posts the ownership notice in
+// the spawned channel's text chat, naming the owner or saying there is none,
+// and pinging nobody.
 //
 // A spawned channel is deleted the moment its last occupant leaves. The
-// restart sweep on GUILD_CREATE reads the rows and touches no channel it
+// restart sweep on GUILD_CREATE reads the rows, restores each channel's owner
+// from its row or elects one by the handover rule, and touches no channel it
 // holds no row for.
 //
 // A spawn that fails is one create per join: no retry, no backoff, no
@@ -104,18 +108,14 @@ type SpawnFailure struct {
 	Cause SpawnFailureCause
 }
 
-// The election below is the branch's stand-in model: while the creator is out
-// of the channel, a present occupant is elected to act for them, and the
-// creator's claim returns with them. Ticket #291 replaces it with the handover
-// rule in CONTEXT.md (the owner always holds a rank role, a handover is final)
-// and keeps the ranking. The ranking reads a member's Discord roles only, no
-// nickname parsing. The present occupants are ordered by:
-//
-//  1. rank role: their rank (tempVCRankRoles), and
-//  2. lowest user ID: a deterministic final tiebreak.
-//
-// The ladder is ordered most senior first (smaller index = higher priority),
-// and a member holding none of its roles sorts below every entry in it.
+// Ownership follows the handover rule in CONTEXT.md. The owner always holds
+// a rank role, or the channel has no owner: the creator at create if they
+// hold one, and when the owner leaves, the highest-ranked occupant with a
+// rank role, ties to the lowest user ID. A rank holder who joins a channel
+// with no owner takes it. A handover is final, so a returning creator is an
+// ordinary occupant. Ranks are read from the roles the gateway payloads
+// carry, against the ladder below, most senior first; a member holding none
+// of its roles is never a candidate. No API call per create or handover.
 
 // rankRole pairs a rank abbreviation with its Discord role ID. The abbreviation
 // is documentation only; the roleID is what the election matches against a
@@ -310,15 +310,11 @@ type TempVC struct {
 	// this two members joining one hub at the same moment would both take the
 	// smallest unused number.
 	pending map[int64]map[int]struct{}
-	// controller maps a spawned channel ID -> the occupant elected to act for
-	// the creator while the creator is out of the channel. Absent when the
-	// creator is present or the channel is empty. Replaced by the handover
-	// rule in #291.
-	controller map[string]string
-	// memberMeta caches each seen member's rank seniority, captured from
-	// gateway events (which carry the acting member), so an election reads ranks
-	// without a REST call per occupant. Keyed by user ID.
-	memberMeta map[string]memberRankMeta
+	// memberRank caches each seen member's index on the rank ladder, read
+	// from the member object a gateway event carries, so a handover ranks
+	// occupants without a REST call. Keyed by user ID; a member holding no
+	// rank role is noRankIndex.
+	memberRank map[string]int
 	// lastFailure holds each hub's last spawn failure, keyed by hub row ID.
 	// Absent once a spawn from that hub succeeds. Never written to the store.
 	lastFailure map[int64]SpawnFailure
@@ -333,16 +329,6 @@ type TempVC struct {
 	// ID, zero for a channel whose hub row is gone.
 	deleteCaptured map[int64]struct{}
 }
-
-// memberRankMeta is the cached election input for a member, read from their
-// roles: their rank index (smaller = higher; noRankIndex if none).
-type memberRankMeta struct {
-	rankIdx int
-}
-
-// worstMemberMeta is the election input for a member we have never cached (no
-// rank role), so an unseen occupant never outranks a known one.
-var worstMemberMeta = memberRankMeta{rankIdx: noRankIndex}
 
 // newTempVC builds the runtime state around a manager and a store and loads
 // the guild's hubs from the store. A store that cannot list them is an error:
@@ -360,8 +346,7 @@ func newTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		channelIndex:   make(map[string]int),
 		pending:        make(map[int64]map[int]struct{}),
 		deleting:       make(map[string]struct{}),
-		controller:     make(map[string]string),
-		memberMeta:     make(map[string]memberRankMeta),
+		memberRank:     make(map[string]int),
 		lastFailure:    make(map[int64]SpawnFailure),
 		createCaptured: make(map[int64]struct{}),
 		deleteCaptured: make(map[int64]struct{}),
@@ -406,6 +391,19 @@ func (t *TempVC) LastSpawnFailure(hubID int64) (SpawnFailure, bool) {
 	defer t.mu.Unlock()
 	f, ok := t.lastFailure[hubID]
 	return f, ok
+}
+
+// Owner reports who owns a spawned channel: the owner's user ID, or empty
+// when the channel has none, and whether the channel is a spawned channel the
+// runtime tracks at all. A hub channel or any other channel is untracked. The
+// rename command reads it to decide whether the invoker may rename.
+func (t *TempVC) Owner(channelID string) (userID string, tracked bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, ok := t.occupants[channelID]; !ok {
+		return "", false
+	}
+	return t.owners[channelID], true
 }
 
 // recordSpawnFailure notes why a hub's spawn just failed, stamped with the
@@ -499,9 +497,13 @@ func (t *TempVC) handleChannelDelete(c *discordgo.ChannelDelete) {
 // and runs the restart sweep over the stored rows. A row whose channel is
 // absent from the guild loses its row. A present, empty channel is deleted
 // with its row. A present, occupied channel is tracked again with its number
-// and owner from the row. No channel without a row is touched, so a channel
-// a human made is never deleted. GUILD_CREATE re-fires on gateway reconnects,
-// so this also resynchronizes tracking after any missed events.
+// from the row and its owner restored from the row; an owner absent from the
+// channel counts as having left, and the handover rule elects from the
+// occupants, whose ranks come from the payload's member list. No channel
+// without a row is touched, so a channel a human made is never deleted.
+// GUILD_CREATE re-fires on gateway reconnects, so this also resynchronizes
+// tracking after any missed events; a restored owner posts no notice, so a
+// reconnect is silent.
 //
 // A store that cannot list the rows leaves the in-memory state as it was: on
 // first connect that is empty, and on a reconnect it is the tracking from
@@ -543,22 +545,28 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	t.channelHub = make(map[string]int64)
 	t.channelIndex = make(map[string]int)
 	// pending is left alone: a create in flight across a reconnect still
-	// holds its number and releases it itself.
-	t.controller = make(map[string]string)
-	t.memberMeta = make(map[string]memberRankMeta)
+	// holds its number and releases it itself. memberRank is kept and
+	// overlaid from the payload: a rank learnt before the reconnect is
+	// still a rank.
 
+	// Ranks come from the payload's member list, and from any voice state
+	// that carries a member, so a handover at the sweep needs no REST fetch.
+	for _, m := range g.Members {
+		if m != nil && m.User != nil {
+			t.rememberMemberLocked(m.User.ID, m)
+		}
+	}
 	for _, vs := range g.VoiceStates {
 		if vs.ChannelID != "" {
 			t.userChannel[vs.UserID] = vs.ChannelID
 		}
-		// Seed the rank cache from any voice state that carries a member, so an
-		// election right after reconnect has ranks without a REST fetch.
 		if vs.Member != nil {
 			t.rememberMemberLocked(vs.UserID, vs.Member)
 		}
 	}
 
 	var gone, empty []string
+	var handovers []store.SpawnedChannel
 	for _, row := range rows {
 		if _, ok := present[row.ChannelID]; !ok {
 			gone = append(gone, row.ChannelID)
@@ -581,7 +589,12 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 			empty = append(empty, row.ChannelID)
 			continue
 		}
-		t.reconcileControllerLocked(row.ChannelID)
+		// The row's owner keeps the channel when present. An absent owner
+		// counts as having left, and the handover rule elects from the
+		// occupants.
+		if owner, changed := t.reconcileOwnerLocked(row.ChannelID); changed {
+			handovers = append(handovers, t.rowLocked(row.ChannelID, owner))
+		}
 	}
 	t.mu.Unlock()
 
@@ -590,6 +603,9 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	}
 	for _, id := range empty {
 		t.deleteIfStillEmpty(id)
+	}
+	for _, row := range handovers {
+		t.applyHandover(row)
 	}
 
 	utils.Info("Temp VC restart sweep complete",
@@ -628,19 +644,28 @@ func (t *TempVC) handleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	_, leftSpawned := t.occupants[oldChannel]
 	emptied := t.applyLeaveLocked(vs.UserID, oldChannel)
 	joinedSpawned := t.applyJoinLocked(vs.UserID, newChannel)
-	// Re-run the election on both sides of the move: leaving may have made the
-	// creator absent or removed the elected occupant; joining may have brought
-	// the creator back. Bookkeeping only; ownership changes nothing in Discord.
+	// The handover rule runs on both sides of the move: the owner may have
+	// left, or a rank holder may have joined a channel with no owner. Each
+	// change is a row write and a notice, both network calls made off-lock.
+	var handovers []store.SpawnedChannel
 	if leftSpawned {
-		t.reconcileControllerLocked(oldChannel)
+		if owner, changed := t.reconcileOwnerLocked(oldChannel); changed {
+			handovers = append(handovers, t.rowLocked(oldChannel, owner))
+		}
 	}
 	if joinedSpawned {
-		t.reconcileControllerLocked(newChannel)
+		if owner, changed := t.reconcileOwnerLocked(newChannel); changed {
+			handovers = append(handovers, t.rowLocked(newChannel, owner))
+		}
 	}
 	// The hub lookup happens under the lock because ApplyHub and RemoveHub
 	// change the map from other goroutines.
 	hub, isHub := t.hubs[newChannel]
 	t.mu.Unlock()
+
+	for _, row := range handovers {
+		t.applyHandover(row)
+	}
 
 	// The vacated channel emptied: delete it now. Off-lock, the delete is a
 	// network call.
@@ -680,72 +705,100 @@ func (t *TempVC) applyJoinLocked(userID, channelID string) bool {
 }
 
 // rememberMemberLocked caches a member's rank index, read from their roles,
-// for future elections. Caller holds mu.
+// for later handovers. Caller holds mu.
 func (t *TempVC) rememberMemberLocked(userID string, m *discordgo.Member) {
-	t.memberMeta[userID] = memberRankMeta{
-		rankIdx: lowestRoleIndex(m, rankRoleIndex, noRankIndex),
-	}
+	t.memberRank[userID] = lowestRoleIndex(m, rankRoleIndex, noRankIndex)
 }
 
-// electInterimControllerLocked picks the member who should hold interim
-// ownership of a spawned channel whose creator is currently absent. Every
-// occupant is eligible; they are ordered by rank role (the present occupant
-// with the highest of tempVCRankRoles wins), then by lowest user ID for
-// determinism. Returns "" only when the channel is empty. Caller holds mu.
-func (t *TempVC) electInterimControllerLocked(channelID string) string {
-	best := ""
-	var bestMeta memberRankMeta
-	for uid := range t.occupants[channelID] {
-		meta := t.metaForLocked(uid)
-		if best == "" || outranksForInterim(meta, uid, bestMeta, best) {
-			best, bestMeta = uid, meta
+// rankLocked returns a member's cached rank index, or noRankIndex when no
+// gateway payload has carried their member object, so an occupant of unknown
+// rank is never a candidate. Caller holds mu.
+func (t *TempVC) rankLocked(userID string) int {
+	if r, ok := t.memberRank[userID]; ok {
+		return r
+	}
+	return noRankIndex
+}
+
+// reconcileOwnerLocked applies the handover rule to a spawned channel whose
+// occupancy just changed. It returns the owner the channel settled on, empty
+// for none, and whether that differs from before. A present owner keeps the
+// channel. Otherwise the highest-ranked occupant with a rank role takes over,
+// ties to the lowest user ID, and with no such occupant the channel has no
+// owner. An untracked or empty channel changes nothing: an emptied one is
+// about to be deleted. Caller holds mu.
+func (t *TempVC) reconcileOwnerLocked(channelID string) (owner string, changed bool) {
+	occ, tracked := t.occupants[channelID]
+	if !tracked || len(occ) == 0 {
+		return "", false
+	}
+	current, has := t.owners[channelID]
+	if _, present := occ[current]; has && present {
+		return current, false
+	}
+	elected := t.electOwnerLocked(occ)
+	if elected == "" {
+		delete(t.owners, channelID)
+	} else {
+		t.owners[channelID] = elected
+	}
+	return elected, elected != current
+}
+
+// electOwnerLocked picks the occupant the handover rule names: the highest
+// rank on the ladder, then the lowest user ID. An occupant holding no rank
+// role, or whose roles no payload has carried, is not a candidate. Empty
+// means there is none. Caller holds mu.
+func (t *TempVC) electOwnerLocked(occ map[string]struct{}) string {
+	best, bestRank := "", noRankIndex
+	for uid := range occ {
+		rank := t.rankLocked(uid)
+		if rank >= noRankIndex {
+			continue
+		}
+		if best == "" || rank < bestRank || (rank == bestRank && lowerUserID(uid, best)) {
+			best, bestRank = uid, rank
 		}
 	}
 	return best
 }
 
-// metaForLocked returns a member's cached election input, or worstMemberMeta
-// when we have never seen their member object, so an uncached occupant never
-// displaces a known candidate. Caller holds mu.
-func (t *TempVC) metaForLocked(userID string) memberRankMeta {
-	if m, ok := t.memberMeta[userID]; ok {
-		return m
+// lowerUserID reports whether a sorts before b as a snowflake: the smaller
+// number. IDs are decimal strings with no leading zero, so a shorter one is
+// smaller and equal lengths compare as strings. 17, 18 and 19 digit IDs all
+// exist on the guild, so a plain string compare would rank a newer 18 digit
+// account below an older 17 digit one.
+func lowerUserID(a, b string) bool {
+	if len(a) != len(b) {
+		return len(a) < len(b)
 	}
-	return worstMemberMeta
+	return a < b
 }
 
-// outranksForInterim reports whether candidate (m, uid) should beat the current
-// best (bm, buid) for interim ownership: higher rank, then lower user ID.
-func outranksForInterim(m memberRankMeta, uid string, bm memberRankMeta, buid string) bool {
-	if m.rankIdx != bm.rankIdx {
-		return m.rankIdx < bm.rankIdx
+// rowLocked builds a spawned channel's row from the tracking state and an
+// owner, for the write that follows a handover. Caller holds mu.
+func (t *TempVC) rowLocked(channelID, owner string) store.SpawnedChannel {
+	return store.SpawnedChannel{
+		ChannelID:   channelID,
+		HubID:       t.channelHub[channelID],
+		Number:      t.channelIndex[channelID],
+		OwnerUserID: owner,
 	}
-	return uid < buid
 }
 
-// reconcileControllerLocked recomputes who should hold interim ownership of a
-// spawned channel and records it in controller. The creator keeps their claim;
-// interim control applies only while the creator is out of the channel. A
-// channel with no recorded owner never gets an interim owner. An emptied
-// channel is left alone, it is about to be deleted. Caller holds mu.
-func (t *TempVC) reconcileControllerLocked(channelID string) {
-	occ, tracked := t.occupants[channelID]
-	if !tracked || len(occ) == 0 {
-		return
+// applyHandover records an ownership change off-lock: the row is upserted
+// with the new owner, which also heals a channel whose create write failed,
+// and the ownership notice goes to the channel's chat. A failed write
+// captures and the channel stays tracked with its live owner.
+func (t *TempVC) applyHandover(row store.SpawnedChannel) {
+	ctx, cancel := t.storeContext()
+	defer cancel()
+	if err := t.st.UpsertSpawnedChannel(ctx, row); err != nil {
+		captureError("Temp VC handover row write failed", err,
+			"channel_id", row.ChannelID, "hub_id", row.HubID)
 	}
-
-	desired := ""
-	creator, hasCreator := t.owners[channelID]
-	if _, creatorPresent := occ[creator]; hasCreator && !creatorPresent {
-		// Creator is away: elect a stand-in from the (non-empty) occupants.
-		desired = t.electInterimControllerLocked(channelID)
-	}
-
-	if desired == "" {
-		delete(t.controller, channelID)
-		return
-	}
-	t.controller[channelID] = desired
+	t.postOwnershipNotice(row.ChannelID, row.OwnerUserID)
+	utils.Info("Temp VC handover", "channel_id", row.ChannelID, "hub_id", row.HubID, "owner_id", row.OwnerUserID)
 }
 
 // untrackLocked forgets a spawned channel. Caller holds mu.
@@ -754,7 +807,6 @@ func (t *TempVC) untrackLocked(channelID string) {
 	delete(t.owners, channelID)
 	delete(t.channelHub, channelID)
 	delete(t.channelIndex, channelID)
-	delete(t.controller, channelID)
 }
 
 // deleteIfStillEmpty deletes a spawned channel that just emptied. It re-checks
@@ -889,9 +941,17 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		return
 	}
 
+	// The creator owns the channel only when they hold a rank role; a guest's
+	// channel starts with no owner and the first rank holder to join takes it.
+	owner := ""
+	if holdsRankRole(vs.Member) {
+		owner = vs.UserID
+	}
 	t.mu.Lock()
 	t.occupants[channel.ID] = make(map[string]struct{})
-	t.owners[channel.ID] = vs.UserID
+	if owner != "" {
+		t.owners[channel.ID] = owner
+	}
 	t.channelHub[channel.ID] = hub.ID
 	t.channelIndex[channel.ID] = index
 	t.releaseChannelIndexLocked(hub.ID, index)
@@ -930,17 +990,44 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 
 	ctx, cancel := t.storeContext()
 	defer cancel()
-	row := store.SpawnedChannel{ChannelID: channel.ID, HubID: hub.ID, Number: index, OwnerUserID: vs.UserID}
+	row := store.SpawnedChannel{ChannelID: channel.ID, HubID: hub.ID, Number: index, OwnerUserID: owner}
 	if err := t.st.UpsertSpawnedChannel(ctx, row); err != nil {
 		// The channel is live and stays tracked in memory. Without its row a
 		// restart will not find it; docs/temp-vc-decisions.md accepts that.
 		captureError("Temp VC row write failed", err,
 			"channel_id", channel.ID, "hub_channel_id", hub.HubChannelID)
 	}
+	t.postOwnershipNotice(channel.ID, owner)
 
 	utils.Info("Temp VC created",
 		"channel_id", channel.ID, "name", name, "number", index,
-		"hub_channel_id", hub.HubChannelID, "hub_id", hub.ID, "owner_id", vs.UserID)
+		"hub_channel_id", hub.HubChannelID, "hub_id", hub.ID, "owner_id", owner)
+}
+
+// holdsRankRole reports whether a member holds any role on the rank ladder:
+// the one set the spec calls "Cav member". A nil member holds none.
+func holdsRankRole(m *discordgo.Member) bool {
+	return lowestRoleIndex(m, rankRoleIndex, noRankIndex) < noRankIndex
+}
+
+// postOwnershipNotice posts the ownership notice in a spawned channel's text
+// chat: one message naming the owner by mention, or saying nobody owns it.
+// The allowed mentions parse nothing, so the mention renders and pings
+// nobody. The voice channel status line is not used. A failed send is a WARN
+// line: the ownership change itself has already happened.
+func (t *TempVC) postOwnershipNotice(channelID, owner string) {
+	content := "Nobody owns this channel."
+	if owner != "" {
+		content = fmt.Sprintf("<@%s> owns this channel.", owner)
+	}
+	_, err := t.mgr.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Content:         content,
+		AllowedMentions: &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}},
+	})
+	if err != nil {
+		utils.Warn("Temp VC ownership notice not sent",
+			"channel_id", channelID, "owner_id", owner, "error", err)
+	}
 }
 
 // messageHubJoiner tells a member whose channel could not be created, in the
