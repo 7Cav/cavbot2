@@ -11,7 +11,7 @@ import (
 )
 
 // Startup checks (spec #285). After READY the bot tells on-call, through
-// Sentry, when the guild has changed under it: the rank ladder in code no
+// Sentry, when the guild has changed under it. The rank ladder in code no
 // longer matches the milpacs API, or the bot's own member has lost
 // Administrator. Either one breaks spawning or handover with no other
 // signal. A check that cannot fetch what it needs is a WARN line and no
@@ -48,7 +48,7 @@ func RunStartupChecks(ctx context.Context, mgr TempVCManager, guildID, botUserID
 	checkAdministrator(mgr, guildID, botUserID)
 }
 
-// checkRankLadder fetches the forum's rank list, drops Tester, and captures
+// checkRankLadder fetches the milpacs rank list, drops Tester, and captures
 // when the abbreviations or their order differ from tempVCRankRoles.
 func checkRankLadder(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, startupCheckTimeout)
@@ -115,7 +115,7 @@ func holdsAdministrator(guild *discordgo.Guild, member *discordgo.Member) bool {
 }
 
 // rankLadderDrift walks both lists by position and returns every position
-// where they disagree. Order counts: a swap reports both positions, and a
+// where they disagree. Order counts. A swap reports both positions, and a
 // list that ends first reports the other's tail.
 func rankLadderDrift(code []rankRole, api []string) []rankDrift {
 	var drift []rankDrift

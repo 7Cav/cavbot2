@@ -203,7 +203,7 @@ func main() {
 	// Startup checks (spec #285): rank ladder drift and a missing Administrator
 	// each capture to Sentry, once per process start. Their own goroutine, so
 	// neither fetch holds up command registration or a gateway handler. They
-	// need no store: the checks write nothing, and Administrator protects
+	// need no store. The checks write nothing, and Administrator protects
 	// /warden as much as spawning.
 	go func() {
 		defer utils.RecoverPanic("startup-checks")

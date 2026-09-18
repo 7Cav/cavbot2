@@ -19,25 +19,6 @@ const (
 	testPlainRoleID = "role-plain"
 )
 
-// capturedEvent is one call through the Sentry seam.
-type capturedEvent struct {
-	err error
-	kv  []any
-}
-
-// recordCaptures swaps the Sentry seam for a recorder and restores it after
-// the test. The checks run synchronously in these tests, so no lock is needed.
-func recordCaptures(t *testing.T) *[]capturedEvent {
-	t.Helper()
-	prev := captureError
-	var events []capturedEvent
-	captureError = func(_ string, err error, kv ...any) {
-		events = append(events, capturedEvent{err: err, kv: kv})
-	}
-	t.Cleanup(func() { captureError = prev })
-	return &events
-}
-
 // testerRank is the API's non-rank entry as the live endpoint served it on
 // 2026-09-17: rankShort "32", rankFull "Tester", rankId "32", first in the list.
 var testerRank = utils.Rank{RankShort: "32", RankFull: "Tester", RankID: "32"}
@@ -116,30 +97,39 @@ func rankIndex(t *testing.T, ranks []utils.Rank, abbrev string) int {
 	return -1
 }
 
-// driftOf returns the drift list the capture carries, found by type so no
-// key name is asserted, or fails the test when the capture carries none.
-func driftOf(t *testing.T, ev capturedEvent) []rankDrift {
+// driftOf returns the drift list the capture's key/values carry, found by
+// type so no key name is asserted, or fails the test when there is none.
+func driftOf(t *testing.T, kv []any) []rankDrift {
 	t.Helper()
-	for _, v := range ev.kv {
+	for _, v := range kv {
 		if d, ok := v.([]rankDrift); ok {
 			return d
 		}
 	}
-	t.Fatalf("capture carries no drift list: %v", ev.kv)
+	t.Fatalf("capture carries no drift list: %v", kv)
 	return nil
 }
 
-// singleCapture fails the test unless exactly one capture was recorded and it
-// wraps want, then returns it.
-func singleCapture(t *testing.T, events []capturedEvent, want error) capturedEvent {
+// recordCaptures swaps the Sentry seam for a recorder for the rest of the
+// test. The checks run synchronously here, so no lock is needed.
+func recordCaptures(t *testing.T) *captureRecorder {
 	t.Helper()
-	if len(events) != 1 {
-		t.Fatalf("captures = %d, want 1", len(events))
+	rec := &captureRecorder{}
+	rec.install(t)
+	return rec
+}
+
+// singleCapture fails the test unless exactly one capture was recorded and
+// its error wraps want, then returns that capture's key/values.
+func singleCapture(t *testing.T, rec *captureRecorder, want error) []any {
+	t.Helper()
+	if rec.count != 1 {
+		t.Fatalf("captures = %d, want 1", rec.count)
 	}
-	if !errors.Is(events[0].err, want) {
-		t.Fatalf("captured error = %v, want %v", events[0].err, want)
+	if !errors.Is(rec.errs[0], want) {
+		t.Fatalf("captured error = %v, want %v", rec.errs[0], want)
 	}
-	return events[0]
+	return rec.kvs[0]
 }
 
 func runChecks(mgr TempVCManager) {
@@ -147,33 +137,33 @@ func runChecks(mgr TempVCManager) {
 }
 
 func TestStartupChecksHealthyGuildCapturesNothing(t *testing.T) {
-	events := recordCaptures(t)
+	rec := recordCaptures(t)
 	serveRanks(t, apiRanks())
 
 	runChecks(healthyManager())
 
-	if len(*events) != 0 {
-		t.Fatalf("captures = %d, want 0", len(*events))
+	if rec.count != 0 {
+		t.Fatalf("captures = %d, want 0", rec.count)
 	}
 }
 
 func TestStartupChecksRenamedRankCapturesTheDifferingEntry(t *testing.T) {
-	events := recordCaptures(t)
+	rec := recordCaptures(t)
 	ranks := apiRanks()
 	ranks[rankIndex(t, ranks, "MAJ")].RankShort = "MJR"
 	serveRanks(t, ranks)
 
 	runChecks(healthyManager())
 
-	ev := singleCapture(t, *events, errRankLadderDrift)
+	kv := singleCapture(t, rec, errRankLadderDrift)
 	want := []rankDrift{{Code: "MAJ", API: "MJR"}}
-	if got := driftOf(t, ev); !reflect.DeepEqual(got, want) {
+	if got := driftOf(t, kv); !reflect.DeepEqual(got, want) {
 		t.Fatalf("drift = %v, want %v", got, want)
 	}
 }
 
 func TestStartupChecksSwappedRanksCaptureBothEntries(t *testing.T) {
-	events := recordCaptures(t)
+	rec := recordCaptures(t)
 	ranks := apiRanks()
 	i, j := rankIndex(t, ranks, "SGT"), rankIndex(t, ranks, "CPL")
 	ranks[i], ranks[j] = ranks[j], ranks[i]
@@ -181,12 +171,12 @@ func TestStartupChecksSwappedRanksCaptureBothEntries(t *testing.T) {
 
 	runChecks(healthyManager())
 
-	ev := singleCapture(t, *events, errRankLadderDrift)
-	// The two pairs as a set: which one the walk reports first is not a
+	kv := singleCapture(t, rec, errRankLadderDrift)
+	// The two pairs as a set. Which one the walk reports first is not a
 	// contract.
 	want := map[rankDrift]bool{{Code: "SGT", API: "CPL"}: true, {Code: "CPL", API: "SGT"}: true}
 	got := make(map[rankDrift]bool)
-	for _, d := range driftOf(t, ev) {
+	for _, d := range driftOf(t, kv) {
 		got[d] = true
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -195,29 +185,31 @@ func TestStartupChecksSwappedRanksCaptureBothEntries(t *testing.T) {
 }
 
 func TestStartupChecksRankMissingFromAPICapturesIt(t *testing.T) {
-	events := recordCaptures(t)
+	rec := recordCaptures(t)
 	ranks := apiRanks()
-	ranks = ranks[:rankIndex(t, ranks, "RCT")]
-	serveRanks(t, ranks)
+	// Drop the last entry by position, so a rank added below the current
+	// lowest one never reddens this test.
+	last := ranks[len(ranks)-1].RankShort
+	serveRanks(t, ranks[:len(ranks)-1])
 
 	runChecks(healthyManager())
 
-	ev := singleCapture(t, *events, errRankLadderDrift)
-	got := driftOf(t, ev)
-	if len(got) != 1 || got[0].Code != "RCT" {
-		t.Fatalf("drift = %v, want one entry with code RCT", got)
+	kv := singleCapture(t, rec, errRankLadderDrift)
+	got := driftOf(t, kv)
+	if len(got) != 1 || got[0].Code != last {
+		t.Fatalf("drift = %v, want one entry with code %s", got, last)
 	}
 }
 
 func TestStartupChecksFailedRankFetchStillReportsMissingAdministrator(t *testing.T) {
-	events := recordCaptures(t)
+	rec := recordCaptures(t)
 	serveRanksStatus(t, http.StatusInternalServerError)
 	mgr := healthyManager()
 	mgr.member = botMember(testPlainRoleID)
 
 	runChecks(mgr)
 
-	singleCapture(t, *events, errAdministratorMissing)
+	singleCapture(t, rec, errAdministratorMissing)
 }
 
 func TestStartupChecksFailedMemberOrGuildFetchCapturesNothing(t *testing.T) {
@@ -230,15 +222,15 @@ func TestStartupChecksFailedMemberOrGuildFetchCapturesNothing(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			events := recordCaptures(t)
+			rec := recordCaptures(t)
 			serveRanks(t, apiRanks())
 			mgr := healthyManager()
 			tc.arm(mgr)
 
 			runChecks(mgr)
 
-			if len(*events) != 0 {
-				t.Fatalf("captures = %d, want 0", len(*events))
+			if rec.count != 0 {
+				t.Fatalf("captures = %d, want 0", rec.count)
 			}
 		})
 	}

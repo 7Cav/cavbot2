@@ -60,8 +60,8 @@ type Rank struct {
 	RankID       string `json:"rankId"`
 }
 
-// RanksResponse is the body of GET milpacs/ranks: every rank the forum knows,
-// in display order. The list holds one entry that is not a rank, Tester, which
+// RanksResponse is the body of GET milpacs/ranks, every milpacs rank in
+// display order. The list holds one entry that is not a rank, Tester, which
 // the startup rank ladder check drops before it compares.
 type RanksResponse struct {
 	Ranks []Rank `json:"ranks"`
@@ -173,8 +173,8 @@ func GetUserByGamertag(ctx context.Context, gamertag string) (*ProfileResponse, 
 		gamertag)
 }
 
-// GetRanks fetches the forum's rank list. The startup rank ladder check reads
-// it once per process start.
+// GetRanks fetches the milpacs rank list. The startup rank ladder check
+// reads it once per process start.
 func GetRanks(ctx context.Context) (*RanksResponse, error) {
 	return makeAPIRequest[RanksResponse](ctx, "milpacs/ranks", "ranks")
 }
