@@ -48,11 +48,6 @@ Optional but feature-gating:
 
 ## Architecture
 
-### Panel (`panel/`)
-
-The hub page (`GET /`) lists every hub with its live spawned count and registers an existing voice channel as a hub (`POST /hubs`). `GET /?hub=<id>` shows that hub's edit form in place of the register form: base string, permission source, moderator roles (checkboxes over the guild's roles, read through the manager's `Guild` call), user limit, bitrate and enabled; the hub channel is fixed at register and the category is read from its parent. `POST /hubs/{id}` saves it and `POST /hubs/{id}/remove` deletes the row and leaves the Discord channel. Every save writes the row, applies it to the runtime in-process through `ApplyHub` or `RemoveHub`, so a join spawns from it or stops spawning with no restart, and then appends a change log entry (`store.ChangeLogEntry`): who, when, the action and a JSON diff keyed by form field name. A register carries every field with a null before, a remove every field with a null after, an update the changed fields only. A remove entry references no hub, and the store clears the hub's earlier entries to match, so a removed hub's whole log lists under `ListChangeLog(ctx, 0, n)`. The edit form shows the hub's last ten entries newest first. The service layer in `panel/hubs.go` owns validation, the store calls, the guild reads through `commands.TempVCManager` and the runtime updates; the diff lives in `panel/changelog.go`; handlers parse the request, call one service function and render. Templates carry `data-hub="<id>"` and `data-field="<name>"` on the elements that show a hub's values and forms (the list row and the edit section both carry `data-hub`; tests pick the section by tag), `data-error="<field>"` on a refusal, and `data-entry="<id>"`, `data-action="<action>"` and `data-change="<field>"` on the change log; those attributes are the test contract, labels and order are not.
-
-
 ### External integrations
 
 - **7Cav API** (`utils/milpacs.go`): generic `makeAPIRequest[T]` against `https://api.7cav.us/api/v1/`, auth via `BEARER`. Use this for any new milpac/profile lookup rather than rolling your own resty client.

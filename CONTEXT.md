@@ -190,10 +190,7 @@ moment it empties. Hub settings are edited in the panel, never in code.
   no-category kind, and it spawns nothing.
   _Avoid_: orphaned hub, stale hub, dead hub, unhealthy hub.
 - **Change log**: The panel's per-hub record of who changed which setting,
-  when, and from what to what. It records panel saves only: one entry per
-  save with the forum user, the time, the action (`register`, `update`,
-  `remove`; `create` and `moderators` when those saves exist) and a diff of
-  the fields. A removed hub's entries stay, with no hub to list under.
+  when, and from what to what. It records panel saves only.
   _Avoid_: audit trail, audit log (that is Discord's), history.
 - **Rank ladder**: The rank roles in seniority order, most senior first,
   that the handover rule ranks occupants by.
@@ -224,10 +221,9 @@ moment it empties. Hub settings are edited in the panel, never in code.
   background scan.
 - **Bot Postgres**: The bot's own database, the `postgres` service in
   `docker-compose.yml`, reached through `BOT_DB_DSN`. Holds the hubs, which
-  the panel edits, the spawned channel rows, which the runtime writes at
-  create and at every handover and deletes with the channel, and the change
-  log, which the panel appends to at every save. The runtime loads the first
-  two at startup. The store package (`store/`) is the only code that talks to
+  the panel edits, and the spawned channel rows, which the runtime writes at
+  create and at every handover and deletes with the channel. The runtime loads
+  both at startup. The store package (`store/`) is the only code that talks to
   it (ADR 0012).
 
 ## Observability
