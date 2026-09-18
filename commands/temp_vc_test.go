@@ -26,6 +26,10 @@ type fakeTempVCManager struct {
 	deleted     []fakeDelete
 	moves       []fakeMove
 	nextChannel *discordgo.Channel
+	// member and guild are what GuildMember and Guild return; the startup
+	// Administrator check reads both.
+	member *discordgo.Member
+	guild  *discordgo.Guild
 
 	deleteCalls int
 
@@ -33,6 +37,8 @@ type fakeTempVCManager struct {
 	createErr  error
 	deleteErr  error
 	moveErr    error
+	memberErr  error
+	guildErr   error
 
 	// createStarted and createRelease, when set, make every create signal
 	// that it has started and then wait until release is closed, so a test
@@ -128,6 +134,24 @@ func (f *fakeTempVCManager) GuildMemberMove(_ string, userID string, channelID *
 	}
 	f.moves = append(f.moves, fakeMove{userID: userID, channelID: channelID})
 	return nil
+}
+
+func (f *fakeTempVCManager) GuildMember(_, _ string) (*discordgo.Member, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.memberErr != nil {
+		return nil, f.memberErr
+	}
+	return f.member, nil
+}
+
+func (f *fakeTempVCManager) Guild(_ string) (*discordgo.Guild, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.guildErr != nil {
+		return nil, f.guildErr
+	}
+	return f.guild, nil
 }
 
 // setNextChannel changes the channel the next create returns.
