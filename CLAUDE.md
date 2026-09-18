@@ -68,7 +68,6 @@ The hub page (`GET /`) lists every hub with its live spawned count and registers
 - Logging is `slog` via `utils.Info/Warn/Error/Debug` — always use these wrappers, not the stdlib `slog` directly, so log level routing stays consistent.
 - Commands log a `"🚀 Starting ..."` line at entry and `"✨ Done!"` at successful exit, with `"command"`, `"username"`, and `"discord_id"` fields. Match this pattern when adding commands so log greps stay uniform.
 - Prefer ephemeral responses for admin/management commands (`MessageFlagsEphemeral`) — see `warden.go` for the deferred-ephemeral pattern (`deferEphemeral` + `editEphemeral`).
-- `/voice-rename` (`commands/voice_rename.go`) has no Cav-member check in code. The gate is a Server Settings command restriction naming the 29 rank roles, applied by the maintainer at deploy before the hubs are enabled (README, Commands). The runtime's `Rename` in `commands/temp_vc_rename.go` owns the target, the moderator and owner checks, the two-per-ten-minutes window and the failure classification; the handler parses and renders.
 
 ## Build/deploy quirks
 

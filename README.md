@@ -30,20 +30,9 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/warden-bulkadd-internal` | Add a validated unit's roster to the internal Warden role |
 | `/helpline` | Crisis and mental health support resources, optionally addressed to a member |
 | `/enlist` | The enlistment process, with a link to the application |
-| `/voice-rename` | Rename the spawned voice channel you are in. Refuses every invocation until `BOT_DB_DSN` is set |
+| `/voice-rename` | Rename the spawned voice channel you are in |
 
 The registered set lives in `commands/registry.go` — update this table when it changes.
-
-`/voice-rename` is for Cav members, and that gate is not in code. It is a
-Server Settings command restriction (Server Settings, Integrations, the bot,
-`/voice-rename`) naming the 29 rank roles from `tempVCRankRoles` in
-`commands/temp_vc.go`. The maintainer applies it at deploy, before any hub is
-enabled. Until then the command is visible to every member, and a guest inside
-a spawned channel gets the no-owner refusal, logged at WARN. Inside the command
-the owner of the channel renames it; a member holding one of the hub's
-moderator roles, or a guild-wide moderator role, renames any spawned channel
-of that hub without owning it. Discord allows two renames per channel per ten
-minutes, and the bot refuses the third itself with the time the window opens.
 
 ## Setup
 
@@ -70,6 +59,11 @@ At <https://discord.com/developers/applications>:
 `applications.commands` is what allows slash commands to register. Discord will
 not let the bot grant a role positioned above its own, so drag the bot's role
 high in the server's role list before testing `/warden`.
+
+`/voice-rename` has no Cav-member check in code. Restrict it in Server Settings
+(Integrations, the bot, `/voice-rename`) to the 29 rank roles listed in
+`tempVCRankRoles` in `commands/temp_vc.go`, before any hub is enabled. Until
+then every member sees the command.
 
 ### 2. IDs
 
@@ -106,7 +100,7 @@ Not checked at startup, but each one silently disables something:
 | `LOG_LEVEL` | Defaults to `INFO`. Accepts `DEBUG`, `INFO`, `WARN`, `ERROR` — **uppercase only**, anything else silently means `INFO` (including the `default` that `.env.example` ships). `DEBUG` shows per-post LOA parse failures. |
 | `DISCORDGO_LOG_LEVEL` | Defaults to `ERROR`, so discordgo reports only its own failures. Accepts `ERROR`, `WARN`, `INFO`, `DEBUG`; anything else means `ERROR`. `WARN` adds the frame the gateway sent when startup fails with `Discord session unavailable`. `DEBUG` also needs `LOG_LEVEL=DEBUG`, and logs every gateway event discordgo does not recognise with its full payload. |
 | `SENTRY_DSN` | Sentry stays off; the bot logs `Sentry disabled (SENTRY_DSN not set)`. |
-| `BOT_DB_DSN` | The bot's own Postgres store (hubs and spawned channels for temporary voice channels) stays off; the bot logs `BOT_DB_DSN not set, bot store disabled` once and every command works as before. `.env.example` leaves it empty on purpose. Set it and the bot pings the database with a short retry, runs its migrations, loads the hub rows for temporary voice channels (`Starting temp voice channels`), and only then opens the Discord session; a database it cannot reach or migrate stops the bot with `Bot store unavailable`. With no hub rows the feature does nothing; rows arrive through the panel. Under compose the value is `postgres://cavbot:<POSTGRES_PASSWORD>@postgres:5432/cavbot?sslmode=disable`. |
+| `BOT_DB_DSN` | The bot's own Postgres store (hubs and spawned channels for temporary voice channels) stays off; the bot logs `BOT_DB_DSN not set, bot store disabled` once, every other command works as before, and `/voice-rename` refuses every invocation. `.env.example` leaves it empty on purpose. Set it and the bot pings the database with a short retry, runs its migrations, loads the hub rows for temporary voice channels (`Starting temp voice channels`), and only then opens the Discord session; a database it cannot reach or migrate stops the bot with `Bot store unavailable`. With no hub rows the feature does nothing; rows arrive through the panel. Under compose the value is `postgres://cavbot:<POSTGRES_PASSWORD>@postgres:5432/cavbot?sslmode=disable`. |
 | `PANEL_ADDR` | The panel, the bot's web UI, does not listen; the bot logs `PANEL_ADDR not set, panel disabled` once. Set it (`:8080` under compose) and every other `PANEL_*` variable but `PANEL_GROUP_IDS` is required; a missing one stops the bot with `Panel misconfigured` before the Discord session opens. The panel also needs `BOT_DB_DSN`, because the hub page reads the store on every load; without it the bot logs `BOT_DB_DSN not set, panel disabled` and runs with no panel. The listener starts after READY and logs `Panel listening`. `.env.example` documents each `PANEL_*` variable. |
 | `POSTGRES_PASSWORD` | Read by the `postgres` service in `docker-compose.yml`, not by the bot. `.env.example` ships `change-me`; a blank value makes the image refuse to start and the bot wait on its healthcheck forever. Only the first boot of an empty volume reads it. |
 | `APP_ENV` | Only tags Sentry events with an environment. No effect unless `SENTRY_DSN` is also set. |

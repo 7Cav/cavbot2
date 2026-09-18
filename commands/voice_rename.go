@@ -17,7 +17,7 @@ import (
 //
 // No code limits the command to Cav members. The maintainer applies a Server
 // Settings command restriction naming the 29 rank roles at deploy, before the
-// hubs are enabled (README, Commands).
+// hubs are enabled (README, Setup).
 
 // voiceRenameCommandName is the registered slash-command name, the value the
 // telemetry line and every capture carry under "command".
