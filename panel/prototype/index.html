@@ -8,8 +8,9 @@
   PROTOTYPE. Throwaway. Not production code.
 
   Question: what should the panel pages from issue #288 look like?
-  Three variants of the sign-in page, the signed-in page and the error page,
+  Four variants of the sign-in page, the signed-in page and the error page,
   switchable with ?variant= and the white bar at the bottom of the screen.
+  D is the round-two combination: A's page styling in C's rail shell.
   Open this file in a browser. Nothing is fetched and nothing is saved.
 
   Design read: an internal admin panel for regiment staff, in the 7cav.us
@@ -210,6 +211,14 @@
     .vc .content { padding: 20px 16px 40px; }
   }
 
+  /* ---------- Variant D: A's pages inside C's rail ---------- */
+  .vd .body { min-width: 0; margin: 0; padding: 10px 32px 48px; }
+  .vd .rail .foot { margin-top: auto; padding: 16px 18px; border-top: 1px solid var(--line); font-size: 13px; }
+  @media (max-width: 767px) {
+    .vd .body { padding: 10px 16px 40px; }
+    .vd .rail .foot { margin: 0 0 0 auto; border-top: 0; padding: 8px 16px; }
+  }
+
   /* Prototype switcher. Not part of the design under review. */
   #proto-bar {
     position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 100;
@@ -272,6 +281,7 @@
     { key: 'a', name: 'Forum sibling', render: renderA },
     { key: 'b', name: 'Gate',          render: renderB },
     { key: 'c', name: 'Console',       render: renderC },
+    { key: 'd', name: 'A pages, C rail', render: renderD },
   ];
   const SCREENS = ['signin', 'expired', 'no-group', 'home', 'error'];
 
@@ -304,9 +314,46 @@
     `<p>The panel checks your forum groups on every request. The forum did not answer this time, so nothing was changed. Your session is kept.</p>`;
 
   // ---- Variant A: a page that could sit inside the forum ----
+  // The page body is shared with variant D, which swaps the top nav for a rail.
+  function bodyA(screen, later, homeTitle) {
+    const cause = CAUSE[screen] ? screen : '';
+    if (screen === 'home') {
+      return `
+        <main class="body">
+          <h1 class="title">${homeTitle}</h1>
+          <p class="desc">Sessions end two hours after sign-in.</p>
+          <div class="block">
+            <h2 class="block-header">Hubs</h2>
+            ${hubsBody(later)}
+          </div>
+        </main>`;
+    }
+    if (screen === 'error') {
+      return `
+        <main class="body">
+          <h1 class="title">The forum did not answer</h1>
+          <div class="block narrow">
+            <div class="block-row">${errorCopy()}</div>
+            <div class="submit-row"><a class="btn" href="/">Try again</a></div>
+          </div>
+        </main>`;
+    }
+    return `
+        <main class="body"${causeAttr(cause)}>
+          <h1 class="title">Sign in</h1>
+          <p class="desc">The panel uses your 7cav.us forum account.</p>
+          <div class="narrow">
+            ${causeNote(cause)}
+            <div class="block">
+              <h2 class="block-header">Use your forum account</h2>
+              <div class="block-row"><p>The forum asks you to approve the sign-in, then sends you back here. Your forum groups decide whether you can open the panel.</p></div>
+              <div class="submit-row">${signinForm()}</div>
+            </div>
+          </div>
+        </main>`;
+  }
   function renderA(screen, later) {
     const signedIn = screen === 'home' || screen === 'error';
-    const cause = CAUSE[screen] ? screen : '';
     const nav = `
       <header class="nav"><div class="nav-inner">
         <a class="nav-logo" href="${FORUM}"><img src="logo-m.png" alt="7th Cavalry Gaming"></a>
@@ -320,42 +367,7 @@
         <span class="copy">${VERSION}</span>
         <a href="${FORUM}">7cav.us</a>
       </footer>`;
-    let main;
-    if (screen === 'home') {
-      main = `
-        <main class="body">
-          <h1 class="title">Panel</h1>
-          <p class="desc">Sessions end two hours after sign-in.</p>
-          <div class="block">
-            <h2 class="block-header">Hubs</h2>
-            ${hubsBody(later)}
-          </div>
-        </main>`;
-    } else if (screen === 'error') {
-      main = `
-        <main class="body">
-          <h1 class="title">The forum did not answer</h1>
-          <div class="block narrow">
-            <div class="block-row">${errorCopy()}</div>
-            <div class="submit-row"><a class="btn" href="/">Try again</a></div>
-          </div>
-        </main>`;
-    } else {
-      main = `
-        <main class="body"${causeAttr(cause)}>
-          <h1 class="title">Sign in</h1>
-          <p class="desc">The panel uses your 7cav.us forum account.</p>
-          <div class="narrow">
-            ${causeNote(cause)}
-            <div class="block">
-              <h2 class="block-header">Use your forum account</h2>
-              <div class="block-row"><p>The forum asks you to approve the sign-in, then sends you back here. Your forum groups decide whether you can open the panel.</p></div>
-              <div class="submit-row">${signinForm()}</div>
-            </div>
-          </div>
-        </main>`;
-    }
-    return `<div class="va">${nav}${main}${footer}</div>`;
+    return `<div class="va">${nav}${bodyA(screen, later, 'Panel')}${footer}</div>`;
   }
 
   // ---- Variant B: one centered gate, then a slim bar ----
@@ -442,9 +454,31 @@
     return `<div class="vc"><div class="console full">${rail}<main class="content">${body}</main></div></div>`;
   }
 
+  // ---- Variant D: round two. A's pages in C's rail shell. ----
+  function renderD(screen, later) {
+    const signedIn = screen === 'home' || screen === 'error';
+    const rail = signedIn ? `
+      <aside class="rail">
+        <div class="mark"><a href="/"><img src="logo-m.png" alt="7th Cavalry Gaming"></a></div>
+        <nav><a class="item is-selected" href="/">Hubs</a></nav>
+        <div class="me">
+          <small>Signed in as</small>
+          <div class="name">${USER}</div>
+          ${signoutForm()}
+        </div>
+        <div class="ver">${VERSION}</div>
+      </aside>` : `
+      <aside class="rail">
+        <div class="mark"><a href="${FORUM}"><img src="logo-m.png" alt="7th Cavalry Gaming"></a></div>
+        <div class="foot"><a href="${FORUM}">Back to the forum</a></div>
+        <div class="ver">${VERSION}</div>
+      </aside>`;
+    return `<div class="va vc vd"><div class="console full">${rail}${bodyA(screen, later, 'Hubs')}</div></div>`;
+  }
+
   // ---- switcher ----
   const params = new URLSearchParams(location.search);
-  let variant = VARIANTS.findIndex(v => v.key === (params.get('variant') || 'a'));
+  let variant = VARIANTS.findIndex(v => v.key === (params.get('variant') || 'd'));
   if (variant < 0) variant = 0;
   let screen = SCREENS.includes(params.get('screen')) ? params.get('screen') : 'signin';
   let later = params.get('later') === '1';
