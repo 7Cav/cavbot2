@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · cavbot2 panel</title>
+<link rel="stylesheet" href="/static/panel.css">
+</head>
+<body>
+<div class="console">
+{{if .SignedIn}}
+  <aside class="rail">
+    <div class="mark"><a href="/"><img src="/static/logo-m.png" alt="7th Cavalry Gaming"></a></div>
+    <nav><a class="item is-selected" href="/">Hubs</a></nav>
+    <div class="me">
+      <small>Signed in as</small>
+      <div class="name" data-field="username">{{.Username}}</div>
+      <form method="post" action="/auth/signout"><button type="submit" class="btn">Sign out</button></form>
+    </div>
+    <div class="ver">cavbot2 {{.Version}}</div>
+  </aside>
+{{else}}
+  <aside class="rail">
+    <div class="mark"><a href="{{.ForumURL}}"><img src="/static/logo-m.png" alt="7th Cavalry Gaming"></a></div>
+    <div class="foot"><a href="{{.ForumURL}}">Back to the forum</a></div>
+    <div class="ver">cavbot2 {{.Version}}</div>
+  </aside>
+{{end}}
+{{template "content" .}}
+</div>
+</body>
+</html>
