@@ -21,14 +21,17 @@ type Fake struct {
 	nextID  int64
 	hubs    map[int64]Hub
 	spawned map[string]SpawnedChannel
+	// guildRoles holds each guild's guild-wide moderator role IDs.
+	guildRoles map[string][]string
 }
 
 // NewFake returns an empty Fake.
 func NewFake() *Fake {
 	return &Fake{
-		nextID:  1,
-		hubs:    make(map[int64]Hub),
-		spawned: make(map[string]SpawnedChannel),
+		nextID:     1,
+		hubs:       make(map[int64]Hub),
+		spawned:    make(map[string]SpawnedChannel),
+		guildRoles: make(map[string][]string),
 	}
 }
 
@@ -129,6 +132,25 @@ func (f *Fake) ListSpawnedChannels(_ context.Context) ([]SpawnedChannel, error) 
 		out = append(out, sc)
 	}
 	return out, nil
+}
+
+// GetGuildModeratorRoles implements Store.
+func (f *Fake) GetGuildModeratorRoles(_ context.Context, guildID string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	roles := slices.Clone(f.guildRoles[guildID])
+	if roles == nil {
+		roles = []string{}
+	}
+	return roles, nil
+}
+
+// SetGuildModeratorRoles implements Store.
+func (f *Fake) SetGuildModeratorRoles(_ context.Context, guildID string, roleIDs []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.guildRoles[guildID] = slices.Clone(roleIDs)
+	return nil
 }
 
 // cloneHub copies a hub so a caller's later edits to the slice do not reach

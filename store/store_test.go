@@ -389,3 +389,44 @@ func TestDeleteHubKeepsSpawned(t *testing.T) {
 		findSpawned(t, rows, "chan-1")
 	})
 }
+
+// T10: the guild-wide moderator roles read back as the set they were written
+// as, a guild with no row reads back empty, and a second write replaces the
+// first. Nothing distinguishes nil from an empty slice, the same rule as a
+// hub's own roles.
+func TestGuildModeratorRolesRoundTrip(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+
+		got, err := s.GetGuildModeratorRoles(ctx, "guild-1")
+		if err != nil {
+			t.Fatalf("GetGuildModeratorRoles with no row: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("GetGuildModeratorRoles with no row = %v, want none", got)
+		}
+
+		want := []string{"role-mp", "role-s6"}
+		if err := s.SetGuildModeratorRoles(ctx, "guild-1", want); err != nil {
+			t.Fatalf("SetGuildModeratorRoles: %v", err)
+		}
+		got, err = s.GetGuildModeratorRoles(ctx, "guild-1")
+		if err != nil {
+			t.Fatalf("GetGuildModeratorRoles: %v", err)
+		}
+		if !slices.Equal(sortedRoles(got), sortedRoles(want)) {
+			t.Errorf("GetGuildModeratorRoles = %v, want %v (as a set)", got, want)
+		}
+
+		if err := s.SetGuildModeratorRoles(ctx, "guild-1", []string{"role-hq"}); err != nil {
+			t.Fatalf("second SetGuildModeratorRoles: %v", err)
+		}
+		got, err = s.GetGuildModeratorRoles(ctx, "guild-1")
+		if err != nil {
+			t.Fatalf("GetGuildModeratorRoles after second set: %v", err)
+		}
+		if !slices.Equal(sortedRoles(got), []string{"role-hq"}) {
+			t.Errorf("GetGuildModeratorRoles after second set = %v, want [role-hq]", got)
+		}
+	})
+}
