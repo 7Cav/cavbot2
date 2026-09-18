@@ -193,13 +193,10 @@ func testConfig(f *fakeForum) Config {
 	}
 }
 
+// newTestPanel is the panel over an empty store, for the sign-in tests.
 func newTestPanel(t *testing.T, f *fakeForum) *Panel {
 	t.Helper()
-	p, err := New(testConfig(f), "test")
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	return p
+	return newTestWorldWith(t, f).p
 }
 
 // browser drives the panel's handler the way a browser would: it carries the
@@ -229,6 +226,13 @@ func (b *browser) do(method, target string, header http.Header) *http.Response {
 	rec := httptest.NewRecorder()
 	b.h.ServeHTTP(rec, req)
 	res := rec.Result()
+	b.absorbCookies(res)
+	return res
+}
+
+// absorbCookies carries the cookies a response sets into the next request
+// and drops the ones it deletes.
+func (b *browser) absorbCookies(res *http.Response) {
 	for _, c := range res.Cookies() {
 		if c.MaxAge < 0 || (!c.Expires.IsZero() && c.Expires.Before(now())) {
 			delete(b.cookies, c.Name)
@@ -236,7 +240,6 @@ func (b *browser) do(method, target string, header http.Header) *http.Response {
 		}
 		b.cookies[c.Name] = c.Value
 	}
-	return res
 }
 
 func (b *browser) get(target string) *http.Response {

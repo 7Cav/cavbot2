@@ -34,6 +34,7 @@
   --btn-edge-d: #212121;
   --btn-edge-l: #3b3b3b;
   --danger-hi: #c84448;
+  --ok: #4f8a4f;
   --radius: 3px;
   --sans: 'Roboto', 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif;
 }
@@ -84,6 +85,28 @@ img { max-width: 100%; }
   border: 1px solid var(--line); border-left: 3px solid var(--danger-hi); border-radius: var(--radius);
   margin-bottom: 12px;
 }
+
+/* The hub list. */
+.scroll { overflow-x: auto; }
+.hublist { width: 100%; min-width: 640px; border-collapse: collapse; font-size: 14px; }
+.hublist th { text-align: left; font-weight: 500; color: var(--text-mute); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.hublist td { padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.hublist tr:last-child td { border-bottom: 0; }
+.hublist .hub { color: var(--text-hi); font-weight: 500; }
+.hublist .num { text-align: right; font-variant-numeric: tabular-nums; }
+.hublist .bad { color: var(--danger-hi); }
+.tag { display: inline-block; padding: 1px .4em; font-size: 12px; line-height: 1.3; border-radius: var(--radius); border: 1px solid var(--line-2); color: var(--text); }
+.tag--on { color: #cfe5cf; border-color: var(--ok); }
+
+/* Form fields, as the forum draws them. */
+.field { display: block; }
+.field-label { display: block; color: var(--text-hi); font-weight: 500; margin-bottom: 6px; }
+.field-hint { display: block; font-size: 13px; color: var(--text-mute); margin-top: 6px; }
+.field input, .field select {
+  display: block; width: 100%; padding: 8px 10px; font: inherit; color: var(--text-hi);
+  background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--radius);
+}
+.field input:focus, .field select:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); }
 
 /* The rail and the page beside it. */
 .console { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100dvh; }

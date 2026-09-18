@@ -225,6 +225,10 @@ type TempVCManager interface {
 	// Guild fetches the guild from the API, roles included. A member carries
 	// role IDs only, so the permission bits come from here.
 	Guild(guildID string) (*discordgo.Guild, error)
+	// GuildChannels fetches the guild's channel list from the API. The panel
+	// reads hub channel names, category names and the register picker from
+	// it at each page load.
+	GuildChannels(guildID string) ([]*discordgo.Channel, error)
 }
 
 // sessionTempVCManager adapts *discordgo.Session to TempVCManager. Each
@@ -269,6 +273,10 @@ func (m *sessionTempVCManager) GuildMember(guildID, userID string) (*discordgo.M
 
 func (m *sessionTempVCManager) Guild(guildID string) (*discordgo.Guild, error) {
 	return m.s.Guild(guildID, discordgo.WithRetryOnRatelimit(false))
+}
+
+func (m *sessionTempVCManager) GuildChannels(guildID string) ([]*discordgo.Channel, error) {
+	return m.s.GuildChannels(guildID, discordgo.WithRetryOnRatelimit(false))
 }
 
 // TempVC holds the feature's runtime state. All maps are guarded by mu:
@@ -330,10 +338,12 @@ type TempVC struct {
 	deleteCaptured map[int64]struct{}
 }
 
-// newTempVC builds the runtime state around a manager and a store and loads
+// NewTempVC builds the runtime state around a manager and a store and loads
 // the guild's hubs from the store. A store that cannot list them is an error:
-// the bot must not run with no hubs when hubs exist.
-func newTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, error) {
+// the bot must not run with no hubs when hubs exist. StartTempVC is the
+// production caller; the panel's tests build a runtime over their own fakes
+// through it, so a register through the panel can be followed by a join.
+func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, error) {
 	t := &TempVC{
 		mgr:            mgr,
 		st:             st,
@@ -393,6 +403,22 @@ func (t *TempVC) LastSpawnFailure(hubID int64) (SpawnFailure, bool) {
 	return f, ok
 }
 
+// SpawnedCount reports how many live spawned channels a hub has right now,
+// from the runtime's own tracking. The panel's hub list shows it per hub row
+// ID. A channel whose delete is in flight still counts: it is live until
+// Discord confirms.
+func (t *TempVC) SpawnedCount(hubID int64) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	n := 0
+	for _, id := range t.channelHub {
+		if id == hubID {
+			n++
+		}
+	}
+	return n
+}
+
 // Owner reports who owns a spawned channel: the owner's user ID, or empty
 // when the channel has none, and whether the channel is a spawned channel the
 // runtime tracks at all. A hub channel or any other channel is untracked. The
@@ -440,7 +466,7 @@ func (t *TempVC) storeContext() (context.Context, context.CancelFunc) {
 // before dg.Open(). The returned runtime is what the panel's service layer
 // applies hub saves to.
 func StartTempVC(dg *discordgo.Session, guildID string, st store.Store) (*TempVC, error) {
-	t, err := newTempVC(NewSessionTempVCManager(dg), st, guildID)
+	t, err := NewTempVC(NewSessionTempVCManager(dg), st, guildID)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +482,7 @@ func StartTempVC(dg *discordgo.Session, guildID string, st store.Store) (*TempVC
 	})
 	dg.AddHandler(func(_ *discordgo.Session, vs *discordgo.VoiceStateUpdate) {
 		defer utils.RecoverPanic("tempvc-voice-state")
-		t.handleVoiceStateUpdate(vs)
+		t.HandleVoiceStateUpdate(vs)
 	})
 	dg.AddHandler(func(_ *discordgo.Session, c *discordgo.ChannelDelete) {
 		defer utils.RecoverPanic("tempvc-channel-delete")
@@ -613,9 +639,11 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 		"tracked", len(rows)-len(gone)-len(empty))
 }
 
-// handleVoiceStateUpdate diffs a member's voice move into a leave + join and
-// runs the spawned-channel lifecycle on each side.
-func (t *TempVC) handleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
+// HandleVoiceStateUpdate diffs a member's voice move into a leave + join and
+// runs the spawned-channel lifecycle on each side. StartTempVC wires it onto
+// the session; it is exported so the panel's tests can feed a join to a
+// runtime they built with NewTempVC.
+func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	if vs.GuildID != t.guildID {
 		return
 	}

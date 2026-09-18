@@ -1,8 +1,9 @@
 // Package panel is the bot's web UI, an HTTP server inside the cavbot2 binary
 // signed in through the forum's OAuth2; the decision and its reasons are in
-// docs/temp-vc-decisions.md. This release delivers the sign-in, the panel
-// session, the group check and the page shell; the hub page arrives in a
-// later ticket.
+// docs/temp-vc-decisions.md. It holds the sign-in, the panel session, the
+// group check, and the hub page: the hub list with each hub's live spawned
+// count, and the register form. Editing, removal and the change log arrive
+// with later tickets.
 package panel
 
 import (
@@ -24,10 +25,12 @@ import (
 // as telemetryNow in the commands package.
 var now = time.Now
 
-// Panel holds the configuration, the parsed pages and the in-memory sessions.
+// Panel holds the configuration, the parsed pages, the in-memory sessions and
+// the service layer the hub page acts through.
 type Panel struct {
 	cfg     Config
 	version string
+	hubs    *hubService
 	// forumURL is the forum's origin, derived from the authorize URL, for the
 	// "Back to the forum" link and the wordmark. No extra variable to keep in
 	// parity for a link.
@@ -47,9 +50,14 @@ type Panel struct {
 // forumTimeout bounds one call to the forum.
 const forumTimeout = 10 * time.Second
 
-// New builds a panel from a config. It parses the templates once, so a broken
-// template fails here at startup and never at a request.
-func New(cfg Config, version string) (*Panel, error) {
+// New builds a panel from a config and what the hub page acts through. It
+// parses the templates once, so a broken template fails here at startup and
+// never at a request. Every field of deps is required: the hub page reads the
+// store, the guild and the runtime on every load.
+func New(cfg Config, version string, deps Deps) (*Panel, error) {
+	if deps.Store == nil || deps.Runtime == nil || deps.Manager == nil || deps.GuildID == "" {
+		return nil, fmt.Errorf("panel needs a store, a runtime, a manager and a guild ID")
+	}
 	pg, err := parsePages()
 	if err != nil {
 		return nil, err
@@ -61,6 +69,7 @@ func New(cfg Config, version string) (*Panel, error) {
 	return &Panel{
 		cfg:      cfg,
 		version:  version,
+		hubs:     &hubService{deps: deps},
 		forumURL: forumURL,
 		pages:    pg,
 		oauth: &oauth2.Config{
@@ -151,6 +160,7 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("GET /auth/callback", p.authCallback)
 	mux.HandleFunc("POST /auth/signout", p.authSignout)
 	mux.HandleFunc("GET /{$}", p.withSession(p.homePage))
+	mux.HandleFunc("POST /hubs", p.withSession(p.registerHub))
 	protected := http.NewCrossOriginProtection().Handler(mux)
 	// A panic in a handler is recovered here, through the same path every
 	// other goroutine uses (ADR 0001), before net/http's own recovery would
@@ -345,6 +355,43 @@ func (p *Panel) endSession(w http.ResponseWriter, id string, sess session, reaso
 	utils.Info("Panel session ended", "reason", reason, "username", sess.username, "forum_user_id", sess.userID)
 }
 
-func (p *Panel) homePage(w http.ResponseWriter, _ *http.Request, sess session) {
-	p.render(w, http.StatusOK, "home", sess.page("Hubs"))
+// homePage is the hub page: the list and the register form.
+func (p *Panel) homePage(w http.ResponseWriter, r *http.Request, sess session) {
+	p.renderHubs(w, r, sess, http.StatusOK, registerInput{}, nil)
+}
+
+// renderHubs renders the hub page with the list read now, and the register
+// form as posted with its refusal when there is one.
+func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session, status int, form registerInput, refusal *fieldError) {
+	page, err := p.hubs.list(r.Context())
+	if err != nil {
+		p.serverError(w, "hub list", err)
+		return
+	}
+	page.Form, page.Error = form, refusal
+	data := sess.page("Hubs")
+	data.Hubs = page
+	p.render(w, status, "home", data)
+}
+
+// registerHub is POST /hubs: one service call, then a redirect to the list
+// where the new hub appears, or the page again with the refused field named.
+func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "the form could not be read", http.StatusBadRequest)
+		return
+	}
+	in := registerInput{ChannelID: r.PostForm.Get(fieldHubChannel), BaseString: r.PostForm.Get(fieldBaseString)}
+	hub, err := p.hubs.register(r.Context(), in)
+	if refusal, ok := asFieldError(err); ok {
+		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, in, refusal)
+		return
+	}
+	if err != nil {
+		p.serverError(w, "hub register", err)
+		return
+	}
+	utils.Info("Panel hub registered", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
+		"base_string", hub.BaseString, "username", sess.username, "forum_user_id", sess.userID)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

@@ -125,22 +125,36 @@ func initBotStore() *store.Postgres {
 	return s
 }
 
-// initPanel reads the PANEL_* variables and builds the panel, or returns nil
+// initPanelConfig reads the PANEL_* variables, or returns a disabled config
 // when PANEL_ADDR is unset so the feature stays inert. It runs before the
-// Discord session opens so a half-filled .env or a broken template stops the
-// bot before it is on the gateway; the listener itself starts after READY. A
-// configured panel that cannot be built stops the bot, the same rule the
-// store follows.
-func initPanel() *panel.Panel {
+// Discord session opens so a half-filled .env stops the bot before it is on
+// the gateway. The hub page reads the store on every load, so a panel with
+// no store is a misconfiguration too.
+func initPanelConfig(storeConfigured bool) panel.Config {
 	cfg, err := panel.ConfigFromEnv()
 	if err != nil {
 		panic(fmt.Sprintf("Panel misconfigured: %v", err))
 	}
 	if !cfg.Enabled() {
 		utils.Warn("PANEL_ADDR not set, panel disabled")
+		return cfg
+	}
+	if !storeConfigured {
+		panic("Panel misconfigured: PANEL_ADDR is set but BOT_DB_DSN is empty")
+	}
+	return cfg
+}
+
+// initPanel builds the panel over the store, the runtime and the Discord
+// session, or returns nil when the config is disabled. It runs before the
+// Discord session opens so a broken template stops the bot before it is on
+// the gateway; the listener itself starts after READY. A configured panel
+// that cannot be built stops the bot, the same rule the store follows.
+func initPanel(cfg panel.Config, deps panel.Deps) *panel.Panel {
+	if !cfg.Enabled() {
 		return nil
 	}
-	p, err := panel.New(cfg, Version)
+	p, err := panel.New(cfg, Version, deps)
 	if err != nil {
 		panic(fmt.Sprintf("Panel unavailable: %v", err))
 	}
@@ -163,7 +177,7 @@ func main() {
 		defer func() { _ = botStore.Close() }()
 	}
 
-	webPanel := initPanel()
+	panelCfg := initPanelConfig(botStore != nil)
 
 	// Route discordgo's own logging through slog before the session exists, so
 	// nothing it emits escapes to the stdlib logger.
@@ -185,10 +199,20 @@ func main() {
 	// dg.Open() so the initial GUILD_CREATE seeds voice-state tracking and
 	// runs the restart sweep. Without a store there are no hubs, so the
 	// feature stays inert.
+	var webPanel *panel.Panel
 	if botStore != nil {
-		if _, err := commands.StartTempVC(dg, GuildID, botStore); err != nil {
+		tempVC, err := commands.StartTempVC(dg, GuildID, botStore)
+		if err != nil {
 			panic(fmt.Sprintf("Bot store unavailable: %v", err))
 		}
+		// The panel's hub page saves through the runtime and reads the guild
+		// through the session, so it is built once both exist.
+		webPanel = initPanel(panelCfg, panel.Deps{
+			Store:   botStore,
+			Runtime: tempVC,
+			Manager: commands.NewSessionTempVCManager(dg),
+			GuildID: GuildID,
+		})
 	}
 
 	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
