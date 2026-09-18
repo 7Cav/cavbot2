@@ -99,6 +99,12 @@ img { max-width: 100%; }
 .hublist .off { color: var(--text-mute); }
 .tag { display: inline-block; padding: 1px .4em; font-size: 12px; line-height: 1.3; border-radius: var(--radius); border: 1px solid var(--line-2); color: var(--text); }
 .tag--on { color: #cfe5cf; border-color: var(--ok); }
+.tag--warn { color: #f1c9cb; border-color: var(--danger-hi); }
+.hublist tr.broken .hub { color: var(--text-mute); }
+.hublist .failure { font-size: 13px; }
+.hublist .failure time { display: block; color: var(--text-mute); }
+.hublist form.inline { display: inline; margin: 0; }
+.btn--small { padding: 4px 10px; font-size: 13px; }
 
 /* Form fields, as the forum draws them. */
 .field { display: block; }

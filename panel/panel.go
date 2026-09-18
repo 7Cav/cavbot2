@@ -2,9 +2,9 @@
 // signed in through the forum's OAuth2; the decision and its reasons are in
 // docs/temp-vc-decisions.md. It holds the sign-in, the panel session, the
 // group check, and the hub page: the hub list with each hub's live spawned
-// count, the register form, each hub's edit form with its change log, and
-// the remove action. Create, the hub channel name field, the broken hub
-// state and the last spawn failure arrive with a later ticket.
+// count, its last spawn failure and its broken hub state, the create and
+// register forms, each hub's edit form with its change log, and the remove
+// action.
 package panel
 
 import (
@@ -163,7 +163,7 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("GET /auth/callback", p.authCallback)
 	mux.HandleFunc("POST /auth/signout", p.authSignout)
 	mux.HandleFunc("GET /{$}", p.withSession(p.homePage))
-	mux.HandleFunc("POST /hubs", p.withSession(p.registerHub))
+	mux.HandleFunc("POST /hubs", p.withSession(p.createOrRegisterHub))
 	mux.HandleFunc("POST /hubs/{id}", p.withSession(p.updateHub))
 	mux.HandleFunc("POST /hubs/{id}/remove", p.withSession(p.removeHub))
 	protected := http.NewCrossOriginProtection().Handler(mux)
@@ -393,17 +393,54 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 	p.render(w, status, "home", data)
 }
 
-// registerHub is POST /hubs: one service call, then a redirect to the list
-// where the new hub appears, or the page again with the refused field named.
-func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session) {
+// createOrRegisterHub is POST /hubs. The create and register forms post to
+// one route and are told apart by their fields: the create form carries a
+// category, the register form a hub channel. An unpicked category still
+// posts the key, empty, so a create with no category is refused as a
+// create and never mistaken for a register.
+func (p *Panel) createOrRegisterHub(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
 		return
 	}
+	if r.PostForm.Has(fieldCategory) {
+		p.createHub(w, r, sess)
+		return
+	}
+	p.registerHub(w, r, sess)
+}
+
+// createHub is the create half of POST /hubs: one service call, then a
+// redirect to the list where the new hub appears, or the page again with the
+// refused field named. The form is already parsed.
+func (p *Panel) createHub(w http.ResponseWriter, r *http.Request, sess session) {
+	in := createInput{
+		CategoryID:  r.PostForm.Get(fieldCategory),
+		ChannelName: r.PostForm.Get(fieldChannelName),
+		BaseString:  r.PostForm.Get(fieldBaseString),
+	}
+	hub, err := p.hubs.create(r.Context(), in, sess.actor())
+	if refusal, ok := asFieldError(err); ok {
+		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, pageRequest{Create: in, Error: refusal, Refused: formCreate})
+		return
+	}
+	if err != nil {
+		p.serverError(w, "hub create", err)
+		return
+	}
+	utils.Info("Panel hub created", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
+		"base_string", hub.BaseString, "username", sess.username, "forum_user_id", sess.userID)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// registerHub is the register half of POST /hubs: one service call, then a
+// redirect to the list where the new hub appears, or the page again with the
+// refused field named. The form is already parsed.
+func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session) {
 	in := registerInput{ChannelID: r.PostForm.Get(fieldHubChannel), BaseString: r.PostForm.Get(fieldBaseString)}
 	hub, err := p.hubs.register(r.Context(), in, sess.actor())
 	if refusal, ok := asFieldError(err); ok {
-		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, pageRequest{Register: in, Error: refusal})
+		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, pageRequest{Register: in, Error: refusal, Refused: formRegister})
 		return
 	}
 	if err != nil {
@@ -436,6 +473,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 		return
 	}
 	in := editInput{
+		ChannelName:      r.PostForm.Get(fieldChannelName),
 		BaseString:       r.PostForm.Get(fieldBaseString),
 		PermissionSource: r.PostForm.Get(fieldPermissionSource),
 		ModeratorRoleIDs: r.PostForm[fieldModeratorRoles],
@@ -449,7 +487,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 		return
 	}
 	if refusal, ok := asFieldError(err); ok {
-		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, pageRequest{HubID: id, Edit: &in, Error: refusal})
+		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, pageRequest{HubID: id, Edit: &in, Error: refusal, Refused: formEdit})
 		return
 	}
 	if err != nil {

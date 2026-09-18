@@ -93,6 +93,14 @@ func classifyDiscordError(err error) discordErrorClass {
 	}
 }
 
+// DiscordErrorDetail is the body-free phrase classifyDiscordError gives a
+// Discord error, for a caller outside this package that shows a user why
+// Discord refused a call. The panel's hub page uses it. The raw response
+// body never reaches the phrase.
+func DiscordErrorDetail(err error) string {
+	return classifyDiscordError(err).UserDetail
+}
+
 // classifyNotFound splits a 404 by its Discord application error code, because a
 // 404 alone is ambiguous: a role-add (PUT .../members/{user}/roles/{role}) can
 // 404 for an absent member, a stale/deleted role, or a wrong guild ID. Reading

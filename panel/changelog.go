@@ -27,10 +27,16 @@ type change struct {
 // diff is a change log diff keyed by form field name.
 type diff map[string]change
 
-// diffFields are the fields a diff can carry, in the form's order: the
-// order a register or remove entry lists them and the form shows them.
+// diffFields are the stored fields a diff can carry, in the form's order:
+// the order a create, register or remove entry lists them and the form
+// shows them. The hub channel name is not stored, so it is not here; an
+// update that renamed the channel adds it to its diff, and shownFields is
+// the order the form renders.
 var diffFields = []string{fieldHubChannel, fieldBaseString, fieldPermissionSource,
 	fieldModeratorRoles, fieldUserLimit, fieldBitrate, fieldEnabled}
+
+// shownFields are every field a diff can carry, in the form's order.
+var shownFields = append([]string{fieldChannelName}, diffFields...)
 
 // fieldValues returns a hub's settings keyed by form field name, as the
 // diff records them. Moderator roles are sorted, so two sets compare and
@@ -123,7 +129,7 @@ func changeViews(entries []store.ChangeLogEntry, roleNames map[string]string) []
 		v := changeView{ID: e.ID, Username: e.ForumUsername, At: e.At, Action: e.Action}
 		var d diff
 		if err := json.Unmarshal(e.Diff, &d); err == nil {
-			for _, field := range diffFields {
+			for _, field := range shownFields {
 				c, ok := d[field]
 				if !ok {
 					continue
