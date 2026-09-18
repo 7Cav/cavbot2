@@ -48,37 +48,6 @@ Optional but feature-gating:
 
 ## Architecture
 
-For command registration, interaction routing, and error-handling conventions, see `docs/adr/` (notably 0004, 0006, 0007). The notes below cover code areas without a dedicated ADR.
-
-### LOA cache (utils/loa.go)
-
-`utils.GlobalLOACache` is a process-global, mutex-guarded cache of forum LOA posts. `initLOACache()` in `main.go` does an initial refresh on startup, then runs `Refresh` every 15 minutes in a goroutine. Refresh is **incremental** — `lastSyncedPostDate` tracks the high-water mark and subsequent queries only pull newer posts. Entries whose `EndDate` has passed are pruned each refresh.
-
-Parsing keys off the `Username`, `Start Date`, and `End Date` field labels. `parseLOAPost` first strips formatting-only BBCode (`[B]`, `[COLOR=…]`, `[SIZE=…]`, etc.) so label/value matching is agnostic to the post's bold/color/size wrapping — real posts vary widely (plain `[B]Start Date[/B]`, no formatting, non-yellow colors, `[SIZE]`-wrapped dates). Date values accept abbreviated or full month names, with or without the comma (`loaDateLayouts`). Posts that still don't match (free-text dates, `Start:`/`End:` label variants, dates only in the title) return `false` and are logged at DEBUG. If the forum changes the *label wording* itself, matching breaks silently — the regression cases in `loa_test.go` are seeded from real forum bodies to catch drift.
-
-### Temporary voice channels (commands/temp_vc.go)
-
-`commands.TempVC` is the runtime. `StartTempVC` runs only when the store is configured: it loads the guild's hub rows through `ApplyHub` and registers three gateway handlers before the session opens. `VOICE_STATE_UPDATE` is diffed into a leave and a join; a join to an enabled hub creates one voice channel named `<base string> - n` under the hub channel's live parent (read from discordgo's state cache, never stored), moves the member in, and writes the spawned channel row. Numbers are the smallest unused per hub row ID, in memory, seeded from rows at the sweep. The last occupant leaving deletes the channel at once, then its row. `GUILD_CREATE` runs the restart sweep over the rows and touches no channel it has no row for. `CHANNEL_DELETE` untracks a spawned channel deleted by hand and deletes its row.
-
-Ownership is the handover rule in `CONTEXT.md`, run by `reconcileOwnerLocked` after every occupancy change to a spawned channel and at the sweep. The creator owns the channel at create if they hold a rank role; when the owner leaves, the highest-ranked occupant with a rank role takes over, ties to the lowest user ID compared as a number; a rank holder joining a channel with no owner takes it; a handover is final. Ranks come from the member object on a voice state update and the member list on guild create, matched against `tempVCRankRoles`, never an API call. Every change is one row upsert and one ownership notice in the spawned channel's chat, `Parse: []` so nobody is pinged; a restored owner at the sweep posts nothing, so a reconnect is silent. `Owner(channelID)` is what the rename command reads. Ownership grants no Discord permission.
-
-`ApplyHub` and `RemoveHub` are the panel's way in: the service layer calls them after its store write succeeds, so the runtime never polls the store. Every Discord write goes through the `TempVCManager` seam with the audit-log reason as a parameter; the production adapter adds `WithRetryOnRatelimit(false)`, so a 429 is a failure and never a sleeping handler. Tests drive the handler methods with a fake manager and `store.NewFake()`.
-
-A spawn that fails is one create per join, no retry. The member gets one message in the hub channel's text chat that mentions them alone. The category is full, or the error has been reported to S6. No DM, no disconnect. `LastSpawnFailure(hubID)` is what the panel reads: the hub's last failure as time and `SpawnFailureCause`, in memory only, cleared by the next successful spawn from that hub. A hub with no category records `SpawnFailureNoCategory`, makes no API call and never reaches Sentry. `commands/temp_vc_errors.go` has its own classifier for the spawned channel paths. The warden classifier is not used there because its not-found branch would page on Unknown Channel. Create failures Discord returned capture once per streak per hub through `captureError`: the cap, 403, 429, 5xx and transport. Delete failures capture the same way for 403, 5xx and transport. The first failure of a streak captures, and the next capture waits for a success of that operation on that hub.
-
-### Startup checks (commands/startup_checks.go)
-
-`commands.RunStartupChecks` runs once per process start, in a goroutine `main.go` starts after `utils.OpenSession` returns, so it never holds up command registration or a gateway handler. It runs with or without a store. Two checks, each a Sentry capture through the `captureError` seam when it fails and a WARN line with no capture when it cannot fetch what it needs (ADR 0001). The rank ladder check fetches `milpacs/ranks` through `utils.GetRanks`, drops the API's `Tester` entry, and compares abbreviations by position with `tempVCRankRoles`; the event carries a `[]rankDrift` of the positions that differ. The Administrator check fetches the bot's own member and the guild through `TempVCManager` and captures when no held role, `@everyone` included, has the Administrator bit. Each capture wraps a package sentinel (`errRankLadderDrift`, `errAdministratorMissing`), which is the event's identity in Sentry and what the tests read with `errors.Is`.
-
-### Panel (panel/)
-
-`panel.New` parses the embedded templates and builds the OAuth2 client; `Start` binds `PANEL_ADDR` and serves in the background. Routes: `GET /signin`, `POST /auth/start`, `GET /auth/callback`, `POST /auth/signout`, `GET /` and `GET /static/`. `withSession` is the gate every signed-in page sits behind: it resolves the session cookie, ends a session past two hours with cause `expired`, then runs the group check, one `GET` to the userinfo URL, and maps the answer onto one of four `checkOutcome` values. Two attributes are test contracts: the sign-in page renders the cause from its `cause` query value as `data-cause` on `<main>`, and the rail carries the forum username under `data-field="username"`. Wording and element order are not. Pending sign-ins and sessions are two maps in `sessions`, keyed by random IDs that are the whole cookie value, pruned once a minute. Tests drive `Handler()` with a fake forum server behind the production URL fields and move the package clock `now`; nothing inside the package is mocked.
-
-### Bot store (store/)
-
-`store.Store` is the one interface between the bot and its Postgres database: hubs get, list, upsert, delete; spawned channels upsert, delete, list. `store.Postgres` is production over `database/sql` with `jackc/pgx/v5`; `store.NewFake()` is the in-memory double for other packages' tests, and the same contract suite in `store/store_test.go` runs against both. `UpsertHub` is keyed on the hub channel ID and `UpsertSpawnedChannel` on the channel ID; both deletes are idempotent; `GetHub` of an unknown ID is `store.ErrNotFound`.
-
-Migrations are SQL files in `store/migrations/`, embedded and run by `store.Open` at startup under a Postgres session lock. Every migration stays compatible with the previous release: additive in the release that introduces it, drops and renames one release later. ADR 0012 has the rule and the file naming.
 
 ### External integrations
 
@@ -89,9 +58,6 @@ Migrations are SQL files in `store/migrations/`, embedded and run by `store.Open
 ## Versioning & deploy
 
 `Version` is injected at Docker build via ldflags (see ADR 0003). Local `go build` / `go run` show `dev`.
-
-- `build_and_push.yml` runs **only on GitHub Releases**, builds the Docker image tagged with the release ref (and injects the same ref as `Version`), pushes to Docker Hub as `7cav/cavbot2:<tag>` and `:latest`, then pings a Watchtower endpoint to force-pull on the prod host.
-- `build_test.yml` runs lint + test (with coverage floor enforcement) + build on push/PR to `develop`. **Default branch is `develop`, not `main`.** PRs target `develop`.
 
 ## Conventions worth knowing
 
@@ -104,8 +70,6 @@ Migrations are SQL files in `store/migrations/`, embedded and run by `store.Open
 ### Docker compose `environment:` allowlist vs `.env` (2026-05-14)
 
 The compose service uses an explicit `environment:` block listing each variable as `KEY: ${KEY}`. **Only those keys reach the container.** Adding a var to `.env` alone (without a matching compose-block line) means `.env` feeds compose's interpolator but the var never propagates into the running process — the bot will log `"Sentry disabled (SENTRY_DSN not set)"` despite the value being in `.env`.
-
-Two-line fix: add the key to both files. 5-second debug check: `docker compose exec <svc> env | grep <KEY>` — empty output proves the var didn't make the trip.
 
 ## See also (durable docs)
 
@@ -147,8 +111,6 @@ go test ./... -race -cover -covermode=atomic | tee /tmp/cover.log
 go build -o cavbot2
 ```
 
-Mirrors `.github/workflows/build_test.yml`, whose build job runs a `postgres:18-alpine` service container and sets `TEST_BOT_DB_DSN`; the `docker` block stands in for that service when the variable is not already exported. `pipefail` ensures a `go test` failure isn't swallowed by `tee`.
-
 ## Branch naming
 
 `<type>/<issue-N>-<short-slug>` — type is `feat|fix|chore|docs|test|refactor`, matching the commit prefix. Example: `feat/65-roster-search-hint`.
@@ -157,11 +119,7 @@ Mirrors `.github/workflows/build_test.yml`, whose build job runs a `postgres:18-
 
 Conventional Commits with optional scope: `<type>(<scope>): <subject>`. Scope is the touched directory or feature (`commands`, `utils`, `loa`, etc.). Subject in imperative mood, lowercase first letter.
 
-## Land strategy
-
-`pr` — open a PR against `develop` (not `main`); human merges.
-
 ## Manual review gates
 
-- **Smoke test on the test guild** for any user-facing command behavior change. CI cannot exercise the live Discord gateway. Skip only for pure refactors and non-command changes.
+- **Smoke test on the test guild** for any user-facing command behavior change. CI cannot exercise the live Discord gateway, but locally we can validate against a test guild.
 - **Env-var parity check** when adding a new env var: both `.env.example` AND the `environment:` block in `docker-compose.yml` must list it (see "Docker compose `environment:` allowlist vs `.env`" quirk above).
