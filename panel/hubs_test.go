@@ -2,8 +2,10 @@ package panel
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -585,5 +587,109 @@ func TestRemoveDeletesTheRowLeavesTheChannelAndStopsSpawning(t *testing.T) {
 	w.join("user-b", "hub-1")
 	if n := w.discord.createCount(); n != 1 {
 		t.Errorf("a join after remove made %d creates in all, want 1: nothing spawns from a removed hub", n)
+	}
+}
+
+// fieldChange is one field of a diff as a reader decodes it: the values are
+// whatever JSON carried, null included.
+type fieldChange struct {
+	Before any `json:"before"`
+	After  any `json:"after"`
+}
+
+// decodeDiff decodes an entry's diff the way the page does.
+func decodeDiff(t *testing.T, e store.ChangeLogEntry) map[string]fieldChange {
+	t.Helper()
+	var diff map[string]fieldChange
+	if err := json.Unmarshal(e.Diff, &diff); err != nil {
+		t.Fatalf("decode diff %s: %v", e.Diff, err)
+	}
+	return diff
+}
+
+// diffFields are the seven fields a register or remove entry carries.
+var diffFields = []string{"hub_channel", "base_string", "permission_source", "moderator_roles", "user_limit", "bitrate", "enabled"}
+
+// assertActor checks an entry names the signed-in test user.
+func assertActor(t *testing.T, e store.ChangeLogEntry, action store.ChangeAction) {
+	t.Helper()
+	if e.Action != action || e.ForumUserID != 1234 || e.ForumUsername != testUsername {
+		t.Errorf("entry = action %q by %d %q, want %q by 1234 %q", e.Action, e.ForumUserID, e.ForumUsername, action, testUsername)
+	}
+}
+
+func TestUpdateAppendsAnEntryWithTheChangedFieldsOnly(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	form := updateForm()
+	form.Set("base_string", "Bravo Voice")
+
+	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
+
+	entries := storedChangeLog(t, w.st, storedHubID(t, w.st, "hub-1"))
+	if len(entries) != 1 {
+		t.Fatalf("the hub has %d entries, want 1", len(entries))
+	}
+	assertActor(t, entries[0], store.ChangeUpdate)
+	diff := decodeDiff(t, entries[0])
+	if len(diff) != 1 {
+		t.Errorf("diff has keys %v, want base_string alone", slices.Sorted(maps.Keys(diff)))
+	}
+	if got := diff["base_string"]; got.Before != "Arma Voice" || got.After != "Bravo Voice" {
+		t.Errorf("diff base_string = %+v, want before Arma Voice, after Bravo Voice", got)
+	}
+}
+
+func TestRegisterAppendsAnEntryWithNullBefore(t *testing.T) {
+	w := newTestWorld(t)
+	signIn(t, w.forum, w.b)
+
+	assertRedirect(t, w.b.postForm("/hubs", registerForm("vc-2", "Squad Voice")), "/")
+
+	entries := storedChangeLog(t, w.st, storedHubID(t, w.st, "vc-2"))
+	if len(entries) != 1 {
+		t.Fatalf("the new hub has %d entries, want 1", len(entries))
+	}
+	assertActor(t, entries[0], store.ChangeRegister)
+	diff := decodeDiff(t, entries[0])
+	for _, field := range diffFields {
+		c, ok := diff[field]
+		if !ok {
+			t.Errorf("diff lacks %s", field)
+			continue
+		}
+		if c.Before != nil {
+			t.Errorf("diff %s before = %v, want null", field, c.Before)
+		}
+	}
+	if diff["base_string"].After != "Squad Voice" || diff["hub_channel"].After != "vc-2" {
+		t.Errorf("diff after: base_string %v, hub_channel %v; want Squad Voice and vc-2", diff["base_string"].After, diff["hub_channel"].After)
+	}
+}
+
+func TestRemoveAppendsAnEntryWithNullAfter(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+
+	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1")+"/remove", nil), "/")
+
+	entries := storedChangeLog(t, w.st, 0)
+	if len(entries) != 1 {
+		t.Fatalf("%d entries under no hub, want 1", len(entries))
+	}
+	assertActor(t, entries[0], store.ChangeRemove)
+	diff := decodeDiff(t, entries[0])
+	for _, field := range diffFields {
+		c, ok := diff[field]
+		if !ok {
+			t.Errorf("diff lacks %s", field)
+			continue
+		}
+		if c.After != nil {
+			t.Errorf("diff %s after = %v, want null", field, c.After)
+		}
+	}
+	if diff["base_string"].Before != "Arma Voice" {
+		t.Errorf("diff base_string before = %v, want Arma Voice", diff["base_string"].Before)
 	}
 }

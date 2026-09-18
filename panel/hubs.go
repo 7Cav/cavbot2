@@ -366,10 +366,11 @@ func (s *hubService) list(ctx context.Context) (hubPage, error) {
 }
 
 // register makes an existing voice channel a hub with the defaults, writes
-// the row and applies it to the runtime, so a join spawns from it at once
-// with no restart. A refusal is a *fieldError naming the field; the store
-// is not written and the runtime is not touched.
-func (s *hubService) register(ctx context.Context, in registerInput) (store.Hub, error) {
+// the row, applies it to the runtime, so a join spawns from it at once with
+// no restart, and appends a change log entry carrying every field. A
+// refusal is a *fieldError naming the field; the store is not written and
+// the runtime is not touched.
+func (s *hubService) register(ctx context.Context, in registerInput, by actor) (store.Hub, error) {
 	in.ChannelID = strings.TrimSpace(in.ChannelID)
 	in.BaseString = strings.TrimSpace(in.BaseString)
 	if n := utf8.RuneCountInString(in.BaseString); n < baseStringMin || n > baseStringMax {
@@ -405,15 +406,23 @@ func (s *hubService) register(ctx context.Context, in registerInput) (store.Hub,
 		return store.Hub{}, fmt.Errorf("write hub: %w", err)
 	}
 	s.deps.Runtime.ApplyHub(stored)
+	if err := s.appendChange(ctx, stored.ID, store.ChangeRegister, diffHubs(nil, &stored), by); err != nil {
+		return store.Hub{}, err
+	}
 	return stored, nil
 }
 
-// update saves a hub's settings from the edit form, writes the row and
-// applies it to the runtime, so a disabled hub stops spawning at once. A
-// refusal is a *fieldError naming the field, and nothing is written;
-// store.ErrNotFound means no hub has the ID.
-func (s *hubService) update(ctx context.Context, hubID int64, in editInput, _ actor) (store.Hub, error) {
-	hub, err := s.deps.Store.GetHub(ctx, hubID)
+// update saves a hub's settings from the edit form, writes the row, applies
+// it to the runtime, so a disabled hub stops spawning at once, and appends a
+// change log entry with the changed fields. A refusal is a *fieldError
+// naming the field, and nothing is written; store.ErrNotFound means no hub
+// has the ID.
+//
+// The order is row, runtime, entry. The runtime apply cannot fail, so once
+// the row is written the runtime matches the store; an entry the store
+// refuses is an error the handler reports, with the save already made.
+func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by actor) (store.Hub, error) {
+	before, err := s.deps.Store.GetHub(ctx, hubID)
 	if err != nil {
 		return store.Hub{}, err
 	}
@@ -421,6 +430,7 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, _ ac
 	if err != nil {
 		return store.Hub{}, err
 	}
+	hub := before
 	if err := applyEdit(&hub, in, roles); err != nil {
 		return store.Hub{}, err
 	}
@@ -430,15 +440,23 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, _ ac
 		return store.Hub{}, fmt.Errorf("write hub: %w", err)
 	}
 	s.deps.Runtime.ApplyHub(stored)
+	if err := s.appendChange(ctx, stored.ID, store.ChangeUpdate, diffHubs(&before, &stored), by); err != nil {
+		return store.Hub{}, err
+	}
 	return stored, nil
 }
 
-// remove deletes a hub's row and drops it from the runtime, so a join to its
-// channel spawns nothing more. No Discord call: the hub channel stays, so a
-// removal is undone by registering the channel again. Spawned channels of
+// remove deletes a hub's row, drops it from the runtime, so a join to its
+// channel spawns nothing more, and appends a change log entry carrying
+// every field with a null after. No Discord call: the hub channel stays, so
+// a removal is undone by registering the channel again. Spawned channels of
 // the hub keep their rows and die when empty, which the runtime does on its
 // own. store.ErrNotFound means no hub has the ID.
-func (s *hubService) remove(ctx context.Context, hubID int64, _ actor) (store.Hub, error) {
+//
+// The entry references no hub: the row is gone, and the store clears the
+// hub's earlier entries to match, so the whole log of a removed hub lists
+// under no hub.
+func (s *hubService) remove(ctx context.Context, hubID int64, by actor) (store.Hub, error) {
 	hub, err := s.deps.Store.GetHub(ctx, hubID)
 	if err != nil {
 		return store.Hub{}, err
@@ -447,6 +465,9 @@ func (s *hubService) remove(ctx context.Context, hubID int64, _ actor) (store.Hu
 		return store.Hub{}, fmt.Errorf("delete hub: %w", err)
 	}
 	s.deps.Runtime.RemoveHub(hub.HubChannelID)
+	if err := s.appendChange(ctx, 0, store.ChangeRemove, diffHubs(&hub, nil), by); err != nil {
+		return store.Hub{}, err
+	}
 	return hub, nil
 }
 

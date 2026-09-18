@@ -405,7 +405,7 @@ func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session
 		return
 	}
 	in := registerInput{ChannelID: r.PostForm.Get(fieldHubChannel), BaseString: r.PostForm.Get(fieldBaseString)}
-	hub, err := p.hubs.register(r.Context(), in)
+	hub, err := p.hubs.register(r.Context(), in, actor{userID: sess.userID, username: sess.username})
 	if refusal, ok := asFieldError(err); ok {
 		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, hubPage{Form: in, Error: refusal})
 		return
