@@ -1,10 +1,10 @@
 // Package panel is the bot's web UI, an HTTP server inside the cavbot2 binary
 // signed in through the forum's OAuth2; the decision and its reasons are in
 // docs/temp-vc-decisions.md. It holds the sign-in, the panel session, the
-// group check, and the hub page: the hub list with each hub's live spawned
-// count, its last spawn failure and its broken hub state, the create and
-// register forms, each hub's edit form with its change log, and the remove
-// action.
+// group check, and the hub page: the guild-wide moderator section with its
+// change log, the hub list with each hub's live spawned count, its last
+// spawn failure and its broken hub state, the create and register forms,
+// each hub's edit form with its change log, and the remove action.
 package panel
 
 import (
@@ -166,6 +166,7 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("POST /hubs", p.withSession(p.createOrRegisterHub))
 	mux.HandleFunc("POST /hubs/{id}", p.withSession(p.updateHub))
 	mux.HandleFunc("POST /hubs/{id}/remove", p.withSession(p.removeHub))
+	mux.HandleFunc("POST /moderators", p.withSession(p.saveModerators))
 	protected := http.NewCrossOriginProtection().Handler(mux)
 	// A panic in a handler is recovered here, through the same path every
 	// other goroutine uses (ADR 0001), before net/http's own recovery would
@@ -518,5 +519,27 @@ func (p *Panel) removeHub(w http.ResponseWriter, r *http.Request, sess session) 
 	}
 	utils.Info("Panel hub removed", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
 		"base_string", hub.BaseString, "username", sess.username, "forum_user_id", sess.userID)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// saveModerators is POST /moderators: one service call, then a redirect to
+// the page where the saved set shows, or the page again with the refused
+// field named on the guild-wide section.
+func (p *Panel) saveModerators(w http.ResponseWriter, r *http.Request, sess session) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "the form could not be read", http.StatusBadRequest)
+		return
+	}
+	in := moderatorsInput{RoleIDs: r.PostForm[fieldModeratorRoles]}
+	roles, err := p.hubs.setModerators(r.Context(), in, sess.actor())
+	if refusal, ok := asFieldError(err); ok {
+		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, pageRequest{Moderators: &in, Error: refusal, Refused: formModerators})
+		return
+	}
+	if err != nil {
+		p.serverError(w, "moderators save", err)
+		return
+	}
+	utils.Info("Panel guild moderator roles saved", "role_ids", roles, "username", sess.username, "forum_user_id", sess.userID)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

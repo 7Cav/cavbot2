@@ -1,6 +1,7 @@
 {{define "content"}}
 <main class="body">
   <h1 class="title">Hubs</h1>
+  {{template "moderators" .}}
   <div class="block">
     <h2 class="block-header">Hubs</h2>
     {{if .Hubs.Hubs}}
@@ -35,6 +36,46 @@
 {{end}}
 
 {{define "refusal"}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}
+
+{{define "moderators"}}
+  <section class="moderators" data-section="moderators">
+  <form method="post" action="/moderators" class="block">
+    <h2 class="block-header">Moderator roles for every hub</h2>
+    {{with .Hubs.RefusalFor "moderators"}}{{template "refusal" .}}{{end}}
+    <div class="block-row">
+      <fieldset class="field" data-field="moderator_roles">
+        <legend class="field-label">Roles</legend>
+        {{range .Hubs.Moderators.Roles}}<label class="check"><input type="checkbox" name="moderator_roles" value="{{.ID}}"{{if .Checked}} checked{{end}}> {{.Name}}</label>{{else}}<span class="off">The server has no roles to offer.</span>{{end}}
+        <span class="field-hint">These roles rename any spawned channel of any hub, including hubs added later. Each hub adds its own roles in its form.</span>
+      </fieldset>
+    </div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save</button></div>
+  </form>
+  <div class="block">
+    {{template "changes" .Hubs.Moderators.Changes}}
+  </div>
+  </section>
+{{end}}
+
+{{define "changes"}}
+    <h2 class="block-header">Change log</h2>
+    {{range .}}
+    <div class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}">
+      <div class="change-head">
+        <span class="change-who" data-field="username">{{.Username}}</span>
+        <span class="tag" data-field="action">{{.Action}}</span>
+        <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
+      </div>
+      {{if .Fields}}
+      <dl class="change-fields">
+        {{range .Fields}}<div data-change="{{.Field}}"><dt>{{.Field}}</dt><dd><span data-field="before">{{.Before}}</span> <span class="arrow">&rarr;</span> <span data-field="after">{{.After}}</span></dd></div>{{end}}
+      </dl>
+      {{else}}<div class="off">No field changed.</div>{{end}}
+    </div>
+    {{else}}
+    <div class="block-row">No saves recorded yet.</div>
+    {{end}}
+{{end}}
 
 {{define "create"}}
   <form method="post" action="/hubs" class="block narrow">
@@ -131,10 +172,17 @@
       </label>
     </div>
     <div class="block-row">
+      <div class="field" data-field="guild_moderator_roles">
+        <span class="field-label">Moderator roles for every hub</span>
+        {{range .GuildRoles}}<span class="tag" data-role="{{.ID}}">{{.Name}}</span> {{else}}<span class="off">none</span>{{end}}
+        <span class="field-hint">Set in the section at the top of the page. They apply to this hub too; a hub cannot exclude them.</span>
+      </div>
+    </div>
+    <div class="block-row">
       <fieldset class="field" data-field="moderator_roles">
-        <legend class="field-label">Moderator roles</legend>
+        <legend class="field-label">Moderator roles for this hub</legend>
         {{range .Roles}}<label class="check"><input type="checkbox" name="moderator_roles" value="{{.ID}}"{{if .Checked}} checked{{end}}> {{.Name}}</label>{{else}}<span class="off">The server has no roles to offer.</span>{{end}}
-        <span class="field-hint">These roles allow renaming regardless of ownership.</span>
+        <span class="field-hint">These roles rename any channel this hub spawns, whoever owns it, in addition to the roles for every hub.</span>
       </fieldset>
     </div>
     <div class="block-row">
@@ -162,23 +210,7 @@
     <div class="submit-row"><button type="submit" class="btn btn--danger" data-field="remove">Remove hub</button></div>
   </form>
   <div class="block">
-    <h2 class="block-header">Change log</h2>
-    {{range .Changes}}
-    <div class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}">
-      <div class="change-head">
-        <span class="change-who" data-field="username">{{.Username}}</span>
-        <span class="tag" data-field="action">{{.Action}}</span>
-        <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
-      </div>
-      {{if .Fields}}
-      <dl class="change-fields">
-        {{range .Fields}}<div data-change="{{.Field}}"><dt>{{.Field}}</dt><dd>{{.Before}} <span class="arrow">&rarr;</span> {{.After}}</dd></div>{{end}}
-      </dl>
-      {{else}}<div class="off">No field changed.</div>{{end}}
-    </div>
-    {{else}}
-    <div class="block-row">No saves recorded yet.</div>
-    {{end}}
+    {{template "changes" .Changes}}
   </div>
   </section>
 {{end}}

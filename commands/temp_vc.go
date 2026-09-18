@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -17,7 +18,8 @@ import (
 // A member joining a hub gets a spawned channel created under the hub
 // channel's category and is moved into it. Hub settings come from the store
 // (the panel edits them); the runtime holds them in memory and the panel's
-// service layer applies each save in-process through ApplyHub and RemoveHub.
+// service layer applies each save in-process through ApplyHub, RemoveHub and
+// ApplyGuildModeratorRoles.
 // The spawned channel is named "<base string> - n", numbered per hub from 1
 // with freed numbers reused, and carries the hub's user limit and bitrate.
 // Permission source "category" sends no overwrites, so Discord copies the
@@ -419,6 +421,17 @@ func (t *TempVC) RemoveHub(hubChannelID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.hubs, hubChannelID)
+}
+
+// ApplyGuildModeratorRoles replaces the guild-wide moderator roles, the set
+// every hub's effective moderators include. The panel's service layer calls
+// it after its store write succeeds, the same arrangement as ApplyHub, so a
+// holder of a role saved on the panel renames at once and a holder of a
+// dropped one is refused at once.
+func (t *TempVC) ApplyGuildModeratorRoles(roleIDs []string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.guildModeratorRoles = slices.Clone(roleIDs)
 }
 
 // LastSpawnFailure reports a hub's last spawn failure since the last

@@ -183,6 +183,36 @@ func TestVoiceRenameGuildModeratorRenamesOwnerlessChannel(t *testing.T) {
 	ephemeralReply(t, f)
 }
 
+// T6c (#296): the guild-wide set applied in-process replaces the earlier
+// one. A holder of a role the panel just saved renames another member's
+// channel at once and the owner is unchanged; once a later save drops the
+// role, the same holder is refused again.
+func TestVoiceRenameGuildModeratorSetAppliedInProcessReplaces(t *testing.T) {
+	fake := newFakeTempVCManager()
+	tv := newTestTempVC(t, fake, seedStore(t, testHub()))
+	spawnInto(tv, fake, "user-owner", "chan-1", member("Smith", testRankSGT))
+	tv.HandleVoiceStateUpdate(voiceEvent("user-mod", "chan-1", member("Jones", testModRoleGuild)))
+
+	tv.ApplyGuildModeratorRoles([]string{testModRoleGuild})
+	runVoiceRename(&fakeResponder{}, tv, renameInteraction("user-mod", []string{testModRoleGuild}, "Alpha"))
+
+	edits := fake.recordedEdits()
+	if len(edits) != 1 || edits[0].channelID != "chan-1" || edits[0].name != "Alpha" {
+		t.Fatalf("edits after the role was applied = %+v, want one on chan-1 named Alpha", edits)
+	}
+	if owner, tracked := tv.Owner("chan-1"); !tracked || owner != "user-owner" {
+		t.Errorf("Owner(chan-1) = %q, %v; want user-owner, still tracked", owner, tracked)
+	}
+
+	tv.ApplyGuildModeratorRoles([]string{})
+	runVoiceRename(&fakeResponder{}, tv, renameInteraction("user-mod", []string{testModRoleGuild}, "Bravo"))
+
+	edits = fake.recordedEdits()
+	if len(edits) != 1 {
+		t.Fatalf("edits after the role was dropped = %+v, want the one named Alpha alone", edits)
+	}
+}
+
 // movableClock replaces the runtime clock for the test and returns a setter,
 // where pinClock in temp_vc_test.go fixes one instant.
 func movableClock(t *testing.T, at time.Time) func(time.Time) {

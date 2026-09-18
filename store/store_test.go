@@ -578,3 +578,53 @@ func TestDeleteHubClearsTheChangeLogReference(t *testing.T) {
 		}
 	})
 }
+
+// moderatorsEntry is a guild-wide moderator save with an ordinal in its
+// diff, under no hub the way the panel appends it.
+func moderatorsEntry(hubID int64, ordinal int) ChangeLogEntry {
+	e := changeEntry(hubID, ordinal)
+	e.Action = ChangeModerators
+	return e
+}
+
+// T14 (#296): ListModeratorChanges returns at most limit guild-wide
+// moderator saves, newest first in append order, and neither a remove entry
+// under no hub nor a moderators entry that references a hub.
+func TestModeratorChangesListReturnsTheLastNNewestFirst(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		hubID := storeHub(t, s, "hub-1")
+		for i := 1; i <= 12; i++ {
+			if err := s.AppendChangeLog(ctx, moderatorsEntry(0, i)); err != nil {
+				t.Fatalf("AppendChangeLog(%d): %v", i, err)
+			}
+		}
+		remove := changeEntry(0, 98)
+		remove.Action = ChangeRemove
+		if err := s.AppendChangeLog(ctx, remove); err != nil {
+			t.Fatalf("AppendChangeLog(remove): %v", err)
+		}
+		if err := s.AppendChangeLog(ctx, moderatorsEntry(hubID, 99)); err != nil {
+			t.Fatalf("AppendChangeLog(hub-referenced): %v", err)
+		}
+
+		entries, err := s.ListModeratorChanges(ctx, 10)
+		if err != nil {
+			t.Fatalf("ListModeratorChanges: %v", err)
+		}
+		if len(entries) != 10 {
+			t.Fatalf("ListModeratorChanges returned %d entries, want 10", len(entries))
+		}
+		if got := ordinalOf(t, entries[0]); got != 12 {
+			t.Errorf("first entry is ordinal %d, want 12 (the newest)", got)
+		}
+		if got := ordinalOf(t, entries[9]); got != 3 {
+			t.Errorf("tenth entry is ordinal %d, want 3", got)
+		}
+		for _, e := range entries {
+			if n := ordinalOf(t, e); n == 98 || n == 99 {
+				t.Errorf("entry ordinal %d is listed, want neither the remove nor the hub-referenced one", n)
+			}
+		}
+	})
+}

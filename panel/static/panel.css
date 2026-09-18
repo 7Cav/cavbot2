@@ -121,6 +121,9 @@ fieldset.field legend { padding: 0; }
 .check input { width: auto; display: inline; margin: 0 6px 0 0; vertical-align: middle; accent-color: var(--gold); }
 .field .check input { width: auto; display: inline; }
 
+/* The guild-wide moderator section: its form beside its change log. */
+.moderators { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; align-items: start; }
+
 /* The change log under a hub's form. */
 .change-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 6px; }
 .change-who { color: var(--text-hi); font-weight: 500; }
@@ -154,6 +157,7 @@ fieldset.field legend { padding: 0; }
 /* Under 768px the rail becomes a top bar and the page goes single column. */
 @media (max-width: 767px) {
   .console { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+  .moderators { grid-template-columns: minmax(0, 1fr); }
   .rail { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; border-right: 0; border-bottom: 1px solid var(--line); }
   .rail .mark { border-bottom: 0; padding: 12px 16px; }
   .rail nav { padding: 0; }

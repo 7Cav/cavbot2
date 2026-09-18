@@ -177,18 +177,28 @@ func (f *Fake) AppendChangeLog(_ context.Context, e ChangeLogEntry) error {
 
 // ListChangeLog implements Store.
 func (f *Fake) ListChangeLog(_ context.Context, hubID int64, limit int) ([]ChangeLogEntry, error) {
+	return f.listChanges(limit, func(e ChangeLogEntry) bool { return e.HubID == hubID }), nil
+}
+
+// ListModeratorChanges implements Store.
+func (f *Fake) ListModeratorChanges(_ context.Context, limit int) ([]ChangeLogEntry, error) {
+	return f.listChanges(limit, func(e ChangeLogEntry) bool { return e.HubID == 0 && e.Action == ChangeModerators }), nil
+}
+
+// listChanges returns at most limit entries that pass keep, newest first.
+func (f *Fake) listChanges(limit int, keep func(ChangeLogEntry) bool) []ChangeLogEntry {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []ChangeLogEntry
 	for i := len(f.changes) - 1; i >= 0 && len(out) < limit; i-- {
 		e := f.changes[i]
-		if e.HubID != hubID {
+		if !keep(e) {
 			continue
 		}
 		e.Diff = slices.Clone(e.Diff)
 		out = append(out, e)
 	}
-	return out, nil
+	return out
 }
 
 // cloneHub copies a hub so a caller's later edits to the slice do not reach
