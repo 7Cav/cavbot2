@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -61,6 +62,25 @@ type registerInput struct {
 	BaseString string
 }
 
+// editInput is the edit form as posted: strings as the browser sent them,
+// parsed and validated by the service, and rendered back on a refusal so
+// nothing typed is lost. The hub channel is not a field: it is fixed at
+// register.
+type editInput struct {
+	BaseString       string
+	PermissionSource string
+	ModeratorRoleIDs []string
+	UserLimit        string
+	Bitrate          string
+	Enabled          bool
+}
+
+// actor is the signed-in forum user a save is recorded against.
+type actor struct {
+	userID   int
+	username string
+}
+
 // fieldError is a validation refusal: which field, and why. The field name
 // is the form field's name and the data-error attribute on the note the
 // page shows, a test contract; the message is not.
@@ -73,8 +93,13 @@ func (e *fieldError) Error() string { return e.Field + ": " + e.Message }
 
 // Form field names, as posted and as named in a refusal.
 const (
-	fieldHubChannel = "hub_channel"
-	fieldBaseString = "base_string"
+	fieldHubChannel       = "hub_channel"
+	fieldBaseString       = "base_string"
+	fieldPermissionSource = "permission_source"
+	fieldModeratorRoles   = "moderator_roles"
+	fieldUserLimit        = "user_limit"
+	fieldBitrate          = "bitrate"
+	fieldEnabled          = "enabled"
 )
 
 // Bounds on the base string. Discord's channel name limit is 100 and the
@@ -90,13 +115,70 @@ const (
 	defaultBitrate   = 64000
 )
 
-// hubPage is what the hub page renders from. Form and Error are set when a
-// register was refused and the page re-renders with the field named.
+// Bounds on the user limit and the bitrate. The user limit is Discord's
+// range, 0 meaning no limit. The bitrate bounds are Discord's hard floor and
+// the ceiling a guild at the top boost tier gets; the ceiling the guild's own
+// tier allows is read live at save by the next ticket.
+const (
+	userLimitMin = 0
+	userLimitMax = 99
+	bitrateMin   = 8000
+	bitrateMax   = 384000
+)
+
+// hubPage is what the hub page renders from. One form shows at a time: the
+// register form, or, with Edit set, one hub's edit form. Error names the
+// refused field of whichever form shows; Form is the register form as
+// posted, so nothing typed is lost on a refusal.
 type hubPage struct {
 	Hubs   []hubRow
 	Picker []pickerChannel
 	Form   registerInput
 	Error  *fieldError
+	Edit   *editPage
+}
+
+// editPage is one hub's edit form: the fixed values the form shows read-only,
+// the guild's roles the moderator picker offers, and the form's fields as
+// stored or as posted back after a refusal.
+type editPage struct {
+	ID int64
+	// ChannelName is empty when the hub channel is not in the guild.
+	ChannelName string
+	// CategoryName is empty when the hub channel has no parent.
+	CategoryName string
+	Roles        []guildRole
+	Form         editInput
+}
+
+// guildRole is one role the moderator picker offers, and whether the form
+// has it checked.
+type guildRole struct {
+	ID      string
+	Name    string
+	Checked bool
+}
+
+// hasRole reports whether the form carries the role.
+func (in editInput) hasRole(id string) bool {
+	for _, r := range in.ModeratorRoleIDs {
+		if r == id {
+			return true
+		}
+	}
+	return false
+}
+
+// editInputOf is the edit form as the stored hub fills it.
+func editInputOf(h store.Hub) editInput {
+	return editInput{
+		BaseString:       h.BaseString,
+		PermissionSource: string(h.PermissionSource),
+		ModeratorRoleIDs: h.ModeratorRoleIDs,
+		UserLimit:        strconv.Itoa(h.UserLimit),
+		Bitrate:          strconv.Itoa(h.Bitrate),
+		Enabled:          h.Enabled,
+	}
 }
 
 // guildChannels is the guild's channel list as read at one page load,
@@ -176,6 +258,67 @@ func (s *hubService) read(ctx context.Context) (snapshot, error) {
 		guild.byID[ch.ID] = ch
 	}
 	return snapshot{hubs: hubs, guild: guild}, nil
+}
+
+// guildRoles reads the guild's roles through the manager seam: the ones the
+// moderator picker offers and an update accepts. The @everyone role, whose
+// ID is the guild's, is left out; every member holds it.
+func (s *hubService) guildRoles() ([]*discordgo.Role, error) {
+	g, err := s.deps.Manager.Guild(s.deps.GuildID)
+	if err != nil {
+		return nil, fmt.Errorf("guild roles: %w", err)
+	}
+	roles := make([]*discordgo.Role, 0, len(g.Roles))
+	for _, r := range g.Roles {
+		if r.ID != s.deps.GuildID {
+			roles = append(roles, r)
+		}
+	}
+	sort.Slice(roles, func(i, j int) bool { return roles[i].Position > roles[j].Position })
+	return roles, nil
+}
+
+// form reads what one hub's edit form renders from. store.ErrNotFound means
+// no hub has the ID.
+func (s *hubService) form(ctx context.Context, hubID int64) (*editPage, error) {
+	hub, err := s.deps.Store.GetHub(ctx, hubID)
+	if err != nil {
+		return nil, err
+	}
+	sn, err := s.read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	roles, err := s.guildRoles()
+	if err != nil {
+		return nil, err
+	}
+	page := &editPage{ID: hub.ID, Form: editInputOf(hub)}
+	if ch, ok := sn.guild.channel(hub.HubChannelID); ok {
+		page.ChannelName = ch.Name
+		page.CategoryName = sn.guild.categoryName(ch)
+	}
+	page.setRoles(roles)
+	return page, nil
+}
+
+// setRoles fills the moderator picker from the guild's roles, checked where
+// the form carries them.
+func (e *editPage) setRoles(roles []*discordgo.Role) {
+	e.Roles = make([]guildRole, 0, len(roles))
+	for _, r := range roles {
+		e.Roles = append(e.Roles, guildRole{ID: r.ID, Name: r.Name, Checked: e.Form.hasRole(r.ID)})
+	}
+}
+
+// withForm puts the form as posted on the page, for the re-render after a
+// refusal, and re-marks the picker from it.
+func (e *editPage) withForm(in editInput) *editPage {
+	e.Form = in
+	for i := range e.Roles {
+		e.Roles[i].Checked = in.hasRole(e.Roles[i].ID)
+	}
+	return e
 }
 
 // list merges the store's hub rows with the guild's channel list and the
@@ -263,6 +406,82 @@ func (s *hubService) register(ctx context.Context, in registerInput) (store.Hub,
 	}
 	s.deps.Runtime.ApplyHub(stored)
 	return stored, nil
+}
+
+// update saves a hub's settings from the edit form, writes the row and
+// applies it to the runtime, so a disabled hub stops spawning at once. A
+// refusal is a *fieldError naming the field, and nothing is written;
+// store.ErrNotFound means no hub has the ID.
+func (s *hubService) update(ctx context.Context, hubID int64, in editInput, _ actor) (store.Hub, error) {
+	hub, err := s.deps.Store.GetHub(ctx, hubID)
+	if err != nil {
+		return store.Hub{}, err
+	}
+	roles, err := s.guildRoles()
+	if err != nil {
+		return store.Hub{}, err
+	}
+	if err := applyEdit(&hub, in, roles); err != nil {
+		return store.Hub{}, err
+	}
+
+	stored, err := s.deps.Store.UpsertHub(ctx, hub)
+	if err != nil {
+		return store.Hub{}, fmt.Errorf("write hub: %w", err)
+	}
+	s.deps.Runtime.ApplyHub(stored)
+	return stored, nil
+}
+
+// applyEdit validates the edit form and puts its values on the hub. The
+// first refusal wins, as a *fieldError naming the field; the hub is then
+// half written and must not be stored.
+func applyEdit(hub *store.Hub, in editInput, roles []*discordgo.Role) error {
+	hub.BaseString = strings.TrimSpace(in.BaseString)
+	if n := utf8.RuneCountInString(hub.BaseString); n < baseStringMin || n > baseStringMax {
+		return &fieldError{fieldBaseString,
+			fmt.Sprintf("Enter a base string of %d to %d characters.", baseStringMin, baseStringMax)}
+	}
+	switch source := store.PermissionSource(in.PermissionSource); source {
+	case store.PermissionCategory, store.PermissionHubChannel:
+		hub.PermissionSource = source
+	default:
+		return &fieldError{fieldPermissionSource, "Choose where spawned channels take their permissions from."}
+	}
+	known := make(map[string]struct{}, len(roles))
+	for _, r := range roles {
+		known[r.ID] = struct{}{}
+	}
+	hub.ModeratorRoleIDs = make([]string, 0, len(in.ModeratorRoleIDs))
+	for _, id := range in.ModeratorRoleIDs {
+		if _, ok := known[id]; !ok {
+			return &fieldError{fieldModeratorRoles, "One of those roles is no longer in the server. Choose again."}
+		}
+		hub.ModeratorRoleIDs = append(hub.ModeratorRoleIDs, id)
+	}
+	var err error
+	if hub.UserLimit, err = intInRange(in.UserLimit, userLimitMin, userLimitMax); err != nil {
+		return &fieldError{fieldUserLimit,
+			fmt.Sprintf("Enter a user limit of %d to %d. 0 means no limit.", userLimitMin, userLimitMax)}
+	}
+	if hub.Bitrate, err = intInRange(in.Bitrate, bitrateMin, bitrateMax); err != nil {
+		return &fieldError{fieldBitrate,
+			fmt.Sprintf("Enter a bitrate of %d to %d.", bitrateMin, bitrateMax)}
+	}
+	hub.Enabled = in.Enabled
+	return nil
+}
+
+// intInRange parses a posted number and checks it lies in [lo, hi].
+func intInRange(raw string, lo, hi int) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, err
+	}
+	if n < lo || n > hi {
+		return 0, fmt.Errorf("%d outside %d to %d", n, lo, hi)
+	}
+	return n, nil
 }
 
 // asFieldError reports whether an error is a validation refusal.

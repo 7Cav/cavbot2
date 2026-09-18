@@ -14,8 +14,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
+	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
 	"golang.org/x/oauth2"
 )
@@ -161,6 +163,7 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("POST /auth/signout", p.authSignout)
 	mux.HandleFunc("GET /{$}", p.withSession(p.homePage))
 	mux.HandleFunc("POST /hubs", p.withSession(p.registerHub))
+	mux.HandleFunc("POST /hubs/{id}", p.withSession(p.updateHub))
 	protected := http.NewCrossOriginProtection().Handler(mux)
 	// A panic in a handler is recovered here, through the same path every
 	// other goroutine uses (ADR 0001), before net/http's own recovery would
@@ -355,20 +358,39 @@ func (p *Panel) endSession(w http.ResponseWriter, id string, sess session, reaso
 	utils.Info("Panel session ended", "reason", reason, "username", sess.username, "forum_user_id", sess.userID)
 }
 
-// homePage is the hub page: the list and the register form.
+// homePage is the hub page: the list, and the register form or, with a hub
+// named in the query, that hub's edit form.
 func (p *Panel) homePage(w http.ResponseWriter, r *http.Request, sess session) {
-	p.renderHubs(w, r, sess, http.StatusOK, registerInput{}, nil)
+	var edit *editPage
+	if raw := r.URL.Query().Get("hub"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 {
+			http.NotFound(w, r)
+			return
+		}
+		edit, err = p.hubs.form(r.Context(), id)
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			p.serverError(w, "hub form", err)
+			return
+		}
+	}
+	p.renderHubs(w, r, sess, http.StatusOK, hubPage{Edit: edit})
 }
 
-// renderHubs renders the hub page with the list read now, and the register
-// form as posted with its refusal when there is one.
-func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session, status int, form registerInput, refusal *fieldError) {
+// renderHubs renders the hub page with the list read now and the forms as
+// the caller set them: the register form as posted, or one hub's edit form,
+// with the refusal when there is one.
+func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session, status int, forms hubPage) {
 	page, err := p.hubs.list(r.Context())
 	if err != nil {
 		p.serverError(w, "hub list", err)
 		return
 	}
-	page.Form, page.Error = form, refusal
+	page.Form, page.Error, page.Edit = forms.Form, forms.Error, forms.Edit
 	data := sess.page("Hubs")
 	data.Hubs = page
 	p.render(w, status, "home", data)
@@ -384,7 +406,7 @@ func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session
 	in := registerInput{ChannelID: r.PostForm.Get(fieldHubChannel), BaseString: r.PostForm.Get(fieldBaseString)}
 	hub, err := p.hubs.register(r.Context(), in)
 	if refusal, ok := asFieldError(err); ok {
-		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, in, refusal)
+		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, hubPage{Form: in, Error: refusal})
 		return
 	}
 	if err != nil {
@@ -394,4 +416,57 @@ func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session
 	utils.Info("Panel hub registered", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
 		"base_string", hub.BaseString, "username", sess.username, "forum_user_id", sess.userID)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// hubIDOf reads the hub ID from the route. A value that is not an ID names
+// no hub, and the caller answers 404.
+func hubIDOf(r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	return id, err == nil && id > 0
+}
+
+// updateHub is POST /hubs/{id}: one service call, then a redirect to the
+// hub's form where the saved values show, or the form again with the refused
+// field named.
+func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) {
+	id, ok := hubIDOf(r)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "the form could not be read", http.StatusBadRequest)
+		return
+	}
+	in := editInput{
+		BaseString:       r.PostForm.Get(fieldBaseString),
+		PermissionSource: r.PostForm.Get(fieldPermissionSource),
+		ModeratorRoleIDs: r.PostForm[fieldModeratorRoles],
+		UserLimit:        r.PostForm.Get(fieldUserLimit),
+		Bitrate:          r.PostForm.Get(fieldBitrate),
+		Enabled:          r.PostForm.Get(fieldEnabled) != "",
+	}
+	hub, err := p.hubs.update(r.Context(), id, in, actor{userID: sess.userID, username: sess.username})
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if refusal, ok := asFieldError(err); ok {
+		// The form again, as posted, so nothing typed is lost. The fixed
+		// values and the roles are read again; the store was not written.
+		edit, err := p.hubs.form(r.Context(), id)
+		if err != nil {
+			p.serverError(w, "hub form", err)
+			return
+		}
+		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, hubPage{Edit: edit.withForm(in), Error: refusal})
+		return
+	}
+	if err != nil {
+		p.serverError(w, "hub update", err)
+		return
+	}
+	utils.Info("Panel hub updated", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
+		"username", sess.username, "forum_user_id", sess.userID)
+	http.Redirect(w, r, "/?hub="+strconv.FormatInt(hub.ID, 10), http.StatusSeeOther)
 }

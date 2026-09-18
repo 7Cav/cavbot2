@@ -5,7 +5,7 @@
     <h2 class="block-header">Hubs</h2>
     {{if .Hubs.Hubs}}
     <div class="scroll"><table class="hublist">
-      <thead><tr><th>Hub</th><th>Channel</th><th>Category</th><th>State</th><th class="num">Spawned</th></tr></thead>
+      <thead><tr><th>Hub</th><th>Channel</th><th>Category</th><th>State</th><th class="num">Spawned</th><th></th></tr></thead>
       <tbody>
       {{range .Hubs.Hubs}}
         <tr data-hub="{{.ID}}">
@@ -14,6 +14,7 @@
           <td data-field="category_name">{{if .CategoryName}}{{.CategoryName}}{{else}}<span class="off">none</span>{{end}}</td>
           <td data-field="enabled">{{if .Enabled}}<span class="tag tag--on">enabled</span>{{else}}<span class="tag">disabled</span>{{end}}</td>
           <td class="num" data-field="spawned">{{.Spawned}}</td>
+          <td class="num"><a href="/?hub={{.ID}}" data-field="edit">Edit</a></td>
         </tr>
       {{end}}
       </tbody>
@@ -23,6 +24,15 @@
     {{end}}
   </div>
 
+  {{if .Hubs.Edit}}
+  {{template "edit" .}}
+  {{else}}
+  {{template "register" .}}
+  {{end}}
+</main>
+{{end}}
+
+{{define "register"}}
   <form method="post" action="/hubs" class="block narrow">
     <h2 class="block-header">Register a voice channel as a hub</h2>
     {{with .Hubs.Error}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}
@@ -45,5 +55,72 @@
     </div>
     <div class="submit-row"><button type="submit" class="btn btn--cta">Register</button></div>
   </form>
-</main>
+{{end}}
+
+{{define "edit"}}
+{{with .Hubs.Edit}}
+  <section class="narrow" data-hub="{{.ID}}">
+  <form method="post" action="/hubs/{{.ID}}" class="block">
+    <h2 class="block-header">Edit hub</h2>
+    {{with $.Hubs.Error}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}
+    <div class="block-row">
+      <div class="field">
+        <span class="field-label">Hub channel</span>
+        <span data-field="channel_name">{{if .ChannelName}}{{.ChannelName}}{{else}}<span class="off">not in the server</span>{{end}}</span>
+        <span class="field-hint">Fixed at register. To move a hub to another channel, remove it and register the other channel.</span>
+      </div>
+    </div>
+    <div class="block-row">
+      <div class="field">
+        <span class="field-label">Category</span>
+        <span data-field="category_name">{{if .CategoryName}}{{.CategoryName}}{{else}}<span class="off">none</span>{{end}}</span>
+        <span class="field-hint">Read from the hub channel's parent in Discord. Spawned channels go under it.</span>
+      </div>
+    </div>
+    <div class="block-row">
+      <label class="field">
+        <span class="field-label">Base string</span>
+        <input type="text" name="base_string" data-field="base_string" value="{{.Form.BaseString}}" maxlength="90" required>
+        <span class="field-hint">Cavbot2 names spawned channels from it: "Arma Voice" gives "Arma Voice - 1". Live channels keep their names.</span>
+      </label>
+    </div>
+    <div class="block-row">
+      <label class="field">
+        <span class="field-label">Permission source</span>
+        <select name="permission_source" data-field="permission_source">
+          <option value="category"{{if eq .Form.PermissionSource "category"}} selected{{end}}>Category</option>
+          <option value="hub_channel"{{if eq .Form.PermissionSource "hub_channel"}} selected{{end}}>Hub channel</option>
+        </select>
+        <span class="field-hint">Category: a spawned channel copies the category's permissions. Hub channel: it copies the hub channel's own, for a stricter hub inside a looser category.</span>
+      </label>
+    </div>
+    <div class="block-row">
+      <fieldset class="field" data-field="moderator_roles">
+        <legend class="field-label">Moderator roles</legend>
+        {{range .Roles}}<label class="check"><input type="checkbox" name="moderator_roles" value="{{.ID}}"{{if .Checked}} checked{{end}}> {{.Name}}</label>{{else}}<span class="off">The server has no roles to offer.</span>{{end}}
+        <span class="field-hint">Members with one of these roles may rename any channel this hub spawns.</span>
+      </fieldset>
+    </div>
+    <div class="block-row">
+      <label class="field">
+        <span class="field-label">User limit</span>
+        <input type="number" name="user_limit" data-field="user_limit" value="{{.Form.UserLimit}}" min="0" max="99" required>
+        <span class="field-hint">0 to 99. 0 means no limit.</span>
+      </label>
+    </div>
+    <div class="block-row">
+      <label class="field">
+        <span class="field-label">Bitrate</span>
+        <input type="number" name="bitrate" data-field="bitrate" value="{{.Form.Bitrate}}" min="8000" max="384000" step="1000" required>
+        <span class="field-hint">In bits per second. 64000 is Discord's default.</span>
+      </label>
+    </div>
+    <div class="block-row">
+      <label class="check"><input type="checkbox" name="enabled" data-field="enabled"{{if .Form.Enabled}} checked{{end}}> Enabled</label>
+      <span class="field-hint">A disabled hub keeps its channel and its settings and spawns nothing.</span>
+    </div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta">Save</button> <a class="btn" href="/">Back to the list</a></div>
+  </form>
+  </section>
+{{end}}
 {{end}}

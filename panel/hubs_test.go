@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,7 +31,14 @@ type fakeDiscord struct {
 	// answering the panel's read.
 	listErr error
 	created []discordgo.GuildChannelCreateData
+	deleted []string
 	spawned int
+}
+
+// testGuildRoles are the guild's roles the moderator picker offers.
+var testGuildRoles = []*discordgo.Role{
+	{ID: "role-mp", Name: "Military Police"},
+	{ID: "role-hq", Name: "Regimental HQ"},
 }
 
 // newFakeDiscord returns a guild with one category holding a voice channel
@@ -75,6 +83,9 @@ func (f *fakeDiscord) GuildChannelCreateComplex(_ string, data discordgo.GuildCh
 }
 
 func (f *fakeDiscord) ChannelDelete(channelID, _ string) (*discordgo.Channel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = append(f.deleted, channelID)
 	return &discordgo.Channel{ID: channelID}, nil
 }
 
@@ -90,7 +101,9 @@ func (f *fakeDiscord) ChannelMessageSendComplex(channelID string, data *discordg
 
 func (f *fakeDiscord) GuildMember(_, _ string) (*discordgo.Member, error) { return nil, nil }
 
-func (f *fakeDiscord) Guild(_ string) (*discordgo.Guild, error) { return nil, nil }
+func (f *fakeDiscord) Guild(_ string) (*discordgo.Guild, error) {
+	return &discordgo.Guild{ID: testGuildID, Roles: testGuildRoles}, nil
+}
 
 func (f *fakeDiscord) setListErr(err error) {
 	f.mu.Lock()
@@ -99,9 +112,21 @@ func (f *fakeDiscord) setListErr(err error) {
 }
 
 func (f *fakeDiscord) createCount() int {
+	return len(f.creates())
+}
+
+// creates returns every create payload the runtime sent, in order.
+func (f *fakeDiscord) creates() []discordgo.GuildChannelCreateData {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return len(f.created)
+	return slices.Clone(f.created)
+}
+
+// deletes returns the ID of every channel the runtime deleted, in order.
+func (f *fakeDiscord) deletes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.deleted)
 }
 
 // testWorld is the panel with everything beneath it: the fake forum, the
@@ -372,5 +397,142 @@ func TestHubPageWithGuildReadFailingIsAServerError(t *testing.T) {
 
 	if !isServerError(res.StatusCode) {
 		t.Errorf("GET / status = %d, want 5xx", res.StatusCode)
+	}
+}
+
+// updateForm is the edit form as posted, every field carrying the value
+// testHub stores, so a test changes one field and posts the rest unchanged.
+func updateForm() url.Values {
+	return url.Values{
+		"base_string":       {"Arma Voice"},
+		"permission_source": {"category"},
+		"user_limit":        {"0"},
+		"bitrate":           {"64000"},
+		"enabled":           {"on"},
+	}
+}
+
+// hubPath is the update route of the stored hub on a channel.
+func hubPath(t *testing.T, st store.Store, hubChannelID string) string {
+	t.Helper()
+	return "/hubs/" + strconv.FormatInt(storedHubID(t, st, hubChannelID), 10)
+}
+
+func TestUpdateWritesTheRowAndReachesTheRuntime(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	form := updateForm()
+	form.Set("base_string", "Bravo Voice")
+	form.Set("permission_source", "hub_channel")
+	form["moderator_roles"] = []string{"role-mp"}
+	form.Set("user_limit", "5")
+	form.Set("bitrate", "96000")
+
+	res := w.b.postForm(hubPath(t, w.st, "hub-1"), form)
+
+	assertRedirect(t, res, "/")
+	hubs := storedHubs(t, w.st)
+	if len(hubs) != 1 {
+		t.Fatalf("stored %d hubs, want 1", len(hubs))
+	}
+	h := hubs[0]
+	if h.BaseString != "Bravo Voice" || h.PermissionSource != store.PermissionHubChannel ||
+		!slices.Equal(h.ModeratorRoleIDs, []string{"role-mp"}) || h.UserLimit != 5 || h.Bitrate != 96000 || !h.Enabled {
+		t.Errorf("stored hub = %+v, want Bravo Voice, hub_channel, [role-mp], limit 5, bitrate 96000, enabled", h)
+	}
+
+	w.join("user-a", "hub-1")
+	creates := w.discord.creates()
+	if len(creates) != 1 {
+		t.Fatalf("a join after the update made %d creates, want 1", len(creates))
+	}
+	if !strings.Contains(creates[0].Name, "Bravo Voice") || creates[0].UserLimit != 5 {
+		t.Errorf("create payload = name %q, user limit %d; want the new base string and limit 5", creates[0].Name, creates[0].UserLimit)
+	}
+}
+
+func TestDisabledHubStopsSpawningAtOnceAndKeepsItsSettings(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	path := hubPath(t, w.st, "hub-1")
+	off := updateForm()
+	off.Del("enabled")
+
+	assertRedirect(t, w.b.postForm(path, off), "/")
+	w.join("user-a", "hub-1")
+	if n := w.discord.createCount(); n != 0 {
+		t.Errorf("a join to the disabled hub made %d creates, want 0", n)
+	}
+	if h := storedHubs(t, w.st)[0]; h.Enabled || h.BaseString != "Arma Voice" {
+		t.Errorf("stored hub = %+v, want disabled with base string Arma Voice kept", h)
+	}
+
+	assertRedirect(t, w.b.postForm(path, updateForm()), "/")
+	w.join("user-b", "hub-1")
+	if n := w.discord.createCount(); n != 1 {
+		t.Errorf("a join to the re-enabled hub made %d creates in all, want 1", n)
+	}
+}
+
+// storedChangeLog lists the change log entries of a hub, newest first.
+func storedChangeLog(t *testing.T, st store.Store, hubID int64) []store.ChangeLogEntry {
+	t.Helper()
+	entries, err := st.ListChangeLog(context.Background(), hubID, 10)
+	if err != nil {
+		t.Fatalf("ListChangeLog(%d): %v", hubID, err)
+	}
+	return entries
+}
+
+// sameHubSettings reports whether two hubs carry the same settings, ignoring
+// the store-set times.
+func sameHubSettings(a, b store.Hub) bool {
+	return a.ID == b.ID && a.HubChannelID == b.HubChannelID && a.BaseString == b.BaseString &&
+		a.PermissionSource == b.PermissionSource && slices.Equal(a.ModeratorRoleIDs, b.ModeratorRoleIDs) &&
+		a.UserLimit == b.UserLimit && a.Bitrate == b.Bitrate && a.Enabled == b.Enabled
+}
+
+func TestUpdateRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
+	set := func(field, value string) url.Values {
+		form := updateForm()
+		form.Set(field, value)
+		return form
+	}
+	cases := []struct {
+		name  string
+		form  url.Values
+		field string
+	}{
+		{"an empty base string", set("base_string", "   "), "base_string"},
+		{"a base string of 91 characters", set("base_string", strings.Repeat("x", 91)), "base_string"},
+		{"a permission source outside the two", set("permission_source", "other"), "permission_source"},
+		{"a user limit below 0", set("user_limit", "-1"), "user_limit"},
+		{"a user limit above 99", set("user_limit", "100"), "user_limit"},
+		{"a user limit that is not a number", set("user_limit", "abc"), "user_limit"},
+		{"a bitrate below 8000", set("bitrate", "7999"), "bitrate"},
+		{"a bitrate that is not a number", set("bitrate", "abc"), "bitrate"},
+		{"a moderator role not in the guild", set("moderator_roles", "role-elsewhere"), "moderator_roles"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			before := storedHubs(t, w.st)[0]
+
+			res := w.b.postForm(hubPath(t, w.st, "hub-1"), tc.form)
+
+			if !isClientError(res.StatusCode) {
+				t.Errorf("status = %d, want 4xx", res.StatusCode)
+			}
+			if field, ok := errorField(t, res); !ok || field != tc.field {
+				t.Errorf("data-error = %q (present %v), want %q", field, ok, tc.field)
+			}
+			if after := storedHubs(t, w.st)[0]; !sameHubSettings(after, before) {
+				t.Errorf("stored hub = %+v, want it unchanged from %+v", after, before)
+			}
+			if entries := storedChangeLog(t, w.st, before.ID); len(entries) != 0 {
+				t.Errorf("a refused update appended %d change log entries, want 0", len(entries))
+			}
+		})
 	}
 }
