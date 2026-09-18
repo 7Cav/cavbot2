@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/7cav/cavbot2/commands"
 	"github.com/7cav/cavbot2/store"
@@ -535,6 +536,11 @@ func TestUpdateRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
 			if entries := storedChangeLog(t, w.st, before.ID); len(entries) != 0 {
 				t.Errorf("a refused update appended %d change log entries, want 0", len(entries))
 			}
+			w.join("user-a", "hub-1")
+			creates := w.discord.creates()
+			if len(creates) != 1 || !strings.Contains(creates[0].Name, "Arma Voice") || creates[0].UserLimit != 0 || creates[0].Bitrate != 64000 {
+				t.Errorf("a join after the refusal made creates %+v, want one with the stored settings", creates)
+			}
 		})
 	}
 }
@@ -607,14 +613,15 @@ func decodeDiff(t *testing.T, e store.ChangeLogEntry) map[string]fieldChange {
 	return diff
 }
 
-// diffFields are the seven fields a register or remove entry carries.
-var diffFields = []string{"hub_channel", "base_string", "permission_source", "moderator_roles", "user_limit", "bitrate", "enabled"}
+// wantDiffFields are the seven fields the spec says a register or remove entry
+// carries, written out here so the test does not read the list from the code.
+var wantDiffFields = []string{"hub_channel", "base_string", "permission_source", "moderator_roles", "user_limit", "bitrate", "enabled"}
 
 // assertActor checks an entry names the signed-in test user.
 func assertActor(t *testing.T, e store.ChangeLogEntry, action store.ChangeAction) {
 	t.Helper()
-	if e.Action != action || e.ForumUserID != 1234 || e.ForumUsername != testUsername {
-		t.Errorf("entry = action %q by %d %q, want %q by 1234 %q", e.Action, e.ForumUserID, e.ForumUsername, action, testUsername)
+	if e.Action != action || e.ForumUserID != testUserID || e.ForumUsername != testUsername {
+		t.Errorf("entry = action %q by %d %q, want %q by %d %q", e.Action, e.ForumUserID, e.ForumUsername, action, testUserID, testUsername)
 	}
 }
 
@@ -652,7 +659,7 @@ func TestRegisterAppendsAnEntryWithNullBefore(t *testing.T) {
 	}
 	assertActor(t, entries[0], store.ChangeRegister)
 	diff := decodeDiff(t, entries[0])
-	for _, field := range diffFields {
+	for _, field := range wantDiffFields {
 		c, ok := diff[field]
 		if !ok {
 			t.Errorf("diff lacks %s", field)
@@ -679,7 +686,7 @@ func TestRemoveAppendsAnEntryWithNullAfter(t *testing.T) {
 	}
 	assertActor(t, entries[0], store.ChangeRemove)
 	diff := decodeDiff(t, entries[0])
-	for _, field := range diffFields {
+	for _, field := range wantDiffFields {
 		c, ok := diff[field]
 		if !ok {
 			t.Errorf("diff lacks %s", field)
@@ -761,6 +768,15 @@ func TestHubFormShowsTheLastTenEntriesNewestFirst(t *testing.T) {
 	}
 	if got := fieldText(t, first, "username"); got != testUsername {
 		t.Errorf("first entry username = %q, want %q", got, testUsername)
+	}
+	at := findElement(first, "", "data-field", "at")
+	if at == nil {
+		t.Fatal("first entry has no data-field=at element")
+	}
+	if raw, _ := attrValue(at, "datetime"); raw == "" {
+		t.Error("first entry's time carries no datetime attribute")
+	} else if _, err := time.Parse(time.RFC3339, raw); err != nil {
+		t.Errorf("first entry datetime %q is not RFC 3339: %v", raw, err)
 	}
 }
 

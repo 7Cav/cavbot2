@@ -27,6 +27,11 @@ type change struct {
 // diff is a change log diff keyed by form field name.
 type diff map[string]change
 
+// diffFields are the fields a diff can carry, in the form's order: the
+// order a register or remove entry lists them and the form shows them.
+var diffFields = []string{fieldHubChannel, fieldBaseString, fieldPermissionSource,
+	fieldModeratorRoles, fieldUserLimit, fieldBitrate, fieldEnabled}
+
 // fieldValues returns a hub's settings keyed by form field name, as the
 // diff records them. Moderator roles are sorted, so two sets compare and
 // read the same whatever order the store returned them in.
@@ -60,8 +65,7 @@ func diffHubs(before, after *store.Hub) diff {
 	if after != nil {
 		is = fieldValues(*after)
 	}
-	for _, field := range []string{fieldHubChannel, fieldBaseString, fieldPermissionSource,
-		fieldModeratorRoles, fieldUserLimit, fieldBitrate, fieldEnabled} {
+	for _, field := range diffFields {
 		if before != nil && after != nil && reflect.DeepEqual(was[field], is[field]) {
 			continue
 		}
@@ -108,11 +112,6 @@ type fieldView struct {
 	After  string
 }
 
-// diffFieldOrder is the order the form shows a diff's fields in: the
-// form's own.
-var diffFieldOrder = []string{fieldHubChannel, fieldBaseString, fieldPermissionSource,
-	fieldModeratorRoles, fieldUserLimit, fieldBitrate, fieldEnabled}
-
 // changeViews decodes stored entries for the form. Moderator roles are
 // stored as IDs and shown by name where the guild still has the role;
 // roleNames maps the guild's roles as read at this page load. An entry
@@ -122,12 +121,9 @@ func changeViews(entries []store.ChangeLogEntry, roleNames map[string]string) []
 	views := make([]changeView, 0, len(entries))
 	for _, e := range entries {
 		v := changeView{ID: e.ID, Username: e.ForumUsername, At: e.At, Action: e.Action}
-		var d map[string]struct {
-			Before json.RawMessage `json:"before"`
-			After  json.RawMessage `json:"after"`
-		}
+		var d diff
 		if err := json.Unmarshal(e.Diff, &d); err == nil {
-			for _, field := range diffFieldOrder {
+			for _, field := range diffFields {
 				c, ok := d[field]
 				if !ok {
 					continue
@@ -144,15 +140,11 @@ func changeViews(entries []store.ChangeLogEntry, roleNames map[string]string) []
 	return views
 }
 
-// valueText renders one diff value for the form: a string as itself, a
-// list joined with commas, a bool as on or off, null and an empty list as
-// none, a number as written. names, when set, replaces each list item that
-// is a key of it; an item with no name shows as itself.
-func valueText(raw json.RawMessage, names map[string]string) string {
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return string(raw)
-	}
+// valueText renders one decoded diff value for the form: a string as
+// itself, a list joined with commas, a bool as on or off, null and an empty
+// list as none, a number as written. names, when set, replaces each list
+// item that is a key of it; an item with no name shows as itself.
+func valueText(v any, names map[string]string) string {
 	switch v := v.(type) {
 	case nil:
 		return "none"
@@ -177,6 +169,6 @@ func valueText(raw json.RawMessage, names map[string]string) string {
 		}
 		return strings.Join(parts, ", ")
 	default:
-		return string(raw)
+		return fmt.Sprint(v)
 	}
 }

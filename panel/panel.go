@@ -363,36 +363,31 @@ func (p *Panel) endSession(w http.ResponseWriter, id string, sess session, reaso
 // homePage is the hub page: the list, and the register form or, with a hub
 // named in the query, that hub's edit form.
 func (p *Panel) homePage(w http.ResponseWriter, r *http.Request, sess session) {
-	var edit *editPage
+	var req pageRequest
 	if raw := r.URL.Query().Get("hub"); raw != "" {
 		id, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || id <= 0 {
 			http.NotFound(w, r)
 			return
 		}
-		edit, err = p.hubs.form(r.Context(), id)
-		if errors.Is(err, store.ErrNotFound) {
-			http.NotFound(w, r)
-			return
-		}
-		if err != nil {
-			p.serverError(w, "hub form", err)
-			return
-		}
+		req.HubID = id
 	}
-	p.renderHubs(w, r, sess, http.StatusOK, hubPage{Edit: edit})
+	p.renderHubs(w, r, sess, http.StatusOK, req)
 }
 
-// renderHubs renders the hub page with the list read now and the forms as
-// the caller set them: the register form as posted, or one hub's edit form,
-// with the refusal when there is one.
-func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session, status int, forms hubPage) {
-	page, err := p.hubs.list(r.Context())
-	if err != nil {
-		p.serverError(w, "hub list", err)
+// renderHubs renders the hub page read now: the list, and the form the
+// request asks for with its refusal when there is one. A request for a hub
+// that does not exist is 404.
+func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session, status int, req pageRequest) {
+	page, err := p.hubs.page(r.Context(), req)
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
 		return
 	}
-	page.Form, page.Error, page.Edit = forms.Form, forms.Error, forms.Edit
+	if err != nil {
+		p.serverError(w, "hub page", err)
+		return
+	}
 	data := sess.page("Hubs")
 	data.Hubs = page
 	p.render(w, status, "home", data)
@@ -406,9 +401,9 @@ func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session
 		return
 	}
 	in := registerInput{ChannelID: r.PostForm.Get(fieldHubChannel), BaseString: r.PostForm.Get(fieldBaseString)}
-	hub, err := p.hubs.register(r.Context(), in, actor{userID: sess.userID, username: sess.username})
+	hub, err := p.hubs.register(r.Context(), in, sess.actor())
 	if refusal, ok := asFieldError(err); ok {
-		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, hubPage{Form: in, Error: refusal})
+		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, pageRequest{Register: in, Error: refusal})
 		return
 	}
 	if err != nil {
@@ -448,20 +443,13 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 		Bitrate:          r.PostForm.Get(fieldBitrate),
 		Enabled:          r.PostForm.Get(fieldEnabled) != "",
 	}
-	hub, err := p.hubs.update(r.Context(), id, in, actor{userID: sess.userID, username: sess.username})
+	hub, err := p.hubs.update(r.Context(), id, in, sess.actor())
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return
 	}
 	if refusal, ok := asFieldError(err); ok {
-		// The form again, as posted, so nothing typed is lost. The fixed
-		// values and the roles are read again; the store was not written.
-		edit, err := p.hubs.form(r.Context(), id)
-		if err != nil {
-			p.serverError(w, "hub form", err)
-			return
-		}
-		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, hubPage{Edit: edit.withForm(in), Error: refusal})
+		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, pageRequest{HubID: id, Edit: &in, Error: refusal})
 		return
 	}
 	if err != nil {
@@ -481,7 +469,7 @@ func (p *Panel) removeHub(w http.ResponseWriter, r *http.Request, sess session) 
 		http.NotFound(w, r)
 		return
 	}
-	hub, err := p.hubs.remove(r.Context(), id, actor{userID: sess.userID, username: sess.username})
+	hub, err := p.hubs.remove(r.Context(), id, sess.actor())
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return

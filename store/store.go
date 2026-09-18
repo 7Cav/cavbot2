@@ -75,7 +75,9 @@ type SpawnedChannel struct {
 type ChangeAction string
 
 const (
-	// ChangeCreate is the panel creating a hub channel and its hub.
+	// ChangeCreate is the panel creating a hub channel and its hub. The
+	// create form is a later ticket's; the value is in the check from the
+	// start so that ticket adds no migration.
 	ChangeCreate ChangeAction = "create"
 	// ChangeRegister is the panel making an existing channel a hub.
 	ChangeRegister ChangeAction = "register"
@@ -83,7 +85,8 @@ const (
 	ChangeUpdate ChangeAction = "update"
 	// ChangeRemove is the panel deleting a hub row.
 	ChangeRemove ChangeAction = "remove"
-	// ChangeModerators is a save of the guild-wide moderator roles.
+	// ChangeModerators is a save of the guild-wide moderator roles, a later
+	// ticket's form, in the check from the start for the same reason.
 	ChangeModerators ChangeAction = "moderators"
 )
 

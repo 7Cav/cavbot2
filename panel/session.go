@@ -51,6 +51,11 @@ func (s session) expired(at time.Time) bool {
 	return !at.Before(s.signedIn.Add(sessionLifetime))
 }
 
+// actor is the forum user a save made in this session is recorded against.
+func (s session) actor() actor {
+	return actor{userID: s.userID, username: s.username}
+}
+
 // page is the page data for a screen this session sees: the rail shows the
 // navigation and the identity block.
 func (s session) page(title string) pageData {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -138,6 +139,21 @@ type hubPage struct {
 	Edit   *editPage
 }
 
+// pageRequest is what a handler asks the page to show beyond the list:
+// which hub's edit form, if any, and the form as posted with its refusal
+// when a save was just refused, so nothing typed is lost.
+type pageRequest struct {
+	// HubID names the hub whose edit form shows. Zero shows the register
+	// form.
+	HubID int64
+	// Register is the register form as posted back after a refusal.
+	Register registerInput
+	// Edit is the edit form as posted back after a refusal. Nil shows the
+	// stored values.
+	Edit  *editInput
+	Error *fieldError
+}
+
 // editPage is one hub's edit form: the fixed values the form shows read-only,
 // the guild's roles the moderator picker offers, and the form's fields as
 // stored or as posted back after a refusal.
@@ -159,16 +175,6 @@ type guildRole struct {
 	ID      string
 	Name    string
 	Checked bool
-}
-
-// hasRole reports whether the form carries the role.
-func (in editInput) hasRole(id string) bool {
-	for _, r := range in.ModeratorRoleIDs {
-		if r == id {
-			return true
-		}
-	}
-	return false
 }
 
 // editInputOf is the edit form as the stored hub fills it.
@@ -229,11 +235,21 @@ func (g guildChannels) categoryName(ch *discordgo.Channel) string {
 	return ""
 }
 
-// snapshot is what both service functions start from: the guild's hub rows
+// snapshot is what the page and every save start from: the guild's hub rows
 // and its channel list, each read once.
 type snapshot struct {
 	hubs  []store.Hub
 	guild guildChannels
+}
+
+// hubByID returns the hub row with the ID, if there is one.
+func (sn snapshot) hubByID(id int64) (store.Hub, bool) {
+	for _, h := range sn.hubs {
+		if h.ID == id {
+			return h, true
+		}
+	}
+	return store.Hub{}, false
 }
 
 // hubOn returns the hub row on a channel, if there is one.
@@ -280,16 +296,75 @@ func (s *hubService) guildRoles() ([]*discordgo.Role, error) {
 	return roles, nil
 }
 
-// form reads what one hub's edit form renders from. store.ErrNotFound means
-// no hub has the ID.
-func (s *hubService) form(ctx context.Context, hubID int64) (*editPage, error) {
-	hub, err := s.deps.Store.GetHub(ctx, hubID)
-	if err != nil {
-		return nil, err
-	}
+// page reads everything the hub page renders from, once: the hub rows and
+// the guild's channel list for the list and the picker, and, when an edit
+// form shows, the guild's roles and the hub's last entries. store.ErrNotFound
+// means no hub has the requested ID.
+func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error) {
 	sn, err := s.read(ctx)
 	if err != nil {
-		return nil, err
+		return hubPage{}, err
+	}
+	page := hubPage{Hubs: s.rows(sn), Picker: picker(sn), Form: req.Register, Error: req.Error}
+	if req.HubID != 0 {
+		if page.Edit, err = s.editForm(ctx, sn, req.HubID, req.Edit); err != nil {
+			return hubPage{}, err
+		}
+	}
+	return page, nil
+}
+
+// rows merges the store's hub rows with the guild's channel list and the
+// runtime's live state.
+func (s *hubService) rows(sn snapshot) []hubRow {
+	rows := make([]hubRow, 0, len(sn.hubs))
+	for _, h := range sn.hubs {
+		row := hubRow{ID: h.ID, BaseString: h.BaseString, Enabled: h.Enabled, Spawned: s.deps.Runtime.SpawnedCount(h.ID)}
+		if ch, ok := sn.guild.channel(h.HubChannelID); ok {
+			row.ChannelName = ch.Name
+			row.CategoryName = sn.guild.categoryName(ch)
+		}
+		rows = append(rows, row)
+	}
+	// The store promises no order. Base string, then ID, so two hubs with one
+	// base string keep their places between loads.
+	sort.Slice(rows, func(i, j int) bool {
+		a, b := strings.ToLower(rows[i].BaseString), strings.ToLower(rows[j].BaseString)
+		if a != b {
+			return a < b
+		}
+		return rows[i].ID < rows[j].ID
+	})
+	return rows
+}
+
+// picker builds the register picker from the voice channels that are not
+// hubs.
+func picker(sn snapshot) []pickerChannel {
+	var out []pickerChannel
+	for _, ch := range sn.guild.voiceChannels() {
+		if _, taken := sn.hubOn(ch.ID); taken {
+			continue
+		}
+		out = append(out, pickerChannel{ID: ch.ID, Name: ch.Name, CategoryName: sn.guild.categoryName(ch)})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.CategoryName != b.CategoryName {
+			return a.CategoryName < b.CategoryName
+		}
+		return a.Name < b.Name
+	})
+	return out
+}
+
+// editForm builds one hub's edit form from the snapshot: the stored values,
+// or the form as posted when a save was refused, the guild's roles for the
+// moderator picker, and the hub's last entries.
+func (s *hubService) editForm(ctx context.Context, sn snapshot, hubID int64, posted *editInput) (*editPage, error) {
+	hub, ok := sn.hubByID(hubID)
+	if !ok {
+		return nil, store.ErrNotFound
 	}
 	roles, err := s.guildRoles()
 	if err != nil {
@@ -299,79 +374,21 @@ func (s *hubService) form(ctx context.Context, hubID int64) (*editPage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list change log: %w", err)
 	}
-	roleNames := make(map[string]string, len(roles))
-	for _, r := range roles {
-		roleNames[r.ID] = r.Name
+	form := editInputOf(hub)
+	if posted != nil {
+		form = *posted
 	}
-	page := &editPage{ID: hub.ID, Form: editInputOf(hub), Changes: changeViews(entries, roleNames)}
+	page := &editPage{ID: hub.ID, Form: form, Roles: make([]guildRole, 0, len(roles))}
 	if ch, ok := sn.guild.channel(hub.HubChannelID); ok {
 		page.ChannelName = ch.Name
 		page.CategoryName = sn.guild.categoryName(ch)
 	}
-	page.setRoles(roles)
-	return page, nil
-}
-
-// setRoles fills the moderator picker from the guild's roles, checked where
-// the form carries them.
-func (e *editPage) setRoles(roles []*discordgo.Role) {
-	e.Roles = make([]guildRole, 0, len(roles))
+	roleNames := make(map[string]string, len(roles))
 	for _, r := range roles {
-		e.Roles = append(e.Roles, guildRole{ID: r.ID, Name: r.Name, Checked: e.Form.hasRole(r.ID)})
+		roleNames[r.ID] = r.Name
+		page.Roles = append(page.Roles, guildRole{ID: r.ID, Name: r.Name, Checked: slices.Contains(form.ModeratorRoleIDs, r.ID)})
 	}
-}
-
-// withForm puts the form as posted on the page, for the re-render after a
-// refusal, and re-marks the picker from it.
-func (e *editPage) withForm(in editInput) *editPage {
-	e.Form = in
-	for i := range e.Roles {
-		e.Roles[i].Checked = in.hasRole(e.Roles[i].ID)
-	}
-	return e
-}
-
-// list merges the store's hub rows with the guild's channel list and the
-// runtime's live state, and builds the register picker from the voice
-// channels that are not hubs.
-func (s *hubService) list(ctx context.Context) (hubPage, error) {
-	sn, err := s.read(ctx)
-	if err != nil {
-		return hubPage{}, err
-	}
-
-	page := hubPage{Hubs: make([]hubRow, 0, len(sn.hubs))}
-	for _, h := range sn.hubs {
-		row := hubRow{ID: h.ID, BaseString: h.BaseString, Enabled: h.Enabled, Spawned: s.deps.Runtime.SpawnedCount(h.ID)}
-		if ch, ok := sn.guild.channel(h.HubChannelID); ok {
-			row.ChannelName = ch.Name
-			row.CategoryName = sn.guild.categoryName(ch)
-		}
-		page.Hubs = append(page.Hubs, row)
-	}
-	// The store promises no order. Base string, then ID, so two hubs with one
-	// base string keep their places between loads.
-	sort.Slice(page.Hubs, func(i, j int) bool {
-		a, b := strings.ToLower(page.Hubs[i].BaseString), strings.ToLower(page.Hubs[j].BaseString)
-		if a != b {
-			return a < b
-		}
-		return page.Hubs[i].ID < page.Hubs[j].ID
-	})
-
-	for _, ch := range sn.guild.voiceChannels() {
-		if _, taken := sn.hubOn(ch.ID); taken {
-			continue
-		}
-		page.Picker = append(page.Picker, pickerChannel{ID: ch.ID, Name: ch.Name, CategoryName: sn.guild.categoryName(ch)})
-	}
-	sort.Slice(page.Picker, func(i, j int) bool {
-		a, b := page.Picker[i], page.Picker[j]
-		if a.CategoryName != b.CategoryName {
-			return a.CategoryName < b.CategoryName
-		}
-		return a.Name < b.Name
-	})
+	page.Changes = changeViews(entries, roleNames)
 	return page, nil
 }
 
@@ -382,11 +399,11 @@ func (s *hubService) list(ctx context.Context) (hubPage, error) {
 // the runtime is not touched.
 func (s *hubService) register(ctx context.Context, in registerInput, by actor) (store.Hub, error) {
 	in.ChannelID = strings.TrimSpace(in.ChannelID)
-	in.BaseString = strings.TrimSpace(in.BaseString)
-	if n := utf8.RuneCountInString(in.BaseString); n < baseStringMin || n > baseStringMax {
-		return store.Hub{}, &fieldError{fieldBaseString,
-			fmt.Sprintf("Enter a base string of %d to %d characters.", baseStringMin, baseStringMax)}
+	baseString, err := validBaseString(in.BaseString)
+	if err != nil {
+		return store.Hub{}, err
 	}
+	in.BaseString = baseString
 	sn, err := s.read(ctx)
 	if err != nil {
 		return store.Hub{}, err
@@ -485,11 +502,11 @@ func (s *hubService) remove(ctx context.Context, hubID int64, by actor) (store.H
 // first refusal wins, as a *fieldError naming the field; the hub is then
 // half written and must not be stored.
 func applyEdit(hub *store.Hub, in editInput, roles []*discordgo.Role) error {
-	hub.BaseString = strings.TrimSpace(in.BaseString)
-	if n := utf8.RuneCountInString(hub.BaseString); n < baseStringMin || n > baseStringMax {
-		return &fieldError{fieldBaseString,
-			fmt.Sprintf("Enter a base string of %d to %d characters.", baseStringMin, baseStringMax)}
+	baseString, err := validBaseString(in.BaseString)
+	if err != nil {
+		return err
 	}
+	hub.BaseString = baseString
 	switch source := store.PermissionSource(in.PermissionSource); source {
 	case store.PermissionCategory, store.PermissionHubChannel:
 		hub.PermissionSource = source
@@ -500,19 +517,22 @@ func applyEdit(hub *store.Hub, in editInput, roles []*discordgo.Role) error {
 	for _, r := range roles {
 		known[r.ID] = struct{}{}
 	}
+	// A set: a role posted twice is stored once.
 	hub.ModeratorRoleIDs = make([]string, 0, len(in.ModeratorRoleIDs))
 	for _, id := range in.ModeratorRoleIDs {
 		if _, ok := known[id]; !ok {
 			return &fieldError{fieldModeratorRoles, "One of those roles is no longer in the server. Choose again."}
 		}
-		hub.ModeratorRoleIDs = append(hub.ModeratorRoleIDs, id)
+		if !slices.Contains(hub.ModeratorRoleIDs, id) {
+			hub.ModeratorRoleIDs = append(hub.ModeratorRoleIDs, id)
+		}
 	}
-	var err error
-	if hub.UserLimit, err = intInRange(in.UserLimit, userLimitMin, userLimitMax); err != nil {
+	var ok bool
+	if hub.UserLimit, ok = intInRange(in.UserLimit, userLimitMin, userLimitMax); !ok {
 		return &fieldError{fieldUserLimit,
 			fmt.Sprintf("Enter a user limit of %d to %d. 0 means no limit.", userLimitMin, userLimitMax)}
 	}
-	if hub.Bitrate, err = intInRange(in.Bitrate, bitrateMin, bitrateMax); err != nil {
+	if hub.Bitrate, ok = intInRange(in.Bitrate, bitrateMin, bitrateMax); !ok {
 		return &fieldError{fieldBitrate,
 			fmt.Sprintf("Enter a bitrate of %d to %d.", bitrateMin, bitrateMax)}
 	}
@@ -520,16 +540,21 @@ func applyEdit(hub *store.Hub, in editInput, roles []*discordgo.Role) error {
 	return nil
 }
 
-// intInRange parses a posted number and checks it lies in [lo, hi].
-func intInRange(raw string, lo, hi int) (int, error) {
+// validBaseString trims a posted base string and checks its length. A
+// refusal is a *fieldError naming the field.
+func validBaseString(raw string) (string, error) {
+	base := strings.TrimSpace(raw)
+	if n := utf8.RuneCountInString(base); n < baseStringMin || n > baseStringMax {
+		return "", &fieldError{fieldBaseString,
+			fmt.Sprintf("Enter a base string of %d to %d characters.", baseStringMin, baseStringMax)}
+	}
+	return base, nil
+}
+
+// intInRange parses a posted number and reports whether it lies in [lo, hi].
+func intInRange(raw string, lo, hi int) (int, bool) {
 	n, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil {
-		return 0, err
-	}
-	if n < lo || n > hi {
-		return 0, fmt.Errorf("%d outside %d to %d", n, lo, hi)
-	}
-	return n, nil
+	return n, err == nil && n >= lo && n <= hi
 }
 
 // asFieldError reports whether an error is a validation refusal.
