@@ -1,0 +1,126 @@
+/* Panel stylesheet. The tokens, the buttons and the blocks are 7cav.us as it
+   renders today, read from its stylesheet on 2026-09-17; the layout is the
+   approved prototype (issue #288, variant D): forum-style pages inside a
+   240px rail. */
+
+/* Roboto, the forum's body face, embedded so no page fetches from a third
+   party. One variable-weight latin file (Roboto v51, Apache 2.0) covers the
+   400, 500 and 700 weights the pages use. */
+@font-face {
+  font-family: 'Roboto';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/static/roboto-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  --bg: #121212;
+  --surface: #171717;
+  --surface-2: #1b1b1b;
+  --surface-3: #212121;
+  --line: #2b2b2b;
+  --line-2: #353535;
+  --line-hi: #4d4d4d;
+  --text: #a1a1a1;
+  --text-hi: #f1f1f1;
+  --text-mute: #8d8d8d;
+  --gold: #ebc729;
+  --gold-hi: #edcd40;
+  --gold-lo: #e5bf15;
+  --btn: #2e2e2e;
+  --btn-hi: #424242;
+  --btn-edge-d: #212121;
+  --btn-edge-l: #3b3b3b;
+  --danger-hi: #c84448;
+  --radius: 3px;
+  --sans: 'Roboto', 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { font: 15px/1.4 var(--sans); color: var(--text); background: var(--bg); -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg) url("/static/page-bg2-c1.png") no-repeat top center / 100% auto fixed;
+}
+a { color: var(--gold); }
+a:hover { color: var(--gold-hi); }
+h1, h2, h3 { margin: 0; color: var(--text-hi); font-weight: 400; }
+p { margin: 0 0 10px; }
+p:last-child { margin-bottom: 0; }
+form { margin: 0; }
+img { max-width: 100%; }
+
+/* Buttons, as the forum draws them. */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: .5em;
+  padding: 8px 14px; font: inherit; font-size: 15px; line-height: 1.4;
+  color: #fff; background: var(--btn);
+  border: 1px solid; border-color: var(--btn-edge-d) var(--btn-edge-l) var(--btn-edge-l) var(--btn-edge-d);
+  border-radius: var(--radius); cursor: pointer; text-decoration: none; white-space: nowrap;
+  transition: background-color .075s ease;
+}
+.btn:hover { background: var(--btn-hi); color: #fff; }
+.btn:active { transform: translateY(1px); }
+.btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.btn--cta { color: #000; background: var(--gold); border-color: var(--gold-lo) var(--gold-hi) var(--gold-hi) var(--gold-lo); }
+.btn--cta:hover { background: #eed14e; color: #000; }
+
+/* Blocks, as the forum draws them. */
+.block { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 2px 2px 2px rgba(0,0,0,.04); margin-bottom: 12px; }
+.block-header {
+  padding: 12px 14px; font-size: 18px; color: var(--text-hi); background: var(--surface-2);
+  border-bottom: 2px solid var(--gold); box-shadow: inset 0 1px 0 0 var(--line-hi);
+  border-radius: var(--radius) var(--radius) 0 0; text-shadow: 0 0 4px #1f1f1f;
+}
+.block-row { padding: 12px 14px; }
+.block-row + .block-row { border-top: 1px solid var(--line); }
+.submit-row { padding: 12px 14px; background: rgba(23,23,23,.9); border-top: 1px solid var(--line-2); border-radius: 0 0 var(--radius) var(--radius); }
+
+/* One note style for the ended-session causes. */
+.note {
+  padding: 12px 14px; color: var(--text-hi); background: var(--surface);
+  border: 1px solid var(--line); border-left: 3px solid var(--danger-hi); border-radius: var(--radius);
+  margin-bottom: 12px;
+}
+
+/* The rail and the page beside it. */
+.console { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100dvh; }
+.rail { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; position: sticky; top: 0; height: 100dvh; }
+.rail .mark { padding: 20px 18px 18px; border-bottom: 1px solid var(--line); }
+.rail .mark img { height: 26px; width: auto; display: block; }
+.rail nav { padding: 10px 0; }
+.rail .item { display: block; padding: 10px 18px; color: var(--text-hi); text-decoration: none; border-left: 3px solid transparent; }
+.rail .item:hover { background: var(--surface-2); color: var(--text-hi); }
+.rail .item.is-selected { border-left-color: var(--gold); background: var(--surface-3); font-weight: 500; }
+.rail .me { margin-top: auto; padding: 16px 18px; border-top: 1px solid var(--line); }
+.rail .me small { display: block; color: var(--text-mute); font-size: 12px; }
+.rail .me .name { color: var(--text-hi); font-weight: 500; margin-bottom: 10px; }
+.rail .foot { margin-top: auto; padding: 16px 18px; border-top: 1px solid var(--line); font-size: 13px; }
+.rail .ver { padding: 10px 18px 16px; font-size: 11px; color: var(--text-mute); }
+
+.body { max-width: 1300px; min-width: 0; margin: 0; padding: 10px 32px 48px; }
+.title { font-size: 22px; margin: 18px 0 4px; }
+.desc { font-size: 13px; color: var(--text-mute); margin: 0 0 12px; }
+.narrow { max-width: 720px; }
+
+/* Under 768px the rail becomes a top bar and the page goes single column. */
+@media (max-width: 767px) {
+  .console { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+  .rail { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; border-right: 0; border-bottom: 1px solid var(--line); }
+  .rail .mark { border-bottom: 0; padding: 12px 16px; }
+  .rail nav { padding: 0; }
+  .rail .item { border-left: 0; border-bottom: 3px solid transparent; }
+  .rail .item.is-selected { border-bottom-color: var(--gold); background: transparent; }
+  .rail .me { margin: 0 0 0 auto; border-top: 0; padding: 8px 16px; display: flex; align-items: center; gap: 10px; }
+  .rail .me small { display: none; }
+  .rail .me .name { margin: 0; }
+  .rail .foot { margin: 0 0 0 auto; border-top: 0; padding: 8px 16px; }
+  .rail .ver { display: none; }
+  .body { padding: 10px 16px 40px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; }
+}

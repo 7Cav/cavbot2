@@ -16,6 +16,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/7cav/cavbot2/commands"
+	"github.com/7cav/cavbot2/panel"
 	"github.com/7cav/cavbot2/store"
 	"github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
@@ -124,6 +125,28 @@ func initBotStore() *store.Postgres {
 	return s
 }
 
+// initPanel reads the PANEL_* variables and builds the panel, or returns nil
+// when PANEL_ADDR is unset so the feature stays inert. It runs before the
+// Discord session opens so a half-filled .env or a broken template stops the
+// bot before it is on the gateway; the listener itself starts after READY. A
+// configured panel that cannot be built stops the bot, the same rule the
+// store follows.
+func initPanel() *panel.Panel {
+	cfg, err := panel.ConfigFromEnv()
+	if err != nil {
+		panic(fmt.Sprintf("Panel misconfigured: %v", err))
+	}
+	if !cfg.Enabled() {
+		utils.Warn("PANEL_ADDR not set, panel disabled")
+		return nil
+	}
+	p, err := panel.New(cfg, Version)
+	if err != nil {
+		panic(fmt.Sprintf("Panel unavailable: %v", err))
+	}
+	return p
+}
+
 func main() {
 	defer utils.InitSentry(Version)()
 
@@ -139,6 +162,8 @@ func main() {
 	if botStore != nil {
 		defer func() { _ = botStore.Close() }()
 	}
+
+	webPanel := initPanel()
 
 	// Route discordgo's own logging through slog before the session exists, so
 	// nothing it emits escapes to the stdlib logger.
@@ -243,6 +268,23 @@ func main() {
 	}
 
 	commands.StartJoinerReportScheduler(dg, GuildID)
+
+	// Panel (spec #285): the web UI listens only now, with the
+	// session READY, since its later pages act through the Discord session.
+	// A port it cannot bind is a deploy error and stops the bot, so the
+	// failure is seen rather than found as a 502 later.
+	if webPanel != nil {
+		if err := webPanel.Start(); err != nil {
+			panic(fmt.Sprintf("Panel unavailable: %v", err))
+		}
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := webPanel.Stop(ctx); err != nil {
+				utils.Warn("Panel did not stop cleanly", "error", err)
+			}
+		}()
+	}
 
 	utils.Info("Bot is now running. Press CTRL-C to exit")
 	sc := make(chan os.Signal, 1)

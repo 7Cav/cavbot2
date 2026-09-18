@@ -22,9 +22,20 @@ services:
       SENTRY_DSN: ${SENTRY_DSN}
       APP_ENV: ${APP_ENV}
       BOT_DB_DSN: ${BOT_DB_DSN}
+      PANEL_ADDR: ${PANEL_ADDR}
+      PANEL_BASE_URL: ${PANEL_BASE_URL}
+      PANEL_OAUTH_CLIENT_ID: ${PANEL_OAUTH_CLIENT_ID}
+      PANEL_OAUTH_CLIENT_SECRET: ${PANEL_OAUTH_CLIENT_SECRET}
+      PANEL_OAUTH_AUTHORIZE_URL: ${PANEL_OAUTH_AUTHORIZE_URL}
+      PANEL_OAUTH_TOKEN_URL: ${PANEL_OAUTH_TOKEN_URL}
+      PANEL_OAUTH_USERINFO_URL: ${PANEL_OAUTH_USERINFO_URL}
+      PANEL_GROUP_IDS: ${PANEL_GROUP_IDS}
+    # edge is where Nginx Proxy Manager reaches the panel on port 8080. The
+    # port is not published on the host; the proxy is the only way in.
     networks:
       - xenforo_internal
       - cavbot2_internal
+      - edge
 
   # The bot's own store (hubs, spawned channels). Pinned to a major because a
   # Postgres major changes the on-disk format, so a floating tag would one day
@@ -59,5 +70,7 @@ volumes:
 
 networks:
   xenforo_internal:
+    external: true
+  edge:
     external: true
   cavbot2_internal:
