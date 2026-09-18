@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/7cav/cavbot2/store"
 )
@@ -85,4 +87,84 @@ func (s *hubService) appendChange(ctx context.Context, hubID int64, action store
 		return fmt.Errorf("append change log: %w", err)
 	}
 	return nil
+}
+
+// changeLogLimit is how many entries a hub's form shows, newest first.
+const changeLogLimit = 10
+
+// changeView is one entry as the hub form shows it.
+type changeView struct {
+	ID       int64
+	Username string
+	At       time.Time
+	Action   store.ChangeAction
+	Fields   []fieldView
+}
+
+// fieldView is one changed field of an entry, its values rendered as text.
+type fieldView struct {
+	Field  string
+	Before string
+	After  string
+}
+
+// diffFieldOrder is the order the form shows a diff's fields in: the
+// form's own.
+var diffFieldOrder = []string{fieldHubChannel, fieldBaseString, fieldPermissionSource,
+	fieldModeratorRoles, fieldUserLimit, fieldBitrate, fieldEnabled}
+
+// changeViews decodes stored entries for the form. An entry whose diff does
+// not decode is shown with no fields rather than dropped: the save happened.
+func changeViews(entries []store.ChangeLogEntry) []changeView {
+	views := make([]changeView, 0, len(entries))
+	for _, e := range entries {
+		v := changeView{ID: e.ID, Username: e.ForumUsername, At: e.At, Action: e.Action}
+		var d map[string]struct {
+			Before json.RawMessage `json:"before"`
+			After  json.RawMessage `json:"after"`
+		}
+		if err := json.Unmarshal(e.Diff, &d); err == nil {
+			for _, field := range diffFieldOrder {
+				c, ok := d[field]
+				if !ok {
+					continue
+				}
+				v.Fields = append(v.Fields, fieldView{Field: field, Before: valueText(c.Before), After: valueText(c.After)})
+			}
+		}
+		views = append(views, v)
+	}
+	return views
+}
+
+// valueText renders one diff value for the form: a string as itself, a
+// list joined with commas, a bool as on or off, null and an empty list as
+// none, a number as written.
+func valueText(raw json.RawMessage) string {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return string(raw)
+	}
+	switch v := v.(type) {
+	case nil:
+		return "none"
+	case string:
+		return v
+	case bool:
+		if v {
+			return "on"
+		}
+		return "off"
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			parts = append(parts, fmt.Sprint(item))
+		}
+		if len(parts) == 0 {
+			return "none"
+		}
+		return strings.Join(parts, ", ")
+	default:
+		return string(raw)
+	}
 }

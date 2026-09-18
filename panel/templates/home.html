@@ -126,6 +126,25 @@
     <div class="block-row">The hub channel stays in Discord, so registering it again undoes this. Channels this hub spawned stay until they empty.</div>
     <div class="submit-row"><button type="submit" class="btn btn--danger" data-field="remove">Remove hub</button></div>
   </form>
+  <div class="block">
+    <h2 class="block-header">Change log</h2>
+    {{range .Changes}}
+    <div class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}">
+      <div class="change-head">
+        <span class="change-who" data-field="username">{{.Username}}</span>
+        <span class="tag" data-field="action">{{.Action}}</span>
+        <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
+      </div>
+      {{if .Fields}}
+      <dl class="change-fields">
+        {{range .Fields}}<div data-change="{{.Field}}"><dt>{{.Field}}</dt><dd>{{.Before}} <span class="arrow">&rarr;</span> {{.After}}</dd></div>{{end}}
+      </dl>
+      {{else}}<div class="off">No field changed.</div>{{end}}
+    </div>
+    {{else}}
+    <div class="block-row">No saves recorded yet.</div>
+    {{end}}
+  </div>
   </section>
 {{end}}
 {{end}}

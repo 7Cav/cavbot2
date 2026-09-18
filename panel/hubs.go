@@ -149,6 +149,8 @@ type editPage struct {
 	CategoryName string
 	Roles        []guildRole
 	Form         editInput
+	// Changes are the hub's last entries, newest first.
+	Changes []changeView
 }
 
 // guildRole is one role the moderator picker offers, and whether the form
@@ -293,7 +295,11 @@ func (s *hubService) form(ctx context.Context, hubID int64) (*editPage, error) {
 	if err != nil {
 		return nil, err
 	}
-	page := &editPage{ID: hub.ID, Form: editInputOf(hub)}
+	entries, err := s.deps.Store.ListChangeLog(ctx, hub.ID, changeLogLimit)
+	if err != nil {
+		return nil, fmt.Errorf("list change log: %w", err)
+	}
+	page := &editPage{ID: hub.ID, Form: editInputOf(hub), Changes: changeViews(entries)}
 	if ch, ok := sn.guild.channel(hub.HubChannelID); ok {
 		page.ChannelName = ch.Name
 		page.CategoryName = sn.guild.categoryName(ch)

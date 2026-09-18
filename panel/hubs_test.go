@@ -693,3 +693,94 @@ func TestRemoveAppendsAnEntryWithNullAfter(t *testing.T) {
 		t.Errorf("diff base_string before = %v, want Arma Voice", diff["base_string"].Before)
 	}
 }
+
+// editSection returns the edit area of one hub on the page: the section
+// under data-hub=id, distinct from the list row that carries the same ID.
+func editSection(t *testing.T, res *http.Response, hubID int64) *html.Node {
+	t.Helper()
+	sec := findElement(parseHTML(t, res), "section", "data-hub", strconv.FormatInt(hubID, 10))
+	if sec == nil {
+		t.Fatalf("page has no section under data-hub=%d", hubID)
+	}
+	return sec
+}
+
+// entryIDs returns the data-entry values under n, in document order.
+func entryIDs(t *testing.T, n *html.Node) []int64 {
+	t.Helper()
+	var ids []int64
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			if raw, ok := attrValue(n, "data-entry"); ok {
+				id, err := strconv.ParseInt(raw, 10, 64)
+				if err != nil {
+					t.Fatalf("data-entry %q is not an ID", raw)
+				}
+				ids = append(ids, id)
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return ids
+}
+
+func TestHubFormShowsTheLastTenEntriesNewestFirst(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	id := storedHubID(t, w.st, "hub-1")
+	for i := 1; i <= 11; i++ {
+		form := updateForm()
+		form.Set("user_limit", strconv.Itoa(i))
+		assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
+	}
+
+	res := w.b.get("/?hub=" + strconv.FormatInt(id, 10))
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /?hub= status = %d, want 200", res.StatusCode)
+	}
+	sec := editSection(t, res, id)
+	shown := entryIDs(t, sec)
+	var want []int64
+	for _, e := range storedChangeLog(t, w.st, id) {
+		want = append(want, e.ID)
+	}
+	if len(want) != 10 || !slices.Equal(shown, want) {
+		t.Fatalf("page shows entries %v, want the store's last ten in its order %v", shown, want)
+	}
+	first := findElement(sec, "", "data-entry", strconv.FormatInt(shown[0], 10))
+	if action, _ := attrValue(first, "data-action"); action != "update" {
+		t.Errorf("first entry data-action = %q, want update", action)
+	}
+	if findElement(first, "", "data-change", "user_limit") == nil {
+		t.Error("first entry has no data-change=user_limit element")
+	}
+	if got := fieldText(t, first, "username"); got != testUsername {
+		t.Errorf("first entry username = %q, want %q", got, testUsername)
+	}
+}
+
+func TestUpdateAndRemoveWithoutSessionRedirectToSigninAndWriteNothing(t *testing.T) {
+	for _, suffix := range []string{"", "/remove"} {
+		t.Run("POST /hubs/{id}"+suffix, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			before := storedHubs(t, w.st)[0]
+			form := updateForm()
+			form.Set("base_string", "Bravo Voice")
+
+			res := w.b.postForm(hubPath(t, w.st, "hub-1")+suffix, form)
+
+			assertRedirect(t, res, "/signin")
+			if hubs := storedHubs(t, w.st); len(hubs) != 1 || !sameHubSettings(hubs[0], before) {
+				t.Errorf("stored hubs = %+v, want the one hub unchanged", hubs)
+			}
+			if n := len(storedChangeLog(t, w.st, before.ID)) + len(storedChangeLog(t, w.st, 0)); n != 0 {
+				t.Errorf("a signed-out post appended %d entries, want 0", n)
+			}
+		})
+	}
+}
