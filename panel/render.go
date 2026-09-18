@@ -41,7 +41,8 @@ func causeFromQuery(raw string) cause {
 }
 
 // pageData is what every template renders from. SignedIn switches the rail
-// between the navigation with the identity block and the forum link.
+// between the navigation with the identity block and the forum link. Hubs is
+// filled for the hub page alone.
 type pageData struct {
 	Title    string
 	Version  string
@@ -49,6 +50,7 @@ type pageData struct {
 	SignedIn bool
 	Username string
 	Cause    cause
+	Hubs     hubPage
 }
 
 // pages are the templates, one per screen, each parsed with the shared layout

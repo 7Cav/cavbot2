@@ -1,9 +1,50 @@
 {{define "content"}}
 <main class="body">
   <h1 class="title">Hubs</h1>
+  <p class="desc">A member who joins a hub gets a spawned channel under the hub's category.</p>
   <div class="block">
     <h2 class="block-header">Hubs</h2>
-    <div class="block-row">The hub list arrives in a later release. Nothing to manage yet.</div>
+    {{if .Hubs.Hubs}}
+    <div class="scroll"><table class="hublist">
+      <thead><tr><th>Hub</th><th>Channel</th><th>Category</th><th>State</th><th class="num">Spawned</th></tr></thead>
+      <tbody>
+      {{range .Hubs.Hubs}}
+        <tr data-hub="{{.ID}}">
+          <td class="hub" data-field="base_string">{{.BaseString}}</td>
+          <td data-field="channel_name">{{if .ChannelName}}{{.ChannelName}}{{else}}<span class="off">not in the guild</span>{{end}}</td>
+          <td data-field="category_name">{{if .CategoryName}}{{.CategoryName}}{{else}}<span class="off">none</span>{{end}}</td>
+          <td data-field="enabled">{{if .Enabled}}<span class="tag tag--on">enabled</span>{{else}}<span class="tag">disabled</span>{{end}}</td>
+          <td class="num" data-field="spawned">{{.Spawned}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table></div>
+    {{else}}
+    <div class="block-row">No hubs yet. Register a voice channel below to make it one.</div>
+    {{end}}
   </div>
+
+  <form method="post" action="/hubs" class="block narrow">
+    <h2 class="block-header">Register a voice channel as a hub</h2>
+    {{with .Hubs.Error}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}
+    <div class="block-row">
+      <label class="field">
+        <span class="field-label">Voice channel</span>
+        <select name="hub_channel" data-field="hub_channel" required>
+          <option value="">Choose a voice channel</option>
+          {{range .Hubs.Picker}}<option value="{{.ID}}"{{if eq .ID $.Hubs.Form.ChannelID}} selected{{end}}>{{.Name}}{{if .CategoryName}} ({{.CategoryName}}){{else}} (no category){{end}}</option>{{end}}
+        </select>
+        <span class="field-hint">Only voice channels that are not hubs are listed. The channel needs a category; spawned channels go under it.</span>
+      </label>
+    </div>
+    <div class="block-row">
+      <label class="field">
+        <span class="field-label">Base string</span>
+        <input type="text" name="base_string" data-field="base_string" value="{{.Hubs.Form.BaseString}}" maxlength="90" required>
+        <span class="field-hint">Spawned channels are named from it: "Arma Voice" gives "Arma Voice - 1".</span>
+      </label>
+    </div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta">Register</button></div>
+  </form>
 </main>
 {{end}}
