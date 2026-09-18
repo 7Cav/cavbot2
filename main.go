@@ -135,7 +135,8 @@ func main() {
 
 	// Database and migrations come before the Discord session opens, so a
 	// failed migration never leaves a half-started bot on the gateway.
-	if botStore := initBotStore(); botStore != nil {
+	botStore := initBotStore()
+	if botStore != nil {
 		defer func() { _ = botStore.Close() }()
 	}
 
@@ -155,11 +156,14 @@ func main() {
 
 	registry := commands.NewRegistry()
 
-	// Temp voice channels (issue #100): handlers must be registered before
+	// Temporary voice channels (spec #285): handlers must be registered before
 	// dg.Open() so the initial GUILD_CREATE seeds voice-state tracking and
-	// sweeps orphaned temp channels.
-	if tempVCCfg, ok := commands.LoadTempVCConfig(GuildID); ok {
-		commands.StartTempVC(dg, tempVCCfg)
+	// runs the restart sweep. Without a store there are no hubs, so the
+	// feature stays inert.
+	if botStore != nil {
+		if _, err := commands.StartTempVC(dg, GuildID, botStore); err != nil {
+			panic(fmt.Sprintf("Bot store unavailable: %v", err))
+		}
 	}
 
 	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
