@@ -30,8 +30,20 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/warden-bulkadd-internal` | Add a validated unit's roster to the internal Warden role |
 | `/helpline` | Crisis and mental health support resources, optionally addressed to a member |
 | `/enlist` | The enlistment process, with a link to the application |
+| `/voice-rename` | Rename the spawned voice channel you are in. Registered only when `BOT_DB_DSN` is set |
 
 The registered set lives in `commands/registry.go` — update this table when it changes.
+
+`/voice-rename` is for Cav members, and that gate is not in code. It is a
+Server Settings command restriction (Server Settings, Integrations, the bot,
+`/voice-rename`) naming the 29 rank roles from `tempVCRankRoles` in
+`commands/temp_vc.go`. The maintainer applies it at deploy, before any hub is
+enabled. Until then the command is visible to every member, and a guest inside
+a spawned channel gets the no-owner refusal, logged at WARN. Inside the command
+the owner of the channel renames it; a member holding one of the hub's
+moderator roles, or a guild-wide moderator role, renames any spawned channel
+of that hub without owning it. Discord allows two renames per channel per ten
+minutes, and the bot refuses the third itself with the time the window opens.
 
 ## Setup
 
@@ -152,9 +164,9 @@ report scheduler`, and finally `Bot is now running. Press CTRL-C to exit`. That
 last line is the success signal — anything that stops earlier is a failed
 start.
 
-Expect a pause of roughly 40 seconds on `Registering commands`. The twelve
-commands are created one at a time and Discord rate-limits them, so a silent
-console there is normal, not a hang.
+Expect a pause of roughly 40 seconds on `Registering commands`. The commands
+(twelve, thirteen with `BOT_DB_DSN` set) are created one at a time and Discord
+rate-limits them, so a silent console there is normal, not a hang.
 
 ### One thing that is not a command
 
