@@ -119,8 +119,10 @@ func (e *fieldError) Error() string { return e.Field + ": " + e.Message }
 
 // errHubBroken is the refusal an update of a broken hub gets: its channel is
 // gone or has no category, so there is nothing to rename and nothing to
-// spawn under. The page offers Remove alone.
-var errHubBroken = &fieldError{fieldHubChannel, "This hub is broken: its channel is gone or has no category. Remove it, or fix the channel in Discord first."}
+// spawn under. It carries no message: the handler answers with the Broken
+// hub view, which explains the state and offers Remove alone, and that view
+// renders no refusal note.
+var errHubBroken = &fieldError{fieldHubChannel, ""}
 
 // Form field names, as posted and as named in a refusal.
 const (
@@ -788,7 +790,7 @@ func applyEdit(hub *store.Hub, in editInput, guild guildInfo) error {
 	}
 	if hub.Bitrate, ok = intInRange(in.Bitrate, bitrateMin, guild.bitrateMax); !ok {
 		return &fieldError{fieldBitrate,
-			fmt.Sprintf("Enter a bitrate of %d to %d. The server's boost tier sets the top.", bitrateMin, guild.bitrateMax)}
+			fmt.Sprintf("Enter a bitrate of %d to %d.", bitrateMin, guild.bitrateMax)}
 	}
 	hub.Enabled = in.Enabled
 	return nil

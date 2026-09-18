@@ -21,7 +21,7 @@
       </tbody>
     </table></div>
     {{else}}
-    <div class="block-row">No hubs yet. Create one below, or register a voice channel that exists.</div>
+    <div class="block-row">No hubs yet. Register a voice channel below.</div>
     {{end}}
   </div>
 
@@ -47,14 +47,12 @@
           <option value="">Choose a category</option>
           {{range .Hubs.Categories}}<option value="{{.ID}}"{{if eq .ID $.Hubs.Create.CategoryID}} selected{{end}}>{{.Name}}</option>{{end}}
         </select>
-        <span class="field-hint">The new hub channel is created under it and takes its permissions.</span>
       </label>
     </div>
     <div class="block-row">
       <label class="field">
         <span class="field-label">Hub channel name</span>
         <input type="text" name="channel_name" data-field="channel_name" value="{{.Hubs.Create.ChannelName}}" maxlength="100" required>
-        <span class="field-hint">The voice channel members join to spawn one, such as "Join to create".</span>
       </label>
     </div>
     <div class="block-row">
@@ -99,8 +97,7 @@
   {{if .Broken}}
   <div class="block">
     <h2 class="block-header">Broken hub</h2>
-    {{with $.Hubs.RefusalFor "edit"}}{{template "refusal" .}}{{end}}
-    <div class="block-row"><span class="tag tag--warn" data-field="broken">broken</span> Its channel is gone from the server or has no category, so it spawns nothing. Fix the channel in Discord, or remove the hub. Its settings stay until it is removed.</div>
+    <div class="block-row"><span class="tag tag--warn" data-field="broken">broken</span> The hub's voice channel is gone from Discord or sits outside a category, so nothing spawns. If the channel still exists, move it into a category and the hub works again. If it was deleted, remove the hub. Its settings stay until then.</div>
   </div>
   {{else}}
   <form method="post" action="/hubs/{{.ID}}" class="block">
@@ -110,7 +107,6 @@
       <label class="field">
         <span class="field-label">Hub channel name</span>
         <input type="text" name="channel_name" data-field="channel_name" value="{{.Form.ChannelName}}" maxlength="100" required>
-        <span class="field-hint">A changed name renames the channel in Discord when you save.</span>
       </label>
     </div>
     <div class="block-row">
@@ -152,7 +148,7 @@
       <label class="field">
         <span class="field-label">Bitrate</span>
         <input type="number" name="bitrate" data-field="bitrate" value="{{.Form.Bitrate}}" min="8000" max="{{.BitrateMax}}" step="1000" required>
-        <span class="field-hint">In bits per second. 64000 is Discord's default; the server's boost tier allows up to {{.BitrateMax}}.</span>
+        <span class="field-hint">the server's boost tier allows up to {{.BitrateMax}}.</span>
       </label>
     </div>
     <div class="block-row">

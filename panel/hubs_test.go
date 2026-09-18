@@ -1289,9 +1289,6 @@ func TestUpdateOfABrokenHubIsRefusedBeforeAnyRename(t *testing.T) {
 	if !isClientError(res.StatusCode) {
 		t.Errorf("status = %d, want 4xx", res.StatusCode)
 	}
-	if field, ok := errorField(t, res); !ok || field != "hub_channel" {
-		t.Errorf("data-error = %q (present %v), want hub_channel", field, ok)
-	}
 	if after := storedHubs(t, w.st)[0]; !sameHubSettings(after, before) {
 		t.Errorf("stored hub = %+v, want it unchanged from %+v", after, before)
 	}
