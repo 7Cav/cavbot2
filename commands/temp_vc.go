@@ -34,8 +34,8 @@ import (
 //
 // A spawn that fails is one create per join: no retry, no backoff, no
 // auto-disable. The member gets one message in the hub channel's text chat
-// that mentions them alone (the area is full, or the failure has been
-// reported), no DM and no disconnect. The runtime keeps each hub's last spawn
+// that mentions them alone (the category is full, or the error has been
+// reported to S6), no DM and no disconnect. The runtime keeps each hub's last spawn
 // failure in memory for the panel, cleared by the next successful spawn from
 // that hub. A failure Discord returned reaches Sentry once per streak per
 // hub; a refusal the bot makes itself, a hub with no category, never does.
@@ -80,9 +80,9 @@ type SpawnFailureCause string
 const (
 	// SpawnFailureNoCategory is the bot's own refusal: the hub channel has no
 	// parent, so there is nowhere to spawn under. No API call is made.
-	SpawnFailureNoCategory SpawnFailureCause = "no category"
+	SpawnFailureNoCategory SpawnFailureCause = "hub channel has no category"
 	// SpawnFailureFull is the category or guild channel cap.
-	SpawnFailureFull SpawnFailureCause = "full"
+	SpawnFailureFull SpawnFailureCause = "this area is full"
 	// SpawnFailureForbidden is a 403 on the create.
 	SpawnFailureForbidden SpawnFailureCause = "missing permissions"
 	// SpawnFailureRateLimited is a 429 on the create. The call is not retried.
@@ -946,13 +946,13 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 // messageHubJoiner tells a member whose channel could not be created, in the
 // hub channel's text chat. The content mentions them and the allowed mentions
 // name them alone, so nobody else is pinged. No DM, no disconnect, and the
-// bot never deletes the message. Two texts only: the area is full, or the
-// failure has been reported. A failed send is a WARN line: the spawn failure
+// bot never deletes the message. Two texts only: the category is full, or
+// the error has been reported to S6. A failed send is a WARN line: the spawn failure
 // itself has already been handled.
 func (t *TempVC) messageHubJoiner(hub store.Hub, userID string, full bool) {
-	content := fmt.Sprintf("<@%s> your channel could not be created. The failure has been reported.", userID)
+	content := fmt.Sprintf("<@%s> Cavbot could not create your channel. The error has been reported to S6.", userID)
 	if full {
-		content = fmt.Sprintf("<@%s> this area is full. Wait for a channel to empty, then join again.", userID)
+		content = fmt.Sprintf("<@%s> this category is full. Wait for a channel to empty, then join again.", userID)
 	}
 	_, err := t.mgr.ChannelMessageSendComplex(hub.HubChannelID, &discordgo.MessageSend{
 		Content:         content,
