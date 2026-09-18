@@ -3,9 +3,12 @@ package commands
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/7cav/cavbot2/store"
 	"github.com/bwmarrin/discordgo"
@@ -29,6 +32,14 @@ type fakeTempVCManager struct {
 	createErr  error
 	deleteErr  error
 	moveErr    error
+
+	// createStarted and createRelease, when set, make every create signal
+	// that it has started and then wait until release is closed, so a test
+	// can hold two creates in flight at once. Each such create returns a
+	// channel ID of its own.
+	createStarted chan struct{}
+	createRelease chan struct{}
+	createSeq     int
 }
 
 type fakeCreate struct {
@@ -77,6 +88,11 @@ func (f *fakeTempVCManager) Channel(channelID string) (*discordgo.Channel, error
 }
 
 func (f *fakeTempVCManager) GuildChannelCreateComplex(_ string, data discordgo.GuildChannelCreateData, reason string) (*discordgo.Channel, error) {
+	// The barrier runs outside the fake's lock so two creates can wait at once.
+	if f.createStarted != nil {
+		f.createStarted <- struct{}{}
+		<-f.createRelease
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.createErr != nil {
@@ -84,6 +100,10 @@ func (f *fakeTempVCManager) GuildChannelCreateComplex(_ string, data discordgo.G
 	}
 	f.created = append(f.created, fakeCreate{data: data, reason: reason})
 	ch := *f.nextChannel
+	if f.createStarted != nil {
+		f.createSeq++
+		ch.ID = fmt.Sprintf("chan-%d", f.createSeq)
+	}
 	ch.Name = data.Name
 	return &ch, nil
 }
@@ -1022,5 +1042,55 @@ func TestTempVCMuteToggleIsNoOp(t *testing.T) {
 	}
 	if fake.deleteCallCount() != 0 {
 		t.Errorf("delete attempts = %d on a no-op update, want 0", fake.deleteCallCount())
+	}
+}
+
+func TestTempVCConcurrentJoinsGetDistinctNumbers(t *testing.T) {
+	fake := newFakeTempVCManager()
+	fake.createStarted = make(chan struct{})
+	fake.createRelease = make(chan struct{})
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+
+	// Two members join the hub on two gateway goroutines.
+	done := make(chan struct{}, 2)
+	for _, user := range []string{"user-a", "user-b"} {
+		go func(user string) {
+			tv.handleVoiceStateUpdate(voiceEvent(user, testTempVCHub, member(user)))
+			done <- struct{}{}
+		}(user)
+	}
+
+	// Both creates are in flight before either commits. A runtime that held
+	// the lock across the create would never let the second one start.
+	deadline := time.After(2 * time.Second)
+	for i := 0; i < 2; i++ {
+		select {
+		case <-fake.createStarted:
+		case <-deadline:
+			t.Fatal("second create did not start while the first was in flight: the create must not run under the lock")
+		}
+	}
+	close(fake.createRelease)
+	for i := 0; i < 2; i++ {
+		select {
+		case <-done:
+		case <-deadline:
+			t.Fatal("a join handler did not return")
+		}
+	}
+
+	names := fake.createdNames()
+	sort.Strings(names)
+	if len(names) != 2 || names[0] != "Voice - 1" || names[1] != "Voice - 2" {
+		t.Errorf("created = %v, want Voice - 1 and Voice - 2, one each", names)
+	}
+	var numbers []int
+	for _, row := range spawnedRows(t, st) {
+		numbers = append(numbers, row.Number)
+	}
+	sort.Ints(numbers)
+	if len(numbers) != 2 || numbers[0] != 1 || numbers[1] != 2 {
+		t.Errorf("row numbers = %v, want 1 and 2", numbers)
 	}
 }

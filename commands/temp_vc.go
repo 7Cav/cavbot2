@@ -54,13 +54,16 @@ const TempVCOverwriteCeiling = discordgo.PermissionManageChannels |
 	discordgo.PermissionVoiceConnect |
 	discordgo.PermissionViewChannel
 
-// tempVCStoreTimeout bounds each store call a gateway handler makes, so a
-// stalled database never hangs a handler goroutine.
+// tempVCStoreTimeout bounds each store call the runtime makes, at startup and
+// from gateway handlers, so a stalled database never hangs a goroutine.
 const tempVCStoreTimeout = 5 * time.Second
 
-// Interim-ownership election is decided purely from a member's Discord roles,
-// with no nickname parsing. When a channel's creator steps away, the present
-// occupants are ranked by, in order:
+// The election below is the branch's stand-in model: while the creator is out
+// of the channel, a present occupant is elected to act for them, and the
+// creator's claim returns with them. Ticket #291 replaces it with the handover
+// rule in CONTEXT.md (the owner always holds a rank role, a handover is final)
+// and keeps the ranking. The ranking reads a member's Discord roles only, no
+// nickname parsing. The present occupants are ordered by:
 //
 //  1. rank role: their rank (tempVCRankRoles), and
 //  2. lowest user ID: a deterministic final tiebreak.
@@ -230,10 +233,15 @@ type TempVC struct {
 	channelHub map[string]int64
 	// channelIndex maps a spawned channel ID -> the number in its name.
 	channelIndex map[string]int
-	// controller maps a spawned channel ID -> the member currently holding
-	// INTERIM ownership because the creator has stepped out of the channel.
-	// Absent when the creator is present or when no eligible member is
-	// available.
+	// pending holds, per hub row ID, the numbers reserved for creates in
+	// flight. The create is a network call made outside the lock, so without
+	// this two members joining one hub at the same moment would both take the
+	// smallest unused number.
+	pending map[int64]map[int]struct{}
+	// controller maps a spawned channel ID -> the occupant elected to act for
+	// the creator while the creator is out of the channel. Absent when the
+	// creator is present or the channel is empty. Replaced by the handover
+	// rule in #291.
 	controller map[string]string
 	// memberMeta caches each seen member's rank seniority, captured from
 	// gateway events (which carry the acting member), so an election reads ranks
@@ -265,6 +273,7 @@ func newTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		owners:       make(map[string]string),
 		channelHub:   make(map[string]int64),
 		channelIndex: make(map[string]int),
+		pending:      make(map[int64]map[int]struct{}),
 		controller:   make(map[string]string),
 		memberMeta:   make(map[string]memberRankMeta),
 	}
@@ -300,7 +309,7 @@ func (t *TempVC) RemoveHub(hubChannelID string) {
 	delete(t.hubs, hubChannelID)
 }
 
-// storeContext bounds one store call made from a gateway handler.
+// storeContext bounds one store call.
 func (t *TempVC) storeContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), tempVCStoreTimeout)
 }
@@ -308,7 +317,7 @@ func (t *TempVC) storeContext() (context.Context, context.CancelFunc) {
 // StartTempVC wires the temp voice channel feature onto a Discord session: a
 // GUILD_CREATE handler that seeds occupancy and runs the restart sweep (fires
 // on initial connect and again on any reconnect), and a VOICE_STATE_UPDATE
-// handler that drives the create/cleanup/interim-ownership lifecycle. Call
+// handler that drives the create, cleanup and ownership lifecycle. Call
 // before dg.Open(). The returned runtime is what the panel's service layer
 // applies hub saves to.
 func StartTempVC(dg *discordgo.Session, guildID string, st store.Store) (*TempVC, error) {
@@ -317,7 +326,10 @@ func StartTempVC(dg *discordgo.Session, guildID string, st store.Store) (*TempVC
 		return nil, err
 	}
 
-	utils.Info("Starting temp voice channels", "hubs", len(t.hubs))
+	t.mu.Lock()
+	hubCount := len(t.hubs)
+	t.mu.Unlock()
+	utils.Info("Starting temp voice channels", "hubs", hubCount)
 
 	dg.AddHandler(func(_ *discordgo.Session, g *discordgo.GuildCreate) {
 		defer utils.RecoverPanic("tempvc-guild-create")
@@ -354,7 +366,7 @@ func (t *TempVC) handleChannelDelete(c *discordgo.ChannelDelete) {
 		return
 	}
 	t.deleteRow(c.ID)
-	utils.Info("Temp VC channel deleted outside the bot", "channel_id", c.ID)
+	utils.Info("Temp VC spawned channel gone, untracked", "channel_id", c.ID)
 }
 
 // handleGuildCreate seeds voice-state tracking from the GUILD_CREATE payload
@@ -404,6 +416,8 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	t.owners = make(map[string]string)
 	t.channelHub = make(map[string]int64)
 	t.channelIndex = make(map[string]int)
+	// pending is left alone: a create in flight across a reconnect still
+	// holds its number and releases it itself.
 	t.controller = make(map[string]string)
 	t.memberMeta = make(map[string]memberRankMeta)
 
@@ -488,10 +502,9 @@ func (t *TempVC) handleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	_, leftSpawned := t.occupants[oldChannel]
 	emptied := t.applyLeaveLocked(vs.UserID, oldChannel)
 	joinedSpawned := t.applyJoinLocked(vs.UserID, newChannel)
-	// Re-elect interim ownership on both sides of the move: leaving may have made
-	// a creator absent (hand off) or removed the interim holder (re-elect);
-	// joining may have brought the creator back (hand back). Bookkeeping only;
-	// ownership changes nothing in Discord.
+	// Re-run the election on both sides of the move: leaving may have made the
+	// creator absent or removed the elected occupant; joining may have brought
+	// the creator back. Bookkeeping only; ownership changes nothing in Discord.
 	if leftSpawned {
 		t.reconcileControllerLocked(oldChannel)
 	}
@@ -670,18 +683,24 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	// discordgo's state cache has it now, so moving the hub channel in Discord
 	// moves spawning with it.
 	hubChannel, err := t.mgr.Channel(hub.HubChannelID)
-	if err != nil || hubChannel.ParentID == "" {
-		utils.Warn("Temp VC spawn refused, hub channel has no category",
+	if err != nil {
+		utils.Warn("Temp VC spawn refused, hub channel not in the state cache",
 			"hub_channel_id", hub.HubChannelID, "user_id", vs.UserID, "error", err)
+		return
+	}
+	if hubChannel.ParentID == "" {
+		utils.Warn("Temp VC spawn refused, hub channel has no category",
+			"hub_channel_id", hub.HubChannelID, "user_id", vs.UserID)
 		return
 	}
 
 	// Every channel a hub spawns is "<base string> - <n>", n being the
-	// smallest number no live channel of that hub holds (see
+	// smallest number no live or in-flight channel of that hub holds (see
 	// nextChannelIndexLocked), NOT the channel count, which collides after a
-	// lower-numbered channel is deleted.
+	// lower-numbered channel is deleted. The number is reserved here and
+	// released on every exit below.
 	t.mu.Lock()
-	index := t.nextChannelIndexLocked(hub.ID)
+	index := t.reserveChannelIndexLocked(hub.ID)
 	t.mu.Unlock()
 	name := nameWithIndex(hub.BaseString, index)
 
@@ -702,6 +721,9 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	reason := fmt.Sprintf("hub %s, creator %s", hub.HubChannelID, vs.UserID)
 	channel, err := t.mgr.GuildChannelCreateComplex(t.guildID, data, reason)
 	if err != nil {
+		t.mu.Lock()
+		t.releaseChannelIndexLocked(hub.ID, index)
+		t.mu.Unlock()
 		captureError("Temp VC create failed", err,
 			"user_id", vs.UserID, "hub_channel_id", hub.HubChannelID, "guild_id", t.guildID)
 		return
@@ -712,6 +734,7 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	t.owners[channel.ID] = vs.UserID
 	t.channelHub[channel.ID] = hub.ID
 	t.channelIndex[channel.ID] = index
+	t.releaseChannelIndexLocked(hub.ID, index)
 	t.mu.Unlock()
 
 	if err := t.mgr.GuildMemberMove(t.guildID, vs.UserID, &channel.ID); err != nil {
@@ -746,21 +769,22 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 }
 
 // nameWithIndex renders "<base> - <n>", first truncating the base so the whole
-// result still fits Discord's channel-name limit. The number is always
-// preserved (the base is what gets cut).
+// result still fits Discord's channel-name limit, counted in characters. The
+// number is always preserved (the base is what gets cut). The panel bounds a
+// base string at 90 characters, so this is a guard for rows written by hand.
 func nameWithIndex(base string, n int) string {
 	suffix := fmt.Sprintf(" - %d", n)
-	if len(base)+len(suffix) > discordChannelNameLimit {
-		base = base[:discordChannelNameLimit-len(suffix)]
+	if runes := []rune(base); len(runes)+len(suffix) > discordChannelNameLimit {
+		base = string(runes[:discordChannelNameLimit-len(suffix)])
 	}
 	return base + suffix
 }
 
 // nextChannelIndexLocked returns the number for a hub's new channel: the
-// smallest positive integer no live channel of that hub holds. Deriving it
-// from the set actually in use, rather than the channel count, is what
-// prevents a freed lower number from colliding with a surviving higher one:
-// deleting "- 1" then creating another yields "- 1" again, never a second
+// smallest positive integer no live or in-flight channel of that hub holds.
+// Deriving it from the set actually in use, rather than the channel count, is
+// what prevents a freed lower number from colliding with a surviving higher
+// one: deleting "- 1" then creating another yields "- 1" again, never a second
 // "- 4". Caller holds mu.
 func (t *TempVC) nextChannelIndexLocked(hubID int64) int {
 	used := make(map[int]bool)
@@ -769,9 +793,32 @@ func (t *TempVC) nextChannelIndexLocked(hubID int64) int {
 			used[n] = true
 		}
 	}
+	for n := range t.pending[hubID] {
+		used[n] = true
+	}
 	for n := 1; ; n++ {
 		if !used[n] {
 			return n
 		}
+	}
+}
+
+// reserveChannelIndexLocked takes the next number for a hub and marks it in
+// flight until releaseChannelIndexLocked. Caller holds mu.
+func (t *TempVC) reserveChannelIndexLocked(hubID int64) int {
+	n := t.nextChannelIndexLocked(hubID)
+	if t.pending[hubID] == nil {
+		t.pending[hubID] = make(map[int]struct{})
+	}
+	t.pending[hubID][n] = struct{}{}
+	return n
+}
+
+// releaseChannelIndexLocked ends a reservation: the number is now either held
+// by a tracked channel or free again. Caller holds mu.
+func (t *TempVC) releaseChannelIndexLocked(hubID int64, n int) {
+	delete(t.pending[hubID], n)
+	if len(t.pending[hubID]) == 0 {
+		delete(t.pending, hubID)
 	}
 }
