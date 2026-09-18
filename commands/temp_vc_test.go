@@ -1448,23 +1448,25 @@ func TestTempVCOwnerLeavesHighestRankTakesOver(t *testing.T) {
 	st := seedStore(t, testHub())
 	tv := newTestTempVC(t, fake, st)
 
-	spawnInto(tv, fake, "owner", "new-chan", member("Sgt", testRankSGT))
-	tv.handleVoiceStateUpdate(voiceEvent("g-pvt", "new-chan", member("Pvt", testRankPVT)))
-	tv.handleVoiceStateUpdate(voiceEvent("g-cpt", "new-chan", member("Cpt", testRankCPT)))
+	// The CPT has the higher user ID, so an election by lowest ID alone
+	// would pick the PVT.
+	spawnInto(tv, fake, "sgt-1", "new-chan", member("Sgt", testRankSGT))
+	tv.handleVoiceStateUpdate(voiceEvent("a-pvt", "new-chan", member("Pvt", testRankPVT)))
+	tv.handleVoiceStateUpdate(voiceEvent("z-cpt", "new-chan", member("Cpt", testRankCPT)))
 	if notices := noticesIn(t, fake, "new-chan"); len(notices) != 1 {
 		t.Fatalf("notices = %d while the owner is present, want the create notice alone", len(notices))
 	}
 
-	tv.handleVoiceStateUpdate(voiceEvent("owner", "", member("Sgt", testRankSGT)))
+	tv.handleVoiceStateUpdate(voiceEvent("sgt-1", "", member("Sgt", testRankSGT)))
 
-	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "g-cpt" {
+	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "z-cpt" {
 		t.Errorf("row = %+v (present %v), want the CPT as owner", row, ok)
 	}
 	notices := noticesIn(t, fake, "new-chan")
 	if len(notices) != 2 {
 		t.Fatalf("notices = %d, want a second one for the handover", len(notices))
 	}
-	if !strings.Contains(notices[1].data.Content, "g-cpt") {
+	if !strings.Contains(notices[1].data.Content, "z-cpt") {
 		t.Errorf("handover notice %q does not carry the CPT's ID", notices[1].data.Content)
 	}
 }
@@ -1504,8 +1506,8 @@ func TestTempVCTieBreaksByLowestUserID(t *testing.T) {
 	st := seedStore(t, testHub())
 	tv := newTestTempVC(t, fake, st)
 
-	// Two SGTs. The lowest user ID is the lowest snowflake: the 17 digit ID
-	// is the smaller number although it sorts after the 18 digit one as a
+	// Two SGTs. The lowest user ID is the lowest number: the 17 digit ID is
+	// the smaller number although it sorts after the 18 digit one as a
 	// string. The higher ID joins first, so taking the first occupant loses.
 	const older, newer = "99999999999999999", "100000000000000000"
 	spawnInto(tv, fake, "cpt-1", "new-chan", member("Cpt", testRankCPT))
@@ -1515,7 +1517,7 @@ func TestTempVCTieBreaksByLowestUserID(t *testing.T) {
 	tv.handleVoiceStateUpdate(voiceEvent("cpt-1", "", member("Cpt", testRankCPT)))
 
 	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != older {
-		t.Errorf("row = %+v (present %v), want the lowest snowflake %s", row, ok, older)
+		t.Errorf("row = %+v (present %v), want the lowest user ID %s", row, ok, older)
 	}
 }
 
@@ -1525,7 +1527,7 @@ func TestTempVCHandoverIsFinal(t *testing.T) {
 	tv := newTestTempVC(t, fake, st)
 
 	// The creator outranks the SGT, so a rule that re-elected on every
-	// occupancy change would hand the channel back when they return.
+	// occupancy change would make the creator owner again when they return.
 	spawnInto(tv, fake, "cpt-1", "new-chan", member("Cpt", testRankCPT))
 	tv.handleVoiceStateUpdate(voiceEvent("sgt-1", "new-chan", member("Sgt", testRankSGT)))
 	tv.handleVoiceStateUpdate(voiceEvent("cpt-1", "", member("Cpt", testRankCPT)))
@@ -1601,12 +1603,9 @@ func TestTempVCHandoverRowWriteHealsAndCaptures(t *testing.T) {
 		if *captures != 1 {
 			t.Errorf("captures = %d, want 1 for the failed handover write", *captures)
 		}
-		// The live owner is the PVT although the row still names the SGT.
+		// The live owner is the PVT whatever the row says.
 		if owner, tracked := tv.Owner("new-chan"); owner != "pvt-1" || !tracked {
 			t.Errorf("Owner(new-chan) = %q, %v, want pvt-1, tracked", owner, tracked)
-		}
-		if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "sgt-1" {
-			t.Errorf("row = %+v (present %v), want the stale create row kept", row, ok)
 		}
 		// Still tracked: the last occupant leaving deletes the channel.
 		tv.handleVoiceStateUpdate(voiceEvent("pvt-1", "", member("Pvt", testRankPVT)))
@@ -1687,5 +1686,25 @@ func TestTempVCRestartSweepRestoresOwnerOrElects(t *testing.T) {
 	}
 	if notices := noticesIn(t, fake, "chan-r"); len(notices) != 1 || !strings.Contains(notices[0].data.Content, "cpt-r") {
 		t.Errorf("notices in chan-r = %+v, want one carrying cpt-r", notices)
+	}
+}
+
+// The bot moves the creator into the new channel, and their voice state
+// event lands a moment later. A rank holder who joins in that window meets
+// a channel whose owner is not absent: the creator keeps it.
+func TestTempVCJoinerInTheCreateWindowDoesNotTakeOver(t *testing.T) {
+	fake := newFakeTempVCManager()
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+
+	tv.handleVoiceStateUpdate(voiceEvent("pvt-1", testTempVCHub, member("Pvt", testRankPVT)))
+	tv.handleVoiceStateUpdate(voiceEvent("cpt-2", "new-chan", member("Cpt", testRankCPT)))
+	tv.handleVoiceStateUpdate(voiceEvent("pvt-1", "new-chan", member("Pvt", testRankPVT)))
+
+	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "pvt-1" {
+		t.Errorf("row = %+v (present %v), want the creator pvt-1 kept as owner", row, ok)
+	}
+	if notices := noticesIn(t, fake, "new-chan"); len(notices) != 1 {
+		t.Errorf("notices = %d, want the create notice alone", len(notices))
 	}
 }
