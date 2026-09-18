@@ -24,6 +24,7 @@ type fakeTempVCManager struct {
 	channels    map[string]*discordgo.Channel
 	created     []fakeCreate
 	deleted     []fakeDelete
+	edits       []fakeEdit
 	moves       []fakeMove
 	messages    []fakeMessage
 	nextChannel *discordgo.Channel
@@ -37,6 +38,7 @@ type fakeTempVCManager struct {
 	channelErr error
 	createErr  error
 	deleteErr  error
+	editErr    error
 	moveErr    error
 	messageErr error
 	memberErr  error
@@ -63,6 +65,12 @@ type fakeCreate struct {
 
 type fakeDelete struct {
 	channelID string
+	reason    string
+}
+
+type fakeEdit struct {
+	channelID string
+	name      string
 	reason    string
 }
 
@@ -136,6 +144,16 @@ func (f *fakeTempVCManager) ChannelDelete(channelID, reason string) (*discordgo.
 	}
 	f.deleted = append(f.deleted, fakeDelete{channelID: channelID, reason: reason})
 	return &discordgo.Channel{ID: channelID}, nil
+}
+
+func (f *fakeTempVCManager) ChannelEdit(channelID string, data *discordgo.ChannelEdit, reason string) (*discordgo.Channel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.editErr != nil {
+		return nil, f.editErr
+	}
+	f.edits = append(f.edits, fakeEdit{channelID: channelID, name: data.Name, reason: reason})
+	return &discordgo.Channel{ID: channelID, Name: data.Name}, nil
 }
 
 func (f *fakeTempVCManager) GuildMemberMove(_ string, userID string, channelID *string) error {
@@ -219,6 +237,14 @@ func (f *fakeTempVCManager) recordedDeletes() []fakeDelete {
 	defer f.mu.Unlock()
 	out := make([]fakeDelete, len(f.deleted))
 	copy(out, f.deleted)
+	return out
+}
+
+func (f *fakeTempVCManager) recordedEdits() []fakeEdit {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]fakeEdit, len(f.edits))
+	copy(out, f.edits)
 	return out
 }
 

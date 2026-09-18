@@ -212,6 +212,9 @@ type TempVCManager interface {
 	// ChannelDelete deletes a channel with the given audit-log reason and no
 	// retry on rate limit.
 	ChannelDelete(channelID, auditReason string) (*discordgo.Channel, error)
+	// ChannelEdit edits a channel with the given audit-log reason and no retry
+	// on rate limit. /voice-rename sends the name alone.
+	ChannelEdit(channelID string, data *discordgo.ChannelEdit, auditReason string) (*discordgo.Channel, error)
 	// GuildMemberMove moves a member between voice channels with no retry on
 	// rate limit.
 	GuildMemberMove(guildID, userID string, channelID *string) error
@@ -259,6 +262,11 @@ func (m *sessionTempVCManager) ChannelDelete(channelID, auditReason string) (*di
 		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
 }
 
+func (m *sessionTempVCManager) ChannelEdit(channelID string, data *discordgo.ChannelEdit, auditReason string) (*discordgo.Channel, error) {
+	return m.s.ChannelEdit(channelID, data,
+		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+}
+
 func (m *sessionTempVCManager) GuildMemberMove(guildID, userID string, channelID *string) error {
 	return m.s.GuildMemberMove(guildID, userID, channelID, discordgo.WithRetryOnRatelimit(false))
 }
@@ -292,6 +300,10 @@ type TempVC struct {
 	// hubs maps a hub channel ID -> its settings. Loaded from the store at
 	// startup and changed in-process by ApplyHub and RemoveHub.
 	hubs map[string]store.Hub
+	// guildModeratorRoles are the roles that moderate every hub. Loaded from
+	// the store at startup; a hub's effective moderator set is the union of
+	// these and its own.
+	guildModeratorRoles []string
 	// userChannel tracks every member's current voice channel (any channel,
 	// not just spawned ones) so a VOICE_STATE_UPDATE can be diffed into a
 	// leave + join without relying on discordgo's state cache. Seeded from
@@ -339,10 +351,11 @@ type TempVC struct {
 }
 
 // NewTempVC builds the runtime state around a manager and a store and loads
-// the guild's hubs from the store. A store that cannot list them is an error:
-// the bot must not run with no hubs when hubs exist. StartTempVC is the
-// production caller; the panel's tests build a runtime over their own fakes
-// through it, so a register through the panel can be followed by a join.
+// the guild's hubs and guild-wide moderator roles from the store. A store
+// that cannot read them is an error: the bot must not run with no hubs when
+// hubs exist. StartTempVC is the production caller; the panel's tests build a
+// runtime over their own fakes through it, so a register through the panel
+// can be followed by a join.
 func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, error) {
 	t := &TempVC{
 		mgr:            mgr,
@@ -370,6 +383,11 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 	for _, h := range hubs {
 		t.ApplyHub(h)
 	}
+	roles, err := st.GetGuildModeratorRoles(ctx, guildID)
+	if err != nil {
+		return nil, fmt.Errorf("load guild moderator roles: %w", err)
+	}
+	t.guildModeratorRoles = roles
 	return t, nil
 }
 
