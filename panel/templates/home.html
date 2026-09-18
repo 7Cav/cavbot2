@@ -34,10 +34,12 @@
 </main>
 {{end}}
 
+{{define "refusal"}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}
+
 {{define "create"}}
   <form method="post" action="/hubs" class="block narrow">
     <h2 class="block-header">Create a hub</h2>
-    {{if eq .Hubs.Refused "create"}}{{with .Hubs.Error}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}{{end}}
+    {{with .Hubs.RefusalFor "create"}}{{template "refusal" .}}{{end}}
     <div class="block-row">
       <label class="field">
         <span class="field-label">Category</span>
@@ -69,13 +71,13 @@
 {{define "register"}}
   <form method="post" action="/hubs" class="block narrow">
     <h2 class="block-header">Register a voice channel as a hub</h2>
-    {{if eq .Hubs.Refused "register"}}{{with .Hubs.Error}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}{{end}}
+    {{with .Hubs.RefusalFor "register"}}{{template "refusal" .}}{{end}}
     <div class="block-row">
       <label class="field">
         <span class="field-label">Voice channel</span>
         <select name="hub_channel" data-field="hub_channel" required>
           <option value="">Choose a voice channel</option>
-          {{range .Hubs.Picker}}<option value="{{.ID}}"{{if eq .ID $.Hubs.Form.ChannelID}} selected{{end}}>{{.Name}}{{if .CategoryName}} ({{.CategoryName}}){{else}} (no category){{end}}</option>{{end}}
+          {{range .Hubs.Picker}}<option value="{{.ID}}"{{if eq .ID $.Hubs.Register.ChannelID}} selected{{end}}>{{.Name}}{{if .CategoryName}} ({{.CategoryName}}){{else}} (no category){{end}}</option>{{end}}
         </select>
         <span class="field-hint">Channels that are already hubs are hidden.</span>
       </label>
@@ -83,7 +85,7 @@
     <div class="block-row">
       <label class="field">
         <span class="field-label">Base string</span>
-        <input type="text" name="base_string" data-field="base_string" value="{{.Hubs.Form.BaseString}}" maxlength="90" required>
+        <input type="text" name="base_string" data-field="base_string" value="{{.Hubs.Register.BaseString}}" maxlength="90" required>
         <span class="field-hint">Cavbot2 names spawned channels from it: "Arma Voice" gives "Arma Voice - 1".</span>
       </label>
     </div>
@@ -97,13 +99,13 @@
   {{if .Broken}}
   <div class="block">
     <h2 class="block-header">Broken hub</h2>
-    {{if eq $.Hubs.Refused "edit"}}{{with $.Hubs.Error}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}{{end}}
+    {{with $.Hubs.RefusalFor "edit"}}{{template "refusal" .}}{{end}}
     <div class="block-row"><span class="tag tag--warn" data-field="broken">broken</span> Its channel is gone from the server or has no category, so it spawns nothing. Fix the channel in Discord, or remove the hub. Its settings stay until it is removed.</div>
   </div>
   {{else}}
   <form method="post" action="/hubs/{{.ID}}" class="block">
     <h2 class="block-header">Edit hub</h2>
-    {{if eq $.Hubs.Refused "edit"}}{{with $.Hubs.Error}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}{{end}}
+    {{with $.Hubs.RefusalFor "edit"}}{{template "refusal" .}}{{end}}
     <div class="block-row">
       <label class="field">
         <span class="field-label">Hub channel name</span>

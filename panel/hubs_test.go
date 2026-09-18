@@ -239,14 +239,13 @@ func newTestWorldWith(t *testing.T, f *fakeForum, hubs ...store.Hub) *testWorld 
 			t.Fatalf("UpsertHub: %v", err)
 		}
 	}
-	w := newTestWorldOver(t, st, f)
-	w.st = st
-	return w
+	return newTestWorldOver(t, st, f)
 }
 
-// newTestWorldOver builds the panel and the runtime over any store, for a
-// test whose store refuses writes. st on the returned world is nil unless
-// the caller sets it: a failing store has no fake to read back from.
+// newTestWorldOver builds the panel and the runtime over any store. st on
+// the returned world is the store when it is the fake, and nil for a store
+// that wraps it to refuse writes: such a test reads back through the fake
+// it wrapped.
 func newTestWorldOver(t *testing.T, st store.Store, f *fakeForum) *testWorld {
 	t.Helper()
 	discord := newFakeDiscord()
@@ -258,7 +257,8 @@ func newTestWorldOver(t *testing.T, st store.Store, f *fakeForum) *testWorld {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return &testWorld{forum: f, discord: discord, runtime: runtime, p: p, b: newBrowser(t, p)}
+	fake, _ := st.(*store.Fake)
+	return &testWorld{forum: f, st: fake, discord: discord, runtime: runtime, p: p, b: newBrowser(t, p)}
 }
 
 // testHub is a stored hub on hub-1 with the defaults a register writes.
@@ -598,6 +598,8 @@ func TestUpdateRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
 		form  url.Values
 		field string
 	}{
+		{"an empty channel name", set("channel_name", "   "), "channel_name"},
+		{"a channel name of 101 characters", set("channel_name", strings.Repeat("x", 101)), "channel_name"},
 		{"an empty base string", set("base_string", "   "), "base_string"},
 		{"a base string of 91 characters", set("base_string", strings.Repeat("x", 91)), "base_string"},
 		{"a permission source outside the two", set("permission_source", "other"), "permission_source"},
@@ -899,7 +901,7 @@ func createForm(categoryID, channelName, baseString string) url.Values {
 	return url.Values{"category": {categoryID}, "channel_name": {channelName}, "base_string": {baseString}}
 }
 
-func TestCreateMakesASyncedChannelUnderTheCategoryAndWritesARow(t *testing.T) {
+func TestCreateMakesAChannelUnderTheCategoryAndWritesARow(t *testing.T) {
 	w := newTestWorld(t)
 	signIn(t, w.forum, w.b)
 
@@ -915,7 +917,7 @@ func TestCreateMakesASyncedChannelUnderTheCategoryAndWritesARow(t *testing.T) {
 		t.Errorf("create payload = type %d, parent %q, name %q; want voice under cat-1 named Squad Join", data.Type, data.ParentID, data.Name)
 	}
 	if len(data.PermissionOverwrites) != 0 {
-		t.Errorf("create payload carries %d overwrites, want none so the channel syncs to the category", len(data.PermissionOverwrites))
+		t.Errorf("create payload carries %d overwrites, want none so the channel takes the category's permissions", len(data.PermissionOverwrites))
 	}
 	if !strings.Contains(calls[0].Reason, testUsername) {
 		t.Errorf("create audit reason %q does not name the panel user %q", calls[0].Reason, testUsername)
@@ -962,6 +964,9 @@ func TestCreateAppendsAnEntryWithNullBefore(t *testing.T) {
 	}
 	if diff["base_string"].After != "Squad Voice" || diff["hub_channel"].After != "spawn-1" {
 		t.Errorf("diff after: base_string %v, hub_channel %v; want Squad Voice and spawn-1", diff["base_string"].After, diff["hub_channel"].After)
+	}
+	if c := diff["channel_name"]; c.Before != nil || c.After != "Squad Join" {
+		t.Errorf("diff channel_name = %+v, want before null, after Squad Join", c)
 	}
 }
 
@@ -1054,8 +1059,8 @@ func TestCreateRefusedByDiscordShowsWhyAndWritesNothing(t *testing.T) {
 	if !isClientError(res.StatusCode) {
 		t.Errorf("status = %d, want 4xx", res.StatusCode)
 	}
-	if _, ok := errorField(t, res); !ok {
-		t.Error("the page carries no data-error note saying why the create was refused")
+	if field, ok := errorField(t, res); !ok || field != "category" {
+		t.Errorf("data-error = %q (present %v), want category: the cap and the bot's view are the category's", field, ok)
 	}
 	if hubs := storedHubs(t, w.st); len(hubs) != 0 {
 		t.Errorf("stored hubs = %+v, want none", hubs)
@@ -1284,8 +1289,8 @@ func TestUpdateOfABrokenHubIsRefusedBeforeAnyRename(t *testing.T) {
 	if !isClientError(res.StatusCode) {
 		t.Errorf("status = %d, want 4xx", res.StatusCode)
 	}
-	if _, ok := errorField(t, res); !ok {
-		t.Error("the page carries no data-error note")
+	if field, ok := errorField(t, res); !ok || field != "hub_channel" {
+		t.Errorf("data-error = %q (present %v), want hub_channel", field, ok)
 	}
 	if after := storedHubs(t, w.st)[0]; !sameHubSettings(after, before) {
 		t.Errorf("stored hub = %+v, want it unchanged from %+v", after, before)
