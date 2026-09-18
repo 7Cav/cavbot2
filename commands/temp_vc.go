@@ -72,9 +72,9 @@ const tempVCStoreTimeout = 5 * time.Second
 // arrangement as telemetryNow.
 var tempVCNow = time.Now
 
-// SpawnFailureCause says why a hub's last spawn failed, as a code the panel
-// renders however it likes. The values are stable; the panel's wording is not
-// pinned to them.
+// SpawnFailureCause says why a hub's last spawn failed. The values are
+// stable codes, worded so the panel can show them as they are or map them to
+// longer wording. Nothing else reads them.
 type SpawnFailureCause string
 
 const (
@@ -395,12 +395,6 @@ func (t *TempVC) ApplyHub(hub store.Hub) {
 func (t *TempVC) RemoveHub(hubChannelID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if hub, ok := t.hubs[hubChannelID]; ok {
-		// A removed hub has no panel row to show a failure on, and a hub
-		// registered again gets a new row ID and a fresh streak.
-		delete(t.lastFailure, hub.ID)
-		delete(t.createCaptured, hub.ID)
-	}
 	delete(t.hubs, hubChannelID)
 }
 
@@ -422,16 +416,16 @@ func (t *TempVC) recordSpawnFailure(hubID int64, cause SpawnFailureCause) {
 	t.lastFailure[hubID] = SpawnFailure{At: tempVCNow(), Cause: cause}
 }
 
-// captureSpawnFailure sends a Discord-side spawn failure to Sentry once per
-// streak per hub: the first failure of a streak captures, the rest of the
-// streak is WARN lines only, and a successful spawn from the hub ends the
-// streak.
-func (t *TempVC) captureSpawnFailure(hubID int64, msg string, err error, kv ...any) {
+// captureOncePerStreak sends a failure to Sentry unless the hub's streak in
+// the given set has already captured, and marks it captured. The set is
+// createCaptured or deleteCaptured; the caller clears the hub's entry on the
+// success that ends the streak.
+func (t *TempVC) captureOncePerStreak(captured map[int64]struct{}, hubID int64, msg string, err error, kv ...any) {
 	t.mu.Lock()
-	_, captured := t.createCaptured[hubID]
-	t.createCaptured[hubID] = struct{}{}
+	_, done := captured[hubID]
+	captured[hubID] = struct{}{}
 	t.mu.Unlock()
-	if !captured {
+	if !done {
 		captureError(msg, err, kv...)
 	}
 }
@@ -780,8 +774,7 @@ func (t *TempVC) deleteIfStillEmpty(channelID string) {
 	t.mu.Unlock()
 
 	_, err := t.mgr.ChannelDelete(channelID, "empty")
-	fault := classifySpawnedChannelError(err)
-	switch {
+	switch fault := classifySpawnedChannelError(err); {
 	case err == nil:
 		utils.Info("Temp VC deleted", "channel_id", channelID)
 		t.mu.Lock()
@@ -799,15 +792,11 @@ func (t *TempVC) deleteIfStillEmpty(channelID string) {
 		t.mu.Lock()
 		delete(t.deleting, channelID)
 		hubID := t.channelHub[channelID]
-		_, captured := t.deleteCaptured[hubID]
-		if fault.outage {
-			t.deleteCaptured[hubID] = struct{}{}
-		}
 		t.mu.Unlock()
 		utils.Warn("Temp VC delete failed, channel kept for the next attempt",
 			"channel_id", channelID, "hub_id", hubID, "error", err)
-		if fault.outage && !captured {
-			captureError("Temp VC delete failed", err,
+		if fault.capturesOnDelete() {
+			t.captureOncePerStreak(t.deleteCaptured, hubID, "Temp VC delete failed", err,
 				"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
 		}
 		return
@@ -893,7 +882,7 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		utils.Warn("Temp VC create failed",
 			"user_id", vs.UserID, "hub_channel_id", hub.HubChannelID, "cause", fault.cause(), "error", err)
 		if fault.capturesOnCreate() {
-			t.captureSpawnFailure(hub.ID, "Temp VC create failed", err,
+			t.captureOncePerStreak(t.createCaptured, hub.ID, "Temp VC create failed", err,
 				"user_id", vs.UserID, "hub_channel_id", hub.HubChannelID, "guild_id", t.guildID)
 		}
 		t.messageHubJoiner(hub, vs.UserID, fault.full)
@@ -919,7 +908,7 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		utils.Warn("Temp VC move-into failed, deleting channel",
 			"user_id", vs.UserID, "channel_id", channel.ID, "hub_channel_id", hub.HubChannelID, "error", err)
 		if classifySpawnedChannelError(err).capturesOnCreate() {
-			t.captureSpawnFailure(hub.ID, "Temp VC move-into failed, deleting channel", err,
+			t.captureOncePerStreak(t.createCaptured, hub.ID, "Temp VC move-into failed, deleting channel", err,
 				"user_id", vs.UserID, "channel_id", channel.ID, "hub_channel_id", hub.HubChannelID)
 		}
 		t.mu.Lock()

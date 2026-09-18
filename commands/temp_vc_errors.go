@@ -35,17 +35,17 @@ type spawnedChannelFault struct {
 	// forbidden is a 403: a category the bot cannot see, or a permission it
 	// lost. Administrator prevents it, so it is a setting to fix.
 	forbidden bool
-	// outage is a 403, a 5xx, or no HTTP response at all (transport). It
-	// pages on every spawned channel path.
-	outage bool
+	// hardFault is a 403, a 5xx, or no HTTP response at all (transport):
+	// the faults that reach Sentry on every spawned channel path.
+	hardFault bool
 }
 
 // classifySpawnedChannelError reads the facts off a Discord error. An error
-// with no structured HTTP response is a transport failure, an outage.
+// with no structured HTTP response is a transport failure.
 func classifySpawnedChannelError(err error) spawnedChannelFault {
 	var restErr *discordgo.RESTError
 	if !errors.As(err, &restErr) || restErr.Response == nil {
-		return spawnedChannelFault{outage: true}
+		return spawnedChannelFault{hardFault: true}
 	}
 	code := 0
 	if restErr.Message != nil {
@@ -59,14 +59,21 @@ func classifySpawnedChannelError(err error) spawnedChannelFault {
 			(code == discordgo.ErrCodeInvalidFormBody && bytes.Contains(restErr.ResponseBody, []byte(categoryCapMarker))),
 		rateLimited: status == http.StatusTooManyRequests,
 		forbidden:   forbidden,
-		outage:      forbidden || status >= 500,
+		hardFault:   forbidden || status >= 500,
 	}
 }
 
-// capturesOnCreate reports whether a create failure with these facts reaches
-// Sentry: the cap, 403, 429, 5xx, transport. Any other 4xx is a WARN line.
+// capturesOnCreate reports whether a create or move-into failure with these
+// facts reaches Sentry: the cap, 403, 429, 5xx, transport. Any other 4xx is a
+// WARN line.
 func (f spawnedChannelFault) capturesOnCreate() bool {
-	return f.full || f.rateLimited || f.outage
+	return f.full || f.rateLimited || f.hardFault
+}
+
+// capturesOnDelete reports whether a delete failure with these facts reaches
+// Sentry: 403, 5xx, transport. A 429 and any other 4xx is a WARN line.
+func (f spawnedChannelFault) capturesOnDelete() bool {
+	return f.hardFault
 }
 
 // cause is the spawn failure cause a create failure with these facts records.

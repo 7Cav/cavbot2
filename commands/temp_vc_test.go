@@ -1540,3 +1540,18 @@ func TestTempVCDeleteFailuresClassify(t *testing.T) {
 		}
 	})
 }
+
+func TestTempVCCapFailureRecordsTheFullCause(t *testing.T) {
+	fake := newFakeTempVCManager()
+	fake.createErr = restError(http.StatusBadRequest, discordgo.ErrCodeMaximumNumberOfGuildChannelsReached, "Maximum number of guild channels reached (500)")
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+	countCaptures(t)
+
+	tv.handleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+
+	got, ok := tv.LastSpawnFailure(storedHubID(t, st))
+	if !ok || got.Cause != SpawnFailureFull {
+		t.Errorf("LastSpawnFailure = %+v (present %v), want cause %q", got, ok, SpawnFailureFull)
+	}
+}
