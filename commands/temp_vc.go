@@ -275,9 +275,29 @@ func newTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		return nil, fmt.Errorf("load hubs: %w", err)
 	}
 	for _, h := range hubs {
-		t.hubs[h.HubChannelID] = h
+		t.ApplyHub(h)
 	}
 	return t, nil
+}
+
+// ApplyHub puts a hub's settings into the runtime, replacing any earlier
+// settings for the same hub channel. The startup load and the panel's service
+// layer (after its store write succeeds) both come through here, so the
+// runtime never polls the store. Live spawned channels keep their names and
+// numbers: a changed base string names only channels spawned after it.
+func (t *TempVC) ApplyHub(hub store.Hub) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.hubs[hub.HubChannelID] = hub
+}
+
+// RemoveHub forgets a hub, so a join to its channel spawns nothing. Its live
+// spawned channels stay tracked and die when empty, the same as any other.
+// The panel's service layer calls this after the hub row is deleted.
+func (t *TempVC) RemoveHub(hubChannelID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.hubs, hubChannelID)
 }
 
 // storeContext bounds one store call made from a gateway handler.
@@ -286,9 +306,11 @@ func (t *TempVC) storeContext() (context.Context, context.CancelFunc) {
 }
 
 // StartTempVC wires the temp voice channel feature onto a Discord session: a
-// VOICE_STATE_UPDATE handler that drives the create/cleanup/interim-ownership
-// lifecycle. Call before dg.Open(). The returned runtime is what the panel's
-// service layer applies hub saves to.
+// GUILD_CREATE handler that seeds occupancy and runs the restart sweep (fires
+// on initial connect and again on any reconnect), and a VOICE_STATE_UPDATE
+// handler that drives the create/cleanup/interim-ownership lifecycle. Call
+// before dg.Open(). The returned runtime is what the panel's service layer
+// applies hub saves to.
 func StartTempVC(dg *discordgo.Session, guildID string, st store.Store) (*TempVC, error) {
 	t, err := newTempVC(NewSessionTempVCManager(dg), st, guildID)
 	if err != nil {
@@ -297,11 +319,142 @@ func StartTempVC(dg *discordgo.Session, guildID string, st store.Store) (*TempVC
 
 	utils.Info("Starting temp voice channels", "hubs", len(t.hubs))
 
+	dg.AddHandler(func(_ *discordgo.Session, g *discordgo.GuildCreate) {
+		defer utils.RecoverPanic("tempvc-guild-create")
+		t.handleGuildCreate(g)
+	})
 	dg.AddHandler(func(_ *discordgo.Session, vs *discordgo.VoiceStateUpdate) {
 		defer utils.RecoverPanic("tempvc-voice-state")
 		t.handleVoiceStateUpdate(vs)
 	})
+	dg.AddHandler(func(_ *discordgo.Session, c *discordgo.ChannelDelete) {
+		defer utils.RecoverPanic("tempvc-channel-delete")
+		t.handleChannelDelete(c)
+	})
 	return t, nil
+}
+
+// handleChannelDelete untracks a spawned channel deleted outside the bot (an
+// admin in Discord's UI) and deletes its row, freeing its number. It acts on
+// tracked spawned channels only: a hub channel is never tracked here, so its
+// deletion changes nothing and the hub row stays for the panel to show as
+// broken. The bot's own deletes untrack before this fires, so the handler is
+// a no-op for them.
+func (t *TempVC) handleChannelDelete(c *discordgo.ChannelDelete) {
+	if c == nil || c.Channel == nil || c.GuildID != t.guildID {
+		return
+	}
+	t.mu.Lock()
+	_, tracked := t.occupants[c.ID]
+	if tracked {
+		t.untrackLocked(c.ID)
+	}
+	t.mu.Unlock()
+	if !tracked {
+		return
+	}
+	t.deleteRow(c.ID)
+	utils.Info("Temp VC channel deleted outside the bot", "channel_id", c.ID)
+}
+
+// handleGuildCreate seeds voice-state tracking from the GUILD_CREATE payload
+// and runs the restart sweep over the stored rows. A row whose channel is
+// absent from the guild loses its row. A present, empty channel is deleted
+// with its row. A present, occupied channel is tracked again with its number
+// and owner from the row. No channel without a row is touched, so a channel
+// a human made is never deleted. GUILD_CREATE re-fires on gateway reconnects,
+// so this also resynchronizes tracking after any missed events.
+//
+// A store that cannot list the rows leaves the in-memory state as it was: on
+// first connect that is empty, and on a reconnect it is the tracking from
+// before the disconnect. The next GUILD_CREATE retries.
+func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
+	if g.ID != t.guildID {
+		return
+	}
+
+	ctx, cancel := t.storeContext()
+	rows, err := t.st.ListSpawnedChannels(ctx)
+	cancel()
+	if err != nil {
+		captureError("Temp VC restart sweep could not list spawned channels", err, "guild_id", g.ID)
+		return
+	}
+
+	present := make(map[string]struct{}, len(g.Channels))
+	for _, ch := range g.Channels {
+		present[ch.ID] = struct{}{}
+	}
+	occupantsOf := make(map[string]map[string]struct{})
+	for _, vs := range g.VoiceStates {
+		if vs.ChannelID == "" {
+			continue
+		}
+		if occupantsOf[vs.ChannelID] == nil {
+			occupantsOf[vs.ChannelID] = make(map[string]struct{})
+		}
+		occupantsOf[vs.ChannelID][vs.UserID] = struct{}{}
+	}
+
+	// Compute the sweep under the lock, but issue deletes after releasing
+	// it, ChannelDelete is a network call.
+	t.mu.Lock()
+	t.userChannel = make(map[string]string)
+	t.occupants = make(map[string]map[string]struct{})
+	t.owners = make(map[string]string)
+	t.channelHub = make(map[string]int64)
+	t.channelIndex = make(map[string]int)
+	t.controller = make(map[string]string)
+	t.memberMeta = make(map[string]memberRankMeta)
+
+	for _, vs := range g.VoiceStates {
+		if vs.ChannelID != "" {
+			t.userChannel[vs.UserID] = vs.ChannelID
+		}
+		// Seed the rank cache from any voice state that carries a member, so an
+		// election right after reconnect has ranks without a REST fetch.
+		if vs.Member != nil {
+			t.rememberMemberLocked(vs.UserID, vs.Member)
+		}
+	}
+
+	var gone, empty []string
+	for _, row := range rows {
+		if _, ok := present[row.ChannelID]; !ok {
+			gone = append(gone, row.ChannelID)
+			continue
+		}
+		occ := occupantsOf[row.ChannelID]
+		if occ == nil {
+			occ = make(map[string]struct{})
+		}
+		// Empty channels are tracked too, so deleteIfStillEmpty applies the
+		// same rules as a live empty event: a failed delete keeps the channel
+		// and its row for the next attempt.
+		t.occupants[row.ChannelID] = occ
+		t.channelHub[row.ChannelID] = row.HubID
+		t.channelIndex[row.ChannelID] = row.Number
+		if row.OwnerUserID != "" {
+			t.owners[row.ChannelID] = row.OwnerUserID
+		}
+		if len(occ) == 0 {
+			empty = append(empty, row.ChannelID)
+			continue
+		}
+		t.reconcileControllerLocked(row.ChannelID)
+	}
+	t.mu.Unlock()
+
+	for _, id := range gone {
+		t.deleteRow(id)
+	}
+	for _, id := range empty {
+		t.deleteIfStillEmpty(id)
+	}
+
+	utils.Info("Temp VC restart sweep complete",
+		"rows", len(rows), "gone", len(gone), "empty", len(empty),
+		"tracked", len(rows)-len(gone)-len(empty))
 }
 
 // handleVoiceStateUpdate diffs a member's voice move into a leave + join and
