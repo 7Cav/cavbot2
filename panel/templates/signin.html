@@ -1,13 +1,12 @@
 {{define "content"}}
 <main class="body"{{if .Cause}} data-cause="{{.Cause}}"{{end}}>
   <h1 class="title">Sign in</h1>
-  <p class="desc">The panel uses your 7cav.us forum account.</p>
+  <p class="desc">Cavbot2 uses your 7cav.us forum account.</p>
   <div class="narrow">
-    {{if eq .Cause "expired"}}<div class="note">Your session ended. A session lasts two hours from sign-in.</div>{{end}}
+    {{if eq .Cause "expired"}}<div class="note">Your session ended. Please sign in again.</div>{{end}}
     {{if eq .Cause "no-group"}}<div class="note">Your forum account is not in a group that can open the panel.</div>{{end}}
     <div class="block">
       <h2 class="block-header">Use your forum account</h2>
-      <div class="block-row"><p>The forum asks you to approve the sign-in, then sends you back here. Your forum groups decide whether you can open the panel.</p></div>
       <div class="submit-row"><form method="post" action="/auth/start"><button type="submit" class="btn btn--cta">Sign in with the forum</button></form></div>
     </div>
   </div>
