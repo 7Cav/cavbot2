@@ -239,7 +239,7 @@ func (s *hubService) register(ctx context.Context, in registerInput) (store.Hub,
 	}
 	ch, ok := sn.guild.voiceChannel(in.ChannelID)
 	if !ok {
-		return store.Hub{}, &fieldError{fieldHubChannel, "Choose a voice channel of the guild."}
+		return store.Hub{}, &fieldError{fieldHubChannel, "That channel is no longer a voice channel in the server. Choose another."}
 	}
 	if _, taken := sn.hubOn(in.ChannelID); taken {
 		return store.Hub{}, &fieldError{fieldHubChannel, "That channel is already a hub."}
