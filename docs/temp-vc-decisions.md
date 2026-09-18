@@ -1,6 +1,6 @@
 # Temporary voice channels: decisions, and what they do to PR #232
 
-**Last updated:** 2026-09-15
+**Last updated:** 2026-09-17
 **Subject:** issue [#100](https://github.com/7Cav/cavbot2/issues/100), PR [#232](https://github.com/7Cav/cavbot2/pull/232), the MEE6 audit (#99), and the wayfinder map [#255](https://github.com/7Cav/cavbot2/issues/255).
 
 ## Purpose
@@ -12,7 +12,7 @@ Do not relitigate anything under "Settled", "Settled while charting", or "Alread
 ## State of play
 
 - Both question rounds are answered. Nothing is in flight with the stakeholder.
-- The maintainer builds this, not the PR's author. PR #232 stays open as the base until a superseding PR exists.
+- The maintainer builds this, not the PR's author. PR #232 is closed; the pull request for [#289](https://github.com/7Cav/cavbot2/issues/289) supersedes it.
 - Every ticket under map #255 is closed as of 2026-09-15. The last was [Panel session lifetime and group re-check](https://github.com/7Cav/cavbot2/issues/280). Nothing is left to decide before the spec is written.
 - PR #232 is a draft, 3 files, +3677 lines, last pushed 2026-07-26. It forked 20 commits behind `develop`. The `main.go` anchors it patches moved (`NewRegistry()` is at line 126, `StartJoinerReportScheduler` at 193), and #245 added gofmt enforcement to CI.
 

@@ -94,7 +94,7 @@ Not checked at startup, but each one silently disables something:
 | `LOG_LEVEL` | Defaults to `INFO`. Accepts `DEBUG`, `INFO`, `WARN`, `ERROR` — **uppercase only**, anything else silently means `INFO` (including the `default` that `.env.example` ships). `DEBUG` shows per-post LOA parse failures. |
 | `DISCORDGO_LOG_LEVEL` | Defaults to `ERROR`, so discordgo reports only its own failures. Accepts `ERROR`, `WARN`, `INFO`, `DEBUG`; anything else means `ERROR`. `WARN` adds the frame the gateway sent when startup fails with `Discord session unavailable`. `DEBUG` also needs `LOG_LEVEL=DEBUG`, and logs every gateway event discordgo does not recognise with its full payload. |
 | `SENTRY_DSN` | Sentry stays off; the bot logs `Sentry disabled (SENTRY_DSN not set)`. |
-| `BOT_DB_DSN` | The bot's own Postgres store (hubs and spawned channels for temporary voice channels) stays off; the bot logs `BOT_DB_DSN not set, bot store disabled` once and every command works as before. `.env.example` leaves it empty on purpose. Set it and the bot pings the database with a short retry, runs its migrations, and only then opens the Discord session; a database it cannot reach or migrate stops the bot with `Bot store unavailable`. Under compose the value is `postgres://cavbot:<POSTGRES_PASSWORD>@postgres:5432/cavbot?sslmode=disable`. |
+| `BOT_DB_DSN` | The bot's own Postgres store (hubs and spawned channels for temporary voice channels) stays off; the bot logs `BOT_DB_DSN not set, bot store disabled` once and every command works as before. `.env.example` leaves it empty on purpose. Set it and the bot pings the database with a short retry, runs its migrations, loads the hub rows for temporary voice channels (`Starting temp voice channels`), and only then opens the Discord session; a database it cannot reach or migrate stops the bot with `Bot store unavailable`. With no hub rows the feature does nothing; rows arrive through the panel. Under compose the value is `postgres://cavbot:<POSTGRES_PASSWORD>@postgres:5432/cavbot?sslmode=disable`. |
 | `POSTGRES_PASSWORD` | Read by the `postgres` service in `docker-compose.yml`, not by the bot. `.env.example` ships `change-me`; a blank value makes the image refuse to start and the bot wait on its healthcheck forever. Only the first boot of an empty volume reads it. |
 | `APP_ENV` | Only tags Sentry events with an environment. No effect unless `SENTRY_DSN` is also set. |
 
@@ -145,7 +145,7 @@ docker compose up -d postgres`.
 A healthy startup logs, in order: `Logger initialized`, `Sentry disabled
 (SENTRY_DSN not set)`, `CavBot2 starting`, the LOA cache line for whichever
 `FORUM_DB_DSN` case you are in, either `BOT_DB_DSN not set, bot store disabled`
-or `Bot store configured` followed by `Bot database migrated`, `Removing
+or `Bot store configured` followed by `Bot database migrated` and `Starting temp voice channels`, `Removing
 deprecated commands`, `Registering commands`, `Starting Star Citizen joiner
 report scheduler`, and finally `Bot is now running. Press CTRL-C to exit`. That
 last line is the success signal — anything that stops earlier is a failed
