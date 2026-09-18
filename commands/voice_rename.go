@@ -15,9 +15,8 @@ import (
 // in. One required string option, the new name. Every reply is ephemeral,
 // through the deferred-ephemeral pattern /warden uses.
 //
-// No code limits the command to Cav members. The maintainer applies a Server
-// Settings command restriction naming the 29 rank roles at deploy, before the
-// hubs are enabled (README, Setup).
+// No code limits the command to Cav members: like every other command, that
+// is a Server Settings restriction (docs/temp-vc-decisions.md, #279).
 
 // voiceRenameCommandName is the registered slash-command name, the value the
 // telemetry line and every capture carry under "command".

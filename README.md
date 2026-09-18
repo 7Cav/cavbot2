@@ -60,11 +60,6 @@ At <https://discord.com/developers/applications>:
 not let the bot grant a role positioned above its own, so drag the bot's role
 high in the server's role list before testing `/warden`.
 
-`/voice-rename` has no Cav-member check in code. Restrict it in Server Settings
-(Integrations, the bot, `/voice-rename`) to the 29 rank roles listed in
-`tempVCRankRoles` in `commands/temp_vc.go`, before any hub is enabled. Until
-then every member sees the command.
-
 ### 2. IDs
 
 Enable 'Developer Mode' in the Discord client ('User Settings' -> 'Advanced'), then
