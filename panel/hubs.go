@@ -12,6 +12,7 @@ import (
 
 	"github.com/7cav/cavbot2/commands"
 	"github.com/7cav/cavbot2/store"
+	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -35,8 +36,9 @@ type hubService struct {
 }
 
 // hubRow is one hub as the list shows it: the stored settings, the channel
-// and category names read from the guild at this page load, and the live
-// spawned count from the runtime.
+// and category names read from the guild at this page load, the broken hub
+// state derived from the same read, and the live spawned count from the
+// runtime.
 type hubRow struct {
 	ID         int64
 	BaseString string
@@ -44,8 +46,15 @@ type hubRow struct {
 	ChannelName string
 	// CategoryName is empty when the hub channel has no parent.
 	CategoryName string
-	Enabled      bool
-	Spawned      int
+	// Broken is the broken hub state of CONTEXT.md: the hub channel is gone
+	// from the guild, or has no category. Discord's state makes it so, and
+	// the list offers Remove alone.
+	Broken  bool
+	Enabled bool
+	Spawned int
+	// Failure is the hub's last spawn failure since its last successful
+	// spawn, from the runtime. Nil when there is none.
+	Failure *commands.SpawnFailure
 }
 
 // pickerChannel is one voice channel the register form offers.
@@ -63,11 +72,22 @@ type registerInput struct {
 	BaseString string
 }
 
+// createInput is the create form as posted: the category to create the hub
+// channel under, the channel's name and the base string. The service trims
+// and validates it; the template renders it back on a refusal.
+type createInput struct {
+	CategoryID  string
+	ChannelName string
+	BaseString  string
+}
+
 // editInput is the edit form as posted: strings as the browser sent them,
 // parsed and validated by the service, and rendered back on a refusal so
 // nothing typed is lost. The hub channel is not a field: it is fixed at
-// register.
+// create or register. Its name is one: a changed name renames the channel
+// on save.
 type editInput struct {
+	ChannelName      string
 	BaseString       string
 	PermissionSource string
 	ModeratorRoleIDs []string
@@ -82,6 +102,11 @@ type actor struct {
 	username string
 }
 
+// String names the actor the way an audit log reason does.
+func (a actor) String() string {
+	return fmt.Sprintf("%s (forum user %d)", a.username, a.userID)
+}
+
 // fieldError is a validation refusal: which field, and why. The field name
 // is the form field's name and the data-error attribute on the note the
 // page shows, a test contract; the message is not.
@@ -92,9 +117,16 @@ type fieldError struct {
 
 func (e *fieldError) Error() string { return e.Field + ": " + e.Message }
 
+// errHubBroken is the refusal an update of a broken hub gets: its channel is
+// gone or has no category, so there is nothing to rename and nothing to
+// spawn under. The page offers Remove alone.
+var errHubBroken = &fieldError{fieldHubChannel, "This hub is broken: its channel is gone or has no category. Remove it, or fix the channel in Discord first."}
+
 // Form field names, as posted and as named in a refusal.
 const (
 	fieldHubChannel       = "hub_channel"
+	fieldCategory         = "category"
+	fieldChannelName      = "channel_name"
 	fieldBaseString       = "base_string"
 	fieldPermissionSource = "permission_source"
 	fieldModeratorRoles   = "moderator_roles"
@@ -110,34 +142,69 @@ const (
 	baseStringMax = 90
 )
 
-// Defaults a register writes for the fields the form does not carry.
+// Bounds on a hub channel's name: Discord's channel name limit.
+const (
+	channelNameMin = 1
+	channelNameMax = 100
+)
+
+// Defaults a create or register writes for the fields the form does not
+// carry.
 const (
 	defaultUserLimit = 0
 	defaultBitrate   = 64000
 )
 
 // Bounds on the user limit and the bitrate. The user limit is Discord's
-// range, 0 meaning no limit. The bitrate bounds are Discord's hard floor and
-// the ceiling a guild at the top boost tier gets; the ceiling the guild's own
-// tier allows is read live at save by the next ticket.
+// range, 0 meaning no limit. The bitrate floor is Discord's; the ceiling is
+// the guild's boost tier's, read live at save through bitrateCeiling.
 const (
 	userLimitMin = 0
 	userLimitMax = 99
 	bitrateMin   = 8000
-	bitrateMax   = 384000
 )
 
-// hubPage is what the hub page renders from. One form shows at a time: the
-// register form, or, with Edit set, one hub's edit form. Error names the
-// refused field of whichever form shows; Form is the register form as
-// posted, so nothing typed is lost on a refusal.
-type hubPage struct {
-	Hubs   []hubRow
-	Picker []pickerChannel
-	Form   registerInput
-	Error  *fieldError
-	Edit   *editPage
+// bitrateCeiling is the highest bitrate Discord accepts on a voice channel
+// of a guild at the given boost tier, in bits per second. Discord raises it
+// with each tier; a guild that loses a tier keeps its channels as they are,
+// so the bound applies to a save and never to a stored row.
+func bitrateCeiling(tier discordgo.PremiumTier) int {
+	switch tier {
+	case discordgo.PremiumTier1:
+		return 128000
+	case discordgo.PremiumTier2:
+		return 256000
+	case discordgo.PremiumTier3:
+		return 384000
+	default:
+		return 96000
+	}
 }
+
+// hubPage is what the hub page renders from. The create and register forms
+// show together, or, with Edit set, one hub's edit form alone. Error names
+// the refused field and Refused the form it belongs to, so the note renders
+// on the form that was posted; Form and Create are those forms as posted,
+// so nothing typed is lost on a refusal.
+type hubPage struct {
+	Hubs       []hubRow
+	Picker     []pickerChannel
+	Categories []pickerChannel
+	Form       registerInput
+	Create     createInput
+	Error      *fieldError
+	// Refused is which form the error belongs to: formCreate, formRegister
+	// or formEdit. Empty with no error.
+	Refused string
+	Edit    *editPage
+}
+
+// The forms a refusal can belong to, as Refused names them.
+const (
+	formCreate   = "create"
+	formRegister = "register"
+	formEdit     = "edit"
+)
 
 // pageRequest is what a handler asks the page to show beyond the list:
 // which hub's edit form, if any, and the form as posted with its refusal
@@ -148,23 +215,31 @@ type pageRequest struct {
 	HubID int64
 	// Register is the register form as posted back after a refusal.
 	Register registerInput
+	// Create is the create form as posted back after a refusal.
+	Create createInput
 	// Edit is the edit form as posted back after a refusal. Nil shows the
 	// stored values.
 	Edit  *editInput
 	Error *fieldError
+	// Refused is the form Error belongs to.
+	Refused string
 }
 
-// editPage is one hub's edit form: the fixed values the form shows read-only,
+// editPage is one hub's edit form: the category the form shows read-only,
 // the guild's roles the moderator picker offers, and the form's fields as
 // stored or as posted back after a refusal.
 type editPage struct {
 	ID int64
-	// ChannelName is empty when the hub channel is not in the guild.
-	ChannelName string
+	// Broken is the broken hub state: the section shows the remove form and
+	// the change log, and no edit form.
+	Broken bool
 	// CategoryName is empty when the hub channel has no parent.
 	CategoryName string
 	Roles        []guildRole
-	Form         editInput
+	// BitrateMax is the ceiling the guild's boost tier allows, for the
+	// input's own bound.
+	BitrateMax int
+	Form       editInput
 	// Changes are the hub's last entries, newest first.
 	Changes []changeView
 }
@@ -177,9 +252,11 @@ type guildRole struct {
 	Checked bool
 }
 
-// editInputOf is the edit form as the stored hub fills it.
-func editInputOf(h store.Hub) editInput {
+// editInputOf is the edit form as the stored hub and its live channel name
+// fill it.
+func editInputOf(h store.Hub, channelName string) editInput {
 	return editInput{
+		ChannelName:      channelName,
 		BaseString:       h.BaseString,
 		PermissionSource: string(h.PermissionSource),
 		ModeratorRoleIDs: h.ModeratorRoleIDs,
@@ -212,6 +289,27 @@ func (g guildChannels) voiceChannel(id string) (*discordgo.Channel, bool) {
 	return ch, true
 }
 
+// category returns the channel with the ID when the guild has it and it is
+// a category.
+func (g guildChannels) category(id string) (*discordgo.Channel, bool) {
+	ch, ok := g.byID[id]
+	if !ok || ch.Type != discordgo.ChannelTypeGuildCategory {
+		return nil, false
+	}
+	return ch, true
+}
+
+// categories returns the guild's categories in the list's order.
+func (g guildChannels) categories() []*discordgo.Channel {
+	var out []*discordgo.Channel
+	for _, ch := range g.all {
+		if ch.Type == discordgo.ChannelTypeGuildCategory {
+			out = append(out, ch)
+		}
+	}
+	return out
+}
+
 // voiceChannels returns the guild's voice channels in the list's order.
 func (g guildChannels) voiceChannels() []*discordgo.Channel {
 	var out []*discordgo.Channel
@@ -240,6 +338,17 @@ func (g guildChannels) categoryName(ch *discordgo.Channel) string {
 type snapshot struct {
 	hubs  []store.Hub
 	guild guildChannels
+}
+
+// hubChannel returns a hub's channel as the guild list has it, and whether
+// the hub is broken: the channel is gone, or has no parent. A broken hub's
+// channel is nil when gone.
+func (sn snapshot) hubChannel(h store.Hub) (ch *discordgo.Channel, broken bool) {
+	ch, ok := sn.guild.channel(h.HubChannelID)
+	if !ok {
+		return nil, true
+	}
+	return ch, ch.ParentID == ""
 }
 
 // hubByID returns the hub row with the ID, if there is one.
@@ -278,13 +387,22 @@ func (s *hubService) read(ctx context.Context) (snapshot, error) {
 	return snapshot{hubs: hubs, guild: guild}, nil
 }
 
-// guildRoles reads the guild's roles through the manager seam: the ones the
-// moderator picker offers and an update accepts. The @everyone role, whose
-// ID is the guild's, is left out; every member holds it.
-func (s *hubService) guildRoles() ([]*discordgo.Role, error) {
+// guildInfo is what one read of the guild gives the edit form and an
+// update: the roles the moderator picker offers and an update accepts, and
+// the bitrate ceiling the guild's boost tier allows.
+type guildInfo struct {
+	roles      []*discordgo.Role
+	bitrateMax int
+}
+
+// guild reads the guild through the manager seam, once per form or save, so
+// the roles offered and the bitrate bound are the guild's now. The
+// @everyone role, whose ID is the guild's, is left out; every member holds
+// it.
+func (s *hubService) guild() (guildInfo, error) {
 	g, err := s.deps.Manager.Guild(s.deps.GuildID)
 	if err != nil {
-		return nil, fmt.Errorf("guild roles: %w", err)
+		return guildInfo{}, fmt.Errorf("guild read: %w", err)
 	}
 	roles := make([]*discordgo.Role, 0, len(g.Roles))
 	for _, r := range g.Roles {
@@ -293,7 +411,7 @@ func (s *hubService) guildRoles() ([]*discordgo.Role, error) {
 		}
 	}
 	sort.Slice(roles, func(i, j int) bool { return roles[i].Position > roles[j].Position })
-	return roles, nil
+	return guildInfo{roles: roles, bitrateMax: bitrateCeiling(g.PremiumTier)}, nil
 }
 
 // page reads everything the hub page renders from, once: the hub rows and
@@ -305,7 +423,8 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 	if err != nil {
 		return hubPage{}, err
 	}
-	page := hubPage{Hubs: s.rows(sn), Picker: picker(sn), Form: req.Register, Error: req.Error}
+	page := hubPage{Hubs: s.rows(sn), Picker: picker(sn), Categories: categoryPicker(sn),
+		Form: req.Register, Create: req.Create, Error: req.Error, Refused: req.Refused}
 	if req.HubID != 0 {
 		if page.Edit, err = s.editForm(ctx, sn, req.HubID, req.Edit); err != nil {
 			return hubPage{}, err
@@ -315,12 +434,17 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 }
 
 // rows merges the store's hub rows with the guild's channel list and the
-// runtime's live state.
+// runtime's live state: the spawned count and the last spawn failure.
 func (s *hubService) rows(sn snapshot) []hubRow {
 	rows := make([]hubRow, 0, len(sn.hubs))
 	for _, h := range sn.hubs {
 		row := hubRow{ID: h.ID, BaseString: h.BaseString, Enabled: h.Enabled, Spawned: s.deps.Runtime.SpawnedCount(h.ID)}
-		if ch, ok := sn.guild.channel(h.HubChannelID); ok {
+		if f, ok := s.deps.Runtime.LastSpawnFailure(h.ID); ok {
+			row.Failure = &f
+		}
+		ch, broken := sn.hubChannel(h)
+		row.Broken = broken
+		if ch != nil {
 			row.ChannelName = ch.Name
 			row.CategoryName = sn.guild.categoryName(ch)
 		}
@@ -358,6 +482,17 @@ func picker(sn snapshot) []pickerChannel {
 	return out
 }
 
+// categoryPicker builds the create form's category picker from the guild's
+// categories, by name.
+func categoryPicker(sn snapshot) []pickerChannel {
+	var out []pickerChannel
+	for _, ch := range sn.guild.categories() {
+		out = append(out, pickerChannel{ID: ch.ID, Name: ch.Name})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 // editForm builds one hub's edit form from the snapshot: the stored values,
 // or the form as posted when a save was refused, the guild's roles for the
 // moderator picker, and the hub's last entries.
@@ -366,7 +501,7 @@ func (s *hubService) editForm(ctx context.Context, sn snapshot, hubID int64, pos
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	roles, err := s.guildRoles()
+	guild, err := s.guild()
 	if err != nil {
 		return nil, err
 	}
@@ -374,22 +509,88 @@ func (s *hubService) editForm(ctx context.Context, sn snapshot, hubID int64, pos
 	if err != nil {
 		return nil, fmt.Errorf("list change log: %w", err)
 	}
-	form := editInputOf(hub)
+	var channelName, categoryName string
+	ch, broken := sn.hubChannel(hub)
+	if ch != nil {
+		channelName = ch.Name
+		categoryName = sn.guild.categoryName(ch)
+	}
+	form := editInputOf(hub, channelName)
 	if posted != nil {
 		form = *posted
 	}
-	page := &editPage{ID: hub.ID, Form: form, Roles: make([]guildRole, 0, len(roles))}
-	if ch, ok := sn.guild.channel(hub.HubChannelID); ok {
-		page.ChannelName = ch.Name
-		page.CategoryName = sn.guild.categoryName(ch)
-	}
-	roleNames := make(map[string]string, len(roles))
-	for _, r := range roles {
+	page := &editPage{ID: hub.ID, Broken: broken, CategoryName: categoryName, Form: form,
+		Roles: make([]guildRole, 0, len(guild.roles)), BitrateMax: guild.bitrateMax}
+	roleNames := make(map[string]string, len(guild.roles))
+	for _, r := range guild.roles {
 		roleNames[r.ID] = r.Name
 		page.Roles = append(page.Roles, guildRole{ID: r.ID, Name: r.Name, Checked: slices.Contains(form.ModeratorRoleIDs, r.ID)})
 	}
 	page.Changes = changeViews(entries, roleNames)
 	return page, nil
+}
+
+// create makes a new hub in one step: a voice channel under the chosen
+// category, created with overwrites omitted so Discord syncs it to the
+// category from birth, then the hub row with the defaults, applied to the
+// runtime and change-logged the way a register is. A refusal is a
+// *fieldError naming the field. A create Discord refuses is a *fieldError
+// on the channel name field with a body-free phrase, and no row is written.
+// A row write that fails deletes the channel just made, so Discord and the
+// store never disagree, and returns the error.
+func (s *hubService) create(ctx context.Context, in createInput, by actor) (store.Hub, error) {
+	in.CategoryID = strings.TrimSpace(in.CategoryID)
+	baseString, err := validBaseString(in.BaseString)
+	if err != nil {
+		return store.Hub{}, err
+	}
+	in.BaseString = baseString
+	channelName, err := validChannelName(in.ChannelName)
+	if err != nil {
+		return store.Hub{}, err
+	}
+	in.ChannelName = channelName
+	sn, err := s.read(ctx)
+	if err != nil {
+		return store.Hub{}, err
+	}
+	if _, ok := sn.guild.category(in.CategoryID); !ok {
+		return store.Hub{}, &fieldError{fieldCategory, "That category is no longer in the server. Choose another."}
+	}
+
+	ch, err := s.deps.Manager.GuildChannelCreateComplex(s.deps.GuildID, discordgo.GuildChannelCreateData{
+		Name:      in.ChannelName,
+		Type:      discordgo.ChannelTypeGuildVoice,
+		ParentID:  in.CategoryID,
+		UserLimit: defaultUserLimit,
+		Bitrate:   defaultBitrate,
+	}, "Panel: hub created by "+by.String())
+	if err != nil {
+		utils.Warn("Panel hub channel create refused", "category_id", in.CategoryID, "error", err)
+		return store.Hub{}, &fieldError{fieldChannelName, "Discord did not create the channel: " + commands.DiscordErrorDetail(err) + "."}
+	}
+
+	stored, err := s.deps.Store.UpsertHub(ctx, store.Hub{
+		GuildID:          s.deps.GuildID,
+		HubChannelID:     ch.ID,
+		BaseString:       in.BaseString,
+		PermissionSource: store.PermissionCategory,
+		ModeratorRoleIDs: []string{},
+		UserLimit:        defaultUserLimit,
+		Bitrate:          defaultBitrate,
+		Enabled:          true,
+	})
+	if err != nil {
+		if _, delErr := s.deps.Manager.ChannelDelete(ch.ID, "Panel: hub row write failed"); delErr != nil {
+			utils.CaptureError("Panel hub channel left behind after a failed row write", delErr, "channel_id", ch.ID)
+		}
+		return store.Hub{}, fmt.Errorf("write hub: %w", err)
+	}
+	s.deps.Runtime.ApplyHub(stored)
+	if err := s.appendChange(ctx, stored.ID, store.ChangeCreate, diffHubs(nil, &stored), by); err != nil {
+		return store.Hub{}, err
+	}
+	return stored, nil
 }
 
 // register makes an existing voice channel a hub with the defaults, writes
@@ -445,21 +646,53 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 // naming the field, and nothing is written; store.ErrNotFound means no hub
 // has the ID.
 //
-// The order is row, runtime, entry. The runtime apply cannot fail, so once
-// the row is written the runtime matches the store; an entry the store
-// refuses is an error the handler reports, with the save already made.
+// A broken hub is refused before anything else: its channel is gone or has
+// no category, and the page offers Remove alone. A changed hub channel name
+// renames the channel in Discord before the row saves, with an audit log
+// reason naming the panel user. A rename Discord refuses is a *fieldError
+// on the name field with a body-free phrase, and nothing is written, so
+// the row and Discord never disagree. The rename joins the entry's diff as
+// channel_name.
+//
+// The order is rename, row, runtime, entry. The runtime apply cannot fail,
+// so once the row is written the runtime matches the store; an entry the
+// store refuses is an error the handler reports, with the save already
+// made.
 func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by actor) (store.Hub, error) {
-	before, err := s.deps.Store.GetHub(ctx, hubID)
+	sn, err := s.read(ctx)
 	if err != nil {
 		return store.Hub{}, err
 	}
-	roles, err := s.guildRoles()
+	before, ok := sn.hubByID(hubID)
+	if !ok {
+		return store.Hub{}, store.ErrNotFound
+	}
+	ch, broken := sn.hubChannel(before)
+	if broken {
+		return store.Hub{}, errHubBroken
+	}
+	// The name as the guild list had it at this read, before any rename.
+	oldName := ch.Name
+	channelName, err := validChannelName(in.ChannelName)
+	if err != nil {
+		return store.Hub{}, err
+	}
+	guild, err := s.guild()
 	if err != nil {
 		return store.Hub{}, err
 	}
 	hub := before
-	if err := applyEdit(&hub, in, roles); err != nil {
+	if err := applyEdit(&hub, in, guild); err != nil {
 		return store.Hub{}, err
+	}
+	d := diffHubs(&before, &hub)
+	if channelName != oldName {
+		reason := "Panel: hub channel renamed by " + by.String()
+		if _, err := s.deps.Manager.ChannelEdit(hub.HubChannelID, &discordgo.ChannelEdit{Name: channelName}, reason); err != nil {
+			utils.Warn("Panel hub channel rename refused", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID, "error", err)
+			return store.Hub{}, &fieldError{fieldChannelName, "Discord did not rename the channel: " + commands.DiscordErrorDetail(err) + "."}
+		}
+		d[fieldChannelName] = change{Before: oldName, After: channelName}
 	}
 
 	stored, err := s.deps.Store.UpsertHub(ctx, hub)
@@ -467,7 +700,7 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by a
 		return store.Hub{}, fmt.Errorf("write hub: %w", err)
 	}
 	s.deps.Runtime.ApplyHub(stored)
-	if err := s.appendChange(ctx, stored.ID, store.ChangeUpdate, diffHubs(&before, &stored), by); err != nil {
+	if err := s.appendChange(ctx, stored.ID, store.ChangeUpdate, d, by); err != nil {
 		return store.Hub{}, err
 	}
 	return stored, nil
@@ -498,10 +731,10 @@ func (s *hubService) remove(ctx context.Context, hubID int64, by actor) (store.H
 	return hub, nil
 }
 
-// applyEdit validates the edit form and puts its values on the hub. The
-// first refusal wins, as a *fieldError naming the field; the hub is then
-// half written and must not be stored.
-func applyEdit(hub *store.Hub, in editInput, roles []*discordgo.Role) error {
+// applyEdit validates the edit form against the guild as read now and puts
+// its values on the hub. The first refusal wins, as a *fieldError naming the
+// field; the hub is then half written and must not be stored.
+func applyEdit(hub *store.Hub, in editInput, guild guildInfo) error {
 	baseString, err := validBaseString(in.BaseString)
 	if err != nil {
 		return err
@@ -513,8 +746,8 @@ func applyEdit(hub *store.Hub, in editInput, roles []*discordgo.Role) error {
 	default:
 		return &fieldError{fieldPermissionSource, "Choose where spawned channels take their permissions from."}
 	}
-	known := make(map[string]struct{}, len(roles))
-	for _, r := range roles {
+	known := make(map[string]struct{}, len(guild.roles))
+	for _, r := range guild.roles {
 		known[r.ID] = struct{}{}
 	}
 	// A set: a role posted twice is stored once.
@@ -532,9 +765,9 @@ func applyEdit(hub *store.Hub, in editInput, roles []*discordgo.Role) error {
 		return &fieldError{fieldUserLimit,
 			fmt.Sprintf("Enter a user limit of %d to %d. 0 means no limit.", userLimitMin, userLimitMax)}
 	}
-	if hub.Bitrate, ok = intInRange(in.Bitrate, bitrateMin, bitrateMax); !ok {
+	if hub.Bitrate, ok = intInRange(in.Bitrate, bitrateMin, guild.bitrateMax); !ok {
 		return &fieldError{fieldBitrate,
-			fmt.Sprintf("Enter a bitrate of %d to %d.", bitrateMin, bitrateMax)}
+			fmt.Sprintf("Enter a bitrate of %d to %d. The server's boost tier sets the top.", bitrateMin, guild.bitrateMax)}
 	}
 	hub.Enabled = in.Enabled
 	return nil
@@ -549,6 +782,17 @@ func validBaseString(raw string) (string, error) {
 			fmt.Sprintf("Enter a base string of %d to %d characters.", baseStringMin, baseStringMax)}
 	}
 	return base, nil
+}
+
+// validChannelName trims a posted hub channel name and checks its length
+// against Discord's limit. A refusal is a *fieldError naming the field.
+func validChannelName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if n := utf8.RuneCountInString(name); n < channelNameMin || n > channelNameMax {
+		return "", &fieldError{fieldChannelName,
+			fmt.Sprintf("Enter a channel name of %d to %d characters.", channelNameMin, channelNameMax)}
+	}
+	return name, nil
 }
 
 // intInRange parses a posted number and reports whether it lies in [lo, hi].

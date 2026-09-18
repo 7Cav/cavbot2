@@ -5,37 +5,71 @@
     <h2 class="block-header">Hubs</h2>
     {{if .Hubs.Hubs}}
     <div class="scroll"><table class="hublist">
-      <thead><tr><th>Hub</th><th>Channel</th><th>Category</th><th>State</th><th class="num">Spawned</th><th></th></tr></thead>
+      <thead><tr><th>Hub</th><th>Channel</th><th>Category</th><th>State</th><th class="num">Spawned</th><th>Last failure</th><th></th></tr></thead>
       <tbody>
       {{range .Hubs.Hubs}}
-        <tr data-hub="{{.ID}}">
+        <tr data-hub="{{.ID}}"{{if .Broken}} class="broken"{{end}}>
           <td class="hub" data-field="base_string">{{.BaseString}}</td>
           <td data-field="channel_name">{{if .ChannelName}}{{.ChannelName}}{{else}}<span class="off">not in the server</span>{{end}}</td>
           <td data-field="category_name">{{if .CategoryName}}{{.CategoryName}}{{else}}<span class="off">none</span>{{end}}</td>
-          <td data-field="enabled">{{if .Enabled}}<span class="tag tag--on">enabled</span>{{else}}<span class="tag">disabled</span>{{end}}</td>
+          <td>{{if .Broken}}<span class="tag tag--warn" data-field="broken">broken</span> {{end}}<span data-field="enabled">{{if .Enabled}}<span class="tag tag--on">enabled</span>{{else}}<span class="tag">disabled</span>{{end}}</span></td>
           <td class="num" data-field="spawned">{{.Spawned}}</td>
-          <td class="num"><a href="/?hub={{.ID}}" data-field="edit">Edit</a></td>
+          <td class="failure">{{with .Failure}}<span data-field="failure_cause">{{.Cause}}</span> <time data-field="failure_at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 15:04"}} UTC</time>{{else}}<span class="off">none</span>{{end}}</td>
+          <td class="num">{{if .Broken}}<form method="post" action="/hubs/{{.ID}}/remove" class="inline"><button type="submit" class="btn btn--danger btn--small" data-field="remove">Remove</button></form>{{else}}<a href="/?hub={{.ID}}" data-field="edit">Edit</a>{{end}}</td>
         </tr>
       {{end}}
       </tbody>
     </table></div>
     {{else}}
-    <div class="block-row">No hubs yet. Register a voice channel below.</div>
+    <div class="block-row">No hubs yet. Create one below, or register a voice channel that exists.</div>
     {{end}}
   </div>
 
   {{if .Hubs.Edit}}
   {{template "edit" .}}
   {{else}}
+  {{template "create" .}}
   {{template "register" .}}
   {{end}}
 </main>
 {{end}}
 
+{{define "create"}}
+  <form method="post" action="/hubs" class="block narrow">
+    <h2 class="block-header">Create a hub</h2>
+    {{if eq .Hubs.Refused "create"}}{{with .Hubs.Error}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}{{end}}
+    <div class="block-row">
+      <label class="field">
+        <span class="field-label">Category</span>
+        <select name="category" data-field="category" required>
+          <option value="">Choose a category</option>
+          {{range .Hubs.Categories}}<option value="{{.ID}}"{{if eq .ID $.Hubs.Create.CategoryID}} selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+        <span class="field-hint">The new hub channel is created under it and takes its permissions.</span>
+      </label>
+    </div>
+    <div class="block-row">
+      <label class="field">
+        <span class="field-label">Hub channel name</span>
+        <input type="text" name="channel_name" data-field="channel_name" value="{{.Hubs.Create.ChannelName}}" maxlength="100" required>
+        <span class="field-hint">The voice channel members join to spawn one, such as "Join to create".</span>
+      </label>
+    </div>
+    <div class="block-row">
+      <label class="field">
+        <span class="field-label">Base string</span>
+        <input type="text" name="base_string" data-field="base_string" value="{{.Hubs.Create.BaseString}}" maxlength="90" required>
+        <span class="field-hint">Cavbot2 names spawned channels from it: "Arma Voice" gives "Arma Voice - 1".</span>
+      </label>
+    </div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta">Create</button></div>
+  </form>
+{{end}}
+
 {{define "register"}}
   <form method="post" action="/hubs" class="block narrow">
     <h2 class="block-header">Register a voice channel as a hub</h2>
-    {{with .Hubs.Error}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}
+    {{if eq .Hubs.Refused "register"}}{{with .Hubs.Error}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}{{end}}
     <div class="block-row">
       <label class="field">
         <span class="field-label">Voice channel</span>
@@ -60,14 +94,22 @@
 {{define "edit"}}
 {{with .Hubs.Edit}}
   <section class="narrow" data-hub="{{.ID}}">
+  {{if .Broken}}
+  <div class="block">
+    <h2 class="block-header">Broken hub</h2>
+    {{if eq $.Hubs.Refused "edit"}}{{with $.Hubs.Error}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}{{end}}
+    <div class="block-row"><span class="tag tag--warn" data-field="broken">broken</span> Its channel is gone from the server or has no category, so it spawns nothing. Fix the channel in Discord, or remove the hub. Its settings stay until it is removed.</div>
+  </div>
+  {{else}}
   <form method="post" action="/hubs/{{.ID}}" class="block">
     <h2 class="block-header">Edit hub</h2>
-    {{with $.Hubs.Error}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}
+    {{if eq $.Hubs.Refused "edit"}}{{with $.Hubs.Error}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}{{end}}
     <div class="block-row">
-      <div class="field">
-        <span class="field-label">Hub channel</span>
-        <span data-field="channel_name">{{if .ChannelName}}{{.ChannelName}}{{else}}<span class="off">not in the server</span>{{end}}</span>
-      </div>
+      <label class="field">
+        <span class="field-label">Hub channel name</span>
+        <input type="text" name="channel_name" data-field="channel_name" value="{{.Form.ChannelName}}" maxlength="100" required>
+        <span class="field-hint">A changed name renames the channel in Discord when you save.</span>
+      </label>
     </div>
     <div class="block-row">
       <div class="field">
@@ -107,15 +149,16 @@
     <div class="block-row">
       <label class="field">
         <span class="field-label">Bitrate</span>
-        <input type="number" name="bitrate" data-field="bitrate" value="{{.Form.Bitrate}}" min="8000" max="384000" step="1000" required>
-        <span class="field-hint">In bits per second. 64000 is Discord's default.</span>
+        <input type="number" name="bitrate" data-field="bitrate" value="{{.Form.Bitrate}}" min="8000" max="{{.BitrateMax}}" step="1000" required>
+        <span class="field-hint">In bits per second. 64000 is Discord's default; the server's boost tier allows up to {{.BitrateMax}}.</span>
       </label>
     </div>
     <div class="block-row">
       <label class="check"><input type="checkbox" name="enabled" data-field="enabled"{{if .Form.Enabled}} checked{{end}}> Enabled</label>
     </div>
-    <div class="submit-row"><button type="submit" class="btn btn--cta">Save</button> <a class="btn" href="/">Back to the list</a></div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save</button> <a class="btn" href="/">Back to the list</a></div>
   </form>
+  {{end}}
   <form method="post" action="/hubs/{{.ID}}/remove" class="block">
     <h2 class="block-header">Remove this hub</h2>
     <div class="submit-row"><button type="submit" class="btn btn--danger" data-field="remove">Remove hub</button></div>

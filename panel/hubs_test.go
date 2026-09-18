@@ -33,9 +33,31 @@ type fakeDiscord struct {
 	// listErr, when set, is what GuildChannels returns: Discord not
 	// answering the panel's read.
 	listErr error
-	created []discordgo.GuildChannelCreateData
-	deleted []string
-	spawned int
+	// createErr, when set, is what every create returns.
+	createErr error
+	// editErr, when set, is what every edit returns.
+	editErr error
+	// premiumTier is the boost tier Guild reports.
+	premiumTier discordgo.PremiumTier
+	created     []fakeCreate
+	edited      []fakeEdit
+	deleted     []string
+	spawned     int
+}
+
+// fakeEdit is one edit call as the fake recorded it: the channel, the name
+// sent and the audit log reason.
+type fakeEdit struct {
+	ChannelID string
+	Name      string
+	Reason    string
+}
+
+// fakeCreate is one create call as the fake recorded it: the payload and
+// the audit log reason.
+type fakeCreate struct {
+	Data   discordgo.GuildChannelCreateData
+	Reason string
 }
 
 // testGuildRoles are the guild's roles the moderator picker offers.
@@ -77,22 +99,45 @@ func (f *fakeDiscord) GuildChannels(_ string) ([]*discordgo.Channel, error) {
 	return f.channels, nil
 }
 
-func (f *fakeDiscord) GuildChannelCreateComplex(_ string, data discordgo.GuildChannelCreateData, _ string) (*discordgo.Channel, error) {
+// GuildChannelCreateComplex records the call and, as Discord would, puts
+// the new channel in the guild's list so a later page load reads it.
+func (f *fakeDiscord) GuildChannelCreateComplex(_ string, data discordgo.GuildChannelCreateData, reason string) (*discordgo.Channel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.created = append(f.created, data)
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
+	f.created = append(f.created, fakeCreate{Data: data, Reason: reason})
 	f.spawned++
-	return &discordgo.Channel{ID: fmt.Sprintf("spawn-%d", f.spawned), Name: data.Name}, nil
+	ch := &discordgo.Channel{ID: fmt.Sprintf("spawn-%d", f.spawned), Name: data.Name, Type: data.Type, ParentID: data.ParentID}
+	f.channels = append(f.channels, ch)
+	return ch, nil
 }
 
+// ChannelDelete records the call and takes the channel out of the guild's
+// list.
 func (f *fakeDiscord) ChannelDelete(channelID, _ string) (*discordgo.Channel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deleted = append(f.deleted, channelID)
+	f.channels = slices.DeleteFunc(f.channels, func(ch *discordgo.Channel) bool { return ch.ID == channelID })
 	return &discordgo.Channel{ID: channelID}, nil
 }
 
-func (f *fakeDiscord) ChannelEdit(channelID string, data *discordgo.ChannelEdit, _ string) (*discordgo.Channel, error) {
+// ChannelEdit records the call and, as Discord would, renames the channel
+// in the guild's list.
+func (f *fakeDiscord) ChannelEdit(channelID string, data *discordgo.ChannelEdit, reason string) (*discordgo.Channel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.editErr != nil {
+		return nil, f.editErr
+	}
+	f.edited = append(f.edited, fakeEdit{ChannelID: channelID, Name: data.Name, Reason: reason})
+	for _, ch := range f.channels {
+		if ch.ID == channelID {
+			ch.Name = data.Name
+		}
+	}
 	return &discordgo.Channel{ID: channelID, Name: data.Name}, nil
 }
 
@@ -105,7 +150,28 @@ func (f *fakeDiscord) ChannelMessageSendComplex(channelID string, data *discordg
 func (f *fakeDiscord) GuildMember(_, _ string) (*discordgo.Member, error) { return nil, nil }
 
 func (f *fakeDiscord) Guild(_ string) (*discordgo.Guild, error) {
-	return &discordgo.Guild{ID: testGuildID, Roles: testGuildRoles}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return &discordgo.Guild{ID: testGuildID, Roles: testGuildRoles, PremiumTier: f.premiumTier}, nil
+}
+
+func (f *fakeDiscord) setEditErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.editErr = err
+}
+
+func (f *fakeDiscord) setPremiumTier(tier discordgo.PremiumTier) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.premiumTier = tier
+}
+
+// edits returns every edit call, in order.
+func (f *fakeDiscord) edits() []fakeEdit {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.edited)
 }
 
 func (f *fakeDiscord) setListErr(err error) {
@@ -114,12 +180,27 @@ func (f *fakeDiscord) setListErr(err error) {
 	f.listErr = err
 }
 
+func (f *fakeDiscord) setCreateErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.createErr = err
+}
+
 func (f *fakeDiscord) createCount() int {
 	return len(f.creates())
 }
 
-// creates returns every create payload the runtime sent, in order.
+// creates returns every create payload sent, in order.
 func (f *fakeDiscord) creates() []discordgo.GuildChannelCreateData {
+	var out []discordgo.GuildChannelCreateData
+	for _, c := range f.createCalls() {
+		out = append(out, c.Data)
+	}
+	return out
+}
+
+// createCalls returns every create call, payload and reason, in order.
+func (f *fakeDiscord) createCalls() []fakeCreate {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.created)
@@ -158,6 +239,16 @@ func newTestWorldWith(t *testing.T, f *fakeForum, hubs ...store.Hub) *testWorld 
 			t.Fatalf("UpsertHub: %v", err)
 		}
 	}
+	w := newTestWorldOver(t, st, f)
+	w.st = st
+	return w
+}
+
+// newTestWorldOver builds the panel and the runtime over any store, for a
+// test whose store refuses writes. st on the returned world is nil unless
+// the caller sets it: a failing store has no fake to read back from.
+func newTestWorldOver(t *testing.T, st store.Store, f *fakeForum) *testWorld {
+	t.Helper()
 	discord := newFakeDiscord()
 	runtime, err := commands.NewTempVC(discord, st, testGuildID)
 	if err != nil {
@@ -167,7 +258,7 @@ func newTestWorldWith(t *testing.T, f *fakeForum, hubs ...store.Hub) *testWorld 
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return &testWorld{forum: f, st: st, discord: discord, runtime: runtime, p: p, b: newBrowser(t, p)}
+	return &testWorld{forum: f, discord: discord, runtime: runtime, p: p, b: newBrowser(t, p)}
 }
 
 // testHub is a stored hub on hub-1 with the defaults a register writes.
@@ -407,6 +498,7 @@ func TestHubPageWithGuildReadFailingIsAServerError(t *testing.T) {
 // testHub stores, so a test changes one field and posts the rest unchanged.
 func updateForm() url.Values {
 	return url.Values{
+		"channel_name":      {"Join to create"},
 		"base_string":       {"Arma Voice"},
 		"permission_source": {"category"},
 		"user_limit":        {"0"},
@@ -798,5 +890,450 @@ func TestUpdateAndRemoveWithoutSessionRedirectToSigninAndWriteNothing(t *testing
 				t.Errorf("a signed-out post appended %d entries, want 0", n)
 			}
 		})
+	}
+}
+
+// createForm is the create form as posted: a category, the new hub
+// channel's name and the base string.
+func createForm(categoryID, channelName, baseString string) url.Values {
+	return url.Values{"category": {categoryID}, "channel_name": {channelName}, "base_string": {baseString}}
+}
+
+func TestCreateMakesASyncedChannelUnderTheCategoryAndWritesARow(t *testing.T) {
+	w := newTestWorld(t)
+	signIn(t, w.forum, w.b)
+
+	res := w.b.postForm("/hubs", createForm("cat-1", "Squad Join", "Squad Voice"))
+
+	assertRedirect(t, res, "/")
+	calls := w.discord.createCalls()
+	if len(calls) != 1 {
+		t.Fatalf("made %d creates, want 1", len(calls))
+	}
+	data := calls[0].Data
+	if data.Type != discordgo.ChannelTypeGuildVoice || data.ParentID != "cat-1" || data.Name != "Squad Join" {
+		t.Errorf("create payload = type %d, parent %q, name %q; want voice under cat-1 named Squad Join", data.Type, data.ParentID, data.Name)
+	}
+	if len(data.PermissionOverwrites) != 0 {
+		t.Errorf("create payload carries %d overwrites, want none so the channel syncs to the category", len(data.PermissionOverwrites))
+	}
+	if !strings.Contains(calls[0].Reason, testUsername) {
+		t.Errorf("create audit reason %q does not name the panel user %q", calls[0].Reason, testUsername)
+	}
+	hubs := storedHubs(t, w.st)
+	if len(hubs) != 1 {
+		t.Fatalf("stored %d hubs, want 1", len(hubs))
+	}
+	h := hubs[0]
+	if h.HubChannelID != "spawn-1" || h.BaseString != "Squad Voice" {
+		t.Errorf("stored hub = %+v, want the created channel spawn-1 with base string Squad Voice", h)
+	}
+	if h.PermissionSource != store.PermissionCategory || h.UserLimit != 0 || h.Bitrate != 64000 || !h.Enabled {
+		t.Errorf("stored hub = %+v, want permission source category, user limit 0, bitrate 64000, enabled", h)
+	}
+
+	w.join("user-a", "spawn-1")
+	if n := w.discord.createCount(); n != 2 {
+		t.Errorf("a join to the created hub made %d creates in all, want 2: the hub channel and one spawn", n)
+	}
+}
+
+func TestCreateAppendsAnEntryWithNullBefore(t *testing.T) {
+	w := newTestWorld(t)
+	signIn(t, w.forum, w.b)
+
+	assertRedirect(t, w.b.postForm("/hubs", createForm("cat-1", "Squad Join", "Squad Voice")), "/")
+
+	entries := storedChangeLog(t, w.st, storedHubID(t, w.st, "spawn-1"))
+	if len(entries) != 1 {
+		t.Fatalf("the new hub has %d entries, want 1", len(entries))
+	}
+	assertActor(t, entries[0], store.ChangeCreate)
+	diff := decodeDiff(t, entries[0])
+	for _, field := range wantDiffFields {
+		c, ok := diff[field]
+		if !ok {
+			t.Errorf("diff lacks %s", field)
+			continue
+		}
+		if c.Before != nil {
+			t.Errorf("diff %s before = %v, want null", field, c.Before)
+		}
+	}
+	if diff["base_string"].After != "Squad Voice" || diff["hub_channel"].After != "spawn-1" {
+		t.Errorf("diff after: base_string %v, hub_channel %v; want Squad Voice and spawn-1", diff["base_string"].After, diff["hub_channel"].After)
+	}
+}
+
+func TestCreateRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
+	cases := []struct {
+		name  string
+		form  url.Values
+		field string
+	}{
+		// An unpicked select posts the key with no value, and the key is
+		// what tells a create from a register.
+		{"an unpicked category still lands on create", createForm("", "Squad Join", "Squad Voice"), "category"},
+		{"a category not in the guild", createForm("cat-elsewhere", "Squad Join", "Squad Voice"), "category"},
+		{"a voice channel as the category", createForm("vc-2", "Squad Join", "Squad Voice"), "category"},
+		{"an empty channel name", createForm("cat-1", "   ", "Squad Voice"), "channel_name"},
+		{"a channel name of 101 characters", createForm("cat-1", strings.Repeat("x", 101), "Squad Voice"), "channel_name"},
+		{"an empty base string", createForm("cat-1", "Squad Join", "   "), "base_string"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t)
+			signIn(t, w.forum, w.b)
+
+			res := w.b.postForm("/hubs", tc.form)
+
+			if !isClientError(res.StatusCode) {
+				t.Errorf("status = %d, want 4xx", res.StatusCode)
+			}
+			if field, ok := errorField(t, res); !ok || field != tc.field {
+				t.Errorf("data-error = %q (present %v), want %q", field, ok, tc.field)
+			}
+			if n := w.discord.createCount(); n != 0 {
+				t.Errorf("a refused create made %d channels, want 0", n)
+			}
+			if hubs := storedHubs(t, w.st); len(hubs) != 0 {
+				t.Errorf("stored hubs = %+v, want none", hubs)
+			}
+			if entries := storedChangeLog(t, w.st, 0); len(entries) != 0 {
+				t.Errorf("a refused create appended %d entries, want 0", len(entries))
+			}
+		})
+	}
+}
+
+// failingStore is the store fake with every hub write refused: the
+// database gone away between the channel create and the row write.
+type failingStore struct {
+	store.Store
+}
+
+func (failingStore) UpsertHub(context.Context, store.Hub) (store.Hub, error) {
+	return store.Hub{}, errors.New("store: connection refused")
+}
+
+func TestCreateDeletesTheChannelWhenTheRowWriteFails(t *testing.T) {
+	st := store.NewFake()
+	w := newTestWorldOver(t, failingStore{st}, newFakeForum(t))
+	signIn(t, w.forum, w.b)
+
+	res := w.b.postForm("/hubs", createForm("cat-1", "Squad Join", "Squad Voice"))
+
+	if !isServerError(res.StatusCode) {
+		t.Errorf("status = %d, want 5xx", res.StatusCode)
+	}
+	calls := w.discord.createCalls()
+	if len(calls) != 1 {
+		t.Fatalf("made %d creates, want 1", len(calls))
+	}
+	if deleted := w.discord.deletes(); !slices.Contains(deleted, "spawn-1") {
+		t.Errorf("deleted channels %v, want the created channel spawn-1 among them", deleted)
+	}
+	if entries := storedChangeLog(t, st, 0); len(entries) != 0 {
+		t.Errorf("a failed create appended %d entries, want 0", len(entries))
+	}
+}
+
+// restError is a Discord REST error with the given status and no body, the
+// shape discordgo returns for a refused call.
+func restError(status int) error {
+	return &discordgo.RESTError{Response: &http.Response{StatusCode: status}, Message: &discordgo.APIErrorMessage{}}
+}
+
+func TestCreateRefusedByDiscordShowsWhyAndWritesNothing(t *testing.T) {
+	w := newTestWorld(t)
+	signIn(t, w.forum, w.b)
+	w.discord.setCreateErr(restError(http.StatusForbidden))
+
+	res := w.b.postForm("/hubs", createForm("cat-1", "Squad Join", "Squad Voice"))
+
+	if !isClientError(res.StatusCode) {
+		t.Errorf("status = %d, want 4xx", res.StatusCode)
+	}
+	if _, ok := errorField(t, res); !ok {
+		t.Error("the page carries no data-error note saying why the create was refused")
+	}
+	if hubs := storedHubs(t, w.st); len(hubs) != 0 {
+		t.Errorf("stored hubs = %+v, want none", hubs)
+	}
+	if entries := storedChangeLog(t, w.st, 0); len(entries) != 0 {
+		t.Errorf("a refused create appended %d entries, want 0", len(entries))
+	}
+}
+
+// inputValue returns the value attribute of the input under data-field=name
+// inside n, and fails the test when the input is absent.
+func inputValue(t *testing.T, n *html.Node, name string) string {
+	t.Helper()
+	el := findElement(n, "input", "data-field", name)
+	if el == nil {
+		t.Errorf("no input under data-field=%q", name)
+		return ""
+	}
+	v, _ := attrValue(el, "value")
+	return v
+}
+
+func TestChangedHubChannelNameRenamesTheChannelNamingThePanelUser(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	id := storedHubID(t, w.st, "hub-1")
+	if got := inputValue(t, editSection(t, w.b.get("/?hub="+strconv.FormatInt(id, 10)), id), "channel_name"); got != "Join to create" {
+		t.Errorf("the edit form's channel name input holds %q, want the live name Join to create", got)
+	}
+	form := updateForm()
+	form.Set("channel_name", "Join here")
+	form.Set("base_string", "Bravo Voice")
+
+	res := w.b.postForm(hubPath(t, w.st, "hub-1"), form)
+
+	assertRedirect(t, res, "/")
+	edits := w.discord.edits()
+	if len(edits) != 1 {
+		t.Fatalf("made %d edits, want 1", len(edits))
+	}
+	if edits[0].ChannelID != "hub-1" || edits[0].Name != "Join here" {
+		t.Errorf("edit = %+v, want hub-1 renamed to Join here", edits[0])
+	}
+	if !strings.Contains(edits[0].Reason, testUsername) {
+		t.Errorf("edit audit reason %q does not name the panel user %q", edits[0].Reason, testUsername)
+	}
+	if h := storedHubs(t, w.st)[0]; h.BaseString != "Bravo Voice" {
+		t.Errorf("stored base string = %q, want Bravo Voice", h.BaseString)
+	}
+	entries := storedChangeLog(t, w.st, id)
+	if len(entries) != 1 {
+		t.Fatalf("the hub has %d entries, want 1", len(entries))
+	}
+	if c := decodeDiff(t, entries[0])["channel_name"]; c.Before != "Join to create" || c.After != "Join here" {
+		t.Errorf("diff channel_name = %+v, want before Join to create, after Join here", c)
+	}
+}
+
+func TestUnchangedHubChannelNameMakesNoEditCall(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	form := updateForm()
+	form.Set("base_string", "Bravo Voice")
+
+	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
+
+	if edits := w.discord.edits(); len(edits) != 0 {
+		t.Errorf("an unchanged name made edits %+v, want none", edits)
+	}
+	if h := storedHubs(t, w.st)[0]; h.BaseString != "Bravo Voice" {
+		t.Errorf("stored base string = %q, want Bravo Voice", h.BaseString)
+	}
+}
+
+func TestRefusedHubChannelRenameWritesNothingAndShowsWhy(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	w.discord.setEditErr(restError(http.StatusForbidden))
+	before := storedHubs(t, w.st)[0]
+	form := updateForm()
+	form.Set("channel_name", "Join here")
+	form.Set("base_string", "Bravo Voice")
+
+	res := w.b.postForm(hubPath(t, w.st, "hub-1"), form)
+
+	if !isClientError(res.StatusCode) {
+		t.Errorf("status = %d, want 4xx", res.StatusCode)
+	}
+	if field, ok := errorField(t, res); !ok || field != "channel_name" {
+		t.Errorf("data-error = %q (present %v), want channel_name", field, ok)
+	}
+	if after := storedHubs(t, w.st)[0]; !sameHubSettings(after, before) {
+		t.Errorf("stored hub = %+v, want it unchanged from %+v", after, before)
+	}
+	if entries := storedChangeLog(t, w.st, before.ID); len(entries) != 0 {
+		t.Errorf("a refused rename appended %d entries, want 0", len(entries))
+	}
+}
+
+func TestBitrateIsBoundedByTheBoostTierReadAtSave(t *testing.T) {
+	cases := []struct {
+		name    string
+		tier    discordgo.PremiumTier
+		bitrate string
+		refused bool
+	}{
+		{"tier 0 refuses 96001", discordgo.PremiumTierNone, "96001", true},
+		{"tier 1 accepts 128000", discordgo.PremiumTier1, "128000", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			w.discord.setPremiumTier(tc.tier)
+			before := storedHubs(t, w.st)[0]
+			form := updateForm()
+			form.Set("bitrate", tc.bitrate)
+
+			res := w.b.postForm(hubPath(t, w.st, "hub-1"), form)
+
+			after := storedHubs(t, w.st)[0]
+			if !tc.refused {
+				assertRedirect(t, res, "/")
+				if after.Bitrate != 128000 {
+					t.Errorf("stored bitrate = %d, want 128000", after.Bitrate)
+				}
+				return
+			}
+			if !isClientError(res.StatusCode) {
+				t.Errorf("status = %d, want 4xx", res.StatusCode)
+			}
+			if field, ok := errorField(t, res); !ok || field != "bitrate" {
+				t.Errorf("data-error = %q (present %v), want bitrate", field, ok)
+			}
+			if !sameHubSettings(after, before) {
+				t.Errorf("stored hub = %+v, want it unchanged from %+v", after, before)
+			}
+		})
+	}
+}
+
+// breakChannel edits the fake guild so the hub channel is gone, or has no
+// parent.
+func (f *fakeDiscord) breakChannel(channelID string, gone bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if gone {
+		f.channels = slices.DeleteFunc(f.channels, func(ch *discordgo.Channel) bool { return ch.ID == channelID })
+		return
+	}
+	for _, ch := range f.channels {
+		if ch.ID == channelID {
+			ch.ParentID = ""
+		}
+	}
+}
+
+// secondHub is a stored hub on vc-2, healthy beside a broken hub-1.
+func secondHub() store.Hub {
+	return store.Hub{
+		GuildID: testGuildID, HubChannelID: "vc-2", BaseString: "Squad Voice",
+		PermissionSource: store.PermissionCategory, Bitrate: 64000, Enabled: true,
+	}
+}
+
+// hasField reports whether n holds an element under data-field=name.
+func hasField(n *html.Node, name string) bool {
+	return findElement(n, "", "data-field", name) != nil
+}
+
+func TestBrokenHubOffersRemoveOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		gone bool
+	}{
+		{"channel gone", true},
+		{"channel with no category", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub(), secondHub())
+			signIn(t, w.forum, w.b)
+			w.discord.breakChannel("hub-1", tc.gone)
+			broken := storedHubID(t, w.st, "hub-1")
+			healthy := storedHubID(t, w.st, "vc-2")
+
+			res := w.b.get("/")
+
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("GET / status = %d, want 200", res.StatusCode)
+			}
+			doc := parseHTML(t, res)
+			row := findElement(doc, "", "data-hub", strconv.FormatInt(broken, 10))
+			if row == nil {
+				t.Fatalf("page has no row under data-hub=%d", broken)
+			}
+			if !hasField(row, "broken") || !hasField(row, "remove") || hasField(row, "edit") {
+				t.Errorf("broken row: broken %v, remove %v, edit %v; want broken and remove present, edit absent",
+					hasField(row, "broken"), hasField(row, "remove"), hasField(row, "edit"))
+			}
+			other := findElement(doc, "", "data-hub", strconv.FormatInt(healthy, 10))
+			if other == nil {
+				t.Fatalf("page has no row under data-hub=%d", healthy)
+			}
+			if hasField(other, "broken") || hasField(other, "remove") {
+				t.Errorf("healthy row: broken %v, remove %v; want neither", hasField(other, "broken"), hasField(other, "remove"))
+			}
+
+			sec := editSection(t, w.b.get("/?hub="+strconv.FormatInt(broken, 10)), broken)
+			if !hasField(sec, "remove") || hasField(sec, "save") {
+				t.Errorf("broken hub's section: remove %v, save %v; want the remove form and no edit form", hasField(sec, "remove"), hasField(sec, "save"))
+			}
+		})
+	}
+}
+
+func TestUpdateOfABrokenHubIsRefusedBeforeAnyRename(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	w.discord.breakChannel("hub-1", false)
+	before := storedHubs(t, w.st)[0]
+	form := updateForm()
+	form.Set("channel_name", "Join here")
+
+	res := w.b.postForm(hubPath(t, w.st, "hub-1"), form)
+
+	if !isClientError(res.StatusCode) {
+		t.Errorf("status = %d, want 4xx", res.StatusCode)
+	}
+	if _, ok := errorField(t, res); !ok {
+		t.Error("the page carries no data-error note")
+	}
+	if after := storedHubs(t, w.st)[0]; !sameHubSettings(after, before) {
+		t.Errorf("stored hub = %+v, want it unchanged from %+v", after, before)
+	}
+	if edits := w.discord.edits(); len(edits) != 0 {
+		t.Errorf("an update of a broken hub made edits %+v, want none", edits)
+	}
+}
+
+func TestHubListShowsTheLastSpawnFailureTheRuntimeHolds(t *testing.T) {
+	w := newTestWorld(t, testHub(), secondHub())
+	signIn(t, w.forum, w.b)
+	w.discord.setCreateErr(restError(http.StatusInternalServerError))
+	w.join("user-a", "hub-1")
+	failed := storedHubID(t, w.st, "hub-1")
+	fine := storedHubID(t, w.st, "vc-2")
+	failure, ok := w.runtime.LastSpawnFailure(failed)
+	if !ok {
+		t.Fatal("the runtime holds no spawn failure for hub-1 after the failed join")
+	}
+
+	res := w.b.get("/")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET / status = %d, want 200", res.StatusCode)
+	}
+	doc := parseHTML(t, res)
+	row := findElement(doc, "", "data-hub", strconv.FormatInt(failed, 10))
+	if row == nil {
+		t.Fatalf("page has no row under data-hub=%d", failed)
+	}
+	if got := fieldText(t, row, "failure_cause"); got != string(failure.Cause) {
+		t.Errorf("data-field=failure_cause shows %q, want the runtime's cause %q", got, failure.Cause)
+	}
+	at := findElement(row, "", "data-field", "failure_at")
+	if at == nil {
+		t.Fatal("the row has no element under data-field=failure_at")
+	}
+	if raw, _ := attrValue(at, "datetime"); raw == "" {
+		t.Error("the failure time carries no datetime attribute")
+	} else if _, err := time.Parse(time.RFC3339, raw); err != nil {
+		t.Errorf("failure datetime %q is not RFC 3339: %v", raw, err)
+	}
+	other := findElement(doc, "", "data-hub", strconv.FormatInt(fine, 10))
+	if other == nil {
+		t.Fatalf("page has no row under data-hub=%d", fine)
+	}
+	if hasField(other, "failure_cause") {
+		t.Error("a hub with no failure shows a data-field=failure_cause element")
 	}
 }
