@@ -214,9 +214,9 @@ func newBrowser(t *testing.T, p *Panel) *browser {
 	return &browser{t: t, h: p.Handler(), cookies: map[string]string{}}
 }
 
-func (b *browser) do(method, target string, header http.Header) *http.Response {
+func (b *browser) do(method, target string, header http.Header, body io.Reader) *http.Response {
 	b.t.Helper()
-	req := httptest.NewRequest(method, testBaseURL+target, nil)
+	req := httptest.NewRequest(method, testBaseURL+target, body)
 	for k, v := range header {
 		req.Header[k] = v
 	}
@@ -244,12 +244,19 @@ func (b *browser) absorbCookies(res *http.Response) {
 
 func (b *browser) get(target string) *http.Response {
 	b.t.Helper()
-	return b.do(http.MethodGet, target, nil)
+	return b.do(http.MethodGet, target, nil, nil)
 }
 
+// post submits an empty form, the way the sign-in and sign-out buttons do.
 func (b *browser) post(target string) *http.Response {
 	b.t.Helper()
-	return b.do(http.MethodPost, target, http.Header{"Content-Type": {"application/x-www-form-urlencoded"}})
+	return b.postForm(target, nil)
+}
+
+// postForm submits a form the way a browser does.
+func (b *browser) postForm(target string, form url.Values) *http.Response {
+	b.t.Helper()
+	return b.do(http.MethodPost, target, http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}, strings.NewReader(form.Encode()))
 }
 
 // setCookie is a cookie the test sets by hand, such as one from a session the
@@ -685,7 +692,7 @@ func TestCrossOriginPostIsRefused(t *testing.T) {
 	res := b.do(http.MethodPost, "/auth/signout", http.Header{
 		"Content-Type":   {"application/x-www-form-urlencoded"},
 		"Sec-Fetch-Site": {"cross-site"},
-	})
+	}, nil)
 
 	if !isClientError(res.StatusCode) {
 		t.Errorf("cross-origin sign-out status = %d, want 4xx", res.StatusCode)

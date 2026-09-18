@@ -640,8 +640,9 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 }
 
 // HandleVoiceStateUpdate diffs a member's voice move into a leave + join and
-// runs the spawned-channel lifecycle on each side. StartTempVC wires it onto
-// the session; it is exported so the panel's tests can feed a join to a
+// runs the spawned-channel lifecycle on each side. StartTempVC is its one
+// production caller and wraps it in RecoverPanic; nothing else in production
+// should call it. It is exported so the panel's tests can feed a join to a
 // runtime they built with NewTempVC.
 func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	if vs.GuildID != t.guildID {

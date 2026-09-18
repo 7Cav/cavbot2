@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
@@ -213,21 +212,6 @@ func TestHubListShowsEachHubWithLiveSpawnedCount(t *testing.T) {
 			t.Errorf("data-field=%s shows %q, want %q", field, got, want)
 		}
 	}
-}
-
-// postForm sends a form-encoded POST the way a browser submits a form.
-func (b *browser) postForm(target string, form url.Values) *http.Response {
-	b.t.Helper()
-	req := httptest.NewRequest(http.MethodPost, testBaseURL+target, strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	for name, value := range b.cookies {
-		req.AddCookie(&http.Cookie{Name: name, Value: value})
-	}
-	rec := httptest.NewRecorder()
-	b.h.ServeHTTP(rec, req)
-	res := rec.Result()
-	b.absorbCookies(res)
-	return res
 }
 
 func registerForm(channelID, baseString string) url.Values {

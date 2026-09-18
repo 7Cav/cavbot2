@@ -128,8 +128,9 @@ func initBotStore() *store.Postgres {
 // initPanelConfig reads the PANEL_* variables, or returns a disabled config
 // when PANEL_ADDR is unset so the feature stays inert. It runs before the
 // Discord session opens so a half-filled .env stops the bot before it is on
-// the gateway. The hub page reads the store on every load, so a panel with
-// no store is a misconfiguration too.
+// the gateway. The hub page reads the store on every load, so with no store
+// the panel is disabled too: one WARN, no listener, as the spec has it for a
+// host with no BOT_DB_DSN.
 func initPanelConfig(storeConfigured bool) panel.Config {
 	cfg, err := panel.ConfigFromEnv()
 	if err != nil {
@@ -140,7 +141,8 @@ func initPanelConfig(storeConfigured bool) panel.Config {
 		return cfg
 	}
 	if !storeConfigured {
-		panic("Panel misconfigured: PANEL_ADDR is set but BOT_DB_DSN is empty")
+		utils.Warn("BOT_DB_DSN not set, panel disabled")
+		return panel.Config{}
 	}
 	return cfg
 }

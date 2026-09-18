@@ -11,8 +11,8 @@
       {{range .Hubs.Hubs}}
         <tr data-hub="{{.ID}}">
           <td class="hub" data-field="base_string">{{.BaseString}}</td>
-          <td data-field="channel_name">{{if .ChannelName}}{{.ChannelName}}{{else}}<span class="bad">not in the guild</span>{{end}}</td>
-          <td data-field="category_name">{{if .CategoryName}}{{.CategoryName}}{{else}}<span class="bad">none</span>{{end}}</td>
+          <td data-field="channel_name">{{if .ChannelName}}{{.ChannelName}}{{else}}<span class="off">not in the guild</span>{{end}}</td>
+          <td data-field="category_name">{{if .CategoryName}}{{.CategoryName}}{{else}}<span class="off">none</span>{{end}}</td>
           <td data-field="enabled">{{if .Enabled}}<span class="tag tag--on">enabled</span>{{else}}<span class="tag">disabled</span>{{end}}</td>
           <td class="num" data-field="spawned">{{.Spawned}}</td>
         </tr>
@@ -24,7 +24,7 @@
     {{end}}
   </div>
 
-  <form method="post" action="/hubs" class="block narrow" data-form="register">
+  <form method="post" action="/hubs" class="block narrow">
     <h2 class="block-header">Register a voice channel as a hub</h2>
     {{with .Hubs.Error}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}
     <div class="block-row">

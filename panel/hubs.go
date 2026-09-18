@@ -99,23 +99,38 @@ type hubPage struct {
 	Error  *fieldError
 }
 
-// guildChannels is the guild's channel list indexed for the lookups the
-// page makes.
+// guildChannels is the guild's channel list as read at one page load,
+// indexed for the lookups the page makes.
 type guildChannels struct {
 	byID map[string]*discordgo.Channel
 	all  []*discordgo.Channel
 }
 
-func (s *hubService) readGuild() (guildChannels, error) {
-	channels, err := s.deps.Manager.GuildChannels(s.deps.GuildID)
-	if err != nil {
-		return guildChannels{}, fmt.Errorf("guild channels: %w", err)
+// channel returns the channel with the ID, if the guild has one.
+func (g guildChannels) channel(id string) (*discordgo.Channel, bool) {
+	ch, ok := g.byID[id]
+	return ch, ok
+}
+
+// voiceChannel returns the channel with the ID when the guild has it and it
+// is a voice channel.
+func (g guildChannels) voiceChannel(id string) (*discordgo.Channel, bool) {
+	ch, ok := g.byID[id]
+	if !ok || ch.Type != discordgo.ChannelTypeGuildVoice {
+		return nil, false
 	}
-	g := guildChannels{byID: make(map[string]*discordgo.Channel, len(channels)), all: channels}
-	for _, ch := range channels {
-		g.byID[ch.ID] = ch
+	return ch, true
+}
+
+// voiceChannels returns the guild's voice channels in the list's order.
+func (g guildChannels) voiceChannels() []*discordgo.Channel {
+	var out []*discordgo.Channel
+	for _, ch := range g.all {
+		if ch.Type == discordgo.ChannelTypeGuildVoice {
+			out = append(out, ch)
+		}
 	}
-	return g, nil
+	return out
 }
 
 // categoryName is the name of a channel's parent, or empty when it has none
@@ -130,27 +145,54 @@ func (g guildChannels) categoryName(ch *discordgo.Channel) string {
 	return ""
 }
 
+// snapshot is what both service functions start from: the guild's hub rows
+// and its channel list, each read once.
+type snapshot struct {
+	hubs  []store.Hub
+	guild guildChannels
+}
+
+// hubOn returns the hub row on a channel, if there is one.
+func (sn snapshot) hubOn(channelID string) (store.Hub, bool) {
+	for _, h := range sn.hubs {
+		if h.HubChannelID == channelID {
+			return h, true
+		}
+	}
+	return store.Hub{}, false
+}
+
+func (s *hubService) read(ctx context.Context) (snapshot, error) {
+	hubs, err := s.deps.Store.ListHubs(ctx, s.deps.GuildID)
+	if err != nil {
+		return snapshot{}, fmt.Errorf("list hubs: %w", err)
+	}
+	channels, err := s.deps.Manager.GuildChannels(s.deps.GuildID)
+	if err != nil {
+		return snapshot{}, fmt.Errorf("guild channels: %w", err)
+	}
+	guild := guildChannels{byID: make(map[string]*discordgo.Channel, len(channels)), all: channels}
+	for _, ch := range channels {
+		guild.byID[ch.ID] = ch
+	}
+	return snapshot{hubs: hubs, guild: guild}, nil
+}
+
 // list merges the store's hub rows with the guild's channel list and the
 // runtime's live state, and builds the register picker from the voice
 // channels that are not hubs.
 func (s *hubService) list(ctx context.Context) (hubPage, error) {
-	hubs, err := s.deps.Store.ListHubs(ctx, s.deps.GuildID)
-	if err != nil {
-		return hubPage{}, fmt.Errorf("list hubs: %w", err)
-	}
-	guild, err := s.readGuild()
+	sn, err := s.read(ctx)
 	if err != nil {
 		return hubPage{}, err
 	}
 
-	page := hubPage{Hubs: make([]hubRow, 0, len(hubs))}
-	isHub := make(map[string]bool, len(hubs))
-	for _, h := range hubs {
-		isHub[h.HubChannelID] = true
+	page := hubPage{Hubs: make([]hubRow, 0, len(sn.hubs))}
+	for _, h := range sn.hubs {
 		row := hubRow{ID: h.ID, BaseString: h.BaseString, Enabled: h.Enabled, Spawned: s.deps.Runtime.SpawnedCount(h.ID)}
-		if ch, ok := guild.byID[h.HubChannelID]; ok {
+		if ch, ok := sn.guild.channel(h.HubChannelID); ok {
 			row.ChannelName = ch.Name
-			row.CategoryName = guild.categoryName(ch)
+			row.CategoryName = sn.guild.categoryName(ch)
 		}
 		page.Hubs = append(page.Hubs, row)
 	}
@@ -164,11 +206,11 @@ func (s *hubService) list(ctx context.Context) (hubPage, error) {
 		return page.Hubs[i].ID < page.Hubs[j].ID
 	})
 
-	for _, ch := range guild.all {
-		if ch.Type != discordgo.ChannelTypeGuildVoice || isHub[ch.ID] {
+	for _, ch := range sn.guild.voiceChannels() {
+		if _, taken := sn.hubOn(ch.ID); taken {
 			continue
 		}
-		page.Picker = append(page.Picker, pickerChannel{ID: ch.ID, Name: ch.Name, CategoryName: guild.categoryName(ch)})
+		page.Picker = append(page.Picker, pickerChannel{ID: ch.ID, Name: ch.Name, CategoryName: sn.guild.categoryName(ch)})
 	}
 	sort.Slice(page.Picker, func(i, j int) bool {
 		a, b := page.Picker[i], page.Picker[j]
@@ -191,22 +233,16 @@ func (s *hubService) register(ctx context.Context, in registerInput) (store.Hub,
 		return store.Hub{}, &fieldError{fieldBaseString,
 			fmt.Sprintf("Enter a base string of %d to %d characters.", baseStringMin, baseStringMax)}
 	}
-	guild, err := s.readGuild()
+	sn, err := s.read(ctx)
 	if err != nil {
 		return store.Hub{}, err
 	}
-	ch, ok := guild.byID[in.ChannelID]
-	if !ok || ch.Type != discordgo.ChannelTypeGuildVoice {
+	ch, ok := sn.guild.voiceChannel(in.ChannelID)
+	if !ok {
 		return store.Hub{}, &fieldError{fieldHubChannel, "Choose a voice channel of the guild."}
 	}
-	hubs, err := s.deps.Store.ListHubs(ctx, s.deps.GuildID)
-	if err != nil {
-		return store.Hub{}, fmt.Errorf("list hubs: %w", err)
-	}
-	for _, h := range hubs {
-		if h.HubChannelID == in.ChannelID {
-			return store.Hub{}, &fieldError{fieldHubChannel, "That channel is already a hub."}
-		}
+	if _, taken := sn.hubOn(in.ChannelID); taken {
+		return store.Hub{}, &fieldError{fieldHubChannel, "That channel is already a hub."}
 	}
 	if ch.ParentID == "" {
 		return store.Hub{}, &fieldError{fieldHubChannel, "That channel has no category. Move it into one first."}
