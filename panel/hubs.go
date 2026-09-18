@@ -189,14 +189,16 @@ func bitrateCeiling(tier discordgo.PremiumTier) int {
 // on the form that was posted; Register and Create are those forms as
 // posted, so nothing typed is lost on a refusal.
 type hubPage struct {
+	// Moderators is the guild-wide section at the top of the page.
+	Moderators moderatorsPage
 	Hubs       []hubRow
 	Picker     []pickerChannel
 	Categories []pickerChannel
 	Register   registerInput
 	Create     createInput
 	Error      *fieldError
-	// Refused is which form the error belongs to: formCreate, formRegister
-	// or formEdit. Empty with no error.
+	// Refused is which form the error belongs to: formCreate, formRegister,
+	// formEdit or formModerators. Empty with no error.
 	Refused string
 	Edit    *editPage
 }
@@ -204,9 +206,10 @@ type hubPage struct {
 // The forms a refusal can belong to, as Refused names them and as the
 // template asks RefusalFor.
 const (
-	formCreate   = "create"
-	formRegister = "register"
-	formEdit     = "edit"
+	formCreate     = "create"
+	formRegister   = "register"
+	formEdit       = "edit"
+	formModerators = "moderators"
 )
 
 // RefusalFor is the refusal to render on a form, or nil when the error
@@ -232,8 +235,11 @@ type pageRequest struct {
 	Create createInput
 	// Edit is the edit form as posted back after a refusal. Nil shows the
 	// stored values.
-	Edit  *editInput
-	Error *fieldError
+	Edit *editInput
+	// Moderators is the guild-wide section's form as posted back after a
+	// refusal. Nil shows the stored set.
+	Moderators *moderatorsInput
+	Error      *fieldError
 	// Refused is the form Error belongs to.
 	Refused string
 }
@@ -249,6 +255,10 @@ type editPage struct {
 	// CategoryName is empty when the hub channel has no parent.
 	CategoryName string
 	Roles        []guildRole
+	// GuildRoles are the guild-wide moderator roles, shown read-only above
+	// the hub's own picker so the effective set is visible. Only the
+	// guild-wide section changes them.
+	GuildRoles []guildRole
 	// BitrateMax is the ceiling the guild's boost tier allows, for the
 	// input's own bound.
 	BitrateMax int
@@ -403,15 +413,18 @@ func (s *hubService) read(ctx context.Context) (snapshot, error) {
 	return snapshot{hubs: hubs, guild: guild}, nil
 }
 
-// guildInfo is what one read of the guild gives the edit form and an
-// update: the roles the moderator picker offers and an update accepts, and
-// the bitrate ceiling the guild's boost tier allows.
+// guildInfo is what one read of the guild gives a page load or a save: the
+// roles the two moderator pickers offer and a save accepts, their names for
+// the change log, and the bitrate ceiling the guild's boost tier allows.
 type guildInfo struct {
-	roles      []*discordgo.Role
+	roles []*discordgo.Role
+	// names maps each role's ID to its name, for a change log entry that
+	// stores IDs.
+	names      map[string]string
 	bitrateMax int
 }
 
-// readGuild reads the guild through the manager seam, once per form or
+// readGuild reads the guild through the manager seam, once per page load or
 // save, so the roles offered and the bitrate bound are the guild's now. The
 // @everyone role, whose ID is the guild's, is left out; every member holds
 // it.
@@ -420,29 +433,53 @@ func (s *hubService) readGuild() (guildInfo, error) {
 	if err != nil {
 		return guildInfo{}, fmt.Errorf("guild read: %w", err)
 	}
-	roles := make([]*discordgo.Role, 0, len(g.Roles))
+	info := guildInfo{roles: make([]*discordgo.Role, 0, len(g.Roles)), names: make(map[string]string, len(g.Roles)),
+		bitrateMax: bitrateCeiling(g.PremiumTier)}
 	for _, r := range g.Roles {
 		if r.ID != s.deps.GuildID {
-			roles = append(roles, r)
+			info.roles = append(info.roles, r)
+			info.names[r.ID] = r.Name
 		}
 	}
-	sort.Slice(roles, func(i, j int) bool { return roles[i].Position > roles[j].Position })
-	return guildInfo{roles: roles, bitrateMax: bitrateCeiling(g.PremiumTier)}, nil
+	sort.Slice(info.roles, func(i, j int) bool { return info.roles[i].Position > info.roles[j].Position })
+	return info, nil
+}
+
+// rolePicker lists the guild's roles for a moderator picker, with those in
+// checked ticked.
+func rolePicker(guild guildInfo, checked []string) []guildRole {
+	out := make([]guildRole, 0, len(guild.roles))
+	for _, r := range guild.roles {
+		out = append(out, guildRole{ID: r.ID, Name: r.Name, Checked: slices.Contains(checked, r.ID)})
+	}
+	return out
 }
 
 // page reads everything the hub page renders from, once: the hub rows and
-// the guild's channel list for the list and the picker, and, when an edit
-// form shows, the guild's roles and the hub's last entries. store.ErrNotFound
-// means no hub has the requested ID.
+// the guild's channel list for the list and the picker, the guild's roles
+// for the guild-wide section and the edit form, the guild-wide set and its
+// last entries, and, when an edit form shows, the hub's last entries.
+// store.ErrNotFound means no hub has the requested ID.
 func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error) {
 	sn, err := s.read(ctx)
 	if err != nil {
 		return hubPage{}, err
 	}
+	guild, err := s.readGuild()
+	if err != nil {
+		return hubPage{}, err
+	}
 	page := hubPage{Hubs: s.rows(sn), Picker: picker(sn), Categories: categoryPicker(sn),
 		Register: req.Register, Create: req.Create, Error: req.Error, Refused: req.Refused}
+	guildWide, err := s.deps.Store.GetGuildModeratorRoles(ctx, s.deps.GuildID)
+	if err != nil {
+		return hubPage{}, fmt.Errorf("read guild moderator roles: %w", err)
+	}
+	if page.Moderators, err = s.moderatorsSection(ctx, guild, guildWide, req.Moderators); err != nil {
+		return hubPage{}, err
+	}
 	if req.HubID != 0 {
-		if page.Edit, err = s.editForm(ctx, sn, req.HubID, req.Edit); err != nil {
+		if page.Edit, err = s.editForm(ctx, sn, guild, guildWide, req.HubID, req.Edit); err != nil {
 			return hubPage{}, err
 		}
 	}
@@ -505,17 +542,14 @@ func categoryPicker(sn snapshot) []pickerChannel {
 	return out
 }
 
-// editForm builds one hub's edit form from the snapshot: the stored values,
-// or the form as posted when a save was refused, the guild's roles for the
-// moderator picker, and the hub's last entries.
-func (s *hubService) editForm(ctx context.Context, sn snapshot, hubID int64, posted *editInput) (*editPage, error) {
+// editForm builds one hub's edit form from the snapshot and the guild read:
+// the stored values, or the form as posted when a save was refused, the
+// guild's roles for the hub's own picker, the guild-wide set shown
+// read-only, and the hub's last entries.
+func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo, guildWide []string, hubID int64, posted *editInput) (*editPage, error) {
 	hub, ok := sn.hubByID(hubID)
 	if !ok {
 		return nil, store.ErrNotFound
-	}
-	guild, err := s.readGuild()
-	if err != nil {
-		return nil, err
 	}
 	entries, err := s.deps.Store.ListChangeLog(ctx, hub.ID, changeLogLimit)
 	if err != nil {
@@ -527,13 +561,13 @@ func (s *hubService) editForm(ctx context.Context, sn snapshot, hubID int64, pos
 		form = *posted
 	}
 	page := &editPage{ID: hub.ID, Broken: st.Broken, CategoryName: st.CategoryName, Form: form,
-		Roles: make([]guildRole, 0, len(guild.roles)), BitrateMax: guild.bitrateMax}
-	roleNames := make(map[string]string, len(guild.roles))
-	for _, r := range guild.roles {
-		roleNames[r.ID] = r.Name
-		page.Roles = append(page.Roles, guildRole{ID: r.ID, Name: r.Name, Checked: slices.Contains(form.ModeratorRoleIDs, r.ID)})
+		Roles: rolePicker(guild, form.ModeratorRoleIDs), BitrateMax: guild.bitrateMax,
+		Changes: changeViews(entries, guild.names)}
+	for _, r := range rolePicker(guild, guildWide) {
+		if r.Checked {
+			page.GuildRoles = append(page.GuildRoles, r)
+		}
 	}
-	page.Changes = changeViews(entries, roleNames)
 	return page, nil
 }
 
@@ -769,20 +803,11 @@ func applyEdit(hub *store.Hub, in editInput, guild guildInfo) error {
 	default:
 		return &fieldError{fieldPermissionSource, "Choose where spawned channels take their permissions from."}
 	}
-	known := make(map[string]struct{}, len(guild.roles))
-	for _, r := range guild.roles {
-		known[r.ID] = struct{}{}
+	roles, err := validRoleSet(in.ModeratorRoleIDs, guild)
+	if err != nil {
+		return err
 	}
-	// A set: a role posted twice is stored once.
-	hub.ModeratorRoleIDs = make([]string, 0, len(in.ModeratorRoleIDs))
-	for _, id := range in.ModeratorRoleIDs {
-		if _, ok := known[id]; !ok {
-			return &fieldError{fieldModeratorRoles, "One of those roles is no longer in the server. Choose again."}
-		}
-		if !slices.Contains(hub.ModeratorRoleIDs, id) {
-			hub.ModeratorRoleIDs = append(hub.ModeratorRoleIDs, id)
-		}
-	}
+	hub.ModeratorRoleIDs = roles
 	var ok bool
 	if hub.UserLimit, ok = intInRange(in.UserLimit, userLimitMin, userLimitMax); !ok {
 		return &fieldError{fieldUserLimit,

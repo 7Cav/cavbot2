@@ -38,20 +38,26 @@ var diffFields = []string{fieldHubChannel, fieldBaseString, fieldPermissionSourc
 // shownFields are every field a diff can carry, in the form's order.
 var shownFields = append([]string{fieldChannelName}, diffFields...)
 
-// fieldValues returns a hub's settings keyed by form field name, as the
-// diff records them. Moderator roles are sorted, so two sets compare and
-// read the same whatever order the store returned them in.
-func fieldValues(h store.Hub) map[string]any {
-	roles := slices.Clone(h.ModeratorRoleIDs)
+// sortedRoles is a role set as a diff records it: sorted, and never null,
+// so two sets compare and read the same whatever order the store returned
+// them in.
+func sortedRoles(ids []string) []string {
+	roles := slices.Clone(ids)
 	if roles == nil {
 		roles = []string{}
 	}
 	slices.Sort(roles)
+	return roles
+}
+
+// fieldValues returns a hub's settings keyed by form field name, as the
+// diff records them.
+func fieldValues(h store.Hub) map[string]any {
 	return map[string]any{
 		fieldHubChannel:       h.HubChannelID,
 		fieldBaseString:       h.BaseString,
 		fieldPermissionSource: string(h.PermissionSource),
-		fieldModeratorRoles:   roles,
+		fieldModeratorRoles:   sortedRoles(h.ModeratorRoleIDs),
 		fieldUserLimit:        h.UserLimit,
 		fieldBitrate:          h.Bitrate,
 		fieldEnabled:          h.Enabled,

@@ -384,3 +384,15 @@ func (p *Postgres) ListChangeLog(ctx context.Context, hubID int64, limit int) ([
 	}
 	return entries, nil
 }
+
+// ListModeratorChanges implements Store.
+func (p *Postgres) ListModeratorChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	entries, err := queryAll(ctx, p.db, scanChangeLogEntry,
+		`SELECT id, hub_id, forum_user_id, forum_username, at, action, diff
+		 FROM change_log WHERE hub_id IS NULL AND action = $1 ORDER BY id DESC LIMIT $2`,
+		string(ChangeModerators), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list moderator changes: %w", err)
+	}
+	return entries, nil
+}

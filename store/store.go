@@ -83,9 +83,7 @@ const (
 	ChangeUpdate ChangeAction = "update"
 	// ChangeRemove is the panel deleting a hub row.
 	ChangeRemove ChangeAction = "remove"
-	// ChangeModerators is a save of the guild-wide moderator roles, a later
-	// ticket's form. The value is in the check from the start so that ticket
-	// adds no migration.
+	// ChangeModerators is a save of the guild-wide moderator roles.
 	ChangeModerators ChangeAction = "moderators"
 )
 
@@ -149,4 +147,10 @@ type Store interface {
 	// hubID, newest first in append order. A hubID of zero lists the entries
 	// that reference no hub.
 	ListChangeLog(ctx context.Context, hubID int64, limit int) ([]ChangeLogEntry, error)
+	// ListModeratorChanges returns at most limit guild-wide moderator saves,
+	// the entries with action ChangeModerators that reference no hub, newest
+	// first in append order. The no-hub bucket also holds every remove and
+	// the earlier entries of removed hubs; this is the panel's guild-wide
+	// section reading its own.
+	ListModeratorChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
 }

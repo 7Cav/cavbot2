@@ -189,8 +189,10 @@ moment it empties. Hub settings are edited in the panel, never in code.
   state fresh each time it shows the hub. A join can reach only the
   no-category kind, and it spawns nothing.
   _Avoid_: orphaned hub, stale hub, dead hub, unhealthy hub.
-- **Change log**: The panel's per-hub record of who changed which setting,
-  when, and from what to what. It records panel saves only.
+- **Change log**: The panel's record of who changed which setting, when,
+  and from what to what. Each hub's form shows the hub's own entries; the
+  guild-wide moderator section shows the entries of its saves, which
+  reference no hub. It records panel saves only.
   _Avoid_: audit trail, audit log (that is Discord's), history.
 - **Rank ladder**: The rank roles in seniority order, most senior first,
   that the handover rule ranks occupants by.
