@@ -195,15 +195,17 @@ func main() {
 	// dg.Open() fails at runtime with no compile-time signal.
 	dg.Identify.Intents = discordgo.IntentsAllWithoutPrivileged | discordgo.IntentsGuildMembers
 
-	registry := commands.NewRegistry()
-
 	// Temporary voice channels (spec #285): handlers must be registered before
 	// dg.Open() so the initial GUILD_CREATE seeds voice-state tracking and
 	// runs the restart sweep. Without a store there are no hubs, so the
-	// feature stays inert.
-	var webPanel *panel.Panel
+	// feature stays inert: no runtime, no panel, no /voice-rename.
+	var (
+		tempVC   *commands.TempVC
+		webPanel *panel.Panel
+	)
 	if botStore != nil {
-		tempVC, err := commands.StartTempVC(dg, GuildID, botStore)
+		var err error
+		tempVC, err = commands.StartTempVC(dg, GuildID, botStore)
 		if err != nil {
 			panic(fmt.Sprintf("Bot store unavailable: %v", err))
 		}
@@ -216,6 +218,9 @@ func main() {
 			GuildID: GuildID,
 		})
 	}
+
+	// The registry takes the runtime, so it is built after it.
+	registry := commands.NewRegistry(tempVC)
 
 	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		// Backstop only. Registered slash-command handlers are wrapped with

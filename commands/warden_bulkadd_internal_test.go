@@ -841,7 +841,7 @@ func TestBuildWardenInternalBulkAddSummary_ClampsToDiscordLimit(t *testing.T) {
 // The command is wired into the registry so Discord registers it and routes its
 // interactions to the handler.
 func TestRegistry_RegistersWardenBulkAddInternal(t *testing.T) {
-	reg := NewRegistry()
+	reg := NewRegistry(nil)
 
 	registered := false
 	for _, def := range reg.GetCommands() {

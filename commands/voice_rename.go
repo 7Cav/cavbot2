@@ -3,6 +3,8 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
@@ -56,7 +58,18 @@ func runVoiceRename(r utils.InteractionResponder, tv *TempVC, interaction *disco
 	username, discordID := interactionUsernameAndID(interaction)
 	utils.Info("🚀 Starting VoiceRename", "command", voiceRenameCommandName, "username", username, "discord_id", discordID)
 
+	// Trimmed, then bounded by Discord's channel name limit, counted in
+	// characters. No other filter: abuse is policed by the Code of Conduct.
 	name, _ := getOptionString(interaction.ApplicationCommandData(), "name")
+	name = strings.TrimSpace(name)
+	if name == "" {
+		editEphemeral(r, interaction, "❌ `name` must not be empty.")
+		return
+	}
+	if utf8.RuneCountInString(name) > discordChannelNameLimit {
+		editEphemeral(r, interaction, fmt.Sprintf("❌ `name` must be at most %d characters.", discordChannelNameLimit))
+		return
+	}
 
 	var roles []string
 	if interaction.Member != nil {
@@ -80,7 +93,10 @@ func runVoiceRename(r utils.InteractionResponder, tv *TempVC, interaction *disco
 // a spawned channel nobody owns, so the Server Settings gate or the rank-role
 // assumption has failed. No reply carries a raw Discord body.
 func renameRefusal(err error, discordID string) string {
-	var notOwner *notOwnerError
+	var (
+		notOwner *notOwnerError
+		window   *renameWindowError
+	)
 	switch {
 	case errors.Is(err, errNotInSpawnedChannel):
 		return "❌ Join a spawned voice channel first. This command renames the channel you are in."
@@ -90,7 +106,18 @@ func renameRefusal(err error, discordID string) string {
 		utils.Warn("Temp VC rename refused, channel has no owner",
 			"command", voiceRenameCommandName, "discord_id", discordID)
 		return "❌ This channel has no owner, so it cannot be renamed."
+	case errors.As(err, &window):
+		// Discord renders <t:UNIX:R> as "in 4 minutes".
+		return fmt.Sprintf("❌ This channel was renamed twice in the last ten minutes. Try again <t:%d:R>.", window.OpensAt.Unix())
+	case errors.Is(err, errChannelGone):
+		return "❌ This channel no longer exists."
+	case classifySpawnedChannelError(err).rateLimited:
+		// The runtime's own count did not see a rename Discord did (one made
+		// in Discord's UI, or before a restart), so Discord refused.
+		return "❌ Discord is rate limiting renames of this channel. Try again in a few minutes."
 	default:
-		return "❌ Could not rename the channel."
+		// The warden classifier's phrase, never the raw body. Unknown Channel
+		// never reaches it: the runtime classifies that code first.
+		return fmt.Sprintf("❌ Could not rename the channel: %s.", classifyDiscordError(err).UserDetail)
 	}
 }

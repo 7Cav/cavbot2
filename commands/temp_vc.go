@@ -330,6 +330,11 @@ type TempVC struct {
 	// this two members joining one hub at the same moment would both take the
 	// smallest unused number.
 	pending map[int64]map[int]struct{}
+	// renames holds, per spawned channel, the times of its renames inside the
+	// last ten minutes, oldest first. Discord allows two per channel per ten
+	// minutes; the runtime refuses the third itself so a 429 never sleeps a
+	// handler. Pruned at each rename and cleared with the channel.
+	renames map[string][]time.Time
 	// memberRank caches each seen member's index on the rank ladder, read
 	// from the member object a gateway event carries, so a handover ranks
 	// occupants without a REST call. Keyed by user ID; a member holding no
@@ -348,6 +353,9 @@ type TempVC struct {
 	// delete of one of that hub's channels opens the next. Keyed by hub row
 	// ID, zero for a channel whose hub row is gone.
 	deleteCaptured map[int64]struct{}
+	// renameCaptured is the same rule for rename failures, opened by a
+	// successful rename of one of the hub's channels.
+	renameCaptured map[int64]struct{}
 }
 
 // NewTempVC builds the runtime state around a manager and a store and loads
@@ -369,10 +377,12 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		channelIndex:   make(map[string]int),
 		pending:        make(map[int64]map[int]struct{}),
 		deleting:       make(map[string]struct{}),
+		renames:        make(map[string][]time.Time),
 		memberRank:     make(map[string]int),
 		lastFailure:    make(map[int64]SpawnFailure),
 		createCaptured: make(map[int64]struct{}),
 		deleteCaptured: make(map[int64]struct{}),
+		renameCaptured: make(map[int64]struct{}),
 	}
 	ctx, cancel := t.storeContext()
 	defer cancel()
@@ -858,6 +868,7 @@ func (t *TempVC) untrackLocked(channelID string) {
 	delete(t.owners, channelID)
 	delete(t.channelHub, channelID)
 	delete(t.channelIndex, channelID)
+	delete(t.renames, channelID)
 }
 
 // deleteIfStillEmpty deletes a spawned channel that just emptied. It re-checks

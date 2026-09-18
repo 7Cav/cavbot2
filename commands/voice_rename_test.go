@@ -2,8 +2,11 @@ package commands
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -178,4 +181,162 @@ func TestVoiceRenameGuildModeratorRenamesOwnerlessChannel(t *testing.T) {
 		t.Errorf("Owner(chan-1) = %q, %v; want no owner and still tracked", owner, tracked)
 	}
 	ephemeralReply(t, f)
+}
+
+// movableClock replaces the runtime clock for the test and returns a setter,
+// where pinClock in temp_vc_test.go fixes one instant.
+func movableClock(t *testing.T, at time.Time) func(time.Time) {
+	t.Helper()
+	prev := tempVCNow
+	now := at
+	tempVCNow = func() time.Time { return now }
+	t.Cleanup(func() { tempVCNow = prev })
+	return func(next time.Time) { now = next }
+}
+
+// T7: Discord allows two renames per channel per ten minutes. The two at t0
+// and t0+1m pass. The third, at t0+2m, is refused with the time the window
+// opens, ten minutes after the first, as a Discord relative timestamp. At
+// exactly that time a rename passes again.
+func TestVoiceRenameWindowRefusesThirdWithinTenMinutes(t *testing.T) {
+	t0 := time.Date(2026, 9, 18, 20, 0, 0, 0, time.UTC)
+	setClock := movableClock(t, t0)
+	fake := newFakeTempVCManager()
+	tv := newSeededTempVC(t, fake)
+	spawnInto(tv, fake, "user-1", "chan-1", member("Smith", testRankSGT))
+
+	rename := func(name string) string {
+		f := &fakeResponder{}
+		runVoiceRename(f, tv, renameInteraction("user-1", nil, name))
+		return ephemeralReply(t, f)
+	}
+
+	rename("One")
+	setClock(t0.Add(time.Minute))
+	rename("Two")
+	if edits := fake.recordedEdits(); len(edits) != 2 {
+		t.Fatalf("edits after two renames = %+v, want two", edits)
+	}
+
+	setClock(t0.Add(2 * time.Minute))
+	reply := rename("Three")
+	if edits := fake.recordedEdits(); len(edits) != 2 {
+		t.Fatalf("edits after the third rename = %+v, want the third refused", edits)
+	}
+	opens := fmt.Sprintf("<t:%d:R>", t0.Add(10*time.Minute).Unix())
+	if !strings.Contains(reply, opens) {
+		t.Errorf("reply %q does not carry the window open time %s", reply, opens)
+	}
+
+	setClock(t0.Add(10 * time.Minute))
+	rename("Four")
+	if edits := fake.recordedEdits(); len(edits) != 3 {
+		t.Errorf("edits once the window opened = %+v, want three", edits)
+	}
+}
+
+// T8: the name is trimmed. An empty result or one over Discord's 100
+// characters is refused with no edit. Counted in characters, so a name of
+// 101 multi-byte characters is over the limit too.
+func TestVoiceRenameNameTrimmedAndBounded(t *testing.T) {
+	for _, tc := range []struct {
+		label string
+		name  string
+		want  string // the name the edit carries, empty for a refusal
+	}{
+		{label: "whitespace only", name: "   \t ", want: ""},
+		{label: "101 characters", name: strings.Repeat("é", 101), want: ""},
+		{label: "padded", name: "  Alpha Briefing  ", want: "Alpha Briefing"},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			fake := newFakeTempVCManager()
+			tv := newSeededTempVC(t, fake)
+			spawnInto(tv, fake, "user-1", "chan-1", member("Smith", testRankSGT))
+
+			f := &fakeResponder{}
+			runVoiceRename(f, tv, renameInteraction("user-1", nil, tc.name))
+
+			edits := fake.recordedEdits()
+			switch {
+			case tc.want == "" && len(edits) != 0:
+				t.Errorf("edits = %+v, want none", edits)
+			case tc.want != "" && (len(edits) != 1 || edits[0].name != tc.want):
+				t.Errorf("edits = %+v, want one named %q", edits, tc.want)
+			}
+			ephemeralReply(t, f)
+		})
+	}
+}
+
+// T9a: a 5xx on the edit reaches Sentry, and the invoker's reply carries no
+// raw Discord body.
+func TestVoiceRenameServerErrorCapturedAndSanitised(t *testing.T) {
+	captures := countCaptures(t)
+	fake := newFakeTempVCManager()
+	tv := newSeededTempVC(t, fake)
+	spawnInto(tv, fake, "user-1", "chan-1", member("Smith", testRankSGT))
+	fake.editErr = restError(http.StatusInternalServerError, 0, rawBodyMarker)
+
+	f := &fakeResponder{}
+	runVoiceRename(f, tv, renameInteraction("user-1", nil, "Alpha"))
+
+	if reply := ephemeralReply(t, f); strings.Contains(reply, rawBodyMarker) {
+		t.Errorf("reply %q leaks the raw Discord body", reply)
+	}
+	if *captures != 1 {
+		t.Errorf("captures = %d, want 1", *captures)
+	}
+}
+
+// T9b: Unknown Channel on the edit means the channel is already gone. The
+// runtime untracks it and drops its row, and nothing reaches Sentry.
+func TestVoiceRenameUnknownChannelUntracksQuietly(t *testing.T) {
+	captures := countCaptures(t)
+	fake := newFakeTempVCManager()
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+	spawnInto(tv, fake, "user-1", "chan-1", member("Smith", testRankSGT))
+	fake.editErr = restError(http.StatusNotFound, discordgo.ErrCodeUnknownChannel, rawBodyMarker)
+
+	f := &fakeResponder{}
+	runVoiceRename(f, tv, renameInteraction("user-1", nil, "Alpha"))
+
+	ephemeralReply(t, f)
+	if *captures != 0 {
+		t.Errorf("captures = %d, want none", *captures)
+	}
+	if _, tracked := tv.Owner("chan-1"); tracked {
+		t.Error("chan-1 is still tracked after Unknown Channel")
+	}
+	if rows := spawnedRows(t, st); len(rows) != 0 {
+		t.Errorf("spawned rows = %+v, want none", rows)
+	}
+}
+
+// T10: the registry declares /voice-rename with its one required string
+// option when it has a runtime, and not at all without one, so a host with no
+// bot store never shows a command that could only refuse.
+func TestRegistryDeclaresVoiceRenameOnlyWithRuntime(t *testing.T) {
+	find := func(reg *Registry) *discordgo.ApplicationCommand {
+		for _, def := range reg.GetCommands() {
+			if def.Name == "voice-rename" {
+				return def
+			}
+		}
+		return nil
+	}
+
+	tv := newSeededTempVC(t, newFakeTempVCManager())
+	def := find(NewRegistry(tv))
+	if def == nil {
+		t.Fatal("voice-rename is not registered with a runtime")
+	}
+	if len(def.Options) != 1 || def.Options[0].Name != "name" ||
+		def.Options[0].Type != discordgo.ApplicationCommandOptionString || !def.Options[0].Required {
+		t.Errorf("options = %+v, want one required string option named name", def.Options)
+	}
+
+	if def := find(NewRegistry(nil)); def != nil {
+		t.Error("voice-rename is registered with no runtime")
+	}
 }

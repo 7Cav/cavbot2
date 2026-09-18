@@ -76,6 +76,12 @@ func (f spawnedChannelFault) capturesOnDelete() bool {
 	return f.hardFault
 }
 
+// capturesOnRename is the delete rule again: 403, 5xx, transport. A 429 is
+// the limit the runtime counts against itself, so it is a WARN line only.
+func (f spawnedChannelFault) capturesOnRename() bool {
+	return f.hardFault
+}
+
 // cause is the spawn failure cause a create failure with these facts records.
 func (f spawnedChannelFault) cause() SpawnFailureCause {
 	switch {

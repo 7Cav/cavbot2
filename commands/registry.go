@@ -6,7 +6,11 @@ type Registry struct {
 	commands []Command
 }
 
-func NewRegistry() *Registry {
+// NewRegistry declares every command (ADR 0006). tempVC is the temporary
+// voice channel runtime, nil on a host with no bot store; /voice-rename is
+// declared only when it exists, so the feature stays inert without one and
+// the startup sync removes the command from a guild the store left.
+func NewRegistry(tempVC *TempVC) *Registry {
 	r := &Registry{}
 	r.RegisterCommands(
 		Milpac(),
@@ -22,6 +26,9 @@ func NewRegistry() *Registry {
 		S3AAR(),
 		Helpline(),
 	)
+	if tempVC != nil {
+		r.RegisterCommands(VoiceRename(tempVC))
+	}
 	return r
 }
 

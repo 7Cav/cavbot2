@@ -3,8 +3,17 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
+)
+
+// Discord's rename limit per channel: renamesPerWindow inside renameWindow.
+// The runtime counts renames itself and refuses the one that would exceed it.
+const (
+	renameWindow     = 10 * time.Minute
+	renamesPerWindow = 2
 )
 
 // Renaming a spawned channel (spec #285, #292). The runtime owns the decision
@@ -32,6 +41,21 @@ func (e *notOwnerError) Error() string {
 	}
 	return "invoker is not the owner " + e.Owner
 }
+
+// renameWindowError is returned when the channel already had its two renames
+// inside the window. OpensAt is when the oldest of them leaves the window.
+type renameWindowError struct {
+	OpensAt time.Time
+}
+
+func (e *renameWindowError) Error() string {
+	return "rename window closed until " + e.OpensAt.UTC().Format(time.RFC3339)
+}
+
+// errChannelGone is returned when Discord answered the edit with Unknown
+// Channel: the channel was deleted while the invoker sat in it. The runtime
+// has already untracked it and dropped its row.
+var errChannelGone = errors.New("channel no longer exists")
 
 // renamed is what a successful Rename reports, for the handler's log line.
 type renamed struct {
@@ -61,6 +85,21 @@ func (t *TempVC) Rename(userID string, memberRoles []string, name string) (renam
 	if !moderator && owner != userID {
 		return renamed{}, &notOwnerError{Owner: owner}
 	}
+	// The slot is taken before the edit and given back if the edit fails, so
+	// two renames in flight on one channel cannot both count as the second.
+	t.mu.Lock()
+	now := tempVCNow()
+	recent := t.renames[channelID]
+	for len(recent) > 0 && now.Sub(recent[0]) >= renameWindow {
+		recent = recent[1:]
+	}
+	if len(recent) >= renamesPerWindow {
+		t.renames[channelID] = recent
+		t.mu.Unlock()
+		return renamed{}, &renameWindowError{OpensAt: recent[0].Add(renameWindow)}
+	}
+	t.renames[channelID] = append(recent, now)
+	t.mu.Unlock()
 
 	// The name before the edit comes from the state cache, for the log line
 	// only. A cache miss leaves it empty; the rename goes ahead regardless.
@@ -69,10 +108,55 @@ func (t *TempVC) Rename(userID string, memberRoles []string, name string) (renam
 		before = ch.Name
 	}
 	reason := fmt.Sprintf("renamed by %s", userID)
-	if _, err := t.mgr.ChannelEdit(channelID, &discordgo.ChannelEdit{Name: name}, reason); err != nil {
-		return renamed{}, err
+	_, err := t.mgr.ChannelEdit(channelID, &discordgo.ChannelEdit{Name: name}, reason)
+	if err != nil {
+		return renamed{}, t.renameFailed(channelID, now, err)
 	}
+	t.mu.Lock()
+	delete(t.renameCaptured, t.channelHub[channelID])
+	t.mu.Unlock()
 	return renamed{ChannelID: channelID, Before: before, After: name}, nil
+}
+
+// renameFailed gives back the rename slot and classifies the failure. Unknown
+// Channel means the channel is already gone: it is untracked, its row is
+// dropped, and nothing is captured. A 403, 5xx or transport failure captures
+// once per streak per hub. Every failure is one WARN line. The error the
+// handler gets carries no raw Discord body in its reply; the classifier
+// there decides the phrase.
+func (t *TempVC) renameFailed(channelID string, at time.Time, err error) error {
+	fault := classifySpawnedChannelError(err)
+	t.mu.Lock()
+	t.releaseRenameLocked(channelID, at)
+	hubID := t.channelHub[channelID]
+	if fault.gone {
+		t.untrackLocked(channelID)
+	}
+	t.mu.Unlock()
+
+	if fault.gone {
+		utils.Info("Temp VC channel already gone at rename, untracked", "channel_id", channelID)
+		t.deleteRow(channelID)
+		return errChannelGone
+	}
+	utils.Warn("Temp VC rename failed", "channel_id", channelID, "hub_id", hubID, "error", err)
+	if fault.capturesOnRename() {
+		t.captureOncePerStreak(t.renameCaptured, hubID, "Temp VC rename failed", err,
+			"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
+	}
+	return err
+}
+
+// releaseRenameLocked gives back the slot a failed rename took, so only
+// renames Discord accepted count against the window. Caller holds mu.
+func (t *TempVC) releaseRenameLocked(channelID string, at time.Time) {
+	recent := t.renames[channelID]
+	for i := len(recent) - 1; i >= 0; i-- {
+		if recent[i].Equal(at) {
+			t.renames[channelID] = append(recent[:i], recent[i+1:]...)
+			return
+		}
+	}
 }
 
 // isModeratorLocked reports whether the member's roles meet the effective
