@@ -199,6 +199,17 @@ func main() {
 			panic(fmt.Sprintf("Error closing Discord connection: %v", err))
 		}
 	}()
+
+	// Startup checks (spec #285): rank ladder drift and a missing Administrator
+	// each capture to Sentry, once per process start. Their own goroutine, so
+	// neither fetch holds up command registration or a gateway handler. They
+	// need no store. The checks write nothing, and Administrator protects
+	// /warden as much as spawning.
+	go func() {
+		defer utils.RecoverPanic("startup-checks")
+		commands.RunStartupChecks(context.Background(), commands.NewSessionTempVCManager(dg), GuildID, dg.State.User.ID)
+	}()
+
 	registeredCommandNames := make(map[string]struct{}, len(registry.GetCommands()))
 	for _, cmd := range registry.GetCommands() {
 		registeredCommandNames[cmd.Name] = struct{}{}

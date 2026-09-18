@@ -170,6 +170,12 @@ type TempVCManager interface {
 	// GuildMemberMove moves a member between voice channels with no retry on
 	// rate limit.
 	GuildMemberMove(guildID, userID string, channelID *string) error
+	// GuildMember fetches one guild member from the API. The startup
+	// Administrator check reads the bot's own member through it.
+	GuildMember(guildID, userID string) (*discordgo.Member, error)
+	// Guild fetches the guild from the API, roles included. A member carries
+	// role IDs only, so the permission bits come from here.
+	Guild(guildID string) (*discordgo.Guild, error)
 }
 
 // sessionTempVCManager adapts *discordgo.Session to TempVCManager. Each
@@ -202,6 +208,14 @@ func (m *sessionTempVCManager) ChannelDelete(channelID, auditReason string) (*di
 
 func (m *sessionTempVCManager) GuildMemberMove(guildID, userID string, channelID *string) error {
 	return m.s.GuildMemberMove(guildID, userID, channelID, discordgo.WithRetryOnRatelimit(false))
+}
+
+func (m *sessionTempVCManager) GuildMember(guildID, userID string) (*discordgo.Member, error) {
+	return m.s.GuildMember(guildID, userID, discordgo.WithRetryOnRatelimit(false))
+}
+
+func (m *sessionTempVCManager) Guild(guildID string) (*discordgo.Guild, error) {
+	return m.s.Guild(guildID, discordgo.WithRetryOnRatelimit(false))
 }
 
 // TempVC holds the feature's runtime state. All maps are guarded by mu:

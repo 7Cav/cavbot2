@@ -512,6 +512,7 @@ type captureRecorder struct {
 	lastKV []any
 	kvs    [][]any
 	msgs   []string
+	errs   []error
 }
 
 func (c *captureRecorder) install(t *testing.T) {
@@ -522,6 +523,7 @@ func (c *captureRecorder) install(t *testing.T) {
 		c.lastKV = kv
 		c.kvs = append(c.kvs, kv)
 		c.msgs = append(c.msgs, msg)
+		c.errs = append(c.errs, err)
 	}
 	t.Cleanup(func() { captureError = prev })
 }
