@@ -40,11 +40,13 @@ import (
 //
 // A spawn that fails is one create per join: no retry, no backoff, no
 // auto-disable. The member gets one message in the hub channel's text chat
-// that mentions them alone (the category is full, or the error has been
-// reported to S6), no DM and no disconnect. The runtime keeps each hub's last spawn
-// failure in memory for the panel, cleared by the next successful spawn from
-// that hub. A failure Discord returned reaches Sentry once per streak per
-// hub; a refusal the bot makes itself, a hub with no category, never does.
+// that mentions them alone, no DM and no disconnect. Three texts: the
+// category is full; the error has been reported to S6, for a failure Discord
+// returned; or only that the channel could not be created, for a refusal the
+// bot made itself. The runtime keeps each hub's last spawn failure in memory
+// for the panel, cleared by the next successful spawn from that hub. A
+// failure Discord returned reaches Sentry once per streak per hub; a refusal
+// the bot makes itself, a hub with no category, never does.
 // temp_vc_errors.go classifies the Discord errors on these paths.
 //
 // docs/temp-vc-decisions.md records what is settled and where each decision
@@ -85,7 +87,8 @@ type SpawnFailureCause string
 
 const (
 	// SpawnFailureNoCategory is the bot's own refusal: the hub channel has no
-	// parent, so there is nowhere to spawn under. No API call is made.
+	// parent, so there is nowhere to spawn under. No create call goes out;
+	// the member gets the refusal text.
 	SpawnFailureNoCategory SpawnFailureCause = "hub channel has no category"
 	// SpawnFailureFull is the category or guild channel cap.
 	SpawnFailureFull SpawnFailureCause = "this area is full"
@@ -966,11 +969,13 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		return
 	}
 	if hubChannel.ParentID == "" {
-		// The bot's own refusal: a WARN line and a note for the panel, never
-		// a Sentry event and no message to the member.
+		// The bot's own refusal: a WARN line, a note for the panel and the
+		// refusal text in the hub chat. No create call and never a Sentry
+		// event.
 		t.recordSpawnFailure(hub.ID, SpawnFailureNoCategory)
 		utils.Warn("Temp VC spawn refused, hub channel has no category",
 			"hub_channel_id", hub.HubChannelID, "user_id", vs.UserID)
+		t.messageHubJoiner(hub, vs.UserID, SpawnFailureNoCategory)
 		return
 	}
 
@@ -1005,14 +1010,15 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		t.releaseChannelIndexLocked(hub.ID, index)
 		t.mu.Unlock()
 		fault := classifySpawnedChannelError(err)
-		t.recordSpawnFailure(hub.ID, fault.cause())
+		cause := fault.cause()
+		t.recordSpawnFailure(hub.ID, cause)
 		utils.Warn("Temp VC create failed",
-			"user_id", vs.UserID, "hub_channel_id", hub.HubChannelID, "cause", fault.cause(), "error", err)
+			"user_id", vs.UserID, "hub_channel_id", hub.HubChannelID, "cause", cause, "error", err)
 		if fault.capturesOnCreate() {
 			t.captureOncePerStreak(t.createCaptured, hub.ID, "Temp VC create failed", err,
 				"user_id", vs.UserID, "hub_channel_id", hub.HubChannelID, "guild_id", t.guildID)
 		}
-		t.messageHubJoiner(hub, vs.UserID, fault.full)
+		t.messageHubJoiner(hub, vs.UserID, cause)
 		return
 	}
 
@@ -1058,7 +1064,7 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		t.mu.Unlock()
 		t.deleteIfStillEmpty(channel.ID)
 		if stillInHub {
-			t.messageHubJoiner(hub, vs.UserID, false)
+			t.messageHubJoiner(hub, vs.UserID, SpawnFailureMove)
 		}
 		return
 	}
@@ -1102,13 +1108,20 @@ func (t *TempVC) postOwnershipNotice(channelID, owner string) {
 // messageHubJoiner tells a member whose channel could not be created, in the
 // hub channel's text chat. The content mentions them and the allowed mentions
 // name them alone, so nobody else is pinged. No DM, no disconnect, and the
-// bot never deletes the message. Two texts only: the category is full, or
-// the error has been reported to S6. A failed send is a WARN line: the spawn failure
-// itself has already been handled.
-func (t *TempVC) messageHubJoiner(hub store.Hub, userID string, full bool) {
-	content := fmt.Sprintf("<@%s> Cavbot could not create your channel. The error has been reported to S6.", userID)
-	if full {
+// bot never deletes the message. Three texts, picked by the cause: the
+// category is full; the error has been reported to S6, for a failure Discord
+// returned; or only that the channel could not be created, for the bot's own
+// refusal, which never reaches Sentry and so has nothing to report. A failed
+// send is a WARN line: the spawn failure itself has already been handled.
+func (t *TempVC) messageHubJoiner(hub store.Hub, userID string, cause SpawnFailureCause) {
+	var content string
+	switch cause {
+	case SpawnFailureFull:
 		content = fmt.Sprintf("<@%s> this category is full. Wait for a channel to empty, then join again.", userID)
+	case SpawnFailureNoCategory:
+		content = fmt.Sprintf("<@%s> Cavbot could not create your channel.", userID)
+	default:
+		content = fmt.Sprintf("<@%s> Cavbot could not create your channel. The error has been reported to S6.", userID)
 	}
 	_, err := t.mgr.ChannelMessageSendComplex(hub.HubChannelID, &discordgo.MessageSend{
 		Content:         content,

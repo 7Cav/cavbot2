@@ -633,9 +633,13 @@ func TestTempVCHubWithoutCategorySpawnsNothing(t *testing.T) {
 	cases := []struct {
 		name  string
 		setup func(f *fakeTempVCManager)
+		// wantMessages is how many hub chat messages the join sends. The
+		// no-parent hub is the bot's own refusal, and the member hears about
+		// it. A hub channel absent from the cache is silent.
+		wantMessages int
 	}{
-		{"hub channel has no parent", func(f *fakeTempVCManager) { f.channels[testTempVCHub].ParentID = "" }},
-		{"hub channel absent from the cache", func(f *fakeTempVCManager) { delete(f.channels, testTempVCHub) }},
+		{"hub channel has no parent", hubWithoutParent, 1},
+		{"hub channel absent from the cache", func(f *fakeTempVCManager) { delete(f.channels, testTempVCHub) }, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -648,7 +652,7 @@ func TestTempVCHubWithoutCategorySpawnsNothing(t *testing.T) {
 			tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
 
 			if creates := fake.recordedCreates(); len(creates) != 0 {
-				t.Errorf("created %d channels, want 0 (no API call)", len(creates))
+				t.Errorf("created %d channels, want 0 (no create call)", len(creates))
 			}
 			if moves := fake.recordedMoves(); len(moves) != 0 {
 				t.Errorf("moves = %+v, want none", moves)
@@ -657,12 +661,12 @@ func TestTempVCHubWithoutCategorySpawnsNothing(t *testing.T) {
 				t.Errorf("rows = %+v, want none", rows)
 			}
 			// The bot's own refusal: a log line and a panel note, never a
-			// Sentry event and no message.
+			// Sentry event.
 			if *captures != 0 {
 				t.Errorf("captures = %d, want 0", *captures)
 			}
-			if msgs := fake.recordedMessages(); len(msgs) != 0 {
-				t.Errorf("messages = %+v, want none (no API call)", msgs)
+			if msgs := hubMessagesMentioning(t, fake, "user-1"); len(msgs) != tc.wantMessages {
+				t.Errorf("messages = %d, want %d", len(msgs), tc.wantMessages)
 			}
 		})
 	}
@@ -1177,14 +1181,14 @@ func categoryCapErr() error {
 	return e
 }
 
-// failedSpawnMessage runs one join against a create that fails with err, under
-// the one member and hub fixture, and returns the content of the hub chat
-// message. The fixture is the same for every call, so the error is the only
-// thing that can change the text.
-func failedSpawnMessage(t *testing.T, createErr error) string {
+// failedSpawnMessage runs one join under the one member and hub fixture,
+// after setup has broken the fake one way, and returns the content of the
+// hub chat message. The fixture is the same for every call, so the cause of
+// the failure is the only thing that can change the text.
+func failedSpawnMessage(t *testing.T, setup func(f *fakeTempVCManager)) string {
 	t.Helper()
 	fake := newFakeTempVCManager()
-	fake.createErr = createErr
+	setup(fake)
 	tv := newSeededTempVC(t, fake)
 	countCaptures(t)
 
@@ -1197,11 +1201,23 @@ func failedSpawnMessage(t *testing.T, createErr error) string {
 	return msgs[0].data.Content
 }
 
-func TestTempVCCapAndGenericMessagesAreTwoTexts(t *testing.T) {
-	guildCap := failedSpawnMessage(t, restError(http.StatusBadRequest, discordgo.ErrCodeMaximumNumberOfGuildChannelsReached, "Maximum number of guild channels reached (500)"))
-	categoryCap := failedSpawnMessage(t, categoryCapErr())
-	forbidden := failedSpawnMessage(t, restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, "Missing Permissions"))
-	serverError := failedSpawnMessage(t, restError(http.StatusInternalServerError, 0, "Internal Server Error"))
+// createFails is the setup that makes every create return err.
+func createFails(err error) func(f *fakeTempVCManager) {
+	return func(f *fakeTempVCManager) { f.createErr = err }
+}
+
+// hubWithoutParent is the setup that moves the hub channel out of its
+// category, the one broken hub a join can reach.
+func hubWithoutParent(f *fakeTempVCManager) {
+	f.channels[testTempVCHub].ParentID = ""
+}
+
+func TestTempVCSpawnFailureMessagesAreThreeTexts(t *testing.T) {
+	guildCap := failedSpawnMessage(t, createFails(restError(http.StatusBadRequest, discordgo.ErrCodeMaximumNumberOfGuildChannelsReached, "Maximum number of guild channels reached (500)")))
+	categoryCap := failedSpawnMessage(t, createFails(categoryCapErr()))
+	forbidden := failedSpawnMessage(t, createFails(restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, "Missing Permissions")))
+	serverError := failedSpawnMessage(t, createFails(restError(http.StatusInternalServerError, 0, "Internal Server Error")))
+	refusal := failedSpawnMessage(t, hubWithoutParent)
 
 	if guildCap != categoryCap {
 		t.Errorf("guild cap %q and category cap %q differ, want the one cap text", guildCap, categoryCap)
@@ -1211,6 +1227,29 @@ func TestTempVCCapAndGenericMessagesAreTwoTexts(t *testing.T) {
 	}
 	if guildCap == forbidden {
 		t.Errorf("cap and generic texts are both %q, want two texts", guildCap)
+	}
+	if refusal == forbidden {
+		t.Errorf("refusal and generic texts are both %q, want a text of its own for the refusal", refusal)
+	}
+	if refusal == guildCap {
+		t.Errorf("refusal and cap texts are both %q, want three texts", refusal)
+	}
+}
+
+// A refusal is never a Sentry event, and that holds when its own message
+// fails to send. The send is the only network call on the refusal path, so
+// this is the one place a refusal could leak into Sentry.
+func TestTempVCRefusalWithFailedSendCapturesNothing(t *testing.T) {
+	fake := newFakeTempVCManager()
+	hubWithoutParent(fake)
+	fake.messageErr = restError(http.StatusInternalServerError, 0, "Internal Server Error")
+	tv := newSeededTempVC(t, fake)
+	captures := countCaptures(t)
+
+	tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+
+	if *captures != 0 {
+		t.Errorf("captures = %d, want 0: a refusal never reaches Sentry, even when its message fails", *captures)
 	}
 }
 
@@ -1263,7 +1302,7 @@ func TestTempVCLastSpawnFailureIsKeptPerHubAndClearedBySuccess(t *testing.T) {
 	at := time.Date(2026, time.September, 18, 20, 30, 0, 0, time.UTC)
 	pinClock(t, at)
 	fake := newFakeTempVCManager()
-	fake.channels[testTempVCHub].ParentID = ""
+	hubWithoutParent(fake)
 	st := seedStore(t, testHub())
 	tv := newTestTempVC(t, fake, st)
 	hubID := storedHubID(t, st)
