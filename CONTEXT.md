@@ -189,6 +189,11 @@ moment it empties. Hub settings are edited in the panel, never in code.
   state fresh each time it shows the hub. A join can reach only the
   no-category kind, and it spawns nothing.
   _Avoid_: orphaned hub, stale hub, dead hub, unhealthy hub.
+- **Spawn failure**: A join to an enabled hub that ends with no spawned
+  channel for the member. Two kinds: a failure Discord returned on the
+  create or the move-into, and a refusal the bot decided itself, which only
+  a broken hub causes.
+  _Avoid_: create failure, failed create, failed join, refused join.
 - **Change log**: The panel's record of who changed which setting, when,
   and from what to what. Each hub's form shows the hub's own entries; the
   guild-wide moderator section shows the entries of its saves, which
