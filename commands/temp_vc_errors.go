@@ -40,9 +40,15 @@ type spawnedChannelFault struct {
 	hardFault bool
 }
 
-// classifySpawnedChannelError reads the facts off a Discord error. An error
-// with no structured HTTP response is a transport failure.
+// classifySpawnedChannelError reads the facts off a Discord error. A 429
+// arrives as a *discordgo.RateLimitError: with retry on rate limit disabled,
+// discordgo returns that type and never a RESTError with status 429. Any
+// other error with no structured HTTP response is a transport failure.
 func classifySpawnedChannelError(err error) spawnedChannelFault {
+	var rateLimitErr *discordgo.RateLimitError
+	if errors.As(err, &rateLimitErr) {
+		return spawnedChannelFault{rateLimited: true}
+	}
 	var restErr *discordgo.RESTError
 	if !errors.As(err, &restErr) || restErr.Response == nil {
 		return spawnedChannelFault{hardFault: true}
@@ -57,9 +63,8 @@ func classifySpawnedChannelError(err error) spawnedChannelFault {
 		gone: code == discordgo.ErrCodeUnknownChannel,
 		full: code == discordgo.ErrCodeMaximumNumberOfGuildChannelsReached ||
 			(code == discordgo.ErrCodeInvalidFormBody && bytes.Contains(restErr.ResponseBody, []byte(categoryCapMarker))),
-		rateLimited: status == http.StatusTooManyRequests,
-		forbidden:   forbidden,
-		hardFault:   forbidden || status >= 500,
+		forbidden: forbidden,
+		hardFault: forbidden || status >= 500,
 	}
 }
 

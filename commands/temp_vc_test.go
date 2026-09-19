@@ -679,6 +679,17 @@ func countCaptures(t *testing.T) *int {
 	return &n
 }
 
+// rateLimitError builds the error discordgo returns on a 429 when the call
+// passed WithRetryOnRatelimit(false): a *RateLimitError, not a *RESTError.
+// The URL carries rawBodyMarker so a reply that interpolates the error text
+// is caught the same way the RESTError cases catch a leaked body.
+func rateLimitError(retryAfter time.Duration) *discordgo.RateLimitError {
+	return &discordgo.RateLimitError{RateLimit: &discordgo.RateLimit{
+		TooManyRequests: &discordgo.TooManyRequests{Message: "You are being rate limited.", RetryAfter: retryAfter},
+		URL:             "https://discord.com/api/v9/channels/" + rawBodyMarker,
+	}}
+}
+
 // failingStore wraps a Fake and fails the methods a test arms. Everything
 // else reaches the Fake.
 type failingStore struct {
@@ -1294,7 +1305,7 @@ func TestTempVCCreateFailuresCaptureOncePerStreakPerHub(t *testing.T) {
 			err  error
 		}{
 			{"guild cap", restError(http.StatusBadRequest, discordgo.ErrCodeMaximumNumberOfGuildChannelsReached, "Maximum number of guild channels reached (500)")},
-			{"429", restError(http.StatusTooManyRequests, 0, "You are being rate limited.")},
+			{"429", rateLimitError(4 * time.Minute)},
 			{"500", restError(http.StatusInternalServerError, 0, "Internal Server Error")},
 			{"transport", errors.New("dial tcp: connection refused")},
 		}
@@ -1380,7 +1391,7 @@ func spawnAndLeave(tv *TempVC, fake *fakeTempVCManager, userID, channelID string
 func TestTempVCDeleteFailuresClassify(t *testing.T) {
 	t.Run("429 is a WARN line and the channel stays tracked", func(t *testing.T) {
 		fake := newFakeTempVCManager()
-		fake.deleteErr = restError(http.StatusTooManyRequests, 0, "You are being rate limited.")
+		fake.deleteErr = rateLimitError(4 * time.Minute)
 		st := seedStore(t, testHub())
 		tv := newTestTempVC(t, fake, st)
 		captures := countCaptures(t)
@@ -1451,18 +1462,30 @@ func TestTempVCDeleteFailuresClassify(t *testing.T) {
 	})
 }
 
-func TestTempVCCapFailureRecordsTheFullCause(t *testing.T) {
-	fake := newFakeTempVCManager()
-	fake.createErr = restError(http.StatusBadRequest, discordgo.ErrCodeMaximumNumberOfGuildChannelsReached, "Maximum number of guild channels reached (500)")
-	st := seedStore(t, testHub())
-	tv := newTestTempVC(t, fake, st)
-	countCaptures(t)
+func TestTempVCSpawnFailureRecordsItsCause(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want SpawnFailureCause
+	}{
+		{"guild cap", restError(http.StatusBadRequest, discordgo.ErrCodeMaximumNumberOfGuildChannelsReached, "Maximum number of guild channels reached (500)"), SpawnFailureFull},
+		{"429", rateLimitError(4 * time.Minute), SpawnFailureRateLimited},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeTempVCManager()
+			fake.createErr = tc.err
+			st := seedStore(t, testHub())
+			tv := newTestTempVC(t, fake, st)
+			countCaptures(t)
 
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+			tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
 
-	got, ok := tv.LastSpawnFailure(storedHubID(t, st))
-	if !ok || got.Cause != SpawnFailureFull {
-		t.Errorf("LastSpawnFailure = %+v (present %v), want cause %q", got, ok, SpawnFailureFull)
+			got, ok := tv.LastSpawnFailure(storedHubID(t, st))
+			if !ok || got.Cause != tc.want {
+				t.Errorf("LastSpawnFailure = %+v (present %v), want cause %q", got, ok, tc.want)
+			}
+		})
 	}
 }
 

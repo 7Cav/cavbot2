@@ -318,6 +318,30 @@ func TestVoiceRenameServerErrorCapturedAndSanitised(t *testing.T) {
 	}
 }
 
+// T9c: a 429 on the edit is a rename the runtime did not count, one made in
+// Discord's UI or before a restart. It is a WARN line only, so nothing
+// reaches Sentry, and the reply carries none of the error text.
+func TestVoiceRenameRateLimitNotCapturedAndSanitised(t *testing.T) {
+	captures := countCaptures(t)
+	fake := newFakeTempVCManager()
+	tv := newSeededTempVC(t, fake)
+	spawnInto(tv, fake, "user-1", "chan-1", member("Smith", testRankSGT))
+	fake.editErr = rateLimitError(4 * time.Minute)
+
+	f := &fakeResponder{}
+	runVoiceRename(f, tv, renameInteraction("user-1", nil, "Alpha"))
+
+	if reply := ephemeralReply(t, f); strings.Contains(reply, rawBodyMarker) {
+		t.Errorf("reply %q leaks the raw Discord error", reply)
+	}
+	if *captures != 0 {
+		t.Errorf("captures = %d, want none", *captures)
+	}
+	if _, tracked := tv.Owner("chan-1"); !tracked {
+		t.Error("chan-1 is no longer tracked after a 429 on the rename")
+	}
+}
+
 // T9b: Unknown Channel on the edit means the channel is already gone. The
 // runtime untracks it and drops its row, and nothing reaches Sentry.
 func TestVoiceRenameUnknownChannelUntracksQuietly(t *testing.T) {
