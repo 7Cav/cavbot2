@@ -157,6 +157,11 @@ Expect a pause of roughly 40 seconds on `Registering commands`. The thirteen
 commands are created one at a time and Discord rate-limits them, so a silent
 console there is normal, not a hang.
 
+**In production** the image comes from a GitHub Release, which pushes
+`7cav/cavbot2:<tag>` and pings Watchtower on the host. The host preparation,
+the Release checklist and the MEE6 cutover steps are in
+[`docs/cutover-runbook.md`](docs/cutover-runbook.md).
+
 ### One thing that is not a command
 
 `main.go` starts a weekly Star Citizen joiner report unconditionally, with no
