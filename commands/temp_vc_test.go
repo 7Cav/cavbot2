@@ -1462,7 +1462,7 @@ func TestTempVCDeleteFailuresClassify(t *testing.T) {
 	})
 }
 
-func TestTempVCCreateFailureRecordsItsCause(t *testing.T) {
+func TestTempVCSpawnFailureRecordsItsCause(t *testing.T) {
 	cases := []struct {
 		name string
 		err  error
