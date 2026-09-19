@@ -4,8 +4,10 @@
 // Fake for other packages' tests (fake.go). The forum's MySQL stays in utils;
 // this package never touches it.
 //
-// ADR 0012 records why migrations run at startup and the rule every migration
-// has to follow.
+// Migrations run at startup, and every one stays compatible with the previous
+// release, since a rollback runs the older image against the newer schema:
+// additive in the release that introduces it, drops and renames one release
+// later (spec #285).
 package store
 
 import (

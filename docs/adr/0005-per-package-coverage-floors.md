@@ -24,7 +24,7 @@ a number.
 ## How to apply
 
 - Local check matches CI: `go test ./... -cover | .github/scripts/check-coverage-floors.sh`.
-  Since ADR 0012 this holds only with `TEST_BOT_DB_DSN` exported: the `store`
+  Since the store package landed (#299) this holds only with `TEST_BOT_DB_DSN` exported: the `store`
   package's Postgres tests skip without it and the package falls under its
   floor. The CI gate block in `CLAUDE.md` starts a throwaway Postgres for that.
 - After a PR that raises a package's coverage non-trivially, edit the floor
