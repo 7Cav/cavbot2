@@ -108,7 +108,7 @@ func initLOACache() {
 // bot runs as it did before the store existed. A configured database that
 // cannot be reached or migrated stops the bot here, before the Discord
 // session opens: with restart: unless-stopped the container retries, and a
-// binary never runs against a schema it does not understand (ADR 0012). The
+// binary never runs against a schema it does not understand. The
 // DSN carries a password and is never logged.
 func initBotStore() *store.Postgres {
 	dsn := os.Getenv("BOT_DB_DSN")

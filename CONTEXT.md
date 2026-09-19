@@ -226,7 +226,7 @@ moment it empties. Hub settings are edited in the panel, never in code.
   the panel edits, and the spawned channel rows, which the runtime writes at
   create and at every handover and deletes with the channel. The runtime loads
   both at startup. The store package (`store/`) is the only code that talks to
-  it (ADR 0012).
+  it.
 
 ## Observability
 

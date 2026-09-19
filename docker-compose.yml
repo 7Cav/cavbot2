@@ -3,7 +3,7 @@ services:
     image: cavbot2:latest
     container_name: cavbot2
     # A failed startup migration exits the process; this retries it, and a
-    # transient database outage at boot heals itself (ADR 0012).
+    # transient database outage at boot heals itself.
     restart: unless-stopped
     depends_on:
       postgres:

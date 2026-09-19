@@ -2,9 +2,8 @@
 
 **Who:** the maintainer, in one evening.
 **Sources:** spec [#285](https://github.com/7Cav/cavbot2/issues/285), the
-cutover order in `docs/temp-vc-decisions.md`, and ADR 0012 (store and
-migrations). Terms are the "Temporary voice channels" section of
-`CONTEXT.md`.
+cutover order in `docs/temp-vc-decisions.md`. Terms are the "Temporary voice
+channels" section of `CONTEXT.md`.
 
 The feature is inert until `BOT_DB_DSN` and `PANEL_ADDR` reach the process,
 and spawns nothing until a hub row is enabled. So the order below turns things
@@ -260,7 +259,7 @@ bot holds no row for them, so it will not either.
 ## Rollback
 
 Rolling back the image is safe at any step: every migration is additive and
-an older binary runs against the newer schema (ADR 0012). Pin the image on
+an older binary runs against the newer schema (spec #285, Store). Pin the image on
 the host and recreate:
 
 ```bash
