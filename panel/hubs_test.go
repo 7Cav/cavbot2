@@ -60,10 +60,15 @@ type fakeCreate struct {
 	Reason string
 }
 
-// testGuildRoles are the guild's roles the moderator picker offers.
+// testGuildRoles are the guild's roles as Discord returns them: the two
+// eligible roles the moderator pickers offer, the managed role Discord made
+// for a bot, and @everyone, whose ID is the guild's. A deleted role is any
+// ID this list never had; the tests use role-gone.
 var testGuildRoles = []*discordgo.Role{
 	{ID: "role-mp", Name: "Military Police"},
 	{ID: "role-hq", Name: "Regimental HQ"},
+	{ID: "role-bot", Name: "CavBot", Managed: true},
+	{ID: testGuildID, Name: "@everyone"},
 }
 
 // newFakeDiscord returns a guild with one category holding a voice channel
@@ -609,6 +614,8 @@ func TestUpdateRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
 		{"a bitrate below 8000", set("bitrate", "7999"), "bitrate"},
 		{"a bitrate that is not a number", set("bitrate", "abc"), "bitrate"},
 		{"a moderator role not in the guild", set("moderator_roles", "role-elsewhere"), "moderator_roles"},
+		{"a managed moderator role", set("moderator_roles", "role-bot"), "moderator_roles"},
+		{"@everyone as a moderator role", set("moderator_roles", testGuildID), "moderator_roles"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -799,11 +806,7 @@ func TestRemoveAppendsAnEntryWithNullAfter(t *testing.T) {
 // under data-hub=id, distinct from the list row that carries the same ID.
 func editSection(t *testing.T, res *http.Response, hubID int64) *html.Node {
 	t.Helper()
-	sec := findElement(parseHTML(t, res), "section", "data-hub", strconv.FormatInt(hubID, 10))
-	if sec == nil {
-		t.Fatalf("page has no section under data-hub=%d", hubID)
-	}
-	return sec
+	return hubSection(t, parseHTML(t, res), hubID)
 }
 
 // entryIDs returns the data-entry values under n, in document order.

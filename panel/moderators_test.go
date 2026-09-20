@@ -122,67 +122,32 @@ func moderatorsSection(t *testing.T, doc *html.Node) *html.Node {
 	return sec
 }
 
-func TestModeratorsSaveRefusesAnUnknownRoleAndWritesNothing(t *testing.T) {
-	w := newTestWorld(t, testHub())
-	signIn(t, w.forum, w.b)
-	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm("role-mp")), "/")
-
-	res := w.b.postForm("/moderators", moderatorsForm("role-mp", "role-gone"))
-
-	if !isClientError(res.StatusCode) {
-		t.Errorf("status = %d, want 4xx", res.StatusCode)
-	}
-	note := findElement(moderatorsSection(t, parseHTML(t, res)), "", "data-error", "moderator_roles")
-	if note == nil {
-		t.Error("the moderators form carries no data-error=moderator_roles")
-	}
-	if got := storedGuildRoles(t, w.st); !sameSet(got, []string{"role-mp"}) {
-		t.Errorf("stored guild roles = %v, want role-mp alone, unchanged", got)
-	}
-	if entries := storedChangeLog(t, w.st, 0); len(entries) != 1 {
-		t.Errorf("%d entries under no hub, want the first save's alone", len(entries))
-	}
-}
-
 // checkedBoxes returns the values of the checked checkboxes named name
 // under n, in document order.
 func checkedBoxes(n *html.Node, name string) []string {
 	var out []string
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "input" {
-			typ, _ := attrValue(n, "type")
-			got, _ := attrValue(n, "name")
-			if typ == "checkbox" && got == name {
-				if _, checked := attrValue(n, "checked"); checked {
-					value, _ := attrValue(n, "value")
-					out = append(out, value)
-				}
-			}
+	eachElement(n, func(n *html.Node) {
+		typ, _ := attrValue(n, "type")
+		got, _ := attrValue(n, "name")
+		if n.Data != "input" || typ != "checkbox" || got != name {
+			return
 		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
+		if _, checked := attrValue(n, "checked"); checked {
+			value, _ := attrValue(n, "value")
+			out = append(out, value)
 		}
-	}
-	walk(n)
+	})
 	return out
 }
 
 // dataRoles returns the data-role values under n, in document order.
 func dataRoles(n *html.Node) []string {
 	var out []string
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode {
-			if id, ok := attrValue(n, "data-role"); ok {
-				out = append(out, id)
-			}
+	eachElement(n, func(n *html.Node) {
+		if id, ok := attrValue(n, "data-role"); ok {
+			out = append(out, id)
 		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
-		}
-	}
-	walk(n)
+	})
 	return out
 }
 

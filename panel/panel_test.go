@@ -347,6 +347,16 @@ func findElement(n *html.Node, tag, attr, value string) *html.Node {
 	return nil
 }
 
+// eachElement calls visit on every element under n, in document order.
+func eachElement(n *html.Node, visit func(*html.Node)) {
+	if n.Type == html.ElementNode {
+		visit(n)
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		eachElement(c, visit)
+	}
+}
+
 func attrValue(n *html.Node, key string) (string, bool) {
 	for _, a := range n.Attr {
 		if a.Key == key {
