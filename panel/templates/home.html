@@ -45,7 +45,7 @@
     <div class="block-row">
       <fieldset class="field" data-field="moderator_roles">
         <legend class="field-label">Roles</legend>
-        {{range .Hubs.Moderators.Roles}}<label class="check"><input type="checkbox" name="moderator_roles" value="{{.ID}}"{{if .Checked}} checked{{end}}> {{.Name}}</label>{{else}}<span class="off">The server has no roles to offer.</span>{{end}}
+        {{range .Hubs.Moderators.Roles}}{{template "role-control" .}}{{else}}<span class="off">The server has no roles to offer.</span>{{end}}
         <span class="field-hint">These roles rename any spawned channel of any hub, including hubs added later. Each hub adds its own roles in its form.</span>
       </fieldset>
     </div>
@@ -56,6 +56,10 @@
   </div>
   </section>
 {{end}}
+
+{{define "role-control"}}<label class="check"><input type="checkbox" name="moderator_roles" value="{{.ID}}"{{if .Checked}} checked{{end}}{{if .Unavailable}} data-unavailable="{{.Unavailable}}"{{end}}> {{.Name}}{{template "role-note" .}}</label>{{end}}
+
+{{define "role-note"}}{{if eq .Unavailable "deleted"}} <span class="off">(not in the server)</span>{{else if eq .Unavailable "managed"}} <span class="off">(managed by an integration)</span>{{end}}{{end}}
 
 {{define "changes"}}
     <h2 class="block-header">Change log</h2>
@@ -174,14 +178,14 @@
     <div class="block-row">
       <div class="field" data-field="guild_moderator_roles">
         <span class="field-label">Moderator roles for every hub</span>
-        {{range .GuildRoles}}<span class="tag" data-role="{{.ID}}">{{.Name}}</span> {{else}}<span class="off">none</span>{{end}}
+        {{range .GuildRoles}}<span class="tag" data-role="{{.ID}}"{{if .Unavailable}} data-unavailable="{{.Unavailable}}"{{end}}>{{.Name}}{{template "role-note" .}}</span> {{else}}<span class="off">none</span>{{end}}
         <span class="field-hint">Set in the section at the top of the page. They apply to this hub too; a hub cannot exclude them.</span>
       </div>
     </div>
     <div class="block-row">
       <fieldset class="field" data-field="moderator_roles">
         <legend class="field-label">Moderator roles for this hub</legend>
-        {{range .Roles}}<label class="check"><input type="checkbox" name="moderator_roles" value="{{.ID}}"{{if .Checked}} checked{{end}}> {{.Name}}</label>{{else}}<span class="off">The server has no roles to offer.</span>{{end}}
+        {{range .Roles}}{{template "role-control" .}}{{else}}<span class="off">The server has no roles to offer.</span>{{end}}
         <span class="field-hint">These roles rename any channel this hub spawns, whoever owns it, in addition to the roles for every hub.</span>
       </fieldset>
     </div>

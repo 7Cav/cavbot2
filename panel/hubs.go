@@ -267,13 +267,30 @@ type editPage struct {
 	Changes []changeView
 }
 
-// guildRole is one role the moderator picker offers, and whether the form
-// has it checked.
+// guildRole is one control of a moderator picker: an eligible role the
+// picker offers, or an unavailable moderator role the record stores, and
+// whether the form has it checked.
 type guildRole struct {
-	ID      string
+	ID string
+	// Name is the role's name, or its ID for a deleted role, whose name
+	// nothing remembers.
 	Name    string
 	Checked bool
+	// Unavailable is why a stored role is no longer eligible, and empty on
+	// an eligible role. It is the data-unavailable attribute on the
+	// control, a test contract; the label copy is not.
+	Unavailable unavailable
 }
+
+// unavailable is the reason a stored moderator role is no longer eligible.
+type unavailable string
+
+const (
+	// unavailableDeleted: no live role has the ID.
+	unavailableDeleted unavailable = "deleted"
+	// unavailableManaged: the live role is managed by an integration.
+	unavailableManaged unavailable = "managed"
+)
 
 // editInputOf is the edit form as the stored hub and its live channel name
 // fill it.
@@ -421,11 +438,35 @@ type guildInfo struct {
 	// eligible are the eligible roles of CONTEXT.md, live, not managed and
 	// not @everyone, highest position first.
 	eligible []*discordgo.Role
+	// live is every role but @everyone, keyed by ID: the eligible ones and
+	// the managed ones, for the reason a stored role is unavailable.
+	live map[string]*discordgo.Role
 	// names maps each role's ID to its name, for a change log entry that
 	// stores IDs. Every role the guild returned is here, managed and
 	// @everyone included, so an older entry that names one still reads.
 	names      map[string]string
 	bitrateMax int
+}
+
+// isEligible reports whether a role may be offered and added: live, not
+// managed and not @everyone.
+func (g guildInfo) isEligible(id string) bool {
+	r, ok := g.live[id]
+	return ok && !r.Managed
+}
+
+// unavailability is why a stored role is no longer eligible, or empty when
+// it is eligible. A stored @everyone reads as deleted: the guild read drops
+// it, and nothing can store it today.
+func (g guildInfo) unavailability(id string) unavailable {
+	r, ok := g.live[id]
+	switch {
+	case !ok:
+		return unavailableDeleted
+	case r.Managed:
+		return unavailableManaged
+	}
+	return ""
 }
 
 // readGuild reads the guild through the manager seam, once per page load or
@@ -438,11 +479,15 @@ func (s *hubService) readGuild() (guildInfo, error) {
 	if err != nil {
 		return guildInfo{}, fmt.Errorf("guild read: %w", err)
 	}
-	info := guildInfo{eligible: make([]*discordgo.Role, 0, len(g.Roles)), names: make(map[string]string, len(g.Roles)),
-		bitrateMax: bitrateCeiling(g.PremiumTier)}
+	info := guildInfo{eligible: make([]*discordgo.Role, 0, len(g.Roles)), live: make(map[string]*discordgo.Role, len(g.Roles)),
+		names: make(map[string]string, len(g.Roles)), bitrateMax: bitrateCeiling(g.PremiumTier)}
 	for _, r := range g.Roles {
 		info.names[r.ID] = r.Name
-		if !r.Managed && r.ID != s.deps.GuildID {
+		if r.ID == s.deps.GuildID {
+			continue
+		}
+		info.live[r.ID] = r
+		if !r.Managed {
 			info.eligible = append(info.eligible, r)
 		}
 	}
@@ -450,14 +495,32 @@ func (s *hubService) readGuild() (guildInfo, error) {
 	return info, nil
 }
 
-// rolePicker lists the guild's roles for a moderator picker, with those in
-// checked ticked.
-func rolePicker(guild guildInfo, checked []string) []guildRole {
+// rolePicker builds a moderator picker: the eligible roles, then one
+// unavailable moderator role per ID in stored that is no longer eligible,
+// by ID, so the record's whole set is on the form and a save can keep or
+// remove each. Those in checked are ticked. On a page load stored and
+// checked are one set; on a refusal, checked is the form as posted, so an
+// unticked unavailable role stays unticked and a posted ID the record
+// never stored renders no control.
+func rolePicker(guild guildInfo, stored, checked []string) []guildRole {
 	out := make([]guildRole, 0, len(guild.eligible))
 	for _, r := range guild.eligible {
 		out = append(out, guildRole{ID: r.ID, Name: r.Name, Checked: slices.Contains(checked, r.ID)})
 	}
-	return out
+	var kept []guildRole
+	for _, id := range stored {
+		reason := guild.unavailability(id)
+		if reason == "" {
+			continue
+		}
+		name := id
+		if r, ok := guild.live[id]; ok {
+			name = r.Name
+		}
+		kept = append(kept, guildRole{ID: id, Name: name, Checked: slices.Contains(checked, id), Unavailable: reason})
+	}
+	sort.Slice(kept, func(i, j int) bool { return kept[i].ID < kept[j].ID })
+	return append(out, kept...)
 }
 
 // page reads everything the hub page renders from, once: the hub rows and
@@ -566,9 +629,9 @@ func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo,
 		form = *posted
 	}
 	page := &editPage{ID: hub.ID, Broken: st.Broken, CategoryName: st.CategoryName, Form: form,
-		Roles: rolePicker(guild, form.ModeratorRoleIDs), BitrateMax: guild.bitrateMax,
+		Roles: rolePicker(guild, hub.ModeratorRoleIDs, form.ModeratorRoleIDs), BitrateMax: guild.bitrateMax,
 		Changes: changeViews(entries, guild.names)}
-	for _, r := range rolePicker(guild, guildWide) {
+	for _, r := range rolePicker(guild, guildWide, guildWide) {
 		if r.Checked {
 			page.GuildRoles = append(page.GuildRoles, r)
 		}

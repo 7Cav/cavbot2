@@ -1,11 +1,13 @@
 package panel
 
 import (
+	"context"
 	"net/http"
 	"slices"
 	"strconv"
 	"testing"
 
+	"github.com/7cav/cavbot2/store"
 	"golang.org/x/net/html"
 )
 
@@ -128,6 +130,96 @@ func TestModeratorsSaveRefusesAnIneligibleRoleAndWritesNothing(t *testing.T) {
 			}
 			if entries := storedChangeLog(t, w.st, 0); len(entries) != 1 {
 				t.Errorf("%d entries under no hub, want the first save's alone", len(entries))
+			}
+		})
+	}
+}
+
+// The two moderator forms a table case can name.
+const (
+	onHubForm   = "hub form"
+	onGuildWide = "guild-wide section"
+)
+
+// newTestWorldModerated builds the panel over a store holding the hubs and
+// the guild-wide moderator set, both in before the runtime is built, the
+// way startup loads them.
+func newTestWorldModerated(t *testing.T, guildWide []string, hubs ...store.Hub) *testWorld {
+	t.Helper()
+	st := store.NewFake()
+	if err := st.SetGuildModeratorRoles(context.Background(), testGuildID, guildWide); err != nil {
+		t.Fatalf("SetGuildModeratorRoles: %v", err)
+	}
+	for _, h := range hubs {
+		if _, err := st.UpsertHub(context.Background(), h); err != nil {
+			t.Fatalf("UpsertHub: %v", err)
+		}
+	}
+	return newTestWorldOver(t, st, newFakeForum(t))
+}
+
+// worldStoring builds a world where one form's stored set holds role-mp and
+// one more role: the hub on hub-1 for the hub form, the guild-wide set
+// otherwise.
+func worldStoring(t *testing.T, form, roleID string) *testWorld {
+	t.Helper()
+	hub := testHub()
+	var guildWide []string
+	if form == onHubForm {
+		hub.ModeratorRoleIDs = []string{"role-mp", roleID}
+	} else {
+		guildWide = []string{"role-mp", roleID}
+	}
+	return newTestWorldModerated(t, guildWide, hub)
+}
+
+// pickerOn returns the named form's picker area on a parsed page.
+func pickerOn(t *testing.T, doc *html.Node, form string, hubID int64) *html.Node {
+	t.Helper()
+	if form == onHubForm {
+		return hubSection(t, doc, hubID)
+	}
+	return moderatorsSection(t, doc)
+}
+
+// controlFor returns the moderator_roles checkbox carrying the ID under n,
+// and fails the test when there is none.
+func controlFor(t *testing.T, n *html.Node, roleID string) roleControl {
+	t.Helper()
+	for _, c := range roleControls(n) {
+		if c.ID == roleID {
+			return c
+		}
+	}
+	t.Fatalf("no moderator_roles checkbox carries %s; the picker has %v", roleID, pickerIDs(n))
+	return roleControl{}
+}
+
+func TestStoredRoleNoLongerEligibleRendersAsUnavailable(t *testing.T) {
+	cases := []struct {
+		form   string
+		roleID string
+		reason string
+	}{
+		{onHubForm, "role-gone", "deleted"},
+		{onHubForm, "role-bot", "managed"},
+		{onGuildWide, "role-gone", "deleted"},
+		{onGuildWide, "role-bot", "managed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.reason+" on the "+tc.form, func(t *testing.T) {
+			w := worldStoring(t, tc.form, tc.roleID)
+			signIn(t, w.forum, w.b)
+			id := storedHubID(t, w.st, "hub-1")
+
+			res := w.b.get("/?hub=" + strconv.FormatInt(id, 10))
+
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("GET /?hub= status = %d, want 200", res.StatusCode)
+			}
+			c := controlFor(t, pickerOn(t, parseHTML(t, res), tc.form, id), tc.roleID)
+			if !c.Checked || c.Disabled || c.Unavailable != tc.reason {
+				t.Errorf("control for %s = %+v, want checked, enabled, data-unavailable=%q", tc.roleID, c, tc.reason)
 			}
 		})
 	}
