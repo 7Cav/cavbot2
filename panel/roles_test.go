@@ -98,3 +98,37 @@ func TestPickersOfferEligibleRolesOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestModeratorsSaveRefusesAnIneligibleRoleAndWritesNothing(t *testing.T) {
+	cases := []struct {
+		name   string
+		roleID string
+	}{
+		{"a role not in the guild", "role-gone"},
+		{"a managed role", "role-bot"},
+		{"@everyone", testGuildID},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			assertRedirect(t, w.b.postForm("/moderators", moderatorsForm("role-mp")), "/")
+
+			res := w.b.postForm("/moderators", moderatorsForm("role-mp", tc.roleID))
+
+			if !isClientError(res.StatusCode) {
+				t.Errorf("status = %d, want 4xx", res.StatusCode)
+			}
+			note := findElement(moderatorsSection(t, parseHTML(t, res)), "", "data-error", "moderator_roles")
+			if note == nil {
+				t.Error("the moderators form carries no data-error=moderator_roles")
+			}
+			if got := storedGuildRoles(t, w.st); !sameSet(got, []string{"role-mp"}) {
+				t.Errorf("stored guild roles = %v, want role-mp alone, unchanged", got)
+			}
+			if entries := storedChangeLog(t, w.st, 0); len(entries) != 1 {
+				t.Errorf("%d entries under no hub, want the first save's alone", len(entries))
+			}
+		})
+	}
+}

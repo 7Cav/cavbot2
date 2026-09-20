@@ -122,28 +122,6 @@ func moderatorsSection(t *testing.T, doc *html.Node) *html.Node {
 	return sec
 }
 
-func TestModeratorsSaveRefusesAnUnknownRoleAndWritesNothing(t *testing.T) {
-	w := newTestWorld(t, testHub())
-	signIn(t, w.forum, w.b)
-	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm("role-mp")), "/")
-
-	res := w.b.postForm("/moderators", moderatorsForm("role-mp", "role-gone"))
-
-	if !isClientError(res.StatusCode) {
-		t.Errorf("status = %d, want 4xx", res.StatusCode)
-	}
-	note := findElement(moderatorsSection(t, parseHTML(t, res)), "", "data-error", "moderator_roles")
-	if note == nil {
-		t.Error("the moderators form carries no data-error=moderator_roles")
-	}
-	if got := storedGuildRoles(t, w.st); !sameSet(got, []string{"role-mp"}) {
-		t.Errorf("stored guild roles = %v, want role-mp alone, unchanged", got)
-	}
-	if entries := storedChangeLog(t, w.st, 0); len(entries) != 1 {
-		t.Errorf("%d entries under no hub, want the first save's alone", len(entries))
-	}
-}
-
 // checkedBoxes returns the values of the checked checkboxes named name
 // under n, in document order.
 func checkedBoxes(n *html.Node, name string) []string {

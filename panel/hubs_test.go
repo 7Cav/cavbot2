@@ -614,6 +614,8 @@ func TestUpdateRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
 		{"a bitrate below 8000", set("bitrate", "7999"), "bitrate"},
 		{"a bitrate that is not a number", set("bitrate", "abc"), "bitrate"},
 		{"a moderator role not in the guild", set("moderator_roles", "role-elsewhere"), "moderator_roles"},
+		{"a managed moderator role", set("moderator_roles", "role-bot"), "moderator_roles"},
+		{"@everyone as a moderator role", set("moderator_roles", testGuildID), "moderator_roles"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

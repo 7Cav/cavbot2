@@ -83,7 +83,7 @@ func validRoleSet(posted []string, guild guildInfo) ([]string, error) {
 	roles := make([]string, 0, len(posted))
 	for _, id := range posted {
 		if _, ok := known[id]; !ok {
-			return nil, &fieldError{fieldModeratorRoles, "One of those roles is no longer in the server. Choose again."}
+			return nil, &fieldError{fieldModeratorRoles, "One of those roles cannot be a moderator role. Choose again."}
 		}
 		if !slices.Contains(roles, id) {
 			roles = append(roles, id)
