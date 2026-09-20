@@ -2,9 +2,11 @@ package panel
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/7cav/cavbot2/store"
@@ -333,5 +335,128 @@ func TestUnavailableRoleIsKeptOrRemovedOnlyByASave(t *testing.T) {
 				t.Error("a rename by a holder of the removed role passed after the save, want a refusal")
 			}
 		})
+	}
+}
+
+func TestARoleStoredOnAnotherRecordIsRefusedForThisOne(t *testing.T) {
+	// ADR 0012: the exception is per record. The guild-wide set is shown on
+	// every hub form, so a hub save unioning it in is the likeliest slip.
+	cases := []struct {
+		name  string
+		world func(t *testing.T) *testWorld
+		// hubChannelID is the hub the post goes to.
+		hubChannelID string
+		channelName  string
+	}{
+		{"stored on hub A, posted to hub B", func(t *testing.T) *testWorld {
+			hubA := testHub()
+			hubA.ModeratorRoleIDs = []string{"role-gone"}
+			return newTestWorldModerated(t, nil, hubA, secondHub())
+		}, "vc-2", "Squad Join"},
+		{"stored guild-wide, posted to a hub", func(t *testing.T) *testWorld {
+			return newTestWorldModerated(t, []string{"role-gone"}, testHub())
+		}, "hub-1", "Join to create"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := tc.world(t)
+			signIn(t, w.forum, w.b)
+			hubID := storedHubID(t, w.st, tc.hubChannelID)
+			form := updateForm()
+			form.Set("channel_name", tc.channelName)
+			form["moderator_roles"] = []string{"role-mp", "role-gone"}
+
+			res := w.b.postForm("/hubs/"+strconv.FormatInt(hubID, 10), form)
+
+			if !isClientError(res.StatusCode) {
+				t.Errorf("status = %d, want 4xx", res.StatusCode)
+			}
+			if field, ok := errorField(t, res); !ok || field != "moderator_roles" {
+				t.Errorf("data-error = %q (present %v), want moderator_roles", field, ok)
+			}
+			for _, h := range storedHubs(t, w.st) {
+				if h.ID == hubID && len(h.ModeratorRoleIDs) != 0 {
+					t.Errorf("the posted hub stores %v, want none, unchanged", h.ModeratorRoleIDs)
+				}
+			}
+			if entries := storedChangeLog(t, w.st, hubID); len(entries) != 0 {
+				t.Errorf("a refused update appended %d change log entries, want 0", len(entries))
+			}
+		})
+	}
+}
+
+// unavailableTags returns the data-unavailable value of each data-role tag
+// under n, keyed by role ID.
+func unavailableTags(n *html.Node) map[string]string {
+	out := map[string]string{}
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			if id, ok := attrValue(n, "data-role"); ok {
+				out[id], _ = attrValue(n, "data-unavailable")
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return out
+}
+
+func TestHubFormTagsAGuildWideRoleThatIsUnavailable(t *testing.T) {
+	w := newTestWorldModerated(t, []string{"role-hq", "role-gone", "role-bot"}, testHub())
+	signIn(t, w.forum, w.b)
+	id := storedHubID(t, w.st, "hub-1")
+
+	res := w.b.get("/?hub=" + strconv.FormatInt(id, 10))
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /?hub= status = %d, want 200", res.StatusCode)
+	}
+	guildWide := findElement(hubSection(t, parseHTML(t, res), id), "", "data-field", "guild_moderator_roles")
+	if guildWide == nil {
+		t.Fatal("the hub form has no element under data-field=guild_moderator_roles")
+	}
+	tags := unavailableTags(guildWide)
+	want := map[string]string{"role-hq": "", "role-gone": "deleted", "role-bot": "managed"}
+	for id, reason := range want {
+		got, ok := tags[id]
+		if !ok {
+			t.Errorf("the hub form has no tag for %s; it tags %v", id, tags)
+			continue
+		}
+		if got != reason {
+			t.Errorf("tag for %s has data-unavailable=%q, want %q", id, got, reason)
+		}
+	}
+}
+
+func TestChangeLogNamesAManagedRoleAnOlderEntryStored(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	// An entry from before managed roles left the pickers: it names the
+	// bot's own role.
+	err := w.st.AppendChangeLog(context.Background(), store.ChangeLogEntry{
+		ForumUserID: testUserID, ForumUsername: testUsername, Action: store.ChangeModerators,
+		Diff: json.RawMessage(`{"moderator_roles":{"before":[],"after":["role-bot"]}}`),
+	})
+	if err != nil {
+		t.Fatalf("AppendChangeLog: %v", err)
+	}
+	signIn(t, w.forum, w.b)
+
+	res := w.b.get("/")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET / status = %d, want 200", res.StatusCode)
+	}
+	sec := moderatorsSection(t, parseHTML(t, res))
+	change := findElement(sec, "", "data-change", "moderator_roles")
+	if change == nil {
+		t.Fatal("the section shows no data-change=moderator_roles element")
+	}
+	if got := fieldText(t, change, "after"); !strings.Contains(got, "CavBot") {
+		t.Errorf("entry after = %q, want the managed role named CavBot", got)
 	}
 }
