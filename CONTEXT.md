@@ -165,6 +165,14 @@ moment it empties. Hub settings are edited in the panel, never in code.
   tracked again, its owner restored or elected by the handover rule. A
   channel with no record is never touched.
   _Avoid_: adoption, orphan sweep, recovery, reap, resync.
+- **Stale voice state**: The bot's record of which channel a member is in,
+  or of who is in a spawned channel, at a moment when Discord has already
+  reported a change the bot has not yet applied. Discord reports changes in
+  order; the bot applies them in no fixed order, so the record can lag.
+  Before it creates, moves or deletes, the bot checks Discord's current
+  state and goes ahead only if the record it decided on still holds at that
+  check.
+  _Avoid_: stale event, out-of-order event, late event, race.
 - **Ownership notice**: The bot message in a spawned channel's text chat that
   names the current owner, or says there is none. Posted when the channel is
   created and at every handover. It pings nobody.
