@@ -45,7 +45,10 @@ func (e *notOwnerError) Error() string {
 }
 
 // renameWindowError: Rename returns it when the channel already had its two
-// renames inside the window. OpensAt is when the oldest of them leaves it.
+// renames inside the window, and when Discord refused the edit with a 429
+// that carries retry_after (a rename the runtime did not count). OpensAt is
+// when the oldest rename leaves the window, or the attempt time plus
+// retry_after.
 type renameWindowError struct {
 	OpensAt time.Time
 }
@@ -145,6 +148,13 @@ func (t *TempVC) renameFailed(channelID string, at time.Time, err error) error {
 	if fault.capturesOnDeleteOrRename() {
 		t.captureOncePerStreak(t.renameCaptured, hubID, "Temp VC rename failed", err,
 			"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
+	}
+	// A 429 is the limit the runtime counts against itself, so Discord's
+	// retry_after is the wait the runtime would have computed, and the invoker
+	// gets the window refusal with that wait (#264, #314). A 429 with no wait
+	// stays the raw error, which the handler renders with no time.
+	if fault.retryAfter > 0 {
+		return &renameWindowError{OpensAt: at.Add(fault.retryAfter)}
 	}
 	return err
 }

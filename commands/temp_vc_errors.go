@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -32,6 +33,9 @@ type spawnedChannelFault struct {
 	full bool
 	// rateLimited is a 429. The call was not retried.
 	rateLimited bool
+	// retryAfter is the wait the 429 carries, Discord's retry_after. Zero
+	// for any other fault, and for a 429 that carries none.
+	retryAfter time.Duration
 	// forbidden is a 403: a category the bot cannot see, or a permission it
 	// lost. Administrator prevents it, so it is a setting to fix.
 	forbidden bool
@@ -47,7 +51,14 @@ type spawnedChannelFault struct {
 func classifySpawnedChannelError(err error) spawnedChannelFault {
 	var rateLimitErr *discordgo.RateLimitError
 	if errors.As(err, &rateLimitErr) {
-		return spawnedChannelFault{rateLimited: true}
+		fault := spawnedChannelFault{rateLimited: true}
+		// RetryAfter is promoted through two pointers discordgo sets on every
+		// 429 it returns. A hand-built error may leave either nil, and the
+		// promoted read would panic, so both are checked first.
+		if rateLimitErr.RateLimit != nil && rateLimitErr.TooManyRequests != nil {
+			fault.retryAfter = rateLimitErr.RetryAfter
+		}
+		return fault
 	}
 	var restErr *discordgo.RESTError
 	if !errors.As(err, &restErr) || restErr.Response == nil {

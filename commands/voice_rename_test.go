@@ -320,8 +320,12 @@ func TestVoiceRenameServerErrorCapturedAndSanitised(t *testing.T) {
 
 // T9c: a 429 on the edit is a rename the runtime did not count, one made in
 // Discord's UI or before a restart. It is a WARN line only, so nothing
-// reaches Sentry, and the reply carries none of the error text.
-func TestVoiceRenameRateLimitNotCapturedAndSanitised(t *testing.T) {
+// reaches Sentry, and the reply carries none of the error text. The reply
+// carries Discord's retry_after the way the window refusal carries its wait
+// (#314): the attempt time plus the wait, as a Discord relative timestamp.
+func TestVoiceRenameRateLimitCarriesRetryAfterNotCapturedAndSanitised(t *testing.T) {
+	// 2026-09-18T20:00:00Z is 1789761600. Four minutes later is 1789761840.
+	pinClock(t, time.Date(2026, 9, 18, 20, 0, 0, 0, time.UTC))
 	captures := countCaptures(t)
 	fake := newFakeTempVCManager()
 	tv := newSeededTempVC(t, fake)
@@ -331,14 +335,47 @@ func TestVoiceRenameRateLimitNotCapturedAndSanitised(t *testing.T) {
 	f := &fakeResponder{}
 	runVoiceRename(f, tv, renameInteraction("user-1", nil, "Alpha"))
 
-	if reply := ephemeralReply(t, f); strings.Contains(reply, rawBodyMarker) {
+	reply := ephemeralReply(t, f)
+	if strings.Contains(reply, rawBodyMarker) {
 		t.Errorf("reply %q leaks the raw Discord error", reply)
+	}
+	if !strings.Contains(reply, "<t:1789761840:R>") {
+		t.Errorf("reply %q does not carry the retry time <t:1789761840:R>", reply)
 	}
 	if *captures != 0 {
 		t.Errorf("captures = %d, want none", *captures)
 	}
 	if _, tracked := tv.Owner("chan-1"); !tracked {
 		t.Error("chan-1 is no longer tracked after a 429 on the rename")
+	}
+}
+
+// T9d: a 429 that carries no usable wait replies without a time. A zero
+// retry_after is the spec's boundary. discordgo sets both embedded pointers on
+// every 429 it returns, so the nil rows are hand-built shapes; the issue asks
+// that they follow the zero path and never panic (#314).
+func TestVoiceRenameRateLimitWithoutWaitRepliesWithoutTime(t *testing.T) {
+	for _, tc := range []struct {
+		label string
+		err   *discordgo.RateLimitError
+	}{
+		{"zero retry_after", rateLimitError(0)},
+		{"nil RateLimit", &discordgo.RateLimitError{}},
+		{"nil TooManyRequests", &discordgo.RateLimitError{RateLimit: &discordgo.RateLimit{}}},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			fake := newFakeTempVCManager()
+			tv := newSeededTempVC(t, fake)
+			spawnInto(tv, fake, "user-1", "chan-1", member("Smith", testRankSGT))
+			fake.editErr = tc.err
+
+			f := &fakeResponder{}
+			runVoiceRename(f, tv, renameInteraction("user-1", nil, "Alpha"))
+
+			if reply := ephemeralReply(t, f); strings.Contains(reply, "<t:") {
+				t.Errorf("reply %q carries a time, want none: Discord gave no wait", reply)
+			}
+		})
 	}
 }
 
