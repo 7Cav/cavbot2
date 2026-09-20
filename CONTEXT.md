@@ -181,6 +181,14 @@ moment it empties. Hub settings are edited in the panel, never in code.
   covers without owning it. Set per hub, or once for every hub; a hub's
   moderator roles are the union of the two. Grants no Discord permission.
   _Avoid_: staff role, admin role, global moderator, default moderator.
+- **Eligible role**: A live Discord role that is not managed and is not
+  `@everyone`. The only kind a moderator picker offers, and the only kind a
+  save may add.
+  _Avoid_: offered role, valid role, pickable role, selectable role.
+- **Unavailable moderator role**: A stored moderator role that is no longer
+  eligible, kept with its authority until a person removes it in the panel.
+  Two reasons: deleted, when the role is gone from Discord, and managed.
+  _Avoid_: legacy role, stale role, orphaned role, ghost role.
 - **Permission source**: The per-hub setting that chooses what a spawned
   channel inherits its permissions from, the hub's category or the hub
   channel itself.
