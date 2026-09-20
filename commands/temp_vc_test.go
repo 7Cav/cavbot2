@@ -498,6 +498,10 @@ func TestTempVCCreatorWithRankRoleOwnsAtCreate(t *testing.T) {
 	if !strings.Contains(notices[0].data.Content, "user-1") {
 		t.Errorf("notice %q does not carry the owner's ID", notices[0].data.Content)
 	}
+	// The create notice is where a member first learns the rename command exists.
+	if !strings.Contains(notices[0].data.Content, "/voice-rename") {
+		t.Errorf("notice %q does not name /voice-rename", notices[0].data.Content)
+	}
 }
 
 func TestTempVCHubChannelPermissionSourceCopiesOverwrites(t *testing.T) {
@@ -1576,6 +1580,10 @@ func TestTempVCOwnerLeavesHighestRankTakesOver(t *testing.T) {
 	if !strings.Contains(notices[1].data.Content, "z-cpt") {
 		t.Errorf("handover notice %q does not carry the CPT's ID", notices[1].data.Content)
 	}
+	// A new owner who never created a channel learns the command here.
+	if !strings.Contains(notices[1].data.Content, "/voice-rename") {
+		t.Errorf("handover notice %q does not name /voice-rename", notices[1].data.Content)
+	}
 }
 
 // A channel whose owner leaves with no rank holder present has no owner. That
@@ -1605,6 +1613,38 @@ func TestTempVCOwnerLeavesWithNoRankHolderMeansNoOwner(t *testing.T) {
 	}
 	if c := notices[1].data.Content; strings.Contains(c, "sgt-1") || strings.Contains(c, "guest-9") {
 		t.Errorf("notice %q names an occupant, want no user ID", c)
+	}
+}
+
+// The ownership notice has four lines: create and handover, each with an
+// owner or none. The same SGT is mentioned at create and at handover, so the
+// two pairs that carry this test compare authored content alone: the create
+// with an owner against the handover to one, and the create with no owner
+// against the leave that elects nobody. The other four pairs differ by the
+// mention.
+func TestTempVCOwnershipNoticesArePairwiseDistinct(t *testing.T) {
+	fake := newFakeTempVCManager()
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+
+	// Channel A: a guest creates it with no owner, the SGT takes it, then the
+	// SGT leaves it to the guest alone. The SGT's move into the hub spawns
+	// channel B with the SGT as owner.
+	spawnInto(tv, fake, "guest-1", "chan-a", member("Guest"))
+	tv.HandleVoiceStateUpdate(voiceEvent("sgt-1", "chan-a", member("Sgt", testRankSGT)))
+	spawnInto(tv, fake, "sgt-1", "chan-b", member("Sgt", testRankSGT))
+
+	a, b := noticesIn(t, fake, "chan-a"), noticesIn(t, fake, "chan-b")
+	if len(a) != 3 || len(b) != 1 {
+		t.Fatalf("notices in chan-a = %d, chan-b = %d, want 3 and 1", len(a), len(b))
+	}
+	lines := []string{a[0].data.Content, a[1].data.Content, a[2].data.Content, b[0].data.Content}
+	for i := range lines {
+		for j := i + 1; j < len(lines); j++ {
+			if lines[i] == lines[j] {
+				t.Errorf("notices %d and %d read the same, %q, want four distinct lines", i, j, lines[i])
+			}
+		}
 	}
 }
 
@@ -1742,6 +1782,7 @@ func TestTempVCRestartSweepRestoresOwnerOrElects(t *testing.T) {
 		{ChannelID: "chan-p", HubID: hubID, Number: 1, OwnerUserID: "pvt-p"},
 		{ChannelID: "chan-q", HubID: hubID, Number: 2, OwnerUserID: "gone-q"},
 		{ChannelID: "chan-r", HubID: hubID, Number: 3},
+		{ChannelID: "chan-s", HubID: hubID, Number: 4, OwnerUserID: "gone-s"},
 	} {
 		if err := st.UpsertSpawnedChannel(ctx, row); err != nil {
 			t.Fatalf("UpsertSpawnedChannel: %v", err)
@@ -1755,12 +1796,14 @@ func TestTempVCRestartSweepRestoresOwnerOrElects(t *testing.T) {
 			voiceChannel("chan-p", testTempVCCategory, "Voice - 1"),
 			voiceChannel("chan-q", testTempVCCategory, "Voice - 2"),
 			voiceChannel("chan-r", testTempVCCategory, "Voice - 3"),
+			voiceChannel("chan-s", testTempVCCategory, "Voice - 4"),
 		},
 		&discordgo.VoiceState{UserID: "pvt-p", ChannelID: "chan-p"},
 		&discordgo.VoiceState{UserID: "sgt-p", ChannelID: "chan-p"},
 		&discordgo.VoiceState{UserID: "guest-q", ChannelID: "chan-q"},
 		&discordgo.VoiceState{UserID: "sgt-q", ChannelID: "chan-q"},
 		&discordgo.VoiceState{UserID: "cpt-r", ChannelID: "chan-r"},
+		&discordgo.VoiceState{UserID: "guest-s", ChannelID: "chan-s"},
 	)
 	g.Members = []*discordgo.Member{
 		guildMember("pvt-p", testRankPVT),
@@ -1768,6 +1811,7 @@ func TestTempVCRestartSweepRestoresOwnerOrElects(t *testing.T) {
 		guildMember("guest-q"),
 		guildMember("sgt-q", testRankSGT),
 		guildMember("cpt-r", testRankCPT),
+		guildMember("guest-s"),
 	}
 	tv.handleGuildCreate(g)
 
@@ -1793,6 +1837,27 @@ func TestTempVCRestartSweepRestoresOwnerOrElects(t *testing.T) {
 	}
 	if notices := noticesIn(t, fake, "chan-r"); len(notices) != 1 || !strings.Contains(notices[0].data.Content, "cpt-r") {
 		t.Errorf("notices in chan-r = %+v, want one carrying cpt-r", notices)
+	}
+
+	// S: the row's owner is absent and the guest is no candidate, so the
+	// channel has no owner now, and the notice says so without naming anyone.
+	if owner, tracked := tv.Owner("chan-s"); owner != "" || !tracked {
+		t.Errorf("Owner(chan-s) = %q, %v, want no owner, tracked", owner, tracked)
+	}
+	notices := noticesIn(t, fake, "chan-s")
+	if len(notices) != 1 {
+		t.Fatalf("notices in chan-s = %d, want one saying there is no owner", len(notices))
+	}
+	if c := notices[0].data.Content; strings.Contains(c, "gone-s") || strings.Contains(c, "guest-s") {
+		t.Errorf("notice %q names a user, want no user ID", c)
+	}
+
+	// A reconnect replays GUILD_CREATE with the same payload. Every owner is
+	// now restored from the row it wrote, so the sweep posts nothing new.
+	before := len(fake.recordedMessages())
+	tv.handleGuildCreate(g)
+	if after := len(fake.recordedMessages()); after != before {
+		t.Errorf("messages after a repeated GUILD_CREATE = %d, want %d: a restored owner is no handover", after, before)
 	}
 }
 

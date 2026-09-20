@@ -857,24 +857,42 @@ func lowerUserID(a, b string) bool {
 	return a < b
 }
 
+// noticeEvent is the event an ownership notice reports: the channel's
+// create, or a handover. Each has its own line for an owner and for none,
+// and its own capture message for a failed row write.
+type noticeEvent int
+
+const (
+	noticeCreate noticeEvent = iota
+	noticeHandover
+)
+
+// captureMsg is the Sentry message for a row write that failed at this event.
+func (e noticeEvent) captureMsg() string {
+	if e == noticeCreate {
+		return "Temp VC row write failed"
+	}
+	return "Temp VC handover row write failed"
+}
+
 // recordOwnership writes a spawned channel's row and posts the ownership
 // notice in its chat, off-lock, at create and at every handover. The upsert
 // at a handover also heals a channel whose create write failed. A failed
-// write captures under captureMsg and the channel stays tracked with its
-// live owner; docs/temp-vc-decisions.md accepts that a restart may then not
-// find it.
-func (t *TempVC) recordOwnership(row store.SpawnedChannel, captureMsg string) {
+// write captures under the event's message and the channel stays tracked
+// with its live owner; docs/temp-vc-decisions.md accepts that a restart may
+// then not find it.
+func (t *TempVC) recordOwnership(row store.SpawnedChannel, event noticeEvent) {
 	ctx, cancel := t.storeContext()
 	defer cancel()
 	if err := t.st.UpsertSpawnedChannel(ctx, row); err != nil {
-		captureError(captureMsg, err, "channel_id", row.ChannelID, "hub_id", row.HubID)
+		captureError(event.captureMsg(), err, "channel_id", row.ChannelID, "hub_id", row.HubID)
 	}
-	t.postOwnershipNotice(row.ChannelID, row.OwnerUserID)
+	t.postOwnershipNotice(row.ChannelID, event, row.OwnerUserID)
 }
 
 // applyHandover records an ownership change and logs it.
 func (t *TempVC) applyHandover(row store.SpawnedChannel) {
-	t.recordOwnership(row, "Temp VC handover row write failed")
+	t.recordOwnership(row, noticeHandover)
 	utils.Info("Temp VC handover", "channel_id", row.ChannelID, "hub_id", row.HubID, "owner_id", row.OwnerUserID)
 }
 
@@ -1078,7 +1096,7 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 
 	t.recordOwnership(
 		store.SpawnedChannel{ChannelID: channel.ID, HubID: hub.ID, Number: index, OwnerUserID: owner},
-		"Temp VC row write failed")
+		noticeCreate)
 
 	utils.Info("Temp VC created",
 		"channel_id", channel.ID, "name", name, "number", index,
@@ -1086,22 +1104,36 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 }
 
 // postOwnershipNotice posts the ownership notice in a spawned channel's text
-// chat: one message naming the owner by mention, or saying nobody owns it.
-// The allowed mentions parse nothing, so the mention renders and pings
-// nobody. The voice channel status line is not used. A failed send is a WARN
-// line: the ownership change itself has already happened.
-func (t *TempVC) postOwnershipNotice(channelID, owner string) {
-	content := "Nobody owns this channel."
-	if owner != "" {
-		content = fmt.Sprintf("<@%s> owns this channel.", owner)
-	}
+// chat, one of the four lines ownershipNoticeLine picks. The owner is named
+// by mention, and the allowed mentions parse nothing, so the mention renders
+// and pings nobody. The voice channel status line is not used. A failed send
+// is a WARN line: the ownership change itself has already happened.
+func (t *TempVC) postOwnershipNotice(channelID string, event noticeEvent, owner string) {
 	_, err := t.mgr.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
-		Content:         content,
+		Content:         ownershipNoticeLine(event, owner),
 		AllowedMentions: &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}},
 	})
 	if err != nil {
 		utils.Warn("Temp VC ownership notice not sent",
 			"channel_id", channelID, "owner_id", owner, "error", err)
+	}
+}
+
+// ownershipNoticeLine picks the ownership notice's line by the event and by
+// whether there is an owner. The copy is #264's, with the handover line
+// amended by #316 to name the rename command, so a member who takes an
+// ownerless channel and never created one still learns it. The command is
+// plain text, not a command mention.
+func ownershipNoticeLine(event noticeEvent, owner string) string {
+	switch {
+	case event == noticeCreate && owner != "":
+		return fmt.Sprintf("<@%s> owns this channel and can rename it with /%s.", owner, voiceRenameCommandName)
+	case event == noticeCreate:
+		return "This channel has no owner. The first Cav member to join it becomes the owner."
+	case owner != "":
+		return fmt.Sprintf("<@%s> now owns this channel and can rename it with /%s.", owner, voiceRenameCommandName)
+	default:
+		return "This channel has no owner now."
 	}
 }
 
