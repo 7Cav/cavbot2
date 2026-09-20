@@ -8,6 +8,12 @@ belong here, not inline in code comments.
 - **7Cav / 7th Cavalry Gaming Regiment** — the gaming community this bot
   serves. Project lives at `github.com/7Cav/cavbot2`. Member-facing reference
   for org structure and terminology is the [7Cav wiki](https://wiki.7cav.us/).
+- **Cav member**: A Discord member who holds a rank role, one of the 29 roles
+  on the rank ladder. The two descriptions name one set: every Cav member
+  holds a rank role, and every rank-role holder is a Cav member. Member-facing
+  copy says "Cav member". The handover rule and the code say "rank role", the
+  test the bot applies.
+  _Avoid_: rank holder (in copy), trooper (in copy), verified member, Cav.
 - **Departments (AFSM enum)** — the fixed set of departments `/afsm` checks
   for award eligibility: `S1` (Personnel), `S2` (Intelligence), `S3`
   (Operations), `S5` (Public Affairs), `S6` (Information Systems), `S7`
