@@ -414,42 +414,47 @@ func (s *hubService) read(ctx context.Context) (snapshot, error) {
 }
 
 // guildInfo is what one read of the guild gives a page load or a save: the
-// roles the two moderator pickers offer and a save accepts, their names for
-// the change log, and the bitrate ceiling the guild's boost tier allows.
+// eligible roles the two moderator pickers offer and a save may add, the
+// name of every role for the change log, and the bitrate ceiling the
+// guild's boost tier allows.
 type guildInfo struct {
-	roles []*discordgo.Role
+	// eligible are the eligible roles of CONTEXT.md, live, not managed and
+	// not @everyone, highest position first.
+	eligible []*discordgo.Role
 	// names maps each role's ID to its name, for a change log entry that
-	// stores IDs.
+	// stores IDs. Every role the guild returned is here, managed and
+	// @everyone included, so an older entry that names one still reads.
 	names      map[string]string
 	bitrateMax int
 }
 
 // readGuild reads the guild through the manager seam, once per page load or
-// save, so the roles offered and the bitrate bound are the guild's now. The
-// @everyone role, whose ID is the guild's, is left out; every member holds
-// it.
+// save, so the roles offered and the bitrate bound are the guild's now. A
+// managed role is one Discord made for an integration, a bot's own role or
+// the booster role, and no picker offers it. The @everyone role, whose ID
+// is the guild's, is left out too; every member holds it.
 func (s *hubService) readGuild() (guildInfo, error) {
 	g, err := s.deps.Manager.Guild(s.deps.GuildID)
 	if err != nil {
 		return guildInfo{}, fmt.Errorf("guild read: %w", err)
 	}
-	info := guildInfo{roles: make([]*discordgo.Role, 0, len(g.Roles)), names: make(map[string]string, len(g.Roles)),
+	info := guildInfo{eligible: make([]*discordgo.Role, 0, len(g.Roles)), names: make(map[string]string, len(g.Roles)),
 		bitrateMax: bitrateCeiling(g.PremiumTier)}
 	for _, r := range g.Roles {
-		if r.ID != s.deps.GuildID {
-			info.roles = append(info.roles, r)
-			info.names[r.ID] = r.Name
+		info.names[r.ID] = r.Name
+		if !r.Managed && r.ID != s.deps.GuildID {
+			info.eligible = append(info.eligible, r)
 		}
 	}
-	sort.Slice(info.roles, func(i, j int) bool { return info.roles[i].Position > info.roles[j].Position })
+	sort.Slice(info.eligible, func(i, j int) bool { return info.eligible[i].Position > info.eligible[j].Position })
 	return info, nil
 }
 
 // rolePicker lists the guild's roles for a moderator picker, with those in
 // checked ticked.
 func rolePicker(guild guildInfo, checked []string) []guildRole {
-	out := make([]guildRole, 0, len(guild.roles))
-	for _, r := range guild.roles {
+	out := make([]guildRole, 0, len(guild.eligible))
+	for _, r := range guild.eligible {
 		out = append(out, guildRole{ID: r.ID, Name: r.Name, Checked: slices.Contains(checked, r.ID)})
 	}
 	return out

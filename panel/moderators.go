@@ -76,8 +76,8 @@ func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by a
 // once. A refusal is a *fieldError on the roles field. The hub form's own
 // picker and the guild-wide section validate through here alike.
 func validRoleSet(posted []string, guild guildInfo) ([]string, error) {
-	known := make(map[string]struct{}, len(guild.roles))
-	for _, r := range guild.roles {
+	known := make(map[string]struct{}, len(guild.eligible))
+	for _, r := range guild.eligible {
 		known[r.ID] = struct{}{}
 	}
 	roles := make([]string, 0, len(posted))

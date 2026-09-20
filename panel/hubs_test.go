@@ -60,10 +60,15 @@ type fakeCreate struct {
 	Reason string
 }
 
-// testGuildRoles are the guild's roles the moderator picker offers.
+// testGuildRoles are the guild's roles as Discord returns them: the two
+// eligible roles the moderator pickers offer, the managed role Discord made
+// for a bot, and @everyone, whose ID is the guild's. A deleted role is any
+// ID this list never had; the tests use role-gone.
 var testGuildRoles = []*discordgo.Role{
 	{ID: "role-mp", Name: "Military Police"},
 	{ID: "role-hq", Name: "Regimental HQ"},
+	{ID: "role-bot", Name: "CavBot", Managed: true},
+	{ID: testGuildID, Name: "@everyone"},
 }
 
 // newFakeDiscord returns a guild with one category holding a voice channel
