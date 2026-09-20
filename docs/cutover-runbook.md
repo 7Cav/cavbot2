@@ -207,7 +207,10 @@ the MEE6 dashboard and register it in the panel with the same values:
   `hub_channel`.
 - Moderator roles: the roles MEE6 lists as moderators for that hub, if any.
   Roles common to every hub go in the guild-wide section once, at the top of
-  the page.
+  the page. The pickers offer eligible roles only, so a managed role MEE6
+  lists, a bot's own role or the booster role, cannot be picked; a stored
+  role that later loses eligibility shows as unavailable until a person
+  unticks it (ADR 0012).
 - User limit and bitrate as MEE6 has them.
 - **Enabled: off.** A disabled hub keeps its settings and ignores joins, so
   nothing spawns while MEE6 still runs.
