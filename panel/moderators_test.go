@@ -126,41 +126,28 @@ func moderatorsSection(t *testing.T, doc *html.Node) *html.Node {
 // under n, in document order.
 func checkedBoxes(n *html.Node, name string) []string {
 	var out []string
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "input" {
-			typ, _ := attrValue(n, "type")
-			got, _ := attrValue(n, "name")
-			if typ == "checkbox" && got == name {
-				if _, checked := attrValue(n, "checked"); checked {
-					value, _ := attrValue(n, "value")
-					out = append(out, value)
-				}
-			}
+	eachElement(n, func(n *html.Node) {
+		typ, _ := attrValue(n, "type")
+		got, _ := attrValue(n, "name")
+		if n.Data != "input" || typ != "checkbox" || got != name {
+			return
 		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
+		if _, checked := attrValue(n, "checked"); checked {
+			value, _ := attrValue(n, "value")
+			out = append(out, value)
 		}
-	}
-	walk(n)
+	})
 	return out
 }
 
 // dataRoles returns the data-role values under n, in document order.
 func dataRoles(n *html.Node) []string {
 	var out []string
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode {
-			if id, ok := attrValue(n, "data-role"); ok {
-				out = append(out, id)
-			}
+	eachElement(n, func(n *html.Node) {
+		if id, ok := attrValue(n, "data-role"); ok {
+			out = append(out, id)
 		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
-		}
-	}
-	walk(n)
+	})
 	return out
 }
 

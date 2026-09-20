@@ -806,11 +806,7 @@ func TestRemoveAppendsAnEntryWithNullAfter(t *testing.T) {
 // under data-hub=id, distinct from the list row that carries the same ID.
 func editSection(t *testing.T, res *http.Response, hubID int64) *html.Node {
 	t.Helper()
-	sec := findElement(parseHTML(t, res), "section", "data-hub", strconv.FormatInt(hubID, 10))
-	if sec == nil {
-		t.Fatalf("page has no section under data-hub=%d", hubID)
-	}
-	return sec
+	return hubSection(t, parseHTML(t, res), hubID)
 }
 
 // entryIDs returns the data-entry values under n, in document order.

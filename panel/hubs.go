@@ -245,8 +245,8 @@ type pageRequest struct {
 }
 
 // editPage is one hub's edit form: the category the form shows read-only,
-// the guild's roles the moderator picker offers, and the form's fields as
-// stored or as posted back after a refusal.
+// the roles the moderator picker offers, and the form's fields as stored or
+// as posted back after a refusal.
 type editPage struct {
 	ID int64
 	// Broken is the broken hub state: the section shows the remove form and
@@ -279,17 +279,16 @@ type guildRole struct {
 	// Unavailable is why a stored role is no longer eligible, and empty on
 	// an eligible role. It is the data-unavailable attribute on the
 	// control, a test contract; the label copy is not.
-	Unavailable unavailable
+	Unavailable unavailableReason
 }
 
-// unavailable is the reason a stored moderator role is no longer eligible.
-type unavailable string
+// unavailableReason is why a stored moderator role is no longer eligible:
+// deleted, when no live role has the ID, or managed.
+type unavailableReason string
 
 const (
-	// unavailableDeleted: no live role has the ID.
-	unavailableDeleted unavailable = "deleted"
-	// unavailableManaged: the live role is managed by an integration.
-	unavailableManaged unavailable = "managed"
+	unavailableDeleted unavailableReason = "deleted"
+	unavailableManaged unavailableReason = "managed"
 )
 
 // editInputOf is the edit form as the stored hub and its live channel name
@@ -448,17 +447,11 @@ type guildInfo struct {
 	bitrateMax int
 }
 
-// isEligible reports whether a role may be offered and added: live, not
-// managed and not @everyone.
-func (g guildInfo) isEligible(id string) bool {
-	r, ok := g.live[id]
-	return ok && !r.Managed
-}
-
-// unavailability is why a stored role is no longer eligible, or empty when
-// it is eligible. A stored @everyone reads as deleted: the guild read drops
-// it, and nothing can store it today.
-func (g guildInfo) unavailability(id string) unavailable {
+// unavailability is why a role with the ID is not eligible, or empty when
+// it is. The rule lives here alone: a role is eligible when it is live,
+// not managed and not @everyone. A stored @everyone reads as deleted, since
+// live leaves it out, and nothing can store it today.
+func (g guildInfo) unavailability(id string) unavailableReason {
 	r, ok := g.live[id]
 	switch {
 	case !ok:
@@ -469,11 +462,15 @@ func (g guildInfo) unavailability(id string) unavailable {
 	return ""
 }
 
+// isEligible reports whether a save may add the role with the ID.
+func (g guildInfo) isEligible(id string) bool {
+	return g.unavailability(id) == ""
+}
+
 // readGuild reads the guild through the manager seam, once per page load or
-// save, so the roles offered and the bitrate bound are the guild's now. A
-// managed role is one Discord made for an integration, a bot's own role or
-// the booster role, and no picker offers it. The @everyone role, whose ID
-// is the guild's, is left out too; every member holds it.
+// save, so the eligible roles and the bitrate bound are the guild's now.
+// The @everyone role, whose ID is the guild's, is not live here: every
+// member holds it.
 func (s *hubService) readGuild() (guildInfo, error) {
 	g, err := s.deps.Manager.Guild(s.deps.GuildID)
 	if err != nil {
@@ -483,11 +480,12 @@ func (s *hubService) readGuild() (guildInfo, error) {
 		names: make(map[string]string, len(g.Roles)), bitrateMax: bitrateCeiling(g.PremiumTier)}
 	for _, r := range g.Roles {
 		info.names[r.ID] = r.Name
-		if r.ID == s.deps.GuildID {
-			continue
+		if r.ID != s.deps.GuildID {
+			info.live[r.ID] = r
 		}
-		info.live[r.ID] = r
-		if !r.Managed {
+	}
+	for _, r := range g.Roles {
+		if info.isEligible(r.ID) {
 			info.eligible = append(info.eligible, r)
 		}
 	}
@@ -495,12 +493,12 @@ func (s *hubService) readGuild() (guildInfo, error) {
 	return info, nil
 }
 
-// rolePicker builds a moderator picker: the eligible roles, then one
-// unavailable moderator role per ID in stored that is no longer eligible,
-// by ID, so the record's whole set is on the form and a save can keep or
-// remove each. Those in checked are ticked. On a page load stored and
-// checked are one set; on a refusal, checked is the form as posted, so an
-// unticked unavailable role stays unticked and a posted ID the record
+// rolePicker builds a moderator picker. The eligible roles come first. Then
+// come the unavailable moderator roles: every ID in stored that is not
+// eligible, sorted by ID. The form shows the record's whole set, and a
+// save keeps or removes each. checked decides the ticks. A page load passes
+// the stored set as checked. A refusal passes the form as posted, so an
+// unticked unavailable role stays unticked, and a posted ID the record
 // never stored renders no control.
 func rolePicker(guild guildInfo, stored, checked []string) []guildRole {
 	out := make([]guildRole, 0, len(guild.eligible))
@@ -524,8 +522,8 @@ func rolePicker(guild guildInfo, stored, checked []string) []guildRole {
 }
 
 // page reads everything the hub page renders from, once: the hub rows and
-// the guild's channel list for the list and the picker, the guild's roles
-// for the guild-wide section and the edit form, the guild-wide set and its
+// the guild's channel list for the list and the picker, the guild read for
+// the guild-wide section and the edit form, the guild-wide set and its
 // last entries, and, when an edit form shows, the hub's last entries.
 // store.ErrNotFound means no hub has the requested ID.
 func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error) {
@@ -612,8 +610,8 @@ func categoryPicker(sn snapshot) []pickerChannel {
 
 // editForm builds one hub's edit form from the snapshot and the guild read:
 // the stored values, or the form as posted when a save was refused, the
-// guild's roles for the hub's own picker, the guild-wide set shown
-// read-only, and the hub's last entries.
+// hub's own picker, the guild-wide set shown read-only, and the hub's last
+// entries.
 func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo, guildWide []string, hubID int64, posted *editInput) (*editPage, error) {
 	hub, ok := sn.hubByID(hubID)
 	if !ok {
@@ -873,7 +871,7 @@ func applyEdit(hub *store.Hub, in editInput, guild guildInfo) error {
 	}
 	// hub still carries the stored set here: what an unavailable role may
 	// be kept from.
-	roles, err := validRoleSet(in.ModeratorRoleIDs, guild, hub.ModeratorRoleIDs)
+	roles, err := acceptedRoles(in.ModeratorRoleIDs, guild, hub.ModeratorRoleIDs)
 	if err != nil {
 		return err
 	}

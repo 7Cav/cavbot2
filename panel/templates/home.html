@@ -59,7 +59,7 @@
 
 {{define "role-control"}}<label class="check"><input type="checkbox" name="moderator_roles" value="{{.ID}}"{{if .Checked}} checked{{end}}{{if .Unavailable}} data-unavailable="{{.Unavailable}}"{{end}}> {{.Name}}{{template "role-note" .}}</label>{{end}}
 
-{{define "role-note"}}{{if eq .Unavailable "deleted"}} <span class="off">(not in the server)</span>{{else if eq .Unavailable "managed"}} <span class="off">(managed by an integration)</span>{{end}}{{end}}
+{{define "role-note"}}{{if eq .Unavailable "deleted"}} <span class="off">not in the server</span>{{else if eq .Unavailable "managed"}} <span class="off">managed by an integration</span>{{end}}{{end}}
 
 {{define "changes"}}
     <h2 class="block-header">Change log</h2>

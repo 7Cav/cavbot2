@@ -32,25 +32,19 @@ type roleControl struct {
 // order.
 func roleControls(n *html.Node) []roleControl {
 	var out []roleControl
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "input" {
-			typ, _ := attrValue(n, "type")
-			name, _ := attrValue(n, "name")
-			if typ == "checkbox" && name == "moderator_roles" {
-				c := roleControl{}
-				c.ID, _ = attrValue(n, "value")
-				_, c.Checked = attrValue(n, "checked")
-				_, c.Disabled = attrValue(n, "disabled")
-				c.Unavailable, _ = attrValue(n, "data-unavailable")
-				out = append(out, c)
-			}
+	eachElement(n, func(n *html.Node) {
+		typ, _ := attrValue(n, "type")
+		name, _ := attrValue(n, "name")
+		if n.Data != "input" || typ != "checkbox" || name != "moderator_roles" {
+			return
 		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
-		}
-	}
-	walk(n)
+		c := roleControl{}
+		c.ID, _ = attrValue(n, "value")
+		_, c.Checked = attrValue(n, "checked")
+		_, c.Disabled = attrValue(n, "disabled")
+		c.Unavailable, _ = attrValue(n, "data-unavailable")
+		out = append(out, c)
+	})
 	return out
 }
 
@@ -390,18 +384,11 @@ func TestARoleStoredOnAnotherRecordIsRefusedForThisOne(t *testing.T) {
 // under n, keyed by role ID.
 func unavailableTags(n *html.Node) map[string]string {
 	out := map[string]string{}
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode {
-			if id, ok := attrValue(n, "data-role"); ok {
-				out[id], _ = attrValue(n, "data-unavailable")
-			}
+	eachElement(n, func(n *html.Node) {
+		if id, ok := attrValue(n, "data-role"); ok {
+			out[id], _ = attrValue(n, "data-unavailable")
 		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
-		}
-	}
-	walk(n)
+	})
 	return out
 }
 
