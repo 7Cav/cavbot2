@@ -112,13 +112,15 @@ func renameRefusal(err error, discordID string) string {
 			"command", voiceRenameCommandName, "discord_id", discordID)
 		return "❌ This channel has no owner, so it cannot be renamed."
 	case errors.As(err, &window):
-		// Discord renders <t:UNIX:R> as "in 4 minutes".
+		// Discord renders <t:UNIX:R> as "in 4 minutes". The runtime returns
+		// this for its own refusal and for a 429 that carries retry_after.
 		return fmt.Sprintf("❌ This channel was renamed twice in the last ten minutes. Try again <t:%d:R>.", window.OpensAt.Unix())
 	case errors.Is(err, errChannelGone):
 		return "❌ This channel no longer exists."
 	case classifySpawnedChannelError(err).rateLimited:
-		// The runtime's own count did not see a rename Discord did (one made
-		// in Discord's UI, or before a restart), so Discord refused.
+		// A 429 with no retry_after. The runtime's own count did not see a
+		// rename Discord did (one made in Discord's UI, or before a restart),
+		// so Discord refused, and gave no wait to render.
 		return "❌ Discord is rate limiting renames of this channel. Try again in a few minutes."
 	default:
 		// The warden classifier's phrase, never the raw body. Unknown Channel
