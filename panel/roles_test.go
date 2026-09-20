@@ -224,3 +224,114 @@ func TestStoredRoleNoLongerEligibleRendersAsUnavailable(t *testing.T) {
 		})
 	}
 }
+
+// postRoles posts a form's moderator set: the hub on hub-1's edit form with
+// every other field as stored, or the guild-wide section's form.
+func (w *testWorld) postRoles(t *testing.T, form string, roleIDs ...string) *http.Response {
+	t.Helper()
+	if form == onHubForm {
+		f := updateForm()
+		f["moderator_roles"] = roleIDs
+		return w.b.postForm(hubPath(t, w.st, "hub-1"), f)
+	}
+	return w.b.postForm("/moderators", moderatorsForm(roleIDs...))
+}
+
+// storedRolesOn reads a form's stored set back through the store.
+func storedRolesOn(t *testing.T, w *testWorld, form string) []string {
+	t.Helper()
+	if form == onHubForm {
+		return storedHubs(t, w.st)[0].ModeratorRoleIDs
+	}
+	return storedGuildRoles(t, w.st)
+}
+
+// newestRoleChange decodes the moderator_roles change of a form's newest
+// change log entry: the hub's own log, or the log under no hub.
+func newestRoleChange(t *testing.T, w *testWorld, form string) fieldChange {
+	t.Helper()
+	var hubID int64
+	if form == onHubForm {
+		hubID = storedHubID(t, w.st, "hub-1")
+	}
+	entries := storedChangeLog(t, w.st, hubID)
+	if len(entries) == 0 {
+		t.Fatalf("the %s has no change log entry", form)
+	}
+	c, ok := decodeDiff(t, entries[0])["moderator_roles"]
+	if !ok {
+		t.Fatalf("the newest %s entry has no moderator_roles change", form)
+	}
+	return c
+}
+
+func TestUnavailableRoleIsKeptOrRemovedOnlyByASave(t *testing.T) {
+	// A member can hold a managed role, the booster role for one, and never
+	// a deleted one, so the runtime is asked through a rename in the managed
+	// rows alone. The untick rows pass since #315's fix to the pickers; the
+	// keep rows are what the validator's stored exception turns green.
+	cases := []struct {
+		form   string
+		roleID string
+		keep   bool
+	}{
+		{onHubForm, "role-gone", true},
+		{onHubForm, "role-bot", true},
+		{onGuildWide, "role-gone", true},
+		{onGuildWide, "role-bot", true},
+		{onHubForm, "role-gone", false},
+		{onHubForm, "role-bot", false},
+		{onGuildWide, "role-bot", false},
+	}
+	for _, tc := range cases {
+		action := "unticked"
+		if tc.keep {
+			action = "kept"
+		}
+		t.Run(tc.roleID+" "+action+" on the "+tc.form, func(t *testing.T) {
+			w := worldStoring(t, tc.form, tc.roleID)
+			signIn(t, w.forum, w.b)
+			// A sergeant spawns a channel from the hub and owns it; a holder
+			// of the stored role sits in it too.
+			w.joinAs("user-owner", "hub-1", testRankSGT)
+			w.joinAs("user-owner", "spawn-1", testRankSGT)
+			w.joinAs("user-mod", "spawn-1", tc.roleID)
+			managed := tc.roleID == "role-bot"
+			if managed && !tc.keep {
+				if _, err := w.runtime.Rename("user-mod", []string{tc.roleID}, "Alpha"); err != nil {
+					t.Fatalf("a rename by a holder of the stored role was refused before the save: %v", err)
+				}
+			}
+			posted := []string{"role-mp"}
+			if tc.keep {
+				posted = append(posted, tc.roleID)
+			}
+
+			res := w.postRoles(t, tc.form, posted...)
+
+			if res.StatusCode < 300 || res.StatusCode > 399 {
+				t.Fatalf("status = %d, want a redirect", res.StatusCode)
+			}
+			if got := storedRolesOn(t, w, tc.form); !sameSet(got, posted) {
+				t.Errorf("stored roles = %v, want %v", got, posted)
+			}
+			_, renameErr := w.runtime.Rename("user-mod", []string{tc.roleID}, "Bravo")
+			if tc.keep {
+				if managed && renameErr != nil {
+					t.Errorf("a rename by a holder of the kept role was refused after the save: %v", renameErr)
+				}
+				return
+			}
+			c := newestRoleChange(t, w, tc.form)
+			if before := roleSet(t, c.Before); !slices.Contains(before, tc.roleID) {
+				t.Errorf("newest entry before = %v, want %s among them", before, tc.roleID)
+			}
+			if after := roleSet(t, c.After); slices.Contains(after, tc.roleID) {
+				t.Errorf("newest entry after = %v, want %s gone", after, tc.roleID)
+			}
+			if managed && renameErr == nil {
+				t.Error("a rename by a holder of the removed role passed after the save, want a refusal")
+			}
+		})
+	}
+}

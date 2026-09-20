@@ -871,7 +871,9 @@ func applyEdit(hub *store.Hub, in editInput, guild guildInfo) error {
 	default:
 		return &fieldError{fieldPermissionSource, "Choose where spawned channels take their permissions from."}
 	}
-	roles, err := validRoleSet(in.ModeratorRoleIDs, guild)
+	// hub still carries the stored set here: what an unavailable role may
+	// be kept from.
+	roles, err := validRoleSet(in.ModeratorRoleIDs, guild, hub.ModeratorRoleIDs)
 	if err != nil {
 		return err
 	}

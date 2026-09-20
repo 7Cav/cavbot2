@@ -52,13 +52,15 @@ func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by a
 	if err != nil {
 		return nil, err
 	}
-	roles, err := validRoleSet(in.RoleIDs, guild)
-	if err != nil {
-		return nil, err
-	}
+	// The stored set is read before validation: it is what an unavailable
+	// role may be kept from.
 	before, err := s.deps.Store.GetGuildModeratorRoles(ctx, s.deps.GuildID)
 	if err != nil {
 		return nil, fmt.Errorf("read guild moderator roles: %w", err)
+	}
+	roles, err := validRoleSet(in.RoleIDs, guild, before)
+	if err != nil {
+		return nil, err
 	}
 	if err := s.deps.Store.SetGuildModeratorRoles(ctx, s.deps.GuildID, roles); err != nil {
 		return nil, fmt.Errorf("write guild moderator roles: %w", err)
@@ -71,18 +73,18 @@ func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by a
 	return roles, nil
 }
 
-// validRoleSet checks each posted role ID against the guild's roles and
-// returns the set with duplicates dropped: a role posted twice is stored
-// once. A refusal is a *fieldError on the roles field. The hub form's own
-// picker and the guild-wide section validate through here alike.
-func validRoleSet(posted []string, guild guildInfo) ([]string, error) {
-	known := make(map[string]struct{}, len(guild.eligible))
-	for _, r := range guild.eligible {
-		known[r.ID] = struct{}{}
-	}
+// validRoleSet checks each posted role ID and returns the set with
+// duplicates dropped: a role posted twice is stored once. An ID is accepted
+// when the role is eligible now, or when stored, the set the record being
+// saved holds as read in this request, already has it: an unavailable
+// moderator role is kept by a save and never added by one (ADR 0012). An ID
+// another record stores is refused for this one. A refusal is a *fieldError
+// on the roles field. The hub form's own picker and the guild-wide section
+// validate through here alike.
+func validRoleSet(posted []string, guild guildInfo, stored []string) ([]string, error) {
 	roles := make([]string, 0, len(posted))
 	for _, id := range posted {
-		if _, ok := known[id]; !ok {
+		if !guild.isEligible(id) && !slices.Contains(stored, id) {
 			return nil, &fieldError{fieldModeratorRoles, "One of those roles cannot be a moderator role. Choose again."}
 		}
 		if !slices.Contains(roles, id) {
