@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,59 +56,10 @@ type hubRow struct {
 	Failure *commands.SpawnFailure
 }
 
-// pickerChannel is one voice channel the register form offers.
+// pickerChannel is one category the create form's category picker offers.
 type pickerChannel struct {
-	ID           string
-	Name         string
-	CategoryName string
-}
-
-// pickerView is one tag picker as the template renders it (spec #343): the
-// selected items as tags, each carrying the control that posts its ID, and
-// the candidates its search list offers. Script adds and removes tags; a
-// page without script posts the tags as rendered (ADR 0013).
-type pickerView struct {
-	// Field is the form field name every tag posts under, and the
-	// data-field on the picker, a test contract.
-	Field string
-	// Single makes the picker hold one tag at most: choosing a candidate
-	// replaces it.
-	Single bool
-	// Dot is whether the items show a colour dot: a role does, a channel
-	// does not.
-	Dot bool
-	// Add is the add control's text.
-	Add string
-	// Search is the search input's label.
-	Search     string
-	Tags       []pickerItem
-	Candidates []pickerItem
-}
-
-// Blank is an empty item of the picker, rendered inside its <template>.
-// The script clones and fills it to make the tag for a chosen candidate.
-func (v pickerView) Blank() pickerItem {
-	return pickerItem{Field: v.Field, Dot: v.Dot}
-}
-
-// pickerItem is one item a picker shows, as a tag or as a search row.
-type pickerItem struct {
-	// Field is the picker's, so a tag posts under it.
-	Field string
-	ID    string
-	// Label is the item's text: a role's name, or its ID for a deleted
-	// role, whose name nothing remembers; a channel's name with its
-	// category's.
-	Label string
-	// Dot is the picker's: whether the item shows a colour dot.
-	Dot bool
-	// Colour is a role's Discord colour as a CSS hex, and empty when the
-	// role has none or the item is a channel.
-	Colour string
-	// Unavailable is why a stored moderator role is no longer eligible, and
-	// empty otherwise. It is the data-unavailable attribute on the control
-	// that posts the role's ID, a test contract; the note's copy is not.
-	Unavailable unavailableReason
+	ID   string
+	Name string
 }
 
 // registerInput is the register form as posted. The service trims and
@@ -529,52 +479,6 @@ func (s *hubService) readGuild() (guildInfo, error) {
 	return info, nil
 }
 
-// rolePicker builds a moderator picker. The tags are the selected roles:
-// the eligible ones highest position first, then the unavailable moderator
-// roles by ID, each with its reason. The candidates are the eligible roles
-// not selected, highest position first, so the role search never offers a
-// selected role or an unavailable one (ADR 0012). stored is the record's
-// set, what an unavailable role may be shown from; selected decides the
-// tags. A page load passes the stored set as selected. A refusal passes the
-// form as posted, so a removed unavailable role stays removed, and a posted
-// ID the record never stored renders no tag.
-func rolePicker(guild guildInfo, stored, selected []string) pickerView {
-	view := pickerView{Field: fieldModeratorRoles, Dot: true, Add: "Add a role", Search: "Search roles"}
-	for _, r := range guild.eligible {
-		item := pickerItem{Field: view.Field, ID: r.ID, Label: r.Name, Dot: view.Dot, Colour: roleColour(r.Color)}
-		if slices.Contains(selected, r.ID) {
-			view.Tags = append(view.Tags, item)
-		} else {
-			view.Candidates = append(view.Candidates, item)
-		}
-	}
-	var kept []pickerItem
-	for _, id := range stored {
-		reason := guild.unavailability(id)
-		if reason == "" || !slices.Contains(selected, id) {
-			continue
-		}
-		item := pickerItem{Field: view.Field, ID: id, Label: id, Dot: view.Dot, Unavailable: reason}
-		if r, ok := guild.live[id]; ok {
-			item.Label, item.Colour = r.Name, roleColour(r.Color)
-		}
-		kept = append(kept, item)
-	}
-	sort.Slice(kept, func(i, j int) bool { return kept[i].ID < kept[j].ID })
-	view.Tags = append(view.Tags, kept...)
-	return view
-}
-
-// roleColour is a Discord role colour as a CSS hex. Discord stores the
-// colour as one integer, 0 meaning the role has none, which renders as no
-// colour rather than black.
-func roleColour(c int) string {
-	if c == 0 {
-		return ""
-	}
-	return fmt.Sprintf("#%06x", c)
-}
-
 // page reads everything the hub page renders from, once: the hub rows and
 // the guild's channel list for the list and the picker, the guild read for
 // the guild-wide section and the edit form, the guild-wide set and its
@@ -629,45 +533,6 @@ func (s *hubService) rows(sn snapshot) []hubRow {
 		return rows[i].ID < rows[j].ID
 	})
 	return rows
-}
-
-// picker builds the register picker from the voice channels that are not
-// hubs.
-func picker(sn snapshot) []pickerChannel {
-	var out []pickerChannel
-	for _, ch := range sn.guild.voiceChannels() {
-		if _, taken := sn.hubOn(ch.ID); taken {
-			continue
-		}
-		out = append(out, pickerChannel{ID: ch.ID, Name: ch.Name, CategoryName: sn.guild.categoryName(ch)})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		if a.CategoryName != b.CategoryName {
-			return a.CategoryName < b.CategoryName
-		}
-		return a.Name < b.Name
-	})
-	return out
-}
-
-// channelPicker builds the register picker: every voice channel that is
-// not a hub as a candidate, by category then name, and the chosen channel
-// as the one tag when it is among them. chosenID is the form as posted
-// back after a refusal, and empty on a plain page load.
-func channelPicker(sn snapshot, chosenID string) pickerView {
-	view := pickerView{Field: fieldHubChannel, Single: true, Add: "Choose a voice channel", Search: "Search voice channels"}
-	for _, ch := range picker(sn) {
-		item := pickerItem{Field: view.Field, ID: ch.ID, Label: ch.Name + " (no category)"}
-		if ch.CategoryName != "" {
-			item.Label = ch.Name + " (" + ch.CategoryName + ")"
-		}
-		view.Candidates = append(view.Candidates, item)
-		if ch.ID == chosenID {
-			view.Tags = append(view.Tags, item)
-		}
-	}
-	return view
 }
 
 // categoryPicker builds the create form's category picker from the guild's
@@ -801,6 +666,11 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 		return store.Hub{}, err
 	}
 	in.BaseString = baseString
+	// The register picker cannot make the browser require a choice the way
+	// the select it replaced did, so an empty post gets its own answer.
+	if in.ChannelID == "" {
+		return store.Hub{}, &fieldError{fieldHubChannel, "Choose a voice channel."}
+	}
 	sn, err := s.read(ctx)
 	if err != nil {
 		return store.Hub{}, err

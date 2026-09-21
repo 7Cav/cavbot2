@@ -23,8 +23,9 @@
     var input = root.querySelector('[data-search-input]');
     var list = root.querySelector('[data-list]');
     var empty = root.querySelector('[data-empty]');
+    var none = root.querySelector('[data-none]');
     var blank = root.querySelector('[data-tag-template]');
-    var rows = Array.prototype.slice.call(list.querySelectorAll('[data-option]'));
+    var rows = Array.from(list.querySelectorAll('[data-option]'));
     var prefix = 'picker' + (++pickers) + '-';
     // active is the row the arrow keys point at, an index into the rows
     // shown by the last refresh.
@@ -38,7 +39,7 @@
 
     function selectedIDs() {
       var ids = {};
-      Array.prototype.forEach.call(tags.querySelectorAll('[data-tag]'), function (tag) {
+      tags.querySelectorAll('[data-tag]').forEach(function (tag) {
         ids[tag.getAttribute('data-tag')] = true;
       });
       return ids;
@@ -58,7 +59,10 @@
         row.setAttribute('aria-selected', 'false');
         if (!hide) { shown.push(row); }
       });
-      empty.hidden = shown.length > 0;
+      // Nothing shown is either no match for the typed text, or nothing
+      // left to add.
+      empty.hidden = shown.length > 0 || q === '';
+      none.hidden = shown.length > 0 || q !== '';
       if (active >= shown.length) { active = shown.length - 1; }
       if (active < 0) { active = 0; }
       if (shown.length) {
@@ -100,7 +104,7 @@
         dot.style.background = colour;
       }
       if (single) {
-        Array.prototype.forEach.call(tags.querySelectorAll('[data-tag]'), function (old) { old.remove(); });
+        tags.querySelectorAll('[data-tag]').forEach(function (old) { old.remove(); });
       }
       tags.appendChild(tag);
       if (single) {
@@ -122,19 +126,23 @@
       refresh();
     });
 
+    // move points the arrow keys at the row delta places away, within the
+    // shown rows, and scrolls it into the list's view.
+    function move(delta) {
+      active = Math.min(Math.max(active + delta, 0), shown.length - 1);
+      refresh();
+      if (shown[active]) { shown[active].scrollIntoView({ block: 'nearest' }); }
+    }
+
     input.addEventListener('keydown', function (e) {
       switch (e.key) {
         case 'ArrowDown':
           e.preventDefault();
-          if (active < shown.length - 1) { active++; }
-          refresh();
-          if (shown[active]) { shown[active].scrollIntoView({ block: 'nearest' }); }
+          move(1);
           break;
         case 'ArrowUp':
           e.preventDefault();
-          if (active > 0) { active--; }
-          refresh();
-          if (shown[active]) { shown[active].scrollIntoView({ block: 'nearest' }); }
+          move(-1);
           break;
         case 'Enter':
           // Enter in a form's text input submits the form. Here it chooses.
@@ -170,5 +178,5 @@
     });
   }
 
-  Array.prototype.forEach.call(document.querySelectorAll('[data-picker]'), setUp);
+  document.querySelectorAll('[data-picker]').forEach(setUp);
 })();

@@ -61,14 +61,14 @@
 
 {{define "picker"}}<div class="picker" data-field="{{.Field}}" data-picker{{if .Single}} data-single{{end}}>
   <ul class="tags" data-tags>{{range .Tags}}{{template "picker-tag" .}}{{end}}</ul>
-  <button type="button" class="btn btn--small" data-add aria-expanded="false">{{.Add}}</button>
+  <button type="button" class="btn btn--small" data-add aria-expanded="false">{{.AddLabel}}</button>
   <div class="search" data-search hidden>
-    <input type="search" class="search-input" data-search-input autocomplete="off" placeholder="Type to filter" aria-label="{{.Search}}">
+    <input type="search" class="search-input" data-search-input autocomplete="off" placeholder="Type to filter" aria-label="{{.SearchLabel}}">
     <ul class="search-list" role="listbox" data-list>
-      {{range .Candidates}}<li role="option" data-option="{{.ID}}" data-label="{{.Label}}" data-colour="{{.Colour}}" tabindex="-1">{{template "dot" .}}{{.Label}}</li>
-      {{else}}<li class="off search-none">Nothing to offer.</li>{{end}}
+      {{range .Candidates}}<li role="option" data-option="{{.ID}}" data-label="{{.Label}}" data-colour="{{.Colour}}" tabindex="-1">{{template "dot" .}}{{.Label}}</li>{{end}}
     </ul>
     <div class="off search-none" data-empty hidden>No match.</div>
+    <div class="off search-none" data-none hidden>Nothing left to add.</div>
   </div>
   <template data-tag-template>{{template "picker-tag" .Blank}}</template>
 </div>{{end}}
@@ -79,7 +79,7 @@
 
 {{define "changes"}}
     <h2 class="block-header">Change log</h2>
-    {{range $i, $e := .}}
+    {{range $i, $_ := .}}
     <details class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}"{{if eq $i 0}} open{{end}}>
       <summary class="change-head">
         <span class="change-who" data-field="username">{{.Username}}</span>
@@ -191,7 +191,7 @@
     <div class="block-row">
       <div class="field" data-field="guild_moderator_roles">
         <span class="field-label">Moderator roles for every hub</span>
-        {{range .GuildRoles}}<span class="tag" data-role="{{.ID}}"{{if .Unavailable}} data-unavailable="{{.Unavailable}}"{{end}}>{{template "dot" .}}{{.Label}}{{template "role-note" .}}</span> {{else}}<span class="off">none</span>{{end}}
+        {{range .GuildRoles}}<span class="tag" data-role="{{.ID}}"{{if .Unavailable}} data-unavailable="{{.Unavailable}}"{{end}}>{{.Label}}{{template "role-note" .}}</span> {{else}}<span class="off">none</span>{{end}}
         <span class="field-hint">Set in the section at the top of the page. They apply to this hub too; a hub cannot exclude them.</span>
       </div>
     </div>

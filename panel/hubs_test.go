@@ -69,7 +69,7 @@ type fakeCreate struct {
 // for a bot, and @everyone, whose ID is the guild's. A deleted role is any
 // ID this list never had; the tests use role-gone.
 var testGuildRoles = []*discordgo.Role{
-	{ID: "role-mp", Name: "Military Police"},
+	{ID: "role-mp", Name: "Military Police", Color: 0xebc729},
 	{ID: "role-hq", Name: "Regimental HQ"},
 	{ID: "role-bot", Name: "CavBot", Managed: true},
 	{ID: testGuildID, Name: "@everyone"},
@@ -450,6 +450,7 @@ func TestRegisterRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
 		form  url.Values
 		field string
 	}{
+		{"no channel chosen", registerForm("", "Squad Voice"), "hub_channel"},
 		{"a text channel", registerForm("text-1", "Chat Voice"), "hub_channel"},
 		{"a channel not in the guild", registerForm("vc-elsewhere", "Squad Voice"), "hub_channel"},
 		{"a voice channel with no parent", registerForm("vc-noparent", "Lobby Voice"), "hub_channel"},

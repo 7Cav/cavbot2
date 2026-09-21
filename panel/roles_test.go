@@ -442,3 +442,108 @@ func TestChangeLogNamesAManagedRoleAnOlderEntryStored(t *testing.T) {
 		t.Errorf("entry after = %q, want the managed role named CavBot", got)
 	}
 }
+
+// hasHiddenAncestor reports whether n or an element above it carries the
+// hidden attribute.
+func hasHiddenAncestor(n *html.Node) bool {
+	for ; n != nil; n = n.Parent {
+		if n.Type == html.ElementNode {
+			if _, hidden := attrValue(n, "hidden"); hidden {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestSearchListsAreRenderedAtLoadAndHiddenUntilOpened(t *testing.T) {
+	// ADR 0013: a page that never runs the script shows its tags and not
+	// the list of every candidate.
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	id := storedHubID(t, w.st, "hub-1")
+
+	res := w.b.get("/?hub=" + strconv.FormatInt(id, 10))
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /?hub= status = %d, want 200", res.StatusCode)
+	}
+	doc := parseHTML(t, res)
+	rows := 0
+	for _, sec := range []*html.Node{moderatorsSection(t, doc), hubSection(t, doc, id)} {
+		eachLiveElement(rolePickerOn(t, sec), func(n *html.Node) {
+			if _, ok := attrValue(n, "data-option"); !ok {
+				return
+			}
+			rows++
+			if !hasHiddenAncestor(n) {
+				t.Errorf("search row %s shows on a page load, want it hidden until opened", textOf(n))
+			}
+		})
+	}
+	if rows == 0 {
+		t.Fatal("the pickers render no search rows")
+	}
+}
+
+func TestRoleColourRendersOnTheSearchRowWithoutAnEscapingFailure(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+
+	res := w.b.get("/")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET / status = %d, want 200", res.StatusCode)
+	}
+	doc := parseHTML(t, res)
+	// html/template writes ZgotmplZ where a value fails its filter; a
+	// colour that did would draw no dot and colour no tag.
+	if body := textOf(doc); strings.Contains(body, "ZgotmplZ") {
+		t.Error("the page carries ZgotmplZ, a template value the escaper refused")
+	}
+	row := findElement(rolePickerOn(t, moderatorsSection(t, doc)), "", "data-option", "role-mp")
+	if row == nil {
+		t.Fatal("the guild-wide role search has no row for role-mp")
+	}
+	found := false
+	for _, a := range row.Attr {
+		if strings.Contains(a.Val, "#ebc729") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the row for role-mp carries no #ebc729, the role's colour; its attributes are %v", row.Attr)
+	}
+}
+
+func TestSaveWithoutScriptLeavesTheModeratorRolesAsStored(t *testing.T) {
+	// ADR 0013: with the script never run, the tags post what the page
+	// loaded, so a save of the other fields keeps the stored set, an
+	// unavailable moderator role included.
+	hub := testHub()
+	hub.ModeratorRoleIDs = []string{"role-mp", "role-gone"}
+	w := newTestWorld(t, hub)
+	signIn(t, w.forum, w.b)
+	id := storedHubID(t, w.st, "hub-1")
+	page := w.b.get("/?hub=" + strconv.FormatInt(id, 10))
+	if page.StatusCode != http.StatusOK {
+		t.Fatalf("GET /?hub= status = %d, want 200", page.StatusCode)
+	}
+	form := updateForm()
+	form.Set("user_limit", "5")
+	form["moderator_roles"] = postedControls(rolePickerOn(t, hubSection(t, parseHTML(t, page), id)), fieldModeratorRoles)
+
+	res := w.b.postForm("/hubs/"+strconv.FormatInt(id, 10), form)
+
+	assertRedirect(t, res, "/")
+	if got := storedHubs(t, w.st)[0].ModeratorRoleIDs; !sameSet(got, []string{"role-mp", "role-gone"}) {
+		t.Errorf("stored roles = %v, want role-mp and role-gone as stored", got)
+	}
+	entries := storedChangeLog(t, w.st, id)
+	if len(entries) != 1 {
+		t.Fatalf("%d change log entries, want 1", len(entries))
+	}
+	if _, changed := decodeDiff(t, entries[0])["moderator_roles"]; changed {
+		t.Error("the entry records a moderator_roles change, want none")
+	}
+}
