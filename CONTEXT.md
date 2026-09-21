@@ -247,6 +247,19 @@ moment it empties. Hub settings are edited in the panel, never in code.
 - **Group check**: The panel's test that the signed-in forum user holds an
   allowlisted forum group, primary or secondary. Runs on every request.
   _Avoid_: allowlist check, permission check, authorisation, role check.
+- **Block**: One bordered unit of a panel page, with a gold header rule. The
+  unit a page's layout rules bound.
+  _Avoid_: card and section (for a page unit; the helpline card is a
+  Discord message), widget.
+- **Tag**: One selected item as a picker shows it, with its remove control.
+  A role tag is a moderator picker's, and shows an unavailable moderator role
+  with its reason.
+  _Avoid_: chip, pill, badge.
+- **Search list**: The list of candidates a picker's add control opens,
+  filtered as the person types. A moderator picker's role search offers the
+  eligible roles not yet selected. The register picker's channel search
+  offers the voice channels that are not hubs.
+  _Avoid_: dropdown, popover, menu, combobox.
 
 ## External systems
 
