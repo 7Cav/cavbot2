@@ -87,7 +87,7 @@ func TestVoiceRenameOutsideSpawnedChannelRefused(t *testing.T) {
 	hub := testHub()
 	hub.Enabled = false
 	tv := newTestTempVC(t, fake, seedStore(t, hub))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("Smith", testRankSGT)))
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("Smith", testRankSGT)))
 
 	f := &fakeResponder{}
 	runVoiceRename(f, tv, renameInteraction("user-1", nil, "Alpha"))
@@ -104,7 +104,7 @@ func TestVoiceRenameOutsideSpawnedChannelRefused(t *testing.T) {
 func TestVoiceRenameInNotSpawnedChannelNamesIt(t *testing.T) {
 	fake := newFakeTempVCManager()
 	tv := newSeededTempVC(t, fake)
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", "perm-1", member("Smith", testRankSGT)))
+	fake.deliver(tv, voiceEvent("user-1", "perm-1", member("Smith", testRankSGT)))
 
 	f := &fakeResponder{}
 	runVoiceRename(f, tv, renameInteraction("user-1", nil, "Alpha"))
@@ -158,7 +158,7 @@ func TestVoiceRenameNonOwnerToldWhoOwns(t *testing.T) {
 	fake := newFakeTempVCManager()
 	tv := newSeededTempVC(t, fake)
 	spawnInto(tv, fake, "user-owner", "chan-1", member("Smith", testRankSGT))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-2", "chan-1", member("Jones", testRankPVT)))
+	fake.deliver(tv, voiceEvent("user-2", "chan-1", member("Jones", testRankPVT)))
 
 	f := &fakeResponder{}
 	runVoiceRename(f, tv, renameInteraction("user-2", nil, "Alpha"))
@@ -202,7 +202,7 @@ func TestVoiceRenameHubModeratorRenamesOwnedChannel(t *testing.T) {
 	hub.ModeratorRoleIDs = []string{testModRoleHub}
 	tv := newTestTempVC(t, fake, seedStore(t, hub))
 	spawnInto(tv, fake, "user-owner", "chan-1", member("Smith", testRankSGT))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-mod", "chan-1", member("Jones", testRankPVT, testModRoleHub)))
+	fake.deliver(tv, voiceEvent("user-mod", "chan-1", member("Jones", testRankPVT, testModRoleHub)))
 
 	f := &fakeResponder{}
 	runVoiceRename(f, tv, renameInteraction("user-mod", []string{testRankPVT, testModRoleHub}, "Alpha"))
@@ -224,7 +224,7 @@ func TestVoiceRenameGuildModeratorRenamesOwnerlessChannel(t *testing.T) {
 	}
 	tv := newTestTempVC(t, fake, st)
 	spawnInto(tv, fake, "user-guest", "chan-1", member("Guest"))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-mod", "chan-1", member("Jones", testModRoleGuild)))
+	fake.deliver(tv, voiceEvent("user-mod", "chan-1", member("Jones", testModRoleGuild)))
 
 	f := &fakeResponder{}
 	runVoiceRename(f, tv, renameInteraction("user-mod", []string{testModRoleGuild}, "Alpha"))
@@ -247,7 +247,7 @@ func TestVoiceRenameGuildModeratorSetAppliedInProcessReplaces(t *testing.T) {
 	fake := newFakeTempVCManager()
 	tv := newTestTempVC(t, fake, seedStore(t, testHub()))
 	spawnInto(tv, fake, "user-owner", "chan-1", member("Smith", testRankSGT))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-mod", "chan-1", member("Jones", testModRoleGuild)))
+	fake.deliver(tv, voiceEvent("user-mod", "chan-1", member("Jones", testModRoleGuild)))
 
 	tv.ApplyGuildModeratorRoles([]string{testModRoleGuild})
 	runVoiceRename(&fakeResponder{}, tv, renameInteraction("user-mod", []string{testModRoleGuild}, "Alpha"))

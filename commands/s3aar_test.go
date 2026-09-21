@@ -16,15 +16,15 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// captureWarnLogs clears the package-wide log sink and returns it, so callers
-// can assert on the lines the code under test emits.
+// captureLogs clears the package-wide log sink and returns it, so callers
+// can assert on the lines the code under test emits, INFO and WARN alike.
 //
 // It deliberately does NOT install a logger of its own. utils.Logger is written
 // exactly once, in TestMain, because a leaked goroutine reads it for the rest
 // of the run and any later write is a data race — see the comment on TestMain.
-// The sink therefore carries INFO as well as WARN lines; every assertion here
-// is a presence check, so the extra lines are inert.
-func captureWarnLogs(t *testing.T) *syncBuffer {
+// Every assertion here is a presence check, so lines at other levels are
+// inert.
+func captureLogs(t *testing.T) *syncBuffer {
 	t.Helper()
 	testLogs.Reset()
 	return testLogs
@@ -705,7 +705,7 @@ func assertNoRosterFollowup(t *testing.T, fups []recordedCall) {
 //   - the attendance embed gains a warning field listing the failed player and
 //     stating they were excluded from the combat roster.
 func TestRunS3aar_EnrichmentFailureWarningFooter(t *testing.T) {
-	logs := captureWarnLogs(t)
+	logs := captureLogs(t)
 
 	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
 	stop := start.Add(2 * time.Hour)
@@ -827,7 +827,7 @@ func TestRunS3aar_HappyPathNoWarningField(t *testing.T) {
 // player must surface in the ⚠️ warning field and must NOT emit a blank/ghost
 // BBCode line ([URL='...'] [/URL]) on the combat roster.
 func TestRunS3aar_EmptyFieldsTreatedAsFailure(t *testing.T) {
-	logs := captureWarnLogs(t)
+	logs := captureLogs(t)
 
 	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
 	stop := start.Add(2 * time.Hour)
@@ -894,7 +894,7 @@ func TestRunS3aar_EmptyFieldsTreatedAsFailure(t *testing.T) {
 // this case dropping the `Roster == ""` check would pass CI. The player must still
 // surface in the ⚠️ warning field and emit no ghost BBCode line.
 func TestRunS3aar_EmptyRosterOnlyTreatedAsFailure(t *testing.T) {
-	logs := captureWarnLogs(t)
+	logs := captureLogs(t)
 
 	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
 	stop := start.Add(2 * time.Hour)
@@ -954,7 +954,7 @@ func TestRunS3aar_EmptyRosterOnlyTreatedAsFailure(t *testing.T) {
 // than emitting a ghost BBCode line. Dropping the gamertag-branch guard would let
 // this slip through, failing the warning-field assertion.
 func TestRunS3aar_GamertagFallbackEmptyFieldsTreatedAsFailure(t *testing.T) {
-	logs := captureWarnLogs(t)
+	logs := captureLogs(t)
 
 	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
 	stop := start.Add(2 * time.Hour)
@@ -1043,7 +1043,7 @@ func TestRunS3aar_GamertagFallbackEmptyFieldsTreatedAsFailure(t *testing.T) {
 // single-failure test leaves uncovered. Two failures with names that sort in a
 // known order pin the alphabetical ordering.
 func TestRunS3aar_MixedRosterFailuresWarningField(t *testing.T) {
-	logs := captureWarnLogs(t)
+	logs := captureLogs(t)
 
 	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
 	stop := start.Add(2 * time.Hour)
@@ -1167,7 +1167,7 @@ func TestBuildEnrichmentFailureField_NoTruncation(t *testing.T) {
 // as an enrichment failure (warning field + WARN log), not a panic or a silently
 // included blank entry.
 func TestRunS3aar_UniformURLRegexFailure(t *testing.T) {
-	logs := captureWarnLogs(t)
+	logs := captureLogs(t)
 
 	start := time.Date(2025, 11, 10, 18, 0, 0, 0, time.UTC)
 	stop := start.Add(2 * time.Hour)

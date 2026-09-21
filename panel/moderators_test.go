@@ -227,8 +227,9 @@ func TestModeratorsSectionShowsItsOwnLastTenEntriesNewestFirst(t *testing.T) {
 const testRankSGT = "899328273752928318"
 
 // joinAs feeds the runtime the gateway event for a member with roles joining
-// a channel.
+// a channel, applied to the fake cache first, the order discordgo keeps.
 func (w *testWorld) joinAs(userID, channelID string, roles ...string) {
+	w.discord.setVoice(userID, channelID)
 	w.runtime.HandleVoiceStateUpdate(&discordgo.VoiceStateUpdate{VoiceState: &discordgo.VoiceState{
 		GuildID: testGuildID, UserID: userID, ChannelID: channelID, Member: &discordgo.Member{Roles: roles},
 	}})

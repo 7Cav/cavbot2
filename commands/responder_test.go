@@ -40,7 +40,7 @@ func (b *syncBuffer) Reset() {
 }
 
 // testLogs is where every log line in this package's tests lands. Helpers that
-// assert on log output (captureWarnLogs, captureTelemetryLines) read it rather
+// assert on log output (captureLogs, captureTelemetryLines) read it rather
 // than installing a logger of their own.
 var testLogs = &syncBuffer{}
 
