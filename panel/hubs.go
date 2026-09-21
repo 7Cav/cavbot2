@@ -64,6 +64,54 @@ type pickerChannel struct {
 	CategoryName string
 }
 
+// pickerView is one tag picker as the template renders it (spec #343): the
+// selected items as tags, each carrying the control that posts its ID, and
+// the candidates its search list offers. Script adds and removes tags; a
+// page without script posts the tags as rendered (ADR 0013).
+type pickerView struct {
+	// Field is the form field name every tag posts under, and the
+	// data-field on the picker, a test contract.
+	Field string
+	// Single makes the picker hold one tag at most: choosing a candidate
+	// replaces it.
+	Single bool
+	// Dot is whether the items show a colour dot: a role does, a channel
+	// does not.
+	Dot bool
+	// Add is the add control's text.
+	Add string
+	// Search is the search input's label.
+	Search     string
+	Tags       []pickerItem
+	Candidates []pickerItem
+}
+
+// Blank is an empty item of the picker, rendered inside its <template>.
+// The script clones and fills it to make the tag for a chosen candidate.
+func (v pickerView) Blank() pickerItem {
+	return pickerItem{Field: v.Field, Dot: v.Dot}
+}
+
+// pickerItem is one item a picker shows, as a tag or as a search row.
+type pickerItem struct {
+	// Field is the picker's, so a tag posts under it.
+	Field string
+	ID    string
+	// Label is the item's text: a role's name, or its ID for a deleted
+	// role, whose name nothing remembers; a channel's name with its
+	// category's.
+	Label string
+	// Dot is the picker's: whether the item shows a colour dot.
+	Dot bool
+	// Colour is a role's Discord colour as a CSS hex, and empty when the
+	// role has none or the item is a channel.
+	Colour string
+	// Unavailable is why a stored moderator role is no longer eligible, and
+	// empty otherwise. It is the data-unavailable attribute on the control
+	// that posts the role's ID, a test contract; the note's copy is not.
+	Unavailable unavailableReason
+}
+
 // registerInput is the register form as posted. The service trims and
 // validates it; the template renders it back on a refusal so nothing typed
 // is lost.
@@ -192,7 +240,9 @@ type hubPage struct {
 	// Moderators is the guild-wide section at the top of the page.
 	Moderators moderatorsPage
 	Hubs       []hubRow
-	Picker     []pickerChannel
+	// Picker is the register picker: the chosen channel as a tag, if any,
+	// and the voice channels its channel search offers.
+	Picker     pickerView
 	Categories []pickerChannel
 	Register   registerInput
 	Create     createInput
@@ -245,8 +295,8 @@ type pageRequest struct {
 }
 
 // editPage is one hub's edit form: the category the form shows read-only,
-// the roles the moderator picker offers, and the form's fields as stored or
-// as posted back after a refusal.
+// the hub's moderator picker, and the form's fields as stored or as posted
+// back after a refusal.
 type editPage struct {
 	ID int64
 	// Broken is the broken hub state: the section shows the remove form and
@@ -254,32 +304,18 @@ type editPage struct {
 	Broken bool
 	// CategoryName is empty when the hub channel has no parent.
 	CategoryName string
-	Roles        []guildRole
+	// Picker is the hub's own moderator picker.
+	Picker pickerView
 	// GuildRoles are the guild-wide moderator roles, shown read-only above
 	// the hub's own picker so the effective set is visible. Only the
 	// guild-wide section changes them.
-	GuildRoles []guildRole
+	GuildRoles []pickerItem
 	// BitrateMax is the ceiling the guild's boost tier allows, for the
 	// input's own bound.
 	BitrateMax int
 	Form       editInput
 	// Changes are the hub's last entries, newest first.
 	Changes []changeView
-}
-
-// guildRole is one control of a moderator picker: an eligible role the
-// picker offers, or an unavailable moderator role the record stores, and
-// whether the form has it checked.
-type guildRole struct {
-	ID string
-	// Name is the role's name, or its ID for a deleted role, whose name
-	// nothing remembers.
-	Name    string
-	Checked bool
-	// Unavailable is why a stored role is no longer eligible, and empty on
-	// an eligible role. It is the data-unavailable attribute on the
-	// control, a test contract; the label copy is not.
-	Unavailable unavailableReason
 }
 
 // unavailableReason is why a stored moderator role is no longer eligible:
@@ -493,32 +529,50 @@ func (s *hubService) readGuild() (guildInfo, error) {
 	return info, nil
 }
 
-// rolePicker builds a moderator picker. The eligible roles come first. Then
-// come the unavailable moderator roles: every ID in stored that is not
-// eligible, sorted by ID. The form shows the record's whole set, and a
-// save keeps or removes each. checked decides the ticks. A page load passes
-// the stored set as checked. A refusal passes the form as posted, so an
-// unticked unavailable role stays unticked, and a posted ID the record
-// never stored renders no control.
-func rolePicker(guild guildInfo, stored, checked []string) []guildRole {
-	out := make([]guildRole, 0, len(guild.eligible))
+// rolePicker builds a moderator picker. The tags are the selected roles:
+// the eligible ones highest position first, then the unavailable moderator
+// roles by ID, each with its reason. The candidates are the eligible roles
+// not selected, highest position first, so the role search never offers a
+// selected role or an unavailable one (ADR 0012). stored is the record's
+// set, what an unavailable role may be shown from; selected decides the
+// tags. A page load passes the stored set as selected. A refusal passes the
+// form as posted, so a removed unavailable role stays removed, and a posted
+// ID the record never stored renders no tag.
+func rolePicker(guild guildInfo, stored, selected []string) pickerView {
+	view := pickerView{Field: fieldModeratorRoles, Dot: true, Add: "Add a role", Search: "Search roles"}
 	for _, r := range guild.eligible {
-		out = append(out, guildRole{ID: r.ID, Name: r.Name, Checked: slices.Contains(checked, r.ID)})
+		item := pickerItem{Field: view.Field, ID: r.ID, Label: r.Name, Dot: view.Dot, Colour: roleColour(r.Color)}
+		if slices.Contains(selected, r.ID) {
+			view.Tags = append(view.Tags, item)
+		} else {
+			view.Candidates = append(view.Candidates, item)
+		}
 	}
-	var kept []guildRole
+	var kept []pickerItem
 	for _, id := range stored {
 		reason := guild.unavailability(id)
-		if reason == "" {
+		if reason == "" || !slices.Contains(selected, id) {
 			continue
 		}
-		name := id
+		item := pickerItem{Field: view.Field, ID: id, Label: id, Dot: view.Dot, Unavailable: reason}
 		if r, ok := guild.live[id]; ok {
-			name = r.Name
+			item.Label, item.Colour = r.Name, roleColour(r.Color)
 		}
-		kept = append(kept, guildRole{ID: id, Name: name, Checked: slices.Contains(checked, id), Unavailable: reason})
+		kept = append(kept, item)
 	}
 	sort.Slice(kept, func(i, j int) bool { return kept[i].ID < kept[j].ID })
-	return append(out, kept...)
+	view.Tags = append(view.Tags, kept...)
+	return view
+}
+
+// roleColour is a Discord role colour as a CSS hex. Discord stores the
+// colour as one integer, 0 meaning the role has none, which renders as no
+// colour rather than black.
+func roleColour(c int) string {
+	if c == 0 {
+		return ""
+	}
+	return fmt.Sprintf("#%06x", c)
 }
 
 // page reads everything the hub page renders from, once: the hub rows and
@@ -535,7 +589,7 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 	if err != nil {
 		return hubPage{}, err
 	}
-	page := hubPage{Hubs: s.rows(sn), Picker: picker(sn), Categories: categoryPicker(sn),
+	page := hubPage{Hubs: s.rows(sn), Picker: channelPicker(sn, req.Register.ChannelID), Categories: categoryPicker(sn),
 		Register: req.Register, Create: req.Create, Error: req.Error, Refused: req.Refused}
 	guildWide, err := s.deps.Store.GetGuildModeratorRoles(ctx, s.deps.GuildID)
 	if err != nil {
@@ -597,6 +651,25 @@ func picker(sn snapshot) []pickerChannel {
 	return out
 }
 
+// channelPicker builds the register picker: every voice channel that is
+// not a hub as a candidate, by category then name, and the chosen channel
+// as the one tag when it is among them. chosenID is the form as posted
+// back after a refusal, and empty on a plain page load.
+func channelPicker(sn snapshot, chosenID string) pickerView {
+	view := pickerView{Field: fieldHubChannel, Single: true, Add: "Choose a voice channel", Search: "Search voice channels"}
+	for _, ch := range picker(sn) {
+		item := pickerItem{Field: view.Field, ID: ch.ID, Label: ch.Name + " (no category)"}
+		if ch.CategoryName != "" {
+			item.Label = ch.Name + " (" + ch.CategoryName + ")"
+		}
+		view.Candidates = append(view.Candidates, item)
+		if ch.ID == chosenID {
+			view.Tags = append(view.Tags, item)
+		}
+	}
+	return view
+}
+
 // categoryPicker builds the create form's category picker from the guild's
 // categories, by name.
 func categoryPicker(sn snapshot) []pickerChannel {
@@ -610,8 +683,8 @@ func categoryPicker(sn snapshot) []pickerChannel {
 
 // editForm builds one hub's edit form from the snapshot and the guild read:
 // the stored values, or the form as posted when a save was refused, the
-// hub's own picker, the guild-wide set shown read-only, and the hub's last
-// entries.
+// hub's own moderator picker, the guild-wide set shown read-only, and the
+// hub's last entries.
 func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo, guildWide []string, hubID int64, posted *editInput) (*editPage, error) {
 	hub, ok := sn.hubByID(hubID)
 	if !ok {
@@ -627,13 +700,8 @@ func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo,
 		form = *posted
 	}
 	page := &editPage{ID: hub.ID, Broken: st.Broken, CategoryName: st.CategoryName, Form: form,
-		Roles: rolePicker(guild, hub.ModeratorRoleIDs, form.ModeratorRoleIDs), BitrateMax: guild.bitrateMax,
-		Changes: changeViews(entries, guild.names)}
-	for _, r := range rolePicker(guild, guildWide, guildWide) {
-		if r.Checked {
-			page.GuildRoles = append(page.GuildRoles, r)
-		}
-	}
+		Picker: rolePicker(guild, hub.ModeratorRoleIDs, form.ModeratorRoleIDs), BitrateMax: guild.bitrateMax,
+		GuildRoles: rolePicker(guild, guildWide, guildWide).Tags, Changes: changeViews(entries, guild.names)}
 	return page, nil
 }
 

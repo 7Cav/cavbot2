@@ -477,23 +477,61 @@ func TestRegisterRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
 	}
 }
 
-// pickerOptions returns the option values of the hub_channel select.
-func pickerOptions(t *testing.T, res *http.Response) []string {
+// pickerRoot returns the picker under data-field=name on a parsed page, and
+// fails the test when there is none.
+func pickerRoot(t *testing.T, doc *html.Node, name string) *html.Node {
 	t.Helper()
-	sel := findElement(parseHTML(t, res), "select", "data-field", "hub_channel")
-	if sel == nil {
-		t.Fatal("page has no select under data-field=hub_channel")
+	root := findElement(doc, "", "data-field", name)
+	if root == nil {
+		t.Fatalf("page has no element under data-field=%s", name)
 	}
-	var values []string
-	for c := sel.FirstChild; c != nil; c = c.NextSibling {
-		if c.Type != html.ElementNode || c.Data != "option" {
-			continue
+	return root
+}
+
+// postedInputs returns the inputs named name under n that would post, in
+// document order: every input carrying the name that is not disabled, and,
+// for a checkbox or a radio, is checked. The input's type is not a
+// contract; what the form posts is.
+func postedInputs(n *html.Node, name string) []*html.Node {
+	var out []*html.Node
+	eachLiveElement(n, func(n *html.Node) {
+		got, _ := attrValue(n, "name")
+		if n.Data != "input" || got != name {
+			return
 		}
-		if v, ok := attrValue(c, "value"); ok && v != "" {
-			values = append(values, v)
+		if _, disabled := attrValue(n, "disabled"); disabled {
+			return
 		}
+		typ, _ := attrValue(n, "type")
+		if _, checked := attrValue(n, "checked"); (typ == "checkbox" || typ == "radio") && !checked {
+			return
+		}
+		out = append(out, n)
+	})
+	return out
+}
+
+// postedControls returns the values the inputs named name under n would
+// post, in document order.
+func postedControls(n *html.Node, name string) []string {
+	var out []string
+	for _, in := range postedInputs(n, name) {
+		value, _ := attrValue(in, "value")
+		out = append(out, value)
 	}
-	return values
+	return out
+}
+
+// searchRows returns the IDs a picker's search list offers under n, in
+// document order: the data-option value of each row.
+func searchRows(n *html.Node) []string {
+	var out []string
+	eachLiveElement(n, func(n *html.Node) {
+		if id, ok := attrValue(n, "data-option"); ok {
+			out = append(out, id)
+		}
+	})
+	return out
 }
 
 func TestRegisterPickerOffersVoiceChannelsThatAreNotHubs(t *testing.T) {
@@ -502,23 +540,34 @@ func TestRegisterPickerOffersVoiceChannelsThatAreNotHubs(t *testing.T) {
 
 	res := w.b.get("/")
 
-	offered := pickerOptions(t, res)
-	has := func(id string) bool {
-		for _, v := range offered {
-			if v == id {
-				return true
-			}
-		}
-		return false
-	}
-	if !has("vc-2") {
+	root := pickerRoot(t, parseHTML(t, res), "hub_channel")
+	offered := searchRows(root)
+	if !slices.Contains(offered, "vc-2") {
 		t.Errorf("picker %v does not offer vc-2, a voice channel that is not a hub", offered)
 	}
-	if has("hub-1") {
+	if slices.Contains(offered, "hub-1") {
 		t.Errorf("picker %v offers hub-1, which is a hub", offered)
 	}
-	if has("text-1") {
+	if slices.Contains(offered, "text-1") {
 		t.Errorf("picker %v offers text-1, a text channel", offered)
+	}
+	if got := textOf(root); !strings.Contains(got, "Arma Reforger") {
+		t.Errorf("picker text %q does not name vc-2's category Arma Reforger", got)
+	}
+}
+
+func TestRefusedRegisterKeepsTheChosenChannel(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+
+	res := w.b.postForm("/hubs", registerForm("vc-2", "   "))
+
+	if !isClientError(res.StatusCode) {
+		t.Fatalf("status = %d, want 4xx", res.StatusCode)
+	}
+	root := pickerRoot(t, parseHTML(t, res), "hub_channel")
+	if got := postedControls(root, "hub_channel"); !slices.Equal(got, []string{"vc-2"}) {
+		t.Errorf("the register picker posts %v after the refusal, want vc-2 alone", got)
 	}
 }
 
@@ -1426,5 +1475,92 @@ func TestHubListShowsTheLastSpawnFailureTheRuntimeHolds(t *testing.T) {
 	}
 	if hasField(other, "failure_cause") {
 		t.Error("a hub with no failure shows a data-field=failure_cause element")
+	}
+}
+
+// scriptSources returns the src of every script element under n.
+func scriptSources(n *html.Node) []string {
+	var out []string
+	eachLiveElement(n, func(n *html.Node) {
+		if src, ok := attrValue(n, "src"); n.Data == "script" && ok {
+			out = append(out, src)
+		}
+	})
+	return out
+}
+
+func TestHubPageScriptIsServedByThePanelItself(t *testing.T) {
+	// ADR 0013: the panel serves its own script, and no page fetches from a
+	// third party.
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+
+	res := w.b.get("/")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET / status = %d, want 200", res.StatusCode)
+	}
+	sources := scriptSources(parseHTML(t, res))
+	if len(sources) == 0 {
+		t.Fatal("the hub page references no script")
+	}
+	for _, src := range sources {
+		u, err := url.Parse(src)
+		if err != nil || u.Scheme != "" || u.Host != "" {
+			t.Errorf("script src %q is not a path on the panel's own host", src)
+			continue
+		}
+		got := w.b.get(src)
+		if got.StatusCode != http.StatusOK {
+			t.Errorf("GET %s status = %d, want 200", src, got.StatusCode)
+		}
+		if ct := got.Header.Get("Content-Type"); !strings.Contains(ct, "javascript") {
+			t.Errorf("GET %s Content-Type = %q, want a JavaScript type", src, ct)
+		}
+	}
+}
+
+// entryElements returns the data-entry elements under n, in document order.
+func entryElements(n *html.Node) []*html.Node {
+	var out []*html.Node
+	eachLiveElement(n, func(n *html.Node) {
+		if _, ok := attrValue(n, "data-entry"); ok {
+			out = append(out, n)
+		}
+	})
+	return out
+}
+
+func TestChangeLogEntriesFoldWithTheNewestOpen(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	id := storedHubID(t, w.st, "hub-1")
+	for _, limit := range []string{"1", "2"} {
+		form := updateForm()
+		form.Set("user_limit", limit)
+		assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
+	}
+
+	res := w.b.get("/?hub=" + strconv.FormatInt(id, 10))
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /?hub= status = %d, want 200", res.StatusCode)
+	}
+	entries := entryElements(editSection(t, res, id))
+	if len(entries) != 2 {
+		t.Fatalf("the hub form shows %d entries, want 2", len(entries))
+	}
+	// The fold is <details>, which folds with no script.
+	if entries[0].Data != "details" {
+		t.Errorf("the newest entry is a <%s>, want a <details>", entries[0].Data)
+	}
+	if _, open := attrValue(entries[0], "open"); !open {
+		t.Error("the newest entry is not open")
+	}
+	if _, open := attrValue(entries[1], "open"); open {
+		t.Error("the older entry is open, want it folded")
+	}
+	if findElement(entries[1], "", "data-change", "user_limit") == nil {
+		t.Error("the folded entry carries no data-change=user_limit element")
 	}
 }
