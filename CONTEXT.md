@@ -169,8 +169,16 @@ moment it empties. Hub settings are edited in the panel, never in code.
   channel it holds a stored record of against the guild. A recorded channel
   that is gone or empty is deleted with its record. An occupied one is
   tracked again, its owner restored or elected by the handover rule. A
-  channel with no record is never touched.
+  channel with no record is never touched. It reads one copied snapshot of
+  Discord's current cached guild state when it takes `t.mu`, not the state
+  in the `GUILD_CREATE` payload.
   _Avoid_: adoption, orphan sweep, recovery, reap, resync.
+- **Spawn in flight**: A spawned channel from the moment Discord confirms
+  its create until its row write or compensating delete finishes. A restart
+  sweep that overlaps this interval leaves the channel alone until that
+  sweep also finishes.
+  _Avoid_: pending spawn, unsettled channel, protected channel, marked
+  channel.
 - **Stale voice state**: The bot's record of which channel a member is in,
   or of who is in a spawned channel, at a moment when Discord has already
   reported a change the bot has not yet applied. Discord reports changes in
