@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,11 +56,10 @@ type hubRow struct {
 	Failure *commands.SpawnFailure
 }
 
-// pickerChannel is one voice channel the register form offers.
+// pickerChannel is one category the create form's category picker offers.
 type pickerChannel struct {
-	ID           string
-	Name         string
-	CategoryName string
+	ID   string
+	Name string
 }
 
 // registerInput is the register form as posted. The service trims and
@@ -192,7 +190,9 @@ type hubPage struct {
 	// Moderators is the guild-wide section at the top of the page.
 	Moderators moderatorsPage
 	Hubs       []hubRow
-	Picker     []pickerChannel
+	// Picker is the register picker: the chosen channel as a tag, if any,
+	// and the voice channels its channel search offers.
+	Picker     pickerView
 	Categories []pickerChannel
 	Register   registerInput
 	Create     createInput
@@ -245,8 +245,8 @@ type pageRequest struct {
 }
 
 // editPage is one hub's edit form: the category the form shows read-only,
-// the roles the moderator picker offers, and the form's fields as stored or
-// as posted back after a refusal.
+// the hub's moderator picker, and the form's fields as stored or as posted
+// back after a refusal.
 type editPage struct {
 	ID int64
 	// Broken is the broken hub state: the section shows the remove form and
@@ -254,32 +254,18 @@ type editPage struct {
 	Broken bool
 	// CategoryName is empty when the hub channel has no parent.
 	CategoryName string
-	Roles        []guildRole
+	// Picker is the hub's own moderator picker.
+	Picker pickerView
 	// GuildRoles are the guild-wide moderator roles, shown read-only above
 	// the hub's own picker so the effective set is visible. Only the
 	// guild-wide section changes them.
-	GuildRoles []guildRole
+	GuildRoles []pickerItem
 	// BitrateMax is the ceiling the guild's boost tier allows, for the
 	// input's own bound.
 	BitrateMax int
 	Form       editInput
 	// Changes are the hub's last entries, newest first.
 	Changes []changeView
-}
-
-// guildRole is one control of a moderator picker: an eligible role the
-// picker offers, or an unavailable moderator role the record stores, and
-// whether the form has it checked.
-type guildRole struct {
-	ID string
-	// Name is the role's name, or its ID for a deleted role, whose name
-	// nothing remembers.
-	Name    string
-	Checked bool
-	// Unavailable is why a stored role is no longer eligible, and empty on
-	// an eligible role. It is the data-unavailable attribute on the
-	// control, a test contract; the label copy is not.
-	Unavailable unavailableReason
 }
 
 // unavailableReason is why a stored moderator role is no longer eligible:
@@ -493,34 +479,6 @@ func (s *hubService) readGuild() (guildInfo, error) {
 	return info, nil
 }
 
-// rolePicker builds a moderator picker. The eligible roles come first. Then
-// come the unavailable moderator roles: every ID in stored that is not
-// eligible, sorted by ID. The form shows the record's whole set, and a
-// save keeps or removes each. checked decides the ticks. A page load passes
-// the stored set as checked. A refusal passes the form as posted, so an
-// unticked unavailable role stays unticked, and a posted ID the record
-// never stored renders no control.
-func rolePicker(guild guildInfo, stored, checked []string) []guildRole {
-	out := make([]guildRole, 0, len(guild.eligible))
-	for _, r := range guild.eligible {
-		out = append(out, guildRole{ID: r.ID, Name: r.Name, Checked: slices.Contains(checked, r.ID)})
-	}
-	var kept []guildRole
-	for _, id := range stored {
-		reason := guild.unavailability(id)
-		if reason == "" {
-			continue
-		}
-		name := id
-		if r, ok := guild.live[id]; ok {
-			name = r.Name
-		}
-		kept = append(kept, guildRole{ID: id, Name: name, Checked: slices.Contains(checked, id), Unavailable: reason})
-	}
-	sort.Slice(kept, func(i, j int) bool { return kept[i].ID < kept[j].ID })
-	return append(out, kept...)
-}
-
 // page reads everything the hub page renders from, once: the hub rows and
 // the guild's channel list for the list and the picker, the guild read for
 // the guild-wide section and the edit form, the guild-wide set and its
@@ -535,7 +493,7 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 	if err != nil {
 		return hubPage{}, err
 	}
-	page := hubPage{Hubs: s.rows(sn), Picker: picker(sn), Categories: categoryPicker(sn),
+	page := hubPage{Hubs: s.rows(sn), Picker: channelPicker(sn, req.Register.ChannelID), Categories: categoryPicker(sn),
 		Register: req.Register, Create: req.Create, Error: req.Error, Refused: req.Refused}
 	guildWide, err := s.deps.Store.GetGuildModeratorRoles(ctx, s.deps.GuildID)
 	if err != nil {
@@ -577,26 +535,6 @@ func (s *hubService) rows(sn snapshot) []hubRow {
 	return rows
 }
 
-// picker builds the register picker from the voice channels that are not
-// hubs.
-func picker(sn snapshot) []pickerChannel {
-	var out []pickerChannel
-	for _, ch := range sn.guild.voiceChannels() {
-		if _, taken := sn.hubOn(ch.ID); taken {
-			continue
-		}
-		out = append(out, pickerChannel{ID: ch.ID, Name: ch.Name, CategoryName: sn.guild.categoryName(ch)})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		if a.CategoryName != b.CategoryName {
-			return a.CategoryName < b.CategoryName
-		}
-		return a.Name < b.Name
-	})
-	return out
-}
-
 // categoryPicker builds the create form's category picker from the guild's
 // categories, by name.
 func categoryPicker(sn snapshot) []pickerChannel {
@@ -610,8 +548,8 @@ func categoryPicker(sn snapshot) []pickerChannel {
 
 // editForm builds one hub's edit form from the snapshot and the guild read:
 // the stored values, or the form as posted when a save was refused, the
-// hub's own picker, the guild-wide set shown read-only, and the hub's last
-// entries.
+// hub's own moderator picker, the guild-wide set shown read-only, and the
+// hub's last entries.
 func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo, guildWide []string, hubID int64, posted *editInput) (*editPage, error) {
 	hub, ok := sn.hubByID(hubID)
 	if !ok {
@@ -627,13 +565,8 @@ func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo,
 		form = *posted
 	}
 	page := &editPage{ID: hub.ID, Broken: st.Broken, CategoryName: st.CategoryName, Form: form,
-		Roles: rolePicker(guild, hub.ModeratorRoleIDs, form.ModeratorRoleIDs), BitrateMax: guild.bitrateMax,
-		Changes: changeViews(entries, guild.names)}
-	for _, r := range rolePicker(guild, guildWide, guildWide) {
-		if r.Checked {
-			page.GuildRoles = append(page.GuildRoles, r)
-		}
-	}
+		Picker: rolePicker(guild, hub.ModeratorRoleIDs, form.ModeratorRoleIDs), BitrateMax: guild.bitrateMax,
+		GuildRoles: rolePicker(guild, guildWide, guildWide).Tags, Changes: changeViews(entries, guild.names)}
 	return page, nil
 }
 
@@ -733,6 +666,11 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 		return store.Hub{}, err
 	}
 	in.BaseString = baseString
+	// The register picker cannot make the browser require a choice the way
+	// the select it replaced did, so an empty post gets its own answer.
+	if in.ChannelID == "" {
+		return store.Hub{}, &fieldError{fieldHubChannel, "Choose a voice channel."}
+	}
 	sn, err := s.read(ctx)
 	if err != nil {
 		return store.Hub{}, err

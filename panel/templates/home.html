@@ -43,11 +43,11 @@
     <h2 class="block-header">Moderator roles for every hub</h2>
     {{with .Hubs.RefusalFor "moderators"}}{{template "refusal" .}}{{end}}
     <div class="block-row">
-      <fieldset class="field" data-field="moderator_roles">
-        <legend class="field-label">Roles</legend>
-        {{range .Hubs.Moderators.Roles}}{{template "role-control" .}}{{else}}<span class="off">The server has no roles to offer.</span>{{end}}
+      <div class="field">
+        <span class="field-label">Roles</span>
+        {{template "picker" .Hubs.Moderators.Picker}}
         <span class="field-hint">These roles rename any spawned channel of any hub, including hubs added later. Each hub adds its own roles in its form.</span>
-      </fieldset>
+      </div>
     </div>
     <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save</button></div>
   </form>
@@ -57,25 +57,41 @@
   </section>
 {{end}}
 
-{{define "role-control"}}<label class="check"><input type="checkbox" name="moderator_roles" value="{{.ID}}"{{if .Checked}} checked{{end}}{{if .Unavailable}} data-unavailable="{{.Unavailable}}"{{end}}> {{.Name}}{{template "role-note" .}}</label>{{end}}
-
 {{define "role-note"}}{{if eq .Unavailable "deleted"}} <span class="off">not in the server</span>{{else if eq .Unavailable "managed"}} <span class="off">managed by an integration</span>{{end}}{{end}}
+
+{{define "picker"}}<div class="picker" data-field="{{.Field}}" data-picker{{if .Single}} data-single{{end}}>
+  <ul class="tags" data-tags>{{range .Tags}}{{template "picker-tag" .}}{{end}}</ul>
+  <button type="button" class="btn btn--small" data-add aria-expanded="false">{{.AddLabel}}</button>
+  <div class="search" data-search hidden>
+    <input type="search" class="search-input" data-search-input autocomplete="off" placeholder="Type to filter" aria-label="{{.SearchLabel}}">
+    <ul class="search-list" role="listbox" data-list>
+      {{range .Candidates}}<li role="option" data-option="{{.ID}}" data-label="{{.Label}}" data-colour="{{.Colour}}" tabindex="-1">{{template "dot" .}}{{.Label}}</li>{{end}}
+    </ul>
+    <div class="off search-none" data-empty hidden>No match.</div>
+    <div class="off search-none" data-none hidden>Nothing left to add.</div>
+  </div>
+  <template data-tag-template>{{template "picker-tag" .Blank}}</template>
+</div>{{end}}
+
+{{define "picker-tag"}}<li class="tag tag--pick" data-tag="{{.ID}}"><input type="hidden" name="{{.Field}}" value="{{.ID}}"{{if .Unavailable}} data-unavailable="{{.Unavailable}}"{{end}}>{{template "dot" .}}<span data-label>{{.Label}}</span>{{template "role-note" .}} <button type="button" class="tag-remove" data-remove aria-label="Remove {{.Label}}">&times;</button></li>{{end}}
+
+{{define "dot"}}{{if .Dot}}{{if .Colour}}<span class="dot" style="background:{{.Colour}}"></span>{{else}}<span class="dot dot--none"></span>{{end}}{{end}}{{end}}
 
 {{define "changes"}}
     <h2 class="block-header">Change log</h2>
-    {{range .}}
-    <div class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}">
-      <div class="change-head">
+    {{range $i, $_ := .}}
+    <details class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}"{{if eq $i 0}} open{{end}}>
+      <summary class="change-head">
         <span class="change-who" data-field="username">{{.Username}}</span>
         <span class="tag" data-field="action">{{.Action}}</span>
         <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
-      </div>
+      </summary>
       {{if .Fields}}
       <dl class="change-fields">
         {{range .Fields}}<div data-change="{{.Field}}"><dt>{{.Field}}</dt><dd><span data-field="before">{{.Before}}</span> <span class="arrow">&rarr;</span> <span data-field="after">{{.After}}</span></dd></div>{{end}}
       </dl>
       {{else}}<div class="off">No field changed.</div>{{end}}
-    </div>
+    </details>
     {{else}}
     <div class="block-row">No saves recorded yet.</div>
     {{end}}
@@ -116,14 +132,11 @@
     <h2 class="block-header">Register a voice channel as a hub</h2>
     {{with .Hubs.RefusalFor "register"}}{{template "refusal" .}}{{end}}
     <div class="block-row">
-      <label class="field">
+      <div class="field">
         <span class="field-label">Voice channel</span>
-        <select name="hub_channel" data-field="hub_channel" required>
-          <option value="">Choose a voice channel</option>
-          {{range .Hubs.Picker}}<option value="{{.ID}}"{{if eq .ID $.Hubs.Register.ChannelID}} selected{{end}}>{{.Name}}{{if .CategoryName}} ({{.CategoryName}}){{else}} (no category){{end}}</option>{{end}}
-        </select>
+        {{template "picker" .Hubs.Picker}}
         <span class="field-hint">Channels that are already hubs are hidden.</span>
-      </label>
+      </div>
     </div>
     <div class="block-row">
       <label class="field">
@@ -178,16 +191,16 @@
     <div class="block-row">
       <div class="field" data-field="guild_moderator_roles">
         <span class="field-label">Moderator roles for every hub</span>
-        {{range .GuildRoles}}<span class="tag" data-role="{{.ID}}"{{if .Unavailable}} data-unavailable="{{.Unavailable}}"{{end}}>{{.Name}}{{template "role-note" .}}</span> {{else}}<span class="off">none</span>{{end}}
+        {{range .GuildRoles}}<span class="tag" data-role="{{.ID}}"{{if .Unavailable}} data-unavailable="{{.Unavailable}}"{{end}}>{{.Label}}{{template "role-note" .}}</span> {{else}}<span class="off">none</span>{{end}}
         <span class="field-hint">Set in the section at the top of the page. They apply to this hub too; a hub cannot exclude them.</span>
       </div>
     </div>
     <div class="block-row">
-      <fieldset class="field" data-field="moderator_roles">
-        <legend class="field-label">Moderator roles for this hub</legend>
-        {{range .Roles}}{{template "role-control" .}}{{else}}<span class="off">The server has no roles to offer.</span>{{end}}
+      <div class="field">
+        <span class="field-label">Moderator roles for this hub</span>
+        {{template "picker" .Picker}}
         <span class="field-hint">These roles rename any channel this hub spawns, whoever owns it, in addition to the roles for every hub.</span>
-      </fieldset>
+      </div>
     </div>
     <div class="block-row">
       <label class="field">

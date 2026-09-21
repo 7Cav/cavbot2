@@ -85,7 +85,9 @@ func (p *Panel) render(w http.ResponseWriter, status int, page string, data page
 	_, _ = buf.WriteTo(w)
 }
 
-// staticHandler serves the embedded stylesheet and images under /static/.
+// staticHandler serves the embedded stylesheet, script, font and images
+// under /static/, all from the binary, so no page fetches from a third
+// party (ADR 0013).
 func staticHandler() http.Handler {
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {

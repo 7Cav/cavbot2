@@ -19,42 +19,31 @@ import (
 // removes it. The data-unavailable attribute is the test contract; labels
 // and element order are not.
 
-// roleControl is one moderator_roles checkbox as the page renders it.
+// roleControl is one control that posts a moderator role's ID, as the page
+// renders it.
 type roleControl struct {
-	ID       string
-	Checked  bool
-	Disabled bool
+	ID string
 	// Unavailable is the data-unavailable value, empty on an eligible role.
 	Unavailable string
 }
 
-// roleControls returns the moderator_roles checkboxes under n, in document
-// order.
+// roleControls returns the controls under n that post moderator_roles, in
+// document order.
 func roleControls(n *html.Node) []roleControl {
 	var out []roleControl
-	eachElement(n, func(n *html.Node) {
-		typ, _ := attrValue(n, "type")
-		name, _ := attrValue(n, "name")
-		if n.Data != "input" || typ != "checkbox" || name != "moderator_roles" {
-			return
-		}
+	for _, in := range postedInputs(n, fieldModeratorRoles) {
 		c := roleControl{}
-		c.ID, _ = attrValue(n, "value")
-		_, c.Checked = attrValue(n, "checked")
-		_, c.Disabled = attrValue(n, "disabled")
-		c.Unavailable, _ = attrValue(n, "data-unavailable")
+		c.ID, _ = attrValue(in, "value")
+		c.Unavailable, _ = attrValue(in, "data-unavailable")
 		out = append(out, c)
-	})
+	}
 	return out
 }
 
-// pickerIDs returns the IDs a picker's checkboxes carry, in document order.
-func pickerIDs(n *html.Node) []string {
-	var out []string
-	for _, c := range roleControls(n) {
-		out = append(out, c.ID)
-	}
-	return out
+// rolePickerOn returns the moderator picker under n.
+func rolePickerOn(t *testing.T, n *html.Node) *html.Node {
+	t.Helper()
+	return pickerRoot(t, n, fieldModeratorRoles)
 }
 
 // hubSection returns the edit area of one hub on a parsed page, the section
@@ -87,7 +76,7 @@ func TestPickersOfferEligibleRolesOnly(t *testing.T) {
 		{"the hub form", hubSection(t, doc, id)},
 	}
 	for _, p := range pickers {
-		offered := pickerIDs(p.node)
+		offered := searchRows(rolePickerOn(t, p.node))
 		if !slices.Contains(offered, "role-mp") {
 			t.Errorf("%s offers %v, want role-mp among them", p.name, offered)
 		}
@@ -178,16 +167,17 @@ func pickerOn(t *testing.T, doc *html.Node, form string, hubID int64) *html.Node
 	return moderatorsSection(t, doc)
 }
 
-// controlFor returns the moderator_roles checkbox carrying the ID under n,
-// and fails the test when there is none.
+// controlFor returns the control under n that posts the role ID, and fails
+// the test when there is none.
 func controlFor(t *testing.T, n *html.Node, roleID string) roleControl {
 	t.Helper()
-	for _, c := range roleControls(n) {
+	controls := roleControls(n)
+	for _, c := range controls {
 		if c.ID == roleID {
 			return c
 		}
 	}
-	t.Fatalf("no moderator_roles checkbox carries %s; the picker has %v", roleID, pickerIDs(n))
+	t.Fatalf("no control posts %s as a moderator role; the picker posts %+v", roleID, controls)
 	return roleControl{}
 }
 
@@ -213,9 +203,13 @@ func TestStoredRoleNoLongerEligibleRendersAsUnavailable(t *testing.T) {
 			if res.StatusCode != http.StatusOK {
 				t.Fatalf("GET /?hub= status = %d, want 200", res.StatusCode)
 			}
-			c := controlFor(t, pickerOn(t, parseHTML(t, res), tc.form, id), tc.roleID)
-			if !c.Checked || c.Disabled || c.Unavailable != tc.reason {
-				t.Errorf("control for %s = %+v, want checked, enabled, data-unavailable=%q", tc.roleID, c, tc.reason)
+			picker := rolePickerOn(t, pickerOn(t, parseHTML(t, res), tc.form, id))
+			c := controlFor(t, picker, tc.roleID)
+			if c.Unavailable != tc.reason {
+				t.Errorf("control for %s = %+v, want data-unavailable=%q", tc.roleID, c, tc.reason)
+			}
+			if offered := searchRows(picker); slices.Contains(offered, tc.roleID) {
+				t.Errorf("the role search offers %v, want %s left out: it is stored and not eligible", offered, tc.roleID)
 			}
 		})
 	}
@@ -264,8 +258,9 @@ func newestRoleChange(t *testing.T, w *testWorld, form string) fieldChange {
 func TestUnavailableRoleIsKeptOrRemovedOnlyByASave(t *testing.T) {
 	// A member can hold a managed role, the booster role for one, and never
 	// a deleted one, so the runtime is asked through a rename in the managed
-	// rows alone. The untick rows pass since #315's fix to the pickers; the
-	// keep rows are what the validator's stored exception turns green.
+	// rows alone. The removed rows pass since #315's fix to the pickers; the
+	// keep rows are what the validator's stored exception turns green. A
+	// removed role's tag is gone from the posted form (#343).
 	cases := []struct {
 		form   string
 		roleID string
@@ -280,7 +275,7 @@ func TestUnavailableRoleIsKeptOrRemovedOnlyByASave(t *testing.T) {
 		{onGuildWide, "role-bot", false},
 	}
 	for _, tc := range cases {
-		action := "unticked"
+		action := "removed"
 		if tc.keep {
 			action = "kept"
 		}
@@ -445,5 +440,110 @@ func TestChangeLogNamesAManagedRoleAnOlderEntryStored(t *testing.T) {
 	}
 	if got := fieldText(t, change, "after"); !strings.Contains(got, "CavBot") {
 		t.Errorf("entry after = %q, want the managed role named CavBot", got)
+	}
+}
+
+// hasHiddenAncestor reports whether n or an element above it carries the
+// hidden attribute.
+func hasHiddenAncestor(n *html.Node) bool {
+	for ; n != nil; n = n.Parent {
+		if n.Type == html.ElementNode {
+			if _, hidden := attrValue(n, "hidden"); hidden {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestSearchListsAreRenderedAtLoadAndHiddenUntilOpened(t *testing.T) {
+	// ADR 0013: a page that never runs the script shows its tags and not
+	// the list of every candidate.
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	id := storedHubID(t, w.st, "hub-1")
+
+	res := w.b.get("/?hub=" + strconv.FormatInt(id, 10))
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /?hub= status = %d, want 200", res.StatusCode)
+	}
+	doc := parseHTML(t, res)
+	rows := 0
+	for _, sec := range []*html.Node{moderatorsSection(t, doc), hubSection(t, doc, id)} {
+		eachLiveElement(rolePickerOn(t, sec), func(n *html.Node) {
+			if _, ok := attrValue(n, "data-option"); !ok {
+				return
+			}
+			rows++
+			if !hasHiddenAncestor(n) {
+				t.Errorf("search row %s shows on a page load, want it hidden until opened", textOf(n))
+			}
+		})
+	}
+	if rows == 0 {
+		t.Fatal("the pickers render no search rows")
+	}
+}
+
+func TestRoleColourRendersOnTheSearchRowWithoutAnEscapingFailure(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+
+	res := w.b.get("/")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET / status = %d, want 200", res.StatusCode)
+	}
+	doc := parseHTML(t, res)
+	// html/template writes ZgotmplZ where a value fails its filter; a
+	// colour that did would draw no dot and colour no tag.
+	if body := textOf(doc); strings.Contains(body, "ZgotmplZ") {
+		t.Error("the page carries ZgotmplZ, a template value the escaper refused")
+	}
+	row := findElement(rolePickerOn(t, moderatorsSection(t, doc)), "", "data-option", "role-mp")
+	if row == nil {
+		t.Fatal("the guild-wide role search has no row for role-mp")
+	}
+	found := false
+	for _, a := range row.Attr {
+		if strings.Contains(a.Val, "#ebc729") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the row for role-mp carries no #ebc729, the role's colour; its attributes are %v", row.Attr)
+	}
+}
+
+func TestSaveWithoutScriptLeavesTheModeratorRolesAsStored(t *testing.T) {
+	// ADR 0013: with the script never run, the tags post what the page
+	// loaded, so a save of the other fields keeps the stored set, an
+	// unavailable moderator role included.
+	hub := testHub()
+	hub.ModeratorRoleIDs = []string{"role-mp", "role-gone"}
+	w := newTestWorld(t, hub)
+	signIn(t, w.forum, w.b)
+	id := storedHubID(t, w.st, "hub-1")
+	page := w.b.get("/?hub=" + strconv.FormatInt(id, 10))
+	if page.StatusCode != http.StatusOK {
+		t.Fatalf("GET /?hub= status = %d, want 200", page.StatusCode)
+	}
+	form := updateForm()
+	form.Set("user_limit", "5")
+	form["moderator_roles"] = postedControls(rolePickerOn(t, hubSection(t, parseHTML(t, page), id)), fieldModeratorRoles)
+
+	res := w.b.postForm("/hubs/"+strconv.FormatInt(id, 10), form)
+
+	assertRedirect(t, res, "/")
+	if got := storedHubs(t, w.st)[0].ModeratorRoleIDs; !sameSet(got, []string{"role-mp", "role-gone"}) {
+		t.Errorf("stored roles = %v, want role-mp and role-gone as stored", got)
+	}
+	entries := storedChangeLog(t, w.st, id)
+	if len(entries) != 1 {
+		t.Fatalf("%d change log entries, want 1", len(entries))
+	}
+	if _, changed := decodeDiff(t, entries[0])["moderator_roles"]; changed {
+		t.Error("the entry records a moderator_roles change, want none")
 	}
 }

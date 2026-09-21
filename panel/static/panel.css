@@ -115,17 +115,54 @@ img { max-width: 100%; }
   background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--radius);
 }
 .field input:focus, .field select:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); }
-fieldset.field { margin: 0; padding: 0; border: 0; min-width: 0; }
-fieldset.field legend { padding: 0; }
+.field input[type=hidden] { display: none; }
 .check { display: block; padding: 4px 0; color: var(--text-hi); }
 .check input { width: auto; display: inline; margin: 0 6px 0 0; vertical-align: middle; accent-color: var(--gold); }
 .field .check input { width: auto; display: inline; }
 
+/* Tag pickers (spec #343): the selected set as tags, and a search list the
+   add control opens. Ten rows show at once; the rest scroll inside the
+   list. A picker's height follows its selected set, never the guild's
+   role count. */
+.tags { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.tags:empty { margin: 0; }
+.tag--pick { display: inline-flex; align-items: center; padding: 3px 2px 3px 8px; font-size: 14px; color: var(--text-hi); background: var(--surface-3); }
+.tag--pick .off { margin-left: 4px; }
+.tag-remove {
+  margin-left: 4px; padding: 0 6px; border: 0; background: transparent; color: var(--text-mute);
+  font: inherit; font-size: 17px; line-height: 1.2; cursor: pointer; border-radius: var(--radius);
+}
+.tag-remove:hover { color: var(--text-hi); background: var(--btn-hi); }
+.tag-remove:focus-visible { outline: 2px solid var(--gold); }
+.dot { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; flex: none; vertical-align: middle; }
+.dot--none { background: var(--line-hi); }
+.search { margin-top: 8px; max-width: 420px; }
+.search-input {
+  display: block; width: 100%; padding: 8px 10px; font: inherit; color: var(--text-hi);
+  background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--radius) var(--radius) 0 0;
+}
+.search-input:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); }
+.search-list {
+  list-style: none; margin: 0; padding: 4px 0; max-height: 330px; overflow-y: auto;
+  background: var(--surface-2); border: 1px solid var(--line-2); border-top: 0; border-radius: 0 0 var(--radius) var(--radius);
+}
+.search-list li[role=option] { display: flex; align-items: center; padding: 6px 10px; color: var(--text-hi); cursor: pointer; }
+.search-list li[role=option]:hover, .search-list li.is-active { background: var(--surface-3); }
+.search-list li[hidden] { display: none; }
+.search-none { padding: 6px 10px; font-size: 13px; }
+
 /* The guild-wide moderator section: its form beside its change log. */
 .moderators { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; align-items: start; }
 
-/* The change log under a hub's form. */
-.change-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 6px; }
+/* The change log under a hub's form. Each entry is a <details> folded to
+   its head line; the newest starts open. */
+.change { padding: 8px 14px; }
+.change-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; cursor: pointer; list-style: none; }
+.change-head::-webkit-details-marker { display: none; }
+.change-head::before { content: "\25B8"; color: var(--text-mute); font-size: 12px; width: 12px; }
+.change[open] > .change-head::before { content: "\25BE"; }
+.change[open] > .change-head { margin-bottom: 6px; }
+.change-head:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: var(--radius); }
 .change-who { color: var(--text-hi); font-weight: 500; }
 .change-head time { font-size: 13px; color: var(--text-mute); }
 .change-fields { margin: 0; font-size: 14px; }

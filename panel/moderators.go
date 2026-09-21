@@ -19,26 +19,26 @@ type moderatorsInput struct {
 }
 
 // moderatorsPage is the guild-wide section as the page renders it: the
-// picker with the stored set checked, or the form as posted when a save
+// picker with the stored set as tags, or the form as posted when a save
 // was refused, and the section's last entries, newest first.
 type moderatorsPage struct {
-	Roles   []guildRole
+	Picker  pickerView
 	Changes []changeView
 }
 
 // moderatorsSection builds the guild-wide section from the guild read and
-// the store: the picker with the stored set checked, or the form as posted
+// the store: the picker with the stored set as tags, or the form as posted
 // back after a refusal, and the section's last saves, newest first.
 func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, stored []string, posted *moderatorsInput) (moderatorsPage, error) {
-	checked := stored
+	selected := stored
 	if posted != nil {
-		checked = posted.RoleIDs
+		selected = posted.RoleIDs
 	}
 	entries, err := s.deps.Store.ListModeratorChanges(ctx, changeLogLimit)
 	if err != nil {
 		return moderatorsPage{}, fmt.Errorf("list moderator changes: %w", err)
 	}
-	return moderatorsPage{Roles: rolePicker(guild, stored, checked), Changes: changeViews(entries, guild.names)}, nil
+	return moderatorsPage{Picker: rolePicker(guild, stored, selected), Changes: changeViews(entries, guild.names)}, nil
 }
 
 // setModerators saves the guild-wide moderator roles: it validates the

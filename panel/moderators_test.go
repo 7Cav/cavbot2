@@ -122,24 +122,6 @@ func moderatorsSection(t *testing.T, doc *html.Node) *html.Node {
 	return sec
 }
 
-// checkedBoxes returns the values of the checked checkboxes named name
-// under n, in document order.
-func checkedBoxes(n *html.Node, name string) []string {
-	var out []string
-	eachElement(n, func(n *html.Node) {
-		typ, _ := attrValue(n, "type")
-		got, _ := attrValue(n, "name")
-		if n.Data != "input" || typ != "checkbox" || got != name {
-			return
-		}
-		if _, checked := attrValue(n, "checked"); checked {
-			value, _ := attrValue(n, "value")
-			out = append(out, value)
-		}
-	})
-	return out
-}
-
 // dataRoles returns the data-role values under n, in document order.
 func dataRoles(n *html.Node) []string {
 	var out []string
@@ -165,8 +147,12 @@ func TestHubFormListsTheGuildWideRolesApartFromItsOwn(t *testing.T) {
 		t.Fatalf("GET /?hub= status = %d, want 200", res.StatusCode)
 	}
 	doc := parseHTML(t, res)
-	if got := checkedBoxes(moderatorsSection(t, doc), "moderator_roles"); !slices.Equal(got, []string{"role-hq"}) {
-		t.Errorf("guild-wide section has %v checked, want role-hq alone", got)
+	guildPicker := rolePickerOn(t, moderatorsSection(t, doc))
+	if got := postedControls(guildPicker, "moderator_roles"); !slices.Equal(got, []string{"role-hq"}) {
+		t.Errorf("guild-wide section posts %v, want role-hq alone", got)
+	}
+	if offered := searchRows(guildPicker); slices.Contains(offered, "role-hq") {
+		t.Errorf("the guild-wide role search offers %v, want the selected role-hq left out", offered)
 	}
 	sec := findElement(doc, "section", "data-hub", strconv.FormatInt(id, 10))
 	if sec == nil {
@@ -179,8 +165,12 @@ func TestHubFormListsTheGuildWideRolesApartFromItsOwn(t *testing.T) {
 	if got := dataRoles(guildWide); !slices.Equal(got, []string{"role-hq"}) {
 		t.Errorf("the hub form lists guild-wide roles %v, want role-hq alone", got)
 	}
-	if got := checkedBoxes(sec, "moderator_roles"); !slices.Equal(got, []string{"role-mp"}) {
-		t.Errorf("the hub's own picker has %v checked, want role-mp alone", got)
+	hubPicker := rolePickerOn(t, sec)
+	if got := postedControls(hubPicker, "moderator_roles"); !slices.Equal(got, []string{"role-mp"}) {
+		t.Errorf("the hub's own picker posts %v, want role-mp alone", got)
+	}
+	if offered := searchRows(hubPicker); slices.Contains(offered, "role-mp") {
+		t.Errorf("the hub's role search offers %v, want the selected role-mp left out", offered)
 	}
 }
 

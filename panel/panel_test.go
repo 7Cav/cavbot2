@@ -358,6 +358,21 @@ func eachElement(n *html.Node, visit func(*html.Node)) {
 	}
 }
 
+// eachLiveElement is eachElement over the elements a browser puts in the
+// document: the contents of a <template> are inert, post nothing and show
+// nothing, so it does not descend into one.
+func eachLiveElement(n *html.Node, visit func(*html.Node)) {
+	if n.Type == html.ElementNode {
+		if n.Data == "template" {
+			return
+		}
+		visit(n)
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		eachLiveElement(c, visit)
+	}
+}
+
 func attrValue(n *html.Node, key string) (string, bool) {
 	for _, a := range n.Attr {
 		if a.Key == key {
