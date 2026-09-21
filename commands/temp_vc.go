@@ -437,13 +437,13 @@ func (m *sessionTempVCManager) VoiceStates(guildID string) VoiceSnapshot {
 	return VoiceSnapshot{}
 }
 
-// MemberRanks reads the payload under State.RLock. discordgo stores the
-// GUILD_CREATE guild's pointer, or copies the struct over the cached one,
-// before any handler runs, so the payload's member and voice state slices
-// are the cache's from then on and are written under State.Lock: a member
-// update writes over the shared member, a voice event replaces or removes
-// an element. The lock covers the whole read and the map holds indexes
-// only, so nothing shared is kept.
+// MemberRanks reads the payload under State.RLock. Before any handler runs,
+// discordgo stores the GUILD_CREATE guild's pointer, or copies the struct
+// over the cached one. From then on the payload's member and voice state
+// slices are the cache's, written under State.Lock: a member update writes
+// over the shared member, and a voice event replaces or removes an element.
+// The lock covers the whole read. The map holds indexes only, so nothing
+// shared is kept.
 func (m *sessionTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
 	m.s.State.RLock()
 	defer m.s.State.RUnlock()
@@ -529,11 +529,13 @@ type TempVC struct {
 	// A spawn that settles while it is set keeps its marker until the sweep
 	// finishes.
 	sweepActive bool
-	// inFlight marks each spawn in flight (CONTEXT.md) by channel ID, from
-	// the tracking commit until settle. The value turns true when the spawn
-	// settles while a sweep is active; that sweep clears it when it
-	// finishes. The restart sweep skips every marked channel.
-	inFlight map[string]bool
+	// inFlight holds each spawn in flight (CONTEXT.md) by channel ID, from
+	// the tracking commit until settle. The restart sweep skips every
+	// channel in it.
+	inFlight map[string]struct{}
+	// settled is the subset of inFlight whose spawn settled while a sweep
+	// was active. That sweep removes them from both sets when it finishes.
+	settled map[string]struct{}
 }
 
 // NewTempVC builds the runtime state around a manager and a store and loads
@@ -561,7 +563,8 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		createCaptured: make(map[int64]struct{}),
 		deleteCaptured: make(map[int64]struct{}),
 		renameCaptured: make(map[int64]struct{}),
-		inFlight:       make(map[string]bool),
+		inFlight:       make(map[string]struct{}),
+		settled:        make(map[string]struct{}),
 	}
 	ctx, cancel := t.storeContext()
 	defer cancel()
@@ -837,7 +840,7 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	for _, row := range rows {
 		// A spawn in flight's row is skipped, not judged: its channel may
 		// not have reached the cache yet, and its tracking is kept above.
-		if _, marked := t.inFlight[row.ChannelID]; marked {
+		if _, ok := t.inFlight[row.ChannelID]; ok {
 			continue
 		}
 		if !snap.hasChannel(row.ChannelID) {
@@ -868,9 +871,6 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 			handovers = append(handovers, handover)
 		}
 	}
-	// tracked is what the rebuilt record holds once the empty channels
-	// go: the rows' occupied channels and the spawns in flight it kept.
-	tracked := len(t.occupants) - len(empty)
 	t.mu.Unlock()
 
 	for _, id := range gone {
@@ -883,6 +883,12 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 		t.applyHandover(row)
 	}
 
+	// tracked is read from the record once the deletes have run: the rows'
+	// occupied channels, the spawns in flight the sweep kept, and any empty
+	// channel whose delete was refused.
+	t.mu.Lock()
+	tracked := len(t.occupants)
+	t.mu.Unlock()
 	utils.Info("Temp VC restart sweep complete",
 		"rows", len(rows), "gone", len(gone), "empty", len(empty),
 		"tracked", tracked, "protected", protected)
@@ -890,9 +896,9 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 
 // keepSpawnsInFlightLocked replaces the record's spawned channel maps with
 // ones holding only the spawns in flight, and reports how many it kept. A
-// marker whose channel is no longer tracked, because its compensating
-// delete went through or a hand delete untracked it, keeps nothing. Caller
-// holds mu.
+// spawn in flight whose channel is no longer tracked, because its
+// compensating delete went through or a hand delete untracked it, keeps
+// nothing. Caller holds mu.
 func (t *TempVC) keepSpawnsInFlightLocked() int {
 	occupants := make(map[string]map[string]struct{})
 	owners := make(map[string]string)
@@ -917,33 +923,32 @@ func (t *TempVC) keepSpawnsInFlightLocked() int {
 }
 
 // finishSweep ends a restart sweep on every exit, a failed list included:
-// the active flag drops and every settled marker goes. An unsettled marker
-// stays, because its spawn's row write or compensating delete is still
-// running and the next sweep must skip it too.
+// the active flag drops and every spawn that settled during the sweep
+// leaves inFlight. A spawn still in flight stays, because its row write or
+// compensating delete is still running and the next sweep must skip it too.
 func (t *TempVC) finishSweep() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.sweepActive = false
-	for id, settled := range t.inFlight {
-		if settled {
-			delete(t.inFlight, id)
-		}
+	for id := range t.settled {
+		delete(t.inFlight, id)
 	}
+	clear(t.settled)
 }
 
 // settleSpawn ends a spawn in flight: its row write or its compensating
-// delete has finished, whatever the outcome. The marker goes at once
-// unless a sweep is active, in which case it stays, settled, until that
+// delete has finished, whatever the outcome. The channel leaves inFlight
+// at once unless a sweep is active, in which case it stays until that
 // sweep finishes: the sweep may have listed the rows before this spawn's
 // row landed, and must not judge it gone or wipe its tracking.
 func (t *TempVC) settleSpawn(channelID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if _, marked := t.inFlight[channelID]; !marked {
+	if _, ok := t.inFlight[channelID]; !ok {
 		return
 	}
 	if t.sweepActive {
-		t.inFlight[channelID] = true
+		t.settled[channelID] = struct{}{}
 		return
 	}
 	delete(t.inFlight, channelID)
@@ -1192,7 +1197,8 @@ func (e noticeEvent) captureMsg() string {
 }
 
 // recordOwnership writes a spawned channel's row and posts the ownership
-// notice in its chat, off-lock, at create and at every handover. The notice
+// notice in its chat, off-lock, at every handover. The create path does the
+// same two steps itself, with the settle of its spawn in between. The notice
 // goes out whether or not the write succeeded: the ownership change itself
 // has happened.
 func (t *TempVC) recordOwnership(row store.SpawnedChannel, event noticeEvent) {
@@ -1448,7 +1454,7 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	t.releaseChannelIndexLocked(hub.ID, index)
 	// From here until settle the channel is a spawn in flight: a restart
 	// sweep that overlaps leaves it alone.
-	t.inFlight[channel.ID] = false
+	t.inFlight[channel.ID] = struct{}{}
 	t.mu.Unlock()
 
 	// The move goes out only for a member the cache still shows in the hub.

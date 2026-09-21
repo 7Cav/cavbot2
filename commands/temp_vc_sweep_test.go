@@ -54,6 +54,25 @@ func (w *windowStore) ListSpawnedChannels(ctx context.Context) ([]store.SpawnedC
 	return rows, err
 }
 
+// newWindowedTempVC is the one-hub fixture for the replays here: the fake
+// manager, the test hub stored behind a windowStore, and the runtime over
+// both.
+func newWindowedTempVC(t *testing.T) (*fakeTempVCManager, *windowStore, *TempVC) {
+	t.Helper()
+	fake := newFakeTempVCManager()
+	st := &windowStore{Fake: seedStore(t, testHub())}
+	return fake, st, newTestTempVC(t, fake, st)
+}
+
+// seedRow stores one spawned channel row on the test hub.
+func seedRow(t *testing.T, st *store.Fake, channelID string, number int, owner string) {
+	t.Helper()
+	row := store.SpawnedChannel{ChannelID: channelID, HubID: storedHubID(t, st), Number: number, OwnerUserID: owner}
+	if err := st.UpsertSpawnedChannel(context.Background(), row); err != nil {
+		t.Fatalf("UpsertSpawnedChannel: %v", err)
+	}
+}
+
 // sweepPayload builds the GUILD_CREATE for the test guild with the hub and
 // the given spawned channels present, and the given members inside them.
 func sweepPayload(channels []string, voice map[string]string) *discordgo.GuildCreate {
@@ -73,9 +92,7 @@ func sweepPayload(channels []string, voice map[string]string) *discordgo.GuildCr
 // member too few: A's leave would be refused by the cache and B's leave
 // would not be attributed to the channel, which would then linger empty.
 func TestTempVCJoinInsideTheSweepWindowCountsInOccupancy(t *testing.T) {
-	fake := newFakeTempVCManager()
-	st := &windowStore{Fake: seedStore(t, testHub())}
-	tv := newTestTempVC(t, fake, st)
+	fake, st, tv := newWindowedTempVC(t)
 	a, b := member("A", testRankSGT), member("B")
 	spawnInto(tv, fake, "user-a", "chan-x", a)
 	st.afterList = func(int) { fake.deliver(tv, voiceEvent("user-b", "chan-x", b)) }
@@ -100,9 +117,7 @@ func TestTempVCJoinInsideTheSweepWindowCountsInOccupancy(t *testing.T) {
 // the cache would count one member too many, and A's leave would not empty
 // the channel. Occupancy comes from the cache alone.
 func TestTempVCLeaveInsideTheSweepWindowCountsInOccupancy(t *testing.T) {
-	fake := newFakeTempVCManager()
-	st := &windowStore{Fake: seedStore(t, testHub())}
-	tv := newTestTempVC(t, fake, st)
+	fake, st, tv := newWindowedTempVC(t)
 	a, b := member("A", testRankSGT), member("B")
 	spawnInto(tv, fake, "user-a", "chan-x", a)
 	fake.deliver(tv, voiceEvent("user-b", "chan-x", b))
@@ -125,9 +140,7 @@ func TestTempVCLeaveInsideTheSweepWindowCountsInOccupancy(t *testing.T) {
 // creator's leave deletes it with its row, and the sweep's line counts it
 // as protected and as tracked although no row was listed.
 func TestTempVCHubJoinInsideTheSweepWindowStaysTracked(t *testing.T) {
-	fake := newFakeTempVCManager()
-	st := &windowStore{Fake: seedStore(t, testHub())}
-	tv := newTestTempVC(t, fake, st)
+	fake, st, tv := newWindowedTempVC(t)
 	logs := captureLogs(t)
 	a, b := member("A", testRankSGT), member("B")
 	st.afterList = func(int) { fake.deliver(tv, voiceEvent("user-a", testTempVCHub, a)) }
@@ -166,9 +179,7 @@ func TestTempVCHubJoinInsideTheSweepWindowStaysTracked(t *testing.T) {
 // no longer exists. The row belongs to a spawn in flight: the sweep skips
 // it, and the channel goes with its row when its creator leaves.
 func TestTempVCRowOfASpawnInFlightIsNotJudgedGone(t *testing.T) {
-	fake := newFakeTempVCManager()
-	st := &windowStore{Fake: seedStore(t, testHub())}
-	tv := newTestTempVC(t, fake, st)
+	fake, st, tv := newWindowedTempVC(t)
 	a := member("A", testRankSGT)
 	st.beforeList = func(int) { fake.deliver(tv, voiceEvent("user-a", testTempVCHub, a)) }
 
@@ -196,9 +207,7 @@ func TestTempVCRowOfASpawnInFlightIsNotJudgedGone(t *testing.T) {
 // sweep judges the row like any other.
 func TestTempVCCompensatingDeleteInsideTheSweepWindow(t *testing.T) {
 	t.Run("goes through", func(t *testing.T) {
-		fake := newFakeTempVCManager()
-		st := &windowStore{Fake: seedStore(t, testHub())}
-		tv := newTestTempVC(t, fake, st)
+		fake, st, tv := newWindowedTempVC(t)
 		logs := captureLogs(t)
 		a := member("A", testRankSGT)
 		fake.createHook = func() { fake.setVoice("user-a", "lobby") }
@@ -221,9 +230,7 @@ func TestTempVCCompensatingDeleteInsideTheSweepWindow(t *testing.T) {
 	})
 
 	t.Run("is refused", func(t *testing.T) {
-		fake := newFakeTempVCManager()
-		st := &windowStore{Fake: seedStore(t, testHub())}
-		tv := newTestTempVC(t, fake, st)
+		fake, st, tv := newWindowedTempVC(t)
 		a, b := member("A", testRankSGT), member("B", testRankPVT)
 		fake.moveErr = restError(http.StatusBadRequest, discordgo.ErrCodeTargetIsNotConnectedToVoice, "Target user is not connected to voice")
 		fake.moveHook = func() {
@@ -296,12 +303,8 @@ func awaitClosed(t *testing.T, done <-chan struct{}, what string) {
 // sweep 2: the rank assertion alone lets it through whenever sweep 1
 // finishes first, which is most runs.
 func TestTempVCSweepsSerialize(t *testing.T) {
-	fake := newFakeTempVCManager()
-	st := &windowStore{Fake: seedStore(t, testHub())}
-	if err := st.UpsertSpawnedChannel(context.Background(), store.SpawnedChannel{ChannelID: "chan-x", HubID: storedHubID(t, st.Fake), Number: 1, OwnerUserID: "user-a"}); err != nil {
-		t.Fatalf("UpsertSpawnedChannel: %v", err)
-	}
-	tv := newTestTempVC(t, fake, st)
+	fake, st, tv := newWindowedTempVC(t)
+	seedRow(t, st.Fake, "chan-x", 1, "user-a")
 	inside := map[string]string{"user-a": "chan-x", "user-x": "chan-x", "user-y": "chan-x"}
 	first := sweepPayload([]string{"chan-x"}, inside)
 	first.Members = []*discordgo.Member{guildMember("user-a", testRankSGT), guildMember("user-x", testRankPVT), guildMember("user-y", testRankSGT)}
@@ -349,12 +352,8 @@ func TestTempVCSweepsSerialize(t *testing.T) {
 // sweep to skip.
 func TestTempVCFailedListEndsTheSweep(t *testing.T) {
 	t.Run("a queued sweep runs after it", func(t *testing.T) {
-		fake := newFakeTempVCManager()
-		st := &windowStore{Fake: seedStore(t, testHub())}
-		if err := st.UpsertSpawnedChannel(context.Background(), store.SpawnedChannel{ChannelID: "chan-e", HubID: storedHubID(t, st.Fake), Number: 1}); err != nil {
-			t.Fatalf("UpsertSpawnedChannel: %v", err)
-		}
-		tv := newTestTempVC(t, fake, st)
+		fake, st, tv := newWindowedTempVC(t)
+		seedRow(t, st.Fake, "chan-e", 1, "")
 		countCaptures(t)
 		inList, release := make(chan struct{}), make(chan struct{})
 		st.failList = func(n int) error {
@@ -390,9 +389,7 @@ func TestTempVCFailedListEndsTheSweep(t *testing.T) {
 	})
 
 	t.Run("a spawn after it settles at once", func(t *testing.T) {
-		fake := newFakeTempVCManager()
-		st := &windowStore{Fake: seedStore(t, testHub())}
-		tv := newTestTempVC(t, fake, st)
+		fake, st, tv := newWindowedTempVC(t)
 		countCaptures(t)
 		st.failList = func(n int) error {
 			if n == 1 {
@@ -422,12 +419,8 @@ func TestTempVCFailedListEndsTheSweep(t *testing.T) {
 // gone test reads the cache, so the sweep makes no delete call for a
 // channel that is already gone and drops the row.
 func TestTempVCSweepGoneTestReadsTheCache(t *testing.T) {
-	fake := newFakeTempVCManager()
-	st := &windowStore{Fake: seedStore(t, testHub())}
-	if err := st.UpsertSpawnedChannel(context.Background(), store.SpawnedChannel{ChannelID: "chan-g", HubID: storedHubID(t, st.Fake), Number: 1}); err != nil {
-		t.Fatalf("UpsertSpawnedChannel: %v", err)
-	}
-	tv := newTestTempVC(t, fake, st)
+	fake, st, tv := newWindowedTempVC(t)
+	seedRow(t, st.Fake, "chan-g", 1, "")
 	st.afterList = func(int) { fake.dropChannel("chan-g") }
 
 	fake.deliverGuildCreate(tv, sweepPayload([]string{"chan-g"}, nil))
@@ -552,12 +545,8 @@ func TestTempVCSweepOverTheSessionAdapterRacesTheCacheCleanly(t *testing.T) {
 // leaves the record and the rows as they are, and the next GUILD_CREATE
 // retries.
 func TestTempVCSweepWithTheGuildMissingTouchesNothing(t *testing.T) {
-	fake := newFakeTempVCManager()
-	st := seedStore(t, testHub())
-	if err := st.UpsertSpawnedChannel(context.Background(), store.SpawnedChannel{ChannelID: "chan-e", HubID: storedHubID(t, st), Number: 1}); err != nil {
-		t.Fatalf("UpsertSpawnedChannel: %v", err)
-	}
-	tv := newTestTempVC(t, fake, st)
+	fake, st, tv := newWindowedTempVC(t)
+	seedRow(t, st.Fake, "chan-e", 1, "")
 	fake.setGuildMissing(true)
 
 	tv.handleGuildCreate(sweepPayload([]string{"chan-e"}, nil))
@@ -565,7 +554,7 @@ func TestTempVCSweepWithTheGuildMissingTouchesNothing(t *testing.T) {
 	if n := fake.deleteCallCount(); n != 0 {
 		t.Errorf("delete attempts = %d, want 0: nothing can be confirmed", n)
 	}
-	if rows := spawnedRows(t, st); len(rows) != 1 || rows[0].ChannelID != "chan-e" {
+	if rows := spawnedRows(t, st.Fake); len(rows) != 1 || rows[0].ChannelID != "chan-e" {
 		t.Errorf("rows = %+v, want the one row untouched", rows)
 	}
 }
