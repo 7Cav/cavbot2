@@ -112,9 +112,12 @@
         add.focus();
         return;
       }
+      // A click leaves focus on the row, and hiding a focused row drops
+      // focus out of the picker, which would close the search. Focus the
+      // input first, then hide the row.
+      input.focus();
       input.value = '';
       refresh();
-      input.focus();
     }
 
     add.addEventListener('click', function () {
