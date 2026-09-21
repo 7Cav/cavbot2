@@ -336,8 +336,8 @@ Still unproven, in rough order of how likely it is to bite:
    `{container="cavbot2"} | logfmt | msg="command_invoked" | username="..."`.
 
 Sequencing is low-risk in either order. The bot's line is inert until Alloy
-parses it, so the emitter can ship (and Watchtower can deploy it) well before
-this block is applied.
+parses it, so the emitter can ship (the release workflow deploys it over SSH)
+well before this block is applied.
 
 For validating the dashboard once it is live, the true 30-day invocation counts
 measured from the host were: Awol 82, Warden 74, Milpac 71, Zulu 41, LOA 21,

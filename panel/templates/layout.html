@@ -23,6 +23,12 @@
   <aside class="rail">
     <div class="mark"><a href="{{.ForumURL}}"><img src="/static/logo-m.png" alt="7th Cavalry Gaming"></a></div>
     <div class="foot"><a href="{{.ForumURL}}">Back to the forum</a></div>
+    <!-- The release workflow's deploy probe polls /signin, which renders this
+         signed-out rail, for the bytes `>cavbot2 <version><`. The text node of
+         the element below must stay exactly `cavbot2 ` plus the version: no
+         child elements, no line breaks, no wording change. Editing it is a
+         deploy contract change, the same rule as the command_invoked log line.
+         The signed-in rail's copy above is not probed. -->
     <div class="ver">cavbot2 {{.Version}}</div>
   </aside>
 {{end}}

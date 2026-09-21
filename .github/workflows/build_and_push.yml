@@ -1,11 +1,28 @@
 name: Build and Push Docker Image
 
+# A published release builds and pushes the image, then deploys it. A
+# prerelease stops after the push. workflow_dispatch skips the build and
+# deploys a tag Docker Hub already holds; that is the redeploy and rollback
+# path. There is no auto-rollback: a failed deploy leaves the host as it is,
+# and the fix is a dispatch with the last good tag.
+#
+# One quirk of the rollback path: a dispatch of a tag older than 0.16.0 rolls
+# the host back but fails the probe, because those builds have no panel to
+# report a version. The deployment is then recorded as failed even though the
+# host is running the old tag.
 on:
   release:
-    types: [created]
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to deploy. Bare semver, already pushed to Docker Hub.
+        required: true
+        type: string
 
 jobs:
-  build_and_push:
+  build:
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
 
     steps:
@@ -28,9 +45,98 @@ jobs:
           tags: |
             7cav/cavbot2:${{ github.ref_name }}
             7cav/cavbot2:latest
-      - name: Wait for image to be available
-        run: sleep 10
 
-      - name: Force Watchtower Update
+  deploy:
+    needs: build
+    # Referencing the production environment is what makes GitHub record a
+    # deployment for this run. Its status follows the job outcome, so a host
+    # failure or a probe timeout marks the deployment failed.
+    #
+    # The build job is skipped on workflow_dispatch. Under the default success()
+    # gate that would skip this job too, so the gate is spelled out: run after a
+    # successful or skipped build, never after a failed one, and never for a
+    # prerelease.
+    if: >-
+      ${{ !cancelled()
+          && (needs.build.result == 'success' || needs.build.result == 'skipped')
+          && (github.event_name == 'workflow_dispatch' || !github.event.release.prerelease) }}
+    runs-on: ubuntu-latest
+    # A host that accepts no connection would otherwise hold this job for the
+    # six hour default, and the concurrency group below would queue every
+    # later deploy behind it. Fifteen minutes covers the pull, the recreate
+    # and the full probe window with room to spare.
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://cavbot2.7cav.us
+    # One deploy at a time. A run that arrives while another is deploying waits
+    # for it instead of cancelling it, so the host is never left mid-recreate.
+    # (GitHub keeps only the newest waiting run; older waiting runs are
+    # cancelled before they start, which is fine, they never touched the host.)
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
+      PROBE_URL: https://cavbot2.7cav.us/signin
+      # Longer than the API's 120 s. The panel listener starts after slash
+      # command registration, and Discord rate-limits that to about 40 s on
+      # its own, on top of the pull and the recreate.
+      PROBE_TIMEOUT_SECONDS: 180
+
+    steps:
+      # The host's forced command rejects anything but a bare semver tag. Failing
+      # here first gives a readable error instead of a bare non-zero ssh exit.
+      - name: Check the tag
         run: |
-          curl -H "Authorization: Bearer ${{ secrets.WATCHER_KEY }}" https://watcher.7cav.us/v1/update
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag '$TAG' is not a bare semver version" >&2
+            exit 1
+          fi
+
+      # The command string is the bare tag and nothing else. The host's forced
+      # command reads it from SSH_ORIGINAL_COMMAND, writes it to the stack .env,
+      # then runs docker compose pull and up -d. Host key checking is strict
+      # against the pinned DEPLOY_KNOWN_HOSTS. A non-zero exit from the host
+      # fails the job.
+      - name: Deploy the tag over SSH
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
+          ssh -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" \
+              -o IdentitiesOnly=yes \
+              -i "$RUNNER_TEMP/deploy_key" \
+              "$DEPLOY_USER@$DEPLOY_HOST" "$TAG"
+
+      # The host returning is not the same as the new container serving. Poll
+      # the public signin page (served with no session, passes through the
+      # proxy) until it renders the tag. The bytes matched are the other half
+      # of the contract documented above the version element in
+      # panel/templates/layout.html; the delimiters keep 0.16.0 from matching
+      # 0.16.01. Past the timeout the job fails and the deployment is recorded
+      # as failed.
+      - name: Wait for the signin page to report the tag
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + PROBE_TIMEOUT_SECONDS))
+          while (( SECONDS < deadline )); do
+            body=$(curl -fsS --max-time 10 "$PROBE_URL" || true)
+            if [[ "$body" == *">cavbot2 $TAG<"* ]]; then
+              echo "$PROBE_URL reports $TAG"
+              exit 0
+            fi
+            echo "$PROBE_URL does not report $TAG yet, retrying"
+            sleep 5
+          done
+          echo "$PROBE_URL did not report $TAG within ${PROBE_TIMEOUT_SECONDS}s" >&2
+          exit 1

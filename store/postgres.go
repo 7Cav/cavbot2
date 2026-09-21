@@ -31,7 +31,8 @@ const (
 	maxOpenConns = 2
 	// pingAttempts and pingInterval bound the startup wait for a Postgres that
 	// is restarting at the moment the bot comes up. Compose already waits for
-	// the healthcheck, so this covers only the Watchtower recreate case.
+	// the healthcheck, so this covers only a recreate that overlaps a database
+	// restart.
 	pingAttempts = 10
 	pingInterval = time.Second
 )
@@ -94,7 +95,7 @@ func pingWithRetry(ctx context.Context, db *sql.DB) error {
 
 // migrate applies every pending embedded migration. The session locker takes
 // a Postgres advisory lock for the run, so two bot processes against one
-// database (a Watchtower recreate that overlaps the old container) cannot
+// database (a deploy recreate that overlaps the old container) cannot
 // both apply the same file. goose runs each file in its own transaction: a
 // failed file rolls back and is retried on the next start.
 func migrate(ctx context.Context, db *sql.DB) error {

@@ -25,6 +25,7 @@ const (
 	testCode         = "code-1"
 	testUserID       = 1234
 	testUsername     = "Doe.J"
+	testVersion      = "test"
 )
 
 // fakeForum plays the forum's token and userinfo endpoints over a real
@@ -414,6 +415,29 @@ func TestSigninPagePlainVisitHasNoCause(t *testing.T) {
 	}
 	if cause, ok := mainCause(t, res); ok {
 		t.Fatalf("plain visit carries data-cause=%q, want none", cause)
+	}
+}
+
+// The literal below is spelled by hand on purpose, never read from the
+// template or a constant. The release workflow's deploy probe polls the public
+// signin page for the same bytes, `>cavbot2 <tag><`, so a restyle of the
+// version element that reflows it or splits the name from the version must go
+// red here before it fails a deploy. This pins the template half of that
+// contract only; the workflow half runs on a GitHub runner.
+func TestSigninPageRendersVersionForDeployProbe(t *testing.T) {
+	b := newBrowser(t, newTestPanel(t, newFakeForum(t)))
+
+	res := b.get("/signin")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if want := ">cavbot2 " + testVersion + "<"; !strings.Contains(string(body), want) {
+		t.Fatalf("signin page does not contain the deploy probe marker %q", want)
 	}
 }
 

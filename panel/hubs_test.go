@@ -258,7 +258,7 @@ func newTestWorldOver(t *testing.T, st store.Store, f *fakeForum) *testWorld {
 	if err != nil {
 		t.Fatalf("NewTempVC: %v", err)
 	}
-	p, err := New(testConfig(f), "test", Deps{Store: st, Runtime: runtime, Manager: discord, GuildID: testGuildID})
+	p, err := New(testConfig(f), testVersion, Deps{Store: st, Runtime: runtime, Manager: discord, GuildID: testGuildID})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -140,9 +140,8 @@ you created yourself gets the bot running, but `/loa` stays empty.
 
 Compose also starts a `postgres:18-alpine` service for the bot's own store,
 with its data in the `cavbot2_pgdata` volume. The bot waits for its healthcheck
-before it starts. Watchtower leaves the database alone (it carries the exclude
-label), so a Postgres minor update is a manual `docker compose pull postgres &&
-docker compose up -d postgres`.
+before it starts. A Postgres minor update is a manual `docker compose pull
+postgres && docker compose up -d postgres`.
 
 A healthy startup logs, in order: `Logger initialized`, `Sentry disabled
 (SENTRY_DSN not set)`, `CavBot2 starting`, the LOA cache line for whichever
@@ -158,8 +157,11 @@ commands are created one at a time and Discord rate-limits them, so a silent
 console there is normal, not a hang.
 
 **In production** the image comes from a GitHub Release, which pushes
-`7cav/cavbot2:<tag>` and pings Watchtower on the host. The host preparation,
-the Release checklist and the MEE6 cutover steps are in
+`7cav/cavbot2:<tag>`, then deploys that tag to the host over SSH. GitHub
+records the result as a deployment in the `production` environment. A
+prerelease pushes and stops. To redeploy or roll back, run the workflow by hand
+with a tag Docker Hub already holds. The host preparation, the Release
+checklist and the MEE6 cutover steps are in
 [`docs/cutover-runbook.md`](docs/cutover-runbook.md).
 
 ### One thing that is not a command
