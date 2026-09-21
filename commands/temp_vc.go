@@ -38,6 +38,18 @@ import (
 // from its row or elects one by the handover rule, and touches no channel it
 // holds no row for.
 //
+// The sweep and the voice handlers run on their own goroutines, and the
+// sweep's list call is made off-lock, so a voice event can be handled
+// inside the sweep's window. The sweep rebuilds who is where from one
+// copied cache snapshot taken under the runtime mutex, not from the payload,
+// so an event handled in the window is counted. A hub join marks its fresh
+// channel as a spawn in flight (CONTEXT.md) at the tracking commit, until
+// its row write or compensating delete finishes; a sweep that overlaps
+// leaves that channel alone and skips its row, so a spawn is never lost to
+// the rebuild. Sweeps serialize behind one mutex, and the sweep reads the
+// payload's slices only for its rank copy, under the state's lock, because
+// discordgo shares them with its cache.
+//
 // A spawn that fails is one create per join: no retry, no backoff, no
 // auto-disable. The member gets one message in the hub channel's text chat
 // that mentions them alone, no DM and no disconnect. Three texts: the
@@ -216,6 +228,28 @@ func lowestRoleIndex(m *discordgo.Member, idx map[string]int, fallback int) int 
 	return best
 }
 
+// GuildMemberRanks reads a GUILD_CREATE guild's rank data into a user ID to
+// rank index map, the guild's member list first and the members its voice
+// states carry second, by the same rank rule the voice handlers apply. It
+// keeps no reference to the guild's members or roles. The production
+// adapter calls it under State.RLock, because discordgo shares the
+// payload's slices with its state cache; the test fakes call it as it is.
+// One helper for all three, so the rank rule cannot diverge.
+func GuildMemberRanks(g *discordgo.Guild) map[string]int {
+	ranks := make(map[string]int, len(g.Members))
+	for _, m := range g.Members {
+		if m != nil && m.User != nil {
+			ranks[m.User.ID] = lowestRoleIndex(m, rankRoleIndex, noRankIndex)
+		}
+	}
+	for _, vs := range g.VoiceStates {
+		if vs != nil && vs.Member != nil {
+			ranks[vs.UserID] = lowestRoleIndex(vs.Member, rankRoleIndex, noRankIndex)
+		}
+	}
+	return ranks
+}
+
 // TempVCManager is the subset of *discordgo.Session the temp-VC lifecycle
 // uses. Command code depends on this interface so tests can substitute a fake
 // that records calls and injects per-call errors without touching the live
@@ -253,10 +287,16 @@ type TempVCManager interface {
 	// reads hub channel names, category names and the register picker from
 	// it at each page load.
 	GuildChannels(guildID string) ([]*discordgo.Channel, error)
-	// VoiceStates reads one copied snapshot of the guild's voice states from
-	// discordgo's state cache, never the API. The runtime checks each
-	// decision against it (#319).
+	// VoiceStates reads one copied snapshot of the guild's voice states and
+	// channel IDs from discordgo's state cache, never the API. The runtime
+	// checks each decision against it (#319) and the restart sweep rebuilds
+	// from it (#325).
 	VoiceStates(guildID string) VoiceSnapshot
+	// MemberRanks reads a GUILD_CREATE guild's rank data into a user ID to
+	// rank index map, through GuildMemberRanks. The production adapter
+	// reads under the state's lock, because discordgo shares the payload's
+	// slices with its cache (#335).
+	MemberRanks(g *discordgo.Guild) map[string]int
 }
 
 // VoiceSnapshot is one copy of a guild's voice states from discordgo's state
@@ -272,6 +312,17 @@ type VoiceSnapshot struct {
 	// ChannelByUser maps each connected member's user ID to the channel they
 	// are in. A member with no entry is not connected.
 	ChannelByUser map[string]string
+	// Channels is the guild's channel ID set as the cache holds it, copied
+	// under the same lock as the voice states. The restart sweep's gone
+	// test reads it: a row whose channel is absent loses its row.
+	Channels map[string]struct{}
+}
+
+// hasChannel reports whether the snapshot holds the channel. A missing
+// guild holds none; callers check Present first.
+func (s VoiceSnapshot) hasChannel(channelID string) bool {
+	_, ok := s.Channels[channelID]
+	return ok
 }
 
 // channelOf reports the channel a member is in, or empty when they are not
@@ -368,15 +419,35 @@ func (m *sessionTempVCManager) VoiceStates(guildID string) VoiceSnapshot {
 		if g.Unavailable {
 			return VoiceSnapshot{}
 		}
-		snap := VoiceSnapshot{Present: true, ChannelByUser: make(map[string]string, len(g.VoiceStates))}
+		snap := VoiceSnapshot{
+			Present:       true,
+			ChannelByUser: make(map[string]string, len(g.VoiceStates)),
+			Channels:      make(map[string]struct{}, len(g.Channels)),
+		}
 		for _, vs := range g.VoiceStates {
 			if vs.ChannelID != "" {
 				snap.ChannelByUser[vs.UserID] = vs.ChannelID
 			}
 		}
+		for _, ch := range g.Channels {
+			snap.Channels[ch.ID] = struct{}{}
+		}
 		return snap
 	}
 	return VoiceSnapshot{}
+}
+
+// MemberRanks reads the payload under State.RLock. Before any handler runs,
+// discordgo stores the GUILD_CREATE guild's pointer, or copies the struct
+// over the cached one. From then on the payload's member and voice state
+// slices are the cache's, written under State.Lock: a member update writes
+// over the shared member, and a voice event replaces or removes an element.
+// The lock covers the whole read. The map holds indexes only, so nothing
+// shared is kept.
+func (m *sessionTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
+	m.s.State.RLock()
+	defer m.s.State.RUnlock()
+	return GuildMemberRanks(g)
 }
 
 // TempVC holds the feature's runtime state. All maps are guarded by mu:
@@ -399,8 +470,8 @@ type TempVC struct {
 	// userChannel tracks every member's current voice channel (any channel,
 	// not just spawned ones) so a VOICE_STATE_UPDATE can be diffed into a
 	// leave + join. It is the diff base, not the truth: discordgo's state
-	// cache is checked before each action. Seeded from GUILD_CREATE voice
-	// states, then maintained from events.
+	// cache is checked before each action. Seeded by the restart sweep from
+	// the cache, hub occupants left out, then maintained from events.
 	userChannel map[string]string
 	// occupants tracks membership per spawned channel. Presence of a key is
 	// what marks a channel as spawned.
@@ -449,6 +520,22 @@ type TempVC struct {
 	// renameCaptured is the same rule for rename failures, opened by a
 	// successful rename of one of the hub's channels.
 	renameCaptured map[int64]struct{}
+	// sweepMu serializes restart sweeps. One sweep holds it for its whole
+	// run, list included, and a queued one takes its own snapshot once the
+	// first has finished, so the later payload's ranks land last. Voice
+	// handlers never take it. Taken before mu and released after it.
+	sweepMu sync.Mutex
+	// sweepActive is set for the length of a restart sweep, list included.
+	// A spawn that settles while it is set keeps its marker until the sweep
+	// finishes.
+	sweepActive bool
+	// inFlight holds each spawn in flight (CONTEXT.md) by channel ID, from
+	// the tracking commit until settle. The restart sweep skips every
+	// channel in it.
+	inFlight map[string]struct{}
+	// settled is the subset of inFlight whose spawn settled while a sweep
+	// was active. That sweep removes them from both sets when it finishes.
+	settled map[string]struct{}
 }
 
 // NewTempVC builds the runtime state around a manager and a store and loads
@@ -476,6 +563,8 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		createCaptured: make(map[int64]struct{}),
 		deleteCaptured: make(map[int64]struct{}),
 		renameCaptured: make(map[int64]struct{}),
+		inFlight:       make(map[string]struct{}),
+		settled:        make(map[string]struct{}),
 	}
 	ctx, cancel := t.storeContext()
 	defer cancel()
@@ -592,8 +681,8 @@ func (t *TempVC) storeContext() (context.Context, context.CancelFunc) {
 }
 
 // StartTempVC wires the temp voice channel feature onto a Discord session: a
-// GUILD_CREATE handler that seeds occupancy and runs the restart sweep (fires
-// on initial connect and again on any reconnect), and a VOICE_STATE_UPDATE
+// GUILD_CREATE handler that runs the restart sweep (fires on initial connect
+// and again on any reconnect), and a VOICE_STATE_UPDATE
 // handler that drives the create, cleanup and ownership lifecycle. Call
 // before dg.Open(). The returned runtime is what the panel's service layer
 // applies hub saves to.
@@ -651,25 +740,50 @@ func (t *TempVC) handleChannelDelete(c *discordgo.ChannelDelete) {
 	}
 }
 
-// handleGuildCreate seeds voice-state tracking from the GUILD_CREATE payload
-// and runs the restart sweep over the stored rows. A row whose channel is
-// absent from the guild loses its row. A present, empty channel is deleted
-// with its row. A present, occupied channel is tracked again with its number
-// from the row and its owner restored from the row; an owner absent from the
-// channel counts as having left, and the handover rule elects from the
-// occupants, whose ranks come from the payload's member list. No channel
-// without a row is touched, so a channel a human made is never deleted.
-// GUILD_CREATE re-fires on gateway reconnects, so this also rebuilds
-// tracking after any missed events; a restored owner posts no notice, so a
-// reconnect is silent.
+// handleGuildCreate runs the restart sweep: it lists the stored rows, then
+// rebuilds the record from them and from one copied snapshot of the cache
+// taken under the lock. A row whose channel is absent from the snapshot
+// loses its row. A present, empty channel is deleted with its row. A
+// present, occupied channel is tracked again with its number from the row
+// and its owner restored from the row; an owner absent from the channel
+// counts as having left, and the handover rule elects from the occupants,
+// whose ranks come from the payload's member list. No channel without a row
+// is touched, so a channel a human made is never deleted. GUILD_CREATE
+// re-fires on gateway reconnects, so this also rebuilds tracking after any
+// missed events; a restored owner posts no notice, so a reconnect is silent.
 //
-// A store that cannot list the rows leaves the in-memory state as it was: on
-// first connect that is empty, and on a reconnect it is the tracking from
-// before the disconnect. The next GUILD_CREATE retries.
+// A spawn in flight, a hub join whose row write or compensating delete has
+// not finished, is left as the record has it and its row is skipped: its
+// tracking either committed before the rebuild and is kept, or lands on the
+// rebuilt record afterwards. Hub occupants are left out of the diff base so
+// their next voice event in the hub reads as a join.
+//
+// A store that cannot list the rows, or a guild missing from the cache,
+// leaves the in-memory state as it was: on first connect that is empty, and
+// on a reconnect it is the tracking from before the disconnect. The next
+// GUILD_CREATE retries.
 func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	if g.ID != t.guildID {
 		return
 	}
+
+	// The payload's rank data is copied before anything waits: the read is
+	// the sweep's only look at the payload's slices, under the state's
+	// lock, and the copy holds indexes alone.
+	ranks := t.mgr.MemberRanks(g.Guild)
+
+	// One sweep at a time. A GUILD_CREATE that lands during a sweep waits
+	// for it and then runs in full over its own snapshot: its payload may
+	// carry a fresher member list than the one in progress.
+	t.sweepMu.Lock()
+	defer t.sweepMu.Unlock()
+	// The sweep is active from before the list until it finishes, so a
+	// spawn that settles in between keeps its marker for the rebuild. The
+	// deferred finish runs before the sweep mutex is released.
+	t.mu.Lock()
+	t.sweepActive = true
+	t.mu.Unlock()
+	defer t.finishSweep()
 
 	ctx, cancel := t.storeContext()
 	rows, err := t.st.ListSpawnedChannels(ctx)
@@ -679,54 +793,57 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 		return
 	}
 
-	present := make(map[string]struct{}, len(g.Channels))
-	for _, ch := range g.Channels {
-		present[ch.ID] = struct{}{}
-	}
-	occupantsOf := make(map[string]map[string]struct{})
-	for _, vs := range g.VoiceStates {
-		if vs.ChannelID == "" {
-			continue
-		}
-		if occupantsOf[vs.ChannelID] == nil {
-			occupantsOf[vs.ChannelID] = make(map[string]struct{})
-		}
-		occupantsOf[vs.ChannelID][vs.UserID] = struct{}{}
-	}
-
 	// Compute the sweep under the lock, but issue deletes after releasing
 	// it, ChannelDelete is a network call.
 	t.mu.Lock()
-	t.userChannel = make(map[string]string)
-	t.occupants = make(map[string]map[string]struct{})
-	t.owners = make(map[string]string)
-	t.channelHub = make(map[string]int64)
-	t.channelIndex = make(map[string]int)
+	// Who is where, and which channels exist, come from one snapshot of the
+	// cache taken here, under the lock, not from the payload: a voice or
+	// channel event handled during the list call has already reached the
+	// cache, and the payload predates it.
+	snap := t.mgr.VoiceStates(t.guildID)
+	// A missing guild confirms nothing, so no row can be judged gone or
+	// empty. The record stays as it was, as after a failed list, and the
+	// next GUILD_CREATE retries.
+	if !snap.Present {
+		t.mu.Unlock()
+		utils.Warn("Temp VC restart sweep skipped, guild missing from the cache", "guild_id", g.ID, "rows", len(rows))
+		return
+	}
+	t.userChannel = make(map[string]string, len(snap.ChannelByUser))
+	occupantsOf := make(map[string]map[string]struct{})
+	for userID, channelID := range snap.ChannelByUser {
+		// A hub's occupants are left out, enabled, disabled or broken hub
+		// alike, so their next voice event in it reads as a join once: an
+		// enabled hub spawns for them, the others take their usual path.
+		if _, isHub := t.hubs[channelID]; !isHub {
+			t.userChannel[userID] = channelID
+		}
+		if occupantsOf[channelID] == nil {
+			occupantsOf[channelID] = make(map[string]struct{})
+		}
+		occupantsOf[channelID][userID] = struct{}{}
+	}
+	// A spawn in flight is left as the record has it: its tracking committed
+	// before this rebuild, and its row may not have been listed. Everything
+	// else is rebuilt from the rows below.
+	protected := t.keepSpawnsInFlightLocked()
 	// pending is left alone: a create in flight across a reconnect still
 	// holds its number and releases it itself. memberRank is kept and
-	// overlaid from the payload: a rank learnt before the reconnect is
-	// still a rank.
-
-	// Ranks come from the payload's member list, and from any voice state
-	// that carries a member, so a handover at the sweep needs no REST fetch.
-	for _, m := range g.Members {
-		if m != nil && m.User != nil {
-			t.rememberMemberLocked(m.User.ID, m)
-		}
-	}
-	for _, vs := range g.VoiceStates {
-		if vs.ChannelID != "" {
-			t.userChannel[vs.UserID] = vs.ChannelID
-		}
-		if vs.Member != nil {
-			t.rememberMemberLocked(vs.UserID, vs.Member)
-		}
+	// overlaid from the payload's copy: a rank learnt before the reconnect
+	// is still a rank, and a handover at the sweep needs no REST fetch.
+	for userID, rank := range ranks {
+		t.memberRank[userID] = rank
 	}
 
 	var gone, empty []string
 	var handovers []store.SpawnedChannel
 	for _, row := range rows {
-		if _, ok := present[row.ChannelID]; !ok {
+		// A spawn in flight's row is skipped, not judged: its channel may
+		// not have reached the cache yet, and its tracking is kept above.
+		if _, ok := t.inFlight[row.ChannelID]; ok {
+			continue
+		}
+		if !snap.hasChannel(row.ChannelID) {
 			gone = append(gone, row.ChannelID)
 			continue
 		}
@@ -766,9 +883,75 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 		t.applyHandover(row)
 	}
 
+	// tracked is read from the record once the deletes have run: the rows'
+	// occupied channels, the spawns in flight the sweep kept, and any empty
+	// channel whose delete was refused.
+	t.mu.Lock()
+	tracked := len(t.occupants)
+	t.mu.Unlock()
 	utils.Info("Temp VC restart sweep complete",
 		"rows", len(rows), "gone", len(gone), "empty", len(empty),
-		"tracked", len(rows)-len(gone)-len(empty))
+		"tracked", tracked, "protected", protected)
+}
+
+// keepSpawnsInFlightLocked replaces the record's spawned channel maps with
+// ones holding only the spawns in flight, and reports how many it kept. A
+// spawn in flight whose channel is no longer tracked, because its
+// compensating delete went through or a hand delete untracked it, keeps
+// nothing. Caller holds mu.
+func (t *TempVC) keepSpawnsInFlightLocked() int {
+	occupants := make(map[string]map[string]struct{})
+	owners := make(map[string]string)
+	channelHub := make(map[string]int64)
+	channelIndex := make(map[string]int)
+	kept := 0
+	for id := range t.inFlight {
+		occ, tracked := t.occupants[id]
+		if !tracked {
+			continue
+		}
+		kept++
+		occupants[id] = occ
+		if owner, ok := t.owners[id]; ok {
+			owners[id] = owner
+		}
+		channelHub[id] = t.channelHub[id]
+		channelIndex[id] = t.channelIndex[id]
+	}
+	t.occupants, t.owners, t.channelHub, t.channelIndex = occupants, owners, channelHub, channelIndex
+	return kept
+}
+
+// finishSweep ends a restart sweep on every exit, a failed list included:
+// the active flag drops and every spawn that settled during the sweep
+// leaves inFlight. A spawn still in flight stays, because its row write or
+// compensating delete is still running and the next sweep must skip it too.
+func (t *TempVC) finishSweep() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sweepActive = false
+	for id := range t.settled {
+		delete(t.inFlight, id)
+	}
+	clear(t.settled)
+}
+
+// settleSpawn ends a spawn in flight: its row write or its compensating
+// delete has finished, whatever the outcome. The channel leaves inFlight
+// at once unless a sweep is active, in which case it stays until that
+// sweep finishes: the sweep may have listed the rows before this spawn's
+// row landed, and must not judge it gone or wipe its tracking.
+func (t *TempVC) settleSpawn(channelID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, ok := t.inFlight[channelID]; !ok {
+		return
+	}
+	if t.sweepActive {
+		t.settled[channelID] = struct{}{}
+		return
+	}
+	delete(t.inFlight, channelID)
 }
 
 // HandleVoiceStateUpdate diffs a member's voice move into a leave + join and
@@ -1014,7 +1197,8 @@ func (e noticeEvent) captureMsg() string {
 }
 
 // recordOwnership writes a spawned channel's row and posts the ownership
-// notice in its chat, off-lock, at create and at every handover. The notice
+// notice in its chat, off-lock, at every handover. The create path does the
+// same two steps itself, with the settle of its spawn in between. The notice
 // goes out whether or not the write succeeded: the ownership change itself
 // has happened.
 func (t *TempVC) recordOwnership(row store.SpawnedChannel, event noticeEvent) {
@@ -1268,6 +1452,9 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	t.channelHub[channel.ID] = hub.ID
 	t.channelIndex[channel.ID] = index
 	t.releaseChannelIndexLocked(hub.ID, index)
+	// From here until settle the channel is a spawn in flight: a restart
+	// sweep that overlaps leaves it alone.
+	t.inFlight[channel.ID] = struct{}{}
 	t.mu.Unlock()
 
 	// The move goes out only for a member the cache still shows in the hub.
@@ -1306,9 +1493,11 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	delete(t.createCaptured, hub.ID)
 	t.mu.Unlock()
 
-	t.recordOwnership(
-		store.SpawnedChannel{ChannelID: channel.ID, HubID: hub.ID, Number: index, OwnerUserID: owner},
-		noticeCreate)
+	// The row write settles the spawn; the create notice follows, as at a
+	// handover.
+	t.writeRow(store.SpawnedChannel{ChannelID: channel.ID, HubID: hub.ID, Number: index, OwnerUserID: owner}, noticeCreate)
+	t.settleSpawn(channel.ID)
+	t.postOwnershipNotice(channel.ID, noticeCreate, owner)
 
 	utils.Info("Temp VC created",
 		"channel_id", channel.ID, "name", name, "number", index,
@@ -1331,6 +1520,7 @@ func (t *TempVC) abandonSpawn(channelID string, hub store.Hub, creator string) {
 	t.mu.Unlock()
 	outcome := t.deleteIfStillEmpty(channelID, creator)
 	if outcome == deleteDone {
+		t.settleSpawn(channelID)
 		return
 	}
 	utils.Info("Temp VC compensating delete refused, channel kept",
@@ -1340,7 +1530,11 @@ func (t *TempVC) abandonSpawn(channelID string, hub store.Hub, creator string) {
 	t.setOwnerLocked(channelID, elected)
 	row := t.rowLocked(channelID, elected)
 	t.mu.Unlock()
-	if t.writeRow(row, noticeCreate) {
+	// The row write settles the spawn either way; the notice follows a
+	// write that went through.
+	written := t.writeRow(row, noticeCreate)
+	t.settleSpawn(channelID)
+	if written {
 		t.postOwnershipNotice(channelID, noticeCreate, elected)
 	}
 }

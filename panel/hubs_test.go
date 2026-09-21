@@ -158,18 +158,32 @@ func (f *fakeDiscord) ChannelMessageSendComplex(channelID string, data *discordg
 
 func (f *fakeDiscord) GuildMember(_, _ string) (*discordgo.Member, error) { return nil, nil }
 
-// VoiceStates copies the fake cache. Any guild but the test guild is absent.
+// VoiceStates copies the fake cache: who is where, and the guild's
+// channels. Any guild but the test guild is absent.
 func (f *fakeDiscord) VoiceStates(guildID string) commands.VoiceSnapshot {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if guildID != testGuildID {
 		return commands.VoiceSnapshot{}
 	}
-	snap := commands.VoiceSnapshot{Present: true, ChannelByUser: make(map[string]string, len(f.voice))}
+	snap := commands.VoiceSnapshot{
+		Present:       true,
+		ChannelByUser: make(map[string]string, len(f.voice)),
+		Channels:      make(map[string]struct{}, len(f.channels)),
+	}
 	for user, ch := range f.voice {
 		snap.ChannelByUser[user] = ch
 	}
+	for _, ch := range f.channels {
+		snap.Channels[ch.ID] = struct{}{}
+	}
 	return snap
+}
+
+// MemberRanks reads the payload through the runtime's shared helper. The
+// panel's tests never run a sweep; the fake carries it for the interface.
+func (f *fakeDiscord) MemberRanks(g *discordgo.Guild) map[string]int {
+	return commands.GuildMemberRanks(g)
 }
 
 // setVoice puts a member in a channel in the fake cache, or disconnects

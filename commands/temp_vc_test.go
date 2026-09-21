@@ -232,19 +232,41 @@ func (f *fakeTempVCManager) GuildChannels(_ string) ([]*discordgo.Channel, error
 	return out, nil
 }
 
-// VoiceStates copies the fake cache for the test guild. Any other guild,
-// or the test guild marked missing, is absent.
+// VoiceStates copies the fake cache for the test guild: who is where, and
+// the channels the cache holds. Any other guild, or the test guild marked
+// missing, is absent.
 func (f *fakeTempVCManager) VoiceStates(guildID string) VoiceSnapshot {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if guildID != testTempVCGuild || f.guildMissing {
 		return VoiceSnapshot{}
 	}
-	snap := VoiceSnapshot{Present: true, ChannelByUser: make(map[string]string, len(f.voice))}
+	snap := VoiceSnapshot{
+		Present:       true,
+		ChannelByUser: make(map[string]string, len(f.voice)),
+		Channels:      make(map[string]struct{}, len(f.channels)),
+	}
 	for user, ch := range f.voice {
 		snap.ChannelByUser[user] = ch
 	}
+	for id := range f.channels {
+		snap.Channels[id] = struct{}{}
+	}
 	return snap
+}
+
+// MemberRanks reads the payload through the shared helper. The fake holds
+// no lock: nothing else writes into a test's payload.
+func (f *fakeTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
+	return GuildMemberRanks(g)
+}
+
+// dropChannel removes a channel from the fake cache, the CHANNEL_DELETE
+// reaching the cache before any handler runs.
+func (f *fakeTempVCManager) dropChannel(channelID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.channels, channelID)
 }
 
 // setVoice puts a member in a channel in the fake cache, or disconnects
@@ -280,7 +302,8 @@ func (f *fakeTempVCManager) deliver(tv *TempVC, vs *discordgo.VoiceStateUpdate) 
 
 // deliverGuildCreate seeds the fake cache from a GUILD_CREATE payload, marks
 // the guild present, and then hands the payload to the sweep, the order
-// discordgo keeps.
+// discordgo keeps. The cache's channels become the payload's, as discordgo
+// replaces the guild's channel list on each GUILD_CREATE.
 func (f *fakeTempVCManager) deliverGuildCreate(tv *TempVC, g *discordgo.GuildCreate) {
 	if g.ID == testTempVCGuild {
 		f.mu.Lock()
@@ -290,6 +313,10 @@ func (f *fakeTempVCManager) deliverGuildCreate(tv *TempVC, g *discordgo.GuildCre
 			if vs.ChannelID != "" {
 				f.voice[vs.UserID] = vs.ChannelID
 			}
+		}
+		f.channels = make(map[string]*discordgo.Channel, len(g.Channels))
+		for _, ch := range g.Channels {
+			f.channels[ch.ID] = ch
 		}
 		f.mu.Unlock()
 	}

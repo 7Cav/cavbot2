@@ -95,6 +95,25 @@ func TestSessionTempVCManagerVoiceStatesReadsTheStateCache(t *testing.T) {
 		}
 	})
 
+	// The restart sweep's gone test reads the channel set, so the adapter
+	// must fill it: left empty, every row would be judged gone.
+	t.Run("a present guild gives the guild's channel set", func(t *testing.T) {
+		dg := newSession(t)
+		feed(t, dg, &discordgo.GuildCreate{Guild: &discordgo.Guild{
+			ID:       "g",
+			Channels: []*discordgo.Channel{{ID: "chan-1", GuildID: "g"}, {ID: "chan-2", GuildID: "g"}},
+		}})
+
+		snap := NewSessionTempVCManager(dg).VoiceStates("g")
+
+		if !snap.Present {
+			t.Fatal("snapshot reads the guild as missing, want present")
+		}
+		if len(snap.Channels) != 2 || !snap.hasChannel("chan-1") || !snap.hasChannel("chan-2") {
+			t.Errorf("Channels = %v, want chan-1 and chan-2", snap.Channels)
+		}
+	})
+
 	t.Run("a guild the cache never held is missing", func(t *testing.T) {
 		dg := newSession(t)
 		feed(t, dg, &discordgo.GuildCreate{Guild: &discordgo.Guild{ID: "g"}})
