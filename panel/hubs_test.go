@@ -1098,6 +1098,16 @@ func restError(status int) error {
 	return &discordgo.RESTError{Response: &http.Response{StatusCode: status}, Message: &discordgo.APIErrorMessage{}}
 }
 
+// rateLimitError is the error discordgo returns on a 429 when the call never
+// lets it retry, as every panel call does: a *RateLimitError with both
+// embedded pointers set, not a *RESTError.
+func rateLimitError(retryAfter time.Duration) error {
+	return &discordgo.RateLimitError{RateLimit: &discordgo.RateLimit{
+		TooManyRequests: &discordgo.TooManyRequests{Message: "You are being rate limited.", RetryAfter: retryAfter},
+		URL:             "https://discord.com/api/v9/channels/1549294658339868692",
+	}}
+}
+
 func TestCreateRefusedByDiscordShowsWhyAndWritesNothing(t *testing.T) {
 	w := newTestWorld(t)
 	signIn(t, w.forum, w.b)
@@ -1200,6 +1210,36 @@ func TestRefusedHubChannelRenameWritesNothingAndShowsWhy(t *testing.T) {
 	}
 	if field, ok := errorField(t, res); !ok || field != "channel_name" {
 		t.Errorf("data-error = %q (present %v), want channel_name", field, ok)
+	}
+	if after := storedHubs(t, w.st)[0]; !sameHubSettings(after, before) {
+		t.Errorf("stored hub = %+v, want it unchanged from %+v", after, before)
+	}
+	if entries := storedChangeLog(t, w.st, before.ID); len(entries) != 0 {
+		t.Errorf("a refused rename appended %d entries, want 0", len(entries))
+	}
+}
+
+// A 429 on the rename is Discord's limit on channel renames, not a lost
+// connection. The note names the wait in whole minutes (#340).
+func TestRateLimitedHubChannelRenameShowsTheWait(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	w.discord.setEditErr(rateLimitError(7*time.Minute + 42*time.Second))
+	before := storedHubs(t, w.st)[0]
+	form := updateForm()
+	form.Set("channel_name", "Join here")
+
+	res := w.b.postForm(hubPath(t, w.st, "hub-1"), form)
+
+	if !isClientError(res.StatusCode) {
+		t.Errorf("status = %d, want 4xx", res.StatusCode)
+	}
+	note := findElement(parseHTML(t, res), "", "data-error", "channel_name")
+	if note == nil {
+		t.Fatal("the page carries no data-error note on channel_name")
+	}
+	if text := textOf(note); !strings.Contains(text, "8 minutes") {
+		t.Errorf("note %q, want the wait rounded up to 8 minutes", text)
 	}
 	if after := storedHubs(t, w.st)[0]; !sameHubSettings(after, before) {
 		t.Errorf("stored hub = %+v, want it unchanged from %+v", after, before)
