@@ -49,6 +49,22 @@ import (
 // the bot makes itself, a hub with no category, never does.
 // temp_vc_errors.go classifies the Discord errors on these paths.
 //
+// discordgo applies every gateway event to its state cache in gateway order
+// before it starts any handler goroutine, and the handlers run unordered, so
+// the runtime's record of who is where can lag Discord: a stale voice state
+// (CONTEXT.md). Each decision is therefore checked against one fresh copied
+// snapshot of the cache (VoiceSnapshot): a handler drops an event the cache
+// already shows superseded, the create and the move-into go out only while
+// the member is still in the hub, a delete only while the cache shows nobody
+// inside, the hub refusal message only while the member is still there, and
+// a handover elects only from recorded occupants the cache confirms. A fresh
+// channel whose creator never entered goes through the compensating delete;
+// when that is refused the channel stays tracked as an ordinary spawned
+// channel. The guarantee is that no handler acts on a decision the cache
+// already shows superseded at that check, not full ordering: a newer event
+// can still land between a check and the API call. A guild missing from the
+// cache counts as current at entry and as "cannot confirm" before an action.
+//
 // docs/temp-vc-decisions.md records what is settled and where each decision
 // came from. CONTEXT.md carries the vocabulary.
 //
@@ -100,7 +116,7 @@ const (
 	// transport error, or a 4xx that is none of the above.
 	SpawnFailureDiscordError SpawnFailureCause = "Discord error"
 	// SpawnFailureMove is a create that succeeded and a move-into that failed.
-	// The new channel was deleted.
+	// The new channel went through the compensating delete.
 	SpawnFailureMove SpawnFailureCause = "move failed"
 )
 
@@ -237,6 +253,42 @@ type TempVCManager interface {
 	// reads hub channel names, category names and the register picker from
 	// it at each page load.
 	GuildChannels(guildID string) ([]*discordgo.Channel, error)
+	// VoiceStates reads one copied snapshot of the guild's voice states from
+	// discordgo's state cache, never the API. The runtime checks each
+	// decision against it (#319).
+	VoiceStates(guildID string) VoiceSnapshot
+}
+
+// VoiceSnapshot is one copy of a guild's voice states from discordgo's state
+// cache, taken at one instant. discordgo applies every gateway event to the
+// cache in gateway order before it starts any handler goroutine, so the
+// snapshot is the ordered truth the runtime's own record can lag behind
+// (CONTEXT.md, "Stale voice state"). It holds copied IDs only and is never
+// carried across an API call: each check takes a fresh one.
+type VoiceSnapshot struct {
+	// Present is false when the cache holds no guild by that ID, or holds it
+	// marked unavailable. A missing guild answers nothing about any member.
+	Present bool
+	// ChannelByUser maps each connected member's user ID to the channel they
+	// are in. A member with no entry is not connected.
+	ChannelByUser map[string]string
+}
+
+// channelOf reports the channel a member is in, or empty when they are not
+// connected or the guild is missing.
+func (s VoiceSnapshot) channelOf(userID string) string {
+	return s.ChannelByUser[userID]
+}
+
+// occupied reports whether the snapshot shows anyone in the channel. A
+// missing guild reads as not occupied; callers check Present first.
+func (s VoiceSnapshot) occupied(channelID string) bool {
+	for _, ch := range s.ChannelByUser {
+		if ch == channelID {
+			return true
+		}
+	}
+	return false
 }
 
 // sessionTempVCManager adapts *discordgo.Session to TempVCManager. Each
@@ -292,6 +344,41 @@ func (m *sessionTempVCManager) GuildChannels(guildID string) ([]*discordgo.Chann
 	return m.s.GuildChannels(guildID, discordgo.WithRetryOnRatelimit(false))
 }
 
+// VoiceStates takes State.RLock once and scans State.Guilds itself. It calls
+// no other State method while it holds the lock: State.Guild, State.Channel
+// and State.VoiceState each take the same read lock, which Go forbids
+// recursively, and State.VoiceState also iterates the slice after State.Guild
+// has released it. A guild marked unavailable is the stub Discord sends on
+// Ready before the GUILD_CREATE, and reads as missing. Lock order is the
+// runtime mutex, then State.RLock; discordgo never takes the runtime mutex.
+func (m *sessionTempVCManager) VoiceStates(guildID string) VoiceSnapshot {
+	st := m.s.State
+	// With voice tracking off the cache holds the GUILD_CREATE-time states
+	// and never moves, so every guild reads as missing and every guarded
+	// action stops, rather than every join reading as superseded.
+	if !m.s.StateEnabled || !st.TrackVoice {
+		return VoiceSnapshot{}
+	}
+	st.RLock()
+	defer st.RUnlock()
+	for _, g := range st.Guilds {
+		if g.ID != guildID {
+			continue
+		}
+		if g.Unavailable {
+			return VoiceSnapshot{}
+		}
+		snap := VoiceSnapshot{Present: true, ChannelByUser: make(map[string]string, len(g.VoiceStates))}
+		for _, vs := range g.VoiceStates {
+			if vs.ChannelID != "" {
+				snap.ChannelByUser[vs.UserID] = vs.ChannelID
+			}
+		}
+		return snap
+	}
+	return VoiceSnapshot{}
+}
+
 // TempVC holds the feature's runtime state. All maps are guarded by mu:
 // discordgo dispatches each gateway event on its own goroutine (SyncEvents is
 // false by default), and the panel's service layer calls ApplyHub and
@@ -311,8 +398,9 @@ type TempVC struct {
 	guildModeratorRoles []string
 	// userChannel tracks every member's current voice channel (any channel,
 	// not just spawned ones) so a VOICE_STATE_UPDATE can be diffed into a
-	// leave + join without relying on discordgo's state cache. Seeded from
-	// GUILD_CREATE voice states, then maintained from events.
+	// leave + join. It is the diff base, not the truth: discordgo's state
+	// cache is checked before each action. Seeded from GUILD_CREATE voice
+	// states, then maintained from events.
 	userChannel map[string]string
 	// occupants tracks membership per spawned channel. Presence of a key is
 	// what marks a channel as spawned.
@@ -672,7 +760,7 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 		t.deleteRow(id)
 	}
 	for _, id := range empty {
-		t.deleteIfStillEmpty(id)
+		t.deleteIfStillEmpty(id, "")
 	}
 	for _, row := range handovers {
 		t.applyHandover(row)
@@ -694,6 +782,17 @@ func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	}
 
 	t.mu.Lock()
+	// An event the cache already shows superseded is dropped whole:
+	// discordgo applied a later event for this member before this handler
+	// started. The record is untouched; the member's latest event brings it
+	// current. A missing guild answers nothing, so the event counts as
+	// current.
+	if snap := t.mgr.VoiceStates(t.guildID); snap.Present && snap.channelOf(vs.UserID) != vs.ChannelID {
+		t.mu.Unlock()
+		utils.Debug("Temp VC voice state event dropped as stale",
+			"user_id", vs.UserID, "channel_id", vs.ChannelID, "cache_channel_id", snap.channelOf(vs.UserID))
+		return
+	}
 	// Refresh the acting member's cached rank whenever the gateway gives us
 	// their member object, so elections read current data.
 	if vs.Member != nil {
@@ -743,7 +842,7 @@ func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	// The vacated channel emptied: delete it now. Off-lock, the delete is a
 	// network call.
 	if emptied {
-		t.deleteIfStillEmpty(oldChannel)
+		t.deleteIfStillEmpty(oldChannel, vs.UserID)
 	}
 
 	// Creating happens only when the user joined a hub they are not already
@@ -798,9 +897,11 @@ func (t *TempVC) rankLocked(userID string) int {
 // row with the new owner, empty for none, for the caller to write off-lock
 // with the notice. A present owner keeps the channel. Otherwise the
 // highest-ranked occupant with a rank role takes over, ties to the lowest
-// user ID, and with no such occupant the channel has no owner. An untracked
-// or empty channel changes nothing: an emptied one is about to be deleted.
-// Caller holds mu.
+// user ID, and with no such occupant the channel has no owner. The election
+// runs over the recorded occupants a fresh snapshot of the cache confirms
+// are inside: a successor whose own leave handler has not run yet is not
+// handed a channel they already left. An untracked or empty channel changes
+// nothing: an emptied one is about to be deleted. Caller holds mu.
 func (t *TempVC) reconcileOwnerLocked(channelID string) (row store.SpawnedChannel, changed bool) {
 	occ, tracked := t.occupants[channelID]
 	if !tracked || len(occ) == 0 {
@@ -810,21 +911,58 @@ func (t *TempVC) reconcileOwnerLocked(channelID string) (row store.SpawnedChanne
 	if _, present := occ[current]; has && present {
 		return row, false
 	}
-	elected := t.electOwnerLocked(occ)
-	if elected == "" {
-		delete(t.owners, channelID)
-	} else {
-		t.owners[channelID] = elected
+	// A missing guild confirms nobody, so no handover is committed: the
+	// owner stands until the next occupancy change or the restart sweep.
+	snap := t.mgr.VoiceStates(t.guildID)
+	if !snap.Present {
+		return row, false
 	}
+	elected := t.electPresentOwnerLocked(channelID, snap)
+	t.setOwnerLocked(channelID, elected)
 	if elected == current {
 		return row, false
 	}
+	return t.rowLocked(channelID, elected), true
+}
+
+// setOwnerLocked records a spawned channel's owner, or none for empty.
+// Caller holds mu.
+func (t *TempVC) setOwnerLocked(channelID, owner string) {
+	if owner == "" {
+		delete(t.owners, channelID)
+		return
+	}
+	t.owners[channelID] = owner
+}
+
+// rowLocked builds a tracked spawned channel's row with the given owner,
+// from the hub and number the runtime holds for it. Caller holds mu.
+func (t *TempVC) rowLocked(channelID, owner string) store.SpawnedChannel {
 	return store.SpawnedChannel{
 		ChannelID:   channelID,
 		HubID:       t.channelHub[channelID],
 		Number:      t.channelIndex[channelID],
-		OwnerUserID: elected,
-	}, true
+		OwnerUserID: owner,
+	}
+}
+
+// electPresentOwnerLocked runs the election over the record's occupants of
+// a channel that the snapshot confirms are inside it. The record is the only
+// candidate source, because the cache carries no rank; a member whose join
+// handler has not run yet is elected by that handler when it runs, since an
+// ownerless channel takes the first rank holder to join. A missing guild
+// confirms nobody. Caller holds mu.
+func (t *TempVC) electPresentOwnerLocked(channelID string, snap VoiceSnapshot) string {
+	if !snap.Present {
+		return ""
+	}
+	present := make(map[string]struct{})
+	for uid := range t.occupants[channelID] {
+		if snap.channelOf(uid) == channelID {
+			present[uid] = struct{}{}
+		}
+	}
+	return t.electOwnerLocked(present)
 }
 
 // electOwnerLocked picks the occupant the handover rule names: the highest
@@ -876,18 +1014,27 @@ func (e noticeEvent) captureMsg() string {
 }
 
 // recordOwnership writes a spawned channel's row and posts the ownership
-// notice in its chat, off-lock, at create and at every handover. The upsert
-// at a handover also heals a channel whose create write failed. A failed
-// write captures under the event's message and the channel stays tracked
-// with its live owner; docs/temp-vc-decisions.md accepts that a restart may
-// then not find it.
+// notice in its chat, off-lock, at create and at every handover. The notice
+// goes out whether or not the write succeeded: the ownership change itself
+// has happened.
 func (t *TempVC) recordOwnership(row store.SpawnedChannel, event noticeEvent) {
+	t.writeRow(row, event)
+	t.postOwnershipNotice(row.ChannelID, event, row.OwnerUserID)
+}
+
+// writeRow upserts a spawned channel's row and reports whether it went
+// through. The upsert at a handover also heals a channel whose create write
+// failed. A failed write captures under the event's message and the channel
+// stays tracked with its live owner; docs/temp-vc-decisions.md accepts that
+// a restart may then not find it.
+func (t *TempVC) writeRow(row store.SpawnedChannel, event noticeEvent) bool {
 	ctx, cancel := t.storeContext()
 	defer cancel()
 	if err := t.st.UpsertSpawnedChannel(ctx, row); err != nil {
 		captureError(event.captureMsg(), err, "channel_id", row.ChannelID, "hub_id", row.HubID)
+		return false
 	}
-	t.postOwnershipNotice(row.ChannelID, event, row.OwnerUserID)
+	return true
 }
 
 // applyHandover records an ownership change and logs it.
@@ -905,15 +1052,68 @@ func (t *TempVC) untrackLocked(channelID string) {
 	delete(t.renames, channelID)
 }
 
+// deleteOutcome is what deleteIfStillEmpty did with a channel: the delete
+// went through, or was refused and the channel stays tracked with its row.
+type deleteOutcome int
+
+const (
+	// deleteDone covers a channel that is deleted, already gone, or no
+	// longer tracked: nothing is left to keep.
+	deleteDone deleteOutcome = iota
+	// deleteRefusedOccupied: the record or the cache shows someone inside.
+	deleteRefusedOccupied
+	// deleteRefusedGuildMissing: the cache holds no guild, so nothing can
+	// confirm the channel is empty. It never reads as empty.
+	deleteRefusedGuildMissing
+	// deleteRefusedFailed: the delete call failed and the channel is live.
+	deleteRefusedFailed
+)
+
+// reason is the value the compensating delete logs under "reason".
+func (o deleteOutcome) reason() string {
+	switch o {
+	case deleteRefusedOccupied:
+		return "channel occupied"
+	case deleteRefusedGuildMissing:
+		return "guild unavailable"
+	case deleteRefusedFailed:
+		return "delete failed"
+	default:
+		return ""
+	}
+}
+
 // deleteIfStillEmpty deletes a spawned channel that just emptied. It re-checks
 // occupancy under the lock first: the leave that emptied the channel was
 // applied under the lock, but a join can land in the gap before this runs.
-func (t *TempVC) deleteIfStillEmpty(channelID string) {
+// userID is the member whose leave emptied it, for the log lines; the
+// restart sweep passes none.
+func (t *TempVC) deleteIfStillEmpty(channelID, userID string) deleteOutcome {
 	t.mu.Lock()
 	members, tracked := t.occupants[channelID]
-	if !tracked || len(members) > 0 {
+	if !tracked {
 		t.mu.Unlock()
-		return
+		return deleteDone
+	}
+	if len(members) > 0 {
+		t.mu.Unlock()
+		return deleteRefusedOccupied
+	}
+	// The record says empty; the cache has the last word. A member whose
+	// join handler has not run yet is still inside, and their handler will
+	// apply the join when it runs. A missing guild confirms nothing. Either
+	// way the channel stays tracked with its row for the next empty event
+	// or the restart sweep.
+	snap := t.mgr.VoiceStates(t.guildID)
+	if !snap.Present {
+		t.mu.Unlock()
+		utils.Info("Temp VC delete skipped, guild missing from the cache", "channel_id", channelID, "user_id", userID)
+		return deleteRefusedGuildMissing
+	}
+	if snap.occupied(channelID) {
+		t.mu.Unlock()
+		utils.Info("Temp VC delete skipped, cache shows the channel occupied", "channel_id", channelID, "user_id", userID)
+		return deleteRefusedOccupied
 	}
 	// Tracking is kept until Discord confirms the delete: a channel that fails
 	// to delete is still live, and the next empty event or the restart sweep
@@ -947,7 +1147,7 @@ func (t *TempVC) deleteIfStillEmpty(channelID string) {
 			t.captureOncePerStreak(t.deleteCaptured, hubID, "Temp VC delete failed", err,
 				"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
 		}
-		return
+		return deleteRefusedFailed
 	}
 
 	t.mu.Lock()
@@ -955,6 +1155,7 @@ func (t *TempVC) deleteIfStillEmpty(channelID string) {
 	delete(t.deleting, channelID)
 	t.mu.Unlock()
 	t.deleteRow(channelID)
+	return deleteDone
 }
 
 // deleteRow removes a spawned channel's row once the channel is gone from
@@ -994,6 +1195,15 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		utils.Warn("Temp VC spawn refused, hub channel has no category",
 			"hub_channel_id", hub.HubChannelID, "user_id", vs.UserID)
 		t.messageHubJoiner(hub, vs.UserID, SpawnFailureNoCategory)
+		return
+	}
+
+	// The create goes out only for a member the cache still shows in the
+	// hub. One who left in the meantime gets no channel and no message:
+	// nothing failed.
+	if !t.stillInHub(vs.UserID, hub.HubChannelID) {
+		utils.Info("Temp VC create skipped, member no longer in the hub",
+			"user_id", vs.UserID, "hub_channel_id", hub.HubChannelID)
 		return
 	}
 
@@ -1060,13 +1270,23 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	t.releaseChannelIndexLocked(hub.ID, index)
 	t.mu.Unlock()
 
+	// The move goes out only for a member the cache still shows in the hub.
+	// One who left while the create was in flight gets no move and no
+	// message: nothing failed, the channel is just not needed.
+	if !t.stillInHub(vs.UserID, hub.HubChannelID) {
+		utils.Info("Temp VC move-into abandoned, member no longer in the hub",
+			"user_id", vs.UserID, "channel_id", channel.ID, "hub_channel_id", hub.HubChannelID)
+		t.abandonSpawn(channel.ID, hub, vs.UserID)
+		return
+	}
 	if err := t.mgr.GuildMemberMove(t.guildID, vs.UserID, &channel.ID); err != nil {
 		// The member vanished (disconnected mid-create) or the move was
 		// refused. A create that succeeds and a move-into that fails is one
-		// spawn failure: the new channel is deleted at once through the
-		// empty-channel path, and the member hears about it only when the
-		// runtime's own occupancy map still has them in the hub. A member
-		// who left needs no ping about a channel that never was.
+		// spawn failure: the new channel goes through the compensating
+		// delete, and the member hears about it only when the cache still
+		// shows them in the hub. A member who left needs no ping about a
+		// channel that never was. A member still waiting hears about it
+		// whatever the delete did: the channel is not theirs either way.
 		t.recordSpawnFailure(hub.ID, SpawnFailureMove)
 		utils.Warn("Temp VC move-into failed, deleting channel",
 			"user_id", vs.UserID, "channel_id", channel.ID, "hub_channel_id", hub.HubChannelID, "error", err)
@@ -1074,16 +1294,8 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 			t.captureOncePerStreak(t.createCaptured, hub.ID, "Temp VC move-into failed, deleting channel", err,
 				"user_id", vs.UserID, "channel_id", channel.ID, "hub_channel_id", hub.HubChannelID)
 		}
-		t.mu.Lock()
-		stillInHub := t.userChannel[vs.UserID] == hub.HubChannelID
-		// The creator never arrived: they leave the occupancy so the
-		// empty-channel path sees the channel for what it is.
-		delete(t.occupants[channel.ID], vs.UserID)
-		t.mu.Unlock()
-		t.deleteIfStillEmpty(channel.ID)
-		if stillInHub {
-			t.messageHubJoiner(hub, vs.UserID, SpawnFailureMove)
-		}
+		t.abandonSpawn(channel.ID, hub, vs.UserID)
+		t.messageHubJoiner(hub, vs.UserID, SpawnFailureMove)
 		return
 	}
 
@@ -1101,6 +1313,44 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	utils.Info("Temp VC created",
 		"channel_id", channel.ID, "name", name, "number", index,
 		"hub_channel_id", hub.HubChannelID, "hub_id", hub.ID, "owner_id", owner)
+}
+
+// abandonSpawn is the compensating delete for a fresh channel its creator
+// never entered, whether the pre-move check skipped the move or Discord
+// refused it. The creator leaves the occupancy first: they are never a
+// candidate for the channel's ownership. Then the guarded delete runs. When
+// it goes through, the channel never had a row. When it is refused, because
+// someone is inside, the guild cannot confirm, or the delete call failed,
+// the channel is live and stays tracked as an ordinary spawned channel: its
+// owner is elected from the occupants a fresh snapshot confirms, its row is
+// written, and the create notice follows the row and never names the
+// creator.
+func (t *TempVC) abandonSpawn(channelID string, hub store.Hub, creator string) {
+	t.mu.Lock()
+	delete(t.occupants[channelID], creator)
+	t.mu.Unlock()
+	outcome := t.deleteIfStillEmpty(channelID, creator)
+	if outcome == deleteDone {
+		return
+	}
+	utils.Info("Temp VC compensating delete refused, channel kept",
+		"channel_id", channelID, "user_id", creator, "hub_channel_id", hub.HubChannelID, "reason", outcome.reason())
+	t.mu.Lock()
+	elected := t.electPresentOwnerLocked(channelID, t.mgr.VoiceStates(t.guildID))
+	t.setOwnerLocked(channelID, elected)
+	row := t.rowLocked(channelID, elected)
+	t.mu.Unlock()
+	if t.writeRow(row, noticeCreate) {
+		t.postOwnershipNotice(channelID, noticeCreate, elected)
+	}
+}
+
+// stillInHub reports whether a fresh snapshot of the cache shows the member
+// in the hub channel. A missing guild cannot confirm it, so the answer is
+// no: the guarded action is skipped rather than taken on a guess.
+func (t *TempVC) stillInHub(userID, hubChannelID string) bool {
+	snap := t.mgr.VoiceStates(t.guildID)
+	return snap.Present && snap.channelOf(userID) == hubChannelID
 }
 
 // postOwnershipNotice posts the ownership notice in a spawned channel's text
@@ -1146,6 +1396,13 @@ func ownershipNoticeLine(event noticeEvent, owner string) string {
 // refusal, which never reaches Sentry and so has nothing to report. A failed
 // send is a WARN line: the spawn failure itself has already been handled.
 func (t *TempVC) messageHubJoiner(hub store.Hub, userID string, cause SpawnFailureCause) {
+	// A member the cache no longer shows in the hub has left, and hears
+	// nothing about a channel they no longer want.
+	if !t.stillInHub(userID, hub.HubChannelID) {
+		utils.Debug("Temp VC spawn failure message skipped, member no longer in the hub",
+			"hub_channel_id", hub.HubChannelID, "user_id", userID, "cause", cause)
+		return
+	}
 	var content string
 	switch cause {
 	case SpawnFailureFull:

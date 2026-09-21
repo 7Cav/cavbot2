@@ -43,6 +43,10 @@ type fakeDiscord struct {
 	edited      []fakeEdit
 	deleted     []string
 	spawned     int
+	// voice stands in for the state cache's voice states: user ID to
+	// channel ID, connected members only. The panel's tests never take the
+	// guild away, so the guild is always present.
+	voice map[string]string
 }
 
 // fakeEdit is one edit call as the fake recorded it: the channel, the name
@@ -81,7 +85,7 @@ func newFakeDiscord() *fakeDiscord {
 		{ID: "vc-2", Name: "Squad Join", Type: discordgo.ChannelTypeGuildVoice, ParentID: "cat-1"},
 		{ID: "text-1", Name: "general", Type: discordgo.ChannelTypeGuildText, ParentID: "cat-1"},
 		{ID: "vc-noparent", Name: "Lobby", Type: discordgo.ChannelTypeGuildVoice},
-	}}
+	}, voice: map[string]string{}}
 }
 
 func (f *fakeDiscord) Channel(channelID string) (*discordgo.Channel, error) {
@@ -153,6 +157,32 @@ func (f *fakeDiscord) ChannelMessageSendComplex(channelID string, data *discordg
 }
 
 func (f *fakeDiscord) GuildMember(_, _ string) (*discordgo.Member, error) { return nil, nil }
+
+// VoiceStates copies the fake cache. Any guild but the test guild is absent.
+func (f *fakeDiscord) VoiceStates(guildID string) commands.VoiceSnapshot {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if guildID != testGuildID {
+		return commands.VoiceSnapshot{}
+	}
+	snap := commands.VoiceSnapshot{Present: true, ChannelByUser: make(map[string]string, len(f.voice))}
+	for user, ch := range f.voice {
+		snap.ChannelByUser[user] = ch
+	}
+	return snap
+}
+
+// setVoice puts a member in a channel in the fake cache, or disconnects
+// them for an empty channel.
+func (f *fakeDiscord) setVoice(userID, channelID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if channelID == "" {
+		delete(f.voice, userID)
+		return
+	}
+	f.voice[userID] = channelID
+}
 
 func (f *fakeDiscord) Guild(_ string) (*discordgo.Guild, error) {
 	f.mu.Lock()
@@ -274,8 +304,10 @@ func testHub() store.Hub {
 	}
 }
 
-// join feeds the runtime the gateway event for a member joining a channel.
+// join feeds the runtime the gateway event for a member joining a channel,
+// applied to the fake cache first, the order discordgo keeps.
 func (w *testWorld) join(userID, channelID string) {
+	w.discord.setVoice(userID, channelID)
 	w.runtime.HandleVoiceStateUpdate(&discordgo.VoiceStateUpdate{VoiceState: &discordgo.VoiceState{
 		GuildID: testGuildID, UserID: userID, ChannelID: channelID, Member: &discordgo.Member{},
 	}})

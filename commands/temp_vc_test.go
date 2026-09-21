@@ -56,6 +56,19 @@ type fakeTempVCManager struct {
 	// move either, so a test can feed a gateway event that lands while the
 	// move is in flight.
 	moveHook func()
+	// createHook is the same for every create call, after the create is
+	// recorded and the fake's lock released: the window between the create
+	// and the move-into.
+	createHook func()
+	// channelHook is the same for every state cache Channel lookup, before
+	// the answer: the window between the handler's entry and the create.
+	channelHook func()
+
+	// voice stands in for the state cache's voice states of the test guild:
+	// user ID to channel ID, connected members only. guildMissing makes the
+	// guild read as absent from the cache. Any other guild is always absent.
+	voice        map[string]string
+	guildMissing bool
 }
 
 type fakeCreate struct {
@@ -98,10 +111,14 @@ func newFakeTempVCManager() *fakeTempVCManager {
 			testTempVCHub: {ID: testTempVCHub, ParentID: testTempVCCategory, Type: discordgo.ChannelTypeGuildVoice},
 		},
 		nextChannel: &discordgo.Channel{ID: "new-chan"},
+		voice:       map[string]string{},
 	}
 }
 
 func (f *fakeTempVCManager) Channel(channelID string) (*discordgo.Channel, error) {
+	if f.channelHook != nil {
+		f.channelHook()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.channelErr != nil {
@@ -121,8 +138,8 @@ func (f *fakeTempVCManager) GuildChannelCreateComplex(_ string, data discordgo.G
 		<-f.createRelease
 	}
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if f.createErr != nil {
+		f.mu.Unlock()
 		return nil, f.createErr
 	}
 	f.created = append(f.created, fakeCreate{data: data, reason: reason})
@@ -132,6 +149,12 @@ func (f *fakeTempVCManager) GuildChannelCreateComplex(_ string, data discordgo.G
 		ch.ID = fmt.Sprintf("chan-%d", f.createSeq)
 	}
 	ch.Name = data.Name
+	f.mu.Unlock()
+	// The hook runs outside the fake's lock, as moveHook does, so it can
+	// feed a gateway event through the fake.
+	if f.createHook != nil {
+		f.createHook()
+	}
 	return &ch, nil
 }
 
@@ -207,6 +230,70 @@ func (f *fakeTempVCManager) GuildChannels(_ string) ([]*discordgo.Channel, error
 		out = append(out, ch)
 	}
 	return out, nil
+}
+
+// VoiceStates copies the fake cache for the test guild. Any other guild,
+// or the test guild marked missing, is absent.
+func (f *fakeTempVCManager) VoiceStates(guildID string) VoiceSnapshot {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if guildID != testTempVCGuild || f.guildMissing {
+		return VoiceSnapshot{}
+	}
+	snap := VoiceSnapshot{Present: true, ChannelByUser: make(map[string]string, len(f.voice))}
+	for user, ch := range f.voice {
+		snap.ChannelByUser[user] = ch
+	}
+	return snap
+}
+
+// setVoice puts a member in a channel in the fake cache, or disconnects
+// them for an empty channel. A reversed test preloads the final gateway
+// state through it before delivering handlers directly.
+func (f *fakeTempVCManager) setVoice(userID, channelID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if channelID == "" {
+		delete(f.voice, userID)
+		return
+	}
+	f.voice[userID] = channelID
+}
+
+// setGuildMissing makes the test guild absent from the fake cache, the
+// interval between a GUILD_DELETE and the next GUILD_CREATE.
+func (f *fakeTempVCManager) setGuildMissing(missing bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.guildMissing = missing
+}
+
+// deliver applies a voice state event to the fake cache and then hands it
+// to the runtime, the order discordgo keeps for an in-order event. Every
+// in-order test goes through here.
+func (f *fakeTempVCManager) deliver(tv *TempVC, vs *discordgo.VoiceStateUpdate) {
+	if vs.GuildID == testTempVCGuild {
+		f.setVoice(vs.UserID, vs.ChannelID)
+	}
+	tv.HandleVoiceStateUpdate(vs)
+}
+
+// deliverGuildCreate seeds the fake cache from a GUILD_CREATE payload, marks
+// the guild present, and then hands the payload to the sweep, the order
+// discordgo keeps.
+func (f *fakeTempVCManager) deliverGuildCreate(tv *TempVC, g *discordgo.GuildCreate) {
+	if g.ID == testTempVCGuild {
+		f.mu.Lock()
+		f.guildMissing = false
+		f.voice = make(map[string]string, len(g.VoiceStates))
+		for _, vs := range g.VoiceStates {
+			if vs.ChannelID != "" {
+				f.voice[vs.UserID] = vs.ChannelID
+			}
+		}
+		f.mu.Unlock()
+	}
+	tv.handleGuildCreate(g)
 }
 
 // setNextChannel changes the channel the next create returns.
@@ -374,7 +461,7 @@ func TestTempVCJoinSpawnsFromStoredHub(t *testing.T) {
 	tv := newTestTempVC(t, fake, st)
 
 	// The creator holds a rank role, so the row names them as owner.
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("Smith", testRankSGT)))
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("Smith", testRankSGT)))
 
 	creates := fake.recordedCreates()
 	if len(creates) != 1 {
@@ -440,8 +527,8 @@ func member(nick string, roleIDs ...string) *discordgo.Member {
 // sequence populates it, and returns with the member sitting in the channel.
 func spawnInto(tv *TempVC, fake *fakeTempVCManager, userID, channelID string, m *discordgo.Member) {
 	fake.setNextChannel(channelID)
-	tv.HandleVoiceStateUpdate(voiceEvent(userID, testTempVCHub, m))
-	tv.HandleVoiceStateUpdate(voiceEvent(userID, channelID, m))
+	fake.deliver(tv, voiceEvent(userID, testTempVCHub, m))
+	fake.deliver(tv, voiceEvent(userID, channelID, m))
 }
 
 // noticesIn returns the messages sent to one channel's text chat, in order,
@@ -515,7 +602,7 @@ func TestTempVCHubChannelPermissionSourceCopiesOverwrites(t *testing.T) {
 	hub.PermissionSource = store.PermissionHubChannel
 	tv := newTestTempVC(t, fake, seedStore(t, hub))
 
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, nil))
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, nil))
 
 	creates := fake.recordedCreates()
 	if len(creates) != 1 {
@@ -546,16 +633,16 @@ func TestTempVCNumbersPerHubAndReusesFreedNumber(t *testing.T) {
 
 	// Two members spawn from the same hub: the hub numbers them 1 and 2.
 	a := member("A")
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", testTempVCHub, a))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", "new-chan", a))
+	fake.deliver(tv, voiceEvent("user-a", testTempVCHub, a))
+	fake.deliver(tv, voiceEvent("user-a", "new-chan", a))
 	fake.setNextChannel("second-chan")
 	b := member("B")
-	tv.HandleVoiceStateUpdate(voiceEvent("user-b", testTempVCHub, b))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-b", "second-chan", b))
+	fake.deliver(tv, voiceEvent("user-b", testTempVCHub, b))
+	fake.deliver(tv, voiceEvent("user-b", "second-chan", b))
 
 	// The first channel empties: deleted at once, with an audit reason, and
 	// its row goes with it.
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", "", a))
+	fake.deliver(tv, voiceEvent("user-a", "", a))
 	deletes := fake.recordedDeletes()
 	if len(deletes) != 1 || deletes[0].channelID != "new-chan" {
 		t.Fatalf("deletes = %+v, want new-chan the moment it emptied", deletes)
@@ -571,7 +658,7 @@ func TestTempVCNumbersPerHubAndReusesFreedNumber(t *testing.T) {
 
 	// The freed number is reused rather than a 3 minted.
 	fake.setNextChannel("third-chan")
-	tv.HandleVoiceStateUpdate(voiceEvent("user-c", testTempVCHub, member("C")))
+	fake.deliver(tv, voiceEvent("user-c", testTempVCHub, member("C")))
 
 	if names := fake.createdNames(); len(names) != 3 || names[0] != "Voice - 1" || names[1] != "Voice - 2" || names[2] != "Voice - 1" {
 		t.Fatalf("created = %v, want Voice - 1, Voice - 2, then the freed Voice - 1", names)
@@ -596,9 +683,9 @@ func TestTempVCTwoHubsNumberIndependentlyWithOwnSettings(t *testing.T) {
 	}
 	tv := newTestTempVC(t, fake, seedStore(t, testHub(), second))
 
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", testTempVCHub, member("A")))
+	fake.deliver(tv, voiceEvent("user-a", testTempVCHub, member("A")))
 	fake.setNextChannel("chan-b")
-	tv.HandleVoiceStateUpdate(voiceEvent("user-b", "hub-2", member("B")))
+	fake.deliver(tv, voiceEvent("user-b", "hub-2", member("B")))
 
 	creates := fake.recordedCreates()
 	if len(creates) != 2 {
@@ -620,7 +707,7 @@ func TestTempVCDisabledHubSpawnsNothing(t *testing.T) {
 	st := seedStore(t, hub)
 	tv := newTestTempVC(t, fake, st)
 
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
 	if creates := fake.recordedCreates(); len(creates) != 0 {
 		t.Errorf("created %d channels from a disabled hub, want 0", len(creates))
@@ -653,7 +740,7 @@ func TestTempVCHubWithoutCategorySpawnsNothing(t *testing.T) {
 			tv := newTestTempVC(t, fake, st)
 			captures := countCaptures(t)
 
-			tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+			fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
 			if creates := fake.recordedCreates(); len(creates) != 0 {
 				t.Errorf("created %d channels, want 0 (no create call)", len(creates))
@@ -727,8 +814,8 @@ func TestTempVCFailedRowWriteKeepsChannelTrackedAndCaptures(t *testing.T) {
 	captures := countCaptures(t)
 
 	a := member("A")
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", testTempVCHub, a))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", "new-chan", a))
+	fake.deliver(tv, voiceEvent("user-a", testTempVCHub, a))
+	fake.deliver(tv, voiceEvent("user-a", "new-chan", a))
 
 	if *captures != 1 {
 		t.Errorf("captures = %d, want 1 for the failed row write", *captures)
@@ -738,7 +825,7 @@ func TestTempVCFailedRowWriteKeepsChannelTrackedAndCaptures(t *testing.T) {
 	}
 
 	// Still tracked: when the member leaves, the channel is deleted.
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", "", a))
+	fake.deliver(tv, voiceEvent("user-a", "", a))
 	if ids := fake.deletedIDs(); len(ids) != 1 || ids[0] != "new-chan" {
 		t.Errorf("deleted = %v, want new-chan (it stayed tracked without a row)", ids)
 	}
@@ -751,7 +838,7 @@ func TestTempVCCreateFailureCapturesAndMovesNobody(t *testing.T) {
 	tv := newTestTempVC(t, fake, st)
 	captures := countCaptures(t)
 
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
 	if *captures != 1 {
 		t.Errorf("captures = %d, want 1", *captures)
@@ -770,7 +857,7 @@ func TestTempVCMoveIntoFailureDeletesChannelAndWritesNoRow(t *testing.T) {
 	st := seedStore(t, testHub())
 	tv := newTestTempVC(t, fake, st)
 
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("Gone")))
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("Gone")))
 
 	if ids := fake.deletedIDs(); len(ids) != 1 || ids[0] != "new-chan" {
 		t.Fatalf("deleted = %v, want the new channel deleted at once", ids)
@@ -823,7 +910,7 @@ func TestTempVCRestartSweepReadsRowsAndTouchesNothingElse(t *testing.T) {
 	}
 	tv := newTestTempVC(t, fake, st)
 
-	tv.handleGuildCreate(guildCreate(
+	fake.deliverGuildCreate(tv, guildCreate(
 		[]*discordgo.Channel{
 			voiceChannel(testTempVCHub, testTempVCCategory, "Hub"),
 			voiceChannel("chan-b", testTempVCCategory, "Voice - 3"),
@@ -848,13 +935,13 @@ func TestTempVCRestartSweepReadsRowsAndTouchesNothingElse(t *testing.T) {
 
 	// C was tracked again although its hub row is gone: when user-a leaves,
 	// it is deleted.
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", "", member("A")))
+	fake.deliver(tv, voiceEvent("user-a", "", member("A")))
 	if ids := fake.deletedIDs(); len(ids) != 2 || ids[1] != "chan-c" {
 		t.Errorf("deleted = %v, want chan-c once it emptied", ids)
 	}
 
 	// D holds number 1 from its row, so the next spawn from the hub is 2.
-	tv.HandleVoiceStateUpdate(voiceEvent("user-c", testTempVCHub, member("C")))
+	fake.deliver(tv, voiceEvent("user-c", testTempVCHub, member("C")))
 	if names := fake.createdNames(); len(names) != 1 || names[0] != "Voice - 2" {
 		t.Errorf("created = %v, want Voice - 2 (number 1 came from D's row)", names)
 	}
@@ -868,9 +955,9 @@ func TestTempVCFailedDeleteKeepsRowAndSweepRetries(t *testing.T) {
 	countCaptures(t)
 
 	a := member("A")
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", testTempVCHub, a))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", "new-chan", a))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", "", a))
+	fake.deliver(tv, voiceEvent("user-a", testTempVCHub, a))
+	fake.deliver(tv, voiceEvent("user-a", "new-chan", a))
+	fake.deliver(tv, voiceEvent("user-a", "", a))
 
 	if fake.deleteCallCount() != 1 {
 		t.Fatalf("delete attempts = %d, want 1", fake.deleteCallCount())
@@ -884,7 +971,7 @@ func TestTempVCFailedDeleteKeepsRowAndSweepRetries(t *testing.T) {
 	fake.mu.Lock()
 	fake.deleteErr = nil
 	fake.mu.Unlock()
-	tv.handleGuildCreate(guildCreate([]*discordgo.Channel{
+	fake.deliverGuildCreate(tv, guildCreate([]*discordgo.Channel{
 		voiceChannel(testTempVCHub, testTempVCCategory, "Hub"),
 		voiceChannel("new-chan", testTempVCCategory, "Voice - 1"),
 	}))
@@ -907,7 +994,7 @@ func TestTempVCSweepListFailureCapturesAndDeletesNothing(t *testing.T) {
 	tv := newTestTempVC(t, fake, st)
 	captures := countCaptures(t)
 
-	tv.handleGuildCreate(guildCreate([]*discordgo.Channel{
+	fake.deliverGuildCreate(tv, guildCreate([]*discordgo.Channel{
 		voiceChannel(testTempVCHub, testTempVCCategory, "Hub"),
 		voiceChannel("chan-b", testTempVCCategory, "Voice - 1"),
 	}))
@@ -929,8 +1016,8 @@ func TestTempVCChannelDeleteFreesRowAndNumber(t *testing.T) {
 	tv := newTestTempVC(t, fake, st)
 
 	a := member("A")
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", testTempVCHub, a))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", "new-chan", a))
+	fake.deliver(tv, voiceEvent("user-a", testTempVCHub, a))
+	fake.deliver(tv, voiceEvent("user-a", "new-chan", a))
 
 	// Someone deletes the spawned channel in Discord's UI.
 	tv.handleChannelDelete(&discordgo.ChannelDelete{Channel: &discordgo.Channel{ID: "new-chan", GuildID: testTempVCGuild}})
@@ -939,7 +1026,7 @@ func TestTempVCChannelDeleteFreesRowAndNumber(t *testing.T) {
 		t.Errorf("rows = %+v, want none after CHANNEL_DELETE", rows)
 	}
 	fake.setNextChannel("second-chan")
-	tv.HandleVoiceStateUpdate(voiceEvent("user-b", testTempVCHub, member("B")))
+	fake.deliver(tv, voiceEvent("user-b", testTempVCHub, member("B")))
 	if names := fake.createdNames(); len(names) != 2 || names[1] != "Voice - 1" {
 		t.Errorf("created = %v, want the freed Voice - 1 reused", names)
 	}
@@ -965,7 +1052,7 @@ func TestTempVCApplyHubAndRemoveHubChangeRoutingInProcess(t *testing.T) {
 	tv := newTestTempVC(t, fake, st)
 
 	// No hub stored: the join spawns nothing, and the member sits in the hub.
-	tv.HandleVoiceStateUpdate(voiceEvent("user-z", testTempVCHub, member("Z")))
+	fake.deliver(tv, voiceEvent("user-z", testTempVCHub, member("Z")))
 	if creates := fake.recordedCreates(); len(creates) != 0 {
 		t.Fatalf("created %d channels with no hub, want 0", len(creates))
 	}
@@ -977,15 +1064,15 @@ func TestTempVCApplyHubAndRemoveHubChangeRoutingInProcess(t *testing.T) {
 	}
 	tv.ApplyHub(hub)
 	a := member("A")
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", testTempVCHub, a))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", "new-chan", a))
+	fake.deliver(tv, voiceEvent("user-a", testTempVCHub, a))
+	fake.deliver(tv, voiceEvent("user-a", "new-chan", a))
 
 	// The panel changes the base string: the live channel keeps its name
 	// and its number, so the next spawn is 2 under the new base.
 	hub.BaseString = "Ops"
 	tv.ApplyHub(hub)
 	fake.setNextChannel("second-chan")
-	tv.HandleVoiceStateUpdate(voiceEvent("user-b", testTempVCHub, member("B")))
+	fake.deliver(tv, voiceEvent("user-b", testTempVCHub, member("B")))
 	if names := fake.createdNames(); len(names) != 2 || names[0] != "Voice - 1" || names[1] != "Ops - 2" {
 		t.Fatalf("created = %v, want Voice - 1 then Ops - 2", names)
 	}
@@ -995,7 +1082,7 @@ func TestTempVCApplyHubAndRemoveHubChangeRoutingInProcess(t *testing.T) {
 
 	// The panel removes the hub: a join spawns nothing more.
 	tv.RemoveHub(testTempVCHub)
-	tv.HandleVoiceStateUpdate(voiceEvent("user-c", testTempVCHub, member("C")))
+	fake.deliver(tv, voiceEvent("user-c", testTempVCHub, member("C")))
 	if creates := fake.recordedCreates(); len(creates) != 2 {
 		t.Errorf("created %d channels after RemoveHub, want the count to stay at 2", len(creates))
 	}
@@ -1008,7 +1095,7 @@ func TestTempVCIgnoresOtherGuilds(t *testing.T) {
 	tv.HandleVoiceStateUpdate(&discordgo.VoiceStateUpdate{VoiceState: &discordgo.VoiceState{
 		GuildID: "other-guild", UserID: "user-1", ChannelID: testTempVCHub,
 	}})
-	tv.handleGuildCreate(&discordgo.GuildCreate{Guild: &discordgo.Guild{
+	fake.deliverGuildCreate(tv, &discordgo.GuildCreate{Guild: &discordgo.Guild{
 		ID:       "other-guild",
 		Channels: []*discordgo.Channel{voiceChannel("x", testTempVCCategory, "X")},
 	}})
@@ -1026,12 +1113,12 @@ func TestTempVCMuteToggleIsNoOp(t *testing.T) {
 	tv := newSeededTempVC(t, fake)
 
 	a := member("A")
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, a))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", "new-chan", a))
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, a))
+	fake.deliver(tv, voiceEvent("user-1", "new-chan", a))
 
 	// Same channel again = mute/deafen toggle; must not disturb tracking or
 	// spawn a second channel.
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", "new-chan", a))
+	fake.deliver(tv, voiceEvent("user-1", "new-chan", a))
 
 	if creates := fake.recordedCreates(); len(creates) != 1 {
 		t.Errorf("created %d channels, want 1", len(creates))
@@ -1052,7 +1139,7 @@ func TestTempVCConcurrentJoinsGetDistinctNumbers(t *testing.T) {
 	done := make(chan struct{}, 2)
 	for _, user := range []string{"user-a", "user-b"} {
 		go func(user string) {
-			tv.HandleVoiceStateUpdate(voiceEvent(user, testTempVCHub, member(user)))
+			fake.deliver(tv, voiceEvent(user, testTempVCHub, member(user)))
 			done <- struct{}{}
 		}(user)
 	}
@@ -1133,7 +1220,7 @@ func TestTempVCCreateFailureMessagesTheMemberInTheHubChat(t *testing.T) {
 	tv := newTestTempVC(t, fake, st)
 	countCaptures(t)
 
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
 	if msgs := hubMessagesMentioning(t, fake, "user-1"); len(msgs) != 1 {
 		t.Errorf("messages = %d, want exactly one in the hub chat", len(msgs))
@@ -1156,9 +1243,9 @@ func TestTempVCUnknownChannelOnDeleteIsQuietCleanup(t *testing.T) {
 
 	// The channel was deleted by hand; the member's disconnect arrives first.
 	a := member("A")
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", testTempVCHub, a))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", "new-chan", a))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", "", a))
+	fake.deliver(tv, voiceEvent("user-a", testTempVCHub, a))
+	fake.deliver(tv, voiceEvent("user-a", "new-chan", a))
+	fake.deliver(tv, voiceEvent("user-a", "", a))
 
 	if *captures != 0 {
 		t.Errorf("captures = %d, want 0: an already-gone channel is not a failure", *captures)
@@ -1168,7 +1255,7 @@ func TestTempVCUnknownChannelOnDeleteIsQuietCleanup(t *testing.T) {
 	}
 	// Untracked, so its number is free again.
 	fake.setNextChannel("second-chan")
-	tv.HandleVoiceStateUpdate(voiceEvent("user-b", testTempVCHub, member("B")))
+	fake.deliver(tv, voiceEvent("user-b", testTempVCHub, member("B")))
 	if names := fake.createdNames(); len(names) != 2 || names[1] != "Voice - 1" {
 		t.Errorf("created = %v, want Voice - 1 reused", names)
 	}
@@ -1196,7 +1283,7 @@ func failedSpawnMessage(t *testing.T, setup func(f *fakeTempVCManager)) string {
 	tv := newSeededTempVC(t, fake)
 	countCaptures(t)
 
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
 	msgs := hubMessagesMentioning(t, fake, "user-1")
 	if len(msgs) != 1 {
@@ -1250,7 +1337,7 @@ func TestTempVCRefusalWithFailedSendCapturesNothing(t *testing.T) {
 	tv := newSeededTempVC(t, fake)
 	captures := countCaptures(t)
 
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
 	if *captures != 0 {
 		t.Errorf("captures = %d, want 0: a refusal never reaches Sentry, even when its message fails", *captures)
@@ -1264,7 +1351,7 @@ func TestTempVCMoveIntoFailureMessagesOnlyAMemberStillInTheHub(t *testing.T) {
 		tv := newSeededTempVC(t, fake)
 		countCaptures(t)
 
-		tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+		fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
 		if ids := fake.deletedIDs(); len(ids) != 1 || ids[0] != "new-chan" {
 			t.Errorf("deleted = %v, want the new channel", ids)
@@ -1280,10 +1367,10 @@ func TestTempVCMoveIntoFailureMessagesOnlyAMemberStillInTheHub(t *testing.T) {
 		tv := newSeededTempVC(t, fake)
 		countCaptures(t)
 		fake.moveHook = func() {
-			tv.HandleVoiceStateUpdate(voiceEvent("user-1", "", member("A")))
+			fake.deliver(tv, voiceEvent("user-1", "", member("A")))
 		}
 
-		tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+		fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
 		if ids := fake.deletedIDs(); len(ids) != 1 || ids[0] != "new-chan" {
 			t.Errorf("deleted = %v, want the new channel", ids)
@@ -1311,7 +1398,7 @@ func TestTempVCLastSpawnFailureIsKeptPerHubAndClearedBySuccess(t *testing.T) {
 	tv := newTestTempVC(t, fake, st)
 	hubID := storedHubID(t, st)
 
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
 	got, ok := tv.LastSpawnFailure(hubID)
 	if !ok {
@@ -1326,8 +1413,8 @@ func TestTempVCLastSpawnFailureIsKeptPerHubAndClearedBySuccess(t *testing.T) {
 
 	// The category comes back and the next join spawns: the failure clears.
 	fake.channels[testTempVCHub].ParentID = testTempVCCategory
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", "", member("A")))
-	tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+	fake.deliver(tv, voiceEvent("user-1", "", member("A")))
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
 	if got, ok := tv.LastSpawnFailure(hubID); ok {
 		t.Errorf("LastSpawnFailure = %+v after a successful spawn, want none", got)
@@ -1359,7 +1446,7 @@ func TestTempVCCreateFailuresCaptureOncePerStreakPerHub(t *testing.T) {
 				tv := newSeededTempVC(t, fake)
 				captures := countCaptures(t)
 
-				tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+				fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
 				if *captures != 1 {
 					t.Errorf("captures = %d, want 1", *captures)
@@ -1375,20 +1462,20 @@ func TestTempVCCreateFailuresCaptureOncePerStreakPerHub(t *testing.T) {
 		tv := newSeededTempVC(t, fake)
 		captures := countCaptures(t)
 
-		tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
-		tv.HandleVoiceStateUpdate(voiceEvent("user-2", testTempVCHub, member("B")))
+		fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+		fake.deliver(tv, voiceEvent("user-2", testTempVCHub, member("B")))
 		if *captures != 1 {
 			t.Fatalf("captures = %d after two failures, want 1", *captures)
 		}
 
 		fake.setCreateErr(nil)
-		tv.HandleVoiceStateUpdate(voiceEvent("user-1", "", member("A")))
-		tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
-		tv.HandleVoiceStateUpdate(voiceEvent("user-1", "new-chan", member("A")))
+		fake.deliver(tv, voiceEvent("user-1", "", member("A")))
+		fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+		fake.deliver(tv, voiceEvent("user-1", "new-chan", member("A")))
 
 		fake.setCreateErr(serverErr)
-		tv.HandleVoiceStateUpdate(voiceEvent("user-2", "", member("B")))
-		tv.HandleVoiceStateUpdate(voiceEvent("user-2", testTempVCHub, member("B")))
+		fake.deliver(tv, voiceEvent("user-2", "", member("B")))
+		fake.deliver(tv, voiceEvent("user-2", testTempVCHub, member("B")))
 		if *captures != 2 {
 			t.Errorf("captures = %d after a success and a new failure, want 2", *captures)
 		}
@@ -1404,9 +1491,9 @@ func TestTempVCCreateFailuresCaptureOncePerStreakPerHub(t *testing.T) {
 		tv := newTestTempVC(t, fake, seedStore(t, testHub(), second))
 		captures := countCaptures(t)
 
-		tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
-		tv.HandleVoiceStateUpdate(voiceEvent("user-2", testTempVCHub, member("B")))
-		tv.HandleVoiceStateUpdate(voiceEvent("user-3", "hub-2", member("C")))
+		fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+		fake.deliver(tv, voiceEvent("user-2", testTempVCHub, member("B")))
+		fake.deliver(tv, voiceEvent("user-3", "hub-2", member("C")))
 
 		if *captures != 2 {
 			t.Errorf("captures = %d, want 2: one streak per hub", *captures)
@@ -1426,9 +1513,9 @@ func (f *fakeTempVCManager) setDeleteErr(err error) {
 func spawnAndLeave(tv *TempVC, fake *fakeTempVCManager, userID, channelID string) {
 	fake.setNextChannel(channelID)
 	m := member(userID)
-	tv.HandleVoiceStateUpdate(voiceEvent(userID, testTempVCHub, m))
-	tv.HandleVoiceStateUpdate(voiceEvent(userID, channelID, m))
-	tv.HandleVoiceStateUpdate(voiceEvent(userID, "", m))
+	fake.deliver(tv, voiceEvent(userID, testTempVCHub, m))
+	fake.deliver(tv, voiceEvent(userID, channelID, m))
+	fake.deliver(tv, voiceEvent(userID, "", m))
 }
 
 func TestTempVCDeleteFailuresClassify(t *testing.T) {
@@ -1448,7 +1535,7 @@ func TestTempVCDeleteFailuresClassify(t *testing.T) {
 			t.Fatalf("rows = %+v, want the row kept for the next attempt", rows)
 		}
 		fake.setDeleteErr(nil)
-		tv.handleGuildCreate(guildCreate([]*discordgo.Channel{
+		fake.deliverGuildCreate(tv, guildCreate([]*discordgo.Channel{
 			voiceChannel(testTempVCHub, testTempVCCategory, "Hub"),
 			voiceChannel("chan-a", testTempVCCategory, "Voice - 1"),
 		}))
@@ -1475,7 +1562,7 @@ func TestTempVCDeleteFailuresClassify(t *testing.T) {
 		}
 
 		fake.setDeleteErr(nil)
-		tv.handleGuildCreate(guildCreate([]*discordgo.Channel{
+		fake.deliverGuildCreate(tv, guildCreate([]*discordgo.Channel{
 			voiceChannel(testTempVCHub, testTempVCCategory, "Hub"),
 			voiceChannel("chan-a", testTempVCCategory, "Voice - 1"),
 			voiceChannel("chan-b", testTempVCCategory, "Voice - 2"),
@@ -1522,7 +1609,7 @@ func TestTempVCSpawnFailureRecordsItsCause(t *testing.T) {
 			tv := newTestTempVC(t, fake, st)
 			countCaptures(t)
 
-			tv.HandleVoiceStateUpdate(voiceEvent("user-1", testTempVCHub, member("A")))
+			fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
 			got, ok := tv.LastSpawnFailure(storedHubID(t, st))
 			if !ok || got.Cause != tc.want {
@@ -1562,13 +1649,13 @@ func TestTempVCOwnerLeavesHighestRankTakesOver(t *testing.T) {
 	// The CPT has the higher user ID, so an election by lowest ID alone
 	// would pick the PVT.
 	spawnInto(tv, fake, "sgt-1", "new-chan", member("Sgt", testRankSGT))
-	tv.HandleVoiceStateUpdate(voiceEvent("a-pvt", "new-chan", member("Pvt", testRankPVT)))
-	tv.HandleVoiceStateUpdate(voiceEvent("z-cpt", "new-chan", member("Cpt", testRankCPT)))
+	fake.deliver(tv, voiceEvent("a-pvt", "new-chan", member("Pvt", testRankPVT)))
+	fake.deliver(tv, voiceEvent("z-cpt", "new-chan", member("Cpt", testRankCPT)))
 	if notices := noticesIn(t, fake, "new-chan"); len(notices) != 1 {
 		t.Fatalf("notices = %d while the owner is present, want the create notice alone", len(notices))
 	}
 
-	tv.HandleVoiceStateUpdate(voiceEvent("sgt-1", "", member("Sgt", testRankSGT)))
+	fake.deliver(tv, voiceEvent("sgt-1", "", member("Sgt", testRankSGT)))
 
 	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "z-cpt" {
 		t.Errorf("row = %+v (present %v), want the CPT as owner", row, ok)
@@ -1597,9 +1684,9 @@ func TestTempVCOwnerLeavesWithNoRankHolderMeansNoOwner(t *testing.T) {
 
 	// IDs that no notice wording can contain by accident.
 	spawnInto(tv, fake, "sgt-1", "new-chan", member("Sgt", testRankSGT))
-	tv.HandleVoiceStateUpdate(voiceEvent("guest-9", "new-chan", member("Guest")))
+	fake.deliver(tv, voiceEvent("guest-9", "new-chan", member("Guest")))
 
-	tv.HandleVoiceStateUpdate(voiceEvent("sgt-1", "", member("Sgt", testRankSGT)))
+	fake.deliver(tv, voiceEvent("sgt-1", "", member("Sgt", testRankSGT)))
 
 	if owner, tracked := tv.Owner("new-chan"); owner != "" || !tracked {
 		t.Errorf("Owner(new-chan) = %q, %v, want no owner, tracked", owner, tracked)
@@ -1631,7 +1718,7 @@ func TestTempVCOwnershipNoticesArePairwiseDistinct(t *testing.T) {
 	// SGT leaves it to the guest alone. The SGT's move into the hub spawns
 	// channel B with the SGT as owner.
 	spawnInto(tv, fake, "guest-1", "chan-a", member("Guest"))
-	tv.HandleVoiceStateUpdate(voiceEvent("sgt-1", "chan-a", member("Sgt", testRankSGT)))
+	fake.deliver(tv, voiceEvent("sgt-1", "chan-a", member("Sgt", testRankSGT)))
 	spawnInto(tv, fake, "sgt-1", "chan-b", member("Sgt", testRankSGT))
 
 	a, b := noticesIn(t, fake, "chan-a"), noticesIn(t, fake, "chan-b")
@@ -1658,10 +1745,10 @@ func TestTempVCTieBreaksByLowestUserID(t *testing.T) {
 	// string. The higher ID joins first, so taking the first occupant loses.
 	const older, newer = "99999999999999999", "100000000000000000"
 	spawnInto(tv, fake, "cpt-1", "new-chan", member("Cpt", testRankCPT))
-	tv.HandleVoiceStateUpdate(voiceEvent(newer, "new-chan", member("Sgt", testRankSGT)))
-	tv.HandleVoiceStateUpdate(voiceEvent(older, "new-chan", member("Sgt", testRankSGT)))
+	fake.deliver(tv, voiceEvent(newer, "new-chan", member("Sgt", testRankSGT)))
+	fake.deliver(tv, voiceEvent(older, "new-chan", member("Sgt", testRankSGT)))
 
-	tv.HandleVoiceStateUpdate(voiceEvent("cpt-1", "", member("Cpt", testRankCPT)))
+	fake.deliver(tv, voiceEvent("cpt-1", "", member("Cpt", testRankCPT)))
 
 	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != older {
 		t.Errorf("row = %+v (present %v), want the lowest user ID %s", row, ok, older)
@@ -1676,13 +1763,13 @@ func TestTempVCHandoverIsFinal(t *testing.T) {
 	// The creator outranks the SGT, so a rule that re-elected on every
 	// occupancy change would make the creator owner again when they return.
 	spawnInto(tv, fake, "cpt-1", "new-chan", member("Cpt", testRankCPT))
-	tv.HandleVoiceStateUpdate(voiceEvent("sgt-1", "new-chan", member("Sgt", testRankSGT)))
-	tv.HandleVoiceStateUpdate(voiceEvent("cpt-1", "", member("Cpt", testRankCPT)))
+	fake.deliver(tv, voiceEvent("sgt-1", "new-chan", member("Sgt", testRankSGT)))
+	fake.deliver(tv, voiceEvent("cpt-1", "", member("Cpt", testRankCPT)))
 	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "sgt-1" {
 		t.Fatalf("row = %+v (present %v), want the SGT after the creator left", row, ok)
 	}
 
-	tv.HandleVoiceStateUpdate(voiceEvent("cpt-1", "new-chan", member("Cpt", testRankCPT)))
+	fake.deliver(tv, voiceEvent("cpt-1", "new-chan", member("Cpt", testRankCPT)))
 
 	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "sgt-1" {
 		t.Errorf("row = %+v (present %v), want the SGT kept: a returning creator is an ordinary occupant", row, ok)
@@ -1699,7 +1786,7 @@ func TestTempVCRankHolderJoiningOwnerlessChannelTakesOver(t *testing.T) {
 
 	spawnInto(tv, fake, "guest-1", "new-chan", member("Guest"))
 
-	tv.HandleVoiceStateUpdate(voiceEvent("pvt-1", "new-chan", member("Pvt", testRankPVT)))
+	fake.deliver(tv, voiceEvent("pvt-1", "new-chan", member("Pvt", testRankPVT)))
 
 	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "pvt-1" {
 		t.Errorf("row = %+v (present %v), want the PVT as owner", row, ok)
@@ -1725,9 +1812,9 @@ func TestTempVCHandoverRowWriteHealsAndCaptures(t *testing.T) {
 			t.Fatal("row present although the create write failed")
 		}
 		st.upsertSpawnedErr = nil
-		tv.HandleVoiceStateUpdate(voiceEvent("pvt-1", "new-chan", member("Pvt", testRankPVT)))
+		fake.deliver(tv, voiceEvent("pvt-1", "new-chan", member("Pvt", testRankPVT)))
 
-		tv.HandleVoiceStateUpdate(voiceEvent("sgt-1", "", member("Sgt", testRankSGT)))
+		fake.deliver(tv, voiceEvent("sgt-1", "", member("Sgt", testRankSGT)))
 
 		row, ok := rowFor(t, st, "new-chan")
 		if !ok || row.HubID != storedHubID(t, st) || row.Number != 1 || row.OwnerUserID != "pvt-1" {
@@ -1742,10 +1829,10 @@ func TestTempVCHandoverRowWriteHealsAndCaptures(t *testing.T) {
 		captures := countCaptures(t)
 
 		spawnInto(tv, fake, "sgt-1", "new-chan", member("Sgt", testRankSGT))
-		tv.HandleVoiceStateUpdate(voiceEvent("pvt-1", "new-chan", member("Pvt", testRankPVT)))
+		fake.deliver(tv, voiceEvent("pvt-1", "new-chan", member("Pvt", testRankPVT)))
 		st.upsertSpawnedErr = errors.New("connection reset")
 
-		tv.HandleVoiceStateUpdate(voiceEvent("sgt-1", "", member("Sgt", testRankSGT)))
+		fake.deliver(tv, voiceEvent("sgt-1", "", member("Sgt", testRankSGT)))
 
 		if *captures != 1 {
 			t.Errorf("captures = %d, want 1 for the failed handover write", *captures)
@@ -1755,7 +1842,7 @@ func TestTempVCHandoverRowWriteHealsAndCaptures(t *testing.T) {
 			t.Errorf("Owner(new-chan) = %q, %v, want pvt-1, tracked", owner, tracked)
 		}
 		// Still tracked: the last occupant leaving deletes the channel.
-		tv.HandleVoiceStateUpdate(voiceEvent("pvt-1", "", member("Pvt", testRankPVT)))
+		fake.deliver(tv, voiceEvent("pvt-1", "", member("Pvt", testRankPVT)))
 		if ids := fake.deletedIDs(); len(ids) != 1 || ids[0] != "new-chan" {
 			t.Errorf("deleted = %v, want new-chan once it emptied", ids)
 		}
@@ -1813,7 +1900,7 @@ func TestTempVCRestartSweepRestoresOwnerOrElects(t *testing.T) {
 		guildMember("cpt-r", testRankCPT),
 		guildMember("guest-s"),
 	}
-	tv.handleGuildCreate(g)
+	fake.deliverGuildCreate(tv, g)
 
 	// P: the row's owner is present and keeps the channel, outranked or not.
 	if owner, tracked := tv.Owner("chan-p"); owner != "pvt-p" || !tracked {
@@ -1855,7 +1942,7 @@ func TestTempVCRestartSweepRestoresOwnerOrElects(t *testing.T) {
 	// A reconnect replays GUILD_CREATE with the same payload. Every owner is
 	// now restored from the row it wrote, so the sweep posts nothing new.
 	before := len(fake.recordedMessages())
-	tv.handleGuildCreate(g)
+	fake.deliverGuildCreate(tv, g)
 	if after := len(fake.recordedMessages()); after != before {
 		t.Errorf("messages after a repeated GUILD_CREATE = %d, want %d: a restored owner is no handover", after, before)
 	}
@@ -1869,9 +1956,9 @@ func TestTempVCJoinerInTheCreateWindowDoesNotTakeOver(t *testing.T) {
 	st := seedStore(t, testHub())
 	tv := newTestTempVC(t, fake, st)
 
-	tv.HandleVoiceStateUpdate(voiceEvent("pvt-1", testTempVCHub, member("Pvt", testRankPVT)))
-	tv.HandleVoiceStateUpdate(voiceEvent("cpt-2", "new-chan", member("Cpt", testRankCPT)))
-	tv.HandleVoiceStateUpdate(voiceEvent("pvt-1", "new-chan", member("Pvt", testRankPVT)))
+	fake.deliver(tv, voiceEvent("pvt-1", testTempVCHub, member("Pvt", testRankPVT)))
+	fake.deliver(tv, voiceEvent("cpt-2", "new-chan", member("Cpt", testRankCPT)))
+	fake.deliver(tv, voiceEvent("pvt-1", "new-chan", member("Pvt", testRankPVT)))
 
 	if row, ok := rowFor(t, st, "new-chan"); !ok || row.OwnerUserID != "pvt-1" {
 		t.Errorf("row = %+v (present %v), want the creator pvt-1 kept as owner", row, ok)
@@ -1901,7 +1988,7 @@ func TestTempVCSpawnedCountIsPerHubAndLive(t *testing.T) {
 	}
 
 	fake.setNextChannel("chan-b")
-	tv.HandleVoiceStateUpdate(voiceEvent("user-b", "hub-2", member("B")))
+	fake.deliver(tv, voiceEvent("user-b", "hub-2", member("B")))
 	if n := tv.SpawnedCount(hubA); n != 1 {
 		t.Errorf("SpawnedCount for hub A after a join to hub B = %d, want 1", n)
 	}
@@ -1909,7 +1996,7 @@ func TestTempVCSpawnedCountIsPerHubAndLive(t *testing.T) {
 		t.Errorf("SpawnedCount for hub B = %d, want 1", n)
 	}
 
-	tv.HandleVoiceStateUpdate(voiceEvent("user-a", "", a))
+	fake.deliver(tv, voiceEvent("user-a", "", a))
 	if n := tv.SpawnedCount(hubA); n != 0 {
 		t.Errorf("SpawnedCount for hub A after its member left = %d, want 0", n)
 	}

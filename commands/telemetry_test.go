@@ -34,20 +34,7 @@ func captureTelemetryLines(t *testing.T) func() []map[string]string {
 
 	return func() []map[string]string {
 		var records []map[string]string
-		for _, raw := range strings.Split(strings.TrimRight(testLogs.String(), "\n"), "\n") {
-			if raw == "" {
-				continue
-			}
-			record := map[string]string{}
-			dec := logfmt.NewDecoder(strings.NewReader(raw))
-			for dec.ScanRecord() {
-				for dec.ScanKeyval() {
-					record[string(dec.Key())] = string(dec.Value())
-				}
-			}
-			if err := dec.Err(); err != nil {
-				t.Fatalf("emitted line is not decodable as logfmt: %v\nline: %s", err, raw)
-			}
+		for _, record := range decodeLogRecords(t, testLogs) {
 			// Only telemetry lines are of interest; handlers emit their own
 			// "🚀 Starting ..." / "✨ Done!" lines by house convention and must
 			// not perturb any count or absence assertion here.
@@ -57,6 +44,32 @@ func captureTelemetryLines(t *testing.T) func() []map[string]string {
 		}
 		return records
 	}
+}
+
+// decodeLogRecords decodes every line in a log sink with a real logfmt
+// decoder, the same encoding family the metrics host parses, one map per
+// record. Decoding rather than string-searching keeps expected values
+// independent of the emitter.
+func decodeLogRecords(t *testing.T, logs *syncBuffer) []map[string]string {
+	t.Helper()
+	var records []map[string]string
+	for _, raw := range strings.Split(strings.TrimRight(logs.String(), "\n"), "\n") {
+		if raw == "" {
+			continue
+		}
+		record := map[string]string{}
+		dec := logfmt.NewDecoder(strings.NewReader(raw))
+		for dec.ScanRecord() {
+			for dec.ScanKeyval() {
+				record[string(dec.Key())] = string(dec.Value())
+			}
+		}
+		if err := dec.Err(); err != nil {
+			t.Fatalf("emitted line is not decodable as logfmt: %v\nline: %s", err, raw)
+		}
+		records = append(records, record)
+	}
+	return records
 }
 
 // registerStub builds a one-command registry around the supplied handler and
