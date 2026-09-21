@@ -26,13 +26,14 @@ const (
 
 // errNotInVoice: Rename returns it when the runtime has no current voice
 // channel on record for the invoker (#317). A member with no record is in no
-// voice channel: the record is reset at every GUILD_CREATE and kept current
+// voice channel. The record is reset at every GUILD_CREATE and kept current
 // from every voice state event.
 var errNotInVoice = errors.New("invoker is in no voice channel")
 
 // notSpawnedChannelError: Rename returns it when the invoker sits in a voice
-// channel the runtime does not track as spawned, so a hub channel or any
-// permanent channel (#317). ChannelID is that channel, for the reply to name.
+// channel no hub created, so the hub channel itself or any other voice
+// channel the runtime does not track as spawned (#317). ChannelID is that
+// channel, for the reply to name.
 type notSpawnedChannelError struct {
 	ChannelID string
 }
