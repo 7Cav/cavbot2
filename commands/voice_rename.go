@@ -99,12 +99,15 @@ func runVoiceRename(r utils.InteractionResponder, tv *TempVC, interaction *disco
 // assumption has failed. No reply carries a raw Discord body.
 func renameRefusal(err error, discordID string) string {
 	var (
-		notOwner *notOwnerError
-		window   *renameWindowError
+		notSpawned *notSpawnedChannelError
+		notOwner   *notOwnerError
+		window     *renameWindowError
 	)
 	switch {
-	case errors.Is(err, errNotInSpawnedChannel):
-		return "❌ Join a spawned voice channel first. This command renames the channel you are in."
+	case errors.Is(err, errNotInVoice):
+		return "❌ Join the voice channel you want to rename, then run /voice-rename again."
+	case errors.As(err, &notSpawned):
+		return fmt.Sprintf("❌ Only channels created by joining a hub can be renamed. <#%s> is not one.", notSpawned.ChannelID)
 	case errors.As(err, &notOwner) && notOwner.Owner != "":
 		return fmt.Sprintf("❌ Only the owner can rename this channel. Ask <@%s>.", notOwner.Owner)
 	case errors.As(err, &notOwner):

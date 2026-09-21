@@ -24,10 +24,23 @@ const (
 // handler in voice_rename.go parses the interaction, calls Rename and renders
 // the outcome.
 
-// errNotInSpawnedChannel: Rename returns it when the invoker is not sitting
-// in a spawned channel the runtime tracks, so in a hub channel, in any other
-// voice channel, or in none.
-var errNotInSpawnedChannel = errors.New("invoker is not in a spawned channel")
+// errNotInVoice: Rename returns it when the runtime has no current voice
+// channel on record for the invoker (#317). A member with no record is in no
+// voice channel. The record is reset at every GUILD_CREATE and kept current
+// from every voice state event.
+var errNotInVoice = errors.New("invoker is in no voice channel")
+
+// notSpawnedChannelError: Rename returns it when the invoker sits in a voice
+// channel no hub created, so the hub channel itself or any other voice
+// channel the runtime does not track as spawned (#317). ChannelID is that
+// channel, for the reply to name.
+type notSpawnedChannelError struct {
+	ChannelID string
+}
+
+func (e *notSpawnedChannelError) Error() string {
+	return "channel " + e.ChannelID + " is not a spawned channel"
+}
 
 // notOwnerError: Rename returns it when the invoker holds no moderator role
 // and is not the channel's owner. Owner is empty when the channel has none,
@@ -76,10 +89,14 @@ type renameResult struct {
 // audit log reason naming the invoker and no retry on rate limit.
 func (t *TempVC) Rename(userID string, memberRoles []string, name string) (renameResult, error) {
 	t.mu.Lock()
-	channelID := t.userChannel[userID]
+	channelID, inVoice := t.userChannel[userID]
+	if !inVoice {
+		t.mu.Unlock()
+		return renameResult{}, errNotInVoice
+	}
 	if _, tracked := t.occupants[channelID]; !tracked {
 		t.mu.Unlock()
-		return renameResult{}, errNotInSpawnedChannel
+		return renameResult{}, &notSpawnedChannelError{ChannelID: channelID}
 	}
 	// A moderator role passes for every spawned channel of a hub it covers,
 	// whoever owns it and whether anyone does. The owner is read only when

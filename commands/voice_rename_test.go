@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -95,6 +96,61 @@ func TestVoiceRenameOutsideSpawnedChannelRefused(t *testing.T) {
 		t.Errorf("edits = %+v, want none", edits)
 	}
 	ephemeralReply(t, f)
+}
+
+// T3b (#317): an invoker in a voice channel no hub created is refused, and
+// the reply names that channel so they can see which one the bot means. No
+// edit. The hub channel in T3 takes the same path in Rename.
+func TestVoiceRenameInNotSpawnedChannelNamesIt(t *testing.T) {
+	fake := newFakeTempVCManager()
+	tv := newSeededTempVC(t, fake)
+	tv.HandleVoiceStateUpdate(voiceEvent("user-1", "perm-1", member("Smith", testRankSGT)))
+
+	f := &fakeResponder{}
+	runVoiceRename(f, tv, renameInteraction("user-1", nil, "Alpha"))
+
+	if edits := fake.recordedEdits(); len(edits) != 0 {
+		t.Errorf("edits = %+v, want none", edits)
+	}
+	if reply := ephemeralReply(t, f); !strings.Contains(reply, "<#perm-1>") {
+		t.Errorf("reply %q does not name the channel the invoker is in", reply)
+	}
+}
+
+// T3c (#317): an invoker in no voice channel is refused, and the reply names
+// no channel, because the runtime has none on record to name. No edit.
+func TestVoiceRenameInNoVoiceChannelNamesNoChannel(t *testing.T) {
+	fake := newFakeTempVCManager()
+	tv := newSeededTempVC(t, fake)
+
+	f := &fakeResponder{}
+	runVoiceRename(f, tv, renameInteraction("user-1", nil, "Alpha"))
+
+	if edits := fake.recordedEdits(); len(edits) != 0 {
+		t.Errorf("edits = %+v, want none", edits)
+	}
+	if reply := ephemeralReply(t, f); strings.Contains(reply, "<#") {
+		t.Errorf("reply %q names a channel, want none: the invoker is in no voice channel", reply)
+	}
+}
+
+// T3d (#317): Rename tells the no-voice case apart by its own error. The
+// handler tests above only exclude a channel mention from the no-voice reply,
+// so a Rename that answered the no-voice invoker with any other refusal, say
+// errChannelGone, would pass them. This pins the error, and with it the reply
+// the handler picks. No edit.
+func TestRenameReportsNoVoiceChannelAsItsOwnError(t *testing.T) {
+	fake := newFakeTempVCManager()
+	tv := newSeededTempVC(t, fake)
+
+	_, err := tv.Rename("user-1", nil, "Alpha")
+
+	if !errors.Is(err, errNotInVoice) {
+		t.Errorf("Rename with no voice state = %v, want errNotInVoice", err)
+	}
+	if edits := fake.recordedEdits(); len(edits) != 0 {
+		t.Errorf("edits = %+v, want none", edits)
+	}
 }
 
 // T4: a non-owner in the channel is refused and the reply names the owner.
