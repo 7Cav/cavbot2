@@ -45,20 +45,17 @@ func runLockNoticeComponent(r utils.InteractionResponder, tv *TempVC, interactio
 		return
 	}
 
-	var roles []string
-	if interaction.Member != nil {
-		roles = interaction.Member.Roles
-	}
+	by := Invoker{UserID: discordID, Roles: interactionRoles(interaction)}
 	action, channelID, ok := parseLockNoticeCustomID(customID)
 	switch {
 	case ok && action == lockNoticeUnlock:
-		if _, err := tv.unlockFromNotice(channelID, discordID, roles); err != nil {
+		if _, err := tv.unlockFromNotice(channelID, by); err != nil {
 			editNoticeReply(r, interaction, lockNoticeRefusal(err, discordID))
 			return
 		}
 		editNoticeReply(r, interaction, voiceUnlock.done)
 	case ok && action == lockNoticeLetIn:
-		if err := tv.letInAllowed(channelID, discordID, roles); err != nil {
+		if err := tv.letInAllowed(channelID, by); err != nil {
 			editNoticeReply(r, interaction, letInRefusal(err))
 			return
 		}
@@ -71,7 +68,7 @@ func runLockNoticeComponent(r utils.InteractionResponder, tv *TempVC, interactio
 		content := fmt.Sprintf("Pick up to %d members to let into <#%s>. Anyone who can't see the channel is skipped.", letInMaxPicks, channelID)
 		sendNoticeReply(r, interaction, &discordgo.WebhookEdit{Content: &content, Components: &picker})
 	case ok && action == lockNoticeLetInPick:
-		res, err := tv.letIn(channelID, discordID, roles, letInPicks(interaction.MessageComponentData()))
+		res, err := tv.letIn(channelID, by, letInPicks(interaction.MessageComponentData()))
 		if err != nil {
 			editNoticeReply(r, interaction, letInRefusal(err))
 			return

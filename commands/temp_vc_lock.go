@@ -68,8 +68,6 @@ func (r lockRecord) row() store.ChannelLock {
 
 // lockResult is what a successful Lock or Unlock reports to its handler.
 type lockResult struct {
-	ChannelID string
-	HubID     int64
 	// NoticeFailed is set by a Lock whose lock notice did not post. The
 	// lock stands all the same.
 	NoticeFailed bool
@@ -82,9 +80,9 @@ type lockResult struct {
 // Once Discord accepts it, the lock notice posts (temp_vc_lock_notice.go);
 // a notice that does not post leaves the lock standing and sets
 // NoticeFailed.
-func (t *TempVC) Lock(userID string, memberRoles []string) (lockResult, error) {
+func (t *TempVC) Lock(by Invoker) (lockResult, error) {
 	t.mu.Lock()
-	channelID, err := t.invokerChannelLocked(userID, memberRoles)
+	channelID, err := t.invokerChannelLocked(by)
 	if err != nil {
 		t.mu.Unlock()
 		return lockResult{}, err
@@ -106,7 +104,7 @@ func (t *TempVC) Lock(userID string, memberRoles []string) (lockResult, error) {
 	if err != nil {
 		t.mu.Unlock()
 		utils.Warn("Temp VC lock refused, channel not in the state cache",
-			"channel_id", channelID, "hub_id", hubID, "user_id", userID, "error", err)
+			"channel_id", channelID, "hub_id", hubID, "user_id", by.UserID, "error", err)
 		return lockResult{}, errChannelNotCached
 	}
 	// The guest list is whoever is inside at this check. A member whose join
@@ -118,12 +116,12 @@ func (t *TempVC) Lock(userID string, memberRoles []string) (lockResult, error) {
 	t.lockBusy[channelID] = struct{}{}
 	t.mu.Unlock()
 
-	reason := fmt.Sprintf("locked by %s", userID)
+	reason := fmt.Sprintf("locked by %s", by.UserID)
 	if _, err := t.mgr.ChannelEdit(channelID, &discordgo.ChannelEdit{PermissionOverwrites: overwrites}, reason); err != nil {
 		return lockResult{}, t.lockEditFailed(channelID, "lock", err)
 	}
 
-	record := lockRecord{locker: userID}
+	record := lockRecord{locker: by.UserID}
 	t.mu.Lock()
 	_, tracked := t.occupants[channelID]
 	if tracked {
@@ -140,7 +138,7 @@ func (t *TempVC) Lock(userID string, memberRoles []string) (lockResult, error) {
 	// The notice posts while the lock is still in flight, so the one row
 	// write below carries its message ID, and a press that lands before
 	// the ID is recorded is told to try again.
-	noticeID, posted := t.postLockNotice(channelID, userID)
+	noticeID, posted := t.postLockNotice(channelID, by.UserID)
 	record.noticeMessageID = noticeID
 	t.mu.Lock()
 	if _, held := t.locks[channelID]; held {
@@ -148,26 +146,26 @@ func (t *TempVC) Lock(userID string, memberRoles []string) (lockResult, error) {
 	}
 	t.mu.Unlock()
 	t.writeLock(channelID, record.row())
-	utils.Info("Temp VC locked", "channel_id", channelID, "hub_id", hubID, "user_id", userID)
-	return lockResult{ChannelID: channelID, HubID: hubID, NoticeFailed: !posted}, nil
+	utils.Info("Temp VC locked", "channel_id", channelID, "hub_id", hubID, "user_id", by.UserID)
+	return lockResult{NoticeFailed: !posted}, nil
 }
 
 // Unlock unlocks the spawned channel the invoker sits in, on the invoker's
 // behalf, when they own it or hold one of its hub's moderator roles. It
 // works whatever the hub's "Locking allowed" says now.
-func (t *TempVC) Unlock(userID string, memberRoles []string) (lockResult, error) {
-	return t.unlock(userID, func() (string, error) {
-		return t.invokerChannelLocked(userID, memberRoles)
+func (t *TempVC) Unlock(by Invoker) (lockResult, error) {
+	return t.unlock(by, func() (string, error) {
+		return t.invokerChannelLocked(by)
 	})
 }
 
-// unlock puts a locked channel's permission source back, on userID's
+// unlock puts a locked channel's permission source back, on the invoker's
 // behalf. resolve names the channel and applies the caller's authority rule;
 // it runs under mu. /voice-unlock resolves the invoker's own channel. A
 // caller with another rule, a button naming its channel for instance,
 // passes its own. The edit replaces the whole overwrite list with the
 // source as the cache holds it now, which drops every guest overwrite.
-func (t *TempVC) unlock(userID string, resolve func() (string, error)) (lockResult, error) {
+func (t *TempVC) unlock(by Invoker, resolve func() (string, error)) (lockResult, error) {
 	t.mu.Lock()
 	channelID, err := resolve()
 	if err != nil {
@@ -187,21 +185,21 @@ func (t *TempVC) unlock(userID string, resolve func() (string, error)) (lockResu
 	if !ok {
 		t.mu.Unlock()
 		utils.Warn("Temp VC unlock refused, hub row gone",
-			"channel_id", channelID, "hub_id", hubID, "user_id", userID)
+			"channel_id", channelID, "hub_id", hubID, "user_id", by.UserID)
 		return lockResult{}, fmt.Errorf("%w: hub row %d is gone", errSourceUnreadable, hubID)
 	}
 	source, err := t.permissionSourceOverwrites(hub)
 	if err != nil {
 		t.mu.Unlock()
 		utils.Warn("Temp VC unlock refused, permission source unreadable",
-			"channel_id", channelID, "hub_id", hubID, "user_id", userID, "error", err)
+			"channel_id", channelID, "hub_id", hubID, "user_id", by.UserID, "error", err)
 		return lockResult{}, fmt.Errorf("%w: %w", errSourceUnreadable, err)
 	}
 	overwrites := unlockOverwrites(source, t.guildID)
 	t.lockBusy[channelID] = struct{}{}
 	t.mu.Unlock()
 
-	reason := fmt.Sprintf("unlocked by %s", userID)
+	reason := fmt.Sprintf("unlocked by %s", by.UserID)
 	if _, err := t.mgr.ChannelEdit(channelID, &discordgo.ChannelEdit{PermissionOverwrites: overwrites}, reason); err != nil {
 		return lockResult{}, t.lockEditFailed(channelID, "unlock", err)
 	}
@@ -217,9 +215,9 @@ func (t *TempVC) unlock(userID string, resolve func() (string, error)) (lockResu
 		return lockResult{}, errChannelGone
 	}
 	t.writeLock(channelID, store.ChannelLock{})
-	t.closeLockNotice(channelID, noticeID, userID)
-	utils.Info("Temp VC unlocked", "channel_id", channelID, "hub_id", hubID, "user_id", userID)
-	return lockResult{ChannelID: channelID, HubID: hubID}, nil
+	t.closeLockNotice(channelID, noticeID, by.UserID)
+	utils.Info("Temp VC unlocked", "channel_id", channelID, "hub_id", hubID, "user_id", by.UserID)
+	return lockResult{}, nil
 }
 
 // insideLocked returns who is inside a spawned channel for a lock's guest
@@ -340,7 +338,7 @@ func (t *TempVC) lockEditFailed(channelID, action string, err error) error {
 	}
 	held := t.endLockOpLocked(channelID)
 	t.mu.Unlock()
-	t.admitGuests(channelID, held, guestReasonJoined)
+	t.addGuests(channelID, held, guestReasonJoined)
 
 	if fault.gone {
 		utils.Info("Temp VC channel already gone at "+action+", untracked", "channel_id", channelID)
@@ -348,7 +346,7 @@ func (t *TempVC) lockEditFailed(channelID, action string, err error) error {
 		return errChannelGone
 	}
 	utils.Warn("Temp VC "+action+" failed", "channel_id", channelID, "hub_id", hubID, "error", err)
-	if fault.capturesOnDeleteOrRename() {
+	if fault.capturesOnChannelChange() {
 		t.captureOncePerStreak(t.lockCaptured, hubID, "Temp VC "+action+" failed", err,
 			"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
 	}
@@ -361,7 +359,7 @@ func (t *TempVC) endLockOp(channelID string) {
 	t.mu.Lock()
 	held := t.endLockOpLocked(channelID)
 	t.mu.Unlock()
-	t.admitGuests(channelID, held, guestReasonJoined)
+	t.addGuests(channelID, held, guestReasonJoined)
 }
 
 // writeLock records a spawned channel's lock on its row. A failed write

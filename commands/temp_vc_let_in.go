@@ -71,8 +71,6 @@ type letInSkipped struct {
 
 // letInResult is what a let-in did with each picked member.
 type letInResult struct {
-	ChannelID string
-	HubID     int64
 	// LetIn lists the new guests, in pick order.
 	LetIn []string
 	// Skipped lists the members left off on purpose.
@@ -124,20 +122,20 @@ func letInPicker(channelID string) ([]discordgo.MessageComponent, error) {
 
 // letInAllowed applies the lock notice buttons' rule to a Let someone in
 // press, before the picker is offered.
-func (t *TempVC) letInAllowed(channelID, userID string, memberRoles []string) error {
+func (t *TempVC) letInAllowed(channelID string, by Invoker) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.lockNoticeAuthorityLocked(channelID, userID, memberRoles)
+	return t.lockNoticeAuthorityLocked(channelID, by)
 }
 
-// letIn puts the picked members on a locked channel's guest list, on
-// userID's behalf, under the lock notice buttons' rule. Each guest add
-// carries an audit log reason naming userID. It returns an error only when
-// it let nobody in because of the channel or the presser; what happened to
-// each member is in the result.
-func (t *TempVC) letIn(channelID, userID string, memberRoles []string, picks []letInPick) (letInResult, error) {
+// letIn puts the picked members on a locked channel's guest list, on the
+// presser's behalf, under the lock notice buttons' rule. Each guest add
+// carries an audit log reason naming the presser. It returns an error only
+// when it let nobody in because of the channel or the presser; what
+// happened to each member is in the result.
+func (t *TempVC) letIn(channelID string, by Invoker, picks []letInPick) (letInResult, error) {
 	t.mu.Lock()
-	if err := t.lockNoticeAuthorityLocked(channelID, userID, memberRoles); err != nil {
+	if err := t.lockNoticeAuthorityLocked(channelID, by); err != nil {
 		t.mu.Unlock()
 		return letInResult{}, err
 	}
@@ -149,31 +147,31 @@ func (t *TempVC) letIn(channelID, userID string, memberRoles []string, picks []l
 	t.lockBusy[channelID] = struct{}{}
 	t.mu.Unlock()
 
-	res := letInResult{ChannelID: channelID, HubID: hubID}
-	reason := fmt.Sprintf("let in by %s", userID)
+	var res letInResult
+	reason := fmt.Sprintf("let in by %s", by.UserID)
 	seen := make(map[string]struct{}, len(picks))
 	for _, p := range picks {
 		if _, dup := seen[p.userID]; dup {
 			continue
 		}
 		seen[p.userID] = struct{}{}
-		t.letInOne(&res, p, reason)
+		t.letInOne(channelID, &res, p, reason)
 	}
 	t.endLockOp(channelID)
 
 	if len(res.LetIn) > 0 {
-		res.PingFailed = !t.postLetInPing(channelID, userID, res.LetIn)
+		res.PingFailed = !t.postLetInPing(channelID, by.UserID, res.LetIn)
 	}
-	utils.Info("Temp VC let in", "channel_id", channelID, "hub_id", hubID, "user_id", userID,
+	utils.Info("Temp VC let in", "channel_id", channelID, "hub_id", hubID, "user_id", by.UserID,
 		"let_in", res.LetIn, "skipped", len(res.Skipped), "failed", res.Failed)
 	return res, nil
 }
 
-// letInOne decides one picked member and records the outcome in res: a
-// bot, a member who cannot see the channel and a current guest are
-// skipped, anyone else gets a guest add. A failed check or add is a WARN
-// line.
-func (t *TempVC) letInOne(res *letInResult, p letInPick, reason string) {
+// letInOne decides one member picked to be let into a channel and records
+// the outcome in res: a bot, a member who cannot see the channel and a
+// current guest are skipped, anyone else gets a guest add. A failed check
+// or add is a WARN line.
+func (t *TempVC) letInOne(channelID string, res *letInResult, p letInPick, reason string) {
 	skip := func(why letInSkipReason) {
 		res.Skipped = append(res.Skipped, letInSkipped{UserID: p.userID, Reason: why})
 	}
@@ -185,10 +183,10 @@ func (t *TempVC) letInOne(res *letInResult, p letInPick, reason string) {
 		skip(skipCannotSee)
 		return
 	}
-	sees, err := t.mgr.CanSeeChannel(res.ChannelID, p.userID, p.roles)
+	sees, err := t.mgr.CanSeeChannel(channelID, p.userID, p.roles)
 	if err != nil {
 		utils.Warn("Temp VC let-in skipped, visibility check failed",
-			"channel_id", res.ChannelID, "user_id", p.userID, "error", err)
+			"channel_id", channelID, "user_id", p.userID, "error", err)
 		res.Failed = append(res.Failed, p.userID)
 		return
 	}
@@ -196,10 +194,10 @@ func (t *TempVC) letInOne(res *letInResult, p letInPick, reason string) {
 		skip(skipCannotSee)
 		return
 	}
-	added, err := t.addGuest(res.ChannelID, p.userID, reason)
+	added, err := t.addGuest(channelID, p.userID, reason)
 	switch {
 	case err != nil:
-		utils.Warn("Temp VC guest add failed", "channel_id", res.ChannelID, "user_id", p.userID, "error", err)
+		utils.Warn("Temp VC guest add failed", "channel_id", channelID, "user_id", p.userID, "error", err)
 		res.Failed = append(res.Failed, p.userID)
 	case !added:
 		skip(skipGuest)
@@ -208,28 +206,28 @@ func (t *TempVC) letInOne(res *letInResult, p letInPick, reason string) {
 	}
 }
 
-// postLetInPing posts the chat line naming the new guests and who let them
-// in. It pings the guests and nobody else, so the one who let them in is
-// named without a ping. It reports whether the line posted; a failure is a
-// WARN line.
-func (t *TempVC) postLetInPing(channelID, inviter string, guests []string) bool {
+// postLetInPing posts the chat line naming the new guests and letInBy, who
+// let them in. It pings the guests and nobody else, so letInBy is named
+// without a ping. It reports whether the line posted; a failure is a WARN
+// line.
+func (t *TempVC) postLetInPing(channelID, letInBy string, guests []string) bool {
 	_, err := t.mgr.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
-		Content: letInLine(inviter, guests),
+		Content: letInLine(letInBy, guests),
 		AllowedMentions: &discordgo.MessageAllowedMentions{
 			Parse: []discordgo.AllowedMentionType{},
 			Users: append([]string(nil), guests...),
 		},
 	})
 	if err != nil {
-		utils.Warn("Temp VC let-in ping not sent", "channel_id", channelID, "user_id", inviter, "error", err)
+		utils.Warn("Temp VC let-in ping not sent", "channel_id", channelID, "user_id", letInBy, "error", err)
 		return false
 	}
 	return true
 }
 
-// letInLine is the chat line a let-in posts.
-func letInLine(inviter string, guests []string) string {
-	return fmt.Sprintf("🚪 <@%s> let in %s. You can join now.", inviter, mentionList(guests))
+// letInLine is the chat line posted when letInBy lets the guests in.
+func letInLine(letInBy string, guests []string) string {
+	return fmt.Sprintf("🚪 <@%s> let in %s. You can join now.", letInBy, mentionList(guests))
 }
 
 // mentionList renders user IDs as mentions joined into one list.

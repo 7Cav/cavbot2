@@ -86,11 +86,11 @@ func (f spawnedChannelFault) capturesOnCreate() bool {
 	return f.full || f.rateLimited || f.hardFault
 }
 
-// capturesOnDeleteOrRename reports whether a delete or rename failure with
-// these facts reaches Sentry: 403, 5xx, transport. A 429 and any other 4xx is
-// a WARN line; on a rename the 429 is the limit the runtime counts against
-// itself.
-func (f spawnedChannelFault) capturesOnDeleteOrRename() bool {
+// capturesOnChannelChange reports whether a failure to change a spawned
+// channel reaches Sentry: a delete, a rename, a lock or unlock edit. 403,
+// 5xx and transport capture. A 429 and any other 4xx is a WARN line. On a
+// rename the 429 is the limit the runtime counts against itself.
+func (f spawnedChannelFault) capturesOnChannelChange() bool {
 	return f.hardFault
 }
 

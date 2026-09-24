@@ -172,7 +172,7 @@ func assertPingsExactly(t *testing.T, msg fakeMessage, want ...permMember) {
 
 // A moderator from outside the channel, or whoever locked it, lets M in: M
 // can join, and the chat line pings M and nobody else, naming who let M in.
-func TestLetInAdmitsThePickedMember(t *testing.T) {
+func TestLetInPutsThePickedMemberOnTheGuestList(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		presser permMember

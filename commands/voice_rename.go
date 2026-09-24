@@ -76,11 +76,7 @@ func runVoiceRename(r utils.InteractionResponder, tv *TempVC, interaction *disco
 		return
 	}
 
-	var roles []string
-	if interaction.Member != nil {
-		roles = interaction.Member.Roles
-	}
-	result, err := tv.Rename(discordID, roles, name)
+	result, err := tv.Rename(discordID, interactionRoles(interaction), name)
 	if err != nil {
 		editEphemeral(r, interaction, renameRefusal(err, discordID))
 		return

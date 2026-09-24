@@ -34,7 +34,7 @@ type lockCommand struct {
 	// verb names the action in the refusals: "lock" or "unlock".
 	verb string
 	// run is the runtime call.
-	run func(tv *TempVC, userID string, roles []string) (lockResult, error)
+	run func(tv *TempVC, by Invoker) (lockResult, error)
 	// done is the invoker's reply on success.
 	done string
 }
@@ -120,11 +120,7 @@ func runLockCommand(r utils.InteractionResponder, tv *TempVC, interaction *disco
 		return
 	}
 
-	var roles []string
-	if interaction.Member != nil {
-		roles = interaction.Member.Roles
-	}
-	res, err := c.run(tv, discordID, roles)
+	res, err := c.run(tv, Invoker{UserID: discordID, Roles: interactionRoles(interaction)})
 	if err != nil {
 		editEphemeral(r, interaction, lockRefusal(err, c, discordID))
 		return

@@ -89,7 +89,7 @@ type renameResult struct {
 // audit log reason naming the invoker and no retry on rate limit.
 func (t *TempVC) Rename(userID string, memberRoles []string, name string) (renameResult, error) {
 	t.mu.Lock()
-	channelID, err := t.invokerChannelLocked(userID, memberRoles)
+	channelID, err := t.invokerChannelLocked(Invoker{UserID: userID, Roles: memberRoles})
 	if err != nil {
 		t.mu.Unlock()
 		return renameResult{}, err
@@ -147,7 +147,7 @@ func (t *TempVC) renameFailed(channelID string, at time.Time, err error) error {
 		return errChannelGone
 	}
 	utils.Warn("Temp VC rename failed", "channel_id", channelID, "hub_id", hubID, "error", err)
-	if fault.capturesOnDeleteOrRename() {
+	if fault.capturesOnChannelChange() {
 		t.captureOncePerStreak(t.renameCaptured, hubID, "Temp VC rename failed", err,
 			"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
 	}
@@ -161,6 +161,14 @@ func (t *TempVC) renameFailed(channelID string, at time.Time, err error) error {
 	return err
 }
 
+// Invoker is the member a voice command or a lock notice press acts for.
+// Roles are the roles the interaction carries for them, which every
+// authority check reads.
+type Invoker struct {
+	UserID string
+	Roles  []string
+}
+
 // invokerChannelLocked resolves the spawned channel a voice command acts on:
 // the one the invoker sits in, when they own it or hold one of its hub's
 // effective moderator roles. /voice-rename, /voice-lock and /voice-unlock
@@ -169,16 +177,16 @@ func (t *TempVC) renameFailed(channelID string, at time.Time, err error) error {
 // does. The owner is read only when the invoker holds none, so a moderator
 // acts on an ownerless channel with no WARN, and no command changes the
 // owner. Caller holds mu.
-func (t *TempVC) invokerChannelLocked(userID string, memberRoles []string) (string, error) {
-	channelID, inVoice := t.userChannel[userID]
+func (t *TempVC) invokerChannelLocked(by Invoker) (string, error) {
+	channelID, inVoice := t.userChannel[by.UserID]
 	if !inVoice {
 		return "", errNotInVoice
 	}
 	if _, tracked := t.occupants[channelID]; !tracked {
 		return "", &notSpawnedChannelError{ChannelID: channelID}
 	}
-	if !t.isModeratorLocked(channelID, memberRoles) {
-		if owner := t.owners[channelID]; owner != userID {
+	if !t.isModeratorLocked(channelID, by.Roles) {
+		if owner := t.owners[channelID]; owner != by.UserID {
 			return "", &notOwnerError{Owner: owner}
 		}
 	}

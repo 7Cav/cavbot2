@@ -974,7 +974,7 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 		t.applyHandover(row)
 	}
 	for channelID, in := range guests {
-		t.admitGuests(channelID, in, guestReasonSwept)
+		t.addGuests(channelID, in, guestReasonSwept)
 	}
 
 	// tracked is read from the record once the deletes have run: the rows'
@@ -1119,7 +1119,7 @@ func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	hub, isHub := t.hubs[newChannel]
 	t.mu.Unlock()
 
-	t.admitGuests(newChannel, guests, guestReasonJoined)
+	t.addGuests(newChannel, guests, guestReasonJoined)
 
 	for _, row := range handovers {
 		t.applyHandover(row)
@@ -1431,7 +1431,7 @@ func (t *TempVC) deleteIfStillEmpty(channelID, userID string) deleteOutcome {
 		t.mu.Unlock()
 		utils.Warn("Temp VC delete failed, channel kept for the next attempt",
 			"channel_id", channelID, "hub_id", hubID, "error", err)
-		if fault.capturesOnDeleteOrRename() {
+		if fault.capturesOnChannelChange() {
 			t.captureOncePerStreak(t.deleteCaptured, hubID, "Temp VC delete failed", err,
 				"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
 		}

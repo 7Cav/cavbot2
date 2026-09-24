@@ -73,11 +73,11 @@ func (t *TempVC) endLockOpLocked(channelID string) []string {
 	return sortedIDs(held)
 }
 
-// admitGuests adds each member to a locked channel's guest list, off-lock.
+// addGuests adds each member to a locked channel's guest list, off-lock.
 // The stale voice state rule holds as for every other action: a member the
 // cache no longer shows in the channel, or a guild missing from the cache,
 // gets no add. A failed add is a WARN line and nothing else.
-func (t *TempVC) admitGuests(channelID string, userIDs []string, reason string) {
+func (t *TempVC) addGuests(channelID string, userIDs []string, reason string) {
 	for _, userID := range userIDs {
 		if snap := t.mgr.VoiceStates(t.guildID); !snap.Present || snap.channelOf(userID) != channelID {
 			utils.Info("Temp VC guest add skipped, member not confirmed in the channel",

@@ -699,7 +699,8 @@ func TestLockingAllowedSaveReachesTheRuntimeAtOnce(t *testing.T) {
 	w.joinAs("user-owner", "hub-1", testRankSGT)
 	w.joinAs("user-owner", "spawn-1", testRankSGT)
 
-	if _, err := w.runtime.Lock("user-owner", []string{testRankSGT}); err == nil {
+	owner := commands.Invoker{UserID: "user-owner", Roles: []string{testRankSGT}}
+	if _, err := w.runtime.Lock(owner); err == nil {
 		t.Fatal("a lock on a hub without locking passed, want a refusal")
 	}
 	if edits := w.discord.edits(); len(edits) != 0 {
@@ -711,7 +712,7 @@ func TestLockingAllowedSaveReachesTheRuntimeAtOnce(t *testing.T) {
 	form.Set("locking_allowed", "on")
 	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
 
-	if _, err := w.runtime.Lock("user-owner", []string{testRankSGT}); err != nil {
+	if _, err := w.runtime.Lock(owner); err != nil {
 		t.Fatalf("a lock after the save was refused: %v", err)
 	}
 	if edits := w.discord.edits(); len(edits) != 1 || edits[0].ChannelID != "spawn-1" {
