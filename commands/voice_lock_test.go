@@ -251,7 +251,8 @@ func TestVoiceUnlockOfASourceWithNoOverwritesOpensTheChannel(t *testing.T) {
 
 // An unlock that cannot read the hub's permission source is refused and the
 // channel stays locked: no fallback list could be trusted not to open it
-// wider than its hub allowed.
+// wider than its hub allowed. The refusal sends no edit or message, leaves
+// the lock notice alone, and changes no row.
 func TestVoiceUnlockRefusedWhenTheSourceCannotBeRead(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -265,18 +266,13 @@ func TestVoiceUnlockRefusedWhenTheSourceCannotBeRead(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fake, st, tv := newLockScene(t, tc.source)
 			lockAs(t, tv, lockOwner)
-			edits := len(fake.recordedEdits())
 			tc.breaks(tv, fake)
+			before := sceneOf(t, fake, st, "chan-1")
 
 			unlockAs(t, tv, lockOwner)
 
-			if got := len(fake.recordedEdits()); got != edits {
-				t.Errorf("edits = %d after the refused unlock, want %d", got, edits)
-			}
+			assertUnchanged(t, fake, st, "chan-1", "the refused unlock", before)
 			assertJoins(t, fake, "chan-1", "after the refused unlock", nil, []permMember{permM})
-			if lock := rowLock(t, st, "chan-1"); !lock.Locked {
-				t.Errorf("row lock = %+v, want still locked", lock)
-			}
 		})
 	}
 }
@@ -302,15 +298,17 @@ func TestVoiceLockSettingTurnedOffKeepsExistingLocks(t *testing.T) {
 func TestVoiceUnlockReadsModeratorRolesLive(t *testing.T) {
 	const roleR = "role-r"
 	holder := permMember{id: "user-r", roles: []string{permRoleMember, roleR}}
-	fake, _, tv := newLockScene(t, store.PermissionCategory)
+	fake, st, tv := newLockScene(t, store.PermissionCategory)
 	tv.ApplyGuildModeratorRoles([]string{roleR})
 	enter(tv, fake, holder, "chan-1")
 	lockAs(t, tv, holder)
 	assertJoins(t, fake, "chan-1", "locked by the R holder", nil, []permMember{permM})
 
 	tv.ApplyGuildModeratorRoles([]string{})
+	before := sceneOf(t, fake, st, "chan-1")
 	unlockAs(t, tv, holder)
 
+	assertUnchanged(t, fake, st, "chan-1", "the R holder's unlock", before)
 	assertJoins(t, fake, "chan-1", "after the R holder's unlock", nil, []permMember{permM})
 }
 
@@ -497,7 +495,8 @@ func TestVoiceLockAndUnlockEditsNameTheInvoker(t *testing.T) {
 }
 
 // Every refusal answers with the ephemeral shape and changes nothing: no
-// edit and no change to the row's lock.
+// edit, no message, no edit of the lock notice, no change to the row's lock,
+// and nobody's join verdict moves.
 func TestVoiceLockAndUnlockRefusals(t *testing.T) {
 	owner := lockOwner
 	for _, tc := range []struct {
@@ -549,16 +548,11 @@ func TestVoiceLockAndUnlockRefusals(t *testing.T) {
 			spawnInto(tv, fake, owner.id, "chan-1", owner.discordMember())
 			enter(tv, fake, permMOD, "chan-1")
 			tc.setup(t, tv, fake)
-			edits, lock := len(fake.recordedEdits()), rowLock(t, st, "chan-1")
+			before := sceneOf(t, fake, st, "chan-1")
 
 			tc.run(t, tv)
 
-			if got := len(fake.recordedEdits()); got != edits {
-				t.Errorf("edits = %d after the refusal, want %d", got, edits)
-			}
-			if got := rowLock(t, st, "chan-1"); got != lock {
-				t.Errorf("row lock = %+v after the refusal, want %+v", got, lock)
-			}
+			assertUnchanged(t, fake, st, "chan-1", "the refusal", before)
 		})
 	}
 }
