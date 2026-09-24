@@ -154,7 +154,8 @@ moment it empties. Hub settings are edited in the panel, never in code.
   joined it. Named from the hub's base string plus a per-hub number.
   _Avoid_: temp channel, temp VC, temporary channel, personal channel.
 - **Owner**: The occupant a spawned channel belongs to, or nobody. Owning
-  is what lets a member rename it; a moderator role renames without owning.
+  is what lets a member rename or lock it; a moderator role does both
+  without owning.
   The owner always holds a rank role. The creator at first, if they hold one;
   after a handover, whoever the handover named. A bot-internal marker that
   grants no Discord permission.
@@ -191,10 +192,33 @@ moment it empties. Hub settings are edited in the panel, never in code.
   names the current owner, or says there is none. Posted when the channel is
   created and at every handover. It pings nobody.
   _Avoid_: announcement, banner, status line, welcome message.
-- **Moderator role**: A Discord role that may rename any spawned channel it
-  covers without owning it. Set per hub, or once for every hub; a hub's
-  moderator roles are the union of the two. Grants no Discord permission.
+- **Moderator role**: A Discord role that may rename, lock and unlock any
+  spawned channel it covers without owning it, and that no lock keeps out.
+  Set per hub, or once for every hub; a hub's moderator roles are the union
+  of the two. Grants no Discord permission beyond getting past a lock.
   _Avoid_: staff role, admin role, global moderator, default moderator.
+- **Lock**: A spawned channel's state in which only its guests and its hub's
+  moderator roles may join. Everyone else still sees the channel, with
+  Discord's padlock, and cannot read its text chat. The owner or a moderator
+  locks it, on a hub that allows locking. It belongs to the channel, not to
+  whoever set it, and lasts until someone unlocks it or the channel is
+  deleted.
+  _Avoid_: private channel, closed channel, hide (a hidden channel is out of
+  sight; a locked one is not).
+- **Guest list**: The members a locked channel admits: everyone who has been
+  inside it since it locked, however they got in, and everyone let in. Each
+  lock starts a new one; unlock clears it. A guest is one member on it.
+  _Avoid_: allowlist, whitelist, permit list, invite list.
+- **Let in**: To put a member who is outside a locked channel on its guest
+  list. Done by a moderator or by whoever locked the channel. It never shows
+  a member a channel they could not already see.
+  _Avoid_: admit, invite, permit, allow.
+- **Lock notice**: The bot message in a locked channel's text chat that
+  names who locked it and carries the controls to unlock it and to let
+  someone in. Posted at each lock. At unlock it is edited to name who
+  unlocked the channel, and loses its controls.
+  _Avoid_: lock panel (the panel is the web UI), control panel, tool,
+  widget.
 - **Eligible role**: A live Discord role that is not managed and is not
   `@everyone`. The only kind a moderator picker offers, and the only kind a
   save may add.
