@@ -147,7 +147,7 @@ func queryAll[T any](ctx context.Context, db *sql.DB, scan func(scanner) (T, err
 
 // hubColumns is the select list every hub read shares, in scanHub's order.
 const hubColumns = `id, guild_id, hub_channel_id, base_string, permission_source,
-	moderator_role_ids, user_limit, bitrate, enabled, created_at, updated_at`
+	moderator_role_ids, user_limit, bitrate, enabled, locking_allowed, created_at, updated_at`
 
 // scanHub reads one hub row in hubColumns order.
 func scanHub(row scanner) (Hub, error) {
@@ -156,7 +156,7 @@ func scanHub(row scanner) (Hub, error) {
 		roles []byte
 	)
 	err := row.Scan(&h.ID, &h.GuildID, &h.HubChannelID, &h.BaseString, &h.PermissionSource,
-		&roles, &h.UserLimit, &h.Bitrate, &h.Enabled, &h.CreatedAt, &h.UpdatedAt)
+		&roles, &h.UserLimit, &h.Bitrate, &h.Enabled, &h.LockingAllowed, &h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return Hub{}, err
 	}
@@ -202,8 +202,8 @@ func (p *Postgres) UpsertHub(ctx context.Context, hub Hub) (Hub, error) {
 	}
 	row := p.db.QueryRowContext(ctx, `
 		INSERT INTO hubs (guild_id, hub_channel_id, base_string, permission_source,
-			moderator_role_ids, user_limit, bitrate, enabled)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			moderator_role_ids, user_limit, bitrate, enabled, locking_allowed)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (hub_channel_id) DO UPDATE SET
 			guild_id = EXCLUDED.guild_id,
 			base_string = EXCLUDED.base_string,
@@ -212,10 +212,11 @@ func (p *Postgres) UpsertHub(ctx context.Context, hub Hub) (Hub, error) {
 			user_limit = EXCLUDED.user_limit,
 			bitrate = EXCLUDED.bitrate,
 			enabled = EXCLUDED.enabled,
+			locking_allowed = EXCLUDED.locking_allowed,
 			updated_at = now()
 		RETURNING `+hubColumns,
 		hub.GuildID, hub.HubChannelID, hub.BaseString, string(hub.PermissionSource),
-		rolesJSON, hub.UserLimit, hub.Bitrate, hub.Enabled)
+		rolesJSON, hub.UserLimit, hub.Bitrate, hub.Enabled, hub.LockingAllowed)
 	stored, err := scanHub(row)
 	if err != nil {
 		return Hub{}, fmt.Errorf("upsert hub %q: %w", hub.HubChannelID, err)
@@ -233,9 +234,10 @@ func (p *Postgres) DeleteHub(ctx context.Context, id int64) error {
 }
 
 // UpsertSpawnedChannel implements Store. The row is keyed on channel_id: a
-// conflict updates hub, number and owner in place and keeps created_at, which
-// is what the handover write relies on. A zero HubID and an empty OwnerUserID
-// are stored as NULL.
+// conflict updates hub, number and owner in place and keeps created_at and
+// the lock columns, which is what the handover write relies on. A new row
+// takes the lock columns' defaults, unlocked. A zero HubID and an empty
+// OwnerUserID are stored as NULL.
 func (p *Postgres) UpsertSpawnedChannel(ctx context.Context, sc SpawnedChannel) error {
 	_, err := p.db.ExecContext(ctx, `
 		INSERT INTO spawned_channels (channel_id, hub_id, number, owner_user_id)
@@ -254,6 +256,29 @@ func (p *Postgres) UpsertSpawnedChannel(ctx context.Context, sc SpawnedChannel) 
 	return nil
 }
 
+// SetSpawnedChannelLock implements Store. Empty user and message IDs are
+// stored as NULL.
+func (p *Postgres) SetSpawnedChannelLock(ctx context.Context, channelID string, lock ChannelLock) error {
+	res, err := p.db.ExecContext(ctx, `
+		UPDATE spawned_channels
+		SET locked = $2, locker_user_id = $3, lock_notice_message_id = $4
+		WHERE channel_id = $1`,
+		channelID, lock.Locked,
+		sql.NullString{String: lock.LockerUserID, Valid: lock.LockerUserID != ""},
+		sql.NullString{String: lock.NoticeMessageID, Valid: lock.NoticeMessageID != ""})
+	if err != nil {
+		return fmt.Errorf("set lock of spawned channel %q: %w", channelID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set lock of spawned channel %q: %w", channelID, err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DeleteSpawnedChannel implements Store.
 func (p *Postgres) DeleteSpawnedChannel(ctx context.Context, channelID string) error {
 	if _, err := p.db.ExecContext(ctx, `DELETE FROM spawned_channels WHERE channel_id = $1`, channelID); err != nil {
@@ -263,26 +288,33 @@ func (p *Postgres) DeleteSpawnedChannel(ctx context.Context, channelID string) e
 }
 
 // scanSpawnedChannel reads one spawned channel row: channel_id, hub_id,
-// number, owner_user_id, created_at. NULL hub and owner read back as zero and
+// number, owner_user_id, locked, locker_user_id, lock_notice_message_id,
+// created_at. NULL hub, owner, locker and message read back as zero and
 // empty.
 func scanSpawnedChannel(row scanner) (SpawnedChannel, error) {
 	var (
-		sc    SpawnedChannel
-		hubID sql.NullInt64
-		owner sql.NullString
+		sc      SpawnedChannel
+		hubID   sql.NullInt64
+		owner   sql.NullString
+		locker  sql.NullString
+		message sql.NullString
 	)
-	if err := row.Scan(&sc.ChannelID, &hubID, &sc.Number, &owner, &sc.CreatedAt); err != nil {
+	if err := row.Scan(&sc.ChannelID, &hubID, &sc.Number, &owner,
+		&sc.Lock.Locked, &locker, &message, &sc.CreatedAt); err != nil {
 		return SpawnedChannel{}, err
 	}
 	sc.HubID = hubID.Int64
 	sc.OwnerUserID = owner.String
+	sc.Lock.LockerUserID = locker.String
+	sc.Lock.NoticeMessageID = message.String
 	return sc, nil
 }
 
 // ListSpawnedChannels implements Store.
 func (p *Postgres) ListSpawnedChannels(ctx context.Context) ([]SpawnedChannel, error) {
 	out, err := queryAll(ctx, p.db, scanSpawnedChannel, `
-		SELECT channel_id, hub_id, number, owner_user_id, created_at
+		SELECT channel_id, hub_id, number, owner_user_id,
+			locked, locker_user_id, lock_notice_message_id, created_at
 		FROM spawned_channels ORDER BY channel_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list spawned channels: %w", err)
