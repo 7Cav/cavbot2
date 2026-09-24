@@ -26,9 +26,9 @@ var (
 // windowManager runs a test's hooks inside the fake's calls, the windows
 // while a call is in flight. The runtime holds no lock across either call,
 // so a hook can deliver a gateway event or start another interaction.
-//   - The edit hook runs once, inside the next channel edit, after the fake
-//     has applied it and before the runtime reads the answer: a lock or
-//     unlock in flight with its edit already applied on Discord's side.
+//   - The edit hook runs once, inside the next overwrite replace, after the
+//     fake has applied it and before the runtime reads the answer: a lock
+//     or unlock in flight with its edit already applied on Discord's side.
 //   - The set hook runs once, inside the next overwrite set, before the
 //     fake applies it: a guest add in flight.
 type windowManager struct {
@@ -57,12 +57,12 @@ func (m *windowManager) take(slot *func()) func() {
 	return hook
 }
 
-func (m *windowManager) ChannelEdit(channelID string, data *discordgo.ChannelEdit, reason string) (*discordgo.Channel, error) {
-	ch, err := m.fakeTempVCManager.ChannelEdit(channelID, data, reason)
+func (m *windowManager) ChannelOverwritesReplace(channelID string, overwrites []*discordgo.PermissionOverwrite, reason string) error {
+	err := m.fakeTempVCManager.ChannelOverwritesReplace(channelID, overwrites, reason)
 	if hook := m.take(&m.duringEdit); hook != nil {
 		hook()
 	}
-	return ch, err
+	return err
 }
 
 func (m *windowManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, reason string) error {

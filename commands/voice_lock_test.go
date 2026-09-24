@@ -207,10 +207,13 @@ func TestVoiceUnlockGivesBackTheSourceVerdicts(t *testing.T) {
 
 // Unlock clears the guest list, so the next lock starts from whoever is
 // inside then. G, a guest of the first lock, leaves before the second and
-// cannot join afterwards.
+// cannot join afterwards. It holds when the second lock comes before
+// Discord's CHANNEL_UPDATE for the unlock reaches the cache: the cache has
+// seen the first lock and none of what came after.
 func TestVoiceLockAfterAnUnlockStartsANewGuestList(t *testing.T) {
 	fake, _, tv := newLockScene(t, store.PermissionCategory)
 	lockAs(t, tv, lockOwner)
+	fake.lagCacheBehindEdits()
 	unlockAs(t, tv, lockOwner)
 	enter(tv, fake, permG, "")
 
@@ -220,9 +223,11 @@ func TestVoiceLockAfterAnUnlockStartsANewGuestList(t *testing.T) {
 		[]permMember{lockOwner, permMOD}, []permMember{permG, permM})
 }
 
-// A source with no overwrites at all still unlocks the channel. Discord
-// drops an empty overwrite list from an edit, which the fake copies, so an
-// unlock that sent the source as it is would leave the lock in place.
+// A source with no overwrites at all still unlocks the channel, and leaves
+// it with no overwrites, exactly the source. The join verdicts cannot tell
+// an empty list from one holding an overwrite that grants and denies
+// nothing, but Discord can: it shows a channel as synced with its category
+// only when the two lists match.
 func TestVoiceUnlockOfASourceWithNoOverwritesOpensTheChannel(t *testing.T) {
 	for _, tc := range []struct {
 		source store.PermissionSource
@@ -245,6 +250,9 @@ func TestVoiceUnlockOfASourceWithNoOverwritesOpensTheChannel(t *testing.T) {
 			unlockAs(t, tv, lockOwner)
 
 			assertJoinsLikeSource(t, fake, "chan-1", tc.from, "after the unlock")
+			if list := fake.overwritesOf(t, "chan-1"); len(list) != 0 {
+				t.Errorf("chan-1 holds %d overwrites after the unlock, want none, as the source %s has", len(list), tc.from)
+			}
 		})
 	}
 }

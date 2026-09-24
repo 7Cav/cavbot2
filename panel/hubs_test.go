@@ -134,8 +134,8 @@ func (f *fakeDiscord) ChannelDelete(channelID, _ string) (*discordgo.Channel, er
 }
 
 // ChannelEdit records the call and, as Discord would, renames the channel
-// in the guild's list. An edit with no name, a lock's, keeps the name, since
-// the request leaves an empty name out.
+// in the guild's list. An edit with no name keeps the name, since the
+// request leaves an empty name out.
 func (f *fakeDiscord) ChannelEdit(channelID string, data *discordgo.ChannelEdit, reason string) (*discordgo.Channel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -149,6 +149,18 @@ func (f *fakeDiscord) ChannelEdit(channelID string, data *discordgo.ChannelEdit,
 		}
 	}
 	return &discordgo.Channel{ID: channelID, Name: data.Name}, nil
+}
+
+// ChannelOverwritesReplace records the call as an edit with no name, or
+// returns editErr. The panel's tests judge no overwrite.
+func (f *fakeDiscord) ChannelOverwritesReplace(channelID string, _ []*discordgo.PermissionOverwrite, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.editErr != nil {
+		return f.editErr
+	}
+	f.edited = append(f.edited, fakeEdit{ChannelID: channelID, Reason: reason})
+	return nil
 }
 
 func (f *fakeDiscord) GuildMemberMove(_, _ string, _ *string) error { return nil }

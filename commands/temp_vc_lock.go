@@ -248,7 +248,7 @@ func (t *TempVC) unlock(by Invoker, resolve func() (string, error)) (lockResult,
 			"channel_id", channelID, "hub_id", hubID, "user_id", by.UserID, "error", err)
 		return lockResult{}, fmt.Errorf("%w: %w", errSourceUnreadable, err)
 	}
-	overwrites := unlockOverwrites(source, t.guildID)
+	overwrites := copyOverwrites(source)
 	t.beginAccessChangeLocked(channelID)
 	t.mu.Unlock()
 	defer t.endAccessChange(channelID)
@@ -267,15 +267,15 @@ func (t *TempVC) unlock(by Invoker, resolve func() (string, error)) (lockResult,
 	return lockResult{}, nil
 }
 
-// sendLockEdit sends a lock's or an unlock's one edit, which carries the
-// channel's whole overwrite list and the audit log reason. Once Discord
-// accepts it, commit applies the change to the record under mu, and the
-// hub's capture streak reopens. A refused edit changes nothing
+// sendLockEdit sends a lock's or an unlock's one edit, which replaces the
+// channel's whole overwrite list and carries the audit log reason. Once
+// Discord accepts it, the state cache holds the new list, commit applies
+// the change to the record under mu, and the hub's capture streak reopens. A refused edit changes nothing
 // (lockEditFailed). errChannelGone reports a channel deleted while the edit
 // was in flight, whose row went with it: nothing is left to lock or unlock.
 // Caller holds the channel's access change.
 func (t *TempVC) sendLockEdit(channelID string, hubID int64, action, reason string, overwrites []*discordgo.PermissionOverwrite, commit func()) error {
-	if _, err := t.mgr.ChannelEdit(channelID, &discordgo.ChannelEdit{PermissionOverwrites: overwrites}, reason); err != nil {
+	if err := t.mgr.ChannelOverwritesReplace(channelID, overwrites, reason); err != nil {
 		return t.lockEditFailed(channelID, action, err)
 	}
 	t.mu.Lock()
@@ -370,21 +370,10 @@ func allowConnect(o *discordgo.PermissionOverwrite) {
 	o.Deny &^= discordgo.PermissionVoiceConnect
 }
 
-// unlockOverwrites is the list an unlock sends: the permission source,
-// copied. A source with no overwrites is sent as one @everyone overwrite
-// that allows and denies nothing, the same permissions as an empty list.
-// ChannelEdit drops an empty list from the request (omitempty), which would
-// leave the lock in place.
-func unlockOverwrites(source []*discordgo.PermissionOverwrite, everyoneID string) []*discordgo.PermissionOverwrite {
-	if len(source) == 0 {
-		return []*discordgo.PermissionOverwrite{{ID: everyoneID, Type: discordgo.PermissionOverwriteTypeRole}}
-	}
-	return copyOverwrites(source)
-}
-
 // copyOverwrites copies an overwrite list entry by entry, so the copy can be
 // changed and sent while the list it came from, the state cache's, stays as
-// it was.
+// it was. An empty list copies to an empty list, which an unlock sends as
+// it is.
 func copyOverwrites(list []*discordgo.PermissionOverwrite) []*discordgo.PermissionOverwrite {
 	out := make([]*discordgo.PermissionOverwrite, len(list))
 	for i, o := range list {

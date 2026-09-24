@@ -2,7 +2,9 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"slices"
 	"sync"
 	"time"
@@ -273,10 +275,17 @@ type TempVCManager interface {
 	// retry on rate limit.
 	ChannelDelete(channelID, auditReason string) (*discordgo.Channel, error)
 	// ChannelEdit edits a channel with the given audit-log reason and no retry
-	// on rate limit. /voice-rename sends the name alone; a lock and an unlock
-	// send the whole overwrite list alone. An empty list is dropped from the
-	// request (omitempty), so it cannot clear a channel's overwrites.
+	// on rate limit. /voice-rename sends the name alone. An empty overwrite
+	// list is dropped from the request (omitempty), so overwrites go through
+	// ChannelOverwritesReplace.
 	ChannelEdit(channelID string, data *discordgo.ChannelEdit, auditReason string) (*discordgo.Channel, error)
+	// ChannelOverwritesReplace replaces a channel's whole overwrite list in
+	// one edit, with the given audit-log reason and no retry on rate limit.
+	// An empty list reaches Discord as an empty list and clears every
+	// overwrite. Once Discord accepts the edit, Channel reads the new list at
+	// once, without waiting for Discord's CHANNEL_UPDATE. A lock and an
+	// unlock send their edits through it.
+	ChannelOverwritesReplace(channelID string, overwrites []*discordgo.PermissionOverwrite, auditReason string) error
 	// GuildMemberMove moves a member between voice channels with no retry on
 	// rate limit.
 	GuildMemberMove(guildID, userID string, channelID *string) error
@@ -370,8 +379,9 @@ func (s VoiceSnapshot) occupied(channelID string) bool {
 }
 
 // sessionTempVCManager adapts *discordgo.Session to TempVCManager. Each
-// method is a one-line pass-through; keeping it trivial means the
-// (hard-to-unit-test) wrapper adds negligible uncovered surface. Every REST
+// method is a one-line pass-through, which keeps the hard-to-unit-test
+// wrapper's uncovered code small. ChannelOverwritesReplace, VoiceStates and
+// CanSeeChannel do more, and their tests drive a real session. Every REST
 // call passes WithRetryOnRatelimit(false): a 429 is a failure the caller
 // handles, never a sleeping gateway handler.
 type sessionTempVCManager struct {
@@ -400,6 +410,44 @@ func (m *sessionTempVCManager) ChannelDelete(channelID, auditReason string) (*di
 func (m *sessionTempVCManager) ChannelEdit(channelID string, data *discordgo.ChannelEdit, auditReason string) (*discordgo.Channel, error) {
 	return m.s.ChannelEdit(channelID, data,
 		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+}
+
+// ChannelOverwritesReplace sends its own PATCH, since ChannelEdit's
+// PermissionOverwrites is omitempty and would drop an empty list, the one
+// an unlock to a source with no overwrites sends. The body always carries
+// the list. The channel Discord returns then goes into the state cache,
+// which would otherwise hold the old list until the CHANNEL_UPDATE lands: a
+// lock sent in that moment after an unlock would start from the locked
+// list. A later CHANNEL_UPDATE overwrites the cache as usual.
+func (m *sessionTempVCManager) ChannelOverwritesReplace(channelID string, overwrites []*discordgo.PermissionOverwrite, auditReason string) error {
+	if overwrites == nil {
+		overwrites = []*discordgo.PermissionOverwrite{}
+	}
+	body := struct {
+		PermissionOverwrites []*discordgo.PermissionOverwrite `json:"permission_overwrites"`
+	}{overwrites}
+	endpoint := discordgo.EndpointChannel(channelID)
+	resp, err := m.s.RequestWithBucketID(http.MethodPatch, endpoint, body, endpoint,
+		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+	if err != nil {
+		return err
+	}
+	// The edit has happened. A reply the cache cannot take leaves the cache
+	// to the CHANNEL_UPDATE, as before, and is no failure of the edit.
+	var edited discordgo.Channel
+	if err := json.Unmarshal(resp, &edited); err != nil {
+		utils.Warn("Temp VC edited channel not cached, reply unreadable", "channel_id", channelID, "error", err)
+		return nil
+	}
+	// ChannelAdd keeps the cached list when the new one is nil, so an
+	// answer of no overwrites is cached as an empty list.
+	if edited.PermissionOverwrites == nil {
+		edited.PermissionOverwrites = []*discordgo.PermissionOverwrite{}
+	}
+	if err := m.s.State.ChannelAdd(&edited); err != nil {
+		utils.Warn("Temp VC edited channel not cached", "channel_id", channelID, "error", err)
+	}
+	return nil
 }
 
 func (m *sessionTempVCManager) GuildMemberMove(guildID, userID string, channelID *string) error {
