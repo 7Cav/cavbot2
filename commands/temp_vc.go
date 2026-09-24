@@ -578,19 +578,15 @@ type TempVC struct {
 	// by a lock, removed by an unlock, cleared with the channel, and
 	// restored from the rows by the restart sweep.
 	locks map[string]lockRecord
-	// lockBusy marks the spawned channels with a lock or unlock in flight,
-	// from its checks until its row write, or a let-in, from its checks
-	// until its guest adds are answered. A second lock, unlock or let-in of
-	// the same channel is refused rather than interleaved.
-	lockBusy map[string]struct{}
+	// accessChanges holds the spawned channels with an access change in
+	// flight (temp_vc_lock.go): a lock or unlock from its checks until its
+	// row write, a let-in from its checks until its guest adds are
+	// answered. Another access change of the same channel waits for it.
+	accessChanges map[string]*accessChange
 	// lockCaptured is the capture rule of deleteCaptured for lock and
 	// unlock edit failures, opened by a successful lock or unlock of one of
 	// the hub's channels.
 	lockCaptured map[int64]struct{}
-	// lockJoins holds, per channel in lockBusy, the members who joined it
-	// while the lock or unlock was in flight. They go on the guest list
-	// when it ends, if the channel is locked then (temp_vc_guest.go).
-	lockJoins map[string]map[string]struct{}
 	// sweepMu serializes restart sweeps. One sweep holds it for its whole
 	// run, list included, and a queued one takes its own snapshot once the
 	// first has finished, so the later payload's ranks land last. Voice
@@ -635,9 +631,8 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		deleteCaptured: make(map[int64]struct{}),
 		renameCaptured: make(map[int64]struct{}),
 		locks:          make(map[string]lockRecord),
-		lockBusy:       make(map[string]struct{}),
+		accessChanges:  make(map[string]*accessChange),
 		lockCaptured:   make(map[int64]struct{}),
-		lockJoins:      make(map[string]map[string]struct{}),
 		inFlight:       make(map[string]struct{}),
 		settled:        make(map[string]struct{}),
 	}

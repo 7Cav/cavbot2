@@ -373,60 +373,67 @@ func TestLetInPingThatFailsToPostLeavesTheGuestIn(t *testing.T) {
 	assertJoins(t, fake, "chan-1", "after the let-in", []permMember{permV}, []permMember{permM})
 }
 
-// permissionSetWindowManager runs a hook once, inside the next overwrite
-// set, before the fake applies it: the window while a let-in's guest add is
-// in flight. The runtime holds no lock across the call, so the hook can run
-// an unlock.
-type permissionSetWindowManager struct {
-	*fakeTempVCManager
-	beforeSet func()
-}
-
-func (m *permissionSetWindowManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, reason string) error {
-	if hook := m.beforeSet; hook != nil {
-		m.beforeSet = nil
-		hook()
-	}
-	return m.fakeTempVCManager.ChannelPermissionSet(channelID, targetID, targetType, allow, deny, reason)
-}
-
-// An unlock pressed while a let-in is landing never lets the new guest past
-// it. After both, and an unlock that goes through, every member has the
-// verdict the source alone gives: V, let in during the first, cannot join.
+// An unlock pressed while a let-in is landing waits for it, then unlocks,
+// and never lets the new guest past it: afterwards every member has the
+// verdict the source alone gives, and V, let in meanwhile, cannot join.
 func TestLetInUnlockPressedWhileALetInIsInFlight(t *testing.T) {
-	fake := newFakeTempVCManager()
-	installPermFixture(fake)
-	mgr := &permissionSetWindowManager{fakeTempVCManager: fake}
-	st := seedStore(t, lockingHub(store.PermissionCategory))
-	tv := newTestTempVC(t, mgr, st)
-	spawnInto(tv, fake, lockOwner.id, "chan-1", lockOwner.discordMember())
+	fake, mgr, st, tv := newWindowScene(t)
 	lockAs(t, tv, lockOwner)
 	unlockButton := noticeButton(t, lockNotice(t, fake, "chan-1"), lockNoticeUnlock)
 	picker := openPicker(t, tv, fake, lockOwner)
-	mgr.beforeSet = func() { press(t, tv, unlockButton, permMOD) }
+	var unlock *started
+	mgr.onSet(func() {
+		unlock = startInteraction(func(f *fakeResponder) {
+			runVoiceLock(f, tv, pressInteraction(unlockButton, permMOD))
+		})
+	})
 
 	pick(t, tv, picker, lockOwner, permV)
-	if lock := rowLock(t, st, "chan-1"); lock.Locked {
-		unlockAs(t, tv, lockOwner)
-	}
+	unlock.reply(t)
 
 	assertUnlocked(t, fake, st, "chan-1", "after the let-in and the unlock")
 }
 
-// A let-in submitted while an unlock is landing lets nobody past the
-// unlock: afterwards V has the source's verdict and cannot join.
+// A let-in submitted while an unlock is landing waits for it, and then lets
+// nobody in: afterwards V has the source's verdict and cannot join, and no
+// chat line pings anyone.
 func TestLetInSubmittedWhileAnUnlockIsInFlight(t *testing.T) {
-	fake, mgr, tv := newEditWindowScene(t)
+	fake, mgr, _, tv := newWindowScene(t)
 	lockAs(t, tv, lockOwner)
 	picker := openPicker(t, tv, fake, lockOwner)
-	mgr.duringEdit = func() { pick(t, tv, picker, lockOwner, permV) }
+	var letIn *started
+	mgr.onEdit(func() {
+		letIn = startInteraction(func(f *fakeResponder) {
+			runVoiceLock(f, tv, pickInteraction(picker, lockOwner, []permMember{permV}))
+		})
+	})
 
 	unlockAs(t, tv, lockOwner)
+	letIn.reply(t)
 
 	assertJoinsLikeSource(t, fake, "chan-1", testTempVCCategory, "after the unlock")
 	if pings := letInPingsIn(fake, "chan-1"); len(pings) != 0 {
 		t.Errorf("let-in pings = %+v, want none for a let-in during the unlock", pings)
 	}
+}
+
+// A let-in submitted while another is landing waits for it and then lets
+// its own pick in, so both picks can join.
+func TestLetInSubmittedWhileALetInIsInFlight(t *testing.T) {
+	fake, mgr, _, tv := newWindowScene(t)
+	lockAs(t, tv, lockOwner)
+	picker := openPicker(t, tv, fake, lockOwner)
+	var second *started
+	mgr.onSet(func() {
+		second = startInteraction(func(f *fakeResponder) {
+			runVoiceLock(f, tv, pickInteraction(picker, permMOD, []permMember{permM}))
+		})
+	})
+
+	pick(t, tv, picker, lockOwner, permV)
+	second.reply(t)
+
+	assertJoins(t, fake, "chan-1", "after both let-ins", []permMember{permV, permM}, []permMember{permN})
 }
 
 // The production adapter judges whether a member sees a channel with

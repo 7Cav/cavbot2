@@ -382,6 +382,47 @@ func TestVoiceLockAndUnlockFailuresClassifyLikeRename(t *testing.T) {
 	}
 }
 
+// A /voice-unlock sent while a lock is landing waits for the lock, then
+// unlocks: afterwards the channel has its source's verdicts and its row
+// reads unlocked.
+func TestVoiceUnlockSentWhileALockIsInFlightWaitsThenUnlocks(t *testing.T) {
+	fake, mgr, st, tv := newWindowScene(t)
+	var unlock *started
+	mgr.onEdit(func() {
+		unlock = startInteraction(func(f *fakeResponder) {
+			runVoiceUnlock(f, tv, lockInteraction(lockOwner))
+		})
+	})
+
+	lockAs(t, tv, lockOwner)
+	unlock.reply(t)
+
+	assertUnlocked(t, fake, st, "chan-1", "after the lock and the unlock")
+}
+
+// A /voice-lock sent while an unlock is landing waits for the unlock, then
+// locks: afterwards G, inside, and MOD can join, M cannot, and the row reads
+// locked.
+func TestVoiceLockSentWhileAnUnlockIsInFlightWaitsThenLocks(t *testing.T) {
+	fake, mgr, st, tv := newWindowScene(t)
+	lockAs(t, tv, lockOwner)
+	var lock *started
+	mgr.onEdit(func() {
+		lock = startInteraction(func(f *fakeResponder) {
+			runVoiceLock(f, tv, lockInteraction(lockOwner))
+		})
+	})
+
+	unlockAs(t, tv, lockOwner)
+	lock.reply(t)
+
+	assertJoins(t, fake, "chan-1", "after the unlock and the lock",
+		[]permMember{permG, permMOD}, []permMember{permM})
+	if lock := rowLock(t, st, "chan-1"); !lock.Locked {
+		t.Errorf("row lock = %+v, want locked", lock)
+	}
+}
+
 // After a restart the sweep restores the lock from the row, so /voice-unlock
 // on the restarted runtime opens the channel.
 func TestVoiceUnlockAfterARestartSweep(t *testing.T) {

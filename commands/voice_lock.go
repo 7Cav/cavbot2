@@ -134,10 +134,6 @@ func runLockCommand(r utils.InteractionResponder, tv *TempVC, interaction *disco
 // channel that is not locked (#347 story 25).
 const notLockedRefusal = "❌ This channel isn't locked."
 
-// lockInFlightRefusal answers a lock, unlock or let-in that met another on
-// the same channel.
-const lockInFlightRefusal = "❌ This channel's lock is changing right now. Try again in a moment."
-
 // lockRefusal renders a failed Lock or Unlock as the invoker's ephemeral
 // reply, the refusals every voice command shares first. No reply carries a
 // raw Discord body.
@@ -152,8 +148,6 @@ func lockRefusal(err error, c lockCommand, discordID string) string {
 		return "❌ Already locked."
 	case errors.Is(err, errNotLocked):
 		return notLockedRefusal
-	case errors.Is(err, errLockInFlight):
-		return lockInFlightRefusal
 	case errors.Is(err, errSourceUnreadable):
 		return "❌ Couldn't unlock the channel: its hub's permissions can't be read, so it stays locked until everyone leaves."
 	case errors.Is(err, errChannelNotCached):

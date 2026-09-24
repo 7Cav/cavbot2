@@ -27,11 +27,12 @@ import (
 // moderator who has since lost the role lets nobody in. Neither needs the
 // hub's "Locking allowed": that setting gates new locks only (Q17).
 //
-// A let-in holds the channel as a lock or unlock does (lockBusy) until its
-// guest adds are answered. An unlock pressed meanwhile is refused with "try
-// again": its edit could land before a guest add, which would then carry
-// the guest past the unlock. A let-in submitted while a lock or unlock is
-// in flight is refused the same way.
+// A let-in is an access change, as a lock and an unlock are
+// (temp_vc_lock.go). It holds the channel until Discord answers its guest
+// adds, and an unlock pressed meanwhile waits for it: sent at once, the
+// unlock's edit could land before a guest add, which would then carry the
+// guest past the unlock. A let-in submitted during a lock or unlock waits
+// the same way, and then finds the channel as that change left it.
 
 // letInMaxPicks is how many members the picker takes at once, Discord's
 // maximum for a select (#347 Q15).
@@ -135,20 +136,31 @@ func (t *TempVC) letInAllowed(channelID string, by Invoker) error {
 // happened to each member is in the result.
 func (t *TempVC) letIn(channelID string, by Invoker, picks []letInPick) (letInResult, error) {
 	t.mu.Lock()
-	if err := t.lockNoticeAuthorityLocked(channelID, by); err != nil {
+	if _, err := t.idleChannelLocked(func() (string, error) {
+		return channelID, t.lockNoticeAuthorityLocked(channelID, by)
+	}); err != nil {
 		t.mu.Unlock()
 		return letInResult{}, err
 	}
-	if _, busy := t.lockBusy[channelID]; busy {
-		t.mu.Unlock()
-		return letInResult{}, errLockInFlight
-	}
 	hubID := t.channelHub[channelID]
-	t.lockBusy[channelID] = struct{}{}
+	t.beginAccessChangeLocked(channelID)
 	t.mu.Unlock()
 
+	res := t.letInEach(channelID, picks, fmt.Sprintf("let in by %s", by.UserID))
+	if len(res.LetIn) > 0 {
+		res.PingFailed = !t.postLetInPing(channelID, by.UserID, res.LetIn)
+	}
+	utils.Info("Temp VC let in", "channel_id", channelID, "hub_id", hubID, "user_id", by.UserID,
+		"let_in", res.LetIn, "skipped", len(res.Skipped), "failed", res.Failed)
+	return res, nil
+}
+
+// letInEach decides each picked member in turn, once each, and ends the
+// let-in's access change when Discord has answered every guest add. The
+// ping is left to the caller, since it changes nobody's access.
+func (t *TempVC) letInEach(channelID string, picks []letInPick, reason string) letInResult {
+	defer t.endAccessChange(channelID)
 	var res letInResult
-	reason := fmt.Sprintf("let in by %s", by.UserID)
 	seen := make(map[string]struct{}, len(picks))
 	for _, p := range picks {
 		if _, dup := seen[p.userID]; dup {
@@ -157,14 +169,7 @@ func (t *TempVC) letIn(channelID string, by Invoker, picks []letInPick) (letInRe
 		seen[p.userID] = struct{}{}
 		t.letInOne(channelID, &res, p, reason)
 	}
-	t.endLockOp(channelID)
-
-	if len(res.LetIn) > 0 {
-		res.PingFailed = !t.postLetInPing(channelID, by.UserID, res.LetIn)
-	}
-	utils.Info("Temp VC let in", "channel_id", channelID, "hub_id", hubID, "user_id", by.UserID,
-		"let_in", res.LetIn, "skipped", len(res.Skipped), "failed", res.Failed)
-	return res, nil
+	return res
 }
 
 // letInOne decides one member picked to be let into a channel and records

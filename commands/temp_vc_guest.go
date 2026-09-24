@@ -18,13 +18,13 @@ import (
 // never stored: it lives on Discord as member overwrites, and an unlock
 // drops it by putting the permission source back.
 //
-// A join during a lock or unlock in flight waits for it to finish. Its
-// guest add, sent at once, could land on either side of the edit: before a
-// lock's, which replaces the whole list and drops it, or after an unlock's,
-// which would carry the guest past the unlock. So the join is held with the
-// operation (lockJoins), and when the operation ends the members it held
-// become guests if the channel is locked then, and are dropped if not. A
-// let-in (temp_vc_let_in.go) holds joins the same way while it runs.
+// A join during an access change (a lock, unlock or let-in in flight,
+// temp_vc_lock.go) waits for it to finish. Its guest add, sent at once,
+// could land on either side of the change's edit: before a lock's, which
+// replaces the whole list and drops it, or after an unlock's, which would
+// carry the guest past the unlock. So the change holds the join
+// (accessChange.joins), and when it ends the members it held become guests
+// if the channel is locked then, and are dropped if not.
 
 // guestReasonJoined and guestReasonSwept are the audit-log reasons of a
 // guest add for a join and for the restart sweep.
@@ -35,21 +35,19 @@ const (
 
 // joinGuestsLocked decides what members joining a spawned channel mean for
 // its guest list, and returns the ones to add now. A locked channel takes
-// them all. A channel with a lock or unlock in flight holds them until it
-// ends (endLockOpLocked). An unlocked or untracked channel takes nobody.
+// them all. A channel with an access change in flight holds them until it
+// ends (endAccessChange). An unlocked or untracked channel takes nobody.
 // Caller holds mu.
 func (t *TempVC) joinGuestsLocked(channelID string, userIDs ...string) []string {
 	if _, tracked := t.occupants[channelID]; !tracked || len(userIDs) == 0 {
 		return nil
 	}
-	if _, busy := t.lockBusy[channelID]; busy {
-		held := t.lockJoins[channelID]
-		if held == nil {
-			held = make(map[string]struct{}, len(userIDs))
-			t.lockJoins[channelID] = held
+	if change, inFlight := t.accessChanges[channelID]; inFlight {
+		if change.joins == nil {
+			change.joins = make(map[string]struct{}, len(userIDs))
 		}
 		for _, userID := range userIDs {
-			held[userID] = struct{}{}
+			change.joins[userID] = struct{}{}
 		}
 		return nil
 	}
@@ -57,20 +55,6 @@ func (t *TempVC) joinGuestsLocked(channelID string, userIDs ...string) []string 
 		return nil
 	}
 	return userIDs
-}
-
-// endLockOpLocked ends a lock or unlock in flight and returns the members
-// it held back who now go on the guest list: all of them when the channel
-// is locked at the end, a lock that went through or an unlock Discord
-// refused, and none when it is not. Caller holds mu.
-func (t *TempVC) endLockOpLocked(channelID string) []string {
-	delete(t.lockBusy, channelID)
-	held := t.lockJoins[channelID]
-	delete(t.lockJoins, channelID)
-	if _, locked := t.locks[channelID]; !locked {
-		return nil
-	}
-	return sortedIDs(held)
 }
 
 // addGuests adds each member to a locked channel's guest list, off-lock.
