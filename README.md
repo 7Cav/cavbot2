@@ -31,7 +31,7 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/helpline` | Crisis and mental health support resources, optionally addressed to a member |
 | `/enlist` | The enlistment process, with a link to the application |
 | `/voice-rename` | Rename the spawned voice channel you are in |
-| `/voice-lock` | Lock the spawned voice channel you are in to the people inside it and the hub's moderators |
+| `/voice-lock` | Lock the spawned voice channel you are in to the people inside it and the hub's moderators, and post a lock notice with an Unlock button in its chat |
 | `/voice-unlock` | Unlock the spawned voice channel you are in |
 
 The registered set lives in `commands/registry.go` — update this table when it changes.

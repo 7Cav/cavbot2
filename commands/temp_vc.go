@@ -310,6 +310,12 @@ type TempVCManager interface {
 	// the caller sends every bit it means to keep. A guest add sends one
 	// member overwrite.
 	ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error
+	// ChannelMessageEditComplex edits a message the bot posted, with no
+	// retry on rate limit. The edit names its channel and message, and
+	// carries the new content and components: a pointer to an empty list
+	// removes every component, and a nil one leaves them. The unlock edits
+	// the lock notice through it.
+	ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error)
 }
 
 // VoiceSnapshot is one copy of a guild's voice states from discordgo's state
@@ -466,6 +472,10 @@ func (m *sessionTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
 func (m *sessionTempVCManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error {
 	return m.s.ChannelPermissionSet(channelID, targetID, targetType, allow, deny,
 		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+}
+
+func (m *sessionTempVCManager) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {
+	return m.s.ChannelMessageEditComplex(edit, discordgo.WithRetryOnRatelimit(false))
 }
 
 // TempVC holds the feature's runtime state. All maps are guarded by mu:

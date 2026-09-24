@@ -35,6 +35,11 @@ type fakeTempVCManager struct {
 
 	deleteCalls int
 
+	// messageEdits is every message edit the fake let through, as sent.
+	// messageEditErr, when set, is what every message edit returns instead.
+	messageEdits   []discordgo.MessageEdit
+	messageEditErr error
+
 	channelErr error
 	createErr  error
 	deleteErr  error
@@ -115,7 +120,10 @@ type fakeMove struct {
 	channelID *string
 }
 
+// fakeMessage is one message the fake let through: the ID the fake gave
+// it, the channel, and what was sent.
 type fakeMessage struct {
+	id        string
 	channelID string
 	data      *discordgo.MessageSend
 }
@@ -271,8 +279,9 @@ func (f *fakeTempVCManager) ChannelMessageSendComplex(channelID string, data *di
 	if f.messageErr != nil {
 		return nil, f.messageErr
 	}
-	f.messages = append(f.messages, fakeMessage{channelID: channelID, data: data})
-	return &discordgo.Message{ChannelID: channelID, Content: data.Content}, nil
+	id := fmt.Sprintf("msg-%d", len(f.messages)+1)
+	f.messages = append(f.messages, fakeMessage{id: id, channelID: channelID, data: data})
+	return &discordgo.Message{ID: id, ChannelID: channelID, Content: data.Content}, nil
 }
 
 func (f *fakeTempVCManager) GuildMember(_, _ string) (*discordgo.Member, error) {
@@ -358,6 +367,18 @@ func (f *fakeTempVCManager) ChannelPermissionSet(channelID, targetID string, tar
 	}
 	f.overwrites[channelID] = append(kept, &set)
 	return nil
+}
+
+// ChannelMessageEditComplex records the edit as sent, or returns
+// messageEditErr and records nothing.
+func (f *fakeTempVCManager) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.messageEditErr != nil {
+		return nil, f.messageEditErr
+	}
+	f.messageEdits = append(f.messageEdits, *edit)
+	return &discordgo.Message{ID: edit.ID, ChannelID: edit.Channel}, nil
 }
 
 // dropChannel removes a channel from the fake cache, the CHANNEL_DELETE
@@ -511,6 +532,14 @@ func (f *fakeTempVCManager) recordedMessages() []fakeMessage {
 	defer f.mu.Unlock()
 	out := make([]fakeMessage, len(f.messages))
 	copy(out, f.messages)
+	return out
+}
+
+func (f *fakeTempVCManager) recordedMessageEdits() []discordgo.MessageEdit {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]discordgo.MessageEdit, len(f.messageEdits))
+	copy(out, f.messageEdits)
 	return out
 }
 
