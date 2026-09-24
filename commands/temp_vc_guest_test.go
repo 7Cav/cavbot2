@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"net/http"
 	"sync"
 	"testing"
@@ -303,18 +304,66 @@ func TestGuestAddNeverShowsAHiddenChannel(t *testing.T) {
 	assertJoins(t, fake, "chan-1", "after their visits", nil, []permMember{permN, hidden})
 }
 
-// A guest add Discord refuses is a WARN line and never a Sentry event, and
-// the channel stays locked.
-func TestGuestAddRefusedByDiscordCapturesNothing(t *testing.T) {
+// A guest add Discord refuses classifies as a rename or a lock edit does. A
+// 5xx, a 403 or a transport failure reaches Sentry once for the streak, so
+// a second refused add captures nothing more, and a 429 never does. Unknown
+// Channel means the channel is gone: it is untracked and its row dropped,
+// with no capture. Otherwise the channel stays locked, and the member whose
+// add failed is not a guest.
+func TestGuestAddFailuresClassifyLikeOtherChannelChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		err      error
+		captures int
+		gone     bool
+	}{
+		{"5xx", restError(http.StatusInternalServerError, 0, rawBodyMarker), 1, false},
+		{"403", restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, rawBodyMarker), 1, false},
+		{"transport", errors.New("connection reset by peer"), 1, false},
+		{"429", rateLimitError(time.Second), 0, false},
+		{"unknown channel", restError(http.StatusNotFound, discordgo.ErrCodeUnknownChannel, rawBodyMarker), 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, st, tv := newLockScene(t, store.PermissionCategory)
+			lockAs(t, tv, lockOwner)
+			captures := countCaptures(t)
+			fake.permissionSetErr = tc.err
+
+			enter(tv, fake, permV, "chan-1")
+			enter(tv, fake, permX, "chan-1")
+
+			if *captures != tc.captures {
+				t.Errorf("captures = %d after two refused guest adds, want %d", *captures, tc.captures)
+			}
+			_, tracked := tv.Owner("chan-1")
+			_, hasRow := rowFor(t, st, "chan-1")
+			if tracked == tc.gone || hasRow == tc.gone {
+				t.Errorf("tracked %v, row %v; want both %v", tracked, hasRow, !tc.gone)
+			}
+			if !tc.gone {
+				assertJoins(t, fake, "chan-1", "after the refused adds", []permMember{permG}, []permMember{permM, permV, permX})
+			}
+		})
+	}
+}
+
+// A guest add that goes through ends the hub's streak of failures, so the
+// next refused add reaches Sentry again.
+func TestGuestAddFailureCapturesOncePerStreak(t *testing.T) {
 	fake, _, tv := newLockScene(t, store.PermissionCategory)
 	lockAs(t, tv, lockOwner)
 	captures := countCaptures(t)
-	fake.permissionSetErr = restError(http.StatusInternalServerError, 0, rawBodyMarker)
+	refused := restError(http.StatusInternalServerError, 0, rawBodyMarker)
 
+	fake.permissionSetErr = refused
 	enter(tv, fake, permV, "chan-1")
+	enter(tv, fake, permX, "chan-1")
+	fake.permissionSetErr = nil
+	enter(tv, fake, permO, "chan-1")
+	fake.permissionSetErr = refused
+	enter(tv, fake, permM, "chan-1")
 
-	if *captures != 0 {
-		t.Errorf("captures = %d after a refused guest add, want 0", *captures)
+	if *captures != 2 {
+		t.Errorf("captures = %d, want 2: one per streak of refused adds", *captures)
 	}
-	assertJoins(t, fake, "chan-1", "after the refused add", []permMember{permG}, []permMember{permM})
 }

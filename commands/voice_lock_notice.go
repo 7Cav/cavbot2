@@ -102,6 +102,8 @@ func letInRefusal(err error) string {
 		return "❌ Only whoever locked this channel or a moderator can let someone in."
 	case errors.Is(err, errNotLocked):
 		return notLockedRefusal
+	case errors.Is(err, errChannelGone):
+		return channelGoneRefusal
 	default:
 		return "❌ Couldn't let anyone in. Try again in a moment."
 	}

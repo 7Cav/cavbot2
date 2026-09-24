@@ -314,10 +314,12 @@ type TempVCManager interface {
 	// slices with its cache (#335).
 	MemberRanks(g *discordgo.Guild) map[string]int
 	// ChannelPermissionSet sets one permission overwrite on a channel, the
-	// target's whole overwrite, with the given audit-log reason and no retry
-	// on rate limit. Discord replaces the target's existing overwrite, so
-	// the caller sends every bit it means to keep. A guest add sends one
-	// member overwrite.
+	// target's whole overwrite, with the given audit-log reason. It is the
+	// one call that retries on a 429, after the wait Discord gives: a guest
+	// add has no other retry, and a let-in of 25 members would otherwise
+	// drop the rest on a bucket that resets in seconds. Discord replaces the
+	// target's existing overwrite, so the caller sends every bit it means to
+	// keep. A guest add sends one member overwrite.
 	ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error
 	// ChannelMessageEditComplex edits a message the bot posted, with no
 	// retry on rate limit. The edit names its channel and message, and
@@ -382,8 +384,10 @@ func (s VoiceSnapshot) occupied(channelID string) bool {
 // method is a one-line pass-through, which keeps the hard-to-unit-test
 // wrapper's uncovered code small. ChannelOverwritesReplace, VoiceStates and
 // CanSeeChannel do more, and their tests drive a real session. Every REST
-// call passes WithRetryOnRatelimit(false): a 429 is a failure the caller
-// handles, never a sleeping gateway handler.
+// call but ChannelPermissionSet passes WithRetryOnRatelimit(false): a 429
+// is a failure the caller handles, never a sleeping gateway handler. A
+// guest add's overwrite set waits out a 429 and retries instead, and
+// TempVCManager says why.
 type sessionTempVCManager struct {
 	s *discordgo.Session
 }
@@ -527,7 +531,7 @@ func (m *sessionTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
 
 func (m *sessionTempVCManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error {
 	return m.s.ChannelPermissionSet(channelID, targetID, targetType, allow, deny,
-		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(true))
 }
 
 func (m *sessionTempVCManager) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {
@@ -635,6 +639,9 @@ type TempVC struct {
 	// unlock edit failures, opened by a successful lock or unlock of one of
 	// the hub's channels.
 	lockCaptured map[int64]struct{}
+	// guestCaptured is the same rule for guest add failures, opened by a
+	// successful guest add in one of the hub's channels.
+	guestCaptured map[int64]struct{}
 	// sweepMu serializes restart sweeps. One sweep holds it for its whole
 	// run, list included, and a queued one takes its own snapshot once the
 	// first has finished, so the later payload's ranks land last. Voice
@@ -681,6 +688,7 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		locks:          make(map[string]lockRecord),
 		accessChanges:  make(map[string]*accessChange),
 		lockCaptured:   make(map[int64]struct{}),
+		guestCaptured:  make(map[int64]struct{}),
 		inFlight:       make(map[string]struct{}),
 		settled:        make(map[string]struct{}),
 	}
@@ -1162,8 +1170,6 @@ func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	hub, isHub := t.hubs[newChannel]
 	t.mu.Unlock()
 
-	t.addGuests(newChannel, guests, guestReasonJoined)
-
 	for _, row := range handovers {
 		t.applyHandover(row)
 	}
@@ -1173,6 +1179,11 @@ func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	if emptied {
 		t.deleteIfStillEmpty(oldChannel, vs.UserID)
 	}
+
+	// The guest add comes after the handovers and the delete, since it may
+	// wait out a rate limit (ChannelPermissionSet retries a 429). A member
+	// who joined a spawned channel never reaches the hub join below.
+	t.addGuests(newChannel, guests, guestReasonJoined)
 
 	// Creating happens only when the user joined a hub they are not already
 	// tracked inside as a spawned channel.

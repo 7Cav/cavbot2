@@ -126,15 +126,37 @@ func (t *TempVC) Rename(userID string, memberRoles []string, name string) (renam
 	return renameResult{ChannelID: channelID, Before: before, After: name}, nil
 }
 
-// renameFailed gives back the rename slot and classifies the failure. Unknown
-// Channel means the channel is already gone, so the runtime untracks it,
-// drops its row and captures nothing. A 403, 5xx or transport failure
-// captures once per streak per hub. Every other failure is one WARN line.
-// The handler renders the returned error without the raw Discord body.
+// renameFailed gives back the rename slot and classifies the failure as
+// every change to a spawned channel is (channelChangeFailed). The handler
+// renders the returned error without the raw Discord body.
 func (t *TempVC) renameFailed(channelID string, at time.Time, err error) error {
-	fault := classifySpawnedChannelError(err)
 	t.mu.Lock()
 	t.releaseRenameLocked(channelID, at)
+	t.mu.Unlock()
+	if t.channelChangeFailed(channelID, "rename", t.renameCaptured, err) {
+		return errChannelGone
+	}
+	// A 429 is the limit the runtime counts against itself, so Discord's
+	// retry_after is the wait the runtime would have computed, and the invoker
+	// gets the window refusal with that wait (#264, #314). A 429 with no wait
+	// stays the raw error, which the handler renders with no time.
+	if fault := classifySpawnedChannelError(err); fault.retryAfter > 0 {
+		return &renameWindowError{OpensAt: at.Add(fault.retryAfter)}
+	}
+	return err
+}
+
+// channelChangeFailed classifies a change to a spawned channel that Discord
+// refused: a rename, a lock or unlock edit, a guest add. Unknown Channel
+// means the channel is already gone, so the runtime untracks it and drops
+// its row with no capture, and gone is true. Any other failure is one WARN
+// line, and a 403, 5xx or transport failure also captures, once per streak
+// per hub: captured is the path's streak set, which the path's next success
+// on one of the hub's channels opens again. kv adds fields to the line and
+// the capture.
+func (t *TempVC) channelChangeFailed(channelID, action string, captured map[int64]struct{}, err error, kv ...any) (gone bool) {
+	fault := classifySpawnedChannelError(err)
+	t.mu.Lock()
 	hubID := t.channelHub[channelID]
 	if fault.gone {
 		t.untrackLocked(channelID)
@@ -142,23 +164,17 @@ func (t *TempVC) renameFailed(channelID string, at time.Time, err error) error {
 	t.mu.Unlock()
 
 	if fault.gone {
-		utils.Info("Temp VC channel already gone at rename, untracked", "channel_id", channelID)
+		utils.Info("Temp VC channel already gone at "+action+", untracked", "channel_id", channelID)
 		t.deleteRow(channelID)
-		return errChannelGone
+		return true
 	}
-	utils.Warn("Temp VC rename failed", "channel_id", channelID, "hub_id", hubID, "error", err)
+	fields := slices.Concat([]any{"channel_id", channelID, "hub_id", hubID}, kv)
+	utils.Warn("Temp VC "+action+" failed", slices.Concat(fields, []any{"error", err})...)
 	if fault.capturesOnChannelChange() {
-		t.captureOncePerStreak(t.renameCaptured, hubID, "Temp VC rename failed", err,
-			"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
+		t.captureOncePerStreak(captured, hubID, "Temp VC "+action+" failed", err,
+			slices.Concat(fields, []any{"guild_id", t.guildID})...)
 	}
-	// A 429 is the limit the runtime counts against itself, so Discord's
-	// retry_after is the wait the runtime would have computed, and the invoker
-	// gets the window refusal with that wait (#264, #314). A 429 with no wait
-	// stays the raw error, which the handler renders with no time.
-	if fault.retryAfter > 0 {
-		return &renameWindowError{OpensAt: at.Add(fault.retryAfter)}
-	}
-	return err
+	return false
 }
 
 // Invoker is the member a voice command or a lock notice press acts for.

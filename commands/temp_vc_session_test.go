@@ -97,6 +97,28 @@ func sameOverwrites(a, b []*discordgo.PermissionOverwrite) bool {
 	return true
 }
 
+// A guest add that meets a rate limit waits out the wait Discord gives and
+// goes through, so a let-in of many members loses none of them to a bucket
+// that resets in seconds.
+func TestSessionTempVCManagerChannelPermissionSetWaitsOutARateLimit(t *testing.T) {
+	var limited bool
+	api := &fakeDiscordAPI{answer: func(*http.Request, []byte) (int, []byte) {
+		if !limited {
+			limited = true
+			return http.StatusTooManyRequests, []byte(`{"message":"You are being rate limited.","retry_after":0.01,"global":false}`)
+		}
+		return http.StatusNoContent, nil
+	}}
+	mgr := NewSessionTempVCManager(sessionOver(t, api, nil))
+
+	err := mgr.ChannelPermissionSet("chan-1", "user-v", discordgo.PermissionOverwriteTypeMember,
+		discordgo.PermissionVoiceConnect, 0, "let in by user-o")
+
+	if err != nil {
+		t.Fatalf("ChannelPermissionSet after a rate limit: %v, want it to go through", err)
+	}
+}
+
 // Replacing a channel's overwrites sends the whole list as one edit of the
 // channel, an empty list included, with the audit log reason. An empty list
 // left out of the request would leave the lock in place. As soon as the

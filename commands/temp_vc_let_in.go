@@ -146,7 +146,10 @@ func (t *TempVC) letIn(channelID string, by Invoker, picks []letInPick) (letInRe
 	t.beginAccessChangeLocked(channelID)
 	t.mu.Unlock()
 
-	res := t.letInEach(channelID, picks, fmt.Sprintf("let in by %s", by.UserID))
+	res, err := t.letInEach(channelID, picks, fmt.Sprintf("let in by %s", by.UserID))
+	if err != nil {
+		return letInResult{}, err
+	}
 	if len(res.LetIn) > 0 {
 		res.PingFailed = !t.postLetInPing(channelID, by.UserID, res.LetIn)
 	}
@@ -157,8 +160,10 @@ func (t *TempVC) letIn(channelID string, by Invoker, picks []letInPick) (letInRe
 
 // letInEach decides each picked member in turn, once each, and ends the
 // let-in's access change when Discord has answered every guest add. The
-// ping is left to the caller, since it changes nobody's access.
-func (t *TempVC) letInEach(channelID string, picks []letInPick, reason string) letInResult {
+// ping is left to the caller, since it changes nobody's access. A guest add
+// Discord answers with Unknown Channel ends the let-in with errChannelGone:
+// the channel and its row are gone, and so is anyone to let in.
+func (t *TempVC) letInEach(channelID string, picks []letInPick, reason string) (letInResult, error) {
 	defer t.endAccessChange(channelID)
 	var res letInResult
 	seen := make(map[string]struct{}, len(picks))
@@ -167,48 +172,52 @@ func (t *TempVC) letInEach(channelID string, picks []letInPick, reason string) l
 			continue
 		}
 		seen[p.userID] = struct{}{}
-		t.letInOne(channelID, &res, p, reason)
+		if gone := t.letInOne(channelID, &res, p, reason); gone {
+			return letInResult{}, errChannelGone
+		}
 	}
-	return res
+	return res, nil
 }
 
 // letInOne decides one member picked to be let into a channel and records
 // the outcome in res: a bot, a member who cannot see the channel and a
 // current guest are skipped, anyone else gets a guest add. A failed check
-// or add is a WARN line.
-func (t *TempVC) letInOne(channelID string, res *letInResult, p letInPick, reason string) {
+// is a WARN line, and a failed add is classified (guestAddFailed), which
+// reports whether the channel is gone.
+func (t *TempVC) letInOne(channelID string, res *letInResult, p letInPick, reason string) (gone bool) {
 	skip := func(why letInSkipReason) {
 		res.Skipped = append(res.Skipped, letInSkipped{UserID: p.userID, Reason: why})
 	}
 	if p.bot {
 		skip(skipBot)
-		return
+		return false
 	}
 	if !p.resolved {
 		skip(skipCannotSee)
-		return
+		return false
 	}
 	sees, err := t.mgr.CanSeeChannel(channelID, p.userID, p.roles)
 	if err != nil {
 		utils.Warn("Temp VC let-in skipped, visibility check failed",
 			"channel_id", channelID, "user_id", p.userID, "error", err)
 		res.Failed = append(res.Failed, p.userID)
-		return
+		return false
 	}
 	if !sees {
 		skip(skipCannotSee)
-		return
+		return false
 	}
 	added, err := t.addGuest(channelID, p.userID, reason)
 	switch {
 	case err != nil:
-		utils.Warn("Temp VC guest add failed", "channel_id", channelID, "user_id", p.userID, "error", err)
 		res.Failed = append(res.Failed, p.userID)
+		return t.guestAddFailed(channelID, p.userID, err)
 	case !added:
 		skip(skipGuest)
 	default:
 		res.LetIn = append(res.LetIn, p.userID)
 	}
+	return false
 }
 
 // postLetInPing posts the chat line naming the new guests and letInBy, who

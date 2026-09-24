@@ -302,24 +302,26 @@ func TestLetInWorksWithLockingTurnedOff(t *testing.T) {
 }
 
 // A member the bot cannot let in, because Discord refuses the guest add or
-// the check whether they see the channel fails, stays out. Neither reaches
-// Sentry. The presser's reply names them and is not the reply a let-in that
-// went through gets, and no chat line pings them.
+// the check whether they see the channel fails, stays out. A 5xx from
+// Discord reaches Sentry as any refused guest add does; the failed check is
+// the bot's own and does not. The presser's reply names them and is not the
+// reply a let-in that went through gets, and no chat line pings them.
 func TestLetInThatFailsNamesWhoDidNotGetIn(t *testing.T) {
 	okFake, _, okTV := newLockScene(t, store.PermissionCategory)
 	lockAs(t, okTV, lockOwner)
 	letIn := pick(t, okTV, openPicker(t, okTV, okFake, lockOwner), lockOwner, permV)
 
 	for _, tc := range []struct {
-		name  string
-		fails func(f *fakeTempVCManager)
+		name     string
+		fails    func(f *fakeTempVCManager)
+		captures int
 	}{
 		{"guest add refused by Discord", func(f *fakeTempVCManager) {
 			f.permissionSetErr = restError(http.StatusInternalServerError, 0, rawBodyMarker)
-		}},
+		}, 1},
 		{"visibility check failed", func(f *fakeTempVCManager) {
 			f.canSeeErr = discordgo.ErrStateNotFound
-		}},
+		}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake, _, tv := newLockScene(t, store.PermissionCategory)
@@ -339,14 +341,40 @@ func TestLetInThatFailsNamesWhoDidNotGetIn(t *testing.T) {
 			if strings.Contains(reply, rawBodyMarker) {
 				t.Errorf("reply %q leaks the raw Discord error", reply)
 			}
-			if *captures != 0 {
-				t.Errorf("captures = %d after the failed let-in, want 0", *captures)
+			if *captures != tc.captures {
+				t.Errorf("captures = %d after the failed let-in, want %d", *captures, tc.captures)
 			}
 			assertJoins(t, fake, "chan-1", "after the failed let-in", nil, []permMember{permV})
 			if pings := letInPingsIn(fake, "chan-1"); len(pings) != 0 {
 				t.Errorf("let-in pings = %+v, want none when nobody got in", pings)
 			}
 		})
+	}
+}
+
+// A let-in whose guest add Discord answers with Unknown Channel finds the
+// channel gone: the runtime forgets it and drops its row, nothing reaches
+// Sentry, and no chat line is posted.
+func TestLetInIntoAChannelDiscordNoLongerHas(t *testing.T) {
+	fake, st, tv := newLockScene(t, store.PermissionCategory)
+	lockAs(t, tv, lockOwner)
+	picker := openPicker(t, tv, fake, lockOwner)
+	captures := countCaptures(t)
+	fake.permissionSetErr = restError(http.StatusNotFound, discordgo.ErrCodeUnknownChannel, rawBodyMarker)
+
+	pick(t, tv, picker, lockOwner, permV, permM)
+
+	if _, tracked := tv.Owner("chan-1"); tracked {
+		t.Error("chan-1 is still tracked, want it forgotten")
+	}
+	if _, hasRow := rowFor(t, st, "chan-1"); hasRow {
+		t.Error("chan-1 still has a row, want it dropped")
+	}
+	if *captures != 0 {
+		t.Errorf("captures = %d, want 0 for a channel that is gone", *captures)
+	}
+	if pings := letInPingsIn(fake, "chan-1"); len(pings) != 0 {
+		t.Errorf("let-in pings = %+v, want none", pings)
 	}
 }
 

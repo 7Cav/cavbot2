@@ -270,13 +270,21 @@ func (t *TempVC) unlock(by Invoker, resolve func() (string, error)) (lockResult,
 // sendLockEdit sends a lock's or an unlock's one edit, which replaces the
 // channel's whole overwrite list and carries the audit log reason. Once
 // Discord accepts it, the state cache holds the new list, commit applies
-// the change to the record under mu, and the hub's capture streak reopens. A refused edit changes nothing
-// (lockEditFailed). errChannelGone reports a channel deleted while the edit
-// was in flight, whose row went with it: nothing is left to lock or unlock.
-// Caller holds the channel's access change.
+// the change to the record under mu, and the hub's capture streak opens
+// again. errChannelGone reports a channel deleted while the edit was in
+// flight, whose row went with it: nothing is left to lock or unlock. A
+// refused edit changes nothing else, classified as every change to a
+// spawned channel is (channelChangeFailed): it carried the whole list, so
+// Discord applied none of it, and the lock stays as it was. A member who
+// joined while an unlock was in flight is a guest of the channel that
+// stayed locked (endAccessChange). Caller holds the channel's access
+// change.
 func (t *TempVC) sendLockEdit(channelID string, hubID int64, action, reason string, overwrites []*discordgo.PermissionOverwrite, commit func()) error {
 	if err := t.mgr.ChannelOverwritesReplace(channelID, overwrites, reason); err != nil {
-		return t.lockEditFailed(channelID, action, err)
+		if t.channelChangeFailed(channelID, action, t.lockCaptured, err) {
+			return errChannelGone
+		}
+		return err
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -381,36 +389,6 @@ func copyOverwrites(list []*discordgo.PermissionOverwrite) []*discordgo.Permissi
 		out[i] = &c
 	}
 	return out
-}
-
-// lockEditFailed classifies a lock or unlock edit Discord refused, the way
-// renameFailed does. Unknown Channel means the channel is already gone, so
-// the runtime untracks it and drops its row with no capture. A 403, 5xx or
-// transport failure captures once per streak per hub. Anything else is one
-// WARN line. Nothing else changes: the edit carried the whole list, so
-// Discord applied none of it, and the lock stays as it was. A member who
-// joined while an unlock was in flight is a guest of the channel that
-// stayed locked (endAccessChange).
-func (t *TempVC) lockEditFailed(channelID, action string, err error) error {
-	fault := classifySpawnedChannelError(err)
-	t.mu.Lock()
-	hubID := t.channelHub[channelID]
-	if fault.gone {
-		t.untrackLocked(channelID)
-	}
-	t.mu.Unlock()
-
-	if fault.gone {
-		utils.Info("Temp VC channel already gone at "+action+", untracked", "channel_id", channelID)
-		t.deleteRow(channelID)
-		return errChannelGone
-	}
-	utils.Warn("Temp VC "+action+" failed", "channel_id", channelID, "hub_id", hubID, "error", err)
-	if fault.capturesOnChannelChange() {
-		t.captureOncePerStreak(t.lockCaptured, hubID, "Temp VC "+action+" failed", err,
-			"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
-	}
-	return err
 }
 
 // writeLock records a spawned channel's lock on its row. A failed write
