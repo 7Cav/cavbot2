@@ -94,11 +94,12 @@ const discordChannelNameLimit = 100
 // TempVCOverwriteCeiling is the most the bot may ever write into a channel
 // permission overwrite: Manage Channels, Move Members, Mute Members, Deafen
 // Members, Connect, View Channel. It is a constant, never a panel setting.
-// A lock and a guest add are the writers today, and each sets or clears
-// Connect alone (lockOverwrites, addGuest); the bits an overwrite already
-// carried, and the permission source an unlock copies back, are Discord's
-// and pass as they are. Raising it is a decision of its own (spec #347, out
-// of scope).
+// The bits the bot writes of its own accord are lockBits (temp_vc_lock.go),
+// which a lock, a guest add and a let-in set or clear, and the build fails
+// if lockBits ever holds a bit outside this ceiling. The bits an overwrite
+// already carried, and the permission source an unlock copies back, are
+// Discord's and pass as they are. Raising it is a decision of its own
+// (spec #347, out of scope).
 const TempVCOverwriteCeiling = discordgo.PermissionManageChannels |
 	discordgo.PermissionVoiceMoveMembers |
 	discordgo.PermissionVoiceMuteMembers |

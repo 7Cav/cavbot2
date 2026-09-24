@@ -104,10 +104,10 @@ func (t *TempVC) addGuest(channelID, userID, reason string) (added bool, err err
 	}); i >= 0 {
 		guest = *ch.PermissionOverwrites[i]
 	}
-	if guest.Allow&discordgo.PermissionVoiceConnect != 0 {
+	if guest.Allow&lockBits == lockBits {
 		return false, nil
 	}
-	allowConnect(&guest)
+	allowLockBits(&guest)
 	if err := t.mgr.ChannelPermissionSet(channelID, userID, guest.Type, guest.Allow, guest.Deny, reason); err != nil {
 		return false, err
 	}

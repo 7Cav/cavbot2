@@ -319,6 +319,17 @@ func (t *TempVC) insideLocked(channelID string) []string {
 	return out
 }
 
+// lockBits are the permission bits the bot writes into an overwrite of its
+// own accord: Connect alone, which a lock denies and allows
+// (lockOverwrites) and a guest add, the join's or a let-in's, allows
+// (addGuest). denyLockBits and allowLockBits write them and nothing else.
+const lockBits = discordgo.PermissionVoiceConnect
+
+// lockBits must sit inside TempVCOverwriteCeiling. This constant fails to
+// compile when they do not: a bit outside the ceiling makes the operand a
+// negative constant, which overflows uint64.
+const _ = uint64(-(lockBits &^ TempVCOverwriteCeiling))
+
 // lockOverwrites builds a lock's overwrite list from the channel's current
 // one:
 //   - Connect denied on @everyone, whose overwrite ID is the guild's, added
@@ -332,9 +343,9 @@ func (t *TempVC) insideLocked(channelID string) []string {
 //
 // Discord applies @everyone first, then role allows over role denies, then
 // the member, so a moderator or a guest still joins and every other role
-// holder is stopped. The bot changes the Connect bit alone, inside
-// TempVCOverwriteCeiling; every other bit an overwrite carried is kept. The
-// current list is copied, never changed: it is the state cache's.
+// holder is stopped. The bot changes lockBits alone; every other bit an
+// overwrite carried is kept. The current list is copied, never changed: it
+// is the state cache's.
 func lockOverwrites(current []*discordgo.PermissionOverwrite, everyoneID string, moderatorRoles, guests []string) []*discordgo.PermissionOverwrite {
 	out := copyOverwrites(current)
 	byID := make(map[string]*discordgo.PermissionOverwrite, len(out)+len(moderatorRoles)+len(guests)+1)
@@ -352,30 +363,31 @@ func lockOverwrites(current []*discordgo.PermissionOverwrite, everyoneID string,
 	}
 	for _, o := range out {
 		if o.Type == discordgo.PermissionOverwriteTypeRole && !slices.Contains(moderatorRoles, o.ID) {
-			denyConnect(o)
+			denyLockBits(o)
 		}
 	}
-	denyConnect(ensure(everyoneID, discordgo.PermissionOverwriteTypeRole))
+	denyLockBits(ensure(everyoneID, discordgo.PermissionOverwriteTypeRole))
 	for _, id := range moderatorRoles {
-		allowConnect(ensure(id, discordgo.PermissionOverwriteTypeRole))
+		allowLockBits(ensure(id, discordgo.PermissionOverwriteTypeRole))
 	}
 	for _, id := range guests {
-		allowConnect(ensure(id, discordgo.PermissionOverwriteTypeMember))
+		allowLockBits(ensure(id, discordgo.PermissionOverwriteTypeMember))
 	}
 	return out
 }
 
-// denyConnect denies Connect on one overwrite. Within one overwrite Discord
-// applies the deny and then the allow, so the allow bit goes too.
-func denyConnect(o *discordgo.PermissionOverwrite) {
-	o.Deny |= discordgo.PermissionVoiceConnect
-	o.Allow &^= discordgo.PermissionVoiceConnect
+// denyLockBits denies lockBits on one overwrite. Within one overwrite
+// Discord applies the deny and then the allow, so the allow bits go too.
+func denyLockBits(o *discordgo.PermissionOverwrite) {
+	o.Deny |= lockBits
+	o.Allow &^= lockBits
 }
 
-// allowConnect allows Connect on one overwrite and clears any Connect deny.
-func allowConnect(o *discordgo.PermissionOverwrite) {
-	o.Allow |= discordgo.PermissionVoiceConnect
-	o.Deny &^= discordgo.PermissionVoiceConnect
+// allowLockBits allows lockBits on one overwrite and clears any deny of
+// them.
+func allowLockBits(o *discordgo.PermissionOverwrite) {
+	o.Allow |= lockBits
+	o.Deny &^= lockBits
 }
 
 // copyOverwrites copies an overwrite list entry by entry, so the copy can be
