@@ -23,9 +23,10 @@ import (
 // The spawned channel is named "<base string> - n", numbered per hub from 1
 // with freed numbers reused, and carries the hub's user limit and bitrate.
 // Permission source "category" sends no overwrites, so Discord copies the
-// category's; "hub_channel" copies the hub channel's own overwrite list. The
-// bot authors no overwrite of its own. Ownership is a bot-internal marker
-// that grants no Discord permission.
+// category's; "hub_channel" copies the hub channel's own overwrite list.
+// permissionSourceOverwrites is the one reader of either list. The bot
+// authors no overwrite of its own. Ownership is a bot-internal marker that
+// grants no Discord permission.
 //
 // One row per spawned channel lives in the store: channel ID, hub, number,
 // owner. It is written at create and at every handover and deleted with the
@@ -1353,6 +1354,37 @@ func (t *TempVC) deleteRow(channelID string) {
 	}
 }
 
+// permissionSourceOverwrites reads a hub's permission source from
+// discordgo's state cache, as it is now: the overwrite list of the hub
+// channel's category for source category, the hub channel's own list for
+// source hub_channel. The spawn path builds a hub_channel create payload
+// from it; a category create sends nothing and lets Discord copy the same
+// list. The slice and its entries are the cache's, so a caller sends them
+// and never changes them.
+//
+// A source that cannot be read is an error, never a fallback to another
+// list: the hub channel missing from the cache, a hub channel with no
+// category, or a category missing from the cache. A hub channel with no
+// category is a broken hub, so it is an error for either source kind.
+func (t *TempVC) permissionSourceOverwrites(hub store.Hub) ([]*discordgo.PermissionOverwrite, error) {
+	hubChannel, err := t.mgr.Channel(hub.HubChannelID)
+	if err != nil {
+		return nil, fmt.Errorf("hub channel %s not in the state cache: %w", hub.HubChannelID, err)
+	}
+	if hubChannel.ParentID == "" {
+		return nil, fmt.Errorf("hub channel %s has no category", hub.HubChannelID)
+	}
+	if hub.PermissionSource == store.PermissionHubChannel {
+		return hubChannel.PermissionOverwrites, nil
+	}
+	category, err := t.mgr.Channel(hubChannel.ParentID)
+	if err != nil {
+		return nil, fmt.Errorf("category %s of hub channel %s not in the state cache: %w",
+			hubChannel.ParentID, hub.HubChannelID, err)
+	}
+	return category.PermissionOverwrites, nil
+}
+
 // handleHubJoin creates a spawned channel for a hub joiner and moves them into
 // it. Runs without the lock held, creation and moves are network calls, and
 // re-locks only to commit tracking state.
@@ -1382,6 +1414,23 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		return
 	}
 
+	// Permission source category: no PermissionOverwrites, so Discord copies
+	// the category's and the channel is synced from birth. Permission source
+	// hub_channel: the hub channel's own list, verbatim, for a stricter hub
+	// inside a looser category. The bot adds no entry of its own either way.
+	var overwrites []*discordgo.PermissionOverwrite
+	if hub.PermissionSource == store.PermissionHubChannel {
+		overwrites, err = t.permissionSourceOverwrites(hub)
+		if err != nil {
+			// The hub channel passed both checks above a moment ago, so only
+			// a channel event landing in between gets here. It ends as the
+			// cache miss above does: nothing spawns and nothing is recorded.
+			utils.Warn("Temp VC spawn refused, permission source unreadable",
+				"hub_channel_id", hub.HubChannelID, "user_id", vs.UserID, "error", err)
+			return
+		}
+	}
+
 	// The create goes out only for a member the cache still shows in the
 	// hub. One who left in the meantime gets no channel and no message:
 	// nothing failed.
@@ -1401,19 +1450,13 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	t.mu.Unlock()
 	name := nameWithIndex(hub.BaseString, index)
 
-	// Permission source category: no PermissionOverwrites, so Discord copies
-	// the category's and the channel is synced from birth. Permission source
-	// hub_channel: the hub channel's own list, verbatim, for a stricter hub
-	// inside a looser category. The bot adds no entry of its own either way.
 	data := discordgo.GuildChannelCreateData{
-		Name:      name,
-		Type:      discordgo.ChannelTypeGuildVoice,
-		ParentID:  hubChannel.ParentID,
-		UserLimit: hub.UserLimit,
-		Bitrate:   hub.Bitrate,
-	}
-	if hub.PermissionSource == store.PermissionHubChannel {
-		data.PermissionOverwrites = hubChannel.PermissionOverwrites
+		Name:                 name,
+		Type:                 discordgo.ChannelTypeGuildVoice,
+		ParentID:             hubChannel.ParentID,
+		UserLimit:            hub.UserLimit,
+		Bitrate:              hub.Bitrate,
+		PermissionOverwrites: overwrites,
 	}
 	reason := fmt.Sprintf("hub %s, creator %s", hub.HubChannelID, vs.UserID)
 	channel, err := t.mgr.GuildChannelCreateComplex(t.guildID, data, reason)

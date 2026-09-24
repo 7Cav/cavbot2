@@ -69,6 +69,12 @@ type fakeTempVCManager struct {
 	// guild read as absent from the cache. Any other guild is always absent.
 	voice        map[string]string
 	guildMissing bool
+
+	// overwrites stands in for Discord's own record of the overwrite list on
+	// each channel the bot created or edited, kept apart from the cache so
+	// a created channel stays out of the cache's channel set as before.
+	// overwritesOf reads it.
+	overwrites map[string][]*discordgo.PermissionOverwrite
 }
 
 type fakeCreate struct {
@@ -81,10 +87,14 @@ type fakeDelete struct {
 	reason    string
 }
 
+// fakeEdit is one channel edit the fake let through. overwrites is the
+// full list the edit carried, copied at the call, empty when it carried
+// none.
 type fakeEdit struct {
-	channelID string
-	name      string
-	reason    string
+	channelID  string
+	name       string
+	overwrites []*discordgo.PermissionOverwrite
+	reason     string
 }
 
 type fakeMove struct {
@@ -112,7 +122,23 @@ func newFakeTempVCManager() *fakeTempVCManager {
 		},
 		nextChannel: &discordgo.Channel{ID: "new-chan"},
 		voice:       map[string]string{},
+		overwrites:  map[string][]*discordgo.PermissionOverwrite{},
 	}
+}
+
+// cloneOverwrites copies an overwrite list entry by entry, so a record
+// keeps what a call carried whatever the caller or the cache does to it
+// afterwards.
+func cloneOverwrites(list []*discordgo.PermissionOverwrite) []*discordgo.PermissionOverwrite {
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]*discordgo.PermissionOverwrite, len(list))
+	for i, o := range list {
+		c := *o
+		out[i] = &c
+	}
+	return out
 }
 
 func (f *fakeTempVCManager) Channel(channelID string) (*discordgo.Channel, error) {
@@ -149,6 +175,18 @@ func (f *fakeTempVCManager) GuildChannelCreateComplex(_ string, data discordgo.G
 		ch.ID = fmt.Sprintf("chan-%d", f.createSeq)
 	}
 	ch.Name = data.Name
+	// Discord gives the new channel the payload's overwrites. A payload
+	// with none (omitempty drops an empty list from the wire) is synced to
+	// its category: the category's list as the cache holds it, or nothing
+	// when the cache holds no category.
+	switch parent, ok := f.channels[data.ParentID]; {
+	case len(data.PermissionOverwrites) > 0:
+		f.overwrites[ch.ID] = cloneOverwrites(data.PermissionOverwrites)
+	case data.ParentID != "" && ok:
+		f.overwrites[ch.ID] = cloneOverwrites(parent.PermissionOverwrites)
+	default:
+		f.overwrites[ch.ID] = nil
+	}
 	f.mu.Unlock()
 	// The hook runs outside the fake's lock, as moveHook does, so it can
 	// feed a gateway event through the fake.
@@ -175,7 +213,14 @@ func (f *fakeTempVCManager) ChannelEdit(channelID string, data *discordgo.Channe
 	if f.editErr != nil {
 		return nil, f.editErr
 	}
-	f.edits = append(f.edits, fakeEdit{channelID: channelID, name: data.Name, reason: reason})
+	sent := cloneOverwrites(data.PermissionOverwrites)
+	f.edits = append(f.edits, fakeEdit{channelID: channelID, name: data.Name, overwrites: sent, reason: reason})
+	// An edit that carries overwrites replaces the channel's whole list. One
+	// that carries none leaves it, since omitempty drops an empty list from
+	// the wire.
+	if len(sent) > 0 {
+		f.overwrites[channelID] = sent
+	}
 	return &discordgo.Channel{ID: channelID, Name: data.Name}, nil
 }
 
@@ -360,6 +405,26 @@ func (f *fakeTempVCManager) recordedEdits() []fakeEdit {
 	out := make([]fakeEdit, len(f.edits))
 	copy(out, f.edits)
 	return out
+}
+
+// overwritesOf returns a channel's overwrite list as Discord holds it now:
+// for a channel the bot created or edited, what the create gave it and every
+// edit since; for any other channel, what the fake cache holds. A copy, so
+// the caller can keep it. A channel the fake has never seen fails the test,
+// since an empty list would read as the guild's own permissions. canJoin
+// reads a channel through it.
+func (f *fakeTempVCManager) overwritesOf(t *testing.T, channelID string) []*discordgo.PermissionOverwrite {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if list, ok := f.overwrites[channelID]; ok {
+		return cloneOverwrites(list)
+	}
+	if ch, ok := f.channels[channelID]; ok {
+		return cloneOverwrites(ch.PermissionOverwrites)
+	}
+	t.Fatalf("overwritesOf(%s): the fake has never seen that channel", channelID)
+	return nil
 }
 
 func (f *fakeTempVCManager) recordedCreates() []fakeCreate {
