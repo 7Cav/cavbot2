@@ -176,21 +176,20 @@ it off; step 6 turns the bot's hubs on.
 
 The Release checklist above, every line green.
 
-### 2. Restrict `/voice-rename` to the 29 rank roles
+### 2. Enable `/voice-rename` for the 29 rank roles
 
 In Discord, Server Settings, Integrations, the bot, then the `/voice-rename`
-command. Turn off the `@everyone` entry and add each of the 29 rank roles
-from the code ladder (`tempVCRankRoles` in `commands/temp_vc.go`), most
-senior first:
+command. On this guild every command starts denied to everyone and works
+only for the roles enabled on it. Add each of the 29 rank roles from the
+code ladder (`tempVCRankRoles` in `commands/temp_vc.go`), most senior first:
 
 `GOA`, `GEN`, `LTG`, `MG`, `BG`, `COL`, `LTC`, `MAJ`, `CPT`, `1LT`, `2LT`,
 `CW5`, `CW4`, `CW3`, `CW2`, `WO1`, `CSM`, `SGM`, `1SG`, `MSG`, `SFC`, `SSG`,
 `SGT`, `CPL`, `SPC`, `PFC`, `PVT`, `AR`, `RCT`.
 
-Until this is applied the command is visible to every member, and a guest
-in a spawned channel reaches the no-owner refusal, which logs at WARN. That
-is why it sits before the hubs are enabled. Discord's 100-entry limit per
-command is not reached.
+Until this is applied nobody can run the command, so no owner can rename a
+spawned channel. That is why it sits before the hubs are enabled. Discord's
+100-entry limit per command is not reached.
 
 ### 3. Transcribe every hub from MEE6, registered disabled
 
