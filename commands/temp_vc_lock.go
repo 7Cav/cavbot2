@@ -104,7 +104,8 @@ func (t *TempVC) Lock(userID string, memberRoles []string) (lockResult, error) {
 		return lockResult{}, errChannelNotCached
 	}
 	// The guest list is whoever is inside at this check. A member whose join
-	// lands between here and the commit below is not on it.
+	// lands between here and the end of the lock is held and added when it
+	// ends (joinGuestsLocked).
 	guests := t.insideLocked(channelID)
 	overwrites := lockOverwrites(current.PermissionOverwrites, t.guildID,
 		t.effectiveModeratorRolesLocked(channelID), guests)
@@ -310,16 +311,18 @@ func unlockOverwrites(source []*discordgo.PermissionOverwrite, everyoneID string
 // with no capture. A 403, 5xx or transport failure captures once per streak
 // per hub. Anything else is one WARN line. Nothing else changes: the edit
 // carried the whole list, so Discord applied none of it, and the lock stays
-// as it was.
+// as it was. A member who joined while an unlock was in flight is a guest
+// of the channel that stayed locked.
 func (t *TempVC) lockEditFailed(channelID, action string, err error) error {
 	fault := classifySpawnedChannelError(err)
 	t.mu.Lock()
-	delete(t.lockBusy, channelID)
 	hubID := t.channelHub[channelID]
 	if fault.gone {
 		t.untrackLocked(channelID)
 	}
+	held := t.endLockOpLocked(channelID)
 	t.mu.Unlock()
+	t.admitGuests(channelID, held, guestReasonJoined)
 
 	if fault.gone {
 		utils.Info("Temp VC channel already gone at "+action+", untracked", "channel_id", channelID)
@@ -334,11 +337,13 @@ func (t *TempVC) lockEditFailed(channelID, action string, err error) error {
 	return err
 }
 
-// endLockOp ends a lock or unlock in flight.
+// endLockOp ends a lock or unlock in flight. Whoever joined the channel
+// meanwhile goes on its guest list if it is locked now.
 func (t *TempVC) endLockOp(channelID string) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.lockBusy, channelID)
+	held := t.endLockOpLocked(channelID)
+	t.mu.Unlock()
+	t.admitGuests(channelID, held, guestReasonJoined)
 }
 
 // writeLock records a spawned channel's lock on its row. A failed write
