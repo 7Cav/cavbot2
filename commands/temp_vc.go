@@ -25,19 +25,20 @@ import (
 // Permission source "category" sends no overwrites, so Discord copies the
 // category's; "hub_channel" copies the hub channel's own overwrite list.
 // permissionSourceOverwrites is the one reader of either list. The bot
-// authors no overwrite of its own. Ownership is a bot-internal marker that
+// writes overwrites of its own only to lock a channel, and an unlock puts
+// the source back (temp_vc_lock.go). Ownership is a bot-internal marker that
 // grants no Discord permission.
 //
 // One row per spawned channel lives in the store: channel ID, hub, number,
-// owner. It is written at create and at every handover and deleted with the
-// channel. Each create and each handover also posts the ownership notice in
-// the spawned channel's text chat, naming the owner or saying there is none,
-// and pinging nobody.
+// owner and lock. It is written at create and at every handover, its lock
+// at every lock and unlock, and it is deleted with the channel. Each create
+// and each handover also posts the ownership notice in the spawned channel's
+// text chat, naming the owner or saying there is none, and pinging nobody.
 //
-// A spawned channel is deleted the moment its last occupant leaves. The
-// restart sweep on GUILD_CREATE reads the rows, restores each channel's owner
-// from its row or elects one by the handover rule, and touches no channel it
-// holds no row for.
+// A spawned channel is deleted the moment its last occupant leaves, which
+// ends any lock on it. The restart sweep on GUILD_CREATE reads the rows,
+// restores each channel's owner from its row or elects one by the handover
+// rule, restores its lock, and touches no channel it holds no row for.
 //
 // The sweep and the voice handlers run on their own goroutines, and the
 // sweep's list call is made off-lock, so a voice event can be handled
@@ -91,8 +92,10 @@ const discordChannelNameLimit = 100
 // TempVCOverwriteCeiling is the most the bot may ever write into a channel
 // permission overwrite: Manage Channels, Move Members, Mute Members, Deafen
 // Members, Connect, View Channel. It is a constant, never a panel setting.
-// Today the bot authors no overwrite at all, so it bounds nothing yet; it is
-// here so the limit is in code before anything reaches for it.
+// A lock is the one writer today, and it sets or clears Connect alone
+// (lockOverwrites); the bits an overwrite already carried, and the
+// permission source an unlock copies back, are Discord's and pass as they
+// are. Raising it is a decision of its own (spec #347, out of scope).
 const TempVCOverwriteCeiling = discordgo.PermissionManageChannels |
 	discordgo.PermissionVoiceMoveMembers |
 	discordgo.PermissionVoiceMuteMembers |
@@ -269,7 +272,9 @@ type TempVCManager interface {
 	// retry on rate limit.
 	ChannelDelete(channelID, auditReason string) (*discordgo.Channel, error)
 	// ChannelEdit edits a channel with the given audit-log reason and no retry
-	// on rate limit. /voice-rename sends the name alone.
+	// on rate limit. /voice-rename sends the name alone; a lock and an unlock
+	// send the whole overwrite list alone. An empty list is dropped from the
+	// request (omitempty), so it cannot clear a channel's overwrites.
 	ChannelEdit(channelID string, data *discordgo.ChannelEdit, auditReason string) (*discordgo.Channel, error)
 	// GuildMemberMove moves a member between voice channels with no retry on
 	// rate limit.
@@ -521,6 +526,19 @@ type TempVC struct {
 	// renameCaptured is the same rule for rename failures, opened by a
 	// successful rename of one of the hub's channels.
 	renameCaptured map[int64]struct{}
+	// locks holds each locked spawned channel's lock, the copy of its row's
+	// that the runtime decides on. Absent when the channel is unlocked. Set
+	// by a lock, removed by an unlock, cleared with the channel, and
+	// restored from the rows by the restart sweep.
+	locks map[string]lockRecord
+	// lockBusy marks the spawned channels with a lock or unlock in flight,
+	// from its checks until its row write, so a second lock or unlock of
+	// the same channel is refused rather than interleaved.
+	lockBusy map[string]struct{}
+	// lockCaptured is the capture rule of deleteCaptured for lock and
+	// unlock edit failures, opened by a successful lock or unlock of one of
+	// the hub's channels.
+	lockCaptured map[int64]struct{}
 	// sweepMu serializes restart sweeps. One sweep holds it for its whole
 	// run, list included, and a queued one takes its own snapshot once the
 	// first has finished, so the later payload's ranks land last. Voice
@@ -564,6 +582,9 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		createCaptured: make(map[int64]struct{}),
 		deleteCaptured: make(map[int64]struct{}),
 		renameCaptured: make(map[int64]struct{}),
+		locks:          make(map[string]lockRecord),
+		lockBusy:       make(map[string]struct{}),
+		lockCaptured:   make(map[int64]struct{}),
 		inFlight:       make(map[string]struct{}),
 		settled:        make(map[string]struct{}),
 	}
@@ -748,10 +769,13 @@ func (t *TempVC) handleChannelDelete(c *discordgo.ChannelDelete) {
 // present, occupied channel is tracked again with its number from the row
 // and its owner restored from the row; an owner absent from the channel
 // counts as having left, and the handover rule elects from the occupants,
-// whose ranks come from the payload's member list. No channel without a row
-// is touched, so a channel a human made is never deleted. GUILD_CREATE
-// re-fires on gateway reconnects, so this also rebuilds tracking after any
-// missed events; a restored owner posts no notice, so a reconnect is silent.
+// whose ranks come from the payload's member list. Its lock comes from the
+// row too, unless the record tracked the channel before this sweep, which
+// only a reconnect finds: the record's lock is then the newer and is kept
+// (restoreLockLocked). No channel without a row is touched, so a channel a
+// human made is never deleted. GUILD_CREATE re-fires on gateway reconnects,
+// so this also rebuilds tracking after any missed events; a restored owner
+// or lock posts no notice, so a reconnect is silent.
 //
 // A spawn in flight, a hub join whose row write or compensating delete has
 // not finished, is left as the record has it and its row is skipped: its
@@ -824,6 +848,9 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 		}
 		occupantsOf[channelID][userID] = struct{}{}
 	}
+	// The record as it stood before this rebuild, for the lock rule in the
+	// row loop.
+	wasTracked, heldLocks := t.occupants, t.locks
 	// A spawn in flight is left as the record has it: its tracking committed
 	// before this rebuild, and its row may not have been listed. Everything
 	// else is rebuilt from the rows below.
@@ -861,6 +888,7 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 		if row.OwnerUserID != "" {
 			t.owners[row.ChannelID] = row.OwnerUserID
 		}
+		t.restoreLockLocked(row, wasTracked, heldLocks)
 		if len(occ) == 0 {
 			empty = append(empty, row.ChannelID)
 			continue
@@ -905,6 +933,7 @@ func (t *TempVC) keepSpawnsInFlightLocked() int {
 	owners := make(map[string]string)
 	channelHub := make(map[string]int64)
 	channelIndex := make(map[string]int)
+	locks := make(map[string]lockRecord)
 	kept := 0
 	for id := range t.inFlight {
 		occ, tracked := t.occupants[id]
@@ -918,8 +947,12 @@ func (t *TempVC) keepSpawnsInFlightLocked() int {
 		}
 		channelHub[id] = t.channelHub[id]
 		channelIndex[id] = t.channelIndex[id]
+		if lock, ok := t.locks[id]; ok {
+			locks[id] = lock
+		}
 	}
 	t.occupants, t.owners, t.channelHub, t.channelIndex = occupants, owners, channelHub, channelIndex
+	t.locks = locks
 	return kept
 }
 
@@ -1235,6 +1268,7 @@ func (t *TempVC) untrackLocked(channelID string) {
 	delete(t.channelHub, channelID)
 	delete(t.channelIndex, channelID)
 	delete(t.renames, channelID)
+	delete(t.locks, channelID)
 }
 
 // deleteOutcome is what deleteIfStillEmpty did with a channel: the delete

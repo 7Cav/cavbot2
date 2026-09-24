@@ -141,6 +141,11 @@ func cloneOverwrites(list []*discordgo.PermissionOverwrite) []*discordgo.Permiss
 	return out
 }
 
+// Channel answers from the fake cache. A channel the bot created or edited
+// reads with the overwrite list Discord holds for it now, as the cache does
+// once Discord's CHANNEL_CREATE or CHANNEL_UPDATE lands, which the fake
+// takes as at once. A created channel still stays out of the channel set
+// VoiceStates reports.
 func (f *fakeTempVCManager) Channel(channelID string) (*discordgo.Channel, error) {
 	if f.channelHook != nil {
 		f.channelHook()
@@ -150,11 +155,21 @@ func (f *fakeTempVCManager) Channel(channelID string) (*discordgo.Channel, error
 	if f.channelErr != nil {
 		return nil, f.channelErr
 	}
-	ch, ok := f.channels[channelID]
-	if !ok {
+	ch, cached := f.channels[channelID]
+	list, recorded := f.overwrites[channelID]
+	switch {
+	case cached && recorded:
+		c := *ch
+		c.PermissionOverwrites = cloneOverwrites(list)
+		return &c, nil
+	case cached:
+		return ch, nil
+	case recorded:
+		return &discordgo.Channel{ID: channelID, GuildID: testTempVCGuild, Type: discordgo.ChannelTypeGuildVoice,
+			PermissionOverwrites: cloneOverwrites(list)}, nil
+	default:
 		return nil, discordgo.ErrStateNotFound
 	}
-	return ch, nil
 }
 
 func (f *fakeTempVCManager) GuildChannelCreateComplex(_ string, data discordgo.GuildChannelCreateData, reason string) (*discordgo.Channel, error) {
