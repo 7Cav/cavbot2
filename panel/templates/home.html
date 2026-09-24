@@ -199,7 +199,7 @@
       <div class="field">
         <span class="field-label">Moderator roles for this hub</span>
         {{template "picker" .Picker}}
-        <span class="field-hint">These roles rename any channel this hub spawns, whoever owns it, in addition to the roles for every hub.</span>
+        <span class="field-hint">These roles rename, lock and unlock any channel this hub spawns, whoever owns it, in addition to the roles for every hub.</span>
       </div>
     </div>
     <div class="block-row">
@@ -218,6 +218,10 @@
     </div>
     <div class="block-row">
       <label class="check"><input type="checkbox" name="enabled" data-field="enabled"{{if .Form.Enabled}} checked{{end}}> Enabled</label>
+    </div>
+    <div class="block-row">
+      <label class="check"><input type="checkbox" name="locking_allowed" data-field="locking_allowed"{{if .Form.LockingAllowed}} checked{{end}}> Locking allowed</label>
+      <span class="field-hint">The owner or a moderator can lock this hub's channels with /voice-lock. Turning this off leaves channels already locked as they are.</span>
     </div>
     <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save</button> <a class="btn" href="/">Back to the list</a></div>
   </form>

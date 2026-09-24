@@ -43,10 +43,10 @@ func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, sto
 
 // setModerators saves the guild-wide moderator roles: it validates the
 // posted IDs against the guild read now and the stored set, writes the
-// guild settings row, applies the set to the runtime, so /voice-rename honours it at once,
-// and appends a change log entry under no hub with the moderators action
-// and a diff in the shape a hub save writes. A refusal is a *fieldError
-// naming the roles field, and nothing is written.
+// guild settings row, applies the set to the runtime, so the voice commands
+// honour it at once, and appends a change log entry under no hub with the
+// moderators action and a diff in the shape a hub save writes. A refusal is
+// a *fieldError naming the roles field, and nothing is written.
 func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by actor) ([]string, error) {
 	guild, err := s.readGuild()
 	if err != nil {

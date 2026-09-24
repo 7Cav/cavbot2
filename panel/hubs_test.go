@@ -134,7 +134,8 @@ func (f *fakeDiscord) ChannelDelete(channelID, _ string) (*discordgo.Channel, er
 }
 
 // ChannelEdit records the call and, as Discord would, renames the channel
-// in the guild's list.
+// in the guild's list. An edit with no name, a lock's, keeps the name, since
+// the request leaves an empty name out.
 func (f *fakeDiscord) ChannelEdit(channelID string, data *discordgo.ChannelEdit, reason string) (*discordgo.Channel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -143,7 +144,7 @@ func (f *fakeDiscord) ChannelEdit(channelID string, data *discordgo.ChannelEdit,
 	}
 	f.edited = append(f.edited, fakeEdit{ChannelID: channelID, Name: data.Name, Reason: reason})
 	for _, ch := range f.channels {
-		if ch.ID == channelID {
+		if ch.ID == channelID && data.Name != "" {
 			ch.Name = data.Name
 		}
 	}
@@ -670,6 +671,47 @@ func TestDisabledHubStopsSpawningAtOnceAndKeepsItsSettings(t *testing.T) {
 	}
 }
 
+// A save that turns "Locking allowed" on reaches the runtime at once: the
+// owner's lock, refused before the save, goes through after it. The change
+// log entry records the setting's before and after, and the form shows it
+// on, so the next save keeps it.
+func TestLockingAllowedSaveReachesTheRuntimeAtOnce(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	w.joinAs("user-owner", "hub-1", testRankSGT)
+	w.joinAs("user-owner", "spawn-1", testRankSGT)
+
+	if _, err := w.runtime.Lock("user-owner", []string{testRankSGT}); err == nil {
+		t.Fatal("a lock on a hub without locking passed, want a refusal")
+	}
+	if edits := w.discord.edits(); len(edits) != 0 {
+		t.Fatalf("edits before the save = %+v, want none", edits)
+	}
+
+	id := storedHubID(t, w.st, "hub-1")
+	form := updateForm()
+	form.Set("locking_allowed", "on")
+	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
+
+	if _, err := w.runtime.Lock("user-owner", []string{testRankSGT}); err != nil {
+		t.Fatalf("a lock after the save was refused: %v", err)
+	}
+	if edits := w.discord.edits(); len(edits) != 1 || edits[0].ChannelID != "spawn-1" {
+		t.Errorf("edits after the save = %+v, want one on spawn-1", edits)
+	}
+	entries := storedChangeLog(t, w.st, id)
+	if len(entries) != 1 {
+		t.Fatalf("the hub has %d entries, want 1", len(entries))
+	}
+	if got := decodeDiff(t, entries[0])["locking_allowed"]; got.Before != false || got.After != true {
+		t.Errorf("diff locking_allowed = %+v, want before false, after true", got)
+	}
+	sec := editSection(t, w.b.get("/?hub="+strconv.FormatInt(id, 10)), id)
+	if got := postedControls(sec, "locking_allowed"); len(got) != 1 {
+		t.Errorf("the form posts locking_allowed %v, want it on as saved", got)
+	}
+}
+
 // storedChangeLog lists the change log entries of a hub, newest first.
 func storedChangeLog(t *testing.T, st store.Store, hubID int64) []store.ChangeLogEntry {
 	t.Helper()
@@ -810,9 +852,10 @@ func decodeDiff(t *testing.T, e store.ChangeLogEntry) map[string]fieldChange {
 	return diff
 }
 
-// wantDiffFields are the seven fields the spec says a register or remove entry
-// carries, written out here so the test does not read the list from the code.
-var wantDiffFields = []string{"hub_channel", "base_string", "permission_source", "moderator_roles", "user_limit", "bitrate", "enabled"}
+// wantDiffFields are the fields the specs (#285, #347) say a register or
+// remove entry carries, written out here so the test does not read the list
+// from the code.
+var wantDiffFields = []string{"hub_channel", "base_string", "permission_source", "moderator_roles", "user_limit", "bitrate", "enabled", "locking_allowed"}
 
 // assertActor checks an entry names the signed-in test user.
 func assertActor(t *testing.T, e store.ChangeLogEntry, action store.ChangeAction) {
