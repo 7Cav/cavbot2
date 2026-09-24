@@ -103,8 +103,11 @@ func (t *TempVC) Lock(userID string, memberRoles []string) (lockResult, error) {
 			"channel_id", channelID, "hub_id", hubID, "user_id", userID, "error", err)
 		return lockResult{}, errChannelNotCached
 	}
+	// The guest list is whoever is inside at this check. A member whose join
+	// lands between here and the commit below is not on it.
+	guests := t.insideLocked(channelID)
 	overwrites := lockOverwrites(current.PermissionOverwrites, t.guildID,
-		t.effectiveModeratorRolesLocked(channelID), t.insideLocked(channelID))
+		t.effectiveModeratorRolesLocked(channelID), guests)
 	t.lockBusy[channelID] = struct{}{}
 	t.mu.Unlock()
 
