@@ -205,6 +205,12 @@ func (f *fakeDiscord) Guild(_ string) (*discordgo.Guild, error) {
 	return &discordgo.Guild{ID: testGuildID, Roles: testGuildRoles, PremiumTier: f.premiumTier}, nil
 }
 
+// ChannelPermissionSet accepts every overwrite set. The panel's tests judge
+// no channel's permissions; the fake carries it for the interface.
+func (f *fakeDiscord) ChannelPermissionSet(_, _ string, _ discordgo.PermissionOverwriteType, _, _ int64, _ string) error {
+	return nil
+}
+
 func (f *fakeDiscord) setEditErr(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

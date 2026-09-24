@@ -92,10 +92,11 @@ const discordChannelNameLimit = 100
 // TempVCOverwriteCeiling is the most the bot may ever write into a channel
 // permission overwrite: Manage Channels, Move Members, Mute Members, Deafen
 // Members, Connect, View Channel. It is a constant, never a panel setting.
-// A lock is the one writer today, and it sets or clears Connect alone
-// (lockOverwrites); the bits an overwrite already carried, and the
-// permission source an unlock copies back, are Discord's and pass as they
-// are. Raising it is a decision of its own (spec #347, out of scope).
+// A lock and a guest add are the writers today, and each sets or clears
+// Connect alone (lockOverwrites, addGuest); the bits an overwrite already
+// carried, and the permission source an unlock copies back, are Discord's
+// and pass as they are. Raising it is a decision of its own (spec #347, out
+// of scope).
 const TempVCOverwriteCeiling = discordgo.PermissionManageChannels |
 	discordgo.PermissionVoiceMoveMembers |
 	discordgo.PermissionVoiceMuteMembers |
@@ -303,6 +304,12 @@ type TempVCManager interface {
 	// reads under the state's lock, because discordgo shares the payload's
 	// slices with its cache (#335).
 	MemberRanks(g *discordgo.Guild) map[string]int
+	// ChannelPermissionSet sets one permission overwrite on a channel, the
+	// target's whole overwrite, with the given audit-log reason and no retry
+	// on rate limit. Discord replaces the target's existing overwrite, so
+	// the caller sends every bit it means to keep. A guest add sends one
+	// member overwrite.
+	ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error
 }
 
 // VoiceSnapshot is one copy of a guild's voice states from discordgo's state
@@ -456,6 +463,11 @@ func (m *sessionTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
 	return GuildMemberRanks(g)
 }
 
+func (m *sessionTempVCManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error {
+	return m.s.ChannelPermissionSet(channelID, targetID, targetType, allow, deny,
+		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+}
+
 // TempVC holds the feature's runtime state. All maps are guarded by mu:
 // discordgo dispatches each gateway event on its own goroutine (SyncEvents is
 // false by default), and the panel's service layer calls ApplyHub and
@@ -539,6 +551,10 @@ type TempVC struct {
 	// unlock edit failures, opened by a successful lock or unlock of one of
 	// the hub's channels.
 	lockCaptured map[int64]struct{}
+	// lockJoins holds, per channel in lockBusy, the members who joined it
+	// while the lock or unlock was in flight. They go on the guest list
+	// when it ends, if the channel is locked then (temp_vc_guest.go).
+	lockJoins map[string]map[string]struct{}
 	// sweepMu serializes restart sweeps. One sweep holds it for its whole
 	// run, list included, and a queued one takes its own snapshot once the
 	// first has finished, so the later payload's ranks land last. Voice
@@ -585,6 +601,7 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		locks:          make(map[string]lockRecord),
 		lockBusy:       make(map[string]struct{}),
 		lockCaptured:   make(map[int64]struct{}),
+		lockJoins:      make(map[string]map[string]struct{}),
 		inFlight:       make(map[string]struct{}),
 		settled:        make(map[string]struct{}),
 	}
@@ -772,10 +789,12 @@ func (t *TempVC) handleChannelDelete(c *discordgo.ChannelDelete) {
 // whose ranks come from the payload's member list. Its lock comes from the
 // row too, unless the record tracked the channel before this sweep, which
 // only a reconnect finds: the record's lock is then the newer and is kept
-// (restoreLockLocked). No channel without a row is touched, so a channel a
-// human made is never deleted. GUILD_CREATE re-fires on gateway reconnects,
-// so this also rebuilds tracking after any missed events; a restored owner
-// or lock posts no notice, so a reconnect is silent.
+// (restoreLockLocked). Everyone inside a locked channel goes on its guest
+// list, since they may have got in while the bot was away. No channel
+// without a row is touched, so a channel a human made is never deleted.
+// GUILD_CREATE re-fires on gateway reconnects, so this also rebuilds
+// tracking after any missed events; a restored owner, lock or guest posts
+// no notice, so a reconnect is silent.
 //
 // A spawn in flight, a hub join whose row write or compensating delete has
 // not finished, is left as the record has it and its row is skipped: its
@@ -865,6 +884,10 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 
 	var gone, empty []string
 	var handovers []store.SpawnedChannel
+	// guests holds, per locked channel, the occupants the sweep adds to its
+	// guest list off-lock after the rebuild: anyone who got in while the
+	// bot was down or disconnected is a guest.
+	guests := make(map[string][]string)
 	for _, row := range rows {
 		// A spawn in flight's row is skipped, not judged: its channel may
 		// not have reached the cache yet, and its tracking is kept above.
@@ -889,6 +912,9 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 			t.owners[row.ChannelID] = row.OwnerUserID
 		}
 		t.restoreLockLocked(row, wasTracked, heldLocks)
+		if in := t.joinGuestsLocked(row.ChannelID, sortedIDs(occ)...); len(in) > 0 {
+			guests[row.ChannelID] = in
+		}
 		if len(occ) == 0 {
 			empty = append(empty, row.ChannelID)
 			continue
@@ -910,6 +936,9 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	}
 	for _, row := range handovers {
 		t.applyHandover(row)
+	}
+	for channelID, in := range guests {
+		t.admitGuests(channelID, in, guestReasonSwept)
 	}
 
 	// tracked is read from the record once the deletes have run: the rows'
@@ -1033,6 +1062,8 @@ func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	_, leftSpawned := t.occupants[oldChannel]
 	emptied := t.applyLeaveLocked(vs.UserID, oldChannel)
 	joinedSpawned := t.applyJoinLocked(vs.UserID, newChannel)
+	// A join into a locked channel puts the member on its guest list.
+	guests := t.joinGuestsLocked(newChannel, vs.UserID)
 	// The handover rule runs on both sides of the move: the owner may have
 	// left, or a rank holder may have joined a channel with no owner. Each
 	// change is a row write and a notice, both network calls made off-lock.
@@ -1051,6 +1082,8 @@ func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	// change the map from other goroutines.
 	hub, isHub := t.hubs[newChannel]
 	t.mu.Unlock()
+
+	t.admitGuests(newChannel, guests, guestReasonJoined)
 
 	for _, row := range handovers {
 		t.applyHandover(row)

@@ -75,6 +75,19 @@ type fakeTempVCManager struct {
 	// a created channel stays out of the cache's channel set as before.
 	// overwritesOf reads it.
 	overwrites map[string][]*discordgo.PermissionOverwrite
+
+	// permissionSets records every overwrite set the fake let through, and
+	// permissionSetErr, when set, is what every set returns.
+	permissionSets   []fakePermissionSet
+	permissionSetErr error
+}
+
+// fakePermissionSet is one overwrite set the fake let through: the channel,
+// the overwrite as sent, and the audit log reason.
+type fakePermissionSet struct {
+	channelID string
+	overwrite discordgo.PermissionOverwrite
+	reason    string
 }
 
 type fakeCreate struct {
@@ -319,6 +332,32 @@ func (f *fakeTempVCManager) VoiceStates(guildID string) VoiceSnapshot {
 // no lock: nothing else writes into a test's payload.
 func (f *fakeTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
 	return GuildMemberRanks(g)
+}
+
+// ChannelPermissionSet records the call and, as Discord does, replaces the
+// target's overwrite on the channel whole, or adds it when the channel has
+// none for the target. A channel the bot never created or edited starts
+// from the list the fake cache holds for it.
+func (f *fakeTempVCManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.permissionSetErr != nil {
+		return f.permissionSetErr
+	}
+	set := discordgo.PermissionOverwrite{ID: targetID, Type: targetType, Allow: allow, Deny: deny}
+	f.permissionSets = append(f.permissionSets, fakePermissionSet{channelID: channelID, overwrite: set, reason: reason})
+	list, recorded := f.overwrites[channelID]
+	if ch, cached := f.channels[channelID]; !recorded && cached {
+		list = cloneOverwrites(ch.PermissionOverwrites)
+	}
+	kept := make([]*discordgo.PermissionOverwrite, 0, len(list)+1)
+	for _, o := range list {
+		if o.ID != targetID {
+			kept = append(kept, o)
+		}
+	}
+	f.overwrites[channelID] = append(kept, &set)
+	return nil
 }
 
 // dropChannel removes a channel from the fake cache, the CHANNEL_DELETE
