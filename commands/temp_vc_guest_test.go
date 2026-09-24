@@ -1,8 +1,11 @@
 package commands
 
 import (
+	"errors"
 	"net/http"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/7cav/cavbot2/store"
 	"github.com/bwmarrin/discordgo"
@@ -21,37 +24,111 @@ var (
 	permX = permMember{id: "user-x", roles: []string{permRoleViewer}}
 )
 
-// editWindowManager runs a hook once, inside the next channel edit, after
-// the fake has answered it and before the runtime reads the answer: the
-// window while a lock or unlock is in flight with its edit already applied
-// on Discord's side. The runtime holds no lock across the edit, so the hook
-// can deliver a gateway event through the fake.
-type editWindowManager struct {
+// windowManager runs a test's hooks inside the fake's calls, the windows
+// while a call is in flight. The runtime holds no lock across either call,
+// so a hook can deliver a gateway event or start another interaction.
+//   - The edit hook runs once, inside the next overwrite replace, after the
+//     fake has applied it and before the runtime reads the answer: a lock
+//     or unlock in flight with its edit already applied on Discord's side.
+//   - The set hook runs once, inside the next overwrite set, before the
+//     fake applies it: a guest add in flight.
+type windowManager struct {
 	*fakeTempVCManager
-	duringEdit func()
+	hooks                 sync.Mutex
+	duringEdit, duringSet func()
 }
 
-func (m *editWindowManager) ChannelEdit(channelID string, data *discordgo.ChannelEdit, reason string) (*discordgo.Channel, error) {
-	ch, err := m.fakeTempVCManager.ChannelEdit(channelID, data, reason)
-	if hook := m.duringEdit; hook != nil {
-		m.duringEdit = nil
+// onEdit and onSet install the edit and set hooks.
+func (m *windowManager) onEdit(hook func()) { m.install(&m.duringEdit, hook) }
+func (m *windowManager) onSet(hook func())  { m.install(&m.duringSet, hook) }
+
+func (m *windowManager) install(slot *func(), hook func()) {
+	m.hooks.Lock()
+	defer m.hooks.Unlock()
+	*slot = hook
+}
+
+// take removes a hook and returns it, nil when none is installed, so each
+// runs once.
+func (m *windowManager) take(slot *func()) func() {
+	m.hooks.Lock()
+	defer m.hooks.Unlock()
+	hook := *slot
+	*slot = nil
+	return hook
+}
+
+func (m *windowManager) ChannelOverwritesReplace(channelID string, overwrites []*discordgo.PermissionOverwrite, reason string) error {
+	err := m.fakeTempVCManager.ChannelOverwritesReplace(channelID, overwrites, reason)
+	if hook := m.take(&m.duringEdit); hook != nil {
 		hook()
 	}
-	return ch, err
+	return err
 }
 
-// newEditWindowScene is newLockScene over an editWindowManager: lockOwner
-// spawns chan-1 on a hub that allows locking and G comes in. Nothing is
-// locked yet.
-func newEditWindowScene(t *testing.T) (*fakeTempVCManager, *editWindowManager, *TempVC) {
+func (m *windowManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, reason string) error {
+	if hook := m.take(&m.duringSet); hook != nil {
+		hook()
+	}
+	return m.fakeTempVCManager.ChannelPermissionSet(channelID, targetID, targetType, allow, deny, reason)
+}
+
+// newWindowScene is newLockScene over a windowManager: lockOwner spawns
+// chan-1 on a hub that allows locking and G comes in. Nothing is locked
+// yet.
+func newWindowScene(t *testing.T) (*fakeTempVCManager, *windowManager, *store.Fake, *TempVC) {
 	t.Helper()
 	fake := newFakeTempVCManager()
 	installPermFixture(fake)
-	mgr := &editWindowManager{fakeTempVCManager: fake}
-	tv := newTestTempVC(t, mgr, seedStore(t, lockingHub(store.PermissionCategory)))
+	mgr := &windowManager{fakeTempVCManager: fake}
+	st := seedStore(t, lockingHub(store.PermissionCategory))
+	tv := newTestTempVC(t, mgr, st)
 	spawnInto(tv, fake, lockOwner.id, "chan-1", lockOwner.discordMember())
 	enter(tv, fake, permG, "chan-1")
-	return fake, mgr, tv
+	return fake, mgr, st, tv
+}
+
+// concurrentGrace is how long an interaction started inside another's
+// window gets to return while that window is open. A runtime that makes it
+// wait for the change in flight holds it past the grace, and it runs once
+// the change ends. A runtime that let it straight through would have it
+// back well inside the grace, while the first change is still in flight.
+const concurrentGrace = 150 * time.Millisecond
+
+// started is an interaction delivered on a goroutine of its own, answering
+// through a responder of its own. It never fails the test itself: reply
+// checks its answer on the test's goroutine once it has returned.
+type started struct {
+	f    *fakeResponder
+	done chan struct{}
+}
+
+// startInteraction delivers an interaction on its own goroutine, through
+// deliver, and gives it concurrentGrace to return before going on.
+func startInteraction(deliver func(f *fakeResponder)) *started {
+	s := &started{f: &fakeResponder{}, done: make(chan struct{})}
+	go func() {
+		defer close(s.done)
+		deliver(s.f)
+	}()
+	s.grace()
+	return s
+}
+
+// grace waits up to concurrentGrace for the interaction to return.
+func (s *started) grace() {
+	select {
+	case <-s.done:
+	case <-time.After(concurrentGrace):
+	}
+}
+
+// reply waits for the interaction to return, checks its answer took the
+// deferred-ephemeral shape, and returns it.
+func (s *started) reply(t *testing.T) string {
+	t.Helper()
+	<-s.done
+	return ephemeralReply(t, s.f)
 }
 
 // V gets into the locked channel (a stubbed join, as a moderator's drag
@@ -141,8 +218,8 @@ func TestGuestJoinAfterARestartSweep(t *testing.T) {
 // A member who gets in while the lock is landing, after the lock took its
 // guest list and before it finished, is a guest too.
 func TestGuestJoinWhileTheLockIsInFlight(t *testing.T) {
-	fake, mgr, tv := newEditWindowScene(t)
-	mgr.duringEdit = func() { enter(tv, fake, permV, "chan-1") }
+	fake, mgr, _, tv := newWindowScene(t)
+	mgr.onEdit(func() { enter(tv, fake, permV, "chan-1") })
 
 	lockAs(t, tv, lockOwner)
 	enter(tv, fake, permV, "")
@@ -153,10 +230,10 @@ func TestGuestJoinWhileTheLockIsInFlight(t *testing.T) {
 // A guest who comes back while the unlock is landing is not carried past
 // it: the next lock, with the guest outside, keeps them out.
 func TestGuestRejoinWhileTheUnlockIsInFlightIsCleared(t *testing.T) {
-	fake, mgr, tv := newEditWindowScene(t)
+	fake, mgr, _, tv := newWindowScene(t)
 	lockAs(t, tv, lockOwner)
 	enter(tv, fake, permG, "")
-	mgr.duringEdit = func() { enter(tv, fake, permG, "chan-1") }
+	mgr.onEdit(func() { enter(tv, fake, permG, "chan-1") })
 
 	unlockAs(t, tv, lockOwner)
 	enter(tv, fake, permG, "")
@@ -168,15 +245,38 @@ func TestGuestRejoinWhileTheUnlockIsInFlightIsCleared(t *testing.T) {
 // A member who gets in while an unlock is in flight, when Discord then
 // refuses the unlock, is a guest of the channel that stayed locked.
 func TestGuestJoinWhileARefusedUnlockIsInFlight(t *testing.T) {
-	fake, mgr, tv := newEditWindowScene(t)
+	fake, mgr, _, tv := newWindowScene(t)
 	lockAs(t, tv, lockOwner)
 	fake.editErr = restError(http.StatusInternalServerError, 0, rawBodyMarker)
-	mgr.duringEdit = func() { enter(tv, fake, permV, "chan-1") }
+	mgr.onEdit(func() { enter(tv, fake, permV, "chan-1") })
 
 	unlockAs(t, tv, lockOwner)
 	enter(tv, fake, permV, "")
 
 	assertJoins(t, fake, "chan-1", "after the refused unlock", []permMember{permV}, []permMember{permM})
+}
+
+// A member who joins while a lock is landing, with an unlock waiting on that
+// lock, is added to the guest list before the unlock goes out, so the unlock
+// drops them: afterwards V has the verdict the source alone gives. The
+// unlock gets its grace again inside V's guest add, where it would land
+// first if nothing held it back.
+func TestGuestHeldByALockIsAddedBeforeTheUnlockWaitingOnIt(t *testing.T) {
+	fake, mgr, st, tv := newWindowScene(t)
+	var unlock *started
+	mgr.onEdit(func() {
+		enter(tv, fake, permV, "chan-1")
+		unlock = startInteraction(func(f *fakeResponder) {
+			runVoiceUnlock(f, tv, lockInteraction(lockOwner))
+		})
+		mgr.onSet(unlock.grace)
+	})
+
+	lockAs(t, tv, lockOwner)
+	unlock.reply(t)
+	enter(tv, fake, permV, "")
+
+	assertUnlocked(t, fake, st, "chan-1", "after the lock and the unlock")
 }
 
 // A guest add never shows anyone a channel the permission source hides
@@ -204,18 +304,66 @@ func TestGuestAddNeverShowsAHiddenChannel(t *testing.T) {
 	assertJoins(t, fake, "chan-1", "after their visits", nil, []permMember{permN, hidden})
 }
 
-// A guest add Discord refuses is a WARN line and never a Sentry event, and
-// the channel stays locked.
-func TestGuestAddRefusedByDiscordCapturesNothing(t *testing.T) {
+// A guest add Discord refuses classifies as a rename or a lock edit does. A
+// 5xx, a 403 or a transport failure reaches Sentry once for the streak, so
+// a second refused add captures nothing more, and a 429 never does. Unknown
+// Channel means the channel is gone: it is untracked and its row dropped,
+// with no capture. Otherwise the channel stays locked, and the member whose
+// add failed is not a guest.
+func TestGuestAddFailuresClassifyLikeOtherChannelChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		err      error
+		captures int
+		gone     bool
+	}{
+		{"5xx", restError(http.StatusInternalServerError, 0, rawBodyMarker), 1, false},
+		{"403", restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, rawBodyMarker), 1, false},
+		{"transport", errors.New("connection reset by peer"), 1, false},
+		{"429", rateLimitError(time.Second), 0, false},
+		{"unknown channel", restError(http.StatusNotFound, discordgo.ErrCodeUnknownChannel, rawBodyMarker), 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, st, tv := newLockScene(t, store.PermissionCategory)
+			lockAs(t, tv, lockOwner)
+			captures := countCaptures(t)
+			fake.permissionSetErr = tc.err
+
+			enter(tv, fake, permV, "chan-1")
+			enter(tv, fake, permX, "chan-1")
+
+			if *captures != tc.captures {
+				t.Errorf("captures = %d after two refused guest adds, want %d", *captures, tc.captures)
+			}
+			_, tracked := tv.Owner("chan-1")
+			_, hasRow := rowFor(t, st, "chan-1")
+			if tracked == tc.gone || hasRow == tc.gone {
+				t.Errorf("tracked %v, row %v; want both %v", tracked, hasRow, !tc.gone)
+			}
+			if !tc.gone {
+				assertJoins(t, fake, "chan-1", "after the refused adds", []permMember{permG}, []permMember{permM, permV, permX})
+			}
+		})
+	}
+}
+
+// A guest add that goes through ends the hub's streak of failures, so the
+// next refused add reaches Sentry again.
+func TestGuestAddFailureCapturesOncePerStreak(t *testing.T) {
 	fake, _, tv := newLockScene(t, store.PermissionCategory)
 	lockAs(t, tv, lockOwner)
 	captures := countCaptures(t)
-	fake.permissionSetErr = restError(http.StatusInternalServerError, 0, rawBodyMarker)
+	refused := restError(http.StatusInternalServerError, 0, rawBodyMarker)
 
+	fake.permissionSetErr = refused
 	enter(tv, fake, permV, "chan-1")
+	enter(tv, fake, permX, "chan-1")
+	fake.permissionSetErr = nil
+	enter(tv, fake, permO, "chan-1")
+	fake.permissionSetErr = refused
+	enter(tv, fake, permM, "chan-1")
 
-	if *captures != 0 {
-		t.Errorf("captures = %d after a refused guest add, want 0", *captures)
+	if *captures != 2 {
+		t.Errorf("captures = %d, want 2: one per streak of refused adds", *captures)
 	}
-	assertJoins(t, fake, "chan-1", "after the refused add", []permMember{permG}, []permMember{permM})
 }

@@ -2,7 +2,9 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"slices"
 	"sync"
 	"time"
@@ -92,11 +94,12 @@ const discordChannelNameLimit = 100
 // TempVCOverwriteCeiling is the most the bot may ever write into a channel
 // permission overwrite: Manage Channels, Move Members, Mute Members, Deafen
 // Members, Connect, View Channel. It is a constant, never a panel setting.
-// A lock and a guest add are the writers today, and each sets or clears
-// Connect alone (lockOverwrites, addGuest); the bits an overwrite already
-// carried, and the permission source an unlock copies back, are Discord's
-// and pass as they are. Raising it is a decision of its own (spec #347, out
-// of scope).
+// The bits the bot writes of its own accord are lockBits (temp_vc_lock.go),
+// which a lock, a guest add and a let-in set or clear, and the build fails
+// if lockBits ever holds a bit outside this ceiling. The bits an overwrite
+// already carried, and the permission source an unlock copies back, are
+// Discord's and pass as they are. Raising it is a decision of its own
+// (spec #347, out of scope).
 const TempVCOverwriteCeiling = discordgo.PermissionManageChannels |
 	discordgo.PermissionVoiceMoveMembers |
 	discordgo.PermissionVoiceMuteMembers |
@@ -273,10 +276,17 @@ type TempVCManager interface {
 	// retry on rate limit.
 	ChannelDelete(channelID, auditReason string) (*discordgo.Channel, error)
 	// ChannelEdit edits a channel with the given audit-log reason and no retry
-	// on rate limit. /voice-rename sends the name alone; a lock and an unlock
-	// send the whole overwrite list alone. An empty list is dropped from the
-	// request (omitempty), so it cannot clear a channel's overwrites.
+	// on rate limit. /voice-rename sends the name alone. An empty overwrite
+	// list is dropped from the request (omitempty), so overwrites go through
+	// ChannelOverwritesReplace.
 	ChannelEdit(channelID string, data *discordgo.ChannelEdit, auditReason string) (*discordgo.Channel, error)
+	// ChannelOverwritesReplace replaces a channel's whole overwrite list in
+	// one edit, with the given audit-log reason and no retry on rate limit.
+	// An empty list reaches Discord as an empty list and clears every
+	// overwrite. Once Discord accepts the edit, Channel reads the new list at
+	// once, without waiting for Discord's CHANNEL_UPDATE. A lock and an
+	// unlock send their edits through it.
+	ChannelOverwritesReplace(channelID string, overwrites []*discordgo.PermissionOverwrite, auditReason string) error
 	// GuildMemberMove moves a member between voice channels with no retry on
 	// rate limit.
 	GuildMemberMove(guildID, userID string, channelID *string) error
@@ -305,10 +315,12 @@ type TempVCManager interface {
 	// slices with its cache (#335).
 	MemberRanks(g *discordgo.Guild) map[string]int
 	// ChannelPermissionSet sets one permission overwrite on a channel, the
-	// target's whole overwrite, with the given audit-log reason and no retry
-	// on rate limit. Discord replaces the target's existing overwrite, so
-	// the caller sends every bit it means to keep. A guest add sends one
-	// member overwrite.
+	// target's whole overwrite, with the given audit-log reason. It is the
+	// one call that retries on a 429, after the wait Discord gives: a guest
+	// add has no other retry, and a let-in of 25 members would otherwise
+	// drop the rest on a bucket that resets in seconds. Discord replaces the
+	// target's existing overwrite, so the caller sends every bit it means to
+	// keep. A guest add sends one member overwrite.
 	ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error
 	// ChannelMessageEditComplex edits a message the bot posted, with no
 	// retry on rate limit. The edit names its channel and message, and
@@ -370,10 +382,13 @@ func (s VoiceSnapshot) occupied(channelID string) bool {
 }
 
 // sessionTempVCManager adapts *discordgo.Session to TempVCManager. Each
-// method is a one-line pass-through; keeping it trivial means the
-// (hard-to-unit-test) wrapper adds negligible uncovered surface. Every REST
-// call passes WithRetryOnRatelimit(false): a 429 is a failure the caller
-// handles, never a sleeping gateway handler.
+// method is a one-line pass-through, which keeps the hard-to-unit-test
+// wrapper's uncovered code small. ChannelOverwritesReplace, VoiceStates and
+// CanSeeChannel do more, and their tests drive a real session. Every REST
+// call but ChannelPermissionSet passes WithRetryOnRatelimit(false): a 429
+// is a failure the caller handles, never a sleeping gateway handler. A
+// guest add's overwrite set waits out a 429 and retries instead, and
+// TempVCManager says why.
 type sessionTempVCManager struct {
 	s *discordgo.Session
 }
@@ -400,6 +415,44 @@ func (m *sessionTempVCManager) ChannelDelete(channelID, auditReason string) (*di
 func (m *sessionTempVCManager) ChannelEdit(channelID string, data *discordgo.ChannelEdit, auditReason string) (*discordgo.Channel, error) {
 	return m.s.ChannelEdit(channelID, data,
 		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+}
+
+// ChannelOverwritesReplace sends its own PATCH, since ChannelEdit's
+// PermissionOverwrites is omitempty and would drop an empty list, the one
+// an unlock to a source with no overwrites sends. The body always carries
+// the list. The channel Discord returns then goes into the state cache,
+// which would otherwise hold the old list until the CHANNEL_UPDATE lands: a
+// lock sent in that moment after an unlock would start from the locked
+// list. A later CHANNEL_UPDATE overwrites the cache as usual.
+func (m *sessionTempVCManager) ChannelOverwritesReplace(channelID string, overwrites []*discordgo.PermissionOverwrite, auditReason string) error {
+	if overwrites == nil {
+		overwrites = []*discordgo.PermissionOverwrite{}
+	}
+	body := struct {
+		PermissionOverwrites []*discordgo.PermissionOverwrite `json:"permission_overwrites"`
+	}{overwrites}
+	endpoint := discordgo.EndpointChannel(channelID)
+	resp, err := m.s.RequestWithBucketID(http.MethodPatch, endpoint, body, endpoint,
+		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+	if err != nil {
+		return err
+	}
+	// The edit has happened. A reply the cache cannot take leaves the cache
+	// to the CHANNEL_UPDATE, as before, and is no failure of the edit.
+	var edited discordgo.Channel
+	if err := json.Unmarshal(resp, &edited); err != nil {
+		utils.Warn("Temp VC edited channel not cached, reply unreadable", "channel_id", channelID, "error", err)
+		return nil
+	}
+	// ChannelAdd keeps the cached list when the new one is nil, so an
+	// answer of no overwrites is cached as an empty list.
+	if edited.PermissionOverwrites == nil {
+		edited.PermissionOverwrites = []*discordgo.PermissionOverwrite{}
+	}
+	if err := m.s.State.ChannelAdd(&edited); err != nil {
+		utils.Warn("Temp VC edited channel not cached", "channel_id", channelID, "error", err)
+	}
+	return nil
 }
 
 func (m *sessionTempVCManager) GuildMemberMove(guildID, userID string, channelID *string) error {
@@ -479,7 +532,7 @@ func (m *sessionTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
 
 func (m *sessionTempVCManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error {
 	return m.s.ChannelPermissionSet(channelID, targetID, targetType, allow, deny,
-		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(true))
 }
 
 func (m *sessionTempVCManager) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {
@@ -578,19 +631,18 @@ type TempVC struct {
 	// by a lock, removed by an unlock, cleared with the channel, and
 	// restored from the rows by the restart sweep.
 	locks map[string]lockRecord
-	// lockBusy marks the spawned channels with a lock or unlock in flight,
-	// from its checks until its row write, or a let-in, from its checks
-	// until its guest adds are answered. A second lock, unlock or let-in of
-	// the same channel is refused rather than interleaved.
-	lockBusy map[string]struct{}
+	// accessChanges holds the spawned channels with an access change in
+	// flight (temp_vc_lock.go): a lock or unlock from its checks until its
+	// row write, a let-in from its checks until its guest adds are
+	// answered. Another access change of the same channel waits for it.
+	accessChanges map[string]*accessChange
 	// lockCaptured is the capture rule of deleteCaptured for lock and
 	// unlock edit failures, opened by a successful lock or unlock of one of
 	// the hub's channels.
 	lockCaptured map[int64]struct{}
-	// lockJoins holds, per channel in lockBusy, the members who joined it
-	// while the lock or unlock was in flight. They go on the guest list
-	// when it ends, if the channel is locked then (temp_vc_guest.go).
-	lockJoins map[string]map[string]struct{}
+	// guestCaptured is the same rule for guest add failures, opened by a
+	// successful guest add in one of the hub's channels.
+	guestCaptured map[int64]struct{}
 	// sweepMu serializes restart sweeps. One sweep holds it for its whole
 	// run, list included, and a queued one takes its own snapshot once the
 	// first has finished, so the later payload's ranks land last. Voice
@@ -635,9 +687,9 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		deleteCaptured: make(map[int64]struct{}),
 		renameCaptured: make(map[int64]struct{}),
 		locks:          make(map[string]lockRecord),
-		lockBusy:       make(map[string]struct{}),
+		accessChanges:  make(map[string]*accessChange),
 		lockCaptured:   make(map[int64]struct{}),
-		lockJoins:      make(map[string]map[string]struct{}),
+		guestCaptured:  make(map[int64]struct{}),
 		inFlight:       make(map[string]struct{}),
 		settled:        make(map[string]struct{}),
 	}
@@ -974,7 +1026,7 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 		t.applyHandover(row)
 	}
 	for channelID, in := range guests {
-		t.admitGuests(channelID, in, guestReasonSwept)
+		t.addGuests(channelID, in, guestReasonSwept)
 	}
 
 	// tracked is read from the record once the deletes have run: the rows'
@@ -1119,8 +1171,6 @@ func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	hub, isHub := t.hubs[newChannel]
 	t.mu.Unlock()
 
-	t.admitGuests(newChannel, guests, guestReasonJoined)
-
 	for _, row := range handovers {
 		t.applyHandover(row)
 	}
@@ -1130,6 +1180,11 @@ func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	if emptied {
 		t.deleteIfStillEmpty(oldChannel, vs.UserID)
 	}
+
+	// The guest add comes after the handovers and the delete, since it may
+	// wait out a rate limit (ChannelPermissionSet retries a 429). A member
+	// who joined a spawned channel never reaches the hub join below.
+	t.addGuests(newChannel, guests, guestReasonJoined)
 
 	// Creating happens only when the user joined a hub they are not already
 	// tracked inside as a spawned channel.
@@ -1431,7 +1486,7 @@ func (t *TempVC) deleteIfStillEmpty(channelID, userID string) deleteOutcome {
 		t.mu.Unlock()
 		utils.Warn("Temp VC delete failed, channel kept for the next attempt",
 			"channel_id", channelID, "hub_id", hubID, "error", err)
-		if fault.capturesOnDeleteOrRename() {
+		if fault.capturesOnChannelChange() {
 			t.captureOncePerStreak(t.deleteCaptured, hubID, "Temp VC delete failed", err,
 				"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
 		}

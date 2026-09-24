@@ -45,20 +45,17 @@ func runLockNoticeComponent(r utils.InteractionResponder, tv *TempVC, interactio
 		return
 	}
 
-	var roles []string
-	if interaction.Member != nil {
-		roles = interaction.Member.Roles
-	}
+	by := Invoker{UserID: discordID, Roles: interactionRoles(interaction)}
 	action, channelID, ok := parseLockNoticeCustomID(customID)
 	switch {
 	case ok && action == lockNoticeUnlock:
-		if _, err := tv.unlockFromNotice(channelID, discordID, roles); err != nil {
+		if _, err := tv.unlockFromNotice(channelID, by); err != nil {
 			editNoticeReply(r, interaction, lockNoticeRefusal(err, discordID))
 			return
 		}
 		editNoticeReply(r, interaction, voiceUnlock.done)
 	case ok && action == lockNoticeLetIn:
-		if err := tv.letInAllowed(channelID, discordID, roles); err != nil {
+		if err := tv.letInAllowed(channelID, by); err != nil {
 			editNoticeReply(r, interaction, letInRefusal(err))
 			return
 		}
@@ -71,7 +68,7 @@ func runLockNoticeComponent(r utils.InteractionResponder, tv *TempVC, interactio
 		content := fmt.Sprintf("Pick up to %d members to let into <#%s>. Anyone who can't see the channel is skipped.", letInMaxPicks, channelID)
 		sendNoticeReply(r, interaction, &discordgo.WebhookEdit{Content: &content, Components: &picker})
 	case ok && action == lockNoticeLetInPick:
-		res, err := tv.letIn(channelID, discordID, roles, letInPicks(interaction.MessageComponentData()))
+		res, err := tv.letIn(channelID, by, letInPicks(interaction.MessageComponentData()))
 		if err != nil {
 			editNoticeReply(r, interaction, letInRefusal(err))
 			return
@@ -103,9 +100,10 @@ func letInRefusal(err error) string {
 	switch {
 	case errors.Is(err, errNotLockerOrModerator):
 		return "❌ Only whoever locked this channel or a moderator can let someone in."
-	case errors.Is(err, errNotLocked), errors.Is(err, errLockInFlight):
-		// Both read the same whatever the action.
-		return lockRefusal(err, voiceUnlock, "")
+	case errors.Is(err, errNotLocked):
+		return notLockedRefusal
+	case errors.Is(err, errChannelGone):
+		return channelGoneRefusal
 	default:
 		return "❌ Couldn't let anyone in. Try again in a moment."
 	}

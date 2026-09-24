@@ -35,3 +35,13 @@ func interactionUsernameAndID(i *discordgo.InteractionCreate) (username, id stri
 	}
 	return user.Username, user.ID
 }
+
+// interactionRoles returns the roles the interaction carries for the
+// invoking member, or nil when it carries no member (a DM). The voice
+// commands and the lock notice's buttons check authority against them.
+func interactionRoles(i *discordgo.InteractionCreate) []string {
+	if i == nil || i.Interaction == nil || i.Member == nil {
+		return nil
+	}
+	return i.Member.Roles
+}

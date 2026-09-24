@@ -80,6 +80,13 @@ type fakeTempVCManager struct {
 	// a created channel stays out of the cache's channel set as before.
 	// overwritesOf reads it.
 	overwrites map[string][]*discordgo.PermissionOverwrite
+	// cached is nil while the fake cache keeps up with Discord at once.
+	// lagCacheBehindEdits fills it with the cache's own copy of each list,
+	// which Channel reads from then on: an edit or an overwrite set changes
+	// Discord's list and leaves the cache's as it was, as the real cache
+	// waits for Discord's CHANNEL_UPDATE. ChannelOverwritesReplace writes
+	// both, as the production adapter does.
+	cached map[string][]*discordgo.PermissionOverwrite
 
 	// permissionSets records every overwrite set the fake let through, and
 	// permissionSetErr, when set, is what every set returns.
@@ -168,8 +175,8 @@ func cloneOverwrites(list []*discordgo.PermissionOverwrite) []*discordgo.Permiss
 // Channel answers from the fake cache. A channel the bot created or edited
 // reads with the overwrite list Discord holds for it now, as the cache does
 // once Discord's CHANNEL_CREATE or CHANNEL_UPDATE lands, which the fake
-// takes as at once. A created channel still stays out of the channel set
-// VoiceStates reports.
+// takes as at once until lagCacheBehindEdits. A created channel still stays
+// out of the channel set VoiceStates reports.
 func (f *fakeTempVCManager) Channel(channelID string) (*discordgo.Channel, error) {
 	if f.channelHook != nil {
 		f.channelHook()
@@ -181,6 +188,9 @@ func (f *fakeTempVCManager) Channel(channelID string) (*discordgo.Channel, error
 	}
 	ch, cached := f.channels[channelID]
 	list, recorded := f.overwrites[channelID]
+	if lagging, ok := f.cached[channelID]; ok {
+		list, recorded = lagging, true
+	}
 	switch {
 	case cached && recorded:
 		c := *ch
@@ -261,6 +271,37 @@ func (f *fakeTempVCManager) ChannelEdit(channelID string, data *discordgo.Channe
 		f.overwrites[channelID] = sent
 	}
 	return &discordgo.Channel{ID: channelID, Name: data.Name}, nil
+}
+
+// ChannelOverwritesReplace records the edit and replaces the channel's
+// whole list with the one sent, an empty one included, or returns editErr
+// and changes nothing. As the production adapter does, it puts the new list
+// in the fake cache at once, lagging or not.
+func (f *fakeTempVCManager) ChannelOverwritesReplace(channelID string, overwrites []*discordgo.PermissionOverwrite, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.editErr != nil {
+		return f.editErr
+	}
+	sent := cloneOverwrites(overwrites)
+	f.edits = append(f.edits, fakeEdit{channelID: channelID, overwrites: sent, reason: reason})
+	f.overwrites[channelID] = sent
+	if f.cached != nil {
+		f.cached[channelID] = cloneOverwrites(sent)
+	}
+	return nil
+}
+
+// lagCacheBehindEdits makes the fake cache stop following Discord for every
+// channel the bot has created or edited so far: from now on it keeps each
+// list as it is now, and only ChannelOverwritesReplace moves it on.
+func (f *fakeTempVCManager) lagCacheBehindEdits() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cached = make(map[string][]*discordgo.PermissionOverwrite, len(f.overwrites))
+	for id, list := range f.overwrites {
+		f.cached[id] = cloneOverwrites(list)
+	}
 }
 
 func (f *fakeTempVCManager) GuildMemberMove(_ string, userID string, channelID *string) error {

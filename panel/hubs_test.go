@@ -134,8 +134,8 @@ func (f *fakeDiscord) ChannelDelete(channelID, _ string) (*discordgo.Channel, er
 }
 
 // ChannelEdit records the call and, as Discord would, renames the channel
-// in the guild's list. An edit with no name, a lock's, keeps the name, since
-// the request leaves an empty name out.
+// in the guild's list. An edit with no name keeps the name, since the
+// request leaves an empty name out.
 func (f *fakeDiscord) ChannelEdit(channelID string, data *discordgo.ChannelEdit, reason string) (*discordgo.Channel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -149,6 +149,18 @@ func (f *fakeDiscord) ChannelEdit(channelID string, data *discordgo.ChannelEdit,
 		}
 	}
 	return &discordgo.Channel{ID: channelID, Name: data.Name}, nil
+}
+
+// ChannelOverwritesReplace records the call as an edit with no name, or
+// returns editErr. The panel's tests judge no overwrite.
+func (f *fakeDiscord) ChannelOverwritesReplace(channelID string, _ []*discordgo.PermissionOverwrite, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.editErr != nil {
+		return f.editErr
+	}
+	f.edited = append(f.edited, fakeEdit{ChannelID: channelID, Reason: reason})
+	return nil
 }
 
 func (f *fakeDiscord) GuildMemberMove(_, _ string, _ *string) error { return nil }
@@ -699,7 +711,8 @@ func TestLockingAllowedSaveReachesTheRuntimeAtOnce(t *testing.T) {
 	w.joinAs("user-owner", "hub-1", testRankSGT)
 	w.joinAs("user-owner", "spawn-1", testRankSGT)
 
-	if _, err := w.runtime.Lock("user-owner", []string{testRankSGT}); err == nil {
+	owner := commands.Invoker{UserID: "user-owner", Roles: []string{testRankSGT}}
+	if _, err := w.runtime.Lock(owner); err == nil {
 		t.Fatal("a lock on a hub without locking passed, want a refusal")
 	}
 	if edits := w.discord.edits(); len(edits) != 0 {
@@ -711,7 +724,7 @@ func TestLockingAllowedSaveReachesTheRuntimeAtOnce(t *testing.T) {
 	form.Set("locking_allowed", "on")
 	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
 
-	if _, err := w.runtime.Lock("user-owner", []string{testRankSGT}); err != nil {
+	if _, err := w.runtime.Lock(owner); err != nil {
 		t.Fatalf("a lock after the save was refused: %v", err)
 	}
 	if edits := w.discord.edits(); len(edits) != 1 || edits[0].ChannelID != "spawn-1" {

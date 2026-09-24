@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -18,13 +19,13 @@ import (
 // never stored: it lives on Discord as member overwrites, and an unlock
 // drops it by putting the permission source back.
 //
-// A join during a lock or unlock in flight waits for it to finish. Its
-// guest add, sent at once, could land on either side of the edit: before a
-// lock's, which replaces the whole list and drops it, or after an unlock's,
-// which would carry the guest past the unlock. So the join is held with the
-// operation (lockJoins), and when the operation ends the members it held
-// become guests if the channel is locked then, and are dropped if not. A
-// let-in (temp_vc_let_in.go) holds joins the same way while it runs.
+// A join during an access change (a lock, unlock or let-in in flight,
+// temp_vc_lock.go) waits for it to finish. Its guest add, sent at once,
+// could land on either side of the change's edit: before a lock's, which
+// replaces the whole list and drops it, or after an unlock's, which would
+// carry the guest past the unlock. So the change holds the join
+// (accessChange.joins), and when it ends the members it held become guests
+// if the channel is locked then, and are dropped if not.
 
 // guestReasonJoined and guestReasonSwept are the audit-log reasons of a
 // guest add for a join and for the restart sweep.
@@ -35,21 +36,19 @@ const (
 
 // joinGuestsLocked decides what members joining a spawned channel mean for
 // its guest list, and returns the ones to add now. A locked channel takes
-// them all. A channel with a lock or unlock in flight holds them until it
-// ends (endLockOpLocked). An unlocked or untracked channel takes nobody.
+// them all. A channel with an access change in flight holds them until it
+// ends (endAccessChange). An unlocked or untracked channel takes nobody.
 // Caller holds mu.
 func (t *TempVC) joinGuestsLocked(channelID string, userIDs ...string) []string {
 	if _, tracked := t.occupants[channelID]; !tracked || len(userIDs) == 0 {
 		return nil
 	}
-	if _, busy := t.lockBusy[channelID]; busy {
-		held := t.lockJoins[channelID]
-		if held == nil {
-			held = make(map[string]struct{}, len(userIDs))
-			t.lockJoins[channelID] = held
+	if change, inFlight := t.accessChanges[channelID]; inFlight {
+		if change.joins == nil {
+			change.joins = make(map[string]struct{}, len(userIDs))
 		}
 		for _, userID := range userIDs {
-			held[userID] = struct{}{}
+			change.joins[userID] = struct{}{}
 		}
 		return nil
 	}
@@ -59,25 +58,12 @@ func (t *TempVC) joinGuestsLocked(channelID string, userIDs ...string) []string 
 	return userIDs
 }
 
-// endLockOpLocked ends a lock or unlock in flight and returns the members
-// it held back who now go on the guest list: all of them when the channel
-// is locked at the end, a lock that went through or an unlock Discord
-// refused, and none when it is not. Caller holds mu.
-func (t *TempVC) endLockOpLocked(channelID string) []string {
-	delete(t.lockBusy, channelID)
-	held := t.lockJoins[channelID]
-	delete(t.lockJoins, channelID)
-	if _, locked := t.locks[channelID]; !locked {
-		return nil
-	}
-	return sortedIDs(held)
-}
-
-// admitGuests adds each member to a locked channel's guest list, off-lock.
+// addGuests adds each member to a locked channel's guest list, off-lock.
 // The stale voice state rule holds as for every other action: a member the
 // cache no longer shows in the channel, or a guild missing from the cache,
-// gets no add. A failed add is a WARN line and nothing else.
-func (t *TempVC) admitGuests(channelID string, userIDs []string, reason string) {
+// gets no add. A failed add is classified (guestAddFailed) and the next
+// member is tried, unless Discord says the channel is gone.
+func (t *TempVC) addGuests(channelID string, userIDs []string, reason string) {
 	for _, userID := range userIDs {
 		if snap := t.mgr.VoiceStates(t.guildID); !snap.Present || snap.channelOf(userID) != channelID {
 			utils.Info("Temp VC guest add skipped, member not confirmed in the channel",
@@ -86,7 +72,9 @@ func (t *TempVC) admitGuests(channelID string, userIDs []string, reason string) 
 		}
 		added, err := t.addGuest(channelID, userID, reason)
 		if err != nil {
-			utils.Warn("Temp VC guest add failed", "channel_id", channelID, "user_id", userID, "error", err)
+			if t.guestAddFailed(channelID, userID, err) {
+				return
+			}
 			continue
 		}
 		if added {
@@ -102,12 +90,13 @@ func (t *TempVC) admitGuests(channelID string, userIDs []string, reason string) 
 // and any Connect deny cleared; no other bit changes, so a guest never gains
 // View Channel. A member whose overwrite already allows Connect is a guest
 // already, and nothing is sent: added reports whether a set went out. A
-// channel missing from the cache is an error, since the member's other bits
-// cannot be kept.
+// channel missing from the cache is errChannelNotCached, since the member's
+// other bits cannot be kept. A set that goes through opens the hub's guest
+// add capture streak again.
 func (t *TempVC) addGuest(channelID, userID, reason string) (added bool, err error) {
 	ch, err := t.mgr.Channel(channelID)
 	if err != nil {
-		return false, fmt.Errorf("channel %s not in the state cache: %w", channelID, err)
+		return false, fmt.Errorf("%w: %w", errChannelNotCached, err)
 	}
 	guest := discordgo.PermissionOverwrite{ID: userID, Type: discordgo.PermissionOverwriteTypeMember}
 	if i := slices.IndexFunc(ch.PermissionOverwrites, func(o *discordgo.PermissionOverwrite) bool {
@@ -115,14 +104,30 @@ func (t *TempVC) addGuest(channelID, userID, reason string) (added bool, err err
 	}); i >= 0 {
 		guest = *ch.PermissionOverwrites[i]
 	}
-	if guest.Allow&discordgo.PermissionVoiceConnect != 0 {
+	if guest.Allow&lockBits == lockBits {
 		return false, nil
 	}
-	allowConnect(&guest)
+	allowLockBits(&guest)
 	if err := t.mgr.ChannelPermissionSet(channelID, userID, guest.Type, guest.Allow, guest.Deny, reason); err != nil {
 		return false, err
 	}
+	t.mu.Lock()
+	delete(t.guestCaptured, t.channelHub[channelID])
+	t.mu.Unlock()
 	return true, nil
+}
+
+// guestAddFailed classifies a guest add that failed, and reports whether
+// the channel is gone. A channel missing from the state cache is the bot's
+// own miss, not a refusal from Discord, so it is a WARN line alone. A
+// refusal is classified as every change to a spawned channel is
+// (channelChangeFailed), with the guest adds' own capture streak.
+func (t *TempVC) guestAddFailed(channelID, userID string, err error) (gone bool) {
+	if errors.Is(err, errChannelNotCached) {
+		utils.Warn("Temp VC guest add failed", "channel_id", channelID, "user_id", userID, "error", err)
+		return false
+	}
+	return t.channelChangeFailed(channelID, "guest add", t.guestCaptured, err, "user_id", userID)
 }
 
 // sortedIDs returns a set's IDs in order.

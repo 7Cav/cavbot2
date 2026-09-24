@@ -168,12 +168,12 @@ func (t *TempVC) closeLockNotice(channelID, messageID, unlocker string) {
 // must hold one of its hub's moderator roles now or be the member who
 // locked it. A channel that is not locked refuses first, so a button left
 // over from an earlier lock says so whoever presses it. Caller holds mu.
-func (t *TempVC) lockNoticeAuthorityLocked(channelID, userID string, memberRoles []string) error {
+func (t *TempVC) lockNoticeAuthorityLocked(channelID string, by Invoker) error {
 	lock, locked := t.locks[channelID]
 	if !locked {
 		return errNotLocked
 	}
-	if t.isModeratorLocked(channelID, memberRoles) || (lock.locker != "" && lock.locker == userID) {
+	if t.isModeratorLocked(channelID, by.Roles) || (lock.locker != "" && lock.locker == by.UserID) {
 		return nil
 	}
 	return errNotLockerOrModerator
@@ -182,8 +182,8 @@ func (t *TempVC) lockNoticeAuthorityLocked(channelID, userID string, memberRoles
 // unlockFromNotice unlocks the channel a lock notice's Unlock button names,
 // on the presser's behalf, under the buttons' rule. The presser need not
 // sit in the channel. Everything after the rule is /voice-unlock's unlock.
-func (t *TempVC) unlockFromNotice(channelID, userID string, memberRoles []string) (lockResult, error) {
-	return t.unlock(userID, func() (string, error) {
-		return channelID, t.lockNoticeAuthorityLocked(channelID, userID, memberRoles)
+func (t *TempVC) unlockFromNotice(channelID string, by Invoker) (lockResult, error) {
+	return t.unlock(by, func() (string, error) {
+		return channelID, t.lockNoticeAuthorityLocked(channelID, by)
 	})
 }

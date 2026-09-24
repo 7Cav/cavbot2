@@ -27,30 +27,27 @@ const (
 // lockCommand is what tells /voice-lock and /voice-unlock apart in the
 // handler they share.
 type lockCommand struct {
-	// name is the registered command name.
-	name string
+	// action names the command and what it does, for the log lines and the
+	// refusals.
+	action voiceAction
 	// logName is the name the "🚀 Starting" line carries.
 	logName string
-	// verb names the action in the refusals: "lock" or "unlock".
-	verb string
 	// run is the runtime call.
-	run func(tv *TempVC, userID string, roles []string) (lockResult, error)
+	run func(tv *TempVC, by Invoker) (lockResult, error)
 	// done is the invoker's reply on success.
 	done string
 }
 
 var (
 	voiceLock = lockCommand{
-		name:    voiceLockCommandName,
+		action:  voiceAction{command: voiceLockCommandName, verb: "lock", past: "locked"},
 		logName: "VoiceLock",
-		verb:    "lock",
 		run:     (*TempVC).Lock,
 		done:    "🔒 Locked. The people inside can leave and come back, and the hub's moderators can join. Nobody else can.",
 	}
 	voiceUnlock = lockCommand{
-		name:    voiceUnlockCommandName,
+		action:  voiceAction{command: voiceUnlockCommandName, verb: "unlock", past: "unlocked"},
 		logName: "VoiceUnlock",
-		verb:    "unlock",
 		run:     (*TempVC).Unlock,
 		done:    "🔓 Unlocked. The channel has its hub's permissions again.",
 	}
@@ -111,20 +108,16 @@ func runLockCommand(r utils.InteractionResponder, tv *TempVC, interaction *disco
 	}
 
 	username, discordID := interactionUsernameAndID(interaction)
-	utils.Info("🚀 Starting "+c.logName, "command", c.name, "username", username, "discord_id", discordID)
+	utils.Info("🚀 Starting "+c.logName, "command", c.action.command, "username", username, "discord_id", discordID)
 
 	if tv == nil {
-		utils.Warn("Temp VC "+c.verb+" refused, no bot store configured",
-			"command", c.name, "discord_id", discordID)
+		utils.Warn("Temp VC "+c.action.verb+" refused, no bot store configured",
+			"command", c.action.command, "discord_id", discordID)
 		editEphemeral(r, interaction, "❌ Temporary voice channels are not enabled on this bot.")
 		return
 	}
 
-	var roles []string
-	if interaction.Member != nil {
-		roles = interaction.Member.Roles
-	}
-	res, err := c.run(tv, discordID, roles)
+	res, err := c.run(tv, Invoker{UserID: discordID, Roles: interactionRoles(interaction)})
 	if err != nil {
 		editEphemeral(r, interaction, lockRefusal(err, c, discordID))
 		return
@@ -134,48 +127,38 @@ func runLockCommand(r utils.InteractionResponder, tv *TempVC, interaction *disco
 		reply += lockNoticeNotPosted
 	}
 	editEphemeral(r, interaction, reply)
-	utils.Info("✨ Done!", "command", c.name)
+	utils.Info("✨ Done!", "command", c.action.command)
 }
 
+// notLockedRefusal answers /voice-unlock and the notice's buttons on a
+// channel that is not locked (#347 story 25).
+const notLockedRefusal = "❌ This channel isn't locked."
+
 // lockRefusal renders a failed Lock or Unlock as the invoker's ephemeral
-// reply. The first three refusals match /voice-rename's. The no-owner
-// refusal is also a WARN line, as it is for rename. No reply carries a raw
-// Discord body.
+// reply, the refusals every voice command shares first. No reply carries a
+// raw Discord body.
 func lockRefusal(err error, c lockCommand, discordID string) string {
-	var (
-		notSpawned *notSpawnedChannelError
-		notOwner   *notOwnerError
-	)
+	if reply, ok := voiceChannelRefusal(err, c.action, discordID); ok {
+		return reply
+	}
 	switch {
-	case errors.Is(err, errNotInVoice):
-		return fmt.Sprintf("❌ Join the voice channel you want to %s, then run /%s again.", c.verb, c.name)
-	case errors.As(err, &notSpawned):
-		return fmt.Sprintf("❌ Only channels created by joining a hub can be %sed. <#%s> is not one.", c.verb, notSpawned.ChannelID)
-	case errors.As(err, &notOwner) && notOwner.Owner != "":
-		return fmt.Sprintf("❌ Only the owner or a moderator can %s this channel. Ask <@%s>.", c.verb, notOwner.Owner)
-	case errors.As(err, &notOwner):
-		utils.Warn("Temp VC "+c.verb+" refused, channel has no owner",
-			"command", c.name, "discord_id", discordID)
-		return fmt.Sprintf("❌ This channel has no owner, so only a moderator can %s it.", c.verb)
 	case errors.Is(err, errLockingNotAllowed):
 		return "❌ Locking isn't turned on for this hub."
 	case errors.Is(err, errAlreadyLocked):
 		return "❌ Already locked."
 	case errors.Is(err, errNotLocked):
-		return "❌ This channel isn't locked."
-	case errors.Is(err, errLockInFlight):
-		return "❌ This channel's lock is changing right now. Try again in a moment."
+		return notLockedRefusal
 	case errors.Is(err, errSourceUnreadable):
 		return "❌ Couldn't unlock the channel: its hub's permissions can't be read, so it stays locked until everyone leaves."
-	case errors.Is(err, errChannelGone):
-		return "❌ This channel no longer exists."
 	case errors.Is(err, errChannelNotCached):
-		return fmt.Sprintf("❌ Couldn't %s the channel. Try again in a moment.", c.verb)
+		// The cache drops a deleted channel before the runtime hears of the
+		// delete, so a tracked channel it lacks is one on its way out.
+		return channelGoneRefusal
 	case classifySpawnedChannelError(err).rateLimited:
-		return fmt.Sprintf("❌ Couldn't %s the channel: Discord is rate limiting changes to it. Try again in a few minutes.", c.verb)
+		return fmt.Sprintf("❌ Couldn't %s the channel: Discord is rate limiting changes to it. Try again in a few minutes.", c.action.verb)
 	default:
 		// The warden classifier's phrase, never the raw body. Unknown Channel
 		// never reaches it: the runtime classifies that code first.
-		return fmt.Sprintf("❌ Couldn't %s the channel: %s.", c.verb, classifyDiscordError(err).UserDetail)
+		return fmt.Sprintf("❌ Couldn't %s the channel: %s.", c.action.verb, classifyDiscordError(err).UserDetail)
 	}
 }

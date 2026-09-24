@@ -76,11 +76,7 @@ func runVoiceRename(r utils.InteractionResponder, tv *TempVC, interaction *disco
 		return
 	}
 
-	var roles []string
-	if interaction.Member != nil {
-		roles = interaction.Member.Roles
-	}
-	result, err := tv.Rename(discordID, roles, name)
+	result, err := tv.Rename(discordID, interactionRoles(interaction), name)
 	if err != nil {
 		editEphemeral(r, interaction, renameRefusal(err, discordID))
 		return
@@ -93,33 +89,63 @@ func runVoiceRename(r utils.InteractionResponder, tv *TempVC, interaction *disco
 	utils.Info("✨ Done!", "command", voiceRenameCommandName)
 }
 
-// renameRefusal renders a failed Rename as the invoker's ephemeral reply. The
-// no-owner refusal is also a WARN line: the invoker reached the command inside
-// a spawned channel nobody owns, so the Server Settings gate or the rank-role
-// assumption has failed. No reply carries a raw Discord body.
-func renameRefusal(err error, discordID string) string {
+// voiceAction names what a voice command does, for the refusals the voice
+// commands share (voiceChannelRefusal).
+type voiceAction struct {
+	// command is the registered command name.
+	command string
+	// verb and past name the action: "rename" and "renamed".
+	verb, past string
+}
+
+// renameAction is /voice-rename's action.
+var renameAction = voiceAction{command: voiceRenameCommandName, verb: "rename", past: "renamed"}
+
+// channelGoneRefusal answers a voice command whose channel no longer
+// exists.
+const channelGoneRefusal = "❌ This channel no longer exists."
+
+// voiceChannelRefusal renders the refusals /voice-rename, /voice-lock and
+// /voice-unlock share, in the words /voice-rename has always used, so the
+// voice commands refuse alike (#347). ok is false for any other error, which
+// the command renders itself. The no-owner refusal is also a WARN line: the
+// invoker reached the command inside a spawned channel nobody owns, so the
+// Server Settings gate or the rank-role assumption has failed.
+func voiceChannelRefusal(err error, a voiceAction, discordID string) (reply string, ok bool) {
 	var (
 		notSpawned *notSpawnedChannelError
 		notOwner   *notOwnerError
-		window     *renameWindowError
 	)
 	switch {
 	case errors.Is(err, errNotInVoice):
-		return "❌ Join the voice channel you want to rename, then run /voice-rename again."
+		return fmt.Sprintf("❌ Join the voice channel you want to %s, then run /%s again.", a.verb, a.command), true
 	case errors.As(err, &notSpawned):
-		return fmt.Sprintf("❌ Only channels created by joining a hub can be renamed. <#%s> is not one.", notSpawned.ChannelID)
+		return fmt.Sprintf("❌ Only channels created by joining a hub can be %s. <#%s> is not one.", a.past, notSpawned.ChannelID), true
 	case errors.As(err, &notOwner) && notOwner.Owner != "":
-		return fmt.Sprintf("❌ Only the owner can rename this channel. Ask <@%s>.", notOwner.Owner)
+		return fmt.Sprintf("❌ Only the owner can %s this channel. Ask <@%s>.", a.verb, notOwner.Owner), true
 	case errors.As(err, &notOwner):
-		utils.Warn("Temp VC rename refused, channel has no owner",
-			"command", voiceRenameCommandName, "discord_id", discordID)
-		return "❌ This channel has no owner, so it cannot be renamed."
+		utils.Warn("Temp VC "+a.verb+" refused, channel has no owner",
+			"command", a.command, "discord_id", discordID)
+		return fmt.Sprintf("❌ This channel has no owner, so it cannot be %s.", a.past), true
+	case errors.Is(err, errChannelGone):
+		return channelGoneRefusal, true
+	default:
+		return "", false
+	}
+}
+
+// renameRefusal renders a failed Rename as the invoker's ephemeral reply,
+// the shared refusals first. No reply carries a raw Discord body.
+func renameRefusal(err error, discordID string) string {
+	if reply, ok := voiceChannelRefusal(err, renameAction, discordID); ok {
+		return reply
+	}
+	var window *renameWindowError
+	switch {
 	case errors.As(err, &window):
 		// Discord renders <t:UNIX:R> as "in 4 minutes". The runtime returns
 		// this for its own refusal and for a 429 that carries retry_after.
 		return fmt.Sprintf("❌ This channel was renamed twice in the last ten minutes. Try again <t:%d:R>.", window.OpensAt.Unix())
-	case errors.Is(err, errChannelGone):
-		return "❌ This channel no longer exists."
 	case classifySpawnedChannelError(err).rateLimited:
 		// A 429 with no retry_after. The runtime's own count did not see a
 		// rename Discord did (one made in Discord's UI, or before a restart),

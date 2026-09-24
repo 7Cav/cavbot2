@@ -27,6 +27,14 @@ import (
 // nothing. The record changes only once Discord accepts the edit, then the
 // row follows through its own store call (SetSpawnedChannelLock), which no
 // handover or other row write touches.
+//
+// A lock, an unlock and a let-in (temp_vc_let_in.go) each change who can
+// join the channel, so they are access changes, and one channel has at most
+// one in flight. One that arrives while another is in flight waits for it to
+// end, then decides afresh and answers as it would have alone: a second
+// lock hears "Already locked.", an unlock that met a lock unlocks. Waiting
+// also keeps the order Discord sees: an unlock's edit never lands before a
+// guest add that started first.
 
 // errLockingNotAllowed: Lock returns it when the channel's hub has "Locking
 // allowed" off, or its hub row is gone.
@@ -37,10 +45,6 @@ var errAlreadyLocked = errors.New("channel is already locked")
 
 // errNotLocked: Unlock returns it for a channel that is not locked.
 var errNotLocked = errors.New("channel is not locked")
-
-// errLockInFlight: Lock, Unlock and a let-in return it while a lock, unlock
-// or let-in of the same channel is still in flight.
-var errLockInFlight = errors.New("a lock or unlock of the channel is in flight")
 
 // errChannelNotCached: Lock returns it when the state cache does not hold
 // the channel, so its current overwrites cannot be read. Nothing is sent.
@@ -68,11 +72,75 @@ func (r lockRecord) row() store.ChannelLock {
 
 // lockResult is what a successful Lock or Unlock reports to its handler.
 type lockResult struct {
-	ChannelID string
-	HubID     int64
 	// NoticeFailed is set by a Lock whose lock notice did not post. The
 	// lock stands all the same.
 	NoticeFailed bool
+}
+
+// accessChange is a lock, unlock or let-in in flight on a spawned channel.
+type accessChange struct {
+	// done is closed when the change ends, which wakes every access change
+	// waiting on the channel.
+	done chan struct{}
+	// joins holds the members who joined the channel while the change was
+	// in flight. When it ends they go on the guest list if the channel is
+	// locked then, and are dropped if not (endAccessChange).
+	joins map[string]struct{}
+}
+
+// idleChannelLocked names the channel an access change acts on and waits
+// until no other access change is in flight on it. resolve names the
+// channel and applies the caller's authority rule. After a wait it runs
+// again, because the invoker may have moved or lost a role meanwhile. On a
+// nil error mu has been held since the channel was last seen idle, so the
+// caller can begin its change (beginAccessChangeLocked) with nothing in
+// between. Caller holds mu, which is released while waiting.
+func (t *TempVC) idleChannelLocked(resolve func() (string, error)) (string, error) {
+	for {
+		channelID, err := resolve()
+		if err != nil {
+			return "", err
+		}
+		change, inFlight := t.accessChanges[channelID]
+		if !inFlight {
+			return channelID, nil
+		}
+		t.mu.Unlock()
+		<-change.done
+		t.mu.Lock()
+	}
+}
+
+// beginAccessChangeLocked marks an access change in flight on an idle
+// channel (idleChannelLocked). Whoever begins one ends it with
+// endAccessChange. Caller holds mu.
+func (t *TempVC) beginAccessChangeLocked(channelID string) {
+	t.accessChanges[channelID] = &accessChange{done: make(chan struct{})}
+}
+
+// endAccessChange ends the access change in flight on a channel. The
+// members who joined meanwhile go on the guest list first, if the channel is
+// locked, while the change still holds the channel. So an unlock waiting on
+// it sends its edit only after their guest adds are answered, and none of
+// them lands after the unlock. A member who joins during those adds is held
+// and added the same way. Then every access change waiting on the channel
+// wakes.
+func (t *TempVC) endAccessChange(channelID string) {
+	t.mu.Lock()
+	change := t.accessChanges[channelID]
+	for len(change.joins) > 0 {
+		held := sortedIDs(change.joins)
+		change.joins = nil
+		if _, locked := t.locks[channelID]; !locked {
+			break
+		}
+		t.mu.Unlock()
+		t.addGuests(channelID, held, guestReasonJoined)
+		t.mu.Lock()
+	}
+	delete(t.accessChanges, channelID)
+	t.mu.Unlock()
+	close(change.done)
 }
 
 // Lock locks the spawned channel the invoker sits in, on the invoker's
@@ -82,9 +150,11 @@ type lockResult struct {
 // Once Discord accepts it, the lock notice posts (temp_vc_lock_notice.go);
 // a notice that does not post leaves the lock standing and sets
 // NoticeFailed.
-func (t *TempVC) Lock(userID string, memberRoles []string) (lockResult, error) {
+func (t *TempVC) Lock(by Invoker) (lockResult, error) {
 	t.mu.Lock()
-	channelID, err := t.invokerChannelLocked(userID, memberRoles)
+	channelID, err := t.idleChannelLocked(func() (string, error) {
+		return t.invokerChannelLocked(by)
+	})
 	if err != nil {
 		t.mu.Unlock()
 		return lockResult{}, err
@@ -98,15 +168,11 @@ func (t *TempVC) Lock(userID string, memberRoles []string) (lockResult, error) {
 		t.mu.Unlock()
 		return lockResult{}, errAlreadyLocked
 	}
-	if _, busy := t.lockBusy[channelID]; busy {
-		t.mu.Unlock()
-		return lockResult{}, errLockInFlight
-	}
 	current, err := t.mgr.Channel(channelID)
 	if err != nil {
 		t.mu.Unlock()
 		utils.Warn("Temp VC lock refused, channel not in the state cache",
-			"channel_id", channelID, "hub_id", hubID, "user_id", userID, "error", err)
+			"channel_id", channelID, "hub_id", hubID, "user_id", by.UserID, "error", err)
 		return lockResult{}, errChannelNotCached
 	}
 	// The guest list is whoever is inside at this check. A member whose join
@@ -115,32 +181,21 @@ func (t *TempVC) Lock(userID string, memberRoles []string) (lockResult, error) {
 	guests := t.insideLocked(channelID)
 	overwrites := lockOverwrites(current.PermissionOverwrites, t.guildID,
 		t.effectiveModeratorRolesLocked(channelID), guests)
-	t.lockBusy[channelID] = struct{}{}
+	t.beginAccessChangeLocked(channelID)
 	t.mu.Unlock()
+	defer t.endAccessChange(channelID)
 
-	reason := fmt.Sprintf("locked by %s", userID)
-	if _, err := t.mgr.ChannelEdit(channelID, &discordgo.ChannelEdit{PermissionOverwrites: overwrites}, reason); err != nil {
-		return lockResult{}, t.lockEditFailed(channelID, "lock", err)
-	}
-
-	record := lockRecord{locker: userID}
-	t.mu.Lock()
-	_, tracked := t.occupants[channelID]
-	if tracked {
+	record := lockRecord{locker: by.UserID}
+	reason := fmt.Sprintf("locked by %s", by.UserID)
+	if err := t.sendLockEdit(channelID, hubID, "lock", reason, overwrites, func() {
 		t.locks[channelID] = record
-	}
-	delete(t.lockCaptured, hubID)
-	t.mu.Unlock()
-	defer t.endLockOp(channelID)
-	// The channel was deleted while the edit was in flight: its row went
-	// with it, and there is nothing left to lock.
-	if !tracked {
-		return lockResult{}, errChannelGone
+	}); err != nil {
+		return lockResult{}, err
 	}
 	// The notice posts while the lock is still in flight, so the one row
-	// write below carries its message ID, and a press that lands before
-	// the ID is recorded is told to try again.
-	noticeID, posted := t.postLockNotice(channelID, userID)
+	// write below carries its message ID, and a press that lands before the
+	// ID is recorded waits for it.
+	noticeID, posted := t.postLockNotice(channelID, by.UserID)
 	record.noticeMessageID = noticeID
 	t.mu.Lock()
 	if _, held := t.locks[channelID]; held {
@@ -148,35 +203,31 @@ func (t *TempVC) Lock(userID string, memberRoles []string) (lockResult, error) {
 	}
 	t.mu.Unlock()
 	t.writeLock(channelID, record.row())
-	utils.Info("Temp VC locked", "channel_id", channelID, "hub_id", hubID, "user_id", userID)
-	return lockResult{ChannelID: channelID, HubID: hubID, NoticeFailed: !posted}, nil
+	utils.Info("Temp VC locked", "channel_id", channelID, "hub_id", hubID, "user_id", by.UserID)
+	return lockResult{NoticeFailed: !posted}, nil
 }
 
 // Unlock unlocks the spawned channel the invoker sits in, on the invoker's
 // behalf, when they own it or hold one of its hub's moderator roles. It
 // works whatever the hub's "Locking allowed" says now.
-func (t *TempVC) Unlock(userID string, memberRoles []string) (lockResult, error) {
-	return t.unlock(userID, func() (string, error) {
-		return t.invokerChannelLocked(userID, memberRoles)
+func (t *TempVC) Unlock(by Invoker) (lockResult, error) {
+	return t.unlock(by, func() (string, error) {
+		return t.invokerChannelLocked(by)
 	})
 }
 
-// unlock puts a locked channel's permission source back, on userID's
+// unlock puts a locked channel's permission source back, on the invoker's
 // behalf. resolve names the channel and applies the caller's authority rule;
 // it runs under mu. /voice-unlock resolves the invoker's own channel. A
 // caller with another rule, a button naming its channel for instance,
 // passes its own. The edit replaces the whole overwrite list with the
 // source as the cache holds it now, which drops every guest overwrite.
-func (t *TempVC) unlock(userID string, resolve func() (string, error)) (lockResult, error) {
+func (t *TempVC) unlock(by Invoker, resolve func() (string, error)) (lockResult, error) {
 	t.mu.Lock()
-	channelID, err := resolve()
+	channelID, err := t.idleChannelLocked(resolve)
 	if err != nil {
 		t.mu.Unlock()
 		return lockResult{}, err
-	}
-	if _, busy := t.lockBusy[channelID]; busy {
-		t.mu.Unlock()
-		return lockResult{}, errLockInFlight
 	}
 	if _, locked := t.locks[channelID]; !locked {
 		t.mu.Unlock()
@@ -187,39 +238,62 @@ func (t *TempVC) unlock(userID string, resolve func() (string, error)) (lockResu
 	if !ok {
 		t.mu.Unlock()
 		utils.Warn("Temp VC unlock refused, hub row gone",
-			"channel_id", channelID, "hub_id", hubID, "user_id", userID)
+			"channel_id", channelID, "hub_id", hubID, "user_id", by.UserID)
 		return lockResult{}, fmt.Errorf("%w: hub row %d is gone", errSourceUnreadable, hubID)
 	}
 	source, err := t.permissionSourceOverwrites(hub)
 	if err != nil {
 		t.mu.Unlock()
 		utils.Warn("Temp VC unlock refused, permission source unreadable",
-			"channel_id", channelID, "hub_id", hubID, "user_id", userID, "error", err)
+			"channel_id", channelID, "hub_id", hubID, "user_id", by.UserID, "error", err)
 		return lockResult{}, fmt.Errorf("%w: %w", errSourceUnreadable, err)
 	}
-	overwrites := unlockOverwrites(source, t.guildID)
-	t.lockBusy[channelID] = struct{}{}
+	overwrites := copyOverwrites(source)
+	t.beginAccessChangeLocked(channelID)
 	t.mu.Unlock()
+	defer t.endAccessChange(channelID)
 
-	reason := fmt.Sprintf("unlocked by %s", userID)
-	if _, err := t.mgr.ChannelEdit(channelID, &discordgo.ChannelEdit{PermissionOverwrites: overwrites}, reason); err != nil {
-		return lockResult{}, t.lockEditFailed(channelID, "unlock", err)
-	}
-
-	t.mu.Lock()
-	_, tracked := t.occupants[channelID]
-	noticeID := t.locks[channelID].noticeMessageID
-	delete(t.locks, channelID)
-	delete(t.lockCaptured, hubID)
-	t.mu.Unlock()
-	defer t.endLockOp(channelID)
-	if !tracked {
-		return lockResult{}, errChannelGone
+	var noticeID string
+	reason := fmt.Sprintf("unlocked by %s", by.UserID)
+	if err := t.sendLockEdit(channelID, hubID, "unlock", reason, overwrites, func() {
+		noticeID = t.locks[channelID].noticeMessageID
+		delete(t.locks, channelID)
+	}); err != nil {
+		return lockResult{}, err
 	}
 	t.writeLock(channelID, store.ChannelLock{})
-	t.closeLockNotice(channelID, noticeID, userID)
-	utils.Info("Temp VC unlocked", "channel_id", channelID, "hub_id", hubID, "user_id", userID)
-	return lockResult{ChannelID: channelID, HubID: hubID}, nil
+	t.closeLockNotice(channelID, noticeID, by.UserID)
+	utils.Info("Temp VC unlocked", "channel_id", channelID, "hub_id", hubID, "user_id", by.UserID)
+	return lockResult{}, nil
+}
+
+// sendLockEdit sends a lock's or an unlock's one edit, which replaces the
+// channel's whole overwrite list and carries the audit log reason. Once
+// Discord accepts it, the state cache holds the new list, commit applies
+// the change to the record under mu, and the hub's capture streak opens
+// again. errChannelGone reports a channel deleted while the edit was in
+// flight, whose row went with it: nothing is left to lock or unlock. A
+// refused edit changes nothing else, classified as every change to a
+// spawned channel is (channelChangeFailed): it carried the whole list, so
+// Discord applied none of it, and the lock stays as it was. A member who
+// joined while an unlock was in flight is a guest of the channel that
+// stayed locked (endAccessChange). Caller holds the channel's access
+// change.
+func (t *TempVC) sendLockEdit(channelID string, hubID int64, action, reason string, overwrites []*discordgo.PermissionOverwrite, commit func()) error {
+	if err := t.mgr.ChannelOverwritesReplace(channelID, overwrites, reason); err != nil {
+		if t.channelChangeFailed(channelID, action, t.lockCaptured, err) {
+			return errChannelGone
+		}
+		return err
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.lockCaptured, hubID)
+	if _, tracked := t.occupants[channelID]; !tracked {
+		return errChannelGone
+	}
+	commit()
+	return nil
 }
 
 // insideLocked returns who is inside a spawned channel for a lock's guest
@@ -245,6 +319,17 @@ func (t *TempVC) insideLocked(channelID string) []string {
 	return out
 }
 
+// lockBits are the permission bits the bot writes into an overwrite of its
+// own accord: Connect alone, which a lock denies and allows
+// (lockOverwrites) and a guest add, the join's or a let-in's, allows
+// (addGuest). denyLockBits and allowLockBits write them and nothing else.
+const lockBits = discordgo.PermissionVoiceConnect
+
+// lockBits must sit inside TempVCOverwriteCeiling. This constant fails to
+// compile when they do not: a bit outside the ceiling makes the operand a
+// negative constant, which overflows uint64.
+const _ = uint64(-(lockBits &^ TempVCOverwriteCeiling))
+
 // lockOverwrites builds a lock's overwrite list from the channel's current
 // one:
 //   - Connect denied on @everyone, whose overwrite ID is the guild's, added
@@ -258,16 +343,14 @@ func (t *TempVC) insideLocked(channelID string) []string {
 //
 // Discord applies @everyone first, then role allows over role denies, then
 // the member, so a moderator or a guest still joins and every other role
-// holder is stopped. The bot changes the Connect bit alone, inside
-// TempVCOverwriteCeiling; every other bit an overwrite carried is kept. The
-// current list is copied, never changed: it is the state cache's.
+// holder is stopped. The bot changes lockBits alone; every other bit an
+// overwrite carried is kept. The current list is copied, never changed: it
+// is the state cache's.
 func lockOverwrites(current []*discordgo.PermissionOverwrite, everyoneID string, moderatorRoles, guests []string) []*discordgo.PermissionOverwrite {
-	out := make([]*discordgo.PermissionOverwrite, 0, len(current)+len(moderatorRoles)+len(guests)+1)
-	byID := make(map[string]*discordgo.PermissionOverwrite, cap(out))
-	for _, o := range current {
-		c := *o
-		out = append(out, &c)
-		byID[c.ID] = &c
+	out := copyOverwrites(current)
+	byID := make(map[string]*discordgo.PermissionOverwrite, len(out)+len(moderatorRoles)+len(guests)+1)
+	for _, o := range out {
+		byID[o.ID] = o
 	}
 	ensure := func(id string, kind discordgo.PermissionOverwriteType) *discordgo.PermissionOverwrite {
 		if o, ok := byID[id]; ok {
@@ -280,88 +363,44 @@ func lockOverwrites(current []*discordgo.PermissionOverwrite, everyoneID string,
 	}
 	for _, o := range out {
 		if o.Type == discordgo.PermissionOverwriteTypeRole && !slices.Contains(moderatorRoles, o.ID) {
-			denyConnect(o)
+			denyLockBits(o)
 		}
 	}
-	denyConnect(ensure(everyoneID, discordgo.PermissionOverwriteTypeRole))
+	denyLockBits(ensure(everyoneID, discordgo.PermissionOverwriteTypeRole))
 	for _, id := range moderatorRoles {
-		allowConnect(ensure(id, discordgo.PermissionOverwriteTypeRole))
+		allowLockBits(ensure(id, discordgo.PermissionOverwriteTypeRole))
 	}
 	for _, id := range guests {
-		allowConnect(ensure(id, discordgo.PermissionOverwriteTypeMember))
+		allowLockBits(ensure(id, discordgo.PermissionOverwriteTypeMember))
 	}
 	return out
 }
 
-// denyConnect denies Connect on one overwrite. Within one overwrite Discord
-// applies the deny and then the allow, so the allow bit goes too.
-func denyConnect(o *discordgo.PermissionOverwrite) {
-	o.Deny |= discordgo.PermissionVoiceConnect
-	o.Allow &^= discordgo.PermissionVoiceConnect
+// denyLockBits denies lockBits on one overwrite. Within one overwrite
+// Discord applies the deny and then the allow, so the allow bits go too.
+func denyLockBits(o *discordgo.PermissionOverwrite) {
+	o.Deny |= lockBits
+	o.Allow &^= lockBits
 }
 
-// allowConnect allows Connect on one overwrite and clears any Connect deny.
-func allowConnect(o *discordgo.PermissionOverwrite) {
-	o.Allow |= discordgo.PermissionVoiceConnect
-	o.Deny &^= discordgo.PermissionVoiceConnect
+// allowLockBits allows lockBits on one overwrite and clears any deny of
+// them.
+func allowLockBits(o *discordgo.PermissionOverwrite) {
+	o.Allow |= lockBits
+	o.Deny &^= lockBits
 }
 
-// unlockOverwrites is the list an unlock sends: the permission source,
-// copied. A source with no overwrites is sent as one @everyone overwrite
-// that allows and denies nothing, the same permissions as an empty list.
-// ChannelEdit drops an empty list from the request (omitempty), which would
-// leave the lock in place.
-func unlockOverwrites(source []*discordgo.PermissionOverwrite, everyoneID string) []*discordgo.PermissionOverwrite {
-	if len(source) == 0 {
-		return []*discordgo.PermissionOverwrite{{ID: everyoneID, Type: discordgo.PermissionOverwriteTypeRole}}
-	}
-	out := make([]*discordgo.PermissionOverwrite, len(source))
-	for i, o := range source {
+// copyOverwrites copies an overwrite list entry by entry, so the copy can be
+// changed and sent while the list it came from, the state cache's, stays as
+// it was. An empty list copies to an empty list, which an unlock sends as
+// it is.
+func copyOverwrites(list []*discordgo.PermissionOverwrite) []*discordgo.PermissionOverwrite {
+	out := make([]*discordgo.PermissionOverwrite, len(list))
+	for i, o := range list {
 		c := *o
 		out[i] = &c
 	}
 	return out
-}
-
-// lockEditFailed ends a lock or unlock whose edit Discord refused, and
-// classifies the failure the way renameFailed does. Unknown Channel means
-// the channel is already gone, so the runtime untracks it and drops its row
-// with no capture. A 403, 5xx or transport failure captures once per streak
-// per hub. Anything else is one WARN line. Nothing else changes: the edit
-// carried the whole list, so Discord applied none of it, and the lock stays
-// as it was. A member who joined while an unlock was in flight is a guest
-// of the channel that stayed locked.
-func (t *TempVC) lockEditFailed(channelID, action string, err error) error {
-	fault := classifySpawnedChannelError(err)
-	t.mu.Lock()
-	hubID := t.channelHub[channelID]
-	if fault.gone {
-		t.untrackLocked(channelID)
-	}
-	held := t.endLockOpLocked(channelID)
-	t.mu.Unlock()
-	t.admitGuests(channelID, held, guestReasonJoined)
-
-	if fault.gone {
-		utils.Info("Temp VC channel already gone at "+action+", untracked", "channel_id", channelID)
-		t.deleteRow(channelID)
-		return errChannelGone
-	}
-	utils.Warn("Temp VC "+action+" failed", "channel_id", channelID, "hub_id", hubID, "error", err)
-	if fault.capturesOnDeleteOrRename() {
-		t.captureOncePerStreak(t.lockCaptured, hubID, "Temp VC "+action+" failed", err,
-			"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
-	}
-	return err
-}
-
-// endLockOp ends a lock or unlock in flight. Whoever joined the channel
-// meanwhile goes on its guest list if it is locked now.
-func (t *TempVC) endLockOp(channelID string) {
-	t.mu.Lock()
-	held := t.endLockOpLocked(channelID)
-	t.mu.Unlock()
-	t.admitGuests(channelID, held, guestReasonJoined)
 }
 
 // writeLock records a spawned channel's lock on its row. A failed write

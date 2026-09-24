@@ -172,7 +172,7 @@ func assertPingsExactly(t *testing.T, msg fakeMessage, want ...permMember) {
 
 // A moderator from outside the channel, or whoever locked it, lets M in: M
 // can join, and the chat line pings M and nobody else, naming who let M in.
-func TestLetInAdmitsThePickedMember(t *testing.T) {
+func TestLetInPutsThePickedMemberOnTheGuestList(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		presser permMember
@@ -302,24 +302,26 @@ func TestLetInWorksWithLockingTurnedOff(t *testing.T) {
 }
 
 // A member the bot cannot let in, because Discord refuses the guest add or
-// the check whether they see the channel fails, stays out. Neither reaches
-// Sentry. The presser's reply names them and is not the reply a let-in that
-// went through gets, and no chat line pings them.
+// the check whether they see the channel fails, stays out. A 5xx from
+// Discord reaches Sentry as any refused guest add does; the failed check is
+// the bot's own and does not. The presser's reply names them and is not the
+// reply a let-in that went through gets, and no chat line pings them.
 func TestLetInThatFailsNamesWhoDidNotGetIn(t *testing.T) {
 	okFake, _, okTV := newLockScene(t, store.PermissionCategory)
 	lockAs(t, okTV, lockOwner)
 	letIn := pick(t, okTV, openPicker(t, okTV, okFake, lockOwner), lockOwner, permV)
 
 	for _, tc := range []struct {
-		name  string
-		fails func(f *fakeTempVCManager)
+		name     string
+		fails    func(f *fakeTempVCManager)
+		captures int
 	}{
 		{"guest add refused by Discord", func(f *fakeTempVCManager) {
 			f.permissionSetErr = restError(http.StatusInternalServerError, 0, rawBodyMarker)
-		}},
+		}, 1},
 		{"visibility check failed", func(f *fakeTempVCManager) {
 			f.canSeeErr = discordgo.ErrStateNotFound
-		}},
+		}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake, _, tv := newLockScene(t, store.PermissionCategory)
@@ -339,14 +341,40 @@ func TestLetInThatFailsNamesWhoDidNotGetIn(t *testing.T) {
 			if strings.Contains(reply, rawBodyMarker) {
 				t.Errorf("reply %q leaks the raw Discord error", reply)
 			}
-			if *captures != 0 {
-				t.Errorf("captures = %d after the failed let-in, want 0", *captures)
+			if *captures != tc.captures {
+				t.Errorf("captures = %d after the failed let-in, want %d", *captures, tc.captures)
 			}
 			assertJoins(t, fake, "chan-1", "after the failed let-in", nil, []permMember{permV})
 			if pings := letInPingsIn(fake, "chan-1"); len(pings) != 0 {
 				t.Errorf("let-in pings = %+v, want none when nobody got in", pings)
 			}
 		})
+	}
+}
+
+// A let-in whose guest add Discord answers with Unknown Channel finds the
+// channel gone: the runtime forgets it and drops its row, nothing reaches
+// Sentry, and no chat line is posted.
+func TestLetInIntoAChannelDiscordNoLongerHas(t *testing.T) {
+	fake, st, tv := newLockScene(t, store.PermissionCategory)
+	lockAs(t, tv, lockOwner)
+	picker := openPicker(t, tv, fake, lockOwner)
+	captures := countCaptures(t)
+	fake.permissionSetErr = restError(http.StatusNotFound, discordgo.ErrCodeUnknownChannel, rawBodyMarker)
+
+	pick(t, tv, picker, lockOwner, permV, permM)
+
+	if _, tracked := tv.Owner("chan-1"); tracked {
+		t.Error("chan-1 is still tracked, want it forgotten")
+	}
+	if _, hasRow := rowFor(t, st, "chan-1"); hasRow {
+		t.Error("chan-1 still has a row, want it dropped")
+	}
+	if *captures != 0 {
+		t.Errorf("captures = %d, want 0 for a channel that is gone", *captures)
+	}
+	if pings := letInPingsIn(fake, "chan-1"); len(pings) != 0 {
+		t.Errorf("let-in pings = %+v, want none", pings)
 	}
 }
 
@@ -373,60 +401,67 @@ func TestLetInPingThatFailsToPostLeavesTheGuestIn(t *testing.T) {
 	assertJoins(t, fake, "chan-1", "after the let-in", []permMember{permV}, []permMember{permM})
 }
 
-// permissionSetWindowManager runs a hook once, inside the next overwrite
-// set, before the fake applies it: the window while a let-in's guest add is
-// in flight. The runtime holds no lock across the call, so the hook can run
-// an unlock.
-type permissionSetWindowManager struct {
-	*fakeTempVCManager
-	beforeSet func()
-}
-
-func (m *permissionSetWindowManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, reason string) error {
-	if hook := m.beforeSet; hook != nil {
-		m.beforeSet = nil
-		hook()
-	}
-	return m.fakeTempVCManager.ChannelPermissionSet(channelID, targetID, targetType, allow, deny, reason)
-}
-
-// An unlock pressed while a let-in is landing never lets the new guest past
-// it. After both, and an unlock that goes through, every member has the
-// verdict the source alone gives: V, let in during the first, cannot join.
+// An unlock pressed while a let-in is landing waits for it, then unlocks,
+// and never lets the new guest past it: afterwards every member has the
+// verdict the source alone gives, and V, let in meanwhile, cannot join.
 func TestLetInUnlockPressedWhileALetInIsInFlight(t *testing.T) {
-	fake := newFakeTempVCManager()
-	installPermFixture(fake)
-	mgr := &permissionSetWindowManager{fakeTempVCManager: fake}
-	st := seedStore(t, lockingHub(store.PermissionCategory))
-	tv := newTestTempVC(t, mgr, st)
-	spawnInto(tv, fake, lockOwner.id, "chan-1", lockOwner.discordMember())
+	fake, mgr, st, tv := newWindowScene(t)
 	lockAs(t, tv, lockOwner)
 	unlockButton := noticeButton(t, lockNotice(t, fake, "chan-1"), lockNoticeUnlock)
 	picker := openPicker(t, tv, fake, lockOwner)
-	mgr.beforeSet = func() { press(t, tv, unlockButton, permMOD) }
+	var unlock *started
+	mgr.onSet(func() {
+		unlock = startInteraction(func(f *fakeResponder) {
+			runVoiceLock(f, tv, pressInteraction(unlockButton, permMOD))
+		})
+	})
 
 	pick(t, tv, picker, lockOwner, permV)
-	if lock := rowLock(t, st, "chan-1"); lock.Locked {
-		unlockAs(t, tv, lockOwner)
-	}
+	unlock.reply(t)
 
 	assertUnlocked(t, fake, st, "chan-1", "after the let-in and the unlock")
 }
 
-// A let-in submitted while an unlock is landing lets nobody past the
-// unlock: afterwards V has the source's verdict and cannot join.
+// A let-in submitted while an unlock is landing waits for it, and then lets
+// nobody in: afterwards V has the source's verdict and cannot join, and no
+// chat line pings anyone.
 func TestLetInSubmittedWhileAnUnlockIsInFlight(t *testing.T) {
-	fake, mgr, tv := newEditWindowScene(t)
+	fake, mgr, _, tv := newWindowScene(t)
 	lockAs(t, tv, lockOwner)
 	picker := openPicker(t, tv, fake, lockOwner)
-	mgr.duringEdit = func() { pick(t, tv, picker, lockOwner, permV) }
+	var letIn *started
+	mgr.onEdit(func() {
+		letIn = startInteraction(func(f *fakeResponder) {
+			runVoiceLock(f, tv, pickInteraction(picker, lockOwner, []permMember{permV}))
+		})
+	})
 
 	unlockAs(t, tv, lockOwner)
+	letIn.reply(t)
 
 	assertJoinsLikeSource(t, fake, "chan-1", testTempVCCategory, "after the unlock")
 	if pings := letInPingsIn(fake, "chan-1"); len(pings) != 0 {
 		t.Errorf("let-in pings = %+v, want none for a let-in during the unlock", pings)
 	}
+}
+
+// A let-in submitted while another is landing waits for it and then lets
+// its own pick in, so both picks can join.
+func TestLetInSubmittedWhileALetInIsInFlight(t *testing.T) {
+	fake, mgr, _, tv := newWindowScene(t)
+	lockAs(t, tv, lockOwner)
+	picker := openPicker(t, tv, fake, lockOwner)
+	var second *started
+	mgr.onSet(func() {
+		second = startInteraction(func(f *fakeResponder) {
+			runVoiceLock(f, tv, pickInteraction(picker, permMOD, []permMember{permM}))
+		})
+	})
+
+	pick(t, tv, picker, lockOwner, permV)
+	second.reply(t)
+
+	assertJoins(t, fake, "chan-1", "after both let-ins", []permMember{permV, permM}, []permMember{permN})
 }
 
 // The production adapter judges whether a member sees a channel with
