@@ -70,12 +70,18 @@ func (r lockRecord) row() store.ChannelLock {
 type lockResult struct {
 	ChannelID string
 	HubID     int64
+	// NoticeFailed is set by a Lock whose lock notice did not post. The
+	// lock stands all the same.
+	NoticeFailed bool
 }
 
 // Lock locks the spawned channel the invoker sits in, on the invoker's
 // behalf, when they own it or hold one of its hub's moderator roles and the
 // hub has "Locking allowed" on. The edit carries an audit log reason naming
 // the invoker and no retry on rate limit. A refused edit changes nothing.
+// Once Discord accepts it, the lock notice posts (temp_vc_lock_notice.go);
+// a notice that does not post leaves the lock standing and sets
+// NoticeFailed.
 func (t *TempVC) Lock(userID string, memberRoles []string) (lockResult, error) {
 	t.mu.Lock()
 	channelID, err := t.invokerChannelLocked(userID, memberRoles)
@@ -130,9 +136,19 @@ func (t *TempVC) Lock(userID string, memberRoles []string) (lockResult, error) {
 	if !tracked {
 		return lockResult{}, errChannelGone
 	}
+	// The notice posts while the lock is still in flight, so the one row
+	// write below carries its message ID, and a press that lands before
+	// the ID is recorded is told to try again.
+	noticeID, posted := t.postLockNotice(channelID, userID)
+	record.noticeMessageID = noticeID
+	t.mu.Lock()
+	if _, held := t.locks[channelID]; held {
+		t.locks[channelID] = record
+	}
+	t.mu.Unlock()
 	t.writeLock(channelID, record.row())
 	utils.Info("Temp VC locked", "channel_id", channelID, "hub_id", hubID, "user_id", userID)
-	return lockResult{ChannelID: channelID, HubID: hubID}, nil
+	return lockResult{ChannelID: channelID, HubID: hubID, NoticeFailed: !posted}, nil
 }
 
 // Unlock unlocks the spawned channel the invoker sits in, on the invoker's
@@ -191,6 +207,7 @@ func (t *TempVC) unlock(userID string, resolve func() (string, error)) (lockResu
 
 	t.mu.Lock()
 	_, tracked := t.occupants[channelID]
+	noticeID := t.locks[channelID].noticeMessageID
 	delete(t.locks, channelID)
 	delete(t.lockCaptured, hubID)
 	t.mu.Unlock()
@@ -199,6 +216,7 @@ func (t *TempVC) unlock(userID string, resolve func() (string, error)) (lockResu
 		return lockResult{}, errChannelGone
 	}
 	t.writeLock(channelID, store.ChannelLock{})
+	t.closeLockNotice(channelID, noticeID, userID)
 	utils.Info("Temp VC unlocked", "channel_id", channelID, "hub_id", hubID, "user_id", userID)
 	return lockResult{ChannelID: channelID, HubID: hubID}, nil
 }

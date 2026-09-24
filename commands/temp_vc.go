@@ -303,6 +303,12 @@ type TempVCManager interface {
 	// reads under the state's lock, because discordgo shares the payload's
 	// slices with its cache (#335).
 	MemberRanks(g *discordgo.Guild) map[string]int
+	// ChannelMessageEditComplex edits a message the bot posted, with no
+	// retry on rate limit. The edit names its channel and message, and
+	// carries the new content and components: a pointer to an empty list
+	// removes every component, and a nil one leaves them. The unlock edits
+	// the lock notice through it.
+	ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error)
 }
 
 // VoiceSnapshot is one copy of a guild's voice states from discordgo's state
@@ -454,6 +460,10 @@ func (m *sessionTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
 	m.s.State.RLock()
 	defer m.s.State.RUnlock()
 	return GuildMemberRanks(g)
+}
+
+func (m *sessionTempVCManager) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {
+	return m.s.ChannelMessageEditComplex(edit, discordgo.WithRetryOnRatelimit(false))
 }
 
 // TempVC holds the feature's runtime state. All maps are guarded by mu:

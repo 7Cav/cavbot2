@@ -97,8 +97,14 @@ func runVoiceUnlock(r utils.InteractionResponder, tv *TempVC, interaction *disco
 // runLockCommand defers an ephemeral reply first, so every outcome below is
 // an edit of that one reply and nothing the invoker sees is public. The
 // runtime logs the lock or unlock itself, naming the invoker, the channel
-// and the hub.
+// and the hub. A press on a lock notice button reaches the same handler
+// (ADR 0007) and goes to runLockNoticeComponent before anything below
+// reads it as a slash command.
 func runLockCommand(r utils.InteractionResponder, tv *TempVC, interaction *discordgo.InteractionCreate, c lockCommand) {
+	if interaction.Type == discordgo.InteractionMessageComponent {
+		runLockNoticeComponent(r, tv, interaction)
+		return
+	}
 	if err := deferEphemeral(r, interaction); err != nil {
 		utils.HandleError(r, interaction, fmt.Sprintf("❌ Failed to acknowledge: %v", err))
 		return
@@ -118,11 +124,16 @@ func runLockCommand(r utils.InteractionResponder, tv *TempVC, interaction *disco
 	if interaction.Member != nil {
 		roles = interaction.Member.Roles
 	}
-	if _, err := c.run(tv, discordID, roles); err != nil {
+	res, err := c.run(tv, discordID, roles)
+	if err != nil {
 		editEphemeral(r, interaction, lockRefusal(err, c, discordID))
 		return
 	}
-	editEphemeral(r, interaction, c.done)
+	reply := c.done
+	if res.NoticeFailed {
+		reply += lockNoticeNotPosted
+	}
+	editEphemeral(r, interaction, reply)
 	utils.Info("✨ Done!", "command", c.name)
 }
 

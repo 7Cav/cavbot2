@@ -58,3 +58,9 @@ say, a placeholder and a defer, the test should catch it.
 - Use `errors.As` with `*discordgo.RESTError` code 40060 to detect
   "interaction already acknowledged" (wording-proof rather than matching the
   error string).
+- A button on a public message (the lock notice, #351) answers a press with
+  the deferred edit pattern, which makes a new ephemeral message. Never use
+  `InteractionResponseUpdateMessage` or `utils.HandleError` there. Both
+  replace the public message for everyone. Skip `editEphemeral` too. Its
+  failure capture reads the interaction as a slash command's and panics on a
+  press.

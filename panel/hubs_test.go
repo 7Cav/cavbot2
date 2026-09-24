@@ -187,6 +187,12 @@ func (f *fakeDiscord) MemberRanks(g *discordgo.Guild) map[string]int {
 	return commands.GuildMemberRanks(g)
 }
 
+// ChannelMessageEditComplex answers every edit as done. The panel's tests
+// read no message the runtime posts or edits.
+func (f *fakeDiscord) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {
+	return &discordgo.Message{ID: edit.ID, ChannelID: edit.Channel}, nil
+}
+
 // setVoice puts a member in a channel in the fake cache, or disconnects
 // them for an empty channel.
 func (f *fakeDiscord) setVoice(userID, channelID string) {
