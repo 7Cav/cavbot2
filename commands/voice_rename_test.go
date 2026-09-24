@@ -72,8 +72,8 @@ func TestVoiceRenameOwnerRenamesOwnChannel(t *testing.T) {
 	if edits[0].channelID != "chan-1" || edits[0].name != "Alpha Briefing" {
 		t.Errorf("edit = %+v, want chan-1 renamed to Alpha Briefing", edits[0])
 	}
-	if !strings.Contains(edits[0].reason, "user-1") {
-		t.Errorf("audit reason %q does not name the invoker", edits[0].reason)
+	if !strings.Contains(edits[0].reason, "tester") || !strings.Contains(edits[0].reason, "user-1") {
+		t.Errorf("audit reason %q does not name the invoker by username and ID", edits[0].reason)
 	}
 	ephemeralReply(t, f)
 }
@@ -143,7 +143,7 @@ func TestRenameReportsNoVoiceChannelAsItsOwnError(t *testing.T) {
 	fake := newFakeTempVCManager()
 	tv := newSeededTempVC(t, fake)
 
-	_, err := tv.Rename("user-1", nil, "Alpha")
+	_, err := tv.Rename(Invoker{UserID: "user-1"}, "Alpha")
 
 	if !errors.Is(err, errNotInVoice) {
 		t.Errorf("Rename with no voice state = %v, want errNotInVoice", err)

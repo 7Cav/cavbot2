@@ -49,7 +49,7 @@ func VoiceRename(tv *TempVC) Command {
 // one reply and nothing the invoker sees is public.
 func runVoiceRename(r utils.InteractionResponder, tv *TempVC, interaction *discordgo.InteractionCreate) {
 	if err := deferEphemeral(r, interaction); err != nil {
-		utils.HandleError(r, interaction, fmt.Sprintf("❌ Failed to acknowledge: %v", err))
+		replyAckFailed(r, interaction, err)
 		return
 	}
 
@@ -76,7 +76,7 @@ func runVoiceRename(r utils.InteractionResponder, tv *TempVC, interaction *disco
 		return
 	}
 
-	result, err := tv.Rename(discordID, interactionRoles(interaction), name)
+	result, err := tv.Rename(Invoker{UserID: discordID, Username: username, Roles: interactionRoles(interaction)}, name)
 	if err != nil {
 		editEphemeral(r, interaction, renameRefusal(err, discordID))
 		return

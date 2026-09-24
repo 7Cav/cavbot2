@@ -186,7 +186,7 @@ func (t *TempVC) Lock(by Invoker) (lockResult, error) {
 	defer t.endAccessChange(channelID)
 
 	record := lockRecord{locker: by.UserID}
-	reason := fmt.Sprintf("locked by %s", by.UserID)
+	reason := fmt.Sprintf("locked by %s", by.auditName())
 	if err := t.sendLockEdit(channelID, hubID, "lock", reason, overwrites, func() {
 		t.locks[channelID] = record
 	}); err != nil {
@@ -254,7 +254,7 @@ func (t *TempVC) unlock(by Invoker, resolve func() (string, error)) (lockResult,
 	defer t.endAccessChange(channelID)
 
 	var noticeID string
-	reason := fmt.Sprintf("unlocked by %s", by.UserID)
+	reason := fmt.Sprintf("unlocked by %s", by.auditName())
 	if err := t.sendLockEdit(channelID, hubID, "unlock", reason, overwrites, func() {
 		noticeID = t.locks[channelID].noticeMessageID
 		delete(t.locks, channelID)

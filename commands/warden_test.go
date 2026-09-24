@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -714,5 +715,46 @@ func TestFindGuildMember_WhitespacePaddedMaxLengthStillSearches(t *testing.T) {
 
 	if gm.countCalls("GuildMembersSearch") != 1 {
 		t.Fatalf("trimmed 100-char query must reach search; got calls %v", gm.Calls())
+	}
+}
+
+// When Discord refuses a slash command's deferred acknowledgement, the
+// member still gets an answer, and it carries none of Discord's response
+// body. Every command that defers answers the same way, and stops there.
+func TestRefusedAcknowledgementKeepsDiscordBodyOutOfTheReply(t *testing.T) {
+	bulkAddInternal := fakeAppCommandInteraction(stringOption("unit", wardenInternalUnits[0].value))
+	bulkAddInternal.GuildID = "guild-1"
+	cases := []struct {
+		name string
+		run  func(f *fakeResponder)
+	}{
+		{"/voice-lock", func(f *fakeResponder) { runVoiceLock(f, nil, fakeAppCommandInteraction()) }},
+		{"/voice-unlock", func(f *fakeResponder) { runVoiceUnlock(f, nil, fakeAppCommandInteraction()) }},
+		{"/voice-rename", func(f *fakeResponder) { runVoiceRename(f, nil, renameInteraction("user-1", nil, "Alpha")) }},
+		{"/warden add", func(f *fakeResponder) {
+			handleWardenAdd(f, nil, fakeAppCommandInteraction(), "guild-1", "someone", "internal")
+		}},
+		{"/warden remove", func(f *fakeResponder) {
+			handleWardenRemove(f, nil, fakeAppCommandInteraction(), "guild-1", "someone", "internal")
+		}},
+		{"/warden-bulkadd-internal", func(f *fakeResponder) { runWardenBulkAddInternal(f, nil, bulkAddInternal) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeResponder{RespondErrs: []error{restError(http.StatusNotFound, 10062, rawBodyMarker)}}
+			tc.run(f)
+
+			calls := f.Calls()
+			if len(calls) != 2 || calls[1].Method != "Respond" || calls[1].Response == nil || calls[1].Response.Data == nil {
+				t.Fatalf("responder calls = %+v, want the refused deferral then one reply", calls)
+			}
+			reply := calls[1].Response.Data.Content
+			if reply == "" {
+				t.Error("the reply is empty")
+			}
+			if strings.Contains(reply, rawBodyMarker) {
+				t.Errorf("reply %q carries Discord's response body", reply)
+			}
+		})
 	}
 }

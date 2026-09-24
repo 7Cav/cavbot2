@@ -87,9 +87,9 @@ type renameResult struct {
 // invoker's behalf. No channel argument: the target is the invoker's current
 // channel from the runtime's own occupancy tracking. The edit call carries an
 // audit log reason naming the invoker and no retry on rate limit.
-func (t *TempVC) Rename(userID string, memberRoles []string, name string) (renameResult, error) {
+func (t *TempVC) Rename(by Invoker, name string) (renameResult, error) {
 	t.mu.Lock()
-	channelID, err := t.invokerChannelLocked(Invoker{UserID: userID, Roles: memberRoles})
+	channelID, err := t.invokerChannelLocked(by)
 	if err != nil {
 		t.mu.Unlock()
 		return renameResult{}, err
@@ -116,7 +116,7 @@ func (t *TempVC) Rename(userID string, memberRoles []string, name string) (renam
 	if ch, err := t.mgr.Channel(channelID); err == nil {
 		before = ch.Name
 	}
-	reason := fmt.Sprintf("renamed by %s", userID)
+	reason := fmt.Sprintf("renamed by %s", by.auditName())
 	if _, err := t.mgr.ChannelEdit(channelID, &discordgo.ChannelEdit{Name: name}, reason); err != nil {
 		return renameResult{}, t.renameFailed(channelID, now, err)
 	}
@@ -179,10 +179,22 @@ func (t *TempVC) channelChangeFailed(channelID, action string, captured map[int6
 
 // Invoker is the member a voice command or a lock notice press acts for.
 // Roles are the roles the interaction carries for them, which every
-// authority check reads.
+// authority check reads. Username is for audit log reasons alone.
 type Invoker struct {
-	UserID string
-	Roles  []string
+	UserID   string
+	Username string
+	Roles    []string
+}
+
+// auditName names the invoker in an audit log reason: the username an
+// admin can read, then the ID, which stays true after a rename. Discord
+// shows the bot as the actor, so the reason is the only place the member
+// appears.
+func (i Invoker) auditName() string {
+	if i.Username == "" {
+		return i.UserID
+	}
+	return i.Username + " (" + i.UserID + ")"
 }
 
 // invokerChannelLocked resolves the spawned channel a voice command acts on:

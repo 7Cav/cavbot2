@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/7cav/cavbot2/commands"
 	"github.com/7cav/cavbot2/store"
 	"github.com/bwmarrin/discordgo"
 	"golang.org/x/net/html"
@@ -234,7 +235,7 @@ func TestModeratorsSaveReachesTheRuntimeAtOnce(t *testing.T) {
 	w.joinAs("user-owner", "spawn-1", testRankSGT)
 	w.joinAs("user-mod", "spawn-1", "role-hq")
 
-	if _, err := w.runtime.Rename("user-mod", []string{"role-hq"}, "Alpha"); err == nil {
+	if _, err := w.runtime.Rename(commands.Invoker{UserID: "user-mod", Roles: []string{"role-hq"}}, "Alpha"); err == nil {
 		t.Fatal("a rename by a holder of an unsaved role passed, want a refusal")
 	}
 	if edits := w.discord.edits(); len(edits) != 0 {
@@ -243,7 +244,7 @@ func TestModeratorsSaveReachesTheRuntimeAtOnce(t *testing.T) {
 
 	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm("role-hq")), "/")
 
-	if _, err := w.runtime.Rename("user-mod", []string{"role-hq"}, "Alpha"); err != nil {
+	if _, err := w.runtime.Rename(commands.Invoker{UserID: "user-mod", Roles: []string{"role-hq"}}, "Alpha"); err != nil {
 		t.Fatalf("a rename by a holder of the saved role was refused: %v", err)
 	}
 	edits := w.discord.edits()

@@ -43,13 +43,13 @@ var (
 		action:  voiceAction{command: voiceLockCommandName, verb: "lock", past: "locked"},
 		logName: "VoiceLock",
 		run:     (*TempVC).Lock,
-		done:    "🔒 Locked. The people inside can leave and come back, and the hub's moderators can join. Nobody else can.",
+		done:    "🔒 Locked. The people inside can leave and come back.",
 	}
 	voiceUnlock = lockCommand{
 		action:  voiceAction{command: voiceUnlockCommandName, verb: "unlock", past: "unlocked"},
 		logName: "VoiceUnlock",
 		run:     (*TempVC).Unlock,
-		done:    "🔓 Unlocked. The channel has its hub's permissions again.",
+		done:    "🔓 Unlocked.",
 	}
 )
 
@@ -103,7 +103,7 @@ func runLockCommand(r utils.InteractionResponder, tv *TempVC, interaction *disco
 		return
 	}
 	if err := deferEphemeral(r, interaction); err != nil {
-		utils.HandleError(r, interaction, fmt.Sprintf("❌ Failed to acknowledge: %v", err))
+		replyAckFailed(r, interaction, err)
 		return
 	}
 
@@ -117,7 +117,7 @@ func runLockCommand(r utils.InteractionResponder, tv *TempVC, interaction *disco
 		return
 	}
 
-	res, err := c.run(tv, Invoker{UserID: discordID, Roles: interactionRoles(interaction)})
+	res, err := c.run(tv, Invoker{UserID: discordID, Username: username, Roles: interactionRoles(interaction)})
 	if err != nil {
 		editEphemeral(r, interaction, lockRefusal(err, c, discordID))
 		return
@@ -149,7 +149,7 @@ func lockRefusal(err error, c lockCommand, discordID string) string {
 	case errors.Is(err, errNotLocked):
 		return notLockedRefusal
 	case errors.Is(err, errSourceUnreadable):
-		return "❌ Couldn't unlock the channel: its hub's permissions can't be read, so it stays locked until everyone leaves."
+		return "❌ Couldn't unlock the channel. Its hub was removed or is broken, so the bot can't restore its permissions."
 	case errors.Is(err, errChannelNotCached):
 		// The cache drops a deleted channel before the runtime hears of the
 		// delete, so a tracked channel it lacks is one on its way out.

@@ -146,7 +146,7 @@ func (t *TempVC) letIn(channelID string, by Invoker, picks []letInPick) (letInRe
 	t.beginAccessChangeLocked(channelID)
 	t.mu.Unlock()
 
-	res, err := t.letInEach(channelID, picks, fmt.Sprintf("let in by %s", by.UserID))
+	res, err := t.letInEach(channelID, picks, fmt.Sprintf("let in by %s", by.auditName()))
 	if err != nil {
 		return letInResult{}, err
 	}

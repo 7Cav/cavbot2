@@ -535,11 +535,12 @@ func TestVoiceLockAndUnlockEditsNameTheInvoker(t *testing.T) {
 	if len(edits) != 2 {
 		t.Fatalf("edits = %+v, want the lock and the unlock", edits)
 	}
-	if !strings.Contains(edits[0].reason, permMOD.id) {
-		t.Errorf("lock audit reason %q does not name %s", edits[0].reason, permMOD.id)
+	// lockInteraction gives every member the username tester.
+	if !strings.Contains(edits[0].reason, "tester") || !strings.Contains(edits[0].reason, permMOD.id) {
+		t.Errorf("lock audit reason %q does not name tester and %s", edits[0].reason, permMOD.id)
 	}
-	if !strings.Contains(edits[1].reason, owner.id) {
-		t.Errorf("unlock audit reason %q does not name %s", edits[1].reason, owner.id)
+	if !strings.Contains(edits[1].reason, "tester") || !strings.Contains(edits[1].reason, owner.id) {
+		t.Errorf("unlock audit reason %q does not name tester and %s", edits[1].reason, owner.id)
 	}
 }
 

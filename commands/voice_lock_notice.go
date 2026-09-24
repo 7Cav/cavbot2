@@ -22,7 +22,7 @@ import (
 
 // lockNoticeNotPosted is added to the invoker's /voice-lock reply when the
 // lock stands but its notice did not post.
-const lockNoticeNotPosted = " The lock notice couldn't be posted in the channel's chat, so unlock it with /" + voiceUnlockCommandName + "."
+const lockNoticeNotPosted = " The lock notice couldn't be posted in the channel's chat."
 
 // runLockNoticeComponent answers a press on a lock notice button, on the
 // channel its CustomID names.
@@ -45,7 +45,7 @@ func runLockNoticeComponent(r utils.InteractionResponder, tv *TempVC, interactio
 		return
 	}
 
-	by := Invoker{UserID: discordID, Roles: interactionRoles(interaction)}
+	by := Invoker{UserID: discordID, Username: username, Roles: interactionRoles(interaction)}
 	action, channelID, ok := parseLockNoticeCustomID(customID)
 	switch {
 	case ok && action == lockNoticeUnlock:
@@ -62,10 +62,10 @@ func runLockNoticeComponent(r utils.InteractionResponder, tv *TempVC, interactio
 		picker, err := letInPicker(channelID)
 		if err != nil {
 			utils.Warn("Let someone in picker not built", "channel_id", channelID, "discord_id", discordID, "error", err)
-			editNoticeReply(r, interaction, "❌ Couldn't open the member picker for this channel. Ask a moderator to drag the member in.")
+			editNoticeReply(r, interaction, "❌ Couldn't open the member picker for this channel. A moderator can drag members in instead.")
 			return
 		}
-		content := fmt.Sprintf("Pick up to %d members to let into <#%s>. Anyone who can't see the channel is skipped.", letInMaxPicks, channelID)
+		content := fmt.Sprintf("Pick up to %d members to let into <#%s>.", letInMaxPicks, channelID)
 		sendNoticeReply(r, interaction, &discordgo.WebhookEdit{Content: &content, Components: &picker})
 	case ok && action == lockNoticeLetInPick:
 		res, err := tv.letIn(channelID, by, letInPicks(interaction.MessageComponentData()))
@@ -83,19 +83,17 @@ func runLockNoticeComponent(r utils.InteractionResponder, tv *TempVC, interactio
 	utils.Info("✨ Done!", "command", voiceLockCommandName)
 }
 
-// lockNoticeRefusal renders a refused press as the presser's reply. A
-// presser outside the buttons' rule is pointed at /voice-unlock, which an
-// owner may run. Every other refusal reads as /voice-unlock's.
+// lockNoticeRefusal renders a refused press as the presser's reply. Every
+// refusal but the buttons' own rule reads as /voice-unlock's.
 func lockNoticeRefusal(err error, discordID string) string {
 	if errors.Is(err, errNotLockerOrModerator) {
-		return fmt.Sprintf("❌ Only whoever locked this channel or a moderator can use this button. The channel's owner can unlock it with /%s.", voiceUnlockCommandName)
+		return "❌ Only whoever locked this channel or a moderator can use this button."
 	}
 	return lockRefusal(err, voiceUnlock, discordID)
 }
 
 // letInRefusal renders a let-in refused before it reached anyone, at the
-// button or at the picker. The not-locker refusal has no /voice-unlock
-// hint: the command unlocks and lets nobody in.
+// button or at the picker.
 func letInRefusal(err error) string {
 	switch {
 	case errors.Is(err, errNotLockerOrModerator):

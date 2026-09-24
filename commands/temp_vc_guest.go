@@ -31,7 +31,7 @@ import (
 // guest add for a join and for the restart sweep.
 const (
 	guestReasonJoined = "joined while locked"
-	guestReasonSwept  = "inside when the restart sweep ran"
+	guestReasonSwept  = "inside when the bot reconnected"
 )
 
 // joinGuestsLocked decides what members joining a spawned channel mean for

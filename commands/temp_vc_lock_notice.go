@@ -101,8 +101,7 @@ func lockNoticeComponents(channelID string) ([]discordgo.MessageComponent, error
 
 // lockNoticeLine is the lock notice's content while the channel is locked.
 func lockNoticeLine(locker string) string {
-	return fmt.Sprintf("🔒 <@%s> locked this channel. The people inside can leave and come back, and the hub's moderators can join. Nobody else can. Let someone in or unlock it with the buttons below, or unlock it with /%s.",
-		locker, voiceUnlockCommandName)
+	return fmt.Sprintf("🔒 <@%s> locked this channel.", locker)
 }
 
 // lockNoticeUnlockedLine is the lock notice's content once the channel is
