@@ -35,6 +35,11 @@ type fakeTempVCManager struct {
 
 	deleteCalls int
 
+	// messageEdits is every message edit the fake let through, as sent.
+	// messageEditErr, when set, is what every message edit returns instead.
+	messageEdits   []discordgo.MessageEdit
+	messageEditErr error
+
 	channelErr error
 	createErr  error
 	deleteErr  error
@@ -69,6 +74,35 @@ type fakeTempVCManager struct {
 	// guild read as absent from the cache. Any other guild is always absent.
 	voice        map[string]string
 	guildMissing bool
+
+	// overwrites stands in for Discord's own record of the overwrite list on
+	// each channel the bot created or edited, kept apart from the cache so
+	// a created channel stays out of the cache's channel set as before.
+	// overwritesOf reads it.
+	overwrites map[string][]*discordgo.PermissionOverwrite
+	// cached is nil while the fake cache keeps up with Discord at once.
+	// lagCacheBehindEdits fills it with the cache's own copy of each list,
+	// which Channel reads from then on: an edit or an overwrite set changes
+	// Discord's list and leaves the cache's as it was, as the real cache
+	// waits for Discord's CHANNEL_UPDATE. ChannelOverwritesReplace writes
+	// both, as the production adapter does.
+	cached map[string][]*discordgo.PermissionOverwrite
+
+	// permissionSets records every overwrite set the fake let through, and
+	// permissionSetErr, when set, is what every set returns.
+	permissionSets   []fakePermissionSet
+	permissionSetErr error
+
+	// canSeeErr, when set, is what every visibility check returns.
+	canSeeErr error
+}
+
+// fakePermissionSet is one overwrite set the fake let through: the channel,
+// the overwrite as sent, and the audit log reason.
+type fakePermissionSet struct {
+	channelID string
+	overwrite discordgo.PermissionOverwrite
+	reason    string
 }
 
 type fakeCreate struct {
@@ -81,10 +115,14 @@ type fakeDelete struct {
 	reason    string
 }
 
+// fakeEdit is one channel edit the fake let through. overwrites is the
+// full list the edit carried, copied at the call, empty when it carried
+// none.
 type fakeEdit struct {
-	channelID string
-	name      string
-	reason    string
+	channelID  string
+	name       string
+	overwrites []*discordgo.PermissionOverwrite
+	reason     string
 }
 
 type fakeMove struct {
@@ -92,7 +130,10 @@ type fakeMove struct {
 	channelID *string
 }
 
+// fakeMessage is one message the fake let through: the ID the fake gave
+// it, the channel, and what was sent.
 type fakeMessage struct {
+	id        string
 	channelID string
 	data      *discordgo.MessageSend
 }
@@ -112,9 +153,30 @@ func newFakeTempVCManager() *fakeTempVCManager {
 		},
 		nextChannel: &discordgo.Channel{ID: "new-chan"},
 		voice:       map[string]string{},
+		overwrites:  map[string][]*discordgo.PermissionOverwrite{},
 	}
 }
 
+// cloneOverwrites copies an overwrite list entry by entry, so a record
+// keeps what a call carried whatever the caller or the cache does to it
+// afterwards.
+func cloneOverwrites(list []*discordgo.PermissionOverwrite) []*discordgo.PermissionOverwrite {
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]*discordgo.PermissionOverwrite, len(list))
+	for i, o := range list {
+		c := *o
+		out[i] = &c
+	}
+	return out
+}
+
+// Channel answers from the fake cache. A channel the bot created or edited
+// reads with the overwrite list Discord holds for it now, as the cache does
+// once Discord's CHANNEL_CREATE or CHANNEL_UPDATE lands, which the fake
+// takes as at once until lagCacheBehindEdits. A created channel still stays
+// out of the channel set VoiceStates reports.
 func (f *fakeTempVCManager) Channel(channelID string) (*discordgo.Channel, error) {
 	if f.channelHook != nil {
 		f.channelHook()
@@ -124,11 +186,24 @@ func (f *fakeTempVCManager) Channel(channelID string) (*discordgo.Channel, error
 	if f.channelErr != nil {
 		return nil, f.channelErr
 	}
-	ch, ok := f.channels[channelID]
-	if !ok {
+	ch, cached := f.channels[channelID]
+	list, recorded := f.overwrites[channelID]
+	if lagging, ok := f.cached[channelID]; ok {
+		list, recorded = lagging, true
+	}
+	switch {
+	case cached && recorded:
+		c := *ch
+		c.PermissionOverwrites = cloneOverwrites(list)
+		return &c, nil
+	case cached:
+		return ch, nil
+	case recorded:
+		return &discordgo.Channel{ID: channelID, GuildID: testTempVCGuild, Type: discordgo.ChannelTypeGuildVoice,
+			PermissionOverwrites: cloneOverwrites(list)}, nil
+	default:
 		return nil, discordgo.ErrStateNotFound
 	}
-	return ch, nil
 }
 
 func (f *fakeTempVCManager) GuildChannelCreateComplex(_ string, data discordgo.GuildChannelCreateData, reason string) (*discordgo.Channel, error) {
@@ -149,6 +224,18 @@ func (f *fakeTempVCManager) GuildChannelCreateComplex(_ string, data discordgo.G
 		ch.ID = fmt.Sprintf("chan-%d", f.createSeq)
 	}
 	ch.Name = data.Name
+	// Discord gives the new channel the payload's overwrites. A payload
+	// with none (omitempty drops an empty list from the wire) is synced to
+	// its category: the category's list as the cache holds it, or nothing
+	// when the cache holds no category.
+	switch parent, ok := f.channels[data.ParentID]; {
+	case len(data.PermissionOverwrites) > 0:
+		f.overwrites[ch.ID] = cloneOverwrites(data.PermissionOverwrites)
+	case data.ParentID != "" && ok:
+		f.overwrites[ch.ID] = cloneOverwrites(parent.PermissionOverwrites)
+	default:
+		f.overwrites[ch.ID] = nil
+	}
 	f.mu.Unlock()
 	// The hook runs outside the fake's lock, as moveHook does, so it can
 	// feed a gateway event through the fake.
@@ -175,8 +262,46 @@ func (f *fakeTempVCManager) ChannelEdit(channelID string, data *discordgo.Channe
 	if f.editErr != nil {
 		return nil, f.editErr
 	}
-	f.edits = append(f.edits, fakeEdit{channelID: channelID, name: data.Name, reason: reason})
+	sent := cloneOverwrites(data.PermissionOverwrites)
+	f.edits = append(f.edits, fakeEdit{channelID: channelID, name: data.Name, overwrites: sent, reason: reason})
+	// An edit that carries overwrites replaces the channel's whole list. One
+	// that carries none leaves it, since omitempty drops an empty list from
+	// the wire.
+	if len(sent) > 0 {
+		f.overwrites[channelID] = sent
+	}
 	return &discordgo.Channel{ID: channelID, Name: data.Name}, nil
+}
+
+// ChannelOverwritesReplace records the edit and replaces the channel's
+// whole list with the one sent, an empty one included, or returns editErr
+// and changes nothing. As the production adapter does, it puts the new list
+// in the fake cache at once, lagging or not.
+func (f *fakeTempVCManager) ChannelOverwritesReplace(channelID string, overwrites []*discordgo.PermissionOverwrite, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.editErr != nil {
+		return f.editErr
+	}
+	sent := cloneOverwrites(overwrites)
+	f.edits = append(f.edits, fakeEdit{channelID: channelID, overwrites: sent, reason: reason})
+	f.overwrites[channelID] = sent
+	if f.cached != nil {
+		f.cached[channelID] = cloneOverwrites(sent)
+	}
+	return nil
+}
+
+// lagCacheBehindEdits makes the fake cache stop following Discord for every
+// channel the bot has created or edited so far: from now on it keeps each
+// list as it is now, and only ChannelOverwritesReplace moves it on.
+func (f *fakeTempVCManager) lagCacheBehindEdits() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cached = make(map[string][]*discordgo.PermissionOverwrite, len(f.overwrites))
+	for id, list := range f.overwrites {
+		f.cached[id] = cloneOverwrites(list)
+	}
 }
 
 func (f *fakeTempVCManager) GuildMemberMove(_ string, userID string, channelID *string) error {
@@ -198,8 +323,9 @@ func (f *fakeTempVCManager) ChannelMessageSendComplex(channelID string, data *di
 	if f.messageErr != nil {
 		return nil, f.messageErr
 	}
-	f.messages = append(f.messages, fakeMessage{channelID: channelID, data: data})
-	return &discordgo.Message{ChannelID: channelID, Content: data.Content}, nil
+	id := fmt.Sprintf("msg-%d", len(f.messages)+1)
+	f.messages = append(f.messages, fakeMessage{id: id, channelID: channelID, data: data})
+	return &discordgo.Message{ID: id, ChannelID: channelID, Content: data.Content}, nil
 }
 
 func (f *fakeTempVCManager) GuildMember(_, _ string) (*discordgo.Member, error) {
@@ -259,6 +385,67 @@ func (f *fakeTempVCManager) VoiceStates(guildID string) VoiceSnapshot {
 // no lock: nothing else writes into a test's payload.
 func (f *fakeTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
 	return GuildMemberRanks(g)
+}
+
+// ChannelPermissionSet records the call and, as Discord does, replaces the
+// target's overwrite on the channel whole, or adds it when the channel has
+// none for the target. A channel the bot never created or edited starts
+// from the list the fake cache holds for it.
+func (f *fakeTempVCManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.permissionSetErr != nil {
+		return f.permissionSetErr
+	}
+	set := discordgo.PermissionOverwrite{ID: targetID, Type: targetType, Allow: allow, Deny: deny}
+	f.permissionSets = append(f.permissionSets, fakePermissionSet{channelID: channelID, overwrite: set, reason: reason})
+	list, recorded := f.overwrites[channelID]
+	if ch, cached := f.channels[channelID]; !recorded && cached {
+		list = cloneOverwrites(ch.PermissionOverwrites)
+	}
+	kept := make([]*discordgo.PermissionOverwrite, 0, len(list)+1)
+	for _, o := range list {
+		if o.ID != targetID {
+			kept = append(kept, o)
+		}
+	}
+	f.overwrites[channelID] = append(kept, &set)
+	return nil
+}
+
+// ChannelMessageEditComplex records the edit as sent, or returns
+// messageEditErr and records nothing.
+func (f *fakeTempVCManager) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.messageEditErr != nil {
+		return nil, f.messageEditErr
+	}
+	f.messageEdits = append(f.messageEdits, *edit)
+	return &discordgo.Message{ID: edit.ID, ChannelID: edit.Channel}, nil
+}
+
+// CanSeeChannel judges the way the production adapter does: discordgo's
+// permission calculation over the channel's list as overwritesOf reads it,
+// the permission fixture's guild roles, and the roles given. A channel the
+// fake has never seen is ErrStateNotFound, as the state cache answers, and
+// canSeeErr, when set, is what every check returns.
+func (f *fakeTempVCManager) CanSeeChannel(channelID, userID string, roles []string) (bool, error) {
+	f.mu.Lock()
+	list, ok := f.currentOverwritesLocked(channelID)
+	err := f.canSeeErr
+	f.mu.Unlock()
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, discordgo.ErrStateNotFound
+	}
+	perms, err := fixturePermissions(list, userID, roles)
+	if err != nil {
+		return false, err
+	}
+	return perms&discordgo.PermissionViewChannel != 0, nil
 }
 
 // dropChannel removes a channel from the fake cache, the CHANNEL_DELETE
@@ -362,6 +549,35 @@ func (f *fakeTempVCManager) recordedEdits() []fakeEdit {
 	return out
 }
 
+// overwritesOf returns a channel's overwrite list as Discord holds it now:
+// for a channel the bot created or edited, what the create gave it and every
+// edit since; for any other channel, what the fake cache holds. A copy, so
+// the caller can keep it. A channel the fake has never seen fails the test,
+// since an empty list would read as the guild's own permissions. canJoin
+// reads a channel through it.
+func (f *fakeTempVCManager) overwritesOf(t *testing.T, channelID string) []*discordgo.PermissionOverwrite {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	list, ok := f.currentOverwritesLocked(channelID)
+	if !ok {
+		t.Fatalf("overwritesOf(%s): the fake has never seen that channel", channelID)
+	}
+	return list
+}
+
+// currentOverwritesLocked is overwritesOf's read, false for a channel the
+// fake has never seen. Caller holds f.mu.
+func (f *fakeTempVCManager) currentOverwritesLocked(channelID string) ([]*discordgo.PermissionOverwrite, bool) {
+	if list, ok := f.overwrites[channelID]; ok {
+		return cloneOverwrites(list), true
+	}
+	if ch, ok := f.channels[channelID]; ok {
+		return cloneOverwrites(ch.PermissionOverwrites), true
+	}
+	return nil, false
+}
+
 func (f *fakeTempVCManager) recordedCreates() []fakeCreate {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -392,6 +608,14 @@ func (f *fakeTempVCManager) recordedMessages() []fakeMessage {
 	defer f.mu.Unlock()
 	out := make([]fakeMessage, len(f.messages))
 	copy(out, f.messages)
+	return out
+}
+
+func (f *fakeTempVCManager) recordedMessageEdits() []discordgo.MessageEdit {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]discordgo.MessageEdit, len(f.messageEdits))
+	copy(out, f.messageEdits)
 	return out
 }
 

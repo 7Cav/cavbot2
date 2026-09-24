@@ -112,16 +112,32 @@ func (f *Fake) DeleteHub(_ context.Context, id int64) error {
 	return nil
 }
 
-// UpsertSpawnedChannel implements Store.
+// UpsertSpawnedChannel implements Store. The caller's lock is ignored: an
+// existing row keeps its own and a new row starts unlocked.
 func (f *Fake) UpsertSpawnedChannel(_ context.Context, sc SpawnedChannel) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if existing, ok := f.spawned[sc.ChannelID]; ok {
 		sc.CreatedAt = existing.CreatedAt
+		sc.Lock = existing.Lock
 	} else {
 		sc.CreatedAt = time.Now()
+		sc.Lock = ChannelLock{}
 	}
 	f.spawned[sc.ChannelID] = sc
+	return nil
+}
+
+// SetSpawnedChannelLock implements Store.
+func (f *Fake) SetSpawnedChannelLock(_ context.Context, channelID string, lock ChannelLock) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	sc, ok := f.spawned[channelID]
+	if !ok {
+		return ErrNotFound
+	}
+	sc.Lock = lock
+	f.spawned[channelID] = sc
 	return nil
 }
 

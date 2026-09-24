@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/7cav/cavbot2/commands"
 	"github.com/7cav/cavbot2/store"
 	"golang.org/x/net/html"
 )
@@ -289,7 +290,7 @@ func TestUnavailableRoleIsKeptOrRemovedOnlyByASave(t *testing.T) {
 			w.joinAs("user-mod", "spawn-1", tc.roleID)
 			managed := tc.roleID == "role-bot"
 			if managed && !tc.keep {
-				if _, err := w.runtime.Rename("user-mod", []string{tc.roleID}, "Alpha"); err != nil {
+				if _, err := w.runtime.Rename(commands.Invoker{UserID: "user-mod", Roles: []string{tc.roleID}}, "Alpha"); err != nil {
 					t.Fatalf("a rename by a holder of the stored role was refused before the save: %v", err)
 				}
 			}
@@ -306,7 +307,7 @@ func TestUnavailableRoleIsKeptOrRemovedOnlyByASave(t *testing.T) {
 			if got := storedRolesOn(t, w, tc.form); !sameSet(got, posted) {
 				t.Errorf("stored roles = %v, want %v", got, posted)
 			}
-			_, renameErr := w.runtime.Rename("user-mod", []string{tc.roleID}, "Bravo")
+			_, renameErr := w.runtime.Rename(commands.Invoker{UserID: "user-mod", Roles: []string{tc.roleID}}, "Bravo")
 			if tc.keep {
 				if managed && renameErr != nil {
 					t.Errorf("a rename by a holder of the kept role was refused after the save: %v", renameErr)

@@ -2,7 +2,9 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"slices"
 	"sync"
 	"time"
@@ -23,20 +25,22 @@ import (
 // The spawned channel is named "<base string> - n", numbered per hub from 1
 // with freed numbers reused, and carries the hub's user limit and bitrate.
 // Permission source "category" sends no overwrites, so Discord copies the
-// category's; "hub_channel" copies the hub channel's own overwrite list. The
-// bot authors no overwrite of its own. Ownership is a bot-internal marker
-// that grants no Discord permission.
+// category's; "hub_channel" copies the hub channel's own overwrite list.
+// permissionSourceOverwrites is the one reader of either list. The bot
+// writes overwrites of its own only to lock a channel, and an unlock puts
+// the source back (temp_vc_lock.go). Ownership is a bot-internal marker that
+// grants no Discord permission.
 //
 // One row per spawned channel lives in the store: channel ID, hub, number,
-// owner. It is written at create and at every handover and deleted with the
-// channel. Each create and each handover also posts the ownership notice in
-// the spawned channel's text chat, naming the owner or saying there is none,
-// and pinging nobody.
+// owner and lock. It is written at create and at every handover, its lock
+// at every lock and unlock, and it is deleted with the channel. Each create
+// and each handover also posts the ownership notice in the spawned channel's
+// text chat, naming the owner or saying there is none, and pinging nobody.
 //
-// A spawned channel is deleted the moment its last occupant leaves. The
-// restart sweep on GUILD_CREATE reads the rows, restores each channel's owner
-// from its row or elects one by the handover rule, and touches no channel it
-// holds no row for.
+// A spawned channel is deleted the moment its last occupant leaves, which
+// ends any lock on it. The restart sweep on GUILD_CREATE reads the rows,
+// restores each channel's owner from its row or elects one by the handover
+// rule, restores its lock, and touches no channel it holds no row for.
 //
 // The sweep and the voice handlers run on their own goroutines, and the
 // sweep's list call is made off-lock, so a voice event can be handled
@@ -90,8 +94,12 @@ const discordChannelNameLimit = 100
 // TempVCOverwriteCeiling is the most the bot may ever write into a channel
 // permission overwrite: Manage Channels, Move Members, Mute Members, Deafen
 // Members, Connect, View Channel. It is a constant, never a panel setting.
-// Today the bot authors no overwrite at all, so it bounds nothing yet; it is
-// here so the limit is in code before anything reaches for it.
+// The bits the bot writes of its own accord are lockBits (temp_vc_lock.go),
+// which a lock, a guest add and a let-in set or clear, and the build fails
+// if lockBits ever holds a bit outside this ceiling. The bits an overwrite
+// already carried, and the permission source an unlock copies back, are
+// Discord's and pass as they are. Raising it is a decision of its own
+// (spec #347, out of scope).
 const TempVCOverwriteCeiling = discordgo.PermissionManageChannels |
 	discordgo.PermissionVoiceMoveMembers |
 	discordgo.PermissionVoiceMuteMembers |
@@ -268,8 +276,17 @@ type TempVCManager interface {
 	// retry on rate limit.
 	ChannelDelete(channelID, auditReason string) (*discordgo.Channel, error)
 	// ChannelEdit edits a channel with the given audit-log reason and no retry
-	// on rate limit. /voice-rename sends the name alone.
+	// on rate limit. /voice-rename sends the name alone. An empty overwrite
+	// list is dropped from the request (omitempty), so overwrites go through
+	// ChannelOverwritesReplace.
 	ChannelEdit(channelID string, data *discordgo.ChannelEdit, auditReason string) (*discordgo.Channel, error)
+	// ChannelOverwritesReplace replaces a channel's whole overwrite list in
+	// one edit, with the given audit-log reason and no retry on rate limit.
+	// An empty list reaches Discord as an empty list and clears every
+	// overwrite. Once Discord accepts the edit, Channel reads the new list at
+	// once, without waiting for Discord's CHANNEL_UPDATE. A lock and an
+	// unlock send their edits through it.
+	ChannelOverwritesReplace(channelID string, overwrites []*discordgo.PermissionOverwrite, auditReason string) error
 	// GuildMemberMove moves a member between voice channels with no retry on
 	// rate limit.
 	GuildMemberMove(guildID, userID string, channelID *string) error
@@ -297,6 +314,28 @@ type TempVCManager interface {
 	// reads under the state's lock, because discordgo shares the payload's
 	// slices with its cache (#335).
 	MemberRanks(g *discordgo.Guild) map[string]int
+	// ChannelPermissionSet sets one permission overwrite on a channel, the
+	// target's whole overwrite, with the given audit-log reason. It is the
+	// one call that retries on a 429, after the wait Discord gives: a guest
+	// add has no other retry, and a let-in of 25 members would otherwise
+	// drop the rest on a bucket that resets in seconds. Discord replaces the
+	// target's existing overwrite, so the caller sends every bit it means to
+	// keep. A guest add sends one member overwrite.
+	ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error
+	// ChannelMessageEditComplex edits a message the bot posted, with no
+	// retry on rate limit. The edit names its channel and message, and
+	// carries the new content and components: a pointer to an empty list
+	// removes every component, and a nil one leaves them. The unlock edits
+	// the lock notice through it.
+	ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error)
+	// CanSeeChannel reports whether a member holding the given roles sees a
+	// channel: View Channel, as discordgo's state permission calculation
+	// gives it over the cached guild roles and channel overwrites. The roles
+	// come from the caller, since the cache holds no offline member of a
+	// large guild; a user select carries each picked member's. A channel or
+	// guild missing from the cache is an error. Let someone in checks it
+	// before a guest add.
+	CanSeeChannel(channelID, userID string, roles []string) (bool, error)
 }
 
 // VoiceSnapshot is one copy of a guild's voice states from discordgo's state
@@ -343,10 +382,13 @@ func (s VoiceSnapshot) occupied(channelID string) bool {
 }
 
 // sessionTempVCManager adapts *discordgo.Session to TempVCManager. Each
-// method is a one-line pass-through; keeping it trivial means the
-// (hard-to-unit-test) wrapper adds negligible uncovered surface. Every REST
-// call passes WithRetryOnRatelimit(false): a 429 is a failure the caller
-// handles, never a sleeping gateway handler.
+// method is a one-line pass-through, which keeps the hard-to-unit-test
+// wrapper's uncovered code small. ChannelOverwritesReplace, VoiceStates and
+// CanSeeChannel do more, and their tests drive a real session. Every REST
+// call but ChannelPermissionSet passes WithRetryOnRatelimit(false): a 429
+// is a failure the caller handles, never a sleeping gateway handler. A
+// guest add's overwrite set waits out a 429 and retries instead, and
+// TempVCManager says why.
 type sessionTempVCManager struct {
 	s *discordgo.Session
 }
@@ -373,6 +415,44 @@ func (m *sessionTempVCManager) ChannelDelete(channelID, auditReason string) (*di
 func (m *sessionTempVCManager) ChannelEdit(channelID string, data *discordgo.ChannelEdit, auditReason string) (*discordgo.Channel, error) {
 	return m.s.ChannelEdit(channelID, data,
 		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+}
+
+// ChannelOverwritesReplace sends its own PATCH, since ChannelEdit's
+// PermissionOverwrites is omitempty and would drop an empty list, the one
+// an unlock to a source with no overwrites sends. The body always carries
+// the list. The channel Discord returns then goes into the state cache,
+// which would otherwise hold the old list until the CHANNEL_UPDATE lands: a
+// lock sent in that moment after an unlock would start from the locked
+// list. A later CHANNEL_UPDATE overwrites the cache as usual.
+func (m *sessionTempVCManager) ChannelOverwritesReplace(channelID string, overwrites []*discordgo.PermissionOverwrite, auditReason string) error {
+	if overwrites == nil {
+		overwrites = []*discordgo.PermissionOverwrite{}
+	}
+	body := struct {
+		PermissionOverwrites []*discordgo.PermissionOverwrite `json:"permission_overwrites"`
+	}{overwrites}
+	endpoint := discordgo.EndpointChannel(channelID)
+	resp, err := m.s.RequestWithBucketID(http.MethodPatch, endpoint, body, endpoint,
+		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+	if err != nil {
+		return err
+	}
+	// The edit has happened. A reply the cache cannot take leaves the cache
+	// to the CHANNEL_UPDATE, as before, and is no failure of the edit.
+	var edited discordgo.Channel
+	if err := json.Unmarshal(resp, &edited); err != nil {
+		utils.Warn("Temp VC edited channel not cached, reply unreadable", "channel_id", channelID, "error", err)
+		return nil
+	}
+	// ChannelAdd keeps the cached list when the new one is nil, so an
+	// answer of no overwrites is cached as an empty list.
+	if edited.PermissionOverwrites == nil {
+		edited.PermissionOverwrites = []*discordgo.PermissionOverwrite{}
+	}
+	if err := m.s.State.ChannelAdd(&edited); err != nil {
+		utils.Warn("Temp VC edited channel not cached", "channel_id", channelID, "error", err)
+	}
+	return nil
 }
 
 func (m *sessionTempVCManager) GuildMemberMove(guildID, userID string, channelID *string) error {
@@ -450,6 +530,32 @@ func (m *sessionTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
 	return GuildMemberRanks(g)
 }
 
+func (m *sessionTempVCManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error {
+	return m.s.ChannelPermissionSet(channelID, targetID, targetType, allow, deny,
+		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(true))
+}
+
+func (m *sessionTempVCManager) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {
+	return m.s.ChannelMessageEditComplex(edit, discordgo.WithRetryOnRatelimit(false))
+}
+
+// CanSeeChannel goes through State.MessagePermissions, discordgo's one
+// state calculation that takes the member's roles from its argument rather
+// than from the cache: State.UserChannelPermissions fails for a member the
+// cache never saw. It reads the channel and the guild under the state's
+// lock, never the API.
+func (m *sessionTempVCManager) CanSeeChannel(channelID, userID string, roles []string) (bool, error) {
+	perms, err := m.s.State.MessagePermissions(&discordgo.Message{
+		ChannelID: channelID,
+		Author:    &discordgo.User{ID: userID},
+		Member:    &discordgo.Member{Roles: roles},
+	})
+	if err != nil {
+		return false, err
+	}
+	return perms&discordgo.PermissionViewChannel != 0, nil
+}
+
 // TempVC holds the feature's runtime state. All maps are guarded by mu:
 // discordgo dispatches each gateway event on its own goroutine (SyncEvents is
 // false by default), and the panel's service layer calls ApplyHub and
@@ -520,6 +626,23 @@ type TempVC struct {
 	// renameCaptured is the same rule for rename failures, opened by a
 	// successful rename of one of the hub's channels.
 	renameCaptured map[int64]struct{}
+	// locks holds each locked spawned channel's lock, the copy of its row's
+	// that the runtime decides on. Absent when the channel is unlocked. Set
+	// by a lock, removed by an unlock, cleared with the channel, and
+	// restored from the rows by the restart sweep.
+	locks map[string]lockRecord
+	// accessChanges holds the spawned channels with an access change in
+	// flight (temp_vc_lock.go): a lock or unlock from its checks until its
+	// row write, a let-in from its checks until its guest adds are
+	// answered. Another access change of the same channel waits for it.
+	accessChanges map[string]*accessChange
+	// lockCaptured is the capture rule of deleteCaptured for lock and
+	// unlock edit failures, opened by a successful lock or unlock of one of
+	// the hub's channels.
+	lockCaptured map[int64]struct{}
+	// guestCaptured is the same rule for guest add failures, opened by a
+	// successful guest add in one of the hub's channels.
+	guestCaptured map[int64]struct{}
 	// sweepMu serializes restart sweeps. One sweep holds it for its whole
 	// run, list included, and a queued one takes its own snapshot once the
 	// first has finished, so the later payload's ranks land last. Voice
@@ -563,6 +686,10 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		createCaptured: make(map[int64]struct{}),
 		deleteCaptured: make(map[int64]struct{}),
 		renameCaptured: make(map[int64]struct{}),
+		locks:          make(map[string]lockRecord),
+		accessChanges:  make(map[string]*accessChange),
+		lockCaptured:   make(map[int64]struct{}),
+		guestCaptured:  make(map[int64]struct{}),
 		inFlight:       make(map[string]struct{}),
 		settled:        make(map[string]struct{}),
 	}
@@ -747,10 +874,15 @@ func (t *TempVC) handleChannelDelete(c *discordgo.ChannelDelete) {
 // present, occupied channel is tracked again with its number from the row
 // and its owner restored from the row; an owner absent from the channel
 // counts as having left, and the handover rule elects from the occupants,
-// whose ranks come from the payload's member list. No channel without a row
-// is touched, so a channel a human made is never deleted. GUILD_CREATE
-// re-fires on gateway reconnects, so this also rebuilds tracking after any
-// missed events; a restored owner posts no notice, so a reconnect is silent.
+// whose ranks come from the payload's member list. Its lock comes from the
+// row too, unless the record tracked the channel before this sweep, which
+// only a reconnect finds: the record's lock is then the newer and is kept
+// (restoreLockLocked). Everyone inside a locked channel goes on its guest
+// list, since they may have got in while the bot was away. No channel
+// without a row is touched, so a channel a human made is never deleted.
+// GUILD_CREATE re-fires on gateway reconnects, so this also rebuilds
+// tracking after any missed events; a restored owner, lock or guest posts
+// no notice, so a reconnect is silent.
 //
 // A spawn in flight, a hub join whose row write or compensating delete has
 // not finished, is left as the record has it and its row is skipped: its
@@ -823,6 +955,9 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 		}
 		occupantsOf[channelID][userID] = struct{}{}
 	}
+	// The record as it stood before this rebuild, for the lock rule in the
+	// row loop.
+	wasTracked, heldLocks := t.occupants, t.locks
 	// A spawn in flight is left as the record has it: its tracking committed
 	// before this rebuild, and its row may not have been listed. Everything
 	// else is rebuilt from the rows below.
@@ -837,6 +972,10 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 
 	var gone, empty []string
 	var handovers []store.SpawnedChannel
+	// guests holds, per locked channel, the occupants the sweep adds to its
+	// guest list off-lock after the rebuild: anyone who got in while the
+	// bot was down or disconnected is a guest.
+	guests := make(map[string][]string)
 	for _, row := range rows {
 		// A spawn in flight's row is skipped, not judged: its channel may
 		// not have reached the cache yet, and its tracking is kept above.
@@ -860,6 +999,10 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 		if row.OwnerUserID != "" {
 			t.owners[row.ChannelID] = row.OwnerUserID
 		}
+		t.restoreLockLocked(row, wasTracked, heldLocks)
+		if in := t.joinGuestsLocked(row.ChannelID, sortedIDs(occ)...); len(in) > 0 {
+			guests[row.ChannelID] = in
+		}
 		if len(occ) == 0 {
 			empty = append(empty, row.ChannelID)
 			continue
@@ -881,6 +1024,9 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	}
 	for _, row := range handovers {
 		t.applyHandover(row)
+	}
+	for channelID, in := range guests {
+		t.addGuests(channelID, in, guestReasonSwept)
 	}
 
 	// tracked is read from the record once the deletes have run: the rows'
@@ -904,6 +1050,7 @@ func (t *TempVC) keepSpawnsInFlightLocked() int {
 	owners := make(map[string]string)
 	channelHub := make(map[string]int64)
 	channelIndex := make(map[string]int)
+	locks := make(map[string]lockRecord)
 	kept := 0
 	for id := range t.inFlight {
 		occ, tracked := t.occupants[id]
@@ -917,8 +1064,12 @@ func (t *TempVC) keepSpawnsInFlightLocked() int {
 		}
 		channelHub[id] = t.channelHub[id]
 		channelIndex[id] = t.channelIndex[id]
+		if lock, ok := t.locks[id]; ok {
+			locks[id] = lock
+		}
 	}
 	t.occupants, t.owners, t.channelHub, t.channelIndex = occupants, owners, channelHub, channelIndex
+	t.locks = locks
 	return kept
 }
 
@@ -999,6 +1150,8 @@ func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	_, leftSpawned := t.occupants[oldChannel]
 	emptied := t.applyLeaveLocked(vs.UserID, oldChannel)
 	joinedSpawned := t.applyJoinLocked(vs.UserID, newChannel)
+	// A join into a locked channel puts the member on its guest list.
+	guests := t.joinGuestsLocked(newChannel, vs.UserID)
 	// The handover rule runs on both sides of the move: the owner may have
 	// left, or a rank holder may have joined a channel with no owner. Each
 	// change is a row write and a notice, both network calls made off-lock.
@@ -1027,6 +1180,11 @@ func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	if emptied {
 		t.deleteIfStillEmpty(oldChannel, vs.UserID)
 	}
+
+	// The guest add comes after the handovers and the delete, since it may
+	// wait out a rate limit (ChannelPermissionSet retries a 429). A member
+	// who joined a spawned channel never reaches the hub join below.
+	t.addGuests(newChannel, guests, guestReasonJoined)
 
 	// Creating happens only when the user joined a hub they are not already
 	// tracked inside as a spawned channel.
@@ -1234,6 +1392,7 @@ func (t *TempVC) untrackLocked(channelID string) {
 	delete(t.channelHub, channelID)
 	delete(t.channelIndex, channelID)
 	delete(t.renames, channelID)
+	delete(t.locks, channelID)
 }
 
 // deleteOutcome is what deleteIfStillEmpty did with a channel: the delete
@@ -1327,7 +1486,7 @@ func (t *TempVC) deleteIfStillEmpty(channelID, userID string) deleteOutcome {
 		t.mu.Unlock()
 		utils.Warn("Temp VC delete failed, channel kept for the next attempt",
 			"channel_id", channelID, "hub_id", hubID, "error", err)
-		if fault.capturesOnDeleteOrRename() {
+		if fault.capturesOnChannelChange() {
 			t.captureOncePerStreak(t.deleteCaptured, hubID, "Temp VC delete failed", err,
 				"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
 		}
@@ -1351,6 +1510,37 @@ func (t *TempVC) deleteRow(channelID string) {
 	if err := t.st.DeleteSpawnedChannel(ctx, channelID); err != nil {
 		captureError("Temp VC row delete failed", err, "channel_id", channelID)
 	}
+}
+
+// permissionSourceOverwrites reads a hub's permission source from
+// discordgo's state cache, as it is now: the overwrite list of the hub
+// channel's category for source category, the hub channel's own list for
+// source hub_channel. The spawn path builds a hub_channel create payload
+// from it; a category create sends nothing and lets Discord copy the same
+// list. The slice and its entries are the cache's, so a caller sends them
+// and never changes them.
+//
+// A source that cannot be read is an error, never a fallback to another
+// list: the hub channel missing from the cache, a hub channel with no
+// category, or a category missing from the cache. A hub channel with no
+// category is a broken hub, so it is an error for either source kind.
+func (t *TempVC) permissionSourceOverwrites(hub store.Hub) ([]*discordgo.PermissionOverwrite, error) {
+	hubChannel, err := t.mgr.Channel(hub.HubChannelID)
+	if err != nil {
+		return nil, fmt.Errorf("hub channel %s not in the state cache: %w", hub.HubChannelID, err)
+	}
+	if hubChannel.ParentID == "" {
+		return nil, fmt.Errorf("hub channel %s has no category", hub.HubChannelID)
+	}
+	if hub.PermissionSource == store.PermissionHubChannel {
+		return hubChannel.PermissionOverwrites, nil
+	}
+	category, err := t.mgr.Channel(hubChannel.ParentID)
+	if err != nil {
+		return nil, fmt.Errorf("category %s of hub channel %s not in the state cache: %w",
+			hubChannel.ParentID, hub.HubChannelID, err)
+	}
+	return category.PermissionOverwrites, nil
 }
 
 // handleHubJoin creates a spawned channel for a hub joiner and moves them into
@@ -1382,6 +1572,23 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		return
 	}
 
+	// Permission source category: no PermissionOverwrites, so Discord copies
+	// the category's and the channel is synced from birth. Permission source
+	// hub_channel: the hub channel's own list, verbatim, for a stricter hub
+	// inside a looser category. The bot adds no entry of its own either way.
+	var overwrites []*discordgo.PermissionOverwrite
+	if hub.PermissionSource == store.PermissionHubChannel {
+		overwrites, err = t.permissionSourceOverwrites(hub)
+		if err != nil {
+			// The hub channel passed both checks above a moment ago, so only
+			// a channel event landing in between gets here. It ends as the
+			// cache miss above does: nothing spawns and nothing is recorded.
+			utils.Warn("Temp VC spawn refused, permission source unreadable",
+				"hub_channel_id", hub.HubChannelID, "user_id", vs.UserID, "error", err)
+			return
+		}
+	}
+
 	// The create goes out only for a member the cache still shows in the
 	// hub. One who left in the meantime gets no channel and no message:
 	// nothing failed.
@@ -1401,19 +1608,13 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	t.mu.Unlock()
 	name := nameWithIndex(hub.BaseString, index)
 
-	// Permission source category: no PermissionOverwrites, so Discord copies
-	// the category's and the channel is synced from birth. Permission source
-	// hub_channel: the hub channel's own list, verbatim, for a stricter hub
-	// inside a looser category. The bot adds no entry of its own either way.
 	data := discordgo.GuildChannelCreateData{
-		Name:      name,
-		Type:      discordgo.ChannelTypeGuildVoice,
-		ParentID:  hubChannel.ParentID,
-		UserLimit: hub.UserLimit,
-		Bitrate:   hub.Bitrate,
-	}
-	if hub.PermissionSource == store.PermissionHubChannel {
-		data.PermissionOverwrites = hubChannel.PermissionOverwrites
+		Name:                 name,
+		Type:                 discordgo.ChannelTypeGuildVoice,
+		ParentID:             hubChannel.ParentID,
+		UserLimit:            hub.UserLimit,
+		Bitrate:              hub.Bitrate,
+		PermissionOverwrites: overwrites,
 	}
 	reason := fmt.Sprintf("hub %s, creator %s", hub.HubChannelID, vs.UserID)
 	channel, err := t.mgr.GuildChannelCreateComplex(t.guildID, data, reason)

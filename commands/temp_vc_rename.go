@@ -24,14 +24,14 @@ const (
 // handler in voice_rename.go parses the interaction, calls Rename and renders
 // the outcome.
 
-// errNotInVoice: Rename returns it when the runtime has no current voice
-// channel on record for the invoker (#317). A member with no record is in no
+// errNotInVoice: Rename, Lock and Unlock return it when the runtime has no
+// current voice channel on record for the invoker (#317). A member with no record is in no
 // voice channel. The record is reset at every GUILD_CREATE and kept current
 // from every voice state event.
 var errNotInVoice = errors.New("invoker is in no voice channel")
 
-// notSpawnedChannelError: Rename returns it when the invoker sits in a voice
-// channel no hub created, so the hub channel itself or any other voice
+// notSpawnedChannelError: Rename, Lock and Unlock return it when the invoker
+// sits in a voice channel no hub created, so the hub channel itself or any other voice
 // channel the runtime does not track as spawned (#317). ChannelID is that
 // channel, for the reply to name.
 type notSpawnedChannelError struct {
@@ -42,8 +42,8 @@ func (e *notSpawnedChannelError) Error() string {
 	return "channel " + e.ChannelID + " is not a spawned channel"
 }
 
-// notOwnerError: Rename returns it when the invoker holds no moderator role
-// and is not the channel's owner. Owner is empty when the channel has none,
+// notOwnerError: Rename, Lock and Unlock return it when the invoker holds no
+// moderator role and is not the channel's owner. Owner is empty when the channel has none,
 // and the handler logs that at WARN, since the Discord gate or the rank-role
 // assumption has failed.
 type notOwnerError struct {
@@ -70,9 +70,9 @@ func (e *renameWindowError) Error() string {
 	return "rename window closed until " + e.OpensAt.UTC().Format(time.RFC3339)
 }
 
-// errChannelGone: Rename returns it when Discord answered the edit with
-// Unknown Channel, so someone deleted the channel while the invoker sat in
-// it. The runtime has already untracked it and dropped its row.
+// errChannelGone: Rename, Lock and Unlock return it when Discord answered the
+// edit with Unknown Channel, so someone deleted the channel while the invoker
+// sat in it. The runtime has already untracked it and dropped its row.
 var errChannelGone = errors.New("channel no longer exists")
 
 // renameResult is what a successful Rename reports, for the handler's log
@@ -87,26 +87,12 @@ type renameResult struct {
 // invoker's behalf. No channel argument: the target is the invoker's current
 // channel from the runtime's own occupancy tracking. The edit call carries an
 // audit log reason naming the invoker and no retry on rate limit.
-func (t *TempVC) Rename(userID string, memberRoles []string, name string) (renameResult, error) {
+func (t *TempVC) Rename(by Invoker, name string) (renameResult, error) {
 	t.mu.Lock()
-	channelID, inVoice := t.userChannel[userID]
-	if !inVoice {
+	channelID, err := t.invokerChannelLocked(by)
+	if err != nil {
 		t.mu.Unlock()
-		return renameResult{}, errNotInVoice
-	}
-	if _, tracked := t.occupants[channelID]; !tracked {
-		t.mu.Unlock()
-		return renameResult{}, &notSpawnedChannelError{ChannelID: channelID}
-	}
-	// A moderator role passes for every spawned channel of a hub it covers,
-	// whoever owns it and whether anyone does. The owner is read only when
-	// the invoker holds none, so a moderator renames an ownerless channel
-	// with no WARN, and a rename never changes the owner.
-	if !t.isModeratorLocked(channelID, memberRoles) {
-		if owner := t.owners[channelID]; owner != userID {
-			t.mu.Unlock()
-			return renameResult{}, &notOwnerError{Owner: owner}
-		}
+		return renameResult{}, err
 	}
 	// The slot is taken before the edit and given back if the edit fails, so
 	// two renames in flight on one channel cannot both count as the second.
@@ -130,9 +116,8 @@ func (t *TempVC) Rename(userID string, memberRoles []string, name string) (renam
 	if ch, err := t.mgr.Channel(channelID); err == nil {
 		before = ch.Name
 	}
-	reason := fmt.Sprintf("renamed by %s", userID)
-	_, err := t.mgr.ChannelEdit(channelID, &discordgo.ChannelEdit{Name: name}, reason)
-	if err != nil {
+	reason := fmt.Sprintf("renamed by %s", by.auditName())
+	if _, err := t.mgr.ChannelEdit(channelID, &discordgo.ChannelEdit{Name: name}, reason); err != nil {
 		return renameResult{}, t.renameFailed(channelID, now, err)
 	}
 	t.mu.Lock()
@@ -141,15 +126,37 @@ func (t *TempVC) Rename(userID string, memberRoles []string, name string) (renam
 	return renameResult{ChannelID: channelID, Before: before, After: name}, nil
 }
 
-// renameFailed gives back the rename slot and classifies the failure. Unknown
-// Channel means the channel is already gone, so the runtime untracks it,
-// drops its row and captures nothing. A 403, 5xx or transport failure
-// captures once per streak per hub. Every other failure is one WARN line.
-// The handler renders the returned error without the raw Discord body.
+// renameFailed gives back the rename slot and classifies the failure as
+// every change to a spawned channel is (channelChangeFailed). The handler
+// renders the returned error without the raw Discord body.
 func (t *TempVC) renameFailed(channelID string, at time.Time, err error) error {
-	fault := classifySpawnedChannelError(err)
 	t.mu.Lock()
 	t.releaseRenameLocked(channelID, at)
+	t.mu.Unlock()
+	if t.channelChangeFailed(channelID, "rename", t.renameCaptured, err) {
+		return errChannelGone
+	}
+	// A 429 is the limit the runtime counts against itself, so Discord's
+	// retry_after is the wait the runtime would have computed, and the invoker
+	// gets the window refusal with that wait (#264, #314). A 429 with no wait
+	// stays the raw error, which the handler renders with no time.
+	if fault := classifySpawnedChannelError(err); fault.retryAfter > 0 {
+		return &renameWindowError{OpensAt: at.Add(fault.retryAfter)}
+	}
+	return err
+}
+
+// channelChangeFailed classifies a change to a spawned channel that Discord
+// refused: a rename, a lock or unlock edit, a guest add. Unknown Channel
+// means the channel is already gone, so the runtime untracks it and drops
+// its row with no capture, and gone is true. Any other failure is one WARN
+// line, and a 403, 5xx or transport failure also captures, once per streak
+// per hub: captured is the path's streak set, which the path's next success
+// on one of the hub's channels opens again. kv adds fields to the line and
+// the capture.
+func (t *TempVC) channelChangeFailed(channelID, action string, captured map[int64]struct{}, err error, kv ...any) (gone bool) {
+	fault := classifySpawnedChannelError(err)
+	t.mu.Lock()
 	hubID := t.channelHub[channelID]
 	if fault.gone {
 		t.untrackLocked(channelID)
@@ -157,23 +164,61 @@ func (t *TempVC) renameFailed(channelID string, at time.Time, err error) error {
 	t.mu.Unlock()
 
 	if fault.gone {
-		utils.Info("Temp VC channel already gone at rename, untracked", "channel_id", channelID)
+		utils.Info("Temp VC channel already gone at "+action+", untracked", "channel_id", channelID)
 		t.deleteRow(channelID)
-		return errChannelGone
+		return true
 	}
-	utils.Warn("Temp VC rename failed", "channel_id", channelID, "hub_id", hubID, "error", err)
-	if fault.capturesOnDeleteOrRename() {
-		t.captureOncePerStreak(t.renameCaptured, hubID, "Temp VC rename failed", err,
-			"channel_id", channelID, "hub_id", hubID, "guild_id", t.guildID)
+	fields := slices.Concat([]any{"channel_id", channelID, "hub_id", hubID}, kv)
+	utils.Warn("Temp VC "+action+" failed", slices.Concat(fields, []any{"error", err})...)
+	if fault.capturesOnChannelChange() {
+		t.captureOncePerStreak(captured, hubID, "Temp VC "+action+" failed", err,
+			slices.Concat(fields, []any{"guild_id", t.guildID})...)
 	}
-	// A 429 is the limit the runtime counts against itself, so Discord's
-	// retry_after is the wait the runtime would have computed, and the invoker
-	// gets the window refusal with that wait (#264, #314). A 429 with no wait
-	// stays the raw error, which the handler renders with no time.
-	if fault.retryAfter > 0 {
-		return &renameWindowError{OpensAt: at.Add(fault.retryAfter)}
+	return false
+}
+
+// Invoker is the member a voice command or a lock notice press acts for.
+// Roles are the roles the interaction carries for them, which every
+// authority check reads. Username is for audit log reasons alone.
+type Invoker struct {
+	UserID   string
+	Username string
+	Roles    []string
+}
+
+// auditName names the invoker in an audit log reason: the username an
+// admin can read, then the ID, which stays true after a rename. Discord
+// shows the bot as the actor, so the reason is the only place the member
+// appears.
+func (i Invoker) auditName() string {
+	if i.Username == "" {
+		return i.UserID
 	}
-	return err
+	return i.Username + " (" + i.UserID + ")"
+}
+
+// invokerChannelLocked resolves the spawned channel a voice command acts on:
+// the one the invoker sits in, when they own it or hold one of its hub's
+// effective moderator roles. /voice-rename, /voice-lock and /voice-unlock
+// share it, so the three refuse alike. A moderator role passes for every
+// spawned channel of a hub it covers, whoever owns it and whether anyone
+// does. The owner is read only when the invoker holds none, so a moderator
+// acts on an ownerless channel with no WARN, and no command changes the
+// owner. Caller holds mu.
+func (t *TempVC) invokerChannelLocked(by Invoker) (string, error) {
+	channelID, inVoice := t.userChannel[by.UserID]
+	if !inVoice {
+		return "", errNotInVoice
+	}
+	if _, tracked := t.occupants[channelID]; !tracked {
+		return "", &notSpawnedChannelError{ChannelID: channelID}
+	}
+	if !t.isModeratorLocked(channelID, by.Roles) {
+		if owner := t.owners[channelID]; owner != by.UserID {
+			return "", &notOwnerError{Owner: owner}
+		}
+	}
+	return channelID, nil
 }
 
 // releaseRenameLocked gives back the slot a failed rename took, so only
@@ -200,16 +245,25 @@ func (t *TempVC) isModeratorLocked(channelID string, memberRoles []string) bool 
 	for _, r := range memberRoles {
 		held[r] = struct{}{}
 	}
-	effective := t.guildModeratorRoles
-	if hub, ok := t.hubByIDLocked(t.channelHub[channelID]); ok {
-		effective = append(slices.Clone(effective), hub.ModeratorRoleIDs...)
-	}
-	for _, r := range effective {
+	for _, r := range t.effectiveModeratorRolesLocked(channelID) {
 		if _, ok := held[r]; ok {
 			return true
 		}
 	}
 	return false
+}
+
+// effectiveModeratorRolesLocked returns the moderator roles of a spawned
+// channel's hub as they are now: the guild-wide roles and the hub's own, or
+// the guild-wide roles alone when the hub row is gone. A lock writes a
+// Connect allow for each. The result is a fresh slice the caller may keep.
+// Caller holds mu.
+func (t *TempVC) effectiveModeratorRolesLocked(channelID string) []string {
+	effective := slices.Clone(t.guildModeratorRoles)
+	if hub, ok := t.hubByIDLocked(t.channelHub[channelID]); ok {
+		effective = append(effective, hub.ModeratorRoleIDs...)
+	}
+	return effective
 }
 
 // hubByIDLocked finds a hub by its row ID. hubs is keyed by hub channel ID,

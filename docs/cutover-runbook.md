@@ -29,9 +29,12 @@ The SHA is the one the release tag will point at, and the conclusion is
 The list on issue [#297](https://github.com/7Cav/cavbot2/issues/297), run
 against the commit to be released and recorded there: register a hub, join,
 spawn, handover with the ownership notice, rename as owner and as moderator,
-delete on empty, restart sweep with an occupied channel, panel sign-in,
-create a hub channel, edit, remove, guild-wide moderator roles, and the spawn
-failure message on a full category.
+lock and unlock (an outsider sees the padlock and can neither join nor read
+the chat, and the pair leaves both renames in the window), let someone in
+from the lock notice (the reply names a skipped member and why), delete on
+empty, restart sweep with an occupied channel, panel sign-in, create a hub
+channel, edit, remove, guild-wide moderator roles, and the spawn failure
+message on a full category.
 
 ### 3. The host compose file
 
@@ -167,10 +170,10 @@ Each line has a command or a place to look, and the value to expect.
    section empty. The sign-in proves the OAuth client, the redirect URI and
    the group check; the empty list proves the page reads the store.
 
-## The seven cutover steps
+## The eight cutover steps
 
-In this order. Steps 3 and 4 happen while MEE6 still runs; step 5 switches
-it off; step 6 turns the bot's hubs on.
+In this order. Steps 4 and 5 happen while MEE6 still runs; step 6 switches
+it off; step 7 turns the bot's hubs on.
 
 ### 1. Release
 
@@ -191,7 +194,19 @@ Until this is applied nobody can run the command, so no owner can rename a
 spawned channel. That is why it sits before the hubs are enabled. Discord's
 100-entry limit per command is not reached.
 
-### 3. Transcribe every hub from MEE6, registered disabled
+### 3. Enable `/voice-lock` and `/voice-unlock` for the roles Nex picks
+
+In Server Settings, Integrations, the bot, open `/voice-lock` and add the
+roles Nex picks, then do the same for `/voice-unlock`. If he picks
+moderator roles alone, no owner who is not a moderator can lock.
+
+Do this before any hub gets "Locking allowed" in the panel. Every hub
+registers with it off, and the setting is what `/voice-lock` checks in the
+bot; the Server Settings roles are what keep everyone else from running it.
+Until step 6 the command picker shows two `/voice-lock` commands, one from
+each bot. MEE6's stays restricted to S6 - HQ and Integrated System Admin.
+
+### 4. Transcribe every hub from MEE6, registered disabled
 
 For each hub on the live guild (17 at the last count, table on
 [#262](https://github.com/7Cav/cavbot2/issues/262)), open its settings in
@@ -213,25 +228,29 @@ the MEE6 dashboard and register it in the panel with the same values:
 - User limit and bitrate as MEE6 has them.
 - **Enabled: off.** A disabled hub keeps its settings and ignores joins, so
   nothing spawns while MEE6 still runs.
+- **Locking allowed: off**, as every register leaves it, until Nex names the
+  hubs that lock. Turn it on later on each of those hubs' forms.
 
-MEE6's ignored roles are not carried over; with rename as the only command
-there is nothing to be exempt from. Each register appends a change log entry
-under the hub, so the panel shows what was transcribed and when.
+MEE6's ignored roles are not carried over. The bot has no per-hub
+exemption. Ownership, the moderator roles and the roles enabled in steps 2
+and 3 decide who may rename, lock and unlock. Each register appends a
+change log entry under the hub, so the panel shows what was transcribed and
+when.
 
-### 4. Delete every empty `#`-named channel in a hub category
+### 5. Delete every empty `#`-named channel in a hub category
 
 MEE6 leaves channels named with a `#` in the hub categories when it loses
 track of them. Delete each one that is empty, in Discord. The bot's restart
 sweep never touches a channel it holds no row for, so these would otherwise
 stay forever.
 
-### 5. Switch the MEE6 Temporary Channels plugin off
+### 6. Switch the MEE6 Temporary Channels plugin off
 
 In the MEE6 dashboard for the guild, the Temporary Channels plugin, off. The
 maintainer has dashboard access. From this moment a join to a hub does
-nothing until step 6, so do 6 right after.
+nothing until step 7, so do 7 right after.
 
-### 6. Enable the hubs in the panel
+### 7. Enable the hubs in the panel
 
 For each hub, open its form, turn Enabled on, Save. The runtime picks up each
 save in-process; no restart. Join one hub and confirm a spawned channel
@@ -239,9 +258,9 @@ appears, named `<base string> - 1`, with the ownership notice in its chat,
 and that it is deleted when you leave. The log shows `Temp VC created` and
 `Temp VC deleted`.
 
-### 7. Delete each occupied MEE6 channel by hand once it empties
+### 8. Delete each occupied MEE6 channel by hand once it empties
 
-List the MEE6-made channels still occupied at step 5 (they carry MEE6's
+List the MEE6-made channels still occupied at step 6 (they carry MEE6's
 names, not `<base string> - <n>`). Nobody is moved. When each one empties,
 delete it in Discord. MEE6 is off, so it will not delete them itself, and the
 bot holds no row for them, so it will not either.

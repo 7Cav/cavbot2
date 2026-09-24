@@ -173,7 +173,7 @@ func runWarden(
 
 func handleWardenAdd(r utils.InteractionResponder, gm GuildManager, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
 	if err := deferEphemeral(r, interaction); err != nil {
-		utils.HandleError(r, interaction, fmt.Sprintf("❌ Failed to acknowledge: %v", err))
+		replyAckFailed(r, interaction, err)
 		return
 	}
 
@@ -225,7 +225,7 @@ func handleWardenRemove(
 	roleScope string,
 ) {
 	if err := deferEphemeral(r, interaction); err != nil {
-		utils.HandleError(r, interaction, fmt.Sprintf("❌ Failed to acknowledge: %v", err))
+		replyAckFailed(r, interaction, err)
 		return
 	}
 
@@ -763,6 +763,20 @@ func deferEphemeral(r utils.InteractionResponder, interaction *discordgo.Interac
 			Flags: discordgo.MessageFlagsEphemeral,
 		},
 	})
+}
+
+// ackFailedReply answers a slash command whose deferred acknowledgement
+// Discord refused.
+const ackFailedReply = "❌ Couldn't start the command. Try again in a moment."
+
+// replyAckFailed answers a refused deferEphemeral. The error goes to the
+// log, never into the reply, which would show the member a raw Discord
+// body.
+func replyAckFailed(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, err error) {
+	username, discordID := interactionUsernameAndID(interaction)
+	utils.Warn("Failed to acknowledge interaction",
+		"command", interaction.ApplicationCommandData().Name, "username", username, "discord_id", discordID, "error", err)
+	utils.HandleError(r, interaction, ackFailedReply)
 }
 
 func editEphemeral(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, content string) {

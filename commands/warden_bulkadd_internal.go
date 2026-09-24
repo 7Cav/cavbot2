@@ -124,7 +124,7 @@ func runWardenBulkAddInternal(
 	}
 
 	if err := deferEphemeral(r, interaction); err != nil {
-		utils.HandleError(r, interaction, fmt.Sprintf("❌ Failed to acknowledge: %v", err))
+		replyAckFailed(r, interaction, err)
 		return
 	}
 
