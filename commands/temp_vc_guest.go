@@ -23,7 +23,8 @@ import (
 // lock's, which replaces the whole list and drops it, or after an unlock's,
 // which would carry the guest past the unlock. So the join is held with the
 // operation (lockJoins), and when the operation ends the members it held
-// become guests if the channel is locked then, and are dropped if not.
+// become guests if the channel is locked then, and are dropped if not. A
+// let-in (temp_vc_let_in.go) holds joins the same way while it runs.
 
 // guestReasonJoined and guestReasonSwept are the audit-log reasons of a
 // guest add for a join and for the restart sweep.

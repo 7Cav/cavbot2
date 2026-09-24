@@ -39,19 +39,10 @@ func pressInteraction(customID string, m permMember) *discordgo.InteractionCreat
 }
 
 // pressWith delivers m's press to the handler main.go's dispatcher routes
-// the CustomID to, answering through f. The route must be a registered
-// command, or Discord's press would reach nothing.
+// the CustomID to, answering through f (routeWith).
 func pressWith(t *testing.T, f *fakeResponder, tv *TempVC, customID string, m permMember) {
 	t.Helper()
-	prefix := strings.Split(customID, "::")[0]
-	if _, ok := NewRegistry(nil).GetHandler(prefix); !ok {
-		t.Fatalf("CustomID %q routes to %q, which is not a registered command", customID, prefix)
-	}
-	run, ok := componentRoutes[prefix]
-	if !ok {
-		t.Fatalf("CustomID %q routes to %q, which takes no button", customID, prefix)
-	}
-	run(f, tv, pressInteraction(customID, m))
+	routeWith(t, f, tv, pressInteraction(customID, m))
 }
 
 // press delivers m's press, checks the answer is a new ephemeral message

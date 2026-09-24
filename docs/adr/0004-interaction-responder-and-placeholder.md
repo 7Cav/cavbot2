@@ -63,4 +63,6 @@ say, a placeholder and a defer, the test should catch it.
   `InteractionResponseUpdateMessage` or `utils.HandleError` there. Both
   replace the public message for everyone. Skip `editEphemeral` too. Its
   failure capture reads the interaction as a slash command's and panics on a
-  press.
+  press. Let someone in (#352) fills that new message with a member picker,
+  and the picker's submission gets a new ephemeral message of its own by the
+  same pattern.

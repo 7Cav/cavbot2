@@ -164,7 +164,7 @@ func lockRefusal(err error, c lockCommand, discordID string) string {
 	case errors.Is(err, errNotLocked):
 		return "❌ This channel isn't locked."
 	case errors.Is(err, errLockInFlight):
-		return "❌ This channel is being locked or unlocked right now. Try again in a moment."
+		return "❌ This channel's lock is changing right now. Try again in a moment."
 	case errors.Is(err, errSourceUnreadable):
 		return "❌ Couldn't unlock the channel: its hub's permissions can't be read, so it stays locked until everyone leaves."
 	case errors.Is(err, errChannelGone):

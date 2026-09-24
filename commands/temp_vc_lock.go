@@ -38,8 +38,8 @@ var errAlreadyLocked = errors.New("channel is already locked")
 // errNotLocked: Unlock returns it for a channel that is not locked.
 var errNotLocked = errors.New("channel is not locked")
 
-// errLockInFlight: Lock and Unlock return it while another lock or unlock of
-// the same channel is still in flight.
+// errLockInFlight: Lock, Unlock and a let-in return it while a lock, unlock
+// or let-in of the same channel is still in flight.
 var errLockInFlight = errors.New("a lock or unlock of the channel is in flight")
 
 // errChannelNotCached: Lock returns it when the state cache does not hold

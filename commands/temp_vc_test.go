@@ -85,6 +85,9 @@ type fakeTempVCManager struct {
 	// permissionSetErr, when set, is what every set returns.
 	permissionSets   []fakePermissionSet
 	permissionSetErr error
+
+	// canSeeErr, when set, is what every visibility check returns.
+	canSeeErr error
 }
 
 // fakePermissionSet is one overwrite set the fake let through: the channel,
@@ -381,6 +384,29 @@ func (f *fakeTempVCManager) ChannelMessageEditComplex(edit *discordgo.MessageEdi
 	return &discordgo.Message{ID: edit.ID, ChannelID: edit.Channel}, nil
 }
 
+// CanSeeChannel judges the way the production adapter does: discordgo's
+// permission calculation over the channel's list as overwritesOf reads it,
+// the permission fixture's guild roles, and the roles given. A channel the
+// fake has never seen is ErrStateNotFound, as the state cache answers, and
+// canSeeErr, when set, is what every check returns.
+func (f *fakeTempVCManager) CanSeeChannel(channelID, userID string, roles []string) (bool, error) {
+	f.mu.Lock()
+	list, ok := f.currentOverwritesLocked(channelID)
+	err := f.canSeeErr
+	f.mu.Unlock()
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, discordgo.ErrStateNotFound
+	}
+	perms, err := fixturePermissions(list, userID, roles)
+	if err != nil {
+		return false, err
+	}
+	return perms&discordgo.PermissionViewChannel != 0, nil
+}
+
 // dropChannel removes a channel from the fake cache, the CHANNEL_DELETE
 // reaching the cache before any handler runs.
 func (f *fakeTempVCManager) dropChannel(channelID string) {
@@ -492,14 +518,23 @@ func (f *fakeTempVCManager) overwritesOf(t *testing.T, channelID string) []*disc
 	t.Helper()
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	list, ok := f.currentOverwritesLocked(channelID)
+	if !ok {
+		t.Fatalf("overwritesOf(%s): the fake has never seen that channel", channelID)
+	}
+	return list
+}
+
+// currentOverwritesLocked is overwritesOf's read, false for a channel the
+// fake has never seen. Caller holds f.mu.
+func (f *fakeTempVCManager) currentOverwritesLocked(channelID string) ([]*discordgo.PermissionOverwrite, bool) {
 	if list, ok := f.overwrites[channelID]; ok {
-		return cloneOverwrites(list)
+		return cloneOverwrites(list), true
 	}
 	if ch, ok := f.channels[channelID]; ok {
-		return cloneOverwrites(ch.PermissionOverwrites)
+		return cloneOverwrites(ch.PermissionOverwrites), true
 	}
-	t.Fatalf("overwritesOf(%s): the fake has never seen that channel", channelID)
-	return nil
+	return nil, false
 }
 
 func (f *fakeTempVCManager) recordedCreates() []fakeCreate {

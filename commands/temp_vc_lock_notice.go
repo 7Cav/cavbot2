@@ -11,7 +11,8 @@ import (
 
 // The lock notice (spec #347, #351): the message a lock posts in the
 // channel's text chat. It names who locked the channel, pings nobody, and
-// carries the lock's buttons. At unlock, by a button or by /voice-unlock, it
+// carries the lock's buttons, Unlock and Let someone in (#352,
+// temp_vc_let_in.go). At unlock, by a button or by /voice-unlock, it
 // is edited to name who unlocked the channel and loses its buttons. Its
 // message ID is stored with the lock, so the edit works after a restart.
 //
@@ -31,6 +32,12 @@ import (
 const (
 	// lockNoticeUnlock is the Unlock button.
 	lockNoticeUnlock = "unlock"
+	// lockNoticeLetIn is the Let someone in button, which answers with a
+	// member picker (temp_vc_let_in.go).
+	lockNoticeLetIn = "let-in"
+	// lockNoticeLetInPick is that picker's user select. It shares the
+	// notice's prefix and payload, so its submission routes the same way.
+	lockNoticeLetInPick = "let-in-pick"
 )
 
 // lockNoticeButtons lists the lock notice's buttons, in the order they sit
@@ -42,6 +49,7 @@ var lockNoticeButtons = []struct {
 	style  discordgo.ButtonStyle
 }{
 	{lockNoticeUnlock, "Unlock", discordgo.SecondaryButton},
+	{lockNoticeLetIn, "Let someone in", discordgo.PrimaryButton},
 }
 
 // discordCustomIDLimit is Discord's cap on a component's CustomID, in
@@ -93,7 +101,7 @@ func lockNoticeComponents(channelID string) ([]discordgo.MessageComponent, error
 
 // lockNoticeLine is the lock notice's content while the channel is locked.
 func lockNoticeLine(locker string) string {
-	return fmt.Sprintf("🔒 <@%s> locked this channel. The people inside can leave and come back, and the hub's moderators can join. Nobody else can. Unlock with the button below or /%s.",
+	return fmt.Sprintf("🔒 <@%s> locked this channel. The people inside can leave and come back, and the hub's moderators can join. Nobody else can. Let someone in or unlock it with the buttons below, or unlock it with /%s.",
 		locker, voiceUnlockCommandName)
 }
 
