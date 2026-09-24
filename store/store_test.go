@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"reflect"
@@ -14,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/7cav/cavbot2/utils"
+	"github.com/pressly/goose/v3"
 )
 
 // TestMain initializes the package-level logger the migrate step logs through,
@@ -80,6 +82,7 @@ func sampleHub(guildID, hubChannelID string) Hub {
 		UserLimit:        12,
 		Bitrate:          96000,
 		Enabled:          true,
+		LockingAllowed:   true,
 	}
 }
 
@@ -118,6 +121,9 @@ func assertHubSettings(t *testing.T, got, want Hub) {
 	}
 	if got.Enabled != want.Enabled {
 		t.Errorf("Enabled = %v, want %v", got.Enabled, want.Enabled)
+	}
+	if got.LockingAllowed != want.LockingAllowed {
+		t.Errorf("LockingAllowed = %v, want %v", got.LockingAllowed, want.LockingAllowed)
 	}
 }
 
@@ -164,6 +170,7 @@ func TestUpsertHubUpdatesInPlace(t *testing.T) {
 		want.UserLimit = 0
 		want.Bitrate = 64000
 		want.Enabled = false
+		want.LockingAllowed = false
 
 		second, err := s.UpsertHub(ctx, want)
 		if err != nil {
@@ -188,6 +195,28 @@ func TestUpsertHubUpdatesInPlace(t *testing.T) {
 		}
 		if len(hubs) != 1 {
 			t.Errorf("ListHubs returned %d hubs, want 1", len(hubs))
+		}
+	})
+}
+
+// T2b (#349): a hub saved without "Locking allowed" reads back with it off,
+// so nothing locks on a hub until someone turns the setting on.
+func TestHubSavedWithoutLockingAllowedReadsBackOff(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		stored, err := s.UpsertHub(ctx, Hub{
+			GuildID: "guild-1", HubChannelID: "hub-1", BaseString: "Arma Voice",
+			PermissionSource: PermissionCategory, Bitrate: 64000, Enabled: true,
+		})
+		if err != nil {
+			t.Fatalf("UpsertHub: %v", err)
+		}
+		got, err := s.GetHub(ctx, stored.ID)
+		if err != nil {
+			t.Fatalf("GetHub: %v", err)
+		}
+		if got.LockingAllowed {
+			t.Error("LockingAllowed = true on a hub saved without it, want false")
 		}
 	})
 }
@@ -309,6 +338,9 @@ func TestUpsertSpawnedThenList(t *testing.T) {
 			t.Errorf("ListSpawnedChannels row = %+v, want HubID %d, Number %d, OwnerUserID %q",
 				got, want.HubID, want.Number, want.OwnerUserID)
 		}
+		if got.Lock != (ChannelLock{}) {
+			t.Errorf("a new row's lock = %+v, want unlocked", got.Lock)
+		}
 
 		want.OwnerUserID = "user-next"
 		if err := s.UpsertSpawnedChannel(ctx, want); err != nil {
@@ -343,6 +375,131 @@ func TestUpsertSpawnedNoOwner(t *testing.T) {
 			t.Errorf("OwnerUserID = %q, want empty", got.OwnerUserID)
 		}
 	})
+}
+
+// listedSpawned lists the spawned rows and returns the one for a channel.
+func listedSpawned(t *testing.T, s Store, channelID string) SpawnedChannel {
+	t.Helper()
+	rows, err := s.ListSpawnedChannels(context.Background())
+	if err != nil {
+		t.Fatalf("ListSpawnedChannels: %v", err)
+	}
+	return findSpawned(t, rows, channelID)
+}
+
+// T7b (#349): a spawned row's lock reads back as it was set, a later write
+// of the row (a handover) keeps it, and setting the zero lock unlocks it with
+// no locker or notice left behind.
+func TestSpawnedChannelLockRoundTripsAndOutlivesAHandover(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		hubID := storeHub(t, s, "hub-1")
+		row := SpawnedChannel{ChannelID: "chan-1", HubID: hubID, Number: 2, OwnerUserID: "user-owner"}
+		if err := s.UpsertSpawnedChannel(ctx, row); err != nil {
+			t.Fatalf("UpsertSpawnedChannel: %v", err)
+		}
+		lock := ChannelLock{Locked: true, LockerUserID: "user-locker", NoticeMessageID: "msg-1"}
+
+		if err := s.SetSpawnedChannelLock(ctx, "chan-1", lock); err != nil {
+			t.Fatalf("SetSpawnedChannelLock: %v", err)
+		}
+		if got := listedSpawned(t, s, "chan-1"); got.Lock != lock || got.OwnerUserID != "user-owner" || got.Number != 2 {
+			t.Errorf("row after the lock = %+v, want lock %+v with owner user-owner and number 2 kept", got, lock)
+		}
+
+		row.OwnerUserID = "user-next"
+		if err := s.UpsertSpawnedChannel(ctx, row); err != nil {
+			t.Fatalf("UpsertSpawnedChannel at the handover: %v", err)
+		}
+		if got := listedSpawned(t, s, "chan-1"); got.Lock != lock || got.OwnerUserID != "user-next" {
+			t.Errorf("row after the handover = %+v, want owner user-next and lock %+v kept", got, lock)
+		}
+
+		if err := s.SetSpawnedChannelLock(ctx, "chan-1", ChannelLock{}); err != nil {
+			t.Fatalf("SetSpawnedChannelLock to unlock: %v", err)
+		}
+		if got := listedSpawned(t, s, "chan-1"); got.Lock != (ChannelLock{}) || got.OwnerUserID != "user-next" {
+			t.Errorf("row after the unlock = %+v, want unlocked with owner user-next kept", got)
+		}
+	})
+}
+
+// T7c (#349): setting the lock of a channel with no row is ErrNotFound and
+// makes no row.
+func TestSetSpawnedChannelLockWithNoRowIsNotFound(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		err := s.SetSpawnedChannelLock(ctx, "chan-none", ChannelLock{Locked: true, LockerUserID: "user-1"})
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("SetSpawnedChannelLock with no row error = %v, want ErrNotFound", err)
+		}
+		rows, err := s.ListSpawnedChannels(ctx)
+		if err != nil {
+			t.Fatalf("ListSpawnedChannels: %v", err)
+		}
+		if len(rows) != 0 {
+			t.Errorf("ListSpawnedChannels = %v, want none", rows)
+		}
+	})
+}
+
+// T7d (#349): rows written before the channel lock migration come through
+// it with "Locking allowed" off on every hub and every spawned channel
+// unlocked, the state an upgrade meets.
+func TestChannelLockMigrationLeavesExistingRowsOffAndUnlocked(t *testing.T) {
+	dsn := os.Getenv(testDSNVar)
+	if dsn == "" {
+		t.Skipf("%s not set", testDSNVar)
+	}
+	ctx := context.Background()
+	raw, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open raw connection: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+	if _, err := raw.ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
+		t.Fatalf("reset schema: %v", err)
+	}
+	files, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatalf("embedded migrations: %v", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, raw, files)
+	if err != nil {
+		t.Fatalf("migration provider: %v", err)
+	}
+	// The change log migration is the last one before the lock's.
+	if _, err := provider.UpTo(ctx, 20260918100000); err != nil {
+		t.Fatalf("migrate to the schema before the lock: %v", err)
+	}
+	var hubID int64
+	if err := raw.QueryRowContext(ctx, `
+		INSERT INTO hubs (guild_id, hub_channel_id, base_string, permission_source, enabled)
+		VALUES ('guild-1', 'hub-1', 'Arma Voice', 'category', TRUE) RETURNING id`).Scan(&hubID); err != nil {
+		t.Fatalf("insert an older hub row: %v", err)
+	}
+	if _, err := raw.ExecContext(ctx, `
+		INSERT INTO spawned_channels (channel_id, hub_id, number, owner_user_id)
+		VALUES ('chan-1', $1, 1, 'user-1')`, hubID); err != nil {
+		t.Fatalf("insert an older spawned row: %v", err)
+	}
+
+	s, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	hub, err := s.GetHub(ctx, hubID)
+	if err != nil {
+		t.Fatalf("GetHub: %v", err)
+	}
+	if hub.LockingAllowed {
+		t.Error("an older hub reads back with LockingAllowed on, want off")
+	}
+	if got := listedSpawned(t, s, "chan-1"); got.Lock != (ChannelLock{}) || got.OwnerUserID != "user-1" {
+		t.Errorf("an older spawned row reads back as %+v, want unlocked with owner user-1", got)
+	}
 }
 
 // T8: a deleted spawned row is gone from ListSpawnedChannels, and deleting it again is

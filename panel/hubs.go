@@ -92,6 +92,7 @@ type editInput struct {
 	UserLimit        string
 	Bitrate          string
 	Enabled          bool
+	LockingAllowed   bool
 }
 
 // actor is the signed-in forum user a save is recorded against.
@@ -133,6 +134,7 @@ const (
 	fieldUserLimit        = "user_limit"
 	fieldBitrate          = "bitrate"
 	fieldEnabled          = "enabled"
+	fieldLockingAllowed   = "locking_allowed"
 )
 
 // Bounds on the base string. Discord's channel name limit is 100 and the
@@ -288,6 +290,7 @@ func editInputOf(h store.Hub, channelName string) editInput {
 		UserLimit:        strconv.Itoa(h.UserLimit),
 		Bitrate:          strconv.Itoa(h.Bitrate),
 		Enabled:          h.Enabled,
+		LockingAllowed:   h.LockingAllowed,
 	}
 }
 
@@ -697,10 +700,10 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 }
 
 // update saves a hub's settings from the edit form, writes the row, applies
-// it to the runtime, so a disabled hub stops spawning at once, and appends a
-// change log entry with the changed fields. A refusal is a *fieldError
-// naming the field, and nothing is written; store.ErrNotFound means no hub
-// has the ID.
+// it to the runtime, so a disabled hub stops spawning at once and a change
+// to "Locking allowed" reaches /voice-lock at once, and appends a change log
+// entry with the changed fields. A refusal is a *fieldError naming the
+// field, and nothing is written; store.ErrNotFound means no hub has the ID.
 //
 // A broken hub is refused before anything else: its channel is gone or has
 // no category, and the page offers Remove alone. A changed hub channel name
@@ -824,6 +827,7 @@ func applyEdit(hub *store.Hub, in editInput, guild guildInfo) error {
 			fmt.Sprintf("Enter a bitrate of %d to %d.", bitrateMin, guild.bitrateMax)}
 	}
 	hub.Enabled = in.Enabled
+	hub.LockingAllowed = in.LockingAllowed
 	return nil
 }
 

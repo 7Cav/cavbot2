@@ -17,8 +17,8 @@ import (
 	"time"
 )
 
-// ErrNotFound is returned by GetHub when no hub has the requested ID. Compare
-// with errors.Is.
+// ErrNotFound is returned by GetHub when no hub has the requested ID, and by
+// SetSpawnedChannelLock when no row has the channel. Compare with errors.Is.
 var ErrNotFound = errors.New("store: not found")
 
 // PermissionSource is the per-hub setting that chooses what a spawned channel
@@ -52,6 +52,10 @@ type Hub struct {
 	UserLimit        int
 	Bitrate          int
 	Enabled          bool
+	// LockingAllowed is whether /voice-lock works on the hub's spawned
+	// channels. Off by default, and a hub stored before the field existed
+	// reads back off. Turning it off leaves existing locks in place.
+	LockingAllowed bool
 	// CreatedAt and UpdatedAt are set by the store, never by the caller.
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -68,8 +72,26 @@ type SpawnedChannel struct {
 	Number int
 	// OwnerUserID is empty when the channel has no owner.
 	OwnerUserID string
+	// Lock is the channel's lock, so the restart sweep can restore it.
+	// SetSpawnedChannelLock is its one writer: UpsertSpawnedChannel ignores
+	// the caller's value, starts a new row unlocked and keeps an existing
+	// row's lock, so a handover never touches a lock.
+	Lock ChannelLock
 	// CreatedAt is set by the store at insert and kept on update. Informational.
 	CreatedAt time.Time
+}
+
+// ChannelLock is a spawned channel's lock as its row records it (spec #347).
+// The zero value is an unlocked channel. The row is the bot's truth about a
+// lock: the bot never infers one from Discord's permissions.
+type ChannelLock struct {
+	Locked bool
+	// LockerUserID is the member who locked the channel, empty when it is
+	// unlocked.
+	LockerUserID string
+	// NoticeMessageID is the lock notice's message ID, empty when the channel
+	// is unlocked or its notice was never posted.
+	NoticeMessageID string
 }
 
 // ChangeAction is what a change log entry records: which kind of panel save
@@ -126,8 +148,12 @@ type Store interface {
 	DeleteHub(ctx context.Context, id int64) error
 
 	// UpsertSpawnedChannel inserts the row, or updates the existing row for
-	// the same ChannelID in place.
+	// the same ChannelID in place. It writes hub, number and owner, never the
+	// lock: a new row is unlocked and an existing row keeps its lock.
 	UpsertSpawnedChannel(ctx context.Context, sc SpawnedChannel) error
+	// SetSpawnedChannelLock replaces the lock on the row for channelID and
+	// changes nothing else on it. ErrNotFound when no row has that channel.
+	SetSpawnedChannelLock(ctx context.Context, channelID string, lock ChannelLock) error
 	// DeleteSpawnedChannel removes the row. Deleting a row that does not exist
 	// is not an error.
 	DeleteSpawnedChannel(ctx context.Context, channelID string) error
@@ -136,9 +162,10 @@ type Store interface {
 	ListSpawnedChannels(ctx context.Context) ([]SpawnedChannel, error)
 
 	// GetGuildModeratorRoles returns the guild-wide moderator role IDs, the
-	// roles that may rename any spawned channel of every hub. A guild with no
-	// row reads back as an empty set with no error. Same set rule as
-	// Hub.ModeratorRoleIDs: no promised order, and nil and empty are one thing.
+	// roles that may rename, lock and unlock any spawned channel of every
+	// hub. A guild with no row reads back as an empty set with no error. Same
+	// set rule as Hub.ModeratorRoleIDs: no promised order, and nil and empty
+	// are one thing.
 	GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error)
 	// SetGuildModeratorRoles replaces the guild-wide moderator role IDs.
 	SetGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string) error
