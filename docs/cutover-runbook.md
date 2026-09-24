@@ -30,8 +30,9 @@ The list on issue [#297](https://github.com/7Cav/cavbot2/issues/297), run
 against the commit to be released and recorded there: register a hub, join,
 spawn, handover with the ownership notice, rename as owner and as moderator,
 lock and unlock (an outsider sees the padlock and can neither join nor read
-the chat, and the pair leaves both renames in the window), delete on empty,
-restart sweep with an occupied channel, panel sign-in, create a hub
+the chat, and the pair leaves both renames in the window), let someone in
+from the lock notice (the reply names a skipped member and why), delete on
+empty, restart sweep with an occupied channel, panel sign-in, create a hub
 channel, edit, remove, guild-wide moderator roles, and the spawn failure
 message on a full category.
 

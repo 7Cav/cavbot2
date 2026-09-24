@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 
@@ -123,12 +124,12 @@ func newPermFixture(t *testing.T, source store.PermissionSource) (*fakeTempVCMan
 	return fake, st, newTestTempVC(t, fake, st)
 }
 
-// channelPermissions is what discordgo computes for m in a voice channel
-// carrying the given overwrites: a State built for the call holds the
-// guild, whose @everyone role has View and Connect at guild level and whose
-// fixture roles have nothing, the channel, and the member.
-func channelPermissions(t *testing.T, overwrites []*discordgo.PermissionOverwrite, m permMember) int64 {
-	t.Helper()
+// fixturePermissions is what discordgo computes for a member holding the
+// given roles in a voice channel carrying the given overwrites: a State
+// built for the call holds the guild, whose @everyone role has View and
+// Connect at guild level and whose fixture roles have nothing, the channel,
+// and the member.
+func fixturePermissions(overwrites []*discordgo.PermissionOverwrite, userID string, roles []string) (int64, error) {
 	const probe = "can-join-probe"
 	st := discordgo.NewState()
 	err := st.GuildAdd(&discordgo.Guild{
@@ -144,15 +145,26 @@ func channelPermissions(t *testing.T, overwrites []*discordgo.PermissionOverwrit
 			PermissionOverwrites: cloneOverwrites(overwrites),
 		}},
 		Members: []*discordgo.Member{{
-			GuildID: testTempVCGuild, User: &discordgo.User{ID: m.id}, Roles: slices.Clone(m.roles),
+			GuildID: testTempVCGuild, User: &discordgo.User{ID: userID}, Roles: slices.Clone(roles),
 		}},
 	})
 	if err != nil {
-		t.Fatalf("State.GuildAdd: %v", err)
+		return 0, fmt.Errorf("State.GuildAdd: %w", err)
 	}
-	perms, err := st.UserChannelPermissions(m.id, probe)
+	perms, err := st.UserChannelPermissions(userID, probe)
 	if err != nil {
-		t.Fatalf("State.UserChannelPermissions(%s): %v", m.id, err)
+		return 0, fmt.Errorf("State.UserChannelPermissions(%s): %w", userID, err)
+	}
+	return perms, nil
+}
+
+// channelPermissions is fixturePermissions for a fixture member, failing
+// the test when discordgo cannot compute it.
+func channelPermissions(t *testing.T, overwrites []*discordgo.PermissionOverwrite, m permMember) int64 {
+	t.Helper()
+	perms, err := fixturePermissions(overwrites, m.id, m.roles)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return perms
 }

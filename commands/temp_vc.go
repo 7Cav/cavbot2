@@ -316,6 +316,14 @@ type TempVCManager interface {
 	// removes every component, and a nil one leaves them. The unlock edits
 	// the lock notice through it.
 	ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error)
+	// CanSeeChannel reports whether a member holding the given roles sees a
+	// channel: View Channel, as discordgo's state permission calculation
+	// gives it over the cached guild roles and channel overwrites. The roles
+	// come from the caller, since the cache holds no offline member of a
+	// large guild; a user select carries each picked member's. A channel or
+	// guild missing from the cache is an error. Let someone in checks it
+	// before a guest add.
+	CanSeeChannel(channelID, userID string, roles []string) (bool, error)
 }
 
 // VoiceSnapshot is one copy of a guild's voice states from discordgo's state
@@ -478,6 +486,23 @@ func (m *sessionTempVCManager) ChannelMessageEditComplex(edit *discordgo.Message
 	return m.s.ChannelMessageEditComplex(edit, discordgo.WithRetryOnRatelimit(false))
 }
 
+// CanSeeChannel goes through State.MessagePermissions, discordgo's one
+// state calculation that takes the member's roles from its argument rather
+// than from the cache: State.UserChannelPermissions fails for a member the
+// cache never saw. It reads the channel and the guild under the state's
+// lock, never the API.
+func (m *sessionTempVCManager) CanSeeChannel(channelID, userID string, roles []string) (bool, error) {
+	perms, err := m.s.State.MessagePermissions(&discordgo.Message{
+		ChannelID: channelID,
+		Author:    &discordgo.User{ID: userID},
+		Member:    &discordgo.Member{Roles: roles},
+	})
+	if err != nil {
+		return false, err
+	}
+	return perms&discordgo.PermissionViewChannel != 0, nil
+}
+
 // TempVC holds the feature's runtime state. All maps are guarded by mu:
 // discordgo dispatches each gateway event on its own goroutine (SyncEvents is
 // false by default), and the panel's service layer calls ApplyHub and
@@ -554,7 +579,8 @@ type TempVC struct {
 	// restored from the rows by the restart sweep.
 	locks map[string]lockRecord
 	// lockBusy marks the spawned channels with a lock or unlock in flight,
-	// from its checks until its row write, so a second lock or unlock of
+	// from its checks until its row write, or a let-in, from its checks
+	// until its guest adds are answered. A second lock, unlock or let-in of
 	// the same channel is refused rather than interleaved.
 	lockBusy map[string]struct{}
 	// lockCaptured is the capture rule of deleteCaptured for lock and

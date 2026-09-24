@@ -217,6 +217,12 @@ func (f *fakeDiscord) ChannelPermissionSet(_, _ string, _ discordgo.PermissionOv
 	return nil
 }
 
+// CanSeeChannel answers that everyone sees every channel. The panel's tests
+// let nobody in; the fake carries it for the interface.
+func (f *fakeDiscord) CanSeeChannel(_, _ string, _ []string) (bool, error) {
+	return true, nil
+}
+
 func (f *fakeDiscord) setEditErr(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
