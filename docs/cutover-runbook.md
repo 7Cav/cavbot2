@@ -276,6 +276,12 @@ bot holds no row for them, so it will not either.
 - The rank ladder drift check and the Administrator check run once per
   process start and capture to Sentry. `Rank ladder drift` means the milpacs
   ranks endpoint and `tempVCRankRoles` disagree; fix the ladder and release.
+- NPM gives up on the panel after 90 s, the `proxy_read_timeout` in NPM's own
+  `nginx.conf`; the proxy host for `cavbot2.7cav.us` does not override it.
+  From the release that fixes #355, the hub page gives its reads a 10 s
+  budget, so a slow page fails and reaches Sentry before NPM gives up. The
+  slowest hub page request is then about 60 s. Keep NPM's timeout above that:
+  a page NPM drops first looks like an abandoned page load and reaches no one.
 
 ## Rollback
 

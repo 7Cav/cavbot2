@@ -326,3 +326,10 @@ error signal. See ADR 0011.
   `utils.Error` is for genuine internal failures (Sentry-eligible).
   `utils.HandleError` is for user-facing responses (often expected outcomes
   like "no troopers found", not Sentry-eligible).
+- **Abandoned page load**: A panel page load whose connection closed before
+  the panel answered and before the page's time budget ran out. Usually the
+  browser left, by navigating away, reloading or closing the tab. It is
+  expected, not a failure, so it leaves an INFO line and no Sentry event. A
+  page still loading when its budget runs out has failed, and is not an
+  abandoned page load.
+  _Avoid_: browser leaving, client disconnect, cancelled request, timeout.
