@@ -402,19 +402,21 @@ func (sn snapshot) hubOn(channelID string) (store.Hub, bool) {
 	return store.Hub{}, false
 }
 
-// The names of the two Discord reads, as their errors carry them. A read the
-// page's time budget ran out on fails under the same name as its own failure.
+// The names the two Discord reads' errors carry: GuildChannels in read, and
+// Guild in readGuild. A read the page's time budget ran out on fails under
+// the same name as its own failure.
 const (
-	readChannels = "guild channels"
-	readRoles    = "guild read"
+	guildChannelsRead = "guild channels"
+	guildRead         = "guild read"
 )
 
-// overBudget is the error of a Discord read the time budget ran out on, or
-// the request's cancellation, under the read's name, or nil when ctx is
-// live. A Discord read takes no context and cannot be cut short, so the
-// page checks after each one; without the check the next store read would
-// fail on the same context and take the blame.
-func overBudget(ctx context.Context, read string) error {
+// contextEnded is nil while ctx is live. Once it has ended, because the time
+// budget ran out or the request was cancelled, it is ctx's error under the
+// name of the Discord read that just returned. A Discord read takes no
+// context and cannot be cut short, so the page checks after each one;
+// without the check the next store read would fail on the same context and
+// take the blame.
+func contextEnded(ctx context.Context, read string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("%s: %w", read, err)
 	}
@@ -428,7 +430,7 @@ func (s *hubService) read(ctx context.Context) (snapshot, error) {
 	}
 	channels, err := s.deps.Manager.GuildChannels(s.deps.GuildID)
 	if err != nil {
-		return snapshot{}, fmt.Errorf("%s: %w", readChannels, err)
+		return snapshot{}, fmt.Errorf("%s: %w", guildChannelsRead, err)
 	}
 	guild := guildChannels{byID: make(map[string]*discordgo.Channel, len(channels)), all: channels}
 	for _, ch := range channels {
@@ -482,7 +484,7 @@ func (g guildInfo) isEligible(id string) bool {
 func (s *hubService) readGuild() (guildInfo, error) {
 	g, err := s.deps.Manager.Guild(s.deps.GuildID)
 	if err != nil {
-		return guildInfo{}, fmt.Errorf("%s: %w", readRoles, err)
+		return guildInfo{}, fmt.Errorf("%s: %w", guildRead, err)
 	}
 	info := guildInfo{eligible: make([]*discordgo.Role, 0, len(g.Roles)), live: make(map[string]*discordgo.Role, len(g.Roles)),
 		names: make(map[string]string, len(g.Roles)), bitrateMax: bitrateCeiling(g.PremiumTier)}
@@ -513,14 +515,14 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 	if err != nil {
 		return hubPage{}, err
 	}
-	if err := overBudget(ctx, readChannels); err != nil {
+	if err := contextEnded(ctx, guildChannelsRead); err != nil {
 		return hubPage{}, err
 	}
 	guild, err := s.readGuild()
 	if err != nil {
 		return hubPage{}, err
 	}
-	if err := overBudget(ctx, readRoles); err != nil {
+	if err := contextEnded(ctx, guildRead); err != nil {
 		return hubPage{}, err
 	}
 	page := hubPage{Hubs: s.rows(sn), Picker: channelPicker(sn, req.Register.ChannelID), Categories: categoryPicker(sn),

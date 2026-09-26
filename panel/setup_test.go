@@ -13,7 +13,9 @@ import (
 )
 
 // syncBuffer is a concurrency-safe sink for the package-wide test logger:
-// the runtime under the panel logs from its own goroutines.
+// the runtime under the panel logs from its own goroutines. It and
+// captureLogs repeat the commands package's helpers because Go keeps test
+// helpers package-local.
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer

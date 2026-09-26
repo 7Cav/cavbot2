@@ -75,11 +75,11 @@ type ctxStore struct {
 	*store.Fake
 	mu sync.Mutex
 	// blocked names the read armed to block, once; started closes when it
-	// begins waiting, and then is what it returns once released, the
-	// context's own error when nil.
-	blocked string
-	started chan struct{}
-	then    error
+	// begins waiting, and releaseErr is what it fails with once released,
+	// the context's own error when nil.
+	blocked    string
+	started    chan struct{}
+	releaseErr error
 	// failing names the read that fails with errStoreDown.
 	failing string
 }
@@ -93,12 +93,12 @@ var errStoreDown = errors.New("store: connection reset by peer")
 const neverReleased = 5 * time.Second
 
 // blockRead arms the named read to block until its context is done, then
-// fail with then, or with the context's error when then is nil. The channel
+// fail with releaseErr, or with the context's error when releaseErr is nil. The channel
 // closes once the read is waiting.
-func (s *ctxStore) blockRead(read string, then error) <-chan struct{} {
+func (s *ctxStore) blockRead(read string, releaseErr error) <-chan struct{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.blocked, s.then, s.started = read, then, make(chan struct{})
+	s.blocked, s.releaseErr, s.started = read, releaseErr, make(chan struct{})
 	return s.started
 }
 
@@ -113,7 +113,7 @@ func (s *ctxStore) failRead(read string) {
 func (s *ctxStore) gate(ctx context.Context, read string) error {
 	s.mu.Lock()
 	failing := s.failing == read
-	blocked, started, then := s.blocked == read, s.started, s.then
+	blocked, started, releaseErr := s.blocked == read, s.started, s.releaseErr
 	if blocked {
 		s.blocked = ""
 	}
@@ -128,8 +128,8 @@ func (s *ctxStore) gate(ctx context.Context, read string) error {
 		case <-time.After(neverReleased):
 			return fmt.Errorf("%s: blocked read never released", read)
 		}
-		if then != nil {
-			return fmt.Errorf("%s: %w", read, then)
+		if releaseErr != nil {
+			return fmt.Errorf("%s: %w", read, releaseErr)
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -233,7 +233,7 @@ func TestHubPageThatRunsOutOfTimeIsReportedAndSaysSo(t *testing.T) {
 	w.p.pageBudget = 10 * time.Millisecond
 	signIn(t, w.forum, w.b)
 	reported := captureSentry(t)
-	st.blockRead("GetGuildModeratorRoles", nil)
+	st.blockRead("ListHubs", nil)
 
 	res := w.b.get("/")
 
@@ -322,7 +322,7 @@ func TestDiscordReadThatRunsOutOfTimeIsReportedUnderItsOwnName(t *testing.T) {
 		slow func(*fakeDiscord, time.Duration)
 	}{
 		{"the channel list", (*fakeDiscord).setListErr, (*fakeDiscord).setListDelay},
-		{"the guild's roles", (*fakeDiscord).setGuildErr, (*fakeDiscord).setGuildDelay},
+		{"the guild read", (*fakeDiscord).setGuildErr, (*fakeDiscord).setGuildDelay},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -362,10 +362,10 @@ func TestDiscordReadThatRunsOutOfTimeIsReportedUnderItsOwnName(t *testing.T) {
 	}
 }
 
-// leaveMidLoad loads the page and closes the connection once the blocked
+// closeMidLoad loads the page and closes the connection once the blocked
 // read is waiting, which net/http turns into a cancelled request context.
 // It returns when the handler does.
-func leaveMidLoad(t *testing.T, w *testWorld, target string, started <-chan struct{}) {
+func closeMidLoad(t *testing.T, w *testWorld, target string, started <-chan struct{}) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -383,11 +383,14 @@ func leaveMidLoad(t *testing.T, w *testWorld, target string, started <-chan stru
 	<-done
 }
 
-// abandonedLines returns the INFO records of an abandoned page load.
+// abandonedLines returns the INFO records of an abandoned page load, found
+// by the level and the fields the brief fixes, never by the sentence: a
+// step, and the signed-in user.
 func abandonedLines(records []map[string]string) []map[string]string {
 	var out []map[string]string
 	for _, r := range records {
-		if r["msg"] == "Panel page abandoned" && r["level"] == "INFO" {
+		if _, ok := r["step"]; ok && r["level"] == "INFO" &&
+			r["username"] == testUsername && r["forum_user_id"] == strconv.Itoa(testUserID) {
 			out = append(out, r)
 		}
 	}
@@ -399,38 +402,28 @@ func TestAbandonedHubPageLoadIsLoggedNotReported(t *testing.T) {
 	signIn(t, w.forum, w.b)
 	reported := captureSentry(t)
 	logs := captureLogs(t)
-	started := st.blockRead("GetGuildModeratorRoles", nil)
+	started := st.blockRead("ListHubs", nil)
 
-	leaveMidLoad(t, w, "/", started)
+	closeMidLoad(t, w, "/", started)
 
 	if n := len(reported.errors()); n != 0 {
 		t.Errorf("sent %d Sentry events, want none", n)
 	}
-	lines := abandonedLines(logs())
-	if len(lines) != 1 {
-		t.Fatalf("logged %d abandoned page lines, want 1", len(lines))
-	}
-	line := lines[0]
-	if line["step"] == "" {
-		t.Error("the line carries no step")
-	}
-	if got := line["username"]; got != testUsername {
-		t.Errorf("username = %q, want %q", got, testUsername)
-	}
-	if got, want := line["forum_user_id"], strconv.Itoa(testUserID); got != want {
-		t.Errorf("forum_user_id = %q, want %q", got, want)
+	if lines := abandonedLines(logs()); len(lines) != 1 {
+		t.Errorf("logged %d INFO lines with a step and the user, want 1", len(lines))
 	}
 }
 
-// The read's error decides, not whether the browser is still there: a read
-// that fails for its own reason is a panel failure even with nobody waiting.
-func TestReadFailureAfterTheBrowserLeftIsStillReported(t *testing.T) {
+// The read's error decides, not whether the connection is still open: a
+// read that fails for its own reason is a panel failure even with nobody
+// waiting.
+func TestReadFailureAfterTheConnectionClosedIsStillReported(t *testing.T) {
 	w, st := newCtxWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 	reported := captureSentry(t)
-	started := st.blockRead("GetGuildModeratorRoles", errStoreDown)
+	started := st.blockRead("ListHubs", errStoreDown)
 
-	leaveMidLoad(t, w, "/", started)
+	closeMidLoad(t, w, "/", started)
 
 	errs := reported.errors()
 	if len(errs) != 1 {

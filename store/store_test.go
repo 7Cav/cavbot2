@@ -850,11 +850,12 @@ func TestPostgresReadEndedWhileWaitingWrapsTheContextError(t *testing.T) {
 }
 
 // awaitLockWaiter polls until a backend other than the poller waits on a
-// lock over guild_settings, and fails the test if the read returns first.
+// lock, and fails the test if the read returns first. The database is the
+// test's alone, so the one waiter is the read.
 func awaitLockWaiter(t *testing.T, raw *sql.DB, read <-chan error) {
 	t.Helper()
 	const q = `SELECT count(*) FROM pg_stat_activity
-		WHERE wait_event_type = 'Lock' AND query LIKE '%guild_settings%' AND pid <> pg_backend_pid()`
+		WHERE wait_event_type = 'Lock' AND pid <> pg_backend_pid()`
 	giveUp := time.After(5 * time.Second)
 	for {
 		var waiting int

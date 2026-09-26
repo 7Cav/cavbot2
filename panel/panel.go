@@ -60,10 +60,11 @@ const forumTimeout = 10 * time.Second
 // the page makes, the store's and Discord's. It must stay under the reverse
 // proxy's 90 s read timeout. A page the proxy cuts off first looks like an
 // abandoned page load and never reaches Sentry. The slowest page load is the
-// 10 s group check, then the budget plus 20 s: a Discord read takes no
-// context, so the budget can run out during one, which runs on to its 20 s
-// client timeout. The page stops as that read returns, so a second Discord
-// read never starts late.
+// 10 s group check, then the budget plus one Discord read: a Discord read
+// takes no context, so the budget can run out during one, which runs on to
+// discordgo's 20 s client timeout, per attempt when discordgo retries a
+// 502. The page stops as that read returns, so a second Discord read never
+// starts late.
 const hubPageBudget = 10 * time.Second
 
 // New builds a panel from a config and what the hub page acts through. It
@@ -429,15 +430,14 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 // afresh and never posted twice.
 func (p *Panel) hubPageFailed(w http.ResponseWriter, sess session, req pageRequest, err error) {
 	utils.CaptureError("Panel request failed", err, "step", "hub page")
-	data := sess.page("The panel could not load this page")
-	data.Failure = failureReadFailed
-	data.Message = "Cavbot2 could not load this page. Nothing changed and you are still signed in."
+	title, kind, message := "The panel could not load this page", failureReadFailed,
+		"Cavbot2 could not load this page. Nothing changed and you are still signed in."
 	if errors.Is(err, context.DeadlineExceeded) {
-		data = sess.page("The panel took too long")
-		data.Failure = failureTooSlow
-		data.Message = "Cavbot2 took too long to load this page. Nothing changed and you are still signed in."
+		title, kind, message = "The panel took too long", failureTooSlow,
+			"Cavbot2 took too long to load this page. Nothing changed and you are still signed in."
 	}
-	data.Retry = "/"
+	data := sess.page(title)
+	data.Failure, data.Message, data.Retry = kind, message, "/"
 	if req.HubID != 0 {
 		data.Retry = "/?hub=" + strconv.FormatInt(req.HubID, 10)
 	}

@@ -165,10 +165,11 @@ prerelease pushes and stops. To redeploy or roll back, run the workflow by hand
 with a tag Docker Hub already holds. The reverse proxy in front of the panel
 has a 90-second read timeout. A hub page load takes about 40 seconds at the
 slowest: the 10-second group check, the page's 10-second time budget, and one
-Discord call of up to 20 seconds that the budget cannot cut short. A save the
-panel refuses makes its own Discord calls before the page's budget starts, so
-that request can run longer. Keep the proxy's read timeout above the slowest
-request. If the proxy drops a page before the panel gives up on it, the page
+Discord call of up to 20 seconds that the budget cannot cut short. Two things
+can run longer. discordgo retries a call Discord answers with a 502, up to
+three times, each attempt with its own 20 seconds. A save the panel refuses
+makes its own Discord calls before the page's budget starts. Keep the proxy's
+read timeout above the slowest request. If the proxy drops a page before the panel gives up on it, the page
 looks like an [abandoned page load](CONTEXT.md#observability) and reaches no
 one.
 
