@@ -46,7 +46,7 @@
       <div class="field">
         <span class="field-label">Roles</span>
         {{template "picker" .Hubs.Moderators.Picker}}
-        <span class="field-hint">These roles rename any spawned channel of any hub, including hubs added later. Each hub adds its own roles in its form.</span>
+        <span class="field-hint">These roles rename any spawned channel of a hub that allows renaming, including hubs added later. Each hub adds its own roles in its form.</span>
       </div>
     </div>
     <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save</button></div>
@@ -199,7 +199,7 @@
       <div class="field">
         <span class="field-label">Moderator roles for this hub</span>
         {{template "picker" .Picker}}
-        <span class="field-hint">These roles rename, lock and unlock any channel this hub spawns.</span>
+        <span class="field-hint">These roles rename, lock and unlock any channel this hub spawns, as far as the settings below allow.</span>
       </div>
     </div>
     <div class="block-row">
@@ -218,6 +218,10 @@
     </div>
     <div class="block-row">
       <label class="check"><input type="checkbox" name="enabled" data-field="enabled"{{if .Form.Enabled}} checked{{end}}> Enabled</label>
+    </div>
+    <div class="block-row">
+      <label class="check"><input type="checkbox" name="renaming_allowed" data-field="renaming_allowed"{{if .Form.RenamingAllowed}} checked{{end}}> Renaming allowed</label>
+      <span class="field-hint">The owner or a moderator can rename this hub's channels with /voice-rename.</span>
     </div>
     <div class="block-row">
       <label class="check"><input type="checkbox" name="locking_allowed" data-field="locking_allowed"{{if .Form.LockingAllowed}} checked{{end}}> Locking allowed</label>

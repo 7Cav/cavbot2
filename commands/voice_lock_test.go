@@ -301,6 +301,21 @@ func TestVoiceLockSettingTurnedOffKeepsExistingLocks(t *testing.T) {
 	assertJoins(t, fake, "chan-1", "after a lock with locking off", []permMember{permM}, nil)
 }
 
+// #360: "Renaming allowed" off leaves /voice-lock alone. On a hub that
+// allows locking and not renaming, the owner's lock shuts M out.
+func TestVoiceLockWorksOnAHubWithRenamingOff(t *testing.T) {
+	fake := newFakeTempVCManager()
+	installPermFixture(fake)
+	hub := lockingHub(store.PermissionCategory)
+	hub.RenamingAllowed = false
+	tv := newTestTempVC(t, fake, seedStore(t, hub))
+	spawnInto(tv, fake, lockOwner.id, "chan-1", lockOwner.discordMember())
+
+	lockAs(t, tv, lockOwner)
+
+	assertJoins(t, fake, "chan-1", "after the owner's lock", nil, []permMember{permM})
+}
+
 // Authority reads the moderator roles live: once the guild-wide set drops
 // role R, an R holder who locked the channel can no longer unlock it.
 func TestVoiceUnlockReadsModeratorRolesLive(t *testing.T) {

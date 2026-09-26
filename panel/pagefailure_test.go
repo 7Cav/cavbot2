@@ -12,65 +12,14 @@ import (
 	"time"
 
 	"github.com/7cav/cavbot2/store"
-	"github.com/getsentry/sentry-go"
 	"golang.org/x/net/html"
 )
 
-// sentryRecorder keeps the error behind every event the panel sends to
-// Sentry. It keeps the error the panel captured, not sentry-go's rendering of
-// it, so a test asks errors.Is of what was reported.
-type sentryRecorder struct {
-	mu   sync.Mutex
-	errs []error
-}
-
-// errors returns the captured errors, one per event, in order.
-func (r *sentryRecorder) errors() []error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]error(nil), r.errs...)
-}
-
-// discardTransport sends nothing anywhere.
-type discardTransport struct{}
-
-func (discardTransport) Configure(sentry.ClientOptions)        {}
-func (discardTransport) SendEvent(*sentry.Event)               {}
-func (discardTransport) Flush(time.Duration) bool              { return true }
-func (discardTransport) FlushWithContext(context.Context) bool { return true }
-func (discardTransport) Close()                                {}
-
-// captureSentry installs a Sentry client for the test and returns what it
-// records. Without it the panel's captures only log, as with no SENTRY_DSN.
-func captureSentry(t *testing.T) *sentryRecorder {
-	t.Helper()
-	rec := &sentryRecorder{}
-	err := sentry.Init(sentry.ClientOptions{
-		Dsn:       "https://test@example.com/1",
-		Transport: discardTransport{},
-		BeforeSend: func(e *sentry.Event, hint *sentry.EventHint) *sentry.Event {
-			rec.mu.Lock()
-			defer rec.mu.Unlock()
-			var captured error
-			if hint != nil {
-				captured = hint.OriginalException
-			}
-			rec.errs = append(rec.errs, captured)
-			return e
-		},
-	})
-	if err != nil {
-		t.Fatalf("sentry.Init: %v", err)
-	}
-	t.Cleanup(func() { sentry.CurrentHub().BindClient(nil) })
-	return rec
-}
-
-// ctxStore is the store fake behind a database that honours the context the
-// way Postgres does: a read whose context is done fails with an error that
-// wraps the context's error. One read can be armed to block until its
-// context is done, the way a read waiting on a lock does, and one can be set
-// to fail outright.
+// ctxStore is the store fake with the page's reads under the test's control.
+// Like the fake and Postgres, a read whose context is done fails with an
+// error that wraps the context's error. On top of that, one read can be
+// armed to block until its context is done, the way a read waiting on a lock
+// does, and one can be set to fail outright.
 type ctxStore struct {
 	*store.Fake
 	mu sync.Mutex
@@ -210,7 +159,7 @@ func assertSignedInPage(t *testing.T, doc *html.Node) {
 func TestHubPageReadFailureIsReportedAndSaysSo(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
-	reported := captureSentry(t)
+	reported := recordSentry(t)
 	w.discord.setListErr(errors.New("discord: 503"))
 
 	res := w.b.get("/")
@@ -223,7 +172,7 @@ func TestHubPageReadFailureIsReportedAndSaysSo(t *testing.T) {
 		t.Errorf("failure page = %q, want read-failed", got)
 	}
 	assertSignedInPage(t, doc)
-	if n := len(reported.errors()); n != 1 {
+	if n := len(reported.recorded()); n != 1 {
 		t.Errorf("sent %d Sentry events, want 1", n)
 	}
 }
@@ -232,7 +181,7 @@ func TestHubPageThatRunsOutOfTimeIsReportedAndSaysSo(t *testing.T) {
 	w, st := newCtxWorld(t, testHub())
 	w.p.pageBudget = 10 * time.Millisecond
 	signIn(t, w.forum, w.b)
-	reported := captureSentry(t)
+	reported := recordSentry(t)
 	st.blockRead("ListHubs", nil)
 
 	res := w.b.get("/")
@@ -245,7 +194,7 @@ func TestHubPageThatRunsOutOfTimeIsReportedAndSaysSo(t *testing.T) {
 		t.Errorf("failure page = %q, want too-slow", got)
 	}
 	assertSignedInPage(t, doc)
-	errs := reported.errors()
+	errs := reported.recorded()
 	if len(errs) != 1 {
 		t.Fatalf("sent %d Sentry events, want 1", len(errs))
 	}
@@ -328,10 +277,10 @@ func TestDiscordReadThatRunsOutOfTimeIsReportedUnderItsOwnName(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			failing, _ := newCtxWorld(t, testHub())
 			signIn(t, failing.forum, failing.b)
-			reported := captureSentry(t)
+			reported := recordSentry(t)
 			tc.fail(failing.discord, errDiscord)
 			failing.b.get("/")
-			errs := reported.errors()
+			errs := reported.recorded()
 			if len(errs) != 1 {
 				t.Fatalf("the read's own failure sent %d Sentry events, want 1", len(errs))
 			}
@@ -343,12 +292,12 @@ func TestDiscordReadThatRunsOutOfTimeIsReportedUnderItsOwnName(t *testing.T) {
 			slow, _ := newCtxWorld(t, testHub())
 			slow.p.pageBudget = 100 * time.Millisecond
 			signIn(t, slow.forum, slow.b)
-			reported = captureSentry(t)
+			reported = recordSentry(t)
 			tc.slow(slow.discord, 300*time.Millisecond)
 
 			slow.b.get("/")
 
-			errs = reported.errors()
+			errs = reported.recorded()
 			if len(errs) != 1 {
 				t.Fatalf("sent %d Sentry events, want 1", len(errs))
 			}
@@ -400,13 +349,13 @@ func abandonedLines(records []map[string]string) []map[string]string {
 func TestAbandonedHubPageLoadIsLoggedNotReported(t *testing.T) {
 	w, st := newCtxWorld(t, testHub())
 	signIn(t, w.forum, w.b)
-	reported := captureSentry(t)
+	reported := recordSentry(t)
 	logs := captureLogs(t)
 	started := st.blockRead("ListHubs", nil)
 
 	closeMidLoad(t, w, "/", started)
 
-	if n := len(reported.errors()); n != 0 {
+	if n := len(reported.recorded()); n != 0 {
 		t.Errorf("sent %d Sentry events, want none", n)
 	}
 	if lines := abandonedLines(logs()); len(lines) != 1 {
@@ -420,12 +369,12 @@ func TestAbandonedHubPageLoadIsLoggedNotReported(t *testing.T) {
 func TestReadFailureAfterTheConnectionClosedIsStillReported(t *testing.T) {
 	w, st := newCtxWorld(t, testHub())
 	signIn(t, w.forum, w.b)
-	reported := captureSentry(t)
+	reported := recordSentry(t)
 	started := st.blockRead("ListHubs", errStoreDown)
 
 	closeMidLoad(t, w, "/", started)
 
-	errs := reported.errors()
+	errs := reported.recorded()
 	if len(errs) != 1 {
 		t.Fatalf("sent %d Sentry events, want 1", len(errs))
 	}

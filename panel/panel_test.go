@@ -222,8 +222,8 @@ func (b *browser) do(method, target string, header http.Header, body io.Reader) 
 	return b.doContext(context.Background(), method, target, header, body)
 }
 
-// doContext is do with a context on the request, which a test cancels the
-// way net/http does when the connection closes.
+// doContext is do over a request with the given context, the context
+// net/http cancels when the browser's connection closes.
 func (b *browser) doContext(ctx context.Context, method, target string, header http.Header, body io.Reader) *http.Response {
 	b.t.Helper()
 	req := httptest.NewRequestWithContext(ctx, method, testBaseURL+target, body)

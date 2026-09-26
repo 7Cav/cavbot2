@@ -24,7 +24,7 @@ set -euo pipefail
 read -r -d '' FLOORS <<'EOF' || true
 github.com/7cav/cavbot2/utils	87
 github.com/7cav/cavbot2/commands	81
-github.com/7cav/cavbot2/store	80
+github.com/7cav/cavbot2/store	86
 github.com/7cav/cavbot2/panel	78
 EOF
 

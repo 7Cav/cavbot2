@@ -52,6 +52,11 @@ type Hub struct {
 	UserLimit        int
 	Bitrate          int
 	Enabled          bool
+	// RenamingAllowed is whether /voice-rename works on the hub's spawned
+	// channels. On for every hub stored before the field existed; UpsertHub
+	// writes the caller's value, so a Hub built without it stores it off.
+	// Turning it off leaves every channel's current name in place.
+	RenamingAllowed bool
 	// LockingAllowed is whether /voice-lock works on the hub's spawned
 	// channels. Off by default, and a hub stored before the field existed
 	// reads back off. Turning it off leaves existing locks in place.
@@ -163,9 +168,10 @@ type Store interface {
 
 	// GetGuildModeratorRoles returns the guild-wide moderator role IDs, the
 	// roles that may rename, lock and unlock any spawned channel of every
-	// hub. A guild with no row reads back as an empty set with no error. Same
-	// set rule as Hub.ModeratorRoleIDs: no promised order, and nil and empty
-	// are one thing.
+	// hub, as far as each hub's settings allow. A guild with no row reads
+	// back as an empty set with no error. Same set rule as
+	// Hub.ModeratorRoleIDs: no promised order, and nil and empty are one
+	// thing.
 	GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error)
 	// SetGuildModeratorRoles replaces the guild-wide moderator role IDs.
 	SetGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string) error

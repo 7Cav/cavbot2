@@ -83,6 +83,7 @@ func sampleHub(guildID, hubChannelID string) Hub {
 		UserLimit:        12,
 		Bitrate:          96000,
 		Enabled:          true,
+		RenamingAllowed:  true,
 		LockingAllowed:   true,
 	}
 }
@@ -122,6 +123,9 @@ func assertHubSettings(t *testing.T, got, want Hub) {
 	}
 	if got.Enabled != want.Enabled {
 		t.Errorf("Enabled = %v, want %v", got.Enabled, want.Enabled)
+	}
+	if got.RenamingAllowed != want.RenamingAllowed {
+		t.Errorf("RenamingAllowed = %v, want %v", got.RenamingAllowed, want.RenamingAllowed)
 	}
 	if got.LockingAllowed != want.LockingAllowed {
 		t.Errorf("LockingAllowed = %v, want %v", got.LockingAllowed, want.LockingAllowed)
@@ -171,6 +175,7 @@ func TestUpsertHubUpdatesInPlace(t *testing.T) {
 		want.UserLimit = 0
 		want.Bitrate = 64000
 		want.Enabled = false
+		want.RenamingAllowed = false
 		want.LockingAllowed = false
 
 		second, err := s.UpsertHub(ctx, want)
@@ -444,10 +449,12 @@ func TestSetSpawnedChannelLockWithNoRowIsNotFound(t *testing.T) {
 	})
 }
 
-// T7d (#349): rows written before the channel lock migration come through
-// it with "Locking allowed" off on every hub and every spawned channel
-// unlocked, the state an upgrade meets.
-func TestChannelLockMigrationLeavesExistingRowsOffAndUnlocked(t *testing.T) {
+// migratedTo resets the test database and runs the migrations up to and
+// including version: the schema an older release left. The case then writes
+// rows the way that release did, and openMigrated runs the rest. Skips when
+// no test database is set.
+func migratedTo(t *testing.T, version int64) *sql.DB {
+	t.Helper()
 	dsn := os.Getenv(testDSNVar)
 	if dsn == "" {
 		t.Skipf("%s not set", testDSNVar)
@@ -457,7 +464,7 @@ func TestChannelLockMigrationLeavesExistingRowsOffAndUnlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open raw connection: %v", err)
 	}
-	defer func() { _ = raw.Close() }()
+	t.Cleanup(func() { _ = raw.Close() })
 	if _, err := raw.ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
 		t.Fatalf("reset schema: %v", err)
 	}
@@ -469,29 +476,53 @@ func TestChannelLockMigrationLeavesExistingRowsOffAndUnlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migration provider: %v", err)
 	}
-	// The change log migration is the last one before the lock's.
-	if _, err := provider.UpTo(ctx, 20260918100000); err != nil {
-		t.Fatalf("migrate to the schema before the lock: %v", err)
+	if _, err := provider.UpTo(ctx, version); err != nil {
+		t.Fatalf("migrate up to %d: %v", version, err)
 	}
+	return raw
+}
+
+// insertOlderHub writes a hub row naming only the columns the first schema
+// has, as an older release wrote it, and returns its ID.
+func insertOlderHub(t *testing.T, raw *sql.DB) int64 {
+	t.Helper()
 	var hubID int64
-	if err := raw.QueryRowContext(ctx, `
+	if err := raw.QueryRowContext(context.Background(), `
 		INSERT INTO hubs (guild_id, hub_channel_id, base_string, permission_source, enabled)
 		VALUES ('guild-1', 'hub-1', 'Arma Voice', 'category', TRUE) RETURNING id`).Scan(&hubID); err != nil {
 		t.Fatalf("insert an older hub row: %v", err)
 	}
-	if _, err := raw.ExecContext(ctx, `
+	return hubID
+}
+
+// openMigrated opens the store over the test database, which runs every
+// migration after the one migratedTo stopped at.
+func openMigrated(t *testing.T) *Postgres {
+	t.Helper()
+	s, err := Open(context.Background(), os.Getenv(testDSNVar))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+// T7d (#349): rows written before the channel lock migration come through
+// it with "Locking allowed" off on every hub and every spawned channel
+// unlocked, the state an upgrade meets.
+func TestChannelLockMigrationLeavesExistingRowsOffAndUnlocked(t *testing.T) {
+	// The change log migration is the last one before the lock's.
+	raw := migratedTo(t, 20260918100000)
+	hubID := insertOlderHub(t, raw)
+	if _, err := raw.ExecContext(context.Background(), `
 		INSERT INTO spawned_channels (channel_id, hub_id, number, owner_user_id)
 		VALUES ('chan-1', $1, 1, 'user-1')`, hubID); err != nil {
 		t.Fatalf("insert an older spawned row: %v", err)
 	}
 
-	s, err := Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
+	s := openMigrated(t)
 
-	hub, err := s.GetHub(ctx, hubID)
+	hub, err := s.GetHub(context.Background(), hubID)
 	if err != nil {
 		t.Fatalf("GetHub: %v", err)
 	}
@@ -500,6 +531,25 @@ func TestChannelLockMigrationLeavesExistingRowsOffAndUnlocked(t *testing.T) {
 	}
 	if got := listedSpawned(t, s, "chan-1"); got.Lock != (ChannelLock{}) || got.OwnerUserID != "user-1" {
 		t.Errorf("an older spawned row reads back as %+v, want unlocked with owner user-1", got)
+	}
+}
+
+// T7e (#360): a hub written before the rename setting existed comes through
+// its migration with "Renaming allowed" on, so an upgrade leaves every hub
+// renaming as it did.
+func TestRenamingAllowedMigrationLeavesExistingHubsOn(t *testing.T) {
+	// The channel lock migration is the last one before the rename setting's.
+	raw := migratedTo(t, 20260924000000)
+	hubID := insertOlderHub(t, raw)
+
+	s := openMigrated(t)
+
+	hub, err := s.GetHub(context.Background(), hubID)
+	if err != nil {
+		t.Fatalf("GetHub: %v", err)
+	}
+	if !hub.RenamingAllowed {
+		t.Error("an older hub reads back with RenamingAllowed off, want on")
 	}
 }
 
@@ -790,8 +840,9 @@ func TestModeratorChangesListReturnsTheLastNNewestFirst(t *testing.T) {
 // The panel tells an abandoned page load from a failed read by errors.Is on
 // the context's error, so a read the context ends while it runs must keep
 // that error in its chain through the store's own wrapping. A
-// characterization pin on Postgres alone: the Fake ignores the context. The
-// read waits on a table lock another connection holds, and the test sees it
+// characterization pin on Postgres alone: a Fake read has no query in flight
+// to end. The read waits on a table lock another connection holds, and the
+// test sees it
 // waiting before the context ends, so the in-flight path is the one pinned
 // and not the check database/sql makes before a query starts.
 func TestPostgresReadEndedWhileWaitingWrapsTheContextError(t *testing.T) {
@@ -873,4 +924,84 @@ func awaitLockWaiter(t *testing.T, raw *sql.DB, read <-chan error) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
+}
+
+// T15 (#356): a call made with a context that is already done fails with that
+// context's error and changes nothing, whichever method it is. A panel save
+// that outlives its request depends on the fake failing here the way
+// Postgres does, or its tests could not see a save stopped halfway.
+func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		live := context.Background()
+		hubID := storeHub(t, s, "hub-1")
+		seeded := SpawnedChannel{ChannelID: "chan-1", HubID: hubID, Number: 1, OwnerUserID: "user-a"}
+		if err := s.UpsertSpawnedChannel(live, seeded); err != nil {
+			t.Fatalf("UpsertSpawnedChannel: %v", err)
+		}
+		if err := s.SetGuildModeratorRoles(live, "guild-1", []string{"role-mp"}); err != nil {
+			t.Fatalf("SetGuildModeratorRoles: %v", err)
+		}
+		if err := s.AppendChangeLog(live, changeEntry(hubID, 1)); err != nil {
+			t.Fatalf("AppendChangeLog: %v", err)
+		}
+
+		done, cancel := context.WithCancel(live)
+		cancel()
+		calls := map[string]func() error{
+			"GetHub":   func() error { _, err := s.GetHub(done, hubID); return err },
+			"ListHubs": func() error { _, err := s.ListHubs(done, "guild-1"); return err },
+			"UpsertHub": func() error {
+				_, err := s.UpsertHub(done, sampleHub("guild-1", "hub-2"))
+				return err
+			},
+			"DeleteHub": func() error { return s.DeleteHub(done, hubID) },
+			"UpsertSpawnedChannel": func() error {
+				return s.UpsertSpawnedChannel(done, SpawnedChannel{ChannelID: "chan-2", HubID: hubID, Number: 2})
+			},
+			"SetSpawnedChannelLock": func() error {
+				return s.SetSpawnedChannelLock(done, "chan-1", ChannelLock{Locked: true, LockerUserID: "user-a"})
+			},
+			"DeleteSpawnedChannel":   func() error { return s.DeleteSpawnedChannel(done, "chan-1") },
+			"ListSpawnedChannels":    func() error { _, err := s.ListSpawnedChannels(done); return err },
+			"GetGuildModeratorRoles": func() error { _, err := s.GetGuildModeratorRoles(done, "guild-1"); return err },
+			"SetGuildModeratorRoles": func() error { return s.SetGuildModeratorRoles(done, "guild-1", []string{"role-hq"}) },
+			"AppendChangeLog":        func() error { return s.AppendChangeLog(done, changeEntry(hubID, 2)) },
+			"ListChangeLog":          func() error { _, err := s.ListChangeLog(done, hubID, 10); return err },
+			"ListModeratorChanges":   func() error { _, err := s.ListModeratorChanges(done, 10); return err },
+		}
+		for name, call := range calls {
+			if err := call(); !errors.Is(err, context.Canceled) {
+				t.Errorf("%s with a done context = %v, want context.Canceled", name, err)
+			}
+		}
+
+		hubs, err := s.ListHubs(live, "guild-1")
+		if err != nil {
+			t.Fatalf("ListHubs: %v", err)
+		}
+		if got := hubChannelIDs(hubs); !slices.Equal(got, []string{"hub-1"}) {
+			t.Errorf("hubs after the done calls = %v, want hub-1 alone", got)
+		}
+		rows, err := s.ListSpawnedChannels(live)
+		if err != nil {
+			t.Fatalf("ListSpawnedChannels: %v", err)
+		}
+		if len(rows) != 1 || rows[0].ChannelID != seeded.ChannelID || rows[0].OwnerUserID != seeded.OwnerUserID || rows[0].Lock != (ChannelLock{}) {
+			t.Errorf("spawned rows after the done calls = %+v, want chan-1 alone, owned by user-a, unlocked", rows)
+		}
+		if roles, err := s.GetGuildModeratorRoles(live, "guild-1"); err != nil || !slices.Equal(roles, []string{"role-mp"}) {
+			t.Errorf("guild moderator roles after the done calls = %v, %v; want [role-mp]", roles, err)
+		}
+		entries, err := s.ListChangeLog(live, hubID, 10)
+		if err != nil {
+			t.Fatalf("ListChangeLog: %v", err)
+		}
+		var ordinals []int
+		for _, e := range entries {
+			ordinals = append(ordinals, ordinalOf(t, e))
+		}
+		if !slices.Equal(ordinals, []int{1}) {
+			t.Errorf("hub-1's entries after the done calls are ordinals %v, want [1], the seeded one alone", ordinals)
+		}
+	})
 }
