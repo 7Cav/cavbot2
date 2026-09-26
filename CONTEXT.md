@@ -219,6 +219,16 @@ moment it empties. Hub settings are edited in the panel, never in code.
   unlocked the channel, and loses its controls.
   _Avoid_: lock panel (the panel is the web UI), control panel, tool,
   widget.
+- **Knock channel**: A spawned channel whose name starts with 🚦, asking
+  members outside to knock before they join. A courtesy the bot does not
+  enforce: a knock channel keeps nobody out, where a lock does. The name is
+  its only record.
+  _Avoid_: soft lock, do not disturb, knocked channel, knock (for the channel
+  or its 🚦).
+- **Knock**: A member outside a knock channel asking the people inside
+  whether they may join. Members do it among themselves; the bot plays no
+  part.
+  _Avoid_: request to join, let in (a lock's term, and done by the bot).
 - **Eligible role**: A live Discord role that is not managed and is not
   `@everyone`. The only kind a moderator picker offers, and the only kind a
   save may add.

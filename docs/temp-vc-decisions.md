@@ -1,7 +1,7 @@
 # Temporary voice channels: decisions, and what they do to PR #232
 
-**Last updated:** 2026-09-24
-**Subject:** issue [#100](https://github.com/7Cav/cavbot2/issues/100), PR [#232](https://github.com/7Cav/cavbot2/pull/232), the MEE6 audit (#99), the wayfinder map [#255](https://github.com/7Cav/cavbot2/issues/255), and the channel lock request [#347](https://github.com/7Cav/cavbot2/issues/347).
+**Last updated:** 2026-09-25
+**Subject:** issue [#100](https://github.com/7Cav/cavbot2/issues/100), PR [#232](https://github.com/7Cav/cavbot2/pull/232), the MEE6 audit (#99), the wayfinder map [#255](https://github.com/7Cav/cavbot2/issues/255), the channel lock request [#347](https://github.com/7Cav/cavbot2/issues/347), and the knock channel request [#357](https://github.com/7Cav/cavbot2/issues/357).
 
 ## Purpose
 
@@ -13,6 +13,7 @@ Do not relitigate anything under "Settled", "Settled while charting", or "Alread
 
 - Both question rounds are answered. Nothing is in flight with the stakeholder.
 - Nex asked for a channel lock on 2026-09-24 ([#347](https://github.com/7Cav/cavbot2/issues/347)). It reopens two rows under "Settled"; each row says what changed, and the detail is under "Settled for #347".
+- Nex asked, through the maintainer, for a way to make a spawned channel a knock channel on 2026-09-25 ([#357](https://github.com/7Cav/cavbot2/issues/357)). The detail is under "Settled for #357".
 - The maintainer builds this, not the PR's author. PR #232 is closed; the pull request for [#289](https://github.com/7Cav/cavbot2/issues/289) supersedes it.
 - Every ticket under map #255 is closed as of 2026-09-15. The last was [Panel session lifetime and group re-check](https://github.com/7Cav/cavbot2/issues/280). Nothing is left to decide before the spec is written.
 - PR #232 was a draft, 3 files, +3677 lines, last pushed 2026-07-26. It forked 20 commits behind `develop`; its pruned code reached `develop` through #299, and the #289 pull request reshapes it onto the store.
@@ -202,6 +203,28 @@ Nex asked for a lock that hub moderators can use for closed staff meetings. MEE6
 | A lock and an unlock each reach Discord as one channel edit carrying the whole overwrite list, so a refusal changes nothing and the invoker hears "Couldn't lock the channel." Adding a guest later is one edit per guest; a failure logs WARN, and a let-in reply names who did not get in. Rejected: one edit per overwrite with a rollback, whose failed rollback leaves a half-locked channel. | Maintainer, #347 Q26 |
 | Smaller behaviour. Refusals match `/voice-rename` (not in voice, not in a spawned channel, not the owner or a moderator), plus "Locking isn't turned on for this hub.", "Already locked." and "This channel isn't locked." The lock notice pings nobody. The picker skips bots, current guests and anyone who cannot see the channel, and the reply names who was skipped and why. Letting in does not raise the hub's user limit. A lock notice that fails to post leaves the lock standing: the invoker's reply says so, `/voice-unlock` still works, and it logs WARN like a failed ownership notice. A lock leaves rename, ownership and handover untouched. | Maintainer, #347 |
 | Mechanism. A lock writes a Connect deny on `@everyone` and on every role overwrite the channel carries, a Connect allow on each moderator role, and a member Connect allow for each guest, all inside the six-bit ceiling. Discord applies role allows after the `@everyone` deny and member allows last, which is why every role overwrite needs the deny and why a guest or moderator still gets in. Discord documents no rate limit for permission edits and nothing puts them under the rename limit; the smoke test covers a lock and unlock pair for error `20028`. Whether a moderator can drag in a member who lacks Connect is undocumented (a Discord engineer called moving people into private channels intended, in discord-api-docs #1293) and is on the smoke test too. | Discord docs research, 2026-09-24 |
+
+## Settled for #357 (knock channel, 2026-09-25)
+
+Nex asked, through the maintainer, for an optional prompt on `/voice-rename` that makes the channel a knock channel by inserting 🚦. The maintainer grilled it on 2026-09-25. The terms (knock channel, knock) are in `CONTEXT.md`.
+
+| Decision | Provenance |
+|---|---|
+| Knocking is what a member outside does: asking to join. The channel is a knock channel, and a member makes a channel one. "Knock" never names the channel, its 🚦, or making it a knock channel. | Maintainer, #357 |
+| A knock channel is a spawned channel whose name starts with 🚦, and nothing else. The bot stores no flag, changes no permission, posts no notice, and offers no control for knocking. The name is the only record, and it holds: after the create, only `/voice-rename` sets a spawned channel's name, so handover, lock, unlock and the restart sweep leave the 🚦 in place. Rejected: a knock mechanism where outsiders ask through the bot and someone inside admits them, which would duplicate the #347 lock's Let someone in. | Maintainer, #357 Q1 |
+| The sign is 🚦, fixed in code. An exception to "If it can be configured in the panel, make it configurable": a convention works only if every hub shows the same sign, and a panel change would leave channels already carrying the old one. | Maintainer, #357 Q2 |
+| The 🚦 leads the name, followed by one space: `🚦 Arma Voice - 1`. It counts toward Discord's 100-character limit. | Maintainer, #357 Q3 |
+| Making a channel a knock channel is an optional true/false option on `/voice-rename`, the shape Nex asked for. It follows the rename rule (owner or moderator) and the Server Settings roles already enabled for `/voice-rename`, so there is no runbook step. It spends a rename like any other name change. Rejected: a separate `/voice-knock`, which Nex would have to enable in Server Settings and which would carry its own refusals. | Maintainer, #357 Q4 |
+| Setting the option yields exactly one 🚦 in the Q3 form. The bot drops any 🚦 and whitespace the member typed at the start of the name, then prepends `🚦 `. `name:🚦Alpha` with the option set becomes `🚦 Alpha`. | Maintainer, #357 Q5 |
+| A name that fits alone but not with the 🚦 is refused, as an over-long name is today: "❌ `name` must be at most 98 characters for a knock channel." The bot never shortens a name. | Maintainer, #357 Q6 |
+| `name` stays required, so making a channel a knock channel means entering its name, as Nex's example does. Rejected: an optional `name` that keeps the current one, which needs the name from the cache and a refusal for a bare `/voice-rename`. | Maintainer, #357 Q7 |
+| The option is `knock-channel`, described as "Make this a knock channel: the name starts with 🚦". Not `knock`, which reads as what an outsider does. The command's description is unchanged. | Maintainer, #357 Q8 |
+| The ownership notice does not mention knock channels. Discord shows the option when a member types `/voice-rename`. | Maintainer, #357 Q9 |
+| The "Temp VC renamed" line gets no new field. `after` carries the 🚦, and a query for names that start with it counts knock channels, hand-typed ones included. | Maintainer, #357 Q10 |
+| The option only adds. Unset and false alike send the name as typed, so a hand-typed 🚦 still makes a knock channel, and a rename with no leading 🚦 makes it an ordinary channel again. Rejected: false stripping a typed 🚦, a name filter the Settled row rules out. | Maintainer, #357 Q11 |
+| With the option set, a name that is empty once the typed 🚦 and whitespace are dropped is refused with the existing "❌ `name` must not be empty." Without the option, a name of `🚦` alone stands, as today. | Maintainer, #357 Q12 |
+| The success reply is unchanged: "✅ Renamed to **🚦 Alpha**." The 🚦 in the name is the confirmation. | Maintainer, #357 Q13 |
+| The README's command row reads "Rename the spawned voice channel you are in, optionally making it a knock channel (🚦)". | Maintainer, #357 Q14 |
 
 ## Open, as tickets on map #255
 
