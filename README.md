@@ -163,11 +163,11 @@ console there is normal, not a hang.
 records the result as a deployment in the `production` environment. A
 prerelease pushes and stops. To redeploy or roll back, run the workflow by hand
 with a tag Docker Hub already holds. The reverse proxy in front of the panel
-gives up on a request after 90 s. Once
-[#355](https://github.com/7Cav/cavbot2/issues/355) gives the hub page's reads a
-10 s budget, the slowest hub page request takes about 60 s. Keep the proxy's
-read timeout above that. A page the proxy drops first looks like an
-[abandoned page load](CONTEXT.md) and reaches no one.
+has a 90-second read timeout. Once [#355](https://github.com/7Cav/cavbot2/issues/355)
+gives the hub page's reads a 10-second budget, the slowest hub page request
+takes about 60 seconds. Keep the proxy's read timeout above that. If the proxy
+drops a page before the panel gives up on it, the page looks like an
+[abandoned page load](CONTEXT.md#observability) and reaches no one.
 
 ### One thing that is not a command
 
