@@ -168,9 +168,10 @@ type Store interface {
 
 	// GetGuildModeratorRoles returns the guild-wide moderator role IDs, the
 	// roles that may rename, lock and unlock any spawned channel of every
-	// hub, as far as each hub's settings allow. A guild with no row reads back as an empty set with no error. Same
-	// set rule as Hub.ModeratorRoleIDs: no promised order, and nil and empty
-	// are one thing.
+	// hub, as far as each hub's settings allow. A guild with no row reads
+	// back as an empty set with no error. Same set rule as
+	// Hub.ModeratorRoleIDs: no promised order, and nil and empty are one
+	// thing.
 	GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error)
 	// SetGuildModeratorRoles replaces the guild-wide moderator role IDs.
 	SetGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string) error

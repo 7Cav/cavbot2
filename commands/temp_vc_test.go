@@ -1995,7 +1995,7 @@ func TestTempVCOwnershipNoticesArePairwiseDistinct(t *testing.T) {
 // the same on both hubs.
 func TestTempVCOwnershipNoticeOffersRenameOnlyWhereTheHubAllowsIt(t *testing.T) {
 	type noticeLines struct{ createOwner, handoverOwner, createNone, handoverNone string }
-	linesOn := func(hub store.Hub) noticeLines {
+	noticeLinesFor := func(hub store.Hub) noticeLines {
 		fake := newFakeTempVCManager()
 		tv := newTestTempVC(t, fake, seedStore(t, hub))
 		// The scene of the pairwise test above: chan-a is created with no
@@ -2013,7 +2013,7 @@ func TestTempVCOwnershipNoticeOffersRenameOnlyWhereTheHubAllowsIt(t *testing.T) 
 			createNone: a[0].data.Content, handoverNone: a[2].data.Content,
 		}
 	}
-	on, off := linesOn(testHub()), linesOn(renamingOffHub())
+	on, off := noticeLinesFor(testHub()), noticeLinesFor(renamingOffHub())
 
 	for _, line := range []string{off.createOwner, off.handoverOwner} {
 		if !strings.Contains(line, "sgt-1") || strings.Contains(line, "/voice-rename") {

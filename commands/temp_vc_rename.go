@@ -90,9 +90,9 @@ type renameResult struct {
 
 // Rename renames the spawned channel the invoker is sitting in, on the
 // invoker's behalf, when its hub allows renaming and they own it or hold one
-// of its moderator roles. No channel argument: the target is the invoker's current
-// channel from the runtime's own occupancy tracking. The edit call carries an
-// audit log reason naming the invoker and no retry on rate limit.
+// of its moderator roles. No channel argument: the target is the invoker's
+// current channel from the runtime's own occupancy tracking. The edit call
+// carries an audit log reason naming the invoker and no retry on rate limit.
 func (t *TempVC) Rename(by Invoker, name string) (renameResult, error) {
 	t.mu.Lock()
 	channelID, err := t.invokerSpawnedChannelLocked(by)
@@ -214,13 +214,13 @@ func (i Invoker) auditName() string {
 	return i.Username + " (" + i.UserID + ")"
 }
 
-// invokerChannelLocked resolves the spawned channel a voice command acts on:
-// the one the invoker sits in, when they own it or hold one of its hub's
-// effective moderator roles. /voice-lock and /voice-unlock call it whole, so
-// the two refuse alike. /voice-rename calls its two halves with the hub's
-// rename check between them (#360), so it refuses in the same words.
-// Caller holds mu.
-func (t *TempVC) invokerChannelLocked(by Invoker) (string, error) {
+// authorizedInvokerChannelLocked resolves the spawned channel a voice
+// command acts on: the one the invoker sits in, when they own it or hold one
+// of its hub's effective moderator roles. /voice-lock and /voice-unlock call
+// it whole, so the two refuse alike. /voice-rename calls its two halves with
+// the hub's rename check between them (#360), so it refuses in the same
+// words. Caller holds mu.
+func (t *TempVC) authorizedInvokerChannelLocked(by Invoker) (string, error) {
 	channelID, err := t.invokerSpawnedChannelLocked(by)
 	if err != nil {
 		return "", err

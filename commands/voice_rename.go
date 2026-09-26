@@ -12,8 +12,9 @@ import (
 
 // /voice-rename (spec #285, #292): the owner of a spawned channel, or a member
 // holding a moderator role of its hub, renames the channel they are sitting
-// in, on a hub with "Renaming allowed" on (#360). One required string option, the new name. Every reply is ephemeral,
-// through the deferred-ephemeral pattern /warden uses.
+// in, on a hub with "Renaming allowed" on (#360). One required string
+// option, the new name. Every reply is ephemeral, through the
+// deferred-ephemeral pattern /warden uses.
 //
 // No code limits the command to Cav members: like every other command, that
 // is a Server Settings restriction (docs/temp-vc-decisions.md, #279).

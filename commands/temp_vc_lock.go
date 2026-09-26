@@ -153,7 +153,7 @@ func (t *TempVC) endAccessChange(channelID string) {
 func (t *TempVC) Lock(by Invoker) (lockResult, error) {
 	t.mu.Lock()
 	channelID, err := t.idleChannelLocked(func() (string, error) {
-		return t.invokerChannelLocked(by)
+		return t.authorizedInvokerChannelLocked(by)
 	})
 	if err != nil {
 		t.mu.Unlock()
@@ -212,7 +212,7 @@ func (t *TempVC) Lock(by Invoker) (lockResult, error) {
 // works whatever the hub's "Locking allowed" says now.
 func (t *TempVC) Unlock(by Invoker) (lockResult, error) {
 	return t.unlock(by, func() (string, error) {
-		return t.invokerChannelLocked(by)
+		return t.authorizedInvokerChannelLocked(by)
 	})
 }
 

@@ -763,7 +763,7 @@ func TestLockingAllowedSaveReachesTheRuntimeAtOnce(t *testing.T) {
 // owner renames their channel, a save unticks the box, and the owner's next
 // rename is refused while the channel keeps the name it had: the save edits
 // no live channel. The change log entry records the setting's before and
-// after.
+// after, and the form shows it off as saved, so the next save keeps it off.
 func TestRenamingAllowedSaveReachesTheRuntimeAtOnce(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
@@ -773,7 +773,7 @@ func TestRenamingAllowedSaveReachesTheRuntimeAtOnce(t *testing.T) {
 
 	sec := editSection(t, w.b.get("/?hub="+strconv.FormatInt(id, 10)), id)
 	if got := postedControls(sec, "renaming_allowed"); len(got) != 1 {
-		t.Errorf("the form of a hub with renaming on posts renaming_allowed %v, want it on", got)
+		t.Errorf("the form of a hub with renaming on posts renaming_allowed %q, want it on", got)
 	}
 	owner := commands.Invoker{UserID: "user-owner", Roles: []string{testRankSGT}}
 	if _, err := w.runtime.Rename(owner, "Alpha"); err != nil {
@@ -799,6 +799,10 @@ func TestRenamingAllowedSaveReachesTheRuntimeAtOnce(t *testing.T) {
 	}
 	if got := decodeDiff(t, entries[0])["renaming_allowed"]; got.Before != true || got.After != false {
 		t.Errorf("diff renaming_allowed = %+v, want before true, after false", got)
+	}
+	sec = editSection(t, w.b.get("/?hub="+strconv.FormatInt(id, 10)), id)
+	if got := postedControls(sec, "renaming_allowed"); len(got) != 0 {
+		t.Errorf("the form after the save posts renaming_allowed %q, want it off as saved", got)
 	}
 }
 

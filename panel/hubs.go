@@ -707,9 +707,9 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 // update saves a hub's settings from the edit form, writes the row, applies
 // it to the runtime, so a disabled hub stops spawning at once and a change
 // to "Renaming allowed" or "Locking allowed" reaches /voice-rename or
-// /voice-lock at once, and appends a change log
-// entry with the changed fields. A refusal is a *fieldError naming the
-// field, and nothing is written; store.ErrNotFound means no hub has the ID.
+// /voice-lock at once, and appends a change log entry with the changed
+// fields. A refusal is a *fieldError naming the field, and nothing is
+// written; store.ErrNotFound means no hub has the ID.
 //
 // A broken hub is refused before anything else: its channel is gone or has
 // no category, and the page offers Remove alone. A changed hub channel name
