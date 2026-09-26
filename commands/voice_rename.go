@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/7cav/cavbot2/utils"
@@ -12,8 +13,9 @@ import (
 
 // /voice-rename (spec #285, #292): the owner of a spawned channel, or a member
 // holding a moderator role of its hub, renames the channel they are sitting
-// in. One required string option, the new name. Every reply is ephemeral,
-// through the deferred-ephemeral pattern /warden uses.
+// in. A required string option, the new name, then an optional boolean,
+// knock-channel, that makes it a knock channel (#357). Every reply is
+// ephemeral, through the deferred-ephemeral pattern /warden uses.
 //
 // No code limits the command to Cav members: like every other command, that
 // is a Server Settings restriction (docs/temp-vc-decisions.md, #279).
@@ -21,6 +23,30 @@ import (
 // voiceRenameCommandName is the registered slash-command name, the value the
 // telemetry line and every capture carry under "command".
 const voiceRenameCommandName = "voice-rename"
+
+// A knock channel is a spawned channel whose name starts with 🚦 (#357).
+// The knock-channel option gives every name the one form
+// knockChannelPrefix, the 🚦 and one space. emojiVariationSelector is
+// U+FE0F, which a keyboard may send after the 🚦.
+const (
+	knockChannelSign       = "\U0001F6A6"
+	knockChannelPrefix     = knockChannelSign + " "
+	emojiVariationSelector = "\uFE0F"
+)
+
+// withoutKnockChannelSigns drops every 🚦 and whitespace at the start of
+// name, so the knock-channel option adds the one 🚦 the name keeps. A 🚦
+// followed by U+FE0F counts as one 🚦.
+func withoutKnockChannelSigns(name string) string {
+	for {
+		name = strings.TrimLeftFunc(name, unicode.IsSpace)
+		rest, found := strings.CutPrefix(name, knockChannelSign)
+		if !found {
+			return name
+		}
+		name = strings.TrimPrefix(rest, emojiVariationSelector)
+	}
+}
 
 // VoiceRename declares the command over a runtime, nil on a host with no bot
 // store (see NewRegistry for why the command exists anyway).
@@ -35,6 +61,11 @@ func VoiceRename(tv *TempVC) Command {
 					Name:        "name",
 					Description: "The new channel name",
 					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionBoolean,
+					Name:        "knock-channel",
+					Description: "Make this a knock channel: the name starts with 🚦",
 				},
 			},
 		},
@@ -64,17 +95,26 @@ func runVoiceRename(r utils.InteractionResponder, tv *TempVC, interaction *disco
 	}
 
 	// Trimmed, then bounded by Discord's channel name limit, counted in
-	// characters. No other filter. The Code of Conduct polices abuse.
-	name, _ := getOptionString(interaction.ApplicationCommandData(), "name")
+	// characters. No other filter. The Code of Conduct polices abuse. With
+	// knock-channel set, the typed 🚦 goes and the one the name keeps takes
+	// two of those characters. Unset or false, the name goes out as typed.
+	data := interaction.ApplicationCommandData()
+	name, _ := getOptionString(data, "name")
 	name = strings.TrimSpace(name)
+	prefix, tooLong := "", "❌ `name` must be at most %d characters."
+	if getOptionBool(data, "knock-channel") {
+		name = withoutKnockChannelSigns(name)
+		prefix, tooLong = knockChannelPrefix, "❌ `name` must be at most %d characters for a knock channel."
+	}
 	if name == "" {
 		editEphemeral(r, interaction, "❌ `name` must not be empty.")
 		return
 	}
-	if utf8.RuneCountInString(name) > discordChannelNameLimit {
-		editEphemeral(r, interaction, fmt.Sprintf("❌ `name` must be at most %d characters.", discordChannelNameLimit))
+	if limit := discordChannelNameLimit - utf8.RuneCountInString(prefix); utf8.RuneCountInString(name) > limit {
+		editEphemeral(r, interaction, fmt.Sprintf(tooLong, limit))
 		return
 	}
+	name = prefix + name
 
 	result, err := tv.Rename(Invoker{UserID: discordID, Username: username, Roles: interactionRoles(interaction)}, name)
 	if err != nil {
