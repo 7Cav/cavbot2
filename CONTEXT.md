@@ -248,10 +248,17 @@ moment it empties. Hub settings are edited in the panel, never in code.
   create or the move-into, and a refusal the bot decided itself, which only
   a broken hub causes.
   _Avoid_: create failure, failed create, failed join, refused join.
+- **Save**: One submitted panel form that changes the bot's settings: a
+  hub's create, register, update or remove, or the guild-wide moderator
+  roles. It begins once the group check passes, runs to its end whether or
+  not the browser waits, and takes effect when the store holds its settings.
+  A refused save changes nothing.
+  _Avoid_: submit, submission, write, commit.
 - **Change log**: The panel's record of who changed which setting, when,
   and from what to what. Each hub's form shows the hub's own entries; the
   guild-wide moderator section shows the entries of its saves, which
-  reference no hub. It records panel saves only.
+  reference no hub. It records saves only, and every save that takes effect
+  has exactly one entry.
   _Avoid_: audit trail, audit log (that is Discord's), history.
 - **Rank ladder**: The rank roles in seniority order, most senior first,
   that the handover rule ranks occupants by.
