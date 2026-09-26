@@ -162,9 +162,11 @@ console there is normal, not a hang.
 `7cav/cavbot2:<tag>`, then deploys that tag to the host over SSH. GitHub
 records the result as a deployment in the `production` environment. A
 prerelease pushes and stops. To redeploy or roll back, run the workflow by hand
-with a tag Docker Hub already holds. The host preparation, the Release
-checklist and the MEE6 cutover steps are in
-[`docs/cutover-runbook.md`](docs/cutover-runbook.md).
+with a tag Docker Hub already holds. The reverse proxy in front of the panel
+has a 90-second read timeout. The slowest hub page request takes about 60
+seconds, so keep the proxy's read timeout above that. If the proxy drops a page
+before the panel gives up on it, the page looks like an
+[abandoned page load](CONTEXT.md#observability) and reaches no one.
 
 ### One thing that is not a command
 
