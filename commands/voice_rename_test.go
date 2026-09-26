@@ -20,9 +20,10 @@ import (
 // checks, or a log line.
 
 // renameInteraction builds the interaction /voice-rename receives: a guild
-// command from a member with the given roles, carrying the one name option.
-func renameInteraction(userID string, roles []string, name string) *discordgo.InteractionCreate {
-	i := fakeAppCommandInteraction(stringOption("name", name))
+// command from a member with the given roles, carrying the name option and
+// any further options given.
+func renameInteraction(userID string, roles []string, name string, more ...*discordgo.ApplicationCommandInteractionDataOption) *discordgo.InteractionCreate {
+	i := fakeAppCommandInteraction(append([]*discordgo.ApplicationCommandInteractionDataOption{stringOption("name", name)}, more...)...)
 	i.GuildID = testTempVCGuild
 	i.Member = &discordgo.Member{
 		User:  &discordgo.User{ID: userID, Username: "tester"},
@@ -440,6 +441,113 @@ func TestVoiceRenameNameTrimmedAndBounded(t *testing.T) {
 	}
 }
 
+// renameWithKnockChannel runs /voice-rename as user-1, the owner of chan-1,
+// with the knock-channel option set to knockChannel, and returns the edits
+// Discord received and the reply.
+func renameWithKnockChannel(t *testing.T, name string, knockChannel bool) ([]fakeEdit, string) {
+	t.Helper()
+	fake := newFakeTempVCManager()
+	tv := newSeededTempVC(t, fake)
+	spawnInto(tv, fake, "user-1", "chan-1", member("Smith", testRankSGT))
+
+	f := &fakeResponder{}
+	runVoiceRename(f, tv, renameInteraction("user-1", nil, name, boolOption("knock-channel", knockChannel)))
+	return fake.recordedEdits(), ephemeralReply(t, f)
+}
+
+// T12a (#357): knock-channel set makes the channel a knock channel. The
+// name Discord receives starts with the 🚦 and one space, and the reply
+// shows that name.
+func TestVoiceRenameKnockChannelPrependsSign(t *testing.T) {
+	edits, reply := renameWithKnockChannel(t, "Alpha", true)
+
+	if len(edits) != 1 || edits[0].name != "🚦 Alpha" {
+		t.Fatalf("edits = %+v, want one named %q", edits, "🚦 Alpha")
+	}
+	if !strings.Contains(reply, "🚦 Alpha") {
+		t.Errorf("reply %q does not show the final name 🚦 Alpha", reply)
+	}
+}
+
+// T12b (#357): with knock-channel set, a knock channel name starts with
+// exactly one 🚦 and one space, whatever 🚦 and whitespace the member typed
+// at the start. A 🚦 followed by the emoji variation selector U+FE0F counts
+// as a 🚦.
+func TestVoiceRenameKnockChannelKeepsOneSign(t *testing.T) {
+	for _, tc := range []struct {
+		label string
+		name  string
+	}{
+		{label: "typed sign", name: "🚦Alpha"},
+		{label: "two typed signs", name: "🚦 🚦 Alpha"},
+		{label: "typed sign with variation selector", name: "🚦\uFE0FAlpha"},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			edits, _ := renameWithKnockChannel(t, tc.name, true)
+
+			if len(edits) != 1 || edits[0].name != "🚦 Alpha" {
+				t.Errorf("edits = %+v, want one named %q", edits, "🚦 Alpha")
+			}
+		})
+	}
+}
+
+// T12c (#357): with knock-channel set, a name that is nothing but 🚦 is
+// empty once the typed 🚦 is dropped, so it is refused with no edit.
+func TestVoiceRenameKnockChannelBareSignRefused(t *testing.T) {
+	edits, _ := renameWithKnockChannel(t, "🚦", true)
+
+	if len(edits) != 0 {
+		t.Errorf("edits = %+v, want none", edits)
+	}
+}
+
+// T12d (#357): the 🚦 and its space count toward Discord's 100 characters,
+// so with knock-channel set a name of 98 characters fits and one of 99 is
+// refused with no edit, never shortened. The refusal names 98, the limit the
+// member has to fit. Counted in characters, as T8 is.
+func TestVoiceRenameKnockChannelNameBounded(t *testing.T) {
+	t.Run("98 characters", func(t *testing.T) {
+		edits, _ := renameWithKnockChannel(t, strings.Repeat("é", 98), true)
+
+		if want := "🚦 " + strings.Repeat("é", 98); len(edits) != 1 || edits[0].name != want {
+			t.Errorf("edits = %+v, want one named %q", edits, want)
+		}
+	})
+	t.Run("99 characters", func(t *testing.T) {
+		edits, reply := renameWithKnockChannel(t, strings.Repeat("é", 99), true)
+
+		if len(edits) != 0 {
+			t.Errorf("edits = %+v, want none", edits)
+		}
+		if !strings.Contains(reply, "98") {
+			t.Errorf("reply %q does not name the 98-character limit", reply)
+		}
+	})
+}
+
+// T12e (#357): with knock-channel false the name goes out as typed. The
+// option only ever adds a 🚦: a typed one stays, a bare 🚦 stands, and the
+// limit stays Discord's 100 characters.
+func TestVoiceRenameKnockChannelFalseSendsNameAsTyped(t *testing.T) {
+	for _, tc := range []struct {
+		label string
+		name  string
+	}{
+		{label: "typed sign", name: "🚦Alpha"},
+		{label: "bare sign", name: "🚦"},
+		{label: "100 characters", name: strings.Repeat("é", 100)},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			edits, _ := renameWithKnockChannel(t, tc.name, false)
+
+			if len(edits) != 1 || edits[0].name != tc.name {
+				t.Errorf("edits = %+v, want one named %q", edits, tc.name)
+			}
+		})
+	}
+}
+
 // T9a: a 5xx on the edit reaches Sentry, and the invoker's reply carries no
 // raw Discord body.
 func TestVoiceRenameServerErrorCapturedAndSanitised(t *testing.T) {
@@ -546,10 +654,13 @@ func TestVoiceRenameUnknownChannelUntracksQuietly(t *testing.T) {
 	}
 }
 
-// T10: the registry declares /voice-rename with its one required string
-// option. Always, whatever the runtime: a command that comes and goes with
-// configuration loses its Server Settings restriction each time the startup
-// sync deletes it, because Discord keys command permissions by command ID.
+// T10: the registry declares /voice-rename with its required string option
+// name, then the optional boolean knock-channel (#357). Discord rejects a
+// command whose required options follow optional ones, so the order is part
+// of the contract. Always, whatever the runtime: a command that comes and
+// goes with configuration loses its Server Settings restriction each time
+// the startup sync deletes it, because Discord keys command permissions by
+// command ID.
 func TestRegistryDeclaresVoiceRename(t *testing.T) {
 	var def *discordgo.ApplicationCommand
 	for _, d := range NewRegistry(nil).GetCommands() {
@@ -560,9 +671,14 @@ func TestRegistryDeclaresVoiceRename(t *testing.T) {
 	if def == nil {
 		t.Fatal("voice-rename is not registered")
 	}
-	if len(def.Options) != 1 || def.Options[0].Name != "name" ||
-		def.Options[0].Type != discordgo.ApplicationCommandOptionString || !def.Options[0].Required {
-		t.Errorf("options = %+v, want one required string option named name", def.Options)
+	if len(def.Options) < 2 {
+		t.Fatalf("options = %+v, want name then knock-channel", def.Options)
+	}
+	if o := def.Options[0]; o.Name != "name" || o.Type != discordgo.ApplicationCommandOptionString || !o.Required {
+		t.Errorf("option 0 = %+v, want the required string option name", o)
+	}
+	if o := def.Options[1]; o.Name != "knock-channel" || o.Type != discordgo.ApplicationCommandOptionBoolean || o.Required {
+		t.Errorf("option 1 = %+v, want the optional boolean option knock-channel", o)
 	}
 }
 

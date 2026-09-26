@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -218,7 +219,14 @@ func newBrowser(t *testing.T, p *Panel) *browser {
 
 func (b *browser) do(method, target string, header http.Header, body io.Reader) *http.Response {
 	b.t.Helper()
-	req := httptest.NewRequest(method, testBaseURL+target, body)
+	return b.doContext(context.Background(), method, target, header, body)
+}
+
+// doContext is do over a request with the given context, the context
+// net/http cancels when the browser's connection closes.
+func (b *browser) doContext(ctx context.Context, method, target string, header http.Header, body io.Reader) *http.Response {
+	b.t.Helper()
+	req := httptest.NewRequestWithContext(ctx, method, testBaseURL+target, body)
 	for k, v := range header {
 		req.Header[k] = v
 	}

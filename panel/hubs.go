@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/7cav/cavbot2/commands"
@@ -32,6 +33,10 @@ type Deps struct {
 // render what comes back.
 type hubService struct {
 	deps Deps
+	// storeTimeout is the deadline forSave gives each store call a save
+	// makes. New sets it to the constant of the same name; a test shortens
+	// it.
+	storeTimeout time.Duration
 }
 
 // hubRow is one hub as the list shows it: the stored settings, the channel

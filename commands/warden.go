@@ -745,6 +745,20 @@ func getOptionString(
 	return "", false
 }
 
+// getOptionBool reads a boolean option, false when the invoker left it
+// unset.
+func getOptionBool(
+	commandData discordgo.ApplicationCommandInteractionData,
+	optionName string,
+) bool {
+	for _, option := range commandData.Options {
+		if option != nil && option.Name == optionName {
+			return option.BoolValue()
+		}
+	}
+	return false
+}
+
 func stringChoices(values []string) []*discordgo.ApplicationCommandOptionChoice {
 	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(values))
 	for _, value := range values {

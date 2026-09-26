@@ -53,6 +53,11 @@ type Panel struct {
 // forumTimeout bounds one call to the forum.
 const forumTimeout = 10 * time.Second
 
+// storeTimeout bounds one store call a save makes, the way the runtime bounds
+// its own. The save as a whole has no deadline: it outlives the request, and a
+// database that stops answering fails it at the call that stalled.
+const storeTimeout = 5 * time.Second
+
 // New builds a panel from a config and what the hub page acts through. It
 // parses the templates once, so a broken template fails here at startup and
 // never at a request. Every field of deps is required: the hub page reads the
@@ -72,7 +77,7 @@ func New(cfg Config, version string, deps Deps) (*Panel, error) {
 	return &Panel{
 		cfg:      cfg,
 		version:  version,
-		hubs:     &hubService{deps: deps},
+		hubs:     &hubService{deps: deps, storeTimeout: storeTimeout},
 		forumURL: forumURL,
 		pages:    pg,
 		oauth: &oauth2.Config{
@@ -420,7 +425,8 @@ func (p *Panel) createHub(w http.ResponseWriter, r *http.Request, sess session) 
 		ChannelName: r.PostForm.Get(fieldChannelName),
 		BaseString:  r.PostForm.Get(fieldBaseString),
 	}
-	hub, err := p.hubs.create(r.Context(), in, sess.actor())
+	ctx, hubs := p.saving(r)
+	hub, err := hubs.create(ctx, in, sess.actor())
 	if refusal, ok := asFieldError(err); ok {
 		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, pageRequest{Create: in, Error: refusal, Refused: formCreate})
 		return
@@ -439,7 +445,8 @@ func (p *Panel) createHub(w http.ResponseWriter, r *http.Request, sess session) 
 // refused field named. The form is already parsed.
 func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session) {
 	in := registerInput{ChannelID: r.PostForm.Get(fieldHubChannel), BaseString: r.PostForm.Get(fieldBaseString)}
-	hub, err := p.hubs.register(r.Context(), in, sess.actor())
+	ctx, hubs := p.saving(r)
+	hub, err := hubs.register(ctx, in, sess.actor())
 	if refusal, ok := asFieldError(err); ok {
 		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, pageRequest{Register: in, Error: refusal, Refused: formRegister})
 		return
@@ -451,6 +458,15 @@ func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session
 	utils.Info("Panel hub registered", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
 		"base_string", hub.BaseString, "username", sess.username, "forum_user_id", sess.userID)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// saving is what a save handler runs its save through. A save begins once
+// the group check has passed and runs to its end whether or not the browser
+// waits. So its context is the request's without the cancellation net/http
+// sends when the connection closes, and its service gives each store call
+// the save makes a deadline of its own.
+func (p *Panel) saving(r *http.Request) (context.Context, *hubService) {
+	return context.WithoutCancel(r.Context()), p.hubs.forSave()
 }
 
 // hubIDOf reads the hub ID from the route. A value that is not an ID names
@@ -484,7 +500,8 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 		RenamingAllowed:  r.PostForm.Get(fieldRenamingAllowed) != "",
 		LockingAllowed:   r.PostForm.Get(fieldLockingAllowed) != "",
 	}
-	hub, err := p.hubs.update(r.Context(), id, in, sess.actor())
+	ctx, hubs := p.saving(r)
+	hub, err := hubs.update(ctx, id, in, sess.actor())
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return
@@ -510,7 +527,8 @@ func (p *Panel) removeHub(w http.ResponseWriter, r *http.Request, sess session) 
 		http.NotFound(w, r)
 		return
 	}
-	hub, err := p.hubs.remove(r.Context(), id, sess.actor())
+	ctx, hubs := p.saving(r)
+	hub, err := hubs.remove(ctx, id, sess.actor())
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return
@@ -533,7 +551,8 @@ func (p *Panel) saveModerators(w http.ResponseWriter, r *http.Request, sess sess
 		return
 	}
 	in := moderatorsInput{RoleIDs: r.PostForm[fieldModeratorRoles]}
-	roles, err := p.hubs.setModerators(r.Context(), in, sess.actor())
+	ctx, hubs := p.saving(r)
+	roles, err := hubs.setModerators(ctx, in, sess.actor())
 	if refusal, ok := asFieldError(err); ok {
 		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, pageRequest{Moderators: &in, Error: refusal, Refused: formModerators})
 		return

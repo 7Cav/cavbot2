@@ -30,7 +30,7 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/warden-bulkadd-internal` | Add a validated unit's roster to the internal Warden role |
 | `/helpline` | Crisis and mental health support resources, optionally addressed to a member |
 | `/enlist` | The enlistment process, with a link to the application |
-| `/voice-rename` | Rename the spawned voice channel you are in |
+| `/voice-rename` | Rename the spawned voice channel you are in, optionally making it a knock channel (🚦) |
 | `/voice-lock` | Lock the spawned voice channel you are in to the people inside it and the hub's moderators, and post a lock notice in its chat with Unlock and Let someone in buttons |
 | `/voice-unlock` | Unlock the spawned voice channel you are in |
 
