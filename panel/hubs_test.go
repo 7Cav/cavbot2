@@ -37,6 +37,10 @@ type fakeDiscord struct {
 	createErr error
 	// editErr, when set, is what every edit returns.
 	editErr error
+	// duringWrite, when set, runs inside every channel create and edit,
+	// after Discord has made the change and before it answers: the moment
+	// a test has the browser leave during a Discord write.
+	duringWrite func()
 	// premiumTier is the boost tier Guild reports.
 	premiumTier discordgo.PremiumTier
 	created     []fakeCreate
@@ -120,6 +124,9 @@ func (f *fakeDiscord) GuildChannelCreateComplex(_ string, data discordgo.GuildCh
 	f.spawned++
 	ch := &discordgo.Channel{ID: fmt.Sprintf("spawn-%d", f.spawned), Name: data.Name, Type: data.Type, ParentID: data.ParentID}
 	f.channels = append(f.channels, ch)
+	if f.duringWrite != nil {
+		f.duringWrite()
+	}
 	return ch, nil
 }
 
@@ -147,6 +154,9 @@ func (f *fakeDiscord) ChannelEdit(channelID string, data *discordgo.ChannelEdit,
 		if ch.ID == channelID && data.Name != "" {
 			ch.Name = data.Name
 		}
+	}
+	if f.duringWrite != nil {
+		f.duringWrite()
 	}
 	return &discordgo.Channel{ID: channelID, Name: data.Name}, nil
 }
@@ -233,6 +243,12 @@ func (f *fakeDiscord) ChannelPermissionSet(_, _ string, _ discordgo.PermissionOv
 // let nobody in; the fake carries it for the interface.
 func (f *fakeDiscord) CanSeeChannel(_, _ string, _ []string) (bool, error) {
 	return true, nil
+}
+
+func (f *fakeDiscord) setDuringWrite(during func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.duringWrite = during
 }
 
 func (f *fakeDiscord) setEditErr(err error) {

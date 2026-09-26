@@ -14,6 +14,10 @@ import (
 // runs against Fake and Postgres alike, so a case that passes against Fake
 // passes against Postgres with the same calls.
 //
+// A call whose context is already done fails with the context's error and
+// changes nothing, as a Postgres call does, so a test can see a caller that
+// hands the store a context its request has cancelled.
+//
 // Mutex-guarded because the suites run under -race and a test may drive the
 // store from the goroutine a gateway handler runs on.
 type Fake struct {
@@ -41,7 +45,10 @@ func NewFake() *Fake {
 }
 
 // GetHub implements Store.
-func (f *Fake) GetHub(_ context.Context, id int64) (Hub, error) {
+func (f *Fake) GetHub(ctx context.Context, id int64) (Hub, error) {
+	if err := ctx.Err(); err != nil {
+		return Hub{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	h, ok := f.hubs[id]
@@ -52,7 +59,10 @@ func (f *Fake) GetHub(_ context.Context, id int64) (Hub, error) {
 }
 
 // ListHubs implements Store.
-func (f *Fake) ListHubs(_ context.Context, guildID string) ([]Hub, error) {
+func (f *Fake) ListHubs(ctx context.Context, guildID string) ([]Hub, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var hubs []Hub
@@ -65,7 +75,10 @@ func (f *Fake) ListHubs(_ context.Context, guildID string) ([]Hub, error) {
 }
 
 // UpsertHub implements Store.
-func (f *Fake) UpsertHub(_ context.Context, hub Hub) (Hub, error) {
+func (f *Fake) UpsertHub(ctx context.Context, hub Hub) (Hub, error) {
+	if err := ctx.Err(); err != nil {
+		return Hub{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	now := time.Now()
@@ -94,7 +107,10 @@ func (f *Fake) hubByChannelLocked(hubChannelID string) (Hub, bool) {
 }
 
 // DeleteHub implements Store.
-func (f *Fake) DeleteHub(_ context.Context, id int64) error {
+func (f *Fake) DeleteHub(ctx context.Context, id int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.hubs, id)
@@ -114,7 +130,10 @@ func (f *Fake) DeleteHub(_ context.Context, id int64) error {
 
 // UpsertSpawnedChannel implements Store. The caller's lock is ignored: an
 // existing row keeps its own and a new row starts unlocked.
-func (f *Fake) UpsertSpawnedChannel(_ context.Context, sc SpawnedChannel) error {
+func (f *Fake) UpsertSpawnedChannel(ctx context.Context, sc SpawnedChannel) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if existing, ok := f.spawned[sc.ChannelID]; ok {
@@ -129,7 +148,10 @@ func (f *Fake) UpsertSpawnedChannel(_ context.Context, sc SpawnedChannel) error 
 }
 
 // SetSpawnedChannelLock implements Store.
-func (f *Fake) SetSpawnedChannelLock(_ context.Context, channelID string, lock ChannelLock) error {
+func (f *Fake) SetSpawnedChannelLock(ctx context.Context, channelID string, lock ChannelLock) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	sc, ok := f.spawned[channelID]
@@ -142,7 +164,10 @@ func (f *Fake) SetSpawnedChannelLock(_ context.Context, channelID string, lock C
 }
 
 // DeleteSpawnedChannel implements Store.
-func (f *Fake) DeleteSpawnedChannel(_ context.Context, channelID string) error {
+func (f *Fake) DeleteSpawnedChannel(ctx context.Context, channelID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.spawned, channelID)
@@ -150,7 +175,10 @@ func (f *Fake) DeleteSpawnedChannel(_ context.Context, channelID string) error {
 }
 
 // ListSpawnedChannels implements Store.
-func (f *Fake) ListSpawnedChannels(_ context.Context) ([]SpawnedChannel, error) {
+func (f *Fake) ListSpawnedChannels(ctx context.Context) ([]SpawnedChannel, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []SpawnedChannel
@@ -161,7 +189,10 @@ func (f *Fake) ListSpawnedChannels(_ context.Context) ([]SpawnedChannel, error) 
 }
 
 // GetGuildModeratorRoles implements Store.
-func (f *Fake) GetGuildModeratorRoles(_ context.Context, guildID string) ([]string, error) {
+func (f *Fake) GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	roles := slices.Clone(f.guildRoles[guildID])
@@ -172,7 +203,10 @@ func (f *Fake) GetGuildModeratorRoles(_ context.Context, guildID string) ([]stri
 }
 
 // SetGuildModeratorRoles implements Store.
-func (f *Fake) SetGuildModeratorRoles(_ context.Context, guildID string, roleIDs []string) error {
+func (f *Fake) SetGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.guildRoles[guildID] = slices.Clone(roleIDs)
@@ -180,7 +214,10 @@ func (f *Fake) SetGuildModeratorRoles(_ context.Context, guildID string, roleIDs
 }
 
 // AppendChangeLog implements Store.
-func (f *Fake) AppendChangeLog(_ context.Context, e ChangeLogEntry) error {
+func (f *Fake) AppendChangeLog(ctx context.Context, e ChangeLogEntry) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	e.ID = f.nextChangeID
@@ -192,12 +229,18 @@ func (f *Fake) AppendChangeLog(_ context.Context, e ChangeLogEntry) error {
 }
 
 // ListChangeLog implements Store.
-func (f *Fake) ListChangeLog(_ context.Context, hubID int64, limit int) ([]ChangeLogEntry, error) {
+func (f *Fake) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]ChangeLogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return f.listChanges(limit, func(e ChangeLogEntry) bool { return e.HubID == hubID }), nil
 }
 
 // ListModeratorChanges implements Store.
-func (f *Fake) ListModeratorChanges(_ context.Context, limit int) ([]ChangeLogEntry, error) {
+func (f *Fake) ListModeratorChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return f.listChanges(limit, func(e ChangeLogEntry) bool { return e.HubID == 0 && e.Action == ChangeModerators }), nil
 }
 

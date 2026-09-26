@@ -785,3 +785,83 @@ func TestModeratorChangesListReturnsTheLastNNewestFirst(t *testing.T) {
 		}
 	})
 }
+
+// T15 (#356): a call made with a context that is already done fails with that
+// context's error and changes nothing, whichever method it is. A panel save
+// that outlives its request depends on the fake failing here the way
+// Postgres does, or its tests could not see a save stopped halfway.
+func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		live := context.Background()
+		hubID := storeHub(t, s, "hub-1")
+		seeded := SpawnedChannel{ChannelID: "chan-1", HubID: hubID, Number: 1, OwnerUserID: "user-a"}
+		if err := s.UpsertSpawnedChannel(live, seeded); err != nil {
+			t.Fatalf("UpsertSpawnedChannel: %v", err)
+		}
+		if err := s.SetGuildModeratorRoles(live, "guild-1", []string{"role-mp"}); err != nil {
+			t.Fatalf("SetGuildModeratorRoles: %v", err)
+		}
+		if err := s.AppendChangeLog(live, changeEntry(hubID, 1)); err != nil {
+			t.Fatalf("AppendChangeLog: %v", err)
+		}
+
+		done, cancel := context.WithCancel(live)
+		cancel()
+		calls := map[string]func() error{
+			"GetHub":   func() error { _, err := s.GetHub(done, hubID); return err },
+			"ListHubs": func() error { _, err := s.ListHubs(done, "guild-1"); return err },
+			"UpsertHub": func() error {
+				_, err := s.UpsertHub(done, sampleHub("guild-1", "hub-2"))
+				return err
+			},
+			"DeleteHub": func() error { return s.DeleteHub(done, hubID) },
+			"UpsertSpawnedChannel": func() error {
+				return s.UpsertSpawnedChannel(done, SpawnedChannel{ChannelID: "chan-2", HubID: hubID, Number: 2})
+			},
+			"SetSpawnedChannelLock": func() error {
+				return s.SetSpawnedChannelLock(done, "chan-1", ChannelLock{Locked: true, LockerUserID: "user-a"})
+			},
+			"DeleteSpawnedChannel":   func() error { return s.DeleteSpawnedChannel(done, "chan-1") },
+			"ListSpawnedChannels":    func() error { _, err := s.ListSpawnedChannels(done); return err },
+			"GetGuildModeratorRoles": func() error { _, err := s.GetGuildModeratorRoles(done, "guild-1"); return err },
+			"SetGuildModeratorRoles": func() error { return s.SetGuildModeratorRoles(done, "guild-1", []string{"role-hq"}) },
+			"AppendChangeLog":        func() error { return s.AppendChangeLog(done, changeEntry(hubID, 2)) },
+			"ListChangeLog":          func() error { _, err := s.ListChangeLog(done, hubID, 10); return err },
+			"ListModeratorChanges":   func() error { _, err := s.ListModeratorChanges(done, 10); return err },
+		}
+		for name, call := range calls {
+			if err := call(); !errors.Is(err, context.Canceled) {
+				t.Errorf("%s with a done context = %v, want context.Canceled", name, err)
+			}
+		}
+
+		hubs, err := s.ListHubs(live, "guild-1")
+		if err != nil {
+			t.Fatalf("ListHubs: %v", err)
+		}
+		if got := hubChannelIDs(hubs); !slices.Equal(got, []string{"hub-1"}) {
+			t.Errorf("hubs after the done calls = %v, want hub-1 alone", got)
+		}
+		rows, err := s.ListSpawnedChannels(live)
+		if err != nil {
+			t.Fatalf("ListSpawnedChannels: %v", err)
+		}
+		if len(rows) != 1 || rows[0].ChannelID != seeded.ChannelID || rows[0].OwnerUserID != seeded.OwnerUserID || rows[0].Lock != (ChannelLock{}) {
+			t.Errorf("spawned rows after the done calls = %+v, want chan-1 alone, owned by user-a, unlocked", rows)
+		}
+		if roles, err := s.GetGuildModeratorRoles(live, "guild-1"); err != nil || !slices.Equal(roles, []string{"role-mp"}) {
+			t.Errorf("guild moderator roles after the done calls = %v, %v; want [role-mp]", roles, err)
+		}
+		entries, err := s.ListChangeLog(live, hubID, 10)
+		if err != nil {
+			t.Fatalf("ListChangeLog: %v", err)
+		}
+		var ordinals []int
+		for _, e := range entries {
+			ordinals = append(ordinals, ordinalOf(t, e))
+		}
+		if !slices.Equal(ordinals, []int{1}) {
+			t.Errorf("hub-1's entries after the done calls are ordinals %v, want [1], the seeded one alone", ordinals)
+		}
+	})
+}
