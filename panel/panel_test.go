@@ -698,8 +698,13 @@ func TestGroupCheckUnavailableKeepsSession(t *testing.T) {
 
 			res := b.get("/")
 
-			if !isServerError(res.StatusCode) {
-				t.Errorf("GET / status = %d, want 5xx", res.StatusCode)
+			// A regression pin: the forum's page shares the error template
+			// with the hub page's failures, and keeps its own 502 and page.
+			if res.StatusCode != http.StatusBadGateway {
+				t.Errorf("GET / status = %d, want 502", res.StatusCode)
+			}
+			if got := failureOf(t, parseHTML(t, res)); got != "forum" {
+				t.Errorf("failure page = %q, want forum", got)
 			}
 			if c := cookieNamed(res, sessionCookie); c != nil {
 				t.Errorf("outage response touched the session cookie: %+v", c)

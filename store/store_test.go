@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/7cav/cavbot2/utils"
 	"github.com/pressly/goose/v3"
@@ -834,6 +835,95 @@ func TestModeratorChangesListReturnsTheLastNNewestFirst(t *testing.T) {
 			}
 		}
 	})
+}
+
+// The panel tells an abandoned page load from a failed read by errors.Is on
+// the context's error, so a read the context ends while it runs must keep
+// that error in its chain through the store's own wrapping. A
+// characterization pin on Postgres alone: a Fake read has no query in flight
+// to end. The read waits on a table lock another connection holds, and the
+// test sees it
+// waiting before the context ends, so the in-flight path is the one pinned
+// and not the check database/sql makes before a query starts.
+func TestPostgresReadEndedWhileWaitingWrapsTheContextError(t *testing.T) {
+	cases := []struct {
+		name string
+		want error
+		// deadline is the read's context deadline, zero for a context the
+		// test cancels once the read is waiting.
+		deadline time.Duration
+	}{
+		{"cancelled", context.Canceled, 0},
+		{"deadline", context.DeadlineExceeded, 2 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := openTestPostgres(t)
+			raw, err := sql.Open("pgx", os.Getenv(testDSNVar))
+			if err != nil {
+				t.Fatalf("open raw connection: %v", err)
+			}
+			defer func() { _ = raw.Close() }()
+			holder, err := raw.BeginTx(context.Background(), nil)
+			if err != nil {
+				t.Fatalf("begin: %v", err)
+			}
+			defer func() { _ = holder.Rollback() }()
+			if _, err := holder.Exec("LOCK TABLE guild_settings IN ACCESS EXCLUSIVE MODE"); err != nil {
+				t.Fatalf("lock: %v", err)
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			if tc.deadline > 0 {
+				ctx, cancel = context.WithTimeout(context.Background(), tc.deadline)
+			}
+			defer cancel()
+			read := make(chan error, 1)
+			go func() {
+				_, err := s.GetGuildModeratorRoles(ctx, "guild-1")
+				read <- err
+			}()
+			awaitLockWaiter(t, raw, read)
+			if tc.deadline == 0 {
+				cancel()
+			}
+
+			select {
+			case err = <-read:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the read did not return after its context ended")
+			}
+			if !errors.Is(err, tc.want) {
+				t.Errorf("read returned %v, want an error wrapping %v", err, tc.want)
+			}
+		})
+	}
+}
+
+// awaitLockWaiter polls until a backend other than the poller waits on a
+// lock, and fails the test if the read returns first. The database is the
+// test's alone, so the one waiter is the read.
+func awaitLockWaiter(t *testing.T, raw *sql.DB, read <-chan error) {
+	t.Helper()
+	const q = `SELECT count(*) FROM pg_stat_activity
+		WHERE wait_event_type = 'Lock' AND pid <> pg_backend_pid()`
+	giveUp := time.After(5 * time.Second)
+	for {
+		var waiting int
+		if err := raw.QueryRow(q).Scan(&waiting); err != nil {
+			t.Fatalf("poll pg_stat_activity: %v", err)
+		}
+		if waiting > 0 {
+			return
+		}
+		select {
+		case err := <-read:
+			t.Fatalf("the read returned %v before it waited on the lock", err)
+		case <-giveUp:
+			t.Fatal("the read never waited on the lock")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
 // T15 (#356): a call made with a context that is already done fails with that

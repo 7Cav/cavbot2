@@ -45,6 +45,9 @@ type Panel struct {
 	// timeout so a forum that accepts the connection and never answers is a
 	// checkUnavailable and not a request that hangs a panel user.
 	client *http.Client
+	// pageBudget is the hub page's time budget, hubPageBudget outside the
+	// tests.
+	pageBudget time.Duration
 
 	server    *http.Server
 	stopPrune chan struct{}
@@ -52,6 +55,17 @@ type Panel struct {
 
 // forumTimeout bounds one call to the forum.
 const forumTimeout = 10 * time.Second
+
+// hubPageBudget is the hub page's time budget: one deadline over every read
+// the page makes, the store's and Discord's. It must stay under the reverse
+// proxy's 90 s read timeout. A page the proxy cuts off first looks like an
+// abandoned page load and never reaches Sentry. The slowest page load is the
+// 10 s group check, then the budget plus one Discord read: a Discord read
+// takes no context, so the budget can run out during one, which runs on to
+// discordgo's 20 s client timeout, per attempt when discordgo retries a
+// 502. The page stops as that read returns, so a second Discord read never
+// starts late.
+const hubPageBudget = 10 * time.Second
 
 // storeTimeout bounds one store call a save makes, the way the runtime bounds
 // its own. The save as a whole has no deadline: it outlives the request, and a
@@ -90,8 +104,9 @@ func New(cfg Config, version string, deps Deps) (*Panel, error) {
 			RedirectURL: cfg.BaseURL + "/auth/callback",
 			Scopes:      []string{"user:read", "user:groups"},
 		},
-		sessions: newSessions(),
-		client:   &http.Client{Timeout: forumTimeout},
+		sessions:   newSessions(),
+		client:     &http.Client{Timeout: forumTimeout},
+		pageBudget: hubPageBudget,
 	}, nil
 }
 
@@ -292,10 +307,15 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 // earns. With a session the page keeps the rail's identity and says the
 // session is kept; without one, at sign-in, it says only to try again.
 func (p *Panel) forumUnavailable(w http.ResponseWriter, sess *session) {
-	data := pageData{Title: "The forum did not answer"}
+	data := pageData{Title: "The forum did not answer",
+		Message: "The forum did not answer while you were signing in, so you are not signed in. Try again from the sign-in page.",
+		Retry:   "/signin"}
 	if sess != nil {
 		data = sess.page(data.Title)
+		data.Message = "Cavbot2 could not reach the forum. Nothing changed and you are still signed in."
+		data.Retry = "/"
 	}
+	data.Failure = failureForum
 	p.render(w, http.StatusBadGateway, "error", data)
 }
 
@@ -385,18 +405,48 @@ func (p *Panel) homePage(w http.ResponseWriter, r *http.Request, sess session) {
 // request asks for with its refusal when there is one. A request for a hub
 // that does not exist is 404.
 func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session, status int, req pageRequest) {
-	page, err := p.hubs.page(r.Context(), req)
-	if errors.Is(err, store.ErrNotFound) {
+	ctx, cancel := context.WithTimeout(r.Context(), p.pageBudget)
+	defer cancel()
+	page, err := p.hubs.page(ctx, req)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
 		http.NotFound(w, r)
 		return
-	}
-	if err != nil {
-		p.serverError(w, "hub page", err)
+	case errors.Is(err, context.Canceled):
+		// An abandoned page load: the connection closed before the page
+		// answered and before its budget ran out, which fails a read with
+		// the request's own cancellation. Expected, so no Sentry event, and
+		// nobody is left to answer.
+		utils.Info("Panel page abandoned", "step", "hub page", "username", sess.username, "forum_user_id", sess.userID)
+		return
+	case err != nil:
+		p.hubPageFailed(w, sess, req, err)
 		return
 	}
 	data := sess.page("Hubs")
 	data.Hubs = page
 	p.render(w, status, "home", data)
+}
+
+// hubPageFailed reports a hub page read that failed to Sentry (ADR 0001) and
+// renders the error page with the 503 it earns: the page took too long when
+// the time budget ran out, and could not load for any other failure. Try
+// again leads to the page's GET address, so a refused save's page is loaded
+// afresh and never posted twice.
+func (p *Panel) hubPageFailed(w http.ResponseWriter, sess session, req pageRequest, err error) {
+	utils.CaptureError("Panel request failed", err, "step", "hub page")
+	title, kind, message := "The panel could not load this page", failureReadFailed,
+		"Cavbot2 could not load this page. Nothing changed and you are still signed in."
+	if errors.Is(err, context.DeadlineExceeded) {
+		title, kind, message = "The panel took too long", failureTooSlow,
+			"Cavbot2 took too long to load this page. Nothing changed and you are still signed in."
+	}
+	data := sess.page(title)
+	data.Failure, data.Message, data.Retry = kind, message, "/"
+	if req.HubID != 0 {
+		data.Retry = "/?hub=" + strconv.FormatInt(req.HubID, 10)
+	}
+	p.render(w, http.StatusServiceUnavailable, "error", data)
 }
 
 // createOrRegisterHub is POST /hubs. The create and register forms post to

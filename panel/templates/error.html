@@ -1,14 +1,9 @@
 {{define "content"}}
-<main class="body">
-  <h1 class="title">The forum did not answer</h1>
+<main class="body" data-failure="{{.Failure}}">
+  <h1 class="title">{{.Title}}</h1>
   <div class="block narrow">
-    {{if .SignedIn}}
-    <div class="block-row"><p>Cavbot2 could not reach the forum. Nothing changed and you are still signed in.</p></div>
-    <div class="submit-row"><a class="btn" href="/">Try again</a></div>
-    {{else}}
-    <div class="block-row"><p>The forum did not answer while you were signing in, so you are not signed in. Try again from the sign-in page.</p></div>
-    <div class="submit-row"><a class="btn" href="/signin">Try again</a></div>
-    {{end}}
+    <div class="block-row"><p>{{.Message}}</p></div>
+    <div class="submit-row"><a class="btn" href="{{.Retry}}" data-retry>Try again</a></div>
   </div>
 </main>
 {{end}}

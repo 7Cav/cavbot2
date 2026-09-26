@@ -40,9 +40,24 @@ func causeFromQuery(raw string) cause {
 	return causeNone
 }
 
+// failure is which failure the error page reports. The values are the
+// data-failure attribute on <main>, a test contract; the sentences are not.
+type failure string
+
+const (
+	// failureForum is the forum not answering the group check or the token
+	// exchange.
+	failureForum failure = "forum"
+	// failureReadFailed is a hub page read that failed.
+	failureReadFailed failure = "read-failed"
+	// failureTooSlow is a hub page whose time budget ran out.
+	failureTooSlow failure = "too-slow"
+)
+
 // pageData is what every template renders from. SignedIn switches the rail
 // between the navigation with the identity block and the forum link. Hubs is
-// filled for the hub page alone.
+// filled for the hub page alone; Failure, Message and Retry for the error
+// page alone.
 type pageData struct {
 	Title    string
 	Version  string
@@ -51,6 +66,11 @@ type pageData struct {
 	Username string
 	Cause    cause
 	Hubs     hubPage
+	Failure  failure
+	// Message is the error page's one sentence.
+	Message string
+	// Retry is where the error page's Try again link leads.
+	Retry string
 }
 
 // pages are the templates, one per screen, each parsed with the shared layout

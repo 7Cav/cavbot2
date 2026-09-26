@@ -349,5 +349,6 @@ error signal. See ADR 0011.
   browser left, by navigating away, reloading or closing the tab. It is
   expected, not a failure, so it leaves an INFO line and no Sentry event. A
   page still loading when its budget runs out has failed, and is not an
-  abandoned page load.
+  abandoned page load. Neither is a load whose read failed for its own
+  reason as the connection closed.
   _Avoid_: browser leaving, client disconnect, cancelled request, timeout.
