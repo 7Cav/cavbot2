@@ -82,6 +82,7 @@ func sampleHub(guildID, hubChannelID string) Hub {
 		UserLimit:        12,
 		Bitrate:          96000,
 		Enabled:          true,
+		RenamingAllowed:  true,
 		LockingAllowed:   true,
 	}
 }
@@ -121,6 +122,9 @@ func assertHubSettings(t *testing.T, got, want Hub) {
 	}
 	if got.Enabled != want.Enabled {
 		t.Errorf("Enabled = %v, want %v", got.Enabled, want.Enabled)
+	}
+	if got.RenamingAllowed != want.RenamingAllowed {
+		t.Errorf("RenamingAllowed = %v, want %v", got.RenamingAllowed, want.RenamingAllowed)
 	}
 	if got.LockingAllowed != want.LockingAllowed {
 		t.Errorf("LockingAllowed = %v, want %v", got.LockingAllowed, want.LockingAllowed)
@@ -170,6 +174,7 @@ func TestUpsertHubUpdatesInPlace(t *testing.T) {
 		want.UserLimit = 0
 		want.Bitrate = 64000
 		want.Enabled = false
+		want.RenamingAllowed = false
 		want.LockingAllowed = false
 
 		second, err := s.UpsertHub(ctx, want)
@@ -443,10 +448,12 @@ func TestSetSpawnedChannelLockWithNoRowIsNotFound(t *testing.T) {
 	})
 }
 
-// T7d (#349): rows written before the channel lock migration come through
-// it with "Locking allowed" off on every hub and every spawned channel
-// unlocked, the state an upgrade meets.
-func TestChannelLockMigrationLeavesExistingRowsOffAndUnlocked(t *testing.T) {
+// migratedTo resets the test database and runs the migrations up to and
+// including version: the schema an older release left. The case then writes
+// rows the way that release did, and openMigrated runs the rest. Skips when
+// no test database is set.
+func migratedTo(t *testing.T, version int64) *sql.DB {
+	t.Helper()
 	dsn := os.Getenv(testDSNVar)
 	if dsn == "" {
 		t.Skipf("%s not set", testDSNVar)
@@ -456,7 +463,7 @@ func TestChannelLockMigrationLeavesExistingRowsOffAndUnlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open raw connection: %v", err)
 	}
-	defer func() { _ = raw.Close() }()
+	t.Cleanup(func() { _ = raw.Close() })
 	if _, err := raw.ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
 		t.Fatalf("reset schema: %v", err)
 	}
@@ -468,29 +475,53 @@ func TestChannelLockMigrationLeavesExistingRowsOffAndUnlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migration provider: %v", err)
 	}
-	// The change log migration is the last one before the lock's.
-	if _, err := provider.UpTo(ctx, 20260918100000); err != nil {
-		t.Fatalf("migrate to the schema before the lock: %v", err)
+	if _, err := provider.UpTo(ctx, version); err != nil {
+		t.Fatalf("migrate up to %d: %v", version, err)
 	}
+	return raw
+}
+
+// insertOlderHub writes a hub row naming only the columns the first schema
+// has, as an older release wrote it, and returns its ID.
+func insertOlderHub(t *testing.T, raw *sql.DB) int64 {
+	t.Helper()
 	var hubID int64
-	if err := raw.QueryRowContext(ctx, `
+	if err := raw.QueryRowContext(context.Background(), `
 		INSERT INTO hubs (guild_id, hub_channel_id, base_string, permission_source, enabled)
 		VALUES ('guild-1', 'hub-1', 'Arma Voice', 'category', TRUE) RETURNING id`).Scan(&hubID); err != nil {
 		t.Fatalf("insert an older hub row: %v", err)
 	}
-	if _, err := raw.ExecContext(ctx, `
+	return hubID
+}
+
+// openMigrated opens the store over the test database, which runs every
+// migration after the one migratedTo stopped at.
+func openMigrated(t *testing.T) *Postgres {
+	t.Helper()
+	s, err := Open(context.Background(), os.Getenv(testDSNVar))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+// T7d (#349): rows written before the channel lock migration come through
+// it with "Locking allowed" off on every hub and every spawned channel
+// unlocked, the state an upgrade meets.
+func TestChannelLockMigrationLeavesExistingRowsOffAndUnlocked(t *testing.T) {
+	// The change log migration is the last one before the lock's.
+	raw := migratedTo(t, 20260918100000)
+	hubID := insertOlderHub(t, raw)
+	if _, err := raw.ExecContext(context.Background(), `
 		INSERT INTO spawned_channels (channel_id, hub_id, number, owner_user_id)
 		VALUES ('chan-1', $1, 1, 'user-1')`, hubID); err != nil {
 		t.Fatalf("insert an older spawned row: %v", err)
 	}
 
-	s, err := Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
+	s := openMigrated(t)
 
-	hub, err := s.GetHub(ctx, hubID)
+	hub, err := s.GetHub(context.Background(), hubID)
 	if err != nil {
 		t.Fatalf("GetHub: %v", err)
 	}
@@ -499,6 +530,25 @@ func TestChannelLockMigrationLeavesExistingRowsOffAndUnlocked(t *testing.T) {
 	}
 	if got := listedSpawned(t, s, "chan-1"); got.Lock != (ChannelLock{}) || got.OwnerUserID != "user-1" {
 		t.Errorf("an older spawned row reads back as %+v, want unlocked with owner user-1", got)
+	}
+}
+
+// T7e (#360): a hub written before the rename setting existed comes through
+// its migration with "Renaming allowed" on, so an upgrade leaves every hub
+// renaming as it did.
+func TestRenamingAllowedMigrationLeavesExistingHubsOn(t *testing.T) {
+	// The channel lock migration is the last one before the rename setting's.
+	raw := migratedTo(t, 20260924000000)
+	hubID := insertOlderHub(t, raw)
+
+	s := openMigrated(t)
+
+	hub, err := s.GetHub(context.Background(), hubID)
+	if err != nil {
+		t.Fatalf("GetHub: %v", err)
+	}
+	if !hub.RenamingAllowed {
+		t.Error("an older hub reads back with RenamingAllowed off, want on")
 	}
 }
 

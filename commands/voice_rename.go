@@ -13,9 +13,10 @@ import (
 
 // /voice-rename (spec #285, #292): the owner of a spawned channel, or a member
 // holding a moderator role of its hub, renames the channel they are sitting
-// in. A required string option, the new name, then an optional boolean,
-// knock-channel, that makes it a knock channel (#357). Every reply is
-// ephemeral, through the deferred-ephemeral pattern /warden uses.
+// in, on a hub with "Renaming allowed" on (#360). A required string option,
+// the new name, then an optional boolean, knock-channel, that makes it a
+// knock channel (#357). Every reply is ephemeral, through the
+// deferred-ephemeral pattern /warden uses.
 //
 // No code limits the command to Cav members: like every other command, that
 // is a Server Settings restriction (docs/temp-vc-decisions.md, #279).
@@ -182,6 +183,8 @@ func renameRefusal(err error, discordID string) string {
 	}
 	var window *renameWindowError
 	switch {
+	case errors.Is(err, errRenamingNotAllowed):
+		return "❌ Renaming isn't turned on for this hub."
 	case errors.As(err, &window):
 		// Discord renders <t:UNIX:R> as "in 4 minutes". The runtime returns
 		// this for its own refusal and for a 429 that carries retry_after.

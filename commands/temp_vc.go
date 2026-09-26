@@ -1749,13 +1749,18 @@ func (t *TempVC) stillInHub(userID, hubChannelID string) bool {
 }
 
 // postOwnershipNotice posts the ownership notice in a spawned channel's text
-// chat, one of the four lines ownershipNoticeLine picks. The owner is named
-// by mention, and the allowed mentions parse nothing, so the mention renders
+// chat, one of the lines ownershipNoticeLine picks. The owner is named by
+// mention, and the allowed mentions parse nothing, so the mention renders
 // and pings nobody. The voice channel status line is not used. A failed send
-// is a WARN line: the ownership change itself has already happened.
+// is a WARN line: the ownership change itself has already happened. The
+// hub's "Renaming allowed" is read here, at post time, so a notice already
+// posted keeps the line it was posted with (#360).
 func (t *TempVC) postOwnershipNotice(channelID string, event noticeEvent, owner string) {
+	t.mu.Lock()
+	renamingAllowed := t.renamingAllowedLocked(channelID)
+	t.mu.Unlock()
 	_, err := t.mgr.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
-		Content:         ownershipNoticeLine(event, owner),
+		Content:         ownershipNoticeLine(event, owner, renamingAllowed),
 		AllowedMentions: &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}},
 	})
 	if err != nil {
@@ -1768,18 +1773,24 @@ func (t *TempVC) postOwnershipNotice(channelID string, event noticeEvent, owner 
 // whether there is an owner. The copy is #264's, with the handover line
 // amended by #316 to name the rename command, so a member who takes an
 // ownerless channel and never created one still learns it. The command is
-// plain text, not a command mention.
-func ownershipNoticeLine(event noticeEvent, owner string) string {
+// plain text, not a command mention. On a hub with renaming off the owner
+// lines drop the rename clause and still name the owner, who may lock where
+// the hub allows it (#360); the lines for no owner do not change.
+func ownershipNoticeLine(event noticeEvent, owner string, renamingAllowed bool) string {
 	switch {
-	case event == noticeCreate && owner != "":
-		return fmt.Sprintf("<@%s> owns this channel and can rename it with /%s.", owner, voiceRenameCommandName)
-	case event == noticeCreate:
+	case event == noticeCreate && owner == "":
 		return "This channel has no owner. The first Cav member to join it becomes the owner."
-	case owner != "":
-		return fmt.Sprintf("<@%s> now owns this channel and can rename it with /%s.", owner, voiceRenameCommandName)
-	default:
+	case owner == "":
 		return "This channel has no owner now."
 	}
+	owns := fmt.Sprintf("<@%s> owns this channel", owner)
+	if event == noticeHandover {
+		owns = fmt.Sprintf("<@%s> now owns this channel", owner)
+	}
+	if !renamingAllowed {
+		return owns + "."
+	}
+	return fmt.Sprintf("%s and can rename it with /%s.", owns, voiceRenameCommandName)
 }
 
 // messageHubJoiner tells a member whose channel could not be created, in the

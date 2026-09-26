@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/7cav/cavbot2/store"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -319,6 +320,91 @@ func TestVoiceRenameWindowRefusesThirdWithinTenMinutes(t *testing.T) {
 	rename("Four")
 	if edits := fake.recordedEdits(); len(edits) != 3 {
 		t.Errorf("edits once the window opened = %+v, want three", edits)
+	}
+}
+
+// renamingOffHub is the test hub with "Renaming allowed" off (#360).
+func renamingOffHub() store.Hub {
+	hub := testHub()
+	hub.RenamingAllowed = false
+	return hub
+}
+
+// #360: a rename refused because the hub has renaming off takes no rename
+// slot. The owner is refused twice on the off hub; once the setting is back
+// on, two renames inside the same ten minutes both go through.
+func TestVoiceRenameRefusedWithRenamingOffTakesNoSlot(t *testing.T) {
+	pinClock(t, time.Date(2026, 9, 26, 20, 0, 0, 0, time.UTC))
+	fake := newFakeTempVCManager()
+	st := seedStore(t, renamingOffHub())
+	tv := newTestTempVC(t, fake, st)
+	spawnInto(tv, fake, "user-1", "chan-1", member("Smith", testRankSGT))
+	rename := func(name string) {
+		runVoiceRename(&fakeResponder{}, tv, renameInteraction("user-1", nil, name))
+	}
+
+	rename("One")
+	rename("Two")
+	if edits := fake.recordedEdits(); len(edits) != 0 {
+		t.Fatalf("edits with renaming off = %+v, want none", edits)
+	}
+
+	pushHub(t, st, tv, func(h *store.Hub) { h.RenamingAllowed = true })
+	rename("Three")
+	rename("Four")
+	if edits := fake.recordedEdits(); len(edits) != 2 {
+		t.Errorf("edits once renaming was turned on = %+v, want two", edits)
+	}
+}
+
+// #360: "Renaming allowed" binds moderators too. A holder of the hub's
+// moderator role, who renames any of its channels while the setting is on,
+// renames nothing once it is off.
+func TestVoiceRenameHubModeratorRefusedWithRenamingOff(t *testing.T) {
+	fake := newFakeTempVCManager()
+	hub := renamingOffHub()
+	hub.ModeratorRoleIDs = []string{testModRoleHub}
+	tv := newTestTempVC(t, fake, seedStore(t, hub))
+	spawnInto(tv, fake, "user-owner", "chan-1", member("Smith", testRankSGT))
+	fake.deliver(tv, voiceEvent("user-mod", "chan-1", member("Jones", testRankPVT, testModRoleHub)))
+
+	runVoiceRename(&fakeResponder{}, tv, renameInteraction("user-mod", []string{testRankPVT, testModRoleHub}, "Alpha"))
+
+	if edits := fake.recordedEdits(); len(edits) != 0 {
+		t.Errorf("edits = %+v, want none", edits)
+	}
+}
+
+// #360: on a hub with renaming off, a member who is neither owner nor
+// moderator hears the reason that applies to everyone, not the name of an
+// owner who could not rename either. The reply mentions nobody.
+func TestVoiceRenameNonOwnerWithRenamingOffIsNotSentToTheOwner(t *testing.T) {
+	fake := newFakeTempVCManager()
+	tv := newTestTempVC(t, fake, seedStore(t, renamingOffHub()))
+	spawnInto(tv, fake, "user-owner", "chan-1", member("Smith", testRankSGT))
+	fake.deliver(tv, voiceEvent("user-2", "chan-1", member("Jones", testRankPVT)))
+
+	f := &fakeResponder{}
+	runVoiceRename(f, tv, renameInteraction("user-2", nil, "Alpha"))
+
+	if reply := ephemeralReply(t, f); strings.Contains(reply, "<@") {
+		t.Errorf("reply %q mentions someone, want nobody", reply)
+	}
+}
+
+// #360: a spawned channel whose hub row is gone reads the setting's default,
+// on, whatever the hub had. Its owner renames it after the hub that had
+// renaming off is removed.
+func TestVoiceRenameAfterTheHubIsRemovedReadsTheDefault(t *testing.T) {
+	fake := newFakeTempVCManager()
+	tv := newTestTempVC(t, fake, seedStore(t, renamingOffHub()))
+	spawnInto(tv, fake, "user-1", "chan-1", member("Smith", testRankSGT))
+
+	tv.RemoveHub(testTempVCHub)
+	runVoiceRename(&fakeResponder{}, tv, renameInteraction("user-1", nil, "Alpha"))
+
+	if edits := fake.recordedEdits(); len(edits) != 1 || edits[0].name != "Alpha" {
+		t.Errorf("edits = %+v, want chan-1 renamed to Alpha", edits)
 	}
 }
 
