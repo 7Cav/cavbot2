@@ -154,8 +154,8 @@ moment it empties. Hub settings are edited in the panel, never in code.
   joined it. Named from the hub's base string plus a per-hub number.
   _Avoid_: temp channel, temp VC, temporary channel, personal channel.
 - **Owner**: The occupant a spawned channel belongs to, or nobody. Owning
-  is what lets a member rename or lock it; a moderator role does both
-  without owning.
+  is what lets a member rename or lock it, as far as its hub allows each; a
+  moderator role does both without owning.
   The owner always holds a rank role. The creator at first, if they hold one;
   after a handover, whoever the handover named. A bot-internal marker that
   grants no Discord permission.
@@ -193,7 +193,8 @@ moment it empties. Hub settings are edited in the panel, never in code.
   created and at every handover. It pings nobody.
   _Avoid_: announcement, banner, status line, welcome message.
 - **Moderator role**: A Discord role that may rename, lock and unlock any
-  spawned channel it covers without owning it, and that no lock keeps out.
+  spawned channel it covers without owning it, as far as the hub allows
+  each, and that no lock keeps out.
   Set per hub, or once for every hub; a hub's moderator roles are the union
   of the two. Grants no Discord permission beyond getting past a lock.
   _Avoid_: staff role, admin role, global moderator, default moderator.
@@ -258,10 +259,17 @@ moment it empties. Hub settings are edited in the panel, never in code.
   create or the move-into, and a refusal the bot decided itself, which only
   a broken hub causes.
   _Avoid_: create failure, failed create, failed join, refused join.
+- **Save**: One submitted panel form that changes the bot's settings: a
+  hub's create, register, update or remove, or the guild-wide moderator
+  roles. It begins once the group check passes, runs to its end whether or
+  not the browser waits, and takes effect when the store holds its settings.
+  A refused save changes nothing.
+  _Avoid_: submit, submission, write, commit.
 - **Change log**: The panel's record of who changed which setting, when,
   and from what to what. Each hub's form shows the hub's own entries; the
   guild-wide moderator section shows the entries of its saves, which
-  reference no hub. It records panel saves only.
+  reference no hub. It records saves only, and every save that takes effect
+  has exactly one entry.
   _Avoid_: audit trail, audit log (that is Discord's), history.
 - **Rank ladder**: The rank roles in seniority order, most senior first,
   that the handover rule ranks occupants by.
