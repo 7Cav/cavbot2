@@ -57,7 +57,7 @@ The compose service uses an explicit `environment:` block listing each variable 
 
 ## See also (durable docs)
 
-For load-bearing decisions, see `docs/adr/`. For domain terminology, see `CONTEXT.md`. For the production host, the Release checklist and the MEE6 cutover, see `docs/cutover-runbook.md`.
+For load-bearing decisions, see `docs/adr/`. For domain terminology, see `CONTEXT.md`.
 
 ## Agent skills
 
