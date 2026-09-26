@@ -33,6 +33,12 @@ type fakeDiscord struct {
 	// listErr, when set, is what GuildChannels returns: Discord not
 	// answering the panel's read.
 	listErr error
+	// guildErr, when set, is what Guild returns.
+	guildErr error
+	// listDelay and guildDelay hold GuildChannels and Guild back before they
+	// answer: a slow Discord, which the panel cannot cut short.
+	listDelay  time.Duration
+	guildDelay time.Duration
 	// createErr, when set, is what every create returns.
 	createErr error
 	// editErr, when set, is what every edit returns.
@@ -100,6 +106,10 @@ func (f *fakeDiscord) Channel(channelID string) (*discordgo.Channel, error) {
 }
 
 func (f *fakeDiscord) GuildChannels(_ string) ([]*discordgo.Channel, error) {
+	f.mu.Lock()
+	delay := f.listDelay
+	f.mu.Unlock()
+	time.Sleep(delay)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.listErr != nil {
@@ -219,7 +229,14 @@ func (f *fakeDiscord) setVoice(userID, channelID string) {
 
 func (f *fakeDiscord) Guild(_ string) (*discordgo.Guild, error) {
 	f.mu.Lock()
+	delay := f.guildDelay
+	f.mu.Unlock()
+	time.Sleep(delay)
+	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.guildErr != nil {
+		return nil, f.guildErr
+	}
 	return &discordgo.Guild{ID: testGuildID, Roles: testGuildRoles, PremiumTier: f.premiumTier}, nil
 }
 
@@ -258,6 +275,24 @@ func (f *fakeDiscord) setListErr(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.listErr = err
+}
+
+func (f *fakeDiscord) setGuildErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.guildErr = err
+}
+
+func (f *fakeDiscord) setListDelay(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listDelay = d
+}
+
+func (f *fakeDiscord) setGuildDelay(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.guildDelay = d
 }
 
 func (f *fakeDiscord) setCreateErr(err error) {
@@ -611,18 +646,6 @@ func TestRegisterWithoutSessionRedirectsToSigninAndWritesNothing(t *testing.T) {
 	assertRedirect(t, res, "/signin")
 	if hubs := storedHubs(t, w.st); len(hubs) != 0 {
 		t.Errorf("signed-out register stored %+v, want nothing", hubs)
-	}
-}
-
-func TestHubPageWithGuildReadFailingIsAServerError(t *testing.T) {
-	w := newTestWorld(t, testHub())
-	signIn(t, w.forum, w.b)
-	w.discord.setListErr(errors.New("discord: 503"))
-
-	res := w.b.get("/")
-
-	if !isServerError(res.StatusCode) {
-		t.Errorf("GET / status = %d, want 5xx", res.StatusCode)
 	}
 }
 

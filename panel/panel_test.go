@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -218,7 +219,14 @@ func newBrowser(t *testing.T, p *Panel) *browser {
 
 func (b *browser) do(method, target string, header http.Header, body io.Reader) *http.Response {
 	b.t.Helper()
-	req := httptest.NewRequest(method, testBaseURL+target, body)
+	return b.doContext(context.Background(), method, target, header, body)
+}
+
+// doContext is do with a context on the request, which a test cancels the
+// way net/http does when the connection closes.
+func (b *browser) doContext(ctx context.Context, method, target string, header http.Header, body io.Reader) *http.Response {
+	b.t.Helper()
+	req := httptest.NewRequestWithContext(ctx, method, testBaseURL+target, body)
 	for k, v := range header {
 		req.Header[k] = v
 	}
@@ -690,8 +698,13 @@ func TestGroupCheckUnavailableKeepsSession(t *testing.T) {
 
 			res := b.get("/")
 
-			if !isServerError(res.StatusCode) {
-				t.Errorf("GET / status = %d, want 5xx", res.StatusCode)
+			// A regression pin: the forum's page shares the error template
+			// with the hub page's failures, and keeps its own 502 and page.
+			if res.StatusCode != http.StatusBadGateway {
+				t.Errorf("GET / status = %d, want 502", res.StatusCode)
+			}
+			if got := failureOf(t, parseHTML(t, res)); got != "forum" {
+				t.Errorf("failure page = %q, want forum", got)
 			}
 			if c := cookieNamed(res, sessionCookie); c != nil {
 				t.Errorf("outage response touched the session cookie: %+v", c)
