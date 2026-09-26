@@ -82,6 +82,7 @@ func sampleHub(guildID, hubChannelID string) Hub {
 		UserLimit:        12,
 		Bitrate:          96000,
 		Enabled:          true,
+		RenamingAllowed:  true,
 		LockingAllowed:   true,
 	}
 }
@@ -121,6 +122,9 @@ func assertHubSettings(t *testing.T, got, want Hub) {
 	}
 	if got.Enabled != want.Enabled {
 		t.Errorf("Enabled = %v, want %v", got.Enabled, want.Enabled)
+	}
+	if got.RenamingAllowed != want.RenamingAllowed {
+		t.Errorf("RenamingAllowed = %v, want %v", got.RenamingAllowed, want.RenamingAllowed)
 	}
 	if got.LockingAllowed != want.LockingAllowed {
 		t.Errorf("LockingAllowed = %v, want %v", got.LockingAllowed, want.LockingAllowed)
@@ -170,6 +174,7 @@ func TestUpsertHubUpdatesInPlace(t *testing.T) {
 		want.UserLimit = 0
 		want.Bitrate = 64000
 		want.Enabled = false
+		want.RenamingAllowed = false
 		want.LockingAllowed = false
 
 		second, err := s.UpsertHub(ctx, want)
@@ -499,6 +504,57 @@ func TestChannelLockMigrationLeavesExistingRowsOffAndUnlocked(t *testing.T) {
 	}
 	if got := listedSpawned(t, s, "chan-1"); got.Lock != (ChannelLock{}) || got.OwnerUserID != "user-1" {
 		t.Errorf("an older spawned row reads back as %+v, want unlocked with owner user-1", got)
+	}
+}
+
+// T7e (#360): a hub written before the rename setting existed comes through
+// its migration with "Renaming allowed" on, so an upgrade leaves every hub
+// renaming as it did.
+func TestRenamingAllowedMigrationLeavesExistingHubsOn(t *testing.T) {
+	dsn := os.Getenv(testDSNVar)
+	if dsn == "" {
+		t.Skipf("%s not set", testDSNVar)
+	}
+	ctx := context.Background()
+	raw, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open raw connection: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+	if _, err := raw.ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
+		t.Fatalf("reset schema: %v", err)
+	}
+	files, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatalf("embedded migrations: %v", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, raw, files)
+	if err != nil {
+		t.Fatalf("migration provider: %v", err)
+	}
+	// The channel lock migration is the last one before the rename setting's.
+	if _, err := provider.UpTo(ctx, 20260924000000); err != nil {
+		t.Fatalf("migrate to the schema before the rename setting: %v", err)
+	}
+	var hubID int64
+	if err := raw.QueryRowContext(ctx, `
+		INSERT INTO hubs (guild_id, hub_channel_id, base_string, permission_source, enabled)
+		VALUES ('guild-1', 'hub-1', 'Arma Voice', 'category', TRUE) RETURNING id`).Scan(&hubID); err != nil {
+		t.Fatalf("insert an older hub row: %v", err)
+	}
+
+	s, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	hub, err := s.GetHub(ctx, hubID)
+	if err != nil {
+		t.Fatalf("GetHub: %v", err)
+	}
+	if !hub.RenamingAllowed {
+		t.Error("an older hub reads back with RenamingAllowed off, want on")
 	}
 }
 

@@ -92,6 +92,7 @@ type editInput struct {
 	UserLimit        string
 	Bitrate          string
 	Enabled          bool
+	RenamingAllowed  bool
 	LockingAllowed   bool
 }
 
@@ -134,6 +135,7 @@ const (
 	fieldUserLimit        = "user_limit"
 	fieldBitrate          = "bitrate"
 	fieldEnabled          = "enabled"
+	fieldRenamingAllowed  = "renaming_allowed"
 	fieldLockingAllowed   = "locking_allowed"
 )
 
@@ -290,6 +292,7 @@ func editInputOf(h store.Hub, channelName string) editInput {
 		UserLimit:        strconv.Itoa(h.UserLimit),
 		Bitrate:          strconv.Itoa(h.Bitrate),
 		Enabled:          h.Enabled,
+		RenamingAllowed:  h.RenamingAllowed,
 		LockingAllowed:   h.LockingAllowed,
 	}
 }
@@ -574,7 +577,8 @@ func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo,
 }
 
 // newHub is a hub on a channel with the defaults a create or register
-// writes, before the store fills its ID and times.
+// writes, before the store fills its ID and times. Renaming is on: the
+// store writes the field as given, so leaving it out would store it off.
 func (s *hubService) newHub(channelID, baseString string) store.Hub {
 	return store.Hub{
 		GuildID:          s.deps.GuildID,
@@ -585,6 +589,7 @@ func (s *hubService) newHub(channelID, baseString string) store.Hub {
 		UserLimit:        defaultUserLimit,
 		Bitrate:          defaultBitrate,
 		Enabled:          true,
+		RenamingAllowed:  true,
 	}
 }
 
@@ -701,7 +706,8 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 
 // update saves a hub's settings from the edit form, writes the row, applies
 // it to the runtime, so a disabled hub stops spawning at once and a change
-// to "Locking allowed" reaches /voice-lock at once, and appends a change log
+// to "Renaming allowed" or "Locking allowed" reaches /voice-rename or
+// /voice-lock at once, and appends a change log
 // entry with the changed fields. A refusal is a *fieldError naming the
 // field, and nothing is written; store.ErrNotFound means no hub has the ID.
 //
@@ -827,6 +833,7 @@ func applyEdit(hub *store.Hub, in editInput, guild guildInfo) error {
 			fmt.Sprintf("Enter a bitrate of %d to %d.", bitrateMin, guild.bitrateMax)}
 	}
 	hub.Enabled = in.Enabled
+	hub.RenamingAllowed = in.RenamingAllowed
 	hub.LockingAllowed = in.LockingAllowed
 	return nil
 }

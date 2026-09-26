@@ -621,7 +621,8 @@ func (f *fakeTempVCManager) recordedMessageEdits() []discordgo.MessageEdit {
 
 // testHub is the hub row every test starts from: the test hub channel, base
 // string "Voice", category permissions, a user limit and a bitrate distinct
-// from Discord's defaults so a payload that drops either goes red.
+// from Discord's defaults so a payload that drops either goes red. Renaming
+// is allowed, as on every hub the panel makes.
 func testHub() store.Hub {
 	return store.Hub{
 		GuildID:          testTempVCGuild,
@@ -631,6 +632,7 @@ func testHub() store.Hub {
 		UserLimit:        5,
 		Bitrate:          96000,
 		Enabled:          true,
+		RenamingAllowed:  true,
 	}
 }
 
@@ -1983,6 +1985,49 @@ func TestTempVCOwnershipNoticesArePairwiseDistinct(t *testing.T) {
 				t.Errorf("notices %d and %d read the same, %q, want four distinct lines", i, j, lines[i])
 			}
 		}
+	}
+}
+
+// #360: the ownership notice offers /voice-rename only on a hub that allows
+// renaming. The same four events run on a hub with it on and a hub with it
+// off. On the off hub the two owner lines still name the owner and leave the
+// command out; on the on hub both carry it. The two lines for no owner read
+// the same on both hubs.
+func TestTempVCOwnershipNoticeOffersRenameOnlyWhereTheHubAllowsIt(t *testing.T) {
+	type noticeLines struct{ createOwner, handoverOwner, createNone, handoverNone string }
+	linesOn := func(hub store.Hub) noticeLines {
+		fake := newFakeTempVCManager()
+		tv := newTestTempVC(t, fake, seedStore(t, hub))
+		// The scene of the pairwise test above: chan-a is created with no
+		// owner, taken by the SGT, then left to the guest alone; the SGT's
+		// move into the hub spawns chan-b with the SGT as owner.
+		spawnInto(tv, fake, "guest-1", "chan-a", member("Guest"))
+		fake.deliver(tv, voiceEvent("sgt-1", "chan-a", member("Sgt", testRankSGT)))
+		spawnInto(tv, fake, "sgt-1", "chan-b", member("Sgt", testRankSGT))
+		a, b := noticesIn(t, fake, "chan-a"), noticesIn(t, fake, "chan-b")
+		if len(a) != 3 || len(b) != 1 {
+			t.Fatalf("notices in chan-a = %d, chan-b = %d, want 3 and 1", len(a), len(b))
+		}
+		return noticeLines{
+			createOwner: b[0].data.Content, handoverOwner: a[1].data.Content,
+			createNone: a[0].data.Content, handoverNone: a[2].data.Content,
+		}
+	}
+	on, off := linesOn(testHub()), linesOn(renamingOffHub())
+
+	for _, line := range []string{off.createOwner, off.handoverOwner} {
+		if !strings.Contains(line, "sgt-1") || strings.Contains(line, "/voice-rename") {
+			t.Errorf("owner line %q on a hub with renaming off, want the owner named and no /voice-rename", line)
+		}
+	}
+	for _, line := range []string{on.createOwner, on.handoverOwner} {
+		if !strings.Contains(line, "/voice-rename") {
+			t.Errorf("owner line %q on a hub with renaming on, want /voice-rename offered", line)
+		}
+	}
+	if off.createNone != on.createNone || off.handoverNone != on.handoverNone {
+		t.Errorf("no-owner lines with renaming off %q, %q; want them as with it on, %q, %q",
+			off.createNone, off.handoverNone, on.createNone, on.handoverNone)
 	}
 }
 

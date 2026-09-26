@@ -345,7 +345,7 @@ func newTestWorldOver(t *testing.T, st store.Store, f *fakeForum) *testWorld {
 func testHub() store.Hub {
 	return store.Hub{
 		GuildID: testGuildID, HubChannelID: "hub-1", BaseString: "Arma Voice",
-		PermissionSource: store.PermissionCategory, Bitrate: 64000, Enabled: true,
+		PermissionSource: store.PermissionCategory, Bitrate: 64000, Enabled: true, RenamingAllowed: true,
 	}
 }
 
@@ -473,6 +473,19 @@ func errorField(t *testing.T, res *http.Response) (string, bool) {
 		return "", false
 	}
 	return attrValue(found, "data-error")
+}
+
+// A hub the panel registers allows renaming, though the register form shows
+// no box for it: every new hub starts that way (#360).
+func TestRegisterStoresRenamingAllowed(t *testing.T) {
+	w := newTestWorld(t)
+	signIn(t, w.forum, w.b)
+
+	assertRedirect(t, w.b.postForm("/hubs", registerForm("vc-2", "Squad Voice")), "/")
+
+	if hubs := storedHubs(t, w.st); len(hubs) != 1 || !hubs[0].RenamingAllowed {
+		t.Errorf("stored hubs = %+v, want one with renaming allowed", hubs)
+	}
 }
 
 func TestRegisterRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
@@ -636,6 +649,7 @@ func updateForm() url.Values {
 		"user_limit":        {"0"},
 		"bitrate":           {"64000"},
 		"enabled":           {"on"},
+		"renaming_allowed":  {"on"},
 	}
 }
 
@@ -740,6 +754,51 @@ func TestLockingAllowedSaveReachesTheRuntimeAtOnce(t *testing.T) {
 	sec := editSection(t, w.b.get("/?hub="+strconv.FormatInt(id, 10)), id)
 	if got := postedControls(sec, "locking_allowed"); len(got) != 1 {
 		t.Errorf("the form posts locking_allowed %v, want it on as saved", got)
+	}
+}
+
+// A save that turns "Renaming allowed" off reaches the runtime at once and
+// leaves live channels as they are (#360). The edit form of a hub with
+// renaming on shows the box ticked, so a save of another field keeps it. The
+// owner renames their channel, a save unticks the box, and the owner's next
+// rename is refused while the channel keeps the name it had: the save edits
+// no live channel. The change log entry records the setting's before and
+// after.
+func TestRenamingAllowedSaveReachesTheRuntimeAtOnce(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	w.joinAs("user-owner", "hub-1", testRankSGT)
+	w.joinAs("user-owner", "spawn-1", testRankSGT)
+	id := storedHubID(t, w.st, "hub-1")
+
+	sec := editSection(t, w.b.get("/?hub="+strconv.FormatInt(id, 10)), id)
+	if got := postedControls(sec, "renaming_allowed"); len(got) != 1 {
+		t.Errorf("the form of a hub with renaming on posts renaming_allowed %v, want it on", got)
+	}
+	owner := commands.Invoker{UserID: "user-owner", Roles: []string{testRankSGT}}
+	if _, err := w.runtime.Rename(owner, "Alpha"); err != nil {
+		t.Fatalf("a rename before the save was refused: %v", err)
+	}
+
+	form := updateForm()
+	form.Del("renaming_allowed")
+	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
+
+	if h := storedHubs(t, w.st)[0]; h.RenamingAllowed {
+		t.Error("the stored hub allows renaming after a save that turned it off")
+	}
+	if _, err := w.runtime.Rename(owner, "Bravo"); err == nil {
+		t.Error("a rename after the save went through, want a refusal")
+	}
+	if edits := w.discord.edits(); len(edits) != 1 || edits[0].ChannelID != "spawn-1" {
+		t.Errorf("edits = %+v, want the one rename on spawn-1 before the save", edits)
+	}
+	entries := storedChangeLog(t, w.st, id)
+	if len(entries) != 1 {
+		t.Fatalf("the hub has %d entries, want 1", len(entries))
+	}
+	if got := decodeDiff(t, entries[0])["renaming_allowed"]; got.Before != true || got.After != false {
+		t.Errorf("diff renaming_allowed = %+v, want before true, after false", got)
 	}
 }
 
@@ -883,10 +942,10 @@ func decodeDiff(t *testing.T, e store.ChangeLogEntry) map[string]fieldChange {
 	return diff
 }
 
-// wantDiffFields are the fields the specs (#285, #347) say a register or
-// remove entry carries, written out here so the test does not read the list
-// from the code.
-var wantDiffFields = []string{"hub_channel", "base_string", "permission_source", "moderator_roles", "user_limit", "bitrate", "enabled", "locking_allowed"}
+// wantDiffFields are the fields the specs (#285, #347, #360) say a register
+// or remove entry carries, written out here so the test does not read the
+// list from the code.
+var wantDiffFields = []string{"hub_channel", "base_string", "permission_source", "moderator_roles", "user_limit", "bitrate", "enabled", "renaming_allowed", "locking_allowed"}
 
 // assertActor checks an entry names the signed-in test user.
 func assertActor(t *testing.T, e store.ChangeLogEntry, action store.ChangeAction) {

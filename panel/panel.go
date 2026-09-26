@@ -481,6 +481,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 		UserLimit:        r.PostForm.Get(fieldUserLimit),
 		Bitrate:          r.PostForm.Get(fieldBitrate),
 		Enabled:          r.PostForm.Get(fieldEnabled) != "",
+		RenamingAllowed:  r.PostForm.Get(fieldRenamingAllowed) != "",
 		LockingAllowed:   r.PostForm.Get(fieldLockingAllowed) != "",
 	}
 	hub, err := p.hubs.update(r.Context(), id, in, sess.actor())

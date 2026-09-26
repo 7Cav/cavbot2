@@ -57,6 +57,11 @@ func (e *notOwnerError) Error() string {
 	return "invoker is not the owner " + e.Owner
 }
 
+// errRenamingNotAllowed: Rename returns it when the channel's hub has
+// "Renaming allowed" off (#360). A channel whose hub row is gone reads the
+// default, which is on.
+var errRenamingNotAllowed = errors.New("renaming is not allowed on the channel's hub")
+
 // renameWindowError: Rename returns it when the channel already had its two
 // renames inside the window, and when Discord refused the edit with a 429
 // that carries retry_after (a rename the runtime did not count). OpensAt is
@@ -84,13 +89,25 @@ type renameResult struct {
 }
 
 // Rename renames the spawned channel the invoker is sitting in, on the
-// invoker's behalf. No channel argument: the target is the invoker's current
+// invoker's behalf, when its hub allows renaming and they own it or hold one
+// of its moderator roles. No channel argument: the target is the invoker's current
 // channel from the runtime's own occupancy tracking. The edit call carries an
 // audit log reason naming the invoker and no retry on rate limit.
 func (t *TempVC) Rename(by Invoker, name string) (renameResult, error) {
 	t.mu.Lock()
-	channelID, err := t.invokerChannelLocked(by)
+	channelID, err := t.invokerSpawnedChannelLocked(by)
 	if err != nil {
+		t.mu.Unlock()
+		return renameResult{}, err
+	}
+	// The hub's setting comes before authority (#360 Q9): with renaming off
+	// nobody may rename, so a non-owner hears that reason and not the name
+	// of an owner who is refused too.
+	if !t.renamingAllowedLocked(channelID) {
+		t.mu.Unlock()
+		return renameResult{}, errRenamingNotAllowed
+	}
+	if err := t.authorizeLocked(channelID, by); err != nil {
 		t.mu.Unlock()
 		return renameResult{}, err
 	}
@@ -199,13 +216,24 @@ func (i Invoker) auditName() string {
 
 // invokerChannelLocked resolves the spawned channel a voice command acts on:
 // the one the invoker sits in, when they own it or hold one of its hub's
-// effective moderator roles. /voice-rename, /voice-lock and /voice-unlock
-// share it, so the three refuse alike. A moderator role passes for every
-// spawned channel of a hub it covers, whoever owns it and whether anyone
-// does. The owner is read only when the invoker holds none, so a moderator
-// acts on an ownerless channel with no WARN, and no command changes the
-// owner. Caller holds mu.
+// effective moderator roles. /voice-lock and /voice-unlock call it whole, so
+// the two refuse alike. /voice-rename calls its two halves with the hub's
+// rename check between them (#360), so it refuses in the same words.
+// Caller holds mu.
 func (t *TempVC) invokerChannelLocked(by Invoker) (string, error) {
+	channelID, err := t.invokerSpawnedChannelLocked(by)
+	if err != nil {
+		return "", err
+	}
+	if err := t.authorizeLocked(channelID, by); err != nil {
+		return "", err
+	}
+	return channelID, nil
+}
+
+// invokerSpawnedChannelLocked resolves the spawned channel the invoker sits
+// in, whoever they are. Caller holds mu.
+func (t *TempVC) invokerSpawnedChannelLocked(by Invoker) (string, error) {
 	channelID, inVoice := t.userChannel[by.UserID]
 	if !inVoice {
 		return "", errNotInVoice
@@ -213,12 +241,31 @@ func (t *TempVC) invokerChannelLocked(by Invoker) (string, error) {
 	if _, tracked := t.occupants[channelID]; !tracked {
 		return "", &notSpawnedChannelError{ChannelID: channelID}
 	}
+	return channelID, nil
+}
+
+// authorizeLocked checks the invoker owns the spawned channel or holds one of
+// its hub's effective moderator roles. A moderator role passes for every
+// spawned channel of a hub it covers, whoever owns it and whether anyone
+// does. The owner is read only when the invoker holds none, so a moderator
+// acts on an ownerless channel with no WARN, and no command changes the
+// owner. Caller holds mu.
+func (t *TempVC) authorizeLocked(channelID string, by Invoker) error {
 	if !t.isModeratorLocked(channelID, by.Roles) {
 		if owner := t.owners[channelID]; owner != by.UserID {
-			return "", &notOwnerError{Owner: owner}
+			return &notOwnerError{Owner: owner}
 		}
 	}
-	return channelID, nil
+	return nil
+}
+
+// renamingAllowedLocked reports whether a spawned channel's hub has
+// "Renaming allowed" on, as the hub is now. A channel whose hub row is gone
+// reads the default, on (#360 Q6). /voice-rename and the ownership notice
+// both read it. Caller holds mu.
+func (t *TempVC) renamingAllowedLocked(channelID string) bool {
+	hub, ok := t.hubByIDLocked(t.channelHub[channelID])
+	return !ok || hub.RenamingAllowed
 }
 
 // releaseRenameLocked gives back the slot a failed rename took, so only
