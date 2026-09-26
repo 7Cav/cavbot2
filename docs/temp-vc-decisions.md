@@ -1,7 +1,7 @@
 # Temporary voice channels: decisions, and what they do to PR #232
 
 **Last updated:** 2026-09-25
-**Subject:** issue [#100](https://github.com/7Cav/cavbot2/issues/100), PR [#232](https://github.com/7Cav/cavbot2/pull/232), the MEE6 audit (#99), the wayfinder map [#255](https://github.com/7Cav/cavbot2/issues/255), the channel lock request [#347](https://github.com/7Cav/cavbot2/issues/347), and the knock channel request [#357](https://github.com/7Cav/cavbot2/issues/357).
+**Subject:** issue [#100](https://github.com/7Cav/cavbot2/issues/100), PR [#232](https://github.com/7Cav/cavbot2/pull/232), the MEE6 audit (#99), the wayfinder map [#255](https://github.com/7Cav/cavbot2/issues/255), the channel lock request [#347](https://github.com/7Cav/cavbot2/issues/347), the knock channel request [#357](https://github.com/7Cav/cavbot2/issues/357), and the request to turn rename off per hub [#360](https://github.com/7Cav/cavbot2/issues/360).
 
 ## Purpose
 
@@ -14,6 +14,7 @@ Do not relitigate anything under "Settled", "Settled while charting", or "Alread
 - Both question rounds are answered. Nothing is in flight with the stakeholder.
 - Nex asked for a channel lock on 2026-09-24 ([#347](https://github.com/7Cav/cavbot2/issues/347)). It reopens two rows under "Settled"; each row says what changed, and the detail is under "Settled for #347".
 - Nex asked, through the maintainer, for a way to make a spawned channel a knock channel on 2026-09-25 ([#357](https://github.com/7Cav/cavbot2/issues/357)). The detail is under "Settled for #357".
+- Nex asked, through the maintainer, for a per-hub setting that turns rename off on 2026-09-25 ([#360](https://github.com/7Cav/cavbot2/issues/360)). It amends one row under "Settled", and the detail is under "Settled for #360".
 - The maintainer builds this, not the PR's author. PR #232 is closed; the pull request for [#289](https://github.com/7Cav/cavbot2/issues/289) supersedes it.
 - Every ticket under map #255 is closed as of 2026-09-15. The last was [Panel session lifetime and group re-check](https://github.com/7Cav/cavbot2/issues/280). Nothing is left to decide before the spec is written.
 - PR #232 was a draft, 3 files, +3677 lines, last pushed 2026-07-26. It forked 20 commits behind `develop`; its pruned code reached `develop` through #299, and the #289 pull request reshapes it onto the store.
@@ -36,7 +37,7 @@ Each row is closed. R1 and R2 are the two question rounds.
 
 | Decision | Provenance |
 |---|---|
-| The bot holds channel permissions. Members get no Manage Channels overwrite. They may rename. They may not lock a channel or change its user limit. Amended 2026-09-24: the owner or a moderator may lock a spawned channel on a hub that allows it, and the Server Settings restriction on the command keeps other members out (#347). | R1 Q1, Q2: "Bot commands are ideal imo. The less access members have to settings the better." Amended by #347 |
+| The bot holds channel permissions. Members get no Manage Channels overwrite. They may rename. They may not lock a channel or change its user limit. Amended 2026-09-24: the owner or a moderator may lock a spawned channel on a hub that allows it, and the Server Settings restriction on the command keeps other members out (#347). Amended 2026-09-25: a hub can turn rename off, and then nobody renames its spawned channels through the bot (#360). | R1 Q1, Q2: "Bot commands are ideal imo. The less access members have to settings the better." Amended by #347 and #360 |
 | Channel names are area plus number, not person-based. Default form `Arma Voice - 1`. No rank, no username, no nickname. | R1 preamble: "the default will be 'Arma Voice - 1' for example" |
 | Numbering is per hub and concurrent, not per user. The second live channel from a hub is `- 2`. A freed lower number is reused. | Follows from the naming form |
 | Channels are deleted the instant the last person leaves. No grace period. Keep Alive 0 was deliberate. Immediate deletion also clears the channel's text chat, which matters for courses and private meetings. | R1 Q6: "When the last person leaves the channel should die" |
@@ -225,6 +226,24 @@ Nex asked, through the maintainer, for an optional prompt on `/voice-rename` tha
 | With the option set, a name that is empty once the typed 🚦 and whitespace are dropped is refused with the existing "❌ `name` must not be empty." Without the option, a name of `🚦` alone stands, as today. | Maintainer, #357 Q12 |
 | The success reply is unchanged: "✅ Renamed to **🚦 Alpha**." The 🚦 in the name is the confirmation. | Maintainer, #357 Q13 |
 | The README's command row reads "Rename the spawned voice channel you are in, optionally making it a knock channel (🚦)". | Maintainer, #357 Q14 |
+
+## Settled for #360 (turning rename off per hub, 2026-09-25)
+
+Nex asked, through the maintainer, for a panel setting that turns rename off on a hub. The use case is the public hubs, whose spawned channels are named after the game they serve and should keep that name: "we don't even want cav members to be able to rename those". The maintainer grilled it on 2026-09-25.
+
+| Decision | Provenance |
+|---|---|
+| With the hub's "Renaming allowed" off, nobody renames its spawned channels through the bot, owners and moderator roles alike. The setting binds moderators as "Locking allowed" does; a moderator role passes the owner check, not a hub setting. The bot cannot stop a rename made in Discord's UI by someone whose category permissions grant Manage Channels. Rejected: stopping owners alone, which needs a second version of the moderator hints and of the refusal. | Maintainer, #360 Q1 |
+| Rename is on for every hub the migration finds and for every hub the panel creates or registers. Nex turns it off hub by hub. The opposite default from "Locking allowed", which started off because locking was new. | Maintainer, #360 Q2 |
+| The runtime reads the setting at each rename, so turning it off reaches the hub's live spawned channels at once. A channel keeps whatever name it has: a panel save never edits a live channel, as with "Locking allowed" (#347 Q17). To restore a name, turn rename on, rename, and turn it off again. Rejected: the save renaming every live channel back to `<base string> - <n>`, which spends their Discord rename allowance. | Maintainer, #360 Q3 |
+| On a hub with rename off there are no knock channels. The `knock-channel` option on `/voice-rename` is a rename (#357 Q4) and is refused with the rest. Rejected: letting the option through alone, which needs a name filter the Settled rows rule out. | Maintainer, #360 Q4 |
+| On a hub with rename off, the ownership notice's owner lines drop the rename clause: "<@X> owns this channel." and "<@X> now owns this channel." The two no-owner lines are unchanged. The line is picked when the notice posts, so a channel spawned before the switch keeps its earlier notice. Ownership still decides who locks on a hub that allows it, so the notice keeps naming the owner. Rejected: no notice on such a hub, which hides who can lock. | Maintainer, #360 Q5 |
+| A spawned channel whose hub row is gone reads every hub setting at its default: rename on, locking off. `/voice-rename` keeps working there with the guild-wide moderator roles, as today, and `/voice-lock` keeps refusing. | Maintainer, #360 Q6 |
+| The setting is a "Renaming allowed" checkbox on the hub's edit form, just above "Locking allowed", with the hint "The owner or a moderator can rename this hub's channels with /voice-rename." The create and register forms do not show it and store it on. It is change-logged under `renaming_allowed` like every hub field. Rejected: a "Renaming off" box, unticked by default, which reads backwards beside "Enabled" and "Locking allowed". | Maintainer, #360 Q7 |
+| The moderator hints stop promising rename everywhere. The guild-wide section reads "These roles rename any spawned channel of a hub that allows renaming, including hubs added later. Each hub adds its own roles in its form." The hub form reads "These roles rename, lock and unlock any channel this hub spawns, as far as the settings below allow." | Maintainer, #360 Q8 |
+| The refusal is "❌ Renaming isn't turned on for this hub." The hub check runs once the invoker is known to sit in a spawned channel, before the owner check and before the rename window. A non-owner hears the reason that applies, not the name of an owner who cannot rename either; an ownerless channel on such a hub fires no no-owner WARN; and a refusal takes no rename slot. This order differs from `/voice-lock`, which checks the owner first. Rejected: `/voice-lock`'s order, which sends a non-owner to an owner who is refused too. | Maintainer, #360 Q9 |
+| The cutover runbook's hub transcription step gains "**Renaming allowed: on**, as every register leaves it. Turn it off on the public hubs whose channels keep the game's name, the hubs Nex names." Its sentence on who may rename, lock and unlock gains ", within each hub's Renaming allowed and Locking allowed". The README's `/voice-rename` row is unchanged, as the `/voice-lock` row names no hub setting. | Maintainer, #360 Q10 |
+| `/voice-lock` has the order Q9 rejects: on a hub with "Locking allowed" off, a non-owner hears who owns the channel, and an ownerless channel fires the no-owner WARN. Fixing it is out of #360's scope and is [#364](https://github.com/7Cav/cavbot2/issues/364), since it changes an order #347 settled. | Maintainer, #360 Q11 |
 
 ## Open, as tickets on map #255
 

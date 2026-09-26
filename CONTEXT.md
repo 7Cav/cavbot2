@@ -154,8 +154,8 @@ moment it empties. Hub settings are edited in the panel, never in code.
   joined it. Named from the hub's base string plus a per-hub number.
   _Avoid_: temp channel, temp VC, temporary channel, personal channel.
 - **Owner**: The occupant a spawned channel belongs to, or nobody. Owning
-  is what lets a member rename or lock it; a moderator role does both
-  without owning.
+  is what lets a member rename or lock it, as far as its hub allows each; a
+  moderator role does both without owning.
   The owner always holds a rank role. The creator at first, if they hold one;
   after a handover, whoever the handover named. A bot-internal marker that
   grants no Discord permission.
@@ -193,7 +193,8 @@ moment it empties. Hub settings are edited in the panel, never in code.
   created and at every handover. It pings nobody.
   _Avoid_: announcement, banner, status line, welcome message.
 - **Moderator role**: A Discord role that may rename, lock and unlock any
-  spawned channel it covers without owning it, and that no lock keeps out.
+  spawned channel it covers without owning it, as far as the hub allows
+  each, and that no lock keeps out.
   Set per hub, or once for every hub; a hub's moderator roles are the union
   of the two. Grants no Discord permission beyond getting past a lock.
   _Avoid_: staff role, admin role, global moderator, default moderator.
