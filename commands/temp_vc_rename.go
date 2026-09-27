@@ -216,10 +216,10 @@ func (i Invoker) auditName() string {
 
 // authorizedInvokerChannelLocked resolves the spawned channel a voice
 // command acts on: the one the invoker sits in, when they own it or hold one
-// of its hub's effective moderator roles. /voice-lock and /voice-unlock call
-// it whole, so the two refuse alike. /voice-rename calls its two halves with
-// the hub's rename check between them (#360), so it refuses in the same
-// words. Caller holds mu.
+// of its hub's effective moderator roles. /voice-unlock calls it whole.
+// /voice-rename and /voice-lock call its two halves with their hub check
+// between them (#360, #364), so all three refuse in the same words. Caller
+// holds mu.
 func (t *TempVC) authorizedInvokerChannelLocked(by Invoker) (string, error) {
 	channelID, err := t.invokerSpawnedChannelLocked(by)
 	if err != nil {
