@@ -42,6 +42,7 @@
   <form method="post" action="/moderators" class="block">
     <h2 class="block-header">Moderator roles for every hub</h2>
     {{with .Hubs.RefusalFor "moderators"}}{{template "refusal" .}}{{end}}
+    <input type="hidden" name="version" value="{{.Hubs.Moderators.Version}}">
     <div class="block-row">
       <div class="field">
         <span class="field-label">Roles</span>
@@ -161,6 +162,8 @@
   <form method="post" action="/hubs/{{.ID}}" class="block">
     <h2 class="block-header">Edit hub</h2>
     {{with $.Hubs.RefusalFor "edit"}}{{template "refusal" .}}{{end}}
+    <input type="hidden" name="version" value="{{.Form.Version}}">
+    <input type="hidden" name="loaded_channel_name" value="{{.Form.LoadedChannelName}}">
     <div class="block-row">
       <label class="field">
         <span class="field-label">Hub channel name</span>

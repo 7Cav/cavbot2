@@ -219,21 +219,21 @@ func TestHubPageFailureOffersTryAgainAtTheGETAddress(t *testing.T) {
 	cases := []struct {
 		name string
 		// load is the request whose hub page fails.
-		load func(w *testWorld, hubPath string) *http.Response
+		load func(t *testing.T, w *testWorld, st store.Store, hubPath string) *http.Response
 		// retry is the page's GET address, from the stored hub's ID.
 		retry func(hubID string) string
 	}{
 		{"the hub list",
-			func(w *testWorld, _ string) *http.Response { return w.b.get("/") },
+			func(_ *testing.T, w *testWorld, _ store.Store, _ string) *http.Response { return w.b.get("/") },
 			func(string) string { return "/" }},
 		{"a hub's edit form",
-			func(w *testWorld, hubPath string) *http.Response {
+			func(_ *testing.T, w *testWorld, _ store.Store, hubPath string) *http.Response {
 				return w.b.get("/?hub=" + strings.TrimPrefix(hubPath, "/hubs/"))
 			},
 			func(id string) string { return "/?hub=" + id }},
 		{"a refused hub save",
-			func(w *testWorld, hubPath string) *http.Response {
-				form := updateForm()
+			func(t *testing.T, w *testWorld, st store.Store, hubPath string) *http.Response {
+				form := updateForm(t, st)
 				form.Set("base_string", "   ")
 				return w.b.postForm(hubPath, form)
 			},
@@ -246,7 +246,7 @@ func TestHubPageFailureOffersTryAgainAtTheGETAddress(t *testing.T) {
 			path := hubPath(t, st.Fake, "hub-1")
 			st.failRead("ListModeratorChanges")
 
-			res := tc.load(w, path)
+			res := tc.load(t, w, st.Fake, path)
 
 			if res.StatusCode != http.StatusServiceUnavailable {
 				t.Errorf("status = %d, want 503", res.StatusCode)

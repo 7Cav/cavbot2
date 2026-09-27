@@ -677,11 +677,16 @@ func TestRegisterWithoutSessionRedirectsToSigninAndWritesNothing(t *testing.T) {
 	}
 }
 
-// updateForm is the edit form as posted, every field carrying the value
-// testHub stores, so a test changes one field and posts the rest unchanged.
-func updateForm() url.Values {
+// updateForm is the edit form of the hub on hub-1 as a page loaded now
+// posts it: every field carrying the value testHub stores, hub-1's name in
+// the fake guild as the name the form loaded, and the version the store
+// holds for the hub now. A test changes one field and posts the rest
+// unchanged.
+func updateForm(t *testing.T, st store.Store) url.Values {
+	t.Helper()
 	return url.Values{
 		"channel_name":         {"Join to create"},
+		"loaded_channel_name":  {"Join to create"},
 		"base_string":          {"Arma Voice"},
 		"permission_source":    {"category"},
 		"user_limit":           {"0"},
@@ -689,7 +694,21 @@ func updateForm() url.Values {
 		"delete_delay_minutes": {"0"},
 		"enabled":              {"on"},
 		"renaming_allowed":     {"on"},
+		"version":              {storedVersion(t, st, "hub-1")},
 	}
+}
+
+// storedVersion is the version the store holds for the hub on a channel,
+// as a form loaded now carries it.
+func storedVersion(t *testing.T, st store.Store, hubChannelID string) string {
+	t.Helper()
+	for _, h := range storedHubs(t, st) {
+		if h.HubChannelID == hubChannelID {
+			return strconv.FormatInt(h.Version, 10)
+		}
+	}
+	t.Fatalf("no hub stored on %s", hubChannelID)
+	return ""
 }
 
 // hubPath is the update route of the stored hub on a channel.
@@ -701,7 +720,7 @@ func hubPath(t *testing.T, st store.Store, hubChannelID string) string {
 func TestUpdateWritesTheRowAndReachesTheRuntime(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
-	form := updateForm()
+	form := updateForm(t, w.st)
 	form.Set("base_string", "Bravo Voice")
 	form.Set("permission_source", "hub_channel")
 	form["moderator_roles"] = []string{"role-mp"}
@@ -735,7 +754,7 @@ func TestDisabledHubStopsSpawningAtOnceAndKeepsItsSettings(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 	path := hubPath(t, w.st, "hub-1")
-	off := updateForm()
+	off := updateForm(t, w.st)
 	off.Del("enabled")
 
 	assertRedirect(t, w.b.postForm(path, off), "/")
@@ -747,7 +766,7 @@ func TestDisabledHubStopsSpawningAtOnceAndKeepsItsSettings(t *testing.T) {
 		t.Errorf("stored hub = %+v, want disabled with base string Arma Voice kept", h)
 	}
 
-	assertRedirect(t, w.b.postForm(path, updateForm()), "/")
+	assertRedirect(t, w.b.postForm(path, updateForm(t, w.st)), "/")
 	w.join("user-b", "hub-1")
 	if n := w.discord.createCount(); n != 1 {
 		t.Errorf("a join to the re-enabled hub made %d creates in all, want 1", n)
@@ -773,7 +792,7 @@ func TestLockingAllowedSaveReachesTheRuntimeAtOnce(t *testing.T) {
 	}
 
 	id := storedHubID(t, w.st, "hub-1")
-	form := updateForm()
+	form := updateForm(t, w.st)
 	form.Set("locking_allowed", "on")
 	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
 
@@ -819,7 +838,7 @@ func TestRenamingAllowedSaveReachesTheRuntimeAtOnce(t *testing.T) {
 		t.Fatalf("a rename before the save was refused: %v", err)
 	}
 
-	form := updateForm()
+	form := updateForm(t, w.st)
 	form.Del("renaming_allowed")
 	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
 
@@ -860,7 +879,7 @@ func TestDeleteDelaySaveStoresItAndReachesTheRuntimeAtOnce(t *testing.T) {
 		t.Errorf("the form of a hub with no delay posts delete_delay_minutes %q, want 0", got)
 	}
 
-	form := updateForm()
+	form := updateForm(t, w.st)
 	form.Set("delete_delay_minutes", "30")
 	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
 
@@ -907,14 +926,16 @@ func sameHubSettings(a, b store.Hub) bool {
 }
 
 func TestUpdateRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
-	set := func(field, value string) url.Values {
-		form := updateForm()
-		form.Set(field, value)
-		return form
+	set := func(field, value string) func(*testing.T, store.Store) url.Values {
+		return func(t *testing.T, st store.Store) url.Values {
+			form := updateForm(t, st)
+			form.Set(field, value)
+			return form
+		}
 	}
 	cases := []struct {
 		name  string
-		form  url.Values
+		form  func(*testing.T, store.Store) url.Values
 		field string
 	}{
 		{"an empty channel name", set("channel_name", "   "), "channel_name"},
@@ -940,7 +961,7 @@ func TestUpdateRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
 			signIn(t, w.forum, w.b)
 			before := storedHubs(t, w.st)[0]
 
-			res := w.b.postForm(hubPath(t, w.st, "hub-1"), tc.form)
+			res := w.b.postForm(hubPath(t, w.st, "hub-1"), tc.form(t, w.st))
 
 			if !isClientError(res.StatusCode) {
 				t.Errorf("status = %d, want 4xx", res.StatusCode)
@@ -969,7 +990,7 @@ func TestUnknownHubIsNotFound(t *testing.T) {
 			w := newTestWorld(t, testHub())
 			signIn(t, w.forum, w.b)
 
-			res := w.b.postForm(path, updateForm())
+			res := w.b.postForm(path, updateForm(t, w.st))
 
 			if res.StatusCode != http.StatusNotFound {
 				t.Errorf("status = %d, want 404", res.StatusCode)
@@ -1047,7 +1068,7 @@ func assertActor(t *testing.T, e store.ChangeLogEntry, action store.ChangeAction
 func TestUpdateAppendsAnEntryWithTheChangedFieldsOnly(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
-	form := updateForm()
+	form := updateForm(t, w.st)
 	form.Set("base_string", "Bravo Voice")
 
 	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
@@ -1155,7 +1176,7 @@ func TestHubFormShowsTheLastTenEntriesNewestFirst(t *testing.T) {
 	signIn(t, w.forum, w.b)
 	id := storedHubID(t, w.st, "hub-1")
 	for i := 1; i <= 11; i++ {
-		form := updateForm()
+		form := updateForm(t, w.st)
 		form.Set("user_limit", strconv.Itoa(i))
 		assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
 	}
@@ -1200,7 +1221,7 @@ func TestUpdateAndRemoveWithoutSessionRedirectToSigninAndWriteNothing(t *testing
 		t.Run("POST /hubs/{id}"+suffix, func(t *testing.T) {
 			w := newTestWorld(t, testHub())
 			before := storedHubs(t, w.st)[0]
-			form := updateForm()
+			form := updateForm(t, w.st)
 			form.Set("base_string", "Bravo Voice")
 
 			res := w.b.postForm(hubPath(t, w.st, "hub-1")+suffix, form)
@@ -1413,7 +1434,7 @@ func TestChangedHubChannelNameRenamesTheChannelNamingThePanelUser(t *testing.T) 
 	if got := inputValue(t, editSection(t, w.b.get("/?hub="+strconv.FormatInt(id, 10)), id), "channel_name"); got != "Join to create" {
 		t.Errorf("the edit form's channel name input holds %q, want the live name Join to create", got)
 	}
-	form := updateForm()
+	form := updateForm(t, w.st)
 	form.Set("channel_name", "Join here")
 	form.Set("base_string", "Bravo Voice")
 
@@ -1445,7 +1466,7 @@ func TestChangedHubChannelNameRenamesTheChannelNamingThePanelUser(t *testing.T) 
 func TestUnchangedHubChannelNameMakesNoEditCall(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
-	form := updateForm()
+	form := updateForm(t, w.st)
 	form.Set("base_string", "Bravo Voice")
 
 	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
@@ -1463,7 +1484,7 @@ func TestRefusedHubChannelRenameWritesNothingAndShowsWhy(t *testing.T) {
 	signIn(t, w.forum, w.b)
 	w.discord.setEditErr(restError(http.StatusForbidden))
 	before := storedHubs(t, w.st)[0]
-	form := updateForm()
+	form := updateForm(t, w.st)
 	form.Set("channel_name", "Join here")
 	form.Set("base_string", "Bravo Voice")
 
@@ -1490,7 +1511,7 @@ func TestRateLimitedHubChannelRenameShowsTheWait(t *testing.T) {
 	signIn(t, w.forum, w.b)
 	w.discord.setEditErr(rateLimitError(7*time.Minute + 42*time.Second))
 	before := storedHubs(t, w.st)[0]
-	form := updateForm()
+	form := updateForm(t, w.st)
 	form.Set("channel_name", "Join here")
 
 	res := w.b.postForm(hubPath(t, w.st, "hub-1"), form)
@@ -1529,7 +1550,7 @@ func TestBitrateIsBoundedByTheBoostTierReadAtSave(t *testing.T) {
 			signIn(t, w.forum, w.b)
 			w.discord.setPremiumTier(tc.tier)
 			before := storedHubs(t, w.st)[0]
-			form := updateForm()
+			form := updateForm(t, w.st)
 			form.Set("bitrate", tc.bitrate)
 
 			res := w.b.postForm(hubPath(t, w.st, "hub-1"), form)
@@ -1634,7 +1655,7 @@ func TestUpdateOfABrokenHubIsRefusedBeforeAnyRename(t *testing.T) {
 	signIn(t, w.forum, w.b)
 	w.discord.breakChannel("hub-1", false)
 	before := storedHubs(t, w.st)[0]
-	form := updateForm()
+	form := updateForm(t, w.st)
 	form.Set("channel_name", "Join here")
 
 	res := w.b.postForm(hubPath(t, w.st, "hub-1"), form)
@@ -1751,7 +1772,7 @@ func TestChangeLogEntriesFoldWithTheNewestOpen(t *testing.T) {
 	signIn(t, w.forum, w.b)
 	id := storedHubID(t, w.st, "hub-1")
 	for _, limit := range []string{"1", "2"} {
-		form := updateForm()
+		form := updateForm(t, w.st)
 		form.Set("user_limit", limit)
 		assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
 	}

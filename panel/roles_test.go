@@ -100,9 +100,9 @@ func TestModeratorsSaveRefusesAnIneligibleRoleAndWritesNothing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newTestWorld(t, testHub())
 			signIn(t, w.forum, w.b)
-			assertRedirect(t, w.b.postForm("/moderators", moderatorsForm("role-mp")), "/")
+			assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-mp")), "/")
 
-			res := w.b.postForm("/moderators", moderatorsForm("role-mp", tc.roleID))
+			res := w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-mp", tc.roleID))
 
 			if !isClientError(res.StatusCode) {
 				t.Errorf("status = %d, want 4xx", res.StatusCode)
@@ -221,11 +221,11 @@ func TestStoredRoleNoLongerEligibleRendersAsUnavailable(t *testing.T) {
 func (w *testWorld) postRoles(t *testing.T, form string, roleIDs ...string) *http.Response {
 	t.Helper()
 	if form == onHubForm {
-		f := updateForm()
+		f := updateForm(t, w.st)
 		f["moderator_roles"] = roleIDs
 		return w.b.postForm(hubPath(t, w.st, "hub-1"), f)
 	}
-	return w.b.postForm("/moderators", moderatorsForm(roleIDs...))
+	return w.b.postForm("/moderators", moderatorsForm(t, w.st, roleIDs...))
 }
 
 // storedRolesOn reads a form's stored set back through the store.
@@ -352,8 +352,10 @@ func TestARoleStoredOnAnotherRecordIsRefusedForThisOne(t *testing.T) {
 			w := tc.world(t)
 			signIn(t, w.forum, w.b)
 			hubID := storedHubID(t, w.st, tc.hubChannelID)
-			form := updateForm()
+			form := updateForm(t, w.st)
 			form.Set("channel_name", tc.channelName)
+			form.Set("loaded_channel_name", tc.channelName)
+			form.Set("version", storedVersion(t, w.st, tc.hubChannelID))
 			form["moderator_roles"] = []string{"role-mp", "role-gone"}
 
 			res := w.b.postForm("/hubs/"+strconv.FormatInt(hubID, 10), form)
@@ -530,7 +532,7 @@ func TestSaveWithoutScriptLeavesTheModeratorRolesAsStored(t *testing.T) {
 	if page.StatusCode != http.StatusOK {
 		t.Fatalf("GET /?hub= status = %d, want 200", page.StatusCode)
 	}
-	form := updateForm()
+	form := updateForm(t, w.st)
 	form.Set("user_limit", "5")
 	form["moderator_roles"] = postedControls(rolePickerOn(t, hubSection(t, parseHTML(t, page), id)), fieldModeratorRoles)
 
