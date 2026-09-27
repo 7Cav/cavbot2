@@ -546,6 +546,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 		ModeratorRoleIDs: r.PostForm[fieldModeratorRoles],
 		UserLimit:        r.PostForm.Get(fieldUserLimit),
 		Bitrate:          r.PostForm.Get(fieldBitrate),
+		DeleteDelay:      r.PostForm.Get(fieldDeleteDelay),
 		Enabled:          r.PostForm.Get(fieldEnabled) != "",
 		RenamingAllowed:  r.PostForm.Get(fieldRenamingAllowed) != "",
 		LockingAllowed:   r.PostForm.Get(fieldLockingAllowed) != "",

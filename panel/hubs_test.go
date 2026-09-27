@@ -681,13 +681,14 @@ func TestRegisterWithoutSessionRedirectsToSigninAndWritesNothing(t *testing.T) {
 // testHub stores, so a test changes one field and posts the rest unchanged.
 func updateForm() url.Values {
 	return url.Values{
-		"channel_name":      {"Join to create"},
-		"base_string":       {"Arma Voice"},
-		"permission_source": {"category"},
-		"user_limit":        {"0"},
-		"bitrate":           {"64000"},
-		"enabled":           {"on"},
-		"renaming_allowed":  {"on"},
+		"channel_name":         {"Join to create"},
+		"base_string":          {"Arma Voice"},
+		"permission_source":    {"category"},
+		"user_limit":           {"0"},
+		"bitrate":              {"64000"},
+		"delete_delay_minutes": {"0"},
+		"enabled":              {"on"},
+		"renaming_allowed":     {"on"},
 	}
 }
 
@@ -844,6 +845,48 @@ func TestRenamingAllowedSaveReachesTheRuntimeAtOnce(t *testing.T) {
 	}
 }
 
+// A save of the delete delay (#372) stores it, records it in the change
+// log and reaches the runtime at once. The form of a hub with no delay
+// posts 0, so a save of another field keeps it. After a save of 30 the form
+// shows 30, and a channel that empties afterwards is not deleted: the
+// runtime holds it for its 30 minutes, which the test never waits out.
+func TestDeleteDelaySaveStoresItAndReachesTheRuntimeAtOnce(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	id := storedHubID(t, w.st, "hub-1")
+
+	sec := editSection(t, w.b.get("/?hub="+strconv.FormatInt(id, 10)), id)
+	if got := postedControls(sec, "delete_delay_minutes"); !slices.Equal(got, []string{"0"}) {
+		t.Errorf("the form of a hub with no delay posts delete_delay_minutes %q, want 0", got)
+	}
+
+	form := updateForm()
+	form.Set("delete_delay_minutes", "30")
+	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
+
+	if h := storedHubs(t, w.st)[0]; h.DeleteDelayMinutes != 30 {
+		t.Errorf("stored delete delay = %d, want 30", h.DeleteDelayMinutes)
+	}
+	entries := storedChangeLog(t, w.st, id)
+	if len(entries) != 1 {
+		t.Fatalf("the hub has %d entries, want 1", len(entries))
+	}
+	if got := decodeDiff(t, entries[0])["delete_delay_minutes"]; got.Before != float64(0) || got.After != float64(30) {
+		t.Errorf("diff delete_delay_minutes = %+v, want before 0, after 30", got)
+	}
+	sec = editSection(t, w.b.get("/?hub="+strconv.FormatInt(id, 10)), id)
+	if got := postedControls(sec, "delete_delay_minutes"); !slices.Equal(got, []string{"30"}) {
+		t.Errorf("the form after the save posts delete_delay_minutes %q, want 30 as saved", got)
+	}
+
+	w.join("user-a", "hub-1")
+	w.join("user-a", "spawn-1")
+	w.join("user-a", "")
+	if deleted := w.discord.deletes(); len(deleted) != 0 {
+		t.Errorf("deleted %v when spawn-1 emptied after the save, want it kept for the delay", deleted)
+	}
+}
+
 // storedChangeLog lists the change log entries of a hub, newest first.
 func storedChangeLog(t *testing.T, st store.Store, hubID int64) []store.ChangeLogEntry {
 	t.Helper()
@@ -859,7 +902,8 @@ func storedChangeLog(t *testing.T, st store.Store, hubID int64) []store.ChangeLo
 func sameHubSettings(a, b store.Hub) bool {
 	return a.ID == b.ID && a.HubChannelID == b.HubChannelID && a.BaseString == b.BaseString &&
 		a.PermissionSource == b.PermissionSource && slices.Equal(a.ModeratorRoleIDs, b.ModeratorRoleIDs) &&
-		a.UserLimit == b.UserLimit && a.Bitrate == b.Bitrate && a.Enabled == b.Enabled
+		a.UserLimit == b.UserLimit && a.Bitrate == b.Bitrate && a.DeleteDelayMinutes == b.DeleteDelayMinutes &&
+		a.Enabled == b.Enabled
 }
 
 func TestUpdateRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
@@ -883,6 +927,9 @@ func TestUpdateRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
 		{"a user limit that is not a number", set("user_limit", "abc"), "user_limit"},
 		{"a bitrate below 8000", set("bitrate", "7999"), "bitrate"},
 		{"a bitrate that is not a number", set("bitrate", "abc"), "bitrate"},
+		{"a delete delay below 0", set("delete_delay_minutes", "-1"), "delete_delay_minutes"},
+		{"a delete delay above 240", set("delete_delay_minutes", "241"), "delete_delay_minutes"},
+		{"an empty delete delay", set("delete_delay_minutes", ""), "delete_delay_minutes"},
 		{"a moderator role not in the guild", set("moderator_roles", "role-elsewhere"), "moderator_roles"},
 		{"a managed moderator role", set("moderator_roles", "role-bot"), "moderator_roles"},
 		{"@everyone as a moderator role", set("moderator_roles", testGuildID), "moderator_roles"},

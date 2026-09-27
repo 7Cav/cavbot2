@@ -33,7 +33,8 @@ type diff map[string]change
 // update that renamed the channel adds it to its diff, and shownFields is
 // the order the form renders.
 var diffFields = []string{fieldHubChannel, fieldBaseString, fieldPermissionSource,
-	fieldModeratorRoles, fieldUserLimit, fieldBitrate, fieldEnabled, fieldRenamingAllowed, fieldLockingAllowed}
+	fieldModeratorRoles, fieldUserLimit, fieldBitrate, fieldDeleteDelay, fieldEnabled, fieldRenamingAllowed,
+	fieldLockingAllowed}
 
 // shownFields are every field a diff can carry, in the form's order.
 var shownFields = append([]string{fieldChannelName}, diffFields...)
@@ -60,6 +61,7 @@ func fieldValues(h store.Hub) map[string]any {
 		fieldModeratorRoles:   sortedRoles(h.ModeratorRoleIDs),
 		fieldUserLimit:        h.UserLimit,
 		fieldBitrate:          h.Bitrate,
+		fieldDeleteDelay:      h.DeleteDelayMinutes,
 		fieldEnabled:          h.Enabled,
 		fieldRenamingAllowed:  h.RenamingAllowed,
 		fieldLockingAllowed:   h.LockingAllowed,

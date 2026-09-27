@@ -147,7 +147,8 @@ func queryAll[T any](ctx context.Context, db *sql.DB, scan func(scanner) (T, err
 
 // hubColumns is the select list every hub read shares, in scanHub's order.
 const hubColumns = `id, guild_id, hub_channel_id, base_string, permission_source,
-	moderator_role_ids, user_limit, bitrate, enabled, renaming_allowed, locking_allowed, created_at, updated_at`
+	moderator_role_ids, user_limit, bitrate, delete_delay_minutes, enabled, renaming_allowed, locking_allowed,
+	created_at, updated_at`
 
 // scanHub reads one hub row in hubColumns order.
 func scanHub(row scanner) (Hub, error) {
@@ -156,7 +157,7 @@ func scanHub(row scanner) (Hub, error) {
 		roles []byte
 	)
 	err := row.Scan(&h.ID, &h.GuildID, &h.HubChannelID, &h.BaseString, &h.PermissionSource,
-		&roles, &h.UserLimit, &h.Bitrate, &h.Enabled, &h.RenamingAllowed, &h.LockingAllowed, &h.CreatedAt, &h.UpdatedAt)
+		&roles, &h.UserLimit, &h.Bitrate, &h.DeleteDelayMinutes, &h.Enabled, &h.RenamingAllowed, &h.LockingAllowed, &h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return Hub{}, err
 	}
@@ -236,8 +237,8 @@ func upsertHub(ctx context.Context, tx *sql.Tx, hub Hub) (Hub, error) {
 	}
 	row := tx.QueryRowContext(ctx, `
 		INSERT INTO hubs (guild_id, hub_channel_id, base_string, permission_source,
-			moderator_role_ids, user_limit, bitrate, enabled, renaming_allowed, locking_allowed)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			moderator_role_ids, user_limit, bitrate, delete_delay_minutes, enabled, renaming_allowed, locking_allowed)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (hub_channel_id) DO UPDATE SET
 			guild_id = EXCLUDED.guild_id,
 			base_string = EXCLUDED.base_string,
@@ -245,13 +246,14 @@ func upsertHub(ctx context.Context, tx *sql.Tx, hub Hub) (Hub, error) {
 			moderator_role_ids = EXCLUDED.moderator_role_ids,
 			user_limit = EXCLUDED.user_limit,
 			bitrate = EXCLUDED.bitrate,
+			delete_delay_minutes = EXCLUDED.delete_delay_minutes,
 			enabled = EXCLUDED.enabled,
 			renaming_allowed = EXCLUDED.renaming_allowed,
 			locking_allowed = EXCLUDED.locking_allowed,
 			updated_at = now()
 		RETURNING `+hubColumns,
 		hub.GuildID, hub.HubChannelID, hub.BaseString, string(hub.PermissionSource),
-		rolesJSON, hub.UserLimit, hub.Bitrate, hub.Enabled, hub.RenamingAllowed, hub.LockingAllowed)
+		rolesJSON, hub.UserLimit, hub.Bitrate, hub.DeleteDelayMinutes, hub.Enabled, hub.RenamingAllowed, hub.LockingAllowed)
 	return scanHub(row)
 }
 
