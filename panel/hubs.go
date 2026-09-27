@@ -885,7 +885,11 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 // The order is rename, then the row and its entry in one store write, then
 // the runtime. A write that fails after a rename leaves the channel renamed
 // and the row as it was (#356), and its error names both channel names so
-// the mismatch is traceable from Sentry.
+// the mismatch is traceable from Sentry. That error never reads as
+// store.ErrNotFound, even when another process removed the hub between the
+// read and the write: the rename changed something, so the save failed
+// with a 500, and the 404 is for an update that changed nothing (#373
+// rules 7 and 9).
 func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by actor) (store.Hub, error) {
 	s.saveTurn.Lock()
 	defer s.saveTurn.Unlock()
@@ -934,7 +938,9 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by a
 	case err == nil:
 		return stored, nil
 	case rename:
-		return store.Hub{}, fmt.Errorf("write hub after renaming its channel from %q to %q: %w", oldName, channelName, err)
+		// The store's error is named, not wrapped, so a hub removed
+		// meanwhile does not turn this failure into a 404.
+		return store.Hub{}, fmt.Errorf("write hub after renaming its channel from %q to %q: %v", oldName, channelName, err)
 	case errors.Is(err, store.ErrStale):
 		// Another process saved the hub after this save's read.
 		return store.Hub{}, errStaleHub

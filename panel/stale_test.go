@@ -394,6 +394,16 @@ func otherSave(t *testing.T, st *otherWriterStore) func() {
 	}
 }
 
+// otherRemove is another process removing the hub on hub-1.
+func otherRemove(t *testing.T, st *otherWriterStore) func() {
+	id := storedHubID(t, st.Fake, "hub-1")
+	return func() {
+		if err := st.DeleteHub(context.Background(), id); err != nil {
+			t.Errorf("the other remove: %v", err)
+		}
+	}
+}
+
 // A form refused for another reason is rendered with the version it
 // posted, never the stored one, so fixing the field and saving again still
 // meets a save that landed since the form loaded. The other save here lands
@@ -461,7 +471,9 @@ func TestFormRefusedForAFieldKeepsItsVersionThroughAnotherSave(t *testing.T) {
 // another process saving between this save's read and its write. With no
 // Discord change made, that is a stale refusal and nothing is written. An
 // update that already renamed the channel keeps the rename and fails with
-// 5xx, and its one Sentry event names both channel names. A register whose
+// 5xx, and its one Sentry event names both channel names, whether another
+// process saved the hub or removed it. An update of a hub another process
+// removed, with no rename, changed nothing and is 404. A register whose
 // channel another process made a hub gets the "already a hub" refusal.
 func TestSaveWhoseRecordChangesBeforeItsWriteWritesNothing(t *testing.T) {
 	cases := []struct {
@@ -515,6 +527,58 @@ func TestSaveWhoseRecordChangesBeforeItsWriteWritesNothing(t *testing.T) {
 				}
 				if msg := errs[0].Error(); !strings.Contains(msg, "Join to create") || !strings.Contains(msg, "Bravo Room") {
 					t.Errorf("the event's error %q does not name both Join to create and Bravo Room", msg)
+				}
+			},
+		},
+		{
+			name:   "an update with a rename whose hub another process removed",
+			method: "SaveHub",
+			other:  otherRemove,
+			post: func(t *testing.T, w *testWorld, st *otherWriterStore) *http.Response {
+				form := updateForm(t, st.Fake)
+				form.Set("channel_name", "Bravo Room")
+				return w.b.postForm(hubPath(t, st.Fake, "hub-1"), form)
+			},
+			check: func(t *testing.T, w *testWorld, st *otherWriterStore, res *http.Response, rec *sentryRecorder) {
+				if !isServerError(res.StatusCode) {
+					t.Errorf("status = %d, want 5xx", res.StatusCode)
+				}
+				if ch, err := w.discord.Channel("hub-1"); err != nil || ch.Name != "Bravo Room" {
+					t.Errorf("hub-1 = %+v, %v; want it renamed to Bravo Room: the rename stays", ch, err)
+				}
+				if hubs := storedHubs(t, st.Fake); len(hubs) != 0 {
+					t.Errorf("stored hubs = %+v, want none: the hub stays removed", hubs)
+				}
+				errs := rec.recorded()
+				if len(errs) != 1 {
+					t.Fatalf("Sentry got %d events, want 1", len(errs))
+				}
+				if msg := errs[0].Error(); !strings.Contains(msg, "Join to create") || !strings.Contains(msg, "Bravo Room") {
+					t.Errorf("the event's error %q does not name both Join to create and Bravo Room", msg)
+				}
+			},
+		},
+		{
+			name:   "an update with the name unchanged whose hub another process removed",
+			method: "SaveHub",
+			other:  otherRemove,
+			post: func(t *testing.T, w *testWorld, st *otherWriterStore) *http.Response {
+				form := updateForm(t, st.Fake)
+				form.Set("user_limit", "5")
+				return w.b.postForm(hubPath(t, st.Fake, "hub-1"), form)
+			},
+			check: func(t *testing.T, w *testWorld, st *otherWriterStore, res *http.Response, rec *sentryRecorder) {
+				if res.StatusCode != http.StatusNotFound {
+					t.Errorf("status = %d, want 404", res.StatusCode)
+				}
+				if edits := w.discord.edits(); len(edits) != 0 {
+					t.Errorf("Discord edits = %+v, want none", edits)
+				}
+				if hubs := storedHubs(t, st.Fake); len(hubs) != 0 {
+					t.Errorf("stored hubs = %+v, want none: the hub stays removed", hubs)
+				}
+				if errs := rec.recorded(); len(errs) != 0 {
+					t.Errorf("Sentry got %d events, want none", len(errs))
 				}
 			},
 		},
