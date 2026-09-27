@@ -38,8 +38,8 @@ type hubService struct {
 	// makes. New sets it to the constant of the same name; a test shortens
 	// it.
 	storeTimeout time.Duration
-	// saveTurn is the save lock, under which the saves of this process take
-	// turns (#373). create, register, update, remove and the guild-wide
+	// saveLock is the lock under which the saves of this process take turns
+	// (#373). create, register, update, remove and the guild-wide
 	// moderator save each take it before their first read and hold it until
 	// the running bot has their update. So each save reads what the save
 	// before it wrote, and the running bot gets saves in the order the store
@@ -63,7 +63,7 @@ type hubService struct {
 	//
 	// A pointer, since forSave copies the service and every copy must share
 	// the one lock.
-	saveTurn *sync.Mutex
+	saveLock *sync.Mutex
 }
 
 // hubRow is one hub as the list shows it: the stored settings, the channel
@@ -227,6 +227,19 @@ var errStaleHub = &fieldError{stale: true, Message: "Someone saved this hub afte
 func formIsCurrent(posted string, version int64) bool {
 	v, err := strconv.ParseInt(strings.TrimSpace(posted), 10, 64)
 	return err == nil && v == version
+}
+
+// postedBackVersion is the version a form rendered back after a refusal
+// carries, the hub's edit form and the guild-wide section alike. After a
+// stale refusal it is the record's version now, stored, so the user's next
+// save goes through over the save the note points at (#373 rule 5). After
+// any other refusal it is the version the form posted, so a save of it
+// still meets any save that landed since the form loaded (rule 6).
+func postedBackVersion(stored int64, posted string, stale bool) string {
+	if stale {
+		return strconv.FormatInt(stored, 10)
+	}
+	return posted
 }
 
 // Bounds on the base string. Discord's channel name limit is 100 and the
@@ -482,11 +495,6 @@ type hubChannelState struct {
 	Broken       bool
 }
 
-// hubChannel reads a hub's channel off the snapshot.
-func (sn snapshot) hubChannel(h store.Hub) hubChannelState {
-	return sn.guild.hubChannel(h)
-}
-
 // hubChannel reads a hub's channel off the guild's channel list.
 func (g guildChannels) hubChannel(h store.Hub) hubChannelState {
 	ch, ok := g.channel(h.HubChannelID)
@@ -654,11 +662,11 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 	if err != nil {
 		return hubPage{}, fmt.Errorf("read guild moderator roles: %w", err)
 	}
-	if page.Moderators, err = s.moderatorsSection(ctx, guild, guildWide, req.Moderators, req.staleFor(formModerators)); err != nil {
+	if page.Moderators, err = s.moderatorsSection(ctx, guild, guildWide, req); err != nil {
 		return hubPage{}, err
 	}
 	if req.HubID != 0 {
-		if page.Edit, err = s.editForm(ctx, sn, guild, guildWide.RoleIDs, req.HubID, req.Edit, req.staleFor(formEdit)); err != nil {
+		if page.Edit, err = s.editForm(ctx, sn, guild, guildWide.RoleIDs, req); err != nil {
 			return hubPage{}, err
 		}
 	}
@@ -674,7 +682,7 @@ func (s *hubService) rows(sn snapshot) []hubRow {
 		if f, ok := s.deps.Runtime.LastSpawnFailure(h.ID); ok {
 			row.Failure = &f
 		}
-		st := sn.hubChannel(h)
+		st := sn.guild.hubChannel(h)
 		row.ChannelName, row.CategoryName, row.Broken = st.Name, st.CategoryName, st.Broken
 		rows = append(rows, row)
 	}
@@ -701,19 +709,14 @@ func categoryPicker(sn snapshot) []pickerChannel {
 	return out
 }
 
-// editForm builds one hub's edit form from the snapshot and the guild read:
-// the stored values, or the form as posted when a save was refused, the
+// editForm builds the edit form of the hub the request names from the
+// snapshot and the guild read: the stored values, or the form as posted
+// when a save was refused, with the version postedBackVersion gives it, the
 // hub's own moderator picker, the guild-wide set shown read-only, and the
-// hub's last entries.
-//
-// A form posted back carries the version it posted, so a save of it after
-// a validation refusal still meets any save that landed since the form
-// loaded. After a stale refusal it carries the hub's version as read here
-// instead, with the user's values, so their next save goes through over
-// the save the note points at. The hub is read before its entries, so the
-// log shown holds every save up to that version.
-func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo, guildWide []string, hubID int64, posted *editInput, stale bool) (*editPage, error) {
-	hub, ok := sn.hubByID(hubID)
+// hub's last entries. The hub is read before its entries, so the log shown
+// holds every save up to the hub's version as read here.
+func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo, guildWide []string, req pageRequest) (*editPage, error) {
+	hub, ok := sn.hubByID(req.HubID)
 	if !ok {
 		return nil, store.ErrNotFound
 	}
@@ -721,14 +724,11 @@ func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo,
 	if err != nil {
 		return nil, fmt.Errorf("list change log: %w", err)
 	}
-	st := sn.hubChannel(hub)
+	st := sn.guild.hubChannel(hub)
 	form := editInputOf(hub, st.Name)
-	if posted != nil {
-		version := form.Version
-		form = *posted
-		if stale {
-			form.Version = version
-		}
+	if req.Edit != nil {
+		form = *req.Edit
+		form.Version = postedBackVersion(hub.Version, req.Edit.Version, req.staleFor(formEdit))
 	}
 	page := &editPage{ID: hub.ID, Broken: st.Broken, CategoryName: st.CategoryName, Form: form,
 		Picker: rolePicker(guild, hub.ModeratorRoleIDs, form.ModeratorRoleIDs), BitrateMax: guild.bitrateMax,
@@ -781,8 +781,8 @@ func (s *hubService) saveHub(ctx context.Context, hub store.Hub, action store.Ch
 // written. A write that fails deletes the channel just made, so Discord and
 // the store never disagree, and returns the error.
 func (s *hubService) create(ctx context.Context, in createInput, by actor) (store.Hub, error) {
-	s.saveTurn.Lock()
-	defer s.saveTurn.Unlock()
+	s.saveLock.Lock()
+	defer s.saveLock.Unlock()
 	in.CategoryID = strings.TrimSpace(in.CategoryID)
 	baseString, err := validBaseString(in.BaseString)
 	if err != nil {
@@ -833,8 +833,8 @@ func (s *hubService) create(ctx context.Context, in createInput, by actor) (stor
 // is a *fieldError naming the field; the store is not written and the
 // runtime is not touched.
 func (s *hubService) register(ctx context.Context, in registerInput, by actor) (store.Hub, error) {
-	s.saveTurn.Lock()
-	defer s.saveTurn.Unlock()
+	s.saveLock.Lock()
+	defer s.saveLock.Unlock()
 	in.ChannelID = strings.TrimSpace(in.ChannelID)
 	baseString, err := validBaseString(in.BaseString)
 	if err != nil {
@@ -904,8 +904,8 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 // with a 500, and the 404 is for an update that changed nothing (#373
 // rules 7 and 9).
 func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by actor) (store.Hub, error) {
-	s.saveTurn.Lock()
-	defer s.saveTurn.Unlock()
+	s.saveLock.Lock()
+	defer s.saveLock.Unlock()
 	before, err := s.deps.Store.GetHub(ctx, hubID)
 	if err != nil {
 		return store.Hub{}, fmt.Errorf("read hub: %w", err)
@@ -975,8 +975,8 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by a
 // hub's earlier entries to match, so the whole log of a removed hub lists
 // under no hub.
 func (s *hubService) remove(ctx context.Context, hubID int64, by actor) (store.Hub, error) {
-	s.saveTurn.Lock()
-	defer s.saveTurn.Unlock()
+	s.saveLock.Lock()
+	defer s.saveLock.Unlock()
 	hub, err := s.deps.Store.GetHub(ctx, hubID)
 	if err != nil {
 		return store.Hub{}, err

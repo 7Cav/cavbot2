@@ -41,16 +41,13 @@ type moderatorsPage struct {
 
 // moderatorsSection builds the guild-wide section from the guild read and
 // the store: the picker with the stored set as tags, or the form as posted
-// back after a refusal, and the section's last saves, newest first. The
-// version follows editForm's rule: the posted one after a refusal, the
-// stored one after a stale refusal or with nothing posted.
-func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, stored store.GuildModeratorRoles, posted *moderatorsInput, stale bool) (moderatorsPage, error) {
+// back after a refusal with the version postedBackVersion gives it, and the
+// section's last saves, newest first.
+func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, stored store.GuildModeratorRoles, req pageRequest) (moderatorsPage, error) {
 	selected, version := stored.RoleIDs, strconv.FormatInt(stored.Version, 10)
-	if posted != nil {
+	if posted := req.Moderators; posted != nil {
 		selected = posted.RoleIDs
-		if !stale {
-			version = posted.Version
-		}
+		version = postedBackVersion(stored.Version, posted.Version, req.staleFor(formModerators))
 	}
 	entries, err := s.deps.Store.ListModeratorChanges(ctx, changeLogLimit)
 	if err != nil {
@@ -68,8 +65,8 @@ func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, sto
 // A section loaded at a version the set is no longer at is refused first,
 // as errStaleModerators, before the guild read.
 func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by actor) ([]string, error) {
-	s.saveTurn.Lock()
-	defer s.saveTurn.Unlock()
+	s.saveLock.Lock()
+	defer s.saveLock.Unlock()
 	// The stored set is read before validation: it is what an unavailable
 	// role may be kept from, and its version is what the section must have
 	// loaded.

@@ -92,7 +92,7 @@ func New(cfg Config, version string, deps Deps) (*Panel, error) {
 	return &Panel{
 		cfg:      cfg,
 		version:  version,
-		hubs:     &hubService{deps: deps, storeTimeout: storeTimeout, saveTurn: &sync.Mutex{}},
+		hubs:     &hubService{deps: deps, storeTimeout: storeTimeout, saveLock: &sync.Mutex{}},
 		forumURL: forumURL,
 		pages:    pg,
 		oauth: &oauth2.Config{
