@@ -722,7 +722,7 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 	if err != nil {
 		return nil, fmt.Errorf("load guild moderator roles: %w", err)
 	}
-	t.guildModeratorRoles = roles
+	t.guildModeratorRoles = roles.RoleIDs
 	return t, nil
 }
 

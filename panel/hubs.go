@@ -550,11 +550,11 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 	if err != nil {
 		return hubPage{}, fmt.Errorf("read guild moderator roles: %w", err)
 	}
-	if page.Moderators, err = s.moderatorsSection(ctx, guild, guildWide, req.Moderators); err != nil {
+	if page.Moderators, err = s.moderatorsSection(ctx, guild, guildWide.RoleIDs, req.Moderators); err != nil {
 		return hubPage{}, err
 	}
 	if req.HubID != 0 {
-		if page.Edit, err = s.editForm(ctx, sn, guild, guildWide, req.HubID, req.Edit); err != nil {
+		if page.Edit, err = s.editForm(ctx, sn, guild, guildWide.RoleIDs, req.HubID, req.Edit); err != nil {
 			return hubPage{}, err
 		}
 	}

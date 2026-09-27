@@ -73,16 +73,16 @@ func (b boundedStore) ListSpawnedChannels(ctx context.Context) ([]store.SpawnedC
 	return b.store.ListSpawnedChannels(ctx)
 }
 
-func (b boundedStore) GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error) {
+func (b boundedStore) GetGuildModeratorRoles(ctx context.Context, guildID string) (store.GuildModeratorRoles, error) {
 	ctx, cancel := context.WithTimeout(ctx, b.timeout)
 	defer cancel()
 	return b.store.GetGuildModeratorRoles(ctx, guildID)
 }
 
-func (b boundedStore) SaveGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string, entry store.ChangeLogEntry) error {
+func (b boundedStore) SaveGuildModeratorRoles(ctx context.Context, guildID string, roles store.GuildModeratorRoles, entry store.ChangeLogEntry) error {
 	ctx, cancel := context.WithTimeout(ctx, b.timeout)
 	defer cancel()
-	return b.store.SaveGuildModeratorRoles(ctx, guildID, roleIDs, entry)
+	return b.store.SaveGuildModeratorRoles(ctx, guildID, roles, entry)
 }
 
 func (b boundedStore) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]store.ChangeLogEntry, error) {

@@ -94,9 +94,9 @@ func (s *ctxStore) ListHubs(ctx context.Context, guildID string) ([]store.Hub, e
 	return s.Fake.ListHubs(ctx, guildID)
 }
 
-func (s *ctxStore) GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error) {
+func (s *ctxStore) GetGuildModeratorRoles(ctx context.Context, guildID string) (store.GuildModeratorRoles, error) {
 	if err := s.gate(ctx, "GetGuildModeratorRoles"); err != nil {
-		return nil, err
+		return store.GuildModeratorRoles{}, err
 	}
 	return s.Fake.GetGuildModeratorRoles(ctx, guildID)
 }

@@ -184,14 +184,14 @@ func (s leavingStore) ListSpawnedChannels(ctx context.Context) ([]store.SpawnedC
 	return s.st.ListSpawnedChannels(ctx)
 }
 
-func (s leavingStore) GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error) {
+func (s leavingStore) GetGuildModeratorRoles(ctx context.Context, guildID string) (store.GuildModeratorRoles, error) {
 	s.d.leave()
 	return s.st.GetGuildModeratorRoles(ctx, guildID)
 }
 
-func (s leavingStore) SaveGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string, entry store.ChangeLogEntry) error {
+func (s leavingStore) SaveGuildModeratorRoles(ctx context.Context, guildID string, roles store.GuildModeratorRoles, entry store.ChangeLogEntry) error {
 	s.d.leave()
-	return s.st.SaveGuildModeratorRoles(ctx, guildID, roleIDs, entry)
+	return s.st.SaveGuildModeratorRoles(ctx, guildID, roles, entry)
 }
 
 func (s leavingStore) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]store.ChangeLogEntry, error) {
@@ -391,7 +391,7 @@ func (refusingStore) RemoveHub(context.Context, int64, store.ChangeLogEntry) err
 	return errStoreRefused
 }
 
-func (refusingStore) SaveGuildModeratorRoles(context.Context, string, []string, store.ChangeLogEntry) error {
+func (refusingStore) SaveGuildModeratorRoles(context.Context, string, store.GuildModeratorRoles, store.ChangeLogEntry) error {
 	return errStoreRefused
 }
 

@@ -17,9 +17,17 @@ import (
 	"time"
 )
 
-// ErrNotFound is returned by GetHub when no hub has the requested ID, and by
-// SetSpawnedChannelLock when no row has the channel. Compare with errors.Is.
+// ErrNotFound is returned by GetHub and SaveHub when no hub has the
+// requested ID, and by SetSpawnedChannelLock when no row has the channel.
+// Compare with errors.Is.
 var ErrNotFound = errors.New("store: not found")
+
+// ErrStale is returned by a combined write whose record is not as the
+// caller read it (#373): SaveHub of a hub whose row is at another version,
+// or of a new hub on a channel a hub already stands on, and
+// SaveGuildModeratorRoles of a set whose row is at another version. The
+// write lands neither the settings nor the entry. Compare with errors.Is.
+var ErrStale = errors.New("store: the record changed since it was read")
 
 // PermissionSource is the per-hub setting that chooses what a spawned channel
 // inherits its permissions from.
@@ -39,7 +47,12 @@ const (
 type Hub struct {
 	// ID is the surrogate key. Zero on a Hub that has never been stored;
 	// SaveHub fills it on return.
-	ID           int64
+	ID int64
+	// Version counts the saves of the hub that took effect: every SaveHub
+	// that takes effect adds exactly one, a save that changes nothing
+	// included. A caller hands back the version it read, and SaveHub writes
+	// only over that version (#373).
+	Version      int64
 	GuildID      string
 	HubChannelID string
 	// BaseString is what spawned channels are named from: "<BaseString> - <n>".
@@ -69,6 +82,17 @@ type Hub struct {
 	// CreatedAt and UpdatedAt are set by the store, never by the caller.
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// GuildModeratorRoles is a guild's guild-wide moderator roles with the
+// version of the settings row that holds them.
+type GuildModeratorRoles struct {
+	// RoleIDs is a set, under the same rule as Hub.ModeratorRoleIDs: no
+	// promised order, and nil and empty are one thing.
+	RoleIDs []string
+	// Version counts the saves of the set that took effect, as Hub.Version
+	// does. A guild with no settings row is at version 0.
+	Version int64
 }
 
 // SpawnedChannel is one row of the spawned channels table, written at create
@@ -158,12 +182,16 @@ type Store interface {
 	GetHub(ctx context.Context, id int64) (Hub, error)
 	// ListHubs returns every hub of the guild, in no promised order.
 	ListHubs(ctx context.Context, guildID string) ([]Hub, error)
-	// SaveHub writes a save's hub and its change log entry together. The hub
-	// is inserted, or updates the existing row for the same HubChannelID in
-	// place, and the stored row comes back with ID, CreatedAt and UpdatedAt
-	// filled; the caller's values for those three are ignored. The entry is
-	// appended under the stored row's ID, whatever HubID the caller set, so a
-	// create or register entry references the hub it made.
+	// SaveHub writes a save's hub and its change log entry together, and the
+	// stored row comes back with ID, Version, CreatedAt and UpdatedAt filled.
+	// A hub with no ID is inserted; ErrStale when a hub already stands on its
+	// HubChannelID. A hub with an ID updates that row's settings only while
+	// the row is at hub.Version, and never inserts: ErrStale when the row is
+	// at another version, ErrNotFound when no row has the ID. An update keeps
+	// the row's GuildID and HubChannelID. Either way the row's version goes
+	// up by one. The entry is appended under the stored row's ID, whatever
+	// HubID the caller set, so a create or register entry references the hub
+	// it made.
 	SaveHub(ctx context.Context, hub Hub, entry ChangeLogEntry) (Hub, error)
 	// RemoveHub deletes the hub and appends a remove's change log entry
 	// together. The entry references no hub, whatever HubID the caller set,
@@ -187,17 +215,17 @@ type Store interface {
 	// order.
 	ListSpawnedChannels(ctx context.Context) ([]SpawnedChannel, error)
 
-	// GetGuildModeratorRoles returns the guild-wide moderator role IDs, the
+	// GetGuildModeratorRoles returns the guild-wide moderator roles, the
 	// roles that may rename, lock and unlock any spawned channel of every
-	// hub, as far as each hub's settings allow. A guild with no row reads
-	// back as an empty set with no error. Same set rule as
-	// Hub.ModeratorRoleIDs: no promised order, and nil and empty are one
-	// thing.
-	GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error)
-	// SaveGuildModeratorRoles replaces the guild-wide moderator role IDs and
-	// appends the save's change log entry together. The entry references no
-	// hub, whatever HubID the caller set.
-	SaveGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string, entry ChangeLogEntry) error
+	// hub, as far as each hub's settings allow, with their version. A guild
+	// with no row reads back as an empty set at version 0, with no error.
+	GetGuildModeratorRoles(ctx context.Context, guildID string) (GuildModeratorRoles, error)
+	// SaveGuildModeratorRoles replaces the guild-wide moderator role IDs
+	// with roles.RoleIDs and appends the save's change log entry together,
+	// only while the guild's row is at roles.Version, 0 meaning no row, and
+	// the row ends one version on. ErrStale when it is at another version.
+	// The entry references no hub, whatever HubID the caller set.
+	SaveGuildModeratorRoles(ctx context.Context, guildID string, roles GuildModeratorRoles, entry ChangeLogEntry) error
 
 	// ListChangeLog returns at most limit entries whose hub reference is
 	// hubID, newest first in append order. A hubID of zero lists the entries

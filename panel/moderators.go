@@ -58,16 +58,17 @@ func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by a
 	if err != nil {
 		return nil, fmt.Errorf("read guild moderator roles: %w", err)
 	}
-	roles, err := acceptedRoles(in.RoleIDs, guild, before)
+	roles, err := acceptedRoles(in.RoleIDs, guild, before.RoleIDs)
 	if err != nil {
 		return nil, err
 	}
-	d := diff{fieldModeratorRoles: {Before: sortedRoles(before), After: sortedRoles(roles)}}
+	d := diff{fieldModeratorRoles: {Before: sortedRoles(before.RoleIDs), After: sortedRoles(roles)}}
 	entry, err := changeEntry(store.ChangeModerators, d, by)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.deps.Store.SaveGuildModeratorRoles(ctx, s.deps.GuildID, roles, entry); err != nil {
+	saved := store.GuildModeratorRoles{RoleIDs: roles, Version: before.Version}
+	if err := s.deps.Store.SaveGuildModeratorRoles(ctx, s.deps.GuildID, saved, entry); err != nil {
 		return nil, fmt.Errorf("write guild moderator roles: %w", err)
 	}
 	s.deps.Runtime.ApplyGuildModeratorRoles(roles)

@@ -168,9 +168,9 @@ func TestSaveHubThenGet(t *testing.T) {
 	})
 }
 
-// T2: a second save for the same hub channel changes the settings of the
-// existing row, creates no second row, and adds its one entry under the
-// same hub.
+// T2: a second save of the hub, by its ID at the version the first
+// returned, changes the settings of the existing row, creates no second row,
+// and adds its one entry under the same hub.
 func TestSaveHubUpdatesInPlace(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
@@ -180,6 +180,7 @@ func TestSaveHubUpdatesInPlace(t *testing.T) {
 		}
 
 		want := sampleHub("guild-1", "hub-1")
+		want.ID, want.Version = first.ID, first.Version
 		want.BaseString = "Briefing"
 		want.PermissionSource = PermissionCategory
 		want.ModeratorRoleIDs = nil
@@ -255,7 +256,7 @@ func notJSON() ChangeLogEntry {
 // each of those hubs and under none.
 type storeState struct {
 	Hubs    []Hub
-	Roles   []string
+	Roles   GuildModeratorRoles
 	Entries map[int64][]ChangeLogEntry
 }
 
@@ -272,7 +273,8 @@ func readState(t *testing.T, s Store) storeState {
 	if err != nil {
 		t.Fatalf("GetGuildModeratorRoles: %v", err)
 	}
-	st := storeState{Hubs: hubs, Roles: sortedRoles(roles), Entries: map[int64][]ChangeLogEntry{}}
+	roles.RoleIDs = sortedRoles(roles.RoleIDs)
+	st := storeState{Hubs: hubs, Roles: roles, Entries: map[int64][]ChangeLogEntry{}}
 	for _, id := range append([]int64{0}, hubIDs(hubs)...) {
 		entries, err := s.ListChangeLog(ctx, id, 100)
 		if err != nil {
@@ -305,17 +307,20 @@ func TestSaveWithADiffThatIsNotJSONWritesNothing(t *testing.T) {
 			_, err := s.SaveHub(ctx, sampleHub("guild-1", "hub-2"), notJSON())
 			return err
 		}},
-		{"SaveHub of an existing hub", func(ctx context.Context, s Store, _ int64) error {
-			h := sampleHub("guild-1", "hub-1")
+		{"SaveHub of an existing hub", func(ctx context.Context, s Store, hubID int64) error {
+			h, err := s.GetHub(ctx, hubID)
+			if err != nil {
+				return fmt.Errorf("GetHub: %w", err)
+			}
 			h.BaseString, h.UserLimit = "Briefing", 3
-			_, err := s.SaveHub(ctx, h, notJSON())
+			_, err = s.SaveHub(ctx, h, notJSON())
 			return err
 		}},
 		{"RemoveHub", func(ctx context.Context, s Store, hubID int64) error {
 			return s.RemoveHub(ctx, hubID, notJSON())
 		}},
 		{"SaveGuildModeratorRoles", func(ctx context.Context, s Store, _ int64) error {
-			return s.SaveGuildModeratorRoles(ctx, "guild-1", []string{"role-hq"}, notJSON())
+			return saveGuildRoles(t, s, []string{"role-hq"}, notJSON())
 		}},
 	}
 	for _, tc := range cases {
@@ -323,7 +328,7 @@ func TestSaveWithADiffThatIsNotJSONWritesNothing(t *testing.T) {
 			forEachStore(t, func(t *testing.T, s Store) {
 				ctx := context.Background()
 				hubID := storeHub(t, s, "hub-1")
-				if err := s.SaveGuildModeratorRoles(ctx, "guild-1", []string{"role-mp"}, moderatorsEntry(1)); err != nil {
+				if err := saveGuildRoles(t, s, []string{"role-mp"}, moderatorsEntry(1)); err != nil {
 					t.Fatalf("SaveGuildModeratorRoles: %v", err)
 				}
 				before := readState(t, s)
@@ -426,6 +431,19 @@ func storeHub(t *testing.T, s Store, hubChannelID string) int64 {
 		t.Fatalf("SaveHub(%s): %v", hubChannelID, err)
 	}
 	return stored.ID
+}
+
+// resaveHub saves the stored hub again, unchanged, by its ID at the version
+// the store holds, with the entry.
+func resaveHub(t *testing.T, s Store, hubID int64, entry ChangeLogEntry) {
+	t.Helper()
+	h, err := s.GetHub(context.Background(), hubID)
+	if err != nil {
+		t.Fatalf("GetHub(%d): %v", hubID, err)
+	}
+	if _, err := s.SaveHub(context.Background(), h, entry); err != nil {
+		t.Fatalf("SaveHub(%d): %v", hubID, err)
+	}
 }
 
 // findSpawned returns the row for a channel from a list, or fails the test.
@@ -688,6 +706,40 @@ func TestDeleteDelayMigrationLeavesExistingHubsAtZero(t *testing.T) {
 	}
 }
 
+// T7g (#373): a hub and a guild-wide set written before the version existed
+// come through its migration with a version, and a save at the version they
+// read back goes through, so an upgrade leaves every hub and the guild-wide
+// roles saveable from the panel.
+func TestVersionMigrationLeavesExistingSettingsSaveable(t *testing.T) {
+	// The delete delay's migration is the last one before the version's.
+	raw := migratedTo(t, 20260927000000)
+	hubID := insertOlderHub(t, raw)
+	if _, err := raw.ExecContext(context.Background(), `
+		INSERT INTO guild_settings (guild_id, moderator_role_ids) VALUES ('guild-1', '["role-mp"]')`); err != nil {
+		t.Fatalf("insert an older guild settings row: %v", err)
+	}
+
+	s := openMigrated(t)
+
+	ctx := context.Background()
+	hub, err := s.GetHub(ctx, hubID)
+	if err != nil {
+		t.Fatalf("GetHub: %v", err)
+	}
+	hub.UserLimit = 3
+	if _, err := s.SaveHub(ctx, hub, changeEntry(1)); err != nil {
+		t.Errorf("SaveHub of an older hub at the version it read back: %v", err)
+	}
+	roles := guildRoles(t, s)
+	if !slices.Equal(roles.RoleIDs, []string{"role-mp"}) {
+		t.Errorf("the older guild-wide set reads back as %v, want [role-mp]", roles.RoleIDs)
+	}
+	roles.RoleIDs = []string{"role-hq"}
+	if err := s.SaveGuildModeratorRoles(ctx, "guild-1", roles, moderatorsEntry(2)); err != nil {
+		t.Errorf("SaveGuildModeratorRoles of the older set at the version it read back: %v", err)
+	}
+}
+
 // T8: a deleted spawned row is gone from ListSpawnedChannels, and deleting it again is
 // not an error.
 func TestDeleteSpawnedChannel(t *testing.T) {
@@ -745,34 +797,22 @@ func TestGuildModeratorRolesRoundTrip(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
 
-		got, err := s.GetGuildModeratorRoles(ctx, "guild-1")
-		if err != nil {
-			t.Fatalf("GetGuildModeratorRoles with no row: %v", err)
-		}
-		if len(got) != 0 {
+		if got := guildRoles(t, s).RoleIDs; len(got) != 0 {
 			t.Errorf("GetGuildModeratorRoles with no row = %v, want none", got)
 		}
 
 		want := []string{"role-mp", "role-s6"}
-		if err := s.SaveGuildModeratorRoles(ctx, "guild-1", want, moderatorsEntry(1)); err != nil {
+		if err := saveGuildRoles(t, s, want, moderatorsEntry(1)); err != nil {
 			t.Fatalf("SaveGuildModeratorRoles: %v", err)
 		}
-		got, err = s.GetGuildModeratorRoles(ctx, "guild-1")
-		if err != nil {
-			t.Fatalf("GetGuildModeratorRoles: %v", err)
-		}
-		if !slices.Equal(sortedRoles(got), sortedRoles(want)) {
+		if got := guildRoles(t, s).RoleIDs; !slices.Equal(sortedRoles(got), sortedRoles(want)) {
 			t.Errorf("GetGuildModeratorRoles = %v, want %v (as a set)", got, want)
 		}
 
-		if err := s.SaveGuildModeratorRoles(ctx, "guild-1", []string{"role-hq"}, moderatorsEntry(2)); err != nil {
+		if err := saveGuildRoles(t, s, []string{"role-hq"}, moderatorsEntry(2)); err != nil {
 			t.Fatalf("second SaveGuildModeratorRoles: %v", err)
 		}
-		got, err = s.GetGuildModeratorRoles(ctx, "guild-1")
-		if err != nil {
-			t.Fatalf("GetGuildModeratorRoles after second save: %v", err)
-		}
-		if !slices.Equal(sortedRoles(got), []string{"role-hq"}) {
+		if got := guildRoles(t, s).RoleIDs; !slices.Equal(sortedRoles(got), []string{"role-hq"}) {
 			t.Errorf("GetGuildModeratorRoles after second save = %v, want [role-hq]", got)
 		}
 		entries, err := s.ListModeratorChanges(ctx, 10)
@@ -787,6 +827,181 @@ func TestGuildModeratorRolesRoundTrip(t *testing.T) {
 			t.Errorf("moderator changes are ordinals %v, want [2 1]", ordinals)
 		}
 	})
+}
+
+// T16 (#373): every save that takes effect adds exactly one to its record's
+// version, a save that changes nothing included. A guild with no settings
+// row is at version 0.
+func TestEverySaveAddsOneToItsRecordsVersion(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		hub, err := s.SaveHub(ctx, sampleHub("guild-1", "hub-1"), changeEntry(1))
+		if err != nil {
+			t.Fatalf("SaveHub of a new hub: %v", err)
+		}
+		for i, name := range []string{"a changed limit", "no change"} {
+			if name == "a changed limit" {
+				hub.UserLimit = 3
+			}
+			saved, err := s.SaveHub(ctx, hub, changeEntry(i+2))
+			if err != nil {
+				t.Fatalf("SaveHub with %s: %v", name, err)
+			}
+			if saved.Version != hub.Version+1 {
+				t.Errorf("SaveHub with %s returned version %d, want %d", name, saved.Version, hub.Version+1)
+			}
+			got, err := s.GetHub(ctx, hub.ID)
+			if err != nil {
+				t.Fatalf("GetHub: %v", err)
+			}
+			if got.Version != hub.Version+1 {
+				t.Errorf("after SaveHub with %s the hub reads back at version %d, want %d", name, got.Version, hub.Version+1)
+			}
+			hub = saved
+		}
+
+		roles, err := s.GetGuildModeratorRoles(ctx, "guild-1")
+		if err != nil {
+			t.Fatalf("GetGuildModeratorRoles with no row: %v", err)
+		}
+		if roles.Version != 0 {
+			t.Errorf("a guild with no row reads back at version %d, want 0", roles.Version)
+		}
+		for i, name := range []string{"a first set", "the same set again"} {
+			roles.RoleIDs = []string{"role-mp"}
+			if err := s.SaveGuildModeratorRoles(ctx, "guild-1", roles, moderatorsEntry(i+1)); err != nil {
+				t.Fatalf("SaveGuildModeratorRoles of %s: %v", name, err)
+			}
+			got, err := s.GetGuildModeratorRoles(ctx, "guild-1")
+			if err != nil {
+				t.Fatalf("GetGuildModeratorRoles: %v", err)
+			}
+			if got.Version != roles.Version+1 {
+				t.Errorf("after saving %s the guild reads back at version %d, want %d", name, got.Version, roles.Version+1)
+			}
+			roles = got
+		}
+	})
+}
+
+// T17 (#373): a save over a version the record is not at fails with
+// ErrStale and writes neither its settings nor its entry. A guild with no
+// settings row is at version 0, so a save at 0 over a stored row fails, and
+// so does a save at 1 over no row.
+func TestSaveOverAnotherVersionIsStaleAndWritesNothing(t *testing.T) {
+	cases := []struct {
+		name string
+		// seedRoles stores a guild-wide set before the save.
+		seedRoles bool
+		save      func(ctx context.Context, s Store, hub Hub) error
+	}{
+		{"a hub one version behind", false, func(ctx context.Context, s Store, hub Hub) error {
+			hub.Version--
+			hub.UserLimit = 3
+			_, err := s.SaveHub(ctx, hub, changeEntry(3))
+			return err
+		}},
+		{"a hub one version ahead", false, func(ctx context.Context, s Store, hub Hub) error {
+			hub.Version++
+			hub.UserLimit = 3
+			_, err := s.SaveHub(ctx, hub, changeEntry(3))
+			return err
+		}},
+		{"a guild-wide set at 0 over a stored row", true, func(ctx context.Context, s Store, _ Hub) error {
+			return s.SaveGuildModeratorRoles(ctx, "guild-1", GuildModeratorRoles{RoleIDs: []string{"role-hq"}, Version: 0}, moderatorsEntry(3))
+		}},
+		{"a guild-wide set at 1 over no row", false, func(ctx context.Context, s Store, _ Hub) error {
+			return s.SaveGuildModeratorRoles(ctx, "guild-1", GuildModeratorRoles{RoleIDs: []string{"role-hq"}, Version: 1}, moderatorsEntry(3))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			forEachStore(t, func(t *testing.T, s Store) {
+				ctx := context.Background()
+				hub, err := s.SaveHub(ctx, sampleHub("guild-1", "hub-1"), changeEntry(1))
+				if err != nil {
+					t.Fatalf("SaveHub of a new hub: %v", err)
+				}
+				if hub, err = s.SaveHub(ctx, hub, changeEntry(2)); err != nil {
+					t.Fatalf("second SaveHub: %v", err)
+				}
+				if tc.seedRoles {
+					if err := saveGuildRoles(t, s, []string{"role-mp"}, moderatorsEntry(2)); err != nil {
+						t.Fatalf("SaveGuildModeratorRoles: %v", err)
+					}
+				}
+				before := readState(t, s)
+
+				if err := tc.save(ctx, s, hub); !errors.Is(err, ErrStale) {
+					t.Errorf("the save returned %v, want ErrStale", err)
+				}
+				if after := readState(t, s); !reflect.DeepEqual(after, before) {
+					t.Errorf("the store after the stale save = %+v, want it as before, %+v", after, before)
+				}
+			})
+		})
+	}
+}
+
+// T18 (#373): a save of a new hub on a channel a hub already stands on
+// fails with ErrStale and writes nothing: it never writes over that hub.
+func TestSaveOfANewHubOnATakenChannelIsStaleAndWritesNothing(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		storeHub(t, s, "hub-1")
+		before := readState(t, s)
+		again := sampleHub("guild-1", "hub-1")
+		again.BaseString = "Briefing"
+
+		if _, err := s.SaveHub(context.Background(), again, changeEntry(1)); !errors.Is(err, ErrStale) {
+			t.Errorf("SaveHub of a new hub on hub-1 returned %v, want ErrStale", err)
+		}
+		if after := readState(t, s); !reflect.DeepEqual(after, before) {
+			t.Errorf("the store after the refused save = %+v, want it as before, %+v", after, before)
+		}
+	})
+}
+
+// T19 (#373): a save by the ID of a hub that has been removed fails with
+// ErrNotFound and writes nothing: an update never inserts.
+func TestSaveOfARemovedHubIsNotFoundAndInsertsNothing(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		hubID := storeHub(t, s, "hub-1")
+		hub, err := s.GetHub(ctx, hubID)
+		if err != nil {
+			t.Fatalf("GetHub: %v", err)
+		}
+		if err := s.RemoveHub(ctx, hubID, removeEntry(1)); err != nil {
+			t.Fatalf("RemoveHub: %v", err)
+		}
+		before := readState(t, s)
+		hub.UserLimit = 3
+
+		if _, err := s.SaveHub(ctx, hub, changeEntry(2)); !errors.Is(err, ErrNotFound) {
+			t.Errorf("SaveHub of the removed hub returned %v, want ErrNotFound", err)
+		}
+		if after := readState(t, s); !reflect.DeepEqual(after, before) {
+			t.Errorf("the store after the refused save = %+v, want it as before, %+v", after, before)
+		}
+	})
+}
+
+// guildRoles reads guild-1's guild-wide moderator roles and their version.
+func guildRoles(t *testing.T, s Store) GuildModeratorRoles {
+	t.Helper()
+	roles, err := s.GetGuildModeratorRoles(context.Background(), "guild-1")
+	if err != nil {
+		t.Fatalf("GetGuildModeratorRoles: %v", err)
+	}
+	return roles
+}
+
+// saveGuildRoles saves guild-1's guild-wide set over the version the store
+// holds now, as a save from a section loaded just before it.
+func saveGuildRoles(t *testing.T, s Store, roleIDs []string, entry ChangeLogEntry) error {
+	t.Helper()
+	current := guildRoles(t, s)
+	return s.SaveGuildModeratorRoles(context.Background(), "guild-1", GuildModeratorRoles{RoleIDs: roleIDs, Version: current.Version}, entry)
 }
 
 // changeEntry is an update's change log entry, its diff naming an ordinal
@@ -831,15 +1046,11 @@ func TestChangeLogListReturnsTheLastNNewestFirst(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
 		hubA := storeHub(t, s, "hub-a")
-		storeHub(t, s, "hub-b")
+		hubB := storeHub(t, s, "hub-b")
 		for i := 1; i <= 12; i++ {
-			if _, err := s.SaveHub(ctx, sampleHub("guild-1", "hub-a"), changeEntry(i)); err != nil {
-				t.Fatalf("SaveHub(%d): %v", i, err)
-			}
+			resaveHub(t, s, hubA, changeEntry(i))
 		}
-		if _, err := s.SaveHub(ctx, sampleHub("guild-1", "hub-b"), changeEntry(99)); err != nil {
-			t.Fatalf("SaveHub(hub-b): %v", err)
-		}
+		resaveHub(t, s, hubB, changeEntry(99))
 
 		entries, err := s.ListChangeLog(ctx, hubA, 10)
 		if err != nil {
@@ -945,7 +1156,7 @@ func TestModeratorChangesListReturnsTheLastNNewestFirst(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
 		for i := 1; i <= 12; i++ {
-			if err := s.SaveGuildModeratorRoles(ctx, "guild-1", []string{fmt.Sprintf("role-%d", i)}, moderatorsEntry(i)); err != nil {
+			if err := saveGuildRoles(t, s, []string{fmt.Sprintf("role-%d", i)}, moderatorsEntry(i)); err != nil {
 				t.Fatalf("SaveGuildModeratorRoles(%d): %v", i, err)
 			}
 		}
@@ -1079,9 +1290,10 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 		if err := s.UpsertSpawnedChannel(live, seeded); err != nil {
 			t.Fatalf("UpsertSpawnedChannel: %v", err)
 		}
-		if err := s.SaveGuildModeratorRoles(live, "guild-1", []string{"role-mp"}, moderatorsEntry(1)); err != nil {
+		if err := saveGuildRoles(t, s, []string{"role-mp"}, moderatorsEntry(1)); err != nil {
 			t.Fatalf("SaveGuildModeratorRoles: %v", err)
 		}
+		seededRoles := guildRoles(t, s)
 
 		done, cancel := context.WithCancel(live)
 		cancel()
@@ -1103,7 +1315,7 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 			"ListSpawnedChannels":    func() error { _, err := s.ListSpawnedChannels(done); return err },
 			"GetGuildModeratorRoles": func() error { _, err := s.GetGuildModeratorRoles(done, "guild-1"); return err },
 			"SaveGuildModeratorRoles": func() error {
-				return s.SaveGuildModeratorRoles(done, "guild-1", []string{"role-hq"}, moderatorsEntry(4))
+				return s.SaveGuildModeratorRoles(done, "guild-1", GuildModeratorRoles{RoleIDs: []string{"role-hq"}, Version: seededRoles.Version}, moderatorsEntry(4))
 			},
 			"ListChangeLog":        func() error { _, err := s.ListChangeLog(done, hubID, 10); return err },
 			"ListModeratorChanges": func() error { _, err := s.ListModeratorChanges(done, 10); return err },
@@ -1128,8 +1340,8 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 		if len(rows) != 1 || rows[0].ChannelID != seeded.ChannelID || rows[0].OwnerUserID != seeded.OwnerUserID || rows[0].Lock != (ChannelLock{}) {
 			t.Errorf("spawned rows after the done calls = %+v, want chan-1 alone, owned by user-a, unlocked", rows)
 		}
-		if roles, err := s.GetGuildModeratorRoles(live, "guild-1"); err != nil || !slices.Equal(roles, []string{"role-mp"}) {
-			t.Errorf("guild moderator roles after the done calls = %v, %v; want [role-mp]", roles, err)
+		if roles := guildRoles(t, s); !slices.Equal(roles.RoleIDs, []string{"role-mp"}) || roles.Version != seededRoles.Version {
+			t.Errorf("guild moderator roles after the done calls = %+v, want [role-mp] as seeded, at %d", roles, seededRoles.Version)
 		}
 		if got := listedOrdinals(t, s, hubID); !slices.Equal(got, []int{0}) {
 			t.Errorf("hub-1's entries after the done calls are ordinals %v, want [0], the seeded one alone", got)

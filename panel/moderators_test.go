@@ -30,7 +30,7 @@ func storedGuildRoles(t *testing.T, st store.Store) []string {
 	if err != nil {
 		t.Fatalf("GetGuildModeratorRoles: %v", err)
 	}
-	return roles
+	return roles.RoleIDs
 }
 
 // sameSet reports whether two role lists hold the same IDs, in any order.
