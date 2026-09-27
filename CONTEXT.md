@@ -143,8 +143,9 @@ grants is configured Discord-side and is out of scope here.
 ## Temporary voice channels
 
 The bot replaces MEE6's "Temporary Channels" plugin. A member joins a hub, the
-bot creates a spawned channel for them, and the spawned channel is deleted the
-moment it empties. Hub settings are edited in the panel, never in code.
+bot creates a spawned channel for them, and the spawned channel is deleted when
+it empties: at once, or after its hub's delete delay. Hub settings are edited
+in the panel, never in code.
 
 - **Hub**: A voice channel that, when a member joins it, causes the bot to
   create a spawned channel and move the member into it. Each hub carries its
@@ -168,11 +169,12 @@ moment it empties. Hub settings are edited in the panel, never in code.
   _Avoid_: hand off, hand back, succession, transfer, loan.
 - **Restart sweep**: The bot's check, when it connects, of every spawned
   channel it holds a stored record of against the guild. A recorded channel
-  that is gone or empty is deleted with its record. An occupied one is
-  tracked again, its owner restored or elected by the handover rule. A
-  channel with no record is never touched. It reads one copied snapshot of
-  Discord's current cached guild state when it takes `t.mu`, not the state
-  in the `GUILD_CREATE` payload.
+  that is gone loses its record. An empty one is deleted with its record once
+  its hub's delete delay, counted from the sweep, passes with nobody joining.
+  An occupied one is tracked again, its owner restored or elected by the
+  handover rule. A channel with no record is never touched. It reads one
+  copied snapshot of Discord's current cached guild state when it takes
+  `t.mu`, not the state in the `GUILD_CREATE` payload.
   _Avoid_: adoption, orphan sweep, recovery, reap, resync.
 - **Spawn in flight**: A spawned channel from the moment Discord confirms
   its create until its row write or compensating delete finishes. A restart
@@ -242,6 +244,11 @@ moment it empties. Hub settings are edited in the panel, never in code.
   channel inherits its permissions from, the hub's category or the hub
   channel itself.
   _Avoid_: sync, category sync, synchronize permissions.
+- **Delete delay**: How long a spawned channel must stay empty before the bot
+  deletes it. Set per hub, and read as it stands now, so a change reaches the
+  channels already waiting; none means the moment the channel empties. A join
+  cancels the wait, and the next empty starts it again.
+  _Avoid_: keep alive (MEE6's term), grace period, linger, timeout, cooldown.
 - **Register**: To make an existing voice channel a hub through the panel.
   The other way a hub comes to exist is the panel creating the channel itself.
   _Avoid_: adopt (for a hub), import, link, attach.
