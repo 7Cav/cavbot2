@@ -20,7 +20,7 @@ import (
 // when it emptied, and the stop of the timer that ends the wait.
 type deleteWait struct {
 	emptiedAt time.Time
-	stop      func() bool
+	stop      func()
 }
 
 // deleteDelayLocked is the delete delay of a spawned channel's hub as the
@@ -34,9 +34,9 @@ func (t *TempVC) deleteDelayLocked(channelID string) time.Duration {
 	return time.Duration(hub.DeleteDelayMinutes) * time.Minute
 }
 
-// waitStart is a wait just started, kept for its log line, which the caller
+// waitStartedLine is the INFO line of a wait just started, which the caller
 // writes once it has released the mutex.
-type waitStart struct {
+type waitStartedLine struct {
 	channelID string
 	hubID     int64
 	delay     time.Duration
@@ -44,7 +44,7 @@ type waitStart struct {
 
 // log writes the wait's INFO line. userID is the member whose leave emptied
 // the channel; the restart sweep passes none.
-func (w waitStart) log(userID string) {
+func (w waitStartedLine) log(userID string) {
 	kv := []any{"channel_id", w.channelID, "hub_id", w.hubID, "delete_delay_minutes", int(w.delay / time.Minute)}
 	if userID != "" {
 		kv = append(kv, "user_id", userID)
@@ -55,13 +55,13 @@ func (w waitStart) log(userID string) {
 // startDeleteWaitLocked starts a channel's wait when it has just emptied on
 // a hub with a delete delay. A delay of 0 starts nothing and reports false,
 // and the caller deletes the channel at once. Caller holds mu.
-func (t *TempVC) startDeleteWaitLocked(channelID string) (waitStart, bool) {
+func (t *TempVC) startDeleteWaitLocked(channelID string) (waitStartedLine, bool) {
 	delay := t.deleteDelayLocked(channelID)
 	if delay == 0 {
-		return waitStart{}, false
+		return waitStartedLine{}, false
 	}
 	t.scheduleDeleteLocked(channelID, tempVCNow(), delay)
-	return waitStart{channelID: channelID, hubID: t.channelHub[channelID], delay: delay}, true
+	return waitStartedLine{channelID: channelID, hubID: t.channelHub[channelID], delay: delay}, true
 }
 
 // sweepDeleteWaitLocked starts the wait of a recorded channel the restart
@@ -73,17 +73,17 @@ func (t *TempVC) startDeleteWaitLocked(channelID string) (waitStart, bool) {
 // other channel waits a fresh, full delay counted from the sweep, since
 // nothing records when it emptied; fresh reports that, and line is its log
 // line. Caller holds mu.
-func (t *TempVC) sweepDeleteWaitLocked(channelID string, held *deleteWait) (line waitStart, fresh, waiting bool) {
+func (t *TempVC) sweepDeleteWaitLocked(channelID string, held *deleteWait) (line waitStartedLine, fresh, waiting bool) {
 	if held == nil {
 		line, waiting = t.startDeleteWaitLocked(channelID)
 		return line, waiting, waiting
 	}
 	delay := t.deleteDelayLocked(channelID)
 	if delay == 0 {
-		return waitStart{}, false, false
+		return waitStartedLine{}, false, false
 	}
 	t.scheduleDeleteLocked(channelID, held.emptiedAt, delay)
-	return waitStart{}, false, true
+	return waitStartedLine{}, false, true
 }
 
 // scheduleDeleteLocked times a channel's wait to end once it has been empty

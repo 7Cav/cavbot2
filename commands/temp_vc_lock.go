@@ -144,6 +144,15 @@ func (t *TempVC) endAccessChange(channelID string) {
 	close(change.done)
 }
 
+// lockingAllowedLocked reports whether a spawned channel's hub has "Locking
+// allowed" on, as the hub is now. A channel whose hub row is gone reads the
+// default, off, as renamingAllowedLocked reads its own (#360 Q6). Caller
+// holds mu.
+func (t *TempVC) lockingAllowedLocked(channelID string) bool {
+	hub, ok := t.hubByIDLocked(t.channelHub[channelID])
+	return ok && hub.LockingAllowed
+}
+
 // Lock locks the spawned channel the invoker sits in, on the invoker's
 // behalf, when the hub has "Locking allowed" on and they own the channel or
 // hold one of its hub's moderator roles. The edit carries an audit log
@@ -163,7 +172,7 @@ func (t *TempVC) Lock(by Invoker) (lockResult, error) {
 		// that reason and not the name of an owner who is refused too. This
 		// runs again after any wait, so it reads the setting as it is when
 		// the lock decides.
-		if hub, ok := t.hubByIDLocked(t.channelHub[channelID]); !ok || !hub.LockingAllowed {
+		if !t.lockingAllowedLocked(channelID) {
 			return "", errLockingNotAllowed
 		}
 		if err := t.authorizeLocked(channelID, by); err != nil {

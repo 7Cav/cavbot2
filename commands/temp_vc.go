@@ -120,11 +120,12 @@ const tempVCStoreTimeout = 5 * time.Second
 var tempVCNow = time.Now
 
 // tempVCAfterFunc runs f on a goroutine of its own once d has passed, and
-// returns a stop that keeps f from running and reports whether it did, as
+// returns a stop that keeps f from running if it has not started, as
 // time.Timer.Stop does. A delete delay's wait is timed through it. A
 // package var beside tempVCNow so tests can run a wait on a fake clock.
-var tempVCAfterFunc = func(d time.Duration, f func()) (stop func() bool) {
-	return time.AfterFunc(d, f).Stop
+var tempVCAfterFunc = func(d time.Duration, f func()) (stop func()) {
+	timer := time.AfterFunc(d, f)
+	return func() { timer.Stop() }
 }
 
 // SpawnFailureCause says why a hub's last spawn failed. The values are
@@ -1002,7 +1003,7 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	var gone, empty []string
 	// started holds the log line of each fresh wait, and waiting counts
 	// every channel the sweep leaves waiting, fresh or kept.
-	var started []waitStart
+	var started []waitStartedLine
 	waiting := 0
 	var handovers []store.SpawnedChannel
 	// guests holds, per locked channel, the occupants the sweep adds to its
@@ -1214,7 +1215,7 @@ func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	emptied := t.applyLeaveLocked(vs.UserID, oldChannel)
 	// On a hub with a delete delay an emptied channel waits instead of
 	// going now.
-	var started waitStart
+	var started waitStartedLine
 	waiting := false
 	if emptied {
 		started, waiting = t.startDeleteWaitLocked(oldChannel)

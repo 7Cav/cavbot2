@@ -55,21 +55,17 @@ func (c *fakeClock) read() time.Time {
 
 // afterFunc schedules f for d from now. A d of 0 or less is due at once and
 // runs at the next advance, as time.AfterFunc runs it on a goroutine of its
-// own rather than inside the caller. The stop it returns reports whether it
-// kept f from running, as time.Timer.Stop does.
-func (c *fakeClock) afterFunc(d time.Duration, f func()) func() bool {
+// own rather than inside the caller. The stop it returns keeps f from
+// running if it has not run yet.
+func (c *fakeClock) afterFunc(d time.Duration, f func()) func() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	tm := &fakeTimer{at: c.now.Add(d), f: f}
 	c.timers = append(c.timers, tm)
-	return func() bool {
+	return func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		if tm.done {
-			return false
-		}
 		tm.done = true
-		return true
 	}
 }
 
