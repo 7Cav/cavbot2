@@ -627,29 +627,33 @@ func (s *hubService) newHub(channelID, baseString string) store.Hub {
 	}
 }
 
-// applyNew is what follows a new hub's row write: the runtime learns the hub,
-// so a join spawns from it at once with no restart, and the change log gets
-// the entry carrying every field with a null before, plus extra, the fields
-// the action carries beyond the stored ones.
-func (s *hubService) applyNew(ctx context.Context, stored store.Hub, action store.ChangeAction, extra diff, by actor) error {
-	s.deps.Runtime.ApplyHub(stored)
-	d := diffHubs(nil, &stored)
-	for field, c := range extra {
-		d[field] = c
+// saveHub writes the hub and its change log entry in one store call, then
+// applies the stored hub to the runtime, so a join spawns from it at once
+// with no restart. The runtime learns only of a write that landed: a failed
+// write leaves it on the settings the store still holds.
+func (s *hubService) saveHub(ctx context.Context, hub store.Hub, action store.ChangeAction, d diff, by actor) (store.Hub, error) {
+	entry, err := changeEntry(action, d, by)
+	if err != nil {
+		return store.Hub{}, err
 	}
-	return s.appendChange(ctx, stored.ID, action, d, by)
+	stored, err := s.deps.Store.SaveHub(ctx, hub, entry)
+	if err != nil {
+		return store.Hub{}, err
+	}
+	s.deps.Runtime.ApplyHub(stored)
+	return stored, nil
 }
 
 // create makes a new hub in one step: a voice channel under the chosen
 // category, created with overwrites omitted so it takes the category's
-// permissions from birth, then the hub row with the defaults, applied to
-// the runtime and change-logged the way a register is, with the channel
-// name typed in the entry. A refusal is a *fieldError naming the field. A
-// create Discord refuses is a *fieldError on the category field, since the
-// category cap and a category the bot cannot see are what Discord refuses
-// on, with a body-free phrase, and no row is written. A row write that
-// fails deletes the channel just made, so Discord and the store never
-// disagree, and returns the error.
+// permissions from birth, then the hub row with the defaults and its change
+// log entry, which carries every field with a null before and the channel
+// name typed, applied to the runtime the way a register is. A refusal is a
+// *fieldError naming the field. A create Discord refuses is a *fieldError on
+// the category field, since the category cap and a category the bot cannot
+// see are what Discord refuses on, with a body-free phrase, and no row is
+// written. A write that fails deletes the channel just made, so Discord and
+// the store never disagree, and returns the error.
 func (s *hubService) create(ctx context.Context, in createInput, by actor) (store.Hub, error) {
 	in.CategoryID = strings.TrimSpace(in.CategoryID)
 	baseString, err := validBaseString(in.BaseString)
@@ -682,25 +686,24 @@ func (s *hubService) create(ctx context.Context, in createInput, by actor) (stor
 		return store.Hub{}, &fieldError{fieldCategory, "Discord did not create the channel under that category: " + commands.DiscordErrorDetail(err) + "."}
 	}
 
-	stored, err := s.deps.Store.UpsertHub(ctx, s.newHub(ch.ID, in.BaseString))
+	hub := s.newHub(ch.ID, in.BaseString)
+	d := diffHubs(nil, &hub)
+	d[fieldChannelName] = change{Before: nil, After: in.ChannelName}
+	stored, err := s.saveHub(ctx, hub, store.ChangeCreate, d, by)
 	if err != nil {
 		if _, delErr := s.deps.Manager.ChannelDelete(ch.ID, "Panel: hub row write failed"); delErr != nil {
 			utils.CaptureError("Panel hub channel left behind after a failed row write", delErr, "channel_id", ch.ID)
 		}
 		return store.Hub{}, fmt.Errorf("write hub: %w", err)
 	}
-	named := diff{fieldChannelName: {Before: nil, After: in.ChannelName}}
-	if err := s.applyNew(ctx, stored, store.ChangeCreate, named, by); err != nil {
-		return store.Hub{}, err
-	}
 	return stored, nil
 }
 
 // register makes an existing voice channel a hub with the defaults, writes
-// the row, applies it to the runtime, so a join spawns from it at once with
-// no restart, and appends a change log entry carrying every field. A
-// refusal is a *fieldError naming the field; the store is not written and
-// the runtime is not touched.
+// the row with a change log entry carrying every field, and applies it to
+// the runtime, so a join spawns from it at once with no restart. A refusal
+// is a *fieldError naming the field; the store is not written and the
+// runtime is not touched.
 func (s *hubService) register(ctx context.Context, in registerInput, by actor) (store.Hub, error) {
 	in.ChannelID = strings.TrimSpace(in.ChannelID)
 	baseString, err := validBaseString(in.BaseString)
@@ -728,22 +731,20 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 		return store.Hub{}, &fieldError{fieldHubChannel, "That channel has no category. Move it into one first."}
 	}
 
-	stored, err := s.deps.Store.UpsertHub(ctx, s.newHub(in.ChannelID, in.BaseString))
+	hub := s.newHub(in.ChannelID, in.BaseString)
+	stored, err := s.saveHub(ctx, hub, store.ChangeRegister, diffHubs(nil, &hub), by)
 	if err != nil {
 		return store.Hub{}, fmt.Errorf("write hub: %w", err)
-	}
-	if err := s.applyNew(ctx, stored, store.ChangeRegister, nil, by); err != nil {
-		return store.Hub{}, err
 	}
 	return stored, nil
 }
 
-// update saves a hub's settings from the edit form, writes the row, applies
-// it to the runtime, so a disabled hub stops spawning at once and a change
-// to "Renaming allowed" or "Locking allowed" reaches /voice-rename or
-// /voice-lock at once, and appends a change log entry with the changed
-// fields. A refusal is a *fieldError naming the field, and nothing is
-// written; store.ErrNotFound means no hub has the ID.
+// update saves a hub's settings from the edit form: it writes the row with
+// a change log entry of the changed fields and applies it to the runtime, so
+// a disabled hub stops spawning at once and a change to "Renaming allowed"
+// or "Locking allowed" reaches /voice-rename or /voice-lock at once. A
+// refusal is a *fieldError naming the field, and nothing is written;
+// store.ErrNotFound means no hub has the ID.
 //
 // A broken hub is refused before anything else: its channel is gone or has
 // no category, and the page offers Remove alone. A changed hub channel name
@@ -753,10 +754,10 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 // the row and Discord never disagree. The rename joins the entry's diff as
 // channel_name.
 //
-// The order is rename, row, runtime, entry. The runtime apply cannot fail,
-// so once the row is written the runtime matches the store; an entry the
-// store refuses is an error the handler reports, with the save already
-// made.
+// The order is rename, then the row and its entry in one store write, then
+// the runtime. A write that fails after a rename leaves the channel renamed
+// and the row as it was (#356), and its error names both channel names so
+// the mismatch is traceable from Sentry.
 func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by actor) (store.Hub, error) {
 	sn, err := s.read(ctx)
 	if err != nil {
@@ -794,28 +795,23 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by a
 		d[fieldChannelName] = change{Before: oldName, After: channelName}
 	}
 
-	stored, err := s.deps.Store.UpsertHub(ctx, hub)
+	stored, err := s.saveHub(ctx, hub, store.ChangeUpdate, d, by)
 	if err != nil {
 		if channelName != oldName {
-			// The channel is renamed and the row is not. The error names
-			// both so the mismatch is traceable from Sentry.
 			return store.Hub{}, fmt.Errorf("write hub after renaming its channel from %q to %q: %w", oldName, channelName, err)
 		}
 		return store.Hub{}, fmt.Errorf("write hub: %w", err)
 	}
-	s.deps.Runtime.ApplyHub(stored)
-	if err := s.appendChange(ctx, stored.ID, store.ChangeUpdate, d, by); err != nil {
-		return store.Hub{}, err
-	}
 	return stored, nil
 }
 
-// remove deletes a hub's row, drops it from the runtime, so a join to its
-// channel spawns nothing more, and appends a change log entry carrying
-// every field with a null after. No Discord call: the hub channel stays, so
-// a removal is undone by registering the channel again. Spawned channels of
-// the hub keep their rows and die when empty, which the runtime does on its
-// own. store.ErrNotFound means no hub has the ID.
+// remove deletes a hub's row with a change log entry carrying every field
+// with a null after, in one store write, then drops the hub from the
+// runtime, so a join to its channel spawns nothing more. No Discord call:
+// the hub channel stays, so a removal is undone by registering the channel
+// again. Spawned channels of the hub keep their rows and die when empty,
+// which the runtime does on its own. store.ErrNotFound means no hub has the
+// ID.
 //
 // The entry references no hub: the row is gone, and the store clears the
 // hub's earlier entries to match, so the whole log of a removed hub lists
@@ -825,13 +821,14 @@ func (s *hubService) remove(ctx context.Context, hubID int64, by actor) (store.H
 	if err != nil {
 		return store.Hub{}, err
 	}
-	if err := s.deps.Store.DeleteHub(ctx, hub.ID); err != nil {
-		return store.Hub{}, fmt.Errorf("delete hub: %w", err)
-	}
-	s.deps.Runtime.RemoveHub(hub.HubChannelID)
-	if err := s.appendChange(ctx, 0, store.ChangeRemove, diffHubs(&hub, nil), by); err != nil {
+	entry, err := changeEntry(store.ChangeRemove, diffHubs(&hub, nil), by)
+	if err != nil {
 		return store.Hub{}, err
 	}
+	if err := s.deps.Store.RemoveHub(ctx, hub.ID, entry); err != nil {
+		return store.Hub{}, fmt.Errorf("remove hub: %w", err)
+	}
+	s.deps.Runtime.RemoveHub(hub.HubChannelID)
 	return hub, nil
 }
 

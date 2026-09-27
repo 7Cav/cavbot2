@@ -38,7 +38,7 @@ const (
 // on the channels it spawns.
 type Hub struct {
 	// ID is the surrogate key. Zero on a Hub that has never been stored;
-	// UpsertHub fills it on return.
+	// SaveHub fills it on return.
 	ID           int64
 	GuildID      string
 	HubChannelID string
@@ -53,7 +53,7 @@ type Hub struct {
 	Bitrate          int
 	Enabled          bool
 	// RenamingAllowed is whether /voice-rename works on the hub's spawned
-	// channels. On for every hub stored before the field existed; UpsertHub
+	// channels. On for every hub stored before the field existed; SaveHub
 	// writes the caller's value, so a Hub built without it stores it off.
 	// Turning it off leaves every channel's current name in place.
 	RenamingAllowed bool
@@ -122,35 +122,51 @@ type ChangeLogEntry struct {
 	// ID is the surrogate key, set by the store.
 	ID int64
 	// HubID is the hub the save was about, or zero for a save about no hub:
-	// the guild-wide moderator roles, and every entry of a hub whose row has
-	// since been deleted, since the reference clears with the row.
+	// the guild-wide moderator roles, a remove, and every entry of a hub
+	// whose row has since been deleted, since the reference clears with the
+	// row. Set by the store from the save that writes the entry.
 	HubID         int64
 	ForumUserID   int
 	ForumUsername string
-	// At is set by the store at append, never by the caller.
+	// At is set by the store when it writes the entry, never by the caller.
 	At     time.Time
 	Action ChangeAction
 	// Diff is a JSON object keyed by field name, each value an object with
 	// "before" and "after". The store keeps the bytes and never reads inside
-	// them; the panel's service layer decides the shape.
+	// them; the panel's service layer decides the shape. Bytes that are not
+	// a JSON value are refused, and the save writes nothing.
 	Diff json.RawMessage
 }
 
 // Store is the one seam between the bot and its database. Two implementations:
 // Postgres here and Fake for tests.
+//
+// A panel save is one call: SaveHub, RemoveHub or SaveGuildModeratorRoles
+// writes the save's settings and its change log entry in one transaction,
+// so both land or neither does, and no method writes either alone (#362).
+// The transaction never leaves the store. The pool holds two connections,
+// and a transaction handed to panel code would hold one of them while that
+// code ran; a call to the plain store made there by mistake would wait on
+// the other connection, or write outside the transaction.
 type Store interface {
 	// GetHub returns the hub with this ID, or ErrNotFound.
 	GetHub(ctx context.Context, id int64) (Hub, error)
 	// ListHubs returns every hub of the guild, in no promised order.
 	ListHubs(ctx context.Context, guildID string) ([]Hub, error)
-	// UpsertHub inserts the hub, or updates the existing row for the same
-	// HubChannelID in place. It returns the stored row with ID, CreatedAt and
-	// UpdatedAt filled; the caller's values for those three are ignored.
-	UpsertHub(ctx context.Context, hub Hub) (Hub, error)
-	// DeleteHub removes the hub. Deleting a hub that does not exist is not an
-	// error. Spawned channel rows of the hub keep their rows with the hub reference
-	// cleared.
-	DeleteHub(ctx context.Context, id int64) error
+	// SaveHub writes a save's hub and its change log entry together. The hub
+	// is inserted, or updates the existing row for the same HubChannelID in
+	// place, and the stored row comes back with ID, CreatedAt and UpdatedAt
+	// filled; the caller's values for those three are ignored. The entry is
+	// appended under the stored row's ID, whatever HubID the caller set, so a
+	// create or register entry references the hub it made.
+	SaveHub(ctx context.Context, hub Hub, entry ChangeLogEntry) (Hub, error)
+	// RemoveHub deletes the hub and appends a remove's change log entry
+	// together. The entry references no hub, whatever HubID the caller set,
+	// since the row is gone, and the hub's earlier entries clear their
+	// reference to match. Spawned channel rows of the hub keep their rows
+	// with the hub reference cleared. Removing a hub that does not exist is
+	// not an error.
+	RemoveHub(ctx context.Context, id int64, entry ChangeLogEntry) error
 
 	// UpsertSpawnedChannel inserts the row, or updates the existing row for
 	// the same ChannelID in place. It writes hub, number and owner, never the
@@ -173,11 +189,11 @@ type Store interface {
 	// Hub.ModeratorRoleIDs: no promised order, and nil and empty are one
 	// thing.
 	GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error)
-	// SetGuildModeratorRoles replaces the guild-wide moderator role IDs.
-	SetGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string) error
+	// SaveGuildModeratorRoles replaces the guild-wide moderator role IDs and
+	// appends the save's change log entry together. The entry references no
+	// hub, whatever HubID the caller set.
+	SaveGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string, entry ChangeLogEntry) error
 
-	// AppendChangeLog adds one entry. The caller's ID and At are ignored.
-	AppendChangeLog(ctx context.Context, entry ChangeLogEntry) error
 	// ListChangeLog returns at most limit entries whose hub reference is
 	// hubID, newest first in append order. A hubID of zero lists the entries
 	// that reference no hub.

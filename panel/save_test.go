@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/7cav/cavbot2/commands"
 	"github.com/7cav/cavbot2/store"
 	"github.com/getsentry/sentry-go"
 )
@@ -153,14 +154,14 @@ func (s leavingStore) ListHubs(ctx context.Context, guildID string) ([]store.Hub
 	return s.st.ListHubs(ctx, guildID)
 }
 
-func (s leavingStore) UpsertHub(ctx context.Context, hub store.Hub) (store.Hub, error) {
+func (s leavingStore) SaveHub(ctx context.Context, hub store.Hub, entry store.ChangeLogEntry) (store.Hub, error) {
 	s.d.leave()
-	return s.st.UpsertHub(ctx, hub)
+	return s.st.SaveHub(ctx, hub, entry)
 }
 
-func (s leavingStore) DeleteHub(ctx context.Context, id int64) error {
+func (s leavingStore) RemoveHub(ctx context.Context, id int64, entry store.ChangeLogEntry) error {
 	s.d.leave()
-	return s.st.DeleteHub(ctx, id)
+	return s.st.RemoveHub(ctx, id, entry)
 }
 
 func (s leavingStore) UpsertSpawnedChannel(ctx context.Context, sc store.SpawnedChannel) error {
@@ -188,14 +189,9 @@ func (s leavingStore) GetGuildModeratorRoles(ctx context.Context, guildID string
 	return s.st.GetGuildModeratorRoles(ctx, guildID)
 }
 
-func (s leavingStore) SetGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string) error {
+func (s leavingStore) SaveGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string, entry store.ChangeLogEntry) error {
 	s.d.leave()
-	return s.st.SetGuildModeratorRoles(ctx, guildID, roleIDs)
-}
-
-func (s leavingStore) AppendChangeLog(ctx context.Context, entry store.ChangeLogEntry) error {
-	s.d.leave()
-	return s.st.AppendChangeLog(ctx, entry)
+	return s.st.SaveGuildModeratorRoles(ctx, guildID, roleIDs, entry)
 }
 
 func (s leavingStore) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]store.ChangeLogEntry, error) {
@@ -345,7 +341,7 @@ type stallingStore struct {
 	store.Store
 }
 
-func (stallingStore) UpsertHub(ctx context.Context, _ store.Hub) (store.Hub, error) {
+func (stallingStore) SaveHub(ctx context.Context, _ store.Hub, _ store.ChangeLogEntry) (store.Hub, error) {
 	select {
 	case <-ctx.Done():
 		return store.Hub{}, ctx.Err()
@@ -373,5 +369,165 @@ func TestSaveStoreCallPastItsDeadlineFailsTheSave(t *testing.T) {
 	}
 	if !errors.Is(errs[0], context.DeadlineExceeded) {
 		t.Errorf("the event's error %v does not wrap context.DeadlineExceeded", errs[0])
+	}
+}
+
+// errStoreRefused is what a refusing store answers: the database gone away
+// at the moment the save writes.
+var errStoreRefused = errors.New("store: connection refused")
+
+// refusingStore is the store fake with every save's write refused: each
+// write that carries a save's settings and its change log entry. Reads go
+// through to the fake.
+type refusingStore struct {
+	*store.Fake
+}
+
+func (refusingStore) SaveHub(context.Context, store.Hub, store.ChangeLogEntry) (store.Hub, error) {
+	return store.Hub{}, errStoreRefused
+}
+
+func (refusingStore) RemoveHub(context.Context, int64, store.ChangeLogEntry) error {
+	return errStoreRefused
+}
+
+func (refusingStore) SaveGuildModeratorRoles(context.Context, string, []string, store.ChangeLogEntry) error {
+	return errStoreRefused
+}
+
+// A save whose store write fails answers 500 and reaches Sentry once, and
+// the running bot keeps acting on the settings from before the save: it
+// never learns of a write that did not land (#362).
+func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
+	cases := []struct {
+		name string
+		path func(t *testing.T, st store.Store) string
+		form url.Values
+		// checkRuntime checks the runtime still acts on the settings from
+		// before the save.
+		checkRuntime func(t *testing.T, w *testWorld)
+	}{
+		{
+			name: "create",
+			path: func(*testing.T, store.Store) string { return "/hubs" },
+			form: createForm("cat-1", "Squad Join", "Squad Voice"),
+			checkRuntime: func(t *testing.T, w *testWorld) {
+				w.join("user-a", "spawn-1")
+				if n := w.discord.createCount(); n != 1 {
+					t.Errorf("a join to the channel the failed create made led to %d creates in all, want 1: the channel alone", n)
+				}
+			},
+		},
+		{
+			name: "register",
+			path: func(*testing.T, store.Store) string { return "/hubs" },
+			form: registerForm("vc-2", "Squad Voice"),
+			checkRuntime: func(t *testing.T, w *testWorld) {
+				w.join("user-a", "vc-2")
+				if n := w.discord.createCount(); n != 0 {
+					t.Errorf("a join to the channel of the failed register made %d creates, want 0", n)
+				}
+			},
+		},
+		{
+			name: "update",
+			path: func(t *testing.T, st store.Store) string { return hubPath(t, st, "hub-1") },
+			form: func() url.Values {
+				form := updateForm()
+				form.Set("base_string", "Bravo Voice")
+				form.Set("user_limit", "5")
+				return form
+			}(),
+			checkRuntime: func(t *testing.T, w *testWorld) {
+				w.join("user-a", "hub-1")
+				creates := w.discord.creates()
+				if len(creates) != 1 {
+					t.Fatalf("a join after the failed update made %d creates, want 1", len(creates))
+				}
+				if !strings.Contains(creates[0].Name, "Arma Voice") || creates[0].UserLimit != 0 {
+					t.Errorf("create payload = name %q, user limit %d; want the old base string Arma Voice and no limit", creates[0].Name, creates[0].UserLimit)
+				}
+			},
+		},
+		{
+			name: "remove",
+			path: func(t *testing.T, st store.Store) string { return hubPath(t, st, "hub-1") + "/remove" },
+			checkRuntime: func(t *testing.T, w *testWorld) {
+				w.join("user-a", "hub-1")
+				if n := w.discord.createCount(); n != 1 {
+					t.Errorf("a join after the failed remove made %d creates, want 1: the hub still spawns", n)
+				}
+			},
+		},
+		{
+			name: "moderators",
+			path: func(*testing.T, store.Store) string { return "/moderators" },
+			form: moderatorsForm("role-hq"),
+			checkRuntime: func(t *testing.T, w *testWorld) {
+				w.joinAs("user-owner", "hub-1", testRankSGT)
+				w.joinAs("user-owner", "spawn-1", testRankSGT)
+				w.joinAs("user-mod", "spawn-1", "role-hq")
+				if _, err := w.runtime.Rename(commands.Invoker{UserID: "user-mod", Roles: []string{"role-hq"}}, "Alpha"); err == nil {
+					t.Error("a rename by a holder of the role the failed save named passed, want a refusal")
+				}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := store.NewFake()
+			if _, err := fake.UpsertHub(context.Background(), testHub()); err != nil {
+				t.Fatalf("UpsertHub: %v", err)
+			}
+			w := newTestWorldOver(t, refusingStore{fake}, newFakeForum(t))
+			signIn(t, w.forum, w.b)
+			rec := recordSentry(t)
+
+			res := w.b.postForm(tc.path(t, fake), tc.form)
+
+			if !isServerError(res.StatusCode) {
+				t.Errorf("status = %d, want 5xx", res.StatusCode)
+			}
+			if errs := rec.recorded(); len(errs) != 1 {
+				t.Errorf("Sentry got %d events, want 1", len(errs))
+			}
+			tc.checkRuntime(t, w)
+		})
+	}
+}
+
+// An update that renamed the hub channel and then fails its store write
+// leaves the channel renamed (#356), and the one Sentry event's error names
+// both channel names, so the mismatch between Discord and the store can be
+// traced.
+func TestUpdateThatRenamedAndFailsItsWriteKeepsTheRenameAndNamesBothNames(t *testing.T) {
+	fake := store.NewFake()
+	if _, err := fake.UpsertHub(context.Background(), testHub()); err != nil {
+		t.Fatalf("UpsertHub: %v", err)
+	}
+	w := newTestWorldOver(t, refusingStore{fake}, newFakeForum(t))
+	signIn(t, w.forum, w.b)
+	rec := recordSentry(t)
+	form := updateForm()
+	form.Set("channel_name", "Bravo Room")
+
+	res := w.b.postForm(hubPath(t, fake, "hub-1"), form)
+
+	if !isServerError(res.StatusCode) {
+		t.Errorf("status = %d, want 5xx", res.StatusCode)
+	}
+	ch, err := w.discord.Channel("hub-1")
+	if err != nil {
+		t.Fatalf("Channel(hub-1): %v", err)
+	}
+	if ch.Name != "Bravo Room" {
+		t.Errorf("hub-1 is named %q, want Bravo Room: the rename stays", ch.Name)
+	}
+	errs := rec.recorded()
+	if len(errs) != 1 {
+		t.Fatalf("Sentry got %d events, want 1", len(errs))
+	}
+	if msg := errs[0].Error(); !strings.Contains(msg, "Join to create") || !strings.Contains(msg, "Bravo Room") {
+		t.Errorf("the event's error %q does not name both Join to create and Bravo Room", msg)
 	}
 }
