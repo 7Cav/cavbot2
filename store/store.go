@@ -17,9 +17,9 @@ import (
 	"time"
 )
 
-// ErrNotFound is returned by GetHub and SaveHub when no hub has the
-// requested ID, and by SetSpawnedChannelLock when no row has the channel.
-// Compare with errors.Is.
+// ErrNotFound is returned by GetHub, SaveHub and RemoveHub when no hub has
+// the requested ID, and by SetSpawnedChannelLock when no row has the
+// channel. Compare with errors.Is.
 var ErrNotFound = errors.New("store: not found")
 
 // ErrStale is returned by a combined write whose record is not as the
@@ -198,7 +198,7 @@ type Store interface {
 	// since the row is gone, and the hub's earlier entries clear their
 	// reference to match. Spawned channel rows of the hub keep their rows
 	// with the hub reference cleared. Removing a hub that does not exist is
-	// not an error.
+	// ErrNotFound and appends no entry, since nothing took effect.
 	RemoveHub(ctx context.Context, id int64, entry ChangeLogEntry) error
 
 	// UpsertSpawnedChannel inserts the row, or updates the existing row for

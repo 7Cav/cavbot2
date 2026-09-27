@@ -25,7 +25,7 @@ type moderatorsInput struct {
 
 // errStaleModerators is the refusal a save from a stale guild-wide section
 // gets, answered the way errStaleHub is.
-var errStaleModerators = &fieldError{refusalStale, "Someone saved the moderator roles for every hub after you opened this page, " +
+var errStaleModerators = &fieldError{stale: true, Message: "Someone saved the moderator roles for every hub after you opened this page, " +
 	"so your changes were not saved. Their save is at the top of the change log below. " +
 	"Your roles are still in the picker. Save again to keep them."}
 
@@ -41,16 +41,13 @@ type moderatorsPage struct {
 
 // moderatorsSection builds the guild-wide section from the guild read and
 // the store: the picker with the stored set as tags, or the form as posted
-// back after a refusal, and the section's last saves, newest first. The
-// version follows editForm's rule: the posted one after a refusal, the
-// stored one after a stale refusal or with nothing posted.
-func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, stored store.GuildModeratorRoles, posted *moderatorsInput, stale bool) (moderatorsPage, error) {
+// back after a refusal with the version postedBackVersion gives it, and the
+// section's last saves, newest first.
+func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, stored store.GuildModeratorRoles, req pageRequest) (moderatorsPage, error) {
 	selected, version := stored.RoleIDs, strconv.FormatInt(stored.Version, 10)
-	if posted != nil {
+	if posted := req.Moderators; posted != nil {
 		selected = posted.RoleIDs
-		if !stale {
-			version = posted.Version
-		}
+		version = postedBackVersion(stored.Version, posted.Version, req.staleFor(formModerators))
 	}
 	entries, err := s.deps.Store.ListModeratorChanges(ctx, changeLogLimit)
 	if err != nil {
@@ -68,8 +65,8 @@ func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, sto
 // A section loaded at a version the set is no longer at is refused first,
 // as errStaleModerators, before the guild read.
 func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by actor) ([]string, error) {
-	s.saveTurn.Lock()
-	defer s.saveTurn.Unlock()
+	s.saveLock.Lock()
+	defer s.saveLock.Unlock()
 	// The stored set is read before validation: it is what an unavailable
 	// role may be kept from, and its version is what the section must have
 	// loaded.
@@ -118,7 +115,7 @@ func acceptedRoles(posted []string, guild guildInfo, stored []string) ([]string,
 	roles := make([]string, 0, len(posted))
 	for _, id := range posted {
 		if !guild.isEligible(id) && !slices.Contains(stored, id) {
-			return nil, &fieldError{fieldModeratorRoles, "One of those roles cannot be a moderator role. Choose again."}
+			return nil, &fieldError{Field: fieldModeratorRoles, Message: "One of those roles cannot be a moderator role. Choose again."}
 		}
 		if !slices.Contains(roles, id) {
 			roles = append(roles, id)

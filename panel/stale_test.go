@@ -292,9 +292,10 @@ func TestSaveWithAMissingOrMalformedVersionIsStale(t *testing.T) {
 	}
 }
 
-// A stale form is refused as stale before its fields are checked: a stale
-// form with an invalid user limit gets 409, where a validation refusal is
-// 422, and nothing is written.
+// A stale form is refused as stale before its fields are checked and
+// before any Discord call: a stale form with an invalid user limit and a
+// changed name gets 409, where a validation refusal is 422, nothing is
+// written, and the channel is not renamed.
 func TestStaleFormWithAnInvalidFieldIsRefusedAsStale(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
@@ -304,11 +305,15 @@ func TestStaleFormWithAnInvalidFieldIsRefusedAsStale(t *testing.T) {
 	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), moved), "/")
 	before := storedHubs(t, w.st)[0]
 	stale.Set("user_limit", "100")
+	stale.Set("channel_name", "Bravo Room")
 
 	res := w.b.postForm(hubPath(t, w.st, "hub-1"), stale)
 
 	if res.StatusCode != http.StatusConflict {
 		t.Errorf("status = %d, want 409", res.StatusCode)
+	}
+	if edits := w.discord.edits(); len(edits) != 0 {
+		t.Errorf("the stale save made Discord edits %+v, want none", edits)
 	}
 	if after := storedHubs(t, w.st)[0]; !sameHubSettings(after, before) {
 		t.Errorf("stored hub = %+v, want it unchanged from %+v", after, before)
@@ -363,6 +368,11 @@ func (s *otherWriterStore) SaveHub(ctx context.Context, hub store.Hub, entry sto
 	return s.Fake.SaveHub(ctx, hub, entry)
 }
 
+func (s *otherWriterStore) RemoveHub(ctx context.Context, id int64, entry store.ChangeLogEntry) error {
+	s.land("RemoveHub")
+	return s.Fake.RemoveHub(ctx, id, entry)
+}
+
 func (s *otherWriterStore) SaveGuildModeratorRoles(ctx context.Context, guildID string, roles store.GuildModeratorRoles, entry store.ChangeLogEntry) error {
 	s.land("SaveGuildModeratorRoles")
 	return s.Fake.SaveGuildModeratorRoles(ctx, guildID, roles, entry)
@@ -390,6 +400,26 @@ func otherSave(t *testing.T, st *otherWriterStore) func() {
 		h.BaseString = "Other Voice"
 		if _, err := st.UpsertHub(context.Background(), h); err != nil {
 			t.Errorf("the other save: %v", err)
+		}
+	}
+}
+
+// otherModeratorsSave is another save of the guild-wide moderator roles
+// landing: the set becomes role-mp.
+func otherModeratorsSave(t *testing.T, st *otherWriterStore) func() {
+	return func() {
+		if err := st.SetGuildModeratorRoles(context.Background(), testGuildID, []string{"role-mp"}); err != nil {
+			t.Errorf("the other save: %v", err)
+		}
+	}
+}
+
+// otherRemove is another process removing the hub on hub-1.
+func otherRemove(t *testing.T, st *otherWriterStore) func() {
+	id := storedHubID(t, st.Fake, "hub-1")
+	return func() {
+		if err := st.DeleteHub(context.Background(), id); err != nil {
+			t.Errorf("the other remove: %v", err)
 		}
 	}
 }
@@ -427,14 +457,8 @@ func TestFormRefusedForAFieldKeepsItsVersionThroughAnotherSave(t *testing.T) {
 			refused: func(t *testing.T, w *testWorld, st *otherWriterStore) *http.Response {
 				return w.b.postForm("/moderators", moderatorsForm(t, st.Fake, "role-gone"))
 			},
-			other: func(t *testing.T, st *otherWriterStore) func() {
-				return func() {
-					if err := st.SetGuildModeratorRoles(context.Background(), testGuildID, []string{"role-mp"}); err != nil {
-						t.Errorf("the other save: %v", err)
-					}
-				}
-			},
-			fix: func(form url.Values) { form["moderator_roles"] = []string{"role-hq"} },
+			other: otherModeratorsSave,
+			fix:   func(form url.Values) { form["moderator_roles"] = []string{"role-hq"} },
 		},
 	}
 	for _, tc := range cases {
@@ -461,8 +485,11 @@ func TestFormRefusedForAFieldKeepsItsVersionThroughAnotherSave(t *testing.T) {
 // another process saving between this save's read and its write. With no
 // Discord change made, that is a stale refusal and nothing is written. An
 // update that already renamed the channel keeps the rename and fails with
-// 5xx, and its one Sentry event names both channel names. A register whose
-// channel another process made a hub gets the "already a hub" refusal.
+// 5xx, and its one Sentry event names both channel names, whether another
+// process saved the hub or removed it. An update of a hub another process
+// removed, with no rename, changed nothing and is 404, and so is a remove
+// of one. A register whose channel another process made a hub gets the
+// "already a hub" refusal.
 func TestSaveWhoseRecordChangesBeforeItsWriteWritesNothing(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -519,15 +546,80 @@ func TestSaveWhoseRecordChangesBeforeItsWriteWritesNothing(t *testing.T) {
 			},
 		},
 		{
-			name:   "a guild-wide save",
-			method: "SaveGuildModeratorRoles",
-			other: func(t *testing.T, st *otherWriterStore) func() {
-				return func() {
-					if err := st.SetGuildModeratorRoles(context.Background(), testGuildID, []string{"role-mp"}); err != nil {
-						t.Errorf("the other save: %v", err)
-					}
+			name:   "an update with a rename whose hub another process removed",
+			method: "SaveHub",
+			other:  otherRemove,
+			post: func(t *testing.T, w *testWorld, st *otherWriterStore) *http.Response {
+				form := updateForm(t, st.Fake)
+				form.Set("channel_name", "Bravo Room")
+				return w.b.postForm(hubPath(t, st.Fake, "hub-1"), form)
+			},
+			check: func(t *testing.T, w *testWorld, st *otherWriterStore, res *http.Response, rec *sentryRecorder) {
+				if !isServerError(res.StatusCode) {
+					t.Errorf("status = %d, want 5xx", res.StatusCode)
+				}
+				if ch, err := w.discord.Channel("hub-1"); err != nil || ch.Name != "Bravo Room" {
+					t.Errorf("hub-1 = %+v, %v; want it renamed to Bravo Room: the rename stays", ch, err)
+				}
+				if hubs := storedHubs(t, st.Fake); len(hubs) != 0 {
+					t.Errorf("stored hubs = %+v, want none: the hub stays removed", hubs)
+				}
+				errs := rec.recorded()
+				if len(errs) != 1 {
+					t.Fatalf("Sentry got %d events, want 1", len(errs))
+				}
+				if msg := errs[0].Error(); !strings.Contains(msg, "Join to create") || !strings.Contains(msg, "Bravo Room") {
+					t.Errorf("the event's error %q does not name both Join to create and Bravo Room", msg)
 				}
 			},
+		},
+		{
+			name:   "an update with the name unchanged whose hub another process removed",
+			method: "SaveHub",
+			other:  otherRemove,
+			post: func(t *testing.T, w *testWorld, st *otherWriterStore) *http.Response {
+				form := updateForm(t, st.Fake)
+				form.Set("user_limit", "5")
+				return w.b.postForm(hubPath(t, st.Fake, "hub-1"), form)
+			},
+			check: func(t *testing.T, w *testWorld, st *otherWriterStore, res *http.Response, rec *sentryRecorder) {
+				if res.StatusCode != http.StatusNotFound {
+					t.Errorf("status = %d, want 404", res.StatusCode)
+				}
+				if edits := w.discord.edits(); len(edits) != 0 {
+					t.Errorf("Discord edits = %+v, want none", edits)
+				}
+				if hubs := storedHubs(t, st.Fake); len(hubs) != 0 {
+					t.Errorf("stored hubs = %+v, want none: the hub stays removed", hubs)
+				}
+				if errs := rec.recorded(); len(errs) != 0 {
+					t.Errorf("Sentry got %d events, want none", len(errs))
+				}
+			},
+		},
+		{
+			name:   "a remove whose hub another process removed",
+			method: "RemoveHub",
+			other:  otherRemove,
+			post: func(t *testing.T, w *testWorld, st *otherWriterStore) *http.Response {
+				return w.b.postForm(hubPath(t, st.Fake, "hub-1")+"/remove", nil)
+			},
+			check: func(t *testing.T, _ *testWorld, st *otherWriterStore, res *http.Response, rec *sentryRecorder) {
+				if res.StatusCode != http.StatusNotFound {
+					t.Errorf("status = %d, want 404", res.StatusCode)
+				}
+				if hubs := storedHubs(t, st.Fake); len(hubs) != 0 {
+					t.Errorf("stored hubs = %+v, want none", hubs)
+				}
+				if errs := rec.recorded(); len(errs) != 0 {
+					t.Errorf("Sentry got %d events, want none", len(errs))
+				}
+			},
+		},
+		{
+			name:   "a guild-wide save",
+			method: "SaveGuildModeratorRoles",
+			other:  otherModeratorsSave,
 			post: func(t *testing.T, w *testWorld, st *otherWriterStore) *http.Response {
 				return w.b.postForm("/moderators", moderatorsForm(t, st.Fake, "role-hq"))
 			},

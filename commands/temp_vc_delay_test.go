@@ -55,21 +55,17 @@ func (c *fakeClock) read() time.Time {
 
 // afterFunc schedules f for d from now. A d of 0 or less is due at once and
 // runs at the next advance, as time.AfterFunc runs it on a goroutine of its
-// own rather than inside the caller. The stop it returns reports whether it
-// kept f from running, as time.Timer.Stop does.
-func (c *fakeClock) afterFunc(d time.Duration, f func()) func() bool {
+// own rather than inside the caller. The stop it returns keeps f from
+// running if it has not run yet.
+func (c *fakeClock) afterFunc(d time.Duration, f func()) func() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	tm := &fakeTimer{at: c.now.Add(d), f: f}
 	c.timers = append(c.timers, tm)
-	return func() bool {
+	return func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		if tm.done {
-			return false
-		}
 		tm.done = true
-		return true
 	}
 }
 
@@ -313,6 +309,28 @@ func TestDeleteDelayRestartSweepStartsAFullWait(t *testing.T) {
 	}
 }
 
+// GUILD_CREATE re-fires on every gateway reconnect. A sweep that finds a
+// channel still empty and already waiting in this process keeps the wait's
+// start, so reconnects never hold an empty channel past its delay (#372
+// Q7): a channel empty since T, swept at T+4 and T+8, goes at T+10.
+func TestDeleteDelayReconnectSweepKeepsTheStartOfARunningWait(t *testing.T) {
+	clock := installFakeClock(t)
+	fake := newFakeTempVCManager()
+	tv := newTestTempVC(t, fake, seedStore(t, delayHub(10)))
+	spawnAndLeave(tv, fake, "user-a", "chan-x")
+
+	for range 2 {
+		clock.advance(4 * time.Minute)
+		fake.deliverGuildCreate(tv, sweepPayload([]string{"chan-x"}, nil))
+		assertNotDeleted(t, fake, "chan-x", "after a reconnect sweep")
+	}
+
+	clock.advance(2*time.Minute - time.Second)
+	assertNotDeleted(t, fake, "chan-x", "a second before 10 minutes empty")
+	clock.advance(time.Second)
+	assertDeleted(t, fake, "chan-x", "10 minutes after it emptied")
+}
+
 // The compensating delete after a failed move-into stays immediate on a hub
 // with a delay: the channel never had anyone in it to empty.
 func TestDeleteDelayLeavesAFailedMoveIntoDeletedAtOnce(t *testing.T) {
@@ -371,8 +389,8 @@ func TestDeleteDelayWaitEndingOnAChannelTheCacheShowsOccupiedKeepsIt(t *testing.
 }
 
 // A wait start logs one INFO line naming the channel, its hub and the delay
-// in minutes, and a join that cancels the wait logs one naming the channel
-// and the member who joined.
+// in minutes, and a join that cancels the wait logs one naming the channel,
+// its hub and the member who joined.
 func TestDeleteDelayLogsAWaitStartAndAJoinThatCancelsIt(t *testing.T) {
 	installFakeClock(t)
 	fake := newFakeTempVCManager()
@@ -390,7 +408,7 @@ func TestDeleteDelayLogsAWaitStartAndAJoinThatCancelsIt(t *testing.T) {
 
 	fake.deliver(tv, voiceEvent("user-b", "chan-x", member("B")))
 
-	cancelled := map[string]string{"channel_id": "chan-x", "user_id": "user-b"}
+	cancelled := map[string]string{"channel_id": "chan-x", "hub_id": hubID, "user_id": "user-b"}
 	if lines := logRecordsWith(t, logs, "INFO", cancelled); len(lines) != 1 {
 		t.Errorf("INFO lines carrying %v = %d, want one for the join that cancelled the wait", cancelled, len(lines))
 	}
@@ -426,5 +444,96 @@ func TestDeleteDelayRestartSweepLeavesAnEmptyWaitingChannelWithNoOwner(t *testin
 	}
 	if n := len(noticesIn(t, fake, "chan-y")); n != 0 {
 		t.Errorf("notices in chan-y = %d, want none: its row named no owner", n)
+	}
+}
+
+// A locked channel that empties keeps its lock through the wait (#372 Q5),
+// and a member on its guest list can get back in: G, inside at the lock,
+// can still join and M still cannot. G's rejoin cancels the wait, which
+// logs its line, and the channel outlives the delay.
+func TestDeleteDelayLockedChannelStaysLockedAndAGuestCanRejoin(t *testing.T) {
+	clock := installFakeClock(t)
+	fake := newFakeTempVCManager()
+	installPermFixture(fake)
+	hub := lockingHub(store.PermissionCategory)
+	hub.DeleteDelayMinutes = 10
+	st := seedStore(t, hub)
+	tv := newTestTempVC(t, fake, st)
+	spawnInto(tv, fake, lockOwner.id, "chan-1", lockOwner.discordMember())
+	enter(tv, fake, permG, "chan-1")
+	lockAs(t, tv, lockOwner)
+	enter(tv, fake, permG, "")
+	enter(tv, fake, lockOwner, "")
+	clock.advance(5 * time.Minute)
+
+	assertJoins(t, fake, "chan-1", "5 minutes into the wait",
+		[]permMember{permG, lockOwner, permMOD}, []permMember{permM})
+	if lock := rowLock(t, st, "chan-1"); !lock.Locked {
+		t.Errorf("row lock = %+v 5 minutes into the wait, want it locked", lock)
+	}
+
+	logs := captureLogs(t)
+	enter(tv, fake, permG, "chan-1")
+	clock.advance(10 * time.Minute)
+
+	cancelled := map[string]string{"channel_id": "chan-1", "hub_id": strconv.FormatInt(storedHubID(t, st), 10), "user_id": permG.id}
+	if lines := logRecordsWith(t, logs, "INFO", cancelled); len(lines) != 1 {
+		t.Errorf("INFO lines carrying %v = %d, want one for G's rejoin cancelling the wait", cancelled, len(lines))
+	}
+	assertNotDeleted(t, fake, "chan-1", "10 minutes after G rejoined")
+}
+
+// The last owner out leaves the channel with no owner, and the first
+// rank-role holder to join during the wait takes over. A handover is
+// final, so a higher rank who joins after them does not.
+func TestDeleteDelayFirstRankHolderToJoinDuringTheWaitBecomesOwner(t *testing.T) {
+	clock := installFakeClock(t)
+	fake := newFakeTempVCManager()
+	st := seedStore(t, delayHub(10))
+	tv := newTestTempVC(t, fake, st)
+	sgt := member("Sgt", testRankSGT)
+	spawnInto(tv, fake, "sgt-1", "chan-x", sgt)
+	fake.deliver(tv, voiceEvent("sgt-1", "", sgt))
+	clock.advance(5 * time.Minute)
+
+	fake.deliver(tv, voiceEvent("pvt-1", "chan-x", member("Pvt", testRankPVT)))
+	fake.deliver(tv, voiceEvent("cpt-1", "chan-x", member("Cpt", testRankCPT)))
+
+	if owner, tracked := tv.Owner("chan-x"); owner != "pvt-1" || !tracked {
+		t.Errorf("Owner(chan-x) = %q, %v, want pvt-1, the first rank holder to join, tracked", owner, tracked)
+	}
+	if row, ok := rowFor(t, st, "chan-x"); !ok || row.OwnerUserID != "pvt-1" {
+		t.Errorf("row = %+v (present %v), want owner pvt-1", row, ok)
+	}
+}
+
+// No path the delete delay adds reaches Sentry (#372 Q12): a wait's start,
+// a join that cancels it, a save that re-times it, the sweep's kept and
+// fresh waits, a wait's end with its delete, and a removed hub's waits
+// going at once.
+func TestDeleteDelayPathsSendNoSentryEvent(t *testing.T) {
+	clock := installFakeClock(t)
+	fake := newFakeTempVCManager()
+	st := seedStore(t, delayHub(10))
+	seedRow(t, st, "chan-s", 2, "")
+	tv := newTestTempVC(t, fake, st)
+	captures := countCaptures(t)
+
+	spawnAndLeave(tv, fake, "user-a", "chan-x")
+	fake.deliver(tv, voiceEvent("user-b", "chan-x", member("B")))
+	fake.deliver(tv, voiceEvent("user-b", "", member("B")))
+	clock.advance(time.Minute)
+	hub := storedTestHub(t, st)
+	hub.DeleteDelayMinutes = 5
+	tv.ApplyHub(hub)
+	fake.deliverGuildCreate(tv, sweepPayload([]string{"chan-x", "chan-s"}, nil))
+	clock.advance(4 * time.Minute)
+	assertDeleted(t, fake, "chan-x", "5 minutes after it emptied")
+	tv.RemoveHub(testTempVCHub)
+	clock.advance(0)
+	assertDeleted(t, fake, "chan-s", "after the hub was removed")
+
+	if *captures != 0 {
+		t.Errorf("captures = %d, want 0", *captures)
 	}
 }

@@ -92,7 +92,7 @@ func New(cfg Config, version string, deps Deps) (*Panel, error) {
 	return &Panel{
 		cfg:      cfg,
 		version:  version,
-		hubs:     &hubService{deps: deps, storeTimeout: storeTimeout, saveTurn: &sync.Mutex{}},
+		hubs:     &hubService{deps: deps, storeTimeout: storeTimeout, saveLock: &sync.Mutex{}},
 		forumURL: forumURL,
 		pages:    pg,
 		oauth: &oauth2.Config{
@@ -479,7 +479,7 @@ func (p *Panel) createHub(w http.ResponseWriter, r *http.Request, sess session) 
 	ctx, hubs := p.saving(r)
 	hub, err := hubs.create(ctx, in, sess.actor())
 	if refusal, ok := asFieldError(err); ok {
-		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, pageRequest{Create: in, Error: refusal, Refused: formCreate})
+		p.renderRefused(w, r, sess, pageRequest{Create: in, Error: refusal, Refused: formCreate})
 		return
 	}
 	if err != nil {
@@ -499,7 +499,7 @@ func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session
 	ctx, hubs := p.saving(r)
 	hub, err := hubs.register(ctx, in, sess.actor())
 	if refusal, ok := asFieldError(err); ok {
-		p.renderHubs(w, r, sess, http.StatusUnprocessableEntity, pageRequest{Register: in, Error: refusal, Refused: formRegister})
+		p.renderRefused(w, r, sess, pageRequest{Register: in, Error: refusal, Refused: formRegister})
 		return
 	}
 	if err != nil {
@@ -520,13 +520,17 @@ func (p *Panel) saving(r *http.Request) (context.Context, *hubService) {
 	return context.WithoutCancel(r.Context()), p.hubs.forSave()
 }
 
-// refusedStatus is the status a refused save answers with: 409 for a stale
-// form, whose save met another save, and 422 for every other refusal.
-func refusedStatus(refusal *fieldError) int {
-	if refusal.Field == refusalStale {
-		return http.StatusConflict
+// renderRefused answers a refused save with the page again, the form as
+// posted and the refusal's note on it. A stale form, whose save met
+// another save, answers 409 and logs one INFO line with the signed-in user
+// and kv, the hub for a hub's form (#373). Every other refusal answers 422.
+func (p *Panel) renderRefused(w http.ResponseWriter, r *http.Request, sess session, req pageRequest, kv ...any) {
+	status := http.StatusUnprocessableEntity
+	if req.Error.stale {
+		status = http.StatusConflict
+		utils.Info("Panel save refused: stale form", append(kv, "username", sess.username, "forum_user_id", sess.userID)...)
 	}
-	return http.StatusUnprocessableEntity
+	p.renderHubs(w, r, sess, status, req)
 }
 
 // hubIDOf reads the hub ID from the route. A value that is not an ID names
@@ -575,10 +579,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 		return
 	}
 	if refusal, ok := asFieldError(err); ok {
-		if refusal.Field == refusalStale {
-			utils.Info("Panel save refused: stale form", "hub_id", id, "username", sess.username, "forum_user_id", sess.userID)
-		}
-		p.renderHubs(w, r, sess, refusedStatus(refusal), pageRequest{HubID: id, Edit: &in, Error: refusal, Refused: formEdit})
+		p.renderRefused(w, r, sess, pageRequest{HubID: id, Edit: &in, Error: refusal, Refused: formEdit}, "hub_id", id)
 		return
 	}
 	if err != nil {
@@ -625,10 +626,7 @@ func (p *Panel) saveModerators(w http.ResponseWriter, r *http.Request, sess sess
 	ctx, hubs := p.saving(r)
 	roles, err := hubs.setModerators(ctx, in, sess.actor())
 	if refusal, ok := asFieldError(err); ok {
-		if refusal.Field == refusalStale {
-			utils.Info("Panel save refused: stale form", "username", sess.username, "forum_user_id", sess.userID)
-		}
-		p.renderHubs(w, r, sess, refusedStatus(refusal), pageRequest{Moderators: &in, Error: refusal, Refused: formModerators})
+		p.renderRefused(w, r, sess, pageRequest{Moderators: &in, Error: refusal, Refused: formModerators})
 		return
 	}
 	if err != nil {
