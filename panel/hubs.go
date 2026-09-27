@@ -96,6 +96,7 @@ type editInput struct {
 	ModeratorRoleIDs []string
 	UserLimit        string
 	Bitrate          string
+	DeleteDelay      string
 	Enabled          bool
 	RenamingAllowed  bool
 	LockingAllowed   bool
@@ -139,6 +140,7 @@ const (
 	fieldModeratorRoles   = "moderator_roles"
 	fieldUserLimit        = "user_limit"
 	fieldBitrate          = "bitrate"
+	fieldDeleteDelay      = "delete_delay_minutes"
 	fieldEnabled          = "enabled"
 	fieldRenamingAllowed  = "renaming_allowed"
 	fieldLockingAllowed   = "locking_allowed"
@@ -171,6 +173,14 @@ const (
 	userLimitMin = 0
 	userLimitMax = 99
 	bitrateMin   = 8000
+)
+
+// Bounds on the delete delay, in whole minutes (#372 Q3). 0 deletes a
+// spawned channel the moment it empties. The ceiling bounds how many empty
+// channels a busy hub holds against Discord's 50 channels per category.
+const (
+	deleteDelayMin = 0
+	deleteDelayMax = 240
 )
 
 // bitrateCeiling is the highest bitrate Discord accepts on a voice channel
@@ -296,6 +306,7 @@ func editInputOf(h store.Hub, channelName string) editInput {
 		ModeratorRoleIDs: h.ModeratorRoleIDs,
 		UserLimit:        strconv.Itoa(h.UserLimit),
 		Bitrate:          strconv.Itoa(h.Bitrate),
+		DeleteDelay:      strconv.Itoa(h.DeleteDelayMinutes),
 		Enabled:          h.Enabled,
 		RenamingAllowed:  h.RenamingAllowed,
 		LockingAllowed:   h.LockingAllowed,
@@ -741,10 +752,11 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 
 // update saves a hub's settings from the edit form: it writes the row with
 // a change log entry of the changed fields and applies it to the runtime, so
-// a disabled hub stops spawning at once and a change to "Renaming allowed"
-// or "Locking allowed" reaches /voice-rename or /voice-lock at once. A
-// refusal is a *fieldError naming the field, and nothing is written;
-// store.ErrNotFound means no hub has the ID.
+// a disabled hub stops spawning at once, a change to "Renaming allowed" or
+// "Locking allowed" reaches /voice-rename or /voice-lock at once, and a
+// changed delete delay reaches the channels already waiting. A refusal is a
+// *fieldError naming the field, and nothing is written; store.ErrNotFound
+// means no hub has the ID.
 //
 // A broken hub is refused before anything else: its channel is gone or has
 // no category, and the page offers Remove alone. A changed hub channel name
@@ -810,8 +822,8 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by a
 // runtime, so a join to its channel spawns nothing more. No Discord call:
 // the hub channel stays, so a removal is undone by registering the channel
 // again. Spawned channels of the hub keep their rows and die when empty,
-// which the runtime does on its own. store.ErrNotFound means no hub has the
-// ID.
+// which the runtime does on its own; those already waiting out the hub's
+// delete delay go at once. store.ErrNotFound means no hub has the ID.
 //
 // The entry references no hub: the row is gone, and the store clears the
 // hub's earlier entries to match, so the whole log of a removed hub lists
@@ -862,6 +874,10 @@ func applyEdit(hub *store.Hub, in editInput, guild guildInfo) error {
 	if hub.Bitrate, ok = intInRange(in.Bitrate, bitrateMin, guild.bitrateMax); !ok {
 		return &fieldError{fieldBitrate,
 			fmt.Sprintf("Enter a bitrate of %d to %d.", bitrateMin, guild.bitrateMax)}
+	}
+	if hub.DeleteDelayMinutes, ok = intInRange(in.DeleteDelay, deleteDelayMin, deleteDelayMax); !ok {
+		return &fieldError{fieldDeleteDelay,
+			fmt.Sprintf("Enter a delete delay of %d to %d minutes. 0 deletes a channel the moment it empties.", deleteDelayMin, deleteDelayMax)}
 	}
 	hub.Enabled = in.Enabled
 	hub.RenamingAllowed = in.RenamingAllowed
