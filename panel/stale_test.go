@@ -404,6 +404,16 @@ func otherSave(t *testing.T, st *otherWriterStore) func() {
 	}
 }
 
+// otherModeratorsSave is another save of the guild-wide moderator roles
+// landing: the set becomes role-mp.
+func otherModeratorsSave(t *testing.T, st *otherWriterStore) func() {
+	return func() {
+		if err := st.SetGuildModeratorRoles(context.Background(), testGuildID, []string{"role-mp"}); err != nil {
+			t.Errorf("the other save: %v", err)
+		}
+	}
+}
+
 // otherRemove is another process removing the hub on hub-1.
 func otherRemove(t *testing.T, st *otherWriterStore) func() {
 	id := storedHubID(t, st.Fake, "hub-1")
@@ -447,14 +457,8 @@ func TestFormRefusedForAFieldKeepsItsVersionThroughAnotherSave(t *testing.T) {
 			refused: func(t *testing.T, w *testWorld, st *otherWriterStore) *http.Response {
 				return w.b.postForm("/moderators", moderatorsForm(t, st.Fake, "role-gone"))
 			},
-			other: func(t *testing.T, st *otherWriterStore) func() {
-				return func() {
-					if err := st.SetGuildModeratorRoles(context.Background(), testGuildID, []string{"role-mp"}); err != nil {
-						t.Errorf("the other save: %v", err)
-					}
-				}
-			},
-			fix: func(form url.Values) { form["moderator_roles"] = []string{"role-hq"} },
+			other: otherModeratorsSave,
+			fix:   func(form url.Values) { form["moderator_roles"] = []string{"role-hq"} },
 		},
 	}
 	for _, tc := range cases {
@@ -615,13 +619,7 @@ func TestSaveWhoseRecordChangesBeforeItsWriteWritesNothing(t *testing.T) {
 		{
 			name:   "a guild-wide save",
 			method: "SaveGuildModeratorRoles",
-			other: func(t *testing.T, st *otherWriterStore) func() {
-				return func() {
-					if err := st.SetGuildModeratorRoles(context.Background(), testGuildID, []string{"role-mp"}); err != nil {
-						t.Errorf("the other save: %v", err)
-					}
-				}
-			},
+			other:  otherModeratorsSave,
 			post: func(t *testing.T, w *testWorld, st *otherWriterStore) *http.Response {
 				return w.b.postForm("/moderators", moderatorsForm(t, st.Fake, "role-hq"))
 			},
