@@ -906,6 +906,45 @@ func TestDeleteDelaySaveStoresItAndReachesTheRuntimeAtOnce(t *testing.T) {
 	}
 }
 
+// The edit form saves the delete delay's bounds: 240, the most, and then 0
+// on a hub that had a delay. The refusals just past them, -1 and 241, are
+// rows of TestUpdateRefusesWithTheFieldNamedAndWritesNothing.
+func TestDeleteDelaySavesItsBounds(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+
+	for _, minutes := range []int{240, 0} {
+		form := updateForm(t, w.st)
+		form.Set("delete_delay_minutes", strconv.Itoa(minutes))
+
+		assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
+
+		if got := storedHubs(t, w.st)[0].DeleteDelayMinutes; got != minutes {
+			t.Errorf("stored delete delay after saving %d = %d", minutes, got)
+		}
+	}
+}
+
+// A hub the panel creates or registers has no delete delay, though neither
+// form shows the field: every new hub starts at 0 (#372 Q1).
+func TestCreateAndRegisterStoreNoDeleteDelay(t *testing.T) {
+	for name, form := range map[string]url.Values{
+		"create":   createForm("cat-1", "Squad Join", "Squad Voice"),
+		"register": registerForm("vc-2", "Squad Voice"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newTestWorld(t)
+			signIn(t, w.forum, w.b)
+
+			assertRedirect(t, w.b.postForm("/hubs", form), "/")
+
+			if hubs := storedHubs(t, w.st); len(hubs) != 1 || hubs[0].DeleteDelayMinutes != 0 {
+				t.Errorf("stored hubs = %+v, want one with a delete delay of 0", hubs)
+			}
+		})
+	}
+}
+
 // storedChangeLog lists the change log entries of a hub, newest first.
 func storedChangeLog(t *testing.T, st store.Store, hubID int64) []store.ChangeLogEntry {
 	t.Helper()
