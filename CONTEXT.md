@@ -279,6 +279,10 @@ in the panel, never in code.
   reference no hub. It records saves only, and every save that takes effect
   has exactly one entry.
   _Avoid_: audit trail, audit log (that is Discord's), history.
+- **Stale form**: A hub's edit form, or the guild-wide moderator section,
+  loaded before another save of the same settings took effect. A save from
+  it is refused. A rename made in Discord does not make a form stale.
+  _Avoid_: conflict, collision, race, outdated form, edit conflict.
 - **Rank ladder**: The rank roles in seniority order, most senior first,
   that the handover rule ranks occupants by.
   _Avoid_: rank list, rank table, seniority list, role ladder.
