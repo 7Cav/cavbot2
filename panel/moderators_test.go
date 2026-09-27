@@ -18,9 +18,15 @@ import (
 // saves the roles that moderate every hub, change-logs the save under no
 // hub, and applies the set to the runtime at once.
 
-// moderatorsForm is the guild-wide section's form as posted.
-func moderatorsForm(roleIDs ...string) url.Values {
-	return url.Values{"moderator_roles": roleIDs}
+// moderatorsForm is the guild-wide section's form as a page loaded now
+// posts it: the roles, and the version the store holds for the set now.
+func moderatorsForm(t *testing.T, st store.Store, roleIDs ...string) url.Values {
+	t.Helper()
+	roles, err := st.GetGuildModeratorRoles(context.Background(), testGuildID)
+	if err != nil {
+		t.Fatalf("GetGuildModeratorRoles: %v", err)
+	}
+	return url.Values{"moderator_roles": roleIDs, "version": {strconv.FormatInt(roles.Version, 10)}}
 }
 
 // storedGuildRoles reads the guild-wide set back through the store.
@@ -30,7 +36,7 @@ func storedGuildRoles(t *testing.T, st store.Store) []string {
 	if err != nil {
 		t.Fatalf("GetGuildModeratorRoles: %v", err)
 	}
-	return roles
+	return roles.RoleIDs
 }
 
 // sameSet reports whether two role lists hold the same IDs, in any order.
@@ -65,7 +71,7 @@ func TestModeratorsSaveWritesTheSetAndAppendsAnEntryUnderNoHub(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 
-	res := w.b.postForm("/moderators", moderatorsForm("role-mp", "role-hq"))
+	res := w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-mp", "role-hq"))
 
 	assertRedirect(t, res, "/")
 	if got := storedGuildRoles(t, w.st); !sameSet(got, []string{"role-hq", "role-mp"}) {
@@ -93,8 +99,8 @@ func TestModeratorsSecondSaveRecordsTheEarlierSetAsBefore(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 
-	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm("role-mp")), "/")
-	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm("role-hq")), "/")
+	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-mp")), "/")
+	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-hq")), "/")
 
 	if got := storedGuildRoles(t, w.st); !sameSet(got, []string{"role-hq"}) {
 		t.Errorf("stored guild roles = %v, want role-hq alone", got)
@@ -139,7 +145,7 @@ func TestHubFormListsTheGuildWideRolesApartFromItsOwn(t *testing.T) {
 	hub.ModeratorRoleIDs = []string{"role-mp"}
 	w := newTestWorld(t, hub)
 	signIn(t, w.forum, w.b)
-	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm("role-hq")), "/")
+	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-hq")), "/")
 	id := storedHubID(t, w.st, "hub-1")
 
 	res := w.b.get("/?hub=" + strconv.FormatInt(id, 10))
@@ -185,7 +191,7 @@ func TestModeratorsSectionShowsItsOwnLastTenEntriesNewestFirst(t *testing.T) {
 		if i%2 == 1 {
 			role = "role-mp"
 		}
-		assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(role)), "/")
+		assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, role)), "/")
 	}
 	// A remove lands under no hub too, newest of all, and must not show here.
 	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1")+"/remove", nil), "/")
@@ -242,7 +248,7 @@ func TestModeratorsSaveReachesTheRuntimeAtOnce(t *testing.T) {
 		t.Fatalf("edits before the save = %+v, want none", edits)
 	}
 
-	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm("role-hq")), "/")
+	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-hq")), "/")
 
 	if _, err := w.runtime.Rename(commands.Invoker{UserID: "user-mod", Roles: []string{"role-hq"}}, "Alpha"); err != nil {
 		t.Fatalf("a rename by a holder of the saved role was refused: %v", err)

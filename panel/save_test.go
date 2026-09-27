@@ -83,7 +83,7 @@ func TestUpdateTheBrowserLeavesDuringTheRenameStillSaves(t *testing.T) {
 	signIn(t, w.forum, w.b)
 	d := &departure{}
 	w.discord.setDuringWrite(d.leave)
-	form := updateForm()
+	form := updateForm(t, w.st)
 	form.Set("channel_name", "Bravo Room")
 	form.Set("base_string", "Bravo Voice")
 	form.Set("user_limit", "5")
@@ -184,14 +184,14 @@ func (s leavingStore) ListSpawnedChannels(ctx context.Context) ([]store.SpawnedC
 	return s.st.ListSpawnedChannels(ctx)
 }
 
-func (s leavingStore) GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error) {
+func (s leavingStore) GetGuildModeratorRoles(ctx context.Context, guildID string) (store.GuildModeratorRoles, error) {
 	s.d.leave()
 	return s.st.GetGuildModeratorRoles(ctx, guildID)
 }
 
-func (s leavingStore) SaveGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string, entry store.ChangeLogEntry) error {
+func (s leavingStore) SaveGuildModeratorRoles(ctx context.Context, guildID string, roles store.GuildModeratorRoles, entry store.ChangeLogEntry) error {
 	s.d.leave()
-	return s.st.SaveGuildModeratorRoles(ctx, guildID, roleIDs, entry)
+	return s.st.SaveGuildModeratorRoles(ctx, guildID, roles, entry)
 }
 
 func (s leavingStore) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]store.ChangeLogEntry, error) {
@@ -212,7 +212,7 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 		hubs []store.Hub
 		// path is the route the save posts to.
 		path func(t *testing.T, st store.Store) string
-		form url.Values
+		form func(t *testing.T, st store.Store) url.Values
 		// checkSaved checks the store holds the save and returns the hub
 		// its entry references, zero for none.
 		checkSaved func(t *testing.T, st store.Store) int64
@@ -221,7 +221,7 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 		{
 			name: "register",
 			path: func(*testing.T, store.Store) string { return "/hubs" },
-			form: registerForm("vc-2", "Squad Voice"),
+			form: fixedForm(registerForm("vc-2", "Squad Voice")),
 			checkSaved: func(t *testing.T, st store.Store) int64 {
 				return storedHubID(t, st, "vc-2")
 			},
@@ -231,6 +231,7 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 			name: "remove",
 			hubs: []store.Hub{testHub()},
 			path: func(t *testing.T, st store.Store) string { return hubPath(t, st, "hub-1") + "/remove" },
+			form: fixedForm(nil),
 			checkSaved: func(t *testing.T, st store.Store) int64 {
 				if hubs := storedHubs(t, st); len(hubs) != 0 {
 					t.Errorf("stored hubs after the remove = %+v, want none", hubs)
@@ -243,7 +244,7 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 			name: "moderators",
 			hubs: []store.Hub{testHub()},
 			path: func(*testing.T, store.Store) string { return "/moderators" },
-			form: moderatorsForm("role-hq"),
+			form: func(t *testing.T, st store.Store) url.Values { return moderatorsForm(t, st, "role-hq") },
 			checkSaved: func(t *testing.T, st store.Store) int64 {
 				if got := storedGuildRoles(t, st); !sameSet(got, []string{"role-hq"}) {
 					t.Errorf("stored guild roles = %v, want role-hq alone", got)
@@ -265,7 +266,7 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 			w := newTestWorldOver(t, leavingStore{st: fake, d: d}, newFakeForum(t))
 			signIn(t, w.forum, w.b)
 
-			res := w.b.postFormAndLeave(tc.path(t, fake), tc.form, d)
+			res := w.b.postFormAndLeave(tc.path(t, fake), tc.form(t, fake), d)
 
 			assertLeft(t, d)
 			assertRedirect(t, res, "/")
@@ -276,6 +277,12 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 			}
 		})
 	}
+}
+
+// fixedForm is a form that is the same whatever the store holds, for a
+// table whose other forms are read off the store.
+func fixedForm(form url.Values) func(*testing.T, store.Store) url.Values {
+	return func(*testing.T, store.Store) url.Values { return form }
 }
 
 // sentryRecorder keeps the original error of every event the panel sends to
@@ -391,7 +398,7 @@ func (refusingStore) RemoveHub(context.Context, int64, store.ChangeLogEntry) err
 	return errStoreRefused
 }
 
-func (refusingStore) SaveGuildModeratorRoles(context.Context, string, []string, store.ChangeLogEntry) error {
+func (refusingStore) SaveGuildModeratorRoles(context.Context, string, store.GuildModeratorRoles, store.ChangeLogEntry) error {
 	return errStoreRefused
 }
 
@@ -402,7 +409,7 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 	cases := []struct {
 		name string
 		path func(t *testing.T, st store.Store) string
-		form url.Values
+		form func(t *testing.T, st store.Store) url.Values
 		// checkRuntime checks the runtime still acts on the settings from
 		// before the save.
 		checkRuntime func(t *testing.T, w *testWorld)
@@ -410,7 +417,7 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 		{
 			name: "create",
 			path: func(*testing.T, store.Store) string { return "/hubs" },
-			form: createForm("cat-1", "Squad Join", "Squad Voice"),
+			form: fixedForm(createForm("cat-1", "Squad Join", "Squad Voice")),
 			checkRuntime: func(t *testing.T, w *testWorld) {
 				w.join("user-a", "spawn-1")
 				if n := w.discord.createCount(); n != 1 {
@@ -421,7 +428,7 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 		{
 			name: "register",
 			path: func(*testing.T, store.Store) string { return "/hubs" },
-			form: registerForm("vc-2", "Squad Voice"),
+			form: fixedForm(registerForm("vc-2", "Squad Voice")),
 			checkRuntime: func(t *testing.T, w *testWorld) {
 				w.join("user-a", "vc-2")
 				if n := w.discord.createCount(); n != 0 {
@@ -432,12 +439,12 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 		{
 			name: "update",
 			path: func(t *testing.T, st store.Store) string { return hubPath(t, st, "hub-1") },
-			form: func() url.Values {
-				form := updateForm()
+			form: func(t *testing.T, st store.Store) url.Values {
+				form := updateForm(t, st)
 				form.Set("base_string", "Bravo Voice")
 				form.Set("user_limit", "5")
 				return form
-			}(),
+			},
 			checkRuntime: func(t *testing.T, w *testWorld) {
 				w.join("user-a", "hub-1")
 				creates := w.discord.creates()
@@ -452,6 +459,7 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 		{
 			name: "remove",
 			path: func(t *testing.T, st store.Store) string { return hubPath(t, st, "hub-1") + "/remove" },
+			form: fixedForm(nil),
 			checkRuntime: func(t *testing.T, w *testWorld) {
 				w.join("user-a", "hub-1")
 				if n := w.discord.createCount(); n != 1 {
@@ -462,7 +470,7 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 		{
 			name: "moderators",
 			path: func(*testing.T, store.Store) string { return "/moderators" },
-			form: moderatorsForm("role-hq"),
+			form: func(t *testing.T, st store.Store) url.Values { return moderatorsForm(t, st, "role-hq") },
 			checkRuntime: func(t *testing.T, w *testWorld) {
 				w.joinAs("user-owner", "hub-1", testRankSGT)
 				w.joinAs("user-owner", "spawn-1", testRankSGT)
@@ -483,7 +491,7 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 			signIn(t, w.forum, w.b)
 			rec := recordSentry(t)
 
-			res := w.b.postForm(tc.path(t, fake), tc.form)
+			res := w.b.postForm(tc.path(t, fake), tc.form(t, fake))
 
 			if !isServerError(res.StatusCode) {
 				t.Errorf("status = %d, want 5xx", res.StatusCode)
@@ -508,7 +516,7 @@ func TestUpdateThatRenamedAndFailsItsWriteKeepsTheRenameAndNamesBothNames(t *tes
 	w := newTestWorldOver(t, refusingStore{fake}, newFakeForum(t))
 	signIn(t, w.forum, w.b)
 	rec := recordSentry(t)
-	form := updateForm()
+	form := updateForm(t, fake)
 	form.Set("channel_name", "Bravo Room")
 
 	res := w.b.postForm(hubPath(t, fake, "hub-1"), form)
