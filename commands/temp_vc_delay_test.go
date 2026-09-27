@@ -395,3 +395,36 @@ func TestDeleteDelayLogsAWaitStartAndAJoinThatCancelsIt(t *testing.T) {
 		t.Errorf("INFO lines carrying %v = %d, want one for the join that cancelled the wait", cancelled, len(lines))
 	}
 }
+
+// At the restart sweep a stored owner who is no longer in the channel
+// counts as having left (#264). An empty channel that the sweep leaves
+// waiting on a hub with a delay therefore has no owner: its row loses the
+// owner and the notice says so, naming nobody. A row that names no owner
+// changes nothing and posts nothing.
+func TestDeleteDelayRestartSweepLeavesAnEmptyWaitingChannelWithNoOwner(t *testing.T) {
+	installFakeClock(t)
+	fake := newFakeTempVCManager()
+	st := seedStore(t, delayHub(10))
+	seedRow(t, st, "chan-x", 1, "sgt-1")
+	seedRow(t, st, "chan-y", 2, "")
+	tv := newTestTempVC(t, fake, st)
+
+	fake.deliverGuildCreate(tv, sweepPayload([]string{"chan-x", "chan-y"}, nil))
+
+	if owner, tracked := tv.Owner("chan-x"); owner != "" || !tracked {
+		t.Errorf("Owner(chan-x) = %q, %v, want no owner, tracked", owner, tracked)
+	}
+	if row, ok := rowFor(t, st, "chan-x"); !ok || row.OwnerUserID != "" {
+		t.Errorf("row = %+v (present %v), want an empty owner", row, ok)
+	}
+	notices := noticesIn(t, fake, "chan-x")
+	if len(notices) != 1 {
+		t.Fatalf("notices in chan-x = %d, want one saying there is no owner", len(notices))
+	}
+	if c := notices[0].data.Content; strings.Contains(c, "sgt-1") {
+		t.Errorf("notice %q names the owner who left, want no user ID", c)
+	}
+	if n := len(noticesIn(t, fake, "chan-y")); n != 0 {
+		t.Errorf("notices in chan-y = %d, want none: its row named no owner", n)
+	}
+}
