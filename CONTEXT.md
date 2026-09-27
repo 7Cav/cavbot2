@@ -270,7 +270,8 @@ in the panel, never in code.
   hub's create, register, update or remove, or the guild-wide moderator
   roles. It begins once the group check passes, runs to its end whether or
   not the browser waits, and takes effect when the store holds its settings.
-  A refused save changes nothing.
+  A refused save changes nothing. A save that fails leaves the store as it
+  was, though a Discord change it already made may stay.
   _Avoid_: submit, submission, write, commit.
 - **Change log**: The panel's record of who changed which setting, when,
   and from what to what. Each hub's form shows the hub's own entries; the
