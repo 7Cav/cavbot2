@@ -13,7 +13,8 @@ import (
 // moment it empties. A join cancels the wait. The delay is read as the hub
 // stands now, so a panel save re-times the waits already running. A delay
 // of 0 deletes a channel the moment it empties. Nothing about a wait is
-// stored: the restart sweep starts every empty channel's wait afresh.
+// stored: after a restart the sweep starts every empty channel's wait
+// afresh, and a sweep on a reconnect keeps the waits this process holds.
 
 // deleteWait is one spawned channel waiting out its hub's delete delay:
 // when it emptied, and the stop of the timer that ends the wait.
@@ -61,6 +62,28 @@ func (t *TempVC) startDeleteWaitLocked(channelID string) (waitStart, bool) {
 	}
 	t.scheduleDeleteLocked(channelID, tempVCNow(), delay)
 	return waitStart{channelID: channelID, hubID: t.channelHub[channelID], delay: delay}, true
+}
+
+// sweepDeleteWaitLocked starts the wait of a recorded channel the restart
+// sweep finds empty, and reports whether it waits: on a hub with no delete
+// delay it does not, and the sweep deletes it. held is the channel's wait
+// from before the sweep, nil for none. A channel that was already waiting
+// in this process, which only a reconnect finds, keeps its wait's start, so
+// reconnects never hold an empty channel past its delay (#372 Q7). Any
+// other channel waits a fresh, full delay counted from the sweep, since
+// nothing records when it emptied; fresh reports that, and line is its log
+// line. Caller holds mu.
+func (t *TempVC) sweepDeleteWaitLocked(channelID string, held *deleteWait) (line waitStart, fresh, waiting bool) {
+	if held == nil {
+		line, waiting = t.startDeleteWaitLocked(channelID)
+		return line, waiting, waiting
+	}
+	delay := t.deleteDelayLocked(channelID)
+	if delay == 0 {
+		return waitStart{}, false, false
+	}
+	t.scheduleDeleteLocked(channelID, held.emptiedAt, delay)
+	return waitStart{}, false, true
 }
 
 // scheduleDeleteLocked times a channel's wait to end once it has been empty

@@ -313,6 +313,28 @@ func TestDeleteDelayRestartSweepStartsAFullWait(t *testing.T) {
 	}
 }
 
+// GUILD_CREATE re-fires on every gateway reconnect. A sweep that finds a
+// channel still empty and already waiting in this process keeps the wait's
+// start, so reconnects never hold an empty channel past its delay (#372
+// Q7): a channel empty since T, swept at T+4 and T+8, goes at T+10.
+func TestDeleteDelayReconnectSweepKeepsTheStartOfARunningWait(t *testing.T) {
+	clock := installFakeClock(t)
+	fake := newFakeTempVCManager()
+	tv := newTestTempVC(t, fake, seedStore(t, delayHub(10)))
+	spawnAndLeave(tv, fake, "user-a", "chan-x")
+
+	for range 2 {
+		clock.advance(4 * time.Minute)
+		fake.deliverGuildCreate(tv, sweepPayload([]string{"chan-x"}, nil))
+		assertNotDeleted(t, fake, "chan-x", "after a reconnect sweep")
+	}
+
+	clock.advance(2*time.Minute - time.Second)
+	assertNotDeleted(t, fake, "chan-x", "a second before 10 minutes empty")
+	clock.advance(time.Second)
+	assertDeleted(t, fake, "chan-x", "10 minutes after it emptied")
+}
+
 // The compensating delete after a failed move-into stays immediate on a hub
 // with a delay: the channel never had anyone in it to empty.
 func TestDeleteDelayLeavesAFailedMoveIntoDeletedAtOnce(t *testing.T) {

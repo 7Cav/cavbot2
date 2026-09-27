@@ -896,20 +896,21 @@ func (t *TempVC) handleChannelDelete(c *discordgo.ChannelDelete) {
 // rebuilds the record from them and from one copied snapshot of the cache
 // taken under the lock. A row whose channel is absent from the snapshot
 // loses its row. A present, empty channel is deleted with its row, or, on a
-// hub with a delete delay, waits a fresh, full delay counted from the sweep,
-// since nothing records when it emptied; the waits held before the sweep
-// end, but a spawn in flight's. A present, occupied or waiting channel is
-// tracked again with its number from the row and its owner restored from
-// the row; an owner absent from the channel counts as having left, and the
-// handover rule elects from the occupants, whose ranks come from the
-// payload's member list, so a waiting channel has no owner. Its lock comes
-// from the row too, unless the record tracked the channel before this
-// sweep, which only a reconnect finds: the record's lock is then the newer
-// and is kept (restoreLockLocked). Everyone inside a locked channel goes on
-// its guest list, since they may have got in while the bot was away. No
-// channel without a row is touched, so a channel a human made is never
-// deleted. GUILD_CREATE re-fires on gateway reconnects, so this also
-// rebuilds tracking after any missed events; a restored owner, lock or
+// hub with a delete delay, waits. After a restart that is a fresh, full
+// delay counted from the sweep, since nothing records when it emptied. On a
+// reconnect a channel already waiting in this process keeps its wait's
+// start, so reconnects never hold it past its delay. A present, occupied or
+// waiting channel is tracked again with its number from the row and its
+// owner restored from the row; an owner absent from the channel counts as
+// having left, and the handover rule elects from the occupants, whose ranks
+// come from the payload's member list, so a waiting channel has no owner.
+// Its lock comes from the row too, unless the record tracked the channel
+// before this sweep, which only a reconnect finds: the record's lock is
+// then the newer and is kept (restoreLockLocked). Everyone inside a locked
+// channel goes on its guest list, since they may have got in while the bot
+// was away. No channel without a row is touched, so a channel a human made
+// is never deleted. GUILD_CREATE re-fires on gateway reconnects, so this
+// also rebuilds tracking after any missed events; a restored owner, lock or
 // guest posts no notice, so a reconnect is silent.
 //
 // A spawn in flight, a hub join whose row write or compensating delete has
@@ -983,9 +984,9 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 		}
 		occupantsOf[channelID][userID] = struct{}{}
 	}
-	// The record as it stood before this rebuild, for the lock rule in the
-	// row loop.
-	wasTracked, heldLocks := t.occupants, t.locks
+	// The record as it stood before this rebuild, for the lock and wait
+	// rules in the row loop.
+	wasTracked, heldLocks, heldWaits := t.occupants, t.locks, t.waits
 	// A spawn in flight is left as the record has it: its tracking committed
 	// before this rebuild, and its row may not have been listed. Everything
 	// else is rebuilt from the rows below.
@@ -999,7 +1000,10 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	}
 
 	var gone, empty []string
-	var waits []waitStart
+	// started holds the log line of each fresh wait, and waiting counts
+	// every channel the sweep leaves waiting, fresh or kept.
+	var started []waitStart
+	waiting := 0
 	var handovers []store.SpawnedChannel
 	// guests holds, per locked channel, the occupants the sweep adds to its
 	// guest list off-lock after the rebuild: anyone who got in while the
@@ -1033,12 +1037,16 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 			guests[row.ChannelID] = in
 		}
 		if len(occ) == 0 {
-			// On a hub with a delete delay the empty channel waits a fresh,
-			// full delay counted from now; nothing records when it emptied.
-			// Its row's owner is not inside, so counts as having left, and
-			// the handover rule leaves the channel with no owner.
-			if started, waiting := t.startDeleteWaitLocked(row.ChannelID); waiting {
-				waits = append(waits, started)
+			// On a hub with a delete delay the empty channel waits: a fresh,
+			// full delay counted from now, or on a reconnect what is left of
+			// the wait it already had (sweepDeleteWaitLocked). Its row's
+			// owner is not inside, so counts as having left, and the
+			// handover rule leaves the channel with no owner.
+			if line, fresh, ok := t.sweepDeleteWaitLocked(row.ChannelID, heldWaits[row.ChannelID]); ok {
+				waiting++
+				if fresh {
+					started = append(started, line)
+				}
 				if handover, changed := t.reconcileOwnerLocked(row.ChannelID); changed {
 					handovers = append(handovers, handover)
 				}
@@ -1062,8 +1070,8 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	for _, id := range empty {
 		t.deleteIfStillEmpty(id, "")
 	}
-	for _, w := range waits {
-		w.log("")
+	for _, line := range started {
+		line.log("")
 	}
 	for _, row := range handovers {
 		t.applyHandover(row)
@@ -1079,7 +1087,7 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	tracked := len(t.occupants)
 	t.mu.Unlock()
 	utils.Info("Temp VC restart sweep complete",
-		"rows", len(rows), "gone", len(gone), "empty", len(empty), "waiting", len(waits),
+		"rows", len(rows), "gone", len(gone), "empty", len(empty), "waiting", waiting,
 		"tracked", tracked, "protected", protected)
 }
 
@@ -1116,8 +1124,8 @@ func (t *TempVC) keepSpawnsInFlightLocked() int {
 			waits[id] = w
 		}
 	}
-	// Every other wait ends here: the rows decide afresh which channels
-	// wait, each from the sweep.
+	// Every other wait's timer stops here. The rows decide which channels
+	// wait, and a channel still empty keeps its wait's start.
 	for id, w := range t.waits {
 		if _, ok := waits[id]; !ok {
 			w.stop()
