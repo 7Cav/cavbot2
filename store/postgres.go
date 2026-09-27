@@ -146,8 +146,9 @@ func queryAll[T any](ctx context.Context, db *sql.DB, scan func(scanner) (T, err
 }
 
 // hubColumns is the select list every hub read shares, in scanHub's order.
-const hubColumns = `id, guild_id, hub_channel_id, base_string, permission_source,
-	moderator_role_ids, user_limit, bitrate, enabled, renaming_allowed, locking_allowed, created_at, updated_at`
+const hubColumns = `id, version, guild_id, hub_channel_id, base_string, permission_source,
+	moderator_role_ids, user_limit, bitrate, delete_delay_minutes, enabled, renaming_allowed, locking_allowed,
+	created_at, updated_at`
 
 // scanHub reads one hub row in hubColumns order.
 func scanHub(row scanner) (Hub, error) {
@@ -155,8 +156,8 @@ func scanHub(row scanner) (Hub, error) {
 		h     Hub
 		roles []byte
 	)
-	err := row.Scan(&h.ID, &h.GuildID, &h.HubChannelID, &h.BaseString, &h.PermissionSource,
-		&roles, &h.UserLimit, &h.Bitrate, &h.Enabled, &h.RenamingAllowed, &h.LockingAllowed, &h.CreatedAt, &h.UpdatedAt)
+	err := row.Scan(&h.ID, &h.Version, &h.GuildID, &h.HubChannelID, &h.BaseString, &h.PermissionSource,
+		&roles, &h.UserLimit, &h.Bitrate, &h.DeleteDelayMinutes, &h.Enabled, &h.RenamingAllowed, &h.LockingAllowed, &h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return Hub{}, err
 	}
@@ -189,47 +190,157 @@ func (p *Postgres) ListHubs(ctx context.Context, guildID string) ([]Hub, error) 
 	return hubs, nil
 }
 
-// UpsertHub implements Store. The row is keyed on hub_channel_id: a conflict
-// updates the settings in place and keeps the row's ID and created_at.
-func (p *Postgres) UpsertHub(ctx context.Context, hub Hub) (Hub, error) {
-	roles := hub.ModeratorRoleIDs
-	if roles == nil {
-		roles = []string{}
-	}
-	rolesJSON, err := json.Marshal(roles)
+// SaveHub implements Store.
+func (p *Postgres) SaveHub(ctx context.Context, hub Hub, entry ChangeLogEntry) (Hub, error) {
+	var stored Hub
+	err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
+		var err error
+		if hub.ID == 0 {
+			stored, err = insertHub(ctx, tx, hub)
+		} else {
+			stored, err = updateHub(ctx, tx, hub)
+		}
+		return stored.ID, err
+	})
 	if err != nil {
-		return Hub{}, fmt.Errorf("encode moderator role IDs: %w", err)
-	}
-	row := p.db.QueryRowContext(ctx, `
-		INSERT INTO hubs (guild_id, hub_channel_id, base_string, permission_source,
-			moderator_role_ids, user_limit, bitrate, enabled, renaming_allowed, locking_allowed)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		ON CONFLICT (hub_channel_id) DO UPDATE SET
-			guild_id = EXCLUDED.guild_id,
-			base_string = EXCLUDED.base_string,
-			permission_source = EXCLUDED.permission_source,
-			moderator_role_ids = EXCLUDED.moderator_role_ids,
-			user_limit = EXCLUDED.user_limit,
-			bitrate = EXCLUDED.bitrate,
-			enabled = EXCLUDED.enabled,
-			renaming_allowed = EXCLUDED.renaming_allowed,
-			locking_allowed = EXCLUDED.locking_allowed,
-			updated_at = now()
-		RETURNING `+hubColumns,
-		hub.GuildID, hub.HubChannelID, hub.BaseString, string(hub.PermissionSource),
-		rolesJSON, hub.UserLimit, hub.Bitrate, hub.Enabled, hub.RenamingAllowed, hub.LockingAllowed)
-	stored, err := scanHub(row)
-	if err != nil {
-		return Hub{}, fmt.Errorf("upsert hub %q: %w", hub.HubChannelID, err)
+		return Hub{}, fmt.Errorf("save hub %q: %w", hub.HubChannelID, err)
 	}
 	return stored, nil
 }
 
-// DeleteHub implements Store. The spawned rows' hub reference clears through
-// the foreign key's ON DELETE SET NULL, so nothing here touches them.
-func (p *Postgres) DeleteHub(ctx context.Context, id int64) error {
-	if _, err := p.db.ExecContext(ctx, `DELETE FROM hubs WHERE id = $1`, id); err != nil {
-		return fmt.Errorf("delete hub %d: %w", id, err)
+// saveWithEntry makes a save's one store write: write stores the settings
+// and returns the hub the entry goes under, zero for none, and the entry is
+// appended under it, both in one transaction. A write that fails appends
+// nothing.
+func (p *Postgres) saveWithEntry(ctx context.Context, entry ChangeLogEntry, write func(tx *sql.Tx) (hubID int64, err error)) error {
+	return p.inTx(ctx, func(tx *sql.Tx) error {
+		hubID, err := write(tx)
+		if err != nil {
+			return err
+		}
+		entry.HubID = hubID
+		return insertChange(ctx, tx, entry)
+	})
+}
+
+// inTx runs fn in one transaction and commits it, or rolls it back when fn
+// fails, so a save's settings and its entry land together or not at all.
+// The rollback's own error is dropped: fn's error is the save's failure, and
+// pgx closes a connection whose rollback fails, which ends the transaction
+// with nothing written.
+func (p *Postgres) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// encodeRoles is a role set as the JSONB columns hold it: never null.
+func encodeRoles(ids []string) ([]byte, error) {
+	if ids == nil {
+		ids = []string{}
+	}
+	raw, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("encode moderator role IDs: %w", err)
+	}
+	return raw, nil
+}
+
+// insertHub writes a new hub row at version 1. A row already on the hub
+// channel stops it, and nothing written is ErrStale: a new hub never writes
+// over one that stands.
+func insertHub(ctx context.Context, tx *sql.Tx, hub Hub) (Hub, error) {
+	rolesJSON, err := encodeRoles(hub.ModeratorRoleIDs)
+	if err != nil {
+		return Hub{}, err
+	}
+	row := tx.QueryRowContext(ctx, `
+		INSERT INTO hubs (guild_id, hub_channel_id, base_string, permission_source,
+			moderator_role_ids, user_limit, bitrate, delete_delay_minutes, enabled, renaming_allowed, locking_allowed,
+			version)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1)
+		ON CONFLICT (hub_channel_id) DO NOTHING
+		RETURNING `+hubColumns,
+		hub.GuildID, hub.HubChannelID, hub.BaseString, string(hub.PermissionSource),
+		rolesJSON, hub.UserLimit, hub.Bitrate, hub.DeleteDelayMinutes, hub.Enabled, hub.RenamingAllowed, hub.LockingAllowed)
+	stored, err := scanHub(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Hub{}, ErrStale
+	}
+	return stored, err
+}
+
+// updateHub writes the settings of the row with the hub's ID, only while
+// the row is at the hub's version, and adds one to it. The row keeps its
+// guild, channel and created_at. No row with the ID is ErrNotFound, and a
+// row at another version is ErrStale; either way it never inserts.
+func updateHub(ctx context.Context, tx *sql.Tx, hub Hub) (Hub, error) {
+	rolesJSON, err := encodeRoles(hub.ModeratorRoleIDs)
+	if err != nil {
+		return Hub{}, err
+	}
+	row := tx.QueryRowContext(ctx, `
+		UPDATE hubs SET
+			base_string = $3,
+			permission_source = $4,
+			moderator_role_ids = $5,
+			user_limit = $6,
+			bitrate = $7,
+			delete_delay_minutes = $8,
+			enabled = $9,
+			renaming_allowed = $10,
+			locking_allowed = $11,
+			version = version + 1,
+			updated_at = now()
+		WHERE id = $1 AND version = $2
+		RETURNING `+hubColumns,
+		hub.ID, hub.Version, hub.BaseString, string(hub.PermissionSource),
+		rolesJSON, hub.UserLimit, hub.Bitrate, hub.DeleteDelayMinutes, hub.Enabled, hub.RenamingAllowed, hub.LockingAllowed)
+	stored, err := scanHub(row)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return stored, err
+	}
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM hubs WHERE id = $1)`, hub.ID).Scan(&exists); err != nil {
+		return Hub{}, err
+	}
+	if !exists {
+		return Hub{}, ErrNotFound
+	}
+	return Hub{}, ErrStale
+}
+
+// RemoveHub implements Store.
+func (p *Postgres) RemoveHub(ctx context.Context, id int64, entry ChangeLogEntry) error {
+	err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
+		return 0, deleteHub(ctx, tx, id)
+	})
+	if err != nil {
+		return fmt.Errorf("remove hub %d: %w", id, err)
+	}
+	return nil
+}
+
+// deleteHub deletes the hub row, and is ErrNotFound when there is none. The
+// spawned rows' and the entries' hub reference clears through the foreign
+// keys' ON DELETE SET NULL, so nothing here touches them.
+func deleteHub(ctx context.Context, tx *sql.Tx, id int64) error {
+	res, err := tx.ExecContext(ctx, `DELETE FROM hubs WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
@@ -323,54 +434,82 @@ func (p *Postgres) ListSpawnedChannels(ctx context.Context) ([]SpawnedChannel, e
 	return out, nil
 }
 
-// GetGuildModeratorRoles implements Store. No row is an empty set, not an
-// error, since a guild whose guild-wide roles were never saved has none.
-func (p *Postgres) GetGuildModeratorRoles(ctx context.Context, guildID string) ([]string, error) {
-	var raw []byte
+// GetGuildModeratorRoles implements Store. No row is an empty set at
+// version 0, not an error, since a guild whose guild-wide roles were never
+// saved has none.
+func (p *Postgres) GetGuildModeratorRoles(ctx context.Context, guildID string) (GuildModeratorRoles, error) {
+	var (
+		raw []byte
+		out GuildModeratorRoles
+	)
 	err := p.db.QueryRowContext(ctx,
-		`SELECT moderator_role_ids FROM guild_settings WHERE guild_id = $1`, guildID).Scan(&raw)
+		`SELECT moderator_role_ids, version FROM guild_settings WHERE guild_id = $1`, guildID).Scan(&raw, &out.Version)
 	if errors.Is(err, sql.ErrNoRows) {
-		return []string{}, nil
+		return GuildModeratorRoles{RoleIDs: []string{}}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get guild moderator roles of guild %q: %w", guildID, err)
+		return GuildModeratorRoles{}, fmt.Errorf("get guild moderator roles of guild %q: %w", guildID, err)
 	}
-	var roles []string
-	if err := json.Unmarshal(raw, &roles); err != nil {
-		return nil, fmt.Errorf("decode guild moderator roles of guild %q: %w", guildID, err)
+	if err := json.Unmarshal(raw, &out.RoleIDs); err != nil {
+		return GuildModeratorRoles{}, fmt.Errorf("decode guild moderator roles of guild %q: %w", guildID, err)
 	}
-	if roles == nil {
-		roles = []string{}
+	if out.RoleIDs == nil {
+		out.RoleIDs = []string{}
 	}
-	return roles, nil
+	return out, nil
 }
 
-// SetGuildModeratorRoles implements Store. The row is keyed on guild_id: a
-// conflict replaces the set in place.
-func (p *Postgres) SetGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string) error {
-	if roleIDs == nil {
-		roleIDs = []string{}
-	}
-	rolesJSON, err := json.Marshal(roleIDs)
+// SaveGuildModeratorRoles implements Store.
+func (p *Postgres) SaveGuildModeratorRoles(ctx context.Context, guildID string, roles GuildModeratorRoles, entry ChangeLogEntry) error {
+	err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
+		return 0, setGuildModeratorRoles(ctx, tx, guildID, roles)
+	})
 	if err != nil {
-		return fmt.Errorf("encode guild moderator roles: %w", err)
-	}
-	_, err = p.db.ExecContext(ctx, `
-		INSERT INTO guild_settings (guild_id, moderator_role_ids)
-		VALUES ($1, $2)
-		ON CONFLICT (guild_id) DO UPDATE SET moderator_role_ids = EXCLUDED.moderator_role_ids`,
-		guildID, rolesJSON)
-	if err != nil {
-		return fmt.Errorf("set guild moderator roles of guild %q: %w", guildID, err)
+		return fmt.Errorf("save guild moderator roles of guild %q: %w", guildID, err)
 	}
 	return nil
 }
 
-// AppendChangeLog implements Store. A zero HubID is stored as NULL, the same
-// as a spawned row's cleared reference. The diff goes in as JSONB, so a
-// caller's bytes that are not a JSON value are refused here.
-func (p *Postgres) AppendChangeLog(ctx context.Context, e ChangeLogEntry) error {
-	_, err := p.db.ExecContext(ctx, `
+// setGuildModeratorRoles writes the guild settings row only while it is at
+// roles.Version: at version 0 it inserts the row at 1, and a row already
+// there stops it; above 0 it replaces the set of the row at that version
+// and adds one to it. Nothing written is ErrStale.
+func setGuildModeratorRoles(ctx context.Context, tx *sql.Tx, guildID string, roles GuildModeratorRoles) error {
+	rolesJSON, err := encodeRoles(roles.RoleIDs)
+	if err != nil {
+		return err
+	}
+	var res sql.Result
+	if roles.Version == 0 {
+		res, err = tx.ExecContext(ctx, `
+			INSERT INTO guild_settings (guild_id, moderator_role_ids, version)
+			VALUES ($1, $2, 1)
+			ON CONFLICT (guild_id) DO NOTHING`,
+			guildID, rolesJSON)
+	} else {
+		res, err = tx.ExecContext(ctx, `
+			UPDATE guild_settings SET moderator_role_ids = $2, version = version + 1
+			WHERE guild_id = $1 AND version = $3`,
+			guildID, rolesJSON, roles.Version)
+	}
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrStale
+	}
+	return nil
+}
+
+// insertChange appends one change log entry. A zero HubID is stored as
+// NULL, the same as a spawned row's cleared reference. The diff goes in as
+// JSONB, so bytes that are not a JSON value are refused here.
+func insertChange(ctx context.Context, tx *sql.Tx, e ChangeLogEntry) error {
+	_, err := tx.ExecContext(ctx, `
 		INSERT INTO change_log (hub_id, forum_user_id, forum_username, action, diff)
 		VALUES ($1, $2, $3, $4, $5)`,
 		sql.NullInt64{Int64: e.HubID, Valid: e.HubID != 0},

@@ -37,7 +37,8 @@ import (
 // guest add that started first.
 
 // errLockingNotAllowed: Lock returns it when the channel's hub has "Locking
-// allowed" off, or its hub row is gone.
+// allowed" off, or its hub row is gone. It comes before any owner refusal
+// (#364), so every invoker in the channel hears it alike.
 var errLockingNotAllowed = errors.New("locking is not allowed on the channel's hub")
 
 // errAlreadyLocked: Lock returns it for a channel that is locked.
@@ -143,27 +144,47 @@ func (t *TempVC) endAccessChange(channelID string) {
 	close(change.done)
 }
 
+// lockingAllowedLocked reports whether a spawned channel's hub has "Locking
+// allowed" on, as the hub is now. A channel whose hub row is gone reads the
+// default, off, as renamingAllowedLocked reads its own (#360 Q6). Caller
+// holds mu.
+func (t *TempVC) lockingAllowedLocked(channelID string) bool {
+	hub, ok := t.hubByIDLocked(t.channelHub[channelID])
+	return ok && hub.LockingAllowed
+}
+
 // Lock locks the spawned channel the invoker sits in, on the invoker's
-// behalf, when they own it or hold one of its hub's moderator roles and the
-// hub has "Locking allowed" on. The edit carries an audit log reason naming
-// the invoker and no retry on rate limit. A refused edit changes nothing.
-// Once Discord accepts it, the lock notice posts (temp_vc_lock_notice.go);
-// a notice that does not post leaves the lock standing and sets
-// NoticeFailed.
+// behalf, when the hub has "Locking allowed" on and they own the channel or
+// hold one of its hub's moderator roles. The edit carries an audit log
+// reason naming the invoker and no retry on rate limit. A refused edit
+// changes nothing. Once Discord accepts it, the lock notice posts
+// (temp_vc_lock_notice.go); a notice that does not post leaves the lock
+// standing and sets NoticeFailed.
 func (t *TempVC) Lock(by Invoker) (lockResult, error) {
 	t.mu.Lock()
 	channelID, err := t.idleChannelLocked(func() (string, error) {
-		return t.authorizedInvokerChannelLocked(by)
+		channelID, err := t.invokerSpawnedChannelLocked(by)
+		if err != nil {
+			return "", err
+		}
+		// The hub's setting comes before authority (#364), as for rename
+		// (#360 Q9): with locking off nobody may lock, so a non-owner hears
+		// that reason and not the name of an owner who is refused too. This
+		// runs again after any wait, so it reads the setting as it is when
+		// the lock decides.
+		if !t.lockingAllowedLocked(channelID) {
+			return "", errLockingNotAllowed
+		}
+		if err := t.authorizeLocked(channelID, by); err != nil {
+			return "", err
+		}
+		return channelID, nil
 	})
 	if err != nil {
 		t.mu.Unlock()
 		return lockResult{}, err
 	}
 	hubID := t.channelHub[channelID]
-	if hub, ok := t.hubByIDLocked(hubID); !ok || !hub.LockingAllowed {
-		t.mu.Unlock()
-		return lockResult{}, errLockingNotAllowed
-	}
 	if _, locked := t.locks[channelID]; locked {
 		t.mu.Unlock()
 		return lockResult{}, errAlreadyLocked

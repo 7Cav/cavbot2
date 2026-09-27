@@ -1,7 +1,6 @@
 package panel
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -12,11 +11,12 @@ import (
 	"github.com/7cav/cavbot2/store"
 )
 
-// The change log (spec #285): every panel save appends one entry saying who
-// saved, when, which action, and a diff of the fields. The diff is a JSON
-// object keyed by form field name, each value {"before": x, "after": y}. A
-// register carries every field with a null before, a remove every field
-// with a null after, an update the changed fields only.
+// The change log (spec #285): every panel save that takes effect has one
+// entry saying who saved, when, which action, and a diff of the fields,
+// written in the same store call as the save's settings (#362). The diff is
+// a JSON object keyed by form field name, each value {"before": x, "after":
+// y}. A register carries every field with a null before, a remove every
+// field with a null after, an update the changed fields only.
 
 // change is one field of a diff.
 type change struct {
@@ -33,7 +33,8 @@ type diff map[string]change
 // update that renamed the channel adds it to its diff, and shownFields is
 // the order the form renders.
 var diffFields = []string{fieldHubChannel, fieldBaseString, fieldPermissionSource,
-	fieldModeratorRoles, fieldUserLimit, fieldBitrate, fieldEnabled, fieldRenamingAllowed, fieldLockingAllowed}
+	fieldModeratorRoles, fieldUserLimit, fieldBitrate, fieldDeleteDelay, fieldEnabled, fieldRenamingAllowed,
+	fieldLockingAllowed}
 
 // shownFields are every field a diff can carry, in the form's order.
 var shownFields = append([]string{fieldChannelName}, diffFields...)
@@ -60,6 +61,7 @@ func fieldValues(h store.Hub) map[string]any {
 		fieldModeratorRoles:   sortedRoles(h.ModeratorRoleIDs),
 		fieldUserLimit:        h.UserLimit,
 		fieldBitrate:          h.Bitrate,
+		fieldDeleteDelay:      h.DeleteDelayMinutes,
 		fieldEnabled:          h.Enabled,
 		fieldRenamingAllowed:  h.RenamingAllowed,
 		fieldLockingAllowed:   h.LockingAllowed,
@@ -88,23 +90,20 @@ func diffHubs(before, after *store.Hub) diff {
 	return d
 }
 
-// appendChange records one save in the change log. hubID is zero for a save
-// about no hub, which a remove is once the row is gone.
-func (s *hubService) appendChange(ctx context.Context, hubID int64, action store.ChangeAction, d diff, by actor) error {
+// changeEntry is a save's change log entry: who saved, which action, and
+// the diff. The store writes it together with the save's settings and sets
+// its hub reference.
+func changeEntry(action store.ChangeAction, d diff, by actor) (store.ChangeLogEntry, error) {
 	raw, err := json.Marshal(d)
 	if err != nil {
-		return fmt.Errorf("encode change log diff: %w", err)
+		return store.ChangeLogEntry{}, fmt.Errorf("encode change log diff: %w", err)
 	}
-	if err := s.deps.Store.AppendChangeLog(ctx, store.ChangeLogEntry{
-		HubID:         hubID,
+	return store.ChangeLogEntry{
 		ForumUserID:   by.userID,
 		ForumUsername: by.username,
 		Action:        action,
 		Diff:          raw,
-	}); err != nil {
-		return fmt.Errorf("append change log: %w", err)
-	}
-	return nil
+	}, nil
 }
 
 // changeLogLimit is how many entries a hub's form shows, newest first.

@@ -35,13 +35,14 @@
 </main>
 {{end}}
 
-{{define "refusal"}}<div class="block-row"><div class="note" data-error="{{.Field}}">{{.Message}}</div></div>{{end}}
+{{define "refusal"}}<div class="block-row"><div class="note" data-error="{{.DataError}}">{{.Message}}</div></div>{{end}}
 
 {{define "moderators"}}
   <section class="moderators" data-section="moderators">
   <form method="post" action="/moderators" class="block">
     <h2 class="block-header">Moderator roles for every hub</h2>
     {{with .Hubs.RefusalFor "moderators"}}{{template "refusal" .}}{{end}}
+    <input type="hidden" name="version" value="{{.Hubs.Moderators.Version}}">
     <div class="block-row">
       <div class="field">
         <span class="field-label">Roles</span>
@@ -161,6 +162,8 @@
   <form method="post" action="/hubs/{{.ID}}" class="block">
     <h2 class="block-header">Edit hub</h2>
     {{with $.Hubs.RefusalFor "edit"}}{{template "refusal" .}}{{end}}
+    <input type="hidden" name="version" value="{{.Form.Version}}">
+    <input type="hidden" name="loaded_channel_name" value="{{.Form.LoadedChannelName}}">
     <div class="block-row">
       <label class="field">
         <span class="field-label">Hub channel name</span>
@@ -214,6 +217,13 @@
         <span class="field-label">Bitrate</span>
         <input type="number" name="bitrate" data-field="bitrate" value="{{.Form.Bitrate}}" min="8000" max="{{.BitrateMax}}" step="1000" required>
         <span class="field-hint">the server's boost tier allows up to {{.BitrateMax}}.</span>
+      </label>
+    </div>
+    <div class="block-row">
+      <label class="field">
+        <span class="field-label">Delete delay</span>
+        <input type="number" name="delete_delay_minutes" data-field="delete_delay_minutes" value="{{.Form.DeleteDelay}}" min="0" max="240" required>
+        <span class="field-hint">How long, in minutes, an empty channel waits before it's deleted.</span>
       </label>
     </div>
     <div class="block-row">

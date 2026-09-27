@@ -170,7 +170,8 @@ in the panel, never in code.
 - **Restart sweep**: The bot's check, when it connects, of every spawned
   channel it holds a stored record of against the guild. A recorded channel
   that is gone loses its record. An empty one is deleted with its record once
-  its hub's delete delay, counted from the sweep, passes with nobody joining.
+  its hub's delete delay passes with nobody joining, counted from when it
+  emptied if the bot saw that happen, and otherwise from the sweep.
   An occupied one is tracked again, its owner restored or elected by the
   handover rule. A channel with no record is never touched. It reads one
   copied snapshot of Discord's current cached guild state when it takes

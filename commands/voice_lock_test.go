@@ -301,6 +301,95 @@ func TestVoiceLockSettingTurnedOffKeepsExistingLocks(t *testing.T) {
 	assertJoins(t, fake, "chan-1", "after a lock with locking off", []permMember{permM}, nil)
 }
 
+// #364: the hub's "Locking allowed" comes before the owner check. M, who
+// neither owns chan-1 nor moderates it, is sent to the owner only where the
+// hub allows locking. With locking off, or with the hub row gone, the owner
+// is refused too, so M's reply names nobody. The success reply names nobody
+// as well, so the channel must also be as it was.
+func TestVoiceLockNonOwnerIsSentToTheOwnerOnlyWhereLockingIsAllowed(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		hub        func(t *testing.T, st *store.Fake, tv *TempVC)
+		namesOwner bool
+	}{
+		{"locking on", func(*testing.T, *store.Fake, *TempVC) {}, true},
+		{"locking off", func(t *testing.T, st *store.Fake, tv *TempVC) {
+			pushHub(t, st, tv, func(h *store.Hub) { h.LockingAllowed = false })
+		}, false},
+		{"hub row gone", func(_ *testing.T, _ *store.Fake, tv *TempVC) { tv.RemoveHub(testTempVCHub) }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, st, tv := newLockScene(t, store.PermissionCategory)
+			enter(tv, fake, permM, "chan-1")
+			tc.hub(t, st, tv)
+			before := sceneOf(t, fake, st, "chan-1")
+
+			reply := lockAs(t, tv, permM)
+
+			if tc.namesOwner {
+				if !strings.Contains(reply, "<@"+lockOwner.id+">") {
+					t.Errorf("reply %q does not name the owner %s", reply, lockOwner.id)
+				}
+				return
+			}
+			if strings.Contains(reply, "<@") {
+				t.Errorf("reply %q mentions someone, want nobody", reply)
+			}
+			assertUnchanged(t, fake, st, "chan-1", "M's refused lock", before)
+		})
+	}
+}
+
+// #364: in a channel nobody owns, a member who moderates nothing fires the
+// no-owner WARN only where the hub allows locking. G holds no rank role, so
+// the chan-1 G spawns has no owner. With locking off G hears what MOD, who
+// passes authority, hears in the same channel, and the WARN stays quiet: it
+// reports a failed Discord gate or rank-role assumption, and here neither
+// failed.
+func TestVoiceLockOwnerlessChannelWarnsOnlyWhereLockingIsAllowed(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		locking bool
+	}{
+		{"locking on", true},
+		{"locking off", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeTempVCManager()
+			installPermFixture(fake)
+			st := seedStore(t, lockingHub(store.PermissionCategory))
+			tv := newTestTempVC(t, fake, st)
+			spawnInto(tv, fake, permG.id, "chan-1", permG.discordMember())
+			enter(tv, fake, permMOD, "chan-1")
+			if owner, tracked := tv.Owner("chan-1"); owner != "" || !tracked {
+				t.Fatalf("Owner(chan-1) = %q, %v; want no owner and tracked", owner, tracked)
+			}
+			var modReply string
+			if !tc.locking {
+				pushHub(t, st, tv, func(h *store.Hub) { h.LockingAllowed = false })
+				modReply = lockAs(t, tv, permMOD)
+			}
+			logs := captureLogs(t)
+
+			reply := lockAs(t, tv, permG)
+
+			warns := logRecordsWith(t, logs, "WARN", map[string]string{"command": voiceLockCommandName, "discord_id": permG.id})
+			if tc.locking {
+				if len(warns) != 1 {
+					t.Errorf("WARN lines for G's lock = %d, want the no-owner WARN", len(warns))
+				}
+				return
+			}
+			if len(warns) != 0 {
+				t.Errorf("WARN lines for G's lock = %+v, want none", warns)
+			}
+			if reply != modReply {
+				t.Errorf("G's reply %q, want what MOD hears in the same channel, %q", reply, modReply)
+			}
+		})
+	}
+}
+
 // #360: "Renaming allowed" off leaves /voice-lock alone. On a hub that
 // allows locking and not renaming, the owner's lock shuts M out.
 func TestVoiceLockWorksOnAHubWithRenamingOff(t *testing.T) {
