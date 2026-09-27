@@ -3,7 +3,6 @@ package panel
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -1286,19 +1285,11 @@ func TestCreateRefusesWithTheFieldNamedAndWritesNothing(t *testing.T) {
 	}
 }
 
-// failingStore is the store fake with every hub write refused: the
-// database gone away between the channel create and the row write.
-type failingStore struct {
-	store.Store
-}
-
-func (failingStore) UpsertHub(context.Context, store.Hub) (store.Hub, error) {
-	return store.Hub{}, errors.New("store: connection refused")
-}
-
+// A create whose store write fails, the database gone away between the
+// channel create and the row write, deletes the channel it made.
 func TestCreateDeletesTheChannelWhenTheRowWriteFails(t *testing.T) {
 	st := store.NewFake()
-	w := newTestWorldOver(t, failingStore{st}, newFakeForum(t))
+	w := newTestWorldOver(t, refusingStore{st}, newFakeForum(t))
 	signIn(t, w.forum, w.b)
 
 	res := w.b.postForm("/hubs", createForm("cat-1", "Squad Join", "Squad Voice"))

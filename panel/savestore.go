@@ -37,16 +37,16 @@ func (b boundedStore) ListHubs(ctx context.Context, guildID string) ([]store.Hub
 	return b.store.ListHubs(ctx, guildID)
 }
 
-func (b boundedStore) UpsertHub(ctx context.Context, hub store.Hub) (store.Hub, error) {
+func (b boundedStore) SaveHub(ctx context.Context, hub store.Hub, entry store.ChangeLogEntry) (store.Hub, error) {
 	ctx, cancel := context.WithTimeout(ctx, b.timeout)
 	defer cancel()
-	return b.store.UpsertHub(ctx, hub)
+	return b.store.SaveHub(ctx, hub, entry)
 }
 
-func (b boundedStore) DeleteHub(ctx context.Context, id int64) error {
+func (b boundedStore) RemoveHub(ctx context.Context, id int64, entry store.ChangeLogEntry) error {
 	ctx, cancel := context.WithTimeout(ctx, b.timeout)
 	defer cancel()
-	return b.store.DeleteHub(ctx, id)
+	return b.store.RemoveHub(ctx, id, entry)
 }
 
 func (b boundedStore) UpsertSpawnedChannel(ctx context.Context, sc store.SpawnedChannel) error {
@@ -79,16 +79,10 @@ func (b boundedStore) GetGuildModeratorRoles(ctx context.Context, guildID string
 	return b.store.GetGuildModeratorRoles(ctx, guildID)
 }
 
-func (b boundedStore) SetGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string) error {
+func (b boundedStore) SaveGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string, entry store.ChangeLogEntry) error {
 	ctx, cancel := context.WithTimeout(ctx, b.timeout)
 	defer cancel()
-	return b.store.SetGuildModeratorRoles(ctx, guildID, roleIDs)
-}
-
-func (b boundedStore) AppendChangeLog(ctx context.Context, entry store.ChangeLogEntry) error {
-	ctx, cancel := context.WithTimeout(ctx, b.timeout)
-	defer cancel()
-	return b.store.AppendChangeLog(ctx, entry)
+	return b.store.SaveGuildModeratorRoles(ctx, guildID, roleIDs, entry)
 }
 
 func (b boundedStore) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]store.ChangeLogEntry, error) {
