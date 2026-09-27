@@ -37,10 +37,13 @@ import (
 // and each handover also posts the ownership notice in the spawned channel's
 // text chat, naming the owner or saying there is none, and pinging nobody.
 //
-// A spawned channel is deleted the moment its last occupant leaves, which
-// ends any lock on it. The restart sweep on GUILD_CREATE reads the rows,
-// restores each channel's owner from its row or elects one by the handover
-// rule, restores its lock, and touches no channel it holds no row for.
+// A spawned channel is deleted the moment its last occupant leaves, or on a
+// hub with a delete delay once it has stayed empty that long
+// (temp_vc_delay.go). The delete ends any lock on it; a wait does not. The
+// restart sweep on GUILD_CREATE reads the rows, restores each channel's
+// owner from its row or elects one by the handover rule, restores its lock,
+// starts a fresh wait for an empty channel on a hub with a delay, and
+// touches no channel it holds no row for.
 //
 // The sweep and the voice handlers run on their own goroutines, and the
 // sweep's list call is made off-lock, so a voice event can be handled
@@ -115,6 +118,14 @@ const tempVCStoreTimeout = 5 * time.Second
 // time.Now call so tests can pin the time a failure is recorded at, the same
 // arrangement as telemetryNow.
 var tempVCNow = time.Now
+
+// tempVCAfterFunc runs f on a goroutine of its own once d has passed, and
+// returns a stop that keeps f from running and reports whether it did, as
+// time.Timer.Stop does. A delete delay's wait is timed through it. A
+// package var beside tempVCNow so tests can run a wait on a fake clock.
+var tempVCAfterFunc = func(d time.Duration, f func()) (stop func() bool) {
+	return time.AfterFunc(d, f).Stop
+}
 
 // SpawnFailureCause says why a hub's last spawn failed. The values are
 // stable codes, worded so the panel can show them as they are or map them to
@@ -659,6 +670,10 @@ type TempVC struct {
 	// settled is the subset of inFlight whose spawn settled while a sweep
 	// was active. That sweep removes them from both sets when it finishes.
 	settled map[string]struct{}
+	// waits holds each spawned channel waiting out its hub's delete delay
+	// (temp_vc_delay.go). Absent when the channel is occupied, or was never
+	// left empty on a hub with a delay.
+	waits map[string]*deleteWait
 }
 
 // NewTempVC builds the runtime state around a manager and a store and loads
@@ -692,6 +707,7 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		guestCaptured:  make(map[int64]struct{}),
 		inFlight:       make(map[string]struct{}),
 		settled:        make(map[string]struct{}),
+		waits:          make(map[string]*deleteWait),
 	}
 	ctx, cancel := t.storeContext()
 	defer cancel()
@@ -714,20 +730,29 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 // settings for the same hub channel. The startup load and the panel's service
 // layer (after its store write succeeds) both come through here, so the
 // runtime never polls the store. Live spawned channels keep their names and
-// numbers: a changed base string names only channels spawned after it.
+// numbers: a changed base string names only channels spawned after it. The
+// hub's channels waiting out its delete delay are timed again against the
+// delay as saved, which may delete some at once, off the caller's goroutine.
 func (t *TempVC) ApplyHub(hub store.Hub) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.hubs[hub.HubChannelID] = hub
+	t.retimeDeleteWaitsLocked(hub.ID)
 }
 
 // RemoveHub forgets a hub, so a join to its channel spawns nothing. Its live
-// spawned channels stay tracked and die when empty, the same as any other.
-// The panel's service layer calls this after the hub row is deleted.
+// spawned channels stay tracked and die when empty, the same as any other:
+// with the hub gone they read a delete delay of 0, so those already waiting
+// out its delay are deleted at once, off the caller's goroutine. The panel's
+// service layer calls this after the hub row is deleted.
 func (t *TempVC) RemoveHub(hubChannelID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	hub, ok := t.hubs[hubChannelID]
 	delete(t.hubs, hubChannelID)
+	if ok {
+		t.retimeDeleteWaitsLocked(hub.ID)
+	}
 }
 
 // ApplyGuildModeratorRoles replaces the guild-wide moderator roles, the set
@@ -754,7 +779,7 @@ func (t *TempVC) LastSpawnFailure(hubID int64) (SpawnFailure, bool) {
 // SpawnedCount reports how many live spawned channels a hub has right now,
 // from the runtime's own tracking. The panel's hub list shows it per hub row
 // ID. A channel whose delete is in flight still counts: it is live until
-// Discord confirms.
+// Discord confirms. So does a channel waiting out its hub's delete delay.
 func (t *TempVC) SpawnedCount(hubID int64) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -870,11 +895,15 @@ func (t *TempVC) handleChannelDelete(c *discordgo.ChannelDelete) {
 // handleGuildCreate runs the restart sweep: it lists the stored rows, then
 // rebuilds the record from them and from one copied snapshot of the cache
 // taken under the lock. A row whose channel is absent from the snapshot
-// loses its row. A present, empty channel is deleted with its row. A
-// present, occupied channel is tracked again with its number from the row
-// and its owner restored from the row; an owner absent from the channel
-// counts as having left, and the handover rule elects from the occupants,
-// whose ranks come from the payload's member list. Its lock comes from the
+// loses its row. A present, empty channel is deleted with its row, or, on a
+// hub with a delete delay, waits a fresh, full delay counted from the sweep,
+// since nothing records when it emptied; the waits held before the sweep
+// end, but a spawn in flight's. An empty channel's owner is restored from
+// its row, and the handover rule runs at the next join. A present, occupied
+// channel is tracked again with its number from the row and its owner
+// restored from the row; an owner absent from the channel counts as having
+// left, and the handover rule elects from the occupants, whose ranks come
+// from the payload's member list. Its lock comes from the
 // row too, unless the record tracked the channel before this sweep, which
 // only a reconnect finds: the record's lock is then the newer and is kept
 // (restoreLockLocked). Everyone inside a locked channel goes on its guest
@@ -971,6 +1000,7 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	}
 
 	var gone, empty []string
+	var waits []waitStart
 	var handovers []store.SpawnedChannel
 	// guests holds, per locked channel, the occupants the sweep adds to its
 	// guest list off-lock after the rebuild: anyone who got in while the
@@ -1004,6 +1034,12 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 			guests[row.ChannelID] = in
 		}
 		if len(occ) == 0 {
+			// On a hub with a delete delay the empty channel waits a fresh,
+			// full delay counted from now; nothing records when it emptied.
+			if started, waiting := t.startDeleteWaitLocked(row.ChannelID); waiting {
+				waits = append(waits, started)
+				continue
+			}
 			empty = append(empty, row.ChannelID)
 			continue
 		}
@@ -1022,6 +1058,9 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	for _, id := range empty {
 		t.deleteIfStillEmpty(id, "")
 	}
+	for _, w := range waits {
+		w.log("")
+	}
 	for _, row := range handovers {
 		t.applyHandover(row)
 	}
@@ -1036,7 +1075,7 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	tracked := len(t.occupants)
 	t.mu.Unlock()
 	utils.Info("Temp VC restart sweep complete",
-		"rows", len(rows), "gone", len(gone), "empty", len(empty),
+		"rows", len(rows), "gone", len(gone), "empty", len(empty), "waiting", len(waits),
 		"tracked", tracked, "protected", protected)
 }
 
@@ -1044,13 +1083,15 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 // ones holding only the spawns in flight, and reports how many it kept. A
 // spawn in flight whose channel is no longer tracked, because its
 // compensating delete went through or a hand delete untracked it, keeps
-// nothing. Caller holds mu.
+// nothing. Every delete delay wait but a kept channel's is stopped. Caller
+// holds mu.
 func (t *TempVC) keepSpawnsInFlightLocked() int {
 	occupants := make(map[string]map[string]struct{})
 	owners := make(map[string]string)
 	channelHub := make(map[string]int64)
 	channelIndex := make(map[string]int)
 	locks := make(map[string]lockRecord)
+	waits := make(map[string]*deleteWait)
 	kept := 0
 	for id := range t.inFlight {
 		occ, tracked := t.occupants[id]
@@ -1067,9 +1108,19 @@ func (t *TempVC) keepSpawnsInFlightLocked() int {
 		if lock, ok := t.locks[id]; ok {
 			locks[id] = lock
 		}
+		if w, ok := t.waits[id]; ok {
+			waits[id] = w
+		}
+	}
+	// Every other wait ends here: the rows decide afresh which channels
+	// wait, each from the sweep.
+	for id, w := range t.waits {
+		if _, ok := waits[id]; !ok {
+			w.stop()
+		}
 	}
 	t.occupants, t.owners, t.channelHub, t.channelIndex = occupants, owners, channelHub, channelIndex
-	t.locks = locks
+	t.locks, t.waits = locks, waits
 	return kept
 }
 
@@ -1149,7 +1200,17 @@ func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 
 	_, leftSpawned := t.occupants[oldChannel]
 	emptied := t.applyLeaveLocked(vs.UserID, oldChannel)
+	// On a hub with a delete delay an emptied channel waits instead of
+	// going now.
+	var started waitStart
+	waiting := false
+	if emptied {
+		started, waiting = t.startDeleteWaitLocked(oldChannel)
+	}
 	joinedSpawned := t.applyJoinLocked(vs.UserID, newChannel)
+	// A join cancels the joined channel's delete delay wait, if it had one.
+	cancelled := joinedSpawned && t.cancelDeleteWaitLocked(newChannel)
+	cancelledHub := t.channelHub[newChannel]
 	// A join into a locked channel puts the member on its guest list.
 	guests := t.joinGuestsLocked(newChannel, vs.UserID)
 	// The handover rule runs on both sides of the move: the owner may have
@@ -1171,13 +1232,21 @@ func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
 	hub, isHub := t.hubs[newChannel]
 	t.mu.Unlock()
 
+	if waiting {
+		started.log(vs.UserID)
+	}
+	if cancelled {
+		utils.Info("Temp VC delete delay cancelled by a join",
+			"channel_id", newChannel, "hub_id", cancelledHub, "user_id", vs.UserID)
+	}
+
 	for _, row := range handovers {
 		t.applyHandover(row)
 	}
 
-	// The vacated channel emptied: delete it now. Off-lock, the delete is a
-	// network call.
-	if emptied {
+	// The vacated channel emptied on a hub with no delete delay: delete it
+	// now. Off-lock, the delete is a network call.
+	if emptied && !waiting {
 		t.deleteIfStillEmpty(oldChannel, vs.UserID)
 	}
 
@@ -1241,11 +1310,16 @@ func (t *TempVC) rankLocked(userID string) int {
 // user ID, and with no such occupant the channel has no owner. The election
 // runs over the recorded occupants a fresh snapshot of the cache confirms
 // are inside: a successor whose own leave handler has not run yet is not
-// handed a channel they already left. An untracked or empty channel changes
-// nothing: an emptied one is about to be deleted. Caller holds mu.
+// handed a channel they already left. An untracked channel changes nothing,
+// and neither does an empty one about to be deleted. An empty channel
+// waiting out its hub's delete delay is not about to go: its owner has left
+// with nobody to take over, so it has no owner. Caller holds mu.
 func (t *TempVC) reconcileOwnerLocked(channelID string) (row store.SpawnedChannel, changed bool) {
 	occ, tracked := t.occupants[channelID]
-	if !tracked || len(occ) == 0 {
+	if !tracked {
+		return row, false
+	}
+	if _, waiting := t.waits[channelID]; len(occ) == 0 && !waiting {
 		return row, false
 	}
 	current, has := t.owners[channelID]
@@ -1385,8 +1459,10 @@ func (t *TempVC) applyHandover(row store.SpawnedChannel) {
 	utils.Info("Temp VC handover", "channel_id", row.ChannelID, "hub_id", row.HubID, "owner_id", row.OwnerUserID)
 }
 
-// untrackLocked forgets a spawned channel. Caller holds mu.
+// untrackLocked forgets a spawned channel, and ends its delete delay wait
+// if it had one. Caller holds mu.
 func (t *TempVC) untrackLocked(channelID string) {
+	t.cancelDeleteWaitLocked(channelID)
 	delete(t.occupants, channelID)
 	delete(t.owners, channelID)
 	delete(t.channelHub, channelID)
@@ -1426,11 +1502,12 @@ func (o deleteOutcome) reason() string {
 	}
 }
 
-// deleteIfStillEmpty deletes a spawned channel that just emptied. It re-checks
-// occupancy under the lock first: the leave that emptied the channel was
-// applied under the lock, but a join can land in the gap before this runs.
-// userID is the member whose leave emptied it, for the log lines; the
-// restart sweep passes none.
+// deleteIfStillEmpty deletes a spawned channel that just emptied, or whose
+// delete delay wait just ended. It re-checks occupancy under the lock first:
+// the leave that emptied the channel was applied under the lock, but a join
+// can land in the gap before this runs. userID is the member whose leave
+// emptied it, for the log lines; the restart sweep and a wait's end pass
+// none.
 func (t *TempVC) deleteIfStillEmpty(channelID, userID string) deleteOutcome {
 	t.mu.Lock()
 	members, tracked := t.occupants[channelID]

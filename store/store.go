@@ -51,7 +51,12 @@ type Hub struct {
 	ModeratorRoleIDs []string
 	UserLimit        int
 	Bitrate          int
-	Enabled          bool
+	// DeleteDelayMinutes is the hub's delete delay (CONTEXT.md): how long, in
+	// whole minutes, a spawned channel must stay empty before the bot deletes
+	// it. 0 deletes it the moment it empties, and a hub stored before the
+	// field existed reads back 0. The panel bounds it at 0 to 240.
+	DeleteDelayMinutes int
+	Enabled            bool
 	// RenamingAllowed is whether /voice-rename works on the hub's spawned
 	// channels. On for every hub stored before the field existed; UpsertHub
 	// writes the caller's value, so a Hub built without it stores it off.

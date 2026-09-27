@@ -217,6 +217,13 @@
       </label>
     </div>
     <div class="block-row">
+      <label class="field">
+        <span class="field-label">Delete delay</span>
+        <input type="number" name="delete_delay_minutes" data-field="delete_delay_minutes" value="{{.Form.DeleteDelay}}" min="0" max="240" required>
+        <span class="field-hint">How long, in minutes, an empty channel waits before it's deleted.</span>
+      </label>
+    </div>
+    <div class="block-row">
       <label class="check"><input type="checkbox" name="enabled" data-field="enabled"{{if .Form.Enabled}} checked{{end}}> Enabled</label>
     </div>
     <div class="block-row">

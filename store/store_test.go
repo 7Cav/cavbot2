@@ -82,9 +82,12 @@ func sampleHub(guildID, hubChannelID string) Hub {
 		ModeratorRoleIDs: []string{"role-mp", "role-hq"},
 		UserLimit:        12,
 		Bitrate:          96000,
-		Enabled:          true,
-		RenamingAllowed:  true,
-		LockingAllowed:   true,
+		// DeleteDelayMinutes is off the default 0, so a write that drops it
+		// reads back wrong.
+		DeleteDelayMinutes: 45,
+		Enabled:            true,
+		RenamingAllowed:    true,
+		LockingAllowed:     true,
 	}
 }
 
@@ -120,6 +123,9 @@ func assertHubSettings(t *testing.T, got, want Hub) {
 	}
 	if got.Bitrate != want.Bitrate {
 		t.Errorf("Bitrate = %d, want %d", got.Bitrate, want.Bitrate)
+	}
+	if got.DeleteDelayMinutes != want.DeleteDelayMinutes {
+		t.Errorf("DeleteDelayMinutes = %d, want %d", got.DeleteDelayMinutes, want.DeleteDelayMinutes)
 	}
 	if got.Enabled != want.Enabled {
 		t.Errorf("Enabled = %v, want %v", got.Enabled, want.Enabled)
@@ -174,6 +180,7 @@ func TestUpsertHubUpdatesInPlace(t *testing.T) {
 		want.ModeratorRoleIDs = nil
 		want.UserLimit = 0
 		want.Bitrate = 64000
+		want.DeleteDelayMinutes = 0
 		want.Enabled = false
 		want.RenamingAllowed = false
 		want.LockingAllowed = false
@@ -550,6 +557,25 @@ func TestRenamingAllowedMigrationLeavesExistingHubsOn(t *testing.T) {
 	}
 	if !hub.RenamingAllowed {
 		t.Error("an older hub reads back with RenamingAllowed off, want on")
+	}
+}
+
+// T7f (#372): a hub written before the delete delay existed comes through
+// its migration with a delay of 0, so an upgrade leaves every hub deleting
+// its channels the moment they empty, as before.
+func TestDeleteDelayMigrationLeavesExistingHubsAtZero(t *testing.T) {
+	// The rename setting's migration is the last one before the delay's.
+	raw := migratedTo(t, 20260926000000)
+	hubID := insertOlderHub(t, raw)
+
+	s := openMigrated(t)
+
+	hub, err := s.GetHub(context.Background(), hubID)
+	if err != nil {
+		t.Fatalf("GetHub: %v", err)
+	}
+	if hub.DeleteDelayMinutes != 0 {
+		t.Errorf("an older hub reads back with DeleteDelayMinutes %d, want 0", hub.DeleteDelayMinutes)
 	}
 }
 
