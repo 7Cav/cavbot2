@@ -147,26 +147,39 @@ func (a actor) String() string {
 	return fmt.Sprintf("%s (forum user %d)", a.username, a.userID)
 }
 
-// fieldError is a validation refusal: which field, and why. The field name
-// is the form field's name and the data-error attribute on the note the
-// page shows, a test contract; the message is not.
+// fieldError is a refused save: the field refused and why, or, with stale
+// set, a stale form (#373), which names no field. The note the page shows
+// carries DataError as its data-error attribute, a test contract; the
+// message is not.
 type fieldError struct {
 	Field   string
 	Message string
+	// stale marks a stale form's refusal, which answers 409 and logs an
+	// INFO line, where every other refusal answers 422.
+	stale bool
 }
 
-func (e *fieldError) Error() string { return e.Field + ": " + e.Message }
+func (e *fieldError) Error() string { return e.DataError() + ": " + e.Message }
+
+// DataError is the data-error value on the refusal's note: the refused
+// field's name, or refusalStale for a stale form.
+func (e *fieldError) DataError() string {
+	if e.stale {
+		return refusalStale
+	}
+	return e.Field
+}
 
 // errAlreadyHub is the refusal a register of a channel a hub already stands
 // on gets.
-var errAlreadyHub = &fieldError{fieldHubChannel, "That channel is already a hub."}
+var errAlreadyHub = &fieldError{Field: fieldHubChannel, Message: "That channel is already a hub."}
 
 // errHubBroken is the refusal an update of a broken hub gets: its channel is
 // gone or has no category, so there is nothing to rename and nothing to
 // spawn under. It carries no message: the handler answers with the Broken
 // hub view, which explains the state and offers Remove alone, and that view
 // renders no refusal note.
-var errHubBroken = &fieldError{fieldHubChannel, ""}
+var errHubBroken = &fieldError{Field: fieldHubChannel}
 
 // Form field names, as posted and as named in a refusal.
 const (
@@ -196,7 +209,7 @@ const refusalStale = "stale"
 // not at the version the form loaded. Nothing is written and no Discord
 // call is made. The handler answers it with 409 and the form as posted,
 // carrying the hub's version now, so a second save goes through.
-var errStaleHub = &fieldError{refusalStale, "Someone saved this hub after you opened this form, so your changes were not saved. " +
+var errStaleHub = &fieldError{stale: true, Message: "Someone saved this hub after you opened this form, so your changes were not saved. " +
 	"Their save is at the top of the change log below. Your values are still in the form. Save again to keep them."}
 
 // formIsCurrent reports whether a form was loaded at the version its
@@ -313,7 +326,7 @@ func (p hubPage) RefusalFor(form string) *fieldError {
 
 // staleFor reports whether the request shows a stale refusal on the form.
 func (r pageRequest) staleFor(form string) bool {
-	return r.Refused == form && r.Error != nil && r.Error.Field == refusalStale
+	return r.Refused == form && r.Error != nil && r.Error.stale
 }
 
 // pageRequest is what a handler asks the page to show beyond the list:
@@ -786,7 +799,7 @@ func (s *hubService) create(ctx context.Context, in createInput, by actor) (stor
 		return store.Hub{}, err
 	}
 	if !sn.guild.hasCategory(in.CategoryID) {
-		return store.Hub{}, &fieldError{fieldCategory, "That category is no longer in the server. Choose another."}
+		return store.Hub{}, &fieldError{Field: fieldCategory, Message: "That category is no longer in the server. Choose another."}
 	}
 
 	ch, err := s.deps.Manager.GuildChannelCreateComplex(s.deps.GuildID, discordgo.GuildChannelCreateData{
@@ -798,7 +811,7 @@ func (s *hubService) create(ctx context.Context, in createInput, by actor) (stor
 	}, "Panel: hub created by "+by.String())
 	if err != nil {
 		utils.Warn("Panel hub channel create refused", "category_id", in.CategoryID, "error", err)
-		return store.Hub{}, &fieldError{fieldCategory, "Discord did not create the channel under that category: " + commands.DiscordErrorDetail(err) + "."}
+		return store.Hub{}, &fieldError{Field: fieldCategory, Message: "Discord did not create the channel under that category: " + commands.DiscordErrorDetail(err) + "."}
 	}
 
 	hub := s.newHub(ch.ID, in.BaseString)
@@ -831,7 +844,7 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 	// The register picker cannot make the browser require a choice the way
 	// the select it replaced did, so an empty post gets its own answer.
 	if in.ChannelID == "" {
-		return store.Hub{}, &fieldError{fieldHubChannel, "Choose a voice channel."}
+		return store.Hub{}, &fieldError{Field: fieldHubChannel, Message: "Choose a voice channel."}
 	}
 	sn, err := s.read(ctx)
 	if err != nil {
@@ -839,13 +852,13 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 	}
 	ch, ok := sn.guild.voiceChannel(in.ChannelID)
 	if !ok {
-		return store.Hub{}, &fieldError{fieldHubChannel, "That channel is no longer a voice channel in the server. Choose another."}
+		return store.Hub{}, &fieldError{Field: fieldHubChannel, Message: "That channel is no longer a voice channel in the server. Choose another."}
 	}
 	if _, taken := sn.hubOn(in.ChannelID); taken {
 		return store.Hub{}, errAlreadyHub
 	}
 	if ch.ParentID == "" {
-		return store.Hub{}, &fieldError{fieldHubChannel, "That channel has no category. Move it into one first."}
+		return store.Hub{}, &fieldError{Field: fieldHubChannel, Message: "That channel has no category. Move it into one first."}
 	}
 
 	hub := s.newHub(in.ChannelID, in.BaseString)
@@ -928,7 +941,7 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by a
 		reason := "Panel: hub channel renamed by " + by.String()
 		if _, err := s.deps.Manager.ChannelEdit(hub.HubChannelID, &discordgo.ChannelEdit{Name: channelName}, reason); err != nil {
 			utils.Warn("Panel hub channel rename refused", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID, "error", err)
-			return store.Hub{}, &fieldError{fieldChannelName, "Discord did not rename the channel: " + commands.DiscordErrorDetail(err) + "."}
+			return store.Hub{}, &fieldError{Field: fieldChannelName, Message: "Discord did not rename the channel: " + commands.DiscordErrorDetail(err) + "."}
 		}
 		d[fieldChannelName] = change{Before: oldName, After: channelName}
 	}
@@ -992,7 +1005,7 @@ func applyEdit(hub *store.Hub, in editInput, guild guildInfo) error {
 	case store.PermissionCategory, store.PermissionHubChannel:
 		hub.PermissionSource = source
 	default:
-		return &fieldError{fieldPermissionSource, "Choose where spawned channels take their permissions from."}
+		return &fieldError{Field: fieldPermissionSource, Message: "Choose where spawned channels take their permissions from."}
 	}
 	// hub still carries the stored set here: what an unavailable role may
 	// be kept from.
@@ -1003,16 +1016,16 @@ func applyEdit(hub *store.Hub, in editInput, guild guildInfo) error {
 	hub.ModeratorRoleIDs = roles
 	var ok bool
 	if hub.UserLimit, ok = intInRange(in.UserLimit, userLimitMin, userLimitMax); !ok {
-		return &fieldError{fieldUserLimit,
-			fmt.Sprintf("Enter a user limit of %d to %d. 0 means no limit.", userLimitMin, userLimitMax)}
+		return &fieldError{Field: fieldUserLimit,
+			Message: fmt.Sprintf("Enter a user limit of %d to %d. 0 means no limit.", userLimitMin, userLimitMax)}
 	}
 	if hub.Bitrate, ok = intInRange(in.Bitrate, bitrateMin, guild.bitrateMax); !ok {
-		return &fieldError{fieldBitrate,
-			fmt.Sprintf("Enter a bitrate of %d to %d.", bitrateMin, guild.bitrateMax)}
+		return &fieldError{Field: fieldBitrate,
+			Message: fmt.Sprintf("Enter a bitrate of %d to %d.", bitrateMin, guild.bitrateMax)}
 	}
 	if hub.DeleteDelayMinutes, ok = intInRange(in.DeleteDelay, deleteDelayMin, deleteDelayMax); !ok {
-		return &fieldError{fieldDeleteDelay,
-			fmt.Sprintf("Enter a delete delay of %d to %d minutes. 0 deletes a channel the moment it empties.", deleteDelayMin, deleteDelayMax)}
+		return &fieldError{Field: fieldDeleteDelay,
+			Message: fmt.Sprintf("Enter a delete delay of %d to %d minutes. 0 deletes a channel the moment it empties.", deleteDelayMin, deleteDelayMax)}
 	}
 	hub.Enabled = in.Enabled
 	hub.RenamingAllowed = in.RenamingAllowed
@@ -1025,8 +1038,8 @@ func applyEdit(hub *store.Hub, in editInput, guild guildInfo) error {
 func validBaseString(raw string) (string, error) {
 	base := strings.TrimSpace(raw)
 	if n := utf8.RuneCountInString(base); n < baseStringMin || n > baseStringMax {
-		return "", &fieldError{fieldBaseString,
-			fmt.Sprintf("Enter a base string of %d to %d characters.", baseStringMin, baseStringMax)}
+		return "", &fieldError{Field: fieldBaseString,
+			Message: fmt.Sprintf("Enter a base string of %d to %d characters.", baseStringMin, baseStringMax)}
 	}
 	return base, nil
 }
@@ -1036,8 +1049,8 @@ func validBaseString(raw string) (string, error) {
 func validChannelName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if n := utf8.RuneCountInString(name); n < channelNameMin || n > channelNameMax {
-		return "", &fieldError{fieldChannelName,
-			fmt.Sprintf("Enter a channel name of %d to %d characters.", channelNameMin, channelNameMax)}
+		return "", &fieldError{Field: fieldChannelName,
+			Message: fmt.Sprintf("Enter a channel name of %d to %d characters.", channelNameMin, channelNameMax)}
 	}
 	return name, nil
 }
@@ -1048,7 +1061,8 @@ func intInRange(raw string, lo, hi int) (int, bool) {
 	return n, err == nil && n >= lo && n <= hi
 }
 
-// asFieldError reports whether an error is a validation refusal.
+// asFieldError reports whether an error is a refused save, a stale form's
+// included.
 func asFieldError(err error) (*fieldError, bool) {
 	var fe *fieldError
 	if errors.As(err, &fe) {
