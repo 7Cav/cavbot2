@@ -87,7 +87,7 @@ func (f *Fake) ListHubs(ctx context.Context, guildID string) ([]Hub, error) {
 // SaveHub implements Store.
 func (f *Fake) SaveHub(ctx context.Context, hub Hub, entry ChangeLogEntry) (Hub, error) {
 	var stored Hub
-	err := f.write(ctx, &entry, func() (int64, error) {
+	err := f.writeAllOrNothing(ctx, &entry, func() (int64, error) {
 		var err error
 		if hub.ID == 0 {
 			stored, err = f.insertHubLocked(hub)
@@ -108,7 +108,7 @@ func (f *Fake) SaveHub(ctx context.Context, hub Hub, entry ChangeLogEntry) (Hub,
 // a save's would.
 func (f *Fake) UpsertHub(ctx context.Context, hub Hub) (Hub, error) {
 	var stored Hub
-	err := f.write(ctx, nil, func() (int64, error) {
+	err := f.writeAllOrNothing(ctx, nil, func() (int64, error) {
 		stored = f.upsertHubLocked(hub)
 		return stored.ID, nil
 	})
@@ -191,7 +191,7 @@ func (f *Fake) DeleteHub(ctx context.Context, id int64) error {
 // rows and its entries, as the foreign keys' ON DELETE SET NULL does. The
 // entry, if any, goes under no hub. ErrNotFound when no row has the ID.
 func (f *Fake) removeHub(ctx context.Context, id int64, entry *ChangeLogEntry) error {
-	return f.write(ctx, entry, func() (int64, error) {
+	return f.writeAllOrNothing(ctx, entry, func() (int64, error) {
 		if _, ok := f.hubs[id]; !ok {
 			return 0, ErrNotFound
 		}
@@ -289,7 +289,7 @@ func (f *Fake) GetGuildModeratorRoles(ctx context.Context, guildID string) (Guil
 // SaveGuildModeratorRoles implements Store. A guild with no set stored is
 // at version 0.
 func (f *Fake) SaveGuildModeratorRoles(ctx context.Context, guildID string, roles GuildModeratorRoles, entry ChangeLogEntry) error {
-	return f.write(ctx, &entry, func() (int64, error) {
+	return f.writeAllOrNothing(ctx, &entry, func() (int64, error) {
 		if f.guildRoles[guildID].Version != roles.Version {
 			return 0, ErrStale
 		}
@@ -302,7 +302,7 @@ func (f *Fake) SaveGuildModeratorRoles(ctx context.Context, guildID string, role
 // writes no entry and checks no version. It replaces the guild's set and
 // adds one to its version, as a save would.
 func (f *Fake) SetGuildModeratorRoles(ctx context.Context, guildID string, roleIDs []string) error {
-	return f.write(ctx, nil, func() (int64, error) {
+	return f.writeAllOrNothing(ctx, nil, func() (int64, error) {
 		f.setGuildRolesLocked(guildID, roleIDs)
 		return 0, nil
 	})
@@ -318,17 +318,18 @@ func (f *Fake) setGuildRolesLocked(guildID string, roleIDs []string) {
 // written, a setup method off the Store interface. The caller's ID and At
 // are ignored.
 func (f *Fake) AppendChangeLog(ctx context.Context, e ChangeLogEntry) error {
-	return f.write(ctx, &e, func() (int64, error) { return e.HubID, nil })
+	return f.writeAllOrNothing(ctx, &e, func() (int64, error) { return e.HubID, nil })
 }
 
-// write makes every write of hub settings, guild-wide moderator roles or a
-// change log entry. It writes nothing when ctx is done or when the entry's
-// diff is not a JSON value, which Postgres's JSONB column refuses too.
-// Otherwise it runs apply under mu and appends the entry, if there is one,
-// under the hub apply returns, zero for none. An apply that fails must
-// have changed nothing, and then no entry is appended: the settings and the
-// entry land together or not at all, as a Postgres transaction's do.
-func (f *Fake) write(ctx context.Context, entry *ChangeLogEntry, apply func() (hubID int64, err error)) error {
+// writeAllOrNothing makes every write of hub settings, guild-wide moderator
+// roles or a change log entry. It writes nothing when ctx is done or when
+// the entry's diff is not a JSON value, which Postgres's JSONB column
+// refuses too. Otherwise it runs apply under mu and appends the entry, if
+// there is one, under the hub apply returns, zero for none. An apply that
+// fails must have changed nothing, and then no entry is appended: the
+// settings and the entry land together or not at all, as a Postgres
+// transaction's do.
+func (f *Fake) writeAllOrNothing(ctx context.Context, entry *ChangeLogEntry, apply func() (hubID int64, err error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

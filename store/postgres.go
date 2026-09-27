@@ -193,23 +193,34 @@ func (p *Postgres) ListHubs(ctx context.Context, guildID string) ([]Hub, error) 
 // SaveHub implements Store.
 func (p *Postgres) SaveHub(ctx context.Context, hub Hub, entry ChangeLogEntry) (Hub, error) {
 	var stored Hub
-	err := p.inTx(ctx, func(tx *sql.Tx) error {
+	err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
 		var err error
 		if hub.ID == 0 {
 			stored, err = insertHub(ctx, tx, hub)
 		} else {
 			stored, err = updateHub(ctx, tx, hub)
 		}
-		if err != nil {
-			return err
-		}
-		entry.HubID = stored.ID
-		return insertChange(ctx, tx, entry)
+		return stored.ID, err
 	})
 	if err != nil {
 		return Hub{}, fmt.Errorf("save hub %q: %w", hub.HubChannelID, err)
 	}
 	return stored, nil
+}
+
+// saveWithEntry makes a save's one store write: write stores the settings
+// and returns the hub the entry goes under, zero for none, and the entry is
+// appended under it, both in one transaction. A write that fails appends
+// nothing.
+func (p *Postgres) saveWithEntry(ctx context.Context, entry ChangeLogEntry, write func(tx *sql.Tx) (hubID int64, err error)) error {
+	return p.inTx(ctx, func(tx *sql.Tx) error {
+		hubID, err := write(tx)
+		if err != nil {
+			return err
+		}
+		entry.HubID = hubID
+		return insertChange(ctx, tx, entry)
+	})
 }
 
 // inTx runs fn in one transaction and commits it, or rolls it back when fn
@@ -307,12 +318,8 @@ func updateHub(ctx context.Context, tx *sql.Tx, hub Hub) (Hub, error) {
 
 // RemoveHub implements Store.
 func (p *Postgres) RemoveHub(ctx context.Context, id int64, entry ChangeLogEntry) error {
-	err := p.inTx(ctx, func(tx *sql.Tx) error {
-		if err := deleteHub(ctx, tx, id); err != nil {
-			return err
-		}
-		entry.HubID = 0
-		return insertChange(ctx, tx, entry)
+	err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
+		return 0, deleteHub(ctx, tx, id)
 	})
 	if err != nil {
 		return fmt.Errorf("remove hub %d: %w", id, err)
@@ -454,12 +461,8 @@ func (p *Postgres) GetGuildModeratorRoles(ctx context.Context, guildID string) (
 
 // SaveGuildModeratorRoles implements Store.
 func (p *Postgres) SaveGuildModeratorRoles(ctx context.Context, guildID string, roles GuildModeratorRoles, entry ChangeLogEntry) error {
-	err := p.inTx(ctx, func(tx *sql.Tx) error {
-		if err := setGuildModeratorRoles(ctx, tx, guildID, roles); err != nil {
-			return err
-		}
-		entry.HubID = 0
-		return insertChange(ctx, tx, entry)
+	err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
+		return 0, setGuildModeratorRoles(ctx, tx, guildID, roles)
 	})
 	if err != nil {
 		return fmt.Errorf("save guild moderator roles of guild %q: %w", guildID, err)
