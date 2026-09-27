@@ -1,10 +1,13 @@
 package panel
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
 	"net/url"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -402,9 +405,35 @@ func (refusingStore) SaveGuildModeratorRoles(context.Context, string, store.Guil
 	return errStoreRefused
 }
 
-// A save whose store write fails answers 500 and reaches Sentry once, and
-// the running bot keeps acting on the settings from before the save: it
-// never learns of a write that did not land (#362).
+// savedState is everything a save can write, read back through the store:
+// the test guild's hubs, its guild-wide moderator roles, and the change log
+// under each hub and under none.
+type savedState struct {
+	Hubs    []store.Hub
+	Roles   store.GuildModeratorRoles
+	Entries map[int64][]store.ChangeLogEntry
+}
+
+// readSavedState reads the store's savedState, hubs in ID order.
+func readSavedState(t *testing.T, st store.Store) savedState {
+	t.Helper()
+	hubs := storedHubs(t, st)
+	slices.SortFunc(hubs, func(a, b store.Hub) int { return cmp.Compare(a.ID, b.ID) })
+	roles, err := st.GetGuildModeratorRoles(context.Background(), testGuildID)
+	if err != nil {
+		t.Fatalf("GetGuildModeratorRoles: %v", err)
+	}
+	state := savedState{Hubs: hubs, Roles: roles, Entries: map[int64][]store.ChangeLogEntry{0: storedChangeLog(t, st, 0)}}
+	for _, h := range hubs {
+		state.Entries[h.ID] = storedChangeLog(t, st, h.ID)
+	}
+	return state
+}
+
+// A save whose store write fails answers 500 and reaches Sentry once. The
+// store and its change log are as they were, and the running bot keeps
+// acting on the settings from before the save: it never learns of a write
+// that did not land (#362).
 func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 	cases := []struct {
 		name string
@@ -490,6 +519,7 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 			w := newTestWorldOver(t, refusingStore{fake}, newFakeForum(t))
 			signIn(t, w.forum, w.b)
 			rec := recordSentry(t)
+			before := readSavedState(t, fake)
 
 			res := w.b.postForm(tc.path(t, fake), tc.form(t, fake))
 
@@ -499,15 +529,18 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 			if errs := rec.recorded(); len(errs) != 1 {
 				t.Errorf("Sentry got %d events, want 1", len(errs))
 			}
+			if after := readSavedState(t, fake); !reflect.DeepEqual(after, before) {
+				t.Errorf("the store after the failed save = %+v, want it as before, %+v", after, before)
+			}
 			tc.checkRuntime(t, w)
 		})
 	}
 }
 
 // An update that renamed the hub channel and then fails its store write
-// leaves the channel renamed (#356), and the one Sentry event's error names
-// both channel names, so the mismatch between Discord and the store can be
-// traced.
+// leaves the channel renamed (#356) and the store and its change log as
+// they were, and the one Sentry event's error names both channel names, so
+// the mismatch between Discord and the store can be traced.
 func TestUpdateThatRenamedAndFailsItsWriteKeepsTheRenameAndNamesBothNames(t *testing.T) {
 	fake := store.NewFake()
 	if _, err := fake.UpsertHub(context.Background(), testHub()); err != nil {
@@ -518,11 +551,15 @@ func TestUpdateThatRenamedAndFailsItsWriteKeepsTheRenameAndNamesBothNames(t *tes
 	rec := recordSentry(t)
 	form := updateForm(t, fake)
 	form.Set("channel_name", "Bravo Room")
+	before := readSavedState(t, fake)
 
 	res := w.b.postForm(hubPath(t, fake, "hub-1"), form)
 
 	if !isServerError(res.StatusCode) {
 		t.Errorf("status = %d, want 5xx", res.StatusCode)
+	}
+	if after := readSavedState(t, fake); !reflect.DeepEqual(after, before) {
+		t.Errorf("the store after the failed save = %+v, want it as before, %+v", after, before)
 	}
 	ch, err := w.discord.Channel("hub-1")
 	if err != nil {

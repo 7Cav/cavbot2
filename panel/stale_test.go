@@ -292,9 +292,10 @@ func TestSaveWithAMissingOrMalformedVersionIsStale(t *testing.T) {
 	}
 }
 
-// A stale form is refused as stale before its fields are checked: a stale
-// form with an invalid user limit gets 409, where a validation refusal is
-// 422, and nothing is written.
+// A stale form is refused as stale before its fields are checked and
+// before any Discord call: a stale form with an invalid user limit and a
+// changed name gets 409, where a validation refusal is 422, nothing is
+// written, and the channel is not renamed.
 func TestStaleFormWithAnInvalidFieldIsRefusedAsStale(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
@@ -304,11 +305,15 @@ func TestStaleFormWithAnInvalidFieldIsRefusedAsStale(t *testing.T) {
 	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), moved), "/")
 	before := storedHubs(t, w.st)[0]
 	stale.Set("user_limit", "100")
+	stale.Set("channel_name", "Bravo Room")
 
 	res := w.b.postForm(hubPath(t, w.st, "hub-1"), stale)
 
 	if res.StatusCode != http.StatusConflict {
 		t.Errorf("status = %d, want 409", res.StatusCode)
+	}
+	if edits := w.discord.edits(); len(edits) != 0 {
+		t.Errorf("the stale save made Discord edits %+v, want none", edits)
 	}
 	if after := storedHubs(t, w.st)[0]; !sameHubSettings(after, before) {
 		t.Errorf("stored hub = %+v, want it unchanged from %+v", after, before)
