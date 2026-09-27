@@ -320,12 +320,22 @@ func (p *Postgres) RemoveHub(ctx context.Context, id int64, entry ChangeLogEntry
 	return nil
 }
 
-// deleteHub deletes the hub row. The spawned rows' and the entries' hub
-// reference clears through the foreign keys' ON DELETE SET NULL, so nothing
-// here touches them.
+// deleteHub deletes the hub row, and is ErrNotFound when there is none. The
+// spawned rows' and the entries' hub reference clears through the foreign
+// keys' ON DELETE SET NULL, so nothing here touches them.
 func deleteHub(ctx context.Context, tx *sql.Tx, id int64) error {
-	_, err := tx.ExecContext(ctx, `DELETE FROM hubs WHERE id = $1`, id)
-	return err
+	res, err := tx.ExecContext(ctx, `DELETE FROM hubs WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // UpsertSpawnedChannel implements Store. The row is keyed on channel_id: a

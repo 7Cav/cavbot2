@@ -189,9 +189,12 @@ func (f *Fake) DeleteHub(ctx context.Context, id int64) error {
 
 // removeHub removes the hub row and clears the hub reference of its spawned
 // rows and its entries, as the foreign keys' ON DELETE SET NULL does. The
-// entry, if any, goes under no hub.
+// entry, if any, goes under no hub. ErrNotFound when no row has the ID.
 func (f *Fake) removeHub(ctx context.Context, id int64, entry *ChangeLogEntry) error {
 	return f.write(ctx, entry, func() (int64, error) {
+		if _, ok := f.hubs[id]; !ok {
+			return 0, ErrNotFound
+		}
 		delete(f.hubs, id)
 		for channelID, sp := range f.spawned {
 			if sp.HubID == id {

@@ -389,8 +389,9 @@ func TestListHubsByGuild(t *testing.T) {
 	})
 }
 
-// T5: a removed hub is gone from GetHub and ListHubs, and removing it again
-// is not an error.
+// T5: a removed hub is gone from GetHub and ListHubs. Removing it again is
+// ErrNotFound and writes nothing, no entry included: the change log has
+// one entry for every save that takes effect.
 func TestRemoveHub(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
@@ -409,8 +410,12 @@ func TestRemoveHub(t *testing.T) {
 		if len(hubs) != 0 {
 			t.Errorf("ListHubs after remove = %v, want none", hubChannelIDs(hubs))
 		}
-		if err := s.RemoveHub(ctx, hubID, removeEntry(2)); err != nil {
-			t.Errorf("second RemoveHub error = %v, want nil", err)
+		before := readState(t, s)
+		if err := s.RemoveHub(ctx, hubID, removeEntry(2)); !errors.Is(err, ErrNotFound) {
+			t.Errorf("second RemoveHub error = %v, want ErrNotFound", err)
+		}
+		if after := readState(t, s); !reflect.DeepEqual(after, before) {
+			t.Errorf("the store after the second remove = %+v, want it as before, %+v", after, before)
 		}
 	})
 }

@@ -363,6 +363,11 @@ func (s *otherWriterStore) SaveHub(ctx context.Context, hub store.Hub, entry sto
 	return s.Fake.SaveHub(ctx, hub, entry)
 }
 
+func (s *otherWriterStore) RemoveHub(ctx context.Context, id int64, entry store.ChangeLogEntry) error {
+	s.land("RemoveHub")
+	return s.Fake.RemoveHub(ctx, id, entry)
+}
+
 func (s *otherWriterStore) SaveGuildModeratorRoles(ctx context.Context, guildID string, roles store.GuildModeratorRoles, entry store.ChangeLogEntry) error {
 	s.land("SaveGuildModeratorRoles")
 	return s.Fake.SaveGuildModeratorRoles(ctx, guildID, roles, entry)
@@ -473,8 +478,9 @@ func TestFormRefusedForAFieldKeepsItsVersionThroughAnotherSave(t *testing.T) {
 // update that already renamed the channel keeps the rename and fails with
 // 5xx, and its one Sentry event names both channel names, whether another
 // process saved the hub or removed it. An update of a hub another process
-// removed, with no rename, changed nothing and is 404. A register whose
-// channel another process made a hub gets the "already a hub" refusal.
+// removed, with no rename, changed nothing and is 404, and so is a remove
+// of one. A register whose channel another process made a hub gets the
+// "already a hub" refusal.
 func TestSaveWhoseRecordChangesBeforeItsWriteWritesNothing(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -576,6 +582,25 @@ func TestSaveWhoseRecordChangesBeforeItsWriteWritesNothing(t *testing.T) {
 				}
 				if hubs := storedHubs(t, st.Fake); len(hubs) != 0 {
 					t.Errorf("stored hubs = %+v, want none: the hub stays removed", hubs)
+				}
+				if errs := rec.recorded(); len(errs) != 0 {
+					t.Errorf("Sentry got %d events, want none", len(errs))
+				}
+			},
+		},
+		{
+			name:   "a remove whose hub another process removed",
+			method: "RemoveHub",
+			other:  otherRemove,
+			post: func(t *testing.T, w *testWorld, st *otherWriterStore) *http.Response {
+				return w.b.postForm(hubPath(t, st.Fake, "hub-1")+"/remove", nil)
+			},
+			check: func(t *testing.T, _ *testWorld, st *otherWriterStore, res *http.Response, rec *sentryRecorder) {
+				if res.StatusCode != http.StatusNotFound {
+					t.Errorf("status = %d, want 404", res.StatusCode)
+				}
+				if hubs := storedHubs(t, st.Fake); len(hubs) != 0 {
+					t.Errorf("stored hubs = %+v, want none", hubs)
 				}
 				if errs := rec.recorded(); len(errs) != 0 {
 					t.Errorf("Sentry got %d events, want none", len(errs))

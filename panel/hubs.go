@@ -954,7 +954,9 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by a
 // the hub channel stays, so a removal is undone by registering the channel
 // again. Spawned channels of the hub keep their rows and die when empty,
 // which the runtime does on its own; those already waiting out the hub's
-// delete delay go at once. store.ErrNotFound means no hub has the ID.
+// delete delay go at once. store.ErrNotFound means no hub has the ID, at
+// the read or, when another process removed it in between, at the write;
+// either way nothing is written.
 //
 // The entry references no hub: the row is gone, and the store clears the
 // hub's earlier entries to match, so the whole log of a removed hub lists
