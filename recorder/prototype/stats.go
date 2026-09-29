@@ -156,7 +156,11 @@ func (s *stats) received(id snowflake.ID, p *voice.Packet, now time.Time) {
 	u := s.user(id)
 	u.frames++
 	u.lastAt = now
-	s.lastAudio = now
+	// Frames from an SSRC with no user yet are the handful a client sends on
+	// joining. Only a known speaker's frames count as audio for -stop-after-silence.
+	if id != 0 {
+		s.lastAudio = now
+	}
 	seq, ok := s.ssrcs[p.SSRC]
 	if !ok {
 		s.ssrcs[p.SSRC] = &ssrcSeq{last: p.Sequence, ts: p.Timestamp}

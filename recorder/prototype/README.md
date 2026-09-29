@@ -51,8 +51,10 @@ This runs without anyone talking. It needs two Discord accounts in the test guil
 Launch A's Chrome, log in, and join the channel:
 
 ```bash
-open -na "Google Chrome" --args --user-data-dir="$HOME/.cache/cavbot2-speaker-chrome" --use-fake-device-for-media-stream --use-fake-ui-for-media-stream --use-file-for-fake-audio-capture="$PWD/out/speaker-loop.wav" https://discord.com/app
+open -na "Google Chrome" --args --user-data-dir="$HOME/.cache/cavbot2-speaker-chrome" --use-fake-device-for-media-stream --use-fake-ui-for-media-stream --disable-features=AudioServiceSandbox --use-file-for-fake-audio-capture="$PWD/out/speaker-loop.wav" https://discord.com/app
 ```
+
+`--disable-features=AudioServiceSandbox` is required on macOS. Chrome's audio process is sandboxed and cannot open the file. The fake mic then plays silence, and Discord shows "no input detected". The flag unsandboxes only the audio process. `--no-sandbox`, which Chrome's error log suggests, would turn off the sandbox for the whole browser.
 
 In A's Voice & Video settings, turn off noise suppression, echo cancellation and automatic gain control. Chrome's own docs for the flag warn that audio processing distorts a played-back file. Then turn off automatic input sensitivity and drag the threshold near the left, so the noise under the counting keeps the microphone open.
 
@@ -102,8 +104,36 @@ Other findings:
 
 **Prototype bug, fixed after run 1.** A rejoin brings a new SSRC with a new random RTP clock, and the track writer measured the gap against the old one. It inserted two one-hour silences and dropped the last segment, 360 frames, as "late". The frames themselves decrypted fine. The writer now places a new SSRC by wall clock, and prefers the wall clock whenever RTP timestamps disagree with it by more than 2 s.
 
-### Still to run
+### Runs 2 and 3: 2026-09-29, unattended test
 
-1. Two people in the channel, with a third joining and leaving while one of them talks. This exercises commits.
-2. `-keepalive 0`, with the bot left 20 minutes or more before someone talks.
-3. A silence of a minute or more by someone who stays connected, to check the drift column on a single SSRC.
+Account A (`xtn`) was the speaker, in the Discord web client through Chrome's fake microphone. Account B (`SyniRon`, desktop app) joined and left five times while A counted. The recorder ran twice in a row: with the keepalive (28 minutes), then without it (26 minutes).
+
+**Question 2, commits: yes.** B's five joins and five leaves made ten op 29 commits (transitions 1 to 10) while A was talking. dave-go processed every one, reaching epoch 11, with 0 commits or welcomes failed and 0 DAVE decrypt failures on A's stream. The only failures were on frames from B's new SSRC that arrived before op 5 named B: 2 frames in the whole run.
+
+A's lost frames, taken from the 30-second snapshots:
+
+| Window | What was happening | A's frames lost |
+|---|---|---|
+| 01:09 to 03:30 | A joins, then B joins and leaves five times | 16 of about 7,000 |
+| 03:30 to 09:00 | steady counting, nobody joining or leaving | 2 of about 16,500 |
+| the minute around each end of the long silence | counting stops, then restarts | 5 to 8 each time |
+
+A commit costs one or two frames, 20 to 40 ms of audio, and never a decrypt failure. Frames arrived at exactly 50 per second while A counted, so Discord transmitted continuously.
+
+**Question 3, long silence: yes, keepalive or not.** With the keepalive, A's audio came back after 17 m 38 s of silence. Without it, after 17 m 58 s in which the bot sent nothing at all, it came back just the same: 23,896 frames, 0 DAVE failures, 0.05% lost. The 13 to 15 minute cut-off Glyphoxa reported did not happen on this network. The keepalive costs one 8-byte packet every 5 s, so keep it anyway: production runs on a different network, and NAT timeouts vary.
+
+**Alignment: yes.** Each of A's tracks is exactly as long as its run (1,690.5 s and 1,558.6 s), and drift at the end was -0.05 s and -0.01 s. That includes 18 minutes of silence on a single SSRC.
+
+**Joining a call in progress: yes.** Run 3 joined while A was counting and opened A's track 0.7 s later.
+
+### Verdict
+
+discordgo for the gateway, plus disgo's voice package from master, plus dave-go, records DAVE voice per speaker in cavbot2 without leaving Go. What the real recorder must handle, all seen in these runs:
+
+- **disgo master, not a release.** v0.19.6 lacks the #593 padding fix. Pin a master pseudo-version until disgo cuts a release.
+- **Replace disgo's default receiver.** It busy-spins while DAVE is not ready, stops for good when the UDP socket closes on a voice reconnect, and never reads in a transport-only session.
+- **Place tracks by wall clock whenever the SSRC changes.** A rejoin gets a new SSRC with a random RTP base. That was the run 1 bug.
+- **Frames that arrive before op 5 have no user.** Buffer them by SSRC and assign them when op 5 arrives, or a speaker's first words after joining are lost.
+- **Keep the keepalive.** It wasn't needed here, but it is cheap insurance.
+
+Not covered: several people talking at once, a voice server reconnect, and a real Discord desktop client as the speaker. The speaker here was the web client. The desktop client was only ever the joining-and-leaving account.
