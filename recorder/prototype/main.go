@@ -33,6 +33,7 @@ func main() {
 	keepalive := flag.Duration("keepalive", 5*time.Second, "UDP keepalive interval; 0 turns it off")
 	statusEvery := flag.Duration("status", 10*time.Second, "how often to print the state table")
 	duration := flag.Duration("duration", 0, "stop after this long; 0 runs until Ctrl-C")
+	stopAfterSilence := flag.Duration("stop-after-silence", 0, "stop 60s after audio resumes following a silence at least this long; 0 turns it off")
 	prime := flag.Bool("prime", false, "send five silence frames after joining, in case Discord withholds audio from a bot that never sent any")
 	debug := flag.Bool("debug", false, "log disgo and dave-go at debug level")
 	flag.Parse()
@@ -164,6 +165,9 @@ func main() {
 
 	ticker := time.NewTicker(*statusEvery)
 	defer ticker.Stop()
+	second := time.NewTicker(time.Second)
+	defer second.Stop()
+	var silenceReached, resumedAt time.Time
 loop:
 	for {
 		select {
@@ -175,6 +179,26 @@ loop:
 		case <-ticker.C:
 			rec.flush()
 			st.printStatus(os.Stdout)
+		case <-second.C:
+			if *stopAfterSilence == 0 {
+				continue
+			}
+			last := st.lastAudioAt()
+			switch {
+			case last.IsZero():
+			case silenceReached.IsZero():
+				if time.Since(last) >= *stopAfterSilence {
+					silenceReached = time.Now()
+					st.printf("no audio for %s; stopping 60s after it resumes", *stopAfterSilence)
+				}
+			case resumedAt.IsZero():
+				if last.After(silenceReached) {
+					resumedAt = last
+					st.printf("audio resumed after %s of silence", last.Sub(silenceReached).Round(time.Second)+*stopAfterSilence)
+				}
+			case time.Since(resumedAt) >= time.Minute:
+				break loop
+			}
 		}
 	}
 

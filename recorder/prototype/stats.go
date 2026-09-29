@@ -177,6 +177,12 @@ func (s *stats) received(id snowflake.ID, p *voice.Packet, now time.Time) {
 	seq.last, seq.ts = p.Sequence, p.Timestamp
 }
 
+func (s *stats) lastAudioAt() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastAudio
+}
+
 func (s *stats) late(id snowflake.ID) {
 	s.mu.Lock()
 	s.user(id).late++

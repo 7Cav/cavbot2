@@ -41,6 +41,23 @@ Flags worth knowing:
 
 Don't point `-channel` at a "Join to create" hub. The running bot would spawn a temporary channel.
 
+## Unattended test
+
+This runs without anyone talking. It needs two Discord accounts in the test guild.
+
+- **Account A is the speaker.** A separate Chrome window uses `out/speaker-loop.wav` as its microphone, and Chrome loops it. The file is 8 minutes of counting out loud over faint pink noise, so Discord transmits without a break, then 18 minutes of digital silence, so Discord sends nothing. Build it with `./speaker-wav.sh` (macOS).
+- **Account B makes the joins and leaves.** Join muted, stay about 20 seconds, leave, wait about 10 seconds, repeat, all while A is counting. Every join and leave makes the recorder process an MLS commit while A talks.
+
+Launch A's Chrome, log in, and join the channel:
+
+```bash
+open -na "Google Chrome" --args --user-data-dir="$HOME/.cache/cavbot2-speaker-chrome" --use-fake-device-for-media-stream --use-fake-ui-for-media-stream --use-file-for-fake-audio-capture="$PWD/out/speaker-loop.wav" https://discord.com/app
+```
+
+In A's Voice & Video settings, turn off noise suppression, echo cancellation and automatic gain control. Chrome's own docs for the flag warn that audio processing distorts a played-back file. Then turn off automatic input sensitivity and drag the threshold near the left, so the noise under the counting keeps the microphone open.
+
+Run the recorder with `-stop-after-silence 15m` and it stops a minute after the audio returns from the silence. Run it once with the keepalive and once with `-keepalive 0`. The second run joins while A is counting, which also tests the bot joining a call in progress.
+
 ## Reading the output
 
 Events print as they happen: who is in the call, which SSRC belongs to whom, and every DAVE step (op 21 to 30). A table prints every `-status`:
