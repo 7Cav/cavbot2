@@ -302,6 +302,9 @@ in the panel, never in code.
 - **Group check**: The panel's test that the signed-in forum user holds an
   allowlisted forum group, primary or secondary. Runs on every request.
   _Avoid_: allowlist check, permission check, authorisation, role check.
+- **Panel admin**: A signed-in forum user who passes the group check.
+  _Avoid_: admin (bare), staff, allowlisted user, moderator (a spawned
+  channel's).
 - **Block**: One bordered unit of a panel page, with a gold header rule. The
   unit a page's layout rules bound.
   _Avoid_: card and section (for a page unit; the helpline card is a
@@ -315,6 +318,52 @@ in the panel, never in code.
   eligible roles not yet selected. The register picker's channel search
   offers the voice channels that are not hubs.
   _Avoid_: dropdown, popover, menu, combobox.
+
+## Voice recording
+
+Designed in #10, not built yet. The bot replaces Craig. A member starts a
+recording of the voice channel they are in, a recorder joins it, and the bot
+keeps what each speaker said as a separate track.
+
+- **Recording**: The audio of one voice channel captured by a recorder from
+  the moment its starter starts it until it stops, kept as one track per speaker
+  and a mix. Deleted 30 days after it stops, or sooner, whole, by its starter
+  or a panel admin.
+  _Avoid_: session, capture, craig (as a verb).
+- **Starter**: The Cav member holding a recording role who started a
+  recording. Apart from panel admins, the only person who can pull it from
+  the panel.
+  _Avoid_: owner (a spawned channel's), host, requester, recorder.
+- **Recorder**: A Discord account, separate from the bot's own, that joins a
+  channel to record it and is in voice only while it records. Each records
+  one channel at a time, so a recording starts only when a recorder is free.
+  Temp VC never counts a recorder as an occupant.
+  _Avoid_: recording bot, Craig, the bot (for this account).
+- **Recording role**: A Discord role whose holders, if Cav members, may start
+  a recording, and may stop one in a channel they are in. Set once for the
+  guild in the panel. With none set, nobody can record.
+  _Avoid_: recorder role, record permission, recording permission.
+- **Track**: One speaker's audio for the whole of a recording, silent wherever
+  they were not talking, so every track in a recording lines up from its
+  start. A speaker who leaves and rejoins keeps one track.
+  _Avoid_: stream, channel (that is Discord's), file.
+- **Speaker**: Anyone whose voice a recording captured. Not necessarily a Cav
+  member: an applicant in an S2 interview is a speaker. A recruit holds the
+  `RCT` rank role, so is a Cav member; an applicant holds none.
+  _Avoid_: participant, attendee, member (for this role).
+- **Mix**: One file of every track in a recording played together, built when
+  the recording stops.
+  _Avoid_: mixdown, combined track, merged audio.
+- **Cut-short recording**: A recording that ended because the bot shut down or
+  crashed, not by a stop, the time cap, or the last person leaving. What it
+  captured up to then is kept.
+  _Avoid_: failed recording, aborted recording, broken recording.
+- **Recording notice**: The bot message in the recorded channel's text chat
+  that says a recording is running, names its starter, and carries the
+  control to stop it. Posted at start, and edited at stop to say it stopped,
+  or that it was cut short, with a link to the recording in the panel. If the
+  channel is gone by then, the starter gets that link by DM instead.
+  _Avoid_: recording panel (the panel is the web UI), banner, announcement.
 
 ## External systems
 
