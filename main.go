@@ -204,6 +204,9 @@ func main() {
 		tempVC   *commands.TempVC
 		webPanel *panel.Panel
 	)
+	// Built before dg.Open(), so the Connect event tells it the gateway
+	// connection is up: the panel's hub page says so while it is down.
+	discordManager := commands.NewSessionTempVCManager(dg)
 	if botStore != nil {
 		var err error
 		tempVC, err = commands.StartTempVC(dg, GuildID, botStore)
@@ -215,7 +218,7 @@ func main() {
 		webPanel = initPanel(panelCfg, panel.Deps{
 			Store:   botStore,
 			Runtime: tempVC,
-			Manager: commands.NewSessionTempVCManager(dg),
+			Manager: discordManager,
 			GuildID: GuildID,
 		})
 	}
@@ -264,7 +267,7 @@ func main() {
 	// /warden as much as spawning.
 	go func() {
 		defer utils.RecoverPanic("startup-checks")
-		commands.RunStartupChecks(context.Background(), commands.NewSessionTempVCManager(dg), GuildID, dg.State.User.ID)
+		commands.RunStartupChecks(context.Background(), discordManager, GuildID, dg.State.User.ID)
 	}()
 
 	registeredCommandNames := make(map[string]struct{}, len(registry.GetCommands()))

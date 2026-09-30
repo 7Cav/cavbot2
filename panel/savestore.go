@@ -8,11 +8,13 @@ import (
 )
 
 // forSave is the service as a save runs it: the same deps, with every store
-// call under its own deadline of storeTimeout. A page load keeps the plain
-// store and the request's lifetime.
-func (s *hubService) forSave() *hubService {
+// call under its own deadline of storeTimeout, and the wait for the guild's
+// data under guildWait. A page load keeps the plain store and the request's
+// lifetime, which its time budget bounds.
+func (s *hubService) forSave(guildWait time.Duration) *hubService {
 	saving := *s
 	saving.deps.Store = boundedStore{store: s.deps.Store, timeout: s.storeTimeout}
+	saving.guildWait = guildWait
 	return &saving
 }
 

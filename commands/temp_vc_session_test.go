@@ -72,11 +72,7 @@ func (a *fakeDiscordAPI) received() []apiRequest {
 // state cache holds the test guild with chan-1 carrying the given list.
 func sessionOver(t *testing.T, api *fakeDiscordAPI, cached []*discordgo.PermissionOverwrite) *discordgo.Session {
 	t.Helper()
-	dg, err := discordgo.New("Bot test")
-	if err != nil {
-		t.Fatalf("discordgo.New: %v", err)
-	}
-	dg.Client = &http.Client{Transport: api}
+	dg := stateSession(t, api)
 	feed(t, dg, &discordgo.GuildCreate{Guild: &discordgo.Guild{
 		ID: testTempVCGuild,
 		Channels: []*discordgo.Channel{{

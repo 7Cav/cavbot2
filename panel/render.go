@@ -52,6 +52,9 @@ const (
 	failureReadFailed failure = "read-failed"
 	// failureTooSlow is a hub page whose time budget ran out.
 	failureTooSlow failure = "too-slow"
+	// failureNoGuildData is a hub page or a save that found no data for the
+	// guild in the gateway state: Discord has not sent it to the bot.
+	failureNoGuildData failure = "no-guild-data"
 )
 
 // pageData is what every template renders from. SignedIn switches the rail

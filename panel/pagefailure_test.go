@@ -157,10 +157,10 @@ func assertSignedInPage(t *testing.T, doc *html.Node) {
 }
 
 func TestHubPageReadFailureIsReportedAndSaysSo(t *testing.T) {
-	w := newTestWorld(t, testHub())
+	w, st := newCtxWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 	reported := recordSentry(t)
-	w.discord.setListErr(errors.New("discord: 503"))
+	st.failRead("ListHubs")
 
 	res := w.b.get("/")
 
@@ -253,59 +253,6 @@ func TestHubPageFailureOffersTryAgainAtTheGETAddress(t *testing.T) {
 			}
 			if got, want := retryOf(t, parseHTML(t, res)), tc.retry(strings.TrimPrefix(path, "/hubs/")); got != want {
 				t.Errorf("Try again leads to %q, want %q", got, want)
-			}
-		})
-	}
-}
-
-// A Discord read takes no context, so the budget can run out while one is
-// in flight. The page must then fail under that read's name, the name its
-// own failure is reported under, and not under the store read that follows
-// it. The store here honours the context the way Postgres does, so a later
-// read would fail with the deadline too.
-func TestDiscordReadThatRunsOutOfTimeIsReportedUnderItsOwnName(t *testing.T) {
-	errDiscord := errors.New("discord: 503 Service Unavailable")
-	cases := []struct {
-		name string
-		fail func(*fakeDiscord, error)
-		slow func(*fakeDiscord, time.Duration)
-	}{
-		{"the channel list", (*fakeDiscord).setListErr, (*fakeDiscord).setListDelay},
-		{"the guild read", (*fakeDiscord).setGuildErr, (*fakeDiscord).setGuildDelay},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			failing, _ := newCtxWorld(t, testHub())
-			signIn(t, failing.forum, failing.b)
-			reported := recordSentry(t)
-			tc.fail(failing.discord, errDiscord)
-			failing.b.get("/")
-			errs := reported.recorded()
-			if len(errs) != 1 {
-				t.Fatalf("the read's own failure sent %d Sentry events, want 1", len(errs))
-			}
-			name, ok := strings.CutSuffix(errs[0].Error(), errDiscord.Error())
-			if !ok || name == "" {
-				t.Fatalf("the read's own failure reported %q, want its name before %q", errs[0], errDiscord)
-			}
-
-			slow, _ := newCtxWorld(t, testHub())
-			slow.p.pageBudget = 100 * time.Millisecond
-			signIn(t, slow.forum, slow.b)
-			reported = recordSentry(t)
-			tc.slow(slow.discord, 300*time.Millisecond)
-
-			slow.b.get("/")
-
-			errs = reported.recorded()
-			if len(errs) != 1 {
-				t.Fatalf("sent %d Sentry events, want 1", len(errs))
-			}
-			if !errors.Is(errs[0], context.DeadlineExceeded) {
-				t.Errorf("reported %v, want an error wrapping context.DeadlineExceeded", errs[0])
-			}
-			if !strings.HasPrefix(errs[0].Error(), name) {
-				t.Errorf("reported %q, want it under the read's own name %q", errs[0], name)
 			}
 		})
 	}

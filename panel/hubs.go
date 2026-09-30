@@ -29,19 +29,24 @@ type Deps struct {
 }
 
 // hubService is the service layer under the hub page's handlers: validation,
-// the store calls, the Discord reads through the manager seam, and the
-// runtime updates. Handlers parse the request, call one function here, and
-// render what comes back.
+// the store calls, the guild's reads from the gateway state and the Discord
+// calls through the manager seam, and the runtime updates. Handlers parse
+// the request, call one function here, and render what comes back.
 type hubService struct {
 	deps Deps
 	// storeTimeout is the deadline forSave gives each store call a save
 	// makes. New sets it to the constant of the same name; a test shortens
 	// it.
 	storeTimeout time.Duration
+	// guildWait bounds a save's wait for the guild's data while it is on
+	// its way, since a save's context has no deadline: forSave sets it to
+	// the page's time budget. Zero for a page load, whose context carries
+	// the budget.
+	guildWait time.Duration
 	// saveLock is the lock under which the saves of this process take turns
 	// (#373). create, register, update, remove and the guild-wide
-	// moderator save each take it before their first read and hold it until
-	// the running bot has their update. So each save reads what the save
+	// moderator save each take it before their first store read and hold it
+	// until the running bot has their update. So each save reads what the save
 	// before it wrote, and the running bot gets saves in the order the store
 	// took them.
 	//
@@ -264,7 +269,8 @@ const (
 
 // Bounds on the user limit and the bitrate. The user limit is Discord's
 // range, 0 meaning no limit. The bitrate floor is Discord's; the ceiling is
-// the guild's boost tier's, read live at save through bitrateCeiling.
+// the guild's boost tier's, read from the gateway state at save through
+// bitrateCeiling.
 const (
 	userLimitMin = 0
 	userLimitMax = 99
@@ -302,6 +308,10 @@ func bitrateCeiling(tier discordgo.PremiumTier) int {
 // on the form that was posted; Register and Create are those forms as
 // posted, so nothing typed is lost on a refusal.
 type hubPage struct {
+	// Disconnected is the bot's gateway connection down at this load: the
+	// page shows the guild as the bot held it when the connection dropped,
+	// and says its channel and role details may be out of date.
+	Disconnected bool
 	// Moderators is the guild-wide section at the top of the page.
 	Moderators moderatorsPage
 	Hubs       []hubRow
@@ -479,11 +489,11 @@ func (g guildChannels) categoryName(ch *discordgo.Channel) string {
 	return ""
 }
 
-// snapshot is what the page and every save start from: the guild's hub rows
-// and its channel list, each read once.
+// snapshot is what the page, a create and a register start from: the
+// guild's hub rows and one read of the guild from the gateway state.
 type snapshot struct {
-	hubs  []store.Hub
-	guild guildChannels
+	hubs []store.Hub
+	guildState
 }
 
 // hubChannelState is a hub's channel as the guild list has it at this
@@ -524,55 +534,111 @@ func (sn snapshot) hubOn(channelID string) (store.Hub, bool) {
 	return store.Hub{}, false
 }
 
-// The names the page's reads' errors carry, which a page that ran out of
-// time also reports each read under (#395). The two Discord reads are
-// GuildChannels in read and Guild in readGuild. A read the page's time
-// budget ran out on fails under the same name as its own failure.
+// The names the page's store reads' errors carry, which a page that ran out
+// of time also reports each read under (#395). A read the page's time budget
+// ran out on fails under the same name as its own failure.
 const (
 	listHubsRead            = "list hubs"
-	guildChannelsRead       = "guild channels"
-	guildRead               = "guild read"
 	guildModeratorRolesRead = "read guild moderator roles"
 	moderatorChangesRead    = "list moderator changes"
 	changeLogRead           = "list change log"
 )
 
-// contextEnded is nil while ctx is live. Once it has ended, because the time
-// budget ran out or the request was cancelled, it is ctx's error under the
-// name of the Discord read that just returned. A Discord read takes no
-// context and cannot be cut short, so the page checks after each one;
-// without the check the next store read would fail on the same context and
-// take the blame.
-func contextEnded(ctx context.Context, read string) error {
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("%s: %w", read, err)
-	}
-	return nil
-}
-
+// read reads the guild from the gateway state, then the hub rows from the
+// store.
 func (s *hubService) read(ctx context.Context) (snapshot, error) {
+	guild, err := s.readGuild(ctx)
+	if err != nil {
+		return snapshot{}, err
+	}
 	hubs, err := s.deps.Store.ListHubs(ctx, s.deps.GuildID)
 	if err != nil {
 		return snapshot{}, fmt.Errorf("%s: %w", listHubsRead, err)
 	}
-	guild, err := s.readChannels()
-	if err != nil {
-		return snapshot{}, err
-	}
-	return snapshot{hubs: hubs, guild: guild}, nil
+	return snapshot{hubs: hubs, guildState: guild}, nil
 }
 
-// readChannels reads the guild's channel list through the manager seam.
-func (s *hubService) readChannels() (guildChannels, error) {
-	channels, _, err := s.deps.Manager.GuildChannels(s.deps.GuildID)
-	if err != nil {
-		return guildChannels{}, fmt.Errorf("%s: %w", guildChannelsRead, err)
+// guildState is the guild as one read of the gateway state gives it: its
+// channel list, its roles and boost tier, and whether the bot's gateway
+// connection was down, which leaves the state as it was when the
+// connection dropped.
+type guildState struct {
+	channels     guildChannels
+	info         guildInfo
+	disconnected bool
+}
+
+// errNoGuildData is a page load or a save that found no data for the guild
+// in the gateway state: Discord has not sent it to the bot. Its page is its
+// own, not a failed read's.
+var errNoGuildData = errors.New("the gateway state holds no data for the guild")
+
+// guildDataPoll is how often a read that found the guild's data on its way
+// looks again.
+const guildDataPoll = 100 * time.Millisecond
+
+// readGuild reads the guild's channels, roles and boost tier from the
+// gateway state through the manager seam, never Discord's API, once per
+// page load or save, so the page and a save's checks see the guild as the
+// bot holds it now.
+//
+// While the state holds the placeholder a READY leaves, the data is on its
+// way, and readGuild looks again until it lands or ctx ends. A deadline
+// that ends the wait fails with errNoGuildData, not the deadline, so the
+// page says Discord has not sent the data rather than that it took too
+// long. A guild absent from the state fails with errNoGuildData at once:
+// Discord has marked it unavailable, and waiting would cost the whole
+// budget.
+func (s *hubService) readGuild(ctx context.Context) (guildState, error) {
+	if s.guildWait > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.guildWait)
+		defer cancel()
 	}
-	guild := guildChannels{byID: make(map[string]*discordgo.Channel, len(channels)), all: channels}
-	for _, ch := range channels {
-		guild.byID[ch.ID] = ch
+	poll := time.NewTicker(guildDataPoll)
+	defer poll.Stop()
+	for {
+		data := s.deps.Manager.GuildData(s.deps.GuildID)
+		switch data.Status {
+		case commands.GuildDataPresent:
+			return s.guildStateOf(data), nil
+		case commands.GuildDataAbsent:
+			return guildState{}, fmt.Errorf("%w: the guild is absent", errNoGuildData)
+		}
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return guildState{}, fmt.Errorf("%w: still on its way when the wait ran out", errNoGuildData)
+			}
+			return guildState{}, fmt.Errorf("wait for guild data: %w", ctx.Err())
+		case <-poll.C:
+		}
 	}
-	return guild, nil
+}
+
+// lockSave takes the save lock once the gateway state holds the guild's
+// data, and returns its unlock. The wait comes first, so saves made while
+// the data is on its way wait for it side by side: waiting in turn, a queue
+// of them would each wait out a budget after the one before and outlast the
+// reverse proxy's timeout. A save that finds no data fails with
+// errNoGuildData without taking its turn. Under the lock the save reads the
+// guild again, since the saves ahead of it may have changed it.
+func (s *hubService) lockSave(ctx context.Context) (func(), error) {
+	if _, err := s.readGuild(ctx); err != nil {
+		return nil, err
+	}
+	s.saveLock.Lock()
+	return s.saveLock.Unlock, nil
+}
+
+// guildStateOf indexes one read of the guild for the lookups the page and
+// the saves make.
+func (s *hubService) guildStateOf(data commands.GuildSnapshot) guildState {
+	channels := guildChannels{byID: make(map[string]*discordgo.Channel, len(data.Channels)), all: data.Channels}
+	for _, ch := range data.Channels {
+		channels.byID[ch.ID] = ch
+	}
+	return guildState{channels: channels, info: s.guildInfoOf(data), disconnected: !data.Connected}
 }
 
 // guildInfo is what one read of the guild gives a page load or a save: the
@@ -613,15 +679,10 @@ func (g guildInfo) isEligible(id string) bool {
 	return g.unavailability(id) == ""
 }
 
-// readGuild reads the guild through the manager seam, once per page load or
-// save, so the eligible roles and the bitrate bound are the guild's now.
-// The @everyone role, whose ID is the guild's, is not live here: every
-// member holds it.
-func (s *hubService) readGuild() (guildInfo, error) {
-	g, _, err := s.deps.Manager.Guild(s.deps.GuildID)
-	if err != nil {
-		return guildInfo{}, fmt.Errorf("%s: %w", guildRead, err)
-	}
+// guildInfoOf builds the eligible roles, the role names and the bitrate
+// bound from one read of the guild. The @everyone role, whose ID is the
+// guild's, is not live here: every member holds it.
+func (s *hubService) guildInfoOf(g commands.GuildSnapshot) guildInfo {
 	info := guildInfo{eligible: make([]*discordgo.Role, 0, len(g.Roles)), live: make(map[string]*discordgo.Role, len(g.Roles)),
 		names: make(map[string]string, len(g.Roles)), bitrateMax: bitrateCeiling(g.PremiumTier)}
 	for _, r := range g.Roles {
@@ -636,42 +697,31 @@ func (s *hubService) readGuild() (guildInfo, error) {
 		}
 	}
 	sort.Slice(info.eligible, func(i, j int) bool { return info.eligible[i].Position > info.eligible[j].Position })
-	return info, nil
+	return info
 }
 
-// page reads everything the hub page renders from, once: the hub rows and
-// the guild's channel list for the list and the picker, the guild read for
-// the guild-wide section and the edit form, the guild-wide set and its
-// last entries, and, when an edit form shows, the hub's last entries.
+// page reads everything the hub page renders from, once: the guild from
+// the gateway state, for the list, the pickers, the guild-wide section and
+// the edit form, then from the store the hub rows, the guild-wide set and
+// its last entries, and, when an edit form shows, the hub's last entries.
 // store.ErrNotFound means no hub has the requested ID. ctx carries the
-// page's time budget; a store read the budget runs out on fails with it, and
-// a Discord read is checked against it as it returns.
+// page's time budget; a store read the budget runs out on fails with it.
 func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error) {
 	sn, err := s.read(ctx)
 	if err != nil {
 		return hubPage{}, err
 	}
-	if err := contextEnded(ctx, guildChannelsRead); err != nil {
-		return hubPage{}, err
-	}
-	guild, err := s.readGuild()
-	if err != nil {
-		return hubPage{}, err
-	}
-	if err := contextEnded(ctx, guildRead); err != nil {
-		return hubPage{}, err
-	}
-	page := hubPage{Hubs: s.rows(sn), Picker: channelPicker(sn, req.Register.ChannelID), Categories: categoryPicker(sn),
+	page := hubPage{Disconnected: sn.disconnected, Hubs: s.rows(sn), Picker: channelPicker(sn, req.Register.ChannelID), Categories: categoryPicker(sn),
 		Register: req.Register, Create: req.Create, Error: req.Error, Refused: req.Refused}
 	guildWide, err := s.deps.Store.GetGuildModeratorRoles(ctx, s.deps.GuildID)
 	if err != nil {
 		return hubPage{}, fmt.Errorf("%s: %w", guildModeratorRolesRead, err)
 	}
-	if page.Moderators, err = s.moderatorsSection(ctx, guild, guildWide, req); err != nil {
+	if page.Moderators, err = s.moderatorsSection(ctx, sn.info, guildWide, req); err != nil {
 		return hubPage{}, err
 	}
 	if req.HubID != 0 {
-		if page.Edit, err = s.editForm(ctx, sn, guild, guildWide.RoleIDs, req); err != nil {
+		if page.Edit, err = s.editForm(ctx, sn, sn.info, guildWide.RoleIDs, req); err != nil {
 			return hubPage{}, err
 		}
 	}
@@ -687,7 +737,7 @@ func (s *hubService) rows(sn snapshot) []hubRow {
 		if f, ok := s.deps.Runtime.LastSpawnFailure(h.ID); ok {
 			row.Failure = &f
 		}
-		st := sn.guild.hubChannel(h)
+		st := sn.channels.hubChannel(h)
 		row.ChannelName, row.CategoryName, row.Broken = st.Name, st.CategoryName, st.Broken
 		rows = append(rows, row)
 	}
@@ -707,7 +757,7 @@ func (s *hubService) rows(sn snapshot) []hubRow {
 // categories, by name.
 func categoryPicker(sn snapshot) []pickerChannel {
 	var out []pickerChannel
-	for _, ch := range sn.guild.categories() {
+	for _, ch := range sn.channels.categories() {
 		out = append(out, pickerChannel{ID: ch.ID, Name: ch.Name})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -729,7 +779,7 @@ func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo,
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", changeLogRead, err)
 	}
-	st := sn.guild.hubChannel(hub)
+	st := sn.channels.hubChannel(hub)
 	form := editInputOf(hub, st.Name)
 	if req.Edit != nil {
 		form = *req.Edit
@@ -786,8 +836,11 @@ func (s *hubService) saveHub(ctx context.Context, hub store.Hub, action store.Ch
 // written. A write that fails deletes the channel just made, so Discord and
 // the store never disagree, and returns the error.
 func (s *hubService) create(ctx context.Context, in createInput, by actor) (store.Hub, error) {
-	s.saveLock.Lock()
-	defer s.saveLock.Unlock()
+	unlock, err := s.lockSave(ctx)
+	if err != nil {
+		return store.Hub{}, err
+	}
+	defer unlock()
 	in.CategoryID = strings.TrimSpace(in.CategoryID)
 	baseString, err := validBaseString(in.BaseString)
 	if err != nil {
@@ -803,7 +856,7 @@ func (s *hubService) create(ctx context.Context, in createInput, by actor) (stor
 	if err != nil {
 		return store.Hub{}, err
 	}
-	if !sn.guild.hasCategory(in.CategoryID) {
+	if !sn.channels.hasCategory(in.CategoryID) {
 		return store.Hub{}, &fieldError{Field: fieldCategory, Message: "That category is no longer in the server. Choose another."}
 	}
 
@@ -838,8 +891,11 @@ func (s *hubService) create(ctx context.Context, in createInput, by actor) (stor
 // is a *fieldError naming the field; the store is not written and the
 // runtime is not touched.
 func (s *hubService) register(ctx context.Context, in registerInput, by actor) (store.Hub, error) {
-	s.saveLock.Lock()
-	defer s.saveLock.Unlock()
+	unlock, err := s.lockSave(ctx)
+	if err != nil {
+		return store.Hub{}, err
+	}
+	defer unlock()
 	in.ChannelID = strings.TrimSpace(in.ChannelID)
 	baseString, err := validBaseString(in.BaseString)
 	if err != nil {
@@ -855,7 +911,7 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 	if err != nil {
 		return store.Hub{}, err
 	}
-	ch, ok := sn.guild.voiceChannel(in.ChannelID)
+	ch, ok := sn.channels.voiceChannel(in.ChannelID)
 	if !ok {
 		return store.Hub{}, &fieldError{Field: fieldHubChannel, Message: "That channel is no longer a voice channel in the server. Choose another."}
 	}
@@ -909,8 +965,11 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 // with a 500, and the 404 is for an update that changed nothing (#373
 // rules 7 and 9).
 func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by actor) (store.Hub, error) {
-	s.saveLock.Lock()
-	defer s.saveLock.Unlock()
+	unlock, err := s.lockSave(ctx)
+	if err != nil {
+		return store.Hub{}, err
+	}
+	defer unlock()
 	before, err := s.deps.Store.GetHub(ctx, hubID)
 	if err != nil {
 		return store.Hub{}, fmt.Errorf("read hub: %w", err)
@@ -918,11 +977,11 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by a
 	if !formIsCurrent(in.Version, before.Version) {
 		return store.Hub{}, errStaleHub
 	}
-	channels, err := s.readChannels()
+	guild, err := s.readGuild(ctx)
 	if err != nil {
 		return store.Hub{}, err
 	}
-	st := channels.hubChannel(before)
+	st := guild.channels.hubChannel(before)
 	if st.Broken {
 		return store.Hub{}, errHubBroken
 	}
@@ -933,12 +992,8 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by a
 		return store.Hub{}, err
 	}
 	rename := channelName != strings.TrimSpace(in.LoadedChannelName) && channelName != oldName
-	guild, err := s.readGuild()
-	if err != nil {
-		return store.Hub{}, err
-	}
 	hub := before
-	if err := applyEdit(&hub, in, guild); err != nil {
+	if err := applyEdit(&hub, in, guild.info); err != nil {
 		return store.Hub{}, err
 	}
 	d := diffHubs(&before, &hub)

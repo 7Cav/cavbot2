@@ -169,13 +169,13 @@ issue once its release deploys. The bot sends the same name with its events;
 only Sentry sees the prefix. That step reads an organization auth token from
 the `SENTRY_AUTH_TOKEN` repository secret, and without it the run ends red
 after a good deploy. The reverse proxy in front of the panel
-has a 90-second read timeout. A hub page load takes about 40 seconds at the
-slowest: the 10-second group check, the page's 10-second time budget, and one
-Discord call of up to 20 seconds that the budget cannot cut short. Two things
-can run longer. discordgo retries a call Discord answers with a 502, up to
-three times, each attempt with its own 20 seconds. A save the panel refuses
-makes its own Discord calls before the page's budget starts. Keep the proxy's
-read timeout above the slowest request. If the proxy drops a page before the panel gives up on it, the page
+has a 90-second read timeout. A hub page load takes about 20 seconds at the
+slowest: the 10-second group check, then the page's 10-second time budget. The
+budget covers the page's store reads and any wait for Discord to send the bot
+the guild's data. A save can take longer. It waits at most the same 10 seconds
+for that data, and its create or rename goes to Discord with up to 20 seconds
+per attempt. discordgo retries a call Discord answers with a 502, up to three
+times. Keep the proxy's read timeout above the slowest request. If the proxy drops a page before the panel gives up on it, the page
 looks like an [abandoned page load](CONTEXT.md#observability) and reaches no
 one.
 

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/7cav/cavbot2/store"
@@ -282,15 +283,19 @@ type TempVCManager interface {
 	// hub channel's parent and overwrite list are read here at each spawn.
 	Channel(channelID string) (*discordgo.Channel, error)
 	// GuildChannelCreateComplex creates a channel with the given audit-log
-	// reason and no retry on rate limit.
+	// reason and no retry on rate limit. Once Discord answers, Channel and
+	// GuildData read the new channel at once, without waiting for Discord's
+	// CHANNEL_CREATE.
 	GuildChannelCreateComplex(guildID string, data discordgo.GuildChannelCreateData, auditReason string) (*discordgo.Channel, error)
 	// ChannelDelete deletes a channel with the given audit-log reason and no
 	// retry on rate limit.
 	ChannelDelete(channelID, auditReason string) (*discordgo.Channel, error)
 	// ChannelEdit edits a channel with the given audit-log reason and no retry
-	// on rate limit. /voice-rename sends the name alone. An empty overwrite
-	// list is dropped from the request (omitempty), so overwrites go through
-	// ChannelOverwritesReplace.
+	// on rate limit. /voice-rename sends the name alone, as does the panel's
+	// rename of a hub channel. An empty overwrite list is dropped from the
+	// request (omitempty), so overwrites go through ChannelOverwritesReplace.
+	// Once Discord answers, Channel and GuildData read the edited channel at
+	// once, without waiting for Discord's CHANNEL_UPDATE.
 	ChannelEdit(channelID string, data *discordgo.ChannelEdit, auditReason string) (*discordgo.Channel, error)
 	// ChannelOverwritesReplace replaces a channel's whole overwrite list in
 	// one edit, with the given audit-log reason and no retry on rate limit.
@@ -310,19 +315,18 @@ type TempVCManager interface {
 	// Administrator check reads the bot's own member through it.
 	GuildMember(guildID, userID string) (*discordgo.Member, error)
 	// Guild fetches the guild from the API, roles included. A member carries
-	// role IDs only, so the permission bits come from here. The timing says
-	// how the read spent its time, waiting inside discordgo and on trips to
-	// Discord.
-	Guild(guildID string) (*discordgo.Guild, ReadTiming, error)
-	// GuildChannels fetches the guild's channel list from the API, with the
-	// read's timing as Guild gives it. The panel reads hub channel names,
-	// category names and the register picker from it at each page load.
-	GuildChannels(guildID string) ([]*discordgo.Channel, ReadTiming, error)
+	// role IDs only, so the startup Administrator check reads the
+	// permission bits from here.
+	Guild(guildID string) (*discordgo.Guild, error)
 	// VoiceStates reads one copied snapshot of the guild's voice states and
 	// channel IDs from discordgo's state cache, never the API. The runtime
 	// checks each decision against it (#319) and the restart sweep rebuilds
 	// from it (#325).
 	VoiceStates(guildID string) VoiceSnapshot
+	// GuildData reads one copied snapshot of the guild's channels, roles and
+	// boost tier from discordgo's state cache, never the API. The panel's
+	// hub page and its saves read the guild through it (#400).
+	GuildData(guildID string) GuildSnapshot
 	// MemberRanks reads a GUILD_CREATE guild's rank data into a user ID to
 	// rank index map, through GuildMemberRanks. The production adapter
 	// reads under the state's lock, because discordgo shares the payload's
@@ -395,22 +399,67 @@ func (s VoiceSnapshot) occupied(channelID string) bool {
 	return false
 }
 
+// GuildDataStatus is how much of a guild discordgo's state cache holds.
+type GuildDataStatus int
+
+const (
+	// GuildDataAbsent is a guild the cache does not hold. An outage's
+	// GUILD_DELETE takes the guild out, and a guild the bot was never sent
+	// is absent too.
+	GuildDataAbsent GuildDataStatus = iota
+	// GuildDataArriving is a guild whose data is on its way: the cache holds
+	// the unavailable placeholder a READY leaves, after a deploy or any fresh
+	// gateway session, until the guild's GUILD_CREATE lands.
+	GuildDataArriving
+	// GuildDataPresent is a guild whose data the cache holds.
+	GuildDataPresent
+)
+
+// GuildSnapshot is one copy of a guild's channels, roles and boost tier from
+// discordgo's state cache, taken under one lock. Every channel and role is a
+// copy, so nothing in it is shared with the cache.
+type GuildSnapshot struct {
+	Status GuildDataStatus
+	// Connected is false while the bot's gateway connection is down. The
+	// cache then holds the guild as it was when the connection dropped, and
+	// events missed meanwhile arrive once the session resumes.
+	Connected bool
+	// Channels are the guild's channels, threads left out, each with its
+	// ID, guild, name, type, parent and position.
+	Channels []*discordgo.Channel
+	// Roles are the guild's roles, @everyone included.
+	Roles       []*discordgo.Role
+	PremiumTier discordgo.PremiumTier
+}
+
 // sessionTempVCManager adapts *discordgo.Session to TempVCManager. Each
 // method is a one-line pass-through, which keeps the hard-to-unit-test
 // wrapper's uncovered code small. ChannelOverwritesReplace, VoiceStates,
-// CanSeeChannel, and Guild and GuildChannels with their read clocks do more,
-// and their tests drive a real session. Every REST call but
-// ChannelPermissionSet passes WithRetryOnRatelimit(false): a 429 is a
-// failure the caller handles, never a sleeping gateway handler. A guest
-// add's overwrite set waits out a 429 and retries instead, and
+// GuildData, CanSeeChannel, and the create and edit that put Discord's
+// reply in the cache do more, and their tests drive a real session. Every
+// REST call but ChannelPermissionSet passes WithRetryOnRatelimit(false): a
+// 429 is a failure the caller handles, never a sleeping gateway handler. A
+// guest add's overwrite set waits out a 429 and retries instead, and
 // TempVCManager says why.
 type sessionTempVCManager struct {
 	s *discordgo.Session
+	// connected is the gateway connection up, as discordgo's Connect and
+	// Disconnect events leave it. Not Session.DataReady: discordgo holds the
+	// lock that guards it through a reconnect's dial, so reading it could
+	// hold a page load for as long as Discord takes to answer.
+	connected atomic.Bool
 }
 
 // NewSessionTempVCManager wraps a real Discord session for production use.
+// A manager learns the connection is up from discordgo's Connect event, so
+// one whose GuildData is read is built before the session opens, as main
+// builds the panel's. Built after, it reads the connection as down until
+// the next reconnect.
 func NewSessionTempVCManager(s *discordgo.Session) TempVCManager {
-	return &sessionTempVCManager{s: s}
+	m := &sessionTempVCManager{s: s}
+	s.AddHandler(func(*discordgo.Session, *discordgo.Connect) { m.connected.Store(true) })
+	s.AddHandler(func(*discordgo.Session, *discordgo.Disconnect) { m.connected.Store(false) })
+	return m
 }
 
 func (m *sessionTempVCManager) Channel(channelID string) (*discordgo.Channel, error) {
@@ -418,8 +467,13 @@ func (m *sessionTempVCManager) Channel(channelID string) (*discordgo.Channel, er
 }
 
 func (m *sessionTempVCManager) GuildChannelCreateComplex(guildID string, data discordgo.GuildChannelCreateData, auditReason string) (*discordgo.Channel, error) {
-	return m.s.GuildChannelCreateComplex(guildID, data,
+	ch, err := m.s.GuildChannelCreateComplex(guildID, data,
 		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+	if err != nil {
+		return ch, err
+	}
+	m.cacheReply(ch)
+	return ch, nil
 }
 
 func (m *sessionTempVCManager) ChannelDelete(channelID, auditReason string) (*discordgo.Channel, error) {
@@ -428,8 +482,30 @@ func (m *sessionTempVCManager) ChannelDelete(channelID, auditReason string) (*di
 }
 
 func (m *sessionTempVCManager) ChannelEdit(channelID string, data *discordgo.ChannelEdit, auditReason string) (*discordgo.Channel, error) {
-	return m.s.ChannelEdit(channelID, data,
+	ch, err := m.s.ChannelEdit(channelID, data,
 		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+	if err != nil {
+		return ch, err
+	}
+	m.cacheReply(ch)
+	return ch, nil
+}
+
+// cacheReply puts a copy of the channel Discord answered a create or an
+// edit with into the state cache, which would otherwise lack the change
+// until the gateway event lands: the page a panel save redirects to would
+// show a hub created a moment ago as broken, or a renamed hub channel under
+// its old name. The gateway event overwrites the cache later as usual. The
+// cache keeps what it is given and the gateway handlers write it under
+// State.Lock, so it gets a copy and the caller keeps the reply. The write
+// has happened: a reply the cache cannot take, such as a new channel whose
+// guild an outage took out of the cache meanwhile, leaves the cache to the
+// gateway event and is no failure of the write.
+func (m *sessionTempVCManager) cacheReply(ch *discordgo.Channel) {
+	cached := *ch
+	if err := m.s.State.ChannelAdd(&cached); err != nil {
+		utils.Warn("Temp VC channel reply not cached", "channel_id", ch.ID, "error", err)
+	}
 }
 
 // ChannelOverwritesReplace sends its own PATCH, since ChannelEdit's
@@ -482,18 +558,8 @@ func (m *sessionTempVCManager) GuildMember(guildID, userID string) (*discordgo.M
 	return m.s.GuildMember(guildID, userID, discordgo.WithRetryOnRatelimit(false))
 }
 
-// Guild and GuildChannels send their requests through a read clock's
-// client, which times each attempt without changing how the read runs.
-func (m *sessionTempVCManager) Guild(guildID string) (*discordgo.Guild, ReadTiming, error) {
-	clock := newReadClock(m.s.Client)
-	g, err := m.s.Guild(guildID, discordgo.WithRetryOnRatelimit(false), discordgo.WithClient(clock.client))
-	return g, clock.timing(), err
-}
-
-func (m *sessionTempVCManager) GuildChannels(guildID string) ([]*discordgo.Channel, ReadTiming, error) {
-	clock := newReadClock(m.s.Client)
-	channels, err := m.s.GuildChannels(guildID, discordgo.WithRetryOnRatelimit(false), discordgo.WithClient(clock.client))
-	return channels, clock.timing(), err
+func (m *sessionTempVCManager) Guild(guildID string) (*discordgo.Guild, error) {
+	return m.s.Guild(guildID, discordgo.WithRetryOnRatelimit(false))
 }
 
 // VoiceStates takes State.RLock once and scans State.Guilds itself. It calls
@@ -536,6 +602,45 @@ func (m *sessionTempVCManager) VoiceStates(guildID string) VoiceSnapshot {
 		return snap
 	}
 	return VoiceSnapshot{}
+}
+
+// GuildData takes State.RLock once and scans State.Guilds itself, as
+// VoiceStates does and for the same reasons. The gateway handlers write the
+// cached channels and roles in place under State.Lock: a CHANNEL_UPDATE
+// copies over the cached channel, and a channel or role delete shifts the
+// slice it sits in. So each one is copied while the lock is held.
+func (m *sessionTempVCManager) GuildData(guildID string) GuildSnapshot {
+	st := m.s.State
+	st.RLock()
+	defer st.RUnlock()
+	for _, g := range st.Guilds {
+		if g.ID != guildID {
+			continue
+		}
+		// The placeholder holds no channels and no roles. Read as data, it
+		// would show every hub broken and every role picker empty.
+		if g.Unavailable {
+			return GuildSnapshot{Status: GuildDataArriving}
+		}
+		data := GuildSnapshot{
+			Status:      GuildDataPresent,
+			Connected:   m.connected.Load(),
+			Channels:    make([]*discordgo.Channel, 0, len(g.Channels)),
+			Roles:       make([]*discordgo.Role, 0, len(g.Roles)),
+			PremiumTier: g.PremiumTier,
+		}
+		for _, ch := range g.Channels {
+			data.Channels = append(data.Channels, &discordgo.Channel{
+				ID: ch.ID, GuildID: ch.GuildID, Name: ch.Name, Type: ch.Type, ParentID: ch.ParentID, Position: ch.Position,
+			})
+		}
+		for _, r := range g.Roles {
+			role := *r
+			data.Roles = append(data.Roles, &role)
+		}
+		return data
+	}
+	return GuildSnapshot{}
 }
 
 // MemberRanks reads the payload under State.RLock. Before any handler runs,
