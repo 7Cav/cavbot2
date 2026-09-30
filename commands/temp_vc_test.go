@@ -337,25 +337,25 @@ func (f *fakeTempVCManager) GuildMember(_, _ string) (*discordgo.Member, error) 
 	return f.member, nil
 }
 
-func (f *fakeTempVCManager) Guild(_ string) (*discordgo.Guild, error) {
+func (f *fakeTempVCManager) Guild(_ string) (*discordgo.Guild, ReadTiming, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.guildErr != nil {
-		return nil, f.guildErr
+		return nil, ReadTiming{}, f.guildErr
 	}
-	return f.guild, nil
+	return f.guild, ReadTiming{}, nil
 }
 
 // GuildChannels lists the cache. The runtime never calls it; the panel does,
 // and the panel's tests carry their own fake.
-func (f *fakeTempVCManager) GuildChannels(_ string) ([]*discordgo.Channel, error) {
+func (f *fakeTempVCManager) GuildChannels(_ string) ([]*discordgo.Channel, ReadTiming, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]*discordgo.Channel, 0, len(f.channels))
 	for _, ch := range f.channels {
 		out = append(out, ch)
 	}
-	return out, nil
+	return out, ReadTiming{}, nil
 }
 
 // VoiceStates copies the fake cache for the test guild: who is where, and
