@@ -4,7 +4,8 @@ name: Build and Push Docker Image
 # prerelease stops after the push. workflow_dispatch skips the build and
 # deploys a tag Docker Hub already holds; that is the redeploy and rollback
 # path. There is no auto-rollback: a failed deploy leaves the host as it is,
-# and the fix is a dispatch with the last good tag.
+# and the fix is a dispatch with the last good tag. After a successful deploy
+# the sentry job records the release and the deploy in Sentry.
 #
 # One quirk of the rollback path: a dispatch of a tag older than 0.16.0 rolls
 # the host back but fails the probe, because those builds have no panel to
@@ -19,6 +20,11 @@ on:
         description: Release tag to deploy. Bare semver, already pushed to Docker Hub.
         required: true
         type: string
+
+# The tag this run deploys, for the deploy and sentry jobs. The build job's
+# github.ref_name is the same tag on a release event.
+env:
+  TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
 
 jobs:
   build:
@@ -77,7 +83,6 @@ jobs:
       group: deploy-production
       cancel-in-progress: false
     env:
-      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
       PROBE_URL: https://cavbot2.7cav.us/signin
       # Longer than the API's 120 s. The panel listener starts after slash
       # command registration, and Discord rate-limits that to about 40 s on
@@ -140,3 +145,48 @@ jobs:
           done
           echo "$PROBE_URL did not report $TAG within ${PROBE_TIMEOUT_SECONDS}s" >&2
           exit 1
+
+  # Records the deployed tag in Sentry as the release cavbot2@<tag>, with the
+  # commits since the previous release and a deploy to production. With the
+  # commits attached, a "Fixes CAVBOT2-N" line in a commit resolves that
+  # Sentry issue once its release deploys. utils.InitSentry sends the same
+  # name, and the two must match byte for byte. The prefix exists only in
+  # Sentry, which keeps one release namespace for every project in the org.
+  #
+  # A dispatch redeploys or rolls back a tag that was already released, so it
+  # records the deploy and leaves the release's commits and finalize time
+  # alone. A tag built before this job existed reports its bare version, so a
+  # rollback to one records the deploy on a release its events never name.
+  #
+  # A job of its own, so a Sentry failure turns the run red without marking
+  # the GitHub deployment failed. It names no environment for the same
+  # reason, which is why SENTRY_AUTH_TOKEN is a repository secret and not a
+  # production environment secret. Without it the job fails.
+  sentry:
+    needs: deploy
+    # Spelled out like deploy's gate: the build job is skipped on
+    # workflow_dispatch, and the default success() would skip this job too.
+    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.1
+        with:
+          # Commit association walks back from the tag to the previous
+          # release's commit, which a shallow clone does not hold.
+          fetch-depth: 0
+
+      - name: Record the release in Sentry
+        uses: getsentry/action-release@v3.7.0
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: syniron
+          SENTRY_PROJECT: cavbot2
+        with:
+          release: cavbot2@${{ env.TAG }}
+          environment: production
+          set_commits: ${{ github.event_name == 'release' && 'auto' || 'skip' }}
+          finalize: ${{ github.event_name == 'release' }}
+          disable_telemetry: true
