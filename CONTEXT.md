@@ -258,8 +258,8 @@ in the panel, never in code.
   empty.
   _Avoid_: paused hub, inactive hub, archived hub, hub off.
 - **Broken hub**: A hub whose channel is gone from Discord or has no category.
-  Discord's state makes it so, never a panel setting, and the panel reads that
-  state fresh each time it shows the hub. A join can reach only the
+  Discord's state makes it so, never a panel setting, and the panel works it
+  out each time it shows the hub and never stores it. A join can reach only the
   no-category kind, and it spawns nothing.
   _Avoid_: orphaned hub, stale hub, dead hub, unhealthy hub.
 - **Spawn failure**: A join to an enabled hub that ends with no spawned
@@ -415,7 +415,9 @@ error signal. See ADR 0011.
   reason as the connection closed.
   _Avoid_: browser leaving, client disconnect, cancelled request, timeout.
 - **Time budget**: The one deadline shared by every read a panel page load
-  makes, starting when the page begins reading. A load still reading when it
-  runs out fails at once, whatever read it is waiting on, and the page says it
-  took too long.
+  makes, and by any wait for Discord to send the bot the guild's data,
+  starting when the page begins reading. A load still reading when it runs out
+  fails at once, whatever read it is waiting on, and the page says it took too
+  long. A load still waiting for the guild's data fails at once too, and the
+  page says Discord has not sent it.
   _Avoid_: page timeout, deadline.
