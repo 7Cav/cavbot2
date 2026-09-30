@@ -51,7 +51,7 @@ func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, sto
 	}
 	entries, err := s.deps.Store.ListModeratorChanges(ctx, changeLogLimit)
 	if err != nil {
-		return moderatorsPage{}, fmt.Errorf("list moderator changes: %w", err)
+		return moderatorsPage{}, fmt.Errorf("%s: %w", moderatorChangesRead, err)
 	}
 	return moderatorsPage{Version: version, Picker: rolePicker(guild, stored.RoleIDs, selected), Changes: changeViews(entries, guild.names)}, nil
 }
@@ -72,7 +72,7 @@ func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by a
 	// loaded.
 	before, err := s.deps.Store.GetGuildModeratorRoles(ctx, s.deps.GuildID)
 	if err != nil {
-		return nil, fmt.Errorf("read guild moderator roles: %w", err)
+		return nil, fmt.Errorf("%s: %w", guildModeratorRolesRead, err)
 	}
 	if !formIsCurrent(in.Version, before.Version) {
 		return nil, errStaleModerators

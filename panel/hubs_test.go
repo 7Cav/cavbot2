@@ -35,9 +35,12 @@ type fakeDiscord struct {
 	// guildErr, when set, is what Guild returns.
 	guildErr error
 	// listDelay and guildDelay hold GuildChannels and Guild back before they
-	// answer: a slow Discord, which the panel cannot cut short.
+	// answer: a slow Discord, which the panel cannot cut short. Each read
+	// reports its delay as trip time in one attempt, unless listTiming sets
+	// the split GuildChannels reports.
 	listDelay  time.Duration
 	guildDelay time.Duration
+	listTiming commands.ReadTiming
 	// createErr, when set, is what every create returns.
 	createErr error
 	// editErr, when set, is what every edit returns.
@@ -108,17 +111,21 @@ func (f *fakeDiscord) Channel(channelID string) (*discordgo.Channel, error) {
 	return nil, discordgo.ErrStateNotFound
 }
 
-func (f *fakeDiscord) GuildChannels(_ string) ([]*discordgo.Channel, error) {
+func (f *fakeDiscord) GuildChannels(_ string) ([]*discordgo.Channel, commands.ReadTiming, error) {
 	f.mu.Lock()
 	delay := f.listDelay
 	f.mu.Unlock()
 	time.Sleep(delay)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.listErr != nil {
-		return nil, f.listErr
+	timing := commands.ReadTiming{Trips: delay, Attempts: 1}
+	if f.listTiming != (commands.ReadTiming{}) {
+		timing = f.listTiming
 	}
-	return f.channels, nil
+	if f.listErr != nil {
+		return nil, timing, f.listErr
+	}
+	return f.channels, timing, nil
 }
 
 // GuildChannelCreateComplex records the call and, as Discord would, puts
@@ -236,17 +243,18 @@ func (f *fakeDiscord) setVoice(userID, channelID string) {
 	f.voice[userID] = channelID
 }
 
-func (f *fakeDiscord) Guild(_ string) (*discordgo.Guild, error) {
+func (f *fakeDiscord) Guild(_ string) (*discordgo.Guild, commands.ReadTiming, error) {
 	f.mu.Lock()
 	delay := f.guildDelay
 	f.mu.Unlock()
 	time.Sleep(delay)
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	timing := commands.ReadTiming{Trips: delay, Attempts: 1}
 	if f.guildErr != nil {
-		return nil, f.guildErr
+		return nil, timing, f.guildErr
 	}
-	return &discordgo.Guild{ID: testGuildID, Roles: testGuildRoles, PremiumTier: f.premiumTier}, nil
+	return &discordgo.Guild{ID: testGuildID, Roles: testGuildRoles, PremiumTier: f.premiumTier}, timing, nil
 }
 
 // ChannelPermissionSet accepts every overwrite set. The panel's tests judge
@@ -302,6 +310,13 @@ func (f *fakeDiscord) setListDelay(d time.Duration) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.listDelay = d
+}
+
+// setListTiming sets the split GuildChannels reports, apart from its delay.
+func (f *fakeDiscord) setListTiming(timing commands.ReadTiming) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listTiming = timing
 }
 
 func (f *fakeDiscord) setGuildDelay(d time.Duration) {

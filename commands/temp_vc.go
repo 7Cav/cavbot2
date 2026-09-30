@@ -310,12 +310,14 @@ type TempVCManager interface {
 	// Administrator check reads the bot's own member through it.
 	GuildMember(guildID, userID string) (*discordgo.Member, error)
 	// Guild fetches the guild from the API, roles included. A member carries
-	// role IDs only, so the permission bits come from here.
-	Guild(guildID string) (*discordgo.Guild, error)
-	// GuildChannels fetches the guild's channel list from the API. The panel
-	// reads hub channel names, category names and the register picker from
-	// it at each page load.
-	GuildChannels(guildID string) ([]*discordgo.Channel, error)
+	// role IDs only, so the permission bits come from here. The timing says
+	// how the read spent its time, waiting inside discordgo and on trips to
+	// Discord.
+	Guild(guildID string) (*discordgo.Guild, ReadTiming, error)
+	// GuildChannels fetches the guild's channel list from the API, with the
+	// read's timing as Guild gives it. The panel reads hub channel names,
+	// category names and the register picker from it at each page load.
+	GuildChannels(guildID string) ([]*discordgo.Channel, ReadTiming, error)
 	// VoiceStates reads one copied snapshot of the guild's voice states and
 	// channel IDs from discordgo's state cache, never the API. The runtime
 	// checks each decision against it (#319) and the restart sweep rebuilds
@@ -395,11 +397,12 @@ func (s VoiceSnapshot) occupied(channelID string) bool {
 
 // sessionTempVCManager adapts *discordgo.Session to TempVCManager. Each
 // method is a one-line pass-through, which keeps the hard-to-unit-test
-// wrapper's uncovered code small. ChannelOverwritesReplace, VoiceStates and
-// CanSeeChannel do more, and their tests drive a real session. Every REST
-// call but ChannelPermissionSet passes WithRetryOnRatelimit(false): a 429
-// is a failure the caller handles, never a sleeping gateway handler. A
-// guest add's overwrite set waits out a 429 and retries instead, and
+// wrapper's uncovered code small. ChannelOverwritesReplace, VoiceStates,
+// CanSeeChannel, and Guild and GuildChannels with their read clocks do more,
+// and their tests drive a real session. Every REST call but
+// ChannelPermissionSet passes WithRetryOnRatelimit(false): a 429 is a
+// failure the caller handles, never a sleeping gateway handler. A guest
+// add's overwrite set waits out a 429 and retries instead, and
 // TempVCManager says why.
 type sessionTempVCManager struct {
 	s *discordgo.Session
@@ -479,12 +482,18 @@ func (m *sessionTempVCManager) GuildMember(guildID, userID string) (*discordgo.M
 	return m.s.GuildMember(guildID, userID, discordgo.WithRetryOnRatelimit(false))
 }
 
-func (m *sessionTempVCManager) Guild(guildID string) (*discordgo.Guild, error) {
-	return m.s.Guild(guildID, discordgo.WithRetryOnRatelimit(false))
+// Guild and GuildChannels send their requests through a read clock's
+// client, which times each attempt without changing how the read runs.
+func (m *sessionTempVCManager) Guild(guildID string) (*discordgo.Guild, ReadTiming, error) {
+	clock := newReadClock(m.s.Client)
+	g, err := m.s.Guild(guildID, discordgo.WithRetryOnRatelimit(false), discordgo.WithClient(clock.client))
+	return g, clock.timing(), err
 }
 
-func (m *sessionTempVCManager) GuildChannels(guildID string) ([]*discordgo.Channel, error) {
-	return m.s.GuildChannels(guildID, discordgo.WithRetryOnRatelimit(false))
+func (m *sessionTempVCManager) GuildChannels(guildID string) ([]*discordgo.Channel, ReadTiming, error) {
+	clock := newReadClock(m.s.Client)
+	channels, err := m.s.GuildChannels(guildID, discordgo.WithRetryOnRatelimit(false), discordgo.WithClient(clock.client))
+	return channels, clock.timing(), err
 }
 
 // VoiceStates takes State.RLock once and scans State.Guilds itself. It calls

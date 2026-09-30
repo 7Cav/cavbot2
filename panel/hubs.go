@@ -524,12 +524,17 @@ func (sn snapshot) hubOn(channelID string) (store.Hub, bool) {
 	return store.Hub{}, false
 }
 
-// The names the two Discord reads' errors carry: GuildChannels in read, and
-// Guild in readGuild. A read the page's time budget ran out on fails under
-// the same name as its own failure.
+// The names the page's reads' errors carry, which a page that ran out of
+// time also reports each read under (#395). The two Discord reads are
+// GuildChannels in read and Guild in readGuild. A read the page's time
+// budget ran out on fails under the same name as its own failure.
 const (
-	guildChannelsRead = "guild channels"
-	guildRead         = "guild read"
+	listHubsRead            = "list hubs"
+	guildChannelsRead       = "guild channels"
+	guildRead               = "guild read"
+	guildModeratorRolesRead = "read guild moderator roles"
+	moderatorChangesRead    = "list moderator changes"
+	changeLogRead           = "list change log"
 )
 
 // contextEnded is nil while ctx is live. Once it has ended, because the time
@@ -548,7 +553,7 @@ func contextEnded(ctx context.Context, read string) error {
 func (s *hubService) read(ctx context.Context) (snapshot, error) {
 	hubs, err := s.deps.Store.ListHubs(ctx, s.deps.GuildID)
 	if err != nil {
-		return snapshot{}, fmt.Errorf("list hubs: %w", err)
+		return snapshot{}, fmt.Errorf("%s: %w", listHubsRead, err)
 	}
 	guild, err := s.readChannels()
 	if err != nil {
@@ -559,7 +564,7 @@ func (s *hubService) read(ctx context.Context) (snapshot, error) {
 
 // readChannels reads the guild's channel list through the manager seam.
 func (s *hubService) readChannels() (guildChannels, error) {
-	channels, err := s.deps.Manager.GuildChannels(s.deps.GuildID)
+	channels, _, err := s.deps.Manager.GuildChannels(s.deps.GuildID)
 	if err != nil {
 		return guildChannels{}, fmt.Errorf("%s: %w", guildChannelsRead, err)
 	}
@@ -613,7 +618,7 @@ func (g guildInfo) isEligible(id string) bool {
 // The @everyone role, whose ID is the guild's, is not live here: every
 // member holds it.
 func (s *hubService) readGuild() (guildInfo, error) {
-	g, err := s.deps.Manager.Guild(s.deps.GuildID)
+	g, _, err := s.deps.Manager.Guild(s.deps.GuildID)
 	if err != nil {
 		return guildInfo{}, fmt.Errorf("%s: %w", guildRead, err)
 	}
@@ -660,7 +665,7 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 		Register: req.Register, Create: req.Create, Error: req.Error, Refused: req.Refused}
 	guildWide, err := s.deps.Store.GetGuildModeratorRoles(ctx, s.deps.GuildID)
 	if err != nil {
-		return hubPage{}, fmt.Errorf("read guild moderator roles: %w", err)
+		return hubPage{}, fmt.Errorf("%s: %w", guildModeratorRolesRead, err)
 	}
 	if page.Moderators, err = s.moderatorsSection(ctx, guild, guildWide, req); err != nil {
 		return hubPage{}, err
@@ -722,7 +727,7 @@ func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo,
 	}
 	entries, err := s.deps.Store.ListChangeLog(ctx, hub.ID, changeLogLimit)
 	if err != nil {
-		return nil, fmt.Errorf("list change log: %w", err)
+		return nil, fmt.Errorf("%s: %w", changeLogRead, err)
 	}
 	st := sn.guild.hubChannel(hub)
 	form := editInputOf(hub, st.Name)

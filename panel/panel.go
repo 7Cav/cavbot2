@@ -406,9 +406,14 @@ func (p *Panel) homePage(w http.ResponseWriter, r *http.Request, sess session) {
 // request asks for with its refusal when there is one. A request for a hub
 // that does not exist is 404.
 func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session, status int, req pageRequest) {
+	// The budget's start is taken before its deadline is set, so a page that
+	// fails on the deadline never reports less time than the budget.
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(r.Context(), p.pageBudget)
 	defer cancel()
-	page, err := p.hubs.page(ctx, req)
+	deadline, _ := ctx.Deadline()
+	reads := newPageReads(start, deadline)
+	page, err := p.hubs.forPage(reads).page(ctx, req)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		http.NotFound(w, r)
@@ -421,7 +426,11 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 		utils.Info("Panel page abandoned", "step", "hub page", "username", sess.username, "forum_user_id", sess.userID)
 		return
 	case err != nil:
-		p.hubPageFailed(w, sess, req, err)
+		var report *budgetReport
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			report = reads.report(p.pageBudget)
+		}
+		p.hubPageFailed(w, sess, req, err, report)
 		return
 	}
 	data := sess.page("Hubs")
@@ -433,9 +442,14 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 // renders the error page with the 503 it earns: the page took too long when
 // the time budget ran out, and could not load for any other failure. Try
 // again leads to the page's GET address, so a refused save's page is loaded
-// afresh and never posted twice.
-func (p *Panel) hubPageFailed(w http.ResponseWriter, sess session, req pageRequest, err error) {
-	utils.CaptureError("Panel request failed", err, "step", "hub page")
+// afresh and never posted twice. report, set when the budget had run out by
+// the failure, goes on the event as time_budget.
+func (p *Panel) hubPageFailed(w http.ResponseWriter, sess session, req pageRequest, err error, report *budgetReport) {
+	kv := []any{"step", "hub page"}
+	if report != nil {
+		kv = append(kv, "time_budget", report)
+	}
+	utils.CaptureError("Panel request failed", err, kv...)
 	title, kind, message := "The panel could not load this page", failureReadFailed,
 		"Cavbot2 could not load this page. Nothing changed and you are still signed in."
 	if errors.Is(err, context.DeadlineExceeded) {

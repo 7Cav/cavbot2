@@ -3,6 +3,7 @@ package panel
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -289,11 +290,12 @@ func fixedForm(form url.Values) func(*testing.T, store.Store) url.Values {
 }
 
 // sentryRecorder keeps the original error of every event the panel sends to
-// Sentry. It sits at the SDK, where the panel's captures end, and nothing
-// leaves the process.
+// Sentry, and the event as JSON, the way the SDK sends it. It sits at the
+// SDK, where the panel's captures end, and nothing leaves the process.
 type sentryRecorder struct {
-	mu   sync.Mutex
-	errs []error
+	mu     sync.Mutex
+	errs   []error
+	events [][]byte
 }
 
 // recordSentry binds a Sentry client that records into the returned
@@ -304,7 +306,7 @@ func recordSentry(t *testing.T) *sentryRecorder {
 	err := sentry.Init(sentry.ClientOptions{
 		Dsn:       "https://key@sentry.test/1",
 		Transport: discardTransport{},
-		BeforeSend: func(_ *sentry.Event, hint *sentry.EventHint) *sentry.Event {
+		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
 			rec.mu.Lock()
 			defer rec.mu.Unlock()
 			var original error
@@ -312,6 +314,11 @@ func recordSentry(t *testing.T) *sentryRecorder {
 				original = hint.OriginalException
 			}
 			rec.errs = append(rec.errs, original)
+			sent, err := json.Marshal(event)
+			if err != nil {
+				t.Errorf("the event does not marshal the way the SDK sends it: %v", err)
+			}
+			rec.events = append(rec.events, sent)
 			return nil
 		},
 	})
@@ -327,6 +334,13 @@ func (r *sentryRecorder) recorded() []error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]error(nil), r.errs...)
+}
+
+// sent returns every event recorded as the SDK would send it, in order.
+func (r *sentryRecorder) sent() [][]byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][]byte(nil), r.events...)
 }
 
 // discardTransport sends nothing. BeforeSend drops every event first; the

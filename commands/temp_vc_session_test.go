@@ -22,6 +22,9 @@ type fakeDiscordAPI struct {
 	requests []apiRequest
 	// answer builds the reply to each request, given its body.
 	answer func(r *http.Request, body []byte) (status int, reply []byte)
+	// header holds headers every reply carries besides its content type,
+	// such as a rate-limit bucket's.
+	header http.Header
 }
 
 // apiRequest is one request as the fake API received it.
@@ -45,9 +48,14 @@ func (a *fakeDiscordAPI) RoundTrip(r *http.Request) (*http.Response, error) {
 	})
 	a.mu.Unlock()
 	status, reply := a.answer(r, body)
+	header := a.header.Clone()
+	if header == nil {
+		header = http.Header{}
+	}
+	header.Set("Content-Type", "application/json")
 	return &http.Response{
 		StatusCode: status,
-		Header:     http.Header{"Content-Type": {"application/json"}},
+		Header:     header,
 		Body:       io.NopCloser(bytes.NewReader(reply)),
 		Request:    r,
 	}, nil
