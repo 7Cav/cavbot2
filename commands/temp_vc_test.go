@@ -337,25 +337,13 @@ func (f *fakeTempVCManager) GuildMember(_, _ string) (*discordgo.Member, error) 
 	return f.member, nil
 }
 
-func (f *fakeTempVCManager) Guild(_ string) (*discordgo.Guild, ReadTiming, error) {
+func (f *fakeTempVCManager) Guild(_ string) (*discordgo.Guild, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.guildErr != nil {
-		return nil, ReadTiming{}, f.guildErr
+		return nil, f.guildErr
 	}
-	return f.guild, ReadTiming{}, nil
-}
-
-// GuildChannels lists the cache. The runtime never calls it; the panel does,
-// and the panel's tests carry their own fake.
-func (f *fakeTempVCManager) GuildChannels(_ string) ([]*discordgo.Channel, ReadTiming, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]*discordgo.Channel, 0, len(f.channels))
-	for _, ch := range f.channels {
-		out = append(out, ch)
-	}
-	return out, ReadTiming{}, nil
+	return f.guild, nil
 }
 
 // VoiceStates copies the fake cache for the test guild: who is where, and
@@ -379,6 +367,12 @@ func (f *fakeTempVCManager) VoiceStates(guildID string) VoiceSnapshot {
 		snap.Channels[id] = struct{}{}
 	}
 	return snap
+}
+
+// GuildData reads the guild as absent. The runtime never calls it; the
+// panel does, and the panel's tests carry their own fake.
+func (f *fakeTempVCManager) GuildData(_ string) GuildSnapshot {
+	return GuildSnapshot{}
 }
 
 // MemberRanks reads the payload through the shared helper. The fake holds

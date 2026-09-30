@@ -57,15 +57,14 @@ type Panel struct {
 // forumTimeout bounds one call to the forum.
 const forumTimeout = 10 * time.Second
 
-// hubPageBudget is the hub page's time budget: one deadline over every read
-// the page makes, the store's and Discord's. It must stay under the reverse
-// proxy's 90 s read timeout. A page the proxy cuts off first looks like an
-// abandoned page load and never reaches Sentry. The slowest page load is the
-// 10 s group check, then the budget plus one Discord read: a Discord read
-// takes no context, so the budget can run out during one, which runs on to
-// discordgo's 20 s client timeout, per attempt when discordgo retries a
-// 502. The page stops as that read returns, so a second Discord read never
-// starts late.
+// hubPageBudget is the hub page's time budget: one deadline over every
+// store read the page makes, and over any wait for Discord to send the bot
+// the guild's data. A save's own wait for that data is bounded by it too.
+// It must stay under the reverse proxy's 90 s read timeout. A page the
+// proxy cuts off first looks like an abandoned page load and never reaches
+// Sentry. The slowest page load is the 10 s group check, then the budget:
+// the page reads the guild from the gateway state and makes no Discord
+// call.
 const hubPageBudget = 10 * time.Second
 
 // storeTimeout bounds one store call a save makes, the way the runtime bounds
@@ -425,6 +424,9 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 		// nobody is left to answer.
 		utils.Info("Panel page abandoned", "step", "hub page", "username", sess.username, "forum_user_id", sess.userID)
 		return
+	case errors.Is(err, errNoGuildData):
+		p.noGuildData(w, sess, "hub page", pageAddress(req), err)
+		return
 	case err != nil:
 		var report *budgetReport
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -457,10 +459,33 @@ func (p *Panel) hubPageFailed(w http.ResponseWriter, sess session, req pageReque
 			"Cavbot2 took too long to load this page. Nothing changed and you are still signed in."
 	}
 	data := sess.page(title)
-	data.Failure, data.Message, data.Retry = kind, message, "/"
+	data.Failure, data.Message, data.Retry = kind, message, pageAddress(req)
+	p.render(w, http.StatusServiceUnavailable, "error", data)
+}
+
+// pageAddress is the GET address of the page a request shows: the hub list,
+// or the hub's edit form. Try again leads there, so a save is never posted
+// twice.
+func pageAddress(req pageRequest) string {
 	if req.HubID != 0 {
-		data.Retry = "/?hub=" + strconv.FormatInt(req.HubID, 10)
+		return "/?hub=" + strconv.FormatInt(req.HubID, 10)
 	}
+	return "/"
+}
+
+// noGuildData renders the error page, with a 503, for a page load or a save
+// that found no data for the guild in the gateway state. Discord has not
+// sent it to the bot: for a moment after a deploy, or through an outage.
+// That is Discord's delay, which the bot's reconnect logs already record,
+// and nothing on-call can fix, so it is one INFO line and no Sentry event.
+// retry is the GET address Try again leads to.
+func (p *Panel) noGuildData(w http.ResponseWriter, sess session, step, retry string, err error) {
+	utils.Info("Panel has no guild data", "step", step, "reason", err.Error(),
+		"username", sess.username, "forum_user_id", sess.userID)
+	data := sess.page("Discord has not sent the server's data")
+	data.Failure, data.Retry = failureNoGuildData, retry
+	data.Message = "Discord hasn't sent Cavbot2 this server's channels and roles. That happens for a moment after the bot restarts, " +
+		"and while Discord has trouble. Nothing changed and you are still signed in."
 	p.render(w, http.StatusServiceUnavailable, "error", data)
 }
 
@@ -497,7 +522,7 @@ func (p *Panel) createHub(w http.ResponseWriter, r *http.Request, sess session) 
 		return
 	}
 	if err != nil {
-		p.serverError(w, "hub create", err)
+		p.saveFailed(w, sess, "hub create", "/", err)
 		return
 	}
 	utils.Info("Panel hub created", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
@@ -517,7 +542,7 @@ func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session
 		return
 	}
 	if err != nil {
-		p.serverError(w, "hub register", err)
+		p.saveFailed(w, sess, "hub register", "/", err)
 		return
 	}
 	utils.Info("Panel hub registered", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
@@ -529,9 +554,22 @@ func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session
 // the group check has passed and runs to its end whether or not the browser
 // waits. So its context is the request's without the cancellation net/http
 // sends when the connection closes, and its service gives each store call
-// the save makes a deadline of its own.
+// the save makes a deadline of its own, and its wait for the guild's data
+// the page's time budget.
 func (p *Panel) saving(r *http.Request) (context.Context, *hubService) {
-	return context.WithoutCancel(r.Context()), p.hubs.forSave()
+	return context.WithoutCancel(r.Context()), p.hubs.forSave(p.pageBudget)
+}
+
+// saveFailed answers a save that failed without a refusal. One that found
+// no data for the guild wrote nothing and gets the page that says so; any
+// other failure is the panel's own. retry is the GET address of the page
+// the save was made from.
+func (p *Panel) saveFailed(w http.ResponseWriter, sess session, step, retry string, err error) {
+	if errors.Is(err, errNoGuildData) {
+		p.noGuildData(w, sess, step, retry, err)
+		return
+	}
+	p.serverError(w, step, err)
 }
 
 // renderRefused answers a refused save with the page again, the form as
@@ -597,7 +635,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 		return
 	}
 	if err != nil {
-		p.serverError(w, "hub update", err)
+		p.saveFailed(w, sess, "hub update", pageAddress(pageRequest{HubID: id}), err)
 		return
 	}
 	utils.Info("Panel hub updated", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
@@ -644,7 +682,7 @@ func (p *Panel) saveModerators(w http.ResponseWriter, r *http.Request, sess sess
 		return
 	}
 	if err != nil {
-		p.serverError(w, "moderators save", err)
+		p.saveFailed(w, sess, "moderators save", "/", err)
 		return
 	}
 	utils.Info("Panel guild moderator roles saved", "role_ids", roles, "username", sess.username, "forum_user_id", sess.userID)

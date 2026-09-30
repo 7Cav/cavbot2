@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -22,25 +23,20 @@ import (
 
 const testGuildID = "guild-1"
 
-// fakeDiscord is the manager fake beneath the panel: the guild's channel list
-// the panel reads, and the create, move and delete calls the runtime makes
-// when a join spawns. Mutex-guarded because the runtime is driven from the
-// test goroutine while the suite runs under -race.
+// fakeDiscord is the manager fake beneath the panel: the gateway state the
+// panel reads the guild from, the create and edit calls a save makes, and
+// the create, move and delete calls the runtime makes when a join spawns.
+// Mutex-guarded because the runtime is driven from the test goroutine while
+// the suite runs under -race.
 type fakeDiscord struct {
-	mu       sync.Mutex
+	mu sync.Mutex
+	// channels are the guild's channels as the fake gateway state holds
+	// them. A create or an edit changes them at once, as the production
+	// adapter puts Discord's reply in the state.
 	channels []*discordgo.Channel
-	// listErr, when set, is what GuildChannels returns: Discord not
-	// answering the panel's read.
-	listErr error
-	// guildErr, when set, is what Guild returns.
-	guildErr error
-	// listDelay and guildDelay hold GuildChannels and Guild back before they
-	// answer: a slow Discord, which the panel cannot cut short. Each read
-	// reports its delay as trip time in one attempt, unless listTiming sets
-	// the split GuildChannels reports.
-	listDelay  time.Duration
-	guildDelay time.Duration
-	listTiming commands.ReadTiming
+	// apiReads counts the reads made of Discord's API, each of which fails:
+	// the panel reads the guild from the gateway state.
+	apiReads int
 	// createErr, when set, is what every create returns.
 	createErr error
 	// editErr, when set, is what every edit returns.
@@ -49,16 +45,24 @@ type fakeDiscord struct {
 	// after Discord has made the change and before it answers: the moment
 	// a test has the browser leave during a Discord write.
 	duringWrite func()
-	// premiumTier is the boost tier Guild reports.
+	// premiumTier is the boost tier the fake gateway state holds.
 	premiumTier discordgo.PremiumTier
 	created     []fakeCreate
 	edited      []fakeEdit
 	deleted     []string
 	spawned     int
 	// voice stands in for the state cache's voice states: user ID to
-	// channel ID, connected members only. The panel's tests never take the
-	// guild away, so the guild is always present.
+	// channel ID, connected members only.
 	voice map[string]string
+	// guildStatus is how much of the guild the fake gateway state holds:
+	// present unless a test takes it away or leaves the READY placeholder.
+	guildStatus commands.GuildDataStatus
+	// placeholderRead closes at the first read that finds the placeholder,
+	// once holdPlaceholder has armed it.
+	placeholderRead chan struct{}
+	// disconnected is the bot's gateway connection down, with the fake
+	// state still holding what it held when the connection dropped.
+	disconnected bool
 }
 
 // fakeEdit is one edit call as the fake recorded it: the channel, the name
@@ -97,7 +101,7 @@ func newFakeDiscord() *fakeDiscord {
 		{ID: "vc-2", Name: "Squad Join", Type: discordgo.ChannelTypeGuildVoice, ParentID: "cat-1"},
 		{ID: "text-1", Name: "general", Type: discordgo.ChannelTypeGuildText, ParentID: "cat-1"},
 		{ID: "vc-noparent", Name: "Lobby", Type: discordgo.ChannelTypeGuildVoice},
-	}, voice: map[string]string{}}
+	}, voice: map[string]string{}, guildStatus: commands.GuildDataPresent}
 }
 
 func (f *fakeDiscord) Channel(channelID string) (*discordgo.Channel, error) {
@@ -111,25 +115,14 @@ func (f *fakeDiscord) Channel(channelID string) (*discordgo.Channel, error) {
 	return nil, discordgo.ErrStateNotFound
 }
 
-func (f *fakeDiscord) GuildChannels(_ string) ([]*discordgo.Channel, commands.ReadTiming, error) {
-	f.mu.Lock()
-	delay := f.listDelay
-	f.mu.Unlock()
-	time.Sleep(delay)
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	timing := commands.ReadTiming{Trips: delay, Attempts: 1}
-	if f.listTiming != (commands.ReadTiming{}) {
-		timing = f.listTiming
-	}
-	if f.listErr != nil {
-		return nil, timing, f.listErr
-	}
-	return f.channels, timing, nil
-}
+// errAPIDown is what every read of Discord's API answers in the panel's
+// tests. The panel reads the guild from the gateway state, so a page and a
+// save work while the API is down.
+var errAPIDown = errors.New("discord: 502 Bad Gateway")
 
-// GuildChannelCreateComplex records the call and, as Discord would, puts
-// the new channel in the guild's list so a later page load reads it.
+// GuildChannelCreateComplex records the call and, as the production adapter
+// does with Discord's reply, puts the new channel in the fake gateway state
+// so the page a save redirects to reads it.
 func (f *fakeDiscord) GuildChannelCreateComplex(_ string, data discordgo.GuildChannelCreateData, reason string) (*discordgo.Channel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -156,9 +149,9 @@ func (f *fakeDiscord) ChannelDelete(channelID, _ string) (*discordgo.Channel, er
 	return &discordgo.Channel{ID: channelID}, nil
 }
 
-// ChannelEdit records the call and, as Discord would, renames the channel
-// in the guild's list. An edit with no name keeps the name, since the
-// request leaves an empty name out.
+// ChannelEdit records the call and, as the production adapter does with
+// Discord's reply, renames the channel in the fake gateway state. An edit
+// with no name keeps the name, since the request leaves an empty name out.
 func (f *fakeDiscord) ChannelEdit(channelID string, data *discordgo.ChannelEdit, reason string) (*discordgo.Channel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -219,6 +212,34 @@ func (f *fakeDiscord) VoiceStates(guildID string) commands.VoiceSnapshot {
 	return snap
 }
 
+// GuildData copies the fake cache's channels, the guild's roles and its
+// boost tier, while the fake state holds the guild's data. Any other guild
+// is absent.
+func (f *fakeDiscord) GuildData(guildID string) commands.GuildSnapshot {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if guildID != testGuildID {
+		return commands.GuildSnapshot{}
+	}
+	if f.guildStatus == commands.GuildDataArriving && f.placeholderRead != nil {
+		close(f.placeholderRead)
+		f.placeholderRead = nil
+	}
+	if f.guildStatus != commands.GuildDataPresent {
+		return commands.GuildSnapshot{Status: f.guildStatus}
+	}
+	data := commands.GuildSnapshot{Status: commands.GuildDataPresent, Connected: !f.disconnected, PremiumTier: f.premiumTier}
+	for _, ch := range f.channels {
+		c := *ch
+		data.Channels = append(data.Channels, &c)
+	}
+	for _, r := range testGuildRoles {
+		role := *r
+		data.Roles = append(data.Roles, &role)
+	}
+	return data
+}
+
 // MemberRanks reads the payload through the runtime's shared helper. The
 // panel's tests never run a sweep; the fake carries it for the interface.
 func (f *fakeDiscord) MemberRanks(g *discordgo.Guild) map[string]int {
@@ -243,18 +264,20 @@ func (f *fakeDiscord) setVoice(userID, channelID string) {
 	f.voice[userID] = channelID
 }
 
-func (f *fakeDiscord) Guild(_ string) (*discordgo.Guild, commands.ReadTiming, error) {
-	f.mu.Lock()
-	delay := f.guildDelay
-	f.mu.Unlock()
-	time.Sleep(delay)
+// Guild is a read of Discord's API: counted, and answered as the API
+// answers while it is down.
+func (f *fakeDiscord) Guild(_ string) (*discordgo.Guild, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	timing := commands.ReadTiming{Trips: delay, Attempts: 1}
-	if f.guildErr != nil {
-		return nil, timing, f.guildErr
-	}
-	return &discordgo.Guild{ID: testGuildID, Roles: testGuildRoles, PremiumTier: f.premiumTier}, timing, nil
+	f.apiReads++
+	return nil, errAPIDown
+}
+
+// apiReadCount is how many reads of Discord's API the panel has made.
+func (f *fakeDiscord) apiReadCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.apiReads
 }
 
 // ChannelPermissionSet accepts every overwrite set. The panel's tests judge
@@ -267,6 +290,32 @@ func (f *fakeDiscord) ChannelPermissionSet(_, _ string, _ discordgo.PermissionOv
 // let nobody in; the fake carries it for the interface.
 func (f *fakeDiscord) CanSeeChannel(_, _ string, _ []string) (bool, error) {
 	return true, nil
+}
+
+// setGuild sets how much of the guild the fake gateway state holds.
+func (f *fakeDiscord) setGuild(status commands.GuildDataStatus) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.guildStatus = status
+}
+
+// holdPlaceholder leaves the READY placeholder in the fake gateway state:
+// the guild's data is on its way. The channel closes at the first read that
+// finds it.
+func (f *fakeDiscord) holdPlaceholder() <-chan struct{} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.guildStatus = commands.GuildDataArriving
+	f.placeholderRead = make(chan struct{})
+	return f.placeholderRead
+}
+
+// setConnected brings the bot's gateway connection up or down. The fake
+// state keeps what it holds either way.
+func (f *fakeDiscord) setConnected(up bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disconnected = !up
 }
 
 func (f *fakeDiscord) setDuringWrite(during func()) {
@@ -292,37 +341,6 @@ func (f *fakeDiscord) edits() []fakeEdit {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.edited)
-}
-
-func (f *fakeDiscord) setListErr(err error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.listErr = err
-}
-
-func (f *fakeDiscord) setGuildErr(err error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.guildErr = err
-}
-
-func (f *fakeDiscord) setListDelay(d time.Duration) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.listDelay = d
-}
-
-// setListTiming sets the split GuildChannels reports, apart from its delay.
-func (f *fakeDiscord) setListTiming(timing commands.ReadTiming) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.listTiming = timing
-}
-
-func (f *fakeDiscord) setGuildDelay(d time.Duration) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.guildDelay = d
 }
 
 func (f *fakeDiscord) setCreateErr(err error) {

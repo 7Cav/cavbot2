@@ -65,8 +65,11 @@ func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, sto
 // A section loaded at a version the set is no longer at is refused first,
 // as errStaleModerators, before the guild read.
 func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by actor) ([]string, error) {
-	s.saveLock.Lock()
-	defer s.saveLock.Unlock()
+	unlock, err := s.lockSave(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	// The stored set is read before validation: it is what an unavailable
 	// role may be kept from, and its version is what the section must have
 	// loaded.
@@ -77,11 +80,11 @@ func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by a
 	if !formIsCurrent(in.Version, before.Version) {
 		return nil, errStaleModerators
 	}
-	guild, err := s.readGuild()
+	guild, err := s.readGuild(ctx)
 	if err != nil {
 		return nil, err
 	}
-	roles, err := acceptedRoles(in.RoleIDs, guild, before.RoleIDs)
+	roles, err := acceptedRoles(in.RoleIDs, guild.info, before.RoleIDs)
 	if err != nil {
 		return nil, err
 	}

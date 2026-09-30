@@ -123,11 +123,11 @@ func channelPicker(sn snapshot, chosenID string) pickerView {
 		id, name, category string
 	}
 	var found []candidate
-	for _, ch := range sn.guild.voiceChannels() {
+	for _, ch := range sn.channels.voiceChannels() {
 		if _, taken := sn.hubOn(ch.ID); taken {
 			continue
 		}
-		found = append(found, candidate{ch.ID, ch.Name, sn.guild.categoryName(ch)})
+		found = append(found, candidate{ch.ID, ch.Name, sn.channels.categoryName(ch)})
 	}
 	sort.Slice(found, func(i, j int) bool {
 		a, b := found[i], found[j]

@@ -82,7 +82,7 @@ func checkAdministrator(mgr TempVCManager, guildID, botUserID string) {
 		utils.Warn("Administrator check skipped, member fetch failed", "error", err, "guild_id", guildID)
 		return
 	}
-	guild, _, err := mgr.Guild(guildID)
+	guild, err := mgr.Guild(guildID)
 	if err != nil {
 		utils.Warn("Administrator check skipped, guild fetch failed", "error", err, "guild_id", guildID)
 		return
