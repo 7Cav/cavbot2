@@ -9,14 +9,24 @@ import (
 	"github.com/getsentry/sentry-go"
 )
 
+// sentryReleasePrefix starts cavbot2's release names in Sentry. Sentry keeps
+// one release namespace per organization, and other projects in the org ship
+// bare versions too, so a bare name could share a release with one of them.
+// The sentry job in .github/workflows/build_and_push.yml creates the release
+// as this prefix plus the tag; the two names must match byte for byte. The
+// version stays bare everywhere else, the image tag and panel footer included.
+const sentryReleasePrefix = "cavbot2@"
+
 // InitSentry configures the Sentry client; an empty SENTRY_DSN is a valid no-op (zero events, zero overhead).
-func InitSentry(release string) func() {
+// Events carry the release cavbot2@<version>.
+func InitSentry(version string) func() {
 	dsn := os.Getenv("SENTRY_DSN")
 	if dsn == "" {
 		Info("Sentry disabled (SENTRY_DSN not set)")
 		return func() {}
 	}
 
+	release := sentryReleasePrefix + version
 	env := os.Getenv("APP_ENV")
 	err := sentry.Init(sentry.ClientOptions{
 		Dsn:              dsn,

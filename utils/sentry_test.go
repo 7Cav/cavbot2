@@ -69,6 +69,31 @@ func TestInitSentry_NoDSN_CaptureErrorSendsNothing(t *testing.T) {
 	}
 }
 
+// The deploy workflow creates the release cavbot2@<tag> in Sentry and hangs
+// its commits and deploys off it. An event under any other name lands in a
+// release with neither.
+func TestInitSentry_EventsCarryTheReleaseTheDeployCreates(t *testing.T) {
+	t.Setenv("SENTRY_DSN", "https://test@example.com/1")
+	resetSentryHub(t)
+
+	InitSentry("1.2.3")
+	// The client's transport cannot be swapped after Init, so a processor
+	// records each finished event and drops it before it is sent.
+	var events []*sentry.Event
+	sentry.CurrentHub().Client().AddEventProcessor(func(e *sentry.Event, _ *sentry.EventHint) *sentry.Event {
+		events = append(events, e)
+		return nil
+	})
+	CaptureError("test error", errors.New("oops"))
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if got, want := events[0].Release, "cavbot2@1.2.3"; got != want {
+		t.Errorf("event release = %q, want %q", got, want)
+	}
+}
+
 func TestCaptureError_SendsEvent(t *testing.T) {
 	tr := initSentryWithTransport(t)
 
