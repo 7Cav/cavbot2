@@ -414,3 +414,7 @@ error signal. See ADR 0011.
   abandoned page load. Neither is a load whose read failed for its own
   reason as the connection closed.
   _Avoid_: browser leaving, client disconnect, cancelled request, timeout.
+- **Time budget**: The one deadline shared by every read a panel page load
+  makes, starting when the page begins reading. A load still reading when it
+  runs out has failed, and the page says it took too long.
+  _Avoid_: page timeout, deadline.
