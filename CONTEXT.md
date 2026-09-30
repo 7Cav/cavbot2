@@ -416,5 +416,6 @@ error signal. See ADR 0011.
   _Avoid_: browser leaving, client disconnect, cancelled request, timeout.
 - **Time budget**: The one deadline shared by every read a panel page load
   makes, starting when the page begins reading. A load still reading when it
-  runs out has failed, and the page says it took too long.
+  runs out fails at once, whatever read it is waiting on, and the page says it
+  took too long.
   _Avoid_: page timeout, deadline.
