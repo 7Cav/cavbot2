@@ -406,6 +406,15 @@ error signal. See ADR 0011.
   `utils.Error` is for genuine internal failures (Sentry-eligible).
   `utils.HandleError` is for user-facing responses (often expected outcomes
   like "no troopers found", not Sentry-eligible).
+- **Missed acknowledgement**: An interaction Discord dropped because the
+  bot's acknowledgement did not land within 3 seconds of Discord creating it.
+  Discord answers that acknowledgement with 10062 Unknown interaction, and
+  the member sees "The application did not respond". Nothing the bot sends
+  after that reaches them, so it sends nothing. Its one Sentry event gives
+  the interaction's age when the bot acknowledged it and how long the
+  acknowledgement took, which tells a late interaction from a slow answer.
+  _Avoid_: expired interaction (the 15-minute limit on editing a reply is a
+  different limit), timeout.
 - **Abandoned page load**: A panel page load whose connection closed before
   the panel answered and before the page's time budget ran out. Usually the
   browser left, by navigating away, reloading or closing the tab. It is
