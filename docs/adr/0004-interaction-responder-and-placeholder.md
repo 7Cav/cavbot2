@@ -18,8 +18,9 @@ Four response patterns are documented; three are in use:
 - **Deferred edit** (`warden`) — defer an *ephemeral* response
   (`InteractionResponseDeferredChannelMessageWithSource` +
   `MessageFlagsEphemeral`), then fill it in with `InteractionResponseEdit`.
-  The `deferEphemeral` / `editEphemeral` / `editEphemeralWithEmbed` helpers in
-  `commands/warden.go` wrap this. Warden does **not** use
+  `deferEphemeral` in `commands/interaction_ack.go` and the `editEphemeral` /
+  `editEphemeralWithEmbed` helpers in `commands/warden.go` wrap this. Warden
+  does **not** use
   `FollowupMessageCreate`.
 - **Deferred followup** (`s3aar`) — defer a public response, then post the
   result with `FollowupMessageCreate`. One run can fire several followups

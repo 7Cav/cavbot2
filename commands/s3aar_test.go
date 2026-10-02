@@ -262,6 +262,10 @@ func TestRunS3aar_SuccessEmbedOutput(t *testing.T) {
 		calls[0].Response.Type != discordgo.InteractionResponseDeferredChannelMessageWithSource {
 		t.Fatalf("expected deferred Respond first; got %+v", calls)
 	}
+	// The AAR is for the whole channel, so the defer is public.
+	if d := calls[0].Response.Data; d != nil && d.Flags&discordgo.MessageFlagsEphemeral != 0 {
+		t.Fatalf("the defer is ephemeral; the AAR must post where the channel can see it")
+	}
 	fups := followups(calls)
 	if len(fups) < 2 {
 		t.Fatalf("expected at least embed + file followups; got %d", len(fups))

@@ -29,7 +29,7 @@ const lockNoticeNotPosted = " The lock notice couldn't be posted in the channel'
 func runLockNoticeComponent(r utils.InteractionResponder, tv *TempVC, interaction *discordgo.InteractionCreate) {
 	customID := interaction.MessageComponentData().CustomID
 	if err := deferEphemeral(r, interaction); err != nil {
-		captureError("Failed to acknowledge a lock notice button", err,
+		captureAckFailure("Failed to acknowledge a lock notice button", err,
 			"command", voiceLockCommandName, "custom_id", customID, "guild_id", interaction.GuildID)
 		return
 	}

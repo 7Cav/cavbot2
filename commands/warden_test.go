@@ -718,9 +718,10 @@ func TestFindGuildMember_WhitespacePaddedMaxLengthStillSearches(t *testing.T) {
 	}
 }
 
-// When Discord refuses a slash command's deferred acknowledgement, the
-// member still gets an answer, and it carries none of Discord's response
-// body. Every command that defers answers the same way, and stops there.
+// When Discord refuses a slash command's deferred acknowledgement with
+// anything but 10062 Unknown interaction, the member still gets an answer,
+// and it carries none of Discord's response body. Every command that defers
+// answers the same way, and stops there.
 func TestRefusedAcknowledgementKeepsDiscordBodyOutOfTheReply(t *testing.T) {
 	bulkAddInternal := fakeAppCommandInteraction(stringOption("unit", wardenInternalUnits[0].value))
 	bulkAddInternal.GuildID = "guild-1"
@@ -741,7 +742,7 @@ func TestRefusedAcknowledgementKeepsDiscordBodyOutOfTheReply(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			f := &fakeResponder{RespondErrs: []error{restError(http.StatusNotFound, 10062, rawBodyMarker)}}
+			f := &fakeResponder{RespondErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)}}
 			tc.run(f)
 
 			calls := f.Calls()
