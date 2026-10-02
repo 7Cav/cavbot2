@@ -389,10 +389,11 @@ func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 		optionMap[opt.Name] = opt
 	}
 
-	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-	})
-	if err != nil {
+	if err := deferPublic(r, i); err != nil {
+		if isUnknownInteraction(err) {
+			captureMissedAck(i, err)
+			return
+		}
 		utils.HandleError(r, i, fmt.Sprintf("Failed to defer interaction: %v", err))
 		return
 	}

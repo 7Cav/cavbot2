@@ -8,16 +8,28 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// deferEphemeral acknowledges an interaction with a deferred ephemeral
-// reply. A refusal comes back as an *ackFailure, which carries the timings
-// captureAckFailure reports.
+// deferEphemeral acknowledges an interaction with a deferred reply only
+// the invoker sees.
 func deferEphemeral(r utils.InteractionResponder, interaction *discordgo.InteractionCreate) error {
+	return deferReply(r, interaction, &discordgo.InteractionResponseData{
+		Flags: discordgo.MessageFlagsEphemeral,
+	})
+}
+
+// deferPublic acknowledges an interaction with a deferred reply the whole
+// channel sees.
+func deferPublic(r utils.InteractionResponder, interaction *discordgo.InteractionCreate) error {
+	return deferReply(r, interaction, nil)
+}
+
+// deferReply acknowledges an interaction with a deferred reply. A refusal
+// comes back as an *ackFailure, which carries the timings
+// captureAckFailure reports.
+func deferReply(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, data *discordgo.InteractionResponseData) error {
 	sent := time.Now()
 	err := r.InteractionRespond(interaction.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
+		Data: data,
 	})
 	if err == nil {
 		return nil
