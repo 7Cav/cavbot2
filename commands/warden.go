@@ -173,7 +173,7 @@ func runWarden(
 
 func handleWardenAdd(r utils.InteractionResponder, gm GuildManager, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
 	if err := deferEphemeral(r, interaction); err != nil {
-		replyAckFailed(r, interaction, err)
+		replyAckFailed(r, interaction, err, "subcommand", wardenSubcommandOf(interaction))
 		return
 	}
 
@@ -225,7 +225,7 @@ func handleWardenRemove(
 	roleScope string,
 ) {
 	if err := deferEphemeral(r, interaction); err != nil {
-		replyAckFailed(r, interaction, err)
+		replyAckFailed(r, interaction, err, "subcommand", wardenSubcommandOf(interaction))
 		return
 	}
 
@@ -266,7 +266,7 @@ func handleWardenBulkAdd(
 ) {
 	if err := deferEphemeral(r, interaction); err != nil {
 		if isUnknownInteraction(err) {
-			captureMissedAck(interaction, err)
+			captureMissedAck(interaction, err, "subcommand", wardenSubcommandOf(interaction))
 			return
 		}
 		utils.HandleError(r, interaction, fmt.Sprintf("❌ Failed to acknowledge bulk add: %v", err))
@@ -371,7 +371,7 @@ func handleWardenPurge(
 ) {
 	if err := deferEphemeral(r, interaction); err != nil {
 		if isUnknownInteraction(err) {
-			captureMissedAck(interaction, err)
+			captureMissedAck(interaction, err, "subcommand", wardenSubcommandOf(interaction))
 			return
 		}
 		utils.HandleError(r, interaction, fmt.Sprintf("❌ Failed to acknowledge purge: %v", err))

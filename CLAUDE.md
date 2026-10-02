@@ -47,7 +47,7 @@ Review the README for required environment variables if you need them.
 
 - Logging is `slog` via `utils.Info/Warn/Error/Debug` — always use these wrappers, not the stdlib `slog` directly, so log level routing stays consistent.
 - Commands log a `"🚀 Starting ..."` line at entry and `"✨ Done!"` at successful exit, with `"command"`, `"username"`, and `"discord_id"` fields. Match this pattern when adding commands so log greps stay uniform.
-- Prefer ephemeral responses for admin/management commands (`MessageFlagsEphemeral`) — see `warden.go` for the deferred-ephemeral pattern (`deferEphemeral` + `editEphemeral`).
+- Prefer ephemeral responses for admin/management commands (`MessageFlagsEphemeral`) — see `deferEphemeral` + `editEphemeral` for the deferred-ephemeral pattern.
 
 ## Build/deploy quirks
 

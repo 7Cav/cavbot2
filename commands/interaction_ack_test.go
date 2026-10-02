@@ -1,10 +1,8 @@
 package commands
 
 import (
-	"context"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,35 +11,11 @@ import (
 	"github.com/getsentry/sentry-go"
 )
 
-// sentryEvents records every event the Sentry client sends, whichever
-// package captured it.
-type sentryEvents struct {
-	mu     sync.Mutex
-	events []*sentry.Event
-}
-
-func (s *sentryEvents) Configure(sentry.ClientOptions)        {}
-func (s *sentryEvents) Flush(time.Duration) bool              { return true }
-func (s *sentryEvents) FlushWithContext(context.Context) bool { return true }
-func (s *sentryEvents) Close()                                {}
-
-func (s *sentryEvents) SendEvent(e *sentry.Event) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.events = append(s.events, e)
-}
-
-func (s *sentryEvents) Events() []*sentry.Event {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]*sentry.Event(nil), s.events...)
-}
-
 // recordSentry binds a Sentry client that records its events, and unbinds
 // it after the test.
-func recordSentry(t *testing.T) *sentryEvents {
+func recordSentry(t *testing.T) *telemetrySentryTransport {
 	t.Helper()
-	rec := &sentryEvents{}
+	rec := &telemetrySentryTransport{}
 	if err := sentry.Init(sentry.ClientOptions{Dsn: "https://test@example.com/1", Transport: rec}); err != nil {
 		t.Fatalf("sentry.Init: %v", err)
 	}
@@ -82,10 +56,12 @@ func extraMs(e *sentry.Event, key string) (int64, bool) {
 
 // When Discord answers a command's acknowledgement with 10062 Unknown
 // interaction, the interaction is gone and nothing more can reach the
-// member. Sentry gets one event that names the failed acknowledgement and
-// the command, and says how long the acknowledgement took and how old the
+// member. Sentry gets one event that names the command, and the /warden
+// subcommand, and says how long the acknowledgement took and how old the
 // interaction was when the bot sent it, so a late interaction can be told
-// from a slow answer. The bot sends nothing further on the interaction.
+// from a slow answer. The event reports Discord's own error, so it groups
+// by Discord's error type. The bot sends nothing further on the
+// interaction.
 func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 	const (
 		ackDelay = 20 * time.Millisecond
@@ -113,23 +89,24 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 	}
 
 	cases := []struct {
-		name    string
-		command string
-		run     func(t *testing.T, r *slowAck)
+		name       string
+		command    string
+		subcommand string
+		run        func(t *testing.T, r *slowAck)
 	}{
-		{"/warden add", "warden", func(_ *testing.T, r *slowAck) { runWarden(r, nil, warden("add")) }},
-		{"/warden remove", "warden", func(_ *testing.T, r *slowAck) { runWarden(r, nil, warden("remove")) }},
-		{"/warden bulkadd", "warden", func(_ *testing.T, r *slowAck) { runWarden(r, nil, warden("bulkadd")) }},
-		{"/warden purge", "warden", func(_ *testing.T, r *slowAck) { runWarden(r, nil, warden("purge")) }},
-		{"/warden-bulkadd-internal", "warden-bulkadd-internal", func(_ *testing.T, r *slowAck) {
+		{"/warden add", "warden", "add", func(_ *testing.T, r *slowAck) { runWarden(r, nil, warden("add")) }},
+		{"/warden remove", "warden", "remove", func(_ *testing.T, r *slowAck) { runWarden(r, nil, warden("remove")) }},
+		{"/warden bulkadd", "warden", "bulkadd", func(_ *testing.T, r *slowAck) { runWarden(r, nil, warden("bulkadd")) }},
+		{"/warden purge", "warden", "purge", func(_ *testing.T, r *slowAck) { runWarden(r, nil, warden("purge")) }},
+		{"/warden-bulkadd-internal", "warden-bulkadd-internal", "", func(_ *testing.T, r *slowAck) {
 			runWardenBulkAddInternal(r, nil, slash("warden-bulkadd-internal", stringOption("unit", wardenInternalUnits[0].value)))
 		}},
-		{"/voice-rename", voiceRenameCommandName, func(_ *testing.T, r *slowAck) {
+		{"/voice-rename", voiceRenameCommandName, "", func(_ *testing.T, r *slowAck) {
 			runVoiceRename(r, nil, slash(voiceRenameCommandName, stringOption("name", "Alpha")))
 		}},
-		{"/voice-lock", voiceLockCommandName, func(_ *testing.T, r *slowAck) { runVoiceLock(r, nil, slash(voiceLockCommandName)) }},
-		{"/voice-unlock", voiceUnlockCommandName, func(_ *testing.T, r *slowAck) { runVoiceUnlock(r, nil, slash(voiceUnlockCommandName)) }},
-		{"lock notice press", voiceLockCommandName, func(t *testing.T, r *slowAck) { runVoiceLock(r, nil, press(t)) }},
+		{"/voice-lock", voiceLockCommandName, "", func(_ *testing.T, r *slowAck) { runVoiceLock(r, nil, slash(voiceLockCommandName)) }},
+		{"/voice-unlock", voiceUnlockCommandName, "", func(_ *testing.T, r *slowAck) { runVoiceUnlock(r, nil, slash(voiceUnlockCommandName)) }},
+		{"lock notice press", voiceLockCommandName, "", func(t *testing.T, r *slowAck) { runVoiceLock(r, nil, press(t)) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,11 +132,14 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 				t.Fatalf("Sentry events = %q, want one", got)
 			}
 			e := events[0]
-			if !strings.Contains(strings.ToLower(e.Tags["message"]), "acknowledge") {
-				t.Errorf("event %q does not name the failed acknowledgement", e.Tags["message"])
-			}
 			if e.Tags["command"] != tc.command {
 				t.Errorf("event command = %q, want %q", e.Tags["command"], tc.command)
+			}
+			if tc.subcommand != "" && e.Contexts["extra"]["subcommand"] != tc.subcommand {
+				t.Errorf("event subcommand = %v, want %q", e.Contexts["extra"]["subcommand"], tc.subcommand)
+			}
+			if n := len(e.Exception); n == 0 || e.Exception[n-1].Type != "*discordgo.RESTError" {
+				t.Errorf("event exceptions = %+v, want Discord's own *discordgo.RESTError outermost", e.Exception)
 			}
 			if took, ok := extraMs(e, "ack_ms"); !ok || took < ackDelay.Milliseconds() || took >= age.Milliseconds() {
 				t.Errorf("ack_ms = %v, want how long the acknowledgement took (>= %d)", e.Contexts["extra"]["ack_ms"], ackDelay.Milliseconds())
