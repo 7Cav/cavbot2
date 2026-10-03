@@ -171,6 +171,11 @@ Foxhole page and the terms around it are designed in #412, not built yet.
   changes who holds the Foxhole roles. Foxhole managers and panel admins open
   it.
   _Avoid_: warden page, warden dashboard.
+- **Member list**: The bot's copy of every member of the guild, which the
+  Foxhole page reads its holders from. Discord sends it in parts after each
+  connect, and it is partial until the last part arrives. A resumed session
+  keeps it.
+  _Avoid_: member cache, roster (a unit's roster is a different list).
 
 ## Temporary voice channels
 
