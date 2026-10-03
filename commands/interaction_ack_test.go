@@ -107,6 +107,7 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 		{"/voice-lock", voiceLockCommandName, "", func(_ *testing.T, r *slowAck) { runVoiceLock(r, nil, slash(voiceLockCommandName)) }},
 		{"/voice-unlock", voiceUnlockCommandName, "", func(_ *testing.T, r *slowAck) { runVoiceUnlock(r, nil, slash(voiceUnlockCommandName)) }},
 		{"/s3aar", "s3aar", "", func(_ *testing.T, r *slowAck) { runS3aar(r, slash("s3aar")) }},
+		{"/s3aar (disabled)", "s3aar", "", func(_ *testing.T, r *slowAck) { runS3aarDisabled(r, slash("s3aar")) }},
 		{"lock notice press", voiceLockCommandName, "", func(t *testing.T, r *slowAck) { runVoiceLock(r, nil, press(t)) }},
 	}
 	for _, tc := range cases {

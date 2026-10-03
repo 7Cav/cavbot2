@@ -739,6 +739,7 @@ func TestRefusedAcknowledgementKeepsDiscordBodyOutOfTheReply(t *testing.T) {
 			handleWardenRemove(f, nil, fakeAppCommandInteraction(), "guild-1", "someone", "internal")
 		}},
 		{"/warden-bulkadd-internal", func(f *fakeResponder) { runWardenBulkAddInternal(f, nil, bulkAddInternal) }},
+		{"/s3aar (disabled)", func(f *fakeResponder) { runS3aarDisabled(f, fakeAppCommandInteraction()) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

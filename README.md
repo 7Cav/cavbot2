@@ -24,7 +24,7 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/awol` | AWOL troopers for a position |
 | `/loa` | Active and upcoming LOAs for a position |
 | `/afsm` | Users eligible for the AFSM in a department |
-| `/s3aar` | Attendance list for events and operations |
+| `/s3aar` | Disabled due to disuse |
 | `/s6-it-check` | S6 IT members eligible for full status |
 | `/warden` | Warden role management |
 | `/warden-bulkadd-internal` | Add a validated unit's roster to the internal Warden role |
