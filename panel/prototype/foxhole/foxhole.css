@@ -60,7 +60,12 @@
 }
 .fx-count { color: var(--text-hi); margin-right: 6px; font-variant-numeric: tabular-nums; }
 .btn[disabled] { opacity: .4; cursor: not-allowed; }
-.fx-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 12px; align-items: start; }
+.fx-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 12px; align-items: stretch; }
+/* The three action blocks sit above the list as one band: equal heights,
+   each block's last button row at its foot. */
+.fx-actions > .block { display: flex; flex-direction: column; }
+.fx-actions > .block > form:last-child { flex: 1; display: flex; flex-direction: column; }
+.fx-actions > .block > form:last-child > .submit-row { margin-top: auto; }
 .fx-actions form + form { border-top: 1px solid var(--line-2); }
 .fx-radios .check { display: inline-block; margin-right: 14px; }
 .fx-row-actions { margin-top: 8px; }

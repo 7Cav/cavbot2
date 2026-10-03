@@ -151,6 +151,22 @@
 {{template "report" .}}
 {{template "pending" .Pending}}
 
+<div class="fx-actions">
+  <section class="block">
+    <h2 class="block-header">Add members</h2>
+    {{template "paste-form" (paste . "" "")}}
+  </section>
+  <section class="block">
+    <h2 class="block-header">Add a unit's roster</h2>
+    {{template "unit-form" .}}
+  </section>
+  <section class="block">
+    <h2 class="block-header">After a war</h2>
+    {{template "purge-form" .}}
+    {{template "readd-form" .}}
+  </section>
+</div>
+
 <section class="block" data-fx-scope>
   <div class="block-header fx-head"><h2>Foxhole role holders</h2>{{template "open" .OpenPartial}}</div>
   <div class="block-row fx-toolbar">
@@ -176,22 +192,6 @@
   </table></div>
   <div class="block-row off fx-empty" data-fx-empty hidden>No member matches.</div>
 </section>
-
-<div class="fx-actions">
-  <section class="block">
-    <h2 class="block-header">Add members</h2>
-    {{template "paste-form" (paste . "" "")}}
-  </section>
-  <section class="block">
-    <h2 class="block-header">Add a unit's roster</h2>
-    {{template "unit-form" .}}
-  </section>
-  <section class="block">
-    <h2 class="block-header">After a war</h2>
-    {{template "purge-form" .}}
-    {{template "readd-form" .}}
-  </section>
-</div>
 
 <section class="block">{{template "changes" .Log}}</section>
 {{end}}
