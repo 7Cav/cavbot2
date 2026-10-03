@@ -1,0 +1,435 @@
+{{/* PROTOTYPE. Throwaway, never merged. Ticket #417.
+     Three variants of the Foxhole page on one route, switched by ?variant=.
+     A: one list with every holder, actions below it.
+     B: a block per list (approved collaborators, Internal, External), each with its own actions.
+     C: the war's steps on top, a compact list, and a side pane for one member, a selection, or the paste box. */}}
+
+{{define "content"}}
+<main class="body fx" data-variant="{{.Variant}}">
+<div hidden data-fx-sampletext="{{.Sample}}"></div>
+{{if eq .Variant "B"}}{{template "B" .}}{{else if eq .Variant "C"}}{{template "C" .}}{{else}}{{template "A" .}}{{end}}
+</main>
+{{template "proto-bar" .}}
+{{end}}
+
+{{/* ---------- shared pieces ---------- */}}
+
+{{define "ret"}}<input type="hidden" name="ret" value="{{.Ret}}">{{end}}
+
+{{define "open"}}{{with .}}<span class="proto-open">Open: <a href="{{.URL}}" target="_blank" rel="noopener">{{.Title}}</a></span>{{end}}{{end}}
+
+{{define "roles"}}{{if .Internal}}<span class="tag fx-role">Internal</span> {{end}}{{if .External}}<span class="tag fx-role">External</span>{{end}}{{end}}
+
+{{define "flags"}}{{if not .InServer}} <span class="tag fx-gone">not in the server</span>{{end}}{{if .ApprovedNotHolding}} <span class="tag tag--warn">approved, doesn't hold External</span>{{end}}{{end}}
+
+{{define "rank"}}{{if .Rank}}<span class="fx-rank">{{.Rank}}</span>{{else if .NoRank}}<span class="tag tag--warn">no rank role</span>{{else}}<span class="off">none</span>{{end}}{{end}}
+
+{{define "report"}}{{with .Report}}
+<div class="note note--ok fx-report" role="status">
+  <strong>{{.Title}}</strong>
+  {{range .Lines}}<div class="fx-report-line">{{.}}</div>{{end}}
+  {{with .Open}}<div class="fx-report-line">{{template "open" .}}</div>{{end}}
+</div>{{end}}{{end}}
+
+{{define "pending"}}{{with .}}
+<section class="block fx-pending{{if .Danger}} fx-pending--danger{{end}}" id="pending" data-fx-pending>
+  <h2 class="block-header">{{.Title}}</h2>
+  {{if .Paste}}
+  <form method="post" action="/paste#pending" class="block-row">
+    {{range .Fields}}{{if eq .Name "ret" "scope"}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}{{end}}
+    <input type="hidden" name="role" value="{{.Role}}">
+    <label class="field"><span class="field-label">Lines for {{.RoleName}}</span>
+      <textarea name="lines" rows="5">{{.Text}}</textarea></label>
+    <div class="fx-row-actions"><button type="submit" class="btn btn--small">Preview again</button></div>
+  </form>
+  {{end}}
+  {{if .Lines}}<div class="block-row">{{range .Lines}}<p>{{.}}</p>{{end}}</div>{{end}}
+  {{if .Rows}}
+  <div class="scroll"><table class="hublist fx-preview">
+    <thead><tr>{{if .InputHead}}{{if ne .InputHead "Member"}}<th>{{.InputHead}}</th>{{end}}{{end}}<th>Member</th><th>Result</th></tr></thead>
+    <tbody>{{$head := .InputHead}}{{range .Rows}}
+      <tr>{{if ne $head "Member"}}<td><code>{{.Input}}</code></td>{{end}}<td>{{if .Member}}{{.Member}}{{else}}<span class="off">none</span>{{end}}</td><td><span class="tag {{.Class}}">{{.Status}}</span></td></tr>
+    {{end}}</tbody>
+  </table></div>
+  {{end}}
+  {{with .Open}}<div class="block-row">{{template "open" .}}</div>{{end}}
+  <form method="post" action="{{.Action}}" class="submit-row fx-submit">
+    {{range .Fields}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+    {{if .Confirm}}<button type="submit" class="btn {{if .Danger}}btn--danger{{else}}btn--cta{{end}}" name="confirmed" value="1">{{.Confirm}}</button>{{end}}
+    <a class="btn" href="{{.CancelURL}}">Cancel</a>
+  </form>
+</section>{{end}}{{end}}
+
+{{define "paste-form"}}
+<form method="post" action="/paste#pending">
+  {{template "ret" .P}}<input type="hidden" name="step" value="preview"><input type="hidden" name="scope" value="{{.Scope}}">
+  <div class="block-row">
+    {{if .Role}}<input type="hidden" name="role" value="{{.Role}}">{{else}}
+    <div class="field fx-radios"><span class="field-label">Role</span>
+      <label class="check"><input type="radio" name="role" value="internal" checked> Internal</label>
+      <label class="check"><input type="radio" name="role" value="external"> External</label>
+    </div>{{end}}
+    <label class="field"><span class="field-label">Members, one per line</span>
+      <textarea name="lines" rows="5" data-fx-lines placeholder="123456789012345678&#10;&lt;@123456789012345678&gt;&#10;kestrel_tlr"></textarea>
+      <span class="field-hint">Discord IDs, mentions or usernames. You see what each line matched before anything changes.</span>
+    </label>
+    <button type="button" class="proto-btn" data-fx-sample hidden>Prototype: fill sample lines</button>
+  </div>
+  <div class="submit-row"><button type="submit" class="btn btn--cta">Preview</button></div>
+</form>{{end}}
+
+{{define "unit-form"}}
+<form method="post" action="/unit#pending">
+  {{template "ret" .}}<input type="hidden" name="step" value="preview">
+  <div class="block-row">
+    <label class="field"><span class="field-label">Validated internal unit</span>
+      <select name="unit">{{range .Units}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+      <span class="field-hint">{{.UnitSum.Holding}} of the {{.UnitSum.Roster}} on the {{.UnitSum.Unit}} roster hold Internal now. Everyone on the roster with a Discord account in the server gets Internal.</span>
+    </label>
+  </div>
+  <div class="submit-row"><button type="submit" class="btn btn--cta">Preview roster</button></div>
+</form>{{end}}
+
+{{define "purge-form"}}
+<form method="post" action="/purge#pending">
+  {{template "ret" .}}
+  <div class="block-row">
+    <div class="field fx-radios"><span class="field-label">Purge</span>
+      <label class="check"><input type="radio" name="role" value="both" checked> Internal and External</label>
+      <label class="check"><input type="radio" name="role" value="internal"> Internal only ({{.Counts.Internal}} holders)</label>
+      <label class="check"><input type="radio" name="role" value="external"> External only ({{.Counts.External}} holders)</label>
+    </div>
+    <span class="field-hint">Run when a war ends. You confirm on the next step. Notes and approvals stay.</span>
+  </div>
+  <div class="submit-row"><button type="submit" class="btn btn--danger">Purge</button></div>
+</form>{{end}}
+
+{{define "readd-form"}}
+<form method="post" action="/readd">
+  {{template "ret" .}}
+  <div class="block-row">
+    <p>{{.ApprovedSum.Line}}</p>
+    <span class="field-hint">Gives External to every approved collaborator in the server who doesn't hold it. Anyone not in the server is skipped and listed.</span>
+  </div>
+  <div class="submit-row"><button type="submit" class="btn btn--cta">Re-add approved collaborators</button></div>
+</form>{{end}}
+
+{{define "changes"}}
+<h2 class="block-header">Change log</h2>
+{{range $i, $e := .}}
+<details class="block-row change"{{if eq $i 0}} open{{end}}>
+  <summary class="change-head">
+    <span class="change-who">{{.Who}}</span>
+    <span class="tag">{{.Action}}</span>
+    <time datetime="{{.At.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.Format "2 Jan 2006 15:04"}} UTC</time>
+  </summary>
+  <div class="fx-change">
+    <p>{{.Summary}}</p>
+    {{if .Notes}}<dl class="change-fields">{{range .Notes}}<div><dt>{{.Member}}</dt><dd>{{.Before}} <span class="arrow">&rarr;</span> {{.After}}</dd></div>{{end}}</dl>{{end}}
+    {{if .Members}}<p class="fx-members">{{join .Members ", "}}</p>{{end}}
+  </div>
+</details>
+{{else}}<div class="block-row">No changes recorded yet.</div>{{end}}
+{{end}}
+
+{{define "filters"}}
+<nav class="fx-filters" aria-label="Filter the list">
+  <a href="{{link .Q "filter" ""}}" data-fx-filter=""{{if eq .Filter ""}} class="is-on"{{end}}>All <span class="fx-n">{{.Counts.All}}</span></a>
+  <a href="{{link .Q "filter" "internal"}}" data-fx-filter="internal"{{if eq .Filter "internal"}} class="is-on"{{end}}>Internal <span class="fx-n">{{.Counts.Internal}}</span></a>
+  <a href="{{link .Q "filter" "external"}}" data-fx-filter="external"{{if eq .Filter "external"}} class="is-on"{{end}}>External <span class="fx-n">{{.Counts.External}}</span></a>
+  <a href="{{link .Q "filter" "approved"}}" data-fx-filter="approved"{{if eq .Filter "approved"}} class="is-on"{{end}}>Approved <span class="fx-n">{{.Counts.Approved}}</span></a>
+  <a href="{{link .Q "filter" "flagged"}}" data-fx-filter="flagged"{{if eq .Filter "flagged"}} class="is-on"{{end}}>Flagged <span class="fx-n">{{.Counts.Flagged}}</span></a>
+</nav>{{end}}
+
+{{define "search"}}<input type="search" class="search-input fx-search" data-fx-search placeholder="{{.}}" aria-label="{{.}}" hidden>{{end}}
+
+{{/* ---------- variant A: one list ---------- */}}
+
+{{define "A"}}
+<h1 class="title">Foxhole</h1>
+<p class="desc">Everyone holding a Foxhole role, and every approved collaborator. Changes here go straight to Discord.</p>
+{{template "report" .}}
+{{template "pending" .Pending}}
+
+<section class="block" data-fx-scope>
+  <div class="block-header fx-head"><h2>Foxhole role holders</h2>{{template "open" .OpenPartial}}</div>
+  <div class="block-row fx-toolbar">
+    {{template "search" "Search name, username, ID or note"}}
+    {{template "filters" .}}
+  </div>
+  <form id="bulk" method="post" action="/bulk#pending">{{template "ret" .}}</form>
+  <div class="fx-bulk" data-fx-bulk>
+    <span class="fx-count"><span data-fx-count>0</span> selected</span>
+    <button type="submit" form="bulk" name="op" value="approve" class="btn btn--small" data-fx-needs>Approve</button>
+    <button type="submit" form="bulk" name="op" value="unapprove" class="btn btn--small" data-fx-needs>Clear approval</button>
+    <button type="submit" form="bulk" name="op" value="remove-internal" class="btn btn--small btn--danger" data-fx-needs>Remove Internal</button>
+    <button type="submit" form="bulk" name="op" value="remove-external" class="btn btn--small btn--danger" data-fx-needs>Remove External</button>
+  </div>
+  <div class="scroll"><table class="hublist fx-list">
+    <thead><tr>
+      <th class="fx-check"><input type="checkbox" data-fx-all aria-label="Select every shown row" hidden></th>
+      <th>Member</th><th>Roles</th><th>Rank role</th><th class="fx-notecol">Note</th><th>Approved</th>
+    </tr></thead>
+    <tbody>
+    {{range .Rows}}{{template "A-row" (row $ .)}}{{end}}
+    </tbody>
+  </table></div>
+  <div class="block-row off fx-empty" data-fx-empty hidden>No member matches.</div>
+</section>
+
+<div class="fx-actions">
+  <section class="block">
+    <h2 class="block-header">Add members</h2>
+    {{template "paste-form" (paste . "" "")}}
+  </section>
+  <section class="block">
+    <h2 class="block-header">Add a unit's roster</h2>
+    {{template "unit-form" .}}
+  </section>
+  <section class="block">
+    <h2 class="block-header">After a war</h2>
+    {{template "purge-form" .}}
+    {{template "readd-form" .}}
+  </section>
+</div>
+
+<section class="block">{{template "changes" .Log}}</section>
+{{end}}
+
+{{define "A-row"}}{{$m := .M}}{{$p := .P}}
+<tr id="m-{{$m.ID}}" data-fx-row data-search="{{$m.SearchText}}" data-tags="{{$m.Tags}}"{{if not ($m.Matches $p.Filter)}} hidden{{end}}>
+  <td class="fx-check"><input type="checkbox" name="id" value="{{$m.ID}}" form="bulk" data-fx-pick data-name="{{$m.Display}}" aria-label="Select {{$m.Display}}"></td>
+  <td class="fx-member"><span class="fx-name">{{$m.Display}}</span> <span class="fx-user">@{{$m.Username}}</span>{{template "flags" $m}}</td>
+  <td class="fx-nowrap">{{template "roles" $m}}</td>
+  <td class="fx-nowrap">{{template "rank" $m}}</td>
+  <td class="fx-note">
+    {{if eq $p.Edit $m.ID}}
+    <form method="post" action="/notes" class="fx-note-form">
+      {{template "ret" $p}}<input type="hidden" name="id" value="{{$m.ID}}">
+      <textarea name="note" rows="2" maxlength="500" aria-label="Note on {{$m.Display}}" autofocus>{{$m.Note}}</textarea>
+      <button type="submit" class="btn btn--small btn--cta">Save</button> <a class="btn btn--small" href="{{link $p.Q "edit" ""}}#m-{{$m.ID}}">Cancel</a>
+    </form>
+    {{else}}
+    <span class="fx-note-text">{{if $m.Note}}{{$m.Note}}{{else}}<span class="off">no note</span>{{end}}</span>
+    <a class="fx-note-edit" href="{{link $p.Q "edit" $m.ID}}#m-{{$m.ID}}" data-fx-edit="{{$m.ID}}">Edit</a>
+    {{end}}
+  </td>
+  <td>{{if $m.Approved}}<span class="tag tag--approved">Approved</span>{{end}}</td>
+</tr>{{end}}
+
+{{/* ---------- variant B: a block per list ---------- */}}
+
+{{define "B"}}
+<h1 class="title">Foxhole</h1>
+<p class="desc">The approved collaborators and each Foxhole role in a block of its own, with that list's actions in its header. Changes go straight to Discord.</p>
+{{template "report" .}}
+{{template "pending" (scoped . "")}}
+<div class="fx-b">
+  <div class="fx-b-main">
+
+  <section class="block" id="approved">
+    <div class="block-header fx-head">
+      <h2>Approved collaborators <span class="fx-n">{{.Counts.Approved}}</span></h2>
+      <form method="post" action="/readd" class="fx-inline">{{template "ret" .}}<input type="hidden" name="scope" value="approved"><button type="submit" class="btn btn--small btn--cta">Re-add approved collaborators</button></form>
+    </div>
+    {{template "pending" (scoped . "approved")}}
+    <div class="block-row fx-hint">They get External back when you re-add after a purge. Mark someone in the External list below to add them here.</div>
+    <div class="scroll"><table class="hublist fx-list">
+      <thead><tr><th>Member</th><th>External</th><th class="fx-notecol">Note</th><th></th></tr></thead>
+      <tbody>{{range .Approved}}
+        <tr id="m-{{.ID}}">
+          <td class="fx-member"><span class="fx-name">{{.Display}}</span> <span class="fx-user">@{{.Username}}</span></td>
+          <td class="fx-nowrap">{{if not .InServer}}<span class="tag fx-gone">not in the server</span>{{else if .External}}<span class="tag tag--on">holds it</span>{{else}}<span class="tag tag--warn">doesn't hold it</span>{{end}}</td>
+          <td class="fx-note">{{if .Note}}{{.Note}}{{else}}<span class="off">no note</span>{{end}}</td>
+          <td class="num"><form method="post" action="/bulk#approved" class="fx-inline">{{template "ret" $}}<input type="hidden" name="scope" value="approved"><input type="hidden" name="id" value="{{.ID}}"><button type="submit" name="op" value="unapprove" class="btn btn--small">Clear approval</button></form></td>
+        </tr>{{else}}<tr><td colspan="4" class="off">Nobody is approved.</td></tr>{{end}}
+      </tbody>
+    </table></div>
+  </section>
+
+  {{template "B-role" (paste . "internal" "internal")}}
+  {{template "B-role" (paste . "external" "external")}}
+  </div>
+
+  <aside class="fx-b-side">
+    <section class="block">{{template "changes" .Log}}</section>
+  </aside>
+</div>
+{{end}}
+
+{{define "B-role"}}{{$p := .P}}{{$role := .Role}}
+{{$ext := eq $role "external"}}
+<section class="block" id="{{$role}}" data-fx-scope>
+  <div class="block-header fx-head">
+    <h2>{{if $ext}}External <span class="fx-n">{{$p.Counts.External}}</span>{{else}}Internal <span class="fx-n">{{$p.Counts.Internal}}</span>{{end}}</h2>
+    <div class="fx-head-actions">
+      <a class="btn btn--small" href="{{link $p.Q "open" (print "add-" $role)}}#{{$role}}">Add members</a>
+      {{if not $ext}}<form method="post" action="/unit#pending" class="fx-inline">{{template "ret" $p}}<input type="hidden" name="scope" value="internal"><input type="hidden" name="step" value="preview"><input type="hidden" name="unit" value="D/ACD"><button type="submit" class="btn btn--small">Add D/ACD roster</button></form>{{end}}
+      <form method="post" action="/purge#pending" class="fx-inline">{{template "ret" $p}}<input type="hidden" name="scope" value="{{$role}}"><input type="hidden" name="role" value="{{$role}}"><button type="submit" class="btn btn--small btn--danger">Purge {{if $ext}}External{{else}}Internal{{end}}</button></form>
+    </div>
+  </div>
+  {{if eq $p.Open (print "add-" $role)}}
+  <div class="fx-inset">{{template "paste-form" (paste $p $role $role)}}</div>
+  {{end}}
+  {{template "pending" (scoped $p $role)}}
+  <div class="block-row fx-toolbar">
+    {{template "search" (print "Search " (or (and $ext "External") "Internal"))}}
+    {{if not $ext}}<span class="fx-hint">{{$p.Counts.NoRank}} without a rank role</span>{{end}}
+    {{template "open" $p.OpenPartial}}
+  </div>
+  <form method="post" action="/bulk#{{$role}}">
+    {{template "ret" $p}}<input type="hidden" name="scope" value="{{$role}}">
+    <div class="scroll"><table class="hublist fx-list">
+      <thead><tr>
+        <th class="fx-check"><input type="checkbox" data-fx-all aria-label="Select every shown row" hidden></th>
+        <th>Member</th>{{if $ext}}<th>Approved</th>{{else}}<th>Rank role</th>{{end}}<th class="fx-notecol">Note</th>
+      </tr></thead>
+      <tbody>{{range (pick $ext $p.External $p.Internal)}}
+        <tr id="m-{{.ID}}" data-fx-row data-search="{{.SearchText}}" data-tags="{{.Tags}}">
+          <td class="fx-check"><input type="checkbox" name="id" value="{{.ID}}" data-fx-pick data-name="{{.Display}}" aria-label="Select {{.Display}}"></td>
+          <td class="fx-member"><span class="fx-name">{{.Display}}</span> <span class="fx-user">@{{.Username}}</span>{{if and $ext .Internal}} <span class="tag fx-role">Internal too</span>{{end}}{{if and (not $ext) .External}} <span class="tag fx-role">External too</span>{{end}}</td>
+          {{if $ext}}<td>{{if .Approved}}<span class="tag tag--approved">Approved</span>{{end}}</td>{{else}}<td class="fx-nowrap">{{template "rank" .}}</td>{{end}}
+          <td class="fx-note"><input type="text" class="fx-note-input" name="note-{{.ID}}" value="{{.Note}}" placeholder="Add a note" maxlength="500" aria-label="Note on {{.Display}}" data-fx-noteinput></td>
+        </tr>{{end}}
+      </tbody>
+    </table></div>
+    <div class="block-row off fx-empty" data-fx-empty hidden>No member matches.</div>
+    <div class="submit-row fx-sticky-foot">
+      <button type="submit" name="op" value="save-notes" class="btn btn--cta" data-fx-savenotes>Save notes</button>
+      <span class="fx-count"><span data-fx-count>0</span> selected</span>
+      {{if $ext}}<button type="submit" name="op" value="approve" class="btn btn--small" data-fx-needs>Approve</button>{{end}}
+      <button type="submit" name="op" value="remove-{{$role}}" class="btn btn--small btn--danger" data-fx-needs>Remove {{if $ext}}External{{else}}Internal{{end}}</button>
+    </div>
+  </form>
+</section>{{end}}
+
+{{/* ---------- variant C: war steps, compact list, side pane ---------- */}}
+
+{{define "C"}}
+<h1 class="title">Foxhole</h1>
+<p class="desc">The war's steps on top. Pick a member in the list to see them in the pane, or tick several to act on them together. Changes go straight to Discord.</p>
+{{template "report" .}}
+
+<section class="block">
+  <h2 class="block-header">When a war ends</h2>
+  <ol class="fx-steps">
+    <li class="fx-step">
+      <span class="fx-step-n">1</span>
+      <div class="fx-step-body">
+        <h3>Purge</h3>
+        <p>{{.Counts.Internal}} hold Internal, {{.Counts.External}} hold External.</p>
+        <a class="btn btn--small btn--danger" href="{{link .Q "open" "purge" "member" ""}}#pane">Purge…</a>
+      </div>
+    </li>
+    <li class="fx-step">
+      <span class="fx-step-n">2</span>
+      <div class="fx-step-body">
+        <h3>Re-add approved collaborators</h3>
+        <p>{{.ApprovedSum.Line}}</p>
+        <form method="post" action="/readd" class="fx-inline">{{template "ret" .}}<button type="submit" class="btn btn--small btn--cta">Re-add</button></form>
+      </div>
+    </li>
+    <li class="fx-step">
+      <span class="fx-step-n">3</span>
+      <div class="fx-step-body">
+        <h3>Add a unit's roster</h3>
+        <p>{{.UnitSum.Unit}}: {{.UnitSum.Holding}} of {{.UnitSum.Roster}} hold Internal.</p>
+        <form method="post" action="/unit#pane" class="fx-inline">{{template "ret" .}}<input type="hidden" name="step" value="preview"><input type="hidden" name="unit" value="D/ACD"><button type="submit" class="btn btn--small">Preview {{.UnitSum.Unit}}</button></form>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<div class="fx-c" data-fx-scope>
+  <section class="block fx-c-list">
+    <div class="block-header fx-head"><h2>Holders <span class="fx-n">{{.Counts.All}}</span></h2>{{template "open" .OpenPartial}}</div>
+    <div class="block-row fx-toolbar">
+      {{template "search" "Search name, username, ID or note"}}
+      {{template "filters" .}}
+      <label class="check fx-allrow" hidden data-fx-allwrap><input type="checkbox" data-fx-all> Select every shown row</label>
+    </div>
+    <form id="bulk" method="post" action="/bulk#pane">{{template "ret" .}}</form>
+    <ul class="fx-rows">
+    {{range .Rows}}{{$sel := and $.Detail (eq $.Detail.ID .ID)}}
+      <li id="m-{{.ID}}" class="fx-crow{{if $sel}} is-selected{{end}}" data-fx-row data-search="{{.SearchText}}" data-tags="{{.Tags}}"{{if not (.Matches $.Filter)}} hidden{{end}}>
+        <input type="checkbox" name="id" value="{{.ID}}" form="bulk" data-fx-pick data-name="{{.Display}}" aria-label="Select {{.Display}}">
+        <a class="fx-crow-main" href="{{link $.Q "member" .ID "open" ""}}#pane">
+          <span class="fx-crow-top">
+            <span class="fx-name">{{.Display}}</span>
+            {{if .Internal}}<span class="fx-pip" title="Internal">I</span>{{end}}{{if .External}}<span class="fx-pip fx-pip--ext" title="External">E</span>{{end}}{{if .Approved}}<span class="tag tag--approved">Approved</span>{{end}}
+            {{if .NoRank}}<span class="tag tag--warn">no rank role</span>{{end}}{{template "flags" .}}
+            <span class="fx-crow-rank">{{.Rank}}</span>
+          </span>
+          {{if .Note}}<span class="fx-crow-note">{{.Note}}</span>{{end}}
+        </a>
+      </li>
+    {{end}}
+    </ul>
+    <div class="block-row off fx-empty" data-fx-empty hidden>No member matches.</div>
+  </section>
+
+  <aside class="fx-c-pane" id="pane">
+    {{if .Pending}}{{template "pending" .Pending}}{{else}}
+    <section class="block fx-bulkpane" data-fx-bulkpane>
+      <h2 class="block-header"><span data-fx-count>0</span> selected</h2>
+      <div class="block-row"><ul class="fx-picked" data-fx-picked></ul><span class="off" data-fx-pickhint>Tick members in the list, then choose an action.</span></div>
+      <div class="submit-row fx-stack">
+        <button type="submit" form="bulk" name="op" value="approve" class="btn btn--small" data-fx-needs>Approve</button>
+        <button type="submit" form="bulk" name="op" value="unapprove" class="btn btn--small" data-fx-needs>Clear approval</button>
+        <button type="submit" form="bulk" name="op" value="remove-internal" class="btn btn--small btn--danger" data-fx-needs>Remove Internal</button>
+        <button type="submit" form="bulk" name="op" value="remove-external" class="btn btn--small btn--danger" data-fx-needs>Remove External</button>
+      </div>
+    </section>
+    <div data-fx-panebody>
+    {{if .Detail}}{{template "C-detail" .}}
+    {{else if eq .Open "purge"}}
+    <section class="block"><h2 class="block-header">Purge</h2>{{template "purge-form" .}}</section>
+    {{else}}
+    <section class="block"><h2 class="block-header">Add members</h2>{{template "paste-form" (paste . "" "")}}</section>
+    {{end}}
+    </div>
+    {{end}}
+  </aside>
+</div>
+
+<section class="block">{{template "changes" .Log}}</section>
+{{end}}
+
+{{define "C-detail"}}{{with .Detail}}
+<section class="block">
+  <div class="block-header fx-head"><h2>{{.Display}}</h2><a class="btn btn--small" href="{{link $.Q "member" ""}}#pane">Close</a></div>
+  <div class="block-row">
+    <dl class="fx-facts">
+      <div><dt>Username</dt><dd>@{{.Username}}</dd></div>
+      <div><dt>Discord ID</dt><dd><code>{{.ID}}</code></dd></div>
+      <div><dt>Roles</dt><dd>{{template "roles" .}}{{if not (or .Internal .External)}}<span class="off">none</span>{{end}}</dd></div>
+      <div><dt>Rank role</dt><dd>{{template "rank" .}}</dd></div>
+      <div><dt>Approved</dt><dd>{{if .Approved}}<span class="tag tag--approved">Approved</span>{{template "flags" .}}{{else}}<span class="off">no</span>{{end}}</dd></div>
+    </dl>
+  </div>
+  <form method="post" action="/notes" class="block-row">
+    {{template "ret" $}}<input type="hidden" name="id" value="{{.ID}}">
+    <label class="field"><span class="field-label">Note</span><textarea name="note" rows="4" maxlength="500">{{.Note}}</textarea></label>
+    <div class="fx-row-actions"><button type="submit" class="btn btn--small btn--cta">Save note</button></div>
+  </form>
+  <form method="post" action="/bulk#pane" class="submit-row fx-stack">
+    {{template "ret" $}}<input type="hidden" name="id" value="{{.ID}}">
+    {{if .Approved}}<button type="submit" name="op" value="unapprove" class="btn btn--small">Clear approval</button>{{else if .External}}<button type="submit" name="op" value="approve" class="btn btn--small">Approve</button>{{end}}
+    {{if .Internal}}<button type="submit" name="op" value="remove-internal" class="btn btn--small btn--danger">Remove Internal</button>{{end}}
+    {{if .External}}<button type="submit" name="op" value="remove-external" class="btn btn--small btn--danger">Remove External</button>{{end}}
+  </form>
+</section>
+{{end}}{{end}}
+
+{{/* ---------- the prototype's switcher, not part of any design ---------- */}}
+
+{{define "proto-bar"}}
+<div class="proto-bar" data-proto-bar>
+  <a class="proto-arrow" href="{{.Prev}}" data-proto-prev aria-label="Previous variant">&larr;</a>
+  <span class="proto-label"><strong>{{.Variant}}</strong> {{.VariantName}}</span>
+  <a class="proto-arrow" href="{{.Next}}" data-proto-next aria-label="Next variant">&rarr;</a>
+  <span class="proto-sep"></span>
+  <a class="proto-link" href="{{.ScriptURL}}">{{if .NoScript}}Script off{{else}}Script on{{end}}</a>
+  <form method="post" action="/reset" class="proto-reset">{{template "ret" .}}<button type="submit">Reset data</button></form>
+</div>
+{{end}}

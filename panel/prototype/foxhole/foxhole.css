@@ -1,0 +1,149 @@
+/* PROTOTYPE styles for the Foxhole page variants (#417), on top of the
+   panel's own panel.css. Classes starting fx- are the page; proto- is the
+   prototype's switcher and its open-question markers, not part of any
+   design. */
+
+.tag--approved { color: var(--gold); border-color: var(--gold-lo); }
+.fx-role { color: var(--text-hi); }
+.fx-gone { color: var(--text-mute); border-style: dashed; }
+.note--ok { border-left-color: var(--ok); }
+.fx-report-line { margin-top: 4px; font-size: 14px; }
+.fx-n { font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; margin-left: 4px; }
+.fx-hint { font-size: 13px; color: var(--text-mute); }
+.fx-nowrap { white-space: nowrap; }
+.fx-inline { display: inline; }
+.fx .off { color: var(--text-mute); }
+.fx [hidden] { display: none !important; }
+
+/* A block header that carries actions. */
+.fx-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.fx-head h2 { font-size: inherit; color: inherit; }
+.fx-head-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.fx-head .btn--small { text-shadow: none; }
+
+/* Search and filters. */
+.fx-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.fx-search { max-width: 340px; border-radius: var(--radius); }
+.fx-filters { display: flex; flex-wrap: wrap; gap: 2px; }
+.fx-filters a { padding: 6px 10px; color: var(--text); text-decoration: none; border-bottom: 2px solid transparent; }
+.fx-filters a:hover { color: var(--text-hi); }
+.fx-filters a.is-on { color: var(--text-hi); border-bottom-color: var(--gold); }
+
+/* The holder tables. Tighter than the hub list: about 80 rows. */
+.fx-list td { padding: 7px 12px; }
+.fx-list th { padding: 8px 12px; }
+.fx-list tr[hidden] { display: none; }
+.fx-list tbody tr:hover td { background: var(--surface-2); }
+.fx-check { width: 36px; }
+.fx-check input { accent-color: var(--gold); width: 16px; height: 16px; vertical-align: middle; }
+.fx-member { min-width: 220px; }
+.fx-name { color: var(--text-hi); font-weight: 500; }
+.fx-user { color: var(--text-mute); font-size: 13px; }
+.fx-rank { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: var(--text-hi); }
+.fx-notecol { width: 38%; }
+.fx-note { font-size: 14px; }
+.fx-note-text { color: var(--text-hi); }
+.fx-note-edit { margin-left: 6px; font-size: 13px; }
+.fx-note-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
+.fx-note-form textarea { flex: 1 1 220px; }
+.fx textarea {
+  display: block; width: 100%; padding: 8px 10px; font: inherit; font-size: 14px; color: var(--text-hi);
+  background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--radius); resize: vertical;
+}
+.fx textarea:focus, .fx-note-input:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); }
+.fx-empty { text-align: center; }
+
+/* Variant A: the selection bar sticks to the top while the list scrolls. */
+.fx-bulk {
+  position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 8px 14px; background: var(--surface-3); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+}
+.fx-count { color: var(--text-hi); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.btn[disabled] { opacity: .4; cursor: not-allowed; }
+.fx-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 12px; align-items: start; }
+.fx-actions form + form { border-top: 1px solid var(--line-2); }
+.fx-radios .check { display: inline-block; margin-right: 14px; }
+.fx-row-actions { margin-top: 8px; }
+
+/* Variant B: lists stacked, change log beside them. */
+.fx-b { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 0 12px; align-items: start; }
+.fx-b-side { position: sticky; top: 12px; max-height: calc(100dvh - 80px); overflow-y: auto; }
+.fx-inset { border-bottom: 1px solid var(--line-2); background: var(--surface-2); }
+.fx-note-input {
+  width: 100%; padding: 5px 8px; font: inherit; font-size: 14px; color: var(--text-hi);
+  background: transparent; border: 1px solid transparent; border-radius: var(--radius);
+}
+.fx-note-input:hover { border-color: var(--line-2); background: var(--bg); }
+.fx-note-input.is-changed { border-color: var(--gold-lo); background: var(--bg); }
+.fx-sticky-foot { position: sticky; bottom: 64px; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; background: var(--surface-2); box-shadow: 0 -6px 12px rgba(0,0,0,.45); }
+
+/* Variant C: steps, then a compact list beside a pane. */
+.fx-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.fx-step { display: flex; gap: 12px; padding: 14px; }
+.fx-step + .fx-step { border-left: 1px solid var(--line); }
+.fx-step-n {
+  flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  color: #000; background: var(--gold); font-weight: 700;
+}
+.fx-step h3 { font-size: 16px; margin-bottom: 4px; }
+.fx-step p { font-size: 14px; color: var(--text); }
+.fx-c { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 0 12px; align-items: start; }
+.fx-c-pane { position: sticky; top: 12px; max-height: calc(100dvh - 80px); overflow-y: auto; }
+.fx-rows { list-style: none; margin: 0; padding: 0; }
+.fx-crow { display: flex; align-items: flex-start; gap: 10px; padding: 6px 14px; border-top: 1px solid var(--line); }
+.fx-crow[hidden] { display: none; }
+.fx-crow input { margin-top: 4px; accent-color: var(--gold); width: 16px; height: 16px; }
+.fx-crow:hover { background: var(--surface-2); }
+.fx-crow.is-selected { background: var(--surface-3); box-shadow: inset 3px 0 0 var(--gold); }
+.fx-crow-main { flex: 1; min-width: 0; color: inherit; text-decoration: none; }
+.fx-crow-main:hover { color: inherit; }
+.fx-crow-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.fx-crow-rank { margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-mute); }
+.fx-crow-note { display: block; font-size: 13px; color: var(--text-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx-pip { display: inline-grid; place-items: center; width: 18px; height: 18px; font-size: 11px; font-weight: 700; border-radius: var(--radius); color: #000; background: #9fb7c9; }
+.fx-pip--ext { background: #c9a99f; }
+.fx-allrow { font-size: 13px; }
+.fx-stack { display: flex; flex-wrap: wrap; gap: 6px; }
+.fx-picked { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.fx-picked li { font-size: 13px; padding: 1px 6px; background: var(--surface-3); border-radius: var(--radius); color: var(--text-hi); }
+.fx-facts { margin: 0; font-size: 14px; }
+.fx-facts > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; padding: 3px 0; }
+.fx-facts dt { color: var(--text-mute); }
+.fx-facts dd { margin: 0; color: var(--text-hi); }
+
+/* Previews and confirmations. */
+.fx-pending { border-color: var(--gold-lo); }
+.fx-pending--danger { border-color: var(--danger-hi); }
+.fx-preview code { font-size: 13px; color: var(--text-hi); }
+.fx-change p { margin: 0 0 4px; font-size: 14px; }
+.fx-members { color: var(--text-mute); font-size: 13px; }
+
+@media (max-width: 1100px) {
+  .fx-actions, .fx-steps { grid-template-columns: minmax(0, 1fr); }
+  .fx-step + .fx-step { border-left: 0; border-top: 1px solid var(--line); }
+  .fx-b, .fx-c { grid-template-columns: minmax(0, 1fr); }
+  .fx-b-side, .fx-c-pane { position: static; max-height: none; }
+}
+
+/* ---------- prototype only ---------- */
+.proto-bar {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 50;
+  display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+  background: #fff; color: #111; border-radius: 999px; box-shadow: 0 4px 18px rgba(0,0,0,.5);
+  font: 14px/1.2 system-ui, sans-serif; white-space: nowrap;
+}
+.proto-arrow { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: #111; text-decoration: none; background: #eee; font-size: 16px; }
+.proto-arrow:hover { background: #ddd; color: #111; }
+.proto-label strong { display: inline-block; min-width: 1.2em; text-align: center; }
+.proto-sep { width: 1px; height: 20px; background: #ccc; }
+.proto-link { color: #444; font-size: 13px; }
+.proto-link:hover { color: #000; }
+.proto-reset { display: inline; }
+.proto-reset button { font: inherit; font-size: 13px; color: #444; background: none; border: 0; text-decoration: underline; cursor: pointer; padding: 0; }
+.proto-open {
+  display: inline-block; padding: 2px 8px; font: 12px/1.4 system-ui, sans-serif; color: #f0b6ff;
+  border: 1px dashed #c86bdc; border-radius: var(--radius); text-shadow: none;
+}
+.proto-open a { color: #f0b6ff; }
+.proto-btn { margin-top: 8px; font: 12px/1.4 system-ui, sans-serif; color: #f0b6ff; background: none; border: 1px dashed #c86bdc; border-radius: var(--radius); padding: 3px 8px; cursor: pointer; }
+.fx { padding-bottom: 90px; }
