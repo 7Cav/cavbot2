@@ -1,0 +1,41 @@
+run at 2026-10-03T04:43:40Z
+   0.411s  gateway open
+   0.414s  GUILD_CREATE: member_count 8, members in payload 1
+   0.414s  state before the request: 1 members
+
+== Experiment 1: opcode 8 with discordgo's array guild_id ==
+   0.414s  discordgo writes: {"op":8,"d":{"guild_id":["\u003cguild\u003e"],"query":"","limit":0,"nonce":"wf420-a","presences":false}}
+   0.414s  opcode 8 sent, nonce wf420-a
+   0.442s  GUILD_MEMBERS_CHUNK nonce "wf420-a", index 0 of count 1: 8 members, not_found 0, 28ms after the request
+   0.442s  state after the request: 8 members
+
+-- second full-list request at once, inside the 30 s window --
+   0.443s  opcode 8 sent, nonce wf420-b
+   0.941s  RATE_LIMITED 499ms after the request: {"retry_after":29.416,"opcode":8,"meta":{"nonce":"wf420-b","guild_id":"<guild>"}}
+   1.018s  GUILD_ROLE_CREATE 1555802505206702120
+   1.070s  created role 1555802505206702120 at position 1
+
+== Experiment 3: rate-limit headers on add and remove ==
+   1.190s  GUILD_MEMBER_UPDATE (grant/remove) member 1: lists the probe role: yes
+   1.199s  PUT    member 1: 204 in 129ms, limit 10, remaining 9, reset-after 10.000, bucket b0bb9027ff6ae0c9619c2719f4a24de5, scope ""
+   1.385s  GUILD_MEMBER_UPDATE (grant/remove) member 1: lists the probe role: no
+   1.471s  DELETE member 1: 204 in 272ms, limit 10, remaining 8, reset-after 9.865, bucket b0bb9027ff6ae0c9619c2719f4a24de5, scope ""
+   1.598s  GUILD_MEMBER_UPDATE (grant/remove) member 1: lists the probe role: yes
+   1.649s  PUT    member 1: 204 in 178ms, limit 10, remaining 7, reset-after 9.612, bucket b0bb9027ff6ae0c9619c2719f4a24de5, scope ""
+   1.757s  GUILD_MEMBER_UPDATE (grant/remove) member 1: lists the probe role: no
+   1.766s  DELETE member 1: 204 in 116ms, limit 10, remaining 6, reset-after 9.427, bucket b0bb9027ff6ae0c9619c2719f4a24de5, scope ""
+   1.897s  GUILD_MEMBER_UPDATE (grant/remove) member 1: lists the probe role: yes
+   1.919s  PUT    member 1: 204 in 153ms, limit 10, remaining 5, reset-after 9.310, bucket b0bb9027ff6ae0c9619c2719f4a24de5, scope ""
+   2.040s  GUILD_MEMBER_UPDATE (grant/remove) member 2: lists the probe role: yes
+   2.052s  PUT    member 2: 204 in 133ms, limit 10, remaining 4, reset-after 9.146, bucket b0bb9027ff6ae0c9619c2719f4a24de5, scope ""
+
+== Experiment 2: role delete with holders ==
+   5.202s  before delete, member 1: cached member lists the role: yes; Discord's member record lists it: yes
+   5.293s  before delete, member 2: cached member lists the role: yes; Discord's member record lists it: yes
+   5.421s  GUILD_MEMBER_UPDATE (after delete) member 1: lists the probe role: no
+   5.462s  GUILD_MEMBER_UPDATE (after delete) member 2: lists the probe role: no
+   5.462s  GUILD_ROLE_DELETE 1555802505206702120
+   5.509s  DELETE role returned after 216ms; listening 30 s
+  35.590s  30 s after delete, member 1: cached member lists the role: no; Discord's member record lists it: no
+  35.670s  30 s after delete, member 2: cached member lists the role: no; Discord's member record lists it: no
+  35.670s  member updates per phase: map[after delete:2 grant/remove:6]
