@@ -26,7 +26,7 @@ func NewRegistry(tempVC *TempVC) *Registry {
 		LOA(),
 		AFSM(),
 		GamertagSearch(),
-		S3AAR(),
+		S3AARDisabled(),
 		Helpline(),
 		VoiceRename(tempVC),
 		VoiceLock(tempVC),
