@@ -133,9 +133,26 @@ grants is configured Discord-side and is out of scope here.
   `role not found`. The bot guarantees a member holds (or no longer holds) the
   named role per the command invoked; it ascribes no meaning to what the role
   unlocks.
-- **Internal / External** — the two Warden role scopes (`internal`, `external`,
-  or `both`). Opaque named roles as far as the bot is concerned. _Avoid_:
-  treating these as access tiers in code — the distinction lives in Discord.
+- **Internal / External**: The two Warden roles, named for who holds them.
+  Internal is for Cav members: the regiment's Foxhole company, and any other
+  Cav member who joins for one war. External is for outside collaborators,
+  players from allied groups. The bot enforces neither meaning, and checks no
+  rank role before an Internal grant. The commands' scope values are
+  `internal`, `external` and `both`.
+  _Avoid_: treating these as access tiers in code; what each role unlocks lives
+  in Discord.
+- **War**: One Foxhole war, the game's campaign from its start to a victory.
+  Warden role membership lasts one war.
+  _Avoid_: season, round.
+- **Purge**: Taking a Warden role off every holder at once. Run when a war
+  ends, so nobody who joined for that war keeps the role into the next. The
+  approved collaborators are re-added straight after.
+  _Avoid_: reset, wipe, clear.
+- **Approved collaborator**: An outside collaborator marked on the panel to get
+  External back after every purge, such as the leader of an allied group. The
+  mark outlives the purge and the member leaving the server; a person clears it,
+  and removing the member's External on the panel clears it too.
+  _Avoid_: locked (a spawned channel's term), whitelisted, pinned, preset.
 - **Validated internal unit** — a position group whose current roster members
   the regiment treats as automatically belonging in the internal Warden role
   (e.g. `D/ACD`). A curated set; not every unit is one.
