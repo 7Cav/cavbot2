@@ -119,13 +119,15 @@ belong here, not inline in code comments.
   dial sequences are an external contract with the same silent-drift hazard as
   PAF labels — a changed number is a correctness change, not a copy edit.
 
-## Warden roles
+## Foxhole roles
 
 The `/warden` command family applies and removes a small set of Discord roles by
-name. The bot's concern ends at role membership — whatever access a Warden role
-grants is configured Discord-side and is out of scope here.
+name. The bot's concern ends at role membership. Whatever access a Foxhole role
+grants is configured Discord-side and is out of scope here. The command names
+and `WARDEN_ROLE_BASE_NAME` keep the Warden name until the code moves over. The
+Foxhole page and the terms around it are designed in #412, not built yet.
 
-- **Warden role** — a Discord role the `/warden` commands manage by exact name.
+- **Foxhole role** — a Discord role the `/warden` commands manage by exact name.
   The name is composed as `<base> Internal` / `<base> External`, where the base
   comes from `WARDEN_ROLE_BASE_NAME` (default `Verified Warden`). Matching is
   exact: the configured base has to reproduce the Discord role name character
@@ -133,7 +135,8 @@ grants is configured Discord-side and is out of scope here.
   `role not found`. The bot guarantees a member holds (or no longer holds) the
   named role per the command invoked; it ascribes no meaning to what the role
   unlocks.
-- **Internal / External**: The two Warden roles, named for who holds them.
+  _Avoid_: Warden role (a faction the regiment no longer plays).
+- **Internal / External**: The two Foxhole roles, named for who holds them.
   Internal is for Cav members: the regiment's Foxhole company, and any other
   Cav member who joins for one war. External is for outside collaborators,
   players from allied groups. The bot enforces neither meaning, and checks no
@@ -142,9 +145,9 @@ grants is configured Discord-side and is out of scope here.
   _Avoid_: treating these as access tiers in code; what each role unlocks lives
   in Discord.
 - **War**: One Foxhole war, the game's campaign from its start to a victory.
-  Warden role membership lasts one war.
+  Foxhole role membership lasts one war.
   _Avoid_: season, round.
-- **Purge**: Taking a Warden role off every holder at once. Run when a war
+- **Purge**: Taking a Foxhole role off every holder at once. Run when a war
   ends, so nobody who joined for that war keeps the role into the next. The
   approved collaborators are re-added straight after.
   _Avoid_: reset, wipe, clear.
@@ -154,8 +157,20 @@ grants is configured Discord-side and is out of scope here.
   and removing the member's External on the panel clears it too.
   _Avoid_: locked (a spawned channel's term), whitelisted, pinned, preset.
 - **Validated internal unit** — a position group whose current roster members
-  the regiment treats as automatically belonging in the internal Warden role
+  the regiment treats as automatically belonging in the Internal Foxhole role
   (e.g. `D/ACD`). A curated set; not every unit is one.
+- **Foxhole group**: The one forum group whose members are Foxhole managers.
+  Who is in it is decided on the forum.
+  _Avoid_: warden group, warden allowlist.
+- **Foxhole manager**: A signed-in forum user in the Foxhole group, such as a
+  Foxhole leader. Opens the Foxhole page. A panel admin can do everything a
+  Foxhole manager can.
+  _Avoid_: warden manager, warden admin, and Foxhole leader as the panel's name
+  for the role.
+- **Foxhole page**: The panel page that lists every Foxhole role holder and
+  changes who holds the Foxhole roles. Foxhole managers and panel admins open
+  it.
+  _Avoid_: warden page, warden dashboard.
 
 ## Temporary voice channels
 
@@ -316,12 +331,15 @@ in the panel, never in code.
   to the forum and the callback. Consumed by the callback, whatever its
   outcome, or dropped after five minutes.
   _Avoid_: auth request, login attempt, OAuth state, flow.
-- **Group check**: The panel's test that the signed-in forum user holds an
-  allowlisted forum group, primary or secondary. Runs on every request.
+- **Group check**: The panel's test of the signed-in forum user's forum
+  groups, primary or secondary, on every request. One of the panel's admin
+  groups makes them a panel admin. The Foxhole group makes them a Foxhole
+  manager.
   _Avoid_: allowlist check, permission check, authorisation, role check.
-- **Panel admin**: A signed-in forum user who passes the group check.
+- **Panel admin**: A signed-in forum user the group check finds in one of the
+  panel's admin groups. Opens every page and takes every action on the panel.
   _Avoid_: admin (bare), staff, allowlisted user, moderator (a spawned
-  channel's).
+  channel's), Foxhole manager (a narrower role).
 - **Block**: One bordered unit of a panel page, with a gold header rule. The
   unit a page's layout rules bound.
   _Avoid_: card and section (for a page unit; the helpline card is a
