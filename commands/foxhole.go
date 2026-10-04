@@ -59,7 +59,7 @@ func LogFoxholeRoleBaseName() {
 		utils.Warn("Foxhole role base name read from the old variable; rename it",
 			"variable", foxholeRoleBaseNameOldEnv,
 			"rename_to", foxholeRoleBaseNameEnv,
-			"fallback_ends", renameCutoff.Format(time.DateOnly))
+			"cleanup_on_or_after", renameCutoff.Format(time.DateOnly))
 	}
 	utils.Info("Foxhole role base name resolved", "base_name", name)
 }

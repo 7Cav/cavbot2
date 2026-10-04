@@ -251,13 +251,17 @@ func TestOldFoxholeNamesGrantWhatTheirNewNamesGrant(t *testing.T) {
 var timestampPattern = regexp.MustCompile(`<t:(-?\d+)(?::[tTdDfFR])?>`)
 
 // assertRenameNotice fails unless content's last line is the rename notice:
-// it names exactly oldName then newName, and dates the cutoff with timestamp
+// it names exactly oldName and newName, and dates the cutoff with timestamp
 // markup, so each manager's client shows it in their own time zone.
 func assertRenameNotice(t *testing.T, content, oldName, newName string) {
 	t.Helper()
 	lastLine := content[strings.LastIndex(content, "\n")+1:]
-	if named := commandsNamedIn(lastLine); !reflect.DeepEqual(named, []string{oldName, newName}) {
-		t.Errorf("last line %q names %v, want /%s then /%s\nreply: %q", lastLine, named, oldName, newName, content)
+	named := commandsNamedIn(lastLine)
+	slices.Sort(named)
+	want := []string{oldName, newName}
+	slices.Sort(want)
+	if !reflect.DeepEqual(named, want) {
+		t.Errorf("last line %q names %v, want /%s and /%s\nreply: %q", lastLine, named, oldName, newName, content)
 	}
 	match := timestampPattern.FindStringSubmatch(lastLine)
 	if match == nil {

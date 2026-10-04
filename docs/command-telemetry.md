@@ -34,7 +34,7 @@ by name; renaming any of them is a parsing-contract change, not a cosmetic edit.
 | Key | Type | Notes |
 | --- | --- | --- |
 | `msg` | string | Always `command_invoked`. The marker Alloy selects on. |
-| `command` | string | Top-level command name, as registered. The **only** value promoted to a Prometheus label. A command still registered under an old name logs that name, so `/warden` runs show as `command=warden` until it goes on 6 November 2026. |
+| `command` | string | Top-level command name, as registered. The **only** value promoted to a Prometheus label. A command still registered under an old name logs that name, so `/warden` runs show as `command=warden` until the cleanup in #455 removes it. |
 | `latency_ms` | integer | Handler wall-time in **whole milliseconds**. Divided by 1000 on the collector side to feed a `_seconds` histogram. See the caveat below. |
 | `discord_id` | string | Invoking user's Discord snowflake. Loki only — never a metric label. |
 | `username` | string | Invoking user's Discord username. Loki only — never a metric label. |

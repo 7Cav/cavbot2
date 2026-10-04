@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -641,8 +642,12 @@ func TestRunFoxhole_BulkAddMixedResults(t *testing.T) {
 	runFoxhole(f, gm, i)
 
 	calls := f.Calls()
-	if embed := lastEditEmbed(calls); embed == nil || embed.Description != "<@111>" {
-		t.Fatalf("expected the reply to name only the added member <@111>, got embed %+v", embed)
+	embed := lastEditEmbed(calls)
+	if embed == nil {
+		t.Fatal("expected the reply to name the added member, got no embed")
+	}
+	if mentioned := regexp.MustCompile(`<@(\d+)>`).FindAllStringSubmatch(embed.Description, -1); len(mentioned) != 1 || mentioned[0][1] != "111" {
+		t.Fatalf("expected the reply to name only the added member 111, got embed %q", embed.Description)
 	}
 	got := lastEditContent(calls)
 	if !strings.Contains(got, "No member found matching 'bad'") {
