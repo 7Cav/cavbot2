@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// positionFormatExamples mirrors the *Position* entry in CONTEXT.md.
+// positionFormatExamples mirrors the *Position* entry in GLOSSARY.md.
 var positionFormatExamples = []string{"2/B/1-7", "Reservist", "S1"}
 
 // emptyRosterSearchMessage builds the user-facing reply for /awol and /loa when

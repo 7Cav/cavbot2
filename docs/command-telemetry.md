@@ -8,7 +8,7 @@ invocation**, and the monitoring host's existing Alloy collector turns those
 lines into Prometheus metrics. The bot carries no Prometheus client and exposes
 no HTTP endpoint. Failures are not part of this signal at all — Sentry owns
 those, and already alerts on them. See [ADR 0011](adr/0011-command-telemetry-via-log-derived-metrics.md)
-for why it is shaped this way, and `CONTEXT.md` for the glossary terms.
+for why it is shaped this way, and `GLOSSARY.md` for the glossary terms.
 
 This file is the **collector's half of the contract**. The emitter's half lives
 in `commands/telemetry.go`. They are documented together on purpose: a change to

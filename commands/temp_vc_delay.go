@@ -6,7 +6,7 @@ import (
 	"github.com/7cav/cavbot2/utils"
 )
 
-// The delete delay (#372, CONTEXT.md). On a hub with one, a spawned channel
+// The delete delay (#372, GLOSSARY.md). On a hub with one, a spawned channel
 // that empties is not deleted at once: it waits, and once it has stayed
 // empty for the delay the guarded delete runs, with its fresh cache check
 // (#319) and its failure classification, as for a channel deleted the

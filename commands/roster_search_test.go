@@ -11,7 +11,7 @@ func TestEmptyRosterSearchMessage(t *testing.T) {
 	if !strings.Contains(got, `"Q/Z/9-9"`) {
 		t.Errorf("message %q missing the quoted position", got)
 	}
-	// CONTEXT.md *Position* examples: 2/B/1-7, Reservist, S1. The acceptance
+	// GLOSSARY.md *Position* examples: 2/B/1-7, Reservist, S1. The acceptance
 	// criterion requires these be sourced from one place; this test pins them
 	// in the user-facing string so a future edit can't quietly drop one.
 	for _, example := range []string{"2/B/1-7", "Reservist", "S1"} {

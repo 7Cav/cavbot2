@@ -1921,7 +1921,7 @@ func TestTempVCOwnerLeavesHighestRankTakesOver(t *testing.T) {
 }
 
 // A channel whose owner leaves with no rank holder present has no owner. That
-// is the none outcome inside CONTEXT.md's Handover entry ("with no such
+// is the none outcome inside GLOSSARY.md's Handover entry ("with no such
 // occupant the channel has no owner"), so it is a handover: a row write with
 // an empty owner and a notice saying so.
 func TestTempVCOwnerLeavesWithNoRankHolderMeansNoOwner(t *testing.T) {
@@ -2148,7 +2148,7 @@ func guildMember(userID string, roleIDs ...string) *discordgo.Member {
 // The sweep restores the owner from the row when they are present. An absent
 // owner counts as having left, and a row with no owner is a channel with no
 // owner, so both elect by the handover rule from the occupants, whose roles
-// come from the payload's member list. CONTEXT.md's Restart sweep entry: an
+// come from the payload's member list. GLOSSARY.md's Restart sweep entry: an
 // occupied channel's owner is "restored or elected by the handover rule".
 func TestTempVCRestartSweepRestoresOwnerOrElects(t *testing.T) {
 	fake := newFakeTempVCManager()

@@ -51,7 +51,7 @@ import (
 // inside the sweep's window. The sweep rebuilds who is where from one
 // copied cache snapshot taken under the runtime mutex, not from the payload,
 // so an event handled in the window is counted. A hub join marks its fresh
-// channel as a spawn in flight (CONTEXT.md) at the tracking commit, until
+// channel as a spawn in flight (GLOSSARY.md) at the tracking commit, until
 // its row write or compensating delete finishes; a sweep that overlaps
 // leaves that channel alone and skips its row, so a spawn is never lost to
 // the rebuild. Sweeps serialize behind one mutex, and the sweep reads the
@@ -72,7 +72,7 @@ import (
 // discordgo applies every gateway event to its state cache in gateway order
 // before it starts any handler goroutine, and the handlers run unordered, so
 // the runtime's record of who is where can lag Discord: a stale voice state
-// (CONTEXT.md). Each decision is therefore checked against one fresh copied
+// (GLOSSARY.md). Each decision is therefore checked against one fresh copied
 // snapshot of the cache (VoiceSnapshot): a handler drops an event the cache
 // already shows superseded, the create and the move-into go out only while
 // the member is still in the hub, a delete only while the cache shows nobody
@@ -86,7 +86,7 @@ import (
 // cache counts as current at entry and as "cannot confirm" before an action.
 //
 // docs/temp-vc-decisions.md records what is settled and where each decision
-// came from. CONTEXT.md carries the vocabulary.
+// came from. GLOSSARY.md carries the vocabulary.
 //
 // GuildVoiceStates is an unprivileged intent already covered by
 // IntentsAllWithoutPrivileged in main.go, so no identify or Developer Portal
@@ -162,7 +162,7 @@ type SpawnFailure struct {
 	Cause SpawnFailureCause
 }
 
-// Ownership follows the handover rule in CONTEXT.md. The owner always holds
+// Ownership follows the handover rule in GLOSSARY.md. The owner always holds
 // a rank role, or the channel has no owner: the creator at create if they
 // hold one, and when the owner leaves, the highest-ranked occupant with a
 // rank role, ties to the lowest user ID. A rank holder who joins a channel
@@ -360,7 +360,7 @@ type TempVCManager interface {
 // cache, taken at one instant. discordgo applies every gateway event to the
 // cache in gateway order before it starts any handler goroutine, so the
 // snapshot is the ordered truth the runtime's own record can lag behind
-// (CONTEXT.md, "Stale voice state"). It holds copied IDs only and is never
+// (GLOSSARY.md, "Stale voice state"). It holds copied IDs only and is never
 // carried across an API call: each check takes a fresh one.
 type VoiceSnapshot struct {
 	// Present is false when the cache holds no guild by that ID, or holds it
@@ -778,7 +778,7 @@ type TempVC struct {
 	// A spawn that settles while it is set keeps its marker until the sweep
 	// finishes.
 	sweepActive bool
-	// inFlight holds each spawn in flight (CONTEXT.md) by channel ID, from
+	// inFlight holds each spawn in flight (GLOSSARY.md) by channel ID, from
 	// the tracking commit until settle. The restart sweep skips every
 	// channel in it.
 	inFlight map[string]struct{}
