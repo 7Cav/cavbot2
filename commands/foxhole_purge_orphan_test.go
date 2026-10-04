@@ -94,7 +94,7 @@ func TestRunFoxholePurge_RecreateFailureSummaryHasNoRawBody(t *testing.T) {
 	runFoxholePurge(f, gm, i, "guild-1", "internal")
 
 	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "Failed to recreate 'Verified Warden Internal'") {
+	if !strings.Contains(got, "Failed to recreate '"+defaultInternalRoleName+"'") {
 		t.Fatalf("expected a clear failed-recreate line, got %q", got)
 	}
 	if strings.Contains(got, rawBodyMarker) || strings.Contains(got, "HTTP 500") {
@@ -121,7 +121,7 @@ func TestRunFoxholePurge_RecreateClientFaultNotCaptured(t *testing.T) {
 	runFoxholePurge(f, gm, i, "guild-1", "internal")
 
 	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "Failed to recreate 'Verified Warden Internal'") {
+	if !strings.Contains(got, "Failed to recreate '"+defaultInternalRoleName+"'") {
 		t.Fatalf("expected a clear failed-recreate line, got %q", got)
 	}
 	// A 403 must carry the permission-specific hint, not just the generic prefix.
@@ -159,7 +159,7 @@ func TestRunFoxholePurge_OldRoleDeleteFailureReportsLingeringRole(t *testing.T) 
 	if strings.Contains(got, "the role was not recreated") || strings.Contains(got, "The role was not recreated") {
 		t.Fatalf("must NOT claim the role was not recreated (it was); got %q", got)
 	}
-	if !strings.Contains(got, "Recreated 'Verified Warden Internal'") {
+	if !strings.Contains(got, "Recreated '"+defaultInternalRoleName+"'") {
 		t.Fatalf("expected the recreate to be reported as done, got %q", got)
 	}
 	if !strings.Contains(got, "could not be deleted") || !strings.Contains(got, "manually") {

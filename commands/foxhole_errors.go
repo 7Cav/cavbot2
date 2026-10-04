@@ -9,7 +9,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// captureError is the Sentry-capture seam used by /warden's error-handling
+// captureError is the Sentry-capture seam used by /foxhole's error-handling
 // paths. It points at utils.CaptureError in production; tests swap it to assert
 // that only genuine system faults (5xx/transport) page Sentry, per ADR 0001.
 var captureError = utils.CaptureError
@@ -172,9 +172,9 @@ func isInteractionTokenExpired(err error) bool {
 
 // lookupFaultSink receives a genuine member-lookup system fault (a 5xx/transport
 // error, or a wrong-guild config 404) together with the roster entry
-// that triggered it. The single /warden add and /warden remove sites pass nil,
+// that triggered it. The single /foxhole add and /foxhole remove sites pass nil,
 // which makes the lookup capture to Sentry inline with its own message and
-// context. The /warden bulkadd loop passes a sink backed by a faultCollector, so
+// context. The /foxhole bulkadd loop passes a sink backed by a faultCollector, so
 // a lookup-fault storm across an N-entry roster collapses to one Sentry event per
 // fault signature instead of N (#216). The leaf gates on class.SystemFault before
 // calling the sink, mirroring the inline capture, so non-captured client faults
@@ -305,7 +305,7 @@ func roleResolveErrorReply(err error, captureMsg string, kv ...any) error {
 }
 
 // channelsResolveErrorReply classifies a GuildChannels lookup failure raised
-// while resolving a guild's channels for a /warden purge, captures it to Sentry
+// while resolving a guild's channels for a /foxhole purge, captures it to Sentry
 // only for genuine system faults (5xx/transport, per ADR 0001), and returns a
 // body-free, operator-facing error. It mirrors roleResolveErrorReply one call
 // site below, with wording tailored to channels rather than roles. The raw
@@ -328,7 +328,7 @@ func channelsResolveErrorReply(err error, captureMsg string, kv ...any) error {
 // for a role add/remove failure from its classification. It does NOT capture —
 // the caller decides whether and how to send the fault to Sentry. The single
 // add/remove sites capture immediately via roleMutationErrorReply; the PUBLIC
-// /warden bulkadd loop builds its per-member failure line here and routes the
+// /foxhole bulkadd loop builds its per-member failure line here and routes the
 // capture through faultCollector so a per-member storm collapses to one event
 // per signature (#214). (The internal bulkadd loop also routes its captures
 // through the collector, but lists faulted members by forum username in bucketed
@@ -354,13 +354,13 @@ func roleMutationErrorMessage(action, roleName, userLabel string, class discordE
 }
 
 // roleMutationErrorReply is the immediate-capture entry point for the single
-// /warden add and remove sites: it classifies a role add/remove failure,
+// /foxhole add and remove sites: it classifies a role add/remove failure,
 // captures it to Sentry once when it is a genuine system fault, and returns the
 // same body-free message roleMutationErrorMessage builds. captureMsg/kv are
 // forwarded to captureError so each site keeps its own log context. The bulk
 // loops deliberately do NOT use this — they would capture once per member; both
 // feed their system faults to a faultCollector instead (#214). The public
-// /warden bulkadd loop builds its per-member line via roleMutationErrorMessage;
+// /foxhole bulkadd loop builds its per-member line via roleMutationErrorMessage;
 // the internal bulkadd loop lists faulted members by forum username in bucketed
 // summaries.
 func roleMutationErrorReply(action, roleName, userLabel string, err error, captureMsg string, kv ...any) string {

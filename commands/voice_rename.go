@@ -16,7 +16,7 @@ import (
 // in, on a hub with "Renaming allowed" on (#360). A required string option,
 // the new name, then an optional boolean, knock-channel, that makes it a
 // knock channel (#357). Every reply is ephemeral, through the
-// deferred-ephemeral pattern /warden uses.
+// deferred-ephemeral pattern /foxhole uses.
 //
 // No code limits the command to Cav members: like every other command, that
 // is a Server Settings restriction (docs/temp-vc-decisions.md, #279).

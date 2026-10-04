@@ -16,23 +16,55 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-const foxholeRoleBaseNameDefault = "Verified Warden"
+// foxholeRoleBaseNameDefault is what the Foxhole roles are named in Discord.
+const foxholeRoleBaseNameDefault = "Verified Foxhole"
 
 // foxholeRoleBaseNameEnv overrides the base name every Foxhole role is
 // composed from.
-const foxholeRoleBaseNameEnv = "WARDEN_ROLE_BASE_NAME"
+const foxholeRoleBaseNameEnv = "FOXHOLE_ROLE_BASE_NAME"
 
-// FoxholeRoleBaseName returns the configured base name, or the default when the
-// variable is unset or empty. Read at the point of use, as s3aar.go reads
-// BM_TOKEN. Exported so main() can log the resolved value at startup.
-func FoxholeRoleBaseName() string {
-	if configured := os.Getenv(foxholeRoleBaseNameEnv); configured != "" {
-		return configured
-	}
-	return foxholeRoleBaseNameDefault
+// foxholeRoleBaseNameOldEnv is foxholeRoleBaseNameEnv's name before the
+// rename. A host that still passes it keeps working until the cleanup in
+// #455 drops it.
+const foxholeRoleBaseNameOldEnv = "WARDEN_ROLE_BASE_NAME"
+
+// foxholeRoleBaseName returns the configured base name, or the default when
+// neither variable is set. Read at the point of use, as s3aar.go reads
+// BM_TOKEN.
+func foxholeRoleBaseName() string {
+	name, _ := resolveFoxholeRoleBaseName()
+	return name
 }
 
-// maxBulkAddEntries caps how many comma-separated entries a single /warden
+// resolveFoxholeRoleBaseName returns the base name and whether it came from
+// the old variable. The new variable wins when set; unset and empty both
+// fall through.
+func resolveFoxholeRoleBaseName() (name string, fromOldEnv bool) {
+	if configured := os.Getenv(foxholeRoleBaseNameEnv); configured != "" {
+		return configured, false
+	}
+	if configured := os.Getenv(foxholeRoleBaseNameOldEnv); configured != "" {
+		return configured, true
+	}
+	return foxholeRoleBaseNameDefault, false
+}
+
+// LogFoxholeRoleBaseName logs the resolved base name, once, at startup. When
+// the name came from the old variable it warns first, naming the variable to
+// rename before the cleanup drops it. Commands resolve the name on every run
+// and never warn, so the warning shows once per start.
+func LogFoxholeRoleBaseName() {
+	name, fromOldEnv := resolveFoxholeRoleBaseName()
+	if fromOldEnv {
+		utils.Warn("Foxhole role base name read from the old variable; rename it",
+			"variable", foxholeRoleBaseNameOldEnv,
+			"rename_to", foxholeRoleBaseNameEnv,
+			"fallback_ends", renameCutoff.Format(time.DateOnly))
+	}
+	utils.Info("Foxhole role base name resolved", "base_name", name)
+}
+
+// maxBulkAddEntries caps how many comma-separated entries a single /foxhole
 // bulkadd may carry. Each entry can trigger a GuildMembersSearch plus a per-role
 // GuildMemberRoleAdd, and Discord allows a multi-thousand-character string
 // option, so without a bound an operator could submit hundreds of names and fan
@@ -61,8 +93,8 @@ var (
 func Foxhole() Command {
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
-			Name:        "warden",
-			Description: "Warden role management",
+			Name:        "foxhole",
+			Description: "Add, remove, bulk-add or purge the Foxhole roles",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
@@ -102,8 +134,10 @@ func runFoxhole(
 	gm GuildManager,
 	interaction *discordgo.InteractionCreate,
 ) {
+	r = withRenameNotice(r, interaction)
+
 	// Guild-context guard runs FIRST, before any read of interaction.Member.
-	// /warden requires guild context, and Discord only populates Member for guild
+	// /foxhole requires guild context, and Discord only populates Member for guild
 	// interactions; a DM-shaped or malformed interaction has a nil Member and a
 	// nil GuildID. Rejecting on the empty GuildID here both gives a clear
 	// server-only message and removes the latent nil-deref the entry log would
@@ -117,7 +151,7 @@ func runFoxhole(
 	// Entry log reads the invoking user through the nil-safe helper rather than
 	// interaction.Member.User directly, so it never panics regardless of context.
 	username, discordID := interactionUsernameAndID(interaction)
-	utils.Info("🚀 Starting Warden", "command", "Warden", "username", username, "discord_id", discordID)
+	utils.Info("🚀 Starting Foxhole", "command", commandNameOf(interaction), "username", username, "discord_id", discordID)
 
 	commandData := interaction.ApplicationCommandData()
 
@@ -126,7 +160,7 @@ func runFoxhole(
 		utils.HandleError(
 			r,
 			interaction,
-			"❌ Invalid warden command; must be "+strings.Join(foxholeSubcommands, ", "),
+			"❌ Invalid /"+commandNameOf(interaction)+" command; must be "+strings.Join(foxholeSubcommands, ", "),
 		)
 		return
 	}
@@ -153,7 +187,7 @@ func runFoxhole(
 		return
 	}
 
-	utils.Debug("Warden command invoked", "command", subcommand, "query", query, "flag", roleScope)
+	utils.Debug("Foxhole command invoked", "command", subcommand, "query", query, "flag", roleScope)
 
 	switch subcommand {
 	case "add":
@@ -168,7 +202,7 @@ func runFoxhole(
 		utils.HandleError(r, interaction, "❌ Unknown subcommand")
 	}
 
-	utils.Info("✨ Done!", "command", "Warden")
+	utils.Info("✨ Done!", "command", commandNameOf(interaction))
 }
 
 func handleFoxholeAdd(r utils.InteractionResponder, gm GuildManager, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
@@ -183,7 +217,7 @@ func handleFoxholeAdd(r utils.InteractionResponder, gm GuildManager, interaction
 		return
 	}
 
-	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, guildID, roleScope)
+	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
 	if err != nil {
 		editEphemeral(r, interaction, err.Error())
 		return
@@ -197,19 +231,19 @@ func handleFoxholeAdd(r utils.InteractionResponder, gm GuildManager, interaction
 				interaction,
 				roleMutationErrorReply(
 					"add", roleName, formatUser(member), err,
-					"Failed to add warden role", "user", member.User.ID, "role", roleName,
+					"Failed to add Foxhole role", "user", member.User.ID, "role", roleName,
 				),
 			)
 			return
 		}
 	}
 
-	utils.Info("Warden role(s) added", "user", member.User.ID, "roles", strings.Join(roleNames, ", "))
+	utils.Info("Foxhole role(s) added", "user", member.User.ID, "roles", strings.Join(roleNames, ", "))
 	editEphemeral(
 		r,
 		interaction,
 		fmt.Sprintf(
-			"✅ Added warden role(s) (%s) to %s",
+			"✅ Added Foxhole role(s) (%s) to %s",
 			strings.Join(roleNames, ", "),
 			formatUser(member),
 		),
@@ -235,7 +269,7 @@ func handleFoxholeRemove(
 		return
 	}
 
-	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, guildID, roleScope)
+	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
 	if err != nil {
 		editEphemeral(r, interaction, err.Error())
 		return
@@ -246,14 +280,14 @@ func handleFoxholeRemove(
 		if err := gm.GuildMemberRoleRemove(guildID, member.User.ID, roleID); err != nil {
 			editEphemeral(r, interaction, roleMutationErrorReply(
 				"remove", roleName, formatUser(member), err,
-				"Failed to remove warden role", "user", member.User.ID, "role", roleName,
+				"Failed to remove Foxhole role", "user", member.User.ID, "role", roleName,
 			))
 			return
 		}
 	}
 
-	utils.Info("Warden role(s) removed", "user", member.User.ID, "roles", strings.Join(roleNames, ", "))
-	editEphemeral(r, interaction, fmt.Sprintf("✅ Removed warden role(s) (%s) from %s", strings.Join(roleNames, ", "), formatUser(member)))
+	utils.Info("Foxhole role(s) removed", "user", member.User.ID, "roles", strings.Join(roleNames, ", "))
+	editEphemeral(r, interaction, fmt.Sprintf("✅ Removed Foxhole role(s) (%s) from %s", strings.Join(roleNames, ", "), formatUser(member)))
 }
 
 func handleFoxholeBulkAdd(
@@ -291,7 +325,7 @@ func handleFoxholeBulkAdd(
 		return
 	}
 
-	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, guildID, roleScope)
+	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
 	if err != nil {
 		editEphemeral(r, interaction, err.Error())
 		return
@@ -317,12 +351,12 @@ func handleFoxholeBulkAdd(
 	lookupFaultCapture := newFaultCollector()
 	defer lookupFaultCapture.flush(
 		"Failed to look up guild member in bulk",
-		"command", "warden", "guild", guildID,
+		"command", commandNameOf(interaction), "guild", guildID,
 	)
 	faultCapture := newFaultCollector()
 	defer faultCapture.flush(
-		"Failed to add warden role in bulk",
-		"command", "warden", "guild", guildID,
+		"Failed to add Foxhole role in bulk",
+		"command", commandNameOf(interaction), "guild", guildID,
 	)
 	for _, singleQuery := range requestedQueries {
 		// A lookup system fault feeds the lookup collector keyed by signature
@@ -379,7 +413,7 @@ func handleFoxholePurge(
 	}
 
 	go func() {
-		defer utils.RecoverPanic("warden-purge")
+		defer utils.RecoverPanic("foxhole-purge")
 		runFoxholePurge(r, gm, interaction, guildID, roleScope)
 	}()
 }
@@ -395,7 +429,7 @@ func runFoxholePurge(
 	guildID string,
 	roleScope string,
 ) {
-	roleIDsToRecreate, roleNamesToRecreate, err := resolveFoxholeRoleIDs(gm, guildID, roleScope)
+	roleIDsToRecreate, roleNamesToRecreate, err := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
 	if err != nil {
 		editEphemeral(r, interaction, err.Error())
 		return
@@ -413,8 +447,8 @@ func runFoxholePurge(
 		// response body is never interpolated into the operator reply (#195).
 		editEphemeral(r, interaction, channelsResolveErrorReply(
 			err,
-			"Failed to retrieve guild channels for warden purge",
-			"command", "warden", "guild", guildID,
+			"Failed to retrieve guild channels for Foxhole purge",
+			"command", commandNameOf(interaction), "guild", guildID,
 		).Error())
 		return
 	}
@@ -449,7 +483,7 @@ func runFoxholePurge(
 			if newRoleID != "" {
 				summaryLines = append(summaryLines, purgePartialDeleteSummary(
 					roleName, newRoleID, roleIDToRecreate, recreateErr,
-					"Warden purge could not delete the old role after recreation",
+					"Foxhole purge could not delete the old role after recreation",
 					"guild", guildID,
 					"roleName", roleName,
 					"oldRoleID", roleIDToRecreate,
@@ -460,7 +494,7 @@ func runFoxholePurge(
 
 			summaryLines = append(summaryLines, purgeRecreateErrorReply(
 				roleName, recreateErr,
-				"Warden purge role recreation failed",
+				"Foxhole purge role recreation failed",
 				"guild", guildID,
 				"roleName", roleName,
 				"roleID", roleIDToRecreate,
@@ -513,7 +547,9 @@ func deliverPurgeSummary(
 	}
 
 	if isInteractionTokenExpired(editErr) {
-		if sendErr := gm.ChannelMessageSend(interaction.ChannelID, summary); sendErr != nil {
+		// r appended the rename notice to the edit; this message bypasses r.
+		fallback := appendRenameNotice(summary, renameNotice(interaction))
+		if sendErr := gm.ChannelMessageSend(interaction.ChannelID, fallback); sendErr != nil {
 			// Both surfaces failed: the operator can't be reached. This is a
 			// genuine delivery fault worth paging on. Carry the original edit
 			// error too, so on-call sees the full chain — the edit expired AND
@@ -521,7 +557,7 @@ func deliverPurgeSummary(
 			captureError(
 				"Failed to deliver purge summary via channel fallback after token expiry",
 				sendErr,
-				"command", "warden",
+				"command", commandNameOf(interaction),
 				"subcommand", foxholeSubcommandOf(interaction),
 				"guild_id", interaction.GuildID,
 				"channel_id", interaction.ChannelID,
@@ -534,7 +570,7 @@ func deliverPurgeSummary(
 		// "did the long purge ever surface its result?" is answerable from logs.
 		utils.Info(
 			"purge summary delivered via channel fallback after interaction token expired",
-			"command", "warden",
+			"command", commandNameOf(interaction),
 			"subcommand", foxholeSubcommandOf(interaction),
 			"guild_id", interaction.GuildID,
 			"channel_id", interaction.ChannelID,
@@ -696,7 +732,7 @@ func reapplyRoleOverwrites(
 }
 
 func resolveFoxholeRoleNames(roleScope string) []string {
-	base := FoxholeRoleBaseName()
+	base := foxholeRoleBaseName()
 
 	if roleScope == "both" {
 		return []string{
@@ -714,6 +750,7 @@ func resolveFoxholeRoleNames(roleScope string) []string {
 
 func resolveFoxholeRoleIDs(
 	gm GuildManager,
+	command string,
 	guildID string,
 	roleScope string,
 ) (roleIDs []string, roleNames []string, err error) {
@@ -731,8 +768,8 @@ func resolveFoxholeRoleIDs(
 			// branch above is handled first, so it never reaches here (#194).
 			return nil, nil, roleResolveErrorReply(
 				findErr,
-				"Failed to retrieve guild roles for warden role resolution",
-				"command", "warden", "guild", guildID, "role", roleName,
+				"Failed to retrieve guild roles for Foxhole role resolution",
+				"command", command, "guild", guildID, "role", roleName,
 			)
 		}
 		roleIDs = append(roleIDs, roleID)
@@ -802,27 +839,29 @@ func editEphemeralWithEmbed(r utils.InteractionResponder, interaction *discordgo
 // already-acknowledged. That is the dead-end loop utils.HandleError walks into
 // here: Respond, get already-acknowledged, re-issue the same edit. So instead of
 // retrying, we treat the lost reply as a genuine delivery failure and capture it
-// to Sentry with the subcommand and guild read off the interaction, so on-call
-// can attribute it even though the command may already have mutated state. This
+// to Sentry with the command, subcommand and guild read off the interaction, so
+// on-call can attribute it even though the command may already have mutated
+// state. The command is the registered name the run came in under, which also
+// names /voice-rename, /voice-lock and /s3aar, the other callers. This
 // is the single failure-handling seam both edit helpers funnel through; future
 // fallback-delivery handling can extend this single seam.
 func captureEditFailure(interaction *discordgo.InteractionCreate, err error) {
 	captureError(
 		"Failed to deliver deferred-ephemeral edit",
 		err,
-		"command", "warden",
+		"command", commandNameOf(interaction),
 		"subcommand", foxholeSubcommandOf(interaction),
 		"guild_id", interaction.GuildID,
 	)
 }
 
-// foxholeSubcommandOf reads the chosen /warden subcommand off the interaction's
+// foxholeSubcommandOf reads the chosen /foxhole subcommand off the interaction's
 // `command` option for failure context, falling back to "unknown" when it can't
 // be resolved (e.g. a malformed interaction) so capture context is never blank.
 //
 // It rides captures under the "subcommand" key, never "command": the latter is
 // promoted to a Sentry tag (see utils.promoteCommandTag) and must hold the
-// registered slash-command name, or /warden's failures split across one group
+// registered slash-command name, or /foxhole's failures split across one group
 // per subcommand and per-command error rate stops being answerable.
 func foxholeSubcommandOf(interaction *discordgo.InteractionCreate) string {
 	if sub, ok := getOptionString(interaction.ApplicationCommandData(), "command"); ok {
@@ -865,7 +904,7 @@ func formatUser(member *discordgo.Member) string {
 
 // findGuildMember resolves a single roster entry to a guild member, capturing any
 // genuine lookup system fault to Sentry inline. It is the entry point for the
-// single /warden add and /warden remove sites, which capture immediately; the
+// single /foxhole add and /foxhole remove sites, which capture immediately; the
 // bulk loop uses findGuildMemberCollecting with a collector-backed sink instead.
 func findGuildMember(gm GuildManager, guildID, query string) (*discordgo.Member, error) {
 	return findGuildMemberCollecting(gm, guildID, query, nil)
@@ -874,7 +913,7 @@ func findGuildMember(gm GuildManager, guildID, query string) (*discordgo.Member,
 // findGuildMemberCollecting is findGuildMember with the lookup-fault capture
 // decision delegated to faultSink. With a nil sink the leaf helpers capture each
 // genuine system fault to Sentry inline (the single add/remove behavior); with a
-// collector-backed sink the /warden bulkadd loop routes those captures through a
+// collector-backed sink the /foxhole bulkadd loop routes those captures through a
 // faultCollector so a lookup-fault storm collapses to one event per signature
 // (#216). The user-facing messages and the non-captured outcomes (empty/too-long
 // query, not-in-server, no match, too many matches, 4xx) are identical either way.
@@ -1021,7 +1060,7 @@ func buildBulkAddSummary(successCount int, failures []string) string {
 
 	var lines []string
 	if successCount > 0 {
-		lines = append(lines, fmt.Sprintf("✅ Added warden role(s) to %d user(s).", successCount))
+		lines = append(lines, fmt.Sprintf("✅ Added Foxhole role(s) to %d user(s).", successCount))
 	}
 	lines = append(lines, failures...)
 

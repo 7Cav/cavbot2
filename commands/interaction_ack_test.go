@@ -56,7 +56,7 @@ func extraMs(e *sentry.Event, key string) (int64, bool) {
 
 // When Discord answers a command's acknowledgement with 10062 Unknown
 // interaction, the interaction is gone and nothing more can reach the
-// member. Sentry gets one event that names the command, and the /warden
+// member. Sentry gets one event that names the command, and the /foxhole
 // subcommand, and says how long the acknowledgement took and how old the
 // interaction was when the bot sent it, so a late interaction can be told
 // from a slow answer. The event reports Discord's own error, so it groups
@@ -75,7 +75,7 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 		return i
 	}
 	foxhole := func(subcommand string) *discordgo.InteractionCreate {
-		return slash("warden",
+		return slash("foxhole",
 			stringOption("command", subcommand), stringOption("flag", "internal"), stringOption("discordname", "someone"))
 	}
 	press := func(t *testing.T) *discordgo.InteractionCreate {
@@ -94,12 +94,12 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 		subcommand string
 		run        func(t *testing.T, r *slowAck)
 	}{
-		{"/warden add", "warden", "add", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("add")) }},
-		{"/warden remove", "warden", "remove", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("remove")) }},
-		{"/warden bulkadd", "warden", "bulkadd", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("bulkadd")) }},
-		{"/warden purge", "warden", "purge", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("purge")) }},
-		{"/warden-bulkadd-internal", "warden-bulkadd-internal", "", func(_ *testing.T, r *slowAck) {
-			runFoxholeBulkAddInternal(r, nil, slash("warden-bulkadd-internal", stringOption("unit", validatedInternalUnits[0].value)))
+		{"/foxhole add", "foxhole", "add", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("add")) }},
+		{"/foxhole remove", "foxhole", "remove", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("remove")) }},
+		{"/foxhole bulkadd", "foxhole", "bulkadd", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("bulkadd")) }},
+		{"/foxhole purge", "foxhole", "purge", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("purge")) }},
+		{"/foxhole-bulkadd-internal", "foxhole-bulkadd-internal", "", func(_ *testing.T, r *slowAck) {
+			runFoxholeBulkAddInternal(r, nil, slash("foxhole-bulkadd-internal", stringOption("unit", validatedInternalUnits[0].value)))
 		}},
 		{"/voice-rename", voiceRenameCommandName, "", func(_ *testing.T, r *slowAck) {
 			runVoiceRename(r, nil, slash(voiceRenameCommandName, stringOption("name", "Alpha")))

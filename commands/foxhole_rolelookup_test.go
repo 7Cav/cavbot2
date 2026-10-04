@@ -69,7 +69,7 @@ func TestResolveFoxholeRoleIDs_Found(t *testing.T) {
 		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 	}
 
-	ids, names, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
+	ids, names, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "internal")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -88,7 +88,7 @@ func TestResolveFoxholeRoleIDs_NotFoundMessageUnchanged(t *testing.T) {
 		roles: []*discordgo.Role{guildRole("other", "Some Other Role")},
 	}
 
-	_, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
+	_, _, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "internal")
 	if err == nil {
 		t.Fatal("expected role-not-found error")
 	}
@@ -106,7 +106,7 @@ func TestResolveFoxholeRoleIDs_NotFoundMessageUnchanged(t *testing.T) {
 func TestResolveFoxholeRoleIDs_APIErrorMessageUnchanged(t *testing.T) {
 	gm := &fakeGuildManager{RolesErrs: []error{errors.New("boom")}}
 
-	_, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
+	_, _, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "internal")
 	if err == nil {
 		t.Fatal("expected guild-roles API error")
 	}

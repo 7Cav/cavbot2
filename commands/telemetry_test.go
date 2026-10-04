@@ -168,7 +168,7 @@ func TestInstrumentedHandler_LatencyIsElapsedWholeMilliseconds(t *testing.T) {
 
 // Option detail rides the line as its own keys rather than a rendered blob, so
 // a LogQL drill-down can filter on `opt_flag="internal"` directly. The opt_
-// prefix also keeps an option that happens to be named "command" — /warden has
+// prefix also keeps an option that happens to be named "command" — /foxhole has
 // one — from colliding with the contract key of the same name.
 func TestInstrumentedHandler_CarriesSubcommandAndOptionDetail(t *testing.T) {
 	tests := []struct {
@@ -293,7 +293,7 @@ func TestInstrumentedHandler_PanickingHandlerIsStillCounted(t *testing.T) {
 	}
 }
 
-// Free-text options can be enormous — /warden bulkadd takes a comma-separated
+// Free-text options can be enormous — /foxhole bulkadd takes a comma-separated
 // list of up to 50 names in a single string option — and an unbounded copy on
 // every telemetry line would bloat the log stream the metrics host ingests.
 // The bound asserted here is deliberately far looser than the cap itself, so

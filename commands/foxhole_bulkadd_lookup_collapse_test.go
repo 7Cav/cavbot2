@@ -222,7 +222,7 @@ func TestRunFoxholeBulkAdd_Lookup4xxListedNotCaptured(t *testing.T) {
 	}
 }
 
-// The split must leave the single /warden add lookup capturing inline: a member
+// The split must leave the single /foxhole add lookup capturing inline: a member
 // lookup 5xx on a single add still pages exactly once, NOT through a collector.
 // The bulk-only collapse must not regress the single-call path to zero captures
 // (a collector that never flushes) or to a collapsed payload.
@@ -239,7 +239,7 @@ func TestRunFoxholeAdd_MemberLookup5xxCapturesOnceInline(t *testing.T) {
 	runFoxhole(f, gm, foxholeAddInteraction())
 
 	if rec.count != 1 {
-		t.Fatalf("a single /warden add lookup 5xx must capture inline exactly once; got %d", rec.count)
+		t.Fatalf("a single /foxhole add lookup 5xx must capture inline exactly once; got %d", rec.count)
 	}
 	got := lastEditContent(f.Calls())
 	if !strings.Contains(strings.ToLower(got), "try again shortly") {
@@ -250,7 +250,7 @@ func TestRunFoxholeAdd_MemberLookup5xxCapturesOnceInline(t *testing.T) {
 	}
 }
 
-// The remove path shares findGuildMember, so a single /warden remove lookup 5xx
+// The remove path shares findGuildMember, so a single /foxhole remove lookup 5xx
 // must likewise capture inline exactly once, behavior-identical to before the
 // bulk-only collapse.
 func TestRunFoxholeRemove_MemberLookup5xxCapturesOnceInline(t *testing.T) {
@@ -265,7 +265,7 @@ func TestRunFoxholeRemove_MemberLookup5xxCapturesOnceInline(t *testing.T) {
 	runFoxhole(f, gm, foxholeRemoveInteraction())
 
 	if rec.count != 1 {
-		t.Fatalf("a single /warden remove lookup 5xx must capture inline exactly once; got %d", rec.count)
+		t.Fatalf("a single /foxhole remove lookup 5xx must capture inline exactly once; got %d", rec.count)
 	}
 	if got := lastEditContent(f.Calls()); strings.Contains(got, rawBodyMarker) {
 		t.Fatalf("must not leak the raw Discord body, got %q", got)
@@ -306,7 +306,7 @@ func TestRunFoxholeBulkAdd_LookupAndRoleAddSameSignatureDoNotFold(t *testing.T) 
 	// The two events must carry the two distinct collector flush messages, so a
 	// cross-wiring (both phases feeding one collector) fails here.
 	const lookupMsg = "Failed to look up guild member in bulk"
-	const roleAddMsg = "Failed to add warden role in bulk"
+	const roleAddMsg = "Failed to add Foxhole role in bulk"
 	seen := map[string]bool{}
 	for _, m := range rec.msgs {
 		seen[m] = true

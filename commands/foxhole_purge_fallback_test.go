@@ -183,8 +183,8 @@ func TestDeliverPurgeSummary_UnexpectedFailureCapturedNotFallback(t *testing.T) 
 		t.Fatalf("expected exactly 1 Sentry capture on an unexpected failure, got %d", *captures)
 	}
 	kvMap := kvToMap(*gotKV)
-	if kvMap["command"] != "warden" {
-		t.Fatalf("expected command=warden in capture context, got %v", kvMap["command"])
+	if kvMap["command"] != "foxhole" {
+		t.Fatalf("expected command=foxhole in capture context, got %v", kvMap["command"])
 	}
 	if kvMap["subcommand"] != "purge" {
 		t.Fatalf("expected subcommand=purge in capture context, got %v", kvMap["subcommand"])
@@ -214,8 +214,8 @@ func TestDeliverPurgeSummary_BothSurfacesFailCaptures(t *testing.T) {
 		t.Fatalf("expected exactly 1 Sentry capture when both surfaces fail, got %d", *captures)
 	}
 	kvMap := kvToMap(*gotKV)
-	if kvMap["command"] != "warden" {
-		t.Fatalf("expected command=warden in capture context, got %v", kvMap["command"])
+	if kvMap["command"] != "foxhole" {
+		t.Fatalf("expected command=foxhole in capture context, got %v", kvMap["command"])
 	}
 	if kvMap["subcommand"] != "purge" {
 		t.Fatalf("expected subcommand=purge in capture context, got %v", kvMap["subcommand"])
@@ -248,7 +248,7 @@ func TestRunFoxholePurge_TokenExpiryReachesChannelFallback(t *testing.T) {
 	if got := gm.countCalls("ChannelMessageSend"); got != 1 {
 		t.Fatalf("a token-expired purge edit must reach the channel fallback once; got %d (%v)", got, gm.Calls())
 	}
-	if got := gm.lastChannelMessage(); !strings.Contains(got, "Recreated 'Verified Warden Internal'") {
+	if got := gm.lastChannelMessage(); !strings.Contains(got, "Recreated '"+defaultInternalRoleName+"'") {
 		t.Fatalf("fallback message must carry the recreated-role summary, got %q", got)
 	}
 }

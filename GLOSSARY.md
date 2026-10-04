@@ -121,17 +121,16 @@ belong here, not inline in code comments.
 
 ## Foxhole roles
 
-The `/warden` command family applies and removes a small set of Discord roles by
-name. The bot's concern ends at role membership. Whatever access a Foxhole role
-grants is configured Discord-side and is out of scope here. The command names
-and `WARDEN_ROLE_BASE_NAME` keep the Warden name until the code moves over. The
-Foxhole page and the terms around it are designed in #412, not built yet.
+The `/foxhole` command family applies and removes a small set of Discord roles
+by name. The bot's concern ends at role membership. Whatever access a Foxhole
+role grants is configured Discord-side and is out of scope here. The Foxhole
+page and the terms around it are designed in #412, not built yet.
 
-- **Foxhole role** — a Discord role the `/warden` commands manage by exact name.
+- **Foxhole role** — a Discord role the `/foxhole` commands manage by exact name.
   The name is composed as `<base> Internal` / `<base> External`, where the base
-  comes from `WARDEN_ROLE_BASE_NAME` (default `Verified Warden`). Matching is
+  comes from `FOXHOLE_ROLE_BASE_NAME` (default `Verified Foxhole`). Matching is
   exact: the configured base has to reproduce the Discord role name character
-  for character, and one that doesn't fails every `/warden` subcommand with
+  for character, and one that doesn't fails every `/foxhole` subcommand with
   `role not found`. The bot guarantees a member holds (or no longer holds) the
   named role per the command invoked; it ascribes no meaning to what the role
   unlocks.
@@ -186,7 +185,7 @@ Foxhole page and the terms around it are designed in #412, not built yet.
   keeps it.
   _Avoid_: member cache, roster (a unit's roster is a different list).
 - **Foxhole action**: One change to who holds the Foxhole roles, made on the
-  Foxhole page or by a `/warden` command: an add, a removal, a roster add, a
+  Foxhole page or by a `/foxhole` command: an add, a removal, a roster add, a
   purge or a re-add of the approved collaborators. One started on the page
   never runs alongside another from either path, so whichever starts second
   is refused. Two commands may still run together. Note edits and approvals

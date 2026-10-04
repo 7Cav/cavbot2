@@ -30,7 +30,7 @@ var errRankLadderDrift = errors.New("rank ladder in code differs from the milpac
 
 // errAdministratorMissing is the identity of a missing Administrator event in
 // Sentry. The bot keeps Administrator as its deployment requirement; without
-// it spawning, handover and /warden all fail at the next call.
+// it spawning, handover and /foxhole all fail at the next call.
 var errAdministratorMissing = errors.New("bot member does not hold Administrator")
 
 // rankDrift is one position where the ladder in code and the API disagree.

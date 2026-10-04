@@ -18,7 +18,7 @@ import (
 const rosterAddFetchTimeout = 30 * time.Second
 
 // validatedInternalUnit is one row of the unit registry behind the
-// /warden-bulkadd-internal picker. value is what the operator's choice emits and
+// /foxhole-bulkadd-internal picker. value is what the operator's choice emits and
 // what fingerprints captures; label is shown in the dropdown and the summary;
 // query is the author-controlled milpac position-group search verified to
 // isolate exactly that unit's roster.
@@ -73,7 +73,7 @@ func FoxholeBulkAddInternal() Command {
 
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
-			Name:        "warden-bulkadd-internal",
+			Name:        "foxhole-bulkadd-internal",
 			Description: "Add a validated unit's roster to " + internalRoleName,
 			Options: []*discordgo.ApplicationCommandOption{
 				{
@@ -98,6 +98,8 @@ func runFoxholeBulkAddInternal(
 	gm GuildManager,
 	interaction *discordgo.InteractionCreate,
 ) {
+	r = withRenameNotice(r, interaction)
+
 	// Guild-context guard first: Foxhole commands require guild context. Rejecting
 	// on an empty GuildID here gives a clear server-only message and guarantees a
 	// non-empty guildID for every downstream Discord role call.
@@ -107,8 +109,9 @@ func runFoxholeBulkAddInternal(
 		return
 	}
 
+	command := commandNameOf(interaction)
 	username, discordID := interactionUsernameAndID(interaction)
-	utils.Info("🚀 Starting Warden Bulk Add Internal", "command", "warden-bulkadd-internal", "username", username, "discord_id", discordID)
+	utils.Info("🚀 Starting Foxhole Bulk Add Internal", "command", command, "username", username, "discord_id", discordID)
 
 	commandData := interaction.ApplicationCommandData()
 	unitValue, ok := getOptionString(commandData, "unit")
@@ -142,8 +145,8 @@ func runFoxholeBulkAddInternal(
 		// interpolated into the reply.
 		editEphemeral(r, interaction, roleResolveErrorReply(
 			err,
-			"Failed to retrieve guild roles for warden internal bulk add",
-			"command", "warden-bulkadd-internal", "guild", guildID, "role", roleName,
+			"Failed to retrieve guild roles for Foxhole internal bulk add",
+			"command", command, "guild", guildID, "role", roleName,
 		).Error())
 		return
 	}
@@ -157,9 +160,9 @@ func runFoxholeBulkAddInternal(
 		// user-input miss: capture it (tagged with the unit value) and surface a
 		// retry message.
 		captureError(
-			"Failed to fetch warden internal unit roster",
+			"Failed to fetch Foxhole internal unit roster",
 			err,
-			"command", "warden-bulkadd-internal", "guild", guildID, "unit", unit.value,
+			"command", command, "guild", guildID, "unit", unit.value,
 		)
 		editEphemeral(r, interaction, fmt.Sprintf(
 			"❌ Failed to fetch the %s roster (milpac error); please try again shortly.",
@@ -175,9 +178,9 @@ func runFoxholeBulkAddInternal(
 	// have happened — never a silent "added 0".
 	if len(roster.LiteProfiles) == 0 {
 		captureError(
-			"Warden internal bulk add roster lookup returned zero members",
+			"Foxhole internal bulk add roster lookup returned zero members",
 			fmt.Errorf("empty roster for unit %q", unit.value),
-			"command", "warden-bulkadd-internal", "guild", guildID, "unit", unit.value,
+			"command", command, "guild", guildID, "unit", unit.value,
 		)
 		editEphemeral(r, interaction, fmt.Sprintf(
 			"⚠️ The %s roster came back empty. That shouldn't happen for a validated unit, so nothing was changed and the issue has been reported.",
@@ -201,8 +204,8 @@ func runFoxholeBulkAddInternal(
 	// args here is exact.
 	faultCapture := newFaultCollector()
 	defer faultCapture.flush(
-		"Failed to add warden internal role in bulk",
-		"command", "warden-bulkadd-internal", "guild", guildID, "unit", unit.value,
+		"Failed to add Foxhole internal role in bulk",
+		"command", command, "guild", guildID, "unit", unit.value,
 	)
 	for _, profile := range roster.LiteProfiles {
 		memberDiscordID := strings.TrimSpace(profile.DiscordID)
@@ -267,7 +270,7 @@ func runFoxholeBulkAddInternal(
 	}
 	editEphemeralWithEmbed(r, interaction, content, embed)
 
-	utils.Info("✨ Done!", "command", "warden-bulkadd-internal", "unit", unit.value, "added", len(added))
+	utils.Info("✨ Done!", "command", command, "unit", unit.value, "added", len(added))
 }
 
 // buildRosterAddSummary composes the ephemeral summary. The
@@ -326,7 +329,13 @@ const discordMessageLimit = 2000
 // then appends a truncation marker. The lead summary line is short and comes
 // first, so it always survives.
 func clampToDiscordMessageLimit(message string) string {
-	if len(message) <= discordMessageLimit {
+	return clampToLimit(message, discordMessageLimit)
+}
+
+// clampToLimit is clampToDiscordMessageLimit for a limit of limit bytes, for a
+// message that something else will be appended to.
+func clampToLimit(message string, limit int) string {
+	if len(message) <= limit {
 		return message
 	}
 	const marker = "... (truncated)"
@@ -335,7 +344,7 @@ func clampToDiscordMessageLimit(message string) string {
 	used := 0
 	for _, line := range lines {
 		addition := len(line) + 1 // +1 for the newline join
-		if used+addition+len(marker)+1 > discordMessageLimit {
+		if used+addition+len(marker)+1 > limit {
 			break
 		}
 		kept = append(kept, line)

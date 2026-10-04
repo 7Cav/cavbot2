@@ -8,7 +8,7 @@ import (
 )
 
 // editFailInteraction builds a deferred-ephemeral interaction carrying a guild
-// id and the /warden `command` option, so the edit-failure path can read its
+// id and the /foxhole `command` option, so the edit-failure path can read its
 // command/guild context straight off the interaction.
 func editFailInteraction(guildID, subcommand string) *discordgo.InteractionCreate {
 	return foxholeInteraction(guildID, stringOption("command", subcommand))
@@ -109,8 +109,8 @@ func TestEditEphemeral_CaptureCarriesCommandAndGuildContext(t *testing.T) {
 	editEphemeral(f, i, "content")
 
 	kvMap := kvToMap(*gotKV)
-	if kvMap["command"] != "warden" {
-		t.Fatalf("expected command=warden in capture context, got %v", kvMap["command"])
+	if kvMap["command"] != "foxhole" {
+		t.Fatalf("expected command=foxhole in capture context, got %v", kvMap["command"])
 	}
 	if kvMap["subcommand"] != "remove" {
 		t.Fatalf("expected subcommand=remove in capture context, got %v", kvMap["subcommand"])
@@ -136,8 +136,8 @@ func TestEditEphemeral_CaptureFallsBackToUnknownCommand(t *testing.T) {
 	if kvMap["subcommand"] != "unknown" {
 		t.Fatalf("expected subcommand=unknown when no command option is present, got %v", kvMap["subcommand"])
 	}
-	if kvMap["command"] != "warden" {
-		t.Fatalf("expected command=warden even when the subcommand is unresolvable, got %v", kvMap["command"])
+	if kvMap["command"] != "foxhole" {
+		t.Fatalf("expected command=foxhole even when the subcommand is unresolvable, got %v", kvMap["command"])
 	}
 }
 

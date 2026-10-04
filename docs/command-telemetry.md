@@ -23,7 +23,7 @@ command. Component/button interactions are deliberately **not** emitted — a
 button press continues a command that was already counted.
 
 ```
-time=2026-08-06T14:22:31.884Z level=INFO msg=command_invoked command=warden latency_ms=843 discord_id=246813579 username=trooper.j opt_command=add opt_flag=internal opt_discordname=Smith.J
+time=2026-08-06T14:22:31.884Z level=INFO msg=command_invoked command=foxhole latency_ms=843 discord_id=246813579 username=trooper.j opt_command=add opt_flag=internal opt_discordname=Smith.J
 ```
 
 ### Contract keys
@@ -34,7 +34,7 @@ by name; renaming any of them is a parsing-contract change, not a cosmetic edit.
 | Key | Type | Notes |
 | --- | --- | --- |
 | `msg` | string | Always `command_invoked`. The marker Alloy selects on. |
-| `command` | string | Top-level command name, as registered. The **only** value promoted to a Prometheus label. |
+| `command` | string | Top-level command name, as registered. The **only** value promoted to a Prometheus label. A command still registered under an old name logs that name, so `/warden` runs show as `command=warden` until it goes on 6 November 2026. |
 | `latency_ms` | integer | Handler wall-time in **whole milliseconds**. Divided by 1000 on the collector side to feed a `_seconds` histogram. See the caveat below. |
 | `discord_id` | string | Invoking user's Discord snowflake. Loki only — never a metric label. |
 | `username` | string | Invoking user's Discord username. Loki only — never a metric label. |
@@ -42,13 +42,13 @@ by name; renaming any of them is a parsing-contract change, not a cosmetic edit.
 ### Drill-down keys
 
 Present only when the interaction carries them. These exist so usage can be
-broken down in Loki (warden internal vs external, say) **without** touching the
+broken down in Loki (Foxhole internal vs external, say) **without** touching the
 metric or its cardinality.
 
 | Key | Notes |
 | --- | --- |
 | `subcommand` | The invoked subcommand path, dotted for a subcommand group (`roles.add`). Absent when the command has no true subcommand. |
-| `opt_<name>` | One key per option, e.g. `opt_flag=internal`. The `opt_` prefix keeps an option named `command` — warden has one — from colliding with the contract key. String values are truncated to 64 runes, so a bulk-entry option cannot emit a multi-kilobyte record. |
+| `opt_<name>` | One key per option, e.g. `opt_flag=internal`. The `opt_` prefix keeps an option named `command` — `/foxhole` has one — from colliding with the contract key. String values are truncated to 64 runes, so a bulk-entry option cannot emit a multi-kilobyte record. |
 
 Option names come from the command definitions, so the `opt_*` key space is
 bounded by the registry — but do not promote any of them to a Prometheus label
@@ -64,7 +64,7 @@ handler.
 One command breaks that assumption, and its latency panel should be read
 accordingly:
 
-- **`/warden purge`** acknowledges, then hands the work to a goroutine
+- **`/foxhole purge`** acknowledges, then hands the work to a goroutine
   (`handleFoxholePurge`), so the measured latency is roughly the ack, not the
   multi-second purge.
 
@@ -77,7 +77,7 @@ counting a completion separately), which is its own change.
 `discord_id` and `username` stay in the log line. Promoting either to a
 Prometheus label would create one time series per user per command and grow
 without bound, and it would put per-user data in a 90-day metrics store. The
-question "who used `/warden` the most?" is answered in Loki instead, on demand,
+question "who used `/foxhole` the most?" is answered in Loki instead, on demand,
 against logs with a shorter retention. This mirrors the cardinality discipline
 the NPM and fail2ban blocks on this host already follow (client IP stays in the
 line).
@@ -112,7 +112,7 @@ is answerable there through the `command` tag that `CaptureError` and
 
 `CaptureError` and `RecoverPanic` promote a `command` key/value to a Sentry
 **tag**, because Sentry groups and filters on tags, not on the extra context.
-The value must be the **registered slash-command name** — `warden`,
+The value must be the **registered slash-command name** — `foxhole`,
 `s6-it-check`, `gamertag_search` — since anything else splits one command's
 failures across several groups, or (for a component CustomID, which can embed
 free user input) gives a bounded dimension an unbounded value space.
@@ -120,7 +120,7 @@ free user input) gives a bounded dimension an unbounded value space.
 Two consequences worth knowing when adding a capture site:
 
 - Pass `"command", "<registered name>"`. If you also want the subcommand,
-  pass it separately as `"subcommand"` — that is why `/warden`'s captures no
+  pass it separately as `"subcommand"` — that is why `/foxhole`'s captures no
   longer put its subcommand under `command`.
 - Some capture sites still carry no `command` at all — the direct
   `utils.CaptureError` calls in `afsm.go`, `s6_trackers.go`, `awol.go` and
@@ -196,7 +196,7 @@ loki.source.docker "containers" {
 // json-file driver's {"log":…,"stream":…} wrapper is already stripped and no
 // stage.docker / stage.cri is needed):
 //
-//   time=2026-08-06T14:22:31.884Z level=INFO msg=command_invoked command=warden
+//   time=2026-08-06T14:22:31.884Z level=INFO msg=command_invoked command=foxhole
 //   latency_ms=843 discord_id=246813579 username=trooper.j opt_flag=internal
 
 loki.process "cavbot2" {

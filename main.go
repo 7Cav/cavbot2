@@ -168,7 +168,7 @@ func main() {
 
 	utils.Info("CavBot2 starting", "version", Version)
 
-	utils.Info("Warden role base name resolved", "base_name", commands.FoxholeRoleBaseName())
+	commands.LogFoxholeRoleBaseName()
 
 	initLOACache()
 
@@ -264,7 +264,7 @@ func main() {
 	// each capture to Sentry, once per process start. Their own goroutine, so
 	// neither fetch holds up command registration or a gateway handler. They
 	// need no store. The checks write nothing, and Administrator protects
-	// /warden as much as spawning.
+	// /foxhole as much as spawning.
 	go func() {
 		defer utils.RecoverPanic("startup-checks")
 		commands.RunStartupChecks(context.Background(), discordManager, GuildID, dg.State.User.ID)

@@ -8,7 +8,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// bulkAddInteraction builds a /warden bulkadd interaction for the given scope
+// bulkAddInteraction builds a /foxhole bulkadd interaction for the given scope
 // and comma-separated discordname list.
 func bulkAddInteraction(scope, names string) *discordgo.InteractionCreate {
 	return foxholeInteraction("guild-1",
@@ -75,7 +75,7 @@ func TestRunFoxholeBulkAdd_SameSignatureCollapsesToOneCapture(t *testing.T) {
 	}
 }
 
-// The public mirror of the internal client-fault tests: in one /warden bulkadd
+// The public mirror of the internal client-fault tests: in one /foxhole bulkadd
 // run, one member's add hits a 403 (missing permissions) and another hits a
 // not-in-server 404 (Unknown Member 10007). Both are captured-NEVER client
 // faults, so the public SystemFault gate must keep them out of the collector —
@@ -214,7 +214,7 @@ func TestRunFoxholeBulkAdd_SameStatusDifferentCodeCapturesPerCode(t *testing.T) 
 	}
 }
 
-// /warden bulkadd with scope "both" adds two roles per member, so affected_count
+// /foxhole bulkadd with scope "both" adds two roles per member, so affected_count
 // must count member-ROLE attempts, not distinct members. One member whose two
 // role-adds both fail with the same signature must collapse to one event with
 // affected_count=2, sampled to that member (#214).
