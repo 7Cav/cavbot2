@@ -23,16 +23,15 @@ type forumUser struct {
 type checkOutcome int
 
 const (
-	// checkPassed: the forum knows the token and the user holds an
-	// allowlisted group.
+	// checkPassed: the forum knows the token and said who the user is. Any
+	// forum user passes; their groups decide whether they are a panel admin.
 	checkPassed checkOutcome = iota
 	// checkExpired: the forum refused the token (401). The session ends with
 	// cause expired.
 	checkExpired
-	// checkNoGroup: the forum answered but the user may not open the panel,
-	// either a 403 or a 200 with no allowlisted group. The session ends with
-	// cause no-group.
-	checkNoGroup
+	// checkRefused: the forum knows the token but would not say who the user
+	// is (403). The session ends with cause refused.
+	checkRefused
 	// checkUnavailable: the forum did not answer, or answered with a status
 	// the panel cannot read as a decision. The session is kept and the user
 	// sees the error page.
@@ -45,15 +44,16 @@ func (o checkOutcome) cause() cause {
 	switch o {
 	case checkExpired:
 		return causeExpired
-	case checkNoGroup:
-		return causeNoGroup
+	case checkRefused:
+		return causeRefused
 	}
 	return causeNone
 }
 
 // groupCheck is one GET to the userinfo URL with the access token. It returns
 // the user on checkPassed and the outcome in every case; err carries the
-// transport or read failure behind checkUnavailable for the log line.
+// transport or read failure behind checkUnavailable for the log line. Whether
+// the user is a panel admin is p.isPanelAdmin(user), decided by the caller.
 func (p *Panel) groupCheck(ctx context.Context, accessToken string) (forumUser, checkOutcome, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.cfg.UserinfoURL, nil)
 	if err != nil {
@@ -71,7 +71,7 @@ func (p *Panel) groupCheck(ctx context.Context, accessToken string) (forumUser, 
 	case res.StatusCode == http.StatusUnauthorized:
 		return forumUser{}, checkExpired, nil
 	case res.StatusCode == http.StatusForbidden:
-		return forumUser{}, checkNoGroup, nil
+		return forumUser{}, checkRefused, nil
 	case res.StatusCode != http.StatusOK:
 		return forumUser{}, checkUnavailable, fmt.Errorf("userinfo answered %d", res.StatusCode)
 	}
@@ -86,20 +86,17 @@ func (p *Panel) groupCheck(ctx context.Context, accessToken string) (forumUser, 
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return forumUser{}, checkUnavailable, fmt.Errorf("userinfo body: %w", err)
 	}
-	if !p.allowed(envelope.Me) {
-		return envelope.Me, checkNoGroup, nil
-	}
 	return envelope.Me, checkPassed, nil
 }
 
-// allowed is the group check's rule: the primary group or any secondary group
-// is in the allowlist.
-func (p *Panel) allowed(u forumUser) bool {
-	if slices.Contains(p.cfg.GroupIDs, u.UserGroupID) {
+// isPanelAdmin is the group check's rule for a panel admin: the primary group
+// or any secondary group is one of the panel's admin groups.
+func (p *Panel) isPanelAdmin(u forumUser) bool {
+	if slices.Contains(p.cfg.AdminGroupIDs, u.UserGroupID) {
 		return true
 	}
 	for _, id := range u.SecondaryGroupIDs {
-		if slices.Contains(p.cfg.GroupIDs, id) {
+		if slices.Contains(p.cfg.AdminGroupIDs, id) {
 			return true
 		}
 	}

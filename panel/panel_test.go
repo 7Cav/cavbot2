@@ -45,8 +45,9 @@ type fakeForum struct {
 	challenge     string
 	tokenRequests int
 
-	userinfoStatus   int
-	userinfoBody     string
+	// accounts are the users the forum knows. The first is the default
+	// user, a panel admin through a secondary group, whom signIn signs in.
+	accounts         []*forumAccount
 	userinfoRequests int
 	// userinfoDrop and tokenDrop make that endpoint close the connection
 	// with no answer, the transport error a forum outage produces.
@@ -54,9 +55,21 @@ type fakeForum struct {
 	tokenDrop    bool
 }
 
+// forumAccount is one user the fake forum knows: the code its consent page
+// hands back for them, the access token the exchange issues for that code,
+// and what /api/me answers for that token.
+type forumAccount struct {
+	code   string
+	token  string
+	status int
+	body   string
+}
+
 func newFakeForum(t *testing.T) *fakeForum {
 	t.Helper()
-	f := &fakeForum{t: t, userinfoStatus: http.StatusOK, userinfoBody: userinfoJSON(2, []int{35, 47, 72})}
+	f := &fakeForum{t: t, accounts: []*forumAccount{{
+		code: testCode, token: testAccessToken, status: http.StatusOK, body: userinfoJSON(2, []int{35, 47, 72}),
+	}}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/oauth2/token", f.token)
 	mux.HandleFunc("GET /api/me", f.userinfo)
@@ -65,16 +78,47 @@ func newFakeForum(t *testing.T) *fakeForum {
 	return f
 }
 
-// userinfoJSON is the /api/me envelope with the two fields the user:groups
-// scope adds.
+// userinfoJSON is the default user's /api/me envelope with the two fields
+// the user:groups scope adds.
 func userinfoJSON(primary int, secondary []int) string {
+	return forumUserJSON(testUserID, testUsername, primary, secondary)
+}
+
+// forumUserJSON is the /api/me envelope for any forum user.
+func forumUserJSON(userID int, username string, primary int, secondary []int) string {
 	body, _ := json.Marshal(map[string]any{"me": map[string]any{
-		"user_id":             testUserID,
-		"username":            testUsername,
+		"user_id":             userID,
+		"username":            username,
 		"user_group_id":       primary,
 		"secondary_group_ids": secondary,
 	}})
 	return string(body)
+}
+
+// addUser makes the forum know one more user, in the groups given, and
+// returns the account signInAs signs in with.
+func (f *fakeForum) addUser(userID int, username string, primary int, secondary []int) *forumAccount {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a := &forumAccount{
+		code:   fmt.Sprintf("code-%d", userID),
+		token:  fmt.Sprintf("access-token-%d", userID),
+		status: http.StatusOK,
+		body:   forumUserJSON(userID, username, primary, secondary),
+	}
+	f.accounts = append(f.accounts, a)
+	return a
+}
+
+// accountFor finds the account by its code or its token. The caller holds
+// f.mu.
+func (f *fakeForum) accountFor(match func(*forumAccount) bool) *forumAccount {
+	for _, a := range f.accounts {
+		if match(a) {
+			return a
+		}
+	}
+	return nil
 }
 
 func (f *fakeForum) setChallenge(c string) {
@@ -83,10 +127,11 @@ func (f *fakeForum) setChallenge(c string) {
 	f.challenge = c
 }
 
+// setUserinfo sets what /api/me answers for the default user.
 func (f *fakeForum) setUserinfo(status int, body string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.userinfoStatus, f.userinfoBody = status, body
+	f.accounts[0].status, f.accounts[0].body = status, body
 }
 
 func (f *fakeForum) setUserinfoDrop(drop bool) {
@@ -144,7 +189,9 @@ func (f *fakeForum) token(w http.ResponseWriter, r *http.Request) {
 		refuse("invalid_client")
 		return
 	}
-	if r.PostForm.Get("grant_type") != "authorization_code" || r.PostForm.Get("code") != testCode {
+	code := r.PostForm.Get("code")
+	account := f.accountFor(func(a *forumAccount) bool { return a.code == code })
+	if r.PostForm.Get("grant_type") != "authorization_code" || account == nil {
 		refuse("invalid_grant")
 		return
 	}
@@ -154,7 +201,7 @@ func (f *fakeForum) token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = fmt.Fprintf(w, `{"access_token":%q,"refresh_token":"refresh-1","token_type":"bearer","expires_in":7200,"scope":"user:read user:groups"}`, testAccessToken)
+	_, _ = fmt.Fprintf(w, `{"access_token":%q,"refresh_token":"refresh-1","token_type":"bearer","expires_in":7200,"scope":"user:read user:groups"}`, account.token)
 }
 
 func (f *fakeForum) userinfo(w http.ResponseWriter, r *http.Request) {
@@ -165,15 +212,17 @@ func (f *fakeForum) userinfo(w http.ResponseWriter, r *http.Request) {
 		f.drop(w)
 		return
 	}
-	if r.Header.Get("Authorization") != "Bearer "+testAccessToken {
+	bearer := r.Header.Get("Authorization")
+	account := f.accountFor(func(a *forumAccount) bool { return bearer == "Bearer "+a.token })
+	if account == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = io.WriteString(w, `{"errors":[{"code":"unauthorized","message":"api_error.unauthorized","params":[]}]}`)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(f.userinfoStatus)
-	_, _ = io.WriteString(w, f.userinfoBody)
+	w.WriteHeader(account.status)
+	_, _ = io.WriteString(w, account.body)
 }
 
 // s256 is the PKCE transform: base64url without padding of the SHA-256 of the
@@ -185,14 +234,14 @@ func s256(verifier string) string {
 
 func testConfig(f *fakeForum) Config {
 	return Config{
-		Addr:         ":0",
-		BaseURL:      testBaseURL,
-		ClientID:     testClientID,
-		ClientSecret: testClientSecret,
-		AuthorizeURL: f.srv.URL + "/oauth2/authorize",
-		TokenURL:     f.srv.URL + "/api/oauth2/token",
-		UserinfoURL:  f.srv.URL + "/api/me",
-		GroupIDs:     []int{71, 47, 44},
+		Addr:          ":0",
+		BaseURL:       testBaseURL,
+		ClientID:      testClientID,
+		ClientSecret:  testClientSecret,
+		AuthorizeURL:  f.srv.URL + "/oauth2/authorize",
+		TokenURL:      f.srv.URL + "/api/oauth2/token",
+		UserinfoURL:   f.srv.URL + "/api/me",
+		AdminGroupIDs: []int{71, 47, 44},
 	}
 }
 
@@ -548,13 +597,27 @@ func assertCookieShape(t *testing.T, c *http.Cookie) {
 	}
 }
 
-// signIn walks a browser through the start redirect and the callback, with
-// the fake forum enforcing its rules, and returns the callback response.
+// signIn walks a browser through the start redirect and the callback as the
+// forum's default user, with the fake forum enforcing its rules, and returns
+// the callback response.
 func signIn(t *testing.T, f *fakeForum, b *browser) *http.Response {
+	t.Helper()
+	return signInWithCode(t, f, b, testCode)
+}
+
+// signInAs is signIn as another user the fake forum knows.
+func signInAs(t *testing.T, f *fakeForum, b *browser, a *forumAccount) *http.Response {
+	t.Helper()
+	return signInWithCode(t, f, b, a.code)
+}
+
+// signInWithCode is the sign-in both helpers walk, with the code the forum's
+// consent page would hand back for the user.
+func signInWithCode(t *testing.T, f *fakeForum, b *browser, code string) *http.Response {
 	t.Helper()
 	q := assertRedirect(t, b.post("/auth/start"), "/oauth2/authorize").Query()
 	f.setChallenge(q.Get("code_challenge"))
-	return b.get("/auth/callback?code=" + testCode + "&state=" + url.QueryEscape(q.Get("state")))
+	return b.get("/auth/callback?code=" + url.QueryEscape(code) + "&state=" + url.QueryEscape(q.Get("state")))
 }
 
 func TestCallbackWithMatchingStateSignsIn(t *testing.T) {
@@ -618,13 +681,13 @@ func TestCallbackRefusedWithoutMatchingPendingSignin(t *testing.T) {
 	}
 }
 
-func TestGroupCheckPassesOnAllowlistedGroup(t *testing.T) {
+func TestGroupCheckFindsAPanelAdminByEitherGroup(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
 	}{
-		{"primary group allowlisted, no secondary", userinfoJSON(71, nil)},
-		{"secondary group allowlisted, primary not", userinfoJSON(2, []int{35, 47, 72})},
+		{"primary group is an admin group, no secondary", userinfoJSON(71, nil)},
+		{"a secondary group is an admin group, primary not", userinfoJSON(2, []int{35, 47, 72})},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -650,8 +713,7 @@ func TestGroupCheckEndsSessionWithCause(t *testing.T) {
 		cause  string
 	}{
 		{"forum refuses the token", http.StatusUnauthorized, `{"errors":[{"code":"unauthorized"}]}`, "expired"},
-		{"no allowlisted group", http.StatusOK, userinfoJSON(2, []int{35, 72}), "no-group"},
-		{"forum answers 403", http.StatusForbidden, `{"errors":[{"code":"permission_denied"}]}`, "no-group"},
+		{"forum answers 403", http.StatusForbidden, `{"errors":[{"code":"permission_denied"}]}`, "refused"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

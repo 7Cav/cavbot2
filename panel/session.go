@@ -39,16 +39,24 @@ func (p pendingSignin) expired(at time.Time) bool {
 }
 
 // session is one signed-in browser. It holds the access token the group check
-// sends on every request and the identity shown in the rail.
+// sends on every request, the identity shown in the rail, and whether the
+// latest group check found a panel admin.
 type session struct {
 	accessToken string
 	userID      int
 	username    string
+	panelAdmin  bool
 	signedIn    time.Time
 }
 
 func (s session) expired(at time.Time) bool {
 	return !at.Before(s.signedIn.Add(sessionLifetime))
+}
+
+// identify takes the identity a passed group check reported and whether it
+// found a panel admin.
+func (s *session) identify(u forumUser, panelAdmin bool) {
+	s.userID, s.username, s.panelAdmin = u.UserID, u.Username, panelAdmin
 }
 
 // actor is the forum user a save made in this session is recorded against.
@@ -57,9 +65,9 @@ func (s session) actor() actor {
 }
 
 // page is the page data for a screen this session sees: the rail shows the
-// navigation and the identity block.
+// identity block, and the navigation to a panel admin.
 func (s session) page(title string) pageData {
-	return pageData{Title: title, SignedIn: true, Username: s.username}
+	return pageData{Title: title, SignedIn: true, PanelAdmin: s.panelAdmin, Username: s.username}
 }
 
 // sessions is the in-memory store of pending sign-ins and sessions, each
@@ -131,8 +139,8 @@ func (s *sessions) get(id string) (session, bool) {
 	return sess, ok
 }
 
-// update replaces a session's identity after a group check, so the rail shows
-// the username the forum reports now.
+// update replaces a session's identity and admin flag after a group check, so
+// the rail shows the username the forum reports now.
 func (s *sessions) update(id string, sess session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -329,7 +329,7 @@ in the panel, never in code.
 - **Save**: One submitted panel form that changes what the panel stores: a
   hub's create, register, update or remove, the guild-wide moderator roles,
   a note, or an approval given or cleared. It begins once the group check
-  passes, runs to its end whether or not the browser waits, and takes effect
+  allows it, runs to its end whether or not the browser waits, and takes effect
   when the store holds the change. A refused save changes nothing. A save
   that fails leaves the store as it was, though a Discord change it already
   made may stay.
@@ -349,21 +349,23 @@ in the panel, never in code.
 - **Rank ladder**: The rank roles in seniority order, most senior first,
   that the handover rule ranks occupants by.
   _Avoid_: rank list, rank table, seniority list, role ladder.
-- **Panel**: cavbot2's web UI at `cavbot2.7cav.us`, signed in through the
-  forum.
+- **Panel**: cavbot2's web UI at `cavbot2.7cav.us`. Any forum user can sign
+  in through the forum, and the group check decides which pages each one sees.
   _Avoid_: dashboard, admin UI, settings screen, config.
 - **Panel session**: The panel's record that a browser is signed in as one
-  forum user. Created at the OAuth callback. Ended by sign-out, by a failed
-  group check, or by the forum refusing the token.
+  forum user. Created at the OAuth callback, for any forum user. Ended by
+  sign-out, or by the forum refusing the token or refusing to say who the user
+  is. A group check that grants nothing leaves it running.
   _Avoid_: login, token session, forum session, auth cookie.
 - **Pending sign-in**: The panel's record of one sign-in between the redirect
   to the forum and the callback. Consumed by the callback, whatever its
   outcome, or dropped after five minutes.
   _Avoid_: auth request, login attempt, OAuth state, flow.
 - **Group check**: The panel's test of the signed-in forum user's forum
-  groups, primary or secondary, on every request. One of the panel's admin
-  groups makes them a panel admin. The Foxhole group makes them a Foxhole
-  manager.
+  groups, primary or secondary, on every request. The groups decide what the
+  panel session can see. They never end it. One of the panel's admin groups
+  makes them a panel admin. The Foxhole group makes them a Foxhole manager. A
+  user in none of them sees only a page saying their roles grant no access.
   _Avoid_: allowlist check, permission check, authorisation, role check.
 - **Panel admin**: A signed-in forum user the group check finds in one of the
   panel's admin groups. Opens every page and takes every action on the panel.

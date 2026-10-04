@@ -25,16 +25,17 @@ type Config struct {
 	TokenURL     string
 	UserinfoURL  string
 
-	// GroupIDs is the allowlist the group check reads: a forum user passes when
-	// the primary group or any secondary group is in it.
-	GroupIDs []int
+	// AdminGroupIDs are the panel's admin groups the group check reads: a
+	// forum user is a panel admin when the primary group or any secondary
+	// group is in it. Any forum user can sign in.
+	AdminGroupIDs []int
 }
 
 // Enabled reports whether the panel listens at all.
 func (c Config) Enabled() bool { return c.Addr != "" }
 
 // defaultGroupIDs are Genstaff, S6 HQ and Regimental Technical Aides, the
-// forum groups that may open the panel when PANEL_GROUP_IDS is unset.
+// forum groups whose members are panel admins when PANEL_GROUP_IDS is unset.
 var defaultGroupIDs = []int{71, 47, 44}
 
 // ConfigFromEnv reads the PANEL_* variables. With PANEL_ADDR unset it returns a
@@ -44,14 +45,14 @@ var defaultGroupIDs = []int{71, 47, 44}
 // first sign-in.
 func ConfigFromEnv() (Config, error) {
 	cfg := Config{
-		Addr:         os.Getenv("PANEL_ADDR"),
-		BaseURL:      strings.TrimRight(os.Getenv("PANEL_BASE_URL"), "/"),
-		ClientID:     os.Getenv("PANEL_OAUTH_CLIENT_ID"),
-		ClientSecret: os.Getenv("PANEL_OAUTH_CLIENT_SECRET"),
-		AuthorizeURL: os.Getenv("PANEL_OAUTH_AUTHORIZE_URL"),
-		TokenURL:     os.Getenv("PANEL_OAUTH_TOKEN_URL"),
-		UserinfoURL:  os.Getenv("PANEL_OAUTH_USERINFO_URL"),
-		GroupIDs:     defaultGroupIDs,
+		Addr:          os.Getenv("PANEL_ADDR"),
+		BaseURL:       strings.TrimRight(os.Getenv("PANEL_BASE_URL"), "/"),
+		ClientID:      os.Getenv("PANEL_OAUTH_CLIENT_ID"),
+		ClientSecret:  os.Getenv("PANEL_OAUTH_CLIENT_SECRET"),
+		AuthorizeURL:  os.Getenv("PANEL_OAUTH_AUTHORIZE_URL"),
+		TokenURL:      os.Getenv("PANEL_OAUTH_TOKEN_URL"),
+		UserinfoURL:   os.Getenv("PANEL_OAUTH_USERINFO_URL"),
+		AdminGroupIDs: defaultGroupIDs,
 	}
 	if !cfg.Enabled() {
 		return cfg, nil
@@ -77,14 +78,15 @@ func ConfigFromEnv() (Config, error) {
 		if err != nil {
 			return Config{}, fmt.Errorf("PANEL_GROUP_IDS: %w", err)
 		}
-		cfg.GroupIDs = ids
+		cfg.AdminGroupIDs = ids
 	}
 	return cfg, nil
 }
 
 // parseGroupIDs reads a comma-separated list of forum group IDs, the
 // LOA_NODE_IDS shape. Unlike that reader it refuses a value it cannot parse:
-// a typo in the allowlist would otherwise lock every user out in silence.
+// a typo in the admin groups would otherwise leave the panel with no admin in
+// silence.
 func parseGroupIDs(raw string) ([]int, error) {
 	var ids []int
 	for _, part := range strings.Split(raw, ",") {

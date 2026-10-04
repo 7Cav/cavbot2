@@ -1,7 +1,8 @@
 // Package panel is the bot's web UI, an HTTP server inside the cavbot2 binary
 // signed in through the forum's OAuth2; the decision and its reasons are in
 // docs/temp-vc-decisions.md. It holds the sign-in, the panel session, the
-// group check, and the hub page: the guild-wide moderator section with its
+// group check, the no-access page every forum user who is not a panel admin
+// gets, and the hub page: the guild-wide moderator section with its
 // change log, the hub list with each hub's live spawned count, its last
 // spawn failure and its broken hub state, the create and register forms,
 // each hub's edit form with its change log, and the remove action.
@@ -134,7 +135,7 @@ func (p *Panel) Start() error {
 			utils.CaptureError("Panel server stopped", err)
 		}
 	}()
-	utils.Info("Panel listening", "addr", ln.Addr().String(), "base_url", p.cfg.BaseURL, "group_ids", p.cfg.GroupIDs)
+	utils.Info("Panel listening", "addr", ln.Addr().String(), "base_url", p.cfg.BaseURL, "admin_group_ids", p.cfg.AdminGroupIDs)
 	return nil
 }
 
@@ -182,11 +183,11 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("POST /auth/start", p.authStart)
 	mux.HandleFunc("GET /auth/callback", p.authCallback)
 	mux.HandleFunc("POST /auth/signout", p.authSignout)
-	mux.HandleFunc("GET /{$}", p.withSession(p.homePage))
-	mux.HandleFunc("POST /hubs", p.withSession(p.createOrRegisterHub))
-	mux.HandleFunc("POST /hubs/{id}", p.withSession(p.updateHub))
-	mux.HandleFunc("POST /hubs/{id}/remove", p.withSession(p.removeHub))
-	mux.HandleFunc("POST /moderators", p.withSession(p.saveModerators))
+	mux.HandleFunc("GET /{$}", p.withPanelAdmin(p.homePage))
+	mux.HandleFunc("POST /hubs", p.withPanelAdmin(p.createOrRegisterHub))
+	mux.HandleFunc("POST /hubs/{id}", p.withPanelAdmin(p.updateHub))
+	mux.HandleFunc("POST /hubs/{id}/remove", p.withPanelAdmin(p.removeHub))
+	mux.HandleFunc("POST /moderators", p.withPanelAdmin(p.saveModerators))
 	protected := http.NewCrossOriginProtection().Handler(mux)
 	// A panic in a handler is recovered here, through the same path every
 	// other goroutine uses (ADR 0001), before net/http's own recovery would
@@ -286,12 +287,14 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 	user, outcome, err := p.groupCheck(r.Context(), tok.AccessToken)
 	switch outcome {
 	case checkPassed:
-		id, err := p.sessions.add(session{accessToken: tok.AccessToken, userID: user.UserID, username: user.Username, signedIn: now()})
+		sess := session{accessToken: tok.AccessToken, signedIn: now()}
+		sess.identify(user, p.isPanelAdmin(user))
+		id, err := p.sessions.add(sess)
 		if err != nil {
 			p.serverError(w, "session create", err)
 			return
 		}
-		utils.Info("Panel sign-in", "username", user.Username, "forum_user_id", user.UserID)
+		utils.Info("Panel sign-in", "username", user.Username, "forum_user_id", user.UserID, "panel_admin", sess.panelAdmin)
 		setCookie(w, sessionCookie, id)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	case checkUnavailable:
@@ -331,6 +334,8 @@ func signinURL(c cause) string {
 // withSession is the gate every signed-in page sits behind: the session
 // cookie must name a live session, and the group check must pass on this
 // request. Expiry by the clock ends the session before the forum is asked.
+// The session next sees carries whether this request's group check found a
+// panel admin.
 func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookie)
@@ -352,7 +357,7 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 		user, outcome, err := p.groupCheck(r.Context(), sess.accessToken)
 		switch outcome {
 		case checkPassed:
-			sess.userID, sess.username = user.UserID, user.Username
+			sess.identify(user, p.isPanelAdmin(user))
 			p.sessions.update(c.Value, sess)
 			next(w, r, sess)
 		case checkUnavailable:
@@ -363,6 +368,23 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 			http.Redirect(w, r, signinURL(outcome.cause()), http.StatusSeeOther)
 		}
 	}
+}
+
+// withPanelAdmin is the gate every settings page sits behind: withSession,
+// and this request's group check must find a panel admin. Anyone else gets
+// the no-access page and the request does nothing.
+func (p *Panel) withPanelAdmin(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
+	return p.withSession(func(w http.ResponseWriter, r *http.Request, sess session) {
+		if !sess.panelAdmin {
+			if r.Method == http.MethodPost {
+				utils.Info("Panel save refused: not a panel admin", "path", r.URL.Path,
+					"username", sess.username, "forum_user_id", sess.userID)
+			}
+			p.render(w, http.StatusForbidden, "noaccess", sess.page("No access"))
+			return
+		}
+		next(w, r, sess)
+	})
 }
 
 // authSignout ends the session the cookie names and nothing else: no group
@@ -551,11 +573,11 @@ func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session
 }
 
 // saving is what a save handler runs its save through. A save begins once
-// the group check has passed and runs to its end whether or not the browser
-// waits. So its context is the request's without the cancellation net/http
-// sends when the connection closes, and its service gives each store call
-// the save makes a deadline of its own, and its wait for the guild's data
-// the page's time budget.
+// the group check has found a panel admin and runs to its end whether or
+// not the browser waits. So its context is the request's without the
+// cancellation net/http sends when the connection closes, and its service
+// gives each store call the save makes a deadline of its own, and its wait
+// for the guild's data the page's time budget.
 func (p *Panel) saving(r *http.Request) (context.Context, *hubService) {
 	return context.WithoutCancel(r.Context()), p.hubs.forSave(p.pageBudget)
 }
