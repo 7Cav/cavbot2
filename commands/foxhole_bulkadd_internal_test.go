@@ -104,7 +104,7 @@ func TestFoxholeBulkAddInternalDefinition_SingleUnitPickerFromRegistry(t *testin
 	}
 
 	// No DefaultMemberPermissions in code: access is governed by Discord's
-	// server-side command-permission override, matching the warden convention.
+	// server-side command-permission override, matching the /warden convention.
 	if cmd.Definition.DefaultMemberPermissions != nil {
 		t.Fatal("must not set DefaultMemberPermissions in code (warden convention)")
 	}

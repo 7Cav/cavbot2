@@ -79,7 +79,7 @@ func boundOptionValue(value any) any {
 // level down — and two levels for a subcommand group — so reading the top-level
 // options directly would report an empty option set for any command that grows a
 // subcommand later. No command in the registry uses true subcommands today
-// (warden spells its own as a plain "command" string option), so this exists to
+// (/warden spells its own as a plain "command" string option), so this exists to
 // keep the contract honest when one does.
 func unwrapSubcommand(options []*discordgo.ApplicationCommandInteractionDataOption) (string, []*discordgo.ApplicationCommandInteractionDataOption) {
 	path := ""

@@ -19,7 +19,7 @@ const rosterAddFetchTimeout = 30 * time.Second
 
 // validatedInternalUnit is one row of the unit registry behind the
 // /warden-bulkadd-internal picker. value is what the operator's choice emits and
-// what fingerprints captures; label is shown in the dropdown and the report;
+// what fingerprints captures; label is shown in the dropdown and the summary;
 // query is the author-controlled milpac position-group search verified to
 // isolate exactly that unit's roster.
 //
@@ -64,6 +64,8 @@ func validatedInternalUnitChoices() []*discordgo.ApplicationCommandOptionChoice 
 	return choices
 }
 
+// FoxholeBulkAddInternal is the roster add command. It adds a validated
+// internal unit's roster to Internal.
 func FoxholeBulkAddInternal() Command {
 	// Descriptions are baked in at registration, so compose them from the
 	// resolved name rather than a literal a rename would leave stale.
@@ -268,7 +270,7 @@ func runFoxholeBulkAddInternal(
 	utils.Info("✨ Done!", "command", "warden-bulkadd-internal", "unit", unit.value, "added", len(added))
 }
 
-// buildRosterAddSummary composes the ephemeral report. The
+// buildRosterAddSummary composes the ephemeral summary. The
 // added-or-confirmed count always leads (the command never silently reports
 // nothing); the not-in-Discord, no-Discord-linked, and could-not-be-added
 // buckets are listed by forum username only when non-empty. When any fault was a
@@ -309,21 +311,22 @@ func rosterAddPermissionsHint(roleName string) string {
 	)
 }
 
-// rosterAddSummaryMaxLen is Discord's per-message limit. The success count
-// is collapsed into one line and the added members ride in the embed, so the
-// content only grows with the by-username buckets; for a curated company-sized
-// unit this stays well under the limit, but clamp anyway so a pathologically
-// large bucket can never make the edit itself fail. clampToDiscordMessageLimit
-// measures bytes (len), not runes: that is deliberate, since byte length >= rune
-// count it is a safe over-estimate of Discord's UTF-8 code-point limit, so don't
-// "fix" it into a rune count and weaken the margin.
-const rosterAddSummaryMaxLen = 2000
+// discordMessageLimit is Discord's per-message limit. The roster add's summary
+// collapses its success count into one line and the added members ride in the
+// embed, so the content only grows with the by-username buckets; for a curated
+// company-sized unit this stays well under the limit, but clamp anyway so a
+// pathologically large bucket can never make the edit itself fail.
+// clampToDiscordMessageLimit measures bytes (len), not runes: that is
+// deliberate, since byte length >= rune count it is a safe over-estimate of
+// Discord's UTF-8 code-point limit, so don't "fix" it into a rune count and
+// weaken the margin.
+const discordMessageLimit = 2000
 
 // clampToDiscordMessageLimit keeps as many whole lines as fit under the limit,
 // then appends a truncation marker. The lead summary line is short and comes
 // first, so it always survives.
 func clampToDiscordMessageLimit(message string) string {
-	if len(message) <= rosterAddSummaryMaxLen {
+	if len(message) <= discordMessageLimit {
 		return message
 	}
 	const marker = "... (truncated)"
@@ -332,7 +335,7 @@ func clampToDiscordMessageLimit(message string) string {
 	used := 0
 	for _, line := range lines {
 		addition := len(line) + 1 // +1 for the newline join
-		if used+addition+len(marker)+1 > rosterAddSummaryMaxLen {
+		if used+addition+len(marker)+1 > discordMessageLimit {
 			break
 		}
 		kept = append(kept, line)
