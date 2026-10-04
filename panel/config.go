@@ -25,10 +25,10 @@ type Config struct {
 	TokenURL     string
 	UserinfoURL  string
 
-	// GroupIDs are the panel's admin groups the group check reads: a forum
-	// user is a panel admin when the primary group or any secondary group is
-	// in it. Any forum user can sign in.
-	GroupIDs []int
+	// AdminGroupIDs are the panel's admin groups the group check reads: a
+	// forum user is a panel admin when the primary group or any secondary
+	// group is in it. Any forum user can sign in.
+	AdminGroupIDs []int
 }
 
 // Enabled reports whether the panel listens at all.
@@ -45,14 +45,14 @@ var defaultGroupIDs = []int{71, 47, 44}
 // first sign-in.
 func ConfigFromEnv() (Config, error) {
 	cfg := Config{
-		Addr:         os.Getenv("PANEL_ADDR"),
-		BaseURL:      strings.TrimRight(os.Getenv("PANEL_BASE_URL"), "/"),
-		ClientID:     os.Getenv("PANEL_OAUTH_CLIENT_ID"),
-		ClientSecret: os.Getenv("PANEL_OAUTH_CLIENT_SECRET"),
-		AuthorizeURL: os.Getenv("PANEL_OAUTH_AUTHORIZE_URL"),
-		TokenURL:     os.Getenv("PANEL_OAUTH_TOKEN_URL"),
-		UserinfoURL:  os.Getenv("PANEL_OAUTH_USERINFO_URL"),
-		GroupIDs:     defaultGroupIDs,
+		Addr:          os.Getenv("PANEL_ADDR"),
+		BaseURL:       strings.TrimRight(os.Getenv("PANEL_BASE_URL"), "/"),
+		ClientID:      os.Getenv("PANEL_OAUTH_CLIENT_ID"),
+		ClientSecret:  os.Getenv("PANEL_OAUTH_CLIENT_SECRET"),
+		AuthorizeURL:  os.Getenv("PANEL_OAUTH_AUTHORIZE_URL"),
+		TokenURL:      os.Getenv("PANEL_OAUTH_TOKEN_URL"),
+		UserinfoURL:   os.Getenv("PANEL_OAUTH_USERINFO_URL"),
+		AdminGroupIDs: defaultGroupIDs,
 	}
 	if !cfg.Enabled() {
 		return cfg, nil
@@ -78,7 +78,7 @@ func ConfigFromEnv() (Config, error) {
 		if err != nil {
 			return Config{}, fmt.Errorf("PANEL_GROUP_IDS: %w", err)
 		}
-		cfg.GroupIDs = ids
+		cfg.AdminGroupIDs = ids
 	}
 	return cfg, nil
 }

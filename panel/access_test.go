@@ -10,8 +10,9 @@ import (
 	"golang.org/x/net/html"
 )
 
-// addNonAdmin makes the forum know a user in no panel admin group.
-func addNonAdmin(f *fakeForum) *forumAccount {
+// addUserOutsideAdminGroups makes the forum know a user in none of the
+// panel's admin groups.
+func addUserOutsideAdminGroups(f *fakeForum) *forumAccount {
 	return f.addUser(5678, "Roe.R", 2, []int{35, 72})
 }
 
@@ -27,22 +28,22 @@ func assertNoAccessPage(t *testing.T, doc *html.Node) {
 	}
 }
 
-// A forum user in no panel admin group signs in and lands on the no-access
-// page, with no settings on it.
-func TestNonAdminSignsInToTheNoAccessPage(t *testing.T) {
+// A forum user in none of the panel's admin groups signs in and lands on
+// the no-access page, with no settings on it.
+func TestUserOutsideTheAdminGroupsSignsInToTheNoAccessPage(t *testing.T) {
 	w := newTestWorld(t, testHub())
-	signInAs(t, w.forum, w.b, addNonAdmin(w.forum))
+	signInAs(t, w.forum, w.b, addUserOutsideAdminGroups(w.forum))
 
 	res := w.b.get("/")
 
 	assertNoAccessPage(t, parseHTML(t, res))
 }
 
-// A forum user in no panel admin group saves nothing: each settings save
-// they post leaves the store as it was. A panel admin then posts the same
-// form and it saves, so no row passes on a form the save would refuse
-// anyway.
-func TestNonAdminSaveWritesNothing(t *testing.T) {
+// A forum user in none of the panel's admin groups saves nothing: each
+// settings save they post leaves the store as it was. A panel admin then
+// posts the same form and it saves, so no row passes on a form the save
+// would refuse anyway.
+func TestUserOutsideTheAdminGroupsSavesNothing(t *testing.T) {
 	cases := []struct {
 		name string
 		path func(t *testing.T, st store.Store) string
@@ -81,18 +82,18 @@ func TestNonAdminSaveWritesNothing(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newTestWorld(t, testHub())
-			signInAs(t, w.forum, w.b, addNonAdmin(w.forum))
+			signInAs(t, w.forum, w.b, addUserOutsideAdminGroups(w.forum))
 			path, form := tc.path(t, w.st), tc.form(t, w.st)
 			before := readSavedState(t, w.st)
 
 			w.b.postForm(path, form)
 
 			if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
-				t.Errorf("the store after the non-admin's save = %+v, want it as before, %+v", after, before)
+				t.Errorf("the store after the save by a user outside the admin groups = %+v, want it as before, %+v", after, before)
 			}
-			admin := newBrowser(t, w.p)
-			signIn(t, w.forum, admin)
-			admin.postForm(path, form)
+			panelAdmin := newBrowser(t, w.p)
+			signIn(t, w.forum, panelAdmin)
+			panelAdmin.postForm(path, form)
 			if after := readSavedState(t, w.st); reflect.DeepEqual(after, before) {
 				t.Error("the same form posted by a panel admin saved nothing: the row's form is one a save refuses")
 			}
@@ -102,7 +103,7 @@ func TestNonAdminSaveWritesNothing(t *testing.T) {
 
 // A panel admin whose forum account leaves every panel admin group keeps
 // their panel session, and their next page is the no-access page.
-func TestAdminWhoLosesTheGroupDropsToTheNoAccessPage(t *testing.T) {
+func TestPanelAdminWhoLeavesTheAdminGroupsDropsToTheNoAccessPage(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 	w.forum.setUserinfo(http.StatusOK, userinfoJSON(2, []int{35, 72}))

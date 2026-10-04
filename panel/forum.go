@@ -53,7 +53,7 @@ func (o checkOutcome) cause() cause {
 // groupCheck is one GET to the userinfo URL with the access token. It returns
 // the user on checkPassed and the outcome in every case; err carries the
 // transport or read failure behind checkUnavailable for the log line. Whether
-// the user is a panel admin is p.admin(user), decided by the caller.
+// the user is a panel admin is p.isPanelAdmin(user), decided by the caller.
 func (p *Panel) groupCheck(ctx context.Context, accessToken string) (forumUser, checkOutcome, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.cfg.UserinfoURL, nil)
 	if err != nil {
@@ -89,14 +89,14 @@ func (p *Panel) groupCheck(ctx context.Context, accessToken string) (forumUser, 
 	return envelope.Me, checkPassed, nil
 }
 
-// admin is the group check's rule for a panel admin: the primary group or any
-// secondary group is one of the panel's admin groups.
-func (p *Panel) admin(u forumUser) bool {
-	if slices.Contains(p.cfg.GroupIDs, u.UserGroupID) {
+// isPanelAdmin is the group check's rule for a panel admin: the primary group
+// or any secondary group is one of the panel's admin groups.
+func (p *Panel) isPanelAdmin(u forumUser) bool {
+	if slices.Contains(p.cfg.AdminGroupIDs, u.UserGroupID) {
 		return true
 	}
 	for _, id := range u.SecondaryGroupIDs {
-		if slices.Contains(p.cfg.GroupIDs, id) {
+		if slices.Contains(p.cfg.AdminGroupIDs, id) {
 			return true
 		}
 	}

@@ -135,7 +135,7 @@ func (p *Panel) Start() error {
 			utils.CaptureError("Panel server stopped", err)
 		}
 	}()
-	utils.Info("Panel listening", "addr", ln.Addr().String(), "base_url", p.cfg.BaseURL, "group_ids", p.cfg.GroupIDs)
+	utils.Info("Panel listening", "addr", ln.Addr().String(), "base_url", p.cfg.BaseURL, "admin_group_ids", p.cfg.AdminGroupIDs)
 	return nil
 }
 
@@ -183,11 +183,11 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("POST /auth/start", p.authStart)
 	mux.HandleFunc("GET /auth/callback", p.authCallback)
 	mux.HandleFunc("POST /auth/signout", p.authSignout)
-	mux.HandleFunc("GET /{$}", p.withAdmin(p.homePage))
-	mux.HandleFunc("POST /hubs", p.withAdmin(p.createOrRegisterHub))
-	mux.HandleFunc("POST /hubs/{id}", p.withAdmin(p.updateHub))
-	mux.HandleFunc("POST /hubs/{id}/remove", p.withAdmin(p.removeHub))
-	mux.HandleFunc("POST /moderators", p.withAdmin(p.saveModerators))
+	mux.HandleFunc("GET /{$}", p.withPanelAdmin(p.homePage))
+	mux.HandleFunc("POST /hubs", p.withPanelAdmin(p.createOrRegisterHub))
+	mux.HandleFunc("POST /hubs/{id}", p.withPanelAdmin(p.updateHub))
+	mux.HandleFunc("POST /hubs/{id}/remove", p.withPanelAdmin(p.removeHub))
+	mux.HandleFunc("POST /moderators", p.withPanelAdmin(p.saveModerators))
 	protected := http.NewCrossOriginProtection().Handler(mux)
 	// A panic in a handler is recovered here, through the same path every
 	// other goroutine uses (ADR 0001), before net/http's own recovery would
@@ -287,13 +287,14 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 	user, outcome, err := p.groupCheck(r.Context(), tok.AccessToken)
 	switch outcome {
 	case checkPassed:
-		admin := p.admin(user)
-		id, err := p.sessions.add(session{accessToken: tok.AccessToken, userID: user.UserID, username: user.Username, admin: admin, signedIn: now()})
+		sess := session{accessToken: tok.AccessToken, signedIn: now()}
+		sess.identify(user, p.isPanelAdmin(user))
+		id, err := p.sessions.add(sess)
 		if err != nil {
 			p.serverError(w, "session create", err)
 			return
 		}
-		utils.Info("Panel sign-in", "username", user.Username, "forum_user_id", user.UserID, "panel_admin", admin)
+		utils.Info("Panel sign-in", "username", user.Username, "forum_user_id", user.UserID, "panel_admin", sess.panelAdmin)
 		setCookie(w, sessionCookie, id)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	case checkUnavailable:
@@ -356,7 +357,7 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 		user, outcome, err := p.groupCheck(r.Context(), sess.accessToken)
 		switch outcome {
 		case checkPassed:
-			sess.userID, sess.username, sess.admin = user.UserID, user.Username, p.admin(user)
+			sess.identify(user, p.isPanelAdmin(user))
 			p.sessions.update(c.Value, sess)
 			next(w, r, sess)
 		case checkUnavailable:
@@ -369,12 +370,12 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 	}
 }
 
-// withAdmin is the gate every settings page sits behind: withSession, and
-// this request's group check must find a panel admin. Anyone else gets the
-// no-access page and the request does nothing.
-func (p *Panel) withAdmin(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
+// withPanelAdmin is the gate every settings page sits behind: withSession,
+// and this request's group check must find a panel admin. Anyone else gets
+// the no-access page and the request does nothing.
+func (p *Panel) withPanelAdmin(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
 	return p.withSession(func(w http.ResponseWriter, r *http.Request, sess session) {
-		if !sess.admin {
+		if !sess.panelAdmin {
 			if r.Method == http.MethodPost {
 				utils.Info("Panel save refused: not a panel admin", "path", r.URL.Path,
 					"username", sess.username, "forum_user_id", sess.userID)

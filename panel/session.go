@@ -45,12 +45,18 @@ type session struct {
 	accessToken string
 	userID      int
 	username    string
-	admin       bool
+	panelAdmin  bool
 	signedIn    time.Time
 }
 
 func (s session) expired(at time.Time) bool {
 	return !at.Before(s.signedIn.Add(sessionLifetime))
+}
+
+// identify takes the identity a passed group check reported and whether it
+// found a panel admin.
+func (s *session) identify(u forumUser, panelAdmin bool) {
+	s.userID, s.username, s.panelAdmin = u.UserID, u.Username, panelAdmin
 }
 
 // actor is the forum user a save made in this session is recorded against.
@@ -61,7 +67,7 @@ func (s session) actor() actor {
 // page is the page data for a screen this session sees: the rail shows the
 // identity block, and the navigation to a panel admin.
 func (s session) page(title string) pageData {
-	return pageData{Title: title, SignedIn: true, Admin: s.admin, Username: s.username}
+	return pageData{Title: title, SignedIn: true, PanelAdmin: s.panelAdmin, Username: s.username}
 }
 
 // sessions is the in-memory store of pending sign-ins and sessions, each

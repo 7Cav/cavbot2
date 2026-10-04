@@ -81,11 +81,11 @@ func newFakeForum(t *testing.T) *fakeForum {
 // userinfoJSON is the default user's /api/me envelope with the two fields
 // the user:groups scope adds.
 func userinfoJSON(primary int, secondary []int) string {
-	return memberJSON(testUserID, testUsername, primary, secondary)
+	return forumUserJSON(testUserID, testUsername, primary, secondary)
 }
 
-// memberJSON is the /api/me envelope for any forum user.
-func memberJSON(userID int, username string, primary int, secondary []int) string {
+// forumUserJSON is the /api/me envelope for any forum user.
+func forumUserJSON(userID int, username string, primary int, secondary []int) string {
 	body, _ := json.Marshal(map[string]any{"me": map[string]any{
 		"user_id":             userID,
 		"username":            username,
@@ -104,7 +104,7 @@ func (f *fakeForum) addUser(userID int, username string, primary int, secondary 
 		code:   fmt.Sprintf("code-%d", userID),
 		token:  fmt.Sprintf("access-token-%d", userID),
 		status: http.StatusOK,
-		body:   memberJSON(userID, username, primary, secondary),
+		body:   forumUserJSON(userID, username, primary, secondary),
 	}
 	f.accounts = append(f.accounts, a)
 	return a
@@ -234,14 +234,14 @@ func s256(verifier string) string {
 
 func testConfig(f *fakeForum) Config {
 	return Config{
-		Addr:         ":0",
-		BaseURL:      testBaseURL,
-		ClientID:     testClientID,
-		ClientSecret: testClientSecret,
-		AuthorizeURL: f.srv.URL + "/oauth2/authorize",
-		TokenURL:     f.srv.URL + "/api/oauth2/token",
-		UserinfoURL:  f.srv.URL + "/api/me",
-		GroupIDs:     []int{71, 47, 44},
+		Addr:          ":0",
+		BaseURL:       testBaseURL,
+		ClientID:      testClientID,
+		ClientSecret:  testClientSecret,
+		AuthorizeURL:  f.srv.URL + "/oauth2/authorize",
+		TokenURL:      f.srv.URL + "/api/oauth2/token",
+		UserinfoURL:   f.srv.URL + "/api/me",
+		AdminGroupIDs: []int{71, 47, 44},
 	}
 }
 
@@ -611,6 +611,8 @@ func signInAs(t *testing.T, f *fakeForum, b *browser, a *forumAccount) *http.Res
 	return signInWithCode(t, f, b, a.code)
 }
 
+// signInWithCode is the sign-in both helpers walk, with the code the forum's
+// consent page would hand back for the user.
 func signInWithCode(t *testing.T, f *fakeForum, b *browser, code string) *http.Response {
 	t.Helper()
 	q := assertRedirect(t, b.post("/auth/start"), "/oauth2/authorize").Query()
@@ -679,13 +681,13 @@ func TestCallbackRefusedWithoutMatchingPendingSignin(t *testing.T) {
 	}
 }
 
-func TestGroupCheckPassesOnAllowlistedGroup(t *testing.T) {
+func TestGroupCheckFindsAPanelAdminByEitherGroup(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
 	}{
-		{"primary group allowlisted, no secondary", userinfoJSON(71, nil)},
-		{"secondary group allowlisted, primary not", userinfoJSON(2, []int{35, 47, 72})},
+		{"primary group is an admin group, no secondary", userinfoJSON(71, nil)},
+		{"a secondary group is an admin group, primary not", userinfoJSON(2, []int{35, 47, 72})},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

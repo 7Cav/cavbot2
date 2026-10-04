@@ -58,19 +58,19 @@ const (
 )
 
 // pageData is what every template renders from. SignedIn switches the rail
-// between the identity block and the forum link, and Admin shows the
+// between the identity block and the forum link, and PanelAdmin shows the
 // navigation beside the identity block. Hubs is filled for the hub page
 // alone; Failure, Message and Retry for the error page alone.
 type pageData struct {
-	Title    string
-	Version  string
-	ForumURL string
-	SignedIn bool
-	Admin    bool
-	Username string
-	Cause    cause
-	Hubs     hubPage
-	Failure  failure
+	Title      string
+	Version    string
+	ForumURL   string
+	SignedIn   bool
+	PanelAdmin bool
+	Username   string
+	Cause      cause
+	Hubs       hubPage
+	Failure    failure
 	// Message is the error page's one sentence.
 	Message string
 	// Retry is where the error page's Try again link leads.
