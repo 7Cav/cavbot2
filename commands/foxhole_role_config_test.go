@@ -11,15 +11,15 @@ import (
 // mutate. A name that composes fine but matches no role in the guild is the
 // failure that matters, and asserting on composed names would miss it.
 
-// TestWardenRoleIDsResolveUnderConfiguredBaseName covers the single-role scopes.
-func TestWardenRoleIDsResolveUnderConfiguredBaseName(t *testing.T) {
-	t.Setenv(wardenRoleBaseNameEnv, "Verified Foxhole")
+// TestFoxholeRoleIDsResolveUnderConfiguredBaseName covers the single-role scopes.
+func TestFoxholeRoleIDsResolveUnderConfiguredBaseName(t *testing.T) {
+	t.Setenv(foxholeRoleBaseNameEnv, "Verified Foxhole")
 
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("role-foxhole-int", "Verified Foxhole Internal")},
+		roles: []*discordgo.Role{guildRole("role-foxhole-int", "Verified Foxhole Internal")},
 	}
 
-	roleIDs, _, err := resolveWardenRoleIDs(gm, "guild-1", "internal")
+	roleIDs, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
 	if err != nil {
 		t.Fatalf("configured base name must resolve against the guild: %v", err)
 	}
@@ -29,20 +29,20 @@ func TestWardenRoleIDsResolveUnderConfiguredBaseName(t *testing.T) {
 	}
 }
 
-// TestWardenBothScopeResolvesUnderConfiguredBaseName covers the two-role scope.
+// TestFoxholeBothScopeResolvesUnderConfiguredBaseName covers the two-role scope.
 // Membership, not order: nothing downstream depends on Internal preceding
 // External.
-func TestWardenBothScopeResolvesUnderConfiguredBaseName(t *testing.T) {
-	t.Setenv(wardenRoleBaseNameEnv, "Verified Foxhole")
+func TestFoxholeBothScopeResolvesUnderConfiguredBaseName(t *testing.T) {
+	t.Setenv(foxholeRoleBaseNameEnv, "Verified Foxhole")
 
 	gm := &fakeGuildManager{
 		roles: []*discordgo.Role{
-			wardenRole("role-foxhole-int", "Verified Foxhole Internal"),
-			wardenRole("role-foxhole-ext", "Verified Foxhole External"),
+			guildRole("role-foxhole-int", "Verified Foxhole Internal"),
+			guildRole("role-foxhole-ext", "Verified Foxhole External"),
 		},
 	}
 
-	roleIDs, _, err := resolveWardenRoleIDs(gm, "guild-1", "both")
+	roleIDs, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "both")
 	if err != nil {
 		t.Fatalf("configured base name must resolve both scopes: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestWardenBothScopeResolvesUnderConfiguredBaseName(t *testing.T) {
 // which resolves its role independently of the four /warden subcommands. The
 // observable is the role reaching the member, not the absence of an error.
 func TestBulkAddInternalAppliesConfiguredRole(t *testing.T) {
-	t.Setenv(wardenRoleBaseNameEnv, "Verified Foxhole")
+	t.Setenv(foxholeRoleBaseNameEnv, "Verified Foxhole")
 
 	rec := &captureRecorder{}
 	rec.install(t)
@@ -69,11 +69,11 @@ func TestBulkAddInternalAppliesConfiguredRole(t *testing.T) {
 	), http.StatusOK, nil)
 
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("role-foxhole-int", "Verified Foxhole Internal")},
+		roles: []*discordgo.Role{guildRole("role-foxhole-int", "Verified Foxhole Internal")},
 	}
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	adds := gm.roleAddCalls()
 	if len(adds) != 1 {

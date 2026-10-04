@@ -24,7 +24,7 @@ const slashCommandPanicContext = "slash-command"
 
 // telemetryNow is the decorator's clock. A package var rather than a direct
 // time.Now call so tests can pin elapsed time without sleeping — the same
-// reason wardenOverwriteDelay is a var.
+// reason purgeOverwriteDelay is a var.
 var telemetryNow = time.Now
 
 // telemetryFields builds the key/value set for one invocation's telemetry line.

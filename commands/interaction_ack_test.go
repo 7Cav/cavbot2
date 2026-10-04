@@ -74,7 +74,7 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 		i.Data = discordgo.ApplicationCommandInteractionData{Name: name, Options: opts}
 		return i
 	}
-	warden := func(subcommand string) *discordgo.InteractionCreate {
+	foxhole := func(subcommand string) *discordgo.InteractionCreate {
 		return slash("warden",
 			stringOption("command", subcommand), stringOption("flag", "internal"), stringOption("discordname", "someone"))
 	}
@@ -94,12 +94,12 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 		subcommand string
 		run        func(t *testing.T, r *slowAck)
 	}{
-		{"/warden add", "warden", "add", func(_ *testing.T, r *slowAck) { runWarden(r, nil, warden("add")) }},
-		{"/warden remove", "warden", "remove", func(_ *testing.T, r *slowAck) { runWarden(r, nil, warden("remove")) }},
-		{"/warden bulkadd", "warden", "bulkadd", func(_ *testing.T, r *slowAck) { runWarden(r, nil, warden("bulkadd")) }},
-		{"/warden purge", "warden", "purge", func(_ *testing.T, r *slowAck) { runWarden(r, nil, warden("purge")) }},
+		{"/warden add", "warden", "add", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("add")) }},
+		{"/warden remove", "warden", "remove", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("remove")) }},
+		{"/warden bulkadd", "warden", "bulkadd", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("bulkadd")) }},
+		{"/warden purge", "warden", "purge", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("purge")) }},
 		{"/warden-bulkadd-internal", "warden-bulkadd-internal", "", func(_ *testing.T, r *slowAck) {
-			runWardenBulkAddInternal(r, nil, slash("warden-bulkadd-internal", stringOption("unit", wardenInternalUnits[0].value)))
+			runFoxholeBulkAddInternal(r, nil, slash("warden-bulkadd-internal", stringOption("unit", validatedInternalUnits[0].value)))
 		}},
 		{"/voice-rename", voiceRenameCommandName, "", func(_ *testing.T, r *slowAck) {
 			runVoiceRename(r, nil, slash(voiceRenameCommandName, stringOption("name", "Alpha")))

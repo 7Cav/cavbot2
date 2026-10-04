@@ -1427,7 +1427,7 @@ func TestTempVCConcurrentJoinsGetDistinctNumbers(t *testing.T) {
 
 // unknownChannelErr is the error discordgo returns when a channel is already
 // gone: HTTP 404 with Discord code 10003. restError lives in
-// warden_resterror_test.go.
+// foxhole_resterror_test.go.
 func unknownChannelErr() error {
 	return restError(http.StatusNotFound, discordgo.ErrCodeUnknownChannel, "Unknown Channel")
 }

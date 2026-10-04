@@ -12,10 +12,10 @@ import (
 //
 // A 429 is read first, through the spawned channel classifier. The panel's
 // calls never let discordgo retry, so a 429 arrives as a
-// *discordgo.RateLimitError, which the warden classifier cannot see and would
+// *discordgo.RateLimitError, which classifyDiscordError cannot see and would
 // call a lost connection (#340). The phrase names the limit and carries the
 // wait as plain text, because Discord's <t:...> markup does not render in a
-// web page. Everything else is the warden classifier's phrase, as before.
+// web page. Everything else is classifyDiscordError's phrase, as before.
 func DiscordErrorDetail(err error) string {
 	if fault := classifySpawnedChannelError(err); fault.rateLimited {
 		return "rate limit reached. " + rateLimitWait(fault.retryAfter)

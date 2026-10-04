@@ -16,7 +16,7 @@ import (
 func TestRecreateRole_OverwriteFailureCleansUpNewRole(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
 		channels: []*discordgo.Channel{
 			{
 				ID: "chan-1",
@@ -55,7 +55,7 @@ func TestRecreateRole_OverwriteFailureCleansUpNewRole(t *testing.T) {
 func TestRecreateRole_DoesNotReEditAfterCreate(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
 	}
 
 	_, _, err := recreateRoleWithChannelOverwrites(gm, "guild-1", "old-int", nil)
@@ -80,18 +80,18 @@ func TestRecreateRole_DoesNotReEditAfterCreate(t *testing.T) {
 // The purge summary must report a failed recreate clearly and must NEVER include
 // the raw Discord response body. A 5xx recreate failure is routed through the
 // classifier, so the summary carries a sanitized phrase, not "HTTP 500, {json}".
-func TestRunWardenPurge_RecreateFailureSummaryHasNoRawBody(t *testing.T) {
+func TestRunFoxholePurge_RecreateFailureSummaryHasNoRawBody(t *testing.T) {
 	noOverwriteDelay(t)
 	captureCount, _ := installCountingCapture(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
 		// Create fails with a 5xx carrying a raw body that must not leak.
 		RoleCreateErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1")
+	i := foxholeInteraction("guild-1")
 
-	runWardenPurge(f, gm, i, "guild-1", "internal")
+	runFoxholePurge(f, gm, i, "guild-1", "internal")
 
 	got := lastEditContent(f.Calls())
 	if !strings.Contains(got, "Failed to recreate 'Verified Warden Internal'") {
@@ -108,17 +108,17 @@ func TestRunWardenPurge_RecreateFailureSummaryHasNoRawBody(t *testing.T) {
 
 // A 4xx recreate failure (client/config fault, e.g. missing permissions) is
 // reported clearly but must NOT page Sentry and must not leak the body.
-func TestRunWardenPurge_RecreateClientFaultNotCaptured(t *testing.T) {
+func TestRunFoxholePurge_RecreateClientFaultNotCaptured(t *testing.T) {
 	noOverwriteDelay(t)
 	captureCount, _ := installCountingCapture(t)
 	gm := &fakeGuildManager{
-		roles:          []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:          []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
 		RoleCreateErrs: []error{restError(http.StatusForbidden, 0, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1")
+	i := foxholeInteraction("guild-1")
 
-	runWardenPurge(f, gm, i, "guild-1", "internal")
+	runFoxholePurge(f, gm, i, "guild-1", "internal")
 
 	got := lastEditContent(f.Calls())
 	if !strings.Contains(got, "Failed to recreate 'Verified Warden Internal'") {
@@ -140,19 +140,19 @@ func TestRunWardenPurge_RecreateClientFaultNotCaptured(t *testing.T) {
 // was created (a duplicate now exists). The summary must say the recreate
 // happened and the old role lingers / needs manual cleanup — NOT "the role was
 // not recreated", which would be the inverse of the truth.
-func TestRunWardenPurge_OldRoleDeleteFailureReportsLingeringRole(t *testing.T) {
+func TestRunFoxholePurge_OldRoleDeleteFailureReportsLingeringRole(t *testing.T) {
 	noOverwriteDelay(t)
 	captureCount, _ := installCountingCapture(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
 		// No channels -> no overwrites to re-apply; create succeeds, then the
 		// old-role delete fails with a 5xx carrying a raw body.
 		RoleDeleteErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1")
+	i := foxholeInteraction("guild-1")
 
-	runWardenPurge(f, gm, i, "guild-1", "internal")
+	runFoxholePurge(f, gm, i, "guild-1", "internal")
 
 	got := lastEditContent(f.Calls())
 	// Must report the recreate as having happened, with a lingering old role.
@@ -186,7 +186,7 @@ func TestRunWardenPurge_OldRoleDeleteFailureReportsLingeringRole(t *testing.T) {
 func TestRecreateRole_CleanupDeleteAlsoFailsReturnsOriginalError(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
 		channels: []*discordgo.Channel{
 			{
 				ID: "chan-1",
@@ -213,7 +213,7 @@ func TestRecreateRole_CleanupDeleteAlsoFailsReturnsOriginalError(t *testing.T) {
 	if strings.Contains(err.Error(), "delete-boom") {
 		t.Fatalf("the secondary cleanup-delete error must not mask the original cause, got %v", err)
 	}
-	// On this path nothing usable was left -> newRoleID is empty, so runWardenPurge
+	// On this path nothing usable was left -> newRoleID is empty, so runFoxholePurge
 	// reports "not recreated" rather than a lingering-role notice.
 	if newRoleID != "" {
 		t.Fatalf("overwrite-failure path must report no usable new role, got newRoleID %q", newRoleID)

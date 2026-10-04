@@ -10,10 +10,10 @@ import (
 )
 
 // Classification of Discord errors on the spawned channel paths (create,
-// move-into, delete). The warden classifier in warden_errors.go is not used
+// move-into, delete). classifyDiscordError in foxhole_errors.go is not used
 // here: its not-found branch pages on Unknown Channel, and for a spawned
 // channel "already gone" is the normal end of a hand delete. Nothing here
-// changes the warden paths.
+// changes the Foxhole command paths.
 
 // categoryCapMarker is the field error code Discord puts under parent_id when
 // a category already holds its 50 channels. Discord documents the limit but

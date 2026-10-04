@@ -157,7 +157,7 @@ func lockRefusal(err error, c lockCommand, discordID string) string {
 	case classifySpawnedChannelError(err).rateLimited:
 		return fmt.Sprintf("❌ Couldn't %s the channel: Discord is rate limiting changes to it. Try again in a few minutes.", c.action.verb)
 	default:
-		// The warden classifier's phrase, never the raw body. Unknown Channel
+		// classifyDiscordError's phrase, never the raw body. Unknown Channel
 		// never reaches it: the runtime classifies that code first.
 		return fmt.Sprintf("❌ Couldn't %s the channel: %s.", c.action.verb, classifyDiscordError(err).UserDetail)
 	}

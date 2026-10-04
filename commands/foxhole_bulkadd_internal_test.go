@@ -9,11 +9,11 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-const wardenInternalRoleName = wardenRoleBaseNameDefault + " Internal"
+const defaultInternalRoleName = foxholeRoleBaseNameDefault + " Internal"
 
-// wardenBulkAddInternalInteraction builds a guild-context interaction carrying
+// foxholeBulkAddInternalInteraction builds a guild-context interaction carrying
 // the chosen unit value, mirroring what the Choices-backed picker emits.
-func wardenBulkAddInternalInteraction(unit string) *discordgo.InteractionCreate {
+func foxholeBulkAddInternalInteraction(unit string) *discordgo.InteractionCreate {
 	i := fakeAppCommandInteraction(stringOption("unit", unit))
 	i.GuildID = "guild-1"
 	return i
@@ -23,7 +23,7 @@ func wardenBulkAddInternalInteraction(unit string) *discordgo.InteractionCreate 
 // role, the precondition every successful run needs.
 func internalRoleGM() *fakeGuildManager {
 	return &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenInternalRoleName)},
+		roles: []*discordgo.Role{guildRole("r-int", defaultInternalRoleName)},
 	}
 }
 
@@ -63,8 +63,8 @@ func lastEditEmbed(calls []recordedCall) *discordgo.MessageEmbed {
 // registry — never free text. This is the safety decision the whole command
 // hangs on (see ADR 0009): the operator can only ever emit a value the registry
 // already contains, so a careless short query can't substring-match the regiment.
-func TestWardenBulkAddInternalDefinition_SingleUnitPickerFromRegistry(t *testing.T) {
-	cmd := WardenBulkAddInternal()
+func TestFoxholeBulkAddInternalDefinition_SingleUnitPickerFromRegistry(t *testing.T) {
+	cmd := FoxholeBulkAddInternal()
 
 	if cmd.Definition.Name != "warden-bulkadd-internal" {
 		t.Fatalf("command name = %q, want warden-bulkadd-internal", cmd.Definition.Name)
@@ -90,8 +90,8 @@ func TestWardenBulkAddInternalDefinition_SingleUnitPickerFromRegistry(t *testing
 	}
 	// The choices are derived from the registry, so adding a unit later is one new
 	// registry row with no command-definition change.
-	if len(unitOpt.Choices) != len(wardenInternalUnits) {
-		t.Fatalf("choices (%d) must be derived 1:1 from the registry (%d)", len(unitOpt.Choices), len(wardenInternalUnits))
+	if len(unitOpt.Choices) != len(validatedInternalUnits) {
+		t.Fatalf("choices (%d) must be derived 1:1 from the registry (%d)", len(unitOpt.Choices), len(validatedInternalUnits))
 	}
 	foundDACD := false
 	for _, choice := range unitOpt.Choices {
@@ -113,8 +113,8 @@ func TestWardenBulkAddInternalDefinition_SingleUnitPickerFromRegistry(t *testing
 // The registry is both the extension seam and the safety boundary: a lookup
 // resolves a known unit to its author-controlled query, and rejects anything
 // that isn't a registered value.
-func TestLookupWardenInternalUnit(t *testing.T) {
-	unit, ok := lookupWardenInternalUnit("D/ACD")
+func TestLookupValidatedInternalUnit(t *testing.T) {
+	unit, ok := lookupValidatedInternalUnit("D/ACD")
 	if !ok {
 		t.Fatal("expected D/ACD to resolve from the registry")
 	}
@@ -125,10 +125,10 @@ func TestLookupWardenInternalUnit(t *testing.T) {
 		t.Fatal("a registered unit must carry a human label")
 	}
 
-	if _, ok := lookupWardenInternalUnit("7"); ok {
+	if _, ok := lookupValidatedInternalUnit("7"); ok {
 		t.Fatal("an unregistered value must not resolve (the safety boundary)")
 	}
-	if _, ok := lookupWardenInternalUnit(""); ok {
+	if _, ok := lookupValidatedInternalUnit(""); ok {
 		t.Fatal("an empty value must not resolve")
 	}
 }
@@ -141,9 +141,9 @@ func TestLookupWardenInternalUnit(t *testing.T) {
 // unit". A duplicate value would let the first matching row silently shadow a
 // later one. Both are invisible to "add a row, no logic change", so this pins the
 // invariant to fail loudly here.
-func TestWardenInternalUnits_RegistryRowsValidAndUnique(t *testing.T) {
+func TestValidatedInternalUnits_RegistryRowsValidAndUnique(t *testing.T) {
 	seen := map[string]bool{}
-	for i, unit := range wardenInternalUnits {
+	for i, unit := range validatedInternalUnits {
 		if unit.value == "" {
 			t.Fatalf("registry row %d has an empty value", i)
 		}
@@ -164,7 +164,7 @@ func TestWardenInternalUnits_RegistryRowsValidAndUnique(t *testing.T) {
 // added straight to Verified Warden Internal by ID (no member search), the run
 // is acknowledged with a deferred ephemeral, and the report carries the
 // added-or-confirmed count plus the success mention embed.
-func TestRunWardenBulkAddInternal_HappyPathAddsAllAndReportsCount(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_HappyPathAddsAllAndReportsCount(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	serveRosterAndProfiles(t, liteRoster(
@@ -175,7 +175,7 @@ func TestRunWardenBulkAddInternal_HappyPathAddsAllAndReportsCount(t *testing.T) 
 	gm := internalRoleGM()
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	// IDs come from the milpac, so the command adds directly and never searches.
 	if gm.countCalls("GuildMembersSearch") != 0 {
@@ -245,7 +245,7 @@ func TestRunWardenBulkAddInternal_HappyPathAddsAllAndReportsCount(t *testing.T) 
 // the member must land in added/confirmed, not in any failure bucket. This is the
 // contract behind the "added or confirmed" wording — a nil error means the member
 // has the role whether or not this call is what put it there.
-func TestRunWardenBulkAddInternal_IdempotentReAddCountsAsConfirmed(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_IdempotentReAddCountsAsConfirmed(t *testing.T) {
 	serveRosterAndProfiles(t, liteRoster(
 		liteMember("Already.In", "111111111111111111"),
 	), http.StatusOK, nil)
@@ -255,7 +255,7 @@ func TestRunWardenBulkAddInternal_IdempotentReAddCountsAsConfirmed(t *testing.T)
 	// as Discord's idempotent role-add PUT behaves.
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	got := lastEditContent(f.Calls())
 	if !strings.Contains(got, "Added or confirmed 1") {
@@ -273,7 +273,7 @@ func TestRunWardenBulkAddInternal_IdempotentReAddCountsAsConfirmed(t *testing.T)
 // A member whose milpac carries no Discord connection (empty discordId) is
 // listed by forum username and never sent to Discord — a mention would render as
 // a dead raw ID, and there is nothing to add.
-func TestRunWardenBulkAddInternal_NoDiscordLinkedListedNotAdded(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_NoDiscordLinkedListedNotAdded(t *testing.T) {
 	serveRosterAndProfiles(t, liteRoster(
 		liteMember("Trooper.A", "111111111111111111"),
 		liteMember("Linkless.B", ""),
@@ -282,7 +282,7 @@ func TestRunWardenBulkAddInternal_NoDiscordLinkedListedNotAdded(t *testing.T) {
 	gm := internalRoleGM()
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	// Only the linked member reaches Discord; the link-less one is skipped.
 	if gm.countCalls("GuildMemberRoleAdd") != 1 {
@@ -307,7 +307,7 @@ func TestRunWardenBulkAddInternal_NoDiscordLinkedListedNotAdded(t *testing.T) {
 // A member with a linked Discord whose add returns 404 (Unknown Member) is "not
 // in this server": listed by forum username, not added, the run continues past
 // it, and a 404 never captures to Sentry.
-func TestRunWardenBulkAddInternal_NotInGuild404ListedNotAddedNoCapture(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_NotInGuild404ListedNotAddedNoCapture(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	serveRosterAndProfiles(t, liteRoster(
@@ -321,7 +321,7 @@ func TestRunWardenBulkAddInternal_NotInGuild404ListedNotAddedNoCapture(t *testin
 	gm.MemberRoleAddErrs = []error{nil, restError(http.StatusNotFound, 10007, rawBodyMarker)}
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	// Both members were attempted: the run continued past the 404.
 	if gm.countCalls("GuildMemberRoleAdd") != 2 {
@@ -350,7 +350,7 @@ func TestRunWardenBulkAddInternal_NotInGuild404ListedNotAddedNoCapture(t *testin
 // be misread as the members being absent ("Not in this Discord") — that conflates
 // a config fault with genuine absence. Each add is a captured system fault listed
 // under "Could not be added", and the raw Discord body never leaks.
-func TestRunWardenBulkAddInternal_DeletedRole404CapturedNotMisreportedAbsent(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_DeletedRole404CapturedNotMisreportedAbsent(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	serveRosterAndProfiles(t, liteRoster(
@@ -366,7 +366,7 @@ func TestRunWardenBulkAddInternal_DeletedRole404CapturedNotMisreportedAbsent(t *
 	}
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	got := lastEditContent(f.Calls())
 	// Present members must NOT be reported as absent.
@@ -408,7 +408,7 @@ func TestRunWardenBulkAddInternal_DeletedRole404CapturedNotMisreportedAbsent(t *
 // causes, so the collapse must NOT fold them together: each signature gets its
 // own Sentry event, with its own affected_count of 1. A 10011 storm alongside a
 // transient 5xx must surface as two events, never one (#214).
-func TestRunWardenBulkAddInternal_MixedSignaturesCaptureOncePerSignature(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_MixedSignaturesCaptureOncePerSignature(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	serveRosterAndProfiles(t, liteRoster(
@@ -424,7 +424,7 @@ func TestRunWardenBulkAddInternal_MixedSignaturesCaptureOncePerSignature(t *test
 	}
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	// Two distinct signatures must produce exactly two captures, one per signature.
 	if rec.count != 2 {
@@ -458,7 +458,7 @@ func TestRunWardenBulkAddInternal_MixedSignaturesCaptureOncePerSignature(t *test
 // A non-404 client fault on an add (here a 403 — bot lacks Manage Roles or the
 // role sits above it) is still surfaced, never silently dropped, but it is an
 // operator-fixable condition so it must NOT capture to Sentry.
-func TestRunWardenBulkAddInternal_PerMemberClientFaultListedNotCaptured(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_PerMemberClientFaultListedNotCaptured(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	serveRosterAndProfiles(t, liteRoster(
@@ -469,7 +469,7 @@ func TestRunWardenBulkAddInternal_PerMemberClientFaultListedNotCaptured(t *testi
 	gm.MemberRoleAddErrs = []error{restError(http.StatusForbidden, 50013, rawBodyMarker)}
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	got := lastEditContent(f.Calls())
 	if !strings.Contains(got, "Could not be added (1)") {
@@ -495,7 +495,7 @@ func TestRunWardenBulkAddInternal_PerMemberClientFaultListedNotCaptured(t *testi
 // A genuine per-member fault (5xx) is listed, sent to Sentry tagged with the
 // unit value, and the run continues past it so the other members still get
 // processed.
-func TestRunWardenBulkAddInternal_PerMemberFaultCapturedAndRunContinues(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_PerMemberFaultCapturedAndRunContinues(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	serveRosterAndProfiles(t, liteRoster(
@@ -507,7 +507,7 @@ func TestRunWardenBulkAddInternal_PerMemberFaultCapturedAndRunContinues(t *testi
 	gm.MemberRoleAddErrs = []error{nil, restError(http.StatusInternalServerError, 0, rawBodyMarker)}
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	// Both attempted: the run continued past the per-member 5xx.
 	if gm.countCalls("GuildMemberRoleAdd") != 2 {
@@ -557,7 +557,7 @@ func TestRunWardenBulkAddInternal_PerMemberFaultCapturedAndRunContinues(t *testi
 // captured, but unlike the 403 it carries no missing-permissions signal, so the
 // summary must NOT append the Manage Roles hint. The clean member still lands in
 // added/confirmed so the run is realistic.
-func TestRunWardenBulkAddInternal_PerMemberGeneric4xxListedNotCapturedNoHint(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_PerMemberGeneric4xxListedNotCapturedNoHint(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	serveRosterAndProfiles(t, liteRoster(
@@ -573,7 +573,7 @@ func TestRunWardenBulkAddInternal_PerMemberGeneric4xxListedNotCapturedNoHint(t *
 	gm.MemberRoleAddErrs = []error{nil, restError(http.StatusBadRequest, 50035, rawBodyMarker)}
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	got := lastEditContent(f.Calls())
 	// The clean member is added/confirmed; the 400 lands in the fault bucket.
@@ -602,7 +602,7 @@ func TestRunWardenBulkAddInternal_PerMemberGeneric4xxListedNotCapturedNoHint(t *
 // (lead, not-in-Discord, no-Discord-linked, could-not-be-added). Map iteration
 // order randomizes WHICH linked member draws which error, but the multiset of
 // outcomes — and therefore every bucket size — is fixed.
-func TestRunWardenBulkAddInternal_AllBucketsCoexistWithStableOrdering(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_AllBucketsCoexistWithStableOrdering(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	serveRosterAndProfiles(t, liteRoster(
@@ -622,7 +622,7 @@ func TestRunWardenBulkAddInternal_AllBucketsCoexistWithStableOrdering(t *testing
 	}
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	got := lastEditContent(f.Calls())
 	leadIdx := strings.Index(got, "Added or confirmed 1")
@@ -649,7 +649,7 @@ func TestRunWardenBulkAddInternal_AllBucketsCoexistWithStableOrdering(t *testing
 // an empty roster is structurally a bug, not "the unit is empty" (ADR 0002). It
 // must change nothing, tell the operator it shouldn't happen and was reported,
 // and capture tagged with the unit value — never a silent "added 0".
-func TestRunWardenBulkAddInternal_EmptyRosterCapturedNothingChanged(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_EmptyRosterCapturedNothingChanged(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	serveRosterAndProfiles(t, utils.LiteRosterResponse{
@@ -659,7 +659,7 @@ func TestRunWardenBulkAddInternal_EmptyRosterCapturedNothingChanged(t *testing.T
 	gm := internalRoleGM()
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	if gm.countCalls("GuildMemberRoleAdd") != 0 {
 		t.Fatalf("an empty roster must change nothing; got adds %v", gm.Calls())
@@ -686,7 +686,7 @@ func TestRunWardenBulkAddInternal_EmptyRosterCapturedNothingChanged(t *testing.T
 // A failed roster fetch is a genuine milpac fault on fixed input: it must be
 // captured (tagged with the unit value), surfaced to the operator, and add
 // nobody.
-func TestRunWardenBulkAddInternal_RosterFetchFaultCapturedNoAdds(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_RosterFetchFaultCapturedNoAdds(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	serveRosterAndProfiles(t, utils.LiteRosterResponse{}, http.StatusInternalServerError, nil)
@@ -694,7 +694,7 @@ func TestRunWardenBulkAddInternal_RosterFetchFaultCapturedNoAdds(t *testing.T) {
 	gm := internalRoleGM()
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	if gm.countCalls("GuildMemberRoleAdd") != 0 {
 		t.Fatalf("a failed roster fetch must not add anyone; got %v", gm.Calls())
@@ -713,13 +713,13 @@ func TestRunWardenBulkAddInternal_RosterFetchFaultCapturedNoAdds(t *testing.T) {
 
 // A DM-shaped interaction (no GuildID) is rejected with a clear server-only
 // message before any defer, guild call, or roster fetch.
-func TestRunWardenBulkAddInternal_MissingGuildRejectedBeforeAnything(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_MissingGuildRejectedBeforeAnything(t *testing.T) {
 	tripwireAPIServer(t)
 	gm := &fakeGuildManager{}
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("unit", "D/ACD")) // no GuildID
 
-	runWardenBulkAddInternal(f, gm, i)
+	runFoxholeBulkAddInternal(f, gm, i)
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("DM-context must not touch the guild; got %v", gm.Calls())
@@ -731,13 +731,13 @@ func TestRunWardenBulkAddInternal_MissingGuildRejectedBeforeAnything(t *testing.
 
 // A crafted interaction carrying a value absent from the registry is rejected
 // before any guild call or roster fetch — the registry is the safety boundary.
-func TestRunWardenBulkAddInternal_UnknownUnitRejectedBeforeAnything(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_UnknownUnitRejectedBeforeAnything(t *testing.T) {
 	tripwireAPIServer(t)
 	gm := internalRoleGM()
 	f := &fakeResponder{}
-	i := wardenBulkAddInternalInteraction("7") // a careless short query, not in the registry
+	i := foxholeBulkAddInternalInteraction("7") // a careless short query, not in the registry
 
-	runWardenBulkAddInternal(f, gm, i)
+	runFoxholeBulkAddInternal(f, gm, i)
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("an unregistered unit must be rejected before any guild call; got %v", gm.Calls())
@@ -749,14 +749,14 @@ func TestRunWardenBulkAddInternal_UnknownUnitRejectedBeforeAnything(t *testing.T
 
 // A (malformed) interaction with no unit option is rejected before any guild
 // call or roster fetch.
-func TestRunWardenBulkAddInternal_MissingUnitOptionRejected(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_MissingUnitOptionRejected(t *testing.T) {
 	tripwireAPIServer(t)
 	gm := internalRoleGM()
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction() // no unit option
 	i.GuildID = "guild-1"
 
-	runWardenBulkAddInternal(f, gm, i)
+	runFoxholeBulkAddInternal(f, gm, i)
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("a missing unit must short-circuit before any guild call; got %v", gm.Calls())
@@ -768,12 +768,12 @@ func TestRunWardenBulkAddInternal_MissingUnitOptionRejected(t *testing.T) {
 
 // When the deferred-ephemeral acknowledge fails, the run bails before resolving
 // roles or fetching the roster, rather than pressing on with no live response.
-func TestRunWardenBulkAddInternal_DeferFailureBailsBeforeWork(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_DeferFailureBailsBeforeWork(t *testing.T) {
 	tripwireAPIServer(t)
 	gm := internalRoleGM()
 	f := &fakeResponder{RespondErrs: []error{errFirstRespond}}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	if gm.countCalls("GuildRoles") != 0 {
 		t.Fatalf("a failed defer must bail before role resolution; got %v", gm.Calls())
@@ -785,12 +785,12 @@ func TestRunWardenBulkAddInternal_DeferFailureBailsBeforeWork(t *testing.T) {
 
 // When the Verified Warden Internal role is absent from the guild, the run says
 // so and never fetches the roster or adds anyone.
-func TestRunWardenBulkAddInternal_InternalRoleMissingSurfacedNoFetch(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_InternalRoleMissingSurfacedNoFetch(t *testing.T) {
 	tripwireAPIServer(t)
-	gm := &fakeGuildManager{roles: []*discordgo.Role{wardenRole("x", "Some Other Role")}}
+	gm := &fakeGuildManager{roles: []*discordgo.Role{guildRole("x", "Some Other Role")}}
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	if gm.countCalls("GuildMemberRoleAdd") != 0 {
 		t.Fatalf("must not add anyone when the role is missing; got %v", gm.Calls())
@@ -802,14 +802,14 @@ func TestRunWardenBulkAddInternal_InternalRoleMissingSurfacedNoFetch(t *testing.
 
 // A 5xx from GuildRoles during role resolution is a genuine Discord fault: it
 // captures once, shows a body-free retry message, and never fetches the roster.
-func TestRunWardenBulkAddInternal_RoleResolve5xxCapturedNoFetch(t *testing.T) {
+func TestRunFoxholeBulkAddInternal_RoleResolve5xxCapturedNoFetch(t *testing.T) {
 	tripwireAPIServer(t)
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{RolesErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)}}
 	f := &fakeResponder{}
 
-	runWardenBulkAddInternal(f, gm, wardenBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	if rec.count != 1 {
 		t.Fatalf("a 5xx GuildRoles fault must capture exactly once; got %d", rec.count)
@@ -822,13 +822,13 @@ func TestRunWardenBulkAddInternal_RoleResolve5xxCapturedNoFetch(t *testing.T) {
 // A very large bucket would otherwise push the summary past Discord's 2000-char
 // message limit and fail the edit. The summary must clamp to the limit while
 // keeping the always-present lead line.
-func TestBuildWardenInternalBulkAddSummary_ClampsToDiscordLimit(t *testing.T) {
+func TestBuildRosterAddSummary_ClampsToDiscordLimit(t *testing.T) {
 	many := make([]string, 400)
 	for i := range many {
 		many[i] = "Trooper.Placeholder.Name"
 	}
 
-	got := buildWardenInternalBulkAddSummary("D/ACD", wardenInternalRoleName, 0, nil, nil, many, false)
+	got := buildRosterAddSummary("D/ACD", defaultInternalRoleName, 0, nil, nil, many, false)
 
 	if len(got) > 2000 {
 		t.Fatalf("summary must stay within Discord's 2000-char limit, got %d", len(got))
@@ -840,7 +840,7 @@ func TestBuildWardenInternalBulkAddSummary_ClampsToDiscordLimit(t *testing.T) {
 
 // The command is wired into the registry so Discord registers it and routes its
 // interactions to the handler.
-func TestRegistry_RegistersWardenBulkAddInternal(t *testing.T) {
+func TestRegistry_RegistersFoxholeBulkAddInternal(t *testing.T) {
 	reg := NewRegistry(nil)
 
 	registered := false

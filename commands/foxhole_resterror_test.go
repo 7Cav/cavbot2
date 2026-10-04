@@ -649,37 +649,37 @@ func TestSystemFaultHelpers_ConfigFaultVsTransientRendering(t *testing.T) {
 
 // --- role add/remove paths: 4xx vs 5xx split + 403 hierarchy hint ---
 
-func wardenAddInteraction() *discordgo.InteractionCreate {
-	return wardenInteraction("guild-1",
+func foxholeAddInteraction() *discordgo.InteractionCreate {
+	return foxholeInteraction("guild-1",
 		stringOption("command", "add"),
 		stringOption("flag", "internal"),
 		stringOption("discordname", "123456789012345678"),
 	)
 }
 
-func wardenRemoveInteraction() *discordgo.InteractionCreate {
-	return wardenInteraction("guild-1",
+func foxholeRemoveInteraction() *discordgo.InteractionCreate {
+	return foxholeInteraction("guild-1",
 		stringOption("command", "remove"),
 		stringOption("flag", "internal"),
 		stringOption("discordname", "123456789012345678"),
 	)
 }
 
-func wardenRoleAddGM(addErr error) *fakeGuildManager {
+func foxholeRoleAddGM(addErr error) *fakeGuildManager {
 	return &fakeGuildManager{
-		roles:             []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:             []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		membersByID:       map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 		MemberRoleAddErrs: []error{addErr},
 	}
 }
 
-func TestRunWardenAdd_RoleAdd403ShowsHierarchyHintNoCapture(t *testing.T) {
+func TestRunFoxholeAdd_RoleAdd403ShowsHierarchyHintNoCapture(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
-	gm := wardenRoleAddGM(restError(http.StatusForbidden, 50013, rawBodyMarker))
+	gm := foxholeRoleAddGM(restError(http.StatusForbidden, 50013, rawBodyMarker))
 	f := &fakeResponder{}
 
-	runWarden(f, gm, wardenAddInteraction())
+	runFoxhole(f, gm, foxholeAddInteraction())
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -693,13 +693,13 @@ func TestRunWardenAdd_RoleAdd403ShowsHierarchyHintNoCapture(t *testing.T) {
 	}
 }
 
-func TestRunWardenAdd_RoleAdd5xxCapturesGenericRetry(t *testing.T) {
+func TestRunFoxholeAdd_RoleAdd5xxCapturesGenericRetry(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
-	gm := wardenRoleAddGM(restError(http.StatusInternalServerError, 0, rawBodyMarker))
+	gm := foxholeRoleAddGM(restError(http.StatusInternalServerError, 0, rawBodyMarker))
 	f := &fakeResponder{}
 
-	runWarden(f, gm, wardenAddInteraction())
+	runFoxhole(f, gm, foxholeAddInteraction())
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -721,13 +721,13 @@ func TestRunWardenAdd_RoleAdd5xxCapturesGenericRetry(t *testing.T) {
 // roleMutationErrorReply), which no other mutation-site test exercises. (A 404
 // no longer reaches this arm — Unknown Role and Unknown Guild codes are captured
 // system faults; see the tests below.)
-func TestRunWardenAdd_RoleAddGeneric4xxNoCapture(t *testing.T) {
+func TestRunFoxholeAdd_RoleAddGeneric4xxNoCapture(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
-	gm := wardenRoleAddGM(restError(http.StatusBadRequest, 50035, rawBodyMarker))
+	gm := foxholeRoleAddGM(restError(http.StatusBadRequest, 50035, rawBodyMarker))
 	f := &fakeResponder{}
 
-	runWarden(f, gm, wardenAddInteraction())
+	runFoxhole(f, gm, foxholeAddInteraction())
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -748,13 +748,13 @@ func TestRunWardenAdd_RoleAddGeneric4xxNoCapture(t *testing.T) {
 // stale/deleted role, surface the sanitized UserDetail phrase, drop the transient
 // "try again shortly" hint (retrying a deleted role only repeats the failure),
 // and never leak the raw Discord body.
-func TestRunWardenAdd_RoleAddUnknownRole404CapturesDistinctConfigFault(t *testing.T) {
+func TestRunFoxholeAdd_RoleAddUnknownRole404CapturesDistinctConfigFault(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
-	gm := wardenRoleAddGM(restError(http.StatusNotFound, discordgo.ErrCodeUnknownRole, rawBodyMarker))
+	gm := foxholeRoleAddGM(restError(http.StatusNotFound, discordgo.ErrCodeUnknownRole, rawBodyMarker))
 	f := &fakeResponder{}
 
-	runWarden(f, gm, wardenAddInteraction())
+	runFoxhole(f, gm, foxholeAddInteraction())
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -785,17 +785,17 @@ func TestRunWardenAdd_RoleAddUnknownRole404CapturesDistinctConfigFault(t *testin
 // config-fault line (naming the wrong guild, surfacing the sanitized UserDetail
 // phrase, no transient retry hint), and never leak the raw body, mirroring the
 // add path's Unknown Role coverage.
-func TestRunWardenRemove_RoleRemoveUnknownGuild404ConfigFault(t *testing.T) {
+func TestRunFoxholeRemove_RoleRemoveUnknownGuild404ConfigFault(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{
-		roles:                []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:                []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		membersByID:          map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 		MemberRoleRemoveErrs: []error{restError(http.StatusNotFound, discordgo.ErrCodeUnknownGuild, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, wardenRemoveInteraction())
+	runFoxhole(f, gm, foxholeRemoveInteraction())
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -818,17 +818,17 @@ func TestRunWardenRemove_RoleRemoveUnknownGuild404ConfigFault(t *testing.T) {
 	}
 }
 
-func TestRunWardenRemove_RoleRemove403ShowsHierarchyHintNoCapture(t *testing.T) {
+func TestRunFoxholeRemove_RoleRemove403ShowsHierarchyHintNoCapture(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{
-		roles:                []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:                []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		membersByID:          map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 		MemberRoleRemoveErrs: []error{restError(http.StatusForbidden, 50013, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, wardenRemoveInteraction())
+	runFoxhole(f, gm, foxholeRemoveInteraction())
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -842,17 +842,17 @@ func TestRunWardenRemove_RoleRemove403ShowsHierarchyHintNoCapture(t *testing.T) 
 	}
 }
 
-func TestRunWardenRemove_RoleRemove5xxCaptures(t *testing.T) {
+func TestRunFoxholeRemove_RoleRemove5xxCaptures(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{
-		roles:                []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:                []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		membersByID:          map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 		MemberRoleRemoveErrs: []error{restError(http.StatusBadGateway, 0, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, wardenRemoveInteraction())
+	runFoxhole(f, gm, foxholeRemoveInteraction())
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -865,24 +865,24 @@ func TestRunWardenRemove_RoleRemove5xxCaptures(t *testing.T) {
 
 // --- bulkadd: 4xx role-add failure must not capture but still report ---
 
-func TestRunWardenBulkAdd_RoleAdd403NoCapture(t *testing.T) {
+func TestRunFoxholeBulkAdd_RoleAdd403NoCapture(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			"good": {{User: &discordgo.User{ID: "111", Username: "good"}}},
 		},
 		MemberRoleAddErrs: []error{restError(http.StatusForbidden, 50013, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1",
+	i := foxholeInteraction("guild-1",
 		stringOption("command", "bulkadd"),
 		stringOption("flag", "internal"),
 		stringOption("discordname", "good"),
 	)
 
-	runWarden(f, gm, i)
+	runFoxhole(f, gm, i)
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -893,24 +893,24 @@ func TestRunWardenBulkAdd_RoleAdd403NoCapture(t *testing.T) {
 	}
 }
 
-func TestRunWardenBulkAdd_RoleAdd5xxCaptures(t *testing.T) {
+func TestRunFoxholeBulkAdd_RoleAdd5xxCaptures(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			"good": {{User: &discordgo.User{ID: "111", Username: "good"}}},
 		},
 		MemberRoleAddErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1",
+	i := foxholeInteraction("guild-1",
 		stringOption("command", "bulkadd"),
 		stringOption("flag", "internal"),
 		stringOption("discordname", "good"),
 	)
 
-	runWarden(f, gm, i)
+	runFoxhole(f, gm, i)
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {

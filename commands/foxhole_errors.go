@@ -285,7 +285,7 @@ func purgePartialDeleteSummary(roleName, newRoleID, oldRoleID string, err error,
 }
 
 // roleResolveErrorReply classifies a GuildRoles lookup failure raised while
-// resolving a warden role by name, captures it to Sentry only for genuine system
+// resolving a Foxhole role by name, captures it to Sentry only for genuine system
 // faults (5xx/transport, per ADR 0001), and returns a body-free, operator-facing
 // error. The explicit not-found result is handled by the caller before this is
 // reached and is deliberately never routed here, so it stays non-captured. The
@@ -305,7 +305,7 @@ func roleResolveErrorReply(err error, captureMsg string, kv ...any) error {
 }
 
 // channelsResolveErrorReply classifies a GuildChannels lookup failure raised
-// while resolving a guild's channels for a warden purge, captures it to Sentry
+// while resolving a guild's channels for a /warden purge, captures it to Sentry
 // only for genuine system faults (5xx/transport, per ADR 0001), and returns a
 // body-free, operator-facing error. It mirrors roleResolveErrorReply one call
 // site below, with wording tailored to channels rather than roles. The raw

@@ -8,10 +8,10 @@ import (
 )
 
 // editFailInteraction builds a deferred-ephemeral interaction carrying a guild
-// id and the warden `command` option, so the edit-failure path can read its
+// id and the /warden `command` option, so the edit-failure path can read its
 // command/guild context straight off the interaction.
 func editFailInteraction(guildID, subcommand string) *discordgo.InteractionCreate {
-	return wardenInteraction(guildID, stringOption("command", subcommand))
+	return foxholeInteraction(guildID, stringOption("command", subcommand))
 }
 
 // countMethod returns how many recorded calls used the given responder method.
@@ -127,8 +127,8 @@ func TestEditEphemeral_CaptureFallsBackToUnknownCommand(t *testing.T) {
 	gotKV := captureCommandAndGuild(t)
 
 	f := &fakeResponder{EditErrs: []error{errors.New("boom")}}
-	// wardenInteraction sets the guild id but passes no command option.
-	i := wardenInteraction("guild-42")
+	// foxholeInteraction sets the guild id but passes no command option.
+	i := foxholeInteraction("guild-42")
 
 	editEphemeral(f, i, "content")
 
