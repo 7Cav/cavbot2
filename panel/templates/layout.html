@@ -12,7 +12,7 @@
 {{if .SignedIn}}
   <aside class="rail">
     <div class="mark"><a href="/"><img src="/static/logo-m.png" alt="7th Cavalry Gaming"></a></div>
-    <nav><a class="item is-selected" href="/">Hubs</a></nav>
+    <nav>{{if .Admin}}<a class="item is-selected" href="/">Hubs</a>{{end}}</nav>
     <div class="me">
       <small>Signed in as</small>
       <div class="name" data-field="username">{{.Username}}</div>

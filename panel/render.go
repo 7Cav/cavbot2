@@ -25,7 +25,7 @@ type cause string
 const (
 	causeNone    cause = ""
 	causeExpired cause = "expired"
-	causeNoGroup cause = "no-group"
+	causeRefused cause = "refused"
 )
 
 // causeFromQuery narrows a query value to the enum, so an unknown value is a
@@ -34,8 +34,8 @@ func causeFromQuery(raw string) cause {
 	switch cause(raw) {
 	case causeExpired:
 		return causeExpired
-	case causeNoGroup:
-		return causeNoGroup
+	case causeRefused:
+		return causeRefused
 	}
 	return causeNone
 }
@@ -58,14 +58,15 @@ const (
 )
 
 // pageData is what every template renders from. SignedIn switches the rail
-// between the navigation with the identity block and the forum link. Hubs is
-// filled for the hub page alone; Failure, Message and Retry for the error
-// page alone.
+// between the identity block and the forum link, and Admin shows the
+// navigation beside the identity block. Hubs is filled for the hub page
+// alone; Failure, Message and Retry for the error page alone.
 type pageData struct {
 	Title    string
 	Version  string
 	ForumURL string
 	SignedIn bool
+	Admin    bool
 	Username string
 	Cause    cause
 	Hubs     hubPage
@@ -82,7 +83,7 @@ type pages map[string]*template.Template
 
 func parsePages() (pages, error) {
 	out := pages{}
-	for _, name := range []string{"signin", "home", "error"} {
+	for _, name := range []string{"signin", "home", "error", "noaccess"} {
 		t, err := template.New("layout.html").ParseFS(templateFS, "templates/layout.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", name, err)
