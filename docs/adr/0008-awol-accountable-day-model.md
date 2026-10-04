@@ -11,7 +11,7 @@ accountable-day count). Supersedes the original `/awol` behavior where the
 `/awol` flags on **accountable days**, not raw time since last forum post.
 
 - **AWOL** = no qualifying forum post in the last 7 days. Bot-derived; unrelated
-  to the milpac record. (CONTEXT.md corrected accordingly.)
+  to the milpac record. (GLOSSARY.md corrected accordingly.)
 - A **day** is a **UTC calendar date** — UTC is 7Cav standard time.
 - **Accountable day:** candidate dates are `(lastPostDate, today]` (post day
   excluded, today included). An **LOA** covers the inclusive range

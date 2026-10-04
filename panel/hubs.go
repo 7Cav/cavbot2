@@ -82,7 +82,7 @@ type hubRow struct {
 	ChannelName string
 	// CategoryName is empty when the hub channel has no parent.
 	CategoryName string
-	// Broken is the broken hub state of CONTEXT.md: the hub channel is gone
+	// Broken is the broken hub state of GLOSSARY.md: the hub channel is gone
 	// from the guild, or has no category. Discord's state makes it so, and
 	// the list offers Remove alone.
 	Broken  bool
@@ -498,7 +498,7 @@ type snapshot struct {
 
 // hubChannelState is a hub's channel as the guild list has it at this
 // read: its name and its category's, each empty when absent, and the
-// broken hub state of CONTEXT.md, the channel gone or with no category.
+// broken hub state of GLOSSARY.md, the channel gone or with no category.
 type hubChannelState struct {
 	Name         string
 	CategoryName string
@@ -646,7 +646,7 @@ func (s *hubService) guildStateOf(data commands.GuildSnapshot) guildState {
 // name of every role for the change log, and the bitrate ceiling the
 // guild's boost tier allows.
 type guildInfo struct {
-	// eligible are the eligible roles of CONTEXT.md, live, not managed and
+	// eligible are the eligible roles of GLOSSARY.md, live, not managed and
 	// not @everyone, highest position first.
 	eligible []*discordgo.Role
 	// live is every role but @everyone, keyed by ID: the eligible ones and

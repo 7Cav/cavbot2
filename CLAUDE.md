@@ -57,7 +57,7 @@ The compose service uses an explicit `environment:` block listing each variable 
 
 ## See also (durable docs)
 
-For load-bearing decisions, see `docs/adr/`. For domain terminology, see `CONTEXT.md`.
+For load-bearing decisions, see `docs/adr/`. For domain terminology, see `GLOSSARY.md`.
 
 ## Agent skills
 
@@ -71,7 +71,7 @@ Canonical names used verbatim (`needs-triage`, `needs-info`, `ready-for-agent`, 
 
 ### Domain docs
 
-Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
+Single-context: `GLOSSARY.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 ## CI gate
 

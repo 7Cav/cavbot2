@@ -1,4 +1,4 @@
-# CONTEXT.md — CavBot2
+# GLOSSARY.md — CavBot2
 
 Domain language used throughout the codebase. New terms that need explanation
 belong here, not inline in code comments.

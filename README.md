@@ -176,7 +176,7 @@ the guild's data. A save can take longer. It waits at most the same 10 seconds
 for that data, and its create or rename goes to Discord with up to 20 seconds
 per attempt. discordgo retries a call Discord answers with a 502, up to three
 times. Keep the proxy's read timeout above the slowest request. If the proxy drops a page before the panel gives up on it, the page
-looks like an [abandoned page load](CONTEXT.md#observability) and reaches no
+looks like an [abandoned page load](GLOSSARY.md#observability) and reaches no
 one.
 
 ### One thing that is not a command

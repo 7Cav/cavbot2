@@ -64,7 +64,7 @@ type Hub struct {
 	ModeratorRoleIDs []string
 	UserLimit        int
 	Bitrate          int
-	// DeleteDelayMinutes is the hub's delete delay (CONTEXT.md): how long, in
+	// DeleteDelayMinutes is the hub's delete delay (GLOSSARY.md): how long, in
 	// whole minutes, a spawned channel must stay empty before the bot deletes
 	// it. 0 deletes it the moment it empties, and a hub stored before the
 	// field existed reads back 0. The panel bounds it at 0 to 240.
