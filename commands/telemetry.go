@@ -24,7 +24,7 @@ const slashCommandPanicContext = "slash-command"
 
 // telemetryNow is the decorator's clock. A package var rather than a direct
 // time.Now call so tests can pin elapsed time without sleeping — the same
-// reason wardenOverwriteDelay is a var.
+// reason purgeOverwriteDelay is a var.
 var telemetryNow = time.Now
 
 // telemetryFields builds the key/value set for one invocation's telemetry line.
@@ -79,7 +79,7 @@ func boundOptionValue(value any) any {
 // level down — and two levels for a subcommand group — so reading the top-level
 // options directly would report an empty option set for any command that grows a
 // subcommand later. No command in the registry uses true subcommands today
-// (warden spells its own as a plain "command" string option), so this exists to
+// (/warden spells its own as a plain "command" string option), so this exists to
 // keep the contract honest when one does.
 func unwrapSubcommand(options []*discordgo.ApplicationCommandInteractionDataOption) (string, []*discordgo.ApplicationCommandInteractionDataOption) {
 	path := ""

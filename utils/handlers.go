@@ -14,7 +14,7 @@ var Logger *slog.Logger
 // paths. It points at CaptureError in production; tests swap it to assert that a
 // genuine failure to deliver an error reply pages Sentry while the expected
 // already-acknowledged case that succeeds on the edit fallback does not (ADR
-// 0001). This mirrors the swappable seam the warden error helpers use.
+// 0001). This mirrors the swappable seam the Foxhole error helpers use.
 var captureError = CaptureError
 
 func InitLogger(levelStr string) {
@@ -88,9 +88,9 @@ func HandleError(r InteractionResponder, i *discordgo.InteractionCreate, message
 //
 // The capture is intentionally unconditional on the failure's status class:
 // HandleError runs synchronously inside the interaction window, so any delivery
-// fault here is genuine. This differs from warden's post-window edit helpers,
-// which gate capture on a token-expiry predicate because their edits race the
-// interaction-token lifetime.
+// fault here is genuine. This differs from the Foxhole commands' post-window
+// edit helpers, which gate capture on a token-expiry predicate because their
+// edits race the interaction-token lifetime.
 func deliverErrorReply(r InteractionResponder, i *discordgo.InteractionCreate, message string, resp *discordgo.InteractionResponse) {
 	err := r.InteractionRespond(i.Interaction, resp)
 	if err == nil {

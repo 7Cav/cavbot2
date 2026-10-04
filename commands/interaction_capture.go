@@ -13,10 +13,11 @@ import "github.com/bwmarrin/discordgo"
 // read off the interaction, so on-call can attribute it even though the command
 // may already have done its work.
 //
-// This is the non-warden sibling of warden.go's captureEditFailure: warden reads
-// its subcommand off the `command` option, whereas these commands each pass their
-// own fixed command name. Both funnel through the same captureError seam and
-// record the same {command, guild_id} context shape.
+// This is the sibling of foxhole.go's captureEditFailure for every other
+// command: /warden reads its subcommand off the `command` option, whereas
+// these commands each pass their own fixed command name. Both funnel through
+// the same captureError seam and record the same {command, guild_id} context
+// shape.
 //
 // `command` must be the REGISTERED slash-command name (`milpac`, `s6-it-check`),
 // not a display name. utils.CaptureError promotes it to a Sentry tag, so a

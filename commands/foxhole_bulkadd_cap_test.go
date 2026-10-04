@@ -26,20 +26,20 @@ func makeBulkAddEntries(n int) string {
 // hundreds of names and trigger a serial GuildMembersSearch + per-role
 // GuildMemberRoleAdd storm that outruns the rate limiter and the interaction
 // token window (#173).
-func TestRunWarden_BulkAddOverLimitRejectedBeforeAnyAPICall(t *testing.T) {
+func TestRunFoxhole_BulkAddOverLimitRejectedBeforeAnyAPICall(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 	}
 	f := &fakeResponder{}
 
 	overLimit := maxBulkAddEntries + 1
-	i := wardenInteraction("guild-1",
+	i := foxholeInteraction("guild-1",
 		stringOption("command", "bulkadd"),
 		stringOption("flag", "internal"),
 		stringOption("discordname", makeBulkAddEntries(overLimit)),
 	)
 
-	runWarden(f, gm, i)
+	runFoxhole(f, gm, i)
 
 	// No GuildManager call may happen: not the role resolution, not the per-entry
 	// search, not the role-add. The whole point is to bail before any fan-out.
@@ -66,7 +66,7 @@ func TestRunWarden_BulkAddOverLimitRejectedBeforeAnyAPICall(t *testing.T) {
 // A bulkadd at exactly the limit is within bounds and must behave as today: it
 // fans out to the per-entry work. Pins the boundary so a future off-by-one
 // (> vs >=) is caught.
-func TestRunWarden_BulkAddAtLimitStillFansOut(t *testing.T) {
+func TestRunFoxhole_BulkAddAtLimitStillFansOut(t *testing.T) {
 	// Every entry resolves to a distinct member so each one reaches a role-add.
 	search := make(map[string][]*discordgo.Member, maxBulkAddEntries)
 	for idx := 0; idx < maxBulkAddEntries; idx++ {
@@ -76,18 +76,18 @@ func TestRunWarden_BulkAddAtLimitStillFansOut(t *testing.T) {
 		}
 	}
 	gm := &fakeGuildManager{
-		roles:         []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:         []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		searchResults: search,
 	}
 	f := &fakeResponder{}
 
-	i := wardenInteraction("guild-1",
+	i := foxholeInteraction("guild-1",
 		stringOption("command", "bulkadd"),
 		stringOption("flag", "internal"),
 		stringOption("discordname", makeBulkAddEntries(maxBulkAddEntries)),
 	)
 
-	runWarden(f, gm, i)
+	runFoxhole(f, gm, i)
 
 	if gm.countCalls("GuildMembersSearch") != maxBulkAddEntries {
 		t.Fatalf("at-limit bulkadd must search every entry; got %d searches (%v)", gm.countCalls("GuildMembersSearch"), gm.Calls())
@@ -108,7 +108,7 @@ func TestRunWarden_BulkAddAtLimitStillFansOut(t *testing.T) {
 // and fan out for every real entry, never falsely rejected. This locks the
 // "count entries, not commas" contract against a regression in
 // splitCommaSeparated's blank-dropping.
-func TestRunWarden_BulkAddCountsParsedEntriesNotRawCommas(t *testing.T) {
+func TestRunFoxhole_BulkAddCountsParsedEntriesNotRawCommas(t *testing.T) {
 	// Interleave each real name with an empty field, then pad with extra trailing
 	// commas. Raw comma-separated token count is well above maxBulkAddEntries; the
 	// parsed (trim + drop-blank) count is exactly maxBulkAddEntries.
@@ -134,17 +134,17 @@ func TestRunWarden_BulkAddCountsParsedEntriesNotRawCommas(t *testing.T) {
 	}
 
 	gm := &fakeGuildManager{
-		roles:         []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:         []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		searchResults: search,
 	}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1",
+	i := foxholeInteraction("guild-1",
 		stringOption("command", "bulkadd"),
 		stringOption("flag", "internal"),
 		stringOption("discordname", payload),
 	)
 
-	runWarden(f, gm, i)
+	runFoxhole(f, gm, i)
 
 	got := lastEditContent(f.Calls())
 	// Must NOT be rejected as over-limit despite the raw comma count exceeding it.

@@ -20,7 +20,7 @@ func tokenExpiredRESTError() *discordgo.RESTError {
 // a guild id and the invoking channel id, so the channel-message fallback has a
 // destination to post to.
 func purgeInteractionWithChannel(guildID, channelID string) *discordgo.InteractionCreate {
-	i := wardenInteraction(guildID, stringOption("command", "purge"))
+	i := foxholeInteraction(guildID, stringOption("command", "purge"))
 	i.ChannelID = channelID
 	return i
 }
@@ -230,20 +230,20 @@ func TestDeliverPurgeSummary_BothSurfacesFailCaptures(t *testing.T) {
 	}
 }
 
-// --- runWardenPurge wires the summary through deliverPurgeSummary ---
+// --- runFoxholePurge wires the summary through deliverPurgeSummary ---
 
 // The end-to-end purge path must reach the channel fallback when its deferred
 // edit expires, so a long purge that finished server-side still reaches the
-// operator. Drives runWardenPurge directly (synchronous, no goroutine).
-func TestRunWardenPurge_TokenExpiryReachesChannelFallback(t *testing.T) {
+// operator. Drives runFoxholePurge directly (synchronous, no goroutine).
+func TestRunFoxholePurge_TokenExpiryReachesChannelFallback(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
 	}
 	f := &fakeResponder{EditErrs: []error{tokenExpiredRESTError()}}
 	i := purgeInteractionWithChannel("guild-1", "chan-9")
 
-	runWardenPurge(f, gm, i, "guild-1", "internal")
+	runFoxholePurge(f, gm, i, "guild-1", "internal")
 
 	if got := gm.countCalls("ChannelMessageSend"); got != 1 {
 		t.Fatalf("a token-expired purge edit must reach the channel fallback once; got %d (%v)", got, gm.Calls())

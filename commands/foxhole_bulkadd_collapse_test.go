@@ -11,7 +11,7 @@ import (
 // bulkAddInteraction builds a /warden bulkadd interaction for the given scope
 // and comma-separated discordname list.
 func bulkAddInteraction(scope, names string) *discordgo.InteractionCreate {
-	return wardenInteraction("guild-1",
+	return foxholeInteraction("guild-1",
 		stringOption("command", "bulkadd"),
 		stringOption("flag", scope),
 		stringOption("discordname", names),
@@ -28,7 +28,7 @@ func searchMember(query, id string) (string, []*discordgo.Member) {
 // Unknown Role (10011) signature. Today each member fires its own capture; the
 // loop must collapse them into ONE Sentry event carrying the affected attempt
 // count and a sample member, while still listing every failure for the operator.
-func TestRunWardenBulkAdd_SameSignatureCollapsesToOneCapture(t *testing.T) {
+func TestRunFoxholeBulkAdd_SameSignatureCollapsesToOneCapture(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 
@@ -36,7 +36,7 @@ func TestRunWardenBulkAdd_SameSignatureCollapsesToOneCapture(t *testing.T) {
 	bobQ, bobM := searchMember("bob", "222")
 	carolQ, carolM := searchMember("carol", "333")
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			aliceQ: aliceM, bobQ: bobM, carolQ: carolM,
 		},
@@ -49,7 +49,7 @@ func TestRunWardenBulkAdd_SameSignatureCollapsesToOneCapture(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, bulkAddInteraction("internal", "alice, bob, carol"))
+	runFoxhole(f, gm, bulkAddInteraction("internal", "alice, bob, carol"))
 
 	// One root cause, one Sentry event — not one per member.
 	if rec.count != 1 {
@@ -82,14 +82,14 @@ func TestRunWardenBulkAdd_SameSignatureCollapsesToOneCapture(t *testing.T) {
 // nothing pages — while still listing every faulted member for the operator.
 // Every other public collapse test feeds only system faults, so without this a
 // regression dropping the public SystemFault gate would fail no test.
-func TestRunWardenBulkAdd_ClientFaultsListedNotCaptured(t *testing.T) {
+func TestRunFoxholeBulkAdd_ClientFaultsListedNotCaptured(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 
 	aliceQ, aliceM := searchMember("alice", "111")
 	bobQ, bobM := searchMember("bob", "222")
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			aliceQ: aliceM, bobQ: bobM,
 		},
@@ -102,7 +102,7 @@ func TestRunWardenBulkAdd_ClientFaultsListedNotCaptured(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, bulkAddInteraction("internal", "alice, bob"))
+	runFoxhole(f, gm, bulkAddInteraction("internal", "alice, bob"))
 
 	// Client faults must never page on-call.
 	if rec.count != 0 {
@@ -124,14 +124,14 @@ func TestRunWardenBulkAdd_ClientFaultsListedNotCaptured(t *testing.T) {
 // stale-role 404, one transient 5xx. The collapse must key on signature, so each
 // gets its own event with its own affected_count of 1; a 10011 storm alongside a
 // 5xx must never fold into a single event (#214).
-func TestRunWardenBulkAdd_MixedSignaturesCaptureOncePerSignature(t *testing.T) {
+func TestRunFoxholeBulkAdd_MixedSignaturesCaptureOncePerSignature(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 
 	aliceQ, aliceM := searchMember("alice", "111")
 	bobQ, bobM := searchMember("bob", "222")
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			aliceQ: aliceM, bobQ: bobM,
 		},
@@ -142,7 +142,7 @@ func TestRunWardenBulkAdd_MixedSignaturesCaptureOncePerSignature(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, bulkAddInteraction("internal", "alice, bob"))
+	runFoxhole(f, gm, bulkAddInteraction("internal", "alice, bob"))
 
 	if rec.count != 2 {
 		t.Fatalf("two distinct fault signatures must capture once each (no folding); got %d", rec.count)
@@ -171,14 +171,14 @@ func TestRunWardenBulkAdd_MixedSignaturesCaptureOncePerSignature(t *testing.T) {
 // them; and the emitted discord_code payload value is otherwise never asserted.
 // This pins both: two captures, carrying distinct discord_code values 10011 and
 // 10004 (#214).
-func TestRunWardenBulkAdd_SameStatusDifferentCodeCapturesPerCode(t *testing.T) {
+func TestRunFoxholeBulkAdd_SameStatusDifferentCodeCapturesPerCode(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 
 	aliceQ, aliceM := searchMember("alice", "111")
 	bobQ, bobM := searchMember("bob", "222")
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			aliceQ: aliceM, bobQ: bobM,
 		},
@@ -190,7 +190,7 @@ func TestRunWardenBulkAdd_SameStatusDifferentCodeCapturesPerCode(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, bulkAddInteraction("internal", "alice, bob"))
+	runFoxhole(f, gm, bulkAddInteraction("internal", "alice, bob"))
 
 	// Same status, different code: two distinct signatures, never folded to one.
 	if rec.count != 2 {
@@ -218,15 +218,15 @@ func TestRunWardenBulkAdd_SameStatusDifferentCodeCapturesPerCode(t *testing.T) {
 // must count member-ROLE attempts, not distinct members. One member whose two
 // role-adds both fail with the same signature must collapse to one event with
 // affected_count=2, sampled to that member (#214).
-func TestRunWardenBulkAdd_BothScopeCountsRoleAttemptsNotMembers(t *testing.T) {
+func TestRunFoxholeBulkAdd_BothScopeCountsRoleAttemptsNotMembers(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 
 	aliceQ, aliceM := searchMember("alice", "111")
 	gm := &fakeGuildManager{
 		roles: []*discordgo.Role{
-			wardenRole("r-int", wardenRoleBaseNameDefault+" Internal"),
-			wardenRole("r-ext", wardenRoleBaseNameDefault+" External"),
+			guildRole("r-int", foxholeRoleBaseNameDefault+" Internal"),
+			guildRole("r-ext", foxholeRoleBaseNameDefault+" External"),
 		},
 		searchResults: map[string][]*discordgo.Member{aliceQ: aliceM},
 		// Both the Internal and External adds for the one member fail 5xx.
@@ -237,7 +237,7 @@ func TestRunWardenBulkAdd_BothScopeCountsRoleAttemptsNotMembers(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, bulkAddInteraction("both", "alice"))
+	runFoxhole(f, gm, bulkAddInteraction("both", "alice"))
 
 	if gm.countCalls("GuildMemberRoleAdd") != 2 {
 		t.Fatalf("scope 'both' must attempt two role adds for the member; got %d", gm.countCalls("GuildMemberRoleAdd"))
@@ -284,13 +284,13 @@ func TestFaultCollector_ZeroValueRecordsWithoutNilPanic(t *testing.T) {
 // makes the role-add path panic on member.User.ID; the deferred flush must still
 // emit alice's capture during unwinding. A plain post-loop flush statement would
 // be skipped by the panic and lose it.
-func TestRunWardenBulkAdd_PanicMidLoopStillFlushesPendingCaptures(t *testing.T) {
+func TestRunFoxholeBulkAdd_PanicMidLoopStillFlushesPendingCaptures(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 
 	aliceQ, aliceM := searchMember("alice", "111")
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			aliceQ: aliceM,
 			// A member with a nil User: dereferencing member.User.ID in the role-add
@@ -304,7 +304,7 @@ func TestRunWardenBulkAdd_PanicMidLoopStillFlushesPendingCaptures(t *testing.T) 
 
 	func() {
 		defer func() { _ = recover() }() // swallow the deliberate mid-loop panic
-		runWarden(f, gm, bulkAddInteraction("internal", "alice, boom"))
+		runFoxhole(f, gm, bulkAddInteraction("internal", "alice, boom"))
 	}()
 
 	// The deferred flush ran during panic unwinding, so alice's pending system-fault

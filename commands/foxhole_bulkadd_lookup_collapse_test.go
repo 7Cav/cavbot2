@@ -14,12 +14,12 @@ import (
 // this file guards: when every entry's lookup fails with the same signature, the
 // bulk loop emits exactly one Sentry event carrying the affected count and a
 // sample entry, while still listing every failure for the operator.
-func TestRunWardenBulkAdd_LookupSameSignatureCollapsesToOneCapture(t *testing.T) {
+func TestRunFoxholeBulkAdd_LookupSameSignatureCollapsesToOneCapture(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		// Every name search 500s with the same signature: a lookup-side storm.
 		MembersSearchErrs: []error{
 			restError(http.StatusInternalServerError, 0, rawBodyMarker),
@@ -29,7 +29,7 @@ func TestRunWardenBulkAdd_LookupSameSignatureCollapsesToOneCapture(t *testing.T)
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, bulkAddInteraction("internal", "alice, bob, carol"))
+	runFoxhole(f, gm, bulkAddInteraction("internal", "alice, bob, carol"))
 
 	// One root cause, one Sentry event — not one per entry.
 	if rec.count != 1 {
@@ -57,12 +57,12 @@ func TestRunWardenBulkAdd_LookupSameSignatureCollapsesToOneCapture(t *testing.T)
 // 500, one 503. The collapse keys on signature, so each gets its own event with
 // its own affected_count of 1; a 500 storm alongside a 503 must never fold into a
 // single event.
-func TestRunWardenBulkAdd_LookupMixedSignaturesCaptureOncePerSignature(t *testing.T) {
+func TestRunFoxholeBulkAdd_LookupMixedSignaturesCaptureOncePerSignature(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		MembersSearchErrs: []error{
 			restError(http.StatusInternalServerError, 0, rawBodyMarker),
 			restError(http.StatusServiceUnavailable, 0, rawBodyMarker),
@@ -70,7 +70,7 @@ func TestRunWardenBulkAdd_LookupMixedSignaturesCaptureOncePerSignature(t *testin
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, bulkAddInteraction("internal", "alice, bob"))
+	runFoxhole(f, gm, bulkAddInteraction("internal", "alice, bob"))
 
 	if rec.count != 2 {
 		t.Fatalf("two distinct lookup signatures must capture once each (no folding); got %d", rec.count)
@@ -97,17 +97,17 @@ func TestRunWardenBulkAdd_LookupMixedSignaturesCaptureOncePerSignature(t *testin
 // A single-entry bulkadd whose one lookup 500s must still emit exactly one event,
 // carrying affected_count=1 and the sample entry — the lower bound of the
 // collapse, pinned directly on the payload so a miscount fails here.
-func TestRunWardenBulkAdd_LookupSingleFaultCapturesOnceCountOne(t *testing.T) {
+func TestRunFoxholeBulkAdd_LookupSingleFaultCapturesOnceCountOne(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 
 	gm := &fakeGuildManager{
-		roles:             []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:             []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		MembersSearchErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, bulkAddInteraction("internal", "alice"))
+	runFoxhole(f, gm, bulkAddInteraction("internal", "alice"))
 
 	if rec.count != 1 {
 		t.Fatalf("a single lookup fault must capture exactly once; got %d", rec.count)
@@ -125,12 +125,12 @@ func TestRunWardenBulkAdd_LookupSingleFaultCapturesOnceCountOne(t *testing.T) {
 // path must collapse the same way and carry the resolved Discord ID as
 // sample_user, proving the by-ID site routes to the collector too, not only the
 // name-search site.
-func TestRunWardenBulkAdd_LookupByIDFaultRoutesToCollector(t *testing.T) {
+func TestRunFoxholeBulkAdd_LookupByIDFaultRoutesToCollector(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		// Every GuildMember lookup 500s with the same signature.
 		MemberErrs: []error{
 			restError(http.StatusInternalServerError, 0, rawBodyMarker),
@@ -139,7 +139,7 @@ func TestRunWardenBulkAdd_LookupByIDFaultRoutesToCollector(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, bulkAddInteraction("internal", "<@111>, <@222>"))
+	runFoxhole(f, gm, bulkAddInteraction("internal", "<@111>, <@222>"))
 
 	if gm.countCalls("GuildMembersSearch") != 0 {
 		t.Fatalf("mention entries must resolve by ID, never fall through to name search; got calls %v", gm.Calls())
@@ -162,12 +162,12 @@ func TestRunWardenBulkAdd_LookupByIDFaultRoutesToCollector(t *testing.T) {
 // faults. Every other lookup-collapse test feeds only system faults, so without
 // this a regression dropping the SystemFault gate (routing a 404/no-match into
 // the collector) would fail no test.
-func TestRunWardenBulkAdd_LookupNonCapturedOutcomesListedNotCaptured(t *testing.T) {
+func TestRunFoxholeBulkAdd_LookupNonCapturedOutcomesListedNotCaptured(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		// The mention resolves by ID and 404s as a genuine absence (Unknown Member).
 		MemberErrs: []error{restError(http.StatusNotFound, discordgo.ErrCodeUnknownMember, rawBodyMarker)},
 		// "common" matches two members (too many); "ghost" is absent from the map (no match).
@@ -180,7 +180,7 @@ func TestRunWardenBulkAdd_LookupNonCapturedOutcomesListedNotCaptured(t *testing.
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, bulkAddInteraction("internal", "<@111>, ghost, common"))
+	runFoxhole(f, gm, bulkAddInteraction("internal", "<@111>, ghost, common"))
 
 	if rec.count != 0 {
 		t.Fatalf("not-in-server / no-match / too-many lookup outcomes must NOT capture to Sentry; got %d", rec.count)
@@ -198,17 +198,17 @@ func TestRunWardenBulkAdd_LookupNonCapturedOutcomesListedNotCaptured(t *testing.
 // A lookup 4xx client fault in bulk (here a 400 on the name search) is
 // operator-fixable, not a system fault: it must be listed for the operator and
 // never reach the collector, the lookup-path mirror of the role-add 403 case.
-func TestRunWardenBulkAdd_Lookup4xxListedNotCaptured(t *testing.T) {
+func TestRunFoxholeBulkAdd_Lookup4xxListedNotCaptured(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 
 	gm := &fakeGuildManager{
-		roles:             []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:             []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		MembersSearchErrs: []error{restError(http.StatusBadRequest, 50035, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, bulkAddInteraction("internal", "alice"))
+	runFoxhole(f, gm, bulkAddInteraction("internal", "alice"))
 
 	if rec.count != 0 {
 		t.Fatalf("a 4xx lookup client fault must NOT capture to Sentry; got %d", rec.count)
@@ -226,17 +226,17 @@ func TestRunWardenBulkAdd_Lookup4xxListedNotCaptured(t *testing.T) {
 // lookup 5xx on a single add still pages exactly once, NOT through a collector.
 // The bulk-only collapse must not regress the single-call path to zero captures
 // (a collector that never flushes) or to a collapsed payload.
-func TestRunWardenAdd_MemberLookup5xxCapturesOnceInline(t *testing.T) {
+func TestRunFoxholeAdd_MemberLookup5xxCapturesOnceInline(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	// No membersByID: the snowflake lookup hits the injected 5xx instead of resolving.
 	gm := &fakeGuildManager{
-		roles:      []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:      []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		MemberErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, wardenAddInteraction())
+	runFoxhole(f, gm, foxholeAddInteraction())
 
 	if rec.count != 1 {
 		t.Fatalf("a single /warden add lookup 5xx must capture inline exactly once; got %d", rec.count)
@@ -253,16 +253,16 @@ func TestRunWardenAdd_MemberLookup5xxCapturesOnceInline(t *testing.T) {
 // The remove path shares findGuildMember, so a single /warden remove lookup 5xx
 // must likewise capture inline exactly once, behavior-identical to before the
 // bulk-only collapse.
-func TestRunWardenRemove_MemberLookup5xxCapturesOnceInline(t *testing.T) {
+func TestRunFoxholeRemove_MemberLookup5xxCapturesOnceInline(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{
-		roles:      []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:      []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		MemberErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, wardenRemoveInteraction())
+	runFoxhole(f, gm, foxholeRemoveInteraction())
 
 	if rec.count != 1 {
 		t.Fatalf("a single /warden remove lookup 5xx must capture inline exactly once; got %d", rec.count)
@@ -280,12 +280,12 @@ func TestRunWardenRemove_MemberLookup5xxCapturesOnceInline(t *testing.T) {
 // signature — so a single shared collector would collapse them to ONE event.
 // Assert TWO events fire, carrying the two distinct flush messages, proving the
 // build breaks if a future edit cross-wires the two collectors.
-func TestRunWardenBulkAdd_LookupAndRoleAddSameSignatureDoNotFold(t *testing.T) {
+func TestRunFoxholeBulkAdd_LookupAndRoleAddSameSignatureDoNotFold(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		// alice (processed first) is a name search that 500s on lookup.
 		MembersSearchErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
 		// bob resolves cleanly, then its role add 500s — same {500,0} signature.
@@ -296,7 +296,7 @@ func TestRunWardenBulkAdd_LookupAndRoleAddSameSignatureDoNotFold(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runWarden(f, gm, bulkAddInteraction("internal", "alice, bob"))
+	runFoxhole(f, gm, bulkAddInteraction("internal", "alice, bob"))
 
 	// A lookup fault and a role-add fault sharing {500,0} must NOT fold: two
 	// collectors, two events.
@@ -329,17 +329,17 @@ func TestRunWardenBulkAdd_LookupAndRoleAddSameSignatureDoNotFold(t *testing.T) {
 // where a config-404 falls through `case class.NotFound` into
 // `case class.SystemFault` — a narrowing edit that routed Unknown Guild back into
 // the absent-member arm would silence the page and only fail here.
-func TestRunWardenBulkAdd_LookupByIDConfig404CapturedAbsenceNot(t *testing.T) {
+func TestRunFoxholeBulkAdd_LookupByIDConfig404CapturedAbsenceNot(t *testing.T) {
 	t.Run("unknownGuild404Captured", func(t *testing.T) {
 		rec := &captureRecorder{}
 		rec.install(t)
 		gm := &fakeGuildManager{
-			roles:      []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+			roles:      []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 			MemberErrs: []error{restError(http.StatusNotFound, discordgo.ErrCodeUnknownGuild, rawBodyMarker)},
 		}
 		f := &fakeResponder{}
 
-		runWarden(f, gm, bulkAddInteraction("internal", "<@111>"))
+		runFoxhole(f, gm, bulkAddInteraction("internal", "<@111>"))
 
 		if rec.count != 1 {
 			t.Fatalf("a config-fault 404 (Unknown Guild) on the by-ID lookup must be collected and page once; got %d", rec.count)
@@ -358,12 +358,12 @@ func TestRunWardenBulkAdd_LookupByIDConfig404CapturedAbsenceNot(t *testing.T) {
 		rec := &captureRecorder{}
 		rec.install(t)
 		gm := &fakeGuildManager{
-			roles:      []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+			roles:      []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 			MemberErrs: []error{restError(http.StatusNotFound, discordgo.ErrCodeUnknownMember, rawBodyMarker)},
 		}
 		f := &fakeResponder{}
 
-		runWarden(f, gm, bulkAddInteraction("internal", "<@111>"))
+		runFoxhole(f, gm, bulkAddInteraction("internal", "<@111>"))
 
 		if rec.count != 0 {
 			t.Fatalf("a genuine absence (Unknown Member 404) on the by-ID lookup must NOT capture; got %d", rec.count)

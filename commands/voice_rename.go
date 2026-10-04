@@ -195,7 +195,7 @@ func renameRefusal(err error, discordID string) string {
 		// so Discord refused, and gave no wait to render.
 		return "❌ Discord is rate limiting renames of this channel. Try again in a few minutes."
 	default:
-		// The warden classifier's phrase, never the raw body. Unknown Channel
+		// classifyDiscordError's phrase, never the raw body. Unknown Channel
 		// never reaches it: the runtime classifies that code first.
 		return fmt.Sprintf("❌ Could not rename the channel: %s.", classifyDiscordError(err).UserDetail)
 	}

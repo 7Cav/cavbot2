@@ -65,7 +65,7 @@ One command breaks that assumption, and its latency panel should be read
 accordingly:
 
 - **`/warden purge`** acknowledges, then hands the work to a goroutine
-  (`handleWardenPurge`), so the measured latency is roughly the ack, not the
+  (`handleFoxholePurge`), so the measured latency is roughly the ack, not the
   multi-second purge.
 
 That is a pre-existing structure, not something the instrumentation changed.

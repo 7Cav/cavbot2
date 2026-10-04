@@ -16,20 +16,20 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-const wardenRoleBaseNameDefault = "Verified Warden"
+const foxholeRoleBaseNameDefault = "Verified Warden"
 
-// wardenRoleBaseNameEnv overrides the base name every warden role is composed
-// from.
-const wardenRoleBaseNameEnv = "WARDEN_ROLE_BASE_NAME"
+// foxholeRoleBaseNameEnv overrides the base name every Foxhole role is
+// composed from.
+const foxholeRoleBaseNameEnv = "WARDEN_ROLE_BASE_NAME"
 
-// WardenRoleBaseName returns the configured base name, or the default when the
+// FoxholeRoleBaseName returns the configured base name, or the default when the
 // variable is unset or empty. Read at the point of use, as s3aar.go reads
 // BM_TOKEN. Exported so main() can log the resolved value at startup.
-func WardenRoleBaseName() string {
-	if configured := os.Getenv(wardenRoleBaseNameEnv); configured != "" {
+func FoxholeRoleBaseName() string {
+	if configured := os.Getenv(foxholeRoleBaseNameEnv); configured != "" {
 		return configured
 	}
-	return wardenRoleBaseNameDefault
+	return foxholeRoleBaseNameDefault
 }
 
 // maxBulkAddEntries caps how many comma-separated entries a single /warden
@@ -41,24 +41,24 @@ func WardenRoleBaseName() string {
 // any Discord API call.
 const maxBulkAddEntries = 50
 
-// wardenOverwriteDelay throttles successive channel-permission writes during a
+// purgeOverwriteDelay throttles successive channel-permission writes during a
 // purge to stay under Discord's rate limit. A package var (not a const) so
-// tests can zero it out and avoid sleeping. See warden_test.go.
-var wardenOverwriteDelay = 200 * time.Millisecond
+// tests can zero it out and avoid sleeping. See foxhole_test.go.
+var purgeOverwriteDelay = 200 * time.Millisecond
 
 var (
-	wardenRoleScopes  = []string{"internal", "external", "both"}
-	wardenSubcommands = []string{
+	foxholeRoleScopes  = []string{"internal", "external", "both"}
+	foxholeSubcommands = []string{
 		"add",
 		"remove",
 		"bulkadd",
 		"purge",
 	}
 
-	wardenTitleCaser = cases.Title(language.Und, cases.NoLower)
+	foxholeTitleCaser = cases.Title(language.Und, cases.NoLower)
 )
 
-func Warden() Command {
+func Foxhole() Command {
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
 			Name:        "warden",
@@ -67,16 +67,16 @@ func Warden() Command {
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "command",
-					Description: "Choose between " + strings.Join(wardenSubcommands, ", "),
+					Description: "Choose between " + strings.Join(foxholeSubcommands, ", "),
 					Required:    true,
-					Choices:     stringChoices(wardenSubcommands),
+					Choices:     stringChoices(foxholeSubcommands),
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "flag",
 					Description: "Internal/external scope, or both",
 					Required:    true,
-					Choices:     stringChoices(wardenRoleScopes),
+					Choices:     stringChoices(foxholeRoleScopes),
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
@@ -86,24 +86,24 @@ func Warden() Command {
 				},
 			},
 		},
-		Handler: handleWarden,
+		Handler: handleFoxhole,
 	}
 }
 
-func handleWarden(
+func handleFoxhole(
 	session *discordgo.Session,
 	interaction *discordgo.InteractionCreate,
 ) {
-	runWarden(utils.NewSessionResponder(session), NewSessionGuildManager(session), interaction)
+	runFoxhole(utils.NewSessionResponder(session), NewSessionGuildManager(session), interaction)
 }
 
-func runWarden(
+func runFoxhole(
 	r utils.InteractionResponder,
 	gm GuildManager,
 	interaction *discordgo.InteractionCreate,
 ) {
 	// Guild-context guard runs FIRST, before any read of interaction.Member.
-	// Warden requires guild context, and Discord only populates Member for guild
+	// /warden requires guild context, and Discord only populates Member for guild
 	// interactions; a DM-shaped or malformed interaction has a nil Member and a
 	// nil GuildID. Rejecting on the empty GuildID here both gives a clear
 	// server-only message and removes the latent nil-deref the entry log would
@@ -122,17 +122,17 @@ func runWarden(
 	commandData := interaction.ApplicationCommandData()
 
 	subcommand, ok := getOptionString(commandData, "command")
-	if !ok || !slices.Contains(wardenSubcommands, subcommand) {
+	if !ok || !slices.Contains(foxholeSubcommands, subcommand) {
 		utils.HandleError(
 			r,
 			interaction,
-			"❌ Invalid warden command; must be "+strings.Join(wardenSubcommands, ", "),
+			"❌ Invalid warden command; must be "+strings.Join(foxholeSubcommands, ", "),
 		)
 		return
 	}
 
 	roleScope, ok := getOptionString(commandData, "flag")
-	if !ok || !slices.Contains(wardenRoleScopes, roleScope) {
+	if !ok || !slices.Contains(foxholeRoleScopes, roleScope) {
 		utils.HandleError(
 			r,
 			interaction,
@@ -157,13 +157,13 @@ func runWarden(
 
 	switch subcommand {
 	case "add":
-		handleWardenAdd(r, gm, interaction, guildID, query, roleScope)
+		handleFoxholeAdd(r, gm, interaction, guildID, query, roleScope)
 	case "remove":
-		handleWardenRemove(r, gm, interaction, guildID, query, roleScope)
+		handleFoxholeRemove(r, gm, interaction, guildID, query, roleScope)
 	case "bulkadd":
-		handleWardenBulkAdd(r, gm, interaction, guildID, query, roleScope)
+		handleFoxholeBulkAdd(r, gm, interaction, guildID, query, roleScope)
 	case "purge":
-		handleWardenPurge(r, gm, interaction, guildID, roleScope)
+		handleFoxholePurge(r, gm, interaction, guildID, roleScope)
 	default:
 		utils.HandleError(r, interaction, "❌ Unknown subcommand")
 	}
@@ -171,9 +171,9 @@ func runWarden(
 	utils.Info("✨ Done!", "command", "Warden")
 }
 
-func handleWardenAdd(r utils.InteractionResponder, gm GuildManager, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
+func handleFoxholeAdd(r utils.InteractionResponder, gm GuildManager, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
 	if err := deferEphemeral(r, interaction); err != nil {
-		replyAckFailed(r, interaction, err, "subcommand", wardenSubcommandOf(interaction))
+		replyAckFailed(r, interaction, err, "subcommand", foxholeSubcommandOf(interaction))
 		return
 	}
 
@@ -183,7 +183,7 @@ func handleWardenAdd(r utils.InteractionResponder, gm GuildManager, interaction 
 		return
 	}
 
-	roleIDs, roleNames, err := resolveWardenRoleIDs(gm, guildID, roleScope)
+	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, guildID, roleScope)
 	if err != nil {
 		editEphemeral(r, interaction, err.Error())
 		return
@@ -216,7 +216,7 @@ func handleWardenAdd(r utils.InteractionResponder, gm GuildManager, interaction 
 	)
 }
 
-func handleWardenRemove(
+func handleFoxholeRemove(
 	r utils.InteractionResponder,
 	gm GuildManager,
 	interaction *discordgo.InteractionCreate,
@@ -225,7 +225,7 @@ func handleWardenRemove(
 	roleScope string,
 ) {
 	if err := deferEphemeral(r, interaction); err != nil {
-		replyAckFailed(r, interaction, err, "subcommand", wardenSubcommandOf(interaction))
+		replyAckFailed(r, interaction, err, "subcommand", foxholeSubcommandOf(interaction))
 		return
 	}
 
@@ -235,7 +235,7 @@ func handleWardenRemove(
 		return
 	}
 
-	roleIDs, roleNames, err := resolveWardenRoleIDs(gm, guildID, roleScope)
+	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, guildID, roleScope)
 	if err != nil {
 		editEphemeral(r, interaction, err.Error())
 		return
@@ -256,7 +256,7 @@ func handleWardenRemove(
 	editEphemeral(r, interaction, fmt.Sprintf("✅ Removed warden role(s) (%s) from %s", strings.Join(roleNames, ", "), formatUser(member)))
 }
 
-func handleWardenBulkAdd(
+func handleFoxholeBulkAdd(
 	r utils.InteractionResponder,
 	gm GuildManager,
 	interaction *discordgo.InteractionCreate,
@@ -266,7 +266,7 @@ func handleWardenBulkAdd(
 ) {
 	if err := deferEphemeral(r, interaction); err != nil {
 		if isUnknownInteraction(err) {
-			captureMissedAck(interaction, err, "subcommand", wardenSubcommandOf(interaction))
+			captureMissedAck(interaction, err, "subcommand", foxholeSubcommandOf(interaction))
 			return
 		}
 		utils.HandleError(r, interaction, fmt.Sprintf("❌ Failed to acknowledge bulk add: %v", err))
@@ -274,7 +274,7 @@ func handleWardenBulkAdd(
 	}
 
 	// Parse and bound the entry list BEFORE any Discord API call (role
-	// resolution, member search, role-add). resolveWardenRoleIDs below issues a
+	// resolution, member search, role-add). resolveFoxholeRoleIDs below issues a
 	// GuildRoles request, and the per-entry loop fans out a GuildMembersSearch +
 	// per-role GuildMemberRoleAdd for every entry, so the count check has to run
 	// ahead of all of it to actually prevent the storm (#173).
@@ -291,7 +291,7 @@ func handleWardenBulkAdd(
 		return
 	}
 
-	roleIDs, roleNames, err := resolveWardenRoleIDs(gm, guildID, roleScope)
+	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, guildID, roleScope)
 	if err != nil {
 		editEphemeral(r, interaction, err.Error())
 		return
@@ -362,7 +362,7 @@ func handleWardenBulkAdd(
 	editEphemeralWithEmbed(r, interaction, content, embed)
 }
 
-func handleWardenPurge(
+func handleFoxholePurge(
 	r utils.InteractionResponder,
 	gm GuildManager,
 	interaction *discordgo.InteractionCreate,
@@ -371,7 +371,7 @@ func handleWardenPurge(
 ) {
 	if err := deferEphemeral(r, interaction); err != nil {
 		if isUnknownInteraction(err) {
-			captureMissedAck(interaction, err, "subcommand", wardenSubcommandOf(interaction))
+			captureMissedAck(interaction, err, "subcommand", foxholeSubcommandOf(interaction))
 			return
 		}
 		utils.HandleError(r, interaction, fmt.Sprintf("❌ Failed to acknowledge purge: %v", err))
@@ -380,22 +380,22 @@ func handleWardenPurge(
 
 	go func() {
 		defer utils.RecoverPanic("warden-purge")
-		runWardenPurge(r, gm, interaction, guildID, roleScope)
+		runFoxholePurge(r, gm, interaction, guildID, roleScope)
 	}()
 }
 
-// runWardenPurge performs the role-recreation purge. Extracted from the inline
-// goroutine in handleWardenPurge so it is directly callable from tests with a
-// fake GuildManager/responder; the caller (handleWardenPurge) owns the
+// runFoxholePurge performs the role-recreation purge. Extracted from the inline
+// goroutine in handleFoxholePurge so it is directly callable from tests with a
+// fake GuildManager/responder; the caller (handleFoxholePurge) owns the
 // goroutine + panic recovery and the deferred-ephemeral acknowledge.
-func runWardenPurge(
+func runFoxholePurge(
 	r utils.InteractionResponder,
 	gm GuildManager,
 	interaction *discordgo.InteractionCreate,
 	guildID string,
 	roleScope string,
 ) {
-	roleIDsToRecreate, roleNamesToRecreate, err := resolveWardenRoleIDs(gm, guildID, roleScope)
+	roleIDsToRecreate, roleNamesToRecreate, err := resolveFoxholeRoleIDs(gm, guildID, roleScope)
 	if err != nil {
 		editEphemeral(r, interaction, err.Error())
 		return
@@ -522,7 +522,7 @@ func deliverPurgeSummary(
 				"Failed to deliver purge summary via channel fallback after token expiry",
 				sendErr,
 				"command", "warden",
-				"subcommand", wardenSubcommandOf(interaction),
+				"subcommand", foxholeSubcommandOf(interaction),
 				"guild_id", interaction.GuildID,
 				"channel_id", interaction.ChannelID,
 				"edit_error", editErr,
@@ -535,7 +535,7 @@ func deliverPurgeSummary(
 		utils.Info(
 			"purge summary delivered via channel fallback after interaction token expired",
 			"command", "warden",
-			"subcommand", wardenSubcommandOf(interaction),
+			"subcommand", foxholeSubcommandOf(interaction),
 			"guild_id", interaction.GuildID,
 			"channel_id", interaction.ChannelID,
 		)
@@ -689,14 +689,14 @@ func reapplyRoleOverwrites(
 		}
 
 		reappliedCount++
-		time.Sleep(wardenOverwriteDelay)
+		time.Sleep(purgeOverwriteDelay)
 	}
 
 	return reappliedCount, nil
 }
 
-func resolveWardenRoleNames(roleScope string) []string {
-	base := WardenRoleBaseName()
+func resolveFoxholeRoleNames(roleScope string) []string {
+	base := FoxholeRoleBaseName()
 
 	if roleScope == "both" {
 		return []string{
@@ -708,16 +708,16 @@ func resolveWardenRoleNames(roleScope string) []string {
 	// Any other scope names one role; callers validate the scope first, so an
 	// unrecognised one just composes a name that matches nothing.
 	return []string{
-		base + " " + wardenTitleCaser.String(roleScope),
+		base + " " + foxholeTitleCaser.String(roleScope),
 	}
 }
 
-func resolveWardenRoleIDs(
+func resolveFoxholeRoleIDs(
 	gm GuildManager,
 	guildID string,
 	roleScope string,
 ) (roleIDs []string, roleNames []string, err error) {
-	roleNames = resolveWardenRoleNames(roleScope)
+	roleNames = resolveFoxholeRoleNames(roleScope)
 	roleIDs = make([]string, 0, len(roleNames))
 
 	for _, roleName := range roleNames {
@@ -811,12 +811,12 @@ func captureEditFailure(interaction *discordgo.InteractionCreate, err error) {
 		"Failed to deliver deferred-ephemeral edit",
 		err,
 		"command", "warden",
-		"subcommand", wardenSubcommandOf(interaction),
+		"subcommand", foxholeSubcommandOf(interaction),
 		"guild_id", interaction.GuildID,
 	)
 }
 
-// wardenSubcommandOf reads the chosen warden subcommand off the interaction's
+// foxholeSubcommandOf reads the chosen /warden subcommand off the interaction's
 // `command` option for failure context, falling back to "unknown" when it can't
 // be resolved (e.g. a malformed interaction) so capture context is never blank.
 //
@@ -824,7 +824,7 @@ func captureEditFailure(interaction *discordgo.InteractionCreate, err error) {
 // promoted to a Sentry tag (see utils.promoteCommandTag) and must hold the
 // registered slash-command name, or /warden's failures split across one group
 // per subcommand and per-command error rate stops being answerable.
-func wardenSubcommandOf(interaction *discordgo.InteractionCreate) string {
+func foxholeSubcommandOf(interaction *discordgo.InteractionCreate) string {
 	if sub, ok := getOptionString(interaction.ApplicationCommandData(), "command"); ok {
 		return sub
 	}

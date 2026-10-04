@@ -14,7 +14,7 @@ import (
 // reported. This is the "found" branch.
 func TestFindGuildRoleIDByName_Found(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("role-abc", "Verified Warden Internal")},
+		roles: []*discordgo.Role{guildRole("role-abc", "Verified Warden Internal")},
 	}
 
 	id, err := findGuildRoleIDByName(gm, "guild-1", "Verified Warden Internal")
@@ -32,7 +32,7 @@ func TestFindGuildRoleIDByName_Found(t *testing.T) {
 // success.
 func TestFindGuildRoleIDByName_NotFoundIsExplicit(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("other", "Some Other Role")},
+		roles: []*discordgo.Role{guildRole("other", "Some Other Role")},
 	}
 
 	id, err := findGuildRoleIDByName(gm, "guild-1", "Verified Warden Internal")
@@ -61,34 +61,34 @@ func TestFindGuildRoleIDByName_APIErrorIsNotNotFound(t *testing.T) {
 	}
 }
 
-// --- resolveWardenRoleIDs: each user-facing outcome unchanged (#180) ---
+// --- resolveFoxholeRoleIDs: each user-facing outcome unchanged (#180) ---
 
-// Found: resolveWardenRoleIDs returns the resolved ids and names, no error.
-func TestResolveWardenRoleIDs_Found(t *testing.T) {
+// Found: resolveFoxholeRoleIDs returns the resolved ids and names, no error.
+func TestResolveFoxholeRoleIDs_Found(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 	}
 
-	ids, names, err := resolveWardenRoleIDs(gm, "guild-1", "internal")
+	ids, names, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if len(ids) != 1 || ids[0] != "r-int" {
 		t.Fatalf("expected [r-int], got %v", ids)
 	}
-	if len(names) != 1 || names[0] != wardenRoleBaseNameDefault+" Internal" {
+	if len(names) != 1 || names[0] != foxholeRoleBaseNameDefault+" Internal" {
 		t.Fatalf("unexpected names %v", names)
 	}
 }
 
-// Not-found: resolveWardenRoleIDs surfaces the same distinct "role not found in
+// Not-found: resolveFoxholeRoleIDs surfaces the same distinct "role not found in
 // guild" message as before, naming the missing role.
-func TestResolveWardenRoleIDs_NotFoundMessageUnchanged(t *testing.T) {
+func TestResolveFoxholeRoleIDs_NotFoundMessageUnchanged(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("other", "Some Other Role")},
+		roles: []*discordgo.Role{guildRole("other", "Some Other Role")},
 	}
 
-	_, _, err := resolveWardenRoleIDs(gm, "guild-1", "internal")
+	_, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
 	if err == nil {
 		t.Fatal("expected role-not-found error")
 	}
@@ -96,17 +96,17 @@ func TestResolveWardenRoleIDs_NotFoundMessageUnchanged(t *testing.T) {
 	if !strings.Contains(got, "role not found in guild") {
 		t.Fatalf("expected role-not-found message, got %q", got)
 	}
-	if !strings.Contains(got, wardenRoleBaseNameDefault+" Internal") {
+	if !strings.Contains(got, foxholeRoleBaseNameDefault+" Internal") {
 		t.Fatalf("not-found message must name the missing role, got %q", got)
 	}
 }
 
 // API error: a genuine GuildRoles failure surfaces the distinct "Failed to
 // retrieve guild roles" message — it is NOT silently treated as not-found.
-func TestResolveWardenRoleIDs_APIErrorMessageUnchanged(t *testing.T) {
+func TestResolveFoxholeRoleIDs_APIErrorMessageUnchanged(t *testing.T) {
 	gm := &fakeGuildManager{RolesErrs: []error{errors.New("boom")}}
 
-	_, _, err := resolveWardenRoleIDs(gm, "guild-1", "internal")
+	_, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
 	if err == nil {
 		t.Fatal("expected guild-roles API error")
 	}

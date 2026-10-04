@@ -191,16 +191,16 @@ func (g *fakeGuildManager) ChannelMessageSend(channelID, content string) error {
 	return popErr(&g.ChannelMessageErrs)
 }
 
-// wardenInteraction builds an *InteractionCreate carrying the given option
-// values plus a GuildID, which runWarden requires (it rejects DM-context).
-func wardenInteraction(guildID string, opts ...*discordgo.ApplicationCommandInteractionDataOption) *discordgo.InteractionCreate {
+// foxholeInteraction builds an *InteractionCreate carrying the given option
+// values plus a GuildID, which runFoxhole requires (it rejects DM-context).
+func foxholeInteraction(guildID string, opts ...*discordgo.ApplicationCommandInteractionDataOption) *discordgo.InteractionCreate {
 	i := fakeAppCommandInteraction(opts...)
 	i.GuildID = guildID
 	return i
 }
 
-// wardenRole is a convenience constructor for a guild role.
-func wardenRole(id, name string) *discordgo.Role {
+// guildRole is a convenience constructor for a guild role.
+func guildRole(id, name string) *discordgo.Role {
 	return &discordgo.Role{ID: id, Name: name}
 }
 
@@ -208,9 +208,9 @@ func wardenRole(id, name string) *discordgo.Role {
 // suite doesn't sleep 200ms per channel overwrite.
 func noOverwriteDelay(t *testing.T) {
 	t.Helper()
-	prev := wardenOverwriteDelay
-	wardenOverwriteDelay = 0
-	t.Cleanup(func() { wardenOverwriteDelay = prev })
+	prev := purgeOverwriteDelay
+	purgeOverwriteDelay = 0
+	t.Cleanup(func() { purgeOverwriteDelay = prev })
 }
 
 // lastEditContent returns the Content of the last Edit call, or "<none>".
@@ -234,21 +234,21 @@ func lastResponseContent(calls []recordedCall) string {
 	return "<none>"
 }
 
-// --- runWarden routing / deferred-ephemeral acknowledge path ---
+// --- runFoxhole routing / deferred-ephemeral acknowledge path ---
 
-func TestRunWarden_AddDeferredEphemeralAcknowledge(t *testing.T) {
+func TestRunFoxhole_AddDeferredEphemeralAcknowledge(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles:       []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:       []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		membersByID: map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 	}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1",
+	i := foxholeInteraction("guild-1",
 		stringOption("command", "add"),
 		stringOption("flag", "internal"),
 		stringOption("discordname", "123456789012345678"),
 	)
 
-	runWarden(f, gm, i)
+	runFoxhole(f, gm, i)
 
 	calls := f.Calls()
 	if len(calls) == 0 {
@@ -275,15 +275,15 @@ func TestRunWarden_AddDeferredEphemeralAcknowledge(t *testing.T) {
 	}
 }
 
-func TestRunWarden_InvalidSubcommandSurfacesError(t *testing.T) {
+func TestRunFoxhole_InvalidSubcommandSurfacesError(t *testing.T) {
 	gm := &fakeGuildManager{}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1",
+	i := foxholeInteraction("guild-1",
 		stringOption("command", "bogus"),
 		stringOption("flag", "internal"),
 	)
 
-	runWarden(f, gm, i)
+	runFoxhole(f, gm, i)
 
 	if len(f.Calls()) == 0 {
 		t.Fatal("expected an error response")
@@ -293,7 +293,7 @@ func TestRunWarden_InvalidSubcommandSurfacesError(t *testing.T) {
 	}
 }
 
-func TestRunWarden_MissingGuildIDRejected(t *testing.T) {
+func TestRunFoxhole_MissingGuildIDRejected(t *testing.T) {
 	gm := &fakeGuildManager{}
 	f := &fakeResponder{}
 	// No GuildID => DM context, must be rejected before any guild call.
@@ -303,7 +303,7 @@ func TestRunWarden_MissingGuildIDRejected(t *testing.T) {
 		stringOption("discordname", "x"),
 	)
 
-	runWarden(f, gm, i)
+	runFoxhole(f, gm, i)
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("DM-context must not touch guild; got %v", gm.Calls())
@@ -314,7 +314,7 @@ func TestRunWarden_MissingGuildIDRejected(t *testing.T) {
 // instead). The entry-log read of Member.User must not panic, and the
 // guild-context guard must reject it with a clear server-only message before any
 // guild call. Regression for #177.
-func TestRunWarden_NilMemberDMContextRejectedWithoutPanic(t *testing.T) {
+func TestRunFoxhole_NilMemberDMContextRejectedWithoutPanic(t *testing.T) {
 	gm := &fakeGuildManager{}
 	f := &fakeResponder{}
 	// DM context: no Member, no GuildID, User set instead.
@@ -326,7 +326,7 @@ func TestRunWarden_NilMemberDMContextRejectedWithoutPanic(t *testing.T) {
 	i.Member = nil
 	i.User = &discordgo.User{ID: "555", Username: "dmuser"}
 
-	runWarden(f, gm, i) // must not panic on the entry-log Member deref
+	runFoxhole(f, gm, i) // must not panic on the entry-log Member deref
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("nil-Member DM context must not touch guild; got %v", gm.Calls())
@@ -339,7 +339,7 @@ func TestRunWarden_NilMemberDMContextRejectedWithoutPanic(t *testing.T) {
 // The fully malformed case: both Member and User are nil (e.g. a forwarded or
 // crafted interaction). The entry log must still not panic, and the command must
 // reject rather than mutate anything. Regression for #177.
-func TestRunWarden_NilMemberAndUserDoesNotPanic(t *testing.T) {
+func TestRunFoxhole_NilMemberAndUserDoesNotPanic(t *testing.T) {
 	gm := &fakeGuildManager{}
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(
@@ -350,7 +350,7 @@ func TestRunWarden_NilMemberAndUserDoesNotPanic(t *testing.T) {
 	i.Member = nil
 	i.User = nil
 
-	runWarden(f, gm, i) // must not panic with both nil
+	runFoxhole(f, gm, i) // must not panic with both nil
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("malformed interaction must not touch guild; got %v", gm.Calls())
@@ -433,10 +433,10 @@ func TestInteractionUsernameAndID(t *testing.T) {
 
 // --- purge: happy path ---
 
-func TestRunWardenPurge_HappyPath(t *testing.T) {
+func TestRunFoxholePurge_HappyPath(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
 		channels: []*discordgo.Channel{
 			{
 				ID: "chan-1",
@@ -447,9 +447,9 @@ func TestRunWardenPurge_HappyPath(t *testing.T) {
 		},
 	}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1")
+	i := foxholeInteraction("guild-1")
 
-	runWardenPurge(f, gm, i, "guild-1", "internal")
+	runFoxholePurge(f, gm, i, "guild-1", "internal")
 
 	// Role recreated: create + one overwrite reapply + delete old. No redundant
 	// edit (the create sets every field) — see #178.
@@ -471,18 +471,18 @@ func TestRunWardenPurge_HappyPath(t *testing.T) {
 	}
 }
 
-func TestRunWardenPurge_BothScopeRecreatesTwoRoles(t *testing.T) {
+func TestRunFoxholePurge_BothScopeRecreatesTwoRoles(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
 		roles: []*discordgo.Role{
-			wardenRole("old-int", wardenRoleBaseNameDefault+" Internal"),
-			wardenRole("old-ext", wardenRoleBaseNameDefault+" External"),
+			guildRole("old-int", foxholeRoleBaseNameDefault+" Internal"),
+			guildRole("old-ext", foxholeRoleBaseNameDefault+" External"),
 		},
 	}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1")
+	i := foxholeInteraction("guild-1")
 
-	runWardenPurge(f, gm, i, "guild-1", "both")
+	runFoxholePurge(f, gm, i, "guild-1", "both")
 
 	if gm.countCalls("GuildRoleCreate") != 2 {
 		t.Fatalf("expected 2 role creates for 'both', got %d (%v)", gm.countCalls("GuildRoleCreate"), gm.Calls())
@@ -495,21 +495,21 @@ func TestRunWardenPurge_BothScopeRecreatesTwoRoles(t *testing.T) {
 
 // --- purge: partial failure (one role recreation fails) ---
 
-func TestRunWardenPurge_PartialFailureContinues(t *testing.T) {
+func TestRunFoxholePurge_PartialFailureContinues(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
 		roles: []*discordgo.Role{
-			wardenRole("old-int", wardenRoleBaseNameDefault+" Internal"),
-			wardenRole("old-ext", wardenRoleBaseNameDefault+" External"),
+			guildRole("old-int", foxholeRoleBaseNameDefault+" Internal"),
+			guildRole("old-ext", foxholeRoleBaseNameDefault+" External"),
 		},
 		// First create succeeds, second fails -> External role recreation errors,
 		// but the loop must continue and report a mixed summary.
 		RoleCreateErrs: []error{nil, fmt.Errorf("discord 500")},
 	}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1")
+	i := foxholeInteraction("guild-1")
 
-	runWardenPurge(f, gm, i, "guild-1", "both")
+	runFoxholePurge(f, gm, i, "guild-1", "both")
 
 	got := lastEditContent(f.Calls())
 	if !strings.Contains(got, "✅ Recreated 'Verified Warden Internal'") {
@@ -526,16 +526,16 @@ func TestRunWardenPurge_PartialFailureContinues(t *testing.T) {
 
 // --- purge: guild not accessible (channels fetch fails) ---
 
-func TestRunWardenPurge_GuildChannelsErrorSurfaces(t *testing.T) {
+func TestRunFoxholePurge_GuildChannelsErrorSurfaces(t *testing.T) {
 	noOverwriteDelay(t)
 	gm := &fakeGuildManager{
-		roles:        []*discordgo.Role{wardenRole("old-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:        []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
 		ChannelsErrs: []error{fmt.Errorf("missing access")},
 	}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1")
+	i := foxholeInteraction("guild-1")
 
-	runWardenPurge(f, gm, i, "guild-1", "internal")
+	runFoxholePurge(f, gm, i, "guild-1", "internal")
 
 	if gm.countCalls("GuildRoleCreate") != 0 {
 		t.Fatalf("must not recreate roles when channels are inaccessible; got %v", gm.Calls())
@@ -546,15 +546,15 @@ func TestRunWardenPurge_GuildChannelsErrorSurfaces(t *testing.T) {
 	}
 }
 
-func TestRunWardenPurge_RoleNotFoundSurfaces(t *testing.T) {
+func TestRunFoxholePurge_RoleNotFoundSurfaces(t *testing.T) {
 	noOverwriteDelay(t)
-	// No matching warden role in the guild -> resolveWardenRoleIDs errors out
+	// No matching Foxhole role in the guild -> resolveFoxholeRoleIDs errors out
 	// before any mutation.
-	gm := &fakeGuildManager{roles: []*discordgo.Role{wardenRole("x", "Some Other Role")}}
+	gm := &fakeGuildManager{roles: []*discordgo.Role{guildRole("x", "Some Other Role")}}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1")
+	i := foxholeInteraction("guild-1")
 
-	runWardenPurge(f, gm, i, "guild-1", "internal")
+	runFoxholePurge(f, gm, i, "guild-1", "internal")
 
 	if gm.countCalls("GuildChannels") != 0 {
 		t.Fatalf("must short-circuit before fetching channels; got %v", gm.Calls())
@@ -567,19 +567,19 @@ func TestRunWardenPurge_RoleNotFoundSurfaces(t *testing.T) {
 
 // --- remove + bulkadd coverage ---
 
-func TestRunWarden_RemoveSuccess(t *testing.T) {
+func TestRunFoxhole_RemoveSuccess(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles:       []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:       []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		membersByID: map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 	}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1",
+	i := foxholeInteraction("guild-1",
 		stringOption("command", "remove"),
 		stringOption("flag", "internal"),
 		stringOption("discordname", "123456789012345678"),
 	)
 
-	runWarden(f, gm, i)
+	runFoxhole(f, gm, i)
 
 	if gm.countCalls("GuildMemberRoleRemove") != 1 {
 		t.Fatalf("expected 1 GuildMemberRoleRemove, got %v", gm.Calls())
@@ -589,20 +589,20 @@ func TestRunWarden_RemoveSuccess(t *testing.T) {
 	}
 }
 
-func TestRunWarden_AddRoleAddFailureSurfaces(t *testing.T) {
+func TestRunFoxhole_AddRoleAddFailureSurfaces(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles:             []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles:             []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		membersByID:       map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 		MemberRoleAddErrs: []error{fmt.Errorf("forbidden")},
 	}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1",
+	i := foxholeInteraction("guild-1",
 		stringOption("command", "add"),
 		stringOption("flag", "internal"),
 		stringOption("discordname", "123456789012345678"),
 	)
 
-	runWarden(f, gm, i)
+	runFoxhole(f, gm, i)
 
 	// A plain (non-REST) error is a transport-class fault: the reply names the
 	// role and surfaces the failure, but never the raw error text.
@@ -615,22 +615,22 @@ func TestRunWarden_AddRoleAddFailureSurfaces(t *testing.T) {
 	}
 }
 
-func TestRunWarden_BulkAddMixedResults(t *testing.T) {
+func TestRunFoxhole_BulkAddMixedResults(t *testing.T) {
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("r-int", wardenRoleBaseNameDefault+" Internal")},
+		roles: []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
 		searchResults: map[string][]*discordgo.Member{
 			"good": {{User: &discordgo.User{ID: "111", Username: "good"}}},
 			// "bad" has no search result -> findGuildMember returns not-found.
 		},
 	}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1",
+	i := foxholeInteraction("guild-1",
 		stringOption("command", "bulkadd"),
 		stringOption("flag", "internal"),
 		stringOption("discordname", "good, bad"),
 	)
 
-	runWarden(f, gm, i)
+	runFoxhole(f, gm, i)
 
 	got := lastEditContent(f.Calls())
 	if !strings.Contains(got, "Added warden role(s) to 1 user(s)") {
@@ -641,15 +641,15 @@ func TestRunWarden_BulkAddMixedResults(t *testing.T) {
 	}
 }
 
-func TestRunWarden_MissingDiscordnameForAdd(t *testing.T) {
+func TestRunFoxhole_MissingDiscordnameForAdd(t *testing.T) {
 	gm := &fakeGuildManager{}
 	f := &fakeResponder{}
-	i := wardenInteraction("guild-1",
+	i := foxholeInteraction("guild-1",
 		stringOption("command", "add"),
 		stringOption("flag", "internal"),
 	)
 
-	runWarden(f, gm, i)
+	runFoxhole(f, gm, i)
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("missing discordname must short-circuit before guild calls; got %v", gm.Calls())
@@ -723,7 +723,7 @@ func TestFindGuildMember_WhitespacePaddedMaxLengthStillSearches(t *testing.T) {
 // and it carries none of Discord's response body. Every command that defers
 // answers the same way, and stops there.
 func TestRefusedAcknowledgementKeepsDiscordBodyOutOfTheReply(t *testing.T) {
-	bulkAddInternal := fakeAppCommandInteraction(stringOption("unit", wardenInternalUnits[0].value))
+	bulkAddInternal := fakeAppCommandInteraction(stringOption("unit", validatedInternalUnits[0].value))
 	bulkAddInternal.GuildID = "guild-1"
 	cases := []struct {
 		name string
@@ -733,12 +733,12 @@ func TestRefusedAcknowledgementKeepsDiscordBodyOutOfTheReply(t *testing.T) {
 		{"/voice-unlock", func(f *fakeResponder) { runVoiceUnlock(f, nil, fakeAppCommandInteraction()) }},
 		{"/voice-rename", func(f *fakeResponder) { runVoiceRename(f, nil, renameInteraction("user-1", nil, "Alpha")) }},
 		{"/warden add", func(f *fakeResponder) {
-			handleWardenAdd(f, nil, fakeAppCommandInteraction(), "guild-1", "someone", "internal")
+			handleFoxholeAdd(f, nil, fakeAppCommandInteraction(), "guild-1", "someone", "internal")
 		}},
 		{"/warden remove", func(f *fakeResponder) {
-			handleWardenRemove(f, nil, fakeAppCommandInteraction(), "guild-1", "someone", "internal")
+			handleFoxholeRemove(f, nil, fakeAppCommandInteraction(), "guild-1", "someone", "internal")
 		}},
-		{"/warden-bulkadd-internal", func(f *fakeResponder) { runWardenBulkAddInternal(f, nil, bulkAddInternal) }},
+		{"/warden-bulkadd-internal", func(f *fakeResponder) { runFoxholeBulkAddInternal(f, nil, bulkAddInternal) }},
 		{"/s3aar (disabled)", func(f *fakeResponder) { runS3aarDisabled(f, fakeAppCommandInteraction()) }},
 	}
 	for _, tc := range cases {

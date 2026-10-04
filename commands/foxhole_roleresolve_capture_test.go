@@ -9,9 +9,9 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// --- resolveWardenRoleIDs: GuildRoles fault capture split (#194) ---
+// --- resolveFoxholeRoleIDs: GuildRoles fault capture split (#194) ---
 //
-// The GuildRoles lookup inside resolveWardenRoleIDs must route a genuine system
+// The GuildRoles lookup inside resolveFoxholeRoleIDs must route a genuine system
 // fault (5xx/transport) through the shared classifier and capture it to Sentry
 // (per ADR 0001), while a 4xx stays a non-captured actionable message and the
 // explicit not-found result remains non-captured. The raw Discord body must
@@ -20,12 +20,12 @@ import (
 // A 5xx from GuildRoles during role resolution is a genuine Discord-side fault:
 // it must capture to Sentry exactly once, show a body-free generic retry
 // message, and never leak the raw Discord response body.
-func TestResolveWardenRoleIDs_GuildRoles5xxCaptures(t *testing.T) {
+func TestResolveFoxholeRoleIDs_GuildRoles5xxCaptures(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{RolesErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)}}
 
-	_, _, err := resolveWardenRoleIDs(gm, "guild-1", "internal")
+	_, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
 	if err == nil {
 		t.Fatal("expected an error from a 5xx GuildRoles lookup")
 	}
@@ -39,7 +39,7 @@ func TestResolveWardenRoleIDs_GuildRoles5xxCaptures(t *testing.T) {
 	for key, want := range map[string]string{
 		"command": "warden",
 		"guild":   "guild-1",
-		"role":    wardenRoleBaseNameDefault + " Internal",
+		"role":    foxholeRoleBaseNameDefault + " Internal",
 	} {
 		got, ok := kvValue(rec.lastKV, key)
 		if !ok {
@@ -53,12 +53,12 @@ func TestResolveWardenRoleIDs_GuildRoles5xxCaptures(t *testing.T) {
 
 // A transport (non-REST) failure from GuildRoles is also a system fault: capture
 // once, no raw body leak.
-func TestResolveWardenRoleIDs_GuildRolesTransportErrorCaptures(t *testing.T) {
+func TestResolveFoxholeRoleIDs_GuildRolesTransportErrorCaptures(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{RolesErrs: []error{errors.New("dial tcp: connection refused")}}
 
-	_, _, err := resolveWardenRoleIDs(gm, "guild-1", "internal")
+	_, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
 	if err == nil {
 		t.Fatal("expected an error from a transport GuildRoles failure")
 	}
@@ -69,12 +69,12 @@ func TestResolveWardenRoleIDs_GuildRolesTransportErrorCaptures(t *testing.T) {
 
 // A 4xx from GuildRoles is an operator/config-fixable client fault: it must
 // surface an actionable, body-free message and must NOT capture to Sentry.
-func TestResolveWardenRoleIDs_GuildRoles4xxDoesNotCapture(t *testing.T) {
+func TestResolveFoxholeRoleIDs_GuildRoles4xxDoesNotCapture(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{RolesErrs: []error{restError(http.StatusBadRequest, 50035, rawBodyMarker)}}
 
-	_, _, err := resolveWardenRoleIDs(gm, "guild-1", "internal")
+	_, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
 	if err == nil {
 		t.Fatal("expected an error from a 4xx GuildRoles lookup")
 	}
@@ -88,14 +88,14 @@ func TestResolveWardenRoleIDs_GuildRoles4xxDoesNotCapture(t *testing.T) {
 
 // The explicit not-found result (the role simply isn't in the guild) is not a
 // fault and must NOT capture to Sentry; the not-found message is preserved.
-func TestResolveWardenRoleIDs_NotFoundDoesNotCapture(t *testing.T) {
+func TestResolveFoxholeRoleIDs_NotFoundDoesNotCapture(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{wardenRole("other", "Some Other Role")},
+		roles: []*discordgo.Role{guildRole("other", "Some Other Role")},
 	}
 
-	_, _, err := resolveWardenRoleIDs(gm, "guild-1", "internal")
+	_, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
 	if err == nil {
 		t.Fatal("expected a role-not-found error")
 	}

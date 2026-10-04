@@ -168,7 +168,7 @@ func main() {
 
 	utils.Info("CavBot2 starting", "version", Version)
 
-	utils.Info("Warden role base name resolved", "base_name", commands.WardenRoleBaseName())
+	utils.Info("Warden role base name resolved", "base_name", commands.FoxholeRoleBaseName())
 
 	initLOACache()
 

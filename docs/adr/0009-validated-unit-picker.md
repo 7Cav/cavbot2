@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted. Implemented in #208 (issue #206).
+Accepted. Implemented in #208 (issue #206). **Code moved 2026-10-04** (#437).
+The registry now lives in `commands/foxhole_bulkadd_internal.go`, and its row
+type is `validatedInternalUnit`. The text below keeps the old names.
 
 ## Decision
 

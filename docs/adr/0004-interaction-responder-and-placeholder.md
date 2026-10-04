@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted (0.7.6 / PR #74).
+Accepted (0.7.6 / PR #74). **Code moved 2026-10-04** (#437). The
+`editEphemeral` helpers named below now live in `commands/foxhole.go`.
 
 ## Decision
 

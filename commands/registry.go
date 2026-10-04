@@ -17,9 +17,9 @@ func NewRegistry(tempVC *TempVC) *Registry {
 	r := &Registry{}
 	r.RegisterCommands(
 		Milpac(),
-		Warden(),
+		Foxhole(),
 		Enlist(),
-		WardenBulkAddInternal(),
+		FoxholeBulkAddInternal(),
 		Zulu(),
 		S6ITCheck(),
 		Awol(),

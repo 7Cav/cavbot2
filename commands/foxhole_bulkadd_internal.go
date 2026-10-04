@@ -12,50 +12,50 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// wardenInternalRosterTimeout bounds the single milpac roster fetch. The
+// rosterAddFetchTimeout bounds the single milpac roster fetch. The
 // per-trooper role-adds that follow are plain Discord calls inside the
 // interaction's 15-minute window, so only the roster lookup needs a deadline.
-const wardenInternalRosterTimeout = 30 * time.Second
+const rosterAddFetchTimeout = 30 * time.Second
 
-// wardenInternalUnit is one row of the unit registry behind the
+// validatedInternalUnit is one row of the unit registry behind the
 // /warden-bulkadd-internal picker. value is what the operator's choice emits and
-// what fingerprints captures; label is shown in the dropdown and the report;
+// what fingerprints captures; label is shown in the dropdown and the summary;
 // query is the author-controlled milpac position-group search verified to
 // isolate exactly that unit's roster.
 //
 // The registry is both the extension seam and the safety boundary (ADR 0009):
 // adding a unit later is one new row with no logic change, and the operator can
 // only ever emit a value the registry already contains.
-type wardenInternalUnit struct {
+type validatedInternalUnit struct {
 	value string
 	label string
 	query string
 }
 
-// wardenInternalUnits is the unit registry. Each query is verified to
+// validatedInternalUnits is the unit registry. Each query is verified to
 // substring-match only its own position group's titles before being added here.
 // D/ACD is the one validated internal unit today; the next is one more row.
-var wardenInternalUnits = []wardenInternalUnit{
+var validatedInternalUnits = []validatedInternalUnit{
 	{value: "D/ACD", label: "D/ACD", query: "D/ACD"},
 }
 
-// lookupWardenInternalUnit resolves a picker value to its registry row. The
+// lookupValidatedInternalUnit resolves a picker value to its registry row. The
 // boolean is the safety check: an unregistered value never resolves, so no query
 // outside the registry can ever reach the milpac API.
-func lookupWardenInternalUnit(value string) (wardenInternalUnit, bool) {
-	for _, unit := range wardenInternalUnits {
+func lookupValidatedInternalUnit(value string) (validatedInternalUnit, bool) {
+	for _, unit := range validatedInternalUnits {
 		if unit.value == value {
 			return unit, true
 		}
 	}
-	return wardenInternalUnit{}, false
+	return validatedInternalUnit{}, false
 }
 
-// wardenInternalUnitChoices builds the dropdown choices from the registry, so a
+// validatedInternalUnitChoices builds the dropdown choices from the registry, so a
 // new registry row automatically becomes a new picker option with no edit here.
-func wardenInternalUnitChoices() []*discordgo.ApplicationCommandOptionChoice {
-	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(wardenInternalUnits))
-	for _, unit := range wardenInternalUnits {
+func validatedInternalUnitChoices() []*discordgo.ApplicationCommandOptionChoice {
+	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(validatedInternalUnits))
+	for _, unit := range validatedInternalUnits {
 		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{
 			Name:  unit.label,
 			Value: unit.value,
@@ -64,10 +64,12 @@ func wardenInternalUnitChoices() []*discordgo.ApplicationCommandOptionChoice {
 	return choices
 }
 
-func WardenBulkAddInternal() Command {
+// FoxholeBulkAddInternal is the roster add command. It adds a validated
+// internal unit's roster to Internal.
+func FoxholeBulkAddInternal() Command {
 	// Descriptions are baked in at registration, so compose them from the
 	// resolved name rather than a literal a rename would leave stale.
-	internalRoleName := resolveWardenRoleNames("internal")[0]
+	internalRoleName := resolveFoxholeRoleNames("internal")[0]
 
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
@@ -79,24 +81,24 @@ func WardenBulkAddInternal() Command {
 					Name:        "unit",
 					Description: "Validated unit whose roster is added to " + internalRoleName,
 					Required:    true,
-					Choices:     wardenInternalUnitChoices(),
+					Choices:     validatedInternalUnitChoices(),
 				},
 			},
 		},
-		Handler: handleWardenBulkAddInternal,
+		Handler: handleFoxholeBulkAddInternal,
 	}
 }
 
-func handleWardenBulkAddInternal(session *discordgo.Session, interaction *discordgo.InteractionCreate) {
-	runWardenBulkAddInternal(utils.NewSessionResponder(session), NewSessionGuildManager(session), interaction)
+func handleFoxholeBulkAddInternal(session *discordgo.Session, interaction *discordgo.InteractionCreate) {
+	runFoxholeBulkAddInternal(utils.NewSessionResponder(session), NewSessionGuildManager(session), interaction)
 }
 
-func runWardenBulkAddInternal(
+func runFoxholeBulkAddInternal(
 	r utils.InteractionResponder,
 	gm GuildManager,
 	interaction *discordgo.InteractionCreate,
 ) {
-	// Guild-context guard first: warden commands require guild context. Rejecting
+	// Guild-context guard first: Foxhole commands require guild context. Rejecting
 	// on an empty GuildID here gives a clear server-only message and guarantees a
 	// non-empty guildID for every downstream Discord role call.
 	guildID := interaction.GuildID
@@ -117,7 +119,7 @@ func runWardenBulkAddInternal(
 	// The picker only ever emits a registered value, but validate against the
 	// registry anyway: it is the safety boundary, and a crafted interaction must
 	// not be able to express a query the registry never authorized.
-	unit, ok := lookupWardenInternalUnit(unitValue)
+	unit, ok := lookupValidatedInternalUnit(unitValue)
 	if !ok {
 		utils.HandleError(r, interaction, fmt.Sprintf("❌ Unknown unit %q; pick one from the list.", unitValue))
 		return
@@ -128,7 +130,7 @@ func runWardenBulkAddInternal(
 		return
 	}
 
-	roleName := resolveWardenRoleNames("internal")[0]
+	roleName := resolveFoxholeRoleNames("internal")[0]
 	roleID, err := findGuildRoleIDByName(gm, guildID, roleName)
 	if errors.Is(err, errRoleNotFound) {
 		editEphemeral(r, interaction, fmt.Sprintf("❌ '%s' role not found in guild", roleName))
@@ -146,7 +148,7 @@ func runWardenBulkAddInternal(
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), wardenInternalRosterTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), rosterAddFetchTimeout)
 	defer cancel()
 
 	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, unit.query)
@@ -258,7 +260,7 @@ func runWardenBulkAddInternal(
 	slices.Sort(noDiscordLinked)
 	slices.Sort(faults)
 
-	content := buildWardenInternalBulkAddSummary(unit.label, roleName, len(added), notInDiscord, noDiscordLinked, faults, sawMissingPermissions)
+	content := buildRosterAddSummary(unit.label, roleName, len(added), notInDiscord, noDiscordLinked, faults, sawMissingPermissions)
 	var embed *discordgo.MessageEmbed
 	if len(added) > 0 {
 		embed = buildAddedMembersEmbed(added)
@@ -268,13 +270,13 @@ func runWardenBulkAddInternal(
 	utils.Info("✨ Done!", "command", "warden-bulkadd-internal", "unit", unit.value, "added", len(added))
 }
 
-// buildWardenInternalBulkAddSummary composes the ephemeral report. The
+// buildRosterAddSummary composes the ephemeral summary. The
 // added-or-confirmed count always leads (the command never silently reports
 // nothing); the not-in-Discord, no-Discord-linked, and could-not-be-added
 // buckets are listed by forum username only when non-empty. When any fault was a
 // 403, a permissions hint trails the buckets so a misconfigured bot reads as an
 // actionable fix rather than an opaque list of failures.
-func buildWardenInternalBulkAddSummary(
+func buildRosterAddSummary(
 	unitLabel, roleName string,
 	addedCount int,
 	notInDiscord, noDiscordLinked, faults []string,
@@ -283,47 +285,48 @@ func buildWardenInternalBulkAddSummary(
 	sections := []string{
 		fmt.Sprintf("✅ Added or confirmed %d %s member(s) in %s.", addedCount, unitLabel, roleName),
 	}
-	if section := formatWardenInternalSection("Not in this Discord", notInDiscord); section != "" {
+	if section := formatRosterAddSection("Not in this Discord", notInDiscord); section != "" {
 		sections = append(sections, section)
 	}
-	if section := formatWardenInternalSection("No Discord linked", noDiscordLinked); section != "" {
+	if section := formatRosterAddSection("No Discord linked", noDiscordLinked); section != "" {
 		sections = append(sections, section)
 	}
-	if section := formatWardenInternalSection("Could not be added", faults); section != "" {
+	if section := formatRosterAddSection("Could not be added", faults); section != "" {
 		sections = append(sections, section)
 	}
 	if missingPermissions {
-		sections = append(sections, wardenInternalPermissionsHint(roleName))
+		sections = append(sections, rosterAddPermissionsHint(roleName))
 	}
 	return clampToDiscordMessageLimit(strings.Join(sections, "\n\n"))
 }
 
-// wardenInternalPermissionsHint is the actionable line appended when a per-member
+// rosterAddPermissionsHint is the actionable line appended when a per-member
 // add failed on a 403. It reuses the substance of roleMutationErrorMessage's
 // missing-permissions branch (Manage Roles plus the role-hierarchy requirement)
 // without interpolating any raw Discord body.
-func wardenInternalPermissionsHint(roleName string) string {
+func rosterAddPermissionsHint(roleName string) string {
 	return fmt.Sprintf(
 		"⚠️ Some members couldn't be added because the bot is missing permissions. It needs Manage Roles, and its own role must sit above '%s'.",
 		roleName,
 	)
 }
 
-// wardenInternalSummaryMaxLen is Discord's per-message limit. The success count
-// is collapsed into one line and the added members ride in the embed, so the
-// content only grows with the by-username buckets; for a curated company-sized
-// unit this stays well under the limit, but clamp anyway so a pathologically
-// large bucket can never make the edit itself fail. clampToDiscordMessageLimit
-// measures bytes (len), not runes: that is deliberate, since byte length >= rune
-// count it is a safe over-estimate of Discord's UTF-8 code-point limit, so don't
-// "fix" it into a rune count and weaken the margin.
-const wardenInternalSummaryMaxLen = 2000
+// discordMessageLimit is Discord's per-message limit. The roster add's summary
+// collapses its success count into one line and the added members ride in the
+// embed, so the content only grows with the by-username buckets; for a curated
+// company-sized unit this stays well under the limit, but clamp anyway so a
+// pathologically large bucket can never make the edit itself fail.
+// clampToDiscordMessageLimit measures bytes (len), not runes: that is
+// deliberate, since byte length >= rune count it is a safe over-estimate of
+// Discord's UTF-8 code-point limit, so don't "fix" it into a rune count and
+// weaken the margin.
+const discordMessageLimit = 2000
 
 // clampToDiscordMessageLimit keeps as many whole lines as fit under the limit,
 // then appends a truncation marker. The lead summary line is short and comes
 // first, so it always survives.
 func clampToDiscordMessageLimit(message string) string {
-	if len(message) <= wardenInternalSummaryMaxLen {
+	if len(message) <= discordMessageLimit {
 		return message
 	}
 	const marker = "... (truncated)"
@@ -332,7 +335,7 @@ func clampToDiscordMessageLimit(message string) string {
 	used := 0
 	for _, line := range lines {
 		addition := len(line) + 1 // +1 for the newline join
-		if used+addition+len(marker)+1 > wardenInternalSummaryMaxLen {
+		if used+addition+len(marker)+1 > discordMessageLimit {
 			break
 		}
 		kept = append(kept, line)
@@ -342,12 +345,12 @@ func clampToDiscordMessageLimit(message string) string {
 	return strings.Join(kept, "\n")
 }
 
-// formatWardenInternalSection renders a labelled, count-headed list of forum
+// formatRosterAddSection renders a labelled, count-headed list of forum
 // usernames, or "" when the bucket is empty. The slices.Sort calls at the call
 // site make the within-bucket username order deterministic; the header count is
 // what keeps the bucket *size* stable in a test even when which member lands in
 // the bucket is map-order-dependent.
-func formatWardenInternalSection(title string, usernames []string) string {
+func formatRosterAddSection(title string, usernames []string) string {
 	if len(usernames) == 0 {
 		return ""
 	}

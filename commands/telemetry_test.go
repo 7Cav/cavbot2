@@ -168,7 +168,7 @@ func TestInstrumentedHandler_LatencyIsElapsedWholeMilliseconds(t *testing.T) {
 
 // Option detail rides the line as its own keys rather than a rendered blob, so
 // a LogQL drill-down can filter on `opt_flag="internal"` directly. The opt_
-// prefix also keeps an option that happens to be named "command" — warden has
+// prefix also keeps an option that happens to be named "command" — /warden has
 // one — from colliding with the contract key of the same name.
 func TestInstrumentedHandler_CarriesSubcommandAndOptionDetail(t *testing.T) {
 	tests := []struct {
