@@ -91,14 +91,6 @@ go test ./... -race -cover -covermode=atomic | tee /tmp/cover.log
 go build -o cavbot2
 ```
 
-## Branch naming
-
-`<type>/<issue-N>-<short-slug>` — type is `feat|fix|chore|docs|test|refactor`, matching the commit prefix. Example: `feat/65-roster-search-hint`.
-
-## Commit prefix
-
-Conventional Commits with optional scope: `<type>(<scope>): <subject>`. Scope is the touched directory or feature (`commands`, `utils`, `loa`, etc.). Subject in imperative mood, lowercase first letter.
-
 ## Review gates
 
 - **Smoke test on the test guild** for any user-facing command behavior change. CI cannot exercise the live Discord gateway, but locally we can validate against a test guild. This can be done by agents.
