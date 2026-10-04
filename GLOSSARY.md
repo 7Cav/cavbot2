@@ -147,14 +147,16 @@ Foxhole page and the terms around it are designed in #412, not built yet.
 - **War**: One Foxhole war, the game's campaign from its start to a victory.
   Foxhole role membership lasts one war.
   _Avoid_: season, round.
-- **Purge**: Taking a Foxhole role off every holder at once. Run when a war
-  ends, so nobody who joined for that war keeps the role into the next. The
-  approved collaborators are re-added straight after.
+- **Purge**: Taking a Foxhole role off every holder in one Foxhole action.
+  Run when a war ends, so nobody who joined for that war keeps the role into
+  the next. Re-adding the approved collaborators is a separate Foxhole action
+  that a Foxhole manager starts afterwards.
   _Avoid_: reset, wipe, clear.
 - **Approved collaborator**: An outside collaborator marked on the panel to get
   External back after every purge, such as the leader of an allied group. The
-  mark outlives the purge and the member leaving the server; a person clears it,
-  and removing the member's External on the panel clears it too.
+  mark outlives a purge and the member leaving the server. A person clears it,
+  and so does any removal of the member's External on the panel other than a
+  purge.
   _Avoid_: locked (a spawned channel's term), whitelisted, pinned, preset.
 - **Note**: A Foxhole manager's free text about one Discord member, one per
   member. A manager starts one only on a Foxhole role holder or an approved
@@ -174,14 +176,28 @@ Foxhole page and the terms around it are designed in #412, not built yet.
   _Avoid_: warden manager, warden admin, and Foxhole leader as the panel's name
   for the role.
 - **Foxhole page**: The panel page that lists every Foxhole role holder and
-  changes who holds the Foxhole roles. Foxhole managers and panel admins open
-  it.
+  approved collaborator with their notes, and starts Foxhole actions. A second
+  view lists the members with a note who hold no Foxhole role and aren't
+  approved collaborators. Foxhole managers and panel admins open it.
   _Avoid_: warden page, warden dashboard.
 - **Member list**: The bot's copy of every member of the guild, which the
   Foxhole page reads its holders from. Discord sends it in parts after each
   connect, and it is partial until the last part arrives. A resumed session
   keeps it.
   _Avoid_: member cache, roster (a unit's roster is a different list).
+- **Foxhole action**: One change to who holds the Foxhole roles, made on the
+  Foxhole page or by a `/warden` command: an add, a removal, a roster add, a
+  purge or a re-add of the approved collaborators. One started on the page
+  never runs alongside another from either path, so whichever starts second
+  is refused. Two commands may still run together. Note edits and approvals
+  change no role, so they aren't Foxhole actions.
+  _Avoid_: bulk action, job, task, operation, lock. Lock is a spawned
+  channel's state, not the rule that keeps two actions apart.
+- **Report**: The record of one Foxhole action started on the Foxhole page.
+  It names who started the action and how it ended, and lists the members it
+  changed, skipped, failed on and never attempted. It is the action's change
+  log entry.
+  _Avoid_: summary, results, receipt.
 
 ## Temporary voice channels
 
@@ -310,18 +326,21 @@ in the panel, never in code.
   create or the move-into, and a refusal the bot decided itself, which only
   a broken hub causes.
   _Avoid_: create failure, failed create, failed join, refused join.
-- **Save**: One submitted panel form that changes the bot's settings: a
-  hub's create, register, update or remove, or the guild-wide moderator
-  roles. It begins once the group check passes, runs to its end whether or
-  not the browser waits, and takes effect when the store holds its settings.
-  A refused save changes nothing. A save that fails leaves the store as it
-  was, though a Discord change it already made may stay.
+- **Save**: One submitted panel form that changes what the panel stores: a
+  hub's create, register, update or remove, the guild-wide moderator roles,
+  a note, or an approval given or cleared. It begins once the group check
+  passes, runs to its end whether or not the browser waits, and takes effect
+  when the store holds the change. A refused save changes nothing. A save
+  that fails leaves the store as it was, though a Discord change it already
+  made may stay.
   _Avoid_: submit, submission, write, commit.
-- **Change log**: The panel's record of who changed which setting, when,
-  and from what to what. Each hub's form shows the hub's own entries; the
-  guild-wide moderator section shows the entries of its saves, which
-  reference no hub. It records saves only, and every save that takes effect
-  has exactly one entry.
+- **Change log**: The panel's record of each change made through it: who made
+  it, when, and what changed. Every save that takes effect has one entry,
+  holding the old and new values. Every Foxhole action started on the Foxhole
+  page has one too, its report. Each hub's form shows the hub's own entries,
+  the guild-wide moderator section the entries of its saves, which reference
+  no hub, and the Foxhole page its own. A change made by a command or by hand
+  in Discord has none.
   _Avoid_: audit trail, audit log (that is Discord's), history.
 - **Stale form**: A hub's edit form, or the guild-wide moderator section,
   loaded before another save of the same settings took effect. A save from
@@ -331,8 +350,7 @@ in the panel, never in code.
   that the handover rule ranks occupants by.
   _Avoid_: rank list, rank table, seniority list, role ladder.
 - **Panel**: cavbot2's web UI at `cavbot2.7cav.us`, signed in through the
-  forum. Hub settings are its first page; later pages are out of this
-  feature's scope.
+  forum.
   _Avoid_: dashboard, admin UI, settings screen, config.
 - **Panel session**: The panel's record that a browser is signed in as one
   forum user. Created at the OAuth callback. Ended by sign-out, by a failed
@@ -466,9 +484,11 @@ error signal. See ADR 0011.
   reason as the connection closed.
   _Avoid_: browser leaving, client disconnect, cancelled request, timeout.
 - **Time budget**: The one deadline shared by every read a panel page load
-  makes, and by any wait for Discord to send the bot the guild's data,
-  starting when the page begins reading. A load still reading when it runs out
-  fails at once, whatever read it is waiting on, and the page says it took too
-  long. A load still waiting for the guild's data fails at once too, and the
-  page says Discord has not sent it.
+  makes, and by any wait for Discord to send the bot the guild's data or the
+  member list, starting when the page begins reading. A load still reading
+  when it runs out fails at once, whatever read it is waiting on, and the
+  page says it took too long. A load still waiting on Discord fails at once
+  too, and the page says Discord has not sent the data. The Foxhole page is
+  the exception. It shows everything that doesn't need the member list, with
+  a notice in place of the rest.
   _Avoid_: page timeout, deadline.
