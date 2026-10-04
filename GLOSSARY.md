@@ -156,6 +156,12 @@ Foxhole page and the terms around it are designed in #412, not built yet.
   mark outlives the purge and the member leaving the server; a person clears it,
   and removing the member's External on the panel clears it too.
   _Avoid_: locked (a spawned channel's term), whitelisted, pinned, preset.
+- **Note**: A Foxhole manager's free text about one Discord member, one per
+  member. A manager starts one only on a Foxhole role holder or an approved
+  collaborator. It outlives a purge, the member losing the role and the member
+  leaving the server. Only a person changes or clears it.
+  _Avoid_: comment, remark, reason (Discord's audit log word for why a change
+  was made).
 - **Validated internal unit** — a position group whose current roster members
   the regiment treats as automatically belonging in the Internal Foxhole role
   (e.g. `D/ACD`). A curated set; not every unit is one.
