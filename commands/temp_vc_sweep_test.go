@@ -484,7 +484,7 @@ func TestTempVCSweepOverTheSessionAdapterRacesTheCacheCleanly(t *testing.T) {
 	if err := st.UpsertSpawnedChannel(context.Background(), store.SpawnedChannel{ChannelID: "chan-gone", HubID: 1, Number: 1}); err != nil {
 		t.Fatalf("UpsertSpawnedChannel: %v", err)
 	}
-	tv, err := NewTempVC(NewSessionTempVCManager(dg), st, "g")
+	tv, err := NewTempVC(NewSessionTempVCManager(dg, "g"), st, "g")
 	if err != nil {
 		t.Fatalf("NewTempVC: %v", err)
 	}

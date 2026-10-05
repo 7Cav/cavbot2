@@ -79,7 +79,7 @@ func TestSessionTempVCManagerVoiceStatesReadsTheStateCache(t *testing.T) {
 		feed(t, dg, sessionVoiceEvent("g", "user-c", "chan-1"))
 		feed(t, dg, sessionVoiceEvent("g", "user-c", ""))
 
-		snap := NewSessionTempVCManager(dg).VoiceStates("g")
+		snap := NewSessionTempVCManager(dg, "g").VoiceStates("g")
 
 		if !snap.Present {
 			t.Fatal("snapshot reads the guild as missing, want present")
@@ -104,7 +104,7 @@ func TestSessionTempVCManagerVoiceStatesReadsTheStateCache(t *testing.T) {
 			Channels: []*discordgo.Channel{{ID: "chan-1", GuildID: "g"}, {ID: "chan-2", GuildID: "g"}},
 		}})
 
-		snap := NewSessionTempVCManager(dg).VoiceStates("g")
+		snap := NewSessionTempVCManager(dg, "g").VoiceStates("g")
 
 		if !snap.Present {
 			t.Fatal("snapshot reads the guild as missing, want present")
@@ -118,7 +118,7 @@ func TestSessionTempVCManagerVoiceStatesReadsTheStateCache(t *testing.T) {
 		dg := newSession(t)
 		feed(t, dg, &discordgo.GuildCreate{Guild: &discordgo.Guild{ID: "g"}})
 
-		if snap := NewSessionTempVCManager(dg).VoiceStates("other"); snap.Present {
+		if snap := NewSessionTempVCManager(dg, "g").VoiceStates("other"); snap.Present {
 			t.Errorf("snapshot of an unknown guild = %+v, want missing", snap)
 		}
 	})
@@ -126,7 +126,7 @@ func TestSessionTempVCManagerVoiceStatesReadsTheStateCache(t *testing.T) {
 	t.Run("an unavailable stub is missing until its GUILD_CREATE lands", func(t *testing.T) {
 		dg := newSession(t)
 		feed(t, dg, readyWith(&discordgo.Guild{ID: "g", Unavailable: true}))
-		mgr := NewSessionTempVCManager(dg)
+		mgr := NewSessionTempVCManager(dg, "g")
 
 		if snap := mgr.VoiceStates("g"); snap.Present {
 			t.Errorf("snapshot of an unavailable guild = %+v, want missing", snap)
@@ -151,7 +151,7 @@ func TestSessionTempVCManagerVoiceStatesReadsTheStateCache(t *testing.T) {
 		}})
 		dg.State.TrackVoice = false
 
-		if snap := NewSessionTempVCManager(dg).VoiceStates("g"); snap.Present {
+		if snap := NewSessionTempVCManager(dg, "g").VoiceStates("g"); snap.Present {
 			t.Errorf("snapshot with TrackVoice off = %+v, want missing: the cache would never move", snap)
 		}
 	})
@@ -163,7 +163,7 @@ func TestSessionTempVCManagerVoiceStatesReadsTheStateCache(t *testing.T) {
 	t.Run("snapshots race a sequential writer cleanly", func(t *testing.T) {
 		dg := newSession(t)
 		feed(t, dg, &discordgo.GuildCreate{Guild: &discordgo.Guild{ID: "g"}})
-		mgr := NewSessionTempVCManager(dg)
+		mgr := NewSessionTempVCManager(dg, "g")
 		channels := map[string]bool{"chan-1": true, "chan-2": true}
 		users := []string{"user-a", "user-b", "user-c"}
 

@@ -77,7 +77,7 @@ func TestSessionTempVCManagerGuildDataReadsTheStateCache(t *testing.T) {
 	dg := stateSession(t, refusingAPI(t))
 	feed(t, dg, &discordgo.GuildCreate{Guild: guildDataGuild()})
 
-	data := NewSessionTempVCManager(dg).GuildData(testTempVCGuild)
+	data := NewSessionTempVCManager(dg, testTempVCGuild).GuildData(testTempVCGuild)
 
 	if data.Status != GuildDataPresent {
 		t.Fatalf("status = %v, want present", data.Status)
@@ -112,7 +112,7 @@ func TestSessionTempVCManagerGuildDataReadsTheStateCache(t *testing.T) {
 // cache as it is now.
 func TestSessionTempVCManagerGuildDataFollowsTheGuildThroughTheGateway(t *testing.T) {
 	dg := stateSession(t, refusingAPI(t))
-	mgr := NewSessionTempVCManager(dg)
+	mgr := NewSessionTempVCManager(dg, testTempVCGuild)
 	feed(t, dg, readyWith(&discordgo.Guild{ID: testTempVCGuild, Unavailable: true}))
 
 	if data := mgr.GuildData(testTempVCGuild); data.Status != GuildDataArriving {
@@ -141,7 +141,7 @@ func TestSessionTempVCManagerGuildDataFollowsTheGuildThroughTheGateway(t *testin
 func TestSessionTempVCManagerGuildDataRacesGatewayEventsCleanly(t *testing.T) {
 	dg := stateSession(t, refusingAPI(t))
 	feed(t, dg, &discordgo.GuildCreate{Guild: guildDataGuild()})
-	mgr := NewSessionTempVCManager(dg)
+	mgr := NewSessionTempVCManager(dg, testTempVCGuild)
 
 	events := func(i int) []any {
 		spare := fmt.Sprintf("vc-%d", i)
@@ -226,7 +226,7 @@ func TestSessionTempVCManagerCreateAndRenamePutDiscordsReplyInTheState(t *testin
 	t.Run("a create", func(t *testing.T) {
 		dg := stateSession(t, answering(created, nil))
 		feed(t, dg, &discordgo.GuildCreate{Guild: guildDataGuild()})
-		mgr := NewSessionTempVCManager(dg)
+		mgr := NewSessionTempVCManager(dg, testTempVCGuild)
 
 		if _, err := create(mgr); err != nil {
 			t.Fatalf("GuildChannelCreateComplex: %v", err)
@@ -242,7 +242,7 @@ func TestSessionTempVCManagerCreateAndRenamePutDiscordsReplyInTheState(t *testin
 		renamed := `{"id":"hub-1","guild_id":"` + testTempVCGuild + `","name":"Join here","type":2,"parent_id":"cat-1"}`
 		dg := stateSession(t, answering(renamed, nil))
 		feed(t, dg, &discordgo.GuildCreate{Guild: guildDataGuild()})
-		mgr := NewSessionTempVCManager(dg)
+		mgr := NewSessionTempVCManager(dg, testTempVCGuild)
 
 		if _, err := mgr.ChannelEdit("hub-1", &discordgo.ChannelEdit{Name: "Join here"}, "renamed by user-o"); err != nil {
 			t.Fatalf("ChannelEdit: %v", err)
@@ -262,7 +262,7 @@ func TestSessionTempVCManagerCreateAndRenamePutDiscordsReplyInTheState(t *testin
 		}
 		dg = stateSession(t, answering(created, outage))
 		feed(t, dg, &discordgo.GuildCreate{Guild: guildDataGuild()})
-		mgr := NewSessionTempVCManager(dg)
+		mgr := NewSessionTempVCManager(dg, testTempVCGuild)
 
 		ch, err := create(mgr)
 

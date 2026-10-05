@@ -240,6 +240,12 @@ func (f *fakeDiscord) GuildData(guildID string) commands.GuildSnapshot {
 	return data
 }
 
+// MemberList reads no guild data. No panel page reads the member list yet;
+// the fake carries it for the interface.
+func (f *fakeDiscord) MemberList(_ string) commands.MemberListSnapshot {
+	return commands.MemberListSnapshot{}
+}
+
 // MemberRanks reads the payload through the runtime's shared helper. The
 // panel's tests never run a sweep; the fake carries it for the interface.
 func (f *fakeDiscord) MemberRanks(g *discordgo.Guild) map[string]int {

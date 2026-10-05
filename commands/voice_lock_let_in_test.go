@@ -493,7 +493,7 @@ func TestSessionTempVCManagerCanSeeChannelJudgesByTheGivenRoles(t *testing.T) {
 			PermissionOverwrites: overwrites,
 		}},
 	}})
-	mgr := NewSessionTempVCManager(dg)
+	mgr := NewSessionTempVCManager(dg, testTempVCGuild)
 
 	for _, tc := range []struct {
 		m    permMember
