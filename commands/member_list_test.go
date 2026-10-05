@@ -2,6 +2,7 @@ package commands
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -25,6 +26,9 @@ import (
 type fakeMemberRequester struct {
 	mu   sync.Mutex
 	sent []memberRequest
+	// failNext makes the next request fail to send, as the gateway write
+	// does while the connection is down. The request is still recorded.
+	failNext error
 }
 
 // memberRequest is one member request as the gateway would have been sent
@@ -39,7 +43,9 @@ func (f *fakeMemberRequester) RequestGuildMembers(guildID, query string, limit i
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, memberRequest{guildID: guildID, query: query, limit: limit, nonce: nonce})
-	return nil
+	err := f.failNext
+	f.failNext = nil
+	return err
 }
 
 // requests returns the member requests sent so far, oldest first.
@@ -249,8 +255,12 @@ func TestMemberListLogsItsCompletionWithThePartCount(t *testing.T) {
 	w.deliver(listChunk(nonce, 2, 3, listMember("user-c", "c")))
 
 	fields := map[string]string{"guild_id": testTempVCGuild, "nonce": nonce, "chunks": "3"}
-	if got := logRecordsWith(t, logs, "INFO", fields); len(got) != 1 {
-		t.Errorf("INFO records carrying %v = %v, want one", fields, got)
+	got := logRecordsWith(t, logs, "INFO", fields)
+	if len(got) != 1 {
+		t.Fatalf("INFO records carrying %v = %v, want one", fields, got)
+	}
+	if got[0]["duration_ms"] == "" {
+		t.Errorf("completion record %v carries no time from request to last part", got[0])
 	}
 }
 
@@ -467,10 +477,12 @@ func TestMemberListSaysWhetherTheGatewayIsConnected(t *testing.T) {
 	}
 }
 
-// Regression pin: green before this slice. discordgo fires Connect on a
-// resume as on a fresh session, and a resumed session gets no GUILD_CREATE.
-// Asking again on Connect would throw a complete list away for nothing.
-func TestMemberListKeepsTheListThroughAResumeRegressionPin(t *testing.T) {
+// Regression pin: green on arrival, no code was written for it. It is the
+// proof that a resumed session sends no request and keeps the list.
+// discordgo fires Connect on a resume as on a fresh session, and a resumed
+// session gets no GUILD_CREATE, so asking again on Connect would throw a
+// complete list away.
+func TestMemberListKeepsTheListThroughAResume(t *testing.T) {
 	w := newMemberListWorld(t)
 	w.completeList()
 
@@ -537,14 +549,14 @@ func TestMemberListStartsOverAfterAnOutage(t *testing.T) {
 	}
 }
 
-// Regression pin: green before this slice, since the read copies each
-// member under the state's lock. discordgo's reader writes cached members
+// Regression pin: green on arrival, no code was written for it. It guards
+// the copy under the state's lock. discordgo's reader writes cached members
 // in place: a member update or a chunk copies over the cached member, an
-// add appends to the slice and a remove shifts it. The readers use every
-// field of what they were given after the read returned, outside any lock,
-// so -race is the assertion that the snapshot shares nothing with the
-// state.
-func TestMemberListRacesGatewayEventsCleanlyRegressionPin(t *testing.T) {
+// add appends to the slice and a remove shifts it. The readers use every field of what they were given
+// after the read returned, outside any lock, so -race is the assertion that
+// the snapshot copies each member under the state's lock and shares nothing
+// with the state.
+func TestMemberListRacesGatewayEventsCleanly(t *testing.T) {
 	w := newMemberListWorld(t)
 	w.completeList()
 
@@ -602,4 +614,19 @@ func TestMemberListRacesGatewayEventsCleanlyRegressionPin(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+// Regression pin: green on arrival, no code was written for it. A request
+// the gateway write fails to send, as it does while the connection is down,
+// is waited on like any other, so the stall wait asks again.
+func TestMemberListAsksAgainAfterARequestFailsToSend(t *testing.T) {
+	w := newMemberListWorld(t)
+	w.req.failNext = errors.New("websocket not open")
+	w.deliver(listGuildCreate())
+
+	w.clock.advance(memberListStallLimit + time.Second)
+
+	if sent := w.req.requests(); len(sent) != 2 {
+		t.Errorf("past the stall limit after a failed send, sent %+v, want a second request", sent)
+	}
 }

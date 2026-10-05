@@ -19,8 +19,7 @@ import (
 // does not record whether the parts are complete. The tracker here does, by
 // counting the parts that answer its own request. A READY empties the list
 // and an outage's GUILD_CREATE resets it, both in the state; a resumed
-// session keeps it. The research behind it is
-// docs/research/warden-gateway-member-list.md at 71850c6.
+// session keeps it. Spec #434, "The member list", sets out the rules.
 
 // memberListStallLimit is how long the bot waits for the next part of the
 // member list before it asks again. Discord allows one full-list request
@@ -30,6 +29,20 @@ const memberListStallLimit = 30 * time.Second
 // memberListLateAfter is how long after its GUILD_CREATE a member list
 // still partial counts as late, and reaches Sentry.
 const memberListLateAfter = 5 * time.Minute
+
+// opRequestGuildMembers is the gateway opcode of the member request, which
+// a RATE_LIMITED dispatch names when it refuses one.
+const opRequestGuildMembers = 8
+
+// askReason says why the bot asked for the member list, in the request's
+// log line.
+type askReason string
+
+const (
+	askGuildCreate askReason = "guild_create"
+	askRefused     askReason = "refused"
+	askStalled     askReason = "stalled"
+)
 
 // errMemberListLate is the Sentry event of a member list still partial
 // memberListLateAfter after its GUILD_CREATE.
@@ -103,8 +116,10 @@ type ListedMember struct {
 // memberList tracks whether the state holds the whole member list of one
 // guild. Its handlers run on discordgo's handler goroutines, one per event
 // in no fixed order, and its waits on timer goroutines, so mu guards every
-// field below it. Lock order: mu is never held while taking the state's
-// lock, nor the other way round.
+// field below it, and each handler and wait decides and starts its request
+// in one critical section. Lock order: mu, then the state's read lock,
+// never the reverse. discordgo releases the state's lock before it starts
+// any handler.
 type memberList struct {
 	guildID string
 	req     memberRequester
@@ -181,17 +196,16 @@ func (m *sessionTempVCManager) MemberList(guildID string) MemberListSnapshot {
 
 // guildCreated starts a new episode for the guild's GUILD_CREATE: it records
 // the guild the state now holds, starts the late wait over and asks for the
-// whole list. Any other guild's GUILD_CREATE is ignored.
+// whole list, all in one critical section, so no read sees the new guild
+// with the old list's count. Any other guild's GUILD_CREATE is ignored.
 func (l *memberList) guildCreated(g *discordgo.Guild) {
 	if g == nil || g.ID != l.guildID {
 		return
 	}
-	l.state.RLock()
-	held := heldGuildLocked(l.state, l.guildID)
-	l.state.RUnlock()
-
 	l.mu.Lock()
-	l.guild = held
+	l.state.RLock()
+	l.guild = availableGuild(l.state, l.guildID)
+	l.state.RUnlock()
 	if l.stopLate != nil {
 		l.stopLate()
 	}
@@ -199,18 +213,18 @@ func (l *memberList) guildCreated(g *discordgo.Guild) {
 	l.late = false
 	episode := l.episode
 	l.stopLate = tempVCAfterFunc(memberListLateAfter, func() { l.lateCheck(episode) })
+	nonce := l.startRequestLocked()
 	l.mu.Unlock()
 
-	l.ask("guild_create")
+	l.send(nonce, askGuildCreate)
 }
 
-// ask sends a new request for the whole list, an empty query with limit 0
-// and a nonce of its own, and starts the stall wait. reason says why, in
-// the request's log line: guild_create, refused or stalled. A request the
-// gateway write fails to send is waited on all the same, so the stall wait
-// asks again.
-func (l *memberList) ask(reason string) {
-	l.mu.Lock()
+// startRequestLocked starts a new request for the whole list with a nonce
+// of its own, clears the count, ends any refusal's wait and starts the
+// stall wait. A request the gateway write then fails to send is waited on
+// all the same, so the stall wait asks again. Caller holds mu, and sends
+// the request once it has released it.
+func (l *memberList) startRequestLocked() (nonce string) {
 	l.requests++
 	l.nonce = "members-" + strconv.FormatUint(l.requests, 10)
 	l.sentAt = tempVCNow()
@@ -223,14 +237,33 @@ func (l *memberList) ask(reason string) {
 		l.stopRetry = nil
 	}
 	l.waitForPartLocked()
-	nonce := l.nonce
-	l.mu.Unlock()
+	return l.nonce
+}
 
+// send sends the request for the whole list, an empty query with limit 0,
+// and logs it with why it was sent.
+func (l *memberList) send(nonce string, reason askReason) {
 	if err := l.req.RequestGuildMembers(l.guildID, "", 0, nonce, false); err != nil {
-		utils.Warn("Member list request not sent", "guild_id", l.guildID, "nonce", nonce, "reason", reason, "error", err)
+		utils.Warn("Member list request not sent", "guild_id", l.guildID, "nonce", nonce, "reason", string(reason), "error", err)
 		return
 	}
-	utils.Info("Member list requested", "guild_id", l.guildID, "nonce", nonce, "reason", reason)
+	utils.Info("Member list requested", "guild_id", l.guildID, "nonce", nonce, "reason", string(reason))
+}
+
+// askAgain sends a new request when the wait that fired still holds: the
+// list is partial, current reports the wait is the one in force, and the
+// state still holds the guild the requests ask about. The guild's next
+// GUILD_CREATE asks for itself. current runs with mu held.
+func (l *memberList) askAgain(reason askReason, current func() bool) {
+	l.mu.Lock()
+	if l.complete || !current() || !l.holdsGuildLocked() {
+		l.mu.Unlock()
+		return
+	}
+	nonce := l.startRequestLocked()
+	l.mu.Unlock()
+
+	l.send(nonce, reason)
 }
 
 // chunkArrived counts a part answering the request in flight, by chunk
@@ -265,8 +298,7 @@ type rateLimitedDispatch struct {
 	RetryAfter float64 `json:"retry_after"`
 	Opcode     int     `json:"opcode"`
 	Meta       struct {
-		Nonce   string `json:"nonce"`
-		GuildID string `json:"guild_id"`
+		Nonce string `json:"nonce"`
 	} `json:"meta"`
 }
 
@@ -279,7 +311,7 @@ func (l *memberList) refused(raw json.RawMessage) {
 		return
 	}
 	l.mu.Lock()
-	if rl.Opcode != 8 || rl.Meta.Nonce == "" || rl.Meta.Nonce != l.nonce || l.complete {
+	if rl.Opcode != opRequestGuildMembers || rl.Meta.Nonce == "" || rl.Meta.Nonce != l.nonce || l.complete {
 		l.mu.Unlock()
 		return
 	}
@@ -293,18 +325,9 @@ func (l *memberList) refused(raw json.RawMessage) {
 }
 
 // retry asks again once the wait of the refusal of request nonce has
-// passed, unless another request has gone out meanwhile or the state no
-// longer holds the guild.
+// passed, unless another request has gone out meanwhile.
 func (l *memberList) retry(nonce string) {
-	if !l.holdsGuild() {
-		return
-	}
-	l.mu.Lock()
-	current := l.nonce == nonce && !l.retryAt.IsZero()
-	l.mu.Unlock()
-	if current {
-		l.ask("refused")
-	}
+	l.askAgain(askRefused, func() bool { return l.nonce == nonce && !l.retryAt.IsZero() })
 }
 
 // waitForPartLocked starts the stall wait over: if no part arrives within
@@ -324,19 +347,10 @@ func (l *memberList) stopStallLocked() {
 	l.stallSeq++
 }
 
-// stalled asks again when the stall wait numbered seq ends with no part,
-// unless the state no longer holds the guild: the guild's next GUILD_CREATE
-// asks for itself. It never gives up otherwise.
+// stalled asks again when the stall wait numbered seq ends with no part. It
+// never gives up while the state holds the guild.
 func (l *memberList) stalled(seq uint64) {
-	if !l.holdsGuild() {
-		return
-	}
-	l.mu.Lock()
-	current := seq == l.stallSeq && !l.complete && l.retryAt.IsZero()
-	l.mu.Unlock()
-	if current {
-		l.ask("stalled")
-	}
+	l.askAgain(askStalled, func() bool { return seq == l.stallSeq && l.retryAt.IsZero() })
 }
 
 // lateCheck marks the list late, and reaches Sentry once, when the list the
@@ -344,39 +358,35 @@ func (l *memberList) stalled(seq uint64) {
 // state no longer holds is one Discord has not sent again, and no fault of
 // the list.
 func (l *memberList) lateCheck(episode uint64) {
-	if !l.holdsGuild() {
-		return
-	}
 	l.mu.Lock()
-	if episode != l.episode || l.complete {
+	if episode != l.episode || l.complete || !l.holdsGuildLocked() {
 		l.mu.Unlock()
 		return
 	}
 	l.late = true
 	received, expected := len(l.seen), l.expected
 	l.mu.Unlock()
-	captureError("Member list still partial 5 minutes after GUILD_CREATE", errMemberListLate,
-		"guild_id", l.guildID, "parts_received", received, "parts_expected", expected)
+	captureError("Member list still partial after GUILD_CREATE", errMemberListLate,
+		"guild_id", l.guildID, "late_after", memberListLateAfter.String(),
+		"parts_received", received, "parts_expected", expected)
 }
 
-// holdsGuild reports whether the state still holds the guild the requests
-// ask about. After a READY it holds an unavailable placeholder, and after
-// an outage's GUILD_DELETE nothing, until the guild's next GUILD_CREATE.
-func (l *memberList) holdsGuild() bool {
-	l.mu.Lock()
-	requested := l.guild
-	l.mu.Unlock()
+// holdsGuildLocked reports whether the state still holds the guild the
+// requests ask about. After a READY it holds an unavailable placeholder,
+// and after an outage's GUILD_DELETE nothing, until the guild's next
+// GUILD_CREATE. Caller holds mu.
+func (l *memberList) holdsGuildLocked() bool {
 	l.state.RLock()
 	defer l.state.RUnlock()
-	g := heldGuildLocked(l.state, l.guildID)
-	return g != nil && g == requested
+	g := availableGuild(l.state, l.guildID)
+	return g != nil && g == l.guild
 }
 
-// heldGuildLocked returns the state's guild, or nil when the state holds no
-// guild by that ID or holds its unavailable placeholder. It scans
-// State.Guilds itself, since State.Guild takes the read lock the caller
-// already holds.
-func heldGuildLocked(st *discordgo.State, guildID string) *discordgo.Guild {
+// availableGuild returns the state's guild, or nil when the state holds no
+// guild by that ID or holds its unavailable placeholder. Caller holds the
+// state's read lock. It scans State.Guilds itself, since State.Guild takes
+// that lock again.
+func availableGuild(st *discordgo.State, guildID string) *discordgo.Guild {
 	for _, g := range st.Guilds {
 		if g.ID == guildID && !g.Unavailable {
 			return g
@@ -406,7 +416,7 @@ func (l *memberList) snapshot(guildID string) MemberListSnapshot {
 	st := l.state
 	st.RLock()
 	defer st.RUnlock()
-	g := heldGuildLocked(st, l.guildID)
+	g := availableGuild(st, l.guildID)
 	if guildID != l.guildID || g == nil {
 		return MemberListSnapshot{}
 	}
