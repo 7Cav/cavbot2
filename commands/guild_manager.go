@@ -15,9 +15,9 @@ import (
 // Discord gateway.
 //
 // Following the InteractionResponder precedent (utils/discord_responder.go),
-// the production wrapper is a thin pass-through. Each call that changes the
-// guild takes an audit log reason, as the temp VC seam's do, so the reason
-// travels with the call. Discord shows the bot as the actor of every such
+// the production wrapper is a thin pass-through that only URL-encodes the
+// audit log reasons. Each call that changes the guild takes one, as the temp
+// VC seam's do, so the reason travels with the call. Discord shows the bot as the actor of every such
 // change, so the reason is where a moderator reads who made it.
 type GuildManager interface {
 	GuildRoles(guildID string) ([]*discordgo.Role, error)

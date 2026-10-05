@@ -214,12 +214,13 @@ func runFoxhole(
 
 // foxholeAuditReason is the audit log reason a Foxhole command run carries
 // on every change it makes, in the temp VC format: the command as typed,
-// under the name it ran, then the member who ran it. what is the subcommand,
-// or the roster add's unit.
-func foxholeAuditReason(interaction *discordgo.InteractionCreate, what string) string {
+// under the name it ran, then the member who ran it. typed is what the
+// member picked after the command name: the subcommand, or the roster add's
+// unit.
+func foxholeAuditReason(interaction *discordgo.InteractionCreate, typed string) string {
 	username, discordID := interactionUsernameAndID(interaction)
 	by := Invoker{UserID: discordID, Username: username}
-	return fmt.Sprintf("/%s %s by %s", commandNameOf(interaction), what, by.auditName())
+	return fmt.Sprintf("/%s %s by %s", commandNameOf(interaction), typed, by.auditName())
 }
 
 func handleFoxholeAdd(r utils.InteractionResponder, gm GuildManager, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
