@@ -2,12 +2,7 @@
 
 ## Status
 
-Accepted. **Amended 2026-10-04** (#438). A rename can keep the old name
-registered for a set window, so its command ID and the Integrations overrides
-Discord keys by it survive the release. `NewRegistry()` still declares every
-command: it registers a copy of each renamed command under its old name from
-the table in `commands/renamed_commands.go`, until a cleanup release deletes
-the row and the startup sync deletes the command.
+Accepted.
 
 ## Decision
 

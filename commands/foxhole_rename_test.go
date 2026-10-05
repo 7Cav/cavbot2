@@ -3,7 +3,6 @@ package commands
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"reflect"
@@ -12,9 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
-	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -102,7 +101,7 @@ func commandsNamedIn(text string) []string {
 // 100 characters, which would stop the bot at registration.
 func TestOldFoxholeNamesDescribeTheirNewNameAndCutoff(t *testing.T) {
 	defs := registeredDefinitions()
-	day := regexp.MustCompile(`\b` + strconv.Itoa(renameCutoff.Day()) + `\b`)
+	day := regexp.MustCompile(`\b` + strconv.Itoa(foxholeRenameCutoff.Day()) + `\b`)
 
 	for oldName, newName := range oldFoxholeNames {
 		def, ok := defs[oldName]
@@ -117,7 +116,7 @@ func TestOldFoxholeNamesDescribeTheirNewNameAndCutoff(t *testing.T) {
 		if !day.MatchString(description) {
 			t.Errorf("/%s description %q lacks the cutoff's day", oldName, description)
 		}
-		for _, part := range []string{renameCutoff.Month().String(), strconv.Itoa(renameCutoff.Year())} {
+		for _, part := range []string{foxholeRenameCutoff.Month().String(), strconv.Itoa(foxholeRenameCutoff.Year())} {
 			if !strings.Contains(description, part) {
 				t.Errorf("/%s description %q lacks %q", oldName, description, part)
 			}
@@ -268,8 +267,8 @@ func assertRenameNotice(t *testing.T, content, oldName, newName string) {
 		t.Errorf("last line %q carries no timestamp markup", lastLine)
 		return
 	}
-	if unix, err := strconv.ParseInt(match[1], 10, 64); err != nil || unix != renameCutoff.Unix() {
-		t.Errorf("last line %q dates %s, want the cutoff's Unix time %d", lastLine, match[1], renameCutoff.Unix())
+	if unix, err := strconv.ParseInt(match[1], 10, 64); err != nil || unix != foxholeRenameCutoff.Unix() {
+		t.Errorf("last line %q dates %s, want the cutoff's Unix time %d", lastLine, match[1], foxholeRenameCutoff.Unix())
 	}
 }
 
@@ -293,89 +292,140 @@ func trooperGuild() *fakeGuildManager {
 	}
 }
 
-// Every reply under an old name still says what it said before, then ends
-// with the notice naming the old command, its new name and the cutoff.
-func TestRepliesUnderOldFoxholeNamesEndWithTheRenameNotice(t *testing.T) {
-	t.Run("immediate reply", func(t *testing.T) {
-		f := &fakeResponder{}
-		runFoxhole(f, trooperGuild(), slashNamed("warden",
-			stringOption("command", "bogus"), stringOption("flag", "internal")))
+// renameNotes returns the rename notes among the follow-ups a run sent: the
+// follow-ups whose content dates the cutoff.
+func renameNotes(calls []recordedCall) []*discordgo.WebhookParams {
+	var notes []*discordgo.WebhookParams
+	for _, c := range calls {
+		if isRenameNote(c) {
+			notes = append(notes, c.Params)
+		}
+	}
+	return notes
+}
 
-		assertRenameNotice(t, lastResponseContent(f.Calls()), "warden", "foxhole")
-	})
+func isRenameNote(c recordedCall) bool {
+	if c.Method != "Followup" || c.Params == nil {
+		return false
+	}
+	for _, match := range timestampPattern.FindAllStringSubmatch(c.Params.Content, -1) {
+		if unix, err := strconv.ParseInt(match[1], 10, 64); err == nil && unix == foxholeRenameCutoff.Unix() {
+			return true
+		}
+	}
+	return false
+}
 
-	t.Run("deferred reply", func(t *testing.T) {
+// assertOneRenameNote fails unless the run sent exactly one rename note, only
+// the invoker sees it, and it names oldName and newName.
+func assertOneRenameNote(t *testing.T, calls []recordedCall, oldName, newName string) {
+	t.Helper()
+	notes := renameNotes(calls)
+	if len(notes) != 1 {
+		t.Fatalf("sent %d rename notes, want 1; calls %+v", len(notes), calls)
+	}
+	if notes[0].Flags&discordgo.MessageFlagsEphemeral == 0 {
+		t.Errorf("rename note %q is visible to the whole channel", notes[0].Content)
+	}
+	assertRenameNotice(t, notes[0].Content, oldName, newName)
+}
+
+// heldRoleCreate is a guild whose role create waits until the test closes
+// release, so a purge can be held partway through.
+type heldRoleCreate struct {
+	*fakeGuildManager
+	release chan struct{}
+}
+
+func (g heldRoleCreate) GuildRoleCreate(guildID string, data *discordgo.RoleParams) (*discordgo.Role, error) {
+	<-g.release
+	return g.fakeGuildManager.GuildRoleCreate(guildID, data)
+}
+
+// followupSignal is a responder that signals on sent after each follow-up.
+type followupSignal struct {
+	*fakeResponder
+	sent chan struct{}
+}
+
+func (f followupSignal) FollowupMessageCreate(i *discordgo.Interaction, wait bool, params *discordgo.WebhookParams) error {
+	err := f.fakeResponder.FollowupMessageCreate(i, wait, params)
+	f.sent <- struct{}{}
+	return err
+}
+
+// A run under an old name ends with a note, sent only to the invoker, naming
+// the old command, its new name and the cutoff.
+func TestRunsUnderOldFoxholeNamesEndWithARenameNote(t *testing.T) {
+	t.Run("after its reply", func(t *testing.T) {
 		f := &fakeResponder{}
 		runFoxhole(f, trooperGuild(), slashNamed("warden",
 			stringOption("command", "add"), stringOption("flag", "internal"),
 			stringOption("discordname", "123456789012345678")))
 
-		assertRenameNotice(t, lastEditContent(f.Calls()), "warden", "foxhole")
+		assertOneRenameNote(t, f.Calls(), "warden", "foxhole")
 	})
 
-	t.Run("deferred reply with the added members", func(t *testing.T) {
+	t.Run("after a refusal", func(t *testing.T) {
 		f := &fakeResponder{}
 		runFoxhole(f, trooperGuild(), slashNamed("warden",
-			stringOption("command", "bulkadd"), stringOption("flag", "internal"),
-			stringOption("discordname", "good")))
+			stringOption("command", "add"), stringOption("flag", "internal")))
+
+		assertOneRenameNote(t, f.Calls(), "warden", "foxhole")
+	})
+
+	// A purge's summary arrives from the background after the handler
+	// returns. A note sent first would take the place of the deferred reply,
+	// and the summary would then overwrite it.
+	t.Run("after the purge summary", func(t *testing.T) {
+		noOverwriteDelay(t)
+		gm := heldRoleCreate{fakeGuildManager: trooperGuild(), release: make(chan struct{})}
+		f := followupSignal{fakeResponder: &fakeResponder{}, sent: make(chan struct{}, 4)}
+
+		runFoxhole(f, gm, slashNamed("warden",
+			stringOption("command", "purge"), stringOption("flag", "internal")))
+		close(gm.release)
+		select {
+		case <-f.sent:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no follow-up after the purge")
+		}
 
 		calls := f.Calls()
-		assertRenameNotice(t, lastEditContent(calls), "warden", "foxhole")
-		if embed := lastEditEmbed(calls); embed == nil || !strings.Contains(embed.Description, "<@111>") {
-			t.Errorf("reply embed %+v no longer names the added member", embed)
+		assertOneRenameNote(t, calls, "warden", "foxhole")
+		summaryAt, noteAt := -1, -1
+		for idx, c := range calls {
+			switch {
+			case c.Method == "Edit":
+				summaryAt = idx
+			case isRenameNote(c):
+				noteAt = idx
+			}
+		}
+		if summaryAt < 0 || noteAt < summaryAt {
+			t.Errorf("rename note at call %d, purge summary at call %d; want the note after the summary", noteAt, summaryAt)
 		}
 	})
 
-	t.Run("roster add's immediate reply", func(t *testing.T) {
+	t.Run("roster add", func(t *testing.T) {
 		f := &fakeResponder{}
 		runFoxholeBulkAddInternal(f, trooperGuild(), slashNamed("warden-bulkadd-internal",
 			stringOption("unit", "not-a-unit")))
 
-		assertRenameNotice(t, lastResponseContent(f.Calls()), "warden-bulkadd-internal", "foxhole-bulkadd-internal")
-	})
-
-	t.Run("purge summary posted to the channel after the token expired", func(t *testing.T) {
-		f := &fakeResponder{EditErrs: []error{tokenExpiredRESTError()}}
-		gm := &fakeGuildManager{}
-		i := slashNamed("warden", stringOption("command", "purge"))
-		i.ChannelID = "chan-9"
-
-		deliverPurgeSummary(f, gm, i, "✅ Purge complete.")
-
-		assertRenameNotice(t, gm.lastChannelMessage(), "warden", "foxhole")
+		assertOneRenameNote(t, f.Calls(), "warden-bulkadd-internal", "foxhole-bulkadd-internal")
 	})
 }
 
-// A reply under a new name carries no rename notice.
-func TestRepliesUnderNewFoxholeNamesCarryNoRenameNotice(t *testing.T) {
+// A run under a new name sends no rename note.
+func TestRunsUnderNewFoxholeNamesSendNoRenameNote(t *testing.T) {
 	f := &fakeResponder{}
 	runFoxhole(f, trooperGuild(), slashNamed("foxhole",
 		stringOption("command", "add"), stringOption("flag", "internal"),
 		stringOption("discordname", "123456789012345678")))
 
-	reply := lastEditContent(f.Calls())
-	if strings.Contains(reply, "<t:"+strconv.FormatInt(renameCutoff.Unix(), 10)) {
-		t.Errorf("/foxhole reply %q carries the rename notice", reply)
+	if notes := renameNotes(f.Calls()); len(notes) != 0 {
+		t.Errorf("/foxhole sent rename notes %+v", notes)
 	}
-}
-
-// Discord refuses a message over 2000 characters, so a reply that already
-// fills the limit makes room for the notice instead of failing to arrive.
-func TestFullReplyUnderAnOldFoxholeNameStillFitsWithTheNotice(t *testing.T) {
-	unlinked := make([]utils.LiteProfileResponse, 200)
-	for idx := range unlinked {
-		unlinked[idx] = liteMember(fmt.Sprintf("Trooper.%03d", idx), "")
-	}
-	serveRosterAndProfiles(t, liteRoster(unlinked...), http.StatusOK, nil)
-	f := &fakeResponder{}
-
-	runFoxholeBulkAddInternal(f, trooperGuild(), slashNamed("warden-bulkadd-internal", stringOption("unit", "D/ACD")))
-
-	reply := lastEditContent(f.Calls())
-	if n := utf8.RuneCountInString(reply); n > 2000 {
-		t.Errorf("reply is %d characters, over Discord's 2000", n)
-	}
-	assertRenameNotice(t, reply, "warden-bulkadd-internal", "foxhole-bulkadd-internal")
 }
 
 // unsetEnv unsets key for the rest of the test and restores it afterwards.

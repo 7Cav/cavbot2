@@ -12,15 +12,16 @@ type Registry struct {
 // deletes any guild command the registry lacks, and Discord keys command
 // permissions by command ID, so a command that came and went with
 // configuration would shed its Server Settings restriction on every
-// store-less start. With no runtime each handler refuses. A renamed command
-// is also declared under its old name until the cutoff (renamed_commands.go).
+// store-less start. With no runtime each handler refuses.
 func NewRegistry(tempVC *TempVC) *Registry {
 	r := &Registry{}
-	declared := []Command{
+	r.RegisterCommands(
 		Milpac(),
 		Foxhole(),
+		Warden(),
 		Enlist(),
 		FoxholeBulkAddInternal(),
+		WardenBulkAddInternal(),
 		Zulu(),
 		S6ITCheck(),
 		Awol(),
@@ -32,9 +33,7 @@ func NewRegistry(tempVC *TempVC) *Registry {
 		VoiceRename(tempVC),
 		VoiceLock(tempVC),
 		VoiceUnlock(tempVC),
-	}
-	r.RegisterCommands(declared...)
-	r.RegisterCommands(oldNameCommands(declared)...)
+	)
 	return r
 }
 

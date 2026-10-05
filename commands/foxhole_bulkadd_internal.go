@@ -98,7 +98,7 @@ func runFoxholeBulkAddInternal(
 	gm GuildManager,
 	interaction *discordgo.InteractionCreate,
 ) {
-	r = withRenameNotice(r, interaction)
+	defer sendRenameNote(r, interaction, "warden-bulkadd-internal", "foxhole-bulkadd-internal")
 
 	// Guild-context guard first: Foxhole commands require guild context. Rejecting
 	// on an empty GuildID here gives a clear server-only message and guarantees a
@@ -329,13 +329,7 @@ const discordMessageLimit = 2000
 // then appends a truncation marker. The lead summary line is short and comes
 // first, so it always survives.
 func clampToDiscordMessageLimit(message string) string {
-	return clampToLimit(message, discordMessageLimit)
-}
-
-// clampToLimit is clampToDiscordMessageLimit for a limit of limit bytes, for a
-// message that something else will be appended to.
-func clampToLimit(message string, limit int) string {
-	if len(message) <= limit {
+	if len(message) <= discordMessageLimit {
 		return message
 	}
 	const marker = "... (truncated)"
@@ -344,7 +338,7 @@ func clampToLimit(message string, limit int) string {
 	used := 0
 	for _, line := range lines {
 		addition := len(line) + 1 // +1 for the newline join
-		if used+addition+len(marker)+1 > limit {
+		if used+addition+len(marker)+1 > discordMessageLimit {
 			break
 		}
 		kept = append(kept, line)

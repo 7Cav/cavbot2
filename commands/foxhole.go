@@ -59,7 +59,7 @@ func LogFoxholeRoleBaseName() {
 		utils.Warn("Foxhole role base name read from the old variable; rename it",
 			"variable", foxholeRoleBaseNameOldEnv,
 			"rename_to", foxholeRoleBaseNameEnv,
-			"cleanup_on_or_after", renameCutoff.Format(time.DateOnly))
+			"cleanup_on_or_after", foxholeRenameCutoff.Format(time.DateOnly))
 	}
 	utils.Info("Foxhole role base name resolved", "base_name", name)
 }
@@ -134,7 +134,13 @@ func runFoxhole(
 	gm GuildManager,
 	interaction *discordgo.InteractionCreate,
 ) {
-	r = withRenameNotice(r, interaction)
+	// A purge sends its own note once its summary is out.
+	purging := false
+	defer func() {
+		if !purging {
+			sendRenameNote(r, interaction, "warden", "foxhole")
+		}
+	}()
 
 	// Guild-context guard runs FIRST, before any read of interaction.Member.
 	// /foxhole requires guild context, and Discord only populates Member for guild
@@ -197,6 +203,7 @@ func runFoxhole(
 	case "bulkadd":
 		handleFoxholeBulkAdd(r, gm, interaction, guildID, query, roleScope)
 	case "purge":
+		purging = true
 		handleFoxholePurge(r, gm, interaction, guildID, roleScope)
 	default:
 		utils.HandleError(r, interaction, "❌ Unknown subcommand")
@@ -415,6 +422,7 @@ func handleFoxholePurge(
 	go func() {
 		defer utils.RecoverPanic("foxhole-purge")
 		runFoxholePurge(r, gm, interaction, guildID, roleScope)
+		sendRenameNote(r, interaction, "warden", "foxhole")
 	}()
 }
 
@@ -547,9 +555,7 @@ func deliverPurgeSummary(
 	}
 
 	if isInteractionTokenExpired(editErr) {
-		// r appended the rename notice to the edit; this message bypasses r.
-		fallback := appendRenameNotice(summary, renameNotice(interaction))
-		if sendErr := gm.ChannelMessageSend(interaction.ChannelID, fallback); sendErr != nil {
+		if sendErr := gm.ChannelMessageSend(interaction.ChannelID, summary); sendErr != nil {
 			// Both surfaces failed: the operator can't be reached. This is a
 			// genuine delivery fault worth paging on. Carry the original edit
 			// error too, so on-call sees the full chain — the edit expired AND

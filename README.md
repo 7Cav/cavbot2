@@ -28,7 +28,7 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/s6-it-check` | S6 IT members eligible for full status |
 | `/foxhole` | Add, remove, bulk-add or purge the Foxhole roles |
 | `/foxhole-bulkadd-internal` | Add a validated unit's roster to the Internal Foxhole role |
-| `/warden`, `/warden-bulkadd-internal` | The old names of the two commands above, kept until a cleanup release on or after 6 November 2026. They run the same code, and every reply under them names the new command and that date |
+| `/warden`, `/warden-bulkadd-internal` | The old names of the two commands above, kept until a cleanup release on or after 6 November 2026. They run the same code, and each run under them ends with a note naming the new command and that date |
 | `/helpline` | Crisis and mental health support resources, optionally addressed to a member |
 | `/enlist` | The enlistment process, with a link to the application |
 | `/voice-rename` | Rename the spawned voice channel you are in, optionally making it a knock channel (🚦) |

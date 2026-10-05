@@ -45,3 +45,12 @@ func interactionRoles(i *discordgo.InteractionCreate) []string {
 	}
 	return i.Member.Roles
 }
+
+// commandNameOf returns the registered name a slash command interaction ran
+// under, or "" for any other interaction.
+func commandNameOf(interaction *discordgo.InteractionCreate) string {
+	if interaction == nil || interaction.Interaction == nil || interaction.Type != discordgo.InteractionApplicationCommand {
+		return ""
+	}
+	return interaction.ApplicationCommandData().Name
+}
