@@ -18,8 +18,10 @@ func NewRegistry(tempVC *TempVC) *Registry {
 	r.RegisterCommands(
 		Milpac(),
 		Foxhole(),
+		Warden(),
 		Enlist(),
 		FoxholeBulkAddInternal(),
+		WardenBulkAddInternal(),
 		Zulu(),
 		S6ITCheck(),
 		Awol(),

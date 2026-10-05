@@ -19,8 +19,8 @@ func foxholeBulkAddInternalInteraction(unit string) *discordgo.InteractionCreate
 	return i
 }
 
-// internalRoleGM is a fake guild that already has the Verified Warden Internal
-// role, the precondition every successful run needs.
+// internalRoleGM is a fake guild that already has the Internal role, the
+// precondition every successful run needs.
 func internalRoleGM() *fakeGuildManager {
 	return &fakeGuildManager{
 		roles: []*discordgo.Role{guildRole("r-int", defaultInternalRoleName)},
@@ -66,8 +66,8 @@ func lastEditEmbed(calls []recordedCall) *discordgo.MessageEmbed {
 func TestFoxholeBulkAddInternalDefinition_SingleUnitPickerFromRegistry(t *testing.T) {
 	cmd := FoxholeBulkAddInternal()
 
-	if cmd.Definition.Name != "warden-bulkadd-internal" {
-		t.Fatalf("command name = %q, want warden-bulkadd-internal", cmd.Definition.Name)
+	if cmd.Definition.Name != "foxhole-bulkadd-internal" {
+		t.Fatalf("command name = %q, want foxhole-bulkadd-internal", cmd.Definition.Name)
 	}
 	if cmd.Handler == nil {
 		t.Fatal("command must have a handler")
@@ -104,9 +104,9 @@ func TestFoxholeBulkAddInternalDefinition_SingleUnitPickerFromRegistry(t *testin
 	}
 
 	// No DefaultMemberPermissions in code: access is governed by Discord's
-	// server-side command-permission override, matching the /warden convention.
+	// server-side command-permission override, matching the /foxhole convention.
 	if cmd.Definition.DefaultMemberPermissions != nil {
-		t.Fatal("must not set DefaultMemberPermissions in code (warden convention)")
+		t.Fatal("must not set DefaultMemberPermissions in code (Foxhole convention)")
 	}
 }
 
@@ -161,7 +161,7 @@ func TestValidatedInternalUnits_RegistryRowsValidAndUnique(t *testing.T) {
 }
 
 // Happy path: every roster member has a linked, in-guild Discord. Each one is
-// added straight to Verified Warden Internal by ID (no member search), the run
+// added straight to the Internal role by ID (no member search), the run
 // is acknowledged with a deferred ephemeral, and the report carries the
 // added-or-confirmed count plus the success mention embed.
 func TestRunFoxholeBulkAddInternal_HappyPathAddsAllAndReportsCount(t *testing.T) {
@@ -783,7 +783,7 @@ func TestRunFoxholeBulkAddInternal_DeferFailureBailsBeforeWork(t *testing.T) {
 	}
 }
 
-// When the Verified Warden Internal role is absent from the guild, the run says
+// When the Internal role is absent from the guild, the run says
 // so and never fetches the roster or adds anyone.
 func TestRunFoxholeBulkAddInternal_InternalRoleMissingSurfacedNoFetch(t *testing.T) {
 	tripwireAPIServer(t)
@@ -845,14 +845,14 @@ func TestRegistry_RegistersFoxholeBulkAddInternal(t *testing.T) {
 
 	registered := false
 	for _, def := range reg.GetCommands() {
-		if def.Name == "warden-bulkadd-internal" {
+		if def.Name == "foxhole-bulkadd-internal" {
 			registered = true
 		}
 	}
 	if !registered {
-		t.Fatal("warden-bulkadd-internal must be registered in the command registry")
+		t.Fatal("foxhole-bulkadd-internal must be registered in the command registry")
 	}
-	if _, ok := reg.GetHandler("warden-bulkadd-internal"); !ok {
-		t.Fatal("warden-bulkadd-internal must resolve a handler from the registry")
+	if _, ok := reg.GetHandler("foxhole-bulkadd-internal"); !ok {
+		t.Fatal("foxhole-bulkadd-internal must resolve a handler from the registry")
 	}
 }

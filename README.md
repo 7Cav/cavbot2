@@ -26,8 +26,9 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/afsm` | Users eligible for the AFSM in a department |
 | `/s3aar` | Disabled due to disuse |
 | `/s6-it-check` | S6 IT members eligible for full status |
-| `/warden` | Warden role management |
-| `/warden-bulkadd-internal` | Add a validated unit's roster to the internal Warden role |
+| `/foxhole` | Add, remove, bulk-add or purge the Foxhole roles |
+| `/foxhole-bulkadd-internal` | Add a validated unit's roster to the Internal Foxhole role |
+| `/warden`, `/warden-bulkadd-internal` | The old names of the two commands above, kept until a cleanup release on or after 6 November 2026. They run the same code, and each run under them ends with a note naming the new command and that date |
 | `/helpline` | Crisis and mental health support resources, optionally addressed to a member |
 | `/enlist` | The enlistment process, with a link to the application |
 | `/voice-rename` | Rename the spawned voice channel you are in, optionally making it a knock channel (🚦) |
@@ -55,12 +56,12 @@ At <https://discord.com/developers/applications>:
 | Permission | Needed for |
 |------------|-----------|
 | View Channels, Send Messages, Embed Links, Attach Files | Every command's response |
-| Manage Roles | `/warden` adds, removes and creates roles; `/warden-bulkadd-internal` adds them |
-| Manage Channels | `/warden` sets per-channel permission overwrites |
+| Manage Roles | `/foxhole` adds, removes and creates roles; `/foxhole-bulkadd-internal` adds them |
+| Manage Channels | `/foxhole` sets per-channel permission overwrites |
 
 `applications.commands` is what allows slash commands to register. Discord will
 not let the bot grant a role positioned above its own, so drag the bot's role
-high in the server's role list before testing `/warden`.
+high in the server's role list before testing `/foxhole`.
 
 ### 2. IDs
 
@@ -93,7 +94,7 @@ Not checked at startup, but each one silently disables something:
 | `BEARER` | API token for `api.7cav.us`. Every milpac lookup fails with no startup error. Check this first if `/milpac`, `/awol` or `/afsm` come back empty. The startup rank ladder check also needs it and logs `Rank ladder check skipped, ranks fetch failed` once without it. |
 | `FORUM_DB_DSN` | LOA cache stays empty, so `/loa` returns nothing. Left blank the bot logs `FORUM_DB_DSN not set, LOA cache disabled` once at startup — but `.env.example` ships a placeholder DSN, which is syntactically valid, so after `cp` you instead get `LOA cache refresh failed` once per node ID, immediately at startup and every 15 minutes after. Both mean the same thing. The production host `xenforo-db` resolves only inside the `xenforo_internal` Docker network. |
 | `LOA_NODE_IDS` | The code default is `180` alone, though `.env.example` already sets the five nodes production scans (`180,400,540,178,369`), so a copied `.env` never falls back. |
-| `WARDEN_ROLE_BASE_NAME` | The code default is `Verified Warden`, though `.env.example` sets what the roles are named in Discord now (`Verified Foxhole`), so a copied `.env` never falls back. Every `/warden` subcommand composes its role names from this and matches Discord **exactly**, so a value that doesn't reproduce the role name character for character fails all of them with `role not found` and changes nothing. The resolved value is logged at startup as `Warden role base name resolved`. |
+| `FOXHOLE_ROLE_BASE_NAME` | Defaults to `Verified Foxhole`, what the roles are named in Discord now. Every `/foxhole` subcommand composes its role names from this and matches Discord **exactly**, so a value that doesn't reproduce the role name character for character fails all of them with `role not found` and changes nothing. The resolved value is logged at startup as `Foxhole role base name resolved`. Until the cleanup release that drops the old command names, the bot also reads the old variable, `WARDEN_ROLE_BASE_NAME`, when this one is unset or empty, and logs a warning naming it at startup. |
 | `LOG_LEVEL` | Defaults to `INFO`. Accepts `DEBUG`, `INFO`, `WARN`, `ERROR` — **uppercase only**, anything else silently means `INFO` (including the `default` that `.env.example` ships). `DEBUG` shows per-post LOA parse failures. |
 | `DISCORDGO_LOG_LEVEL` | Defaults to `ERROR`, so discordgo reports only its own failures. Accepts `ERROR`, `WARN`, `INFO`, `DEBUG`; anything else means `ERROR`. `WARN` adds the frame the gateway sent when startup fails with `Discord session unavailable`. `DEBUG` also needs `LOG_LEVEL=DEBUG`, and logs every gateway event discordgo does not recognise with its full payload. |
 | `SENTRY_DSN` | Sentry stays off; the bot logs `Sentry disabled (SENTRY_DSN not set)`. |
@@ -199,11 +200,11 @@ Sunday, a real person gets your test output. Prefer a test guild.
 | `FORUM_DB_DSN not set` at startup, or `LOA cache refresh failed` every 15 minutes | Expected without a reachable forum database; only affects `/loa` |
 | `Bot database not answering, retrying` nine times, then a panic `Bot store unavailable` | `BOT_DB_DSN` names a Postgres that is not there. The compose host `postgres` resolves only inside compose; for `go run .` blank the variable or point it at a local server |
 | Panic `Bot store unavailable: open bot database: the DSN does not parse` | `BOT_DB_DSN` is malformed. The value is not echoed because it carries a password; compare it against the form in `.env.example` |
-| `/warden` fails with a permissions error | Bot invited without Manage Roles / Manage Channels, or its own role sits below the role it is editing |
+| `/foxhole` fails with a permissions error | Bot invited without Manage Roles / Manage Channels, or its own role sits below the role it is editing |
 | Commands never appear | Bot invited without `applications.commands`, or `GUILD_ID` is not the server you are in |
 | Every milpac lookup fails | `BEARER` missing or expired |
 | `Rank ladder check skipped, ranks fetch failed` once at startup | `BEARER` missing or expired, or `api.7cav.us` unreachable. The check runs once after READY and does not retry |
-| `Bot member lacks Administrator` at startup, and a Sentry event when `SENTRY_DSN` is set | The bot's role on the guild lacks Administrator. Grant it; the bot keeps running but spawning, handover and `/warden` fail at the next call |
+| `Bot member lacks Administrator` at startup, and a Sentry event when `SENTRY_DSN` is set | The bot's role on the guild lacks Administrator. Grant it; the bot keeps running but spawning, handover and `/foxhole` fail at the next call |
 | `Rank ladder drift` at startup, and a Sentry event when `SENTRY_DSN` is set | The abbreviations or order of `tempVCRankRoles` in `commands/temp_vc.go` differ from the milpacs ranks endpoint. The event lists the positions that differ |
 | Compose says `pull access denied` for `cavbot2:latest` | The image was never built locally — run `docker build -t cavbot2:latest .` |
 | Compose says network `xenforo_internal` not found | Create it, or join the host that has it |

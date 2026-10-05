@@ -11,7 +11,7 @@ import (
 )
 
 // 7Cav-specific identifiers and cadence. Hardcoded rather than env-configured
-// because they're tenant-specific (matching the /warden role-ID precedent).
+// because they're tenant-specific (matching the /foxhole role-ID precedent).
 const (
 	sparrowDiscordID  = "154035997187899392"
 	starCitizenRoleID = "1385946179174531223"

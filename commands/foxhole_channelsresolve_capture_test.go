@@ -50,7 +50,7 @@ func TestRunFoxholePurge_GuildChannels5xxCaptures(t *testing.T) {
 	}
 	// #195 requires command+guild context on the capture.
 	for key, want := range map[string]string{
-		"command": "warden",
+		"command": "foxhole",
 		"guild":   "guild-1",
 	} {
 		gotV, ok := kvValue(rec.lastKV, key)

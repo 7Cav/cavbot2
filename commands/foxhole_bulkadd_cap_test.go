@@ -95,10 +95,7 @@ func TestRunFoxhole_BulkAddAtLimitStillFansOut(t *testing.T) {
 	if gm.countCalls("GuildMemberRoleAdd") != maxBulkAddEntries {
 		t.Fatalf("at-limit bulkadd must add a role per entry; got %d (%v)", gm.countCalls("GuildMemberRoleAdd"), gm.Calls())
 	}
-	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, fmt.Sprintf("Added warden role(s) to %d user(s)", maxBulkAddEntries)) {
-		t.Fatalf("expected all %d adds summarised, got %q", maxBulkAddEntries, got)
-	}
+	assertReplyNamesAddedMembers(t, f.Calls(), maxBulkAddEntries)
 }
 
 // The cap counts PARSED entries, not raw commas. splitCommaSeparated trims and
@@ -158,8 +155,21 @@ func TestRunFoxhole_BulkAddCountsParsedEntriesNotRawCommas(t *testing.T) {
 	if gm.countCalls("GuildMemberRoleAdd") != maxBulkAddEntries {
 		t.Fatalf("must add a role per real entry (%d), got %d (%v)", maxBulkAddEntries, gm.countCalls("GuildMemberRoleAdd"), gm.Calls())
 	}
-	if !strings.Contains(got, fmt.Sprintf("Added warden role(s) to %d user(s)", maxBulkAddEntries)) {
-		t.Fatalf("expected all %d real entries added, got %q", maxBulkAddEntries, got)
+	assertReplyNamesAddedMembers(t, f.Calls(), maxBulkAddEntries)
+}
+
+// assertReplyNamesAddedMembers fails unless the reply's embed mentions each of
+// the members id-0 to id-(count-1) the fixtures above resolve.
+func assertReplyNamesAddedMembers(t *testing.T, calls []recordedCall, count int) {
+	t.Helper()
+	embed := lastEditEmbed(calls)
+	if embed == nil {
+		t.Fatalf("reply carries no embed of added members; content %q", lastEditContent(calls))
+	}
+	for idx := 0; idx < count; idx++ {
+		if mention := fmt.Sprintf("<@id-%d>", idx); !strings.Contains(embed.Description, mention) {
+			t.Errorf("reply names no %s among the added members", mention)
+		}
 	}
 }
 

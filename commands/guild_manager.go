@@ -2,7 +2,7 @@ package commands
 
 import "github.com/bwmarrin/discordgo"
 
-// GuildManager is the subset of *discordgo.Session that /warden uses to read
+// GuildManager is the subset of *discordgo.Session that /foxhole uses to read
 // and mutate guild roles, members, and channel permission overwrites, plus send
 // a plain channel message as the purge summary's token-independent fallback
 // surface. Command code depends on this interface so tests can substitute a fake
@@ -11,7 +11,7 @@ import "github.com/bwmarrin/discordgo"
 //
 // Following the InteractionResponder precedent (utils/discord_responder.go),
 // the production wrapper is a thin pass-through; the variadic
-// discordgo.RequestOption arguments are dropped because no /warden call site
+// discordgo.RequestOption arguments are dropped because no /foxhole call site
 // uses them.
 type GuildManager interface {
 	GuildRoles(guildID string) ([]*discordgo.Role, error)

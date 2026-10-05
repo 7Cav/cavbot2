@@ -5,6 +5,11 @@
 Accepted. Implemented in #208 (issue #206). **Code moved 2026-10-04** (#437).
 The registry now lives in `commands/foxhole_bulkadd_internal.go`, and its row
 type is `validatedInternalUnit`. The text below keeps the old names.
+**Names moved 2026-10-04** (#438). The command is `/foxhole-bulkadd-internal`,
+with `/warden-bulkadd-internal` kept on the same handler until the cleanup in #455.
+The role base name comes from `FOXHOLE_ROLE_BASE_NAME` and defaults to
+`Verified Foxhole`, so the role the text calls `Verified Warden Internal` is
+`Verified Foxhole Internal`.
 
 ## Decision
 

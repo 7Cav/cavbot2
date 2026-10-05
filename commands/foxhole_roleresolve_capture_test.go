@@ -25,7 +25,7 @@ func TestResolveFoxholeRoleIDs_GuildRoles5xxCaptures(t *testing.T) {
 	rec.install(t)
 	gm := &fakeGuildManager{RolesErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)}}
 
-	_, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
+	_, _, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "internal")
 	if err == nil {
 		t.Fatal("expected an error from a 5xx GuildRoles lookup")
 	}
@@ -37,7 +37,7 @@ func TestResolveFoxholeRoleIDs_GuildRoles5xxCaptures(t *testing.T) {
 	}
 	// #194 requires command+guild context on the capture; pin those plus role.
 	for key, want := range map[string]string{
-		"command": "warden",
+		"command": "foxhole",
 		"guild":   "guild-1",
 		"role":    foxholeRoleBaseNameDefault + " Internal",
 	} {
@@ -58,7 +58,7 @@ func TestResolveFoxholeRoleIDs_GuildRolesTransportErrorCaptures(t *testing.T) {
 	rec.install(t)
 	gm := &fakeGuildManager{RolesErrs: []error{errors.New("dial tcp: connection refused")}}
 
-	_, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
+	_, _, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "internal")
 	if err == nil {
 		t.Fatal("expected an error from a transport GuildRoles failure")
 	}
@@ -74,7 +74,7 @@ func TestResolveFoxholeRoleIDs_GuildRoles4xxDoesNotCapture(t *testing.T) {
 	rec.install(t)
 	gm := &fakeGuildManager{RolesErrs: []error{restError(http.StatusBadRequest, 50035, rawBodyMarker)}}
 
-	_, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
+	_, _, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "internal")
 	if err == nil {
 		t.Fatal("expected an error from a 4xx GuildRoles lookup")
 	}
@@ -95,7 +95,7 @@ func TestResolveFoxholeRoleIDs_NotFoundDoesNotCapture(t *testing.T) {
 		roles: []*discordgo.Role{guildRole("other", "Some Other Role")},
 	}
 
-	_, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
+	_, _, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "internal")
 	if err == nil {
 		t.Fatal("expected a role-not-found error")
 	}

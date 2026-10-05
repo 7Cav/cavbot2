@@ -19,7 +19,7 @@ func TestFoxholeRoleIDsResolveUnderConfiguredBaseName(t *testing.T) {
 		roles: []*discordgo.Role{guildRole("role-foxhole-int", "Verified Foxhole Internal")},
 	}
 
-	roleIDs, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "internal")
+	roleIDs, _, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "internal")
 	if err != nil {
 		t.Fatalf("configured base name must resolve against the guild: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestFoxholeBothScopeResolvesUnderConfiguredBaseName(t *testing.T) {
 		},
 	}
 
-	roleIDs, _, err := resolveFoxholeRoleIDs(gm, "guild-1", "both")
+	roleIDs, _, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "both")
 	if err != nil {
 		t.Fatalf("configured base name must resolve both scopes: %v", err)
 	}
@@ -56,8 +56,8 @@ func TestFoxholeBothScopeResolvesUnderConfiguredBaseName(t *testing.T) {
 	}
 }
 
-// TestBulkAddInternalAppliesConfiguredRole covers /warden-bulkadd-internal,
-// which resolves its role independently of the four /warden subcommands. The
+// TestBulkAddInternalAppliesConfiguredRole covers /foxhole-bulkadd-internal,
+// which resolves its role independently of the four /foxhole subcommands. The
 // observable is the role reaching the member, not the absence of an error.
 func TestBulkAddInternalAppliesConfiguredRole(t *testing.T) {
 	t.Setenv(foxholeRoleBaseNameEnv, "Verified Foxhole")

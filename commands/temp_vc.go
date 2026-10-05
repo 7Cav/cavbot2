@@ -274,7 +274,7 @@ func GuildMemberRanks(g *discordgo.Guild) map[string]int {
 // TempVCManager is the subset of *discordgo.Session the temp-VC lifecycle
 // uses. Command code depends on this interface so tests can substitute a fake
 // that records calls and injects per-call errors without touching the live
-// Discord gateway, the same seam pattern as GuildManager (/warden) and
+// Discord gateway, the same seam pattern as GuildManager (/foxhole) and
 // InteractionResponder (utils/discord_responder.go). The audit-log reason is a
 // parameter because tests assert it; the other discordgo request options are
 // the production adapter's alone.

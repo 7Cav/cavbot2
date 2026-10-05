@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -10,7 +11,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// fakeGuildManager is a deterministic GuildManager for /warden integration
+// fakeGuildManager is a deterministic GuildManager for /foxhole integration
 // tests. It records every call and serves canned data; per-method error queues
 // (popped FIFO via popErr) let a test inject a failure on a specific call. The
 // zero value answers role/member lookups from the maps below, so a test only
@@ -191,10 +192,12 @@ func (g *fakeGuildManager) ChannelMessageSend(channelID, content string) error {
 	return popErr(&g.ChannelMessageErrs)
 }
 
-// foxholeInteraction builds an *InteractionCreate carrying the given option
-// values plus a GuildID, which runFoxhole requires (it rejects DM-context).
+// foxholeInteraction builds a /foxhole *InteractionCreate carrying the given
+// option values plus a GuildID, which runFoxhole requires (it rejects
+// DM-context).
 func foxholeInteraction(guildID string, opts ...*discordgo.ApplicationCommandInteractionDataOption) *discordgo.InteractionCreate {
 	i := fakeAppCommandInteraction(opts...)
+	i.Data = discordgo.ApplicationCommandInteractionData{Name: "foxhole", Options: opts}
 	i.GuildID = guildID
 	return i
 }
@@ -234,6 +237,16 @@ func lastResponseContent(calls []recordedCall) string {
 	return "<none>"
 }
 
+// assertReplyNames fails unless reply names each of the members and roles.
+func assertReplyNames(t *testing.T, reply string, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		if !strings.Contains(reply, name) {
+			t.Errorf("reply %q does not name %q", reply, name)
+		}
+	}
+}
+
 // --- runFoxhole routing / deferred-ephemeral acknowledge path ---
 
 func TestRunFoxhole_AddDeferredEphemeralAcknowledge(t *testing.T) {
@@ -270,9 +283,7 @@ func TestRunFoxhole_AddDeferredEphemeralAcknowledge(t *testing.T) {
 	if gm.countCalls("GuildMemberRoleAdd") != 1 {
 		t.Fatalf("expected 1 GuildMemberRoleAdd, got %d (%v)", gm.countCalls("GuildMemberRoleAdd"), gm.Calls())
 	}
-	if got := lastEditContent(calls); !strings.Contains(got, "✅ Added warden role(s)") {
-		t.Fatalf("expected success edit, got %q", got)
-	}
+	assertReplyNames(t, lastEditContent(calls), "trooper", defaultInternalRoleName)
 }
 
 func TestRunFoxhole_InvalidSubcommandSurfacesError(t *testing.T) {
@@ -463,7 +474,7 @@ func TestRunFoxholePurge_HappyPath(t *testing.T) {
 		t.Fatalf("expected 1 GuildRoleDelete, got %v", gm.Calls())
 	}
 	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "✅ Recreated 'Verified Warden Internal'") {
+	if !strings.Contains(got, "✅ Recreated '"+defaultInternalRoleName+"'") {
 		t.Fatalf("expected success summary, got %q", got)
 	}
 	if !strings.Contains(got, "re-applied 1 overwrite(s)") {
@@ -512,10 +523,10 @@ func TestRunFoxholePurge_PartialFailureContinues(t *testing.T) {
 	runFoxholePurge(f, gm, i, "guild-1", "both")
 
 	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "✅ Recreated 'Verified Warden Internal'") {
+	if !strings.Contains(got, "✅ Recreated '"+defaultInternalRoleName+"'") {
 		t.Fatalf("expected the first role to succeed, got %q", got)
 	}
-	if !strings.Contains(got, "❌ Failed to recreate 'Verified Warden External'") {
+	if !strings.Contains(got, "❌ Failed to recreate '"+foxholeRoleBaseNameDefault+" External'") {
 		t.Fatalf("expected the second role to be reported failed, got %q", got)
 	}
 	// The old External role must NOT be deleted when its recreation failed.
@@ -584,9 +595,7 @@ func TestRunFoxhole_RemoveSuccess(t *testing.T) {
 	if gm.countCalls("GuildMemberRoleRemove") != 1 {
 		t.Fatalf("expected 1 GuildMemberRoleRemove, got %v", gm.Calls())
 	}
-	if got := lastEditContent(f.Calls()); !strings.Contains(got, "✅ Removed warden role(s)") {
-		t.Fatalf("expected remove success, got %q", got)
-	}
+	assertReplyNames(t, lastEditContent(f.Calls()), "trooper", defaultInternalRoleName)
 }
 
 func TestRunFoxhole_AddRoleAddFailureSurfaces(t *testing.T) {
@@ -607,7 +616,7 @@ func TestRunFoxhole_AddRoleAddFailureSurfaces(t *testing.T) {
 	// A plain (non-REST) error is a transport-class fault: the reply names the
 	// role and surfaces the failure, but never the raw error text.
 	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "Could not add 'Verified Warden Internal'") {
+	if !strings.Contains(got, "Could not add '"+defaultInternalRoleName+"'") {
 		t.Fatalf("expected role-add failure surfaced, got %q", got)
 	}
 	if strings.Contains(got, "forbidden") {
@@ -632,10 +641,15 @@ func TestRunFoxhole_BulkAddMixedResults(t *testing.T) {
 
 	runFoxhole(f, gm, i)
 
-	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "Added warden role(s) to 1 user(s)") {
-		t.Fatalf("expected 1 success in summary, got %q", got)
+	calls := f.Calls()
+	embed := lastEditEmbed(calls)
+	if embed == nil {
+		t.Fatal("expected the reply to name the added member, got no embed")
 	}
+	if mentioned := regexp.MustCompile(`<@(\d+)>`).FindAllStringSubmatch(embed.Description, -1); len(mentioned) != 1 || mentioned[0][1] != "111" {
+		t.Fatalf("expected the reply to name only the added member 111, got embed %q", embed.Description)
+	}
+	got := lastEditContent(calls)
 	if !strings.Contains(got, "No member found matching 'bad'") {
 		t.Fatalf("expected 'bad' reported as failure, got %q", got)
 	}
@@ -732,13 +746,13 @@ func TestRefusedAcknowledgementKeepsDiscordBodyOutOfTheReply(t *testing.T) {
 		{"/voice-lock", func(f *fakeResponder) { runVoiceLock(f, nil, fakeAppCommandInteraction()) }},
 		{"/voice-unlock", func(f *fakeResponder) { runVoiceUnlock(f, nil, fakeAppCommandInteraction()) }},
 		{"/voice-rename", func(f *fakeResponder) { runVoiceRename(f, nil, renameInteraction("user-1", nil, "Alpha")) }},
-		{"/warden add", func(f *fakeResponder) {
+		{"/foxhole add", func(f *fakeResponder) {
 			handleFoxholeAdd(f, nil, fakeAppCommandInteraction(), "guild-1", "someone", "internal")
 		}},
-		{"/warden remove", func(f *fakeResponder) {
+		{"/foxhole remove", func(f *fakeResponder) {
 			handleFoxholeRemove(f, nil, fakeAppCommandInteraction(), "guild-1", "someone", "internal")
 		}},
-		{"/warden-bulkadd-internal", func(f *fakeResponder) { runFoxholeBulkAddInternal(f, nil, bulkAddInternal) }},
+		{"/foxhole-bulkadd-internal", func(f *fakeResponder) { runFoxholeBulkAddInternal(f, nil, bulkAddInternal) }},
 		{"/s3aar (disabled)", func(f *fakeResponder) { runS3aarDisabled(f, fakeAppCommandInteraction()) }},
 	}
 	for _, tc := range cases {

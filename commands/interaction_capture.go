@@ -14,7 +14,7 @@ import "github.com/bwmarrin/discordgo"
 // may already have done its work.
 //
 // This is the sibling of foxhole.go's captureEditFailure for every other
-// command: /warden reads its subcommand off the `command` option, whereas
+// command: /foxhole reads its subcommand off the `command` option, whereas
 // these commands each pass their own fixed command name. Both funnel through
 // the same captureError seam and record the same {command, guild_id} context
 // shape.
