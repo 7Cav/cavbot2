@@ -124,7 +124,7 @@ belong here, not inline in code comments.
 The `/foxhole` command family applies and removes a small set of Discord roles
 by name. The bot's concern ends at role membership. Whatever access a Foxhole
 role grants is configured Discord-side and is out of scope here. The Foxhole
-page and the terms around it are designed in #412, not built yet.
+page and the terms around it are designed in #412.
 
 - **Foxhole role** — a Discord role the `/foxhole` commands manage by exact name.
   The name is composed as `<base> Internal` / `<base> External`, where the base

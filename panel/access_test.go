@@ -42,8 +42,18 @@ func TestUserOutsideTheAdminGroupsSignsInToTheNoAccessPage(t *testing.T) {
 // A forum user in none of the panel's admin groups saves nothing: each
 // settings save they post leaves the store as it was. A panel admin then
 // posts the same form and it saves, so no row passes on a form the save
-// would refuse anyway.
+// would refuse anyway. The Foxhole manager's rows are regression pins: they
+// passed before the Foxhole page existed, when the group check read a
+// Foxhole manager as a user in no group. They pin that no hub route moved
+// under the Foxhole page's gate.
 func TestUserOutsideTheAdminGroupsSavesNothing(t *testing.T) {
+	users := []struct {
+		name string
+		add  func(*fakeForum) *forumAccount
+	}{
+		{"in no group", addUserOutsideAdminGroups},
+		{"Foxhole manager", addFoxholeManager},
+	}
 	cases := []struct {
 		name string
 		path func(t *testing.T, st store.Store) string
@@ -79,25 +89,27 @@ func TestUserOutsideTheAdminGroupsSavesNothing(t *testing.T) {
 			form: func(t *testing.T, st store.Store) url.Values { return moderatorsForm(t, st, "role-hq") },
 		},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			w := newTestWorld(t, testHub())
-			signInAs(t, w.forum, w.b, addUserOutsideAdminGroups(w.forum))
-			path, form := tc.path(t, w.st), tc.form(t, w.st)
-			before := readSavedState(t, w.st)
+	for _, u := range users {
+		for _, tc := range cases {
+			t.Run(u.name+"/"+tc.name, func(t *testing.T) {
+				w := newTestWorld(t, testHub())
+				signInAs(t, w.forum, w.b, u.add(w.forum))
+				path, form := tc.path(t, w.st), tc.form(t, w.st)
+				before := readSavedState(t, w.st)
 
-			w.b.postForm(path, form)
+				w.b.postForm(path, form)
 
-			if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
-				t.Errorf("the store after the save by a user outside the admin groups = %+v, want it as before, %+v", after, before)
-			}
-			panelAdmin := newBrowser(t, w.p)
-			signIn(t, w.forum, panelAdmin)
-			panelAdmin.postForm(path, form)
-			if after := readSavedState(t, w.st); reflect.DeepEqual(after, before) {
-				t.Error("the same form posted by a panel admin saved nothing: the row's form is one a save refuses")
-			}
-		})
+				if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
+					t.Errorf("the store after the save by a user outside the admin groups = %+v, want it as before, %+v", after, before)
+				}
+				panelAdmin := newBrowser(t, w.p)
+				signIn(t, w.forum, panelAdmin)
+				panelAdmin.postForm(path, form)
+				if after := readSavedState(t, w.st); reflect.DeepEqual(after, before) {
+					t.Error("the same form posted by a panel admin saved nothing: the row's form is one a save refuses")
+				}
+			})
+		}
 	}
 }
 

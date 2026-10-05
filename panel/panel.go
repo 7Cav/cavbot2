@@ -1,11 +1,13 @@
 // Package panel is the bot's web UI, an HTTP server inside the cavbot2 binary
 // signed in through the forum's OAuth2; the decision and its reasons are in
 // docs/temp-vc-decisions.md. It holds the sign-in, the panel session, the
-// group check, the no-access page every forum user who is not a panel admin
-// gets, and the hub page: the guild-wide moderator section with its
-// change log, the hub list with each hub's live spawned count, its last
-// spawn failure and its broken hub state, the create and register forms,
-// each hub's edit form with its change log, and the remove action.
+// group check, the no-access page every forum user who opens no page gets,
+// the hub page and the Foxhole page. The hub page is the guild-wide
+// moderator section with its change log, the hub list with each hub's live
+// spawned count, its last spawn failure and its broken hub state, the create
+// and register forms, each hub's edit form with its change log, and the
+// remove action. The Foxhole page lists the Foxhole role holders from the
+// member list, with search and filters.
 package panel
 
 import (
@@ -135,7 +137,8 @@ func (p *Panel) Start() error {
 			utils.CaptureError("Panel server stopped", err)
 		}
 	}()
-	utils.Info("Panel listening", "addr", ln.Addr().String(), "base_url", p.cfg.BaseURL, "admin_group_ids", p.cfg.AdminGroupIDs)
+	utils.Info("Panel listening", "addr", ln.Addr().String(), "base_url", p.cfg.BaseURL,
+		"admin_group_ids", p.cfg.AdminGroupIDs, "foxhole_group_id", p.cfg.FoxholeGroupID)
 	return nil
 }
 
@@ -188,6 +191,7 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("POST /hubs/{id}", p.withPanelAdmin(p.updateHub))
 	mux.HandleFunc("POST /hubs/{id}/remove", p.withPanelAdmin(p.removeHub))
 	mux.HandleFunc("POST /moderators", p.withPanelAdmin(p.saveModerators))
+	mux.HandleFunc("GET /foxhole", p.withFoxholePage(p.foxholePage))
 	protected := http.NewCrossOriginProtection().Handler(mux)
 	// A panic in a handler is recovered here, through the same path every
 	// other goroutine uses (ADR 0001), before net/http's own recovery would
@@ -288,13 +292,14 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 	switch outcome {
 	case checkPassed:
 		sess := session{accessToken: tok.AccessToken, signedIn: now()}
-		sess.identify(user, p.isPanelAdmin(user))
+		sess.identify(user, p.accessOf(user))
 		id, err := p.sessions.add(sess)
 		if err != nil {
 			p.serverError(w, "session create", err)
 			return
 		}
-		utils.Info("Panel sign-in", "username", user.Username, "forum_user_id", user.UserID, "panel_admin", sess.panelAdmin)
+		utils.Info("Panel sign-in", "username", user.Username, "forum_user_id", user.UserID,
+			"panel_admin", sess.access.panelAdmin, "foxhole_manager", sess.access.foxholeManager)
 		setCookie(w, sessionCookie, id)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	case checkUnavailable:
@@ -334,8 +339,8 @@ func signinURL(c cause) string {
 // withSession is the gate every signed-in page sits behind: the session
 // cookie must name a live session, and the group check must pass on this
 // request. Expiry by the clock ends the session before the forum is asked.
-// The session next sees carries whether this request's group check found a
-// panel admin.
+// The session next sees carries what this request's group check lets it
+// open.
 func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookie)
@@ -357,7 +362,7 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 		user, outcome, err := p.groupCheck(r.Context(), sess.accessToken)
 		switch outcome {
 		case checkPassed:
-			sess.identify(user, p.isPanelAdmin(user))
+			sess.identify(user, p.accessOf(user))
 			p.sessions.update(c.Value, sess)
 			next(w, r, sess)
 		case checkUnavailable:
@@ -371,20 +376,46 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 }
 
 // withPanelAdmin is the gate every settings page sits behind: withSession,
-// and this request's group check must find a panel admin. Anyone else gets
-// the no-access page and the request does nothing.
+// and this request's group check must find a panel admin. Anyone else is
+// refused and the request does nothing.
 func (p *Panel) withPanelAdmin(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
 	return p.withSession(func(w http.ResponseWriter, r *http.Request, sess session) {
-		if !sess.panelAdmin {
-			if r.Method == http.MethodPost {
-				utils.Info("Panel save refused: not a panel admin", "path", r.URL.Path,
-					"username", sess.username, "forum_user_id", sess.userID)
-			}
-			p.render(w, http.StatusForbidden, "noaccess", sess.page("No access"))
+		if !sess.access.panelAdmin {
+			p.refuse(w, r, sess)
 			return
 		}
 		next(w, r, sess)
 	})
+}
+
+// withFoxholePage is the gate the Foxhole page sits behind: withSession, and
+// this request's group check must find a panel admin or a Foxhole manager.
+// Anyone else is refused and the request does nothing.
+func (p *Panel) withFoxholePage(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
+	return p.withSession(func(w http.ResponseWriter, r *http.Request, sess session) {
+		if !sess.access.foxholePage() {
+			p.refuse(w, r, sess)
+			return
+		}
+		next(w, r, sess)
+	})
+}
+
+// refuse answers a request the session's groups don't allow. A page load
+// by a user who opens some other page goes to the page they land on: the
+// hub page sits at the panel's root, where sign-in and the rail's mark
+// lead, so a Foxhole manager who reaches it gets the Foxhole page. Every
+// other request, and every save, gets the no-access page and does nothing.
+func (p *Panel) refuse(w http.ResponseWriter, r *http.Request, sess session) {
+	if to := sess.access.landing(); r.Method == http.MethodGet && to != "" {
+		http.Redirect(w, r, to, http.StatusSeeOther)
+		return
+	}
+	if r.Method == http.MethodPost {
+		utils.Info("Panel save refused: not a panel admin", "path", r.URL.Path,
+			"username", sess.username, "forum_user_id", sess.userID)
+	}
+	p.render(w, http.StatusForbidden, "noaccess", sess.page("No access"))
 }
 
 // authSignout ends the session the cookie names and nothing else: no group
@@ -458,7 +489,7 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 		return
 	}
 	data := sess.page("Hubs")
-	data.Hubs = page
+	data.Page, data.Hubs = pageHubs, page
 	p.render(w, status, "home", data)
 }
 

@@ -249,6 +249,17 @@ func lowestRoleIndex(m *discordgo.Member, idx map[string]int, fallback int) int 
 	return best
 }
 
+// SeniorRankRole returns the most senior rank role among the role IDs, by
+// the rank ladder, and false when none of them is a rank role. The panel's
+// Foxhole page shows it, by the same rank rule the voice handlers apply.
+func SeniorRankRole(roleIDs []string) (string, bool) {
+	i := lowestRoleIndex(&discordgo.Member{Roles: roleIDs}, rankRoleIndex, noRankIndex)
+	if i == noRankIndex {
+		return "", false
+	}
+	return tempVCRankRoles[i].roleID, true
+}
+
 // GuildMemberRanks reads a GUILD_CREATE guild's rank data into a user ID to
 // rank index map, the guild's member list first and the members its voice
 // states carry second, by the same rank rule the voice handlers apply. It

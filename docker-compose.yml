@@ -30,6 +30,7 @@ services:
       PANEL_OAUTH_TOKEN_URL: ${PANEL_OAUTH_TOKEN_URL}
       PANEL_OAUTH_USERINFO_URL: ${PANEL_OAUTH_USERINFO_URL}
       PANEL_GROUP_IDS: ${PANEL_GROUP_IDS}
+      FOXHOLE_GROUP_ID: ${FOXHOLE_GROUP_ID}
     # edge is where Nginx Proxy Manager reaches the panel on port 8080. The
     # port is not published on the host; the proxy is the only way in.
     networks:

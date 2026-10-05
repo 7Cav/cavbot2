@@ -24,7 +24,7 @@ type checkOutcome int
 
 const (
 	// checkPassed: the forum knows the token and said who the user is. Any
-	// forum user passes; their groups decide whether they are a panel admin.
+	// forum user passes; their groups decide which pages they open.
 	checkPassed checkOutcome = iota
 	// checkExpired: the forum refused the token (401). The session ends with
 	// cause expired.
@@ -52,8 +52,8 @@ func (o checkOutcome) cause() cause {
 
 // groupCheck is one GET to the userinfo URL with the access token. It returns
 // the user on checkPassed and the outcome in every case; err carries the
-// transport or read failure behind checkUnavailable for the log line. Whether
-// the user is a panel admin is p.isPanelAdmin(user), decided by the caller.
+// transport or read failure behind checkUnavailable for the log line. What
+// the user opens is p.accessOf(user), decided by the caller.
 func (p *Panel) groupCheck(ctx context.Context, accessToken string) (forumUser, checkOutcome, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.cfg.UserinfoURL, nil)
 	if err != nil {
@@ -89,14 +89,51 @@ func (p *Panel) groupCheck(ctx context.Context, accessToken string) (forumUser, 
 	return envelope.Me, checkPassed, nil
 }
 
-// isPanelAdmin is the group check's rule for a panel admin: the primary group
-// or any secondary group is one of the panel's admin groups.
-func (p *Panel) isPanelAdmin(u forumUser) bool {
-	if slices.Contains(p.cfg.AdminGroupIDs, u.UserGroupID) {
+// access is what one group check lets a session open. A user can be both a
+// panel admin and a Foxhole manager.
+type access struct {
+	// panelAdmin is the primary group or any secondary group being one of
+	// the panel's admin groups. A panel admin opens every page.
+	panelAdmin bool
+	// foxholeManager is the primary group or any secondary group being the
+	// Foxhole group.
+	foxholeManager bool
+}
+
+// foxholePage reports whether the session opens the Foxhole page: panel
+// admins and Foxhole managers do.
+func (a access) foxholePage() bool { return a.panelAdmin || a.foxholeManager }
+
+// landing is the address of the page the session lands on at sign-in: the
+// hub page for a panel admin, else the Foxhole page for a Foxhole manager.
+// Empty when the session opens no page, and the no-access page shows.
+func (a access) landing() string {
+	switch {
+	case a.panelAdmin:
+		return "/"
+	case a.foxholePage():
+		return "/foxhole"
+	}
+	return ""
+}
+
+// accessOf is the group check's rule: the user's primary group or any
+// secondary group decides what the session opens.
+func (p *Panel) accessOf(u forumUser) access {
+	return access{
+		panelAdmin:     inGroups(u, p.cfg.AdminGroupIDs...),
+		foxholeManager: inGroups(u, p.cfg.FoxholeGroupID),
+	}
+}
+
+// inGroups reports whether the user's primary group or any secondary group
+// is one of ids.
+func inGroups(u forumUser, ids ...int) bool {
+	if slices.Contains(ids, u.UserGroupID) {
 		return true
 	}
 	for _, id := range u.SecondaryGroupIDs {
-		if slices.Contains(p.cfg.AdminGroupIDs, id) {
+		if slices.Contains(ids, id) {
 			return true
 		}
 	}

@@ -11,8 +11,11 @@
 <div class="console">
 {{if .SignedIn}}
   <aside class="rail">
-    <div class="mark"><a href="/"><img src="/static/logo-m.png" alt="7th Cavalry Gaming"></a></div>
-    <nav>{{if .PanelAdmin}}<a class="item is-selected" href="/">Hubs</a>{{end}}</nav>
+    <div class="mark"><a href="/" data-nav="landing"><img src="/static/logo-m.png" alt="7th Cavalry Gaming"></a></div>
+    <nav>
+      {{- if .Nav.Hubs}}<a class="item{{if eq .Page "hubs"}} is-selected{{end}}" href="/" data-nav="hubs">Hubs</a>{{end -}}
+      {{- if .Nav.Foxhole}}<a class="item{{if eq .Page "foxhole"}} is-selected{{end}}" href="/foxhole" data-nav="foxhole">Foxhole</a>{{end -}}
+    </nav>
     <div class="me">
       <small>Signed in as</small>
       <div class="name" data-field="username">{{.Username}}</div>
