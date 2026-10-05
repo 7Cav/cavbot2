@@ -205,11 +205,14 @@ func main() {
 		webPanel *panel.Panel
 	)
 	// Built before dg.Open(), so the Connect event tells it the gateway
-	// connection is up: the panel's hub page says so while it is down.
-	discordManager := commands.NewSessionTempVCManager(dg)
+	// connection is up, and the guild's GUILD_CREATE makes it ask for the
+	// member list (#440). The panel's hub page says when the connection is
+	// down. The one manager serves the runtime, the panel and the startup
+	// checks, so the bot asks Discord for the list once.
+	discordManager := commands.NewSessionTempVCManager(dg, GuildID)
 	if botStore != nil {
 		var err error
-		tempVC, err = commands.StartTempVC(dg, GuildID, botStore)
+		tempVC, err = commands.StartTempVC(dg, discordManager, GuildID, botStore)
 		if err != nil {
 			panic(fmt.Sprintf("Bot store unavailable: %v", err))
 		}

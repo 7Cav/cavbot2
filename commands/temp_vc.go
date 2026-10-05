@@ -346,6 +346,11 @@ type TempVCManager interface {
 	// removes every component, and a nil one leaves them. The unlock edits
 	// the lock notice through it.
 	ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error)
+	// MemberList reads one copied snapshot of the guild's member list,
+	// taken under the state's lock and never from the API (#440). It holds
+	// the members only once the list is complete. The panel's Foxhole page
+	// reads its holders through it.
+	MemberList(guildID string) MemberListSnapshot
 	// CanSeeChannel reports whether a member holding the given roles sees a
 	// channel: View Channel, as discordgo's state permission calculation
 	// gives it over the cached guild roles and channel overwrites. The roles
@@ -435,8 +440,9 @@ type GuildSnapshot struct {
 // sessionTempVCManager adapts *discordgo.Session to TempVCManager. Each
 // method is a one-line pass-through, which keeps the hard-to-unit-test
 // wrapper's uncovered code small. ChannelOverwritesReplace, VoiceStates,
-// GuildData, CanSeeChannel, and the create and edit that put Discord's
-// reply in the cache do more, and their tests drive a real session. Every
+// GuildData, MemberList, CanSeeChannel, and the create and edit that put
+// Discord's reply in the cache do more, and their tests drive a real
+// session. The member list's tracker lives in member_list.go. Every
 // REST call but ChannelPermissionSet passes WithRetryOnRatelimit(false): a
 // 429 is a failure the caller handles, never a sleeping gateway handler. A
 // guest add's overwrite set waits out a 429 and retries instead, and
@@ -448,17 +454,20 @@ type sessionTempVCManager struct {
 	// lock that guards it through a reconnect's dial, so reading it could
 	// hold a page load for as long as Discord takes to answer.
 	connected atomic.Bool
+	// members is the guild's member list.
+	members *memberList
 }
 
-// NewSessionTempVCManager wraps a real Discord session for production use.
-// A manager learns the connection is up from discordgo's Connect event, so
-// one whose GuildData is read is built before the session opens, as main
-// builds the panel's. Built after, it reads the connection as down until
-// the next reconnect.
-func NewSessionTempVCManager(s *discordgo.Session) TempVCManager {
-	m := &sessionTempVCManager{s: s}
-	s.AddHandler(func(*discordgo.Session, *discordgo.Connect) { m.connected.Store(true) })
-	s.AddHandler(func(*discordgo.Session, *discordgo.Disconnect) { m.connected.Store(false) })
+// NewSessionTempVCManager wraps a real Discord session for production use,
+// and keeps the member list of the guild with the given ID. A manager
+// learns the connection is up from discordgo's Connect event, and asks for
+// the member list on the guild's GUILD_CREATE, so it is built before the
+// session opens, as main builds it. Built after, it reads the connection as
+// down until the next reconnect, and has no member list until the next
+// GUILD_CREATE. Build one per session: each asks Discord for the list.
+func NewSessionTempVCManager(s *discordgo.Session, guildID string) TempVCManager {
+	m := newSessionTempVCManager(s, guildID, s)
+	s.AddHandler(m.onGatewayEvent)
 	return m
 }
 
@@ -951,10 +960,11 @@ func (t *TempVC) storeContext() (context.Context, context.CancelFunc) {
 // GUILD_CREATE handler that runs the restart sweep (fires on initial connect
 // and again on any reconnect), and a VOICE_STATE_UPDATE
 // handler that drives the create, cleanup and ownership lifecycle. Call
-// before dg.Open(). The returned runtime is what the panel's service layer
-// applies hub saves to.
-func StartTempVC(dg *discordgo.Session, guildID string, st store.Store) (*TempVC, error) {
-	t, err := NewTempVC(NewSessionTempVCManager(dg), st, guildID)
+// before dg.Open(). The runtime acts through mgr, the session's one
+// manager, which the panel and the startup checks share. The returned
+// runtime is what the panel's service layer applies hub saves to.
+func StartTempVC(dg *discordgo.Session, mgr TempVCManager, guildID string, st store.Store) (*TempVC, error) {
+	t, err := NewTempVC(mgr, st, guildID)
 	if err != nil {
 		return nil, err
 	}

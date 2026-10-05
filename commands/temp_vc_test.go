@@ -375,6 +375,12 @@ func (f *fakeTempVCManager) GuildData(_ string) GuildSnapshot {
 	return GuildSnapshot{}
 }
 
+// MemberList reads no guild data. The runtime never calls it, and the
+// member list's tests drive the production adapter.
+func (f *fakeTempVCManager) MemberList(_ string) MemberListSnapshot {
+	return MemberListSnapshot{}
+}
+
 // MemberRanks reads the payload through the shared helper. The fake holds
 // no lock: nothing else writes into a test's payload.
 func (f *fakeTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {

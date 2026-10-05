@@ -113,7 +113,7 @@ func TestSessionTempVCManagerChannelPermissionSetWaitsOutARateLimit(t *testing.T
 		}
 		return http.StatusNoContent, nil
 	}}
-	mgr := NewSessionTempVCManager(sessionOver(t, api, nil))
+	mgr := NewSessionTempVCManager(sessionOver(t, api, nil), testTempVCGuild)
 
 	err := mgr.ChannelPermissionSet("chan-1", "user-v", discordgo.PermissionOverwriteTypeMember,
 		discordgo.PermissionVoiceConnect, 0, "let in by user-o")
@@ -154,7 +154,7 @@ func TestSessionTempVCManagerChannelOverwritesReplace(t *testing.T) {
 				return http.StatusOK, []byte(`{"id":"chan-1","guild_id":"` + testTempVCGuild +
 					`","type":2,"permission_overwrites":` + string(list) + `}`)
 			}}
-			mgr := NewSessionTempVCManager(sessionOver(t, api, locked))
+			mgr := NewSessionTempVCManager(sessionOver(t, api, locked), testTempVCGuild)
 
 			if err := mgr.ChannelOverwritesReplace("chan-1", tc.list, "unlocked by user-o"); err != nil {
 				t.Fatalf("ChannelOverwritesReplace: %v", err)
