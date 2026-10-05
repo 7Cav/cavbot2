@@ -43,6 +43,10 @@ type fakeGuildManager struct {
 	// Calls() log only keeps the method name).
 	roleAdds []roleAddCall
 
+	// writes records every call that changes the guild, with the audit log
+	// reason it carried, in the order they were made.
+	writes []guildWrite
+
 	RolesErrs            []error
 	RoleCreateErrs       []error
 	RoleDeleteErrs       []error
@@ -61,6 +65,13 @@ type sentChannelMessage struct {
 	content   string
 }
 
+// guildWrite is one recorded call that changes the guild: the method name
+// and the audit log reason it carried.
+type guildWrite struct {
+	method string
+	reason string
+}
+
 // roleAddCall is one recorded GuildMemberRoleAdd call with every argument kept,
 // so a test can assert the exact (guildID, userID, roleID) tuples a command
 // emitted rather than only how many adds happened.
@@ -74,6 +85,22 @@ func (g *fakeGuildManager) record(name string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.calls = append(g.calls, name)
+}
+
+// recordWrite records a call that changes the guild, under name, with its
+// audit log reason.
+func (g *fakeGuildManager) recordWrite(name, reason string) {
+	g.record(name)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.writes = append(g.writes, guildWrite{method: name, reason: reason})
+}
+
+// guildWrites returns a copy of every recorded call that changed the guild.
+func (g *fakeGuildManager) guildWrites() []guildWrite {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]guildWrite(nil), g.writes...)
 }
 
 func (g *fakeGuildManager) Calls() []string {
@@ -100,8 +127,8 @@ func (g *fakeGuildManager) GuildRoles(_ string) ([]*discordgo.Role, error) {
 	return g.roles, nil
 }
 
-func (g *fakeGuildManager) GuildRoleCreate(_ string, _ *discordgo.RoleParams) (*discordgo.Role, error) {
-	g.record("GuildRoleCreate")
+func (g *fakeGuildManager) GuildRoleCreate(_ string, _ *discordgo.RoleParams, auditReason string) (*discordgo.Role, error) {
+	g.recordWrite("GuildRoleCreate", auditReason)
 	if err := popErr(&g.RoleCreateErrs); err != nil {
 		return nil, err
 	}
@@ -112,8 +139,8 @@ func (g *fakeGuildManager) GuildRoleCreate(_ string, _ *discordgo.RoleParams) (*
 	return &discordgo.Role{ID: fmt.Sprintf("new-role-%d", g.nextCreatedNum)}, nil
 }
 
-func (g *fakeGuildManager) GuildRoleDelete(_, roleID string) error {
-	g.record("GuildRoleDelete")
+func (g *fakeGuildManager) GuildRoleDelete(_, roleID, auditReason string) error {
+	g.recordWrite("GuildRoleDelete", auditReason)
 	g.mu.Lock()
 	g.deletedRoleIDs = append(g.deletedRoleIDs, roleID)
 	g.mu.Unlock()
@@ -140,8 +167,8 @@ func (g *fakeGuildManager) GuildChannels(_ string) ([]*discordgo.Channel, error)
 	return g.channels, nil
 }
 
-func (g *fakeGuildManager) ChannelPermissionSet(_, _ string, _ discordgo.PermissionOverwriteType, _, _ int64) error {
-	g.record("ChannelPermissionSet")
+func (g *fakeGuildManager) ChannelPermissionSet(_, _ string, _ discordgo.PermissionOverwriteType, _, _ int64, auditReason string) error {
+	g.recordWrite("ChannelPermissionSet", auditReason)
 	return popErr(&g.ChannelPermSetErrs)
 }
 
@@ -164,8 +191,8 @@ func (g *fakeGuildManager) GuildMembersSearch(_, query string, _ int) ([]*discor
 	return g.searchResults[query], nil
 }
 
-func (g *fakeGuildManager) GuildMemberRoleAdd(guildID, userID, roleID string) error {
-	g.record("GuildMemberRoleAdd")
+func (g *fakeGuildManager) GuildMemberRoleAdd(guildID, userID, roleID, auditReason string) error {
+	g.recordWrite("GuildMemberRoleAdd", auditReason)
 	g.mu.Lock()
 	g.roleAdds = append(g.roleAdds, roleAddCall{guildID: guildID, userID: userID, roleID: roleID})
 	g.mu.Unlock()
@@ -179,8 +206,8 @@ func (g *fakeGuildManager) roleAddCalls() []roleAddCall {
 	return append([]roleAddCall(nil), g.roleAdds...)
 }
 
-func (g *fakeGuildManager) GuildMemberRoleRemove(_, _, _ string) error {
-	g.record("GuildMemberRoleRemove")
+func (g *fakeGuildManager) GuildMemberRoleRemove(_, _, _, auditReason string) error {
+	g.recordWrite("GuildMemberRoleRemove", auditReason)
 	return popErr(&g.MemberRoleRemoveErrs)
 }
 

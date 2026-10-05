@@ -207,6 +207,7 @@ func runFoxholeBulkAddInternal(
 		"Failed to add Foxhole internal role in bulk",
 		"command", command, "guild", guildID, "unit", unit.value,
 	)
+	reason := foxholeAuditReason(interaction, unit.label)
 	for _, profile := range roster.LiteProfiles {
 		memberDiscordID := strings.TrimSpace(profile.DiscordID)
 		if memberDiscordID == "" {
@@ -216,7 +217,7 @@ func runFoxholeBulkAddInternal(
 			continue
 		}
 
-		err := gm.GuildMemberRoleAdd(guildID, memberDiscordID, roleID)
+		err := gm.GuildMemberRoleAdd(guildID, memberDiscordID, roleID, reason)
 		if err == nil {
 			// Idempotent PUT: a fresh add and a re-add of an existing member both
 			// land here, so this is "added or confirmed".
