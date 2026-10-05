@@ -180,7 +180,7 @@ img { max-width: 100%; }
 .fx-filters a { padding: 6px 10px; color: var(--text); text-decoration: none; border-bottom: 2px solid transparent; }
 .fx-filters a:hover { color: var(--text-hi); }
 .fx-filters a.is-on { color: var(--text-hi); border-bottom-color: var(--gold); }
-.fx-n { margin-left: 4px; font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
+.fx-count { margin-left: 4px; font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
 .fx-list th { padding: 8px 12px; }
 .fx-list td { padding: 7px 12px; }
 .fx-list tbody tr:hover td { background: var(--surface-2); }

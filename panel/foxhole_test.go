@@ -92,13 +92,7 @@ func TestFoxholeManagerAskingForAHubLandsOnTheFoxholePage(t *testing.T) {
 		t.Errorf("landed on page %q, want foxhole", got)
 	}
 	for _, attr := range []string{"data-hub", "data-entry", "data-section"} {
-		var found []string
-		eachElement(doc, func(n *html.Node) {
-			if v, ok := attrValue(n, attr); ok {
-				found = append(found, v)
-			}
-		})
-		if len(found) > 0 {
+		if found := valuesOf(doc, attr); len(found) > 0 {
 			t.Errorf("the page carries %s elements %v, want none of the hub page's", attr, found)
 		}
 	}
@@ -281,18 +275,6 @@ func holderRows(t *testing.T, doc *html.Node) map[string]*html.Node {
 	return rows
 }
 
-// valuesOf returns the value of the attribute on every element under n that
-// carries it, in document order.
-func valuesOf(n *html.Node, attr string) []string {
-	var out []string
-	eachElement(n, func(el *html.Node) {
-		if v, ok := attrValue(el, attr); ok {
-			out = append(out, v)
-		}
-	})
-	return out
-}
-
 // The holder list has a row for each member holding Internal or External,
 // and for nobody else, each with the member's display name, username,
 // Foxhole roles and rank role. The display name is the server nickname,
@@ -335,7 +317,7 @@ func TestHolderListShowsEachFoxholeRoleHolder(t *testing.T) {
 		if rank != want.rank {
 			t.Errorf("%s: rank role %q, want %q", id, rank, want.rank)
 		}
-		if got := valuesOf(row, "data-role"); !slices.Equal(got, want.roles) {
+		if got := dataRoles(row); !slices.Equal(got, want.roles) {
 			t.Errorf("%s: roles %v, want %v", id, got, want.roles)
 		}
 		if got := valuesOf(row, "data-flag"); !slices.Equal(got, want.flags) {
@@ -501,9 +483,9 @@ func TestFoxholePageShowsANoticeWhileTheMemberListIsIncomplete(t *testing.T) {
 // from the default.
 func TestHolderListFollowsTheFoxholeRoleBaseName(t *testing.T) {
 	w := newFoxholeWorld(t)
-	t.Setenv("FOXHOLE_ROLE_BASE_NAME", "Verified Warden")
-	w.discord.addRoles(&discordgo.Role{ID: "role-wd-internal", Name: "Verified Warden Internal"})
-	hollis := commands.ListedMember{ID: "100000000000000006", Username: "hollis", RoleIDs: []string{"role-wd-internal", roleSGT}}
+	t.Setenv("FOXHOLE_ROLE_BASE_NAME", "Regiment Foxhole")
+	w.discord.addRoles(&discordgo.Role{ID: "role-rf-internal", Name: "Regiment Foxhole Internal"})
+	hollis := commands.ListedMember{ID: "100000000000000006", Username: "hollis", RoleIDs: []string{"role-rf-internal", roleSGT}}
 	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
 		Members: []commands.ListedMember{memberDoe, hollis}})
 

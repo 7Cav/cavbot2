@@ -40,7 +40,8 @@ func TestUserOutsideTheAdminGroupsSignsInToTheNoAccessPage(t *testing.T) {
 }
 
 // A forum user in none of the panel's admin groups saves nothing: each
-// settings save they post leaves the store as it was. A panel admin then
+// settings save they post answers with the no-access page, which says
+// nothing changed, and leaves the store as it was. A panel admin then
 // posts the same form and it saves, so no row passes on a form the save
 // would refuse anyway. The Foxhole manager's rows are regression pins: they
 // passed before the Foxhole page existed, when the group check read a
@@ -97,8 +98,9 @@ func TestUserOutsideTheAdminGroupsSavesNothing(t *testing.T) {
 				path, form := tc.path(t, w.st), tc.form(t, w.st)
 				before := readSavedState(t, w.st)
 
-				w.b.postForm(path, form)
+				res := w.b.postForm(path, form)
 
+				assertNoAccessPage(t, parseHTML(t, follow(t, w.b, res)))
 				if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
 					t.Errorf("the store after the save by a user outside the admin groups = %+v, want it as before, %+v", after, before)
 				}

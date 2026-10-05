@@ -33,11 +33,12 @@ import (
 var now = time.Now
 
 // Panel holds the configuration, the parsed pages, the in-memory sessions and
-// the service layer the hub page acts through.
+// the service layers the hub page and the Foxhole page read through.
 type Panel struct {
 	cfg     Config
 	version string
 	hubs    *hubService
+	foxhole foxholeService
 	// forumURL is the forum's origin, derived from the authorize URL, for the
 	// "Back to the forum" link and the wordmark. No extra variable to keep in
 	// parity for a link.
@@ -95,6 +96,7 @@ func New(cfg Config, version string, deps Deps) (*Panel, error) {
 		cfg:      cfg,
 		version:  version,
 		hubs:     &hubService{deps: deps, storeTimeout: storeTimeout, saveLock: &sync.Mutex{}},
+		foxhole:  foxholeService{manager: deps.Manager, guildID: deps.GuildID},
 		forumURL: forumURL,
 		pages:    pg,
 		oauth: &oauth2.Config{
@@ -191,7 +193,7 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("POST /hubs/{id}", p.withPanelAdmin(p.updateHub))
 	mux.HandleFunc("POST /hubs/{id}/remove", p.withPanelAdmin(p.removeHub))
 	mux.HandleFunc("POST /moderators", p.withPanelAdmin(p.saveModerators))
-	mux.HandleFunc("GET /foxhole", p.withFoxholePage(p.foxholePage))
+	mux.HandleFunc("GET "+foxholePath, p.withFoxholePage(p.foxholePage))
 	protected := http.NewCrossOriginProtection().Handler(mux)
 	// A panic in a handler is recovered here, through the same path every
 	// other goroutine uses (ADR 0001), before net/http's own recovery would
@@ -375,25 +377,23 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 	}
 }
 
-// withPanelAdmin is the gate every settings page sits behind: withSession,
-// and this request's group check must find a panel admin. Anyone else is
-// refused and the request does nothing.
+// withPanelAdmin is the gate every settings page sits behind: this
+// request's group check must find a panel admin.
 func (p *Panel) withPanelAdmin(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
-	return p.withSession(func(w http.ResponseWriter, r *http.Request, sess session) {
-		if !sess.access.panelAdmin {
-			p.refuse(w, r, sess)
-			return
-		}
-		next(w, r, sess)
-	})
+	return p.withAccess(func(a access) bool { return a.panelAdmin }, next)
 }
 
-// withFoxholePage is the gate the Foxhole page sits behind: withSession, and
-// this request's group check must find a panel admin or a Foxhole manager.
-// Anyone else is refused and the request does nothing.
+// withFoxholePage is the gate the Foxhole page sits behind: this request's
+// group check must find a panel admin or a Foxhole manager.
 func (p *Panel) withFoxholePage(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
+	return p.withAccess(access.foxholePage, next)
+}
+
+// withAccess is withSession, and opens must allow what this request's group
+// check found. Anyone else is refused and the request does nothing.
+func (p *Panel) withAccess(opens func(access) bool, next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
 	return p.withSession(func(w http.ResponseWriter, r *http.Request, sess session) {
-		if !sess.access.foxholePage() {
+		if !opens(sess.access) {
 			p.refuse(w, r, sess)
 			return
 		}
@@ -411,6 +411,8 @@ func (p *Panel) refuse(w http.ResponseWriter, r *http.Request, sess session) {
 		http.Redirect(w, r, to, http.StatusSeeOther)
 		return
 	}
+	// Every save the panel takes is a panel admin's, so the line keeps the
+	// name log searches already use.
 	if r.Method == http.MethodPost {
 		utils.Info("Panel save refused: not a panel admin", "path", r.URL.Path,
 			"username", sess.username, "forum_user_id", sess.userID)

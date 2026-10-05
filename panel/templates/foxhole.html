@@ -13,7 +13,7 @@
         <button type="submit" class="btn btn--small">Search</button>
       </form>
       <nav class="fx-filters" aria-label="Filter the list">
-        {{- range .Filters}}<a href="{{.Href}}" data-filter="{{.Name}}"{{if .On}} class="is-on" aria-current="page"{{end}}>{{.Label}} <span class="fx-n" data-field="count">{{.Count}}</span></a>{{end -}}
+        {{- range .Filters}}<a href="{{.Href}}" data-filter="{{.Name}}"{{if .On}} class="is-on" aria-current="page"{{end}}>{{.Label}} <span class="fx-count" data-field="count">{{.Count}}</span></a>{{end -}}
       </nav>
     </div>
     <div class="scroll"><table class="hublist fx-list">

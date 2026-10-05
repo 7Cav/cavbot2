@@ -179,6 +179,16 @@ page and the terms around it are designed in #412.
   view lists the members with a note who hold no Foxhole role and aren't
   approved collaborators. Foxhole managers and panel admins open it.
   _Avoid_: warden page, warden dashboard.
+- **Holder list**: The Foxhole page's list of every Foxhole role holder and
+  every approved collaborator, read from the member list as it stands when
+  the page loads.
+  _Avoid_: roster (a unit's roster), member list (the bot's copy of the
+  whole guild).
+- **Flag**: A mark on a holder list row that points a Foxhole manager at a
+  member worth a second look: "no rank role" on an Internal holder with no
+  rank role, "not in the server", or "approved, doesn't hold External". It
+  is display only, and the bot acts on none.
+  _Avoid_: warning, alert, issue.
 - **Member list**: The bot's copy of every member of the guild, which the
   Foxhole page reads its holders from. Discord sends it in parts after each
   connect, and it is partial until the last part arrives. A resumed session

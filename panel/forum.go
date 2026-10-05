@@ -112,7 +112,7 @@ func (a access) landing() string {
 	case a.panelAdmin:
 		return "/"
 	case a.foxholePage():
-		return "/foxhole"
+		return foxholePath
 	}
 	return ""
 }

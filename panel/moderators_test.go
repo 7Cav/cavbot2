@@ -131,13 +131,7 @@ func moderatorsSection(t *testing.T, doc *html.Node) *html.Node {
 
 // dataRoles returns the data-role values under n, in document order.
 func dataRoles(n *html.Node) []string {
-	var out []string
-	eachElement(n, func(n *html.Node) {
-		if id, ok := attrValue(n, "data-role"); ok {
-			out = append(out, id)
-		}
-	})
-	return out
+	return valuesOf(n, "data-role")
 }
 
 func TestHubFormListsTheGuildWideRolesApartFromItsOwn(t *testing.T) {

@@ -76,12 +76,22 @@ type holderRow struct {
 	NoRankRole bool
 }
 
+// foxholePath is the Foxhole page's address.
+const foxholePath = "/foxhole"
+
 // The Foxhole page's query parameters: the search, from the search form,
 // and the filter, from the filter links.
 const (
 	paramQuery  = "q"
 	paramFilter = "filter"
 )
+
+// foxholeService reads the Foxhole page from the gateway state, through the
+// manager seam the hub page reads the guild through.
+type foxholeService struct {
+	manager commands.TempVCManager
+	guildID string
+}
 
 // foxholePage is GET /foxhole, the Foxhole page. It reads the guild's roles
 // and the member list from the gateway state and makes no Discord call. The
@@ -90,7 +100,7 @@ func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session
 	data := sess.page("Foxhole")
 	data.Page = pageFoxhole
 	q := r.URL.Query()
-	data.Foxhole = readFoxhole(p.hubs.deps.Manager, p.hubs.deps.GuildID, q.Get(paramQuery), q.Get(paramFilter))
+	data.Foxhole = p.foxhole.view(q.Get(paramQuery), q.Get(paramFilter))
 	p.render(w, http.StatusOK, "foxhole", data)
 }
 
@@ -105,19 +115,19 @@ func (h holderRow) matches(search string) bool {
 		strings.Contains(h.ID, search)
 }
 
-// readFoxhole reads the Foxhole page from one snapshot of the guild's roles
-// and one of its member list, through the manager seam, never Discord's API.
+// view reads the Foxhole page from one snapshot of the guild's roles and
+// one of its member list, through the manager seam, never Discord's API.
 // The Foxhole roles are found by exact name, as the commands find them. The
 // holder list keeps the holders who match query and the filter named. A
 // member list that isn't complete holds no members, and the page has no
 // holder list.
-func readFoxhole(m commands.TempVCManager, guildID, query, filter string) foxholeView {
-	list := m.MemberList(guildID)
+func (s foxholeService) view(query, filter string) foxholeView {
+	list := s.manager.MemberList(s.guildID)
 	if list.Status != commands.MemberListComplete {
 		return foxholeView{}
 	}
 	search := strings.ToLower(strings.TrimSpace(query))
-	guild := m.GuildData(guildID)
+	guild := s.manager.GuildData(s.guildID)
 	internalName, externalName := commands.FoxholeRoleNames()
 	var internalID, externalID string
 	roleNames := make(map[string]string, len(guild.Roles))
@@ -153,13 +163,12 @@ func readFoxhole(m commands.TempVCManager, guildID, query, filter string) foxhol
 	slices.SortFunc(matched, func(a, b holderRow) int {
 		return cmp.Or(cmp.Compare(strings.ToLower(a.DisplayName), strings.ToLower(b.DisplayName)), cmp.Compare(a.ID, b.ID))
 	})
-	return filterHolders(matched, query, filter)
+	return listView(matched, query, filter)
 }
 
-// filterHolders builds the page from the holders matching the search: a
-// link for each filter with its count, and the holders the named filter
-// keeps.
-func filterHolders(matched []holderRow, query, filter string) foxholeView {
+// listView builds the page from the holders matching the search: a link for
+// each filter with its count, and the holders the named filter keeps.
+func listView(matched []holderRow, query, filter string) foxholeView {
 	page := foxholeView{ListReady: true, Query: query, Filter: filterAll}
 	for _, f := range holderFilters {
 		if f.name == filter {
@@ -192,7 +201,7 @@ func foxholeAddress(query, filter string) string {
 		v.Set(paramQuery, query)
 	}
 	if len(v) == 0 {
-		return "/foxhole"
+		return foxholePath
 	}
-	return "/foxhole?" + v.Encode()
+	return foxholePath + "?" + v.Encode()
 }

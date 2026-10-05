@@ -444,6 +444,18 @@ func eachLiveElement(n *html.Node, visit func(*html.Node)) {
 	}
 }
 
+// valuesOf returns the value of the attribute on every element under n that
+// carries it, in document order.
+func valuesOf(n *html.Node, attr string) []string {
+	var out []string
+	eachElement(n, func(el *html.Node) {
+		if v, ok := attrValue(el, attr); ok {
+			out = append(out, v)
+		}
+	})
+	return out
+}
+
 func attrValue(n *html.Node, key string) (string, bool) {
 	for _, a := range n.Attr {
 		if a.Key == key {
