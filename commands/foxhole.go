@@ -212,6 +212,16 @@ func runFoxhole(
 	utils.Info("✨ Done!", "command", commandNameOf(interaction))
 }
 
+// foxholeAuditReason is the audit log reason a Foxhole command run carries
+// on every change it makes, in the temp VC format: the command as typed,
+// under the name it ran, then the member who ran it. what is the subcommand,
+// or the roster add's unit.
+func foxholeAuditReason(interaction *discordgo.InteractionCreate, what string) string {
+	username, discordID := interactionUsernameAndID(interaction)
+	by := Invoker{UserID: discordID, Username: username}
+	return fmt.Sprintf("/%s %s by %s", commandNameOf(interaction), what, by.auditName())
+}
+
 func handleFoxholeAdd(r utils.InteractionResponder, gm GuildManager, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
 	if err := deferEphemeral(r, interaction); err != nil {
 		replyAckFailed(r, interaction, err, "subcommand", foxholeSubcommandOf(interaction))
@@ -230,9 +240,10 @@ func handleFoxholeAdd(r utils.InteractionResponder, gm GuildManager, interaction
 		return
 	}
 
+	reason := foxholeAuditReason(interaction, "add")
 	for index, roleID := range roleIDs {
 		roleName := roleNames[index]
-		if err := gm.GuildMemberRoleAdd(guildID, member.User.ID, roleID); err != nil {
+		if err := gm.GuildMemberRoleAdd(guildID, member.User.ID, roleID, reason); err != nil {
 			editEphemeral(
 				r,
 				interaction,
@@ -282,9 +293,10 @@ func handleFoxholeRemove(
 		return
 	}
 
+	reason := foxholeAuditReason(interaction, "remove")
 	for index, roleID := range roleIDs {
 		roleName := roleNames[index]
-		if err := gm.GuildMemberRoleRemove(guildID, member.User.ID, roleID); err != nil {
+		if err := gm.GuildMemberRoleRemove(guildID, member.User.ID, roleID, reason); err != nil {
 			editEphemeral(r, interaction, roleMutationErrorReply(
 				"remove", roleName, formatUser(member), err,
 				"Failed to remove Foxhole role", "user", member.User.ID, "role", roleName,
@@ -365,6 +377,7 @@ func handleFoxholeBulkAdd(
 		"Failed to add Foxhole role in bulk",
 		"command", commandNameOf(interaction), "guild", guildID,
 	)
+	reason := foxholeAuditReason(interaction, "bulkadd")
 	for _, singleQuery := range requestedQueries {
 		// A lookup system fault feeds the lookup collector keyed by signature
 		// instead of capturing once per entry, so a 5xx storm during resolution
@@ -378,7 +391,7 @@ func handleFoxholeBulkAdd(
 		allOK := true
 		for index, roleID := range roleIDs {
 			roleName := roleNames[index]
-			if err := gm.GuildMemberRoleAdd(guildID, member.User.ID, roleID); err != nil {
+			if err := gm.GuildMemberRoleAdd(guildID, member.User.ID, roleID, reason); err != nil {
 				// Build the per-member message immediately, but hand a genuine system
 				// fault to the collector instead of capturing it here, so a deleted-role
 				// storm pages once per signature rather than once per member-role add.
@@ -462,6 +475,7 @@ func runFoxholePurge(
 	}
 
 	var summaryLines []string
+	reason := foxholeAuditReason(interaction, "purge")
 
 	for index, roleIDToRecreate := range roleIDsToRecreate {
 		roleName := roleNamesToRecreate[index]
@@ -471,6 +485,7 @@ func runFoxholePurge(
 			guildID,
 			roleIDToRecreate,
 			guildChannels,
+			reason,
 		)
 
 		if recreateErr != nil {
@@ -589,11 +604,14 @@ func deliverPurgeSummary(
 	captureEditFailure(interaction, editErr)
 }
 
+// recreateRoleWithChannelOverwrites carries reason, the purge's audit log
+// reason, on every change it makes.
 func recreateRoleWithChannelOverwrites(
 	gm GuildManager,
 	guildID string,
 	oldRoleID string,
 	guildChannels []*discordgo.Channel,
+	reason string,
 ) (string, int, error) {
 	oldRole, err := fetchGuildRoleByID(gm, guildID, oldRoleID)
 	if err != nil {
@@ -614,7 +632,7 @@ func recreateRoleWithChannelOverwrites(
 		Hoist:       &oldRole.Hoist,
 		Mentionable: &oldRole.Mentionable,
 		Permissions: &oldRole.Permissions,
-	})
+	}, reason)
 
 	if err != nil {
 		return "", 0, fmt.Errorf("create role: %w", err)
@@ -624,18 +642,20 @@ func recreateRoleWithChannelOverwrites(
 		gm,
 		newRole.ID,
 		channelOverwritesByChannelID,
+		reason,
 	)
 
 	if err != nil {
 		// The new role exists but its overwrites are incomplete and the old role
 		// is still present: that is the orphan-duplicate state #178 is about.
 		// Delete the new role so the guild is left with only the (untouched) old
-		// role, not a half-configured duplicate.
-		cleanupOrphanRole(gm, guildID, newRole.ID)
+		// role, not a half-configured duplicate. Its reason says so, since a
+		// role created and deleted moments apart reads oddly in the audit log.
+		cleanupOrphanRole(gm, guildID, newRole.ID, reason+", undoing a failed recreate")
 		return "", reappliedOverwriteCount, fmt.Errorf("reapply overwrites: %w", err)
 	}
 
-	if err := gm.GuildRoleDelete(guildID, oldRoleID); err != nil {
+	if err := gm.GuildRoleDelete(guildID, oldRoleID, reason); err != nil {
 		// The new role is fully built and is the intended keeper; only the old
 		// role's deletion failed. Do NOT delete the new role here — that would
 		// throw away the completed recreation. Report the partial state up so the
@@ -653,8 +673,8 @@ func recreateRoleWithChannelOverwrites(
 // failing is a secondary fault — surfacing it would mask the real cause. If the
 // delete genuinely fails the role may still linger, which the purge summary's
 // "failed to recreate" line already warns the operator about.
-func cleanupOrphanRole(gm GuildManager, guildID, roleID string) {
-	if err := gm.GuildRoleDelete(guildID, roleID); err != nil {
+func cleanupOrphanRole(gm GuildManager, guildID, roleID, reason string) {
+	if err := gm.GuildRoleDelete(guildID, roleID, reason); err != nil {
 		utils.Warn(
 			"failed to clean up orphan role after a failed recreation",
 			"guild", guildID,
@@ -707,6 +727,7 @@ func reapplyRoleOverwrites(
 	gm GuildManager,
 	newRoleID string,
 	channelOverwritesByChannelID map[string]*discordgo.PermissionOverwrite,
+	reason string,
 ) (int, error) {
 	reappliedCount := 0
 
@@ -726,6 +747,7 @@ func reapplyRoleOverwrites(
 			discordgo.PermissionOverwriteTypeRole,
 			overwrite.Allow,
 			overwrite.Deny,
+			reason,
 		); err != nil {
 			return reappliedCount, fmt.Errorf("channel %s: %w", channelID, err)
 		}

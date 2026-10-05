@@ -29,7 +29,7 @@ func TestRecreateRole_OverwriteFailureCleansUpNewRole(t *testing.T) {
 		ChannelPermSetErrs: []error{restError(http.StatusInternalServerError, 0, "boom")},
 	}
 
-	_, _, err := recreateRoleWithChannelOverwrites(gm, "guild-1", "old-int", gm.channels)
+	_, _, err := recreateRoleWithChannelOverwrites(gm, "guild-1", "old-int", gm.channels, "/foxhole purge by tester (999)")
 	if err == nil {
 		t.Fatal("expected an error when the overwrite step fails")
 	}
@@ -58,7 +58,7 @@ func TestRecreateRole_DoesNotReEditAfterCreate(t *testing.T) {
 		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
 	}
 
-	_, _, err := recreateRoleWithChannelOverwrites(gm, "guild-1", "old-int", nil)
+	_, _, err := recreateRoleWithChannelOverwrites(gm, "guild-1", "old-int", nil, "/foxhole purge by tester (999)")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestRecreateRole_CleanupDeleteAlsoFailsReturnsOriginalError(t *testing.T) {
 		RoleDeleteErrs: []error{restError(http.StatusInternalServerError, 0, "delete-boom")},
 	}
 
-	newRoleID, _, err := recreateRoleWithChannelOverwrites(gm, "guild-1", "old-int", gm.channels)
+	newRoleID, _, err := recreateRoleWithChannelOverwrites(gm, "guild-1", "old-int", gm.channels, "/foxhole purge by tester (999)")
 	if err == nil {
 		t.Fatal("expected an error when the overwrite step fails")
 	}

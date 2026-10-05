@@ -337,9 +337,9 @@ type heldRoleCreate struct {
 	release chan struct{}
 }
 
-func (g heldRoleCreate) GuildRoleCreate(guildID string, data *discordgo.RoleParams) (*discordgo.Role, error) {
+func (g heldRoleCreate) GuildRoleCreate(guildID string, data *discordgo.RoleParams, auditReason string) (*discordgo.Role, error) {
 	<-g.release
-	return g.fakeGuildManager.GuildRoleCreate(guildID, data)
+	return g.fakeGuildManager.GuildRoleCreate(guildID, data, auditReason)
 }
 
 // followupSignal is a responder that signals on sent after each follow-up.
