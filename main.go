@@ -222,6 +222,10 @@ func main() {
 			Store:   botStore,
 			Runtime: tempVC,
 			Manager: discordManager,
+			// The Foxhole page's actions read the member list through the
+			// manager and change roles through the commands' role calls,
+			// which URL-encode the audit log reason.
+			Foxhole: commands.NewFoxholeRuntime(discordManager, commands.NewSessionGuildManager(dg), botStore, GuildID),
 			GuildID: GuildID,
 		})
 	}

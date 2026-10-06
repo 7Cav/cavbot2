@@ -7,8 +7,9 @@
 // spawned count, its last spawn failure and its broken hub state, the create
 // and register forms, each hub's edit form with its change log, and the
 // remove action. The Foxhole page lists the Foxhole role holders from the
-// member list, with search, filters and each holder's note, and its own
-// change log of note saves.
+// member list, with search, filters and each holder's note, starts a purge
+// through the Foxhole runtime and shows its progress and report, and keeps
+// its own change log of saves and reports.
 package panel
 
 import (
@@ -82,8 +83,8 @@ const storeTimeout = 5 * time.Second
 // never at a request. Every field of deps is required: the hub page reads the
 // store, the guild and the runtime on every load.
 func New(cfg Config, version string, deps Deps) (*Panel, error) {
-	if deps.Store == nil || deps.Runtime == nil || deps.Manager == nil || deps.GuildID == "" {
-		return nil, fmt.Errorf("panel needs a store, a runtime, a manager and a guild ID")
+	if deps.Store == nil || deps.Runtime == nil || deps.Manager == nil || deps.Foxhole == nil || deps.GuildID == "" {
+		return nil, fmt.Errorf("panel needs a store, a runtime, a manager, a Foxhole runtime and a guild ID")
 	}
 	pg, err := parsePages()
 	if err != nil {
@@ -97,7 +98,7 @@ func New(cfg Config, version string, deps Deps) (*Panel, error) {
 		cfg:      cfg,
 		version:  version,
 		hubs:     &hubService{deps: deps, storeTimeout: storeTimeout, saveLock: &sync.Mutex{}},
-		foxhole:  foxholeService{manager: deps.Manager, store: deps.Store, guildID: deps.GuildID},
+		foxhole:  foxholeService{manager: deps.Manager, store: deps.Store, actions: deps.Foxhole, guildID: deps.GuildID},
 		forumURL: forumURL,
 		pages:    pg,
 		oauth: &oauth2.Config{
@@ -197,6 +198,7 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("GET "+foxholePath, p.withFoxholePage(p.foxholePage))
 	mux.HandleFunc("POST "+foxholeNotesPath, p.withFoxholePage(p.saveNote))
 	mux.HandleFunc("POST "+foxholeApprovalsPath, p.withFoxholePage(p.saveApprovals))
+	mux.HandleFunc("POST "+foxholePurgePath, p.withFoxholePage(p.startPurge))
 	protected := http.NewCrossOriginProtection().Handler(mux)
 	// A panic in a handler is recovered here, through the same path every
 	// other goroutine uses (ADR 0001), before net/http's own recovery would

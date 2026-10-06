@@ -1,7 +1,7 @@
 // Package store is the bot's own database: the hubs the panel edits, the
 // spawned channels the runtime tracks across a restart, the change log of
-// every panel save, and the Foxhole page's notes and approvals, kept in a
-// change log of their own. Postgres in production (postgres.go), an in-memory
+// every panel save, and the Foxhole page's notes and approvals, with a
+// change log of their own that also holds each Foxhole action's report. Postgres in production (postgres.go), an in-memory
 // Fake for other packages' tests (fake.go). The forum's MySQL stays in utils;
 // this package never touches it.
 //
@@ -155,7 +155,20 @@ const (
 	// ChangeClearApproval is an approvals save on the Foxhole page that
 	// clears members' approvals. Its entry goes in the Foxhole change log.
 	ChangeClearApproval ChangeAction = "clear_approval"
+	// ChangePurge is a purge started on the Foxhole page. Its entry is the
+	// purge's report, in the Foxhole change log.
+	ChangePurge ChangeAction = "purge"
 )
+
+// FoxholeReport is the report of a Foxhole action started on the Foxhole
+// page as the Foxhole change log holds it: the entry the action wrote when
+// it started, its diff as the action last wrote it, and whether the action
+// is still running. The runtime decides the diff's shape; the store keeps
+// the bytes.
+type FoxholeReport struct {
+	Entry   ChangeLogEntry
+	Running bool
+}
 
 // FoxholeRecord is one member's Foxhole record (spec #434): their note,
 // whether they are an approved collaborator, and the display name and
@@ -315,4 +328,21 @@ type Store interface {
 	// kept apart from the hub page's: no hub page list returns its entries,
 	// and it returns none of theirs. Entries reference no hub.
 	ListFoxholeChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
+
+	// StartFoxholeReport appends a Foxhole action's report to the Foxhole
+	// change log, marked running, and returns the entry with its ID and time
+	// set. The time is when the action started.
+	StartFoxholeReport(ctx context.Context, entry ChangeLogEntry) (ChangeLogEntry, error)
+	// UpdateFoxholeReport replaces the diff of the running report with the ID
+	// given, which stays running. ErrNotFound when no running report has the
+	// ID, a save's entry and an ended report among them, and nothing written.
+	UpdateFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error
+	// EndFoxholeReport replaces the diff of the running report with the ID
+	// given and marks it ended, after which it takes no more writes.
+	// ErrNotFound as UpdateFoxholeReport.
+	EndFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error
+	// LastFoxholeReport returns the newest report in the Foxhole change log,
+	// running or not, however many saves' entries were appended after it.
+	// ErrNotFound when the log holds none.
+	LastFoxholeReport(ctx context.Context) (FoxholeReport, error)
 }

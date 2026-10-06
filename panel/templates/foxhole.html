@@ -1,8 +1,20 @@
 {{define "content"}}
 <main class="body" data-page="{{.Page}}">
   <h1 class="title">Foxhole</h1>
-  <p class="desc">Everyone holding a Foxhole role, and every approved collaborator.</p>
+  <p class="desc">Everyone holding a Foxhole role, and every approved collaborator. Changes here go straight to Discord.</p>
   {{with .Foxhole}}
+  {{with .Report}}{{if .Running}}
+  <section class="block fx-progress" role="status" data-field="progress" data-report="{{.ID}}" data-action="{{.Action}}">
+    <h2 class="block-header">{{.Name}} is running</h2>
+    <div class="block-row">Started by <span data-field="started-by">{{.StartedBy}}</span>. <span data-field="done">{{.Done}}</span> of <span data-field="total">{{.Total}}</span> done, <span data-field="left" data-seconds="{{.Left.Seconds}}">about {{.Left.Text}}</span> left. It keeps going if you close this tab. Reload the page to see how far it has got.</div>
+  </section>
+  {{else}}
+  <section class="block fx-report" data-field="report" data-report="{{.ID}}" data-action="{{.Action}}" data-outcome="{{.Outcome}}">
+    <h2 class="block-header">{{.Name}}: {{.OutcomeLabel}}</h2>
+    {{template "report-head" .}}
+    {{template "report-lists" .}}
+  </section>
+  {{end}}{{end}}
   {{with .NoteForm}}
   <section class="block narrow" data-field="note-block">
     <h2 class="block-header">Note on {{if .DisplayName}}{{.DisplayName}} <span class="fx-user">@{{.Username}}</span>{{else}}{{.MemberID}}{{end}}</h2>
@@ -11,9 +23,41 @@
   {{end}}
   <div role="status" data-note-result>{{with .Cleared}}<div class="note note--ok" data-field="note-result" data-cleared="{{.MemberID}}">Cleared the note on {{.MemberName}} <span class="fx-user">@{{.MemberUsername}}</span>. They hold no Foxhole role, so they're no longer listed.</div>{{end}}</div>
   {{with .ApprovalRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
+  {{with .ActionRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
   {{with .Skipped}}<div class="note" data-field="approve-skipped">Not approved, since {{if eq (len .) 1}}this member doesn't{{else}}these members don't{{end}} hold External: {{range $i, $m := .}}{{if $i}}, {{end}}<span data-skipped="{{$m.ID}}">{{if $m.DisplayName}}{{$m.DisplayName}} <span class="fx-user">@{{$m.Username}}</span>{{else}}{{$m.ID}}{{end}}</span>{{end}}. Nothing changed for them.</div>{{end}}
   {{if not .ListNotice}}
   {{if .Disconnected}}<div class="note" data-notice="disconnected">Cavbot2 has lost its connection to Discord. The holder list may be out of date.</div>{{end}}
+  {{with .PurgeConfirm}}
+  <section class="block fx-pending fx-pending--danger" data-field="purge-confirm" data-scope="{{.Scope}}">
+    <h2 class="block-header">Purge {{.Label}}?</h2>
+    <div class="block-row">
+      {{range .Roles}}<p data-purge-role="{{.Role}}">Takes {{.Name}} off <span data-field="holders">{{.Holders}}</span> {{if eq .Holders 1}}holder{{else}}holders{{end}}{{if eq .Role "external"}}, approved collaborators included{{end}}.</p>{{end}}
+      <p data-field="keeps">Notes and approvals stay.</p>
+      <p>Takes <span data-field="estimate" data-seconds="{{.Estimate.Seconds}}">about {{.Estimate.Text}}</span> at one change a second. It keeps going if you close this tab.</p>
+    </div>
+    <form method="post" action="/foxhole/purge" class="submit-row">
+      <input type="hidden" name="scope" value="{{.Scope}}">
+      <button type="submit" class="btn btn--danger" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Purge {{.Label}}</button>
+      <a class="btn" href="/foxhole">Cancel</a>
+    </form>
+  </section>
+  {{end}}
+  <div class="fx-actions" data-field="actions">
+    <section class="block" data-field="after-a-war">
+      <h2 class="block-header">After a war</h2>
+      <form method="get" action="/foxhole" data-field="purge">
+        <div class="block-row">
+          <div class="field fx-radios"><span class="field-label">Purge</span>
+            <label class="check"><input type="radio" name="purge" value="both" checked> Internal and External</label>
+            <label class="check"><input type="radio" name="purge" value="internal"> Internal only</label>
+            <label class="check"><input type="radio" name="purge" value="external"> External only</label>
+          </div>
+          <span class="field-hint">Run when a war ends. You confirm on the next step. Notes and approvals stay.</span>
+        </div>
+        <div class="submit-row"><button type="submit" class="btn btn--danger"{{if .Busy}} disabled{{end}}>Purge</button>{{if .Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Wait for it to end.</span>{{end}}</div>
+      </form>
+    </section>
+  </div>
   {{if .NoRoleView}}
   <section class="block" data-field="no-role">
     <h2 class="block-header">Members with a note and no Foxhole role</h2>
@@ -74,12 +118,19 @@
   <section class="block" data-field="changes">
     <h2 class="block-header">Change log</h2>
     {{range $i, $_ := .Changes}}
-    <details class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}"{{if eq $i 0}} open{{end}}>
+    <details class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}"{{with .Report}} data-outcome="{{.OutcomeCode}}"{{end}}{{if eq $i 0}} open{{end}}>
       <summary class="change-head">
         <span class="change-who" data-field="username">{{.Username}}</span>
         <span class="tag" data-field="action">{{.Label}}</span>
         <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
       </summary>
+      {{if .Report}}{{with .Report}}
+      <div class="change-fields fx-changereport">
+        <p>{{.Name}}: {{.OutcomeLabel}}</p>
+        {{template "report-head" .}}
+        {{template "report-lists" .}}
+      </div>
+      {{end}}{{else}}
       <dl class="change-fields">
         {{if eq .Action "note"}}
         <div data-change="member"><dt>member</dt><dd data-touched="{{.MemberID}}">{{.MemberName}} <span class="fx-user">@{{.MemberUsername}}</span></dd></div>
@@ -89,6 +140,7 @@
         <div data-change="approved"><dt>approved</dt><dd>{{if eq .Action "approve"}}no{{else}}yes{{end}} <span class="arrow">&rarr;</span> {{if eq .Action "approve"}}yes{{else}}no{{end}}</dd></div>
         {{end}}
       </dl>
+      {{end}}
     </details>
     {{else}}
     <div class="block-row">No changes recorded yet.</div>
@@ -128,3 +180,14 @@
   <a href="{{.Back}}" class="fx-notecancel" data-field="cancel_note">Cancel</a>
   {{if .NoRoleRow}}<p class="fx-hint" id="note-hint" data-field="note-hint">An empty note takes this member off the page.</p>{{end}}
 </form>{{end}}
+
+{{define "report-head"}}<div class="block-row fx-reporthead">Started by <span data-field="started-by">{{.StartedBy}}</span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>{{if not .EndedAt.IsZero}}, ended at <time data-field="ended" datetime="{{.EndedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.EndedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>{{end}}.</div>{{end}}
+
+{{define "report-lists"}}
+<div class="block-row fx-reportlist" data-list="changed"><h3>Changed <span class="fx-count" data-field="count">{{len .Changed}}</span></h3>{{template "report-members" .Changed}}</div>
+<div class="block-row fx-reportlist" data-list="skipped"><h3>Skipped <span class="fx-count" data-field="count">{{len .Skipped}}</span></h3>{{template "report-members" .Skipped}}</div>
+<div class="block-row fx-reportlist" data-list="failed"><h3>Failed <span class="fx-count" data-field="count">{{len .Failed}}</span></h3>{{template "report-members" .Failed}}</div>
+<div class="block-row fx-reportlist" data-list="not-attempted"><h3>Not attempted <span class="fx-count" data-field="count">{{len .NotAttempted}}</span></h3>{{template "report-members" .NotAttempted}}</div>
+{{end}}
+
+{{define "report-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}" data-role="{{.Role}}"{{with .Skip}} data-reason="{{.}}"{{end}}>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.ID}}{{end}} <span class="fx-user">@{{.Username}}</span> <span class="tag fx-role">{{.RoleName}}</span>{{with .Why}} <span data-field="reason">{{.}}</span>{{end}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}

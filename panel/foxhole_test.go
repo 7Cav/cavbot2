@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/7cav/cavbot2/commands"
+	"github.com/7cav/cavbot2/store"
 	"github.com/bwmarrin/discordgo"
 	"golang.org/x/net/html"
 )
@@ -254,9 +255,19 @@ var (
 // manager.
 func newFoxholeWorld(t *testing.T) *testWorld {
 	t.Helper()
+	return newFoxholeWorldWith(t, func(st store.Store) store.Store { return st })
+}
+
+// newFoxholeWorldWith is newFoxholeWorld over the store fake as wrap
+// wraps it. w.st is the fake itself.
+func newFoxholeWorldWith(t *testing.T, wrap func(store.Store) store.Store) *testWorld {
+	t.Helper()
 	t.Setenv("FOXHOLE_ROLE_BASE_NAME", "")
 	t.Setenv("WARDEN_ROLE_BASE_NAME", "")
-	w := newTestWorld(t)
+	fake := store.NewFake()
+	watch := endWatch{Store: wrap(fake), ended: make(chan struct{}, 16)}
+	w := newTestWorldOver(t, watch, newFakeForum(t))
+	w.st, w.actionEnded = fake, watch.ended
 	w.discord.addRoles(foxholeGuildRoles...)
 	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
 		Members: []commands.ListedMember{memberDoe, memberAsh, memberKestrel, memberMarsh, memberVance}})

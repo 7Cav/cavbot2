@@ -43,6 +43,9 @@ type Fake struct {
 	foxholeChanges changeLog
 	// members holds each guild's Foxhole records by member ID.
 	members map[string]map[string]FoxholeRecord
+	// reports marks the entries of the Foxhole change log that are Foxhole
+	// actions' reports, by ID, each true while its action runs.
+	reports map[int64]bool
 }
 
 // changeLog is one change log in append order, and the ID its next entry
@@ -62,6 +65,7 @@ func NewFake() *Fake {
 		changes:        changeLog{nextID: 1},
 		foxholeChanges: changeLog{nextID: 1},
 		members:        make(map[string]map[string]FoxholeRecord),
+		reports:        make(map[int64]bool),
 	}
 }
 
@@ -346,28 +350,38 @@ func (f *Fake) writeAllOrNothing(ctx context.Context, entry *ChangeLogEntry, app
 
 // writeToLog is writeAllOrNothing with the entry appended to log.
 func (f *Fake) writeToLog(ctx context.Context, log *changeLog, entry *ChangeLogEntry, apply func() (hubID int64, err error)) error {
+	_, err := f.appendToLog(ctx, log, entry, apply)
+	return err
+}
+
+// appendToLog is writeToLog, and returns the entry as appended, with its ID
+// and time, or the zero entry when there is none. apply runs before the
+// append under mu, so log.nextID is then the ID the entry gets.
+func (f *Fake) appendToLog(ctx context.Context, log *changeLog, entry *ChangeLogEntry, apply func() (hubID int64, err error)) (ChangeLogEntry, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return ChangeLogEntry{}, err
 	}
 	if entry != nil && !json.Valid(entry.Diff) {
-		return errors.New("store: the change log diff is not a JSON value")
+		return ChangeLogEntry{}, errors.New("store: the change log diff is not a JSON value")
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	hubID, err := apply()
 	if err != nil {
-		return err
+		return ChangeLogEntry{}, err
 	}
-	if entry != nil {
-		e := *entry
-		e.ID = log.nextID
-		log.nextID++
-		e.HubID = hubID
-		e.At = time.Now()
-		e.Diff = slices.Clone(e.Diff)
-		log.entries = append(log.entries, e)
+	if entry == nil {
+		return ChangeLogEntry{}, nil
 	}
-	return nil
+	e := *entry
+	e.ID = log.nextID
+	log.nextID++
+	e.HubID = hubID
+	e.At = time.Now()
+	e.Diff = slices.Clone(e.Diff)
+	log.entries = append(log.entries, e)
+	e.Diff = slices.Clone(e.Diff)
+	return e, nil
 }
 
 // ListChangeLog implements Store.
@@ -493,6 +507,65 @@ func (f *Fake) ListFoxholeChanges(ctx context.Context, limit int) ([]ChangeLogEn
 		return nil, err
 	}
 	return f.listChanges(&f.foxholeChanges, limit, func(ChangeLogEntry) bool { return true }), nil
+}
+
+// StartFoxholeReport implements Store.
+func (f *Fake) StartFoxholeReport(ctx context.Context, entry ChangeLogEntry) (ChangeLogEntry, error) {
+	return f.appendToLog(ctx, &f.foxholeChanges, &entry, func() (int64, error) {
+		f.reports[f.foxholeChanges.nextID] = true
+		return 0, nil
+	})
+}
+
+// UpdateFoxholeReport implements Store.
+func (f *Fake) UpdateFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
+	return f.writeReport(ctx, id, diff, true)
+}
+
+// EndFoxholeReport implements Store.
+func (f *Fake) EndFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
+	return f.writeReport(ctx, id, diff, false)
+}
+
+// writeReport replaces the diff of the running report with the ID given,
+// which stays running as running says. It writes nothing when ctx is done,
+// when the diff is not a JSON value, or when no running report has the ID.
+func (f *Fake) writeReport(ctx context.Context, id int64, diff json.RawMessage, running bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !json.Valid(diff) {
+		return errors.New("store: the change log diff is not a JSON value")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.reports[id] {
+		return ErrNotFound
+	}
+	for i := range f.foxholeChanges.entries {
+		if f.foxholeChanges.entries[i].ID == id {
+			f.foxholeChanges.entries[i].Diff = slices.Clone(diff)
+		}
+	}
+	f.reports[id] = running
+	return nil
+}
+
+// LastFoxholeReport implements Store.
+func (f *Fake) LastFoxholeReport(ctx context.Context) (FoxholeReport, error) {
+	if err := ctx.Err(); err != nil {
+		return FoxholeReport{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.foxholeChanges.entries) - 1; i >= 0; i-- {
+		e := f.foxholeChanges.entries[i]
+		if running, ok := f.reports[e.ID]; ok {
+			e.Diff = slices.Clone(e.Diff)
+			return FoxholeReport{Entry: e, Running: running}, nil
+		}
+	}
+	return FoxholeReport{}, ErrNotFound
 }
 
 // cloneHub copies a hub so a caller's later edits to the slice do not reach
