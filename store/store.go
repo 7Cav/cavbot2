@@ -162,6 +162,10 @@ const (
 	// Foxhole page. Its entry is the re-add's report, in the Foxhole change
 	// log.
 	ChangeReAdd ChangeAction = "re_add"
+	// ChangeRemoval is a removal of a Foxhole role from members selected on
+	// the Foxhole page. Its entry is the removal's report, in the Foxhole
+	// change log. A hub's removal is ChangeRemove.
+	ChangeRemoval ChangeAction = "removal"
 )
 
 // FoxholeReport is the report of a Foxhole action started on the Foxhole
@@ -323,6 +327,12 @@ type Store interface {
 	// left with no note and no approval loses their record, as in
 	// SaveFoxholeNote. A member with no record is left with none.
 	ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry ChangeLogEntry) error
+	// ClearFoxholeApprovalForRemoval clears the member's approval, when they
+	// have one, and reports whether they had. It appends no entry: a removal
+	// that took External from the member makes the call, and the removal's
+	// report names the approval it cleared. A member left with no note and no
+	// approval loses their record, as in ClearFoxholeApprovals.
+	ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string) (bool, error)
 	// SetFoxholeRecordNames replaces the last-seen names of each member
 	// given who has a record, and starts no record for one who hasn't. It
 	// appends no entry: no person made the change.

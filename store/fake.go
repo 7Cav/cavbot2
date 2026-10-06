@@ -488,6 +488,24 @@ func (f *Fake) ClearFoxholeApprovals(ctx context.Context, guildID string, member
 	})
 }
 
+// ClearFoxholeApprovalForRemoval implements Store.
+func (f *Fake) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string) (bool, error) {
+	cleared := false
+	err := f.writeAllOrNothing(ctx, nil, func() (int64, error) {
+		m, ok := f.members[guildID][memberID]
+		if !ok || !m.Approved {
+			return 0, nil
+		}
+		cleared, m.Approved = true, false
+		f.members[guildID][memberID] = m
+		if m.Note == "" {
+			delete(f.members[guildID], memberID)
+		}
+		return 0, nil
+	})
+	return cleared, err
+}
+
 // SetFoxholeRecordNames implements Store.
 func (f *Fake) SetFoxholeRecordNames(ctx context.Context, guildID string, names []MemberNames) error {
 	return f.writeAllOrNothing(ctx, nil, func() (int64, error) {

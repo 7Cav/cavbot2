@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/7cav/cavbot2/commands"
@@ -111,7 +113,7 @@ func (m reportMember) Why() string {
 }
 
 // reportViewOf decodes a report the store holds for the page. Its name is
-// the action's, with a purge's scope.
+// the action's, with a purge's scope or a removal's role.
 func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 	var report commands.ActionReport
 	if err := json.Unmarshal(stored.Entry.Diff, &report); err != nil {
@@ -120,6 +122,9 @@ func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 	name := actionNames[stored.Entry.Action]
 	if scope := scopeLabels[report.Scope]; scope != "" {
 		name += " " + scope
+	}
+	if role := foxholeRoleLabels[report.Role]; role != "" {
+		name += " " + role
 	}
 	view := &reportView{ID: stored.Entry.ID, Action: stored.Entry.Action, Name: name,
 		StartedBy: stored.Entry.ForumUsername, StartedAt: stored.Entry.At, EndedAt: report.EndedAt,
@@ -199,8 +204,9 @@ var foxholeRoleLabels = map[commands.FoxholeRole]string{commands.FoxholeInternal
 // the Foxhole change log whose action is among them is that action's
 // report.
 var actionNames = map[store.ChangeAction]string{
-	store.ChangePurge: "Purge",
-	store.ChangeReAdd: "Re-add approved collaborators",
+	store.ChangePurge:   "Purge",
+	store.ChangeRemoval: "Remove",
+	store.ChangeReAdd:   "Re-add approved collaborators",
 }
 
 // scopeLabels are the purge scopes as the page names them.
@@ -229,6 +235,87 @@ func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope c
 	}
 	confirm.Estimate = estimateFor(changes)
 	return confirm
+}
+
+// removePreview is the preview a removal waits on: the role, the members
+// selected who lose it, those it skips, for External the approved
+// collaborators among the losers, whose approval it clears, how many of
+// its members have a note, and the rough time at one change a second.
+type removePreview struct {
+	Role    commands.FoxholeRole
+	Name    string
+	Loses   []previewMember
+	Skipped []previewMember
+	Cleared []previewMember
+	// Notes counts the members the preview names who have a note.
+	Notes    int
+	Estimate estimate
+	// Back is the address of the view the selection was made in, where
+	// Cancel leads.
+	Back string
+}
+
+// previewMember is one member a preview names, under the names the member
+// list shows, or the record's when it doesn't hold them, with their note.
+type previewMember struct {
+	ID          string
+	DisplayName string
+	Username    string
+	Note        string
+	// Skip is why the removal skips the member: they don't hold the role,
+	// or they left the server.
+	Skip commands.SkipReason
+}
+
+// removePreviewOf is the preview of a removal of the request's role from
+// the members it selected, in display name order, read from a complete
+// member list and the guild's Foxhole records.
+func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, req foxholeRequest) *removePreview {
+	guild := s.foxholeGuildOf()
+	preview := &removePreview{Role: req.Remove, Name: foxholeRoleLabels[req.Remove], Back: foxholeAddress(req.Query, req.Filter)}
+	var named []previewMember
+	for _, id := range distinct(req.RemoveMembers) {
+		rec := records[id]
+		member := previewMember{ID: id, DisplayName: rec.DisplayName, Username: rec.Username, Note: rec.Note}
+		mem, inServer := list.Member(id)
+		row := guild.rowOf(mem, rec)
+		holds := (req.Remove == commands.FoxholeInternal && row.Internal) || (req.Remove == commands.FoxholeExternal && row.External)
+		if inServer {
+			member.DisplayName, member.Username = mem.DisplayName(), mem.Username
+		}
+		named = append(named, member)
+		switch {
+		case !inServer:
+			member.Skip = commands.SkipLeft
+			preview.Skipped = append(preview.Skipped, member)
+		case !holds:
+			member.Skip = commands.SkipNotHolding
+			preview.Skipped = append(preview.Skipped, member)
+		default:
+			preview.Loses = append(preview.Loses, member)
+			if req.Remove == commands.FoxholeExternal && rec.Approved {
+				preview.Cleared = append(preview.Cleared, member)
+			}
+		}
+	}
+	for _, m := range named {
+		if m.Note != "" {
+			preview.Notes++
+		}
+	}
+	for _, members := range [][]previewMember{preview.Loses, preview.Skipped, preview.Cleared} {
+		byName(members)
+	}
+	preview.Estimate = estimateFor(len(preview.Loses))
+	return preview
+}
+
+// byName sorts members by display name, ignoring case, then by ID, as the
+// holder list does.
+func byName(members []previewMember) {
+	slices.SortFunc(members, func(a, b previewMember) int {
+		return cmp.Or(cmp.Compare(strings.ToLower(a.DisplayName), strings.ToLower(b.DisplayName)), cmp.Compare(a.ID, b.ID))
+	})
 }
 
 // reAddCounts is what the After a war block says a re-add would do: how
@@ -289,6 +376,16 @@ func actionListPartialRefusal(what string) *saveRefusal {
 		Message: fmt.Sprintf("Cavbot2 doesn't have the whole member list from Discord yet, so %s didn't start. Nothing changed. Try again once the list has arrived.", what)}
 }
 
+// removeListPartialRefusal refuses a remove preview of the role named,
+// opened while the member list is partial: it can't tell who holds the
+// role. The page keeps no selection, so the manager selects again once the
+// holder list is back.
+func removeListPartialRefusal(role string) *saveRefusal {
+	return &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
+		log:     "Panel action refused: member list partial",
+		Message: fmt.Sprintf("Cavbot2 doesn't have the whole member list from Discord yet, so it can't tell who holds %s. Nothing changed. Select the members again once the list has arrived.", role)}
+}
+
 // roleMissingRefusal refuses a Foxhole action, named by what, that changes
 // a role the guild doesn't hold by its configured name. The runtime has
 // reported it to Sentry.
@@ -313,6 +410,29 @@ func (p *Panel) startPurge(w http.ResponseWriter, r *http.Request, sess session)
 	p.startAction(w, r, sess, "the purge", func(ctx context.Context, by commands.ForumUser) error {
 		return p.foxhole.actions.Purge(ctx, scope, by)
 	}, "scope", scope)
+}
+
+// startRemoval is POST /foxhole/remove, the remove preview's Confirm: it
+// starts the removal of the role confirmed from the members the preview
+// listed as losing it, as startAction says.
+func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess session) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "the form could not be read", http.StatusBadRequest)
+		return
+	}
+	role, ok := commands.ParseFoxholeRole(r.PostForm.Get(fieldRole))
+	if !ok {
+		http.Error(w, "the form names no Foxhole role, so nothing changed", http.StatusBadRequest)
+		return
+	}
+	members := r.PostForm[fieldMember]
+	if len(members) == 0 {
+		http.Error(w, "the form names no member, so nothing changed", http.StatusBadRequest)
+		return
+	}
+	p.startAction(w, r, sess, "the removal", func(ctx context.Context, by commands.ForumUser) error {
+		return p.foxhole.actions.Remove(ctx, role, members, by)
+	}, "role", role, "members", len(members))
 }
 
 // startReAdd is POST /foxhole/re-add, the After a war block's Re-add

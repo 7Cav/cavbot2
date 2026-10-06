@@ -85,6 +85,9 @@ type foxholeView struct {
 	ActionRefusal *saveRefusal
 	// PurgeConfirm is the confirmation the purge form opened, nil for none.
 	PurgeConfirm *purgeConfirm
+	// RemovePreview is the preview a Remove button of the selection bar
+	// opened, nil for none.
+	RemovePreview *removePreview
 	// ReAdd counts the approved collaborators by what a re-add would do with
 	// each, for the After a war block. Nil while the member list isn't
 	// complete.
@@ -318,19 +321,24 @@ type foxholeChange struct {
 
 // The Foxhole page's addresses: the page, the note save its note form
 // posts to, the approvals save its selection bar posts to, the purge its
-// purge confirmation starts, the re-add its After a war block starts, and
-// the Stop on its progress block.
+// purge confirmation starts, the removal its remove preview starts, the
+// re-add its After a war block starts, and the Stop on its progress block.
 const (
 	foxholePath          = "/foxhole"
 	foxholeNotesPath     = "/foxhole/notes"
 	foxholeApprovalsPath = "/foxhole/approvals"
 	foxholePurgePath     = "/foxhole/purge"
+	foxholeRemovePath    = "/foxhole/remove"
 	foxholeReAddPath     = "/foxhole/re-add"
 	foxholeStopPath      = "/foxhole/stop"
 )
 
 // fieldScope is the purge confirmation's field: the scope it confirms.
 const fieldScope = "scope"
+
+// fieldRole is the remove preview's field beside the members it posts as
+// fieldMember: the role it confirms.
+const fieldRole = "role"
 
 // fieldReport is the Stop form's field: the ID of the report of the action
 // the progress block showed.
@@ -340,8 +348,10 @@ const fieldReport = "report"
 // the filter, from the filter links, the ID of the member whose note form
 // the page opens, from a row's Edit link, the ID of the member a note save
 // cleared off the page, and the IDs of the members an Approve skipped, each
-// from the save's redirect, and the scope of the purge whose confirmation
-// the page opens, from the purge form.
+// from the save's redirect, the scope of the purge whose confirmation the
+// page opens, from the purge form, and the role whose remove preview the
+// page opens, from the selection bar's Remove buttons, which name the
+// members selected as fieldMember.
 const (
 	paramQuery      = "q"
 	paramFilter     = "filter"
@@ -349,6 +359,7 @@ const (
 	paramCleared    = "cleared"
 	paramSkipped    = "skipped"
 	paramPurge      = "purge"
+	paramRemove     = "remove"
 )
 
 // The note form's fields beside the view's query and filter: the member,
@@ -413,6 +424,10 @@ type foxholeRequest struct {
 	// Purge is the scope of the purge whose confirmation the page opens,
 	// empty for none.
 	Purge commands.PurgeScope
+	// Remove is the role whose remove preview the page opens, empty for
+	// none, and RemoveMembers the IDs of the members selected for it.
+	Remove        commands.FoxholeRole
+	RemoveMembers []string
 	// ActionRefusal is the refusal of the Foxhole action this page answers,
 	// nil for none.
 	ActionRefusal *saveRefusal
@@ -424,9 +439,11 @@ type foxholeRequest struct {
 func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session) {
 	q := r.URL.Query()
 	purge, _ := commands.ParsePurgeScope(q.Get(paramPurge))
+	remove, _ := commands.ParseFoxholeRole(q.Get(paramRemove))
 	p.renderFoxhole(w, r, sess, http.StatusOK,
 		foxholeRequest{Query: q.Get(paramQuery), Filter: knownFilter(q.Get(paramFilter)), NoteMember: q.Get(paramNoteMember),
-			Cleared: q.Get(paramCleared), Skipped: q[paramSkipped], AwaitList: true, Purge: purge})
+			Cleared: q.Get(paramCleared), Skipped: q[paramSkipped], AwaitList: true, Purge: purge,
+			Remove: remove, RemoveMembers: q[fieldMember]})
 }
 
 // renderFoxhole renders the Foxhole page read now, under the page's time
@@ -650,8 +667,14 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 		if req.Purge != "" {
 			view.PurgeConfirm = s.purgeConfirmOf(list, req.Purge)
 		}
+		if req.Remove != "" {
+			view.RemovePreview = s.removePreviewOf(list, records, req)
+		}
 	} else {
 		view.ListNotice = noticeFor(list, foxholeURL(req.Query, req.Filter, req.NoteMember))
+		if req.Remove != "" {
+			view.ActionRefusal = removeListPartialRefusal(foxholeRoleLabels[req.Remove])
+		}
 	}
 	view.Query, view.Filter = req.Query, req.Filter
 	view.NoteTemplate = req.blankNoteForm()
@@ -663,7 +686,10 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 		view.NoteForm = noteFormFor(req, list, records)
 	}
 	view.Skipped = s.stillSkipped(list, records, req.Skipped)
-	view.ApprovalRefusal, view.ActionRefusal = req.ApprovalRefusal, req.ActionRefusal
+	view.ApprovalRefusal = req.ApprovalRefusal
+	if req.ActionRefusal != nil {
+		view.ActionRefusal = req.ActionRefusal
+	}
 	running, busy := s.actions.Running()
 	if report != nil && report.Running && busy {
 		report.StopPressedBy, report.Paused = running.StopPressedBy, running.Paused

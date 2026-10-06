@@ -701,6 +701,33 @@ func (p *Postgres) ClearFoxholeApprovals(ctx context.Context, guildID string, me
 	return nil
 }
 
+// ClearFoxholeApprovalForRemoval implements Store. The clear and the drop
+// of a record left with neither a note nor an approval run in one
+// transaction.
+func (p *Postgres) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string) (bool, error) {
+	cleared := false
+	err := p.inTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE foxhole_records SET approved = FALSE, updated_at = now()
+			WHERE guild_id = $1 AND member_id = $2 AND approved`, guildID, memberID)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil || n == 0 {
+			return err
+		}
+		cleared = true
+		_, err = tx.ExecContext(ctx, `
+			DELETE FROM foxhole_records WHERE guild_id = $1 AND member_id = $2 AND note = ''`, guildID, memberID)
+		return err
+	})
+	if err != nil {
+		return false, fmt.Errorf("clear the Foxhole approval of member %q: %w", memberID, err)
+	}
+	return cleared, nil
+}
+
 // SetFoxholeRecordNames implements Store. The few updates run in one
 // transaction, so a refresh lands whole or not at all.
 func (p *Postgres) SetFoxholeRecordNames(ctx context.Context, guildID string, names []MemberNames) error {
