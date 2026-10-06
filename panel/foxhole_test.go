@@ -251,8 +251,8 @@ var (
 
 // newFoxholeWorld is the test world with the fixture's roles in the guild
 // and a complete member list of the fixture's members, and the Foxhole role
-// base name left at its default. The browser is signed in as a Foxhole
-// manager.
+// base name left at its default. Its Foxhole actions pause on w.pause. The
+// browser is signed in as a Foxhole manager.
 func newFoxholeWorld(t *testing.T) *testWorld {
 	t.Helper()
 	return newFoxholeWorldWith(t, func(st store.Store) store.Store { return st })
@@ -266,8 +266,9 @@ func newFoxholeWorldWith(t *testing.T, wrap func(store.Store) store.Store) *test
 	t.Setenv("WARDEN_ROLE_BASE_NAME", "")
 	fake := store.NewFake()
 	watch := endWatch{Store: wrap(fake), ended: make(chan struct{}, 16)}
+	pause := installPauseClock(t)
 	w := newTestWorldOver(t, watch, newFakeForum(t))
-	w.st, w.actionEnded = fake, watch.ended
+	w.st, w.actionEnded, w.pause = fake, watch.ended, pause
 	w.discord.addRoles(foxholeGuildRoles...)
 	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
 		Members: []commands.ListedMember{memberDoe, memberAsh, memberKestrel, memberMarsh, memberVance}})

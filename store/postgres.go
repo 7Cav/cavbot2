@@ -802,6 +802,17 @@ func (p *Postgres) writeReport(ctx context.Context, id int64, diff json.RawMessa
 	return nil
 }
 
+// RunningFoxholeReports implements Store.
+func (p *Postgres) RunningFoxholeReports(ctx context.Context) ([]ChangeLogEntry, error) {
+	entries, err := queryAll(ctx, p.db, scanFoxholeChange,
+		`SELECT id, forum_user_id, forum_username, at, action, diff
+		FROM foxhole_change_log WHERE report = 'running' ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list running Foxhole reports: %w", err)
+	}
+	return entries, nil
+}
+
 // LastFoxholeReport implements Store.
 func (p *Postgres) LastFoxholeReport(ctx context.Context) (FoxholeReport, error) {
 	var report FoxholeReport

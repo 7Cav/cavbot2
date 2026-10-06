@@ -165,3 +165,41 @@ func TestLastReportIsTheNewestReportHoweverManySavesFollowIt(t *testing.T) {
 		assertReport(t, s, newest, "second purge", false)
 	})
 }
+
+// The running reports are the reports started and not yet ended, each with
+// its diff as last written: a report ended isn't one, and neither is a
+// save's entry.
+func TestRunningReportsAreTheReportsNotYetEnded(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		ended, err := s.StartFoxholeReport(ctx, purgeEntry("started"))
+		if err != nil {
+			t.Fatalf("StartFoxholeReport: %v", err)
+		}
+		running, err := s.StartFoxholeReport(ctx, purgeEntry("started"))
+		if err != nil {
+			t.Fatalf("StartFoxholeReport: %v", err)
+		}
+		if err := s.EndFoxholeReport(ctx, ended.ID, reportDiff("done")); err != nil {
+			t.Fatalf("EndFoxholeReport: %v", err)
+		}
+		if err := s.UpdateFoxholeReport(ctx, running.ID, reportDiff("one done")); err != nil {
+			t.Fatalf("UpdateFoxholeReport: %v", err)
+		}
+		if err := saveNote(s, memberDoe, "", "discharged 12 Sep"); err != nil {
+			t.Fatalf("note save: %v", err)
+		}
+
+		got, err := s.RunningFoxholeReports(ctx)
+
+		if err != nil {
+			t.Fatalf("RunningFoxholeReports: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != running.ID {
+			t.Fatalf("the running reports are %+v, want entry %d alone", got, running.ID)
+		}
+		if diff, want := decodeDiff(t, got[0].Diff), decodeDiff(t, reportDiff("one done")); !reflect.DeepEqual(diff, want) {
+			t.Errorf("the running report's diff = %v, want %v", diff, want)
+		}
+	})
+}

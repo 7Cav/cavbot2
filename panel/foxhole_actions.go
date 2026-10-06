@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/7cav/cavbot2/commands"
@@ -33,12 +34,21 @@ type reportView struct {
 	StartedAt, EndedAt time.Time
 	// Running is the action still running: the page shows its progress
 	// block in the report's place.
-	Running      bool
-	Outcome      commands.ReportOutcome
+	Running bool
+	Outcome commands.ReportOutcome
+	// StoppedBy is the forum user who stopped an action that ended stopped,
+	// empty otherwise.
+	StoppedBy    string
 	Changed      []reportMember
 	Skipped      []reportMember
 	Failed       []reportMember
 	NotAttempted []reportMember
+	// StoppingBy is the forum user who pressed Stop on the running action,
+	// which stops after the change in flight. Empty until someone does.
+	StoppingBy string
+	// Waiting is the running action paused before its next member, waiting
+	// for the member list.
+	Waiting bool
 	// Done counts the members the action has been through, of Total, and
 	// Left is the rough time the rest take.
 	Done, Total int
@@ -61,8 +71,18 @@ func (r reportView) OutcomeLabel() string {
 		return "Done"
 	case r.Outcome == commands.ReportMemberListGone:
 		return "Stopped: Discord's member list didn't arrive"
+	case r.Outcome == commands.ReportStopped:
+		return "Stopped by " + r.StoppedBy
+	case r.Outcome == commands.ReportRestart:
+		return "Stopped by a restart"
 	}
 	return string(r.Outcome)
+}
+
+// PauseLimit is how long a paused action waits for the member list before
+// it stops, as the progress block says it.
+func (reportView) PauseLimit() string {
+	return fmt.Sprintf("%d s", int(commands.FoxholePauseLimit/time.Second))
 }
 
 // OutcomeCode is the report's data-outcome marker: how the action ended,
@@ -98,6 +118,9 @@ func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 		Running: stored.Running, Outcome: report.Outcome,
 		Changed: reportMembers(report.Changed), Skipped: reportMembers(report.Skipped), Failed: reportMembers(report.Failed),
 		NotAttempted: reportMembers(report.NotAttempted)}
+	if report.StoppedBy != nil {
+		view.StoppedBy = report.StoppedBy.Username
+	}
 	view.Done = len(view.Changed) + len(view.Skipped) + len(view.Failed)
 	view.Total = view.Done + len(view.NotAttempted)
 	view.Left = estimateFor(len(view.NotAttempted))
@@ -262,6 +285,25 @@ func (p *Panel) startPurge(w http.ResponseWriter, r *http.Request, sess session)
 		p.serverError(w, "purge start", err)
 		return
 	}
+	http.Redirect(w, r, foxholePath, http.StatusSeeOther)
+}
+
+// stopAction is POST /foxhole/stop, the progress block's Stop: it asks the
+// running Foxhole action to stop after the change in flight, and redirects
+// straight back to the Foxhole page. There is no confirmation step.
+func (p *Panel) stopAction(w http.ResponseWriter, r *http.Request, sess session) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "the form could not be read", http.StatusBadRequest)
+		return
+	}
+	reportID, err := strconv.ParseInt(r.PostForm.Get(fieldReport), 10, 64)
+	if err != nil {
+		http.Error(w, "the form names no action, so nothing stopped", http.StatusBadRequest)
+		return
+	}
+	stopped := p.foxhole.actions.Stop(reportID, commands.ForumUser{ID: sess.userID, Username: sess.username})
+	utils.Info("Panel Foxhole action stop", "report_id", reportID, "running", stopped,
+		"username", sess.username, "forum_user_id", sess.userID)
 	http.Redirect(w, r, foxholePath, http.StatusSeeOther)
 }
 

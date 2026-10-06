@@ -72,9 +72,31 @@ const foxholeStoreTimeout = 5 * time.Second
 // manager until the next one, so one store blip mustn't leave it so.
 const foxholeEndAttempts = 3
 
+// FoxholePauseLimit is how long a Foxhole action stays paused before its
+// next member, waiting for a complete member list with the bot connected,
+// before it stops. A paused action holds the one-action-at-a-time rule,
+// which blocks the commands, and they don't need the list.
+const FoxholePauseLimit = 60 * time.Second
+
+// foxholePausePoll is how often a paused action reads the member list
+// again. It matches the rate of one role change a second, so a pause reads
+// the list no more often than a running action does.
+const foxholePausePoll = time.Second
+
 // foxholeNow is the Foxhole runtime's clock, a package var beside
 // tempVCNow.
 var foxholeNow = time.Now
+
+// FoxholeAfterFunc runs f on a goroutine of its own once d has passed, and
+// returns a stop that keeps f from running if it has not started, as
+// time.Timer.Stop does. A Foxhole action's pause limit is timed through it.
+// A package var beside foxholeNow, exported so the panel's tests can run a
+// pause on a fake clock. Each runtime takes it when it is built, so a
+// runtime already running keeps the clock it was built with.
+var FoxholeAfterFunc = func(d time.Duration, f func()) (stop func()) {
+	timer := time.AfterFunc(d, f)
+	return func() { timer.Stop() }
+}
 
 // FoxholeGuildReader is the subset of the manager seam a Foxhole action
 // reads the guild through, from the gateway state and never Discord's API:
@@ -94,10 +116,11 @@ type FoxholeRoleWriter interface {
 	GuildMemberRoleRemove(guildID, userID, roleID, auditReason string) error
 }
 
-// ForumUser is the forum user who started a Foxhole action on the page.
+// ForumUser is a forum user who started or stopped a Foxhole action on the
+// page.
 type ForumUser struct {
-	ID       int
-	Username string
+	ID       int    `json:"id"`
+	Username string `json:"username"`
 }
 
 // auditName names the forum user in an audit log reason, the way the
@@ -139,6 +162,14 @@ const (
 	// went partial under it: it could no longer check a member before
 	// changing them. What it hadn't reached is not attempted.
 	ReportMemberListGone ReportOutcome = "member-list"
+	// ReportStopped is an action a Foxhole manager or panel admin stopped.
+	// The change in flight finished; what it hadn't reached is not
+	// attempted. The report names who stopped it.
+	ReportStopped ReportOutcome = "stopped"
+	// ReportRestart is an action the bot's restart cut off: a deploy or a
+	// crash. Its report holds what it had written before the restart, and
+	// the action never resumes.
+	ReportRestart ReportOutcome = "restart"
 )
 
 // ActionReport is a Foxhole action's report as its change log entry's diff
@@ -150,6 +181,8 @@ type ActionReport struct {
 	Outcome ReportOutcome `json:"outcome,omitempty"`
 	// EndedAt is when the action ended, zero while it runs.
 	EndedAt time.Time `json:"ended_at,omitzero"`
+	// StoppedBy is who stopped an action that ended ReportStopped.
+	StoppedBy *ForumUser `json:"stopped_by,omitempty"`
 	// Changed are the members whose role the action changed.
 	Changed []ReportMember `json:"changed"`
 	// Skipped are the members the action reached and left as they were,
@@ -213,30 +246,96 @@ type FoxholeRuntime struct {
 	roles   FoxholeRoleWriter
 	store   store.Store
 	guildID string
+	// afterFunc times a pause's limit: FoxholeAfterFunc when the runtime
+	// was built.
+	afterFunc func(d time.Duration, f func()) (stop func())
 
 	mu sync.Mutex
 	// busy is an action running, which holds the one-action-at-a-time
 	// rule.
 	busy bool
+	// reportID is the running action's report, 0 until it is written.
+	reportID int64
+	// stopBy is who pressed Stop on the running action, nil until someone
+	// does, and stop closes when someone does.
+	stopBy *ForumUser
+	stop   chan struct{}
+	// waiting is the running action paused before its next member.
+	waiting bool
 }
 
-// Busy reports whether a Foxhole action is running.
-func (r *FoxholeRuntime) Busy() bool {
+// RunningAction is the Foxhole action running now, as the page shows it
+// beside its report.
+type RunningAction struct {
+	// StoppedBy is the username of the forum user who pressed Stop, empty
+	// until someone does. The action stops after the change in flight.
+	StoppedBy string
+	// Waiting is the action paused before its next member, waiting for a
+	// complete member list with the bot connected.
+	Waiting bool
+}
+
+// Running reports the Foxhole action running, and false when none is.
+func (r *FoxholeRuntime) Running() (RunningAction, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.busy
+	action := RunningAction{Waiting: r.waiting}
+	if r.stopBy != nil {
+		action.StoppedBy = r.stopBy.Username
+	}
+	return action, r.busy
 }
 
 // claim takes the one-action-at-a-time rule, and reports false when an
-// action already holds it.
-func (r *FoxholeRuntime) claim() bool {
+// action already holds it. The channel it returns closes when someone
+// presses the action's Stop.
+func (r *FoxholeRuntime) claim() (<-chan struct{}, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.busy {
+		return nil, false
+	}
+	r.busy, r.reportID, r.stopBy, r.stop, r.waiting = true, 0, nil, make(chan struct{}), false
+	return r.stop, true
+}
+
+// started records the running action's report.
+func (r *FoxholeRuntime) started(reportID int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reportID = reportID
+}
+
+// Stop asks the running Foxhole action whose report has the ID given to
+// stop, on behalf of the forum user given, and reports whether one was
+// running. It stops after the change in flight, and its report names them.
+// A Stop from a page that showed an action since ended stops nothing,
+// whatever runs now.
+func (r *FoxholeRuntime) Stop(reportID int64, by ForumUser) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.busy || r.reportID == 0 || r.reportID != reportID {
 		return false
 	}
-	r.busy = true
+	if r.stopBy == nil {
+		r.stopBy = &by
+		close(r.stop)
+	}
 	return true
+}
+
+// stopRequested is who pressed Stop on the running action, nil for nobody.
+func (r *FoxholeRuntime) stopRequested() *ForumUser {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stopBy
+}
+
+// setWaiting records whether the running action is paused.
+func (r *FoxholeRuntime) setWaiting(waiting bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.waiting = waiting
 }
 
 // release gives the rule back.
@@ -247,9 +346,48 @@ func (r *FoxholeRuntime) release() {
 }
 
 // NewFoxholeRuntime builds the runtime over the guild's gateway state, the
-// role calls and the bot's store.
-func NewFoxholeRuntime(guild FoxholeGuildReader, roles FoxholeRoleWriter, st store.Store, guildID string) *FoxholeRuntime {
-	return &FoxholeRuntime{guild: guild, roles: roles, store: st, guildID: guildID}
+// role calls and the bot's store. It ends every report the store still
+// holds running as stopped by a restart, since the action that wrote it
+// stopped with the process before it ended, and it never resumes one. An
+// error is the store failing that work.
+func NewFoxholeRuntime(guild FoxholeGuildReader, roles FoxholeRoleWriter, st store.Store, guildID string) (*FoxholeRuntime, error) {
+	r := &FoxholeRuntime{guild: guild, roles: roles, store: st, guildID: guildID, afterFunc: FoxholeAfterFunc}
+	ctx, cancel := context.WithTimeout(context.Background(), foxholeStoreTimeout)
+	defer cancel()
+	if err := r.endCutOff(ctx); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// endCutOff ends each report still running with the outcome
+// ReportRestart. Each keeps the members its action had written as changed,
+// skipped and failed, and lists the rest as not attempted.
+func (r *FoxholeRuntime) endCutOff(ctx context.Context) error {
+	running, err := r.store.RunningFoxholeReports(ctx)
+	if err != nil {
+		return fmt.Errorf("list running Foxhole reports: %w", err)
+	}
+	for _, entry := range running {
+		var report ActionReport
+		if err := json.Unmarshal(entry.Diff, &report); err != nil {
+			// Only the runtime writes a report, so this is a fault. The report
+			// still ends, with the members it could read, so no page shows its
+			// action running for good.
+			captureError("Foxhole report unreadable at startup", err, "report_id", entry.ID)
+		}
+		report.Outcome, report.EndedAt = ReportRestart, foxholeNow().UTC()
+		raw, err := json.Marshal(report)
+		if err != nil {
+			return fmt.Errorf("encode Foxhole report %d: %w", entry.ID, err)
+		}
+		if err := r.store.EndFoxholeReport(ctx, entry.ID, raw); err != nil {
+			return fmt.Errorf("end Foxhole report %d: %w", entry.ID, err)
+		}
+		utils.Info("Foxhole action stopped by a restart", "action", entry.Action, "report_id", entry.ID,
+			"changed", len(report.Changed), "not_attempted", len(report.NotAttempted))
+	}
+	return nil
 }
 
 // plannedChange is one role change an action sets out to make: the member
@@ -265,6 +403,8 @@ type actionRun struct {
 	action   store.ChangeAction
 	reportID int64
 	reason   string
+	// stop closes when someone presses the action's Stop.
+	stop <-chan struct{}
 }
 
 // Purge starts a purge of the scope given, started by the forum user
@@ -277,7 +417,8 @@ type actionRun struct {
 // member list showed at the start. It never deletes or recreates a role,
 // so role IDs and channel overwrites stay.
 func (r *FoxholeRuntime) Purge(ctx context.Context, scope PurgeScope, by ForumUser) (err error) {
-	if !r.claim() {
+	stop, ok := r.claim()
+	if !ok {
 		return ErrActionRunning
 	}
 	defer func() {
@@ -318,7 +459,8 @@ func (r *FoxholeRuntime) Purge(ctx context.Context, scope PurgeScope, by ForumUs
 	}
 	utils.Info("Foxhole action started", "action", store.ChangePurge, "scope", scope, "members", len(plan),
 		"username", by.Username, "forum_user_id", by.ID)
-	run := actionRun{action: store.ChangePurge, reportID: entry.ID, reason: "Panel: Foxhole purge by " + by.auditName()}
+	r.started(entry.ID)
+	run := actionRun{action: store.ChangePurge, reportID: entry.ID, reason: "Panel: Foxhole purge by " + by.auditName(), stop: stop}
 	go r.run(run, plan, report, names)
 	return nil
 }
@@ -395,11 +537,13 @@ func purgePlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, scope Pu
 }
 
 // run makes an action's role changes one at a time, writing the report
-// after each, and ends the report once it has been through them all. Just
-// before it changes a member it reads them from the member list: one who
-// no longer holds the role, or who left the server, is skipped with that
-// reason, and one still in the server is named in the report under the
-// names the list shows now, which also refresh their record's names.
+// after each, and ends the report once it has been through them all, or
+// sooner when someone presses Stop or a pause outlasts FoxholePauseLimit
+// (awaitList). Just before it changes a member it reads them from the
+// member list: one who no longer holds the role, or who left the server,
+// is skipped with that reason, and one still in the server is named in the
+// report under the names the list shows now, which also refresh their
+// record's names.
 func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionReport, names map[string]store.MemberNames) {
 	defer utils.RecoverPanic("foxhole-action")
 	// A panic gives the rule back too; release on a free rule does nothing.
@@ -407,12 +551,15 @@ func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionR
 	faults := newFaultCollector()
 	outcome := ReportDone
 	for _, p := range plan {
-		member := p.member
-		list := r.guild.MemberList(r.guildID)
-		if list.Status != MemberListComplete {
-			outcome = ReportMemberListGone
+		list, end := r.awaitList(run.stop)
+		if end != "" {
+			outcome = end
+			if end == ReportStopped {
+				report.StoppedBy = r.stopRequested()
+			}
 			break
 		}
+		member := p.member
 		mem, ok := list.Member(member.ID)
 		if ok {
 			r.refreshNames(names, mem)
@@ -448,6 +595,50 @@ func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionR
 	faults.flush("Foxhole action role change failed", "action", run.action, "guild", r.guildID)
 	utils.Info("Foxhole action ended", "action", run.action, "outcome", report.Outcome, "changed", len(report.Changed),
 		"skipped", len(report.Skipped), "failed", len(report.Failed), "not_attempted", len(report.NotAttempted))
+}
+
+// awaitList reads the member list before an action's next member, and
+// ends the action instead with the outcome it returns. A Stop pressed ends
+// it ReportStopped. A list complete with the bot connected comes back at
+// once. Otherwise the action pauses: it reads the list again every
+// foxholePausePoll until it is complete with the bot connected, while Stop
+// still ends it, and once FoxholePauseLimit passes it ends it
+// ReportMemberListGone.
+func (r *FoxholeRuntime) awaitList(stop <-chan struct{}) (MemberListSnapshot, ReportOutcome) {
+	select {
+	case <-stop:
+		return MemberListSnapshot{}, ReportStopped
+	default:
+	}
+	list := r.guild.MemberList(r.guildID)
+	if listReady(list) {
+		return list, ""
+	}
+	r.setWaiting(true)
+	defer r.setWaiting(false)
+	expired := make(chan struct{})
+	cancel := r.afterFunc(FoxholePauseLimit, func() { close(expired) })
+	defer cancel()
+	poll := time.NewTicker(foxholePausePoll)
+	defer poll.Stop()
+	for {
+		select {
+		case <-stop:
+			return list, ReportStopped
+		case <-expired:
+			return list, ReportMemberListGone
+		case <-poll.C:
+		}
+		if list = r.guild.MemberList(r.guildID); listReady(list) {
+			return list, ""
+		}
+	}
+}
+
+// listReady reports whether an action can check a member against the list:
+// it is complete, and the bot's connection is up, so it is current.
+func listReady(list MemberListSnapshot) bool {
+	return list.Status == MemberListComplete && list.Connected
 }
 
 // failureReason is why Discord refused a member's role change, in plain

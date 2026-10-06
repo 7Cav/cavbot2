@@ -341,6 +341,10 @@ type Store interface {
 	// given and marks it ended, after which it takes no more writes.
 	// ErrNotFound as UpdateFoxholeReport.
 	EndFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error
+	// RunningFoxholeReports returns every report still marked running, each
+	// with its diff as last written, oldest first. An ended report and a
+	// save's entry are never among them.
+	RunningFoxholeReports(ctx context.Context) ([]ChangeLogEntry, error)
 	// LastFoxholeReport returns the newest report in the Foxhole change log,
 	// running or not, however many saves' entries were appended after it.
 	// ErrNotFound when the log holds none.

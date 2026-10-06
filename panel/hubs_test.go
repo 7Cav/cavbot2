@@ -302,7 +302,8 @@ func (f *fakeDiscord) GuildData(guildID string) commands.GuildSnapshot {
 }
 
 // MemberList copies the member list snapshot the test set, the members and
-// their role IDs included. Any other guild has none.
+// their role IDs included while the list is complete, and none while it
+// isn't, as the production adapter gives it. Any other guild has none.
 func (f *fakeDiscord) MemberList(guildID string) commands.MemberListSnapshot {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -315,6 +316,9 @@ func (f *fakeDiscord) MemberList(guildID string) commands.MemberListSnapshot {
 	}
 	snap := f.memberList
 	snap.Members = nil
+	if snap.Status != commands.MemberListComplete {
+		return snap
+	}
 	for _, m := range f.memberList.Members {
 		m.RoleIDs = slices.Clone(m.RoleIDs)
 		snap.Members = append(snap.Members, m)
@@ -415,6 +419,15 @@ func (f *fakeDiscord) setMemberList(snap commands.MemberListSnapshot) {
 		snap.Members[i].RoleIDs = slices.Clone(snap.Members[i].RoleIDs)
 	}
 	f.memberList = snap
+}
+
+// setListStatus changes how far the member list has arrived and whether
+// the bot's gateway connection is up, keeping the members the fake holds,
+// as the state keeps them through a resumed session.
+func (f *fakeDiscord) setListStatus(status commands.MemberListStatus, connected bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.memberList.Status, f.memberList.Connected = status, connected
 }
 
 // holdPartialList leaves a partial member list snapshot in the fake gateway
@@ -601,6 +614,9 @@ type testWorld struct {
 	// actionEnded receives once each time a Foxhole action's report has
 	// been written as ended, in a world built over an endWatch.
 	actionEnded <-chan struct{}
+	// pause is the clock the world's Foxhole actions pause on, in a world
+	// built by newFoxholeWorld.
+	pause *pauseClock
 }
 
 // newTestWorld builds the panel over a store holding the given hubs. The
@@ -639,7 +655,10 @@ func newTestWorldConfigured(t *testing.T, st store.Store, f *fakeForum, cfg Conf
 	if err != nil {
 		t.Fatalf("NewTempVC: %v", err)
 	}
-	foxhole := commands.NewFoxholeRuntime(discord, discord, st, testGuildID)
+	foxhole, err := commands.NewFoxholeRuntime(discord, discord, st, testGuildID)
+	if err != nil {
+		t.Fatalf("NewFoxholeRuntime: %v", err)
+	}
 	p, err := New(cfg, testVersion, Deps{Store: st, Runtime: runtime, Manager: discord, Foxhole: foxhole, GuildID: testGuildID})
 	if err != nil {
 		t.Fatalf("New: %v", err)

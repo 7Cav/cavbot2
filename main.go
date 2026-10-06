@@ -216,16 +216,21 @@ func main() {
 		if err != nil {
 			panic(fmt.Sprintf("Bot store unavailable: %v", err))
 		}
+		// The Foxhole page's actions read the member list through the
+		// manager and change roles through the commands' role calls, which
+		// URL-encode the audit log reason. Building the runtime ends any
+		// action the last process left running as stopped by a restart.
+		foxhole, err := commands.NewFoxholeRuntime(discordManager, commands.NewSessionGuildManager(dg), botStore, GuildID)
+		if err != nil {
+			panic(fmt.Sprintf("Bot store unavailable: %v", err))
+		}
 		// The panel's hub page saves through the runtime and reads the guild
 		// through the session, so it is built once both exist.
 		webPanel = initPanel(panelCfg, panel.Deps{
 			Store:   botStore,
 			Runtime: tempVC,
 			Manager: discordManager,
-			// The Foxhole page's actions read the member list through the
-			// manager and change roles through the commands' role calls,
-			// which URL-encode the audit log reason.
-			Foxhole: commands.NewFoxholeRuntime(discordManager, commands.NewSessionGuildManager(dg), botStore, GuildID),
+			Foxhole: foxhole,
 			GuildID: GuildID,
 		})
 	}
