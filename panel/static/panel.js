@@ -264,13 +264,14 @@
 
   // announce puts the answer's save result in this page's result line. The
   // line is a live region, so it keeps its element and changes its contents
-  // only, and a screen reader reads the new result out.
+  // only, and a screen reader reads the new result out. It copies the
+  // answer's result, leaving the answer whole for the checks after it.
   function announce(doc) {
     var fresh = doc.querySelector('[data-note-result]');
     var mine = document.querySelector('[data-note-result]');
     if (!fresh || !mine) { return; }
     mine.replaceChildren.apply(mine, Array.from(fresh.childNodes).map(function (n) {
-      return document.adoptNode(n);
+      return document.importNode(n, true);
     }));
   }
 
