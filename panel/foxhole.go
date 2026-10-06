@@ -223,7 +223,7 @@ var errNoteListPartial = &saveRefusal{Kind: "member-list", status: http.StatusSe
 // list and stays open.
 var errApproveListPartial = &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
 	log:     "Panel save refused: member list partial",
-	Message: "Cavbot2 doesn't have the whole member list from Discord yet, so it can't check who holds External. Nothing changed. Approve again once the list is back."}
+	Message: "Awaiting member list from discord. Try again shortly."}
 
 // foxholeChange is one entry of the Foxhole page's change log as the page
 // shows it: who saved, and what. A note save's names the member it touched
@@ -433,7 +433,7 @@ func (p *Panel) saveApprovals(w http.ResponseWriter, r *http.Request, sess sessi
 	case opClear:
 		err = service.clearApprovals(ctx, members, sess.actor())
 	default:
-		http.Error(w, "the form names no approvals save", http.StatusBadRequest)
+		http.Error(w, "the form didn't say whether to approve or clear the approval, so nothing changed", http.StatusBadRequest)
 		return
 	}
 	var refusal *saveRefusal
