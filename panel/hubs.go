@@ -574,7 +574,8 @@ type guildState struct {
 var errNoGuildData = errors.New("the gateway state holds no data for the guild")
 
 // guildDataPoll is how often a read that found the guild's data on its way
-// looks again.
+// looks again, and a Foxhole page load that found the member list on its
+// way.
 const guildDataPoll = 100 * time.Millisecond
 
 // readGuild reads the guild's channels, roles and boost tier from the

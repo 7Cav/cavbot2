@@ -393,3 +393,84 @@
   count.hidden = false;
   refresh();
 })();
+
+/* The member list notice on the Foxhole page (spec #434, ADR 0013). While
+   the member list is partial a notice stands in the holder list's place,
+   with a Reload link to the page in the view it shows. The script loads
+   that address in the background, where the page waits for the list on its
+   way, and puts each answer's notice in place of this one, so the count and
+   the retry move on. An answer with no notice means the list has arrived:
+   the page reloads, unless a text box on it holds text, which a reload would
+   lose. The notice then says the list has arrived and links the reload.
+   Without script the Reload link does the same by hand. */
+(function () {
+  'use strict';
+
+  var notice = document.querySelector('[data-notice="member-list"]');
+  if (!notice) { return; }
+  // pause is the time between one answer and the next load. Each load
+  // waits on the server while the list is on its way, so this only spaces
+  // out the loads that answer at once.
+  var pause = 3000;
+
+  function address() {
+    return notice.querySelector('[data-field="reload"]').getAttribute('href');
+  }
+
+  function holdsText() {
+    return Array.from(document.querySelectorAll('input[type="text"], input[type="search"], input:not([type]), textarea'))
+      .some(function (box) { return box.value.trim() !== ''; });
+  }
+
+  function arrived() {
+    if (!holdsText()) {
+      location.replace(address());
+      return;
+    }
+    var link = document.createElement('a');
+    link.href = address();
+    link.setAttribute('data-field', 'reload');
+    link.textContent = 'Reload the page.';
+    notice.setAttribute('data-list-status', 'arrived');
+    notice.replaceChildren('The member list has arrived. ', link);
+  }
+
+  // refresh puts the answer's notice in this one. The notice is a live
+  // region, so it keeps its element and changes its contents only.
+  function refresh(fresh) {
+    notice.setAttribute('data-list-status', fresh.getAttribute('data-list-status'));
+    notice.replaceChildren.apply(notice, Array.from(fresh.childNodes).map(function (n) {
+      return document.importNode(n, true);
+    }));
+  }
+
+  function load() {
+    fetch(address(), { credentials: 'same-origin' })
+      .then(function (res) {
+        return res.text().then(function (text) {
+          return { ok: res.ok, doc: new DOMParser().parseFromString(text, 'text/html') };
+        });
+      })
+      .then(function (answer) {
+        // A sign-in page or an error page says nothing about the list:
+        // try again later.
+        var page = answer.ok && answer.doc.querySelector('main[data-page="foxhole"]');
+        if (!page) {
+          later();
+          return;
+        }
+        var fresh = page.querySelector('[data-notice="member-list"]');
+        if (!fresh) {
+          arrived();
+          return;
+        }
+        refresh(fresh);
+        later();
+      })
+      .catch(later);
+  }
+
+  function later() { setTimeout(load, pause); }
+
+  later();
+})();
