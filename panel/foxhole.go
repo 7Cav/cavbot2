@@ -86,8 +86,9 @@ type foxholeView struct {
 	// PurgeConfirm is the confirmation the purge form opened, nil for none.
 	PurgeConfirm *purgeConfirm
 	// ReAdd counts the approved collaborators by what a re-add would do with
-	// each, for the After a war block.
-	ReAdd reAddCounts
+	// each, for the After a war block. Nil while the member list isn't
+	// complete.
+	ReAdd *reAddCounts
 	// Busy is a Foxhole action running at this load: the controls that
 	// would start another are disabled.
 	Busy bool

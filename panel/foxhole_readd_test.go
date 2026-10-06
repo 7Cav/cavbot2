@@ -69,33 +69,12 @@ func TestAfterAWarBlockCountsApprovedCollaboratorsByWhatReAddWouldDo(t *testing.
 	}
 }
 
-// pressReAdd presses the After a war block's Re-add button, the way a
-// browser posts its form, and follows the answer wherever it lands.
+// pressReAdd presses the After a war block's Re-add button on a page it
+// loads, the way a browser posts its form, and follows the answer wherever
+// it lands.
 func pressReAdd(t *testing.T, b *browser) *http.Response {
 	t.Helper()
-	doc := parseHTML(t, b.get(foxholePath))
-	action := attrOf(reAddBlock(t, doc), "action")
-	if action == "" {
-		t.Fatal("the re-add posts nowhere")
-	}
-	return follow(t, b, b.postForm(action, formPosts(t, doc, action)))
-}
-
-// changeEntries returns the change log's entries of the action given, by
-// their data-action marker.
-func changeEntries(t *testing.T, doc *html.Node, action string) []*html.Node {
-	t.Helper()
-	section := findElement(doc, "", "data-field", "changes")
-	if section == nil {
-		t.Fatal("the page has no change log")
-	}
-	var out []*html.Node
-	for _, el := range entryElements(section) {
-		if attrOf(el, "data-action") == action {
-			out = append(out, el)
-		}
-	}
-	return out
+	return follow(t, b, postReAdd(t, b, parseHTML(t, b.get(foxholePath))))
 }
 
 // After a purge of External, one press of Re-add, with no preview, gives
@@ -173,6 +152,9 @@ func TestReAddRoleChangesNameTheReAddAndTheForumUserWhoStartedIt(t *testing.T) {
 func postReAdd(t *testing.T, b *browser, doc *html.Node) *http.Response {
 	t.Helper()
 	action := attrOf(reAddBlock(t, doc), "action")
+	if action == "" {
+		t.Fatal("the re-add posts nowhere")
+	}
 	return b.postForm(action, formPosts(t, doc, action))
 }
 
@@ -197,10 +179,12 @@ func TestReAddPostedWhileTheMemberListIsPartialIsRefused(t *testing.T) {
 
 // One Foxhole action runs at a time. While a purge runs, the page disables
 // Re-add, and the server refuses a re-add posted anyway, by a browser with
-// no script: the page says so, and no re-add starts.
+// no script: the page says so, and no re-add starts. Doe, approved without
+// External, is someone to re-add throughout, so the running purge is what
+// disables the button.
 func TestReAddWhileAPurgeRunsIsRefused(t *testing.T) {
 	w := newFoxholeWorld(t)
-	seedApproved(t, w, namesOf(memberKestrel))
+	seedApproved(t, w, namesOf(memberKestrel), namesOf(memberDoe))
 	hold := holdRoleWrites(t, w)
 	startPurge(t, w, "external")
 	hold.next(t)
@@ -218,5 +202,35 @@ func TestReAddWhileAPurgeRunsIsRefused(t *testing.T) {
 	w.awaitActionEnd(t)
 	if entries := changeEntries(t, parseHTML(t, w.b.get(foxholePath)), "re_add"); len(entries) != 0 {
 		t.Errorf("the change log holds %d re-add entries, want none", len(entries))
+	}
+}
+
+// Re-add is disabled while it would give External to nobody, since no
+// approved collaborator in the server lacks it. A press then would only put
+// an empty report in place of the last one, which after a war names who
+// lost each role. With someone to give External to, it is enabled.
+func TestReAddIsDisabledWithNobodyToGiveExternalTo(t *testing.T) {
+	cases := []struct {
+		name     string
+		approved []store.MemberNames
+		disabled bool
+	}{
+		{"each approved collaborator holds External or left", []store.MemberNames{namesOf(memberKestrel), collaboratorGone}, true},
+		{"an approved collaborator in the server lacks External", []store.MemberNames{namesOf(memberDoe)}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			seedApproved(t, w, tc.approved...)
+
+			button := findElement(reAddBlock(t, parseHTML(t, w.b.get(foxholePath))), "button", "", "")
+
+			if button == nil {
+				t.Fatal("the re-add has no button")
+			}
+			if got := disabled(button); got != tc.disabled {
+				t.Errorf("the Re-add button is disabled %v, want %v", got, tc.disabled)
+			}
+		})
 	}
 }

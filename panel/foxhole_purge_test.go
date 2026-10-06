@@ -88,8 +88,9 @@ func purgeConfirmation(t *testing.T, doc *html.Node) *html.Node {
 	return confirm
 }
 
-// purgeEntries returns the change log's purge entries.
-func purgeEntries(t *testing.T, doc *html.Node) []*html.Node {
+// changeEntries returns the change log's entries of the action given, by
+// their data-action marker.
+func changeEntries(t *testing.T, doc *html.Node, action string) []*html.Node {
 	t.Helper()
 	section := findElement(doc, "", "data-field", "changes")
 	if section == nil {
@@ -97,7 +98,7 @@ func purgeEntries(t *testing.T, doc *html.Node) []*html.Node {
 	}
 	var out []*html.Node
 	for _, el := range entryElements(section) {
-		if action, _ := attrValue(el, "data-action"); action == "purge" {
+		if attrOf(el, "data-action") == action {
 			out = append(out, el)
 		}
 	}
@@ -147,7 +148,7 @@ func TestPurgeConfirmationCountsTheHoldersOfEachRoleAndTheTime(t *testing.T) {
 			if got, _ := attrValue(estimate, "data-seconds"); got != strconv.Itoa(int(want/time.Second)) {
 				t.Errorf("the estimate is %s s, want %d s", got, int(want/time.Second))
 			}
-			if entries := purgeEntries(t, doc); len(entries) != 0 {
+			if entries := changeEntries(t, doc, "purge"); len(entries) != 0 {
 				t.Errorf("opening the confirmation left %d purge entries in the change log, want none", len(entries))
 			}
 		})
@@ -326,7 +327,7 @@ func TestPurgeConfirmedWhileTheMemberListIsPartialIsRefused(t *testing.T) {
 	if findLive(doc, "", "data-error", "member-list") == nil {
 		t.Error("the page doesn't say the purge was refused for the member list")
 	}
-	if entries := purgeEntries(t, doc); len(entries) != 0 {
+	if entries := changeEntries(t, doc, "purge"); len(entries) != 0 {
 		t.Errorf("the change log holds %d purge entries, want none", len(entries))
 	}
 }
@@ -617,7 +618,7 @@ func TestPurgeReportIsItsChangeLogEntryFromStartToEnd(t *testing.T) {
 
 	page := parseHTML(t, w.b.get(foxholePath))
 
-	entries := purgeEntries(t, page)
+	entries := changeEntries(t, page, "purge")
 	if len(entries) != 1 {
 		t.Fatalf("the change log holds %d purge entries while the purge runs, want 1", len(entries))
 	}
@@ -630,7 +631,7 @@ func TestPurgeReportIsItsChangeLogEntryFromStartToEnd(t *testing.T) {
 	}
 	hold.open()
 	w.awaitActionEnd(t)
-	entries = purgeEntries(t, parseHTML(t, w.b.get(foxholePath)))
+	entries = changeEntries(t, parseHTML(t, w.b.get(foxholePath)), "purge")
 	if len(entries) != 1 || attrOf(entries[0], "data-entry") != id {
 		t.Fatalf("after the purge the change log holds purge entries %v, want the one entry %s", valuesOfEach(entries, "data-entry"), id)
 	}
@@ -746,7 +747,7 @@ func TestSecondPurgeWhileOneRunsIsRefused(t *testing.T) {
 	}
 	hold.open()
 	w.awaitActionEnd(t)
-	if entries := purgeEntries(t, parseHTML(t, w.b.get(foxholePath))); len(entries) != 1 {
+	if entries := changeEntries(t, parseHTML(t, w.b.get(foxholePath)), "purge"); len(entries) != 1 {
 		t.Errorf("the change log holds %d purge entries, want the running purge's alone", len(entries))
 	}
 }
@@ -859,7 +860,7 @@ func TestPurgeOfARoleMissingFromTheServerIsRefusedAndReported(t *testing.T) {
 	if findLive(doc, "", "data-error", "role-missing") == nil {
 		t.Error("the page doesn't say the purge was refused for a missing role")
 	}
-	if entries := purgeEntries(t, doc); len(entries) != 0 {
+	if entries := changeEntries(t, doc, "purge"); len(entries) != 0 {
 		t.Errorf("the change log holds %d purge entries, want none", len(entries))
 	}
 	internalName, _ := commands.FoxholeRoleNames()

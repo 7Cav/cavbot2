@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/7cav/cavbot2/commands"
@@ -244,8 +243,8 @@ func (c reAddCounts) Approved() int { return c.Holding + c.NotHolding + c.NotInS
 
 // reAddCountsOf counts the approved collaborators among the holder list's
 // rows, by the flags the rows show.
-func reAddCountsOf(holders []holderRow) reAddCounts {
-	var c reAddCounts
+func reAddCountsOf(holders []holderRow) *reAddCounts {
+	c := &reAddCounts{}
 	for _, h := range holders {
 		switch {
 		case !h.Approved:
@@ -344,7 +343,7 @@ func (p *Panel) startAction(w http.ResponseWriter, r *http.Request, sess session
 		return
 	}
 	if err != nil {
-		p.serverError(w, strings.TrimPrefix(what, "the ")+" start", err)
+		p.serverError(w, "Foxhole action start", fmt.Errorf("start %s: %w", what, err))
 		return
 	}
 	http.Redirect(w, r, foxholePath, http.StatusSeeOther)
