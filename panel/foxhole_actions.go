@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/7cav/cavbot2/commands"
@@ -102,19 +103,26 @@ func (m reportMember) Why() string {
 	switch m.Skip {
 	case commands.SkipNotHolding:
 		return "no longer holds " + m.RoleName
+	case commands.SkipHolding:
+		return "already holds " + m.RoleName
 	case commands.SkipLeft:
 		return "left the server"
 	}
 	return m.Failure
 }
 
-// reportViewOf decodes a report the store holds for the page.
+// reportViewOf decodes a report the store holds for the page. Its name is
+// the action's, with a purge's scope.
 func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 	var report commands.ActionReport
 	if err := json.Unmarshal(stored.Entry.Diff, &report); err != nil {
 		return nil, fmt.Errorf("decode Foxhole report %d: %w", stored.Entry.ID, err)
 	}
-	view := &reportView{ID: stored.Entry.ID, Action: stored.Entry.Action, Name: actionNames[stored.Entry.Action] + " " + scopeLabels[report.Scope],
+	name := actionNames[stored.Entry.Action]
+	if scope := scopeLabels[report.Scope]; scope != "" {
+		name += " " + scope
+	}
+	view := &reportView{ID: stored.Entry.ID, Action: stored.Entry.Action, Name: name,
 		StartedBy: stored.Entry.ForumUsername, StartedAt: stored.Entry.At, EndedAt: report.EndedAt,
 		Running: stored.Running, Outcome: report.Outcome,
 		Changed: reportMembers(report.Changed), Skipped: reportMembers(report.Skipped), Failed: reportMembers(report.Failed),
@@ -188,8 +196,13 @@ func estimateFor(changes int) estimate {
 // foxholeRoleLabels are the Foxhole roles as the page names them.
 var foxholeRoleLabels = map[commands.FoxholeRole]string{commands.FoxholeInternal: "Internal", commands.FoxholeExternal: "External"}
 
-// actionNames are the Foxhole actions as the page names them.
-var actionNames = map[store.ChangeAction]string{store.ChangePurge: "Purge"}
+// actionNames are the Foxhole actions as the page names them. An entry of
+// the Foxhole change log whose action is among them is that action's
+// report.
+var actionNames = map[store.ChangeAction]string{
+	store.ChangePurge: "Purge",
+	store.ChangeReAdd: "Re-add approved collaborators",
+}
 
 // scopeLabels are the purge scopes as the page names them.
 var scopeLabels = map[commands.PurgeScope]string{
@@ -219,6 +232,34 @@ func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope c
 	return confirm
 }
 
+// reAddCounts is what the After a war block says a re-add would do: how
+// many approved collaborators hold External already, how many in the server
+// don't, and how many left the server.
+type reAddCounts struct {
+	Holding, NotHolding, NotInServer int
+}
+
+// Approved is how many approved collaborators there are.
+func (c reAddCounts) Approved() int { return c.Holding + c.NotHolding + c.NotInServer }
+
+// reAddCountsOf counts the approved collaborators among the holder list's
+// rows, by the flags the rows show.
+func reAddCountsOf(holders []holderRow) reAddCounts {
+	var c reAddCounts
+	for _, h := range holders {
+		switch {
+		case !h.Approved:
+		case h.NotInServer:
+			c.NotInServer++
+		case h.External:
+			c.Holding++
+		default:
+			c.NotHolding++
+		}
+	}
+	return c
+}
+
 // lastReport reads the last Foxhole action's report, nil before the first
 // action.
 func (s foxholeService) lastReport(ctx context.Context) (*reportView, error) {
@@ -232,32 +273,34 @@ func (s foxholeService) lastReport(ctx context.Context) (*reportView, error) {
 	return reportViewOf(stored)
 }
 
-// errActionRunning refuses a Foxhole action started while another runs.
-// The page shows the running action's progress block, which names it and
-// who started it.
-var errActionRunning = &saveRefusal{Kind: "action-running", status: http.StatusConflict,
-	log:     "Panel action refused: another action running",
-	Message: "Another Foxhole action is running, so the purge didn't start. Nothing changed. Try again when it ends."}
+// actionRunningRefusal refuses a Foxhole action, named by what, started
+// while another runs. The page shows the running action's progress block,
+// which names it and who started it.
+func actionRunningRefusal(what string) *saveRefusal {
+	return &saveRefusal{Kind: "action-running", status: http.StatusConflict,
+		log:     "Panel action refused: another action running",
+		Message: fmt.Sprintf("Another Foxhole action is running, so %s didn't start. Nothing changed. Try again when it ends.", what)}
+}
 
-// errActionListPartial refuses a Foxhole action started while the member
-// list is partial: it could not see who holds a role.
-var errActionListPartial = &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
-	log:     "Panel action refused: member list partial",
-	Message: "Cavbot2 doesn't have the whole member list from Discord yet, so the purge didn't start. Nothing changed. Try again once the list has arrived."}
+// actionListPartialRefusal refuses a Foxhole action, named by what, started
+// while the member list is partial: it could not see who holds a role.
+func actionListPartialRefusal(what string) *saveRefusal {
+	return &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
+		log:     "Panel action refused: member list partial",
+		Message: fmt.Sprintf("Cavbot2 doesn't have the whole member list from Discord yet, so %s didn't start. Nothing changed. Try again once the list has arrived.", what)}
+}
 
-// roleMissingRefusal refuses a Foxhole action naming a role the guild
-// doesn't hold by its configured name. The runtime has reported it to
-// Sentry.
-func roleMissingRefusal(role string) *saveRefusal {
+// roleMissingRefusal refuses a Foxhole action, named by what, that changes
+// a role the guild doesn't hold by its configured name. The runtime has
+// reported it to Sentry.
+func roleMissingRefusal(what, role string) *saveRefusal {
 	return &saveRefusal{Kind: "role-missing", status: http.StatusUnprocessableEntity,
 		log:     "Panel action refused: Foxhole role not found",
-		Message: fmt.Sprintf("The server has no role named %s, so the purge didn't start. Nothing changed. The bot has reported it.", role)}
+		Message: fmt.Sprintf("The server has no role named %s, so %s didn't start. Nothing changed. The bot has reported it.", role, what)}
 }
 
 // startPurge is POST /foxhole/purge, the purge confirmation's Confirm: it
-// starts the purge through the Foxhole runtime and redirects straight back
-// to the Foxhole page. The purge runs in the background to its end,
-// whether or not the browser waits, so the request never waits on it.
+// starts the purge of the scope confirmed, as startAction says.
 func (p *Panel) startPurge(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -268,21 +311,40 @@ func (p *Panel) startPurge(w http.ResponseWriter, r *http.Request, sess session)
 		http.Error(w, "the form names no purge scope, so nothing changed", http.StatusBadRequest)
 		return
 	}
-	err := p.foxhole.actions.Purge(context.WithoutCancel(r.Context()), scope, sess.forumUser())
+	p.startAction(w, r, sess, "the purge", func(ctx context.Context, by commands.ForumUser) error {
+		return p.foxhole.actions.Purge(ctx, scope, by)
+	}, "scope", scope)
+}
+
+// startReAdd is POST /foxhole/re-add, the After a war block's Re-add
+// approved collaborators: one button with no preview, which starts the
+// re-add as startAction says.
+func (p *Panel) startReAdd(w http.ResponseWriter, r *http.Request, sess session) {
+	p.startAction(w, r, sess, "the re-add", p.foxhole.actions.ReAdd)
+}
+
+// startAction starts a Foxhole action, named by what, through start and
+// redirects straight back to the Foxhole page. The action runs in the
+// background to its end, whether or not the browser waits, so the request
+// never waits on it. A refused action answers with the page and the
+// refusal, and logs it with kv.
+func (p *Panel) startAction(w http.ResponseWriter, r *http.Request, sess session, what string,
+	start func(context.Context, commands.ForumUser) error, kv ...any) {
+	err := start(context.WithoutCancel(r.Context()), sess.forumUser())
 	var missing *commands.MissingRoleError
 	switch {
 	case errors.Is(err, commands.ErrActionRunning):
-		p.refuseAction(w, r, sess, errActionRunning, "scope", scope)
+		p.refuseAction(w, r, sess, actionRunningRefusal(what), kv...)
 		return
 	case errors.Is(err, commands.ErrMemberListPartial):
-		p.refuseAction(w, r, sess, errActionListPartial, "scope", scope)
+		p.refuseAction(w, r, sess, actionListPartialRefusal(what), kv...)
 		return
 	case errors.As(err, &missing):
-		p.refuseAction(w, r, sess, roleMissingRefusal(missing.Role), "scope", scope, "role", missing.Role)
+		p.refuseAction(w, r, sess, roleMissingRefusal(what, missing.Role), append(kv, "role", missing.Role)...)
 		return
 	}
 	if err != nil {
-		p.serverError(w, "purge start", err)
+		p.serverError(w, strings.TrimPrefix(what, "the ")+" start", err)
 		return
 	}
 	http.Redirect(w, r, foxholePath, http.StatusSeeOther)

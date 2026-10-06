@@ -326,10 +326,31 @@ func (f *fakeDiscord) MemberList(guildID string) commands.MemberListSnapshot {
 	return snap
 }
 
+// GuildMemberRoleAdd records the call and, as Discord's member update does
+// in the gateway state, gives the member the role in the member list,
+// unless roleErrs refuses it. duringRoleWrite runs before it answers.
+func (f *fakeDiscord) GuildMemberRoleAdd(_, userID, roleID, reason string) error {
+	return f.writeRole(userID, roleID, reason, func(roles []string) []string {
+		if slices.Contains(roles, roleID) {
+			return roles
+		}
+		return append(slices.Clone(roles), roleID)
+	})
+}
+
 // GuildMemberRoleRemove records the call and, as Discord's member update
 // does in the gateway state, takes the role off the member in the member
 // list, unless roleErrs refuses it. duringRoleWrite runs before it answers.
 func (f *fakeDiscord) GuildMemberRoleRemove(_, userID, roleID, reason string) error {
+	return f.writeRole(userID, roleID, reason, func(roles []string) []string {
+		return slices.DeleteFunc(slices.Clone(roles), func(id string) bool { return id == roleID })
+	})
+}
+
+// writeRole records one member role change and, unless roleErrs refuses
+// it, applies edit to the member's role IDs in the member list. It runs
+// duringRoleWrite before it answers, with the fake's lock released.
+func (f *fakeDiscord) writeRole(userID, roleID, reason string, edit func([]string) []string) error {
 	f.mu.Lock()
 	f.apiWrites++
 	write := fakeRoleWrite{MemberID: userID, RoleID: roleID, Reason: reason}
@@ -338,7 +359,7 @@ func (f *fakeDiscord) GuildMemberRoleRemove(_, userID, roleID, reason string) er
 	if err == nil {
 		for i, m := range f.memberList.Members {
 			if m.ID == userID {
-				f.memberList.Members[i].RoleIDs = slices.DeleteFunc(slices.Clone(m.RoleIDs), func(id string) bool { return id == roleID })
+				f.memberList.Members[i].RoleIDs = edit(m.RoleIDs)
 			}
 		}
 	}

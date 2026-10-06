@@ -203,3 +203,24 @@ func TestRunningReportsAreTheReportsNotYetEnded(t *testing.T) {
 		}
 	})
 }
+
+// A re-add of the approved collaborators keeps its report in the Foxhole
+// change log as a purge does: started, it reads back as the newest report,
+// running, under its own action.
+func TestReAddReportReadsBackRunningUnderItsAction(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		entry := ChangeLogEntry{ForumUserID: 1234, ForumUsername: "Doe.J", Action: ChangeReAdd, Diff: reportDiff("started")}
+
+		started, err := s.StartFoxholeReport(ctx, entry)
+
+		if err != nil {
+			t.Fatalf("StartFoxholeReport: %v", err)
+		}
+		report := lastReport(t, s)
+		if got := report.Entry; !report.Running || got.ID != started.ID || got.Action != ChangeReAdd {
+			t.Errorf("the newest report is entry %d of action %s, running %v; want entry %d of action %s, running",
+				got.ID, got.Action, report.Running, started.ID, ChangeReAdd)
+		}
+	})
+}

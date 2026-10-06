@@ -41,7 +41,7 @@
   <section class="block fx-pending fx-pending--danger" data-field="purge-confirm" data-scope="{{.Scope}}">
     <h2 class="block-header">Purge {{.Label}}?</h2>
     <div class="block-row">
-      {{range .Roles}}<p data-purge-role="{{.Role}}">Takes {{.Name}} off <span data-field="holders">{{.Holders}}</span> {{if eq .Holders 1}}holder{{else}}holders{{end}}{{if eq .Role "external"}}, approved collaborators included{{end}}.</p>{{end}}
+      {{range .Roles}}<p data-purge-role="{{.Role}}">Takes {{.Name}} off <span data-field="holders">{{.Holders}}</span> {{if eq .Holders 1}}holder{{else}}holders{{end}}{{if eq .Role "external"}}, approved collaborators included. Re-add approved collaborators gives it back to them{{end}}.</p>{{end}}
       <p data-field="keeps">Notes and approvals stay.</p>
       <p>Takes <span data-field="estimate" data-seconds="{{.Estimate.Seconds}}">about {{.Estimate.Text}}</span> at one change a second. It keeps going if you close this tab.</p>
     </div>
@@ -66,6 +66,19 @@
         </div>
         <div class="submit-row"><button type="submit" class="btn btn--danger"{{if .Busy}} disabled{{end}}>Purge</button>{{if .Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Wait for it to end.</span>{{end}}</div>
       </form>
+      {{with .ReAdd}}
+      <form method="post" action="/foxhole/re-add" class="fx-readd" data-field="re-add">
+        <div class="block-row">
+          <span class="field-label">Re-add approved collaborators</span>
+          <p class="fx-readdcount">{{if .Approved}}<span data-field="approved">{{.Approved}}</span> approved {{if eq .Approved 1}}collaborator{{else}}collaborators{{end}}: <span data-field="holding">{{.Holding}}</span> {{if eq .Holding 1}}holds{{else}}hold{{end}} External
+            {{- with .NotHolding}}, <span data-field="not-holding">{{.}}</span> {{if eq . 1}}doesn't{{else}}don't{{end}}{{end}}
+            {{- with .NotInServer}}, <span data-field="not-in-server">{{.}}</span> {{if eq . 1}}isn't{{else}}aren't{{end}} in the server{{end}}.
+            {{- else}}No approved collaborators yet. Approve External holders in the list below.{{end}}</p>
+          <span class="field-hint">Gives External to every approved collaborator in the server who doesn't hold it, straight away with no preview. Anyone not in the server is skipped and listed.</span>
+        </div>
+        <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="re-add-start"{{if $.Foxhole.Busy}} disabled{{end}}>Re-add approved collaborators</button></div>
+      </form>
+      {{end}}
     </section>
   </div>
   {{if .NoRoleView}}

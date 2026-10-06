@@ -8,8 +8,9 @@
 // and register forms, each hub's edit form with its change log, and the
 // remove action. The Foxhole page lists the Foxhole role holders from the
 // member list, with search, filters and each holder's note, starts a purge
-// through the Foxhole runtime and shows its progress and report, and keeps
-// its own change log of saves and reports.
+// and a re-add of the approved collaborators through the Foxhole runtime
+// and shows its progress and report, and keeps its own change log of saves
+// and reports.
 package panel
 
 import (
@@ -199,6 +200,7 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("POST "+foxholeNotesPath, p.withFoxholePage(p.saveNote))
 	mux.HandleFunc("POST "+foxholeApprovalsPath, p.withFoxholePage(p.saveApprovals))
 	mux.HandleFunc("POST "+foxholePurgePath, p.withFoxholePage(p.startPurge))
+	mux.HandleFunc("POST "+foxholeReAddPath, p.withFoxholePage(p.startReAdd))
 	mux.HandleFunc("POST "+foxholeStopPath, p.withFoxholePage(p.stopAction))
 	protected := http.NewCrossOriginProtection().Handler(mux)
 	// A panic in a handler is recovered here, through the same path every
