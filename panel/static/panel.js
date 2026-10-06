@@ -205,6 +205,14 @@
   function mount(cell, form, restore) {
     var input = form.querySelector('[data-note-input]');
     var cancel = form.querySelector('[data-field="cancel_note"]');
+    // A form cloned into a row carries the hint ID the page's own form
+    // uses. Each row's form gets its own, so its input names its own hint
+    // and a screen reader reads the warning out.
+    var hint = form.querySelector('[data-field="note-hint"]');
+    if (hint) {
+      hint.id = 'note-hint-' + cell.closest('[data-member]').getAttribute('data-member');
+      input.setAttribute('aria-describedby', hint.id);
+    }
     cell.replaceChildren(form);
     form.addEventListener('submit', function (e) {
       e.preventDefault();

@@ -9,12 +9,12 @@ import (
 	"golang.org/x/net/html"
 )
 
-// newPurgedWorld is the Foxhole world after a purge. Notes were saved
-// through the page while their members held their roles: Doe's and
-// Kestrel's mention an ally, Marsh's doesn't. Then Doe lost Internal and
-// stays in the server, Marsh left the server, and Kestrel still holds
-// External.
-func newPurgedWorld(t *testing.T) *testWorld {
+// newNoRoleWorld is the Foxhole world once two members with a note are off
+// the holder list. Notes were saved through the page while their members
+// held their roles: Doe's and Kestrel's mention an ally, Marsh's doesn't.
+// Then Doe lost Internal and stays in the server, Marsh left the server,
+// and Kestrel still holds External.
+func newNoRoleWorld(t *testing.T) *testWorld {
 	t.Helper()
 	w := newFoxholeWorld(t)
 	notes := []struct{ id, note string }{
@@ -25,11 +25,21 @@ func newPurgedWorld(t *testing.T) *testWorld {
 	for _, n := range notes {
 		assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, n.id), n.note), foxholePath)
 	}
-	purged := memberDoe
-	purged.RoleIDs = []string{roleSGT}
-	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
-		Members: []commands.ListedMember{purged, memberAsh, memberKestrel, memberVance}})
+	setMembers(w, doeWithoutInternal(), memberAsh, memberKestrel, memberVance)
 	return w
+}
+
+// doeWithoutInternal is Doe once Internal came off: in the server, with
+// their rank role and no Foxhole role.
+func doeWithoutInternal() commands.ListedMember {
+	doe := memberDoe
+	doe.RoleIDs = []string{roleSGT}
+	return doe
+}
+
+// setMembers makes the member list complete with these members alone.
+func setMembers(w *testWorld, members ...commands.ListedMember) {
+	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true, Members: members})
 }
 
 // noRoleLink returns the page's link to the no-role view, and fails the
@@ -68,12 +78,12 @@ func noRoleRows(t *testing.T, doc *html.Node) map[string]*html.Node {
 	return rows
 }
 
-// After a purge, the link after the filter links counts the members with a
-// note who hold no Foxhole role and opens a view listing exactly them, the
-// one who left the server among them. All keeps listing the holders alone,
+// Once members with a note hold no Foxhole role, the link after the filter
+// links counts them and opens a view listing exactly them, the one who left
+// the server among them. All keeps listing the holders alone,
 // and a member with no role and no note is in neither.
 func TestNoRoleViewListsTheMembersWithANoteAndNoFoxholeRole(t *testing.T) {
-	w := newPurgedWorld(t)
+	w := newNoRoleWorld(t)
 	page := parseHTML(t, w.b.get(foxholePath))
 
 	link := noRoleLink(t, page)
@@ -92,7 +102,7 @@ func TestNoRoleViewListsTheMembersWithANoteAndNoFoxholeRole(t *testing.T) {
 // flagged "not in the server", under the display name and username the
 // panel last saw. One still in the server carries no such flag.
 func TestNoRoleViewFlagsAMemberWhoLeftTheServerUnderTheirLastNames(t *testing.T) {
-	w := newPurgedWorld(t)
+	w := newNoRoleWorld(t)
 
 	rows := noRoleRows(t, openNoRoleView(t, w.b))
 
@@ -147,7 +157,7 @@ func noteHint(t *testing.T, doc *html.Node) bool {
 // takes the member off the page, since saving one does. A holder row's form
 // doesn't: a holder with no note stays listed.
 func TestNoteFormOnANoRoleRowWarnsThatAnEmptyNoteTakesTheMemberOff(t *testing.T) {
-	w := newPurgedWorld(t)
+	w := newNoRoleWorld(t)
 
 	if !noteHint(t, openNoRoleNote(t, w.b, memberDoe.ID)) {
 		t.Errorf("the note form on %s's no-role row carries no hint", memberDoe.ID)
@@ -162,7 +172,7 @@ func TestNoteFormOnANoRoleRowWarnsThatAnEmptyNoteTakesTheMemberOff(t *testing.T)
 // says their note was cleared, and the change log keeps the old text, so
 // the note can be put back.
 func TestClearingANoRoleNoteTakesTheMemberOffAndSaysSo(t *testing.T) {
-	w := newPurgedWorld(t)
+	w := newNoRoleWorld(t)
 
 	page := parseHTML(t, follow(t, w.b, submitNote(t, w.b, openNoRoleNote(t, w.b, memberDoe.ID), "")))
 
@@ -185,7 +195,7 @@ func TestClearingANoRoleNoteTakesTheMemberOffAndSaysSo(t *testing.T) {
 // the no-role view. It goes red if the clear left a record behind, as one
 // way of naming the member in the save's result would.
 func TestNoteCanNotStartOnAMemberWhoseNoRoleNoteWasCleared(t *testing.T) {
-	w := newPurgedWorld(t)
+	w := newNoRoleWorld(t)
 	follow(t, w.b, submitNote(t, w.b, openNoRoleNote(t, w.b, memberDoe.ID), ""))
 	before := readNoteState(t, w.st)
 
@@ -231,7 +241,7 @@ func TestHolderSearchSaysWhenTheNoRoleViewAlsoMatches(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			w := newPurgedWorld(t)
+			w := newNoRoleWorld(t)
 
 			page := parseHTML(t, submitSearch(t, w.b, parseHTML(t, w.b.get(foxholePath)), tc.query))
 
@@ -252,7 +262,7 @@ func TestHolderSearchSaysWhenTheNoRoleViewAlsoMatches(t *testing.T) {
 // The also-matches line links to the other view with the search kept, both
 // ways: from the holder list to the no-role view, and back.
 func TestAlsoMatchesLinksCarryTheSearchToTheOtherView(t *testing.T) {
-	w := newPurgedWorld(t)
+	w := newNoRoleWorld(t)
 	holders := parseHTML(t, submitSearch(t, w.b, parseHTML(t, w.b.get(foxholePath)), "allied"))
 	_, toNoRole, ok := alsoMatchesLine(t, holders)
 	if !ok {
@@ -275,9 +285,11 @@ func TestAlsoMatchesLinksCarryTheSearchToTheOtherView(t *testing.T) {
 
 // The no-role view reads the member list like the rest of the page. While
 // the list is partial it can't tell who holds no role, so the member-list
-// notice takes the view's place, though the store holds every note.
+// notice takes the view's place, though the store holds every note. A
+// regression pin: a partial list showed the notice whatever the address
+// before this view, and only the link this starts from is new.
 func TestNoRoleViewShowsTheMemberListNoticeWhileTheListIsPartial(t *testing.T) {
-	w := newPurgedWorld(t)
+	w := newNoRoleWorld(t)
 	href, _ := attrValue(noRoleLink(t, parseHTML(t, w.b.get(foxholePath))), "href")
 	w.discord.setMemberList(arrivingList)
 
@@ -288,5 +300,44 @@ func TestNoRoleViewShowsTheMemberListNoticeWhileTheListIsPartial(t *testing.T) {
 	}
 	if findElement(doc, "", "data-field", "no-role") != nil {
 		t.Error("the no-role view shows its rows while the member list is partial")
+	}
+}
+
+// The result line says what is true when the page loads. Going back to the
+// address a clear landed on, once the member has a note again and the
+// no-role view lists them, shows no result line about them.
+func TestClearedResultIsGoneOnceTheMemberHasANoteAgain(t *testing.T) {
+	w := newNoRoleWorld(t)
+	res := submitNote(t, w.b, openNoRoleNote(t, w.b, memberDoe.ID), "")
+	landed := location(t, res).RequestURI()
+	follow(t, w.b, res)
+	setMembers(w, memberDoe, memberAsh, memberKestrel, memberVance)
+	assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "back for the next war"), foxholePath)
+	setMembers(w, doeWithoutInternal(), memberAsh, memberKestrel, memberVance)
+
+	page := parseHTML(t, w.b.get(landed))
+
+	if _, listed := noRoleRows(t, page)[memberDoe.ID]; !listed {
+		t.Fatalf("the no-role view at %s doesn't list %s, want them listed with their new note", landed, memberDoe.ID)
+	}
+	if findLive(page, "", "data-cleared", memberDoe.ID) != nil {
+		t.Errorf("%s still says %s's note was cleared and they're no longer listed", landed, memberDoe.ID)
+	}
+}
+
+// Clearing a holder's note leaves them on the holder list, so the page the
+// save lands on lists them with no note and says nothing about them leaving.
+// A regression pin: the save sent no result for a holder before the check
+// moved to the page load.
+func TestClearingAHoldersNoteShowsNoClearedResult(t *testing.T) {
+	w := newNoRoleWorld(t)
+
+	page := parseHTML(t, follow(t, w.b, submitNote(t, w.b, openNote(t, w.b, memberKestrel.ID), "")))
+
+	if got := noteOf(t, page, memberKestrel.ID); got != "" {
+		t.Errorf("%s's row shows the note %q, want none", memberKestrel.ID, got)
+	}
+	if findLive(page, "", "data-cleared", memberKestrel.ID) != nil {
+		t.Errorf("the page says %s is no longer listed, above their row", memberKestrel.ID)
 	}
 }
