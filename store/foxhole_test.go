@@ -362,8 +362,9 @@ func assertNewestEntry(t *testing.T, s Store, n int, entry ChangeLogEntry) {
 	}
 }
 
-// approve marks Doe and Kestrel approved in guild-1, with an entry.
-func approve(t *testing.T, s Store) {
+// approveDoeAndKestrel marks Doe and Kestrel approved in guild-1, with an
+// entry.
+func approveDoeAndKestrel(t *testing.T, s Store) {
 	t.Helper()
 	if err := s.ApproveFoxholeMembers(context.Background(), "guild-1", []MemberNames{doeNames, kestrelNames},
 		approvalEntry(ChangeApprove, memberDoe, memberKestrel)); err != nil {
@@ -381,7 +382,7 @@ func TestClearApprovalKeepsARecordWithANoteAndRemovesOneWithout(t *testing.T) {
 		if err := saveNote(s, memberDoe, "", "allied liaison"); err != nil {
 			t.Fatalf("seed save: %v", err)
 		}
-		approve(t, s)
+		approveDoeAndKestrel(t, s)
 		entry := approvalEntry(ChangeClearApproval, memberDoe, memberKestrel)
 
 		err := s.ClearFoxholeApprovals(context.Background(), "guild-1", []string{memberDoe, memberKestrel}, entry)
@@ -448,7 +449,7 @@ func TestApprovalsSaveWithADiffThatIsNotJSONWritesNothing(t *testing.T) {
 // approvals.
 func TestEmptyNoteOnAnApprovedCollaboratorKeepsTheRecord(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
-		approve(t, s)
+		approveDoeAndKestrel(t, s)
 		if err := saveNote(s, memberKestrel, "", "allied group lead"); err != nil {
 			t.Fatalf("seed save: %v", err)
 		}

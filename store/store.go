@@ -1,7 +1,7 @@
 // Package store is the bot's own database: the hubs the panel edits, the
 // spawned channels the runtime tracks across a restart, the change log of
-// every panel save, and the Foxhole page's notes, kept in a change log of
-// their own. Postgres in production (postgres.go), an in-memory
+// every panel save, and the Foxhole page's notes and approvals, kept in a
+// change log of their own. Postgres in production (postgres.go), an in-memory
 // Fake for other packages' tests (fake.go). The forum's MySQL stays in utils;
 // this package never touches it.
 //

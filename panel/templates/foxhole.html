@@ -1,7 +1,7 @@
 {{define "content"}}
 <main class="body" data-page="{{.Page}}">
   <h1 class="title">Foxhole</h1>
-  <p class="desc">Everyone holding a Foxhole role, and every approved collaborator. Changes here go straight to Discord.</p>
+  <p class="desc">Everyone holding a Foxhole role, and every approved collaborator. Role changes here go straight to Discord. Notes and approvals stay on the panel and change no role.</p>
   {{with .Foxhole}}
   {{with .NoteForm}}
   <section class="block narrow" data-field="note-block">
@@ -10,7 +10,7 @@
   </section>
   {{end}}
   <div role="status" data-note-result>{{with .Cleared}}<div class="note note--ok" data-field="note-result" data-cleared="{{.MemberID}}">Cleared the note on {{.MemberName}} <span class="fx-user">@{{.MemberUsername}}</span>. They hold no Foxhole role, so they're no longer listed.</div>{{end}}</div>
-  {{with .Refusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
+  {{with .ApprovalRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
   {{with .Skipped}}<div class="note" data-field="approve-skipped">Not approved, since {{if eq (len .) 1}}this member doesn't{{else}}these members don't{{end}} hold External: {{range $i, $m := .}}{{if $i}}, {{end}}<span data-skipped="{{$m.ID}}">{{if $m.DisplayName}}{{$m.DisplayName}} <span class="fx-user">@{{$m.Username}}</span>{{else}}{{$m.ID}}{{end}}</span>{{end}}. Nothing changed for them.</div>{{end}}
   {{if .ListReady}}
   {{if .NoRoleView}}

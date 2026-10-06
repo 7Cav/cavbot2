@@ -10,12 +10,6 @@ import (
 	"golang.org/x/net/html"
 )
 
-// The selection bar's buttons, by the op each posts.
-const (
-	pressApprove = "approve"
-	pressClear   = "clear"
-)
-
 // submitSelection ticks the holder list's checkbox of each member named and
 // presses the selection bar's button for op, the way a browser submits the
 // selection: the fields the selection form owns, the ticked boxes among
@@ -92,7 +86,7 @@ func newestChange(t *testing.T, doc *html.Node) (string, []string) {
 func TestApproveMarksTheExternalHoldersAndSkipsOneWithoutExternal(t *testing.T) {
 	w := newFoxholeWorld(t)
 
-	res := submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), pressApprove, memberKestrel.ID, memberMarsh.ID, memberDoe.ID)
+	res := submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opApprove, memberKestrel.ID, memberMarsh.ID, memberDoe.ID)
 
 	assertRedirect(t, res, foxholePath)
 	page := parseHTML(t, follow(t, w.b, res))
@@ -116,7 +110,7 @@ func TestApproveMarksTheExternalHoldersAndSkipsOneWithoutExternal(t *testing.T) 
 // redirected to, reloaded or reached by Back, no longer names them.
 func TestApproveSkipLineGoesOnceTheMemberHoldsExternal(t *testing.T) {
 	w := newFoxholeWorld(t)
-	res := submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), pressApprove, memberKestrel.ID, memberDoe.ID)
+	res := submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opApprove, memberKestrel.ID, memberDoe.ID)
 	landing := location(t, res).RequestURI()
 	doe := memberDoe
 	doe.RoleIDs = append(slices.Clone(doe.RoleIDs), roleExternal)
@@ -133,7 +127,7 @@ func TestApproveSkipLineGoesOnceTheMemberHoldsExternal(t *testing.T) {
 // bar, as a manager does, and fails the test unless the save lands.
 func approveThroughThePage(t *testing.T, w *testWorld, memberIDs ...string) {
 	t.Helper()
-	res := submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), pressApprove, memberIDs...)
+	res := submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opApprove, memberIDs...)
 	assertRedirect(t, res, foxholePath)
 }
 
@@ -143,7 +137,7 @@ func TestClearApprovalClearsEachSelectedApproval(t *testing.T) {
 	w := newFoxholeWorld(t)
 	approveThroughThePage(t, w, memberKestrel.ID, memberMarsh.ID)
 
-	res := submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), pressClear, memberKestrel.ID, memberMarsh.ID)
+	res := submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opClear, memberKestrel.ID, memberMarsh.ID)
 
 	assertRedirect(t, res, foxholePath)
 	page := parseHTML(t, follow(t, w.b, res))
@@ -168,8 +162,8 @@ func TestApprovalsSavesMakeNoDiscordCall(t *testing.T) {
 		press   string
 		members []string
 	}{
-		{pressApprove, []string{memberKestrel.ID, memberDoe.ID}},
-		{pressClear, []string{memberKestrel.ID}},
+		{opApprove, []string{memberKestrel.ID, memberDoe.ID}},
+		{opClear, []string{memberKestrel.ID}},
 	}
 	for _, save := range saves {
 		page := parseHTML(t, w.b.get(foxholePath))
@@ -195,7 +189,7 @@ func TestWhileTheMemberListIsPartialApproveIsRefusedAndClearApprovalSaves(t *tes
 		page := parseHTML(t, w.b.get(foxholePath))
 		w.discord.setMemberList(arrivingList)
 
-		res := submitSelection(t, w.b, page, pressApprove, memberKestrel.ID)
+		res := submitSelection(t, w.b, page, opApprove, memberKestrel.ID)
 
 		if findLive(parseHTML(t, res), "", "data-error", "member-list") == nil {
 			t.Errorf("the answer (status %d) names no member-list refusal", res.StatusCode)
@@ -207,7 +201,7 @@ func TestWhileTheMemberListIsPartialApproveIsRefusedAndClearApprovalSaves(t *tes
 		page := parseHTML(t, w.b.get(foxholePath))
 		w.discord.setMemberList(arrivingList)
 
-		res := submitSelection(t, w.b, page, pressClear, memberKestrel.ID)
+		res := submitSelection(t, w.b, page, opClear, memberKestrel.ID)
 
 		assertRedirect(t, res, foxholePath)
 		for _, rec := range readNoteState(t, w.st).Records {
@@ -303,7 +297,7 @@ func TestApproveByAUserInNeitherGroupIsRefused(t *testing.T) {
 	w := newFoxholeWorld(t)
 	fields := formPosts(t, parseHTML(t, w.b.get(foxholePath)), foxholeApprovalsPath)
 	fields.Set(fieldMember, memberKestrel.ID)
-	fields.Set(fieldOp, pressApprove)
+	fields.Set(fieldOp, opApprove)
 	outsider := newBrowser(t, w.p)
 	signInAs(t, w.forum, outsider, addUserOutsideAdminGroups(w.forum))
 	before := readNoteState(t, w.st)

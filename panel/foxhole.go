@@ -72,9 +72,9 @@ type foxholeView struct {
 	// skipped for not holding External, those of them still not approved and
 	// not holding External at this load. Empty for none.
 	Skipped []changedMember
-	// Refusal is why the approvals save this page answers was refused, nil
-	// for a page that answers none.
-	Refusal *saveRefusal
+	// ApprovalRefusal is why the approvals save this page answers was
+	// refused, nil for a page that answers none.
+	ApprovalRefusal *saveRefusal
 }
 
 // filterLink is one filter link above the holder list. Each keeps the
@@ -566,7 +566,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 		view.NoteForm = noteFormFor(req, list, records)
 	}
 	view.Skipped = s.stillSkipped(list, records, req.Skipped)
-	view.Refusal = req.ApprovalRefusal
+	view.ApprovalRefusal = req.ApprovalRefusal
 	return view, nil
 }
 
@@ -580,9 +580,9 @@ func (s foxholeService) stillSkipped(list commands.MemberListSnapshot, records m
 	}
 	guild := s.foxholeGuildOf()
 	var out []changedMember
-	for _, id := range skipped {
+	for _, id := range distinct(skipped) {
 		rec := records[id]
-		if rec.Approved || slices.ContainsFunc(out, func(m changedMember) bool { return m.ID == id }) {
+		if rec.Approved {
 			continue
 		}
 		member := changedMember{ID: id, DisplayName: rec.DisplayName, Username: rec.Username}
@@ -789,8 +789,8 @@ func (s foxholeService) approve(ctx context.Context, memberIDs []string, by acto
 	}
 	guild := s.foxholeGuildOf()
 	var approving []store.MemberNames
-	for _, id := range memberIDs {
-		if records[id].Approved || slices.ContainsFunc(approving, func(n store.MemberNames) bool { return n.MemberID == id }) {
+	for _, id := range distinct(memberIDs) {
+		if records[id].Approved {
 			continue
 		}
 		mem, ok := memberByID(list, id)
@@ -821,9 +821,9 @@ func (s foxholeService) clearApprovals(ctx context.Context, memberIDs []string, 
 		return err
 	}
 	var clearing []store.MemberNames
-	for _, id := range memberIDs {
+	for _, id := range distinct(memberIDs) {
 		rec := records[id]
-		if !rec.Approved || slices.ContainsFunc(clearing, func(n store.MemberNames) bool { return n.MemberID == id }) {
+		if !rec.Approved {
 			continue
 		}
 		clearing = append(clearing, store.MemberNames{MemberID: id, DisplayName: rec.DisplayName, Username: rec.Username})
@@ -840,6 +840,20 @@ func (s foxholeService) clearApprovals(ctx context.Context, memberIDs []string, 
 		ids = append(ids, n.MemberID)
 	}
 	return s.store.ClearFoxholeApprovals(ctx, s.guildID, ids, entry)
+}
+
+// distinct is the IDs in their order with each repeat after the first
+// left out, so a member posted twice is touched and named once.
+func distinct(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // approvalDiff is an approvals save's change log diff: the members the save
@@ -886,10 +900,7 @@ type noteText struct {
 
 // Label is the entry's action as the change log names it.
 func (c foxholeChange) Label() string {
-	switch c.Action {
-	case store.ChangeApprove:
-		return "approve"
-	case store.ChangeClearApproval:
+	if c.Action == store.ChangeClearApproval {
 		return "clear approval"
 	}
 	return string(c.Action)

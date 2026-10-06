@@ -39,7 +39,9 @@ type fakeDiscord struct {
 	apiReads int
 	// apiWrites counts the writes made through Discord's API, every
 	// channel, member, permission and message call among them, whether or
-	// not the fake records the call's details too.
+	// not the fake records the call's details too. A write call added to the
+	// fake, a role grant among them, counts here too:
+	// TestApprovalsSavesMakeNoDiscordCall holds the approvals saves to none.
 	apiWrites int
 	// createErr, when set, is what every create returns.
 	createErr error
