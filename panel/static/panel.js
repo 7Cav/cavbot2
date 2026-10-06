@@ -236,6 +236,14 @@
     });
   }
 
+  // show puts a note in the cell as the server would render it: the note
+  // text, the loaded note the next form starts from, and the link's label.
+  function show(cell, note) {
+    cell.setAttribute('data-note', note);
+    cell.querySelector('[data-field="note"]').textContent = note;
+    cell.querySelector('[data-field="edit_note"]').textContent = note ? 'Edit' : 'Add a note';
+  }
+
   // failed tells the manager in the form that the save didn't reach the
   // panel, and leaves the form open with their text.
   function failed(form) {
@@ -266,7 +274,14 @@
         if (!answer.ok) {
           var refused = answer.doc.querySelector('main [data-field="note-form"]');
           if (refused) {
-            mount(cell, document.adoptNode(refused), restore);
+            // The refused form loads the note as it stands now, which may
+            // be another manager's. Cancel shows that note, not the one the
+            // row loaded.
+            var current = refused.querySelector('[name="loaded"]').value;
+            mount(cell, document.adoptNode(refused), function () {
+              restore();
+              show(cell, current);
+            });
           } else {
             failed(form);
           }
@@ -283,9 +298,7 @@
         // The view the save returns to no longer lists the row, as when
         // the search matched the old note: show the saved note in place.
         restore();
-        var saved = input.value.trim();
-        cell.setAttribute('data-note', saved);
-        cell.querySelector('[data-field="note"]').textContent = saved;
+        show(cell, input.value.trim());
       })
       .catch(function () { failed(form); });
   }
