@@ -121,82 +121,102 @@ belong here, not inline in code comments.
 
 ## Foxhole roles
 
-The `/foxhole` command family applies and removes a small set of Discord roles
-by name. The bot's concern ends at role membership. Whatever access a Foxhole
-role grants is configured Discord-side and is out of scope here. The Foxhole
-page and the terms around it are designed in #412, not built yet.
+The Discord roles the regiment gives members for the game Foxhole, and the
+panel page and `/foxhole` commands that manage who holds them. What a Foxhole
+role unlocks is set in Discord, outside the bot.
 
-- **Foxhole role** — a Discord role the `/foxhole` commands manage by exact name.
-  The name is composed as `<base> Internal` / `<base> External`, where the base
-  comes from `FOXHOLE_ROLE_BASE_NAME` (default `Verified Foxhole`). Matching is
-  exact: the configured base has to reproduce the Discord role name character
-  for character, and one that doesn't fails every `/foxhole` subcommand with
-  `role not found`. The bot guarantees a member holds (or no longer holds) the
-  named role per the command invoked; it ascribes no meaning to what the role
-  unlocks.
-  _Avoid_: Warden role (a faction the regiment no longer plays).
-- **Internal / External**: The two Foxhole roles, named for who holds them.
-  Internal is for Cav members: the regiment's Foxhole company, and any other
-  Cav member who joins for one war. External is for outside collaborators,
-  players from allied groups. The bot enforces neither meaning, and checks no
-  rank role before an Internal grant. The commands' scope values are
-  `internal`, `external` and `both`.
-  _Avoid_: treating these as access tiers in code; what each role unlocks lives
-  in Discord.
-- **War**: One Foxhole war, the game's campaign from its start to a victory.
-  Foxhole role membership lasts one war.
-  _Avoid_: season, round.
-- **Purge**: Taking a Foxhole role off every holder in one Foxhole action.
-  Run when a war ends, so nobody who joined for that war keeps the role into
-  the next. Re-adding the approved collaborators is a separate Foxhole action
-  that a Foxhole manager starts afterwards.
-  _Avoid_: reset, wipe, clear.
-- **Approved collaborator**: An outside collaborator marked on the panel to get
-  External back after every purge, such as the leader of an allied group. The
-  mark outlives a purge and the member leaving the server. A person clears it,
-  and so does any removal of the member's External on the panel other than a
-  purge.
-  _Avoid_: locked (a spawned channel's term), whitelisted, pinned, preset.
-- **Note**: A Foxhole manager's free text about one Discord member, one per
-  member. A manager starts one only on a Foxhole role holder or an approved
-  collaborator. It outlives a purge, the member losing the role and the member
-  leaving the server. Only a person changes or clears it.
-  _Avoid_: comment, remark, reason (Discord's audit log word for why a change
-  was made).
-- **Validated internal unit** — a position group whose current roster members
-  the regiment treats as automatically belonging in the Internal Foxhole role
-  (e.g. `D/ACD`). A curated set; not every unit is one.
-- **Foxhole group**: The one forum group whose members are Foxhole managers.
-  Who is in it is decided on the forum.
-  _Avoid_: warden group, warden allowlist.
-- **Foxhole manager**: A signed-in forum user in the Foxhole group, such as a
-  Foxhole leader. Opens the Foxhole page. A panel admin can do everything a
-  Foxhole manager can.
-  _Avoid_: warden manager, warden admin, and Foxhole leader as the panel's name
-  for the role.
-- **Foxhole page**: The panel page that lists every Foxhole role holder and
-  approved collaborator with their notes, and starts Foxhole actions. A second
-  view lists the members with a note who hold no Foxhole role and aren't
-  approved collaborators. Foxhole managers and panel admins open it.
-  _Avoid_: warden page, warden dashboard.
-- **Member list**: The bot's copy of every member of the guild, which the
-  Foxhole page reads its holders from. Discord sends it in parts after each
-  connect, and it is partial until the last part arrives. A resumed session
-  keeps it.
-  _Avoid_: member cache, roster (a unit's roster is a different list).
-- **Foxhole action**: One change to who holds the Foxhole roles, made on the
-  Foxhole page or by a `/foxhole` command: an add, a removal, a roster add, a
-  purge or a re-add of the approved collaborators. One started on the page
-  never runs alongside another from either path, so whichever starts second
-  is refused. Two commands may still run together. Note edits and approvals
-  change no role, so they aren't Foxhole actions.
-  _Avoid_: bulk action, job, task, operation, lock. Lock is a spawned
-  channel's state, not the rule that keeps two actions apart.
-- **Report**: The record of one Foxhole action started on the Foxhole page.
-  It names who started the action and how it ended, and lists the members it
-  changed, skipped, failed on and never attempted. It is the action's change
-  log entry.
-  _Avoid_: summary, results, receipt.
+**Foxhole role**:
+A Discord role the `/foxhole` commands and the Foxhole page give and take by
+its exact name, Internal or External. The bot answers for who holds it,
+never for what it unlocks.
+_Avoid_: Warden role (a faction the regiment no longer plays).
+
+**Internal / External**:
+The two Foxhole roles, Internal for Cav members and External for outside
+collaborators from allied groups. The bot enforces neither meaning and checks
+no rank role before an Internal grant.
+_Avoid_: access tier.
+
+**War**:
+One Foxhole war, the game's campaign from its start to a victory. Foxhole
+role membership lasts one war.
+_Avoid_: season, round.
+
+**Purge**:
+Taking a Foxhole role off every holder in one Foxhole action when a war ends.
+Re-adding the approved collaborators afterwards is a separate Foxhole action.
+_Avoid_: reset, wipe, clear.
+
+**Approved collaborator**:
+An outside collaborator marked on the panel to get External back after every
+purge, such as an allied group's leader. The mark outlives a purge and the
+member leaving the server, and only a person clears it, by hand or by
+removing their External on the panel.
+_Avoid_: locked (a spawned channel's term), whitelisted, pinned, preset.
+
+**Note**:
+A Foxhole manager's free text about one Discord member, one per member,
+started only on a Foxhole role holder or an approved collaborator. It
+outlives a purge, the member losing the role and the member leaving the
+server, and only a person changes or clears it.
+_Avoid_: comment, remark, reason (Discord's audit log word for why a change
+was made).
+
+**Validated internal unit**:
+A position group whose current roster the regiment treats as belonging in
+Internal, such as D/ACD. Not every unit is one.
+
+**Foxhole group**:
+The one forum group whose members are Foxhole managers. Who is in it is
+decided on the forum.
+_Avoid_: warden group, warden allowlist.
+
+**Foxhole manager**:
+A signed-in forum user in the Foxhole group, such as a Foxhole leader, who
+opens the Foxhole page. A panel admin can do everything a Foxhole manager
+can.
+_Avoid_: warden manager, warden admin, Foxhole leader (as the panel's name
+for the role).
+
+**Foxhole page**:
+The panel page that lists every Foxhole role holder and approved
+collaborator with their notes, and starts Foxhole actions. A second view
+lists the members with a note who hold no Foxhole role and aren't approved
+collaborators.
+_Avoid_: warden page, warden dashboard.
+
+**Holder list**:
+The Foxhole page's list of every Foxhole role holder and every approved
+collaborator, read from the member list as it stands when the page loads.
+_Avoid_: roster (a unit's roster), member list (the bot's copy of the whole
+guild).
+
+**Flag**:
+A display-only mark on a holder list row that points a Foxhole manager at a
+member worth a second look. The marks are "no rank role" on an Internal
+holder, "not in the server", and "approved, doesn't hold External".
+_Avoid_: warning, alert, issue.
+
+**Member list**:
+The bot's copy of every member of the guild, which the holder list is read
+from, partial after each connect until Discord's last part arrives. A
+resumed session keeps it.
+_Avoid_: member cache, roster (a unit's roster is a different list).
+
+**Foxhole action**:
+One change to who holds the Foxhole roles, made on the Foxhole page or by a
+`/foxhole` command: an add, a removal, a roster add, a purge or a re-add of
+the approved collaborators. One started on the page never runs alongside
+another from either path, though two commands may still run together.
+_Avoid_: bulk action, job, task, operation, lock (a spawned channel's
+state, not the rule that keeps two actions apart).
+
+**Report**:
+The record of one Foxhole action started on the Foxhole page, and that
+action's change log entry. It names who started the action and how it
+ended, and lists the members it changed, skipped, failed on and never
+attempted.
+_Avoid_: summary, results, receipt.
 
 ## Temporary voice channels
 

@@ -63,6 +63,11 @@ type fakeDiscord struct {
 	// disconnected is the bot's gateway connection down, with the fake
 	// state still holding what it held when the connection dropped.
 	disconnected bool
+	// roles are the guild's roles as the fake gateway state holds them.
+	roles []*discordgo.Role
+	// memberList is the member list snapshot the fake gateway state gives:
+	// no guild until a test sets one.
+	memberList commands.MemberListSnapshot
 }
 
 // fakeEdit is one edit call as the fake recorded it: the channel, the name
@@ -101,7 +106,7 @@ func newFakeDiscord() *fakeDiscord {
 		{ID: "vc-2", Name: "Squad Join", Type: discordgo.ChannelTypeGuildVoice, ParentID: "cat-1"},
 		{ID: "text-1", Name: "general", Type: discordgo.ChannelTypeGuildText, ParentID: "cat-1"},
 		{ID: "vc-noparent", Name: "Lobby", Type: discordgo.ChannelTypeGuildVoice},
-	}, voice: map[string]string{}, guildStatus: commands.GuildDataPresent}
+	}, voice: map[string]string{}, guildStatus: commands.GuildDataPresent, roles: slices.Clone(testGuildRoles)}
 }
 
 func (f *fakeDiscord) Channel(channelID string) (*discordgo.Channel, error) {
@@ -233,17 +238,42 @@ func (f *fakeDiscord) GuildData(guildID string) commands.GuildSnapshot {
 		c := *ch
 		data.Channels = append(data.Channels, &c)
 	}
-	for _, r := range testGuildRoles {
+	for _, r := range f.roles {
 		role := *r
 		data.Roles = append(data.Roles, &role)
 	}
 	return data
 }
 
-// MemberList reads no guild data. No panel page reads the member list yet;
-// the fake carries it for the interface.
-func (f *fakeDiscord) MemberList(_ string) commands.MemberListSnapshot {
-	return commands.MemberListSnapshot{}
+// MemberList copies the member list snapshot the test set, the members and
+// their role IDs included. Any other guild has none.
+func (f *fakeDiscord) MemberList(guildID string) commands.MemberListSnapshot {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if guildID != testGuildID {
+		return commands.MemberListSnapshot{}
+	}
+	snap := f.memberList
+	snap.Members = nil
+	for _, m := range f.memberList.Members {
+		m.RoleIDs = slices.Clone(m.RoleIDs)
+		snap.Members = append(snap.Members, m)
+	}
+	return snap
+}
+
+// setMemberList sets the member list snapshot the fake gateway state gives.
+func (f *fakeDiscord) setMemberList(snap commands.MemberListSnapshot) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.memberList = snap
+}
+
+// addRoles puts roles in the guild's role list.
+func (f *fakeDiscord) addRoles(roles ...*discordgo.Role) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.roles = append(f.roles, roles...)
 }
 
 // MemberRanks reads the payload through the runtime's shared helper. The
@@ -417,12 +447,19 @@ func newTestWorldWith(t *testing.T, f *fakeForum, hubs ...store.Hub) *testWorld 
 // it wrapped.
 func newTestWorldOver(t *testing.T, st store.Store, f *fakeForum) *testWorld {
 	t.Helper()
+	return newTestWorldConfigured(t, st, f, testConfig(f))
+}
+
+// newTestWorldConfigured is newTestWorldOver with the panel built from the
+// configuration given.
+func newTestWorldConfigured(t *testing.T, st store.Store, f *fakeForum, cfg Config) *testWorld {
+	t.Helper()
 	discord := newFakeDiscord()
 	runtime, err := commands.NewTempVC(discord, st, testGuildID)
 	if err != nil {
 		t.Fatalf("NewTempVC: %v", err)
 	}
-	p, err := New(testConfig(f), testVersion, Deps{Store: st, Runtime: runtime, Manager: discord, GuildID: testGuildID})
+	p, err := New(cfg, testVersion, Deps{Store: st, Runtime: runtime, Manager: discord, GuildID: testGuildID})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

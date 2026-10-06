@@ -760,6 +760,15 @@ func reapplyRoleOverwrites(
 	return reappliedCount, nil
 }
 
+// FoxholeRoleNames returns the names of the two Foxhole roles, Internal and
+// External, composed from the configured base name, which it reads at each
+// call as the commands do. The panel's Foxhole page finds the roles by these
+// names in the guild's roles, the same exact match the commands make.
+func FoxholeRoleNames() (internal, external string) {
+	names := resolveFoxholeRoleNames("both")
+	return names[0], names[1]
+}
+
 func resolveFoxholeRoleNames(roleScope string) []string {
 	base := foxholeRoleBaseName()
 

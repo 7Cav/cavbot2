@@ -1,5 +1,5 @@
 {{define "content"}}
-<main class="body">
+<main class="body" data-page="{{.Page}}">
   <h1 class="title">Hubs</h1>
   {{if .Hubs.Disconnected}}<div class="note" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Channel and role details on this page may be out of date.</div>{{end}}
   {{template "moderators" .}}

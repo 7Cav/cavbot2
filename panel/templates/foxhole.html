@@ -1,0 +1,39 @@
+{{define "content"}}
+<main class="body" data-page="{{.Page}}">
+  <h1 class="title">Foxhole</h1>
+  <p class="desc">Everyone holding a Foxhole role. Changes here go straight to Discord.</p>
+  {{with .Foxhole}}
+  {{if .ListReady}}
+  <section class="block" data-field="holders">
+    <h2 class="block-header">Foxhole role holders</h2>
+    <div class="block-row fx-toolbar">
+      <form method="get" action="/foxhole" class="fx-searchform" role="search" data-field="search">
+        {{if ne .Filter "all"}}<input type="hidden" name="filter" value="{{.Filter}}">{{end}}
+        <input type="search" name="q" value="{{.Query}}" class="search-input fx-search" placeholder="Search name, username or ID" aria-label="Search name, username or ID">
+        <button type="submit" class="btn btn--small">Search</button>
+      </form>
+      <nav class="fx-filters" aria-label="Filter the list">
+        {{- range .Filters}}<a href="{{.Href}}" data-filter="{{.Name}}"{{if .On}} class="is-on" aria-current="page"{{end}}>{{.Label}} <span class="fx-count" data-field="count">{{.Count}}</span></a>{{end -}}
+      </nav>
+    </div>
+    <div class="scroll"><table class="hublist fx-list">
+      <thead><tr><th>Member</th><th>Roles</th><th>Rank role</th></tr></thead>
+      <tbody>
+      {{range .Holders}}
+        <tr data-member="{{.ID}}">
+          <td class="fx-member"><span class="fx-name" data-field="display_name">{{.DisplayName}}</span> <span class="fx-user">@<span data-field="username">{{.Username}}</span></span></td>
+          <td class="fx-nowrap">{{if .Internal}}<span class="tag fx-role" data-role="internal">Internal</span> {{end}}{{if .External}}<span class="tag fx-role" data-role="external">External</span>{{end}}</td>
+          <td class="fx-nowrap">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else if .NoRankRole}}<span class="tag tag--warn" data-flag="no-rank-role">no rank role</span>{{else}}<span class="off">none</span>{{end}}</td>
+        </tr>
+      {{else}}
+        <tr><td colspan="3" class="off">{{if $.Foxhole.NoHolders}}Nobody holds a Foxhole role.{{else}}No holder matches.{{end}}</td></tr>
+      {{end}}
+      </tbody>
+    </table></div>
+  </section>
+  {{else}}
+  <div class="note" data-notice="member-list">Cavbot2 doesn't have the whole member list from Discord yet, so the holder list can't show. Reload the page in a minute.</div>
+  {{end}}
+  {{end}}
+</main>
+{{end}}

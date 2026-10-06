@@ -134,6 +134,19 @@ func (f *fakeForum) setUserinfo(status int, body string) {
 	f.accounts[0].status, f.accounts[0].body = status, body
 }
 
+// setGroups sets the groups /api/me reports for a user the forum knows.
+func (f *fakeForum) setGroups(a *forumAccount, primary int, secondary []int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var me struct {
+		Me forumUser `json:"me"`
+	}
+	if err := json.Unmarshal([]byte(a.body), &me); err != nil {
+		f.t.Fatalf("the account's /api/me body: %v", err)
+	}
+	a.body = forumUserJSON(me.Me.UserID, me.Me.Username, primary, secondary)
+}
+
 func (f *fakeForum) setUserinfoDrop(drop bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -234,14 +247,15 @@ func s256(verifier string) string {
 
 func testConfig(f *fakeForum) Config {
 	return Config{
-		Addr:          ":0",
-		BaseURL:       testBaseURL,
-		ClientID:      testClientID,
-		ClientSecret:  testClientSecret,
-		AuthorizeURL:  f.srv.URL + "/oauth2/authorize",
-		TokenURL:      f.srv.URL + "/api/oauth2/token",
-		UserinfoURL:   f.srv.URL + "/api/me",
-		AdminGroupIDs: []int{71, 47, 44},
+		Addr:           ":0",
+		BaseURL:        testBaseURL,
+		ClientID:       testClientID,
+		ClientSecret:   testClientSecret,
+		AuthorizeURL:   f.srv.URL + "/oauth2/authorize",
+		TokenURL:       f.srv.URL + "/api/oauth2/token",
+		UserinfoURL:    f.srv.URL + "/api/me",
+		AdminGroupIDs:  []int{71, 47, 44},
+		FoxholeGroupID: testFoxholeGroupID,
 	}
 }
 
@@ -428,6 +442,18 @@ func eachLiveElement(n *html.Node, visit func(*html.Node)) {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		eachLiveElement(c, visit)
 	}
+}
+
+// valuesOf returns the value of the attribute on every element under n that
+// carries it, in document order.
+func valuesOf(n *html.Node, attr string) []string {
+	var out []string
+	eachElement(n, func(el *html.Node) {
+		if v, ok := attrValue(el, attr); ok {
+			out = append(out, v)
+		}
+	})
+	return out
 }
 
 func attrValue(n *html.Node, key string) (string, bool) {

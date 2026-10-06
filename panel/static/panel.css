@@ -171,6 +171,25 @@ img { max-width: 100%; }
 .change-fields dd { margin: 0; color: var(--text-hi); overflow-wrap: anywhere; }
 .change-fields .arrow { color: var(--text-mute); padding: 0 4px; }
 
+/* The Foxhole page (spec #434, prototype variant A): the holder list, its
+   search and its filter links. */
+.fx-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.fx-searchform { display: flex; align-items: center; gap: 6px; flex: 0 1 380px; }
+.fx-search { flex: 1; min-width: 0; border-radius: var(--radius); }
+.fx-filters { display: flex; flex-wrap: wrap; gap: 2px; }
+.fx-filters a { padding: 6px 10px; color: var(--text); text-decoration: none; border-bottom: 2px solid transparent; }
+.fx-filters a:hover { color: var(--text-hi); }
+.fx-filters a.is-on { color: var(--text-hi); border-bottom-color: var(--gold); }
+.fx-count { margin-left: 4px; font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
+.fx-list th { padding: 8px 12px; }
+.fx-list td { padding: 7px 12px; }
+.fx-list tbody tr:hover td { background: var(--surface-2); }
+.fx-member { min-width: 220px; }
+.fx-name { color: var(--text-hi); font-weight: 500; }
+.fx-user { font-size: 13px; color: var(--text-mute); }
+.fx-role, .fx-rank { color: var(--text-hi); }
+.fx-nowrap { white-space: nowrap; }
+
 /* The rail and the page beside it. */
 .console { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100dvh; }
 .rail { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; position: sticky; top: 0; height: 100dvh; }

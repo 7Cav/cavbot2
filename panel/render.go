@@ -58,24 +58,44 @@ const (
 )
 
 // pageData is what every template renders from. SignedIn switches the rail
-// between the identity block and the forum link, and PanelAdmin shows the
-// navigation beside the identity block. Hubs is filled for the hub page
-// alone; Failure, Message and Retry for the error page alone.
+// between the identity block and the forum link, and Nav lists the pages the
+// rail links to beside the identity block. Page names the page shown, for
+// its rail link and its data-page. Hubs is filled for the hub page alone,
+// Foxhole for the Foxhole page alone, and Failure, Message and Retry for the
+// error page alone.
 type pageData struct {
-	Title      string
-	Version    string
-	ForumURL   string
-	SignedIn   bool
-	PanelAdmin bool
-	Username   string
-	Cause      cause
-	Hubs       hubPage
-	Failure    failure
+	Title    string
+	Version  string
+	ForumURL string
+	SignedIn bool
+	Nav      nav
+	Page     string
+	Username string
+	Cause    cause
+	Hubs     hubPage
+	Foxhole  foxholeView
+	Failure  failure
 	// Message is the error page's one sentence.
 	Message string
 	// Retry is where the error page's Try again link leads.
 	Retry string
 }
+
+// nav is which pages the rail links to: the ones this request's group check
+// lets the session open.
+type nav struct {
+	Hubs    bool
+	Foxhole bool
+}
+
+// Any reports whether the session opens any page.
+func (n nav) Any() bool { return n.Hubs || n.Foxhole }
+
+// The pages the rail links to, as Page names them.
+const (
+	pageHubs    = "hubs"
+	pageFoxhole = "foxhole"
+)
 
 // pages are the templates, one per screen, each parsed with the shared layout
 // so a page defines only its title and its content block.
@@ -83,7 +103,7 @@ type pages map[string]*template.Template
 
 func parsePages() (pages, error) {
 	out := pages{}
-	for _, name := range []string{"signin", "home", "error", "noaccess"} {
+	for _, name := range []string{"signin", "home", "error", "noaccess", "foxhole"} {
 		t, err := template.New("layout.html").ParseFS(templateFS, "templates/layout.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", name, err)
