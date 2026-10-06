@@ -299,3 +299,167 @@ func TestFoxholeChangesAreKeptApartFromTheHubPagesLog(t *testing.T) {
 		}
 	})
 }
+
+// memberKestrel is a second member, one the cases approve with no record.
+const memberKestrel = "100000000000000003"
+
+// approvalEntry is an approvals save's change log entry, its diff naming the
+// members it touched. The panel decides the diff's shape; the store keeps
+// the bytes.
+func approvalEntry(action ChangeAction, memberIDs ...string) ChangeLogEntry {
+	raw, _ := json.Marshal(map[string]any{"members": memberIDs})
+	return ChangeLogEntry{ForumUserID: 1234, ForumUsername: "Doe.J", Action: action, Diff: raw}
+}
+
+// doeNames and kestrelNames are the names an approvals save gives each
+// member.
+var (
+	doeNames     = MemberNames{MemberID: memberDoe, DisplayName: "SGT Doe.J", Username: "jdoe"}
+	kestrelNames = MemberNames{MemberID: memberKestrel, DisplayName: "kestrel_tlr", Username: "kestrel_tlr"}
+)
+
+// Approving a member with a note marks their record approved and keeps the
+// note. Approving a member with no record starts one, approved with no
+// note, under the names the save gave. The Foxhole change log gains the
+// save's one entry, as given.
+func TestApproveMarksEachMemberAndAppendsOneEntry(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		if err := saveNote(s, memberDoe, "", "allied liaison"); err != nil {
+			t.Fatalf("seed save: %v", err)
+		}
+		entry := approvalEntry(ChangeApprove, memberDoe, memberKestrel)
+
+		err := s.ApproveFoxholeMembers(context.Background(), "guild-1", []MemberNames{doeNames, kestrelNames}, entry)
+
+		if err != nil {
+			t.Fatalf("ApproveFoxholeMembers: %v", err)
+		}
+		want := map[string]FoxholeRecord{
+			memberDoe:     {MemberID: memberDoe, Note: "allied liaison", Approved: true, DisplayName: "SGT Doe.J", Username: "jdoe"},
+			memberKestrel: {MemberID: memberKestrel, Approved: true, DisplayName: "kestrel_tlr", Username: "kestrel_tlr"},
+		}
+		if got := foxholeRecords(t, s); !reflect.DeepEqual(got, want) {
+			t.Errorf("records = %+v, want %+v", got, want)
+		}
+		assertNewestEntry(t, s, 2, entry)
+	})
+}
+
+// assertNewestEntry checks the Foxhole change log holds n entries, the
+// newest being entry as given, with its forum user, action and diff.
+func assertNewestEntry(t *testing.T, s Store, n int, entry ChangeLogEntry) {
+	t.Helper()
+	entries := foxholeChanges(t, s)
+	if len(entries) != n {
+		t.Fatalf("the Foxhole change log holds %d entries, want %d", len(entries), n)
+	}
+	e := entries[0]
+	if e.ForumUserID != entry.ForumUserID || e.ForumUsername != entry.ForumUsername || e.Action != entry.Action {
+		t.Errorf("the newest entry = %+v, want forum user %d %s and action %s", e, entry.ForumUserID, entry.ForumUsername, entry.Action)
+	}
+	if diff, want := decodeDiff(t, e.Diff), decodeDiff(t, entry.Diff); !reflect.DeepEqual(diff, want) {
+		t.Errorf("the newest entry's diff = %v, want %v", diff, want)
+	}
+}
+
+// approve marks Doe and Kestrel approved in guild-1, with an entry.
+func approve(t *testing.T, s Store) {
+	t.Helper()
+	if err := s.ApproveFoxholeMembers(context.Background(), "guild-1", []MemberNames{doeNames, kestrelNames},
+		approvalEntry(ChangeApprove, memberDoe, memberKestrel)); err != nil {
+		t.Fatalf("ApproveFoxholeMembers: %v", err)
+	}
+}
+
+// Clearing the approval of a member with a note keeps their record, with
+// the note, no longer approved. Clearing it on a member with no note
+// removes their record, since the store holds one only for a member with a
+// note or an approval. The Foxhole change log gains the save's one entry,
+// as given.
+func TestClearApprovalKeepsARecordWithANoteAndRemovesOneWithout(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		if err := saveNote(s, memberDoe, "", "allied liaison"); err != nil {
+			t.Fatalf("seed save: %v", err)
+		}
+		approve(t, s)
+		entry := approvalEntry(ChangeClearApproval, memberDoe, memberKestrel)
+
+		err := s.ClearFoxholeApprovals(context.Background(), "guild-1", []string{memberDoe, memberKestrel}, entry)
+
+		if err != nil {
+			t.Fatalf("ClearFoxholeApprovals: %v", err)
+		}
+		want := map[string]FoxholeRecord{
+			memberDoe: {MemberID: memberDoe, Note: "allied liaison", DisplayName: "SGT Doe.J", Username: "jdoe"},
+		}
+		if got := foxholeRecords(t, s); !reflect.DeepEqual(got, want) {
+			t.Errorf("records = %+v, want %+v", got, want)
+		}
+		assertNewestEntry(t, s, 3, entry)
+	})
+}
+
+// An approvals save whose entry's diff is not a JSON value fails, and the
+// store holds neither its approvals nor its entry: they land together or
+// not at all. The store writes the records first, so this holds them to
+// the entry's transaction.
+func TestApprovalsSaveWithADiffThatIsNotJSONWritesNothing(t *testing.T) {
+	cases := []struct {
+		name string
+		save func(s Store, entry ChangeLogEntry) error
+		// action is the save's own, so the diff is all the store refuses.
+		action ChangeAction
+	}{
+		{"approve", func(s Store, entry ChangeLogEntry) error {
+			return s.ApproveFoxholeMembers(context.Background(), "guild-1", []MemberNames{kestrelNames}, entry)
+		}, ChangeApprove},
+		{"clear approval", func(s Store, entry ChangeLogEntry) error {
+			return s.ClearFoxholeApprovals(context.Background(), "guild-1", []string{memberDoe}, entry)
+		}, ChangeClearApproval},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			forEachStore(t, func(t *testing.T, s Store) {
+				if err := s.ApproveFoxholeMembers(context.Background(), "guild-1", []MemberNames{doeNames},
+					approvalEntry(ChangeApprove, memberDoe)); err != nil {
+					t.Fatalf("seed approve: %v", err)
+				}
+				before := readFoxholeState(t, s)
+				entry := approvalEntry(tc.action, memberDoe)
+				entry.Diff = notJSON().Diff
+
+				err := tc.save(s, entry)
+
+				if err == nil {
+					t.Error("the save returned no error, want the diff refused")
+				}
+				if after := readFoxholeState(t, s); !reflect.DeepEqual(after, before) {
+					t.Errorf("the store after the refused save = %+v, want it as before, %+v", after, before)
+				}
+			})
+		})
+	}
+}
+
+// Clearing the note of an approved collaborator keeps their record,
+// approved: the store drops a record only once it holds neither a note nor
+// an approval. A regression pin: the note save's delete checked the
+// approval from its first case, though nothing could set one until
+// approvals.
+func TestEmptyNoteOnAnApprovedCollaboratorKeepsTheRecord(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		approve(t, s)
+		if err := saveNote(s, memberKestrel, "", "allied group lead"); err != nil {
+			t.Fatalf("seed save: %v", err)
+		}
+
+		if err := saveNote(s, memberKestrel, "allied group lead", ""); err != nil {
+			t.Fatalf("SaveFoxholeNote with an empty note: %v", err)
+		}
+
+		got, ok := foxholeRecords(t, s)[memberKestrel]
+		if !ok || !got.Approved || got.Note != "" {
+			t.Errorf("%s's record = %+v (present: %v), want it kept, approved, with no note", memberKestrel, got, ok)
+		}
+	})
+}

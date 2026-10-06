@@ -37,6 +37,10 @@ type fakeDiscord struct {
 	// apiReads counts the reads made of Discord's API, each of which fails:
 	// the panel reads the guild and its members from the gateway state.
 	apiReads int
+	// apiWrites counts the writes made through Discord's API, every
+	// channel, member, permission and message call among them, whether or
+	// not the fake records the call's details too.
+	apiWrites int
 	// createErr, when set, is what every create returns.
 	createErr error
 	// editErr, when set, is what every edit returns.
@@ -131,6 +135,7 @@ var errAPIDown = errors.New("discord: 502 Bad Gateway")
 func (f *fakeDiscord) GuildChannelCreateComplex(_ string, data discordgo.GuildChannelCreateData, reason string) (*discordgo.Channel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.apiWrites++
 	if f.createErr != nil {
 		return nil, f.createErr
 	}
@@ -149,6 +154,7 @@ func (f *fakeDiscord) GuildChannelCreateComplex(_ string, data discordgo.GuildCh
 func (f *fakeDiscord) ChannelDelete(channelID, _ string) (*discordgo.Channel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.apiWrites++
 	f.deleted = append(f.deleted, channelID)
 	f.channels = slices.DeleteFunc(f.channels, func(ch *discordgo.Channel) bool { return ch.ID == channelID })
 	return &discordgo.Channel{ID: channelID}, nil
@@ -160,6 +166,7 @@ func (f *fakeDiscord) ChannelDelete(channelID, _ string) (*discordgo.Channel, er
 func (f *fakeDiscord) ChannelEdit(channelID string, data *discordgo.ChannelEdit, reason string) (*discordgo.Channel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.apiWrites++
 	if f.editErr != nil {
 		return nil, f.editErr
 	}
@@ -180,6 +187,7 @@ func (f *fakeDiscord) ChannelEdit(channelID string, data *discordgo.ChannelEdit,
 func (f *fakeDiscord) ChannelOverwritesReplace(channelID string, _ []*discordgo.PermissionOverwrite, reason string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.apiWrites++
 	if f.editErr != nil {
 		return f.editErr
 	}
@@ -187,10 +195,22 @@ func (f *fakeDiscord) ChannelOverwritesReplace(channelID string, _ []*discordgo.
 	return nil
 }
 
-func (f *fakeDiscord) GuildMemberMove(_, _ string, _ *string) error { return nil }
+func (f *fakeDiscord) GuildMemberMove(_, _ string, _ *string) error {
+	f.countWrite()
+	return nil
+}
 
 func (f *fakeDiscord) ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error) {
+	f.countWrite()
 	return &discordgo.Message{ChannelID: channelID, Content: data.Content}, nil
+}
+
+// countWrite counts a write through Discord's API that the fake records
+// nothing else about.
+func (f *fakeDiscord) countWrite() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.apiWrites++
 }
 
 // GuildMember is a read of Discord's API: counted, and answered as the API
@@ -292,6 +312,7 @@ func (f *fakeDiscord) MemberRanks(g *discordgo.Guild) map[string]int {
 // ChannelMessageEditComplex answers every edit as done. The panel's tests
 // read no message the runtime posts or edits.
 func (f *fakeDiscord) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {
+	f.countWrite()
 	return &discordgo.Message{ID: edit.ID, ChannelID: edit.Channel}, nil
 }
 
@@ -323,9 +344,18 @@ func (f *fakeDiscord) apiReadCount() int {
 	return f.apiReads
 }
 
+// apiCallCount is how many calls to Discord's API, reads and writes, the
+// panel and the runtime have made.
+func (f *fakeDiscord) apiCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.apiReads + f.apiWrites
+}
+
 // ChannelPermissionSet accepts every overwrite set. The panel's tests judge
 // no channel's permissions; the fake carries it for the interface.
 func (f *fakeDiscord) ChannelPermissionSet(_, _ string, _ discordgo.PermissionOverwriteType, _, _ int64, _ string) error {
+	f.countWrite()
 	return nil
 }
 

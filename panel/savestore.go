@@ -111,6 +111,18 @@ func (b boundedStore) SaveFoxholeNote(ctx context.Context, guildID string, save 
 	return b.store.SaveFoxholeNote(ctx, guildID, save, entry)
 }
 
+func (b boundedStore) ApproveFoxholeMembers(ctx context.Context, guildID string, members []store.MemberNames, entry store.ChangeLogEntry) error {
+	ctx, cancel := context.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.ApproveFoxholeMembers(ctx, guildID, members, entry)
+}
+
+func (b boundedStore) ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry store.ChangeLogEntry) error {
+	ctx, cancel := context.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.ClearFoxholeApprovals(ctx, guildID, memberIDs, entry)
+}
+
 func (b boundedStore) SetFoxholeRecordNames(ctx context.Context, guildID string, names []store.MemberNames) error {
 	ctx, cancel := context.WithTimeout(ctx, b.timeout)
 	defer cancel()

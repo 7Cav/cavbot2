@@ -148,6 +148,13 @@ const (
 	// ChangeNote is a save of one member's note on the Foxhole page. Its
 	// entry goes in the Foxhole change log, never the hub page's.
 	ChangeNote ChangeAction = "note"
+	// ChangeApprove is an approvals save on the Foxhole page that marks
+	// members approved collaborators. Its entry goes in the Foxhole change
+	// log.
+	ChangeApprove ChangeAction = "approve"
+	// ChangeClearApproval is an approvals save on the Foxhole page that
+	// clears members' approvals. Its entry goes in the Foxhole change log.
+	ChangeClearApproval ChangeAction = "clear_approval"
 )
 
 // FoxholeRecord is one member's Foxhole record (spec #434): their note,
@@ -288,6 +295,17 @@ type Store interface {
 	// member with no note and no approval removes their record, since the
 	// store holds records only for members with one or the other.
 	SaveFoxholeNote(ctx context.Context, guildID string, save NoteSave, entry ChangeLogEntry) error
+	// ApproveFoxholeMembers marks each member given an approved
+	// collaborator and appends the save's entry to the Foxhole change log
+	// together. A member with a record keeps their note and takes the names
+	// given; one with none gets a record, approved with no note, under the
+	// names given.
+	ApproveFoxholeMembers(ctx context.Context, guildID string, members []MemberNames, entry ChangeLogEntry) error
+	// ClearFoxholeApprovals clears the approval of each member given and
+	// appends the save's entry to the Foxhole change log together. A member
+	// left with no note and no approval loses their record, as in
+	// SaveFoxholeNote. A member with no record is left with none.
+	ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry ChangeLogEntry) error
 	// SetFoxholeRecordNames replaces the last-seen names of each member
 	// given who has a record, and starts no record for one who hasn't. It
 	// appends no entry: no person made the change.

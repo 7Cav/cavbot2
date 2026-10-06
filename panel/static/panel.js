@@ -365,3 +365,31 @@
     open(cell);
   });
 })();
+
+/* The Foxhole page's selection bar (spec #434, ADR 0013): how many rows are
+   ticked, and its buttons off while none is. The checkboxes belong to the
+   bar's form through their form attribute, so without script the bar posts
+   whatever is ticked, and it shows no count. */
+(function () {
+  'use strict';
+
+  var bar = document.querySelector('[data-field="selection"]');
+  if (!bar) { return; }
+  var count = bar.querySelector('[data-selection-count]');
+  var selected = count.querySelector('[data-field="selected"]');
+  var buttons = bar.querySelectorAll('[data-needs-selection]');
+
+  function refresh() {
+    var n = document.querySelectorAll('[data-select]:checked').length;
+    selected.textContent = n;
+    buttons.forEach(function (b) { b.disabled = n === 0; });
+  }
+
+  document.addEventListener('change', function (e) {
+    if (e.target.matches('[data-select]')) { refresh(); }
+  });
+  // Back and forward can bring the page back with boxes still ticked.
+  window.addEventListener('pageshow', refresh);
+  count.hidden = false;
+  refresh();
+})();

@@ -438,6 +438,42 @@ func (f *Fake) SaveFoxholeNote(ctx context.Context, guildID string, save NoteSav
 	})
 }
 
+// ApproveFoxholeMembers implements Store.
+func (f *Fake) ApproveFoxholeMembers(ctx context.Context, guildID string, members []MemberNames, entry ChangeLogEntry) error {
+	return f.writeToLog(ctx, &f.foxholeChanges, &entry, func() (int64, error) {
+		records := f.members[guildID]
+		if records == nil {
+			records = map[string]FoxholeRecord{}
+			f.members[guildID] = records
+		}
+		for _, n := range members {
+			m := records[n.MemberID]
+			m.MemberID, m.Approved, m.DisplayName, m.Username = n.MemberID, true, n.DisplayName, n.Username
+			records[n.MemberID] = m
+		}
+		return 0, nil
+	})
+}
+
+// ClearFoxholeApprovals implements Store.
+func (f *Fake) ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry ChangeLogEntry) error {
+	return f.writeToLog(ctx, &f.foxholeChanges, &entry, func() (int64, error) {
+		records := f.members[guildID]
+		for _, id := range memberIDs {
+			m, ok := records[id]
+			if !ok {
+				continue
+			}
+			m.Approved = false
+			records[id] = m
+			if m.Note == "" {
+				delete(records, id)
+			}
+		}
+		return 0, nil
+	})
+}
+
 // SetFoxholeRecordNames implements Store.
 func (f *Fake) SetFoxholeRecordNames(ctx context.Context, guildID string, names []MemberNames) error {
 	return f.writeAllOrNothing(ctx, nil, func() (int64, error) {
