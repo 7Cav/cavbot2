@@ -539,13 +539,20 @@ func pageAddress(req pageRequest) string {
 // and nothing on-call can fix, so it is one INFO line and no Sentry event.
 // retry is the GET address Try again leads to.
 func (p *Panel) noGuildData(w http.ResponseWriter, sess session, step, retry string, err error) {
-	utils.Info("Panel has no guild data", "step", step, "reason", err.Error(),
-		"username", sess.username, "forum_user_id", sess.userID)
+	logNoGuildData(sess, step, err)
 	data := sess.page("Discord has not sent the server's data")
 	data.Failure, data.Retry = failureNoGuildData, retry
 	data.Message = "Discord hasn't sent Cavbot2 this server's channels and roles. That happens for a moment after the bot restarts, " +
 		"and while Discord has trouble. Nothing changed and you are still signed in."
 	p.render(w, http.StatusServiceUnavailable, "error", data)
+}
+
+// logNoGuildData is the one INFO line of a page load or a save that found
+// no data for the guild in the gateway state, and no Sentry event: the
+// delay is Discord's.
+func logNoGuildData(sess session, step string, err error) {
+	utils.Info("Panel has no guild data", "step", step, "reason", err.Error(),
+		"username", sess.username, "forum_user_id", sess.userID)
 }
 
 // createOrRegisterHub is POST /hubs. The create and register forms post to

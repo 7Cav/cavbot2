@@ -17,10 +17,17 @@ import (
 // with, the production default.
 const testFoxholeGroupID = 323
 
+// The Foxhole manager addFoxholeManager adds: their forum user ID and
+// username.
+const (
+	managerUserID   = 2468
+	managerUsername = "Smith.F"
+)
+
 // addFoxholeManager makes the forum know a user in the Foxhole group by a
 // secondary group, and in none of the panel's admin groups.
 func addFoxholeManager(f *fakeForum) *forumAccount {
-	return f.addUser(2468, "Smith.F", 2, []int{35, testFoxholeGroupID})
+	return f.addUser(managerUserID, managerUsername, 2, []int{35, testFoxholeGroupID})
 }
 
 // follow follows the panel's redirects from res, the way a browser does,

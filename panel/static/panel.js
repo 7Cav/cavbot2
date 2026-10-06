@@ -408,10 +408,14 @@
 
   var notice = document.querySelector('[data-notice="member-list"]');
   if (!notice) { return; }
-  // pause is the time between one answer and the next load. Each load
-  // waits on the server while the list is on its way, so this only spaces
-  // out the loads that answer at once.
-  var pause = 3000;
+  // Loads start at least spacing apart, and a load starts at least a
+  // second after the one before answered. A load the server held while the
+  // list was on its way is followed almost at once. One the server answered
+  // at once, for a list that can't arrive within its wait, is followed
+  // spacing later, so an open tab through an outage loads the page a few
+  // times a minute.
+  var spacing = 10000;
+  var started = 0;
 
   function address() {
     return notice.querySelector('[data-field="reload"]').getAttribute('href');
@@ -436,8 +440,10 @@
   }
 
   // refresh puts the answer's notice in this one. The notice is a live
-  // region, so it keeps its element and changes its contents only.
+  // region, so it keeps its element and changes its contents only, and
+  // only when they changed, so a screen reader reads out news alone.
   function refresh(fresh) {
+    if (fresh.textContent === notice.textContent) { return; }
     notice.setAttribute('data-list-status', fresh.getAttribute('data-list-status'));
     notice.replaceChildren.apply(notice, Array.from(fresh.childNodes).map(function (n) {
       return document.importNode(n, true);
@@ -445,6 +451,7 @@
   }
 
   function load() {
+    started = Date.now();
     fetch(address(), { credentials: 'same-origin' })
       .then(function (res) {
         return res.text().then(function (text) {
@@ -470,7 +477,9 @@
       .catch(later);
   }
 
-  function later() { setTimeout(load, pause); }
+  function later() {
+    setTimeout(load, Math.max(1000, started + spacing - Date.now()));
+  }
 
   later();
 })();

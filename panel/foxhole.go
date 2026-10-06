@@ -22,11 +22,9 @@ import (
 // from the gateway state at this load, narrowed to the search and the
 // filter, the note form the page opens, and the page's change log.
 type foxholeView struct {
-	// ListReady is the member list complete at this load. Until it is, a
-	// notice takes the holder list's place, so the page never shows a
-	// partial list.
-	ListReady bool
-	// ListNotice is that notice, nil once the list is complete.
+	// ListNotice is the notice in the holder list's place while the member
+	// list isn't complete at this load, so the page never shows a partial
+	// list. Nil once the list is complete.
 	ListNotice *listNotice
 	// Disconnected is the bot's gateway connection down with the list
 	// complete: the page shows in full, and says the holder list may be out
@@ -87,10 +85,8 @@ type foxholeView struct {
 // listNotice is the one-line notice in the holder list's place while the
 // member list is partial: how far along the list is, and a Reload link.
 type listNotice struct {
-	// Status is the list's state as the notice names it, its
-	// data-list-status marker: listArriving, listRefused, listLate or
-	// listNoGuild.
-	Status string
+	// Status is the list's state as the notice names it.
+	Status listState
 	// Received and Expected count the parts of a list arriving. Expected is
 	// 0 until the first part says how many, and the notice then counts
 	// none.
@@ -104,12 +100,15 @@ type listNotice struct {
 	Reload string
 }
 
-// The member list's states as the notice names them.
+// listState is a partial member list's state as the notice names it, its
+// data-list-status marker.
+type listState string
+
 const (
-	listArriving = "arriving"
-	listRefused  = "refused"
-	listLate     = "late"
-	listNoGuild  = "no-guild"
+	listArriving listState = "arriving"
+	listRefused  listState = "refused"
+	listLate     listState = "late"
+	listNoGuild  listState = "no-guild"
 )
 
 // noticeFor is the notice for a member list that isn't complete, its
@@ -405,10 +404,9 @@ func (p *Panel) renderFoxhole(w http.ResponseWriter, r *http.Request, sess sessi
 		return
 	}
 	if view.ListNotice != nil && view.ListNotice.Status == listNoGuild {
-		// Discord's delay, as on the hub page: one INFO line and no Sentry
-		// event. The page itself shows, with the notice.
-		utils.Info("Panel has no guild data", "step", "foxhole page", "reason", errNoGuildData.Error(),
-			"username", sess.username, "forum_user_id", sess.userID)
+		// Discord's delay, as on the hub page, though the page itself shows,
+		// with the notice in the list's place.
+		logNoGuildData(sess, "foxhole page", errNoGuildData)
 	}
 	data := sess.page("Foxhole")
 	data.Page, data.Foxhole = pageFoxhole, view
@@ -617,9 +615,10 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	view := foxholeView{}
 	if list.Status == commands.MemberListComplete {
 		// The names are for a later load, once a member has left: a write
-		// that fails is reported and the page shows anyway. One the page's
-		// own end cut short, its budget spent on the wait or the browser
-		// gone, is no fault of the store's, and the next load writes it.
+		// that fails is reported and the page shows anyway. A write cut
+		// short because the wait used up the time budget, or because the
+		// page load was abandoned, is no store fault. The next load writes
+		// the names.
 		if err := s.refreshNames(ctx, list, records); err != nil && ctx.Err() == nil {
 			utils.CaptureError("Panel Foxhole name refresh failed", err)
 		}
@@ -643,13 +642,14 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 }
 
 // memberList reads the member list through the manager seam, never
-// Discord's API. A page load, await set, finding the list on its way looks
-// again every guildDataPoll until it completes or ctx ends, the way the hub
-// page waits for the guild's data. A wait its time budget ends gives the
-// list as it stands, and the page shows a notice in the list's place. The
-// wait stops at once for a list that can't complete within the budget: one
-// refused with the bot's next request due after the budget, and one whose
-// guild is absent from the state, which the hub page doesn't wait for
+// Discord's API. With await set, as on a page load, it waits for a list
+// that isn't complete, the way the hub page waits for the guild's data: it
+// reads again every guildDataPoll until the list completes or ctx ends.
+// When the time budget ends the wait, it returns the list as it stands, and
+// the page shows a notice in the list's place. It stops waiting at once for
+// a list that can't complete within the budget. Discord may have refused
+// the bot's request with the next one due after the deadline, or the guild
+// may be absent from the state, which the hub page doesn't wait for
 // either.
 func (s foxholeService) memberList(ctx context.Context, await bool) (commands.MemberListSnapshot, error) {
 	list := s.manager.MemberList(s.guildID)
@@ -661,7 +661,7 @@ func (s foxholeService) memberList(ctx context.Context, await bool) (commands.Me
 	defer poll.Stop()
 	for list.Status != commands.MemberListComplete {
 		switch {
-		case list.Status == commands.MemberListRefused && list.RetryAt.Sub(now()) > time.Until(deadline):
+		case list.Status == commands.MemberListRefused && list.RetryAt.After(deadline):
 			return list, nil
 		case list.Status == commands.MemberListNoGuild && s.manager.GuildData(s.guildID).Status == commands.GuildDataAbsent:
 			return list, nil
@@ -1079,7 +1079,7 @@ func knownFilter(filter string) string {
 // listView builds the page from the holders matching the search: a link for
 // each filter with its count, and the holders the named filter keeps.
 func listView(matched []holderRow, query, filter string) foxholeView {
-	page := foxholeView{ListReady: true, Query: query, Filter: filter}
+	page := foxholeView{Query: query, Filter: filter}
 	for _, f := range holderFilters {
 		link := filterLink{Name: f.name, Label: f.label, Href: foxholeAddress(query, f.name), On: f.name == page.Filter}
 		for _, h := range matched {

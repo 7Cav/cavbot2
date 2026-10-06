@@ -3,6 +3,7 @@ package panel
 import (
 	"net/http"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -65,7 +66,7 @@ func TestFoxholePageWaitsForAMemberListOnItsWay(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFoxholeWorld(t)
 			w.discord.setGuild(tc.guild)
-			completeOnFirstRead(w, w.discord.holdMemberList(tc.list(w)))
+			completeOnFirstRead(w, w.discord.holdPartialList(tc.list(w)))
 
 			res := w.b.get(foxholePath)
 
@@ -79,53 +80,42 @@ func TestFoxholePageWaitsForAMemberListOnItsWay(t *testing.T) {
 	}
 }
 
-// Discord refused the bot's request for the member list, and the bot asks
-// again only after the page's time budget would end. Waiting can't show the
-// list, so the page answers at once with the notice in the list's place.
-func TestFoxholePageWithTheRetryPastItsBudgetAnswersAtOnce(t *testing.T) {
+// A list that can't complete within the page's time budget gets no wait:
+// the page answers at once with the notice in the list's place. Discord
+// refused the bot's request and the bot asks again only after the budget
+// would end; or an outage's GUILD_DELETE took the guild out of the gateway
+// state, and the member list with it, which the hub page doesn't wait for
+// either.
+func TestFoxholePageAnswersAtOnceForAListThatCantCompleteInTime(t *testing.T) {
 	const budget = 5 * time.Second
-	w := newFoxholeWorld(t)
-	w.p.pageBudget = budget
-	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListRefused, Connected: true, RetryAt: now().Add(2 * budget)})
-
-	start := time.Now()
-	res := w.b.get(foxholePath)
-	took := time.Since(start)
-
-	if res.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", res.StatusCode)
+	cases := []struct {
+		name  string
+		guild commands.GuildDataStatus
+		list  commands.MemberListSnapshot
+	}{
+		{"refused, retry past the budget", commands.GuildDataPresent,
+			commands.MemberListSnapshot{Status: commands.MemberListRefused, Connected: true, RetryAt: now().Add(2 * budget)}},
+		{"guild absent", commands.GuildDataAbsent, commands.MemberListSnapshot{Status: commands.MemberListNoGuild, Connected: true}},
 	}
-	if findElement(parseHTML(t, res), "", "data-notice", "member-list") == nil {
-		t.Error("the page has no member list notice")
-	}
-	if took > budget/5 {
-		t.Errorf("answered after %v, want well before the %v budget", took, budget)
-	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			w.p.pageBudget = budget
+			w.discord.setGuild(tc.guild)
+			w.discord.setMemberList(tc.list)
 
-// An outage's GUILD_DELETE takes the guild out of the gateway state, and
-// the member list goes with it. The page answers at once with the notice in
-// the list's place, as the hub page answers at once, rather than wait out
-// its budget for a guild Discord has marked unavailable.
-func TestFoxholePageWithTheGuildAbsentAnswersAtOnce(t *testing.T) {
-	const budget = 5 * time.Second
-	w := newFoxholeWorld(t)
-	w.p.pageBudget = budget
-	w.discord.setGuild(commands.GuildDataAbsent)
-	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListNoGuild, Connected: true})
+			start := time.Now()
+			res := w.b.get(foxholePath)
+			took := time.Since(start)
 
-	start := time.Now()
-	res := w.b.get(foxholePath)
-	took := time.Since(start)
-
-	if res.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", res.StatusCode)
-	}
-	if findElement(parseHTML(t, res), "", "data-notice", "member-list") == nil {
-		t.Error("the page has no member list notice")
-	}
-	if took > budget/5 {
-		t.Errorf("answered after %v, want well before the %v budget", took, budget)
+			if res.StatusCode != http.StatusOK {
+				t.Errorf("status = %d, want 200", res.StatusCode)
+			}
+			memberListNotice(t, parseHTML(t, res))
+			if took > budget/5 {
+				t.Errorf("answered after %v, want well before the %v budget", took, budget)
+			}
+		})
 	}
 }
 
@@ -284,7 +274,7 @@ func TestFoxholePageWithNoGuildDataLogsItAndSendsNoSentryEvent(t *testing.T) {
 
 	var lines int
 	for _, r := range logs() {
-		if _, ok := r["step"]; ok && r["level"] == "INFO" && r["username"] == "Smith.F" && r["forum_user_id"] == "2468" {
+		if _, ok := r["step"]; ok && r["level"] == "INFO" && r["username"] == managerUsername && r["forum_user_id"] == strconv.Itoa(managerUserID) {
 			lines++
 		}
 	}
