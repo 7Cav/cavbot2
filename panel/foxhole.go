@@ -27,6 +27,10 @@ type foxholeView struct {
 	// search it lists.
 	Filters []filterLink
 	Holders []holderRow
+	// NoHolders is nobody holding a Foxhole role at this load, whatever the
+	// search. The empty list then says so, instead of saying no holder
+	// matches.
+	NoHolders bool
 }
 
 // filterLink is one filter link above the holder list. Each keeps the
@@ -141,6 +145,7 @@ func (s foxholeService) view(query, filter string) foxholeView {
 		}
 	}
 	var matched []holderRow
+	holders := 0
 	for _, mem := range list.Members {
 		row := holderRow{
 			ID:          mem.ID,
@@ -152,6 +157,7 @@ func (s foxholeService) view(query, filter string) foxholeView {
 		if !row.Internal && !row.External {
 			continue
 		}
+		holders++
 		if rank, ok := commands.SeniorRankRole(mem.RoleIDs); ok {
 			row.RankRole = cmp.Or(roleNames[rank], rank)
 		}
@@ -163,7 +169,9 @@ func (s foxholeService) view(query, filter string) foxholeView {
 	slices.SortFunc(matched, func(a, b holderRow) int {
 		return cmp.Or(cmp.Compare(strings.ToLower(a.DisplayName), strings.ToLower(b.DisplayName)), cmp.Compare(a.ID, b.ID))
 	})
-	return listView(matched, query, filter)
+	view := listView(matched, query, filter)
+	view.NoHolders = holders == 0
+	return view
 }
 
 // listView builds the page from the holders matching the search: a link for

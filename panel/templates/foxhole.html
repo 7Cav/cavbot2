@@ -26,7 +26,7 @@
           <td class="fx-nowrap">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else if .NoRankRole}}<span class="tag tag--warn" data-flag="no-rank-role">no rank role</span>{{else}}<span class="off">none</span>{{end}}</td>
         </tr>
       {{else}}
-        <tr><td colspan="3" class="off">No holder matches.</td></tr>
+        <tr><td colspan="3" class="off">{{if $.Foxhole.NoHolders}}Nobody holds a Foxhole role.{{else}}No holder matches.{{end}}</td></tr>
       {{end}}
       </tbody>
     </table></div>
