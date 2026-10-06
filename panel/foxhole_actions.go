@@ -43,12 +43,13 @@ type reportView struct {
 	Skipped      []reportMember
 	Failed       []reportMember
 	NotAttempted []reportMember
-	// StoppingBy is the forum user who pressed Stop on the running action,
-	// which stops after the change in flight. Empty until someone does.
-	StoppingBy string
-	// Waiting is the running action paused before its next member, waiting
+	// StopPressedBy is the forum user who pressed Stop on the running
+	// action, which stops after the change in flight. Empty until someone
+	// does.
+	StopPressedBy string
+	// Paused is the running action paused before its next member, waiting
 	// for the member list.
-	Waiting bool
+	Paused bool
 	// Done counts the members the action has been through, of Total, and
 	// Left is the rough time the rest take.
 	Done, Total int
@@ -62,7 +63,9 @@ type reportMember struct {
 	RoleName string
 }
 
-// OutcomeLabel is how the action ended, as the page says it.
+// OutcomeLabel is how the action ended, as the page says it. The page's
+// "outcome" template names who stopped a stopped action itself, around its
+// stopped-by marker.
 func (r reportView) OutcomeLabel() string {
 	switch {
 	case r.Running:
@@ -71,8 +74,6 @@ func (r reportView) OutcomeLabel() string {
 		return "Done"
 	case r.Outcome == commands.ReportMemberListGone:
 		return "Stopped: Discord's member list didn't arrive"
-	case r.Outcome == commands.ReportStopped:
-		return "Stopped by " + r.StoppedBy
 	case r.Outcome == commands.ReportRestart:
 		return "Stopped by a restart"
 	}
@@ -267,8 +268,7 @@ func (p *Panel) startPurge(w http.ResponseWriter, r *http.Request, sess session)
 		http.Error(w, "the form names no purge scope, so nothing changed", http.StatusBadRequest)
 		return
 	}
-	by := commands.ForumUser{ID: sess.userID, Username: sess.username}
-	err := p.foxhole.actions.Purge(context.WithoutCancel(r.Context()), scope, by)
+	err := p.foxhole.actions.Purge(context.WithoutCancel(r.Context()), scope, sess.forumUser())
 	var missing *commands.MissingRoleError
 	switch {
 	case errors.Is(err, commands.ErrActionRunning):
@@ -301,10 +301,15 @@ func (p *Panel) stopAction(w http.ResponseWriter, r *http.Request, sess session)
 		http.Error(w, "the form names no action, so nothing stopped", http.StatusBadRequest)
 		return
 	}
-	stopped := p.foxhole.actions.Stop(reportID, commands.ForumUser{ID: sess.userID, Username: sess.username})
-	utils.Info("Panel Foxhole action stop", "report_id", reportID, "running", stopped,
+	stopped := p.foxhole.actions.Stop(reportID, sess.forumUser())
+	utils.Info("Panel Foxhole Stop pressed", "report_id", reportID, "action_stopping", stopped,
 		"username", sess.username, "forum_user_id", sess.userID)
 	http.Redirect(w, r, foxholePath, http.StatusSeeOther)
+}
+
+// forumUser is the forum user this session's Foxhole actions name.
+func (s session) forumUser() commands.ForumUser {
+	return commands.ForumUser{ID: s.userID, Username: s.username}
 }
 
 // refuseAction answers a refused Foxhole action with the page as it stands

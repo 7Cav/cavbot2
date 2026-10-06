@@ -78,10 +78,10 @@ const foxholeEndAttempts = 3
 // which blocks the commands, and they don't need the list.
 const FoxholePauseLimit = 60 * time.Second
 
-// foxholePausePoll is how often a paused action reads the member list
+// FoxholePausePoll is how often a paused action reads the member list
 // again. It matches the rate of one role change a second, so a pause reads
 // the list no more often than a running action does.
-const foxholePausePoll = time.Second
+const FoxholePausePoll = time.Second
 
 // foxholeNow is the Foxhole runtime's clock, a package var beside
 // tempVCNow.
@@ -89,10 +89,11 @@ var foxholeNow = time.Now
 
 // FoxholeAfterFunc runs f on a goroutine of its own once d has passed, and
 // returns a stop that keeps f from running if it has not started, as
-// time.Timer.Stop does. A Foxhole action's pause limit is timed through it.
-// A package var beside foxholeNow, exported so the panel's tests can run a
-// pause on a fake clock. Each runtime takes it when it is built, so a
-// runtime already running keeps the clock it was built with.
+// time.Timer.Stop does. A Foxhole action's pause is timed through it: its
+// limit and each read of the list. A package var beside foxholeNow,
+// exported so the panel's tests can run a pause on a fake clock. Each
+// runtime takes it when it is built, so a runtime already running keeps the
+// clock it was built with.
 var FoxholeAfterFunc = func(d time.Duration, f func()) (stop func()) {
 	timer := time.AfterFunc(d, f)
 	return func() { timer.Stop() }
@@ -246,44 +247,52 @@ type FoxholeRuntime struct {
 	roles   FoxholeRoleWriter
 	store   store.Store
 	guildID string
-	// afterFunc times a pause's limit: FoxholeAfterFunc when the runtime
-	// was built.
+	// afterFunc times a pause: FoxholeAfterFunc when the runtime was built.
 	afterFunc func(d time.Duration, f func()) (stop func())
 
 	mu sync.Mutex
-	// busy is an action running, which holds the one-action-at-a-time
-	// rule.
-	busy bool
-	// reportID is the running action's report, 0 until it is written.
+	// running is the action running, nil when none is. An action running
+	// holds the one-action-at-a-time rule.
+	running *actionState
+}
+
+// actionState is what the runtime knows of the action running, beside its
+// report in the store.
+type actionState struct {
+	// reportID is the action's report, 0 until it is written.
 	reportID int64
-	// stopBy is who pressed Stop on the running action, nil until someone
-	// does, and stop closes when someone does.
-	stopBy *ForumUser
-	stop   chan struct{}
-	// waiting is the running action paused before its next member.
-	waiting bool
+	// stopPressedBy is who pressed Stop, nil until someone does, and stop
+	// closes when someone does.
+	stopPressedBy *ForumUser
+	stop          chan struct{}
+	// paused is the action paused before its next member.
+	paused bool
 }
 
 // RunningAction is the Foxhole action running now, as the page shows it
 // beside its report.
 type RunningAction struct {
-	// StoppedBy is the username of the forum user who pressed Stop, empty
-	// until someone does. The action stops after the change in flight.
-	StoppedBy string
-	// Waiting is the action paused before its next member, waiting for a
+	// StopPressedBy is the username of the forum user who pressed Stop,
+	// empty until someone does. The action stops after the change in
+	// flight.
+	StopPressedBy string
+	// Paused is the action paused before its next member, waiting for a
 	// complete member list with the bot connected.
-	Waiting bool
+	Paused bool
 }
 
 // Running reports the Foxhole action running, and false when none is.
 func (r *FoxholeRuntime) Running() (RunningAction, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	action := RunningAction{Waiting: r.waiting}
-	if r.stopBy != nil {
-		action.StoppedBy = r.stopBy.Username
+	if r.running == nil {
+		return RunningAction{}, false
 	}
-	return action, r.busy
+	action := RunningAction{Paused: r.running.paused}
+	if by := r.running.stopPressedBy; by != nil {
+		action.StopPressedBy = by.Username
+	}
+	return action, true
 }
 
 // claim takes the one-action-at-a-time rule, and reports false when an
@@ -292,18 +301,18 @@ func (r *FoxholeRuntime) Running() (RunningAction, bool) {
 func (r *FoxholeRuntime) claim() (<-chan struct{}, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.busy {
+	if r.running != nil {
 		return nil, false
 	}
-	r.busy, r.reportID, r.stopBy, r.stop, r.waiting = true, 0, nil, make(chan struct{}), false
-	return r.stop, true
+	r.running = &actionState{stop: make(chan struct{})}
+	return r.running.stop, true
 }
 
 // started records the running action's report.
 func (r *FoxholeRuntime) started(reportID int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.reportID = reportID
+	r.running.reportID = reportID
 }
 
 // Stop asks the running Foxhole action whose report has the ID given to
@@ -314,35 +323,36 @@ func (r *FoxholeRuntime) started(reportID int64) {
 func (r *FoxholeRuntime) Stop(reportID int64, by ForumUser) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.busy || r.reportID == 0 || r.reportID != reportID {
+	action := r.running
+	if action == nil || action.reportID == 0 || action.reportID != reportID {
 		return false
 	}
-	if r.stopBy == nil {
-		r.stopBy = &by
-		close(r.stop)
+	if action.stopPressedBy == nil {
+		action.stopPressedBy = &by
+		close(action.stop)
 	}
 	return true
 }
 
-// stopRequested is who pressed Stop on the running action, nil for nobody.
-func (r *FoxholeRuntime) stopRequested() *ForumUser {
+// stopPressedBy is who pressed Stop on the running action, nil for nobody.
+func (r *FoxholeRuntime) stopPressedBy() *ForumUser {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.stopBy
+	return r.running.stopPressedBy
 }
 
-// setWaiting records whether the running action is paused.
-func (r *FoxholeRuntime) setWaiting(waiting bool) {
+// setPaused records whether the running action is paused.
+func (r *FoxholeRuntime) setPaused(paused bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.waiting = waiting
+	r.running.paused = paused
 }
 
-// release gives the rule back.
+// release gives the rule back. On a free rule it does nothing.
 func (r *FoxholeRuntime) release() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.busy = false
+	r.running = nil
 }
 
 // NewFoxholeRuntime builds the runtime over the guild's gateway state, the
@@ -555,7 +565,7 @@ func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionR
 		if end != "" {
 			outcome = end
 			if end == ReportStopped {
-				report.StoppedBy = r.stopRequested()
+				report.StoppedBy = r.stopPressedBy()
 			}
 			break
 		}
@@ -601,7 +611,7 @@ func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionR
 // ends the action instead with the outcome it returns. A Stop pressed ends
 // it ReportStopped. A list complete with the bot connected comes back at
 // once. Otherwise the action pauses: it reads the list again every
-// foxholePausePoll until it is complete with the bot connected, while Stop
+// FoxholePausePoll until it is complete with the bot connected, while Stop
 // still ends it, and once FoxholePauseLimit passes it ends it
 // ReportMemberListGone.
 func (r *FoxholeRuntime) awaitList(stop <-chan struct{}) (MemberListSnapshot, ReportOutcome) {
@@ -614,25 +624,30 @@ func (r *FoxholeRuntime) awaitList(stop <-chan struct{}) (MemberListSnapshot, Re
 	if listReady(list) {
 		return list, ""
 	}
-	r.setWaiting(true)
-	defer r.setWaiting(false)
-	expired := make(chan struct{})
-	cancel := r.afterFunc(FoxholePauseLimit, func() { close(expired) })
-	defer cancel()
-	poll := time.NewTicker(foxholePausePoll)
-	defer poll.Stop()
-	for {
+	r.setPaused(true)
+	defer r.setPaused(false)
+	for expired := r.after(FoxholePauseLimit); ; {
+		poll := r.after(FoxholePausePoll)
 		select {
 		case <-stop:
 			return list, ReportStopped
 		case <-expired:
 			return list, ReportMemberListGone
-		case <-poll.C:
+		case <-poll:
 		}
 		if list = r.guild.MemberList(r.guildID); listReady(list) {
 			return list, ""
 		}
 	}
+}
+
+// after is a channel that closes once d has passed on the runtime's clock.
+// A timer whose channel nobody waits on any more runs out with nothing to
+// wake.
+func (r *FoxholeRuntime) after(d time.Duration) <-chan struct{} {
+	done := make(chan struct{})
+	r.afterFunc(d, func() { close(done) })
+	return done
 }
 
 // listReady reports whether an action can check a member against the list:

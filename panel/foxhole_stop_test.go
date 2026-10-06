@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"slices"
@@ -14,6 +15,12 @@ import (
 // inputs, and returns the response.
 func submit(t *testing.T, b *browser, form *html.Node) *http.Response {
 	t.Helper()
+	return submitContext(t, b, context.Background(), form)
+}
+
+// submitContext is submit with the request's context ctx.
+func submitContext(t *testing.T, b *browser, ctx context.Context, form *html.Node) *http.Response {
+	t.Helper()
 	action, _ := attrValue(form, "action")
 	fields := url.Values{}
 	eachElement(form, func(n *html.Node) {
@@ -22,7 +29,7 @@ func submit(t *testing.T, b *browser, form *html.Node) *http.Response {
 			fields.Add(name, value)
 		}
 	})
-	return b.do(http.MethodPost, action, http.Header{"Content-Type": {"application/x-www-form-urlencoded"}},
+	return b.doContext(ctx, http.MethodPost, action, http.Header{"Content-Type": {"application/x-www-form-urlencoded"}},
 		strings.NewReader(fields.Encode()))
 }
 

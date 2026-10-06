@@ -7,9 +7,9 @@
   <section class="block fx-progress" role="status" data-field="progress" data-report="{{.ID}}" data-action="{{.Action}}">
     <h2 class="block-header">{{.Name}} is running</h2>
     <div class="block-row">Started by <span data-field="started-by">{{.StartedBy}}</span>. <span data-field="done">{{.Done}}</span> of <span data-field="total">{{.Total}}</span> done, <span data-field="left" data-seconds="{{.Left.Seconds}}">about {{.Left.Text}}</span> left. It keeps going if you close this tab. Reload the page to see how far it has got.</div>
-    {{if .Waiting}}<div class="block-row" data-field="waiting">Paused: waiting for the member list from Discord. It stops if the list hasn't arrived after {{.PauseLimit}}.</div>{{end}}
-    {{if .StoppingBy}}
-    <div class="block-row" data-field="stopping">Stopping: <span data-field="stopped-by">{{.StoppingBy}}</span> pressed Stop. It stops after the change in flight, and the rest is listed as not attempted.</div>
+    {{if .Paused}}<div class="block-row" data-field="paused">Paused: waiting for the member list from Discord. It stops if the list hasn't arrived after {{.PauseLimit}}.</div>{{end}}
+    {{if .StopPressedBy}}
+    <div class="block-row" data-field="stopping">Stopping: <span data-field="stopped-by">{{.StopPressedBy}}</span> pressed Stop. It stops after the change in flight, and the rest is listed as not attempted.</div>
     {{else}}
     <form method="post" action="/foxhole/stop" class="submit-row" data-field="stop">
       <input type="hidden" name="report" value="{{.ID}}">
@@ -20,7 +20,7 @@
   </section>
   {{else}}
   <section class="block fx-report" data-field="report" data-report="{{.ID}}" data-action="{{.Action}}" data-outcome="{{.Outcome}}">
-    <h2 class="block-header">{{.Name}}: {{.OutcomeLabel}}</h2>
+    <h2 class="block-header">{{.Name}}: {{template "outcome" .}}</h2>
     {{template "report-head" .}}
     {{template "report-lists" .}}
   </section>
@@ -136,7 +136,7 @@
       </summary>
       {{if .Report}}{{with .Report}}
       <div class="change-fields fx-changereport">
-        <p>{{.Name}}: {{.OutcomeLabel}}</p>
+        <p>{{.Name}}: {{template "outcome" .}}</p>
         {{template "report-head" .}}
         {{template "report-lists" .}}
       </div>
@@ -191,7 +191,9 @@
   {{if .NoRoleRow}}<p class="fx-hint" id="note-hint" data-field="note-hint">An empty note takes this member off the page.</p>{{end}}
 </form>{{end}}
 
-{{define "report-head"}}<div class="block-row fx-reporthead">{{with .StoppedBy}}Stopped by <span data-field="stopped-by">{{.}}</span>. {{end}}Started by <span data-field="started-by">{{.StartedBy}}</span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>{{if not .EndedAt.IsZero}}, ended at <time data-field="ended" datetime="{{.EndedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.EndedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>{{end}}.</div>{{end}}
+{{define "outcome"}}{{if .StoppedBy}}Stopped by <span data-field="stopped-by">{{.StoppedBy}}</span>{{else}}{{.OutcomeLabel}}{{end}}{{end}}
+
+{{define "report-head"}}<div class="block-row fx-reporthead">Started by <span data-field="started-by">{{.StartedBy}}</span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>{{if not .EndedAt.IsZero}}, ended at <time data-field="ended" datetime="{{.EndedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.EndedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>{{end}}.</div>{{end}}
 
 {{define "report-lists"}}
 <div class="block-row fx-reportlist" data-list="changed"><h3>Changed <span class="fx-count" data-field="count">{{len .Changed}}</span></h3>{{template "report-members" .Changed}}</div>

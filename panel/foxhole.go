@@ -660,7 +660,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	view.ApprovalRefusal, view.ActionRefusal = req.ApprovalRefusal, req.ActionRefusal
 	running, busy := s.actions.Running()
 	if report != nil && report.Running && busy {
-		report.StoppingBy, report.Waiting = running.StoppedBy, running.Waiting
+		report.StopPressedBy, report.Paused = running.StopPressedBy, running.Paused
 	}
 	view.Report, view.Busy = report, busy
 	return view, nil

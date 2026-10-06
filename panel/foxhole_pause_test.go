@@ -10,21 +10,23 @@ import (
 )
 
 // pauseClock stands in for the clock a Foxhole action's pause is timed on:
-// commands.FoxholeAfterFunc schedules on it. Each timer scheduled signals
-// scheduled, so a test knows an action has paused with no sleep, and advance
-// runs each timer that falls due on the test's own goroutine.
+// commands.FoxholeAfterFunc schedules on it. A test waits for an action to
+// pause by waiting for the timers a pause schedules, with no sleep, and
+// advance runs each timer that falls due on the test's own goroutine.
 type pauseClock struct {
-	mu        sync.Mutex
-	now       time.Duration
-	timers    []*pauseTimer
+	mu     sync.Mutex
+	now    time.Duration
+	timers []*pauseTimer
+	// scheduled receives, without blocking, each time a timer is scheduled.
 	scheduled chan struct{}
 }
 
 // pauseTimer is one scheduled call, which never runs once done is set.
 type pauseTimer struct {
-	at   time.Duration
-	f    func()
-	done bool
+	after time.Duration
+	at    time.Duration
+	f     func()
+	done  bool
 }
 
 // installPauseClock puts a pause clock under every Foxhole runtime built
@@ -32,7 +34,7 @@ type pauseTimer struct {
 // so a runtime left running by an earlier test keeps its own.
 func installPauseClock(t *testing.T) *pauseClock {
 	t.Helper()
-	c := &pauseClock{scheduled: make(chan struct{}, 16)}
+	c := &pauseClock{scheduled: make(chan struct{}, 1)}
 	prev := commands.FoxholeAfterFunc
 	commands.FoxholeAfterFunc = c.afterFunc
 	t.Cleanup(func() { commands.FoxholeAfterFunc = prev })
@@ -41,10 +43,13 @@ func installPauseClock(t *testing.T) *pauseClock {
 
 func (c *pauseClock) afterFunc(d time.Duration, f func()) func() {
 	c.mu.Lock()
-	tm := &pauseTimer{at: c.now + d, f: f}
+	tm := &pauseTimer{after: d, at: c.now + d, f: f}
 	c.timers = append(c.timers, tm)
 	c.mu.Unlock()
-	c.scheduled <- struct{}{}
+	select {
+	case c.scheduled <- struct{}{}:
+	default:
+	}
 	return func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -52,14 +57,29 @@ func (c *pauseClock) afterFunc(d time.Duration, f func()) func() {
 	}
 }
 
-// awaitPause waits for a Foxhole action to pause, which schedules its
-// pause limit on the clock.
+// pending reports whether a timer of d is waiting to run.
+func (c *pauseClock) pending(d time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, tm := range c.timers {
+		if !tm.done && tm.after == d {
+			return true
+		}
+	}
+	return false
+}
+
+// awaitPause waits for a Foxhole action to pause: its pause limit and its
+// next read of the member list are both waiting on the clock.
 func (c *pauseClock) awaitPause(t *testing.T) {
 	t.Helper()
-	select {
-	case <-c.scheduled:
-	case <-time.After(hangLimit):
-		t.Fatal("the Foxhole action never paused")
+	deadline := time.After(hangLimit)
+	for !c.pending(commands.FoxholePauseLimit) || !c.pending(commands.FoxholePausePoll) {
+		select {
+		case <-c.scheduled:
+		case <-deadline:
+			t.Fatal("the Foxhole action never paused")
+		}
 	}
 }
 
@@ -119,8 +139,8 @@ func TestActionPausesBeforeItsNextMemberAndStopStillWorks(t *testing.T) {
 
 			progress := progressBlock(t, parseHTML(t, w.b.get(foxholePath)))
 
-			if findElement(progress, "", "data-field", "waiting") == nil {
-				t.Error("the progress block doesn't say the action is waiting for the member list")
+			if findElement(progress, "", "data-field", "paused") == nil {
+				t.Error("the progress block doesn't say the action is paused for the member list")
 			}
 			assertRedirect(t, submit(t, w.b, stopForm(t, progress)), foxholePath)
 			w.awaitActionEnd(t)
@@ -168,6 +188,7 @@ func TestPausedActionRunsOnOnceTheMemberListIsBack(t *testing.T) {
 	pauseMidRun(t, w, commands.MemberListArriving, true)
 
 	w.discord.setListStatus(commands.MemberListComplete, true)
+	w.pause.advance(commands.FoxholePausePoll)
 
 	w.awaitActionEnd(t)
 	report := reportBlock(t, parseHTML(t, w.b.get(foxholePath)))
@@ -191,8 +212,8 @@ func TestPurgeConfirmedDuringADisconnectStartsPausedAndRunsOnceConnected(t *test
 
 	w.pause.awaitPause(t)
 	progress := progressBlock(t, parseHTML(t, w.b.get(foxholePath)))
-	if findElement(progress, "", "data-field", "waiting") == nil {
-		t.Error("the progress block doesn't say the purge is waiting for the member list")
+	if findElement(progress, "", "data-field", "paused") == nil {
+		t.Error("the progress block doesn't say the purge is paused for the member list")
 	}
 	if done := fieldText(t, progress, "done"); done != "0" {
 		t.Errorf("the progress block says %s done while disconnected, want 0", done)
@@ -201,6 +222,7 @@ func TestPurgeConfirmedDuringADisconnectStartsPausedAndRunsOnceConnected(t *test
 		t.Errorf("Discord got %d role changes while the bot was disconnected, want none", len(writes))
 	}
 	w.discord.setListStatus(commands.MemberListComplete, true)
+	w.pause.advance(commands.FoxholePausePoll)
 	w.awaitActionEnd(t)
 	report := reportBlock(t, parseHTML(t, w.b.get(foxholePath)))
 	if got := outcomeOf(report); got != "done" {

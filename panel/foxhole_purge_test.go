@@ -265,16 +265,7 @@ func confirmPurge(t *testing.T, b *browser, ctx context.Context, confirm *html.N
 	if form == nil {
 		t.Fatal("the purge confirmation has no form")
 	}
-	action, _ := attrValue(form, "action")
-	fields := url.Values{}
-	eachElement(form, func(n *html.Node) {
-		if name, ok := attrValue(n, "name"); ok && n.Data == "input" {
-			value, _ := attrValue(n, "value")
-			fields.Add(name, value)
-		}
-	})
-	return b.doContext(ctx, http.MethodPost, action, http.Header{"Content-Type": {"application/x-www-form-urlencoded"}},
-		strings.NewReader(fields.Encode()))
+	return submitContext(t, b, ctx, form)
 }
 
 // reportBlock returns the report at the top of the page, and fails the
