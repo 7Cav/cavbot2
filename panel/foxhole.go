@@ -38,6 +38,20 @@ type foxholeView struct {
 	// search. The empty list then says so, instead of saying no holder
 	// matches.
 	NoHolders bool
+	// NoRoleLink is the link to the no-role view after the filter links,
+	// with how many members matching the search the view lists.
+	NoRoleLink filterLink
+	// NoRoleView is the page showing the no-role view in the holder list's
+	// place, and NoRole its rows: every member with a note who isn't on the
+	// holder list, matching the search.
+	NoRoleView bool
+	NoRole     []holderRow
+	// NoNotes is nobody in the no-role view at this load, whatever the
+	// search.
+	NoNotes bool
+	// Also is the line under a search's results counting the other view's
+	// matches, with a link there. Nil with no search or no match there.
+	Also *alsoMatches
 	// NoteForm is the note form the page opens above the holder list: the
 	// one a holder row's Edit link names, which is how a browser with no
 	// script edits a note. Nil when the page opens none.
@@ -48,6 +62,11 @@ type foxholeView struct {
 	// Changes is the Foxhole page's change log, newest first. It reads no
 	// member list, so it shows whatever the list's state.
 	Changes []noteChangeView
+	// Cleared is the change log entry of the save before this load, when it
+	// cleared a member's note and took them off the page: the page says so,
+	// naming them as the entry does, since their record is gone. Nil for
+	// none.
+	Cleared *noteChangeView
 }
 
 // filterLink is one filter link above the holder list. Each keeps the
@@ -60,6 +79,17 @@ type filterLink struct {
 	On    bool
 }
 
+// alsoMatches is the line under a search's results counting the members
+// the other view lists for the same search, linking there with the search
+// kept.
+type alsoMatches struct {
+	Count int
+	// NoRole is a line in the holder list, pointing at the no-role view.
+	// False is one in the no-role view, pointing back at the holder list.
+	NoRole bool
+	Href   string
+}
+
 // holderFilter is one of the holder list's filters: which holders it
 // lists.
 type holderFilter struct {
@@ -70,6 +100,12 @@ type holderFilter struct {
 
 // filterAll is the filter that lists every holder, the list's default.
 const filterAll = "all"
+
+// filterNoRole names the no-role view: the members with a note who aren't
+// on the holder list. It rides the filter parameter, so the search form,
+// the Edit links and a note save keep the view, but it filters nothing:
+// its rows are members the holder list never shows.
+const filterNoRole = "no-role"
 
 // holderFilters are the holder list's filters, in the order their links
 // show.
@@ -95,6 +131,9 @@ type holderRow struct {
 	// NoRankRole is the "no rank role" flag: an Internal holder with no
 	// rank role. Display only; the bot acts on no flag.
 	NoRankRole bool
+	// NotInServer is the "not in the server" flag: a member the member list
+	// doesn't hold, shown under the names the panel last saw.
+	NotInServer bool
 	// Note is the member's note, empty when they have none.
 	Note string
 	// EditHref is the row's Edit link: the page, in the view it shows, with
@@ -119,6 +158,9 @@ type noteForm struct {
 	Filter string
 	// Back is the address of that view, where Cancel leads.
 	Back string
+	// NoRole is the form opened from the no-role view, whose member an empty
+	// note takes off the page. The form then says so.
+	NoRole bool
 	// Refusal is why the save the form shows was refused, nil for a form
 	// the Edit link opened.
 	Refusal *noteRefusal
@@ -184,12 +226,14 @@ const (
 )
 
 // The Foxhole page's query parameters: the search, from the search form,
-// the filter, from the filter links, and the ID of the member whose note
-// form the page opens, from a row's Edit link.
+// the filter, from the filter links, the ID of the member whose note form
+// the page opens, from a row's Edit link, and the ID of the member a note
+// save cleared off the page, from the save's redirect.
 const (
 	paramQuery      = "q"
 	paramFilter     = "filter"
 	paramNoteMember = "note"
+	paramCleared    = "cleared"
 )
 
 // The note form's fields beside the view's query and filter: the member,
@@ -217,15 +261,19 @@ func (s foxholeService) forSave(timeout time.Duration) foxholeService {
 }
 
 // foxholeRequest is what a Foxhole page load asks for: the search, the
-// filter, one the page knows, and the ID of the member whose note form
-// opens, empty for none. A refused note save's page also carries the
-// refusal and the note as typed, which the form shows.
+// filter, one the page knows, the ID of the member whose note form opens,
+// empty for none, and the result of the save before it. A refused note
+// save's page also carries the refusal and the note as typed, which the
+// form shows.
 type foxholeRequest struct {
 	Query      string
 	Filter     string
 	NoteMember string
 	Refusal    *noteRefusal
 	Typed      string
+	// Cleared is the ID of the member whose note the save before this load
+	// cleared, taking them off the page, empty for none.
+	Cleared string
 }
 
 // foxholePage is GET /foxhole, the Foxhole page. It reads the guild's roles
@@ -234,7 +282,7 @@ type foxholeRequest struct {
 func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session) {
 	q := r.URL.Query()
 	p.renderFoxhole(w, r, sess, http.StatusOK,
-		foxholeRequest{Query: q.Get(paramQuery), Filter: knownFilter(q.Get(paramFilter)), NoteMember: q.Get(paramNoteMember)})
+		foxholeRequest{Query: q.Get(paramQuery), Filter: knownFilter(q.Get(paramFilter)), NoteMember: q.Get(paramNoteMember), Cleared: q.Get(paramCleared)})
 }
 
 // renderFoxhole renders the Foxhole page read now, under the page's time
@@ -284,7 +332,7 @@ func (p *Panel) saveNote(w http.ResponseWriter, r *http.Request, sess session) {
 	}
 	// The save runs to its end whether or not the browser waits, as a hub
 	// save does.
-	err := p.foxhole.forSave(storeTimeout).saveNote(context.WithoutCancel(r.Context()), in, sess.actor())
+	offPage, err := p.foxhole.forSave(storeTimeout).saveNote(context.WithoutCancel(r.Context()), in, sess.actor())
 	var refusal *noteRefusal
 	if errors.As(err, &refusal) {
 		utils.Info(refusal.log, "member_id", in.MemberID, "username", sess.username, "forum_user_id", sess.userID)
@@ -296,6 +344,12 @@ func (p *Panel) saveNote(w http.ResponseWriter, r *http.Request, sess session) {
 		return
 	}
 	utils.Info("Panel Foxhole note saved", "member_id", in.MemberID, "username", sess.username, "forum_user_id", sess.userID)
+	if offPage {
+		// No confirmation step: the page the save lands on says the note
+		// was cleared and the member is no longer listed.
+		http.Redirect(w, r, clearedAddress(in.Query, in.Filter, in.MemberID), http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, foxholeAddress(in.Query, in.Filter), http.StatusSeeOther)
 }
 
@@ -411,8 +465,11 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 		view = s.holderList(list, records, req)
 	}
 	view.Query, view.Filter = req.Query, req.Filter
-	view.NoteTemplate = noteForm{Query: req.Query, Filter: req.Filter, Back: foxholeAddress(req.Query, req.Filter)}
+	view.NoteTemplate = noteForm{Query: req.Query, Filter: req.Filter, Back: foxholeAddress(req.Query, req.Filter), NoRole: req.Filter == filterNoRole}
 	view.Changes = noteChangeViews(entries)
+	if req.Cleared != "" {
+		view.Cleared = clearedBy(view.Changes, req.Cleared)
+	}
 	if req.NoteMember != "" {
 		view.NoteForm = noteFormFor(req, list, records)
 	}
@@ -456,31 +513,66 @@ func (s foxholeService) records(ctx context.Context) (map[string]store.FoxholeRe
 	return out, nil
 }
 
-// holderList builds the holder list from a complete member list: every
-// holder, with their note and their Edit link, narrowed to the search and
+// holderList builds the page's two lists from a complete member list: the
+// holder list, every holder, and the no-role view, every member with a note
+// who isn't on the holder list, the members who left the server among them
+// under the names the panel last saw. Each row carries its note and its
+// Edit link. Both lists are narrowed to the search, and the holder list to
 // the filter.
 func (s foxholeService) holderList(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, req foxholeRequest) foxholeView {
-	search := strings.ToLower(strings.TrimSpace(req.Query))
 	guild := s.foxholeGuildOf()
-	var matched []holderRow
-	holders := 0
+	var holders, noRole []holderRow
+	inServer := make(map[string]bool, len(list.Members))
 	for _, mem := range list.Members {
+		inServer[mem.ID] = true
 		row := guild.rowOf(mem, records[mem.ID].Note)
-		if !row.holds() {
-			continue
+		switch {
+		case row.holds():
+			holders = append(holders, row)
+		case row.Note != "":
+			noRole = append(noRole, row)
 		}
-		holders++
-		row.EditHref = foxholeURL(req.Query, req.Filter, mem.ID)
+	}
+	for id, rec := range records {
+		if rec.Note != "" && !inServer[id] {
+			noRole = append(noRole, holderRow{ID: id, DisplayName: rec.DisplayName, Username: rec.Username, Note: rec.Note, NotInServer: true})
+		}
+	}
+	matchedHolders, matchedNoRole := matching(holders, req), matching(noRole, req)
+	view := listView(matchedHolders, req.Query, req.Filter)
+	view.NoHolders = len(holders) == 0
+	view.NoRoleLink = filterLink{Name: filterNoRole, Label: "No role, with a note", Count: len(matchedNoRole),
+		Href: foxholeAddress(req.Query, filterNoRole), On: req.Filter == filterNoRole}
+	if req.Filter == filterNoRole {
+		view.NoRoleView, view.NoRole, view.NoNotes = true, matchedNoRole, len(noRole) == 0
+	}
+	// A search runs in the view the manager is on, and says under its
+	// results when the other view matches too, whether or not this one did.
+	switch {
+	case strings.TrimSpace(req.Query) == "":
+	case view.NoRoleView && len(matchedHolders) > 0:
+		view.Also = &alsoMatches{Count: len(matchedHolders), Href: foxholeAddress(req.Query, filterAll)}
+	case !view.NoRoleView && len(matchedNoRole) > 0:
+		view.Also = &alsoMatches{Count: len(matchedNoRole), NoRole: true, Href: foxholeAddress(req.Query, filterNoRole)}
+	}
+	return view
+}
+
+// matching keeps the rows that hold the request's search, each with its
+// Edit link, in display name order.
+func matching(rows []holderRow, req foxholeRequest) []holderRow {
+	search := strings.ToLower(strings.TrimSpace(req.Query))
+	var matched []holderRow
+	for _, row := range rows {
 		if row.matches(search) {
+			row.EditHref = foxholeURL(req.Query, req.Filter, row.ID)
 			matched = append(matched, row)
 		}
 	}
 	slices.SortFunc(matched, func(a, b holderRow) int {
 		return cmp.Or(cmp.Compare(strings.ToLower(a.DisplayName), strings.ToLower(b.DisplayName)), cmp.Compare(a.ID, b.ID))
 	})
-	view := listView(matched, req.Query, req.Filter)
-	view.NoHolders = holders == 0
-	return view
+	return matched
 }
 
 // noteFormFor is the note form the request opens: the member's note as the
@@ -489,7 +581,7 @@ func (s foxholeService) holderList(list commands.MemberListSnapshot, records map
 func noteFormFor(req foxholeRequest, list commands.MemberListSnapshot, records map[string]store.FoxholeRecord) *noteForm {
 	rec := records[req.NoteMember]
 	form := &noteForm{MemberID: req.NoteMember, DisplayName: rec.DisplayName, Username: rec.Username, Loaded: rec.Note, Note: rec.Note,
-		Query: req.Query, Filter: req.Filter, Back: foxholeAddress(req.Query, req.Filter)}
+		Query: req.Query, Filter: req.Filter, Back: foxholeAddress(req.Query, req.Filter), NoRole: req.Filter == filterNoRole}
 	if mem, ok := memberByID(list, req.NoteMember); ok {
 		form.DisplayName, form.Username = displayName(mem), mem.Username
 	}
@@ -503,10 +595,13 @@ func noteFormFor(req foxholeRequest, list commands.MemberListSnapshot, records m
 // change log entry with it, under the names the member list shows now, or
 // the record's when the list doesn't hold the member. A save that starts a
 // note, on a member with no record, must find them holding a Foxhole role.
-func (s foxholeService) saveNote(ctx context.Context, in noteInput, by actor) error {
+// It reports whether the save took the member off the page: an empty note
+// on a member a complete member list shows holding no Foxhole role leaves
+// them no record, and no list shows them.
+func (s foxholeService) saveNote(ctx context.Context, in noteInput, by actor) (offPage bool, err error) {
 	records, err := s.records(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	rec, hasRecord := records[in.MemberID]
 	names := store.MemberNames{MemberID: in.MemberID, DisplayName: rec.DisplayName, Username: rec.Username}
@@ -515,12 +610,14 @@ func (s foxholeService) saveNote(ctx context.Context, in noteInput, by actor) er
 	if inList {
 		names.DisplayName, names.Username = displayName(member), member.Username
 	}
+	complete := list.Status == commands.MemberListComplete
+	holds := inList && s.foxholeGuildOf().rowOf(member, "").holds()
 	if !hasRecord && in.Loaded == "" {
 		switch {
-		case list.Status != commands.MemberListComplete:
-			return errNoteListPartial
-		case !inList || !s.foxholeGuildOf().rowOf(member, "").holds():
-			return errNotHolder
+		case !complete:
+			return false, errNoteListPartial
+		case !holds:
+			return false, errNotHolder
 		}
 	}
 	raw, err := json.Marshal(noteDiff{
@@ -528,15 +625,18 @@ func (s foxholeService) saveNote(ctx context.Context, in noteInput, by actor) er
 		Note:   noteText{Before: in.Loaded, After: in.Note},
 	})
 	if err != nil {
-		return fmt.Errorf("encode note change: %w", err)
+		return false, fmt.Errorf("encode note change: %w", err)
 	}
 	entry := store.ChangeLogEntry{ForumUserID: by.userID, ForumUsername: by.username, Action: store.ChangeNote, Diff: raw}
 	save := store.NoteSave{MemberID: in.MemberID, Before: in.Loaded, Note: in.Note, DisplayName: names.DisplayName, Username: names.Username}
 	err = s.store.SaveFoxholeNote(ctx, s.guildID, save, entry)
 	if errors.Is(err, store.ErrStale) {
-		return errStaleNote
+		return false, errStaleNote
 	}
-	return err
+	if err != nil {
+		return false, err
+	}
+	return in.Note == "" && complete && !holds, nil
 }
 
 // noteDiff is a note save's change log diff: the member the save touched,
@@ -575,9 +675,23 @@ func noteChangeViews(entries []store.ChangeLogEntry) []noteChangeView {
 	return views
 }
 
-// knownFilter is the filter named, or filterAll for one the page doesn't
-// know.
+// clearedBy is the newest entry of the change log that touched the member,
+// nil when the log shows none.
+func clearedBy(changes []noteChangeView, memberID string) *noteChangeView {
+	for i := range changes {
+		if changes[i].MemberID == memberID {
+			return &changes[i]
+		}
+	}
+	return nil
+}
+
+// knownFilter is the filter named, the no-role view included, or filterAll
+// for one the page doesn't know.
 func knownFilter(filter string) string {
+	if filter == filterNoRole {
+		return filterNoRole
+	}
 	for _, f := range holderFilters {
 		if f.name == filter {
 			return f.name
@@ -614,6 +728,18 @@ func foxholeAddress(query, filter string) string {
 // foxholeURL is foxholeAddress with the note form of the member whose ID
 // is noteMember open, none when it is empty.
 func foxholeURL(query, filter, noteMember string) string {
+	return foxholeLink(query, filter, paramNoteMember, noteMember)
+}
+
+// clearedAddress is foxholeAddress saying that a save cleared the note of
+// the member whose ID is member and took them off the page.
+func clearedAddress(query, filter, member string) string {
+	return foxholeLink(query, filter, paramCleared, member)
+}
+
+// foxholeLink is foxholeAddress with the parameter key set to value, left
+// out when value is empty.
+func foxholeLink(query, filter, key, value string) string {
 	v := url.Values{}
 	if filter != filterAll {
 		v.Set(paramFilter, filter)
@@ -621,8 +747,8 @@ func foxholeURL(query, filter, noteMember string) string {
 	if query != "" {
 		v.Set(paramQuery, query)
 	}
-	if noteMember != "" {
-		v.Set(paramNoteMember, noteMember)
+	if value != "" {
+		v.Set(key, value)
 	}
 	if len(v) == 0 {
 		return foxholePath
