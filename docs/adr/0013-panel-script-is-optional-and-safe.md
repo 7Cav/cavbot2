@@ -45,19 +45,8 @@ fetches from a third party, the same reason the font is embedded.
 
 ## Amendment: the Foxhole note has a no-script editing path (2026-10-06)
 
-Spec #434 made this decision and #442 built it. With script, a holder row's
-Edit link opens the note form in the row. Enter saves and Escape cancels.
-Without script, the same link loads the Foxhole page with that note form
-above the holder list. Both post the same fields to the same save. The
-server renders the form once, and the script clones that rendering from a
-`<template>`, so there is still one rendering to build and test. A refused
-note save comes back in the same form, with or without script.
-
-The rule above would leave a manager with no script unable to change a
-note. A dead picker posts the stored set, which is safe. A dead Edit link
-posts nothing, and the manager loses the note they meant to write. Notes
-are the record managers rely on after a purge, so the page keeps that path.
-
-Another control that needs a no-script path is still a new decision. Follow
-the note form when one is made: one server-rendered form that the script
-reuses, never a second rendering.
+Spec #434 made an exception for the Foxhole page's note. Without script, a
+holder row's Edit link loads the page with the same note form the script
+opens in the row. A dead picker keeps the stored set, but a dead Edit link
+would lose the note a manager meant to save. The server renders the form
+once and the script clones it, so there is still one rendering.
