@@ -25,6 +25,9 @@ type Deps struct {
 	Store   store.Store
 	Runtime *commands.TempVC
 	Manager commands.TempVCManager
+	// Foxhole is the runtime the Foxhole page starts its Foxhole actions
+	// through.
+	Foxhole *commands.FoxholeRuntime
 	GuildID string
 }
 

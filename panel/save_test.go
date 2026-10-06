@@ -238,6 +238,26 @@ func (s leavingStore) ListFoxholeChanges(ctx context.Context, limit int) ([]stor
 	return s.st.ListFoxholeChanges(ctx, limit)
 }
 
+func (s leavingStore) StartFoxholeReport(ctx context.Context, entry store.ChangeLogEntry) (store.ChangeLogEntry, error) {
+	s.d.leave()
+	return s.st.StartFoxholeReport(ctx, entry)
+}
+
+func (s leavingStore) UpdateFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
+	s.d.leave()
+	return s.st.UpdateFoxholeReport(ctx, id, diff)
+}
+
+func (s leavingStore) EndFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
+	s.d.leave()
+	return s.st.EndFoxholeReport(ctx, id, diff)
+}
+
+func (s leavingStore) LastFoxholeReport(ctx context.Context) (store.FoxholeReport, error) {
+	s.d.leave()
+	return s.st.LastFoxholeReport(ctx)
+}
+
 // A save whose browser leaves as the save first calls the store still
 // takes effect, with exactly one change log entry recording it.
 func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {

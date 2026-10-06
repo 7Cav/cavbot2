@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/7cav/cavbot2/commands"
+	"github.com/7cav/cavbot2/store"
 	"github.com/bwmarrin/discordgo"
 	"golang.org/x/net/html"
 )
@@ -256,7 +257,10 @@ func newFoxholeWorld(t *testing.T) *testWorld {
 	t.Helper()
 	t.Setenv("FOXHOLE_ROLE_BASE_NAME", "")
 	t.Setenv("WARDEN_ROLE_BASE_NAME", "")
-	w := newTestWorld(t)
+	fake := store.NewFake()
+	watch := endWatch{Store: fake, ended: make(chan struct{}, 16)}
+	w := newTestWorldOver(t, watch, newFakeForum(t))
+	w.st, w.actionEnded = fake, watch.ended
 	w.discord.addRoles(foxholeGuildRoles...)
 	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
 		Members: []commands.ListedMember{memberDoe, memberAsh, memberKestrel, memberMarsh, memberVance}})

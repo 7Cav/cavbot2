@@ -177,7 +177,9 @@ budget. The budget covers the page's store reads and any wait for Discord to
 send the bot the guild's data, or on the Foxhole page the member list. A save can take longer. It waits at most the same 10 seconds
 for that data, and its create or rename goes to Discord with up to 20 seconds
 per attempt. discordgo retries a call Discord answers with a 502, up to three
-times. Keep the proxy's read timeout above the slowest request. If the proxy drops a page before the panel gives up on it, the page
+times. A Foxhole action, such as a purge, runs in the background and its
+request redirects at once, so the proxy never cuts one off however long it
+runs. Keep the proxy's read timeout above the slowest request. If the proxy drops a page before the panel gives up on it, the page
 looks like an [abandoned page load](GLOSSARY.md#observability) and reaches no
 one.
 

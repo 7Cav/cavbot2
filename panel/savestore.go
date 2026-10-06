@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/7cav/cavbot2/store"
@@ -133,4 +134,28 @@ func (b boundedStore) ListFoxholeChanges(ctx context.Context, limit int) ([]stor
 	ctx, cancel := context.WithTimeout(ctx, b.timeout)
 	defer cancel()
 	return b.store.ListFoxholeChanges(ctx, limit)
+}
+
+func (b boundedStore) StartFoxholeReport(ctx context.Context, entry store.ChangeLogEntry) (store.ChangeLogEntry, error) {
+	ctx, cancel := context.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.StartFoxholeReport(ctx, entry)
+}
+
+func (b boundedStore) LastFoxholeReport(ctx context.Context) (store.FoxholeReport, error) {
+	ctx, cancel := context.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.LastFoxholeReport(ctx)
+}
+
+func (b boundedStore) UpdateFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
+	ctx, cancel := context.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.UpdateFoxholeReport(ctx, id, diff)
+}
+
+func (b boundedStore) EndFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
+	ctx, cancel := context.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.EndFoxholeReport(ctx, id, diff)
 }

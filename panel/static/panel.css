@@ -224,6 +224,30 @@ img { max-width: 100%; }
 .fx-check { width: 36px; }
 .fx-check input { width: 16px; height: 16px; margin: 0; vertical-align: middle; accent-color: var(--gold); }
 .fx-refusal { margin-bottom: 12px; }
+
+/* Foxhole actions: the action blocks above the holder list, one band of
+   equal heights with each block's buttons at its foot; the confirmation an
+   action waits on; and the running action's progress block, or the last
+   action's report, at the top of the page. */
+.fx-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 12px; align-items: stretch; }
+.fx-actions > .block { display: flex; flex-direction: column; }
+.fx-actions > .block > form:last-child { flex: 1; display: flex; flex-direction: column; }
+.fx-actions > .block > form:last-child > .submit-row { margin-top: auto; }
+.fx-radios .check { display: inline-block; margin-right: 14px; }
+.btn[disabled] { opacity: .4; cursor: not-allowed; }
+.fx-pending { border-color: var(--gold-lo); }
+.fx-pending--danger { border-color: var(--danger-hi); }
+.fx-pending p { margin: 0 0 6px; }
+.fx-progress { border-color: var(--gold-lo); }
+.fx-reportlist h3 { margin: 0 0 6px; font-size: 14px; font-weight: 500; color: var(--text-hi); }
+.fx-reportmembers { margin: 0; padding-left: 18px; font-size: 14px; }
+.fx-reportmembers li + li { margin-top: 2px; }
+.fx-reporthead { font-size: 14px; color: var(--text-mute); }
+.fx-changereport > p { margin: 0 0 6px; color: var(--text-hi); }
+.fx-changereport .block-row { padding: 6px 0; }
+@media (max-width: 1100px) {
+  .fx-actions { grid-template-columns: minmax(0, 1fr); }
+}
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 /* The rail and the page beside it. */

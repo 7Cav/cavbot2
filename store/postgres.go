@@ -737,18 +737,86 @@ func insertFoxholeChange(ctx context.Context, tx *sql.Tx, e ChangeLogEntry) erro
 // ListFoxholeChanges implements Store. Newest first is descending ID, as in
 // ListChangeLog.
 func (p *Postgres) ListFoxholeChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
-	entries, err := queryAll(ctx, p.db, func(row scanner) (ChangeLogEntry, error) {
-		var (
-			e    ChangeLogEntry
-			diff []byte
-		)
-		err := row.Scan(&e.ID, &e.ForumUserID, &e.ForumUsername, &e.At, &e.Action, &diff)
-		e.Diff = json.RawMessage(diff)
-		return e, err
-	}, `SELECT id, forum_user_id, forum_username, at, action, diff
+	entries, err := queryAll(ctx, p.db, scanFoxholeChange,
+		`SELECT id, forum_user_id, forum_username, at, action, diff
 		FROM foxhole_change_log ORDER BY id DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list Foxhole changes: %w", err)
 	}
 	return entries, nil
+}
+
+// scanFoxholeChange reads one row of the Foxhole change log: id,
+// forum_user_id, forum_username, at, action, diff.
+func scanFoxholeChange(row scanner) (ChangeLogEntry, error) {
+	var (
+		e    ChangeLogEntry
+		diff []byte
+	)
+	err := row.Scan(&e.ID, &e.ForumUserID, &e.ForumUsername, &e.At, &e.Action, &diff)
+	e.Diff = json.RawMessage(diff)
+	return e, err
+}
+
+// StartFoxholeReport implements Store. The diff goes in as JSONB, so bytes
+// that are not a JSON value are refused here.
+func (p *Postgres) StartFoxholeReport(ctx context.Context, entry ChangeLogEntry) (ChangeLogEntry, error) {
+	err := p.db.QueryRowContext(ctx, `
+		INSERT INTO foxhole_change_log (forum_user_id, forum_username, action, diff, report)
+		VALUES ($1, $2, $3, $4, 'running')
+		RETURNING id, at`,
+		entry.ForumUserID, entry.ForumUsername, string(entry.Action), []byte(entry.Diff)).Scan(&entry.ID, &entry.At)
+	if err != nil {
+		return ChangeLogEntry{}, fmt.Errorf("start Foxhole report: %w", err)
+	}
+	return entry, nil
+}
+
+// UpdateFoxholeReport implements Store.
+func (p *Postgres) UpdateFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
+	return p.writeReport(ctx, id, diff, "running")
+}
+
+// EndFoxholeReport implements Store.
+func (p *Postgres) EndFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
+	return p.writeReport(ctx, id, diff, "ended")
+}
+
+// writeReport replaces the diff of the running report with the ID given and
+// sets its report state to state, in one statement. No row matched is
+// ErrNotFound.
+func (p *Postgres) writeReport(ctx context.Context, id int64, diff json.RawMessage, state string) error {
+	res, err := p.db.ExecContext(ctx, `
+		UPDATE foxhole_change_log SET diff = $2, report = $3 WHERE id = $1 AND report = 'running'`,
+		id, []byte(diff), state)
+	if err != nil {
+		return fmt.Errorf("write Foxhole report %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("write Foxhole report %d: %w", id, err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// LastFoxholeReport implements Store.
+func (p *Postgres) LastFoxholeReport(ctx context.Context) (FoxholeReport, error) {
+	var report FoxholeReport
+	row := p.db.QueryRowContext(ctx, `
+		SELECT id, forum_user_id, forum_username, at, action, diff, report = 'running'
+		FROM foxhole_change_log WHERE report IS NOT NULL ORDER BY id DESC LIMIT 1`)
+	var diff []byte
+	e := &report.Entry
+	err := row.Scan(&e.ID, &e.ForumUserID, &e.ForumUsername, &e.At, &e.Action, &diff, &report.Running)
+	if errors.Is(err, sql.ErrNoRows) {
+		return FoxholeReport{}, ErrNotFound
+	}
+	if err != nil {
+		return FoxholeReport{}, fmt.Errorf("read the last Foxhole report: %w", err)
+	}
+	e.Diff = json.RawMessage(diff)
+	return report, nil
 }

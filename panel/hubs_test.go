@@ -78,6 +78,23 @@ type fakeDiscord struct {
 	// partialListRead closes at the first read that finds the member list
 	// partial, once holdPartialList has armed it.
 	partialListRead chan struct{}
+	// roleWrites are the member role changes made, in order.
+	roleWrites []fakeRoleWrite
+	// roleErrs holds what a role change answers for the member with the
+	// ID, which then keeps their roles as they were.
+	roleErrs map[string]error
+	// duringRoleWrite, when set, runs inside every member role change,
+	// after Discord has made it and before it answers, with the fake's lock
+	// released: the moment a test holds a Foxhole action mid-run.
+	duringRoleWrite func(fakeRoleWrite)
+}
+
+// fakeRoleWrite is one member role change as the fake recorded it: the
+// member, the role and the audit log reason.
+type fakeRoleWrite struct {
+	MemberID string
+	RoleID   string
+	Reason   string
 }
 
 // fakeEdit is one edit call as the fake recorded it: the channel, the name
@@ -305,10 +322,98 @@ func (f *fakeDiscord) MemberList(guildID string) commands.MemberListSnapshot {
 	return snap
 }
 
+// GuildMemberRoleRemove records the call and, as Discord's member update
+// does in the gateway state, takes the role off the member in the member
+// list, unless roleErrs refuses it. duringRoleWrite runs before it answers.
+func (f *fakeDiscord) GuildMemberRoleRemove(_, userID, roleID, reason string) error {
+	f.mu.Lock()
+	f.apiWrites++
+	write := fakeRoleWrite{MemberID: userID, RoleID: roleID, Reason: reason}
+	f.roleWrites = append(f.roleWrites, write)
+	err := f.roleErrs[userID]
+	if err == nil {
+		for i, m := range f.memberList.Members {
+			if m.ID == userID {
+				f.memberList.Members[i].RoleIDs = slices.DeleteFunc(slices.Clone(m.RoleIDs), func(id string) bool { return id == roleID })
+			}
+		}
+	}
+	during := f.duringRoleWrite
+	f.mu.Unlock()
+	if during != nil {
+		during(write)
+	}
+	return err
+}
+
+// editMember changes one member of the member list in place, as a change
+// made by hand in Discord reaches the gateway state.
+func (f *fakeDiscord) editMember(id string, edit func(*commands.ListedMember)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.memberList.Members {
+		if f.memberList.Members[i].ID == id {
+			edit(&f.memberList.Members[i])
+		}
+	}
+}
+
+// dropMember takes a member out of the member list, as their leaving the
+// server does.
+func (f *fakeDiscord) dropMember(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.memberList.Members = slices.DeleteFunc(slices.Clone(f.memberList.Members), func(m commands.ListedMember) bool { return m.ID == id })
+}
+
+// holdersOf returns the IDs of the members of the member list holding the
+// role, sorted.
+func (f *fakeDiscord) holdersOf(roleID string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, m := range f.memberList.Members {
+		if slices.Contains(m.RoleIDs, roleID) {
+			out = append(out, m.ID)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// roleChanges returns every member role change made, in order.
+func (f *fakeDiscord) roleChanges() []fakeRoleWrite {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.roleWrites)
+}
+
+// failRoleWrites makes every role change to the member answer err.
+func (f *fakeDiscord) failRoleWrites(memberID string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.roleErrs == nil {
+		f.roleErrs = map[string]error{}
+	}
+	f.roleErrs[memberID] = err
+}
+
+func (f *fakeDiscord) setDuringRoleWrite(during func(fakeRoleWrite)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.duringRoleWrite = during
+}
+
 // setMemberList sets the member list snapshot the fake gateway state gives.
+// The fake keeps its own copy, so a role change it makes never reaches the
+// fixture members a test built the snapshot from.
 func (f *fakeDiscord) setMemberList(snap commands.MemberListSnapshot) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	snap.Members = slices.Clone(snap.Members)
+	for i := range snap.Members {
+		snap.Members[i].RoleIDs = slices.Clone(snap.Members[i].RoleIDs)
+	}
 	f.memberList = snap
 }
 
@@ -485,6 +590,9 @@ type testWorld struct {
 	runtime *commands.TempVC
 	p       *Panel
 	b       *browser
+	// actionEnded receives once each time a Foxhole action's report has
+	// been written as ended, in a world built over an endWatch.
+	actionEnded <-chan struct{}
 }
 
 // newTestWorld builds the panel over a store holding the given hubs. The
@@ -523,7 +631,8 @@ func newTestWorldConfigured(t *testing.T, st store.Store, f *fakeForum, cfg Conf
 	if err != nil {
 		t.Fatalf("NewTempVC: %v", err)
 	}
-	p, err := New(cfg, testVersion, Deps{Store: st, Runtime: runtime, Manager: discord, GuildID: testGuildID})
+	foxhole := commands.NewFoxholeRuntime(discord, discord, st, testGuildID)
+	p, err := New(cfg, testVersion, Deps{Store: st, Runtime: runtime, Manager: discord, Foxhole: foxhole, GuildID: testGuildID})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
