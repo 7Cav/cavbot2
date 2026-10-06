@@ -313,17 +313,22 @@ type foxholeChange struct {
 }
 
 // The Foxhole page's addresses: the page, the note save its note form
-// posts to, the approvals save its selection bar posts to, and the purge
-// its purge confirmation starts.
+// posts to, the approvals save its selection bar posts to, the purge its
+// purge confirmation starts, and the Stop on its progress block.
 const (
 	foxholePath          = "/foxhole"
 	foxholeNotesPath     = "/foxhole/notes"
 	foxholeApprovalsPath = "/foxhole/approvals"
 	foxholePurgePath     = "/foxhole/purge"
+	foxholeStopPath      = "/foxhole/stop"
 )
 
 // fieldScope is the purge confirmation's field: the scope it confirms.
 const fieldScope = "scope"
+
+// fieldReport is the Stop form's field: the ID of the report of the action
+// the progress block showed.
+const fieldReport = "report"
 
 // The Foxhole page's query parameters: the search, from the search form,
 // the filter, from the filter links, the ID of the member whose note form
@@ -653,8 +658,11 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	}
 	view.Skipped = s.stillSkipped(list, records, req.Skipped)
 	view.ApprovalRefusal, view.ActionRefusal = req.ApprovalRefusal, req.ActionRefusal
-	view.Report = report
-	view.Busy = s.actions.Busy()
+	running, busy := s.actions.Running()
+	if report != nil && report.Running && busy {
+		report.StopPressedBy, report.Paused = running.StopPressedBy, running.Paused
+	}
+	view.Report, view.Busy = report, busy
 	return view, nil
 }
 

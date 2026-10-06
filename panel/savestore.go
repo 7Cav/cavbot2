@@ -142,6 +142,12 @@ func (b boundedStore) StartFoxholeReport(ctx context.Context, entry store.Change
 	return b.store.StartFoxholeReport(ctx, entry)
 }
 
+func (b boundedStore) RunningFoxholeReports(ctx context.Context) ([]store.ChangeLogEntry, error) {
+	ctx, cancel := context.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.RunningFoxholeReports(ctx)
+}
+
 func (b boundedStore) LastFoxholeReport(ctx context.Context) (store.FoxholeReport, error) {
 	ctx, cancel := context.WithTimeout(ctx, b.timeout)
 	defer cancel()

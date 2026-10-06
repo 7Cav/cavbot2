@@ -253,6 +253,11 @@ func (s leavingStore) EndFoxholeReport(ctx context.Context, id int64, diff json.
 	return s.st.EndFoxholeReport(ctx, id, diff)
 }
 
+func (s leavingStore) RunningFoxholeReports(ctx context.Context) ([]store.ChangeLogEntry, error) {
+	s.d.leave()
+	return s.st.RunningFoxholeReports(ctx)
+}
+
 func (s leavingStore) LastFoxholeReport(ctx context.Context) (store.FoxholeReport, error) {
 	s.d.leave()
 	return s.st.LastFoxholeReport(ctx)

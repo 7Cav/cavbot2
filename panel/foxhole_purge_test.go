@@ -265,16 +265,7 @@ func confirmPurge(t *testing.T, b *browser, ctx context.Context, confirm *html.N
 	if form == nil {
 		t.Fatal("the purge confirmation has no form")
 	}
-	action, _ := attrValue(form, "action")
-	fields := url.Values{}
-	eachElement(form, func(n *html.Node) {
-		if name, ok := attrValue(n, "name"); ok && n.Data == "input" {
-			value, _ := attrValue(n, "value")
-			fields.Add(name, value)
-		}
-	})
-	return b.doContext(ctx, http.MethodPost, action, http.Header{"Content-Type": {"application/x-www-form-urlencoded"}},
-		strings.NewReader(fields.Encode()))
+	return submitContext(t, b, ctx, form)
 }
 
 // reportBlock returns the report at the top of the page, and fails the
@@ -815,33 +806,6 @@ func TestPurgeRefreshesTheStoredNamesOfAMemberWithARecord(t *testing.T) {
 	want := []store.FoxholeRecord{{MemberID: memberDoe.ID, Note: "discharged 12 Sep", DisplayName: "SGT Doe.J", Username: "jdoe"}}
 	if got := readNoteState(t, w.st).Records; !reflect.DeepEqual(got, want) {
 		t.Errorf("records after the purge = %+v, want %+v", got, want)
-	}
-}
-
-// A purge checks each member against the member list, so it stops when the
-// list goes partial under it, rather than take the members it can no longer
-// see for members who left. It sends Discord nothing more, and its report
-// says the member list didn't arrive and lists the rest as not attempted.
-func TestPurgeStopsWhenTheMemberListGoesPartialMidRun(t *testing.T) {
-	w := newFoxholeWorld(t)
-	w.p.pageBudget = partialListBudget
-	hold := holdRoleWrites(t, w)
-	startPurge(t, w, "internal")
-	hold.next(t)
-	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListArriving, Connected: true})
-
-	hold.open()
-	w.awaitActionEnd(t)
-
-	if writes := w.discord.roleChanges(); len(writes) != 1 {
-		t.Errorf("the purge sent Discord %d changes, want only the one made before the list went partial", len(writes))
-	}
-	report := reportBlock(t, parseHTML(t, w.b.get(foxholePath)))
-	if got := outcomeOf(report); got != "member-list" {
-		t.Errorf("the report's outcome is %q, want member-list", got)
-	}
-	if got := fieldText(t, reportList(t, report, "not-attempted"), "count"); got != "2" {
-		t.Errorf("the report counts %s not attempted, want the 2 Internal holders it never reached", got)
 	}
 }
 

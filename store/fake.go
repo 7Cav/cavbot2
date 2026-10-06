@@ -551,6 +551,23 @@ func (f *Fake) writeReport(ctx context.Context, id int64, diff json.RawMessage, 
 	return nil
 }
 
+// RunningFoxholeReports implements Store.
+func (f *Fake) RunningFoxholeReports(ctx context.Context) ([]ChangeLogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []ChangeLogEntry
+	for _, e := range f.foxholeChanges.entries {
+		if f.reports[e.ID] {
+			e.Diff = slices.Clone(e.Diff)
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
 // LastFoxholeReport implements Store.
 func (f *Fake) LastFoxholeReport(ctx context.Context) (FoxholeReport, error) {
 	if err := ctx.Err(); err != nil {
