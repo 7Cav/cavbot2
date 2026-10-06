@@ -25,7 +25,10 @@ import (
 // submitted as the page left it: every named input that is not disabled, a
 // checkbox or radio only when checked and "on" when it has no value, each
 // select's selected option or its first, and each textarea's text. The
-// contents of a <template> post nothing.
+// contents of a <template> post nothing. The controls are the ones the
+// form owns, as a browser resolves it: those inside it with no form
+// attribute, and those anywhere on the page whose form attribute names its
+// ID.
 func formPosts(t *testing.T, doc *html.Node, action string) url.Values {
 	t.Helper()
 	form := findElement(doc, "form", "action", action)
@@ -33,7 +36,10 @@ func formPosts(t *testing.T, doc *html.Node, action string) url.Values {
 		t.Fatalf("page has no form posting to %s", action)
 	}
 	out := url.Values{}
-	eachLiveElement(form, func(n *html.Node) {
+	eachLiveElement(doc, func(n *html.Node) {
+		if !ownedBy(n, form) {
+			return
+		}
 		name, _ := attrValue(n, "name")
 		if name == "" {
 			return
@@ -79,6 +85,21 @@ func formPosts(t *testing.T, doc *html.Node, action string) url.Values {
 		}
 	})
 	return out
+}
+
+// ownedBy reports whether form owns the control n: n names the form's ID in
+// its form attribute, or carries none and sits inside the form.
+func ownedBy(n, form *html.Node) bool {
+	if owner, ok := attrValue(n, "form"); ok {
+		id, _ := attrValue(form, "id")
+		return id != "" && owner == id
+	}
+	for p := n.Parent; p != nil; p = p.Parent {
+		if p == form {
+			return true
+		}
+	}
+	return false
 }
 
 // loadedForm loads the page at target through b and returns what its form

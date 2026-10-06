@@ -655,6 +655,52 @@ func insertNote(ctx context.Context, tx *sql.Tx, guildID string, save NoteSave) 
 	return nil
 }
 
+// ApproveFoxholeMembers implements Store. The records go in before the
+// entry, in one transaction.
+func (p *Postgres) ApproveFoxholeMembers(ctx context.Context, guildID string, members []MemberNames, entry ChangeLogEntry) error {
+	err := p.inTx(ctx, func(tx *sql.Tx) error {
+		for _, n := range members {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO foxhole_records (guild_id, member_id, approved, last_display_name, last_username)
+				VALUES ($1, $2, TRUE, $3, $4)
+				ON CONFLICT (guild_id, member_id) DO UPDATE SET approved = TRUE,
+					last_display_name = EXCLUDED.last_display_name, last_username = EXCLUDED.last_username, updated_at = now()`,
+				guildID, n.MemberID, n.DisplayName, n.Username); err != nil {
+				return err
+			}
+		}
+		return insertFoxholeChange(ctx, tx, entry)
+	})
+	if err != nil {
+		return fmt.Errorf("approve Foxhole members of guild %q: %w", guildID, err)
+	}
+	return nil
+}
+
+// ClearFoxholeApprovals implements Store. The records go in before the
+// entry, in one transaction.
+func (p *Postgres) ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry ChangeLogEntry) error {
+	err := p.inTx(ctx, func(tx *sql.Tx) error {
+		for _, id := range memberIDs {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE foxhole_records SET approved = FALSE, updated_at = now()
+				WHERE guild_id = $1 AND member_id = $2`, guildID, id); err != nil {
+				return err
+			}
+			// A record holds a note or an approval. One left with neither goes.
+			if _, err := tx.ExecContext(ctx, `
+				DELETE FROM foxhole_records WHERE guild_id = $1 AND member_id = $2 AND note = ''`, guildID, id); err != nil {
+				return err
+			}
+		}
+		return insertFoxholeChange(ctx, tx, entry)
+	})
+	if err != nil {
+		return fmt.Errorf("clear Foxhole approvals of guild %q: %w", guildID, err)
+	}
+	return nil
+}
+
 // SetFoxholeRecordNames implements Store. The few updates run in one
 // transaction, so a refresh lands whole or not at all.
 func (p *Postgres) SetFoxholeRecordNames(ctx context.Context, guildID string, names []MemberNames) error {

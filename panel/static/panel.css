@@ -211,6 +211,21 @@ img { max-width: 100%; }
 .fx-notenow { color: var(--text-hi); }
 .fx-notecancel { font-size: 13px; }
 
+/* Approved collaborators, and the selection bar that approves them: it
+   sticks to the top of the window while the holder list scrolls under it.
+   The count shows once the page script runs. */
+.tag--approved { color: var(--gold); border-color: var(--gold-lo); }
+.fx-selbar {
+  position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 8px 14px; background: var(--surface-3); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+}
+.fx-selcount { margin-right: 6px; color: var(--text-hi); font-variant-numeric: tabular-nums; }
+.fx-selbar .btn[disabled] { opacity: .4; cursor: not-allowed; }
+.fx-check { width: 36px; }
+.fx-check input { width: 16px; height: 16px; margin: 0; vertical-align: middle; accent-color: var(--gold); }
+.fx-refusal { margin-bottom: 12px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
 /* The rail and the page beside it. */
 .console { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100dvh; }
 .rail { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; position: sticky; top: 0; height: 100dvh; }

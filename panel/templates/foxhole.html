@@ -1,7 +1,7 @@
 {{define "content"}}
 <main class="body" data-page="{{.Page}}">
   <h1 class="title">Foxhole</h1>
-  <p class="desc">Everyone holding a Foxhole role. Changes here go straight to Discord.</p>
+  <p class="desc">Everyone holding a Foxhole role, and every approved collaborator.</p>
   {{with .Foxhole}}
   {{with .NoteForm}}
   <section class="block narrow" data-field="note-block">
@@ -10,6 +10,8 @@
   </section>
   {{end}}
   <div role="status" data-note-result>{{with .Cleared}}<div class="note note--ok" data-field="note-result" data-cleared="{{.MemberID}}">Cleared the note on {{.MemberName}} <span class="fx-user">@{{.MemberUsername}}</span>. They hold no Foxhole role, so they're no longer listed.</div>{{end}}</div>
+  {{with .ApprovalRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
+  {{with .Skipped}}<div class="note" data-field="approve-skipped">Not approved, since {{if eq (len .) 1}}this member doesn't{{else}}these members don't{{end}} hold External: {{range $i, $m := .}}{{if $i}}, {{end}}<span data-skipped="{{$m.ID}}">{{if $m.DisplayName}}{{$m.DisplayName}} <span class="fx-user">@{{$m.Username}}</span>{{else}}{{$m.ID}}{{end}}</span>{{end}}. Nothing changed for them.</div>{{end}}
   {{if .ListReady}}
   {{if .NoRoleView}}
   <section class="block" data-field="no-role">
@@ -34,18 +36,27 @@
   <section class="block" data-field="holders">
     <h2 class="block-header">Foxhole role holders</h2>
     {{template "fx-toolbar" .}}
+    <form method="post" action="/foxhole/approvals" id="fx-selection" class="fx-selbar" data-field="selection">
+      <input type="hidden" name="q" value="{{.Query}}">
+      <input type="hidden" name="filter" value="{{.Filter}}">
+      <span class="fx-selcount" data-selection-count aria-live="polite" hidden><span data-field="selected">0</span> selected</span>
+      <button type="submit" name="op" value="approve" class="btn btn--small" data-needs-selection>Approve</button>
+      <button type="submit" name="op" value="clear" class="btn btn--small" data-needs-selection>Clear approval</button>
+    </form>
     <div class="scroll"><table class="hublist fx-list">
-      <thead><tr><th>Member</th><th>Roles</th><th>Rank role</th><th>Note</th></tr></thead>
+      <thead><tr><th class="fx-check"><span class="visually-hidden">Select</span></th><th>Member</th><th>Roles</th><th>Rank role</th><th>Note</th><th>Approved</th></tr></thead>
       <tbody>
       {{range .Holders}}
         <tr data-member="{{.ID}}">
+          <td class="fx-check"><input type="checkbox" name="member" value="{{.ID}}" form="fx-selection" aria-label="Select {{.DisplayName}}" data-select></td>
           {{template "member-cell" .}}
           <td class="fx-nowrap">{{if .Internal}}<span class="tag fx-role" data-role="internal">Internal</span> {{end}}{{if .External}}<span class="tag fx-role" data-role="external">External</span>{{end}}</td>
           <td class="fx-nowrap">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else if .NoRankRole}}<span class="tag tag--warn" data-flag="no-rank-role">no rank role</span>{{else}}<span class="off">none</span>{{end}}</td>
           {{template "note-cell" .}}
+          <td class="fx-nowrap">{{if .Approved}}<span class="tag tag--approved" data-approved>Approved</span>{{end}}</td>
         </tr>
       {{else}}
-        <tr><td colspan="4" class="off">{{if $.Foxhole.NoHolders}}Nobody holds a Foxhole role.{{else}}No holder matches.{{end}}</td></tr>
+        <tr><td colspan="6" class="off">{{if $.Foxhole.NoHolders}}Nobody holds a Foxhole role or is an approved collaborator.{{else}}No member matches.{{end}}</td></tr>
       {{end}}
       </tbody>
     </table></div>
@@ -61,12 +72,17 @@
     <details class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}"{{if eq $i 0}} open{{end}}>
       <summary class="change-head">
         <span class="change-who" data-field="username">{{.Username}}</span>
-        <span class="tag" data-field="action">{{.Action}}</span>
+        <span class="tag" data-field="action">{{.Label}}</span>
         <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
       </summary>
       <dl class="change-fields">
+        {{if eq .Action "note"}}
         <div data-change="member"><dt>member</dt><dd data-touched="{{.MemberID}}">{{.MemberName}} <span class="fx-user">@{{.MemberUsername}}</span></dd></div>
         <div data-change="note"><dt>note</dt><dd><span data-field="before">{{.Before}}</span>{{if not .Before}}<span class="off">none</span>{{end}} <span class="arrow">&rarr;</span> <span data-field="after">{{.After}}</span>{{if not .After}}<span class="off">none</span>{{end}}</dd></div>
+        {{else}}
+        <div data-change="members"><dt>members</dt><dd>{{range $i, $m := .Members}}{{if $i}}, {{end}}<span data-touched="{{$m.ID}}">{{$m.DisplayName}} <span class="fx-user">@{{$m.Username}}</span></span>{{end}}</dd></div>
+        <div data-change="approved"><dt>approved</dt><dd>{{if eq .Action "approve"}}no{{else}}yes{{end}} <span class="arrow">&rarr;</span> {{if eq .Action "approve"}}yes{{else}}no{{end}}</dd></div>
+        {{end}}
       </dl>
     </details>
     {{else}}
@@ -92,7 +108,7 @@
 
 {{define "also-matches"}}{{with .}}<div class="block-row fx-also" data-field="also-matches"><a href="{{.Href}}"><span data-field="count">{{.Count}}</span> {{if eq .Count 1}}member{{else}}members{{end}} {{if .ToNoRoleView}}with no role{{else}}in the holder list{{end}} also {{if eq .Count 1}}matches{{else}}match{{end}}</a></div>{{end}}{{end}}
 
-{{define "member-cell"}}<td class="fx-member"><span class="fx-name" data-field="display_name">{{.DisplayName}}</span> <span class="fx-user">@<span data-field="username">{{.Username}}</span></span>{{if .NotInServer}} <span class="tag fx-gone" data-flag="not-in-server">not in the server</span>{{end}}</td>{{end}}
+{{define "member-cell"}}<td class="fx-member"><span class="fx-name" data-field="display_name">{{.DisplayName}}</span> <span class="fx-user">@<span data-field="username">{{.Username}}</span></span>{{if .NotInServer}} <span class="tag fx-gone" data-flag="not-in-server">not in the server</span>{{end}}{{if .ApprovedNoExternal}} <span class="tag tag--warn" data-flag="approved-not-external">approved, doesn't hold External</span>{{end}}</td>{{end}}
 
 {{define "note-cell"}}<td class="fx-note" data-note-cell data-note="{{.Note}}"><span class="fx-notetext" data-field="note">{{.Note}}</span> <a href="{{.EditHref}}" class="fx-noteedit" data-field="edit_note">{{if .Note}}Edit{{else}}Add a note{{end}}</a></td>{{end}}
 

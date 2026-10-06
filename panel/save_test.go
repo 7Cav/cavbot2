@@ -218,6 +218,16 @@ func (s leavingStore) SaveFoxholeNote(ctx context.Context, guildID string, save 
 	return s.st.SaveFoxholeNote(ctx, guildID, save, entry)
 }
 
+func (s leavingStore) ApproveFoxholeMembers(ctx context.Context, guildID string, members []store.MemberNames, entry store.ChangeLogEntry) error {
+	s.d.leave()
+	return s.st.ApproveFoxholeMembers(ctx, guildID, members, entry)
+}
+
+func (s leavingStore) ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry store.ChangeLogEntry) error {
+	s.d.leave()
+	return s.st.ClearFoxholeApprovals(ctx, guildID, memberIDs, entry)
+}
+
 func (s leavingStore) SetFoxholeRecordNames(ctx context.Context, guildID string, names []store.MemberNames) error {
 	s.d.leave()
 	return s.st.SetFoxholeRecordNames(ctx, guildID, names)
