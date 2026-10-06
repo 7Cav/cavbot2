@@ -25,8 +25,9 @@ var ErrNotFound = errors.New("store: not found")
 
 // ErrStale is returned by a combined write whose record is not as the
 // caller read it (#373): SaveHub of a hub whose row is at another version,
-// or of a new hub on a channel a hub already stands on, and
-// SaveGuildModeratorRoles of a set whose row is at another version. The
+// or of a new hub on a channel a hub already stands on,
+// SaveGuildModeratorRoles of a set whose row is at another version, and
+// SaveFoxholeNote over a note that isn't the one the saver loaded. The
 // write lands neither the settings nor the entry. Compare with errors.Is.
 var ErrStale = errors.New("store: the record changed since it was read")
 
@@ -149,12 +150,12 @@ const (
 	ChangeNote ChangeAction = "note"
 )
 
-// FoxholeMember is one member's Foxhole record (spec #434): their note,
+// FoxholeRecord is one member's Foxhole record (spec #434): their note,
 // whether they are an approved collaborator, and the display name and
 // username the panel last saw them under. The store holds one for each
 // member of the guild with a note or an approval, and nothing about who
 // holds a Foxhole role: a command purge recreates the role under a new ID.
-type FoxholeMember struct {
+type FoxholeRecord struct {
 	MemberID string
 	Note     string
 	Approved bool
@@ -277,16 +278,20 @@ type Store interface {
 	// section reading its own.
 	ListModeratorChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
 
-	// ListFoxholeMembers returns every Foxhole record of the guild, in no
+	// ListFoxholeRecords returns every Foxhole record of the guild, in no
 	// promised order.
-	ListFoxholeMembers(ctx context.Context, guildID string) ([]FoxholeMember, error)
+	ListFoxholeRecords(ctx context.Context, guildID string) ([]FoxholeRecord, error)
 	// SaveFoxholeNote writes the member's note and names and appends the
-	// save's entry to the Foxhole change log together.
+	// save's entry to the Foxhole change log together, only while the
+	// stored note is save.Before, a member with no record holding the empty
+	// note. ErrStale otherwise, and nothing written. A save that leaves a
+	// member with no note and no approval removes their record, since the
+	// store holds records only for members with one or the other.
 	SaveFoxholeNote(ctx context.Context, guildID string, save NoteSave, entry ChangeLogEntry) error
-	// SetFoxholeMemberNames replaces the last-seen names of each member
+	// SetFoxholeRecordNames replaces the last-seen names of each member
 	// given who has a record, and starts no record for one who hasn't. It
 	// appends no entry: no person made the change.
-	SetFoxholeMemberNames(ctx context.Context, guildID string, names []MemberNames) error
+	SetFoxholeRecordNames(ctx context.Context, guildID string, names []MemberNames) error
 	// ListFoxholeChanges returns at most limit entries of the Foxhole page's
 	// change log, newest first in append order. The Foxhole change log is
 	// kept apart from the hub page's: no hub page list returns its entries,

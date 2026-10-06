@@ -570,16 +570,16 @@ func (p *Postgres) ListModeratorChanges(ctx context.Context, limit int) ([]Chang
 	return entries, nil
 }
 
-// ListFoxholeMembers implements Store.
-func (p *Postgres) ListFoxholeMembers(ctx context.Context, guildID string) ([]FoxholeMember, error) {
-	members, err := queryAll(ctx, p.db, func(row scanner) (FoxholeMember, error) {
-		var m FoxholeMember
+// ListFoxholeRecords implements Store.
+func (p *Postgres) ListFoxholeRecords(ctx context.Context, guildID string) ([]FoxholeRecord, error) {
+	members, err := queryAll(ctx, p.db, func(row scanner) (FoxholeRecord, error) {
+		var m FoxholeRecord
 		err := row.Scan(&m.MemberID, &m.Note, &m.Approved, &m.DisplayName, &m.Username)
 		return m, err
 	}, `SELECT member_id, note, approved, last_display_name, last_username
-		FROM foxhole_members WHERE guild_id = $1 ORDER BY member_id`, guildID)
+		FROM foxhole_records WHERE guild_id = $1 ORDER BY member_id`, guildID)
 	if err != nil {
-		return nil, fmt.Errorf("list Foxhole members of guild %q: %w", guildID, err)
+		return nil, fmt.Errorf("list Foxhole records of guild %q: %w", guildID, err)
 	}
 	return members, nil
 }
@@ -592,7 +592,7 @@ func (p *Postgres) SaveFoxholeNote(ctx context.Context, guildID string, save Not
 		}
 		// A record holds a note or an approval. One left with neither goes.
 		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM foxhole_members WHERE guild_id = $1 AND member_id = $2 AND note = '' AND NOT approved`,
+			DELETE FROM foxhole_records WHERE guild_id = $1 AND member_id = $2 AND note = '' AND NOT approved`,
 			guildID, save.MemberID); err != nil {
 			return err
 		}
@@ -612,7 +612,7 @@ func (p *Postgres) SaveFoxholeNote(ctx context.Context, guildID string, save Not
 func writeNote(ctx context.Context, tx *sql.Tx, guildID string, save NoteSave) error {
 	var stored string
 	err := tx.QueryRowContext(ctx, `
-		SELECT note FROM foxhole_members WHERE guild_id = $1 AND member_id = $2 FOR UPDATE`,
+		SELECT note FROM foxhole_records WHERE guild_id = $1 AND member_id = $2 FOR UPDATE`,
 		guildID, save.MemberID).Scan(&stored)
 	if errors.Is(err, sql.ErrNoRows) {
 		if save.Before != "" {
@@ -627,7 +627,7 @@ func writeNote(ctx context.Context, tx *sql.Tx, guildID string, save NoteSave) e
 		return ErrStale
 	}
 	_, err = tx.ExecContext(ctx, `
-		UPDATE foxhole_members SET note = $3, last_display_name = $4, last_username = $5, updated_at = now()
+		UPDATE foxhole_records SET note = $3, last_display_name = $4, last_username = $5, updated_at = now()
 		WHERE guild_id = $1 AND member_id = $2`,
 		guildID, save.MemberID, save.Note, save.DisplayName, save.Username)
 	return err
@@ -638,7 +638,7 @@ func writeNote(ctx context.Context, tx *sql.Tx, guildID string, save NoteSave) e
 // ErrStale.
 func insertNote(ctx context.Context, tx *sql.Tx, guildID string, save NoteSave) error {
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO foxhole_members (guild_id, member_id, note, last_display_name, last_username)
+		INSERT INTO foxhole_records (guild_id, member_id, note, last_display_name, last_username)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (guild_id, member_id) DO NOTHING`,
 		guildID, save.MemberID, save.Note, save.DisplayName, save.Username)
@@ -655,13 +655,13 @@ func insertNote(ctx context.Context, tx *sql.Tx, guildID string, save NoteSave) 
 	return nil
 }
 
-// SetFoxholeMemberNames implements Store. The few updates run in one
+// SetFoxholeRecordNames implements Store. The few updates run in one
 // transaction, so a refresh lands whole or not at all.
-func (p *Postgres) SetFoxholeMemberNames(ctx context.Context, guildID string, names []MemberNames) error {
+func (p *Postgres) SetFoxholeRecordNames(ctx context.Context, guildID string, names []MemberNames) error {
 	err := p.inTx(ctx, func(tx *sql.Tx) error {
 		for _, n := range names {
 			if _, err := tx.ExecContext(ctx, `
-				UPDATE foxhole_members SET last_display_name = $3, last_username = $4
+				UPDATE foxhole_records SET last_display_name = $3, last_username = $4
 				WHERE guild_id = $1 AND member_id = $2`,
 				guildID, n.MemberID, n.DisplayName, n.Username); err != nil {
 				return err
@@ -670,7 +670,7 @@ func (p *Postgres) SetFoxholeMemberNames(ctx context.Context, guildID string, na
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("set Foxhole member names of guild %q: %w", guildID, err)
+		return fmt.Errorf("set Foxhole record names of guild %q: %w", guildID, err)
 	}
 	return nil
 }

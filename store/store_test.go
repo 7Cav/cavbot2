@@ -1328,12 +1328,12 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 			},
 			"ListChangeLog":        func() error { _, err := s.ListChangeLog(done, hubID, 10); return err },
 			"ListModeratorChanges": func() error { _, err := s.ListModeratorChanges(done, 10); return err },
-			"ListFoxholeMembers":   func() error { _, err := s.ListFoxholeMembers(done, "guild-1"); return err },
+			"ListFoxholeRecords":   func() error { _, err := s.ListFoxholeRecords(done, "guild-1"); return err },
 			"SaveFoxholeNote": func() error {
 				return s.SaveFoxholeNote(done, "guild-1", NoteSave{MemberID: memberDoe, Before: "discharged 12 Sep", Note: "rejoined"}, noteEntry("rejoined"))
 			},
-			"SetFoxholeMemberNames": func() error {
-				return s.SetFoxholeMemberNames(done, "guild-1", []MemberNames{{MemberID: memberDoe, DisplayName: "CPL Doe.J", Username: "jdoe_cav"}})
+			"SetFoxholeRecordNames": func() error {
+				return s.SetFoxholeRecordNames(done, "guild-1", []MemberNames{{MemberID: memberDoe, DisplayName: "CPL Doe.J", Username: "jdoe_cav"}})
 			},
 			"ListFoxholeChanges": func() error { _, err := s.ListFoxholeChanges(done, 10); return err },
 		}

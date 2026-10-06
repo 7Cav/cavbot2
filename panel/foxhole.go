@@ -125,12 +125,14 @@ type noteForm struct {
 }
 
 // noteRefusal is a refused note save: its reason, which the page names as
-// the data-error marker, the sentence the form shows, and the status the
-// page answers with. A refused save writes nothing.
+// the data-error marker, the sentence the form shows, the status the page
+// answers with, and the INFO line it logs, in the "Panel save refused"
+// family the hub saves log under. A refused save writes nothing.
 type noteRefusal struct {
 	Kind    string
 	Message string
 	status  int
+	log     string
 }
 
 func (e *noteRefusal) Error() string { return e.Message }
@@ -138,6 +140,7 @@ func (e *noteRefusal) Error() string { return e.Message }
 // errNotHolder refuses a save that would start a note on a member who holds
 // no Foxhole role: a note starts only on a holder.
 var errNotHolder = &noteRefusal{Kind: "not-holder", status: http.StatusUnprocessableEntity,
+	log:     "Panel save refused: no Foxhole role",
 	Message: "This member holds no Foxhole role, so a note can't start on them. Nothing was saved."}
 
 // errStaleNote refuses a save from a note form another save got to first,
@@ -145,6 +148,7 @@ var errNotHolder = &noteRefusal{Kind: "not-holder", status: http.StatusUnprocess
 // back with the note as it stands now loaded, and saving it again writes
 // over that.
 var errStaleNote = &noteRefusal{Kind: "stale", status: http.StatusConflict,
+	log:     "Panel save refused: stale form",
 	Message: "Someone changed this note after you opened it, so yours wasn't saved. Save again to replace their note with the text in the box."}
 
 // errNoteListPartial refuses a save that would start a note while the
@@ -152,6 +156,7 @@ var errStaleNote = &noteRefusal{Kind: "stale", status: http.StatusConflict,
 // Foxhole role. An edit of a note a member has reads no list and stays
 // open.
 var errNoteListPartial = &noteRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
+	log:     "Panel save refused: member list partial",
 	Message: "Cavbot2 doesn't have the whole member list from Discord yet, so it can't check this member holds a Foxhole role. Nothing was saved. Save again in a minute."}
 
 // noteChangeView is one entry of the Foxhole page's change log as the page
@@ -179,12 +184,12 @@ const (
 )
 
 // The Foxhole page's query parameters: the search, from the search form,
-// the filter, from the filter links, and the member whose note form the
-// page opens, from a row's Edit link.
+// the filter, from the filter links, and the ID of the member whose note
+// form the page opens, from a row's Edit link.
 const (
-	paramQuery  = "q"
-	paramFilter = "filter"
-	paramNote   = "note"
+	paramQuery      = "q"
+	paramFilter     = "filter"
+	paramNoteMember = "note"
 )
 
 // The note form's fields beside the view's query and filter: the member,
@@ -212,15 +217,15 @@ func (s foxholeService) forSave(timeout time.Duration) foxholeService {
 }
 
 // foxholeRequest is what a Foxhole page load asks for: the search, the
-// filter, and the member whose note form opens, empty for none. A refused
-// note save's page also carries the refusal and the note as typed, which
-// the form shows.
+// filter, one the page knows, and the ID of the member whose note form
+// opens, empty for none. A refused note save's page also carries the
+// refusal and the note as typed, which the form shows.
 type foxholeRequest struct {
-	Query   string
-	Filter  string
-	Note    string
-	Refusal *noteRefusal
-	Typed   string
+	Query      string
+	Filter     string
+	NoteMember string
+	Refusal    *noteRefusal
+	Typed      string
 }
 
 // foxholePage is GET /foxhole, the Foxhole page. It reads the guild's roles
@@ -228,7 +233,8 @@ type foxholeRequest struct {
 // search is a plain GET form, so it works without script.
 func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session) {
 	q := r.URL.Query()
-	p.renderFoxhole(w, r, sess, http.StatusOK, foxholeRequest{Query: q.Get(paramQuery), Filter: q.Get(paramFilter), Note: q.Get(paramNote)})
+	p.renderFoxhole(w, r, sess, http.StatusOK,
+		foxholeRequest{Query: q.Get(paramQuery), Filter: knownFilter(q.Get(paramFilter)), NoteMember: q.Get(paramNoteMember)})
 }
 
 // renderFoxhole renders the Foxhole page read now, under the page's time
@@ -243,7 +249,7 @@ func (p *Panel) renderFoxhole(w http.ResponseWriter, r *http.Request, sess sessi
 		return
 	}
 	if err != nil {
-		p.pageFailed(w, sess, "foxhole page", foxholeAddress(req.Query, knownFilter(req.Filter)), err, nil)
+		p.pageFailed(w, sess, "foxhole page", foxholeAddress(req.Query, req.Filter), err, nil)
 		return
 	}
 	data := sess.page("Foxhole")
@@ -270,14 +276,19 @@ func (p *Panel) saveNote(w http.ResponseWriter, r *http.Request, sess session) {
 		http.Error(w, "the form names no member", http.StatusBadRequest)
 		return
 	}
+	if in.Note == in.Loaded {
+		// The form posts the note it loaded: nothing changed, so nothing is
+		// saved and the change log gains no entry.
+		http.Redirect(w, r, foxholeAddress(in.Query, in.Filter), http.StatusSeeOther)
+		return
+	}
 	// The save runs to its end whether or not the browser waits, as a hub
 	// save does.
 	err := p.foxhole.forSave(storeTimeout).saveNote(context.WithoutCancel(r.Context()), in, sess.actor())
 	var refusal *noteRefusal
 	if errors.As(err, &refusal) {
-		utils.Info("Panel Foxhole note save refused", "reason", refusal.Kind, "member_id", in.MemberID,
-			"username", sess.username, "forum_user_id", sess.userID)
-		p.renderFoxhole(w, r, sess, refusal.status, foxholeRequest{Query: in.Query, Filter: in.Filter, Note: in.MemberID, Refusal: refusal, Typed: in.Note})
+		utils.Info(refusal.log, "member_id", in.MemberID, "username", sess.username, "forum_user_id", sess.userID)
+		p.renderFoxhole(w, r, sess, refusal.status, foxholeRequest{Query: in.Query, Filter: in.Filter, NoteMember: in.MemberID, Refusal: refusal, Typed: in.Note})
 		return
 	}
 	if err != nil {
@@ -357,6 +368,17 @@ func (g foxholeGuild) rowOf(mem commands.ListedMember, note string) holderRow {
 // holds reports whether the row's member holds a Foxhole role.
 func (h holderRow) holds() bool { return h.Internal || h.External }
 
+// memberByID finds a member in the member list. A list that isn't complete
+// holds no members, so it finds nobody.
+func memberByID(list commands.MemberListSnapshot, id string) (commands.ListedMember, bool) {
+	for _, mem := range list.Members {
+		if mem.ID == id {
+			return mem, true
+		}
+	}
+	return commands.ListedMember{}, false
+}
+
 // displayName is the name a member shows in the server: their server
 // nickname, else their global name, else their username.
 func displayName(mem commands.ListedMember) string {
@@ -381,16 +403,18 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	list := s.manager.MemberList(s.guildID)
 	view := foxholeView{}
 	if list.Status == commands.MemberListComplete {
-		if err := s.refreshNames(ctx, list, records); err != nil {
-			return foxholeView{}, err
+		// The names are for a later load, once a member has left: a write
+		// that fails is reported and the page shows anyway.
+		if err := s.refreshNames(ctx, list, records); err != nil && !errors.Is(err, context.Canceled) {
+			utils.CaptureError("Panel Foxhole name refresh failed", err)
 		}
 		view = s.holderList(list, records, req)
 	}
-	view.Query, view.Filter = req.Query, knownFilter(req.Filter)
-	view.NoteTemplate = noteForm{Query: view.Query, Filter: view.Filter, Back: foxholeAddress(view.Query, view.Filter)}
+	view.Query, view.Filter = req.Query, req.Filter
+	view.NoteTemplate = noteForm{Query: req.Query, Filter: req.Filter, Back: foxholeAddress(req.Query, req.Filter)}
 	view.Changes = noteChangeViews(entries)
-	if req.Note != "" {
-		view.NoteForm = noteFormFor(req, list, s.foxholeGuildOf(), records)
+	if req.NoteMember != "" {
+		view.NoteForm = noteFormFor(req, list, records)
 	}
 	return view, nil
 }
@@ -399,7 +423,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 // member with a record whose display name or username changed since the
 // panel last saw them, so a member who leaves shows under their last
 // names. A load that finds none changed writes nothing.
-func (s foxholeService) refreshNames(ctx context.Context, list commands.MemberListSnapshot, records map[string]store.FoxholeMember) error {
+func (s foxholeService) refreshNames(ctx context.Context, list commands.MemberListSnapshot, records map[string]store.FoxholeRecord) error {
 	var changed []store.MemberNames
 	for _, mem := range list.Members {
 		rec, ok := records[mem.ID]
@@ -413,19 +437,19 @@ func (s foxholeService) refreshNames(ctx context.Context, list commands.MemberLi
 	if len(changed) == 0 {
 		return nil
 	}
-	if err := s.store.SetFoxholeMemberNames(ctx, s.guildID, changed); err != nil {
-		return fmt.Errorf("set Foxhole member names: %w", err)
+	if err := s.store.SetFoxholeRecordNames(ctx, s.guildID, changed); err != nil {
+		return fmt.Errorf("set Foxhole record names: %w", err)
 	}
 	return nil
 }
 
 // records reads the guild's Foxhole records keyed by member ID.
-func (s foxholeService) records(ctx context.Context) (map[string]store.FoxholeMember, error) {
-	members, err := s.store.ListFoxholeMembers(ctx, s.guildID)
+func (s foxholeService) records(ctx context.Context) (map[string]store.FoxholeRecord, error) {
+	members, err := s.store.ListFoxholeRecords(ctx, s.guildID)
 	if err != nil {
-		return nil, fmt.Errorf("list Foxhole members: %w", err)
+		return nil, fmt.Errorf("list Foxhole records: %w", err)
 	}
-	out := make(map[string]store.FoxholeMember, len(members))
+	out := make(map[string]store.FoxholeRecord, len(members))
 	for _, m := range members {
 		out[m.MemberID] = m
 	}
@@ -435,9 +459,8 @@ func (s foxholeService) records(ctx context.Context) (map[string]store.FoxholeMe
 // holderList builds the holder list from a complete member list: every
 // holder, with their note and their Edit link, narrowed to the search and
 // the filter.
-func (s foxholeService) holderList(list commands.MemberListSnapshot, records map[string]store.FoxholeMember, req foxholeRequest) foxholeView {
+func (s foxholeService) holderList(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, req foxholeRequest) foxholeView {
 	search := strings.ToLower(strings.TrimSpace(req.Query))
-	filter := knownFilter(req.Filter)
 	guild := s.foxholeGuildOf()
 	var matched []holderRow
 	holders := 0
@@ -447,7 +470,7 @@ func (s foxholeService) holderList(list commands.MemberListSnapshot, records map
 			continue
 		}
 		holders++
-		row.EditHref = noteAddress(req.Query, filter, mem.ID)
+		row.EditHref = foxholeURL(req.Query, req.Filter, mem.ID)
 		if row.matches(search) {
 			matched = append(matched, row)
 		}
@@ -455,7 +478,7 @@ func (s foxholeService) holderList(list commands.MemberListSnapshot, records map
 	slices.SortFunc(matched, func(a, b holderRow) int {
 		return cmp.Or(cmp.Compare(strings.ToLower(a.DisplayName), strings.ToLower(b.DisplayName)), cmp.Compare(a.ID, b.ID))
 	})
-	view := listView(matched, req.Query, filter)
+	view := listView(matched, req.Query, req.Filter)
 	view.NoHolders = holders == 0
 	return view
 }
@@ -463,15 +486,12 @@ func (s foxholeService) holderList(list commands.MemberListSnapshot, records map
 // noteFormFor is the note form the request opens: the member's note as the
 // store holds it, under the names the member list shows, or the record's
 // when the list doesn't hold them.
-func noteFormFor(req foxholeRequest, list commands.MemberListSnapshot, guild foxholeGuild, records map[string]store.FoxholeMember) *noteForm {
-	rec := records[req.Note]
-	filter := knownFilter(req.Filter)
-	form := &noteForm{MemberID: req.Note, DisplayName: rec.DisplayName, Username: rec.Username, Loaded: rec.Note, Note: rec.Note,
-		Query: req.Query, Filter: filter, Back: foxholeAddress(req.Query, filter)}
-	for _, mem := range list.Members {
-		if mem.ID == req.Note {
-			form.DisplayName, form.Username = displayName(mem), mem.Username
-		}
+func noteFormFor(req foxholeRequest, list commands.MemberListSnapshot, records map[string]store.FoxholeRecord) *noteForm {
+	rec := records[req.NoteMember]
+	form := &noteForm{MemberID: req.NoteMember, DisplayName: rec.DisplayName, Username: rec.Username, Loaded: rec.Note, Note: rec.Note,
+		Query: req.Query, Filter: req.Filter, Back: foxholeAddress(req.Query, req.Filter)}
+	if mem, ok := memberByID(list, req.NoteMember); ok {
+		form.DisplayName, form.Username = displayName(mem), mem.Username
 	}
 	if req.Refusal != nil {
 		form.Note, form.Refusal = req.Typed, req.Refusal
@@ -491,18 +511,15 @@ func (s foxholeService) saveNote(ctx context.Context, in noteInput, by actor) er
 	rec, hasRecord := records[in.MemberID]
 	names := store.MemberNames{MemberID: in.MemberID, DisplayName: rec.DisplayName, Username: rec.Username}
 	list := s.manager.MemberList(s.guildID)
-	var member *commands.ListedMember
-	for _, mem := range list.Members {
-		if mem.ID == in.MemberID {
-			member = &mem
-			names.DisplayName, names.Username = displayName(mem), mem.Username
-		}
+	member, inList := memberByID(list, in.MemberID)
+	if inList {
+		names.DisplayName, names.Username = displayName(member), member.Username
 	}
 	if !hasRecord && in.Loaded == "" {
 		switch {
 		case list.Status != commands.MemberListComplete:
 			return errNoteListPartial
-		case member == nil || !s.foxholeGuildOf().rowOf(*member, "").holds():
+		case !inList || !s.foxholeGuildOf().rowOf(member, "").holds():
 			return errNotHolder
 		}
 	}
@@ -594,14 +611,9 @@ func foxholeAddress(query, filter string) string {
 	return foxholeURL(query, filter, "")
 }
 
-// noteAddress is foxholeAddress with the member's note form open.
-func noteAddress(query, filter, memberID string) string {
-	return foxholeURL(query, filter, memberID)
-}
-
-// foxholeURL is the Foxhole page's address with the search, the filter and
-// the member whose note form opens, leaving out each that is the default.
-func foxholeURL(query, filter, note string) string {
+// foxholeURL is foxholeAddress with the note form of the member whose ID
+// is noteMember open, none when it is empty.
+func foxholeURL(query, filter, noteMember string) string {
 	v := url.Values{}
 	if filter != filterAll {
 		v.Set(paramFilter, filter)
@@ -609,8 +621,8 @@ func foxholeURL(query, filter, note string) string {
 	if query != "" {
 		v.Set(paramQuery, query)
 	}
-	if note != "" {
-		v.Set(paramNote, note)
+	if noteMember != "" {
+		v.Set(paramNoteMember, noteMember)
 	}
 	if len(v) == 0 {
 		return foxholePath

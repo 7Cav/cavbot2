@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE foxhole_members (
+CREATE TABLE foxhole_records (
     guild_id          TEXT        NOT NULL,
     member_id         TEXT        NOT NULL,
     note              TEXT        NOT NULL DEFAULT '',
@@ -21,4 +21,4 @@ CREATE TABLE foxhole_change_log (
 
 -- +goose Down
 DROP TABLE foxhole_change_log;
-DROP TABLE foxhole_members;
+DROP TABLE foxhole_records;

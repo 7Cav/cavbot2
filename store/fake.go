@@ -42,7 +42,7 @@ type Fake struct {
 	changes        changeLog
 	foxholeChanges changeLog
 	// members holds each guild's Foxhole records by member ID.
-	members map[string]map[string]FoxholeMember
+	members map[string]map[string]FoxholeRecord
 }
 
 // changeLog is one change log in append order, and the ID its next entry
@@ -61,7 +61,7 @@ func NewFake() *Fake {
 		guildRoles:     make(map[string]GuildModeratorRoles),
 		changes:        changeLog{nextID: 1},
 		foxholeChanges: changeLog{nextID: 1},
-		members:        make(map[string]map[string]FoxholeMember),
+		members:        make(map[string]map[string]FoxholeRecord),
 	}
 }
 
@@ -403,14 +403,14 @@ func (f *Fake) listChanges(log *changeLog, limit int, keep func(ChangeLogEntry) 
 	return out
 }
 
-// ListFoxholeMembers implements Store.
-func (f *Fake) ListFoxholeMembers(ctx context.Context, guildID string) ([]FoxholeMember, error) {
+// ListFoxholeRecords implements Store.
+func (f *Fake) ListFoxholeRecords(ctx context.Context, guildID string) ([]FoxholeRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var out []FoxholeMember
+	var out []FoxholeRecord
 	for _, m := range f.members[guildID] {
 		out = append(out, m)
 	}
@@ -422,7 +422,7 @@ func (f *Fake) SaveFoxholeNote(ctx context.Context, guildID string, save NoteSav
 	return f.writeToLog(ctx, &f.foxholeChanges, &entry, func() (int64, error) {
 		members := f.members[guildID]
 		if members == nil {
-			members = map[string]FoxholeMember{}
+			members = map[string]FoxholeRecord{}
 			f.members[guildID] = members
 		}
 		m := members[save.MemberID]
@@ -438,8 +438,8 @@ func (f *Fake) SaveFoxholeNote(ctx context.Context, guildID string, save NoteSav
 	})
 }
 
-// SetFoxholeMemberNames implements Store.
-func (f *Fake) SetFoxholeMemberNames(ctx context.Context, guildID string, names []MemberNames) error {
+// SetFoxholeRecordNames implements Store.
+func (f *Fake) SetFoxholeRecordNames(ctx context.Context, guildID string, names []MemberNames) error {
 	return f.writeAllOrNothing(ctx, nil, func() (int64, error) {
 		for _, n := range names {
 			if m, ok := f.members[guildID][n.MemberID]; ok {

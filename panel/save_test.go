@@ -208,9 +208,9 @@ func (s leavingStore) ListModeratorChanges(ctx context.Context, limit int) ([]st
 	return s.st.ListModeratorChanges(ctx, limit)
 }
 
-func (s leavingStore) ListFoxholeMembers(ctx context.Context, guildID string) ([]store.FoxholeMember, error) {
+func (s leavingStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
 	s.d.leave()
-	return s.st.ListFoxholeMembers(ctx, guildID)
+	return s.st.ListFoxholeRecords(ctx, guildID)
 }
 
 func (s leavingStore) SaveFoxholeNote(ctx context.Context, guildID string, save store.NoteSave, entry store.ChangeLogEntry) error {
@@ -218,9 +218,9 @@ func (s leavingStore) SaveFoxholeNote(ctx context.Context, guildID string, save 
 	return s.st.SaveFoxholeNote(ctx, guildID, save, entry)
 }
 
-func (s leavingStore) SetFoxholeMemberNames(ctx context.Context, guildID string, names []store.MemberNames) error {
+func (s leavingStore) SetFoxholeRecordNames(ctx context.Context, guildID string, names []store.MemberNames) error {
 	s.d.leave()
-	return s.st.SetFoxholeMemberNames(ctx, guildID, names)
+	return s.st.SetFoxholeRecordNames(ctx, guildID, names)
 }
 
 func (s leavingStore) ListFoxholeChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {

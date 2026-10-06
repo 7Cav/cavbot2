@@ -99,10 +99,10 @@ func (b boundedStore) ListModeratorChanges(ctx context.Context, limit int) ([]st
 	return b.store.ListModeratorChanges(ctx, limit)
 }
 
-func (b boundedStore) ListFoxholeMembers(ctx context.Context, guildID string) ([]store.FoxholeMember, error) {
+func (b boundedStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
 	ctx, cancel := context.WithTimeout(ctx, b.timeout)
 	defer cancel()
-	return b.store.ListFoxholeMembers(ctx, guildID)
+	return b.store.ListFoxholeRecords(ctx, guildID)
 }
 
 func (b boundedStore) SaveFoxholeNote(ctx context.Context, guildID string, save store.NoteSave, entry store.ChangeLogEntry) error {
@@ -111,10 +111,10 @@ func (b boundedStore) SaveFoxholeNote(ctx context.Context, guildID string, save 
 	return b.store.SaveFoxholeNote(ctx, guildID, save, entry)
 }
 
-func (b boundedStore) SetFoxholeMemberNames(ctx context.Context, guildID string, names []store.MemberNames) error {
+func (b boundedStore) SetFoxholeRecordNames(ctx context.Context, guildID string, names []store.MemberNames) error {
 	ctx, cancel := context.WithTimeout(ctx, b.timeout)
 	defer cancel()
-	return b.store.SetFoxholeMemberNames(ctx, guildID, names)
+	return b.store.SetFoxholeRecordNames(ctx, guildID, names)
 }
 
 func (b boundedStore) ListFoxholeChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {

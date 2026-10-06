@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/7cav/cavbot2/commands"
@@ -59,27 +60,15 @@ func findLive(n *html.Node, tag, attr, value string) *html.Node {
 }
 
 // submitNote submits the page's note form with text typed in its note box,
-// the way a browser posts a form: every field it carries goes in the body.
+// the way a browser posts a form.
 func submitNote(t *testing.T, b *browser, doc *html.Node, text string) *http.Response {
 	t.Helper()
-	form := findLive(doc, "form", "data-field", "note-form")
-	if form == nil {
+	if findLive(doc, "form", "data-field", "note-form") == nil {
 		t.Fatal("the page has no note form")
 	}
-	action, _ := attrValue(form, "action")
-	fields := url.Values{}
-	eachElement(form, func(n *html.Node) {
-		name, ok := attrValue(n, "name")
-		if n.Data != "input" || !ok {
-			return
-		}
-		value, _ := attrValue(n, "value")
-		if name == fieldNote {
-			value = text
-		}
-		fields.Add(name, value)
-	})
-	return b.postForm(action, fields)
+	fields := formPosts(t, doc, foxholeNotesPath)
+	fields.Set(fieldNote, text)
+	return b.postForm(foxholeNotesPath, fields)
 }
 
 // noteOf returns the note a holder row shows: the text of its note field,
@@ -174,18 +163,20 @@ func noteSaveForm(memberID, loaded, note string) url.Values {
 }
 
 // noteState is everything a note save can write, read back through the
-// store: the test guild's Foxhole records and the Foxhole change log.
+// store: the test guild's Foxhole records, by member ID, and the Foxhole
+// change log.
 type noteState struct {
-	Records []store.FoxholeMember
+	Records []store.FoxholeRecord
 	Entries []store.ChangeLogEntry
 }
 
 func readNoteState(t *testing.T, st store.Store) noteState {
 	t.Helper()
-	records, err := st.ListFoxholeMembers(context.Background(), testGuildID)
+	records, err := st.ListFoxholeRecords(context.Background(), testGuildID)
 	if err != nil {
-		t.Fatalf("ListFoxholeMembers: %v", err)
+		t.Fatalf("ListFoxholeRecords: %v", err)
 	}
+	slices.SortFunc(records, func(a, b store.FoxholeRecord) int { return strings.Compare(a.MemberID, b.MemberID) })
 	entries, err := st.ListFoxholeChanges(context.Background(), 100)
 	if err != nil {
 		t.Fatalf("ListFoxholeChanges: %v", err)
@@ -236,7 +227,7 @@ func TestNoteEditSavesWhileTheMemberListIsPartial(t *testing.T) {
 	res := w.b.postForm(foxholeNotesPath, noteSaveForm(memberDoe.ID, "discharged 12 Sep", "rejoined, fine to re-add"))
 
 	assertRedirect(t, res, foxholePath)
-	want := []store.FoxholeMember{{MemberID: memberDoe.ID, Note: "rejoined, fine to re-add", DisplayName: "SGT Doe.J", Username: "jdoe"}}
+	want := []store.FoxholeRecord{{MemberID: memberDoe.ID, Note: "rejoined, fine to re-add", DisplayName: "SGT Doe.J", Username: "jdoe"}}
 	if got := readNoteState(t, w.st).Records; !reflect.DeepEqual(got, want) {
 		t.Errorf("records = %+v, want %+v", got, want)
 	}
@@ -276,7 +267,7 @@ func TestStaleNoteFormIsRefusedAndItsNextSaveLands(t *testing.T) {
 		t.Errorf("the note box holds %q, want the text typed", typed)
 	}
 	assertRedirect(t, submitNote(t, w.b, doc, "rejoined, fine to re-add"), foxholePath)
-	want := []store.FoxholeMember{{MemberID: memberDoe.ID, Note: "rejoined, fine to re-add", DisplayName: "SGT Doe.J", Username: "jdoe"}}
+	want := []store.FoxholeRecord{{MemberID: memberDoe.ID, Note: "rejoined, fine to re-add", DisplayName: "SGT Doe.J", Username: "jdoe"}}
 	if got := readNoteState(t, w.st).Records; !reflect.DeepEqual(got, want) {
 		t.Errorf("records after the second save = %+v, want %+v", got, want)
 	}
@@ -330,7 +321,7 @@ func TestPageLoadRefreshesTheLastSeenNamesOfAMemberWithANote(t *testing.T) {
 
 	w.b.get(foxholePath)
 
-	want := []store.FoxholeMember{{MemberID: memberDoe.ID, Note: "discharged 12 Sep", DisplayName: "CPL Doe.J", Username: "jdoe_cav"}}
+	want := []store.FoxholeRecord{{MemberID: memberDoe.ID, Note: "discharged 12 Sep", DisplayName: "CPL Doe.J", Username: "jdoe_cav"}}
 	if got := readNoteState(t, w.st).Records; !reflect.DeepEqual(got, want) {
 		t.Errorf("records after the page load = %+v, want %+v", got, want)
 	}
@@ -373,7 +364,7 @@ func TestFoxholePageWhoseStoreReadFailsShowsTheCouldNotLoadPage(t *testing.T) {
 		Members: []commands.ListedMember{memberDoe, memberKestrel}})
 	signInAs(t, w.forum, w.b, addFoxholeManager(w.forum))
 	reported := recordSentry(t)
-	st.failRead("ListFoxholeMembers")
+	st.failRead("ListFoxholeRecords")
 
 	res := w.b.get(foxholePath)
 
@@ -386,6 +377,54 @@ func TestFoxholePageWhoseStoreReadFailsShowsTheCouldNotLoadPage(t *testing.T) {
 	}
 	if name := findElement(doc, "", "data-field", "username"); name == nil || textOf(name) != "Smith.F" {
 		t.Error("the page shows no signed-in Smith.F, want the session kept")
+	}
+	if n := len(reported.recorded()); n != 1 {
+		t.Errorf("sent %d Sentry events, want 1", n)
+	}
+}
+
+// A note save that changes nothing writes nothing: the note form posted
+// with the note it loaded lands back on the list, and the change log gains
+// no entry with the same text before and after.
+func TestNoteSaveThatChangesNothingWritesNoEntry(t *testing.T) {
+	w := newFoxholeWorld(t)
+	assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
+	before := readNoteState(t, w.st)
+
+	res := submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep")
+
+	assertRedirect(t, res, foxholePath)
+	if after := readNoteState(t, w.st); !reflect.DeepEqual(after, before) {
+		t.Errorf("the store after the unchanged save = %+v, want it as before, %+v", after, before)
+	}
+}
+
+// The name refresh is bookkeeping for a later load: a page load whose
+// refresh write fails still shows the holder list with the notes, and
+// reports the failure to Sentry once.
+func TestFoxholePageWhoseNameRefreshFailsStillShowsTheHolderList(t *testing.T) {
+	t.Setenv("FOXHOLE_ROLE_BASE_NAME", "")
+	t.Setenv("WARDEN_ROLE_BASE_NAME", "")
+	w, st := newCtxWorld(t)
+	w.discord.addRoles(foxholeGuildRoles...)
+	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
+		Members: []commands.ListedMember{memberDoe, memberKestrel}})
+	signInAs(t, w.forum, w.b, addFoxholeManager(w.forum))
+	assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
+	renamed := memberDoe
+	renamed.Nick = "CPL Doe.J"
+	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
+		Members: []commands.ListedMember{renamed, memberKestrel}})
+	reported := recordSentry(t)
+	st.failRead("SetFoxholeRecordNames")
+
+	res := w.b.get(foxholePath)
+
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", res.StatusCode)
+	}
+	if got := noteOf(t, parseHTML(t, res), memberDoe.ID); got != "discharged 12 Sep" {
+		t.Errorf("%s's row shows the note %q, want the one saved", memberDoe.ID, got)
 	}
 	if n := len(reported.recorded()); n != 1 {
 		t.Errorf("sent %d Sentry events, want 1", n)

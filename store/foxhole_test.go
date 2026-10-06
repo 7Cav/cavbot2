@@ -32,13 +32,13 @@ func saveNote(s Store, memberID, before, note string) error {
 }
 
 // foxholeMembers lists guild-1's Foxhole records keyed by member ID.
-func foxholeMembers(t *testing.T, s Store) map[string]FoxholeMember {
+func foxholeRecords(t *testing.T, s Store) map[string]FoxholeRecord {
 	t.Helper()
-	members, err := s.ListFoxholeMembers(context.Background(), "guild-1")
+	members, err := s.ListFoxholeRecords(context.Background(), "guild-1")
 	if err != nil {
-		t.Fatalf("ListFoxholeMembers: %v", err)
+		t.Fatalf("ListFoxholeRecords: %v", err)
 	}
-	out := map[string]FoxholeMember{}
+	out := map[string]FoxholeRecord{}
 	for _, m := range members {
 		out[m.MemberID] = m
 	}
@@ -68,7 +68,7 @@ func TestNoteSaveReadsBack(t *testing.T) {
 			t.Fatalf("SaveFoxholeNote: %v", err)
 		}
 
-		members := foxholeMembers(t, s)
+		members := foxholeRecords(t, s)
 		got, ok := members[memberDoe]
 		if len(members) != 1 || !ok {
 			t.Fatalf("records = %+v, want one, for %s", members, memberDoe)
@@ -90,9 +90,9 @@ func TestNoteSaveReadsBack(t *testing.T) {
 		if diff, want := decodeDiff(t, e.Diff), decodeDiff(t, entry.Diff); !reflect.DeepEqual(diff, want) {
 			t.Errorf("diff = %v, want %v", diff, want)
 		}
-		other, err := s.ListFoxholeMembers(ctx, "guild-2")
+		other, err := s.ListFoxholeRecords(ctx, "guild-2")
 		if err != nil {
-			t.Fatalf("ListFoxholeMembers(guild-2): %v", err)
+			t.Fatalf("ListFoxholeRecords(guild-2): %v", err)
 		}
 		if len(other) != 0 {
 			t.Errorf("guild-2's records = %+v, want none", other)
@@ -103,13 +103,13 @@ func TestNoteSaveReadsBack(t *testing.T) {
 // foxholeState is everything a note save can write, read back through the
 // store: guild-1's Foxhole records and the Foxhole change log.
 type foxholeState struct {
-	Members map[string]FoxholeMember
+	Members map[string]FoxholeRecord
 	Entries []ChangeLogEntry
 }
 
 func readFoxholeState(t *testing.T, s Store) foxholeState {
 	t.Helper()
-	return foxholeState{Members: foxholeMembers(t, s), Entries: foxholeChanges(t, s)}
+	return foxholeState{Members: foxholeRecords(t, s), Entries: foxholeChanges(t, s)}
 }
 
 // A note save writes only over the note its saver loaded. One whose Before
@@ -160,7 +160,7 @@ func TestEmptyNoteSaveRemovesTheRecordAndAppendsItsEntry(t *testing.T) {
 			t.Fatalf("SaveFoxholeNote with an empty note: %v", err)
 		}
 
-		if members := foxholeMembers(t, s); len(members) != 0 {
+		if members := foxholeRecords(t, s); len(members) != 0 {
 			t.Errorf("records = %+v, want none", members)
 		}
 		entries := foxholeChanges(t, s)
@@ -209,15 +209,15 @@ func TestNameRefreshUpdatesOnlyMembersWithARecord(t *testing.T) {
 		}
 		const stranger = "100000000000000009"
 
-		err := s.SetFoxholeMemberNames(ctx, "guild-1", []MemberNames{
+		err := s.SetFoxholeRecordNames(ctx, "guild-1", []MemberNames{
 			{MemberID: memberDoe, DisplayName: "CPL Doe.J", Username: "jdoe_cav"},
 			{MemberID: stranger, DisplayName: "Ghost", Username: "ghost"},
 		})
 
 		if err != nil {
-			t.Fatalf("SetFoxholeMemberNames: %v", err)
+			t.Fatalf("SetFoxholeRecordNames: %v", err)
 		}
-		members := foxholeMembers(t, s)
+		members := foxholeRecords(t, s)
 		if got := members[memberDoe]; got.DisplayName != "CPL Doe.J" || got.Username != "jdoe_cav" || got.Note != "discharged 12 Sep" {
 			t.Errorf("%s's record = %+v, want CPL Doe.J @jdoe_cav with the note kept", memberDoe, got)
 		}
