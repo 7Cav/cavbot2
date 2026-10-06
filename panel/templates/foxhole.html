@@ -12,7 +12,8 @@
   <div role="status" data-note-result>{{with .Cleared}}<div class="note note--ok" data-field="note-result" data-cleared="{{.MemberID}}">Cleared the note on {{.MemberName}} <span class="fx-user">@{{.MemberUsername}}</span>. They hold no Foxhole role, so they're no longer listed.</div>{{end}}</div>
   {{with .ApprovalRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
   {{with .Skipped}}<div class="note" data-field="approve-skipped">Not approved, since {{if eq (len .) 1}}this member doesn't{{else}}these members don't{{end}} hold External: {{range $i, $m := .}}{{if $i}}, {{end}}<span data-skipped="{{$m.ID}}">{{if $m.DisplayName}}{{$m.DisplayName}} <span class="fx-user">@{{$m.Username}}</span>{{else}}{{$m.ID}}{{end}}</span>{{end}}. Nothing changed for them.</div>{{end}}
-  {{if .ListReady}}
+  {{if not .ListNotice}}
+  {{if .Disconnected}}<div class="note" data-notice="disconnected">Cavbot2 has lost its connection to Discord. The holder list may be out of date.</div>{{end}}
   {{if .NoRoleView}}
   <section class="block" data-field="no-role">
     <h2 class="block-header">Members with a note and no Foxhole role</h2>
@@ -63,9 +64,13 @@
     {{template "also-matches" .AlsoMatches}}
   </section>
   {{end}}
-  {{else}}
-  <div class="note" data-notice="member-list">Cavbot2 doesn't have the whole member list from Discord yet, so the holder list can't show. Reload the page in a minute.</div>
-  {{end}}
+  {{else}}{{with .ListNotice}}
+  <div class="note" role="status" data-notice="member-list" data-list-status="{{.Status}}">
+    {{- if eq .Status "arriving"}}Waiting for the member list from Discord{{if .Expected}} (<span data-field="parts_received">{{.Received}}</span> of <span data-field="parts_expected">{{.Expected}}</span>){{end}}.
+    {{- else if eq .Status "refused"}}Discord stopped the member list fetch. Retrying in <span data-field="retry_in">{{.RetryIn}}</span> s.
+    {{- else if eq .Status "late"}}Discord took too long to send the member list.
+    {{- else}}Discord's member list didn't arrive. Wait a bit and try again.{{end}} <a href="{{.Reload}}" data-field="reload">Reload</a></div>
+  {{end}}{{end}}
   <section class="block" data-field="changes">
     <h2 class="block-header">Change log</h2>
     {{range $i, $_ := .Changes}}

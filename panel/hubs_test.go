@@ -72,8 +72,12 @@ type fakeDiscord struct {
 	// roles are the guild's roles as the fake gateway state holds them.
 	roles []*discordgo.Role
 	// memberList is the member list snapshot the fake gateway state gives:
-	// no guild until a test sets one.
+	// complete, with the bot its one member, until a test sets one, as the
+	// production adapter gives it beside a guild whose data the state holds.
 	memberList commands.MemberListSnapshot
+	// partialListRead closes at the first read that finds the member list
+	// partial, once holdPartialList has armed it.
+	partialListRead chan struct{}
 }
 
 // fakeEdit is one edit call as the fake recorded it: the channel, the name
@@ -112,8 +116,14 @@ func newFakeDiscord() *fakeDiscord {
 		{ID: "vc-2", Name: "Squad Join", Type: discordgo.ChannelTypeGuildVoice, ParentID: "cat-1"},
 		{ID: "text-1", Name: "general", Type: discordgo.ChannelTypeGuildText, ParentID: "cat-1"},
 		{ID: "vc-noparent", Name: "Lobby", Type: discordgo.ChannelTypeGuildVoice},
-	}, voice: map[string]string{}, guildStatus: commands.GuildDataPresent, roles: slices.Clone(testGuildRoles)}
+	}, voice: map[string]string{}, guildStatus: commands.GuildDataPresent, roles: slices.Clone(testGuildRoles),
+		memberList: commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
+			Members: []commands.ListedMember{testBotMember}}}
 }
+
+// testBotMember is the bot as the member list holds it: a guild's member
+// list always holds the bot.
+var testBotMember = commands.ListedMember{ID: "200000000000000001", Username: "cavbot2"}
 
 func (f *fakeDiscord) Channel(channelID string) (*discordgo.Channel, error) {
 	f.mu.Lock()
@@ -282,6 +292,10 @@ func (f *fakeDiscord) MemberList(guildID string) commands.MemberListSnapshot {
 	if guildID != testGuildID {
 		return commands.MemberListSnapshot{}
 	}
+	if f.memberList.Status != commands.MemberListComplete && f.partialListRead != nil {
+		close(f.partialListRead)
+		f.partialListRead = nil
+	}
 	snap := f.memberList
 	snap.Members = nil
 	for _, m := range f.memberList.Members {
@@ -296,6 +310,17 @@ func (f *fakeDiscord) setMemberList(snap commands.MemberListSnapshot) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.memberList = snap
+}
+
+// holdPartialList leaves a partial member list snapshot in the fake gateway
+// state. The channel closes at the first read that finds it partial, and
+// that read still returns it.
+func (f *fakeDiscord) holdPartialList(snap commands.MemberListSnapshot) <-chan struct{} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.memberList = snap
+	f.partialListRead = make(chan struct{})
+	return f.partialListRead
 }
 
 // addRoles puts roles in the guild's role list.

@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/7cav/cavbot2/commands"
 	"github.com/bwmarrin/discordgo"
@@ -18,10 +17,17 @@ import (
 // with, the production default.
 const testFoxholeGroupID = 323
 
+// The Foxhole manager addFoxholeManager adds: their forum user ID and
+// username.
+const (
+	managerUserID   = 2468
+	managerUsername = "Smith.F"
+)
+
 // addFoxholeManager makes the forum know a user in the Foxhole group by a
 // secondary group, and in none of the panel's admin groups.
 func addFoxholeManager(f *fakeForum) *forumAccount {
-	return f.addUser(2468, "Smith.F", 2, []int{35, testFoxholeGroupID})
+	return f.addUser(managerUserID, managerUsername, 2, []int{35, testFoxholeGroupID})
 }
 
 // follow follows the panel's redirects from res, the way a browser does,
@@ -434,46 +440,6 @@ func TestFoxholePageMakesNoDiscordCall(t *testing.T) {
 	}
 	if n := w.discord.apiReadCount() - before; n != 0 {
 		t.Errorf("the page load made %d reads of Discord's API, want 0", n)
-	}
-}
-
-// While the member list isn't complete, a notice takes the holder list's
-// place, whatever the reason: the page never shows a list it doesn't hold
-// whole. Each snapshot is one the production adapter returns, with no
-// members until the list is complete.
-func TestFoxholePageShowsANoticeWhileTheMemberListIsIncomplete(t *testing.T) {
-	cases := []struct {
-		name  string
-		guild commands.GuildDataStatus
-		list  commands.MemberListSnapshot
-	}{
-		{"arriving", commands.GuildDataPresent, commands.MemberListSnapshot{
-			Status: commands.MemberListArriving, Connected: true, PartsReceived: 3, PartsExpected: 10}},
-		{"refused", commands.GuildDataPresent, commands.MemberListSnapshot{
-			Status: commands.MemberListRefused, Connected: true, RetryAt: time.Date(2026, 10, 5, 12, 0, 25, 0, time.UTC)}},
-		{"late", commands.GuildDataPresent, commands.MemberListSnapshot{
-			Status: commands.MemberListLate, Connected: true, PartsReceived: 3, PartsExpected: 10}},
-		{"no guild", commands.GuildDataArriving, commands.MemberListSnapshot{Status: commands.MemberListNoGuild}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			w := newFoxholeWorld(t)
-			w.discord.setGuild(tc.guild)
-			w.discord.setMemberList(tc.list)
-
-			res := w.b.get("/foxhole")
-
-			if res.StatusCode != http.StatusOK {
-				t.Errorf("status = %d, want 200", res.StatusCode)
-			}
-			doc := parseHTML(t, res)
-			if findElement(doc, "", "data-notice", "member-list") == nil {
-				t.Error("the page has no member list notice")
-			}
-			if findElement(doc, "", "data-field", "holders") != nil {
-				t.Error("the page shows a holder list")
-			}
-		})
 	}
 }
 

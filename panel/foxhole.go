@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"slices"
@@ -21,10 +22,14 @@ import (
 // from the gateway state at this load, narrowed to the search and the
 // filter, the note form the page opens, and the page's change log.
 type foxholeView struct {
-	// ListReady is the member list complete at this load. Until it is, a
-	// notice takes the holder list's place, so the page never shows a
-	// partial list.
-	ListReady bool
+	// ListNotice is the notice in the holder list's place while the member
+	// list isn't complete at this load, so the page never shows a partial
+	// list. Nil once the list is complete.
+	ListNotice *listNotice
+	// Disconnected is the bot's gateway connection down with the list
+	// complete: the page shows in full, and says the holder list may be out
+	// of date.
+	Disconnected bool
 	// Query is the search as typed, rendered back into the search box.
 	Query string
 	// Filter names the filter the list shows: filterAll when the address
@@ -75,6 +80,53 @@ type foxholeView struct {
 	// ApprovalRefusal is why the approvals save this page answers was
 	// refused, nil for a page that answers none.
 	ApprovalRefusal *saveRefusal
+}
+
+// listNotice is the one-line notice in the holder list's place while the
+// member list is partial: how far along the list is, and a Reload link.
+type listNotice struct {
+	// Status is the list's state as the notice names it.
+	Status listState
+	// Received and Expected count the parts of a list arriving. Expected is
+	// 0 until the first part says how many, and the notice then counts
+	// none.
+	Received, Expected int
+	// RetryIn is the whole seconds until the bot asks again after a
+	// refusal.
+	RetryIn int
+	// Reload is the address the Reload link loads, and the page's script
+	// loads in the background to learn when the list has arrived: the page
+	// in the view it shows, with any note form it shows open.
+	Reload string
+}
+
+// listState is a partial member list's state as the notice names it, its
+// data-list-status marker.
+type listState string
+
+const (
+	listArriving listState = "arriving"
+	listRefused  listState = "refused"
+	listLate     listState = "late"
+	listNoGuild  listState = "no-guild"
+)
+
+// noticeFor is the notice for a member list that isn't complete, its
+// Reload link loading reload.
+func noticeFor(list commands.MemberListSnapshot, reload string) *listNotice {
+	n := &listNotice{Received: list.PartsReceived, Expected: list.PartsExpected, Reload: reload}
+	switch list.Status {
+	case commands.MemberListArriving:
+		n.Status = listArriving
+	case commands.MemberListRefused:
+		n.Status = listRefused
+		n.RetryIn = max(1, int(math.Ceil(list.RetryAt.Sub(now()).Seconds())))
+	case commands.MemberListLate:
+		n.Status = listLate
+	default:
+		n.Status = listNoGuild
+	}
+	return n
 }
 
 // filterLink is one filter link above the holder list. Each keeps the
@@ -320,6 +372,10 @@ type foxholeRequest struct {
 	// ApprovalRefusal is the refusal of the approvals save this page
 	// answers, nil for none.
 	ApprovalRefusal *saveRefusal
+	// AwaitList is a page load, which waits within its time budget for a
+	// member list on its way. A refused save's page answers at once with
+	// the list as it stands.
+	AwaitList bool
 }
 
 // foxholePage is GET /foxhole, the Foxhole page. It reads the guild's roles
@@ -329,7 +385,7 @@ func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session
 	q := r.URL.Query()
 	p.renderFoxhole(w, r, sess, http.StatusOK,
 		foxholeRequest{Query: q.Get(paramQuery), Filter: knownFilter(q.Get(paramFilter)), NoteMember: q.Get(paramNoteMember),
-			Cleared: q.Get(paramCleared), Skipped: q[paramSkipped]})
+			Cleared: q.Get(paramCleared), Skipped: q[paramSkipped], AwaitList: true})
 }
 
 // renderFoxhole renders the Foxhole page read now, under the page's time
@@ -346,6 +402,11 @@ func (p *Panel) renderFoxhole(w http.ResponseWriter, r *http.Request, sess sessi
 	if err != nil {
 		p.pageFailed(w, sess, "foxhole page", foxholeAddress(req.Query, req.Filter), err, nil)
 		return
+	}
+	if view.ListNotice != nil && view.ListNotice.Status == listNoGuild {
+		// Discord's delay, as on the hub page, though the page itself shows,
+		// with the notice in the list's place.
+		logNoGuildData(sess, "foxhole page", errNoGuildData)
 	}
 	data := sess.page("Foxhole")
 	data.Page, data.Foxhole = pageFoxhole, view
@@ -531,12 +592,13 @@ func displayName(mem commands.ListedMember) string {
 	return cmp.Or(mem.Nick, mem.GlobalName, mem.Username)
 }
 
-// view reads the Foxhole page from one snapshot of the guild's roles and
-// one of its member list, through the manager seam, never Discord's API,
-// and from the store's Foxhole records and change log. The holder list
-// keeps the holders who match the search and the filter named. A member
-// list that isn't complete holds no members, and the page has no holder
-// list.
+// view reads the Foxhole page from the store's Foxhole records and change
+// log, then from one snapshot of the guild's roles and one of its member
+// list, through the manager seam, never Discord's API. The store comes
+// first, so a page load that waits out its time budget for the list still
+// has what it shows in the list's place. The holder list keeps the holders
+// who match the search and the filter named. A member list that isn't
+// complete holds no members, and the page has no holder list.
 func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeView, error) {
 	records, err := s.records(ctx)
 	if err != nil {
@@ -546,15 +608,24 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	if err != nil {
 		return foxholeView{}, fmt.Errorf("list Foxhole changes: %w", err)
 	}
-	list := s.manager.MemberList(s.guildID)
+	list, err := s.memberList(ctx, req.AwaitList)
+	if err != nil {
+		return foxholeView{}, err
+	}
 	view := foxholeView{}
 	if list.Status == commands.MemberListComplete {
 		// The names are for a later load, once a member has left: a write
-		// that fails is reported and the page shows anyway.
-		if err := s.refreshNames(ctx, list, records); err != nil && !errors.Is(err, context.Canceled) {
+		// that fails is reported and the page shows anyway. A write cut
+		// short because the wait used up the time budget, or because the
+		// page load was abandoned, is no store fault. The next load writes
+		// the names.
+		if err := s.refreshNames(ctx, list, records); err != nil && ctx.Err() == nil {
 			utils.CaptureError("Panel Foxhole name refresh failed", err)
 		}
 		view = s.lists(list, records, req)
+		view.Disconnected = !list.Connected
+	} else {
+		view.ListNotice = noticeFor(list, foxholeURL(req.Query, req.Filter, req.NoteMember))
 	}
 	view.Query, view.Filter = req.Query, req.Filter
 	view.NoteTemplate = req.blankNoteForm()
@@ -568,6 +639,44 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	view.Skipped = s.stillSkipped(list, records, req.Skipped)
 	view.ApprovalRefusal = req.ApprovalRefusal
 	return view, nil
+}
+
+// memberList reads the member list through the manager seam, never
+// Discord's API. With await set, as on a page load, it waits for a list
+// that isn't complete, the way the hub page waits for the guild's data: it
+// reads again every guildDataPoll until the list completes or ctx ends.
+// When the time budget ends the wait, it returns the list as it stands, and
+// the page shows a notice in the list's place. It stops waiting at once for
+// a list that can't complete within the budget. Discord may have refused
+// the bot's request with the next one due after the deadline, or the guild
+// may be absent from the state, which the hub page doesn't wait for
+// either.
+func (s foxholeService) memberList(ctx context.Context, await bool) (commands.MemberListSnapshot, error) {
+	list := s.manager.MemberList(s.guildID)
+	if !await {
+		return list, nil
+	}
+	deadline, _ := ctx.Deadline()
+	poll := time.NewTicker(guildDataPoll)
+	defer poll.Stop()
+	for list.Status != commands.MemberListComplete {
+		switch {
+		case list.Status == commands.MemberListRefused && list.RetryAt.After(deadline):
+			return list, nil
+		case list.Status == commands.MemberListNoGuild && s.manager.GuildData(s.guildID).Status == commands.GuildDataAbsent:
+			return list, nil
+		}
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return list, nil
+			}
+			return list, fmt.Errorf("wait for the member list: %w", ctx.Err())
+		case <-poll.C:
+		}
+		list = s.manager.MemberList(s.guildID)
+	}
+	return list, nil
 }
 
 // stillSkipped is the members an Approve skipped for not holding External
@@ -970,7 +1079,7 @@ func knownFilter(filter string) string {
 // listView builds the page from the holders matching the search: a link for
 // each filter with its count, and the holders the named filter keeps.
 func listView(matched []holderRow, query, filter string) foxholeView {
-	page := foxholeView{ListReady: true, Query: query, Filter: filter}
+	page := foxholeView{Query: query, Filter: filter}
 	for _, f := range holderFilters {
 		link := filterLink{Name: f.name, Label: f.label, Href: foxholeAddress(query, f.name), On: f.name == page.Filter}
 		for _, h := range matched {
