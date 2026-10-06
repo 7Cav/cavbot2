@@ -14,42 +14,6 @@ import (
 	"golang.org/x/net/html"
 )
 
-// pressRemove ticks the holder list's checkbox of each member named and
-// presses the selection bar's Remove button for the role, the way a browser
-// submits the selection: the fields the selection form owns, the ticked
-// boxes among them, and the name and value of the button pressed, sent by
-// the method and to the address the button names, else the form's.
-func pressRemove(t *testing.T, b *browser, doc *html.Node, role string, memberIDs ...string) *http.Response {
-	t.Helper()
-	rows := holderRows(t, doc)
-	for _, id := range memberIDs {
-		row, ok := rows[id]
-		if !ok {
-			t.Fatalf("the holder list has no row for %s", id)
-		}
-		box := findElement(row, "input", "type", "checkbox")
-		if box == nil {
-			t.Fatalf("%s's row has no checkbox", id)
-		}
-		box.Attr = append(box.Attr, html.Attribute{Key: "checked"})
-	}
-	button := removeButton(t, doc, role)
-	form := findElement(doc, "form", "data-field", "selection")
-	fields := formPosts(t, doc, attrOf(form, "action"))
-	fields.Set(attrOf(button, "name"), attrOf(button, "value"))
-	action, method := attrOf(form, "action"), attrOf(form, "method")
-	if v, ok := attrValue(button, "formaction"); ok {
-		action = v
-	}
-	if v, ok := attrValue(button, "formmethod"); ok {
-		method = v
-	}
-	if method == "get" {
-		return b.get(action + "?" + fields.Encode())
-	}
-	return b.postForm(action, fields)
-}
-
 // removeButton returns the selection bar's Remove button for the role, and
 // fails the test when the bar has none.
 func removeButton(t *testing.T, doc *html.Node, role string) *html.Node {
@@ -132,7 +96,7 @@ func TestRemovePreviewListsWhoLosesTheRoleWhoIsSkippedAndWhoseApprovalItClears(t
 			page := parseHTML(t, w.b.get(foxholePath))
 			calls := w.discord.apiCallCount()
 
-			preview := removePreviewBlock(t, parseHTML(t, pressRemove(t, w.b, page, tc.role, tc.selected...)))
+			preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, page, tc.role, tc.selected...)))
 
 			if got := attrOf(preview, "data-role"); got != tc.role {
 				t.Errorf("the preview removes %q, want %q", got, tc.role)
@@ -203,7 +167,7 @@ func confirmRemoval(t *testing.T, b *browser, preview *html.Node) *http.Response
 func TestConfirmedRemovalTakesExternalAndClearsTheApprovalOfAnApprovedCollaborator(t *testing.T) {
 	w := newFoxholeWorld(t)
 	seedApproved(t, w, namesOf(memberMarsh))
-	preview := removePreviewBlock(t, parseHTML(t, pressRemove(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID, memberMarsh.ID)))
+	preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID, memberMarsh.ID)))
 
 	assertRedirect(t, confirmRemoval(t, w.b, preview), foxholePath)
 	w.awaitActionEnd(t)
@@ -243,7 +207,7 @@ func TestConfirmedRemovalTakesExternalAndClearsTheApprovalOfAnApprovedCollaborat
 // moderator knows who did it without opening the panel.
 func TestRemovalRoleChangesNameTheRemovalAndTheForumUserWhoStartedIt(t *testing.T) {
 	w := newFoxholeWorld(t)
-	preview := removePreviewBlock(t, parseHTML(t, pressRemove(t, w.b, parseHTML(t, w.b.get(foxholePath)), "internal", memberDoe.ID, memberAsh.ID)))
+	preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "internal", memberDoe.ID, memberAsh.ID)))
 
 	assertRedirect(t, confirmRemoval(t, w.b, preview), foxholePath)
 	w.awaitActionEnd(t)
@@ -271,7 +235,7 @@ func TestRemovePressedWhileTheMemberListIsPartialIsRefused(t *testing.T) {
 	w.discord.setMemberList(arrivingList)
 	calls := w.discord.apiCallCount()
 
-	doc := parseHTML(t, pressRemove(t, w.b, page, "external", memberKestrel.ID))
+	doc := parseHTML(t, submitSelection(t, w.b, page, "external", memberKestrel.ID))
 
 	if findLive(doc, "", "data-error", "member-list") == nil {
 		t.Error("the page doesn't say the removal was refused for the member list")
@@ -301,7 +265,7 @@ func TestRemoveControlsAreDisabledWhileAnActionRuns(t *testing.T) {
 			t.Errorf("the Remove %s button is enabled while a purge runs", role)
 		}
 	}
-	preview := removePreviewBlock(t, parseHTML(t, pressRemove(t, w.b, before, "external", memberKestrel.ID)))
+	preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, before, "external", memberKestrel.ID)))
 	if button := findElement(preview, "", "data-field", "confirm"); button == nil || !disabled(button) {
 		t.Error("the remove preview's Confirm is enabled while a purge runs")
 	}
@@ -313,7 +277,7 @@ func TestRemoveControlsAreDisabledWhileAnActionRuns(t *testing.T) {
 func TestRemovalByAUserInNeitherGroupIsRefused(t *testing.T) {
 	w := newFoxholeWorld(t)
 	seedApproved(t, w, namesOf(memberKestrel))
-	preview := removePreviewBlock(t, parseHTML(t, pressRemove(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID)))
+	preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID)))
 	outsider := newBrowser(t, w.p)
 	signInAs(t, w.forum, outsider, addUserOutsideAdminGroups(w.forum))
 	before := readNoteState(t, w.st)
@@ -344,8 +308,8 @@ func TestRemovePreviewWithNobodyLosingTheRoleCantBeConfirmed(t *testing.T) {
 	w := newFoxholeWorld(t)
 	page := parseHTML(t, w.b.get(foxholePath))
 
-	nobody := removePreviewBlock(t, parseHTML(t, pressRemove(t, w.b, page, "external", memberDoe.ID)))
-	somebody := removePreviewBlock(t, parseHTML(t, pressRemove(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID)))
+	nobody := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, page, "external", memberDoe.ID)))
+	somebody := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID)))
 
 	if enabledConfirm(nobody) {
 		t.Error("the preview of removing External from Doe alone, who doesn't hold it, offers a Confirm")
@@ -362,7 +326,7 @@ func TestRemovePreviewWithNobodyLosingTheRoleCantBeConfirmed(t *testing.T) {
 func TestRemovalOfInternalKeepsTheApproval(t *testing.T) {
 	w := newFoxholeWorld(t)
 	seedApproved(t, w, namesOf(memberMarsh))
-	preview := removePreviewBlock(t, parseHTML(t, pressRemove(t, w.b, parseHTML(t, w.b.get(foxholePath)), "internal", memberMarsh.ID)))
+	preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "internal", memberMarsh.ID)))
 
 	assertRedirect(t, confirmRemoval(t, w.b, preview), foxholePath)
 	w.awaitActionEnd(t)

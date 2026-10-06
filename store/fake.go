@@ -472,17 +472,8 @@ func (f *Fake) ApproveFoxholeMembers(ctx context.Context, guildID string, member
 // ClearFoxholeApprovals implements Store.
 func (f *Fake) ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry ChangeLogEntry) error {
 	return f.writeToLog(ctx, &f.foxholeChanges, &entry, func() (int64, error) {
-		records := f.members[guildID]
 		for _, id := range memberIDs {
-			m, ok := records[id]
-			if !ok {
-				continue
-			}
-			m.Approved = false
-			records[id] = m
-			if m.Note == "" {
-				delete(records, id)
-			}
+			f.clearApproval(guildID, id)
 		}
 		return 0, nil
 	})
@@ -492,18 +483,26 @@ func (f *Fake) ClearFoxholeApprovals(ctx context.Context, guildID string, member
 func (f *Fake) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string) (bool, error) {
 	cleared := false
 	err := f.writeAllOrNothing(ctx, nil, func() (int64, error) {
-		m, ok := f.members[guildID][memberID]
-		if !ok || !m.Approved {
-			return 0, nil
-		}
-		cleared, m.Approved = true, false
-		f.members[guildID][memberID] = m
-		if m.Note == "" {
-			delete(f.members[guildID], memberID)
-		}
+		cleared = f.clearApproval(guildID, memberID)
 		return 0, nil
 	})
 	return cleared, err
+}
+
+// clearApproval clears the member's approval, when they have one, drops
+// their record when that leaves it with no note, and reports whether they
+// had one. The caller holds mu.
+func (f *Fake) clearApproval(guildID, memberID string) bool {
+	m, ok := f.members[guildID][memberID]
+	if !ok || !m.Approved {
+		return false
+	}
+	m.Approved = false
+	f.members[guildID][memberID] = m
+	if m.Note == "" {
+		delete(f.members[guildID], memberID)
+	}
+	return true
 }
 
 // SetFoxholeRecordNames implements Store.

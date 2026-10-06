@@ -40,6 +40,12 @@ func ParseFoxholeRole(raw string) (FoxholeRole, bool) {
 	return "", false
 }
 
+// RemovalClearsApproval reports whether a removal of the role on the
+// Foxhole page clears the approval of each member it takes the role from.
+// Only External's does: approved collaborators are External only. A purge
+// never clears one.
+func (r FoxholeRole) RemovalClearsApproval() bool { return r == FoxholeExternal }
+
 // PurgeScope is which Foxhole roles a purge takes off their holders: both,
 // or Internal or External alone.
 type PurgeScope string
@@ -499,10 +505,10 @@ func (r *FoxholeRuntime) ReAdd(ctx context.Context, by ForumUser) error {
 // approval too, which a purge never does.
 func (r *FoxholeRuntime) Remove(ctx context.Context, role FoxholeRole, memberIDs []string, by ForumUser) error {
 	return r.start(ctx, actionSpec{
-		action: store.ChangeRemoval, role: role, roles: []FoxholeRole{role}, clearsApproval: role == FoxholeExternal,
+		action: store.ChangeRemoval, role: role, roles: []FoxholeRole{role}, clearsApproval: role.RemovalClearsApproval(),
 		reason: "Panel: Foxhole removal by ",
 		plan: func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange {
-			return removalPlan(list, roleIDs[role], records, role, memberIDs)
+			return removalPlan(list, roleIDs, records, role, memberIDs)
 		},
 	}, by)
 }
@@ -636,35 +642,36 @@ func reAddPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records 
 		if !rec.Approved {
 			continue
 		}
-		member := ReportMember{ID: rec.MemberID, DisplayName: rec.DisplayName, Username: rec.Username, Role: FoxholeExternal}
-		if m, ok := list.Member(rec.MemberID); ok {
-			member.DisplayName, member.Username = m.DisplayName(), m.Username
-		}
-		plan = append(plan, plannedChange{member: member, roleID: roleIDs[FoxholeExternal]})
+		seen := store.MemberNames{MemberID: rec.MemberID, DisplayName: rec.DisplayName, Username: rec.Username}
+		plan = append(plan, plannedChange{member: plannedMember(list, seen, FoxholeExternal), roleID: roleIDs[FoxholeExternal]})
 	}
 	return byDisplayName(plan)
 }
 
-// removalPlan is a removal's role changes: the role, by its ID, for each
-// member given, once, in display name order, whether or not they hold it
-// or are in the server. The member list names those in it, and the
-// records' last-seen names those who left.
-func removalPlan(list MemberListSnapshot, roleID string, records []store.FoxholeRecord, role FoxholeRole, memberIDs []string) []plannedChange {
+// removalPlan is a removal's role changes: the role for each member given,
+// once, in display name order, whether or not they hold it or are in the
+// server. The member list names those in it, and the records' last-seen
+// names those who left.
+func removalPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord, role FoxholeRole, memberIDs []string) []plannedChange {
 	names := namesOf(records)
-	seen := make(map[string]bool, len(memberIDs))
 	var plan []plannedChange
-	for _, id := range memberIDs {
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		member := ReportMember{ID: id, DisplayName: names[id].DisplayName, Username: names[id].Username, Role: role}
-		if m, ok := list.Member(id); ok {
-			member.DisplayName, member.Username = m.DisplayName(), m.Username
-		}
-		plan = append(plan, plannedChange{member: member, roleID: roleID})
+	for _, id := range slices.Compact(slices.Sorted(slices.Values(memberIDs))) {
+		seen := names[id]
+		seen.MemberID = id
+		plan = append(plan, plannedChange{member: plannedMember(list, seen, role), roleID: roleIDs[role]})
 	}
 	return byDisplayName(plan)
+}
+
+// plannedMember is a member an action sets out to change the role given
+// for, under the names the member list shows, or the last-seen names given
+// when it doesn't hold them.
+func plannedMember(list MemberListSnapshot, seen store.MemberNames, role FoxholeRole) ReportMember {
+	member := ReportMember{ID: seen.MemberID, DisplayName: seen.DisplayName, Username: seen.Username, Role: role}
+	if m, ok := list.Member(seen.MemberID); ok {
+		member.DisplayName, member.Username = m.DisplayName(), m.Username
+	}
+	return member
 }
 
 // byDisplayName sorts changes by their member's display name, ignoring

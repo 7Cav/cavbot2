@@ -52,7 +52,7 @@
     </form>
   </section>
   {{end}}
-  {{with .RemovePreview}}{{$role := .Name}}
+  {{with .RemovePreview}}
   <section class="block fx-pending fx-pending--danger" data-field="remove-preview" data-role="{{.Role}}">
     <h2 class="block-header">Remove {{.Name}}?</h2>
     {{with .Notes}}<div class="block-row" data-field="notes"><span data-field="note-count">{{.}}</span> {{if eq . 1}}member in this preview has{{else}}members in this preview have{{end}} a note.</div>{{end}}
@@ -60,8 +60,7 @@
     {{with .Cleared}}<div class="block-row fx-reportlist" data-list="approval-cleared"><h3>Approval cleared <span class="fx-count" data-field="count">{{len .}}</span></h3>
       <p>Removing External also clears the approval of {{if eq (len .) 1}}this approved collaborator{{else}}these approved collaborators{{end}}, so Re-add won't give it back to them.</p>
       <ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}">{{.DisplayName}} <span class="fx-user">@{{.Username}}</span></li>{{end}}</ul></div>{{end}}
-    <div class="block-row fx-reportlist" data-list="skipped"><h3>Skipped <span class="fx-count" data-field="count">{{len .Skipped}}</span></h3>
-      {{- with .Skipped}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}" data-reason="{{.Skip}}">{{template "preview-member" .}} <span data-field="reason">{{if eq .Skip "left"}}not in the server{{else}}doesn't hold {{$role}}{{end}}</span>{{template "preview-note" .}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}</div>
+    <div class="block-row fx-reportlist" data-list="skipped"><h3>Skipped <span class="fx-count" data-field="count">{{len .Skipped}}</span></h3>{{template "preview-members" .Skipped}}</div>
     {{if .Loses}}
     <div class="block-row"><p>Takes <span data-field="estimate" data-seconds="{{.Estimate.Seconds}}">about {{.Estimate.Text}}</span> at one change a second. It keeps going if you close this tab.</p></div>
     <form method="post" action="/foxhole/remove" class="submit-row">
@@ -233,11 +232,7 @@
   {{if .NoRoleRow}}<p class="fx-hint" id="note-hint" data-field="note-hint">An empty note takes this member off the page.</p>{{end}}
 </form>{{end}}
 
-{{define "preview-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}">{{template "preview-member" .}}{{template "preview-note" .}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}
-
-{{define "preview-member"}}{{if .DisplayName}}{{.DisplayName}} <span class="fx-user">@{{.Username}}</span>{{else}}{{.ID}}{{end}}{{end}}
-
-{{define "preview-note"}}{{with .Note}} <span class="fx-previewnote">Note: <span data-field="note">{{.}}</span></span>{{end}}{{end}}
+{{define "preview-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}"{{with .Skip}} data-reason="{{.}}"{{end}}>{{if .DisplayName}}{{.DisplayName}} <span class="fx-user">@{{.Username}}</span>{{else}}{{.ID}}{{end}}{{with .Why}} <span data-field="reason">{{.}}</span>{{end}}{{with .Note}} <span class="fx-previewnote">Note: <span data-field="note">{{.}}</span></span>{{end}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}
 
 {{define "outcome"}}{{if .StoppedBy}}Stopped by <span data-field="stopped-by">{{.StoppedBy}}</span>{{else}}{{.OutcomeLabel}}{{end}}{{end}}
 

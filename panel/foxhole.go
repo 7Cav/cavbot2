@@ -628,6 +628,11 @@ func (g foxholeGuild) rowOf(mem commands.ListedMember, rec store.FoxholeRecord) 
 // holds reports whether the row's member holds a Foxhole role.
 func (h holderRow) holds() bool { return h.Internal || h.External }
 
+// holdsRole reports whether the row's member holds the Foxhole role given.
+func (h holderRow) holdsRole(role commands.FoxholeRole) bool {
+	return (role == commands.FoxholeInternal && h.Internal) || (role == commands.FoxholeExternal && h.External)
+}
+
 // view reads the Foxhole page from the store's Foxhole records and change
 // log, then from one snapshot of the guild's roles and one of its member
 // list, through the manager seam, never Discord's API. The store comes
@@ -869,10 +874,14 @@ func matching(rows []holderRow, req foxholeRequest) []holderRow {
 			matched = append(matched, row)
 		}
 	}
-	slices.SortFunc(matched, func(a, b holderRow) int {
-		return cmp.Or(cmp.Compare(strings.ToLower(a.DisplayName), strings.ToLower(b.DisplayName)), cmp.Compare(a.ID, b.ID))
-	})
+	slices.SortFunc(matched, func(a, b holderRow) int { return byName(a.DisplayName, a.ID, b.DisplayName, b.ID) })
 	return matched
+}
+
+// byName orders two members the way the page lists them: by display name,
+// ignoring case, then by ID.
+func byName(aName, aID, bName, bID string) int {
+	return cmp.Or(cmp.Compare(strings.ToLower(aName), strings.ToLower(bName)), cmp.Compare(aID, bID))
 }
 
 // noteFormFor is the note form the request opens: the member's note as the
