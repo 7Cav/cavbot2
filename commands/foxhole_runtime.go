@@ -67,6 +67,11 @@ func (s PurgeScope) Roles() []FoxholeRole {
 // stalled database never hangs the action.
 const foxholeStoreTimeout = 5 * time.Second
 
+// foxholeEndAttempts is how many times an action tries the write that ends
+// its report. A report left unended shows a running action to every
+// manager until the next one, so one store blip mustn't leave it so.
+const foxholeEndAttempts = 3
+
 // foxholeNow is the Foxhole runtime's clock, a package var beside
 // tempVCNow.
 var foxholeNow = time.Now
@@ -105,6 +110,19 @@ func (u ForumUser) auditName() string {
 // list isn't complete: the action could not see who holds a role. Nothing
 // changed.
 var ErrMemberListPartial = errors.New("the member list isn't complete")
+
+// MissingRoleError refuses a Foxhole action naming a Foxhole role the
+// guild doesn't hold by the name the commands use. The name comes from
+// configuration, not the manager, so the fault reaches Sentry (ADR 0002).
+// Nothing changed.
+type MissingRoleError struct {
+	// Role is the missing role's name.
+	Role string
+}
+
+func (e *MissingRoleError) Error() string {
+	return fmt.Sprintf("the %q role isn't in the server", e.Role)
+}
 
 // ErrActionRunning refuses a Foxhole action started while another runs:
 // one action at a time, so two never fight over the same roles. Nothing
@@ -153,23 +171,23 @@ type ReportMember struct {
 	DisplayName string      `json:"display_name"`
 	Username    string      `json:"username"`
 	Role        FoxholeRole `json:"role"`
-	// Reason is why a skipped member was skipped, one of the Skip codes, or
-	// why Discord refused a failed member's change, in plain words.
-	Reason string `json:"reason,omitempty"`
+	// Skip is why a skipped member was skipped.
+	Skip SkipReason `json:"skip,omitempty"`
+	// Failure is why Discord refused a failed member's change, in plain
+	// words.
+	Failure string `json:"failure,omitempty"`
 }
 
-// Why a Foxhole action skipped a member it reached: they no longer held
-// the role it was taking, or they had left the server.
+// SkipReason is why a Foxhole action skipped a member it reached.
+type SkipReason string
+
 const (
-	SkipNotHolding = "not-holding"
-	SkipLeft       = "left"
+	// SkipNotHolding is a member who no longer held the role the action was
+	// taking.
+	SkipNotHolding SkipReason = "not-holding"
+	// SkipLeft is a member who had left the server.
+	SkipLeft SkipReason = "left"
 )
-
-// DisplayName is the name a member shows in the server: their server
-// nickname, else their global name, else their username.
-func (m ListedMember) DisplayName() string {
-	return cmp.Or(m.Nick, m.GlobalName, m.Username)
-}
 
 // FoxholeRoleIDs finds the Foxhole roles among the guild's roles by the
 // exact names the commands use, and returns each one's ID, empty for a role
@@ -197,36 +215,27 @@ type FoxholeRuntime struct {
 	guildID string
 
 	mu sync.Mutex
-	// running is the action running, nil while none runs.
-	running *FoxholeRunning
+	// busy is an action running, which holds the one-action-at-a-time
+	// rule.
+	busy bool
 }
 
-// FoxholeRunning is a Foxhole action that is running: what it is, and the
-// forum user who started it.
-type FoxholeRunning struct {
-	Action store.ChangeAction
-	By     ForumUser
-}
-
-// Running reports the Foxhole action running, if one is.
-func (r *FoxholeRuntime) Running() (FoxholeRunning, bool) {
+// Busy reports whether a Foxhole action is running.
+func (r *FoxholeRuntime) Busy() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.running == nil {
-		return FoxholeRunning{}, false
-	}
-	return *r.running, true
+	return r.busy
 }
 
-// claim takes the one-action-at-a-time rule for an action, and reports
-// false when another action holds it.
-func (r *FoxholeRuntime) claim(action FoxholeRunning) bool {
+// claim takes the one-action-at-a-time rule, and reports false when an
+// action already holds it.
+func (r *FoxholeRuntime) claim() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.running != nil {
+	if r.busy {
 		return false
 	}
-	r.running = &action
+	r.busy = true
 	return true
 }
 
@@ -234,7 +243,7 @@ func (r *FoxholeRuntime) claim(action FoxholeRunning) bool {
 func (r *FoxholeRuntime) release() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.running = nil
+	r.busy = false
 }
 
 // NewFoxholeRuntime builds the runtime over the guild's gateway state, the
@@ -243,23 +252,32 @@ func NewFoxholeRuntime(guild FoxholeGuildReader, roles FoxholeRoleWriter, st sto
 	return &FoxholeRuntime{guild: guild, roles: roles, store: st, guildID: guildID}
 }
 
-// planned is one role change an action sets out to make: the member as
-// the member list showed them when it started, and the role's ID.
-type planned struct {
+// plannedChange is one role change an action sets out to make: the member
+// as the member list showed them when it started, and the role's ID.
+type plannedChange struct {
 	member ReportMember
 	roleID string
 }
 
+// actionRun is what an action's run carries besides its plan: the action,
+// its report's ID, and the audit log reason each of its changes sends.
+type actionRun struct {
+	action   store.ChangeAction
+	reportID int64
+	reason   string
+}
+
 // Purge starts a purge of the scope given, started by the forum user
 // given, and returns once its report is written. It starts only while no
-// other Foxhole action runs, else ErrActionRunning, and only with a
-// complete member list, else ErrMemberListPartial. The purge then runs in
+// other Foxhole action runs, else ErrActionRunning, only with a complete
+// member list, else ErrMemberListPartial, and only when the guild holds
+// each role it names, else a *MissingRoleError. The purge then runs in
 // the background, with no deadline of ctx's, to its end: one member at a
 // time, External holders first, it takes the role off each holder the
 // member list showed at the start. It never deletes or recreates a role,
 // so role IDs and channel overwrites stay.
 func (r *FoxholeRuntime) Purge(ctx context.Context, scope PurgeScope, by ForumUser) (err error) {
-	if !r.claim(FoxholeRunning{Action: store.ChangePurge, By: by}) {
+	if !r.claim() {
 		return ErrActionRunning
 	}
 	defer func() {
@@ -271,7 +289,12 @@ func (r *FoxholeRuntime) Purge(ctx context.Context, scope PurgeScope, by ForumUs
 	if list.Status != MemberListComplete {
 		return ErrMemberListPartial
 	}
-	plan := purgePlan(list, FoxholeRoleIDs(r.guild.GuildData(r.guildID)), scope)
+	roleIDs := FoxholeRoleIDs(r.guild.GuildData(r.guildID))
+	if err := missingRole(roleIDs, scope); err != nil {
+		captureError("Foxhole role not found for a purge", err, "role", err.Role, "scope", scope)
+		return err
+	}
+	plan := purgePlan(list, roleIDs, scope)
 	report := ActionReport{Scope: scope, Changed: []ReportMember{}, Skipped: []ReportMember{}, Failed: []ReportMember{},
 		NotAttempted: make([]ReportMember, 0, len(plan))}
 	for _, p := range plan {
@@ -295,7 +318,8 @@ func (r *FoxholeRuntime) Purge(ctx context.Context, scope PurgeScope, by ForumUs
 	}
 	utils.Info("Foxhole action started", "action", store.ChangePurge, "scope", scope, "members", len(plan),
 		"username", by.Username, "forum_user_id", by.ID)
-	go r.run(entry.ID, plan, report, names, "Panel: Foxhole purge by "+by.auditName())
+	run := actionRun{action: store.ChangePurge, reportID: entry.ID, reason: "Panel: Foxhole purge by " + by.auditName()}
+	go r.run(run, plan, report, names)
 	return nil
 }
 
@@ -326,32 +350,42 @@ func (r *FoxholeRuntime) refreshNames(names map[string]store.MemberNames, mem Li
 	ctx, cancel := context.WithTimeout(context.Background(), foxholeStoreTimeout)
 	defer cancel()
 	if err := r.store.SetFoxholeRecordNames(ctx, r.guildID, []store.MemberNames{now}); err != nil {
-		utils.CaptureError("Foxhole action name refresh failed", err, "member_id", mem.ID)
+		captureError("Foxhole action name refresh failed", err, "member_id", mem.ID)
 		return
 	}
 	names[mem.ID] = now
 }
 
+// missingRole is the first role the scope names that the guild lacks, nil
+// when it holds them all.
+func missingRole(roleIDs map[FoxholeRole]string, scope PurgeScope) *MissingRoleError {
+	internalName, externalName := FoxholeRoleNames()
+	names := map[FoxholeRole]string{FoxholeInternal: internalName, FoxholeExternal: externalName}
+	for _, role := range scope.Roles() {
+		if roleIDs[role] == "" {
+			return &MissingRoleError{Role: names[role]}
+		}
+	}
+	return nil
+}
+
 // purgePlan is a purge's role changes over the member list as it stands:
 // for each role the scope names, in order, every member holding it, in
 // display name order.
-func purgePlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, scope PurgeScope) []planned {
-	var plan []planned
+func purgePlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, scope PurgeScope) []plannedChange {
+	var plan []plannedChange
 	for _, role := range scope.Roles() {
 		id := roleIDs[role]
-		if id == "" {
-			continue
-		}
-		var holders []planned
+		var holders []plannedChange
 		for _, m := range list.Members {
 			if slices.Contains(m.RoleIDs, id) {
-				holders = append(holders, planned{
+				holders = append(holders, plannedChange{
 					member: ReportMember{ID: m.ID, DisplayName: m.DisplayName(), Username: m.Username, Role: role},
 					roleID: id,
 				})
 			}
 		}
-		slices.SortFunc(holders, func(a, b planned) int {
+		slices.SortFunc(holders, func(a, b plannedChange) int {
 			return cmp.Or(cmp.Compare(strings.ToLower(a.member.DisplayName), strings.ToLower(b.member.DisplayName)),
 				cmp.Compare(a.member.ID, b.member.ID))
 		})
@@ -366,7 +400,7 @@ func purgePlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, scope Pu
 // no longer holds the role, or who left the server, is skipped with that
 // reason, and one still in the server is named in the report under the
 // names the list shows now, which also refresh their record's names.
-func (r *FoxholeRuntime) run(reportID int64, plan []planned, report ActionReport, names map[string]store.MemberNames, reason string) {
+func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionReport, names map[string]store.MemberNames) {
 	defer utils.RecoverPanic("foxhole-action")
 	// A panic gives the rule back too; release on a free rule does nothing.
 	defer r.release()
@@ -379,40 +413,40 @@ func (r *FoxholeRuntime) run(reportID int64, plan []planned, report ActionReport
 			outcome = ReportMemberListGone
 			break
 		}
-		mem, ok := memberIn(list, member.ID)
+		mem, ok := list.Member(member.ID)
 		if ok {
 			r.refreshNames(names, mem)
+			member.DisplayName, member.Username = mem.DisplayName(), mem.Username
 		}
 		switch {
 		case !ok:
-			member.Reason = SkipLeft
+			member.Skip = SkipLeft
 			report.Skipped = append(report.Skipped, member)
 		case !slices.Contains(mem.RoleIDs, p.roleID):
-			member.DisplayName, member.Username, member.Reason = mem.DisplayName(), mem.Username, SkipNotHolding
+			member.Skip = SkipNotHolding
 			report.Skipped = append(report.Skipped, member)
 		default:
-			member.DisplayName, member.Username = mem.DisplayName(), mem.Username
-			if err := r.roles.GuildMemberRoleRemove(r.guildID, member.ID, p.roleID, reason); err != nil {
+			if err := r.roles.GuildMemberRoleRemove(r.guildID, member.ID, p.roleID, run.reason); err != nil {
 				if classifyDiscordError(err).SystemFault {
 					faults.recordSystemFault(err, member.ID)
 				}
-				member.Reason = failureReason(err)
+				member.Failure = failureReason(err)
 				report.Failed = append(report.Failed, member)
 			} else {
 				report.Changed = append(report.Changed, member)
 			}
 		}
 		report.NotAttempted = report.NotAttempted[1:]
-		r.writeReport(reportID, report, false)
+		r.writeReport(run.reportID, report, false)
 	}
 	report.Outcome, report.EndedAt = outcome, foxholeNow().UTC()
 	// The action's last Discord change is made, so it gives the rule back
 	// before it writes its end: whoever sees the report ended can start the
 	// next.
 	r.release()
-	r.writeReport(reportID, report, true)
-	faults.flush("Foxhole action role change failed", "action", store.ChangePurge, "guild", r.guildID)
-	utils.Info("Foxhole action ended", "action", store.ChangePurge, "outcome", report.Outcome, "changed", len(report.Changed),
+	r.writeReport(run.reportID, report, true)
+	faults.flush("Foxhole action role change failed", "action", run.action, "guild", r.guildID)
+	utils.Info("Foxhole action ended", "action", run.action, "outcome", report.Outcome, "changed", len(report.Changed),
 		"skipped", len(report.Skipped), "failed", len(report.Failed), "not_attempted", len(report.NotAttempted))
 }
 
@@ -426,38 +460,38 @@ func failureReason(err error) string {
 	case class.NotFound:
 		return "Discord has no such member in the server"
 	case class.ConfigFault:
-		return "the role is gone from Discord"
+		return "Discord doesn't know the role or the server, so the role may have been deleted"
 	case class.SystemFault:
 		return class.UserDetail
 	}
 	return "Discord rejected the change"
 }
 
-// memberIn finds a member in the member list.
-func memberIn(list MemberListSnapshot, id string) (ListedMember, bool) {
-	for _, m := range list.Members {
-		if m.ID == id {
-			return m, true
-		}
-	}
-	return ListedMember{}, false
-}
-
-// writeReport writes the report as it stands, ending it when end is set. A
-// write that fails reaches Sentry and the action goes on: the role changes
-// matter more, and the next write carries everything.
+// writeReport writes the report as it stands, ending it when end is set.
+// The end write is tried foxholeEndAttempts times. A write that fails for
+// good reaches Sentry and the action goes on: the role changes matter
+// more, and the next write carries everything.
 func (r *FoxholeRuntime) writeReport(reportID int64, report ActionReport, end bool) {
 	raw, err := json.Marshal(report)
-	if err == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), foxholeStoreTimeout)
-		defer cancel()
-		if end {
-			err = r.store.EndFoxholeReport(ctx, reportID, raw)
-		} else {
-			err = r.store.UpdateFoxholeReport(ctx, reportID, raw)
-		}
-	}
 	if err != nil {
-		utils.CaptureError("Foxhole report write failed", err, "report_id", reportID, "end", end)
+		captureError("Foxhole report write failed", err, "report_id", reportID, "end", end)
+		return
+	}
+	write, attempts := r.store.UpdateFoxholeReport, 1
+	if end {
+		write, attempts = r.store.EndFoxholeReport, foxholeEndAttempts
+	}
+	for attempt := 1; ; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), foxholeStoreTimeout)
+		err = write(ctx, reportID, raw)
+		cancel()
+		if err == nil {
+			return
+		}
+		if attempt == attempts {
+			captureError("Foxhole report write failed", err, "report_id", reportID, "end", end, "attempts", attempts)
+			return
+		}
+		utils.Warn("Foxhole report write failed, retrying", "report_id", reportID, "attempt", attempt, "error", err)
 	}
 }

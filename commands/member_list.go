@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -99,6 +100,17 @@ type MemberListSnapshot struct {
 	Members []ListedMember
 }
 
+// Member finds a member in the snapshot. A list that isn't complete holds
+// no members, so it finds nobody.
+func (s MemberListSnapshot) Member(id string) (ListedMember, bool) {
+	for _, m := range s.Members {
+		if m.ID == id {
+			return m, true
+		}
+	}
+	return ListedMember{}, false
+}
+
 // ListedMember is one member of the member list.
 type ListedMember struct {
 	ID         string
@@ -111,6 +123,12 @@ type ListedMember struct {
 	AvatarURL string
 	JoinedAt  time.Time
 	RoleIDs   []string
+}
+
+// DisplayName is the name a member shows in the server: their server
+// nickname, else their global name, else their username.
+func (m ListedMember) DisplayName() string {
+	return cmp.Or(m.Nick, m.GlobalName, m.Username)
 }
 
 // memberList tracks whether the state holds the whole member list of one

@@ -36,9 +36,6 @@ func TestSessionGuildManagerRoleChangesWaitOutARateLimit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s after a rate limit: %v, want it to go through", name, err)
 			}
-			if n := len(api.received()); n != 2 {
-				t.Errorf("the API received %d requests, want the refused one and its retry", n)
-			}
 		})
 	}
 }

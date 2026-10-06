@@ -255,10 +255,17 @@ var (
 // manager.
 func newFoxholeWorld(t *testing.T) *testWorld {
 	t.Helper()
+	return newFoxholeWorldWith(t, func(st store.Store) store.Store { return st })
+}
+
+// newFoxholeWorldWith is newFoxholeWorld over the store fake as wrap
+// wraps it. w.st is the fake itself.
+func newFoxholeWorldWith(t *testing.T, wrap func(store.Store) store.Store) *testWorld {
+	t.Helper()
 	t.Setenv("FOXHOLE_ROLE_BASE_NAME", "")
 	t.Setenv("WARDEN_ROLE_BASE_NAME", "")
 	fake := store.NewFake()
-	watch := endWatch{Store: fake, ended: make(chan struct{}, 16)}
+	watch := endWatch{Store: wrap(fake), ended: make(chan struct{}, 16)}
 	w := newTestWorldOver(t, watch, newFakeForum(t))
 	w.st, w.actionEnded = fake, watch.ended
 	w.discord.addRoles(foxholeGuildRoles...)

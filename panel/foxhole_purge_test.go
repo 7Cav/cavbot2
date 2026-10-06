@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"net/http"
 	"net/url"
@@ -155,7 +156,7 @@ func TestPurgeConfirmationCountsTheHoldersOfEachRoleAndTheTime(t *testing.T) {
 
 // endWatch is the store with a signal each time a Foxhole action's report
 // is written as ended, so a test knows an action has run to its end with
-// no sleep.
+// no sleep. An end write that fails signals nothing.
 type endWatch struct {
 	store.Store
 	ended chan struct{}
@@ -163,8 +164,32 @@ type endWatch struct {
 
 func (s endWatch) EndFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
 	err := s.Store.EndFoxholeReport(ctx, id, diff)
-	s.ended <- struct{}{}
+	if err == nil {
+		s.ended <- struct{}{}
+	}
 	return err
+}
+
+// errStoreBlip is a store call that failed once and would go through
+// again, as on a dropped database connection.
+var errStoreBlip = errors.New("store: connection reset")
+
+// failingEnd is the store with its first report end write failing.
+type failingEnd struct {
+	store.Store
+	mu     sync.Mutex
+	failed bool
+}
+
+func (s *failingEnd) EndFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
+	s.mu.Lock()
+	first := !s.failed
+	s.failed = true
+	s.mu.Unlock()
+	if first {
+		return errStoreBlip
+	}
+	return s.Store.EndFoxholeReport(ctx, id, diff)
 }
 
 // awaitActionEnd waits for the running Foxhole action's report to be
@@ -817,5 +842,64 @@ func TestPurgeStopsWhenTheMemberListGoesPartialMidRun(t *testing.T) {
 	}
 	if got := fieldText(t, reportList(t, report, "not-attempted"), "count"); got != "2" {
 		t.Errorf("the report counts %s not attempted, want the 2 Internal holders it never reached", got)
+	}
+}
+
+// A purge whose report fails to be written as ended, on one store blip,
+// still ends: the page shows its report done, never a progress block that
+// stays for good.
+func TestPurgeReportEndsThroughAStoreBlip(t *testing.T) {
+	w := newFoxholeWorldWith(t, func(st store.Store) store.Store { return &failingEnd{Store: st} })
+
+	startPurge(t, w, "external")
+	w.awaitActionEnd(t)
+
+	if got := outcomeOf(reportBlock(t, parseHTML(t, w.b.get(foxholePath)))); got != "done" {
+		t.Errorf("the report's outcome is %q, want done", got)
+	}
+}
+
+// reportedExtras returns the value each recorded Sentry event carries under
+// key in its extra context, for the events that carry one.
+func reportedExtras(t *testing.T, rec *sentryRecorder, key string) []string {
+	t.Helper()
+	var out []string
+	for _, raw := range rec.sent() {
+		var event struct {
+			Contexts struct {
+				Extra map[string]any `json:"extra"`
+			} `json:"contexts"`
+		}
+		if err := json.Unmarshal(raw, &event); err != nil {
+			t.Fatalf("decode a recorded event: %v", err)
+		}
+		if v, ok := event.Contexts.Extra[key].(string); ok {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// A purge needs each role it names to be in the server by the name the
+// commands use. One that isn't is a fault on fixed input (ADR 0002), so
+// confirming the purge changes nothing, the page says so, no report
+// starts, and the fault reaches Sentry naming the role.
+func TestPurgeOfARoleMissingFromTheServerIsRefusedAndReported(t *testing.T) {
+	w := newFoxholeWorld(t)
+	reported := recordSentry(t)
+	confirm := purgeConfirmation(t, parseHTML(t, openPurge(t, w.b, parseHTML(t, w.b.get(foxholePath)), "internal")))
+	w.discord.removeRole(roleInternal)
+
+	doc := parseHTML(t, confirmPurge(t, w.b, context.Background(), confirm))
+
+	if findLive(doc, "", "data-error", "role-missing") == nil {
+		t.Error("the page doesn't say the purge was refused for a missing role")
+	}
+	if entries := purgeEntries(t, doc); len(entries) != 0 {
+		t.Errorf("the change log holds %d purge entries, want none", len(entries))
+	}
+	internalName, _ := commands.FoxholeRoleNames()
+	if roles := reportedExtras(t, reported, "role"); !slices.Contains(roles, internalName) {
+		t.Errorf("Sentry got events naming the roles %v, want one naming %q", roles, internalName)
 	}
 }

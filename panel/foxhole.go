@@ -94,156 +94,6 @@ type foxholeView struct {
 	Report *reportView
 }
 
-// reportView is a Foxhole action's report as the page shows it: its
-// outcome, and the members it changed, skipped and never attempted.
-type reportView struct {
-	ID int64
-	// Action is the action the report is of, and Label the action with its
-	// scope as the page names it.
-	Action store.ChangeAction
-	Label  string
-	// StartedBy is the forum user who started the action, StartedAt when,
-	// and EndedAt when it ended, zero while it runs.
-	StartedBy          string
-	StartedAt, EndedAt time.Time
-	// Running is the action still running: the page shows its progress
-	// block in the report's place.
-	Running      bool
-	Outcome      commands.ReportOutcome
-	Changed      []reportMember
-	Skipped      []reportMember
-	Failed       []reportMember
-	NotAttempted []reportMember
-	// Done counts the members the action has been through, of Total, and
-	// Left is the rough time the rest take.
-	Done, Total int
-	Left        estimate
-}
-
-// reportMember is one member a report names, with the role's name as the
-// page shows it.
-type reportMember struct {
-	commands.ReportMember
-	RoleName string
-}
-
-// OutcomeLabel is how the action ended, as the page says it.
-func (r reportView) OutcomeLabel() string {
-	switch {
-	case r.Running:
-		return "Running"
-	case r.Outcome == commands.ReportDone:
-		return "Done"
-	case r.Outcome == commands.ReportMemberListGone:
-		return "Stopped: Discord's member list didn't arrive"
-	}
-	return string(r.Outcome)
-}
-
-// OutcomeCode is the report's data-outcome marker: how the action ended,
-// or running while it runs.
-func (r reportView) OutcomeCode() string {
-	if r.Running {
-		return "running"
-	}
-	return string(r.Outcome)
-}
-
-// SkipReason is why the member was skipped, as the page says it.
-func (m reportMember) SkipReason() string {
-	switch m.Reason {
-	case commands.SkipNotHolding:
-		return "no longer holds " + m.RoleName
-	case commands.SkipLeft:
-		return "left the server"
-	}
-	return m.Reason
-}
-
-// reportViewOf decodes a report the store holds for the page.
-func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
-	var report commands.ActionReport
-	if err := json.Unmarshal(stored.Entry.Diff, &report); err != nil {
-		return nil, fmt.Errorf("decode Foxhole report %d: %w", stored.Entry.ID, err)
-	}
-	view := &reportView{ID: stored.Entry.ID, Action: stored.Entry.Action, Label: "Purge " + scopeLabels[report.Scope],
-		StartedBy: stored.Entry.ForumUsername, StartedAt: stored.Entry.At, EndedAt: report.EndedAt,
-		Running: stored.Running, Outcome: report.Outcome,
-		Changed: reportMembers(report.Changed), Skipped: reportMembers(report.Skipped), Failed: reportMembers(report.Failed),
-		NotAttempted: reportMembers(report.NotAttempted)}
-	view.Done = len(view.Changed) + len(view.Skipped) + len(view.Failed)
-	view.Total = view.Done + len(view.NotAttempted)
-	view.Left = estimateFor(len(view.NotAttempted))
-	return view, nil
-}
-
-// reportMembers are a report's members as the page shows them.
-func reportMembers(members []commands.ReportMember) []reportMember {
-	out := make([]reportMember, 0, len(members))
-	for _, m := range members {
-		out = append(out, reportMember{ReportMember: m, RoleName: roleNames[m.Role]})
-	}
-	return out
-}
-
-// purgeConfirm is the confirmation a purge waits on: its scope, how many
-// holders lose each role it names, in the order the purge takes them, and
-// the rough time at one change a second.
-type purgeConfirm struct {
-	Scope    commands.PurgeScope
-	Label    string
-	Roles    []purgeRole
-	Estimate estimate
-}
-
-// purgeRole is one role a purge takes, and how many hold it at this load.
-type purgeRole struct {
-	Role    commands.FoxholeRole
-	Name    string
-	Holders int
-}
-
-// changeEstimate is the time one role change takes in the page's
-// estimates: Discord's per-guild member-role rate is about one change a
-// second.
-const changeEstimate = time.Second
-
-// estimate is a rough time for a number of role changes: the whole seconds,
-// for the data-seconds marker, and the words the page shows.
-type estimate struct {
-	Seconds int
-	Text    string
-}
-
-// estimateFor is the rough time of changes role changes at changeEstimate
-// each. Under a minute it counts seconds, under ten minutes minutes and
-// seconds to the nearest 5, and beyond that whole minutes.
-func estimateFor(changes int) estimate {
-	d := time.Duration(changes) * changeEstimate
-	secs := int(d.Round(time.Second) / time.Second)
-	switch {
-	case secs < 60:
-		return estimate{Seconds: secs, Text: fmt.Sprintf("%d s", secs)}
-	case secs < 600:
-		rounded := (secs + 2) / 5 * 5
-		if rounded%60 == 0 {
-			return estimate{Seconds: secs, Text: fmt.Sprintf("%d min", rounded/60)}
-		}
-		return estimate{Seconds: secs, Text: fmt.Sprintf("%d min %d s", rounded/60, rounded%60)}
-	}
-	return estimate{Seconds: secs, Text: fmt.Sprintf("%d min", (secs+30)/60)}
-}
-
-// roleNames are the Foxhole roles as the page names them.
-var roleNames = map[commands.FoxholeRole]string{commands.FoxholeInternal: "Internal", commands.FoxholeExternal: "External"}
-
-// scopeLabels are the purge scopes as the page names them.
-var scopeLabels = map[commands.PurgeScope]string{
-	commands.PurgeBoth:     "Internal and External",
-	commands.PurgeInternal: "Internal",
-	commands.PurgeExternal: "External",
-}
-
 // listNotice is the one-line notice in the holder list's place while the
 // member list is partial: how far along the list is, and a Reload link.
 type listNotice struct {
@@ -438,19 +288,6 @@ var errNoteListPartial = &saveRefusal{Kind: "member-list", status: http.StatusSe
 var errApproveListPartial = &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
 	log:     "Panel save refused: member list partial",
 	Message: "Awaiting member list from discord. Try again shortly."}
-
-// errActionRunning refuses a Foxhole action started while another runs.
-// The page shows the running action's progress block, which names it and
-// who started it.
-var errActionRunning = &saveRefusal{Kind: "action-running", status: http.StatusConflict,
-	log:     "Panel action refused: another action running",
-	Message: "Another Foxhole action is running, so the purge didn't start. Nothing changed. Try again when it ends."}
-
-// errActionListPartial refuses a Foxhole action started while the member
-// list is partial: it could not see who holds a role.
-var errActionListPartial = &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
-	log:     "Panel action refused: member list partial",
-	Message: "Cavbot2 doesn't have the whole member list from Discord yet, so the purge didn't start. Nothing changed. Try again once the list has arrived."}
 
 // foxholeChange is one entry of the Foxhole page's change log as the page
 // shows it: who saved, and what. A note save's names the member it touched
@@ -705,45 +542,6 @@ func (p *Panel) saveApprovals(w http.ResponseWriter, r *http.Request, sess sessi
 	http.Redirect(w, r, skippedAddress(query, filter, skipped), http.StatusSeeOther)
 }
 
-// startPurge is POST /foxhole/purge, the purge confirmation's Confirm: it
-// starts the purge through the Foxhole runtime and redirects straight back
-// to the Foxhole page. The purge runs in the background to its end,
-// whether or not the browser waits, so the request never waits on it.
-func (p *Panel) startPurge(w http.ResponseWriter, r *http.Request, sess session) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "the form could not be read", http.StatusBadRequest)
-		return
-	}
-	scope, ok := commands.ParsePurgeScope(r.PostForm.Get(fieldScope))
-	if !ok {
-		http.Error(w, "the form names no purge scope, so nothing changed", http.StatusBadRequest)
-		return
-	}
-	by := commands.ForumUser{ID: sess.userID, Username: sess.username}
-	err := p.foxhole.actions.Purge(context.WithoutCancel(r.Context()), scope, by)
-	switch {
-	case errors.Is(err, commands.ErrActionRunning):
-		p.refuseAction(w, r, sess, errActionRunning, "scope", scope)
-		return
-	case errors.Is(err, commands.ErrMemberListPartial):
-		p.refuseAction(w, r, sess, errActionListPartial, "scope", scope)
-		return
-	}
-	if err != nil {
-		p.serverError(w, "purge start", err)
-		return
-	}
-	utils.Info("Panel Foxhole purge started", "scope", scope, "username", sess.username, "forum_user_id", sess.userID)
-	http.Redirect(w, r, foxholePath, http.StatusSeeOther)
-}
-
-// refuseAction answers a refused Foxhole action with the page as it stands
-// and the refusal on it, and logs the refusal's INFO line with kv.
-func (p *Panel) refuseAction(w http.ResponseWriter, r *http.Request, sess session, refusal *saveRefusal, kv ...any) {
-	utils.Info(refusal.log, append(kv, "username", sess.username, "forum_user_id", sess.userID)...)
-	p.renderFoxhole(w, r, sess, refusal.status, foxholeRequest{Filter: filterAll, ActionRefusal: refusal})
-}
-
 // flagged reports whether the holder carries a flag.
 func (h holderRow) flagged() bool { return h.NoRankRole || h.NotInServer || h.ApprovedNoExternal }
 
@@ -770,16 +568,11 @@ type foxholeGuild struct {
 // the manager seam, never Discord's API.
 func (s foxholeService) foxholeGuildOf() foxholeGuild {
 	guild := s.manager.GuildData(s.guildID)
-	internalName, externalName := commands.FoxholeRoleNames()
-	g := foxholeGuild{roleNames: make(map[string]string, len(guild.Roles))}
+	ids := commands.FoxholeRoleIDs(guild)
+	g := foxholeGuild{internalID: ids[commands.FoxholeInternal], externalID: ids[commands.FoxholeExternal],
+		roleNames: make(map[string]string, len(guild.Roles))}
 	for _, r := range guild.Roles {
 		g.roleNames[r.ID] = r.Name
-		switch {
-		case r.Name == internalName && g.internalID == "":
-			g.internalID = r.ID
-		case r.Name == externalName && g.externalID == "":
-			g.externalID = r.ID
-		}
 	}
 	return g
 }
@@ -789,7 +582,7 @@ func (s foxholeService) foxholeGuildOf() foxholeGuild {
 func (g foxholeGuild) rowOf(mem commands.ListedMember, rec store.FoxholeRecord) holderRow {
 	row := holderRow{
 		ID:          mem.ID,
-		DisplayName: displayName(mem),
+		DisplayName: mem.DisplayName(),
 		Username:    mem.Username,
 		Internal:    g.internalID != "" && slices.Contains(mem.RoleIDs, g.internalID),
 		External:    g.externalID != "" && slices.Contains(mem.RoleIDs, g.externalID),
@@ -806,23 +599,6 @@ func (g foxholeGuild) rowOf(mem commands.ListedMember, rec store.FoxholeRecord) 
 
 // holds reports whether the row's member holds a Foxhole role.
 func (h holderRow) holds() bool { return h.Internal || h.External }
-
-// memberByID finds a member in the member list. A list that isn't complete
-// holds no members, so it finds nobody.
-func memberByID(list commands.MemberListSnapshot, id string) (commands.ListedMember, bool) {
-	for _, mem := range list.Members {
-		if mem.ID == id {
-			return mem, true
-		}
-	}
-	return commands.ListedMember{}, false
-}
-
-// displayName is the name a member shows in the server: their server
-// nickname, else their global name, else their username.
-func displayName(mem commands.ListedMember) string {
-	return cmp.Or(mem.Nick, mem.GlobalName, mem.Username)
-}
 
 // view reads the Foxhole page from the store's Foxhole records and change
 // log, then from one snapshot of the guild's roles and one of its member
@@ -878,21 +654,8 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	view.Skipped = s.stillSkipped(list, records, req.Skipped)
 	view.ApprovalRefusal, view.ActionRefusal = req.ApprovalRefusal, req.ActionRefusal
 	view.Report = report
-	_, view.Busy = s.actions.Running()
+	view.Busy = s.actions.Busy()
 	return view, nil
-}
-
-// lastReport reads the last Foxhole action's report, nil before the first
-// action.
-func (s foxholeService) lastReport(ctx context.Context) (*reportView, error) {
-	stored, err := s.store.LastFoxholeReport(ctx)
-	if errors.Is(err, store.ErrNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read the last Foxhole report: %w", err)
-	}
-	return reportViewOf(stored)
 }
 
 // memberList reads the member list through the manager seam, never
@@ -933,30 +696,6 @@ func (s foxholeService) memberList(ctx context.Context, await bool) (commands.Me
 	return list, nil
 }
 
-// purgeConfirmOf is the confirmation of a purge of the scope given, its
-// counts read from a complete member list.
-func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope commands.PurgeScope) *purgeConfirm {
-	guild := s.foxholeGuildOf()
-	holders := map[commands.FoxholeRole]int{}
-	for _, mem := range list.Members {
-		row := guild.rowOf(mem, store.FoxholeRecord{})
-		if row.Internal {
-			holders[commands.FoxholeInternal]++
-		}
-		if row.External {
-			holders[commands.FoxholeExternal]++
-		}
-	}
-	confirm := &purgeConfirm{Scope: scope, Label: scopeLabels[scope]}
-	changes := 0
-	for _, role := range scope.Roles() {
-		confirm.Roles = append(confirm.Roles, purgeRole{Role: role, Name: roleNames[role], Holders: holders[role]})
-		changes += holders[role]
-	}
-	confirm.Estimate = estimateFor(changes)
-	return confirm
-}
-
 // stillSkipped is the members an Approve skipped for not holding External
 // who, at this load, still aren't approved and still don't hold External,
 // under the names the member list shows, or the record's when it doesn't
@@ -973,11 +712,11 @@ func (s foxholeService) stillSkipped(list commands.MemberListSnapshot, records m
 			continue
 		}
 		member := changedMember{ID: id, DisplayName: rec.DisplayName, Username: rec.Username}
-		if mem, ok := memberByID(list, id); ok {
+		if mem, ok := list.Member(id); ok {
 			if guild.rowOf(mem, rec).External {
 				continue
 			}
-			member.DisplayName, member.Username = displayName(mem), mem.Username
+			member.DisplayName, member.Username = mem.DisplayName(), mem.Username
 		}
 		out = append(out, member)
 	}
@@ -995,7 +734,7 @@ func (s foxholeService) refreshNames(ctx context.Context, list commands.MemberLi
 		if !ok {
 			continue
 		}
-		if name := displayName(mem); name != rec.DisplayName || mem.Username != rec.Username {
+		if name := mem.DisplayName(); name != rec.DisplayName || mem.Username != rec.Username {
 			changed = append(changed, store.MemberNames{MemberID: mem.ID, DisplayName: name, Username: mem.Username})
 		}
 	}
@@ -1102,8 +841,8 @@ func noteFormFor(req foxholeRequest, list commands.MemberListSnapshot, records m
 	rec := records[req.NoteMember]
 	form := req.blankNoteForm()
 	form.MemberID, form.DisplayName, form.Username, form.Loaded, form.Note = req.NoteMember, rec.DisplayName, rec.Username, rec.Note, rec.Note
-	if mem, ok := memberByID(list, req.NoteMember); ok {
-		form.DisplayName, form.Username = displayName(mem), mem.Username
+	if mem, ok := list.Member(req.NoteMember); ok {
+		form.DisplayName, form.Username = mem.DisplayName(), mem.Username
 	}
 	if req.Refusal != nil {
 		form.Note, form.Refusal = req.Typed, req.Refusal
@@ -1130,9 +869,9 @@ func (s foxholeService) saveNote(ctx context.Context, in noteInput, by actor) er
 	rec, hasRecord := records[in.MemberID]
 	names := store.MemberNames{MemberID: in.MemberID, DisplayName: rec.DisplayName, Username: rec.Username}
 	list := s.manager.MemberList(s.guildID)
-	member, inList := memberByID(list, in.MemberID)
+	member, inList := list.Member(in.MemberID)
 	if inList {
-		names.DisplayName, names.Username = displayName(member), member.Username
+		names.DisplayName, names.Username = member.DisplayName(), member.Username
 	}
 	if !hasRecord && in.Loaded == "" {
 		switch {
@@ -1180,12 +919,12 @@ func (s foxholeService) approve(ctx context.Context, memberIDs []string, by acto
 		if records[id].Approved {
 			continue
 		}
-		mem, ok := memberByID(list, id)
+		mem, ok := list.Member(id)
 		if !ok || !guild.rowOf(mem, records[id]).External {
 			skipped = append(skipped, id)
 			continue
 		}
-		approving = append(approving, store.MemberNames{MemberID: id, DisplayName: displayName(mem), Username: mem.Username})
+		approving = append(approving, store.MemberNames{MemberID: id, DisplayName: mem.DisplayName(), Username: mem.Username})
 	}
 	if len(approving) == 0 {
 		return skipped, nil
@@ -1335,7 +1074,7 @@ func (s foxholeService) offPage(list commands.MemberListSnapshot, records map[st
 	if _, ok := records[memberID]; ok || list.Status != commands.MemberListComplete {
 		return false
 	}
-	mem, inList := memberByID(list, memberID)
+	mem, inList := list.Member(memberID)
 	return !inList || !s.foxholeGuildOf().rowOf(mem, store.FoxholeRecord{}).holds()
 }
 

@@ -428,6 +428,14 @@ func (f *fakeDiscord) holdPartialList(snap commands.MemberListSnapshot) <-chan s
 	return f.partialListRead
 }
 
+// removeRole takes a role out of the guild's role list, as deleting it in
+// Discord does.
+func (f *fakeDiscord) removeRole(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.roles = slices.DeleteFunc(slices.Clone(f.roles), func(r *discordgo.Role) bool { return r.ID == id })
+}
+
 // addRoles puts roles in the guild's role list.
 func (f *fakeDiscord) addRoles(roles ...*discordgo.Role) {
 	f.mu.Lock()
