@@ -1,6 +1,7 @@
 // Package store is the bot's own database: the hubs the panel edits, the
-// spawned channels the runtime tracks across a restart, and the change log
-// of every panel save. Postgres in production (postgres.go), an in-memory
+// spawned channels the runtime tracks across a restart, the change log of
+// every panel save, and the Foxhole page's notes, kept in a change log of
+// their own. Postgres in production (postgres.go), an in-memory
 // Fake for other packages' tests (fake.go). The forum's MySQL stays in utils;
 // this package never touches it.
 //
@@ -143,7 +144,37 @@ const (
 	ChangeRemove ChangeAction = "remove"
 	// ChangeModerators is a save of the guild-wide moderator roles.
 	ChangeModerators ChangeAction = "moderators"
+	// ChangeNote is a save of one member's note on the Foxhole page. Its
+	// entry goes in the Foxhole change log, never the hub page's.
+	ChangeNote ChangeAction = "note"
 )
+
+// FoxholeMember is one member's Foxhole record (spec #434): their note,
+// whether they are an approved collaborator, and the display name and
+// username the panel last saw them under. The store holds one for each
+// member of the guild with a note or an approval, and nothing about who
+// holds a Foxhole role: a command purge recreates the role under a new ID.
+type FoxholeMember struct {
+	MemberID string
+	Note     string
+	Approved bool
+	// DisplayName and Username are the names the panel last saw, so a
+	// member who left the server still shows under a name.
+	DisplayName string
+	Username    string
+}
+
+// NoteSave is one save of a member's note: the note as the saver loaded it,
+// the note they saved, and the member's names as the panel sees them now.
+type NoteSave struct {
+	MemberID string
+	// Before is the note as the saver loaded it, empty for a member with no
+	// record. The save writes only over it.
+	Before      string
+	Note        string
+	DisplayName string
+	Username    string
+}
 
 // ChangeLogEntry is one row of the change log: who saved what through the
 // panel, when, and from what to what.
@@ -165,6 +196,14 @@ type ChangeLogEntry struct {
 	// them; the panel's service layer decides the shape. Bytes that are not
 	// a JSON value are refused, and the save writes nothing.
 	Diff json.RawMessage
+}
+
+// MemberNames is a member's display name and username as the panel saw
+// them.
+type MemberNames struct {
+	MemberID    string
+	DisplayName string
+	Username    string
 }
 
 // Store is the one seam between the bot and its database. Two implementations:
@@ -237,4 +276,20 @@ type Store interface {
 	// the earlier entries of removed hubs; this is the panel's guild-wide
 	// section reading its own.
 	ListModeratorChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
+
+	// ListFoxholeMembers returns every Foxhole record of the guild, in no
+	// promised order.
+	ListFoxholeMembers(ctx context.Context, guildID string) ([]FoxholeMember, error)
+	// SaveFoxholeNote writes the member's note and names and appends the
+	// save's entry to the Foxhole change log together.
+	SaveFoxholeNote(ctx context.Context, guildID string, save NoteSave, entry ChangeLogEntry) error
+	// SetFoxholeMemberNames replaces the last-seen names of each member
+	// given who has a record, and starts no record for one who hasn't. It
+	// appends no entry: no person made the change.
+	SetFoxholeMemberNames(ctx context.Context, guildID string, names []MemberNames) error
+	// ListFoxholeChanges returns at most limit entries of the Foxhole page's
+	// change log, newest first in append order. The Foxhole change log is
+	// kept apart from the hub page's: no hub page list returns its entries,
+	// and it returns none of theirs. Entries reference no hub.
+	ListFoxholeChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
 }

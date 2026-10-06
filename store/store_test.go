@@ -1299,6 +1299,10 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 			t.Fatalf("SaveGuildModeratorRoles: %v", err)
 		}
 		seededRoles := guildRoles(t, s)
+		if err := saveNote(s, memberDoe, "", "discharged 12 Sep"); err != nil {
+			t.Fatalf("SaveFoxholeNote: %v", err)
+		}
+		seededFoxhole := readFoxholeState(t, s)
 
 		done, cancel := context.WithCancel(live)
 		cancel()
@@ -1324,6 +1328,14 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 			},
 			"ListChangeLog":        func() error { _, err := s.ListChangeLog(done, hubID, 10); return err },
 			"ListModeratorChanges": func() error { _, err := s.ListModeratorChanges(done, 10); return err },
+			"ListFoxholeMembers":   func() error { _, err := s.ListFoxholeMembers(done, "guild-1"); return err },
+			"SaveFoxholeNote": func() error {
+				return s.SaveFoxholeNote(done, "guild-1", NoteSave{MemberID: memberDoe, Before: "discharged 12 Sep", Note: "rejoined"}, noteEntry("rejoined"))
+			},
+			"SetFoxholeMemberNames": func() error {
+				return s.SetFoxholeMemberNames(done, "guild-1", []MemberNames{{MemberID: memberDoe, DisplayName: "CPL Doe.J", Username: "jdoe_cav"}})
+			},
+			"ListFoxholeChanges": func() error { _, err := s.ListFoxholeChanges(done, 10); return err },
 		}
 		for name, call := range calls {
 			if err := call(); !errors.Is(err, context.Canceled) {
@@ -1353,6 +1365,9 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 		}
 		if got := listedOrdinals(t, s, 0); !slices.Equal(got, []int{1}) {
 			t.Errorf("entries under no hub after the done calls are ordinals %v, want [1], the seeded one alone", got)
+		}
+		if got := readFoxholeState(t, s); !reflect.DeepEqual(got, seededFoxhole) {
+			t.Errorf("the Foxhole records and change log after the done calls = %+v, want them as seeded, %+v", got, seededFoxhole)
 		}
 	})
 }

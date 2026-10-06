@@ -35,7 +35,7 @@ type fakeDiscord struct {
 	// adapter puts Discord's reply in the state.
 	channels []*discordgo.Channel
 	// apiReads counts the reads made of Discord's API, each of which fails:
-	// the panel reads the guild from the gateway state.
+	// the panel reads the guild and its members from the gateway state.
 	apiReads int
 	// createErr, when set, is what every create returns.
 	createErr error
@@ -193,7 +193,14 @@ func (f *fakeDiscord) ChannelMessageSendComplex(channelID string, data *discordg
 	return &discordgo.Message{ChannelID: channelID, Content: data.Content}, nil
 }
 
-func (f *fakeDiscord) GuildMember(_, _ string) (*discordgo.Member, error) { return nil, nil }
+// GuildMember is a read of Discord's API: counted, and answered as the API
+// answers while it is down.
+func (f *fakeDiscord) GuildMember(_, _ string) (*discordgo.Member, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.apiReads++
+	return nil, errAPIDown
+}
 
 // VoiceStates copies the fake cache: who is where, and the guild's
 // channels. Any guild but the test guild is absent.

@@ -37,20 +37,31 @@ type Fake struct {
 	// guildRoles holds each guild's guild-wide moderator roles and their
 	// version.
 	guildRoles map[string]GuildModeratorRoles
-	// changes is the change log in append order; nextChangeID is the next
-	// entry's ID.
-	changes      []ChangeLogEntry
-	nextChangeID int64
+	// changes is the hub page's change log, and foxholeChanges the Foxhole
+	// page's, kept apart as the two tables keep them.
+	changes        changeLog
+	foxholeChanges changeLog
+	// members holds each guild's Foxhole records by member ID.
+	members map[string]map[string]FoxholeMember
+}
+
+// changeLog is one change log in append order, and the ID its next entry
+// gets.
+type changeLog struct {
+	entries []ChangeLogEntry
+	nextID  int64
 }
 
 // NewFake returns an empty Fake.
 func NewFake() *Fake {
 	return &Fake{
-		nextID:       1,
-		hubs:         make(map[int64]Hub),
-		spawned:      make(map[string]SpawnedChannel),
-		guildRoles:   make(map[string]GuildModeratorRoles),
-		nextChangeID: 1,
+		nextID:         1,
+		hubs:           make(map[int64]Hub),
+		spawned:        make(map[string]SpawnedChannel),
+		guildRoles:     make(map[string]GuildModeratorRoles),
+		changes:        changeLog{nextID: 1},
+		foxholeChanges: changeLog{nextID: 1},
+		members:        make(map[string]map[string]FoxholeMember),
 	}
 }
 
@@ -202,9 +213,9 @@ func (f *Fake) removeHub(ctx context.Context, id int64, entry *ChangeLogEntry) e
 				f.spawned[channelID] = sp
 			}
 		}
-		for i := range f.changes {
-			if f.changes[i].HubID == id {
-				f.changes[i].HubID = 0
+		for i := range f.changes.entries {
+			if f.changes.entries[i].HubID == id {
+				f.changes.entries[i].HubID = 0
 			}
 		}
 		return 0, nil
@@ -330,6 +341,11 @@ func (f *Fake) AppendChangeLog(ctx context.Context, e ChangeLogEntry) error {
 // settings and the entry land together or not at all, as a Postgres
 // transaction's do.
 func (f *Fake) writeAllOrNothing(ctx context.Context, entry *ChangeLogEntry, apply func() (hubID int64, err error)) error {
+	return f.writeToLog(ctx, &f.changes, entry, apply)
+}
+
+// writeToLog is writeAllOrNothing with the entry appended to log.
+func (f *Fake) writeToLog(ctx context.Context, log *changeLog, entry *ChangeLogEntry, apply func() (hubID int64, err error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -344,12 +360,12 @@ func (f *Fake) writeAllOrNothing(ctx context.Context, entry *ChangeLogEntry, app
 	}
 	if entry != nil {
 		e := *entry
-		e.ID = f.nextChangeID
-		f.nextChangeID++
+		e.ID = log.nextID
+		log.nextID++
 		e.HubID = hubID
 		e.At = time.Now()
 		e.Diff = slices.Clone(e.Diff)
-		f.changes = append(f.changes, e)
+		log.entries = append(log.entries, e)
 	}
 	return nil
 }
@@ -359,7 +375,7 @@ func (f *Fake) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]Cha
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return f.listChanges(limit, func(e ChangeLogEntry) bool { return e.HubID == hubID }), nil
+	return f.listChanges(&f.changes, limit, func(e ChangeLogEntry) bool { return e.HubID == hubID }), nil
 }
 
 // ListModeratorChanges implements Store.
@@ -367,16 +383,17 @@ func (f *Fake) ListModeratorChanges(ctx context.Context, limit int) ([]ChangeLog
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return f.listChanges(limit, func(e ChangeLogEntry) bool { return e.HubID == 0 && e.Action == ChangeModerators }), nil
+	return f.listChanges(&f.changes, limit, func(e ChangeLogEntry) bool { return e.HubID == 0 && e.Action == ChangeModerators }), nil
 }
 
-// listChanges returns at most limit entries that pass keep, newest first.
-func (f *Fake) listChanges(limit int, keep func(ChangeLogEntry) bool) []ChangeLogEntry {
+// listChanges returns at most limit entries of log that pass keep, newest
+// first.
+func (f *Fake) listChanges(log *changeLog, limit int, keep func(ChangeLogEntry) bool) []ChangeLogEntry {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []ChangeLogEntry
-	for i := len(f.changes) - 1; i >= 0 && len(out) < limit; i-- {
-		e := f.changes[i]
+	for i := len(log.entries) - 1; i >= 0 && len(out) < limit; i-- {
+		e := log.entries[i]
 		if !keep(e) {
 			continue
 		}
@@ -384,6 +401,62 @@ func (f *Fake) listChanges(limit int, keep func(ChangeLogEntry) bool) []ChangeLo
 		out = append(out, e)
 	}
 	return out
+}
+
+// ListFoxholeMembers implements Store.
+func (f *Fake) ListFoxholeMembers(ctx context.Context, guildID string) ([]FoxholeMember, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []FoxholeMember
+	for _, m := range f.members[guildID] {
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// SaveFoxholeNote implements Store.
+func (f *Fake) SaveFoxholeNote(ctx context.Context, guildID string, save NoteSave, entry ChangeLogEntry) error {
+	return f.writeToLog(ctx, &f.foxholeChanges, &entry, func() (int64, error) {
+		members := f.members[guildID]
+		if members == nil {
+			members = map[string]FoxholeMember{}
+			f.members[guildID] = members
+		}
+		m := members[save.MemberID]
+		if m.Note != save.Before {
+			return 0, ErrStale
+		}
+		m.MemberID, m.Note, m.DisplayName, m.Username = save.MemberID, save.Note, save.DisplayName, save.Username
+		members[save.MemberID] = m
+		if m.Note == "" && !m.Approved {
+			delete(members, save.MemberID)
+		}
+		return 0, nil
+	})
+}
+
+// SetFoxholeMemberNames implements Store.
+func (f *Fake) SetFoxholeMemberNames(ctx context.Context, guildID string, names []MemberNames) error {
+	return f.writeAllOrNothing(ctx, nil, func() (int64, error) {
+		for _, n := range names {
+			if m, ok := f.members[guildID][n.MemberID]; ok {
+				m.DisplayName, m.Username = n.DisplayName, n.Username
+				f.members[guildID][n.MemberID] = m
+			}
+		}
+		return 0, nil
+	})
+}
+
+// ListFoxholeChanges implements Store.
+func (f *Fake) ListFoxholeChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.listChanges(&f.foxholeChanges, limit, func(ChangeLogEntry) bool { return true }), nil
 }
 
 // cloneHub copies a hub so a caller's later edits to the slice do not reach

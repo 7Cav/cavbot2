@@ -183,3 +183,118 @@
 
   document.querySelectorAll('[data-picker]').forEach(setUp);
 })();
+
+/* Inline note edit on the Foxhole page (spec #434, ADR 0013). A holder
+   row's Edit link opens the note form in the row's note cell: the same form
+   the link opens above the list when script is off, cloned from the page's
+   <template>. Enter saves, posting the form in the background; Escape and
+   Cancel put the cell back. A saved note swaps in the row's note cell and
+   the change log from the page the save answers with, so nothing else on
+   the page reloads. A refused save swaps in the form the server sends back,
+   with its reason and the text typed. */
+(function () {
+  'use strict';
+
+  var template = document.querySelector('[data-note-template]');
+  if (!template) { return; }
+
+  // mount puts a note form in the cell and wires its keys and buttons.
+  // restore puts back what the cell showed before the form opened.
+  function mount(cell, form, restore) {
+    var input = form.querySelector('[data-note-input]');
+    var cancel = form.querySelector('[data-field="cancel_note"]');
+    cell.replaceChildren(form);
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      save(cell, form, restore);
+    });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        restore();
+      }
+    });
+    cancel.addEventListener('click', function (e) {
+      e.preventDefault();
+      restore();
+    });
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+
+  function open(cell) {
+    var shown = Array.from(cell.childNodes);
+    var note = cell.getAttribute('data-note');
+    var form = template.content.firstElementChild.cloneNode(true);
+    form.querySelector('[name="member"]').value = cell.closest('[data-member]').getAttribute('data-member');
+    form.querySelector('[name="loaded"]').value = note;
+    form.querySelector('[name="note"]').value = note;
+    mount(cell, form, function () {
+      cell.replaceChildren.apply(cell, shown);
+      var link = cell.querySelector('[data-field="edit_note"]');
+      if (link) { link.focus(); }
+    });
+  }
+
+  // failed tells the manager in the form that the save didn't reach the
+  // panel, and leaves the form open with their text.
+  function failed(form) {
+    var line = form.querySelector('[data-note-failed]') || document.createElement('div');
+    line.setAttribute('data-note-failed', '');
+    line.className = 'note fx-noterefusal';
+    line.textContent = 'The note could not be saved. Reload the page and try again.';
+    form.prepend(line);
+    form.querySelector('[type="submit"]').disabled = false;
+  }
+
+  function save(cell, form, restore) {
+    var input = form.querySelector('[data-note-input]');
+    var loaded = form.querySelector('[name="loaded"]').value;
+    if (input.value.trim() === loaded && !form.querySelector('[data-error]')) {
+      restore();
+      return;
+    }
+    var id = cell.closest('[data-member]').getAttribute('data-member');
+    form.querySelector('[type="submit"]').disabled = true;
+    fetch(form.action, { method: 'POST', body: new URLSearchParams(new FormData(form)), credentials: 'same-origin' })
+      .then(function (res) {
+        return res.text().then(function (text) {
+          return { ok: res.ok, doc: new DOMParser().parseFromString(text, 'text/html') };
+        });
+      })
+      .then(function (answer) {
+        if (!answer.ok) {
+          var refused = answer.doc.querySelector('main [data-field="note-form"]');
+          if (refused) {
+            mount(cell, document.adoptNode(refused), restore);
+          } else {
+            failed(form);
+          }
+          return;
+        }
+        var log = answer.doc.querySelector('[data-field="changes"]');
+        var mine = document.querySelector('[data-field="changes"]');
+        if (log && mine) { mine.replaceWith(document.adoptNode(log)); }
+        var fresh = answer.doc.querySelector('[data-member="' + CSS.escape(id) + '"] [data-note-cell]');
+        if (fresh) {
+          cell.replaceWith(document.adoptNode(fresh));
+          return;
+        }
+        // The view the save returns to no longer lists the row, as when
+        // the search matched the old note: show the saved note in place.
+        restore();
+        var saved = input.value.trim();
+        cell.setAttribute('data-note', saved);
+        cell.querySelector('[data-field="note"]').textContent = saved;
+      })
+      .catch(function () { failed(form); });
+  }
+
+  document.addEventListener('click', function (e) {
+    var link = e.target.closest('[data-field="edit_note"]');
+    var cell = link && link.closest('[data-note-cell]');
+    if (!cell) { return; }
+    e.preventDefault();
+    open(cell);
+  });
+})();

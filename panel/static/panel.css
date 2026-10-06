@@ -190,6 +190,18 @@ img { max-width: 100%; }
 .fx-role, .fx-rank { color: var(--text-hi); }
 .fx-nowrap { white-space: nowrap; }
 
+/* A holder's note, and the form that edits it: in the row's note cell with
+   script, above the holder list without. */
+.fx-note { min-width: 240px; max-width: 460px; }
+.fx-notetext { color: var(--text-hi); overflow-wrap: anywhere; }
+.fx-noteedit { font-size: 13px; white-space: nowrap; }
+.fx-notetext:not(:empty) + .fx-noteedit { margin-left: 6px; }
+.fx-noteform { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.fx-noteinput { flex: 1 1 220px; min-width: 0; border-radius: var(--radius); }
+.fx-noterefusal { flex-basis: 100%; margin: 0; }
+.fx-notenow { color: var(--text-hi); }
+.fx-notecancel { font-size: 13px; }
+
 /* The rail and the page beside it. */
 .console { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100dvh; }
 .rail { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; position: sticky; top: 0; height: 100dvh; }
