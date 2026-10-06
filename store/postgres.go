@@ -569,3 +569,140 @@ func (p *Postgres) ListModeratorChanges(ctx context.Context, limit int) ([]Chang
 	}
 	return entries, nil
 }
+
+// ListFoxholeRecords implements Store.
+func (p *Postgres) ListFoxholeRecords(ctx context.Context, guildID string) ([]FoxholeRecord, error) {
+	members, err := queryAll(ctx, p.db, func(row scanner) (FoxholeRecord, error) {
+		var m FoxholeRecord
+		err := row.Scan(&m.MemberID, &m.Note, &m.Approved, &m.DisplayName, &m.Username)
+		return m, err
+	}, `SELECT member_id, note, approved, last_display_name, last_username
+		FROM foxhole_records WHERE guild_id = $1 ORDER BY member_id`, guildID)
+	if err != nil {
+		return nil, fmt.Errorf("list Foxhole records of guild %q: %w", guildID, err)
+	}
+	return members, nil
+}
+
+// SaveFoxholeNote implements Store.
+func (p *Postgres) SaveFoxholeNote(ctx context.Context, guildID string, save NoteSave, entry ChangeLogEntry) error {
+	err := p.inTx(ctx, func(tx *sql.Tx) error {
+		if err := writeNote(ctx, tx, guildID, save); err != nil {
+			return err
+		}
+		// A record holds a note or an approval. One left with neither goes.
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM foxhole_records WHERE guild_id = $1 AND member_id = $2 AND note = '' AND NOT approved`,
+			guildID, save.MemberID); err != nil {
+			return err
+		}
+		return insertFoxholeChange(ctx, tx, entry)
+	})
+	if err != nil {
+		return fmt.Errorf("save Foxhole note of member %q: %w", save.MemberID, err)
+	}
+	return nil
+}
+
+// writeNote writes the member's note and names only while the stored note
+// is save.Before, a member with no record holding the empty note. The row
+// is locked from the read to the write, so no other save lands between
+// them. A save that starts a record inserts it only while no other save has,
+// since a missing row locks nothing. Nothing written is ErrStale.
+func writeNote(ctx context.Context, tx *sql.Tx, guildID string, save NoteSave) error {
+	var stored string
+	err := tx.QueryRowContext(ctx, `
+		SELECT note FROM foxhole_records WHERE guild_id = $1 AND member_id = $2 FOR UPDATE`,
+		guildID, save.MemberID).Scan(&stored)
+	if errors.Is(err, sql.ErrNoRows) {
+		if save.Before != "" {
+			return ErrStale
+		}
+		return insertNote(ctx, tx, guildID, save)
+	}
+	if err != nil {
+		return err
+	}
+	if stored != save.Before {
+		return ErrStale
+	}
+	_, err = tx.ExecContext(ctx, `
+		UPDATE foxhole_records SET note = $3, last_display_name = $4, last_username = $5, updated_at = now()
+		WHERE guild_id = $1 AND member_id = $2`,
+		guildID, save.MemberID, save.Note, save.DisplayName, save.Username)
+	return err
+}
+
+// insertNote starts the member's record with the save's note and names.
+// A record another save started first stops it, and nothing written is
+// ErrStale.
+func insertNote(ctx context.Context, tx *sql.Tx, guildID string, save NoteSave) error {
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO foxhole_records (guild_id, member_id, note, last_display_name, last_username)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (guild_id, member_id) DO NOTHING`,
+		guildID, save.MemberID, save.Note, save.DisplayName, save.Username)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrStale
+	}
+	return nil
+}
+
+// SetFoxholeRecordNames implements Store. The few updates run in one
+// transaction, so a refresh lands whole or not at all.
+func (p *Postgres) SetFoxholeRecordNames(ctx context.Context, guildID string, names []MemberNames) error {
+	err := p.inTx(ctx, func(tx *sql.Tx) error {
+		for _, n := range names {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE foxhole_records SET last_display_name = $3, last_username = $4
+				WHERE guild_id = $1 AND member_id = $2`,
+				guildID, n.MemberID, n.DisplayName, n.Username); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("set Foxhole record names of guild %q: %w", guildID, err)
+	}
+	return nil
+}
+
+// insertFoxholeChange appends one entry to the Foxhole change log. The diff
+// goes in as JSONB, so bytes that are not a JSON value are refused here.
+func insertFoxholeChange(ctx context.Context, tx *sql.Tx, e ChangeLogEntry) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO foxhole_change_log (forum_user_id, forum_username, action, diff)
+		VALUES ($1, $2, $3, $4)`,
+		e.ForumUserID, e.ForumUsername, string(e.Action), []byte(e.Diff))
+	if err != nil {
+		return fmt.Errorf("append Foxhole change log entry: %w", err)
+	}
+	return nil
+}
+
+// ListFoxholeChanges implements Store. Newest first is descending ID, as in
+// ListChangeLog.
+func (p *Postgres) ListFoxholeChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	entries, err := queryAll(ctx, p.db, func(row scanner) (ChangeLogEntry, error) {
+		var (
+			e    ChangeLogEntry
+			diff []byte
+		)
+		err := row.Scan(&e.ID, &e.ForumUserID, &e.ForumUsername, &e.At, &e.Action, &diff)
+		e.Diff = json.RawMessage(diff)
+		return e, err
+	}, `SELECT id, forum_user_id, forum_username, at, action, diff
+		FROM foxhole_change_log ORDER BY id DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list Foxhole changes: %w", err)
+	}
+	return entries, nil
+}

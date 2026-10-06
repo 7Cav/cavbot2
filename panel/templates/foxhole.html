@@ -3,13 +3,19 @@
   <h1 class="title">Foxhole</h1>
   <p class="desc">Everyone holding a Foxhole role. Changes here go straight to Discord.</p>
   {{with .Foxhole}}
+  {{with .NoteForm}}
+  <section class="block narrow" data-field="note-block">
+    <h2 class="block-header">Note on {{if .DisplayName}}{{.DisplayName}} <span class="fx-user">@{{.Username}}</span>{{else}}{{.MemberID}}{{end}}</h2>
+    <div class="block-row">{{template "note-form" .}}</div>
+  </section>
+  {{end}}
   {{if .ListReady}}
   <section class="block" data-field="holders">
     <h2 class="block-header">Foxhole role holders</h2>
     <div class="block-row fx-toolbar">
       <form method="get" action="/foxhole" class="fx-searchform" role="search" data-field="search">
         {{if ne .Filter "all"}}<input type="hidden" name="filter" value="{{.Filter}}">{{end}}
-        <input type="search" name="q" value="{{.Query}}" class="search-input fx-search" placeholder="Search name, username or ID" aria-label="Search name, username or ID">
+        <input type="search" name="q" value="{{.Query}}" class="search-input fx-search" placeholder="Search name, username, ID or note" aria-label="Search name, username, ID or note">
         <button type="submit" class="btn btn--small">Search</button>
       </form>
       <nav class="fx-filters" aria-label="Filter the list">
@@ -17,16 +23,17 @@
       </nav>
     </div>
     <div class="scroll"><table class="hublist fx-list">
-      <thead><tr><th>Member</th><th>Roles</th><th>Rank role</th></tr></thead>
+      <thead><tr><th>Member</th><th>Roles</th><th>Rank role</th><th>Note</th></tr></thead>
       <tbody>
       {{range .Holders}}
         <tr data-member="{{.ID}}">
           <td class="fx-member"><span class="fx-name" data-field="display_name">{{.DisplayName}}</span> <span class="fx-user">@<span data-field="username">{{.Username}}</span></span></td>
           <td class="fx-nowrap">{{if .Internal}}<span class="tag fx-role" data-role="internal">Internal</span> {{end}}{{if .External}}<span class="tag fx-role" data-role="external">External</span>{{end}}</td>
           <td class="fx-nowrap">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else if .NoRankRole}}<span class="tag tag--warn" data-flag="no-rank-role">no rank role</span>{{else}}<span class="off">none</span>{{end}}</td>
+          <td class="fx-note" data-note-cell data-note="{{.Note}}"><span class="fx-notetext" data-field="note">{{.Note}}</span> <a href="{{.EditHref}}" class="fx-noteedit" data-field="edit_note">{{if .Note}}Edit{{else}}Add a note{{end}}</a></td>
         </tr>
       {{else}}
-        <tr><td colspan="3" class="off">{{if $.Foxhole.NoHolders}}Nobody holds a Foxhole role.{{else}}No holder matches.{{end}}</td></tr>
+        <tr><td colspan="4" class="off">{{if $.Foxhole.NoHolders}}Nobody holds a Foxhole role.{{else}}No holder matches.{{end}}</td></tr>
       {{end}}
       </tbody>
     </table></div>
@@ -34,6 +41,36 @@
   {{else}}
   <div class="note" data-notice="member-list">Cavbot2 doesn't have the whole member list from Discord yet, so the holder list can't show. Reload the page in a minute.</div>
   {{end}}
+  <section class="block" data-field="changes">
+    <h2 class="block-header">Change log</h2>
+    {{range $i, $_ := .Changes}}
+    <details class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}"{{if eq $i 0}} open{{end}}>
+      <summary class="change-head">
+        <span class="change-who" data-field="username">{{.Username}}</span>
+        <span class="tag" data-field="action">{{.Action}}</span>
+        <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
+      </summary>
+      <dl class="change-fields">
+        <div data-change="member"><dt>member</dt><dd data-touched="{{.MemberID}}">{{.MemberName}} <span class="fx-user">@{{.MemberUsername}}</span></dd></div>
+        <div data-change="note"><dt>note</dt><dd><span data-field="before">{{.Before}}</span>{{if not .Before}}<span class="off">none</span>{{end}} <span class="arrow">&rarr;</span> <span data-field="after">{{.After}}</span>{{if not .After}}<span class="off">none</span>{{end}}</dd></div>
+      </dl>
+    </details>
+    {{else}}
+    <div class="block-row">No changes recorded yet.</div>
+    {{end}}
+  </section>
+  <template data-note-template>{{template "note-form" .NoteTemplate}}</template>
   {{end}}
 </main>
 {{end}}
+
+{{define "note-form"}}<form method="post" action="/foxhole/notes" class="fx-noteform" data-field="note-form">
+  {{with .Refusal}}<div class="note fx-noterefusal" data-error="{{.Kind}}">{{.Message}}{{if eq .Kind "stale"}} Their note: <span class="fx-notenow">{{if $.Loaded}}{{$.Loaded}}{{else}}none{{end}}</span>{{end}}</div>{{end}}
+  <input type="hidden" name="member" value="{{.MemberID}}">
+  <input type="hidden" name="loaded" value="{{.Loaded}}">
+  <input type="hidden" name="q" value="{{.Query}}">
+  <input type="hidden" name="filter" value="{{.Filter}}">
+  <input type="text" name="note" value="{{.Note}}" class="search-input fx-noteinput" aria-label="Note" autocomplete="off" data-note-input>
+  <button type="submit" class="btn btn--small btn--cta" data-field="save_note">Save</button>
+  <a href="{{.Back}}" class="fx-notecancel" data-field="cancel_note">Cancel</a>
+</form>{{end}}

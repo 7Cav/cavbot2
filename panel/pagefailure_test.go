@@ -108,6 +108,20 @@ func (s *ctxStore) ListModeratorChanges(ctx context.Context, limit int) ([]store
 	return s.Fake.ListModeratorChanges(ctx, limit)
 }
 
+func (s *ctxStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
+	if err := s.gate(ctx, "ListFoxholeRecords"); err != nil {
+		return nil, err
+	}
+	return s.Fake.ListFoxholeRecords(ctx, guildID)
+}
+
+func (s *ctxStore) SetFoxholeRecordNames(ctx context.Context, guildID string, names []store.MemberNames) error {
+	if err := s.gate(ctx, "SetFoxholeRecordNames"); err != nil {
+		return err
+	}
+	return s.Fake.SetFoxholeRecordNames(ctx, guildID, names)
+}
+
 func (s *ctxStore) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]store.ChangeLogEntry, error) {
 	if err := s.gate(ctx, "ListChangeLog"); err != nil {
 		return nil, err

@@ -7,7 +7,8 @@
 // spawned count, its last spawn failure and its broken hub state, the create
 // and register forms, each hub's edit form with its change log, and the
 // remove action. The Foxhole page lists the Foxhole role holders from the
-// member list, with search and filters.
+// member list, with search, filters and each holder's note, and its own
+// change log of note saves.
 package panel
 
 import (
@@ -96,7 +97,7 @@ func New(cfg Config, version string, deps Deps) (*Panel, error) {
 		cfg:      cfg,
 		version:  version,
 		hubs:     &hubService{deps: deps, storeTimeout: storeTimeout, saveLock: &sync.Mutex{}},
-		foxhole:  foxholeService{manager: deps.Manager, guildID: deps.GuildID},
+		foxhole:  foxholeService{manager: deps.Manager, store: deps.Store, guildID: deps.GuildID},
 		forumURL: forumURL,
 		pages:    pg,
 		oauth: &oauth2.Config{
@@ -194,6 +195,7 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("POST /hubs/{id}/remove", p.withPanelAdmin(p.removeHub))
 	mux.HandleFunc("POST /moderators", p.withPanelAdmin(p.saveModerators))
 	mux.HandleFunc("GET "+foxholePath, p.withFoxholePage(p.foxholePage))
+	mux.HandleFunc("POST "+foxholeNotesPath, p.withFoxholePage(p.saveNote))
 	protected := http.NewCrossOriginProtection().Handler(mux)
 	// A panic in a handler is recovered here, through the same path every
 	// other goroutine uses (ADR 0001), before net/http's own recovery would
@@ -411,8 +413,9 @@ func (p *Panel) refuse(w http.ResponseWriter, r *http.Request, sess session) {
 		http.Redirect(w, r, to, http.StatusSeeOther)
 		return
 	}
-	// Every save the panel takes is a panel admin's, so the line keeps the
-	// name log searches already use.
+	// A panel admin passes every gate, so a refused save, a note save
+	// included, is never one's, and the line keeps the name log searches
+	// already use.
 	if r.Method == http.MethodPost {
 		utils.Info("Panel save refused: not a panel admin", "path", r.URL.Path,
 			"username", sess.username, "forum_user_id", sess.userID)
@@ -487,7 +490,7 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			report = reads.report(p.pageBudget)
 		}
-		p.hubPageFailed(w, sess, req, err, report)
+		p.pageFailed(w, sess, "hub page", pageAddress(req), err, report)
 		return
 	}
 	data := sess.page("Hubs")
@@ -495,14 +498,14 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 	p.render(w, status, "home", data)
 }
 
-// hubPageFailed reports a hub page read that failed to Sentry (ADR 0001) and
+// pageFailed reports a page read that failed to Sentry (ADR 0001) and
 // renders the error page with the 503 it earns: the page took too long when
 // the time budget ran out, and could not load for any other failure. Try
-// again leads to the page's GET address, so a refused save's page is loaded
-// afresh and never posted twice. report, set when the budget had run out by
-// the failure, goes on the event as time_budget.
-func (p *Panel) hubPageFailed(w http.ResponseWriter, sess session, req pageRequest, err error, report *budgetReport) {
-	kv := []any{"step", "hub page"}
+// again leads to retry, the page's GET address, so a refused save's page is
+// loaded afresh and never posted twice. report, set when the hub page's
+// budget had run out by the failure, goes on the event as time_budget.
+func (p *Panel) pageFailed(w http.ResponseWriter, sess session, step, retry string, err error, report *budgetReport) {
+	kv := []any{"step", step}
 	if report != nil {
 		kv = append(kv, "time_budget", report)
 	}
@@ -514,7 +517,7 @@ func (p *Panel) hubPageFailed(w http.ResponseWriter, sess session, req pageReque
 			"Cavbot2 took too long to load this page. Nothing changed and you are still signed in."
 	}
 	data := sess.page(title)
-	data.Failure, data.Message, data.Retry = kind, message, pageAddress(req)
+	data.Failure, data.Message, data.Retry = kind, message, retry
 	p.render(w, http.StatusServiceUnavailable, "error", data)
 }
 

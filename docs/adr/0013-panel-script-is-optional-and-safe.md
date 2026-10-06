@@ -42,3 +42,11 @@ fetches from a third party, the same reason the font is embedded.
   set.
 - Do not add a no-script editing path for a scripted control. If a control
   needs one, that is a new decision.
+
+## Amendment: the Foxhole note has a no-script editing path (2026-10-06)
+
+Spec #434 made an exception for the Foxhole page's note. Without script, a
+holder row's Edit link loads the page with the same note form the script
+opens in the row. A dead picker keeps the stored set, but a dead Edit link
+would lose the note a manager meant to save. The server renders the form
+once and the script clones it, so there is still one rendering.
