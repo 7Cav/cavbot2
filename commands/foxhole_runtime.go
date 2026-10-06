@@ -112,8 +112,9 @@ type FoxholeGuildReader interface {
 // which the production adapter URL-encodes. The production adapter waits
 // out a rate limit and retries, so a member never fails on a bucket that
 // resets in seconds, and discordgo paces the calls to Discord's per-guild
-// member-role rate, about one a second.
+// member-role rate, about one a second. Adds and removals share that rate.
 type FoxholeRoleWriter interface {
+	GuildMemberRoleAdd(guildID, userID, roleID, auditReason string) error
 	GuildMemberRoleRemove(guildID, userID, roleID, auditReason string) error
 }
 
@@ -219,6 +220,9 @@ const (
 	// SkipNotHolding is a member who no longer held the role the action was
 	// taking.
 	SkipNotHolding SkipReason = "not-holding"
+	// SkipHolding is a member who already held the role the action was
+	// giving.
+	SkipHolding SkipReason = "holding"
 	// SkipLeft is a member who had left the server.
 	SkipLeft SkipReason = "left"
 )
@@ -408,25 +412,70 @@ type plannedChange struct {
 }
 
 // actionRun is what an action's run carries besides its plan: the action,
-// its report's ID, and the audit log reason each of its changes sends.
+// whether it gives the role or takes it, its report's ID, and the audit log
+// reason each of its changes sends.
 type actionRun struct {
 	action   store.ChangeAction
+	grant    bool
 	reportID int64
 	reason   string
 	// stop closes when someone presses the action's Stop.
 	stop <-chan struct{}
 }
 
+// actionSpec is a Foxhole action as start starts it.
+type actionSpec struct {
+	action store.ChangeAction
+	// scope is a purge's scope, for its report.
+	scope PurgeScope
+	// roles are the Foxhole roles the action changes. The guild must hold
+	// each.
+	roles []FoxholeRole
+	// grant is an action giving the role. One that doesn't takes it.
+	grant bool
+	// reason is the audit log reason's wording before the forum user who
+	// started the action.
+	reason string
+	// plan is the action's role changes, over the complete member list as it
+	// stands, the guild's Foxhole role IDs and the guild's Foxhole records.
+	plan func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange
+}
+
 // Purge starts a purge of the scope given, started by the forum user
+// given, and returns once its report is written. It starts as start says.
+// The purge then runs in the background, with no deadline of ctx's, to its
+// end: one member at a time, External holders first, it takes the role off
+// each holder the member list showed at the start. It never deletes or
+// recreates a role, so role IDs and channel overwrites stay.
+func (r *FoxholeRuntime) Purge(ctx context.Context, scope PurgeScope, by ForumUser) error {
+	return r.start(ctx, actionSpec{
+		action: store.ChangePurge, scope: scope, roles: scope.Roles(), reason: "Panel: Foxhole purge by ",
+		plan: func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, _ []store.FoxholeRecord) []plannedChange {
+			return purgePlan(list, roleIDs, scope)
+		},
+	}, by)
+}
+
+// ReAdd starts a re-add of the approved collaborators, started by the forum
+// user given, and returns once its report is written. It starts as start
+// says. The re-add then runs in the background, with no deadline of ctx's,
+// to its end: one member at a time, it gives External to each approved
+// collaborator the store held at the start. One who left the server, or
+// who holds External already, is skipped with that reason.
+func (r *FoxholeRuntime) ReAdd(ctx context.Context, by ForumUser) error {
+	return r.start(ctx, actionSpec{
+		action: store.ChangeReAdd, roles: []FoxholeRole{FoxholeExternal}, grant: true,
+		reason: "Panel: Foxhole re-add of approved collaborators by ", plan: reAddPlan,
+	}, by)
+}
+
+// start starts the Foxhole action spec names, started by the forum user
 // given, and returns once its report is written. It starts only while no
 // other Foxhole action runs, else ErrActionRunning, only with a complete
 // member list, else ErrMemberListPartial, and only when the guild holds
-// each role it names, else a *MissingRoleError. The purge then runs in
-// the background, with no deadline of ctx's, to its end: one member at a
-// time, External holders first, it takes the role off each holder the
-// member list showed at the start. It never deletes or recreates a role,
-// so role IDs and channel overwrites stay.
-func (r *FoxholeRuntime) Purge(ctx context.Context, scope PurgeScope, by ForumUser) (err error) {
+// each role the action changes, else a *MissingRoleError. The action then
+// runs in the background, with no deadline of ctx's.
+func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUser) (err error) {
 	stop, ok := r.claim()
 	if !ok {
 		return ErrActionRunning
@@ -441,52 +490,48 @@ func (r *FoxholeRuntime) Purge(ctx context.Context, scope PurgeScope, by ForumUs
 		return ErrMemberListPartial
 	}
 	roleIDs := FoxholeRoleIDs(r.guild.GuildData(r.guildID))
-	if err := missingRole(roleIDs, scope); err != nil {
-		captureError("Foxhole role not found for a purge", err, "role", err.Role, "scope", scope)
+	if err := missingRole(roleIDs, spec.roles); err != nil {
+		captureError("Foxhole role not found for an action", err, "role", err.Role, "action", spec.action, "scope", spec.scope)
 		return err
 	}
-	plan := purgePlan(list, roleIDs, scope)
-	report := ActionReport{Scope: scope, Changed: []ReportMember{}, Skipped: []ReportMember{}, Failed: []ReportMember{},
+	ctx, cancel := context.WithTimeout(ctx, foxholeStoreTimeout)
+	defer cancel()
+	records, err := r.store.ListFoxholeRecords(ctx, r.guildID)
+	if err != nil {
+		return fmt.Errorf("list Foxhole records: %w", err)
+	}
+	plan := spec.plan(list, roleIDs, records)
+	report := ActionReport{Scope: spec.scope, Changed: []ReportMember{}, Skipped: []ReportMember{}, Failed: []ReportMember{},
 		NotAttempted: make([]ReportMember, 0, len(plan))}
 	for _, p := range plan {
 		report.NotAttempted = append(report.NotAttempted, p.member)
 	}
 	raw, err := json.Marshal(report)
 	if err != nil {
-		return fmt.Errorf("encode the purge's report: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(ctx, foxholeStoreTimeout)
-	defer cancel()
-	names, err := r.recordNames(ctx)
-	if err != nil {
-		return err
+		return fmt.Errorf("encode the %s report: %w", spec.action, err)
 	}
 	entry, err := r.store.StartFoxholeReport(ctx, store.ChangeLogEntry{
-		ForumUserID: by.ID, ForumUsername: by.Username, Action: store.ChangePurge, Diff: raw,
+		ForumUserID: by.ID, ForumUsername: by.Username, Action: spec.action, Diff: raw,
 	})
 	if err != nil {
-		return fmt.Errorf("start the purge's report: %w", err)
+		return fmt.Errorf("start the %s report: %w", spec.action, err)
 	}
-	utils.Info("Foxhole action started", "action", store.ChangePurge, "scope", scope, "members", len(plan),
+	utils.Info("Foxhole action started", "action", spec.action, "scope", spec.scope, "members", len(plan),
 		"username", by.Username, "forum_user_id", by.ID)
 	r.started(entry.ID)
-	run := actionRun{action: store.ChangePurge, reportID: entry.ID, reason: "Panel: Foxhole purge by " + by.auditName(), stop: stop}
-	go r.run(run, plan, report, names)
+	run := actionRun{action: spec.action, grant: spec.grant, reportID: entry.ID, reason: spec.reason + by.auditName(), stop: stop}
+	go r.run(run, plan, report, namesOf(records))
 	return nil
 }
 
-// recordNames reads the last-seen names of each member with a Foxhole
-// record, by member ID.
-func (r *FoxholeRuntime) recordNames(ctx context.Context) (map[string]store.MemberNames, error) {
-	records, err := r.store.ListFoxholeRecords(ctx, r.guildID)
-	if err != nil {
-		return nil, fmt.Errorf("list Foxhole records: %w", err)
-	}
+// namesOf is the last-seen names of each member with a Foxhole record, by
+// member ID.
+func namesOf(records []store.FoxholeRecord) map[string]store.MemberNames {
 	names := make(map[string]store.MemberNames, len(records))
 	for _, rec := range records {
 		names[rec.MemberID] = store.MemberNames{MemberID: rec.MemberID, DisplayName: rec.DisplayName, Username: rec.Username}
 	}
-	return names, nil
+	return names
 }
 
 // refreshNames stores the names the member list shows for a member with a
@@ -508,12 +553,12 @@ func (r *FoxholeRuntime) refreshNames(names map[string]store.MemberNames, mem Li
 	names[mem.ID] = now
 }
 
-// missingRole is the first role the scope names that the guild lacks, nil
-// when it holds them all.
-func missingRole(roleIDs map[FoxholeRole]string, scope PurgeScope) *MissingRoleError {
+// missingRole is the first of the roles that the guild lacks, nil when it
+// holds them all.
+func missingRole(roleIDs map[FoxholeRole]string, roles []FoxholeRole) *MissingRoleError {
 	internalName, externalName := FoxholeRoleNames()
 	names := map[FoxholeRole]string{FoxholeInternal: internalName, FoxholeExternal: externalName}
-	for _, role := range scope.Roles() {
+	for _, role := range roles {
 		if roleIDs[role] == "" {
 			return &MissingRoleError{Role: names[role]}
 		}
@@ -537,21 +582,47 @@ func purgePlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, scope Pu
 				})
 			}
 		}
-		slices.SortFunc(holders, func(a, b plannedChange) int {
-			return cmp.Or(cmp.Compare(strings.ToLower(a.member.DisplayName), strings.ToLower(b.member.DisplayName)),
-				cmp.Compare(a.member.ID, b.member.ID))
-		})
-		plan = append(plan, holders...)
+		plan = append(plan, byDisplayName(holders)...)
 	}
 	return plan
+}
+
+// reAddPlan is a re-add's role changes: External for every approved
+// collaborator, in display name order, whether or not they are in the
+// server. The member list names those in it, and the records' last-seen
+// names those who left.
+func reAddPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange {
+	var plan []plannedChange
+	for _, rec := range records {
+		if !rec.Approved {
+			continue
+		}
+		member := ReportMember{ID: rec.MemberID, DisplayName: rec.DisplayName, Username: rec.Username, Role: FoxholeExternal}
+		if m, ok := list.Member(rec.MemberID); ok {
+			member.DisplayName, member.Username = m.DisplayName(), m.Username
+		}
+		plan = append(plan, plannedChange{member: member, roleID: roleIDs[FoxholeExternal]})
+	}
+	return byDisplayName(plan)
+}
+
+// byDisplayName sorts changes by their member's display name, ignoring
+// case, then by member ID, and returns them.
+func byDisplayName(changes []plannedChange) []plannedChange {
+	slices.SortFunc(changes, func(a, b plannedChange) int {
+		return cmp.Or(cmp.Compare(strings.ToLower(a.member.DisplayName), strings.ToLower(b.member.DisplayName)),
+			cmp.Compare(a.member.ID, b.member.ID))
+	})
+	return changes
 }
 
 // run makes an action's role changes one at a time, writing the report
 // after each, and ends the report once it has been through them all, or
 // sooner when someone presses Stop or a pause outlasts FoxholePauseLimit
 // (awaitList). Just before it changes a member it reads them from the
-// member list: one who no longer holds the role, or who left the server,
-// is skipped with that reason, and one still in the server is named in the
+// member list: one who no longer holds the role it takes, who holds the
+// role it gives already, or who left the server, is skipped with that
+// reason, and one still in the server is named in the
 // report under the names the list shows now, which also refresh their
 // record's names.
 func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionReport, names map[string]store.MemberNames) {
@@ -575,15 +646,19 @@ func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionR
 			r.refreshNames(names, mem)
 			member.DisplayName, member.Username = mem.DisplayName(), mem.Username
 		}
+		holds := slices.Contains(mem.RoleIDs, p.roleID)
 		switch {
 		case !ok:
 			member.Skip = SkipLeft
 			report.Skipped = append(report.Skipped, member)
-		case !slices.Contains(mem.RoleIDs, p.roleID):
+		case run.grant && holds:
+			member.Skip = SkipHolding
+			report.Skipped = append(report.Skipped, member)
+		case !run.grant && !holds:
 			member.Skip = SkipNotHolding
 			report.Skipped = append(report.Skipped, member)
 		default:
-			if err := r.roles.GuildMemberRoleRemove(r.guildID, member.ID, p.roleID, run.reason); err != nil {
+			if err := r.change(run, member.ID, p.roleID); err != nil {
 				if classifyDiscordError(err).SystemFault {
 					faults.recordSystemFault(err, member.ID)
 				}
@@ -605,6 +680,15 @@ func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionR
 	faults.flush("Foxhole action role change failed", "action", run.action, "guild", r.guildID)
 	utils.Info("Foxhole action ended", "action", run.action, "outcome", report.Outcome, "changed", len(report.Changed),
 		"skipped", len(report.Skipped), "failed", len(report.Failed), "not_attempted", len(report.NotAttempted))
+}
+
+// change gives the member the role, or takes it, as the run does, with the
+// run's audit log reason.
+func (r *FoxholeRuntime) change(run actionRun, memberID, roleID string) error {
+	if run.grant {
+		return r.roles.GuildMemberRoleAdd(r.guildID, memberID, roleID, run.reason)
+	}
+	return r.roles.GuildMemberRoleRemove(r.guildID, memberID, roleID, run.reason)
 }
 
 // awaitList reads the member list before an action's next member, and

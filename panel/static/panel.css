@@ -234,6 +234,8 @@ img { max-width: 100%; }
 .fx-actions > .block > form:last-child { flex: 1; display: flex; flex-direction: column; }
 .fx-actions > .block > form:last-child > .submit-row { margin-top: auto; }
 .fx-radios .check { display: inline-block; margin-right: 14px; }
+.fx-readd { border-top: 1px solid var(--line-2); }
+.fx-readdcount { margin: 0; color: var(--text-hi); }
 .btn[disabled] { opacity: .4; cursor: not-allowed; }
 .fx-pending { border-color: var(--gold-lo); }
 .fx-pending--danger { border-color: var(--danger-hi); }

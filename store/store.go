@@ -158,6 +158,10 @@ const (
 	// ChangePurge is a purge started on the Foxhole page. Its entry is the
 	// purge's report, in the Foxhole change log.
 	ChangePurge ChangeAction = "purge"
+	// ChangeReAdd is a re-add of the approved collaborators started on the
+	// Foxhole page. Its entry is the re-add's report, in the Foxhole change
+	// log.
+	ChangeReAdd ChangeAction = "re_add"
 )
 
 // FoxholeReport is the report of a Foxhole action started on the Foxhole

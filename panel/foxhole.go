@@ -85,6 +85,10 @@ type foxholeView struct {
 	ActionRefusal *saveRefusal
 	// PurgeConfirm is the confirmation the purge form opened, nil for none.
 	PurgeConfirm *purgeConfirm
+	// ReAdd counts the approved collaborators by what a re-add would do with
+	// each, for the After a war block. Nil while the member list isn't
+	// complete.
+	ReAdd *reAddCounts
 	// Busy is a Foxhole action running at this load: the controls that
 	// would start another are disabled.
 	Busy bool
@@ -314,12 +318,14 @@ type foxholeChange struct {
 
 // The Foxhole page's addresses: the page, the note save its note form
 // posts to, the approvals save its selection bar posts to, the purge its
-// purge confirmation starts, and the Stop on its progress block.
+// purge confirmation starts, the re-add its After a war block starts, and
+// the Stop on its progress block.
 const (
 	foxholePath          = "/foxhole"
 	foxholeNotesPath     = "/foxhole/notes"
 	foxholeApprovalsPath = "/foxhole/approvals"
 	foxholePurgePath     = "/foxhole/purge"
+	foxholeReAddPath     = "/foxhole/re-add"
 	foxholeStopPath      = "/foxhole/stop"
 )
 
@@ -808,6 +814,7 @@ func (s foxholeService) lists(list commands.MemberListSnapshot, records map[stri
 	noRoleView := req.Filter == filterNoRole
 	view := listView(matchedHolders, req.Query, req.Filter)
 	view.NoHolders = len(holders) == 0
+	view.ReAdd = reAddCountsOf(holders)
 	view.NoRoleLink = filterLink{Name: filterNoRole, Label: "No role, with a note", Count: len(matchedNoRole),
 		Href: foxholeAddress(req.Query, filterNoRole), On: noRoleView}
 	if noRoleView {
@@ -1034,8 +1041,11 @@ type noteText struct {
 
 // Label is the entry's action as the change log names it.
 func (c foxholeChange) Label() string {
-	if c.Action == store.ChangeClearApproval {
+	switch c.Action {
+	case store.ChangeClearApproval:
 		return "clear approval"
+	case store.ChangeReAdd:
+		return "re-add"
 	}
 	return string(c.Action)
 }
@@ -1047,7 +1057,7 @@ func foxholeChanges(entries []store.ChangeLogEntry) []foxholeChange {
 	views := make([]foxholeChange, 0, len(entries))
 	for _, e := range entries {
 		v := foxholeChange{ID: e.ID, Username: e.ForumUsername, At: e.At, Action: e.Action}
-		if e.Action == store.ChangePurge {
+		if _, ok := actionNames[e.Action]; ok {
 			// The entry is the report. The entry alone doesn't say whether
 			// the action still runs; a report with no outcome yet does.
 			if report, err := reportViewOf(store.FoxholeReport{Entry: e}); err == nil {
