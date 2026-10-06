@@ -184,14 +184,16 @@
   document.querySelectorAll('[data-picker]').forEach(setUp);
 })();
 
-/* Inline note edit on the Foxhole page (spec #434, ADR 0013). A holder
-   row's Edit link opens the note form in the row's note cell: the same form
-   the link opens above the list when script is off, cloned from the page's
+/* Inline note edit on the Foxhole page (spec #434, ADR 0013). A row's Edit
+   link opens the note form in the row's note cell: the same form the link
+   opens above the list when script is off, cloned from the page's
    <template>. Enter saves, posting the form in the background; Escape and
-   Cancel put the cell back. A saved note swaps in the row's note cell and
-   the change log from the page the save answers with, so nothing else on
-   the page reloads. A refused save swaps in the form the server sends back,
-   with its reason and the text typed. */
+   Cancel put the cell back. A saved note swaps in the row's note cell, the
+   change log and the save's result from the page the save answers with, so
+   nothing else on the page reloads. A save that took the member off the
+   page, as an empty note on a member with no role does, drops the row and
+   swaps in the list's counts instead. A refused save swaps in the form the
+   server sends back, with its reason and the text typed. */
 (function () {
   'use strict';
 
@@ -203,6 +205,14 @@
   function mount(cell, form, restore) {
     var input = form.querySelector('[data-note-input]');
     var cancel = form.querySelector('[data-field="cancel_note"]');
+    // A form cloned into a row carries the hint ID the page's own form
+    // uses. Each row's form gets its own, so its input names its own hint
+    // and a screen reader reads the warning out.
+    var hint = form.querySelector('[data-field="note-hint"]');
+    if (hint) {
+      hint.id = 'note-hint-' + cell.closest('[data-member]').getAttribute('data-member');
+      input.setAttribute('aria-describedby', hint.id);
+    }
     cell.replaceChildren(form);
     form.addEventListener('submit', function (e) {
       e.preventDefault();
@@ -242,6 +252,47 @@
     cell.setAttribute('data-note', note);
     cell.querySelector('[data-field="note"]').textContent = note;
     cell.querySelector('[data-field="edit_note"]').textContent = note ? 'Edit' : 'Add a note';
+  }
+
+  // swap replaces this page's element matching the selector with the one
+  // the answer carries, when both have it.
+  function swap(doc, selector) {
+    var fresh = doc.querySelector(selector);
+    var mine = document.querySelector(selector);
+    if (fresh && mine) { mine.replaceWith(document.adoptNode(fresh)); }
+  }
+
+  // announce puts the answer's save result in this page's result line. The
+  // line is a live region, so it keeps its element and changes its contents
+  // only, and a screen reader reads the new result out. It copies the
+  // answer's result, leaving the answer whole for the checks after it.
+  function announce(doc) {
+    var fresh = doc.querySelector('[data-note-result]');
+    var mine = document.querySelector('[data-note-result]');
+    if (!fresh || !mine) { return; }
+    mine.replaceChildren.apply(mine, Array.from(fresh.childNodes).map(function (n) {
+      return document.importNode(n, true);
+    }));
+  }
+
+  // takeOff drops a row the save took off the page, swaps in the answer's
+  // filter counts, and the answer's empty list when it was the last row.
+  // Focus moves to a neighbouring row's Edit link, or the search box.
+  function takeOff(row, doc) {
+    var body = row.parentNode;
+    var view = row.closest('[data-field]').getAttribute('data-field');
+    var next = row.nextElementSibling || row.previousElementSibling;
+    row.remove();
+    swap(doc, '[data-filters]');
+    var link = next && next.querySelector('[data-field="edit_note"]');
+    if (link) {
+      link.focus();
+      return;
+    }
+    var empty = doc.querySelector('[data-field="' + view + '"] tbody');
+    if (empty) { body.replaceWith(document.adoptNode(empty)); }
+    var search = document.querySelector('[data-field="search"] [type="search"]');
+    if (search) { search.focus(); }
   }
 
   // failed tells the manager in the form that the save didn't reach the
@@ -287,12 +338,15 @@
           }
           return;
         }
-        var log = answer.doc.querySelector('[data-field="changes"]');
-        var mine = document.querySelector('[data-field="changes"]');
-        if (log && mine) { mine.replaceWith(document.adoptNode(log)); }
+        swap(answer.doc, '[data-field="changes"]');
+        announce(answer.doc);
         var fresh = answer.doc.querySelector('[data-member="' + CSS.escape(id) + '"] [data-note-cell]');
         if (fresh) {
           cell.replaceWith(document.adoptNode(fresh));
+          return;
+        }
+        if (answer.doc.querySelector('[data-cleared="' + CSS.escape(id) + '"]')) {
+          takeOff(cell.closest('[data-member]'), answer.doc);
           return;
         }
         // The view the save returns to no longer lists the row, as when

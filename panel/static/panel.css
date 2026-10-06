@@ -190,6 +190,15 @@ img { max-width: 100%; }
 .fx-role, .fx-rank { color: var(--text-hi); }
 .fx-nowrap { white-space: nowrap; }
 
+/* The no-role view: its link after the filter links, set apart since it
+   opens another list, the "not in the server" flag, the line under a
+   search's results naming the other view's matches, and a save's result. */
+.fx-filters a.fx-viewlink { margin-left: 10px; padding-left: 14px; border-left: 1px solid var(--line-2); }
+.fx-gone { color: var(--text-mute); border-style: dashed; }
+.fx-also { font-size: 13px; }
+.note--ok { border-left-color: var(--ok); }
+.fx-hint { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--text-mute); }
+
 /* A holder's note, and the form that edits it: in the row's note cell with
    script, above the holder list without. */
 .fx-note { min-width: 240px; max-width: 460px; }
