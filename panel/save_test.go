@@ -228,6 +228,11 @@ func (s leavingStore) ClearFoxholeApprovals(ctx context.Context, guildID string,
 	return s.st.ClearFoxholeApprovals(ctx, guildID, memberIDs, entry)
 }
 
+func (s leavingStore) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string) (bool, error) {
+	s.d.leave()
+	return s.st.ClearFoxholeApprovalForRemoval(ctx, guildID, memberID)
+}
+
 func (s leavingStore) SetFoxholeRecordNames(ctx context.Context, guildID string, names []store.MemberNames) error {
 	s.d.leave()
 	return s.st.SetFoxholeRecordNames(ctx, guildID, names)

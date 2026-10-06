@@ -30,6 +30,22 @@ const (
 	FoxholeExternal FoxholeRole = "external"
 )
 
+// ParseFoxholeRole reads a Foxhole role as a form posts it, and reports
+// false for one that names neither.
+func ParseFoxholeRole(raw string) (FoxholeRole, bool) {
+	switch role := FoxholeRole(raw); role {
+	case FoxholeInternal, FoxholeExternal:
+		return role, true
+	}
+	return "", false
+}
+
+// RemovalClearsApproval reports whether a removal of the role on the
+// Foxhole page clears the approval of each member it takes the role from.
+// Only External's does: approved collaborators are External only. A purge
+// never clears one.
+func (r FoxholeRole) RemovalClearsApproval() bool { return r == FoxholeExternal }
+
 // PurgeScope is which Foxhole roles a purge takes off their holders: both,
 // or Internal or External alone.
 type PurgeScope string
@@ -179,6 +195,8 @@ const (
 type ActionReport struct {
 	// Scope is a purge's scope.
 	Scope PurgeScope `json:"scope,omitempty"`
+	// Role is a removal's role.
+	Role FoxholeRole `json:"role,omitempty"`
 	// Outcome is how the action ended, empty while it runs.
 	Outcome ReportOutcome `json:"outcome,omitempty"`
 	// EndedAt is when the action ended, zero while it runs.
@@ -211,6 +229,9 @@ type ReportMember struct {
 	// Failure is why Discord refused a failed member's change, in plain
 	// words.
 	Failure string `json:"failure,omitempty"`
+	// ApprovalCleared is a member a removal took External from whose
+	// approval it cleared.
+	ApprovalCleared bool `json:"approval_cleared,omitempty"`
 }
 
 // SkipReason is why a Foxhole action skipped a member it reached.
@@ -419,6 +440,9 @@ type actionRun struct {
 	grant    bool
 	reportID int64
 	reason   string
+	// clearsApproval is a removal of External, which clears the approval of
+	// each member it takes the role from.
+	clearsApproval bool
 	// stop closes when someone presses the action's Stop.
 	stop <-chan struct{}
 }
@@ -426,13 +450,17 @@ type actionRun struct {
 // actionSpec is a Foxhole action as start starts it.
 type actionSpec struct {
 	action store.ChangeAction
-	// scope is a purge's scope, for its report.
+	// scope is a purge's scope, and role a removal's role, for its report.
 	scope PurgeScope
+	role  FoxholeRole
 	// roles are the Foxhole roles the action changes. The guild must hold
 	// each.
 	roles []FoxholeRole
 	// grant is an action giving the role. One that doesn't takes it.
 	grant bool
+	// clearsApproval is an action that clears the approval of each member it
+	// takes External from.
+	clearsApproval bool
 	// reason is the audit log reason's wording before the forum user who
 	// started the action.
 	reason string
@@ -469,6 +497,22 @@ func (r *FoxholeRuntime) ReAdd(ctx context.Context, by ForumUser) error {
 	}, by)
 }
 
+// Remove starts a removal of the role given from the members given,
+// started by the forum user given, and returns once its report is written.
+// It starts as start says. The removal then runs in the background, with no
+// deadline of ctx's, to its end: one member at a time, it takes the role
+// off each. Taking External off an approved collaborator clears their
+// approval too, which a purge never does.
+func (r *FoxholeRuntime) Remove(ctx context.Context, role FoxholeRole, memberIDs []string, by ForumUser) error {
+	return r.start(ctx, actionSpec{
+		action: store.ChangeRemoval, role: role, roles: []FoxholeRole{role}, clearsApproval: role.RemovalClearsApproval(),
+		reason: "Panel: Foxhole removal by ",
+		plan: func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange {
+			return removalPlan(list, roleIDs, records, role, memberIDs)
+		},
+	}, by)
+}
+
 // start starts the Foxhole action spec names, started by the forum user
 // given, and returns once its report is written. It starts only while no
 // other Foxhole action runs, else ErrActionRunning, only with a complete
@@ -501,7 +545,7 @@ func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUse
 		return fmt.Errorf("list Foxhole records: %w", err)
 	}
 	plan := spec.plan(list, roleIDs, records)
-	report := ActionReport{Scope: spec.scope, Changed: []ReportMember{}, Skipped: []ReportMember{}, Failed: []ReportMember{},
+	report := ActionReport{Scope: spec.scope, Role: spec.role, Changed: []ReportMember{}, Skipped: []ReportMember{}, Failed: []ReportMember{},
 		NotAttempted: make([]ReportMember, 0, len(plan))}
 	for _, p := range plan {
 		report.NotAttempted = append(report.NotAttempted, p.member)
@@ -516,10 +560,11 @@ func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUse
 	if err != nil {
 		return fmt.Errorf("start the %s report: %w", spec.action, err)
 	}
-	utils.Info("Foxhole action started", "action", spec.action, "scope", spec.scope, "members", len(plan),
+	utils.Info("Foxhole action started", "action", spec.action, "scope", spec.scope, "role", spec.role, "members", len(plan),
 		"username", by.Username, "forum_user_id", by.ID)
 	r.started(entry.ID)
-	run := actionRun{action: spec.action, grant: spec.grant, reportID: entry.ID, reason: spec.reason + by.auditName(), stop: stop}
+	run := actionRun{action: spec.action, grant: spec.grant, reportID: entry.ID, reason: spec.reason + by.auditName(),
+		clearsApproval: spec.clearsApproval, stop: stop}
 	go r.run(run, plan, report, namesOf(records))
 	return nil
 }
@@ -597,13 +642,36 @@ func reAddPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records 
 		if !rec.Approved {
 			continue
 		}
-		member := ReportMember{ID: rec.MemberID, DisplayName: rec.DisplayName, Username: rec.Username, Role: FoxholeExternal}
-		if m, ok := list.Member(rec.MemberID); ok {
-			member.DisplayName, member.Username = m.DisplayName(), m.Username
-		}
-		plan = append(plan, plannedChange{member: member, roleID: roleIDs[FoxholeExternal]})
+		seen := store.MemberNames{MemberID: rec.MemberID, DisplayName: rec.DisplayName, Username: rec.Username}
+		plan = append(plan, plannedChange{member: plannedMember(list, seen, FoxholeExternal), roleID: roleIDs[FoxholeExternal]})
 	}
 	return byDisplayName(plan)
+}
+
+// removalPlan is a removal's role changes: the role for each member given,
+// once, in display name order, whether or not they hold it or are in the
+// server. The member list names those in it, and the records' last-seen
+// names those who left.
+func removalPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord, role FoxholeRole, memberIDs []string) []plannedChange {
+	names := namesOf(records)
+	var plan []plannedChange
+	for _, id := range slices.Compact(slices.Sorted(slices.Values(memberIDs))) {
+		seen := names[id]
+		seen.MemberID = id
+		plan = append(plan, plannedChange{member: plannedMember(list, seen, role), roleID: roleIDs[role]})
+	}
+	return byDisplayName(plan)
+}
+
+// plannedMember is a member an action sets out to change the role given
+// for, under the names the member list shows, or the last-seen names given
+// when it doesn't hold them.
+func plannedMember(list MemberListSnapshot, seen store.MemberNames, role FoxholeRole) ReportMember {
+	member := ReportMember{ID: seen.MemberID, DisplayName: seen.DisplayName, Username: seen.Username, Role: role}
+	if m, ok := list.Member(seen.MemberID); ok {
+		member.DisplayName, member.Username = m.DisplayName(), m.Username
+	}
+	return member
 }
 
 // byDisplayName sorts changes by their member's display name, ignoring
@@ -665,6 +733,9 @@ func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionR
 				member.Failure = failureReason(err)
 				report.Failed = append(report.Failed, member)
 			} else {
+				if run.clearsApproval {
+					member.ApprovalCleared = r.clearApproval(member.ID)
+				}
 				report.Changed = append(report.Changed, member)
 			}
 		}
@@ -680,6 +751,22 @@ func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionR
 	faults.flush("Foxhole action role change failed", "action", run.action, "guild", r.guildID)
 	utils.Info("Foxhole action ended", "action", run.action, "outcome", report.Outcome, "changed", len(report.Changed),
 		"skipped", len(report.Skipped), "failed", len(report.Failed), "not_attempted", len(report.NotAttempted))
+}
+
+// clearApproval clears the approval of a member whose External a removal
+// took, and reports whether they had one. A clear that fails reaches Sentry
+// and the action goes on: the member keeps the approval, their row flags
+// them "approved, doesn't hold External", and the report says nothing
+// cleared.
+func (r *FoxholeRuntime) clearApproval(memberID string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), foxholeStoreTimeout)
+	defer cancel()
+	cleared, err := r.store.ClearFoxholeApprovalForRemoval(ctx, r.guildID, memberID)
+	if err != nil {
+		captureError("Foxhole removal approval clear failed", err, "member_id", memberID)
+		return false
+	}
+	return cleared
 }
 
 // change gives the member the role, or takes it, as the run does, with the

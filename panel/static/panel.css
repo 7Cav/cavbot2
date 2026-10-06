@@ -240,6 +240,7 @@ img { max-width: 100%; }
 .fx-pending { border-color: var(--gold-lo); }
 .fx-pending--danger { border-color: var(--danger-hi); }
 .fx-pending p { margin: 0 0 6px; }
+.fx-previewnote { display: block; font-size: 13px; color: var(--text-mute); overflow-wrap: anywhere; }
 .fx-progress { border-color: var(--gold-lo); }
 .fx-reportlist h3 { margin: 0 0 6px; font-size: 14px; font-weight: 500; color: var(--text-hi); }
 .fx-reportmembers { margin: 0; padding-left: 18px; font-size: 14px; }

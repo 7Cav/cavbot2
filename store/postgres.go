@@ -682,14 +682,7 @@ func (p *Postgres) ApproveFoxholeMembers(ctx context.Context, guildID string, me
 func (p *Postgres) ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry ChangeLogEntry) error {
 	err := p.inTx(ctx, func(tx *sql.Tx) error {
 		for _, id := range memberIDs {
-			if _, err := tx.ExecContext(ctx, `
-				UPDATE foxhole_records SET approved = FALSE, updated_at = now()
-				WHERE guild_id = $1 AND member_id = $2`, guildID, id); err != nil {
-				return err
-			}
-			// A record holds a note or an approval. One left with neither goes.
-			if _, err := tx.ExecContext(ctx, `
-				DELETE FROM foxhole_records WHERE guild_id = $1 AND member_id = $2 AND note = ''`, guildID, id); err != nil {
+			if _, err := clearApproval(ctx, tx, guildID, id); err != nil {
 				return err
 			}
 		}
@@ -699,6 +692,41 @@ func (p *Postgres) ClearFoxholeApprovals(ctx context.Context, guildID string, me
 		return fmt.Errorf("clear Foxhole approvals of guild %q: %w", guildID, err)
 	}
 	return nil
+}
+
+// ClearFoxholeApprovalForRemoval implements Store. The clear and the drop
+// of a record left with neither a note nor an approval run in one
+// transaction.
+func (p *Postgres) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string) (bool, error) {
+	var cleared bool
+	err := p.inTx(ctx, func(tx *sql.Tx) (err error) {
+		cleared, err = clearApproval(ctx, tx, guildID, memberID)
+		return err
+	})
+	if err != nil {
+		return false, fmt.Errorf("clear the Foxhole approval of member %q: %w", memberID, err)
+	}
+	return cleared, nil
+}
+
+// clearApproval clears the member's approval, when they have one, drops
+// their record when that leaves it with no note, and reports whether they
+// had one.
+func clearApproval(ctx context.Context, tx *sql.Tx, guildID, memberID string) (bool, error) {
+	res, err := tx.ExecContext(ctx, `
+		UPDATE foxhole_records SET approved = FALSE, updated_at = now()
+		WHERE guild_id = $1 AND member_id = $2 AND approved`, guildID, memberID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n == 0 {
+		return false, err
+	}
+	// A record holds a note or an approval. One left with neither goes.
+	_, err = tx.ExecContext(ctx, `
+		DELETE FROM foxhole_records WHERE guild_id = $1 AND member_id = $2 AND note = ''`, guildID, memberID)
+	return err == nil, err
 }
 
 // SetFoxholeRecordNames implements Store. The few updates run in one

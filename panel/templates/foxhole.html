@@ -52,6 +52,30 @@
     </form>
   </section>
   {{end}}
+  {{with .RemovePreview}}
+  <section class="block fx-pending fx-pending--danger" data-field="remove-preview" data-role="{{.Role}}">
+    <h2 class="block-header">Remove {{.Name}}?</h2>
+    {{with .Notes}}<div class="block-row" data-field="notes"><span data-field="note-count">{{.}}</span> {{if eq . 1}}member in this preview has{{else}}members in this preview have{{end}} a note.</div>{{end}}
+    <div class="block-row fx-reportlist" data-list="loses"><h3>Loses {{.Name}} <span class="fx-count" data-field="count">{{len .Loses}}</span></h3>{{template "preview-members" .Loses}}</div>
+    {{with .Cleared}}<div class="block-row fx-reportlist" data-list="approval-cleared"><h3>Approval cleared <span class="fx-count" data-field="count">{{len .}}</span></h3>
+      <p>Removing External also clears the approval of {{if eq (len .) 1}}this approved collaborator{{else}}these approved collaborators{{end}}, so Re-add won't give it back to them.</p>
+      <ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}">{{.DisplayName}} <span class="fx-user">@{{.Username}}</span></li>{{end}}</ul></div>{{end}}
+    <div class="block-row fx-reportlist" data-list="skipped"><h3>Skipped <span class="fx-count" data-field="count">{{len .Skipped}}</span></h3>{{template "preview-members" .Skipped}}</div>
+    {{if .Loses}}
+    <div class="block-row"><p>Takes <span data-field="estimate" data-seconds="{{.Estimate.Seconds}}">about {{.Estimate.Text}}</span> at one change a second. It keeps going if you close this tab.</p></div>
+    <form method="post" action="/foxhole/remove" class="submit-row">
+      <input type="hidden" name="role" value="{{.Role}}">
+      {{- range .Loses}}
+      <input type="hidden" name="member" value="{{.ID}}">
+      {{- end}}
+      <button type="submit" class="btn btn--danger" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Remove {{.Name}} from {{len .Loses}} {{if eq (len .Loses) 1}}member{{else}}members{{end}}</button>
+      <a class="btn" href="{{.Back}}">Cancel</a>
+    </form>
+    {{else}}
+    <div class="submit-row"><a class="btn" href="{{.Back}}">Cancel</a> <span class="fx-hint" data-field="nobody-to-remove">Nobody selected holds {{.Name}}, so there's nothing to remove.</span></div>
+    {{end}}
+  </section>
+  {{end}}
   <div class="fx-actions" data-field="actions">
     <section class="block" data-field="after-a-war">
       <h2 class="block-header">After a war</h2>
@@ -111,6 +135,9 @@
       <span class="fx-selcount" data-selection-count aria-live="polite" hidden><span data-field="selected">0</span> selected</span>
       <button type="submit" name="op" value="approve" class="btn btn--small" data-needs-selection>Approve</button>
       <button type="submit" name="op" value="clear" class="btn btn--small" data-needs-selection>Clear approval</button>
+      {{- /* While an action runs the Remove buttons stay off, so the bar's script, which turns on each button marked as needing a selection, leaves them unmarked. */}}
+      <button type="submit" name="remove" value="internal" formmethod="get" formaction="/foxhole" class="btn btn--small btn--danger" data-remove="internal"{{if .Busy}} disabled{{else}} data-needs-selection{{end}}>Remove Internal</button>
+      <button type="submit" name="remove" value="external" formmethod="get" formaction="/foxhole" class="btn btn--small btn--danger" data-remove="external"{{if .Busy}} disabled{{else}} data-needs-selection{{end}}>Remove External</button>
     </form>
     <div class="scroll"><table class="hublist fx-list">
       <thead><tr><th class="fx-check"><span class="visually-hidden">Select</span></th><th>Member</th><th>Roles</th><th>Rank role</th><th>Note</th><th>Approved</th></tr></thead>
@@ -205,6 +232,8 @@
   {{if .NoRoleRow}}<p class="fx-hint" id="note-hint" data-field="note-hint">An empty note takes this member off the page.</p>{{end}}
 </form>{{end}}
 
+{{define "preview-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}"{{with .Skip}} data-reason="{{.}}"{{end}}>{{if .DisplayName}}{{.DisplayName}} <span class="fx-user">@{{.Username}}</span>{{else}}{{.ID}}{{end}}{{with .Why}} <span data-field="reason">{{.}}</span>{{end}}{{with .Note}} <span class="fx-previewnote">Note: <span data-field="note">{{.}}</span></span>{{end}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}
+
 {{define "outcome"}}{{if .StoppedBy}}Stopped by <span data-field="stopped-by">{{.StoppedBy}}</span>{{else}}{{.OutcomeLabel}}{{end}}{{end}}
 
 {{define "report-head"}}<div class="block-row fx-reporthead">Started by <span data-field="started-by">{{.StartedBy}}</span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>{{if not .EndedAt.IsZero}}, ended at <time data-field="ended" datetime="{{.EndedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.EndedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>{{end}}.</div>{{end}}
@@ -216,4 +245,4 @@
 <div class="block-row fx-reportlist" data-list="not-attempted"><h3>Not attempted <span class="fx-count" data-field="count">{{len .NotAttempted}}</span></h3>{{template "report-members" .NotAttempted}}</div>
 {{end}}
 
-{{define "report-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}" data-role="{{.Role}}"{{with .Skip}} data-reason="{{.}}"{{end}}>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.ID}}{{end}} <span class="fx-user">@{{.Username}}</span> <span class="tag fx-role">{{.RoleName}}</span>{{with .Why}} <span data-field="reason">{{.}}</span>{{end}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}
+{{define "report-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}" data-role="{{.Role}}"{{with .Skip}} data-reason="{{.}}"{{end}}{{if .ApprovalCleared}} data-approval-cleared{{end}}>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.ID}}{{end}} <span class="fx-user">@{{.Username}}</span> <span class="tag fx-role">{{.RoleName}}</span>{{if .ApprovalCleared}} <span class="tag tag--approved">approval cleared</span>{{end}}{{with .Why}} <span data-field="reason">{{.}}</span>{{end}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}

@@ -464,3 +464,64 @@ func TestEmptyNoteOnAnApprovedCollaboratorKeepsTheRecord(t *testing.T) {
 		}
 	})
 }
+
+// A removal that takes External from an approved collaborator clears their
+// approval, and says whether there was one to clear. A member with a note
+// keeps the record and the note; one with no note loses the record. A
+// member with no approval, with a note or with no record at all, is left as
+// they were, and the call says there was none. The Foxhole change log gains
+// no entry in any case: the removal's report names the approval it cleared.
+func TestRemovalClearsAnApprovalWithNoEntryOfItsOwn(t *testing.T) {
+	const memberVance = "100000000000000005"
+	cases := []struct {
+		name    string
+		member  string
+		cleared bool
+		want    map[string]FoxholeRecord
+	}{
+		{"approved with a note", memberDoe, true, map[string]FoxholeRecord{
+			memberDoe:     {MemberID: memberDoe, Note: "allied liaison", DisplayName: "SGT Doe.J", Username: "jdoe"},
+			memberKestrel: {MemberID: memberKestrel, Approved: true, DisplayName: "kestrel_tlr", Username: "kestrel_tlr"},
+			memberVance:   {MemberID: memberVance, Note: "ask before re-adding", DisplayName: "SGT Doe.J", Username: "jdoe"},
+		}},
+		{"approved with no note", memberKestrel, true, map[string]FoxholeRecord{
+			memberDoe:   {MemberID: memberDoe, Note: "allied liaison", Approved: true, DisplayName: "SGT Doe.J", Username: "jdoe"},
+			memberVance: {MemberID: memberVance, Note: "ask before re-adding", DisplayName: "SGT Doe.J", Username: "jdoe"},
+		}},
+		{"a note and no approval", memberVance, false, nil},
+		{"no record", "100000000000000009", false, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			forEachStore(t, func(t *testing.T, s Store) {
+				if err := saveNote(s, memberDoe, "", "allied liaison"); err != nil {
+					t.Fatalf("seed save: %v", err)
+				}
+				if err := saveNote(s, memberVance, "", "ask before re-adding"); err != nil {
+					t.Fatalf("seed save: %v", err)
+				}
+				approveDoeAndKestrel(t, s)
+				before := readFoxholeState(t, s)
+				want := tc.want
+				if want == nil {
+					want = before.Members
+				}
+
+				cleared, err := s.ClearFoxholeApprovalForRemoval(context.Background(), "guild-1", tc.member)
+
+				if err != nil {
+					t.Fatalf("ClearFoxholeApprovalForRemoval: %v", err)
+				}
+				if cleared != tc.cleared {
+					t.Errorf("ClearFoxholeApprovalForRemoval reports an approval cleared: %v, want %v", cleared, tc.cleared)
+				}
+				if got := foxholeRecords(t, s); !reflect.DeepEqual(got, want) {
+					t.Errorf("records = %+v, want %+v", got, want)
+				}
+				if got := foxholeChanges(t, s); !reflect.DeepEqual(got, before.Entries) {
+					t.Errorf("the Foxhole change log = %+v, want it as before, %+v", got, before.Entries)
+				}
+			})
+		})
+	}
+}

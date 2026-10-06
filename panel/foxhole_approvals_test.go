@@ -5,15 +5,17 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"golang.org/x/net/html"
 )
 
 // submitSelection ticks the holder list's checkbox of each member named and
-// presses the selection bar's button for op, the way a browser submits the
-// selection: the fields the selection form owns, the ticked boxes among
-// them, and the name and value of the button pressed.
+// presses the selection bar's button whose value is op, the way a browser
+// submits the selection: the fields the selection form owns, the ticked
+// boxes among them, and the name and value of the button pressed, sent by
+// the method and to the address the button names, else the form's.
 func submitSelection(t *testing.T, b *browser, doc *html.Node, op string, memberIDs ...string) *http.Response {
 	t.Helper()
 	rows := holderRows(t, doc)
@@ -44,7 +46,17 @@ func submitSelection(t *testing.T, b *browser, doc *html.Node, op string, member
 	fields := formPosts(t, doc, foxholeApprovalsPath)
 	name, _ := attrValue(button, "name")
 	fields.Set(name, op)
-	return b.postForm(foxholeApprovalsPath, fields)
+	action, method := foxholeApprovalsPath, http.MethodPost
+	if v, ok := attrValue(button, "formaction"); ok {
+		action = v
+	}
+	if v, ok := attrValue(button, "formmethod"); ok {
+		method = strings.ToUpper(v)
+	}
+	if method == http.MethodGet {
+		return b.get(action + "?" + fields.Encode())
+	}
+	return b.postForm(action, fields)
 }
 
 // approvedRows returns the holder list's rows that carry the approved mark,

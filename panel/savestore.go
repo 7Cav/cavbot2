@@ -124,6 +124,12 @@ func (b boundedStore) ClearFoxholeApprovals(ctx context.Context, guildID string,
 	return b.store.ClearFoxholeApprovals(ctx, guildID, memberIDs, entry)
 }
 
+func (b boundedStore) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.ClearFoxholeApprovalForRemoval(ctx, guildID, memberID)
+}
+
 func (b boundedStore) SetFoxholeRecordNames(ctx context.Context, guildID string, names []store.MemberNames) error {
 	ctx, cancel := context.WithTimeout(ctx, b.timeout)
 	defer cancel()

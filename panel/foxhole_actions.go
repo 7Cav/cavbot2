@@ -111,7 +111,7 @@ func (m reportMember) Why() string {
 }
 
 // reportViewOf decodes a report the store holds for the page. Its name is
-// the action's, with a purge's scope.
+// the action's, with a purge's scope or a removal's role.
 func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 	var report commands.ActionReport
 	if err := json.Unmarshal(stored.Entry.Diff, &report); err != nil {
@@ -120,6 +120,9 @@ func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 	name := actionNames[stored.Entry.Action]
 	if scope := scopeLabels[report.Scope]; scope != "" {
 		name += " " + scope
+	}
+	if role := foxholeRoleLabels[report.Role]; role != "" {
+		name += " " + role
 	}
 	view := &reportView{ID: stored.Entry.ID, Action: stored.Entry.Action, Name: name,
 		StartedBy: stored.Entry.ForumUsername, StartedAt: stored.Entry.At, EndedAt: report.EndedAt,
@@ -199,8 +202,9 @@ var foxholeRoleLabels = map[commands.FoxholeRole]string{commands.FoxholeInternal
 // the Foxhole change log whose action is among them is that action's
 // report.
 var actionNames = map[store.ChangeAction]string{
-	store.ChangePurge: "Purge",
-	store.ChangeReAdd: "Re-add approved collaborators",
+	store.ChangePurge:   "Purge",
+	store.ChangeRemoval: "Remove",
+	store.ChangeReAdd:   "Re-add approved collaborators",
 }
 
 // scopeLabels are the purge scopes as the page names them.
@@ -229,6 +233,87 @@ func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope c
 	}
 	confirm.Estimate = estimateFor(changes)
 	return confirm
+}
+
+// removePreview is the preview a removal waits on: the role, the members
+// selected who lose it, those it skips, for External the approved
+// collaborators among the losers, whose approval it clears, how many of
+// its members have a note, and the rough time at one change a second.
+type removePreview struct {
+	Role    commands.FoxholeRole
+	Name    string
+	Loses   []previewMember
+	Skipped []previewMember
+	Cleared []previewMember
+	// Notes counts the members the preview names who have a note.
+	Notes    int
+	Estimate estimate
+	// Back is the address of the view the selection was made in, where
+	// Cancel leads.
+	Back string
+}
+
+// previewMember is one member a preview names, under the names the member
+// list shows, or the record's when it doesn't hold them, with their note.
+type previewMember struct {
+	ID          string
+	DisplayName string
+	Username    string
+	Note        string
+	// Skip is why the removal skips the member: they don't hold the role,
+	// or they left the server. RoleName is the role as the page names it.
+	Skip     commands.SkipReason
+	RoleName string
+}
+
+// Why is why the removal skips the member, as the preview says it. Empty
+// for a member who loses the role.
+func (m previewMember) Why() string {
+	switch m.Skip {
+	case commands.SkipNotHolding:
+		return "doesn't hold " + m.RoleName
+	case commands.SkipLeft:
+		return "not in the server"
+	}
+	return ""
+}
+
+// removePreviewOf is the preview of a removal of the request's role from
+// the members it selected, in display name order, read from a complete
+// member list and the guild's Foxhole records.
+func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, req foxholeRequest) *removePreview {
+	guild := s.foxholeGuildOf()
+	name := foxholeRoleLabels[req.Remove]
+	preview := &removePreview{Role: req.Remove, Name: name, Back: foxholeAddress(req.Query, req.Filter)}
+	for _, id := range distinct(req.RemoveMembers) {
+		rec := records[id]
+		member := previewMember{ID: id, DisplayName: rec.DisplayName, Username: rec.Username, Note: rec.Note, RoleName: name}
+		mem, inServer := list.Member(id)
+		if inServer {
+			member.DisplayName, member.Username = mem.DisplayName(), mem.Username
+		}
+		if member.Note != "" {
+			preview.Notes++
+		}
+		switch {
+		case !inServer:
+			member.Skip = commands.SkipLeft
+			preview.Skipped = append(preview.Skipped, member)
+		case !guild.rowOf(mem, rec).holdsRole(req.Remove):
+			member.Skip = commands.SkipNotHolding
+			preview.Skipped = append(preview.Skipped, member)
+		default:
+			preview.Loses = append(preview.Loses, member)
+			if req.Remove.RemovalClearsApproval() && rec.Approved {
+				preview.Cleared = append(preview.Cleared, member)
+			}
+		}
+	}
+	for _, members := range [][]previewMember{preview.Loses, preview.Skipped, preview.Cleared} {
+		slices.SortFunc(members, func(a, b previewMember) int { return byName(a.DisplayName, a.ID, b.DisplayName, b.ID) })
+	}
+	preview.Estimate = estimateFor(len(preview.Loses))
+	return preview
 }
 
 // reAddCounts is what the After a war block says a re-add would do: how
@@ -289,6 +374,16 @@ func actionListPartialRefusal(what string) *saveRefusal {
 		Message: fmt.Sprintf("Cavbot2 doesn't have the whole member list from Discord yet, so %s didn't start. Nothing changed. Try again once the list has arrived.", what)}
 }
 
+// removeListPartialRefusal refuses a removal of the role named, its preview
+// opened or its Confirm pressed while the member list is partial: it can't
+// tell who holds the role. The page keeps no selection, so the manager
+// selects again once the holder list is back.
+func removeListPartialRefusal(role string) *saveRefusal {
+	return &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
+		log:     "Panel action refused: member list partial",
+		Message: fmt.Sprintf("Cavbot2 doesn't have the whole member list from Discord yet, so it can't tell who holds %s. Nothing changed. Select the members again once the list has arrived.", role)}
+}
+
 // roleMissingRefusal refuses a Foxhole action, named by what, that changes
 // a role the guild doesn't hold by its configured name. The runtime has
 // reported it to Sentry.
@@ -315,6 +410,35 @@ func (p *Panel) startPurge(w http.ResponseWriter, r *http.Request, sess session)
 	}, "scope", scope)
 }
 
+// startRemoval is POST /foxhole/remove, the remove preview's Confirm: it
+// starts the removal of the role confirmed from the members the preview
+// listed as losing it, as startAction says.
+func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess session) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "the form could not be read", http.StatusBadRequest)
+		return
+	}
+	role, ok := commands.ParseFoxholeRole(r.PostForm.Get(fieldRole))
+	if !ok {
+		http.Error(w, "the form names no Foxhole role, so nothing changed", http.StatusBadRequest)
+		return
+	}
+	members := r.PostForm[fieldMember]
+	if len(members) == 0 {
+		http.Error(w, "the form names no member, so nothing changed", http.StatusBadRequest)
+		return
+	}
+	p.startAction(w, r, sess, "the removal", func(ctx context.Context, by commands.ForumUser) error {
+		err := p.foxhole.actions.Remove(ctx, role, members, by)
+		if errors.Is(err, commands.ErrMemberListPartial) {
+			// The page the refusal answers with keeps no selection: it says
+			// to select again, as the preview's refusal does.
+			return removeListPartialRefusal(foxholeRoleLabels[role])
+		}
+		return err
+	}, "role", role, "members", len(members))
+}
+
 // startReAdd is POST /foxhole/re-add, the After a war block's Re-add
 // approved collaborators: one button with no preview, which starts the
 // re-add as startAction says.
@@ -326,12 +450,19 @@ func (p *Panel) startReAdd(w http.ResponseWriter, r *http.Request, sess session)
 // redirects straight back to the Foxhole page. The action runs in the
 // background to its end, whether or not the browser waits, so the request
 // never waits on it. A refused action answers with the page and the
-// refusal, and logs it with kv.
+// refusal, and logs it with kv. A start that returns a *saveRefusal refuses
+// in its own words.
 func (p *Panel) startAction(w http.ResponseWriter, r *http.Request, sess session, what string,
 	start func(context.Context, commands.ForumUser) error, kv ...any) {
 	err := start(context.WithoutCancel(r.Context()), sess.forumUser())
-	var missing *commands.MissingRoleError
+	var (
+		missing *commands.MissingRoleError
+		refusal *saveRefusal
+	)
 	switch {
+	case errors.As(err, &refusal):
+		p.refuseAction(w, r, sess, refusal, kv...)
+		return
 	case errors.Is(err, commands.ErrActionRunning):
 		p.refuseAction(w, r, sess, actionRunningRefusal(what), kv...)
 		return
