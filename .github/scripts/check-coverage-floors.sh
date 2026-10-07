@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# .github/scripts/check-coverage-floors.sh
+# .github/scripts/check-coverage-floors.sh <floors-file>
 #
 # Reads `go test -cover` output on stdin and fails (exit 1) if any tracked
-# package's coverage is below its declared floor. Tracked packages and floors
-# are inlined below — when a PR adds tests that meaningfully raise a package's
-# coverage, the floor should be raised in the same PR.
+# package's coverage is below its floor. The floors file lists the tracked
+# packages, one per line: import path, a tab, the floor in percent. Lines
+# starting with # are comments. gate.sh passes .github/coverage-floors.tsv.
+#
+# A package more than 3 points above its floor gets a RAISE line naming its new
+# floor: the whole-number part of its coverage, minus 1. RAISE does not change
+# the exit code. ADR 0005 says to apply it in the same PR.
 #
 # The `main` package is intentionally not tracked: it's entrypoint wiring
 # (DISCORD_TOKEN check, gateway open, command registration) and is not
@@ -12,26 +16,26 @@
 #
 # The `store` floor assumes its Postgres tests ran. They skip when
 # TEST_BOT_DB_DSN is unset, and the Fake alone covers far less, so a local run
-# with no database fails this check for `store` alone. CI always sets the
-# variable; locally, start a Postgres and export the DSN (see README, Testing).
+# with no database fails this check for `store` alone. gate.sh starts a
+# Postgres and sets the variable.
 
 set -euo pipefail
 
-# Inline floor table: pkg<TAB>min-percent. Bump these when tests land.
-# `read -d '' ... || true`: -d '' reads until NUL; since no NUL appears in the
-# heredoc, read returns 1 at EOF. Without `|| true`, `set -e` would kill the
-# script before any check runs. Don't "clean up" the `|| true`.
-read -r -d '' FLOORS <<'EOF' || true
-github.com/7cav/cavbot2/utils	87
-github.com/7cav/cavbot2/commands	81
-github.com/7cav/cavbot2/store	86
-github.com/7cav/cavbot2/panel	86
-EOF
+floors_file=${1:?usage: check-coverage-floors.sh <floors-file> < go-test-output}
+FLOORS=$(grep -v '^#' "$floors_file" || true)
+if [[ -z "$FLOORS" ]]; then
+    echo "ERROR: no floors in $floors_file" >&2
+    exit 1
+fi
+
+# Coverage more than this many points above a floor gets a RAISE line.
+raise_margin=3
 
 # Read `go test -cover` output from stdin.
 output=$(cat)
 
 fail=0
+raise=()
 while IFS=$'\t' read -r pkg floor; do
     [[ -z "$pkg" ]] && continue
     # Extract the "coverage: X.X% of statements" for this package.
@@ -47,7 +51,11 @@ while IFS=$'\t' read -r pkg floor; do
             echo "FAIL: $pkg coverage ${cov}% < floor ${floor}%" >&2
             fail=1
         else
-            echo "OK:   $pkg coverage ${cov}% >= floor ${floor}%"
+            margin=$(awk -v c="$cov" -v f="$floor" 'BEGIN { printf "%.1f", c - f }')
+            echo "OK:   $pkg coverage ${cov}% >= floor ${floor}%, margin ${margin}"
+            if awk -v c="$cov" -v f="$floor" -v m="$raise_margin" 'BEGIN { exit (c - f > m) ? 0 : 1 }'; then
+                raise+=("RAISE $pkg to $((${cov%.*} - 1)) (floor ${floor}%, coverage ${cov}%)")
+            fi
         fi
     else
         echo "ERROR: could not parse coverage for $pkg from: $line" >&2
@@ -55,9 +63,15 @@ while IFS=$'\t' read -r pkg floor; do
     fi
 done <<<"$FLOORS"
 
+if [[ ${#raise[@]} -gt 0 ]]; then
+    echo
+    printf '%s\n' "${raise[@]}"
+    echo "Coverage is more than $raise_margin points above these floors. Set each to the"
+    echo "number given, in $floors_file, in this PR (ADR 0005)."
+fi
+
 if [[ $fail -ne 0 ]]; then
     echo
-    echo "Coverage floor check failed. To raise a floor, edit this script:"
-    echo "  .github/scripts/check-coverage-floors.sh"
+    echo "Coverage floor check failed. Floors live in $floors_file."
     exit 1
 fi

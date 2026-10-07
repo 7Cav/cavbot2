@@ -1,0 +1,8 @@
+# Per-package coverage floors, read by .github/scripts/check-coverage-floors.sh.
+# One package per line: import path, a tab, the floor in percent.
+# ADR 0005 says when to change a floor.
+github.com/7cav/cavbot2/utils	90
+github.com/7cav/cavbot2/commands	85
+github.com/7cav/cavbot2/store	86
+github.com/7cav/cavbot2/panel	86
+github.com/7cav/cavbot2/tools/smoke	18
