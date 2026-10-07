@@ -287,3 +287,58 @@ func TestRosterAddReportReadsBackRunningUnderItsAction(t *testing.T) {
 		}
 	})
 }
+
+// A report reads back by its ID, while it runs and once it has ended, with
+// its forum user, action and diff and whether it still runs, however many
+// reports and saves' entries follow it. An ID no report has is ErrNotFound,
+// a save's entry included.
+func TestReportReadsBackByItsID(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		ended, err := s.StartFoxholeReport(ctx, purgeEntry("started"))
+		if err != nil {
+			t.Fatalf("StartFoxholeReport: %v", err)
+		}
+		if err := s.EndFoxholeReport(ctx, ended.ID, reportDiff("done")); err != nil {
+			t.Fatalf("EndFoxholeReport: %v", err)
+		}
+		running, err := s.StartFoxholeReport(ctx, ChangeLogEntry{ForumUserID: 5678, ForumUsername: "Jones.K", Action: ChangeReAdd, Diff: reportDiff("re-adding")})
+		if err != nil {
+			t.Fatalf("StartFoxholeReport: %v", err)
+		}
+		if err := saveNote(s, memberDoe, "", "discharged 12 Sep"); err != nil {
+			t.Fatalf("note save: %v", err)
+		}
+		saveEntry := foxholeChanges(t, s)[0].ID
+
+		cases := []struct {
+			id      int64
+			step    string
+			action  ChangeAction
+			by      string
+			running bool
+		}{
+			{ended.ID, "done", ChangePurge, "Doe.J", false},
+			{running.ID, "re-adding", ChangeReAdd, "Jones.K", true},
+		}
+		for _, tc := range cases {
+			report, err := s.FoxholeReport(ctx, tc.id)
+			if err != nil {
+				t.Fatalf("FoxholeReport(%d): %v", tc.id, err)
+			}
+			got := report.Entry
+			if got.ID != tc.id || got.Action != tc.action || got.ForumUsername != tc.by || report.Running != tc.running {
+				t.Errorf("FoxholeReport(%d) = entry %d of action %s by %s, running %v; want entry %d of action %s by %s, running %v",
+					tc.id, got.ID, got.Action, got.ForumUsername, report.Running, tc.id, tc.action, tc.by, tc.running)
+			}
+			if diff, want := decodeDiff(t, got.Diff), decodeDiff(t, reportDiff(tc.step)); !reflect.DeepEqual(diff, want) {
+				t.Errorf("FoxholeReport(%d) diff = %v, want %v", tc.id, diff, want)
+			}
+		}
+		for _, id := range []int64{saveEntry, saveEntry + 100} {
+			if _, err := s.FoxholeReport(ctx, id); !errors.Is(err, ErrNotFound) {
+				t.Errorf("FoxholeReport(%d) = %v, want ErrNotFound", id, err)
+			}
+		}
+	})
+}

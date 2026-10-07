@@ -859,3 +859,22 @@ func (p *Postgres) LastFoxholeReport(ctx context.Context) (FoxholeReport, error)
 	e.Diff = json.RawMessage(diff)
 	return report, nil
 }
+
+// FoxholeReport implements Store.
+func (p *Postgres) FoxholeReport(ctx context.Context, id int64) (FoxholeReport, error) {
+	var report FoxholeReport
+	row := p.db.QueryRowContext(ctx, `
+		SELECT id, forum_user_id, forum_username, at, action, diff, report = 'running'
+		FROM foxhole_change_log WHERE id = $1 AND report IS NOT NULL`, id)
+	var diff []byte
+	e := &report.Entry
+	err := row.Scan(&e.ID, &e.ForumUserID, &e.ForumUsername, &e.At, &e.Action, &diff, &report.Running)
+	if errors.Is(err, sql.ErrNoRows) {
+		return FoxholeReport{}, ErrNotFound
+	}
+	if err != nil {
+		return FoxholeReport{}, fmt.Errorf("read Foxhole report %d: %w", id, err)
+	}
+	e.Diff = json.RawMessage(diff)
+	return report, nil
+}

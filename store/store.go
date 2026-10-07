@@ -381,4 +381,7 @@ type Store interface {
 	// running or not, however many saves' entries were appended after it.
 	// ErrNotFound when the log holds none.
 	LastFoxholeReport(ctx context.Context) (FoxholeReport, error)
+	// FoxholeReport returns the report with the ID given, running or not.
+	// ErrNotFound when no report has the ID, a save's entry among them.
+	FoxholeReport(ctx context.Context, id int64) (FoxholeReport, error)
 }

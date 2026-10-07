@@ -160,6 +160,12 @@ func (b boundedStore) LastFoxholeReport(ctx context.Context) (store.FoxholeRepor
 	return b.store.LastFoxholeReport(ctx)
 }
 
+func (b boundedStore) FoxholeReport(ctx context.Context, id int64) (store.FoxholeReport, error) {
+	ctx, cancel := context.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.FoxholeReport(ctx, id)
+}
+
 func (b boundedStore) UpdateFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
 	ctx, cancel := context.WithTimeout(ctx, b.timeout)
 	defer cancel()
