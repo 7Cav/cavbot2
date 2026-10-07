@@ -8,9 +8,9 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 ## Prerequisites
 
 - Go 1.25.0 or higher (see the `go` directive in `go.mod`)
-- [golangci-lint](https://golangci-lint.run/) — CI installs the latest release
-  (`.github/workflows/build_test.yml`), so track that. It must be built with a Go
-  at least as new as `go.mod` targets, or it refuses to run.
+- [golangci-lint](https://golangci-lint.run/) at the version CI pins in
+  `GOLANGCI_LINT_VERSION` (`.github/workflows/build_test.yml`). It must be built
+  with a Go at least as new as `go.mod` targets, or it refuses to run.
 - A C compiler (gcc/clang) if you want to run the tests with `-race`
 - Docker, only if you want the container path in step 4
 
