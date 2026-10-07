@@ -78,7 +78,7 @@
   {{with .RemovePreview}}
   <section class="block fx-pending fx-pending--danger" data-field="remove-preview" data-role="{{.Role}}">
     <h2 class="block-header">Remove {{.Name}}?</h2>
-    {{with .Notes}}<div class="block-row" data-field="notes"><span data-field="note-count">{{.}}</span> {{if eq . 1}}member in this preview has{{else}}members in this preview have{{end}} a note.</div>{{end}}
+    {{template "note-count" .Notes}}
     <div class="block-row fx-reportlist" data-list="loses"><h3>Loses {{.Name}} <span class="fx-count" data-field="count">{{len .Loses}}</span></h3>{{template "preview-members" .Loses}}</div>
     {{with .Cleared}}<div class="block-row fx-reportlist" data-list="approval-cleared"><h3>Approval cleared <span class="fx-count" data-field="count">{{len .}}</span></h3>
       <p>Removing External also clears the approval of {{if eq (len .) 1}}this approved collaborator{{else}}these approved collaborators{{end}}, so Re-add won't give it back to them.</p>
@@ -103,7 +103,7 @@
   <section class="block fx-pending" data-field="add-preview" data-role="{{.Role}}">
     <h2 class="block-header">Add {{.Name}}?</h2>
     {{template "add-form" .Paste}}
-    {{with .Notes}}<div class="block-row" data-field="notes"><span data-field="note-count">{{.}}</span> {{if eq . 1}}member in this preview has{{else}}members in this preview have{{end}} a note.</div>{{end}}
+    {{template "note-count" .Notes}}
     <div class="scroll"><table class="hublist fx-list fx-addpreview">
       <thead><tr><th>Line</th><th>Pasted</th><th>Member</th><th>Result</th></tr></thead>
       <tbody>
@@ -136,7 +136,7 @@
   <section class="block fx-pending" data-field="roster-preview" data-unit="{{.Unit.Value}}">
     <h2 class="block-header">{{if .Retry}}Add the {{.Unit.Label}} troopers the roster add missed to Internal?{{else}}Add the {{.Unit.Label}} roster to Internal?{{end}}</h2>
     <div class="block-row" data-field="roster-counts"><span data-field="trooper-count">{{len .Rows}}</span> {{if eq (len .Rows) 1}}trooper{{else}}troopers{{end}} {{if .Retry}}the roster add missed{{else}}on the roster{{end}}. <span data-field="holding-count">{{.Holding}}</span> {{if eq .Holding 1}}holds{{else}}hold{{end}} Internal now. The add takes {{if .Retry}}every trooper listed{{else}}the whole roster{{end}}.</div>
-    {{with .Notes}}<div class="block-row" data-field="notes"><span data-field="note-count">{{.}}</span> {{if eq . 1}}member in this preview has{{else}}members in this preview have{{end}} a note.</div>{{end}}
+    {{template "note-count" .Notes}}
     <div class="scroll"><table class="hublist fx-list fx-addpreview">
       <thead><tr><th>Trooper</th><th>Member</th><th>Result</th></tr></thead>
       <tbody>
@@ -167,7 +167,7 @@
   {{with .RetryConfirm}}
   <section class="block fx-pending{{if .Purge}} fx-pending--danger{{end}}" data-field="retry-confirm" data-action="{{.Report.Action}}" data-report="{{.Report.ID}}">
     <h2 class="block-header">Retry {{.Report.Name}}?</h2>
-    {{with .Notes}}<div class="block-row" data-field="notes"><span data-field="note-count">{{.}}</span> {{if eq . 1}}member in this preview has{{else}}members in this preview have{{end}} a note.</div>{{end}}
+    {{template "note-count" .Notes}}
     <div class="block-row fx-reportlist" data-list="changes"><h3>{{if .Purge}}Loses the role{{else}}Gets External{{end}} <span class="fx-count" data-field="count">{{len .Changes}}</span></h3>{{template "preview-members" .Changes}}</div>
     <div class="block-row fx-reportlist" data-list="skipped"><h3>Skipped <span class="fx-count" data-field="count">{{len .Skipped}}</span></h3>{{template "preview-members" .Skipped}}</div>
     {{if .Changes}}
@@ -353,6 +353,8 @@
   <a href="{{.Back}}" class="fx-notecancel" data-field="cancel_note">Cancel</a>
   {{if .NoRoleRow}}<p class="fx-hint" id="note-hint" data-field="note-hint">An empty note takes this member off the page.</p>{{end}}
 </form>{{end}}
+
+{{define "note-count"}}{{with .}}<div class="block-row" data-field="notes"><span data-field="note-count">{{.}}</span> {{if eq . 1}}member in this preview has{{else}}members in this preview have{{end}} a note.</div>{{end}}{{end}}
 
 {{define "preview-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}"{{with .Role}} data-role="{{.}}"{{end}}{{with .Skip}} data-reason="{{.}}"{{end}}>{{if .DisplayName}}{{.DisplayName}} <span class="fx-user">@{{.Username}}</span>{{else}}{{.ID}}{{end}}{{if .Role}} <span class="tag fx-role">{{.RoleName}}</span>{{end}}{{with .Why}} <span data-field="reason">{{.}}</span>{{end}}{{with .Note}} <span class="fx-previewnote">Note: <span data-field="note">{{.}}</span></span>{{end}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}
 

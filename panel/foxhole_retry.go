@@ -111,12 +111,13 @@ func (s foxholeService) retryConfirmOf(report *reportView, list commands.MemberL
 	grant := !confirm.Purge()
 	noted := map[string]bool{}
 	for _, m := range report.Missed {
-		member := previewMember{ID: m.ID, DisplayName: m.DisplayName, Username: m.Username, Note: records[m.ID].Note, RoleName: m.RoleName, Role: m.Role}
+		rec := records[m.ID]
+		member := previewMember{ID: m.ID, DisplayName: m.DisplayName, Username: m.Username, Note: rec.Note, RoleName: m.RoleName, Role: m.Role}
 		if member.Note != "" {
 			noted[m.ID] = true
 		}
 		mem, inServer := list.Member(m.ID)
-		holds := inServer && guild.rowOf(mem, store.FoxholeRecord{}).holdsRole(m.Role)
+		holds := inServer && guild.rowOf(mem, rec).holdsRole(m.Role)
 		if inServer {
 			member.DisplayName, member.Username = mem.DisplayName(), mem.Username
 		}
