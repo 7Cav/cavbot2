@@ -6,12 +6,7 @@ Nobody watches the run, so answer from the requirements and the repo wherever a 
 
 `.github/scripts/factory-eligible.sh` prints `waiting` and `queue`. End the run with the script's error if it fails, or with `nothing to do` when both are empty.
 
-A PR in `waiting` holds the factory until it merges or closes, and this run tends it instead of picking an issue. Read its state with `gh pr view <pr> --json mergeStateStatus,autoMergeRequest,headRefName` and `gh pr checks <pr> --required`, then act on the first that applies:
-
-1. **Auto-merge is off.** The PR was handed back, or the maintainer took it over. End the run with `waiting on #<pr>`.
-2. **The state is `DIRTY`**, a conflict with `develop`, or **a required check failed** (`gh pr checks` exits 1). Fix it, as *Fix a waiting PR* says.
-3. **The state is `BEHIND`.** `develop` merges only branches that are up to date, so run `gh pr update-branch <pr>` and end the run with `updated #<pr>`.
-4. **Anything else**, such as checks still running or a review thread open. End the run with `waiting on #<pr>`.
+A PR in `waiting` holds the factory until it merges or closes. Read it with `gh pr view <pr> --json mergeStateStatus,autoMergeRequest`. `develop` merges only branches that are up to date, so when auto-merge is on and the state is `BEHIND`, run `gh pr update-branch <pr>` and end the run with `updated #<pr>`. Otherwise end it with `waiting on #<pr>`.
 
 Take one issue from `queue` in this order, lowest number first within a bucket:
 
@@ -21,12 +16,6 @@ Take one issue from `queue` in this order, lowest number first within a bucket:
 4. **Refactors**, with no user-visible change.
 
 Read an issue's body only when its title, labels and parent leave the bucket unclear. Claim the issue the moment you pick it, with `gh issue edit <n> --add-assignee @me`. Done when the issue is assigned to you.
-
-## Fix a waiting PR
-
-A PR gets two fix rounds. Count them with `gh pr view <pr> --json comments --jq '[.comments[].body | select(startswith("Factory fix round"))] | length'`. Once two are spent, hand back the issue the PR closes.
-
-Check the PR out with `gh pr checkout <pr> --detach`, since an earlier run's worktree may still hold its branch. Read a failed check's log with `gh run view <run> --log-failed`, for the run `gh pr checks` links. Resolve a conflict by running `git fetch origin develop` and merging `origin/develop` in. Fix the cause, run `.github/scripts/gate.sh`, and push with `git push origin HEAD:<headRefName>`. Then comment on the PR `Factory fix round <n>: <what failed and what you changed>`. Done when the push has landed and the comment is posted. End the run with `fixed #<pr>`.
 
 ## Requirements
 
@@ -38,11 +27,20 @@ Fetch the issue and its parent as `docs/agents/issue-tracker.md` says, and read 
 
 Leave the PR's smoke checks to a later pass, since the smoke tool runs one bot across all worktrees and the maintainer's own sessions need it.
 
-Once `/implement` has opened its PR, label it `factory` and turn on squash auto-merge with `gh pr merge <pr> --auto --squash`. An unattended local session has no Auto-fix, so a later run tends the PR from `waiting` (Pick). End the run with the PR's URL once auto-merge is on.
+Once `/implement` has opened its PR, label it `factory` and turn on squash auto-merge with `gh pr merge <pr> --auto --squash`. An unattended run has no Auto-fix, so watch the PR's CI yourself until it merges:
+
+1. Run `gh pr checks <pr> --required --watch`, which returns once the required checks finish.
+2. Read `gh pr view <pr> --json state,mergeStateStatus` and act on it:
+   - `MERGED`: done.
+   - `BEHIND`: `develop` merges only branches that are up to date, so run `gh pr update-branch <pr>` and go back to 1.
+   - `DIRTY`, or a required check failed: fix it and go back to 1. For a conflict, merge `origin/develop` in. For a failed check, read its log with `gh run view <run> --log-failed`. Run `.github/scripts/gate.sh` before you push.
+   - Still open with checks passing: auto-merge is about to merge it. Wait a minute and read it again.
+
+Fix failing checks and conflicts up to two rounds in all. Done when the PR has merged; end the run with its URL.
 
 ## Hand back
 
-Hand the issue back when the run can't finish it: missing context, a decision the requirements leave open, a dependency outside the repo such as a Discord or forum setting, or a waiting PR with both fix rounds spent.
+Hand the issue back when the run can't finish it: missing context, a decision the requirements leave open, a dependency outside the repo such as a Discord or forum setting, or checks still failing after two rounds.
 
 Comment on the issue with what stopped the run and the branch or PR it reached. For each decision or context the requirements lack, name the terms it turns on and the spec sections and glossary entries you searched for it. Then turn off the PR's auto-merge (`gh pr merge <pr> --disable-auto`), and leave the PR open with its `factory` label. Release the claim as you swap `ready-for-agent` for `blocked`:
 
