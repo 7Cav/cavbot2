@@ -9,6 +9,12 @@ on:
     branches:
       - develop
 
+# Both jobs run this golangci-lint, the one you run locally and gate.sh
+# picks up, so a new release cannot fail CI on code that passed the gate.
+# Dependabot does not bump it. Change it when you upgrade locally.
+env:
+  GOLANGCI_LINT_VERSION: v2.14.0
+
 jobs:
   lint:
     name: Lint
@@ -18,10 +24,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
 
+      # Lints on go.mod's Go with the module cache, as Build does.
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9.3.0
         with:
-          version: latest
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
           args: --timeout=5m
 
   # Runs the same gate.sh agents run locally, so the two cannot drift. It
@@ -46,7 +58,7 @@ jobs:
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v9.3.0
         with:
-          version: latest
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
           install-only: true
 
       # gate.sh starts its own Postgres for the store tests through Docker,
