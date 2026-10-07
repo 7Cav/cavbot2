@@ -5,8 +5,8 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
-- **Read an issue**: `gh issue view <number> --comments`, filtering comments by `jq` and also fetching labels.
-- **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
+- **Fetch an issue**: see "When a skill says 'fetch the relevant ticket'" below.
+- **List issues**: `gh issue list --state open --json number,title,labels --jq '[.[] | {number, title, labels: [.labels[].name]}]'` with `--label` and `--state` filters, then fetch the issues you need.
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
@@ -19,7 +19,18 @@ Create a GitHub issue.
 
 ## When a skill says "fetch the relevant ticket"
 
-Run `gh issue view <number> --comments`.
+Fetch the body and every comment into your scratchpad directory in one call:
+
+```bash
+gh issue view <n> --json body,comments --jq '.body, (.comments[] | "\n---\n@\(.author.login):\n\(.body)")' > <scratchpad>/issue-<n>.md
+```
+
+Empty output means the fetch worked. Read the file with the Read tool. Claude Code can add a false "GitHub API rate limit exceeded" hint to a `gh` call whose output quotes rate-limit text, and specs about Discord quote it often. If the hint shows up anyway, check `gh api rate_limit` and carry on while it shows calls left.
+
+How much of a spec to read:
+
+- Reviewing against a spec, or any spec under 20 KB (`wc -c`): all of it. Hand a review subagent the file's absolute path.
+- Implementing one ticket of a spec over 20 KB: list headings with `grep -n '^#'`, then read the sections the ticket names, `## Testing Decisions`, `## Out of Scope`, and every section those refer you to.
 
 ## Wayfinding operations
 

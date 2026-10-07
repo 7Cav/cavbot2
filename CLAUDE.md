@@ -65,7 +65,7 @@ For load-bearing decisions, see `docs/adr/`. For domain terminology, see `GLOSSA
 
 ### Issue tracker
 
-GitHub Issues at `7cav/cavbot2` (`gh` CLI). See `docs/agents/issue-tracker.md`.
+Read `docs/agents/issue-tracker.md` before you fetch, file or change an issue.
 
 ### Triage labels
 
