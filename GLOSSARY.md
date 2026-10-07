@@ -1,123 +1,126 @@
-# GLOSSARY.md — CavBot2
+# CavBot2
 
-Domain language used throughout the codebase. New terms that need explanation
-belong here, not inline in code comments.
+The language of cavbot2, the 7th Cavalry Gaming Regiment's Discord bot and
+web panel. Define a new term here rather than in a code comment.
 
 ## Organization
 
-- **7Cav / 7th Cavalry Gaming Regiment** — the gaming community this bot
-  serves. Project lives at `github.com/7Cav/cavbot2`. Member-facing reference
-  for org structure and terminology is the [7Cav wiki](https://wiki.7cav.us/).
-- **Cav member**: A Discord member who holds a rank role, one of the 29 roles
-  on the rank ladder. The two descriptions name one set: every Cav member
-  holds a rank role, and every rank-role holder is a Cav member. Member-facing
-  copy says "Cav member". The handover rule and the code say "rank role", the
-  test the bot applies.
-  _Avoid_: rank holder (in copy), trooper (in copy), verified member, Cav.
-- **Departments (AFSM enum)** — the fixed set of departments `/afsm` checks
-  for award eligibility: `S1` (Personnel), `S2` (Intelligence), `S3`
-  (Operations), `S5` (Public Affairs), `S6` (Information Systems), `S7`
-  (Training), `WAG` (Wiki Admin Group), `RTC` (Recruit Training Command),
-  `RRD` (Regimental Recruiting Department), `MP` (Military Police), `ODS`
-  (Officer Development School), `NCOA` (Non-Commissioned Officer Academy).
-  Canonicalized in `commands/afsm.go`.
-- **Position** — free-text string like `2/B/1-7`, `Reservist`, or a
-  department name (`S1`).
-- **Position group** — the milpac's grouping of positions into named units
-  (e.g. `D/ACD`, `A/1-7`). `ACD` is a battalion-level group; `D/ACD` is a
-  company within it. Exposed by the API's position-group hierarchy and used as
-  the unit vocabulary for roster lookups.
-- **Regiment time (UTC) / Zulu** — UTC is 7Cav standard time; **Zulu** is its
-  member-facing name, written with a `z` suffix (`2300z`). Wherever the bot has
-  to decide what calendar day something falls on (e.g. AWOL day-counting), a
-  "day" is a **UTC calendar date**. _Avoid_: GMT.
+**7Cav**:
+The 7th Cavalry Gaming Regiment, the gaming community this bot serves. Its
+wiki at https://wiki.7cav.us/ is the member-facing reference for the
+regiment's structure and terms.
+
+**Cav member**:
+A Discord member who holds a rank role, one of the 29 roles on the rank
+ladder. The two descriptions name one set: every Cav member holds a rank
+role, and every rank-role holder is a Cav member. Member-facing copy says
+"Cav member". The handover rule and the code say "rank role", the test the
+bot applies.
+_Avoid_: rank holder (in copy), trooper (in copy), verified member, Cav.
+
+**Department**:
+One of the twelve parts of the regiment /afsm checks: S1 (Personnel), S2
+(Intelligence), S3 (Operations), S5 (Public Affairs), S6 (Information
+Systems), S7 (Training), WAG (Wiki Admin Group), RTC (Recruit Training
+Command), RRD (Regimental Recruiting Department), MP (Military Police), ODS
+(Officer Development School) and NCOA (Non-Commissioned Officer Academy).
+
+**Position**:
+A trooper's assignment as their milpac records it, in free text such as
+2/B/1-7, Reservist or a department code like S1.
+
+**Position group**:
+A unit as the milpacs name it, grouping its positions, such as ACD at
+battalion level or D/ACD, a company within it.
+
+**Zulu**:
+UTC, the regiment's standard time, written with a z suffix as in 2300z.
+Wherever the bot decides which day something falls on, as in counting
+accountable days, a day is a UTC calendar date.
+_Avoid_: GMT.
 
 ## Member records
 
-- **MILPACS / milpac** — the regiment's personnel record system served by
-  `api.7cav.us`; colloquially, "milpac" means one trooper's record.
-- **Forum username** — the user's Xenforo handle, also stored on the milpac.
-  Used as the lookup key for `GetMilpacByUsername` (the post-Keycloak path).
-- **Keycloak ID** — legacy identity field on profile responses; removed in
-  0.7.9 after the upstream Keycloak path was retired. Use
-  `GetMilpacByUsername` (forum username) instead.
-- **Roster** — a department- or position-scoped list returned by
-  `GetRosterByFuzzyPositionSearch`. Empty rosters from fixed-input commands
-  (`/afsm`, `/s6-it-check`) are structurally a bug, not a user-input issue —
-  see ADR 0002.
+**Milpac**:
+One trooper's record in MILPACS, the regiment's personnel record system.
+
+**Forum username**:
+A member's handle on the forum, also stored on their milpac. The bot finds a
+member's milpac by it.
+
+**Roster**:
+The troopers the milpacs list under a department or position group, such as
+everyone in S1 or in D/ACD.
 
 ## Forum + LOA
 
-- **Xenforo forum** — the regiment's web forum. The bot reads its MySQL DB
-  (`xf_thread`, `xf_post`) for LOA scanning.
-- **LOA (Leave of Absence)** — a forum thread declaring a member away from
-  duty for a date range. Filed via a **PAF** and parsed from its Xenforo
-  BBCode template (labels around the **Subject**'s username, `Start Date`, and
-  `End Date`). The PAF records both a **Submitter** and a **Subject**; the LOA
-  belongs to the **Subject** — that is who `/loa` and `/awol` key on, never the
-  Submitter. Template drift silently breaks parsing. One thread is exactly
-  one LOA — a second LOA always means a new thread, so `ThreadID` uniquely
-  identifies an LOA. **Filing an LOA is itself a forum post**, so it resets the
-  trooper's last-post clock; this is why a long unexcused gap immediately
-  followed by an LOA is rare in practice (the accountable-day model still
-  handles it correctly if it occurs).
-- **PAF (Personnel Action Form)** — a forum form for filing a personnel
-  action. An LOA is filed via an LOA-request PAF, which records both a
-  Submitter and a Subject. A PAF's field labels are what the bot parses, so a
-  forum-side relabel is a change to the bot's parsing contract, not a cosmetic
-  edit.
-- **Subject** — the trooper an LOA is *for*; the person going on leave. The
-  LOA belongs to the Subject, and it is the only party the bot attributes the
-  LOA to. _Avoid_: bare "Username" — the PAF historically carries the Submitter
-  and the Subject under the same `Username` label, so "the username" is
-  ambiguous.
-- **Submitter** — the account that files a PAF. For an LOA this may be the
-  Subject themselves (a self-request) or someone acting on their behalf (e.g.
-  their squad lead). The bot never attributes the LOA to the Submitter.
-  _Avoid_: author, poster.
-- **LOA node** — a Xenforo forum section that hosts LOA threads. Production
-  scans five (`180,400,540,178,369`); the code default is `180`.
-- **LOA cache** — `utils.GlobalLOACache`, the in-process cache populated by a
-  15-minute background refresh. Tracks per-cache health via
-  `IsHealthy(maxAge) → (bool, lastSuccess)`. `/loa` and `/awol` consult this
-  rather than hitting the forum DB synchronously.
-- **Incremental refresh** — refreshes walk forward from `lastSyncedPostDate`,
-  not a full re-scan. Expired entries (past `EndDate`) are pruned each pass.
+**Forum**:
+The regiment's Xenforo web forum. Members file PAFs there, and a post there
+is what keeps a trooper from going AWOL.
+
+**LOA**:
+Leave of absence: a trooper's notice, filed as a PAF in a forum thread of
+its own, that they will be away for a date range. It belongs to its Subject,
+and a second LOA is always a new thread.
+
+**PAF**:
+Personnel Action Form: the forum form a personnel action is filed on, such
+as an LOA request, which names a Submitter and a Subject. The bot reads a
+PAF by its field labels, so renaming one on the forum changes what the bot
+can read.
+
+**Subject**:
+The trooper an LOA is for, the one going on leave. The bot attributes the
+LOA to its Subject and nobody else.
+_Avoid_: username (bare), because PAFs have carried the Submitter and the
+Subject under the same Username label.
+
+**Submitter**:
+The account that files a PAF. For an LOA, the Subject themselves or someone
+filing for them, such as their squad lead.
+_Avoid_: author, poster.
+
+**LOA node**:
+A forum section that holds LOA threads.
+
+**LOA cache**:
+The bot's copy of the forum's LOAs, each kept until a year after it ends and
+refreshed every 15 minutes. When it is unavailable, /awol counts days with
+no LOA subtracted and says so.
 
 ## Eligibility / tracker concepts
 
-- **AFSM (Armed Forces Service Medal)** — an award. `/afsm` reports members
-  whose milpac record indicates they meet the bar for the medal but haven't
-  received it yet, scoped to one of the departments in the AFSM enum above.
-- **S6-IT full status** — promotion from probationary to full member of the
-  S6 IT team. `/s6-it-check` enumerates eligible members.
-- **AWOL** — a trooper who has not posted on the 7Cav forums within the last
-  **7 days**. Active membership requires at least one forum post per week
-  (typically a roll-call post, but *any* post on the 7Cav forums qualifies a
-  trooper as not AWOL). AWOL is a bot-derived signal computed from forum
-  activity — it has **nothing to do with the milpac record**. `/awol` lists
-  current AWOL candidates for a position, with an "On LOA" indicator sourced
-  from the LOA cache.
-- **Accountable day** — a UTC calendar date that counts toward a trooper's
-  AWOL total. The candidate dates are those strictly after the trooper's last
-  forum post up to and including today (`(lastPostDate, today]`); a date is
-  **accountable** unless it is covered by an LOA. A trooper is an AWOL
-  candidate when their accountable days exceed 7. Because coverage is a set of
-  dates, overlapping, adjacent, and future LOAs need no special handling — the
-  union of covered dates falls out naturally.
-- **Accuracy disclaimer** — because milpac records are user-entered free
-  text, parsing can drift. `/afsm` always renders the disclaimer, regardless
-  of whether the eligibles list is empty — see ADR 0002.
+**AFSM**:
+The Armed Forces Service Medal, given for service in a department. /afsm
+lists the members of one department who have served in it for a year and
+have no AFSM for it from the past year.
+
+**S6 IT full status**:
+Full membership of the S6 IT team, which a probationary member is promoted
+to. /s6-it-check lists the members who have held an S6 IT position for six
+months.
+
+**AWOL**:
+A trooper with more than 7 accountable days. The regiment expects a forum
+post at least once a week, and any post counts. AWOL comes from forum posts
+alone, never from the milpac.
+
+**Accountable day**:
+A UTC calendar date after a trooper's last forum post, up to and including
+today, that none of their LOAs covers.
+
+**Accuracy disclaimer**:
+The warning at the top of every /afsm reply, with or without names, that the
+list may be wrong because milpac records are typed by hand.
 
 ## Member welfare
 
-- **Helpline card** — the set of crisis and mental-health support resources
-  `/helpline` renders, optionally addressed to a member. Every resource on it is
-  an **external, independent organisation**; the regiment designates no internal
-  crisis contact, because those services are staffed, trained, and continuously
-  available in a way a volunteer roster is not. The card's phone numbers and
-  dial sequences are an external contract with the same silent-drift hazard as
-  PAF labels — a changed number is a correctness change, not a copy edit.
+**Helpline card**:
+The crisis and mental-health services /helpline posts, optionally addressed
+to a member. Every service on it is an outside organisation. The regiment
+names no internal crisis contact, since no volunteer roster is staffed,
+trained and always available the way those services are. A changed phone
+number or dial sequence on it is a correctness fix, not a copy edit.
 
 ## Foxhole roles
 
@@ -225,184 +228,239 @@ bot creates a spawned channel for them, and the spawned channel is deleted when
 it empties: at once, or after its hub's delete delay. Hub settings are edited
 in the panel, never in code.
 
-- **Hub**: A voice channel that, when a member joins it, causes the bot to
-  create a spawned channel and move the member into it. Each hub carries its
-  own settings. MEE6 calls this "join to create".
-  _Avoid_: join-to-create channel, creation trigger, hub voice channel.
-- **Spawned channel**: The voice channel a hub creates for the member who
-  joined it. Named from the hub's base string plus a per-hub number.
-  _Avoid_: temp channel, temp VC, temporary channel, personal channel.
-- **Owner**: The occupant a spawned channel belongs to, or nobody. Owning
-  is what lets a member rename or lock it, as far as its hub allows each; a
-  moderator role does both without owning.
-  The owner always holds a rank role. The creator at first, if they hold one;
-  after a handover, whoever the handover named. A bot-internal marker that
-  grants no Discord permission.
-  _Avoid_: interim controller, controller, creator (for the current owner).
-- **Handover**: The bot giving ownership of a spawned channel to an occupant.
-  When the owner leaves, the highest-ranked occupant with a rank role takes
-  over, ties broken by lowest user ID; with no such occupant the channel has
-  no owner. When a rank-role holder joins a channel with no owner, they take
-  over. A handover is final: a returning creator is an ordinary occupant.
-  _Avoid_: hand off, hand back, succession, transfer, loan.
-- **Restart sweep**: The bot's check, when it connects, of every spawned
-  channel it holds a stored record of against the guild. A recorded channel
-  that is gone loses its record. An empty one is deleted with its record once
-  its hub's delete delay passes with nobody joining, counted from when it
-  emptied if the bot saw that happen, and otherwise from the sweep.
-  An occupied one is tracked again, its owner restored or elected by the
-  handover rule. A channel with no record is never touched. It reads one
-  copied snapshot of Discord's current cached guild state when it takes
-  `t.mu`, not the state in the `GUILD_CREATE` payload.
-  _Avoid_: adoption, orphan sweep, recovery, reap, resync.
-- **Spawn in flight**: A spawned channel from the moment Discord confirms
-  its create until its row write or compensating delete finishes. A restart
-  sweep that overlaps this interval leaves the channel alone until that
-  sweep also finishes.
-  _Avoid_: pending spawn, unsettled channel, protected channel, marked
-  channel.
-- **Stale voice state**: The bot's record of which channel a member is in,
-  or of who is in a spawned channel, at a moment when Discord has already
-  reported a change the bot has not yet applied. Discord reports changes in
-  order; the bot applies them in no fixed order, so the record can lag.
-  Before it creates, moves or deletes, the bot checks Discord's current
-  state and goes ahead only if the record it decided on still holds at that
-  check.
-  _Avoid_: stale event, out-of-order event, late event, race.
-- **Ownership notice**: The bot message in a spawned channel's text chat that
-  names the current owner, or says there is none. Posted when the channel is
-  created and at every handover. It pings nobody.
-  _Avoid_: announcement, banner, status line, welcome message.
-- **Moderator role**: A Discord role that may rename, lock and unlock any
-  spawned channel it covers without owning it, as far as the hub allows
-  each, and that no lock keeps out.
-  Set per hub, or once for every hub; a hub's moderator roles are the union
-  of the two. Grants no Discord permission beyond getting past a lock.
-  _Avoid_: staff role, admin role, global moderator, default moderator.
-- **Lock**: A spawned channel's state in which only its guests and its hub's
-  moderator roles may join. Everyone else still sees the channel, with
-  Discord's padlock, and cannot read its text chat. The owner or a moderator
-  locks it, on a hub that allows locking. It belongs to the channel, not to
-  whoever set it, and lasts until someone unlocks it or the channel is
-  deleted.
-  _Avoid_: private channel, closed channel, hide (a hidden channel is out of
-  sight; a locked one is not).
-- **Guest list**: The members a locked channel admits: everyone who has been
-  inside it since it locked, however they got in, and everyone let in. Each
-  lock starts a new one; unlock clears it. A guest is one member on it.
-  _Avoid_: allowlist, whitelist, permit list, invite list.
-- **Let in**: To put a member who is outside a locked channel on its guest
-  list. Done by a moderator or by whoever locked the channel. It never shows
-  a member a channel they could not already see.
-  _Avoid_: admit, invite, permit, allow.
-- **Lock notice**: The bot message in a locked channel's text chat that
-  names who locked it and carries the controls to unlock it and to let
-  someone in. Posted at each lock. At unlock it is edited to name who
-  unlocked the channel, and loses its controls.
-  _Avoid_: lock panel (the panel is the web UI), control panel, tool,
-  widget.
-- **Knock channel**: A spawned channel whose name starts with 🚦, asking
-  members outside to knock before they join. A courtesy the bot does not
-  enforce: a knock channel keeps nobody out, where a lock does. The name is
-  its only record.
-  _Avoid_: soft lock, do not disturb, knocked channel, knock (for the channel
-  or its 🚦).
-- **Knock**: A member outside a knock channel asking the people inside
-  whether they may join. Members do it among themselves; the bot plays no
-  part.
-  _Avoid_: request to join, let in (a lock's term, and done by the bot).
-- **Eligible role**: A live Discord role that is not managed and is not
-  `@everyone`. The only kind a moderator picker offers, and the only kind a
-  save may add.
-  _Avoid_: offered role, valid role, pickable role, selectable role.
-- **Unavailable moderator role**: A stored moderator role that is no longer
-  eligible, kept with its authority until a person removes it in the panel.
-  Two reasons: deleted, when the role is gone from Discord, and managed.
-  _Avoid_: legacy role, stale role, orphaned role, ghost role.
-- **Permission source**: The per-hub setting that chooses what a spawned
-  channel inherits its permissions from, the hub's category or the hub
-  channel itself.
-  _Avoid_: sync, category sync, synchronize permissions.
-- **Delete delay**: How long a spawned channel must stay empty before the bot
-  deletes it. Set per hub, and read as it stands now, so a change reaches the
-  channels already waiting; none means the moment the channel empties. A join
-  cancels the wait, and the next empty starts it again.
-  _Avoid_: keep alive (MEE6's term), grace period, linger, timeout, cooldown.
-- **Register**: To make an existing voice channel a hub through the panel.
-  The other way a hub comes to exist is the panel creating the channel itself.
-  _Avoid_: adopt (for a hub), import, link, attach.
-- **Disabled hub**: A hub that keeps its channel and its settings but spawns
-  nothing. A join to it does nothing. Its spawned channels live on until
-  empty.
-  _Avoid_: paused hub, inactive hub, archived hub, hub off.
-- **Broken hub**: A hub whose channel is gone from Discord or has no category.
-  Discord's state makes it so, never a panel setting, and the panel works it
-  out each time it shows the hub and never stores it. A join can reach only the
-  no-category kind, and it spawns nothing.
-  _Avoid_: orphaned hub, stale hub, dead hub, unhealthy hub.
-- **Spawn failure**: A join to an enabled hub that ends with no spawned
-  channel for the member. Two kinds: a failure Discord returned on the
-  create or the move-into, and a refusal the bot decided itself, which only
-  a broken hub causes.
-  _Avoid_: create failure, failed create, failed join, refused join.
-- **Save**: One submitted panel form that changes what the panel stores: a
-  hub's create, register, update or remove, the guild-wide moderator roles,
-  a note, or an approval given or cleared. It begins once the group check
-  allows it, runs to its end whether or not the browser waits, and takes effect
-  when the store holds the change. A refused save changes nothing. A save
-  that fails leaves the store as it was, though a Discord change it already
-  made may stay.
-  _Avoid_: submit, submission, write, commit.
-- **Change log**: The panel's record of each change made through it: who made
-  it, when, and what changed. Every save that takes effect has one entry,
-  holding the old and new values. Every Foxhole action started on the Foxhole
-  page has one too, its report. Each hub's form shows the hub's own entries,
-  the guild-wide moderator section the entries of its saves, which reference
-  no hub, and the Foxhole page its own. A change made by a command or by hand
-  in Discord has none.
-  _Avoid_: audit trail, audit log (that is Discord's), history.
-- **Stale form**: A hub's edit form, or the guild-wide moderator section,
-  loaded before another save of the same settings took effect. A save from
-  it is refused. A rename made in Discord does not make a form stale.
-  _Avoid_: conflict, collision, race, outdated form, edit conflict.
-- **Rank ladder**: The rank roles in seniority order, most senior first,
-  that the handover rule ranks occupants by.
-  _Avoid_: rank list, rank table, seniority list, role ladder.
-- **Panel**: cavbot2's web UI at `cavbot2.7cav.us`. Any forum user can sign
-  in through the forum, and the group check decides which pages each one sees.
-  _Avoid_: dashboard, admin UI, settings screen, config.
-- **Panel session**: The panel's record that a browser is signed in as one
-  forum user. Created at the OAuth callback, for any forum user. Ended by
-  sign-out, or by the forum refusing the token or refusing to say who the user
-  is. A group check that grants nothing leaves it running.
-  _Avoid_: login, token session, forum session, auth cookie.
-- **Pending sign-in**: The panel's record of one sign-in between the redirect
-  to the forum and the callback. Consumed by the callback, whatever its
-  outcome, or dropped after five minutes.
-  _Avoid_: auth request, login attempt, OAuth state, flow.
-- **Group check**: The panel's test of the signed-in forum user's forum
-  groups, primary or secondary, on every request. The groups decide what the
-  panel session can see. They never end it. One of the panel's admin groups
-  makes them a panel admin. The Foxhole group makes them a Foxhole manager. A
-  user in none of them sees only a page saying their roles grant no access.
-  _Avoid_: allowlist check, permission check, authorisation, role check.
-- **Panel admin**: A signed-in forum user the group check finds in one of the
-  panel's admin groups. Opens every page and takes every action on the panel.
-  _Avoid_: admin (bare), staff, allowlisted user, moderator (a spawned
-  channel's), Foxhole manager (a narrower role).
-- **Block**: One bordered unit of a panel page, with a gold header rule. The
-  unit a page's layout rules bound.
-  _Avoid_: card and section (for a page unit; the helpline card is a
-  Discord message), widget.
-- **Tag**: One selected item as a picker shows it, with its remove control.
-  A role tag is a moderator picker's, and shows an unavailable moderator role
-  with its reason.
-  _Avoid_: chip, pill, badge.
-- **Search list**: The list of candidates a picker's add control opens,
-  filtered as the person types. A moderator picker's role search offers the
-  eligible roles not yet selected. The register picker's channel search
-  offers the voice channels that are not hubs.
-  _Avoid_: dropdown, popover, menu, combobox.
+**Hub**:
+A voice channel that, when a member joins it, causes the bot to create a
+spawned channel and move the member into it. Each hub carries its own
+settings. MEE6 calls this "join to create".
+_Avoid_: join-to-create channel, creation trigger, hub voice channel.
+
+**Spawned channel**:
+The voice channel a hub creates for the member who joined it. Named from the
+hub's base string plus a per-hub number.
+_Avoid_: temp channel, temp VC, temporary channel, personal channel.
+
+**Owner**:
+The occupant a spawned channel belongs to, or nobody. Owning is what lets a
+member rename or lock it, as far as its hub allows each; a moderator role
+does both without owning. The owner always holds a rank role. The creator at
+first, if they hold one; after a handover, whoever the handover named. A
+bot-internal marker that grants no Discord permission.
+_Avoid_: interim controller, controller, creator (for the current owner).
+
+**Handover**:
+The bot giving ownership of a spawned channel to an occupant. When the owner
+leaves, the highest-ranked occupant with a rank role takes over, ties broken
+by lowest user ID; with no such occupant the channel has no owner. When a
+rank-role holder joins a channel with no owner, they take over. A handover
+is final: a returning creator is an ordinary occupant.
+_Avoid_: hand off, hand back, succession, transfer, loan.
+
+**Restart sweep**:
+The bot's check, when it connects, of every spawned channel it holds a
+stored record of against the guild. A recorded channel that is gone loses
+its record. An empty one is deleted with its record once its hub's delete
+delay passes with nobody joining, counted from when it emptied if the bot
+saw that happen, and otherwise from the sweep. An occupied one is tracked
+again, its owner restored or elected by the handover rule. A channel with no
+record is never touched.
+_Avoid_: adoption, orphan sweep, recovery, reap, resync.
+
+**Spawn in flight**:
+A spawned channel from the moment Discord confirms its create until its row
+write or compensating delete finishes. A restart sweep that overlaps this
+interval leaves the channel alone until that sweep also finishes.
+_Avoid_: pending spawn, unsettled channel, protected channel, marked
+channel.
+
+**Stale voice state**:
+The bot's record of which channel a member is in, or of who is in a spawned
+channel, at a moment when Discord has already reported a change the bot has
+not yet applied. Discord reports changes in order; the bot applies them in
+no fixed order, so the record can lag. Before it creates, moves or deletes,
+the bot checks Discord's current state and goes ahead only if the record it
+decided on still holds at that check.
+_Avoid_: stale event, out-of-order event, late event, race.
+
+**Ownership notice**:
+The bot message in a spawned channel's text chat that names the current
+owner, or says there is none. Posted when the channel is created and at
+every handover. It pings nobody.
+_Avoid_: announcement, banner, status line, welcome message.
+
+**Moderator role**:
+A Discord role that may rename, lock and unlock any spawned channel it
+covers without owning it, as far as the hub allows each, and that no lock
+keeps out. Set per hub, or once for every hub; a hub's moderator roles are
+the union of the two. Grants no Discord permission beyond getting past a
+lock.
+_Avoid_: staff role, admin role, global moderator, default moderator.
+
+**Lock**:
+A spawned channel's state in which only its guests and its hub's moderator
+roles may join. Everyone else still sees the channel, with Discord's
+padlock, and cannot read its text chat. The owner or a moderator locks it,
+on a hub that allows locking. It belongs to the channel, not to whoever set
+it, and lasts until someone unlocks it or the channel is deleted.
+_Avoid_: private channel, closed channel, hide (a hidden channel is out of
+sight; a locked one is not).
+
+**Guest list**:
+The members a locked channel admits: everyone who has been inside it since
+it locked, however they got in, and everyone let in. Each lock starts a new
+one; unlock clears it. A guest is one member on it.
+_Avoid_: allowlist, whitelist, permit list, invite list.
+
+**Let in**:
+To put a member who is outside a locked channel on its guest list. Done by a
+moderator or by whoever locked the channel. It never shows a member a
+channel they could not already see.
+_Avoid_: admit, invite, permit, allow.
+
+**Lock notice**:
+The bot message in a locked channel's text chat that names who locked it and
+carries the controls to unlock it and to let someone in. Posted at each
+lock. At unlock it is edited to name who unlocked the channel, and loses its
+controls.
+_Avoid_: lock panel (the panel is the web UI), control panel, tool, widget.
+
+**Knock channel**:
+A spawned channel whose name starts with 🚦, asking members outside to knock
+before they join. A courtesy the bot does not enforce: a knock channel keeps
+nobody out, where a lock does. The name is its only record.
+_Avoid_: soft lock, do not disturb, knocked channel, knock (for the channel
+or its 🚦).
+
+**Knock**:
+A member outside a knock channel asking the people inside whether they may
+join. Members do it among themselves; the bot plays no part.
+_Avoid_: request to join, let in (a lock's term, and done by the bot).
+
+**Eligible role**:
+A live Discord role that is not managed and is not `@everyone`. The only
+kind a moderator picker offers, and the only kind a save may add.
+_Avoid_: offered role, valid role, pickable role, selectable role.
+
+**Unavailable moderator role**:
+A stored moderator role that is no longer eligible, kept with its authority
+until a person removes it in the panel. Two reasons: deleted, when the role
+is gone from Discord, and managed.
+_Avoid_: legacy role, stale role, orphaned role, ghost role.
+
+**Permission source**:
+The per-hub setting that chooses what a spawned channel inherits its
+permissions from, the hub's category or the hub channel itself.
+_Avoid_: sync, category sync, synchronize permissions.
+
+**Delete delay**:
+How long a spawned channel must stay empty before the bot deletes it. Set
+per hub, and read as it stands now, so a change reaches the channels already
+waiting; none means the moment the channel empties. A join cancels the wait,
+and the next empty starts it again.
+_Avoid_: keep alive (MEE6's term), grace period, linger, timeout, cooldown.
+
+**Register**:
+To make an existing voice channel a hub through the panel. The other way a
+hub comes to exist is the panel creating the channel itself.
+_Avoid_: adopt (for a hub), import, link, attach.
+
+**Disabled hub**:
+A hub that keeps its channel and its settings but spawns nothing. A join to
+it does nothing. Its spawned channels live on until empty.
+_Avoid_: paused hub, inactive hub, archived hub, hub off.
+
+**Broken hub**:
+A hub whose channel is gone from Discord or has no category. Discord's state
+makes it so, never a panel setting, and the panel works it out each time it
+shows the hub and never stores it. A join can reach only the no-category
+kind, and it spawns nothing.
+_Avoid_: orphaned hub, stale hub, dead hub, unhealthy hub.
+
+**Spawn failure**:
+A join to an enabled hub that ends with no spawned channel for the member.
+Two kinds: a failure Discord returned on the create or the move-into, and a
+refusal the bot decided itself, which only a broken hub causes.
+_Avoid_: create failure, failed create, failed join, refused join.
+
+**Save**:
+One submitted panel form that changes what the panel stores: a hub's create,
+register, update or remove, the guild-wide moderator roles, a note, or an
+approval given or cleared. It begins once the group check allows it, runs to
+its end whether or not the browser waits, and takes effect when the store
+holds the change. A refused save changes nothing. A save that fails leaves
+the store as it was, though a Discord change it already made may stay.
+_Avoid_: submit, submission, write, commit.
+
+**Change log**:
+The panel's record of each change made through it: who made it, when, and
+what changed. Every save that takes effect has one entry, holding the old
+and new values. Every Foxhole action started on the Foxhole page has one
+too, its report. Each hub's form shows the hub's own entries, the guild-wide
+moderator section the entries of its saves, which reference no hub, and the
+Foxhole page its own. A change made by a command or by hand in Discord has
+none.
+_Avoid_: audit trail, audit log (that is Discord's), history.
+
+**Stale form**:
+A hub's edit form, or the guild-wide moderator section, loaded before
+another save of the same settings took effect. A save from it is refused. A
+rename made in Discord does not make a form stale.
+_Avoid_: conflict, collision, race, outdated form, edit conflict.
+
+**Rank ladder**:
+The rank roles in seniority order, most senior first, that the handover rule
+ranks occupants by.
+_Avoid_: rank list, rank table, seniority list, role ladder.
+
+**Panel**:
+cavbot2's web UI at `cavbot2.7cav.us`. Any forum user can sign in through
+the forum, and the group check decides which pages each one sees.
+_Avoid_: dashboard, admin UI, settings screen, config.
+
+**Panel session**:
+The panel's record that a browser is signed in as one forum user. Created at
+the OAuth callback, for any forum user. Ended by sign-out, or by the forum
+refusing the token or refusing to say who the user is. A group check that
+grants nothing leaves it running.
+_Avoid_: login, token session, forum session, auth cookie.
+
+**Pending sign-in**:
+The panel's record of one sign-in between the redirect to the forum and the
+callback. Consumed by the callback, whatever its outcome, or dropped after
+five minutes.
+_Avoid_: auth request, login attempt, OAuth state, flow.
+
+**Group check**:
+The panel's test of the signed-in forum user's forum groups, primary or
+secondary, on every request. The groups decide what the panel session can
+see. They never end it. One of the panel's admin groups makes them a panel
+admin. The Foxhole group makes them a Foxhole manager. A user in none of
+them sees only a page saying their roles grant no access.
+_Avoid_: allowlist check, permission check, authorisation, role check.
+
+**Panel admin**:
+A signed-in forum user the group check finds in one of the panel's admin
+groups. Opens every page and takes every action on the panel.
+_Avoid_: admin (bare), staff, allowlisted user, moderator (a spawned
+channel's), Foxhole manager (a narrower role).
+
+**Block**:
+One bordered unit of a panel page, with a gold header rule. The unit a
+page's layout rules bound.
+_Avoid_: card and section (for a page unit; the helpline card is a Discord
+message), widget.
+
+**Tag**:
+One selected item as a picker shows it, with its remove control. A role tag
+is a moderator picker's, and shows an unavailable moderator role with its
+reason.
+_Avoid_: chip, pill, badge.
+
+**Search list**:
+The list of candidates a picker's add control opens, filtered as the person
+types. A moderator picker's role search offers the eligible roles not yet
+selected. The register picker's channel search offers the voice channels
+that are not hubs.
+_Avoid_: dropdown, popover, menu, combobox.
 
 ## Voice recording
 
@@ -410,106 +468,104 @@ Designed in #10, not built yet. The bot replaces Craig. A member starts a
 recording of the voice channel they are in, a recorder joins it, and the bot
 keeps what each speaker said as a separate track.
 
-- **Recording**: The audio of one voice channel captured by a recorder from
-  the moment its starter starts it until it stops, kept as one track per speaker
-  and a mix. Deleted 30 days after it stops, or sooner, whole, by its starter
-  or a panel admin.
-  _Avoid_: session, capture, craig (as a verb).
-- **Starter**: The Cav member holding a recording role who started a
-  recording. Apart from panel admins, the only person who can pull it from
-  the panel.
-  _Avoid_: owner (a spawned channel's), host, requester, recorder.
-- **Recorder**: A Discord account, separate from the bot's own, that joins a
-  channel to record it and is in voice only while it records. Each records
-  one channel at a time, so a recording starts only when a recorder is free.
-  Temp VC never counts a recorder as an occupant.
-  _Avoid_: recording bot, Craig, the bot (for this account).
-- **Recording role**: A Discord role whose holders, if Cav members, may start
-  a recording, and may stop one in a channel they are in. Set once for the
-  guild in the panel. With none set, nobody can record.
-  _Avoid_: recorder role, record permission, recording permission.
-- **Track**: One speaker's audio for the whole of a recording, silent wherever
-  they were not talking, so every track in a recording lines up from its
-  start. A speaker who leaves and rejoins keeps one track.
-  _Avoid_: stream, channel (that is Discord's), file.
-- **Speaker**: Anyone whose voice a recording captured. Not necessarily a Cav
-  member: an applicant in an S2 interview is a speaker. A recruit holds the
-  `RCT` rank role, so is a Cav member; an applicant holds none.
-  _Avoid_: participant, attendee, member (for this role).
-- **Mix**: One file of every track in a recording played together, built when
-  the recording stops.
-  _Avoid_: mixdown, combined track, merged audio.
-- **Cut-short recording**: A recording that ended because the bot shut down or
-  crashed, not by a stop, the time cap, or the last person leaving. What it
-  captured up to then is kept.
-  _Avoid_: failed recording, aborted recording, broken recording.
-- **Recording notice**: The bot message in the recorded channel's text chat
-  that says a recording is running, names its starter, and carries the
-  control to stop it. Posted at start, and edited at stop to say it stopped,
-  or that it was cut short, with a link to the recording in the panel. If the
-  channel is gone by then, the starter gets that link by DM instead.
-  _Avoid_: recording panel (the panel is the web UI), banner, announcement.
+**Recording**:
+The audio of one voice channel captured by a recorder from the moment its
+starter starts it until it stops, kept as one track per speaker and a mix.
+Deleted 30 days after it stops, or sooner, whole, by its starter or a panel
+admin.
+_Avoid_: session, capture, craig (as a verb).
+
+**Starter**:
+The Cav member holding a recording role who started a recording. Apart from
+panel admins, the only person who can pull it from the panel.
+_Avoid_: owner (a spawned channel's), host, requester, recorder.
+
+**Recorder**:
+A Discord account, separate from the bot's own, that joins a channel to
+record it and is in voice only while it records. Each records one channel at
+a time, so a recording starts only when a recorder is free. Temp VC never
+counts a recorder as an occupant.
+_Avoid_: recording bot, Craig, the bot (for this account).
+
+**Recording role**:
+A Discord role whose holders, if Cav members, may start a recording, and may
+stop one in a channel they are in. Set once for the guild in the panel. With
+none set, nobody can record.
+_Avoid_: recorder role, record permission, recording permission.
+
+**Track**:
+One speaker's audio for the whole of a recording, silent wherever they were
+not talking, so every track in a recording lines up from its start. A
+speaker who leaves and rejoins keeps one track.
+_Avoid_: stream, channel (that is Discord's), file.
+
+**Speaker**:
+Anyone whose voice a recording captured. Not necessarily a Cav member: an
+applicant in an S2 interview is a speaker. A recruit holds the `RCT` rank
+role, so is a Cav member; an applicant holds none.
+_Avoid_: participant, attendee, member (for this role).
+
+**Mix**:
+One file of every track in a recording played together, built when the
+recording stops.
+_Avoid_: mixdown, combined track, merged audio.
+
+**Cut-short recording**:
+A recording that ended because the bot shut down or crashed, not by a stop,
+the time cap, or the last person leaving. What it captured up to then is
+kept.
+_Avoid_: failed recording, aborted recording, broken recording.
+
+**Recording notice**:
+The bot message in the recorded channel's text chat that says a recording is
+running, names its starter, and carries the control to stop it. Posted at
+start, and edited at stop to say it stopped, or that it was cut short, with
+a link to the recording in the panel. If the channel is gone by then, the
+starter gets that link by DM instead.
+_Avoid_: recording panel (the panel is the web UI), banner, announcement.
 
 ## External systems
 
-- **7Cav API** (`https://api.7cav.us/api/v1/`) — bearer-auth REST API. All
-  milpac/profile traffic goes through `utils.makeAPIRequest[T]`; never roll
-  a fresh `resty.Client` for new endpoints.
-- **Xenforo MySQL** — read-only access to the forum DB. Connection pool
-  deliberately tiny (`SetMaxOpenConns(2)`) because this is a low-rate
-  background scan.
-- **Bot Postgres**: The bot's own database, the `postgres` service in
-  `docker-compose.yml`, reached through `BOT_DB_DSN`. Holds the hubs, which
-  the panel edits, and the spawned channel rows, which the runtime writes at
-  create and at every handover and deletes with the channel. The runtime loads
-  both at startup. The store package (`store/`) is the only code that talks to
-  it.
+**7Cav API**:
+The regiment's web API at api.7cav.us, where the bot reads milpacs and
+rosters.
+
+**Bot Postgres**:
+The bot's own database, and the only one it writes to.
 
 ## Observability
 
-Two channels, deliberately split: **usage** is answered by the 7Cav Grafana
-stack (`metrics.7cav.us`); **failures** are Sentry's alone. They never
-overlap — a failure is not telemetry, and a usage metric never carries an
-error signal. See ADR 0011.
+Usage goes to the regiment's Grafana stack at metrics.7cav.us, and failures
+go to Sentry. Neither one carries the other's signal (ADR 0011).
 
-- **Command telemetry** — the per-invocation usage record for a slash command:
-  which command ran, how long it took, and who ran it. Lives in the Grafana /
-  Prometheus / Loki stack, derived from the bot's own logs; it deliberately
-  holds *no* failure signal (that is Sentry's). _Avoid_: treating it as error
-  tracking, or promoting caller identity to a metric label — the caller belongs
-  in the log line only, never a Prometheus label. See ADR 0011.
-- **`command_invoked` line** — the single structured log line the dispatch
-  wrapper emits once per slash-command invocation. Its message marker and field
-  keys (`command`, `latency_ms`, `discord_id`, `username`) are a contract
-  consumed off-box by the metrics host's log scraper; changing them is a
-  parsing-contract change, not a cosmetic edit — the same drift hazard as
-  PAF / LOA label wording. See ADR 0011 and `docs/command-telemetry.md`.
-- **Sentry** — wired in 0.7.7. Captured manually at `utils.CaptureError`
-  call sites — not via a blanket slog bridge. See ADR 0001. Command telemetry
-  does not touch Sentry; Sentry does not touch usage metrics.
-- **`utils.Error` vs `utils.HandleError`** — load-bearing distinction.
-  `utils.Error` is for genuine internal failures (Sentry-eligible).
-  `utils.HandleError` is for user-facing responses (often expected outcomes
-  like "no troopers found", not Sentry-eligible).
-- **Missed acknowledgement**: An interaction Discord dropped because the
-  bot's acknowledgement did not reach Discord within 3 seconds of the
-  interaction's creation. The member sees "The application did not respond".
-  _Avoid_: expired interaction (the 15-minute limit on editing a reply is a
-  different limit), timeout.
-- **Abandoned page load**: A panel page load whose connection closed before
-  the panel answered and before the page's time budget ran out. Usually the
-  browser left, by navigating away, reloading or closing the tab. It is
-  expected, not a failure, so it leaves an INFO line and no Sentry event. A
-  page still loading when its budget runs out has failed, and is not an
-  abandoned page load. Neither is a load whose read failed for its own
-  reason as the connection closed.
-  _Avoid_: browser leaving, client disconnect, cancelled request, timeout.
-- **Time budget**: The one deadline shared by every read a panel page load
-  makes, and by any wait for Discord to send the bot the guild's data or the
-  member list, starting when the page begins reading. A load still reading
-  when it runs out fails at once, whatever read it is waiting on, and the
-  page says it took too long. A load still waiting on Discord fails at once
-  too, and the page says Discord has not sent the data. The Foxhole page is
-  the exception. It shows everything that doesn't need the member list, with
-  a notice in place of the rest.
-  _Avoid_: page timeout, deadline.
+**Command telemetry**:
+The usage record of one slash command run: which command, how long it took
+and who ran it. It never records a failure.
+
+**Missed acknowledgement**:
+An interaction Discord dropped because the bot's acknowledgement did not
+reach Discord within 3 seconds of the interaction's creation. The member
+sees "The application did not respond".
+_Avoid_: expired interaction (the 15-minute limit on editing a reply is a
+different limit), timeout.
+
+**Abandoned page load**:
+A panel page load whose connection closed before the panel answered and
+before the page's time budget ran out. Usually the browser left, by
+navigating away, reloading or closing the tab. It is expected, not a
+failure, so it leaves an INFO line and no Sentry event. A page still loading
+when its budget runs out has failed, and is not an abandoned page load.
+Neither is a load whose read failed for its own reason as the connection
+closed.
+_Avoid_: browser leaving, client disconnect, cancelled request, timeout.
+
+**Time budget**:
+The one deadline shared by every read a panel page load makes, and by any
+wait for Discord to send the bot the guild's data or the member list,
+starting when the page begins reading. A load still reading when it runs out
+fails at once, whatever read it is waiting on, and the page says it took too
+long. A load still waiting on Discord fails at once too, and the page says
+Discord has not sent the data. The Foxhole page is the exception. It shows
+everything that doesn't need the member list, with a notice in place of the
+rest.
+_Avoid_: page timeout, deadline.

@@ -47,6 +47,7 @@ Review the README for required environment variables if you need them.
 ## Conventions worth knowing
 
 - Logging is `slog` via `utils.Info/Warn/Error/Debug` — always use these wrappers, not the stdlib `slog` directly, so log level routing stays consistent.
+- Report an internal failure with `utils.CaptureError`, which logs it and sends it to Sentry (ADR 0001). Tell the member about an expected outcome, like no troopers found, with `utils.HandleError`.
 - Commands log a `"🚀 Starting ..."` line at entry and `"✨ Done!"` at successful exit, with `"command"`, `"username"`, and `"discord_id"` fields. Match this pattern when adding commands so log greps stay uniform.
 - Prefer ephemeral responses for admin/management commands (`MessageFlagsEphemeral`) — see `deferEphemeral` + `editEphemeral` for the deferred-ephemeral pattern.
 
