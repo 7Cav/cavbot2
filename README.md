@@ -39,6 +39,8 @@ The registered set lives in `commands/registry.go` — update this table when it
 
 `/foxhole` and the panel's Foxhole page match names differently. `/foxhole add`, `remove` and `bulkadd` send a name to Discord's member search, which matches the start of a name, and refuse a name with more than one hit. The page's paste box reads the bot's own member list and needs a whole username, server nickname or global name, ignoring case. When a line matches two to five members it asks the manager to pick one. So the same name can find a member on one path and miss on the other, and an ID or mention is the one form both read the same way. `bulkadd` takes at most 50 entries, and the paste box has no cap.
 
+The two paths never change the roles at the same time. While an action started on the Foxhole page runs, `/foxhole` and `/foxhole-bulkadd-internal` refuse and change nothing. The reply names the action, who started it and how far it has got. While one of those commands runs, the page names it and refuses to start an action. Two commands still run together.
+
 ## Setup
 
 ### 1. Discord application
@@ -208,6 +210,7 @@ Sunday, a real person gets your test output. Prefer a test guild.
 | `FORUM_DB_DSN not set` at startup, or `LOA cache refresh failed` every 15 minutes | Expected without a reachable forum database; only affects `/loa` |
 | `Bot database not answering, retrying` nine times, then a panic `Bot store unavailable` | `BOT_DB_DSN` names a Postgres that is not there. The compose host `postgres` resolves only inside compose; for `go run .` blank the variable or point it at a local server |
 | Panic `Bot store unavailable: open bot database: the DSN does not parse` | `BOT_DB_DSN` is malformed. The value is not echoed because it carries a password; compare it against the form in `.env.example` |
+| `/foxhole` replies that a Foxhole action is running on the Foxhole page | A manager started an action on the panel's Foxhole page, and the role-changing commands refuse until it ends. Try again then, or press Stop on the page's progress block |
 | `/foxhole` fails with a permissions error | Bot invited without Manage Roles / Manage Channels, or its own role sits below the role it is editing |
 | Commands never appear | Bot invited without `applications.commands`, or `GUILD_ID` is not the server you are in |
 | Every milpac lookup fails | `BEARER` missing or expired |
