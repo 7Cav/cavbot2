@@ -12,7 +12,7 @@ A Go Discord bot (module `github.com/7cav/cavbot2`) for the 7th Cavalry Gaming R
 go build -o cavbot2 .                     # build the binary (CI uses this exact command)
 go run .                                  # run locally (requires env vars; see below)
 go mod tidy                               # sync deps after changing imports
-golangci-lint run --timeout=5m            # lint (no .golangci config; uses defaults — same as CI)
+golangci-lint run --timeout=5m            # lint, configured in .golangci.yml (same as CI)
 docker build -t cavbot2:latest . && docker compose up   # run via Docker (see README step 4)
 ```
 

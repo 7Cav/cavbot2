@@ -22,6 +22,12 @@ func submit(t *testing.T, b *browser, form *html.Node) *http.Response {
 func submitContext(t *testing.T, b *browser, ctx context.Context, form *html.Node) *http.Response {
 	t.Helper()
 	action, _ := attrValue(form, "action")
+	return b.doContext(ctx, http.MethodPost, action, http.Header{"Content-Type": {"application/x-www-form-urlencoded"}},
+		strings.NewReader(formValues(form).Encode()))
+}
+
+// formValues is what a browser posts for a form: the values of its inputs.
+func formValues(form *html.Node) url.Values {
 	fields := url.Values{}
 	eachElement(form, func(n *html.Node) {
 		if name, ok := attrValue(n, "name"); ok && n.Data == "input" {
@@ -29,8 +35,7 @@ func submitContext(t *testing.T, b *browser, ctx context.Context, form *html.Nod
 			fields.Add(name, value)
 		}
 	})
-	return b.doContext(ctx, http.MethodPost, action, http.Header{"Content-Type": {"application/x-www-form-urlencoded"}},
-		strings.NewReader(fields.Encode()))
+	return fields
 }
 
 // stopForm returns the Stop form on a progress block, and fails the test
