@@ -132,10 +132,13 @@ func runFoxhole(
 	fx *FoxholeRuntime,
 	interaction *discordgo.InteractionCreate,
 ) {
-	// A purge sends its own note once its summary is out.
+	// A purge runs on in the background, so it gives the one-action-at-a-time
+	// rule back and sends its own note once its summary is out.
 	purging := false
+	endCommand := func() {}
 	defer func() {
 		if !purging {
+			endCommand()
 			sendRenameNote(r, interaction, "warden", "foxhole")
 		}
 	}()
@@ -193,6 +196,15 @@ func runFoxhole(
 
 	utils.Debug("Foxhole command invoked", "command", subcommand, "query", query, "flag", roleScope)
 
+	// Every subcommand changes roles, so none runs alongside a Foxhole
+	// action started on the Foxhole page.
+	end, refused := fx.startCommand()
+	if refused != nil {
+		refuseForPageAction(r, interaction, *refused)
+		return
+	}
+	endCommand = end
+
 	switch subcommand {
 	case "add":
 		handleFoxholeAdd(r, gm, interaction, guildID, query, roleScope)
@@ -202,12 +214,24 @@ func runFoxhole(
 		handleFoxholeBulkAdd(r, gm, interaction, guildID, query, roleScope)
 	case "purge":
 		purging = true
-		handleFoxholePurge(r, gm, interaction, guildID, roleScope)
+		handleFoxholePurge(r, gm, interaction, guildID, roleScope, end)
 	default:
 		utils.HandleError(r, interaction, "❌ Unknown subcommand")
 	}
 
 	utils.Info("✨ Done!", "command", commandNameOf(interaction))
+}
+
+// refuseForPageAction answers a role-changing Foxhole command sent while a
+// Foxhole action started on the Foxhole page runs, with a reply only its
+// member sees naming the action, who started it and how far it has got.
+// The command changes nothing.
+func refuseForPageAction(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, action pageActionRunning) {
+	utils.Info("Foxhole command refused: a page action is running", "command", commandNameOf(interaction),
+		"subcommand", foxholeSubcommandOf(interaction), "action", action.name, "started_by", action.startedBy)
+	utils.HandleError(r, interaction, fmt.Sprintf(
+		"❌ A Foxhole action is running on the Foxhole page: %s, started by %s, %d of %d done. Nothing changed. Try again when it ends.",
+		action.name, action.startedBy, action.done, action.total))
 }
 
 // foxholeAuditReason is the audit log reason a Foxhole command run carries
@@ -415,14 +439,18 @@ func handleFoxholeBulkAdd(
 	editEphemeralWithEmbed(r, interaction, content, embed)
 }
 
+// handleFoxholePurge starts the purge in the background, which calls end
+// once it has run.
 func handleFoxholePurge(
 	r utils.InteractionResponder,
 	gm GuildManager,
 	interaction *discordgo.InteractionCreate,
 	guildID string,
 	roleScope string,
+	end func(),
 ) {
 	if err := deferEphemeral(r, interaction); err != nil {
+		end()
 		if isUnknownInteraction(err) {
 			captureMissedAck(interaction, err, "subcommand", foxholeSubcommandOf(interaction))
 			return
@@ -433,6 +461,7 @@ func handleFoxholePurge(
 
 	go func() {
 		defer utils.RecoverPanic("foxhole-purge")
+		defer end()
 		runFoxholePurge(r, gm, interaction, guildID, roleScope)
 		sendRenameNote(r, interaction, "warden", "foxhole")
 	}()

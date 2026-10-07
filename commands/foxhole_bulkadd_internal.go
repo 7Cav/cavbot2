@@ -88,6 +88,13 @@ func runFoxholeBulkAddInternal(
 		return
 	}
 
+	end, refused := fx.startCommand()
+	if refused != nil {
+		refuseForPageAction(r, interaction, *refused)
+		return
+	}
+	defer end()
+
 	if err := deferEphemeral(r, interaction); err != nil {
 		replyAckFailed(r, interaction, err)
 		return
