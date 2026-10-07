@@ -4,7 +4,7 @@
 # The CI gate. CI's build job runs this script, so a pass here is a pass in
 # CI. Run it from anywhere in the repo before you push.
 #
-# Steps, in order: lint, module tidiness, the floor script's own tests, the
+# Steps, in order: the glossary's entry format, lint, module tidiness, the floor script's own tests, the
 # test suite with -race and coverage against a throwaway Postgres, the
 # coverage floors, the build.
 #
@@ -47,6 +47,23 @@ if [[ -z "$(git status --porcelain)" ]]; then
     tree="working tree clean"
 else
     tree="working tree has uncommitted changes"
+fi
+
+step "glossary entry format"
+# Each GLOSSARY.md entry is a bare `**Term**:` line with its definition below.
+# Bulleted entries are the retired style.
+bad=$(grep -nHE '^[[:space:]]*- |^\*\*' GLOSSARY.md | grep -vE '^GLOSSARY\.md:[0-9]+:\*\*[^*]+\*\*:$' || true)
+if [[ -n "$bad" ]]; then
+    printf '%s\n' "$bad"
+    cat <<'EOF'
+Write each entry as a term line, its definition, then the words to avoid,
+with a blank line between entries:
+
+**Term**:
+One or two sentences on what the term is.
+_Avoid_: synonym, other synonym
+EOF
+    exit 1
 fi
 
 step "lint"
