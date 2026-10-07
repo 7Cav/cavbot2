@@ -164,6 +164,22 @@ func initPanel(cfg panel.Config, deps panel.Deps) *panel.Panel {
 }
 
 func main() {
+	// Signal handling comes first, so a stop at any point during startup
+	// shuts down like one after it (#470): main returns and the deferred
+	// steps run. Installing it also turns SIGINT back on when a
+	// non-interactive shell started the bot with it ignored.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	// stopped reports a stop that arrived while a startup step ran. A step
+	// such as a migration finishes first, and startup goes no further.
+	stopped := func() bool {
+		if ctx.Err() == nil {
+			return false
+		}
+		utils.Info("Shutting down")
+		return true
+	}
+
 	defer utils.InitSentry(Version)()
 
 	utils.Info("CavBot2 starting", "version", Version)
@@ -177,6 +193,9 @@ func main() {
 	botStore := initBotStore()
 	if botStore != nil {
 		defer func() { _ = botStore.Close() }()
+	}
+	if stopped() {
+		return
 	}
 
 	panelCfg := initPanelConfig(botStore != nil)
@@ -271,6 +290,9 @@ func main() {
 			panic(fmt.Sprintf("Error closing Discord connection: %v", err))
 		}
 	}()
+	if stopped() {
+		return
+	}
 
 	// Startup checks (spec #285): rank ladder drift and a missing Administrator
 	// each capture to Sentry, once per process start. Their own goroutine, so
@@ -282,60 +304,39 @@ func main() {
 		commands.RunStartupChecks(context.Background(), discordManager, GuildID, dg.State.User.ID)
 	}()
 
-	registeredCommandNames := make(map[string]struct{}, len(registry.GetCommands()))
-	for _, cmd := range registry.GetCommands() {
-		registeredCommandNames[cmd.Name] = struct{}{}
-	}
-	utils.Info("Removing deprecated commands")
-	existingCommands, err := dg.ApplicationCommands(dg.State.User.ID, GuildID)
-	if err != nil {
-		utils.Warn("Warning: Could not fetch existing commands:", "error", err)
-	} else {
-		for _, cmd := range existingCommands {
-			if _, exists := registeredCommandNames[cmd.Name]; !exists {
-				err := dg.ApplicationCommandDelete(dg.State.User.ID, GuildID, cmd.ID)
-				if err != nil {
-					utils.Warn("Warning: Could not delete deprecated command", "command", cmd.Name, "error", err)
-				} else {
-					utils.Info("Removed deprecated command", "command", cmd.Name)
-				}
-			}
-		}
-	}
-
-	utils.Info("Registering commands")
-	registeredCommands := make([]*discordgo.ApplicationCommand, len(registry.GetCommands()))
-
-	for i, cmd := range registry.GetCommands() {
-		rcmd, err := dg.ApplicationCommandCreate(dg.State.User.ID, GuildID, cmd)
-		if err != nil {
-			panic(fmt.Sprintf("Cannot create command %v: %v", cmd.Name, err))
-		}
-		registeredCommands[i] = rcmd
-	}
-
-	commands.StartJoinerReportScheduler(dg, GuildID)
-
-	// Panel (spec #285): the web UI listens only now, with the
-	// session READY, since its later pages act through the Discord session.
-	// A port it cannot bind is a deploy error and stops the bot, so the
-	// failure is seen rather than found as a 502 later.
+	// Panel (spec #285): the web UI listens once the session is READY, since
+	// its later pages act through the Discord session, and before the
+	// commands register, which Discord's rate limit can hold for up to about
+	// 40 s (#470). A port it cannot bind is a deploy error and stops the bot,
+	// so the failure is seen rather than found as a 502 later.
 	if webPanel != nil {
 		if err := webPanel.Start(); err != nil {
 			panic(fmt.Sprintf("Panel unavailable: %v", err))
 		}
 		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := webPanel.Stop(ctx); err != nil {
+			if err := webPanel.Stop(stopCtx); err != nil {
 				utils.Warn("Panel did not stop cleanly", "error", err)
 			}
 		}()
 	}
 
+	// The startup sync (ADR 0006). A stop while Discord holds it ends startup
+	// here. Any other failure, such as a command Discord rejects, stops the
+	// bot, and the deferred shutdown still runs.
+	utils.Info("Registering commands")
+	if err := registry.Sync(ctx, dg, dg.State.User.ID, GuildID); err != nil {
+		if stopped() {
+			return
+		}
+		panic(fmt.Sprintf("Cannot register commands: %v", err))
+	}
+	utils.Info("Commands registered", "count", len(registry.GetCommands()))
+
+	commands.StartJoinerReportScheduler(dg, GuildID)
+
 	utils.Info("Bot is now running. Press CTRL-C to exit")
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-sc
+	<-ctx.Done()
 	utils.Info("Shutting down")
 }

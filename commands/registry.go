@@ -1,6 +1,13 @@
 package commands
 
-import "github.com/bwmarrin/discordgo"
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/7cav/cavbot2/utils"
+	"github.com/bwmarrin/discordgo"
+)
 
 type Registry struct {
 	commands []Command
@@ -53,6 +60,60 @@ func (r *Registry) GetCommands() []*discordgo.ApplicationCommand {
 		cmds[i] = cmd.Definition
 	}
 	return cmds
+}
+
+// guildCommandAPI is the Discord REST surface the startup sync uses.
+// *discordgo.Session satisfies it.
+type guildCommandAPI interface {
+	ApplicationCommands(appID, guildID string, options ...discordgo.RequestOption) ([]*discordgo.ApplicationCommand, error)
+	ApplicationCommandBulkOverwrite(appID string, guildID string, commands []*discordgo.ApplicationCommand, options ...discordgo.RequestOption) ([]*discordgo.ApplicationCommand, error)
+}
+
+// errCommandSyncPanicked is what Sync returns when its Discord calls panic.
+// RecoverPanic has already logged the panic and sent it to Sentry.
+var errCommandSyncPanicked = errors.New("command sync panicked")
+
+// Sync makes the guild's commands the registry's (ADR 0006) in one bulk
+// overwrite. Discord keeps the ID of each command whose name it already
+// holds, even when the definition changed, so the permission overrides it
+// keys by that ID survive. It deletes the commands the registry no longer
+// declares, and the list beforehand only names them in the log.
+//
+// One request replaces the create-each loop that Discord paced to about a
+// minute (#470). The overwrite route allows two requests and then holds the
+// next for up to about 40 s, so a third start within a minute waits. Sync
+// returns ctx's error as soon as ctx ends, so a stop is never held by that
+// wait. The request it leaves behind ends with the process.
+func (r *Registry) Sync(ctx context.Context, api guildCommandAPI, appID, guildID string) error {
+	done := make(chan error, 1)
+	go func() {
+		err := errCommandSyncPanicked
+		defer func() { done <- err }()
+		defer utils.RecoverPanic("command-sync")
+		err = r.overwrite(api, appID, guildID)
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (r *Registry) overwrite(api guildCommandAPI, appID, guildID string) error {
+	existing, err := api.ApplicationCommands(appID, guildID)
+	if err != nil {
+		utils.Warn("Could not list the guild's commands, so removed ones go unnamed", "error", err)
+	}
+	if _, err := api.ApplicationCommandBulkOverwrite(appID, guildID, r.GetCommands()); err != nil {
+		return fmt.Errorf("overwrite the guild's commands: %w", err)
+	}
+	for _, cmd := range existing {
+		if _, declared := r.GetHandler(cmd.Name); !declared {
+			utils.Info("Removed deprecated command", "command", cmd.Name)
+		}
+	}
+	return nil
 }
 
 func (r *Registry) GetHandler(name string) (CommandHandler, bool) {

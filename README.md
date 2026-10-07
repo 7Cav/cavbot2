@@ -150,15 +150,18 @@ postgres && docker compose up -d postgres`.
 A healthy startup logs, in order: `Logger initialized`, `Sentry disabled
 (SENTRY_DSN not set)`, `CavBot2 starting`, the LOA cache line for whichever
 `FORUM_DB_DSN` case you are in, either `BOT_DB_DSN not set, bot store disabled`
-or `Bot store configured` followed by `Bot database migrated` and `Starting temp voice channels`, `Removing
-deprecated commands`, `Registering commands`, `Starting Star Citizen joiner
-report scheduler`, and finally `Bot is now running. Press CTRL-C to exit`. That
+or `Bot store configured` followed by `Bot database migrated` and `Starting temp voice channels`,
+`Panel listening` when the panel is configured, `Registering commands`,
+`Commands registered`, `Starting Star Citizen joiner report scheduler`, and
+finally `Bot is now running. Press CTRL-C to exit`. That
 last line is the success signal — anything that stops earlier is a failed
 start.
 
-Expect a pause of roughly 40 seconds on `Registering commands`. The fifteen
-commands are created one at a time and Discord rate-limits them, so a silent
-console there is normal, not a hang.
+Registering the commands takes under a second, since the registry goes to
+Discord in one request. Discord allows two of those in a row and holds a third
+within about a minute for up to 40 seconds, so after quick restarts a silent
+console on `Registering commands` is normal, not a hang. The panel already
+listens by then, and a stop still shuts the bot down cleanly.
 
 **In production** the image comes from a GitHub Release, which pushes
 `7cav/cavbot2:<tag>`, then deploys that tag to the host over SSH. GitHub
