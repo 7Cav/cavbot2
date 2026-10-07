@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/7cav/cavbot2/commands"
@@ -198,9 +199,15 @@ func reportMembers(members []commands.ReportMember) []reportMember {
 // holders lose each role it names, in the order the purge takes them, and
 // the rough time at one change a second.
 type purgeConfirm struct {
-	Scope    commands.PurgeScope
-	Label    string
-	Roles    []purgeRole
+	Scope commands.PurgeScope
+	Label string
+	Roles []purgeRole
+	// ChangeCount is how many role changes the purge would make, every
+	// role's holders together. At 0 the page offers no Confirm.
+	ChangeCount int
+	// Nobody names the scope's roles for the hint shown at 0 changes,
+	// Internal first as the scope's label has them: "Internal or External".
+	Nobody   string
 	Estimate estimate
 }
 
@@ -248,7 +255,6 @@ func estimateFor(changes int) estimate {
 func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope commands.PurgeScope) *purgeConfirm {
 	roleIDs := commands.FoxholeRoleIDs(s.manager.GuildData(s.guildID))
 	confirm := &purgeConfirm{Scope: scope, Label: scope.Label()}
-	changes := 0
 	for _, role := range scope.Roles() {
 		holders := 0
 		for _, mem := range list.Members {
@@ -257,9 +263,16 @@ func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope c
 			}
 		}
 		confirm.Roles = append(confirm.Roles, purgeRole{Role: role, Name: role.Label(), Holders: holders})
-		changes += holders
+		confirm.ChangeCount += holders
 	}
-	confirm.Estimate = estimateFor(changes)
+	var names []string
+	for _, role := range []commands.FoxholeRole{commands.FoxholeInternal, commands.FoxholeExternal} {
+		if slices.Contains(scope.Roles(), role) {
+			names = append(names, role.Label())
+		}
+	}
+	confirm.Nobody = strings.Join(names, " or ")
+	confirm.Estimate = estimateFor(confirm.ChangeCount)
 	return confirm
 }
 

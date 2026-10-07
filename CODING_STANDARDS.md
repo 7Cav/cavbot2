@@ -10,9 +10,8 @@ against the rules under each heading it touches. Look up a term in
 **A no-op says so and stops.** A preview that would change nobody says why
 where its Confirm would be. A save that would change nothing ends with the
 store and the change log as they were. Reference: `nobody-to-remove`,
-`nobody-to-add` and `nobody-to-re-add` in `panel/templates/foxhole.html`.
-The purge confirmation still offers Purge at zero holders (#474). Flag any
-hunk that touches it.
+`nobody-to-add`, `nobody-to-re-add` and `nobody-to-purge` in
+`panel/templates/foxhole.html`.
 
 **A Confirm acts on what its preview showed.** The gap between a preview
 and its Confirm is a TOCTOU window. The member list can move in it, as when

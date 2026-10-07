@@ -59,14 +59,20 @@
     <h2 class="block-header">Purge {{.Label}}?</h2>
     <div class="block-row">
       {{range .Roles}}<p data-purge-role="{{.Role}}">Takes {{.Name}} off <span data-field="holders">{{.Holders}}</span> {{if eq .Holders 1}}holder{{else}}holders{{end}}{{if eq .Role "external"}}, approved collaborators included. Re-add approved collaborators gives it back to them{{end}}.</p>{{end}}
+      {{- if .ChangeCount}}
       <p data-field="keeps">Notes and approvals stay.</p>
       <p>Takes <span data-field="estimate" data-seconds="{{.Estimate.Seconds}}">about {{.Estimate.Text}}</span> at one change a second. It keeps going if you close this tab.</p>
+      {{- end}}
     </div>
+    {{if .ChangeCount}}
     <form method="post" action="/foxhole/purge" class="submit-row">
       <input type="hidden" name="scope" value="{{.Scope}}">
       <button type="submit" class="btn btn--danger" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Purge {{.Label}}</button>
       <a class="btn" href="/foxhole">Cancel</a>
     </form>
+    {{else}}
+    <div class="submit-row"><a class="btn" href="/foxhole">Cancel</a> <span class="fx-hint" data-field="nobody-to-purge">Nobody holds {{.Nobody}}, so there's nothing to purge.</span></div>
+    {{end}}
   </section>
   {{end}}
   {{with .RemovePreview}}

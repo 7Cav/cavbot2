@@ -105,6 +105,25 @@ func changeEntries(t *testing.T, doc *html.Node, action string) []*html.Node {
 	return out
 }
 
+// purgeHolders returns how many holders the purge confirmation counts for
+// each role it names, by role, and fails the test on a count that isn't a
+// number.
+func purgeHolders(t *testing.T, confirm *html.Node) map[string]int {
+	t.Helper()
+	out := map[string]int{}
+	eachElement(confirm, func(n *html.Node) {
+		if role, ok := attrValue(n, "data-purge-role"); ok {
+			text := fieldText(t, n, "holders")
+			holders, err := strconv.Atoi(text)
+			if err != nil {
+				t.Errorf("the confirmation counts %q %s holders, want a number", text, role)
+			}
+			out[role] = holders
+		}
+	})
+	return out
+}
+
 // The purge confirmation states how many holders lose each role the scope
 // names, that notes and approvals stay, and the rough time at one change a
 // second. Opening it starts nothing.
@@ -124,13 +143,7 @@ func TestPurgeConfirmationCountsTheHoldersOfEachRoleAndTheTime(t *testing.T) {
 			doc := parseHTML(t, openPurge(t, w.b, parseHTML(t, w.b.get(foxholePath)), tc.scope))
 
 			confirm := purgeConfirmation(t, doc)
-			got := map[string]int{}
-			eachElement(confirm, func(n *html.Node) {
-				if role, ok := attrValue(n, "data-purge-role"); ok {
-					got[role], _ = strconv.Atoi(fieldText(t, n, "holders"))
-				}
-			})
-			if !maps.Equal(got, tc.holders) {
+			if got := purgeHolders(t, confirm); !maps.Equal(got, tc.holders) {
 				t.Errorf("the confirmation counts the holders %v, want %v", got, tc.holders)
 			}
 			if findElement(confirm, "", "data-field", "keeps") == nil {
@@ -152,6 +165,71 @@ func TestPurgeConfirmationCountsTheHoldersOfEachRoleAndTheTime(t *testing.T) {
 				t.Errorf("opening the confirmation left %d purge entries in the change log, want none", len(entries))
 			}
 		})
+	}
+}
+
+// A purge confirmation whose scope has no holder left would change nobody,
+// so it says there's nothing to purge where Confirm would be, offers no
+// Confirm and no estimate, and still counts each role's holders. Opening it
+// starts nothing: the last purge's report stays on top.
+func TestPurgeConfirmationWithNobodyToPurgeOffersNoConfirm(t *testing.T) {
+	cases := []struct {
+		scope   string
+		holders map[string]int
+	}{
+		{"internal", map[string]int{"internal": 0}},
+		{"external", map[string]int{"external": 0}},
+		{"both", map[string]int{"internal": 0, "external": 0}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.scope, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			startPurge(t, w, tc.scope)
+			w.awaitActionEnd(t)
+			last := attrOf(reportBlock(t, parseHTML(t, w.b.get(foxholePath))), "data-report")
+
+			doc := parseHTML(t, openPurge(t, w.b, parseHTML(t, w.b.get(foxholePath)), tc.scope))
+
+			confirm := purgeConfirmation(t, doc)
+			if findElement(confirm, "", "data-field", "nobody-to-purge") == nil {
+				t.Error("the confirmation doesn't say there's nothing to purge")
+			}
+			if findElement(confirm, "", "data-field", "confirm") != nil {
+				t.Error("the confirmation offers Confirm with nobody to purge")
+			}
+			if findElement(confirm, "form", "action", foxholePurgePath) != nil {
+				t.Error("the confirmation has a purge form with nobody to purge")
+			}
+			if findElement(confirm, "", "data-field", "estimate") != nil {
+				t.Error("the confirmation gives an estimate with nobody to purge")
+			}
+			if got := purgeHolders(t, confirm); !maps.Equal(got, tc.holders) {
+				t.Errorf("the confirmation counts the holders %v, want %v", got, tc.holders)
+			}
+			if entries := changeEntries(t, doc, "purge"); len(entries) != 1 {
+				t.Errorf("the change log holds %d purge entries, want the earlier purge's alone", len(entries))
+			}
+			if got := attrOf(reportBlock(t, doc), "data-report"); got != last {
+				t.Errorf("the page shows report %s on top, want the earlier purge's, %s", got, last)
+			}
+		})
+	}
+}
+
+// A purge of both roles with External already gone still has Internal
+// holders to take, so its confirmation offers Purge and its estimate.
+func TestPurgeConfirmationOfBothWithOneRoleHeldOffersPurge(t *testing.T) {
+	w := newFoxholeWorld(t)
+	startPurge(t, w, "external")
+	w.awaitActionEnd(t)
+
+	confirm := purgeConfirmation(t, parseHTML(t, openPurge(t, w.b, parseHTML(t, w.b.get(foxholePath)), "both")))
+
+	if button := findElement(confirm, "", "data-field", "confirm"); button == nil || disabled(button) {
+		t.Error("the confirmation offers no enabled Purge with Internal still held")
+	}
+	if findElement(confirm, "", "data-field", "estimate") == nil {
+		t.Error("the confirmation gives no estimate with Internal still held")
 	}
 }
 
