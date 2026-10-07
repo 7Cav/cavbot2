@@ -212,7 +212,8 @@ One change to who holds the Foxhole roles, made on the Foxhole page or by a
 the approved collaborators. One started on the page never runs alongside
 another from either path, though two commands may still run together.
 _Avoid_: bulk action, job, task, operation, lock (a spawned channel's
-state, not the rule that keeps two actions apart).
+state, not the rule that keeps two actions apart), starter for who started
+one (a recording's).
 
 **Report**:
 The record of one Foxhole action started on the Foxhole page, and that
