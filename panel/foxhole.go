@@ -35,6 +35,10 @@ type foxholeView struct {
 	// Filter names the filter the list shows: filterAll when the address
 	// names none, or one the page doesn't know.
 	Filter string
+	// Reload is the page in the view it shows, with any note form it shows
+	// open: the address the member list notice's and the progress block's
+	// Reload links load, and the page's script loads in the background.
+	Reload string
 	// Filters are the filter links, each with how many holders matching the
 	// search it lists.
 	Filters []filterLink
@@ -117,7 +121,8 @@ type foxholeView struct {
 }
 
 // listNotice is the one-line notice in the holder list's place while the
-// member list is partial: how far along the list is, and a Reload link.
+// member list is partial: how far along the list is. It ends in a Reload
+// link to the view's Reload address.
 type listNotice struct {
 	// Status is the list's state as the notice names it.
 	Status listState
@@ -128,10 +133,6 @@ type listNotice struct {
 	// RetryIn is the whole seconds until the bot asks again after a
 	// refusal.
 	RetryIn int
-	// Reload is the address the Reload link loads, and the page's script
-	// loads in the background to learn when the list has arrived: the page
-	// in the view it shows, with any note form it shows open.
-	Reload string
 }
 
 // listState is a partial member list's state as the notice names it, its
@@ -145,10 +146,9 @@ const (
 	listNoGuild  listState = "no-guild"
 )
 
-// noticeFor is the notice for a member list that isn't complete, its
-// Reload link loading reload.
-func noticeFor(list commands.MemberListSnapshot, reload string) *listNotice {
-	n := &listNotice{Received: list.PartsReceived, Expected: list.PartsExpected, Reload: reload}
+// noticeFor is the notice for a member list that isn't complete.
+func noticeFor(list commands.MemberListSnapshot) *listNotice {
+	n := &listNotice{Received: list.PartsReceived, Expected: list.PartsExpected}
 	switch list.Status {
 	case commands.MemberListArriving:
 		n.Status = listArriving
@@ -714,7 +714,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 			}
 		}
 	} else {
-		view.ListNotice = noticeFor(list, foxholeURL(req.Query, req.Filter, req.NoteMember))
+		view.ListNotice = noticeFor(list)
 		if req.Remove != "" {
 			view.ActionRefusal = removeListPartialRefusal(foxholeRoleLabels[req.Remove])
 		}
@@ -726,6 +726,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 		}
 	}
 	view.Query, view.Filter = req.Query, req.Filter
+	view.Reload = foxholeURL(req.Query, req.Filter, req.NoteMember)
 	view.Units = commands.ValidatedInternalUnits()
 	view.NoteTemplate = req.blankNoteForm()
 	view.Changes = foxholeChanges(entries)

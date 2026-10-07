@@ -483,3 +483,129 @@
 
   later();
 })();
+
+/* The Foxhole page's progress block (spec #434, ADR 0013). While a Foxhole
+   action runs, the block shows how far it had got when the page loaded, and
+   its Reload link loads the page again in the view it shows. The script
+   hides the link's sentence and loads that address in the background every
+   few seconds instead. Each answer's count, time left, pause line and Stop
+   go into this block in place, so a keyboard user on Stop stays there until
+   someone presses it, and then moves to the line saying it's stopping. An
+   answer showing the report means the action has ended: the report takes
+   the block's place, with a link to reload the page, and the change log
+   takes the answer's, which holds the ended report too. A status line only
+   a screen reader reads says how it ended, since the report itself isn't a
+   live region. The holder list, any note being typed and any selection
+   stay as the page loaded them. */
+(function () {
+  'use strict';
+
+  var progress = document.querySelector('[data-field="progress"]');
+  if (!progress) { return; }
+  // every is the wait from one answer to the next load. An answer that
+  // isn't the Foxhole page, a sign-in page or an error page, waits backOff
+  // instead, so an open tab through a forum outage loads it a few times a
+  // minute.
+  var every = 3000;
+  var backOff = 10000;
+  var address = progress.querySelector('[data-field="reload"]').getAttribute('href');
+  // said is a live region from the start, so a screen reader reads out
+  // what goes in it at the end.
+  var said = document.createElement('div');
+  said.setAttribute('role', 'status');
+  said.className = 'visually-hidden';
+  progress.before(said);
+
+  // hideHint hides the block's no-script sentence, which says to reload.
+  function hideHint(block) {
+    block.querySelector('[data-field="reload-hint"]').hidden = true;
+  }
+
+  // update brings this block up to the answer's, for the same action. The
+  // pause line comes and goes, and Stop gives way to the stopping line once
+  // someone presses it.
+  function update(fresh) {
+    ['done', 'total', 'left'].forEach(function (name) {
+      var mine = progress.querySelector('[data-field="' + name + '"]');
+      var theirs = fresh.querySelector('[data-field="' + name + '"]');
+      if (mine.textContent !== theirs.textContent) { mine.textContent = theirs.textContent; }
+    });
+    progress.querySelector('[data-field="left"]').setAttribute('data-seconds',
+      fresh.querySelector('[data-field="left"]').getAttribute('data-seconds'));
+    var paused = progress.querySelector('[data-field="paused"]');
+    var pausedNow = fresh.querySelector('[data-field="paused"]');
+    if (pausedNow && !paused) {
+      progress.querySelector('[data-field="how-far"]').after(document.importNode(pausedNow, true));
+    } else if (paused && !pausedNow) {
+      paused.remove();
+    }
+    var stop = progress.querySelector('[data-field="stop"]');
+    var stopping = fresh.querySelector('[data-field="stopping"]');
+    if (stop && stopping) {
+      var focused = stop.contains(document.activeElement);
+      stopping = document.importNode(stopping, true);
+      stopping.tabIndex = -1;
+      stop.replaceWith(stopping);
+      if (focused) { stopping.focus(); }
+    }
+  }
+
+  // ended puts the answer's report in this block's place, with a link to
+  // reload the page, and the answer's change log in this page's. Focus in
+  // the block moves to the link.
+  function ended(page, report) {
+    var focused = progress.contains(document.activeElement);
+    var line = document.createElement('div');
+    var link = document.createElement('a');
+    line.className = 'block-row';
+    line.setAttribute('data-field', 'reload-changes');
+    link.href = address;
+    link.textContent = 'Reload the page to see the changes';
+    line.appendChild(link);
+    report = document.adoptNode(report);
+    var heading = report.querySelector('h2');
+    heading.after(line);
+    progress.replaceWith(report);
+    var changes = page.querySelector('[data-field="changes"]');
+    var mine = document.querySelector('[data-field="changes"]');
+    if (changes && mine) { mine.replaceWith(document.adoptNode(changes)); }
+    said.textContent = heading.textContent + '. ' + link.textContent + '.';
+    if (focused) { link.focus(); }
+  }
+
+  function load() {
+    fetch(address, { credentials: 'same-origin' })
+      .then(function (res) {
+        return res.text().then(function (text) {
+          return { ok: res.ok, doc: new DOMParser().parseFromString(text, 'text/html') };
+        });
+      })
+      .then(function (answer) {
+        var page = answer.ok && answer.doc.querySelector('main[data-page="foxhole"]');
+        var report = page && page.querySelector('[data-field="report"]');
+        var fresh = page && page.querySelector('[data-field="progress"]');
+        if (report) {
+          ended(page, report);
+          return;
+        }
+        if (!fresh) {
+          setTimeout(load, backOff);
+          return;
+        }
+        if (fresh.getAttribute('data-report') === progress.getAttribute('data-report')) {
+          update(fresh);
+        } else {
+          // Another action started after this one ended, between two loads.
+          fresh = document.adoptNode(fresh);
+          hideHint(fresh);
+          progress.replaceWith(fresh);
+          progress = fresh;
+        }
+        setTimeout(load, every);
+      })
+      .catch(function () { setTimeout(load, backOff); });
+  }
+
+  hideHint(progress);
+  setTimeout(load, every);
+})();
