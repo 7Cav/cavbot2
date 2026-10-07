@@ -19,6 +19,13 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 scripts=.github/scripts
 
+# Run on the Go version go.mod names, the one CI's setup-go installs. Coverage
+# moves with the toolchain (commands covers 86.4% under 1.26.0 and 88.1% under
+# 1.27.1), so a newer local Go would pass floors CI fails. Go fetches the
+# pinned toolchain on first use.
+GOTOOLCHAIN=go$(go list -m -f '{{.GoVersion}}')
+export GOTOOLCHAIN
+
 work=$(mktemp -d)
 worktree=$(basename "$PWD")
 db=cavbot2-gate-${worktree//[^a-zA-Z0-9_.-]/-}-$$
@@ -67,5 +74,5 @@ go build -o "$work/cavbot2" .
 # A summary to paste into a reviewer's prompt, so they can tell which tree
 # passed without running the suite again.
 step "gate passed"
-echo "commit $commit, $tree"
+echo "commit $commit, $tree, $(go env GOVERSION)"
 cat "$work/floors.log"

@@ -237,6 +237,8 @@ It lints, checks that `go.mod` and `go.sum` are tidy, runs the suite with
 `-race` and coverage, checks the coverage floors and builds. The `store`
 package's tests need a real Postgres, so the gate starts a throwaway one of
 its own and removes it on exit. Several checkouts can run the gate at once.
+It runs on the Go version `go.mod` names, the one CI uses, because coverage
+differs between Go versions; Go downloads that toolchain on first use.
 
 CI enforces per-package coverage floors, listed in
 `.github/coverage-floors.tsv`. A floor stays within 3 points of its package's
