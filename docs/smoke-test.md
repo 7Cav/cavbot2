@@ -2,12 +2,19 @@
 
 A smoke test runs a change on the test guild, where the bot is on the live
 gateway and the panel is in a real browser. CI reaches neither. Every change a
-member or panel user can see gets one before it merges: a slash command, a
-panel page, or what the bot does to channels, roles and messages.
+member or panel user can see gets one before the release that ships it: a
+slash command, a panel page, or what the bot does to channels, roles and
+messages (ADR 0015).
 
-You run every step and write the report. The person you work for comes in at
-two points only, and the step that needs them says so: consent on the real
-forum, and slash commands that post as them.
+A smoke test has two halves. The PR that makes the change writes its check
+list (step 1) and carries the `needs-smoke` label. A smoke pass (steps 2 to 6)
+runs the check lists of one or more PRs on one build: an open PR's branch, or
+`develop` for every merged PR still labelled `needs-smoke`. Before a release,
+run passes on `develop` until no merged PR carries the label.
+
+You run every step of a pass and write the report. The person you work for
+comes in at two points only, and the step that needs them says so: consent on
+the real forum, and slash commands that post as them.
 
 ## 1. Write the check list
 
@@ -18,11 +25,26 @@ you will drive each check: the panel, `smoke api`, or a slash command. When a
 live run cannot reach a check, such as a state only a unit test can force,
 write the reason next to it.
 
-Done when every changed behavior in the diff has a check or a reason.
+Put the list in the PR body under a **Smoke checks** heading and add the
+`needs-smoke` label. Whoever runs the pass may come to it days later with only
+that section, so each check names its persona or account and the result to
+expect.
 
-## 2. Start a run
+Done when every changed behavior in the diff has a check or a reason, and the
+PR carries `needs-smoke`.
 
-Commit the change, then:
+## 2. Start a pass
+
+Pick the build. For one open PR, check out its branch with every change
+committed. For merged PRs, bring a clean checkout of `develop` up to
+`origin/develop` and list the PRs still waiting. One pass covers them all, so
+collect each one's **Smoke checks** section.
+
+```bash
+gh pr list --state merged --label needs-smoke --json number,title --jq '.[] | "#\(.number) \(.title)"'
+```
+
+Then start the bot:
 
 ```bash
 go run ./tools/smoke up
@@ -79,14 +101,22 @@ runs.
 Done when every check has a result: what you did, as which persona or account,
 and what you saw.
 
-## 4. Fix and run again
+## 4. Handle a failed check
 
-When a check fails, fix the code, commit, then `down` and `up`. A restart ends
-every panel session, as in production, so sign in again. Run the failed checks
-and every check the fix could affect.
+On an open PR's branch, fix the code, commit, then `down` and `up`. A restart
+ends every panel session, as in production, so sign in again. Run the failed
+checks and every check the fix could affect.
 
-Done when every check passes on one build without a `-dirty` suffix, so the
-build names a commit the PR holds.
+On `develop` the change has already merged. File an issue labelled `bug` and
+`needs-triage` for each failed check: the check, what you saw, the build, and
+the PR it came from. The person decides whether the next release waits for a
+fix or they revert the PR. Either way the PR keeps `needs-smoke`, so the
+release waits too, until a later pass shows the fix working or the revert
+merges.
+
+On an open PR's branch, done when every check passes on one build without a
+`-dirty` suffix, so the build names a commit the PR holds. On `develop`, done
+when every failed check has its issue.
 
 ## 5. Clean up
 
@@ -99,14 +129,18 @@ fixture is undone.
 
 ## 6. Report
 
-Add a **Smoke test** section to the PR body: the build, each check with its
-persona or account and result, and each unreachable check with its reason.
-This repository is public, so name people by persona or role. Forum usernames,
-user IDs, IP addresses and channel contents stay out of the PR.
+Comment on each PR the pass covered: the build, each check with its persona or
+account and result, each unreachable check with its reason, and the issue for
+each failure. A comment works on open and merged PRs alike, and a merged PR's
+body already became its squash commit. This repository is public, so name
+people by persona or role. Forum usernames, user IDs, IP addresses and channel
+contents stay out of the PR. Then remove `needs-smoke` from each PR whose
+checks all passed.
 
-Done when the section covers the whole check list. A smoke test that could not
-run blocks the merge, so in that case the section gives the reason, and you
-ask the person to run it or waive it.
+Done when every PR the pass covered has its comment, and `needs-smoke` stays
+only on PRs with a failed check or checks the pass could not run. For the
+second kind, tell the person why so they can run them or waive them. A waiver
+removes the label too.
 
 ## When `up` fails
 

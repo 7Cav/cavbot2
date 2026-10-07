@@ -267,9 +267,10 @@ give them only a database `test-db.sh` started.
 ### Smoke test
 
 CI never reaches the Discord gateway or a browser, so a change members can see
-also runs on a test guild before it merges. `go run ./tools/smoke up` starts
-this checkout's bot there, with the panel at <http://localhost:8080> and a fake
-forum to sign in through. [docs/smoke-test.md](docs/smoke-test.md) covers the
+also runs on a test guild before the release that ships it.
+`go run ./tools/smoke up` starts this checkout's bot there, with the panel at
+<http://localhost:8080> and a fake forum to sign in through.
+[docs/smoke-test.md](docs/smoke-test.md) covers the
 rest.
 
 ## Contributing

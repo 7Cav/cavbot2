@@ -4,9 +4,9 @@
 # The CI gate. CI's build job runs this script, so a pass here is a pass in
 # CI. Run it from anywhere in the repo before you push.
 #
-# Steps, in order: the glossary's entry format, lint, module tidiness, the floor script's own tests, the
-# test suite with -race and coverage against a throwaway Postgres, the
-# coverage floors, the build.
+# Steps, in order: the glossary's entry format, lint, module tidiness, the
+# tests of the scripts in this directory, the test suite with -race and
+# coverage against a throwaway Postgres, the coverage floors, the build.
 #
 # Runs in several worktrees at once without interference. Each run starts its
 # own Postgres through test-db.sh and removes only that container on exit, and
@@ -72,8 +72,10 @@ golangci-lint run --timeout=5m
 step "go.mod and go.sum are tidy"
 go mod tidy -diff
 
-step "floor script tests"
-"$scripts/check-coverage-floors_test.sh"
+step "script tests"
+for t in "$scripts"/*_test.sh; do
+    "$t"
+done
 
 step "Postgres for the store tests"
 TEST_BOT_DB_DSN=$("$scripts/test-db.sh" "$db")
