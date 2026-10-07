@@ -67,7 +67,9 @@ for an accountability tool where humans are the safety net.
   that preceded it. A trooper currently on LOA who accrued >7 unexcused dates
   before it is still flagged ("on LOA, still AWOL", ⚪ glyph). This is
   intentionally stricter than "currently on LOA → never AWOL"; it is rare in
-  practice because filing an LOA is itself a forum post that resets the clock.
+  practice because a self-filed LOA is itself a forum post that resets the
+  clock. An LOA filed for the Subject by someone else (ADR 0010) is the
+  Submitter's post, so it leaves the Subject's clock running.
 - When touching the LOA store, preserve the `GetEntry`/`IsOnLOA`/`IsHealthy`
   contracts — `/loa` depends on them too, not just `/awol`'s LOA tag.
 - Keep the accountable-day math a pure function (dates + windows → days AWOL)
