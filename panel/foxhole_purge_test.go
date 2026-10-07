@@ -105,6 +105,25 @@ func changeEntries(t *testing.T, doc *html.Node, action string) []*html.Node {
 	return out
 }
 
+// purgeHolders returns how many holders the purge confirmation counts for
+// each role it names, by role, and fails the test on a count that isn't a
+// number.
+func purgeHolders(t *testing.T, confirm *html.Node) map[string]int {
+	t.Helper()
+	out := map[string]int{}
+	eachElement(confirm, func(n *html.Node) {
+		if role, ok := attrValue(n, "data-purge-role"); ok {
+			text := fieldText(t, n, "holders")
+			holders, err := strconv.Atoi(text)
+			if err != nil {
+				t.Errorf("the confirmation counts %q %s holders, want a number", text, role)
+			}
+			out[role] = holders
+		}
+	})
+	return out
+}
+
 // The purge confirmation states how many holders lose each role the scope
 // names, that notes and approvals stay, and the rough time at one change a
 // second. Opening it starts nothing.
@@ -124,13 +143,7 @@ func TestPurgeConfirmationCountsTheHoldersOfEachRoleAndTheTime(t *testing.T) {
 			doc := parseHTML(t, openPurge(t, w.b, parseHTML(t, w.b.get(foxholePath)), tc.scope))
 
 			confirm := purgeConfirmation(t, doc)
-			got := map[string]int{}
-			eachElement(confirm, func(n *html.Node) {
-				if role, ok := attrValue(n, "data-purge-role"); ok {
-					got[role], _ = strconv.Atoi(fieldText(t, n, "holders"))
-				}
-			})
-			if !maps.Equal(got, tc.holders) {
+			if got := purgeHolders(t, confirm); !maps.Equal(got, tc.holders) {
 				t.Errorf("the confirmation counts the holders %v, want %v", got, tc.holders)
 			}
 			if findElement(confirm, "", "data-field", "keeps") == nil {
@@ -190,18 +203,7 @@ func TestPurgeConfirmationWithNobodyToPurgeOffersNoConfirm(t *testing.T) {
 			if findElement(confirm, "", "data-field", "estimate") != nil {
 				t.Error("the confirmation gives an estimate with nobody to purge")
 			}
-			got := map[string]int{}
-			eachElement(confirm, func(n *html.Node) {
-				if role, ok := attrValue(n, "data-purge-role"); ok {
-					text := fieldText(t, n, "holders")
-					holders, err := strconv.Atoi(text)
-					if err != nil {
-						t.Errorf("the confirmation counts %q %s holders, want a number", text, role)
-					}
-					got[role] = holders
-				}
-			})
-			if !maps.Equal(got, tc.holders) {
+			if got := purgeHolders(t, confirm); !maps.Equal(got, tc.holders) {
 				t.Errorf("the confirmation counts the holders %v, want %v", got, tc.holders)
 			}
 			if entries := changeEntries(t, doc, "purge"); len(entries) != 1 {
