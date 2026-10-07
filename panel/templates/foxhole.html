@@ -101,8 +101,11 @@
     <form method="post" action="/foxhole/add" id="fx-add-confirm" class="submit-row" data-field="add-confirm">
       <input type="hidden" name="role" value="{{.Role}}">
       <input type="hidden" name="lines" value="{{.Paste.Text}}">
-      {{if .Rows}}<button type="submit" class="btn btn--cta" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Add {{.Name}}</button>{{end}}
+      <input type="hidden" name="named" value="{{.Named}}">
+      {{if .CanAdd}}<button type="submit" class="btn btn--cta" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Add {{.Name}}</button>{{end}}
       <a class="btn" href="/foxhole">Cancel</a>
+      {{- if not .CanAdd}} <span class="fx-hint" data-field="nobody-to-add">No line gives {{.Name}} to anyone, so there's nothing to add.</span>
+      {{- else if $.Foxhole.Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Confirm once it ends.</span>{{end}}
     </form>
   </section>
   {{end}}
@@ -193,7 +196,7 @@
     {{template "also-matches" .AlsoMatches}}
   </section>
   {{end}}
-  {{else}}{{if .PasteHeld}}
+  {{else}}{{if .PasteAlone}}
   <div class="fx-actions fx-actions--alone" data-field="actions">
     <section class="block" data-field="add-members">
       <h2 class="block-header">Add members</h2>
@@ -287,7 +290,7 @@
       <span class="field-hint">Discord IDs, mentions, usernames, nicknames or global names. You see what each line matched before anything changes.</span>
     </label>
   </div>
-  <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="preview">{{if .Again}}Preview again{{else}}Preview{{end}}</button></div>
+  <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="preview">{{if .AbovePreview}}Preview again{{else}}Preview{{end}}</button></div>
 </form>{{end}}
 
 {{define "add-member"}}<span class="fx-name" data-field="display_name">{{.DisplayName}}</span> <span class="fx-user">@<span data-field="username">{{.Username}}</span></span>
@@ -305,7 +308,7 @@
 <div class="block-row fx-reportlist" data-list="skipped"><h3>Skipped <span class="fx-count" data-field="count">{{len .Skipped}}</span></h3>{{template "report-members" .Skipped}}</div>
 <div class="block-row fx-reportlist" data-list="failed"><h3>Failed <span class="fx-count" data-field="count">{{len .Failed}}</span></h3>{{template "report-members" .Failed}}</div>
 <div class="block-row fx-reportlist" data-list="not-attempted"><h3>Not attempted <span class="fx-count" data-field="count">{{len .NotAttempted}}</span></h3>{{template "report-members" .NotAttempted}}</div>
-{{with .Unadded}}<div class="block-row fx-reportlist" data-list="unadded"><h3>Lines that added nobody <span class="fx-count" data-field="count">{{len .}}</span></h3>
+{{with .AddedNobody}}<div class="block-row fx-reportlist" data-list="added-nobody"><h3>Lines that added nobody <span class="fx-count" data-field="count">{{len .}}</span></h3>
   <ul class="fx-reportmembers">{{range .}}<li data-line="{{.Line}}" data-reason="{{.Reason}}"{{with .SameAs}} data-same-as="{{.}}"{{end}}{{with .Matches}} data-matches="{{.}}"{{end}}><code data-field="text">{{.Text}}</code>: <span data-field="reason">{{.Why}}</span></li>{{end}}</ul></div>{{end}}
 {{end}}
 

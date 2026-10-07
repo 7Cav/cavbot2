@@ -214,40 +214,41 @@ type ActionReport struct {
 	// NotAttempted are the members the action set out to change and has
 	// not reached: while it runs, the members still to come.
 	NotAttempted []ReportMember `json:"not_attempted"`
-	// Unadded are an add's pasted lines that named no member to add when it
-	// started, in the order pasted.
-	Unadded []UnaddedLine `json:"unadded,omitempty"`
+	// AddedNobody are an add's pasted lines that named no member to add
+	// when it started, in the order pasted.
+	AddedNobody []PastedLine `json:"added_nobody,omitempty"`
 }
 
-// UnaddedLine is a line pasted for an add that named no member to add when
+// PastedLine is a line pasted for an add that named no member to add when
 // the add started, and why.
-type UnaddedLine struct {
+type PastedLine struct {
 	// Line is the line's number in the paste box, counting blank lines, and
 	// Text the line as pasted.
-	Line   int           `json:"line"`
-	Text   string        `json:"text"`
-	Reason UnaddedReason `json:"reason"`
-	// Matches counts the members an UnaddedNonePicked line matched.
+	Line int    `json:"line"`
+	Text string `json:"text"`
+	// Reason is why the line added nobody.
+	Reason LineReason `json:"reason"`
+	// Matches counts the members a LineNonePicked line matched.
 	Matches int `json:"matches,omitempty"`
-	// SameAs is the line whose member an UnaddedSameMember line named too.
+	// SameAs is the line whose member a LineSameMember line named too.
 	SameAs int `json:"same_as,omitempty"`
 }
 
-// UnaddedReason is why a pasted line added nobody.
-type UnaddedReason string
+// LineReason is why a pasted line added nobody.
+type LineReason string
 
 const (
-	// UnaddedNoMatch is a line no member's name matches.
-	UnaddedNoMatch UnaddedReason = "no-match"
-	// UnaddedNoSuchID is a line naming a Discord ID no member of the server
+	// LineNoMatch is a line no member's name matches.
+	LineNoMatch LineReason = "no-match"
+	// LineNoSuchID is a line naming a Discord ID no member of the server
 	// has.
-	UnaddedNoSuchID UnaddedReason = "no-such-id"
-	// UnaddedNonePicked is a line matching several members, none of whom was
+	LineNoSuchID LineReason = "no-such-id"
+	// LineNonePicked is a line matching several members, none of whom was
 	// picked.
-	UnaddedNonePicked UnaddedReason = "none-picked"
-	// UnaddedSameMember is a line naming a member another line named, whom
-	// the add gives the role once.
-	UnaddedSameMember UnaddedReason = "same-member"
+	LineNonePicked LineReason = "none-picked"
+	// LineSameMember is a line naming a member another line named, whom the
+	// add gives the role once.
+	LineSameMember LineReason = "same-member"
 )
 
 // ReportMember is one member a report names, under the names the member
@@ -499,8 +500,8 @@ type actionSpec struct {
 	// reason is the audit log reason's wording before the forum user who
 	// started the action.
 	reason string
-	// unadded are an add's pasted lines that named no member to add.
-	unadded []UnaddedLine
+	// addedNobody are an add's pasted lines that named no member to add.
+	addedNobody []PastedLine
 	// plan is the action's role changes, over the complete member list as it
 	// stands, the guild's Foxhole role IDs and the guild's Foxhole records.
 	plan func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange
@@ -557,10 +558,10 @@ func (r *FoxholeRuntime) Remove(ctx context.Context, role FoxholeRole, memberIDs
 // to its end: one member at a time, in the order given, it gives the role
 // to each. One who holds it already, or who left the server, is skipped
 // with that reason.
-func (r *FoxholeRuntime) Add(ctx context.Context, role FoxholeRole, memberIDs []string, unadded []UnaddedLine, by ForumUser) error {
+func (r *FoxholeRuntime) Add(ctx context.Context, role FoxholeRole, memberIDs []string, addedNobody []PastedLine, by ForumUser) error {
 	return r.start(ctx, actionSpec{
 		action: store.ChangeAdd, role: role, roles: []FoxholeRole{role}, grant: true, reason: "Panel: Foxhole add by ",
-		unadded: unadded,
+		addedNobody: addedNobody,
 		plan: func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange {
 			return addPlan(list, roleIDs, records, role, memberIDs)
 		},
@@ -600,7 +601,7 @@ func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUse
 	}
 	plan := spec.plan(list, roleIDs, records)
 	report := ActionReport{Scope: spec.scope, Role: spec.role, Changed: []ReportMember{}, Skipped: []ReportMember{}, Failed: []ReportMember{},
-		NotAttempted: make([]ReportMember, 0, len(plan)), Unadded: spec.unadded}
+		NotAttempted: make([]ReportMember, 0, len(plan)), AddedNobody: spec.addedNobody}
 	for _, p := range plan {
 		report.NotAttempted = append(report.NotAttempted, p.member)
 	}
@@ -707,14 +708,7 @@ func reAddPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records 
 // server. The member list names those in it, and the records' last-seen
 // names those who left.
 func removalPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord, role FoxholeRole, memberIDs []string) []plannedChange {
-	names := namesOf(records)
-	var plan []plannedChange
-	for _, id := range slices.Compact(slices.Sorted(slices.Values(memberIDs))) {
-		seen := names[id]
-		seen.MemberID = id
-		plan = append(plan, plannedChange{member: plannedMember(list, seen, role), roleID: roleIDs[role]})
-	}
-	return byDisplayName(plan)
+	return byDisplayName(plannedChanges(list, roleIDs, records, role, slices.Compact(slices.Sorted(slices.Values(memberIDs)))))
 }
 
 // addPlan is an add's role changes: the role for each member given, once,
@@ -722,14 +716,22 @@ func removalPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, record
 // The member list names those in it, and the records' last-seen names those
 // who left.
 func addPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord, role FoxholeRole, memberIDs []string) []plannedChange {
+	seen := map[string]bool{}
+	once := slices.DeleteFunc(slices.Clone(memberIDs), func(id string) bool {
+		repeat := seen[id]
+		seen[id] = true
+		return repeat
+	})
+	return plannedChanges(list, roleIDs, records, role, once)
+}
+
+// plannedChanges are the changes of the role for each member given, in the
+// order given, under the names the member list shows, or the records'
+// last-seen names for a member it doesn't hold.
+func plannedChanges(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord, role FoxholeRole, memberIDs []string) []plannedChange {
 	names := namesOf(records)
-	planned := map[string]bool{}
-	var plan []plannedChange
+	plan := make([]plannedChange, 0, len(memberIDs))
 	for _, id := range memberIDs {
-		if planned[id] {
-			continue
-		}
-		planned[id] = true
 		seen := names[id]
 		seen.MemberID = id
 		plan = append(plan, plannedChange{member: plannedMember(list, seen, role), roleID: roleIDs[role]})

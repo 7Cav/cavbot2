@@ -43,8 +43,8 @@ type reportView struct {
 	Skipped      []reportMember
 	Failed       []reportMember
 	NotAttempted []reportMember
-	// Unadded are an add's pasted lines that added nobody.
-	Unadded []unaddedLine
+	// AddedNobody are an add's pasted lines that added nobody.
+	AddedNobody []reportLine
 	// StopPressedBy is the forum user who pressed Stop on the running
 	// action, which stops after the change in flight. Empty until someone
 	// does.
@@ -58,25 +58,22 @@ type reportView struct {
 	Left        estimate
 }
 
-// unaddedLine is a line pasted for an add that added nobody, as its report
+// reportLine is a line pasted for an add that added nobody, as its report
 // lists it.
-type unaddedLine struct {
-	commands.UnaddedLine
+type reportLine struct {
+	commands.PastedLine
 }
 
-// Why is why the line added nobody, as the report says it.
-func (l unaddedLine) Why() string {
-	switch l.Reason {
-	case commands.UnaddedNoMatch:
-		return "no member matches"
-	case commands.UnaddedNoSuchID:
-		return "no member with this ID in the server"
-	case commands.UnaddedNonePicked:
+// Why is why the line added nobody, as the report says it. A line matching
+// more than a pick row offers had nothing to pick from.
+func (l reportLine) Why() string {
+	switch {
+	case l.Reason == commands.LineNonePicked && l.Matches > maxChoices:
+		return fmt.Sprintf("matched %d members, too many to pick from", l.Matches)
+	case l.Reason == commands.LineNonePicked:
 		return fmt.Sprintf("matched %d members, none picked", l.Matches)
-	case commands.UnaddedSameMember:
-		return fmt.Sprintf("same member as line %d", l.SameAs)
 	}
-	return string(l.Reason)
+	return lineReasonWords(l.Reason, l.SameAs)
 }
 
 // reportMember is one member a report names, with the role's name as the
@@ -152,8 +149,8 @@ func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 		Running: stored.Running, Outcome: report.Outcome,
 		Changed: reportMembers(report.Changed), Skipped: reportMembers(report.Skipped), Failed: reportMembers(report.Failed),
 		NotAttempted: reportMembers(report.NotAttempted)}
-	for _, line := range report.Unadded {
-		view.Unadded = append(view.Unadded, unaddedLine{UnaddedLine: line})
+	for _, line := range report.AddedNobody {
+		view.AddedNobody = append(view.AddedNobody, reportLine{PastedLine: line})
 	}
 	if report.StoppedBy != nil {
 		view.StoppedBy = report.StoppedBy.Username
@@ -401,10 +398,10 @@ func actionListPartialRefusal(what string) *saveRefusal {
 		Message: fmt.Sprintf("Cavbot2 doesn't have the whole member list from Discord yet, so %s didn't start. Nothing changed. Try again once the list has arrived.", what)}
 }
 
-// addListPartialRefusal refuses an add's Preview pressed while the member
-// list is partial: no line can be matched. The page keeps the lines
-// pasted, to preview again once the list has arrived.
-var addListPartialRefusal = &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
+// errAddListPartial refuses an add's Preview pressed while the member list
+// is partial: no line can be matched. The page keeps the lines pasted, to
+// preview again once the list has arrived.
+var errAddListPartial = &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
 	log:     "Panel action refused: member list partial",
 	Message: "Cavbot2 doesn't have the whole member list from Discord yet, so it can't match the pasted lines. Nothing changed. Preview again once the list has arrived."}
 

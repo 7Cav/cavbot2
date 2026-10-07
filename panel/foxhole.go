@@ -93,10 +93,10 @@ type foxholeView struct {
 	AddPreview *addPreview
 	// Paste is the Add members block's paste box as the page shows it.
 	Paste pasteBox
-	// PasteHeld is the page answering an add refused while the member list
+	// PasteAlone is the page answering an add refused while the member list
 	// is partial: the Add members block shows alone above the notice, with
 	// the lines pasted, to send again once the list is back.
-	PasteHeld bool
+	PasteAlone bool
 	// ReAdd counts the approved collaborators by what a re-add would do with
 	// each, for the After a war block. Nil while the member list isn't
 	// complete.
@@ -695,7 +695,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 			view.ActionRefusal = removeListPartialRefusal(foxholeRoleLabels[req.Remove])
 		}
 		if req.Paste != nil {
-			view.Paste, view.PasteHeld, view.ActionRefusal = *req.Paste, true, addListPartialRefusal
+			view.Paste, view.PasteAlone, view.ActionRefusal = *req.Paste, true, errAddListPartial
 		}
 	}
 	view.Query, view.Filter = req.Query, req.Filter

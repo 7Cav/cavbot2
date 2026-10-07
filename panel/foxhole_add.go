@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -28,20 +29,22 @@ const (
 )
 
 // fieldLines is the paste box's field beside fieldRole: the lines pasted.
-// The add preview's Confirm posts the lines it previewed under it, beside a
-// pick row's choice picked, as fieldPick and the row's line number.
+// The add preview's Confirm posts the lines it previewed under it, beside
+// who each line named, as fieldNamed, and a pick row's choice picked, as
+// fieldPick and the row's line number.
 const (
 	fieldLines = "lines"
+	fieldNamed = "named"
 	fieldPick  = "pick-"
 )
 
 // pasteBox is the paste box as the page shows it: the role picked and the
-// lines pasted. Again is the box above an add preview, whose button
+// lines pasted. AbovePreview is the box above an add preview, whose button
 // previews again.
 type pasteBox struct {
-	Role  commands.FoxholeRole
-	Text  string
-	Again bool
+	Role         commands.FoxholeRole
+	Text         string
+	AbovePreview bool
 }
 
 // addPreview is the preview an add waits on: the role it gives, the paste
@@ -65,13 +68,15 @@ const (
 	lineGets lineResult = "gets"
 	// lineHolding is a line whose member already holds the role.
 	lineHolding lineResult = "holding"
-	// lineNoMatch is a line no member's name matches.
-	lineNoMatch lineResult = "no-match"
+	// lineNoMatch is a line no member's name matches. It and the two
+	// results after it are reasons a line adds nobody, which the add's report
+	// gives under the same codes.
+	lineNoMatch = lineResult(commands.LineNoMatch)
 	// lineNoSuchID is a line naming a Discord ID no member of the server
 	// has.
-	lineNoSuchID lineResult = "no-such-id"
+	lineNoSuchID = lineResult(commands.LineNoSuchID)
 	// lineSameMember is a line naming the member an earlier line named.
-	lineSameMember lineResult = "same-member"
+	lineSameMember = lineResult(commands.LineSameMember)
 	// linePick is a line matching two to maxChoices members, offered as
 	// choices with none chosen. It adds nobody unless the manager picks one.
 	linePick lineResult = "pick"
@@ -85,11 +90,11 @@ const (
 // that hides the right member.
 const maxChoices = 5
 
-// outcome is what an add does with a pasted line, or with a pick row's
+// lineOutcome is what an add does with a pasted line, or with a pick row's
 // choice: the result, the line whose member a lineSameMember result names
 // too, the members a linePick or lineTooMany line matched, and the role as
 // the page names it.
-type outcome struct {
+type lineOutcome struct {
 	Result   lineResult
 	SameAs   int
 	Matches  int
@@ -97,18 +102,14 @@ type outcome struct {
 }
 
 // ResultLabel is the outcome as the preview says it.
-func (o outcome) ResultLabel() string {
+func (o lineOutcome) ResultLabel() string {
 	switch o.Result {
 	case lineGets:
 		return "gets " + o.RoleName
 	case lineHolding:
 		return "already holds " + o.RoleName
-	case lineNoMatch:
-		return "no member matches"
-	case lineNoSuchID:
-		return "no member with this ID in the server"
-	case lineSameMember:
-		return fmt.Sprintf("same member as line %d", o.SameAs)
+	case lineNoMatch, lineNoSuchID, lineSameMember:
+		return lineReasonWords(commands.LineReason(o.Result), o.SameAs)
 	case linePick:
 		return fmt.Sprintf("matches %d members, pick one", o.Matches)
 	case lineTooMany:
@@ -117,11 +118,27 @@ func (o outcome) ResultLabel() string {
 	return string(o.Result)
 }
 
+// lineReasonWords is why a pasted line adds nobody, as both the preview and
+// the add's report say it, for the reasons they word alike: no member
+// matches, no member has the ID, or the line names the member line sameAs
+// named.
+func lineReasonWords(reason commands.LineReason, sameAs int) string {
+	switch reason {
+	case commands.LineNoMatch:
+		return "no member matches"
+	case commands.LineNoSuchID:
+		return "no member with this ID in the server"
+	case commands.LineSameMember:
+		return fmt.Sprintf("same member as line %d", sameAs)
+	}
+	return string(reason)
+}
+
 // addRow is one pasted line as the add preview shows it: its number in the
 // paste box, counting blank lines, its text, what the add does with it, and
 // the member it matched, nil for none, or a pick row's choices.
 type addRow struct {
-	outcome
+	lineOutcome
 	Line    int
 	Text    string
 	Member  *addMember
@@ -133,7 +150,7 @@ type addRow struct {
 // addChoice is one member a pick row offers, and what picking them does.
 type addChoice struct {
 	addMember
-	outcome
+	lineOutcome
 }
 
 // addMember is a member a pasted line matched, as the holder list shows
@@ -154,9 +171,14 @@ func (m addMember) MatchedLabel() string {
 type matchKind string
 
 const (
-	matchedID         matchKind = "id"
-	matchedUsername   matchKind = "username"
-	matchedNickname   matchKind = "nickname"
+	// matchedID is a line naming the member's Discord ID, bare or as a
+	// mention.
+	matchedID matchKind = "id"
+	// matchedUsername is a line equal to the member's username.
+	matchedUsername matchKind = "username"
+	// matchedNickname is a line equal to the member's server nickname.
+	matchedNickname matchKind = "nickname"
+	// matchedGlobalName is a line equal to the member's global name.
 	matchedGlobalName matchKind = "global-name"
 )
 
@@ -171,10 +193,10 @@ type lineMatch struct {
 	by     matchKind
 }
 
-// pastedLine is one non-blank line of the paste box: its number in the box,
-// counting blank lines, its text with the spaces around it trimmed, and
-// the members it matched.
-type pastedLine struct {
+// matchedLine is one non-blank line of the paste box: its number in the
+// box, counting blank lines, its text with the spaces around it trimmed,
+// and the members it matched.
+type matchedLine struct {
 	number  int
 	text    string
 	matches []lineMatch
@@ -182,18 +204,18 @@ type pastedLine struct {
 	byID bool
 }
 
-// pastedLines reads the paste box's lines against a complete member list.
+// matchLines reads the paste box's lines against a complete member list.
 // A blank line is no member, though it counts in the numbering. There is no
 // cap on how many lines.
-func pastedLines(list commands.MemberListSnapshot, text string) []pastedLine {
-	var lines []pastedLine
+func matchLines(list commands.MemberListSnapshot, text string) []matchedLine {
+	var lines []matchedLine
 	for i, raw := range strings.Split(text, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
 		}
 		matches, byID := matchLine(list, line)
-		lines = append(lines, pastedLine{number: i + 1, text: line, matches: matches, byID: byID})
+		lines = append(lines, matchedLine{number: i + 1, text: line, matches: matches, byID: byID})
 	}
 	return lines
 }
@@ -255,12 +277,12 @@ func sameName(have, pasted string) bool {
 func (s foxholeService) addPreviewOf(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, paste pasteBox, picks map[int]string) *addPreview {
 	guild := s.foxholeGuildOf()
 	name := foxholeRoleLabels[paste.Role]
-	paste.Again = true
+	paste.AbovePreview = true
 	preview := &addPreview{Role: paste.Role, Name: name, Paste: paste}
 	// claimed is the line that named each member first.
 	claimed := map[string]int{}
-	for _, line := range pastedLines(list, paste.Text) {
-		row := addRow{outcome: outcome{RoleName: name, Matches: len(line.matches)}, Line: line.number, Text: line.text, matches: line.matches}
+	for _, line := range matchLines(list, paste.Text) {
+		row := addRow{lineOutcome: lineOutcome{RoleName: name, Matches: len(line.matches)}, Line: line.number, Text: line.text, matches: line.matches}
 		switch n := len(line.matches); {
 		case n == 0 && line.byID:
 			row.Result = lineNoSuchID
@@ -270,7 +292,7 @@ func (s foxholeService) addPreviewOf(list commands.MemberListSnapshot, records m
 			match := line.matches[0]
 			holder := guild.rowOf(match.member, records[match.member.ID])
 			row.Member = &addMember{holderRow: holder, Matched: match.by}
-			row.outcome = memberOutcome(holder, paste.Role, claimed)
+			row.lineOutcome = memberOutcome(holder, paste.Role, claimed)
 			if row.Result != lineSameMember {
 				claimed[holder.ID] = line.number
 			}
@@ -289,13 +311,13 @@ func (s foxholeService) addPreviewOf(list commands.MemberListSnapshot, records m
 		for _, match := range row.matches {
 			holder := guild.rowOf(match.member, records[match.member.ID])
 			row.Choices = append(row.Choices, addChoice{addMember: addMember{holderRow: holder, Matched: match.by},
-				outcome: memberOutcome(holder, paste.Role, claimed)})
+				lineOutcome: memberOutcome(holder, paste.Role, claimed)})
 		}
 		for _, choice := range row.Choices {
 			if choice.ID != picks[row.Line] {
 				continue
 			}
-			row.Member, row.outcome = &choice.addMember, choice.outcome
+			row.Member, row.lineOutcome = &choice.addMember, choice.lineOutcome
 			if row.Result != lineSameMember {
 				claimed[choice.ID] = row.Line
 			}
@@ -309,8 +331,8 @@ func (s foxholeService) addPreviewOf(list commands.MemberListSnapshot, records m
 // given the line that named each member first: a member named before is
 // the same member as that line, one holding the role already holds it, and
 // anyone else gets it.
-func memberOutcome(holder holderRow, role commands.FoxholeRole, claimed map[string]int) outcome {
-	o := outcome{Result: lineGets, RoleName: foxholeRoleLabels[role]}
+func memberOutcome(holder holderRow, role commands.FoxholeRole, claimed map[string]int) lineOutcome {
+	o := lineOutcome{Result: lineGets, RoleName: foxholeRoleLabels[role]}
 	if first, seen := claimed[holder.ID]; seen {
 		o.Result, o.SameAs = lineSameMember, first
 	} else if holder.holdsRole(role) {
@@ -336,6 +358,23 @@ func (p *addPreview) notes() int {
 	return len(noted)
 }
 
+// CanAdd reports whether confirming the preview could give the role to
+// anyone: a line whose member gets it, or a pick row with a choice who
+// would. A preview that can't offers no Confirm.
+func (p *addPreview) CanAdd() bool {
+	for _, row := range p.Rows {
+		if row.Result == lineGets {
+			return true
+		}
+		for _, c := range row.Choices {
+			if c.Result == lineGets {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // members are the IDs of the members the add gives the role, in paste
 // order, each once: those of the rows matching one member, or with a choice
 // picked, who get the role or hold it already. The runner skips each who
@@ -350,23 +389,19 @@ func (p *addPreview) members() []string {
 	return ids
 }
 
-// unadded are the pasted lines that name no member the add gives the role,
-// in paste order, each with why: a line no member matches, one naming an
-// ID no member has, one matching several with none picked, and one naming
-// a member another line named.
-func (p *addPreview) unadded() []commands.UnaddedLine {
-	var lines []commands.UnaddedLine
+// addedNobody are the pasted lines that name no member the add gives the
+// role, in paste order, each with why: a line no member matches, one naming
+// an ID no member has, one naming a member another line named, and one
+// matching several with none picked.
+func (p *addPreview) addedNobody() []commands.PastedLine {
+	var lines []commands.PastedLine
 	for _, row := range p.Rows {
-		line := commands.UnaddedLine{Line: row.Line, Text: row.Text}
+		line := commands.PastedLine{Line: row.Line, Text: row.Text}
 		switch row.Result {
-		case lineNoMatch:
-			line.Reason = commands.UnaddedNoMatch
-		case lineNoSuchID:
-			line.Reason = commands.UnaddedNoSuchID
+		case lineNoMatch, lineNoSuchID, lineSameMember:
+			line.Reason, line.SameAs = commands.LineReason(row.Result), row.SameAs
 		case linePick, lineTooMany:
-			line.Reason, line.Matches = commands.UnaddedNonePicked, row.Matches
-		case lineSameMember:
-			line.Reason, line.SameAs = commands.UnaddedSameMember, row.SameAs
+			line.Reason, line.Matches = commands.LineNonePicked, row.Matches
 		default:
 			continue
 		}
@@ -388,10 +423,39 @@ func picksOf(form url.Values) map[int]string {
 	return picks
 }
 
+// errAddChanged refuses an add's Confirm when a line names other members
+// than the preview showed, as when a username changed hands since, so an
+// add never gives the role to someone the manager didn't see. The page
+// shows the preview as it stands now, to check and confirm again.
+var errAddChanged = &saveRefusal{Kind: "changed", status: http.StatusConflict,
+	log:     "Panel action refused: add preview out of date",
+	Message: "Some lines name different members than when you previewed them, so the add didn't start. Nothing changed. Check the preview below and confirm again."}
+
+// Named is who each line of the preview names, for the Confirm to post
+// back: per line, the IDs of the members it matched, sorted, or "many" for
+// a line matching more than a pick row offers. The picks don't change it.
+func (p *addPreview) Named() string {
+	var b strings.Builder
+	for _, row := range p.Rows {
+		ids := make([]string, 0, len(row.matches))
+		for _, m := range row.matches {
+			ids = append(ids, m.member.ID)
+		}
+		slices.Sort(ids)
+		named := strings.Join(ids, ",")
+		if row.Result == lineTooMany {
+			named = "many"
+		}
+		fmt.Fprintf(&b, "%d=%s;", row.Line, named)
+	}
+	return b.String()
+}
+
 // startAdd is POST /foxhole/add, the add preview's Confirm: it matches the
 // lines the preview showed again, against the member list as it stands,
 // with the choices picked, and starts the add of the role to the members
-// they name, as startAction says.
+// they name, as startAction says. A line that names other members than
+// the preview showed starts nothing.
 func (p *Panel) startAdd(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -403,22 +467,37 @@ func (p *Panel) startAdd(w http.ResponseWriter, r *http.Request, sess session) {
 		return
 	}
 	paste, picks := pasteBox{Role: role, Text: r.PostForm.Get(fieldLines)}, picksOf(r.PostForm)
+	named := r.PostForm.Get(fieldNamed)
 	// A refused add answers with its preview again, or with the paste box
 	// alone while the member list is partial, so the lines pasted are kept.
 	back := foxholeRequest{Filter: filterAll, Paste: &paste}
 	p.startAction(w, r, sess, back, "the add", func(ctx context.Context, by commands.ForumUser) error {
-		service := p.foxhole.forSave(storeTimeout)
-		records, err := service.records(ctx)
+		preview, err := p.foxhole.forSave(storeTimeout).confirmedAdd(ctx, paste, picks, named)
 		if err != nil {
 			return err
 		}
-		list := service.manager.MemberList(service.guildID)
-		if list.Status != commands.MemberListComplete {
-			return commands.ErrMemberListPartial
-		}
-		preview := service.addPreviewOf(list, records, paste, picks)
-		return p.foxhole.actions.Add(ctx, role, preview.members(), preview.unadded(), by)
+		return p.foxhole.actions.Add(ctx, role, preview.members(), preview.addedNobody(), by)
 	}, "role", role)
+}
+
+// confirmedAdd is the add the paste and the choices picked name, matched
+// against the member list as it stands, which must be complete, else
+// commands.ErrMemberListPartial. Its lines must name the members named
+// records, as the preview's Named, else errAddChanged.
+func (s foxholeService) confirmedAdd(ctx context.Context, paste pasteBox, picks map[int]string, named string) (*addPreview, error) {
+	records, err := s.records(ctx)
+	if err != nil {
+		return nil, err
+	}
+	list := s.manager.MemberList(s.guildID)
+	if list.Status != commands.MemberListComplete {
+		return nil, commands.ErrMemberListPartial
+	}
+	preview := s.addPreviewOf(list, records, paste, picks)
+	if preview.Named() != named {
+		return nil, errAddChanged
+	}
+	return preview, nil
 }
 
 // previewAdd is POST /foxhole/add/preview, the paste box's Preview: the

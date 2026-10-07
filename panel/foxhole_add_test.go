@@ -288,10 +288,14 @@ func TestAddPreviewLineMatchingSeveralMembersOffersThemUpToFive(t *testing.T) {
 
 // confirmAdd picks, in each pick row of the page's add preview, the choice
 // of the member given for its line, and presses Confirm, the way a browser
-// posts the add's form.
+// posts the add's form. It fails the test when the preview offers no
+// Confirm to press.
 func confirmAdd(t *testing.T, b *browser, doc *html.Node, picks map[int]string) *http.Response {
 	t.Helper()
 	preview := addPreviewBlock(t, doc)
+	if button := findElement(preview, "button", "data-field", "confirm"); button == nil || disabled(button) {
+		t.Fatal("the add preview offers no Confirm to press")
+	}
 	for line, id := range picks {
 		choice := choicesOf(pastedRow(t, preview, line))[id]
 		if choice == nil {
@@ -303,8 +307,8 @@ func confirmAdd(t *testing.T, b *browser, doc *html.Node, picks map[int]string) 
 	return b.postForm(foxholeAddPath, formPosts(t, doc, foxholeAddPath))
 }
 
-// Members for the add's pick rows: two twins, each "twin" by a different
-// kind of name, and six members nicknamed "crowd".
+// Two twins for the add's pick rows, each "twin" by a different kind of
+// name.
 var (
 	twinA = commands.ListedMember{ID: "300000000000000001", Username: "twin_a", Nick: "Twin"}
 	twinB = commands.ListedMember{ID: "300000000000000002", Username: "twin_b", GlobalName: "twin"}
@@ -313,7 +317,7 @@ var (
 // crowd is six members nicknamed "crowd", one more than a pick row offers.
 func crowd() []commands.ListedMember {
 	var members []commands.ListedMember
-	for i := range maxChoices + 1 {
+	for i := range 6 {
 		members = append(members, commands.ListedMember{ID: fmt.Sprintf("40000000000000000%d", i+1),
 			Username: fmt.Sprintf("crowd_%d", i+1), Nick: "crowd"})
 	}
@@ -354,13 +358,13 @@ func TestConfirmedAddGivesTheRoleToEachMatchedAndPickedMemberOnce(t *testing.T) 
 	}
 }
 
-// unaddedLines returns the lines a report lists as having added nobody, in
+// addedNobodyLines returns the lines a report lists as having added nobody, in
 // the order it lists them, each as its text, its reason code and the
 // marker that reason carries: the line a same-member line repeats, or how
 // many members a line matched.
-func unaddedLines(report *html.Node) []string {
+func addedNobodyLines(report *html.Node) []string {
 	var lines []string
-	if list := findElement(report, "", "data-list", "unadded"); list != nil {
+	if list := findElement(report, "", "data-list", "added-nobody"); list != nil {
 		eachElement(list, func(n *html.Node) {
 			if reason, ok := attrValue(n, "data-reason"); ok {
 				text := findElement(n, "", "data-field", "text")
@@ -388,7 +392,7 @@ func TestAddReportListsEachLineThatAddedNobodyWithItsReason(t *testing.T) {
 
 	page = parseHTML(t, w.b.get(foxholePath))
 	want := []string{"999999999999999999 no-such-id ", "jdoe same-member 1", "ghost none-picked 2", "nobody_here no-match "}
-	if got := unaddedLines(reportBlock(t, page)); !slices.Equal(got, want) {
+	if got := addedNobodyLines(reportBlock(t, page)); !slices.Equal(got, want) {
 		t.Errorf("the report lists the lines that added nobody as %q, want %q", got, want)
 	}
 	if entries := changeEntries(t, page, "add"); len(entries) != 1 {
@@ -532,5 +536,45 @@ func TestAddByAUserInNeitherGroupIsRefused(t *testing.T) {
 				t.Errorf("the change log holds %d add entries, want none", len(entries))
 			}
 		})
+	}
+}
+
+// An add that would give the role to nobody can't be confirmed: a preview
+// whose every line matches nobody, names a member who already holds the
+// role, or matches more than five members offers no Confirm.
+func TestAddPreviewWithNobodyToAddCantBeConfirmed(t *testing.T) {
+	w := newFoxholeWorld(t)
+	withMembers(t, w, crowd()...)
+
+	preview := pastePreview(t, w, "external", "nobody_here\nkestrel_tlr\ncrowd")
+
+	if button := findElement(preview, "button", "data-field", "confirm"); button != nil && !disabled(button) {
+		t.Error("the preview of an add that gives the role to nobody offers a Confirm")
+	}
+}
+
+// Confirm adds only the members the preview showed. When a line names
+// someone else by the time Confirm is pressed, as when a username changes
+// hands, nothing starts: the page says the members changed and shows the
+// add preview as it stands now, to check and confirm again.
+func TestAddConfirmedAfterALineNamesSomeoneElseStartsNothing(t *testing.T) {
+	w := newFoxholeWorld(t)
+	newcomer := commands.ListedMember{ID: "500000000000000001", Username: "rvance_alt"}
+	withMembers(t, w, newcomer)
+	page := parseHTML(t, w.b.get(foxholePath))
+	doc := parseHTML(t, previewPaste(t, w.b, page, addForm(t, page), "external", "rvance"))
+	w.discord.editMember(memberVance.ID, func(m *commands.ListedMember) { m.Username = "rvance_old" })
+	w.discord.editMember(newcomer.ID, func(m *commands.ListedMember) { m.Username = "rvance" })
+
+	after := parseHTML(t, confirmAdd(t, w.b, doc, nil))
+
+	if findLive(after, "", "data-error", "changed") == nil {
+		t.Error("the page doesn't say the members changed since the preview")
+	}
+	if got := attrOf(pastedRow(t, addPreviewBlock(t, after), 1), "data-member"); got != newcomer.ID {
+		t.Errorf("the add preview's line 1 names %q, want the member it names now, %s", got, newcomer.ID)
+	}
+	if entries := changeEntries(t, parseHTML(t, w.b.get(foxholePath)), "add"); len(entries) != 0 {
+		t.Errorf("the change log holds %d add entries, want none", len(entries))
 	}
 }
