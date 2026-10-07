@@ -1,8 +1,9 @@
 # golangci-lint v2 config.
 #
-# Only formatting is configured here. `linters.default` is left unset, so the
-# standard linter set (errcheck, govet, ineffassign, staticcheck, unused) stays
-# exactly as it was before this file existed.
+# `linters.default: standard` keeps the standard linter set (errcheck, govet,
+# ineffassign, staticcheck, unused) as it was before this file existed.
+# depguard and gosec on top of it hold the panel's security rules, so review
+# needn't.
 #
 # gofmt is a *formatter* in v2, not a linter: `golangci-lint run` reports diffs
 # as issues, and `golangci-lint fmt` rewrites them in place.
@@ -11,6 +12,31 @@
 # line, so another linter firing on the same line hides the gofmt one until it
 # is fixed. Harmless as a gate — the masking issue fails the build on its own.
 version: "2"
+
+linters:
+  default: standard
+  enable:
+    - depguard
+    - gosec
+  settings:
+    depguard:
+      rules:
+        panel-pages:
+          files:
+            - "**/panel/**"
+          deny:
+            - pkg: text/template
+              desc: panel pages render with html/template, which escapes each value for where it lands
+    gosec:
+      # G201 and G202 catch SQL built from values by formatting or
+      # concatenation: queries take values as parameters. G201 misses a
+      # fmt.Sprintf written inside the Query or Exec call itself, so
+      # CODING_STANDARDS.md leaves that shape to review. G203 catches a value
+      # converted to template.HTML, which html/template then leaves unescaped.
+      includes:
+        - G201
+        - G202
+        - G203
 
 formatters:
   enable:
