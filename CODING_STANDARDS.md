@@ -1,43 +1,44 @@
 # Coding standards
 
-The Standards review applies these rules to a diff. Each is a judgement call
-no linter makes. golangci-lint (`.golangci.yml`) and the test suite enforce
-the mechanical rules, so review skips those.
+Judgement rules for the Standards review. Each heading names the code its
+rules govern. You are done with this file when you have checked every hunk
+against the rules under each heading it touches. Look up a term in
+`GLOSSARY.md` when its meaning decides a finding.
 
-`GLOSSARY.md` defines the terms used here. Each file name in `docs/adr/` says
-what that ADR decides. Open an ADR when a hunk touches its decision.
+## Previews, Confirms and saves
 
-## Foxhole actions and saves
+**A no-op says so and stops.** A preview that would change nobody says why
+where its Confirm would be. A save that would change nothing ends with the
+store and the change log as they were. Reference: `nobody-to-remove`,
+`nobody-to-add` and `nobody-to-re-add` in `panel/templates/foxhole.html`.
+The purge confirmation still offers Purge at zero holders (#474). Flag any
+hunk that touches it.
 
-**Nothing to change, nothing to confirm.** A preview or confirmation that
-would change nobody offers no Confirm, and says why. A save that changes
-nothing writes no change log entry. The remove, add and re-add previews
-follow this (#449, #450, #451), and so do note and approval saves (#442,
-#444). The purge confirmation is the known exception, tracked in #474.
+**A Confirm acts on what its preview showed.** The gap between a preview
+and its Confirm is a TOCTOU window. The member list can move in it, as when
+a username changes hands. A Confirm acts only on members its preview
+listed, or refuses and shows the preview again. Reference: `startRemoval`
+acts on the IDs its preview posted, and `startAdd` matches its lines again
+and refuses with `errAddChanged` when they name other members. A purge
+confirmation lists counts rather than members, and the purge acts on
+whoever holds the role when it starts.
 
-**A Confirm changes only the members its preview listed.** The member list
-can move between a preview and its Confirm, as when a username changes
-hands. No action then reaches a member the manager never saw. The removal
-acts on the IDs its preview posted. The add matches its lines again and
-refuses when they name other members (`errAddChanged`, #451). A purge
-confirmation lists counts rather than members, and the purge takes the role
-off whoever holds it when it starts. That is by design (#434).
+## The page a save lands on
 
-**A save's result holds at every load.** The page a save lands on shows the
-save's result, such as a cleared note or the members an Approve skipped. The
-page checks that result against the state at its own load, so a reload
-drops what no longer holds instead of repeating it (`Cleared` and `Skipped`
-in `panel/foxhole.go`, #443, #444).
+**The GET re-derives the save's result.** A save ends in a
+Post/Redirect/Get. The redirect carries IDs, and the GET shows the result
+as it holds at that load, so a reload drops whatever no longer holds.
+Reference: `Cleared` and `Skipped` in `panel/foxhole.go`.
 
-## Decisions
+## ADRs
 
-**An ADR conflict changes the diff, not the ADR.** Where a hunk conflicts
-with an ADR, the finding asks for the change to fit the ADR. Report any edit
-to a file in `docs/adr/` as needing the maintainer's sign-off.
+**The ADR wins.** Each file name in `docs/adr/` states its decision. Open
+the ADRs whose decision a hunk touches. A conflict's finding asks for the
+change to fit the ADR. Report an edit to a file in `docs/adr/` as needing
+the maintainer's sign-off.
 
-## SQL
+## SQL queries
 
-**Queries take every value as a parameter.** gosec catches SQL built by
-concatenation, and a formatted query held in a variable. It misses
-`fmt.Sprintf` written inside the `Query` or `Exec` call, so review checks
-that shape.
+**Every value is a parameter.** gosec catches concatenated SQL and a
+formatted query held in a variable. Review checks the shape it misses:
+`fmt.Sprintf` written inside the `Query` or `Exec` call.
