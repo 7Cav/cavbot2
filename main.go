@@ -318,8 +318,9 @@ func main() {
 	// Panel (spec #285): the web UI listens once the session is READY, since
 	// its later pages act through the Discord session, and before the
 	// commands register, which Discord's rate limit can hold for up to about
-	// 40 s (#470). A port it cannot bind is a deploy error and stops the bot,
-	// so the failure is seen rather than found as a 502 later.
+	// a minute after restarts seconds apart (#470). A port it cannot bind is
+	// a deploy error and stops the bot, so the failure is seen rather than
+	// found as a 502 later.
 	if webPanel != nil {
 		if err := webPanel.Start(); err != nil {
 			panic(fmt.Sprintf("Panel unavailable: %v", err))

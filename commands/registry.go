@@ -80,10 +80,11 @@ var errCommandSyncPanicked = errors.New("command sync panicked")
 // declares, and the list beforehand only names them in the log.
 //
 // One request replaces the create-each loop that Discord paced to about a
-// minute (#470). The overwrite route allows two requests and then holds the
-// next for up to about 40 s, so a third start within a minute waits. Sync
-// returns ctx's error as soon as ctx ends, so a stop is never held by that
-// wait. The request it leaves behind ends with the process.
+// minute (#470). The overwrite has its own rate limit. After two in quick
+// succession, Discord holds the next for up to about a minute, so a start
+// seconds after two others waits. Sync returns ctx's error as soon as ctx
+// ends, so a stop is never held by that wait. The request it leaves behind
+// ends with the process.
 func (r *Registry) Sync(ctx context.Context, api guildCommandAPI, appID, guildID string) error {
 	done := make(chan error, 1)
 	go func() {
