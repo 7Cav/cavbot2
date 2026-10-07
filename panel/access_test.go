@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/7cav/cavbot2/store"
@@ -125,4 +127,36 @@ func TestPanelAdminWhoLeavesTheAdminGroupsDropsToTheNoAccessPage(t *testing.T) {
 	res := w.b.get("/")
 
 	assertNoAccessPage(t, parseHTML(t, res))
+}
+
+// A form on another site can post to the panel from a signed-in manager's
+// browser, which sends the manager's cookie with it. A remove preview's
+// Confirm posted that way is refused and starts no removal. The same
+// Confirm posted from the panel's own page then starts it.
+func TestConfirmPostedFromAnotherSiteIsRefused(t *testing.T) {
+	w := newFoxholeWorld(t)
+	preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID)))
+	form := findElement(preview, "form", "", "")
+	if form == nil {
+		t.Fatal("the remove preview has no form")
+	}
+	action, _ := attrValue(form, "action")
+
+	res := w.b.do(http.MethodPost, action, http.Header{
+		"Content-Type":   {"application/x-www-form-urlencoded"},
+		"Origin":         {"https://elsewhere.example"},
+		"Sec-Fetch-Site": {"cross-site"},
+	}, strings.NewReader(formValues(form).Encode()))
+
+	if res.StatusCode < 400 || res.StatusCode > 499 {
+		t.Errorf("the Confirm posted from another site answered %d, want a refusal", res.StatusCode)
+	}
+	if entries := changeEntries(t, parseHTML(t, w.b.get(foxholePath)), "removal"); len(entries) != 0 {
+		t.Errorf("the Confirm posted from another site started %d removals, want none", len(entries))
+	}
+	assertRedirect(t, confirmRemoval(t, w.b, preview), foxholePath)
+	w.awaitActionEnd(t)
+	if slices.Contains(w.discord.holdersOf(roleExternal), memberKestrel.ID) {
+		t.Errorf("the same Confirm posted from the panel's page left %s holding External", memberKestrel.ID)
+	}
 }
