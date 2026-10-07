@@ -6,7 +6,7 @@
   {{with .Commands}}
   <section class="block fx-progress" role="status" data-field="command-running">
     <h2 class="block-header">{{if eq (len .) 1}}A Foxhole command is running{{else}}Foxhole commands are running{{end}}</h2>
-    {{range .}}<div class="block-row"><code data-field="command">{{.Command}}</code>, run by <span data-member="{{.By.ID}}">{{.By.DisplayName}} <span class="fx-user">@{{.By.Username}}</span></span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>.</div>{{end}}
+    {{range .}}<div class="block-row"><code data-field="command">{{.Command}}</code>, run by <span data-member="{{.By.MemberID}}">{{.By.DisplayName}} <span class="fx-user">@{{.By.Username}}</span></span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>.</div>{{end}}
     <div class="block-row">A Foxhole action on this page can start once {{if eq (len .) 1}}it ends{{else}}they end{{end}}. Commands don't report how far they've got. <a href="{{$.Foxhole.Reload}}">Reload the page</a> to check.</div>
   </section>
   {{end}}

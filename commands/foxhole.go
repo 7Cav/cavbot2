@@ -13,6 +13,7 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
+	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 )
@@ -136,10 +137,10 @@ func runFoxhole(
 	// A purge runs on in the background, so it gives the one-action-at-a-time
 	// rule back and sends its own note once its summary is out.
 	purging := false
-	endCommand := func() {}
+	end := func() {}
 	defer func() {
 		if !purging {
-			endCommand()
+			end()
 			sendRenameNote(r, interaction, "warden", "foxhole")
 		}
 	}()
@@ -199,12 +200,12 @@ func runFoxhole(
 
 	// Every subcommand changes roles, so none runs alongside a Foxhole
 	// action started on the Foxhole page.
-	end, refused := fx.startCommand(foxholeCommandRun(interaction, subcommand))
-	if refused != nil {
-		refuseForPageAction(r, interaction, *refused)
+	run := foxholeCommandRun(interaction, subcommand)
+	var refused *RunningAction
+	if end, refused = fx.startCommand(run); refused != nil {
+		refuseForPageAction(r, interaction, run, *refused)
 		return
 	}
-	endCommand = end
 
 	switch subcommand {
 	case "add":
@@ -223,16 +224,16 @@ func runFoxhole(
 	utils.Info("✨ Done!", "command", commandNameOf(interaction))
 }
 
-// refuseForPageAction answers a role-changing Foxhole command sent while a
-// Foxhole action started on the Foxhole page runs, with a reply only its
-// member sees naming the action, who started it and how far it has got.
-// The command changes nothing.
-func refuseForPageAction(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, action pageActionRunning) {
+// refuseForPageAction answers a role-changing Foxhole command run sent
+// while a Foxhole action started on the Foxhole page runs, with a reply only
+// its member sees naming the action, who started it and how far it has
+// got. The command changes nothing.
+func refuseForPageAction(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, run CommandRun, action RunningAction) {
 	utils.Info("Foxhole command refused: a page action is running", "command", commandNameOf(interaction),
-		"subcommand", foxholeSubcommandOf(interaction), "action", action.name, "started_by", action.startedBy)
+		"typed", run.Command, "action", action.Name, "started_by", action.StartedBy)
 	utils.HandleError(r, interaction, fmt.Sprintf(
 		"❌ A Foxhole action is running on the Foxhole page: %s, started by %s, %d of %d done. Nothing changed. Try again when it ends.",
-		action.name, action.startedBy, action.done, action.total))
+		action.Name, action.StartedBy, action.Done, action.Total))
 }
 
 // foxholeCommandTyped is a Foxhole command run as its member typed it,
@@ -257,10 +258,11 @@ func foxholeAuditReason(interaction *discordgo.InteractionCreate, typed string) 
 func foxholeCommandRun(interaction *discordgo.InteractionCreate, typed string) CommandRun {
 	run := CommandRun{Command: foxholeCommandTyped(interaction, typed), StartedAt: foxholeNow().UTC()}
 	if user := interactionUser(interaction); user != nil {
-		run.By = CommandMember{ID: user.ID, Username: user.Username, DisplayName: cmp.Or(user.GlobalName, user.Username)}
-		if interaction.Member != nil && interaction.Member.Nick != "" {
-			run.By.DisplayName = interaction.Member.Nick
+		var nick string
+		if interaction.Member != nil {
+			nick = interaction.Member.Nick
 		}
+		run.By = store.MemberNames{MemberID: user.ID, Username: user.Username, DisplayName: cmp.Or(nick, user.GlobalName, user.Username)}
 	}
 	return run
 }

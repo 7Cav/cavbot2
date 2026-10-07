@@ -233,48 +233,52 @@ func TestRoleCommandsAreRefusedWhileAPageActionRuns(t *testing.T) {
 	}
 }
 
-// heldRoleAdd is a guild whose member role adds hold inside the write,
-// after entered signals, until release closes.
-type heldRoleAdd struct {
-	*fakeGuildManager
+// writeGate holds a command's Discord writes inside the write: each signals
+// entered, then waits until release closes. The test's end closes it.
+type writeGate struct {
 	entered chan struct{}
 	release chan struct{}
 }
 
-func newHeldRoleAdd(t *testing.T, gm *fakeGuildManager) heldRoleAdd {
+func newWriteGate(t *testing.T) writeGate {
 	t.Helper()
-	g := heldRoleAdd{fakeGuildManager: gm, entered: make(chan struct{}, 16), release: make(chan struct{})}
-	t.Cleanup(func() { closeOnce(g.release) })
+	g := writeGate{entered: make(chan struct{}, 16), release: make(chan struct{})}
+	t.Cleanup(func() {
+		select {
+		case <-g.release:
+		default:
+			close(g.release)
+		}
+	})
 	return g
 }
 
-func (g heldRoleAdd) GuildMemberRoleAdd(guildID, userID, roleID, auditReason string) error {
+func (g writeGate) hold() {
 	g.entered <- struct{}{}
 	<-g.release
+}
+
+// heldRoleAdd is a guild whose member role adds go through its gate.
+type heldRoleAdd struct {
+	*fakeGuildManager
+	writeGate
+}
+
+func (g heldRoleAdd) GuildMemberRoleAdd(guildID, userID, roleID, auditReason string) error {
+	g.hold()
 	return g.fakeGuildManager.GuildMemberRoleAdd(guildID, userID, roleID, auditReason)
 }
 
-// heldPurgeCreate is a guild whose role creates, a purge's first change,
-// hold inside the write, after entered signals, until release closes.
+// heldPurgeCreate is a guild whose role creates, a purge's first change, go
+// through its gate.
 type heldPurgeCreate struct {
 	*fakeGuildManager
-	entered chan struct{}
-	release chan struct{}
+	writeGate
 }
 
 func (g heldPurgeCreate) GuildRoleCreate(guildID string, data *discordgo.RoleParams, auditReason string) (*discordgo.Role, error) {
-	g.entered <- struct{}{}
-	<-g.release
+	g.hold()
 	return g.fakeGuildManager.GuildRoleCreate(guildID, data, auditReason)
-}
-
-// closeOnce closes ch unless it is closed already.
-func closeOnce(ch chan struct{}) {
-	select {
-	case <-ch:
-	default:
-		close(ch)
-	}
 }
 
 // awaitSignal waits for ch, and fails the test when what never happens.
@@ -291,7 +295,7 @@ func awaitSignal(t *testing.T, ch <-chan struct{}, what string) {
 // run together, as before the Foxhole page, while no page action runs.
 func TestTwoRoleCommandsRunTogether(t *testing.T) {
 	fx, _ := newPageRuntime(t)
-	first := newHeldRoleAdd(t, trooperGuild())
+	first := heldRoleAdd{trooperGuild(), newWriteGate(t)}
 	firstDone := make(chan struct{})
 	go func() {
 		defer close(firstDone)
@@ -300,13 +304,17 @@ func TestTwoRoleCommandsRunTogether(t *testing.T) {
 	}()
 	awaitSignal(t, first.entered, "the first command's role add")
 	second := trooperGuild()
+	f := &fakeResponder{}
 
-	runFoxhole(&fakeResponder{}, second, fx, slashNamed("foxhole", stringOption("command", "add"),
+	runFoxhole(f, second, fx, slashNamed("foxhole", stringOption("command", "add"),
 		stringOption("flag", "internal"), stringOption("discordname", "123456789012345678")))
 
 	want := []roleAddCall{{guildID: "guild-1", userID: "123456789012345678", roleID: "r-int"}}
 	if got := second.roleAddCalls(); !slices.Equal(got, want) {
 		t.Errorf("the second command's role adds = %+v while the first held, want %+v", got, want)
+	}
+	if reply := memberReply(t, f.Calls()); !strings.Contains(reply, "trooper") {
+		t.Errorf("the second command's reply %q doesn't name trooper, the member it added", reply)
 	}
 	close(first.release)
 	awaitSignal(t, firstDone, "the first command's end")
@@ -347,8 +355,7 @@ func TestPageActionIsRefusedWhileARoleCommandRuns(t *testing.T) {
 				stringOption("flag", "internal"), stringOption("discordname", "123456789012345678")))
 		}},
 		{"purge", func(t *testing.T) (GuildManager, chan struct{}, chan struct{}) {
-			g := heldPurgeCreate{fakeGuildManager: trooperGuild(), entered: make(chan struct{}, 4), release: make(chan struct{})}
-			t.Cleanup(func() { closeOnce(g.release) })
+			g := heldPurgeCreate{trooperGuild(), newWriteGate(t)}
 			return g, g.entered, g.release
 		}, func(gm GuildManager, fx *FoxholeRuntime) {
 			runFoxhole(&fakeResponder{}, gm, fx, slashNamed("foxhole", stringOption("command", "purge"),
@@ -381,7 +388,7 @@ func TestPageActionIsRefusedWhileARoleCommandRuns(t *testing.T) {
 // heldAddGuild is trooperGuild with its member role adds held.
 func heldAddGuild(t *testing.T) (GuildManager, chan struct{}, chan struct{}) {
 	t.Helper()
-	g := newHeldRoleAdd(t, trooperGuild())
+	g := heldRoleAdd{trooperGuild(), newWriteGate(t)}
 	return g, g.entered, g.release
 }
 

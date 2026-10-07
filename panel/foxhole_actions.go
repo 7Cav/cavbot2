@@ -162,8 +162,7 @@ func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 	if report.StoppedBy != nil {
 		view.StoppedBy = report.StoppedBy.Username
 	}
-	view.Done = len(view.Changed) + len(view.Skipped) + len(view.Failed)
-	view.Total = view.Done + len(view.NotAttempted)
+	view.Done, view.Total = report.Progress()
 	view.Left = estimateFor(len(view.NotAttempted))
 	return view, nil
 }

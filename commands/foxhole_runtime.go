@@ -259,9 +259,9 @@ var foxholeActionNames = map[store.ChangeAction]string{
 	store.ChangeRosterAdd: "roster add",
 }
 
-// IsFoxholeAction reports whether a change log entry's action is a Foxhole
-// action's, so the entry is the action's report.
-func IsFoxholeAction(action store.ChangeAction) bool {
+// IsReport reports whether a change log entry of the action given is a
+// Foxhole action's report.
+func IsReport(action store.ChangeAction) bool {
 	_, ok := foxholeActionNames[action]
 	return ok
 }
@@ -417,18 +417,11 @@ type FoxholeRuntime struct {
 type CommandRun struct {
 	// Command is the command as its member typed it, as in "/foxhole add".
 	Command string
-	// By is the Discord member who ran it.
-	By CommandMember
+	// By is the Discord member who ran it, under the names the command's
+	// interaction carried.
+	By store.MemberNames
 	// StartedAt is when it started.
 	StartedAt time.Time
-}
-
-// CommandMember is the Discord member who ran a Foxhole command, under the
-// names the command's interaction carried.
-type CommandMember struct {
-	ID          string
-	Username    string
-	DisplayName string
 }
 
 // actionState is what the runtime knows of the action running, beside its
@@ -451,9 +444,16 @@ type actionState struct {
 	paused bool
 }
 
-// RunningAction is the Foxhole action running now, as the page shows it
-// beside its report.
+// RunningAction is the Foxhole action started on the Foxhole page that
+// runs now, as the page shows it beside its report and a refused command's
+// reply names it.
 type RunningAction struct {
+	// Name is the action's name, as FoxholeActionName gives it, and
+	// StartedBy the username of the forum user who started it.
+	Name, StartedBy string
+	// Done counts the members the action has been through, of Total, as its
+	// report's Progress gives them: 0 of 0 until its report is written.
+	Done, Total int
 	// StopPressedBy is the username of the forum user who pressed Stop,
 	// empty until someone does. The action stops after the change in
 	// flight.
@@ -463,18 +463,34 @@ type RunningAction struct {
 	Paused bool
 }
 
-// Running reports the Foxhole action running, and false when none is.
+// Running reports the Foxhole action started on the Foxhole page that runs
+// now, and false when none does.
 func (r *FoxholeRuntime) Running() (RunningAction, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.running == nil {
 		return RunningAction{}, false
 	}
-	action := RunningAction{Paused: r.running.paused}
-	if by := r.running.stopPressedBy; by != nil {
+	return r.running.view(), true
+}
+
+// view is the action as RunningAction shows it. The caller holds the
+// runtime's lock.
+func (a *actionState) view() RunningAction {
+	action := RunningAction{Name: a.name, StartedBy: a.startedBy.Username, Done: a.done, Total: a.total, Paused: a.paused}
+	if by := a.stopPressedBy; by != nil {
 		action.StopPressedBy = by.Username
 	}
-	return action, true
+	return action
+}
+
+// Busy reports whether a Foxhole action holds the one-action-at-a-time
+// rule, started on the Foxhole page or by a role-changing command, so a
+// page action couldn't start.
+func (r *FoxholeRuntime) Busy() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.running != nil || len(r.commands) > 0
 }
 
 // claim takes the one-action-at-a-time rule for the action named, started
@@ -506,28 +522,21 @@ func (r *FoxholeRuntime) progressed(report ActionReport) {
 	r.running.done, r.running.total = report.Progress()
 }
 
-// pageActionRunning is the Foxhole action started on the Foxhole page that
-// refuses a role-changing Foxhole command, as the command's reply names it.
-type pageActionRunning struct {
-	name        string
-	startedBy   string
-	done, total int
-}
-
 // startCommand takes the one-action-at-a-time rule for the role-changing
 // Foxhole command run given, beside any other command running, and returns
 // the call that gives it back, which the command makes once its run has
 // ended. While a Foxhole action started on the Foxhole page runs, it takes
-// nothing and returns that action instead. On a host with no bot store, r
-// is nil and it refuses nothing.
-func (r *FoxholeRuntime) startCommand(run CommandRun) (end func(), refused *pageActionRunning) {
+// nothing, returns that action, and its end does nothing. On a host with no
+// bot store, r is nil and it refuses nothing.
+func (r *FoxholeRuntime) startCommand(run CommandRun) (end func(), refused *RunningAction) {
 	if r == nil {
 		return func() {}, nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if a := r.running; a != nil {
-		return nil, &pageActionRunning{name: a.name, startedBy: a.startedBy.Username, done: a.done, total: a.total}
+	if r.running != nil {
+		action := r.running.view()
+		return func() {}, &action
 	}
 	if r.commands == nil {
 		r.commands = map[int]CommandRun{}

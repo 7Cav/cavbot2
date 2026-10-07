@@ -88,9 +88,10 @@ func runFoxholeBulkAddInternal(
 		return
 	}
 
-	end, refused := fx.startCommand(foxholeCommandRun(interaction, unit.Label))
+	run := foxholeCommandRun(interaction, unit.Label)
+	end, refused := fx.startCommand(run)
 	if refused != nil {
-		refuseForPageAction(r, interaction, *refused)
+		refuseForPageAction(r, interaction, run, *refused)
 		return
 	}
 	defer end()

@@ -217,12 +217,13 @@ var errRosterChanged = &saveRefusal{Kind: "roster-changed", status: http.StatusC
 // troopers listed, as the preview's Listed, else errRosterChanged with the
 // roster as it stands now. It fetches nothing while the add couldn't start:
 // while the member list is partial, commands.ErrMemberListPartial, and
-// while another Foxhole action runs, commands.ErrActionRunning.
+// while another Foxhole action runs, from the page or a role-changing
+// command, commands.ErrActionRunning.
 func (s foxholeService) confirmedRoster(ctx context.Context, unit commands.ValidatedInternalUnit, listed string) ([]commands.RosterTrooper, error) {
 	if s.manager.MemberList(s.guildID).Status != commands.MemberListComplete {
 		return nil, commands.ErrMemberListPartial
 	}
-	if _, busy := s.actions.Running(); busy {
+	if s.actions.Busy() {
 		return nil, commands.ErrActionRunning
 	}
 	troopers, err := fetchRoster(ctx, unit)

@@ -185,6 +185,9 @@ func roleGrants(api *fakeDiscordAPI) []string {
 // An old name dispatches the way main.go's dispatcher reaches every command,
 // by its registered name, and grants the same roles its new name grants. Its
 // one telemetry line carries the name it ran under.
+//
+// Regression pin for #453: the registry here has no Foxhole runtime, as on
+// a host with no bot store, and the commands refuse nothing.
 func TestOldFoxholeNamesGrantWhatTheirNewNamesGrant(t *testing.T) {
 	serveRosterAndProfiles(t, liteRoster(
 		liteMember("Trooper.A", "111111111111111111"),
