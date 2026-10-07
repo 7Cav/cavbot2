@@ -91,8 +91,14 @@ type foxholeView struct {
 	// AddPreview is the preview the paste box's Preview opened, nil for
 	// none.
 	AddPreview *addPreview
+	// RosterPreview is the preview the roster block's Preview roster opened,
+	// nil for none.
+	RosterPreview *rosterPreview
 	// Paste is the Add members block's paste box as the page shows it.
 	Paste pasteBox
+	// Units are the validated internal units the Add a unit's roster block
+	// offers, from the registry the roster add command's picker offers.
+	Units []commands.ValidatedInternalUnit
 	// PasteAlone is the page answering an add refused while the member list
 	// is partial: the Add members block shows alone above the notice, with
 	// the lines pasted, to send again once the list is back.
@@ -442,6 +448,9 @@ type foxholeRequest struct {
 	ActionRefusal *saveRefusal
 	// Paste is the paste box the page answers the Preview of, nil for none.
 	Paste *pasteBox
+	// Roster is the validated internal unit whose roster preview the page
+	// opens, nil for none.
+	Roster *commands.ValidatedInternalUnit
 }
 
 // foxholePage is GET /foxhole, the Foxhole page. It reads the guild's roles
@@ -689,6 +698,17 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 		if req.Paste != nil {
 			view.AddPreview = s.addPreviewOf(list, records, *req.Paste, nil)
 		}
+		if req.Roster != nil {
+			preview, err := s.rosterPreview(ctx, list, records, *req.Roster)
+			var refusal *saveRefusal
+			switch {
+			case errors.As(err, &refusal):
+				view.ActionRefusal = refusal
+			case err != nil:
+				return foxholeView{}, err
+			}
+			view.RosterPreview = preview
+		}
 	} else {
 		view.ListNotice = noticeFor(list, foxholeURL(req.Query, req.Filter, req.NoteMember))
 		if req.Remove != "" {
@@ -697,8 +717,12 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 		if req.Paste != nil {
 			view.Paste, view.PasteAlone, view.ActionRefusal = *req.Paste, true, errAddListPartial
 		}
+		if req.Roster != nil {
+			view.ActionRefusal = errRosterListPartial
+		}
 	}
 	view.Query, view.Filter = req.Query, req.Filter
+	view.Units = commands.ValidatedInternalUnits()
 	view.NoteTemplate = req.blankNoteForm()
 	view.Changes = foxholeChanges(entries)
 	if req.Cleared != "" && s.offPage(list, records, req.Cleared) {
@@ -1098,6 +1122,8 @@ func (c foxholeChange) Label() string {
 		return "clear approval"
 	case store.ChangeReAdd:
 		return "re-add"
+	case store.ChangeRosterAdd:
+		return "roster add"
 	}
 	return string(c.Action)
 }

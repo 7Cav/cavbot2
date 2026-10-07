@@ -179,7 +179,7 @@ after a good deploy. The reverse proxy in front of the panel
 has a 90-second read timeout. A hub or Foxhole page load takes about 20 seconds
 at the slowest: the 10-second group check, then the page's 10-second time
 budget. The budget covers the page's store reads and any wait for Discord to
-send the bot the guild's data, or on the Foxhole page the member list. A save can take longer. It waits at most the same 10 seconds
+send the bot the guild's data, or on the Foxhole page the member list. A roster preview's fetch of the unit's roster from the 7Cav API counts against the same budget, and its Confirm fetches the roster again under a budget of its own. A save can take longer. It waits at most the same 10 seconds
 for that data, and its create or rename goes to Discord with up to 20 seconds
 per attempt. discordgo retries a call Discord answers with a 502, up to three
 times. A Foxhole action, such as a purge, runs in the background and its

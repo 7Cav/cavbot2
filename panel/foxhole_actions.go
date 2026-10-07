@@ -125,7 +125,13 @@ func (m reportMember) Why() string {
 	case commands.SkipHolding:
 		return "already holds " + m.RoleName
 	case commands.SkipLeft:
+		if m.Trooper != "" {
+			// A roster's trooper may never have been in the server.
+			return "isn't in the server"
+		}
 		return "left the server"
+	case commands.SkipNoDiscord:
+		return "no Discord account on the milpac"
 	}
 	return m.Failure
 }
@@ -143,6 +149,9 @@ func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 	}
 	if role := foxholeRoleLabels[report.Role]; role != "" {
 		name += " " + role
+	}
+	if report.Unit != "" {
+		name = report.Unit + " " + name
 	}
 	view := &reportView{ID: stored.Entry.ID, Action: stored.Entry.Action, Name: name,
 		StartedBy: stored.Entry.ForumUsername, StartedAt: stored.Entry.At, EndedAt: report.EndedAt,
@@ -229,6 +238,8 @@ var actionNames = map[store.ChangeAction]string{
 	store.ChangeRemoval: "Remove",
 	store.ChangeReAdd:   "Re-add approved collaborators",
 	store.ChangeAdd:     "Add",
+	// A roster add's name follows its unit, as in "D/ACD roster add".
+	store.ChangeRosterAdd: "roster add",
 }
 
 // scopeLabels are the purge scopes as the page names them.

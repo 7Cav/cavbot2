@@ -197,6 +197,8 @@ type ActionReport struct {
 	Scope PurgeScope `json:"scope,omitempty"`
 	// Role is a removal's role, or an add's.
 	Role FoxholeRole `json:"role,omitempty"`
+	// Unit is a roster add's validated internal unit, by its label.
+	Unit string `json:"unit,omitempty"`
 	// Outcome is how the action ended, empty while it runs.
 	Outcome ReportOutcome `json:"outcome,omitempty"`
 	// EndedAt is when the action ended, zero while it runs.
@@ -259,6 +261,9 @@ type ReportMember struct {
 	DisplayName string      `json:"display_name"`
 	Username    string      `json:"username"`
 	Role        FoxholeRole `json:"role"`
+	// Trooper is a roster add's member's forum username on the roster. A
+	// trooper with no Discord account on the milpac has no ID.
+	Trooper string `json:"trooper,omitempty"`
 	// Skip is why a skipped member was skipped.
 	Skip SkipReason `json:"skip,omitempty"`
 	// Failure is why Discord refused a failed member's change, in plain
@@ -281,7 +286,18 @@ const (
 	SkipHolding SkipReason = "holding"
 	// SkipLeft is a member who had left the server.
 	SkipLeft SkipReason = "left"
+	// SkipNoDiscord is a roster add's trooper whose milpac names no Discord
+	// account, whom it skips before it starts.
+	SkipNoDiscord SkipReason = "no-discord"
 )
+
+// RosterTrooper is one trooper on a validated internal unit's roster, as a
+// roster add takes them: their forum username, and the Discord ID their
+// milpac names, empty for none.
+type RosterTrooper struct {
+	Username  string
+	DiscordID string
+}
 
 // FoxholeRoleIDs finds the Foxhole roles among the guild's roles by the
 // exact names the commands use, and returns each one's ID, empty for a role
@@ -502,6 +518,11 @@ type actionSpec struct {
 	reason string
 	// addedNobody are an add's pasted lines that named no member to add.
 	addedNobody []PastedLine
+	// unit is a roster add's unit, by its label, for its report.
+	unit string
+	// skipped are the members the action skips before it starts: a roster
+	// add's troopers with no Discord account on the milpac.
+	skipped []ReportMember
 	// plan is the action's role changes, over the complete member list as it
 	// stands, the guild's Foxhole role IDs and the guild's Foxhole records.
 	plan func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange
@@ -568,6 +589,30 @@ func (r *FoxholeRuntime) Add(ctx context.Context, role FoxholeRole, memberIDs []
 	}, by)
 }
 
+// RosterAdd starts an add of a validated internal unit's roster to
+// Internal, the troopers given, started by the forum user given, and
+// returns once its report is written. It starts as start says. The report
+// lists each trooper whose milpac names no Discord account as skipped. The
+// add then runs in the background, with no deadline of ctx's, to its end:
+// one member at a time, in the order given, it gives Internal to each
+// trooper's Discord ID. One who holds it already, or who isn't in the
+// server, is skipped with that reason.
+func (r *FoxholeRuntime) RosterAdd(ctx context.Context, unit ValidatedInternalUnit, troopers []RosterTrooper, by ForumUser) error {
+	var noDiscord []ReportMember
+	for _, t := range troopers {
+		if t.DiscordID == "" {
+			noDiscord = append(noDiscord, ReportMember{Trooper: t.Username, Role: FoxholeInternal, Skip: SkipNoDiscord})
+		}
+	}
+	return r.start(ctx, actionSpec{
+		action: store.ChangeRosterAdd, unit: unit.Label, roles: []FoxholeRole{FoxholeInternal}, grant: true,
+		reason: "Panel: Foxhole " + unit.Label + " roster add by ", skipped: noDiscord,
+		plan: func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange {
+			return rosterAddPlan(list, roleIDs, records, troopers)
+		},
+	}, by)
+}
+
 // start starts the Foxhole action spec names, started by the forum user
 // given, and returns once its report is written. It starts only while no
 // other Foxhole action runs, else ErrActionRunning, only with a complete
@@ -600,7 +645,8 @@ func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUse
 		return fmt.Errorf("list Foxhole records: %w", err)
 	}
 	plan := spec.plan(list, roleIDs, records)
-	report := ActionReport{Scope: spec.scope, Role: spec.role, Changed: []ReportMember{}, Skipped: []ReportMember{}, Failed: []ReportMember{},
+	report := ActionReport{Scope: spec.scope, Role: spec.role, Unit: spec.unit, Changed: []ReportMember{},
+		Skipped: append([]ReportMember{}, spec.skipped...), Failed: []ReportMember{},
 		NotAttempted: make([]ReportMember, 0, len(plan)), AddedNobody: spec.addedNobody}
 	for _, p := range plan {
 		report.NotAttempted = append(report.NotAttempted, p.member)
@@ -615,7 +661,7 @@ func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUse
 	if err != nil {
 		return fmt.Errorf("start the %s report: %w", spec.action, err)
 	}
-	utils.Info("Foxhole action started", "action", spec.action, "scope", spec.scope, "role", spec.role, "members", len(plan),
+	utils.Info("Foxhole action started", "action", spec.action, "scope", spec.scope, "role", spec.role, "unit", spec.unit, "members", len(plan),
 		"username", by.Username, "forum_user_id", by.ID)
 	r.started(entry.ID)
 	run := actionRun{action: spec.action, grant: spec.grant, reportID: entry.ID, reason: spec.reason + by.auditName(),
@@ -723,6 +769,29 @@ func addPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []
 		return repeat
 	})
 	return plannedChanges(list, roleIDs, records, role, once)
+}
+
+// rosterAddPlan is a roster add's role changes: Internal for each trooper
+// given with a Discord ID, once, in the order given, whether or not they
+// hold it or are in the server, each named by their forum username too.
+// The member list names those in it, and the records' last-seen names those
+// who left.
+func rosterAddPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord, troopers []RosterTrooper) []plannedChange {
+	names := namesOf(records)
+	seen := map[string]bool{}
+	var plan []plannedChange
+	for _, t := range troopers {
+		if t.DiscordID == "" || seen[t.DiscordID] {
+			continue
+		}
+		seen[t.DiscordID] = true
+		known := names[t.DiscordID]
+		known.MemberID = t.DiscordID
+		member := plannedMember(list, known, FoxholeInternal)
+		member.Trooper = t.Username
+		plan = append(plan, plannedChange{member: member, roleID: roleIDs[FoxholeInternal]})
+	}
+	return plan
 }
 
 // plannedChanges are the changes of the role for each member given, in the

@@ -109,10 +109,42 @@
     </form>
   </section>
   {{end}}
+  {{with .RosterPreview}}
+  <section class="block fx-pending" data-field="roster-preview" data-unit="{{.Unit.Value}}">
+    <h2 class="block-header">Add the {{.Unit.Label}} roster to Internal?</h2>
+    <div class="block-row" data-field="roster-counts"><span data-field="trooper-count">{{len .Rows}}</span> {{if eq (len .Rows) 1}}trooper{{else}}troopers{{end}} on the roster. <span data-field="holding-count">{{.Holding}}</span> {{if eq .Holding 1}}holds{{else}}hold{{end}} Internal now. The add takes the whole roster.</div>
+    {{with .Notes}}<div class="block-row" data-field="notes"><span data-field="note-count">{{.}}</span> {{if eq . 1}}member in this preview has{{else}}members in this preview have{{end}} a note.</div>{{end}}
+    <div class="scroll"><table class="hublist fx-list fx-addpreview">
+      <thead><tr><th>Trooper</th><th>Member</th><th>Result</th></tr></thead>
+      <tbody>
+      {{range .Rows}}
+        <tr data-trooper="{{.Trooper}}" data-result="{{.Result}}"{{with .DiscordID}} data-member="{{.}}"{{end}}>
+          <td><span class="fx-name" data-field="trooper">{{.Trooper}}</span></td>
+          <td>{{with .Member}}{{template "roster-member" .}}{{else}}<span class="off">{{if .DiscordID}}not in the server{{else}}no Discord account{{end}}</span>{{end}}
+            {{- with .Note}}<span class="fx-previewnote">Note: <span data-field="note">{{.}}</span></span>{{end}}</td>
+          <td><span class="tag" data-field="result">{{.ResultLabel}}</span></td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table></div>
+    <form method="post" action="/foxhole/roster" class="submit-row" data-field="roster-confirm">
+      <input type="hidden" name="unit" value="{{.Unit.Value}}">
+      <input type="hidden" name="roster" value="{{.Listed}}">
+      {{if .CanAdd}}<button type="submit" class="btn btn--cta" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Add the {{.Unit.Label}} roster to Internal</button>{{end}}
+      <a class="btn" href="/foxhole">Cancel</a>
+      {{- if not .CanAdd}} <span class="fx-hint" data-field="nobody-to-add">Nobody on the {{.Unit.Label}} roster would get Internal, so there's nothing to add.</span>
+      {{- else if $.Foxhole.Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Confirm once it ends.</span>{{end}}
+    </form>
+  </section>
+  {{end}}
   <div class="fx-actions" data-field="actions">
     <section class="block" data-field="add-members">
       <h2 class="block-header">Add members</h2>
       {{template "add-form" .Paste}}
+    </section>
+    <section class="block" data-field="add-roster">
+      <h2 class="block-header">Add a unit's roster</h2>
+      {{template "roster-form" .}}
     </section>
     <section class="block" data-field="after-a-war">
       <h2 class="block-header">After a war</h2>
@@ -293,6 +325,20 @@
   <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="preview">{{if .AbovePreview}}Preview again{{else}}Preview{{end}}</button></div>
 </form>{{end}}
 
+{{define "roster-form"}}<form method="post" action="/foxhole/roster/preview" data-field="roster-form">
+  <div class="block-row">
+    <label class="field"><span class="field-label">Validated unit</span>
+      <select name="unit">{{range .Units}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select>
+      <span class="field-hint">Adds the unit's whole roster to Internal. You see each trooper on it before anything changes.</span>
+    </label>
+  </div>
+  <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="preview-roster">Preview roster</button></div>
+</form>{{end}}
+
+{{define "roster-member"}}<span class="fx-name" data-field="display_name">{{.DisplayName}}</span> <span class="fx-user">@<span data-field="username">{{.Username}}</span></span>
+  <span class="fx-addinfo">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else}}<span class="off">no rank role</span>{{end}}
+  {{- if .Internal}} <span class="tag fx-role" data-role="internal">Internal</span>{{end}}{{if .External}} <span class="tag fx-role" data-role="external">External</span>{{end}}</span>{{end}}
+
 {{define "add-member"}}<span class="fx-name" data-field="display_name">{{.DisplayName}}</span> <span class="fx-user">@<span data-field="username">{{.Username}}</span></span>
   <span class="fx-matched">matched by {{.MatchedLabel}}</span>
   <span class="fx-addinfo">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else}}<span class="off">no rank role</span>{{end}}
@@ -312,4 +358,4 @@
   <ul class="fx-reportmembers">{{range .}}<li data-line="{{.Line}}" data-reason="{{.Reason}}"{{with .SameAs}} data-same-as="{{.}}"{{end}}{{with .Matches}} data-matches="{{.}}"{{end}}><code data-field="text">{{.Text}}</code>: <span data-field="reason">{{.Why}}</span></li>{{end}}</ul></div>{{end}}
 {{end}}
 
-{{define "report-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}" data-role="{{.Role}}"{{with .Skip}} data-reason="{{.}}"{{end}}{{if .ApprovalCleared}} data-approval-cleared{{end}}>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.ID}}{{end}} <span class="fx-user">@{{.Username}}</span> <span class="tag fx-role">{{.RoleName}}</span>{{if .ApprovalCleared}} <span class="tag tag--approved">approval cleared</span>{{end}}{{with .Why}} <span data-field="reason">{{.}}</span>{{end}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}
+{{define "report-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}" data-role="{{.Role}}"{{with .Trooper}} data-trooper="{{.}}"{{end}}{{with .Skip}} data-reason="{{.}}"{{end}}{{if .ApprovalCleared}} data-approval-cleared{{end}}>{{if .Trooper}}<span data-field="trooper">{{.Trooper}}</span>{{if .DisplayName}} <span class="fx-user">{{.DisplayName}} @{{.Username}}</span>{{end}}{{else}}{{if .DisplayName}}{{.DisplayName}}{{else}}{{.ID}}{{end}} <span class="fx-user">@{{.Username}}</span>{{end}} <span class="tag fx-role">{{.RoleName}}</span>{{if .ApprovalCleared}} <span class="tag tag--approved">approval cleared</span>{{end}}{{with .Why}} <span data-field="reason">{{.}}</span>{{end}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}
