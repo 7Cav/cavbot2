@@ -216,9 +216,9 @@ const (
 	// The change in flight finished; what it hadn't reached is not
 	// attempted. The report names who stopped it.
 	ReportStopped ReportOutcome = "stopped"
-	// ReportRestart is an action the bot's restart cut off: a deploy or a
-	// crash. Its report holds what it had written before the restart, and
-	// the action never resumes.
+	// ReportRestart is an action the bot's restart cut off, a deploy or a
+	// crash, or one a panic the bot caught cut off. Its report holds what it
+	// had written before then, and the action never resumes.
 	ReportRestart ReportOutcome = "restart"
 )
 
@@ -907,14 +907,24 @@ func retryPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, misses [
 // member list, else ErrMemberListPartial, and only when the guild holds
 // each role the action changes, else a *MissingRoleError. The action then
 // runs in the background, with no deadline of ctx's.
-func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUser) (err error) {
+func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUser) error {
 	stop, ok := r.claim(FoxholeActionName(spec.action, ActionReport{Scope: spec.scope, Role: spec.role, Unit: spec.unit}), by)
 	if !ok {
 		return ErrActionRunning
 	}
+	// An action that never reaches its run, by an error or a panic, gives
+	// the rule back. One whose report is written by then can only have
+	// panicked, and its report ends first, as a restart would end it.
+	handed, reportID := false, int64(0)
+	var report ActionReport
 	defer func() {
-		if err != nil {
-			r.release()
+		if handed {
+			return
+		}
+		defer r.release()
+		if reportID != 0 {
+			report.Outcome, report.EndedAt = ReportRestart, foxholeNow().UTC()
+			r.writeReport(reportID, report, true)
 		}
 	}()
 	list := r.guild.MemberList(r.guildID)
@@ -933,7 +943,7 @@ func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUse
 		return fmt.Errorf("list Foxhole records: %w", err)
 	}
 	plan := spec.plan(list, roleIDs, records)
-	report := ActionReport{Scope: spec.scope, Role: spec.role, Unit: spec.unit, Changed: []ReportMember{},
+	report = ActionReport{Scope: spec.scope, Role: spec.role, Unit: spec.unit, Changed: []ReportMember{},
 		Skipped: append([]ReportMember{}, spec.skipped...), Failed: []ReportMember{},
 		NotAttempted: make([]ReportMember, 0, len(plan)), AddedNobody: spec.addedNobody}
 	for _, p := range plan {
@@ -949,13 +959,16 @@ func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUse
 	if err != nil {
 		return fmt.Errorf("start the %s report: %w", spec.action, err)
 	}
+	reportID = entry.ID
 	utils.Info("Foxhole action started", "action", spec.action, "scope", spec.scope, "role", spec.role, "unit", spec.unit, "members", len(plan),
 		"username", by.Username, "forum_user_id", by.ID)
 	r.started(entry.ID)
 	r.progressed(report)
 	run := actionRun{action: spec.action, grant: spec.grant, reportID: entry.ID, reason: spec.reason + by.auditName(),
 		clearsApproval: spec.clearsApproval, absent: cmp.Or(spec.absent, SkipLeft), stop: stop}
-	go r.run(run, plan, report, namesOf(records))
+	names := namesOf(records)
+	handed = true
+	go r.run(run, plan, report, names)
 	return nil
 }
 
@@ -1118,29 +1131,43 @@ func byDisplayName(changes []plannedChange) []plannedChange {
 	return changes
 }
 
-// run makes an action's role changes one at a time, writing the report
-// after each, and ends the report once it has been through them all, or
-// sooner when someone presses Stop or a pause outlasts FoxholePauseLimit
-// (awaitList). Just before it changes a member it reads them from the
-// member list: one who no longer holds the role it takes, or who holds the
-// role it gives already, is skipped with that reason, one not in the server
-// with the run's absent reason, and one still in the server is named in the
-// report under the names the list shows now, which also refresh their
-// record's names.
+// run makes an action's role changes, as changeEach does, then ends the
+// report and gives the rule back. A panic ends the report too, as a restart
+// would, since the action never resumes.
 func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionReport, names map[string]store.MemberNames) {
 	defer utils.RecoverPanic("foxhole-action")
-	// A panic gives the rule back too; release on a free rule does nothing.
+	// The action gives the rule back once, after its end write has returned,
+	// so nothing starts until the report has ended.
 	defer r.release()
 	faults := newFaultCollector()
-	outcome := ReportDone
+	outcome := ReportRestart
+	defer func() {
+		report.Outcome, report.EndedAt = outcome, foxholeNow().UTC()
+		r.writeReport(run.reportID, report, true)
+		faults.flush("Foxhole action role change failed", "action", run.action, "guild", r.guildID)
+		utils.Info("Foxhole action ended", "action", run.action, "outcome", report.Outcome, "changed", len(report.Changed),
+			"skipped", len(report.Skipped), "failed", len(report.Failed), "not_attempted", len(report.NotAttempted))
+	}()
+	outcome = r.changeEach(run, plan, &report, names, faults)
+}
+
+// changeEach makes an action's role changes one at a time, writing the
+// report after each, and returns the outcome the report ends with once it
+// has been through them all, or sooner when someone presses Stop or a
+// pause outlasts FoxholePauseLimit (awaitList). Just before it changes a
+// member it reads them from the member list: one who no longer holds the
+// role it takes, or who holds the role it gives already, is skipped with
+// that reason, one not in the server with the run's absent reason, and one
+// still in the server is named in the report under the names the list
+// shows now, which also refresh their record's names.
+func (r *FoxholeRuntime) changeEach(run actionRun, plan []plannedChange, report *ActionReport, names map[string]store.MemberNames, faults *faultCollector) ReportOutcome {
 	for _, p := range plan {
 		list, end := r.awaitList(run.stop)
 		if end != "" {
-			outcome = end
 			if end == ReportStopped {
 				report.StoppedBy = r.stopPressedBy()
 			}
-			break
+			return end
 		}
 		member := p.member
 		mem, ok := list.Member(member.ID)
@@ -1174,18 +1201,10 @@ func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionR
 			}
 		}
 		report.NotAttempted = report.NotAttempted[1:]
-		r.progressed(report)
-		r.writeReport(run.reportID, report, false)
+		r.progressed(*report)
+		r.writeReport(run.reportID, *report, false)
 	}
-	report.Outcome, report.EndedAt = outcome, foxholeNow().UTC()
-	// The action's last Discord change is made, so it gives the rule back
-	// before it writes its end: whoever sees the report ended can start the
-	// next.
-	r.release()
-	r.writeReport(run.reportID, report, true)
-	faults.flush("Foxhole action role change failed", "action", run.action, "guild", r.guildID)
-	utils.Info("Foxhole action ended", "action", run.action, "outcome", report.Outcome, "changed", len(report.Changed),
-		"skipped", len(report.Skipped), "failed", len(report.Failed), "not_attempted", len(report.NotAttempted))
+	return ReportDone
 }
 
 // clearApproval clears the approval of a member whose External a removal
