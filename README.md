@@ -246,6 +246,14 @@ export TEST_BOT_DB_DSN='postgres://postgres:postgres@localhost:5433/postgres?ssl
 The tests drop and recreate the `public` schema of that database before every
 case, so point the variable at a throwaway server only.
 
+### Smoke test
+
+CI never reaches the Discord gateway or a browser, so a change members can see
+also runs on a test guild before it merges. `go run ./tools/smoke up` starts
+this checkout's bot there, with the panel at <http://localhost:8080> and a fake
+forum to sign in through. [docs/smoke-test.md](docs/smoke-test.md) covers the
+rest.
+
 ## Contributing
 
 Contributions are welcome through issues and pull requests on our GitHub repository.
