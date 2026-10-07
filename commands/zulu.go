@@ -106,11 +106,11 @@ func runZulu(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 			instant.Unix(), instant.Unix())
 	}
 
-	if err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	if err := acknowledge(r, i, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{Content: content},
 	}); err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		replyAckFailed(r, i, err)
 		return
 	}
 	utils.Info("✨ Done!", "command", "Zulu")

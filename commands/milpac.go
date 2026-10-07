@@ -55,14 +55,14 @@ func runMilpac(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	username, discordID := interactionUsernameAndID(i)
 	utils.Info("🚀 Starting Milpac", "command", "Milpac", "username", username, "discord_id", discordID)
 
-	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	err := acknowledge(r, i, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: "Fetching Milpac data...",
 		},
 	})
 	if err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		replyAckFailed(r, i, err)
 		return
 	}
 

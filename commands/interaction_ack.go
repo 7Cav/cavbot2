@@ -22,15 +22,20 @@ func deferPublic(r utils.InteractionResponder, interaction *discordgo.Interactio
 	return deferReply(r, interaction, nil)
 }
 
-// deferReply acknowledges an interaction with a deferred reply. A refusal
-// comes back as an *ackFailure, which carries the timings
-// captureAckFailure reports.
+// deferReply acknowledges an interaction with a deferred reply.
 func deferReply(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, data *discordgo.InteractionResponseData) error {
-	sent := time.Now()
-	err := r.InteractionRespond(interaction.Interaction, &discordgo.InteractionResponse{
+	return acknowledge(r, interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 		Data: data,
 	})
+}
+
+// acknowledge sends an interaction's first response, a deferral or the
+// reply itself. A refusal comes back as an *ackFailure, which carries the
+// timings captureAckFailure reports.
+func acknowledge(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, resp *discordgo.InteractionResponse) error {
+	sent := time.Now()
+	err := r.InteractionRespond(interaction.Interaction, resp)
 	if err == nil {
 		return nil
 	}
@@ -96,11 +101,11 @@ func captureMissedAck(interaction *discordgo.InteractionCreate, err error, kv ..
 	}, kv...)...)
 }
 
-// ackFailedReply answers a slash command whose deferred acknowledgement
-// Discord refused.
+// ackFailedReply answers a slash command whose acknowledgement Discord
+// refused.
 const ackFailedReply = "❌ Couldn't start the command. Try again in a moment."
 
-// replyAckFailed handles a refused deferEphemeral. A 10062 goes to Sentry,
+// replyAckFailed handles a refused acknowledgement. A 10062 goes to Sentry,
 // with any further context the caller has in kv, and gets no reply, since
 // none could arrive. Any other refusal goes to the log and gets
 // ackFailedReply, never the error, which would show the member a raw

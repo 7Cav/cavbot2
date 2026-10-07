@@ -37,15 +37,14 @@ func runS6ITCheck(r utils.InteractionResponder, i *discordgo.InteractionCreate) 
 	username, discordID := interactionUsernameAndID(i)
 	utils.Info("🚀 Starting S6 IT Check", "command", "S6ITCheck", "username", username, "discord_id", discordID)
 
-	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	err := acknowledge(r, i, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: "Fetching S6 IT Check data...",
 		},
 	})
 	if err != nil {
-		utils.CaptureError("❌ Interaction response failed", err)
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		replyAckFailed(r, i, err)
 		return
 	}
 

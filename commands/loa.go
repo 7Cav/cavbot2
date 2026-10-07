@@ -83,14 +83,14 @@ func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *
 
 	position := i.ApplicationCommandData().Options[0].StringValue()
 
-	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	err := acknowledge(r, i, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: fmt.Sprintf("Fetching LOA data for %s...", position),
 		},
 	})
 	if err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		replyAckFailed(r, i, err)
 		return
 	}
 
