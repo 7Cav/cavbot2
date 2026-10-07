@@ -14,14 +14,14 @@ import (
 
 // fakeGuildCommands is Discord's side of the startup sync for one guild: the
 // command names it holds, with a bulk overwrite leaving exactly the names it
-// was sent, as Discord does. With hold set, an overwrite closes entered and
-// then waits for hold to close, as Discord's rate limit can hold one.
+// was sent, as Discord does. With release set, an overwrite closes entered and
+// then waits for release to close, as Discord's rate limit can hold one.
 type fakeGuildCommands struct {
 	mu           sync.Mutex
 	held         []string
 	listErr      error
 	overwriteErr error
-	hold         chan struct{}
+	release      chan struct{}
 	entered      chan struct{}
 }
 
@@ -39,9 +39,9 @@ func (f *fakeGuildCommands) ApplicationCommands(_, _ string, _ ...discordgo.Requ
 }
 
 func (f *fakeGuildCommands) ApplicationCommandBulkOverwrite(_, _ string, cmds []*discordgo.ApplicationCommand, _ ...discordgo.RequestOption) ([]*discordgo.ApplicationCommand, error) {
-	if f.hold != nil {
+	if f.release != nil {
 		close(f.entered)
-		<-f.hold
+		<-f.release
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -107,8 +107,8 @@ func TestRegistrySync_UnlistableGuildStillGetsTheRegistrysCommands(t *testing.T)
 }
 
 func TestRegistrySync_StopWhileDiscordHoldsTheOverwriteReturnsAtOnce(t *testing.T) {
-	guild := &fakeGuildCommands{hold: make(chan struct{}), entered: make(chan struct{})}
-	t.Cleanup(func() { close(guild.hold) })
+	guild := &fakeGuildCommands{release: make(chan struct{}), entered: make(chan struct{})}
+	t.Cleanup(func() { close(guild.release) })
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

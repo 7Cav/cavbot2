@@ -170,9 +170,13 @@ func main() {
 	// non-interactive shell started the bot with it ignored.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	// stopped reports a stop that arrived while a startup step ran. A step
-	// such as a migration finishes first, and startup goes no further.
-	stopped := func() bool {
+	// The first signal starts the shutdown. A second one gets the default
+	// action and ends the process, for a step that hangs.
+	context.AfterFunc(ctx, stop)
+	// shuttingDown reports a stop that arrived while a startup step ran, and
+	// logs "Shutting down" when one did. A step such as a migration finishes
+	// first, and startup goes no further.
+	shuttingDown := func() bool {
 		if ctx.Err() == nil {
 			return false
 		}
@@ -187,6 +191,9 @@ func main() {
 	commands.LogFoxholeRoleBaseName()
 
 	initLOACache()
+	if shuttingDown() {
+		return
+	}
 
 	// Database and migrations come before the Discord session opens, so a
 	// failed migration never leaves a half-started bot on the gateway.
@@ -194,7 +201,7 @@ func main() {
 	if botStore != nil {
 		defer func() { _ = botStore.Close() }()
 	}
-	if stopped() {
+	if shuttingDown() {
 		return
 	}
 
@@ -279,6 +286,10 @@ func main() {
 		}
 	})
 
+	if shuttingDown() {
+		return
+	}
+
 	// Not dg.Open() directly: a session can open without ever reaching READY,
 	// which leaves dg.State.User nil for the command registration below.
 	if err := utils.OpenSession(dg); err != nil {
@@ -290,7 +301,7 @@ func main() {
 			panic(fmt.Sprintf("Error closing Discord connection: %v", err))
 		}
 	}()
-	if stopped() {
+	if shuttingDown() {
 		return
 	}
 
@@ -327,7 +338,7 @@ func main() {
 	// bot, and the deferred shutdown still runs.
 	utils.Info("Registering commands")
 	if err := registry.Sync(ctx, dg, dg.State.User.ID, GuildID); err != nil {
-		if stopped() {
+		if shuttingDown() {
 			return
 		}
 		panic(fmt.Sprintf("Cannot register commands: %v", err))

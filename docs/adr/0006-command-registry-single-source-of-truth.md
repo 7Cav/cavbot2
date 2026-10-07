@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. **Amended 2026-10-07**: startup syncs the guild in one bulk
+overwrite instead of deleting and creating commands one at a time (#470).
 
 ## Decision
 
