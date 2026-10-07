@@ -489,49 +489,49 @@
    its Reload link loads the page again in the view it shows. The script
    hides the link's sentence and loads that address in the background every
    few seconds instead. Each answer's count, time left, pause line and Stop
-   go into this block in place, so a keyboard user on Stop stays there. An
+   go into this block in place, so a keyboard user on Stop stays there until
+   someone presses it, and then moves to the line saying it's stopping. An
    answer showing the report means the action has ended: the report takes
    the block's place, with a link to reload the page, and the change log
-   takes the answer's, which holds the ended report too. The holder list,
-   any note being typed and any selection stay as the page loaded them. */
+   takes the answer's, which holds the ended report too. A status line only
+   a screen reader reads says how it ended, since the report itself isn't a
+   live region. The holder list, any note being typed and any selection
+   stay as the page loaded them. */
 (function () {
   'use strict';
 
   var progress = document.querySelector('[data-field="progress"]');
   if (!progress) { return; }
   // every is the wait from one answer to the next load. An answer that
-  // isn't the Foxhole page, a sign-in page or an error page, waits spacing
+  // isn't the Foxhole page, a sign-in page or an error page, waits backOff
   // instead, so an open tab through a forum outage loads it a few times a
   // minute.
   var every = 3000;
-  var spacing = 10000;
+  var backOff = 10000;
   var address = progress.querySelector('[data-field="reload"]').getAttribute('href');
+  // said is a live region from the start, so a screen reader reads out
+  // what goes in it at the end.
+  var said = document.createElement('div');
+  said.setAttribute('role', 'status');
+  said.className = 'visually-hidden';
+  progress.before(said);
 
-  // watch hides the block's no-script sentence, which says to reload.
-  function watch(block) {
+  // hideHint hides the block's no-script sentence, which says to reload.
+  function hideHint(block) {
     block.querySelector('[data-field="reload-hint"]').hidden = true;
-  }
-
-  // copy puts the answer's text for each field named in this block.
-  function copy(fresh, names) {
-    names.forEach(function (name) {
-      var mine = progress.querySelector('[data-field="' + name + '"]');
-      var theirs = fresh.querySelector('[data-field="' + name + '"]');
-      if (mine && theirs && mine.textContent !== theirs.textContent) {
-        mine.textContent = theirs.textContent;
-      }
-    });
   }
 
   // update brings this block up to the answer's, for the same action. The
   // pause line comes and goes, and Stop gives way to the stopping line once
   // someone presses it.
   function update(fresh) {
-    copy(fresh, ['done', 'total', 'left']);
-    var left = fresh.querySelector('[data-field="left"]');
-    if (left) {
-      progress.querySelector('[data-field="left"]').setAttribute('data-seconds', left.getAttribute('data-seconds'));
-    }
+    ['done', 'total', 'left'].forEach(function (name) {
+      var mine = progress.querySelector('[data-field="' + name + '"]');
+      var theirs = fresh.querySelector('[data-field="' + name + '"]');
+      if (mine.textContent !== theirs.textContent) { mine.textContent = theirs.textContent; }
+    });
+    progress.querySelector('[data-field="left"]').setAttribute('data-seconds',
+      fresh.querySelector('[data-field="left"]').getAttribute('data-seconds'));
     var paused = progress.querySelector('[data-field="paused"]');
     var pausedNow = fresh.querySelector('[data-field="paused"]');
     if (pausedNow && !paused) {
@@ -542,13 +542,17 @@
     var stop = progress.querySelector('[data-field="stop"]');
     var stopping = fresh.querySelector('[data-field="stopping"]');
     if (stop && stopping) {
-      stop.replaceWith(document.importNode(stopping, true));
+      var focused = stop.contains(document.activeElement);
+      stopping = document.importNode(stopping, true);
+      stopping.tabIndex = -1;
+      stop.replaceWith(stopping);
+      if (focused) { stopping.focus(); }
     }
   }
 
   // ended puts the answer's report in this block's place, with a link to
-  // reload the page, and the answer's change log in this page's. Focus on
-  // Stop moves to the link.
+  // reload the page, and the answer's change log in this page's. Focus in
+  // the block moves to the link.
   function ended(page, report) {
     var focused = progress.contains(document.activeElement);
     var line = document.createElement('div');
@@ -559,11 +563,13 @@
     link.textContent = 'Reload the page to see the changes';
     line.appendChild(link);
     report = document.adoptNode(report);
-    report.querySelector('h2').after(line);
+    var heading = report.querySelector('h2');
+    heading.after(line);
     progress.replaceWith(report);
     var changes = page.querySelector('[data-field="changes"]');
     var mine = document.querySelector('[data-field="changes"]');
     if (changes && mine) { mine.replaceWith(document.adoptNode(changes)); }
+    said.textContent = heading.textContent + '. ' + link.textContent + '.';
     if (focused) { link.focus(); }
   }
 
@@ -583,7 +589,7 @@
           return;
         }
         if (!fresh) {
-          setTimeout(load, spacing);
+          setTimeout(load, backOff);
           return;
         }
         if (fresh.getAttribute('data-report') === progress.getAttribute('data-report')) {
@@ -591,15 +597,15 @@
         } else {
           // Another action started after this one ended, between two loads.
           fresh = document.adoptNode(fresh);
-          watch(fresh);
+          hideHint(fresh);
           progress.replaceWith(fresh);
           progress = fresh;
         }
         setTimeout(load, every);
       })
-      .catch(function () { setTimeout(load, spacing); });
+      .catch(function () { setTimeout(load, backOff); });
   }
 
-  watch(progress);
+  hideHint(progress);
   setTimeout(load, every);
 })();
