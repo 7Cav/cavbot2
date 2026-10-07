@@ -226,30 +226,38 @@ Run the tests:
 go test ./...
 ```
 
-Run tests with the coverage floor check (matches CI):
+Run the CI gate, the same script CI's Build job runs. It needs Docker and
+`golangci-lint`:
 
 ```bash
-go test ./... -race -cover | .github/scripts/check-coverage-floors.sh
+.github/scripts/gate.sh
 ```
 
-CI enforces per-package coverage floors via `.github/scripts/check-coverage-floors.sh`. When a PR raises a package's coverage by more than a point or two, raise its floor in the same PR — that's how the suite ratchets up without the team having to think about it.
+It lints, checks that `go.mod` and `go.sum` are tidy, runs the suite with
+`-race` and coverage, checks the coverage floors and builds. The `store`
+package's tests need a real Postgres, so the gate starts a throwaway one of
+its own and removes it on exit. Several checkouts can run the gate at once.
 
-The `store` package tests its Postgres implementation against a real server.
-They read `TEST_BOT_DB_DSN` and skip when it is unset, so `go test ./...`
-passes on a machine with no database, but the floor check then fails for
-`store` alone because only its in-memory Fake ran. CI starts a Postgres service
-container and sets the variable. To match it locally:
+CI enforces per-package coverage floors, listed in
+`.github/coverage-floors.tsv`. A floor stays within 3 points of its package's
+coverage. When coverage climbs past that, the floor check prints a RAISE line
+with the new floor, and the floor goes up in the same PR. ADR 0005 has the
+reasoning.
+
+To run the `store` tests on their own, start a throwaway database. The script
+prints its DSN, and the container's name on stderr:
 
 ```bash
-docker run --rm -d --name cavbot2-test-pg -e POSTGRES_PASSWORD=postgres -p 5433:5432 postgres:18-alpine
+dsn=$(.github/scripts/test-db.sh)
 ```
 
 ```bash
-export TEST_BOT_DB_DSN='postgres://postgres:postgres@localhost:5433/postgres?sslmode=disable'
+TEST_BOT_DB_DSN=$dsn go test ./store/...
 ```
 
-The tests drop and recreate the `public` schema of that database before every
-case, so point the variable at a throwaway server only.
+Without `TEST_BOT_DB_DSN` the Postgres tests skip and only the in-memory Fake
+runs. The tests drop and recreate the `public` schema before every case, so
+give them only a database `test-db.sh` started.
 
 ### Smoke test
 

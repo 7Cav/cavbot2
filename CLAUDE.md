@@ -9,23 +9,24 @@ A Go Discord bot (module `github.com/7cav/cavbot2`) for the 7th Cavalry Gaming R
 ## Common commands
 
 ```bash
-go build -o cavbot2 .                     # build the binary (CI uses this exact command)
+.github/scripts/gate.sh                   # the CI gate (see "CI gate" below)
+go build -o cavbot2 .                     # build the binary
 go run .                                  # run locally (requires env vars; see below)
 go mod tidy                               # sync deps after changing imports
-golangci-lint run --timeout=5m            # lint (no .golangci config; uses defaults — same as CI)
+golangci-lint run --timeout=5m            # lint (config in .golangci.yml)
 docker build -t cavbot2:latest . && docker compose up   # run via Docker (see README step 4)
 ```
 
-Tests live in `*_test.go` files alongside the code they cover. Run them with `go test ./...`. CI runs the suite with coverage enforcement — see the Testing section of README.md and `.github/scripts/check-coverage-floors.sh` for the floor policy.
+Tests live in `*_test.go` files alongside the code they cover. Run them with `go test ./...`. Coverage floors live in `.github/coverage-floors.tsv`, and ADR 0005 says when to change one.
 
-The `store` package's tests run against a real Postgres named by `TEST_BOT_DB_DSN` and skip when it is unset, so `go test ./...` passes with no database but the store coverage floor does not. To match CI locally:
+The `store` package's tests run against a real Postgres named by `TEST_BOT_DB_DSN` and skip when it is unset. To run them, start a throwaway database and pass its DSN:
 
 ```bash
-docker run --rm -d --name cavbot2-test-pg -e POSTGRES_PASSWORD=postgres -p 5433:5432 postgres:18-alpine
-export TEST_BOT_DB_DSN='postgres://postgres:postgres@localhost:5433/postgres?sslmode=disable'
+dsn=$(.github/scripts/test-db.sh)
+TEST_BOT_DB_DSN=$dsn go test ./store/...
 ```
 
-The tests drop and recreate the `public` schema of that database before every case. Point the variable at a throwaway server only.
+Each call starts a new container and prints its name on stderr, so reuse one DSN across commands and remove the container with `docker rm -f <name>` when done. The tests drop and recreate the `public` schema before every case, so the variable always names a database `test-db.sh` started.
 
 ## Required environment variables
 
@@ -75,21 +76,7 @@ Single-context: `GLOSSARY.md` + `docs/adr/` at repo root. See `docs/agents/domai
 
 ## CI gate
 
-```bash
-set -euo pipefail
-golangci-lint run --timeout=5m
-go mod tidy
-if [[ -z "${TEST_BOT_DB_DSN:-}" ]]; then
-  docker rm -f cavbot2-gate-pg >/dev/null 2>&1 || true
-  docker run --rm -d --name cavbot2-gate-pg -e POSTGRES_PASSWORD=postgres -p 5433:5432 postgres:18-alpine >/dev/null
-  trap 'docker rm -f cavbot2-gate-pg >/dev/null 2>&1 || true' EXIT
-  until docker exec cavbot2-gate-pg pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
-  export TEST_BOT_DB_DSN='postgres://postgres:postgres@localhost:5433/postgres?sslmode=disable'
-fi
-go test ./... -race -cover -covermode=atomic | tee /tmp/cover.log
-./.github/scripts/check-coverage-floors.sh < /tmp/cover.log
-go build -o cavbot2
-```
+Run `.github/scripts/gate.sh` before you push. CI's Build job runs the same script, and each run starts its own Postgres, so worktrees run it side by side. When its floor check prints RAISE, set those floors in the same PR (ADR 0005). The summary it ends with (commit, tree state, coverage per package) is the test evidence for a review of that commit.
 
 ## Review gates
 
