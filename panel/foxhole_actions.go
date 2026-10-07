@@ -198,9 +198,12 @@ func reportMembers(members []commands.ReportMember) []reportMember {
 // holders lose each role it names, in the order the purge takes them, and
 // the rough time at one change a second.
 type purgeConfirm struct {
-	Scope    commands.PurgeScope
-	Label    string
-	Roles    []purgeRole
+	Scope commands.PurgeScope
+	Label string
+	Roles []purgeRole
+	// Changes counts the role changes the purge would make, every role's
+	// holders together. At 0 the page offers no Confirm.
+	Changes  int
 	Estimate estimate
 }
 
@@ -248,7 +251,6 @@ func estimateFor(changes int) estimate {
 func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope commands.PurgeScope) *purgeConfirm {
 	roleIDs := commands.FoxholeRoleIDs(s.manager.GuildData(s.guildID))
 	confirm := &purgeConfirm{Scope: scope, Label: scope.Label()}
-	changes := 0
 	for _, role := range scope.Roles() {
 		holders := 0
 		for _, mem := range list.Members {
@@ -257,9 +259,9 @@ func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope c
 			}
 		}
 		confirm.Roles = append(confirm.Roles, purgeRole{Role: role, Name: role.Label(), Holders: holders})
-		changes += holders
+		confirm.Changes += holders
 	}
-	confirm.Estimate = estimateFor(changes)
+	confirm.Estimate = estimateFor(confirm.Changes)
 	return confirm
 }
 
