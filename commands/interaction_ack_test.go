@@ -1,8 +1,11 @@
 package commands
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -29,19 +32,6 @@ func snowflakeAt(t time.Time) string {
 	return strconv.FormatInt((t.UnixMilli()-discordEpochMs)<<22, 10)
 }
 
-// slowAck holds the first response back for delay before Discord answers
-// it, as a slow acknowledgement would.
-type slowAck struct {
-	*fakeResponder
-	delay time.Duration
-	once  sync.Once
-}
-
-func (s *slowAck) InteractionRespond(i *discordgo.Interaction, resp *discordgo.InteractionResponse) error {
-	s.once.Do(func() { time.Sleep(s.delay) })
-	return s.fakeResponder.InteractionRespond(i, resp)
-}
-
 // extraMs reads a millisecond count off an event's extra context.
 func extraMs(e *sentry.Event, key string) (int64, bool) {
 	switch v := e.Contexts["extra"][key].(type) {
@@ -61,69 +51,52 @@ func extraMs(e *sentry.Event, key string) (int64, bool) {
 // interaction was when the bot sent it, so a late interaction can be told
 // from a slow answer. The event reports Discord's own error, so it groups
 // by Discord's error type. The bot sends nothing further on the
-// interaction.
+// interaction. Every registered command keeps to this, and so does a press
+// on a lock notice button.
 func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 	const (
 		ackDelay = 20 * time.Millisecond
 		age      = 5 * time.Second
 	)
-	slash := func(name string, opts ...*discordgo.ApplicationCommandInteractionDataOption) *discordgo.InteractionCreate {
-		i := fakeAppCommandInteraction(opts...)
-		i.ID = snowflakeAt(time.Now().Add(-age))
-		i.GuildID = "guild-1"
-		i.Data = discordgo.ApplicationCommandInteractionData{Name: name, Options: opts}
-		return i
+	type missedRun struct {
+		label, command, subcommand string
+		handler                    CommandHandler
+		interaction                func(t *testing.T) *discordgo.InteractionCreate
 	}
-	foxhole := func(subcommand string) *discordgo.InteractionCreate {
-		return slash("foxhole",
-			stringOption("command", subcommand), stringOption("flag", "internal"), stringOption("discordname", "someone"))
+	var runs []missedRun
+	for _, run := range registeredRuns(t) {
+		runs = append(runs, missedRun{run.label, run.command, run.subcommand, run.handler,
+			func(*testing.T) *discordgo.InteractionCreate { return run.interaction(time.Now().Add(-age)) }})
 	}
-	press := func(t *testing.T) *discordgo.InteractionCreate {
-		customID, err := lockNoticeCustomID(lockNoticeUnlock, "chan-1")
-		if err != nil {
-			t.Fatal(err)
-		}
-		i := pressInteraction(customID, lockOwner)
-		i.ID = snowflakeAt(time.Now().Add(-age))
-		return i
-	}
+	// main.go's dispatcher routes a press to /voice-lock's handler by its
+	// CustomID (ADR 0007).
+	lockHandler, _ := NewRegistry(nil, nil).GetHandler(voiceLockCommandName)
+	runs = append(runs, missedRun{"lock notice press", voiceLockCommandName, "", lockHandler,
+		func(t *testing.T) *discordgo.InteractionCreate {
+			customID, err := lockNoticeCustomID(lockNoticeUnlock, "chan-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			i := pressInteraction(customID, lockOwner)
+			i.ID, i.AppID, i.Token = snowflakeAt(time.Now().Add(-age)), "app-1", "token-1"
+			return i
+		}})
 
-	cases := []struct {
-		name       string
-		command    string
-		subcommand string
-		run        func(t *testing.T, r *slowAck)
-	}{
-		{"/foxhole add", "foxhole", "add", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, nil, foxhole("add")) }},
-		{"/foxhole remove", "foxhole", "remove", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, nil, foxhole("remove")) }},
-		{"/foxhole bulkadd", "foxhole", "bulkadd", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, nil, foxhole("bulkadd")) }},
-		{"/foxhole purge", "foxhole", "purge", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, nil, foxhole("purge")) }},
-		{"/foxhole-bulkadd-internal", "foxhole-bulkadd-internal", "", func(_ *testing.T, r *slowAck) {
-			runFoxholeBulkAddInternal(r, nil, nil, slash("foxhole-bulkadd-internal", stringOption("unit", validatedInternalUnits[0].Value)))
-		}},
-		{"/voice-rename", voiceRenameCommandName, "", func(_ *testing.T, r *slowAck) {
-			runVoiceRename(r, nil, slash(voiceRenameCommandName, stringOption("name", "Alpha")))
-		}},
-		{"/voice-lock", voiceLockCommandName, "", func(_ *testing.T, r *slowAck) { runVoiceLock(r, nil, slash(voiceLockCommandName)) }},
-		{"/voice-unlock", voiceUnlockCommandName, "", func(_ *testing.T, r *slowAck) { runVoiceUnlock(r, nil, slash(voiceUnlockCommandName)) }},
-		{"/s3aar", "s3aar", "", func(_ *testing.T, r *slowAck) { runS3aar(r, slash("s3aar")) }},
-		{"/s3aar (disabled)", "s3aar", "", func(_ *testing.T, r *slowAck) { runS3aarDisabled(r, slash("s3aar")) }},
-		{"lock notice press", voiceLockCommandName, "", func(t *testing.T, r *slowAck) { runVoiceLock(r, nil, press(t)) }},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range runs {
+		t.Run(tc.label, func(t *testing.T) {
 			rec := recordSentry(t)
 			// Discord answers every call on a gone interaction with 10062.
-			gone := func() []error {
-				err := restError(http.StatusNotFound, discordgo.ErrCodeUnknownInteraction, "Unknown interaction")
-				return []error{err, err, err}
-			}
-			r := &slowAck{fakeResponder: &fakeResponder{RespondErrs: gone(), EditErrs: gone(), FollowupErrs: gone()}, delay: ackDelay}
+			var slow sync.Once
+			api := &fakeDiscordAPI{answer: func(*http.Request, []byte) (int, []byte) {
+				slow.Do(func() { time.Sleep(ackDelay) })
+				return http.StatusNotFound, []byte(fmt.Sprintf(`{"message": "Unknown interaction", "code": %d}`, discordgo.ErrCodeUnknownInteraction))
+			}}
+			i := tc.interaction(t)
 
-			tc.run(t, r)
+			tc.handler(stateSession(t, api), i)
 
-			if calls := r.Calls(); len(calls) != 1 {
-				t.Errorf("responder calls = %+v, want only the refused acknowledgement", calls)
+			if reqs := onInteraction(api, i); len(reqs) != 1 {
+				t.Errorf("requests on the interaction = %+v, want only the refused acknowledgement", reqs)
 			}
 			events := rec.Events()
 			if len(events) != 1 {
@@ -148,6 +121,169 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 			}
 			if old, ok := extraMs(e, "interaction_age_ms"); !ok || old < age.Milliseconds() || old >= age.Milliseconds()+60_000 {
 				t.Errorf("interaction_age_ms = %v, want the interaction's age when acknowledged (>= %d)", e.Contexts["extra"]["interaction_age_ms"], age.Milliseconds())
+			}
+		})
+	}
+}
+
+// ackRunOptions gives each registered command the options that carry a
+// run of it to its acknowledgement. A command that spells its subcommands
+// as the choices of a "command" option runs once per choice, and
+// registeredRuns adds that option itself.
+func ackRunOptions() map[string][]*discordgo.ApplicationCommandInteractionDataOption {
+	foxhole := []*discordgo.ApplicationCommandInteractionDataOption{
+		stringOption("flag", "internal"), stringOption("discordname", "someone"),
+	}
+	roster := []*discordgo.ApplicationCommandInteractionDataOption{
+		stringOption("unit", validatedInternalUnits[0].Value),
+	}
+	return map[string][]*discordgo.ApplicationCommandInteractionDataOption{
+		"milpac":                   {userOption("user", "123456789012345678")},
+		"foxhole":                  foxhole,
+		"warden":                   foxhole,
+		"enlist":                   nil,
+		"foxhole-bulkadd-internal": roster,
+		"warden-bulkadd-internal":  roster,
+		"zulu":                     nil,
+		"s6-it-check":              nil,
+		"awol":                     {stringOption("position", "S1")},
+		"loa":                      {stringOption("position", "S1")},
+		"afsm":                     {stringOption("department", "S1")},
+		"gamertag_search":          {stringOption("gamertag", "someone")},
+		"s3aar":                    nil,
+		"helpline":                 nil,
+		voiceRenameCommandName:     {stringOption("name", "Alpha")},
+		voiceLockCommandName:       nil,
+		voiceUnlockCommandName:     nil,
+	}
+}
+
+// registeredRun is one run of a registered command, through the handler
+// main.go's dispatcher reaches by the command's name.
+type registeredRun struct {
+	label, command, subcommand string
+	handler                    CommandHandler
+	options                    []*discordgo.ApplicationCommandInteractionDataOption
+}
+
+// registeredRuns walks NewRegistry: every registered command, once per
+// subcommand for a command that has them. A command with no entry in
+// ackRunOptions fails t, so no command joins the registry without a case.
+func registeredRuns(t *testing.T) []registeredRun {
+	t.Helper()
+	reg := NewRegistry(nil, nil)
+	cases := ackRunOptions()
+	var runs []registeredRun
+	for _, def := range reg.GetCommands() {
+		opts, ok := cases[def.Name]
+		if !ok {
+			t.Errorf("no case for /%s: give ackRunOptions the options that carry a run of it to its acknowledgement", def.Name)
+			continue
+		}
+		handler, _ := reg.GetHandler(def.Name)
+		subcommands := typedSubcommands(def)
+		if len(subcommands) == 0 {
+			runs = append(runs, registeredRun{label: "/" + def.Name, command: def.Name, handler: handler, options: opts})
+			continue
+		}
+		for _, sub := range subcommands {
+			runs = append(runs, registeredRun{
+				label: "/" + def.Name + " " + sub, command: def.Name, subcommand: sub, handler: handler,
+				options: append([]*discordgo.ApplicationCommandInteractionDataOption{stringOption("command", sub)}, opts...),
+			})
+		}
+	}
+	return runs
+}
+
+// typedSubcommands returns the choices of a command's "command" option,
+// the way /foxhole spells its subcommands.
+func typedSubcommands(def *discordgo.ApplicationCommand) []string {
+	for _, opt := range def.Options {
+		if opt.Name != "command" {
+			continue
+		}
+		var subcommands []string
+		for _, choice := range opt.Choices {
+			subcommands = append(subcommands, fmt.Sprint(choice.Value))
+		}
+		return subcommands
+	}
+	return nil
+}
+
+// interaction is the run's slash command as Discord delivers it, minted at
+// created.
+func (run registeredRun) interaction(created time.Time) *discordgo.InteractionCreate {
+	i := sessionSlash(run.command, run.options...)
+	i.ID = snowflakeAt(created)
+	return i
+}
+
+// onInteraction returns the requests that reached Discord on i: its
+// responses, edits and follow-ups, which all carry its token.
+func onInteraction(api *fakeDiscordAPI, i *discordgo.InteractionCreate) []apiRequest {
+	var reqs []apiRequest
+	for _, req := range api.received() {
+		if strings.Contains(req.path, i.Token) {
+			reqs = append(reqs, req)
+		}
+	}
+	return reqs
+}
+
+// isResponse reports whether req is an interaction response, the call
+// that acknowledges an interaction or replies to it first.
+func isResponse(req apiRequest) bool {
+	return req.method == http.MethodPost && strings.HasSuffix(req.path, "/callback")
+}
+
+// When Discord refuses a command's acknowledgement with anything but 10062
+// Unknown interaction, the member gets ackFailedReply, the answer every
+// command gives then. None of Discord's response body reaches the member;
+// it stays in the log.
+func TestRefusedAcknowledgementGetsTheFixedReply(t *testing.T) {
+	for _, run := range registeredRuns(t) {
+		t.Run(run.label, func(t *testing.T) {
+			logs := captureLogs(t)
+			var refuse sync.Once
+			api := &fakeDiscordAPI{answer: func(r *http.Request, _ []byte) (int, []byte) {
+				if !strings.HasSuffix(r.URL.Path, "/callback") {
+					return http.StatusOK, []byte(`{"id":"message-1"}`)
+				}
+				status := http.StatusNoContent
+				refuse.Do(func() { status = http.StatusInternalServerError })
+				if status == http.StatusNoContent {
+					return status, nil
+				}
+				return status, []byte(fmt.Sprintf(`{"message": %q, "code": 0}`, rawBodyMarker))
+			}}
+			i := run.interaction(time.Now())
+
+			run.handler(stateSession(t, api), i)
+
+			reqs := onInteraction(api, i)
+			if len(reqs) < 2 || !isResponse(reqs[1]) {
+				t.Fatalf("requests on the interaction = %+v, want the refused acknowledgement, then a reply", reqs)
+			}
+			var reply struct {
+				Data struct {
+					Content string `json:"content"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(reqs[1].body, &reply); err != nil {
+				t.Fatalf("reply body %s: %v", reqs[1].body, err)
+			}
+			if reply.Data.Content != ackFailedReply {
+				t.Errorf("reply = %q, want %q", reply.Data.Content, ackFailedReply)
+			}
+			for _, req := range reqs {
+				if strings.Contains(string(req.body), rawBodyMarker) {
+					t.Errorf("%s %s carries Discord's response body: %s", req.method, req.path, req.body)
+				}
+			}
+			if !strings.Contains(logs.String(), rawBodyMarker) {
+				t.Error("the log lacks Discord's response body")
 			}
 		})
 	}

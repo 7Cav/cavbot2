@@ -162,7 +162,7 @@ func runHelpline(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	utils.Info("🚀 Starting Helpline", "command", "Helpline", "username", username,
 		"discord_id", discordID, "target_id", targetID)
 
-	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	err := acknowledge(r, i, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: content,
@@ -170,7 +170,7 @@ func runHelpline(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 		},
 	})
 	if err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		replyAckFailed(r, i, err)
 		return
 	}
 	utils.Info("✨ Done!", "command", "Helpline")

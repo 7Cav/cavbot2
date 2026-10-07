@@ -129,14 +129,14 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		forceFile = i.ApplicationCommandData().Options[1].BoolValue()
 	}
 
-	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	err := acknowledge(r, i, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: fmt.Sprintf("Fetching AWOL data for %s...", position),
 		},
 	})
 	if err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		replyAckFailed(r, i, err)
 		return
 	}
 

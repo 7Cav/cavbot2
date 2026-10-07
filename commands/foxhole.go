@@ -135,12 +135,16 @@ func runFoxhole(
 	interaction *discordgo.InteractionCreate,
 ) {
 	// A purge runs on in the background, so it gives the one-action-at-a-time
-	// rule back and sends its own note once its summary is out.
-	purging := false
+	// rule back and sends its own note once its summary is out. A missed
+	// acknowledgement leaves no interaction to send the note on.
+	purging, missedAck := false, false
 	end := func() {}
 	defer func() {
-		if !purging {
-			end()
+		if purging {
+			return
+		}
+		end()
+		if !missedAck {
 			sendRenameNote(r, interaction, "warden", "foxhole")
 		}
 	}()
@@ -207,6 +211,13 @@ func runFoxhole(
 		return
 	}
 
+	// Every subcommand answers in one reply only its member sees.
+	if err := deferEphemeral(r, interaction); err != nil {
+		missedAck = isUnknownInteraction(err)
+		replyAckFailed(r, interaction, err, "subcommand", subcommand)
+		return
+	}
+
 	switch subcommand {
 	case "add":
 		handleFoxholeAdd(r, gm, interaction, guildID, query, roleScope)
@@ -268,11 +279,6 @@ func foxholeCommandRun(interaction *discordgo.InteractionCreate, typed string) C
 }
 
 func handleFoxholeAdd(r utils.InteractionResponder, gm GuildManager, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
-	if err := deferEphemeral(r, interaction); err != nil {
-		replyAckFailed(r, interaction, err, "subcommand", foxholeSubcommandOf(interaction))
-		return
-	}
-
 	member, err := findGuildMember(gm, guildID, query)
 	if err != nil {
 		editEphemeral(r, interaction, err.Error())
@@ -321,11 +327,6 @@ func handleFoxholeRemove(
 	query string,
 	roleScope string,
 ) {
-	if err := deferEphemeral(r, interaction); err != nil {
-		replyAckFailed(r, interaction, err, "subcommand", foxholeSubcommandOf(interaction))
-		return
-	}
-
 	member, err := findGuildMember(gm, guildID, query)
 	if err != nil {
 		editEphemeral(r, interaction, err.Error())
@@ -362,15 +363,6 @@ func handleFoxholeBulkAdd(
 	query string,
 	roleScope string,
 ) {
-	if err := deferEphemeral(r, interaction); err != nil {
-		if isUnknownInteraction(err) {
-			captureMissedAck(interaction, err, "subcommand", foxholeSubcommandOf(interaction))
-			return
-		}
-		utils.HandleError(r, interaction, fmt.Sprintf("❌ Failed to acknowledge bulk add: %v", err))
-		return
-	}
-
 	// Parse and bound the entry list BEFORE any Discord API call (role
 	// resolution, member search, role-add). resolveFoxholeRoleIDs below issues a
 	// GuildRoles request, and the per-entry loop fans out a GuildMembersSearch +
@@ -471,16 +463,6 @@ func handleFoxholePurge(
 	roleScope string,
 	end func(),
 ) {
-	if err := deferEphemeral(r, interaction); err != nil {
-		end()
-		if isUnknownInteraction(err) {
-			captureMissedAck(interaction, err, "subcommand", foxholeSubcommandOf(interaction))
-			return
-		}
-		utils.HandleError(r, interaction, fmt.Sprintf("❌ Failed to acknowledge purge: %v", err))
-		return
-	}
-
 	go func() {
 		defer utils.RecoverPanic("foxhole-purge")
 		defer end()
@@ -492,7 +474,8 @@ func handleFoxholePurge(
 // runFoxholePurge performs the role-recreation purge. Extracted from the inline
 // goroutine in handleFoxholePurge so it is directly callable from tests with a
 // fake GuildManager/responder; the caller (handleFoxholePurge) owns the
-// goroutine + panic recovery and the deferred-ephemeral acknowledge.
+// goroutine + panic recovery, and runFoxhole the deferred-ephemeral
+// acknowledge.
 func runFoxholePurge(
 	r utils.InteractionResponder,
 	gm GuildManager,

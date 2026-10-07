@@ -34,7 +34,7 @@ func runEnlist(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	utils.Info("🚀 Starting Enlist", "command", "Enlist", "username", username,
 		"discord_id", discordID)
 
-	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	err := acknowledge(r, i, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Embeds: []*discordgo.MessageEmbed{
@@ -52,8 +52,7 @@ func runEnlist(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	})
 
 	if err != nil {
-		utils.Error("❌ Interaction response failed", "error", err)
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		replyAckFailed(r, i, err)
 		return
 	}
 

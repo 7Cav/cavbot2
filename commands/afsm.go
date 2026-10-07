@@ -58,15 +58,14 @@ func runAFSM(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	choice := i.ApplicationCommandData().Options[0].StringValue()
 	utils.Debug("🔍 Processing department choice", "department", choice)
 
-	err := r.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	err := acknowledge(r, i, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: fmt.Sprintf("Fetching AFSM data for %s...", choice),
 		},
 	})
 	if err != nil {
-		utils.CaptureError("❌ Interaction response failed", err)
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to respond to interaction: %v", err))
+		replyAckFailed(r, i, err)
 		return
 	}
 

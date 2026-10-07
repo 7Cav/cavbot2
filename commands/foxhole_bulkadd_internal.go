@@ -58,7 +58,13 @@ func runFoxholeBulkAddInternal(
 	fx *FoxholeRuntime,
 	interaction *discordgo.InteractionCreate,
 ) {
-	defer sendRenameNote(r, interaction, "warden-bulkadd-internal", "foxhole-bulkadd-internal")
+	// A missed acknowledgement leaves no interaction to send the note on.
+	missedAck := false
+	defer func() {
+		if !missedAck {
+			sendRenameNote(r, interaction, "warden-bulkadd-internal", "foxhole-bulkadd-internal")
+		}
+	}()
 
 	// Guild-context guard first: Foxhole commands require guild context. Rejecting
 	// on an empty GuildID here gives a clear server-only message and guarantees a
@@ -97,6 +103,7 @@ func runFoxholeBulkAddInternal(
 	defer end()
 
 	if err := deferEphemeral(r, interaction); err != nil {
+		missedAck = isUnknownInteraction(err)
 		replyAckFailed(r, interaction, err)
 		return
 	}
