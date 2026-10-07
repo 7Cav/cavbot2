@@ -2,44 +2,79 @@
 
 ## Status
 
-Accepted (0.7.6 / PR #75). Amended 2026-10-06: a floor now stays within 3
-points of its package's coverage, and the floor script computes the new floor.
+Accepted (0.7.6 / PR #75). **Amended 2026-10-07**: the rule for raising a
+floor changed; see *Amendment: floors track coverage, not each PR's gain*.
+Per-package floors are unchanged.
 
 ## Decision
 
-CI enforces **per-package** coverage floors. `.github/coverage-floors.tsv`
-lists each tracked package and its floor, and
-`.github/scripts/check-coverage-floors.sh` fails when a package's coverage in
-the `go test -cover` output is below its floor. `main` is excluded.
+CI enforces **per-package** coverage floors via
+`.github/scripts/check-coverage-floors.sh` — a pure-bash script that parses
+`go test -cover` on stdin and applies inlined per-package floors. `main` is
+excluded.
 
-A floor stays at most 3 points below its package's coverage. When coverage is
-more than 3 points above the floor, the script prints a RAISE line with the new
-floor: the whole-number part of the coverage, minus 1. Set it in the same PR.
+When a PR raises a package's coverage by more than a point or two, raise its
+floor in the same PR. *Superseded: see the amendment below.*
 
 ## Why
 
 A single global floor either sandbags well-covered packages or false-alarms
-on refactor dips elsewhere. A floor just below each package's coverage leaves
-room for a refactor dip and still fails on a real loss.
-
-The first version said to raise a floor "when a PR raises a package's coverage
-by more than a point or two". Agents read that two ways. #458 and #459 compared
-their own gain to two points and left `commands` at a floor of 81 with its
-coverage at 94.8%. #460 set `panel`'s floor just under its coverage. Under the
-first reading, `commands` later fell to 88.0% and no check failed. A rule
-measured from the floor needs no baseline run of `develop`, and the script
-applies it the same way for every reader.
-
-RAISE does not fail the check. Two PRs merged close together can each gain
-less than 3 points and pass that line together. A failing check would then
-turn `develop` red over a gain in coverage and block every open PR,
-Dependabot's included, until someone raised the floor.
+on refactor dips elsewhere. Per-package floors set just-below baseline let
+the suite ratchet up organically without anyone having to remember to bump
+a number.
 
 ## How to apply
 
-- `.github/scripts/gate.sh` runs the check after the suite, against a Postgres
-  it starts, the same way CI does. The `store` floor holds only when its
-  Postgres tests run.
-- When the check prints RAISE, set those floors in `.github/coverage-floors.tsv`
-  in the same PR.
+*Superseded by the amendment's How to apply.*
+
+- Local check matches CI: `go test ./... -cover | .github/scripts/check-coverage-floors.sh`.
+  Since the store package landed (#299) this holds only with `TEST_BOT_DB_DSN` exported: the `store`
+  package's Postgres tests skip without it and the package falls under its
+  floor. The CI gate block in `CLAUDE.md` starts a throwaway Postgres for that.
+- After a PR that raises a package's coverage non-trivially, edit the floor
+  for that package in the script in the same PR. That's the ratchet.
+- Don't add new packages without a starter floor — even `1%` is enough to
+  begin the ratchet.
+
+## Amendment: floors track coverage, not each PR's gain (2026-10-07)
+
+The raise rule above was read two ways. One reading measured a PR's own gain
+against "a point or two" and left the floor alone below that. The other kept
+the floor just below coverage, as *Why* intends. Under the first, a run of
+small gains never moves a floor, so the gap between floor and coverage keeps
+growing and a loss of that size passes CI. `commands` sat 13 points above its
+floor of 81, then lost almost 7 points of coverage without a failed check.
+
+### Decision
+
+A floor stays within 3 points of its package's coverage. When coverage is more
+than 3 points above the floor, the floor moves to the whole-number part of the
+coverage minus 1, in the same PR. The floor check computes and prints that
+number, so every reader gets the same one.
+
+Coverage above that line never fails the check. Only a package below its floor
+fails.
+
+Floors come from coverage on the Go version CI runs, the one `go.mod` names.
+The same code covers differently under different Go versions: `commands`
+covers 86.4% under 1.26.0 and 88.1% under 1.27.1, more than the 1 to 2 points
+a fresh floor leaves.
+
+### Considered options
+
+- A rule based on each PR's gain, with a sharper threshold. Every PR would
+  need a baseline run of `develop` to measure its gain, and floors would still
+  fall behind coverage one small gain at a time.
+- Failing the check when coverage passes the 3-point line. Two PRs merged
+  close together can each stay under it and cross it together. `develop`
+  would then go red over a coverage gain and block every open PR, Dependabot's
+  included, until someone raised the floor.
+
+### How to apply
+
+- `.github/scripts/gate.sh` runs the floor check the way CI does: on CI's Go
+  version, after the full suite, against a Postgres it starts. The `store`
+  floor holds only when its Postgres tests run.
+- Floors live in `.github/coverage-floors.tsv`. When the check prints a RAISE
+  line, set that floor in the same PR.
 - A new package gets a floor in the PR that adds it, by the same rule.
