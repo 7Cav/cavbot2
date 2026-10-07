@@ -33,6 +33,15 @@ trap 'exit 143' TERM
 
 step() { printf '\n==> %s\n' "$*"; }
 
+# What this run tests, read before any step so a commit made mid-run cannot
+# change the summary.
+commit=$(git rev-parse --short HEAD)
+if [[ -z "$(git status --porcelain)" ]]; then
+    tree="working tree clean"
+else
+    tree="working tree has uncommitted changes"
+fi
+
 step "lint"
 golangci-lint run --timeout=5m
 
@@ -57,11 +66,6 @@ go build -o "$work/cavbot2" .
 
 # A summary to paste into a reviewer's prompt, so they can tell which tree
 # passed without running the suite again.
-if [[ -z "$(git status --porcelain)" ]]; then
-    tree="working tree clean"
-else
-    tree="working tree has uncommitted changes"
-fi
 step "gate passed"
-echo "commit $(git rev-parse --short HEAD), $tree"
+echo "commit $commit, $tree"
 cat "$work/floors.log"

@@ -22,7 +22,14 @@
 set -euo pipefail
 
 floors_file=${1:?usage: check-coverage-floors.sh <floors-file> < go-test-output}
-FLOORS=$(grep -v '^#' "$floors_file")
+FLOORS=$(grep -v '^#' "$floors_file" || true)
+if [[ -z "$FLOORS" ]]; then
+    echo "ERROR: no floors in $floors_file" >&2
+    exit 1
+fi
+
+# Coverage more than this many points above a floor gets a RAISE line.
+raise_margin=3
 
 # Read `go test -cover` output from stdin.
 output=$(cat)
@@ -46,7 +53,7 @@ while IFS=$'\t' read -r pkg floor; do
         else
             margin=$(awk -v c="$cov" -v f="$floor" 'BEGIN { printf "%.1f", c - f }')
             echo "OK:   $pkg coverage ${cov}% >= floor ${floor}%, margin ${margin}"
-            if awk -v c="$cov" -v f="$floor" 'BEGIN { exit (c - f > 3) ? 0 : 1 }'; then
+            if awk -v c="$cov" -v f="$floor" -v m="$raise_margin" 'BEGIN { exit (c - f > m) ? 0 : 1 }'; then
                 raise+=("RAISE $pkg to $((${cov%.*} - 1)) (floor ${floor}%, coverage ${cov}%)")
             fi
         fi
@@ -59,7 +66,7 @@ done <<<"$FLOORS"
 if [[ ${#raise[@]} -gt 0 ]]; then
     echo
     printf '%s\n' "${raise[@]}"
-    echo "Coverage is more than 3 points above these floors. Set each to the"
+    echo "Coverage is more than $raise_margin points above these floors. Set each to the"
     echo "number given, in $floors_file, in this PR (ADR 0005)."
 fi
 
