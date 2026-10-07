@@ -43,6 +43,8 @@ type reportView struct {
 	Skipped      []reportMember
 	Failed       []reportMember
 	NotAttempted []reportMember
+	// Unadded are an add's pasted lines that added nobody.
+	Unadded []unaddedLine
 	// StopPressedBy is the forum user who pressed Stop on the running
 	// action, which stops after the change in flight. Empty until someone
 	// does.
@@ -54,6 +56,27 @@ type reportView struct {
 	// Left is the rough time the rest take.
 	Done, Total int
 	Left        estimate
+}
+
+// unaddedLine is a line pasted for an add that added nobody, as its report
+// lists it.
+type unaddedLine struct {
+	commands.UnaddedLine
+}
+
+// Why is why the line added nobody, as the report says it.
+func (l unaddedLine) Why() string {
+	switch l.Reason {
+	case commands.UnaddedNoMatch:
+		return "no member matches"
+	case commands.UnaddedNoSuchID:
+		return "no member with this ID in the server"
+	case commands.UnaddedNonePicked:
+		return fmt.Sprintf("matched %d members, none picked", l.Matches)
+	case commands.UnaddedSameMember:
+		return fmt.Sprintf("same member as line %d", l.SameAs)
+	}
+	return string(l.Reason)
 }
 
 // reportMember is one member a report names, with the role's name as the
@@ -129,6 +152,9 @@ func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 		Running: stored.Running, Outcome: report.Outcome,
 		Changed: reportMembers(report.Changed), Skipped: reportMembers(report.Skipped), Failed: reportMembers(report.Failed),
 		NotAttempted: reportMembers(report.NotAttempted)}
+	for _, line := range report.Unadded {
+		view.Unadded = append(view.Unadded, unaddedLine{UnaddedLine: line})
+	}
 	if report.StoppedBy != nil {
 		view.StoppedBy = report.StoppedBy.Username
 	}
@@ -205,6 +231,7 @@ var actionNames = map[store.ChangeAction]string{
 	store.ChangePurge:   "Purge",
 	store.ChangeRemoval: "Remove",
 	store.ChangeReAdd:   "Re-add approved collaborators",
+	store.ChangeAdd:     "Add",
 }
 
 // scopeLabels are the purge scopes as the page names them.
@@ -374,6 +401,13 @@ func actionListPartialRefusal(what string) *saveRefusal {
 		Message: fmt.Sprintf("Cavbot2 doesn't have the whole member list from Discord yet, so %s didn't start. Nothing changed. Try again once the list has arrived.", what)}
 }
 
+// addListPartialRefusal refuses an add's Preview pressed while the member
+// list is partial: no line can be matched. The page keeps the lines
+// pasted, to preview again once the list has arrived.
+var addListPartialRefusal = &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
+	log:     "Panel action refused: member list partial",
+	Message: "Cavbot2 doesn't have the whole member list from Discord yet, so it can't match the pasted lines. Nothing changed. Preview again once the list has arrived."}
+
 // removeListPartialRefusal refuses a removal of the role named, its preview
 // opened or its Confirm pressed while the member list is partial: it can't
 // tell who holds the role. The page keeps no selection, so the manager
@@ -405,7 +439,7 @@ func (p *Panel) startPurge(w http.ResponseWriter, r *http.Request, sess session)
 		http.Error(w, "the form names no purge scope, so nothing changed", http.StatusBadRequest)
 		return
 	}
-	p.startAction(w, r, sess, "the purge", func(ctx context.Context, by commands.ForumUser) error {
+	p.startAction(w, r, sess, actionPage, "the purge", func(ctx context.Context, by commands.ForumUser) error {
 		return p.foxhole.actions.Purge(ctx, scope, by)
 	}, "scope", scope)
 }
@@ -428,7 +462,7 @@ func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess sessio
 		http.Error(w, "the form names no member, so nothing changed", http.StatusBadRequest)
 		return
 	}
-	p.startAction(w, r, sess, "the removal", func(ctx context.Context, by commands.ForumUser) error {
+	p.startAction(w, r, sess, actionPage, "the removal", func(ctx context.Context, by commands.ForumUser) error {
 		err := p.foxhole.actions.Remove(ctx, role, members, by)
 		if errors.Is(err, commands.ErrMemberListPartial) {
 			// The page the refusal answers with keeps no selection: it says
@@ -443,16 +477,16 @@ func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess sessio
 // approved collaborators: one button with no preview, which starts the
 // re-add as startAction says.
 func (p *Panel) startReAdd(w http.ResponseWriter, r *http.Request, sess session) {
-	p.startAction(w, r, sess, "the re-add", p.foxhole.actions.ReAdd)
+	p.startAction(w, r, sess, actionPage, "the re-add", p.foxhole.actions.ReAdd)
 }
 
 // startAction starts a Foxhole action, named by what, through start and
 // redirects straight back to the Foxhole page. The action runs in the
 // background to its end, whether or not the browser waits, so the request
-// never waits on it. A refused action answers with the page and the
-// refusal, and logs it with kv. A start that returns a *saveRefusal refuses
-// in its own words.
-func (p *Panel) startAction(w http.ResponseWriter, r *http.Request, sess session, what string,
+// never waits on it. A refused action answers with the page back asks for
+// and the refusal, and logs it with kv. A start that returns a *saveRefusal
+// refuses in its own words.
+func (p *Panel) startAction(w http.ResponseWriter, r *http.Request, sess session, back foxholeRequest, what string,
 	start func(context.Context, commands.ForumUser) error, kv ...any) {
 	err := start(context.WithoutCancel(r.Context()), sess.forumUser())
 	var (
@@ -461,16 +495,16 @@ func (p *Panel) startAction(w http.ResponseWriter, r *http.Request, sess session
 	)
 	switch {
 	case errors.As(err, &refusal):
-		p.refuseAction(w, r, sess, refusal, kv...)
+		p.refuseAction(w, r, sess, back, refusal, kv...)
 		return
 	case errors.Is(err, commands.ErrActionRunning):
-		p.refuseAction(w, r, sess, actionRunningRefusal(what), kv...)
+		p.refuseAction(w, r, sess, back, actionRunningRefusal(what), kv...)
 		return
 	case errors.Is(err, commands.ErrMemberListPartial):
-		p.refuseAction(w, r, sess, actionListPartialRefusal(what), kv...)
+		p.refuseAction(w, r, sess, back, actionListPartialRefusal(what), kv...)
 		return
 	case errors.As(err, &missing):
-		p.refuseAction(w, r, sess, roleMissingRefusal(what, missing.Role), append(kv, "role", missing.Role)...)
+		p.refuseAction(w, r, sess, back, roleMissingRefusal(what, missing.Role), append(kv, "role", missing.Role)...)
 		return
 	}
 	if err != nil {
@@ -504,9 +538,15 @@ func (s session) forumUser() commands.ForumUser {
 	return commands.ForumUser{ID: s.userID, Username: s.username}
 }
 
-// refuseAction answers a refused Foxhole action with the page as it stands
-// and the refusal on it, and logs the refusal's INFO line with kv.
-func (p *Panel) refuseAction(w http.ResponseWriter, r *http.Request, sess session, refusal *saveRefusal, kv ...any) {
+// refuseAction answers a refused Foxhole action with the page back asks
+// for, as it stands, and the refusal on it, and logs the refusal's INFO
+// line with kv.
+func (p *Panel) refuseAction(w http.ResponseWriter, r *http.Request, sess session, back foxholeRequest, refusal *saveRefusal, kv ...any) {
 	utils.Info(refusal.log, append(kv, "username", sess.username, "forum_user_id", sess.userID)...)
-	p.renderFoxhole(w, r, sess, refusal.status, foxholeRequest{Filter: filterAll, ActionRefusal: refusal})
+	back.ActionRefusal = refusal
+	p.renderFoxhole(w, r, sess, refusal.status, back)
 }
+
+// actionPage is the page a refused purge, removal or re-add answers with:
+// the holder list unfiltered, with nothing open.
+var actionPage = foxholeRequest{Filter: filterAll}

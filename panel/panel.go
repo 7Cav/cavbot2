@@ -200,6 +200,8 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("POST "+foxholeNotesPath, p.withFoxholePage(p.saveNote))
 	mux.HandleFunc("POST "+foxholeApprovalsPath, p.withFoxholePage(p.saveApprovals))
 	mux.HandleFunc("POST "+foxholePurgePath, p.withFoxholePage(p.startPurge))
+	mux.HandleFunc("POST "+foxholeAddPreviewPath, p.withFoxholePage(p.previewAdd))
+	mux.HandleFunc("POST "+foxholeAddPath, p.withFoxholePage(p.startAdd))
 	mux.HandleFunc("POST "+foxholeRemovePath, p.withFoxholePage(p.startRemoval))
 	mux.HandleFunc("POST "+foxholeReAddPath, p.withFoxholePage(p.startReAdd))
 	mux.HandleFunc("POST "+foxholeStopPath, p.withFoxholePage(p.stopAction))

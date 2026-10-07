@@ -76,7 +76,41 @@
     {{end}}
   </section>
   {{end}}
+  {{with .AddPreview}}
+  <section class="block fx-pending" data-field="add-preview" data-role="{{.Role}}">
+    <h2 class="block-header">Add {{.Name}}?</h2>
+    {{template "add-form" .Paste}}
+    {{with .Notes}}<div class="block-row" data-field="notes"><span data-field="note-count">{{.}}</span> {{if eq . 1}}member in this preview has{{else}}members in this preview have{{end}} a note.</div>{{end}}
+    <div class="scroll"><table class="hublist fx-list fx-addpreview">
+      <thead><tr><th>Line</th><th>Pasted</th><th>Member</th><th>Result</th></tr></thead>
+      <tbody>
+      {{range .Rows}}{{$line := .Line}}
+        <tr data-line="{{.Line}}" data-result="{{.Result}}"{{with .Member}} data-member="{{.ID}}" data-matched="{{.Matched}}"{{end}}{{with .SameAs}} data-same-as="{{.}}"{{end}}{{if or (eq .Result "pick") (eq .Result "too-many")}} data-matches="{{.Matches}}"{{end}}>
+          <td class="fx-nowrap">{{.Line}}</td>
+          <td><code class="fx-pasted">{{.Text}}</code></td>
+          <td>{{with .Member}}{{template "add-member" .}}{{else}}{{with .Choices}}<ul class="fx-choices">
+            {{- range .}}<li data-choice="{{.ID}}" data-matched="{{.Matched}}" data-result="{{.Result}}"{{with .SameAs}} data-same-as="{{.}}"{{end}}><label class="check"><input type="radio" name="pick-{{$line}}" value="{{.ID}}" form="fx-add-confirm"> {{template "add-member" .}}</label> <span class="tag" data-field="result">{{.ResultLabel}}</span></li>{{end -}}
+          </ul>{{else}}<span class="off">none</span>{{end}}{{end}}</td>
+          <td><span class="tag" data-field="result">{{.ResultLabel}}</span></td>
+        </tr>
+      {{else}}
+        <tr><td colspan="4" class="off">The paste box is empty.</td></tr>
+      {{end}}
+      </tbody>
+    </table></div>
+    <form method="post" action="/foxhole/add" id="fx-add-confirm" class="submit-row" data-field="add-confirm">
+      <input type="hidden" name="role" value="{{.Role}}">
+      <input type="hidden" name="lines" value="{{.Paste.Text}}">
+      {{if .Rows}}<button type="submit" class="btn btn--cta" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Add {{.Name}}</button>{{end}}
+      <a class="btn" href="/foxhole">Cancel</a>
+    </form>
+  </section>
+  {{end}}
   <div class="fx-actions" data-field="actions">
+    <section class="block" data-field="add-members">
+      <h2 class="block-header">Add members</h2>
+      {{template "add-form" .Paste}}
+    </section>
     <section class="block" data-field="after-a-war">
       <h2 class="block-header">After a war</h2>
       <form method="get" action="/foxhole" data-field="purge">
@@ -159,7 +193,14 @@
     {{template "also-matches" .AlsoMatches}}
   </section>
   {{end}}
-  {{else}}{{with .ListNotice}}
+  {{else}}{{if .PasteHeld}}
+  <div class="fx-actions fx-actions--alone" data-field="actions">
+    <section class="block" data-field="add-members">
+      <h2 class="block-header">Add members</h2>
+      {{template "add-form" .Paste}}
+    </section>
+  </div>
+  {{end}}{{with .ListNotice}}
   <div class="note" role="status" data-notice="member-list" data-list-status="{{.Status}}">
     {{- if eq .Status "arriving"}}Waiting for the member list from Discord{{if .Expected}} (<span data-field="parts_received">{{.Received}}</span> of <span data-field="parts_expected">{{.Expected}}</span>){{end}}.
     {{- else if eq .Status "refused"}}Discord stopped the member list fetch. Retrying in <span data-field="retry_in">{{.RetryIn}}</span> s.
@@ -234,6 +275,27 @@
 
 {{define "preview-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}"{{with .Skip}} data-reason="{{.}}"{{end}}>{{if .DisplayName}}{{.DisplayName}} <span class="fx-user">@{{.Username}}</span>{{else}}{{.ID}}{{end}}{{with .Why}} <span data-field="reason">{{.}}</span>{{end}}{{with .Note}} <span class="fx-previewnote">Note: <span data-field="note">{{.}}</span></span>{{end}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}
 
+{{define "add-form"}}<form method="post" action="/foxhole/add/preview" data-field="add-form">
+  <div class="block-row">
+    <div class="field fx-radios"><span class="field-label">Role</span>
+      <label class="check"><input type="radio" name="role" value="internal"{{if ne .Role "external"}} checked{{end}}> Internal</label>
+      <label class="check"><input type="radio" name="role" value="external"{{if eq .Role "external"}} checked{{end}}> External</label>
+    </div>
+    <label class="field"><span class="field-label">Members, one a line</span>
+      <textarea name="lines" rows="5" class="fx-paste" autocomplete="off" spellcheck="false">
+{{.Text}}</textarea>
+      <span class="field-hint">Discord IDs, mentions, usernames, nicknames or global names. You see what each line matched before anything changes.</span>
+    </label>
+  </div>
+  <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="preview">{{if .Again}}Preview again{{else}}Preview{{end}}</button></div>
+</form>{{end}}
+
+{{define "add-member"}}<span class="fx-name" data-field="display_name">{{.DisplayName}}</span> <span class="fx-user">@<span data-field="username">{{.Username}}</span></span>
+  <span class="fx-matched">matched by {{.MatchedLabel}}</span>
+  <span class="fx-addinfo">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else}}<span class="off">no rank role</span>{{end}}
+  {{- if .Internal}} <span class="tag fx-role" data-role="internal">Internal</span>{{end}}{{if .External}} <span class="tag fx-role" data-role="external">External</span>{{end}}</span>
+  {{- with .Note}}<span class="fx-previewnote">Note: <span data-field="note">{{.}}</span></span>{{end}}{{end}}
+
 {{define "outcome"}}{{if .StoppedBy}}Stopped by <span data-field="stopped-by">{{.StoppedBy}}</span>{{else}}{{.OutcomeLabel}}{{end}}{{end}}
 
 {{define "report-head"}}<div class="block-row fx-reporthead">Started by <span data-field="started-by">{{.StartedBy}}</span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>{{if not .EndedAt.IsZero}}, ended at <time data-field="ended" datetime="{{.EndedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.EndedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>{{end}}.</div>{{end}}
@@ -243,6 +305,8 @@
 <div class="block-row fx-reportlist" data-list="skipped"><h3>Skipped <span class="fx-count" data-field="count">{{len .Skipped}}</span></h3>{{template "report-members" .Skipped}}</div>
 <div class="block-row fx-reportlist" data-list="failed"><h3>Failed <span class="fx-count" data-field="count">{{len .Failed}}</span></h3>{{template "report-members" .Failed}}</div>
 <div class="block-row fx-reportlist" data-list="not-attempted"><h3>Not attempted <span class="fx-count" data-field="count">{{len .NotAttempted}}</span></h3>{{template "report-members" .NotAttempted}}</div>
+{{with .Unadded}}<div class="block-row fx-reportlist" data-list="unadded"><h3>Lines that added nobody <span class="fx-count" data-field="count">{{len .}}</span></h3>
+  <ul class="fx-reportmembers">{{range .}}<li data-line="{{.Line}}" data-reason="{{.Reason}}"{{with .SameAs}} data-same-as="{{.}}"{{end}}{{with .Matches}} data-matches="{{.}}"{{end}}><code data-field="text">{{.Text}}</code>: <span data-field="reason">{{.Why}}</span></li>{{end}}</ul></div>{{end}}
 {{end}}
 
 {{define "report-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}" data-role="{{.Role}}"{{with .Skip}} data-reason="{{.}}"{{end}}{{if .ApprovalCleared}} data-approval-cleared{{end}}>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.ID}}{{end}} <span class="fx-user">@{{.Username}}</span> <span class="tag fx-role">{{.RoleName}}</span>{{if .ApprovalCleared}} <span class="tag tag--approved">approval cleared</span>{{end}}{{with .Why}} <span data-field="reason">{{.}}</span>{{end}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}

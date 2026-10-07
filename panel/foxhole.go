@@ -88,6 +88,15 @@ type foxholeView struct {
 	// RemovePreview is the preview a Remove button of the selection bar
 	// opened, nil for none.
 	RemovePreview *removePreview
+	// AddPreview is the preview the paste box's Preview opened, nil for
+	// none.
+	AddPreview *addPreview
+	// Paste is the Add members block's paste box as the page shows it.
+	Paste pasteBox
+	// PasteHeld is the page answering an add refused while the member list
+	// is partial: the Add members block shows alone above the notice, with
+	// the lines pasted, to send again once the list is back.
+	PasteHeld bool
 	// ReAdd counts the approved collaborators by what a re-add would do with
 	// each, for the After a war block. Nil while the member list isn't
 	// complete.
@@ -431,6 +440,8 @@ type foxholeRequest struct {
 	// ActionRefusal is the refusal of the Foxhole action this page answers,
 	// nil for none.
 	ActionRefusal *saveRefusal
+	// Paste is the paste box the page answers the Preview of, nil for none.
+	Paste *pasteBox
 }
 
 // foxholePage is GET /foxhole, the Foxhole page. It reads the guild's roles
@@ -675,10 +686,16 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 		if req.Remove != "" {
 			view.RemovePreview = s.removePreviewOf(list, records, req)
 		}
+		if req.Paste != nil {
+			view.AddPreview = s.addPreviewOf(list, records, *req.Paste, nil)
+		}
 	} else {
 		view.ListNotice = noticeFor(list, foxholeURL(req.Query, req.Filter, req.NoteMember))
 		if req.Remove != "" {
 			view.ActionRefusal = removeListPartialRefusal(foxholeRoleLabels[req.Remove])
+		}
+		if req.Paste != nil {
+			view.Paste, view.PasteHeld, view.ActionRefusal = *req.Paste, true, addListPartialRefusal
 		}
 	}
 	view.Query, view.Filter = req.Query, req.Filter

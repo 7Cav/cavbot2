@@ -195,7 +195,7 @@ const (
 type ActionReport struct {
 	// Scope is a purge's scope.
 	Scope PurgeScope `json:"scope,omitempty"`
-	// Role is a removal's role.
+	// Role is a removal's role, or an add's.
 	Role FoxholeRole `json:"role,omitempty"`
 	// Outcome is how the action ended, empty while it runs.
 	Outcome ReportOutcome `json:"outcome,omitempty"`
@@ -214,7 +214,41 @@ type ActionReport struct {
 	// NotAttempted are the members the action set out to change and has
 	// not reached: while it runs, the members still to come.
 	NotAttempted []ReportMember `json:"not_attempted"`
+	// Unadded are an add's pasted lines that named no member to add when it
+	// started, in the order pasted.
+	Unadded []UnaddedLine `json:"unadded,omitempty"`
 }
+
+// UnaddedLine is a line pasted for an add that named no member to add when
+// the add started, and why.
+type UnaddedLine struct {
+	// Line is the line's number in the paste box, counting blank lines, and
+	// Text the line as pasted.
+	Line   int           `json:"line"`
+	Text   string        `json:"text"`
+	Reason UnaddedReason `json:"reason"`
+	// Matches counts the members an UnaddedNonePicked line matched.
+	Matches int `json:"matches,omitempty"`
+	// SameAs is the line whose member an UnaddedSameMember line named too.
+	SameAs int `json:"same_as,omitempty"`
+}
+
+// UnaddedReason is why a pasted line added nobody.
+type UnaddedReason string
+
+const (
+	// UnaddedNoMatch is a line no member's name matches.
+	UnaddedNoMatch UnaddedReason = "no-match"
+	// UnaddedNoSuchID is a line naming a Discord ID no member of the server
+	// has.
+	UnaddedNoSuchID UnaddedReason = "no-such-id"
+	// UnaddedNonePicked is a line matching several members, none of whom was
+	// picked.
+	UnaddedNonePicked UnaddedReason = "none-picked"
+	// UnaddedSameMember is a line naming a member another line named, whom
+	// the add gives the role once.
+	UnaddedSameMember UnaddedReason = "same-member"
+)
 
 // ReportMember is one member a report names, under the names the member
 // list showed when the action reached them, with the role the action
@@ -450,7 +484,8 @@ type actionRun struct {
 // actionSpec is a Foxhole action as start starts it.
 type actionSpec struct {
 	action store.ChangeAction
-	// scope is a purge's scope, and role a removal's role, for its report.
+	// scope is a purge's scope, and role a removal's or an add's role, for
+	// its report.
 	scope PurgeScope
 	role  FoxholeRole
 	// roles are the Foxhole roles the action changes. The guild must hold
@@ -464,6 +499,8 @@ type actionSpec struct {
 	// reason is the audit log reason's wording before the forum user who
 	// started the action.
 	reason string
+	// unadded are an add's pasted lines that named no member to add.
+	unadded []UnaddedLine
 	// plan is the action's role changes, over the complete member list as it
 	// stands, the guild's Foxhole role IDs and the guild's Foxhole records.
 	plan func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange
@@ -513,6 +550,23 @@ func (r *FoxholeRuntime) Remove(ctx context.Context, role FoxholeRole, memberIDs
 	}, by)
 }
 
+// Add starts an add of the role to the members given, started by the
+// forum user given, and returns once its report is written. It starts as
+// start says. The report lists the pasted lines given that named no member
+// to add. The add then runs in the background, with no deadline of ctx's,
+// to its end: one member at a time, in the order given, it gives the role
+// to each. One who holds it already, or who left the server, is skipped
+// with that reason.
+func (r *FoxholeRuntime) Add(ctx context.Context, role FoxholeRole, memberIDs []string, unadded []UnaddedLine, by ForumUser) error {
+	return r.start(ctx, actionSpec{
+		action: store.ChangeAdd, role: role, roles: []FoxholeRole{role}, grant: true, reason: "Panel: Foxhole add by ",
+		unadded: unadded,
+		plan: func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange {
+			return addPlan(list, roleIDs, records, role, memberIDs)
+		},
+	}, by)
+}
+
 // start starts the Foxhole action spec names, started by the forum user
 // given, and returns once its report is written. It starts only while no
 // other Foxhole action runs, else ErrActionRunning, only with a complete
@@ -546,7 +600,7 @@ func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUse
 	}
 	plan := spec.plan(list, roleIDs, records)
 	report := ActionReport{Scope: spec.scope, Role: spec.role, Changed: []ReportMember{}, Skipped: []ReportMember{}, Failed: []ReportMember{},
-		NotAttempted: make([]ReportMember, 0, len(plan))}
+		NotAttempted: make([]ReportMember, 0, len(plan)), Unadded: spec.unadded}
 	for _, p := range plan {
 		report.NotAttempted = append(report.NotAttempted, p.member)
 	}
@@ -661,6 +715,26 @@ func removalPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, record
 		plan = append(plan, plannedChange{member: plannedMember(list, seen, role), roleID: roleIDs[role]})
 	}
 	return byDisplayName(plan)
+}
+
+// addPlan is an add's role changes: the role for each member given, once,
+// in the order given, whether or not they hold it or are in the server.
+// The member list names those in it, and the records' last-seen names those
+// who left.
+func addPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord, role FoxholeRole, memberIDs []string) []plannedChange {
+	names := namesOf(records)
+	planned := map[string]bool{}
+	var plan []plannedChange
+	for _, id := range memberIDs {
+		if planned[id] {
+			continue
+		}
+		planned[id] = true
+		seen := names[id]
+		seen.MemberID = id
+		plan = append(plan, plannedChange{member: plannedMember(list, seen, role), roleID: roleIDs[role]})
+	}
+	return plan
 }
 
 // plannedMember is a member an action sets out to change the role given

@@ -166,6 +166,10 @@ const (
 	// the Foxhole page. Its entry is the removal's report, in the Foxhole
 	// change log. A hub's removal is ChangeRemove.
 	ChangeRemoval ChangeAction = "removal"
+	// ChangeAdd is an add of a Foxhole role to the members pasted in the
+	// Foxhole page's paste box. Its entry is the add's report, in the Foxhole
+	// change log.
+	ChangeAdd ChangeAction = "add"
 )
 
 // FoxholeReport is the report of a Foxhole action started on the Foxhole
