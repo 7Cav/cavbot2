@@ -27,13 +27,22 @@ Fetch the issue and its parent as `docs/agents/issue-tracker.md` says, and read 
 
 Leave the PR's smoke checks to a later pass, since the smoke tool runs one bot across all worktrees and the maintainer's own sessions need it.
 
-Once `/implement` has opened its PR, label it `factory` and turn on squash auto-merge with `gh pr merge <pr> --auto --squash`. Auto-fix wakes this session for a failing check, a conflict with `develop`, or a review comment. Fix failing checks and conflicts, and push again, up to two rounds in all. Act on a review comment only when its author can push to the repo, which `gh api 'repos/{owner}/{repo}/collaborators/<login>/permission' --jq .user.permissions.push` answers `true`. Leave anyone else's thread for the maintainer. End the run with the PR's URL once auto-merge and Auto-fix are on.
+Once `/implement` has opened its PR, label it `factory` and turn on squash auto-merge with `gh pr merge <pr> --auto --squash`. An unattended run has no Auto-fix, so watch the PR's CI yourself until it merges:
+
+1. Run `gh pr checks <pr> --required --watch`, which returns once the required checks finish.
+2. Read `gh pr view <pr> --json state,mergeStateStatus` and act on it:
+   - `MERGED`: done.
+   - `BEHIND`: `develop` merges only branches that are up to date, so run `gh pr update-branch <pr>` and go back to 1.
+   - `DIRTY`, or a required check failed: fix it and go back to 1. For a conflict, merge `origin/develop` in. For a failed check, read its log with `gh run view <run> --log-failed`. Run `.github/scripts/gate.sh` before you push.
+   - Still open with checks passing: auto-merge is about to merge it. Wait a minute and read it again.
+
+Fix failing checks and conflicts up to two rounds in all. Done when the PR has merged; end the run with its URL.
 
 ## Hand back
 
 Hand the issue back when the run can't finish it: missing context, a decision the requirements leave open, a dependency outside the repo such as a Discord or forum setting, or checks still failing after two rounds.
 
-Comment on the issue with what stopped the run and the branch or PR it reached. For each decision or context the requirements lack, name the terms it turns on and the spec sections and glossary entries you searched for it. Then turn off the PR's auto-merge (`gh pr merge <pr> --disable-auto`) and Auto-fix, and leave the PR open with its `factory` label. Release the claim as you swap `ready-for-agent` for `blocked`:
+Comment on the issue with what stopped the run and the branch or PR it reached. For each decision or context the requirements lack, name the terms it turns on and the spec sections and glossary entries you searched for it. Then turn off the PR's auto-merge (`gh pr merge <pr> --disable-auto`), and leave the PR open with its `factory` label. Release the claim as you swap `ready-for-agent` for `blocked`:
 
 ```bash
 gh issue edit <n> --remove-assignee @me --remove-label ready-for-agent --add-label blocked

@@ -20,4 +20,4 @@ Run `.github/scripts/gate.sh`. Push the branch once it passes.
 
 Load the `pr` skill and open the PR, ready for review. The PR closes each ticket it implements, or the spec when there are no tickets. When a member or panel user would notice the change, the PR carries its smoke checks and `needs-smoke`, as step 1 of `docs/smoke-test.md` says.
 
-Arm Auto-fix on the PR. Done when the PR's status shows Auto-fix on. If this session has no Auto-fix, stop and say it isn't armed.
+Arm Auto-fix on the PR. Done when the PR's status shows Auto-fix on, or, in an unattended local session, which has no Auto-fix, once you have said it isn't armed.
