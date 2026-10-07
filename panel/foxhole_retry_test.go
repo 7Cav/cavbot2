@@ -2,6 +2,7 @@ package panel
 
 import (
 	"maps"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -369,5 +370,42 @@ func TestRetryShowsWhyEachMemberFailedLastTime(t *testing.T) {
 	}
 	if got := memberReason(retrying, memberKestrel.ID); got != reported {
 		t.Errorf("the Retry gives the reason %q for the member who failed, want the report's, %q", got, reported)
+	}
+}
+
+// A Retry confirmed for a report with nothing to retry, as from a stale or
+// hand-made page, changes nothing and is refused with a reason on the
+// page. It is no internal failure, so nothing reaches Sentry.
+func TestRetryOfAReportWithNothingToRetryIsRefusedWithoutReachingSentry(t *testing.T) {
+	cases := []struct {
+		name   string
+		report func(t *testing.T, w *testWorld) string
+	}{
+		{"a report that missed nobody", func(t *testing.T, w *testWorld) string {
+			startPurge(t, w, "external")
+			w.awaitActionEnd(t)
+			return attrOf(reportBlock(t, parseHTML(t, w.b.get(foxholePath))), "data-report")
+		}},
+		{"no such report", func(t *testing.T, w *testWorld) string { return "999999" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			report := tc.report(t, w)
+			reported := recordSentry(t)
+			before := len(w.discord.roleChanges())
+
+			res := w.b.postForm(foxholeRetryPath, url.Values{fieldReport: {report}})
+
+			if findLive(parseHTML(t, res), "", "data-error", "nothing-to-retry") == nil {
+				t.Error("the page doesn't say there was nothing to retry")
+			}
+			if n := len(reported.sent()); n != 0 {
+				t.Errorf("Sentry got %d events, want none", n)
+			}
+			if writes := w.discord.roleChanges()[before:]; len(writes) != 0 {
+				t.Errorf("the refused Retry made the role changes %v, want none", writes)
+			}
+		})
 	}
 }

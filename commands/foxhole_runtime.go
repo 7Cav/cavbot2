@@ -197,9 +197,9 @@ func (e *MissingRoleError) Error() string {
 var ErrActionRunning = errors.New("another Foxhole action is running")
 
 // ErrNothingToRetry refuses a Retry of a report with nothing to retry: one
-// whose action still runs, one that missed nobody, or one of an add or a
-// removal, whose Retry confirms through the action's own preview. Nothing
-// changed.
+// the store doesn't hold, one whose action still runs, one that missed
+// nobody, or one of an add or a removal, whose Retry confirms through the
+// action's own preview. Nothing changed.
 var ErrNothingToRetry = errors.New("the Foxhole report has nothing to retry")
 
 // ReportOutcome is how a Foxhole action ended.
@@ -826,17 +826,21 @@ func rosterAddSpec(unit string) actionSpec {
 // again, started by the forum user given, over just the members it failed
 // on or never attempted, and returns once the new run's report is written.
 // It retries a purge, of the report's scope, a re-add and a roster add, of
-// the report's unit. Each change carries that action's audit log reason,
+// the report's unit while the registry still holds it. Each change carries that action's audit log reason,
 // naming the forum user given, and a purge's Retry clears no approval, as a
 // purge doesn't. It starts as start says, checking only the roles its
 // members were to change. The run then goes as the action's own does: one
 // member at a time, in the order the report lists them, each checked
-// against the member list when it reaches them. A report still running, or
-// that missed nobody, or of another action, is ErrNothingToRetry.
+// against the member list when it reaches them. A report the store doesn't
+// hold, still running, that missed nobody, or of another action, is
+// ErrNothingToRetry.
 func (r *FoxholeRuntime) Retry(ctx context.Context, reportID int64, by ForumUser) error {
 	readCtx, cancel := context.WithTimeout(ctx, foxholeStoreTimeout)
 	stored, err := r.store.FoxholeReport(readCtx, reportID)
 	cancel()
+	if errors.Is(err, store.ErrNotFound) {
+		return ErrNothingToRetry
+	}
 	if err != nil {
 		return fmt.Errorf("read Foxhole report %d: %w", reportID, err)
 	}
@@ -855,7 +859,12 @@ func (r *FoxholeRuntime) Retry(ctx context.Context, reportID int64, by ForumUser
 	case store.ChangeReAdd:
 		spec = reAddSpec()
 	case store.ChangeRosterAdd:
-		spec = rosterAddSpec(report.Unit)
+		unit, ok := LookupValidatedInternalUnitLabelled(report.Unit)
+		if !ok {
+			// The unit has left the registry since (ADR 0009).
+			return ErrNothingToRetry
+		}
+		spec = rosterAddSpec(unit.Label)
 	default:
 		return ErrNothingToRetry
 	}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -22,12 +21,6 @@ import (
 // foxholeRetryPath is the Confirm of a Retry opened for a purge, a re-add
 // or a roster add, which posts the report as fieldReport.
 const foxholeRetryPath = "/foxhole/retry"
-
-// missed are the members the action failed on, then those it never
-// attempted, each in the order the action set out to change them.
-func (r reportView) missed() []reportMember {
-	return append(slices.Clone(r.Failed), r.NotAttempted...)
-}
 
 // retryReport reads the report with the ID given for its Retry: nil when no
 // report has the ID, or its action still runs, or it missed nobody.
@@ -57,7 +50,7 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 		return err
 	}
 	var ids []string
-	for _, m := range report.missed() {
+	for _, m := range report.Missed {
 		ids = append(ids, m.ID)
 	}
 	switch report.Action {
@@ -69,14 +62,14 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 		view.RemovePreview = s.removePreviewOf(list, records,
 			foxholeRequest{Query: req.Query, Filter: req.Filter, Remove: report.Role, RemoveMembers: ids})
 	case store.ChangeRosterAdd:
-		unit, ok := unitLabelled(report.Unit)
+		unit, ok := commands.LookupValidatedInternalUnitLabelled(report.Unit)
 		if !ok {
 			// The unit has left the registry since, so no roster add of it
 			// starts again (ADR 0009).
 			return nil
 		}
 		var troopers []commands.RosterTrooper
-		for _, m := range report.missed() {
+		for _, m := range report.Missed {
 			troopers = append(troopers, commands.RosterTrooper{Username: m.Trooper, DiscordID: m.ID})
 		}
 		view.RosterPreview = s.rosterPreviewOf(list, records, unit, troopers)
@@ -96,24 +89,24 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 // shows under the names the member list shows, or the report's when it
 // doesn't hold them.
 type retryConfirm struct {
-	// Report is the report whose Retry it is, and Action and Name its
-	// action as the page names it.
-	Report   int64
-	Action   store.ChangeAction
-	Name     string
+	// Report is the report whose Retry it is.
+	Report   *reportView
 	Changes  []previewMember
 	Skipped  []previewMember
 	Estimate estimate
 }
 
+// Purge reports whether the Retry is a purge's, which takes each member's
+// role. A re-add's gives it.
+func (c retryConfirm) Purge() bool { return c.Report.Action == store.ChangePurge }
+
 // retryConfirmOf is the confirmation of the report's Retry, read from a
-// complete member list. A re-add gives each member the role, and a purge
-// takes it.
+// complete member list.
 func (s foxholeService) retryConfirmOf(report *reportView, list commands.MemberListSnapshot) *retryConfirm {
 	guild := s.foxholeGuildOf()
-	grant := report.Action == store.ChangeReAdd
-	confirm := &retryConfirm{Report: report.ID, Action: report.Action, Name: report.Name}
-	for _, m := range report.missed() {
+	confirm := &retryConfirm{Report: report}
+	grant := !confirm.Purge()
+	for _, m := range report.Missed {
 		member := previewMember{ID: m.ID, DisplayName: m.DisplayName, Username: m.Username, RoleName: m.RoleName, Role: m.Role}
 		mem, inServer := list.Member(m.ID)
 		holds := inServer && guild.rowOf(mem, store.FoxholeRecord{}).holdsRole(m.Role)
@@ -137,18 +130,6 @@ func (s foxholeService) retryConfirmOf(report *reportView, list commands.MemberL
 	return confirm
 }
 
-// unitLabelled is the validated internal unit with the label given, as a
-// roster add's report names it, and false for a label the registry no
-// longer holds.
-func unitLabelled(label string) (commands.ValidatedInternalUnit, bool) {
-	for _, unit := range commands.ValidatedInternalUnits() {
-		if unit.Label == label {
-			return unit, true
-		}
-	}
-	return commands.ValidatedInternalUnit{}, false
-}
-
 // startRetry is POST /foxhole/retry, the Confirm of the Retry of a purge, a
 // re-add or a roster add: it starts the action of the report the form names
 // again, over the members the report missed, as startAction says.
@@ -163,6 +144,18 @@ func (p *Panel) startRetry(w http.ResponseWriter, r *http.Request, sess session)
 		return
 	}
 	p.startAction(w, r, sess, actionPage, "the retry", func(ctx context.Context, by commands.ForumUser) error {
-		return p.foxhole.actions.Retry(ctx, reportID, by)
+		err := p.foxhole.actions.Retry(ctx, reportID, by)
+		if errors.Is(err, commands.ErrNothingToRetry) {
+			return errNothingToRetry
+		}
+		return err
 	}, "report_id", reportID)
 }
+
+// errNothingToRetry refuses a Retry's Confirm posted for a report with
+// nothing to retry, as from a page loaded before the report went, or one
+// made by hand. The page offers Retry only on a report that has something
+// to retry.
+var errNothingToRetry = &saveRefusal{Kind: "nothing-to-retry", status: http.StatusConflict,
+	log:     "Panel action refused: nothing to retry",
+	Message: "That report has no members left to retry, so nothing changed."}

@@ -48,6 +48,10 @@ type reportView struct {
 	Skipped      []reportMember
 	Failed       []reportMember
 	NotAttempted []reportMember
+	// Missed are the members the action failed on, then those it never
+	// attempted, each in the order it set out to change them: the members
+	// its Retry holds.
+	Missed []reportMember
 	// AddedNobody are an add's pasted lines that added nobody.
 	AddedNobody []reportLine
 	// StopPressedBy is the forum user who pressed Stop on the running
@@ -111,13 +115,9 @@ func (reportView) PauseLimit() string {
 	return fmt.Sprintf("%d s", int(commands.FoxholePauseLimit/time.Second))
 }
 
-// Misses counts the members the action failed on or never attempted, whom
-// its Retry holds.
-func (r reportView) Misses() int { return len(r.Failed) + len(r.NotAttempted) }
-
 // CanRetry reports whether the report offers Retry: the action has ended
 // and missed someone.
-func (r reportView) CanRetry() bool { return !r.Running && r.Misses() > 0 }
+func (r reportView) CanRetry() bool { return !r.Running && len(r.Missed) > 0 }
 
 // RetryHref is the address of the page with the report's Retry open.
 func (r reportView) RetryHref() string {
@@ -173,7 +173,7 @@ func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 		Role: report.Role, Unit: report.Unit, StartedBy: stored.Entry.ForumUsername, StartedAt: stored.Entry.At, EndedAt: report.EndedAt,
 		Running: stored.Running, Outcome: report.Outcome,
 		Changed: reportMembers(report.Changed), Skipped: reportMembers(report.Skipped), Failed: reportMembers(report.Failed),
-		NotAttempted: reportMembers(report.NotAttempted)}
+		NotAttempted: reportMembers(report.NotAttempted), Missed: reportMembers(report.Misses())}
 	for _, line := range report.AddedNobody {
 		view.AddedNobody = append(view.AddedNobody, reportLine{PastedLine: line})
 	}
