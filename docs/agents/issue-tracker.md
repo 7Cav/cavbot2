@@ -37,9 +37,15 @@ How much of a spec to read:
 A wayfinder map and its tickets are GitHub issues. GitHub's own features carry the structure; no body convention is needed.
 
 - **The map** is one issue labelled `wayfinder:map`. Make it a sub-issue of the feature issue it charts (`--parent <n>`), so the feature page shows it.
-- **Tickets** are sub-issues of the map: `gh issue create --parent <map>`. Each carries one `wayfinder:<type>` label: `research`, `prototype`, `grilling`, or `task`.
+- **Tickets** are sub-issues of the map, on the map's milestone: `gh issue create --parent <map> --milestone "<the map's milestone>"`. Each carries one `wayfinder:<type>` label: `research`, `prototype`, `grilling`, or `task`.
 - **Blocking** uses native relationships: `gh issue edit <ticket> --add-blocked-by <other>`. GitHub renders the edge on both issues.
-- **The frontier** is every open child of the map with nothing open in its `blockedBy` list and no assignee. Query it with `gh issue view <map> --json subIssues`, then `gh issue view <n> --json state,assignees,blockedBy` per child.
+- **The frontier** is every open child of the map with nothing open in its `blockedBy` list and no assignee. This one call lists it:
+
+  ```bash
+  gh api graphql -F owner='{owner}' -F repo='{repo}' -F map=<map> -f query='query($owner:String!,$repo:String!,$map:Int!){repository(owner:$owner,name:$repo){issue(number:$map){subIssues(first:100){nodes{number title state assignees(first:1){totalCount} blockedBy(first:50){nodes{state}}}}}}}' --jq '.data.repository.issue.subIssues.nodes[] | select(.state=="OPEN" and .assignees.totalCount==0 and ([.blockedBy.nodes[]|select(.state=="OPEN")]|length)==0) | "#\(.number) \(.title)"'
+  ```
+
+  `gh issue view <map> --json subIssues` wraps the children as `{nodes, totalCount}`, so read every child with `--jq '.subIssues.nodes[]'`.
 - **Claiming** is assignment: `gh issue edit <n> --add-assignee @me` before any work. An open, unassigned ticket is unclaimed.
 - **Resolving** is a comment with the answer, then `gh issue close <n>`, then one line appended to the map's "Decisions so far" with `gh issue edit <map> --body-file`.
 - **Out of scope** is a closed ticket plus one line in the map's "Out of scope" section. It never appears in "Decisions so far".
