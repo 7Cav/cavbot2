@@ -764,7 +764,7 @@ func TestFindGuildMember_WhitespacePaddedMaxLengthStillSearches(t *testing.T) {
 // and it carries none of Discord's response body. Every command that defers
 // answers the same way, and stops there.
 func TestRefusedAcknowledgementKeepsDiscordBodyOutOfTheReply(t *testing.T) {
-	bulkAddInternal := fakeAppCommandInteraction(stringOption("unit", validatedInternalUnits[0].value))
+	bulkAddInternal := fakeAppCommandInteraction(stringOption("unit", validatedInternalUnits[0].Value))
 	bulkAddInternal.GuildID = "guild-1"
 	cases := []struct {
 		name string

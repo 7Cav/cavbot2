@@ -114,21 +114,21 @@ func TestFoxholeBulkAddInternalDefinition_SingleUnitPickerFromRegistry(t *testin
 // resolves a known unit to its author-controlled query, and rejects anything
 // that isn't a registered value.
 func TestLookupValidatedInternalUnit(t *testing.T) {
-	unit, ok := lookupValidatedInternalUnit("D/ACD")
+	unit, ok := LookupValidatedInternalUnit("D/ACD")
 	if !ok {
 		t.Fatal("expected D/ACD to resolve from the registry")
 	}
 	if unit.query != "D/ACD" {
 		t.Fatalf("query = %q, want D/ACD", unit.query)
 	}
-	if unit.label == "" {
+	if unit.Label == "" {
 		t.Fatal("a registered unit must carry a human label")
 	}
 
-	if _, ok := lookupValidatedInternalUnit("7"); ok {
+	if _, ok := LookupValidatedInternalUnit("7"); ok {
 		t.Fatal("an unregistered value must not resolve (the safety boundary)")
 	}
-	if _, ok := lookupValidatedInternalUnit(""); ok {
+	if _, ok := LookupValidatedInternalUnit(""); ok {
 		t.Fatal("an empty value must not resolve")
 	}
 }
@@ -144,19 +144,19 @@ func TestLookupValidatedInternalUnit(t *testing.T) {
 func TestValidatedInternalUnits_RegistryRowsValidAndUnique(t *testing.T) {
 	seen := map[string]bool{}
 	for i, unit := range validatedInternalUnits {
-		if unit.value == "" {
+		if unit.Value == "" {
 			t.Fatalf("registry row %d has an empty value", i)
 		}
 		if unit.query == "" {
-			t.Fatalf("registry row %d (%q) has an empty query", i, unit.value)
+			t.Fatalf("registry row %d (%q) has an empty query", i, unit.Value)
 		}
-		if unit.label == "" {
-			t.Fatalf("registry row %d (%q) has an empty label", i, unit.value)
+		if unit.Label == "" {
+			t.Fatalf("registry row %d (%q) has an empty label", i, unit.Value)
 		}
-		if seen[unit.value] {
-			t.Fatalf("registry row %d has a duplicate value %q; the first match would shadow it", i, unit.value)
+		if seen[unit.Value] {
+			t.Fatalf("registry row %d has a duplicate value %q; the first match would shadow it", i, unit.Value)
 		}
-		seen[unit.value] = true
+		seen[unit.Value] = true
 	}
 }
 

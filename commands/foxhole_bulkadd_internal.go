@@ -6,50 +6,10 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 )
-
-// rosterAddFetchTimeout bounds the single milpac roster fetch. The
-// per-trooper role-adds that follow are plain Discord calls inside the
-// interaction's 15-minute window, so only the roster lookup needs a deadline.
-const rosterAddFetchTimeout = 30 * time.Second
-
-// validatedInternalUnit is one row of the unit registry behind the
-// /foxhole-bulkadd-internal picker. value is what the operator's choice emits and
-// what fingerprints captures; label is shown in the dropdown and the summary;
-// query is the author-controlled milpac position-group search verified to
-// isolate exactly that unit's roster.
-//
-// The registry is both the extension seam and the safety boundary (ADR 0009):
-// adding a unit later is one new row with no logic change, and the operator can
-// only ever emit a value the registry already contains.
-type validatedInternalUnit struct {
-	value string
-	label string
-	query string
-}
-
-// validatedInternalUnits is the unit registry. Each query is verified to
-// substring-match only its own position group's titles before being added here.
-// D/ACD is the one validated internal unit today; the next is one more row.
-var validatedInternalUnits = []validatedInternalUnit{
-	{value: "D/ACD", label: "D/ACD", query: "D/ACD"},
-}
-
-// lookupValidatedInternalUnit resolves a picker value to its registry row. The
-// boolean is the safety check: an unregistered value never resolves, so no query
-// outside the registry can ever reach the milpac API.
-func lookupValidatedInternalUnit(value string) (validatedInternalUnit, bool) {
-	for _, unit := range validatedInternalUnits {
-		if unit.value == value {
-			return unit, true
-		}
-	}
-	return validatedInternalUnit{}, false
-}
 
 // validatedInternalUnitChoices builds the dropdown choices from the registry, so a
 // new registry row automatically becomes a new picker option with no edit here.
@@ -57,8 +17,8 @@ func validatedInternalUnitChoices() []*discordgo.ApplicationCommandOptionChoice 
 	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(validatedInternalUnits))
 	for _, unit := range validatedInternalUnits {
 		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{
-			Name:  unit.label,
-			Value: unit.value,
+			Name:  unit.Label,
+			Value: unit.Value,
 		})
 	}
 	return choices
@@ -122,7 +82,7 @@ func runFoxholeBulkAddInternal(
 	// The picker only ever emits a registered value, but validate against the
 	// registry anyway: it is the safety boundary, and a crafted interaction must
 	// not be able to express a query the registry never authorized.
-	unit, ok := lookupValidatedInternalUnit(unitValue)
+	unit, ok := LookupValidatedInternalUnit(unitValue)
 	if !ok {
 		utils.HandleError(r, interaction, fmt.Sprintf("❌ Unknown unit %q; pick one from the list.", unitValue))
 		return
@@ -151,10 +111,7 @@ func runFoxholeBulkAddInternal(
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), rosterAddFetchTimeout)
-	defer cancel()
-
-	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, unit.query)
+	roster, err := unit.Roster(context.Background())
 	if err != nil {
 		// A roster fetch failure on fixed input is a genuine milpac fault, not a
 		// user-input miss: capture it (tagged with the unit value) and surface a
@@ -162,11 +119,11 @@ func runFoxholeBulkAddInternal(
 		captureError(
 			"Failed to fetch Foxhole internal unit roster",
 			err,
-			"command", command, "guild", guildID, "unit", unit.value,
+			"command", command, "guild", guildID, "unit", unit.Value,
 		)
 		editEphemeral(r, interaction, fmt.Sprintf(
 			"❌ Failed to fetch the %s roster (milpac error); please try again shortly.",
-			unit.label,
+			unit.Label,
 		))
 		return
 	}
@@ -179,12 +136,12 @@ func runFoxholeBulkAddInternal(
 	if len(roster.LiteProfiles) == 0 {
 		captureError(
 			"Foxhole internal bulk add roster lookup returned zero members",
-			fmt.Errorf("empty roster for unit %q", unit.value),
-			"command", command, "guild", guildID, "unit", unit.value,
+			fmt.Errorf("empty roster for unit %q", unit.Value),
+			"command", command, "guild", guildID, "unit", unit.Value,
 		)
 		editEphemeral(r, interaction, fmt.Sprintf(
 			"⚠️ The %s roster came back empty. That shouldn't happen for a validated unit, so nothing was changed and the issue has been reported.",
-			unit.label,
+			unit.Label,
 		))
 		return
 	}
@@ -205,9 +162,9 @@ func runFoxholeBulkAddInternal(
 	faultCapture := newFaultCollector()
 	defer faultCapture.flush(
 		"Failed to add Foxhole internal role in bulk",
-		"command", command, "guild", guildID, "unit", unit.value,
+		"command", command, "guild", guildID, "unit", unit.Value,
 	)
-	reason := foxholeAuditReason(interaction, unit.label)
+	reason := foxholeAuditReason(interaction, unit.Label)
 	for _, profile := range roster.LiteProfiles {
 		memberDiscordID := strings.TrimSpace(profile.DiscordID)
 		if memberDiscordID == "" {
@@ -264,14 +221,14 @@ func runFoxholeBulkAddInternal(
 	slices.Sort(noDiscordLinked)
 	slices.Sort(faults)
 
-	content := buildRosterAddSummary(unit.label, roleName, len(added), notInDiscord, noDiscordLinked, faults, sawMissingPermissions)
+	content := buildRosterAddSummary(unit.Label, roleName, len(added), notInDiscord, noDiscordLinked, faults, sawMissingPermissions)
 	var embed *discordgo.MessageEmbed
 	if len(added) > 0 {
 		embed = buildAddedMembersEmbed(added)
 	}
 	editEphemeralWithEmbed(r, interaction, content, embed)
 
-	utils.Info("✨ Done!", "command", command, "unit", unit.value, "added", len(added))
+	utils.Info("✨ Done!", "command", command, "unit", unit.Value, "added", len(added))
 }
 
 // buildRosterAddSummary composes the ephemeral summary. The
