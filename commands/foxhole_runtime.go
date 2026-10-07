@@ -40,6 +40,18 @@ func ParseFoxholeRole(raw string) (FoxholeRole, bool) {
 	return "", false
 }
 
+// Label is the role as the Foxhole page and the commands' replies name it,
+// empty for no role.
+func (r FoxholeRole) Label() string {
+	switch r {
+	case FoxholeInternal:
+		return "Internal"
+	case FoxholeExternal:
+		return "External"
+	}
+	return ""
+}
+
 // RemovalClearsApproval reports whether a removal of the role on the
 // Foxhole page clears the approval of each member it takes the role from.
 // Only External's does: approved collaborators are External only. A purge
@@ -64,6 +76,20 @@ func ParsePurgeScope(raw string) (PurgeScope, bool) {
 		return scope, true
 	}
 	return "", false
+}
+
+// Label is the scope as the Foxhole page and the commands' replies name it,
+// empty for no scope.
+func (s PurgeScope) Label() string {
+	switch s {
+	case PurgeBoth:
+		return "Internal and External"
+	case PurgeInternal:
+		return "Internal"
+	case PurgeExternal:
+		return "External"
+	}
+	return ""
 }
 
 // Roles are the Foxhole roles the scope names, in the order a purge takes
@@ -219,6 +245,44 @@ type ActionReport struct {
 	// AddedNobody are an add's pasted lines that named no member to add
 	// when it started, in the order pasted.
 	AddedNobody []PastedLine `json:"added_nobody,omitempty"`
+}
+
+// foxholeActionNames are the Foxhole actions as the Foxhole page and the
+// commands' replies name them. An entry of the Foxhole change log whose
+// action is among them is that action's report.
+var foxholeActionNames = map[store.ChangeAction]string{
+	store.ChangePurge:   "Purge",
+	store.ChangeRemoval: "Remove",
+	store.ChangeReAdd:   "Re-add approved collaborators",
+	store.ChangeAdd:     "Add",
+	// A roster add's name follows its unit, as in "D/ACD roster add".
+	store.ChangeRosterAdd: "roster add",
+}
+
+// IsFoxholeAction reports whether a change log entry's action is a Foxhole
+// action's, so the entry is the action's report.
+func IsFoxholeAction(action store.ChangeAction) bool {
+	_, ok := foxholeActionNames[action]
+	return ok
+}
+
+// FoxholeActionName is the name of the Foxhole action whose report is
+// given, as the Foxhole page and the commands' replies name it: the action,
+// with a purge's scope or an add's or a removal's role, and a roster add's
+// unit before it, as in "Purge Internal and External" or "D/ACD roster
+// add".
+func FoxholeActionName(action store.ChangeAction, report ActionReport) string {
+	name := foxholeActionNames[action]
+	if scope := report.Scope.Label(); scope != "" {
+		name += " " + scope
+	}
+	if role := report.Role.Label(); role != "" {
+		name += " " + role
+	}
+	if report.Unit != "" {
+		name = report.Unit + " " + name
+	}
+	return name
 }
 
 // PastedLine is a line pasted for an add that named no member to add when

@@ -81,7 +81,7 @@ func (r rosterRow) ResultLabel() string {
 	if r.Result == rosterGets {
 		return "gets Internal"
 	}
-	return skipWords(commands.SkipReason(r.Result), foxholeRoleLabels[commands.FoxholeInternal])
+	return skipWords(commands.SkipReason(r.Result), commands.FoxholeInternal.Label())
 }
 
 // rosterRequest is the roster preview a page opens: the unit, and its

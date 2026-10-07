@@ -716,7 +716,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	} else {
 		view.ListNotice = noticeFor(list)
 		if req.Remove != "" {
-			view.ActionRefusal = removeListPartialRefusal(foxholeRoleLabels[req.Remove])
+			view.ActionRefusal = removeListPartialRefusal(req.Remove.Label())
 		}
 		if req.Paste != nil {
 			view.Paste, view.PasteAlone, view.ActionRefusal = *req.Paste, true, errAddListPartial
@@ -1140,7 +1140,7 @@ func foxholeChanges(entries []store.ChangeLogEntry) []foxholeChange {
 	views := make([]foxholeChange, 0, len(entries))
 	for _, e := range entries {
 		v := foxholeChange{ID: e.ID, Username: e.ForumUsername, At: e.At, Action: e.Action}
-		if _, ok := actionNames[e.Action]; ok {
+		if commands.IsFoxholeAction(e.Action) {
 			// The entry is the report. The entry alone doesn't say whether
 			// the action still runs; a report with no outcome yet does.
 			if report, err := reportViewOf(store.FoxholeReport{Entry: e}); err == nil {

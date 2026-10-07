@@ -276,7 +276,7 @@ func sameName(have, pasted string) bool {
 // line number: a pick that names none of the row's choices picks nothing.
 func (s foxholeService) addPreviewOf(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, paste pasteBox, picks map[int]string) *addPreview {
 	guild := s.foxholeGuildOf()
-	name := foxholeRoleLabels[paste.Role]
+	name := paste.Role.Label()
 	paste.AbovePreview = true
 	preview := &addPreview{Role: paste.Role, Name: name, Paste: paste}
 	// claimed is the line that named each member first.
@@ -332,7 +332,7 @@ func (s foxholeService) addPreviewOf(list commands.MemberListSnapshot, records m
 // the same member as that line, one holding the role already holds it, and
 // anyone else gets it.
 func memberOutcome(holder holderRow, role commands.FoxholeRole, claimed map[string]int) lineOutcome {
-	o := lineOutcome{Result: lineGets, RoleName: foxholeRoleLabels[role]}
+	o := lineOutcome{Result: lineGets, RoleName: role.Label()}
 	if first, seen := claimed[holder.ID]; seen {
 		o.Result, o.SameAs = lineSameMember, first
 	} else if holder.holdsRole(role) {
