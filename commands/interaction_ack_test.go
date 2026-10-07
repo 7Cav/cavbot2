@@ -99,7 +99,7 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 		{"/foxhole bulkadd", "foxhole", "bulkadd", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("bulkadd")) }},
 		{"/foxhole purge", "foxhole", "purge", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("purge")) }},
 		{"/foxhole-bulkadd-internal", "foxhole-bulkadd-internal", "", func(_ *testing.T, r *slowAck) {
-			runFoxholeBulkAddInternal(r, nil, slash("foxhole-bulkadd-internal", stringOption("unit", validatedInternalUnits[0].value)))
+			runFoxholeBulkAddInternal(r, nil, slash("foxhole-bulkadd-internal", stringOption("unit", validatedInternalUnits[0].Value)))
 		}},
 		{"/voice-rename", voiceRenameCommandName, "", func(_ *testing.T, r *slowAck) {
 			runVoiceRename(r, nil, slash(voiceRenameCommandName, stringOption("name", "Alpha")))

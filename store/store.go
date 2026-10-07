@@ -170,6 +170,10 @@ const (
 	// Foxhole page's paste box. Its entry is the add's report, in the Foxhole
 	// change log.
 	ChangeAdd ChangeAction = "add"
+	// ChangeRosterAdd is an add of a validated internal unit's roster to
+	// Internal, started on the Foxhole page. Its entry is the roster add's
+	// report, in the Foxhole change log.
+	ChangeRosterAdd ChangeAction = "roster_add"
 )
 
 // FoxholeReport is the report of a Foxhole action started on the Foxhole

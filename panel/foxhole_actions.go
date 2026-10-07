@@ -119,15 +119,29 @@ func (r reportView) OutcomeCode() string {
 // change, as the page says it. Empty for a member it changed or never
 // attempted.
 func (m reportMember) Why() string {
-	switch m.Skip {
-	case commands.SkipNotHolding:
-		return "no longer holds " + m.RoleName
-	case commands.SkipHolding:
-		return "already holds " + m.RoleName
-	case commands.SkipLeft:
-		return "left the server"
+	if why := skipWords(m.Skip, m.RoleName); why != "" {
+		return why
 	}
 	return m.Failure
+}
+
+// skipWords is why a Foxhole action skips a member, as both its report and
+// the roster preview say it, with the role's name as the page shows it.
+// Empty for no reason.
+func skipWords(reason commands.SkipReason, roleName string) string {
+	switch reason {
+	case commands.SkipNotHolding:
+		return "no longer holds " + roleName
+	case commands.SkipHolding:
+		return "already holds " + roleName
+	case commands.SkipLeft:
+		return "left the server"
+	case commands.SkipNotInServer:
+		return "isn't in the server"
+	case commands.SkipNoDiscord:
+		return "no Discord account on the milpac"
+	}
+	return ""
 }
 
 // reportViewOf decodes a report the store holds for the page. Its name is
@@ -143,6 +157,9 @@ func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 	}
 	if role := foxholeRoleLabels[report.Role]; role != "" {
 		name += " " + role
+	}
+	if report.Unit != "" {
+		name = report.Unit + " " + name
 	}
 	view := &reportView{ID: stored.Entry.ID, Action: stored.Entry.Action, Name: name,
 		StartedBy: stored.Entry.ForumUsername, StartedAt: stored.Entry.At, EndedAt: report.EndedAt,
@@ -229,6 +246,8 @@ var actionNames = map[store.ChangeAction]string{
 	store.ChangeRemoval: "Remove",
 	store.ChangeReAdd:   "Re-add approved collaborators",
 	store.ChangeAdd:     "Add",
+	// A roster add's name follows its unit, as in "D/ACD roster add".
+	store.ChangeRosterAdd: "roster add",
 }
 
 // scopeLabels are the purge scopes as the page names them.
