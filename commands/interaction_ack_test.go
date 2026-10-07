@@ -58,29 +58,21 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 		ackDelay = 20 * time.Millisecond
 		age      = 5 * time.Second
 	)
-	type missedRun struct {
-		label, command, subcommand string
-		handler                    CommandHandler
-		interaction                func(t *testing.T) *discordgo.InteractionCreate
-	}
-	var runs []missedRun
-	for _, run := range registeredRuns(t) {
-		runs = append(runs, missedRun{run.label, run.command, run.subcommand, run.handler,
-			func(*testing.T) *discordgo.InteractionCreate { return run.interaction(time.Now().Add(-age)) }})
+	customID, err := lockNoticeCustomID(lockNoticeUnlock, "chan-1")
+	if err != nil {
+		t.Fatal(err)
 	}
 	// main.go's dispatcher routes a press to /voice-lock's handler by its
 	// CustomID (ADR 0007).
 	lockHandler, _ := NewRegistry(nil, nil).GetHandler(voiceLockCommandName)
-	runs = append(runs, missedRun{"lock notice press", voiceLockCommandName, "", lockHandler,
-		func(t *testing.T) *discordgo.InteractionCreate {
-			customID, err := lockNoticeCustomID(lockNoticeUnlock, "chan-1")
-			if err != nil {
-				t.Fatal(err)
-			}
+	runs := append(registeredRuns(t), registeredRun{
+		label: "lock notice press", command: voiceLockCommandName, handler: lockHandler,
+		interaction: func(created time.Time) *discordgo.InteractionCreate {
 			i := pressInteraction(customID, lockOwner)
-			i.ID, i.AppID, i.Token = snowflakeAt(time.Now().Add(-age)), "app-1", "token-1"
+			i.ID, i.AppID, i.Token = snowflakeAt(created), "app-1", "token-1"
 			return i
-		}})
+		},
+	})
 
 	for _, tc := range runs {
 		t.Run(tc.label, func(t *testing.T) {
@@ -91,7 +83,7 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 				slow.Do(func() { time.Sleep(ackDelay) })
 				return http.StatusNotFound, []byte(fmt.Sprintf(`{"message": "Unknown interaction", "code": %d}`, discordgo.ErrCodeUnknownInteraction))
 			}}
-			i := tc.interaction(t)
+			i := tc.interaction(time.Now().Add(-age))
 
 			tc.handler(stateSession(t, api), i)
 
@@ -163,7 +155,9 @@ func ackRunOptions() map[string][]*discordgo.ApplicationCommandInteractionDataOp
 type registeredRun struct {
 	label, command, subcommand string
 	handler                    CommandHandler
-	options                    []*discordgo.ApplicationCommandInteractionDataOption
+	// interaction builds the run's interaction as Discord delivers it,
+	// minted at created.
+	interaction func(created time.Time) *discordgo.InteractionCreate
 }
 
 // registeredRuns walks NewRegistry: every registered command, once per
@@ -172,10 +166,10 @@ type registeredRun struct {
 func registeredRuns(t *testing.T) []registeredRun {
 	t.Helper()
 	reg := NewRegistry(nil, nil)
-	cases := ackRunOptions()
+	optionsByCommand := ackRunOptions()
 	var runs []registeredRun
 	for _, def := range reg.GetCommands() {
-		opts, ok := cases[def.Name]
+		opts, ok := optionsByCommand[def.Name]
 		if !ok {
 			t.Errorf("no case for /%s: give ackRunOptions the options that carry a run of it to its acknowledgement", def.Name)
 			continue
@@ -183,13 +177,14 @@ func registeredRuns(t *testing.T) []registeredRun {
 		handler, _ := reg.GetHandler(def.Name)
 		subcommands := typedSubcommands(def)
 		if len(subcommands) == 0 {
-			runs = append(runs, registeredRun{label: "/" + def.Name, command: def.Name, handler: handler, options: opts})
+			runs = append(runs, registeredRun{label: "/" + def.Name, command: def.Name, handler: handler,
+				interaction: slashAt(def.Name, opts...)})
 			continue
 		}
 		for _, sub := range subcommands {
 			runs = append(runs, registeredRun{
 				label: "/" + def.Name + " " + sub, command: def.Name, subcommand: sub, handler: handler,
-				options: append([]*discordgo.ApplicationCommandInteractionDataOption{stringOption("command", sub)}, opts...),
+				interaction: slashAt(def.Name, append([]*discordgo.ApplicationCommandInteractionDataOption{stringOption("command", sub)}, opts...)...),
 			})
 		}
 	}
@@ -212,12 +207,14 @@ func typedSubcommands(def *discordgo.ApplicationCommand) []string {
 	return nil
 }
 
-// interaction is the run's slash command as Discord delivers it, minted at
-// created.
-func (run registeredRun) interaction(created time.Time) *discordgo.InteractionCreate {
-	i := sessionSlash(run.command, run.options...)
-	i.ID = snowflakeAt(created)
-	return i
+// slashAt builds name's slash command with opts as Discord delivers it,
+// minted at created.
+func slashAt(name string, opts ...*discordgo.ApplicationCommandInteractionDataOption) func(created time.Time) *discordgo.InteractionCreate {
+	return func(created time.Time) *discordgo.InteractionCreate {
+		i := sessionSlash(name, opts...)
+		i.ID = snowflakeAt(created)
+		return i
+	}
 }
 
 // onInteraction returns the requests that reached Discord on i: its
