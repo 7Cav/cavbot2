@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"time"
@@ -28,6 +29,10 @@ type reportView struct {
 	// scope as the page names it.
 	Action store.ChangeAction
 	Name   string
+	// Role is a removal's role, or an add's, and Unit a roster add's
+	// validated internal unit, by its label.
+	Role commands.FoxholeRole
+	Unit string
 	// StartedBy is the forum user who started the action, StartedAt when,
 	// and EndedAt when it ended, zero while it runs.
 	StartedBy          string
@@ -106,6 +111,19 @@ func (reportView) PauseLimit() string {
 	return fmt.Sprintf("%d s", int(commands.FoxholePauseLimit/time.Second))
 }
 
+// Misses counts the members the action failed on or never attempted, whom
+// its Retry holds.
+func (r reportView) Misses() int { return len(r.Failed) + len(r.NotAttempted) }
+
+// CanRetry reports whether the report offers Retry: the action has ended
+// and missed someone.
+func (r reportView) CanRetry() bool { return !r.Running && r.Misses() > 0 }
+
+// RetryHref is the address of the page with the report's Retry open.
+func (r reportView) RetryHref() string {
+	return foxholePath + "?" + url.Values{paramRetry: {strconv.FormatInt(r.ID, 10)}}.Encode()
+}
+
 // OutcomeCode is the report's data-outcome marker: how the action ended,
 // or running while it runs.
 func (r reportView) OutcomeCode() string {
@@ -152,7 +170,7 @@ func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 		return nil, fmt.Errorf("decode Foxhole report %d: %w", stored.Entry.ID, err)
 	}
 	view := &reportView{ID: stored.Entry.ID, Action: stored.Entry.Action, Name: commands.FoxholeActionName(stored.Entry.Action, report),
-		StartedBy: stored.Entry.ForumUsername, StartedAt: stored.Entry.At, EndedAt: report.EndedAt,
+		Role: report.Role, Unit: report.Unit, StartedBy: stored.Entry.ForumUsername, StartedAt: stored.Entry.At, EndedAt: report.EndedAt,
 		Running: stored.Running, Outcome: report.Outcome,
 		Changed: reportMembers(report.Changed), Skipped: reportMembers(report.Skipped), Failed: reportMembers(report.Failed),
 		NotAttempted: reportMembers(report.NotAttempted)}
@@ -274,14 +292,19 @@ type previewMember struct {
 	// or they left the server. RoleName is the role as the page names it.
 	Skip     commands.SkipReason
 	RoleName string
+	// Role is the role a Retry confirmation's member was to lose or get,
+	// empty in a preview of one role.
+	Role commands.FoxholeRole
 }
 
-// Why is why the removal skips the member, as the preview says it. Empty
-// for a member who loses the role.
+// Why is why the removal or the Retry skips the member, as the preview
+// says it. Empty for a member who loses or gets the role.
 func (m previewMember) Why() string {
 	switch m.Skip {
 	case commands.SkipNotHolding:
 		return "doesn't hold " + m.RoleName
+	case commands.SkipHolding:
+		return "already holds " + m.RoleName
 	case commands.SkipLeft:
 		return "not in the server"
 	}

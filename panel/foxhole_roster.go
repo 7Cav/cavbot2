@@ -62,6 +62,10 @@ type rosterPreview struct {
 	Notes int
 	// Holding counts the troopers who already hold Internal.
 	Holding int
+	// Retry is the report whose Retry the preview is, holding only the
+	// troopers its roster add missed, 0 for a preview of the whole roster.
+	// Its Confirm posts the report instead of the roster.
+	Retry int64
 }
 
 // rosterRow is one trooper on the roster as the roster preview shows them:
