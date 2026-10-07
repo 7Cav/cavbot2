@@ -3,6 +3,13 @@
   <h1 class="title">Foxhole</h1>
   <p class="desc">Everyone holding a Foxhole role, and every approved collaborator. Changes here go straight to Discord.</p>
   {{with .Foxhole}}
+  {{with .Commands}}
+  <section class="block fx-progress" role="status" data-field="command-running">
+    <h2 class="block-header">{{if eq (len .) 1}}A Foxhole command is running{{else}}Foxhole commands are running{{end}}</h2>
+    {{range .}}<div class="block-row"><code data-field="command">{{.Command}}</code>, run by <span data-member="{{.By.ID}}">{{.By.DisplayName}} <span class="fx-user">@{{.By.Username}}</span></span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>.</div>{{end}}
+    <div class="block-row">A Foxhole action on this page can start once {{if eq (len .) 1}}it ends{{else}}they end{{end}}. Commands don't report how far they've got. <a href="{{$.Foxhole.Reload}}">Reload the page</a> to check.</div>
+  </section>
+  {{end}}
   {{with .Report}}{{if .Running}}
   <section class="block fx-progress" role="status" data-field="progress" data-report="{{.ID}}" data-action="{{.Action}}">
     <h2 class="block-header">{{.Name}} is running</h2>

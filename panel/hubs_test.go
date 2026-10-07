@@ -630,6 +630,8 @@ type testWorld struct {
 	st      *store.Fake
 	discord *fakeDiscord
 	runtime *commands.TempVC
+	// foxhole is the Foxhole runtime the panel was built over.
+	foxhole *commands.FoxholeRuntime
 	p       *Panel
 	b       *browser
 	// actionEnded receives once each time a Foxhole action's report has
@@ -685,7 +687,7 @@ func newTestWorldConfigured(t *testing.T, st store.Store, f *fakeForum, cfg Conf
 		t.Fatalf("New: %v", err)
 	}
 	fake, _ := st.(*store.Fake)
-	return &testWorld{forum: f, st: fake, discord: discord, runtime: runtime, p: p, b: newBrowser(t, p)}
+	return &testWorld{forum: f, st: fake, discord: discord, runtime: runtime, foxhole: foxhole, p: p, b: newBrowser(t, p)}
 }
 
 // testHub is a stored hub on hub-1 with the defaults a register writes.

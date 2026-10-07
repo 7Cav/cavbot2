@@ -405,9 +405,30 @@ type FoxholeRuntime struct {
 	// running is the action running, nil when none is. An action running
 	// holds the one-action-at-a-time rule.
 	running *actionState
-	// commands counts the role-changing Foxhole commands running. Each holds
-	// the rule against the page's actions, never against another command.
-	commands int
+	// commands are the role-changing Foxhole commands running, by a key of
+	// their own. Each holds the rule against the page's actions, never
+	// against another command.
+	commands    map[int]CommandRun
+	nextCommand int
+}
+
+// CommandRun is a role-changing Foxhole command running, as the Foxhole
+// page names it.
+type CommandRun struct {
+	// Command is the command as its member typed it, as in "/foxhole add".
+	Command string
+	// By is the Discord member who ran it.
+	By CommandMember
+	// StartedAt is when it started.
+	StartedAt time.Time
+}
+
+// CommandMember is the Discord member who ran a Foxhole command, under the
+// names the command's interaction carried.
+type CommandMember struct {
+	ID          string
+	Username    string
+	DisplayName string
 }
 
 // actionState is what the runtime knows of the action running, beside its
@@ -463,7 +484,7 @@ func (r *FoxholeRuntime) Running() (RunningAction, bool) {
 func (r *FoxholeRuntime) claim(name string, by ForumUser) (<-chan struct{}, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.running != nil || r.commands > 0 {
+	if r.running != nil || len(r.commands) > 0 {
 		return nil, false
 	}
 	r.running = &actionState{name: name, startedBy: by, stop: make(chan struct{})}
@@ -493,13 +514,13 @@ type pageActionRunning struct {
 	done, total int
 }
 
-// startCommand takes the one-action-at-a-time rule for a role-changing
-// Foxhole command, beside any other command running, and returns the call
-// that gives it back, which the command makes once its run has ended. While
-// a Foxhole action started on the Foxhole page runs, it takes nothing and
-// returns that action instead. On a host with no bot store, r is nil and it
-// refuses nothing.
-func (r *FoxholeRuntime) startCommand() (end func(), refused *pageActionRunning) {
+// startCommand takes the one-action-at-a-time rule for the role-changing
+// Foxhole command run given, beside any other command running, and returns
+// the call that gives it back, which the command makes once its run has
+// ended. While a Foxhole action started on the Foxhole page runs, it takes
+// nothing and returns that action instead. On a host with no bot store, r
+// is nil and it refuses nothing.
+func (r *FoxholeRuntime) startCommand(run CommandRun) (end func(), refused *pageActionRunning) {
 	if r == nil {
 		return func() {}, nil
 	}
@@ -508,12 +529,30 @@ func (r *FoxholeRuntime) startCommand() (end func(), refused *pageActionRunning)
 	if a := r.running; a != nil {
 		return nil, &pageActionRunning{name: a.name, startedBy: a.startedBy.Username, done: a.done, total: a.total}
 	}
-	r.commands++
+	if r.commands == nil {
+		r.commands = map[int]CommandRun{}
+	}
+	key := r.nextCommand
+	r.nextCommand++
+	r.commands[key] = run
 	return func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		r.commands--
+		delete(r.commands, key)
 	}, nil
+}
+
+// RunningCommands are the role-changing Foxhole commands running now, the
+// first started first.
+func (r *FoxholeRuntime) RunningCommands() []CommandRun {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	runs := make([]CommandRun, 0, len(r.commands))
+	for _, run := range r.commands {
+		runs = append(runs, run)
+	}
+	slices.SortFunc(runs, func(a, b CommandRun) int { return a.StartedAt.Compare(b.StartedAt) })
+	return runs
 }
 
 // Stop asks the running Foxhole action whose report has the ID given to

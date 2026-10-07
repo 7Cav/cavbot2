@@ -111,9 +111,14 @@ type foxholeView struct {
 	// each, for the After a war block. Nil while the member list isn't
 	// complete.
 	ReAdd *reAddCounts
-	// Busy is a Foxhole action running at this load: the controls that
-	// would start another are disabled.
+	// Busy is a Foxhole action running at this load, started on the page or
+	// by a role-changing command: the controls that would start another are
+	// disabled.
 	Busy bool
+	// Commands are the role-changing Foxhole commands running at this load,
+	// the first started first. The page names each and shows no count, since
+	// a command reports no progress.
+	Commands []commands.CommandRun
 	// Report is the last Foxhole action's report, nil before the first
 	// action. It reads no member list, so it shows whatever the list's
 	// state.
@@ -745,7 +750,8 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	if report != nil && report.Running && busy {
 		report.StopPressedBy, report.Paused = running.StopPressedBy, running.Paused
 	}
-	view.Report, view.Busy = report, busy
+	view.Commands = s.actions.RunningCommands()
+	view.Report, view.Busy = report, busy || len(view.Commands) > 0
 	return view, nil
 }
 

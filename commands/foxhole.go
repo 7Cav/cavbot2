@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -198,7 +199,7 @@ func runFoxhole(
 
 	// Every subcommand changes roles, so none runs alongside a Foxhole
 	// action started on the Foxhole page.
-	end, refused := fx.startCommand()
+	end, refused := fx.startCommand(foxholeCommandRun(interaction, subcommand))
 	if refused != nil {
 		refuseForPageAction(r, interaction, *refused)
 		return
@@ -234,15 +235,34 @@ func refuseForPageAction(r utils.InteractionResponder, interaction *discordgo.In
 		action.name, action.startedBy, action.done, action.total))
 }
 
+// foxholeCommandTyped is a Foxhole command run as its member typed it,
+// under the name it ran: the command name, then typed, what the member
+// picked after it, the subcommand or the roster add's unit.
+func foxholeCommandTyped(interaction *discordgo.InteractionCreate, typed string) string {
+	return fmt.Sprintf("/%s %s", commandNameOf(interaction), typed)
+}
+
 // foxholeAuditReason is the audit log reason a Foxhole command run carries
 // on every change it makes, in the temp VC format: the command as typed,
-// under the name it ran, then the member who ran it. typed is what the
-// member picked after the command name: the subcommand, or the roster add's
-// unit.
+// as foxholeCommandTyped gives it, then the member who ran it.
 func foxholeAuditReason(interaction *discordgo.InteractionCreate, typed string) string {
 	username, discordID := interactionUsernameAndID(interaction)
 	by := Invoker{UserID: discordID, Username: username}
-	return fmt.Sprintf("/%s %s by %s", commandNameOf(interaction), typed, by.auditName())
+	return foxholeCommandTyped(interaction, typed) + " by " + by.auditName()
+}
+
+// foxholeCommandRun is a role-changing Foxhole command run as the Foxhole
+// page names it while it runs: as typed, as foxholeCommandTyped gives it,
+// the member who ran it under the names the interaction carries, and now.
+func foxholeCommandRun(interaction *discordgo.InteractionCreate, typed string) CommandRun {
+	run := CommandRun{Command: foxholeCommandTyped(interaction, typed), StartedAt: foxholeNow().UTC()}
+	if user := interactionUser(interaction); user != nil {
+		run.By = CommandMember{ID: user.ID, Username: user.Username, DisplayName: cmp.Or(user.GlobalName, user.Username)}
+		if interaction.Member != nil && interaction.Member.Nick != "" {
+			run.By.DisplayName = interaction.Member.Nick
+		}
+	}
+	return run
 }
 
 func handleFoxholeAdd(r utils.InteractionResponder, gm GuildManager, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
