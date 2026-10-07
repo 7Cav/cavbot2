@@ -239,8 +239,18 @@ type MemberNames struct {
 	Username    string
 }
 
-// Store is the one seam between the bot and its database. Two implementations:
-// Postgres here and Fake for tests.
+// Store is the one seam between the bot and its database. Postgres
+// implements it here, and Fake implements it for tests.
+//
+// A new method also goes on panel's boundedStore and its test leavingStore,
+// which write out every method, so the build fails until each has it.
+//
+// A new read that a panel page makes goes on up to two more, and the build
+// passes without them. pageStore embeds a Store. A read on the hub page
+// needs a method there, or a page that runs out of time leaves the read out
+// of its budget report. The test ctxStore embeds Fake. A read on any panel
+// page needs a method there, or the page failure tests cannot block or fail
+// it.
 //
 // A panel save is one call: SaveHub, RemoveHub or SaveGuildModeratorRoles
 // writes the save's settings and its change log entry in one transaction,
