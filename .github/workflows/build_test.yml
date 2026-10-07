@@ -68,7 +68,7 @@ jobs:
           go test ./... -race -cover -covermode=atomic | tee /tmp/cover.log
 
       - name: Enforce coverage floors
-        run: ./.github/scripts/check-coverage-floors.sh < /tmp/cover.log
+        run: ./.github/scripts/check-coverage-floors.sh .github/coverage-floors.tsv < /tmp/cover.log
 
       - name: Test build
         run: go build -o cavbot2
