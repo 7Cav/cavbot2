@@ -976,12 +976,12 @@ func findGuildMemberCollecting(gm GuildManager, guildID, query string, faultSink
 	// and would report a misleading "no member found" even for a transient API
 	// fault). A 404 means the user really isn't here; any other failure is
 	// surfaced (and captured if it's a genuine system fault).
-	if userID, ok := mentionUserID(trimmedQuery); ok {
+	if userID, ok := MentionUserID(trimmedQuery); ok {
 		return resolveMemberByID(gm, guildID, userID, faultSink)
 	}
 
 	// Raw snowflake ID: same authoritative treatment as a mention.
-	if isSnowflakeID(trimmedQuery) {
+	if IsSnowflakeID(trimmedQuery) {
 		return resolveMemberByID(gm, guildID, trimmedQuery, faultSink)
 	}
 
@@ -1001,10 +1001,10 @@ func findGuildMemberCollecting(gm GuildManager, guildID, query string, faultSink
 	}
 }
 
-// mentionUserID extracts the user snowflake from a Discord mention
+// MentionUserID extracts the user snowflake from a Discord mention
 // (<@123> or <@!123>). It returns ("", false) for anything that isn't a
 // non-empty mention, so callers can branch on whether the input was a mention.
-func mentionUserID(query string) (string, bool) {
+func MentionUserID(query string) (string, bool) {
 	if !strings.HasPrefix(query, "<@") || !strings.HasSuffix(query, ">") {
 		return "", false
 	}
@@ -1124,7 +1124,10 @@ func buildBulkAddSummary(successCount int, failures []string) string {
 	return strings.Join(kept, "\n")
 }
 
-func isSnowflakeID(value string) bool {
+// IsSnowflakeID reports whether value reads as a Discord ID: digits only,
+// at least 15 of them. The Foxhole page reads a pasted line's ID the same
+// way the command reads its argument.
+func IsSnowflakeID(value string) bool {
 	if len(value) < 15 {
 		return false
 	}

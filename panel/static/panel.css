@@ -110,11 +110,12 @@ img { max-width: 100%; }
 .field { display: block; }
 .field-label { display: block; color: var(--text-hi); font-weight: 500; margin-bottom: 6px; }
 .field-hint { display: block; font-size: 13px; color: var(--text-mute); margin-top: 6px; }
-.field input, .field select {
+.field input, .field select, .field textarea {
   display: block; width: 100%; padding: 8px 10px; font: inherit; color: var(--text-hi);
   background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--radius);
 }
-.field input:focus, .field select:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); }
+.field textarea { resize: vertical; min-height: 7em; }
+.field input:focus, .field select:focus, .field textarea:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); }
 .field input[type=hidden] { display: none; }
 .check { display: block; padding: 4px 0; color: var(--text-hi); }
 .check input { width: auto; display: inline; margin: 0 6px 0 0; vertical-align: middle; accent-color: var(--gold); }
@@ -241,6 +242,12 @@ img { max-width: 100%; }
 .fx-pending--danger { border-color: var(--danger-hi); }
 .fx-pending p { margin: 0 0 6px; }
 .fx-previewnote { display: block; font-size: 13px; color: var(--text-mute); overflow-wrap: anywhere; }
+.fx-actions--alone { grid-template-columns: minmax(0, 36rem); margin-bottom: 12px; }
+.fx-pasted { overflow-wrap: anywhere; }
+.fx-matched, .fx-addinfo { display: block; font-size: 13px; color: var(--text-mute); }
+.fx-choices { margin: 0; padding: 0; list-style: none; }
+.fx-choices li + li { margin-top: 8px; }
+.fx-choices .check { display: inline; padding: 0; }
 .fx-progress { border-color: var(--gold-lo); }
 .fx-reportlist h3 { margin: 0 0 6px; font-size: 14px; font-weight: 500; color: var(--text-hi); }
 .fx-reportmembers { margin: 0; padding-left: 18px; font-size: 14px; }

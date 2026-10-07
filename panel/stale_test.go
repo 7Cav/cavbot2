@@ -35,6 +35,11 @@ func formPosts(t *testing.T, doc *html.Node, action string) url.Values {
 	if form == nil {
 		t.Fatalf("page has no form posting to %s", action)
 	}
+	return formFields(doc, form)
+}
+
+// formFields is formPosts for the form given, one of the page doc's.
+func formFields(doc, form *html.Node) url.Values {
 	out := url.Values{}
 	eachLiveElement(doc, func(n *html.Node) {
 		if !ownedBy(n, form) {

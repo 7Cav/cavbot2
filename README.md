@@ -37,6 +37,8 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 
 The registered set lives in `commands/registry.go` — update this table when it changes.
 
+`/foxhole` and the panel's Foxhole page match names differently. `/foxhole add`, `remove` and `bulkadd` send a name to Discord's member search, which matches the start of a name, and refuse a name with more than one hit. The page's paste box reads the bot's own member list and needs a whole username, server nickname or global name, ignoring case. When a line matches two to five members it asks the manager to pick one. So the same name can find a member on one path and miss on the other, and an ID or mention is the one form both read the same way. `bulkadd` takes at most 50 entries, and the paste box has no cap.
+
 ## Setup
 
 ### 1. Discord application
