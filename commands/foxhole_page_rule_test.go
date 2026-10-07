@@ -103,11 +103,17 @@ var pageStarter = ForumUser{ID: 1357, Username: "Smith.F"}
 // Foxhole role base name is left at its default.
 func newPageRuntime(t *testing.T) (*FoxholeRuntime, *pageHold) {
 	t.Helper()
+	return newPageRuntimeOver(t, store.NewFake())
+}
+
+// newPageRuntimeOver is newPageRuntime over the store given.
+func newPageRuntimeOver(t *testing.T, st store.Store) (*FoxholeRuntime, *pageHold) {
+	t.Helper()
 	t.Setenv(foxholeRoleBaseNameEnv, "")
 	t.Setenv(foxholeRoleBaseNameOldEnv, "")
 	hold := &pageHold{entered: make(chan string, 16), release: make(chan struct{}), free: make(chan struct{})}
 	t.Cleanup(hold.open)
-	fx, err := NewFoxholeRuntime(pageGuild{}, hold, store.NewFake(), "guild-1")
+	fx, err := NewFoxholeRuntime(pageGuild{}, hold, st, "guild-1")
 	if err != nil {
 		t.Fatalf("NewFoxholeRuntime: %v", err)
 	}

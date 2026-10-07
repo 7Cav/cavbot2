@@ -272,13 +272,24 @@ func (s *failingEnd) EndFoxholeReport(ctx context.Context, id int64, diff json.R
 }
 
 // awaitActionEnd waits for the running Foxhole action's report to be
-// written as ended.
+// written as ended, then for the action to give the rule back, which it
+// does once that write has returned.
 func (w *testWorld) awaitActionEnd(t *testing.T) {
 	t.Helper()
 	select {
 	case <-w.actionEnded:
 	case <-time.After(hangLimit):
 		t.Fatal("the Foxhole action never ended")
+	}
+	deadline := time.Now().Add(hangLimit)
+	for {
+		if _, running := w.foxhole.Running(); !running {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the Foxhole action never gave the rule back after its report ended")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
