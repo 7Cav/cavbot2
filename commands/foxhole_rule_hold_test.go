@@ -16,9 +16,9 @@ import (
 // until its report's end is written, and nothing but its own end gives the
 // rule back (#492).
 
-// secondStarter is a forum user who starts a page action after
-// pageStarter's, so the running action's starter says whose runs.
-var secondStarter = ForumUser{ID: 2468, Username: "Jones.K"}
+// otherManager is a forum user who starts a page action after
+// pageStarter's, so who started the running action tells whose it is.
+var otherManager = ForumUser{ID: 2468, Username: "Jones.K"}
 
 // endHold is the store fake with each report end write held inside the
 // write until the test lets it through.
@@ -75,24 +75,6 @@ func (h endHold) pass(t *testing.T) {
 	awaitSignal(t, h.done, "the report end write's return")
 }
 
-// startsWhileRunningRetried calls start, a page action's start, again
-// while another Foxhole action holds the rule, the way a manager would,
-// and fails the test unless it starts within 5 seconds.
-func startsWhileRunningRetried(t *testing.T, what string, start func() error) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		err := start()
-		if err == nil {
-			return
-		}
-		if !errors.Is(err, ErrActionRunning) || time.Now().After(deadline) {
-			t.Fatalf("%s didn't start: %v", what, err)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
 // reportOf reads the report with the ID given from the store.
 func reportOf(t *testing.T, st store.Store, id int64) ActionReport {
 	t.Helper()
@@ -130,7 +112,7 @@ func TestAPageActionHoldsTheRuleThroughItsEndAndTheNextHoldsItAfter(t *testing.T
 	if !fx.Busy() {
 		t.Error("while its end write is held, Busy() is false")
 	}
-	if err := fx.Purge(ctx, PurgeBoth, secondStarter); !errors.Is(err, ErrActionRunning) {
+	if err := fx.Purge(ctx, PurgeBoth, otherManager); !errors.Is(err, ErrActionRunning) {
 		t.Fatalf("a page purge started while the first's end write was held: %v, want ErrActionRunning", err)
 	}
 	end, refused := fx.startCommand(CommandRun{Command: "/foxhole add", StartedAt: time.Now()})
@@ -140,11 +122,11 @@ func TestAPageActionHoldsTheRuleThroughItsEndAndTheNextHoldsItAfter(t *testing.T
 	}
 
 	ends.pass(t)
-	startsWhileRunningRetried(t, "the second page purge", func() error { return fx.Purge(ctx, PurgeBoth, secondStarter) })
+	startsOnceFree(t, "the second page purge", func() error { return fx.Purge(ctx, PurgeBoth, otherManager) })
 	hold.next(t)
 
-	if running, ok := fx.Running(); !ok || running.StartedBy != secondStarter.Username {
-		t.Fatalf("with the second purge mid-run, Running() = %+v, %v, want the action %s started", running, ok, secondStarter.Username)
+	if running, ok := fx.Running(); !ok || running.StartedBy != otherManager.Username {
+		t.Fatalf("with the second purge mid-run, Running() = %+v, %v, want the action %s started", running, ok, otherManager.Username)
 	}
 	if !fx.Busy() {
 		t.Error("with the second purge mid-run, Busy() is false")
@@ -280,5 +262,5 @@ func TestAPageActionThatPanicsMidRunEndsItsReportAsARestart(t *testing.T) {
 	if got := idsOf(report.NotAttempted); !slices.Equal(got, rest) {
 		t.Errorf("the report lists %v as not attempted, want the members the run never reached, %v", got, rest)
 	}
-	startsWhileRunningRetried(t, "the report's Retry", func() error { return fx.Retry(ctx, id, pageStarter) })
+	startsOnceFree(t, "the report's Retry", func() error { return fx.Retry(ctx, id, pageStarter) })
 }

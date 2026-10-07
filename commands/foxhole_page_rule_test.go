@@ -329,19 +329,19 @@ func TestTwoRoleCommandsRunTogether(t *testing.T) {
 	}
 }
 
-// startsOnceFree starts a page purge, as the Foxhole page's Confirm does,
-// trying again while another Foxhole action holds the rule, the way a
+// startsOnceFree calls start, which starts a page action as the Foxhole
+// page does, again while another Foxhole action holds the rule, the way a
 // manager would, and fails the test unless it starts within 5 seconds.
-func startsOnceFree(t *testing.T, fx *FoxholeRuntime) {
+func startsOnceFree(t *testing.T, what string, start func() error) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		err := fx.Purge(context.Background(), PurgeBoth, pageStarter)
+		err := start()
 		if err == nil {
 			return
 		}
 		if !errors.Is(err, ErrActionRunning) || time.Now().After(deadline) {
-			t.Fatalf("the page purge didn't start after the command ended: %v", err)
+			t.Fatalf("%s didn't start: %v", what, err)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -386,7 +386,9 @@ func TestPageActionIsRefusedWhileARoleCommandRuns(t *testing.T) {
 				t.Fatalf("the page purge started while the command ran: %v, want ErrActionRunning", err)
 			}
 			close(release)
-			startsOnceFree(t, fx)
+			startsOnceFree(t, "the page purge after the command ended", func() error {
+				return fx.Purge(context.Background(), PurgeBoth, pageStarter)
+			})
 		})
 	}
 }
