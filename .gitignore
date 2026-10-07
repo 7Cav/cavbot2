@@ -2,9 +2,7 @@
 
 .env
 WARP.md
-.claude/*
-# Repo skills, such as the factory's /implement, ship with the code.
-!.claude/skills/
+.claude/
 docs/superpowers/
 
 # build artifact from `go build -o cavbot2`
