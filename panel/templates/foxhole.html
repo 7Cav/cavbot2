@@ -118,8 +118,8 @@
       <thead><tr><th>Trooper</th><th>Member</th><th>Result</th></tr></thead>
       <tbody>
       {{range .Rows}}
-        <tr data-trooper="{{.Trooper}}" data-result="{{.Result}}"{{with .DiscordID}} data-member="{{.}}"{{end}}>
-          <td><span class="fx-name" data-field="trooper">{{.Trooper}}</span></td>
+        <tr data-trooper="{{.Username}}" data-result="{{.Result}}"{{with .DiscordID}} data-member="{{.}}"{{end}}>
+          <td><span class="fx-name" data-field="trooper">{{.Username}}</span></td>
           <td>{{with .Member}}{{template "roster-member" .}}{{else}}<span class="off">{{if .DiscordID}}not in the server{{else}}no Discord account{{end}}</span>{{end}}
             {{- with .Note}}<span class="fx-previewnote">Note: <span data-field="note">{{.}}</span></span>{{end}}</td>
           <td><span class="tag" data-field="result">{{.ResultLabel}}</span></td>

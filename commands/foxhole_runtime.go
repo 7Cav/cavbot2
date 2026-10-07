@@ -286,6 +286,10 @@ const (
 	SkipHolding SkipReason = "holding"
 	// SkipLeft is a member who had left the server.
 	SkipLeft SkipReason = "left"
+	// SkipNotInServer is a roster add's trooper whose Discord ID no member
+	// of the server has. A trooper may never have joined, so a roster add
+	// says so rather than SkipLeft.
+	SkipNotInServer SkipReason = "not-in-server"
 	// SkipNoDiscord is a roster add's trooper whose milpac names no Discord
 	// account, whom it skips before it starts.
 	SkipNoDiscord SkipReason = "no-discord"
@@ -494,6 +498,8 @@ type actionRun struct {
 	// clearsApproval is a removal of External, which clears the approval of
 	// each member it takes the role from.
 	clearsApproval bool
+	// absent is the reason a member not in the server is skipped with.
+	absent SkipReason
 	// stop closes when someone presses the action's Stop.
 	stop <-chan struct{}
 }
@@ -523,6 +529,9 @@ type actionSpec struct {
 	// skipped are the members the action skips before it starts: a roster
 	// add's troopers with no Discord account on the milpac.
 	skipped []ReportMember
+	// absent is the reason a member not in the server is skipped with:
+	// SkipLeft when empty.
+	absent SkipReason
 	// plan is the action's role changes, over the complete member list as it
 	// stands, the guild's Foxhole role IDs and the guild's Foxhole records.
 	plan func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange
@@ -595,8 +604,8 @@ func (r *FoxholeRuntime) Add(ctx context.Context, role FoxholeRole, memberIDs []
 // lists each trooper whose milpac names no Discord account as skipped. The
 // add then runs in the background, with no deadline of ctx's, to its end:
 // one member at a time, in the order given, it gives Internal to each
-// trooper's Discord ID. One who holds it already, or who isn't in the
-// server, is skipped with that reason.
+// trooper's Discord ID. One who holds it already is skipped with that
+// reason, and one who isn't in the server with SkipNotInServer.
 func (r *FoxholeRuntime) RosterAdd(ctx context.Context, unit ValidatedInternalUnit, troopers []RosterTrooper, by ForumUser) error {
 	var noDiscord []ReportMember
 	for _, t := range troopers {
@@ -606,7 +615,7 @@ func (r *FoxholeRuntime) RosterAdd(ctx context.Context, unit ValidatedInternalUn
 	}
 	return r.start(ctx, actionSpec{
 		action: store.ChangeRosterAdd, unit: unit.Label, roles: []FoxholeRole{FoxholeInternal}, grant: true,
-		reason: "Panel: Foxhole " + unit.Label + " roster add by ", skipped: noDiscord,
+		reason: "Panel: Foxhole " + unit.Label + " roster add by ", skipped: noDiscord, absent: SkipNotInServer,
 		plan: func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange {
 			return rosterAddPlan(list, roleIDs, records, troopers)
 		},
@@ -665,7 +674,7 @@ func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUse
 		"username", by.Username, "forum_user_id", by.ID)
 	r.started(entry.ID)
 	run := actionRun{action: spec.action, grant: spec.grant, reportID: entry.ID, reason: spec.reason + by.auditName(),
-		clearsApproval: spec.clearsApproval, stop: stop}
+		clearsApproval: spec.clearsApproval, absent: cmp.Or(spec.absent, SkipLeft), stop: stop}
 	go r.run(run, plan, report, namesOf(records))
 	return nil
 }
@@ -833,9 +842,9 @@ func byDisplayName(changes []plannedChange) []plannedChange {
 // after each, and ends the report once it has been through them all, or
 // sooner when someone presses Stop or a pause outlasts FoxholePauseLimit
 // (awaitList). Just before it changes a member it reads them from the
-// member list: one who no longer holds the role it takes, who holds the
-// role it gives already, or who left the server, is skipped with that
-// reason, and one still in the server is named in the
+// member list: one who no longer holds the role it takes, or who holds the
+// role it gives already, is skipped with that reason, one not in the server
+// with the run's absent reason, and one still in the server is named in the
 // report under the names the list shows now, which also refresh their
 // record's names.
 func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionReport, names map[string]store.MemberNames) {
@@ -862,7 +871,7 @@ func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionR
 		holds := slices.Contains(mem.RoleIDs, p.roleID)
 		switch {
 		case !ok:
-			member.Skip = SkipLeft
+			member.Skip = run.absent
 			report.Skipped = append(report.Skipped, member)
 		case run.grant && holds:
 			member.Skip = SkipHolding

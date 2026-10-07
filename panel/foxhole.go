@@ -448,9 +448,8 @@ type foxholeRequest struct {
 	ActionRefusal *saveRefusal
 	// Paste is the paste box the page answers the Preview of, nil for none.
 	Paste *pasteBox
-	// Roster is the validated internal unit whose roster preview the page
-	// opens, nil for none.
-	Roster *commands.ValidatedInternalUnit
+	// Roster is the roster preview the page opens, nil for none.
+	Roster *rosterRequest
 }
 
 // foxholePage is GET /foxhole, the Foxhole page. It reads the guild's roles
@@ -699,15 +698,20 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 			view.AddPreview = s.addPreviewOf(list, records, *req.Paste, nil)
 		}
 		if req.Roster != nil {
-			preview, err := s.rosterPreview(ctx, list, records, *req.Roster)
+			troopers := req.Roster.Troopers
+			var err error
+			if troopers == nil {
+				troopers, err = fetchRoster(ctx, req.Roster.Unit)
+			}
 			var refusal *saveRefusal
 			switch {
 			case errors.As(err, &refusal):
 				view.ActionRefusal = refusal
 			case err != nil:
 				return foxholeView{}, err
+			default:
+				view.RosterPreview = s.rosterPreviewOf(list, records, req.Roster.Unit, troopers)
 			}
-			view.RosterPreview = preview
 		}
 	} else {
 		view.ListNotice = noticeFor(list, foxholeURL(req.Query, req.Filter, req.NoteMember))

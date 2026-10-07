@@ -37,19 +37,20 @@ const (
 )
 
 // rosterResult is what a roster add does with one trooper on the roster,
-// its data-result marker.
+// its data-result marker. Each but rosterGets is a reason the add skips
+// the trooper, which its report gives under the same code.
 type rosterResult string
 
 const (
 	// rosterGets is a trooper in the server who gets Internal.
 	rosterGets rosterResult = "gets"
 	// rosterHolding is a trooper who already holds Internal.
-	rosterHolding rosterResult = "holding"
+	rosterHolding = rosterResult(commands.SkipHolding)
 	// rosterNotInServer is a trooper whose milpac names a Discord ID no
 	// member of the server has.
-	rosterNotInServer rosterResult = "not-in-server"
+	rosterNotInServer = rosterResult(commands.SkipNotInServer)
 	// rosterNoDiscord is a trooper whose milpac names no Discord account.
-	rosterNoDiscord rosterResult = "no-discord"
+	rosterNoDiscord = rosterResult(commands.SkipNoDiscord)
 )
 
 // rosterPreview is the preview a roster add waits on: the unit, and a row
@@ -64,30 +65,31 @@ type rosterPreview struct {
 }
 
 // rosterRow is one trooper on the roster as the roster preview shows them:
-// their forum username, the Discord ID their milpac names, what the add
-// does with them, the member, nil for a trooper not in the server, and the
-// member's note, whether or not they are in the server.
+// the trooper, what the add does with them, the member, nil for a trooper
+// not in the server, and the member's note, whether or not they are in the
+// server.
 type rosterRow struct {
-	Trooper   string
-	DiscordID string
-	Result    rosterResult
-	Member    *holderRow
-	Note      string
+	commands.RosterTrooper
+	Result rosterResult
+	Member *holderRow
+	Note   string
 }
 
-// ResultLabel is the row's result as the preview says it.
+// ResultLabel is the row's result as the preview says it, in the report's
+// words for a trooper the add skips.
 func (r rosterRow) ResultLabel() string {
-	switch r.Result {
-	case rosterGets:
+	if r.Result == rosterGets {
 		return "gets Internal"
-	case rosterHolding:
-		return "already holds Internal"
-	case rosterNotInServer:
-		return "isn't in the server"
-	case rosterNoDiscord:
-		return "no Discord account on the milpac"
 	}
-	return string(r.Result)
+	return skipWords(commands.SkipReason(r.Result), foxholeRoleLabels[commands.FoxholeInternal])
+}
+
+// rosterRequest is the roster preview a page opens: the unit, and its
+// roster when the request has fetched it already, nil for the page to
+// fetch it.
+type rosterRequest struct {
+	Unit     commands.ValidatedInternalUnit
+	Troopers []commands.RosterTrooper
 }
 
 // errRosterListPartial refuses a Preview roster pressed while the member
@@ -151,17 +153,6 @@ func rosterTroopers(ctx context.Context, unit commands.ValidatedInternalUnit) ([
 	return troopers, nil
 }
 
-// rosterPreview fetches the unit's roster, as fetchRoster says, and
-// previews its add to Internal against a complete member list and the
-// guild's Foxhole records.
-func (s foxholeService) rosterPreview(ctx context.Context, list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, unit commands.ValidatedInternalUnit) (*rosterPreview, error) {
-	troopers, err := fetchRoster(ctx, unit)
-	if err != nil {
-		return nil, err
-	}
-	return s.rosterPreviewOf(list, records, unit, troopers), nil
-}
-
 // rosterPreviewOf is the preview of an add of the troopers given to
 // Internal, read from a complete member list and the guild's Foxhole
 // records.
@@ -169,7 +160,7 @@ func (s foxholeService) rosterPreviewOf(list commands.MemberListSnapshot, record
 	guild := s.foxholeGuildOf()
 	preview := &rosterPreview{Unit: unit}
 	for _, t := range troopers {
-		row := rosterRow{Trooper: t.Username, DiscordID: t.DiscordID}
+		row := rosterRow{RosterTrooper: t}
 		if t.DiscordID != "" {
 			row.Note = records[t.DiscordID].Note
 		}
@@ -202,7 +193,7 @@ func (s foxholeService) rosterPreviewOf(list commands.MemberListSnapshot, record
 func (p *rosterPreview) Listed() string {
 	troopers := make([]commands.RosterTrooper, 0, len(p.Rows))
 	for _, row := range p.Rows {
-		troopers = append(troopers, commands.RosterTrooper{Username: row.Trooper, DiscordID: row.DiscordID})
+		troopers = append(troopers, row.RosterTrooper)
 	}
 	return listedRoster(troopers)
 }
@@ -221,6 +212,29 @@ var errRosterChanged = &saveRefusal{Kind: "roster-changed", status: http.StatusC
 	log:     "Panel action refused: roster preview out of date",
 	Message: "The roster changed since you previewed it, so the roster add didn't start. Nothing changed. Check the preview below and confirm again."}
 
+// confirmedRoster is the roster a roster add's Confirm starts on: the
+// unit's roster fetched again, as fetchRoster says, which must list the
+// troopers listed, as the preview's Listed, else errRosterChanged with the
+// roster as it stands now. It fetches nothing while the add couldn't start:
+// while the member list is partial, commands.ErrMemberListPartial, and
+// while another Foxhole action runs, commands.ErrActionRunning.
+func (s foxholeService) confirmedRoster(ctx context.Context, unit commands.ValidatedInternalUnit, listed string) ([]commands.RosterTrooper, error) {
+	if s.manager.MemberList(s.guildID).Status != commands.MemberListComplete {
+		return nil, commands.ErrMemberListPartial
+	}
+	if _, busy := s.actions.Running(); busy {
+		return nil, commands.ErrActionRunning
+	}
+	troopers, err := fetchRoster(ctx, unit)
+	if err != nil {
+		return nil, err
+	}
+	if listedRoster(troopers) != listed {
+		return troopers, errRosterChanged
+	}
+	return troopers, nil
+}
+
 // CanAdd reports whether confirming the preview could give Internal to
 // anyone: a trooper in the server who doesn't hold it. A preview that
 // can't offers no Confirm.
@@ -229,10 +243,10 @@ func (p *rosterPreview) CanAdd() bool {
 }
 
 // startRosterAdd is POST /foxhole/roster, the roster preview's Confirm: it
-// fetches the unit's roster again, as fetchRoster says, and starts the
-// roster add of it, as startAction says. A roster that lists other troopers
-// than the preview did starts nothing. A unit outside the registry is
-// refused before any roster fetch.
+// starts the roster add of the roster confirmedRoster gives, as
+// startAction says. A roster that lists other troopers than the preview
+// did starts nothing, and the page shows the preview as it stands now. A
+// unit outside the registry is refused before any roster fetch.
 func (p *Panel) startRosterAdd(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -249,20 +263,15 @@ func (p *Panel) startRosterAdd(w http.ResponseWriter, r *http.Request, sess sess
 	// fetch does.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), p.pageBudget)
 	defer cancel()
-	troopers, err := fetchRoster(ctx, unit)
-	var refusal *saveRefusal
-	switch {
-	case errors.As(err, &refusal):
-		p.refuseAction(w, r, sess, actionPage, refusal, kv...)
-		return
-	case err != nil:
-		p.serverError(w, "Foxhole roster fetch", err)
-		return
-	case listedRoster(troopers) != r.PostForm.Get(fieldRoster):
-		p.refuseAction(w, r, sess, foxholeRequest{Filter: filterAll, Roster: &unit}, errRosterChanged, kv...)
+	troopers, err := p.foxhole.confirmedRoster(ctx, unit, r.PostForm.Get(fieldRoster))
+	if errors.Is(err, errRosterChanged) {
+		p.refuseAction(w, r, sess, foxholeRequest{Filter: filterAll, Roster: &rosterRequest{Unit: unit, Troopers: troopers}}, errRosterChanged, kv...)
 		return
 	}
 	p.startAction(w, r, sess, actionPage, "the roster add", func(ctx context.Context, by commands.ForumUser) error {
+		if err != nil {
+			return err
+		}
 		return p.foxhole.actions.RosterAdd(ctx, unit, troopers, by)
 	}, kv...)
 }
@@ -280,5 +289,5 @@ func (p *Panel) previewRoster(w http.ResponseWriter, r *http.Request, sess sessi
 		http.Error(w, "the form names no validated internal unit, so nothing changed", http.StatusBadRequest)
 		return
 	}
-	p.renderFoxhole(w, r, sess, http.StatusOK, foxholeRequest{Filter: filterAll, AwaitList: true, Roster: &unit})
+	p.renderFoxhole(w, r, sess, http.StatusOK, foxholeRequest{Filter: filterAll, AwaitList: true, Roster: &rosterRequest{Unit: unit}})
 }

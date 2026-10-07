@@ -379,7 +379,7 @@ func TestConfirmedRosterAddGivesInternalToEachTrooperInTheServerWithoutIt(t *tes
 		t.Errorf("the roster add made the role changes %v, want %v", writes, want)
 	}
 	skipped := trooperReasons(reportList(t, reportBlock(t, parseHTML(t, w.b.get(foxholePath))), "skipped"))
-	if want := map[string]string{"Doe.J": "holding", "Gone.P": "left", "Nolink.Q": "no-discord"}; !maps.Equal(skipped, want) {
+	if want := map[string]string{"Doe.J": "holding", "Gone.P": "not-in-server", "Nolink.Q": "no-discord"}; !maps.Equal(skipped, want) {
 		t.Errorf("the report skipped %v, want %v", skipped, want)
 	}
 }
@@ -473,5 +473,45 @@ func TestRosterPreviewWithNobodyToAddCantBeConfirmed(t *testing.T) {
 	}
 	if findElement(preview, "", "data-field", "nobody-to-add") == nil {
 		t.Error("the preview doesn't say there's nobody to add")
+	}
+}
+
+// A roster add's Confirm refuses before it fetches the roster again when
+// the add couldn't start anyway: while the member list is partial, and
+// while another Foxhole action runs. Each says why, so a roster fetch that
+// fails then never stands in for the real reason.
+func TestRosterAddConfirmedWhenItCantStartFetchesNoRoster(t *testing.T) {
+	cases := []struct {
+		name    string
+		refusal string
+		before  func(t *testing.T, w *testWorld)
+	}{
+		{"member list partial", "member-list", func(_ *testing.T, w *testWorld) {
+			w.discord.setMemberList(arrivingList)
+		}},
+		{"another action running", "action-running", func(t *testing.T, w *testWorld) {
+			hold := holdRoleWrites(t, w)
+			startPurge(t, w, "internal")
+			hold.next(t)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			w.p.pageBudget = partialListBudget
+			api := serveRoster(t, trooperVance)
+			doc := parseHTML(t, previewRoster(t, w, "D/ACD"))
+			tc.before(t, w)
+			calls := api.requestCount()
+
+			after := parseHTML(t, w.b.postForm(foxholeRosterPath, formPosts(t, doc, foxholeRosterPath)))
+
+			if findLive(after, "", "data-error", tc.refusal) == nil {
+				t.Errorf("the page doesn't give the %s refusal", tc.refusal)
+			}
+			if n := api.requestCount() - calls; n != 0 {
+				t.Errorf("the 7Cav API got %d more requests, want none", n)
+			}
+		})
 	}
 }

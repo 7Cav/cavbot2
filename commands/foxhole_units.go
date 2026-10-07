@@ -8,9 +8,10 @@ import (
 	"github.com/7cav/cavbot2/utils"
 )
 
-// rosterFetchTimeout bounds the single milpac roster fetch. The
-// per-trooper role-adds that follow are plain Discord calls inside the
-// interaction's 15-minute window, so only the roster lookup needs a deadline.
+// rosterFetchTimeout bounds a unit's roster fetch. The roster add command's
+// per-trooper role-adds are plain Discord calls inside the interaction's
+// 15-minute window, so only the roster lookup needs a deadline. A caller's
+// shorter deadline, such as a panel page's time budget, still wins.
 const rosterFetchTimeout = 30 * time.Second
 
 // ValidatedInternalUnit is one row of the validated internal unit registry,

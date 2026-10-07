@@ -119,21 +119,29 @@ func (r reportView) OutcomeCode() string {
 // change, as the page says it. Empty for a member it changed or never
 // attempted.
 func (m reportMember) Why() string {
-	switch m.Skip {
+	if why := skipWords(m.Skip, m.RoleName); why != "" {
+		return why
+	}
+	return m.Failure
+}
+
+// skipWords is why a Foxhole action skips a member, as both its report and
+// the roster preview say it, with the role's name as the page shows it.
+// Empty for no reason.
+func skipWords(reason commands.SkipReason, roleName string) string {
+	switch reason {
 	case commands.SkipNotHolding:
-		return "no longer holds " + m.RoleName
+		return "no longer holds " + roleName
 	case commands.SkipHolding:
-		return "already holds " + m.RoleName
+		return "already holds " + roleName
 	case commands.SkipLeft:
-		if m.Trooper != "" {
-			// A roster's trooper may never have been in the server.
-			return "isn't in the server"
-		}
 		return "left the server"
+	case commands.SkipNotInServer:
+		return "isn't in the server"
 	case commands.SkipNoDiscord:
 		return "no Discord account on the milpac"
 	}
-	return m.Failure
+	return ""
 }
 
 // reportViewOf decodes a report the store holds for the page. Its name is
