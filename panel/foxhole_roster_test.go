@@ -116,7 +116,7 @@ func TestRosterBlockOffersTheUnitsTheCommandsPickerOffers(t *testing.T) {
 		}
 	})
 	var want []string
-	for _, opt := range commands.FoxholeBulkAddInternal().Definition.Options {
+	for _, opt := range commands.FoxholeBulkAddInternal(nil).Definition.Options {
 		for _, choice := range opt.Choices {
 			want = append(want, choice.Value.(string)+" "+choice.Name)
 		}
@@ -478,8 +478,9 @@ func TestRosterPreviewWithNobodyToAddCantBeConfirmed(t *testing.T) {
 
 // A roster add's Confirm refuses before it fetches the roster again when
 // the add couldn't start anyway: while the member list is partial, and
-// while another Foxhole action runs. Each says why, so a roster fetch that
-// fails then never stands in for the real reason.
+// while another Foxhole action runs, from the page or a role-changing
+// command. Each says why, so a roster fetch that fails then never stands in
+// for the real reason.
 func TestRosterAddConfirmedWhenItCantStartFetchesNoRoster(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -493,6 +494,9 @@ func TestRosterAddConfirmedWhenItCantStartFetchesNoRoster(t *testing.T) {
 			hold := holdRoleWrites(t, w)
 			startPurge(t, w, "internal")
 			hold.next(t)
+		}},
+		{"a command running", "action-running", func(t *testing.T, w *testWorld) {
+			holdFoxholeAdd(t, w)
 		}},
 	}
 	for _, tc := range cases {

@@ -288,7 +288,7 @@ func TestRunFoxhole_AddDeferredEphemeralAcknowledge(t *testing.T) {
 		stringOption("discordname", "123456789012345678"),
 	)
 
-	runFoxhole(f, gm, i)
+	runFoxhole(f, gm, nil, i)
 
 	calls := f.Calls()
 	if len(calls) == 0 {
@@ -321,7 +321,7 @@ func TestRunFoxhole_InvalidSubcommandSurfacesError(t *testing.T) {
 		stringOption("flag", "internal"),
 	)
 
-	runFoxhole(f, gm, i)
+	runFoxhole(f, gm, nil, i)
 
 	if len(f.Calls()) == 0 {
 		t.Fatal("expected an error response")
@@ -341,7 +341,7 @@ func TestRunFoxhole_MissingGuildIDRejected(t *testing.T) {
 		stringOption("discordname", "x"),
 	)
 
-	runFoxhole(f, gm, i)
+	runFoxhole(f, gm, nil, i)
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("DM-context must not touch guild; got %v", gm.Calls())
@@ -364,7 +364,7 @@ func TestRunFoxhole_NilMemberDMContextRejectedWithoutPanic(t *testing.T) {
 	i.Member = nil
 	i.User = &discordgo.User{ID: "555", Username: "dmuser"}
 
-	runFoxhole(f, gm, i) // must not panic on the entry-log Member deref
+	runFoxhole(f, gm, nil, i) // must not panic on the entry-log Member deref
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("nil-Member DM context must not touch guild; got %v", gm.Calls())
@@ -388,7 +388,7 @@ func TestRunFoxhole_NilMemberAndUserDoesNotPanic(t *testing.T) {
 	i.Member = nil
 	i.User = nil
 
-	runFoxhole(f, gm, i) // must not panic with both nil
+	runFoxhole(f, gm, nil, i) // must not panic with both nil
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("malformed interaction must not touch guild; got %v", gm.Calls())
@@ -617,7 +617,7 @@ func TestRunFoxhole_RemoveSuccess(t *testing.T) {
 		stringOption("discordname", "123456789012345678"),
 	)
 
-	runFoxhole(f, gm, i)
+	runFoxhole(f, gm, nil, i)
 
 	if gm.countCalls("GuildMemberRoleRemove") != 1 {
 		t.Fatalf("expected 1 GuildMemberRoleRemove, got %v", gm.Calls())
@@ -638,7 +638,7 @@ func TestRunFoxhole_AddRoleAddFailureSurfaces(t *testing.T) {
 		stringOption("discordname", "123456789012345678"),
 	)
 
-	runFoxhole(f, gm, i)
+	runFoxhole(f, gm, nil, i)
 
 	// A plain (non-REST) error is a transport-class fault: the reply names the
 	// role and surfaces the failure, but never the raw error text.
@@ -666,7 +666,7 @@ func TestRunFoxhole_BulkAddMixedResults(t *testing.T) {
 		stringOption("discordname", "good, bad"),
 	)
 
-	runFoxhole(f, gm, i)
+	runFoxhole(f, gm, nil, i)
 
 	calls := f.Calls()
 	embed := lastEditEmbed(calls)
@@ -690,7 +690,7 @@ func TestRunFoxhole_MissingDiscordnameForAdd(t *testing.T) {
 		stringOption("flag", "internal"),
 	)
 
-	runFoxhole(f, gm, i)
+	runFoxhole(f, gm, nil, i)
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("missing discordname must short-circuit before guild calls; got %v", gm.Calls())
@@ -779,7 +779,7 @@ func TestRefusedAcknowledgementKeepsDiscordBodyOutOfTheReply(t *testing.T) {
 		{"/foxhole remove", func(f *fakeResponder) {
 			handleFoxholeRemove(f, nil, fakeAppCommandInteraction(), "guild-1", "someone", "internal")
 		}},
-		{"/foxhole-bulkadd-internal", func(f *fakeResponder) { runFoxholeBulkAddInternal(f, nil, bulkAddInternal) }},
+		{"/foxhole-bulkadd-internal", func(f *fakeResponder) { runFoxholeBulkAddInternal(f, nil, nil, bulkAddInternal) }},
 		{"/s3aar (disabled)", func(f *fakeResponder) { runS3aarDisabled(f, fakeAppCommandInteraction()) }},
 	}
 	for _, tc := range cases {

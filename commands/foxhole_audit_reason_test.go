@@ -54,7 +54,7 @@ func TestFoxholeRoleChangesNameTheCommandAndWhoRanIt(t *testing.T) {
 				stringOption("discordname", tc.discordname),
 			), reasonInvoker)
 
-			runFoxhole(&fakeResponder{}, gm, interaction)
+			runFoxhole(&fakeResponder{}, gm, nil, interaction)
 
 			writes := gm.guildWrites()
 			if len(writes) == 0 {
@@ -152,7 +152,7 @@ func TestFoxholeRosterAddNamesTheCommandUnitAndWhoRanIt(t *testing.T) {
 			gm := internalRoleGM()
 			interaction := ranBy(slashNamed(command, stringOption("unit", "D/ACD")), reasonInvoker)
 
-			runFoxholeBulkAddInternal(&fakeResponder{}, gm, interaction)
+			runFoxholeBulkAddInternal(&fakeResponder{}, gm, nil, interaction)
 
 			writes := gm.guildWrites()
 			if len(writes) == 0 {

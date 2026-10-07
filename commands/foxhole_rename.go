@@ -22,16 +22,16 @@ import (
 var foxholeRenameCutoff = time.Date(2026, time.November, 6, 12, 0, 0, 0, time.UTC)
 
 // Warden is /foxhole under its old name.
-func Warden() Command {
-	cmd := Foxhole()
+func Warden(fx *FoxholeRuntime) Command {
+	cmd := Foxhole(fx)
 	cmd.Definition.Name = "warden"
 	cmd.Definition.Description = renamedDescription("foxhole")
 	return cmd
 }
 
 // WardenBulkAddInternal is /foxhole-bulkadd-internal under its old name.
-func WardenBulkAddInternal() Command {
-	cmd := FoxholeBulkAddInternal()
+func WardenBulkAddInternal(fx *FoxholeRuntime) Command {
+	cmd := FoxholeBulkAddInternal(fx)
 	cmd.Definition.Name = "warden-bulkadd-internal"
 	cmd.Definition.Description = renamedDescription("foxhole-bulkadd-internal")
 	return cmd

@@ -47,7 +47,7 @@ func TestDisabledS3aarTellsTheInvokerWhereToGoAndByWhen(t *testing.T) {
 // because all a member can get from it is that it is off.
 func TestRegistryDeclaresS3aarWithNoOptions(t *testing.T) {
 	var def *discordgo.ApplicationCommand
-	for _, d := range NewRegistry(nil).GetCommands() {
+	for _, d := range NewRegistry(nil, nil).GetCommands() {
 		if d.Name == "s3aar" {
 			def = d
 		}

@@ -94,12 +94,12 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 		subcommand string
 		run        func(t *testing.T, r *slowAck)
 	}{
-		{"/foxhole add", "foxhole", "add", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("add")) }},
-		{"/foxhole remove", "foxhole", "remove", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("remove")) }},
-		{"/foxhole bulkadd", "foxhole", "bulkadd", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("bulkadd")) }},
-		{"/foxhole purge", "foxhole", "purge", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, foxhole("purge")) }},
+		{"/foxhole add", "foxhole", "add", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, nil, foxhole("add")) }},
+		{"/foxhole remove", "foxhole", "remove", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, nil, foxhole("remove")) }},
+		{"/foxhole bulkadd", "foxhole", "bulkadd", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, nil, foxhole("bulkadd")) }},
+		{"/foxhole purge", "foxhole", "purge", func(_ *testing.T, r *slowAck) { runFoxhole(r, nil, nil, foxhole("purge")) }},
 		{"/foxhole-bulkadd-internal", "foxhole-bulkadd-internal", "", func(_ *testing.T, r *slowAck) {
-			runFoxholeBulkAddInternal(r, nil, slash("foxhole-bulkadd-internal", stringOption("unit", validatedInternalUnits[0].Value)))
+			runFoxholeBulkAddInternal(r, nil, nil, slash("foxhole-bulkadd-internal", stringOption("unit", validatedInternalUnits[0].Value)))
 		}},
 		{"/voice-rename", voiceRenameCommandName, "", func(_ *testing.T, r *slowAck) {
 			runVoiceRename(r, nil, slash(voiceRenameCommandName, stringOption("name", "Alpha")))

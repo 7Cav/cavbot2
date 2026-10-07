@@ -29,7 +29,7 @@ func TestRunFoxholeBulkAdd_LookupSameSignatureCollapsesToOneCapture(t *testing.T
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, bulkAddInteraction("internal", "alice, bob, carol"))
+	runFoxhole(f, gm, nil, bulkAddInteraction("internal", "alice, bob, carol"))
 
 	// One root cause, one Sentry event — not one per entry.
 	if rec.count != 1 {
@@ -70,7 +70,7 @@ func TestRunFoxholeBulkAdd_LookupMixedSignaturesCaptureOncePerSignature(t *testi
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, bulkAddInteraction("internal", "alice, bob"))
+	runFoxhole(f, gm, nil, bulkAddInteraction("internal", "alice, bob"))
 
 	if rec.count != 2 {
 		t.Fatalf("two distinct lookup signatures must capture once each (no folding); got %d", rec.count)
@@ -107,7 +107,7 @@ func TestRunFoxholeBulkAdd_LookupSingleFaultCapturesOnceCountOne(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, bulkAddInteraction("internal", "alice"))
+	runFoxhole(f, gm, nil, bulkAddInteraction("internal", "alice"))
 
 	if rec.count != 1 {
 		t.Fatalf("a single lookup fault must capture exactly once; got %d", rec.count)
@@ -139,7 +139,7 @@ func TestRunFoxholeBulkAdd_LookupByIDFaultRoutesToCollector(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, bulkAddInteraction("internal", "<@111>, <@222>"))
+	runFoxhole(f, gm, nil, bulkAddInteraction("internal", "<@111>, <@222>"))
 
 	if gm.countCalls("GuildMembersSearch") != 0 {
 		t.Fatalf("mention entries must resolve by ID, never fall through to name search; got calls %v", gm.Calls())
@@ -180,7 +180,7 @@ func TestRunFoxholeBulkAdd_LookupNonCapturedOutcomesListedNotCaptured(t *testing
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, bulkAddInteraction("internal", "<@111>, ghost, common"))
+	runFoxhole(f, gm, nil, bulkAddInteraction("internal", "<@111>, ghost, common"))
 
 	if rec.count != 0 {
 		t.Fatalf("not-in-server / no-match / too-many lookup outcomes must NOT capture to Sentry; got %d", rec.count)
@@ -208,7 +208,7 @@ func TestRunFoxholeBulkAdd_Lookup4xxListedNotCaptured(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, bulkAddInteraction("internal", "alice"))
+	runFoxhole(f, gm, nil, bulkAddInteraction("internal", "alice"))
 
 	if rec.count != 0 {
 		t.Fatalf("a 4xx lookup client fault must NOT capture to Sentry; got %d", rec.count)
@@ -236,7 +236,7 @@ func TestRunFoxholeAdd_MemberLookup5xxCapturesOnceInline(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, foxholeAddInteraction())
+	runFoxhole(f, gm, nil, foxholeAddInteraction())
 
 	if rec.count != 1 {
 		t.Fatalf("a single /foxhole add lookup 5xx must capture inline exactly once; got %d", rec.count)
@@ -262,7 +262,7 @@ func TestRunFoxholeRemove_MemberLookup5xxCapturesOnceInline(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, foxholeRemoveInteraction())
+	runFoxhole(f, gm, nil, foxholeRemoveInteraction())
 
 	if rec.count != 1 {
 		t.Fatalf("a single /foxhole remove lookup 5xx must capture inline exactly once; got %d", rec.count)
@@ -296,7 +296,7 @@ func TestRunFoxholeBulkAdd_LookupAndRoleAddSameSignatureDoNotFold(t *testing.T) 
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, bulkAddInteraction("internal", "alice, bob"))
+	runFoxhole(f, gm, nil, bulkAddInteraction("internal", "alice, bob"))
 
 	// A lookup fault and a role-add fault sharing {500,0} must NOT fold: two
 	// collectors, two events.
@@ -339,7 +339,7 @@ func TestRunFoxholeBulkAdd_LookupByIDConfig404CapturedAbsenceNot(t *testing.T) {
 		}
 		f := &fakeResponder{}
 
-		runFoxhole(f, gm, bulkAddInteraction("internal", "<@111>"))
+		runFoxhole(f, gm, nil, bulkAddInteraction("internal", "<@111>"))
 
 		if rec.count != 1 {
 			t.Fatalf("a config-fault 404 (Unknown Guild) on the by-ID lookup must be collected and page once; got %d", rec.count)
@@ -363,7 +363,7 @@ func TestRunFoxholeBulkAdd_LookupByIDConfig404CapturedAbsenceNot(t *testing.T) {
 		}
 		f := &fakeResponder{}
 
-		runFoxhole(f, gm, bulkAddInteraction("internal", "<@111>"))
+		runFoxhole(f, gm, nil, bulkAddInteraction("internal", "<@111>"))
 
 		if rec.count != 0 {
 			t.Fatalf("a genuine absence (Unknown Member 404) on the by-ID lookup must NOT capture; got %d", rec.count)

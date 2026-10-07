@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
+	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 )
@@ -90,7 +92,9 @@ var (
 	foxholeTitleCaser = cases.Title(language.Und, cases.NoLower)
 )
 
-func Foxhole() Command {
+// Foxhole declares /foxhole over the Foxhole runtime, nil on a host with
+// no bot store.
+func Foxhole(fx *FoxholeRuntime) Command {
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
 			Name:        "foxhole",
@@ -118,26 +122,25 @@ func Foxhole() Command {
 				},
 			},
 		},
-		Handler: handleFoxhole,
+		Handler: func(session *discordgo.Session, interaction *discordgo.InteractionCreate) {
+			runFoxhole(utils.NewSessionResponder(session), NewSessionGuildManager(session), fx, interaction)
+		},
 	}
-}
-
-func handleFoxhole(
-	session *discordgo.Session,
-	interaction *discordgo.InteractionCreate,
-) {
-	runFoxhole(utils.NewSessionResponder(session), NewSessionGuildManager(session), interaction)
 }
 
 func runFoxhole(
 	r utils.InteractionResponder,
 	gm GuildManager,
+	fx *FoxholeRuntime,
 	interaction *discordgo.InteractionCreate,
 ) {
-	// A purge sends its own note once its summary is out.
+	// A purge runs on in the background, so it gives the one-action-at-a-time
+	// rule back and sends its own note once its summary is out.
 	purging := false
+	end := func() {}
 	defer func() {
 		if !purging {
+			end()
 			sendRenameNote(r, interaction, "warden", "foxhole")
 		}
 	}()
@@ -195,6 +198,15 @@ func runFoxhole(
 
 	utils.Debug("Foxhole command invoked", "command", subcommand, "query", query, "flag", roleScope)
 
+	// Every subcommand changes roles, so none runs alongside a Foxhole
+	// action started on the Foxhole page.
+	run := foxholeCommandRun(interaction, subcommand)
+	var refused *RunningAction
+	if end, refused = fx.startCommand(run); refused != nil {
+		refuseForPageAction(r, interaction, run, *refused)
+		return
+	}
+
 	switch subcommand {
 	case "add":
 		handleFoxholeAdd(r, gm, interaction, guildID, query, roleScope)
@@ -204,7 +216,7 @@ func runFoxhole(
 		handleFoxholeBulkAdd(r, gm, interaction, guildID, query, roleScope)
 	case "purge":
 		purging = true
-		handleFoxholePurge(r, gm, interaction, guildID, roleScope)
+		handleFoxholePurge(r, gm, interaction, guildID, roleScope, end)
 	default:
 		utils.HandleError(r, interaction, "❌ Unknown subcommand")
 	}
@@ -212,15 +224,47 @@ func runFoxhole(
 	utils.Info("✨ Done!", "command", commandNameOf(interaction))
 }
 
+// refuseForPageAction answers a role-changing Foxhole command run sent
+// while a Foxhole action started on the Foxhole page runs, with a reply only
+// its member sees naming the action, who started it and how far it has
+// got. The command changes nothing.
+func refuseForPageAction(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, run CommandRun, action RunningAction) {
+	utils.Info("Foxhole command refused: a page action is running", "command", commandNameOf(interaction),
+		"typed", run.Command, "action", action.Name, "started_by", action.StartedBy)
+	utils.HandleError(r, interaction, fmt.Sprintf(
+		"❌ A Foxhole action is running on the Foxhole page: %s, started by %s, %d of %d done. Nothing changed. Try again when it ends.",
+		action.Name, action.StartedBy, action.Done, action.Total))
+}
+
+// foxholeCommandTyped is a Foxhole command run as its member typed it,
+// under the name it ran: the command name, then typed, what the member
+// picked after it, the subcommand or the roster add's unit.
+func foxholeCommandTyped(interaction *discordgo.InteractionCreate, typed string) string {
+	return fmt.Sprintf("/%s %s", commandNameOf(interaction), typed)
+}
+
 // foxholeAuditReason is the audit log reason a Foxhole command run carries
 // on every change it makes, in the temp VC format: the command as typed,
-// under the name it ran, then the member who ran it. typed is what the
-// member picked after the command name: the subcommand, or the roster add's
-// unit.
+// as foxholeCommandTyped gives it, then the member who ran it.
 func foxholeAuditReason(interaction *discordgo.InteractionCreate, typed string) string {
 	username, discordID := interactionUsernameAndID(interaction)
 	by := Invoker{UserID: discordID, Username: username}
-	return fmt.Sprintf("/%s %s by %s", commandNameOf(interaction), typed, by.auditName())
+	return foxholeCommandTyped(interaction, typed) + " by " + by.auditName()
+}
+
+// foxholeCommandRun is a role-changing Foxhole command run as the Foxhole
+// page names it while it runs: as typed, as foxholeCommandTyped gives it,
+// the member who ran it under the names the interaction carries, and now.
+func foxholeCommandRun(interaction *discordgo.InteractionCreate, typed string) CommandRun {
+	run := CommandRun{Command: foxholeCommandTyped(interaction, typed), StartedAt: foxholeNow().UTC()}
+	if user := interactionUser(interaction); user != nil {
+		var nick string
+		if interaction.Member != nil {
+			nick = interaction.Member.Nick
+		}
+		run.By = store.MemberNames{MemberID: user.ID, Username: user.Username, DisplayName: cmp.Or(nick, user.GlobalName, user.Username)}
+	}
+	return run
 }
 
 func handleFoxholeAdd(r utils.InteractionResponder, gm GuildManager, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
@@ -417,14 +461,18 @@ func handleFoxholeBulkAdd(
 	editEphemeralWithEmbed(r, interaction, content, embed)
 }
 
+// handleFoxholePurge starts the purge in the background, which calls end
+// once it has run.
 func handleFoxholePurge(
 	r utils.InteractionResponder,
 	gm GuildManager,
 	interaction *discordgo.InteractionCreate,
 	guildID string,
 	roleScope string,
+	end func(),
 ) {
 	if err := deferEphemeral(r, interaction); err != nil {
+		end()
 		if isUnknownInteraction(err) {
 			captureMissedAck(interaction, err, "subcommand", foxholeSubcommandOf(interaction))
 			return
@@ -435,6 +483,7 @@ func handleFoxholePurge(
 
 	go func() {
 		defer utils.RecoverPanic("foxhole-purge")
+		defer end()
 		runFoxholePurge(r, gm, interaction, guildID, roleScope)
 		sendRenameNote(r, interaction, "warden", "foxhole")
 	}()

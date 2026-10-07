@@ -49,7 +49,7 @@ func TestRunFoxholeBulkAdd_SameSignatureCollapsesToOneCapture(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, bulkAddInteraction("internal", "alice, bob, carol"))
+	runFoxhole(f, gm, nil, bulkAddInteraction("internal", "alice, bob, carol"))
 
 	// One root cause, one Sentry event — not one per member.
 	if rec.count != 1 {
@@ -102,7 +102,7 @@ func TestRunFoxholeBulkAdd_ClientFaultsListedNotCaptured(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, bulkAddInteraction("internal", "alice, bob"))
+	runFoxhole(f, gm, nil, bulkAddInteraction("internal", "alice, bob"))
 
 	// Client faults must never page on-call.
 	if rec.count != 0 {
@@ -142,7 +142,7 @@ func TestRunFoxholeBulkAdd_MixedSignaturesCaptureOncePerSignature(t *testing.T) 
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, bulkAddInteraction("internal", "alice, bob"))
+	runFoxhole(f, gm, nil, bulkAddInteraction("internal", "alice, bob"))
 
 	if rec.count != 2 {
 		t.Fatalf("two distinct fault signatures must capture once each (no folding); got %d", rec.count)
@@ -190,7 +190,7 @@ func TestRunFoxholeBulkAdd_SameStatusDifferentCodeCapturesPerCode(t *testing.T) 
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, bulkAddInteraction("internal", "alice, bob"))
+	runFoxhole(f, gm, nil, bulkAddInteraction("internal", "alice, bob"))
 
 	// Same status, different code: two distinct signatures, never folded to one.
 	if rec.count != 2 {
@@ -237,7 +237,7 @@ func TestRunFoxholeBulkAdd_BothScopeCountsRoleAttemptsNotMembers(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, bulkAddInteraction("both", "alice"))
+	runFoxhole(f, gm, nil, bulkAddInteraction("both", "alice"))
 
 	if gm.countCalls("GuildMemberRoleAdd") != 2 {
 		t.Fatalf("scope 'both' must attempt two role adds for the member; got %d", gm.countCalls("GuildMemberRoleAdd"))
@@ -304,7 +304,7 @@ func TestRunFoxholeBulkAdd_PanicMidLoopStillFlushesPendingCaptures(t *testing.T)
 
 	func() {
 		defer func() { _ = recover() }() // swallow the deliberate mid-loop panic
-		runFoxhole(f, gm, bulkAddInteraction("internal", "alice, boom"))
+		runFoxhole(f, gm, nil, bulkAddInteraction("internal", "alice, boom"))
 	}()
 
 	// The deferred flush ran during panic unwinding, so alice's pending system-fault

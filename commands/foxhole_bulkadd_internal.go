@@ -24,9 +24,10 @@ func validatedInternalUnitChoices() []*discordgo.ApplicationCommandOptionChoice 
 	return choices
 }
 
-// FoxholeBulkAddInternal is the roster add command. It adds a validated
-// internal unit's roster to Internal.
-func FoxholeBulkAddInternal() Command {
+// FoxholeBulkAddInternal is the roster add command over the Foxhole
+// runtime, nil on a host with no bot store. It adds a validated internal
+// unit's roster to Internal.
+func FoxholeBulkAddInternal(fx *FoxholeRuntime) Command {
 	// Descriptions are baked in at registration, so compose them from the
 	// resolved name rather than a literal a rename would leave stale.
 	internalRoleName := resolveFoxholeRoleNames("internal")[0]
@@ -45,17 +46,16 @@ func FoxholeBulkAddInternal() Command {
 				},
 			},
 		},
-		Handler: handleFoxholeBulkAddInternal,
+		Handler: func(session *discordgo.Session, interaction *discordgo.InteractionCreate) {
+			runFoxholeBulkAddInternal(utils.NewSessionResponder(session), NewSessionGuildManager(session), fx, interaction)
+		},
 	}
-}
-
-func handleFoxholeBulkAddInternal(session *discordgo.Session, interaction *discordgo.InteractionCreate) {
-	runFoxholeBulkAddInternal(utils.NewSessionResponder(session), NewSessionGuildManager(session), interaction)
 }
 
 func runFoxholeBulkAddInternal(
 	r utils.InteractionResponder,
 	gm GuildManager,
+	fx *FoxholeRuntime,
 	interaction *discordgo.InteractionCreate,
 ) {
 	defer sendRenameNote(r, interaction, "warden-bulkadd-internal", "foxhole-bulkadd-internal")
@@ -87,6 +87,14 @@ func runFoxholeBulkAddInternal(
 		utils.HandleError(r, interaction, fmt.Sprintf("❌ Unknown unit %q; pick one from the list.", unitValue))
 		return
 	}
+
+	run := foxholeCommandRun(interaction, unit.Label)
+	end, refused := fx.startCommand(run)
+	if refused != nil {
+		refuseForPageAction(r, interaction, run, *refused)
+		return
+	}
+	defer end()
 
 	if err := deferEphemeral(r, interaction); err != nil {
 		replyAckFailed(r, interaction, err)

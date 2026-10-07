@@ -40,6 +40,18 @@ func ParseFoxholeRole(raw string) (FoxholeRole, bool) {
 	return "", false
 }
 
+// Label is the role as the Foxhole page and the commands' replies name it,
+// empty for no role.
+func (r FoxholeRole) Label() string {
+	switch r {
+	case FoxholeInternal:
+		return "Internal"
+	case FoxholeExternal:
+		return "External"
+	}
+	return ""
+}
+
 // RemovalClearsApproval reports whether a removal of the role on the
 // Foxhole page clears the approval of each member it takes the role from.
 // Only External's does: approved collaborators are External only. A purge
@@ -64,6 +76,20 @@ func ParsePurgeScope(raw string) (PurgeScope, bool) {
 		return scope, true
 	}
 	return "", false
+}
+
+// Label is the scope as the Foxhole page and the commands' replies name it,
+// empty for no scope.
+func (s PurgeScope) Label() string {
+	switch s {
+	case PurgeBoth:
+		return "Internal and External"
+	case PurgeInternal:
+		return "Internal"
+	case PurgeExternal:
+		return "External"
+	}
+	return ""
 }
 
 // Roles are the Foxhole roles the scope names, in the order a purge takes
@@ -221,6 +247,51 @@ type ActionReport struct {
 	AddedNobody []PastedLine `json:"added_nobody,omitempty"`
 }
 
+// foxholeActionNames are the Foxhole actions as the Foxhole page and the
+// commands' replies name them. An entry of the Foxhole change log whose
+// action is among them is that action's report.
+var foxholeActionNames = map[store.ChangeAction]string{
+	store.ChangePurge:   "Purge",
+	store.ChangeRemoval: "Remove",
+	store.ChangeReAdd:   "Re-add approved collaborators",
+	store.ChangeAdd:     "Add",
+	// A roster add's name follows its unit, as in "D/ACD roster add".
+	store.ChangeRosterAdd: "roster add",
+}
+
+// IsReport reports whether a change log entry of the action given is a
+// Foxhole action's report.
+func IsReport(action store.ChangeAction) bool {
+	_, ok := foxholeActionNames[action]
+	return ok
+}
+
+// FoxholeActionName is the name of the Foxhole action whose report is
+// given, as the Foxhole page and the commands' replies name it: the action,
+// with a purge's scope or an add's or a removal's role, and a roster add's
+// unit before it, as in "Purge Internal and External" or "D/ACD roster
+// add".
+func FoxholeActionName(action store.ChangeAction, report ActionReport) string {
+	name := foxholeActionNames[action]
+	if scope := report.Scope.Label(); scope != "" {
+		name += " " + scope
+	}
+	if role := report.Role.Label(); role != "" {
+		name += " " + role
+	}
+	if report.Unit != "" {
+		name = report.Unit + " " + name
+	}
+	return name
+}
+
+// Progress counts the members the action has been through, the ones it
+// changed, skipped and failed on, of every member its report names.
+func (r ActionReport) Progress() (done, total int) {
+	done = len(r.Changed) + len(r.Skipped) + len(r.Failed)
+	return done, done + len(r.NotAttempted)
+}
+
 // PastedLine is a line pasted for an add that named no member to add when
 // the add started, and why.
 type PastedLine struct {
@@ -334,13 +405,37 @@ type FoxholeRuntime struct {
 	// running is the action running, nil when none is. An action running
 	// holds the one-action-at-a-time rule.
 	running *actionState
+	// commands are the role-changing Foxhole commands running, by a key of
+	// their own. Each holds the rule against the page's actions, never
+	// against another command.
+	commands    map[int]CommandRun
+	nextCommand int
+}
+
+// CommandRun is a role-changing Foxhole command running, as the Foxhole
+// page names it.
+type CommandRun struct {
+	// Command is the command as its member typed it, as in "/foxhole add".
+	Command string
+	// By is the Discord member who ran it, under the names the command's
+	// interaction carried.
+	By store.MemberNames
+	// StartedAt is when it started.
+	StartedAt time.Time
 }
 
 // actionState is what the runtime knows of the action running, beside its
 // report in the store.
 type actionState struct {
+	// name is the action's name, as FoxholeActionName gives it, and
+	// startedBy the forum user who started it.
+	name      string
+	startedBy ForumUser
 	// reportID is the action's report, 0 until it is written.
 	reportID int64
+	// done counts the members the action has been through, of total, as
+	// its report's Progress gives them: 0 of 0 until the report is written.
+	done, total int
 	// stopPressedBy is who pressed Stop, nil until someone does, and stop
 	// closes when someone does.
 	stopPressedBy *ForumUser
@@ -349,9 +444,16 @@ type actionState struct {
 	paused bool
 }
 
-// RunningAction is the Foxhole action running now, as the page shows it
-// beside its report.
+// RunningAction is the Foxhole action started on the Foxhole page that
+// runs now, as the page shows it beside its report and a refused command's
+// reply names it.
 type RunningAction struct {
+	// Name is the action's name, as FoxholeActionName gives it, and
+	// StartedBy the username of the forum user who started it.
+	Name, StartedBy string
+	// Done counts the members the action has been through, of Total, as its
+	// report's Progress gives them: 0 of 0 until its report is written.
+	Done, Total int
 	// StopPressedBy is the username of the forum user who pressed Stop,
 	// empty until someone does. The action stops after the change in
 	// flight.
@@ -361,30 +463,47 @@ type RunningAction struct {
 	Paused bool
 }
 
-// Running reports the Foxhole action running, and false when none is.
+// Running reports the Foxhole action started on the Foxhole page that runs
+// now, and false when none does.
 func (r *FoxholeRuntime) Running() (RunningAction, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.running == nil {
 		return RunningAction{}, false
 	}
-	action := RunningAction{Paused: r.running.paused}
-	if by := r.running.stopPressedBy; by != nil {
-		action.StopPressedBy = by.Username
-	}
-	return action, true
+	return r.running.view(), true
 }
 
-// claim takes the one-action-at-a-time rule, and reports false when an
-// action already holds it. The channel it returns closes when someone
-// presses the action's Stop.
-func (r *FoxholeRuntime) claim() (<-chan struct{}, bool) {
+// view is the action as RunningAction shows it. The caller holds the
+// runtime's lock.
+func (a *actionState) view() RunningAction {
+	action := RunningAction{Name: a.name, StartedBy: a.startedBy.Username, Done: a.done, Total: a.total, Paused: a.paused}
+	if by := a.stopPressedBy; by != nil {
+		action.StopPressedBy = by.Username
+	}
+	return action
+}
+
+// Busy reports whether a Foxhole action holds the one-action-at-a-time
+// rule, started on the Foxhole page or by a role-changing command, so a
+// page action couldn't start.
+func (r *FoxholeRuntime) Busy() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.running != nil {
+	return r.running != nil || len(r.commands) > 0
+}
+
+// claim takes the one-action-at-a-time rule for the action named, started
+// by the forum user given, and reports false when another action or a
+// role-changing command already holds it. The channel it returns closes
+// when someone presses the action's Stop.
+func (r *FoxholeRuntime) claim(name string, by ForumUser) (<-chan struct{}, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.running != nil || len(r.commands) > 0 {
 		return nil, false
 	}
-	r.running = &actionState{stop: make(chan struct{})}
+	r.running = &actionState{name: name, startedBy: by, stop: make(chan struct{})}
 	return r.running.stop, true
 }
 
@@ -393,6 +512,56 @@ func (r *FoxholeRuntime) started(reportID int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.running.reportID = reportID
+}
+
+// progressed records how far the running action has got, as its report
+// stands.
+func (r *FoxholeRuntime) progressed(report ActionReport) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.running.done, r.running.total = report.Progress()
+}
+
+// startCommand takes the one-action-at-a-time rule for the role-changing
+// Foxhole command run given, beside any other command running, and returns
+// the call that gives it back, which the command makes once its run has
+// ended. While a Foxhole action started on the Foxhole page runs, it takes
+// nothing, returns that action, and its end does nothing. On a host with no
+// bot store, r is nil and it refuses nothing.
+func (r *FoxholeRuntime) startCommand(run CommandRun) (end func(), refused *RunningAction) {
+	if r == nil {
+		return func() {}, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.running != nil {
+		action := r.running.view()
+		return func() {}, &action
+	}
+	if r.commands == nil {
+		r.commands = map[int]CommandRun{}
+	}
+	key := r.nextCommand
+	r.nextCommand++
+	r.commands[key] = run
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		delete(r.commands, key)
+	}, nil
+}
+
+// RunningCommands are the role-changing Foxhole commands running now, the
+// first started first.
+func (r *FoxholeRuntime) RunningCommands() []CommandRun {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	runs := make([]CommandRun, 0, len(r.commands))
+	for _, run := range r.commands {
+		runs = append(runs, run)
+	}
+	slices.SortFunc(runs, func(a, b CommandRun) int { return a.StartedAt.Compare(b.StartedAt) })
+	return runs
 }
 
 // Stop asks the running Foxhole action whose report has the ID given to
@@ -629,7 +798,7 @@ func (r *FoxholeRuntime) RosterAdd(ctx context.Context, unit ValidatedInternalUn
 // each role the action changes, else a *MissingRoleError. The action then
 // runs in the background, with no deadline of ctx's.
 func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUser) (err error) {
-	stop, ok := r.claim()
+	stop, ok := r.claim(FoxholeActionName(spec.action, ActionReport{Scope: spec.scope, Role: spec.role, Unit: spec.unit}), by)
 	if !ok {
 		return ErrActionRunning
 	}
@@ -673,6 +842,7 @@ func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUse
 	utils.Info("Foxhole action started", "action", spec.action, "scope", spec.scope, "role", spec.role, "unit", spec.unit, "members", len(plan),
 		"username", by.Username, "forum_user_id", by.ID)
 	r.started(entry.ID)
+	r.progressed(report)
 	run := actionRun{action: spec.action, grant: spec.grant, reportID: entry.ID, reason: spec.reason + by.auditName(),
 		clearsApproval: spec.clearsApproval, absent: cmp.Or(spec.absent, SkipLeft), stop: stop}
 	go r.run(run, plan, report, namesOf(records))
@@ -894,6 +1064,7 @@ func (r *FoxholeRuntime) run(run actionRun, plan []plannedChange, report ActionR
 			}
 		}
 		report.NotAttempted = report.NotAttempted[1:]
+		r.progressed(report)
 		r.writeReport(run.reportID, report, false)
 	}
 	report.Outcome, report.EndedAt = outcome, foxholeNow().UTC()

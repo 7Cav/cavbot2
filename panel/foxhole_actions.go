@@ -151,17 +151,7 @@ func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 	if err := json.Unmarshal(stored.Entry.Diff, &report); err != nil {
 		return nil, fmt.Errorf("decode Foxhole report %d: %w", stored.Entry.ID, err)
 	}
-	name := actionNames[stored.Entry.Action]
-	if scope := scopeLabels[report.Scope]; scope != "" {
-		name += " " + scope
-	}
-	if role := foxholeRoleLabels[report.Role]; role != "" {
-		name += " " + role
-	}
-	if report.Unit != "" {
-		name = report.Unit + " " + name
-	}
-	view := &reportView{ID: stored.Entry.ID, Action: stored.Entry.Action, Name: name,
+	view := &reportView{ID: stored.Entry.ID, Action: stored.Entry.Action, Name: commands.FoxholeActionName(stored.Entry.Action, report),
 		StartedBy: stored.Entry.ForumUsername, StartedAt: stored.Entry.At, EndedAt: report.EndedAt,
 		Running: stored.Running, Outcome: report.Outcome,
 		Changed: reportMembers(report.Changed), Skipped: reportMembers(report.Skipped), Failed: reportMembers(report.Failed),
@@ -172,8 +162,7 @@ func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 	if report.StoppedBy != nil {
 		view.StoppedBy = report.StoppedBy.Username
 	}
-	view.Done = len(view.Changed) + len(view.Skipped) + len(view.Failed)
-	view.Total = view.Done + len(view.NotAttempted)
+	view.Done, view.Total = report.Progress()
 	view.Left = estimateFor(len(view.NotAttempted))
 	return view, nil
 }
@@ -182,7 +171,7 @@ func reportViewOf(stored store.FoxholeReport) (*reportView, error) {
 func reportMembers(members []commands.ReportMember) []reportMember {
 	out := make([]reportMember, 0, len(members))
 	for _, m := range members {
-		out = append(out, reportMember{ReportMember: m, RoleName: foxholeRoleLabels[m.Role]})
+		out = append(out, reportMember{ReportMember: m, RoleName: m.Role.Label()})
 	}
 	return out
 }
@@ -235,34 +224,12 @@ func estimateFor(changes int) estimate {
 	return estimate{Seconds: secs, Text: fmt.Sprintf("%d min", (secs+30)/60)}
 }
 
-// foxholeRoleLabels are the Foxhole roles as the page names them.
-var foxholeRoleLabels = map[commands.FoxholeRole]string{commands.FoxholeInternal: "Internal", commands.FoxholeExternal: "External"}
-
-// actionNames are the Foxhole actions as the page names them. An entry of
-// the Foxhole change log whose action is among them is that action's
-// report.
-var actionNames = map[store.ChangeAction]string{
-	store.ChangePurge:   "Purge",
-	store.ChangeRemoval: "Remove",
-	store.ChangeReAdd:   "Re-add approved collaborators",
-	store.ChangeAdd:     "Add",
-	// A roster add's name follows its unit, as in "D/ACD roster add".
-	store.ChangeRosterAdd: "roster add",
-}
-
-// scopeLabels are the purge scopes as the page names them.
-var scopeLabels = map[commands.PurgeScope]string{
-	commands.PurgeBoth:     "Internal and External",
-	commands.PurgeInternal: "Internal",
-	commands.PurgeExternal: "External",
-}
-
 // purgeConfirmOf is the confirmation of a purge of the scope given, its
 // counts read from a complete member list through the role lookup the purge
 // itself makes, so the count confirmed is the count the purge sets out on.
 func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope commands.PurgeScope) *purgeConfirm {
 	roleIDs := commands.FoxholeRoleIDs(s.manager.GuildData(s.guildID))
-	confirm := &purgeConfirm{Scope: scope, Label: scopeLabels[scope]}
+	confirm := &purgeConfirm{Scope: scope, Label: scope.Label()}
 	changes := 0
 	for _, role := range scope.Roles() {
 		holders := 0
@@ -271,7 +238,7 @@ func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope c
 				holders++
 			}
 		}
-		confirm.Roles = append(confirm.Roles, purgeRole{Role: role, Name: foxholeRoleLabels[role], Holders: holders})
+		confirm.Roles = append(confirm.Roles, purgeRole{Role: role, Name: role.Label(), Holders: holders})
 		changes += holders
 	}
 	confirm.Estimate = estimateFor(changes)
@@ -326,7 +293,7 @@ func (m previewMember) Why() string {
 // member list and the guild's Foxhole records.
 func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, req foxholeRequest) *removePreview {
 	guild := s.foxholeGuildOf()
-	name := foxholeRoleLabels[req.Remove]
+	name := req.Remove.Label()
 	preview := &removePreview{Role: req.Remove, Name: name, Back: foxholeAddress(req.Query, req.Filter)}
 	for _, id := range distinct(req.RemoveMembers) {
 		rec := records[id]
@@ -483,7 +450,7 @@ func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess sessio
 		if errors.Is(err, commands.ErrMemberListPartial) {
 			// The page the refusal answers with keeps no selection: it says
 			// to select again, as the preview's refusal does.
-			return removeListPartialRefusal(foxholeRoleLabels[role])
+			return removeListPartialRefusal(role.Label())
 		}
 		return err
 	}, "role", role, "members", len(members))
