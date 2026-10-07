@@ -207,6 +207,7 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("POST "+foxholeRemovePath, p.withFoxholePage(p.startRemoval))
 	mux.HandleFunc("POST "+foxholeReAddPath, p.withFoxholePage(p.startReAdd))
 	mux.HandleFunc("POST "+foxholeStopPath, p.withFoxholePage(p.stopAction))
+	mux.HandleFunc("POST "+foxholeRetryPath, p.withFoxholePage(p.startRetry))
 	protected := http.NewCrossOriginProtection().Handler(mux)
 	// A panic in a handler is recovered here, through the same path every
 	// other goroutine uses (ADR 0001), before net/http's own recovery would

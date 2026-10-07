@@ -602,6 +602,26 @@ func (f *Fake) LastFoxholeReport(ctx context.Context) (FoxholeReport, error) {
 	return FoxholeReport{}, ErrNotFound
 }
 
+// FoxholeReport implements Store.
+func (f *Fake) FoxholeReport(ctx context.Context, id int64) (FoxholeReport, error) {
+	if err := ctx.Err(); err != nil {
+		return FoxholeReport{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	running, ok := f.reports[id]
+	if !ok {
+		return FoxholeReport{}, ErrNotFound
+	}
+	for _, e := range f.foxholeChanges.entries {
+		if e.ID == id {
+			e.Diff = slices.Clone(e.Diff)
+			return FoxholeReport{Entry: e, Running: running}, nil
+		}
+	}
+	return FoxholeReport{}, ErrNotFound
+}
+
 // cloneHub copies a hub so a caller's later edits to the slice do not reach
 // the stored row, the way a database round trip would not.
 func cloneHub(h Hub) Hub {

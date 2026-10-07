@@ -196,6 +196,12 @@ func (e *MissingRoleError) Error() string {
 // changed.
 var ErrActionRunning = errors.New("another Foxhole action is running")
 
+// ErrNothingToRetry refuses a Retry of a report with nothing to retry: one
+// the store doesn't hold, one whose action still runs, one that missed
+// nobody, or one of an add or a removal, whose Retry confirms through the
+// action's own preview. Nothing changed.
+var ErrNothingToRetry = errors.New("the Foxhole report has nothing to retry")
+
 // ReportOutcome is how a Foxhole action ended.
 type ReportOutcome string
 
@@ -290,6 +296,13 @@ func FoxholeActionName(action store.ChangeAction, report ActionReport) string {
 func (r ActionReport) Progress() (done, total int) {
 	done = len(r.Changed) + len(r.Skipped) + len(r.Failed)
 	return done, done + len(r.NotAttempted)
+}
+
+// Misses are the members the action failed on, then those it never
+// attempted, each in the order it set out to change them: the members its
+// Retry changes.
+func (r ActionReport) Misses() []ReportMember {
+	return append(slices.Clone(r.Failed), r.NotAttempted...)
 }
 
 // PastedLine is a line pasted for an add that named no member to add when
@@ -713,12 +726,17 @@ type actionSpec struct {
 // each holder the member list showed at the start. It never deletes or
 // recreates a role, so role IDs and channel overwrites stay.
 func (r *FoxholeRuntime) Purge(ctx context.Context, scope PurgeScope, by ForumUser) error {
-	return r.start(ctx, actionSpec{
-		action: store.ChangePurge, scope: scope, roles: scope.Roles(), reason: "Panel: Foxhole purge by ",
-		plan: func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, _ []store.FoxholeRecord) []plannedChange {
-			return purgePlan(list, roleIDs, scope)
-		},
-	}, by)
+	spec := purgeSpec(scope)
+	spec.plan = func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, _ []store.FoxholeRecord) []plannedChange {
+		return purgePlan(list, roleIDs, scope)
+	}
+	return r.start(ctx, spec, by)
+}
+
+// purgeSpec is a purge of the scope given, as Purge and a purge's Retry
+// start it, but for its plan.
+func purgeSpec(scope PurgeScope) actionSpec {
+	return actionSpec{action: store.ChangePurge, scope: scope, roles: scope.Roles(), reason: "Panel: Foxhole purge by "}
 }
 
 // ReAdd starts a re-add of the approved collaborators, started by the forum
@@ -728,10 +746,16 @@ func (r *FoxholeRuntime) Purge(ctx context.Context, scope PurgeScope, by ForumUs
 // collaborator the store held at the start. One who left the server, or
 // who holds External already, is skipped with that reason.
 func (r *FoxholeRuntime) ReAdd(ctx context.Context, by ForumUser) error {
-	return r.start(ctx, actionSpec{
-		action: store.ChangeReAdd, roles: []FoxholeRole{FoxholeExternal}, grant: true,
-		reason: "Panel: Foxhole re-add of approved collaborators by ", plan: reAddPlan,
-	}, by)
+	spec := reAddSpec()
+	spec.plan = reAddPlan
+	return r.start(ctx, spec, by)
+}
+
+// reAddSpec is a re-add of the approved collaborators, as ReAdd and a
+// re-add's Retry start it, but for its plan.
+func reAddSpec() actionSpec {
+	return actionSpec{action: store.ChangeReAdd, roles: []FoxholeRole{FoxholeExternal}, grant: true,
+		reason: "Panel: Foxhole re-add of approved collaborators by "}
 }
 
 // Remove starts a removal of the role given from the members given,
@@ -782,13 +806,99 @@ func (r *FoxholeRuntime) RosterAdd(ctx context.Context, unit ValidatedInternalUn
 			noDiscord = append(noDiscord, ReportMember{Trooper: t.Username, Role: FoxholeInternal, Skip: SkipNoDiscord})
 		}
 	}
-	return r.start(ctx, actionSpec{
-		action: store.ChangeRosterAdd, unit: unit.Label, roles: []FoxholeRole{FoxholeInternal}, grant: true,
-		reason: "Panel: Foxhole " + unit.Label + " roster add by ", skipped: noDiscord, absent: SkipNotInServer,
-		plan: func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange {
-			return rosterAddPlan(list, roleIDs, records, troopers)
-		},
-	}, by)
+	spec := rosterAddSpec(unit.Label)
+	spec.skipped = noDiscord
+	spec.plan = func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange {
+		return rosterAddPlan(list, roleIDs, records, troopers)
+	}
+	return r.start(ctx, spec, by)
+}
+
+// rosterAddSpec is a roster add of the validated internal unit labelled as
+// given, as RosterAdd and a roster add's Retry start it, but for its plan
+// and the troopers it skips before it starts.
+func rosterAddSpec(unit string) actionSpec {
+	return actionSpec{action: store.ChangeRosterAdd, unit: unit, roles: []FoxholeRole{FoxholeInternal}, grant: true,
+		reason: "Panel: Foxhole " + unit + " roster add by ", absent: SkipNotInServer}
+}
+
+// Retry starts the Foxhole action the report with the ID given is of
+// again, started by the forum user given, over just the members it failed
+// on or never attempted, and returns once the new run's report is written.
+// It retries a purge, of the report's scope, a re-add and a roster add, of
+// the report's unit while the registry still holds it. Each change carries that action's audit log reason,
+// naming the forum user given, and a purge's Retry clears no approval, as a
+// purge doesn't. It starts as start says, checking only the roles its
+// members were to change. The run then goes as the action's own does: one
+// member at a time, in the order the report lists them, each checked
+// against the member list when it reaches them. A report the store doesn't
+// hold, still running, that missed nobody, or of another action, is
+// ErrNothingToRetry.
+func (r *FoxholeRuntime) Retry(ctx context.Context, reportID int64, by ForumUser) error {
+	readCtx, cancel := context.WithTimeout(ctx, foxholeStoreTimeout)
+	stored, err := r.store.FoxholeReport(readCtx, reportID)
+	cancel()
+	if errors.Is(err, store.ErrNotFound) {
+		return ErrNothingToRetry
+	}
+	if err != nil {
+		return fmt.Errorf("read Foxhole report %d: %w", reportID, err)
+	}
+	var report ActionReport
+	if err := json.Unmarshal(stored.Entry.Diff, &report); err != nil {
+		return fmt.Errorf("decode Foxhole report %d: %w", reportID, err)
+	}
+	misses := report.Misses()
+	if stored.Running || len(misses) == 0 {
+		return ErrNothingToRetry
+	}
+	var spec actionSpec
+	switch stored.Entry.Action {
+	case store.ChangePurge:
+		spec = purgeSpec(report.Scope)
+	case store.ChangeReAdd:
+		spec = reAddSpec()
+	case store.ChangeRosterAdd:
+		unit, ok := LookupValidatedInternalUnitLabelled(report.Unit)
+		if !ok {
+			// The unit has left the registry since (ADR 0009).
+			return ErrNothingToRetry
+		}
+		spec = rosterAddSpec(unit.Label)
+	default:
+		return ErrNothingToRetry
+	}
+	spec.roles = rolesOf(misses)
+	spec.plan = func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, _ []store.FoxholeRecord) []plannedChange {
+		return retryPlan(list, roleIDs, misses)
+	}
+	return r.start(ctx, spec, by)
+}
+
+// rolesOf are the Foxhole roles the members were to change, each once, in
+// the order the members name them.
+func rolesOf(members []ReportMember) []FoxholeRole {
+	var roles []FoxholeRole
+	for _, m := range members {
+		if !slices.Contains(roles, m.Role) {
+			roles = append(roles, m.Role)
+		}
+	}
+	return roles
+}
+
+// retryPlan is a Retry's role changes: the role each member missed was to
+// change, in the order given, under the names the member list shows, or the
+// report's when it doesn't hold them. A roster add's member keeps their
+// forum username.
+func retryPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, misses []ReportMember) []plannedChange {
+	plan := make([]plannedChange, 0, len(misses))
+	for _, m := range misses {
+		member := plannedMember(list, store.MemberNames{MemberID: m.ID, DisplayName: m.DisplayName, Username: m.Username}, m.Role)
+		member.Trooper = m.Trooper
+		plan = append(plan, plannedChange{member: member, roleID: roleIDs[m.Role]})
+	}
+	return plan
 }
 
 // start starts the Foxhole action spec names, started by the forum user

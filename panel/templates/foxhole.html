@@ -31,6 +31,7 @@
     <h2 class="block-header">{{.Name}}: {{template "outcome" .}}</h2>
     {{template "report-head" .}}
     {{template "report-lists" .}}
+    {{template "retry" .}}
   </section>
   {{end}}{{end}}
   {{with .NoteForm}}
@@ -45,6 +46,14 @@
   {{with .Skipped}}<div class="note" data-field="approve-skipped">Not approved, since {{if eq (len .) 1}}this member doesn't{{else}}these members don't{{end}} hold External: {{range $i, $m := .}}{{if $i}}, {{end}}<span data-skipped="{{$m.ID}}">{{if $m.DisplayName}}{{$m.DisplayName}} <span class="fx-user">@{{$m.Username}}</span>{{else}}{{$m.ID}}{{end}}</span>{{end}}. Nothing changed for them.</div>{{end}}
   {{if not .ListNotice}}
   {{if .Disconnected}}<div class="note" data-notice="disconnected">Cavbot2 has lost its connection to Discord. The holder list may be out of date.</div>{{end}}
+  {{with .Retry}}
+  <section class="block fx-pending" data-field="retrying" data-report="{{.ID}}" data-action="{{.Action}}">
+    <h2 class="block-header">Retry: {{.Name}}</h2>
+    <div class="block-row">Started by <span data-field="started-by">{{.StartedBy}}</span> at <time datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>. Below are only the {{len .Missed}} {{if eq (len .Missed) 1}}member{{else}}members{{end}} it failed on or didn't attempt, checked against Discord as it is now. Confirming starts a new run in your name.</div>
+    {{with .Failed}}<div class="block-row fx-reportlist" data-list="failed"><h3>Failed last time <span class="fx-count" data-field="count">{{len .}}</span></h3>{{template "report-members" .}}
+      <p class="fx-hint">If Discord refused for a missing permission or a deleted role, fix that in Discord first, or these fail again.</p></div>{{end}}
+  </section>
+  {{end}}
   {{with .PurgeConfirm}}
   <section class="block fx-pending fx-pending--danger" data-field="purge-confirm" data-scope="{{.Scope}}">
     <h2 class="block-header">Purge {{.Label}}?</h2>
@@ -119,8 +128,8 @@
   {{end}}
   {{with .RosterPreview}}
   <section class="block fx-pending" data-field="roster-preview" data-unit="{{.Unit.Value}}">
-    <h2 class="block-header">Add the {{.Unit.Label}} roster to Internal?</h2>
-    <div class="block-row" data-field="roster-counts"><span data-field="trooper-count">{{len .Rows}}</span> {{if eq (len .Rows) 1}}trooper{{else}}troopers{{end}} on the roster. <span data-field="holding-count">{{.Holding}}</span> {{if eq .Holding 1}}holds{{else}}hold{{end}} Internal now. The add takes the whole roster.</div>
+    <h2 class="block-header">{{if .Retry}}Add the {{.Unit.Label}} troopers the roster add missed to Internal?{{else}}Add the {{.Unit.Label}} roster to Internal?{{end}}</h2>
+    <div class="block-row" data-field="roster-counts"><span data-field="trooper-count">{{len .Rows}}</span> {{if eq (len .Rows) 1}}trooper{{else}}troopers{{end}} {{if .Retry}}the roster add missed{{else}}on the roster{{end}}. <span data-field="holding-count">{{.Holding}}</span> {{if eq .Holding 1}}holds{{else}}hold{{end}} Internal now. The add takes {{if .Retry}}every trooper listed{{else}}the whole roster{{end}}.</div>
     {{with .Notes}}<div class="block-row" data-field="notes"><span data-field="note-count">{{.}}</span> {{if eq . 1}}member in this preview has{{else}}members in this preview have{{end}} a note.</div>{{end}}
     <div class="scroll"><table class="hublist fx-list fx-addpreview">
       <thead><tr><th>Trooper</th><th>Member</th><th>Result</th></tr></thead>
@@ -135,14 +144,35 @@
       {{end}}
       </tbody>
     </table></div>
-    <form method="post" action="/foxhole/roster" class="submit-row" data-field="roster-confirm">
+    <form method="post" action="{{if .Retry}}/foxhole/retry{{else}}/foxhole/roster{{end}}" class="submit-row" data-field="roster-confirm">
+      {{- if .Retry}}
+      <input type="hidden" name="report" value="{{.Retry}}">
+      {{- else}}
       <input type="hidden" name="unit" value="{{.Unit.Value}}">
       <input type="hidden" name="roster" value="{{.Listed}}">
-      {{if .CanAdd}}<button type="submit" class="btn btn--cta" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Add the {{.Unit.Label}} roster to Internal</button>{{end}}
+      {{- end}}
+      {{if .CanAdd}}<button type="submit" class="btn btn--cta" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>{{if .Retry}}Add the troopers listed to Internal{{else}}Add the {{.Unit.Label}} roster to Internal{{end}}</button>{{end}}
       <a class="btn" href="/foxhole">Cancel</a>
-      {{- if not .CanAdd}} <span class="fx-hint" data-field="nobody-to-add">Nobody on the {{.Unit.Label}} roster would get Internal, so there's nothing to add.</span>
+      {{- if not .CanAdd}} <span class="fx-hint" data-field="nobody-to-add">Nobody {{if .Retry}}listed{{else}}on the {{.Unit.Label}} roster{{end}} would get Internal, so there's nothing to add.</span>
       {{- else if $.Foxhole.Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Confirm once it ends.</span>{{end}}
     </form>
+  </section>
+  {{end}}
+  {{with .RetryConfirm}}
+  <section class="block fx-pending{{if .Purge}} fx-pending--danger{{end}}" data-field="retry-confirm" data-action="{{.Report.Action}}" data-report="{{.Report.ID}}">
+    <h2 class="block-header">Retry {{.Report.Name}}?</h2>
+    <div class="block-row fx-reportlist" data-list="changes"><h3>{{if .Purge}}Loses the role{{else}}Gets External{{end}} <span class="fx-count" data-field="count">{{len .Changes}}</span></h3>{{template "preview-members" .Changes}}</div>
+    <div class="block-row fx-reportlist" data-list="skipped"><h3>Skipped <span class="fx-count" data-field="count">{{len .Skipped}}</span></h3>{{template "preview-members" .Skipped}}</div>
+    {{if .Changes}}
+    <div class="block-row">{{if .Purge}}<p data-field="keeps">Notes and approvals stay.</p>{{end}}<p>Takes <span data-field="estimate" data-seconds="{{.Estimate.Seconds}}">about {{.Estimate.Text}}</span> at one change a second. It keeps going if you close this tab.</p></div>
+    <form method="post" action="/foxhole/retry" class="submit-row">
+      <input type="hidden" name="report" value="{{.Report.ID}}">
+      <button type="submit" class="btn {{if .Purge}}btn--danger{{else}}btn--cta{{end}}" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Retry {{len .Changes}} {{if eq (len .Changes) 1}}member{{else}}members{{end}}</button>
+      <a class="btn" href="/foxhole">Cancel</a>
+    </form>
+    {{else}}
+    <div class="submit-row"><a class="btn" href="/foxhole">Cancel</a> {{if .Purge}}<span class="fx-hint" data-field="nobody-to-purge">Nobody listed still holds the role they were to lose, so there's nothing to purge.</span>{{else}}<span class="fx-hint" data-field="nobody-to-re-add">Everybody listed holds External or has left the server, so there's nobody to re-add.</span>{{end}}</div>
+    {{end}}
   </section>
   {{end}}
   <div class="fx-actions" data-field="actions">
@@ -264,6 +294,7 @@
         <p>{{.Name}}: {{template "outcome" .}}</p>
         {{template "report-head" .}}
         {{template "report-lists" .}}
+        {{template "retry" .}}
       </div>
       {{end}}{{else}}
       <dl class="change-fields">
@@ -316,7 +347,7 @@
   {{if .NoRoleRow}}<p class="fx-hint" id="note-hint" data-field="note-hint">An empty note takes this member off the page.</p>{{end}}
 </form>{{end}}
 
-{{define "preview-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}"{{with .Skip}} data-reason="{{.}}"{{end}}>{{if .DisplayName}}{{.DisplayName}} <span class="fx-user">@{{.Username}}</span>{{else}}{{.ID}}{{end}}{{with .Why}} <span data-field="reason">{{.}}</span>{{end}}{{with .Note}} <span class="fx-previewnote">Note: <span data-field="note">{{.}}</span></span>{{end}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}
+{{define "preview-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}"{{with .Role}} data-role="{{.}}"{{end}}{{with .Skip}} data-reason="{{.}}"{{end}}>{{if .DisplayName}}{{.DisplayName}} <span class="fx-user">@{{.Username}}</span>{{else}}{{.ID}}{{end}}{{if .Role}} <span class="tag fx-role">{{.RoleName}}</span>{{end}}{{with .Why}} <span data-field="reason">{{.}}</span>{{end}}{{with .Note}} <span class="fx-previewnote">Note: <span data-field="note">{{.}}</span></span>{{end}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}
 
 {{define "add-form"}}<form method="post" action="/foxhole/add/preview" data-field="add-form">
   <div class="block-row">
@@ -365,5 +396,7 @@
 {{with .AddedNobody}}<div class="block-row fx-reportlist" data-list="added-nobody"><h3>Lines that added nobody <span class="fx-count" data-field="count">{{len .}}</span></h3>
   <ul class="fx-reportmembers">{{range .}}<li data-line="{{.Line}}" data-reason="{{.Reason}}"{{with .SameAs}} data-same-as="{{.}}"{{end}}{{with .Matches}} data-matches="{{.}}"{{end}}><code data-field="text">{{.Text}}</code>: <span data-field="reason">{{.Why}}</span></li>{{end}}</ul></div>{{end}}
 {{end}}
+
+{{define "retry"}}{{if .CanRetry}}<div class="submit-row"><a class="btn" href="{{.RetryHref}}" data-field="retry">Retry {{len .Missed}} {{if eq (len .Missed) 1}}member{{else}}members{{end}}</a> <span class="fx-hint">Opens the preview again with only the failed and not attempted members, checked against Discord as it is now.</span></div>{{end}}{{end}}
 
 {{define "report-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}" data-role="{{.Role}}"{{with .Trooper}} data-trooper="{{.}}"{{end}}{{with .Skip}} data-reason="{{.}}"{{end}}{{if .ApprovalCleared}} data-approval-cleared{{end}}>{{if .Trooper}}<span data-field="trooper">{{.Trooper}}</span>{{if .DisplayName}} <span class="fx-user">{{.DisplayName}} @{{.Username}}</span>{{end}}{{else}}{{if .DisplayName}}{{.DisplayName}}{{else}}{{.ID}}{{end}} <span class="fx-user">@{{.Username}}</span>{{end}} <span class="tag fx-role">{{.RoleName}}</span>{{if .ApprovalCleared}} <span class="tag tag--approved">approval cleared</span>{{end}}{{with .Why}} <span data-field="reason">{{.}}</span>{{end}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}

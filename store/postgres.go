@@ -843,18 +843,41 @@ func (p *Postgres) RunningFoxholeReports(ctx context.Context) ([]ChangeLogEntry,
 
 // LastFoxholeReport implements Store.
 func (p *Postgres) LastFoxholeReport(ctx context.Context) (FoxholeReport, error) {
-	var report FoxholeReport
-	row := p.db.QueryRowContext(ctx, `
+	report, err := scanFoxholeReport(p.db.QueryRowContext(ctx, `
 		SELECT id, forum_user_id, forum_username, at, action, diff, report = 'running'
-		FROM foxhole_change_log WHERE report IS NOT NULL ORDER BY id DESC LIMIT 1`)
-	var diff []byte
+		FROM foxhole_change_log WHERE report IS NOT NULL ORDER BY id DESC LIMIT 1`))
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return FoxholeReport{}, fmt.Errorf("read the last Foxhole report: %w", err)
+	}
+	return report, err
+}
+
+// FoxholeReport implements Store.
+func (p *Postgres) FoxholeReport(ctx context.Context, id int64) (FoxholeReport, error) {
+	report, err := scanFoxholeReport(p.db.QueryRowContext(ctx, `
+		SELECT id, forum_user_id, forum_username, at, action, diff, report = 'running'
+		FROM foxhole_change_log WHERE id = $1 AND report IS NOT NULL`, id))
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return FoxholeReport{}, fmt.Errorf("read Foxhole report %d: %w", id, err)
+	}
+	return report, err
+}
+
+// scanFoxholeReport reads the one report a query selects: id,
+// forum_user_id, forum_username, at, action, diff, and whether it runs. No
+// row is ErrNotFound.
+func scanFoxholeReport(row *sql.Row) (FoxholeReport, error) {
+	var (
+		report FoxholeReport
+		diff   []byte
+	)
 	e := &report.Entry
 	err := row.Scan(&e.ID, &e.ForumUserID, &e.ForumUsername, &e.At, &e.Action, &diff, &report.Running)
 	if errors.Is(err, sql.ErrNoRows) {
 		return FoxholeReport{}, ErrNotFound
 	}
 	if err != nil {
-		return FoxholeReport{}, fmt.Errorf("read the last Foxhole report: %w", err)
+		return FoxholeReport{}, err
 	}
 	e.Diff = json.RawMessage(diff)
 	return report, nil

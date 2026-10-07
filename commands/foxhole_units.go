@@ -55,6 +55,18 @@ func LookupValidatedInternalUnit(value string) (ValidatedInternalUnit, bool) {
 	return ValidatedInternalUnit{}, false
 }
 
+// LookupValidatedInternalUnitLabelled resolves a unit's label, as a roster
+// add's report names its unit, to its registry row. A label the registry no
+// longer holds never resolves, so no roster add of that unit starts again.
+func LookupValidatedInternalUnitLabelled(label string) (ValidatedInternalUnit, bool) {
+	for _, unit := range validatedInternalUnits {
+		if unit.Label == label {
+			return unit, true
+		}
+	}
+	return ValidatedInternalUnit{}, false
+}
+
 // Roster fetches the unit's roster through the milpac position-group
 // search its registry row authorizes, under rosterFetchTimeout.
 func (u ValidatedInternalUnit) Roster(ctx context.Context) (*utils.LiteRosterResponse, error) {

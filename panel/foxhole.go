@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -98,6 +99,13 @@ type foxholeView struct {
 	// RosterPreview is the preview the roster block's Preview roster opened,
 	// nil for none.
 	RosterPreview *rosterPreview
+	// RetryConfirm is the confirmation a report's Retry opened, for an
+	// action with no preview of its own, nil for none.
+	RetryConfirm *retryConfirm
+	// Retry is the report whose Retry the page opened, above the action's
+	// preview, nil for none. The page shows the members it failed on
+	// again, with why.
+	Retry *reportView
 	// Paste is the Add members block's paste box as the page shows it.
 	Paste pasteBox
 	// Units are the validated internal units the Add a unit's roster block
@@ -369,9 +377,10 @@ const fieldReport = "report"
 // the page opens, from a row's Edit link, the ID of the member a note save
 // cleared off the page, and the IDs of the members an Approve skipped, each
 // from the save's redirect, the scope of the purge whose confirmation the
-// page opens, from the purge form, and the role whose remove preview the
-// page opens, from the selection bar's Remove buttons, which name the
-// members selected as fieldMember.
+// page opens, from the purge form, the role whose remove preview the page
+// opens, from the selection bar's Remove buttons, which name the members
+// selected as fieldMember, and the ID of the report whose Retry the page
+// opens, from the report's Retry.
 const (
 	paramQuery      = "q"
 	paramFilter     = "filter"
@@ -380,6 +389,7 @@ const (
 	paramSkipped    = "skipped"
 	paramPurge      = "purge"
 	paramRemove     = "remove"
+	paramRetry      = "retry"
 )
 
 // The note form's fields beside the view's query and filter: the member,
@@ -455,6 +465,8 @@ type foxholeRequest struct {
 	Paste *pasteBox
 	// Roster is the roster preview the page opens, nil for none.
 	Roster *rosterRequest
+	// Retry is the ID of the report whose Retry the page opens, 0 for none.
+	Retry int64
 }
 
 // foxholePage is GET /foxhole, the Foxhole page. It reads the guild's roles
@@ -464,10 +476,11 @@ func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session
 	q := r.URL.Query()
 	purge, _ := commands.ParsePurgeScope(q.Get(paramPurge))
 	remove, _ := commands.ParseFoxholeRole(q.Get(paramRemove))
+	retry, _ := strconv.ParseInt(q.Get(paramRetry), 10, 64)
 	p.renderFoxhole(w, r, sess, http.StatusOK,
 		foxholeRequest{Query: q.Get(paramQuery), Filter: knownFilter(q.Get(paramFilter)), NoteMember: q.Get(paramNoteMember),
 			Cleared: q.Get(paramCleared), Skipped: q[paramSkipped], AwaitList: true, Purge: purge,
-			Remove: remove, RemoveMembers: q[fieldMember]})
+			Remove: remove, RemoveMembers: q[fieldMember], Retry: retry})
 }
 
 // renderFoxhole renders the Foxhole page read now, under the page's time
@@ -716,6 +729,11 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 				return foxholeView{}, err
 			default:
 				view.RosterPreview = s.rosterPreviewOf(list, records, req.Roster.Unit, troopers)
+			}
+		}
+		if req.Retry != 0 {
+			if err := s.openRetry(ctx, &view, list, records, req); err != nil {
+				return foxholeView{}, err
 			}
 		}
 	} else {
