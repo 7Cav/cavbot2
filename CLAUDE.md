@@ -74,6 +74,10 @@ Canonical names used verbatim (`needs-triage`, `needs-info`, `ready-for-agent`, 
 
 Single-context: `GLOSSARY.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
+## Git
+
+`develop` is the default branch. Use `origin/develop` as the base for every fetch, diff, merge-base, and rebase. The `default-branch` ruleset allows only squash merges, so merge with `gh pr merge --squash`.
+
 ## CI gate
 
 Run `.github/scripts/gate.sh` before you push. CI's Build job runs the same script, and each run starts its own Postgres, so worktrees run it side by side. When its floor check prints RAISE, set those floors in the same PR (ADR 0005). The summary it ends with (commit, tree state, coverage per package) is the test evidence for a review of that commit.
