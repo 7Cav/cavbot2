@@ -85,4 +85,4 @@ Run `.github/scripts/gate.sh` before you push. CI's Build job runs the same scri
 
 ## Review gates
 
-- **Smoke test on the test guild** for any change a member or panel user can see: a slash command, a panel page, or what the bot does in Discord. The agent that made the change runs it with `go run ./tools/smoke` and reports it in the PR body, following `docs/smoke-test.md`. Panel sign-in goes through a local fake forum, so the agent completes it alone.
+- **Smoke test on the test guild** for any change a member or panel user can see: a slash command, a panel page, or what the bot does in Discord. The PR lists its checks under **Smoke checks** and carries the `needs-smoke` label. A smoke pass runs them before the release that ships the change (ADR 0015), so publish a release only when no merged PR carries `needs-smoke`. `docs/smoke-test.md` covers writing the checks and running a pass.
