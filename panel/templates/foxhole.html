@@ -167,6 +167,7 @@
   {{with .RetryConfirm}}
   <section class="block fx-pending{{if .Purge}} fx-pending--danger{{end}}" data-field="retry-confirm" data-action="{{.Report.Action}}" data-report="{{.Report.ID}}">
     <h2 class="block-header">Retry {{.Report.Name}}?</h2>
+    {{with .Notes}}<div class="block-row" data-field="notes"><span data-field="note-count">{{.}}</span> {{if eq . 1}}member in this preview has{{else}}members in this preview have{{end}} a note.</div>{{end}}
     <div class="block-row fx-reportlist" data-list="changes"><h3>{{if .Purge}}Loses the role{{else}}Gets External{{end}} <span class="fx-count" data-field="count">{{len .Changes}}</span></h3>{{template "preview-members" .Changes}}</div>
     <div class="block-row fx-reportlist" data-list="skipped"><h3>Skipped <span class="fx-count" data-field="count">{{len .Skipped}}</span></h3>{{template "preview-members" .Skipped}}</div>
     {{if .Changes}}

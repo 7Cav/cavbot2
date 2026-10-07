@@ -336,6 +336,95 @@ func TestPurgeRetryWithNobodyLeftToPurgeOffersNoConfirm(t *testing.T) {
 	}
 }
 
+// notesShown returns the note each member entry of a Retry confirmation
+// shows, keyed "<member ID> <role>", leaving out the entries with none.
+func notesShown(confirm *html.Node) map[string]string {
+	notes := map[string]string{}
+	eachElement(confirm, func(n *html.Node) {
+		if id, ok := attrValue(n, "data-member"); ok {
+			if note := findElement(n, "", "data-field", "note"); note != nil && textOf(note) != "" {
+				notes[id+" "+attrOf(n, "data-role")] = textOf(note)
+			}
+		}
+	})
+	return notes
+}
+
+// A purge's or a re-add's Retry confirmation shows each listed member's
+// note, read-only, as the store holds it when the confirmation opens, with
+// a line counting the members with one, as every other preview does. A
+// re-add has no preview of its own, so its Retry confirmation is the one
+// page that lists the collaborators before External goes back on.
+func TestRetryConfirmationShowsEachListedMembersNoteWithACount(t *testing.T) {
+	cases := []struct {
+		name   string
+		action string
+		run    func(t *testing.T, w *testWorld)
+		notes  map[string]string
+		// count is the count line's number, empty when the confirmation
+		// should have no count line.
+		count string
+	}{
+		{"re-add", "re_add", func(t *testing.T, w *testWorld) {
+			seedApproved(t, w, namesOf(memberAsh))
+			w.discord.failRoleWrites(memberAsh.ID, missingPermissions())
+			pressReAdd(t, w.b)
+			w.awaitActionEnd(t)
+			seedNote(t, w, namesOf(memberAsh), "ask before re-adding")
+		}, map[string]string{memberAsh.ID + " external": "ask before re-adding"}, "1"},
+		{"purge, a member to change and one who left", "purge", func(t *testing.T, w *testWorld) {
+			w.discord.failRoleWrites(memberKestrel.ID, missingPermissions())
+			w.discord.failRoleWrites(memberMarsh.ID, missingPermissions())
+			startPurge(t, w, "external")
+			w.awaitActionEnd(t)
+			seedNote(t, w, namesOf(memberKestrel), "runs the allied logi group")
+			seedNote(t, w, namesOf(memberMarsh), "keeps External through the next war")
+			w.discord.dropMember(memberMarsh.ID)
+		}, map[string]string{
+			memberKestrel.ID + " external": "runs the allied logi group",
+			memberMarsh.ID + " external":   "keeps External through the next war",
+		}, "2"},
+		{"purge of both, a member listed under each role", "purge", func(t *testing.T, w *testWorld) {
+			w.discord.failRoleWrites(memberMarsh.ID, missingPermissions())
+			startPurge(t, w, "both")
+			w.awaitActionEnd(t)
+			seedNote(t, w, namesOf(memberMarsh), "keeps External through the next war")
+		}, map[string]string{
+			memberMarsh.ID + " external": "keeps External through the next war",
+			memberMarsh.ID + " internal": "keeps External through the next war",
+		}, "1"},
+		// A regression pin, green before the notes came: with nobody listed
+		// having a note, the confirmation has no count line.
+		{"nobody listed has a note", "re_add", func(t *testing.T, w *testWorld) {
+			seedApproved(t, w, namesOf(memberAsh))
+			w.discord.failRoleWrites(memberAsh.ID, missingPermissions())
+			pressReAdd(t, w.b)
+			w.awaitActionEnd(t)
+		}, map[string]string{}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			tc.run(t, w)
+
+			confirm := retryConfirmation(t, openRetry(t, w.b), tc.action)
+
+			if got := notesShown(confirm); !maps.Equal(got, tc.notes) {
+				t.Errorf("the Retry confirmation shows the notes %v, want %v", got, tc.notes)
+			}
+			count := findElement(confirm, "", "data-field", "note-count")
+			switch {
+			case count == nil && tc.count != "":
+				t.Errorf("the Retry confirmation has no count line, want one counting %s members with a note", tc.count)
+			case count != nil && tc.count == "":
+				t.Errorf("the Retry confirmation counts %s members with a note, want no count line", textOf(count))
+			case count != nil && textOf(count) != tc.count:
+				t.Errorf("the Retry confirmation counts %s members with a note, want %s", textOf(count), tc.count)
+			}
+		})
+	}
+}
+
 // memberReason is the reason a list gives for the member with the ID
 // given, empty when it names no such member or gives no reason.
 func memberReason(list *html.Node, id string) string {

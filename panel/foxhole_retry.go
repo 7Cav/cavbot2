@@ -75,7 +75,7 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 		view.RosterPreview = s.rosterPreviewOf(list, records, unit, troopers)
 		view.RosterPreview.Retry = report.ID
 	case store.ChangeReAdd, store.ChangePurge:
-		view.RetryConfirm = s.retryConfirmOf(report, list)
+		view.RetryConfirm = s.retryConfirmOf(report, list, records)
 	}
 	view.Retry = report
 	return nil
@@ -87,12 +87,15 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 // confirming does with each as the member list stands. Changes are those
 // who lose or get it, and Skipped those the run would skip, with why. Each
 // shows under the names the member list shows, or the report's when it
-// doesn't hold them.
+// doesn't hold them, with their note.
 type retryConfirm struct {
 	// Report is the report whose Retry it is.
-	Report   *reportView
-	Changes  []previewMember
-	Skipped  []previewMember
+	Report  *reportView
+	Changes []previewMember
+	Skipped []previewMember
+	// Notes counts the members the confirmation lists who have a note, each
+	// once, though a purge of both roles can list a member under each.
+	Notes    int
 	Estimate estimate
 }
 
@@ -101,13 +104,17 @@ type retryConfirm struct {
 func (c retryConfirm) Purge() bool { return c.Report.Action == store.ChangePurge }
 
 // retryConfirmOf is the confirmation of the report's Retry, read from a
-// complete member list.
-func (s foxholeService) retryConfirmOf(report *reportView, list commands.MemberListSnapshot) *retryConfirm {
+// complete member list and the guild's Foxhole records.
+func (s foxholeService) retryConfirmOf(report *reportView, list commands.MemberListSnapshot, records map[string]store.FoxholeRecord) *retryConfirm {
 	guild := s.foxholeGuildOf()
 	confirm := &retryConfirm{Report: report}
 	grant := !confirm.Purge()
+	noted := map[string]bool{}
 	for _, m := range report.Missed {
-		member := previewMember{ID: m.ID, DisplayName: m.DisplayName, Username: m.Username, RoleName: m.RoleName, Role: m.Role}
+		member := previewMember{ID: m.ID, DisplayName: m.DisplayName, Username: m.Username, Note: records[m.ID].Note, RoleName: m.RoleName, Role: m.Role}
+		if member.Note != "" {
+			noted[m.ID] = true
+		}
 		mem, inServer := list.Member(m.ID)
 		holds := inServer && guild.rowOf(mem, store.FoxholeRecord{}).holdsRole(m.Role)
 		if inServer {
@@ -126,6 +133,7 @@ func (s foxholeService) retryConfirmOf(report *reportView, list commands.MemberL
 		}
 		confirm.Skipped = append(confirm.Skipped, member)
 	}
+	confirm.Notes = len(noted)
 	confirm.Estimate = estimateFor(len(confirm.Changes))
 	return confirm
 }
