@@ -720,7 +720,7 @@ func TestVoiceLockAndUnlockRefusals(t *testing.T) {
 func TestRegistryDeclaresVoiceLockAndUnlock(t *testing.T) {
 	for _, name := range []string{"voice-lock", "voice-unlock"} {
 		var def *discordgo.ApplicationCommand
-		for _, d := range NewRegistry(nil).GetCommands() {
+		for _, d := range NewRegistry(nil, nil).GetCommands() {
 			if d.Name == name {
 				def = d
 			}

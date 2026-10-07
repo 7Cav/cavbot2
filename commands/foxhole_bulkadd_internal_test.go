@@ -64,7 +64,7 @@ func lastEditEmbed(calls []recordedCall) *discordgo.MessageEmbed {
 // hangs on (see ADR 0009): the operator can only ever emit a value the registry
 // already contains, so a careless short query can't substring-match the regiment.
 func TestFoxholeBulkAddInternalDefinition_SingleUnitPickerFromRegistry(t *testing.T) {
-	cmd := FoxholeBulkAddInternal()
+	cmd := FoxholeBulkAddInternal(nil)
 
 	if cmd.Definition.Name != "foxhole-bulkadd-internal" {
 		t.Fatalf("command name = %q, want foxhole-bulkadd-internal", cmd.Definition.Name)
@@ -175,7 +175,7 @@ func TestRunFoxholeBulkAddInternal_HappyPathAddsAllAndReportsCount(t *testing.T)
 	gm := internalRoleGM()
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	// IDs come from the milpac, so the command adds directly and never searches.
 	if gm.countCalls("GuildMembersSearch") != 0 {
@@ -255,7 +255,7 @@ func TestRunFoxholeBulkAddInternal_IdempotentReAddCountsAsConfirmed(t *testing.T
 	// as Discord's idempotent role-add PUT behaves.
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	got := lastEditContent(f.Calls())
 	if !strings.Contains(got, "Added or confirmed 1") {
@@ -282,7 +282,7 @@ func TestRunFoxholeBulkAddInternal_NoDiscordLinkedListedNotAdded(t *testing.T) {
 	gm := internalRoleGM()
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	// Only the linked member reaches Discord; the link-less one is skipped.
 	if gm.countCalls("GuildMemberRoleAdd") != 1 {
@@ -321,7 +321,7 @@ func TestRunFoxholeBulkAddInternal_NotInGuild404ListedNotAddedNoCapture(t *testi
 	gm.MemberRoleAddErrs = []error{nil, restError(http.StatusNotFound, 10007, rawBodyMarker)}
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	// Both members were attempted: the run continued past the 404.
 	if gm.countCalls("GuildMemberRoleAdd") != 2 {
@@ -366,7 +366,7 @@ func TestRunFoxholeBulkAddInternal_DeletedRole404CapturedNotMisreportedAbsent(t 
 	}
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	got := lastEditContent(f.Calls())
 	// Present members must NOT be reported as absent.
@@ -424,7 +424,7 @@ func TestRunFoxholeBulkAddInternal_MixedSignaturesCaptureOncePerSignature(t *tes
 	}
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	// Two distinct signatures must produce exactly two captures, one per signature.
 	if rec.count != 2 {
@@ -469,7 +469,7 @@ func TestRunFoxholeBulkAddInternal_PerMemberClientFaultListedNotCaptured(t *test
 	gm.MemberRoleAddErrs = []error{restError(http.StatusForbidden, 50013, rawBodyMarker)}
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	got := lastEditContent(f.Calls())
 	if !strings.Contains(got, "Could not be added (1)") {
@@ -507,7 +507,7 @@ func TestRunFoxholeBulkAddInternal_PerMemberFaultCapturedAndRunContinues(t *test
 	gm.MemberRoleAddErrs = []error{nil, restError(http.StatusInternalServerError, 0, rawBodyMarker)}
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	// Both attempted: the run continued past the per-member 5xx.
 	if gm.countCalls("GuildMemberRoleAdd") != 2 {
@@ -573,7 +573,7 @@ func TestRunFoxholeBulkAddInternal_PerMemberGeneric4xxListedNotCapturedNoHint(t 
 	gm.MemberRoleAddErrs = []error{nil, restError(http.StatusBadRequest, 50035, rawBodyMarker)}
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	got := lastEditContent(f.Calls())
 	// The clean member is added/confirmed; the 400 lands in the fault bucket.
@@ -622,7 +622,7 @@ func TestRunFoxholeBulkAddInternal_AllBucketsCoexistWithStableOrdering(t *testin
 	}
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	got := lastEditContent(f.Calls())
 	leadIdx := strings.Index(got, "Added or confirmed 1")
@@ -659,7 +659,7 @@ func TestRunFoxholeBulkAddInternal_EmptyRosterCapturedNothingChanged(t *testing.
 	gm := internalRoleGM()
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	if gm.countCalls("GuildMemberRoleAdd") != 0 {
 		t.Fatalf("an empty roster must change nothing; got adds %v", gm.Calls())
@@ -694,7 +694,7 @@ func TestRunFoxholeBulkAddInternal_RosterFetchFaultCapturedNoAdds(t *testing.T) 
 	gm := internalRoleGM()
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	if gm.countCalls("GuildMemberRoleAdd") != 0 {
 		t.Fatalf("a failed roster fetch must not add anyone; got %v", gm.Calls())
@@ -719,7 +719,7 @@ func TestRunFoxholeBulkAddInternal_MissingGuildRejectedBeforeAnything(t *testing
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("unit", "D/ACD")) // no GuildID
 
-	runFoxholeBulkAddInternal(f, gm, i)
+	runFoxholeBulkAddInternal(f, gm, nil, i)
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("DM-context must not touch the guild; got %v", gm.Calls())
@@ -737,7 +737,7 @@ func TestRunFoxholeBulkAddInternal_UnknownUnitRejectedBeforeAnything(t *testing.
 	f := &fakeResponder{}
 	i := foxholeBulkAddInternalInteraction("7") // a careless short query, not in the registry
 
-	runFoxholeBulkAddInternal(f, gm, i)
+	runFoxholeBulkAddInternal(f, gm, nil, i)
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("an unregistered unit must be rejected before any guild call; got %v", gm.Calls())
@@ -756,7 +756,7 @@ func TestRunFoxholeBulkAddInternal_MissingUnitOptionRejected(t *testing.T) {
 	i := fakeAppCommandInteraction() // no unit option
 	i.GuildID = "guild-1"
 
-	runFoxholeBulkAddInternal(f, gm, i)
+	runFoxholeBulkAddInternal(f, gm, nil, i)
 
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("a missing unit must short-circuit before any guild call; got %v", gm.Calls())
@@ -773,7 +773,7 @@ func TestRunFoxholeBulkAddInternal_DeferFailureBailsBeforeWork(t *testing.T) {
 	gm := internalRoleGM()
 	f := &fakeResponder{RespondErrs: []error{errFirstRespond}}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	if gm.countCalls("GuildRoles") != 0 {
 		t.Fatalf("a failed defer must bail before role resolution; got %v", gm.Calls())
@@ -790,7 +790,7 @@ func TestRunFoxholeBulkAddInternal_InternalRoleMissingSurfacedNoFetch(t *testing
 	gm := &fakeGuildManager{roles: []*discordgo.Role{guildRole("x", "Some Other Role")}}
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	if gm.countCalls("GuildMemberRoleAdd") != 0 {
 		t.Fatalf("must not add anyone when the role is missing; got %v", gm.Calls())
@@ -809,7 +809,7 @@ func TestRunFoxholeBulkAddInternal_RoleResolve5xxCapturedNoFetch(t *testing.T) {
 	gm := &fakeGuildManager{RolesErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)}}
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	if rec.count != 1 {
 		t.Fatalf("a 5xx GuildRoles fault must capture exactly once; got %d", rec.count)
@@ -841,7 +841,7 @@ func TestBuildRosterAddSummary_ClampsToDiscordLimit(t *testing.T) {
 // The command is wired into the registry so Discord registers it and routes its
 // interactions to the handler.
 func TestRegistry_RegistersFoxholeBulkAddInternal(t *testing.T) {
-	reg := NewRegistry(nil)
+	reg := NewRegistry(nil, nil)
 
 	registered := false
 	for _, def := range reg.GetCommands() {

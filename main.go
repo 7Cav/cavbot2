@@ -228,6 +228,7 @@ func main() {
 	// /voice-lock and /voice-unlock refuse.
 	var (
 		tempVC   *commands.TempVC
+		foxhole  *commands.FoxholeRuntime
 		webPanel *panel.Panel
 	)
 	// Built before dg.Open(), so the Connect event tells it the gateway
@@ -246,7 +247,7 @@ func main() {
 		// manager and change roles through the commands' role calls, which
 		// URL-encode the audit log reason. Building the runtime ends any
 		// action the last process left running as stopped by a restart.
-		foxhole, err := commands.NewFoxholeRuntime(discordManager, commands.NewSessionGuildManager(dg), botStore, GuildID)
+		foxhole, err = commands.NewFoxholeRuntime(discordManager, commands.NewSessionGuildManager(dg), botStore, GuildID)
 		if err != nil {
 			panic(fmt.Sprintf("Bot store unavailable: %v", err))
 		}
@@ -261,8 +262,10 @@ func main() {
 		})
 	}
 
-	// The registry takes the runtime, so it is built after it.
-	registry := commands.NewRegistry(tempVC)
+	// The registry takes the runtimes, so it is built after them. The
+	// Foxhole commands share the one-action-at-a-time rule with the
+	// Foxhole page through the Foxhole runtime.
+	registry := commands.NewRegistry(tempVC, foxhole)
 
 	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		// Backstop only. Registered slash-command handlers are wrapped with

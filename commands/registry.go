@@ -14,21 +14,24 @@ type Registry struct {
 }
 
 // NewRegistry declares every command (ADR 0006). tempVC is the temporary
-// voice channel runtime, nil on a host with no bot store. /voice-rename,
+// voice channel runtime and foxhole the Foxhole runtime, each nil on a host
+// with no bot store. /voice-rename,
 // /voice-lock and /voice-unlock are declared either way: the startup sync
 // deletes any guild command the registry lacks, and Discord keys command
 // permissions by command ID, so a command that came and went with
 // configuration would shed its Server Settings restriction on every
-// store-less start. With no runtime each handler refuses.
-func NewRegistry(tempVC *TempVC) *Registry {
+// store-less start. With no runtime each handler refuses. With no Foxhole
+// runtime the Foxhole commands refuse nothing: there is no Foxhole page to
+// share the roles with.
+func NewRegistry(tempVC *TempVC, foxhole *FoxholeRuntime) *Registry {
 	r := &Registry{}
 	r.RegisterCommands(
 		Milpac(),
-		Foxhole(),
-		Warden(),
+		Foxhole(foxhole),
+		Warden(foxhole),
 		Enlist(),
-		FoxholeBulkAddInternal(),
-		WardenBulkAddInternal(),
+		FoxholeBulkAddInternal(foxhole),
+		WardenBulkAddInternal(foxhole),
 		Zulu(),
 		S6ITCheck(),
 		Awol(),

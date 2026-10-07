@@ -31,7 +31,7 @@ var oldFoxholeNames = map[string]string{
 // registeredDefinitions returns the production registry's definitions by name.
 func registeredDefinitions() map[string]*discordgo.ApplicationCommand {
 	defs := map[string]*discordgo.ApplicationCommand{}
-	for _, def := range NewRegistry(nil).GetCommands() {
+	for _, def := range NewRegistry(nil, nil).GetCommands() {
 		defs[def.Name] = def
 	}
 	return defs
@@ -216,7 +216,7 @@ func TestOldFoxholeNamesGrantWhatTheirNewNamesGrant(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.oldName, func(t *testing.T) {
-			registry := NewRegistry(nil)
+			registry := NewRegistry(nil, nil)
 			run := func(name string) (grants []string, telemetry []map[string]string) {
 				handler, ok := registry.GetHandler(name)
 				if !ok {
@@ -359,7 +359,7 @@ func (f followupSignal) FollowupMessageCreate(i *discordgo.Interaction, wait boo
 func TestRunsUnderOldFoxholeNamesEndWithARenameNote(t *testing.T) {
 	t.Run("after its reply", func(t *testing.T) {
 		f := &fakeResponder{}
-		runFoxhole(f, trooperGuild(), slashNamed("warden",
+		runFoxhole(f, trooperGuild(), nil, slashNamed("warden",
 			stringOption("command", "add"), stringOption("flag", "internal"),
 			stringOption("discordname", "123456789012345678")))
 
@@ -368,7 +368,7 @@ func TestRunsUnderOldFoxholeNamesEndWithARenameNote(t *testing.T) {
 
 	t.Run("after a refusal", func(t *testing.T) {
 		f := &fakeResponder{}
-		runFoxhole(f, trooperGuild(), slashNamed("warden",
+		runFoxhole(f, trooperGuild(), nil, slashNamed("warden",
 			stringOption("command", "add"), stringOption("flag", "internal")))
 
 		assertOneRenameNote(t, f.Calls(), "warden", "foxhole")
@@ -382,8 +382,9 @@ func TestRunsUnderOldFoxholeNamesEndWithARenameNote(t *testing.T) {
 		gm := heldRoleCreate{fakeGuildManager: trooperGuild(), release: make(chan struct{})}
 		f := followupSignal{fakeResponder: &fakeResponder{}, sent: make(chan struct{}, 4)}
 
-		runFoxhole(f, gm, slashNamed("warden",
+		runFoxhole(f, gm, nil, slashNamed("warden",
 			stringOption("command", "purge"), stringOption("flag", "internal")))
+
 		close(gm.release)
 		select {
 		case <-f.sent:
@@ -409,7 +410,7 @@ func TestRunsUnderOldFoxholeNamesEndWithARenameNote(t *testing.T) {
 
 	t.Run("roster add", func(t *testing.T) {
 		f := &fakeResponder{}
-		runFoxholeBulkAddInternal(f, trooperGuild(), slashNamed("warden-bulkadd-internal",
+		runFoxholeBulkAddInternal(f, trooperGuild(), nil, slashNamed("warden-bulkadd-internal",
 			stringOption("unit", "not-a-unit")))
 
 		assertOneRenameNote(t, f.Calls(), "warden-bulkadd-internal", "foxhole-bulkadd-internal")
@@ -419,7 +420,7 @@ func TestRunsUnderOldFoxholeNamesEndWithARenameNote(t *testing.T) {
 // A run under a new name sends no rename note.
 func TestRunsUnderNewFoxholeNamesSendNoRenameNote(t *testing.T) {
 	f := &fakeResponder{}
-	runFoxhole(f, trooperGuild(), slashNamed("foxhole",
+	runFoxhole(f, trooperGuild(), nil, slashNamed("foxhole",
 		stringOption("command", "add"), stringOption("flag", "internal"),
 		stringOption("discordname", "123456789012345678")))
 
@@ -454,9 +455,10 @@ func liveRoleGuild() *fakeGuildManager {
 // IDs the member was granted.
 func grantedRoleIDs(t *testing.T, gm *fakeGuildManager) []string {
 	t.Helper()
-	runFoxhole(&fakeResponder{}, gm, slashNamed("foxhole",
+	runFoxhole(&fakeResponder{}, gm, nil, slashNamed("foxhole",
 		stringOption("command", "add"), stringOption("flag", "internal"),
 		stringOption("discordname", "123456789012345678")))
+
 	var ids []string
 	for _, add := range gm.roleAddCalls() {
 		ids = append(ids, add.roleID)
@@ -559,7 +561,7 @@ func TestFoxholeCapturesNameTheCommandTheyRanUnder(t *testing.T) {
 			gm := trooperGuild()
 			gm.RolesErrs = []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)}
 
-			runFoxhole(&fakeResponder{}, gm, slashNamed(name, add...))
+			runFoxhole(&fakeResponder{}, gm, nil, slashNamed(name, add...))
 
 			if got, _ := kvValue(rec.lastKV, "command"); rec.count != 1 || got != name {
 				t.Errorf("captures = %d, command = %v; want one capture with command=%s", rec.count, got, name)
@@ -570,7 +572,7 @@ func TestFoxholeCapturesNameTheCommandTheyRanUnder(t *testing.T) {
 			rec.install(t)
 			f := &fakeResponder{EditErrs: []error{errors.New("503 service unavailable")}}
 
-			runFoxhole(f, trooperGuild(), slashNamed(name, add...))
+			runFoxhole(f, trooperGuild(), nil, slashNamed(name, add...))
 
 			if got, _ := kvValue(rec.lastKV, "command"); rec.count != 1 || got != name {
 				t.Errorf("captures = %d, command = %v; want one capture with command=%s", rec.count, got, name)

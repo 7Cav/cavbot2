@@ -679,7 +679,7 @@ func TestRunFoxholeAdd_RoleAdd403ShowsHierarchyHintNoCapture(t *testing.T) {
 	gm := foxholeRoleAddGM(restError(http.StatusForbidden, 50013, rawBodyMarker))
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, foxholeAddInteraction())
+	runFoxhole(f, gm, nil, foxholeAddInteraction())
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -699,7 +699,7 @@ func TestRunFoxholeAdd_RoleAdd5xxCapturesGenericRetry(t *testing.T) {
 	gm := foxholeRoleAddGM(restError(http.StatusInternalServerError, 0, rawBodyMarker))
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, foxholeAddInteraction())
+	runFoxhole(f, gm, nil, foxholeAddInteraction())
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -727,7 +727,7 @@ func TestRunFoxholeAdd_RoleAddGeneric4xxNoCapture(t *testing.T) {
 	gm := foxholeRoleAddGM(restError(http.StatusBadRequest, 50035, rawBodyMarker))
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, foxholeAddInteraction())
+	runFoxhole(f, gm, nil, foxholeAddInteraction())
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -754,7 +754,7 @@ func TestRunFoxholeAdd_RoleAddUnknownRole404CapturesDistinctConfigFault(t *testi
 	gm := foxholeRoleAddGM(restError(http.StatusNotFound, discordgo.ErrCodeUnknownRole, rawBodyMarker))
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, foxholeAddInteraction())
+	runFoxhole(f, gm, nil, foxholeAddInteraction())
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -795,7 +795,7 @@ func TestRunFoxholeRemove_RoleRemoveUnknownGuild404ConfigFault(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, foxholeRemoveInteraction())
+	runFoxhole(f, gm, nil, foxholeRemoveInteraction())
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -828,7 +828,7 @@ func TestRunFoxholeRemove_RoleRemove403ShowsHierarchyHintNoCapture(t *testing.T)
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, foxholeRemoveInteraction())
+	runFoxhole(f, gm, nil, foxholeRemoveInteraction())
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -852,7 +852,7 @@ func TestRunFoxholeRemove_RoleRemove5xxCaptures(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runFoxhole(f, gm, foxholeRemoveInteraction())
+	runFoxhole(f, gm, nil, foxholeRemoveInteraction())
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -882,7 +882,7 @@ func TestRunFoxholeBulkAdd_RoleAdd403NoCapture(t *testing.T) {
 		stringOption("discordname", "good"),
 	)
 
-	runFoxhole(f, gm, i)
+	runFoxhole(f, gm, nil, i)
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {
@@ -910,7 +910,7 @@ func TestRunFoxholeBulkAdd_RoleAdd5xxCaptures(t *testing.T) {
 		stringOption("discordname", "good"),
 	)
 
-	runFoxhole(f, gm, i)
+	runFoxhole(f, gm, nil, i)
 
 	got := lastEditContent(f.Calls())
 	if strings.Contains(got, rawBodyMarker) {

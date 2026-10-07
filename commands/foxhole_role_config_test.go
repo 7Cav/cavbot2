@@ -73,7 +73,7 @@ func TestBulkAddInternalAppliesConfiguredRole(t *testing.T) {
 	}
 	f := &fakeResponder{}
 
-	runFoxholeBulkAddInternal(f, gm, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
 	adds := gm.roleAddCalls()
 	if len(adds) != 1 {

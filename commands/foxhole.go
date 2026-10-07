@@ -90,7 +90,9 @@ var (
 	foxholeTitleCaser = cases.Title(language.Und, cases.NoLower)
 )
 
-func Foxhole() Command {
+// Foxhole declares /foxhole over the Foxhole runtime, nil on a host with
+// no bot store.
+func Foxhole(fx *FoxholeRuntime) Command {
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
 			Name:        "foxhole",
@@ -118,20 +120,16 @@ func Foxhole() Command {
 				},
 			},
 		},
-		Handler: handleFoxhole,
+		Handler: func(session *discordgo.Session, interaction *discordgo.InteractionCreate) {
+			runFoxhole(utils.NewSessionResponder(session), NewSessionGuildManager(session), fx, interaction)
+		},
 	}
-}
-
-func handleFoxhole(
-	session *discordgo.Session,
-	interaction *discordgo.InteractionCreate,
-) {
-	runFoxhole(utils.NewSessionResponder(session), NewSessionGuildManager(session), interaction)
 }
 
 func runFoxhole(
 	r utils.InteractionResponder,
 	gm GuildManager,
+	fx *FoxholeRuntime,
 	interaction *discordgo.InteractionCreate,
 ) {
 	// A purge sends its own note once its summary is out.

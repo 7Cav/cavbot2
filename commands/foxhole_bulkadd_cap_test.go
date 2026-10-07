@@ -39,7 +39,7 @@ func TestRunFoxhole_BulkAddOverLimitRejectedBeforeAnyAPICall(t *testing.T) {
 		stringOption("discordname", makeBulkAddEntries(overLimit)),
 	)
 
-	runFoxhole(f, gm, i)
+	runFoxhole(f, gm, nil, i)
 
 	// No GuildManager call may happen: not the role resolution, not the per-entry
 	// search, not the role-add. The whole point is to bail before any fan-out.
@@ -87,7 +87,7 @@ func TestRunFoxhole_BulkAddAtLimitStillFansOut(t *testing.T) {
 		stringOption("discordname", makeBulkAddEntries(maxBulkAddEntries)),
 	)
 
-	runFoxhole(f, gm, i)
+	runFoxhole(f, gm, nil, i)
 
 	if gm.countCalls("GuildMembersSearch") != maxBulkAddEntries {
 		t.Fatalf("at-limit bulkadd must search every entry; got %d searches (%v)", gm.countCalls("GuildMembersSearch"), gm.Calls())
@@ -141,7 +141,7 @@ func TestRunFoxhole_BulkAddCountsParsedEntriesNotRawCommas(t *testing.T) {
 		stringOption("discordname", payload),
 	)
 
-	runFoxhole(f, gm, i)
+	runFoxhole(f, gm, nil, i)
 
 	got := lastEditContent(f.Calls())
 	// Must NOT be rejected as over-limit despite the raw comma count exceeding it.

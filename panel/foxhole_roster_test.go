@@ -116,7 +116,7 @@ func TestRosterBlockOffersTheUnitsTheCommandsPickerOffers(t *testing.T) {
 		}
 	})
 	var want []string
-	for _, opt := range commands.FoxholeBulkAddInternal().Definition.Options {
+	for _, opt := range commands.FoxholeBulkAddInternal(nil).Definition.Options {
 		for _, choice := range opt.Choices {
 			want = append(want, choice.Value.(string)+" "+choice.Name)
 		}
