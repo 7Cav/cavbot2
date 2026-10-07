@@ -93,4 +93,4 @@ go build -o cavbot2
 
 ## Review gates
 
-- **Smoke test on the test guild** for any user-facing command behavior change. CI cannot exercise the live Discord gateway, but locally we can validate against a test guild. This can be done by agents.
+- **Smoke test on the test guild** for any change a member or panel user can see: a slash command, a panel page, or what the bot does in Discord. The agent that made the change runs it with `go run ./tools/smoke` and reports it in the PR body, following `docs/smoke-test.md`. Panel sign-in goes through a local fake forum, so the agent completes it alone.
