@@ -1,6 +1,6 @@
 # Factory run
 
-Nobody watches the run, so answer from the requirements and the repo wherever a skill would ask the user. End the run with one line saying how it ended.
+Nobody watches the run, so answer from the requirements and the repo wherever this file or a skill would ask the user. End the run with one line saying how it ended.
 
 ## Pick
 
@@ -19,15 +19,35 @@ Read an issue's body only when its title, labels and parent leave the bucket unc
 
 ## Requirements
 
-The requirements are the issue, its thread, its `parent` issue when it has one, and the GLOSSARY.md entries they name. In `/implement`'s words the issue is the ticket and its parent is the spec. An agent brief in the thread wins where it differs from the rest.
+The requirements are the issue, its thread, its `parent` issue when it has one, and the GLOSSARY.md entries they name. In Implement's words below, the issue is the ticket and its parent is the spec. An agent brief in the thread wins where it differs from the rest.
 
-Fetch the issue and its parent as `docs/agents/issue-tracker.md` says, and read as much of the spec as it says. Done when you have read all of that, before `/implement` loads `tdd`.
+Fetch the issue and its parent as `docs/agents/issue-tracker.md` says, and read as much of the spec as it says. Done when you have read all of that, before you load `tdd`.
+
+## Implement
+
+Implement the work described by the user in the spec or tickets, then ship it as a pull request into the **base**. The base is `develop` unless the user names another. This run is your go-ahead to push, open the PR, and arm Auto-fix.
+
+If the user passes a ticket reference, fetch it as `docs/agents/issue-tracker.md` says and state its title before starting. If the reference is ambiguous, ask.
+
+If you're on the base, create a branch for the work.
+
+Load the `tdd` skill and build every requirement under its rules, running `go build ./...` and the touched packages' tests after each slice. Done when every requirement in the spec or tickets is built under those rules and its tests are green. A docs-only change is done once built.
+
+Commit your work.
+
+Load the `code-review` skill with the base as the fixed point, the spec or tickets as the spec, and the approved seam ledger. Done when every finding is fixed and committed, or declined with a reason you give in your final message.
+
+Run `.github/scripts/gate.sh`. Push the branch once it passes.
+
+Load the `pr` skill and open the PR, ready for review. The PR closes each ticket it implements, or the spec when there are no tickets. When a member or panel user would notice the change, the PR carries its smoke checks and `needs-smoke`, as step 1 of `docs/smoke-test.md` says.
+
+Arm Auto-fix on the PR. Done when the PR's status shows Auto-fix on, or, in an unattended local session, which has no Auto-fix, once you have said it isn't armed.
 
 ## Finish
 
 Leave the PR's smoke checks to a later pass, since the smoke tool runs one bot across all worktrees and the maintainer's own sessions need it.
 
-Once `/implement` has opened its PR, label it `factory` and turn on squash auto-merge with `gh pr merge <pr> --auto --squash`. An unattended run has no Auto-fix, so watch the PR's CI yourself until it merges:
+Once you have opened the PR, label it `factory` and turn on squash auto-merge with `gh pr merge <pr> --auto --squash`. An unattended run has no Auto-fix, so watch the PR's CI yourself until it merges:
 
 1. Run `gh pr checks <pr> --required --watch`, which returns once the required checks finish.
 2. Read `gh pr view <pr> --json state,mergeStateStatus` and act on it:
