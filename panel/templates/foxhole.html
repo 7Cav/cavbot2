@@ -6,7 +6,8 @@
   {{with .Report}}{{if .Running}}
   <section class="block fx-progress" role="status" data-field="progress" data-report="{{.ID}}" data-action="{{.Action}}">
     <h2 class="block-header">{{.Name}} is running</h2>
-    <div class="block-row">Started by <span data-field="started-by">{{.StartedBy}}</span>. <span data-field="done">{{.Done}}</span> of <span data-field="total">{{.Total}}</span> done, <span data-field="left" data-seconds="{{.Left.Seconds}}">about {{.Left.Text}}</span> left. It keeps going if you close this tab. Reload the page to see how far it has got.</div>
+    {{- /* The script moves the count every few seconds, so a screen reader leaves this row out of the block's announcements. The script hides the reload hint. */}}
+    <div class="block-row" data-field="how-far" aria-live="off">Started by <span data-field="started-by">{{.StartedBy}}</span>. <span data-field="done">{{.Done}}</span> of <span data-field="total">{{.Total}}</span> done, <span data-field="left" data-seconds="{{.Left.Seconds}}">about {{.Left.Text}}</span> left. It keeps going if you close this tab.<span data-field="reload-hint"> <a href="{{$.Foxhole.Reload}}" data-field="reload">Reload the page</a> to see how far it has got.</span></div>
     {{if .Paused}}<div class="block-row" data-field="paused">Paused: waiting for the member list from Discord. It stops if the list hasn't arrived after {{.PauseLimit}}.</div>{{end}}
     {{if .StopPressedBy}}
     <div class="block-row" data-field="stopping">Stopping: <span data-field="stopped-by">{{.StopPressedBy}}</span> pressed Stop. It stops after the change in flight, and the rest is listed as not attempted.</div>
@@ -240,7 +241,7 @@
     {{- if eq .Status "arriving"}}Waiting for the member list from Discord{{if .Expected}} (<span data-field="parts_received">{{.Received}}</span> of <span data-field="parts_expected">{{.Expected}}</span>){{end}}.
     {{- else if eq .Status "refused"}}Discord stopped the member list fetch. Retrying in <span data-field="retry_in">{{.RetryIn}}</span> s.
     {{- else if eq .Status "late"}}Discord took too long to send the member list.
-    {{- else}}Discord's member list didn't arrive. Wait a bit and try again.{{end}} <a href="{{.Reload}}" data-field="reload">Reload</a></div>
+    {{- else}}Discord's member list didn't arrive. Wait a bit and try again.{{end}} <a href="{{$.Foxhole.Reload}}" data-field="reload">Reload</a></div>
   {{end}}{{end}}
   <section class="block" data-field="changes">
     <h2 class="block-header">Change log</h2>
