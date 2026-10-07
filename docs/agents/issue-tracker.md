@@ -25,7 +25,7 @@ Fetch the body and comments into your scratchpad directory in one call:
 .github/scripts/fetch-issue.sh <n> > <scratchpad>/issue-<n>.md
 ```
 
-The script keeps only what people who can push to the repo wrote. The repo is public, so anyone can comment on an issue, and an issue's author can edit its body after it is labelled `ready-for-agent`. A comment by anyone else is left out, and so is a body, with a note in its place. Read the full thread on GitHub only when the person you work for asks.
+The script keeps only what people who can push to the repo wrote, since anyone can write on this public repo's issues. Read the full thread on GitHub only when the person you work for asks.
 
 Empty output means the fetch worked. Read the file with the Read tool. Claude Code can add a false "GitHub API rate limit exceeded" hint to a `gh` call whose output quotes rate-limit text, and specs about Discord quote it often. If the hint shows up anyway, check `gh api rate_limit` and carry on while it shows calls left.
 

@@ -36,13 +36,13 @@ jq -n --slurpfile issues "$tmp/issues.json" --slurpfile pulls "$tmp/pulls.json" 
   | [ $pulls[][] | (.body // "")
     | scan("(?i)\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+#([0-9]+)\\b")
     | .[0] | tonumber ] as $taken
-  | [ $issues[][] | select(.pull_request == null) ] as $listed
-  | if any($listed[]; .issue_dependencies_summary.blocked_by == null)
+  | [ $issues[][] | select(.pull_request == null) ] as $open_issues
+  | if any($open_issues[]; .issue_dependencies_summary.blocked_by == null)
     then error("GitHub no longer reports how many open blockers an issue has")
     else . end
   | { waiting: $waiting,
       queue: (if $waiting != [] then [] else
-        [ $listed[]
+        [ $open_issues[]
           | select(any(.labels[]; .name == "ready-for-agent"))
           | select(.assignees == [])
           | select(.issue_dependencies_summary.blocked_by == 0)

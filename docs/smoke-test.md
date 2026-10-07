@@ -110,7 +110,9 @@ checks and every check the fix could affect.
 On `develop` the change has already merged. File an issue labelled `bug` and
 `needs-triage` for each failed check: the check, what you saw, the build, and
 the PR it came from. The person decides whether the next release waits for a
-fix or the PR is reverted.
+fix or they revert the PR. Either way the PR keeps `needs-smoke`, so the
+release waits too, until a later pass shows the fix working or the revert
+merges.
 
 On an open PR's branch, done when every check passes on one build without a
 `-dirty` suffix, so the build names a commit the PR holds. On `develop`, done
@@ -132,11 +134,12 @@ account and result, each unreachable check with its reason, and the issue for
 each failure. A comment works on open and merged PRs alike, and a merged PR's
 body already became its squash commit. This repository is public, so name
 people by persona or role. Forum usernames, user IDs, IP addresses and channel
-contents stay out of the PR. Then remove the PR's `needs-smoke` label.
+contents stay out of the PR. Then remove `needs-smoke` from each PR whose
+checks all passed.
 
-Done when every PR the pass covered has its comment and no longer carries
-`needs-smoke`. When a pass could not run a PR's checks at all, its label stays,
-and you tell the person why so they can run them or waive them. A waiver
+Done when every PR the pass covered has its comment, and `needs-smoke` stays
+only on PRs with a failed check or checks the pass could not run. For the
+second kind, tell the person why so they can run them or waive them. A waiver
 removes the label too.
 
 ## When `up` fails

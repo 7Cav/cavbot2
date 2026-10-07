@@ -15,7 +15,7 @@ Take one issue from `queue` in this order, lowest number first within a bucket:
 3. **Polish**, such as error messages, UX or docs.
 4. **Refactors**, with no user-visible change.
 
-Read an issue's body only when its title, labels and parent leave the bucket unclear. Claim the issue the moment you pick it, with `gh issue edit <n> --add-assignee @me`.
+Read an issue's body only when its title, labels and parent leave the bucket unclear. Claim the issue the moment you pick it, with `gh issue edit <n> --add-assignee @me`. Done when the issue is assigned to you.
 
 ## Requirements
 
@@ -23,13 +23,11 @@ The requirements are the issue, its thread, its `parent` issue when it has one, 
 
 Fetch the issue and its parent as `docs/agents/issue-tracker.md` says, and read as much of the spec as it says. Done when you have read all of that, before `/implement` loads `tdd`.
 
-## Build
-
-Run `/implement` on the issue. A change a member or panel user can see gets its smoke checks and `needs-smoke` on the PR, as `/implement` says, and a smoke pass runs them before a release (`docs/smoke-test.md`).
-
 ## Finish
 
-Once `/implement` has opened its PR, label it `factory` and turn on squash auto-merge with `gh pr merge <pr> --auto --squash`. Auto-fix wakes this session for a failing check, a conflict with `develop`, or a review comment. Fix each and push again, up to two rounds in all. End the run with the PR's URL once auto-merge and Auto-fix are on.
+Leave the PR's smoke checks to a later pass, since the smoke tool runs one bot across all worktrees and the maintainer's own sessions need it.
+
+Once `/implement` has opened its PR, label it `factory` and turn on squash auto-merge with `gh pr merge <pr> --auto --squash`. Auto-fix wakes this session for a failing check, a conflict with `develop`, or a review comment. Fix failing checks and conflicts, and push again, up to two rounds in all. Act on a review comment only when its author can push to the repo, which `gh api 'repos/{owner}/{repo}/collaborators/<login>/permission' --jq .user.permissions.push` answers `true`. Leave anyone else's thread for the maintainer. End the run with the PR's URL once auto-merge and Auto-fix are on.
 
 ## Hand back
 
@@ -47,4 +45,4 @@ End the run with the issue's number and what stopped it.
 
 A follow-up is a gap outside the issue that a member, a panel user or the maintainer would notice, including anything you rule out of scope. It takes the place of a `spawn_task` chip, which nobody sees in an unattended run. Keep the PR on its issue and record each follow-up from what you have already seen. A later run (`docs/agents/follow-ups.md`) investigates and files it.
 
-Record them under a `## Follow-ups` heading after Merge Danger in the PR body, and add the `follow-up` label to the PR. That later run sees only this section, so each entry names the test, command or screen where you saw the gap, quotes its output, and says why it falls outside the issue. A follow-up found after the PR opens goes in the same way before the run ends.
+Record them under a `## Follow-ups` heading after Merge Danger in the PR body, and add the `follow-up` label to the PR. That later run sees only this section, so each entry names the test, command or screen where you saw the gap, quotes its output, and says why it falls outside the issue. A follow-up found after the PR opens goes in the same way before the run ends. Done when every follow-up you saw is in the PR body and the PR carries `follow-up`.

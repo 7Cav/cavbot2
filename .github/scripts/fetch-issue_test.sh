@@ -17,7 +17,7 @@ cat >"$tmp/bin/gh" <<'EOF'
 # instead.
 case "$*" in
     *"/collaborators"*) call=collaborators ;;
-    "issue view 12 "*) call=issue ;;
+    *"issue view 12"*) call=issue ;;
     *) echo "fake gh: unexpected call: $*" >&2; exit 2 ;;
 esac
 if [[ ${FAIL_ON:-} == "$call" ]]; then

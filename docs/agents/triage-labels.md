@@ -14,9 +14,9 @@ When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the 
 
 Edit the right-hand column to match whatever vocabulary you actually use.
 
-## `blocked`: a factory hand-back
+## `blocked` marks a factory hand-back
 
-This repo adds a sixth state role, `blocked`. A factory run that [hands an issue back](factory.md#hand-back) swaps its `ready-for-agent` for `blocked`, and the label stays until triage answers the hand-back. It is not `blocked on external dependency`, and an issue's blockers live in GitHub's blocked-by links. On a hand-back those are all closed, because the factory takes only an issue with none open.
+This repo adds a sixth state role, `blocked`. A factory run that [hands an issue back](factory.md#hand-back) swaps its `ready-for-agent` for `blocked`, and the label stays until triage answers the hand-back. The older `blocked on external dependency` label marks a different state, work waiting on something outside the repo. An issue's blockers live in GitHub's blocked-by links. On a hand-back those are all closed, because the factory takes only an issue with none open.
 
 - **Show what needs attention.** List `blocked` issues as a fourth bucket, after `needs-info`.
 - **Gather context.** Read the hand-back comment as prior triage notes. Each reason it gives for stopping is an outstanding question for the maintainer.

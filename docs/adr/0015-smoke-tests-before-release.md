@@ -33,5 +33,5 @@ maintainer came back.
   list, its tip is unproven on the test guild.
 - A pass on `develop` tests the merged changes together, as the release ships
   them.
-- A failed check is a bug in merged code. Before the next release, the
-  maintainer has it fixed or reverts the PR.
+- A failed check is a bug in merged code. Its PR keeps `needs-smoke`, so the
+  next release waits until the maintainer has it fixed or reverts the PR.

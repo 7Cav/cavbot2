@@ -21,8 +21,8 @@ gh api 'repos/{owner}/{repo}/collaborators?per_page=100' --paginate >"$tmp/colla
 gh issue view "$n" --json author,body,comments >"$tmp/issue.json"
 
 jq -r --slurpfile collaborators "$tmp/collaborators.json" '
-  [ $collaborators[][] | select(.permissions.push) | .login ] as $trusted
-  | def trusted: .author.login as $l | any($trusted[]; . == $l);
-  (if trusted then .body
+  [ $collaborators[][] | select(.permissions.push) | .login ] as $pushers
+  | def by_pusher: .author.login as $l | any($pushers[]; . == $l);
+  (if by_pusher then .body
    else "(The body is by @\(.author.login), who can'"'"'t push to this repository, so it is left out. Work from the comments below.)" end),
-  (.comments[] | select(trusted) | "\n---\n@\(.author.login):\n\(.body)")' "$tmp/issue.json"
+  (.comments[] | select(by_pusher) | "\n---\n@\(.author.login):\n\(.body)")' "$tmp/issue.json"
