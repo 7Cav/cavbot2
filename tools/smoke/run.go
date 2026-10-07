@@ -32,7 +32,8 @@ const (
 )
 
 // startupTimeout bounds how long up waits. A start registers every slash
-// command one at a time, which Discord rate-limits to about a minute.
+// command in one request, which Discord can hold for up to about a minute
+// after restarts seconds apart.
 const startupTimeout = 5 * time.Minute
 
 // runState is the run file: what a run is, where it came from, and how far it
@@ -495,7 +496,7 @@ func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
 	go func() { s.botDone <- cmd.Wait() }()
 	s.st.Bot = cmd.Process.Pid
 	s.save()
-	s.logf("bot started (pid %d); registering commands takes about a minute", cmd.Process.Pid)
+	s.logf("bot started (pid %d); after restarts seconds apart, registering commands can take up to about a minute", cmd.Process.Pid)
 
 	ready := make(chan struct{})
 	s.logDone = make(chan struct{})
