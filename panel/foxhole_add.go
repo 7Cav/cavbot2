@@ -59,6 +59,10 @@ type addPreview struct {
 	Notes int
 }
 
+// NobodyHint is the hint the preview gives in Confirm's place when no line
+// gives the role to anyone.
+func (p *addPreview) NobodyHint() string { return nobodyToAdd(p.Name) }
+
 // lineResult is what an add does with one pasted line, its data-result
 // marker.
 type lineResult string
@@ -455,7 +459,8 @@ func (p *addPreview) Named() string {
 // lines the preview showed again, against the member list as it stands,
 // with the choices picked, and starts the add of the role to the members
 // they name, as startAction says. A line that names other members than
-// the preview showed starts nothing.
+// the preview showed starts nothing, and nor does an add that would give
+// the role to nobody: each answers with the preview, the lines kept.
 func (p *Panel) startAdd(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -471,7 +476,7 @@ func (p *Panel) startAdd(w http.ResponseWriter, r *http.Request, sess session) {
 	// A refused add answers with its preview again, or with the paste box
 	// alone while the member list is partial, so the lines pasted are kept.
 	back := foxholeRequest{Filter: filterAll, Paste: &paste}
-	p.startAction(w, r, sess, back, "the add", func(ctx context.Context, by commands.ForumUser) error {
+	p.startAction(w, r, sess, back, "the add", nobodyToChangeRefusal(nobodyToAdd(role.Label())), func(ctx context.Context, by commands.ForumUser) error {
 		preview, err := p.foxhole.forSave(storeTimeout).confirmedAdd(ctx, paste, picks, named)
 		if err != nil {
 			return err

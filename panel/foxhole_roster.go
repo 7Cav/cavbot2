@@ -240,6 +240,16 @@ func (s foxholeService) confirmedRoster(ctx context.Context, unit commands.Valid
 	return troopers, nil
 }
 
+// NobodyHint is the hint the preview gives in Confirm's place when it can't
+// add anyone. A Retry's preview names the troopers listed rather than the
+// roster, and its Confirm starts a Retry, which refuses in its own words.
+func (p *rosterPreview) NobodyHint() string {
+	if p.Retry != 0 {
+		return "Nobody listed would get Internal, so there's nothing to add."
+	}
+	return nobodyOnRoster(p.Unit.Label)
+}
+
 // CanAdd reports whether confirming the preview could give Internal to
 // anyone: a trooper in the server who doesn't hold it. A preview that
 // can't offers no Confirm.
@@ -251,6 +261,7 @@ func (p *rosterPreview) CanAdd() bool {
 // starts the roster add of the roster confirmedRoster gives, as
 // startAction says. A roster that lists other troopers than the preview
 // did starts nothing, and the page shows the preview as it stands now. A
+// roster add that would give Internal to nobody starts nothing either. A
 // unit outside the registry is refused before any roster fetch.
 func (p *Panel) startRosterAdd(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
@@ -273,7 +284,7 @@ func (p *Panel) startRosterAdd(w http.ResponseWriter, r *http.Request, sess sess
 		p.refuseAction(w, r, sess, foxholeRequest{Filter: filterAll, Roster: &rosterRequest{Unit: unit, Troopers: troopers}}, errRosterChanged, kv...)
 		return
 	}
-	p.startAction(w, r, sess, actionPage, "the roster add", func(ctx context.Context, by commands.ForumUser) error {
+	p.startAction(w, r, sess, actionPage, "the roster add", nobodyToChangeRefusal(nobodyOnRoster(unit.Label)), func(ctx context.Context, by commands.ForumUser) error {
 		if err != nil {
 			return err
 		}

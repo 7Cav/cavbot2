@@ -9,9 +9,11 @@ against the rules under each heading it touches. Look up a term in
 
 **A no-op says so and stops.** A preview that would change nobody says why
 where its Confirm would be. A save that would change nothing ends with the
-store and the change log as they were. Reference: `nobody-to-remove`,
+store and the change log as they were. The server refuses it too, since a
+form kept from an earlier load still posts. Reference: `nobody-to-remove`,
 `nobody-to-add`, `nobody-to-re-add` and `nobody-to-purge` in
-`panel/templates/foxhole.html`.
+`panel/templates/foxhole.html`, and `commands.ErrNobodyToChange`, which
+`FoxholeRuntime.start` returns before it writes a report.
 
 **A Confirm acts on what its preview showed.** The gap between a preview
 and its Confirm is a TOCTOU window. The member list can move in it, as when

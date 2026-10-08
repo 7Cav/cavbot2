@@ -205,11 +205,12 @@ type purgeConfirm struct {
 	// ChangeCount is how many role changes the purge would make, every
 	// role's holders together. At 0 the page offers no Confirm.
 	ChangeCount int
-	// Nobody names the scope's roles for the hint shown at 0 changes,
-	// Internal first as the scope's label has them: "Internal or External".
-	Nobody   string
-	Estimate estimate
+	Estimate    estimate
 }
+
+// NobodyHint is the hint the confirmation gives in Confirm's place at 0
+// changes.
+func (c *purgeConfirm) NobodyHint() string { return nobodyToPurge(c.Scope) }
 
 // purgeRole is one role a purge takes, and how many hold it at this load.
 type purgeRole struct {
@@ -265,13 +266,6 @@ func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope c
 		confirm.Roles = append(confirm.Roles, purgeRole{Role: role, Name: role.Label(), Holders: holders})
 		confirm.ChangeCount += holders
 	}
-	var names []string
-	for _, role := range []commands.FoxholeRole{commands.FoxholeInternal, commands.FoxholeExternal} {
-		if slices.Contains(scope.Roles(), role) {
-			names = append(names, role.Label())
-		}
-	}
-	confirm.Nobody = strings.Join(names, " or ")
 	confirm.Estimate = estimateFor(confirm.ChangeCount)
 	return confirm
 }
@@ -293,6 +287,10 @@ type removePreview struct {
 	// Cancel leads.
 	Back string
 }
+
+// NobodyHint is the hint the preview gives in Confirm's place when nobody
+// selected loses the role.
+func (p *removePreview) NobodyHint() string { return nobodyToRemove(p.Name) }
 
 // previewMember is one member a preview names, under the names the member
 // list shows, or the record's when it doesn't hold them, with their note.
@@ -372,6 +370,10 @@ type reAddCounts struct {
 // Approved is how many approved collaborators there are.
 func (c reAddCounts) Approved() int { return c.Holding + c.NotHolding + c.NotInServer }
 
+// NobodyHint is the hint the After a war block gives beside Re-add when
+// every approved collaborator in the server holds External.
+func (reAddCounts) NobodyHint() string { return nobodyToReAdd }
+
 // reAddCountsOf counts the approved collaborators among the holder list's
 // rows, by the flags the rows show.
 func reAddCountsOf(holders []holderRow) *reAddCounts {
@@ -446,6 +448,50 @@ func roleMissingRefusal(what, role string) *saveRefusal {
 		Message: fmt.Sprintf("The server has no role named %s, so %s didn't start. Nothing changed. The bot has reported it.", role, what)}
 }
 
+// The hints a Foxhole action's preview gives in its Confirm's place when
+// confirming would change nobody. The action's refusal gives the same one
+// when it would change nobody by the time it starts.
+
+// nobodyToPurge is a purge's hint, naming the scope's roles Internal first
+// as the scope's label has them: "Internal or External".
+func nobodyToPurge(scope commands.PurgeScope) string {
+	var names []string
+	for _, role := range []commands.FoxholeRole{commands.FoxholeInternal, commands.FoxholeExternal} {
+		if slices.Contains(scope.Roles(), role) {
+			names = append(names, role.Label())
+		}
+	}
+	return fmt.Sprintf("Nobody holds %s, so there's nothing to purge.", strings.Join(names, " or "))
+}
+
+// nobodyToRemove is a removal's hint, for the role named.
+func nobodyToRemove(role string) string {
+	return fmt.Sprintf("Nobody selected holds %s, so there's nothing to remove.", role)
+}
+
+// nobodyToAdd is an add's hint, for the role named.
+func nobodyToAdd(role string) string {
+	return fmt.Sprintf("No line gives %s to anyone, so there's nothing to add.", role)
+}
+
+// nobodyOnRoster is a roster add's hint, for the unit labelled as given.
+func nobodyOnRoster(unit string) string {
+	return fmt.Sprintf("Nobody on the %s roster would get Internal, so there's nothing to add.", unit)
+}
+
+// nobodyToReAdd is a re-add's hint.
+const nobodyToReAdd = "Every approved collaborator in the server holds External, so there's nobody to re-add."
+
+// nobodyToChangeRefusal refuses a Foxhole action that would change nobody
+// when it starts (commands.ErrNobodyToChange), as one confirmed from a page
+// or preview loaded before something else changed its members. hint is the
+// action's preview hint.
+func nobodyToChangeRefusal(hint string) *saveRefusal {
+	return &saveRefusal{Kind: "nobody-to-change", status: http.StatusConflict,
+		log:     "Panel action refused: nobody to change",
+		Message: hint + " Nothing changed."}
+}
+
 // startPurge is POST /foxhole/purge, the purge confirmation's Confirm: it
 // starts the purge of the scope confirmed, as startAction says.
 func (p *Panel) startPurge(w http.ResponseWriter, r *http.Request, sess session) {
@@ -458,9 +504,10 @@ func (p *Panel) startPurge(w http.ResponseWriter, r *http.Request, sess session)
 		http.Error(w, "the form names no purge scope, so nothing changed", http.StatusBadRequest)
 		return
 	}
-	p.startAction(w, r, sess, actionPage, "the purge", func(ctx context.Context, by commands.ForumUser) error {
-		return p.foxhole.actions.Purge(ctx, scope, by)
-	}, "scope", scope)
+	p.startAction(w, r, sess, actionPage, "the purge", nobodyToChangeRefusal(nobodyToPurge(scope)),
+		func(ctx context.Context, by commands.ForumUser) error {
+			return p.foxhole.actions.Purge(ctx, scope, by)
+		}, "scope", scope)
 }
 
 // startRemoval is POST /foxhole/remove, the remove preview's Confirm: it
@@ -483,7 +530,8 @@ func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess sessio
 		return
 	}
 	approvals := r.PostForm[fieldApprovalCleared]
-	p.startAction(w, r, sess, actionPage, "the removal", func(ctx context.Context, by commands.ForumUser) error {
+	nobody := nobodyToChangeRefusal(nobodyToRemove(role.Label()))
+	p.startAction(w, r, sess, actionPage, "the removal", nobody, func(ctx context.Context, by commands.ForumUser) error {
 		err := p.foxhole.actions.Remove(ctx, role, members, approvals, by)
 		if errors.Is(err, commands.ErrMemberListPartial) {
 			// The page the refusal answers with keeps no selection: it says
@@ -498,17 +546,18 @@ func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess sessio
 // approved collaborators: one button with no preview, which starts the
 // re-add as startAction says.
 func (p *Panel) startReAdd(w http.ResponseWriter, r *http.Request, sess session) {
-	p.startAction(w, r, sess, actionPage, "the re-add", p.foxhole.actions.ReAdd)
+	p.startAction(w, r, sess, actionPage, "the re-add", nobodyToChangeRefusal(nobodyToReAdd), p.foxhole.actions.ReAdd)
 }
 
 // startAction starts a Foxhole action, named by what, through start and
 // redirects straight back to the Foxhole page. The action runs in the
 // background to its end, whether or not the browser waits, so the request
 // never waits on it. A refused action answers with the page back asks for
-// and the refusal, and logs it with kv. A start that returns a *saveRefusal
-// refuses in its own words.
+// and the refusal, and logs it with kv. An action that would change nobody
+// is refused with nobody, and a start that returns a *saveRefusal refuses
+// in its own words.
 func (p *Panel) startAction(w http.ResponseWriter, r *http.Request, sess session, back foxholeRequest, what string,
-	start func(context.Context, commands.ForumUser) error, kv ...any) {
+	nobody *saveRefusal, start func(context.Context, commands.ForumUser) error, kv ...any) {
 	err := start(context.WithoutCancel(r.Context()), sess.forumUser())
 	var (
 		missing *commands.MissingRoleError
@@ -526,6 +575,9 @@ func (p *Panel) startAction(w http.ResponseWriter, r *http.Request, sess session
 		return
 	case errors.As(err, &missing):
 		p.refuseAction(w, r, sess, back, roleMissingRefusal(what, missing.Role), append(kv, "role", missing.Role)...)
+		return
+	case errors.Is(err, commands.ErrNobodyToChange):
+		p.refuseAction(w, r, sess, back, nobody, kv...)
 		return
 	}
 	if err != nil {

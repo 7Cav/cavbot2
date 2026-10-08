@@ -111,16 +111,22 @@ func TestReAddAfterAPurgeGivesExternalBackToApprovedCollaboratorsOnly(t *testing
 // A re-add checks each approved collaborator against the member list when
 // it reaches them. One who left the server, and one who holds External
 // already, are each skipped with that reason, so the report names whom a
-// manager has to chase.
+// manager has to chase. A re-add with someone to give External to runs
+// whoever else it skips, and its report lists both.
 func TestReAddReportSkipsCollaboratorsNotInTheServerOrHoldingExternal(t *testing.T) {
 	w := newFoxholeWorld(t)
-	seedApproved(t, w, namesOf(memberKestrel), collaboratorGone)
+	seedApproved(t, w, namesOf(memberDoe), namesOf(memberKestrel), collaboratorGone)
 
 	pressReAdd(t, w.b)
 	w.awaitActionEnd(t)
 
-	skipped := listedReasons(reportList(t, reportBlock(t, parseHTML(t, w.b.get(foxholePath))), "skipped"))
-	if want := map[string]string{collaboratorGone.MemberID: "left", memberKestrel.ID: "holding"}; !maps.Equal(skipped, want) {
+	report := reportBlock(t, parseHTML(t, w.b.get(foxholePath)))
+	if got, want := pairs(reportList(t, report, "changed")), []string{memberDoe.ID + " external"}; !slices.Equal(got, want) {
+		t.Errorf("the report changed %v, want %v", got, want)
+	}
+	skipped := listedReasons(reportList(t, report, "skipped"))
+	want := map[string]string{collaboratorGone.MemberID: string(commands.SkipLeft), memberKestrel.ID: string(commands.SkipHolding)}
+	if !maps.Equal(skipped, want) {
 		t.Errorf("the report skipped %v, want %v", skipped, want)
 	}
 }
