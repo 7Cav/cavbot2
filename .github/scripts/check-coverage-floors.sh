@@ -10,9 +10,10 @@
 # floor: the whole-number part of its coverage, minus 1. RAISE does not change
 # the exit code. ADR 0005 says to apply it in the same PR.
 #
-# The `main` package is intentionally not tracked: it's entrypoint wiring
-# (DISCORD_TOKEN check, gateway open, command registration) and is not
-# realistically unit-testable without a substantial refactor.
+# A package whose tests report a coverage percentage needs a floor. One with no
+# floor fails the check with a NO FLOOR line. That line names the floor to set,
+# found by the RAISE rule but never below 0. A package without tests needs no
+# floor. Today `main` is one of those.
 #
 # The `store` floor assumes its Postgres tests ran. They skip when
 # TEST_BOT_DB_DSN is unset, and the Fake alone covers far less, so a local run
@@ -30,6 +31,14 @@ fi
 
 # Coverage more than this many points above a floor gets a RAISE line.
 raise_margin=3
+
+# floor_for <coverage>: the floor for a coverage percentage. That is its
+# whole-number part, minus 1, and never below 0.
+floor_for() {
+    local f=$((${1%.*} - 1))
+    [[ $f -lt 0 ]] && f=0
+    echo "$f"
+}
 
 # Read `go test -cover` output from stdin.
 output=$(cat)
@@ -54,7 +63,7 @@ while IFS=$'\t' read -r pkg floor; do
             margin=$(awk -v c="$cov" -v f="$floor" 'BEGIN { printf "%.1f", c - f }')
             echo "OK:   $pkg coverage ${cov}% >= floor ${floor}%, margin ${margin}"
             if awk -v c="$cov" -v f="$floor" -v m="$raise_margin" 'BEGIN { exit (c - f > m) ? 0 : 1 }'; then
-                raise+=("RAISE $pkg to $((${cov%.*} - 1)) (floor ${floor}%, coverage ${cov}%)")
+                raise+=("RAISE $pkg to $(floor_for "$cov") (floor ${floor}%, coverage ${cov}%)")
             fi
         fi
     else
@@ -62,6 +71,19 @@ while IFS=$'\t' read -r pkg floor; do
         fail=1
     fi
 done <<<"$FLOORS"
+
+# go test reports a tested package's coverage on an `ok` line. Code without
+# tests gets a line with no `ok`. Tests that cover no statements get no
+# percentage. Neither needs a floor.
+floored_pkgs=$(cut -f1 <<<"$FLOORS")
+while IFS= read -r line; do
+    [[ "$line" =~ ^ok[[:space:]]+([^[:space:]]+)[[:space:]].*coverage:[[:space:]]+([0-9]+\.[0-9]+)%[[:space:]]of[[:space:]]statements ]] || continue
+    pkg="${BASH_REMATCH[1]}"
+    cov="${BASH_REMATCH[2]}"
+    grep -Fxq -- "$pkg" <<<"$floored_pkgs" && continue
+    echo "NO FLOOR: $pkg needs a floor of $(floor_for "$cov") (coverage ${cov}%)" >&2
+    fail=1
+done <<<"$output"
 
 if [[ ${#raise[@]} -gt 0 ]]; then
     echo

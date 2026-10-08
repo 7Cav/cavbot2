@@ -248,8 +248,9 @@ differs between Go versions; Go downloads that toolchain on first use.
 CI enforces per-package coverage floors, listed in
 `.github/coverage-floors.tsv`. A floor stays within 3 points of its package's
 coverage. When coverage climbs past that, the floor check prints a RAISE line
-with the new floor, and the floor goes up in the same PR. ADR 0005 has the
-reasoning.
+with the new floor, and the floor goes up in the same PR. A package with tests
+needs a floor. Without one, the check fails with a NO FLOOR line naming the
+floor to set. ADR 0005 has the reasoning.
 
 To run the `store` tests on their own, start a throwaway database. The script
 prints its DSN, and the container's name on stderr:
