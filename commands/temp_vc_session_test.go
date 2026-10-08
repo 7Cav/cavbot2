@@ -202,9 +202,9 @@ func channelReplyAPI() *fakeDiscordAPI {
 	}}
 }
 
-// assertWritesReadAsWritten fails unless api received a write, and every
+// assertEveryWriteReadsAsWritten fails unless api received a write, and each
 // write it received carries a reason header Discord reads as reason.
-func assertWritesReadAsWritten(t *testing.T, call string, api *fakeDiscordAPI, reason string) {
+func assertEveryWriteReadsAsWritten(t *testing.T, call string, api *fakeDiscordAPI, reason string) {
 	t.Helper()
 	var writes int
 	for _, req := range api.received() {
@@ -219,10 +219,10 @@ func assertWritesReadAsWritten(t *testing.T, call string, api *fakeDiscordAPI, r
 	}
 }
 
-// A hub channel rename's reason names the forum user who saved it, and the
-// audit log shows the forum username as the forum does, an accented letter
-// and a % included.
-func TestSessionTempVCManagerRenameReasonReadsAsWritten(t *testing.T) {
+// ChannelEdit, the call a hub channel rename goes through, sends a reason
+// naming a forum user with an accented letter and a % so that Discord reads
+// it as written.
+func TestSessionTempVCManagerChannelEditReasonReadsAsWritten(t *testing.T) {
 	const reason = "Panel: hub channel renamed by José%41 (forum user 1234)"
 	api := channelReplyAPI()
 	mgr := NewSessionTempVCManager(sessionOver(t, api, nil), testTempVCGuild)
@@ -231,7 +231,7 @@ func TestSessionTempVCManagerRenameReasonReadsAsWritten(t *testing.T) {
 		t.Fatalf("ChannelEdit: %v", err)
 	}
 
-	assertWritesReadAsWritten(t, "ChannelEdit", api, reason)
+	assertEveryWriteReadsAsWritten(t, "ChannelEdit", api, reason)
 }
 
 // Every change the production adapter sends carries its reason so that
@@ -273,7 +273,7 @@ func TestSessionTempVCManagerSendsReasonsDiscordReadsAsWritten(t *testing.T) {
 				t.Fatalf("%s: %v", tc.name, err)
 			}
 
-			assertWritesReadAsWritten(t, tc.name, api, reason)
+			assertEveryWriteReadsAsWritten(t, tc.name, api, reason)
 		})
 	}
 }
