@@ -51,8 +51,9 @@ func extraMs(e *sentry.Event, key string) (int64, bool) {
 // interaction was when the bot sent it, so a late interaction can be told
 // from a slow answer. The event reports Discord's own error, so it groups
 // by Discord's error type. The bot sends nothing further on the
-// interaction. Every registered command keeps to this, and so does a press
-// on a lock notice button.
+// interaction. Every registered command keeps to this, whether its first
+// response is its normal reply or a refusal of bad input, and so does a
+// press on a lock notice button.
 func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 	const (
 		ackDelay = 20 * time.Millisecond
@@ -73,6 +74,7 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 			return i
 		},
 	})
+	runs = append(runs, refusalRuns(t)...)
 
 	for _, tc := range runs {
 		t.Run(tc.label, func(t *testing.T) {
@@ -99,6 +101,11 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 				t.Fatalf("Sentry events = %q, want one", got)
 			}
 			e := events[0]
+			// Every missed slash command groups as one issue. A lock notice
+			// press has an event of its own.
+			if i.Type == discordgo.InteractionApplicationCommand && e.Tags["message"] != missedAckMessage {
+				t.Errorf("event message = %q, want %q, so every missed slash command groups as one issue", e.Tags["message"], missedAckMessage)
+			}
 			if e.Tags["command"] != tc.command {
 				t.Errorf("event command = %q, want %q", e.Tags["command"], tc.command)
 			}
@@ -147,6 +154,62 @@ func ackRunOptions() map[string][]*discordgo.ApplicationCommandInteractionDataOp
 		voiceRenameCommandName:     {stringOption("name", "Alpha")},
 		voiceLockCommandName:       nil,
 		voiceUnlockCommandName:     nil,
+	}
+}
+
+// refusalRuns are the runs of registered commands whose first response is
+// a refusal, one per refusal. The commands run beside a Foxhole page action
+// held mid-run for the rest of t.
+func refusalRuns(t *testing.T) []registeredRun {
+	t.Helper()
+	fx, hold := newPageRuntime(t)
+	holdPagePurge(t, fx, hold)
+	reg := NewRegistry(nil, fx)
+	// run is a refusal of command's run with opts, which got as far as
+	// subcommand when the command has one.
+	run := func(label, command, subcommand string, opts ...*discordgo.ApplicationCommandInteractionDataOption) registeredRun {
+		handler, _ := reg.GetHandler(command)
+		return registeredRun{label: "/" + command + " " + label, command: command, subcommand: subcommand,
+			handler: handler, interaction: slashAt(command, opts...)}
+	}
+	runs := []registeredRun{
+		run("date without a time", "zulu", "", stringOption("date", "01MAY26")),
+		run("bad date", "zulu", "", stringOption("time", "2300"), stringOption("date", "BADDATE")),
+		run("bad time", "zulu", "", stringOption("time", "9999")),
+	}
+	for _, name := range []string{"foxhole", "warden"} {
+		dm := run("outside a guild", name, "",
+			stringOption("command", "add"), stringOption("flag", "internal"), stringOption("discordname", "someone"))
+		dm.interaction = outsideGuild(dm.interaction)
+		runs = append(runs, dm,
+			run("bad command", name, "",
+				stringOption("command", "nonsense"), stringOption("flag", "internal"), stringOption("discordname", "someone")),
+			run("bad flag", name, "add",
+				stringOption("command", "add"), stringOption("flag", "nonsense"), stringOption("discordname", "someone")),
+			run("no discordname", name, "add",
+				stringOption("command", "add"), stringOption("flag", "internal")),
+			run("during a page action", name, "add",
+				stringOption("command", "add"), stringOption("flag", "internal"), stringOption("discordname", "someone")),
+		)
+	}
+	for _, name := range []string{"foxhole-bulkadd-internal", "warden-bulkadd-internal"} {
+		dm := run("outside a guild", name, "", stringOption("unit", validatedInternalUnits[0].Value))
+		dm.interaction = outsideGuild(dm.interaction)
+		runs = append(runs, dm,
+			run("no unit", name, ""),
+			run("unknown unit", name, "", stringOption("unit", "not-a-unit")),
+			run("during a page action", name, "", stringOption("unit", validatedInternalUnits[0].Value)),
+		)
+	}
+	return runs
+}
+
+// outsideGuild is build's interaction sent outside a guild, from a DM.
+func outsideGuild(build func(time.Time) *discordgo.InteractionCreate) func(time.Time) *discordgo.InteractionCreate {
+	return func(created time.Time) *discordgo.InteractionCreate {
+		i := build(created)
+		i.GuildID, i.User, i.Member = "", i.Member.User, nil
+		return i
 	}
 }
 
@@ -283,5 +346,42 @@ func TestRefusedAcknowledgementGetsTheFixedReply(t *testing.T) {
 				t.Error("the log lacks Discord's response body")
 			}
 		})
+	}
+}
+
+// When Discord refuses a refusal sent as a command's first reply with
+// anything but 10062 Unknown interaction, Sentry gets the event for an
+// error reply that never arrived, not a missed acknowledgement, and it
+// carries Discord's own error. No second reply follows, so ackFailedReply
+// never takes the place of the refusal.
+func TestRejectedRefusalIsReportedAsALostErrorReply(t *testing.T) {
+	rec := recordSentry(t)
+	api := &fakeDiscordAPI{answer: func(*http.Request, []byte) (int, []byte) {
+		return http.StatusInternalServerError, []byte(`{"message": "Internal Server Error", "code": 0}`)
+	}}
+	handler, _ := NewRegistry(nil, nil).GetHandler("zulu")
+	i := slashAt("zulu", stringOption("time", "9999"))(time.Now())
+
+	handler(stateSession(t, api), i)
+
+	var responses []apiRequest
+	for _, req := range onInteraction(api, i) {
+		if isResponse(req) {
+			responses = append(responses, req)
+		}
+	}
+	if len(responses) != 1 {
+		t.Errorf("interaction responses = %+v, want only the rejected refusal", responses)
+	}
+	events := rec.Events()
+	if len(events) != 1 {
+		t.Fatalf("Sentry events = %d, want one", len(events))
+	}
+	e := events[0]
+	if e.Tags["message"] == missedAckMessage {
+		t.Errorf("event message = %q, want the lost error reply's, not a missed acknowledgement", e.Tags["message"])
+	}
+	if n := len(e.Exception); n == 0 || e.Exception[n-1].Type != "*discordgo.RESTError" {
+		t.Errorf("event exceptions = %+v, want Discord's own *discordgo.RESTError outermost", e.Exception)
 	}
 }

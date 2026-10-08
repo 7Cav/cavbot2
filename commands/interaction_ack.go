@@ -90,12 +90,16 @@ func isUnknownInteraction(err error) bool {
 		restErr.Message.Code == discordgo.ErrCodeUnknownInteraction
 }
 
+// missedAckMessage is the message of the Sentry event for a missed
+// acknowledgement, which groups every miss as one issue.
+const missedAckMessage = "Failed to acknowledge a slash command"
+
 // captureMissedAck reports a slash command whose acknowledgement Discord
 // answered with 10062, with any further context the caller has in kv. It
 // is the one event for the miss, so the caller sends nothing more on the
 // interaction.
 func captureMissedAck(interaction *discordgo.InteractionCreate, err error, kv ...any) {
-	captureAckFailure("Failed to acknowledge a slash command", err, append([]any{
+	captureAckFailure(missedAckMessage, err, append([]any{
 		"command", interaction.ApplicationCommandData().Name,
 		"guild_id", interaction.GuildID,
 	}, kv...)...)
@@ -119,4 +123,44 @@ func replyAckFailed(r utils.InteractionResponder, interaction *discordgo.Interac
 	utils.Warn("Failed to acknowledge interaction",
 		"command", interaction.ApplicationCommandData().Name, "username", username, "discord_id", discordID, "error", err)
 	utils.HandleError(r, interaction, ackFailedReply)
+}
+
+// refuse refuses a slash command run with message, a reply only its
+// member sees, sent through utils.HandleError as the interaction's first
+// response. That response
+// acknowledges the interaction, so refuse sends it through acknowledge. A
+// 10062 is then a missed acknowledgement: refuse reports it as
+// captureMissedAck does, with any further context in kv, and returns true,
+// so the caller sends nothing more on the interaction. HandleError handles
+// any other error, which reaches it as Discord's own error.
+func refuse(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, message string, kv ...any) (missedAck bool) {
+	first := &refusalResponder{InteractionResponder: r, interaction: interaction}
+	utils.HandleError(first, interaction, message)
+	if first.missed == nil {
+		return false
+	}
+	captureMissedAck(interaction, first.missed, kv...)
+	return true
+}
+
+// refusalResponder sends a refusal through acknowledge. It keeps a 10062
+// in missed rather than hand it to HandleError, which would report it as
+// an error reply that never arrived.
+type refusalResponder struct {
+	utils.InteractionResponder
+	interaction *discordgo.InteractionCreate
+	missed      error
+}
+
+func (f *refusalResponder) InteractionRespond(_ *discordgo.Interaction, resp *discordgo.InteractionResponse) error {
+	err := acknowledge(f.InteractionResponder, f.interaction, resp)
+	switch {
+	case err == nil:
+		return nil
+	case isUnknownInteraction(err):
+		f.missed = err
+		return nil
+	default:
+		return errors.Unwrap(err)
+	}
 }
