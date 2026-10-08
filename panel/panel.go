@@ -221,10 +221,10 @@ func (p *Panel) Handler() http.Handler {
 	// A panic in a handler is recovered here and reported through the same
 	// path every other goroutine uses (ADR 0001), before net/http's own
 	// recovery would print it with the remote address through the stdlib
-	// logger and end the request with an empty 200. It answers with
-	// serverError's text and not its capture, so the panic is one event. The
-	// recovery runs before the gate, and the answer needs no session. A panic
-	// can come after a store write, so the answer never says nothing changed.
+	// logger. The request still gets an answer: serverError's text without
+	// its capture, so the panic is one event. The recovery runs before the
+	// gate, and the answer needs no session. A panic can come after a store
+	// write, so the answer never says nothing changed.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if v := recover(); v != nil {

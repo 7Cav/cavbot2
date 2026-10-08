@@ -83,7 +83,9 @@ func TestRequestThatDoesNotPanicAnswersWithoutTheServerError(t *testing.T) {
 }
 
 // carriesPath reports whether some string in the event, wherever the SDK
-// puts it, is the path or a URL with that path.
+// puts it, is the path or a URL with that path. The criterion is that the
+// event carries the path, not which of the event's fields holds it, so the
+// test reads every field and not only the extra context.
 func carriesPath(t *testing.T, event []byte, path string) bool {
 	t.Helper()
 	var decoded any
