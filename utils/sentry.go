@@ -33,6 +33,12 @@ func InitSentry(version string) func() {
 		Environment:      env,
 		Release:          release,
 		TracesSampleRate: 1.0,
+		// The default telemetry buffer can take an event out of its buffer
+		// before handing it to the transport, and a Flush between the two
+		// returns true with the event unsent. A failed start captures and
+		// exits, so it would lose its event. The older transport queues the
+		// event inside the capture call, and Flush waits for it.
+		DisableTelemetryBuffer: true,
 	})
 	if err != nil {
 		Warn("Sentry init failed, continuing without it", "error", err)
