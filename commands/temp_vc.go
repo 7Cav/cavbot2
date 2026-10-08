@@ -457,7 +457,9 @@ type GuildSnapshot struct {
 // REST call but ChannelPermissionSet passes WithRetryOnRatelimit(false): a
 // 429 is a failure the caller handles, never a sleeping gateway handler. A
 // guest add's overwrite set waits out a 429 and retries instead, and
-// TempVCManager says why.
+// TempVCManager says why. Every audit-log reason goes out through
+// auditLogReason, as GuildManager's do, so the audit log shows a forum
+// username with an accent or a % as written.
 type sessionTempVCManager struct {
 	s *discordgo.Session
 	// connected is the gateway connection up, as discordgo's Connect and
@@ -488,7 +490,7 @@ func (m *sessionTempVCManager) Channel(channelID string) (*discordgo.Channel, er
 
 func (m *sessionTempVCManager) GuildChannelCreateComplex(guildID string, data discordgo.GuildChannelCreateData, auditReason string) (*discordgo.Channel, error) {
 	ch, err := m.s.GuildChannelCreateComplex(guildID, data,
-		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+		auditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
 	if err != nil {
 		return ch, err
 	}
@@ -498,12 +500,12 @@ func (m *sessionTempVCManager) GuildChannelCreateComplex(guildID string, data di
 
 func (m *sessionTempVCManager) ChannelDelete(channelID, auditReason string) (*discordgo.Channel, error) {
 	return m.s.ChannelDelete(channelID,
-		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+		auditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
 }
 
 func (m *sessionTempVCManager) ChannelEdit(channelID string, data *discordgo.ChannelEdit, auditReason string) (*discordgo.Channel, error) {
 	ch, err := m.s.ChannelEdit(channelID, data,
-		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+		auditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
 	if err != nil {
 		return ch, err
 	}
@@ -544,7 +546,7 @@ func (m *sessionTempVCManager) ChannelOverwritesReplace(channelID string, overwr
 	}{overwrites}
 	endpoint := discordgo.EndpointChannel(channelID)
 	resp, err := m.s.RequestWithBucketID(http.MethodPatch, endpoint, body, endpoint,
-		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
+		auditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
 	if err != nil {
 		return err
 	}
@@ -678,7 +680,7 @@ func (m *sessionTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
 
 func (m *sessionTempVCManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error {
 	return m.s.ChannelPermissionSet(channelID, targetID, targetType, allow, deny,
-		discordgo.WithAuditLogReason(auditReason), discordgo.WithRetryOnRatelimit(true))
+		auditLogReason(auditReason), discordgo.WithRetryOnRatelimit(true))
 }
 
 func (m *sessionTempVCManager) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {

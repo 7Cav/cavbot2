@@ -193,3 +193,87 @@ func TestSessionTempVCManagerChannelOverwritesReplace(t *testing.T) {
 		})
 	}
 }
+
+// channelReplyAPI answers every request with chan-1, as Discord answers a
+// channel create, edit or delete.
+func channelReplyAPI() *fakeDiscordAPI {
+	return &fakeDiscordAPI{answer: func(*http.Request, []byte) (int, []byte) {
+		return http.StatusOK, []byte(`{"id":"chan-1","guild_id":"` + testTempVCGuild + `","type":2}`)
+	}}
+}
+
+// assertEveryWriteReadsAsWritten fails unless api received a write, and each
+// write it received carries a reason header Discord reads as reason.
+func assertEveryWriteReadsAsWritten(t *testing.T, call string, api *fakeDiscordAPI, reason string) {
+	t.Helper()
+	var writes int
+	for _, req := range api.received() {
+		if req.method == http.MethodGet {
+			continue
+		}
+		writes++
+		assertReadsAsWritten(t, call, req.auditReason, reason)
+	}
+	if writes == 0 {
+		t.Errorf("%s sent no write; requests %+v", call, api.received())
+	}
+}
+
+// ChannelEdit, the call a hub channel rename goes through, sends a reason
+// naming a forum user with an accented letter and a % so that Discord reads
+// it as written.
+func TestSessionTempVCManagerChannelEditReasonReadsAsWritten(t *testing.T) {
+	const reason = "Panel: hub channel renamed by José%41 (forum user 1234)"
+	api := channelReplyAPI()
+	mgr := NewSessionTempVCManager(sessionOver(t, api, nil), testTempVCGuild)
+
+	if _, err := mgr.ChannelEdit("chan-1", &discordgo.ChannelEdit{Name: "Hub"}, reason); err != nil {
+		t.Fatalf("ChannelEdit: %v", err)
+	}
+
+	assertEveryWriteReadsAsWritten(t, "ChannelEdit", api, reason)
+}
+
+// Every change the production adapter sends carries its reason so that
+// Discord reads it as written. Sent unencoded, the é arrives as raw bytes,
+// %41 reads as A and + may read as a space.
+func TestSessionTempVCManagerSendsReasonsDiscordReadsAsWritten(t *testing.T) {
+	const reason = "Panel: hub channel renamed by José%41+1 (forum user 1234)"
+	calls := []struct {
+		name string
+		call func(TempVCManager) error
+	}{
+		{"GuildChannelCreateComplex", func(mgr TempVCManager) error {
+			_, err := mgr.GuildChannelCreateComplex(testTempVCGuild, discordgo.GuildChannelCreateData{
+				Name: "Hub", Type: discordgo.ChannelTypeGuildVoice,
+			}, reason)
+			return err
+		}},
+		{"ChannelDelete", func(mgr TempVCManager) error {
+			_, err := mgr.ChannelDelete("chan-1", reason)
+			return err
+		}},
+		{"ChannelEdit", func(mgr TempVCManager) error {
+			_, err := mgr.ChannelEdit("chan-1", &discordgo.ChannelEdit{Name: "Hub"}, reason)
+			return err
+		}},
+		{"ChannelOverwritesReplace", func(mgr TempVCManager) error {
+			return mgr.ChannelOverwritesReplace("chan-1", permCategoryOverwrites(), reason)
+		}},
+		{"ChannelPermissionSet", func(mgr TempVCManager) error {
+			return mgr.ChannelPermissionSet("chan-1", "user-v", discordgo.PermissionOverwriteTypeMember,
+				discordgo.PermissionVoiceConnect, 0, reason)
+		}},
+	}
+	for _, tc := range calls {
+		t.Run(tc.name, func(t *testing.T) {
+			api := channelReplyAPI()
+
+			if err := tc.call(NewSessionTempVCManager(sessionOver(t, api, nil), testTempVCGuild)); err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+
+			assertEveryWriteReadsAsWritten(t, tc.name, api, reason)
+		})
+	}
+}
