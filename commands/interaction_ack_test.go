@@ -51,9 +51,9 @@ func extraMs(e *sentry.Event, key string) (int64, bool) {
 // interaction was when the bot sent it, so a late interaction can be told
 // from a slow answer. The event reports Discord's own error, so it groups
 // by Discord's error type. The bot sends nothing further on the
-// interaction. Every registered command keeps to this, whether its first
-// response is its normal reply or a refusal of bad input, and so does a
-// press on a lock notice button.
+// interaction. Every registered command keeps to this when its first
+// response is its normal reply, and so do the refusals refusalRuns lists
+// and a press on a lock notice button.
 func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 	const (
 		ackDelay = 20 * time.Millisecond
@@ -112,9 +112,7 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 			if tc.subcommand != "" && e.Contexts["extra"]["subcommand"] != tc.subcommand {
 				t.Errorf("event subcommand = %v, want %q", e.Contexts["extra"]["subcommand"], tc.subcommand)
 			}
-			if n := len(e.Exception); n == 0 || e.Exception[n-1].Type != "*discordgo.RESTError" {
-				t.Errorf("event exceptions = %+v, want Discord's own *discordgo.RESTError outermost", e.Exception)
-			}
+			reportsDiscordError(t, e)
 			if took, ok := extraMs(e, "ack_ms"); !ok || took < ackDelay.Milliseconds() || took >= age.Milliseconds() {
 				t.Errorf("ack_ms = %v, want how long the acknowledgement took (>= %d)", e.Contexts["extra"]["ack_ms"], ackDelay.Milliseconds())
 			}
@@ -122,6 +120,15 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 				t.Errorf("interaction_age_ms = %v, want the interaction's age when acknowledged (>= %d)", e.Contexts["extra"]["interaction_age_ms"], age.Milliseconds())
 			}
 		})
+	}
+}
+
+// reportsDiscordError fails t unless e reports Discord's own error, so it
+// groups in Sentry by Discord's error type.
+func reportsDiscordError(t *testing.T, e *sentry.Event) {
+	t.Helper()
+	if n := len(e.Exception); n == 0 || e.Exception[n-1].Type != "*discordgo.RESTError" {
+		t.Errorf("event exceptions = %+v, want Discord's own *discordgo.RESTError outermost", e.Exception)
 	}
 }
 
@@ -349,7 +356,7 @@ func TestRefusedAcknowledgementGetsTheFixedReply(t *testing.T) {
 	}
 }
 
-// When Discord refuses a refusal sent as a command's first reply with
+// When Discord rejects a refusal sent as a command's first reply with
 // anything but 10062 Unknown interaction, Sentry gets the event for an
 // error reply that never arrived, not a missed acknowledgement, and it
 // carries Discord's own error. No second reply follows, so ackFailedReply
@@ -381,7 +388,5 @@ func TestRejectedRefusalIsReportedAsALostErrorReply(t *testing.T) {
 	if e.Tags["message"] == missedAckMessage {
 		t.Errorf("event message = %q, want the lost error reply's, not a missed acknowledgement", e.Tags["message"])
 	}
-	if n := len(e.Exception); n == 0 || e.Exception[n-1].Type != "*discordgo.RESTError" {
-		t.Errorf("event exceptions = %+v, want Discord's own *discordgo.RESTError outermost", e.Exception)
-	}
+	reportsDiscordError(t, e)
 }

@@ -127,19 +127,19 @@ func replyAckFailed(r utils.InteractionResponder, interaction *discordgo.Interac
 
 // refuse refuses a slash command run with message, a reply only its
 // member sees, sent through utils.HandleError as the interaction's first
-// response. That response
-// acknowledges the interaction, so refuse sends it through acknowledge. A
-// 10062 is then a missed acknowledgement: refuse reports it as
-// captureMissedAck does, with any further context in kv, and returns true,
-// so the caller sends nothing more on the interaction. HandleError handles
-// any other error, which reaches it as Discord's own error.
+// response. That response acknowledges the interaction, so refuse sends it
+// through acknowledge. A 10062 is then a missed acknowledgement: refuse
+// reports it as captureMissedAck does, with any further context in kv, and
+// returns true, so the caller sends nothing more on the interaction.
+// HandleError handles any other error, which reaches it as Discord's own
+// error.
 func refuse(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, message string, kv ...any) (missedAck bool) {
-	first := &refusalResponder{InteractionResponder: r, interaction: interaction}
-	utils.HandleError(first, interaction, message)
-	if first.missed == nil {
+	responder := &refusalResponder{InteractionResponder: r, interaction: interaction}
+	utils.HandleError(responder, interaction, message)
+	if responder.missed == nil {
 		return false
 	}
-	captureMissedAck(interaction, first.missed, kv...)
+	captureMissedAck(interaction, responder.missed, kv...)
 	return true
 }
 
@@ -152,13 +152,13 @@ type refusalResponder struct {
 	missed      error
 }
 
-func (f *refusalResponder) InteractionRespond(_ *discordgo.Interaction, resp *discordgo.InteractionResponse) error {
-	err := acknowledge(f.InteractionResponder, f.interaction, resp)
+func (rr *refusalResponder) InteractionRespond(_ *discordgo.Interaction, resp *discordgo.InteractionResponse) error {
+	err := acknowledge(rr.InteractionResponder, rr.interaction, resp)
 	switch {
 	case err == nil:
 		return nil
 	case isUnknownInteraction(err):
-		f.missed = err
+		rr.missed = err
 		return nil
 	default:
 		return errors.Unwrap(err)

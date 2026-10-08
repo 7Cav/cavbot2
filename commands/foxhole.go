@@ -239,8 +239,8 @@ func runFoxhole(
 // refuseForPageAction answers a role-changing Foxhole command run sent
 // while a Foxhole action started on the Foxhole page runs, with a reply only
 // its member sees naming the action, who started it and how far it has
-// got. The command changes nothing. It reports whether Discord missed the
-// reply as the run's acknowledgement, as refuse does, with kv.
+// got. The command changes nothing. The reply goes through refuse, with
+// kv, and refuseForPageAction returns what refuse returns.
 func refuseForPageAction(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, run CommandRun, action RunningAction, kv ...any) (missedAck bool) {
 	utils.Info("Foxhole command refused: a page action is running", "command", commandNameOf(interaction),
 		"typed", run.Command, "action", action.Name, "started_by", action.StartedBy)
