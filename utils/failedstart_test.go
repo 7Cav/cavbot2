@@ -294,7 +294,7 @@ func TestFailedStart_AfterAStartReachesRunningTheNextFailureSends(t *testing.T) 
 	const msg = "Cannot register commands: 50035 Invalid Form Body"
 	failStart(NewStartWatch(clockAt(firstFailure)), msg)
 
-	NewStartWatch(clockAt(firstFailure.Add(30 * time.Second))).Running()
+	NewStartWatch(clockAt(firstFailure.Add(30 * time.Second))).MarkRunning()
 	failStart(NewStartWatch(clockAt(firstFailure.Add(time.Minute))), msg)
 
 	if got := len(sentryEvents.Events()); got != 2 {
@@ -328,7 +328,31 @@ func TestFailedStart_PanicAfterRunningSendsNothing(t *testing.T) {
 	left := func() (left any) {
 		defer func() { left = recover() }()
 		defer w.ReportFailure()
-		w.Running()
+		w.MarkRunning()
+		panic(msg)
+	}()
+	sentry.Flush(2 * time.Second)
+
+	if left != msg {
+		t.Errorf("panic left as %v, want %q", left, msg)
+	}
+	if got := sentryEvents.Events(); len(got) != 0 {
+		t.Errorf("Sentry got %d events, want none: %+v", len(got), got)
+	}
+}
+
+// A stop during startup ends main by returning, and a panic in the shutdown
+// that follows, such as the deferred Discord close, is not a failed start.
+func TestFailedStart_PanicAfterAStopSendsNothing(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	sentryEvents := listenAsSentry(t, "1.2.3")
+	const msg = "Error closing Discord connection: websocket: close sent"
+	w := NewStartWatch(clockAt(firstFailure))
+
+	left := func() (left any) {
+		defer func() { left = recover() }()
+		defer w.ReportFailure()
+		w.Stopping()
 		panic(msg)
 	}()
 	sentry.Flush(2 * time.Second)

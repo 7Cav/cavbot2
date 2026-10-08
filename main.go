@@ -173,22 +173,24 @@ func main() {
 	// The first signal starts the shutdown. A second one gets the default
 	// action and ends the process, for a step that hangs.
 	context.AfterFunc(ctx, stop)
+	// A startup step below that fails panics. The watch sends that failed start
+	// to Sentry and lets the panic go on (#473).
+	start := utils.NewStartWatch(time.Now)
 	// shuttingDown reports a stop that arrived while a startup step ran, and
 	// logs "Shutting down" when one did. A step such as a migration finishes
-	// first, and startup goes no further.
+	// first, and startup goes no further. A panic in the shutdown that follows
+	// is no failed start, so the watch hears of the stop.
 	shuttingDown := func() bool {
 		if ctx.Err() == nil {
 			return false
 		}
 		utils.Info("Shutting down")
+		start.Stopping()
 		return true
 	}
 
 	defer utils.InitSentry(Version)()
-	// A startup step that fails panics. The watch sends that failed start to
-	// Sentry and lets the panic go on (#473). It is deferred after InitSentry
-	// so it runs while the client is still live.
-	start := utils.NewStartWatch(time.Now)
+	// Deferred after InitSentry, so it runs while the client is still live.
 	defer start.ReportFailure()
 
 	utils.Info("CavBot2 starting", "version", Version)
@@ -356,7 +358,7 @@ func main() {
 
 	commands.StartJoinerReportScheduler(dg, GuildID)
 
-	start.Running()
+	start.MarkRunning()
 	utils.Info("Bot is now running. Press CTRL-C to exit")
 	<-ctx.Done()
 	utils.Info("Shutting down")
