@@ -37,10 +37,6 @@ type Deps struct {
 // the request, call one function here, and render what comes back.
 type hubService struct {
 	deps Deps
-	// storeTimeout is the deadline forSave gives each store call a save
-	// makes. New sets it to the constant of the same name; a test shortens
-	// it.
-	storeTimeout time.Duration
 	// guildWait bounds a save's wait for the guild's data while it is on
 	// its way, since a save's context has no deadline: forSave sets it to
 	// the page's time budget. Zero for a page load, whose context carries

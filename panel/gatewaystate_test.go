@@ -224,8 +224,8 @@ func TestHubPageWaitsForTheGuildDataOnItsWay(t *testing.T) {
 
 // A save that meets no guild data writes nothing and answers with the page
 // that says Discord has not sent the data. With the guild absent it fails
-// at once; with the data on its way it waits, for no longer than the
-// page's time budget, since a save's own context has no deadline.
+// at once; with the data on its way it waits out the page's time budget,
+// which bounds the wait since a save's own context has no deadline.
 func TestSaveWithNoGuildDataWritesNothing(t *testing.T) {
 	for _, save := range gatewaySaves {
 		t.Run(save.name+" with the guild absent", func(t *testing.T) {
@@ -246,9 +246,14 @@ func TestSaveWithNoGuildDataWritesNothing(t *testing.T) {
 		w.discord.holdPlaceholder()
 		before := storedHubs(t, w.st)[0]
 
+		start := w.clock.Now()
 		res := createSave.post(t, w)
+		waited := w.clock.since(start)
 
 		assertNoGuildDataAndNothingWritten(t, w, before, res)
+		if waited < hubPageBudget {
+			t.Errorf("answered after waiting %v, want the save to wait out the page's %v budget", waited, hubPageBudget)
+		}
 	})
 }
 

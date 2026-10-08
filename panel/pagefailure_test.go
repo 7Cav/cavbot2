@@ -31,10 +31,10 @@ type ctxStore struct {
 	releaseErr error
 	// failing names the read that fails with errStoreDown.
 	failing string
-	// slow names the read that takes slowFor on clock each time it runs.
-	slow    string
-	slowFor time.Duration
-	clock   *testClock
+	// timed names the read that takes takes on clock each time it runs.
+	timed string
+	takes time.Duration
+	clock *testClock
 }
 
 // errStoreDown is a store read failing for a reason that is not the
@@ -55,17 +55,17 @@ func (s *ctxStore) blockRead(read string, releaseErr error) <-chan struct{} {
 	return s.started
 }
 
-// slowRead makes every call of the named read take d on the panel's clock
+// readTakes makes every call of the named read take d on the panel's clock
 // before it answers.
-func (s *ctxStore) slowRead(read string, d time.Duration) {
+func (s *ctxStore) readTakes(read string, d time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.slow, s.slowFor = read, d
+	s.timed, s.takes = read, d
 }
 
-// runOutOnceStarted moves the clock on to at, the page's deadline, once the
-// blocked read has started: the read is still waiting when the page's
-// budget runs out.
+// runOutOnceStarted moves the clock on to at, where the page's time budget
+// runs out, once the blocked read has started: the read is still waiting
+// when it does.
 func (s *ctxStore) runOutOnceStarted(started <-chan struct{}, at time.Time) {
 	go func() {
 		select {
@@ -91,13 +91,13 @@ func (s *ctxStore) gate(ctx context.Context, read string) error {
 	if blocked {
 		s.blocked = ""
 	}
-	slowFor := time.Duration(0)
-	if s.slow == read {
-		slowFor = s.slowFor
+	takes := time.Duration(0)
+	if s.timed == read {
+		takes = s.takes
 	}
 	s.mu.Unlock()
-	if slowFor > 0 {
-		s.clock.advance(slowFor)
+	if takes > 0 {
+		s.clock.advance(takes)
 	}
 	if failing {
 		return fmt.Errorf("%s: %w", read, errStoreDown)

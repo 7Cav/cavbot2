@@ -48,9 +48,6 @@ type Panel struct {
 	// timeout so a forum that accepts the connection and never answers is a
 	// checkUnavailable and not a request that hangs a panel user.
 	client *http.Client
-	// pageBudget is the hub page's time budget, hubPageBudget outside the
-	// tests.
-	pageBudget time.Duration
 
 	server    *http.Server
 	stopPrune chan struct{}
@@ -93,7 +90,7 @@ func New(cfg Config, version string, deps Deps) (*Panel, error) {
 	return &Panel{
 		cfg:      cfg,
 		version:  version,
-		hubs:     &hubService{deps: deps, storeTimeout: storeTimeout, saveLock: &sync.Mutex{}},
+		hubs:     &hubService{deps: deps, saveLock: &sync.Mutex{}},
 		foxhole:  foxholeService{manager: deps.Manager, store: deps.Store, actions: deps.Foxhole, guildID: deps.GuildID},
 		forumURL: forumURL,
 		pages:    pg,
@@ -107,9 +104,8 @@ func New(cfg Config, version string, deps Deps) (*Panel, error) {
 			RedirectURL: cfg.BaseURL + "/auth/callback",
 			Scopes:      []string{"user:read", "user:groups"},
 		},
-		sessions:   newSessions(),
-		client:     &http.Client{Timeout: forumTimeout},
-		pageBudget: hubPageBudget,
+		sessions: newSessions(),
+		client:   &http.Client{Timeout: forumTimeout},
 	}, nil
 }
 
@@ -491,7 +487,7 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 	// The budget's start is taken before its deadline is set, so a page that
 	// fails on the deadline never reports less time than the budget.
 	start := panelClock.Now()
-	ctx, cancel := panelClock.WithTimeout(r.Context(), p.pageBudget)
+	ctx, cancel := panelClock.WithTimeout(r.Context(), hubPageBudget)
 	defer cancel()
 	deadline, _ := ctx.Deadline()
 	reads := newPageReads(start, deadline)
@@ -513,7 +509,7 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 	case err != nil:
 		var report *budgetReport
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			report = reads.report(p.pageBudget)
+			report = reads.report(hubPageBudget)
 		}
 		p.pageFailed(w, sess, "hub page", pageAddress(req), err, report)
 		return
@@ -647,7 +643,7 @@ func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session
 // gives each store call the save makes a deadline of its own, and its wait
 // for the guild's data the page's time budget.
 func (p *Panel) saving(r *http.Request) (context.Context, *hubService) {
-	return context.WithoutCancel(r.Context()), p.hubs.forSave(p.pageBudget)
+	return context.WithoutCancel(r.Context()), p.hubs.forSave(hubPageBudget)
 }
 
 // saveFailed answers a save that failed without a refusal. One that found

@@ -93,7 +93,7 @@ func TestSlowStoreReadIsTheOneTheBudgetRanOutDuring(t *testing.T) {
 	w, st := newCtxWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 	reported := recordSentry(t)
-	st.slowRead("ListHubs", hubPageBudget/2)
+	st.readTakes("ListHubs", hubPageBudget/2)
 	st.runOutOnceStarted(st.blockRead("ListModeratorChanges", nil), w.clock.Now().Add(hubPageBudget))
 
 	w.b.get("/")

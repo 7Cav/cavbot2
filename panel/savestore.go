@@ -14,7 +14,7 @@ import (
 // lifetime, which its time budget bounds.
 func (s *hubService) forSave(guildWait time.Duration) *hubService {
 	saving := *s
-	saving.deps.Store = boundedStore{store: s.deps.Store, timeout: s.storeTimeout}
+	saving.deps.Store = boundedStore{store: s.deps.Store, timeout: storeTimeout}
 	saving.guildWait = guildWait
 	return &saving
 }

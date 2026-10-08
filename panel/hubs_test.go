@@ -66,11 +66,10 @@ type fakeDiscord struct {
 	// landOnRead lands the guild's data once a read has found the
 	// placeholder, so the read after it finds the data.
 	landOnRead bool
-	// placeholderMeet, when set, holds the first read that finds the
-	// placeholder until a second read finds it too.
-	placeholderMeet chan struct{}
-	// placeholderHeld is a read holding at placeholderMeet.
-	placeholderHeld bool
+	// secondRead, when set, closes once a second read finds the
+	// placeholder, and firstReadHeld is the first one waiting for it.
+	secondRead    chan struct{}
+	firstReadHeld bool
 	// disconnected is the bot's gateway connection down, with the fake
 	// state still holding what it held when the connection dropped.
 	disconnected bool
@@ -282,14 +281,12 @@ func (f *fakeDiscord) VoiceStates(guildID string) commands.VoiceSnapshot {
 // boost tier, while the fake state holds the guild's data. Any other guild
 // is absent.
 func (f *fakeDiscord) GuildData(guildID string) commands.GuildSnapshot {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	if guildID != testGuildID {
 		return commands.GuildSnapshot{}
 	}
-	if f.guildStatus == commands.GuildDataArriving && f.placeholderMeet != nil {
-		f.meetAtPlaceholder()
-	}
+	f.holdForSecondRead()
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.guildStatus == commands.GuildDataArriving && f.landOnRead {
 		f.guildStatus, f.landOnRead = commands.GuildDataPresent, false
 		return commands.GuildSnapshot{Status: commands.GuildDataArriving}
@@ -576,27 +573,35 @@ func (f *fakeDiscord) landAfterOneRead() {
 func (f *fakeDiscord) holdPlaceholderForTwo() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.guildStatus, f.placeholderMeet = commands.GuildDataArriving, make(chan struct{})
+	f.guildStatus, f.secondRead = commands.GuildDataArriving, make(chan struct{})
 }
 
-// meetAtPlaceholder holds the first read at placeholderMeet, with f.mu
-// released, and lets it go at the second. Caller holds f.mu.
-func (f *fakeDiscord) meetAtPlaceholder() {
-	meet := f.placeholderMeet
-	if f.placeholderHeld {
-		close(meet)
-		f.placeholderMeet = nil
+// holdForSecondRead holds the first read that finds the placeholder, once
+// holdPlaceholderForTwo has armed it, until a second read finds it too or
+// hangLimit passes. Any other read passes straight through.
+func (f *fakeDiscord) holdForSecondRead() {
+	f.mu.Lock()
+	second := f.secondRead
+	switch {
+	case second == nil || f.guildStatus != commands.GuildDataArriving:
+		f.mu.Unlock()
+		return
+	case f.firstReadHeld:
+		close(second)
+		f.secondRead = nil
+		f.mu.Unlock()
 		return
 	}
-	f.placeholderHeld = true
+	f.firstReadHeld = true
 	f.mu.Unlock()
 	select {
-	case <-meet:
+	case <-second:
 	case <-time.After(hangLimit):
-	}
-	f.mu.Lock()
-	if f.placeholderMeet == meet {
-		f.placeholderMeet = nil
+		f.mu.Lock()
+		if f.secondRead == second {
+			f.secondRead = nil
+		}
+		f.mu.Unlock()
 	}
 }
 

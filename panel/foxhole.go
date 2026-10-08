@@ -491,7 +491,7 @@ func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session
 // budget. A store read that fails gets the could-not-load page, as the hub
 // page's does, and an abandoned load answers nobody.
 func (p *Panel) renderFoxhole(w http.ResponseWriter, r *http.Request, sess session, status int, req foxholeRequest) {
-	ctx, cancel := panelClock.WithTimeout(r.Context(), p.pageBudget)
+	ctx, cancel := panelClock.WithTimeout(r.Context(), hubPageBudget)
 	defer cancel()
 	view, err := p.foxhole.view(ctx, req)
 	if errors.Is(err, context.Canceled) {
