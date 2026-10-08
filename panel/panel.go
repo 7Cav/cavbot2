@@ -181,33 +181,51 @@ func originOf(raw string) (string, error) {
 	return u.Scheme + "://" + u.Host + "/", nil
 }
 
+// route is one of the panel's routes: a ServeMux pattern and the handler
+// behind it, its gate included.
+type route struct {
+	pattern string
+	handler http.Handler
+}
+
+// routes is every route the panel serves, each behind its gate. Handler
+// registers these and no others, so a test that reads the list reads what
+// the panel serves.
+func (p *Panel) routes() []route {
+	return []route{
+		{"GET /static/", staticHandler()},
+		{"GET /signin", http.HandlerFunc(p.signinPage)},
+		{"POST /auth/start", http.HandlerFunc(p.authStart)},
+		{"GET /auth/callback", http.HandlerFunc(p.authCallback)},
+		{"POST /auth/signout", http.HandlerFunc(p.authSignout)},
+		{"GET /{$}", p.withPanelAdmin(p.homePage)},
+		{"POST /hubs", p.withPanelAdmin(p.createOrRegisterHub)},
+		{"POST /hubs/{id}", p.withPanelAdmin(p.updateHub)},
+		{"POST /hubs/{id}/remove", p.withPanelAdmin(p.removeHub)},
+		{"POST /moderators", p.withPanelAdmin(p.saveModerators)},
+		{"GET " + foxholePath, p.withFoxholePage(p.foxholePage)},
+		{"POST " + foxholeNotesPath, p.withFoxholePage(p.saveNote)},
+		{"POST " + foxholeApprovalsPath, p.withFoxholePage(p.saveApprovals)},
+		{"POST " + foxholePurgePath, p.withFoxholePage(p.startPurge)},
+		{"POST " + foxholeAddPreviewPath, p.withFoxholePage(p.previewAdd)},
+		{"POST " + foxholeAddPath, p.withFoxholePage(p.startAdd)},
+		{"POST " + foxholeRosterPreviewPath, p.withFoxholePage(p.previewRoster)},
+		{"POST " + foxholeRosterPath, p.withFoxholePage(p.startRosterAdd)},
+		{"POST " + foxholeRemovePath, p.withFoxholePage(p.startRemoval)},
+		{"POST " + foxholeReAddPath, p.withFoxholePage(p.startReAdd)},
+		{"POST " + foxholeStopPath, p.withFoxholePage(p.stopAction)},
+		{"POST " + foxholeRetryPath, p.withFoxholePage(p.startRetry)},
+	}
+}
+
 // Handler is the panel's routes behind Go's cross-origin protection, which
 // refuses a state-changing request a browser sends from another origin. The
 // panel therefore carries no form token, and every state change is a POST.
 func (p *Panel) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("GET /static/", staticHandler())
-	mux.HandleFunc("GET /signin", p.signinPage)
-	mux.HandleFunc("POST /auth/start", p.authStart)
-	mux.HandleFunc("GET /auth/callback", p.authCallback)
-	mux.HandleFunc("POST /auth/signout", p.authSignout)
-	mux.HandleFunc("GET /{$}", p.withPanelAdmin(p.homePage))
-	mux.HandleFunc("POST /hubs", p.withPanelAdmin(p.createOrRegisterHub))
-	mux.HandleFunc("POST /hubs/{id}", p.withPanelAdmin(p.updateHub))
-	mux.HandleFunc("POST /hubs/{id}/remove", p.withPanelAdmin(p.removeHub))
-	mux.HandleFunc("POST /moderators", p.withPanelAdmin(p.saveModerators))
-	mux.HandleFunc("GET "+foxholePath, p.withFoxholePage(p.foxholePage))
-	mux.HandleFunc("POST "+foxholeNotesPath, p.withFoxholePage(p.saveNote))
-	mux.HandleFunc("POST "+foxholeApprovalsPath, p.withFoxholePage(p.saveApprovals))
-	mux.HandleFunc("POST "+foxholePurgePath, p.withFoxholePage(p.startPurge))
-	mux.HandleFunc("POST "+foxholeAddPreviewPath, p.withFoxholePage(p.previewAdd))
-	mux.HandleFunc("POST "+foxholeAddPath, p.withFoxholePage(p.startAdd))
-	mux.HandleFunc("POST "+foxholeRosterPreviewPath, p.withFoxholePage(p.previewRoster))
-	mux.HandleFunc("POST "+foxholeRosterPath, p.withFoxholePage(p.startRosterAdd))
-	mux.HandleFunc("POST "+foxholeRemovePath, p.withFoxholePage(p.startRemoval))
-	mux.HandleFunc("POST "+foxholeReAddPath, p.withFoxholePage(p.startReAdd))
-	mux.HandleFunc("POST "+foxholeStopPath, p.withFoxholePage(p.stopAction))
-	mux.HandleFunc("POST "+foxholeRetryPath, p.withFoxholePage(p.startRetry))
+	for _, rt := range p.routes() {
+		mux.Handle(rt.pattern, rt.handler)
+	}
 	protected := http.NewCrossOriginProtection().Handler(mux)
 	// A panic in a handler is recovered here, through the same path every
 	// other goroutine uses (ADR 0001), before net/http's own recovery would

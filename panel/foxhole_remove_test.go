@@ -4,7 +4,6 @@ import (
 	"context"
 	"maps"
 	"net/http"
-	"reflect"
 	"slices"
 	"strconv"
 	"testing"
@@ -329,28 +328,6 @@ func TestRemoveControlsAreDisabledWhileAnActionRuns(t *testing.T) {
 	preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, before, "external", memberKestrel.ID)))
 	if button := findElement(preview, "", "data-field", "confirm"); button == nil || !disabled(button) {
 		t.Error("the remove preview's Confirm is enabled while a purge runs")
-	}
-}
-
-// A removal sits behind the Foxhole page's gate: a signed-in forum user who
-// opens no page posts a remove preview's Confirm and gets the no-access
-// page, and no role and nothing in the store changes.
-func TestRemovalByAUserInNeitherGroupIsRefused(t *testing.T) {
-	w := newFoxholeWorld(t)
-	seedApproved(t, w, namesOf(memberKestrel))
-	preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID)))
-	outsider := newBrowser(t, w.p)
-	signInAs(t, w.forum, outsider, addUserOutsideAdminGroups(w.forum))
-	before := readNoteState(t, w.st)
-
-	res := confirmRemoval(t, outsider, preview)
-
-	assertNoAccessPage(t, parseHTML(t, follow(t, outsider, res)))
-	if writes := w.discord.roleChanges(); len(writes) != 0 {
-		t.Errorf("the refused removal changed the roles %+v, want none", writes)
-	}
-	if after := readNoteState(t, w.st); !reflect.DeepEqual(after, before) {
-		t.Errorf("the store after the refused removal = %+v, want it as before, %+v", after, before)
 	}
 }
 
