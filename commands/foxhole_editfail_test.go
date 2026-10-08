@@ -2,17 +2,11 @@ package commands
 
 import (
 	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
 )
-
-// editFailInteraction builds a deferred-ephemeral interaction carrying a guild
-// id and the /foxhole `command` option, so the edit-failure path can read its
-// command/guild context straight off the interaction.
-func editFailInteraction(guildID, subcommand string) *discordgo.InteractionCreate {
-	return foxholeInteraction(guildID, stringOption("command", subcommand))
-}
 
 // countMethod returns how many recorded calls used the given responder method.
 func countMethod(calls []recordedCall, method string) int {
@@ -23,55 +17,6 @@ func countMethod(calls []recordedCall, method string) int {
 		}
 	}
 	return n
-}
-
-// A failed post-defer edit must be captured to Sentry exactly once, with no
-// retry loop: the helper must not re-issue InteractionRespond or a second
-// InteractionResponseEdit, since the interaction is already acknowledged and
-// the identical edit just failed.
-func TestEditEphemeral_FailedEditCapturesOnceNoRetry(t *testing.T) {
-	rec := &captureRecorder{}
-	rec.install(t)
-
-	f := &fakeResponder{EditErrs: []error{errors.New("503 service unavailable")}}
-	i := editFailInteraction("guild-42", "add")
-
-	editEphemeral(f, i, "✅ done")
-
-	calls := f.Calls()
-	if got := countMethod(calls, "Edit"); got != 1 {
-		t.Fatalf("expected exactly 1 Edit (the failing call), got %d: %v", got, calls)
-	}
-	if got := countMethod(calls, "Respond"); got != 0 {
-		t.Fatalf("expected no Respond on the post-defer failure path, got %d: %v", got, calls)
-	}
-	if rec.count != 1 {
-		t.Fatalf("expected exactly 1 Sentry capture, got %d", rec.count)
-	}
-}
-
-// editEphemeralWithEmbed must funnel its edit-failure handling through the same
-// capture-with-context seam: one capture, no retry.
-func TestEditEphemeralWithEmbed_FailedEditCapturesOnceNoRetry(t *testing.T) {
-	rec := &captureRecorder{}
-	rec.install(t)
-
-	f := &fakeResponder{EditErrs: []error{errors.New("503 service unavailable")}}
-	i := editFailInteraction("guild-42", "purge")
-	embed := &discordgo.MessageEmbed{Title: "Added 0 user(s)"}
-
-	editEphemeralWithEmbed(f, i, "summary", embed)
-
-	calls := f.Calls()
-	if got := countMethod(calls, "Edit"); got != 1 {
-		t.Fatalf("expected exactly 1 Edit (the failing call), got %d: %v", got, calls)
-	}
-	if got := countMethod(calls, "Respond"); got != 0 {
-		t.Fatalf("expected no Respond on the post-defer failure path, got %d: %v", got, calls)
-	}
-	if rec.count != 1 {
-		t.Fatalf("expected exactly 1 Sentry capture, got %d", rec.count)
-	}
 }
 
 // kvToMap folds a captured kv slice (key, value, key, value, ...) into a map for
@@ -86,77 +31,75 @@ func kvToMap(kv []any) map[string]any {
 	return m
 }
 
-// captureCommandAndGuild swaps the captureError seam to record the kv passed on
-// the next capture, returning a pointer the test reads after the call.
-func captureCommandAndGuild(t *testing.T) *[]any {
-	t.Helper()
-	var gotKV []any
-	prev := captureError
-	captureError = func(_ string, _ error, kv ...any) { gotKV = kv }
-	t.Cleanup(func() { captureError = prev })
-	return &gotKV
-}
-
-// The capture must carry command and guild context, both read off the
-// interaction, so on-call can attribute a lost reply to its subcommand and
-// guild. This is the single seam future fallback-delivery handling extends.
-func TestEditEphemeral_CaptureCarriesCommandAndGuildContext(t *testing.T) {
-	gotKV := captureCommandAndGuild(t)
-
-	f := &fakeResponder{EditErrs: []error{errors.New("boom")}}
-	i := editFailInteraction("guild-42", "remove")
-
-	editEphemeral(f, i, "content")
-
-	kvMap := kvToMap(*gotKV)
-	if kvMap["command"] != "foxhole" {
-		t.Fatalf("expected command=foxhole in capture context, got %v", kvMap["command"])
+// A Foxhole command whose reply, the edit of its deferred response, fails
+// has already acknowledged the interaction, so it can neither send the
+// edit again nor respond anew. It pages Sentry once, and makes no second
+// attempt: one edit, and no response besides the acknowledgement. The
+// capture names the registered command, and the subcommand and guild where
+// the run has them, so on-call can tell which run lost its reply. Each row
+// is one way a reply goes out: a plain edit, and an edit carrying the added
+// members embed.
+func TestFoxholeLostReplyIsCapturedOnceWithNoRetry(t *testing.T) {
+	cases := []struct {
+		name string
+		gm   func() *fakeGuildManager
+		run  func(*fakeResponder, *fakeGuildManager)
+		want map[string]any
+	}{
+		{
+			name: "remove",
+			gm:   func() *fakeGuildManager { return foxholeRoleAddGM(nil) },
+			run: func(f *fakeResponder, gm *fakeGuildManager) {
+				runFoxhole(f, gm, nil, foxholeRemoveInteraction())
+			},
+			want: map[string]any{"command": "foxhole", "subcommand": "remove", "guild_id": "guild-1"},
+		},
+		{
+			name: "bulkadd, with the added members embed",
+			gm: func() *fakeGuildManager {
+				gm := foxholeRoleAddGM(nil)
+				gm.searchResults = map[string][]*discordgo.Member{"good": {{User: &discordgo.User{ID: "111", Username: "good"}}}}
+				return gm
+			},
+			run: func(f *fakeResponder, gm *fakeGuildManager) {
+				runFoxhole(f, gm, nil, bulkAddInteraction("internal", "good"))
+			},
+			want: map[string]any{"command": "foxhole", "subcommand": "bulkadd", "guild_id": "guild-1"},
+		},
+		{
+			name: "roster add, with the added members embed",
+			gm:   internalRoleGM,
+			run: func(f *fakeResponder, gm *fakeGuildManager) {
+				runFoxholeBulkAddInternal(f, gm, nil, slashNamed("foxhole-bulkadd-internal", stringOption("unit", "D/ACD")))
+			},
+			want: map[string]any{"command": "foxhole-bulkadd-internal", "guild_id": "guild-1"},
+		},
 	}
-	if kvMap["subcommand"] != "remove" {
-		t.Fatalf("expected subcommand=remove in capture context, got %v", kvMap["subcommand"])
-	}
-	if kvMap["guild_id"] != "guild-42" {
-		t.Fatalf("expected guild_id=guild-42 in capture context, got %v", kvMap["guild_id"])
-	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			serveRosterAndProfiles(t, liteRoster(liteMember("Trooper.A", "111111111111111111")), http.StatusOK, nil)
+			rec := &captureRecorder{}
+			rec.install(t)
+			f := &fakeResponder{EditErrs: []error{errors.New("503 service unavailable")}}
 
-// When the interaction carries no `command` option (a malformed interaction),
-// the capture context must fall back to "unknown" rather than an empty string,
-// so the lost reply still has an attributable command field.
-func TestEditEphemeral_CaptureFallsBackToUnknownCommand(t *testing.T) {
-	gotKV := captureCommandAndGuild(t)
+			tc.run(f, tc.gm())
 
-	f := &fakeResponder{EditErrs: []error{errors.New("boom")}}
-	// foxholeInteraction sets the guild id but passes no command option.
-	i := foxholeInteraction("guild-42")
-
-	editEphemeral(f, i, "content")
-
-	kvMap := kvToMap(*gotKV)
-	if kvMap["subcommand"] != "unknown" {
-		t.Fatalf("expected subcommand=unknown when no command option is present, got %v", kvMap["subcommand"])
-	}
-	if kvMap["command"] != "foxhole" {
-		t.Fatalf("expected command=foxhole even when the subcommand is unresolvable, got %v", kvMap["command"])
-	}
-}
-
-// A successful edit must never page Sentry: the capture seam stays untouched on
-// the happy path. This pins the guarantee locally instead of leaving it only
-// transitively implied by the 5xx-failure tests.
-func TestEditEphemeral_SuccessfulEditDoesNotCapture(t *testing.T) {
-	rec := &captureRecorder{}
-	rec.install(t)
-
-	f := &fakeResponder{} // no EditErrs: the edit succeeds.
-	i := editFailInteraction("guild-42", "add")
-
-	editEphemeral(f, i, "✅ done")
-
-	if got := countMethod(f.Calls(), "Edit"); got != 1 {
-		t.Fatalf("expected exactly 1 Edit, got %d", got)
-	}
-	if rec.count != 0 {
-		t.Fatalf("a successful edit must not capture to Sentry, got %d captures", rec.count)
+			calls := f.Calls()
+			if got := countMethod(calls, "Edit"); got != 1 {
+				t.Errorf("expected exactly 1 Edit (the failing call), got %d: %v", got, calls)
+			}
+			if got := countMethod(calls, "Respond"); got != 1 {
+				t.Errorf("expected only the acknowledgement's Respond, got %d: %v", got, calls)
+			}
+			if rec.count != 1 {
+				t.Fatalf("expected exactly 1 Sentry capture, got %d", rec.count)
+			}
+			got := kvToMap(rec.lastKV)
+			for key, want := range tc.want {
+				if got[key] != want {
+					t.Errorf("capture context %s = %v, want %v", key, got[key], want)
+				}
+			}
+		})
 	}
 }

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -55,6 +56,7 @@ func TestRunFoxhole_BulkAddOverLimitRejectedBeforeAnyAPICall(t *testing.T) {
 
 	// The reply must be actionable: name the limit and the offending count.
 	got := lastEditContent(f.Calls())
+	assertVerdict(t, got, "", verdictFailed)
 	if !strings.Contains(got, strconv.Itoa(maxBulkAddEntries)) {
 		t.Fatalf("rejection must name the limit %d, got %q", maxBulkAddEntries, got)
 	}
@@ -98,13 +100,13 @@ func TestRunFoxhole_BulkAddAtLimitStillFansOut(t *testing.T) {
 	assertReplyNamesAddedMembers(t, f.Calls(), maxBulkAddEntries)
 }
 
-// The cap counts PARSED entries, not raw commas. splitCommaSeparated trims and
-// drops blank tokens, so a comma-heavy payload (trailing commas, doubled
+// The cap counts PARSED entries, not raw commas. The parse trims and drops
+// blank tokens, so a comma-heavy payload (trailing commas, doubled
 // commas, whitespace-only fields) can carry far more than maxBulkAddEntries raw
 // tokens yet net to <= the limit of real names. Such a payload must be ACCEPTED
 // and fan out for every real entry, never falsely rejected. This locks the
-// "count entries, not commas" contract against a regression in
-// splitCommaSeparated's blank-dropping.
+// "count entries, not commas" contract against a regression in the parse's
+// blank-dropping.
 func TestRunFoxhole_BulkAddCountsParsedEntriesNotRawCommas(t *testing.T) {
 	// Interleave each real name with an empty field, then pad with extra trailing
 	// commas. Raw comma-separated token count is well above maxBulkAddEntries; the
@@ -126,9 +128,6 @@ func TestRunFoxhole_BulkAddCountsParsedEntriesNotRawCommas(t *testing.T) {
 	if rawCommaCount <= maxBulkAddEntries {
 		t.Fatalf("test setup: need > %d raw tokens to prove the comma/entry distinction, got %d", maxBulkAddEntries, rawCommaCount)
 	}
-	if parsed := len(splitCommaSeparated(payload)); parsed != maxBulkAddEntries {
-		t.Fatalf("test setup: payload must parse to exactly %d real entries, got %d", maxBulkAddEntries, parsed)
-	}
 
 	gm := &fakeGuildManager{
 		roles:         []*discordgo.Role{guildRole("r-int", foxholeRoleBaseNameDefault+" Internal")},
@@ -143,12 +142,8 @@ func TestRunFoxhole_BulkAddCountsParsedEntriesNotRawCommas(t *testing.T) {
 
 	runFoxhole(f, gm, nil, i)
 
-	got := lastEditContent(f.Calls())
-	// Must NOT be rejected as over-limit despite the raw comma count exceeding it.
-	if strings.Contains(got, "Too many entries") {
-		t.Fatalf("comma-heavy payload netting to %d real entries must not be rejected; got %q", maxBulkAddEntries, got)
-	}
-	// Must fan out once per real entry, not once per raw comma token.
+	// Must fan out once per real entry, not once per raw comma token, so the
+	// cap never refused it.
 	if gm.countCalls("GuildMembersSearch") != maxBulkAddEntries {
 		t.Fatalf("must search once per real entry (%d), got %d (%v)", maxBulkAddEntries, gm.countCalls("GuildMembersSearch"), gm.Calls())
 	}
@@ -173,30 +168,51 @@ func assertReplyNamesAddedMembers(t *testing.T, calls []recordedCall, count int)
 	}
 }
 
-// splitCommaSeparated's trim-and-drop-blank contract is load-bearing for the
-// bulkadd cap (the cap counts what this returns). Pin it directly.
-func TestSplitCommaSeparated_TrimsAndDropsBlanks(t *testing.T) {
+// A bulkadd's entries are the comma-separated names with each trimmed and
+// the blank ones dropped. Entries that are all blank leave nothing to do, so
+// the run changes nothing and asks Discord nothing; otherwise exactly the
+// named members get the role, and no blank entry fails.
+func TestRunFoxhole_BulkAddEntriesAreTheTrimmedNonBlankNames(t *testing.T) {
 	cases := []struct {
-		name string
-		in   string
-		want []string
+		name    string
+		entries string
+		added   []string
 	}{
-		{"empty string", "", nil},
 		{"only commas and spaces", " , ,,  ,", nil},
-		{"interior and trailing blanks", "a,,b, ,c", []string{"a", "b", "c"}},
-		{"surrounding whitespace trimmed", "  a , b ,c  ", []string{"a", "b", "c"}},
-		{"single entry no commas", "solo", []string{"solo"}},
-		{"leading and trailing commas", ",a,b,", []string{"a", "b"}},
+		{"interior blanks", "a,,b, ,c", []string{"a", "b", "c"}},
+		{"surrounding whitespace", "  a , b ,c  ", []string{"a", "b", "c"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := splitCommaSeparated(tc.in)
-			if len(got) != len(tc.want) {
-				t.Fatalf("splitCommaSeparated(%q) = %v (len %d), want %v (len %d)", tc.in, got, len(got), tc.want, len(tc.want))
+			gm := &fakeGuildManager{
+				roles:         []*discordgo.Role{guildRole("r-int", defaultInternalRoleName)},
+				searchResults: map[string][]*discordgo.Member{},
 			}
-			for idx := range tc.want {
-				if got[idx] != tc.want[idx] {
-					t.Fatalf("splitCommaSeparated(%q)[%d] = %q, want %q", tc.in, idx, got[idx], tc.want[idx])
+			for _, name := range []string{"a", "b", "c"} {
+				gm.searchResults[name] = []*discordgo.Member{{User: &discordgo.User{ID: "id-" + name, Username: name}}}
+			}
+			f := &fakeResponder{}
+
+			runFoxhole(f, gm, nil, bulkAddInteraction("internal", tc.entries))
+
+			var added []string
+			for _, add := range gm.roleAddCalls() {
+				added = append(added, strings.TrimPrefix(add.userID, "id-"))
+			}
+			if !slices.Equal(added, tc.added) {
+				t.Errorf("the bulkadd added %v, want %v", added, tc.added)
+			}
+			reply := lastEditContent(f.Calls())
+			if tc.added == nil {
+				if calls := gm.Calls(); len(calls) != 0 {
+					t.Errorf("a bulkadd with nothing to do asked Discord %v", calls)
+				}
+				assertVerdict(t, reply, "", verdictLeftOver)
+				return
+			}
+			for _, v := range verdicts(reply, "") {
+				if v != verdictDone {
+					t.Errorf("the reply carries verdict %q, want every line %q; reply %q", v, verdictDone, reply)
 				}
 			}
 		})

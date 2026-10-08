@@ -940,6 +940,10 @@ func foxholeSubcommandOf(interaction *discordgo.InteractionCreate) string {
 	return "unknown"
 }
 
+// addedEmbedMore is the line that ends the added members embed when it
+// can't name them all, counting the members it leaves out.
+const addedEmbedMore = "... and %d more."
+
 func buildAddedMembersEmbed(members []*discordgo.Member) *discordgo.MessageEmbed {
 	const maxDescLen = 4096
 	var sb strings.Builder
@@ -947,7 +951,7 @@ func buildAddedMembersEmbed(members []*discordgo.Member) *discordgo.MessageEmbed
 	for _, m := range members {
 		line := fmt.Sprintf("<@%s>\n", m.User.ID)
 		if sb.Len()+len(line) > maxDescLen {
-			_, _ = fmt.Fprintf(&sb, "... and %d more.", len(members)-rendered)
+			_, _ = fmt.Fprintf(&sb, addedEmbedMore, len(members)-rendered)
 			break
 		}
 		sb.WriteString(line)
@@ -1060,19 +1064,19 @@ func resolveMemberByID(gm GuildManager, guildID, userID string, faultSink lookup
 		class := classifyDiscordError(err)
 		switch {
 		case class.NotFound:
-			return nil, fmt.Errorf("❌ <@%s> is not in this server", userID)
+			return nil, fmt.Errorf("❌ <@%s> %s", userID, adviceAbsent)
 		case class.SystemFault:
 			recordLookupFault(faultSink, err, userID, "Failed to look up guild member by ID", "user_id", userID)
 			if class.ConfigFault {
 				return nil, fmt.Errorf("❌ Could not look up <@%s>: %s", userID, configFaultHint(class))
 			}
-			return nil, errors.New("❌ Member lookup is temporarily unavailable (Discord error); please try again shortly")
+			return nil, errors.New("❌ Member lookup is temporarily unavailable (Discord error); please " + adviceTransient)
 		default:
 			return nil, fmt.Errorf("❌ Could not look up <@%s> (%s)", userID, class.UserDetail)
 		}
 	}
 	if member == nil {
-		return nil, fmt.Errorf("❌ <@%s> is not in this server", userID)
+		return nil, fmt.Errorf("❌ <@%s> %s", userID, adviceAbsent)
 	}
 	return member, nil
 }

@@ -3,7 +3,6 @@ package commands
 import (
 	"errors"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
@@ -25,230 +24,102 @@ func purgeInteractionWithChannel(guildID, channelID string) *discordgo.Interacti
 	return i
 }
 
-// installCountingCapture swaps the captureError seam to both count how many
-// times it fires and record the kv from the most recent call, so a test can
-// assert exactly-one-capture and the context fields on the same install.
-func installCountingCapture(t *testing.T) (*int, *[]any) {
-	t.Helper()
-	var count int
-	var gotKV []any
-	prev := captureError
-	captureError = func(_ string, _ error, kv ...any) {
-		count++
-		gotKV = kv
+// purgeSummaryContext is what a capture of a purge summary nobody received
+// names: the command, the subcommand and the guild.
+var purgeSummaryContext = map[string]any{"command": "foxhole", "subcommand": "purge", "guild_id": "guild-1"}
+
+// A purge re-applies channel overwrites one at a time, so a long one can
+// outlive the interaction's 15-minute token and its summary can't go out as
+// the deferred reply. When Discord says the token is gone, the summary goes
+// to the channel the purge was run in instead, and nothing pages Sentry,
+// since the manager got it. Any other failed reply is a fault: it pages
+// Sentry once, naming the run, and the summary goes nowhere else. A reply
+// delivered needs neither.
+func TestRunFoxholePurge_SummaryReachesTheManagerPastTheTokenWindow(t *testing.T) {
+	cases := []struct {
+		name     string
+		editErr  error
+		fallback bool
+	}{
+		{"the reply is delivered", nil, false},
+		{"Invalid Webhook Token", tokenExpiredRESTError(), true},
+		{"Unknown Webhook", restError(http.StatusNotFound, discordgo.ErrCodeUnknownWebhook, "Unknown Webhook"), true},
+		{"Unknown Interaction", restError(http.StatusNotFound, discordgo.ErrCodeUnknownInteraction, "Unknown Interaction"), true},
+		{"server error", restError(http.StatusInternalServerError, 0, "boom"), false},
+		{"transport error", errors.New("dial tcp: connection refused"), false},
 	}
-	t.Cleanup(func() { captureError = prev })
-	return &count, &gotKV
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			noOverwriteDelay(t)
+			rec := &captureRecorder{}
+			rec.install(t)
+			gm := oneOverwriteGuild()
+			f := &fakeResponder{EditErrs: []error{tc.editErr}}
+
+			runFoxholePurge(f, gm, purgeInteractionWithChannel("guild-1", "chan-9"), "guild-1", "internal")
+
+			if got := countMethod(f.Calls(), "Edit"); got != 1 {
+				t.Errorf("the purge edited its reply %d times, want once", got)
+			}
+			messages := gm.channelMessages
+			switch {
+			case tc.fallback:
+				if len(messages) != 1 || messages[0].channelID != "chan-9" {
+					t.Fatalf("channel messages = %+v, want the summary in chan-9, where the purge ran", messages)
+				}
+				assertVerdict(t, messages[0].content, defaultInternalRoleName, verdictDone)
+				if rec.count != 0 {
+					t.Errorf("a summary delivered to the channel captured %d events, want none", rec.count)
+				}
+			case tc.editErr == nil:
+				if len(messages) != 0 || rec.count != 0 {
+					t.Errorf("a delivered reply sent channel messages %+v and captured %d events, want neither", messages, rec.count)
+				}
+			default:
+				if len(messages) != 0 {
+					t.Errorf("channel messages = %+v, want none for a failed reply that isn't the token's end", messages)
+				}
+				if rec.count != 1 {
+					t.Fatalf("Sentry got %d events, want 1", rec.count)
+				}
+				got := kvToMap(rec.lastKV)
+				for key, want := range purgeSummaryContext {
+					if got[key] != want {
+						t.Errorf("capture context %s = %v, want %v", key, got[key], want)
+					}
+				}
+			}
+		})
+	}
 }
 
-// lastChannelMessage returns the content of the last ChannelMessageSend
-// recorded by the fake, or "<none>".
-func (g *fakeGuildManager) lastChannelMessage() string {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if len(g.channelMessages) == 0 {
-		return "<none>"
-	}
-	return g.channelMessages[len(g.channelMessages)-1].content
-}
-
-// --- token-expiry classifier ---
-
-func TestIsInteractionTokenExpired_50027IsExpiry(t *testing.T) {
-	if !isInteractionTokenExpired(tokenExpiredRESTError()) {
-		t.Fatal("an Invalid Webhook Token (50027) error must be treated as token expiry")
-	}
-}
-
-func TestIsInteractionTokenExpired_UnknownWebhookIsExpiry(t *testing.T) {
-	err := restError(http.StatusNotFound, discordgo.ErrCodeUnknownWebhook, "Unknown Webhook")
-	if !isInteractionTokenExpired(err) {
-		t.Fatal("an Unknown Webhook (10015) error must be treated as token expiry")
-	}
-}
-
-func TestIsInteractionTokenExpired_UnknownInteractionIsExpiry(t *testing.T) {
-	err := restError(http.StatusNotFound, discordgo.ErrCodeUnknownInteraction, "Unknown Interaction")
-	if !isInteractionTokenExpired(err) {
-		t.Fatal("an Unknown Interaction (10062) error must be treated as token expiry")
-	}
-}
-
-func TestIsInteractionTokenExpired_5xxIsNotExpiry(t *testing.T) {
-	err := restError(http.StatusInternalServerError, 0, "boom")
-	if isInteractionTokenExpired(err) {
-		t.Fatal("a 5xx must NOT be misclassified as token expiry — it is an unexpected fault")
-	}
-}
-
-func TestIsInteractionTokenExpired_TransportErrorIsNotExpiry(t *testing.T) {
-	if isInteractionTokenExpired(errors.New("dial tcp: connection refused")) {
-		t.Fatal("a transport error must NOT be classified as token expiry")
-	}
-}
-
-// --- deliverPurgeSummary: happy path ---
-
-// On a successful edit, the summary is delivered ephemerally and the fallback
-// channel surface is never touched, and nothing is captured to Sentry.
-func TestDeliverPurgeSummary_HappyPathEditsNoFallback(t *testing.T) {
+// When the token is gone and the channel message fails too, nothing reached
+// the manager: that pages Sentry once, naming the run and carrying the
+// failed reply's error as well as the channel's, so on-call sees both.
+func TestRunFoxholePurge_SummaryReachingNobodyIsCapturedWithBothFailures(t *testing.T) {
+	noOverwriteDelay(t)
 	rec := &captureRecorder{}
 	rec.install(t)
-
-	f := &fakeResponder{} // edit succeeds
-	gm := &fakeGuildManager{}
-	i := purgeInteractionWithChannel("guild-1", "chan-9")
-
-	deliverPurgeSummary(f, gm, i, "✅ Purge complete.")
-
-	if got := countMethod(f.Calls(), "Edit"); got != 1 {
-		t.Fatalf("expected exactly 1 Edit on the happy path, got %d", got)
-	}
-	if got := gm.countCalls("ChannelMessageSend"); got != 0 {
-		t.Fatalf("happy path must NOT use the channel fallback; got %d ChannelMessageSend", got)
-	}
-	if rec.count != 0 {
-		t.Fatalf("happy path must not capture to Sentry; got %d", rec.count)
-	}
-}
-
-// --- deliverPurgeSummary: token-expiry fallback ---
-
-// When the deferred edit fails with a token-expiry error, the summary must be
-// delivered through the channel-message fallback carrying the same summary.
-func TestDeliverPurgeSummary_TokenExpiryFallsBackToChannel(t *testing.T) {
-	rec := &captureRecorder{}
-	rec.install(t)
-
-	f := &fakeResponder{EditErrs: []error{tokenExpiredRESTError()}}
-	gm := &fakeGuildManager{}
-	i := purgeInteractionWithChannel("guild-1", "chan-9")
-	summary := "✅ Recreated 'Verified Warden Internal'."
-
-	deliverPurgeSummary(f, gm, i, summary)
-
-	if got := gm.countCalls("ChannelMessageSend"); got != 1 {
-		t.Fatalf("a token-expired edit must fall back to one ChannelMessageSend; got %d (%v)", got, gm.Calls())
-	}
-	if got := gm.lastChannelMessage(); !strings.Contains(got, "Recreated 'Verified Warden Internal'") {
-		t.Fatalf("fallback channel message must carry the purge summary, got %q", got)
-	}
-	// Token expiry is an expected end-of-window condition, not a system fault:
-	// the operator was reached via the fallback, so it must NOT page Sentry.
-	if rec.count != 0 {
-		t.Fatalf("a token-expiry fallback delivery must NOT capture to Sentry; got %d", rec.count)
-	}
-}
-
-// The fallback channel message must be addressed to the invoking channel.
-func TestDeliverPurgeSummary_TokenExpiryFallbackTargetsInvokingChannel(t *testing.T) {
-	f := &fakeResponder{EditErrs: []error{tokenExpiredRESTError()}}
-	gm := &fakeGuildManager{}
-	i := purgeInteractionWithChannel("guild-1", "chan-target")
-
-	deliverPurgeSummary(f, gm, i, "summary")
-
-	gm.mu.Lock()
-	defer gm.mu.Unlock()
-	if len(gm.channelMessages) != 1 {
-		t.Fatalf("expected exactly 1 channel message, got %d", len(gm.channelMessages))
-	}
-	if gm.channelMessages[0].channelID != "chan-target" {
-		t.Fatalf("fallback must target the invoking channel id, got %q", gm.channelMessages[0].channelID)
-	}
-}
-
-// --- deliverPurgeSummary: unexpected (non-expiry) edit failure ---
-
-// A non-expiry edit failure (e.g. a 5xx) is an unexpected fault: it must be
-// captured to Sentry with context and must NOT be delivered as if expiry.
-func TestDeliverPurgeSummary_UnexpectedFailureCapturedNotFallback(t *testing.T) {
-	captures, gotKV := installCountingCapture(t)
-
-	f := &fakeResponder{EditErrs: []error{restError(http.StatusInternalServerError, 0, "boom")}}
-	gm := &fakeGuildManager{}
-	i := purgeInteractionWithChannel("guild-7", "chan-9")
-
-	deliverPurgeSummary(f, gm, i, "summary")
-
-	// The edit is attempted exactly once: an unexpected failure captures, it does
-	// not retry the already-acknowledged edit.
-	if got := countMethod(f.Calls(), "Edit"); got != 1 {
-		t.Fatalf("expected exactly 1 Edit (the failing call, no retry), got %d", got)
-	}
-	if got := gm.countCalls("ChannelMessageSend"); got != 0 {
-		t.Fatalf("an unexpected (non-expiry) edit failure must NOT use the channel fallback; got %d", got)
-	}
-	if *captures != 1 {
-		t.Fatalf("expected exactly 1 Sentry capture on an unexpected failure, got %d", *captures)
-	}
-	kvMap := kvToMap(*gotKV)
-	if kvMap["command"] != "foxhole" {
-		t.Fatalf("expected command=foxhole in capture context, got %v", kvMap["command"])
-	}
-	if kvMap["subcommand"] != "purge" {
-		t.Fatalf("expected subcommand=purge in capture context, got %v", kvMap["subcommand"])
-	}
-	if kvMap["guild_id"] != "guild-7" {
-		t.Fatalf("expected guild_id=guild-7 in capture context, got %v", kvMap["guild_id"])
-	}
-}
-
-// When the edit expires AND the channel fallback also fails, the operator
-// cannot be reached at all — that is a genuine delivery fault, so it must be
-// captured to Sentry with command + guild context.
-func TestDeliverPurgeSummary_BothSurfacesFailCaptures(t *testing.T) {
-	captures, gotKV := installCountingCapture(t)
-
 	editErr := tokenExpiredRESTError()
+	gm := oneOverwriteGuild()
+	gm.ChannelMessageErrs = []error{errors.New("missing access")}
 	f := &fakeResponder{EditErrs: []error{editErr}}
-	gm := &fakeGuildManager{ChannelMessageErrs: []error{errors.New("missing access")}}
-	i := purgeInteractionWithChannel("guild-3", "chan-9")
 
-	deliverPurgeSummary(f, gm, i, "summary")
+	runFoxholePurge(f, gm, purgeInteractionWithChannel("guild-1", "chan-9"), "guild-1", "internal")
 
 	if got := gm.countCalls("ChannelMessageSend"); got != 1 {
 		t.Fatalf("expected the fallback to be attempted once, got %d", got)
 	}
-	if *captures != 1 {
-		t.Fatalf("expected exactly 1 Sentry capture when both surfaces fail, got %d", *captures)
+	if rec.count != 1 {
+		t.Fatalf("expected exactly 1 Sentry capture when both surfaces fail, got %d", rec.count)
 	}
-	kvMap := kvToMap(*gotKV)
-	if kvMap["command"] != "foxhole" {
-		t.Fatalf("expected command=foxhole in capture context, got %v", kvMap["command"])
+	got := kvToMap(rec.lastKV)
+	for key, want := range purgeSummaryContext {
+		if got[key] != want {
+			t.Errorf("capture context %s = %v, want %v", key, got[key], want)
+		}
 	}
-	if kvMap["subcommand"] != "purge" {
-		t.Fatalf("expected subcommand=purge in capture context, got %v", kvMap["subcommand"])
-	}
-	if kvMap["guild_id"] != "guild-3" {
-		t.Fatalf("expected guild_id=guild-3 in capture context, got %v", kvMap["guild_id"])
-	}
-	// The capture must carry the original token-expiry edit error too, so on-call
-	// sees the full failure chain (edit expired AND channel send failed).
-	if kvMap["edit_error"] != error(editErr) {
-		t.Fatalf("expected the original edit error in capture context, got %v", kvMap["edit_error"])
-	}
-}
-
-// --- runFoxholePurge wires the summary through deliverPurgeSummary ---
-
-// The end-to-end purge path must reach the channel fallback when its deferred
-// edit expires, so a long purge that finished server-side still reaches the
-// operator. Drives runFoxholePurge directly (synchronous, no goroutine).
-func TestRunFoxholePurge_TokenExpiryReachesChannelFallback(t *testing.T) {
-	noOverwriteDelay(t)
-	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
-	}
-	f := &fakeResponder{EditErrs: []error{tokenExpiredRESTError()}}
-	i := purgeInteractionWithChannel("guild-1", "chan-9")
-
-	runFoxholePurge(f, gm, i, "guild-1", "internal")
-
-	if got := gm.countCalls("ChannelMessageSend"); got != 1 {
-		t.Fatalf("a token-expired purge edit must reach the channel fallback once; got %d (%v)", got, gm.Calls())
-	}
-	if got := gm.lastChannelMessage(); !strings.Contains(got, "Recreated '"+defaultInternalRoleName+"'") {
-		t.Fatalf("fallback message must carry the recreated-role summary, got %q", got)
+	if got["edit_error"] != error(editErr) {
+		t.Errorf("expected the original edit error in capture context, got %v", got["edit_error"])
 	}
 }

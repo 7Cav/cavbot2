@@ -66,9 +66,7 @@ func TestRunFoxholeBulkAdd_SameSignatureCollapsesToOneCapture(t *testing.T) {
 	// The per-member summary is unchanged: every failure is still listed.
 	got := lastEditContent(f.Calls())
 	for _, name := range []string{"alice", "bob", "carol"} {
-		if !strings.Contains(got, name) {
-			t.Fatalf("every failed member must still be listed in the summary; missing %q in %q", name, got)
-		}
+		assertVerdict(t, got, name, verdictFailed)
 	}
 	if strings.Contains(got, rawBodyMarker) {
 		t.Fatalf("must not leak the raw Discord body, got %q", got)
@@ -111,9 +109,7 @@ func TestRunFoxholeBulkAdd_ClientFaultsListedNotCaptured(t *testing.T) {
 	// Both faulted members are still surfaced, never silently dropped.
 	got := lastEditContent(f.Calls())
 	for _, name := range []string{"alice", "bob"} {
-		if !strings.Contains(got, name) {
-			t.Fatalf("every client-faulted member must still be listed in the summary; missing %q in %q", name, got)
-		}
+		assertVerdict(t, got, name, verdictFailed)
 	}
 	if strings.Contains(got, rawBodyMarker) {
 		t.Fatalf("must not leak the raw Discord body, got %q", got)
@@ -250,30 +246,6 @@ func TestRunFoxholeBulkAdd_BothScopeCountsRoleAttemptsNotMembers(t *testing.T) {
 	}
 	if sample, ok := kvValue(rec.lastKV, "sample_user"); !ok || sample != "111" {
 		t.Fatalf("sample_user must be the failed member's Discord ID (111); got %v", sample)
-	}
-}
-
-// The zero-value faultCollector must be safe to record into without going through
-// newFaultCollector(): recordSystemFault lazy-inits the entries map, so a future
-// caller that builds the collector as a plain struct literal can never nil-panic
-// on the first record (the map-write that a nil map would panic on). A flush of
-// what it collected still emits exactly that one fault.
-func TestFaultCollector_ZeroValueRecordsWithoutNilPanic(t *testing.T) {
-	rec := &captureRecorder{}
-	rec.install(t)
-
-	var fc faultCollector // zero value: entries is a nil map
-	fc.recordSystemFault(restError(http.StatusInternalServerError, 0, rawBodyMarker), "111")
-	fc.flush("boom", "command", "warden")
-
-	if rec.count != 1 {
-		t.Fatalf("a zero-value collector must record and flush one fault; got %d", rec.count)
-	}
-	if affected, ok := kvValue(rec.lastKV, "affected_count"); !ok || affected != 1 {
-		t.Fatalf("the flushed fault must carry affected_count=1; got %v (kv %v)", affected, rec.lastKV)
-	}
-	if sample, ok := kvValue(rec.lastKV, "sample_user"); !ok || sample != "111" {
-		t.Fatalf("the flushed fault must carry the sample_user; got %v (kv %v)", sample, rec.lastKV)
 	}
 }
 

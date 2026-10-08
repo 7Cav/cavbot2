@@ -2,6 +2,7 @@ package commands
 
 import (
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
@@ -11,48 +12,50 @@ import (
 // mutate. A name that composes fine but matches no role in the guild is the
 // failure that matters, and asserting on composed names would miss it.
 
-// TestFoxholeRoleIDsResolveUnderConfiguredBaseName covers the single-role scopes.
-func TestFoxholeRoleIDsResolveUnderConfiguredBaseName(t *testing.T) {
-	t.Setenv(foxholeRoleBaseNameEnv, "Verified Foxhole")
-
-	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{guildRole("role-foxhole-int", "Verified Foxhole Internal")},
-	}
-
-	roleIDs, _, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "internal")
-	if err != nil {
-		t.Fatalf("configured base name must resolve against the guild: %v", err)
-	}
-
-	if len(roleIDs) != 1 || roleIDs[0] != "role-foxhole-int" {
-		t.Fatalf("expected the configured role's id, got %v", roleIDs)
+// configuredRoleGuild holds the Foxhole roles named from the base name
+// "Configured Base", and one member reachable by ID.
+func configuredRoleGuild() *fakeGuildManager {
+	return &fakeGuildManager{
+		roles: []*discordgo.Role{
+			guildRole("role-default-int", defaultInternalRoleName),
+			guildRole("role-configured-int", "Configured Base Internal"),
+			guildRole("role-configured-ext", "Configured Base External"),
+		},
+		membersByID: map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
 	}
 }
 
-// TestFoxholeBothScopeResolvesUnderConfiguredBaseName covers the two-role scope.
-// Membership, not order: nothing downstream depends on Internal preceding
-// External.
-func TestFoxholeBothScopeResolvesUnderConfiguredBaseName(t *testing.T) {
-	t.Setenv(foxholeRoleBaseNameEnv, "Verified Foxhole")
-
-	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{
-			guildRole("role-foxhole-int", "Verified Foxhole Internal"),
-			guildRole("role-foxhole-ext", "Verified Foxhole External"),
-		},
+// /foxhole add gives the member the roles named from the configured base
+// name, for one scope and for both. Membership, not order: nothing
+// downstream depends on Internal preceding External.
+func TestFoxholeAddGivesTheRolesNamedFromTheConfiguredBaseName(t *testing.T) {
+	cases := []struct {
+		scope string
+		want  []string
+	}{
+		{"internal", []string{"role-configured-int"}},
+		{"both", []string{"role-configured-ext", "role-configured-int"}},
 	}
+	for _, tc := range cases {
+		t.Run(tc.scope, func(t *testing.T) {
+			t.Setenv(foxholeRoleBaseNameEnv, "Configured Base")
+			gm := configuredRoleGuild()
 
-	roleIDs, _, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "both")
-	if err != nil {
-		t.Fatalf("configured base name must resolve both scopes: %v", err)
-	}
+			runFoxhole(&fakeResponder{}, gm, nil, foxholeInteraction("guild-1",
+				stringOption("command", "add"),
+				stringOption("flag", tc.scope),
+				stringOption("discordname", "123456789012345678"),
+			))
 
-	resolved := map[string]bool{}
-	for _, id := range roleIDs {
-		resolved[id] = true
-	}
-	if len(roleIDs) != 2 || !resolved["role-foxhole-int"] || !resolved["role-foxhole-ext"] {
-		t.Fatalf("expected both configured role ids, got %v", roleIDs)
+			var got []string
+			for _, add := range gm.roleAddCalls() {
+				got = append(got, add.roleID)
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("the add gave roles %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

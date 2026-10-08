@@ -14,6 +14,26 @@ import (
 // that only genuine system faults (5xx/transport) page Sentry, per ADR 0001.
 var captureError = utils.CaptureError
 
+// The advice a reply gives for each kind of Discord failure
+// classifyDiscordError tells apart. Each kind's phrase sits in every Discord
+// failure reply of that kind and in none of another kind, so a test tells
+// the kinds apart by these alone. A roster fetch failure, which the milpac
+// API causes, gets the transient advice too.
+const (
+	// adviceTransient is a 5xx or transport fault's, which may clear.
+	adviceTransient = "try again shortly"
+	// adviceAbsent is a genuine absence's: Unknown Member, or a bare 404 on
+	// a member lookup.
+	adviceAbsent = "is not in this server"
+	// adviceConfigFault is a stale or deleted role's, or a wrong guild ID's,
+	// which retrying never clears.
+	adviceConfigFault = "Re-resolve the role or correct the guild ID; retrying won't help"
+	// adviceMissingPermissions is a 403's.
+	adviceMissingPermissions = "missing permissions"
+	// adviceRejected is any other refusal's.
+	adviceRejected = "Discord rejected the request"
+)
+
 // discordErrorClass is the result of classifying an error returned by a Discord
 // REST call. It separates operator/config-fixable client faults (4xx) from
 // genuine system faults (5xx and transport errors), and never carries the raw
@@ -76,13 +96,13 @@ func classifyDiscordError(err error) discordErrorClass {
 	case status == http.StatusForbidden:
 		return discordErrorClass{
 			MissingPermissions: true,
-			UserDetail:         "missing permissions",
+			UserDetail:         adviceMissingPermissions,
 		}
 	case status == http.StatusNotFound:
 		return classifyNotFound(restErr)
 	case status >= 400 && status < 500:
 		return discordErrorClass{
-			UserDetail: "Discord rejected the request",
+			UserDetail: adviceRejected,
 		}
 	default:
 		// 5xx (and any unexpected >=500) is a Discord-side system fault.
@@ -137,8 +157,8 @@ func classifyNotFound(restErr *discordgo.RESTError) discordErrorClass {
 // keep their own transient retry wording.
 func configFaultHint(class discordErrorClass) string {
 	return fmt.Sprintf(
-		"a stale or deleted role, or a wrong guild ID (%s). Re-resolve the role or correct the guild ID; retrying won't help",
-		class.UserDetail,
+		"a stale or deleted role, or a wrong guild ID (%s). %s",
+		class.UserDetail, adviceConfigFault,
 	)
 }
 
@@ -206,7 +226,7 @@ func searchErrorMessage(class discordErrorClass) error {
 		if class.ConfigFault {
 			return fmt.Errorf("❌ Member search failed: %s", configFaultHint(class))
 		}
-		return errors.New("❌ Member search is temporarily unavailable (Discord error); please try again shortly")
+		return errors.New("❌ Member search is temporarily unavailable (Discord error); please " + adviceTransient)
 	}
 	return fmt.Errorf("❌ Member search failed (%s); check the query or try a mention/ID instead", class.UserDetail)
 }
@@ -250,18 +270,18 @@ func purgeRecreateErrorReply(roleName string, err error, captureMsg string, kv .
 			)
 		}
 		return fmt.Sprintf(
-			"❌ Failed to recreate '%s': Discord error, the role was not recreated; please try again shortly.",
-			roleName,
+			"❌ Failed to recreate '%s': Discord error, the role was not recreated; please %s.",
+			roleName, adviceTransient,
 		)
 	case class.MissingPermissions:
 		return fmt.Sprintf(
-			"❌ Failed to recreate '%s': missing permissions. The bot needs Manage Roles and its own role must sit above '%s'. The role was not recreated.",
-			roleName, roleName,
+			"❌ Failed to recreate '%s': %s. The bot needs Manage Roles and its own role must sit above '%s'. The role was not recreated.",
+			roleName, adviceMissingPermissions, roleName,
 		)
 	default:
 		return fmt.Sprintf(
-			"❌ Failed to recreate '%s': Discord rejected the request (%s). The role was not recreated.",
-			roleName, class.UserDetail,
+			"❌ Failed to recreate '%s': %s (%s). The role was not recreated.",
+			roleName, adviceRejected, class.UserDetail,
 		)
 	}
 }
@@ -299,7 +319,7 @@ func roleResolveErrorReply(err error, captureMsg string, kv ...any) error {
 		if class.ConfigFault {
 			return fmt.Errorf("❌ Failed to retrieve guild roles: %s", configFaultHint(class))
 		}
-		return errors.New("❌ Failed to retrieve guild roles (Discord error); please try again shortly")
+		return errors.New("❌ Failed to retrieve guild roles (Discord error); please " + adviceTransient)
 	}
 	return fmt.Errorf("❌ Failed to retrieve guild roles (%s)", class.UserDetail)
 }
@@ -319,7 +339,7 @@ func channelsResolveErrorReply(err error, captureMsg string, kv ...any) error {
 		if class.ConfigFault {
 			return fmt.Errorf("❌ Failed to retrieve guild channels: %s", configFaultHint(class))
 		}
-		return errors.New("❌ Failed to retrieve guild channels (Discord error); please try again shortly")
+		return errors.New("❌ Failed to retrieve guild channels (Discord error); please " + adviceTransient)
 	}
 	return fmt.Errorf("❌ Failed to retrieve guild channels (%s)", class.UserDetail)
 }
@@ -342,14 +362,14 @@ func roleMutationErrorMessage(action, roleName, userLabel string, class discordE
 		if class.ConfigFault {
 			return fmt.Sprintf("❌ Could not %s '%s' for %s: %s.", action, roleName, userLabel, configFaultHint(class))
 		}
-		return fmt.Sprintf("❌ Could not %s '%s' for %s: Discord error, please try again shortly.", action, roleName, userLabel)
+		return fmt.Sprintf("❌ Could not %s '%s' for %s: Discord error, please %s.", action, roleName, userLabel, adviceTransient)
 	case class.MissingPermissions:
 		return fmt.Sprintf(
-			"❌ Could not %s '%s' for %s: missing permissions — the bot needs Manage Roles and its own role must be positioned above '%s'.",
-			action, roleName, userLabel, roleName,
+			"❌ Could not %s '%s' for %s: %s — the bot needs Manage Roles and its own role must be positioned above '%s'.",
+			action, roleName, userLabel, adviceMissingPermissions, roleName,
 		)
 	default:
-		return fmt.Sprintf("❌ Could not %s '%s' for %s: Discord rejected the request.", action, roleName, userLabel)
+		return fmt.Sprintf("❌ Could not %s '%s' for %s: %s.", action, roleName, userLabel, adviceRejected)
 	}
 }
 

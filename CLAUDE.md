@@ -50,6 +50,7 @@ Review the README for required environment variables if you need them.
 - Report an internal failure with `utils.CaptureError`, which logs it and sends it to Sentry (ADR 0001). Tell the member about an expected outcome, like no troopers found, with `utils.HandleError`.
 - Commands log a `"🚀 Starting ..."` line at entry and `"✨ Done!"` at successful exit, with `"command"`, `"username"`, and `"discord_id"` fields. Match this pattern when adding commands so log greps stay uniform.
 - Prefer ephemeral responses for admin/management commands (`MessageFlagsEphemeral`) — see `deferEphemeral` + `editEphemeral` for the deferred-ephemeral pattern.
+- Command reply tests read three things from a reply: the verdict marker that opens a line (✅, ❌ or ⚠️), the names it carries, and production constants for the phrases that tell cases apart. The rest of a sentence stays free to change. This covers new command tests and existing ones a change edits anyway.
 
 ## Build/deploy quirks
 

@@ -1,8 +1,9 @@
 package commands
 
 import (
+	"errors"
 	"net/http"
-	"strings"
+	"slices"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
@@ -10,216 +11,123 @@ import (
 
 // --- #178: purge recreation must not leave an orphan duplicate role ---
 
-// When the channel-overwrite re-application step fails after the new role has
-// already been created, the function must delete the new role so the guild is
-// not left with a duplicate (new orphan alongside the still-present old role).
-func TestRecreateRole_OverwriteFailureCleansUpNewRole(t *testing.T) {
+// When copying an overwrite to the new role fails, the purge deletes the new
+// role, so the guild isn't left with a duplicate beside the old role it
+// still has, and the reply says the role failed.
+func TestRunFoxholePurge_OverwriteFailureDeletesTheNewRole(t *testing.T) {
 	noOverwriteDelay(t)
-	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
-		channels: []*discordgo.Channel{
-			{
-				ID: "chan-1",
-				PermissionOverwrites: []*discordgo.PermissionOverwrite{
-					{ID: "old-int", Type: discordgo.PermissionOverwriteTypeRole, Allow: 1, Deny: 0},
-				},
-			},
-		},
-		// The overwrite re-application fails after the new role already exists.
-		ChannelPermSetErrs: []error{restError(http.StatusInternalServerError, 0, "boom")},
-	}
-
-	_, _, err := recreateRoleWithChannelOverwrites(gm, "guild-1", "old-int", gm.channels, "/foxhole purge by tester (999)")
-	if err == nil {
-		t.Fatal("expected an error when the overwrite step fails")
-	}
-
-	// New role was created, then deleted as cleanup. The OLD role must NOT be
-	// deleted (its recreation failed), so exactly one delete -> the new role.
-	if gm.countCalls("GuildRoleCreate") != 1 {
-		t.Fatalf("expected the new role to be created, got %v", gm.Calls())
-	}
-	if gm.countCalls("GuildRoleDelete") != 1 {
-		t.Fatalf("expected exactly 1 delete (the orphan new role), got %d (%v)", gm.countCalls("GuildRoleDelete"), gm.Calls())
-	}
-	// The delete target must be EXACTLY the newly created role id (the fake's
-	// first create returns "new-role-1"), never the old role.
-	if got := gm.lastDeletedRoleID(); got != "new-role-1" {
-		t.Fatalf("cleanup must delete the new role %q, deleted %q", "new-role-1", got)
-	}
-}
-
-// The redundant post-create edit has been dropped: the create already sets every
-// field. Pin the mutation sequence to exactly create-then-delete-old, so a
-// re-edit step (the create->edit failure window #178 closed) cannot reappear.
-func TestRecreateRole_DoesNotReEditAfterCreate(t *testing.T) {
-	noOverwriteDelay(t)
-	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
-	}
-
-	_, _, err := recreateRoleWithChannelOverwrites(gm, "guild-1", "old-int", nil, "/foxhole purge by tester (999)")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// With no overwrites to re-apply, the only mutations are: create the new role,
-	// then delete the old one. Any GuildRoleEdit between them would be the dropped
-	// redundant re-apply.
-	wantMutations := []string{"GuildRoleCreate", "GuildRoleDelete"}
-	var gotMutations []string
-	for _, c := range gm.Calls() {
-		if c == "GuildRoleCreate" || c == "GuildRoleEdit" || c == "GuildRoleDelete" {
-			gotMutations = append(gotMutations, c)
-		}
-	}
-	if strings.Join(gotMutations, ",") != strings.Join(wantMutations, ",") {
-		t.Fatalf("expected mutation sequence %v (no redundant edit), got %v", wantMutations, gm.Calls())
-	}
-}
-
-// The purge summary must report a failed recreate clearly and must NEVER include
-// the raw Discord response body. A 5xx recreate failure is routed through the
-// classifier, so the summary carries a sanitized phrase, not "HTTP 500, {json}".
-func TestRunFoxholePurge_RecreateFailureSummaryHasNoRawBody(t *testing.T) {
-	noOverwriteDelay(t)
-	captureCount, _ := installCountingCapture(t)
-	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
-		// Create fails with a 5xx carrying a raw body that must not leak.
-		RoleCreateErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
-	}
+	gm := oneOverwriteGuild()
+	gm.ChannelPermSetErrs = []error{restError(http.StatusInternalServerError, 0, "boom")}
 	f := &fakeResponder{}
-	i := foxholeInteraction("guild-1")
 
-	runFoxholePurge(f, gm, i, "guild-1", "internal")
+	runFoxholePurge(f, gm, foxholeInteraction("guild-1"), "guild-1", "internal")
 
-	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "Failed to recreate '"+defaultInternalRoleName+"'") {
-		t.Fatalf("expected a clear failed-recreate line, got %q", got)
+	// The fake's first create returns new-role-1. The old role stays.
+	if got := gm.deletedRoles(); !slices.Equal(got, []string{"new-role-1"}) {
+		t.Fatalf("the purge deleted roles %v, want only the new role new-role-1", got)
 	}
-	if strings.Contains(got, rawBodyMarker) || strings.Contains(got, "HTTP 500") {
-		t.Fatalf("summary must not contain the raw Discord body, got %q", got)
-	}
-	// A 5xx is a genuine system fault: it must be captured exactly once.
-	if *captureCount != 1 {
-		t.Fatalf("expected the system fault to be captured once, got %d", *captureCount)
-	}
+	assertVerdict(t, lastEditContent(f.Calls()), defaultInternalRoleName, verdictFailed)
 }
 
-// A 4xx recreate failure (client/config fault, e.g. missing permissions) is
-// reported clearly but must NOT page Sentry and must not leak the body.
-func TestRunFoxholePurge_RecreateClientFaultNotCaptured(t *testing.T) {
+// With no overwrites to copy, a purge's only changes are creating the new
+// role, then deleting the old one: the create sets every field, so no edit
+// follows it to fail after the new role exists (#178).
+func TestRunFoxholePurge_CreatesThenDeletesWithNoOtherRoleChange(t *testing.T) {
 	noOverwriteDelay(t)
-	captureCount, _ := installCountingCapture(t)
 	gm := &fakeGuildManager{
-		roles:          []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
-		RoleCreateErrs: []error{restError(http.StatusForbidden, 0, rawBodyMarker)},
+		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
 	}
-	f := &fakeResponder{}
-	i := foxholeInteraction("guild-1")
 
-	runFoxholePurge(f, gm, i, "guild-1", "internal")
+	runFoxholePurge(&fakeResponder{}, gm, foxholeInteraction("guild-1"), "guild-1", "internal")
 
-	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "Failed to recreate '"+defaultInternalRoleName+"'") {
-		t.Fatalf("expected a clear failed-recreate line, got %q", got)
+	var methods []string
+	for _, write := range gm.guildWrites() {
+		methods = append(methods, write.method)
 	}
-	// A 403 must carry the permission-specific hint, not just the generic prefix.
-	if !strings.Contains(got, "missing permissions") || !strings.Contains(got, "Manage Roles") {
-		t.Fatalf("expected the permission-specific hint for a 403, got %q", got)
-	}
-	if strings.Contains(got, rawBodyMarker) || strings.Contains(got, "HTTP 403") {
-		t.Fatalf("summary must not contain the raw Discord body, got %q", got)
-	}
-	if *captureCount != 0 {
-		t.Fatalf("a 4xx client fault must not be captured to Sentry, got %d", *captureCount)
+	if want := []string{"GuildRoleCreate", "GuildRoleDelete"}; !slices.Equal(methods, want) {
+		t.Fatalf("the purge changed the guild with %v, want %v", methods, want)
 	}
 }
 
-// When create + overwrites succeed but deleting the OLD role fails, the new role
-// was created (a duplicate now exists). The summary must say the recreate
-// happened and the old role lingers / needs manual cleanup — NOT "the role was
-// not recreated", which would be the inverse of the truth.
+// When Discord refuses the new role, the purge's line for that role says it
+// failed, with the advice for that kind of failure and never Discord's raw
+// body. A missing permission also names Manage Roles. Only a system fault
+// pages Sentry.
+func TestRunFoxholePurge_RecreateFailureAdvisesOnEachKindOfDiscordFailure(t *testing.T) {
+	for _, failure := range []discordFailure{serverError, unknownGuild, forbidden, badRequest} {
+		t.Run(failure.name, func(t *testing.T) {
+			noOverwriteDelay(t)
+			rec := &captureRecorder{}
+			rec.install(t)
+			gm := &fakeGuildManager{
+				roles:          []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
+				RoleCreateErrs: []error{failure.err},
+			}
+			f := &fakeResponder{}
+
+			runFoxholePurge(f, gm, foxholeInteraction("guild-1"), "guild-1", "internal")
+
+			reply := lastEditContent(f.Calls())
+			assertReplyNames(t, reply, defaultInternalRoleName)
+			assertFailureReply(t, reply, failure, rec)
+			if failure.advice == adviceMissingPermissions {
+				assertReplyNames(t, reply, "Manage Roles")
+			}
+		})
+	}
+}
+
+// When create and overwrites succeed but deleting the OLD role fails, the
+// new role exists beside the old one. The reply says the role was recreated
+// with a problem left over, and names the old role's ID so the manager can
+// delete it. A server error pages Sentry once.
 func TestRunFoxholePurge_OldRoleDeleteFailureReportsLingeringRole(t *testing.T) {
 	noOverwriteDelay(t)
-	captureCount, _ := installCountingCapture(t)
+	rec := &captureRecorder{}
+	rec.install(t)
 	gm := &fakeGuildManager{
 		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
 		// No channels -> no overwrites to re-apply; create succeeds, then the
 		// old-role delete fails with a 5xx carrying a raw body.
-		RoleDeleteErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)},
+		RoleDeleteErrs: []error{serverError.err},
 	}
 	f := &fakeResponder{}
-	i := foxholeInteraction("guild-1")
 
-	runFoxholePurge(f, gm, i, "guild-1", "internal")
+	runFoxholePurge(f, gm, foxholeInteraction("guild-1"), "guild-1", "internal")
 
-	got := lastEditContent(f.Calls())
-	// Must report the recreate as having happened, with a lingering old role.
-	if strings.Contains(got, "the role was not recreated") || strings.Contains(got, "The role was not recreated") {
-		t.Fatalf("must NOT claim the role was not recreated (it was); got %q", got)
-	}
-	if !strings.Contains(got, "Recreated '"+defaultInternalRoleName+"'") {
-		t.Fatalf("expected the recreate to be reported as done, got %q", got)
-	}
-	if !strings.Contains(got, "could not be deleted") || !strings.Contains(got, "manually") {
-		t.Fatalf("expected a lingering-old-role / manual-cleanup notice, got %q", got)
-	}
-	// The leftover old role id must be named so the operator can find it.
-	if !strings.Contains(got, "old-int") {
-		t.Fatalf("expected the lingering old role id in the summary, got %q", got)
-	}
-	if strings.Contains(got, rawBodyMarker) || strings.Contains(got, "HTTP 500") {
-		t.Fatalf("summary must not contain the raw Discord body, got %q", got)
-	}
-	// A 5xx delete failure is a genuine system fault: capture it once.
-	if *captureCount != 1 {
-		t.Fatalf("expected the system fault to be captured once, got %d", *captureCount)
+	reply := lastEditContent(f.Calls())
+	assertVerdict(t, reply, defaultInternalRoleName, verdictLeftOver)
+	assertReplyNames(t, reply, "old-int")
+	assertNoLeak(t, reply, serverError.err)
+	if rec.count != 1 {
+		t.Fatalf("expected the system fault to be captured once, got %d", rec.count)
 	}
 }
 
-// Edge case: the overwrite step fails (forcing the orphan-cleanup path) AND the
-// cleanup delete of the new role also fails. The function must still return the
-// ORIGINAL "reapply overwrites" error (the cleanup-delete error is logged, not
-// returned, so it can't mask the real cause) and must return normally without a
-// panic.
-func TestRecreateRole_CleanupDeleteAlsoFailsReturnsOriginalError(t *testing.T) {
+// When copying an overwrite fails and deleting the new role fails too, the
+// failure Sentry gets is the overwrite's, the cause, not the cleanup's. The
+// reply says the role failed, not that it was recreated with a leftover.
+func TestRunFoxholePurge_OverwriteFailureOutranksAFailedCleanup(t *testing.T) {
 	noOverwriteDelay(t)
-	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{guildRole("old-int", foxholeRoleBaseNameDefault+" Internal")},
-		channels: []*discordgo.Channel{
-			{
-				ID: "chan-1",
-				PermissionOverwrites: []*discordgo.PermissionOverwrite{
-					{ID: "old-int", Type: discordgo.PermissionOverwriteTypeRole, Allow: 1, Deny: 0},
-				},
-			},
-		},
-		// Overwrite re-apply fails -> triggers orphan cleanup.
-		ChannelPermSetErrs: []error{restError(http.StatusInternalServerError, 0, "overwrite-boom")},
-		// The cleanup delete of the NEW role then also fails.
-		RoleDeleteErrs: []error{restError(http.StatusInternalServerError, 0, "delete-boom")},
-	}
+	rec := &captureRecorder{}
+	rec.install(t)
+	overwriteErr := restError(http.StatusInternalServerError, 0, "overwrite-boom")
+	cleanupErr := restError(http.StatusInternalServerError, 0, "delete-boom")
+	gm := oneOverwriteGuild()
+	gm.ChannelPermSetErrs = []error{overwriteErr}
+	gm.RoleDeleteErrs = []error{cleanupErr}
+	f := &fakeResponder{}
 
-	newRoleID, _, err := recreateRoleWithChannelOverwrites(gm, "guild-1", "old-int", gm.channels, "/foxhole purge by tester (999)")
-	if err == nil {
-		t.Fatal("expected an error when the overwrite step fails")
+	runFoxholePurge(f, gm, foxholeInteraction("guild-1"), "guild-1", "internal")
+
+	if rec.count != 1 {
+		t.Fatalf("Sentry got %d events, want 1", rec.count)
 	}
-	// The returned error must be the original overwrite failure, not the
-	// secondary cleanup-delete failure.
-	if !strings.Contains(err.Error(), "reapply overwrites") {
-		t.Fatalf("expected the original 'reapply overwrites' error to surface, got %v", err)
+	if !errors.Is(rec.errs[0], overwriteErr) || errors.Is(rec.errs[0], cleanupErr) {
+		t.Errorf("Sentry got %v, want the overwrite failure and not the cleanup's", rec.errs[0])
 	}
-	if strings.Contains(err.Error(), "delete-boom") {
-		t.Fatalf("the secondary cleanup-delete error must not mask the original cause, got %v", err)
+	if got := gm.deletedRoles(); !slices.Equal(got, []string{"new-role-1"}) {
+		t.Errorf("the purge tried to delete roles %v, want only the new role new-role-1", got)
 	}
-	// On this path nothing usable was left -> newRoleID is empty, so runFoxholePurge
-	// reports "not recreated" rather than a lingering-role notice.
-	if newRoleID != "" {
-		t.Fatalf("overwrite-failure path must report no usable new role, got newRoleID %q", newRoleID)
-	}
-	// The cleanup was attempted exactly once (and failed).
-	if gm.countCalls("GuildRoleDelete") != 1 {
-		t.Fatalf("expected exactly one (failed) cleanup delete, got %d (%v)", gm.countCalls("GuildRoleDelete"), gm.Calls())
-	}
+	assertVerdict(t, lastEditContent(f.Calls()), defaultInternalRoleName, verdictFailed)
 }

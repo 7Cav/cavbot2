@@ -1,108 +1,67 @@
 package commands
 
 import (
-	"errors"
-	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
 )
 
-// --- resolveFoxholeRoleIDs: GuildRoles fault capture split (#194) ---
-//
-// The GuildRoles lookup inside resolveFoxholeRoleIDs must route a genuine system
-// fault (5xx/transport) through the shared classifier and capture it to Sentry
-// (per ADR 0001), while a 4xx stays a non-captured actionable message and the
-// explicit not-found result remains non-captured. The raw Discord body must
-// never reach the operator-facing message.
+// --- role resolution: GuildRoles fault capture split (#180, #194) ---
 
-// A 5xx from GuildRoles during role resolution is a genuine Discord-side fault:
-// it must capture to Sentry exactly once, show a body-free generic retry
-// message, and never leak the raw Discord response body.
-func TestResolveFoxholeRoleIDs_GuildRoles5xxCaptures(t *testing.T) {
-	rec := &captureRecorder{}
-	rec.install(t)
-	gm := &fakeGuildManager{RolesErrs: []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)}}
+// roleLookupGM is a guild with one member reachable by ID whose role lookup
+// Discord fails with err.
+func roleLookupGM(err error) *fakeGuildManager {
+	gm := foxholeRoleAddGM(nil)
+	gm.RolesErrs = []error{err}
+	return gm
+}
 
-	_, _, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "internal")
-	if err == nil {
-		t.Fatal("expected an error from a 5xx GuildRoles lookup")
-	}
-	if rec.count != 1 {
-		t.Fatalf("a 5xx GuildRoles fault must capture to Sentry exactly once; got %d", rec.count)
-	}
-	if strings.Contains(err.Error(), rawBodyMarker) {
-		t.Fatalf("role resolution leaked the raw Discord body: %q", err.Error())
-	}
-	// #194 requires command+guild context on the capture; pin those plus role.
-	for key, want := range map[string]string{
-		"command": "foxhole",
-		"guild":   "guild-1",
-		"role":    foxholeRoleBaseNameDefault + " Internal",
-	} {
-		got, ok := kvValue(rec.lastKV, key)
-		if !ok {
-			t.Fatalf("capture context missing %q; got kv %v", key, rec.lastKV)
-		}
-		if got != want {
-			t.Fatalf("capture context %q = %v, want %q", key, got, want)
-		}
+// When Discord fails the lookup of the guild's roles, /foxhole add changes
+// nothing and gives the advice for that kind of failure, never reporting the
+// role as missing. A system fault pages Sentry once, naming the command, the
+// guild and the role it looked for (#194); a client fault pages nothing.
+func TestRunFoxholeAdd_RoleLookupFailureAdvisesAndChangesNothing(t *testing.T) {
+	for _, failure := range []discordFailure{serverError, transport, unknownGuild, badRequest} {
+		t.Run(failure.name, func(t *testing.T) {
+			rec := &captureRecorder{}
+			rec.install(t)
+			gm := roleLookupGM(failure.err)
+			f := &fakeResponder{}
+
+			runFoxhole(f, gm, nil, foxholeAddInteraction())
+
+			if n := gm.countCalls("GuildMemberRoleAdd"); n != 0 {
+				t.Fatalf("the add changed %d roles without knowing the role", n)
+			}
+			assertFailureReply(t, lastEditContent(f.Calls()), failure, rec)
+			if failure.captured {
+				assertCaptureNames(t, rec.lastKV, map[string]string{
+					"command": "foxhole",
+					"guild":   "guild-1",
+					"role":    defaultInternalRoleName,
+				})
+			}
+		})
 	}
 }
 
-// A transport (non-REST) failure from GuildRoles is also a system fault: capture
-// once, no raw body leak.
-func TestResolveFoxholeRoleIDs_GuildRolesTransportErrorCaptures(t *testing.T) {
+// A guild that has no role by the Foxhole role's name gets a reply naming the
+// role it couldn't find. That is no fault, so Sentry gets nothing, and no
+// role changes.
+func TestRunFoxholeAdd_RoleNotInTheGuildIsNamed(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
-	gm := &fakeGuildManager{RolesErrs: []error{errors.New("dial tcp: connection refused")}}
+	gm := foxholeRoleAddGM(nil)
+	gm.roles = []*discordgo.Role{guildRole("other", "Some Other Role")}
+	f := &fakeResponder{}
 
-	_, _, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "internal")
-	if err == nil {
-		t.Fatal("expected an error from a transport GuildRoles failure")
-	}
-	if rec.count != 1 {
-		t.Fatalf("a transport GuildRoles fault must capture to Sentry exactly once; got %d", rec.count)
-	}
-}
+	runFoxhole(f, gm, nil, foxholeAddInteraction())
 
-// A 4xx from GuildRoles is an operator/config-fixable client fault: it must
-// surface an actionable, body-free message and must NOT capture to Sentry.
-func TestResolveFoxholeRoleIDs_GuildRoles4xxDoesNotCapture(t *testing.T) {
-	rec := &captureRecorder{}
-	rec.install(t)
-	gm := &fakeGuildManager{RolesErrs: []error{restError(http.StatusBadRequest, 50035, rawBodyMarker)}}
-
-	_, _, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "internal")
-	if err == nil {
-		t.Fatal("expected an error from a 4xx GuildRoles lookup")
-	}
+	assertVerdict(t, lastEditContent(f.Calls()), defaultInternalRoleName, verdictFailed)
 	if rec.count != 0 {
-		t.Fatalf("a 4xx GuildRoles fault must NOT capture to Sentry; got %d", rec.count)
+		t.Errorf("a role missing from the guild captured %d events, want none", rec.count)
 	}
-	if strings.Contains(err.Error(), rawBodyMarker) {
-		t.Fatalf("role resolution leaked the raw Discord body: %q", err.Error())
-	}
-}
-
-// The explicit not-found result (the role simply isn't in the guild) is not a
-// fault and must NOT capture to Sentry; the not-found message is preserved.
-func TestResolveFoxholeRoleIDs_NotFoundDoesNotCapture(t *testing.T) {
-	rec := &captureRecorder{}
-	rec.install(t)
-	gm := &fakeGuildManager{
-		roles: []*discordgo.Role{guildRole("other", "Some Other Role")},
-	}
-
-	_, _, err := resolveFoxholeRoleIDs(gm, "foxhole", "guild-1", "internal")
-	if err == nil {
-		t.Fatal("expected a role-not-found error")
-	}
-	if rec.count != 0 {
-		t.Fatalf("an explicit not-found result must NOT capture to Sentry; got %d", rec.count)
-	}
-	if !strings.Contains(err.Error(), "role not found in guild") {
-		t.Fatalf("expected the not-found message, got %q", err.Error())
+	if n := gm.countCalls("GuildMemberRoleAdd"); n != 0 {
+		t.Errorf("the add changed %d roles with no role to give", n)
 	}
 }

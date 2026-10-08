@@ -141,6 +141,42 @@ func TestProgressBlockSaysStoppingUntilTheChangeInFlightEnds(t *testing.T) {
 	}
 }
 
+// Regression pin, spec #434 user story 10: a Foxhole manager who leaves the
+// Foxhole group while their action runs loses the page and their Stop at
+// once, and the action runs to its end, so the roles aren't left half
+// changed. The manager's refused requests come while the action is still
+// held mid-run, so an action stopped by one of them would leave the second
+// holder with External.
+func TestActionRunsToItsEndAfterItsManagerLeavesTheFoxholeGroup(t *testing.T) {
+	w := newFoxholeWorld(t)
+	hold := holdRoleWrites(t, w)
+	leaver := w.forum.addUser(8642, "Leaves.L", 2, []int{35, testFoxholeGroupID})
+	manager := newBrowser(t, w.p)
+	signInAs(t, w.forum, manager, leaver)
+	confirm := purgeConfirmation(t, parseHTML(t, openPurge(t, manager, parseHTML(t, manager.get(foxholePath)), "external")))
+	assertRedirect(t, confirmPurge(t, manager, context.Background(), confirm), foxholePath)
+	hold.next(t)
+	stop := stopForm(t, progressBlock(t, parseHTML(t, manager.get(foxholePath))))
+	w.forum.setGroups(leaver, 2, []int{35})
+
+	assertNoAccessPage(t, parseHTML(t, follow(t, manager, manager.get(foxholePath))))
+	assertNoAccessPage(t, parseHTML(t, submit(t, manager, stop)))
+
+	hold.open()
+	w.awaitActionEnd(t)
+	if holders := w.discord.holdersOf(roleExternal); len(holders) != 0 {
+		t.Errorf("after the purge %v still hold External, want nobody", holders)
+	}
+	report := reportBlock(t, parseHTML(t, signedIn(t, w, "Admin.A", []int{47}).get(foxholePath)))
+	if got := outcomeOf(report); got != "done" {
+		t.Errorf("the report's outcome is %q, want done", got)
+	}
+	if got, want := pairs(reportList(t, report, "changed")), []string{memberKestrel.ID + " external", memberMarsh.ID + " external"}; !slices.Equal(got, want) {
+		t.Errorf("the report changed %v, want %v", got, want)
+	}
+	assertNoAccessPage(t, parseHTML(t, follow(t, manager, manager.get(foxholePath))))
+}
+
 // A Stop from a page loaded while an earlier action ran stops nothing that
 // started since: a later purge runs on to its end.
 func TestStopFromAnEndedActionsProgressBlockLeavesTheNextActionRunning(t *testing.T) {
