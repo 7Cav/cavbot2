@@ -204,19 +204,19 @@ var foxholePostCases = map[string]foxholePostCase{
 	},
 	foxholePurgePath: func(t *testing.T, w *testWorld, _ *rosterAPI) (url.Values, func(*testing.T, *http.Response)) {
 		doc := parseHTML(t, openPurge(t, w.b, parseHTML(t, w.b.get(foxholePath)), "both"))
-		return formPosts(t, doc, foxholePurgePath), changesNoRoleForTheOutsider(w, startedAction(t, w, store.ChangePurge))
+		return formPosts(t, doc, foxholePurgePath), thenNoRoleChangeNamesTheOutsider(t, w, startedAction(t, w, store.ChangePurge))
 	},
 	foxholeReAddPath: func(t *testing.T, w *testWorld, _ *rosterAPI) (url.Values, func(*testing.T, *http.Response)) {
 		seedApproved(t, w, namesOf(memberDoe))
 		doc := parseHTML(t, w.b.get(foxholePath))
-		return formPosts(t, doc, foxholeReAddPath), changesNoRoleForTheOutsider(w, startedAction(t, w, store.ChangeReAdd))
+		return formPosts(t, doc, foxholeReAddPath), thenNoRoleChangeNamesTheOutsider(t, w, startedAction(t, w, store.ChangeReAdd))
 	},
 	foxholeRetryPath: func(t *testing.T, w *testWorld, _ *rosterAPI) (url.Values, func(*testing.T, *http.Response)) {
 		w.discord.failRoleWrites(memberKestrel.ID, missingPermissions())
 		startPurge(t, w, "external")
 		w.awaitActionEnd(t)
 		w.discord.failRoleWrites(memberKestrel.ID, nil)
-		return formPosts(t, openRetry(t, w.b), foxholeRetryPath), changesNoRoleForTheOutsider(w, startedAction(t, w, store.ChangePurge))
+		return formPosts(t, openRetry(t, w.b), foxholeRetryPath), thenNoRoleChangeNamesTheOutsider(t, w, startedAction(t, w, store.ChangePurge))
 	},
 	// A purge runs, held inside its first role change, until the manager's
 	// Stop.
@@ -270,15 +270,22 @@ func startedAction(t *testing.T, w *testWorld, action store.ChangeAction) func(*
 	}
 }
 
-// changesNoRoleForTheOutsider is started, and then no role change names
-// the outsider. By then the manager's action has ended, and actions run
-// one at a time, so one the outsider's request had started would have made
+// thenNoRoleChangeNamesTheOutsider runs the check started, then checks
+// that the manager's action changed a role and that no role change names
+// the outsider. By then the manager's action has ended. Actions run one at
+// a time, so an action the outsider's request had started would have made
 // its role changes first, or kept the manager's from starting.
-func changesNoRoleForTheOutsider(w *testWorld, started func(*testing.T, *http.Response)) func(*testing.T, *http.Response) {
+func thenNoRoleChangeNamesTheOutsider(t *testing.T, w *testWorld, started func(*testing.T, *http.Response)) func(*testing.T, *http.Response) {
+	t.Helper()
+	before := len(w.discord.roleChanges())
 	return func(t *testing.T, res *http.Response) {
 		t.Helper()
 		started(t, res)
-		for _, write := range w.discord.roleChanges() {
+		writes := w.discord.roleChanges()
+		if len(writes) == before {
+			t.Error("the manager's action changed no role, so no role change could name the outsider either")
+		}
+		for _, write := range writes {
 			if strings.Contains(write.Reason, outsiderUsername) {
 				t.Errorf("the change to %s names the user outside every group: %q", write.MemberID, write.Reason)
 			}
@@ -321,8 +328,14 @@ func TestEveryFoxholePostRouteHasAnOutsiderCase(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	found := 0
 	for _, rt := range w.p.routes() {
-		method, path, _ := strings.Cut(rt.pattern, " ")
-		if method != http.MethodPost || (path != foxholePath && !strings.HasPrefix(path, foxholePath+"/")) {
+		// A pattern names its method before its path, or no method, and
+		// then serves POST too.
+		fields := strings.Fields(rt.pattern)
+		method, path := "", fields[len(fields)-1]
+		if len(fields) > 1 {
+			method = fields[0]
+		}
+		if (method != "" && method != http.MethodPost) || (path != foxholePath && !strings.HasPrefix(path, foxholePath+"/")) {
 			continue
 		}
 		found++
