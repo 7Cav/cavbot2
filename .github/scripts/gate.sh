@@ -6,8 +6,8 @@
 #
 # Steps, in order: the glossary's entry format, lint, the error reply check,
 # module tidiness, the image's Go, the tests of the scripts in this directory,
-# the test suite with -race and coverage against a throwaway Postgres, the
-# coverage floors, the build.
+# the migrations against develop's, the test suite with -race and coverage
+# against a throwaway Postgres, the coverage floors, the build.
 #
 # Runs in several worktrees at once without interference. Each run starts its
 # own Postgres through test-db.sh and removes only that container on exit, and
@@ -89,6 +89,15 @@ step "script tests"
 for t in "$scripts"/*_test.sh; do
     "$t"
 done
+
+step "migrations sort after develop's and leave its own unchanged"
+# CI checks out a single commit, so fetch develop itself. A failed fetch stops
+# the gate, and the check fails without develop rather than passing. Run
+# locally, the check reads this worktree's origin/develop.
+if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    git fetch --no-tags --depth=1 origin +refs/heads/develop:refs/remotes/origin/develop
+fi
+"$scripts/check-migrations.sh" origin/develop store/migrations "$(date -u +%Y%m%d%H%M%S)"
 
 step "Postgres for the store tests"
 TEST_BOT_DB_DSN=$("$scripts/test-db.sh" "$db")

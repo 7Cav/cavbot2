@@ -18,9 +18,19 @@ import (
 
 // migrationFiles is every migration, compiled into the binary so the
 // CGO_ENABLED=0 image needs no second COPY. Files are named
-// <timestamp>_<slug>.sql; goose refuses an unapplied file with a lower version
-// than the highest applied one, so a PR that lands after another migration
-// renumbers on rebase.
+// <timestamp>_<slug>.sql. Number a new one with the output of
+// `date -u +%Y%m%d%H%M%S`, run when you write it or rebase it, which also
+// keeps two written on the same day apart. goose refuses an unapplied file
+// numbered below the highest one a database has applied, and the bot then
+// fails at startup. So a file a branch adds sorts above every migration on
+// develop, and is numbered no later than now so it can't sit above files
+// written before that date. A migration on develop never changes, since a
+// database that applied it never runs the edit. The gate enforces all three
+// rules with .github/scripts/check-migrations.sh.
+//
+// goose's out-of-order mode stays off. It would let production apply files in
+// a different order from a fresh database, so a schema could differ from the
+// one the tests built without any error.
 //
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
