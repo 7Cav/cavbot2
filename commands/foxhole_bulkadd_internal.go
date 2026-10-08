@@ -246,6 +246,14 @@ func runFoxholeBulkAddInternal(
 	utils.Info("✨ Done!", "command", command, "unit", unit.Value, "added", len(added))
 }
 
+// The headings of the groups a roster add's summary lists troopers under,
+// by forum username.
+const (
+	rosterAddNotInDiscord    = "Not in this Discord"
+	rosterAddNoDiscordLinked = "No Discord linked"
+	rosterAddCouldNotAdd     = "Could not be added"
+)
+
 // buildRosterAddSummary composes the ephemeral summary. The
 // added-or-confirmed count always leads (the command never silently reports
 // nothing); the not-in-Discord, no-Discord-linked, and could-not-be-added
@@ -261,13 +269,13 @@ func buildRosterAddSummary(
 	sections := []string{
 		fmt.Sprintf("✅ Added or confirmed %d %s member(s) in %s.", addedCount, unitLabel, roleName),
 	}
-	if section := formatRosterAddSection("Not in this Discord", notInDiscord); section != "" {
+	if section := formatRosterAddSection(rosterAddNotInDiscord, notInDiscord); section != "" {
 		sections = append(sections, section)
 	}
-	if section := formatRosterAddSection("No Discord linked", noDiscordLinked); section != "" {
+	if section := formatRosterAddSection(rosterAddNoDiscordLinked, noDiscordLinked); section != "" {
 		sections = append(sections, section)
 	}
-	if section := formatRosterAddSection("Could not be added", faults); section != "" {
+	if section := formatRosterAddSection(rosterAddCouldNotAdd, faults); section != "" {
 		sections = append(sections, section)
 	}
 	if missingPermissions {
@@ -282,7 +290,7 @@ func buildRosterAddSummary(
 // without interpolating any raw Discord body.
 func rosterAddPermissionsHint(roleName string) string {
 	return fmt.Sprintf(
-		"⚠️ Some members couldn't be added because the bot is missing permissions. It needs Manage Roles, and its own role must sit above '%s'.",
+		"⚠️ Some members couldn't be added because the bot is "+adviceMissingPermissions+". It needs Manage Roles, and its own role must sit above '%s'.",
 		roleName,
 	)
 }
