@@ -68,7 +68,7 @@ func TestRunFoxholePurge_RecreateFailureAdvisesOnEachKindOfDiscordFailure(t *tes
 			runFoxholePurge(f, gm, foxholeInteraction("guild-1"), "guild-1", "internal")
 
 			reply := lastEditContent(f.Calls())
-			assertVerdict(t, reply, defaultInternalRoleName, verdictFailed)
+			assertReplyNames(t, reply, defaultInternalRoleName)
 			assertFailureReply(t, reply, failure, rec)
 			if failure.advice == adviceMissingPermissions {
 				assertReplyNames(t, reply, "Manage Roles")
@@ -98,6 +98,7 @@ func TestRunFoxholePurge_OldRoleDeleteFailureReportsLingeringRole(t *testing.T) 
 	reply := lastEditContent(f.Calls())
 	assertVerdict(t, reply, defaultInternalRoleName, verdictLeftOver)
 	assertReplyNames(t, reply, "old-int")
+	assertNoLeak(t, reply, serverError.err)
 	if rec.count != 1 {
 		t.Fatalf("expected the system fault to be captured once, got %d", rec.count)
 	}

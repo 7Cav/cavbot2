@@ -69,6 +69,17 @@ func kvValue(kv []any, key string) (any, bool) {
 	return nil, false
 }
 
+// assertCaptureNames fails unless a capture's key/values carry each value
+// want gives, under its key.
+func assertCaptureNames(t *testing.T, kv []any, want map[string]string) {
+	t.Helper()
+	for key, value := range want {
+		if got, ok := kvValue(kv, key); !ok || got != value {
+			t.Errorf("capture context %q = %v, want %q; kv %v", key, got, value, kv)
+		}
+	}
+}
+
 // discordFailure is one kind of answer Discord gives a failed call, the
 // advice a reply gives for it, and whether it is a system fault that pages
 // Sentry (ADR 0001).
@@ -91,16 +102,31 @@ var (
 	badRequest   = discordFailure{"400", restError(http.StatusBadRequest, 50035, rawBodyMarker), adviceRejected, false}
 )
 
-// assertFailureReply fails unless reply is one ❌ line carrying the
-// failure's advice and none of the other kinds', without the raw Discord
-// body, and Sentry got one event exactly when the failure is a system
-// fault.
-func assertFailureReply(t *testing.T, reply string, failure discordFailure, rec *captureRecorder) {
+// assertNoLeak fails if reply carries err's own text: the marker a test
+// plants in Discord's answer, or the HTTP status a REST error's text leads
+// with.
+func assertNoLeak(t *testing.T, reply string, err error) {
 	t.Helper()
-	assertAdvice(t, reply, failure.advice)
 	if strings.Contains(reply, rawBodyMarker) {
 		t.Errorf("reply %q leaks the raw Discord body", reply)
 	}
+	var restErr *discordgo.RESTError
+	if errors.As(err, &restErr) && restErr.Response != nil {
+		if status := fmt.Sprintf("HTTP %d", restErr.Response.StatusCode); strings.Contains(reply, status) {
+			t.Errorf("reply %q leaks Discord's %s", reply, status)
+		}
+	}
+}
+
+// assertFailureReply fails unless reply is one ❌ line carrying the
+// failure's advice and none of the other kinds', without the failure's own
+// text, and Sentry got one event exactly when the failure is a system
+// fault.
+func assertFailureReply(t *testing.T, reply string, failure discordFailure, rec *captureRecorder) {
+	t.Helper()
+	assertVerdict(t, reply, "", verdictFailed)
+	assertAdvice(t, reply, failure.advice)
+	assertNoLeak(t, reply, failure.err)
 	want := 0
 	if failure.captured {
 		want = 1
@@ -156,11 +182,7 @@ func TestFoxholeMemberLookupAdvisesOnEachKindOfDiscordFailure(t *testing.T) {
 				stringOption("discordname", "<@123456789012345678>"),
 			))
 
-			reply := lastEditContent(f.Calls())
-			if got := verdicts(reply, ""); len(got) != 1 || got[0] != verdictFailed {
-				t.Errorf("the reply's verdicts are %q, want one %q", got, verdictFailed)
-			}
-			assertFailureReply(t, reply, failure, rec)
+			assertFailureReply(t, lastEditContent(f.Calls()), failure, rec)
 			if n := gm.countCalls("GuildMembersSearch"); n != 0 {
 				t.Errorf("the add searched by name %d times after its lookup by ID", n)
 			}
@@ -230,11 +252,7 @@ func TestFoxholeNameSearchAdvisesOnEachKindOfDiscordFailure(t *testing.T) {
 				stringOption("discordname", "somename"),
 			))
 
-			reply := lastEditContent(f.Calls())
-			if got := verdicts(reply, ""); len(got) != 1 || got[0] != verdictFailed {
-				t.Errorf("the reply's verdicts are %q, want one %q", got, verdictFailed)
-			}
-			assertFailureReply(t, reply, failure, rec)
+			assertFailureReply(t, lastEditContent(f.Calls()), failure, rec)
 		})
 	}
 }
@@ -271,7 +289,7 @@ func foxholeRoleAddGM(addErr error) *fakeGuildManager {
 // the bot's own role must sit above. A role deleted since it was resolved is
 // a config fault: it pages Sentry, and retrying won't clear it.
 func TestFoxholeRoleAddAdvisesOnEachKindOfDiscordFailure(t *testing.T) {
-	for _, failure := range []discordFailure{serverError, unknownRole, forbidden, badRequest} {
+	for _, failure := range []discordFailure{serverError, transport, unknownRole, forbidden, badRequest} {
 		t.Run(failure.name, func(t *testing.T) {
 			rec := &captureRecorder{}
 			rec.install(t)
@@ -290,9 +308,8 @@ func TestFoxholeRoleAddAdvisesOnEachKindOfDiscordFailure(t *testing.T) {
 	}
 }
 
-// /foxhole remove shares the add's failure replies: a Discord server error
-// on the removal names the member, keeps the advice to retry, and pages
-// Sentry once.
+// A Discord server error on /foxhole remove's role change names the member,
+// keeps the advice to retry, and pages Sentry once.
 func TestRunFoxholeRemove_RoleRemove5xxCaptures(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)

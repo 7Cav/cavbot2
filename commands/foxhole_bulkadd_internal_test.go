@@ -720,9 +720,7 @@ func TestRunFoxholeBulkAddInternal_MissingGuildRejectedBeforeAnything(t *testing
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("DM-context must not touch the guild; got %v", gm.Calls())
 	}
-	if got := verdicts(lastResponseContent(f.Calls()), ""); !slices.Equal(got, []string{verdictFailed}) {
-		t.Fatalf("the refusal's verdicts are %q, want one %q", got, verdictFailed)
-	}
+	assertVerdict(t, lastResponseContent(f.Calls()), "", verdictFailed)
 }
 
 // A crafted interaction carrying a value absent from the registry is refused
@@ -756,9 +754,7 @@ func TestRunFoxholeBulkAddInternal_MissingUnitOptionRejected(t *testing.T) {
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("a missing unit must short-circuit before any guild call; got %v", gm.Calls())
 	}
-	if got := verdicts(lastResponseContent(f.Calls()), ""); !slices.Equal(got, []string{verdictFailed}) {
-		t.Fatalf("the refusal's verdicts are %q, want one %q", got, verdictFailed)
-	}
+	assertVerdict(t, lastResponseContent(f.Calls()), "", verdictFailed)
 }
 
 // When the deferred-ephemeral acknowledge fails, the run bails before resolving
@@ -844,49 +840,60 @@ func TestRunFoxholeBulkAddInternal_ReplyStaysWithinDiscordsMessageLimit(t *testi
 	assertLeadNamesTheUnit(t, reply)
 }
 
-// The added embed names every member added when they fit. When they don't,
-// it names as many as it shows, each one added and none twice, and its last
-// line counts the rest, so the members named and the members counted make
-// up everyone added.
-func TestRunFoxholeBulkAddInternal_EmbedNamesOrCountsEveryMemberAdded(t *testing.T) {
-	for _, total := range []int{5, 200} {
-		t.Run(fmt.Sprintf("%d added", total), func(t *testing.T) {
-			serveRosterAndProfiles(t, manyTroopers(total, true), http.StatusOK, nil)
-			f := &fakeResponder{}
+// addedEmbed runs a roster add of total linked troopers and returns the
+// members its added embed names, how many more its last line counts, and
+// the lines that name members.
+func addedEmbed(t *testing.T, total int) (named []string, left int, mentionLines string) {
+	t.Helper()
+	serveRosterAndProfiles(t, manyTroopers(total, true), http.StatusOK, nil)
+	f := &fakeResponder{}
 
-			runFoxholeBulkAddInternal(f, internalRoleGM(), nil, foxholeBulkAddInternalInteraction("D/ACD"))
+	runFoxholeBulkAddInternal(f, internalRoleGM(), nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
-			embed := lastEditEmbed(f.Calls())
-			if embed == nil {
-				t.Fatal("the reply carries no embed of the members added")
-			}
-			added := map[string]bool{}
-			for _, p := range manyTroopers(total, true).LiteProfiles {
-				added[p.DiscordID] = true
-			}
-			named := embedMentions(embed)
-			seen := map[string]bool{}
-			for _, id := range named {
-				if !added[id] || seen[id] {
-					t.Errorf("the embed names %s, which is no added member or is named twice", id)
-				}
-				seen[id] = true
-			}
-			lines := strings.Split(embed.Description, "\n")
-			left := 0
-			if _, err := fmt.Sscanf(lines[len(lines)-1], addedEmbedMore, &left); err != nil {
-				left = 0
-			}
-			if len(named)+left != total {
-				t.Errorf("the embed names %d members and counts %d more, want %d in all", len(named), left, total)
-			}
-			if total == 5 && left != 0 {
-				t.Errorf("the embed counts %d more of 5 members, want all named", left)
-			}
-			if total == 200 && left == 0 {
-				t.Error("the embed names all 200 members, want the rest counted")
-			}
-		})
+	embed := lastEditEmbed(f.Calls())
+	if embed == nil {
+		t.Fatal("the reply carries no embed of the members added")
+	}
+	added := map[string]bool{}
+	for _, p := range manyTroopers(total, true).LiteProfiles {
+		added[p.DiscordID] = true
+	}
+	named = embedMentions(embed)
+	seen := map[string]bool{}
+	for _, id := range named {
+		if !added[id] || seen[id] {
+			t.Errorf("the embed names %s, which is no added member or is named twice", id)
+		}
+		seen[id] = true
+	}
+	lines := strings.Split(embed.Description, "\n")
+	if _, err := fmt.Sscanf(lines[len(lines)-1], addedEmbedMore, &left); err == nil {
+		lines = lines[:len(lines)-1]
+	}
+	return named, left, strings.Join(lines, "\n")
+}
+
+// A roster add's embed names every member it added when they fit.
+func TestRunFoxholeBulkAddInternal_EmbedNamesEveryMemberAddedWhenTheyFit(t *testing.T) {
+	named, left, _ := addedEmbed(t, 5)
+
+	if len(named) != 5 || left != 0 {
+		t.Errorf("the embed names %d members and counts %d more, want all 5 named", len(named), left)
+	}
+}
+
+// When the members added don't fit, the embed names as many as fit in
+// Discord's 4096-character description, each one added and none twice, and
+// its last line counts the rest, so the members named and the members
+// counted make up everyone added.
+func TestRunFoxholeBulkAddInternal_EmbedCountsTheMembersItCantName(t *testing.T) {
+	named, left, mentionLines := addedEmbed(t, 200)
+
+	if left == 0 || len(named)+left != 200 {
+		t.Errorf("the embed names %d members and counts %d more, want the rest of the 200 counted", len(named), left)
+	}
+	if n := len(mentionLines); n > 4096 {
+		t.Errorf("the embed's mentions run %d characters, over Discord's 4096", n)
 	}
 }
 

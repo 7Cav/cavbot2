@@ -15,9 +15,10 @@ import (
 var captureError = utils.CaptureError
 
 // The advice a reply gives for each kind of Discord failure
-// classifyDiscordError tells apart. Each kind's phrase sits in every reply
-// for that kind and in no reply for another, so a test tells the kinds apart
-// by these alone.
+// classifyDiscordError tells apart. Each kind's phrase sits in every Discord
+// failure reply of that kind and in none of another kind, so a test tells
+// the kinds apart by these alone. A roster fetch failure, which the milpac
+// API causes, gets the transient advice too.
 const (
 	// adviceTransient is a 5xx or transport fault's, which may clear.
 	adviceTransient = "try again shortly"
@@ -156,8 +157,8 @@ func classifyNotFound(restErr *discordgo.RESTError) discordErrorClass {
 // keep their own transient retry wording.
 func configFaultHint(class discordErrorClass) string {
 	return fmt.Sprintf(
-		"a stale or deleted role, or a wrong guild ID (%s). "+adviceConfigFault,
-		class.UserDetail,
+		"a stale or deleted role, or a wrong guild ID (%s). %s",
+		class.UserDetail, adviceConfigFault,
 	)
 }
 
@@ -269,18 +270,18 @@ func purgeRecreateErrorReply(roleName string, err error, captureMsg string, kv .
 			)
 		}
 		return fmt.Sprintf(
-			"❌ Failed to recreate '%s': Discord error, the role was not recreated; please "+adviceTransient+".",
-			roleName,
+			"❌ Failed to recreate '%s': Discord error, the role was not recreated; please %s.",
+			roleName, adviceTransient,
 		)
 	case class.MissingPermissions:
 		return fmt.Sprintf(
-			"❌ Failed to recreate '%s': "+adviceMissingPermissions+". The bot needs Manage Roles and its own role must sit above '%s'. The role was not recreated.",
-			roleName, roleName,
+			"❌ Failed to recreate '%s': %s. The bot needs Manage Roles and its own role must sit above '%s'. The role was not recreated.",
+			roleName, adviceMissingPermissions, roleName,
 		)
 	default:
 		return fmt.Sprintf(
-			"❌ Failed to recreate '%s': "+adviceRejected+" (%s). The role was not recreated.",
-			roleName, class.UserDetail,
+			"❌ Failed to recreate '%s': %s (%s). The role was not recreated.",
+			roleName, adviceRejected, class.UserDetail,
 		)
 	}
 }
@@ -361,14 +362,14 @@ func roleMutationErrorMessage(action, roleName, userLabel string, class discordE
 		if class.ConfigFault {
 			return fmt.Sprintf("❌ Could not %s '%s' for %s: %s.", action, roleName, userLabel, configFaultHint(class))
 		}
-		return fmt.Sprintf("❌ Could not %s '%s' for %s: Discord error, please "+adviceTransient+".", action, roleName, userLabel)
+		return fmt.Sprintf("❌ Could not %s '%s' for %s: Discord error, please %s.", action, roleName, userLabel, adviceTransient)
 	case class.MissingPermissions:
 		return fmt.Sprintf(
-			"❌ Could not %s '%s' for %s: "+adviceMissingPermissions+" — the bot needs Manage Roles and its own role must be positioned above '%s'.",
-			action, roleName, userLabel, roleName,
+			"❌ Could not %s '%s' for %s: %s — the bot needs Manage Roles and its own role must be positioned above '%s'.",
+			action, roleName, userLabel, adviceMissingPermissions, roleName,
 		)
 	default:
-		return fmt.Sprintf("❌ Could not %s '%s' for %s: "+adviceRejected+".", action, roleName, userLabel)
+		return fmt.Sprintf("❌ Could not %s '%s' for %s: %s.", action, roleName, userLabel, adviceRejected)
 	}
 }
 

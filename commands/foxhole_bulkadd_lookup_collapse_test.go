@@ -215,9 +215,7 @@ func TestRunFoxholeBulkAdd_Lookup4xxListedNotCaptured(t *testing.T) {
 		t.Fatalf("a 4xx lookup client fault must NOT capture to Sentry; got %d", rec.count)
 	}
 	got := lastEditContent(f.Calls())
-	if v := verdicts(got, ""); !slices.Equal(v, []string{verdictFailed}) {
-		t.Fatalf("the 4xx-faulted lookup must still be listed as failed; verdicts %q in %q", v, got)
-	}
+	assertVerdict(t, got, "", verdictFailed)
 	if strings.Contains(got, rawBodyMarker) {
 		t.Fatalf("must not leak the raw Discord body, got %q", got)
 	}

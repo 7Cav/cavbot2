@@ -2,7 +2,6 @@ package commands
 
 import (
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -469,9 +468,7 @@ func TestRunFoxhole_MemberlessInteractionRefusedWithoutPanic(t *testing.T) {
 			if len(gm.Calls()) != 0 {
 				t.Fatalf("a memberless interaction must not touch the guild; got %v", gm.Calls())
 			}
-			if got := verdicts(lastResponseContent(f.Calls()), ""); !slices.Equal(got, []string{verdictFailed}) {
-				t.Fatalf("the refusal's verdicts are %q, want one %q", got, verdictFailed)
-			}
+			assertVerdict(t, lastResponseContent(f.Calls()), "", verdictFailed)
 		})
 	}
 }
@@ -624,12 +621,8 @@ func TestRunFoxhole_BulkAddMixedResults(t *testing.T) {
 	runFoxhole(f, gm, nil, i)
 
 	calls := f.Calls()
-	embed := lastEditEmbed(calls)
-	if embed == nil {
-		t.Fatal("expected the reply to name the added member, got no embed")
-	}
-	if mentioned := regexp.MustCompile(`<@(\d+)>`).FindAllStringSubmatch(embed.Description, -1); len(mentioned) != 1 || mentioned[0][1] != "111" {
-		t.Fatalf("expected the reply to name only the added member 111, got embed %q", embed.Description)
+	if got := embedMentions(lastEditEmbed(calls)); !slices.Equal(got, []string{"111"}) {
+		t.Fatalf("the embed names %v as added, want only the added member 111", got)
 	}
 	assertVerdict(t, lastEditContent(calls), "bad", verdictFailed)
 }
@@ -647,9 +640,7 @@ func TestRunFoxhole_MissingDiscordnameForAdd(t *testing.T) {
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("missing discordname must short-circuit before guild calls; got %v", gm.Calls())
 	}
-	if got := verdicts(lastResponseContent(f.Calls()), ""); !slices.Equal(got, []string{verdictFailed}) {
-		t.Fatalf("the refusal's verdicts are %q, want one %q", got, verdictFailed)
-	}
+	assertVerdict(t, lastResponseContent(f.Calls()), "", verdictFailed)
 }
 
 // Discord's member search takes 1 to 100 characters, counted in runes. A
@@ -681,9 +672,7 @@ func TestRunFoxhole_AddNameQueryLengthLimit(t *testing.T) {
 				t.Fatalf("the name search ran: %v, want %v; calls %v", searched, tc.searches, gm.Calls())
 			}
 			if !tc.searches {
-				if got := verdicts(lastEditContent(f.Calls()), ""); !slices.Equal(got, []string{verdictFailed}) {
-					t.Errorf("the refusal's verdicts are %q, want one %q", got, verdictFailed)
-				}
+				assertVerdict(t, lastEditContent(f.Calls()), "", verdictFailed)
 			}
 		})
 	}

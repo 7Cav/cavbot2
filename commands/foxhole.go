@@ -1064,7 +1064,7 @@ func resolveMemberByID(gm GuildManager, guildID, userID string, faultSink lookup
 		class := classifyDiscordError(err)
 		switch {
 		case class.NotFound:
-			return nil, fmt.Errorf("❌ <@%s> "+adviceAbsent, userID)
+			return nil, fmt.Errorf("❌ <@%s> %s", userID, adviceAbsent)
 		case class.SystemFault:
 			recordLookupFault(faultSink, err, userID, "Failed to look up guild member by ID", "user_id", userID)
 			if class.ConfigFault {
@@ -1076,7 +1076,7 @@ func resolveMemberByID(gm GuildManager, guildID, userID string, faultSink lookup
 		}
 	}
 	if member == nil {
-		return nil, fmt.Errorf("❌ <@%s> "+adviceAbsent, userID)
+		return nil, fmt.Errorf("❌ <@%s> %s", userID, adviceAbsent)
 	}
 	return member, nil
 }

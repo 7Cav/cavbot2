@@ -137,8 +137,8 @@ func runFoxholeBulkAddInternal(
 			"command", command, "guild", guildID, "unit", unit.Value,
 		)
 		editEphemeral(r, interaction, fmt.Sprintf(
-			"❌ Failed to fetch the %s roster (milpac error); please try again shortly.",
-			unit.Label,
+			"❌ Failed to fetch the %s roster (milpac error); please %s.",
+			unit.Label, adviceTransient,
 		))
 		return
 	}
@@ -290,8 +290,8 @@ func buildRosterAddSummary(
 // without interpolating any raw Discord body.
 func rosterAddPermissionsHint(roleName string) string {
 	return fmt.Sprintf(
-		"⚠️ Some members couldn't be added because the bot is "+adviceMissingPermissions+". It needs Manage Roles, and its own role must sit above '%s'.",
-		roleName,
+		"⚠️ Some members couldn't be added because the bot is %s. It needs Manage Roles, and its own role must sit above '%s'.",
+		adviceMissingPermissions, roleName,
 	)
 }
 

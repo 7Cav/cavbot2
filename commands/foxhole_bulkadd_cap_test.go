@@ -56,9 +56,7 @@ func TestRunFoxhole_BulkAddOverLimitRejectedBeforeAnyAPICall(t *testing.T) {
 
 	// The reply must be actionable: name the limit and the offending count.
 	got := lastEditContent(f.Calls())
-	if v := verdicts(got, ""); !slices.Equal(v, []string{verdictFailed}) {
-		t.Fatalf("the refusal's verdicts are %q, want one %q", v, verdictFailed)
-	}
+	assertVerdict(t, got, "", verdictFailed)
 	if !strings.Contains(got, strconv.Itoa(maxBulkAddEntries)) {
 		t.Fatalf("rejection must name the limit %d, got %q", maxBulkAddEntries, got)
 	}
@@ -209,9 +207,7 @@ func TestRunFoxhole_BulkAddEntriesAreTheTrimmedNonBlankNames(t *testing.T) {
 				if calls := gm.Calls(); len(calls) != 0 {
 					t.Errorf("a bulkadd with nothing to do asked Discord %v", calls)
 				}
-				if got := verdicts(reply, ""); !slices.Equal(got, []string{verdictLeftOver}) {
-					t.Errorf("the reply's verdicts are %q, want one %q", got, verdictLeftOver)
-				}
+				assertVerdict(t, reply, "", verdictLeftOver)
 				return
 			}
 			for _, v := range verdicts(reply, "") {

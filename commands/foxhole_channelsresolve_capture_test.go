@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"slices"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
@@ -36,18 +35,9 @@ func TestRunFoxholePurge_ChannelLookupFailureAdvisesAndRecreatesNothing(t *testi
 			if gm.countCalls("GuildRoleCreate") != 0 {
 				t.Fatalf("must not recreate roles when channels are inaccessible; got %v", gm.Calls())
 			}
-			reply := lastEditContent(f.Calls())
-			if got := verdicts(reply, ""); !slices.Equal(got, []string{verdictFailed}) {
-				t.Errorf("the reply's verdicts are %q, want one %q", got, verdictFailed)
-			}
-			assertFailureReply(t, reply, failure, rec)
-			if !failure.captured {
-				return
-			}
-			for key, want := range map[string]string{"command": "foxhole", "guild": "guild-1"} {
-				if got, ok := kvValue(rec.lastKV, key); !ok || got != want {
-					t.Errorf("capture context %q = %v, want %q; kv %v", key, got, want, rec.lastKV)
-				}
+			assertFailureReply(t, lastEditContent(f.Calls()), failure, rec)
+			if failure.captured {
+				assertCaptureNames(t, rec.lastKV, map[string]string{"command": "foxhole", "guild": "guild-1"})
 			}
 		})
 	}
