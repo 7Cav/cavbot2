@@ -200,9 +200,6 @@ func (t *tracer) traceReturns(fn *ssa.Function, f *frame) bool {
 func (t *tracer) traceBindings(v *ssa.FreeVar, f *frame) bool {
 	closure := v.Parent()
 	index := slices.Index(closure.FreeVars, v)
-	if closure.Parent() == nil {
-		return false
-	}
 	for _, block := range closure.Parent().Blocks {
 		for _, instr := range block.Instrs {
 			if mk, ok := instr.(*ssa.MakeClosure); ok && mk.Fn == closure && t.trace(mk.Bindings[index], f) {
@@ -217,11 +214,7 @@ func (t *tracer) traceBindings(v *ssa.FreeVar, f *frame) bool {
 // and every argument of a call that addr is passed to, since the call may
 // write them there, as a strings.Builder's WriteString does.
 func (t *tracer) traceStores(addr ssa.Value, f *frame) bool {
-	refs := addr.Referrers()
-	if refs == nil {
-		return false
-	}
-	for _, ref := range *refs {
+	for _, ref := range *addr.Referrers() {
 		switch ref := ref.(type) {
 		case *ssa.Store:
 			if ref.Addr == addr && t.trace(ref.Val, f) {
