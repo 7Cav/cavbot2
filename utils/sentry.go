@@ -84,18 +84,7 @@ func CaptureError(msg string, err error, kv ...any) {
 
 	sentry.WithScope(func(scope *sentry.Scope) {
 		scope.SetTag("message", msg)
-
-		extras := make(map[string]any)
-		for i := 0; i+1 < len(kv); i += 2 {
-			key, ok := kv[i].(string)
-			if !ok {
-				continue
-			}
-			extras[key] = kv[i+1]
-		}
-		if len(extras) > 0 {
-			scope.SetContext("extra", extras)
-		}
+		setExtras(scope, extrasFrom(kv))
 		promoteCommandTag(scope, kv)
 
 		sentry.CaptureException(err)
@@ -110,7 +99,22 @@ func RecoverPanic(ctx string, kv ...any) {
 	if r == nil {
 		return
 	}
+	// Its events still carry no extra context. #512 left the events of
+	// RecoverPanic's callers as they were.
+	reportPanic(ctx, r, kv, nil)
+}
 
+// ReportPanic logs a panic its caller has already recovered and forwards it
+// to Sentry, for a caller that still has to act once the panic is caught,
+// such as answer the request it ended. RecoverPanic recovers the panic
+// itself and leaves its caller no way to learn of it. The event carries
+// RecoverPanic's tags, and kv in its extra context too, the way
+// CaptureError's carries its pairs.
+func ReportPanic(ctx string, r any, kv ...any) {
+	reportPanic(ctx, r, kv, extrasFrom(kv))
+}
+
+func reportPanic(ctx string, r any, kv []any, extras map[string]any) {
 	Error("panic recovered", append([]any{"context", ctx, "panic", r, "stack", string(debug.Stack())}, kv...)...)
 
 	if sentry.CurrentHub().Client() == nil {
@@ -120,7 +124,29 @@ func RecoverPanic(ctx string, kv ...any) {
 	sentry.WithScope(func(scope *sentry.Scope) {
 		scope.SetTag("context", ctx)
 		promoteCommandTag(scope, kv)
+		setExtras(scope, extras)
 		sentry.CurrentHub().RecoverWithContext(context.Background(), r)
 	})
 	sentry.Flush(2 * time.Second)
+}
+
+// extrasFrom collects a capture's string-keyed key/values for the event's
+// extra context.
+func extrasFrom(kv []any) map[string]any {
+	extras := make(map[string]any)
+	for i := 0; i+1 < len(kv); i += 2 {
+		key, ok := kv[i].(string)
+		if !ok {
+			continue
+		}
+		extras[key] = kv[i+1]
+	}
+	return extras
+}
+
+// setExtras puts extras on the scope as its extra context, when there are any.
+func setExtras(scope *sentry.Scope, extras map[string]any) {
+	if len(extras) > 0 {
+		scope.SetContext("extra", extras)
+	}
 }

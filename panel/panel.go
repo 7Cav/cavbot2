@@ -218,11 +218,20 @@ func (p *Panel) Handler() http.Handler {
 		mux.Handle(rt.pattern, rt.handler)
 	}
 	protected := http.NewCrossOriginProtection().Handler(mux)
-	// A panic in a handler is recovered here, through the same path every
-	// other goroutine uses (ADR 0001), before net/http's own recovery would
-	// print it with the remote address through the stdlib logger.
+	// A panic in a handler is recovered here and reported through the same
+	// path every other goroutine uses (ADR 0001), before net/http's own
+	// recovery would print it with the remote address through the stdlib
+	// logger. The request still gets an answer: serverError's text without
+	// its capture, so the panic is one event. The recovery runs before the
+	// gate, and the answer needs no session. A panic can come after a store
+	// write, so the answer never says nothing changed.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer utils.RecoverPanic("panel-request", "path", r.URL.Path)
+		defer func() {
+			if v := recover(); v != nil {
+				utils.ReportPanic("panel-request", v, "path", r.URL.Path)
+				http.Error(w, serverErrorText, http.StatusInternalServerError)
+			}
+		}()
 		protected.ServeHTTP(w, r)
 	})
 }
@@ -254,12 +263,16 @@ func (p *Panel) authStart(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, p.oauth.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier)), http.StatusSeeOther)
 }
 
+// serverErrorText is the answer to a request the panel itself could not
+// complete. It says nothing of whether a change took effect.
+const serverErrorText = "the panel could not complete the request"
+
 // serverError is a failure inside the panel itself, not a forum answer: the
 // random source or a template. It captures to Sentry (ADR 0001) and answers
 // a bare 500.
 func (p *Panel) serverError(w http.ResponseWriter, step string, err error) {
 	utils.CaptureError("Panel request failed", err, "step", step)
-	http.Error(w, "the panel could not complete the request", http.StatusInternalServerError)
+	http.Error(w, serverErrorText, http.StatusInternalServerError)
 }
 
 // authCallback is the one GET that creates state, defended by the state value
