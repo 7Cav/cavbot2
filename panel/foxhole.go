@@ -364,9 +364,13 @@ const (
 // fieldScope is the purge confirmation's field: the scope it confirms.
 const fieldScope = "scope"
 
-// fieldRole is the remove preview's field beside the members it posts as
-// fieldMember: the role it confirms.
-const fieldRole = "role"
+// The remove preview's fields beside the members it posts as fieldMember:
+// the role it confirms, and the ID of each member whose approval it named
+// as cleared.
+const (
+	fieldRole            = "role"
+	fieldApprovalCleared = "approval-cleared"
+)
 
 // fieldReport is the Stop form's field: the ID of the report of the action
 // the progress block showed.

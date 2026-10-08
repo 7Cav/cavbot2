@@ -91,6 +91,9 @@
       {{- range .Loses}}
       <input type="hidden" name="member" value="{{.ID}}">
       {{- end}}
+      {{- range .Cleared}}
+      <input type="hidden" name="approval-cleared" value="{{.ID}}">
+      {{- end}}
       <button type="submit" class="btn btn--danger" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Remove {{.Name}} from {{len .Loses}} {{if eq (len .Loses) 1}}member{{else}}members{{end}}</button>
       <a class="btn" href="{{.Back}}">Cancel</a>
     </form>

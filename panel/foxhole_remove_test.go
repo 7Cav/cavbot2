@@ -202,6 +202,67 @@ func TestConfirmedRemovalTakesExternalAndClearsTheApprovalOfAnApprovedCollaborat
 	}
 }
 
+// assertLostExternalKeptApproval fails the test unless the member no longer
+// holds External yet still carries the approved mark on their row, and the
+// report lists them as changed without marking them as losing their
+// approval.
+func assertLostExternalKeptApproval(t *testing.T, w *testWorld, memberID string) {
+	t.Helper()
+	if holders := w.discord.holdersOf(roleExternal); slices.Contains(holders, memberID) {
+		t.Errorf("after the removal %v hold External, want %s among them no more", holders, memberID)
+	}
+	page := parseHTML(t, w.b.get(foxholePath))
+	if got := approvedRows(t, page); !slices.Contains(got, memberID) {
+		t.Errorf("after the removal the rows %v carry the approved mark, want %s among them", got, memberID)
+	}
+	item := findElement(reportList(t, reportBlock(t, page), "changed"), "", "data-member", memberID)
+	if item == nil {
+		t.Fatalf("the report doesn't list %s as changed", memberID)
+	}
+	if _, ok := attrValue(item, "data-approval-cleared"); ok {
+		t.Errorf("the report marks %s as losing their approval, which the preview didn't name", memberID)
+	}
+}
+
+// A removal clears only the approvals its preview named. A manager approves
+// a selected member while the removal runs, before it reaches them: the
+// removal takes their External and leaves the approval, so the next re-add
+// gives External back.
+func TestRemovalKeepsAnApprovalGivenWhileItRuns(t *testing.T) {
+	w := newFoxholeWorld(t)
+	preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID, memberMarsh.ID)))
+	hold := holdRoleWrites(t, w)
+	assertRedirect(t, confirmRemoval(t, w.b, preview), foxholePath)
+	unreached := memberKestrel.ID
+	if hold.next(t).MemberID == memberKestrel.ID {
+		unreached = memberMarsh.ID
+	}
+
+	approveThroughThePage(t, w, unreached)
+	hold.open()
+	w.awaitActionEnd(t)
+
+	assertLostExternalKeptApproval(t, w, unreached)
+}
+
+// A removal clears only the approvals its preview named. A manager approves
+// Kestrel after the remove preview opened, showing no approval to clear, and
+// before its Confirm: the removal takes Kestrel's External and leaves the
+// approval.
+func TestRemovalKeepsAnApprovalGivenAfterItsPreviewOpened(t *testing.T) {
+	w := newFoxholeWorld(t)
+	preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID)))
+	if findElement(preview, "", "data-list", "approval-cleared") != nil {
+		t.Fatal("the preview names an approval to clear before anyone approved Kestrel")
+	}
+	approveThroughThePage(t, w, memberKestrel.ID)
+
+	assertRedirect(t, confirmRemoval(t, w.b, preview), foxholePath)
+	w.awaitActionEnd(t)
+
+	assertLostExternalKeptApproval(t, w, memberKestrel.ID)
+}
+
 // Every role change a removal makes carries the audit log reason the spec
 // fixes, naming the removal and the forum user who started it, so a Discord
 // moderator knows who did it without opening the panel.

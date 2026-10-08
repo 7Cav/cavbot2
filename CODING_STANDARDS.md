@@ -16,8 +16,10 @@ store and the change log as they were. Reference: `nobody-to-remove`,
 **A Confirm acts on what its preview showed.** The gap between a preview
 and its Confirm is a TOCTOU window. The member list can move in it, as when
 a username changes hands. A Confirm acts only on members its preview
-listed, or refuses and shows the preview again. Reference: `startRemoval`
-acts on the IDs its preview posted, and `startAdd` matches its lines again
+listed, or refuses and shows the preview again. A Confirm's other effects,
+such as clearing an approval, reach only what its preview named. Reference:
+`startRemoval` acts on the IDs its preview posted and clears only the
+approvals its preview listed, and `startAdd` matches its lines again
 and refuses with `errAddChanged` when they name other members. A purge
 confirmation lists counts rather than members, and the purge acts on
 whoever holds the role when it starts.
