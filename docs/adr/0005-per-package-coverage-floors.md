@@ -4,6 +4,7 @@
 
 Accepted (0.7.6 / PR #75). **Amended 2026-10-07**: the rule for raising a
 floor changed; see *Amendment: floors track coverage, not each PR's gain*.
+**Amended 2026-10-08**: a tested package with no floor fails the check.
 Per-package floors are unchanged.
 
 ## Decision
@@ -78,3 +79,13 @@ a fresh floor leaves.
 - Floors live in `.github/coverage-floors.tsv`. When the check prints a RAISE
   line, set that floor in the same PR.
 - A new package gets a floor in the PR that adds it, by the same rule.
+  *Superseded by the 2026-10-08 amendment.*
+
+## Amendment: a tested package with no floor fails the check (2026-10-08)
+
+A package whose tests report a percentage needs a floor. The check fails one
+that has none and prints a `NO FLOOR` line naming the floor to set, by the
+RAISE rule but never below 0. A package without tests needs no floor, since a
+floor of 0 guards nothing, so `main` needs no exemption by name. Unlike RAISE,
+this fails the check. Only a PR that adds a package's first test, or deletes
+its floor, can cause it, so `develop` never goes red over it (#482).
