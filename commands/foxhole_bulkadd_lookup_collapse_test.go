@@ -2,6 +2,7 @@ package commands
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -45,8 +46,8 @@ func TestRunFoxholeBulkAdd_LookupSameSignatureCollapsesToOneCapture(t *testing.T
 
 	// The per-entry summary is unchanged: every failed lookup is still listed.
 	got := lastEditContent(f.Calls())
-	if strings.Count(got, "❌") != 3 {
-		t.Fatalf("every failed lookup must still be listed in the summary; got %q", got)
+	if v := verdicts(got, ""); !slices.Equal(v, []string{verdictFailed, verdictFailed, verdictFailed}) {
+		t.Fatalf("the summary's verdicts are %q, want a failure for each of the 3 lookups; got %q", v, got)
 	}
 	if strings.Contains(got, rawBodyMarker) {
 		t.Fatalf("must not leak the raw Discord body, got %q", got)
@@ -187,8 +188,8 @@ func TestRunFoxholeBulkAdd_LookupNonCapturedOutcomesListedNotCaptured(t *testing
 	}
 	// All three are still surfaced to the operator, never silently dropped.
 	got := lastEditContent(f.Calls())
-	if strings.Count(got, "❌") != 3 {
-		t.Fatalf("every non-captured lookup failure must still be listed; got %q", got)
+	for _, entry := range []string{"<@111>", "ghost", "common"} {
+		assertVerdict(t, got, entry, verdictFailed)
 	}
 	if strings.Contains(got, rawBodyMarker) {
 		t.Fatalf("must not leak the raw Discord body, got %q", got)
@@ -214,8 +215,8 @@ func TestRunFoxholeBulkAdd_Lookup4xxListedNotCaptured(t *testing.T) {
 		t.Fatalf("a 4xx lookup client fault must NOT capture to Sentry; got %d", rec.count)
 	}
 	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "❌") {
-		t.Fatalf("the 4xx-faulted lookup must still be listed; got %q", got)
+	if v := verdicts(got, ""); !slices.Equal(v, []string{verdictFailed}) {
+		t.Fatalf("the 4xx-faulted lookup must still be listed as failed; verdicts %q in %q", v, got)
 	}
 	if strings.Contains(got, rawBodyMarker) {
 		t.Fatalf("must not leak the raw Discord body, got %q", got)
@@ -242,9 +243,7 @@ func TestRunFoxholeAdd_MemberLookup5xxCapturesOnceInline(t *testing.T) {
 		t.Fatalf("a single /foxhole add lookup 5xx must capture inline exactly once; got %d", rec.count)
 	}
 	got := lastEditContent(f.Calls())
-	if !strings.Contains(strings.ToLower(got), "try again shortly") {
-		t.Fatalf("a transient member-lookup fault must keep the retry hint, got %q", got)
-	}
+	assertAdvice(t, got, adviceTransient)
 	if strings.Contains(got, rawBodyMarker) {
 		t.Fatalf("must not leak the raw Discord body, got %q", got)
 	}
@@ -267,9 +266,11 @@ func TestRunFoxholeRemove_MemberLookup5xxCapturesOnceInline(t *testing.T) {
 	if rec.count != 1 {
 		t.Fatalf("a single /foxhole remove lookup 5xx must capture inline exactly once; got %d", rec.count)
 	}
-	if got := lastEditContent(f.Calls()); strings.Contains(got, rawBodyMarker) {
+	got := lastEditContent(f.Calls())
+	if strings.Contains(got, rawBodyMarker) {
 		t.Fatalf("must not leak the raw Discord body, got %q", got)
 	}
+	assertAdvice(t, got, adviceTransient)
 }
 
 // The headline #216 guarantee: the lookup collector and the role-add collector
@@ -368,8 +369,6 @@ func TestRunFoxholeBulkAdd_LookupByIDConfig404CapturedAbsenceNot(t *testing.T) {
 		if rec.count != 0 {
 			t.Fatalf("a genuine absence (Unknown Member 404) on the by-ID lookup must NOT capture; got %d", rec.count)
 		}
-		if got := lastEditContent(f.Calls()); !strings.Contains(got, "❌") {
-			t.Fatalf("the absent member must still be listed for the operator; got %q", got)
-		}
+		assertVerdict(t, lastEditContent(f.Calls()), "<@111>", verdictFailed)
 	})
 }

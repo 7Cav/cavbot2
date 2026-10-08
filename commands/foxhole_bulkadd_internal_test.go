@@ -1,7 +1,10 @@
 package commands
 
 import (
+	"fmt"
 	"net/http"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -160,10 +163,70 @@ func TestValidatedInternalUnits_RegistryRowsValidAndUnique(t *testing.T) {
 	}
 }
 
+// rosterAddHeadings are the headings a roster add's reply lists troopers
+// under.
+var rosterAddHeadings = []string{rosterAddNotInDiscord, rosterAddNoDiscordLinked, rosterAddCouldNotAdd}
+
+// troopersUnder returns which of troopers a roster add's reply lists under
+// each group heading, keyed by the heading. A heading's group runs from its
+// heading to the next.
+func troopersUnder(reply string, troopers ...string) map[string][]string {
+	groups := map[string][]string{}
+	heading := ""
+	for _, line := range strings.Split(reply, "\n") {
+		if i := slices.IndexFunc(rosterAddHeadings, func(h string) bool { return strings.Contains(line, h) }); i >= 0 {
+			heading = rosterAddHeadings[i]
+			continue
+		}
+		if heading == "" {
+			continue
+		}
+		for _, trooper := range troopers {
+			if strings.Contains(line, trooper) {
+				groups[heading] = append(groups[heading], trooper)
+			}
+		}
+	}
+	return groups
+}
+
+// assertTroopersUnder fails unless the roster add's reply lists troopers
+// under each heading exactly as want does, and the troopers want leaves out
+// under none.
+func assertTroopersUnder(t *testing.T, reply string, want map[string][]string, troopers ...string) {
+	t.Helper()
+	got := troopersUnder(reply, troopers...)
+	for _, heading := range rosterAddHeadings {
+		if !slices.Equal(got[heading], want[heading]) {
+			t.Errorf("the reply lists %v under %q, want %v; reply %q", got[heading], heading, want[heading], reply)
+		}
+	}
+}
+
+// embedMentions returns the IDs of the members the added embed names, in
+// order, or none when the reply carries no embed.
+func embedMentions(embed *discordgo.MessageEmbed) []string {
+	if embed == nil {
+		return nil
+	}
+	var ids []string
+	for _, match := range regexp.MustCompile(`<@(\d+)>`).FindAllStringSubmatch(embed.Description, -1) {
+		ids = append(ids, match[1])
+	}
+	return ids
+}
+
+// assertLeadNamesTheUnit fails unless the roster add's reply has one line
+// naming the unit, and that line says the add was done.
+func assertLeadNamesTheUnit(t *testing.T, reply string) {
+	t.Helper()
+	assertVerdict(t, reply, "D/ACD", verdictDone)
+}
+
 // Happy path: every roster member has a linked, in-guild Discord. Each one is
 // added straight to the Internal role by ID (no member search), the run
-// is acknowledged with a deferred ephemeral, and the report carries the
-// added-or-confirmed count plus the success mention embed.
+// is acknowledged with a deferred ephemeral, and the reply names the unit
+// and every member added.
 func TestRunFoxholeBulkAddInternal_HappyPathAddsAllAndReportsCount(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
@@ -217,21 +280,19 @@ func TestRunFoxholeBulkAddInternal_HappyPathAddsAllAndReportsCount(t *testing.T)
 		t.Fatal("the defer must be ephemeral")
 	}
 
-	got := lastEditContent(calls)
-	if !strings.Contains(got, "Added or confirmed 2") {
-		t.Fatalf("expected the exact added-or-confirmed lead phrase, got %q", got)
+	reply := lastEditContent(calls)
+	assertLeadNamesTheUnit(t, reply)
+	assertReplyNames(t, reply, defaultInternalRoleName)
+	// A clean run is not a permissions problem: no advice for one.
+	if strings.Contains(reply, adviceMissingPermissions) {
+		t.Fatalf("a clean run must not carry the missing-permissions advice; got %q", reply)
 	}
-	// A clean run is not a permissions problem: no hint.
-	if strings.Contains(got, "Manage Roles") {
-		t.Fatalf("a clean run must not surface the missing-permissions hint; got %q", got)
-	}
+	assertTroopersUnder(t, reply, nil, "Trooper.A", "Trooper.B")
 
-	embed := lastEditEmbed(calls)
-	if embed == nil {
-		t.Fatal("expected a success mention embed")
-	}
-	if embed.Title != "Added 2 user(s)" {
-		t.Fatalf("embed should report exactly 2 users, got %q", embed.Title)
+	added := embedMentions(lastEditEmbed(calls))
+	slices.Sort(added)
+	if want := []string{"111111111111111111", "222222222222222222"}; !slices.Equal(added, want) {
+		t.Fatalf("the embed names %v as added, want %v", added, want)
 	}
 
 	// A clean run must never page Sentry.
@@ -242,9 +303,9 @@ func TestRunFoxholeBulkAddInternal_HappyPathAddsAllAndReportsCount(t *testing.T)
 
 // Idempotency: re-adding a member who already holds the role is a no-op on
 // Discord's side (the role-add PUT returns success), so the fake returns nil and
-// the member must land in added/confirmed, not in any failure bucket. This is the
-// contract behind the "added or confirmed" wording — a nil error means the member
-// has the role whether or not this call is what put it there.
+// the member must count as added, not under any failure heading. This is the
+// contract behind the "added or confirmed" wording — a nil error means the
+// member has the role whether or not this call is what put it there.
 func TestRunFoxholeBulkAddInternal_IdempotentReAddCountsAsConfirmed(t *testing.T) {
 	serveRosterAndProfiles(t, liteRoster(
 		liteMember("Already.In", "111111111111111111"),
@@ -257,16 +318,11 @@ func TestRunFoxholeBulkAddInternal_IdempotentReAddCountsAsConfirmed(t *testing.T
 
 	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
-	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "Added or confirmed 1") {
-		t.Fatalf("an idempotent re-add must count as confirmed, got %q", got)
-	}
-	if strings.Contains(got, "Could not be added") {
-		t.Fatalf("an idempotent re-add must not be reported as a failure, got %q", got)
-	}
-	embed := lastEditEmbed(f.Calls())
-	if embed == nil || !strings.Contains(embed.Description, "111111111111111111") {
-		t.Fatalf("the re-added member must appear in the success embed, got %+v", embed)
+	reply := lastEditContent(f.Calls())
+	assertLeadNamesTheUnit(t, reply)
+	assertTroopersUnder(t, reply, nil, "Already.In")
+	if got := embedMentions(lastEditEmbed(f.Calls())); !slices.Equal(got, []string{"111111111111111111"}) {
+		t.Fatalf("the embed names %v as added, want the re-added member", got)
 	}
 }
 
@@ -288,19 +344,11 @@ func TestRunFoxholeBulkAddInternal_NoDiscordLinkedListedNotAdded(t *testing.T) {
 	if gm.countCalls("GuildMemberRoleAdd") != 1 {
 		t.Fatalf("expected exactly 1 role add (the linked member), got %d (%v)", gm.countCalls("GuildMemberRoleAdd"), gm.Calls())
 	}
-	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "Added or confirmed 1") {
-		t.Fatalf("expected the exact added-or-confirmed lead phrase for the one linked member, got %q", got)
-	}
-	if !strings.Contains(got, "No Discord linked") {
-		t.Fatalf("expected a 'No Discord linked' section, got %q", got)
-	}
-	if !strings.Contains(got, "Linkless.B") {
-		t.Fatalf("expected the link-less member listed by forum username, got %q", got)
-	}
-	// The link-less member must not appear as a mention in the success embed.
-	if embed := lastEditEmbed(f.Calls()); embed != nil && strings.Contains(embed.Description, "Linkless.B") {
-		t.Fatalf("link-less member must not be in the success embed, got %q", embed.Description)
+	reply := lastEditContent(f.Calls())
+	assertLeadNamesTheUnit(t, reply)
+	assertTroopersUnder(t, reply, map[string][]string{rosterAddNoDiscordLinked: {"Linkless.B"}}, "Trooper.A", "Linkless.B")
+	if got := embedMentions(lastEditEmbed(f.Calls())); !slices.Equal(got, []string{"111111111111111111"}) {
+		t.Fatalf("the embed names %v as added, want only the linked member", got)
 	}
 }
 
@@ -316,9 +364,7 @@ func TestRunFoxholeBulkAddInternal_NotInGuild404ListedNotAddedNoCapture(t *testi
 	), http.StatusOK, nil)
 
 	gm := internalRoleGM()
-	// One of the two adds 404s. Map iteration order is nondeterministic, so assert
-	// on counts rather than which member lands in the bucket.
-	gm.MemberRoleAddErrs = []error{nil, restError(http.StatusNotFound, 10007, rawBodyMarker)}
+	gm.roleAddErrsByUser = map[string]error{"222222222222222222": restError(http.StatusNotFound, 10007, rawBodyMarker)}
 	f := &fakeResponder{}
 
 	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
@@ -327,29 +373,25 @@ func TestRunFoxholeBulkAddInternal_NotInGuild404ListedNotAddedNoCapture(t *testi
 	if gm.countCalls("GuildMemberRoleAdd") != 2 {
 		t.Fatalf("expected both members attempted, got %d (%v)", gm.countCalls("GuildMemberRoleAdd"), gm.Calls())
 	}
-	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "Added or confirmed 1") {
-		t.Fatalf("expected the exact added-or-confirmed lead phrase for the one present member, got %q", got)
-	}
-	if !strings.Contains(got, "Not in this Discord (1)") {
-		t.Fatalf("expected one member in the 'Not in this Discord' section, got %q", got)
-	}
-	if strings.Contains(got, rawBodyMarker) {
-		t.Fatalf("must not leak the raw Discord body, got %q", got)
+	reply := lastEditContent(f.Calls())
+	assertLeadNamesTheUnit(t, reply)
+	assertTroopersUnder(t, reply, map[string][]string{rosterAddNotInDiscord: {"Absent.B"}}, "Present.A", "Absent.B")
+	if strings.Contains(reply, rawBodyMarker) {
+		t.Fatalf("must not leak the raw Discord body, got %q", reply)
 	}
 	if rec.count != 0 {
 		t.Fatalf("a 404 (not in server) must NOT capture to Sentry; got %d", rec.count)
 	}
-	if embed := lastEditEmbed(f.Calls()); embed == nil || !strings.Contains(embed.Title, "1") {
-		t.Fatal("expected the one successful add reported in the success embed")
+	if got := embedMentions(lastEditEmbed(f.Calls())); !slices.Equal(got, []string{"111111111111111111"}) {
+		t.Fatalf("the embed names %v as added, want only the present member", got)
 	}
 }
 
 // The headline #209 scenario: the resolved role is deleted between resolution
 // and the add loop, so every add 404s with Unknown Role (10011). This must NOT
-// be misread as the members being absent ("Not in this Discord") — that conflates
-// a config fault with genuine absence. Each add is a captured system fault listed
-// under "Could not be added", and the raw Discord body never leaks.
+// be misread as the members being absent — that conflates a config fault with
+// genuine absence. Both members are listed as not added, the faults collapse
+// to one Sentry event, and the raw Discord body never leaks.
 func TestRunFoxholeBulkAddInternal_DeletedRole404CapturedNotMisreportedAbsent(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
@@ -368,14 +410,8 @@ func TestRunFoxholeBulkAddInternal_DeletedRole404CapturedNotMisreportedAbsent(t 
 
 	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
-	got := lastEditContent(f.Calls())
-	// Present members must NOT be reported as absent.
-	if strings.Contains(got, "Not in this Discord") {
-		t.Fatalf("a deleted-role 404 must not misreport present members as 'Not in this Discord'; got %q", got)
-	}
-	if !strings.Contains(got, "Could not be added (2)") {
-		t.Fatalf("a stale-role 404 must list both members under 'Could not be added'; got %q", got)
-	}
+	reply := lastEditContent(f.Calls())
+	assertTroopersUnder(t, reply, map[string][]string{rosterAddCouldNotAdd: {"Present.A", "Present.B"}}, "Present.A", "Present.B")
 	// Both members hit the SAME fault signature (404 Unknown Role), so the loop
 	// must collapse them into ONE Sentry event for the one root cause, not page
 	// once per member (#214). The collapsed event carries the affected count and a
@@ -398,8 +434,8 @@ func TestRunFoxholeBulkAddInternal_DeletedRole404CapturedNotMisreportedAbsent(t 
 	if unitVal, ok := kvValue(rec.lastKV, "unit"); !ok || unitVal != "D/ACD" {
 		t.Fatalf("the capture must be tagged with the unit value; got kv %v", rec.lastKV)
 	}
-	if strings.Contains(got, rawBodyMarker) {
-		t.Fatalf("must not leak the raw Discord body, got %q", got)
+	if strings.Contains(reply, rawBodyMarker) {
+		t.Fatalf("must not leak the raw Discord body, got %q", reply)
 	}
 }
 
@@ -418,9 +454,9 @@ func TestRunFoxholeBulkAddInternal_MixedSignaturesCaptureOncePerSignature(t *tes
 
 	gm := internalRoleGM()
 	// One stale-role 404, one transient 5xx: two distinct signatures.
-	gm.MemberRoleAddErrs = []error{
-		restError(http.StatusNotFound, discordgo.ErrCodeUnknownRole, rawBodyMarker),
-		restError(http.StatusInternalServerError, 0, rawBodyMarker),
+	gm.roleAddErrsByUser = map[string]error{
+		"111111111111111111": restError(http.StatusNotFound, discordgo.ErrCodeUnknownRole, rawBodyMarker),
+		"222222222222222222": restError(http.StatusInternalServerError, 0, rawBodyMarker),
 	}
 	f := &fakeResponder{}
 
@@ -450,14 +486,14 @@ func TestRunFoxholeBulkAddInternal_MixedSignaturesCaptureOncePerSignature(t *tes
 		t.Fatalf("the two events must carry distinct http_status signatures; got %v", statuses)
 	}
 	// Both members are still listed for the operator, unchanged by the collapse.
-	if got := lastEditContent(f.Calls()); !strings.Contains(got, "Could not be added (2)") {
-		t.Fatalf("both faulted members must still be listed; got %q", got)
-	}
+	assertTroopersUnder(t, lastEditContent(f.Calls()), map[string][]string{rosterAddCouldNotAdd: {"Present.A", "Present.B"}}, "Present.A", "Present.B")
 }
 
 // A non-404 client fault on an add (here a 403 — bot lacks Manage Roles or the
-// role sits above it) is still surfaced, never silently dropped, but it is an
-// operator-fixable condition so it must NOT capture to Sentry.
+// role sits above it) is still listed, never silently dropped, but it is an
+// operator-fixable condition so it must NOT capture to Sentry. The reply
+// adds the advice for missing permissions, naming Manage Roles and the role
+// the bot's own role must sit above.
 func TestRunFoxholeBulkAddInternal_PerMemberClientFaultListedNotCaptured(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
@@ -471,25 +507,18 @@ func TestRunFoxholeBulkAddInternal_PerMemberClientFaultListedNotCaptured(t *test
 
 	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
-	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "Could not be added (1)") {
-		t.Fatalf("a non-404 client fault must still be listed, not silently dropped; got %q", got)
-	}
-	if !strings.Contains(got, "Forbidden.A") {
-		t.Fatalf("expected the member listed by forum username, got %q", got)
-	}
+	reply := lastEditContent(f.Calls())
+	assertTroopersUnder(t, reply, map[string][]string{rosterAddCouldNotAdd: {"Forbidden.A"}}, "Forbidden.A")
 	if rec.count != 0 {
 		t.Fatalf("a 4xx client fault must NOT capture to Sentry; got %d", rec.count)
 	}
-	if strings.Contains(got, rawBodyMarker) {
-		t.Fatalf("must not leak the raw Discord body, got %q", got)
+	if strings.Contains(reply, rawBodyMarker) {
+		t.Fatalf("must not leak the raw Discord body, got %q", reply)
 	}
-	// A 403 is a missing-permissions fault: the summary must carry an actionable
-	// hint (Manage Roles + role position) so the operator isn't left with only an
-	// opaque "Could not be added" list and a misleading "added 0" lead.
-	if !strings.Contains(got, "Manage Roles") {
-		t.Fatalf("a missing-permissions fault must surface a 'Manage Roles' hierarchy hint; got %q", got)
+	if !strings.Contains(reply, adviceMissingPermissions) {
+		t.Fatalf("a 403 must carry the missing-permissions advice; got %q", reply)
 	}
+	assertReplyNames(t, reply, "Manage Roles", defaultInternalRoleName)
 }
 
 // A genuine per-member fault (5xx) is listed, sent to Sentry tagged with the
@@ -504,7 +533,7 @@ func TestRunFoxholeBulkAddInternal_PerMemberFaultCapturedAndRunContinues(t *test
 	), http.StatusOK, nil)
 
 	gm := internalRoleGM()
-	gm.MemberRoleAddErrs = []error{nil, restError(http.StatusInternalServerError, 0, rawBodyMarker)}
+	gm.roleAddErrsByUser = map[string]error{"222222222222222222": restError(http.StatusInternalServerError, 0, rawBodyMarker)}
 	f := &fakeResponder{}
 
 	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
@@ -518,45 +547,38 @@ func TestRunFoxholeBulkAddInternal_PerMemberFaultCapturedAndRunContinues(t *test
 	}
 	// Pin the "single fault → count 1" acceptance criterion directly on the payload,
 	// not just transitively via rec.count: the one collected fault carries an
-	// affected_count of 1 and a sample_user, so a regression that miscounts attempts
-	// or drops the sample fails here rather than only in the multi-fault tests.
+	// affected_count of 1 and the faulted member as its sample, so a regression
+	// that miscounts attempts or drops the sample fails here rather than only in
+	// the multi-fault tests.
 	if affected, ok := kvValue(rec.lastKV, "affected_count"); !ok || affected != 1 {
 		t.Fatalf("the single collected fault must carry affected_count=1; got %v (kv %v)", affected, rec.lastKV)
 	}
-	sample, ok := kvValue(rec.lastKV, "sample_user")
-	if !ok {
-		t.Fatalf("the single collected fault must carry a sample_user; got kv %v", rec.lastKV)
-	}
-	// Map iteration order decides which member drew the 5xx, so the sample is the
-	// faulted member's Discord ID — one of the two real roster IDs.
-	if sample != "111111111111111111" && sample != "222222222222222222" {
-		t.Fatalf("sample_user must be the faulted member's Discord ID; got %v", sample)
+	if sample, ok := kvValue(rec.lastKV, "sample_user"); !ok || sample != "222222222222222222" {
+		t.Fatalf("sample_user must be the faulted member's Discord ID; got %v (kv %v)", sample, rec.lastKV)
 	}
 	if unitVal, ok := kvValue(rec.lastKV, "unit"); !ok || unitVal != "D/ACD" {
 		t.Fatalf("the capture must be tagged with the unit value; got kv %v", rec.lastKV)
 	}
-	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "Could not be added (1)") {
-		t.Fatalf("expected a 'Could not be added' section listing the faulted member, got %q", got)
-	}
-	if strings.Contains(got, rawBodyMarker) {
-		t.Fatalf("must not leak the raw Discord body, got %q", got)
+	reply := lastEditContent(f.Calls())
+	assertTroopersUnder(t, reply, map[string][]string{rosterAddCouldNotAdd: {"Boom.B"}}, "Ok.A", "Boom.B")
+	if strings.Contains(reply, rawBodyMarker) {
+		t.Fatalf("must not leak the raw Discord body, got %q", reply)
 	}
 	// A pure-5xx fault is not a permissions problem, so the missing-permissions
-	// hint must NOT be appended.
-	if strings.Contains(got, "Manage Roles") {
-		t.Fatalf("a 5xx fault must not surface the missing-permissions hint; got %q", got)
+	// advice must NOT be added.
+	if strings.Contains(reply, adviceMissingPermissions) {
+		t.Fatalf("a 5xx fault must not carry the missing-permissions advice; got %q", reply)
 	}
-	if embed := lastEditEmbed(f.Calls()); embed == nil || !strings.Contains(embed.Title, "1") {
-		t.Fatal("expected the one successful add reported in the success embed")
+	if got := embedMentions(lastEditEmbed(f.Calls())); !slices.Equal(got, []string{"111111111111111111"}) {
+		t.Fatalf("the embed names %v as added, want only the member whose add went through", got)
 	}
 }
 
 // A generic non-403/404 4xx on an add (here a 400 with a non-permission code) is
 // the classifier's fall-through client fault. Like the 403 it is listed and not
 // captured, but unlike the 403 it carries no missing-permissions signal, so the
-// summary must NOT append the Manage Roles hint. The clean member still lands in
-// added/confirmed so the run is realistic.
+// reply must NOT add that advice. The clean member still counts as added, so
+// the run is realistic.
 func TestRunFoxholeBulkAddInternal_PerMemberGeneric4xxListedNotCapturedNoHint(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
@@ -566,43 +588,34 @@ func TestRunFoxholeBulkAddInternal_PerMemberGeneric4xxListedNotCapturedNoHint(t 
 	), http.StatusOK, nil)
 
 	gm := internalRoleGM()
-	// One add 400s with a non-permission code (50035 Invalid Form Body), hitting the
-	// classifier's generic 4xx arm — not NotFound, not SystemFault, not
-	// MissingPermissions. Map order randomizes which member draws it, so assert on
-	// counts rather than which member lands in the bucket.
-	gm.MemberRoleAddErrs = []error{nil, restError(http.StatusBadRequest, 50035, rawBodyMarker)}
+	// Reject.B's add 400s with a non-permission code (50035 Invalid Form Body),
+	// hitting the classifier's generic 4xx arm — not NotFound, not SystemFault,
+	// not MissingPermissions.
+	gm.roleAddErrsByUser = map[string]error{"222222222222222222": restError(http.StatusBadRequest, 50035, rawBodyMarker)}
 	f := &fakeResponder{}
 
 	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
-	got := lastEditContent(f.Calls())
-	// The clean member is added/confirmed; the 400 lands in the fault bucket.
-	if !strings.Contains(got, "Added or confirmed 1") {
-		t.Fatalf("expected the one clean add reported as added-or-confirmed, got %q", got)
-	}
-	if !strings.Contains(got, "Could not be added (1)") {
-		t.Fatalf("a generic 4xx fault must still be listed, not silently dropped; got %q", got)
-	}
+	reply := lastEditContent(f.Calls())
+	assertLeadNamesTheUnit(t, reply)
+	assertTroopersUnder(t, reply, map[string][]string{rosterAddCouldNotAdd: {"Reject.B"}}, "Ok.A", "Reject.B")
 	// A generic 4xx is a client fault, not a system fault: it must not page Sentry.
 	if rec.count != 0 {
 		t.Fatalf("a generic 4xx client fault must NOT capture to Sentry; got %d", rec.count)
 	}
-	// It is not a 403 either, so no missing-permissions hint may be appended.
-	if strings.Contains(got, "Manage Roles") {
-		t.Fatalf("a non-403 4xx must not surface the missing-permissions hint; got %q", got)
+	// It is not a 403 either, so no missing-permissions advice may be added.
+	if strings.Contains(reply, adviceMissingPermissions) {
+		t.Fatalf("a non-403 4xx must not carry the missing-permissions advice; got %q", reply)
 	}
-	if strings.Contains(got, rawBodyMarker) {
-		t.Fatalf("must not leak the raw Discord body, got %q", got)
+	if strings.Contains(reply, rawBodyMarker) {
+		t.Fatalf("must not leak the raw Discord body, got %q", reply)
 	}
 }
 
-// All four outcome buckets at once: one clean add, one linked-but-absent (404),
-// one with no Discord link, and one genuine fault (5xx). The lead count must
-// coexist with every section, and the sections must appear in a stable order
-// (lead, not-in-Discord, no-Discord-linked, could-not-be-added). Map iteration
-// order randomizes WHICH linked member draws which error, but the multiset of
-// outcomes — and therefore every bucket size — is fixed.
-func TestRunFoxholeBulkAddInternal_AllBucketsCoexistWithStableOrdering(t *testing.T) {
+// Every group at once: one clean add, one linked-but-absent (404), one with
+// no Discord link, and one genuine fault (5xx). Each trooper sits under its
+// own group's heading, and the clean one under none.
+func TestRunFoxholeBulkAddInternal_AllGroupsCoexist(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
 	serveRosterAndProfiles(t, liteRoster(
@@ -613,31 +626,23 @@ func TestRunFoxholeBulkAddInternal_AllBucketsCoexistWithStableOrdering(t *testin
 	), http.StatusOK, nil)
 
 	gm := internalRoleGM()
-	// Three linked members draw these three outcomes (one each) in map order: a
-	// success, a 404 (not in this Discord), and a 5xx (a genuine fault).
-	gm.MemberRoleAddErrs = []error{
-		nil,
-		restError(http.StatusNotFound, 10007, rawBodyMarker),
-		restError(http.StatusInternalServerError, 0, rawBodyMarker),
+	gm.roleAddErrsByUser = map[string]error{
+		"222222222222222222": restError(http.StatusNotFound, 10007, rawBodyMarker),
+		"333333333333333333": restError(http.StatusInternalServerError, 0, rawBodyMarker),
 	}
 	f := &fakeResponder{}
 
 	runFoxholeBulkAddInternal(f, gm, nil, foxholeBulkAddInternalInteraction("D/ACD"))
 
-	got := lastEditContent(f.Calls())
-	leadIdx := strings.Index(got, "Added or confirmed 1")
-	notInIdx := strings.Index(got, "Not in this Discord (1)")
-	noLinkIdx := strings.Index(got, "No Discord linked (1)")
-	faultIdx := strings.Index(got, "Could not be added (1)")
-	if leadIdx < 0 || notInIdx < 0 || noLinkIdx < 0 || faultIdx < 0 {
-		t.Fatalf("expected the lead count and all three buckets present, got %q", got)
-	}
-	ordered := leadIdx < notInIdx && notInIdx < noLinkIdx && noLinkIdx < faultIdx
-	if !ordered {
-		t.Fatalf("sections must keep a stable order (lead, not-in-Discord, no-link, could-not-be-added); got %q", got)
-	}
-	if strings.Contains(got, rawBodyMarker) {
-		t.Fatalf("must not leak the raw Discord body, got %q", got)
+	reply := lastEditContent(f.Calls())
+	assertLeadNamesTheUnit(t, reply)
+	assertTroopersUnder(t, reply, map[string][]string{
+		rosterAddNotInDiscord:    {"Absent.B"},
+		rosterAddNoDiscordLinked: {"Linkless.C"},
+		rosterAddCouldNotAdd:     {"Boom.D"},
+	}, "Added.A", "Absent.B", "Linkless.C", "Boom.D")
+	if strings.Contains(reply, rawBodyMarker) {
+		t.Fatalf("must not leak the raw Discord body, got %q", reply)
 	}
 	// Only the 5xx is a genuine fault; it captures exactly once.
 	if rec.count != 1 {
@@ -647,8 +652,8 @@ func TestRunFoxholeBulkAddInternal_AllBucketsCoexistWithStableOrdering(t *testin
 
 // The picker feeding a registry feeding a fixed query makes this fixed input, so
 // an empty roster is structurally a bug, not "the unit is empty" (ADR 0002). It
-// must change nothing, tell the operator it shouldn't happen and was reported,
-// and capture tagged with the unit value — never a silent "added 0".
+// must change nothing, warn the operator, and capture tagged with the unit
+// value — never a silent "added 0".
 func TestRunFoxholeBulkAddInternal_EmptyRosterCapturedNothingChanged(t *testing.T) {
 	rec := &captureRecorder{}
 	rec.install(t)
@@ -670,13 +675,7 @@ func TestRunFoxholeBulkAddInternal_EmptyRosterCapturedNothingChanged(t *testing.
 	if unitVal, ok := kvValue(rec.lastKV, "unit"); !ok || unitVal != "D/ACD" {
 		t.Fatalf("the empty-roster capture must be tagged with the unit value; got kv %v", rec.lastKV)
 	}
-	got := lastEditContent(f.Calls())
-	if strings.Contains(got, "Added or confirmed 0") {
-		t.Fatalf("empty roster must not be reported as a normal 'added 0' summary; got %q", got)
-	}
-	if !strings.Contains(strings.ToLower(got), "shouldn't happen") {
-		t.Fatalf("expected an ADR-0002 'shouldn't happen, reported' message, got %q", got)
-	}
+	assertVerdict(t, lastEditContent(f.Calls()), "D/ACD", verdictLeftOver)
 	// No success embed for a non-result.
 	if embed := lastEditEmbed(f.Calls()); embed != nil {
 		t.Fatalf("an empty roster must not produce a success embed; got %+v", embed)
@@ -705,14 +704,11 @@ func TestRunFoxholeBulkAddInternal_RosterFetchFaultCapturedNoAdds(t *testing.T) 
 	if unitVal, ok := kvValue(rec.lastKV, "unit"); !ok || unitVal != "D/ACD" {
 		t.Fatalf("the roster-fetch capture must be tagged with the unit value; got kv %v", rec.lastKV)
 	}
-	got := lastEditContent(f.Calls())
-	if !strings.Contains(got, "Failed to fetch") {
-		t.Fatalf("expected a roster-fetch failure message, got %q", got)
-	}
+	assertVerdict(t, lastEditContent(f.Calls()), "D/ACD", verdictFailed)
 }
 
-// A DM-shaped interaction (no GuildID) is rejected with a clear server-only
-// message before any defer, guild call, or roster fetch.
+// A DM-shaped interaction (no GuildID) is refused before any defer, guild
+// call, or roster fetch.
 func TestRunFoxholeBulkAddInternal_MissingGuildRejectedBeforeAnything(t *testing.T) {
 	tripwireAPIServer(t)
 	gm := &fakeGuildManager{}
@@ -724,13 +720,14 @@ func TestRunFoxholeBulkAddInternal_MissingGuildRejectedBeforeAnything(t *testing
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("DM-context must not touch the guild; got %v", gm.Calls())
 	}
-	if got := lastResponseContent(f.Calls()); !strings.Contains(got, "can only be used in a server") {
-		t.Fatalf("expected a server-only rejection, got %q", got)
+	if got := verdicts(lastResponseContent(f.Calls()), ""); !slices.Equal(got, []string{verdictFailed}) {
+		t.Fatalf("the refusal's verdicts are %q, want one %q", got, verdictFailed)
 	}
 }
 
-// A crafted interaction carrying a value absent from the registry is rejected
-// before any guild call or roster fetch — the registry is the safety boundary.
+// A crafted interaction carrying a value absent from the registry is refused
+// before any guild call or roster fetch — the registry is the safety
+// boundary — and the refusal echoes the value back.
 func TestRunFoxholeBulkAddInternal_UnknownUnitRejectedBeforeAnything(t *testing.T) {
 	tripwireAPIServer(t)
 	gm := internalRoleGM()
@@ -742,12 +739,10 @@ func TestRunFoxholeBulkAddInternal_UnknownUnitRejectedBeforeAnything(t *testing.
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("an unregistered unit must be rejected before any guild call; got %v", gm.Calls())
 	}
-	if got := lastResponseContent(f.Calls()); !strings.Contains(got, "Unknown unit") {
-		t.Fatalf("expected an unknown-unit rejection, got %q", got)
-	}
+	assertVerdict(t, lastResponseContent(f.Calls()), "7", verdictFailed)
 }
 
-// A (malformed) interaction with no unit option is rejected before any guild
+// A (malformed) interaction with no unit option is refused before any guild
 // call or roster fetch.
 func TestRunFoxholeBulkAddInternal_MissingUnitOptionRejected(t *testing.T) {
 	tripwireAPIServer(t)
@@ -761,8 +756,8 @@ func TestRunFoxholeBulkAddInternal_MissingUnitOptionRejected(t *testing.T) {
 	if len(gm.Calls()) != 0 {
 		t.Fatalf("a missing unit must short-circuit before any guild call; got %v", gm.Calls())
 	}
-	if got := lastResponseContent(f.Calls()); !strings.Contains(got, "Missing unit") {
-		t.Fatalf("expected a missing-unit rejection, got %q", got)
+	if got := verdicts(lastResponseContent(f.Calls()), ""); !slices.Equal(got, []string{verdictFailed}) {
+		t.Fatalf("the refusal's verdicts are %q, want one %q", got, verdictFailed)
 	}
 }
 
@@ -783,8 +778,8 @@ func TestRunFoxholeBulkAddInternal_DeferFailureBailsBeforeWork(t *testing.T) {
 	}
 }
 
-// When the Internal role is absent from the guild, the run says
-// so and never fetches the roster or adds anyone.
+// When the Internal role is absent from the guild, the run names the role it
+// couldn't find and never fetches the roster or adds anyone.
 func TestRunFoxholeBulkAddInternal_InternalRoleMissingSurfacedNoFetch(t *testing.T) {
 	tripwireAPIServer(t)
 	gm := &fakeGuildManager{roles: []*discordgo.Role{guildRole("x", "Some Other Role")}}
@@ -795,9 +790,7 @@ func TestRunFoxholeBulkAddInternal_InternalRoleMissingSurfacedNoFetch(t *testing
 	if gm.countCalls("GuildMemberRoleAdd") != 0 {
 		t.Fatalf("must not add anyone when the role is missing; got %v", gm.Calls())
 	}
-	if got := lastEditContent(f.Calls()); !strings.Contains(got, "role not found in guild") {
-		t.Fatalf("expected a role-not-found message, got %q", got)
-	}
+	assertVerdict(t, lastEditContent(f.Calls()), defaultInternalRoleName, verdictFailed)
 }
 
 // A 5xx from GuildRoles during role resolution is a genuine Discord fault: it
@@ -814,27 +807,86 @@ func TestRunFoxholeBulkAddInternal_RoleResolve5xxCapturedNoFetch(t *testing.T) {
 	if rec.count != 1 {
 		t.Fatalf("a 5xx GuildRoles fault must capture exactly once; got %d", rec.count)
 	}
-	if got := lastEditContent(f.Calls()); strings.Contains(got, rawBodyMarker) {
-		t.Fatalf("must not leak the raw Discord body, got %q", got)
+	reply := lastEditContent(f.Calls())
+	if strings.Contains(reply, rawBodyMarker) {
+		t.Fatalf("must not leak the raw Discord body, got %q", reply)
 	}
+	assertAdvice(t, reply, adviceTransient)
 }
 
-// A very large bucket would otherwise push the summary past Discord's 2000-char
-// message limit and fail the edit. The summary must clamp to the limit while
-// keeping the always-present lead line.
-func TestBuildRosterAddSummary_ClampsToDiscordLimit(t *testing.T) {
-	many := make([]string, 400)
-	for i := range many {
-		many[i] = "Trooper.Placeholder.Name"
+// manyTroopers is a roster of n troopers, Trooper.000 up, each with an
+// 18-digit Discord ID when linked is true and none otherwise.
+func manyTroopers(n int, linked bool) utils.LiteRosterResponse {
+	profiles := make(map[string]utils.LiteProfileResponse, n)
+	for i := range n {
+		id := ""
+		if linked {
+			id = fmt.Sprintf("1%017d", i)
+		}
+		profiles[fmt.Sprintf("p%d", i)] = liteMember(fmt.Sprintf("Trooper.%03d", i), id)
 	}
+	return utils.LiteRosterResponse{LiteProfiles: profiles}
+}
 
-	got := buildRosterAddSummary("D/ACD", defaultInternalRoleName, 0, nil, nil, many, false)
+// A group too big for one message would push the reply past Discord's
+// 2000-character message limit and fail the edit. The reply stays within the
+// limit and keeps its lead line naming the unit.
+func TestRunFoxholeBulkAddInternal_ReplyStaysWithinDiscordsMessageLimit(t *testing.T) {
+	serveRosterAndProfiles(t, manyTroopers(400, false), http.StatusOK, nil)
+	f := &fakeResponder{}
 
-	if len(got) > 2000 {
-		t.Fatalf("summary must stay within Discord's 2000-char limit, got %d", len(got))
+	runFoxholeBulkAddInternal(f, internalRoleGM(), nil, foxholeBulkAddInternalInteraction("D/ACD"))
+
+	reply := lastEditContent(f.Calls())
+	if n := len(reply); n > 2000 {
+		t.Fatalf("the reply is %d characters, over Discord's 2000", n)
 	}
-	if !strings.Contains(got, "Added or confirmed 0") {
-		t.Fatalf("the lead summary line must survive truncation, got %q", got)
+	assertLeadNamesTheUnit(t, reply)
+}
+
+// The added embed names every member added when they fit. When they don't,
+// it names as many as it shows, each one added and none twice, and its last
+// line counts the rest, so the members named and the members counted make
+// up everyone added.
+func TestRunFoxholeBulkAddInternal_EmbedNamesOrCountsEveryMemberAdded(t *testing.T) {
+	for _, total := range []int{5, 200} {
+		t.Run(fmt.Sprintf("%d added", total), func(t *testing.T) {
+			serveRosterAndProfiles(t, manyTroopers(total, true), http.StatusOK, nil)
+			f := &fakeResponder{}
+
+			runFoxholeBulkAddInternal(f, internalRoleGM(), nil, foxholeBulkAddInternalInteraction("D/ACD"))
+
+			embed := lastEditEmbed(f.Calls())
+			if embed == nil {
+				t.Fatal("the reply carries no embed of the members added")
+			}
+			added := map[string]bool{}
+			for _, p := range manyTroopers(total, true).LiteProfiles {
+				added[p.DiscordID] = true
+			}
+			named := embedMentions(embed)
+			seen := map[string]bool{}
+			for _, id := range named {
+				if !added[id] || seen[id] {
+					t.Errorf("the embed names %s, which is no added member or is named twice", id)
+				}
+				seen[id] = true
+			}
+			lines := strings.Split(embed.Description, "\n")
+			left := 0
+			if _, err := fmt.Sscanf(lines[len(lines)-1], addedEmbedMore, &left); err != nil {
+				left = 0
+			}
+			if len(named)+left != total {
+				t.Errorf("the embed names %d members and counts %d more, want %d in all", len(named), left, total)
+			}
+			if total == 5 && left != 0 {
+				t.Errorf("the embed counts %d more of 5 members, want all named", left)
+			}
+			if total == 200 && left == 0 {
+				t.Error("the embed names all 200 members, want the rest counted")
+			}
+		})
 	}
 }
 
