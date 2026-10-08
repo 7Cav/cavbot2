@@ -114,6 +114,12 @@ const foxholeStoreTimeout = 5 * time.Second
 // manager until the next one, so one store blip mustn't leave it so.
 const foxholeEndAttempts = 3
 
+// foxholeEndRetryWait is how long the runtime waits between its attempts
+// at a report's end write once the attempts at its action's end have all
+// failed. It keeps trying until the write lands, so a report shows how its
+// action ended soon after the store is back, without a restart.
+const foxholeEndRetryWait = 10 * time.Second
+
 // FoxholePauseLimit is how long a Foxhole action stays paused before its
 // next member, waiting for a complete member list with the bot connected,
 // before it stops. A paused action holds the one-action-at-a-time rule,
@@ -131,8 +137,9 @@ var foxholeNow = time.Now
 
 // FoxholeAfterFunc runs f on a goroutine of its own once d has passed, and
 // returns a stop that keeps f from running if it has not started, as
-// time.Timer.Stop does. A Foxhole action's pause is timed through it: its
-// limit and each read of the list. A package var beside foxholeNow,
+// time.Timer.Stop does. A Foxhole action's pause is timed through it, its
+// limit and each read of the list, and so are the background attempts at a
+// report's end write (foxholeEndRetryWait). A package var beside foxholeNow,
 // exported so the panel's tests can run a pause on a fake clock. Each
 // runtime takes it when it is built, so a runtime already running keeps the
 // clock it was built with.
@@ -418,7 +425,8 @@ type FoxholeRuntime struct {
 	roles   FoxholeRoleWriter
 	store   store.Store
 	guildID string
-	// afterFunc times a pause: FoxholeAfterFunc when the runtime was built.
+	// afterFunc times a pause and the background end writes:
+	// FoxholeAfterFunc when the runtime was built.
 	afterFunc func(d time.Duration, f func()) (stop func())
 
 	mu sync.Mutex
@@ -1333,7 +1341,8 @@ func failureReason(err error) string {
 // writeReport writes the report as it stands, ending it when end is set.
 // The end write is tried foxholeEndAttempts times. A write that fails for
 // good reaches Sentry and the action goes on: the role changes matter
-// more, and the next write carries everything.
+// more, and the next write carries everything. An end write that fails for
+// good goes on in the background (endLate).
 func (r *FoxholeRuntime) writeReport(reportID int64, report ActionReport, end bool) {
 	raw, err := json.Marshal(report)
 	if err != nil {
@@ -1348,13 +1357,47 @@ func (r *FoxholeRuntime) writeReport(reportID int64, report ActionReport, end bo
 		ctx, cancel := context.WithTimeout(context.Background(), foxholeStoreTimeout)
 		err = write(ctx, reportID, raw)
 		cancel()
-		if err == nil {
+		if err == nil || end && endWritten(reportID, err) {
 			return
 		}
 		if attempt == attempts {
 			captureError("Foxhole report write failed", err, "report_id", reportID, "end", end, "attempts", attempts)
+			if end {
+				r.afterFunc(foxholeEndRetryWait, func() { r.endLate(reportID, report, raw) })
+			}
 			return
 		}
 		utils.Warn("Foxhole report write failed, retrying", "report_id", reportID, "attempt", attempt, "error", err)
 	}
+}
+
+// endLate is a background attempt at the end write of a report whose
+// action is over, the report as the action left it. An attempt that fails
+// tries again once foxholeEndRetryWait has passed, with no limit, until the
+// write lands or the process stops. It never touches the one-action rule or
+// the action running now.
+func (r *FoxholeRuntime) endLate(reportID int64, report ActionReport, raw json.RawMessage) {
+	defer utils.RecoverPanic("foxhole-report-end")
+	ctx, cancel := context.WithTimeout(context.Background(), foxholeStoreTimeout)
+	defer cancel()
+	switch err := r.store.EndFoxholeReport(ctx, reportID, raw); {
+	case err == nil:
+		utils.Info("Foxhole report ended late", "report_id", reportID, "outcome", report.Outcome,
+			"after", foxholeNow().Sub(report.EndedAt))
+	case !endWritten(reportID, err):
+		utils.Debug("Foxhole report end write failed, retrying", "report_id", reportID, "error", err)
+		r.afterFunc(foxholeEndRetryWait, func() { r.endLate(reportID, report, raw) })
+	}
+}
+
+// endWritten reports whether an end write of the report that failed with
+// the error given has ended it all the same. ErrNotFound says the report
+// no longer runs, so an earlier attempt that returned an error had
+// committed: no attempt follows, and nothing reaches Sentry.
+func endWritten(reportID int64, err error) bool {
+	if !errors.Is(err, store.ErrNotFound) {
+		return false
+	}
+	utils.Info("Foxhole report already ended", "report_id", reportID)
+	return true
 }
