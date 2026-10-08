@@ -72,7 +72,8 @@ const (
 	// one-request-per-30-s limit. The snapshot says when the bot asks again.
 	MemberListRefused
 	// MemberListLate is a list still partial memberListLateAfter after its
-	// GUILD_CREATE. The bot keeps asking.
+	// GUILD_CREATE. The bot keeps asking, and while a refusal is pending the
+	// snapshot says when it asks again.
 	MemberListLate
 	// MemberListComplete is a list whose every part has arrived. Gateway
 	// events keep it current from then on.
@@ -93,8 +94,7 @@ type MemberListSnapshot struct {
 	PartsReceived int
 	PartsExpected int
 	// RetryAt is when the bot asks again after a refusal, set while a
-	// refusal is pending, whatever the status reads: a list past the late
-	// mark reads late with its refusal's retry time still set.
+	// refusal is pending and the status reads refused or late.
 	RetryAt time.Time
 	// Members is every member of the guild, set only while the status is
 	// complete, so no reader can show a partial list.
