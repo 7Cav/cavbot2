@@ -83,19 +83,25 @@ func TestFoxholePageWaitsForAMemberListOnItsWay(t *testing.T) {
 // A list that can't complete within the page's time budget gets no wait:
 // the page answers at once with the notice in the list's place. Discord
 // refused the bot's request and the bot asks again only after the budget
-// would end; or an outage's GUILD_DELETE took the guild out of the gateway
-// state, and the member list with it, which the hub page doesn't wait for
-// either.
+// would end, whether the list reads refused or, past the late mark, late,
+// which keeps its late notice (#495); or an outage's GUILD_DELETE took the
+// guild out of the gateway state, and the member list with it, which the
+// hub page doesn't wait for either.
 func TestFoxholePageAnswersAtOnceForAListThatCantCompleteInTime(t *testing.T) {
 	const budget = 5 * time.Second
 	cases := []struct {
 		name  string
 		guild commands.GuildDataStatus
 		list  commands.MemberListSnapshot
+		// status is the notice's list status the case checks, empty for a
+		// case that checks only that the notice is there.
+		status string
 	}{
 		{"refused, retry past the budget", commands.GuildDataPresent,
-			commands.MemberListSnapshot{Status: commands.MemberListRefused, Connected: true, RetryAt: now().Add(2 * budget)}},
-		{"guild absent", commands.GuildDataAbsent, commands.MemberListSnapshot{Status: commands.MemberListNoGuild, Connected: true}},
+			commands.MemberListSnapshot{Status: commands.MemberListRefused, Connected: true, RetryAt: now().Add(2 * budget)}, ""},
+		{"late, refusal retrying past the budget", commands.GuildDataPresent,
+			commands.MemberListSnapshot{Status: commands.MemberListLate, Connected: true, RetryAt: now().Add(2 * budget)}, "late"},
+		{"guild absent", commands.GuildDataAbsent, commands.MemberListSnapshot{Status: commands.MemberListNoGuild, Connected: true}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -111,7 +117,10 @@ func TestFoxholePageAnswersAtOnceForAListThatCantCompleteInTime(t *testing.T) {
 			if res.StatusCode != http.StatusOK {
 				t.Errorf("status = %d, want 200", res.StatusCode)
 			}
-			memberListNotice(t, parseHTML(t, res))
+			notice := memberListNotice(t, parseHTML(t, res))
+			if got, _ := attrValue(notice, "data-list-status"); tc.status != "" && got != tc.status {
+				t.Errorf("the notice's list status = %q, want %q", got, tc.status)
+			}
 			if took > budget/5 {
 				t.Errorf("answered after %v, want well before the %v budget", took, budget)
 			}

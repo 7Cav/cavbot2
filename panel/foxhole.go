@@ -322,7 +322,7 @@ var errNoteListPartial = &saveRefusal{Kind: "member-list", status: http.StatusSe
 // list and stays open.
 var errApproveListPartial = &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
 	log:     "Panel save refused: member list partial",
-	Message: "Awaiting member list from discord. Try again shortly."}
+	Message: "Awaiting the member list from Discord, so nobody was approved. Try again shortly."}
 
 // foxholeChange is one entry of the Foxhole page's change log as the page
 // shows it: who saved, and what. A note save's names the member it touched
@@ -780,9 +780,9 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 // When the time budget ends the wait, it returns the list as it stands, and
 // the page shows a notice in the list's place. It stops waiting at once for
 // a list that can't complete within the budget. Discord may have refused
-// the bot's request with the next one due after the deadline, or the guild
-// may be absent from the state, which the hub page doesn't wait for
-// either.
+// the bot's request with the next one due after the deadline, whether the
+// list reads refused or, past the late mark, late, or the guild may be
+// absent from the state, which the hub page doesn't wait for either.
 func (s foxholeService) memberList(ctx context.Context, await bool) (commands.MemberListSnapshot, error) {
 	list := s.manager.MemberList(s.guildID)
 	if !await {
@@ -793,7 +793,7 @@ func (s foxholeService) memberList(ctx context.Context, await bool) (commands.Me
 	defer poll.Stop()
 	for list.Status != commands.MemberListComplete {
 		switch {
-		case list.Status == commands.MemberListRefused && list.RetryAt.After(deadline):
+		case list.RetryAt.After(deadline):
 			return list, nil
 		case list.Status == commands.MemberListNoGuild && s.manager.GuildData(s.guildID).Status == commands.GuildDataAbsent:
 			return list, nil

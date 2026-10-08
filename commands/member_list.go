@@ -92,8 +92,9 @@ type MemberListSnapshot struct {
 	// flight. PartsExpected is 0 until the first part arrives.
 	PartsReceived int
 	PartsExpected int
-	// RetryAt is when the bot asks again after a refusal, set only while
-	// the status is refused.
+	// RetryAt is when the bot asks again after a refusal, set while a
+	// refusal is pending, whatever the status reads: a list past the late
+	// mark reads late with its refusal's retry time still set.
 	RetryAt time.Time
 	// Members is every member of the guild, set only while the status is
 	// complete, so no reader can show a partial list.
