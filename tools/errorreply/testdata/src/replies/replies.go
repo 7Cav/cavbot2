@@ -2,6 +2,7 @@ package replies
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/7cav/cavbot2/utils"
 )
@@ -66,4 +67,28 @@ func goesThroughAWrapper(err error) {
 
 func goesThroughAWrapperWithAFixedMessage() {
 	replyWith(fetchFailed)
+}
+
+func assemblesTheMessage(err error) {
+	var sb strings.Builder
+	sb.WriteString("❌ Failed: ")
+	sb.WriteString(err.Error())
+	utils.HandleError(nil, nil, sb.String()) // want "."
+}
+
+type failure struct {
+	detail string
+}
+
+func keepsTheMessageInAField(err error) {
+	f := failure{detail: "❌ Failed: " + err.Error()}
+	utils.HandleError(nil, nil, f.detail) // want "."
+}
+
+func sharesTheMessageWithAClosure(err error) {
+	msg := "❌ Failed: " + err.Error()
+	reply := func() {
+		utils.HandleError(nil, nil, msg) // want "."
+	}
+	reply()
 }

@@ -529,7 +529,7 @@ const (
 	s3aarBadServerReply           = "❌ That server isn't available. Pick one from the list."
 	s3aarBattleMetricsFailedReply = "❌ Couldn't get the sessions from BattleMetrics. Try again in a few minutes."
 	s3aarDebugFailedReply         = "❌ Couldn't build the debug file. The problem has been reported."
-	s3aarSendFailedReply          = "❌ Couldn't post the AAR. Try again in a few minutes."
+	s3aarSendFailedReply          = "❌ Couldn't post all of the AAR. Check what posted above before you run it again."
 )
 
 // sendS3aarFollowup sends one of /s3aar's fixed answers as a followup.

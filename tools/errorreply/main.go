@@ -169,6 +169,12 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 		return t.trace(v.X, f)
 	case *ssa.Alloc:
 		return t.traceStores(v, f)
+	case *ssa.FreeVar:
+		return t.traceBindings(v, f)
+	case *ssa.UnOp:
+		return t.trace(v.X, f)
+	case *ssa.FieldAddr:
+		return t.trace(v.X, f)
 	}
 	return false
 }
@@ -189,7 +195,27 @@ func (t *tracer) traceReturns(fn *ssa.Function, f *frame) bool {
 	return false
 }
 
-// traceStores traces every value stored at addr or at an address within it.
+// traceBindings traces what each closure the enclosing function makes binds
+// to the free variable v.
+func (t *tracer) traceBindings(v *ssa.FreeVar, f *frame) bool {
+	closure := v.Parent()
+	index := slices.Index(closure.FreeVars, v)
+	if closure.Parent() == nil {
+		return false
+	}
+	for _, block := range closure.Parent().Blocks {
+		for _, instr := range block.Instrs {
+			if mk, ok := instr.(*ssa.MakeClosure); ok && mk.Fn == closure && t.trace(mk.Bindings[index], f) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// traceStores traces every value stored at addr or at an address within it,
+// and every argument of a call that addr is passed to, since the call may
+// write them there, as a strings.Builder's WriteString does.
 func (t *tracer) traceStores(addr ssa.Value, f *frame) bool {
 	refs := addr.Referrers()
 	if refs == nil {
@@ -201,8 +227,14 @@ func (t *tracer) traceStores(addr ssa.Value, f *frame) bool {
 			if ref.Addr == addr && t.trace(ref.Val, f) {
 				return true
 			}
-		case *ssa.IndexAddr:
-			if t.traceStores(ref, f) {
+		case ssa.CallInstruction:
+			for _, arg := range ref.Common().Args {
+				if t.trace(arg, f) {
+					return true
+				}
+			}
+		case *ssa.IndexAddr, *ssa.FieldAddr:
+			if t.traceStores(ref.(ssa.Value), f) {
 				return true
 			}
 		}
