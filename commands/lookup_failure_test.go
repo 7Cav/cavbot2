@@ -24,15 +24,19 @@ func lastReply(t *testing.T, calls []recordedCall) string {
 	return reply
 }
 
-// assertNoErrorText fails unless reply opens with ❌, carries the phrase
-// that tells its case apart, and leaves out every error rec captured.
-func assertNoErrorText(t *testing.T, reply, phrase string, rec *captureRecorder) {
+// assertFixedReply fails unless reply opens with ❌, carries the phrase
+// that tells its case apart, and leaves out every error rec captured. A nil
+// rec is a run that captured nothing.
+func assertFixedReply(t *testing.T, reply, phrase string, rec *captureRecorder) {
 	t.Helper()
 	if !strings.HasPrefix(reply, "❌") {
 		t.Errorf("reply %q doesn't open with ❌", reply)
 	}
 	if !strings.Contains(reply, phrase) {
 		t.Errorf("reply %q doesn't carry %q", reply, phrase)
+	}
+	if rec == nil {
+		return
 	}
 	for _, err := range rec.errs {
 		if strings.Contains(reply, err.Error()) {
@@ -50,5 +54,5 @@ func assertLookupFailed(t *testing.T, calls []recordedCall, rec *captureRecorder
 		t.Fatalf("captures = %d, want 1", rec.count)
 	}
 	assertCaptureNames(t, rec.kvs[0], map[string]string{"command": command})
-	assertNoErrorText(t, lastReply(t, calls), lookupFailedReply, rec)
+	assertFixedReply(t, lastReply(t, calls), lookupFailedReply, rec)
 }

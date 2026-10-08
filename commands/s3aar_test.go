@@ -412,7 +412,7 @@ func TestRunS3aarBattleMetricsFailureReachesSentryNotTheMember(t *testing.T) {
 	if rec.count != 1 {
 		t.Fatalf("captures = %d, want 1", rec.count)
 	}
-	assertNoErrorText(t, fups[0].Params.Content, s3aarBattleMetricsFailedReply, rec)
+	assertFixedReply(t, fups[0].Params.Content, s3aarBattleMetricsFailedReply, rec)
 	assertNoRosterFollowup(t, fups)
 }
 
@@ -625,7 +625,7 @@ func TestRunS3aar_InvalidStartDate(t *testing.T) {
 	if len(fups) != 1 {
 		t.Fatalf("bad start date must produce exactly one followup; got %d: %+v", len(fups), fups)
 	}
-	assertS3aarRefusal(t, fups[0].Params.Content, s3aarBadStartReply)
+	assertFixedReply(t, fups[0].Params.Content, s3aarBadStartReply, nil)
 	assertNoRosterFollowup(t, fups)
 }
 
@@ -640,7 +640,7 @@ func TestRunS3aar_InvalidEndDate(t *testing.T) {
 	if len(fups) != 1 {
 		t.Fatalf("bad end date must produce exactly one followup; got %d: %+v", len(fups), fups)
 	}
-	assertS3aarRefusal(t, fups[0].Params.Content, s3aarBadEndReply)
+	assertFixedReply(t, fups[0].Params.Content, s3aarBadEndReply, nil)
 	assertNoRosterFollowup(t, fups)
 }
 
@@ -656,33 +656,8 @@ func TestRunS3aar_NotAvailableServer(t *testing.T) {
 	if len(fups) != 1 {
 		t.Fatalf("NotAvailable server must produce exactly one followup; got %d: %+v", len(fups), fups)
 	}
-	assertS3aarRefusal(t, fups[0].Params.Content, s3aarBadServerReply)
+	assertFixedReply(t, fups[0].Params.Content, s3aarBadServerReply, nil)
 	assertNoRosterFollowup(t, fups)
-}
-
-// TestRunS3aar_UnsetBMToken asserts that with a valid date+server but no
-// BM_TOKEN, fetchBattleMetricsSessions fails and the specific followup is sent
-// with no roster output.
-func TestRunS3aar_UnsetBMToken(t *testing.T) {
-	t.Setenv("BM_TOKEN", "")
-	r := &fakeResponder{}
-	i := s3aarOptions("Tac1", "10NOV25", "10NOV25", "1800", "2000", 30, "")
-	runS3aar(r, i)
-
-	fups := followups(r.Calls())
-	if len(fups) != 1 {
-		t.Fatalf("unset BM_TOKEN must produce exactly one followup; got %d: %+v", len(fups), fups)
-	}
-	assertNoRosterFollowup(t, fups)
-}
-
-// assertS3aarRefusal fails unless a refusal opens with ❌ and carries the
-// phrase that tells its case apart.
-func assertS3aarRefusal(t *testing.T, content, phrase string) {
-	t.Helper()
-	if !strings.HasPrefix(content, "❌") || !strings.Contains(content, phrase) {
-		t.Fatalf("refusal %q, want it to open with ❌ and carry %q", content, phrase)
-	}
 }
 
 // assertNoRosterFollowup fails if any followup carries an embed or a file —

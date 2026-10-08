@@ -287,7 +287,7 @@ func TestRunMilpacForAMemberWithNoMilpacSaysSo(t *testing.T) {
 	if rec.count != 0 {
 		t.Errorf("captures = %d, want none", rec.count)
 	}
-	assertNoErrorText(t, lastReply(t, f.Calls()), milpacNotFoundReply, rec)
+	assertFixedReply(t, lastReply(t, f.Calls()), milpacNotFoundReply, rec)
 }
 
 // A milpac lookup the 7Cav API fails tells the member to try again, and
@@ -316,7 +316,7 @@ func TestRunMilpacWithAnUnreadableDateReachesSentryNotTheMember(t *testing.T) {
 	if rec.count != 1 {
 		t.Fatalf("captures = %d, want 1", rec.count)
 	}
-	assertNoErrorText(t, lastReply(t, f.Calls()), milpacUnreadableReply, rec)
+	assertFixedReply(t, lastReply(t, f.Calls()), milpacUnreadableReply, rec)
 }
 
 func TestRunMilpac_BadUniformURL_FallsThroughHandleError(t *testing.T) {

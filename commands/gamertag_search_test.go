@@ -81,7 +81,7 @@ func TestRunGamertagSearchForAnUnknownGamertagSaysSo(t *testing.T) {
 		t.Errorf("captures = %d, want none", rec.count)
 	}
 	reply := lastReply(t, f.Calls())
-	assertNoErrorText(t, reply, gamertagNotFound, rec)
+	assertFixedReply(t, reply, gamertagNotFound, rec)
 	if !strings.Contains(reply, "Unknown.Tag") {
 		t.Errorf("reply %q doesn't name the gamertag Unknown.Tag", reply)
 	}
