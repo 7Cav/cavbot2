@@ -51,6 +51,10 @@ func Debug(msg string, args ...any) {
 	Logger.Debug(msg, args...)
 }
 
+// HandleError sends message to the member as their error reply. message is
+// fixed text plus any member input it names. An error's text goes to the log
+// or to Sentry instead (ADR 0001), and tools/errorreply, which the gate runs,
+// reports a call whose message is built from an error.
 func HandleError(r InteractionResponder, i *discordgo.InteractionCreate, message string) {
 	Info("Error handling interaction", "message", message)
 
