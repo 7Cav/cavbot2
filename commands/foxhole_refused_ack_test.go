@@ -6,10 +6,11 @@ import (
 )
 
 // When Discord refuses a /foxhole bulkadd's or purge's acknowledgement with
-// anything but 10062 Unknown interaction, the run stops at the one reply
-// that tells the member it couldn't start: no guild read, no role change,
-// and nothing left running, so the Foxhole page isn't kept busy by a
-// command its member was told never started.
+// anything but 10062 Unknown interaction, the run stops at one reply. It
+// reads and changes nothing in the guild and leaves nothing running, so the
+// Foxhole page isn't kept busy by a command its member was told never
+// started. TestRefusedAcknowledgementGetsTheFixedReply pins what that reply
+// says.
 func TestRefusedFoxholeAcknowledgementStopsTheRun(t *testing.T) {
 	for _, subcommand := range []string{"bulkadd", "purge"} {
 		t.Run(subcommand, func(t *testing.T) {
