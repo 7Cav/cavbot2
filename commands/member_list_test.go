@@ -406,6 +406,27 @@ func TestMemberListStillPartialAtTheLateLimitReachesSentryOnce(t *testing.T) {
 	})
 }
 
+// Regression pin: green on arrival, no code was written for it. A refusal
+// past the late mark reads late, and the snapshot still says when the bot
+// asks again, so the page can skip a wait the retry would outlast (#495).
+func TestMemberListPastTheLateMarkKeepsAPendingRefusalsRetryTime(t *testing.T) {
+	w := newMemberListWorld(t)
+	w.deliver(listGuildCreate())
+	w.clock.advance(memberListLateAfter + time.Second)
+	refusedAt := w.clock.read()
+	const wait = 25 * time.Second
+
+	w.deliver(rateLimited(t, w.lastNonce(), "25"))
+
+	snap := w.read()
+	if snap.Status != MemberListLate {
+		t.Errorf("after a refusal past the late mark, status = %v, want late", snap.Status)
+	}
+	if snap.RetryAt.Before(refusedAt.Add(wait)) || snap.RetryAt.After(refusedAt.Add(wait+time.Second)) {
+		t.Errorf("retry at %v, want 25 s after %v, or within a second after that", snap.RetryAt, refusedAt)
+	}
+}
+
 // A READY swaps in an unavailable placeholder for the guild, which empties
 // the list. Until Discord sends the guild again, the bot neither asks for
 // its members nor reports the list late: a guild Discord never sent is no
