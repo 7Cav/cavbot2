@@ -79,7 +79,7 @@ func runZulu(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 	}
 
 	if timeStr == "" && dateStr != "" {
-		utils.HandleError(r, i, "❌ Invalid arguments; a date needs a time (HHMM, e.g. 2300)")
+		refuse(r, i, "❌ Invalid arguments; a date needs a time (HHMM, e.g. 2300)")
 		return
 	}
 
@@ -92,10 +92,10 @@ func runZulu(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 			// Naming the field the member got right is worse than saying nothing,
 			// so the two halves are reported apart. See utils.ErrInvalidZulu*.
 			if errors.Is(err, utils.ErrInvalidZuluDate) {
-				utils.HandleError(r, i, "❌ Invalid date; must be DDMMMYY (e.g. 01MAY26)")
+				refuse(r, i, "❌ Invalid date; must be DDMMMYY (e.g. 01MAY26)")
 				return
 			}
-			utils.HandleError(r, i, "❌ Invalid time; must be HHMM in Zulu (e.g. 2300 or 2300z)")
+			refuse(r, i, "❌ Invalid time; must be HHMM in Zulu (e.g. 2300 or 2300z)")
 			return
 		}
 		// The absolute token carries a date because it renders in each viewer's
