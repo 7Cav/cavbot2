@@ -434,8 +434,8 @@ _Avoid_: auth request, login attempt, OAuth state, flow.
 The panel's test of the signed-in forum user's forum groups, primary or
 secondary, on every request. The groups decide what the panel session can
 see. They never end it. One of the panel's admin groups makes them a panel
-admin. The Foxhole group makes them a Foxhole manager. A user in none of
-them sees only a page saying their roles grant no access.
+admin. The Foxhole group makes them a Foxhole manager. An outsider sees
+only a page saying their roles grant no access.
 _Avoid_: allowlist check, permission check, authorisation, role check.
 
 **Panel admin**:
@@ -443,6 +443,12 @@ A signed-in forum user the group check finds in one of the panel's admin
 groups. Opens every page and takes every action on the panel.
 _Avoid_: admin (bare), staff, allowlisted user, moderator (a spawned
 channel's), Foxhole manager (a narrower role).
+
+**Outsider**:
+A signed-in forum user the group check finds in none of the panel's groups,
+neither a panel admin nor a Foxhole manager.
+_Avoid_: user outside the admin groups (a Foxhole manager is one too), user
+in neither group, user in no group, guest, unprivileged user.
 
 **Block**:
 One bordered unit of a panel page, with a gold header rule. The unit a
