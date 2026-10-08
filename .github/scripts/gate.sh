@@ -22,7 +22,7 @@ scripts=.github/scripts
 
 # Run on the toolchain go.mod pins with its toolchain line. CI's setup-go
 # installs that one and the image builds on it, so the gate tests the Go
-# members run. Coverage moves with the toolchain, so another local Go would
+# production runs. Coverage moves with the toolchain, so another local Go would
 # pass floors CI fails. Go fetches the pinned toolchain on first use.
 GOTOOLCHAIN=$(awk '$1 == "toolchain" { print $2 }' go.mod)
 if [[ -z "$GOTOOLCHAIN" ]]; then

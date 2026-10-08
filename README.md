@@ -245,8 +245,8 @@ package's tests need a real Postgres, so the gate starts a throwaway one of
 its own and removes it on exit. Several checkouts can run the gate at once.
 It runs on the toolchain `go.mod` pins in its `toolchain` line, whatever Go
 you have installed, because coverage differs between Go versions. CI and the
-image's builder use the same toolchain, so the image members run is built by
-the Go the tests ran on. One gate step fails when the Dockerfile's `golang`
+image's builder use the same toolchain, so the image production runs is built
+by the Go the tests ran on. One gate step fails when the Dockerfile's `golang`
 tag names another version. To move to a new Go, change the `toolchain` line
 and that tag in the same PR.
 
