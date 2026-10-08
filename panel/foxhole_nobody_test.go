@@ -17,6 +17,9 @@ import (
 // entry, and leaves the last report on top. It is an expected outcome, so
 // nothing reaches Sentry.
 func TestKeptFormOfAnActionThatWouldChangeNobodyIsRefused(t *testing.T) {
+	// The add's paste: Vance, and a line naming nobody, which counts for
+	// nobody, since the add lists it and changes no one for it.
+	const paste = "rvance\nnobody_here"
 	cases := []struct {
 		name string
 		// action is the change log's data-action marker of the action posted,
@@ -49,12 +52,10 @@ func TestKeptFormOfAnActionThatWouldChangeNobodyIsRefused(t *testing.T) {
 			w.awaitActionEnd(t)
 			return func() *http.Response { return confirmRemoval(t, w.b, kept) }
 		}},
-		{name: "add", action: "add", refusal: "nobody-to-change", paste: "rvance\nnobody_here", stale: func(t *testing.T, w *testWorld) func() *http.Response {
-			// The line naming nobody counts for nobody: the add lists it and
-			// changes no one for it.
+		{name: "add", action: "add", refusal: "nobody-to-change", paste: paste, stale: func(t *testing.T, w *testWorld) func() *http.Response {
 			preview := func() *html.Node {
 				page := parseHTML(t, w.b.get(foxholePath))
-				return parseHTML(t, previewPaste(t, w.b, page, addForm(t, page), "external", "rvance\nnobody_here"))
+				return parseHTML(t, previewPaste(t, w.b, page, addForm(t, page), "external", paste))
 			}
 			kept := preview()
 			assertRedirect(t, confirmAdd(t, w.b, preview(), nil), foxholePath)

@@ -71,7 +71,7 @@
       <a class="btn" href="/foxhole">Cancel</a>
     </form>
     {{else}}
-    <div class="submit-row"><a class="btn" href="/foxhole">Cancel</a> <span class="fx-hint" data-field="nobody-to-purge">Nobody holds {{.Nobody}}, so there's nothing to purge.</span></div>
+    <div class="submit-row"><a class="btn" href="/foxhole">Cancel</a> <span class="fx-hint" data-field="nobody-to-purge">{{.NobodyHint}}</span></div>
     {{end}}
   </section>
   {{end}}
@@ -98,7 +98,7 @@
       <a class="btn" href="{{.Back}}">Cancel</a>
     </form>
     {{else}}
-    <div class="submit-row"><a class="btn" href="{{.Back}}">Cancel</a> <span class="fx-hint" data-field="nobody-to-remove">Nobody selected holds {{.Name}}, so there's nothing to remove.</span></div>
+    <div class="submit-row"><a class="btn" href="{{.Back}}">Cancel</a> <span class="fx-hint" data-field="nobody-to-remove">{{.NobodyHint}}</span></div>
     {{end}}
   </section>
   {{end}}
@@ -130,7 +130,7 @@
       <input type="hidden" name="named" value="{{.Named}}">
       {{if .CanAdd}}<button type="submit" class="btn btn--cta" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Add {{.Name}}</button>{{end}}
       <a class="btn" href="/foxhole">Cancel</a>
-      {{- if not .CanAdd}} <span class="fx-hint" data-field="nobody-to-add">No line gives {{.Name}} to anyone, so there's nothing to add.</span>
+      {{- if not .CanAdd}} <span class="fx-hint" data-field="nobody-to-add">{{.NobodyHint}}</span>
       {{- else if $.Foxhole.Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Confirm once it ends.</span>{{end}}
     </form>
   </section>
@@ -162,7 +162,7 @@
       {{- end}}
       {{if .CanAdd}}<button type="submit" class="btn btn--cta" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>{{if .Retry}}Add the troopers listed to Internal{{else}}Add the {{.Unit.Label}} roster to Internal{{end}}</button>{{end}}
       <a class="btn" href="/foxhole">Cancel</a>
-      {{- if not .CanAdd}} <span class="fx-hint" data-field="nobody-to-add">Nobody {{if .Retry}}listed{{else}}on the {{.Unit.Label}} roster{{end}} would get Internal, so there's nothing to add.</span>
+      {{- if not .CanAdd}} <span class="fx-hint" data-field="nobody-to-add">{{.NobodyHint}}</span>
       {{- else if $.Foxhole.Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Confirm once it ends.</span>{{end}}
     </form>
   </section>
@@ -218,7 +218,7 @@
           <span class="field-hint">Gives External to every approved collaborator in the server who doesn't hold it, straight away with no preview. Anyone not in the server is skipped and listed.</span>
         </div>
         <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="re-add-start"{{if or $.Foxhole.Busy (not .NotHolding)}} disabled{{end}}>Re-add approved collaborators</button>
-          {{- if and .Approved (not .NotHolding)}} <span class="fx-hint" data-field="nobody-to-re-add">Every approved collaborator in the server holds External, so there's nobody to re-add.</span>{{end}}</div>
+          {{- if and .Approved (not .NotHolding)}} <span class="fx-hint" data-field="nobody-to-re-add">{{.NobodyHint}}</span>{{end}}</div>
       </form>
       {{end}}
     </section>

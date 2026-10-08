@@ -152,7 +152,9 @@ func (p *Panel) startRetry(w http.ResponseWriter, r *http.Request, sess session)
 		http.Error(w, "the form names no report, so nothing changed", http.StatusBadRequest)
 		return
 	}
-	p.startAction(w, r, sess, actionPage, "the retry", func(ctx context.Context, by commands.ForumUser) error {
+	// A Retry whose every miss the run would skip has nothing to retry
+	// either.
+	p.startAction(w, r, sess, actionPage, "the retry", errNothingToRetry, func(ctx context.Context, by commands.ForumUser) error {
 		err := p.foxhole.actions.Retry(ctx, reportID, by)
 		if errors.Is(err, commands.ErrNothingToRetry) {
 			return errNothingToRetry

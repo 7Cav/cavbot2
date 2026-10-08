@@ -198,9 +198,8 @@ var ErrActionRunning = errors.New("another Foxhole action is running")
 
 // ErrNothingToRetry refuses a Retry of a report with nothing to retry: one
 // the store doesn't hold, one whose action still runs, one that missed
-// nobody, one whose every miss the Retry would change nobody for, or one of
-// an add or a removal, whose Retry confirms through the action's own
-// preview. Nothing changed.
+// nobody, or one of an add or a removal, whose Retry confirms through the
+// action's own preview. Nothing changed.
 var ErrNothingToRetry = errors.New("the Foxhole report has nothing to retry")
 
 // ErrNobodyToChange refuses a Foxhole action that would change nobody when
@@ -849,8 +848,7 @@ func rosterAddSpec(unit string) actionSpec {
 // member at a time, in the order the report lists them, each checked
 // against the member list when it reaches them. A report the store doesn't
 // hold, still running, that missed nobody, or of another action, is
-// ErrNothingToRetry, and so is one whose every miss the run would skip at
-// its start, as start says.
+// ErrNothingToRetry.
 func (r *FoxholeRuntime) Retry(ctx context.Context, reportID int64, by ForumUser) error {
 	readCtx, cancel := context.WithTimeout(ctx, foxholeStoreTimeout)
 	stored, err := r.store.FoxholeReport(readCtx, reportID)
@@ -889,10 +887,7 @@ func (r *FoxholeRuntime) Retry(ctx context.Context, reportID int64, by ForumUser
 	spec.plan = func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, _ []store.FoxholeRecord) []plannedChange {
 		return retryPlan(list, roleIDs, misses)
 	}
-	if err := r.start(ctx, spec, by); !errors.Is(err, ErrNobodyToChange) {
-		return err
-	}
-	return ErrNothingToRetry
+	return r.start(ctx, spec, by)
 }
 
 // rolesOf are the Foxhole roles the members were to change, each once, in
