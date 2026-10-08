@@ -55,6 +55,40 @@ run_check $'example.com/app/a\t86\nexample.com/app/gone\t50' \
     $'ok  \texample.com/app/a\t0.5s\tcoverage: 87.0% of statements'
 [[ $code -eq 1 ]] || fail "exit $code, want 1"
 
+case_name="a tested package with no floor fails with a NO FLOOR line naming one under its coverage"
+run_check $'example.com/app/a\t86' \
+    $'ok  \texample.com/app/a\t0.5s\tcoverage: 87.0% of statements
+ok  \texample.com/app/b\t0.5s\tcoverage: 66.7% of statements'
+[[ $code -eq 1 ]] || fail "exit $code, want 1"
+grep -Eq '^NO FLOOR.*example\.com/app/b[[:space:]].*[^0-9.]65([^0-9.]|$)' <<<"$out" ||
+    fail "no NO FLOOR line naming example.com/app/b and 65"
+
+case_name="a tested package under 1% coverage with no floor gets a NO FLOOR of 0"
+run_check $'example.com/app/a\t86' \
+    $'ok  \texample.com/app/a\t0.5s\tcoverage: 87.0% of statements
+ok  \texample.com/app/b\t0.1s\tcoverage: 0.5% of statements'
+grep -Eq '^NO FLOOR.*example\.com/app/b[[:space:]].*[^0-9.]0([^0-9.]|$)' <<<"$out" ||
+    fail "no NO FLOOR line naming example.com/app/b and 0"
+
+# go test prints these for code without tests, tests that cover no statements,
+# and no tests and no statements.
+case_name="a package with no coverage percentage on an ok line needs no floor"
+run_check $'example.com/app/a\t86' \
+    $'ok  \texample.com/app/a\t0.5s\tcoverage: 87.0% of statements
+\texample.com/app\t\tcoverage: 0.0% of statements
+ok  \texample.com/app/empty\t0.2s\tcoverage: [no statements]
+?   \texample.com/app/none\t[no test files]'
+[[ $code -eq 0 ]] || fail "exit $code, want 0"
+if grep -q '^NO FLOOR' <<<"$out"; then fail "printed a NO FLOOR line"; fi
+
+case_name="the module's root package needs a floor once it has tests"
+run_check $'example.com/app/a\t86' \
+    $'ok  \texample.com/app/a\t0.5s\tcoverage: 87.0% of statements
+ok  \texample.com/app\t0.4s\tcoverage: 40.2% of statements'
+[[ $code -eq 1 ]] || fail "exit $code, want 1"
+grep -Eq '^NO FLOOR.*example\.com/app[[:space:]].*[^0-9.]39([^0-9.]|$)' <<<"$out" ||
+    fail "no NO FLOOR line naming example.com/app and 39"
+
 if [[ $failures -ne 0 ]]; then
     echo "$failures check-coverage-floors test(s) failed" >&2
     exit 1
