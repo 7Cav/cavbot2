@@ -7,7 +7,8 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 
 ## Prerequisites
 
-- Go 1.25.0 or higher (see the `go` directive in `go.mod`)
+- Go 1.21 or later. The `toolchain` line in `go.mod` pins the Go that CI, the
+  gate and the image build on, and Go downloads it on first use.
 - [golangci-lint](https://golangci-lint.run/) at the version CI pins in
   `GOLANGCI_LINT_VERSION` (`.github/workflows/build_test.yml`). It must be built
   with a Go at least as new as `go.mod` targets, or it refuses to run.
@@ -242,8 +243,12 @@ It lints, checks that `go.mod` and `go.sum` are tidy, runs the suite with
 `-race` and coverage, checks the coverage floors and builds. The `store`
 package's tests need a real Postgres, so the gate starts a throwaway one of
 its own and removes it on exit. Several checkouts can run the gate at once.
-It runs on the Go version `go.mod` names, the one CI uses, because coverage
-differs between Go versions; Go downloads that toolchain on first use.
+It runs on the toolchain `go.mod` pins in its `toolchain` line, whatever Go
+you have installed, because coverage differs between Go versions. CI and the
+image's builder use the same toolchain, so the image production runs is built
+by the Go the tests ran on. One gate step fails when the Dockerfile's `golang`
+tag names another version. To move to a new Go, change the `toolchain` line
+and that tag in the same PR.
 
 CI enforces per-package coverage floors, listed in
 `.github/coverage-floors.tsv`. A floor stays within 3 points of its package's

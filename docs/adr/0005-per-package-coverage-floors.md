@@ -5,6 +5,7 @@
 Accepted (0.7.6 / PR #75). **Amended 2026-10-07**: the rule for raising a
 floor changed; see *Amendment: floors track coverage, not each PR's gain*.
 **Amended 2026-10-08**: a tested package with no floor fails the check.
+**Amended 2026-10-08**: floors come from the toolchain `go.mod` pins.
 Per-package floors are unchanged.
 
 ## Decision
@@ -57,6 +58,7 @@ Coverage above that line never fails the check. Only a package below its floor
 fails.
 
 Floors come from coverage on the Go version CI runs, the one `go.mod` names.
+*Superseded by the 2026-10-08 toolchain amendment.*
 The same code covers differently under different Go versions: `commands`
 covers 86.4% under 1.26.0 and 88.1% under 1.27.1, more than the 1 to 2 points
 a fresh floor leaves.
@@ -89,3 +91,12 @@ RAISE rule but never below 0. A package without tests needs no floor, since a
 floor of 0 guards nothing, so `main` needs no exemption by name. Unlike RAISE,
 this fails the check. Only a PR that adds a package's first test, or deletes
 its floor, can cause it, so `develop` never goes red over it (#482).
+
+## Amendment: floors come from the toolchain `go.mod` pins (2026-10-08)
+
+`go.mod` pins one exact Go in its `toolchain` line. CI's jobs, the gate and the
+image's builder all run on it, so floors come from coverage on that toolchain.
+The `go` directive stays at 1.26.0, because it also sets the binary's GODEBUG
+defaults. A PR that moves to a new Go changes the `toolchain` line and the
+Dockerfile's `golang` tag together, and sets the floors its RAISE lines name
+(#483).

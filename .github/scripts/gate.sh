@@ -5,9 +5,9 @@
 # CI. Run it from anywhere in the repo before you push.
 #
 # Steps, in order: the glossary's entry format, lint, the error reply check,
-# module tidiness, the tests of the scripts in this directory, the test suite
-# with -race and coverage against a throwaway Postgres, the coverage floors,
-# the build.
+# module tidiness, the image's Go, the tests of the scripts in this directory,
+# the test suite with -race and coverage against a throwaway Postgres, the
+# coverage floors, the build.
 #
 # Runs in several worktrees at once without interference. Each run starts its
 # own Postgres through test-db.sh and removes only that container on exit, and
@@ -20,11 +20,15 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 scripts=.github/scripts
 
-# Run on the Go version go.mod names, the one CI's setup-go installs. Coverage
-# moves with the toolchain (commands covers 86.4% under 1.26.0 and 88.1% under
-# 1.27.1), so a newer local Go would pass floors CI fails. Go fetches the
-# pinned toolchain on first use.
-GOTOOLCHAIN=go$(go list -m -f '{{.GoVersion}}')
+# Run on the toolchain go.mod pins with its toolchain line. CI's setup-go
+# installs that one and the image builds on it, so the gate tests the Go
+# production runs. Coverage moves with the toolchain, so another local Go would
+# pass floors CI fails. Go fetches the pinned toolchain on first use.
+GOTOOLCHAIN=$(awk '$1 == "toolchain" { print $2 }' go.mod)
+if [[ -z "$GOTOOLCHAIN" ]]; then
+    echo "go.mod has no toolchain line. CI, this gate and the image all build on it." >&2
+    exit 1
+fi
 export GOTOOLCHAIN
 
 work=$(mktemp -d)
@@ -77,6 +81,9 @@ go run ./tools/errorreply ./...
 
 step "go.mod and go.sum are tidy"
 go mod tidy -diff
+
+step "the image builds on the Go this gate tests"
+"$scripts/check-image-go.sh" "$GOTOOLCHAIN" Dockerfile
 
 step "script tests"
 for t in "$scripts"/*_test.sh; do
