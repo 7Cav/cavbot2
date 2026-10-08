@@ -465,7 +465,8 @@ func (p *Panel) startPurge(w http.ResponseWriter, r *http.Request, sess session)
 
 // startRemoval is POST /foxhole/remove, the remove preview's Confirm: it
 // starts the removal of the role confirmed from the members the preview
-// listed as losing it, as startAction says.
+// listed as losing it, clearing the approval of those it listed under
+// Approval cleared alone, as startAction says.
 func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -482,7 +483,7 @@ func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess sessio
 		return
 	}
 	p.startAction(w, r, sess, actionPage, "the removal", func(ctx context.Context, by commands.ForumUser) error {
-		err := p.foxhole.actions.Remove(ctx, role, members, by)
+		err := p.foxhole.actions.Remove(ctx, role, members, r.PostForm[fieldApprovalCleared], by)
 		if errors.Is(err, commands.ErrMemberListPartial) {
 			// The page the refusal answers with keeps no selection: it says
 			// to select again, as the preview's refusal does.

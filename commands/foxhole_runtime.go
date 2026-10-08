@@ -677,9 +677,9 @@ type actionRun struct {
 	grant    bool
 	reportID int64
 	reason   string
-	// clearsApproval is a removal of External, which clears the approval of
-	// each member it takes the role from.
-	clearsApproval bool
+	// clearsApproval are the members, by ID, whose approval a removal of
+	// External clears when it takes the role from them.
+	clearsApproval map[string]bool
 	// absent is the reason a member not in the server is skipped with.
 	absent SkipReason
 	// stop closes when someone presses the action's Stop.
@@ -698,9 +698,9 @@ type actionSpec struct {
 	roles []FoxholeRole
 	// grant is an action giving the role. One that doesn't takes it.
 	grant bool
-	// clearsApproval is an action that clears the approval of each member it
-	// takes External from.
-	clearsApproval bool
+	// clearsApproval are the members, by ID, whose approval a removal of
+	// External clears when it takes the role from them.
+	clearsApproval []string
 	// reason is the audit log reason's wording before the forum user who
 	// started the action.
 	reason string
@@ -762,11 +762,16 @@ func reAddSpec() actionSpec {
 // started by the forum user given, and returns once its report is written.
 // It starts as start says. The removal then runs in the background, with no
 // deadline of ctx's, to its end: one member at a time, it takes the role
-// off each. Taking External off an approved collaborator clears their
-// approval too, which a purge never does.
-func (r *FoxholeRuntime) Remove(ctx context.Context, role FoxholeRole, memberIDs []string, by ForumUser) error {
+// off each. Taking External off a member among clearsApproval, the
+// approved collaborators its preview named, clears their approval too,
+// which a purge never does. It clears no other approval, so one given
+// since the preview opened stays.
+func (r *FoxholeRuntime) Remove(ctx context.Context, role FoxholeRole, memberIDs, clearsApproval []string, by ForumUser) error {
+	if !role.RemovalClearsApproval() {
+		clearsApproval = nil
+	}
 	return r.start(ctx, actionSpec{
-		action: store.ChangeRemoval, role: role, roles: []FoxholeRole{role}, clearsApproval: role.RemovalClearsApproval(),
+		action: store.ChangeRemoval, role: role, roles: []FoxholeRole{role}, clearsApproval: clearsApproval,
 		reason: "Panel: Foxhole removal by ",
 		plan: func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange {
 			return removalPlan(list, roleIDs, records, role, memberIDs)
@@ -965,7 +970,10 @@ func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUse
 	r.started(entry.ID)
 	r.progressed(report)
 	run := actionRun{action: spec.action, grant: spec.grant, reportID: entry.ID, reason: spec.reason + by.auditName(),
-		clearsApproval: spec.clearsApproval, absent: cmp.Or(spec.absent, SkipLeft), stop: stop}
+		clearsApproval: map[string]bool{}, absent: cmp.Or(spec.absent, SkipLeft), stop: stop}
+	for _, id := range spec.clearsApproval {
+		run.clearsApproval[id] = true
+	}
 	names := namesOf(records)
 	handed = true
 	go r.run(run, plan, report, names)
@@ -1194,7 +1202,7 @@ func (r *FoxholeRuntime) changeEach(run actionRun, plan []plannedChange, report 
 				member.Failure = failureReason(err)
 				report.Failed = append(report.Failed, member)
 			} else {
-				if run.clearsApproval {
+				if run.clearsApproval[member.ID] {
 					member.ApprovalCleared = r.clearApproval(member.ID)
 				}
 				report.Changed = append(report.Changed, member)
