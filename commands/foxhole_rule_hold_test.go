@@ -257,7 +257,7 @@ func TestAPageActionThatPanicsMidRunEndsItsReportAsARestart(t *testing.T) {
 	if got := idsOf(report.Changed); len(got) == 0 || !slices.Equal(got, answered) {
 		t.Errorf("the report lists %v as changed, want the members Discord changed, %v", got, answered)
 	}
-	holders := []string{"100000000000000001", "100000000000000002", "100000000000000003"}
+	holders := []string{kestrelID, ashID, doeID}
 	rest := slices.DeleteFunc(holders, func(id string) bool { return slices.Contains(answered, id) })
 	if got := idsOf(report.NotAttempted); !slices.Equal(got, rest) {
 		t.Errorf("the report lists %v as not attempted, want the members the run never reached, %v", got, rest)

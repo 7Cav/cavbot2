@@ -91,19 +91,27 @@ func (f failingRoleChange) GuildMemberRoleAdd(guildID, userID, roleID, reason st
 	return restError(403, 50013, "Missing Permissions")
 }
 
-// The page's members, as pageGuild lists them, and bob, who isn't in the
-// server.
-const (
-	kestrelID = "100000000000000001"
-	ashID     = "100000000000000002"
-	doeID     = "100000000000000003"
-	bobID     = "100000000000000009"
-)
+// bobID is an approved collaborator who isn't in the page's guild.
+const bobID = "100000000000000009"
+
+// endedReport reads the report with the ID given from the store, and fails
+// the test while it still reads running.
+func endedReport(t *testing.T, st store.Store, id int64) ActionReport {
+	t.Helper()
+	stored, err := st.FoxholeReport(context.Background(), id)
+	if err != nil {
+		t.Fatalf("read report %d: %v", id, err)
+	}
+	if stored.Running {
+		t.Fatalf("report %d still reads running", id)
+	}
+	return reportOf(t, st, id)
+}
 
 // A re-add whose store is down from its first progress write through every
 // end write ends, once the store is back, with how the action ended: the
-// members it changed, skipped and failed on, the one it never reached, and
-// who stopped it. The report then offers its Retry.
+// members it changed, skipped and failed on, and the one it never reached.
+// The report then offers its Retry.
 func TestAReportWhoseEndWriteFailsEndsOnceTheStoreIsBack(t *testing.T) {
 	clock := installFoxholeClock(t)
 	fake := store.NewFake()
@@ -117,14 +125,7 @@ func TestAReportWhoseEndWriteFailsEndsOnceTheStoreIsBack(t *testing.T) {
 		t.Fatalf("approve the collaborators: %v", err)
 	}
 	st := &storeOutage{Store: fake}
-	t.Setenv(foxholeRoleBaseNameEnv, "")
-	t.Setenv(foxholeRoleBaseNameOldEnv, "")
-	hold := &pageHold{entered: make(chan string, 16), release: make(chan struct{}), free: make(chan struct{})}
-	t.Cleanup(hold.open)
-	fx, err := NewFoxholeRuntime(pageGuild{}, failingRoleChange{hold, doeID}, st, "guild-1")
-	if err != nil {
-		t.Fatalf("NewFoxholeRuntime: %v", err)
-	}
+	fx, hold := newPageRuntimeWith(t, st, func(h *pageHold) FoxholeRoleWriter { return failingRoleChange{h, doeID} })
 
 	if err := fx.ReAdd(ctx, pageStarter); err != nil {
 		t.Fatalf("the re-add didn't start: %v", err)
@@ -147,14 +148,7 @@ func TestAReportWhoseEndWriteFailsEndsOnceTheStoreIsBack(t *testing.T) {
 	st.endsDown.Store(false)
 	clock.advance(foxholeEndRetryWait)
 
-	stored, err := fake.FoxholeReport(ctx, id)
-	if err != nil {
-		t.Fatalf("read the report: %v", err)
-	}
-	if stored.Running {
-		t.Fatal("one wait after the store came back, the report still reads running")
-	}
-	report := reportOf(t, fake, id)
+	report := endedReport(t, fake, id)
 	if report.Outcome != ReportStopped {
 		t.Errorf("the report ended %q, want %q", report.Outcome, ReportStopped)
 	}
@@ -233,13 +227,8 @@ func TestAnEndWriteTheStoreAlreadyTookCountsAsWritten(t *testing.T) {
 				clock.advance(foxholeEndRetryWait)
 			}
 
-			id := lastReportID(t, fake)
-			stored, err := fake.FoxholeReport(context.Background(), id)
-			if err != nil {
-				t.Fatalf("read the report: %v", err)
-			}
-			if got := reportOf(t, fake, id).Outcome; stored.Running || got != ReportDone {
-				t.Errorf("the report reads running %v, ended %q, want ended %q", stored.Running, got, ReportDone)
+			if got := endedReport(t, fake, lastReportID(t, fake)).Outcome; got != ReportDone {
+				t.Errorf("the report ended %q, want %q", got, ReportDone)
 			}
 			if got := st.ends.Load(); got != tc.ends {
 				t.Errorf("%d end writes reached the store, want %d", got, tc.ends)
@@ -273,13 +262,8 @@ func TestAReportWhoseEndWriteFailsForLongReachesSentryOnce(t *testing.T) {
 	st.endsDown.Store(false)
 	clock.advance(foxholeEndRetryWait)
 
-	id := lastReportID(t, fake)
-	stored, err := fake.FoxholeReport(context.Background(), id)
-	if err != nil {
-		t.Fatalf("read the report: %v", err)
-	}
-	if got := reportOf(t, fake, id).Outcome; stored.Running || got != ReportDone {
-		t.Errorf("the report reads running %v, ended %q, want ended %q", stored.Running, got, ReportDone)
+	if got := endedReport(t, fake, lastReportID(t, fake)).Outcome; got != ReportDone {
+		t.Errorf("the report ended %q, want %q", got, ReportDone)
 	}
 	if *captures != 1 {
 		t.Errorf("%d captures reached Sentry, want 1", *captures)
@@ -322,7 +306,7 @@ func TestALateEndWriteLeavesThePageActionRunningNowAsItWas(t *testing.T) {
 	}
 	clock.advance(foxholeEndRetryWait)
 
-	if got := reportOf(t, fake, first).Outcome; got != ReportDone {
+	if got := endedReport(t, fake, first).Outcome; got != ReportDone {
 		t.Errorf("the first report ended %q, want %q", got, ReportDone)
 	}
 	if now, ok := fx.Running(); !ok || now != running {
@@ -341,7 +325,7 @@ func TestALateEndWriteLeavesThePageActionRunningNowAsItWas(t *testing.T) {
 	hold.next(t)
 	hold.pass(t)
 	awaitFree(t, fx)
-	report := reportOf(t, fake, second)
+	report := endedReport(t, fake, second)
 	if want := []string{kestrelID, ashID, doeID}; report.Outcome != ReportDone || !slices.Equal(idsOf(report.Changed), slices.Sorted(slices.Values(want))) {
 		t.Errorf("the second report ended %q with %v changed, want %q with %v", report.Outcome, idsOf(report.Changed), ReportDone, want)
 	}

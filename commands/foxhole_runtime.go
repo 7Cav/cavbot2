@@ -1341,8 +1341,8 @@ func failureReason(err error) string {
 // writeReport writes the report as it stands, ending it when end is set.
 // The end write is tried foxholeEndAttempts times. A write that fails for
 // good reaches Sentry and the action goes on: the role changes matter
-// more, and the next write carries everything. An end write that fails for
-// good goes on in the background (endLate).
+// more, and the next write carries everything. An end write whose attempts
+// all fail goes on in the background (endLate).
 func (r *FoxholeRuntime) writeReport(reportID int64, report ActionReport, end bool) {
 	raw, err := json.Marshal(report)
 	if err != nil {
@@ -1391,9 +1391,10 @@ func (r *FoxholeRuntime) endLate(reportID int64, report ActionReport, raw json.R
 }
 
 // endWritten reports whether an end write of the report that failed with
-// the error given has ended it all the same. ErrNotFound says the report
-// no longer runs, so an earlier attempt that returned an error had
-// committed: no attempt follows, and nothing reaches Sentry.
+// the error given has ended it all the same, and logs at INFO when it has.
+// ErrNotFound says the report no longer runs, as when an earlier attempt
+// that returned an error had committed, so no attempt follows and nothing
+// reaches Sentry.
 func endWritten(reportID int64, err error) bool {
 	if !errors.Is(err, store.ErrNotFound) {
 		return false

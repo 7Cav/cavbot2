@@ -28,6 +28,13 @@ const (
 	pageExternal = "role-fx-external"
 )
 
+// The members of the page's guild, by ID.
+const (
+	kestrelID = "100000000000000001"
+	ashID     = "100000000000000002"
+	doeID     = "100000000000000003"
+)
+
 // pageGuild is the guild's gateway state as a Foxhole page action reads
 // it: the two Foxhole roles, named from the default base name, and a
 // complete member list in which one member holds External and two hold
@@ -36,9 +43,9 @@ type pageGuild struct{}
 
 func (pageGuild) MemberList(string) MemberListSnapshot {
 	return MemberListSnapshot{Status: MemberListComplete, Connected: true, Members: []ListedMember{
-		{ID: "100000000000000001", Username: "kestrel", RoleIDs: []string{pageExternal}},
-		{ID: "100000000000000002", Username: "ash", RoleIDs: []string{pageInternal}},
-		{ID: "100000000000000003", Username: "doe", RoleIDs: []string{pageInternal}},
+		{ID: kestrelID, Username: "kestrel", RoleIDs: []string{pageExternal}},
+		{ID: ashID, Username: "ash", RoleIDs: []string{pageInternal}},
+		{ID: doeID, Username: "doe", RoleIDs: []string{pageInternal}},
 	}}
 }
 
@@ -109,11 +116,18 @@ func newPageRuntime(t *testing.T) (*FoxholeRuntime, *pageHold) {
 // newPageRuntimeOver is newPageRuntime over the store given.
 func newPageRuntimeOver(t *testing.T, st store.Store) (*FoxholeRuntime, *pageHold) {
 	t.Helper()
+	return newPageRuntimeWith(t, st, func(h *pageHold) FoxholeRoleWriter { return h })
+}
+
+// newPageRuntimeWith is newPageRuntimeOver with its role changes made
+// through the Discord wrap builds around the held one.
+func newPageRuntimeWith(t *testing.T, st store.Store, wrap func(*pageHold) FoxholeRoleWriter) (*FoxholeRuntime, *pageHold) {
+	t.Helper()
 	t.Setenv(foxholeRoleBaseNameEnv, "")
 	t.Setenv(foxholeRoleBaseNameOldEnv, "")
 	hold := &pageHold{entered: make(chan string, 16), release: make(chan struct{}), free: make(chan struct{})}
 	t.Cleanup(hold.open)
-	fx, err := NewFoxholeRuntime(pageGuild{}, hold, st, "guild-1")
+	fx, err := NewFoxholeRuntime(pageGuild{}, wrap(hold), st, "guild-1")
 	if err != nil {
 		t.Fatalf("NewFoxholeRuntime: %v", err)
 	}
