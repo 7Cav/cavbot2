@@ -4,44 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"io/fs"
-	"os"
 	"path"
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/pressly/goose/v3"
 )
-
-// emptyMigrationProvider resets the test database to an empty public schema
-// and returns a raw connection to it and a goose provider over the embedded
-// migrations, none applied. Skips when no test database is set.
-func emptyMigrationProvider(t *testing.T) (*sql.DB, *goose.Provider) {
-	t.Helper()
-	dsn := os.Getenv(testDSNVar)
-	if dsn == "" {
-		t.Skipf("%s not set", testDSNVar)
-	}
-	ctx := context.Background()
-	raw, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatalf("open raw connection: %v", err)
-	}
-	t.Cleanup(func() { _ = raw.Close() })
-	if _, err := raw.ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
-		t.Fatalf("reset schema: %v", err)
-	}
-	files, err := fs.Sub(migrationFiles, "migrations")
-	if err != nil {
-		t.Fatalf("embedded migrations: %v", err)
-	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, raw, files)
-	if err != nil {
-		t.Fatalf("migration provider: %v", err)
-	}
-	return raw, provider
-}
 
 // schemaQueries each read one kind of object in the public schema from the
 // Postgres catalog, one line per object, so two schemas compare as sets of
@@ -123,7 +90,8 @@ func schemaDiff(before, after []string) string {
 // so its Down meets the schema the migrations before it built, and the
 // schema after its Down must match the schema before its Up.
 func TestEveryMigrationDownRestoresTheSchemaBeforeItsUp(t *testing.T) {
-	raw, provider := emptyMigrationProvider(t)
+	_, raw := resetTestDatabase(t)
+	provider := migrationProvider(t, raw)
 	ctx := context.Background()
 	// goose creates its version table on its first call. Making that call
 	// before the first snapshot keeps goose's own table out of the diff.
