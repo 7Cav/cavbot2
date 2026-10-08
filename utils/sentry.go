@@ -110,7 +110,26 @@ func RecoverPanic(ctx string, kv ...any) {
 	if r == nil {
 		return
 	}
+	reportPanic(ctx, r, kv, nil)
+}
 
+// ReportPanic logs a panic its caller has already recovered and forwards it
+// to Sentry, for a caller that still has to act once the panic is caught,
+// such as answer the request it ended. RecoverPanic recovers the panic
+// itself and leaves its caller no way to learn of it. The event carries
+// RecoverPanic's tags, and kv in its extra context too, the way
+// CaptureError's carries its pairs.
+func ReportPanic(ctx string, r any, kv ...any) {
+	extras := make(map[string]any)
+	for i := 0; i+1 < len(kv); i += 2 {
+		if key, ok := kv[i].(string); ok {
+			extras[key] = kv[i+1]
+		}
+	}
+	reportPanic(ctx, r, kv, extras)
+}
+
+func reportPanic(ctx string, r any, kv []any, extras map[string]any) {
 	Error("panic recovered", append([]any{"context", ctx, "panic", r, "stack", string(debug.Stack())}, kv...)...)
 
 	if sentry.CurrentHub().Client() == nil {
@@ -120,6 +139,9 @@ func RecoverPanic(ctx string, kv ...any) {
 	sentry.WithScope(func(scope *sentry.Scope) {
 		scope.SetTag("context", ctx)
 		promoteCommandTag(scope, kv)
+		if len(extras) > 0 {
+			scope.SetContext("extra", extras)
+		}
 		sentry.CurrentHub().RecoverWithContext(context.Background(), r)
 	})
 	sentry.Flush(2 * time.Second)
