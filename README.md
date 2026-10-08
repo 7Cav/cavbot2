@@ -11,7 +11,8 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
   gate and the image build on, and Go downloads it on first use.
 - [golangci-lint](https://golangci-lint.run/) at the version CI pins in
   `GOLANGCI_LINT_VERSION` (`.github/workflows/build_test.yml`). It must be built
-  with a Go at least as new as `go.mod` targets, or it refuses to run.
+  with a Go at least as new as the `toolchain` line in `go.mod`, or it refuses
+  to run.
 - A C compiler (gcc/clang) if you want to run the tests with `-race`
 - Docker, only if you want the container path in step 4
 
@@ -222,7 +223,7 @@ Sunday, a real person gets your test output. Prefer a test guild.
 | `Rank ladder drift` at startup, and a Sentry event when `SENTRY_DSN` is set | The abbreviations or order of `tempVCRankRoles` in `commands/temp_vc.go` differ from the milpacs ranks endpoint. The event lists the positions that differ |
 | Compose says `pull access denied` for `cavbot2:latest` | The image was never built locally — run `docker build -t cavbot2:latest .` |
 | Compose says network `xenforo_internal` not found | Create it, or join the host that has it |
-| golangci-lint reports a Go version mismatch | Your golangci-lint was built with an older Go than `go.mod` targets; install a build made with Go 1.25+ |
+| golangci-lint stops with `used to build golangci-lint is lower than the targeted Go version` | Your golangci-lint was built with an older Go than the `toolchain` line in `go.mod`. Install a build made with a Go at least as new as that line. The `targeted Go version` in the message is the Go version golangci-lint needs |
 
 ## Testing
 
