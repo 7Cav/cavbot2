@@ -185,6 +185,11 @@ func main() {
 	}
 
 	defer utils.InitSentry(Version)()
+	// A startup step that fails panics. The watch sends that failed start to
+	// Sentry and lets the panic go on (#473). It is deferred after InitSentry
+	// so it runs while the client is still live.
+	start := utils.NewStartWatch(time.Now)
+	defer start.ReportFailure()
 
 	utils.Info("CavBot2 starting", "version", Version)
 
@@ -351,6 +356,7 @@ func main() {
 
 	commands.StartJoinerReportScheduler(dg, GuildID)
 
+	start.Running()
 	utils.Info("Bot is now running. Press CTRL-C to exit")
 	<-ctx.Done()
 	utils.Info("Shutting down")
