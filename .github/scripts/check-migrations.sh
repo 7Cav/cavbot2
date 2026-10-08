@@ -3,9 +3,9 @@
 #
 # Fails (exit 1) when the migrations in <dir>, as the working tree holds them,
 # break a rule against the ones on <base-ref>, develop. A migration is a *.sql
-# file in <dir>, and its number is the digits its name starts with. <now> is
-# the current UTC time as YYYYMMDDhhmmss, how `goose create` numbers a file.
-# gate.sh passes `date -u +%Y%m%d%H%M%S`.
+# file in <dir>, and its number is the part of its name before the first _.
+# <now> is the current UTC time as YYYYMMDDhhmmss, how `goose create` numbers
+# a file. gate.sh passes `date -u +%Y%m%d%H%M%S`.
 #
 # The rules, for a file the branch adds and develop does not have:
 #   - it sorts above every migration on develop, compared as numbers;
@@ -44,7 +44,7 @@ main() {
     local problems=() highest=0 changed="" renumber="" f n path
     while IFS= read -r f; do
         [[ -n $f ]] || continue
-        n=$(number "$f")
+        n=$(migration_number "$f")
         if ((n > highest)); then
             highest=$n
         fi
@@ -59,7 +59,7 @@ main() {
         [[ -e $path ]] || continue
         f=${path##*/}
         grep -qxF "$f" <<<"$on_base" && continue
-        n=$(number "$f")
+        n=$(migration_number "$f")
         if ((n <= highest)); then
             problems+=("$f $rule_order")
             renumber=1
@@ -82,33 +82,42 @@ main() {
             cat <<'EOF'
 
 goose refuses a migration numbered below one a database has applied, and the
-bot then fails at startup. Rename each file that sorts at or below develop, or
-is numbered later than now, to the output of this command, run when you write
-the migration or rebase it:
-
-    date -u +%Y%m%d%H%M%S
+bot then fails at startup. Give each file that sorts at or below develop, or
+is numbered later than now, a new number.
 EOF
         fi
         if [[ -n $changed ]]; then
             cat <<EOF
 
 A database that applied a migration on develop never runs a change to it.
-Restore each such file and put the change in a new migration:
+Restore each such file, then put the change in a new migration:
 
     git checkout $base -- $dir/<file>
 
 If the branch never touched the file, it is behind develop: merge $base in.
 EOF
         fi
+        cat <<'EOF'
+
+Number a migration with the output of this command, run when you write it or
+rebase it:
+
+    date -u +%Y%m%d%H%M%S
+EOF
     } >&2
     exit 1
 }
 
-# number <file>: the file's number, the digits its name starts with, in base
-# 10. A name with none is 0.
-number() {
-    local digits=${1%%[!0-9]*}
-    echo $((10#${digits:-0}))
+# migration_number <file>: the file's number, the part of its name before the
+# first _, in base 10. goose skips a file whose part is not a number, so that
+# file reads as 0 and sorts below develop.
+migration_number() {
+    local part=${1%%_*}
+    if [[ $part =~ ^[0-9]+$ ]]; then
+        echo $((10#$part))
+    else
+        echo 0
+    fi
 }
 
 # Run only when executed, so the tests can source the rule phrases.

@@ -2,7 +2,9 @@
 # .github/scripts/gate.sh
 #
 # The CI gate. CI's build job runs this script, so a pass here is a pass in
-# CI. Run it from anywhere in the repo before you push.
+# CI. Run it from anywhere in the repo before you push. The one exception is
+# the migration check: CI fetches develop first, while a local run reads this
+# worktree's origin/develop as it stands, so fetch before you trust a local pass.
 #
 # Steps, in order: the glossary's entry format, lint, the error reply check,
 # module tidiness, the image's Go, the tests of the scripts in this directory,
