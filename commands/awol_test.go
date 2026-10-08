@@ -443,26 +443,16 @@ func TestRunAwol_EmptyRosterSurfacesFormatHint(t *testing.T) {
 	}
 }
 
-func TestRunAwol_RosterFetch500SurfacesError(t *testing.T) {
+// A roster fetch the 7Cav API fails tells the member to try again, and its
+// error goes to Sentry, not to the member.
+func TestRunAwolRosterFailureReachesSentryNotTheMember(t *testing.T) {
 	serveAwolRoster(t, utils.LiteRosterResponse{}, http.StatusInternalServerError)
+	rec := recordCaptures(t)
 
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	cache := healthyCache(nil)
-	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runAwol(f, healthyCache(nil), awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	runAwol(f, cache, awolRefDate, i)
-
-	calls := f.Calls()
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 calls, got %d: %+v", len(calls), calls)
-	}
-	got := "<nil>"
-	if calls[2].Edit.Content != nil {
-		got = *calls[2].Edit.Content
-	}
-	if !strings.Contains(got, "Failed to fetch roster") {
-		t.Fatalf("expected 'Failed to fetch roster' in Edit fallback, got %q", got)
-	}
+	assertLookupFailed(t, f.Calls(), rec, "awol")
 }
 
 // TestRunAwol_ActiveLOAStillAWOL pins the "on LOA, still AWOL" case: a trooper

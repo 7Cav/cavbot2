@@ -390,11 +390,7 @@ func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	}
 
 	if err := deferPublic(r, i); err != nil {
-		if isUnknownInteraction(err) {
-			captureMissedAck(i, err)
-			return
-		}
-		utils.HandleError(r, i, fmt.Sprintf("Failed to defer interaction: %v", err))
+		replyAckFailed(r, i, err)
 		return
 	}
 
@@ -411,41 +407,29 @@ func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 
 	start, err := utils.ParseZuluDateTime(startDate, startTime)
 	if err != nil {
-		if sendErr := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-			Content: fmt.Sprintf("Invalid start date/time: %v", err),
-		}); sendErr != nil {
-			utils.HandleError(r, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
-		}
+		utils.Info("Refused /s3aar start", "command", "S3AAR", "error", err)
+		sendS3aarFollowup(r, i, s3aarBadStartReply)
 		return
 	}
 
 	stop, err := utils.ParseZuluDateTime(endDate, endTime)
 	if err != nil {
-		if sendErr := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-			Content: fmt.Sprintf("Invalid end date/time: %v", err),
-		}); sendErr != nil {
-			utils.HandleError(r, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
-		}
+		utils.Info("Refused /s3aar end", "command", "S3AAR", "error", err)
+		sendS3aarFollowup(r, i, s3aarBadEndReply)
 		return
 	}
 
 	serverID, err := getServerID(server)
 	if err != nil {
-		if sendErr := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-			Content: fmt.Sprintf("Invalid server selection: %v", err),
-		}); sendErr != nil {
-			utils.HandleError(r, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
-		}
+		utils.Info("Refused /s3aar server", "command", "S3AAR", "error", err)
+		sendS3aarFollowup(r, i, s3aarBadServerReply)
 		return
 	}
 
 	sessions, err := fetchBattleMetricsSessions(serverID, start, stop, minAttendance)
 	if err != nil {
-		if sendErr := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-			Content: fmt.Sprintf("Failed to fetch BattleMetrics data: %v", err),
-		}); sendErr != nil {
-			utils.HandleError(r, i, fmt.Sprintf("Failed to send error message: %v", sendErr))
-		}
+		captureError("BattleMetrics fetch failed", err, "command", "s3aar", "guild_id", i.GuildID)
+		sendS3aarFollowup(r, i, s3aarBattleMetricsFailedReply)
 		return
 	}
 
@@ -488,7 +472,7 @@ func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 		Embeds: []*discordgo.MessageEmbed{embed1},
 	})
 	if err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("Failed to send embeds: %v", err))
+		replyS3aarSendFailed(r, i, err)
 		return
 	}
 
@@ -509,17 +493,14 @@ func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 		},
 	})
 	if err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("Failed to send AAR roster file: %v", err))
+		replyS3aarSendFailed(r, i, err)
 	}
 
 	if debug == "Yes" {
 		jsonData, err := json.MarshalIndent(sessions, "", "  ")
 		if err != nil {
-			if sendErr := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-				Content: fmt.Sprintf("Failed to format session data: %v", err),
-			}); sendErr != nil {
-				utils.HandleError(r, i, fmt.Sprintf("❌ Failed to send error message: %v", sendErr))
-			}
+			captureError("Failed to encode /s3aar sessions", err, "command", "s3aar", "guild_id", i.GuildID)
+			sendS3aarFollowup(r, i, s3aarDebugFailedReply)
 			return
 		}
 
@@ -533,9 +514,35 @@ func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 			},
 		})
 		if err != nil {
-			utils.HandleError(r, i, fmt.Sprintf("Failed to send JSON file: %v", err))
+			replyS3aarSendFailed(r, i, err)
 		}
 	}
 
 	utils.Info("✨ Done!", "command", "S3AAR")
+}
+
+// The refusals /s3aar answers bad input with, and its answers when
+// something fails.
+const (
+	s3aarBadStartReply            = "❌ The start date or time isn't valid. Give a date like 10NOV25 and a time like 1800."
+	s3aarBadEndReply              = "❌ The end date or time isn't valid. Give a date like 10NOV25 and a time like 1800."
+	s3aarBadServerReply           = "❌ That server isn't available. Pick one from the list."
+	s3aarBattleMetricsFailedReply = "❌ Couldn't get the sessions from BattleMetrics. Try again in a few minutes."
+	s3aarDebugFailedReply         = "❌ Couldn't build the debug file. The problem has been reported."
+	s3aarSendFailedReply          = "❌ Couldn't post all of the AAR. Check what posted above before you run it again."
+)
+
+// sendS3aarFollowup sends one of /s3aar's fixed answers as a followup.
+func sendS3aarFollowup(r utils.InteractionResponder, i *discordgo.InteractionCreate, content string) {
+	if err := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{Content: content}); err != nil {
+		replyS3aarSendFailed(r, i, err)
+	}
+}
+
+// replyS3aarSendFailed handles a followup Discord refused. The error goes to
+// Sentry, and the member gets s3aarSendFailedReply in place of the deferred
+// reply.
+func replyS3aarSendFailed(r utils.InteractionResponder, i *discordgo.InteractionCreate, err error) {
+	captureError("Failed to send an /s3aar followup", err, "command", "s3aar", "guild_id", i.GuildID)
+	utils.HandleError(r, i, s3aarSendFailedReply)
 }

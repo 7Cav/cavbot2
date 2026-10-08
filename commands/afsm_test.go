@@ -726,25 +726,16 @@ func TestRunAFSM_EmptyRoster(t *testing.T) {
 	}
 }
 
-func TestRunAFSM_RosterFetch500(t *testing.T) {
+// A roster fetch the 7Cav API fails tells the member to try again, and its
+// error goes to Sentry, not to the member.
+func TestRunAFSMRosterFailureReachesSentryNotTheMember(t *testing.T) {
 	serveRosterAndProfiles(t, utils.LiteRosterResponse{}, http.StatusInternalServerError, nil)
+	rec := recordCaptures(t)
 
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	i := fakeAppCommandInteraction(stringOption("department", "S6"))
+	runAFSM(f, fakeAppCommandInteraction(stringOption("department", "S6")))
 
-	runAFSM(f, i)
-
-	calls := f.Calls()
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 calls, got %d: %+v", len(calls), calls)
-	}
-	if calls[2].Edit.Content == nil || !strings.Contains(*calls[2].Edit.Content, "Failed to fetch Members") {
-		got := "<nil>"
-		if calls[2].Edit.Content != nil {
-			got = *calls[2].Edit.Content
-		}
-		t.Fatalf("expected 'Failed to fetch Members' in Edit fallback, got %q", got)
-	}
+	assertLookupFailed(t, f.Calls(), rec, "afsm")
 }
 
 // TestRunAFSM_FirstRespondFails_BailsBeforeAPI covers the early-bail branch when

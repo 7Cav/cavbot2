@@ -651,25 +651,16 @@ func TestRunS6ITCheck_EmptyRoster(t *testing.T) {
 	}
 }
 
-func TestRunS6ITCheck_RosterFetch500(t *testing.T) {
+// A roster fetch the 7Cav API fails tells the member to try again, and its
+// error goes to Sentry, not to the member.
+func TestRunS6ITCheckRosterFailureReachesSentryNotTheMember(t *testing.T) {
 	serveS6RosterAndProfiles(t, utils.LiteRosterResponse{}, http.StatusInternalServerError, nil)
+	rec := recordCaptures(t)
 
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	i := fakeAppCommandInteraction()
+	runS6ITCheck(f, fakeAppCommandInteraction())
 
-	runS6ITCheck(f, i)
-
-	calls := f.Calls()
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 calls, got %d: %+v", len(calls), calls)
-	}
-	if calls[2].Edit.Content == nil || !strings.Contains(*calls[2].Edit.Content, "Failed to fetch S6 Members") {
-		got := "<nil>"
-		if calls[2].Edit.Content != nil {
-			got = *calls[2].Edit.Content
-		}
-		t.Fatalf("expected 'Failed to fetch S6 Members' in Edit fallback, got %q", got)
-	}
+	assertLookupFailed(t, f.Calls(), rec, "s6-it-check")
 }
 
 // TestRunS6ITCheck_FirstRespondFails_BailsBeforeAPI covers the early-bail branch

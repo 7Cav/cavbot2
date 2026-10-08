@@ -4,9 +4,10 @@
 # The CI gate. CI's build job runs this script, so a pass here is a pass in
 # CI. Run it from anywhere in the repo before you push.
 #
-# Steps, in order: the glossary's entry format, lint, module tidiness, the
-# tests of the scripts in this directory, the test suite with -race and
-# coverage against a throwaway Postgres, the coverage floors, the build.
+# Steps, in order: the glossary's entry format, lint, the error reply check,
+# module tidiness, the tests of the scripts in this directory, the test suite
+# with -race and coverage against a throwaway Postgres, the coverage floors,
+# the build.
 #
 # Runs in several worktrees at once without interference. Each run starts its
 # own Postgres through test-db.sh and removes only that container on exit, and
@@ -68,6 +69,11 @@ fi
 
 step "lint"
 golangci-lint run --timeout=5m
+
+step "error replies carry no error text"
+# A member's error reply is a fixed message. The error goes to the log or
+# to Sentry (#478).
+go run ./tools/errorreply ./...
 
 step "go.mod and go.sum are tidy"
 go mod tidy -diff
