@@ -570,3 +570,10 @@ Discord has not sent the data. The Foxhole page is the exception. It shows
 everything that doesn't need the member list, with a notice in place of the
 rest.
 _Avoid_: page timeout, deadline.
+
+**Failed start**:
+A start of the bot that ends before the bot is running, because a startup
+step failed. A stop during startup is not a failed start, but a step that
+fails for its own reason while a stop is waiting still is. A failure while
+the bot shuts down is not one.
+_Avoid_: crash, boot failure, startup panic.
