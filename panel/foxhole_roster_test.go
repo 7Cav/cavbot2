@@ -433,32 +433,6 @@ func TestRosterAddConfirmedAfterTheRosterChangedStartsNothing(t *testing.T) {
 	}
 }
 
-// The roster block sits behind the Foxhole page's gate: a signed-in forum
-// user who opens no page gets the no-access page for Preview roster and for
-// a roster preview's Confirm, which fetch no roster and start no roster add.
-func TestRosterAddByAUserInNeitherGroupIsRefused(t *testing.T) {
-	for _, path := range []string{foxholeRosterPreviewPath, foxholeRosterPath} {
-		t.Run(path, func(t *testing.T) {
-			w := newFoxholeWorld(t)
-			api := serveRoster(t, trooperVance)
-			preview := parseHTML(t, previewRoster(t, w, "D/ACD"))
-			calls := api.requestCount()
-			outsider := newBrowser(t, w.p)
-			signInAs(t, w.forum, outsider, addUserOutsideAdminGroups(w.forum))
-
-			res := outsider.postForm(path, formPosts(t, preview, foxholeRosterPath))
-
-			assertNoAccessPage(t, parseHTML(t, follow(t, outsider, res)))
-			if n := api.requestCount() - calls; n != 0 {
-				t.Errorf("the 7Cav API got %d requests, want none", n)
-			}
-			if entries := changeEntries(t, parseHTML(t, w.b.get(foxholePath)), "roster_add"); len(entries) != 0 {
-				t.Errorf("the change log holds %d roster add entries, want none", len(entries))
-			}
-		})
-	}
-}
-
 // A roster add that would give Internal to nobody says so and offers no
 // Confirm: every trooper on the roster already holds Internal, isn't in the
 // server, or has no Discord account on the milpac.

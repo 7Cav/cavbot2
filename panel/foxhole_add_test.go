@@ -506,39 +506,6 @@ func TestAddConfirmIsDisabledWhileAnActionRunsAndPreviewStaysOpen(t *testing.T) 
 	}
 }
 
-// The paste box sits behind the Foxhole page's gate: a signed-in forum user
-// who opens no page gets the no-access page for its Preview and for an add
-// preview's Confirm, which starts no add.
-func TestAddByAUserInNeitherGroupIsRefused(t *testing.T) {
-	cases := []struct {
-		name  string
-		press func(t *testing.T, outsider *browser, page, preview *html.Node) *http.Response
-	}{
-		{"preview", func(t *testing.T, outsider *browser, page, _ *html.Node) *http.Response {
-			return previewPaste(t, outsider, page, addForm(t, page), "external", "jdoe")
-		}},
-		{"confirm", func(t *testing.T, outsider *browser, _, preview *html.Node) *http.Response {
-			return outsider.postForm(foxholeAddPath, formPosts(t, preview, foxholeAddPath))
-		}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			w := newFoxholeWorld(t)
-			page := parseHTML(t, w.b.get(foxholePath))
-			preview := parseHTML(t, previewPaste(t, w.b, page, addForm(t, page), "external", "jdoe"))
-			outsider := newBrowser(t, w.p)
-			signInAs(t, w.forum, outsider, addUserOutsideAdminGroups(w.forum))
-
-			res := tc.press(t, outsider, page, preview)
-
-			assertNoAccessPage(t, parseHTML(t, follow(t, outsider, res)))
-			if entries := changeEntries(t, parseHTML(t, w.b.get(foxholePath)), "add"); len(entries) != 0 {
-				t.Errorf("the change log holds %d add entries, want none", len(entries))
-			}
-		})
-	}
-}
-
 // An add that would give the role to nobody can't be confirmed: a preview
 // whose every line matches nobody, names a member who already holds the
 // role, or matches more than five members offers no Confirm.

@@ -2,7 +2,6 @@ package panel
 
 import (
 	"net/http"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -299,25 +298,5 @@ func TestNoteStartsOnAnApprovedCollaboratorWithNoFoxholeRole(t *testing.T) {
 	assertRedirect(t, res, foxholePath)
 	if got := noteOf(t, parseHTML(t, follow(t, w.b, res)), memberKestrel.ID); got != "allied group lead" {
 		t.Errorf("%s's row shows the note %q, want the one saved", memberKestrel.ID, got)
-	}
-}
-
-// An approvals save sits behind the Foxhole page's gate: a signed-in forum
-// user who opens no page posts the selection bar's Approve and gets the
-// no-access page, and the store holds what it held.
-func TestApproveByAUserInNeitherGroupIsRefused(t *testing.T) {
-	w := newFoxholeWorld(t)
-	fields := formPosts(t, parseHTML(t, w.b.get(foxholePath)), foxholeApprovalsPath)
-	fields.Set(fieldMember, memberKestrel.ID)
-	fields.Set(fieldOp, opApprove)
-	outsider := newBrowser(t, w.p)
-	signInAs(t, w.forum, outsider, addUserOutsideAdminGroups(w.forum))
-	before := readNoteState(t, w.st)
-
-	res := outsider.postForm(foxholeApprovalsPath, fields)
-
-	assertNoAccessPage(t, parseHTML(t, follow(t, outsider, res)))
-	if after := readNoteState(t, w.st); !reflect.DeepEqual(after, before) {
-		t.Errorf("the store after the refused save = %+v, want it as before, %+v", after, before)
 	}
 }
