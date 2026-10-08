@@ -49,27 +49,48 @@ func forEachStore(t *testing.T, run func(t *testing.T, s Store)) {
 // named here: a wrong embed path or a bad migration reddens every Postgres case.
 func openTestPostgres(t *testing.T) Store {
 	t.Helper()
-	dsn := os.Getenv(testDSNVar)
-	if dsn == "" {
-		t.Skipf("%s not set", testDSNVar)
-	}
-	ctx := context.Background()
-
-	raw, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatalf("open raw connection: %v", err)
-	}
-	defer func() { _ = raw.Close() }()
-	if _, err := raw.ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
-		t.Fatalf("reset schema: %v", err)
-	}
-
-	s, err := Open(ctx, dsn)
+	dsn, _ := resetTestDatabase(t)
+	s, err := Open(context.Background(), dsn)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
+}
+
+// resetTestDatabase drops and recreates the test database's public schema,
+// and returns its DSN and a raw connection to it that closes with the test.
+// Skips when no test database is set.
+func resetTestDatabase(t *testing.T) (string, *sql.DB) {
+	t.Helper()
+	dsn := os.Getenv(testDSNVar)
+	if dsn == "" {
+		t.Skipf("%s not set", testDSNVar)
+	}
+	raw, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open raw connection: %v", err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	if _, err := raw.ExecContext(context.Background(), "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
+		t.Fatalf("reset schema: %v", err)
+	}
+	return dsn, raw
+}
+
+// migrationProvider is a goose provider that runs the embedded migrations
+// over raw.
+func migrationProvider(t *testing.T, raw *sql.DB) *goose.Provider {
+	t.Helper()
+	files, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatalf("embedded migrations: %v", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, raw, files)
+	if err != nil {
+		t.Fatalf("migration provider: %v", err)
+	}
+	return provider
 }
 
 // sampleHub is the fixture every hub case starts from.
@@ -594,28 +615,8 @@ func TestSetSpawnedChannelLockWithNoRowIsNotFound(t *testing.T) {
 // no test database is set.
 func migratedTo(t *testing.T, version int64) *sql.DB {
 	t.Helper()
-	dsn := os.Getenv(testDSNVar)
-	if dsn == "" {
-		t.Skipf("%s not set", testDSNVar)
-	}
-	ctx := context.Background()
-	raw, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatalf("open raw connection: %v", err)
-	}
-	t.Cleanup(func() { _ = raw.Close() })
-	if _, err := raw.ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
-		t.Fatalf("reset schema: %v", err)
-	}
-	files, err := fs.Sub(migrationFiles, "migrations")
-	if err != nil {
-		t.Fatalf("embedded migrations: %v", err)
-	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, raw, files)
-	if err != nil {
-		t.Fatalf("migration provider: %v", err)
-	}
-	if _, err := provider.UpTo(ctx, version); err != nil {
+	_, raw := resetTestDatabase(t)
+	if _, err := migrationProvider(t, raw).UpTo(context.Background(), version); err != nil {
 		t.Fatalf("migrate up to %d: %v", version, err)
 	}
 	return raw
