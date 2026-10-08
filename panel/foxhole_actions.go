@@ -265,15 +265,22 @@ func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope c
 		confirm.Roles = append(confirm.Roles, purgeRole{Role: role, Name: role.Label(), Holders: holders})
 		confirm.ChangeCount += holders
 	}
+	confirm.Nobody = purgeNobody(scope)
+	confirm.Estimate = estimateFor(confirm.ChangeCount)
+	return confirm
+}
+
+// purgeNobody names the scope's roles for the hint a purge that would
+// change nobody gives, Internal first as the scope's label has them:
+// "Internal or External".
+func purgeNobody(scope commands.PurgeScope) string {
 	var names []string
 	for _, role := range []commands.FoxholeRole{commands.FoxholeInternal, commands.FoxholeExternal} {
 		if slices.Contains(scope.Roles(), role) {
 			names = append(names, role.Label())
 		}
 	}
-	confirm.Nobody = strings.Join(names, " or ")
-	confirm.Estimate = estimateFor(confirm.ChangeCount)
-	return confirm
+	return strings.Join(names, " or ")
 }
 
 // removePreview is the preview a removal waits on: the role, the members
@@ -446,6 +453,26 @@ func roleMissingRefusal(what, role string) *saveRefusal {
 		Message: fmt.Sprintf("The server has no role named %s, so %s didn't start. Nothing changed. The bot has reported it.", role, what)}
 }
 
+// nobodyToChangeRefusal refuses a Foxhole action that would change nobody
+// when it starts, as one confirmed from a page or preview loaded before
+// something else changed its members. why is the reason the action's
+// preview gives where its Confirm would be.
+func nobodyToChangeRefusal(why string) *saveRefusal {
+	return &saveRefusal{Kind: "nobody-to-change", status: http.StatusConflict,
+		log:     "Panel action refused: nobody to change",
+		Message: why + " Nothing changed."}
+}
+
+// refuseNobody is err, a Foxhole action's start's, with
+// commands.ErrNobodyToChange refused as nobodyToChangeRefusal says, giving
+// why.
+func refuseNobody(err error, why string) error {
+	if errors.Is(err, commands.ErrNobodyToChange) {
+		return nobodyToChangeRefusal(why)
+	}
+	return err
+}
+
 // startPurge is POST /foxhole/purge, the purge confirmation's Confirm: it
 // starts the purge of the scope confirmed, as startAction says.
 func (p *Panel) startPurge(w http.ResponseWriter, r *http.Request, sess session) {
@@ -459,7 +486,8 @@ func (p *Panel) startPurge(w http.ResponseWriter, r *http.Request, sess session)
 		return
 	}
 	p.startAction(w, r, sess, actionPage, "the purge", func(ctx context.Context, by commands.ForumUser) error {
-		return p.foxhole.actions.Purge(ctx, scope, by)
+		return refuseNobody(p.foxhole.actions.Purge(ctx, scope, by),
+			fmt.Sprintf("Nobody holds %s, so there's nothing to purge.", purgeNobody(scope)))
 	}, "scope", scope)
 }
 
@@ -490,7 +518,7 @@ func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess sessio
 			// to select again, as the preview's refusal does.
 			return removeListPartialRefusal(role.Label())
 		}
-		return err
+		return refuseNobody(err, fmt.Sprintf("Nobody selected holds %s, so there's nothing to remove.", role.Label()))
 	}, "role", role, "members", len(members), "approvals_to_clear", len(approvals))
 }
 
@@ -498,7 +526,10 @@ func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess sessio
 // approved collaborators: one button with no preview, which starts the
 // re-add as startAction says.
 func (p *Panel) startReAdd(w http.ResponseWriter, r *http.Request, sess session) {
-	p.startAction(w, r, sess, actionPage, "the re-add", p.foxhole.actions.ReAdd)
+	p.startAction(w, r, sess, actionPage, "the re-add", func(ctx context.Context, by commands.ForumUser) error {
+		return refuseNobody(p.foxhole.actions.ReAdd(ctx, by),
+			"Every approved collaborator in the server holds External, so there's nobody to re-add.")
+	})
 }
 
 // startAction starts a Foxhole action, named by what, through start and
@@ -506,7 +537,8 @@ func (p *Panel) startReAdd(w http.ResponseWriter, r *http.Request, sess session)
 // background to its end, whether or not the browser waits, so the request
 // never waits on it. A refused action answers with the page back asks for
 // and the refusal, and logs it with kv. A start that returns a *saveRefusal
-// refuses in its own words.
+// refuses in its own words, as each handler's start does for an action
+// that would change nobody (refuseNobody).
 func (p *Panel) startAction(w http.ResponseWriter, r *http.Request, sess session, back foxholeRequest, what string,
 	start func(context.Context, commands.ForumUser) error, kv ...any) {
 	err := start(context.WithoutCancel(r.Context()), sess.forumUser())

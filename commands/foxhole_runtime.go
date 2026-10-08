@@ -198,9 +198,17 @@ var ErrActionRunning = errors.New("another Foxhole action is running")
 
 // ErrNothingToRetry refuses a Retry of a report with nothing to retry: one
 // the store doesn't hold, one whose action still runs, one that missed
-// nobody, or one of an add or a removal, whose Retry confirms through the
-// action's own preview. Nothing changed.
+// nobody, one whose every miss the Retry would change nobody for, or one of
+// an add or a removal, whose Retry confirms through the action's own
+// preview. Nothing changed.
 var ErrNothingToRetry = errors.New("the Foxhole report has nothing to retry")
+
+// ErrNobodyToChange refuses a Foxhole action that would change nobody when
+// it starts: each member it sets out to change has left the server, holds
+// the role it gives already, or no longer holds the role it takes, as when
+// it was confirmed from a page loaded before another action changed them.
+// It writes no report, so the last report stays on top. Nothing changed.
+var ErrNobodyToChange = errors.New("the Foxhole action would change nobody")
 
 // ReportOutcome is how a Foxhole action ended.
 type ReportOutcome string
@@ -841,7 +849,8 @@ func rosterAddSpec(unit string) actionSpec {
 // member at a time, in the order the report lists them, each checked
 // against the member list when it reaches them. A report the store doesn't
 // hold, still running, that missed nobody, or of another action, is
-// ErrNothingToRetry.
+// ErrNothingToRetry, and so is one whose every miss the run would skip at
+// its start, as start says.
 func (r *FoxholeRuntime) Retry(ctx context.Context, reportID int64, by ForumUser) error {
 	readCtx, cancel := context.WithTimeout(ctx, foxholeStoreTimeout)
 	stored, err := r.store.FoxholeReport(readCtx, reportID)
@@ -880,7 +889,10 @@ func (r *FoxholeRuntime) Retry(ctx context.Context, reportID int64, by ForumUser
 	spec.plan = func(list MemberListSnapshot, roleIDs map[FoxholeRole]string, _ []store.FoxholeRecord) []plannedChange {
 		return retryPlan(list, roleIDs, misses)
 	}
-	return r.start(ctx, spec, by)
+	if err := r.start(ctx, spec, by); !errors.Is(err, ErrNobodyToChange) {
+		return err
+	}
+	return ErrNothingToRetry
 }
 
 // rolesOf are the Foxhole roles the members were to change, each once, in
@@ -912,9 +924,11 @@ func retryPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, misses [
 // start starts the Foxhole action spec names, started by the forum user
 // given, and returns once its report is written. It starts only while no
 // other Foxhole action runs, else ErrActionRunning, only with a complete
-// member list, else ErrMemberListPartial, and only when the guild holds
-// each role the action changes, else a *MissingRoleError. The action then
-// runs in the background, with no deadline of ctx's.
+// member list, else ErrMemberListPartial, only when the guild holds each
+// role the action changes, else a *MissingRoleError, and only when it would
+// change somebody, as changeEach would at the start, else
+// ErrNobodyToChange. The action then runs in the background, with no
+// deadline of ctx's.
 func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUser) error {
 	stop, ok := r.claim(FoxholeActionName(spec.action, ActionReport{Scope: spec.scope, Role: spec.role, Unit: spec.unit}), by)
 	if !ok {
@@ -951,6 +965,11 @@ func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUse
 		return fmt.Errorf("list Foxhole records: %w", err)
 	}
 	plan := spec.plan(list, roleIDs, records)
+	run := actionRun{action: spec.action, grant: spec.grant, reason: spec.reason + by.auditName(),
+		approvalsToClear: spec.approvalsToClear, absent: cmp.Or(spec.absent, SkipLeft), stop: stop}
+	if !slices.ContainsFunc(plan, func(p plannedChange) bool { return run.skip(list, p) == "" }) {
+		return ErrNobodyToChange
+	}
 	report = ActionReport{Scope: spec.scope, Role: spec.role, Unit: spec.unit, Changed: []ReportMember{},
 		Skipped: append([]ReportMember{}, spec.skipped...), Failed: []ReportMember{},
 		NotAttempted: make([]ReportMember, 0, len(plan)), AddedNobody: spec.addedNobody}
@@ -972,8 +991,7 @@ func (r *FoxholeRuntime) start(ctx context.Context, spec actionSpec, by ForumUse
 		"username", by.Username, "forum_user_id", by.ID)
 	r.started(entry.ID)
 	r.progressed(report)
-	run := actionRun{action: spec.action, grant: spec.grant, reportID: entry.ID, reason: spec.reason + by.auditName(),
-		approvalsToClear: spec.approvalsToClear, absent: cmp.Or(spec.absent, SkipLeft), stop: stop}
+	run.reportID = entry.ID
 	names := namesOf(records)
 	handed = true
 	go r.run(run, plan, report, names)
@@ -1178,21 +1196,13 @@ func (r *FoxholeRuntime) changeEach(run actionRun, plan []plannedChange, report 
 			return end
 		}
 		member := p.member
-		mem, ok := list.Member(member.ID)
-		if ok {
+		if mem, ok := list.Member(member.ID); ok {
 			r.refreshNames(names, mem)
 			member.DisplayName, member.Username = mem.DisplayName(), mem.Username
 		}
-		holds := slices.Contains(mem.RoleIDs, p.roleID)
+		member.Skip = run.skip(list, p)
 		switch {
-		case !ok:
-			member.Skip = run.absent
-			report.Skipped = append(report.Skipped, member)
-		case run.grant && holds:
-			member.Skip = SkipHolding
-			report.Skipped = append(report.Skipped, member)
-		case !run.grant && !holds:
-			member.Skip = SkipNotHolding
+		case member.Skip != "":
 			report.Skipped = append(report.Skipped, member)
 		default:
 			if err := r.change(run, member.ID, p.roleID); err != nil {
@@ -1213,6 +1223,25 @@ func (r *FoxholeRuntime) changeEach(run actionRun, plan []plannedChange, report 
 		r.writeReport(run.reportID, *report, false)
 	}
 	return ReportDone
+}
+
+// skip is why the run skips the planned change's member as the member list
+// given shows them, empty for a member it changes: one not in the server is
+// skipped with the run's absent reason, one holding the role a run gives
+// with SkipHolding, and one not holding the role a run takes with
+// SkipNotHolding.
+func (run actionRun) skip(list MemberListSnapshot, p plannedChange) SkipReason {
+	mem, ok := list.Member(p.member.ID)
+	holds := slices.Contains(mem.RoleIDs, p.roleID)
+	switch {
+	case !ok:
+		return run.absent
+	case run.grant && holds:
+		return SkipHolding
+	case !run.grant && !holds:
+		return SkipNotHolding
+	}
+	return ""
 }
 
 // clearApproval clears the approval of a member whose External a removal

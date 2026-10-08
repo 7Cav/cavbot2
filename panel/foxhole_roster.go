@@ -251,6 +251,7 @@ func (p *rosterPreview) CanAdd() bool {
 // starts the roster add of the roster confirmedRoster gives, as
 // startAction says. A roster that lists other troopers than the preview
 // did starts nothing, and the page shows the preview as it stands now. A
+// roster add that would give Internal to nobody starts nothing either. A
 // unit outside the registry is refused before any roster fetch.
 func (p *Panel) startRosterAdd(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
@@ -277,7 +278,8 @@ func (p *Panel) startRosterAdd(w http.ResponseWriter, r *http.Request, sess sess
 		if err != nil {
 			return err
 		}
-		return p.foxhole.actions.RosterAdd(ctx, unit, troopers, by)
+		return refuseNobody(p.foxhole.actions.RosterAdd(ctx, unit, troopers, by),
+			fmt.Sprintf("Nobody on the %s roster would get Internal, so there's nothing to add.", unit.Label))
 	}, kv...)
 }
 

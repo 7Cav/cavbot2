@@ -455,7 +455,8 @@ func (p *addPreview) Named() string {
 // lines the preview showed again, against the member list as it stands,
 // with the choices picked, and starts the add of the role to the members
 // they name, as startAction says. A line that names other members than
-// the preview showed starts nothing.
+// the preview showed starts nothing, and nor does an add that would give
+// the role to nobody: each answers with the preview, the lines kept.
 func (p *Panel) startAdd(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -476,7 +477,8 @@ func (p *Panel) startAdd(w http.ResponseWriter, r *http.Request, sess session) {
 		if err != nil {
 			return err
 		}
-		return p.foxhole.actions.Add(ctx, role, preview.members(), preview.addedNobody(), by)
+		return refuseNobody(p.foxhole.actions.Add(ctx, role, preview.members(), preview.addedNobody(), by),
+			fmt.Sprintf("No line gives %s to anyone, so there's nothing to add.", role.Label()))
 	}, "role", role)
 }
 
