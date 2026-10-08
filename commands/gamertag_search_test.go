@@ -64,65 +64,43 @@ func TestRunGamertagSearch_HappyPath(t *testing.T) {
 	}
 }
 
-func TestRunGamertagSearch_API404_FallsThroughHandleError(t *testing.T) {
+// A gamertag no trooper has gets gamertagNotFound with the gamertag as
+// typed, and nothing reaches Sentry, since nothing failed.
+func TestRunGamertagSearchForAnUnknownGamertagSaysSo(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	t.Cleanup(srv.Close)
 	t.Cleanup(utils.SetAPIBaseURLForTest(srv.URL))
+	rec := recordCaptures(t)
 
-	// Placeholder Respond succeeds; HandleError's Respond hits "already
-	// acknowledged" (simulated) and falls back to Edit.
-	f := &fakeResponder{
-		RespondErrs: []error{nil, errAlreadyAcked},
-	}
-	i := fakeAppCommandInteraction(stringOption("gamertag", "Unknown"))
+	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
+	runGamertagSearch(f, fakeAppCommandInteraction(stringOption("gamertag", "Unknown.Tag")))
 
-	runGamertagSearch(f, i)
-
-	calls := f.Calls()
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 calls (placeholder + HandleError Respond + Edit fallback), got %d: %+v", len(calls), calls)
+	if rec.count != 0 {
+		t.Errorf("captures = %d, want none", rec.count)
 	}
-	// calls[0] = placeholder Respond; calls[1] = HandleError's Respond (fails);
-	// calls[2] = HandleError's Edit fallback with the error message.
-	if calls[2].Method != "Edit" {
-		t.Fatalf("calls[2]: expected Edit (HandleError fallback), got %q", calls[2].Method)
-	}
-	if calls[2].Edit.Content == nil || !strings.Contains(*calls[2].Edit.Content, "no milpac found") {
-		got := "<nil>"
-		if calls[2].Edit.Content != nil {
-			got = *calls[2].Edit.Content
-		}
-		t.Fatalf("calls[2]: expected error content containing 'no milpac found', got %q", got)
+	reply := lastReply(t, f.Calls())
+	assertNoErrorText(t, reply, gamertagNotFound, rec)
+	if !strings.Contains(reply, "Unknown.Tag") {
+		t.Errorf("reply %q doesn't name the gamertag Unknown.Tag", reply)
 	}
 }
 
-func TestRunGamertagSearch_API401_FallsThroughHandleError(t *testing.T) {
+// A gamertag search the 7Cav API refuses tells the member to try again,
+// and its error goes to Sentry, not to the member.
+func TestRunGamertagSearchLookupFailureReachesSentryNotTheMember(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	t.Cleanup(srv.Close)
 	t.Cleanup(utils.SetAPIBaseURLForTest(srv.URL))
+	rec := recordCaptures(t)
 
-	f := &fakeResponder{
-		RespondErrs: []error{nil, errAlreadyAcked},
-	}
-	i := fakeAppCommandInteraction(stringOption("gamertag", "Anyone"))
+	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
+	runGamertagSearch(f, fakeAppCommandInteraction(stringOption("gamertag", "Anyone")))
 
-	runGamertagSearch(f, i)
-
-	calls := f.Calls()
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 calls, got %d", len(calls))
-	}
-	if calls[2].Edit.Content == nil || !strings.Contains(*calls[2].Edit.Content, "milpac API returned 401") {
-		got := "<nil>"
-		if calls[2].Edit.Content != nil {
-			got = *calls[2].Edit.Content
-		}
-		t.Fatalf("expected '401' surfaced in user-visible error, got %q", got)
-	}
+	assertLookupFailed(t, f.Calls(), rec, "gamertag_search")
 }
 
 func TestRunGamertagSearch_BadUniformURL_FallsThroughHandleError(t *testing.T) {

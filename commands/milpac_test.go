@@ -275,74 +275,48 @@ func TestRunMilpac_EmptyGamertagOmitsField(t *testing.T) {
 	}
 }
 
-func TestRunMilpac_NotFound_FallsThroughHandleError(t *testing.T) {
+// A member with no milpac gets milpacNotFoundReply, and nothing reaches
+// Sentry, since nothing failed.
+func TestRunMilpacForAMemberWithNoMilpacSaysSo(t *testing.T) {
 	serveMilpacStatus(t, http.StatusNotFound)
+	rec := recordCaptures(t)
 
-	// Placeholder Respond succeeds; HandleError's Respond hits "already
-	// acknowledged" (simulated) and falls back to Edit.
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	i := fakeAppCommandInteraction(userOption("user", "404"))
+	runMilpac(f, fakeAppCommandInteraction(userOption("user", "404")))
 
-	runMilpac(f, i)
-
-	calls := f.Calls()
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 calls (placeholder + HandleError Respond + Edit fallback), got %d: %+v", len(calls), calls)
+	if rec.count != 0 {
+		t.Errorf("captures = %d, want none", rec.count)
 	}
-	if calls[2].Method != "Edit" {
-		t.Fatalf("calls[2]: expected Edit (HandleError fallback), got %q", calls[2].Method)
-	}
-	if calls[2].Edit.Content == nil || !strings.Contains(*calls[2].Edit.Content, "no milpac found") {
-		got := "<nil>"
-		if calls[2].Edit.Content != nil {
-			got = *calls[2].Edit.Content
-		}
-		t.Fatalf("calls[2]: expected 'no milpac found' in error, got %q", got)
-	}
+	assertNoErrorText(t, lastReply(t, f.Calls()), milpacNotFoundReply, rec)
 }
 
-func TestRunMilpac_UpstreamError_FallsThroughHandleError(t *testing.T) {
+// A milpac lookup the 7Cav API fails tells the member to try again, and
+// its error goes to Sentry, not to the member.
+func TestRunMilpacLookupFailureReachesSentryNotTheMember(t *testing.T) {
 	serveMilpacStatus(t, http.StatusInternalServerError)
+	rec := recordCaptures(t)
 
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	i := fakeAppCommandInteraction(userOption("user", "500"))
+	runMilpac(f, fakeAppCommandInteraction(userOption("user", "500")))
 
-	runMilpac(f, i)
-
-	calls := f.Calls()
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 calls, got %d: %+v", len(calls), calls)
-	}
-	if calls[2].Edit.Content == nil || !strings.Contains(*calls[2].Edit.Content, "milpac API returned 500") {
-		got := "<nil>"
-		if calls[2].Edit.Content != nil {
-			got = *calls[2].Edit.Content
-		}
-		t.Fatalf("calls[2]: expected '500' surfaced in user-visible error, got %q", got)
-	}
+	assertLookupFailed(t, f.Calls(), rec, "milpac")
 }
 
-func TestRunMilpac_BadJoinDate_FallsThroughHandleError(t *testing.T) {
+// A milpac whose join date the bot can't read tells the member it was
+// reported, and the parse error goes to Sentry, not to the member.
+func TestRunMilpacWithAnUnreadableDateReachesSentryNotTheMember(t *testing.T) {
 	profile := milpacProfileWithSecondaries()
 	profile.JoinDate = "not-a-date"
 	serveMilpacByDiscordID(t, profile)
+	rec := recordCaptures(t)
 
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	i := fakeAppCommandInteraction(userOption("user", "111"))
+	runMilpac(f, fakeAppCommandInteraction(userOption("user", "111")))
 
-	runMilpac(f, i)
-
-	calls := f.Calls()
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 calls, got %d: %+v", len(calls), calls)
+	if rec.count != 1 {
+		t.Fatalf("captures = %d, want 1", rec.count)
 	}
-	if calls[2].Edit.Content == nil || !strings.Contains(*calls[2].Edit.Content, "Failed to parse join date") {
-		got := "<nil>"
-		if calls[2].Edit.Content != nil {
-			got = *calls[2].Edit.Content
-		}
-		t.Fatalf("calls[2]: expected 'Failed to parse join date', got %q", got)
-	}
+	assertNoErrorText(t, lastReply(t, f.Calls()), milpacUnreadableReply, rec)
 }
 
 func TestRunMilpac_BadUniformURL_FallsThroughHandleError(t *testing.T) {
@@ -406,32 +380,6 @@ func TestRunMilpac_EmptyPromotionDate_FallsBackToJoinDate(t *testing.T) {
 	// the promotion line equals the join date.
 	if !strings.Contains(rankField, "15JAN2023") {
 		t.Fatalf("Rank field = %q, want promotion date to fall back to join date 15JAN2023", rankField)
-	}
-}
-
-// TestRunMilpac_MalformedPromotionDate_FallsThroughHandleError exercises the
-// PromotionDate parse-error path: a non-empty but unparseable value makes
-// time.Parse fail, surfacing "Failed to parse promotion date" via HandleError.
-func TestRunMilpac_MalformedPromotionDate_FallsThroughHandleError(t *testing.T) {
-	profile := milpacProfileWithSecondaries()
-	profile.PromotionDate = "not-a-date" // non-empty, unparseable
-	serveMilpacByDiscordID(t, profile)
-
-	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	i := fakeAppCommandInteraction(userOption("user", "111"))
-
-	runMilpac(f, i)
-
-	calls := f.Calls()
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 calls (placeholder + HandleError Respond + Edit fallback), got %d: %+v", len(calls), calls)
-	}
-	if calls[2].Edit.Content == nil || !strings.Contains(*calls[2].Edit.Content, "Failed to parse promotion date") {
-		got := "<nil>"
-		if calls[2].Edit.Content != nil {
-			got = *calls[2].Edit.Content
-		}
-		t.Fatalf("calls[2]: expected 'Failed to parse promotion date', got %q", got)
 	}
 }
 

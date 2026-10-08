@@ -77,8 +77,7 @@ func runAFSM(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	utils.Debug("📊 Fetching roster data", "department", choice)
 	Members, err := utils.GetRosterByFuzzyPositionSearch(ctx, choice)
 	if err != nil {
-		utils.CaptureError("❌ Roster fetch failed", err)
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to fetch Members: %v", err))
+		replyLookupFailed(r, i, "afsm", err)
 		return
 	}
 	utils.Info("📋 Retrieved roster", "member_count", len(Members.LiteProfiles))

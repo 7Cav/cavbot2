@@ -78,26 +78,16 @@ func TestRunLoa_FirstRespondFails_BailsBeforeCacheAndAPI(t *testing.T) {
 	assertPlaceholderFailedBailout(t, f.Calls())
 }
 
-func TestRunLoa_RosterFetch500SurfacesError(t *testing.T) {
+// A roster fetch the 7Cav API fails tells the member to try again, and its
+// error goes to Sentry, not to the member.
+func TestRunLoaRosterFailureReachesSentryNotTheMember(t *testing.T) {
 	serveAwolRoster(t, utils.LiteRosterResponse{}, http.StatusInternalServerError)
+	rec := recordCaptures(t)
 
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	cache := healthyView(map[string]utils.LOAEntry{})
-	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runLoa(f, healthyView(map[string]utils.LOAEntry{}), loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	runLoa(f, cache, loaRefDate, i)
-
-	calls := f.Calls()
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 calls, got %d: %+v", len(calls), calls)
-	}
-	got := "<nil>"
-	if calls[2].Edit.Content != nil {
-		got = *calls[2].Edit.Content
-	}
-	if !strings.Contains(got, "Failed to fetch roster") {
-		t.Fatalf("expected 'Failed to fetch roster' in Edit fallback, got %q", got)
-	}
+	assertLookupFailed(t, f.Calls(), rec, "loa")
 }
 
 func TestRunLoa_StaleCacheShortCircuitsWithUnavailable(t *testing.T) {

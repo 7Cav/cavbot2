@@ -113,7 +113,7 @@ func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *
 
 	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, position)
 	if err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to fetch roster: %v", err))
+		replyLookupFailed(r, i, "loa", err)
 		return
 	}
 	if len(roster.LiteProfiles) == 0 {

@@ -160,7 +160,7 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 
 	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, position)
 	if err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to fetch roster: %v", err))
+		replyLookupFailed(r, i, "awol", err)
 		return
 	}
 	if len(roster.LiteProfiles) == 0 {

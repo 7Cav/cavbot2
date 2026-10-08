@@ -55,8 +55,7 @@ func runS6ITCheck(r utils.InteractionResponder, i *discordgo.InteractionCreate) 
 
 	s6Members, err := utils.GetRosterByFuzzyPositionSearch(ctx, "S6")
 	if err != nil {
-		utils.CaptureError("❌ Roster fetch failed", err)
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to fetch S6 Members: %v", err))
+		replyLookupFailed(r, i, "s6-it-check", err)
 		return
 	}
 

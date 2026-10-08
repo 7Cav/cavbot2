@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -106,6 +107,10 @@ var rosterMap = map[string]string{
 
 var apiBaseURL = "https://api.7cav.us/api/v1"
 
+// ErrNotFound is the error a 7Cav API lookup wraps when the API answers 404:
+// nothing matches what was asked for.
+var ErrNotFound = errors.New("the 7Cav API answered 404")
+
 func makeAPIRequest[T any](ctx context.Context, path string, identifier string) (*T, error) {
 	start := time.Now()
 	client := resty.New()
@@ -136,7 +141,7 @@ func makeAPIRequest[T any](ctx context.Context, path string, identifier string) 
 	}
 
 	if status == http.StatusNotFound {
-		return nil, fmt.Errorf("no %s found", pathPrefix)
+		return nil, fmt.Errorf("no %s found: %w", pathPrefix, ErrNotFound)
 	}
 
 	const maxBodyLog = 512

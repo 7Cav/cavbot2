@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -50,8 +51,12 @@ func runGamertagSearch(r utils.InteractionResponder, i *discordgo.InteractionCre
 	utils.Info("Gamertag search requested", "command", "GamertagSearch", "gamertag", gamertag, "username", username, "discord_id", discordID)
 
 	user, err := utils.GetUserByGamertag(ctx, gamertag)
+	if errors.Is(err, utils.ErrNotFound) {
+		utils.HandleError(r, i, fmt.Sprintf("❌ %s `%s`. Check the spelling and try again.", gamertagNotFound, gamertag))
+		return
+	}
 	if err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to fetch user: %v", err))
+		replyLookupFailed(r, i, "gamertag_search", err)
 		return
 	}
 	utils.Info("User found", "command", "GamertagSearch", "gamertag", gamertag, "username", user.User.Username, "discord_id", user.DiscordID)
@@ -70,3 +75,7 @@ func runGamertagSearch(r utils.InteractionResponder, i *discordgo.InteractionCre
 	}
 	utils.Info("✨ Done!", "command", "GamertagSearch")
 }
+
+// gamertagNotFound opens the reply to /gamertag_search for a gamertag no
+// trooper has.
+const gamertagNotFound = "No trooper has the gamertag"

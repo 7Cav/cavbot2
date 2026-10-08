@@ -396,26 +396,24 @@ func TestRunS3aar_DebugJSONOutput(t *testing.T) {
 	}
 }
 
-func TestRunS3aar_BattleMetricsUpstreamError(t *testing.T) {
+// A BattleMetrics fetch that fails tells the member so, and its error goes
+// to Sentry, not to the member.
+func TestRunS3aarBattleMetricsFailureReachesSentryNotTheMember(t *testing.T) {
 	serveBattleMetricsError(t, http.StatusInternalServerError)
+	rec := recordCaptures(t)
 
 	r := &fakeResponder{}
-	i := s3aarOptions("Tac1", "10NOV25", "10NOV25", "1800", "2000", 30, "")
-	runS3aar(r, i)
+	runS3aar(r, s3aarOptions("Tac1", "10NOV25", "10NOV25", "1800", "2000", 30, ""))
 
-	calls := r.Calls()
-	// Defer succeeds, then the upstream failure is reported via a followup.
-	fups := followups(calls)
+	fups := followups(r.Calls())
 	if len(fups) != 1 {
-		t.Fatalf("upstream error must produce exactly one (error) followup; got %d: %+v", len(fups), fups)
+		t.Fatalf("followups = %d, want 1: %+v", len(fups), fups)
 	}
-	if !strings.Contains(fups[0].Params.Content, "Failed to fetch BattleMetrics data") {
-		t.Fatalf("unexpected upstream-error content: %q", fups[0].Params.Content)
+	if rec.count != 1 {
+		t.Fatalf("captures = %d, want 1", rec.count)
 	}
-	// No embed/file followup on the error path.
-	if len(fups[0].Params.Embeds) != 0 || len(fups[0].Params.Files) != 0 {
-		t.Fatalf("error followup must be plain content, got %+v", fups[0].Params)
-	}
+	assertNoErrorText(t, fups[0].Params.Content, s3aarBattleMetricsFailedReply, rec)
+	assertNoRosterFollowup(t, fups)
 }
 
 // readAARFile finds the aar_roster.txt file followup and returns its decoded
@@ -627,9 +625,7 @@ func TestRunS3aar_InvalidStartDate(t *testing.T) {
 	if len(fups) != 1 {
 		t.Fatalf("bad start date must produce exactly one followup; got %d: %+v", len(fups), fups)
 	}
-	if !strings.HasPrefix(fups[0].Params.Content, "Invalid start date/time:") {
-		t.Fatalf("unexpected start-date error content: %q", fups[0].Params.Content)
-	}
+	assertS3aarRefusal(t, fups[0].Params.Content, s3aarBadStartReply)
 	assertNoRosterFollowup(t, fups)
 }
 
@@ -644,9 +640,7 @@ func TestRunS3aar_InvalidEndDate(t *testing.T) {
 	if len(fups) != 1 {
 		t.Fatalf("bad end date must produce exactly one followup; got %d: %+v", len(fups), fups)
 	}
-	if !strings.HasPrefix(fups[0].Params.Content, "Invalid end date/time:") {
-		t.Fatalf("unexpected end-date error content: %q", fups[0].Params.Content)
-	}
+	assertS3aarRefusal(t, fups[0].Params.Content, s3aarBadEndReply)
 	assertNoRosterFollowup(t, fups)
 }
 
@@ -662,9 +656,7 @@ func TestRunS3aar_NotAvailableServer(t *testing.T) {
 	if len(fups) != 1 {
 		t.Fatalf("NotAvailable server must produce exactly one followup; got %d: %+v", len(fups), fups)
 	}
-	if !strings.HasPrefix(fups[0].Params.Content, "Invalid server selection:") {
-		t.Fatalf("unexpected server error content: %q", fups[0].Params.Content)
-	}
+	assertS3aarRefusal(t, fups[0].Params.Content, s3aarBadServerReply)
 	assertNoRosterFollowup(t, fups)
 }
 
@@ -681,11 +673,16 @@ func TestRunS3aar_UnsetBMToken(t *testing.T) {
 	if len(fups) != 1 {
 		t.Fatalf("unset BM_TOKEN must produce exactly one followup; got %d: %+v", len(fups), fups)
 	}
-	if !strings.Contains(fups[0].Params.Content, "Failed to fetch BattleMetrics data") ||
-		!strings.Contains(fups[0].Params.Content, "BM_TOKEN not set") {
-		t.Fatalf("unexpected BM_TOKEN error content: %q", fups[0].Params.Content)
-	}
 	assertNoRosterFollowup(t, fups)
+}
+
+// assertS3aarRefusal fails unless a refusal opens with ❌ and carries the
+// phrase that tells its case apart.
+func assertS3aarRefusal(t *testing.T, content, phrase string) {
+	t.Helper()
+	if !strings.HasPrefix(content, "❌") || !strings.Contains(content, phrase) {
+		t.Fatalf("refusal %q, want it to open with ❌ and carry %q", content, phrase)
+	}
 }
 
 // assertNoRosterFollowup fails if any followup carries an embed or a file —

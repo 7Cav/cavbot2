@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
@@ -80,13 +81,17 @@ func runMilpac(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	defer cancel()
 
 	milpac, err := utils.GetMilpacByDiscordID(ctx, user.ID)
+	if errors.Is(err, utils.ErrNotFound) {
+		utils.HandleError(r, i, milpacNotFoundReply)
+		return
+	}
 	if err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to fetch milpac: %v", err))
+		replyLookupFailed(r, i, "milpac", err)
 		return
 	}
 	joinDate, err := time.Parse("2006-01-02", milpac.JoinDate)
 	if err != nil {
-		utils.HandleError(r, i, fmt.Sprintf("❌ Failed to parse join date: %v", err))
+		replyMilpacUnreadable(r, i, "joinDate", milpac.JoinDate, err)
 		return
 	}
 	formatJoinDate := joinDate.Format("02Jan2006")
@@ -95,8 +100,11 @@ func runMilpac(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	if milpac.PromotionDate != "" {
 		var err error
 		promotionDate, err = time.Parse("2006-01-02", milpac.PromotionDate)
-		if err != nil || promotionDate.IsZero() {
-			utils.HandleError(r, i, fmt.Sprintf("❌ Failed to parse promotion date: %v", err))
+		if err == nil && promotionDate.IsZero() {
+			err = errors.New("promotion date reads as the zero time")
+		}
+		if err != nil {
+			replyMilpacUnreadable(r, i, "promotionDate", milpac.PromotionDate, err)
 			return
 		}
 	} else {
@@ -115,7 +123,7 @@ func runMilpac(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 			utils.Debug("📋 Processing record", "type", record.RecordType, "date", record.RecordDate)
 			recordDate, err := time.Parse("2006-01-02", record.RecordDate)
 			if err != nil {
-				utils.HandleError(r, i, fmt.Sprintf("❌ Failed to parse record date: %v", err))
+				replyMilpacUnreadable(r, i, "recordDate", record.RecordDate, err)
 				return
 			}
 			if strings.Contains(record.RecordDetails, "Retired") || strings.Contains(record.RecordDetails, "ELOA") ||
@@ -280,4 +288,20 @@ func calculateTotalService(assignments []map[string]interface{}) time.Duration {
 	}
 
 	return totalTime
+}
+
+// milpacNotFoundReply answers /milpac for a member with no milpac.
+const milpacNotFoundReply = "❌ No milpac is linked to that member's Discord account. Check you picked the right member."
+
+// milpacUnreadableReply answers /milpac when the API's milpac holds a date
+// the bot can't read.
+const milpacUnreadableReply = "❌ This milpac has a date the bot can't read, so it can't be shown. The problem has been reported."
+
+// replyMilpacUnreadable answers /milpac for a milpac whose date field holds
+// a value the bot can't read. The API should never send one, so the error
+// goes to Sentry with the field and its value.
+func replyMilpacUnreadable(r utils.InteractionResponder, i *discordgo.InteractionCreate, field, value string, err error) {
+	captureError("Milpac holds an unreadable date", err,
+		"command", "milpac", "guild_id", i.GuildID, "field", field, "value", value)
+	utils.HandleError(r, i, milpacUnreadableReply)
 }
