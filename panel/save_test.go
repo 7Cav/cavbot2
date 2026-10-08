@@ -425,12 +425,15 @@ const stallLimit = 2 * time.Second
 
 // stallingStore is the store fake with its hub write stalled: the call
 // answers only when its context is done, with the context's error, the way
-// a Postgres write blocked on a lock does.
+// a Postgres write blocked on a lock does. While it stalls, the panel's
+// clock passes the store timeout.
 type stallingStore struct {
 	store.Store
+	clock *testClock
 }
 
-func (stallingStore) SaveHub(ctx context.Context, _ store.Hub, _ store.ChangeLogEntry) (store.Hub, error) {
+func (s stallingStore) SaveHub(ctx context.Context, _ store.Hub, _ store.ChangeLogEntry) (store.Hub, error) {
+	s.clock.advance(storeTimeout)
 	select {
 	case <-ctx.Done():
 		return store.Hub{}, ctx.Err()
@@ -442,8 +445,7 @@ func (stallingStore) SaveHub(ctx context.Context, _ store.Hub, _ store.ChangeLog
 // A save whose store call stalls past its deadline fails, and the failure
 // reaches Sentry once as the deadline running out.
 func TestSaveStoreCallPastItsDeadlineFailsTheSave(t *testing.T) {
-	w := newTestWorldOver(t, stallingStore{store.NewFake()}, newFakeForum(t))
-	w.p.hubs.storeTimeout = 20 * time.Millisecond
+	w := newTestWorldOver(t, stallingStore{store.NewFake(), installClock(t)}, newFakeForum(t))
 	signIn(t, w.forum, w.b)
 	rec := recordSentry(t)
 

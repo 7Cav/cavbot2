@@ -291,7 +291,6 @@ func TestAlsoMatchesLinksCarryTheSearchToTheOtherView(t *testing.T) {
 func TestNoRoleViewShowsTheMemberListNoticeWhileTheListIsPartial(t *testing.T) {
 	w := newNoRoleWorld(t)
 	href, _ := attrValue(noRoleLink(t, parseHTML(t, w.b.get(foxholePath))), "href")
-	w.p.pageBudget = partialListBudget
 	w.discord.setMemberList(arrivingList)
 
 	doc := parseHTML(t, w.b.get(href))

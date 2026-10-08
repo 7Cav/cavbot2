@@ -134,7 +134,6 @@ func TestActionPausesBeforeItsNextMemberAndStopStillWorks(t *testing.T) {
 	for _, tc := range pauseCases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFoxholeWorld(t)
-			w.p.pageBudget = partialListBudget
 			pauseMidRun(t, w, tc.status, tc.connected)
 
 			progress := progressBlock(t, parseHTML(t, w.b.get(foxholePath)))
@@ -163,7 +162,6 @@ func TestActionPausesBeforeItsNextMemberAndStopStillWorks(t *testing.T) {
 // the members it never reached as not attempted.
 func TestPauseLongerThanTheLimitStopsTheAction(t *testing.T) {
 	w := newFoxholeWorld(t)
-	w.p.pageBudget = partialListBudget
 	pauseMidRun(t, w, commands.MemberListArriving, true)
 
 	w.pause.advance(commands.FoxholePauseLimit)

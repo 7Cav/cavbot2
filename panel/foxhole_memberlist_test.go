@@ -17,29 +17,10 @@ import (
 // for a guild Discord hasn't sent, the guild's data the gateway state holds
 // beside it.
 
-// partialListBudget is the time budget of a test whose page load waits it
-// out for a list that never completes: long enough for the page's store
-// reads, short enough to keep the suite quick.
-const partialListBudget = 200 * time.Millisecond
-
 // fixtureList is the complete member list of the fixture's members.
 func fixtureList() commands.MemberListSnapshot {
 	return commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
 		Members: []commands.ListedMember{memberDoe, memberAsh, memberKestrel, memberMarsh, memberVance}}
-}
-
-// completeOnFirstRead completes the member list, with the guild's data
-// landing too, once the page has read the list partial. A page that never
-// reads it partial leaves the list as it is.
-func completeOnFirstRead(w *testWorld, read <-chan struct{}) {
-	go func() {
-		select {
-		case <-read:
-			w.discord.setGuild(commands.GuildDataPresent)
-			w.discord.setMemberList(fixtureList())
-		case <-time.After(hangLimit):
-		}
-	}()
 }
 
 // Just after a deploy the member list is on its way. A page load waits for
@@ -59,14 +40,14 @@ func TestFoxholePageWaitsForAMemberListOnItsWay(t *testing.T) {
 			return commands.MemberListSnapshot{Status: commands.MemberListArriving, Connected: true, PartsReceived: 3, PartsExpected: 10}
 		}},
 		{"refused, retry inside the budget", commands.GuildDataPresent, func(w *testWorld) commands.MemberListSnapshot {
-			return commands.MemberListSnapshot{Status: commands.MemberListRefused, Connected: true, RetryAt: now().Add(w.p.pageBudget / 2)}
+			return commands.MemberListSnapshot{Status: commands.MemberListRefused, Connected: true, RetryAt: w.clock.Now().Add(hubPageBudget / 2)}
 		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFoxholeWorld(t)
 			w.discord.setGuild(tc.guild)
-			completeOnFirstRead(w, w.discord.holdPartialList(tc.list(w)))
+			w.discord.completeAfterOneRead(tc.list(w), fixtureList())
 
 			res := w.b.get(foxholePath)
 
@@ -88,31 +69,33 @@ func TestFoxholePageWaitsForAMemberListOnItsWay(t *testing.T) {
 // guild out of the gateway state, and the member list with it, which the
 // hub page doesn't wait for either.
 func TestFoxholePageAnswersAtOnceForAListThatCantCompleteInTime(t *testing.T) {
-	const budget = 5 * time.Second
 	cases := []struct {
 		name  string
 		guild commands.GuildDataStatus
-		list  commands.MemberListSnapshot
+		list  func(at time.Time) commands.MemberListSnapshot
 		// status is the notice's list status the case checks, empty for a
 		// case that checks only that the notice is there.
 		status string
 	}{
-		{"refused, retry past the budget", commands.GuildDataPresent,
-			commands.MemberListSnapshot{Status: commands.MemberListRefused, Connected: true, RetryAt: now().Add(2 * budget)}, ""},
-		{"late, refusal retrying past the budget", commands.GuildDataPresent,
-			commands.MemberListSnapshot{Status: commands.MemberListLate, Connected: true, RetryAt: now().Add(2 * budget)}, "late"},
-		{"guild absent", commands.GuildDataAbsent, commands.MemberListSnapshot{Status: commands.MemberListNoGuild, Connected: true}, ""},
+		{"refused, retry past the budget", commands.GuildDataPresent, func(at time.Time) commands.MemberListSnapshot {
+			return commands.MemberListSnapshot{Status: commands.MemberListRefused, Connected: true, RetryAt: at.Add(2 * hubPageBudget)}
+		}, ""},
+		{"late, refusal retrying past the budget", commands.GuildDataPresent, func(at time.Time) commands.MemberListSnapshot {
+			return commands.MemberListSnapshot{Status: commands.MemberListLate, Connected: true, RetryAt: at.Add(2 * hubPageBudget)}
+		}, "late"},
+		{"guild absent", commands.GuildDataAbsent, func(time.Time) commands.MemberListSnapshot {
+			return commands.MemberListSnapshot{Status: commands.MemberListNoGuild, Connected: true}
+		}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFoxholeWorld(t)
-			w.p.pageBudget = budget
 			w.discord.setGuild(tc.guild)
-			w.discord.setMemberList(tc.list)
+			w.discord.setMemberList(tc.list(w.clock.Now()))
 
-			start := time.Now()
+			start := w.clock.Now()
 			res := w.b.get(foxholePath)
-			took := time.Since(start)
+			waited := w.clock.since(start)
 
 			if res.StatusCode != http.StatusOK {
 				t.Errorf("status = %d, want 200", res.StatusCode)
@@ -121,8 +104,8 @@ func TestFoxholePageAnswersAtOnceForAListThatCantCompleteInTime(t *testing.T) {
 			if got, _ := attrValue(notice, "data-list-status"); tc.status != "" && got != tc.status {
 				t.Errorf("the notice's list status = %q, want %q", got, tc.status)
 			}
-			if took > budget/5 {
-				t.Errorf("answered after %v, want well before the %v budget", took, budget)
+			if waited > hubPageBudget/5 {
+				t.Errorf("answered after waiting %v, want well before the %v budget", waited, hubPageBudget)
 			}
 		})
 	}
@@ -175,12 +158,10 @@ func TestFoxholePageNamesTheMemberListStateInItsNotice(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			pinClock(t)
 			w := newFoxholeWorld(t)
 			assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
-			w.p.pageBudget = partialListBudget
 			w.discord.setGuild(tc.guild)
-			w.discord.setMemberList(tc.list(now()))
+			w.discord.setMemberList(tc.list(w.clock.Now()))
 
 			res := w.b.get(foxholePath)
 
@@ -224,7 +205,6 @@ func TestFoxholePageNamesTheMemberListStateInItsNotice(t *testing.T) {
 func TestMemberListNoticeReloadLinkKeepsTheView(t *testing.T) {
 	w := newFoxholeWorld(t)
 	marshall := commands.ListedMember{ID: "100000000000000007", Username: "marshall_k", RoleIDs: []string{roleExternal}}
-	w.p.pageBudget = partialListBudget
 	w.discord.setMemberList(arrivingList)
 	notice := memberListNotice(t, parseHTML(t, w.b.get("/foxhole?q=marsh&filter=internal")))
 	reload := findElement(notice, "a", "data-field", "reload")
@@ -273,7 +253,6 @@ func TestFoxholePageWithTheConnectionDownSaysTheHolderListMayBeOutOfDate(t *test
 // a regression pin: the page sent none before the line.
 func TestFoxholePageWithNoGuildDataLogsItAndSendsNoSentryEvent(t *testing.T) {
 	w := newFoxholeWorld(t)
-	w.p.pageBudget = partialListBudget
 	w.discord.setGuild(commands.GuildDataArriving)
 	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListNoGuild, Connected: true})
 	logs := captureLogs(t)

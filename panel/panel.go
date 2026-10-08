@@ -30,11 +30,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// now is the package clock for the pending sign-in and session lifetimes. A
-// package var so tests can move time without sleeping, the same arrangement
-// as telemetryNow in the commands package.
-var now = time.Now
-
 // Panel holds the configuration, the parsed pages, the in-memory sessions and
 // the service layers the hub page and the Foxhole page read through.
 type Panel struct {
@@ -158,12 +153,12 @@ func (p *Panel) Stop(ctx context.Context) error {
 
 func (p *Panel) pruneLoop() {
 	defer utils.RecoverPanic("panel-prune")
-	ticker := time.NewTicker(pruneInterval)
+	ticker := time.NewTicker(pruneInterval) //nolint:forbidigo // how often to prune, on the wall clock; what has expired is read on panelClock
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			p.sessions.prune(now())
+			p.sessions.prune(panelClock.Now())
 		case <-p.stopPrune:
 			return
 		}
@@ -254,7 +249,7 @@ func (p *Panel) authStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verifier := oauth2.GenerateVerifier()
-	id, err := p.sessions.addPending(pendingSignin{state: state, verifier: verifier, started: now()})
+	id, err := p.sessions.addPending(pendingSignin{state: state, verifier: verifier, started: panelClock.Now()})
 	if err != nil {
 		p.serverError(w, "sign-in start", err)
 		return
@@ -281,7 +276,7 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no sign-in in progress", http.StatusBadRequest)
 		return
 	}
-	pending, ok := p.sessions.takePending(c.Value, now())
+	pending, ok := p.sessions.takePending(c.Value, panelClock.Now())
 	if !ok {
 		http.Error(w, "the sign-in took too long or was not started here", http.StatusBadRequest)
 		return
@@ -325,7 +320,7 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 	user, outcome, err := p.groupCheck(r.Context(), tok.AccessToken)
 	switch outcome {
 	case checkPassed:
-		sess := session{accessToken: tok.AccessToken, signedIn: now()}
+		sess := session{accessToken: tok.AccessToken, signedIn: panelClock.Now()}
 		sess.identify(user, p.accessOf(user))
 		id, err := p.sessions.add(sess)
 		if err != nil {
@@ -388,7 +383,7 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 			http.Redirect(w, r, signinURL(causeNone), http.StatusSeeOther)
 			return
 		}
-		if sess.expired(now()) {
+		if sess.expired(panelClock.Now()) {
 			p.endSession(w, c.Value, sess, string(causeExpired))
 			http.Redirect(w, r, signinURL(causeExpired), http.StatusSeeOther)
 			return
@@ -495,8 +490,8 @@ func (p *Panel) homePage(w http.ResponseWriter, r *http.Request, sess session) {
 func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session, status int, req pageRequest) {
 	// The budget's start is taken before its deadline is set, so a page that
 	// fails on the deadline never reports less time than the budget.
-	start := time.Now()
-	ctx, cancel := context.WithTimeout(r.Context(), p.pageBudget)
+	start := panelClock.Now()
+	ctx, cancel := panelClock.WithTimeout(r.Context(), p.pageBudget)
 	defer cancel()
 	deadline, _ := ctx.Deadline()
 	reads := newPageReads(start, deadline)

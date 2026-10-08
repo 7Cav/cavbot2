@@ -31,6 +31,10 @@ type ctxStore struct {
 	releaseErr error
 	// failing names the read that fails with errStoreDown.
 	failing string
+	// slow names the read that takes slowFor on clock each time it runs.
+	slow    string
+	slowFor time.Duration
+	clock   *testClock
 }
 
 // errStoreDown is a store read failing for a reason that is not the
@@ -51,6 +55,27 @@ func (s *ctxStore) blockRead(read string, releaseErr error) <-chan struct{} {
 	return s.started
 }
 
+// slowRead makes every call of the named read take d on the panel's clock
+// before it answers.
+func (s *ctxStore) slowRead(read string, d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.slow, s.slowFor = read, d
+}
+
+// runOutOnceStarted moves the clock on to at, the page's deadline, once the
+// blocked read has started: the read is still waiting when the page's
+// budget runs out.
+func (s *ctxStore) runOutOnceStarted(started <-chan struct{}, at time.Time) {
+	go func() {
+		select {
+		case <-started:
+			s.clock.advanceTo(at)
+		case <-time.After(neverReleased):
+		}
+	}()
+}
+
 // failRead makes every call of the named read fail with errStoreDown.
 func (s *ctxStore) failRead(read string) {
 	s.mu.Lock()
@@ -66,7 +91,14 @@ func (s *ctxStore) gate(ctx context.Context, read string) error {
 	if blocked {
 		s.blocked = ""
 	}
+	slowFor := time.Duration(0)
+	if s.slow == read {
+		slowFor = s.slowFor
+	}
 	s.mu.Unlock()
+	if slowFor > 0 {
+		s.clock.advance(slowFor)
+	}
 	if failing {
 		return fmt.Errorf("%s: %w", read, errStoreDown)
 	}
@@ -140,7 +172,9 @@ func newCtxWorld(t *testing.T, hubs ...store.Hub) (*testWorld, *ctxStore) {
 			t.Fatalf("UpsertHub: %v", err)
 		}
 	}
-	return newTestWorldOver(t, st, newFakeForum(t)), st
+	w := newTestWorldOver(t, st, newFakeForum(t))
+	st.clock = w.clock
+	return w, st
 }
 
 // failureOf returns the data-failure on <main>: which failure page this is.
@@ -193,10 +227,9 @@ func TestHubPageReadFailureIsReportedAndSaysSo(t *testing.T) {
 
 func TestHubPageThatRunsOutOfTimeIsReportedAndSaysSo(t *testing.T) {
 	w, st := newCtxWorld(t, testHub())
-	w.p.pageBudget = 10 * time.Millisecond
 	signIn(t, w.forum, w.b)
 	reported := recordSentry(t)
-	st.blockRead("ListHubs", nil)
+	st.runOutOnceStarted(st.blockRead("ListHubs", nil), w.clock.Now().Add(hubPageBudget))
 
 	res := w.b.get("/")
 

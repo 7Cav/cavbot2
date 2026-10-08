@@ -788,7 +788,6 @@ func TestReportAndProgressShowWhileTheMemberListIsPartial(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFoxholeWorld(t)
-			w.p.pageBudget = partialListBudget
 			tc.run(t, w)
 			w.discord.setMemberList(partial)
 

@@ -90,17 +90,16 @@ func assertElapsedCoversBudget(t *testing.T, tb timeBudget, budget time.Duration
 // before it finished, and the elapsed time counts from the budget's start,
 // not the slow read's.
 func TestSlowStoreReadIsTheOneTheBudgetRanOutDuring(t *testing.T) {
-	const budget = 100 * time.Millisecond
 	w, st := newCtxWorld(t, testHub())
-	w.p.pageBudget = budget
 	signIn(t, w.forum, w.b)
 	reported := recordSentry(t)
-	st.blockRead("ListModeratorChanges", nil)
+	st.slowRead("ListHubs", hubPageBudget/2)
+	st.runOutOnceStarted(st.blockRead("ListModeratorChanges", nil), w.clock.Now().Add(hubPageBudget))
 
 	w.b.get("/")
 
 	tb := onlyTimeBudget(t, reported)
 	assertReads(t, tb,
 		"list hubs="+wantFinished, "read guild moderator roles="+wantFinished, "list moderator changes="+wantRanOut)
-	assertElapsedCoversBudget(t, tb, budget)
+	assertElapsedCoversBudget(t, tb, hubPageBudget)
 }

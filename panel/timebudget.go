@@ -37,14 +37,14 @@ func newPageReads(start, deadline time.Time) *pageReads {
 // that returned at or after the deadline is the one the budget ran out
 // during.
 func (r *pageReads) add(name string, started time.Time) {
-	end := time.Now()
+	end := panelClock.Now()
 	r.reads = append(r.reads, pageRead{name: name, took: end.Sub(started), ranOut: !end.Before(r.deadline)})
 }
 
 // timeStoreRead makes a store read and records it under name, whatever it
 // returns.
 func timeStoreRead[T any](r *pageReads, name string, read func() (T, error)) (T, error) {
-	started := time.Now()
+	started := panelClock.Now()
 	v, err := read()
 	r.add(name, started)
 	return v, err
@@ -79,7 +79,7 @@ const (
 
 // report is the record at the page's failure, with the budget it ran under.
 func (r *pageReads) report(budget time.Duration) *budgetReport {
-	out := &budgetReport{BudgetMS: budget.Milliseconds(), ElapsedMS: time.Since(r.start).Milliseconds(),
+	out := &budgetReport{BudgetMS: budget.Milliseconds(), ElapsedMS: panelClock.Now().Sub(r.start).Milliseconds(),
 		Reads: make([]readReport, 0, len(r.reads))}
 	for _, rd := range r.reads {
 		rr := readReport{Read: rd.name, Outcome: outcomeFinished, TookMS: rd.took.Milliseconds()}

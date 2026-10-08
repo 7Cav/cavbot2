@@ -266,7 +266,7 @@ func (p *Panel) startRosterAdd(w http.ResponseWriter, r *http.Request, sess sess
 	// The fetch runs to its end whether or not the browser waits, as the
 	// action it starts does, under the page's time budget, as the preview's
 	// fetch does.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), p.pageBudget)
+	ctx, cancel := panelClock.WithTimeout(context.WithoutCancel(r.Context()), p.pageBudget)
 	defer cancel()
 	troopers, err := p.foxhole.confirmedRoster(ctx, unit, r.PostForm.Get(fieldRoster))
 	if errors.Is(err, errRosterChanged) {

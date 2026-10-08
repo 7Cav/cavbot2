@@ -596,11 +596,9 @@ const guildDataPoll = 100 * time.Millisecond
 func (s *hubService) readGuild(ctx context.Context) (guildState, error) {
 	if s.guildWait > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.guildWait)
+		ctx, cancel = panelClock.WithTimeout(ctx, s.guildWait)
 		defer cancel()
 	}
-	poll := time.NewTicker(guildDataPoll)
-	defer poll.Stop()
 	for {
 		data := s.deps.Manager.GuildData(s.deps.GuildID)
 		switch data.Status {
@@ -615,7 +613,7 @@ func (s *hubService) readGuild(ctx context.Context) (guildState, error) {
 				return guildState{}, fmt.Errorf("%w: still on its way when the wait ran out", errNoGuildData)
 			}
 			return guildState{}, fmt.Errorf("wait for guild data: %w", ctx.Err())
-		case <-poll.C:
+		case <-panelClock.After(guildDataPoll):
 		}
 	}
 }
