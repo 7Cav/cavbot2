@@ -157,7 +157,7 @@ func runFoxhole(
 	// otherwise hit (#177).
 	guildID := interaction.GuildID
 	if guildID == "" {
-		utils.HandleError(r, interaction, "❌ This command can only be used in a server (guild).")
+		missedAck = refuse(r, interaction, "❌ This command can only be used in a server (guild).")
 		return
 	}
 
@@ -170,7 +170,7 @@ func runFoxhole(
 
 	subcommand, ok := getOptionString(commandData, "command")
 	if !ok || !slices.Contains(foxholeSubcommands, subcommand) {
-		utils.HandleError(
+		missedAck = refuse(
 			r,
 			interaction,
 			"❌ Invalid /"+commandNameOf(interaction)+" command; must be "+strings.Join(foxholeSubcommands, ", "),
@@ -180,10 +180,11 @@ func runFoxhole(
 
 	roleScope, ok := getOptionString(commandData, "flag")
 	if !ok || !slices.Contains(foxholeRoleScopes, roleScope) {
-		utils.HandleError(
+		missedAck = refuse(
 			r,
 			interaction,
 			"❌ Missing or invalid flag argument; must be 'internal', 'external', or 'both'",
+			"subcommand", subcommand,
 		)
 		return
 	}
@@ -196,7 +197,7 @@ func runFoxhole(
 	query = strings.TrimSpace(query)
 
 	if subcommand != "purge" && query == "" {
-		utils.HandleError(r, interaction, "❌ Missing discordname argument for this command")
+		missedAck = refuse(r, interaction, "❌ Missing discordname argument for this command", "subcommand", subcommand)
 		return
 	}
 
@@ -207,7 +208,7 @@ func runFoxhole(
 	run := foxholeCommandRun(interaction, subcommand)
 	var refused *RunningAction
 	if end, refused = fx.startCommand(run); refused != nil {
-		refuseForPageAction(r, interaction, run, *refused)
+		missedAck = refuseForPageAction(r, interaction, run, *refused, "subcommand", subcommand)
 		return
 	}
 
@@ -238,13 +239,14 @@ func runFoxhole(
 // refuseForPageAction answers a role-changing Foxhole command run sent
 // while a Foxhole action started on the Foxhole page runs, with a reply only
 // its member sees naming the action, who started it and how far it has
-// got. The command changes nothing.
-func refuseForPageAction(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, run CommandRun, action RunningAction) {
+// got. The command changes nothing. The reply goes through refuse, with
+// kv, and refuseForPageAction returns what refuse returns.
+func refuseForPageAction(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, run CommandRun, action RunningAction, kv ...any) (missedAck bool) {
 	utils.Info("Foxhole command refused: a page action is running", "command", commandNameOf(interaction),
 		"typed", run.Command, "action", action.Name, "started_by", action.StartedBy)
-	utils.HandleError(r, interaction, fmt.Sprintf(
+	return refuse(r, interaction, fmt.Sprintf(
 		"❌ A Foxhole action is running on the Foxhole page: %s, started by %s, %d of %d done. Nothing changed. Try again when it ends.",
-		action.Name, action.StartedBy, action.Done, action.Total))
+		action.Name, action.StartedBy, action.Done, action.Total), kv...)
 }
 
 // foxholeCommandTyped is a Foxhole command run as its member typed it,

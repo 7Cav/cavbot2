@@ -71,7 +71,7 @@ func runFoxholeBulkAddInternal(
 	// non-empty guildID for every downstream Discord role call.
 	guildID := interaction.GuildID
 	if guildID == "" {
-		utils.HandleError(r, interaction, "❌ This command can only be used in a server (guild).")
+		missedAck = refuse(r, interaction, "❌ This command can only be used in a server (guild).")
 		return
 	}
 
@@ -82,7 +82,7 @@ func runFoxholeBulkAddInternal(
 	commandData := interaction.ApplicationCommandData()
 	unitValue, ok := getOptionString(commandData, "unit")
 	if !ok {
-		utils.HandleError(r, interaction, "❌ Missing unit argument.")
+		missedAck = refuse(r, interaction, "❌ Missing unit argument.")
 		return
 	}
 	// The picker only ever emits a registered value, but validate against the
@@ -90,14 +90,14 @@ func runFoxholeBulkAddInternal(
 	// not be able to express a query the registry never authorized.
 	unit, ok := LookupValidatedInternalUnit(unitValue)
 	if !ok {
-		utils.HandleError(r, interaction, fmt.Sprintf("❌ Unknown unit %q; pick one from the list.", unitValue))
+		missedAck = refuse(r, interaction, fmt.Sprintf("❌ Unknown unit %q; pick one from the list.", unitValue))
 		return
 	}
 
 	run := foxholeCommandRun(interaction, unit.Label)
 	end, refused := fx.startCommand(run)
 	if refused != nil {
-		refuseForPageAction(r, interaction, run, *refused)
+		missedAck = refuseForPageAction(r, interaction, run, *refused)
 		return
 	}
 	defer end()
