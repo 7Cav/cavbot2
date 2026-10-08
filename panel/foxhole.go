@@ -167,7 +167,7 @@ func noticeFor(list commands.MemberListSnapshot) *listNotice {
 		n.Status = listArriving
 	case commands.MemberListRefused:
 		n.Status = listRefused
-		n.RetryIn = max(1, int(math.Ceil(list.RetryAt.Sub(now()).Seconds())))
+		n.RetryIn = max(1, int(math.Ceil(list.RetryAt.Sub(panelClock.Now()).Seconds())))
 	case commands.MemberListLate:
 		n.Status = listLate
 	default:
@@ -491,7 +491,7 @@ func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session
 // budget. A store read that fails gets the could-not-load page, as the hub
 // page's does, and an abandoned load answers nobody.
 func (p *Panel) renderFoxhole(w http.ResponseWriter, r *http.Request, sess session, status int, req foxholeRequest) {
-	ctx, cancel := context.WithTimeout(r.Context(), p.pageBudget)
+	ctx, cancel := panelClock.WithTimeout(r.Context(), hubPageBudget)
 	defer cancel()
 	view, err := p.foxhole.view(ctx, req)
 	if errors.Is(err, context.Canceled) {
@@ -793,8 +793,6 @@ func (s foxholeService) memberList(ctx context.Context, await bool) (commands.Me
 		return list, nil
 	}
 	deadline, _ := ctx.Deadline()
-	poll := time.NewTicker(guildDataPoll)
-	defer poll.Stop()
 	for list.Status != commands.MemberListComplete {
 		switch {
 		case list.RetryAt.After(deadline):
@@ -808,7 +806,7 @@ func (s foxholeService) memberList(ctx context.Context, await bool) (commands.Me
 				return list, nil
 			}
 			return list, fmt.Errorf("wait for the member list: %w", ctx.Err())
-		case <-poll.C:
+		case <-panelClock.After(guildDataPoll):
 		}
 		list = s.manager.MemberList(s.guildID)
 	}

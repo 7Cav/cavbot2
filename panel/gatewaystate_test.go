@@ -144,16 +144,14 @@ const wantNoGuildData = "no-guild-data"
 // page says so at once rather than wait out its budget, and it is
 // Discord's trouble, not the panel's, so nothing reaches Sentry.
 func TestHubPageWithTheGuildAbsentSaysDiscordHasNotSentIt(t *testing.T) {
-	const budget = 5 * time.Second
 	w := newTestWorld(t, testHub())
-	w.p.pageBudget = budget
 	signIn(t, w.forum, w.b)
 	reported := recordSentry(t)
 	w.discord.setGuild(commands.GuildDataAbsent)
 
-	start := time.Now()
+	start := w.clock.Now()
 	res := w.b.get("/")
-	took := time.Since(start)
+	waited := w.clock.since(start)
 
 	if res.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", res.StatusCode)
@@ -161,16 +159,17 @@ func TestHubPageWithTheGuildAbsentSaysDiscordHasNotSentIt(t *testing.T) {
 	if got := failureOf(t, parseHTML(t, res)); got != wantNoGuildData {
 		t.Errorf("failure page = %q, want %s", got, wantNoGuildData)
 	}
-	if took > budget/5 {
-		t.Errorf("answered after %v, want well before the %v budget", took, budget)
+	if waited > hubPageBudget/5 {
+		t.Errorf("answered after waiting %v, want well before the %v budget", waited, hubPageBudget)
 	}
 	if n := len(reported.recorded()); n != 0 {
 		t.Errorf("sent %d Sentry events, want none", n)
 	}
 }
 
-// hangLimit bounds a page load that waits for the guild's data, so a wait
-// that never ends fails the test instead of hanging the suite.
+// hangLimit bounds a test's real-time wait for something the panel or the
+// runtime does, so a wait that never ends fails the test instead of hanging
+// the suite.
 const hangLimit = 3 * time.Second
 
 // After a deploy the gateway state holds the READY placeholder until the
@@ -182,14 +181,7 @@ func TestHubPageWaitsForTheGuildDataOnItsWay(t *testing.T) {
 	t.Run("data that lands within the budget", func(t *testing.T) {
 		w := newTestWorld(t, testHub())
 		signIn(t, w.forum, w.b)
-		read := w.discord.holdPlaceholder()
-		go func() {
-			select {
-			case <-read:
-				w.discord.setGuild(commands.GuildDataPresent)
-			case <-time.After(hangLimit):
-			}
-		}()
+		w.discord.landAfterOneRead()
 
 		res := w.b.get("/")
 
@@ -206,16 +198,14 @@ func TestHubPageWaitsForTheGuildDataOnItsWay(t *testing.T) {
 	})
 
 	t.Run("data that never lands", func(t *testing.T) {
-		const budget = 200 * time.Millisecond
 		w := newTestWorld(t, testHub())
-		w.p.pageBudget = budget
 		signIn(t, w.forum, w.b)
 		reported := recordSentry(t)
 		w.discord.holdPlaceholder()
 
-		start := time.Now()
+		start := w.clock.Now()
 		res := w.b.get("/")
-		took := time.Since(start)
+		waited := w.clock.since(start)
 
 		if res.StatusCode != http.StatusServiceUnavailable {
 			t.Errorf("status = %d, want 503", res.StatusCode)
@@ -223,8 +213,8 @@ func TestHubPageWaitsForTheGuildDataOnItsWay(t *testing.T) {
 		if got := failureOf(t, parseHTML(t, res)); got != wantNoGuildData {
 			t.Errorf("failure page = %q, want %s", got, wantNoGuildData)
 		}
-		if took < budget || took > hangLimit {
-			t.Errorf("answered after %v, want the page to wait out its %v budget and give up there", took, budget)
+		if waited < hubPageBudget {
+			t.Errorf("answered after waiting %v, want the page to wait out its %v budget", waited, hubPageBudget)
 		}
 		if n := len(reported.recorded()); n != 0 {
 			t.Errorf("sent %d Sentry events, want none", n)
@@ -234,8 +224,8 @@ func TestHubPageWaitsForTheGuildDataOnItsWay(t *testing.T) {
 
 // A save that meets no guild data writes nothing and answers with the page
 // that says Discord has not sent the data. With the guild absent it fails
-// at once; with the data on its way it waits, for no longer than the
-// page's time budget, since a save's own context has no deadline.
+// at once; with the data on its way it waits out the page's time budget,
+// which bounds the wait since a save's own context has no deadline.
 func TestSaveWithNoGuildDataWritesNothing(t *testing.T) {
 	for _, save := range gatewaySaves {
 		t.Run(save.name+" with the guild absent", func(t *testing.T) {
@@ -252,18 +242,18 @@ func TestSaveWithNoGuildDataWritesNothing(t *testing.T) {
 
 	t.Run("a create with the data never landing", func(t *testing.T) {
 		w := newTestWorld(t, testHub())
-		w.p.pageBudget = 200 * time.Millisecond
 		signIn(t, w.forum, w.b)
 		w.discord.holdPlaceholder()
 		before := storedHubs(t, w.st)[0]
 
-		start := time.Now()
+		start := w.clock.Now()
 		res := createSave.post(t, w)
+		waited := w.clock.since(start)
 
-		if took := time.Since(start); took > hangLimit {
-			t.Errorf("answered after %v, want the save to give up at the page's budget", took)
-		}
 		assertNoGuildDataAndNothingWritten(t, w, before, res)
+		if waited < hubPageBudget {
+			t.Errorf("answered after waiting %v, want the save to wait out the page's %v budget", waited, hubPageBudget)
+		}
 	})
 }
 
@@ -347,24 +337,22 @@ func TestHubPageWithTheConnectionDownSaysTheGuildMayBeOutOfDate(t *testing.T) {
 // starting its own, which would push a queue of them past the reverse
 // proxy's timeout.
 func TestSavesWaitForTheGuildDataSideBySide(t *testing.T) {
-	const budget = 600 * time.Millisecond
 	w := newTestWorld(t, testHub())
-	w.p.pageBudget = budget
 	signIn(t, w.forum, w.b)
 	other := secondBrowser(t, w)
-	w.discord.holdPlaceholder()
+	w.discord.holdPlaceholderForTwo()
 	moderators := moderatorsForm(t, w.st, "role-mp")
 
 	type answer struct {
-		res  *http.Response
-		took time.Duration
+		res    *http.Response
+		waited time.Duration
 	}
 	post := func(b *browser, path string, form url.Values) <-chan answer {
 		done := make(chan answer, 1)
 		go func() {
-			start := time.Now()
+			start := w.clock.Now()
 			res := b.postForm(path, form)
-			done <- answer{res, time.Since(start)}
+			done <- answer{res, w.clock.since(start)}
 		}()
 		return done
 	}
@@ -374,7 +362,7 @@ func TestSavesWaitForTheGuildDataSideBySide(t *testing.T) {
 	}
 
 	// Waiting in turn, the second save would answer after two budgets.
-	limit := budget * 5 / 3
+	limit := hubPageBudget * 5 / 3
 	for name, done := range answers {
 		a := <-done
 		if a.res.StatusCode != http.StatusServiceUnavailable {
@@ -384,8 +372,8 @@ func TestSavesWaitForTheGuildDataSideBySide(t *testing.T) {
 		if got := failureOf(t, parseHTML(t, a.res)); got != wantNoGuildData {
 			t.Errorf("%s: failure page = %q, want %s", name, got, wantNoGuildData)
 		}
-		if a.took > limit {
-			t.Errorf("%s answered after %v, want within %v: saves wait for the data side by side, not in turn", name, a.took, limit)
+		if a.waited > limit {
+			t.Errorf("%s answered after waiting %v, want within %v: saves wait for the data side by side, not in turn", name, a.waited, limit)
 		}
 	}
 }

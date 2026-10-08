@@ -307,7 +307,7 @@ func (b *browser) doContext(ctx context.Context, method, target string, header h
 // and drops the ones it deletes.
 func (b *browser) absorbCookies(res *http.Response) {
 	for _, c := range res.Cookies() {
-		if c.MaxAge < 0 || (!c.Expires.IsZero() && c.Expires.Before(now())) {
+		if c.MaxAge < 0 || (!c.Expires.IsZero() && c.Expires.Before(panelClock.Now())) {
 			delete(b.cookies, c.Name)
 			continue
 		}
@@ -489,18 +489,6 @@ func mainCause(t *testing.T, res *http.Response) (string, bool) {
 		t.Fatal("page has no <main>")
 	}
 	return attrValue(m, "data-cause")
-}
-
-// pinClock fixes the package clock at a start time and returns a function that
-// moves it forward.
-func pinClock(t *testing.T) func(time.Duration) {
-	t.Helper()
-	start := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
-	current := start
-	prev := now
-	now = func() time.Time { return current }
-	t.Cleanup(func() { now = prev })
-	return func(d time.Duration) { current = current.Add(d) }
 }
 
 func TestSigninPagePlainVisitHasNoCause(t *testing.T) {
@@ -854,13 +842,13 @@ func TestCrossOriginPostIsRefused(t *testing.T) {
 }
 
 func TestPendingSigninDroppedAfterFiveMinutes(t *testing.T) {
-	advance := pinClock(t)
+	clock := installClock(t)
 	f := newFakeForum(t)
 	b := newBrowser(t, newTestPanel(t, f))
 	start := b.post("/auth/start")
 	q := location(t, start).Query()
 	f.setChallenge(q.Get("code_challenge"))
-	advance(5*time.Minute + time.Second)
+	clock.advance(5*time.Minute + time.Second)
 
 	res := b.get("/auth/callback?code=" + testCode + "&state=" + url.QueryEscape(q.Get("state")))
 
@@ -873,11 +861,11 @@ func TestPendingSigninDroppedAfterFiveMinutes(t *testing.T) {
 }
 
 func TestSessionEndsTwoHoursAfterSignin(t *testing.T) {
-	advance := pinClock(t)
+	clock := installClock(t)
 	f := newFakeForum(t)
 	b := newBrowser(t, newTestPanel(t, f))
 	signIn(t, f, b)
-	advance(2*time.Hour + time.Second)
+	clock.advance(2*time.Hour + time.Second)
 
 	res := b.get("/")
 

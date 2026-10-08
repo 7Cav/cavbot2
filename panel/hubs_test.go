@@ -63,9 +63,13 @@ type fakeDiscord struct {
 	// guildStatus is how much of the guild the fake gateway state holds:
 	// present unless a test takes it away or leaves the READY placeholder.
 	guildStatus commands.GuildDataStatus
-	// placeholderRead closes at the first read that finds the placeholder,
-	// once holdPlaceholder has armed it.
-	placeholderRead chan struct{}
+	// landOnRead lands the guild's data once a read has found the
+	// placeholder, so the read after it finds the data.
+	landOnRead bool
+	// secondRead, when set, closes once a second read finds the
+	// placeholder, and firstReadHeld is the first one waiting for it.
+	secondRead    chan struct{}
+	firstReadHeld bool
 	// disconnected is the bot's gateway connection down, with the fake
 	// state still holding what it held when the connection dropped.
 	disconnected bool
@@ -75,9 +79,9 @@ type fakeDiscord struct {
 	// complete, with the bot its one member, until a test sets one, as the
 	// production adapter gives it beside a guild whose data the state holds.
 	memberList commands.MemberListSnapshot
-	// partialListRead closes at the first read that finds the member list
-	// partial, once holdPartialList has armed it.
-	partialListRead chan struct{}
+	// completeList, when set, is the complete member list that lands, with
+	// the guild's data, once a read has found the list partial.
+	completeList *commands.MemberListSnapshot
 	// roleWrites are the member role changes made, in order.
 	roleWrites []fakeRoleWrite
 	// roleErrs holds what a role change answers for the member with the
@@ -277,14 +281,15 @@ func (f *fakeDiscord) VoiceStates(guildID string) commands.VoiceSnapshot {
 // boost tier, while the fake state holds the guild's data. Any other guild
 // is absent.
 func (f *fakeDiscord) GuildData(guildID string) commands.GuildSnapshot {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	if guildID != testGuildID {
 		return commands.GuildSnapshot{}
 	}
-	if f.guildStatus == commands.GuildDataArriving && f.placeholderRead != nil {
-		close(f.placeholderRead)
-		f.placeholderRead = nil
+	f.holdForSecondRead()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.guildStatus == commands.GuildDataArriving && f.landOnRead {
+		f.guildStatus, f.landOnRead = commands.GuildDataPresent, false
+		return commands.GuildSnapshot{Status: commands.GuildDataArriving}
 	}
 	if f.guildStatus != commands.GuildDataPresent {
 		return commands.GuildSnapshot{Status: f.guildStatus}
@@ -310,11 +315,11 @@ func (f *fakeDiscord) MemberList(guildID string) commands.MemberListSnapshot {
 	if guildID != testGuildID {
 		return commands.MemberListSnapshot{}
 	}
-	if f.memberList.Status != commands.MemberListComplete && f.partialListRead != nil {
-		close(f.partialListRead)
-		f.partialListRead = nil
-	}
 	snap := f.memberList
+	if snap.Status != commands.MemberListComplete && f.completeList != nil {
+		f.memberList, f.completeList = *f.completeList, nil
+		f.guildStatus = commands.GuildDataPresent
+	}
 	snap.Members = nil
 	if snap.Status != commands.MemberListComplete {
 		return snap
@@ -451,15 +456,15 @@ func (f *fakeDiscord) setListStatus(status commands.MemberListStatus, connected 
 	f.memberList.Status, f.memberList.Connected = status, connected
 }
 
-// holdPartialList leaves a partial member list snapshot in the fake gateway
-// state. The channel closes at the first read that finds it partial, and
-// that read still returns it.
-func (f *fakeDiscord) holdPartialList(snap commands.MemberListSnapshot) <-chan struct{} {
+// completeAfterOneRead leaves a partial member list snapshot in the fake
+// gateway state for one read: the read after it finds the complete list,
+// with the guild's data landed too.
+func (f *fakeDiscord) completeAfterOneRead(partial, complete commands.MemberListSnapshot) {
+	f.setMemberList(complete)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.memberList = snap
-	f.partialListRead = make(chan struct{})
-	return f.partialListRead
+	landed := f.memberList
+	f.memberList, f.completeList = partial, &landed
 }
 
 // removeRole takes a role out of the guild's role list, as deleting it in
@@ -547,14 +552,57 @@ func (f *fakeDiscord) setGuild(status commands.GuildDataStatus) {
 }
 
 // holdPlaceholder leaves the READY placeholder in the fake gateway state:
-// the guild's data is on its way. The channel closes at the first read that
-// finds it.
-func (f *fakeDiscord) holdPlaceholder() <-chan struct{} {
+// the guild's data is on its way, and never lands.
+func (f *fakeDiscord) holdPlaceholder() {
+	f.setGuild(commands.GuildDataArriving)
+}
+
+// landAfterOneRead leaves the READY placeholder in the fake gateway state
+// for one read: the read after it finds the guild's data landed.
+func (f *fakeDiscord) landAfterOneRead() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.guildStatus = commands.GuildDataArriving
-	f.placeholderRead = make(chan struct{})
-	return f.placeholderRead
+	f.guildStatus, f.landOnRead = commands.GuildDataArriving, true
+}
+
+// holdPlaceholderForTwo leaves the READY placeholder in the fake gateway
+// state, and holds the first read that finds it until a second read finds
+// it too, or until hangLimit passes. Two saves that wait for the data side
+// by side both read it before either waits, whatever the clock does; two
+// that take turns can't.
+func (f *fakeDiscord) holdPlaceholderForTwo() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.guildStatus, f.secondRead = commands.GuildDataArriving, make(chan struct{})
+}
+
+// holdForSecondRead holds the first read that finds the placeholder, once
+// holdPlaceholderForTwo has armed it, until a second read finds it too or
+// hangLimit passes. Any other read passes straight through.
+func (f *fakeDiscord) holdForSecondRead() {
+	f.mu.Lock()
+	second := f.secondRead
+	switch {
+	case second == nil || f.guildStatus != commands.GuildDataArriving:
+		f.mu.Unlock()
+		return
+	case f.firstReadHeld:
+		close(second)
+		f.secondRead = nil
+		f.mu.Unlock()
+		return
+	}
+	f.firstReadHeld = true
+	f.mu.Unlock()
+	select {
+	case <-second:
+	case <-time.After(hangLimit):
+		f.mu.Lock()
+		if f.secondRead == second {
+			f.secondRead = nil
+		}
+		f.mu.Unlock()
+	}
 }
 
 // setConnected brings the bot's gateway connection up or down. The fake
@@ -640,6 +688,8 @@ type testWorld struct {
 	// pause is the clock the world's Foxhole actions pause on, in a world
 	// built by newFoxholeWorld.
 	pause *pauseClock
+	// clock is the clock the panel runs on.
+	clock *testClock
 }
 
 // newTestWorld builds the panel over a store holding the given hubs. The
@@ -673,6 +723,7 @@ func newTestWorldOver(t *testing.T, st store.Store, f *fakeForum) *testWorld {
 // configuration given.
 func newTestWorldConfigured(t *testing.T, st store.Store, f *fakeForum, cfg Config) *testWorld {
 	t.Helper()
+	clock := installClock(t)
 	discord := newFakeDiscord()
 	runtime, err := commands.NewTempVC(discord, st, testGuildID)
 	if err != nil {
@@ -687,7 +738,7 @@ func newTestWorldConfigured(t *testing.T, st store.Store, f *fakeForum, cfg Conf
 		t.Fatalf("New: %v", err)
 	}
 	fake, _ := st.(*store.Fake)
-	return &testWorld{forum: f, st: fake, discord: discord, runtime: runtime, foxhole: foxhole, p: p, b: newBrowser(t, p)}
+	return &testWorld{forum: f, st: fake, discord: discord, runtime: runtime, foxhole: foxhole, p: p, b: newBrowser(t, p), clock: clock}
 }
 
 // testHub is a stored hub on hub-1 with the defaults a register writes.

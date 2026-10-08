@@ -277,7 +277,6 @@ func TestRosterHoldingCountShowsInThePreviewNotOnThePage(t *testing.T) {
 // says nothing changed, opens no roster preview and fetches no roster.
 func TestRosterPreviewWhileTheMemberListIsPartialIsRefused(t *testing.T) {
 	w := newFoxholeWorld(t)
-	w.p.pageBudget = partialListBudget
 	api := serveRoster(t, trooperVance)
 	page := parseHTML(t, w.b.get(foxholePath))
 	fields := formFields(page, findElement(rosterBlock(t, page), "form", "data-field", "roster-form"))
@@ -476,7 +475,6 @@ func TestRosterAddConfirmedWhenItCantStartFetchesNoRoster(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFoxholeWorld(t)
-			w.p.pageBudget = partialListBudget
 			api := serveRoster(t, trooperVance)
 			doc := parseHTML(t, previewRoster(t, w, "D/ACD"))
 			tc.before(t, w)

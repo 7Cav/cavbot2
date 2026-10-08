@@ -448,7 +448,6 @@ func TestAddPressedWhileTheMemberListIsPartialIsRefusedKeepingThePaste(t *testin
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFoxholeWorld(t)
-			w.p.pageBudget = partialListBudget
 
 			doc := parseHTML(t, tc.press(t, w))
 

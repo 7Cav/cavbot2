@@ -3,7 +3,8 @@
 # `linters.default: standard` keeps the standard linter set (errcheck, govet,
 # ineffassign, staticcheck, unused) as it was before this file existed.
 # depguard and gosec on top of it hold the panel's security rules, so review
-# needn't.
+# needn't. forbidigo holds the panel's production code to its clock, and
+# nolintlint makes every //nolint name its linter and say why.
 #
 # gofmt is a *formatter* in v2, not a linter: `golangci-lint run` reports diffs
 # as issues, and `golangci-lint fmt` rewrites them in place.
@@ -17,7 +18,9 @@ linters:
   default: standard
   enable:
     - depguard
+    - forbidigo
     - gosec
+    - nolintlint
   settings:
     depguard:
       rules:
@@ -37,6 +40,28 @@ linters:
         - G201
         - G202
         - G203
+    forbidigo:
+      # The panel reads the time, sets its deadlines and waits through
+      # panelClock (panel/clock.go), so its tests run it on a clock they move
+      # and never wait out a time budget (#480). A read that has to use the
+      # wall clock carries a //nolint:forbidigo that says why.
+      analyze-types: true
+      forbid:
+        - pattern: ^time\.(Now|Since|Until|After|AfterFunc|Sleep|Tick|NewTicker|NewTimer)$
+          msg: read the time and wait through panelClock
+        - pattern: ^context\.(WithTimeout|WithTimeoutCause|WithDeadline|WithDeadlineCause)$
+          msg: set deadlines through panelClock.WithTimeout
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+  exclusions:
+    rules:
+      # forbidigo's rules are the panel's, for its production code alone.
+      - path-except: ^panel/
+        linters: [forbidigo]
+      - path: _test\.go$
+        linters: [forbidigo]
 
 formatters:
   enable:

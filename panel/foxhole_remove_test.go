@@ -290,7 +290,6 @@ func TestRemovalRoleChangesNameTheRemovalAndTheForumUserWhoStartedIt(t *testing.
 // kept, and the manager selects again once the rows are back.
 func TestRemovePressedWhileTheMemberListIsPartialIsRefused(t *testing.T) {
 	w := newFoxholeWorld(t)
-	w.p.pageBudget = partialListBudget
 	page := parseHTML(t, w.b.get(foxholePath))
 	w.discord.setMemberList(arrivingList)
 	calls := w.discord.apiCallCount()
