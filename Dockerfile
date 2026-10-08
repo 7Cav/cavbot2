@@ -1,4 +1,7 @@
-FROM golang:latest AS builder
+# The Go that builds the image, which must be the toolchain go.mod pins: CI's
+# tests run on that one. The gate's image Go step fails when they differ, so a
+# Dependabot bump of this tag needs go.mod's toolchain line moved with it.
+FROM golang:1.27.1 AS builder
 
 ARG VERSION=dev
 

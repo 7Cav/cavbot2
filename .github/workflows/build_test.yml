@@ -24,7 +24,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
 
-      # Lints on go.mod's Go with the module cache, as Build does.
+      # Lints on the toolchain go.mod pins, with the module cache, as Build
+      # does. The image builds on that toolchain too.
       - name: Set up Go
         uses: actions/setup-go@v7.0.0
         with:

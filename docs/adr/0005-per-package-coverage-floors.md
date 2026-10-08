@@ -56,7 +56,8 @@ number, so every reader gets the same one.
 Coverage above that line never fails the check. Only a package below its floor
 fails.
 
-Floors come from coverage on the Go version CI runs, the one `go.mod` names.
+Floors come from coverage on the Go version CI runs, the toolchain `go.mod`
+pins in its `toolchain` line. The image builds on the same one (#483).
 The same code covers differently under different Go versions: `commands`
 covers 86.4% under 1.26.0 and 88.1% under 1.27.1, more than the 1 to 2 points
 a fresh floor leaves.
