@@ -531,6 +531,15 @@ a link to the recording in the panel. If the channel is gone by then, the
 starter gets that link by DM instead.
 _Avoid_: recording panel (the panel is the web UI), banner, announcement.
 
+## Slash commands
+
+**Refusal**:
+A command's reply that turns a run down before the command acts on it: bad
+input, a run outside a server, or a Foxhole action running on the Foxhole
+page. Only the member who ran it sees it, and nothing changed.
+_Avoid_: rejection, error reply (which also covers a run that failed after
+it started).
+
 ## External systems
 
 **7Cav API**:
