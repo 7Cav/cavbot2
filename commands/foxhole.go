@@ -947,17 +947,21 @@ func foxholeSubcommandOf(interaction *discordgo.InteractionCreate) string {
 const addedEmbedMore = "... and %d more."
 
 func buildAddedMembersEmbed(members []*discordgo.Member) *discordgo.MessageEmbed {
-	const maxDescLen = 4096
 	var sb strings.Builder
-	rendered := 0
-	for _, m := range members {
+	for i, m := range members {
 		line := fmt.Sprintf("<@%s>\n", m.User.ID)
-		if sb.Len()+len(line) > maxDescLen {
-			_, _ = fmt.Fprintf(&sb, addedEmbedMore, len(members)-rendered)
+		// Name a member only while the count line for the members after it
+		// still fits, so the count line that ends a cut-short list never
+		// pushes the description past the limit.
+		countLine := ""
+		if i < len(members)-1 {
+			countLine = fmt.Sprintf(addedEmbedMore, len(members)-i-1)
+		}
+		if sb.Len()+len(line)+len(countLine) > discordEmbedDescriptionLimit {
+			_, _ = fmt.Fprintf(&sb, addedEmbedMore, len(members)-i)
 			break
 		}
 		sb.WriteString(line)
-		rendered++
 	}
 	return &discordgo.MessageEmbed{
 		Title:       fmt.Sprintf("Added %d user(s)", len(members)),
