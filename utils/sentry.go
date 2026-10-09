@@ -57,7 +57,7 @@ const commandTagKey = "command"
 // and onto the scope as a tag. Sentry groups and filters on tags only, so this
 // is what makes per-command error rate answerable — the failure-side
 // counterpart to the usage metrics, which deliberately carry no error signal
-// (ADR 0011). Promotion is additive: CaptureError still records the same pair
+// (ADR 0011). Promotion is additive: every capture still records the same pair
 // in its extra context.
 //
 // Only "command" is promoted, not every string pair. Tags are a bounded
@@ -91,27 +91,23 @@ func CaptureError(msg string, err error, kv ...any) {
 	})
 }
 
-// RecoverPanic swallows a panic, logs it, and forwards it to Sentry. The
-// event carries ctx as its "context" tag and kv in its extra context, the way
-// CaptureError's carries its pairs. A "command" pair also becomes a tag.
+// RecoverPanic swallows a panic, logs it, and forwards it to Sentry the way
+// ReportPanic does.
 func RecoverPanic(ctx string, kv ...any) {
 	r := recover()
 	if r == nil {
 		return
 	}
-	reportPanic(ctx, r, kv, extrasFrom(kv))
+	ReportPanic(ctx, r, kv...)
 }
 
 // ReportPanic logs a panic its caller has already recovered and forwards it
 // to Sentry, for a caller that still has to act once the panic is caught,
 // such as answer the request it ended. RecoverPanic recovers the panic
-// itself and leaves its caller no way to learn of it. The event carries the
-// same tags and extra context as RecoverPanic's.
+// itself and leaves its caller no way to learn of it. The event carries ctx
+// as its "context" tag and kv's string-keyed pairs in its extra context, the
+// way CaptureError's carries its pairs. A "command" pair also becomes a tag.
 func ReportPanic(ctx string, r any, kv ...any) {
-	reportPanic(ctx, r, kv, extrasFrom(kv))
-}
-
-func reportPanic(ctx string, r any, kv []any, extras map[string]any) {
 	Error("panic recovered", append([]any{"context", ctx, "panic", r, "stack", string(debug.Stack())}, kv...)...)
 
 	if sentry.CurrentHub().Client() == nil {
@@ -121,7 +117,7 @@ func reportPanic(ctx string, r any, kv []any, extras map[string]any) {
 	sentry.WithScope(func(scope *sentry.Scope) {
 		scope.SetTag("context", ctx)
 		promoteCommandTag(scope, kv)
-		setExtras(scope, extras)
+		setExtras(scope, extrasFrom(kv))
 		sentry.CurrentHub().RecoverWithContext(context.Background(), r)
 	})
 	sentry.Flush(2 * time.Second)
