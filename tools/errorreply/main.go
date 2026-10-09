@@ -3,6 +3,12 @@
 // or a utils.HandleError reply, checked whole, embeds included. ADR 0016 says
 // which data from an error a message may carry. The gate runs the check over
 // the module's production code (.github/scripts/gate.sh).
+//
+// The check reads one package at a time, so it judges a value by what was
+// stored in it only for a struct error type the package being checked
+// defines. An error type from another package, or one that isn't a struct,
+// counts as built from an error on sight. That is stricter than ADR 0016
+// until the check follows calls into the module's other packages (#534).
 package main
 
 import (
@@ -36,7 +42,7 @@ const (
 // The methods that send a message to Discord, on any interface that declares
 // them and on *discordgo.Session, and the position of the argument that
 // carries the message, not counting the receiver.
-var sendMethods = map[string]int{
+var sinkMethods = map[string]int{
 	"InteractionRespond":        1,
 	"InteractionResponseEdit":   1,
 	"FollowupMessageCreate":     2,
@@ -67,7 +73,7 @@ func run(pass *analysis.Pass) (any, error) {
 		for _, fn := range funcs {
 			for _, block := range fn.Blocks {
 				for _, instr := range block.Instrs {
-					for _, v := range sent(instr, wrappers, reached) {
+					for _, v := range outgoing(instr, wrappers, reached) {
 						t := &tracer{pkg: pass.Pkg, seen: map[visit]bool{}}
 						if t.trace(v, nil) && !reported[instr.Pos()] {
 							reported[instr.Pos()] = true
@@ -101,10 +107,10 @@ func run(pass *analysis.Pass) (any, error) {
 	return nil, nil
 }
 
-// sent returns the values instr hands on toward a member: the arguments of a
-// sink call that carry the message, or the value stored into a field of an
+// outgoing returns the values instr hands on toward Discord: the arguments of
+// a sink call that carry the message, or the value stored into a field of an
 // error type that reaches a sink.
-func sent(instr ssa.Instruction, wrappers map[*ssa.Function]map[int]bool, reached map[*types.TypeName]bool) []ssa.Value {
+func outgoing(instr ssa.Instruction, wrappers map[*ssa.Function]map[int]bool, reached map[*types.TypeName]bool) []ssa.Value {
 	switch instr := instr.(type) {
 	case ssa.CallInstruction:
 		var values []ssa.Value
@@ -131,7 +137,7 @@ func sent(instr ssa.Instruction, wrappers map[*ssa.Function]map[int]bool, reache
 // a message.
 func sinkParams(call *ssa.CallCommon, wrappers map[*ssa.Function]map[int]bool) []int {
 	if call.IsInvoke() {
-		if param, ok := sendMethods[call.Method.Name()]; ok && len(call.Args) > param {
+		if param, ok := sinkMethods[call.Method.Name()]; ok && len(call.Args) > param {
 			return []int{param}
 		}
 		return nil
@@ -140,7 +146,7 @@ func sinkParams(call *ssa.CallCommon, wrappers map[*ssa.Function]map[int]bool) [
 	if callee == nil {
 		return nil
 	}
-	if param, ok := sendMethods[callee.Name()]; ok && isSessionMethod(callee) && len(call.Args) > param+1 {
+	if param, ok := sinkMethods[callee.Name()]; ok && isSessionMethod(callee) && len(call.Args) > param+1 {
 		// The receiver is the call's first argument.
 		return []int{param + 1}
 	}
@@ -157,15 +163,14 @@ func sinkParams(call *ssa.CallCommon, wrappers map[*ssa.Function]map[int]bool) [
 // isSessionMethod reports whether fn is a method of *discordgo.Session.
 func isSessionMethod(fn *ssa.Function) bool {
 	recv := fn.Signature.Recv()
-	if recv == nil {
-		return false
-	}
-	ptr, ok := recv.Type().(*types.Pointer)
-	if !ok {
-		return false
-	}
-	named, ok := ptr.Elem().(*types.Named)
-	return ok && named.Obj().Name() == "Session" && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == discordgoPackage
+	return recv != nil && isNamed(recv.Type(), discordgoPackage, "Session")
+}
+
+// isNamed reports whether typ, or the type it points to, is one of the types
+// names in the package at path.
+func isNamed(typ types.Type, path string, names ...string) bool {
+	obj := typeName(typ)
+	return obj != nil && obj.Pkg() != nil && obj.Pkg().Path() == path && slices.Contains(names, obj.Name())
 }
 
 // tracer reports whether any value a value is built from is an error, other
@@ -280,12 +285,7 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 // isTime reports whether typ is a time or a duration, which can't carry an
 // error's words even when read off an error (ADR 0016).
 func isTime(typ types.Type) bool {
-	named, ok := typ.(*types.Named)
-	if !ok {
-		return false
-	}
-	obj := named.Obj()
-	return obj.Pkg() != nil && obj.Pkg().Path() == "time" && (obj.Name() == "Time" || obj.Name() == "Duration")
+	return isNamed(typ, "time", "Time", "Duration")
 }
 
 // followable reports whether the tracer can follow the error value v to

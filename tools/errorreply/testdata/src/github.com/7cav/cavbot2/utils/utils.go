@@ -10,7 +10,5 @@ type InteractionResponder interface {
 	FollowupMessageCreate(i *discordgo.Interaction, wait bool, params *discordgo.WebhookParams) error
 }
 
-type InteractionCreate = discordgo.InteractionCreate
-
 // HandleError sends message to the member.
 func HandleError(r InteractionResponder, i *discordgo.InteractionCreate, message string) {}

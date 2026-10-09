@@ -6,7 +6,7 @@
 # the migration check: CI fetches develop first, while a local run reads this
 # worktree's origin/develop as it stands, so fetch before you trust a local pass.
 #
-# Steps, in order: the glossary's entry format, lint, the error text check,
+# Steps, in order: the glossary's entry format, lint, the error data check,
 # module tidiness, the image's Go, the tests of the scripts in this directory,
 # the migrations against develop's, the test suite with -race and coverage
 # against a throwaway Postgres, the coverage floors, the build.
@@ -76,7 +76,7 @@ fi
 step "lint"
 golangci-lint run --timeout=5m
 
-step "messages carry no error text"
+step "messages carry no data from an error"
 # A message the bot sends to Discord carries no data from an error, except a
 # time (ADR 0016). The error goes to the log or to Sentry. Test code sends
 # nothing to a member, so the check reads production code only.
