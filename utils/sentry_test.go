@@ -217,6 +217,30 @@ func TestRecoverPanic_CommandIsGroupable(t *testing.T) {
 	}
 }
 
+// A maintainer triaging a recovered panic in Sentry needs what its caller
+// knew, such as the channel a delayed temp VC delete was for, without
+// matching the event to a log line by its timestamp.
+func TestRecoverPanic_PairsReachExtraContext(t *testing.T) {
+	tr := initSentryWithTransport(t)
+
+	func() {
+		defer RecoverPanic("tempvc-delete-delay", "channel_id", "123")
+		panic("delete failed")
+	}()
+
+	events := tr.Events()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	extras, ok := events[0].Contexts["extra"]
+	if !ok {
+		t.Fatal("expected 'extra' context on event")
+	}
+	if extras["channel_id"] != "123" {
+		t.Errorf("extra[channel_id] = %v, want %q", extras["channel_id"], "123")
+	}
+}
+
 func TestRecoverPanic_TagsContextOnEvent(t *testing.T) {
 	tr := initSentryWithTransport(t)
 
