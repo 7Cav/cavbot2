@@ -327,15 +327,15 @@ func TestPageLoadRefreshesTheLastSeenNamesOfAMemberWithANote(t *testing.T) {
 	}
 }
 
-// A note save sits behind the Foxhole page's gate. A forum user who opens
-// no page posts one and gets the no-access page, and the store holds what
-// it held. A panel admin, who opens every page, posts the same form and it
-// saves. A regression pin: the route sat behind that gate from the first
-// note case; one behind the session gate alone fails here.
-func TestNoteSaveByAUserInNeitherGroupIsRefusedAndAPanelAdminsSaves(t *testing.T) {
+// A note save sits behind the Foxhole page's gate. An outsider posts one
+// and gets the no-access page, and the store holds what it held. A panel
+// admin, who opens every page, posts the same form and it saves. A
+// regression pin: the route sat behind that gate from the first note case;
+// one behind the session gate alone fails here.
+func TestNoteSaveByAnOutsiderIsRefusedAndAPanelAdminsSaves(t *testing.T) {
 	w := newFoxholeWorld(t)
 	outsider := newBrowser(t, w.p)
-	signInAs(t, w.forum, outsider, addUserOutsideAdminGroups(w.forum))
+	signInAs(t, w.forum, outsider, addOutsider(w.forum))
 	form := noteSaveForm(memberDoe.ID, "", "discharged 12 Sep")
 	before := readNoteState(t, w.st)
 
