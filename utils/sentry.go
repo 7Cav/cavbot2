@@ -92,24 +92,21 @@ func CaptureError(msg string, err error, kv ...any) {
 }
 
 // RecoverPanic swallows a panic, logs it, and forwards it to Sentry. The
-// variadic kv carries attribution for the event — currently the "command" pair
-// the slash-command decorator supplies, which promoteCommandTag lifts to a tag.
+// event carries ctx as its "context" tag and kv in its extra context, the way
+// CaptureError's carries its pairs. A "command" pair also becomes a tag.
 func RecoverPanic(ctx string, kv ...any) {
 	r := recover()
 	if r == nil {
 		return
 	}
-	// Its events still carry no extra context. #512 left the events of
-	// RecoverPanic's callers as they were.
-	reportPanic(ctx, r, kv, nil)
+	reportPanic(ctx, r, kv, extrasFrom(kv))
 }
 
 // ReportPanic logs a panic its caller has already recovered and forwards it
 // to Sentry, for a caller that still has to act once the panic is caught,
 // such as answer the request it ended. RecoverPanic recovers the panic
-// itself and leaves its caller no way to learn of it. The event carries
-// RecoverPanic's tags, and kv in its extra context too, the way
-// CaptureError's carries its pairs.
+// itself and leaves its caller no way to learn of it. The event carries the
+// same tags and extra context as RecoverPanic's.
 func ReportPanic(ctx string, r any, kv ...any) {
 	reportPanic(ctx, r, kv, extrasFrom(kv))
 }
