@@ -3,6 +3,7 @@ package panel
 import (
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"slices"
@@ -14,13 +15,11 @@ import (
 	"golang.org/x/net/html"
 )
 
-// outsiderUsername is the forum username of the user
-// addUserOutsideAdminGroups adds.
+// outsiderUsername is the forum username of the outsider addOutsider adds.
 const outsiderUsername = "Roe.R"
 
-// addUserOutsideAdminGroups makes the forum know a user in none of the
-// panel's admin groups.
-func addUserOutsideAdminGroups(f *fakeForum) *forumAccount {
+// addOutsider makes the forum know an outsider.
+func addOutsider(f *fakeForum) *forumAccount {
 	return f.addUser(5678, outsiderUsername, 2, []int{35, 72})
 }
 
@@ -36,15 +35,79 @@ func assertNoAccessPage(t *testing.T, doc *html.Node) {
 	}
 }
 
-// A forum user in none of the panel's admin groups signs in and lands on
-// the no-access page, with no settings on it.
-func TestUserOutsideTheAdminGroupsSignsInToTheNoAccessPage(t *testing.T) {
-	w := newTestWorld(t, testHub())
-	signInAs(t, w.forum, w.b, addUserOutsideAdminGroups(w.forum))
+// pageLoadCases is a case for each page the panel serves behind a gate:
+// the path loaded, the sign-in of a user the page admits, and the page that
+// user gets there.
+var pageLoadCases = []struct {
+	path  string
+	admit func(t *testing.T, f *fakeForum, b *browser) *http.Response
+	page  string
+}{
+	{"/", signIn, pageHubs},
+	{foxholePath, func(t *testing.T, f *fakeForum, b *browser) *http.Response {
+		return signInAs(t, f, b, addFoxholeManager(f))
+	}, pageFoxhole},
+}
 
-	res := w.b.get("/")
+// An outsider who loads a page behind a gate gets the no-access page, with
+// no settings on it. A user the page admits then loads it and gets the
+// page, so no case passes on a route that refuses everyone.
+func TestPageLoadByAnOutsiderIsRefused(t *testing.T) {
+	for _, tc := range pageLoadCases {
+		t.Run("GET "+tc.path, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signInAs(t, w.forum, w.b, addOutsider(w.forum))
 
-	assertNoAccessPage(t, parseHTML(t, res))
+			res := follow(t, w.b, w.b.get(tc.path))
+
+			assertNoAccessPage(t, parseHTML(t, res))
+			admitted := newBrowser(t, w.p)
+			tc.admit(t, w.forum, admitted)
+			if got := pageOf(t, parseHTML(t, follow(t, admitted, admitted.get(tc.path)))); got != tc.page {
+				t.Errorf("a user the page admits lands on page %q, want %s", got, tc.page)
+			}
+		})
+	}
+}
+
+// settingsSaveCases is a case for each save the hub page posts: a hub's
+// create, register, update and remove, and the guild-wide moderator roles.
+// Each reads the path it posts to and its form off a store that holds
+// testHub.
+var settingsSaveCases = []struct {
+	name string
+	path func(t *testing.T, st store.Store) string
+	form func(t *testing.T, st store.Store) url.Values
+}{
+	{
+		name: "create",
+		path: func(*testing.T, store.Store) string { return "/hubs" },
+		form: fixedForm(createForm("cat-1", "Squad Join", "Squad Voice")),
+	},
+	{
+		name: "register",
+		path: func(*testing.T, store.Store) string { return "/hubs" },
+		form: fixedForm(registerForm("vc-2", "Squad Voice")),
+	},
+	{
+		name: "update",
+		path: func(t *testing.T, st store.Store) string { return hubPath(t, st, "hub-1") },
+		form: func(t *testing.T, st store.Store) url.Values {
+			form := updateForm(t, st)
+			form.Set("base_string", "Bravo Voice")
+			return form
+		},
+	},
+	{
+		name: "remove",
+		path: func(t *testing.T, st store.Store) string { return hubPath(t, st, "hub-1") + "/remove" },
+		form: fixedForm(nil),
+	},
+	{
+		name: "moderators",
+		path: func(*testing.T, store.Store) string { return "/moderators" },
+		form: func(t *testing.T, st store.Store) url.Values { return moderatorsForm(t, st, "role-hq") },
+	},
 }
 
 // A forum user in none of the panel's admin groups saves nothing: each
@@ -53,53 +116,18 @@ func TestUserOutsideTheAdminGroupsSignsInToTheNoAccessPage(t *testing.T) {
 // posts the same form and it saves, so no row passes on a form the save
 // would refuse anyway. The Foxhole manager's rows are regression pins: they
 // passed before the Foxhole page existed, when the group check read a
-// Foxhole manager as a user in no group. They pin that no hub route moved
+// Foxhole manager as an outsider. They pin that no hub route moved
 // under the Foxhole page's gate.
 func TestUserOutsideTheAdminGroupsSavesNothing(t *testing.T) {
 	users := []struct {
 		name string
 		add  func(*fakeForum) *forumAccount
 	}{
-		{"in no group", addUserOutsideAdminGroups},
+		{"outsider", addOutsider},
 		{"Foxhole manager", addFoxholeManager},
 	}
-	cases := []struct {
-		name string
-		path func(t *testing.T, st store.Store) string
-		form func(t *testing.T, st store.Store) url.Values
-	}{
-		{
-			name: "create",
-			path: func(*testing.T, store.Store) string { return "/hubs" },
-			form: fixedForm(createForm("cat-1", "Squad Join", "Squad Voice")),
-		},
-		{
-			name: "register",
-			path: func(*testing.T, store.Store) string { return "/hubs" },
-			form: fixedForm(registerForm("vc-2", "Squad Voice")),
-		},
-		{
-			name: "update",
-			path: func(t *testing.T, st store.Store) string { return hubPath(t, st, "hub-1") },
-			form: func(t *testing.T, st store.Store) url.Values {
-				form := updateForm(t, st)
-				form.Set("base_string", "Bravo Voice")
-				return form
-			},
-		},
-		{
-			name: "remove",
-			path: func(t *testing.T, st store.Store) string { return hubPath(t, st, "hub-1") + "/remove" },
-			form: fixedForm(nil),
-		},
-		{
-			name: "moderators",
-			path: func(*testing.T, store.Store) string { return "/moderators" },
-			form: func(t *testing.T, st store.Store) url.Values { return moderatorsForm(t, st, "role-hq") },
-		},
-	}
 	for _, u := range users {
-		for _, tc := range cases {
+		for _, tc := range settingsSaveCases {
 			t.Run(u.name+"/"+tc.name, func(t *testing.T) {
 				w := newTestWorld(t, testHub())
 				signInAs(t, w.forum, w.b, u.add(w.forum))
@@ -110,7 +138,7 @@ func TestUserOutsideTheAdminGroupsSavesNothing(t *testing.T) {
 
 				assertNoAccessPage(t, parseHTML(t, follow(t, w.b, res)))
 				if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
-					t.Errorf("the store after the save by a user outside the admin groups = %+v, want it as before, %+v", after, before)
+					t.Errorf("the store after the %s's save = %+v, want it as before, %+v", u.name, after, before)
 				}
 				panelAdmin := newBrowser(t, w.p)
 				signIn(t, w.forum, panelAdmin)
@@ -287,64 +315,70 @@ func thenNoRoleChangeNamesTheOutsider(t *testing.T, w *testWorld, started func(*
 		}
 		for _, write := range writes {
 			if strings.Contains(write.Reason, outsiderUsername) {
-				t.Errorf("the change to %s names the user outside every group: %q", write.MemberID, write.Reason)
+				t.Errorf("the change to %s names the outsider: %q", write.MemberID, write.Reason)
 			}
 		}
 	}
 }
 
-// A forum user in neither the panel's admin groups nor the Foxhole group
-// changes nothing through any Foxhole POST route: each answers with the
-// no-access page, and no store write, role change, action or 7Cav API
-// request follows. A Foxhole manager then posts the same form and it does
-// what the route does, so no case passes on a form the route would refuse
-// anyway.
-func TestFoxholePostByAUserInNeitherGroupDoesNothing(t *testing.T) {
+// An outsider changes nothing through any Foxhole POST route: each answers
+// with the no-access page, and no store write, role change, action or 7Cav
+// API request follows. A Foxhole manager then posts the same form and it
+// does what the route does, so no case passes on a form the route would
+// refuse anyway.
+func TestFoxholePostByAnOutsiderDoesNothing(t *testing.T) {
 	for _, path := range slices.Sorted(maps.Keys(foxholePostCases)) {
 		t.Run(path, func(t *testing.T) {
 			w := newFoxholeWorld(t)
 			api := serveRoster(t, trooperVance)
 			form, tookEffect := foxholePostCases[path](t, w, api)
 			outsider := newBrowser(t, w.p)
-			signInAs(t, w.forum, outsider, addUserOutsideAdminGroups(w.forum))
+			signInAs(t, w.forum, outsider, addOutsider(w.forum))
 			before := readFoxholeEffects(t, w, api)
 
 			res := outsider.postForm(path, form)
 
 			assertNoAccessPage(t, parseHTML(t, res))
 			if after := readFoxholeEffects(t, w, api); !reflect.DeepEqual(after, before) {
-				t.Errorf("after the post by a user outside every group:\n%+v\nwant it as before:\n%+v", after, before)
+				t.Errorf("after the outsider's post:\n%+v\nwant it as before:\n%+v", after, before)
 			}
 			tookEffect(t, w.b.postForm(path, form))
 		})
 	}
 }
 
-// Every Foxhole POST route the panel serves has a case in
-// foxholePostCases, so one added later is checked against a user in
-// neither group, whatever gate it sits behind, without anyone remembering
-// to write its case.
-func TestEveryFoxholePostRouteHasAnOutsiderCase(t *testing.T) {
+// openRoutes is every route the panel serves to anyone, signed in or not,
+// by its pattern as routes() writes it.
+var openRoutes = []string{"GET /static/", "GET /signin", "POST /auth/start", "GET /auth/callback", "POST /auth/signout"}
+
+// Every route the panel serves is in openRoutes or has an outsider case, a
+// case whose request the route serves. A route added later fails here until
+// someone writes its case or opens it on purpose, whatever gate it sits
+// behind.
+func TestEveryRouteHasAnOutsiderCaseOrIsOpen(t *testing.T) {
 	w := newTestWorld(t, testHub())
-	found := 0
+	mux := http.NewServeMux()
 	for _, rt := range w.p.routes() {
-		// A pattern names its method before its path, or no method, and
-		// then serves POST too.
-		fields := strings.Fields(rt.pattern)
-		method, path := "", fields[len(fields)-1]
-		if len(fields) > 1 {
-			method = fields[0]
-		}
-		if (method != "" && method != http.MethodPost) || (path != foxholePath && !strings.HasPrefix(path, foxholePath+"/")) {
-			continue
-		}
-		found++
-		if _, ok := foxholePostCases[path]; !ok {
-			t.Errorf("POST %s has no case in foxholePostCases", path)
-		}
+		mux.Handle(rt.pattern, rt.handler)
 	}
-	if found == 0 {
-		t.Error("the panel serves no Foxhole POST route")
+	reached := map[string]bool{}
+	reach := func(method, path string) {
+		_, pattern := mux.Handler(httptest.NewRequest(method, path, nil))
+		reached[pattern] = true
+	}
+	for path := range foxholePostCases {
+		reach(http.MethodPost, path)
+	}
+	for _, tc := range settingsSaveCases {
+		reach(http.MethodPost, tc.path(t, w.st))
+	}
+	for _, tc := range pageLoadCases {
+		reach(http.MethodGet, tc.path)
+	}
+	for _, rt := range w.p.routes() {
+		if !reached[rt.pattern] && !slices.Contains(openRoutes, rt.pattern) {
+			t.Errorf("%s has no outsider case and isn't in openRoutes", rt.pattern)
+		}
 	}
 }
 

@@ -145,7 +145,7 @@ func TestRailShowsOnlyThePagesTheUserOpensAndEachLinkOpensIt(t *testing.T) {
 		{"panel admin", 2, []int{47}, true, true, "hubs"},
 		{"Foxhole manager", 2, []int{testFoxholeGroupID}, false, true, "foxhole"},
 		{"panel admin and Foxhole manager", 2, []int{47, testFoxholeGroupID}, true, true, "hubs"},
-		{"neither", 2, []int{35}, false, false, ""},
+		{"outsider", 2, []int{35}, false, false, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
