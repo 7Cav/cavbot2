@@ -1,5 +1,8 @@
-// Command errorreply reports a member error reply that carries an error's
-// text. The gate runs it over the module (.github/scripts/gate.sh).
+// Command errorreply reports a message the bot sends to Discord that carries
+// data from an error: an interaction reply, edit or followup, a channel post,
+// or a utils.HandleError reply, checked whole, embeds included. ADR 0016 says
+// which data from an error a message may carry. The gate runs the check over
+// the module's production code (.github/scripts/gate.sh).
 package main
 
 import (
@@ -15,7 +18,7 @@ import (
 
 var analyzer = &analysis.Analyzer{
 	Name:     "errorreply",
-	Doc:      "reports a utils.HandleError call whose message carries an error's text",
+	Doc:      "reports a message to Discord that carries data from an error",
 	Requires: []*analysis.Analyzer{buildssa.Analyzer},
 	Run:      run,
 }
@@ -31,8 +34,8 @@ const (
 )
 
 // The methods that send a message to Discord, on any interface that declares
-// them and on *discordgo.Session, and the position of the argument that carries the message, not
-// counting the receiver.
+// them and on *discordgo.Session, and the position of the argument that
+// carries the message, not counting the receiver.
 var sendMethods = map[string]int{
 	"InteractionRespond":        1,
 	"InteractionResponseEdit":   1,
@@ -44,7 +47,7 @@ var sendMethods = map[string]int{
 
 const discordgoPackage = "github.com/bwmarrin/discordgo"
 
-const diagnostic = "this member reply carries an error's text; reply with a fixed message and log the error or capture it (ADR 0001)"
+const diagnostic = "this message to Discord carries data from an error; send fixed text and log the error or capture it (ADR 0016)"
 
 var errorType = types.Universe.Lookup("error").Type().Underlying().(*types.Interface)
 
@@ -124,8 +127,8 @@ func sent(instr ssa.Instruction, wrappers map[*ssa.Function]map[int]bool, reache
 	return nil
 }
 
-// sinkParams returns the positions of call's arguments that reach a member
-// as their error reply.
+// sinkParams returns the positions of call's arguments that reach Discord as
+// a message.
 func sinkParams(call *ssa.CallCommon, wrappers map[*ssa.Function]map[int]bool) []int {
 	if call.IsInvoke() {
 		if param, ok := sendMethods[call.Method.Name()]; ok && len(call.Args) > param {
