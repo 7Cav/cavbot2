@@ -1,9 +1,14 @@
-// Package utils stands in for cavbot2's utils, which holds HandleError.
+// Package utils stands in for cavbot2's utils, which holds HandleError and
+// InteractionResponder.
 package utils
 
-type InteractionResponder interface{}
+import "github.com/bwmarrin/discordgo"
 
-type InteractionCreate struct{}
+type InteractionResponder interface {
+	InteractionRespond(i *discordgo.Interaction, resp *discordgo.InteractionResponse) error
+	InteractionResponseEdit(i *discordgo.Interaction, edit *discordgo.WebhookEdit) error
+	FollowupMessageCreate(i *discordgo.Interaction, wait bool, params *discordgo.WebhookParams) error
+}
 
 // HandleError sends message to the member.
-func HandleError(r InteractionResponder, i *InteractionCreate, message string) {}
+func HandleError(r InteractionResponder, i *discordgo.InteractionCreate, message string) {}

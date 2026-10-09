@@ -216,6 +216,21 @@ func recordLookupFault(sink lookupFaultSink, err error, sampleUser, captureMsg s
 	captureError(captureMsg, err, kv...)
 }
 
+// lookupReply is the error a Foxhole member or role lookup fails with. Its
+// text is the reply the member reads: fixed text, what the member typed, and
+// classifyDiscordError's phrases. The gate's errorreply check reads what each
+// lookup puts in it, so an error's own text there fails the gate (ADR 0016).
+type lookupReply struct {
+	reply string
+}
+
+func (e *lookupReply) Error() string { return e.reply }
+
+// lookupReplyf formats a lookup's reply as the error it fails with.
+func lookupReplyf(format string, a ...any) error {
+	return &lookupReply{reply: fmt.Sprintf(format, a...)}
+}
+
 // searchErrorMessage builds the body-free, operator-facing error for a
 // GuildMembersSearch failure from its classification. It does NOT capture — the
 // caller decides whether and how to send the fault to Sentry (inline for the
@@ -224,11 +239,11 @@ func recordLookupFault(sink lookupFaultSink, err error, sampleUser, captureMsg s
 func searchErrorMessage(class discordErrorClass) error {
 	if class.SystemFault {
 		if class.ConfigFault {
-			return fmt.Errorf("❌ Member search failed: %s", configFaultHint(class))
+			return lookupReplyf("❌ Member search failed: %s", configFaultHint(class))
 		}
-		return errors.New("❌ Member search is temporarily unavailable (Discord error); please " + adviceTransient)
+		return lookupReplyf("❌ Member search is temporarily unavailable (Discord error); please %s", adviceTransient)
 	}
-	return fmt.Errorf("❌ Member search failed (%s); check the query or try a mention/ID instead", class.UserDetail)
+	return lookupReplyf("❌ Member search failed (%s); check the query or try a mention/ID instead", class.UserDetail)
 }
 
 // searchErrorReply classifies a GuildMembersSearch failure, routes a genuine
@@ -317,11 +332,11 @@ func roleResolveErrorReply(err error, captureMsg string, kv ...any) error {
 	if class.SystemFault {
 		captureError(captureMsg, err, kv...)
 		if class.ConfigFault {
-			return fmt.Errorf("❌ Failed to retrieve guild roles: %s", configFaultHint(class))
+			return lookupReplyf("❌ Failed to retrieve guild roles: %s", configFaultHint(class))
 		}
-		return errors.New("❌ Failed to retrieve guild roles (Discord error); please " + adviceTransient)
+		return lookupReplyf("❌ Failed to retrieve guild roles (Discord error); please %s", adviceTransient)
 	}
-	return fmt.Errorf("❌ Failed to retrieve guild roles (%s)", class.UserDetail)
+	return lookupReplyf("❌ Failed to retrieve guild roles (%s)", class.UserDetail)
 }
 
 // channelsResolveErrorReply classifies a GuildChannels lookup failure raised
@@ -337,11 +352,11 @@ func channelsResolveErrorReply(err error, captureMsg string, kv ...any) error {
 	if class.SystemFault {
 		captureError(captureMsg, err, kv...)
 		if class.ConfigFault {
-			return fmt.Errorf("❌ Failed to retrieve guild channels: %s", configFaultHint(class))
+			return lookupReplyf("❌ Failed to retrieve guild channels: %s", configFaultHint(class))
 		}
-		return errors.New("❌ Failed to retrieve guild channels (Discord error); please " + adviceTransient)
+		return lookupReplyf("❌ Failed to retrieve guild channels (Discord error); please %s", adviceTransient)
 	}
-	return fmt.Errorf("❌ Failed to retrieve guild channels (%s)", class.UserDetail)
+	return lookupReplyf("❌ Failed to retrieve guild channels (%s)", class.UserDetail)
 }
 
 // roleMutationErrorMessage builds the body-free, actionable user-facing message
