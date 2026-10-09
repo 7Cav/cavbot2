@@ -950,9 +950,16 @@ func buildAddedMembersEmbed(members []*discordgo.Member) *discordgo.MessageEmbed
 	const maxDescLen = 4096
 	var sb strings.Builder
 	rendered := 0
-	for _, m := range members {
+	for i, m := range members {
 		line := fmt.Sprintf("<@%s>\n", m.User.ID)
-		if sb.Len()+len(line) > maxDescLen {
+		// Name a member only while the count line for the members after it
+		// still fits, so the count line that ends a cut-short list never
+		// pushes the description past the limit.
+		more := ""
+		if i < len(members)-1 {
+			more = fmt.Sprintf(addedEmbedMore, len(members)-i-1)
+		}
+		if sb.Len()+len(line)+len(more) > maxDescLen {
 			_, _ = fmt.Fprintf(&sb, addedEmbedMore, len(members)-rendered)
 			break
 		}

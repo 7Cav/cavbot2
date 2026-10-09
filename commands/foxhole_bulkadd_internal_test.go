@@ -810,14 +810,14 @@ func TestRunFoxholeBulkAddInternal_RoleResolve5xxCapturedNoFetch(t *testing.T) {
 	assertAdvice(t, reply, adviceTransient)
 }
 
-// manyTroopers is a roster of n troopers, Trooper.000 up, each with an
-// 18-digit Discord ID when linked is true and none otherwise.
-func manyTroopers(n int, linked bool) utils.LiteRosterResponse {
+// manyTroopers is a roster of n troopers, Trooper.000 up, each with a
+// Discord ID idDigits long, or none linked when idDigits is 0.
+func manyTroopers(n, idDigits int) utils.LiteRosterResponse {
 	profiles := make(map[string]utils.LiteProfileResponse, n)
 	for i := range n {
 		id := ""
-		if linked {
-			id = fmt.Sprintf("1%017d", i)
+		if idDigits > 0 {
+			id = fmt.Sprintf("1%0*d", idDigits-1, i)
 		}
 		profiles[fmt.Sprintf("p%d", i)] = liteMember(fmt.Sprintf("Trooper.%03d", i), id)
 	}
@@ -828,7 +828,7 @@ func manyTroopers(n int, linked bool) utils.LiteRosterResponse {
 // 2000-character message limit and fail the edit. The reply stays within the
 // limit and keeps its lead line naming the unit.
 func TestRunFoxholeBulkAddInternal_ReplyStaysWithinDiscordsMessageLimit(t *testing.T) {
-	serveRosterAndProfiles(t, manyTroopers(400, false), http.StatusOK, nil)
+	serveRosterAndProfiles(t, manyTroopers(400, 0), http.StatusOK, nil)
 	f := &fakeResponder{}
 
 	runFoxholeBulkAddInternal(f, internalRoleGM(), nil, foxholeBulkAddInternalInteraction("D/ACD"))
@@ -840,12 +840,12 @@ func TestRunFoxholeBulkAddInternal_ReplyStaysWithinDiscordsMessageLimit(t *testi
 	assertLeadNamesTheUnit(t, reply)
 }
 
-// addedEmbed runs a roster add of total linked troopers and returns the
-// members its added embed names, how many more its last line counts, and
-// the lines that name members.
-func addedEmbed(t *testing.T, total int) (named []string, left int, mentionLines string) {
+// addedEmbed runs a roster add of total troopers linked to Discord IDs
+// idDigits long and returns the members its added embed names, how many
+// more its last line counts, and the whole description.
+func addedEmbed(t *testing.T, total, idDigits int) (named []string, left int, description string) {
 	t.Helper()
-	serveRosterAndProfiles(t, manyTroopers(total, true), http.StatusOK, nil)
+	serveRosterAndProfiles(t, manyTroopers(total, idDigits), http.StatusOK, nil)
 	f := &fakeResponder{}
 
 	runFoxholeBulkAddInternal(f, internalRoleGM(), nil, foxholeBulkAddInternalInteraction("D/ACD"))
@@ -855,7 +855,7 @@ func addedEmbed(t *testing.T, total int) (named []string, left int, mentionLines
 		t.Fatal("the reply carries no embed of the members added")
 	}
 	added := map[string]bool{}
-	for _, p := range manyTroopers(total, true).LiteProfiles {
+	for _, p := range manyTroopers(total, idDigits).LiteProfiles {
 		added[p.DiscordID] = true
 	}
 	named = embedMentions(embed)
@@ -867,15 +867,13 @@ func addedEmbed(t *testing.T, total int) (named []string, left int, mentionLines
 		seen[id] = true
 	}
 	lines := strings.Split(embed.Description, "\n")
-	if _, err := fmt.Sscanf(lines[len(lines)-1], addedEmbedMore, &left); err == nil {
-		lines = lines[:len(lines)-1]
-	}
-	return named, left, strings.Join(lines, "\n")
+	_, _ = fmt.Sscanf(lines[len(lines)-1], addedEmbedMore, &left)
+	return named, left, embed.Description
 }
 
 // A roster add's embed names every member it added when they fit.
 func TestRunFoxholeBulkAddInternal_EmbedNamesEveryMemberAddedWhenTheyFit(t *testing.T) {
-	named, left, _ := addedEmbed(t, 5)
+	named, left, _ := addedEmbed(t, 5, 18)
 
 	if len(named) != 5 || left != 0 {
 		t.Errorf("the embed names %d members and counts %d more, want all 5 named", len(named), left)
@@ -885,15 +883,26 @@ func TestRunFoxholeBulkAddInternal_EmbedNamesEveryMemberAddedWhenTheyFit(t *test
 // When the members added don't fit, the embed names as many as fit in
 // Discord's 4096-character description, each one added and none twice, and
 // its last line counts the rest, so the members named and the members
-// counted make up everyone added.
+// counted make up everyone added. The count line fits in the description
+// too, or Discord refuses the edit and the reply never arrives. Each total
+// is the first one whose mentions alone, one per line, run past the limit
+// at that ID length.
 func TestRunFoxholeBulkAddInternal_EmbedCountsTheMembersItCantName(t *testing.T) {
-	named, left, mentionLines := addedEmbed(t, 200)
+	for _, tc := range []struct{ idDigits, total int }{
+		{17, 196},
+		{18, 187},
+		{19, 179},
+	} {
+		t.Run(fmt.Sprintf("%d-digit IDs", tc.idDigits), func(t *testing.T) {
+			named, left, description := addedEmbed(t, tc.total, tc.idDigits)
 
-	if left == 0 || len(named)+left != 200 {
-		t.Errorf("the embed names %d members and counts %d more, want the rest of the 200 counted", len(named), left)
-	}
-	if n := len(mentionLines); n > 4096 {
-		t.Errorf("the embed's mentions run %d characters, over Discord's 4096", n)
+			if n := len(description); n > 4096 {
+				t.Errorf("the embed's description runs %d characters, over Discord's 4096", n)
+			}
+			if len(named)+left != tc.total {
+				t.Errorf("the embed names %d members and counts %d more, want the rest of the %d counted", len(named), left, tc.total)
+			}
+		})
 	}
 }
 
