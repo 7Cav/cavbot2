@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -524,6 +525,101 @@ func TestSigninPageRendersVersionForDeployProbe(t *testing.T) {
 	}
 	if want := ">cavbot2 " + testVersion + "<"; !strings.Contains(string(body), want) {
 		t.Fatalf("signin page does not contain the deploy probe marker %q", want)
+	}
+}
+
+// iconHrefs returns the href of every link in the document's head whose rel
+// names an icon.
+func iconHrefs(doc *html.Node) []string {
+	var out []string
+	head := findElement(doc, "head", "", "")
+	if head == nil {
+		return nil
+	}
+	eachLiveElement(head, func(n *html.Node) {
+		rel, _ := attrValue(n, "rel")
+		href, ok := attrValue(n, "href")
+		if n.Data == "link" && ok && slices.Contains(strings.Fields(strings.ToLower(rel)), "icon") {
+			out = append(out, href)
+		}
+	})
+	return out
+}
+
+// Every page names a tab icon the panel serves from its own origin, so no
+// page fetches it from a third party (ADR 0013). A browser with no session
+// gets the icon too, since the sign-in page shows it.
+func TestEveryPageNamesAnIconThePanelServes(t *testing.T) {
+	cases := []struct {
+		name   string
+		path   string
+		admit  func(t *testing.T, f *fakeForum, b *browser)
+		landed func(t *testing.T, doc *html.Node)
+	}{
+		{
+			name:  "sign-in page with no session",
+			path:  "/signin",
+			admit: func(*testing.T, *fakeForum, *browser) {},
+			landed: func(t *testing.T, doc *html.Node) {
+				if findElement(doc, "form", "action", "/auth/start") == nil {
+					t.Fatal("the page is not the sign-in page")
+				}
+			},
+		},
+		{
+			name:  "hubs page as a panel admin",
+			path:  "/",
+			admit: func(t *testing.T, f *fakeForum, b *browser) { signIn(t, f, b) },
+			landed: func(t *testing.T, doc *html.Node) {
+				if got := pageOf(t, doc); got != pageHubs {
+					t.Fatalf("landed on page %q, want %s", got, pageHubs)
+				}
+			},
+		},
+		{
+			name:   "no-access page as an outsider",
+			path:   "/",
+			admit:  func(t *testing.T, f *fakeForum, b *browser) { signInAs(t, f, b, addOutsider(f)) },
+			landed: assertNoAccessPage,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			tc.admit(t, w.forum, w.b)
+			page, err := url.Parse(testBaseURL + tc.path)
+			if err != nil {
+				t.Fatalf("parse page URL: %v", err)
+			}
+
+			doc := parseHTML(t, follow(t, w.b, w.b.get(tc.path)))
+
+			tc.landed(t, doc)
+			hrefs := iconHrefs(doc)
+			if len(hrefs) == 0 {
+				t.Fatal("the page's head names no icon")
+			}
+			signedOut := newBrowser(t, w.p)
+			for _, href := range hrefs {
+				ref, err := url.Parse(href)
+				if err != nil {
+					t.Errorf("icon href %q does not parse: %v", href, err)
+					continue
+				}
+				icon := page.ResolveReference(ref)
+				if icon.Scheme != page.Scheme || icon.Host != page.Host {
+					t.Errorf("icon %q is not on the panel's own origin %s://%s", href, page.Scheme, page.Host)
+					continue
+				}
+				got := signedOut.get(icon.RequestURI())
+				if got.StatusCode != http.StatusOK {
+					t.Errorf("GET %s with no session: status = %d, want 200", href, got.StatusCode)
+				}
+				if ct := got.Header.Get("Content-Type"); !strings.HasPrefix(ct, "image/") {
+					t.Errorf("GET %s with no session: Content-Type = %q, want an image type", href, ct)
+				}
+			}
+		})
 	}
 }
 
