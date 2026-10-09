@@ -20,7 +20,9 @@ import (
 // does not record whether the parts are complete. The tracker here does, by
 // counting the parts that answer its own request. A READY empties the list
 // and an outage's GUILD_CREATE resets it, both in the state; a resumed
-// session keeps it. Spec #434, "The member list", sets out the rules.
+// session keeps it. A GUILD_CREATE names each member in voice twice, and
+// the tracker keeps one entry of each (#549). Spec #434, "The member list",
+// sets out the rules.
 
 // memberListStallLimit is how long the bot waits for the next part of the
 // member list before it asks again. Discord allows one full-list request
@@ -96,8 +98,8 @@ type MemberListSnapshot struct {
 	// RetryAt is when the bot asks again after a refusal, set while a
 	// refusal is pending and the status reads refused or late.
 	RetryAt time.Time
-	// Members is every member of the guild, set only while the status is
-	// complete, so no reader can show a partial list.
+	// Members is every member of the guild, once each, set only while the
+	// status is complete, so no reader can show a partial list.
 	Members []ListedMember
 }
 
@@ -133,12 +135,13 @@ func (m ListedMember) DisplayName() string {
 }
 
 // memberList tracks whether the state holds the whole member list of one
-// guild. Its handlers run on discordgo's handler goroutines, one per event
+// guild, and at each GUILD_CREATE trims the state's members to one entry
+// per member. Its handlers run on discordgo's handler goroutines, one per event
 // in no fixed order, and its waits on timer goroutines, so mu guards every
 // field below it, and each handler and wait decides and starts its request
-// in one critical section. Lock order: mu, then the state's read lock,
-// never the reverse. discordgo releases the state's lock before it starts
-// any handler.
+// in one critical section. Lock order: mu, then the state's lock, read or
+// write, never the reverse. discordgo releases the state's lock before it
+// starts any handler.
 type memberList struct {
 	guildID string
 	req     memberRequester
@@ -214,17 +217,21 @@ func (m *sessionTempVCManager) MemberList(guildID string) MemberListSnapshot {
 }
 
 // guildCreated starts a new episode for the guild's GUILD_CREATE: it records
-// the guild the state now holds, starts the late wait over and asks for the
-// whole list, all in one critical section, so no read sees the new guild
-// with the old list's count. Any other guild's GUILD_CREATE is ignored.
+// the guild the state now holds, keeps one entry per member in its members,
+// starts the late wait over and asks for the whole list, all in one
+// critical section, so no read sees the new guild with the old list's
+// count. Any other guild's GUILD_CREATE is ignored.
 func (l *memberList) guildCreated(g *discordgo.Guild) {
 	if g == nil || g.ID != l.guildID {
 		return
 	}
 	l.mu.Lock()
-	l.state.RLock()
+	l.state.Lock()
 	l.guild = availableGuild(l.state, l.guildID)
-	l.state.RUnlock()
+	if l.guild != nil {
+		l.guild.Members = keepLastEntryPerMember(l.guild.Members)
+	}
+	l.state.Unlock()
 	if l.stopLate != nil {
 		l.stopLate()
 	}
@@ -236,6 +243,33 @@ func (l *memberList) guildCreated(g *discordgo.Guild) {
 	l.mu.Unlock()
 
 	l.send(nonce, askGuildCreate)
+}
+
+// keepLastEntryPerMember returns members with each member's earlier entries
+// dropped, keeping the last, in order. Discord's GUILD_CREATE names each
+// member in voice twice (discord/discord-api-docs#997, #549), and discordgo
+// keeps both in Guild.Members while its member map holds the later one,
+// which every member update reaches. The earlier one would never change
+// again, and a removal would take it out of the slice and leave the later
+// one behind. The kept entries go in a new slice, so another handler
+// holding the old one never sees its entries shift.
+func keepLastEntryPerMember(members []*discordgo.Member) []*discordgo.Member {
+	last := make(map[string]int, len(members))
+	for i, m := range members {
+		if m != nil && m.User != nil {
+			last[m.User.ID] = i
+		}
+	}
+	if len(last) == len(members) {
+		return members
+	}
+	kept := make([]*discordgo.Member, 0, len(last))
+	for i, m := range members {
+		if m == nil || m.User == nil || last[m.User.ID] == i {
+			kept = append(kept, m)
+		}
+	}
+	return kept
 }
 
 // startRequestLocked starts a new request for the whole list with a nonce

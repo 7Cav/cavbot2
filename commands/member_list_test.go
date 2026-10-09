@@ -242,6 +242,100 @@ func TestMemberListCompletesWhenEveryPartOfTheRequestHasArrived(t *testing.T) {
 	}
 }
 
+// voiceMemberJSON is user-voice, a member in a voice channel, as a
+// GUILD_CREATE carries them.
+const voiceMemberJSON = `{"user":{"id":"user-voice","username":"voice.v"},"nick":"Voice","roles":["role-a","role-b"]}`
+
+// voiceGuildCreate is the test guild's GUILD_CREATE while user-voice is in
+// a voice channel, decoded from its wire frame the way discordgo's reader
+// decodes every dispatch. Discord names each member in voice twice in its
+// members (discord/discord-api-docs#997), as the test guild's did in #549.
+func voiceGuildCreate(t *testing.T) *discordgo.GuildCreate {
+	t.Helper()
+	frame := `{"op":0,"s":2,"t":"GUILD_CREATE","d":{"id":"` + testTempVCGuild + `",` +
+		`"voice_states":[{"user_id":"user-voice","channel_id":"voice-1","session_id":"session-1"}],` +
+		`"members":[{"user":{"id":"user-bot","username":"cavbot"}},` + voiceMemberJSON + `,` + voiceMemberJSON + `]}}`
+	var e *discordgo.Event
+	if err := json.Unmarshal([]byte(frame), &e); err != nil {
+		t.Fatalf("decode %s: %v", frame, err)
+	}
+	gc := &discordgo.GuildCreate{}
+	if err := json.Unmarshal(e.RawData, gc); err != nil {
+		t.Fatalf("decode the GUILD_CREATE in %s: %v", frame, err)
+	}
+	return gc
+}
+
+// voiceMember is user-voice as a part of the member list carries them.
+func voiceMember() *discordgo.Member {
+	return &discordgo.Member{User: &discordgo.User{ID: "user-voice", Username: "voice.v"}, Nick: "Voice", Roles: []string{"role-a", "role-b"}}
+}
+
+// timesListed counts the entries a snapshot holds for the member.
+func timesListed(snap MemberListSnapshot, id string) int {
+	n := 0
+	for _, m := range snap.Members {
+		if m.ID == id {
+			n++
+		}
+	}
+	return n
+}
+
+// completeVoiceList delivers voiceGuildCreate and the one part that
+// completes its list.
+func (w *memberListWorld) completeVoiceList() {
+	w.t.Helper()
+	w.deliver(voiceGuildCreate(w.t))
+	w.deliver(listChunk(w.lastNonce(), 0, 1, listMember("user-bot", "cavbot"), voiceMember(), listMember("user-other", "other.o")))
+	if snap := w.read(); snap.Status != MemberListComplete {
+		w.t.Fatalf("after the only part, status = %v, want complete", snap.Status)
+	}
+}
+
+// A member in voice when the GUILD_CREATE arrives is listed once, though
+// Discord names them twice in it, so the Foxhole page lists them on one row
+// and its filters count them once (#549).
+func TestMemberListHoldsAMemberInVoiceAtGuildCreateOnce(t *testing.T) {
+	w := newMemberListWorld(t)
+	w.completeVoiceList()
+
+	snap := w.read()
+	for _, id := range []string{"user-bot", "user-voice", "user-other"} {
+		if n := timesListed(snap, id); n != 1 {
+			t.Errorf("complete list holds %s %d times, want once", id, n)
+		}
+	}
+}
+
+// The one entry of a member in voice at the GUILD_CREATE follows their
+// updates and their leaving, as every member's does. A copy frozen at the
+// GUILD_CREATE would keep listing them as holding a role they lost, or as
+// in the server after they left (#549).
+func TestMemberListFollowsAMemberInVoiceAtGuildCreate(t *testing.T) {
+	w := newMemberListWorld(t)
+	w.completeVoiceList()
+
+	lostRoleB := voiceMember()
+	lostRoleB.GuildID, lostRoleB.Roles = testTempVCGuild, []string{"role-a"}
+	w.deliver(&discordgo.GuildMemberUpdate{Member: lostRoleB})
+
+	snap := w.read()
+	if n := timesListed(snap, "user-voice"); n != 1 {
+		t.Fatalf("after an update, the list holds user-voice %d times, want once", n)
+	}
+	got, ok := snap.Member("user-voice")
+	if !ok || !slices.Equal(got.RoleIDs, []string{"role-a"}) {
+		t.Errorf("after role-b was removed, user-voice = %+v (found %v), want role-a alone", got, ok)
+	}
+
+	w.deliver(&discordgo.GuildMemberRemove{Member: &discordgo.Member{GuildID: testTempVCGuild, User: &discordgo.User{ID: "user-voice"}}})
+
+	if n := timesListed(w.read(), "user-voice"); n != 0 {
+		t.Errorf("after user-voice left, the list holds them %d times, want none", n)
+	}
+}
+
 // Completion leaves one INFO record with the part count, which is how
 // Grafana learns the live guild's chunk time.
 func TestMemberListLogsItsCompletionWithThePartCount(t *testing.T) {
