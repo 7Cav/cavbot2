@@ -25,6 +25,7 @@ package main
 import (
 	"go/token"
 	"go/types"
+	"maps"
 	"slices"
 	"strings"
 
@@ -39,7 +40,7 @@ var analyzer = &analysis.Analyzer{
 	Doc:       "reports a message to Discord or a panel answer that carries data from an error",
 	Requires:  []*analysis.Analyzer{buildssa.Analyzer},
 	Run:       run,
-	FactTypes: []analysis.Fact{new(results), new(contents)},
+	FactTypes: []analysis.Fact{new(funcFact), new(typeFact)},
 }
 
 func main() { singlechecker.Main(analyzer) }
@@ -49,14 +50,16 @@ func main() { singlechecker.Main(analyzer) }
 // types alone, so a call into one counts as built from all its arguments.
 const module = "github.com/7cav/cavbot2"
 
-// results is what each result of a function of the module is built from,
-// recorded by the check of the function's package for the checks of the
-// packages that call it.
-type results struct {
-	Of []result
+// funcFact is what the check of a function's package records about the
+// function for the checks of the packages that call it: what each of its
+// results is built from, and which of its parameters it stores into an
+// error type the package defines.
+type funcFact struct {
+	Results []result
+	Stores  []store
 }
 
-func (*results) AFact() {}
+func (*funcFact) AFact() {}
 
 // result is what one result of a function is built from: data from an
 // error, or the parameters at Params, counting a method's receiver first.
@@ -65,14 +68,21 @@ type result struct {
 	Params  []int
 }
 
-// contents is whether the package that defines an error type stores data
-// from an error in it, recorded by that package's check for the checks of
-// the packages that read a value of the type.
-type contents struct {
+// store is a parameter of a function, counting a method's receiver first,
+// that the function stores into the error type of its package named Type.
+type store struct {
+	Param int
+	Type  string
+}
+
+// typeFact is what the check of an error type's package records about the
+// type for the checks of the packages that read a value of it: whether a
+// store in its package puts data from an error in it.
+type typeFact struct {
 	Carries bool
 }
 
-func (*contents) AFact() {}
+func (*typeFact) AFact() {}
 
 // The function that sends a member its error reply, and the position of the
 // parameter that carries the reply's text.
@@ -131,34 +141,34 @@ func run(pass *analysis.Pass) (any, error) {
 		return nil, nil
 	}
 	funcs := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA).SrcFuncs
-	flow(pass, funcs, true, map[*types.TypeName]string{}, func(pos token.Pos, diag string) {
+	flow(pass, funcs, false, map[*types.TypeName]string{}, func(pos token.Pos, diag string) {
 		pass.Reportf(pos, "%s", diag)
 	})
-	exportContents(pass, funcs)
-	exportResults(pass, funcs)
+	stores := exportTypes(pass, funcs)
+	exportFuncs(pass, funcs, stores)
 	return nil, nil
 }
 
 // flow traces each value funcs hand on toward a person and reports each one
-// built from an error. With sinks set, a value is handed on by a sink call
-// or a store into a panel field. Either way a value stored into one of the
-// reached error types is handed on, since such a value carries what is
-// stored in it.
+// built from an error. A value is handed on by a checked call or a store
+// into a panel field, unless storesOnly is set. Either way a value stored
+// into one of the reached error types is handed on, since such a value
+// carries what is stored in it.
 //
 // A function that passes one of its parameters on to a sink is a sink for
 // that parameter too, and once a value of an error type the module defines
 // reaches a sink, each store into that type is checked. Each round over the
 // package finds the wrappers and the types the sinks known so far reach,
 // until a round finds none. flow returns the wrappers.
-func flow(pass *analysis.Pass, funcs []*ssa.Function, sinks bool, reached map[*types.TypeName]string, report func(token.Pos, string)) map[*ssa.Function]map[int]string {
-	wrappers := map[*ssa.Function]map[int]string{}
+func flow(pass *analysis.Pass, funcs []*ssa.Function, storesOnly bool, reached map[*types.TypeName]string, report func(token.Pos, string)) map[*ssa.Function]map[int]string {
+	s := &sinks{pass: pass, storesOnly: storesOnly, wrappers: map[*ssa.Function]map[int]string{}, reached: reached}
 	reported := map[token.Pos]bool{}
 	for found := true; found; {
 		found = false
 		for _, fn := range funcs {
 			for _, block := range fn.Blocks {
 				for _, instr := range block.Instrs {
-					for _, out := range outgoing(instr, sinks, wrappers, reached) {
+					for _, out := range s.outgoing(instr) {
 						t := &tracer{pass: pass, seen: map[visit]bool{}}
 						if t.trace(out.v, nil) && !reported[instr.Pos()] {
 							reported[instr.Pos()] = true
@@ -170,11 +180,11 @@ func flow(pass *analysis.Pass, funcs []*ssa.Function, sinks bool, reached map[*t
 							// function the wrapper.
 							owner := forwarded.Parent()
 							index := slices.Index(owner.Params, forwarded)
-							if wrappers[owner] == nil {
-								wrappers[owner] = map[int]string{}
+							if s.wrappers[owner] == nil {
+								s.wrappers[owner] = map[int]string{}
 							}
-							if _, ok := wrappers[owner][index]; !ok {
-								wrappers[owner][index] = out.diag
+							if _, ok := s.wrappers[owner][index]; !ok {
+								s.wrappers[owner][index] = out.diag
 								found = true
 							}
 						}
@@ -189,25 +199,33 @@ func flow(pass *analysis.Pass, funcs []*ssa.Function, sinks bool, reached map[*t
 			}
 		}
 	}
-	return wrappers
+	return s.wrappers
 }
 
-// exportContents records, for each struct error type the package defines,
+// exportTypes records, for each struct error type the package defines,
 // whether a store in the package puts data from an error in it, for the
-// checks of the packages that read a value of the type.
-func exportContents(pass *analysis.Pass, funcs []*ssa.Function) {
+// checks of the packages that read a value of the type. It returns, for
+// each function, the parameters it stores into one of those types.
+func exportTypes(pass *analysis.Pass, funcs []*ssa.Function) map[*ssa.Function][]store {
+	stores := map[*ssa.Function][]store{}
 	scope := pass.Pkg.Scope()
 	for _, name := range scope.Names() {
 		obj, ok := scope.Lookup(name).(*types.TypeName)
 		if !ok || !isStruct(obj) || !isError(obj.Type()) {
 			continue
 		}
-		fact := &contents{}
-		flow(pass, funcs, false, map[*types.TypeName]string{obj: ""}, func(token.Pos, string) {
+		fact := &typeFact{}
+		wrappers := flow(pass, funcs, true, map[*types.TypeName]string{obj: ""}, func(token.Pos, string) {
 			fact.Carries = true
 		})
 		pass.ExportObjectFact(obj, fact)
+		for fn, params := range wrappers {
+			for param := range params {
+				stores[fn] = append(stores[fn], store{Param: param, Type: name})
+			}
+		}
 	}
+	return stores
 }
 
 // isError reports whether typ, or a pointer to it, is an error.
@@ -215,12 +233,13 @@ func isError(typ types.Type) bool {
 	return types.Implements(typ, errorType) || types.Implements(types.NewPointer(typ), errorType)
 }
 
-// exportResults records what each result of each function of the package is
-// built from, for the checks of the packages that call it.
-func exportResults(pass *analysis.Pass, funcs []*ssa.Function) {
+// exportFuncs records, for each function of the package, what each of its
+// results is built from and the parameters it stores into the package's
+// error types, for the checks of the packages that call it.
+func exportFuncs(pass *analysis.Pass, funcs []*ssa.Function, stores map[*ssa.Function][]store) {
 	type export struct {
 		obj  *types.Func
-		fact *results
+		fact *funcFact
 	}
 	// Each fact is exported once all are found, so that finding one never
 	// reads another this package recorded.
@@ -230,13 +249,13 @@ func exportResults(pass *analysis.Pass, funcs []*ssa.Function) {
 		if !ok {
 			continue
 		}
-		fact := &results{Of: make([]result, fn.Signature.Results().Len())}
-		for i := range fact.Of {
+		fact := &funcFact{Results: make([]result, fn.Signature.Results().Len()), Stores: stores[fn]}
+		for i := range fact.Results {
 			t := &tracer{pass: pass, seen: map[visit]bool{}, through: true}
-			fact.Of[i].Carries = t.traceReturns(fn, nil, i)
+			fact.Results[i].Carries = t.traceReturns(fn, nil, i)
 			for _, param := range t.forwarded {
-				if index := slices.Index(fn.Params, param); index >= 0 && !slices.Contains(fact.Of[i].Params, index) {
-					fact.Of[i].Params = append(fact.Of[i].Params, index)
+				if index := slices.Index(fn.Params, param); index >= 0 && !slices.Contains(fact.Results[i].Params, index) {
+					fact.Results[i].Params = append(fact.Results[i].Params, index)
 				}
 			}
 		}
@@ -245,6 +264,21 @@ func exportResults(pass *analysis.Pass, funcs []*ssa.Function) {
 	for _, e := range exports {
 		pass.ExportObjectFact(e.obj, e.fact)
 	}
+}
+
+// sinks is what one flow over a package hands a value on to.
+type sinks struct {
+	pass *analysis.Pass
+	// storesOnly leaves out the checked calls and fields, so that only a
+	// store into a reached type, or a call that passes a value on to one,
+	// hands a value on.
+	storesOnly bool
+	// wrappers holds the functions of the package that pass a parameter on
+	// to a sink, and the diagnostic for each such parameter.
+	wrappers map[*ssa.Function]map[int]string
+	// reached holds the error types of the module that reach a sink, and
+	// the diagnostic for a store into each.
+	reached map[*types.TypeName]string
 }
 
 // sent is a value an instruction hands on toward a person, and the
@@ -256,18 +290,18 @@ type sent struct {
 
 // outgoing returns the values instr hands on toward a person: the arguments
 // of a sink call that carry the message or the answer, or the value stored
-// into a field of an error type that reaches a sink.
-func outgoing(instr ssa.Instruction, sinks bool, wrappers map[*ssa.Function]map[int]string, reached map[*types.TypeName]string) []sent {
+// into a panel field or into a field of an error type that reaches a sink.
+func (s *sinks) outgoing(instr ssa.Instruction) []sent {
 	switch instr := instr.(type) {
 	case ssa.CallInstruction:
 		var values []sent
 		answers := instr.Parent().Pkg.Pkg.Path() == panelPackage
-		for param, diag := range sinkParams(instr.Common(), sinks, answers, wrappers) {
+		for param, diag := range s.params(instr.Common(), answers) {
 			values = append(values, sent{instr.Common().Args[param], diag})
 		}
 		return values
 	case *ssa.Store:
-		if field, ok := instr.Addr.(*ssa.FieldAddr); ok && sinks && panelFields[fieldName(field)] {
+		if field, ok := instr.Addr.(*ssa.FieldAddr); ok && !s.storesOnly && panelFields[fieldName(field)] {
 			return []sent{{instr.Val, toPanel}}
 		}
 		for addr := instr.Addr; ; {
@@ -275,7 +309,7 @@ func outgoing(instr ssa.Instruction, sinks bool, wrappers map[*ssa.Function]map[
 			if !ok {
 				return nil
 			}
-			if diag, ok := reached[typeName(field.X.Type())]; ok {
+			if diag, ok := s.reached[typeName(field.X.Type())]; ok {
 				return []sent{{instr.Val, diag}}
 			}
 			addr = field.X
@@ -297,15 +331,38 @@ func fieldName(field *ssa.FieldAddr) string {
 	return ""
 }
 
-// sinkParams returns the positions of call's arguments that reach a person,
-// each with the diagnostic that names where it goes.
-func sinkParams(call *ssa.CallCommon, sinks, answers bool, wrappers map[*ssa.Function]map[int]string) map[int]string {
-	if !sinks {
-		if callee := call.StaticCallee(); callee != nil {
-			return wrappers[callee]
+// params returns the positions of call's arguments that reach a person,
+// each with the diagnostic that names where it goes. answers says whether
+// call is made in the panel's package.
+func (s *sinks) params(call *ssa.CallCommon, answers bool) map[int]string {
+	if !s.storesOnly {
+		if params := checkedParams(call, answers); params != nil {
+			return params
 		}
-		return nil
 	}
+	callee := call.StaticCallee()
+	params := maps.Clone(s.wrappers[callee])
+	// A function of another package of the module that stores a parameter
+	// into one of its error types passes that parameter on to a sink once
+	// the type reaches one.
+	if fact := importFuncFact(s.pass, call); fact != nil {
+		for _, st := range fact.Stores {
+			obj, _ := callee.Object().Pkg().Scope().Lookup(st.Type).(*types.TypeName)
+			if diag, ok := s.reached[obj]; ok {
+				if params == nil {
+					params = map[int]string{}
+				}
+				params[st.Param] = diag
+			}
+		}
+	}
+	return params
+}
+
+// checkedParams returns the positions of the arguments of call that carry a
+// message to Discord or, when answers is set, a panel answer, each with the
+// diagnostic that names where it goes, or nil when call is no checked call.
+func checkedParams(call *ssa.CallCommon, answers bool) map[int]string {
 	if call.IsInvoke() {
 		if param, ok := sinkMethods[call.Method.Name()]; ok && len(call.Args) > param {
 			return map[int]string{param: toDiscord}
@@ -326,7 +383,7 @@ func sinkParams(call *ssa.CallCommon, sinks, answers bool, wrappers map[*ssa.Fun
 	if param, ok := panelAnswers[callee.String()]; ok && answers && len(call.Args) > param {
 		return map[int]string{param: toPanel}
 	}
-	return wrappers[callee]
+	return nil
 }
 
 // isSessionMethod reports whether fn is a method of *discordgo.Session.
@@ -397,7 +454,7 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 	}
 	if types.Implements(v.Type(), errorType) {
 		obj := typeName(v.Type())
-		var fact contents
+		var fact typeFact
 		switch {
 		case obj != nil && isStruct(obj) && obj.Pkg() == t.pass.Pkg:
 			if !t.through {
@@ -491,31 +548,40 @@ func (t *tracer) followable(v ssa.Value, f *frame) bool {
 	case *ssa.Const, *ssa.MakeInterface, *ssa.ChangeInterface, *ssa.Phi:
 		return true
 	case *ssa.Call:
-		return t.follows(v, f)
+		callee, fact := t.follow(v, f)
+		return callee != nil || fact != nil
 	case *ssa.Extract:
 		call, ok := v.Tuple.(*ssa.Call)
-		return ok && t.follows(call, f)
+		if !ok {
+			return false
+		}
+		callee, fact := t.follow(call, f)
+		return callee != nil || fact != nil
 	case *ssa.Parameter:
 		return f != nil && f.call.Call.StaticCallee() == v.Parent()
 	}
 	return false
 }
 
-// follows reports whether the tracer can follow call: into the body of a
-// function of the package being checked, or by what the check of another
-// package of the module recorded about the function.
-func (t *tracer) follows(call *ssa.Call, f *frame) bool {
-	return t.callee(call, f) != nil || t.results(call) != nil
+// follow returns what the tracer follows call by: the body of a function
+// of the package being checked, or else what the check of another package
+// of the module recorded about the function. Both are nil when the tracer
+// can't follow call.
+func (t *tracer) follow(call *ssa.Call, f *frame) (*ssa.Function, *funcFact) {
+	if callee := t.callee(call, f); callee != nil {
+		return callee, nil
+	}
+	return nil, importFuncFact(t.pass, &call.Call)
 }
 
 // traceCall traces the result of call at index, or every result when index
 // is negative, when the tracer follows call. followed reports whether it
 // does.
 func (t *tracer) traceCall(call *ssa.Call, index int, f *frame) (carries, followed bool) {
-	if callee := t.callee(call, f); callee != nil {
+	switch callee, fact := t.follow(call, f); {
+	case callee != nil:
 		return t.traceReturns(callee, &frame{call: call, parent: f}, index), true
-	}
-	if fact := t.results(call); fact != nil {
+	case fact != nil:
 		return t.traceResults(call, fact, index, f), true
 	}
 	return false, false
@@ -531,10 +597,10 @@ func (t *tracer) callee(call *ssa.Call, f *frame) *ssa.Function {
 	return callee
 }
 
-// results returns what the check of another package of the module recorded
-// about the function call enters, or nil when it recorded nothing.
-func (t *tracer) results(call *ssa.Call) *results {
-	callee := call.Call.StaticCallee()
+// importFuncFact returns what the check of another package of the module
+// recorded about the function call enters, or nil when it recorded nothing.
+func importFuncFact(pass *analysis.Pass, call *ssa.CallCommon) *funcFact {
+	callee := call.StaticCallee()
 	if callee == nil || callee.Object() == nil {
 		return nil
 	}
@@ -546,8 +612,8 @@ func (t *tracer) results(call *ssa.Call) *results {
 	if obj.Signature().Recv() != nil {
 		params++
 	}
-	var fact results
-	if len(call.Call.Args) != params || !t.pass.ImportObjectFact(obj, &fact) {
+	var fact funcFact
+	if len(call.Args) != params || !pass.ImportObjectFact(obj, &fact) {
 		return nil
 	}
 	return &fact
@@ -556,8 +622,8 @@ func (t *tracer) results(call *ssa.Call) *results {
 // traceResults traces the result at index of a call into another package of
 // the module, or every result when index is negative, by what that
 // package's check recorded about it.
-func (t *tracer) traceResults(call *ssa.Call, fact *results, index int, f *frame) bool {
-	for i, r := range fact.Of {
+func (t *tracer) traceResults(call *ssa.Call, fact *funcFact, index int, f *frame) bool {
+	for i, r := range fact.Results {
 		if index >= 0 && i != index {
 			continue
 		}

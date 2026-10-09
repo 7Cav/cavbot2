@@ -43,3 +43,15 @@ func Sweep(err error) error {
 func LastSweep() error {
 	return &SweepError{Reason: "sweep failed: " + lastErr.Error()}
 }
+
+// NoticeError is a refusal whose message the caller words.
+type NoticeError struct {
+	Message string
+}
+
+func (e *NoticeError) Error() string { return e.Message }
+
+// Notice refuses with message.
+func Notice(message string) error {
+	return &NoticeError{Message: message}
+}

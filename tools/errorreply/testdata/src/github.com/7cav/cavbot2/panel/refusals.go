@@ -24,3 +24,10 @@ func quotesASweepErrorsReason(w http.ResponseWriter, err error) {
 func answersWithTheLastSweepsError(w http.ResponseWriter) {
 	http.Error(w, commands.LastSweep().Error(), http.StatusBadGateway) // want "panel"
 }
+
+func answersWithANoticeBuiltFromTheError(w http.ResponseWriter, err error) {
+	var notice *commands.NoticeError
+	if errors.As(commands.Notice("Refused: "+err.Error()), &notice) { // want "panel"
+		http.Error(w, notice.Message, http.StatusUnprocessableEntity)
+	}
+}

@@ -15,9 +15,10 @@ func TestErrorReply(t *testing.T) {
 
 // Each line in the panel and commands testdata that carries a want comment
 // is a panel answer, or a store into a value that reaches one, that the
-// analyzer reports as a panel answer. It reports no other line.
+// analyzer reports as a panel answer. It reports no other line, and nothing
+// the smoke tool's fake forum answers a maintainer.
 func TestPanelAnswer(t *testing.T) {
-	analysistest.Run(diagnosticsOnly{t}, analysistest.TestData(), analyzer, "github.com/7cav/cavbot2/panel", "github.com/7cav/cavbot2/commands")
+	analysistest.Run(diagnosticsOnly{t}, analysistest.TestData(), analyzer, "github.com/7cav/cavbot2/panel", "github.com/7cav/cavbot2/commands", "github.com/7cav/cavbot2/tools/smoke")
 }
 
 // diagnosticsOnly passes analysistest's failures on to the test, apart from
