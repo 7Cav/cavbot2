@@ -37,3 +37,9 @@ func LastSweepFailure() string {
 func Describe(detail string) string {
 	return "Failed: " + detail
 }
+
+// Classify is the phrase a Discord error gets, chosen by classifying it, and
+// the error, for the caller to log.
+func Classify(err error) (string, error) {
+	return failureReason(err), err
+}

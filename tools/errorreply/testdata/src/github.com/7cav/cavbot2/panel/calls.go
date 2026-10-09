@@ -21,3 +21,8 @@ func answersWithAnErrorsTextFromAnotherPackage(w http.ResponseWriter) {
 func answersWithAnotherPackagesSentenceAroundTheError(w http.ResponseWriter, err error) {
 	http.Error(w, commands.Describe(err.Error()), http.StatusInternalServerError) // want "panel"
 }
+
+func answersWithOneResultOfAnotherPackagesCall(w http.ResponseWriter, err error) {
+	phrase, _ := commands.Classify(err)
+	http.Error(w, "Refused: "+phrase, http.StatusUnprocessableEntity)
+}

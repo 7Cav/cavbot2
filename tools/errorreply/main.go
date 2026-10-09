@@ -288,14 +288,13 @@ func outgoing(instr ssa.Instruction, sinks bool, wrappers map[*ssa.Function]map[
 // its type's name and its own name, or "" when its type has no name.
 func fieldName(field *ssa.FieldAddr) string {
 	obj := typeName(field.X.Type())
-	if obj == nil || obj.Pkg() == nil {
+	if obj == nil {
 		return ""
 	}
-	st, ok := obj.Type().Underlying().(*types.Struct)
-	if !ok {
-		return ""
+	if st, ok := obj.Type().Underlying().(*types.Struct); ok {
+		return obj.Pkg().Path() + "." + obj.Name() + "." + st.Field(field.Field).Name()
 	}
-	return obj.Pkg().Path() + "." + obj.Name() + "." + st.Field(field.Field).Name()
+	return ""
 }
 
 // sinkParams returns the positions of call's arguments that reach a person,
@@ -416,11 +415,8 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 	}
 	switch v := v.(type) {
 	case *ssa.Call:
-		if callee := t.callee(v, f); callee != nil {
-			return t.traceReturns(callee, &frame{call: v, parent: f}, -1)
-		}
-		if fact := t.results(v); fact != nil {
-			return t.traceResults(v, fact, -1, f)
+		if carries, followed := t.traceCall(v, -1, f); followed {
+			return carries
 		}
 		if v.Call.IsInvoke() && t.trace(v.Call.Value, f) {
 			return true
@@ -432,11 +428,8 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 		}
 	case *ssa.Extract:
 		if call, ok := v.Tuple.(*ssa.Call); ok {
-			if callee := t.callee(call, f); callee != nil {
-				return t.traceReturns(callee, &frame{call: call, parent: f}, v.Index)
-			}
-			if fact := t.results(call); fact != nil {
-				return t.traceResults(call, fact, v.Index, f)
+			if carries, followed := t.traceCall(call, v.Index, f); followed {
+				return carries
 			}
 		}
 	case *ssa.Parameter:
@@ -498,14 +491,34 @@ func (t *tracer) followable(v ssa.Value, f *frame) bool {
 	case *ssa.Const, *ssa.MakeInterface, *ssa.ChangeInterface, *ssa.Phi:
 		return true
 	case *ssa.Call:
-		return t.callee(v, f) != nil || t.results(v) != nil
+		return t.follows(v, f)
 	case *ssa.Extract:
 		call, ok := v.Tuple.(*ssa.Call)
-		return ok && (t.callee(call, f) != nil || t.results(call) != nil)
+		return ok && t.follows(call, f)
 	case *ssa.Parameter:
 		return f != nil && f.call.Call.StaticCallee() == v.Parent()
 	}
 	return false
+}
+
+// follows reports whether the tracer can follow call: into the body of a
+// function of the package being checked, or by what the check of another
+// package of the module recorded about the function.
+func (t *tracer) follows(call *ssa.Call, f *frame) bool {
+	return t.callee(call, f) != nil || t.results(call) != nil
+}
+
+// traceCall traces the result of call at index, or every result when index
+// is negative, when the tracer follows call. followed reports whether it
+// does.
+func (t *tracer) traceCall(call *ssa.Call, index int, f *frame) (carries, followed bool) {
+	if callee := t.callee(call, f); callee != nil {
+		return t.traceReturns(callee, &frame{call: call, parent: f}, index), true
+	}
+	if fact := t.results(call); fact != nil {
+		return t.traceResults(call, fact, index, f), true
+	}
+	return false, false
 }
 
 // callee returns the function of the package being checked that call
@@ -522,13 +535,10 @@ func (t *tracer) callee(call *ssa.Call, f *frame) *ssa.Function {
 // about the function call enters, or nil when it recorded nothing.
 func (t *tracer) results(call *ssa.Call) *results {
 	callee := call.Call.StaticCallee()
-	if callee == nil {
+	if callee == nil || callee.Object() == nil {
 		return nil
 	}
-	obj, ok := callee.Object().(*types.Func)
-	if !ok {
-		return nil
-	}
+	obj := callee.Object().(*types.Func)
 	// A method's facts count its receiver as the first parameter, so they
 	// fit a call that passes the receiver as its first argument, and not a
 	// call to the method bound to a receiver.
