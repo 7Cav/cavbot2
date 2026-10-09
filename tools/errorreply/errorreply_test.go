@@ -6,9 +6,32 @@ import (
 	"golang.org/x/tools/go/analysis/analysistest"
 )
 
-// Each line in testdata/src/replies that carries a want comment is a message
-// to Discord, or a store into an error type that reaches one, that the
-// analyzer reports. It reports no other line.
+// Each line in testdata/src/github.com/7cav/cavbot2/replies that carries a
+// want comment is a message to Discord, or a store into an error type that
+// reaches one, that the analyzer reports. It reports no other line.
 func TestErrorReply(t *testing.T) {
-	analysistest.Run(t, analysistest.TestData(), analyzer, "replies")
+	analysistest.Run(diagnosticsOnly{t}, analysistest.TestData(), analyzer, "github.com/7cav/cavbot2/replies")
+}
+
+// Each line in the panel and commands testdata that carries a want comment
+// is a panel answer, or a store into a value that reaches one, that the
+// analyzer reports as a panel answer. It reports no other line.
+func TestPanelAnswer(t *testing.T) {
+	analysistest.Run(diagnosticsOnly{t}, analysistest.TestData(), analyzer, "github.com/7cav/cavbot2/panel", "github.com/7cav/cavbot2/commands")
+}
+
+// diagnosticsOnly passes analysistest's failures on to the test, apart from
+// a fact the testdata doesn't expect. A fact is how the check of one package
+// tells the check of another what a function returns, not something the
+// check reports, so the testdata expects none.
+type diagnosticsOnly struct {
+	t *testing.T
+}
+
+func (d diagnosticsOnly) Errorf(format string, args ...any) {
+	d.t.Helper()
+	if format == "%v: unexpected %s: %v" && len(args) == 3 && args[1] == "fact" {
+		return
+	}
+	d.t.Errorf(format, args...)
 }

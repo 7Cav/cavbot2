@@ -76,10 +76,11 @@ fi
 step "lint"
 golangci-lint run --timeout=5m
 
-step "messages carry no data from an error"
-# A message the bot sends to Discord carries no data from an error, except a
-# time (ADR 0016). The error goes to the log or to Sentry. Test code sends
-# nothing to a member, so the check reads production code only.
+step "messages and panel answers carry no data from an error"
+# A message the bot sends to Discord, or a panel answer, carries no data from
+# an error, except a time (ADR 0016). The error goes to the log or to Sentry.
+# Test code shows nothing to a member or a panel user, so the check reads
+# production code only.
 go run ./tools/errorreply -test=false ./...
 
 step "go.mod and go.sum are tidy"
