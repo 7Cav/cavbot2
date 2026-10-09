@@ -832,7 +832,7 @@ func resolveFoxholeRoleIDs(
 	for _, roleName := range roleNames {
 		roleID, findErr := findGuildRoleIDByName(gm, guildID, roleName)
 		if errors.Is(findErr, errRoleNotFound) {
-			return nil, nil, fmt.Errorf("❌ '%s' role not found in guild", roleName)
+			return nil, nil, lookupReplyf("❌ '%s' role not found in guild", roleName)
 		}
 		if findErr != nil {
 			// A genuine GuildRoles fault (5xx/transport) is classified and captured
@@ -1000,7 +1000,7 @@ func findGuildMember(gm GuildManager, guildID, query string) (*discordgo.Member,
 func findGuildMemberCollecting(gm GuildManager, guildID, query string, faultSink lookupFaultSink) (*discordgo.Member, error) {
 	trimmedQuery := strings.TrimSpace(query)
 	if trimmedQuery == "" {
-		return nil, fmt.Errorf("❌ Empty query")
+		return nil, lookupReplyf("❌ Empty query")
 	}
 
 	// Discord's member-search query must be 1-100 characters. Reject an
@@ -1009,7 +1009,7 @@ func findGuildMemberCollecting(gm GuildManager, guildID, query string, faultSink
 	// mention/ID branches below, but real mentions and snowflakes are well
 	// under 100 chars, so in practice only a long name search trips it.
 	if utf8.RuneCountInString(trimmedQuery) > 100 {
-		return nil, fmt.Errorf("❌ Query too long (max 100 characters); use a mention/ID instead")
+		return nil, lookupReplyf("❌ Query too long (max 100 characters); use a mention/ID instead")
 	}
 
 	// Mentions: <@123>, <@!123>. A mention unambiguously names one user, so the
@@ -1035,11 +1035,11 @@ func findGuildMemberCollecting(gm GuildManager, guildID, query string, faultSink
 
 	switch len(members) {
 	case 0:
-		return nil, fmt.Errorf("❌ No member found matching '%s'", query)
+		return nil, lookupReplyf("❌ No member found matching '%s'", query)
 	case 1:
 		return members[0], nil
 	default:
-		return nil, fmt.Errorf("❌ Too many matches for '%s' (be more specific, or use a mention/ID)", query)
+		return nil, lookupReplyf("❌ Too many matches for '%s' (be more specific, or use a mention/ID)", query)
 	}
 }
 
@@ -1070,19 +1070,19 @@ func resolveMemberByID(gm GuildManager, guildID, userID string, faultSink lookup
 		class := classifyDiscordError(err)
 		switch {
 		case class.NotFound:
-			return nil, fmt.Errorf("❌ <@%s> %s", userID, adviceAbsent)
+			return nil, lookupReplyf("❌ <@%s> %s", userID, adviceAbsent)
 		case class.SystemFault:
 			recordLookupFault(faultSink, err, userID, "Failed to look up guild member by ID", "user_id", userID)
 			if class.ConfigFault {
-				return nil, fmt.Errorf("❌ Could not look up <@%s>: %s", userID, configFaultHint(class))
+				return nil, lookupReplyf("❌ Could not look up <@%s>: %s", userID, configFaultHint(class))
 			}
-			return nil, errors.New("❌ Member lookup is temporarily unavailable (Discord error); please " + adviceTransient)
+			return nil, lookupReplyf("❌ Member lookup is temporarily unavailable (Discord error); please %s", adviceTransient)
 		default:
-			return nil, fmt.Errorf("❌ Could not look up <@%s> (%s)", userID, class.UserDetail)
+			return nil, lookupReplyf("❌ Could not look up <@%s> (%s)", userID, class.UserDetail)
 		}
 	}
 	if member == nil {
-		return nil, fmt.Errorf("❌ <@%s> %s", userID, adviceAbsent)
+		return nil, lookupReplyf("❌ <@%s> %s", userID, adviceAbsent)
 	}
 	return member, nil
 }
