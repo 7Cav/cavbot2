@@ -242,11 +242,10 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 			}
 		}
 	case *ssa.Extract:
-		// An error a call into the package returns, which followable let
-		// through.
-		if types.Implements(v.Type(), errorType) {
-			call := v.Tuple.(*ssa.Call)
-			return t.traceReturns(t.callee(call, f), &frame{call: call, parent: f}, v.Index)
+		if call, ok := v.Tuple.(*ssa.Call); ok {
+			if callee := t.callee(call, f); callee != nil {
+				return t.traceReturns(callee, &frame{call: call, parent: f}, v.Index)
+			}
 		}
 	case *ssa.Parameter:
 		if f == nil {
@@ -257,6 +256,11 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 			return t.trace(f.call.Call.Args[slices.Index(v.Parent().Params, v)], f.parent)
 		}
 	case *ssa.BinOp:
+		switch v.Op {
+		case token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
+			// A comparison inspects its operands and carries none of them.
+			return false
+		}
 		return t.trace(v.X, f) || t.trace(v.Y, f)
 	case *ssa.Phi:
 		for _, edge := range v.Edges {
@@ -265,6 +269,8 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 			}
 		}
 	case *ssa.Slice:
+		return t.trace(v.X, f)
+	case *ssa.Convert:
 		return t.trace(v.X, f)
 	case *ssa.MakeInterface:
 		return t.trace(v.X, f)
@@ -277,6 +283,8 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 	case *ssa.UnOp:
 		return t.trace(v.X, f)
 	case *ssa.FieldAddr:
+		return t.trace(v.X, f)
+	case *ssa.Field:
 		return t.trace(v.X, f)
 	}
 	return false

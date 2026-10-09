@@ -32,3 +32,62 @@ func picksAFixedMessageWithErrorsAs(r utils.InteractionResponder, i *discordgo.I
 	}
 	utils.HandleError(r, i, reply)
 }
+
+func refusal(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	return "❌ Refused: " + err.Error(), true
+}
+
+func repliesWithAHelpersRefusal(r utils.InteractionResponder, i *discordgo.InteractionCreate, err error) {
+	if reply, ok := refusal(err); ok {
+		utils.HandleError(r, i, reply) // want "."
+	}
+}
+
+func quotesTheResponseBody(r utils.InteractionResponder, i *discordgo.InteractionCreate, err error) {
+	var rest *discordgo.RESTError
+	if errors.As(err, &rest) {
+		utils.HandleError(r, i, "❌ Discord said: "+string(rest.ResponseBody)) // want "."
+	}
+}
+
+// verdict is what a classifier tells the reply about an error.
+type verdict struct {
+	phrase string
+}
+
+func judge(err error) verdict {
+	return verdict{phrase: err.Error()}
+}
+
+func repliesWithAFieldTheHelperFilledFromTheError(r utils.InteractionResponder, i *discordgo.InteractionCreate, err error) {
+	utils.HandleError(r, i, "❌ Failed: "+judge(err).phrase) // want "."
+}
+
+func classifyFault(err error) verdict {
+	var rest *discordgo.RESTError
+	if errors.As(err, &rest) && rest.Response != nil && rest.Response.StatusCode == 403 {
+		return verdict{phrase: "missing permissions"}
+	}
+	return verdict{phrase: "could not reach Discord"}
+}
+
+func repliesWithAClassifiersPhrase(r utils.InteractionResponder, i *discordgo.InteractionCreate, err error) {
+	utils.HandleError(r, i, fmt.Sprintf("❌ Failed: %s.", classifyFault(err).phrase))
+}
+
+// attendee is a player the reply names, and whether their lookup failed.
+type attendee struct {
+	name   string
+	failed bool
+}
+
+func attend(name string, err error) attendee {
+	return attendee{name: name, failed: err != nil}
+}
+
+func namesAPlayerBesideAFailureFlag(r utils.InteractionResponder, i *discordgo.InteractionCreate, name string, err error) {
+	utils.HandleError(r, i, "⚠️ Couldn't match "+attend(name, err).name)
+}
