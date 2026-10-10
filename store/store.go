@@ -130,7 +130,27 @@ type Recording struct {
 	StartedAt  time.Time
 	// StoppedAt is zero while the recording runs.
 	StoppedAt time.Time
+	// Ended is how the recording ended, empty while it runs.
+	Ended RecordingEnd
 }
+
+// RecordingEnd is how a recording ended: what stopped it.
+type RecordingEnd string
+
+const (
+	// RecordingEndStopped: a member stopped it, by /record stop or the
+	// recording notice's button.
+	RecordingEndStopped RecordingEnd = "stopped"
+	// RecordingEndCap: it reached the time cap.
+	RecordingEndCap RecordingEnd = "cap"
+	// RecordingEndEmpty: no human was left in the channel.
+	RecordingEndEmpty RecordingEnd = "empty"
+	// RecordingEndDisk: free disk space fell below the threshold.
+	RecordingEndDisk RecordingEnd = "disk"
+	// RecordingEndRecorderLeft: the recorder left the channel, moved out,
+	// disconnected, or with the channel deleted.
+	RecordingEndRecorderLeft RecordingEnd = "recorder_left"
+)
 
 // SpawnedChannel is one row of the spawned channels table, written at create
 // and at every handover so the restart sweep can restore number and owner.
@@ -379,13 +399,13 @@ type Store interface {
 	ListRecordingRoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
 
 	// StartRecording writes a running recording's row and returns it with
-	// its ID set. The caller's ID and StoppedAt are ignored: a new row is
-	// running.
+	// its ID set. The caller's ID, StoppedAt and Ended are ignored: a new
+	// row is running.
 	StartRecording(ctx context.Context, rec Recording) (Recording, error)
 	// StopRecording records the stop time of the running recording with the
-	// ID given. ErrNotFound when no running recording has the ID, a stopped
-	// one among them, and nothing written.
-	StopRecording(ctx context.Context, id int64, at time.Time) error
+	// ID given, and how it ended. ErrNotFound when no running recording has
+	// the ID, a stopped one among them, and nothing written.
+	StopRecording(ctx context.Context, id int64, at time.Time, end RecordingEnd) error
 	// ListRecordings returns every recording of the guild, running or not,
 	// in no promised order.
 	ListRecordings(ctx context.Context, guildID string) ([]Recording, error)

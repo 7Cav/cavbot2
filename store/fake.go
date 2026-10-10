@@ -471,13 +471,13 @@ func (f *Fake) StartRecording(ctx context.Context, rec Recording) (Recording, er
 	defer f.mu.Unlock()
 	rec.ID = f.nextRecordingID
 	f.nextRecordingID++
-	rec.StoppedAt = time.Time{}
+	rec.StoppedAt, rec.Ended = time.Time{}, ""
 	f.recordings[rec.ID] = rec
 	return rec, nil
 }
 
 // StopRecording implements Store.
-func (f *Fake) StopRecording(ctx context.Context, id int64, at time.Time) error {
+func (f *Fake) StopRecording(ctx context.Context, id int64, at time.Time, end RecordingEnd) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -487,7 +487,7 @@ func (f *Fake) StopRecording(ctx context.Context, id int64, at time.Time) error 
 	if !ok || !rec.StoppedAt.IsZero() {
 		return ErrNotFound
 	}
-	rec.StoppedAt = at
+	rec.StoppedAt, rec.Ended = at, end
 	f.recordings[id] = rec
 	return nil
 }

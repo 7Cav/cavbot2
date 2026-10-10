@@ -124,10 +124,10 @@ func (b boundedStore) StartRecording(ctx context.Context, rec store.Recording) (
 	return b.store.StartRecording(ctx, rec)
 }
 
-func (b boundedStore) StopRecording(ctx context.Context, id int64, at time.Time) error {
+func (b boundedStore) StopRecording(ctx context.Context, id int64, at time.Time, end store.RecordingEnd) error {
 	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
 	defer cancel()
-	return b.store.StopRecording(ctx, id, at)
+	return b.store.StopRecording(ctx, id, at, end)
 }
 
 func (b boundedStore) ListRecordings(ctx context.Context, guildID string) ([]store.Recording, error) {

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -112,18 +113,25 @@ func (v *fakeRecorderVoice) inChannel(channelID string) []string {
 // the runtime over a fake voice adapter with the recorders given.
 type recordScene struct {
 	// dir is the recordings directory.
-	dir   string
-	clock *fakeClock
-	fake  *fakeTempVCManager
-	st    *store.Fake
-	tv    *TempVC
-	voice *fakeRecorderVoice
-	rt    *RecordingRuntime
+	dir string
+	// freeDisk is the free space the runtime reads on the recordings
+	// volume, plenty unless a test sets it.
+	freeDisk *atomic.Uint64
+	clock    *fakeClock
+	fake     *fakeTempVCManager
+	st       *store.Fake
+	tv       *TempVC
+	voice    *fakeRecorderVoice
+	rt       *RecordingRuntime
 }
 
 func newRecordScene(t *testing.T, recorders ...string) *recordScene {
 	t.Helper()
-	sc := &recordScene{dir: t.TempDir(), clock: installFakeClock(t), fake: newFakeTempVCManager()}
+	sc := &recordScene{dir: t.TempDir(), clock: installFakeClock(t), fake: newFakeTempVCManager(), freeDisk: &atomic.Uint64{}}
+	sc.freeDisk.Store(1 << 40)
+	prevFreeDisk := recordingFreeDisk
+	recordingFreeDisk = func(string) (uint64, error) { return sc.freeDisk.Load(), nil }
+	t.Cleanup(func() { recordingFreeDisk = prevFreeDisk })
 	sc.fake.channels[recordChannel] = &discordgo.Channel{ID: recordChannel, Name: recordChannelName, Type: discordgo.ChannelTypeGuildVoice}
 	sc.fake.channels[recordOtherChannel] = &discordgo.Channel{ID: recordOtherChannel, Name: "Other", Type: discordgo.ChannelTypeGuildVoice}
 	sc.st = seedStore(t, testHub())
@@ -367,16 +375,34 @@ func (sc *recordScene) startIn(t *testing.T, m permMember, channelID string) {
 	}
 }
 
-// assertStopped checks that the recorder has left the channel and the
-// recording's one row has its stop time, the clock's now.
-func (sc *recordScene) assertStopped(t *testing.T, channelID string) {
+// assertStopped checks that the recorder has left the channel, the
+// recording's one row has its stop time, the clock's now, and records that
+// it ended as end, and the recording notice was edited to lose its button.
+func (sc *recordScene) assertStopped(t *testing.T, channelID string, end store.RecordingEnd) {
 	t.Helper()
 	if got := sc.voice.inChannel(channelID); len(got) != 0 {
 		t.Errorf("recorders in %s after the stop = %v, want none", channelID, got)
 	}
 	recs := sc.recordings(t)
-	if len(recs) != 1 || !recs[0].StoppedAt.Equal(sc.clock.read()) {
-		t.Errorf("recordings after the stop = %+v, want one stopped at %v", recs, sc.clock.read())
+	if len(recs) != 1 || !recs[0].StoppedAt.Equal(sc.clock.read()) || recs[0].Ended != end {
+		t.Errorf("recordings after the stop = %+v, want one stopped at %v, ended %q", recs, sc.clock.read(), end)
+	}
+	// A nil list leaves the button in place; an empty one removes it.
+	edit := noticeEdit(t, sc.fake, recordingNotice(t, sc.fake, channelID))
+	if edit.Components == nil || len(*edit.Components) != 0 {
+		t.Errorf("notice edit components = %v, want an empty list", edit.Components)
+	}
+}
+
+// assertRunning checks that the recorder is still in the channel and the
+// recording's one row is still open.
+func (sc *recordScene) assertRunning(t *testing.T, channelID string) {
+	t.Helper()
+	if got := sc.voice.inChannel(channelID); len(got) != 1 {
+		t.Errorf("recorders in %s = %v, want the one recording it", channelID, got)
+	}
+	if recs := sc.recordings(t); len(recs) != 1 || !recs[0].StoppedAt.IsZero() {
+		t.Errorf("recordings = %+v, want one still running", recs)
 	}
 }
 
@@ -393,7 +419,7 @@ func TestRecordStopByTheStarterFromAnotherChannel(t *testing.T) {
 	if !strings.HasPrefix(reply, "✅") {
 		t.Errorf("reply = %q, want a ✅ verdict", reply)
 	}
-	sc.assertStopped(t, recordChannel)
+	sc.assertStopped(t, recordChannel, store.RecordingEndStopped)
 }
 
 // The recording stays with its channel when the starter moves elsewhere: a
@@ -410,7 +436,7 @@ func TestRecordStaysWithItsChannelWhenTheStarterMoves(t *testing.T) {
 	if !strings.HasPrefix(reply, "✅") {
 		t.Errorf("reply = %q, want a ✅ verdict", reply)
 	}
-	sc.assertStopped(t, recordChannel)
+	sc.assertStopped(t, recordChannel, store.RecordingEndStopped)
 }
 
 // A member in the channel who neither started the recording nor holds a

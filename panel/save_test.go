@@ -228,9 +228,9 @@ func (s leavingStore) StartRecording(ctx context.Context, rec store.Recording) (
 	return s.st.StartRecording(ctx, rec)
 }
 
-func (s leavingStore) StopRecording(ctx context.Context, id int64, at time.Time) error {
+func (s leavingStore) StopRecording(ctx context.Context, id int64, at time.Time, end store.RecordingEnd) error {
 	s.d.leave()
-	return s.st.StopRecording(ctx, id, at)
+	return s.st.StopRecording(ctx, id, at, end)
 }
 
 func (s leavingStore) ListRecordings(ctx context.Context, guildID string) ([]store.Recording, error) {

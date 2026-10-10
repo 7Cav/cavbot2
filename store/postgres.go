@@ -664,7 +664,7 @@ func (p *Postgres) ListRecordingRoleChanges(ctx context.Context, limit int) ([]C
 
 // StartRecording implements Store.
 func (p *Postgres) StartRecording(ctx context.Context, rec Recording) (Recording, error) {
-	rec.StoppedAt = time.Time{}
+	rec.StoppedAt, rec.Ended = time.Time{}, ""
 	err := p.db.QueryRowContext(ctx, `
 		INSERT INTO recordings (guild_id, channel_id, channel_name, starter_id, title, recorder_id, started_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -677,9 +677,9 @@ func (p *Postgres) StartRecording(ctx context.Context, rec Recording) (Recording
 }
 
 // StopRecording implements Store. No running row matched is ErrNotFound.
-func (p *Postgres) StopRecording(ctx context.Context, id int64, at time.Time) error {
+func (p *Postgres) StopRecording(ctx context.Context, id int64, at time.Time, end RecordingEnd) error {
 	res, err := p.db.ExecContext(ctx,
-		`UPDATE recordings SET stopped_at = $2 WHERE id = $1 AND stopped_at IS NULL`, id, at)
+		`UPDATE recordings SET stopped_at = $2, ended = $3 WHERE id = $1 AND stopped_at IS NULL`, id, at, string(end))
 	if err != nil {
 		return fmt.Errorf("stop recording %d: %w", id, err)
 	}
@@ -699,12 +699,13 @@ func (p *Postgres) ListRecordings(ctx context.Context, guildID string) ([]Record
 		var (
 			rec     Recording
 			stopped sql.NullTime
+			ended   sql.NullString
 		)
 		err := row.Scan(&rec.ID, &rec.GuildID, &rec.ChannelID, &rec.ChannelName, &rec.StarterID,
-			&rec.Title, &rec.RecorderID, &rec.StartedAt, &stopped)
-		rec.StoppedAt = stopped.Time
+			&rec.Title, &rec.RecorderID, &rec.StartedAt, &stopped, &ended)
+		rec.StoppedAt, rec.Ended = stopped.Time, RecordingEnd(ended.String)
 		return rec, err
-	}, `SELECT id, guild_id, channel_id, channel_name, starter_id, title, recorder_id, started_at, stopped_at
+	}, `SELECT id, guild_id, channel_id, channel_name, starter_id, title, recorder_id, started_at, stopped_at, ended
 		FROM recordings WHERE guild_id = $1`, guildID)
 	if err != nil {
 		return nil, fmt.Errorf("list recordings of guild %q: %w", guildID, err)

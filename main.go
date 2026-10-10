@@ -287,6 +287,9 @@ func main() {
 		// fill its recorders: with none, every /record start is refused as
 		// recording off.
 		recording = commands.NewRecordingRuntime(discordManager, botStore, tempVC, GuildID, recorders, recordingsDir())
+		// Its voice events and channel deletes stop a recording by itself
+		// (#388): the last human leaving, or the recorder leaving.
+		recording.Listen(dg)
 		// The panel's hub page saves through the runtime and reads the guild
 		// through the session, so it is built once both exist.
 		webPanel = initPanel(panelCfg, panel.Deps{

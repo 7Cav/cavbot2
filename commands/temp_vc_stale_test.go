@@ -114,6 +114,44 @@ func TestSessionTempVCManagerVoiceStatesReadsTheStateCache(t *testing.T) {
 		}
 	})
 
+	// A recording stops when no human is left in its channel, so the bots in
+	// voice are named. A voice event carries its member, and a GUILD_CREATE's
+	// voice states carry none, so a bot in voice since before a restart is
+	// known from the cached member list.
+	t.Run("a present guild names the bots in voice", func(t *testing.T) {
+		dg := newSession(t)
+		feed(t, dg, &discordgo.GuildCreate{Guild: &discordgo.Guild{
+			ID: "g",
+			Members: []*discordgo.Member{
+				{GuildID: "g", User: &discordgo.User{ID: "bot-cached", Bot: true}},
+				{GuildID: "g", User: &discordgo.User{ID: "user-a"}},
+			},
+			VoiceStates: []*discordgo.VoiceState{
+				{GuildID: "g", UserID: "bot-cached", ChannelID: "chan-1"},
+				{GuildID: "g", UserID: "user-a", ChannelID: "chan-1"},
+			},
+		}})
+		botEvent := sessionVoiceEvent("g", "bot-event", "chan-1")
+		botEvent.Member = &discordgo.Member{GuildID: "g", User: &discordgo.User{ID: "bot-event", Bot: true}}
+		feed(t, dg, botEvent)
+		humanEvent := sessionVoiceEvent("g", "user-b", "chan-1")
+		humanEvent.Member = &discordgo.Member{GuildID: "g", User: &discordgo.User{ID: "user-b"}}
+		feed(t, dg, humanEvent)
+
+		snap := NewSessionTempVCManager(dg, "g").VoiceStates("g")
+
+		for _, bot := range []string{"bot-cached", "bot-event"} {
+			if _, ok := snap.Bots[bot]; !ok {
+				t.Errorf("Bots = %v, want it to hold %s", snap.Bots, bot)
+			}
+		}
+		for _, human := range []string{"user-a", "user-b"} {
+			if _, ok := snap.Bots[human]; ok {
+				t.Errorf("Bots = %v, want it without the human %s", snap.Bots, human)
+			}
+		}
+	})
+
 	t.Run("a guild the cache never held is missing", func(t *testing.T) {
 		dg := newSession(t)
 		feed(t, dg, &discordgo.GuildCreate{Guild: &discordgo.Guild{ID: "g"}})

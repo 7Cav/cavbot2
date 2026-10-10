@@ -393,6 +393,10 @@ type VoiceSnapshot struct {
 	// under the same lock as the voice states. The restart sweep's gone
 	// test reads it: a row whose channel is absent loses its row.
 	Channels map[string]struct{}
+	// Bots holds the connected members the cache knows to be bots, from
+	// their voice state's member or their cached guild member. A recording
+	// stops once only bots and recorders are left in its channel.
+	Bots map[string]struct{}
 }
 
 // hasChannel reports whether the snapshot holds the channel. A missing
@@ -617,9 +621,31 @@ func (m *sessionTempVCManager) VoiceStates(guildID string) VoiceSnapshot {
 			ChannelByUser: make(map[string]string, len(g.VoiceStates)),
 			Channels:      make(map[string]struct{}, len(g.Channels)),
 		}
+		// A voice event carries its member, and a GUILD_CREATE's voice
+		// states carry none: those are looked up in the cached member list,
+		// in one pass over it.
+		snap.Bots = make(map[string]struct{})
+		unknown := make(map[string]struct{})
 		for _, vs := range g.VoiceStates {
-			if vs.ChannelID != "" {
-				snap.ChannelByUser[vs.UserID] = vs.ChannelID
+			if vs.ChannelID == "" {
+				continue
+			}
+			snap.ChannelByUser[vs.UserID] = vs.ChannelID
+			switch {
+			case vs.Member == nil || vs.Member.User == nil:
+				unknown[vs.UserID] = struct{}{}
+			case vs.Member.User.Bot:
+				snap.Bots[vs.UserID] = struct{}{}
+			}
+		}
+		if len(unknown) > 0 {
+			for _, m := range g.Members {
+				if m.User == nil || !m.User.Bot {
+					continue
+				}
+				if _, ok := unknown[m.User.ID]; ok {
+					snap.Bots[m.User.ID] = struct{}{}
+				}
 			}
 		}
 		for _, ch := range g.Channels {

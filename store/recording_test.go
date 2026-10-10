@@ -127,9 +127,9 @@ func listRecordings(t *testing.T, s Store) []Recording {
 }
 
 // A started recording reads back as it was started, under the ID the start
-// returned and not yet stopped. A stop records its time, and the recording
-// then reads back stopped at it. A second stop of it, and a stop of an ID
-// no recording has, are ErrNotFound.
+// returned and not yet stopped. A stop records its time and how it ended,
+// and the recording then reads back stopped at it, ended that way. A second
+// stop of it, and a stop of an ID no recording has, are ErrNotFound.
 func TestRecordingStartsAndStops(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
@@ -146,22 +146,22 @@ func TestRecordingStartsAndStops(t *testing.T) {
 		}
 
 		stoppedAt := want.StartedAt.Add(42 * time.Minute)
-		if err := s.StopRecording(ctx, started.ID, stoppedAt); err != nil {
+		if err := s.StopRecording(ctx, started.ID, stoppedAt, RecordingEndCap); err != nil {
 			t.Fatalf("StopRecording: %v", err)
 		}
-		want.StoppedAt = stoppedAt
+		want.StoppedAt, want.Ended = stoppedAt, RecordingEndCap
 		if got := listRecordings(t, s); len(got) != 1 || !sameRecording(got[0], want) {
 			t.Errorf("recordings after the stop = %+v, want only %+v", got, want)
 		}
 
-		if err := s.StopRecording(ctx, started.ID, stoppedAt.Add(time.Minute)); !errors.Is(err, ErrNotFound) {
+		if err := s.StopRecording(ctx, started.ID, stoppedAt.Add(time.Minute), RecordingEndStopped); !errors.Is(err, ErrNotFound) {
 			t.Errorf("second StopRecording = %v, want ErrNotFound", err)
 		}
-		if err := s.StopRecording(ctx, started.ID+100, stoppedAt); !errors.Is(err, ErrNotFound) {
+		if err := s.StopRecording(ctx, started.ID+100, stoppedAt, RecordingEndStopped); !errors.Is(err, ErrNotFound) {
 			t.Errorf("StopRecording of an unknown ID = %v, want ErrNotFound", err)
 		}
-		if got := listRecordings(t, s); len(got) != 1 || !got[0].StoppedAt.Equal(stoppedAt) {
-			t.Errorf("recordings after the refused stops = %+v, want one stopped at %v", got, stoppedAt)
+		if got := listRecordings(t, s); len(got) != 1 || !sameRecording(got[0], want) {
+			t.Errorf("recordings after the refused stops = %+v, want only %+v", got, want)
 		}
 	})
 }
