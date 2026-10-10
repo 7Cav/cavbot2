@@ -3,12 +3,15 @@ package voice
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/disgoorg/disgo/gateway"
 	disgovoice "github.com/disgoorg/disgo/voice"
+	"github.com/disgoorg/godave"
 	"github.com/disgoorg/snowflake/v2"
+	"github.com/gorilla/websocket"
 )
 
 // The production recorder session, over a fake disgo voice manager. Only
@@ -146,5 +149,49 @@ func TestRecorderCloseLeavesVoice(t *testing.T) {
 
 	if !m.closed {
 		t.Error("the recorder's voice connections are still open after Close")
+	}
+}
+
+// fakeVoiceGateway stands in for disgo's voice gateway, which a test can't
+// open without a voice server. Its other methods belong to the nil Gateway
+// it embeds, so a call to one fails the test.
+type fakeVoiceGateway struct {
+	disgovoice.Gateway
+}
+
+func (g *fakeVoiceGateway) Close() {}
+
+// voiceConnWithClose builds disgo's own voice connection with the recorder
+// session's connection options, its gateway faked, and returns the close
+// handler disgo gave that gateway, as the recorder's options wrap it.
+func voiceConnWithClose(t *testing.T, s *discordgoSession) disgovoice.CloseHandlerFunc {
+	t.Helper()
+	var onClose disgovoice.CloseHandlerFunc
+	newGateway := func(_ godave.Session, _ disgovoice.EventHandlerFunc, closeHandler disgovoice.CloseHandlerFunc, _ ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
+		onClose = closeHandler
+		return &fakeVoiceGateway{}
+	}
+	stateUpdate := func(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
+		return s.updateVoiceState(ctx, guildID, channelID, selfMute, selfDeaf)
+	}
+	opts := append(s.connOpts(newGateway), disgovoice.WithConnDaveSessionLogger(slog.New(slog.DiscardHandler)))
+	disgovoice.NewConn(snowflake.ID(100), snowflake.ID(300), stateUpdate, func() {}, opts...)
+	if onClose == nil {
+		t.Fatal("disgo built no voice gateway")
+	}
+	return onClose
+}
+
+// A voice gateway that closes in a way disgo won't reconnect from, so that
+// disgo takes the recorder out of the channel itself, is a voice connection
+// lost mid-recording, and Sentry hears of it.
+func TestRecorderReportsAVoiceConnectionDisgoGivesUpOn(t *testing.T) {
+	events := recordSentry(t)
+	onClose := voiceConnWithClose(t, recorderSession(t, &fakeManager{}))
+
+	onClose(&fakeVoiceGateway{}, &websocket.CloseError{Code: 4004, Text: "Authentication failed"})
+
+	if got := len(events.Events()); got != 1 {
+		t.Errorf("Sentry events = %d, want 1 for the lost connection", got)
 	}
 }

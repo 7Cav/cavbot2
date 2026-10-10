@@ -216,12 +216,13 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	}
 	// The recorder starts handing over what it hears only now, with the
 	// row written: frames before wait in the socket. A frame arrives at the
-	// runtime's clock when it's handed over.
+	// runtime's clock when it's handed over. It receives before a stop can
+	// find it, so the stop's leave ends the receiving.
 	tracks := newRecordingTracks(r.dir, row.ID, row.StartedAt)
+	conn.Receive(func(f voice.Frame) { tracks.write(f, recordingNow()) })
 	r.mu.Lock()
 	r.running[recorderID] = &activeRecording{row: row, conn: conn, tracks: tracks}
 	r.mu.Unlock()
-	conn.Receive(func(f voice.Frame) { tracks.write(f, recordingNow()) })
 	utils.Info("Recording started", "recording_id", row.ID, "channel_id", channelID,
 		"starter", by.UserID, "recorder", recorderID)
 	return channelID, nil
