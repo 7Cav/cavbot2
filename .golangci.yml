@@ -3,8 +3,9 @@
 # `linters.default: standard` keeps the standard linter set (errcheck, govet,
 # ineffassign, staticcheck, unused) as it was before this file existed.
 # depguard and gosec on top of it hold the panel's security rules, so review
-# needn't. forbidigo holds the panel's production code to its clock, and
-# nolintlint makes every //nolint name its linter and say why.
+# needn't. forbidigo holds the panel's production code to its clock and the
+# commands package's error replies to refuse and replyError, and nolintlint
+# makes every //nolint name its linter and say why.
 #
 # gofmt is a *formatter* in v2, not a linter: `golangci-lint run` reports diffs
 # as issues, and `golangci-lint fmt` rewrites them in place.
@@ -41,25 +42,43 @@ linters:
         - G202
         - G203
     forbidigo:
-      # The panel reads the time, sets its deadlines and waits through
-      # panelClock (panel/clock.go), so its tests run it on a clock they move
-      # and never wait out a time budget (#480). A read that has to use the
-      # wall clock carries a //nolint:forbidigo that says why.
       analyze-types: true
       forbid:
+        # The panel reads the time, sets its deadlines and waits through
+        # panelClock (panel/clock.go), so its tests run it on a clock they
+        # move and never wait out a time budget (#480). A read that has to
+        # use the wall clock carries a //nolint:forbidigo that says why.
         - pattern: ^time\.(Now|Since|Until|After|AfterFunc|Sleep|Tick|NewTicker|NewTimer)$
           msg: read the time and wait through panelClock
         - pattern: ^context\.(WithTimeout|WithTimeoutCause|WithDeadline|WithDeadlineCause)$
           msg: set deadlines through panelClock.WithTimeout
+        # A command sends its error replies through refuse and replyError
+        # (commands/interaction_ack.go), which send through acknowledge, so
+        # Discord's 10062 on a command's first response reaches Sentry as a
+        # missed acknowledgement with its timings (#514, #544).
+        - pattern: ^utils\.HandleError$
+          pkg: ^github\.com/7cav/cavbot2/utils$
+          msg: send a command's error reply through refuse when it turns the run down before the command acts on it, or through replyError for any other error reply
     nolintlint:
       require-explanation: true
       require-specific: true
 
   exclusions:
     rules:
-      # forbidigo's rules are the panel's, for its production code alone.
+      # Each forbidigo rule holds one package's production code, so each
+      # exclusion matches its own rule's message. The panel's clock rules
+      # are for panel/ alone.
       - path-except: ^panel/
         linters: [forbidigo]
+        text: panelClock
+      # The error reply rule is for commands/ alone, outside the file that
+      # holds refuse and replyError.
+      - path-except: ^commands/
+        linters: [forbidigo]
+        text: replyError
+      - path: ^commands/interaction_ack\.go$
+        linters: [forbidigo]
+        text: replyError
       - path: _test\.go$
         linters: [forbidigo]
 
