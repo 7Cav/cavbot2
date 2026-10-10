@@ -474,8 +474,35 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 	case *ssa.Call:
 		return t.traceCall(v, -1, f)
 	case *ssa.Extract:
-		if call, ok := v.Tuple.(*ssa.Call); ok {
-			return t.traceCall(call, v.Index, f)
+		switch tuple := v.Tuple.(type) {
+		case *ssa.Call:
+			return t.traceCall(tuple, v.Index, f)
+		case *ssa.Next:
+			// A range step's first result says whether it got an element,
+			// and carries none of it.
+			if iter, ok := tuple.Iter.(*ssa.Range); ok && v.Index > 0 {
+				return t.trace(iter.X, f)
+			}
+		// The second result of a comma-ok lookup or type assertion says
+		// whether it succeeded, and carries none of the value.
+		case *ssa.Lookup:
+			return v.Index == 0 && t.trace(tuple.X, f)
+		case *ssa.TypeAssert:
+			return v.Index == 0 && t.trace(tuple.X, f)
+		case *ssa.Select:
+			// A select's first two results say which case it took and
+			// whether a receive got a value. The rest are what its receive
+			// cases got, in order.
+			recv := v.Index - 2
+			for _, state := range tuple.States {
+				if state.Dir != types.RecvOnly {
+					continue
+				}
+				if recv == 0 {
+					return t.trace(state.Chan, f)
+				}
+				recv--
+			}
 		}
 	case *ssa.Parameter:
 		if f == nil {
@@ -518,6 +545,20 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 		return t.trace(v.X, f)
 	case *ssa.Field:
 		return t.trace(v.X, f)
+	case *ssa.IndexAddr:
+		return t.trace(v.X, f)
+	case *ssa.Index:
+		return t.trace(v.X, f)
+	case *ssa.Lookup:
+		return t.trace(v.X, f)
+	case *ssa.MakeSlice:
+		return t.traceStores(v, f)
+	case *ssa.MakeMap:
+		return t.traceStores(v, f)
+	case *ssa.TypeAssert:
+		return t.trace(v.X, f)
+	case *ssa.MakeChan:
+		return t.traceStores(v, f)
 	}
 	return false
 }
@@ -694,13 +735,21 @@ func (t *tracer) traceStores(addr ssa.Value, f *frame) bool {
 			if ref.Addr == addr && t.trace(ref.Val, f) {
 				return true
 			}
+		case *ssa.MapUpdate:
+			if ref.Map == addr && (t.trace(ref.Key, f) || t.trace(ref.Value, f)) {
+				return true
+			}
+		case *ssa.Send:
+			if ref.Chan == addr && t.trace(ref.X, f) {
+				return true
+			}
 		case ssa.CallInstruction:
 			for _, arg := range ref.Common().Args {
 				if t.trace(arg, f) {
 					return true
 				}
 			}
-		case *ssa.IndexAddr, *ssa.FieldAddr:
+		case *ssa.IndexAddr, *ssa.FieldAddr, *ssa.Slice:
 			if t.traceStores(ref.(ssa.Value), f) {
 				return true
 			}
