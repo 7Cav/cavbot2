@@ -31,6 +31,17 @@
 // container. The index or key it is read with, a range's position in a
 // string, and the second result of a comma-ok read carry none of it.
 //
+// A closure is read as part of the function that makes it. What the closure
+// puts in a variable it captured counts as put there, whoever calls the
+// closure, and so does what it stores, sends or sets through a channel, map,
+// slice or pointer it loads out of that variable. A parameter of the
+// enclosing function that the closure reads is a parameter of that function.
+// The closure's own parameter is built from what each call of it in the
+// package passes it.
+//
+// A local counts as built from everything written through another local
+// that holds its address, even after that local points elsewhere.
+//
 // A package-level variable counts as built from everything its package puts
 // in it: its declared value, a store at an address within it, a map update
 // or a send on it, a call it's passed to, and what each call in the package
@@ -231,7 +242,7 @@ func newSource(pass *analysis.Pass) *source {
 // tracer returns a tracer of values in the package. through is as the
 // tracer's field says.
 func (src *source) tracer(through bool) *tracer {
-	return &tracer{src: src, seen: map[visit]bool{}, through: through}
+	return &tracer{src: src, seen: map[visit]bool{}, held: map[visit]bool{}, through: through}
 }
 
 // putting is a container an instruction puts values in, and those values.
@@ -643,6 +654,9 @@ func isNamed(typ types.Type, path string, names ...string) bool {
 type tracer struct {
 	src  *source
 	seen map[visit]bool
+	// held holds the locals traced for what is written through the address
+	// each holds.
+	held map[visit]bool
 	// forwarded holds the parameters of the traced function, or of a
 	// function enclosing it, that the value was built from.
 	forwarded []*ssa.Parameter
@@ -656,15 +670,23 @@ type tracer struct {
 	through bool
 }
 
-// visit is a value traced inside the chain of calls f entered to reach it.
+// visit is a value traced inside the chain of frames f the tracer entered to
+// reach it.
 type visit struct {
 	v ssa.Value
 	f *frame
 }
 
-// frame is a call the tracer followed into its callee's body.
+// frame is a function body the tracer followed a value into: the callee of
+// a call, or a closure it reached through a variable the closure puts values
+// in, which runs at each call of the closure.
 type frame struct {
-	call   *ssa.Call
+	fn *ssa.Function
+	// call is the call that entered fn, or nil for a closure reached through
+	// a variable.
+	call *ssa.Call
+	// parent is the frame call is made in, or the frame a closure's
+	// enclosing function runs in. A closure's calls are made there too.
 	parent *frame
 }
 
@@ -674,9 +696,14 @@ type frame struct {
 // the package passes it.
 var anywhere = &frame{}
 
+// runs reports whether f is a frame of fn's body.
+func (f *frame) runs(fn *ssa.Function) bool {
+	return f != nil && f != anywhere && f.fn == fn
+}
+
 func (f *frame) entered(fn *ssa.Function) bool {
 	for ; f != nil && f != anywhere; f = f.parent {
-		if f.call.Call.StaticCallee() == fn {
+		if f.runs(fn) {
 			return true
 		}
 	}
@@ -751,9 +778,14 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 		case f == nil:
 			t.forwarded = append(t.forwarded, v)
 		case f == anywhere:
-			return t.traceCallers(v)
-		case f.call.Call.StaticCallee() == v.Parent():
+			return t.traceCallers(v, anywhere)
+		case f.fn != v.Parent():
+		case f.call != nil:
 			return t.trace(f.call.Call.Args[slices.Index(v.Parent().Params, v)], f.parent)
+		default:
+			// A closure reached through a variable runs at each call of it,
+			// which its enclosing function makes.
+			return t.traceCallers(v, f.parent)
 		}
 	case *ssa.BinOp:
 		switch v.Op {
@@ -818,11 +850,12 @@ func (t *tracer) traceVariable(g *ssa.Global) bool {
 	return false
 }
 
-// traceCallers traces what each call in the package passes the parameter p.
-func (t *tracer) traceCallers(p *ssa.Parameter) bool {
+// traceCallers traces what each call in the package passes the parameter p,
+// inside the frame f the calls are made in.
+func (t *tracer) traceCallers(p *ssa.Parameter, f *frame) bool {
 	index := slices.Index(p.Parent().Params, p)
 	for _, call := range t.src.calls[p.Parent()] {
-		if args := call.Common().Args; index < len(args) && t.trace(args[index], anywhere) {
+		if args := call.Common().Args; index < len(args) && t.trace(args[index], f) {
 			return true
 		}
 	}
@@ -853,7 +886,7 @@ func (t *tracer) followable(v ssa.Value, f *frame) bool {
 		callee, fact := t.follow(call, f)
 		return callee != nil || fact != nil
 	case *ssa.Parameter:
-		return f != nil && f != anywhere && f.call.Call.StaticCallee() == v.Parent()
+		return f.runs(v.Parent()) && f.call != nil
 	}
 	return false
 }
@@ -876,7 +909,7 @@ func (t *tracer) follow(call *ssa.Call, f *frame) (*ssa.Function, *funcFact) {
 func (t *tracer) traceCall(call *ssa.Call, index int, f *frame) bool {
 	switch callee, fact := t.follow(call, f); {
 	case callee != nil:
-		return t.traceReturns(callee, &frame{call: call, parent: f}, index)
+		return t.traceReturns(callee, &frame{fn: callee, call: call, parent: f}, index)
 	case fact != nil:
 		return t.traceResults(call, fact, index, f)
 	}
@@ -977,10 +1010,13 @@ func (t *tracer) traceReturns(fn *ssa.Function, f *frame, index int) bool {
 }
 
 // traceBindings traces what each closure the enclosing function makes binds
-// to the free variable v.
+// to the free variable v, in the frame the enclosing function runs in.
 func (t *tracer) traceBindings(v *ssa.FreeVar, f *frame) bool {
 	closure := v.Parent()
 	index := slices.Index(closure.FreeVars, v)
+	if f.runs(closure) {
+		f = f.parent
+	}
 	for _, block := range closure.Parent().Blocks {
 		for _, instr := range block.Instrs {
 			if mk, ok := instr.(*ssa.MakeClosure); ok && mk.Fn == closure && t.trace(mk.Bindings[index], f) {
@@ -992,7 +1028,9 @@ func (t *tracer) traceBindings(v *ssa.FreeVar, f *frame) bool {
 }
 
 // traceStores traces every value put in addr, or in an address or a slice
-// within it, as puts lists them.
+// within it, as puts lists them, whether the function puts it there, a
+// closure it captures addr in, a container it loads out of addr, or another
+// local that holds addr.
 func (t *tracer) traceStores(addr ssa.Value, f *frame) bool {
 	for _, ref := range *addr.Referrers() {
 		for _, p := range puts(ref) {
@@ -1008,6 +1046,55 @@ func (t *tracer) traceStores(addr ssa.Value, f *frame) bool {
 		if v, ok := ref.(ssa.Value); ok && within(v) == addr && t.traceStores(v, f) {
 			return true
 		}
+		// A channel, map, slice or pointer loaded out of addr shares what
+		// is put in it with the one addr holds.
+		if load, ok := ref.(*ssa.UnOp); ok && load.Op == token.MUL && isContainer(load.Type()) && t.traceStores(load, f) {
+			return true
+		}
+		// A local that holds addr puts in it what is written through it.
+		if store, ok := ref.(*ssa.Store); ok && store.Val == addr {
+			if holder, ok := store.Addr.(*ssa.Alloc); ok && t.traceThrough(holder, f) {
+				return true
+			}
+		}
+		// A closure that captures addr puts values in it through its free
+		// variable.
+		if fv := capture(ref, addr); fv != nil && t.traceStores(fv, &frame{fn: fv.Parent(), parent: f}) {
+			return true
+		}
 	}
 	return false
+}
+
+// traceThrough traces what is written through the address the local holder
+// holds, there or in a closure that captures holder. What is put in holder
+// itself is left out, since it points holder elsewhere.
+func (t *tracer) traceThrough(holder ssa.Value, f *frame) bool {
+	// Two locals that hold each other's addresses in turn are traced once.
+	if t.held[visit{holder, f}] {
+		return false
+	}
+	t.held[visit{holder, f}] = true
+	for _, ref := range *holder.Referrers() {
+		if load, ok := ref.(*ssa.UnOp); ok && load.Op == token.MUL && t.traceStores(load, f) {
+			return true
+		}
+		if fv := capture(ref, holder); fv != nil && t.traceThrough(fv, &frame{fn: fv.Parent(), parent: f}) {
+			return true
+		}
+	}
+	return false
+}
+
+// capture returns the free variable through which the closure instr makes
+// reaches addr, or nil when instr makes no closure that captures addr.
+func capture(instr ssa.Instruction, addr ssa.Value) *ssa.FreeVar {
+	mk, ok := instr.(*ssa.MakeClosure)
+	if !ok {
+		return nil
+	}
+	if i := slices.Index(mk.Bindings, addr); i >= 0 {
+		return mk.Fn.(*ssa.Function).FreeVars[i]
+	}
+	return nil
 }

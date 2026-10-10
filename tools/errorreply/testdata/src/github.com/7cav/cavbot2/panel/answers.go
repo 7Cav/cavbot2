@@ -23,3 +23,9 @@ func answersWithTheErrorTrimmedByACallThatReturnsTwoResults(w http.ResponseWrite
 	detail, _ := strings.CutPrefix(err.Error(), "HTTP ")
 	http.Error(w, "bad: "+detail, http.StatusInternalServerError) // want "panel"
 }
+
+func answersWithWhatAClosureKept(w http.ResponseWriter, err error) {
+	var reason string
+	func() { reason = err.Error() }()
+	http.Error(w, "bad: "+reason, http.StatusInternalServerError) // want "panel"
+}
