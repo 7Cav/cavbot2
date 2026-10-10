@@ -20,6 +20,21 @@
 // it reaches a person. A call into a package outside the module counts as
 // built from all its arguments, and an error type from outside the module,
 // or one that isn't a struct, counts as built from an error on sight.
+//
+// A value read out of a slice, array, map, channel or interface counts as
+// built from everything put in it: an element read by index or by range, a
+// map's key or value, a type assertion, a receive. So does the whole
+// container. The index or key it is read with, and the second result of a
+// comma-ok read, carry none of it.
+//
+// A package-level variable counts as built from everything its package puts
+// in it: its declared value, a store at an address within it, a map update
+// on it, and what each call in the package passes a function that puts its
+// parameter there. Another package of the module that reads the variable
+// gets the verdict its package recorded. The check can't follow a value
+// that one package puts in another's variable to where the variable is
+// read, so it reports that store where it's made, and a call that passes a
+// value to another package's function that puts it in a variable.
 package main
 
 import (
@@ -40,7 +55,7 @@ var analyzer = &analysis.Analyzer{
 	Doc:       "reports a message to Discord or a panel answer that carries data from an error",
 	Requires:  []*analysis.Analyzer{buildssa.Analyzer},
 	Run:       run,
-	FactTypes: []analysis.Fact{new(funcFact), new(typeFact)},
+	FactTypes: []analysis.Fact{new(funcFact), new(typeFact), new(varFact)},
 }
 
 func main() { singlechecker.Main(analyzer) }
@@ -52,11 +67,13 @@ const module = "github.com/7cav/cavbot2"
 
 // funcFact is what the check of a function's package records about the
 // function for the checks of the packages that call it: what each of its
-// results is built from, and which of its parameters it stores into an
-// error type the package defines.
+// results is built from, which of its parameters it stores into an error
+// type the package defines, and which, counting a method's receiver first,
+// it puts in a package-level variable of the package.
 type funcFact struct {
 	Results []result
 	Stores  []store
+	Vars    []int
 }
 
 func (*funcFact) AFact() {}
@@ -83,6 +100,15 @@ type typeFact struct {
 }
 
 func (*typeFact) AFact() {}
+
+// varFact is what the check of a package-level variable's package records
+// about the variable for the checks of the packages that read it: whether
+// what its package puts in it carries data from an error.
+type varFact struct {
+	Carries bool
+}
+
+func (*varFact) AFact() {}
 
 // The function that sends a member its error reply, and the position of the
 // parameter that carries the reply's text.
@@ -130,29 +156,37 @@ var panelFields = map[string]bool{
 
 // The diagnostics, one for each place a value is handed on to.
 const (
-	toDiscord = "this message to Discord carries data from an error; send fixed text and log the error or capture it (ADR 0016)"
-	toPanel   = "this panel answer carries data from an error; answer with fixed text and log the error or capture it (ADR 0016)"
+	toDiscord  = "this message to Discord carries data from an error; send fixed text and log the error or capture it (ADR 0016)"
+	toPanel    = "this panel answer carries data from an error; answer with fixed text and log the error or capture it (ADR 0016)"
+	toVariable = "this puts data from an error in another package's variable, where the check can't follow it to a person; put fixed text there and log the error or capture it (ADR 0016)"
 )
 
 var errorType = types.Universe.Lookup("error").Type().Underlying().(*types.Interface)
 
 func run(pass *analysis.Pass) (any, error) {
-	if path := pass.Pkg.Path(); path != module && !strings.HasPrefix(path, module+"/") {
+	if !inModule(pass.Pkg) {
 		return nil, nil
 	}
 	src := newSource(pass)
-	flow(pass, src, false, map[*types.TypeName]string{}, func(pos token.Pos, diag string) {
+	flow(&sinks{pass: pass, src: src, reached: map[*types.TypeName]string{}}, func(pos token.Pos, diag string) {
 		pass.Reportf(pos, "%s", diag)
 	})
 	stores := exportTypes(pass, src)
-	exportFuncs(pass, src, stores)
+	vars := exportVars(pass, src)
+	exportFuncs(pass, src, stores, vars)
 	return nil, nil
+}
+
+// inModule reports whether pkg is a package of the module.
+func inModule(pkg *types.Package) bool {
+	return pkg.Path() == module || strings.HasPrefix(pkg.Path(), module+"/")
 }
 
 // source is the code of the package being checked: its functions, the
 // values they put in each of its package-level variables, and the calls
 // they make to each function with a body.
 type source struct {
+	pkg    *ssa.Package
 	funcs  []*ssa.Function
 	writes map[*ssa.Global][]ssa.Value
 	calls  map[*ssa.Function][]ssa.CallInstruction
@@ -163,7 +197,7 @@ type source struct {
 // functions and which holds each variable's declared value.
 func newSource(pass *analysis.Pass) *source {
 	built := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
-	src := &source{funcs: built.SrcFuncs, writes: map[*ssa.Global][]ssa.Value{}, calls: map[*ssa.Function][]ssa.CallInstruction{}}
+	src := &source{pkg: built.Pkg, funcs: built.SrcFuncs, writes: map[*ssa.Global][]ssa.Value{}, calls: map[*ssa.Function][]ssa.CallInstruction{}}
 	if init := built.Pkg.Func("init"); init != nil {
 		src.funcs = append(src.funcs, init)
 	}
@@ -219,19 +253,17 @@ func variable(v ssa.Value) *ssa.Global {
 	}
 }
 
-// flow traces each value funcs hand on toward a person and reports each one
-// built from an error. A value is handed on by a checked call or a store
-// into a panel field, unless storesOnly is set. Either way a value stored
-// into one of the reached error types is handed on, since such a value
-// carries what is stored in it.
+// flow traces each value the package's functions hand on to s and reports
+// each one built from an error.
 //
 // A function that passes one of its parameters on to a sink is a sink for
 // that parameter too, and once a value of an error type the module defines
 // reaches a sink, each store into that type is checked. Each round over the
 // package finds the wrappers and the types the sinks known so far reach,
 // until a round finds none. flow returns the wrappers.
-func flow(pass *analysis.Pass, src *source, storesOnly bool, reached map[*types.TypeName]string, report func(token.Pos, string)) map[*ssa.Function]map[int]string {
-	s := &sinks{pass: pass, storesOnly: storesOnly, wrappers: map[*ssa.Function]map[int]string{}, reached: reached}
+func flow(s *sinks, report func(token.Pos, string)) map[*ssa.Function]map[int]string {
+	pass, src, reached := s.pass, s.src, s.reached
+	s.wrappers = map[*ssa.Function]map[int]string{}
 	reported := map[token.Pos]bool{}
 	for found := true; found; {
 		found = false
@@ -285,7 +317,7 @@ func exportTypes(pass *analysis.Pass, src *source) map[*ssa.Function][]store {
 			continue
 		}
 		fact := &typeFact{}
-		wrappers := flow(pass, src, true, map[*types.TypeName]string{obj: ""}, func(token.Pos, string) {
+		wrappers := flow(&sinks{pass: pass, src: src, storesOnly: true, reached: map[*types.TypeName]string{obj: ""}}, func(token.Pos, string) {
 			fact.Carries = true
 		})
 		pass.ExportObjectFact(obj, fact)
@@ -298,6 +330,29 @@ func exportTypes(pass *analysis.Pass, src *source) map[*ssa.Function][]store {
 	return stores
 }
 
+// exportVars records, for each package-level variable of the package,
+// whether what the package puts in it carries data from an error, for the
+// checks of the packages that read it. It returns, for each function, the
+// parameters it puts in one of the variables.
+func exportVars(pass *analysis.Pass, src *source) map[*ssa.Function][]int {
+	for _, member := range src.pkg.Members {
+		g, ok := member.(*ssa.Global)
+		if !ok || g.Object() == nil {
+			continue
+		}
+		t := &tracer{pass: pass, src: src, seen: map[visit]bool{}, through: true}
+		pass.ExportObjectFact(g.Object(), &varFact{Carries: t.traceVariable(g)})
+	}
+	puts := map[*ssa.Function][]int{}
+	wrappers := flow(&sinks{pass: pass, src: src, storesOnly: true, vars: true, reached: map[*types.TypeName]string{}}, func(token.Pos, string) {})
+	for fn, params := range wrappers {
+		for param := range params {
+			puts[fn] = append(puts[fn], param)
+		}
+	}
+	return puts
+}
+
 // isError reports whether typ, or a pointer to it, is an error.
 func isError(typ types.Type) bool {
 	return types.Implements(typ, errorType) || types.Implements(types.NewPointer(typ), errorType)
@@ -305,8 +360,9 @@ func isError(typ types.Type) bool {
 
 // exportFuncs records, for each function of the package, what each of its
 // results is built from and the parameters it stores into the package's
-// error types, for the checks of the packages that call it.
-func exportFuncs(pass *analysis.Pass, src *source, stores map[*ssa.Function][]store) {
+// error types or puts in its variables, for the checks of the packages that
+// call it.
+func exportFuncs(pass *analysis.Pass, src *source, stores map[*ssa.Function][]store, vars map[*ssa.Function][]int) {
 	type export struct {
 		obj  *types.Func
 		fact *funcFact
@@ -319,7 +375,7 @@ func exportFuncs(pass *analysis.Pass, src *source, stores map[*ssa.Function][]st
 		if !ok {
 			continue
 		}
-		fact := &funcFact{Results: make([]result, fn.Signature.Results().Len()), Stores: stores[fn]}
+		fact := &funcFact{Results: make([]result, fn.Signature.Results().Len()), Stores: stores[fn], Vars: vars[fn]}
 		for i := range fact.Results {
 			t := &tracer{pass: pass, src: src, seen: map[visit]bool{}, through: true}
 			fact.Results[i].Carries = t.traceReturns(fn, nil, i)
@@ -336,13 +392,22 @@ func exportFuncs(pass *analysis.Pass, src *source, stores map[*ssa.Function][]st
 	}
 }
 
-// sinks is what one flow over a package hands a value on to.
+// sinks is what one flow over a package hands a value on to. Unless
+// storesOnly is set, that is a checked call, a store into a panel field,
+// and a value put in another package's variable. Either way a value stored
+// into one of the reached error types is handed on, since such a value
+// carries what is stored in it.
 type sinks struct {
 	pass *analysis.Pass
-	// storesOnly leaves out the checked calls and fields, so that only a
-	// store into a reached type, or a call that passes a value on to one,
-	// hands a value on.
+	src  *source
+	// storesOnly leaves out the checked calls, fields and other packages'
+	// variables, so that only a store into a reached type, or a call that
+	// passes a value on to one, hands a value on.
 	storesOnly bool
+	// vars hands on each value put in a package-level variable of the
+	// package, so that the flow finds the functions that put a parameter
+	// in one.
+	vars bool
 	// wrappers holds the functions of the package that pass a parameter on
 	// to a sink, and the diagnostic for each such parameter.
 	wrappers map[*ssa.Function]map[int]string
@@ -359,33 +424,65 @@ type sent struct {
 }
 
 // outgoing returns the values instr hands on toward a person: the arguments
-// of a sink call that carry the message or the answer, or the value stored
-// into a panel field or into a field of an error type that reaches a sink.
+// of a sink call that carry the message or the answer, the value stored
+// into a panel field or into a field of an error type that reaches a sink,
+// or the values put in a package-level variable that s hands on.
 func (s *sinks) outgoing(instr ssa.Instruction) []sent {
+	values := s.puts(instr)
 	switch instr := instr.(type) {
 	case ssa.CallInstruction:
-		var values []sent
 		answers := instr.Parent().Pkg.Pkg.Path() == panelPackage
 		for param, diag := range s.params(instr.Common(), answers) {
 			values = append(values, sent{instr.Common().Args[param], diag})
 		}
-		return values
 	case *ssa.Store:
-		if field, ok := instr.Addr.(*ssa.FieldAddr); ok && !s.storesOnly && panelFields[fieldName(field)] {
-			return []sent{{instr.Val, toPanel}}
-		}
-		for addr := instr.Addr; ; {
-			field, ok := addr.(*ssa.FieldAddr)
-			if !ok {
-				return nil
-			}
-			if diag, ok := s.reached[typeName(field.X.Type())]; ok {
-				return []sent{{instr.Val, diag}}
-			}
-			addr = field.X
+		if diag, ok := s.field(instr.Addr); ok {
+			values = append(values, sent{instr.Val, diag})
 		}
 	}
-	return nil
+	return values
+}
+
+// puts returns the values instr puts in a package-level variable that s
+// hands on: one of the package's own when vars is set, or else one of
+// another package of the module, whose check can't follow the value to
+// where the variable is read.
+func (s *sinks) puts(instr ssa.Instruction) []sent {
+	g, values := put(instr)
+	if g == nil {
+		return nil
+	}
+	var diag string
+	switch {
+	case s.vars && g.Pkg == s.src.pkg:
+	case !s.storesOnly && g.Pkg != s.src.pkg && inModule(g.Pkg.Pkg):
+		diag = toVariable
+	default:
+		return nil
+	}
+	var out []sent
+	for _, v := range values {
+		out = append(out, sent{v, diag})
+	}
+	return out
+}
+
+// field returns the diagnostic for a value stored at addr into a panel
+// field, or into a field of an error type that reaches a sink.
+func (s *sinks) field(addr ssa.Value) (string, bool) {
+	if field, ok := addr.(*ssa.FieldAddr); ok && !s.storesOnly && panelFields[fieldName(field)] {
+		return toPanel, true
+	}
+	for {
+		field, ok := addr.(*ssa.FieldAddr)
+		if !ok {
+			return "", false
+		}
+		if diag, ok := s.reached[typeName(field.X.Type())]; ok {
+			return diag, true
+		}
+		addr = field.X
+	}
 }
 
 // fieldName returns the field field addresses, named by its package path,
@@ -412,17 +509,24 @@ func (s *sinks) params(call *ssa.CallCommon, answers bool) map[int]string {
 	}
 	callee := call.StaticCallee()
 	params := maps.Clone(s.wrappers[callee])
-	// A function of another package of the module that stores a parameter
-	// into one of its error types passes that parameter on to a sink once
-	// the type reaches one.
+	if params == nil {
+		params = map[int]string{}
+	}
 	if fact := importFuncFact(s.pass, call); fact != nil {
+		// A function of another package of the module that stores a
+		// parameter into one of its error types passes that parameter on
+		// to a sink once the type reaches one.
 		for _, st := range fact.Stores {
 			obj, _ := callee.Object().Pkg().Scope().Lookup(st.Type).(*types.TypeName)
 			if diag, ok := s.reached[obj]; ok {
-				if params == nil {
-					params = map[int]string{}
-				}
 				params[st.Param] = diag
+			}
+		}
+		// One that puts a parameter in a package-level variable puts it
+		// where this check can't follow it.
+		if !s.storesOnly {
+			for _, param := range fact.Vars {
+				params[param] = toVariable
 			}
 		}
 	}
@@ -476,7 +580,9 @@ func isNamed(typ types.Type, path string, names ...string) bool {
 // its return values and back out through its parameters to the call's
 // arguments, and a call into another package of the module by what that
 // package's check recorded about it. A call into any other function counts
-// as built from all its arguments.
+// as built from all its arguments. It follows a read out of a container to
+// what was put in it, and a package-level variable to what its package puts
+// in it.
 type tracer struct {
 	pass *analysis.Pass
 	src  *source
@@ -646,9 +752,13 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 }
 
 // traceVariable traces every value the package puts in the package-level
-// variable g. What a variable holds doesn't depend on the call the tracer
-// reached it in.
+// variable g, or reads what the check of g's package recorded about it.
+// What a variable holds doesn't depend on the call the tracer reached it in.
 func (t *tracer) traceVariable(g *ssa.Global) bool {
+	if g.Pkg != t.src.pkg {
+		var fact varFact
+		return g.Object() != nil && t.pass.ImportObjectFact(g.Object(), &fact) && fact.Carries
+	}
 	for _, v := range t.src.writes[g] {
 		if t.trace(v, anywhere) {
 			return true
@@ -831,8 +941,9 @@ func (t *tracer) traceBindings(v *ssa.FreeVar, f *frame) bool {
 }
 
 // traceStores traces every value stored at addr or at an address within it,
-// and every argument of a call that addr is passed to, since the call may
-// write them there, as a strings.Builder's WriteString does.
+// or put in the map or sent on the channel addr is, and every argument of a
+// call that addr is passed to, since the call may write them there, as a
+// strings.Builder's WriteString does.
 func (t *tracer) traceStores(addr ssa.Value, f *frame) bool {
 	for _, ref := range *addr.Referrers() {
 		switch ref := ref.(type) {
