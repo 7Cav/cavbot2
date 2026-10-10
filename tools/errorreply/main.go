@@ -472,22 +472,10 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 	}
 	switch v := v.(type) {
 	case *ssa.Call:
-		if carries, followed := t.traceCall(v, -1, f); followed {
-			return carries
-		}
-		if v.Call.IsInvoke() && t.trace(v.Call.Value, f) {
-			return true
-		}
-		for _, arg := range v.Call.Args {
-			if t.trace(arg, f) {
-				return true
-			}
-		}
+		return t.traceCall(v, -1, f)
 	case *ssa.Extract:
 		if call, ok := v.Tuple.(*ssa.Call); ok {
-			if carries, followed := t.traceCall(call, v.Index, f); followed {
-				return carries
-			}
+			return t.traceCall(call, v.Index, f)
 		}
 	case *ssa.Parameter:
 		if f == nil {
@@ -575,16 +563,25 @@ func (t *tracer) follow(call *ssa.Call, f *frame) (*ssa.Function, *funcFact) {
 }
 
 // traceCall traces the result of call at index, or every result when index
-// is negative, when the tracer follows call. followed reports whether it
-// does.
-func (t *tracer) traceCall(call *ssa.Call, index int, f *frame) (carries, followed bool) {
+// is negative. When the tracer can't follow call, each of its results counts
+// as built from all its arguments and the interface value a method call is
+// made on.
+func (t *tracer) traceCall(call *ssa.Call, index int, f *frame) bool {
 	switch callee, fact := t.follow(call, f); {
 	case callee != nil:
-		return t.traceReturns(callee, &frame{call: call, parent: f}, index), true
+		return t.traceReturns(callee, &frame{call: call, parent: f}, index)
 	case fact != nil:
-		return t.traceResults(call, fact, index, f), true
+		return t.traceResults(call, fact, index, f)
 	}
-	return false, false
+	if call.Call.IsInvoke() && t.trace(call.Call.Value, f) {
+		return true
+	}
+	for _, arg := range call.Call.Args {
+		if t.trace(arg, f) {
+			return true
+		}
+	}
+	return false
 }
 
 // callee returns the function of the package being checked that call

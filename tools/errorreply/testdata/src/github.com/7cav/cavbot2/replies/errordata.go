@@ -3,6 +3,7 @@ package replies
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
@@ -90,4 +91,10 @@ func attend(name string, err error) attendee {
 
 func namesAPlayerBesideAFailureFlag(r utils.InteractionResponder, i *discordgo.InteractionCreate, name string, err error) {
 	utils.HandleError(r, i, "⚠️ Couldn't match "+attend(name, err).name)
+}
+
+func namesAWaitParsedFromTheErrorsText(r utils.InteractionResponder, i *discordgo.InteractionCreate, err error) {
+	if wait, perr := time.ParseDuration(err.Error()); perr == nil {
+		utils.HandleError(r, i, fmt.Sprintf("❌ Discord is busy. Try again in %s.", wait))
+	}
 }
