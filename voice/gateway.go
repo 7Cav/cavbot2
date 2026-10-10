@@ -108,6 +108,9 @@ type disgoConn struct {
 	conn disgovoice.Conn
 }
 
+// Receive is not wired to disgo yet.
+func (c disgoConn) Receive(func(Frame)) {}
+
 // Leave sends the voice state update that takes the recorder out, and closes
 // the voice gateway, UDP and DAVE session.
 func (c disgoConn) Leave(ctx context.Context) { c.conn.Close(ctx) }

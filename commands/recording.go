@@ -33,6 +33,14 @@ import (
 // is, so tests can pin a recording's start and stop times.
 var recordingNow = time.Now
 
+// recordingAfterFunc runs f on a goroutine of its own once d has passed, as
+// tempVCAfterFunc does. A recording's flushes are timed through it, so tests
+// run them on the fake clock.
+var recordingAfterFunc = func(d time.Duration, f func()) (stop func()) {
+	timer := time.AfterFunc(d, f)
+	return func() { timer.Stop() }
+}
+
 // recordingJoinTimeout bounds a recorder's join. The command has deferred
 // its reply by then, so the member waits on it.
 const recordingJoinTimeout = 30 * time.Second
@@ -113,6 +121,9 @@ type RecordingRuntime struct {
 	voice     RecorderVoice
 	guildID   string
 	recorders []string
+	// dir is the recordings directory, which holds a directory of tracks
+	// per recording.
+	dir string
 
 	mu sync.Mutex
 	// running maps each busy recorder's user ID to its recording.
@@ -122,16 +133,17 @@ type RecordingRuntime struct {
 // activeRecording is one recording a recorder is busy with. conn is nil
 // while its join is in flight.
 type activeRecording struct {
-	row  store.Recording
-	conn voice.Conn
+	row    store.Recording
+	conn   voice.Conn
+	tracks *recordingTracks
 	// stopping is set once a stop has taken it, so a second stop doesn't.
 	stopping bool
 }
 
 // NewRecordingRuntime builds the recording runtime over the Discord
 // session's manager, the store, temp VC (which knows the hubs) and the
-// voice adapter, whose recorders it takes now.
-func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guildID string, rv RecorderVoice) *RecordingRuntime {
+// voice adapter, whose recorders it takes now. Tracks go under dir.
+func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guildID string, rv RecorderVoice, dir string) *RecordingRuntime {
 	return &RecordingRuntime{
 		mgr:       mgr,
 		st:        st,
@@ -139,6 +151,7 @@ func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guild
 		voice:     rv,
 		guildID:   guildID,
 		recorders: rv.UserIDs(),
+		dir:       dir,
 		running:   make(map[string]*activeRecording),
 	}
 }
@@ -201,9 +214,14 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 		captureError("Recording row not written at start", err, "recorder", recorderID, "channel_id", channelID)
 		return "", errRecordingFailed
 	}
+	// The recorder starts handing over what it hears only now, with the
+	// row written: frames before wait in the socket. A frame arrives at the
+	// runtime's clock when it's handed over.
+	tracks := newRecordingTracks(r.dir, row.ID, row.StartedAt)
 	r.mu.Lock()
-	r.running[recorderID] = &activeRecording{row: row, conn: conn}
+	r.running[recorderID] = &activeRecording{row: row, conn: conn, tracks: tracks}
 	r.mu.Unlock()
+	conn.Receive(func(f voice.Frame) { tracks.write(f, recordingNow()) })
 	utils.Info("Recording started", "recording_id", row.ID, "channel_id", channelID,
 		"starter", by.UserID, "recorder", recorderID)
 	return channelID, nil
@@ -252,9 +270,13 @@ func (r *RecordingRuntime) Stop(by Invoker) (channelID string, err error) {
 	r.mu.Unlock()
 
 	r.leave(target.conn)
+	stoppedAt := recordingNow()
+	if err := target.tracks.close(stoppedAt); err != nil {
+		captureError("Tracks not closed at stop", err, "recording_id", target.row.ID)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)
 	defer cancel()
-	if err := r.st.StopRecording(ctx, target.row.ID, recordingNow()); err != nil {
+	if err := r.st.StopRecording(ctx, target.row.ID, stoppedAt); err != nil {
 		captureError("Recording row not closed at stop", err, "recording_id", target.row.ID)
 	}
 	r.release(recorderID)

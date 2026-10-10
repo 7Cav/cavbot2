@@ -26,8 +26,26 @@ type GatewaySession interface {
 
 // Conn is one recorder's connection to a voice channel.
 type Conn interface {
+	// Receive hands every frame the recorder hears from now on to handle,
+	// one at a time, in the order they arrive, until Leave.
+	Receive(handle func(Frame))
 	// Leave takes the recorder out of the channel.
 	Leave(ctx context.Context)
+}
+
+// Frame is one Opus packet a speaker sent, as Discord delivered it, with
+// both encryptions taken off.
+type Frame struct {
+	// UserID is the speaker's Discord user ID.
+	UserID string
+	// SSRC is the RTP stream the packet came on. A speaker who rejoins
+	// comes back on a new one.
+	SSRC uint32
+	// Timestamp is the packet's RTP timestamp, in 48 kHz samples from a
+	// random base each SSRC picks.
+	Timestamp uint32
+	// Opus is the packet's Opus payload, the caller's to keep.
+	Opus []byte
 }
 
 // Opener opens one recorder's gateway session from its token.

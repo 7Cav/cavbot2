@@ -46,6 +46,7 @@ type fakeConn struct {
 }
 
 func (c *fakeConn) Leave(context.Context) { c.left = true }
+func (c *fakeConn) Receive(func(Frame))   {}
 
 // errAuthenticationFailed is the fake gateway's answer to a token it does
 // not know, as Discord closes a session whose token is bad or revoked.
