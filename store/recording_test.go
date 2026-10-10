@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
+	"time"
 )
 
 // The recording roles (#383): the guild-wide set of roles whose holders may
@@ -94,4 +96,81 @@ func TestRecordingRolesSaveOverAStoredRowMovesItsVersion(t *testing.T) {
 			t.Errorf("after a save over version %d the set reads back at %d, want another version", loaded.Version, got)
 		}
 	})
+}
+
+// Recordings (#386): a recording's row is written when a recorder joins and
+// closed when it leaves.
+
+// sampleRecording is a running recording in guild-1, with every field the
+// start writes set off its zero value, so a write that drops one reads back
+// wrong.
+func sampleRecording() Recording {
+	return Recording{
+		GuildID:     "guild-1",
+		ChannelID:   "vc-1",
+		ChannelName: "Briefing Room",
+		StarterID:   "user-s",
+		Title:       "S2 interview",
+		RecorderID:  "user-recorder",
+		StartedAt:   time.Date(2026, time.October, 10, 18, 0, 0, 0, time.UTC),
+	}
+}
+
+// listRecordings reads guild-1's recordings.
+func listRecordings(t *testing.T, s Store) []Recording {
+	t.Helper()
+	recs, err := s.ListRecordings(context.Background(), "guild-1")
+	if err != nil {
+		t.Fatalf("ListRecordings: %v", err)
+	}
+	return recs
+}
+
+// A started recording reads back as it was started, under the ID the start
+// returned and not yet stopped. A stop records its time, and the recording
+// then reads back stopped at it. A second stop of it, and a stop of an ID
+// no recording has, are ErrNotFound.
+func TestRecordingStartsAndStops(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		want := sampleRecording()
+		started, err := s.StartRecording(ctx, want)
+		if err != nil {
+			t.Fatalf("StartRecording: %v", err)
+		}
+		want.ID = started.ID
+
+		got := listRecordings(t, s)
+		if len(got) != 1 || !sameRecording(got[0], want) {
+			t.Fatalf("recordings after the start = %+v, want only %+v", got, want)
+		}
+
+		stoppedAt := want.StartedAt.Add(42 * time.Minute)
+		if err := s.StopRecording(ctx, started.ID, stoppedAt); err != nil {
+			t.Fatalf("StopRecording: %v", err)
+		}
+		want.StoppedAt = stoppedAt
+		if got := listRecordings(t, s); len(got) != 1 || !sameRecording(got[0], want) {
+			t.Errorf("recordings after the stop = %+v, want only %+v", got, want)
+		}
+
+		if err := s.StopRecording(ctx, started.ID, stoppedAt.Add(time.Minute)); !errors.Is(err, ErrNotFound) {
+			t.Errorf("second StopRecording = %v, want ErrNotFound", err)
+		}
+		if err := s.StopRecording(ctx, started.ID+100, stoppedAt); !errors.Is(err, ErrNotFound) {
+			t.Errorf("StopRecording of an unknown ID = %v, want ErrNotFound", err)
+		}
+		if got := listRecordings(t, s); len(got) != 1 || !got[0].StoppedAt.Equal(stoppedAt) {
+			t.Errorf("recordings after the refused stops = %+v, want one stopped at %v", got, stoppedAt)
+		}
+	})
+}
+
+// sameRecording compares two recordings field by field, times by instant,
+// since Postgres hands a time back in its own location.
+func sameRecording(a, b Recording) bool {
+	ta, tb := a, b
+	ta.StartedAt, tb.StartedAt = time.Time{}, time.Time{}
+	ta.StoppedAt, tb.StoppedAt = time.Time{}, time.Time{}
+	return ta == tb && a.StartedAt.Equal(b.StartedAt) && a.StoppedAt.Equal(b.StoppedAt)
 }

@@ -48,6 +48,10 @@ type Fake struct {
 	// reports marks the entries of the Foxhole change log that are Foxhole
 	// actions' reports, by ID, each true while its action runs.
 	reports map[int64]bool
+	// recordings holds every recording by ID, and nextRecordingID the ID the
+	// next start gets.
+	recordings      map[int64]Recording
+	nextRecordingID int64
 }
 
 // changeLog is one change log in append order, and the ID its next entry
@@ -60,15 +64,17 @@ type changeLog struct {
 // NewFake returns an empty Fake.
 func NewFake() *Fake {
 	return &Fake{
-		nextID:         1,
-		hubs:           make(map[int64]Hub),
-		spawned:        make(map[string]SpawnedChannel),
-		guildRoles:     make(map[string]GuildModeratorRoles),
-		recordingRoles: make(map[string]RecordingRoles),
-		changes:        changeLog{nextID: 1},
-		foxholeChanges: changeLog{nextID: 1},
-		members:        make(map[string]map[string]FoxholeRecord),
-		reports:        make(map[int64]bool),
+		nextID:          1,
+		hubs:            make(map[int64]Hub),
+		spawned:         make(map[string]SpawnedChannel),
+		guildRoles:      make(map[string]GuildModeratorRoles),
+		recordingRoles:  make(map[string]RecordingRoles),
+		changes:         changeLog{nextID: 1},
+		foxholeChanges:  changeLog{nextID: 1},
+		members:         make(map[string]map[string]FoxholeRecord),
+		reports:         make(map[int64]bool),
+		recordings:      make(map[int64]Recording),
+		nextRecordingID: 1,
 	}
 }
 
@@ -454,6 +460,52 @@ func (f *Fake) listChanges(log *changeLog, limit int, keep func(ChangeLogEntry) 
 		out = append(out, e)
 	}
 	return out
+}
+
+// StartRecording implements Store.
+func (f *Fake) StartRecording(ctx context.Context, rec Recording) (Recording, error) {
+	if err := ctx.Err(); err != nil {
+		return Recording{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec.ID = f.nextRecordingID
+	f.nextRecordingID++
+	rec.StoppedAt = time.Time{}
+	f.recordings[rec.ID] = rec
+	return rec, nil
+}
+
+// StopRecording implements Store.
+func (f *Fake) StopRecording(ctx context.Context, id int64, at time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.recordings[id]
+	if !ok || !rec.StoppedAt.IsZero() {
+		return ErrNotFound
+	}
+	rec.StoppedAt = at
+	f.recordings[id] = rec
+	return nil
+}
+
+// ListRecordings implements Store.
+func (f *Fake) ListRecordings(ctx context.Context, guildID string) ([]Recording, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []Recording
+	for _, rec := range f.recordings {
+		if rec.GuildID == guildID {
+			out = append(out, rec)
+		}
+	}
+	return out, nil
 }
 
 // ListFoxholeRecords implements Store.

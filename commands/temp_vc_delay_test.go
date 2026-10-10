@@ -17,11 +17,11 @@ import (
 // runs on a fake clock, so no test waits real minutes, and judges a channel
 // by whether the fake manager was asked to delete it. ---
 
-// fakeClock stands in for the runtime's clock and timers: tempVCNow reads
-// its time and tempVCAfterFunc schedules on it. advance moves time forward
-// and runs each timer that falls due, earliest first, on the test's own
-// goroutine, so a wait ends in step with the test and the suite needs no
-// lock around what the runtime does when it does.
+// fakeClock stands in for the runtimes' clocks and timers: tempVCNow and
+// recordingNow read its time and tempVCAfterFunc schedules on it. advance
+// moves time forward and runs each timer that falls due, earliest first, on
+// the test's own goroutine, so a wait ends in step with the test and the
+// suite needs no lock around what the runtime does when it does.
 type fakeClock struct {
 	mu     sync.Mutex
 	now    time.Time
@@ -41,9 +41,9 @@ type fakeTimer struct {
 func installFakeClock(t *testing.T) *fakeClock {
 	t.Helper()
 	c := &fakeClock{now: time.Date(2026, time.September, 27, 18, 0, 0, 0, time.UTC)}
-	prevNow, prevAfter := tempVCNow, tempVCAfterFunc
-	tempVCNow, tempVCAfterFunc = c.read, c.afterFunc
-	t.Cleanup(func() { tempVCNow, tempVCAfterFunc = prevNow, prevAfter })
+	prevNow, prevAfter, prevRecordingNow := tempVCNow, tempVCAfterFunc, recordingNow
+	tempVCNow, tempVCAfterFunc, recordingNow = c.read, c.afterFunc, c.read
+	t.Cleanup(func() { tempVCNow, tempVCAfterFunc, recordingNow = prevNow, prevAfter, prevRecordingNow })
 	return c
 }
 

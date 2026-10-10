@@ -937,6 +937,15 @@ func (t *TempVC) SpawnedCount(hubID int64) int {
 	return n
 }
 
+// IsHub reports whether a channel is a hub's channel, a disabled hub's
+// included. /record start refuses in one.
+func (t *TempVC) IsHub(channelID string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, ok := t.hubs[channelID]
+	return ok
+}
+
 // Owner reports who owns a spawned channel: the owner's user ID, or empty
 // when the channel has none, and whether the channel is a spawned channel the
 // runtime tracks at all. A hub channel or any other channel is untracked. The

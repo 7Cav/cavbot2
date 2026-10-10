@@ -23,13 +23,29 @@ func TestMain(m *testing.M) {
 }
 
 // fakeSession is one recorder's gateway session as the fake gateway opens it.
+// conns is every voice connection it joined, in order.
 type fakeSession struct {
 	userID string
 	closed bool
+	conns  []*fakeConn
 }
 
 func (s *fakeSession) UserID() string { return s.userID }
 func (s *fakeSession) Close() error   { s.closed = true; return nil }
+
+func (s *fakeSession) Join(_ context.Context, guildID, channelID string) (Conn, error) {
+	c := &fakeConn{guildID: guildID, channelID: channelID}
+	s.conns = append(s.conns, c)
+	return c, nil
+}
+
+// fakeConn is one voice connection a fake session joined, until it leaves.
+type fakeConn struct {
+	guildID, channelID string
+	left               bool
+}
+
+func (c *fakeConn) Leave(context.Context) { c.left = true }
 
 // errAuthenticationFailed is the fake gateway's answer to a token it does
 // not know, as Discord closes a session whose token is bad or revoked.
@@ -156,5 +172,29 @@ func TestCloseClosesEveryRecorderSession(t *testing.T) {
 		if !s.closed {
 			t.Errorf("recorder %s still connected after Close", s.userID)
 		}
+	}
+}
+
+// A join goes through the session of the recorder it names, into the guild
+// and channel given, and leaving takes that recorder back out.
+func TestJoinGoesThroughTheNamedRecorder(t *testing.T) {
+	gw := newFakeGateway(map[string]string{"tok-a": "id-a", "tok-b": "id-b"})
+	r := Connect("tok-a,tok-b", gw.open)
+
+	conn, err := r.Join(context.Background(), "id-b", "guild-1", "vc-1")
+	if err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+
+	a, b := gw.opened[0], gw.opened[1]
+	if len(a.conns) != 0 {
+		t.Errorf("recorder id-a joined %d channels, want none", len(a.conns))
+	}
+	if len(b.conns) != 1 || b.conns[0].guildID != "guild-1" || b.conns[0].channelID != "vc-1" {
+		t.Fatalf("recorder id-b joined %+v, want guild-1's vc-1", b.conns)
+	}
+	conn.Leave(context.Background())
+	if !b.conns[0].left {
+		t.Error("recorder id-b still in vc-1 after Leave")
 	}
 }

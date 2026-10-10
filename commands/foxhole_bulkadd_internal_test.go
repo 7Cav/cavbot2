@@ -909,7 +909,7 @@ func TestRunFoxholeBulkAddInternal_EmbedCountsTheMembersItCantName(t *testing.T)
 // The command is wired into the registry so Discord registers it and routes its
 // interactions to the handler.
 func TestRegistry_RegistersFoxholeBulkAddInternal(t *testing.T) {
-	reg := NewRegistry(nil, nil)
+	reg := NewRegistry(nil, nil, nil)
 
 	registered := false
 	for _, def := range reg.GetCommands() {

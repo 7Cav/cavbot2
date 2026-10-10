@@ -663,7 +663,7 @@ func TestVoiceRenameUnknownChannelUntracksQuietly(t *testing.T) {
 // command ID.
 func TestRegistryDeclaresVoiceRename(t *testing.T) {
 	var def *discordgo.ApplicationCommand
-	for _, d := range NewRegistry(nil, nil).GetCommands() {
+	for _, d := range NewRegistry(nil, nil, nil).GetCommands() {
 		if d.Name == "voice-rename" {
 			def = d
 		}

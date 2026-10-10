@@ -78,7 +78,7 @@ func holdFoxholeAdd(t *testing.T, w *testWorld) heldCommand {
 		t.Fatalf("discordgo.New: %v", err)
 	}
 	session.Client = &http.Client{Transport: api}
-	handler, ok := commands.NewRegistry(nil, w.foxhole).GetHandler("foxhole")
+	handler, ok := commands.NewRegistry(nil, w.foxhole, nil).GetHandler("foxhole")
 	if !ok {
 		t.Fatal("no /foxhole handler registered")
 	}

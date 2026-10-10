@@ -109,6 +109,29 @@ type RecordingRoles struct {
 	Version int64
 }
 
+// Recording is one row of the recordings table (spec #381): one voice
+// channel recorded by one recorder, from the start of /record start until
+// its stop.
+type Recording struct {
+	// ID is the surrogate key. Zero on a Recording that has never been
+	// stored; StartRecording fills it.
+	ID        int64
+	GuildID   string
+	ChannelID string
+	// ChannelName is the channel's name when the recording started, kept
+	// for a channel deleted or renamed since.
+	ChannelName string
+	// StarterID is the starter's Discord user ID.
+	StarterID string
+	// Title is the starter's optional title, empty when they gave none.
+	Title string
+	// RecorderID is the user ID of the recorder that recorded it.
+	RecorderID string
+	StartedAt  time.Time
+	// StoppedAt is zero while the recording runs.
+	StoppedAt time.Time
+}
+
 // SpawnedChannel is one row of the spawned channels table, written at create
 // and at every handover so the restart sweep can restore number and owner.
 type SpawnedChannel struct {
@@ -354,6 +377,18 @@ type Store interface {
 	// newest first in append order: the panel's recording roles section
 	// reading its own.
 	ListRecordingRoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
+
+	// StartRecording writes a running recording's row and returns it with
+	// its ID set. The caller's ID and StoppedAt are ignored: a new row is
+	// running.
+	StartRecording(ctx context.Context, rec Recording) (Recording, error)
+	// StopRecording records the stop time of the running recording with the
+	// ID given. ErrNotFound when no running recording has the ID, a stopped
+	// one among them, and nothing written.
+	StopRecording(ctx context.Context, id int64, at time.Time) error
+	// ListRecordings returns every recording of the guild, running or not,
+	// in no promised order.
+	ListRecordings(ctx context.Context, guildID string) ([]Recording, error)
 
 	// ListFoxholeRecords returns every Foxhole record of the guild, in no
 	// promised order.

@@ -118,6 +118,24 @@ func (b boundedStore) ListRecordingRoleChanges(ctx context.Context, limit int) (
 	return b.store.ListRecordingRoleChanges(ctx, limit)
 }
 
+func (b boundedStore) StartRecording(ctx context.Context, rec store.Recording) (store.Recording, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.StartRecording(ctx, rec)
+}
+
+func (b boundedStore) StopRecording(ctx context.Context, id int64, at time.Time) error {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.StopRecording(ctx, id, at)
+}
+
+func (b boundedStore) ListRecordings(ctx context.Context, guildID string) ([]store.Recording, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.ListRecordings(ctx, guildID)
+}
+
 func (b boundedStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
 	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
 	defer cancel()
