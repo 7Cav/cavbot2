@@ -239,3 +239,11 @@ func repliesWithWhatAReturnedClosureGivesBack(err error) {
 func repliesWithFixedTextAReturnedClosureGivesBack() {
 	utils.HandleError(nil, nil, "❌ Failed: "+reasonLater(fetchFailed)())
 }
+
+func applyTo(keep func(string), s string) { keep(s) }
+
+func repliesWithWhatAClosureHandedToAHelperKept(err error) {
+	var reason string
+	applyTo(func(s string) { reason = s }, err.Error())
+	utils.HandleError(nil, nil, "❌ Failed: "+reason) // want "Discord"
+}

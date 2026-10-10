@@ -50,3 +50,8 @@ type channelMaker interface {
 func givesTheErrorAsAChannelsAuditLogReason(m channelMaker, err error) {
 	_, _ = m.GuildChannelCreateComplex("1", discordgo.GuildChannelCreateData{Name: "vc"}, "spawn failed: "+err.Error()) // want "Discord"
 }
+
+func renamesAChannelToTheErrorThroughAMethodValue(m renamer, err error) {
+	edit := m.ChannelEdit
+	_, _ = edit("1", &discordgo.ChannelEdit{Name: "vc " + err.Error()}, "renamed by /voice-rename") // want "Discord"
+}

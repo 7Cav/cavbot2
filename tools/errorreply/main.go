@@ -76,9 +76,11 @@ import (
 	"go/token"
 	"go/types"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 
+	"github.com/bwmarrin/discordgo"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/buildssa"
 	"golang.org/x/tools/go/analysis/singlechecker"
@@ -201,15 +203,15 @@ func inModule(pkg *types.Package) bool {
 
 // source is the code of the package being checked: its functions, the
 // values they put in each of its package-level variables, the calls they
-// make to each function with a body, and the names of *discordgo.Session's
-// methods.
+// make to each function with a body, and the functions they also use as a
+// value, whose calls through that value the check can't see.
 type source struct {
-	pass           *analysis.Pass
-	pkg            *ssa.Package
-	funcs          []*ssa.Function
-	writes         map[*ssa.Global][]ssa.Value
-	calls          map[*ssa.Function][]ssa.CallInstruction
-	sessionMethods map[string]bool
+	pass   *analysis.Pass
+	pkg    *ssa.Package
+	funcs  []*ssa.Function
+	writes map[*ssa.Global][]ssa.Value
+	calls  map[*ssa.Function][]ssa.CallInstruction
+	values map[*ssa.Function]bool
 }
 
 // newSource reads the package pass checks. Its functions take in the
@@ -217,7 +219,7 @@ type source struct {
 // functions and which holds each variable's declared value.
 func newSource(pass *analysis.Pass) *source {
 	built := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
-	src := &source{pass: pass, pkg: built.Pkg, funcs: built.SrcFuncs, writes: map[*ssa.Global][]ssa.Value{}, calls: map[*ssa.Function][]ssa.CallInstruction{}, sessionMethods: sessionMethods(pass.Pkg)}
+	src := &source{pass: pass, pkg: built.Pkg, funcs: built.SrcFuncs, writes: map[*ssa.Global][]ssa.Value{}, calls: map[*ssa.Function][]ssa.CallInstruction{}, values: map[*ssa.Function]bool{}}
 	if init := built.Pkg.Func("init"); init != nil {
 		src.funcs = append(src.funcs, init)
 	}
@@ -234,40 +236,54 @@ func newSource(pass *analysis.Pass) *source {
 						src.calls[callee] = append(src.calls[callee], call)
 					}
 				}
+				for _, fn := range usedAsValues(instr) {
+					src.values[fn] = true
+				}
 			}
 		}
 	}
 	return src
 }
 
-// sessionMethods returns the names of *discordgo.Session's methods, from
-// the discordgo package among pkg's imports, or none when pkg doesn't import
-// it.
-func sessionMethods(pkg *types.Package) map[string]bool {
-	names := map[string]bool{}
-	seen := map[*types.Package]bool{}
-	var walk func(*types.Package)
-	walk = func(p *types.Package) {
-		if seen[p] {
-			return
+// usedAsValues returns the functions instr uses as a value: every function
+// among its operands, and every closure it is handed, apart from the
+// function a call calls and the function a closure is made of.
+func usedAsValues(instr ssa.Instruction) []*ssa.Function {
+	var called ssa.Value
+	switch instr := instr.(type) {
+	case ssa.CallInstruction:
+		if !instr.Common().IsInvoke() {
+			called = instr.Common().Value
 		}
-		seen[p] = true
-		if p.Path() != discordgoPackage {
-			for _, imp := range p.Imports() {
-				walk(imp)
-			}
-			return
+	case *ssa.MakeClosure:
+		called = instr.Fn
+	}
+	var fns []*ssa.Function
+	for _, op := range instr.Operands(nil) {
+		if op == nil || *op == nil || *op == called {
+			continue
 		}
-		if obj, ok := p.Scope().Lookup("Session").(*types.TypeName); ok {
-			methods := types.NewMethodSet(types.NewPointer(obj.Type()))
-			for i := range methods.Len() {
-				names[methods.At(i).Obj().Name()] = true
-			}
+		switch v := (*op).(type) {
+		case *ssa.Function:
+			fns = append(fns, v)
+		case *ssa.MakeClosure:
+			fns = append(fns, v.Fn.(*ssa.Function))
 		}
 	}
-	walk(pkg)
-	return names
+	return fns
 }
+
+// sessionMethods holds the names of *discordgo.Session's methods, read off
+// the discordgo the module builds with, so that a package that doesn't
+// import discordgo has them too.
+var sessionMethods = func() map[string]bool {
+	names := map[string]bool{}
+	session := reflect.TypeFor[*discordgo.Session]()
+	for i := range session.NumMethod() {
+		names[session.Method(i).Name] = true
+	}
+	return names
+}()
 
 // tracer returns a tracer of values in the package. through is as the
 // tracer's field says.
@@ -598,7 +614,7 @@ func fieldName(field *ssa.FieldAddr) string {
 // call is made in the panel's package.
 func (s *sinks) params(call *ssa.CallCommon, answers bool) map[int]string {
 	if !s.storesOnly {
-		if params := s.src.checkedParams(call, answers); params != nil {
+		if params := checkedParams(call, answers); params != nil {
 			return params
 		}
 	}
@@ -634,7 +650,7 @@ func (s *sinks) params(call *ssa.CallCommon, answers bool) map[int]string {
 // checkedParams returns the positions of the arguments of call that carry a
 // message to Discord or, when answers is set, a panel answer, each with the
 // diagnostic that names where it goes, or nil when call is no checked call.
-func (src *source) checkedParams(call *ssa.CallCommon, answers bool) map[int]string {
+func checkedParams(call *ssa.CallCommon, answers bool) map[int]string {
 	if answers && handsOnWriter(call) {
 		// What a call outside the module is handed along with the response
 		// writer goes to the browser, apart from the writer and a method's
@@ -650,7 +666,7 @@ func (src *source) checkedParams(call *ssa.CallCommon, answers bool) map[int]str
 	if call.IsInvoke() {
 		// A method of any interface named like one of *discordgo.Session's
 		// is taken for it. Its receiver isn't among the call's arguments.
-		if src.sessionMethods[call.Method.Name()] {
+		if sessionMethods[call.Method.Name()] {
 			return arguments(call, 0, toDiscord)
 		}
 		return nil
@@ -658,6 +674,12 @@ func (src *source) checkedParams(call *ssa.CallCommon, answers bool) map[int]str
 	callee := call.StaticCallee()
 	if callee == nil {
 		return nil
+	}
+	if obj, ok := callee.Object().(*types.Func); ok && isInterfaceMethod(obj) && callee.Signature.Recv() == nil && sessionMethods[obj.Name()] {
+		// A method value taken from an interface is called through a
+		// wrapper bound to the interface value, so its receiver isn't among
+		// the call's arguments.
+		return arguments(call, 0, toDiscord)
 	}
 	if obj, ok := callee.Object().(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == discordgoPackage {
 		// What a call hands discordgo goes to Discord. A method's receiver,
@@ -669,6 +691,12 @@ func (src *source) checkedParams(call *ssa.CallCommon, answers bool) map[int]str
 		return map[int]string{sinkParam: toDiscord}
 	}
 	return nil
+}
+
+// isInterfaceMethod reports whether fn is a method of an interface.
+func isInterfaceMethod(fn *types.Func) bool {
+	recv := fn.Signature().Recv()
+	return recv != nil && types.IsInterface(recv.Type())
 }
 
 // leavesModule reports whether call goes to code outside the module, or to
@@ -976,8 +1004,13 @@ func (t *tracer) traceVariable(g *ssa.Global) bool {
 }
 
 // traceCallers traces what each call in the package passes the parameter p,
-// inside the frame f the calls are made in.
+// inside the frame f the calls are made in. A function the package also
+// uses as a value has calls the check can't see, so its parameter counts as
+// a value the check can't follow.
 func (t *tracer) traceCallers(p *ssa.Parameter, f *frame) bool {
+	if t.src.values[p.Parent()] {
+		return true
+	}
 	index := slices.Index(p.Parent().Params, p)
 	for _, call := range t.src.calls[p.Parent()] {
 		if args := call.Common().Args; index < len(args) && t.trace(args[index], f) {
