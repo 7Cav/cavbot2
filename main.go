@@ -18,6 +18,7 @@ import (
 	"github.com/7cav/cavbot2/commands"
 	"github.com/7cav/cavbot2/panel"
 	"github.com/7cav/cavbot2/store"
+	"github.com/7cav/cavbot2/voice"
 	"github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
 )
@@ -228,6 +229,18 @@ func main() {
 	// dg.Open() fails at runtime with no compile-time signal.
 	dg.Identify.Intents = discordgo.IntentsAllWithoutPrivileged | discordgo.IntentsGuildMembers
 
+	// Recorders (spec #381): one gateway session per token in
+	// RECORDER_TOKENS, opened before temp VC starts, since temp VC takes
+	// their user IDs before it registers a handler. With no token, recording
+	// is off and none connects. A token that fails goes to Sentry and costs
+	// only its own recorder. Deferred before the main session's close, so
+	// the recorders close after it.
+	recorders := voice.Connect(os.Getenv("RECORDER_TOKENS"), voice.OpenGateway)
+	defer recorders.Close()
+	if shuttingDown() {
+		return
+	}
+
 	// Temporary voice channels (spec #285): handlers must be registered before
 	// dg.Open() so the initial GUILD_CREATE seeds voice-state tracking and
 	// runs the restart sweep. Without a store there are no hubs, so the
@@ -246,7 +259,7 @@ func main() {
 	discordManager := commands.NewSessionTempVCManager(dg, GuildID)
 	if botStore != nil {
 		var err error
-		tempVC, err = commands.StartTempVC(dg, discordManager, GuildID, botStore, nil)
+		tempVC, err = commands.StartTempVC(dg, discordManager, GuildID, botStore, recorders.UserIDs())
 		if err != nil {
 			panic(fmt.Sprintf("Bot store unavailable: %v", err))
 		}
