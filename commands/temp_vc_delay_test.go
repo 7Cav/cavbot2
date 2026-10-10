@@ -41,9 +41,11 @@ type fakeTimer struct {
 func installFakeClock(t *testing.T) *fakeClock {
 	t.Helper()
 	c := &fakeClock{now: time.Date(2026, time.September, 27, 18, 0, 0, 0, time.UTC)}
-	prevNow, prevAfter, prevRecordingNow := tempVCNow, tempVCAfterFunc, recordingNow
-	tempVCNow, tempVCAfterFunc, recordingNow = c.read, c.afterFunc, c.read
-	t.Cleanup(func() { tempVCNow, tempVCAfterFunc, recordingNow = prevNow, prevAfter, prevRecordingNow })
+	prevNow, prevAfter, prevRecordingNow, prevRecordingAfter := tempVCNow, tempVCAfterFunc, recordingNow, recordingAfterFunc
+	tempVCNow, tempVCAfterFunc, recordingNow, recordingAfterFunc = c.read, c.afterFunc, c.read, c.afterFunc
+	t.Cleanup(func() {
+		tempVCNow, tempVCAfterFunc, recordingNow, recordingAfterFunc = prevNow, prevAfter, prevRecordingNow, prevRecordingAfter
+	})
 	return c
 }
 

@@ -164,6 +164,16 @@ func initPanel(cfg panel.Config, deps panel.Deps) *panel.Panel {
 	return p
 }
 
+// recordingsDir is where recordings' tracks go: RECORDINGS_DIR, which
+// docker-compose.yml points at the recordings volume, or `recordings` under
+// the working directory when it's unset.
+func recordingsDir() string {
+	if dir := os.Getenv("RECORDINGS_DIR"); dir != "" {
+		return dir
+	}
+	return "recordings"
+}
+
 func main() {
 	// Signal handling comes first, so a stop at any point during startup
 	// shuts down like one after it (#470): main returns and the deferred
@@ -276,7 +286,7 @@ func main() {
 		// VC is, and checks for hubs through it. The recorder tokens only
 		// fill its recorders: with none, every /record start is refused as
 		// recording off.
-		recording = commands.NewRecordingRuntime(discordManager, botStore, tempVC, GuildID, recorders)
+		recording = commands.NewRecordingRuntime(discordManager, botStore, tempVC, GuildID, recorders, recordingsDir())
 		// The panel's hub page saves through the runtime and reads the guild
 		// through the session, so it is built once both exist.
 		webPanel = initPanel(panelCfg, panel.Deps{

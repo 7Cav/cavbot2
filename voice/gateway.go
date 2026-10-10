@@ -3,11 +3,14 @@ package voice
 import (
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 	disgovoice "github.com/disgoorg/disgo/voice"
+	"github.com/disgoorg/godave"
 	"github.com/disgoorg/snowflake/v2"
 	"github.com/thomas-vilte/dave-go/session"
 )
@@ -51,6 +54,7 @@ func OpenGateway(token string) (GatewaySession, error) {
 		disgovoice.WithLogger(utils.Logger),
 		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
 		disgovoice.WithDaveSessionLogger(utils.Logger),
+		disgovoice.WithConnConfigOpts(s.connOpts(disgovoice.NewGateway)...),
 	)
 	// Added after READY, once the manager exists: no voice event reaches a
 	// recorder before its first join.
@@ -66,6 +70,42 @@ type discordgoSession struct {
 	dg     *discordgo.Session
 	userID string
 	voice  disgovoice.Manager
+
+	// leaving is set while a Leave or Close takes the recorder out, so the
+	// voice state update disgo sends for it is known to be ours. gaveUp is
+	// set when disgo sends one on its own: it couldn't keep the connection.
+	leaving atomic.Bool
+	gaveUp  atomic.Bool
+}
+
+// connOpts configures every voice connection the recorder opens: the
+// recorder's own UDP connection, and a voice gateway whose close handler is
+// watched for a connection lost mid-recording. newGateway builds the
+// gateway, disgo's NewGateway outside tests.
+func (s *discordgoSession) connOpts(newGateway disgovoice.GatewayCreateFunc) []disgovoice.ConnConfigOpt {
+	return []disgovoice.ConnConfigOpt{
+		disgovoice.WithUDPConnCreateFunc(newUDPConn),
+		disgovoice.WithConnGatewayCreateFunc(func(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, opts ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
+			return newGateway(dave, onEvent, s.watchClose(onClose), opts...)
+		}),
+	}
+}
+
+// watchClose wraps disgo's handler for a voice gateway that closed and
+// couldn't resume. disgo opens a fresh connection when the close allows it,
+// and a voice reconnect ends there. Otherwise, or when the fresh connection
+// fails, disgo takes the recorder out of the channel itself: the voice
+// connection is lost mid-recording, and Sentry hears of it with the close
+// that started it.
+func (s *discordgoSession) watchClose(onClose disgovoice.CloseHandlerFunc) disgovoice.CloseHandlerFunc {
+	return func(g disgovoice.Gateway, err error) {
+		defer utils.RecoverPanic("recorder-voice-close", "recorder", s.userID)
+		s.gaveUp.Store(false)
+		onClose(g, err)
+		if s.gaveUp.Load() {
+			utils.CaptureError("Voice connection lost mid-recording", err, "recorder", s.userID)
+		}
+	}
 }
 
 func (s *discordgoSession) UserID() string { return s.userID }
@@ -73,6 +113,7 @@ func (s *discordgoSession) UserID() string { return s.userID }
 // Close takes the recorder out of any voice channel it is still in, then
 // ends its session.
 func (s *discordgoSession) Close() error {
+	s.leaving.Store(true)
 	ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
 	defer cancel()
 	s.voice.Close(ctx)
@@ -93,24 +134,55 @@ func (s *discordgoSession) Join(ctx context.Context, guildID, channelID string) 
 	if err != nil {
 		return nil, fmt.Errorf("channel ID %q: %w", channelID, err)
 	}
+	s.leaving.Store(false)
 	conn := s.voice.CreateConn(gid)
 	if err := conn.Open(ctx, cid, true, false); err != nil {
+		s.leaving.Store(true)
 		closeCtx, cancel := context.WithTimeout(context.Background(), closeTimeout)
 		defer cancel()
 		conn.Close(closeCtx)
 		return nil, err
 	}
-	return disgoConn{conn}, nil
+	return &disgoConn{conn: conn, recorder: s.userID, leaving: &s.leaving}, nil
 }
 
-// disgoConn is a recorder's disgo voice connection.
+// disgoConn is a recorder's disgo voice connection. leaving is its
+// session's.
 type disgoConn struct {
-	conn disgovoice.Conn
+	conn     disgovoice.Conn
+	recorder string
+	leaving  *atomic.Bool
+
+	mu  sync.Mutex
+	rcv *receiver
 }
 
-// Leave sends the voice state update that takes the recorder out, and closes
+// Receive starts the recorder's audio receiver on the connection, which
+// hands handle every frame from now until Leave. Frames that arrived before
+// wait in the socket.
+func (c *disgoConn) Receive(handle func(Frame)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rcv != nil {
+		return
+	}
+	c.rcv = newReceiver(c.conn, handle, c.recorder)
+	c.rcv.open()
+}
+
+// Leave stops the receiver, so no frame is handed over after it returns,
+// then sends the voice state update that takes the recorder out, and closes
 // the voice gateway, UDP and DAVE session.
-func (c disgoConn) Leave(ctx context.Context) { c.conn.Close(ctx) }
+func (c *disgoConn) Leave(ctx context.Context) {
+	c.leaving.Store(true)
+	c.mu.Lock()
+	rcv := c.rcv
+	c.mu.Unlock()
+	if rcv != nil {
+		rcv.close()
+	}
+	c.conn.Close(ctx)
+}
 
 // updateVoiceState is disgo's StateUpdateFunc: the voice state update on the
 // recorder's own gateway. discordgo's ChannelVoiceJoinManual sends exactly
@@ -127,6 +199,8 @@ func (s *discordgoSession) updateVoiceState(_ context.Context, guildID snowflake
 	cid := ""
 	if channelID != nil {
 		cid = channelID.String()
+	} else if !s.leaving.Load() {
+		s.gaveUp.Store(true)
 	}
 	return s.dg.ChannelVoiceJoinManual(guildID.String(), cid, selfMute, selfDeaf)
 }

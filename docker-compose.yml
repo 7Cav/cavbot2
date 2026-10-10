@@ -32,6 +32,12 @@ services:
       PANEL_GROUP_IDS: ${PANEL_GROUP_IDS}
       FOXHOLE_GROUP_ID: ${FOXHOLE_GROUP_ID}
       RECORDER_TOKENS: ${RECORDER_TOKENS}
+      # Where the recordings' tracks go: the recordings volume's mount point,
+      # below. Fixed here rather than read from .env, so the tracks always
+      # land on the volume and survive a redeploy.
+      RECORDINGS_DIR: /recordings
+    volumes:
+      - cavbot2_recordings:/recordings
     # edge is where Nginx Proxy Manager reaches the panel on port 8080. The
     # port is not published on the host; the proxy is the only way in.
     networks:
@@ -64,6 +70,7 @@ services:
 
 volumes:
   cavbot2_pgdata:
+  cavbot2_recordings:
 
 networks:
   xenforo_internal:

@@ -49,11 +49,13 @@ type fakeRecorderVoice struct {
 	joinErr   error
 }
 
-// fakeVoiceConn is one recorder in one channel, until it leaves.
+// fakeVoiceConn is one recorder in one channel, until it leaves. handle is
+// what the runtime passed to Receive, nil before it does.
 type fakeVoiceConn struct {
 	v                     *fakeRecorderVoice
 	recorderID, channelID string
 	left                  bool
+	handle                func(voice.Frame)
 }
 
 func (v *fakeRecorderVoice) UserIDs() []string {
@@ -77,6 +79,12 @@ func (c *fakeVoiceConn) Leave(context.Context) {
 	c.v.mu.Lock()
 	defer c.v.mu.Unlock()
 	c.left = true
+}
+
+func (c *fakeVoiceConn) Receive(handle func(voice.Frame)) {
+	c.v.mu.Lock()
+	defer c.v.mu.Unlock()
+	c.handle = handle
 }
 
 // joinCount is how many joins went out.
@@ -103,6 +111,8 @@ func (v *fakeRecorderVoice) inChannel(channelID string) []string {
 // store holding the test hub and the recording role, temp VC over them, and
 // the runtime over a fake voice adapter with the recorders given.
 type recordScene struct {
+	// dir is the recordings directory.
+	dir   string
 	clock *fakeClock
 	fake  *fakeTempVCManager
 	st    *store.Fake
@@ -113,14 +123,14 @@ type recordScene struct {
 
 func newRecordScene(t *testing.T, recorders ...string) *recordScene {
 	t.Helper()
-	sc := &recordScene{clock: installFakeClock(t), fake: newFakeTempVCManager()}
+	sc := &recordScene{dir: t.TempDir(), clock: installFakeClock(t), fake: newFakeTempVCManager()}
 	sc.fake.channels[recordChannel] = &discordgo.Channel{ID: recordChannel, Name: recordChannelName, Type: discordgo.ChannelTypeGuildVoice}
 	sc.fake.channels[recordOtherChannel] = &discordgo.Channel{ID: recordOtherChannel, Name: "Other", Type: discordgo.ChannelTypeGuildVoice}
 	sc.st = seedStore(t, testHub())
 	saveRecordingRoles(t, sc.st, testRecordingRole)
 	sc.voice = &fakeRecorderVoice{recorders: recorders}
 	sc.tv = newTestTempVC(t, sc.fake, sc.st)
-	sc.rt = NewRecordingRuntime(sc.fake, sc.st, sc.tv, testTempVCGuild, sc.voice)
+	sc.rt = NewRecordingRuntime(sc.fake, sc.st, sc.tv, testTempVCGuild, sc.voice, sc.dir)
 	return sc
 }
 
@@ -473,7 +483,7 @@ func TestRecordStartRowWriteFailureLeavesNoRecorderInTheChannel(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 	captures := countCaptures(t)
 	failing := &failingStore{Fake: sc.st, startRecordingErr: errors.New("connection refused")}
-	rt := NewRecordingRuntime(sc.fake, failing, sc.tv, testTempVCGuild, sc.voice)
+	rt := NewRecordingRuntime(sc.fake, failing, sc.tv, testTempVCGuild, sc.voice, sc.dir)
 	sc.fake.setVoice(recStarter.id, recordChannel)
 
 	recordAs(t, rt, recStarter, "start")
