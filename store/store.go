@@ -26,8 +26,8 @@ var ErrNotFound = errors.New("store: not found")
 // ErrStale is returned by a combined write whose record is not as the
 // caller read it (#373): SaveHub of a hub whose row is at another version,
 // or of a new hub on a channel a hub already stands on,
-// SaveGuildModeratorRoles of a set whose row is at another version, and
-// SaveFoxholeNote over a note that isn't the one the saver loaded. The
+// SaveGuildModeratorRoles or SaveRecordingRoles of a set whose row is at
+// another version, and SaveFoxholeNote over a note that isn't the one the saver loaded. The
 // write lands neither the settings nor the entry. Compare with errors.Is.
 var ErrStale = errors.New("store: the record changed since it was read")
 
@@ -97,6 +97,17 @@ type GuildModeratorRoles struct {
 	Version int64
 }
 
+// RecordingRoles is a guild's recording roles (GLOSSARY.md), the roles
+// whose holders may start a recording, with the version of the row that
+// holds them. A guild with none can record nothing.
+type RecordingRoles struct {
+	// RoleIDs is a set, under the same rule as Hub.ModeratorRoleIDs.
+	RoleIDs []string
+	// Version counts the saves of the set that took effect, as
+	// GuildModeratorRoles.Version does. A guild with no row is at version 0.
+	Version int64
+}
+
 // SpawnedChannel is one row of the spawned channels table, written at create
 // and at every handover so the restart sweep can restore number and owner.
 type SpawnedChannel struct {
@@ -145,6 +156,8 @@ const (
 	ChangeRemove ChangeAction = "remove"
 	// ChangeModerators is a save of the guild-wide moderator roles.
 	ChangeModerators ChangeAction = "moderators"
+	// ChangeRecordingRoles is a save of the recording roles.
+	ChangeRecordingRoles ChangeAction = "recording_roles"
 	// ChangeNote is a save of one member's note on the Foxhole page. Its
 	// entry goes in the Foxhole change log, never the hub page's.
 	ChangeNote ChangeAction = "note"
@@ -219,8 +232,8 @@ type ChangeLogEntry struct {
 	// ID is the surrogate key, set by the store.
 	ID int64
 	// HubID is the hub the save was about, or zero for a save about no hub:
-	// the guild-wide moderator roles, a remove, and every entry of a hub
-	// whose row has since been deleted, since the reference clears with the
+	// the guild-wide moderator roles, the recording roles, a remove, and
+	// every entry of a hub whose row has since been deleted, since the reference clears with the
 	// row. Set by the store from the save that writes the entry.
 	HubID         int64
 	ForumUserID   int
@@ -256,9 +269,10 @@ type MemberNames struct {
 // page needs a method there, or the page failure tests cannot block or fail
 // it.
 //
-// A panel save is one call: SaveHub, RemoveHub or SaveGuildModeratorRoles
-// writes the save's settings and its change log entry in one transaction,
-// so both land or neither does, and no method writes either alone (#362).
+// A panel save is one call: SaveHub, RemoveHub, SaveGuildModeratorRoles or
+// SaveRecordingRoles writes the save's settings and its change log entry in
+// one transaction, so both land or neither does, and no method writes either
+// alone (#362).
 // The transaction never leaves the store. The pool holds two connections,
 // and a transaction handed to panel code would hold one of them while that
 // code ran; a call to the plain store made there by mistake would wait on
@@ -323,6 +337,22 @@ type Store interface {
 	// the earlier entries of removed hubs; this is the panel's guild-wide
 	// section reading its own.
 	ListModeratorChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
+
+	// GetRecordingRoles returns the recording roles with their version. A
+	// guild with no row reads back as an empty set at version 0, with no
+	// error.
+	GetRecordingRoles(ctx context.Context, guildID string) (RecordingRoles, error)
+	// SaveRecordingRoles replaces the recording role IDs with
+	// roles.RoleIDs and appends the save's change log entry together, only
+	// while the guild's row is at roles.Version, 0 meaning no row, and the
+	// row ends one version on. ErrStale when it is at another version. The
+	// entry references no hub, whatever HubID the caller set.
+	SaveRecordingRoles(ctx context.Context, guildID string, roles RecordingRoles, entry ChangeLogEntry) error
+	// ListRecordingRoleChanges returns at most limit recording roles saves,
+	// the entries with action ChangeRecordingRoles that reference no hub,
+	// newest first in append order: the panel's recording roles section
+	// reading its own.
+	ListRecordingRoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
 
 	// ListFoxholeRecords returns every Foxhole record of the guild, in no
 	// promised order.

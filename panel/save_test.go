@@ -208,6 +208,21 @@ func (s leavingStore) ListModeratorChanges(ctx context.Context, limit int) ([]st
 	return s.st.ListModeratorChanges(ctx, limit)
 }
 
+func (s leavingStore) GetRecordingRoles(ctx context.Context, guildID string) (store.RecordingRoles, error) {
+	s.d.leave()
+	return s.st.GetRecordingRoles(ctx, guildID)
+}
+
+func (s leavingStore) SaveRecordingRoles(ctx context.Context, guildID string, roles store.RecordingRoles, entry store.ChangeLogEntry) error {
+	s.d.leave()
+	return s.st.SaveRecordingRoles(ctx, guildID, roles, entry)
+}
+
+func (s leavingStore) ListRecordingRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	s.d.leave()
+	return s.st.ListRecordingRoleChanges(ctx, limit)
+}
+
 func (s leavingStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
 	s.d.leave()
 	return s.st.ListFoxholeRecords(ctx, guildID)
