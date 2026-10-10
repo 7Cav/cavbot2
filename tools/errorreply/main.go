@@ -1,18 +1,18 @@
 // Command errorreply reports what the bot shows a person that carries data
 // from an error. That is a message to Discord: anything the bot hands
 // discordgo, such as an interaction reply, a channel post, a channel or role
-// name, or an audit-log reason, and a utils.HandleError reply. A method of
-// any interface named like one of *discordgo.Session's is taken for it. It
-// is also a panel answer: whatever a call outside the module is handed along
-// with the panel's response writer, such as the text of an http.Error, the
-// URL of a redirect, the data a page renders, or what is written or encoded
-// to the writer. Each is checked whole, embeds and page data included. A
-// Foxhole report member's failure reason and a spawn failure's cause reach a
-// panel page through the store or the temp VC runtime, where the check can't
-// follow them, so a value stored into either is checked where it is stored.
-// ADR 0016 says which data from an error a message or a panel answer may
-// carry. The gate runs the check over the module's production code
-// (.github/scripts/gate.sh).
+// name, or an audit-log reason, and a utils.HandleError reply. A call of a
+// method of any interface named like one of *discordgo.Session's counts as
+// the session's method. It is also a panel answer: whatever a call outside
+// the module is handed along with the panel's response writer, such as the
+// text of an http.Error, the URL of a redirect, the data a page renders, or
+// what is written or encoded to the writer. Each is checked whole, embeds
+// and page data included. A Foxhole report member's failure reason and a
+// spawn failure's cause reach a panel page through the store or the temp VC
+// runtime, where the check can't follow them, so a value stored into either
+// is checked where it is stored. ADR 0016 says which data from an error a
+// message or a panel answer may carry. The gate runs the check over the
+// module's production code (.github/scripts/gate.sh).
 //
 // The check fails closed (ADR 0017). A value passes only when the check has
 // a rule for everything it is built from. A value it has no rule for counts
@@ -65,10 +65,11 @@
 // in it: its declared value, a store at an address within it, a map update
 // or a send on it, a call it's passed to, and what each call in the package
 // passes a function that puts its parameter there. Another package of the
-// module that reads the variable gets the verdict its package recorded. The check can't follow a value
-// that one package puts in another's variable to where the variable is
-// read, so it reports that store where it's made, and a call that passes a
-// value to another package's function that puts it in a variable.
+// module that reads the variable gets the verdict its package recorded. The
+// check can't follow a value that one package puts in another's variable to
+// where the variable is read, so it reports that store where it's made, and
+// a call that passes a value to another package's function that puts it in
+// a variable.
 package main
 
 import (
@@ -203,12 +204,12 @@ func inModule(pkg *types.Package) bool {
 // make to each function with a body, and the names of *discordgo.Session's
 // methods.
 type source struct {
-	pass    *analysis.Pass
-	pkg     *ssa.Package
-	funcs   []*ssa.Function
-	writes  map[*ssa.Global][]ssa.Value
-	calls   map[*ssa.Function][]ssa.CallInstruction
-	session map[string]bool
+	pass           *analysis.Pass
+	pkg            *ssa.Package
+	funcs          []*ssa.Function
+	writes         map[*ssa.Global][]ssa.Value
+	calls          map[*ssa.Function][]ssa.CallInstruction
+	sessionMethods map[string]bool
 }
 
 // newSource reads the package pass checks. Its functions take in the
@@ -216,7 +217,7 @@ type source struct {
 // functions and which holds each variable's declared value.
 func newSource(pass *analysis.Pass) *source {
 	built := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
-	src := &source{pass: pass, pkg: built.Pkg, funcs: built.SrcFuncs, writes: map[*ssa.Global][]ssa.Value{}, calls: map[*ssa.Function][]ssa.CallInstruction{}, session: sessionMethods(pass.Pkg)}
+	src := &source{pass: pass, pkg: built.Pkg, funcs: built.SrcFuncs, writes: map[*ssa.Global][]ssa.Value{}, calls: map[*ssa.Function][]ssa.CallInstruction{}, sessionMethods: sessionMethods(pass.Pkg)}
 	if init := built.Pkg.Func("init"); init != nil {
 		src.funcs = append(src.funcs, init)
 	}
@@ -649,7 +650,7 @@ func (src *source) checkedParams(call *ssa.CallCommon, answers bool) map[int]str
 	if call.IsInvoke() {
 		// A method of any interface named like one of *discordgo.Session's
 		// is taken for it. Its receiver isn't among the call's arguments.
-		if src.session[call.Method.Name()] {
+		if src.sessionMethods[call.Method.Name()] {
 			return arguments(call, 0, toDiscord)
 		}
 		return nil
@@ -662,11 +663,7 @@ func (src *source) checkedParams(call *ssa.CallCommon, answers bool) map[int]str
 		// What a call hands discordgo goes to Discord. A method's receiver,
 		// the call's first argument, is the session or the value the method
 		// reads.
-		first := 0
-		if callee.Signature.Recv() != nil {
-			first = 1
-		}
-		return arguments(call, first, toDiscord)
+		return arguments(call, receivers(call), toDiscord)
 	}
 	if callee.Name() == sinkName && callee.Pkg != nil && callee.Pkg.Pkg.Path() == sinkPackage && len(call.Args) > sinkParam {
 		return map[int]string{sinkParam: toDiscord}
@@ -705,17 +702,24 @@ func carriesWriter(v ssa.Value) bool {
 	if isNamed(v.Type(), "net/http", "ResponseWriter") {
 		return true
 	}
-	switch v := v.(type) {
-	case *ssa.ChangeInterface:
-		return carriesWriter(v.X)
-	case *ssa.Call:
-		return handsOnWriter(&v.Call)
-	case *ssa.Extract:
-		if call, ok := v.Tuple.(*ssa.Call); ok {
-			return handsOnWriter(&call.Call)
-		}
+	if conv, ok := v.(*ssa.ChangeInterface); ok {
+		return carriesWriter(conv.X)
 	}
-	return false
+	call := resultOf(v)
+	return call != nil && handsOnWriter(&call.Call)
+}
+
+// resultOf returns the call v is a result of, or nil when v is no call's
+// result.
+func resultOf(v ssa.Value) *ssa.Call {
+	switch v := v.(type) {
+	case *ssa.Call:
+		return v
+	case *ssa.Extract:
+		call, _ := v.Tuple.(*ssa.Call)
+		return call
+	}
+	return nil
 }
 
 // receivers returns how many of call's arguments are a method's receiver:
@@ -996,12 +1000,9 @@ func (t *tracer) followable(v ssa.Value, f *frame) bool {
 	switch v := v.(type) {
 	case *ssa.Const, *ssa.MakeInterface, *ssa.ChangeInterface, *ssa.Phi:
 		return true
-	case *ssa.Call:
-		callee, fact := t.follow(v, f)
-		return callee != nil || fact != nil
-	case *ssa.Extract:
-		call, ok := v.Tuple.(*ssa.Call)
-		if !ok {
+	case *ssa.Call, *ssa.Extract:
+		call := resultOf(v)
+		if call == nil {
 			return false
 		}
 		callee, fact := t.follow(call, f)
