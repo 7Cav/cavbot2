@@ -77,8 +77,10 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 		},
 	})
 	runs = append(runs, refusalRuns(t)...)
+	// No command sends replyError as its first response today. The run
+	// holds the helper to the same report for one that does.
 	runs = append(runs, registeredRun{
-		label: "error reply as the first response", command: "milpac",
+		label: "replyError as the first response", command: "milpac",
 		handler: func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			replyError(utils.NewSessionResponder(s), i, "❌ That didn't work.")
 		},

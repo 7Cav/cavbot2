@@ -134,7 +134,7 @@ func replyAckFailed(r utils.InteractionResponder, interaction *discordgo.Interac
 // HandleError handles any other error, which reaches it as Discord's own
 // error.
 func refuse(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, message string, kv ...any) (missedAck bool) {
-	responder := &refusalResponder{InteractionResponder: r, interaction: interaction}
+	responder := &errorReplyResponder{InteractionResponder: r, interaction: interaction}
 	utils.HandleError(responder, interaction, message)
 	if responder.missed == nil {
 		return false
@@ -153,16 +153,16 @@ func replyError(r utils.InteractionResponder, interaction *discordgo.Interaction
 	refuse(r, interaction, message)
 }
 
-// refusalResponder sends a refusal through acknowledge. It keeps a 10062
-// in missed rather than hand it to HandleError, which would report it as
-// an error reply that never arrived.
-type refusalResponder struct {
+// errorReplyResponder sends an error reply from refuse or replyError
+// through acknowledge. It keeps a 10062 in missed rather than hand it to
+// HandleError, which would report it as an error reply that never arrived.
+type errorReplyResponder struct {
 	utils.InteractionResponder
 	interaction *discordgo.InteractionCreate
 	missed      error
 }
 
-func (rr *refusalResponder) InteractionRespond(_ *discordgo.Interaction, resp *discordgo.InteractionResponse) error {
+func (rr *errorReplyResponder) InteractionRespond(_ *discordgo.Interaction, resp *discordgo.InteractionResponse) error {
 	err := acknowledge(rr.InteractionResponder, rr.interaction, resp)
 	switch {
 	case err == nil:
