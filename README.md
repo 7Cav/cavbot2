@@ -76,8 +76,8 @@ A recorder is the account that joins a voice channel to record it
 own, separate from the bot's. Recording stays off until at least one recorder
 token is set in `RECORDER_TOKENS`, and removing every token and restarting
 turns it off again. Skip this on a host that doesn't record. Recording itself
-is still being built (#381). For now each recorder connects at startup, shows
-online, and is left out of temporary voice channels.
+isn't built yet (#381). For now each recorder connects at startup and shows
+online, and temporary voice channels ignore it.
 
 1. 'New Application', named for what it is, such as `CavBot Recorder`, so
    members can tell it from the bot.
