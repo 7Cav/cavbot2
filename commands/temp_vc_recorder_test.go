@@ -20,7 +20,7 @@ const testRecorder = "user-recorder"
 func TestTempVCRecorderJoiningAHubSpawnsNothing(t *testing.T) {
 	fake := newFakeTempVCManager()
 	tv := newSeededTempVC(t, fake)
-	tv.IgnoreRecorders([]string{testRecorder})
+	tv.ignoreRecorders([]string{testRecorder})
 
 	fake.deliver(tv, voiceEvent(testRecorder, testTempVCHub, member("Recorder")))
 
@@ -39,7 +39,7 @@ func TestTempVCChannelHoldingOnlyARecorderIsDeletedAfterItsDelay(t *testing.T) {
 	clock := installFakeClock(t)
 	fake := newFakeTempVCManager()
 	tv := newTestTempVC(t, fake, seedStore(t, delayHub(10)))
-	tv.IgnoreRecorders([]string{testRecorder})
+	tv.ignoreRecorders([]string{testRecorder})
 	spawnInto(tv, fake, "user-a", "chan-x", member("A"))
 	fake.deliver(tv, voiceEvent(testRecorder, "chan-x", member("Recorder")))
 
@@ -58,7 +58,7 @@ func TestTempVCChannelHoldingOnlyARecorderIsDeletedAfterItsDelay(t *testing.T) {
 func TestVoiceLockWithARecorderInsideLeavesItOffTheGuestList(t *testing.T) {
 	recorder := permMember{id: testRecorder, roles: []string{permRoleMember}}
 	fake, _, tv := newLockScene(t, store.PermissionCategory)
-	tv.IgnoreRecorders([]string{recorder.id})
+	tv.ignoreRecorders([]string{recorder.id})
 	enter(tv, fake, recorder, "chan-1")
 
 	lockAs(t, tv, lockOwner)
@@ -76,7 +76,7 @@ func TestTempVCRestartSweepDeletesAChannelHoldingOnlyARecorder(t *testing.T) {
 		t.Fatalf("UpsertSpawnedChannel: %v", err)
 	}
 	tv := newTestTempVC(t, fake, st)
-	tv.IgnoreRecorders([]string{testRecorder})
+	tv.ignoreRecorders([]string{testRecorder})
 
 	fake.deliverGuildCreate(tv, sweepPayload([]string{"chan-x"}, map[string]string{testRecorder: "chan-x"}))
 

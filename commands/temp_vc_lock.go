@@ -327,7 +327,7 @@ func (t *TempVC) insideLocked(channelID string) []string {
 	for userID := range t.occupants[channelID] {
 		inside[userID] = struct{}{}
 	}
-	for userID, ch := range t.voiceStates().ChannelByUser {
+	for userID, ch := range t.voiceStatesWithoutRecorders().ChannelByUser {
 		if ch == channelID {
 			inside[userID] = struct{}{}
 		}

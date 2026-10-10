@@ -246,7 +246,7 @@ func main() {
 	discordManager := commands.NewSessionTempVCManager(dg, GuildID)
 	if botStore != nil {
 		var err error
-		tempVC, err = commands.StartTempVC(dg, discordManager, GuildID, botStore)
+		tempVC, err = commands.StartTempVC(dg, discordManager, GuildID, botStore, nil)
 		if err != nil {
 			panic(fmt.Sprintf("Bot store unavailable: %v", err))
 		}

@@ -5,33 +5,37 @@ package commands
 // VC treats it as absent from every hub and spawned channel: it never spawns
 // a channel, never keeps one alive, never lands on a guest list, and so is
 // never elected owner.
+//
+// The set is fixed before any gateway event can reach the runtime:
+// StartTempVC sets it before it registers a handler. A recorder the record
+// already counted would stay an occupant, since its own events are dropped,
+// so the set is never changed afterwards.
 
-// IgnoreRecorders sets the recorder user IDs, replacing any set before. The
-// recorder sessions pass them in at startup; with none set, temp VC counts
-// every account.
-func (t *TempVC) IgnoreRecorders(userIDs []string) {
-	set := make(map[string]struct{}, len(userIDs))
+// ignoreRecorders sets the recorder user IDs. StartTempVC calls it once,
+// before it registers any handler, and the tests call it at the same point.
+// It is read without the lock, since nothing writes it after that.
+func (t *TempVC) ignoreRecorders(userIDs []string) {
+	t.recorders = make(map[string]struct{}, len(userIDs))
 	for _, id := range userIDs {
-		set[id] = struct{}{}
+		t.recorders[id] = struct{}{}
 	}
-	t.recorders.Store(&set)
 }
 
 // isRecorder reports whether a user ID is one of the recorders.
 func (t *TempVC) isRecorder(userID string) bool {
-	set := t.recorders.Load()
-	if set == nil {
-		return false
-	}
-	_, ok := (*set)[userID]
+	_, ok := t.recorders[userID]
 	return ok
 }
 
-// voiceStates reads a fresh snapshot of the cache, as VoiceStates does,
-// with the recorders left out, so a channel holding only a recorder reads
-// as empty. The snapshot is a copy of its own, so leaving them out touches
-// nothing shared.
-func (t *TempVC) voiceStates() VoiceSnapshot {
+// voiceStatesWithoutRecorders reads a fresh snapshot of the cache, as
+// VoiceStates does, with the recorders left out, so a channel holding only
+// a recorder reads as empty. A read that counts who is in a channel goes
+// through it: the delete check, the lock's guest list and the restart
+// sweep. A read that asks where one member already in the record is, or
+// the member an event is for, needs no filter, since the drop at the top
+// of HandleVoiceStateUpdate keeps every recorder out of both. The snapshot
+// is a copy of its own, so leaving them out touches nothing shared.
+func (t *TempVC) voiceStatesWithoutRecorders() VoiceSnapshot {
 	snap := t.mgr.VoiceStates(t.guildID)
 	for userID := range snap.ChannelByUser {
 		if t.isRecorder(userID) {
