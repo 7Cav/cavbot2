@@ -147,16 +147,29 @@ type activeRecording struct {
 	tracks *recordingTracks
 	// noticeID is the recording notice's message ID.
 	noticeID string
-	// stopCap cancels the stop at the cap, and stopDisk the next disk
-	// check. Both are set before the recording is running, so a stop always
-	// finds them. A disk check sets stopDisk again under the runtime's
-	// mutex, and only while the recording isn't stopping.
-	stopCap, stopDisk func()
+	// cancelCap cancels the stop at the cap, and cancelDiskCheck the next
+	// disk check. Both are set before the recording is running, so a stop
+	// always finds them. A disk check sets cancelDiskCheck again under the
+	// runtime's mutex, and only while the recording isn't stopping.
+	cancelCap, cancelDiskCheck func()
 	// stopping is set once a stop has taken it, so a second stop doesn't.
 	stopping bool
 	// recorderSeen is set once the cache has shown the recorder in the
 	// channel.
 	recorderSeen bool
+}
+
+// live reports whether the recording runs and no stop has taken it: its
+// join has returned, and nothing is stopping it.
+func (rec *activeRecording) live() bool {
+	return rec.conn != nil && !rec.stopping
+}
+
+// mayStop applies /record stop's rule to someone: the starter may stop the
+// recording from anywhere, and a recording-role holder from inside its
+// channel. The button follows the same rule.
+func (rec *activeRecording) mayStop(userID string, holdsRole, inChannel bool) bool {
+	return rec.row.StarterID == userID || (holdsRole && inChannel)
 }
 
 // NewRecordingRuntime builds the recording runtime over the Discord
@@ -249,13 +262,17 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	tracks := newRecordingTracks(r.dir, row.ID, row.StartedAt)
 	conn.Receive(func(f voice.Frame) { tracks.write(f, recordingNow()) })
 	rec := &activeRecording{row: row, conn: conn, tracks: tracks, noticeID: noticeID}
-	rec.stopCap = recordingAfterFunc(recordingCap, func() { r.autoStop(recorderID, rec, store.RecordingEndCap) })
-	rec.stopDisk = recordingAfterFunc(recordingDiskCheckInterval, func() { r.checkDisk(recorderID, rec) })
+	rec.cancelCap = recordingAfterFunc(recordingCap, func() { r.autoStop(rec, store.RecordingEndCap) })
+	rec.cancelDiskCheck = recordingAfterFunc(recordingDiskCheckInterval, func() { r.checkDisk(rec) })
 	r.mu.Lock()
 	r.running[recorderID] = rec
 	r.mu.Unlock()
 	utils.Info("Recording started", "recording_id", row.ID, "channel_id", channelID,
 		"starter", by.UserID, "recorder", recorderID)
+	// The recorder's own voice event was most likely handled while its join
+	// was in flight, before the recording ran, so the channel is checked
+	// now: the cache's view of it then counts as seen.
+	r.checkChannels()
 	return channelID, nil
 }
 
@@ -272,36 +289,35 @@ func (r *RecordingRuntime) Stop(by Invoker) (channelID string, err error) {
 	}
 
 	r.mu.Lock()
-	var hereID, ownID string
-	for id, rec := range r.running {
-		if rec.conn == nil || rec.stopping {
+	var hereRec, ownRec *activeRecording
+	for _, rec := range r.running {
+		if !rec.live() {
 			continue
 		}
 		if here != "" && rec.row.ChannelID == here {
-			hereID = id
+			hereRec = rec
 		}
 		if rec.row.StarterID == by.UserID {
-			ownID = id
+			ownRec = rec
 		}
 	}
-	recorderID := ""
+	var target *activeRecording
 	switch {
-	case hereID != "" && (holds || r.running[hereID].row.StarterID == by.UserID):
-		recorderID = hereID
-	case ownID != "":
-		recorderID = ownID
-	case hereID != "":
+	case hereRec != nil && hereRec.mayStop(by.UserID, holds, true):
+		target = hereRec
+	case ownRec != nil:
+		target = ownRec
+	case hereRec != nil:
 		r.mu.Unlock()
 		return "", errNotAllowedToStop
 	default:
 		r.mu.Unlock()
 		return "", errNothingToStop
 	}
-	target := r.running[recorderID]
 	target.stopping = true
 	r.mu.Unlock()
 
-	r.finish(recorderID, target, store.RecordingEndStopped, "stopped_by", by.UserID)
+	r.finish(target, store.RecordingEndStopped, by.UserID)
 	return target.row.ChannelID, nil
 }
 
@@ -316,37 +332,44 @@ func (r *RecordingRuntime) stopFromNotice(channelID string, by Invoker) error {
 	}
 
 	r.mu.Lock()
-	var recorderID string
-	var target *activeRecording
-	for id, rec := range r.running {
-		if rec.conn != nil && !rec.stopping && rec.row.ChannelID == channelID {
-			recorderID, target = id, rec
-		}
-	}
+	target := r.runningInLocked(channelID)
 	switch {
 	case target == nil:
 		r.mu.Unlock()
 		return errNothingToStop
-	case target.row.StarterID != by.UserID && (!holds || !in):
+	case !target.mayStop(by.UserID, holds, in):
 		r.mu.Unlock()
 		return errNotAllowedToStop
 	}
 	target.stopping = true
 	r.mu.Unlock()
 
-	r.finish(recorderID, target, store.RecordingEndStopped, "stopped_by", by.UserID)
+	r.finish(target, store.RecordingEndStopped, by.UserID)
+	return nil
+}
+
+// runningInLocked returns the live recording of a channel, or nil when none
+// runs there. Caller holds mu.
+func (r *RecordingRuntime) runningInLocked(channelID string) *activeRecording {
+	for _, rec := range r.running {
+		if rec.live() && rec.row.ChannelID == channelID {
+			return rec
+		}
+	}
 	return nil
 }
 
 // finish ends a recording a stop has taken: the recorder leaves, the tracks
 // end at the stop time, the row records the stop time and how it ended, and
-// the notice says it stopped. kv names what stopped it, for the log line.
-func (r *RecordingRuntime) finish(recorderID string, target *activeRecording, end store.RecordingEnd, kv ...any) {
+// the notice says it stopped. stoppedBy is the member who stopped it, empty
+// when it stopped by itself.
+func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEnd, stoppedBy string) {
+	recorderID := target.row.RecorderID
 	r.mu.Lock()
-	stopDisk := target.stopDisk
+	cancelDiskCheck := target.cancelDiskCheck
 	r.mu.Unlock()
-	target.stopCap()
-	stopDisk()
+	target.cancelCap()
+	cancelDiskCheck()
 	r.leave(target.conn)
 	stoppedAt := recordingNow()
 	if err := target.tracks.close(stoppedAt); err != nil {
@@ -358,9 +381,9 @@ func (r *RecordingRuntime) finish(recorderID string, target *activeRecording, en
 		captureError("Recording row not closed at stop", err, "recording_id", target.row.ID)
 	}
 	r.release(recorderID)
-	r.closeRecordingNotice(target.row.ChannelID, target.noticeID, target.row.ID)
-	utils.Info("Recording stopped", append([]any{"recording_id", target.row.ID, "channel_id", target.row.ChannelID,
-		"recorder", recorderID, "ended", string(end)}, kv...)...)
+	r.closeRecordingNotice(target)
+	utils.Info("Recording stopped", "recording_id", target.row.ID, "channel_id", target.row.ChannelID,
+		"recorder", recorderID, "ended", string(end), "stopped_by", stoppedBy)
 }
 
 // reserveRecorder marks the first free recorder, in configured order, busy

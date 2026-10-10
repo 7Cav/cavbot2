@@ -87,18 +87,18 @@ const recordingNoticeStoppedLine = "⏹️ This channel is no longer being recor
 // closeRecordingNotice edits a stopped recording's notice to say it stopped,
 // and removes its button. A failed edit is a WARN line and never holds up
 // the stop, which has already happened.
-func (r *RecordingRuntime) closeRecordingNotice(channelID, messageID string, recordingID int64) {
+func (r *RecordingRuntime) closeRecordingNotice(rec *activeRecording) {
 	content := recordingNoticeStoppedLine
 	_, err := r.mgr.ChannelMessageEditComplex(&discordgo.MessageEdit{
-		ID:              messageID,
-		Channel:         channelID,
+		ID:              rec.noticeID,
+		Channel:         rec.row.ChannelID,
 		Content:         &content,
 		Components:      &[]discordgo.MessageComponent{},
 		AllowedMentions: noMentions(),
 	})
 	if err != nil {
-		utils.Warn("Recording notice not edited at stop",
-			"recording_id", recordingID, "channel_id", channelID, "message_id", messageID, "error", err)
+		utils.Warn("Recording notice not edited at stop", "recording_id", rec.row.ID,
+			"channel_id", rec.row.ChannelID, "message_id", rec.noticeID, "error", err)
 	}
 }
 

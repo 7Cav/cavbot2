@@ -123,6 +123,9 @@ func TestRecordingNoticeStopButtonAnswersToTheStarterAndRecordingRoleHolders(t *
 			reply := pressStop(t, sc.rt, button, tc.presser)
 
 			if tc.stops {
+				if !strings.HasPrefix(reply, "✅") {
+					t.Errorf("reply = %q, want a ✅ verdict", reply)
+				}
 				sc.assertStopped(t, recordChannel, store.RecordingEndStopped)
 				return
 			}
@@ -142,17 +145,17 @@ func (sc *recordScene) deliver(userID, channelID string) {
 	sc.rt.HandleVoiceStateUpdate(vs)
 }
 
-// autoStop is one way a recording stops by itself: what happens after the
-// starter has started it in recordChannel and the cache has seen the
-// recorder join, and how the row then records it ended.
-type autoStop struct {
+// autoStopCase is one way a recording stops by itself: what happens after the
+// starter has started it in recordChannel, and how the row then records it
+// ended.
+type autoStopCase struct {
 	name string
 	// cause makes the recording stop.
 	cause func(t *testing.T, sc *recordScene)
 	end   store.RecordingEnd
 }
 
-var autoStops = []autoStop{
+var autoStops = []autoStopCase{
 	{
 		name: "the last human leaves, with a bot still in the channel",
 		cause: func(t *testing.T, sc *recordScene) {
@@ -204,13 +207,15 @@ var autoStops = []autoStop{
 
 // A recording stops by itself, and records how it ended: the recorder
 // leaves, the row is closed at the clock's now, and the notice loses its
-// button.
+// button. The cache shows the recorder in the channel before the start
+// returns, as it does when the recorder's own voice event is handled during
+// the join, so no later event tells the runtime the recorder arrived.
 func TestRecordingStopsByItself(t *testing.T) {
 	for _, tc := range autoStops {
 		t.Run(tc.name, func(t *testing.T) {
 			sc := newRecordScene(t, testRecorder)
+			sc.fake.setVoice(testRecorder, recordChannel)
 			sc.startIn(t, recStarter, recordChannel)
-			sc.deliver(testRecorder, recordChannel)
 
 			tc.cause(t, sc)
 
