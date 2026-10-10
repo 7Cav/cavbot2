@@ -16,13 +16,13 @@
 // it is built from. That check also recorded which parameters the function
 // hands on toward a person, itself or through the functions it calls, so a
 // call that passes one of them data from an error is reported where it's
-// made, as a direct send is. It judges a value of a struct error type the module
-// defines by what is stored in it. A store in the package being checked is
-// reported at its line. Another package's stores are recorded with the
-// type, so a value that carries an error's data from them is reported where
-// it reaches a person. A call into a package outside the module counts as
-// built from all its arguments, and an error type from outside the module,
-// or one that isn't a struct, counts as built from an error on sight.
+// made, as a direct send is. It judges a value of a struct error type the
+// module defines by what is stored in it. A store in the package being checked
+// is reported at its line. Another package's stores are recorded with the type,
+// so a value that carries an error's data from them is reported where it
+// reaches a person. A call into a package outside the module counts as built
+// from all its arguments, and an error type from outside the module, or one
+// that isn't a struct, counts as built from an error on sight.
 //
 // A value read out of a slice, array, map, channel or interface counts as
 // built from everything put in it: an element read by index or by range, a
@@ -76,10 +76,10 @@ const module = "github.com/7cav/cavbot2"
 // toward a person, with the diagnostic a value built from an error there
 // gets.
 type funcFact struct {
-	Results   []result
-	Stores    []store
-	VarParams []int
-	Sinks     map[int]string
+	Results    []result
+	Stores     []store
+	VarParams  []int
+	SinkParams map[int]string
 }
 
 func (*funcFact) AFact() {}
@@ -426,7 +426,7 @@ func exportFuncs(src *source, stores map[*ssa.Function][]store, varParams map[*s
 		if !ok {
 			continue
 		}
-		fact := &funcFact{Results: make([]result, fn.Signature.Results().Len()), Stores: stores[fn], VarParams: varParams[fn], Sinks: wrappers[fn]}
+		fact := &funcFact{Results: make([]result, fn.Signature.Results().Len()), Stores: stores[fn], VarParams: varParams[fn], SinkParams: wrappers[fn]}
 		for i := range fact.Results {
 			t := src.tracer(true)
 			fact.Results[i].Carries = t.traceReturns(fn, nil, i)
@@ -584,7 +584,7 @@ func (s *sinks) params(call *ssa.CallCommon, answers bool) map[int]string {
 			}
 			// One that hands a parameter on toward a person, itself or
 			// through another function, is a sink for that parameter.
-			maps.Copy(params, fact.Sinks)
+			maps.Copy(params, fact.SinkParams)
 		}
 	}
 	return params
