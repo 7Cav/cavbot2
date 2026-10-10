@@ -3,6 +3,7 @@ package replies
 import (
 	"github.com/7cav/cavbot2/alerts"
 	"github.com/7cav/cavbot2/notify"
+	"github.com/7cav/cavbot2/phrases"
 	"github.com/7cav/cavbot2/state"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
@@ -62,4 +63,12 @@ func keepsTheErrorThroughAnotherPackagesSetter(err error) {
 
 func buildsAnotherPackagesRefusalFromTheError(err error) {
 	_ = notify.Refuse("❌ " + err.Error()) // want "Discord"
+}
+
+func repliesWithTheErrorQuotedByAnotherPackagesClosure(err error) {
+	utils.HandleError(nil, nil, "❌ Failed: "+phrases.Quote(err.Error())) // want "Discord"
+}
+
+func repliesWithFixedTextQuotedByAnotherPackagesClosure() {
+	utils.HandleError(nil, nil, phrases.Quote(state.BusyMessage))
 }
