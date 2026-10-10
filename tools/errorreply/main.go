@@ -33,12 +33,14 @@
 //
 // A closure is read as part of the function that makes it. What the closure
 // puts in a variable it captured counts as put there, whoever calls the
-// closure, and so does what it puts in a channel, map, slice or pointer it
-// loads out of that variable. A parameter of the enclosing function that the
-// closure reads is a parameter of that function. The closure's own parameter
-// is built from what the enclosing function passes it at each call it makes.
-// A local counts as built from everything written through another local that
-// holds its address, even after that local points elsewhere.
+// closure, and so does what it stores, sends or sets through a channel, map,
+// slice or pointer it loads out of that variable. A parameter of the
+// enclosing function that the closure reads is a parameter of that function.
+// The closure's own parameter is built from what each call of it in the
+// package passes it.
+//
+// A local counts as built from everything written through another local
+// that holds its address, even after that local points elsewhere.
 //
 // A package-level variable counts as built from everything its package puts
 // in it: its declared value, a store at an address within it, a map update
@@ -240,7 +242,7 @@ func newSource(pass *analysis.Pass) *source {
 // tracer returns a tracer of values in the package. through is as the
 // tracer's field says.
 func (src *source) tracer(through bool) *tracer {
-	return &tracer{src: src, seen: map[visit]bool{}, through: through}
+	return &tracer{src: src, seen: map[visit]bool{}, held: map[visit]bool{}, through: through}
 }
 
 // putting is a container an instruction puts values in, and those values.
@@ -652,6 +654,9 @@ func isNamed(typ types.Type, path string, names ...string) bool {
 type tracer struct {
 	src  *source
 	seen map[visit]bool
+	// held holds the locals traced for what is written through the address
+	// each holds.
+	held map[visit]bool
 	// forwarded holds the parameters of the traced function, or of a
 	// function enclosing it, that the value was built from.
 	forwarded []*ssa.Parameter
@@ -1048,20 +1053,48 @@ func (t *tracer) traceStores(addr ssa.Value, f *frame) bool {
 		}
 		// A local that holds addr puts in it what is written through it.
 		if store, ok := ref.(*ssa.Store); ok && store.Val == addr {
-			if holder, ok := store.Addr.(*ssa.Alloc); ok && t.trace(holder, f) {
+			if holder, ok := store.Addr.(*ssa.Alloc); ok && t.traceThrough(holder, f) {
 				return true
 			}
 		}
 		// A closure that captures addr puts values in it through its free
 		// variable.
-		if mk, ok := ref.(*ssa.MakeClosure); ok {
-			closure := mk.Fn.(*ssa.Function)
-			for i, binding := range mk.Bindings {
-				if binding == addr && t.traceStores(closure.FreeVars[i], &frame{fn: closure, parent: f}) {
-					return true
-				}
-			}
+		if fv := capture(ref, addr); fv != nil && t.traceStores(fv, &frame{fn: fv.Parent(), parent: f}) {
+			return true
 		}
 	}
 	return false
+}
+
+// traceThrough traces what is written through the address the local holder
+// holds, there or in a closure that captures holder. What is put in holder
+// itself is left out, since it points holder elsewhere.
+func (t *tracer) traceThrough(holder ssa.Value, f *frame) bool {
+	// Two locals that hold each other's addresses in turn are traced once.
+	if t.held[visit{holder, f}] {
+		return false
+	}
+	t.held[visit{holder, f}] = true
+	for _, ref := range *holder.Referrers() {
+		if load, ok := ref.(*ssa.UnOp); ok && load.Op == token.MUL && t.traceStores(load, f) {
+			return true
+		}
+		if fv := capture(ref, holder); fv != nil && t.traceThrough(fv, &frame{fn: fv.Parent(), parent: f}) {
+			return true
+		}
+	}
+	return false
+}
+
+// capture returns the free variable through which the closure instr makes
+// reaches addr, or nil when instr makes no closure that captures addr.
+func capture(instr ssa.Instruction, addr ssa.Value) *ssa.FreeVar {
+	mk, ok := instr.(*ssa.MakeClosure)
+	if !ok {
+		return nil
+	}
+	if i := slices.Index(mk.Bindings, addr); i >= 0 {
+		return mk.Fn.(*ssa.Function).FreeVars[i]
+	}
+	return nil
 }

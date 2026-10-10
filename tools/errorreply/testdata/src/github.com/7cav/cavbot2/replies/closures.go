@@ -3,6 +3,7 @@ package replies
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"sync"
 
@@ -57,6 +58,11 @@ func repliesWithWhatAGoroutineSent(err error) {
 
 func repliesWithAMapValueAClosureSet(err error) {
 	failures := map[string]string{}
+	func() { failures["roster"] = err.Error() }()
+	utils.HandleError(nil, nil, "❌ Failed: "+failures["roster"]) // want "Discord"
+}
+
+func repliesWithWhatAClosureSetInAMapItWasGiven(failures map[string]string, err error) {
 	func() { failures["roster"] = err.Error() }()
 	utils.HandleError(nil, nil, "❌ Failed: "+failures["roster"]) // want "Discord"
 }
@@ -144,6 +150,27 @@ func repliesWithFixedTextAClosureWroteThroughAPointer(err error) {
 		}
 	}()
 	utils.HandleError(nil, nil, reason)
+}
+
+func repliesWithFixedTextWhileAClosureReadsTheErrorThroughAPointer(err error) {
+	reply := "❌ Couldn't fetch the roster."
+	var detail string
+	shown := &reply
+	if err != nil {
+		shown = &detail
+		detail = err.Error()
+	}
+	func() { log.Print(*shown) }()
+	utils.HandleError(nil, nil, reply)
+}
+
+func repliesWithFixedTextAfterSwappingCapturedPointers() {
+	var a, b string
+	p, q := &a, &b
+	p, q = q, p
+	*q = fetchFailed
+	func() { _, _ = p, q }()
+	utils.HandleError(nil, nil, a)
 }
 
 func repliesWithWhatWasWrittenThroughAPointerToAPointer(err error) {
