@@ -15,6 +15,10 @@ func redirectsWithTheError(w http.ResponseWriter, r *http.Request, err error) {
 	http.Redirect(w, r, "/signin?cause="+err.Error(), http.StatusSeeOther) // want "panel"
 }
 
+func answersWithWhatFollowsTheErrorsFirstColon(w http.ResponseWriter, err error) {
+	http.Error(w, "bad: "+strings.Split(err.Error(), ": ")[1], http.StatusBadGateway) // want "panel"
+}
+
 func answersWithTheErrorTrimmedByACallThatReturnsTwoResults(w http.ResponseWriter, err error) {
 	detail, _ := strings.CutPrefix(err.Error(), "HTTP ")
 	http.Error(w, "bad: "+detail, http.StatusInternalServerError) // want "panel"

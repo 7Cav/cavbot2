@@ -7,8 +7,9 @@ import (
 )
 
 // Each line in testdata/src/github.com/7cav/cavbot2/replies that carries a
-// want comment is a message to Discord, or a store into an error type that
-// reaches one, that the analyzer reports. It reports no other line.
+// want comment is a message to Discord, a store into an error type that
+// reaches one, or a value put in another package's variable, that the
+// analyzer reports. It reports no other line.
 func TestErrorReply(t *testing.T) {
 	analysistest.Run(diagnosticsOnly{t}, analysistest.TestData(), analyzer, "github.com/7cav/cavbot2/replies")
 }
