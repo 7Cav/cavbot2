@@ -85,6 +85,10 @@ import (
 // can still land between a check and the API call. A guild missing from the
 // cache counts as current at entry and as "cannot confirm" before an action.
 //
+// A recorder is absent from all of this (temp_vc_recorder.go). Its events
+// never reach the record, and the delete check, the lock and the restart
+// sweep read the cache with recorders left out.
+//
 // docs/temp-vc-decisions.md records what is settled and where each decision
 // came from. GLOSSARY.md carries the vocabulary.
 //
