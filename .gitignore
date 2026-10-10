@@ -7,3 +7,7 @@ docs/superpowers/
 
 # build artifact from `go build -o cavbot2`
 /cavbot2
+
+# Impeccable's local run state: critique snapshots carry this machine's paths
+.impeccable/critique/
+.impeccable/live/
