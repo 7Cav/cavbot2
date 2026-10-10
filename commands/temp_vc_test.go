@@ -74,6 +74,9 @@ type fakeTempVCManager struct {
 	// guild read as absent from the cache. Any other guild is always absent.
 	voice        map[string]string
 	guildMissing bool
+	// bots are the user IDs the cache knows to be bots. VoiceStates names
+	// the connected ones.
+	bots map[string]bool
 
 	// overwrites stands in for Discord's own record of the overwrite list on
 	// each channel the bot created or edited, kept apart from the cache so
@@ -362,6 +365,12 @@ func (f *fakeTempVCManager) VoiceStates(guildID string) VoiceSnapshot {
 	}
 	for user, ch := range f.voice {
 		snap.ChannelByUser[user] = ch
+		if f.bots[user] {
+			if snap.Bots == nil {
+				snap.Bots = make(map[string]struct{})
+			}
+			snap.Bots[user] = struct{}{}
+		}
 	}
 	for id := range f.channels {
 		snap.Channels[id] = struct{}{}
@@ -467,6 +476,16 @@ func (f *fakeTempVCManager) setVoice(userID, channelID string) {
 		return
 	}
 	f.voice[userID] = channelID
+}
+
+// setBot marks a user as a bot in the fake cache.
+func (f *fakeTempVCManager) setBot(userID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.bots == nil {
+		f.bots = make(map[string]bool)
+	}
+	f.bots[userID] = true
 }
 
 // setGuildMissing makes the test guild absent from the fake cache, the

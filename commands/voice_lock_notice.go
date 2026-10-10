@@ -144,14 +144,17 @@ func editNoticeReply(r utils.InteractionResponder, interaction *discordgo.Intera
 }
 
 // sendNoticeReply fills in the ephemeral reply to a press or a picker
-// submission. A lost reply is captured. editEphemeral cannot serve here:
-// its capture reads the interaction as a slash command's, which panics on
-// a component's.
+// submission, on the lock notice or the recording notice. A lost reply is
+// captured under the command the CustomID's first segment names (ADR
+// 0007). editEphemeral cannot serve here: its capture reads the interaction
+// as a slash command's, which panics on a component's.
 func sendNoticeReply(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, edit *discordgo.WebhookEdit) {
 	if err := r.InteractionResponseEdit(interaction.Interaction, edit); err != nil {
+		customID := interaction.MessageComponentData().CustomID
+		command, _, _ := strings.Cut(customID, customIDSeparator)
 		captureError("Failed to deliver deferred-ephemeral edit", err,
-			"command", voiceLockCommandName,
-			"custom_id", interaction.MessageComponentData().CustomID,
+			"command", command,
+			"custom_id", customID,
 			"guild_id", interaction.GuildID)
 	}
 }

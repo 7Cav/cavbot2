@@ -55,6 +55,13 @@ func Record(rt *RecordingRuntime) Command {
 // runRecord is the /record handler behind the responder seam. It defers an
 // ephemeral reply first, so every outcome is an edit of that one reply.
 func runRecord(r utils.InteractionResponder, rt *RecordingRuntime, interaction *discordgo.InteractionCreate) {
+	// A press on the recording notice's button reaches the same handler
+	// (ADR 0007), and goes to its own path before anything below reads it as
+	// a slash command.
+	if interaction.Type == discordgo.InteractionMessageComponent {
+		runRecordingNoticeComponent(r, rt, interaction)
+		return
+	}
 	if err := deferEphemeral(r, interaction); err != nil {
 		replyAckFailed(r, interaction, err)
 		return
