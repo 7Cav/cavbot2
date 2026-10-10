@@ -27,7 +27,9 @@ import (
 // store at each start and stop, so a panel save takes effect at once.
 //
 // A recording's row is written once its recorder is in the channel, and
-// closed with its stop time once the recorder has left.
+// closed with its stop time once the recorder has left. Its tracks
+// (recording_tracks.go) take what the recorder hears from the row write on,
+// and end at the stop time.
 
 // recordingNow is the recording runtime's clock, a package var as tempVCNow
 // is, so tests can pin a recording's start and stop times.
