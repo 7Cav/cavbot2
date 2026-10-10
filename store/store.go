@@ -132,7 +132,33 @@ type Recording struct {
 	StoppedAt time.Time
 	// Ended is how the recording ended, empty while it runs.
 	Ended RecordingEnd
+	// Mix is how far the recording's mix has got, empty while it runs.
+	Mix MixState
+	// Speakers is everyone the recording heard, as its stop found them.
+	// None while it runs.
+	Speakers []Speaker
 }
+
+// Speaker is one speaker (GLOSSARY.md) of a recording.
+type Speaker struct {
+	// ID is the speaker's Discord user ID.
+	ID string
+	// DisplayName is the name they showed in the server when the recording
+	// stopped.
+	DisplayName string
+}
+
+// MixState is how far a recording's mix (GLOSSARY.md) has got.
+type MixState string
+
+const (
+	// MixProcessing: the recording has stopped and its mix is being built.
+	MixProcessing MixState = "processing"
+	// MixReady: the mix is built and can be downloaded.
+	MixReady MixState = "ready"
+	// MixFailed: the mix couldn't be built. The tracks are still there.
+	MixFailed MixState = "failed"
+)
 
 // RecordingEnd is how a recording ended: what stopped it.
 type RecordingEnd string
@@ -403,9 +429,13 @@ type Store interface {
 	// row is running.
 	StartRecording(ctx context.Context, rec Recording) (Recording, error)
 	// StopRecording records the stop time of the running recording with the
-	// ID given, and how it ended. ErrNotFound when no running recording has
-	// the ID, a stopped one among them, and nothing written.
-	StopRecording(ctx context.Context, id int64, at time.Time, end RecordingEnd) error
+	// ID given, how it ended and its speakers, and leaves its mix
+	// processing. ErrNotFound when no running recording has the ID, a
+	// stopped one among them, and nothing written.
+	StopRecording(ctx context.Context, id int64, at time.Time, end RecordingEnd, speakers []Speaker) error
+	// SetRecordingMix records how far the mix of the recording with the ID
+	// given has got. ErrNotFound when no recording has the ID.
+	SetRecordingMix(ctx context.Context, id int64, mix MixState) error
 	// ListRecordings returns every recording of the guild, running or not,
 	// in no promised order.
 	ListRecordings(ctx context.Context, guildID string) ([]Recording, error)

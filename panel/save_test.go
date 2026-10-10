@@ -228,9 +228,14 @@ func (s leavingStore) StartRecording(ctx context.Context, rec store.Recording) (
 	return s.st.StartRecording(ctx, rec)
 }
 
-func (s leavingStore) StopRecording(ctx context.Context, id int64, at time.Time, end store.RecordingEnd) error {
+func (s leavingStore) StopRecording(ctx context.Context, id int64, at time.Time, end store.RecordingEnd, speakers []store.Speaker) error {
 	s.d.leave()
-	return s.st.StopRecording(ctx, id, at, end)
+	return s.st.StopRecording(ctx, id, at, end, speakers)
+}
+
+func (s leavingStore) SetRecordingMix(ctx context.Context, id int64, mix store.MixState) error {
+	s.d.leave()
+	return s.st.SetRecordingMix(ctx, id, mix)
 }
 
 func (s leavingStore) ListRecordings(ctx context.Context, guildID string) ([]store.Recording, error) {
