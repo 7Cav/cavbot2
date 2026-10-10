@@ -3,6 +3,7 @@ package replies
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/7cav/cavbot2/utils"
@@ -109,4 +110,35 @@ func refusesWithTheError(err error) {
 
 func repliesWithTheRememberedRefusal() {
 	utils.HandleError(nil, nil, "❌ Refused: "+lastRefusal) // want "."
+}
+
+var sweepFailures = make(chan string, 1)
+
+func sendsTheErrorOnAVariablesChannel(err error) {
+	sweepFailures <- err.Error()
+}
+
+func repliesWithAFailureReceivedFromAVariablesChannel() {
+	utils.HandleError(nil, nil, "❌ The sweep failed: "+<-sweepFailures) // want "."
+}
+
+var lastFailures [2]string
+
+func setsTheErrorThroughASliceOfAVariablesArray(err error) {
+	failures := lastFailures[:]
+	failures[0] = err.Error()
+}
+
+func repliesWithTheLastFailure() {
+	utils.HandleError(nil, nil, "❌ Failed: "+lastFailures[0]) // want "."
+}
+
+var report strings.Builder
+
+func writesTheErrorIntoAVariablesBuilder(err error) {
+	report.WriteString(err.Error())
+}
+
+func repliesWithTheBuiltReport() {
+	utils.HandleError(nil, nil, "❌ Failed: "+report.String()) // want "."
 }

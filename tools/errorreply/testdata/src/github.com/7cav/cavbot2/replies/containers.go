@@ -107,10 +107,11 @@ func receivesTheErrorsTextOnAChannel(err error) {
 	utils.HandleError(nil, nil, "❌ Failed: "+<-failures) // want "."
 }
 
-func selectsTheErrorsTextOffAChannel(err error, done chan string) {
+func selectsTheErrorsTextOffAChannel(err error, notices chan string, done chan string) {
 	failures := make(chan string, 1)
 	failures <- err.Error()
 	select {
+	case notices <- "Sweep failed":
 	case failure := <-failures:
 		utils.HandleError(nil, nil, "❌ Failed: "+failure) // want "."
 	case <-done:
@@ -129,5 +130,13 @@ func repliesWithEachErrorTextOnAChannel(err error) {
 	close(failures)
 	for failure := range failures {
 		utils.HandleError(nil, nil, "❌ Failed: "+failure) // want "."
+	}
+}
+
+func namesWhereInTheErrorAColonIs(err error) {
+	for i, r := range err.Error() {
+		if r == ':' {
+			utils.HandleError(nil, nil, fmt.Sprint("❌ Failed at character ", i))
+		}
 	}
 }

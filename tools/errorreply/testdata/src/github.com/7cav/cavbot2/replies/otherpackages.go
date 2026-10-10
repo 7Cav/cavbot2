@@ -20,3 +20,11 @@ func storesTheErrorInAnotherPackagesVariable(err error) {
 func passesTheErrorToAnotherPackagesSetter(err error) {
 	state.RememberRefusal(err.Error()) // want "variable"
 }
+
+func readsAnotherPackagesReport() {
+	_ = state.Report.String()
+}
+
+func logsTheErrorThroughAnotherPackagesLogger(err error) {
+	state.Logger.Print("sweep failed: " + err.Error())
+}
