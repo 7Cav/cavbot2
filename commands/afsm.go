@@ -88,7 +88,7 @@ func runAFSM(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 			fmt.Errorf("empty roster for department %q", choice),
 			"department", choice,
 		)
-		utils.HandleError(r, i, fmt.Sprintf("⚠️ The %s roster came back empty — this shouldn't happen for a preset department. The issue has been reported.", choice))
+		replyError(r, i, fmt.Sprintf("⚠️ The %s roster came back empty — this shouldn't happen for a preset department. The issue has been reported.", choice))
 		return
 	}
 

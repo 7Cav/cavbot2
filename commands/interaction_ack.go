@@ -143,6 +143,16 @@ func refuse(r utils.InteractionResponder, interaction *discordgo.InteractionCrea
 	return true
 }
 
+// replyError sends message as a slash command's error reply when the reply
+// isn't a refusal, such as a lookup that failed after the command deferred.
+// It sends the reply as refuse does, so an error reply sent as the
+// interaction's first response reports a 10062 as a missed acknowledgement
+// too. After a deferral, Discord answers the response with 40060 and
+// HandleError edits the deferred reply instead.
+func replyError(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, message string) {
+	refuse(r, interaction, message)
+}
+
 // refusalResponder sends a refusal through acknowledge. It keeps a 10062
 // in missed rather than hand it to HandleError, which would report it as
 // an error reply that never arrived.

@@ -82,7 +82,7 @@ func runMilpac(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 
 	milpac, err := utils.GetMilpacByDiscordID(ctx, user.ID)
 	if errors.Is(err, utils.ErrNotFound) {
-		utils.HandleError(r, i, milpacNotFoundReply)
+		replyError(r, i, milpacNotFoundReply)
 		return
 	}
 	if err != nil {
@@ -197,7 +197,7 @@ func runMilpac(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	)
 	matches := regexp.MustCompile(`/\d+/(\d+)\.jpg`).FindStringSubmatch(milpac.UniformUrl)
 	if len(matches) < 2 {
-		utils.HandleError(r, i, "❌ Failed to parse uniform URL")
+		replyError(r, i, "❌ Failed to parse uniform URL")
 		return
 	}
 	id := matches[1]
@@ -303,5 +303,5 @@ const milpacUnreadableReply = "❌ This milpac has a date the bot can't read, so
 func replyMilpacUnreadable(r utils.InteractionResponder, i *discordgo.InteractionCreate, field, value string, err error) {
 	captureError("Milpac holds an unreadable date", err,
 		"command", "milpac", "guild_id", i.GuildID, "field", field, "value", value)
-	utils.HandleError(r, i, milpacUnreadableReply)
+	replyError(r, i, milpacUnreadableReply)
 }

@@ -64,7 +64,7 @@ func runS6ITCheck(r utils.InteractionResponder, i *discordgo.InteractionCreate) 
 			"S6 IT roster lookup returned zero members",
 			fmt.Errorf("empty roster for S6 fuzzy search"),
 		)
-		utils.HandleError(r, i, "⚠️ The S6 roster came back empty — this shouldn't happen. The issue has been reported.")
+		replyError(r, i, "⚠️ The S6 roster came back empty — this shouldn't happen. The issue has been reported.")
 		return
 	}
 

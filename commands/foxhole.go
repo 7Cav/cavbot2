@@ -230,7 +230,7 @@ func runFoxhole(
 		purging = true
 		handleFoxholePurge(r, gm, interaction, guildID, roleScope, end)
 	default:
-		utils.HandleError(r, interaction, "❌ Unknown subcommand")
+		replyError(r, interaction, "❌ Unknown subcommand")
 	}
 
 	utils.Info("✨ Done!", "command", commandNameOf(interaction))

@@ -544,5 +544,5 @@ func sendS3aarFollowup(r utils.InteractionResponder, i *discordgo.InteractionCre
 // reply.
 func replyS3aarSendFailed(r utils.InteractionResponder, i *discordgo.InteractionCreate, err error) {
 	captureError("Failed to send an /s3aar followup", err, "command", "s3aar", "guild_id", i.GuildID)
-	utils.HandleError(r, i, s3aarSendFailedReply)
+	replyError(r, i, s3aarSendFailedReply)
 }
