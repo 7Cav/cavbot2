@@ -128,6 +128,7 @@ type RecordingRuntime struct {
 	st        store.Store
 	tv        *TempVC
 	voice     RecorderVoice
+	mixer     Mixer
 	guildID   string
 	recorders []string
 	// dir is the recordings directory, which holds a directory of tracks
@@ -174,13 +175,15 @@ func (rec *activeRecording) mayStop(userID string, holdsRole, inChannel bool) bo
 
 // NewRecordingRuntime builds the recording runtime over the Discord
 // session's manager, the store, temp VC (which knows the hubs) and the
-// voice adapter, whose recorders it takes now. Tracks go under dir.
-func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guildID string, rv RecorderVoice, dir string) *RecordingRuntime {
+// voice adapter, whose recorders it takes now. Tracks go under dir, and
+// the mixer builds each recording's mix there.
+func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guildID string, rv RecorderVoice, mixer Mixer, dir string) *RecordingRuntime {
 	return &RecordingRuntime{
 		mgr:       mgr,
 		st:        st,
 		tv:        tv,
 		voice:     rv,
+		mixer:     mixer,
 		guildID:   guildID,
 		recorders: rv.UserIDs(),
 		dir:       dir,
@@ -360,9 +363,9 @@ func (r *RecordingRuntime) runningInLocked(channelID string) *activeRecording {
 }
 
 // finish ends a recording a stop has taken: the recorder leaves, the tracks
-// end at the stop time, the row records the stop time and how it ended, and
-// the notice says it stopped. stoppedBy is the member who stopped it, empty
-// when it stopped by itself.
+// end at the stop time, the row records the stop time, how it ended and its
+// speakers, the notice says it stopped, and the mix starts. stoppedBy is the
+// member who stopped it, empty when it stopped by itself.
 func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEnd, stoppedBy string) {
 	recorderID := target.row.RecorderID
 	r.mu.Lock()
@@ -375,15 +378,27 @@ func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEn
 	if err := target.tracks.close(stoppedAt); err != nil {
 		captureError("Tracks not closed at stop", err, "recording_id", target.row.ID)
 	}
+	row := target.row
+	row.StoppedAt, row.Ended, row.Speakers = stoppedAt, end, r.speakers(target.tracks.speakerIDs())
 	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)
 	defer cancel()
-	if err := r.st.StopRecording(ctx, target.row.ID, stoppedAt, end); err != nil {
-		captureError("Recording row not closed at stop", err, "recording_id", target.row.ID)
+	if err := r.st.StopRecording(ctx, row.ID, stoppedAt, end, row.Speakers); err != nil {
+		captureError("Recording row not closed at stop", err, "recording_id", row.ID)
 	}
 	r.release(recorderID)
 	r.closeRecordingNotice(target)
-	utils.Info("Recording stopped", "recording_id", target.row.ID, "channel_id", target.row.ChannelID,
+	utils.Info("Recording stopped", "recording_id", row.ID, "channel_id", row.ChannelID,
 		"recorder", recorderID, "ended", string(end), "stopped_by", stoppedBy)
+	r.startMix(row)
+}
+
+// speakers names everyone a recording heard.
+func (r *RecordingRuntime) speakers(userIDs []string) []store.Speaker {
+	out := make([]store.Speaker, 0, len(userIDs))
+	for _, id := range userIDs {
+		out = append(out, store.Speaker{ID: id, DisplayName: id})
+	}
+	return out
 }
 
 // reserveRecorder marks the first free recorder, in configured order, busy
