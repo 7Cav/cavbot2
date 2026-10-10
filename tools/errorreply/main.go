@@ -80,8 +80,11 @@
 //     the two fields named above, where they are stored, and no other.
 //   - A function called through a function value. When such a function hands
 //     its parameter on to a message or a panel answer, the check reports its
-//     direct calls only. Failing closed there would report every Discord and
-//     panel handler, since discordgo and net/http call each one that way.
+//     direct calls only. Failing closed there reported 47 places in the
+//     bot's code: the slash command handlers the command registry calls that
+//     way, the gateway event handlers discordgo calls, the panel routes and
+//     middleware net/http calls, and the panel's background actions its
+//     action runner calls.
 package main
 
 import (
