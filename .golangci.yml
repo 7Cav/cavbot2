@@ -4,8 +4,8 @@
 # ineffassign, staticcheck, unused) as it was before this file existed.
 # depguard and gosec on top of it hold the panel's security rules, so review
 # needn't. forbidigo holds the panel's production code to its clock and to
-# registering routes only through routes(), and the commands package's error
-# replies to refuse and replyError, and nolintlint makes every //nolint name
+# registering routes only through routes(). It holds the commands package's
+# error replies to refuse and replyError. nolintlint makes every //nolint name
 # its linter and say why.
 #
 # gofmt is a *formatter* in v2, not a linter: `golangci-lint run` reports diffs

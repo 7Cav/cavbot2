@@ -182,8 +182,7 @@ type route struct {
 // routes is every route the panel serves, each behind its gate. Handler
 // registers these and no others, so a test that reads the list reads what
 // the panel serves. forbidigo's route rule in .golangci.yml holds the
-// panel's production code to that. It flags any other mux and any other
-// route registration.
+// panel's production code to that.
 func (p *Panel) routes() []route {
 	return []route{
 		{"GET /static/", staticHandler()},
