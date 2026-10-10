@@ -386,7 +386,7 @@ func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEn
 	row := target.row
 	members := r.mgr.MemberList(r.guildID)
 	row.StoppedAt, row.Ended, row.Speakers = stoppedAt, end, speakersOf(members, target.tracks.speakerIDs())
-	if err := writeRecordingInfo(r.dir, row, displayNameIn(members, row.StarterID)); err != nil {
+	if err := writeRecordingInfo(r.dir, row, members.DisplayName(row.StarterID)); err != nil {
 		captureError("Info file not written", err, "recording_id", row.ID)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)
@@ -406,22 +406,12 @@ func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEn
 func speakersOf(members MemberListSnapshot, userIDs []string) []store.Speaker {
 	out := make([]store.Speaker, 0, len(userIDs))
 	for _, id := range userIDs {
-		out = append(out, store.Speaker{ID: id, DisplayName: displayNameIn(members, id)})
+		out = append(out, store.Speaker{ID: id, DisplayName: members.DisplayName(id)})
 	}
 	slices.SortFunc(out, func(a, b store.Speaker) int {
 		return cmp.Or(strings.Compare(strings.ToLower(a.DisplayName), strings.ToLower(b.DisplayName)), strings.Compare(a.ID, b.ID))
 	})
 	return out
-}
-
-// displayNameIn is a user's display name in the member list, or their
-// Discord ID when the list doesn't hold them: a speaker who left the server
-// before the stop, or a list not yet complete.
-func displayNameIn(members MemberListSnapshot, userID string) string {
-	if m, ok := members.Member(userID); ok {
-		return m.DisplayName()
-	}
-	return userID
 }
 
 // reserveRecorder marks the first free recorder, in configured order, busy

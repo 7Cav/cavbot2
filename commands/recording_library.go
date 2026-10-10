@@ -8,9 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -19,36 +17,12 @@ import (
 
 // The recording library (spec #381, #389): the recordings as the panel reads
 // them. It lists them from the store and streams their files from the
-// recordings directory, so it works whether recording is on or off.
-//
-// A recording's directory, named by its ID, holds one Ogg Opus track per
-// speaker named by their Discord ID, the info file, and the mix once it is
-// built.
+// recordings directory (recording_files.go), so it works whether recording
+// is on or off.
 
-// recordingDir is a recording's directory under the recordings directory.
-func recordingDir(dir string, id int64) string {
-	return filepath.Join(dir, strconv.FormatInt(id, 10))
-}
-
-// trackFileName is the file name of a speaker's track.
-func trackFileName(userID string) string {
-	return userID + ".ogg"
-}
-
-// trackPath is the path of a speaker's track in a recording.
-func trackPath(dir string, id int64, userID string) string {
-	return filepath.Join(recordingDir(dir, id), trackFileName(userID))
-}
-
-// mixPath is the path of a recording's mix. RFC 7845 gives .opus as an Ogg
-// Opus file's extension.
-func mixPath(dir string, id int64) string {
-	return filepath.Join(recordingDir(dir, id), "mix.opus")
-}
-
-// errMixNotReady: the recording's mix is processing or failed, so there is
+// ErrMixNotReady: the recording's mix is processing or failed, so there is
 // nothing to download.
-var errMixNotReady = errors.New("recording: mix not ready")
+var ErrMixNotReady = errors.New("recording: mix not ready")
 
 // RecordingLibrary reads the recordings of one guild.
 type RecordingLibrary struct {
@@ -85,11 +59,11 @@ func (l *RecordingLibrary) StartedBy(ctx context.Context, discordID string) ([]s
 	return slices.DeleteFunc(recs, func(rec store.Recording) bool { return rec.StarterID != discordID }), nil
 }
 
-// OpenMix opens a recording's mix for reading. errMixNotReady unless the
+// OpenMix opens a recording's mix for reading. ErrMixNotReady unless the
 // mix is ready.
 func (l *RecordingLibrary) OpenMix(rec store.Recording) (*os.File, error) {
 	if rec.Mix != store.MixReady {
-		return nil, errMixNotReady
+		return nil, ErrMixNotReady
 	}
 	f, err := os.Open(mixPath(l.dir, rec.ID))
 	if err != nil {
