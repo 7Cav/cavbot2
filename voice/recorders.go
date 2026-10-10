@@ -9,20 +9,20 @@ import (
 	"github.com/7cav/cavbot2/utils"
 )
 
-// Session is one recorder's gateway session.
-type Session interface {
+// GatewaySession is one recorder's gateway session.
+type GatewaySession interface {
 	// UserID is the recorder account's Discord user ID.
 	UserID() string
 	// Close ends the session, and the recorder goes offline.
 	Close() error
 }
 
-// Open opens one recorder's gateway session from its token.
-type Open func(token string) (Session, error)
+// Opener opens one recorder's gateway session from its token.
+type Opener func(token string) (GatewaySession, error)
 
 // Recorders is the set of recorders connected at startup.
 type Recorders struct {
-	sessions []Session
+	sessions []GatewaySession
 }
 
 // Connect opens one session per token in raw, the RECORDER_TOKENS value: a
@@ -31,7 +31,7 @@ type Recorders struct {
 // bad or revoked token costs only its own recorder. The report names the
 // token by its position in the list, never by its text, since a token is
 // the recorder account.
-func Connect(raw string, open Open) *Recorders {
+func Connect(raw string, open Opener) *Recorders {
 	var tokens []string
 	for token := range strings.SplitSeq(raw, ",") {
 		if token = strings.TrimSpace(token); token != "" {

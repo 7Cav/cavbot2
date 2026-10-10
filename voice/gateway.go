@@ -11,10 +11,10 @@ import (
 // on, and Discord would close a session asking for one it lacks.
 const recorderIntents = discordgo.IntentsGuilds | discordgo.IntentsGuildVoiceStates
 
-// OpenGateway is the production Open: a discordgo session for the recorder
+// OpenGateway is the production Opener: a discordgo session for the recorder
 // account, open once READY has named it. A session that opened without
 // reaching READY is closed again, so a failed recorder holds no connection.
-func OpenGateway(token string) (Session, error) {
+func OpenGateway(token string) (GatewaySession, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, err
@@ -25,13 +25,13 @@ func OpenGateway(token string) (Session, error) {
 		_ = dg.Close()
 		return nil, err
 	}
-	return gatewaySession{dg}, nil
+	return discordgoSession{dg}, nil
 }
 
-// gatewaySession is a recorder's discordgo session.
-type gatewaySession struct {
+// discordgoSession is a recorder's discordgo session.
+type discordgoSession struct {
 	dg *discordgo.Session
 }
 
-func (s gatewaySession) UserID() string { return s.dg.State.User.ID }
-func (s gatewaySession) Close() error   { return s.dg.Close() }
+func (s discordgoSession) UserID() string { return s.dg.State.User.ID }
+func (s discordgoSession) Close() error   { return s.dg.Close() }

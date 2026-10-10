@@ -49,7 +49,7 @@ func newFakeGateway(accounts map[string]string) *fakeGateway {
 	return &fakeGateway{accounts: accounts}
 }
 
-func (g *fakeGateway) open(token string) (Session, error) {
+func (g *fakeGateway) open(token string) (GatewaySession, error) {
 	g.asked = append(g.asked, token)
 	userID, ok := g.accounts[token]
 	if !ok {
