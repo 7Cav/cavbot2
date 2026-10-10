@@ -14,6 +14,9 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
   with a Go at least as new as the `toolchain` line in `go.mod`, or it refuses
   to run.
 - A C compiler (gcc/clang) if you want to run the tests with `-race`
+- ffmpeg on `PATH`, built with libopus, to build a recording's mix. The Docker
+  image installs it. Without it the mixer's contract test skips, except in
+  CI, and a recording's mix fails while its tracks stay downloadable.
 - Docker, only if you want the container path in step 4
 
 ## Commands
@@ -77,9 +80,10 @@ A recorder is the account that joins a voice channel to record it
 own, separate from the bot's. Recording stays off until at least one recorder
 token is set in `RECORDER_TOKENS`, and removing every token and restarting
 turns it off again. Skip this on a host that doesn't record. For now a recorder
-joins the channel at `/record start` and leaves at `/record stop`, and
-writes one track per speaker under `RECORDINGS_DIR` (#381). Temporary voice
-channels ignore it.
+joins the channel at `/record start` and leaves at `/record stop`. The bot
+writes one track per speaker and an info file under `RECORDINGS_DIR`, then
+builds the recording's mix with ffmpeg (#381). Temporary voice channels
+ignore it.
 
 1. 'New Application', named for what it is, such as `CavBot Recorder`, so
    members can tell it from the bot.
@@ -133,7 +137,7 @@ Not checked at startup, but each one silently disables something:
 | `PANEL_ADDR` | The panel, the bot's web UI, does not listen; the bot logs `PANEL_ADDR not set, panel disabled` once. Set it (`:8080` under compose) and every other `PANEL_*` variable but `PANEL_GROUP_IDS` is required; a missing one stops the bot with `Panel misconfigured` before the Discord session opens. The panel also needs `BOT_DB_DSN`, because the hub page reads the store on every load; without it the bot logs `BOT_DB_DSN not set, panel disabled` and runs with no panel. The listener starts after READY and logs `Panel listening`. `.env.example` documents each `PANEL_*` variable. |
 | `FOXHOLE_GROUP_ID` | Defaults to `323`, the forum's Foxhole group. A forum user in it, as primary or secondary group, is a Foxhole manager: sign-in takes them to the panel's Foxhole page, and the hub page and its saves refuse them. Panel admins open the Foxhole page whatever their groups. The group check reads it on every request, so adding or removing a manager on the forum needs no deploy. With `PANEL_ADDR` set, a value that isn't a number stops the bot with `Panel misconfigured`. |
 | `RECORDER_TOKENS` | Recording stays off, and nobody can record; the bot logs `RECORDER_TOKENS not set, recording off` once, and `/record start` replies that recording is off. `/record` stays in the command list either way, so it keeps its Server Settings roles. Set it to a recorder token, or several separated by commas ([Recorder applications](#recorder-applications)), and each recorder connects at startup, logs `Recorder connected` with its user ID, and shows online. Removing every token and restarting turns recording off again. A token that fails to connect goes to Sentry as `Recorder failed to connect`, and the bot and the other recorders keep running. |
-| `RECORDINGS_DIR` | Where recordings go: a directory per recording, named by its ID, holding one Ogg Opus track per speaker, named by the speaker's Discord ID. Defaults to `recordings` under the working directory. `docker-compose.yml` sets it to `/recordings`, the mount point of the `cavbot2_recordings` volume, and doesn't read it from `.env`, so the tracks always land on the volume and survive a redeploy. A directory the bot can't write to goes to Sentry as `Track not written` at a speaker's first words, and the recording keeps running without that track. |
+| `RECORDINGS_DIR` | Where recordings go: a directory per recording, named by its ID, holding one Ogg Opus track per speaker, named by the speaker's Discord ID, the info file `info.txt`, and the mix `mix.opus` once ffmpeg has built it. A mix ffmpeg can't build goes to Sentry as `Mix failed`, and the tracks stay downloadable. Defaults to `recordings` under the working directory. `docker-compose.yml` sets it to `/recordings`, the mount point of the `cavbot2_recordings` volume, and doesn't read it from `.env`, so the tracks always land on the volume and survive a redeploy. A directory the bot can't write to goes to Sentry as `Track not written` at a speaker's first words, and the recording keeps running without that track. |
 | `POSTGRES_PASSWORD` | Read by the `postgres` service in `docker-compose.yml`, not by the bot. `.env.example` ships `change-me`; a blank value makes the image refuse to start and the bot wait on its healthcheck forever. Only the first boot of an empty volume reads it. |
 | `APP_ENV` | Only tags Sentry events with an environment. No effect unless `SENTRY_DSN` is also set. |
 

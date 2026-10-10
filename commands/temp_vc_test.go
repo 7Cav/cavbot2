@@ -77,6 +77,8 @@ type fakeTempVCManager struct {
 	// bots are the user IDs the cache knows to be bots. VoiceStates names
 	// the connected ones.
 	bots map[string]bool
+	// members is the guild's member list, complete, as MemberList reads it.
+	members []ListedMember
 
 	// overwrites stands in for Discord's own record of the overwrite list on
 	// each channel the bot created or edited, kept apart from the cache so
@@ -384,10 +386,20 @@ func (f *fakeTempVCManager) GuildData(_ string) GuildSnapshot {
 	return GuildSnapshot{}
 }
 
-// MemberList reads no guild data. The runtime never calls it, and the
-// member list's tests drive the production adapter.
+// MemberList reads the members setMember added, as a complete list. The
+// recording runtime names speakers from it. The member list's own tests
+// drive the production adapter.
 func (f *fakeTempVCManager) MemberList(_ string) MemberListSnapshot {
-	return MemberListSnapshot{}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return MemberListSnapshot{Status: MemberListComplete, Connected: true, Members: append([]ListedMember(nil), f.members...)}
+}
+
+// setMember adds a member to the guild's member list.
+func (f *fakeTempVCManager) setMember(m ListedMember) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.members = append(f.members, m)
 }
 
 // MemberRanks reads the payload through the shared helper. The fake holds

@@ -1,9 +1,11 @@
 package commands
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -118,6 +120,9 @@ type RecordingManager interface {
 	ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error)
 	// ChannelMessageEditComplex edits the recording notice at stop.
 	ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error)
+	// MemberList is TempVCManager's: one copied snapshot of the guild's
+	// member list, which names a recording's speakers at its stop.
+	MemberList(guildID string) MemberListSnapshot
 }
 
 // RecordingRuntime holds the recordings running now. Built on every host
@@ -379,7 +384,11 @@ func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEn
 		captureError("Tracks not closed at stop", err, "recording_id", target.row.ID)
 	}
 	row := target.row
-	row.StoppedAt, row.Ended, row.Speakers = stoppedAt, end, r.speakers(target.tracks.speakerIDs())
+	members := r.mgr.MemberList(r.guildID)
+	row.StoppedAt, row.Ended, row.Speakers = stoppedAt, end, speakersOf(members, target.tracks.speakerIDs())
+	if err := writeRecordingInfo(r.dir, row, displayNameIn(members, row.StarterID)); err != nil {
+		captureError("Info file not written", err, "recording_id", row.ID)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)
 	defer cancel()
 	if err := r.st.StopRecording(ctx, row.ID, stoppedAt, end, row.Speakers); err != nil {
@@ -392,13 +401,27 @@ func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEn
 	r.startMix(row)
 }
 
-// speakers names everyone a recording heard.
-func (r *RecordingRuntime) speakers(userIDs []string) []store.Speaker {
+// speakersOf names everyone a recording heard by their display name in the
+// member list, in the order of their names.
+func speakersOf(members MemberListSnapshot, userIDs []string) []store.Speaker {
 	out := make([]store.Speaker, 0, len(userIDs))
 	for _, id := range userIDs {
-		out = append(out, store.Speaker{ID: id, DisplayName: id})
+		out = append(out, store.Speaker{ID: id, DisplayName: displayNameIn(members, id)})
 	}
+	slices.SortFunc(out, func(a, b store.Speaker) int {
+		return cmp.Or(strings.Compare(strings.ToLower(a.DisplayName), strings.ToLower(b.DisplayName)), strings.Compare(a.ID, b.ID))
+	})
 	return out
+}
+
+// displayNameIn is a user's display name in the member list, or their
+// Discord ID when the list doesn't hold them: a speaker who left the server
+// before the stop, or a list not yet complete.
+func displayNameIn(members MemberListSnapshot, userID string) string {
+	if m, ok := members.Member(userID); ok {
+		return m.DisplayName()
+	}
+	return userID
 }
 
 // reserveRecorder marks the first free recorder, in configured order, busy
