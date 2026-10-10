@@ -3,6 +3,8 @@
 package panel
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -28,4 +30,16 @@ func answersWithWhatAClosureKept(w http.ResponseWriter, err error) {
 	var reason string
 	func() { reason = err.Error() }()
 	http.Error(w, "bad: "+reason, http.StatusInternalServerError) // want "panel"
+}
+
+func writesTheError(w http.ResponseWriter, err error) {
+	_, _ = w.Write([]byte("Failed: " + err.Error())) // want "panel"
+}
+
+func printsTheError(w http.ResponseWriter, err error) {
+	fmt.Fprintf(w, "Failed: %v", err) // want "panel"
+}
+
+func encodesTheError(w http.ResponseWriter, err error) {
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}) // want "panel"
 }
