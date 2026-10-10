@@ -1,14 +1,23 @@
 // Command errorreply reports what the bot shows a person that carries data
-// from an error. That is a message the bot sends to Discord: an interaction
-// reply, edit or followup, a channel post, or a utils.HandleError reply. It is
-// also a panel answer: the text of the panel's http.Error, the URL of its
-// redirect, or the data its page renders. Each is checked whole, embeds and
-// page data included. A Foxhole report member's failure reason and a spawn
-// failure's cause reach a panel page through the store or the temp VC
-// runtime, where the check can't follow them, so a value stored into either
-// is checked where it is stored. ADR 0016 says which data from an error a
-// message or a panel answer may carry. The gate runs the check over the
-// module's production code (.github/scripts/gate.sh).
+// from an error. That is a message to Discord: anything the bot hands
+// discordgo, such as an interaction reply, a channel post, a channel or role
+// name, or an audit-log reason, and a utils.HandleError reply. A method of
+// any interface named like one of *discordgo.Session's is taken for it. It
+// is also a panel answer: whatever a call outside the module is handed along
+// with the panel's response writer, such as the text of an http.Error, the
+// URL of a redirect, the data a page renders, or what is written or encoded
+// to the writer. Each is checked whole, embeds and page data included. A
+// Foxhole report member's failure reason and a spawn failure's cause reach a
+// panel page through the store or the temp VC runtime, where the check can't
+// follow them, so a value stored into either is checked where it is stored.
+// ADR 0016 says which data from an error a message or a panel answer may
+// carry. The gate runs the check over the module's production code
+// (.github/scripts/gate.sh).
+//
+// The check fails closed (ADR 0017). A value passes only when the check has
+// a rule for everything it is built from. A value it has no rule for counts
+// as data from an error, so a route the check can't follow fails the gate
+// where the value reaches a person. The rules follow.
 //
 // The check reads one package at a time. It follows a call into another
 // package of the module by what that package's check recorded: whether each
@@ -23,7 +32,8 @@
 // so a value that carries an error's data from them is reported where it
 // reaches a person. A call into a package outside the module counts as built
 // from all its arguments, and an error type from outside the module, or one
-// that isn't a struct, counts as built from an error on sight.
+// that isn't a struct, counts as built from an error on sight. A call through
+// a function value counts as built from that value too.
 //
 // A value read out of a slice, array, map, channel or interface counts as
 // built from everything put in it: an element read by index or by range, a
@@ -31,7 +41,8 @@
 // container. The index or key it is read with, a range's position in a
 // string, and the second result of a comma-ok read carry none of it.
 //
-// A closure is read as part of the function that makes it. What the closure
+// A closure is read as part of the function that makes it, and a closure
+// value counts as built from what it captured. What the closure
 // puts in a variable it captured counts as put there, whoever calls the
 // closure, and so does what it stores, sends or sets through a channel, map,
 // slice or pointer it loads out of that variable. A parameter of the
@@ -42,11 +53,19 @@
 // A local counts as built from everything written through another local
 // that holds its address, even after that local points elsewhere.
 //
+// Writes through a pointer are the one place the check follows the routes it
+// knows instead of failing closed, because failing closed there reports
+// ordinary replies built from nested composite literals (ADR 0017). It
+// follows a write at an address or within it, through a closure that
+// captured it, and through a local that holds it. It doesn't follow a write
+// through a pointer a call returned, or through an address kept in a slice,
+// map or struct field.
+//
 // A package-level variable counts as built from everything its package puts
 // in it: its declared value, a store at an address within it, a map update
 // or a send on it, a call it's passed to, and what each call in the package
-// passes a function that puts its parameter there. Another package of the module that reads the variable
-// gets the verdict its package recorded. The check can't follow a value
+// passes a function that puts its parameter there. Another package of the
+// module that reads the variable gets the verdict its package recorded. The check can't follow a value
 // that one package puts in another's variable to where the variable is
 // read, so it reports that store where it's made, and a call that passes a
 // value to another package's function that puts it in a variable.
@@ -153,9 +172,9 @@ var panelFields = map[string]bool{
 
 // The diagnostics, one for each place a value is handed on to.
 const (
-	toDiscord  = "this message to Discord carries data from an error; send fixed text and log the error or capture it (ADR 0016)"
-	toPanel    = "this panel answer carries data from an error; answer with fixed text and log the error or capture it (ADR 0016)"
-	toVariable = "this puts data from an error in another package's variable, where the check can't follow it to a person; put fixed text there and log the error or capture it (ADR 0016)"
+	toDiscord  = "this message to Discord carries data from an error, or data the check can't follow; send fixed text and log the error or capture it (ADR 0016, ADR 0017)"
+	toPanel    = "this panel answer carries data from an error, or data the check can't follow; answer with fixed text and log the error or capture it (ADR 0016, ADR 0017)"
+	toVariable = "this puts data from an error, or data the check can't follow, in another package's variable, and the check doesn't follow a variable to where another package reads it; put fixed text there and log the error or capture it (ADR 0016, ADR 0017)"
 )
 
 var errorType = types.Universe.Lookup("error").Type().Underlying().(*types.Interface)
@@ -727,7 +746,8 @@ func isNamed(typ types.Type, path string, names ...string) bool {
 
 // tracer reports whether any value a value is built from is an error, other
 // than a time and a value of an error type the module defines, which is
-// judged by what was stored in it (ADR 0016).
+// judged by what was stored in it (ADR 0016), or is a value it has no rule
+// for (ADR 0017).
 // It follows a call into a function of the package being checked, through
 // its return values and back out through its parameters to the call's
 // arguments, and a call into another package of the module by what that
