@@ -257,6 +257,7 @@ var recordRefusals = []recordRefusal{
 		name:      "not in voice",
 		recorders: []string{testRecorder},
 		setup:     func(*testing.T, *recordScene) permMember { return recStarter },
+		carries:   []string{recordNotInVoiceRefusal},
 	},
 	{
 		name:      "in a hub",
@@ -265,6 +266,7 @@ var recordRefusals = []recordRefusal{
 			sc.fake.setVoice(recStarter.id, testTempVCHub)
 			return recStarter
 		},
+		carries: []string{recordInHubRefusal},
 	},
 	{
 		name:      "no recording role",
@@ -273,6 +275,7 @@ var recordRefusals = []recordRefusal{
 			sc.fake.setVoice(recOutsider.id, recordChannel)
 			return recOutsider
 		},
+		carries: []string{noRecordingRoleRefusal},
 	},
 	{
 		name:      "recording role but no rank role",
@@ -282,6 +285,7 @@ var recordRefusals = []recordRefusal{
 			sc.fake.setVoice(applicant.id, recordChannel)
 			return applicant
 		},
+		carries: []string{notCavMemberRefusal},
 	},
 	{
 		name:      "no recorder free",
@@ -292,7 +296,7 @@ var recordRefusals = []recordRefusal{
 			sc.fake.setVoice(recStarter.id, recordOtherChannel)
 			return recStarter
 		},
-		carries: []string{"<#" + recordChannel + ">"},
+		carries: []string{noFreeRecorderRefusal, "<#" + recordChannel + ">"},
 	},
 	{
 		name: "recording off",
@@ -306,10 +310,10 @@ var recordRefusals = []recordRefusal{
 }
 
 // A start is refused when any one precondition fails: no recorder joins,
-// no row is written, and the reply is ephemeral. Each fixture meets every
-// other precondition. No wording is asserted beyond the constants that tell
-// the recording-off refusal from the no-free-recorder one, and the channel
-// the latter names.
+// no row is written, and the reply is an ephemeral ❌ carrying that
+// precondition's refusal. Each fixture meets every other precondition. No
+// wording is asserted beyond the refusal constants that tell the cases
+// apart, and the channel the no-free-recorder refusal names.
 func TestRecordStartRefusals(t *testing.T) {
 	for _, tc := range recordRefusals {
 		t.Run(tc.name, func(t *testing.T) {
@@ -319,6 +323,9 @@ func TestRecordStartRefusals(t *testing.T) {
 
 			reply := recordAs(t, sc.rt, caller, "start")
 
+			if !strings.HasPrefix(reply, "❌") {
+				t.Errorf("reply = %q, want a ❌ verdict", reply)
+			}
 			if got := sc.voice.joinCount(); got != joins {
 				t.Errorf("joins = %d, want %d, none from the refused start", got, joins)
 			}
@@ -404,8 +411,11 @@ func TestRecordStopByAnyoneElseIsRefused(t *testing.T) {
 	sc.startIn(t, recStarter, recordChannel)
 	sc.fake.setVoice(recOutsider.id, recordChannel)
 
-	recordAs(t, sc.rt, recOutsider, "stop")
+	reply := recordAs(t, sc.rt, recOutsider, "stop")
 
+	if !strings.HasPrefix(reply, notAllowedToStopRefusal) {
+		t.Errorf("reply = %q, want the refusal %q", reply, notAllowedToStopRefusal)
+	}
 	if got := sc.voice.inChannel(recordChannel); !slices.Equal(got, []string{testRecorder}) {
 		t.Errorf("recorders in %s after the refused stop = %v, want [%s]", recordChannel, got, testRecorder)
 	}
@@ -495,5 +505,7 @@ func TestRegistryDeclaresRecordWhetherRecordingIsOnOrOff(t *testing.T) {
 // a start is refused with the ephemeral shape instead of dereferencing a
 // nil runtime.
 func TestRecordNoRuntimeRefused(t *testing.T) {
-	recordAs(t, nil, recStarter, "start")
+	if reply := recordAs(t, nil, recStarter, "start"); reply != recordingOffRefusal {
+		t.Errorf("reply = %q, want the refusal %q", reply, recordingOffRefusal)
+	}
 }

@@ -37,6 +37,12 @@ var recordingNow = time.Now
 // its reply by then, so the member waits on it.
 const recordingJoinTimeout = 30 * time.Second
 
+// recordingLeaveTimeout bounds a recorder's leave.
+const recordingLeaveTimeout = 5 * time.Second
+
+// recordingStoreTimeout bounds each store call the runtime makes.
+const recordingStoreTimeout = 5 * time.Second
+
 // The reasons a start is refused. The command turns each into the member's
 // reply.
 var (
@@ -167,9 +173,9 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 		return "", err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), recordingJoinTimeout)
-	defer cancel()
-	conn, err := r.voice.Join(ctx, recorderID, r.guildID, channelID)
+	joinCtx, cancelJoin := context.WithTimeout(context.Background(), recordingJoinTimeout)
+	defer cancelJoin()
+	conn, err := r.voice.Join(joinCtx, recorderID, r.guildID, channelID)
 	if err != nil {
 		r.release(recorderID)
 		captureError("Recorder failed to join", err, "recorder", recorderID, "channel_id", channelID)
@@ -184,11 +190,13 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 		RecorderID:  recorderID,
 		StartedAt:   recordingNow(),
 	}
-	row, err = r.st.StartRecording(ctx, row)
+	storeCtx, cancelStore := context.WithTimeout(context.Background(), recordingStoreTimeout)
+	defer cancelStore()
+	row, err = r.st.StartRecording(storeCtx, row)
 	if err != nil {
 		// A recording with no row is one the panel and the deploy gate
 		// can't see, so the recorder leaves rather than record it.
-		conn.Leave(ctx)
+		r.leave(conn)
 		r.release(recorderID)
 		captureError("Recording row not written at start", err, "recorder", recorderID, "channel_id", channelID)
 		return "", errRecordingFailed
@@ -243,9 +251,9 @@ func (r *RecordingRuntime) Stop(by Invoker) (channelID string, err error) {
 	target.stopping = true
 	r.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), recordingJoinTimeout)
+	r.leave(target.conn)
+	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)
 	defer cancel()
-	target.conn.Leave(ctx)
 	if err := r.st.StopRecording(ctx, target.row.ID, recordingNow()); err != nil {
 		captureError("Recording row not closed at stop", err, "recording_id", target.row.ID)
 	}
@@ -273,6 +281,13 @@ func (r *RecordingRuntime) reserveRecorder(channelID string) (string, error) {
 	return "", busy
 }
 
+// leave takes a recorder out of its channel, with a deadline of its own.
+func (r *RecordingRuntime) leave(conn voice.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), recordingLeaveTimeout)
+	defer cancel()
+	conn.Leave(ctx)
+}
+
 // release frees a recorder.
 func (r *RecordingRuntime) release(recorderID string) {
 	r.mu.Lock()
@@ -284,7 +299,7 @@ func (r *RecordingRuntime) release(recorderID string) {
 // read from the store on every call, so a save on the panel decides the
 // next start or stop with no restart.
 func (r *RecordingRuntime) holdsRecordingRole(by Invoker) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), tempVCStoreTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)
 	defer cancel()
 	roles, err := r.st.GetRecordingRoles(ctx, r.guildID)
 	if err != nil {

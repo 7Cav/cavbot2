@@ -21,9 +21,6 @@ import (
 // recordCommandName is the registered slash-command name.
 const recordCommandName = "record"
 
-// recordTitleMaxLength caps a recording's title.
-const recordTitleMaxLength = 100
-
 // Record declares /record over the recording runtime, nil on a host with no
 // bot store.
 func Record(rt *RecordingRuntime) Command {
@@ -40,7 +37,6 @@ func Record(rt *RecordingRuntime) Command {
 						Type:        discordgo.ApplicationCommandOptionString,
 						Name:        "title",
 						Description: "A title to find the recording by",
-						MaxLength:   recordTitleMaxLength,
 					}},
 				},
 				{
@@ -84,14 +80,16 @@ func runRecord(r utils.InteractionResponder, rt *RecordingRuntime, interaction *
 		}
 		channelID, err := rt.Start(by, title)
 		if err != nil {
-			replyRecordError(r, interaction, startRefusal(err))
+			reply, refused := startRefusal(err)
+			replyRecordError(r, interaction, reply, refused)
 			return
 		}
 		editEphemeral(r, interaction, fmt.Sprintf("✅ Recording <#%s>.", channelID))
 	case "stop":
 		channelID, err := rt.Stop(by)
 		if err != nil {
-			replyRecordError(r, interaction, stopRefusal(err))
+			reply, refused := stopRefusal(err)
+			replyRecordError(r, interaction, reply, refused)
 			return
 		}
 		editEphemeral(r, interaction, fmt.Sprintf("✅ Stopped recording <#%s>.", channelID))
@@ -103,59 +101,67 @@ func runRecord(r utils.InteractionResponder, rt *RecordingRuntime, interaction *
 // passed. The runtime has reported the cause.
 const recordFailedReply = "❌ Something went wrong with the recorder. The error has been reported."
 
-// replyRecordError sends a refusal when there is one, and the failed reply
-// otherwise.
-func replyRecordError(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, refusal string) {
-	if refusal != "" {
+// replyRecordError sends a run's refusal when it was refused, and the
+// failed reply when it failed after its checks.
+func replyRecordError(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, refusal string, refused bool) {
+	if refused {
 		refuse(r, interaction, refusal)
 		return
 	}
 	replyError(r, interaction, recordFailedReply)
 }
 
-// recordingOffRefusal answers /record on a host where recording is off: no
-// recorder token, or no bot store.
-const recordingOffRefusal = "❌ Recording is off on this bot."
+// The refusals of /record, one per reason.
+const (
+	// recordingOffRefusal answers /record on a host where recording is
+	// off: no recorder token, or no bot store.
+	recordingOffRefusal     = "❌ Recording is off on this bot."
+	recordNotInVoiceRefusal = "❌ Join the voice or stage channel you want to record, then run /record start again."
+	recordInHubRefusal      = "❌ Hubs can't be recorded. Start the recording in the channel you're moved to."
+	noRecordingRoleRefusal  = "❌ You need a recording role to record. The recording roles are set in the panel."
+	notCavMemberRefusal     = "❌ Only Cav members can record."
+	// noFreeRecorderRefusal opens the refusal of a start when every
+	// recorder is recording. The channels they record follow it.
+	noFreeRecorderRefusal   = "❌ Every recorder is busy."
+	nothingToStopRefusal    = "❌ There's no recording here for you to stop."
+	notAllowedToStopRefusal = "❌ Only the person who started this recording, or someone with a recording role, can stop it."
+)
 
-// noFreeRecorderRefusal opens the refusal of a start when every recorder is
-// recording. The channels they record follow it.
-const noFreeRecorderRefusal = "❌ Every recorder is busy."
-
-// startRefusal renders a refused start as the member's reply, empty for a
-// start that failed rather than being refused.
-func startRefusal(err error) string {
+// startRefusal renders a refused start as the member's reply. refused is
+// false for a start that failed after its checks.
+func startRefusal(err error) (reply string, refused bool) {
 	var busy *noFreeRecorderError
 	switch {
 	case errors.Is(err, errRecordingOff):
-		return recordingOffRefusal
+		return recordingOffRefusal, true
 	case errors.Is(err, errRecordNotInVoice):
-		return "❌ Join the voice or stage channel you want to record, then run /record start again."
+		return recordNotInVoiceRefusal, true
 	case errors.Is(err, errRecordInHub):
-		return "❌ Hubs can't be recorded. Start the recording in the channel you're moved to."
+		return recordInHubRefusal, true
 	case errors.Is(err, errNoRecordingRole):
-		return "❌ You need a recording role to record. Ask whoever runs the bot's panel."
+		return noRecordingRoleRefusal, true
 	case errors.Is(err, errNotCavMember):
-		return "❌ Only Cav members can record."
+		return notCavMemberRefusal, true
 	case errors.As(err, &busy):
 		mentions := make([]string, len(busy.ChannelIDs))
 		for i, id := range busy.ChannelIDs {
 			mentions[i] = "<#" + id + ">"
 		}
-		return noFreeRecorderRefusal + " Recording now: " + strings.Join(mentions, ", ") + "."
+		return noFreeRecorderRefusal + " Recording now: " + strings.Join(mentions, ", ") + ".", true
 	default:
-		return ""
+		return "", false
 	}
 }
 
-// stopRefusal renders a refused stop as the member's reply, empty for a
-// stop that failed rather than being refused.
-func stopRefusal(err error) string {
+// stopRefusal renders a refused stop as the member's reply. refused is
+// false for a stop that failed after its checks.
+func stopRefusal(err error) (reply string, refused bool) {
 	switch {
 	case errors.Is(err, errNothingToStop):
-		return "❌ There's no recording here for you to stop."
+		return nothingToStopRefusal, true
 	case errors.Is(err, errNotAllowedToStop):
-		return "❌ Only the person who started this recording, or someone with a recording role, can stop it."
+		return notAllowedToStopRefusal, true
 	default:
-		return ""
+		return "", false
 	}
 }
