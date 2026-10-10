@@ -122,7 +122,12 @@ type recordScene struct {
 	st       *store.Fake
 	tv       *TempVC
 	voice    *fakeRecorderVoice
-	rt       *RecordingRuntime
+	// mixer builds every mix, writing "fake mix" until a test sets
+	// otherwise.
+	mixer *fakeMixer
+	rt    *RecordingRuntime
+	// lib reads the recordings back, as the panel does.
+	lib *RecordingLibrary
 }
 
 func newRecordScene(t *testing.T, recorders ...string) *recordScene {
@@ -138,7 +143,9 @@ func newRecordScene(t *testing.T, recorders ...string) *recordScene {
 	saveRecordingRoles(t, sc.st, testRecordingRole)
 	sc.voice = &fakeRecorderVoice{recorders: recorders}
 	sc.tv = newTestTempVC(t, sc.fake, sc.st)
-	sc.rt = NewRecordingRuntime(sc.fake, sc.st, sc.tv, testTempVCGuild, sc.voice, sc.dir)
+	sc.mixer = &fakeMixer{out: []byte("fake mix")}
+	sc.rt = NewRecordingRuntime(sc.fake, sc.st, sc.tv, testTempVCGuild, sc.voice, sc.mixer, sc.dir)
+	sc.lib = NewRecordingLibrary(sc.st, testTempVCGuild, sc.dir)
 	return sc
 }
 
@@ -509,7 +516,7 @@ func TestRecordStartRowWriteFailureLeavesNoRecorderInTheChannel(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 	captures := countCaptures(t)
 	failing := &failingStore{Fake: sc.st, startRecordingErr: errors.New("connection refused")}
-	rt := NewRecordingRuntime(sc.fake, failing, sc.tv, testTempVCGuild, sc.voice, sc.dir)
+	rt := NewRecordingRuntime(sc.fake, failing, sc.tv, testTempVCGuild, sc.voice, sc.mixer, sc.dir)
 	sc.fake.setVoice(recStarter.id, recordChannel)
 
 	recordAs(t, rt, recStarter, "start")

@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"errors"
 	"hash/fnv"
+	"maps"
 	"os"
-	"path/filepath"
-	"strconv"
+	"slices"
 	"sync"
 	"time"
 
@@ -26,8 +26,9 @@ const trackFlushInterval = 3 * time.Second
 // delivers frames. A speaker's track opens at their first frame.
 type recordingTracks struct {
 	recordingID int64
-	dir         string
-	start       time.Time
+	// dir is the recordings directory, which holds the recording's own.
+	dir   string
+	start time.Time
 
 	mu        sync.Mutex
 	bySpeaker map[string]*track
@@ -69,7 +70,7 @@ const opusSilenceSamples = 960
 func newRecordingTracks(dir string, recordingID int64, start time.Time) *recordingTracks {
 	tracks := &recordingTracks{
 		recordingID: recordingID,
-		dir:         filepath.Join(dir, strconv.FormatInt(recordingID, 10)),
+		dir:         dir,
 		start:       start,
 		bySpeaker:   make(map[string]*track),
 	}
@@ -178,10 +179,10 @@ func (t *track) end(end int64) error {
 // first one. A track that can't be created comes back with the error.
 func (tracks *recordingTracks) open(userID string) (*track, error) {
 	t := &track{}
-	if err := os.MkdirAll(tracks.dir, 0o750); err != nil {
+	if err := os.MkdirAll(recordingDir(tracks.dir, tracks.recordingID), 0o750); err != nil {
 		return t, err
 	}
-	f, err := os.Create(filepath.Join(tracks.dir, userID+".ogg"))
+	f, err := os.Create(trackPath(tracks.dir, tracks.recordingID, userID))
 	if err != nil {
 		return t, err
 	}
@@ -220,6 +221,13 @@ func (t *track) close(end int64) error {
 		err = cerr
 	}
 	return err
+}
+
+// speakerIDs lists the user ID of everyone the tracks heard, in order.
+func (tracks *recordingTracks) speakerIDs() []string {
+	tracks.mu.Lock()
+	defer tracks.mu.Unlock()
+	return slices.Sorted(maps.Keys(tracks.bySpeaker))
 }
 
 // close ends every track at stop, the recording's end, and closes its

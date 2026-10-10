@@ -17,6 +17,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.Version=${VERSION}
 
 FROM alpine:latest
 
+# ffmpeg builds each recording's mix (spec #381). Running it here fails the
+# build of an image that couldn't.
+RUN apk add --no-cache ffmpeg && ffmpeg -version
+
 WORKDIR /app
 
 COPY --from=builder /app/main .

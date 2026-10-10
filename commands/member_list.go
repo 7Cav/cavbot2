@@ -114,6 +114,16 @@ func (s MemberListSnapshot) Member(id string) (ListedMember, bool) {
 	return ListedMember{}, false
 }
 
+// DisplayName is a user's display name in the snapshot, or their Discord ID
+// when it doesn't hold them: someone who left the server, or a list not yet
+// complete.
+func (s MemberListSnapshot) DisplayName(userID string) string {
+	if m, ok := s.Member(userID); ok {
+		return m.DisplayName()
+	}
+	return userID
+}
+
 // ListedMember is one member of the member list.
 type ListedMember struct {
 	ID         string

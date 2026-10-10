@@ -286,7 +286,7 @@ func main() {
 		// VC is, and checks for hubs through it. The recorder tokens only
 		// fill its recorders: with none, every /record start is refused as
 		// recording off.
-		recording = commands.NewRecordingRuntime(discordManager, botStore, tempVC, GuildID, recorders, recordingsDir())
+		recording = commands.NewRecordingRuntime(discordManager, botStore, tempVC, GuildID, recorders, commands.FFmpegMixer{}, recordingsDir())
 		// Its voice events and channel deletes stop a recording by itself
 		// (#388): the last human leaving, or the recorder leaving.
 		recording.Listen(dg)

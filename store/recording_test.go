@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -146,18 +148,18 @@ func TestRecordingStartsAndStops(t *testing.T) {
 		}
 
 		stoppedAt := want.StartedAt.Add(42 * time.Minute)
-		if err := s.StopRecording(ctx, started.ID, stoppedAt, RecordingEndCap); err != nil {
+		if err := s.StopRecording(ctx, started.ID, stoppedAt, RecordingEndCap, nil); err != nil {
 			t.Fatalf("StopRecording: %v", err)
 		}
-		want.StoppedAt, want.Ended = stoppedAt, RecordingEndCap
+		want.StoppedAt, want.Ended, want.Mix = stoppedAt, RecordingEndCap, MixProcessing
 		if got := listRecordings(t, s); len(got) != 1 || !sameRecording(got[0], want) {
 			t.Errorf("recordings after the stop = %+v, want only %+v", got, want)
 		}
 
-		if err := s.StopRecording(ctx, started.ID, stoppedAt.Add(time.Minute), RecordingEndStopped); !errors.Is(err, ErrNotFound) {
+		if err := s.StopRecording(ctx, started.ID, stoppedAt.Add(time.Minute), RecordingEndStopped, nil); !errors.Is(err, ErrNotFound) {
 			t.Errorf("second StopRecording = %v, want ErrNotFound", err)
 		}
-		if err := s.StopRecording(ctx, started.ID+100, stoppedAt, RecordingEndStopped); !errors.Is(err, ErrNotFound) {
+		if err := s.StopRecording(ctx, started.ID+100, stoppedAt, RecordingEndStopped, nil); !errors.Is(err, ErrNotFound) {
 			t.Errorf("StopRecording of an unknown ID = %v, want ErrNotFound", err)
 		}
 		if got := listRecordings(t, s); len(got) != 1 || !sameRecording(got[0], want) {
@@ -166,11 +168,70 @@ func TestRecordingStartsAndStops(t *testing.T) {
 	})
 }
 
+// A stop records who spoke, and the recording reads back with them and its
+// mix processing.
+func TestRecordingStopKeepsItsSpeakersAndLeavesTheMixProcessing(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		started, err := s.StartRecording(ctx, sampleRecording())
+		if err != nil {
+			t.Fatalf("StartRecording: %v", err)
+		}
+		speakers := []Speaker{{ID: "user-a", DisplayName: "SGT Doe.J"}, {ID: "user-b", DisplayName: "applicant"}}
+
+		if err := s.StopRecording(ctx, started.ID, started.StartedAt.Add(time.Hour), RecordingEndStopped, speakers); err != nil {
+			t.Fatalf("StopRecording: %v", err)
+		}
+
+		got := listRecordings(t, s)
+		if len(got) != 1 || got[0].Mix != MixProcessing || !sameSpeakers(got[0].Speakers, speakers) {
+			t.Errorf("recordings after the stop = %+v, want one with speakers %+v and its mix %q", got, speakers, MixProcessing)
+		}
+	})
+}
+
+// A recording's mix reads back in the state it was last set to. Setting the
+// mix of an ID no recording has is ErrNotFound.
+func TestRecordingMixReadsBackAsSet(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		started, err := s.StartRecording(ctx, sampleRecording())
+		if err != nil {
+			t.Fatalf("StartRecording: %v", err)
+		}
+		if err := s.StopRecording(ctx, started.ID, started.StartedAt.Add(time.Hour), RecordingEndStopped, nil); err != nil {
+			t.Fatalf("StopRecording: %v", err)
+		}
+
+		if err := s.SetRecordingMix(ctx, started.ID, MixReady); err != nil {
+			t.Fatalf("SetRecordingMix: %v", err)
+		}
+
+		if got := listRecordings(t, s); len(got) != 1 || got[0].Mix != MixReady {
+			t.Errorf("recordings after the mix was set = %+v, want one with its mix %q", got, MixReady)
+		}
+		if err := s.SetRecordingMix(ctx, started.ID+100, MixReady); !errors.Is(err, ErrNotFound) {
+			t.Errorf("SetRecordingMix of an unknown ID = %v, want ErrNotFound", err)
+		}
+	})
+}
+
 // sameRecording compares two recordings field by field, times by instant,
-// since Postgres hands a time back in its own location.
+// since Postgres hands a time back in its own location, and speakers as a
+// set.
 func sameRecording(a, b Recording) bool {
 	ta, tb := a, b
 	ta.StartedAt, tb.StartedAt = time.Time{}, time.Time{}
 	ta.StoppedAt, tb.StoppedAt = time.Time{}, time.Time{}
-	return ta == tb && a.StartedAt.Equal(b.StartedAt) && a.StoppedAt.Equal(b.StoppedAt)
+	ta.Speakers, tb.Speakers = nil, nil
+	return reflect.DeepEqual(ta, tb) && a.StartedAt.Equal(b.StartedAt) && a.StoppedAt.Equal(b.StoppedAt) &&
+		sameSpeakers(a.Speakers, b.Speakers)
+}
+
+// sameSpeakers compares two speaker lists as sets: no reader depends on
+// their order.
+func sameSpeakers(a, b []Speaker) bool {
+	byID := func(x, y Speaker) int { return strings.Compare(x.ID, y.ID) }
+	sa, sb := slices.SortedFunc(slices.Values(a), byID), slices.SortedFunc(slices.Values(b), byID)
+	return slices.Equal(sa, sb)
 }

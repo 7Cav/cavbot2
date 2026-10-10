@@ -1,9 +1,11 @@
 package commands
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -118,6 +120,9 @@ type RecordingManager interface {
 	ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error)
 	// ChannelMessageEditComplex edits the recording notice at stop.
 	ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error)
+	// MemberList is TempVCManager's: one copied snapshot of the guild's
+	// member list, which names a recording's speakers at its stop.
+	MemberList(guildID string) MemberListSnapshot
 }
 
 // RecordingRuntime holds the recordings running now. Built on every host
@@ -128,6 +133,7 @@ type RecordingRuntime struct {
 	st        store.Store
 	tv        *TempVC
 	voice     RecorderVoice
+	mixer     Mixer
 	guildID   string
 	recorders []string
 	// dir is the recordings directory, which holds a directory of tracks
@@ -174,13 +180,15 @@ func (rec *activeRecording) mayStop(userID string, holdsRole, inChannel bool) bo
 
 // NewRecordingRuntime builds the recording runtime over the Discord
 // session's manager, the store, temp VC (which knows the hubs) and the
-// voice adapter, whose recorders it takes now. Tracks go under dir.
-func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guildID string, rv RecorderVoice, dir string) *RecordingRuntime {
+// voice adapter, whose recorders it takes now. Tracks go under dir, and
+// the mixer builds each recording's mix there.
+func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guildID string, rv RecorderVoice, mixer Mixer, dir string) *RecordingRuntime {
 	return &RecordingRuntime{
 		mgr:       mgr,
 		st:        st,
 		tv:        tv,
 		voice:     rv,
+		mixer:     mixer,
 		guildID:   guildID,
 		recorders: rv.UserIDs(),
 		dir:       dir,
@@ -360,9 +368,9 @@ func (r *RecordingRuntime) runningInLocked(channelID string) *activeRecording {
 }
 
 // finish ends a recording a stop has taken: the recorder leaves, the tracks
-// end at the stop time, the row records the stop time and how it ended, and
-// the notice says it stopped. stoppedBy is the member who stopped it, empty
-// when it stopped by itself.
+// end at the stop time, the row records the stop time, how it ended and its
+// speakers, the notice says it stopped, and the mix starts. stoppedBy is the
+// member who stopped it, empty when it stopped by itself.
 func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEnd, stoppedBy string) {
 	recorderID := target.row.RecorderID
 	r.mu.Lock()
@@ -375,15 +383,35 @@ func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEn
 	if err := target.tracks.close(stoppedAt); err != nil {
 		captureError("Tracks not closed at stop", err, "recording_id", target.row.ID)
 	}
+	row := target.row
+	members := r.mgr.MemberList(r.guildID)
+	row.StoppedAt, row.Ended, row.Speakers = stoppedAt, end, speakersOf(members, target.tracks.speakerIDs())
+	if err := writeRecordingInfo(r.dir, row, members.DisplayName(row.StarterID)); err != nil {
+		captureError("Info file not written", err, "recording_id", row.ID)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)
 	defer cancel()
-	if err := r.st.StopRecording(ctx, target.row.ID, stoppedAt, end); err != nil {
-		captureError("Recording row not closed at stop", err, "recording_id", target.row.ID)
+	if err := r.st.StopRecording(ctx, row.ID, stoppedAt, end, row.Speakers); err != nil {
+		captureError("Recording row not closed at stop", err, "recording_id", row.ID)
 	}
 	r.release(recorderID)
 	r.closeRecordingNotice(target)
-	utils.Info("Recording stopped", "recording_id", target.row.ID, "channel_id", target.row.ChannelID,
+	utils.Info("Recording stopped", "recording_id", row.ID, "channel_id", row.ChannelID,
 		"recorder", recorderID, "ended", string(end), "stopped_by", stoppedBy)
+	r.startMix(row)
+}
+
+// speakersOf names everyone a recording heard by their display name in the
+// member list, in the order of their names.
+func speakersOf(members MemberListSnapshot, userIDs []string) []store.Speaker {
+	out := make([]store.Speaker, 0, len(userIDs))
+	for _, id := range userIDs {
+		out = append(out, store.Speaker{ID: id, DisplayName: members.DisplayName(id)})
+	}
+	slices.SortFunc(out, func(a, b store.Speaker) int {
+		return cmp.Or(strings.Compare(strings.ToLower(a.DisplayName), strings.ToLower(b.DisplayName)), strings.Compare(a.ID, b.ID))
+	})
+	return out
 }
 
 // reserveRecorder marks the first free recorder, in configured order, busy

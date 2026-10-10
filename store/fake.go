@@ -471,13 +471,13 @@ func (f *Fake) StartRecording(ctx context.Context, rec Recording) (Recording, er
 	defer f.mu.Unlock()
 	rec.ID = f.nextRecordingID
 	f.nextRecordingID++
-	rec.StoppedAt, rec.Ended = time.Time{}, ""
+	rec.StoppedAt, rec.Ended, rec.Mix, rec.Speakers = time.Time{}, "", "", nil
 	f.recordings[rec.ID] = rec
 	return rec, nil
 }
 
 // StopRecording implements Store.
-func (f *Fake) StopRecording(ctx context.Context, id int64, at time.Time, end RecordingEnd) error {
+func (f *Fake) StopRecording(ctx context.Context, id int64, at time.Time, end RecordingEnd, speakers []Speaker) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -487,7 +487,23 @@ func (f *Fake) StopRecording(ctx context.Context, id int64, at time.Time, end Re
 	if !ok || !rec.StoppedAt.IsZero() {
 		return ErrNotFound
 	}
-	rec.StoppedAt, rec.Ended = at, end
+	rec.StoppedAt, rec.Ended, rec.Mix, rec.Speakers = at, end, MixProcessing, slices.Clone(speakers)
+	f.recordings[id] = rec
+	return nil
+}
+
+// SetRecordingMix implements Store.
+func (f *Fake) SetRecordingMix(ctx context.Context, id int64, mix MixState) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.recordings[id]
+	if !ok {
+		return ErrNotFound
+	}
+	rec.Mix = mix
 	f.recordings[id] = rec
 	return nil
 }
@@ -502,6 +518,7 @@ func (f *Fake) ListRecordings(ctx context.Context, guildID string) ([]Recording,
 	var out []Recording
 	for _, rec := range f.recordings {
 		if rec.GuildID == guildID {
+			rec.Speakers = slices.Clone(rec.Speakers)
 			out = append(out, rec)
 		}
 	}

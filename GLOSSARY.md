@@ -520,6 +520,12 @@ One file of every track in a recording played together, built when the
 recording stops.
 _Avoid_: mixdown, combined track, merged audio.
 
+**Info file**:
+The text file kept with a recording, and in its zip, that names its title,
+channel, starter, start and stop times in Zulu, how it ended, and each
+speaker's display name and Discord ID.
+_Avoid_: metadata, manifest, readme.
+
 **Cut-short recording**:
 A recording that ended because the bot shut down or crashed, not by a stop,
 the time cap, or the last person leaving. What it captured up to then is

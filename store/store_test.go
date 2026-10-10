@@ -1381,9 +1381,10 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 			"ListFoxholeChanges": func() error { _, err := s.ListFoxholeChanges(done, 10); return err },
 			"StartRecording":     func() error { _, err := s.StartRecording(done, sampleRecording()); return err },
 			"StopRecording": func() error {
-				return s.StopRecording(done, started.ID, running.StartedAt.Add(time.Hour), RecordingEndStopped)
+				return s.StopRecording(done, started.ID, running.StartedAt.Add(time.Hour), RecordingEndStopped, nil)
 			},
-			"ListRecordings": func() error { _, err := s.ListRecordings(done, "guild-1"); return err },
+			"ListRecordings":  func() error { _, err := s.ListRecordings(done, "guild-1"); return err },
+			"SetRecordingMix": func() error { return s.SetRecordingMix(done, started.ID, MixReady) },
 		}
 		for name, call := range calls {
 			if err := call(); !errors.Is(err, context.Canceled) {
