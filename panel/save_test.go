@@ -337,6 +337,18 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 			},
 			action: store.ChangeModerators,
 		},
+		{
+			name: "recording roles",
+			path: func(*testing.T, store.Store) string { return "/recording-roles" },
+			form: func(t *testing.T, st store.Store) url.Values { return recordingRolesForm(t, st, "role-hq") },
+			checkSaved: func(t *testing.T, st store.Store) int64 {
+				if got := storedRecordingRoles(t, st).RoleIDs; !sameSet(got, []string{"role-hq"}) {
+					t.Errorf("stored recording roles = %v, want role-hq alone", got)
+				}
+				return 0
+			},
+			action: store.ChangeRecordingRoles,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -501,6 +513,10 @@ func (refusingStore) SaveGuildModeratorRoles(context.Context, string, store.Guil
 	return errStoreRefused
 }
 
+func (refusingStore) SaveRecordingRoles(context.Context, string, store.RecordingRoles, store.ChangeLogEntry) error {
+	return errStoreRefused
+}
+
 // savedState is everything a save can write, read back through the store:
 // the test guild's hubs, its guild-wide moderator roles, its recording
 // roles, and the change log under each hub and under none.
@@ -538,7 +554,7 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 		path func(t *testing.T, st store.Store) string
 		form func(t *testing.T, st store.Store) url.Values
 		// checkRuntime checks the runtime still acts on the settings from
-		// before the save.
+		// before the save. Nil for a save no runtime acts on.
 		checkRuntime func(t *testing.T, w *testWorld)
 	}{
 		{
@@ -607,6 +623,13 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 				}
 			},
 		},
+		{
+			// The recording runtime reads the recording roles from the
+			// store at each start, so no runtime holds them.
+			name: "recording roles",
+			path: func(*testing.T, store.Store) string { return "/recording-roles" },
+			form: func(t *testing.T, st store.Store) url.Values { return recordingRolesForm(t, st, "role-hq") },
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -630,7 +653,9 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 			if after := readSavedState(t, fake); !reflect.DeepEqual(after, before) {
 				t.Errorf("the store after the failed save = %+v, want it as before, %+v", after, before)
 			}
-			tc.checkRuntime(t, w)
+			if tc.checkRuntime != nil {
+				tc.checkRuntime(t, w)
+			}
 		})
 	}
 }

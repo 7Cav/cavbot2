@@ -25,7 +25,7 @@ type recordingRolesInput struct {
 
 // errStaleRecordingRoles is the refusal a save from a stale recording roles
 // section gets, answered the way errStaleModerators is.
-var errStaleRecordingRoles = &fieldError{stale: true, Message: "Someone saved the recording roles after you opened this page, " +
+var errStaleRecordingRoles = &fieldError{kind: refusalStale, Message: "Someone saved the recording roles after you opened this page, " +
 	"so your changes were not saved. Their save is at the top of the change log below. " +
 	"Your roles are still in the picker. Save again to keep them."}
 
@@ -36,7 +36,7 @@ var errIneligibleRecordingRole = &fieldError{Field: fieldRecordingRoles, Message
 // errRecordingRolesUnchanged is the refusal a recording roles save gets
 // when it posts the stored set: a save that would change nothing says so
 // and writes nothing, not even a change log entry.
-var errRecordingRolesUnchanged = &fieldError{unchanged: true, Message: "Those are already the recording roles, so nothing was saved."}
+var errRecordingRolesUnchanged = &fieldError{kind: refusalUnchanged, Message: "Those are already the recording roles, so nothing was saved."}
 
 // recordingRolesPage is the recording roles section as the page renders it:
 // the picker with the stored set as tags, or the form as posted when a save
@@ -76,8 +76,9 @@ func (s *hubService) recordingRolesSection(ctx context.Context, guild guildInfo,
 // validates the posted IDs against the guild read now and the stored set,
 // and a refusal is a *fieldError naming the roles field, with nothing
 // written. A valid set that is the stored one is refused as
-// errRecordingRolesUnchanged. A section loaded at a version the set is no longer at is refused
-// first, as errStaleRecordingRoles, before the guild read.
+// errRecordingRolesUnchanged. A section loaded at a version the set is no
+// longer at is refused first, as errStaleRecordingRoles, before the guild
+// read.
 func (s *hubService) setRecordingRoles(ctx context.Context, in recordingRolesInput, by actor) ([]string, error) {
 	unlock, err := s.lockSave(ctx)
 	if err != nil {

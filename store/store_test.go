@@ -903,34 +903,32 @@ func TestEverySaveAddsOneToItsRecordsVersion(t *testing.T) {
 func TestSaveOverAnotherVersionIsStaleAndWritesNothing(t *testing.T) {
 	cases := []struct {
 		name string
-		// seedRoles stores a guild-wide set before the save, and
-		// seedRecording a set of recording roles.
-		seedRoles     bool
-		seedRecording bool
-		save          func(ctx context.Context, s Store, hub Hub) error
+		// seed stores the record the save goes over, if any, before it.
+		seed func(t *testing.T, s Store)
+		save func(ctx context.Context, s Store, hub Hub) error
 	}{
-		{"a hub one version behind", false, false, func(ctx context.Context, s Store, hub Hub) error {
+		{"a hub one version behind", nil, func(ctx context.Context, s Store, hub Hub) error {
 			hub.Version--
 			hub.UserLimit = 3
 			_, err := s.SaveHub(ctx, hub, changeEntry(3))
 			return err
 		}},
-		{"a hub one version ahead", false, false, func(ctx context.Context, s Store, hub Hub) error {
+		{"a hub one version ahead", nil, func(ctx context.Context, s Store, hub Hub) error {
 			hub.Version++
 			hub.UserLimit = 3
 			_, err := s.SaveHub(ctx, hub, changeEntry(3))
 			return err
 		}},
-		{"a guild-wide set at 0 over a stored row", true, false, func(ctx context.Context, s Store, _ Hub) error {
+		{"a guild-wide set at 0 over a stored row", seedGuildRoles, func(ctx context.Context, s Store, _ Hub) error {
 			return s.SaveGuildModeratorRoles(ctx, "guild-1", GuildModeratorRoles{RoleIDs: []string{"role-hq"}, Version: 0}, moderatorsEntry(3))
 		}},
-		{"a guild-wide set at 1 over no row", false, false, func(ctx context.Context, s Store, _ Hub) error {
+		{"a guild-wide set at 1 over no row", nil, func(ctx context.Context, s Store, _ Hub) error {
 			return s.SaveGuildModeratorRoles(ctx, "guild-1", GuildModeratorRoles{RoleIDs: []string{"role-hq"}, Version: 1}, moderatorsEntry(3))
 		}},
-		{"a recording roles set at 0 over a stored row", false, true, func(ctx context.Context, s Store, _ Hub) error {
+		{"a recording roles set at 0 over a stored row", seedRecordingRoles, func(ctx context.Context, s Store, _ Hub) error {
 			return s.SaveRecordingRoles(ctx, "guild-1", RecordingRoles{RoleIDs: []string{"role-hq"}, Version: 0}, recordingRolesEntry(3))
 		}},
-		{"a recording roles set at 1 over no row", false, false, func(ctx context.Context, s Store, _ Hub) error {
+		{"a recording roles set at 1 over no row", nil, func(ctx context.Context, s Store, _ Hub) error {
 			return s.SaveRecordingRoles(ctx, "guild-1", RecordingRoles{RoleIDs: []string{"role-hq"}, Version: 1}, recordingRolesEntry(3))
 		}},
 	}
@@ -945,15 +943,8 @@ func TestSaveOverAnotherVersionIsStaleAndWritesNothing(t *testing.T) {
 				if hub, err = s.SaveHub(ctx, hub, changeEntry(2)); err != nil {
 					t.Fatalf("second SaveHub: %v", err)
 				}
-				if tc.seedRoles {
-					if err := saveGuildRoles(t, s, []string{"role-mp"}, moderatorsEntry(2)); err != nil {
-						t.Fatalf("SaveGuildModeratorRoles: %v", err)
-					}
-				}
-				if tc.seedRecording {
-					if err := saveRecordingRoles(t, s, []string{"role-s2"}, recordingRolesEntry(2)); err != nil {
-						t.Fatalf("SaveRecordingRoles: %v", err)
-					}
+				if tc.seed != nil {
+					tc.seed(t, s)
 				}
 				before := readState(t, s)
 
@@ -965,6 +956,23 @@ func TestSaveOverAnotherVersionIsStaleAndWritesNothing(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// seedGuildRoles stores a guild-wide set, role-mp, with ordinal 2.
+func seedGuildRoles(t *testing.T, s Store) {
+	t.Helper()
+	if err := saveGuildRoles(t, s, []string{"role-mp"}, moderatorsEntry(2)); err != nil {
+		t.Fatalf("SaveGuildModeratorRoles: %v", err)
+	}
+}
+
+// seedRecordingRoles stores a set of recording roles, role-s2, with
+// ordinal 2.
+func seedRecordingRoles(t *testing.T, s Store) {
+	t.Helper()
+	if err := saveRecordingRoles(t, s, []string{"role-s2"}, recordingRolesEntry(2)); err != nil {
+		t.Fatalf("SaveRecordingRoles: %v", err)
 	}
 }
 

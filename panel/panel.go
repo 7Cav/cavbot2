@@ -679,7 +679,7 @@ func (p *Panel) saveFailed(w http.ResponseWriter, sess session, step, retry stri
 // and kv, the hub for a hub's form (#373). Every other refusal answers 422.
 func (p *Panel) renderRefused(w http.ResponseWriter, r *http.Request, sess session, req pageRequest, kv ...any) {
 	status := http.StatusUnprocessableEntity
-	if req.Error.stale {
+	if req.Error.stale() {
 		status = http.StatusConflict
 		utils.Info("Panel save refused: stale form", append(kv, "username", sess.username, "forum_user_id", sess.userID)...)
 	}

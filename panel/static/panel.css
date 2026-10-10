@@ -152,7 +152,8 @@ img { max-width: 100%; }
 .search-list li[hidden] { display: none; }
 .search-none { padding: 6px 10px; font-size: 13px; }
 
-/* The guild-wide moderator section: its form beside its change log. */
+/* The guild-wide moderator section and the recording roles section: each
+   form beside its change log. */
 .moderators, .recording-roles { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; align-items: start; }
 
 /* The change log under a hub's form. Each entry is a <details> folded to

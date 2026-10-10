@@ -27,8 +27,9 @@ var ErrNotFound = errors.New("store: not found")
 // caller read it (#373): SaveHub of a hub whose row is at another version,
 // or of a new hub on a channel a hub already stands on,
 // SaveGuildModeratorRoles or SaveRecordingRoles of a set whose row is at
-// another version, and SaveFoxholeNote over a note that isn't the one the saver loaded. The
-// write lands neither the settings nor the entry. Compare with errors.Is.
+// another version, and SaveFoxholeNote over a note that isn't the one the
+// saver loaded. The write lands neither the settings nor the entry. Compare
+// with errors.Is.
 var ErrStale = errors.New("store: the record changed since it was read")
 
 // PermissionSource is the per-hub setting that chooses what a spawned channel

@@ -368,9 +368,9 @@ func (f *Fake) AppendChangeLog(ctx context.Context, e ChangeLogEntry) error {
 }
 
 // writeAllOrNothing makes every write of hub settings, guild-wide moderator
-// roles, recording roles or a change log entry. It writes nothing when ctx is done or when
-// the entry's diff is not a JSON value, which Postgres's JSONB column
-// refuses too. Otherwise it runs apply under mu and appends the entry, if
+// roles, recording roles or a change log entry. It writes nothing when ctx
+// is done or when the entry's diff is not a JSON value, which Postgres's
+// JSONB column refuses too. Otherwise it runs apply under mu and appends the entry, if
 // there is one, under the hub apply returns, zero for none. An apply that
 // fails must have changed nothing, and then no entry is appended: the
 // settings and the entry land together or not at all, as a Postgres

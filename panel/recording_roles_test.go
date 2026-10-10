@@ -193,32 +193,44 @@ func seedRecordingRoles(t *testing.T, st *store.Fake, roleIDs ...string) {
 	}
 }
 
-// A stored recording role whose Discord role is since deleted stays listed
-// in the section, marked unavailable with its reason (ADR 0012).
-func TestStoredRecordingRoleSinceDeletedRendersAsUnavailable(t *testing.T) {
-	w := newTestWorld(t, testHub())
-	seedRecordingRoles(t, w.st, "role-mp", "role-gone")
-	signIn(t, w.forum, w.b)
+// A stored recording role that is no longer eligible, its Discord role since
+// deleted or made managed, stays listed in the section, marked unavailable
+// with its reason (ADR 0012).
+func TestStoredRecordingRoleNoLongerEligibleRendersAsUnavailable(t *testing.T) {
+	cases := []struct {
+		roleID string
+		reason string
+	}{
+		{"role-gone", "deleted"},
+		{"role-bot", "managed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.reason, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			seedRecordingRoles(t, w.st, "role-mp", tc.roleID)
+			signIn(t, w.forum, w.b)
 
-	res := w.b.get("/")
+			res := w.b.get("/")
 
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("GET / status = %d, want 200", res.StatusCode)
-	}
-	picker := pickerRoot(t, recordingRolesSection(t, parseHTML(t, res)), "recording_roles")
-	var reason string
-	found := false
-	for _, in := range postedInputs(picker, "recording_roles") {
-		if id, _ := attrValue(in, "value"); id == "role-gone" {
-			reason, _ = attrValue(in, "data-unavailable")
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("the recording roles picker posts no role-gone; it posts %v", postedControls(picker, "recording_roles"))
-	}
-	if reason != "deleted" {
-		t.Errorf("role-gone's control carries data-unavailable=%q, want deleted", reason)
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("GET / status = %d, want 200", res.StatusCode)
+			}
+			picker := pickerRoot(t, recordingRolesSection(t, parseHTML(t, res)), "recording_roles")
+			var reason string
+			found := false
+			for _, in := range postedInputs(picker, "recording_roles") {
+				if id, _ := attrValue(in, "value"); id == tc.roleID {
+					reason, _ = attrValue(in, "data-unavailable")
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("the recording roles picker posts no %s; it posts %v", tc.roleID, postedControls(picker, "recording_roles"))
+			}
+			if reason != tc.reason {
+				t.Errorf("%s's control carries data-unavailable=%q, want %s", tc.roleID, reason, tc.reason)
+			}
+		})
 	}
 }
 

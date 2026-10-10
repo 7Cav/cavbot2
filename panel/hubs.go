@@ -51,11 +51,11 @@ type hubService struct {
 	//
 	// One lock covers all six. The first five share the hub rows and the
 	// running bot: a create or a register can meet another register on a
-	// channel, an update can meet a remove on one hub, and every save
-	// updates the running bot after its write. The recording roles save
-	// shares neither and takes its turn all the same. Saves are rare, a few people saving by
-	// hand, so taking turns one at a time costs nothing a finer lock would
-	// save, and no one has to work out which saves can meet.
+	// channel, an update can meet a remove on one hub, and every save updates
+	// the running bot after its write. The recording roles save shares
+	// neither and takes its turn all the same. Saves are rare, a few people
+	// saving by hand, so taking turns one at a time costs nothing a finer
+	// lock would save, and no one has to work out which saves can meet.
 	//
 	// A save holds it through its Discord calls, the rename or the channel
 	// create between its read and its write. Released around them, another
@@ -152,35 +152,32 @@ func (a actor) String() string {
 	return fmt.Sprintf("%s (forum user %d)", a.username, a.userID)
 }
 
-// fieldError is a refused save: the field refused and why, or, with stale
-// set, a stale form (#373), or, with unchanged set, a save that would change
-// nothing, neither of which names a field. The note the page shows carries
-// DataError as its data-error attribute, a test contract; the message is
-// not.
+// fieldError is a refused save: the field refused and why, or a refusal of
+// a kind that names no field. The note the page shows carries DataError as
+// its data-error attribute, a test contract; the message is not.
 type fieldError struct {
 	Field   string
 	Message string
-	// stale marks a stale form's refusal, which answers 409 and logs an
-	// INFO line, where every other refusal answers 422.
-	stale bool
-	// unchanged marks the refusal of a save that would change nothing.
-	unchanged bool
+	// kind is refusalStale for a stale form (#373), whose refusal answers
+	// 409 and logs an INFO line where every other refusal answers 422,
+	// refusalUnchanged for a save that would change nothing, and empty for
+	// a refused field.
+	kind string
 }
 
 func (e *fieldError) Error() string { return e.DataError() + ": " + e.Message }
 
-// DataError is the data-error value on the refusal's note: the refused
-// field's name, refusalStale for a stale form, or refusalUnchanged for a
-// save that would change nothing.
+// DataError is the data-error value on the refusal's note: its kind, or
+// the refused field's name when it has none.
 func (e *fieldError) DataError() string {
-	switch {
-	case e.stale:
-		return refusalStale
-	case e.unchanged:
-		return refusalUnchanged
+	if e.kind != "" {
+		return e.kind
 	}
 	return e.Field
 }
+
+// stale reports whether the refusal is a stale form's.
+func (e *fieldError) stale() bool { return e.kind == refusalStale }
 
 // errAlreadyHub is the refusal a register of a channel a hub already stands
 // on gets.
@@ -226,7 +223,7 @@ const (
 // not at the version the form loaded. Nothing is written and no Discord
 // call is made. The handler answers it with 409 and the form as posted,
 // carrying the hub's version now, so a second save goes through.
-var errStaleHub = &fieldError{stale: true, Message: "Someone saved this hub after you opened this form, so your changes were not saved. " +
+var errStaleHub = &fieldError{kind: refusalStale, Message: "Someone saved this hub after you opened this form, so your changes were not saved. " +
 	"Their save is at the top of the change log below. Your values are still in the form. Save again to keep them."}
 
 // formIsCurrent reports whether a form was loaded at the version its
@@ -364,7 +361,7 @@ func (p hubPage) RefusalFor(form string) *fieldError {
 
 // staleFor reports whether the request shows a stale refusal on the form.
 func (r pageRequest) staleFor(form string) bool {
-	return r.Refused == form && r.Error != nil && r.Error.stale
+	return r.Refused == form && r.Error != nil && r.Error.stale()
 }
 
 // pageRequest is what a handler asks the page to show beyond the list:

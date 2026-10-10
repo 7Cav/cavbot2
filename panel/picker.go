@@ -64,9 +64,9 @@ func (v pickerView) Blank() pickerItem {
 }
 
 // rolePicker builds a role picker, a moderator picker or the recording
-// roles picker, whose tags post under field. The tags are the selected roles:
-// the eligible ones highest position first, then the unavailable moderator
-// roles by ID, each with its reason. The candidates are the eligible roles
+// roles picker, whose tags post under field. The tags are the selected
+// roles: the eligible ones highest position first, then the stored ones no
+// longer eligible by ID, each with its reason. The candidates are the eligible roles
 // not selected, highest position first, so the role search never offers a
 // selected role or an unavailable one (ADR 0012). stored is the record's
 // set, what an unavailable role may be shown from; selected decides the
