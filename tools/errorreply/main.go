@@ -691,9 +691,14 @@ type frame struct {
 // the package passes it.
 var anywhere = &frame{}
 
+// runs reports whether f is a frame of fn's body.
+func (f *frame) runs(fn *ssa.Function) bool {
+	return f != nil && f != anywhere && f.fn == fn
+}
+
 func (f *frame) entered(fn *ssa.Function) bool {
 	for ; f != nil && f != anywhere; f = f.parent {
-		if f.fn == fn {
+		if f.runs(fn) {
 			return true
 		}
 	}
@@ -876,7 +881,7 @@ func (t *tracer) followable(v ssa.Value, f *frame) bool {
 		callee, fact := t.follow(call, f)
 		return callee != nil || fact != nil
 	case *ssa.Parameter:
-		return f != nil && f != anywhere && f.call != nil && f.fn == v.Parent()
+		return f.runs(v.Parent()) && f.call != nil
 	}
 	return false
 }
@@ -1004,7 +1009,7 @@ func (t *tracer) traceReturns(fn *ssa.Function, f *frame, index int) bool {
 func (t *tracer) traceBindings(v *ssa.FreeVar, f *frame) bool {
 	closure := v.Parent()
 	index := slices.Index(closure.FreeVars, v)
-	if f != nil && f != anywhere && f.fn == closure {
+	if f.runs(closure) {
 		f = f.parent
 	}
 	for _, block := range closure.Parent().Blocks {
