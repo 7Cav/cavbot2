@@ -321,13 +321,13 @@ func (t *TempVC) sendLockEdit(channelID string, hubID int64, action, reason stri
 // list: the record's occupants and every member a fresh snapshot of the
 // cache shows there, sorted. The union leaves out nobody whose join handler
 // has not run yet, and a member whose leave has not landed is a guest who
-// was inside a moment ago. Caller holds mu.
+// was inside a moment ago. A recorder is never a guest. Caller holds mu.
 func (t *TempVC) insideLocked(channelID string) []string {
 	inside := make(map[string]struct{}, len(t.occupants[channelID]))
 	for userID := range t.occupants[channelID] {
 		inside[userID] = struct{}{}
 	}
-	for userID, ch := range t.mgr.VoiceStates(t.guildID).ChannelByUser {
+	for userID, ch := range t.voiceStatesWithoutRecorders().ChannelByUser {
 		if ch == channelID {
 			inside[userID] = struct{}{}
 		}

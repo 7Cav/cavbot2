@@ -85,6 +85,10 @@ import (
 // can still land between a check and the API call. A guild missing from the
 // cache counts as current at entry and as "cannot confirm" before an action.
 //
+// A recorder is absent from all of this (temp_vc_recorder.go). Its events
+// never reach the record, and the delete check, the lock and the restart
+// sweep read the cache with recorders left out.
+//
 // docs/temp-vc-decisions.md records what is settled and where each decision
 // came from. GLOSSARY.md carries the vocabulary.
 //
@@ -811,6 +815,10 @@ type TempVC struct {
 	// (temp_vc_delay.go). Absent when the channel is occupied, or was never
 	// left empty on a hub with a delay.
 	waits map[string]*deleteWait
+	// recorders is the set of recorder user IDs (temp_vc_recorder.go), set
+	// once before any gateway event reaches the runtime and never changed,
+	// so it is read without mu.
+	recorders map[string]struct{}
 }
 
 // NewTempVC builds the runtime state around a manager and a store and loads
@@ -976,11 +984,16 @@ func (t *TempVC) storeContext() (context.Context, context.CancelFunc) {
 // before dg.Open(). The runtime acts through mgr, the session's one
 // manager, which the panel and the startup checks share. The returned
 // runtime is what the panel's service layer applies hub saves to.
-func StartTempVC(dg *discordgo.Session, mgr TempVCManager, guildID string, st store.Store) (*TempVC, error) {
+// recorders are the recorder user IDs, which temp VC treats as absent;
+// with none, it counts every account. They are set before any handler is
+// registered, so neither the restart sweep nor a voice event can count a
+// recorder first (temp_vc_recorder.go).
+func StartTempVC(dg *discordgo.Session, mgr TempVCManager, guildID string, st store.Store, recorders []string) (*TempVC, error) {
 	t, err := NewTempVC(mgr, st, guildID)
 	if err != nil {
 		return nil, err
 	}
+	t.ignoreRecorders(recorders)
 
 	t.mu.Lock()
 	hubCount := len(t.hubs)
@@ -1098,8 +1111,9 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	// Who is where, and which channels exist, come from one snapshot of the
 	// cache taken here, under the lock, not from the payload: a voice or
 	// channel event handled during the list call has already reached the
-	// cache, and the payload predates it.
-	snap := t.mgr.VoiceStates(t.guildID)
+	// cache, and the payload predates it. Recorders are left out, so a
+	// channel holding only a recorder reads as empty.
+	snap := t.voiceStatesWithoutRecorders()
 	// A missing guild confirms nothing, so no row can be judged gone or
 	// empty. The record stays as it was, as after a failed list, and the
 	// next GUILD_CREATE retries.
@@ -1312,7 +1326,9 @@ func (t *TempVC) settleSpawn(channelID string) {
 // should call it. It is exported so the panel's tests can feed a join to a
 // runtime they built with NewTempVC.
 func (t *TempVC) HandleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {
-	if vs.GuildID != t.guildID {
+	// A recorder's events never reach the record, so it is never an
+	// occupant, a guest or an owner, and its hub join spawns nothing.
+	if vs.GuildID != t.guildID || t.isRecorder(vs.UserID) {
 		return
 	}
 
@@ -1673,8 +1689,8 @@ func (t *TempVC) deleteIfStillEmpty(channelID, userID string) deleteOutcome {
 	// join handler has not run yet is still inside, and their handler will
 	// apply the join when it runs. A missing guild confirms nothing. Either
 	// way the channel stays tracked with its row for the next empty event
-	// or the restart sweep.
-	snap := t.mgr.VoiceStates(t.guildID)
+	// or the restart sweep. A recorder inside does not count.
+	snap := t.voiceStatesWithoutRecorders()
 	if !snap.Present {
 		t.mu.Unlock()
 		utils.Info("Temp VC delete skipped, guild missing from the cache", "channel_id", channelID, "user_id", userID)
