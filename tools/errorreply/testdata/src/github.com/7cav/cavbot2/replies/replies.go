@@ -92,3 +92,13 @@ func sharesTheMessageWithAClosure(err error) {
 	}
 	reply()
 }
+
+func trimsTheErrorWithACallThatReturnsTwoResults(err error) {
+	msg, _ := strings.CutPrefix(err.Error(), "HTTP ")
+	utils.HandleError(nil, nil, "❌ Failed: "+msg) // want "."
+}
+
+func keepsWhatFollowsTheErrorsColon(err error) {
+	_, detail, _ := strings.Cut(err.Error(), ": ")
+	utils.HandleError(nil, nil, "❌ Failed: "+detail) // want "."
+}

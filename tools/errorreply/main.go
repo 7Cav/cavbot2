@@ -475,19 +475,13 @@ func (t *tracer) trace(v ssa.Value, f *frame) bool {
 		if carries, followed := t.traceCall(v, -1, f); followed {
 			return carries
 		}
-		if v.Call.IsInvoke() && t.trace(v.Call.Value, f) {
-			return true
-		}
-		for _, arg := range v.Call.Args {
-			if t.trace(arg, f) {
-				return true
-			}
-		}
+		return t.traceArgs(v, f)
 	case *ssa.Extract:
 		if call, ok := v.Tuple.(*ssa.Call); ok {
 			if carries, followed := t.traceCall(call, v.Index, f); followed {
 				return carries
 			}
+			return t.traceArgs(call, f)
 		}
 	case *ssa.Parameter:
 		if f == nil {
@@ -585,6 +579,21 @@ func (t *tracer) traceCall(call *ssa.Call, index int, f *frame) (carries, follow
 		return t.traceResults(call, fact, index, f), true
 	}
 	return false, false
+}
+
+// traceArgs traces every argument of call, and the interface value a method
+// call is made on, for a call the tracer can't follow. Each of its results
+// counts as built from all of them.
+func (t *tracer) traceArgs(call *ssa.Call, f *frame) bool {
+	if call.Call.IsInvoke() && t.trace(call.Call.Value, f) {
+		return true
+	}
+	for _, arg := range call.Call.Args {
+		if t.trace(arg, f) {
+			return true
+		}
+	}
+	return false
 }
 
 // callee returns the function of the package being checked that call
