@@ -52,7 +52,7 @@ func runGamertagSearch(r utils.InteractionResponder, i *discordgo.InteractionCre
 
 	user, err := utils.GetUserByGamertag(ctx, gamertag)
 	if errors.Is(err, utils.ErrNotFound) {
-		utils.HandleError(r, i, fmt.Sprintf("❌ %s `%s`. Check the spelling and try again.", gamertagNotFound, gamertag))
+		replyError(r, i, fmt.Sprintf("❌ %s `%s`. Check the spelling and try again.", gamertagNotFound, gamertag))
 		return
 	}
 	if err != nil {
@@ -63,7 +63,7 @@ func runGamertagSearch(r utils.InteractionResponder, i *discordgo.InteractionCre
 
 	id, err := utils.ExtractMilpacIDFromUniformURL(user.UniformUrl)
 	if err != nil {
-		utils.HandleError(r, i, "❌ Failed to parse uniform URL")
+		replyError(r, i, "❌ Failed to parse uniform URL")
 		return
 	}
 	milpacUrl := fmt.Sprintf("https://7cav.us/rosters/profile/%s", id)

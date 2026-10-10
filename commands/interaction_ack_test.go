@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 	"github.com/getsentry/sentry-go"
 )
@@ -52,8 +53,9 @@ func extraMs(e *sentry.Event, key string) (int64, bool) {
 // from a slow answer. The event reports Discord's own error, so it groups
 // by Discord's error type. The bot sends nothing further on the
 // interaction. Every registered command keeps to this when its first
-// response is its normal reply, and so do the refusals refusalRuns lists
-// and a press on a lock notice button.
+// response is its normal reply, and so do the refusals refusalRuns lists,
+// an error reply sent through replyError, and a press on a lock notice
+// button.
 func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 	const (
 		ackDelay = 20 * time.Millisecond
@@ -75,6 +77,15 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 		},
 	})
 	runs = append(runs, refusalRuns(t)...)
+	// No command sends replyError as its first response today. The run
+	// holds the helper to the same report for one that does.
+	runs = append(runs, registeredRun{
+		label: "replyError as the first response", command: "milpac",
+		handler: func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			replyError(utils.NewSessionResponder(s), i, "❌ That didn't work.")
+		},
+		interaction: slashAt("milpac"),
+	})
 
 	for _, tc := range runs {
 		t.Run(tc.label, func(t *testing.T) {

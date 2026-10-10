@@ -20,7 +20,9 @@ signal-rich.
 ## How to apply
 
 - New genuine internal failure → `utils.CaptureError`.
-- New user-facing response (incl. "no troopers found", "no LOAs") →
-  `utils.HandleError`. Never wire Sentry into the user-facing path.
+- New user-facing response from a command (incl. "no troopers found", "no
+  LOAs") → `refuse` for a refusal, `replyError` for any other error reply
+  (`commands/interaction_ack.go`). Both send through `utils.HandleError`.
+  Never wire Sentry into the user-facing path.
 - The `utils.Error` vs `utils.HandleError` split is load-bearing; preserve it
   on refactors.

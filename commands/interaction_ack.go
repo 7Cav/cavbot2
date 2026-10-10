@@ -134,7 +134,7 @@ func replyAckFailed(r utils.InteractionResponder, interaction *discordgo.Interac
 // HandleError handles any other error, which reaches it as Discord's own
 // error.
 func refuse(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, message string, kv ...any) (missedAck bool) {
-	responder := &refusalResponder{InteractionResponder: r, interaction: interaction}
+	responder := &errorReplyResponder{InteractionResponder: r, interaction: interaction}
 	utils.HandleError(responder, interaction, message)
 	if responder.missed == nil {
 		return false
@@ -143,16 +143,26 @@ func refuse(r utils.InteractionResponder, interaction *discordgo.InteractionCrea
 	return true
 }
 
-// refusalResponder sends a refusal through acknowledge. It keeps a 10062
-// in missed rather than hand it to HandleError, which would report it as
-// an error reply that never arrived.
-type refusalResponder struct {
+// replyError sends message as a slash command's error reply when the reply
+// isn't a refusal, such as a lookup that failed after the command deferred.
+// It sends the reply as refuse does, so an error reply sent as the
+// interaction's first response reports a 10062 as a missed acknowledgement
+// too. After a deferral, Discord answers the response with 40060 and
+// HandleError edits the deferred reply instead.
+func replyError(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, message string) {
+	refuse(r, interaction, message)
+}
+
+// errorReplyResponder sends an error reply from refuse or replyError
+// through acknowledge. It keeps a 10062 in missed rather than hand it to
+// HandleError, which would report it as an error reply that never arrived.
+type errorReplyResponder struct {
 	utils.InteractionResponder
 	interaction *discordgo.InteractionCreate
 	missed      error
 }
 
-func (rr *refusalResponder) InteractionRespond(_ *discordgo.Interaction, resp *discordgo.InteractionResponse) error {
+func (rr *errorReplyResponder) InteractionRespond(_ *discordgo.Interaction, resp *discordgo.InteractionResponse) error {
 	err := acknowledge(rr.InteractionResponder, rr.interaction, resp)
 	switch {
 	case err == nil:

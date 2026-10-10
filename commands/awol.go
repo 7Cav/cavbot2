@@ -164,7 +164,7 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		return
 	}
 	if len(roster.LiteProfiles) == 0 {
-		utils.HandleError(r, i, emptyRosterSearchMessage(position))
+		replyError(r, i, emptyRosterSearchMessage(position))
 		return
 	}
 
