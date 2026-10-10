@@ -25,7 +25,7 @@ type moderatorsInput struct {
 
 // errStaleModerators is the refusal a save from a stale guild-wide section
 // gets, answered the way errStaleHub is.
-var errStaleModerators = &fieldError{stale: true, Message: "Someone saved the moderator roles for every hub after you opened this page, " +
+var errStaleModerators = &fieldError{kind: refusalStale, Message: "Someone saved the moderator roles for every hub after you opened this page, " +
 	"so your changes were not saved. Their save is at the top of the change log below. " +
 	"Your roles are still in the picker. Save again to keep them."}
 
@@ -53,7 +53,7 @@ func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, sto
 	if err != nil {
 		return moderatorsPage{}, fmt.Errorf("%s: %w", moderatorChangesRead, err)
 	}
-	return moderatorsPage{Version: version, Picker: rolePicker(guild, stored.RoleIDs, selected), Changes: changeViews(entries, guild.names)}, nil
+	return moderatorsPage{Version: version, Picker: rolePicker(fieldModeratorRoles, guild, stored.RoleIDs, selected), Changes: changeViews(entries, guild.names)}, nil
 }
 
 // setModerators saves the guild-wide moderator roles: it validates the
@@ -84,7 +84,7 @@ func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by a
 	if err != nil {
 		return nil, err
 	}
-	roles, err := acceptedRoles(in.RoleIDs, guild.info, before.RoleIDs)
+	roles, err := acceptedRoles(in.RoleIDs, guild.info, before.RoleIDs, errIneligibleModeratorRole)
 	if err != nil {
 		return nil, err
 	}
@@ -106,19 +106,24 @@ func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by a
 	return roles, nil
 }
 
+// errIneligibleModeratorRole is the refusal a moderator picker's save gets
+// when it posts a role it may not add.
+var errIneligibleModeratorRole = &fieldError{Field: fieldModeratorRoles, Message: "One of those roles cannot be a moderator role. Choose again."}
+
 // acceptedRoles checks each posted role ID and returns the set with
 // duplicates dropped: a role posted twice is stored once. The check accepts
 // an ID on two grounds. The role is eligible now. Or stored, the set the
 // record being saved holds, read in this request, already has the ID. So a
-// save keeps an unavailable moderator role and never adds one (ADR 0012),
-// and an ID another record stores is refused for this one. A refusal is a
-// *fieldError on the roles field. The hub form's own picker and the
-// guild-wide section validate through here alike.
-func acceptedRoles(posted []string, guild guildInfo, stored []string) ([]string, error) {
+// save keeps an unavailable role and never adds one (ADR 0012), and an ID
+// another record stores is refused for this one. A refusal returns refused,
+// the *fieldError naming the picker's roles field. The hub form's own
+// picker, the guild-wide section and the recording roles section validate
+// through here alike.
+func acceptedRoles(posted []string, guild guildInfo, stored []string, refused *fieldError) ([]string, error) {
 	roles := make([]string, 0, len(posted))
 	for _, id := range posted {
 		if !guild.isEligible(id) && !slices.Contains(stored, id) {
-			return nil, &fieldError{Field: fieldModeratorRoles, Message: "One of those roles cannot be a moderator role. Choose again."}
+			return nil, refused
 		}
 		if !slices.Contains(roles, id) {
 			roles = append(roles, id)

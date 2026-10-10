@@ -515,6 +515,76 @@ func setGuildModeratorRoles(ctx context.Context, tx *sql.Tx, guildID string, rol
 	return nil
 }
 
+// GetRecordingRoles implements Store. No row is an empty set at version
+// 0, not an error, since a guild whose recording roles were never saved
+// has none.
+func (p *Postgres) GetRecordingRoles(ctx context.Context, guildID string) (RecordingRoles, error) {
+	var (
+		raw []byte
+		out RecordingRoles
+	)
+	err := p.db.QueryRowContext(ctx,
+		`SELECT role_ids, version FROM recording_roles WHERE guild_id = $1`, guildID).Scan(&raw, &out.Version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RecordingRoles{RoleIDs: []string{}}, nil
+	}
+	if err != nil {
+		return RecordingRoles{}, fmt.Errorf("get recording roles of guild %q: %w", guildID, err)
+	}
+	if err := json.Unmarshal(raw, &out.RoleIDs); err != nil {
+		return RecordingRoles{}, fmt.Errorf("decode recording roles of guild %q: %w", guildID, err)
+	}
+	if out.RoleIDs == nil {
+		out.RoleIDs = []string{}
+	}
+	return out, nil
+}
+
+// SaveRecordingRoles implements Store.
+func (p *Postgres) SaveRecordingRoles(ctx context.Context, guildID string, roles RecordingRoles, entry ChangeLogEntry) error {
+	err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
+		return 0, setRecordingRoles(ctx, tx, guildID, roles)
+	})
+	if err != nil {
+		return fmt.Errorf("save recording roles of guild %q: %w", guildID, err)
+	}
+	return nil
+}
+
+// setRecordingRoles writes the guild's recording roles row only while it
+// is at roles.Version, as setGuildModeratorRoles writes the guild settings
+// row. Nothing written is ErrStale.
+func setRecordingRoles(ctx context.Context, tx *sql.Tx, guildID string, roles RecordingRoles) error {
+	rolesJSON, err := encodeRoles(roles.RoleIDs)
+	if err != nil {
+		return err
+	}
+	var res sql.Result
+	if roles.Version == 0 {
+		res, err = tx.ExecContext(ctx, `
+			INSERT INTO recording_roles (guild_id, role_ids, version)
+			VALUES ($1, $2, 1)
+			ON CONFLICT (guild_id) DO NOTHING`,
+			guildID, rolesJSON)
+	} else {
+		res, err = tx.ExecContext(ctx, `
+			UPDATE recording_roles SET role_ids = $2, version = version + 1
+			WHERE guild_id = $1 AND version = $3`,
+			guildID, rolesJSON, roles.Version)
+	}
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrStale
+	}
+	return nil
+}
+
 // insertChange appends one change log entry. A zero HubID is stored as
 // NULL, the same as a spawned row's cleared reference. The diff goes in as
 // JSONB, so bytes that are not a JSON value are refused here.
@@ -576,6 +646,18 @@ func (p *Postgres) ListModeratorChanges(ctx context.Context, limit int) ([]Chang
 		string(ChangeModerators), limit)
 	if err != nil {
 		return nil, fmt.Errorf("list moderator changes: %w", err)
+	}
+	return entries, nil
+}
+
+// ListRecordingRoleChanges implements Store.
+func (p *Postgres) ListRecordingRoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	entries, err := queryAll(ctx, p.db, scanChangeLogEntry,
+		`SELECT id, hub_id, forum_user_id, forum_username, at, action, diff
+		 FROM change_log WHERE hub_id IS NULL AND action = $1 ORDER BY id DESC LIMIT $2`,
+		string(ChangeRecordingRoles), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list recording roles changes: %w", err)
 	}
 	return entries, nil
 }

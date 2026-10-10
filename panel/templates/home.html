@@ -3,6 +3,7 @@
   <h1 class="title">Hubs</h1>
   {{if .Hubs.Disconnected}}<div class="note" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Channel and role details on this page may be out of date.</div>{{end}}
   {{template "moderators" .}}
+  {{template "recording-roles" .}}
   <div class="block">
     <h2 class="block-header">Hubs</h2>
     {{if .Hubs.Hubs}}
@@ -55,6 +56,27 @@
   </form>
   <div class="block">
     {{template "changes" .Hubs.Moderators.Changes}}
+  </div>
+  </section>
+{{end}}
+
+{{define "recording-roles"}}
+  <section class="recording-roles" data-section="recording-roles">
+  <form method="post" action="/recording-roles" class="block">
+    <h2 class="block-header">Recording roles</h2>
+    {{with .Hubs.RefusalFor "recording-roles"}}{{template "refusal" .}}{{end}}
+    <input type="hidden" name="version" value="{{.Hubs.RecordingRoles.Version}}">
+    <div class="block-row">
+      <div class="field">
+        <span class="field-label">Roles</span>
+        {{template "picker" .Hubs.RecordingRoles.Picker}}
+        <span class="field-hint">Cav members holding one of these roles can start a recording, and stop one in a channel they are in. With none set, nobody can record.</span>
+      </div>
+    </div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save</button></div>
+  </form>
+  <div class="block">
+    {{template "changes" .Hubs.RecordingRoles.Changes}}
   </div>
   </section>
 {{end}}

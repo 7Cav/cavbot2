@@ -404,6 +404,11 @@ func (s *otherWriterStore) SaveGuildModeratorRoles(ctx context.Context, guildID 
 	return s.Fake.SaveGuildModeratorRoles(ctx, guildID, roles, entry)
 }
 
+func (s *otherWriterStore) SaveRecordingRoles(ctx context.Context, guildID string, roles store.RecordingRoles, entry store.ChangeLogEntry) error {
+	s.land("SaveRecordingRoles")
+	return s.Fake.SaveRecordingRoles(ctx, guildID, roles, entry)
+}
+
 // newOtherWriterWorld is the test world over an otherWriterStore holding
 // testHub, and that store. The world's st is nil; a test reads back
 // through the store's Fake.

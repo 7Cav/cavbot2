@@ -208,6 +208,21 @@ func (s leavingStore) ListModeratorChanges(ctx context.Context, limit int) ([]st
 	return s.st.ListModeratorChanges(ctx, limit)
 }
 
+func (s leavingStore) GetRecordingRoles(ctx context.Context, guildID string) (store.RecordingRoles, error) {
+	s.d.leave()
+	return s.st.GetRecordingRoles(ctx, guildID)
+}
+
+func (s leavingStore) SaveRecordingRoles(ctx context.Context, guildID string, roles store.RecordingRoles, entry store.ChangeLogEntry) error {
+	s.d.leave()
+	return s.st.SaveRecordingRoles(ctx, guildID, roles, entry)
+}
+
+func (s leavingStore) ListRecordingRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	s.d.leave()
+	return s.st.ListRecordingRoleChanges(ctx, limit)
+}
+
 func (s leavingStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
 	s.d.leave()
 	return s.st.ListFoxholeRecords(ctx, guildID)
@@ -321,6 +336,18 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 				return 0
 			},
 			action: store.ChangeModerators,
+		},
+		{
+			name: "recording roles",
+			path: func(*testing.T, store.Store) string { return "/recording-roles" },
+			form: func(t *testing.T, st store.Store) url.Values { return recordingRolesForm(t, st, "role-hq") },
+			checkSaved: func(t *testing.T, st store.Store) int64 {
+				if got := storedRecordingRoles(t, st).RoleIDs; !sameSet(got, []string{"role-hq"}) {
+					t.Errorf("stored recording roles = %v, want role-hq alone", got)
+				}
+				return 0
+			},
+			action: store.ChangeRecordingRoles,
 		},
 	}
 	for _, tc := range cases {
@@ -486,13 +513,18 @@ func (refusingStore) SaveGuildModeratorRoles(context.Context, string, store.Guil
 	return errStoreRefused
 }
 
+func (refusingStore) SaveRecordingRoles(context.Context, string, store.RecordingRoles, store.ChangeLogEntry) error {
+	return errStoreRefused
+}
+
 // savedState is everything a save can write, read back through the store:
-// the test guild's hubs, its guild-wide moderator roles, and the change log
-// under each hub and under none.
+// the test guild's hubs, its guild-wide moderator roles, its recording
+// roles, and the change log under each hub and under none.
 type savedState struct {
-	Hubs    []store.Hub
-	Roles   store.GuildModeratorRoles
-	Entries map[int64][]store.ChangeLogEntry
+	Hubs      []store.Hub
+	Roles     store.GuildModeratorRoles
+	Recording store.RecordingRoles
+	Entries   map[int64][]store.ChangeLogEntry
 }
 
 // readSavedState reads the store's savedState, hubs in ID order.
@@ -504,7 +536,8 @@ func readSavedState(t *testing.T, st store.Store) savedState {
 	if err != nil {
 		t.Fatalf("GetGuildModeratorRoles: %v", err)
 	}
-	state := savedState{Hubs: hubs, Roles: roles, Entries: map[int64][]store.ChangeLogEntry{0: storedChangeLog(t, st, 0)}}
+	state := savedState{Hubs: hubs, Roles: roles, Recording: storedRecordingRoles(t, st),
+		Entries: map[int64][]store.ChangeLogEntry{0: storedChangeLog(t, st, 0)}}
 	for _, h := range hubs {
 		state.Entries[h.ID] = storedChangeLog(t, st, h.ID)
 	}
@@ -521,7 +554,7 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 		path func(t *testing.T, st store.Store) string
 		form func(t *testing.T, st store.Store) url.Values
 		// checkRuntime checks the runtime still acts on the settings from
-		// before the save.
+		// before the save. Nil for a save no runtime acts on.
 		checkRuntime func(t *testing.T, w *testWorld)
 	}{
 		{
@@ -590,6 +623,13 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 				}
 			},
 		},
+		{
+			// The recording runtime reads the recording roles from the
+			// store at each start, so no runtime holds them.
+			name: "recording roles",
+			path: func(*testing.T, store.Store) string { return "/recording-roles" },
+			form: func(t *testing.T, st store.Store) url.Values { return recordingRolesForm(t, st, "role-hq") },
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -613,7 +653,9 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 			if after := readSavedState(t, fake); !reflect.DeepEqual(after, before) {
 				t.Errorf("the store after the failed save = %+v, want it as before, %+v", after, before)
 			}
-			tc.checkRuntime(t, w)
+			if tc.checkRuntime != nil {
+				tc.checkRuntime(t, w)
+			}
 		})
 	}
 }

@@ -37,6 +37,8 @@ type Fake struct {
 	// guildRoles holds each guild's guild-wide moderator roles and their
 	// version.
 	guildRoles map[string]GuildModeratorRoles
+	// recordingRoles holds each guild's recording roles and their version.
+	recordingRoles map[string]RecordingRoles
 	// changes is the hub page's change log, and foxholeChanges the Foxhole
 	// page's, kept apart as the two tables keep them.
 	changes        changeLog
@@ -62,6 +64,7 @@ func NewFake() *Fake {
 		hubs:           make(map[int64]Hub),
 		spawned:        make(map[string]SpawnedChannel),
 		guildRoles:     make(map[string]GuildModeratorRoles),
+		recordingRoles: make(map[string]RecordingRoles),
 		changes:        changeLog{nextID: 1},
 		foxholeChanges: changeLog{nextID: 1},
 		members:        make(map[string]map[string]FoxholeRecord),
@@ -329,6 +332,34 @@ func (f *Fake) setGuildRolesLocked(guildID string, roleIDs []string) {
 	f.guildRoles[guildID] = GuildModeratorRoles{RoleIDs: slices.Clone(roleIDs), Version: f.guildRoles[guildID].Version + 1}
 }
 
+// GetRecordingRoles implements Store.
+func (f *Fake) GetRecordingRoles(ctx context.Context, guildID string) (RecordingRoles, error) {
+	if err := ctx.Err(); err != nil {
+		return RecordingRoles{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	roles := f.recordingRoles[guildID]
+	roles.RoleIDs = slices.Clone(roles.RoleIDs)
+	if roles.RoleIDs == nil {
+		roles.RoleIDs = []string{}
+	}
+	return roles, nil
+}
+
+// SaveRecordingRoles implements Store. A guild with no set stored is at
+// version 0.
+func (f *Fake) SaveRecordingRoles(ctx context.Context, guildID string, roles RecordingRoles, entry ChangeLogEntry) error {
+	return f.writeAllOrNothing(ctx, &entry, func() (int64, error) {
+		current := f.recordingRoles[guildID]
+		if current.Version != roles.Version {
+			return 0, ErrStale
+		}
+		f.recordingRoles[guildID] = RecordingRoles{RoleIDs: slices.Clone(roles.RoleIDs), Version: current.Version + 1}
+		return 0, nil
+	})
+}
+
 // AppendChangeLog adds one entry under the caller's HubID with nothing else
 // written, a setup method off the Store interface. The caller's ID and At
 // are ignored.
@@ -337,9 +368,9 @@ func (f *Fake) AppendChangeLog(ctx context.Context, e ChangeLogEntry) error {
 }
 
 // writeAllOrNothing makes every write of hub settings, guild-wide moderator
-// roles or a change log entry. It writes nothing when ctx is done or when
-// the entry's diff is not a JSON value, which Postgres's JSONB column
-// refuses too. Otherwise it runs apply under mu and appends the entry, if
+// roles, recording roles or a change log entry. It writes nothing when ctx
+// is done or when the entry's diff is not a JSON value, which Postgres's
+// JSONB column refuses too. Otherwise it runs apply under mu and appends the entry, if
 // there is one, under the hub apply returns, zero for none. An apply that
 // fails must have changed nothing, and then no entry is appended: the
 // settings and the entry land together or not at all, as a Postgres
@@ -398,6 +429,14 @@ func (f *Fake) ListModeratorChanges(ctx context.Context, limit int) ([]ChangeLog
 		return nil, err
 	}
 	return f.listChanges(&f.changes, limit, func(e ChangeLogEntry) bool { return e.HubID == 0 && e.Action == ChangeModerators }), nil
+}
+
+// ListRecordingRoleChanges implements Store.
+func (f *Fake) ListRecordingRoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.listChanges(&f.changes, limit, func(e ChangeLogEntry) bool { return e.HubID == 0 && e.Action == ChangeRecordingRoles }), nil
 }
 
 // listChanges returns at most limit entries of log that pass keep, newest

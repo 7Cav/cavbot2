@@ -152,8 +152,9 @@ img { max-width: 100%; }
 .search-list li[hidden] { display: none; }
 .search-none { padding: 6px 10px; font-size: 13px; }
 
-/* The guild-wide moderator section: its form beside its change log. */
-.moderators { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; align-items: start; }
+/* The guild-wide moderator section and the recording roles section: each
+   form beside its change log. */
+.moderators, .recording-roles { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; align-items: start; }
 
 /* The change log under a hub's form. Each entry is a <details> folded to
    its head line; the newest starts open. */
@@ -283,7 +284,7 @@ img { max-width: 100%; }
 /* Under 768px the rail becomes a top bar and the page goes single column. */
 @media (max-width: 767px) {
   .console { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
-  .moderators { grid-template-columns: minmax(0, 1fr); }
+  .moderators, .recording-roles { grid-template-columns: minmax(0, 1fr); }
   .rail { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; border-right: 0; border-bottom: 1px solid var(--line); }
   .rail .mark { border-bottom: 0; padding: 12px 16px; }
   .rail nav { padding: 0; }

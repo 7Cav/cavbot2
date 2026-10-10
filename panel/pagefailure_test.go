@@ -140,6 +140,20 @@ func (s *ctxStore) ListModeratorChanges(ctx context.Context, limit int) ([]store
 	return s.Fake.ListModeratorChanges(ctx, limit)
 }
 
+func (s *ctxStore) GetRecordingRoles(ctx context.Context, guildID string) (store.RecordingRoles, error) {
+	if err := s.gate(ctx, "GetRecordingRoles"); err != nil {
+		return store.RecordingRoles{}, err
+	}
+	return s.Fake.GetRecordingRoles(ctx, guildID)
+}
+
+func (s *ctxStore) ListRecordingRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	if err := s.gate(ctx, "ListRecordingRoleChanges"); err != nil {
+		return nil, err
+	}
+	return s.Fake.ListRecordingRoleChanges(ctx, limit)
+}
+
 func (s *ctxStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
 	if err := s.gate(ctx, "ListFoxholeRecords"); err != nil {
 		return nil, err

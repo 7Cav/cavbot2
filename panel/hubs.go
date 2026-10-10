@@ -43,18 +43,19 @@ type hubService struct {
 	// the budget.
 	guildWait time.Duration
 	// saveLock is the lock under which the saves of this process take turns
-	// (#373). create, register, update, remove and the guild-wide
-	// moderator save each take it before their first store read and hold it
-	// until the running bot has their update. So each save reads what the save
-	// before it wrote, and the running bot gets saves in the order the store
-	// took them.
+	// (#373). create, register, update, remove, the guild-wide moderator
+	// save and the recording roles save each take it before their first
+	// store read and hold it until the running bot has their update. So each
+	// save reads what the save before it wrote, and the running bot gets
+	// saves in the order the store took them.
 	//
-	// One lock covers all five. They share the hub rows and the running
-	// bot: a create or a register can meet another register on a channel,
-	// an update can meet a remove on one hub, and every save updates the
-	// running bot after its write. Saves are rare, a few people saving by
-	// hand, so taking turns one at a time costs nothing a finer lock would
-	// save, and no one has to work out which saves can meet.
+	// One lock covers all six. The first five share the hub rows and the
+	// running bot: a create or a register can meet another register on a
+	// channel, an update can meet a remove on one hub, and every save updates
+	// the running bot after its write. The recording roles save shares
+	// neither and takes its turn all the same. Saves are rare, a few people
+	// saving by hand, so taking turns one at a time costs nothing a finer
+	// lock would save, and no one has to work out which saves can meet.
 	//
 	// A save holds it through its Discord calls, the rename or the channel
 	// create between its read and its write. Released around them, another
@@ -151,28 +152,32 @@ func (a actor) String() string {
 	return fmt.Sprintf("%s (forum user %d)", a.username, a.userID)
 }
 
-// fieldError is a refused save: the field refused and why, or, with stale
-// set, a stale form (#373), which names no field. The note the page shows
-// carries DataError as its data-error attribute, a test contract; the
-// message is not.
+// fieldError is a refused save: the field refused and why, or a refusal of
+// a kind that names no field. The note the page shows carries DataError as
+// its data-error attribute, a test contract; the message is not.
 type fieldError struct {
 	Field   string
 	Message string
-	// stale marks a stale form's refusal, which answers 409 and logs an
-	// INFO line, where every other refusal answers 422.
-	stale bool
+	// kind is refusalStale for a stale form (#373), whose refusal answers
+	// 409 and logs an INFO line where every other refusal answers 422,
+	// refusalUnchanged for a save that would change nothing, and empty for
+	// a refused field.
+	kind string
 }
 
 func (e *fieldError) Error() string { return e.DataError() + ": " + e.Message }
 
-// DataError is the data-error value on the refusal's note: the refused
-// field's name, or refusalStale for a stale form.
+// DataError is the data-error value on the refusal's note: its kind, or
+// the refused field's name when it has none.
 func (e *fieldError) DataError() string {
-	if e.stale {
-		return refusalStale
+	if e.kind != "" {
+		return e.kind
 	}
 	return e.Field
 }
+
+// stale reports whether the refusal is a stale form's.
+func (e *fieldError) stale() bool { return e.kind == refusalStale }
 
 // errAlreadyHub is the refusal a register of a channel a hub already stands
 // on gets.
@@ -193,6 +198,7 @@ const (
 	fieldBaseString       = "base_string"
 	fieldPermissionSource = "permission_source"
 	fieldModeratorRoles   = "moderator_roles"
+	fieldRecordingRoles   = "recording_roles"
 	fieldUserLimit        = "user_limit"
 	fieldBitrate          = "bitrate"
 	fieldDeleteDelay      = "delete_delay_minutes"
@@ -205,15 +211,19 @@ const (
 	fieldLoadedChannelName = "loaded_channel_name"
 )
 
-// refusalStale is the data-error value on a stale refusal's note, a test
-// contract like the field names.
-const refusalStale = "stale"
+// refusalStale is the data-error value on a stale refusal's note, and
+// refusalUnchanged on the note of a save that would change nothing, test
+// contracts like the field names.
+const (
+	refusalStale     = "stale"
+	refusalUnchanged = "unchanged"
+)
 
 // errStaleHub is the refusal a save from a stale hub form gets: the hub is
 // not at the version the form loaded. Nothing is written and no Discord
 // call is made. The handler answers it with 409 and the form as posted,
 // carrying the hub's version now, so a second save goes through.
-var errStaleHub = &fieldError{stale: true, Message: "Someone saved this hub after you opened this form, so your changes were not saved. " +
+var errStaleHub = &fieldError{kind: refusalStale, Message: "Someone saved this hub after you opened this form, so your changes were not saved. " +
 	"Their save is at the top of the change log below. Your values are still in the form. Save again to keep them."}
 
 // formIsCurrent reports whether a form was loaded at the version its
@@ -313,7 +323,9 @@ type hubPage struct {
 	Disconnected bool
 	// Moderators is the guild-wide section at the top of the page.
 	Moderators moderatorsPage
-	Hubs       []hubRow
+	// RecordingRoles is the recording roles section beside it.
+	RecordingRoles recordingRolesPage
+	Hubs           []hubRow
 	// Picker is the register picker: the chosen channel as a tag, if any,
 	// and the voice channels its channel search offers.
 	Picker     pickerView
@@ -322,7 +334,7 @@ type hubPage struct {
 	Create     createInput
 	Error      *fieldError
 	// Refused is which form the error belongs to: formCreate, formRegister,
-	// formEdit or formModerators. Empty with no error.
+	// formEdit, formModerators or formRecordingRoles. Empty with no error.
 	Refused string
 	Edit    *editPage
 }
@@ -330,10 +342,11 @@ type hubPage struct {
 // The forms a refusal can belong to, as Refused names them and as the
 // template asks RefusalFor.
 const (
-	formCreate     = "create"
-	formRegister   = "register"
-	formEdit       = "edit"
-	formModerators = "moderators"
+	formCreate         = "create"
+	formRegister       = "register"
+	formEdit           = "edit"
+	formModerators     = "moderators"
+	formRecordingRoles = "recording-roles"
 )
 
 // RefusalFor is the refusal to render on a form, or nil when the error
@@ -348,7 +361,7 @@ func (p hubPage) RefusalFor(form string) *fieldError {
 
 // staleFor reports whether the request shows a stale refusal on the form.
 func (r pageRequest) staleFor(form string) bool {
-	return r.Refused == form && r.Error != nil && r.Error.stale
+	return r.Refused == form && r.Error != nil && r.Error.stale()
 }
 
 // pageRequest is what a handler asks the page to show beyond the list:
@@ -368,7 +381,10 @@ type pageRequest struct {
 	// Moderators is the guild-wide section's form as posted back after a
 	// refusal. Nil shows the stored set.
 	Moderators *moderatorsInput
-	Error      *fieldError
+	// RecordingRoles is the recording roles section's form as posted back
+	// after a refusal. Nil shows the stored set.
+	RecordingRoles *recordingRolesInput
+	Error          *fieldError
 	// Refused is the form Error belongs to.
 	Refused string
 }
@@ -537,10 +553,12 @@ func (sn snapshot) hubOn(channelID string) (store.Hub, bool) {
 // of time also reports each read under (#395). A read the page's time budget
 // ran out on fails under the same name as its own failure.
 const (
-	listHubsRead            = "list hubs"
-	guildModeratorRolesRead = "read guild moderator roles"
-	moderatorChangesRead    = "list moderator changes"
-	changeLogRead           = "list change log"
+	listHubsRead             = "list hubs"
+	guildModeratorRolesRead  = "read guild moderator roles"
+	moderatorChangesRead     = "list moderator changes"
+	recordingRolesRead       = "read recording roles"
+	recordingRoleChangesRead = "list recording roles changes"
+	changeLogRead            = "list change log"
 )
 
 // read reads the guild from the gateway state, then the hub rows from the
@@ -718,6 +736,9 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 	if page.Moderators, err = s.moderatorsSection(ctx, sn.info, guildWide, req); err != nil {
 		return hubPage{}, err
 	}
+	if page.RecordingRoles, err = s.recordingRolesSection(ctx, sn.info, req); err != nil {
+		return hubPage{}, err
+	}
 	if req.HubID != 0 {
 		if page.Edit, err = s.editForm(ctx, sn, sn.info, guildWide.RoleIDs, req); err != nil {
 			return hubPage{}, err
@@ -784,8 +805,8 @@ func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo,
 		form.Version = postedBackVersion(hub.Version, req.Edit.Version, req.staleFor(formEdit))
 	}
 	page := &editPage{ID: hub.ID, Broken: st.Broken, CategoryName: st.CategoryName, Form: form,
-		Picker: rolePicker(guild, hub.ModeratorRoleIDs, form.ModeratorRoleIDs), BitrateMax: guild.bitrateMax,
-		GuildRoles: rolePicker(guild, guildWide, guildWide).Tags, Changes: changeViews(entries, guild.names)}
+		Picker: rolePicker(fieldModeratorRoles, guild, hub.ModeratorRoleIDs, form.ModeratorRoleIDs), BitrateMax: guild.bitrateMax,
+		GuildRoles: rolePicker(fieldModeratorRoles, guild, guildWide, guildWide).Tags, Changes: changeViews(entries, guild.names)}
 	return page, nil
 }
 
@@ -1067,7 +1088,7 @@ func applyEdit(hub *store.Hub, in editInput, guild guildInfo) error {
 	}
 	// hub still carries the stored set here: what an unavailable role may
 	// be kept from.
-	roles, err := acceptedRoles(in.ModeratorRoleIDs, guild, hub.ModeratorRoleIDs)
+	roles, err := acceptedRoles(in.ModeratorRoleIDs, guild, hub.ModeratorRoleIDs, errIneligibleModeratorRole)
 	if err != nil {
 		return err
 	}

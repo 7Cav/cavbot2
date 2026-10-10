@@ -36,8 +36,13 @@ var diffFields = []string{fieldHubChannel, fieldBaseString, fieldPermissionSourc
 	fieldModeratorRoles, fieldUserLimit, fieldBitrate, fieldDeleteDelay, fieldEnabled, fieldRenamingAllowed,
 	fieldLockingAllowed}
 
-// shownFields are every field a diff can carry, in the form's order.
-var shownFields = append([]string{fieldChannelName}, diffFields...)
+// shownFields are every field a diff can carry, in the form's order: a
+// hub's fields, then the recording roles, the one field of their section's
+// diffs.
+var shownFields = slices.Concat([]string{fieldChannelName}, diffFields, []string{fieldRecordingRoles})
+
+// roleFields are the fields whose values are role IDs, shown by name.
+var roleFields = []string{fieldModeratorRoles, fieldRecordingRoles}
 
 // sortedRoles is a role set as a diff records it: sorted, and never null,
 // so two sets compare and read the same whatever order the store returned
@@ -125,11 +130,11 @@ type fieldView struct {
 	After  string
 }
 
-// changeViews decodes stored entries for the form. Moderator roles are
-// stored as IDs and shown by name where the guild still has the role;
-// roleNames maps the guild's roles as read at this page load. An entry
-// whose diff does not decode is shown with no fields rather than dropped:
-// the save happened.
+// changeViews decodes stored entries for the form. Moderator and recording
+// roles are stored as IDs and shown by name where the guild still has the
+// role; roleNames maps the guild's roles as read at this page load. An
+// entry whose diff does not decode is shown with no fields rather than
+// dropped: the save happened.
 func changeViews(entries []store.ChangeLogEntry, roleNames map[string]string) []changeView {
 	views := make([]changeView, 0, len(entries))
 	for _, e := range entries {
@@ -142,7 +147,7 @@ func changeViews(entries []store.ChangeLogEntry, roleNames map[string]string) []
 					continue
 				}
 				names := roleNames
-				if field != fieldModeratorRoles {
+				if !slices.Contains(roleFields, field) {
 					names = nil
 				}
 				v.Fields = append(v.Fields, fieldView{Field: field, Before: valueText(c.Before, names), After: valueText(c.After, names)})

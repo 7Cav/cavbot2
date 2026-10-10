@@ -3,14 +3,14 @@
 // docs/temp-vc-decisions.md. It holds the sign-in, the panel session, the
 // group check, the no-access page every forum user who opens no page gets,
 // the hub page and the Foxhole page. The hub page is the guild-wide
-// moderator section with its change log, the hub list with each hub's live
-// spawned count, its last spawn failure and its broken hub state, the create
-// and register forms, each hub's edit form with its change log, and the
-// remove action. The Foxhole page lists the Foxhole role holders from the
-// member list, with search, filters and each holder's note, starts a purge
-// and a re-add of the approved collaborators through the Foxhole runtime
-// and shows its progress and report, and keeps its own change log of saves
-// and reports.
+// moderator section and the recording roles section, each with its change
+// log, the hub list with each hub's live spawned count, its last spawn
+// failure and its broken hub state, the create and register forms, each
+// hub's edit form with its change log, and the remove action. The Foxhole
+// page lists the Foxhole role holders from the member list, with search,
+// filters and each holder's note, starts a purge and a re-add of the
+// approved collaborators through the Foxhole runtime and shows its progress
+// and report, and keeps its own change log of saves and reports.
 package panel
 
 import (
@@ -195,6 +195,7 @@ func (p *Panel) routes() []route {
 		{"POST /hubs/{id}", p.withPanelAdmin(p.updateHub)},
 		{"POST /hubs/{id}/remove", p.withPanelAdmin(p.removeHub)},
 		{"POST /moderators", p.withPanelAdmin(p.saveModerators)},
+		{"POST /recording-roles", p.withPanelAdmin(p.saveRecordingRoles)},
 		{"GET " + foxholePath, p.withFoxholePage(p.foxholePage)},
 		{"POST " + foxholeNotesPath, p.withFoxholePage(p.saveNote)},
 		{"POST " + foxholeApprovalsPath, p.withFoxholePage(p.saveApprovals)},
@@ -678,7 +679,7 @@ func (p *Panel) saveFailed(w http.ResponseWriter, sess session, step, retry stri
 // and kv, the hub for a hub's form (#373). Every other refusal answers 422.
 func (p *Panel) renderRefused(w http.ResponseWriter, r *http.Request, sess session, req pageRequest, kv ...any) {
 	status := http.StatusUnprocessableEntity
-	if req.Error.stale {
+	if req.Error.stale() {
 		status = http.StatusConflict
 		utils.Info("Panel save refused: stale form", append(kv, "username", sess.username, "forum_user_id", sess.userID)...)
 	}
@@ -786,5 +787,28 @@ func (p *Panel) saveModerators(w http.ResponseWriter, r *http.Request, sess sess
 		return
 	}
 	utils.Info("Panel guild moderator roles saved", "role_ids", roles, "username", sess.username, "forum_user_id", sess.userID)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// saveRecordingRoles is POST /recording-roles: one service call, then a
+// redirect to the page where the saved set shows, or the page again with
+// the refusal on the recording roles section.
+func (p *Panel) saveRecordingRoles(w http.ResponseWriter, r *http.Request, sess session) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "the form could not be read", http.StatusBadRequest)
+		return
+	}
+	in := recordingRolesInput{Version: r.PostForm.Get(fieldVersion), RoleIDs: r.PostForm[fieldRecordingRoles]}
+	ctx, hubs := p.saving(r)
+	roles, err := hubs.setRecordingRoles(ctx, in, sess.actor())
+	if refusal, ok := asFieldError(err); ok {
+		p.renderRefused(w, r, sess, pageRequest{RecordingRoles: &in, Error: refusal, Refused: formRecordingRoles})
+		return
+	}
+	if err != nil {
+		p.saveFailed(w, sess, "recording roles save", "/", err)
+		return
+	}
+	utils.Info("Panel recording roles saved", "role_ids", roles, "username", sess.username, "forum_user_id", sess.userID)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
