@@ -55,3 +55,11 @@ func warnsWithTheErrorThroughAChainOfWrappers(err error) {
 func repliesWithTheErrorThroughAnotherPackagesMethod(n notify.Notifier, err error) {
 	n.Reply("❌ Failed: " + err.Error()) // want "Discord"
 }
+
+func keepsTheErrorThroughAnotherPackagesSetter(err error) {
+	notify.Remember("❌ Refused: " + err.Error()) // want "variable"
+}
+
+func buildsAnotherPackagesRefusalFromTheError(err error) {
+	_ = notify.Refuse("❌ " + err.Error()) // want "Discord"
+}

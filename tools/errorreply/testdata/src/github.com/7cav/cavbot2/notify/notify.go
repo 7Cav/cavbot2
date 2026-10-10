@@ -4,6 +4,7 @@
 package notify
 
 import (
+	"github.com/7cav/cavbot2/state"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 )
@@ -24,4 +25,26 @@ type Notifier struct{}
 // Reply sends message to the member.
 func (Notifier) Reply(message string) {
 	utils.HandleError(nil, nil, message)
+}
+
+// Remember keeps reason as the last refusal's.
+func Remember(reason string) {
+	state.LastRefusal = reason
+}
+
+// Refusal is a refusal the bot explains to a member.
+type Refusal struct {
+	Reason string
+}
+
+func (r *Refusal) Error() string { return r.Reason }
+
+// Refuse returns a refusal for reason.
+func Refuse(reason string) *Refusal {
+	return &Refusal{Reason: reason}
+}
+
+// Explain sends the member the refusal's reason.
+func Explain(r *Refusal) {
+	utils.HandleError(nil, nil, r.Error())
 }
