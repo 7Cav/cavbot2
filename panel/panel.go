@@ -181,7 +181,9 @@ type route struct {
 
 // routes is every route the panel serves, each behind its gate. Handler
 // registers these and no others, so a test that reads the list reads what
-// the panel serves.
+// the panel serves. forbidigo's route rule in .golangci.yml holds the
+// panel's production code to that. It flags any other mux and any other
+// route registration.
 func (p *Panel) routes() []route {
 	return []route{
 		{"GET /static/", staticHandler()},
@@ -213,9 +215,9 @@ func (p *Panel) routes() []route {
 // refuses a state-changing request a browser sends from another origin. The
 // panel therefore carries no form token, and every state change is a POST.
 func (p *Panel) Handler() http.Handler {
-	mux := http.NewServeMux()
+	mux := http.NewServeMux() //nolint:forbidigo // the one mux the panel serves, holding routes() alone
 	for _, rt := range p.routes() {
-		mux.Handle(rt.pattern, rt.handler)
+		mux.Handle(rt.pattern, rt.handler) //nolint:forbidigo // registers routes(), the one list of the panel's routes
 	}
 	protected := http.NewCrossOriginProtection().Handler(mux)
 	// A panic in a handler is recovered here and reported through the same

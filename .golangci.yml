@@ -3,9 +3,10 @@
 # `linters.default: standard` keeps the standard linter set (errcheck, govet,
 # ineffassign, staticcheck, unused) as it was before this file existed.
 # depguard and gosec on top of it hold the panel's security rules, so review
-# needn't. forbidigo holds the panel's production code to its clock and the
-# commands package's error replies to refuse and replyError, and nolintlint
-# makes every //nolint name its linter and say why.
+# needn't. forbidigo holds the panel's production code to its clock and to
+# registering routes only through routes(), and the commands package's error
+# replies to refuse and replyError, and nolintlint makes every //nolint name
+# its linter and say why.
 #
 # gofmt is a *formatter* in v2, not a linter: `golangci-lint run` reports diffs
 # as issues, and `golangci-lint fmt` rewrites them in place.
@@ -52,6 +53,14 @@ linters:
           msg: read the time and wait through panelClock
         - pattern: ^context\.(WithTimeout|WithTimeoutCause|WithDeadline|WithDeadlineCause)$
           msg: set deadlines through panelClock.WithTimeout
+        # The panel serves the routes routes() lists and no others. Handler
+        # builds its one mux from that list, and the test that every route has
+        # an outsider case reads it (#546). A route registered anywhere else,
+        # or a second mux that could serve one, would pass that test unseen.
+        # The calls that build the served mux carry a //nolint:forbidigo.
+        - pattern: ^(http\.NewServeMux|http\.Handle|http\.HandleFunc|http\.ServeMux\.(Handle|HandleFunc))$
+          pkg: ^net/http$
+          msg: add the route to routes(), the one list of routes the panel serves
         # A command sends its error replies through refuse and replyError
         # (commands/interaction_ack.go), which send through acknowledge, so
         # Discord's 10062 on a command's first response reaches Sentry as a
@@ -67,10 +76,13 @@ linters:
     rules:
       # Each forbidigo rule holds one package's production code, so each
       # exclusion matches its own rule's message. The panel's clock rules
-      # are for panel/ alone.
+      # and its route rule are for panel/ alone.
       - path-except: ^panel/
         linters: [forbidigo]
         text: panelClock
+      - path-except: ^panel/
+        linters: [forbidigo]
+        text: routes\(\)
       # The error reply rule is for commands/ alone, outside the file that
       # holds refuse and replyError.
       - path-except: ^commands/
