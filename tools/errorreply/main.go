@@ -42,24 +42,19 @@
 // string, and the second result of a comma-ok read carry none of it.
 //
 // A closure is read as part of the function that makes it, and a closure
-// value counts as built from what it captured. What the closure
-// puts in a variable it captured counts as put there, whoever calls the
-// closure, and so does what it stores, sends or sets through a channel, map,
-// slice or pointer it loads out of that variable. A parameter of the
-// enclosing function that the closure reads is a parameter of that function.
-// The closure's own parameter is built from what each call of it in the
-// package passes it.
+// value counts as built from what it captured. What the closure puts in a
+// variable it captured counts as put there, whoever calls the closure, and
+// so does what it stores, sends or sets through a channel, map, slice or
+// pointer it loads out of that variable. A parameter of the enclosing
+// function that the closure reads is a parameter of that function. The
+// closure's own parameter is built from what each call of it in the package
+// passes it. When the package also uses the closure as a value, some of
+// those calls are hidden from the check, so the parameter counts as a value
+// the check can't follow. The same holds for a function that puts its
+// parameter in a package-level variable.
 //
-// A local counts as built from everything written through another local
-// that holds its address, even after that local points elsewhere.
-//
-// Writes through a pointer are the one place the check follows the routes it
-// knows instead of failing closed, because failing closed there reports
-// ordinary replies built from nested composite literals (ADR 0017). It
-// follows a write at an address or within it, through a closure that
-// captured it, and through a local that holds it. It doesn't follow a write
-// through a pointer a call returned, or through an address kept in a slice,
-// map or struct field.
+// A local counts as built from everything written through another local that
+// holds its address, even after that local points elsewhere.
 //
 // A package-level variable counts as built from everything its package puts
 // in it: its declared value, a store at an address within it, a map update
@@ -68,8 +63,25 @@
 // module that reads the variable gets the verdict its package recorded. The
 // check can't follow a value that one package puts in another's variable to
 // where the variable is read, so it reports that store where it's made, and
-// a call that passes a value to another package's function that puts it in
-// a variable.
+// a call that passes a value to another package's function that puts it in a
+// variable.
+//
+// Three places follow the routes the check knows instead of failing closed
+// (ADR 0017). A reply missed anywhere else is a bug in the fail-closed rule.
+//
+//   - Writes through a pointer. Failing closed there reports ordinary
+//     replies built from nested composite literals. The check follows a
+//     write at an address or within it, through a closure that captured it,
+//     and through a local that holds it. It doesn't follow a write through a
+//     pointer a call returned, or through an address kept in a slice, map or
+//     struct field.
+//   - A value that reaches a panel page through the store or the temp VC
+//     runtime. The check can't follow a value through either, so it checks
+//     the two fields named above, where they are stored, and no other.
+//   - A function called through a function value. When such a function hands
+//     its parameter on to a message or a panel answer, the check reports its
+//     direct calls only. Failing closed there would report every Discord and
+//     panel handler, since discordgo and net/http call each one that way.
 package main
 
 import (

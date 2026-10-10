@@ -19,12 +19,22 @@ an agent just wrote. The agent rewrites the line or teaches the check the
 route. On the day this changed, the stricter check reported nothing in the
 bot's production code.
 
-Writes through a pointer kept somewhere else are the one area where the check
-still follows known routes. Failing closed there needs the check to know where
-every address goes. A rule that failed any address leaving its function
-reported 93 lines of ordinary reply building, such as a nested
-`&discordgo.InteractionResponseData{...}` or a constructor that returns a
-pointer. A missed reply there is a gap in those routes. A missed reply
+Three areas still follow known routes. The package doc names what each one
+follows.
+
+- **Writes through a pointer kept somewhere else.** Failing closed needs the
+  check to know where every address goes. A rule that failed any address
+  leaving its function reported 93 lines of ordinary reply building, such as
+  a nested `&discordgo.InteractionResponseData{...}` or a constructor that
+  returns a pointer.
+- **A value that reaches a panel page through the store or the temp VC
+  runtime.** The check can't follow a value through either, so it checks the
+  fields that carry a failure to a page where they are stored.
+- **A function called through a function value.** Failing closed when such a
+  function hands its parameter on to a message would report every Discord
+  and panel handler, since discordgo and net/http call each one that way.
+
+A missed reply in one of these areas is a gap in its routes. A missed reply
 anywhere else is a bug in the fail-closed rule, not a route to add.
 
 ## Considered options
@@ -32,5 +42,6 @@ anywhere else is a bug in the fail-closed rule, not a route to add.
 - **Keep adding routes and calls as reviews find them.** Each fix was small,
   but Go constructs and discordgo calls have no end, and a missing entry
   fails silently.
-- **Fail closed on writes through pointers too.** It reported 93 ordinary
-  lines of production code, as above.
+- **Fail closed on pointer writes and on functions called through a
+  function value too.** The first reported 93 ordinary lines of production
+  code, and the second would report every handler, as above.
