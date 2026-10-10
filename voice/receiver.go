@@ -38,10 +38,11 @@ const (
 	// heldPerSSRC caps the frames held for one SSRC while op 5 hasn't
 	// mapped it: 5 s of audio. The oldest goes first.
 	heldPerSSRC = 250
-	// daveFailureBurst is how many of one speaker's frames in a row DAVE
-	// fails to decrypt before Sentry hears of it: half a second of audio.
-	// A join or leave costs a frame or two at most.
-	daveFailureBurst = 25
+	// failureBurst is how many failures in a row Sentry hears of once:
+	// datagrams the UDP connection can't read, or one speaker's frames DAVE
+	// can't decrypt. Half a second of one speaker's audio. A join or leave
+	// costs a frame or two at most.
+	failureBurst = 25
 )
 
 // receiver reads one voice connection's packets on a goroutine of its own
@@ -60,9 +61,11 @@ type receiver struct {
 	// goroutine touches it.
 	held map[uint32][]*disgovoice.Packet
 	// failing counts each speaker's frames DAVE has failed to decrypt
-	// since their last that decrypted. Only the receiver's goroutine
-	// touches it.
-	failing map[snowflake.ID]int
+	// since their last that decrypted, and unreadable the datagrams the
+	// UDP connection has failed to read since its last good one. Only the
+	// receiver's goroutine touches them.
+	failing    map[snowflake.ID]int
+	unreadable int
 }
 
 // newReceiver builds the receiver of a recorder's connection. It hands
@@ -116,6 +119,7 @@ func (r *receiver) step() {
 	p, err := r.conn.UDP().ReadPacket()
 	switch {
 	case err == nil:
+		r.unreadable = 0
 		r.receive(p)
 	case errors.Is(err, os.ErrDeadlineExceeded):
 		// Nothing arrived. The next step looks at the held frames again.
@@ -123,7 +127,10 @@ func (r *receiver) step() {
 		// A voice reconnect closes the socket, and disgo opens a new one.
 		r.pause(closedPause)
 	default:
-		utils.Debug("Voice packet dropped", "recorder", r.recorder, "error", err)
+		r.unreadable++
+		if r.unreadable == failureBurst {
+			utils.CaptureError("Voice packets unreadable", err, "recorder", r.recorder, "packets", failureBurst)
+		}
 	}
 }
 
@@ -191,13 +198,13 @@ func (r *receiver) deliver(userID snowflake.ID, p *disgovoice.Packet) {
 	n, err := dave.Decrypt(user, p.Opus, out)
 	if err != nil {
 		r.failing[userID]++
-		if r.failing[userID] == daveFailureBurst {
+		if r.failing[userID] == failureBurst {
 			utils.CaptureError("DAVE decrypt failures", err, "recorder", r.recorder,
-				"user_id", userID.String(), "frames", daveFailureBurst)
+				"user_id", userID.String(), "frames", failureBurst)
 		}
 		return
 	}
-	if failed := r.failing[userID]; failed >= daveFailureBurst {
+	if failed := r.failing[userID]; failed >= failureBurst {
 		utils.Info("DAVE decrypt recovered", "recorder", r.recorder, "user_id", userID.String(), "frames_lost", failed)
 	}
 	delete(r.failing, userID)

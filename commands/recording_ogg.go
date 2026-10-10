@@ -21,8 +21,10 @@ type oggWriter struct {
 	serial  uint32
 	pageSeq uint32
 	// granule is the stream's length so far, in 48 kHz samples: the end of
-	// the last packet written.
-	granule uint64
+	// the last packet written. pageGranule is the granule position of the
+	// last page written out.
+	granule     uint64
+	pageGranule uint64
 
 	// The page being filled.
 	lacing []byte
@@ -83,9 +85,16 @@ func (o *oggWriter) flush() error {
 	return o.emit(0)
 }
 
-// close writes out the last page, marked as the end of the stream. The
-// stream holds at least one packet by then.
-func (o *oggWriter) close() error {
+// pending reports whether the page being filled holds a packet.
+func (o *oggWriter) pending() bool { return len(o.lacing) > 0 }
+
+// closeAt writes out the page being filled as the last, marked as the end
+// of the stream, which ends at end samples. A stream whose packets run past
+// end is trimmed there (RFC 7845, section 4.4), as far back as the previous
+// page's end, which a granule position may not go below. The page holds a
+// packet by then.
+func (o *oggWriter) closeAt(end uint64) error {
+	o.granule = max(end, o.pageGranule)
 	return o.emit(oggEOS)
 }
 
@@ -94,6 +103,7 @@ func (o *oggWriter) close() error {
 func (o *oggWriter) emit(flags byte) error {
 	err := o.page(o.lacing, o.body, o.granule, flags)
 	o.lacing, o.body = o.lacing[:0], o.body[:0]
+	o.pageGranule = o.granule
 	return err
 }
 

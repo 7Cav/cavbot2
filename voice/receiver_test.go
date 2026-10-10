@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,13 +35,11 @@ type fakeReceiveConn struct {
 
 	mu    sync.Mutex
 	users map[uint32]snowflake.ID
-	// misses counts lookups of an SSRC no user is mapped to yet.
-	misses int
 }
 
 func newFakeReceiveConn() *fakeReceiveConn {
 	return &fakeReceiveConn{
-		udp:   &fakeVoiceUDP{packets: make(chan *disgovoice.Packet, 64)},
+		udp:   &fakeVoiceUDP{reads: make(chan udpRead, 64)},
 		dave:  &fakeDAVE{},
 		users: make(map[uint32]snowflake.ID),
 	}
@@ -52,11 +51,7 @@ func (c *fakeReceiveConn) DAVE() godave.Session    { return c.dave }
 func (c *fakeReceiveConn) UserIDBySSRC(ssrc uint32) snowflake.ID {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	id := c.users[ssrc]
-	if id == 0 {
-		c.misses++
-	}
-	return id
+	return c.users[ssrc]
 }
 
 // mapSSRC maps an SSRC to a user, as op 5 does.
@@ -66,30 +61,36 @@ func (c *fakeReceiveConn) mapSSRC(ssrc uint32, userID string) {
 	c.users[ssrc] = snowflake.MustParse(userID)
 }
 
-// missCount is how many lookups found no user so far.
-func (c *fakeReceiveConn) missCount() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.misses
-}
-
 // send queues a packet on the SSRC, its payload the DAVE frame given.
 func (c *fakeReceiveConn) send(ssrc, timestamp uint32, payload []byte) {
-	c.udp.packets <- &disgovoice.Packet{SSRC: ssrc, Timestamp: timestamp, Opus: payload}
+	c.udp.reads <- udpRead{p: &disgovoice.Packet{SSRC: ssrc, Timestamp: timestamp, Opus: payload}}
+}
+
+// sendUnreadable queues a datagram the UDP connection can't read.
+func (c *fakeReceiveConn) sendUnreadable() {
+	c.udp.reads <- udpRead{err: errors.New("transport decrypt: cipher: message authentication failed")}
+}
+
+// udpRead is what one read of the UDP connection returns.
+type udpRead struct {
+	p   *disgovoice.Packet
+	err error
 }
 
 // fakeVoiceUDP is the UDP connection: each read returns the next queued
-// packet, or a read timeout when none is waiting, as the adapter's own
-// connection does.
+// result, or a read timeout when none is waiting, as the adapter's own
+// connection does. taken counts the queued results read.
 type fakeVoiceUDP struct {
 	disgovoice.UDPConn
-	packets chan *disgovoice.Packet
+	reads chan udpRead
+	taken atomic.Int32
 }
 
 func (u *fakeVoiceUDP) ReadPacket() (*disgovoice.Packet, error) {
 	select {
-	case p := <-u.packets:
-		return p, nil
+	case r := <-u.reads:
+		u.taken.Add(1)
+		return r.p, r.err
 	case <-time.After(5 * time.Millisecond):
 		return nil, os.ErrDeadlineExceeded
 	}
@@ -171,9 +172,9 @@ func TestReceiverHoldsFramesUntilTheirSSRCMaps(t *testing.T) {
 
 	conn.send(testSpeakerSSRC, 1000, sealFor(testSpeaker, "first"))
 	conn.send(testSpeakerSSRC, 1960, sealFor(testSpeaker, "second"))
-	eventually(t, "both early frames read with no user mapped", func() bool {
-		return len(conn.udp.packets) == 0 && conn.missCount() >= 2
-	})
+	// The receiver takes the second packet only once it's done with the
+	// first, which it read with no user mapped.
+	eventually(t, "both early frames read", func() bool { return conn.udp.taken.Load() == 2 })
 	conn.mapSSRC(testSpeakerSSRC, testSpeaker)
 	conn.send(testSpeakerSSRC, 2920, sealFor(testSpeaker, "third"))
 
@@ -210,10 +211,32 @@ func TestReceiverReportsABurstOfDAVEFailuresOnce(t *testing.T) {
 	h := newHeard()
 	startReceiver(t, conn, h.handle)
 
-	for i := range 2 * daveFailureBurst {
+	for i := range 2 * failureBurst {
 		conn.send(testSpeakerSSRC, uint32(i*960), sealFor("999", "unreadable"))
 	}
-	conn.send(testSpeakerSSRC, uint32(2*daveFailureBurst*960), sealFor(testSpeaker, "words"))
+	conn.send(testSpeakerSSRC, uint32(2*failureBurst*960), sealFor(testSpeaker, "words"))
+	h.next(t)
+
+	if got := len(events.Events()); got != 1 {
+		t.Errorf("Sentry events = %d, want 1 for the burst", got)
+	}
+}
+
+// A run of datagrams the UDP connection can't read, such as a transport key
+// that no longer matches, is reported to Sentry once, not once a datagram:
+// left at debug level, it would leave every track empty with no word to the
+// maintainer.
+func TestReceiverReportsABurstOfUnreadablePacketsOnce(t *testing.T) {
+	events := recordSentry(t)
+	conn := newFakeReceiveConn()
+	conn.mapSSRC(testSpeakerSSRC, testSpeaker)
+	h := newHeard()
+	startReceiver(t, conn, h.handle)
+
+	for range 2 * failureBurst {
+		conn.sendUnreadable()
+	}
+	conn.send(testSpeakerSSRC, 1000, sealFor(testSpeaker, "words"))
 	h.next(t)
 
 	if got := len(events.Events()); got != 1 {

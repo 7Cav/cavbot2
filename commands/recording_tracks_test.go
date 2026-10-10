@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -245,8 +246,8 @@ func assertAt(t *testing.T, tracks []oggTrack, marker string, want int) {
 	}
 }
 
-// samplesAt is a time from the recording's start in 48 kHz samples.
-func samplesAt(d time.Duration) int {
+// samplesIn is a time from the recording's start in 48 kHz samples.
+func samplesIn(d time.Duration) int {
 	return int(d.Seconds() * 48000)
 }
 
@@ -280,14 +281,14 @@ func TestRecordingPlacesARejoiningSpeakerByTheClockInTheirTrack(t *testing.T) {
 	sc.clock.advance(time.Second)
 	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
 	sc.clock.advance(3 * time.Second)
-	sc.hear(t, recordChannel, frame(speakerA, 12, uint32(5000+opusFrameSamples+samplesAt(1500*time.Millisecond)), "a2"))
+	sc.hear(t, recordChannel, frame(speakerA, 12, uint32(5000+opusFrameSamples+samplesIn(1500*time.Millisecond)), "a2"))
 	recordAs(t, sc.rt, recStarter, "stop")
 
 	tracks := sc.tracks(t)
 	if a1, a2 := trackWith(t, tracks, "a1"), trackWith(t, tracks, "a2"); a1.path != a2.path {
 		t.Errorf("a1 is in %s and a2 in %s, want one track for the speaker", a1.path, a2.path)
 	}
-	assertAt(t, tracks, "a2", samplesAt(4*time.Second))
+	assertAt(t, tracks, "a2", samplesIn(4*time.Second))
 }
 
 // When a frame's RTP timestamp disagrees with the clock by more than 2 s,
@@ -300,32 +301,56 @@ func TestRecordingPlacesAnRTPJumpPastTwoSecondsByTheClock(t *testing.T) {
 	sc.clock.advance(time.Second)
 	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
 	sc.clock.advance(time.Second)
-	sc.hear(t, recordChannel, frame(speakerA, 11, uint32(5000+opusFrameSamples+samplesAt(5*time.Second)), "a2"))
+	sc.hear(t, recordChannel, frame(speakerA, 11, uint32(5000+opusFrameSamples+samplesIn(5*time.Second)), "a2"))
 	recordAs(t, sc.rt, recStarter, "stop")
 
-	assertAt(t, sc.tracks(t), "a2", samplesAt(2*time.Second))
+	assertAt(t, sc.tracks(t), "a2", samplesIn(2*time.Second))
 }
 
-// A track runs to the end of the recording, silent after its speaker's last
-// words: its final granule position is the recording's length, within one
-// frame.
+// A track runs to the end of the recording and no further: its final
+// granule position is the recording's length, within one frame, whether its
+// speaker fell silent long before the stop, was talking as it came, or had
+// RTP timestamps that put their words ahead of the clock.
 func TestRecordingTrackRunsToTheRecordingsLength(t *testing.T) {
-	sc := newRecordScene(t, testRecorder)
-	sc.startIn(t, recStarter, recordChannel)
-
-	sc.clock.advance(time.Second)
-	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
-	sc.clock.advance(29 * time.Second)
-	recordAs(t, sc.rt, recStarter, "stop")
-
-	tracks := sc.tracks(t)
-	if len(tracks) != 1 {
-		t.Fatalf("tracks = %d, want 1", len(tracks))
+	type heardAt struct {
+		at time.Duration
+		ts uint32
 	}
-	want := uint64(samplesAt(30 * time.Second))
-	if got := tracks[0].granule; got+opusFrameSamples < want || got > want+opusFrameSamples {
-		t.Errorf("track length = %d samples (%.3f s), want %d (30 s) within one frame",
-			got, float64(got)/48000, want)
+	for _, tc := range []struct {
+		name   string
+		frames []heardAt
+	}{
+		{name: "silent at the stop", frames: []heardAt{{at: time.Second, ts: 5000}}},
+		{name: "talking at the stop", frames: []heardAt{{at: 30 * time.Second, ts: 5000}}},
+		{name: "ahead of the clock at the stop", frames: []heardAt{
+			{at: 27 * time.Second, ts: 5000},
+			// RTP puts this frame 3 s after the first, at 30 s, while it
+			// arrives at 29.5 s: within 2 s of the clock, so RTP places it.
+			{at: 29500 * time.Millisecond, ts: uint32(5000 + samplesIn(3*time.Second))},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := newRecordScene(t, testRecorder)
+			sc.startIn(t, recStarter, recordChannel)
+
+			start := sc.clock.read()
+			for i, f := range tc.frames {
+				sc.clock.advance(start.Add(f.at).Sub(sc.clock.read()))
+				sc.hear(t, recordChannel, frame(speakerA, 11, f.ts, "a"+strconv.Itoa(i)))
+			}
+			sc.clock.advance(start.Add(30 * time.Second).Sub(sc.clock.read()))
+			recordAs(t, sc.rt, recStarter, "stop")
+
+			tracks := sc.tracks(t)
+			if len(tracks) != 1 {
+				t.Fatalf("tracks = %d, want 1", len(tracks))
+			}
+			want := uint64(samplesIn(30 * time.Second))
+			if got := tracks[0].granule; got+opusFrameSamples < want || got > want+opusFrameSamples {
+				t.Errorf("track length = %d samples (%.3f s), want %d (30 s) within one frame",
+					got, float64(got)/48000, want)
+			}
+		})
 	}
 }
 

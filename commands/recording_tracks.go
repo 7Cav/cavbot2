@@ -29,9 +29,9 @@ type recordingTracks struct {
 	dir         string
 	start       time.Time
 
-	mu     sync.Mutex
-	tracks map[string]*track
-	closed bool
+	mu        sync.Mutex
+	bySpeaker map[string]*track
+	closed    bool
 	// stopFlush cancels the next flush.
 	stopFlush func()
 }
@@ -64,75 +64,69 @@ var opusSilence = []byte{0xF8, 0xFF, 0xFE}
 const opusSilenceSamples = 960
 
 // newRecordingTracks makes the tracks of the recording with the ID given,
-// which started at start, in its own directory under dir.
-// The tracks are flushed to disk every trackFlushInterval from now until
-// close.
+// which started at start, in its own directory under dir. The tracks are
+// flushed to disk every trackFlushInterval from now until close.
 func newRecordingTracks(dir string, recordingID int64, start time.Time) *recordingTracks {
-	rt := &recordingTracks{
+	tracks := &recordingTracks{
 		recordingID: recordingID,
 		dir:         filepath.Join(dir, strconv.FormatInt(recordingID, 10)),
 		start:       start,
-		tracks:      make(map[string]*track),
+		bySpeaker:   make(map[string]*track),
 	}
-	rt.mu.Lock()
-	rt.stopFlush = recordingAfterFunc(trackFlushInterval, rt.flush)
-	rt.mu.Unlock()
-	return rt
+	tracks.mu.Lock()
+	tracks.stopFlush = recordingAfterFunc(trackFlushInterval, tracks.flush)
+	tracks.mu.Unlock()
+	return tracks
 }
 
-// flush writes every track's pages out to disk, then sets the next flush.
-func (rt *recordingTracks) flush() {
-	defer utils.RecoverPanic("recording-flush", "recording_id", rt.recordingID)
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	if rt.closed {
+// flush writes every track's pages out to disk. The next flush is set
+// first, so a panic here costs this flush alone.
+func (tracks *recordingTracks) flush() {
+	defer utils.RecoverPanic("recording-flush", "recording_id", tracks.recordingID)
+	tracks.mu.Lock()
+	defer tracks.mu.Unlock()
+	if tracks.closed {
 		return
 	}
-	for userID, t := range rt.tracks {
+	tracks.stopFlush = recordingAfterFunc(trackFlushInterval, tracks.flush)
+	for userID, t := range tracks.bySpeaker {
 		if t.err != nil {
 			continue
 		}
-		err := t.ogg.flush()
-		if err == nil {
-			err = t.buf.Flush()
-		}
-		if err != nil {
-			t.fail(err)
-			captureError("Track not written", err, "recording_id", rt.recordingID, "user_id", userID)
+		if err := t.flush(); err != nil {
+			tracks.fail(userID, t, err)
 		}
 	}
-	rt.stopFlush = recordingAfterFunc(trackFlushInterval, rt.flush)
 }
 
 // write adds a frame that arrived at arrival to its speaker's track. A
 // frame after close is dropped: the recorder has left by then.
-func (rt *recordingTracks) write(f voice.Frame, arrival time.Time) {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	if rt.closed {
+func (tracks *recordingTracks) write(f voice.Frame, arrival time.Time) {
+	tracks.mu.Lock()
+	defer tracks.mu.Unlock()
+	if tracks.closed {
 		return
 	}
-	t, ok := rt.tracks[f.UserID]
+	t, ok := tracks.bySpeaker[f.UserID]
 	if !ok {
 		var err error
-		t, err = rt.open(f.UserID)
+		t, err = tracks.open(f.UserID)
+		tracks.bySpeaker[f.UserID] = t
 		if err != nil {
-			captureError("Track not written", err, "recording_id", rt.recordingID, "user_id", f.UserID)
+			tracks.fail(f.UserID, t, err)
 		}
-		rt.tracks[f.UserID] = t
 	}
 	if t.err != nil {
 		return
 	}
-	if err := t.place(f, rt.samplesAt(arrival)); err != nil {
-		t.fail(err)
-		captureError("Track not written", err, "recording_id", rt.recordingID, "user_id", f.UserID)
+	if err := t.place(f, tracks.samplesAt(arrival)); err != nil {
+		tracks.fail(f.UserID, t, err)
 	}
 }
 
 // samplesAt is how far into the recording a time is, in 48 kHz samples.
-func (rt *recordingTracks) samplesAt(at time.Time) int64 {
-	return int64(at.Sub(rt.start).Seconds() * opusSampleRate)
+func (tracks *recordingTracks) samplesAt(at time.Time) int64 {
+	return int64(at.Sub(tracks.start).Seconds() * opusSampleRate)
 }
 
 // place writes a packet where it belongs in the track, filling the gap
@@ -167,68 +161,80 @@ func (t *track) place(f voice.Frame, wallClock int64) error {
 	return t.ogg.writePacket(f.Opus, samples)
 }
 
-// end fills the track with silence to the recording's end, at least one
-// frame, so it lasts the whole recording, and writes its last page.
+// end fills the track with silence to the recording's end, so it lasts the
+// whole recording, and writes its last page, which ends the track there.
+// The last page needs a packet, so a track already at the end gets one more
+// silence frame, trimmed off again.
 func (t *track) end(end int64) error {
-	for {
+	for int64(t.ogg.granule) < end || !t.ogg.pending() {
 		if err := t.ogg.writePacket(opusSilence, opusSilenceSamples); err != nil {
 			return err
 		}
-		if int64(t.ogg.granule) >= end {
-			return t.ogg.close()
-		}
 	}
+	return t.ogg.closeAt(uint64(max(end, 0)))
 }
 
 // open creates a speaker's track, and the recording's directory with the
-// first one. A track that can't be created comes back failed.
-func (rt *recordingTracks) open(userID string) (*track, error) {
-	if err := os.MkdirAll(rt.dir, 0o750); err != nil {
-		return &track{err: err}, err
-	}
-	f, err := os.Create(filepath.Join(rt.dir, userID+".ogg"))
-	if err != nil {
-		return &track{err: err}, err
-	}
-	t := &track{f: f, buf: bufio.NewWriter(f)}
-	serial := fnv.New32a()
-	_, _ = serial.Write([]byte(userID))
-	if t.ogg, err = newOggWriter(t.buf, serial.Sum32()); err != nil {
-		t.fail(err)
+// first one. A track that can't be created comes back with the error.
+func (tracks *recordingTracks) open(userID string) (*track, error) {
+	t := &track{}
+	if err := os.MkdirAll(tracks.dir, 0o750); err != nil {
 		return t, err
 	}
-	return t, nil
+	f, err := os.Create(filepath.Join(tracks.dir, userID+".ogg"))
+	if err != nil {
+		return t, err
+	}
+	t.f, t.buf = f, bufio.NewWriter(f)
+	serial := fnv.New32a()
+	_, _ = serial.Write([]byte(userID))
+	t.ogg, err = newOggWriter(t.buf, serial.Sum32())
+	return t, err
 }
 
-// fail marks the track failed and closes its file.
-func (t *track) fail(err error) {
+// fail marks a speaker's track failed and closes its file, and Sentry
+// hears of it once: the track takes nothing after.
+func (tracks *recordingTracks) fail(userID string, t *track, err error) {
 	t.err = err
 	if t.f != nil {
 		_ = t.f.Close()
 	}
+	captureError("Track not written", err, "recording_id", tracks.recordingID, "user_id", userID)
+}
+
+// flush writes the track's pages out to disk.
+func (t *track) flush() error {
+	if err := t.ogg.flush(); err != nil {
+		return err
+	}
+	return t.buf.Flush()
+}
+
+// close ends the track at end and closes its file.
+func (t *track) close(end int64) error {
+	err := t.end(end)
+	if ferr := t.buf.Flush(); err == nil {
+		err = ferr
+	}
+	if cerr := t.f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // close ends every track at stop, the recording's end, and closes its
 // file. Frames that arrive after are dropped.
-func (rt *recordingTracks) close(stop time.Time) error {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.closed = true
-	rt.stopFlush()
-	end := rt.samplesAt(stop)
+func (tracks *recordingTracks) close(stop time.Time) error {
+	tracks.mu.Lock()
+	defer tracks.mu.Unlock()
+	tracks.closed = true
+	tracks.stopFlush()
+	end := tracks.samplesAt(stop)
 	var errs []error
-	for _, t := range rt.tracks {
-		if t.err != nil {
-			continue
+	for _, t := range tracks.bySpeaker {
+		if t.err == nil {
+			errs = append(errs, t.close(end))
 		}
-		err := t.end(end)
-		if ferr := t.buf.Flush(); err == nil {
-			err = ferr
-		}
-		if cerr := t.f.Close(); err == nil {
-			err = cerr
-		}
-		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }
