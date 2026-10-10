@@ -229,3 +229,13 @@ func keptByAClosure(msg string) string {
 func repliesWithWhatAHelpersClosureKept(err error) {
 	utils.HandleError(nil, nil, "❌ Failed: "+keptByAClosure(err.Error())) // want "Discord"
 }
+
+func reasonLater(msg string) func() string { return func() string { return msg } }
+
+func repliesWithWhatAReturnedClosureGivesBack(err error) {
+	utils.HandleError(nil, nil, "❌ Failed: "+reasonLater(err.Error())()) // want "Discord"
+}
+
+func repliesWithFixedTextAReturnedClosureGivesBack() {
+	utils.HandleError(nil, nil, "❌ Failed: "+reasonLater(fetchFailed)())
+}

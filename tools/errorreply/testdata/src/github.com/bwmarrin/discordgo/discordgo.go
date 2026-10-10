@@ -54,11 +54,49 @@ type MessageEdit struct {
 
 type Message struct{}
 
+type Channel struct{}
+
+type ChannelEdit struct {
+	Name string
+}
+
+type GuildChannelCreateData struct {
+	Name string
+}
+
 type RequestOption func()
 
 type Session struct{}
 
 func (s *Session) ChannelMessageSend(channelID string, content string, options ...RequestOption) (*Message, error) {
+	return nil, nil
+}
+
+func (s *Session) ChannelEdit(channelID string, data *ChannelEdit, options ...RequestOption) (*Channel, error) {
+	return nil, nil
+}
+
+func (s *Session) GuildChannelCreateComplex(guildID string, data GuildChannelCreateData, options ...RequestOption) (*Channel, error) {
+	return nil, nil
+}
+
+func (s *Session) ChannelMessageSendComplex(channelID string, data *MessageSend, options ...RequestOption) (*Message, error) {
+	return nil, nil
+}
+
+func (s *Session) ChannelMessageEditComplex(m *MessageEdit, options ...RequestOption) (*Message, error) {
+	return nil, nil
+}
+
+func (s *Session) InteractionRespond(interaction *Interaction, resp *InteractionResponse, options ...RequestOption) error {
+	return nil
+}
+
+func (s *Session) InteractionResponseEdit(interaction *Interaction, newresp *WebhookEdit, options ...RequestOption) (*Message, error) {
+	return nil, nil
+}
+
+func (s *Session) FollowupMessageCreate(interaction *Interaction, wait bool, data *WebhookParams, options ...RequestOption) (*Message, error) {
 	return nil, nil
 }
 

@@ -26,3 +26,27 @@ func editsAPostToTheError(p poster, err error) {
 func postsTheErrorThroughTheSession(s *discordgo.Session, err error) {
 	_, _ = s.ChannelMessageSend("1", "❌ Failed: "+err.Error()) // want "."
 }
+
+func renamesAChannelToTheError(s *discordgo.Session, err error) {
+	_, _ = s.ChannelEdit("1", &discordgo.ChannelEdit{Name: "vc " + err.Error()}) // want "Discord"
+}
+
+// renamer renames channels the way the temp VC manager does, with the audit
+// log reason as its own argument.
+type renamer interface {
+	ChannelEdit(channelID string, data *discordgo.ChannelEdit, auditReason string) (*discordgo.Channel, error)
+}
+
+func renamesAChannelToTheErrorThroughAManager(m renamer, err error) {
+	_, _ = m.ChannelEdit("1", &discordgo.ChannelEdit{Name: "vc " + err.Error()}, "renamed by /voice-rename") // want "Discord"
+}
+
+// channelMaker creates channels the way the temp VC manager does, with the
+// audit log reason as its own argument.
+type channelMaker interface {
+	GuildChannelCreateComplex(guildID string, data discordgo.GuildChannelCreateData, auditReason string) (*discordgo.Channel, error)
+}
+
+func givesTheErrorAsAChannelsAuditLogReason(m channelMaker, err error) {
+	_, _ = m.GuildChannelCreateComplex("1", discordgo.GuildChannelCreateData{Name: "vc"}, "spawn failed: "+err.Error()) // want "Discord"
+}
