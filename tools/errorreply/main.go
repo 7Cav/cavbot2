@@ -12,14 +12,18 @@
 //
 // The check reads one package at a time. It follows a call into another
 // package of the module by what that package's check recorded: whether each
-// result of the function carries data from an error, and which parameters
-// it is built from. It judges a value of a struct error type the module
+// result of the function carries data from an error, which parameters it is
+// built from, and which it hands on, itself or through the functions it
+// calls, to a message, a panel answer, an error type that reaches one, or
+// another package's variable. A call that passes such a parameter data from
+// an error is reported where it's made, with the diagnostic the function's
+// own package gives it. It judges a value of a struct error type the module
 // defines by what is stored in it. A store in the package being checked is
-// reported at its line. Another package's stores are recorded with the
-// type, so a value that carries an error's data from them is reported where
-// it reaches a person. A call into a package outside the module counts as
-// built from all its arguments, and an error type from outside the module,
-// or one that isn't a struct, counts as built from an error on sight.
+// reported at its line. Another package's stores are recorded with the type,
+// so a value that carries an error's data from them is reported where it
+// reaches a person. A call into a package outside the module counts as built
+// from all its arguments, and an error type from outside the module, or one
+// that isn't a struct, counts as built from an error on sight.
 //
 // A value read out of a slice, array, map, channel or interface counts as
 // built from everything put in it: an element read by index or by range, a
@@ -68,12 +72,15 @@ const module = "github.com/7cav/cavbot2"
 // funcFact is what the check of a function's package records about the
 // function for the checks of the packages that call it: what each of its
 // results is built from, which of its parameters it stores into an error
-// type the package defines, and which, counting a method's receiver first,
-// it puts in a package-level variable of the package.
+// type the package defines, which, counting a method's receiver first, it
+// puts in a package-level variable of the package, and which it hands on
+// to a message, a panel answer, an error type that reaches one, or another
+// package's variable, with the diagnostic for each.
 type funcFact struct {
-	Results   []result
-	Stores    []store
-	VarParams []int
+	Results    []result
+	Stores     []store
+	VarParams  []int
+	SinkParams map[int]string
 }
 
 func (*funcFact) AFact() {}
@@ -168,12 +175,12 @@ func run(pass *analysis.Pass) (any, error) {
 		return nil, nil
 	}
 	src := newSource(pass)
-	flow(&sinks{src: src, reached: map[*types.TypeName]string{}}, func(pos token.Pos, diag string) {
+	wrappers := flow(&sinks{src: src, reached: map[*types.TypeName]string{}}, func(pos token.Pos, diag string) {
 		pass.Reportf(pos, "%s", diag)
 	})
 	stores := exportTypes(src)
 	varParams := exportVars(src)
-	exportFuncs(src, stores, varParams)
+	exportFuncs(src, stores, varParams, wrappers)
 	return nil, nil
 }
 
@@ -403,10 +410,10 @@ func isError(typ types.Type) bool {
 }
 
 // exportFuncs records, for each function of the package, what each of its
-// results is built from and the parameters it stores into the package's
-// error types or puts in its variables, for the checks of the packages that
-// call it.
-func exportFuncs(src *source, stores map[*ssa.Function][]store, varParams map[*ssa.Function][]int) {
+// results is built from, the parameters it stores into the package's error
+// types or puts in its variables, and the parameters wrappers holds for it,
+// for the checks of the packages that call it.
+func exportFuncs(src *source, stores map[*ssa.Function][]store, varParams map[*ssa.Function][]int, wrappers map[*ssa.Function]map[int]string) {
 	type export struct {
 		obj  *types.Func
 		fact *funcFact
@@ -419,7 +426,7 @@ func exportFuncs(src *source, stores map[*ssa.Function][]store, varParams map[*s
 		if !ok {
 			continue
 		}
-		fact := &funcFact{Results: make([]result, fn.Signature.Results().Len()), Stores: stores[fn], VarParams: varParams[fn]}
+		fact := &funcFact{Results: make([]result, fn.Signature.Results().Len()), Stores: stores[fn], VarParams: varParams[fn], SinkParams: wrappers[fn]}
 		for i := range fact.Results {
 			t := src.tracer(true)
 			fact.Results[i].Carries = t.traceReturns(fn, nil, i)
@@ -575,6 +582,9 @@ func (s *sinks) params(call *ssa.CallCommon, answers bool) map[int]string {
 			for _, param := range fact.VarParams {
 				params[param] = toVariable
 			}
+			// One whose check found it handing a parameter on to a sink is
+			// a sink for that parameter too, with the same diagnostic.
+			maps.Copy(params, fact.SinkParams)
 		}
 	}
 	return params
