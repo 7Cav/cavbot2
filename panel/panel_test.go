@@ -532,11 +532,7 @@ func TestSigninPageRendersVersionForDeployProbe(t *testing.T) {
 // names an icon.
 func iconHrefs(doc *html.Node) []string {
 	var out []string
-	head := findElement(doc, "head", "", "")
-	if head == nil {
-		return nil
-	}
-	eachLiveElement(head, func(n *html.Node) {
+	eachLiveElement(findElement(doc, "head", "", ""), func(n *html.Node) {
 		rel, _ := attrValue(n, "rel")
 		href, ok := attrValue(n, "href")
 		if n.Data == "link" && ok && slices.Contains(strings.Fields(strings.ToLower(rel)), "icon") {
@@ -546,10 +542,10 @@ func iconHrefs(doc *html.Node) []string {
 	return out
 }
 
-// Every page names a tab icon the panel serves from its own origin, so no
+// A page names a tab icon the panel serves from its own origin, so no
 // page fetches it from a third party (ADR 0013). A browser with no session
 // gets the icon too, since the sign-in page shows it.
-func TestEveryPageNamesAnIconThePanelServes(t *testing.T) {
+func TestPageNamesAnIconThePanelServes(t *testing.T) {
 	cases := []struct {
 		name   string
 		path   string
@@ -587,7 +583,7 @@ func TestEveryPageNamesAnIconThePanelServes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newTestWorld(t, testHub())
 			tc.admit(t, w.forum, w.b)
-			page, err := url.Parse(testBaseURL + tc.path)
+			pageURL, err := url.Parse(testBaseURL + tc.path)
 			if err != nil {
 				t.Fatalf("parse page URL: %v", err)
 			}
@@ -606,9 +602,9 @@ func TestEveryPageNamesAnIconThePanelServes(t *testing.T) {
 					t.Errorf("icon href %q does not parse: %v", href, err)
 					continue
 				}
-				icon := page.ResolveReference(ref)
-				if icon.Scheme != page.Scheme || icon.Host != page.Host {
-					t.Errorf("icon %q is not on the panel's own origin %s://%s", href, page.Scheme, page.Host)
+				icon := pageURL.ResolveReference(ref)
+				if icon.Scheme != pageURL.Scheme || icon.Host != pageURL.Host {
+					t.Errorf("icon %q is not on the panel's own origin %s://%s", href, pageURL.Scheme, pageURL.Host)
 					continue
 				}
 				got := signedOut.get(icon.RequestURI())
