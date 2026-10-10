@@ -69,6 +69,29 @@ At <https://discord.com/developers/applications>:
 not let the bot grant a role positioned above its own, so drag the bot's role
 high in the server's role list before testing `/foxhole`.
 
+#### Recorder applications
+
+A recorder is the account that joins a voice channel to record it
+([GLOSSARY.md](GLOSSARY.md)), and each one is a Discord application of its
+own, separate from the bot's. Recording stays off until at least one recorder
+token is set in `RECORDER_TOKENS`, and removing every token and restarting
+turns it off again. Skip this on a host that doesn't record. Recording itself
+is still being built (#381). For now each recorder connects at startup, shows
+online, and is left out of temporary voice channels.
+
+1. 'New Application', named for what it is, such as `CavBot Recorder`, so
+   members can tell it from the bot.
+2. On the 'Bot' tab, 'Reset Token' and copy it into `RECORDER_TOKENS`. Leave
+   every Privileged Gateway Intent off. A recorder asks only for the guilds
+   and voice states intents ([ADR 0014](docs/adr/0014-voice-on-disgo-and-dave-go.md)).
+3. Under 'OAuth2 -> URL Generator', select the `bot` scope and the
+   Administrator permission, then open the generated URL to invite the
+   recorder to the same server as the bot. It holds Administrator like the
+   bot, since its token sits in the same environment (ADR 0014).
+
+Another recorder is another application, its token added to `RECORDER_TOKENS`
+after a comma, with no code change.
+
 ### 2. IDs
 
 Enable 'Developer Mode' in the Discord client ('User Settings' -> 'Advanced'), then
@@ -107,6 +130,7 @@ Not checked at startup, but each one silently disables something:
 | `BOT_DB_DSN` | The bot's own Postgres store (hubs, spawned channels and the change log for temporary voice channels, and the Foxhole page's notes, approvals and change log) stays off; the bot logs `BOT_DB_DSN not set, bot store disabled` once, every other command works as before, and `/voice-rename`, `/voice-lock` and `/voice-unlock` refuse every invocation. `.env.example` leaves it empty on purpose. Set it and the bot pings the database with a short retry, runs its migrations, loads the hub rows for temporary voice channels (`Starting temp voice channels`), ends any Foxhole action the last run left running as stopped by a restart (`Foxhole action stopped by a restart`), and only then opens the Discord session; a database it cannot reach or migrate stops the bot with `Bot store unavailable`. With no hub rows the feature does nothing; rows arrive through the panel. Under compose the value is `postgres://cavbot:<POSTGRES_PASSWORD>@postgres:5432/cavbot?sslmode=disable`. |
 | `PANEL_ADDR` | The panel, the bot's web UI, does not listen; the bot logs `PANEL_ADDR not set, panel disabled` once. Set it (`:8080` under compose) and every other `PANEL_*` variable but `PANEL_GROUP_IDS` is required; a missing one stops the bot with `Panel misconfigured` before the Discord session opens. The panel also needs `BOT_DB_DSN`, because the hub page reads the store on every load; without it the bot logs `BOT_DB_DSN not set, panel disabled` and runs with no panel. The listener starts after READY and logs `Panel listening`. `.env.example` documents each `PANEL_*` variable. |
 | `FOXHOLE_GROUP_ID` | Defaults to `323`, the forum's Foxhole group. A forum user in it, as primary or secondary group, is a Foxhole manager: sign-in takes them to the panel's Foxhole page, and the hub page and its saves refuse them. Panel admins open the Foxhole page whatever their groups. The group check reads it on every request, so adding or removing a manager on the forum needs no deploy. With `PANEL_ADDR` set, a value that isn't a number stops the bot with `Panel misconfigured`. |
+| `RECORDER_TOKENS` | Recording stays off, and nobody can record; the bot logs `RECORDER_TOKENS not set, recording off` once. Set it to a recorder token, or several separated by commas ([Recorder applications](#recorder-applications)), and each recorder connects at startup, logs `Recorder connected` with its user ID, and shows online. Removing every token and restarting turns recording off again. A token that fails to connect goes to Sentry as `Recorder failed to connect`, and the bot and the other recorders keep running. |
 | `POSTGRES_PASSWORD` | Read by the `postgres` service in `docker-compose.yml`, not by the bot. `.env.example` ships `change-me`; a blank value makes the image refuse to start and the bot wait on its healthcheck forever. Only the first boot of an empty volume reads it. |
 | `APP_ENV` | Only tags Sentry events with an environment. No effect unless `SENTRY_DSN` is also set. |
 
@@ -156,7 +180,9 @@ postgres && docker compose up -d postgres`.
 A healthy startup logs, in order: `Logger initialized`, `Sentry disabled
 (SENTRY_DSN not set)`, `CavBot2 starting`, the LOA cache line for whichever
 `FORUM_DB_DSN` case you are in, either `BOT_DB_DSN not set, bot store disabled`
-or `Bot store configured` followed by `Bot database migrated` and `Starting temp voice channels`,
+or `Bot store configured` followed by `Bot database migrated`, then
+`RECORDER_TOKENS not set, recording off` or a `Recorder connected` line per
+recorder, then `Starting temp voice channels` when the store is configured,
 `Panel listening` when the panel is configured, `Registering commands`,
 `Commands registered`, `Starting Star Citizen joiner report scheduler`, and
 finally `Bot is now running. Press CTRL-C to exit`. That
@@ -214,6 +240,7 @@ Sunday, a real person gets your test output. Prefer a test guild.
 | Panic `Bot store unavailable: open bot database: the DSN does not parse` | `BOT_DB_DSN` is malformed. The value is not echoed because it carries a password; compare it against the form in `.env.example` |
 | A panic line ending `[recovered, repanicked]`, its stack trace starting in `StartWatch.ReportFailure` | Expected for a failed start with `SENTRY_DSN` set. The bot caught the panic to send it to Sentry, then let the same panic go on. The frames below `panic(...)` name the step that failed |
 | `Failed start already sent to Sentry` just before the panic | The bot failed to start with the same message less than an hour ago, and that failure went to Sentry at the logged `sent_at`. While a restart loop keeps failing with one message, that message goes to Sentry at most once an hour, so the loop can't use up the org's Sentry quota. A start that reaches running clears the record, and recreating the container clears it too |
+| `Recorder failed to connect` at startup, with `recorder=N`, and a Sentry event when `SENTRY_DSN` is set | Discord refused the Nth token in `RECORDER_TOKENS`, usually one reset since you copied it. Reset it on that recorder application's 'Bot' tab and paste the new one. The bot and the other recorders keep running without it |
 | `/foxhole` replies that a Foxhole action is running on the Foxhole page | A manager started an action on the panel's Foxhole page, and the role-changing commands refuse until it ends. Try again then, or press Stop on the page's progress block |
 | `/foxhole` fails with a permissions error | Bot invited without Manage Roles / Manage Channels, or its own role sits below the role it is editing |
 | Commands never appear | Bot invited without `applications.commands`, or `GUILD_ID` is not the server you are in |

@@ -494,7 +494,7 @@ _Avoid_: owner (a spawned channel's), host, requester, recorder.
 A Discord account, separate from the bot's own, that joins a channel to
 record it and is in voice only while it records. Each records one channel at
 a time, so a recording starts only when a recorder is free. Temp VC never
-counts a recorder as an occupant.
+counts a recorder as an occupant. With none configured, nobody can record.
 _Avoid_: recording bot, Craig, the bot (for this account).
 
 **Recording role**:
