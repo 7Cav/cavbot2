@@ -122,3 +122,12 @@ func readsTheErrorOutOfASliceSizedAtRunTime(err error, names []string) {
 	lines[0] = err.Error()
 	utils.HandleError(nil, nil, "❌ Failed: "+lines[0]) // want "."
 }
+
+func repliesWithEachErrorTextOnAChannel(err error) {
+	failures := make(chan string, 1)
+	failures <- err.Error()
+	close(failures)
+	for failure := range failures {
+		utils.HandleError(nil, nil, "❌ Failed: "+failure) // want "."
+	}
+}
