@@ -29,7 +29,7 @@ func routeWith(t *testing.T, f *fakeResponder, tv *TempVC, i *discordgo.Interact
 	t.Helper()
 	customID := i.MessageComponentData().CustomID
 	prefix := strings.Split(customID, "::")[0]
-	if _, ok := NewRegistry(nil, nil).GetHandler(prefix); !ok {
+	if _, ok := NewRegistry(nil, nil, nil).GetHandler(prefix); !ok {
 		t.Fatalf("CustomID %q routes to %q, which is not a registered command", customID, prefix)
 	}
 	run, ok := componentRoutes[prefix]

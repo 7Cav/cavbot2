@@ -1,9 +1,13 @@
 // Package voice is the voice adapter (spec #381, ADR 0014). It owns the
 // recorder sessions: one gateway session per recorder, in the bot process
-// beside the main one.
+// beside the main one. A recorder joins a voice channel through disgo's voice
+// package with a dave-go DAVE session, and none of disgo's types leave this
+// package.
 package voice
 
 import (
+	"context"
+	"fmt"
 	"strings"
 
 	"github.com/7cav/cavbot2/utils"
@@ -13,8 +17,17 @@ import (
 type GatewaySession interface {
 	// UserID is the recorder account's Discord user ID.
 	UserID() string
+	// Join connects the recorder to a voice channel of the guild, and
+	// returns once Discord has let it in, or with ctx's error.
+	Join(ctx context.Context, guildID, channelID string) (Conn, error)
 	// Close ends the session, and the recorder goes offline.
 	Close() error
+}
+
+// Conn is one recorder's connection to a voice channel.
+type Conn interface {
+	// Leave takes the recorder out of the channel.
+	Leave(ctx context.Context)
 }
 
 // Opener opens one recorder's gateway session from its token.
@@ -33,7 +46,10 @@ type Recorders struct {
 // the recorder account.
 func Connect(raw string, open Opener) *Recorders {
 	var tokens []string
-	for token := range strings.SplitSeq(raw, ",") {
+	// strings.Split, not SplitSeq: the gate's error data check can't follow
+	// a value out of a range-over-func loop, and every recorder session is
+	// built from a token.
+	for _, token := range strings.Split(raw, ",") {
 		if token = strings.TrimSpace(token); token != "" {
 			tokens = append(tokens, token)
 		}
@@ -62,6 +78,18 @@ func (r *Recorders) UserIDs() []string {
 		ids = append(ids, s.UserID())
 	}
 	return ids
+}
+
+// Join connects the recorder with the given user ID to a voice channel of
+// the guild. A recorder is in one voice channel at a time, so the caller
+// joins one it isn't already recording with.
+func (r *Recorders) Join(ctx context.Context, recorderID, guildID, channelID string) (Conn, error) {
+	for _, s := range r.sessions {
+		if s.UserID() == recorderID {
+			return s.Join(ctx, guildID, channelID)
+		}
+	}
+	return nil, fmt.Errorf("recorder %s is not connected", recorderID)
 }
 
 // Close ends every recorder's session, at shutdown.

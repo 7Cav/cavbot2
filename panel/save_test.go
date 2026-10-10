@@ -223,6 +223,21 @@ func (s leavingStore) ListRecordingRoleChanges(ctx context.Context, limit int) (
 	return s.st.ListRecordingRoleChanges(ctx, limit)
 }
 
+func (s leavingStore) StartRecording(ctx context.Context, rec store.Recording) (store.Recording, error) {
+	s.d.leave()
+	return s.st.StartRecording(ctx, rec)
+}
+
+func (s leavingStore) StopRecording(ctx context.Context, id int64, at time.Time) error {
+	s.d.leave()
+	return s.st.StopRecording(ctx, id, at)
+}
+
+func (s leavingStore) ListRecordings(ctx context.Context, guildID string) ([]store.Recording, error) {
+	s.d.leave()
+	return s.st.ListRecordings(ctx, guildID)
+}
+
 func (s leavingStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
 	s.d.leave()
 	return s.st.ListFoxholeRecords(ctx, guildID)

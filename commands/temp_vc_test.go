@@ -1042,8 +1042,16 @@ func rateLimitError(retryAfter time.Duration) *discordgo.RateLimitError {
 // else reaches the Fake.
 type failingStore struct {
 	*store.Fake
-	upsertSpawnedErr error
-	listSpawnedErr   error
+	upsertSpawnedErr  error
+	listSpawnedErr    error
+	startRecordingErr error
+}
+
+func (f *failingStore) StartRecording(ctx context.Context, rec store.Recording) (store.Recording, error) {
+	if f.startRecordingErr != nil {
+		return store.Recording{}, f.startRecordingErr
+	}
+	return f.Fake.StartRecording(ctx, rec)
 }
 
 func (f *failingStore) UpsertSpawnedChannel(ctx context.Context, sc store.SpawnedChannel) error {

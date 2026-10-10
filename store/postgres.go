@@ -662,6 +662,56 @@ func (p *Postgres) ListRecordingRoleChanges(ctx context.Context, limit int) ([]C
 	return entries, nil
 }
 
+// StartRecording implements Store.
+func (p *Postgres) StartRecording(ctx context.Context, rec Recording) (Recording, error) {
+	rec.StoppedAt = time.Time{}
+	err := p.db.QueryRowContext(ctx, `
+		INSERT INTO recordings (guild_id, channel_id, channel_name, starter_id, title, recorder_id, started_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id`,
+		rec.GuildID, rec.ChannelID, rec.ChannelName, rec.StarterID, rec.Title, rec.RecorderID, rec.StartedAt).Scan(&rec.ID)
+	if err != nil {
+		return Recording{}, fmt.Errorf("start recording of channel %q: %w", rec.ChannelID, err)
+	}
+	return rec, nil
+}
+
+// StopRecording implements Store. No running row matched is ErrNotFound.
+func (p *Postgres) StopRecording(ctx context.Context, id int64, at time.Time) error {
+	res, err := p.db.ExecContext(ctx,
+		`UPDATE recordings SET stopped_at = $2 WHERE id = $1 AND stopped_at IS NULL`, id, at)
+	if err != nil {
+		return fmt.Errorf("stop recording %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("stop recording %d: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("stop recording %d: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
+// ListRecordings implements Store.
+func (p *Postgres) ListRecordings(ctx context.Context, guildID string) ([]Recording, error) {
+	recs, err := queryAll(ctx, p.db, func(row scanner) (Recording, error) {
+		var (
+			rec     Recording
+			stopped sql.NullTime
+		)
+		err := row.Scan(&rec.ID, &rec.GuildID, &rec.ChannelID, &rec.ChannelName, &rec.StarterID,
+			&rec.Title, &rec.RecorderID, &rec.StartedAt, &stopped)
+		rec.StoppedAt = stopped.Time
+		return rec, err
+	}, `SELECT id, guild_id, channel_id, channel_name, starter_id, title, recorder_id, started_at, stopped_at
+		FROM recordings WHERE guild_id = $1`, guildID)
+	if err != nil {
+		return nil, fmt.Errorf("list recordings of guild %q: %w", guildID, err)
+	}
+	return recs, nil
+}
+
 // ListFoxholeRecords implements Store.
 func (p *Postgres) ListFoxholeRecords(ctx context.Context, guildID string) ([]FoxholeRecord, error) {
 	members, err := queryAll(ctx, p.db, func(row scanner) (FoxholeRecord, error) {

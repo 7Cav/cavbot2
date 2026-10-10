@@ -1335,6 +1335,12 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 			t.Fatalf("SaveFoxholeNote: %v", err)
 		}
 		seededFoxhole := readFoxholeState(t, s)
+		running := sampleRecording()
+		started, err := s.StartRecording(live, running)
+		if err != nil {
+			t.Fatalf("StartRecording: %v", err)
+		}
+		running.ID = started.ID
 
 		done, cancel := context.WithCancel(live)
 		cancel()
@@ -1373,6 +1379,11 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 				return s.SetFoxholeRecordNames(done, "guild-1", []MemberNames{{MemberID: memberDoe, DisplayName: "CPL Doe.J", Username: "jdoe_cav"}})
 			},
 			"ListFoxholeChanges": func() error { _, err := s.ListFoxholeChanges(done, 10); return err },
+			"StartRecording":     func() error { _, err := s.StartRecording(done, sampleRecording()); return err },
+			"StopRecording": func() error {
+				return s.StopRecording(done, started.ID, running.StartedAt.Add(time.Hour))
+			},
+			"ListRecordings": func() error { _, err := s.ListRecordings(done, "guild-1"); return err },
 		}
 		for name, call := range calls {
 			if err := call(); !errors.Is(err, context.Canceled) {
@@ -1408,6 +1419,9 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 		}
 		if got := readFoxholeState(t, s); !reflect.DeepEqual(got, seededFoxhole) {
 			t.Errorf("the Foxhole records and change log after the done calls = %+v, want them as seeded, %+v", got, seededFoxhole)
+		}
+		if got := listRecordings(t, s); len(got) != 1 || !sameRecording(got[0], running) {
+			t.Errorf("recordings after the done calls = %+v, want the seeded running one alone, %+v", got, running)
 		}
 	})
 }

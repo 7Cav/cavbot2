@@ -247,9 +247,10 @@ func main() {
 	// feature stays inert: no runtime, no panel, and /voice-rename,
 	// /voice-lock and /voice-unlock refuse.
 	var (
-		tempVC   *commands.TempVC
-		foxhole  *commands.FoxholeRuntime
-		webPanel *panel.Panel
+		tempVC    *commands.TempVC
+		foxhole   *commands.FoxholeRuntime
+		recording *commands.RecordingRuntime
+		webPanel  *panel.Panel
 	)
 	// Built before dg.Open(), so the Connect event tells it the gateway
 	// connection is up, and the guild's GUILD_CREATE makes it ask for the
@@ -271,6 +272,11 @@ func main() {
 		if err != nil {
 			panic(fmt.Sprintf("Bot store unavailable: %v", err))
 		}
+		// Recording (spec #381) is built on every host with a store, as temp
+		// VC is, and checks for hubs through it. The recorder tokens only
+		// fill its recorders: with none, every /record start is refused as
+		// recording off.
+		recording = commands.NewRecordingRuntime(discordManager, botStore, tempVC, GuildID, recorders)
 		// The panel's hub page saves through the runtime and reads the guild
 		// through the session, so it is built once both exist.
 		webPanel = initPanel(panelCfg, panel.Deps{
@@ -285,7 +291,7 @@ func main() {
 	// The registry takes the runtimes, so it is built after them. The
 	// Foxhole commands share the one-action-at-a-time rule with the
 	// Foxhole page through the Foxhole runtime.
-	registry := commands.NewRegistry(tempVC, foxhole)
+	registry := commands.NewRegistry(tempVC, foxhole, recording)
 
 	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		// Backstop only. Registered slash-command handlers are wrapped with

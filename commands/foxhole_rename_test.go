@@ -31,7 +31,7 @@ var oldFoxholeNames = map[string]string{
 // registeredDefinitions returns the production registry's definitions by name.
 func registeredDefinitions() map[string]*discordgo.ApplicationCommand {
 	defs := map[string]*discordgo.ApplicationCommand{}
-	for _, def := range NewRegistry(nil, nil).GetCommands() {
+	for _, def := range NewRegistry(nil, nil, nil).GetCommands() {
 		defs[def.Name] = def
 	}
 	return defs
@@ -219,7 +219,7 @@ func TestOldFoxholeNamesGrantWhatTheirNewNamesGrant(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.oldName, func(t *testing.T) {
-			registry := NewRegistry(nil, nil)
+			registry := NewRegistry(nil, nil, nil)
 			run := func(name string) (grants []string, telemetry []map[string]string) {
 				handler, ok := registry.GetHandler(name)
 				if !ok {
