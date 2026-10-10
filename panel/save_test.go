@@ -502,12 +502,13 @@ func (refusingStore) SaveGuildModeratorRoles(context.Context, string, store.Guil
 }
 
 // savedState is everything a save can write, read back through the store:
-// the test guild's hubs, its guild-wide moderator roles, and the change log
-// under each hub and under none.
+// the test guild's hubs, its guild-wide moderator roles, its recording
+// roles, and the change log under each hub and under none.
 type savedState struct {
-	Hubs    []store.Hub
-	Roles   store.GuildModeratorRoles
-	Entries map[int64][]store.ChangeLogEntry
+	Hubs      []store.Hub
+	Roles     store.GuildModeratorRoles
+	Recording store.RecordingRoles
+	Entries   map[int64][]store.ChangeLogEntry
 }
 
 // readSavedState reads the store's savedState, hubs in ID order.
@@ -519,7 +520,8 @@ func readSavedState(t *testing.T, st store.Store) savedState {
 	if err != nil {
 		t.Fatalf("GetGuildModeratorRoles: %v", err)
 	}
-	state := savedState{Hubs: hubs, Roles: roles, Entries: map[int64][]store.ChangeLogEntry{0: storedChangeLog(t, st, 0)}}
+	state := savedState{Hubs: hubs, Roles: roles, Recording: storedRecordingRoles(t, st),
+		Entries: map[int64][]store.ChangeLogEntry{0: storedChangeLog(t, st, 0)}}
 	for _, h := range hubs {
 		state.Entries[h.ID] = storedChangeLog(t, st, h.ID)
 	}

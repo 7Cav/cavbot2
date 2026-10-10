@@ -71,7 +71,8 @@ func TestPageLoadByAnOutsiderIsRefused(t *testing.T) {
 }
 
 // settingsSaveCases is a case for each save the hub page posts: a hub's
-// create, register, update and remove, and the guild-wide moderator roles.
+// create, register, update and remove, the guild-wide moderator roles and
+// the recording roles.
 // Each reads the path it posts to and its form off a store that holds
 // testHub.
 var settingsSaveCases = []struct {
@@ -107,6 +108,11 @@ var settingsSaveCases = []struct {
 		name: "moderators",
 		path: func(*testing.T, store.Store) string { return "/moderators" },
 		form: func(t *testing.T, st store.Store) url.Values { return moderatorsForm(t, st, "role-hq") },
+	},
+	{
+		name: "recording roles",
+		path: func(*testing.T, store.Store) string { return "/recording-roles" },
+		form: func(t *testing.T, st store.Store) url.Values { return recordingRolesForm(t, st, "role-hq") },
 	},
 }
 

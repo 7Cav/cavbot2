@@ -338,13 +338,15 @@ _Avoid_: request to join, let in (a lock's term, and done by the bot).
 
 **Eligible role**:
 A live Discord role that is not managed and is not `@everyone`. The only
-kind a moderator picker offers, and the only kind a save may add.
+kind a moderator picker or the recording roles picker offers, and the only
+kind a save may add.
 _Avoid_: offered role, valid role, pickable role, selectable role.
 
 **Unavailable moderator role**:
 A stored moderator role that is no longer eligible, kept with its authority
 until a person removes it in the panel. Two reasons: deleted, when the role
-is gone from Discord, and managed.
+is gone from Discord, and managed. A stored recording role that is no
+longer eligible is kept the same way.
 _Avoid_: legacy role, stale role, orphaned role, ghost role.
 
 **Permission source**:
@@ -384,8 +386,8 @@ _Avoid_: create failure, failed create, failed join, refused join.
 
 **Save**:
 One submitted panel form that changes what the panel stores: a hub's create,
-register, update or remove, the guild-wide moderator roles, a note, or an
-approval given or cleared. It begins once the group check allows it, runs to
+register, update or remove, the guild-wide moderator roles, the recording
+roles, a note, or an approval given or cleared. It begins once the group check allows it, runs to
 its end whether or not the browser waits, and takes effect when the store
 holds the change. A refused save changes nothing. A save that fails leaves
 the store as it was, though a Discord change it already made may stay.
@@ -396,14 +398,14 @@ The panel's record of each change made through it: who made it, when, and
 what changed. Every save that takes effect has one entry, holding the old
 and new values. Every Foxhole action started on the Foxhole page has one
 too, its report. Each hub's form shows the hub's own entries, the guild-wide
-moderator section the entries of its saves, which reference no hub, and the
-Foxhole page its own. A change made by a command or by hand in Discord has
+moderator section and the recording roles section each the entries of its
+own saves, which reference no hub, and the Foxhole page its own. A change made by a command or by hand in Discord has
 none.
 _Avoid_: audit trail, audit log (that is Discord's), history.
 
 **Stale form**:
-A hub's edit form, or the guild-wide moderator section, loaded before
-another save of the same settings took effect. A save from it is refused. A
+A hub's edit form, the guild-wide moderator section or the recording roles
+section, loaded before another save of the same settings took effect. A save from it is refused. A
 rename made in Discord does not make a form stale.
 _Avoid_: conflict, collision, race, outdated form, edit conflict.
 
@@ -458,14 +460,14 @@ message), widget.
 
 **Tag**:
 One selected item as a picker shows it, with its remove control. A role tag
-is a moderator picker's, and shows an unavailable moderator role with its
-reason.
+is a moderator picker's or the recording roles picker's, and shows a stored
+role that is no longer eligible with its reason.
 _Avoid_: chip, pill, badge.
 
 **Search list**:
 The list of candidates a picker's add control opens, filtered as the person
-types. A moderator picker's role search offers the eligible roles not yet
-selected. The register picker's channel search offers the voice channels
+types. A moderator picker's or the recording roles picker's role search
+offers the eligible roles not yet selected. The register picker's channel search offers the voice channels
 that are not hubs.
 _Avoid_: dropdown, popover, menu, combobox.
 

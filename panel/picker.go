@@ -63,7 +63,8 @@ func (v pickerView) Blank() pickerItem {
 	return v.item("", "")
 }
 
-// rolePicker builds a moderator picker. The tags are the selected roles:
+// rolePicker builds a role picker, a moderator picker or the recording
+// roles picker, whose tags post under field. The tags are the selected roles:
 // the eligible ones highest position first, then the unavailable moderator
 // roles by ID, each with its reason. The candidates are the eligible roles
 // not selected, highest position first, so the role search never offers a
@@ -73,8 +74,8 @@ func (v pickerView) Blank() pickerItem {
 // form as posted, so a removed unavailable role stays removed until the
 // page is loaded again, and a posted ID the record never stored renders no
 // tag.
-func rolePicker(guild guildInfo, stored, selected []string) pickerView {
-	view := pickerView{Field: fieldModeratorRoles, Dots: true, AddLabel: "Add a role", SearchLabel: "Search roles"}
+func rolePicker(field string, guild guildInfo, stored, selected []string) pickerView {
+	view := pickerView{Field: field, Dots: true, AddLabel: "Add a role", SearchLabel: "Search roles"}
 	for _, r := range guild.eligible {
 		item := view.item(r.ID, r.Name)
 		item.Colour = roleColour(r.Color)

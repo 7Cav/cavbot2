@@ -126,6 +126,18 @@ func (s pageStore) ListModeratorChanges(ctx context.Context, limit int) ([]store
 	})
 }
 
+func (s pageStore) GetRecordingRoles(ctx context.Context, guildID string) (store.RecordingRoles, error) {
+	return timeStoreRead(s.reads, recordingRolesRead, func() (store.RecordingRoles, error) {
+		return s.Store.GetRecordingRoles(ctx, guildID)
+	})
+}
+
+func (s pageStore) ListRecordingRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	return timeStoreRead(s.reads, recordingRoleChangesRead, func() ([]store.ChangeLogEntry, error) {
+		return s.Store.ListRecordingRoleChanges(ctx, limit)
+	})
+}
+
 func (s pageStore) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]store.ChangeLogEntry, error) {
 	return timeStoreRead(s.reads, changeLogRead, func() ([]store.ChangeLogEntry, error) {
 		return s.Store.ListChangeLog(ctx, hubID, limit)
