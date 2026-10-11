@@ -148,6 +148,12 @@ func (b boundedStore) ListRecordings(ctx context.Context, guildID string) ([]sto
 	return b.store.ListRecordings(ctx, guildID)
 }
 
+func (b boundedStore) DeleteRecording(ctx context.Context, id int64) error {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.DeleteRecording(ctx, id)
+}
+
 func (b boundedStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
 	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
 	defer cancel()
