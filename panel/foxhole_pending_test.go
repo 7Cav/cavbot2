@@ -176,3 +176,40 @@ func TestOpeningAPreviewLandsOnIt(t *testing.T) {
 		})
 	}
 }
+
+// live reports whether a button takes a press: it carries no disabled.
+func live(button *html.Node) bool {
+	_, disabled := attrValue(button, "disabled")
+	return !disabled
+}
+
+// purgeButton returns the After a war block's Purge, the purge form's
+// button, and fails the test when the form has none.
+func purgeButton(t *testing.T, doc *html.Node) *html.Node {
+	t.Helper()
+	button := findElement(purgeForm(t, doc), "button", "", "")
+	if button == nil {
+		t.Fatal("the purge form has no button")
+	}
+	return button
+}
+
+// While the purge confirmation is open, its Confirm is the one live Purge
+// on the page: the After a war block's own Purge is off. With nothing open
+// and nothing running, the block's Purge is live.
+func TestOpenPurgeConfirmationLeavesNoSecondLivePurge(t *testing.T) {
+	w := newFoxholeWorld(t)
+	page := parseHTML(t, w.b.get(foxholePath))
+	if !live(purgeButton(t, page)) {
+		t.Error("with nothing open the After a war block's Purge is off, want it live")
+	}
+
+	doc := parseHTML(t, openPurge(t, w.b, page, "both"))
+
+	if live(purgeButton(t, doc)) {
+		t.Error("with the purge confirmation open the After a war block's Purge is live, want it off")
+	}
+	if confirm := findElement(purgeConfirmation(t, doc), "", "data-field", "confirm"); confirm == nil || !live(confirm) {
+		t.Error("the purge confirmation's Confirm is missing or off, want it live")
+	}
+}

@@ -204,16 +204,20 @@
     </section>
     <section class="block" data-field="after-a-war">
       <h2 class="block-header">After a war</h2>
+      {{- /* While the purge confirmation is open, its Confirm is the page's one live Purge: the form here shows the scope it confirms, turned off. */}}
+      {{- $scope := "both"}}{{with .PurgeConfirm}}{{$scope = printf "%s" .Scope}}{{end}}
       <form method="get" action="/foxhole#purge-confirm" data-field="purge">
         <div class="block-row">
           <div class="field fx-radios"><span class="field-label">Purge</span>
-            <label class="check"><input type="radio" name="purge" value="both" checked> Internal and External</label>
-            <label class="check"><input type="radio" name="purge" value="internal"> Internal only</label>
-            <label class="check"><input type="radio" name="purge" value="external"> External only</label>
+            <label class="check"><input type="radio" name="purge" value="both"{{if eq $scope "both"}} checked{{end}}{{if .PurgeConfirm}} disabled{{end}}> Internal and External</label>
+            <label class="check"><input type="radio" name="purge" value="internal"{{if eq $scope "internal"}} checked{{end}}{{if .PurgeConfirm}} disabled{{end}}> Internal only</label>
+            <label class="check"><input type="radio" name="purge" value="external"{{if eq $scope "external"}} checked{{end}}{{if .PurgeConfirm}} disabled{{end}}> External only</label>
           </div>
           <span class="field-hint">Run when a war ends. You confirm on the next step. Notes and approvals stay.</span>
         </div>
-        <div class="submit-row"><button type="submit" class="btn btn--danger"{{if .Busy}} disabled{{end}}>Purge</button>{{if .Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Wait for it to end.</span>{{end}}</div>
+        <div class="submit-row"><button type="submit" class="btn btn--danger"{{if or .Busy .PurgeConfirm}} disabled{{end}}>Purge</button>
+          {{- if .PurgeConfirm}} <span class="fx-hint" data-field="purge-open">Confirm or cancel <a href="#purge-confirm">the purge at the top of the page</a> first.</span>
+          {{- else if .Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Wait for it to end.</span>{{end}}</div>
       </form>
       {{with .ReAdd}}
       <form method="post" action="/foxhole/re-add" class="fx-readd" data-field="re-add">
