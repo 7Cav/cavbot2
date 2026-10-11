@@ -951,10 +951,10 @@ type frame struct {
 	// call is the call that entered fn, or nil for a closure reached through
 	// a variable.
 	call ssa.CallInstruction
-	// made is the closure value the tracer entered fn through: the closure
-	// call calls, or the closure that captured the variable the tracer
-	// reached fn through. It is nil when call calls fn by name.
-	made *ssa.MakeClosure
+	// closure is the closure value the tracer entered fn through: the
+	// closure call calls, or the closure that captured the variable the
+	// tracer reached fn through. It is nil when call calls fn by name.
+	closure *ssa.MakeClosure
 	// parent is the frame call is made in, or the frame a closure's
 	// enclosing function runs in. A closure's calls are made there too.
 	parent *frame
@@ -973,8 +973,8 @@ func (f *frame) runs(fn *ssa.Function) bool {
 
 // enter returns the frame of callee's body that call, made in f, enters.
 func enter(callee *ssa.Function, call ssa.CallInstruction, f *frame) *frame {
-	made, _ := call.Common().Value.(*ssa.MakeClosure)
-	return &frame{fn: callee, call: call, made: made, parent: f}
+	closure, _ := call.Common().Value.(*ssa.MakeClosure)
+	return &frame{fn: callee, call: call, closure: closure, parent: f}
 }
 
 func (f *frame) entered(fn *ssa.Function) bool {
@@ -1315,7 +1315,7 @@ func (t *tracer) traceBindings(v *ssa.FreeVar, f *frame) bool {
 		// A method value bound to its receiver has no enclosing function, and
 		// any function may make it. The tracer can only have entered its body
 		// through a closure value, which binds its receiver.
-		return t.trace(f.made.Bindings[index], f.parent)
+		return t.trace(f.closure.Bindings[index], f.parent)
 	}
 	if f.runs(closure) {
 		f = f.parent
@@ -1379,7 +1379,7 @@ func (t *tracer) traceStores(addr ssa.Value, f *frame, made bool) bool {
 		}
 		// A closure that captures addr puts values in it through its free
 		// variable.
-		if fv := capture(ref, addr); fv != nil && t.traceStores(fv, &frame{fn: fv.Parent(), made: ref.(*ssa.MakeClosure), parent: f}, made) {
+		if fv, inner := capture(ref, addr, f); fv != nil && t.traceStores(fv, inner, made) {
 			return true
 		}
 	}
@@ -1391,19 +1391,19 @@ func (t *tracer) traceStores(addr ssa.Value, f *frame, made bool) bool {
 // what the function's body puts in the parameter addr is handed as. Any
 // other call puts there everything else it is handed, as puts has it.
 func (t *tracer) traceCallPuts(call ssa.CallInstruction, addr ssa.Value, f *frame) bool {
-	callee := t.callee(call, f)
-	handed := operands(call.Common())
-	for i, op := range handed {
-		if op.v != addr || !writable(op.v) {
-			continue
-		}
-		if callee != nil {
-			if t.traceStores(callee.Params[op.param], enter(callee, call, f), true) {
+	if callee := t.callee(call, f); callee != nil {
+		for _, op := range operands(call.Common()) {
+			if op.v == addr && writable(addr) && t.traceStores(callee.Params[op.param], enter(callee, call, f), true) {
 				return true
 			}
+		}
+		return false
+	}
+	for _, p := range puts(call) {
+		if p.into != addr {
 			continue
 		}
-		for _, v := range others(handed, i) {
+		for _, v := range p.values {
 			if t.trace(v, f) {
 				return true
 			}
@@ -1426,7 +1426,7 @@ func (t *tracer) traceThrough(holder ssa.Value, f *frame, made bool) bool {
 		if load, ok := ref.(*ssa.UnOp); ok && load.Op == token.MUL && t.traceStores(load, f, made) {
 			return true
 		}
-		if fv := capture(ref, holder); fv != nil && t.traceThrough(fv, &frame{fn: fv.Parent(), made: ref.(*ssa.MakeClosure), parent: f}, made) {
+		if fv, inner := capture(ref, holder, f); fv != nil && t.traceThrough(fv, inner, made) {
 			return true
 		}
 	}
@@ -1434,14 +1434,17 @@ func (t *tracer) traceThrough(holder ssa.Value, f *frame, made bool) bool {
 }
 
 // capture returns the free variable through which the closure instr makes
-// reaches addr, or nil when instr makes no closure that captures addr.
-func capture(instr ssa.Instruction, addr ssa.Value) *ssa.FreeVar {
+// reaches addr, and the frame of the closure's body, entered from f, that
+// reaches it there. Both are nil when instr makes no closure that captures
+// addr.
+func capture(instr ssa.Instruction, addr ssa.Value, f *frame) (*ssa.FreeVar, *frame) {
 	mk, ok := instr.(*ssa.MakeClosure)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	if i := slices.Index(mk.Bindings, addr); i >= 0 {
-		return mk.Fn.(*ssa.Function).FreeVars[i]
+		fv := mk.Fn.(*ssa.Function).FreeVars[i]
+		return fv, &frame{fn: fv.Parent(), closure: mk, parent: f}
 	}
-	return nil
+	return nil, nil
 }

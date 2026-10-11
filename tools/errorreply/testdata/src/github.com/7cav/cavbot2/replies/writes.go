@@ -37,7 +37,7 @@ func repliesWithWhatAClosureCalledLaterWroteIntoACapturedSlice(err error) {
 	utils.HandleError(nil, nil, "❌ Failed: "+lines[0]) // want "Discord"
 }
 
-func repliesFromAMapAClosureReadsAfterWritingTheErrorIntoIt(err error) {
+func repliesFromAMapItWroteTheErrorIntoWhileAClosureReadsIt(err error) {
 	m := map[string]string{}
 	put(m, err.Error())
 	defer func() { _ = len(m) }()
@@ -54,6 +54,7 @@ func repliesFromAMapAClosureLoggedNextToTheError(err error) {
 	utils.HandleError(nil, nil, failures["roster"])
 }
 
+// patrol is a sweep that schedules its own next run.
 type patrol struct {
 	stop func()
 	note string
@@ -113,6 +114,7 @@ func repliesWithWhoJoined(name string) {
 	utils.HandleError(nil, nil, b.String())
 }
 
+// roster is a lookup that keeps why it failed.
 type roster struct{ failure string }
 
 func (r *roster) describe() string { return r.failure }
