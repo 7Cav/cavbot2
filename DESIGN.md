@@ -196,7 +196,7 @@ components:
     typography: "{typography.body}"
     padding: "10px 18px"
   rail-item-hover:
-    backgroundColor: "{colors.surface-2}"
+    backgroundColor: "{colors.surface-3}"
   rail-item-selected:
     backgroundColor: "{colors.surface-3}"
     typography: "{typography.body-strong}"
@@ -263,8 +263,8 @@ A grey ladder from near-black to near-white, one gold accent, and a red and a gr
 ### Neutral
 - **Night Ground** (#121212): the page behind everything, and the well of every text field.
 - **Block Charcoal** (#171717): blocks, notices and the rail.
-- **Header Charcoal** (#1b1b1b): block headers, the picker's search list, a rail item under the pointer.
-- **Raised Charcoal** (#212121): the selected rail item, a hovered holder row, a picker tag, the sticky selection bar, the search option Enter would choose.
+- **Header Charcoal** (#1b1b1b): block headers and the picker's search list.
+- **Raised Charcoal** (#212121): the selected rail item, a rail item, a holder row or the folded report line under the pointer, a picker tag, the sticky selection bar, the search option Enter would choose.
 - **Seam** (#2b2b2b): block edges and the dividers between rows.
 - **Strong Seam** (#353535): the line above a submit row, a plain tag's edge, the divider before the no-role view link.
 - **Bevel Highlight** (#4d4d4d): the one-pixel highlight along a block header's top, a disabled button's edge, a role with no colour.
@@ -323,7 +323,7 @@ Under 768px the rail becomes a top bar of two short rows. The logo (20px) and pa
 
 ## Elevation & Depth
 
-The system is flat. Four charcoal steps carry depth: Night Ground, Block Charcoal, Header Charcoal, Raised Charcoal. One step up means the thing sits on top, is selected, or is under the pointer. The forum's night-map image is the only texture. It is fixed to the viewport at full width, top-centred, and fades into the ground behind the rail and blocks. The forum's 4% block shadow and its header text shadow were dropped, because neither can be seen on this ground.
+The system is flat. Four charcoal steps carry depth: Night Ground, Block Charcoal, Header Charcoal, Raised Charcoal. A step up means the thing sits on top, is selected, or is under the pointer; a rail item, a holder row and the folded report line go straight to Raised Charcoal under the pointer. The forum's night-map image is the only texture. It is fixed to the viewport at full width, top-centred, and fades into the ground behind the rail and blocks. The forum's 4% block shadow and its header text shadow were dropped, because neither can be seen on this ground.
 
 ### Shadow Vocabulary
 - **Header highlight** (`box-shadow: inset 0 1px 0 0 #4d4d4d`): a one-pixel highlight along the top edge of a block header. It is the only shadow in the system.
@@ -379,7 +379,7 @@ Forum-issue hardware: plain, bevelled, sure.
 - **Error.** Fields have no red state. A refusal notice at the top of the block says what was refused and that nothing changed.
 
 ### Navigation
-- **Rail.** A 240px Block Charcoal column with a 1px Seam on its right. Items are full width, 10px by 18px, in bright 15px text, with a 3px left edge. Under the pointer an item steps to Header Charcoal. The selected item steps to Raised Charcoal, takes a gold left edge and weight 500. Its focus ring sits inside the item.
+- **Rail.** A 240px Block Charcoal column with a 1px Seam on its right. Items are full width, 10px by 18px, in bright 15px text, with a 3px left edge. Under the pointer an item steps to Raised Charcoal. The selected item sits at Raised Charcoal already, with a gold left edge and weight 500, and hovering it changes nothing. Its focus ring sits inside the item.
 - **Phone.** The rail turns into the two-row top bar described in Layout. The selected item's gold edge moves to its bottom.
 - **Filter links.** A row of plain Body Grey links, 6px by 10px. The current one turns bright with a 2px gold underline. The Foxhole filters and the Recordings page's "Yours / Every recording" switch both use them.
 
