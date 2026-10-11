@@ -1422,6 +1422,7 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 			},
 			"ListRecordings":  func() error { _, err := s.ListRecordings(done, "guild-1"); return err },
 			"SetRecordingMix": func() error { return s.SetRecordingMix(done, started.ID, MixReady) },
+			"DeleteRecording": func() error { return s.DeleteRecording(done, started.ID) },
 		}
 		for name, call := range calls {
 			if err := call(); !errors.Is(err, context.Canceled) {

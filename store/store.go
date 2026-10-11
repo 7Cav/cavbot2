@@ -444,6 +444,9 @@ type Store interface {
 	// ListRecordings returns every recording of the guild, running or not,
 	// in no promised order.
 	ListRecordings(ctx context.Context, guildID string) ([]Recording, error)
+	// DeleteRecording deletes the row of the recording with the ID given.
+	// Deleting an ID no recording has is not an error.
+	DeleteRecording(ctx context.Context, id int64) error
 
 	// ListFoxholeRecords returns every Foxhole record of the guild, in no
 	// promised order.

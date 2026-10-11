@@ -216,6 +216,29 @@ func TestRecordingMixReadsBackAsSet(t *testing.T) {
 	})
 }
 
+// A deleted recording no longer reads back, and the guild's other
+// recordings still do (#392).
+func TestRecordingDeleteRemovesThatRecordingOnly(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		gone, err := s.StartRecording(ctx, sampleRecording())
+		if err != nil {
+			t.Fatalf("StartRecording: %v", err)
+		}
+		kept, err := s.StartRecording(ctx, sampleRecording())
+		if err != nil {
+			t.Fatalf("second StartRecording: %v", err)
+		}
+
+		if err := s.DeleteRecording(ctx, gone.ID); err != nil {
+			t.Fatalf("DeleteRecording: %v", err)
+		}
+		if got := listRecordings(t, s); len(got) != 1 || got[0].ID != kept.ID {
+			t.Errorf("recordings after deleting %d = %+v, want only %d", gone.ID, got, kept.ID)
+		}
+	})
+}
+
 // sameRecording compares two recordings field by field, times by instant,
 // since Postgres hands a time back in its own location, and speakers as a
 // set.

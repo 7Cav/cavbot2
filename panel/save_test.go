@@ -248,6 +248,11 @@ func (s leavingStore) ListRecordings(ctx context.Context, guildID string) ([]sto
 	return s.st.ListRecordings(ctx, guildID)
 }
 
+func (s leavingStore) DeleteRecording(ctx context.Context, id int64) error {
+	s.d.leave()
+	return s.st.DeleteRecording(ctx, id)
+}
+
 func (s leavingStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
 	s.d.leave()
 	return s.st.ListFoxholeRecords(ctx, guildID)

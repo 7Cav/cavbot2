@@ -782,6 +782,14 @@ func (p *Postgres) ListRecordings(ctx context.Context, guildID string) ([]Record
 	return recs, nil
 }
 
+// DeleteRecording implements Store.
+func (p *Postgres) DeleteRecording(ctx context.Context, id int64) error {
+	if _, err := p.db.ExecContext(ctx, `DELETE FROM recordings WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("delete recording %d: %w", id, err)
+	}
+	return nil
+}
+
 // ListFoxholeRecords implements Store.
 func (p *Postgres) ListFoxholeRecords(ctx context.Context, guildID string) ([]FoxholeRecord, error) {
 	members, err := queryAll(ctx, p.db, func(row scanner) (FoxholeRecord, error) {
