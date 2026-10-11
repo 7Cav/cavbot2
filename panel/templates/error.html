@@ -3,7 +3,7 @@
   <h1 class="title">{{.Title}}</h1>
   <div class="block narrow">
     <div class="block-row"><p>{{.Message}}</p></div>
-    <div class="submit-row"><a class="btn" href="{{.Retry}}" data-retry>Try again</a></div>
+    <div class="submit-row">{{if eq .Failure "signin"}}{{template "signin-form" .}}{{else}}<a class="btn" href="{{.Retry}}" data-retry>{{if eq .Failure "not-found"}}Go to the panel{{else}}Try again{{end}}</a>{{end}}</div>
   </div>
 </main>
 {{end}}

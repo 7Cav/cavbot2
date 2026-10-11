@@ -45,6 +45,11 @@
 </body>
 </html>
 
+{{/* The button that starts a sign-in: on the sign-in page, and as Sign in
+   again on the page a sign-in that didn't finish lands on. It carries the
+   address to come back to once signed in. */}}
+{{define "signin-form"}}<form method="post" action="/auth/start">{{with .Next}}<input type="hidden" name="next" value="{{.}}">{{end}}<button type="submit" class="btn btn--cta">{{if .Failure}}Sign in again{{else}}Sign in with the forum{{end}}</button></form>{{end}}
+
 {{/* The note a recording's delete lands on: on the Recordings page, or on
    the no-access page when it was the starter's last recording. */}}
 {{define "deleted-note"}}<div role="status"><div class="note note--ok" data-field="deleted">Recording deleted. Nobody can download it now.</div></div>{{end}}

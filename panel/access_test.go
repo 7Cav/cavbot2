@@ -355,8 +355,9 @@ func TestFoxholePostByAnOutsiderDoesNothing(t *testing.T) {
 }
 
 // openRoutes is every route the panel serves to anyone, signed in or not,
-// by its pattern as routes() writes it.
-var openRoutes = []string{"GET /static/", "GET /signin", "POST /auth/start", "GET /auth/callback", "POST /auth/signout"}
+// by its pattern as routes() writes it. "/" is every address no other route
+// serves, which answers with the not-found page and acts on nothing.
+var openRoutes = []string{"GET /static/", "GET /signin", "POST /auth/start", "GET /auth/callback", "POST /auth/signout", "/"}
 
 // Every route the panel serves is in openRoutes or has an outsider case, a
 // case whose request the route serves. A route added later fails here until

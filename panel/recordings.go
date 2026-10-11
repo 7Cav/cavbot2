@@ -323,7 +323,7 @@ func attachment(name string) string {
 func (p *Panel) recordingFor(w http.ResponseWriter, r *http.Request, sess session, step string) (store.Recording, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
-		http.NotFound(w, r)
+		p.notFound(w, &sess, notFoundTitle, notFoundText)
 		return store.Recording{}, false
 	}
 	ctx, cancel := panelClock.WithTimeout(r.Context(), storeTimeout)

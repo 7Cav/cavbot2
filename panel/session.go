@@ -26,12 +26,14 @@ const (
 )
 
 // pendingSignin is one sign-in between the redirect to the forum and the
-// callback: the state the callback must echo and the PKCE verifier the
-// exchange must send.
+// callback: the state the callback must echo, the PKCE verifier the
+// exchange must send, and the panel address to come back to once signed
+// in.
 type pendingSignin struct {
 	state    string
 	verifier string
 	started  time.Time
+	next     string
 }
 
 func (p pendingSignin) expired(at time.Time) bool {
@@ -112,7 +114,8 @@ func (s *sessions) addPending(p pendingSignin) (string, error) {
 
 // takePending returns the pending sign-in under the ID and removes it, so a
 // callback is answered once whatever its outcome. An expired one is reported
-// as absent.
+// as absent, with what it held, so a new sign-in can come back to its
+// address.
 func (s *sessions) takePending(id string, at time.Time) (pendingSignin, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -121,10 +124,7 @@ func (s *sessions) takePending(id string, at time.Time) (pendingSignin, bool) {
 		return pendingSignin{}, false
 	}
 	delete(s.pending, id)
-	if p.expired(at) {
-		return pendingSignin{}, false
-	}
-	return p, true
+	return p, !p.expired(at)
 }
 
 func (s *sessions) add(sess session) (string, error) {

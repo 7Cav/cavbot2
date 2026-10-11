@@ -17,15 +17,18 @@ var templateFS embed.FS
 //go:embed static/*
 var staticFS embed.FS
 
-// cause is why a panel session ended, shown on the sign-in page. The values
-// are the data-cause attribute on <main>, a test contract; the sentences are
-// not.
+// cause is why a panel session ended, or why a sign-in didn't start one,
+// shown on the sign-in page. The values are the data-cause attribute on
+// <main>, a test contract; the sentences are not.
 type cause string
 
 const (
 	causeNone    cause = ""
 	causeExpired cause = "expired"
 	causeRefused cause = "refused"
+	// causeUnfinished is a sign-in the forum sent back without consent:
+	// the user pressed Deny, or the forum refused the request.
+	causeUnfinished cause = "unfinished"
 )
 
 // causeFromQuery narrows a query value to the enum, so an unknown value is a
@@ -36,6 +39,8 @@ func causeFromQuery(raw string) cause {
 		return causeExpired
 	case causeRefused:
 		return causeRefused
+	case causeUnfinished:
+		return causeUnfinished
 	}
 	return causeNone
 }
@@ -55,6 +60,13 @@ const (
 	// failureNoGuildData is a hub page or a save that found no data for the
 	// guild in the gateway state: Discord has not sent it to the bot.
 	failureNoGuildData failure = "no-guild-data"
+	// failureSignin is a sign-in callback the panel could not complete. Its
+	// page offers a new sign-in in place of Try again.
+	failureSignin failure = "signin"
+	// failureNotFound is an address that names nothing: a hub or a
+	// recording that isn't there, or a path the panel doesn't serve. Its
+	// page leads into the panel in place of Try again.
+	failureNotFound failure = "not-found"
 )
 
 // pageData is what every template renders from. SignedIn switches the rail
@@ -81,6 +93,9 @@ type pageData struct {
 	Message string
 	// Retry is where the error page's Try again link leads.
 	Retry string
+	// Next is the panel address a sign-in started from the page comes back
+	// to, carried by the sign-in form.
+	Next string
 }
 
 // nav is which pages the rail links to: the ones this request's group check

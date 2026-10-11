@@ -768,9 +768,43 @@ func signInAs(t *testing.T, f *fakeForum, b *browser, a *forumAccount) *http.Res
 // consent page would hand back for the user.
 func signInWithCode(t *testing.T, f *fakeForum, b *browser, code string) *http.Response {
 	t.Helper()
-	q := assertRedirect(t, b.post("/auth/start"), "/oauth2/authorize").Query()
+	return consent(t, f, b, b.post("/auth/start"), code)
+}
+
+// consent gives consent on the forum's page that the sign-in start's
+// answer res sent the browser to, as the user whose code is given, and
+// returns the callback's response.
+func consent(t *testing.T, f *fakeForum, b *browser, res *http.Response, code string) *http.Response {
+	t.Helper()
+	q := assertRedirect(t, res, "/oauth2/authorize").Query()
 	f.setChallenge(q.Get("code_challenge"))
 	return b.get("/auth/callback?code=" + url.QueryEscape(code) + "&state=" + url.QueryEscape(q.Get("state")))
+}
+
+// signInFrom signs in from the page doc as the user whose code is given,
+// the way a person does: it presses the page's sign-in button, or follows
+// the page's way back to one, and gives consent on the forum's page. It
+// returns the callback's response.
+func signInFrom(t *testing.T, f *fakeForum, b *browser, doc *html.Node, code string) *http.Response {
+	t.Helper()
+	for range 5 {
+		var start *html.Node
+		eachLiveElement(doc, func(n *html.Node) {
+			if start == nil && n.Data == "form" && attrOf(n, "action") == "/auth/start" {
+				start = n
+			}
+		})
+		if start != nil {
+			return consent(t, f, b, b.postForm("/auth/start", formFields(doc, start)), code)
+		}
+		back := findElement(doc, "a", "data-retry", "")
+		if back == nil {
+			t.Fatal("the page has no sign-in button and no way back to one")
+		}
+		doc = parseHTML(t, follow(t, b, b.get(attrOf(back, "href"))))
+	}
+	t.Fatal("no sign-in button within 5 pages")
+	return nil
 }
 
 func TestCallbackWithMatchingStateSignsIn(t *testing.T) {
@@ -800,18 +834,31 @@ func TestCallbackWithMatchingStateSignsIn(t *testing.T) {
 	}
 }
 
-func TestCallbackRefusedWithoutMatchingPendingSignin(t *testing.T) {
+// A callback the panel can't complete signs nobody in and asks the forum
+// for nothing. It answers with the panel's sign-in failure page, whose way
+// back signs the browser in.
+func TestCallbackThatCannotCompleteOffersToSignInAgain(t *testing.T) {
 	cases := []struct {
 		name string
 		run  func(t *testing.T, f *fakeForum, b *browser) *http.Response
 	}{
+		{"no sign-in cookie", func(t *testing.T, f *fakeForum, b *browser) *http.Response {
+			return b.get("/auth/callback?code=" + testCode + "&state=some-state")
+		}},
 		{"state differs from the pending one", func(t *testing.T, f *fakeForum, b *browser) *http.Response {
 			start := b.post("/auth/start")
 			f.setChallenge(location(t, start).Query().Get("code_challenge"))
 			return b.get("/auth/callback?code=" + testCode + "&state=not-the-one-issued")
 		}},
-		{"no sign-in cookie", func(t *testing.T, f *fakeForum, b *browser) *http.Response {
-			return b.get("/auth/callback?code=" + testCode + "&state=some-state")
+		{"the sign-in took too long", func(t *testing.T, f *fakeForum, b *browser) *http.Response {
+			q := location(t, b.post("/auth/start")).Query()
+			f.setChallenge(q.Get("code_challenge"))
+			installClock(t).advance(pendingLifetime + time.Second)
+			return b.get("/auth/callback?code=" + testCode + "&state=" + url.QueryEscape(q.Get("state")))
+		}},
+		{"the forum sent no code", func(t *testing.T, f *fakeForum, b *browser) *http.Response {
+			q := location(t, b.post("/auth/start")).Query()
+			return b.get("/auth/callback?state=" + url.QueryEscape(q.Get("state")))
 		}},
 	}
 	for _, tc := range cases {
@@ -829,6 +876,14 @@ func TestCallbackRefusedWithoutMatchingPendingSignin(t *testing.T) {
 			}
 			if n := f.tokenRequestCount(); n != 0 {
 				t.Errorf("refused callback made %d token requests, want 0", n)
+			}
+			doc := parseHTML(t, res)
+			if got := failureOf(t, doc); got != "signin" {
+				t.Errorf("failure page = %q, want signin", got)
+			}
+			again := signInFrom(t, f, b, doc, testCode)
+			if c := cookieNamed(again, sessionCookie); c == nil || c.Value == "" {
+				t.Errorf("signing in again from the page set no session cookie: status %d", again.StatusCode)
 			}
 		})
 	}
@@ -1022,8 +1077,8 @@ func TestCallbackWithForumErrorReturnsToSignin(t *testing.T) {
 	res := b.get("/auth/callback?error=access_denied&state=" + url.QueryEscape(q.Get("state")))
 
 	loc := assertRedirect(t, res, "/signin")
-	if cause, ok := mainCause(t, b.get(loc.RequestURI())); ok {
-		t.Errorf("a denied consent carries data-cause=%q, want none", cause)
+	if cause, ok := mainCause(t, b.get(loc.RequestURI())); !ok || cause != "unfinished" {
+		t.Errorf("sign-in page data-cause = %q (present %v), want unfinished", cause, ok)
 	}
 	if c := cookieNamed(res, sessionCookie); c != nil && c.Value != "" {
 		t.Errorf("denied consent set a session cookie %q", c.Value)
