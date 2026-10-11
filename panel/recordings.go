@@ -327,6 +327,11 @@ func (p *Panel) recordingStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := panelClock.WithTimeout(r.Context(), storeTimeout)
 	defer cancel()
 	recs, err := p.recordings.All(ctx)
+	if errors.Is(err, context.Canceled) {
+		// The poll left before the answer: expected, so no Sentry event.
+		utils.Info("Panel recording status abandoned")
+		return
+	}
 	if err != nil {
 		p.serverError(w, "recording status", err)
 		return

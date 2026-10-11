@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# .github/scripts/wait-for-recordings.sh
-#
-# Usage: wait-for-recordings.sh <status URL> <poll interval seconds>
+# .github/scripts/wait-for-recordings.sh <status URL> <poll interval seconds>
 #
 # The deploy's wait for recordings (spec #381, #394). Polls the panel's
 # recording status endpoint and returns once it says no recording is
@@ -10,8 +8,8 @@
 
 set -euo pipefail
 
-url=$1
-interval=$2
+url=${1:?usage: wait-for-recordings.sh <status URL> <poll interval seconds>}
+interval=${2:?usage: wait-for-recordings.sh <status URL> <poll interval seconds>}
 
 while :; do
     # curl retries a poll that fails, so a blip in the tunnel or the proxy
@@ -31,8 +29,10 @@ while :; do
     *)
         # A build from before the status route sends the poll to sign in,
         # and recording stays off in production until after that build. A
-        # panel that never answers is a bot that is down, whose recordings
-        # have already stopped, and the deploy may be the fix it needs.
+        # poll that still fails after curl's retries means the bot is down,
+        # so its recordings have already stopped, or its panel can't read
+        # the database and may be recording. Either way the deploy may be
+        # the fix, so it goes ahead rather than wait out the step's timeout.
         echo "::warning::$url gave no recording flag, so the deploy goes ahead."
         exit 0
         ;;

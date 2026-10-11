@@ -57,7 +57,11 @@ func TestRecordingStatusFollowsWhetherARecordingRuns(t *testing.T) {
 	if !running {
 		t.Errorf("while a recording runs the flag is false, want true")
 	}
-	for _, leak := range []string{"Squad Join", testRecordChannel, starter.ID, starter.DisplayName()} {
+	channel, err := w.discord.Channel(testRecordChannel)
+	if err != nil {
+		t.Fatalf("the fixture has no channel %s: %v", testRecordChannel, err)
+	}
+	for _, leak := range []string{channel.Name, testRecordChannel, starter.ID, starter.DisplayName()} {
 		if strings.Contains(body, leak) {
 			t.Errorf("while a recording runs the answer %q holds %q", body, leak)
 		}
