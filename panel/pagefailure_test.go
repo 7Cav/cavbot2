@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/7cav/cavbot2/commands"
 	"github.com/7cav/cavbot2/store"
 	"golang.org/x/net/html"
 )
@@ -276,44 +277,71 @@ func retryOf(t *testing.T, doc *html.Node) string {
 	return href
 }
 
+// Try again on the error page loads the page afresh by GET, so a refused
+// save is never posted twice, and opens where that page opens: a hub's edit
+// form at the form, sections below the top, and the hub list at its top.
 func TestHubPageFailureOffersTryAgainAtTheGETAddress(t *testing.T) {
 	cases := []struct {
 		name string
-		// load is the request whose hub page fails.
-		load func(t *testing.T, w *testWorld, st store.Store, hubPath string) *http.Response
-		// retry is the page's GET address, from the stored hub's ID.
-		retry func(hubID string) string
+		// fail is the request whose hub page fails, made with the failure
+		// it meets armed.
+		fail func(t *testing.T, w *testWorld, st *ctxStore, hubPath string) *http.Response
+		// atEditForm is whether Try again opens at the hub's edit form
+		// rather than at the top of the hub list.
+		atEditForm bool
 	}{
 		{"the hub list",
-			func(_ *testing.T, w *testWorld, _ store.Store, _ string) *http.Response { return w.b.get("/") },
-			func(string) string { return "/" }},
+			func(_ *testing.T, w *testWorld, st *ctxStore, _ string) *http.Response {
+				st.failRead("ListModeratorChanges")
+				return w.b.get("/")
+			}, false},
 		{"a hub's edit form",
-			func(_ *testing.T, w *testWorld, _ store.Store, hubPath string) *http.Response {
+			func(_ *testing.T, w *testWorld, st *ctxStore, hubPath string) *http.Response {
+				st.failRead("ListModeratorChanges")
 				return w.b.get("/?hub=" + strings.TrimPrefix(hubPath, "/hubs/"))
-			},
-			func(id string) string { return "/?hub=" + id }},
+			}, true},
 		{"a refused hub save",
-			func(t *testing.T, w *testWorld, st store.Store, hubPath string) *http.Response {
-				form := updateForm(t, st)
+			func(t *testing.T, w *testWorld, st *ctxStore, hubPath string) *http.Response {
+				form := updateForm(t, st.Fake)
 				form.Set("base_string", "   ")
+				st.failRead("ListModeratorChanges")
 				return w.b.postForm(hubPath, form)
-			},
-			func(id string) string { return "/?hub=" + id }},
+			}, true},
+		{"a hub save that found no guild data",
+			func(t *testing.T, w *testWorld, st *ctxStore, hubPath string) *http.Response {
+				form := updateForm(t, st.Fake)
+				form.Set("base_string", "Bravo Voice")
+				w.discord.setGuild(commands.GuildDataAbsent)
+				return w.b.postForm(hubPath, form)
+			}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w, st := newCtxWorld(t, testHub())
 			signIn(t, w.forum, w.b)
 			path := hubPath(t, st.Fake, "hub-1")
-			st.failRead("ListModeratorChanges")
-
-			res := tc.load(t, w, st.Fake, path)
-
+			res := tc.fail(t, w, st, path)
 			if res.StatusCode != http.StatusServiceUnavailable {
 				t.Errorf("status = %d, want 503", res.StatusCode)
 			}
-			if got, want := retryOf(t, parseHTML(t, res)), tc.retry(strings.TrimPrefix(path, "/hubs/")); got != want {
-				t.Errorf("Try again leads to %q, want %q", got, want)
+			retry := retryOf(t, parseHTML(t, res))
+			st.failRead("")
+			w.discord.setGuild(commands.GuildDataPresent)
+
+			doc, fragment := landing(t, w.b, retry, w.b.get(retry))
+
+			if !tc.atEditForm {
+				if fragment != "" {
+					t.Errorf("Try again opens at fragment %q, want the top of the hub list", fragment)
+				}
+				return
+			}
+			section := hubSection(t, doc, storedHubID(t, st.Fake, "hub-1"))
+			if findElement(section, "", "data-field", "save") == nil {
+				t.Fatal("Try again opens a page whose hub section shows no edit form")
+			}
+			if target := landedOn(doc, fragment); target == nil || !within(target, section) {
+				t.Errorf("Try again opens at fragment %q, want the hub's edit form", fragment)
 			}
 		})
 	}

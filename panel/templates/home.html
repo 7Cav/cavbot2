@@ -45,7 +45,7 @@
 {{define "remove-preview"}}
 {{with .Remove}}
   <section class="block block--danger" data-field="remove-preview" data-remove-hub="{{.ID}}">
-    <h2 class="block-header">Remove hub {{.BaseString}}?</h2>
+    <h2 class="block-header" id="remove" tabindex="-1"{{if $.RefusalFor "remove"}} aria-describedby="refusal"{{end}}>Remove hub {{.BaseString}}?</h2>
     {{with $.RefusalFor "remove"}}{{template "refusal" .}}{{end}}
     <div class="block-row">
       {{- if not .ChannelName}}Its voice channel is gone from Discord, so the hub creates nothing now.
@@ -71,7 +71,7 @@
         <li>The moderator roles for every hub, and the recording roles.</li>
       </ul>
     </div>
-    <form method="post" action="/hubs/{{.ID}}/remove" class="submit-row">
+    <form method="post" action="/hubs/{{.ID}}/remove#remove" class="submit-row">
       <input type="hidden" name="version" value="{{.Version}}">
       <button type="submit" class="btn btn--danger-filled" data-field="confirm">Remove hub {{.BaseString}}</button>
       <a class="btn" href="{{.Back}}" data-field="cancel">Cancel</a>
@@ -80,15 +80,17 @@
 {{end}}
 {{end}}
 
-{{define "refusal"}}<div class="block-row"><div class="note" data-error="{{.DataError}}">{{.Message}}</div></div>{{end}}
+{{- /* A refused form's note. One form at most is refused per page, so its
+     ID is unique, and the form's heading names it in aria-describedby. */}}
+{{define "refusal"}}<div class="block-row"><div class="note" id="refusal" data-error="{{.DataError}}">{{.Message}}</div></div>{{end}}
 
 {{- /* The line a save lands on, in the form it saved. */}}
 {{define "saved"}}<div class="block-row" role="status"><div class="note note--ok note--inline" data-field="saved">Saved.</div></div>{{end}}
 
 {{define "moderators"}}
   <section class="moderators" data-section="moderators">
-  <form method="post" action="/moderators" class="block">
-    <h2 class="block-header" id="moderators" tabindex="-1">Moderator roles for every hub</h2>
+  <form method="post" action="/moderators#moderators" class="block">
+    <h2 class="block-header" id="moderators" tabindex="-1"{{if .Hubs.RefusalFor "moderators"}} aria-describedby="refusal"{{end}}>Moderator roles for every hub</h2>
     {{with .Hubs.RefusalFor "moderators"}}{{template "refusal" .}}{{end}}
     {{if .Hubs.Moderators.Saved}}{{template "saved"}}{{end}}
     <input type="hidden" name="version" value="{{.Hubs.Moderators.Version}}">
@@ -109,8 +111,8 @@
 
 {{define "recording-roles"}}
   <section class="recording-roles" data-section="recording-roles">
-  <form method="post" action="/recording-roles" class="block">
-    <h2 class="block-header" id="recording-roles" tabindex="-1">Recording roles</h2>
+  <form method="post" action="/recording-roles#recording-roles" class="block">
+    <h2 class="block-header" id="recording-roles" tabindex="-1"{{if .Hubs.RefusalFor "recording-roles"}} aria-describedby="refusal"{{end}}>Recording roles</h2>
     {{with .Hubs.RefusalFor "recording-roles"}}{{template "refusal" .}}{{end}}
     {{if .Hubs.RecordingRoles.Saved}}{{template "saved"}}{{end}}
     <input type="hidden" name="version" value="{{.Hubs.RecordingRoles.Version}}">
@@ -170,8 +172,8 @@
 {{end}}
 
 {{define "create"}}
-  <form method="post" action="/hubs" class="block narrow">
-    <h2 class="block-header">Create a hub</h2>
+  <form method="post" action="/hubs#create" class="block narrow" data-section="create">
+    <h2 class="block-header" id="create" tabindex="-1"{{if .Hubs.RefusalFor "create"}} aria-describedby="refusal"{{end}}>Create a hub</h2>
     {{with .Hubs.RefusalFor "create"}}{{template "refusal" .}}{{end}}
     <div class="block-row">
       <label class="field">
@@ -200,8 +202,8 @@
 {{end}}
 
 {{define "register"}}
-  <form method="post" action="/hubs" class="block narrow">
-    <h2 class="block-header">Register a voice channel as a hub</h2>
+  <form method="post" action="/hubs#register" class="block narrow" data-section="register">
+    <h2 class="block-header" id="register" tabindex="-1"{{if .Hubs.RefusalFor "register"}} aria-describedby="refusal"{{end}}>Register a voice channel as a hub</h2>
     {{with .Hubs.RefusalFor "register"}}{{template "refusal" .}}{{end}}
     <div class="block-row">
       <div class="field" role="group" aria-labelledby="register-channel-label" aria-describedby="register-channel-hint">
@@ -230,8 +232,8 @@
     <div class="block-row"><span class="tag tag--warn" data-field="broken">broken</span> The hub's voice channel is gone from Discord or sits outside a category, so nothing spawns. If the channel still exists, move it into a category and the hub works again. If it was deleted, remove the hub. Its settings stay until then.</div>
   </div>
   {{else}}
-  <form method="post" action="/hubs/{{.ID}}" class="block">
-    <h2 class="block-header" id="edit" tabindex="-1">Edit hub</h2>
+  <form method="post" action="/hubs/{{.ID}}#edit" class="block">
+    <h2 class="block-header" id="edit" tabindex="-1"{{if $.Hubs.RefusalFor "edit"}} aria-describedby="refusal"{{end}}>Edit hub</h2>
     {{with $.Hubs.RefusalFor "edit"}}{{template "refusal" .}}{{end}}
     {{if .Saved}}{{template "saved"}}{{end}}
     <input type="hidden" name="version" value="{{.Form.Version}}">

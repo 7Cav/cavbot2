@@ -2,6 +2,8 @@ package panel
 
 import (
 	"net/http"
+	"net/url"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -83,6 +85,356 @@ func TestEditFormOpensAtTheForm(t *testing.T) {
 			}
 			if findElement(section, "", "data-field", "save") == nil {
 				t.Error("the page lands on the hub's section, which shows no edit form")
+			}
+		})
+	}
+}
+
+// refusedSave is one way a save of a Hubs page form is refused, driven the
+// way a browser drives it: the form, its action and its fields come from
+// the page the panel renders.
+type refusedSave struct {
+	name string
+	// status is the refusal's: 422 for a refused field or a save that
+	// changes nothing, 409 for a stale form.
+	status int
+	// refuse loads the page the form is on and returns the form's action
+	// and the fields its refused save posts.
+	refuse func(t *testing.T, w *testWorld) (action string, fields url.Values)
+	// block is the form's block on the answer's page.
+	block func(t *testing.T, w *testWorld, doc *html.Node) *html.Node
+}
+
+// formIn returns the action and fields of the form inside block, one of
+// the page doc's, as a browser would submit it untouched.
+func formIn(t *testing.T, doc, block *html.Node) (string, url.Values) {
+	t.Helper()
+	form := findElement(block, "form", "", "")
+	if form == nil {
+		t.Fatal("the block has no form")
+	}
+	return attrOf(form, "action"), formFields(doc, form)
+}
+
+// withAttr returns the first element under n carrying attr, whatever its
+// value, nil for none.
+func withAttr(n *html.Node, attr string) *html.Node {
+	var found *html.Node
+	eachElement(n, func(el *html.Node) {
+		if _, ok := attrValue(el, attr); ok && found == nil {
+			found = el
+		}
+	})
+	return found
+}
+
+// isHeading reports whether n is a heading a screen reader lists as one.
+func isHeading(n *html.Node) bool {
+	return slices.Contains([]string{"h1", "h2", "h3", "h4", "h5", "h6"}, n.Data)
+}
+
+// hubEditBlock is the hub-1 edit section on a page.
+func hubEditBlock(t *testing.T, w *testWorld, doc *html.Node) *html.Node {
+	t.Helper()
+	return hubSection(t, doc, storedHubID(t, w.st, "hub-1"))
+}
+
+// hubEditPage is the address of hub-1's edit form, opened at the top.
+func hubEditPage(t *testing.T, w *testWorld) string {
+	t.Helper()
+	return "/?hub=" + strconv.FormatInt(storedHubID(t, w.st, "hub-1"), 10)
+}
+
+// savedByAnother has another panel admin load page and save the form inside
+// the block it finds, with change made to its fields, so a form loaded
+// before it is stale.
+func savedByAnother(t *testing.T, w *testWorld, page string, block func(*testing.T, *testWorld, *html.Node) *html.Node, change func(url.Values)) {
+	t.Helper()
+	b := secondBrowser(t, w)
+	doc := parseHTML(t, b.get(page))
+	action, fields := formIn(t, doc, block(t, w, doc))
+	change(fields)
+	if res := b.postForm(action, fields); res.StatusCode < 300 || res.StatusCode > 399 {
+		t.Fatalf("the other panel admin's save answered %d, want it to go through", res.StatusCode)
+	}
+}
+
+// moderatorsBlock is the guild-wide moderator roles section on a page.
+func moderatorsBlock(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
+	t.Helper()
+	return moderatorsSection(t, doc)
+}
+
+// recordingRolesBlock is the recording roles section on a page.
+func recordingRolesBlock(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
+	t.Helper()
+	return recordingRolesSection(t, doc)
+}
+
+// createBlock is the Create a hub form on a page.
+func createBlock(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
+	t.Helper()
+	form := findElement(doc, "form", "data-section", formCreate)
+	if form == nil {
+		t.Fatal("page has no form under data-section=create")
+	}
+	return form
+}
+
+// registerBlock is the Register a voice channel as a hub form on a page.
+func registerBlock(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
+	t.Helper()
+	form := findElement(doc, "form", "data-section", formRegister)
+	if form == nil {
+		t.Fatal("page has no form under data-section=register")
+	}
+	return form
+}
+
+var refusedSaves = []refusedSave{
+	{
+		name:   "a hub edit with a blank base string",
+		status: http.StatusUnprocessableEntity,
+		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := parseHTML(t, w.b.get(hubEditPage(t, w)))
+			action, fields := formIn(t, doc, hubEditBlock(t, w, doc))
+			fields.Set("base_string", "   ")
+			return action, fields
+		},
+		block: hubEditBlock,
+	},
+	{
+		name:   "a stale hub edit",
+		status: http.StatusConflict,
+		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := parseHTML(t, w.b.get(hubEditPage(t, w)))
+			savedByAnother(t, w, hubEditPage(t, w), hubEditBlock, func(f url.Values) { f.Set("user_limit", "5") })
+			action, fields := formIn(t, doc, hubEditBlock(t, w, doc))
+			fields.Set("base_string", "Bravo Voice")
+			return action, fields
+		},
+		block: hubEditBlock,
+	},
+	{
+		name:   "moderator roles for every hub that change nothing",
+		status: http.StatusUnprocessableEntity,
+		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := parseHTML(t, w.b.get("/"))
+			return formIn(t, doc, moderatorsSection(t, doc))
+		},
+		block: moderatorsBlock,
+	},
+	{
+		name:   "stale moderator roles for every hub",
+		status: http.StatusConflict,
+		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := parseHTML(t, w.b.get("/"))
+			savedByAnother(t, w, "/", moderatorsBlock, func(f url.Values) { f.Add(fieldModeratorRoles, "role-mp") })
+			return formIn(t, doc, moderatorsSection(t, doc))
+		},
+		block: moderatorsBlock,
+	},
+	{
+		name:   "recording roles that change nothing",
+		status: http.StatusUnprocessableEntity,
+		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := parseHTML(t, w.b.get("/"))
+			return formIn(t, doc, recordingRolesSection(t, doc))
+		},
+		block: recordingRolesBlock,
+	},
+	{
+		name:   "stale recording roles",
+		status: http.StatusConflict,
+		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := parseHTML(t, w.b.get("/"))
+			savedByAnother(t, w, "/", recordingRolesBlock, func(f url.Values) { f.Add(fieldRecordingRoles, "role-mp") })
+			return formIn(t, doc, recordingRolesSection(t, doc))
+		},
+		block: recordingRolesBlock,
+	},
+	{
+		name:   "a create with no category",
+		status: http.StatusUnprocessableEntity,
+		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := parseHTML(t, w.b.get("/"))
+			action, fields := formIn(t, doc, createBlock(t, w, doc))
+			fields.Set(fieldChannelName, "Squad Join")
+			fields.Set(fieldBaseString, "Squad Voice")
+			return action, fields
+		},
+		block: createBlock,
+	},
+	{
+		name:   "a register with no channel",
+		status: http.StatusUnprocessableEntity,
+		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := parseHTML(t, w.b.get("/"))
+			action, fields := formIn(t, doc, registerBlock(t, w, doc))
+			fields.Set(fieldBaseString, "Squad Voice")
+			return action, fields
+		},
+		block: registerBlock,
+	},
+	{
+		name:   "a stale remove preview's Confirm",
+		status: http.StatusConflict,
+		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := openHubRemovePreview(t, w.b, storedHubID(t, w.st, "hub-1"))
+			savedByAnother(t, w, hubEditPage(t, w), hubEditBlock, func(f url.Values) { f.Set("user_limit", "5") })
+			return formIn(t, doc, removePreviewBlock(t, doc))
+		},
+		block: func(t *testing.T, _ *testWorld, doc *html.Node) *html.Node { return removePreviewBlock(t, doc) },
+	},
+}
+
+// A refused save answers with the page, which opens at the refused form's
+// block rather than at the top, sections above it: the browser lands on
+// the block's heading, which takes focus and whose description is the
+// refusal's note, so the panel admin sees and hears why nothing saved
+// (PRODUCT.md, Principle 1).
+func TestARefusedSaveLandsOnItsForm(t *testing.T) {
+	for _, tc := range refusedSaves {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			action, fields := tc.refuse(t, w)
+
+			res, fragment := arrive(t, w.b, action, w.b.postForm(action, fields))
+
+			if res.StatusCode != tc.status {
+				t.Fatalf("status = %d, want %d", res.StatusCode, tc.status)
+			}
+			doc := parseHTML(t, res)
+			block := tc.block(t, w, doc)
+			heading := landedOn(doc, fragment)
+			if heading == nil || !isHeading(heading) || !within(heading, block) {
+				t.Fatalf("the answer opens at fragment %q, want the heading of the refused form's block", fragment)
+			}
+			if got := attrOf(heading, "tabindex"); got != "-1" {
+				t.Errorf("the landed heading has tabindex %q, want -1 so it takes focus without joining the tab order", got)
+			}
+			note := withAttr(block, "data-error")
+			if note == nil {
+				t.Fatal("the refused form's block carries no refusal note")
+			}
+			if got, want := accessibleDescription(doc, heading), announcedText(note); got != want {
+				t.Errorf("the landed heading's description is %q, want the refusal note, %q", got, want)
+			}
+		})
+	}
+}
+
+// A hub edit refused because the hub turned broken after its form loaded
+// answers with the Broken hub block in place of the form, and lands on
+// that block's heading the way any refused edit lands on the form's.
+func TestARefusedEditOfABrokenHubLandsOnTheBrokenHubBlock(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	doc := parseHTML(t, w.b.get(hubEditPage(t, w)))
+	action, fields := formIn(t, doc, hubEditBlock(t, w, doc))
+	fields.Set("base_string", "Bravo Voice")
+	w.discord.breakChannel("hub-1", false)
+
+	res, fragment := arrive(t, w.b, action, w.b.postForm(action, fields))
+
+	if !isClientError(res.StatusCode) {
+		t.Fatalf("status = %d, want the edit refused", res.StatusCode)
+	}
+	doc = parseHTML(t, res)
+	heading := landedOn(doc, fragment)
+	if heading == nil || !isHeading(heading) || !within(heading, hubEditBlock(t, w, doc)) {
+		t.Fatalf("the answer opens at fragment %q, want a heading in the hub's section", fragment)
+	}
+	// The block a heading heads is its parent.
+	if findElement(heading.Parent, "", "data-field", "broken") == nil {
+		t.Error("the answer lands on a heading whose block shows no broken marker, want the Broken hub block's")
+	}
+	if got := attrOf(heading, "tabindex"); got != "-1" {
+		t.Errorf("the landed heading has tabindex %q, want -1 so it takes focus without joining the tab order", got)
+	}
+}
+
+// hubListBlock is the hub list's block on a page.
+func hubListBlock(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
+	t.Helper()
+	block := findElement(doc, "", "id", hubListAnchor)
+	if block == nil {
+		t.Fatal("page has no hub list block")
+	}
+	return block
+}
+
+// A save that goes through lands on what it changed, though its form's
+// action names the form's own block for a refusal to land on: a section's
+// save on the section, an added hub on the hub list naming it, and a
+// removal on the hub list. A hub edit's save is
+// TestEditFormOpensAtTheForm's.
+func TestASaveThatGoesThroughLandsOnWhatItChanged(t *testing.T) {
+	cases := []struct {
+		name string
+		// save loads the page the form is on and returns the form's action
+		// and the fields of a save that goes through.
+		save func(t *testing.T, w *testWorld) (action string, fields url.Values)
+		// block is the block of the page the save lands on.
+		block func(t *testing.T, w *testWorld, doc *html.Node) *html.Node
+		// added is the base string of the hub the block names as added,
+		// empty for a save that adds none.
+		added string
+	}{
+		{"the moderator roles for every hub", func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := parseHTML(t, w.b.get("/"))
+			action, fields := formIn(t, doc, moderatorsSection(t, doc))
+			fields.Add(fieldModeratorRoles, "role-mp")
+			return action, fields
+		}, moderatorsBlock, ""},
+		{"the recording roles", func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := parseHTML(t, w.b.get("/"))
+			action, fields := formIn(t, doc, recordingRolesSection(t, doc))
+			fields.Add(fieldRecordingRoles, "role-mp")
+			return action, fields
+		}, recordingRolesBlock, ""},
+		{"a create", func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := parseHTML(t, w.b.get("/"))
+			action, fields := formIn(t, doc, createBlock(t, w, doc))
+			fields.Set(fieldCategory, "cat-1")
+			fields.Set(fieldChannelName, "Squad Join")
+			fields.Set(fieldBaseString, "Squad Voice")
+			return action, fields
+		}, hubListBlock, "Squad Voice"},
+		{"a register", func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := parseHTML(t, w.b.get("/"))
+			action, fields := formIn(t, doc, registerBlock(t, w, doc))
+			fields.Set(fieldHubChannel, "vc-2")
+			fields.Set(fieldBaseString, "Squad Voice")
+			return action, fields
+		}, hubListBlock, "Squad Voice"},
+		{"a removal", func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := openHubRemovePreview(t, w.b, storedHubID(t, w.st, "hub-1"))
+			return formIn(t, doc, removePreviewBlock(t, doc))
+		}, hubListBlock, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			action, fields := tc.save(t, w)
+
+			doc, fragment := landing(t, w.b, action, w.b.postForm(action, fields))
+
+			block := tc.block(t, w, doc)
+			if target := landedOn(doc, fragment); target == nil || !within(target, block) {
+				t.Fatalf("the save lands at fragment %q, want on the block it changed", fragment)
+			}
+			if tc.added == "" {
+				return
+			}
+			line := findElement(block, "", "data-field", "added")
+			if line == nil {
+				t.Fatal("the hub list it lands on names no hub as added")
+			}
+			if got := fieldText(t, line, "base_string"); got != tc.added {
+				t.Errorf("the hub list names %q as added, want %q", got, tc.added)
 			}
 		})
 	}
