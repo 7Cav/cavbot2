@@ -10,6 +10,7 @@
     <h2 class="block-header">Hubs</h2>
     {{with .Hubs.Removed}}<div class="block-row" role="status"><div class="note note--ok note--inline" data-field="removed">{{.By}} removed hub <span class="hub-name" data-field="base_string">{{.BaseString}}</span> at <time datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 15:04"}} UTC</time>.
       {{- with .ChannelName}} Its voice channel, {{.}}, stays in Discord. Register it below to make it a hub again, starting from the default settings.{{end}}</div></div>{{end}}
+    {{with .Hubs.Added}}<div class="block-row" role="status"><div class="note note--ok note--inline" data-field="added">Added hub <span class="hub-name" data-field="base_string">{{.BaseString}}</span>. <a href="/?hub={{.ID}}#edit">Edit it</a> to change its other settings.</div></div>{{end}}
     {{if .Hubs.Hubs}}
     <div class="scroll"><table class="hublist">
       <thead><tr><th>Hub</th><th>Channel</th><th>Category</th><th>State</th><th class="num">Spawned</th><th>Last failure</th><th></th></tr></thead>
@@ -81,11 +82,15 @@
 
 {{define "refusal"}}<div class="block-row"><div class="note" data-error="{{.DataError}}">{{.Message}}</div></div>{{end}}
 
+{{- /* The line a save lands on, in the form it saved. */}}
+{{define "saved"}}<div class="block-row" role="status"><div class="note note--ok note--inline" data-field="saved">Saved.</div></div>{{end}}
+
 {{define "moderators"}}
   <section class="moderators" data-section="moderators">
   <form method="post" action="/moderators" class="block">
-    <h2 class="block-header">Moderator roles for every hub</h2>
+    <h2 class="block-header" id="moderators" tabindex="-1">Moderator roles for every hub</h2>
     {{with .Hubs.RefusalFor "moderators"}}{{template "refusal" .}}{{end}}
+    {{if .Hubs.Moderators.Saved}}{{template "saved"}}{{end}}
     <input type="hidden" name="version" value="{{.Hubs.Moderators.Version}}">
     <div class="block-row">
       <div class="field" role="group" aria-labelledby="moderator-roles-label" aria-describedby="moderator-roles-hint">
@@ -105,8 +110,9 @@
 {{define "recording-roles"}}
   <section class="recording-roles" data-section="recording-roles">
   <form method="post" action="/recording-roles" class="block">
-    <h2 class="block-header">Recording roles</h2>
+    <h2 class="block-header" id="recording-roles" tabindex="-1">Recording roles</h2>
     {{with .Hubs.RefusalFor "recording-roles"}}{{template "refusal" .}}{{end}}
+    {{if .Hubs.RecordingRoles.Saved}}{{template "saved"}}{{end}}
     <input type="hidden" name="version" value="{{.Hubs.RecordingRoles.Version}}">
     <div class="block-row">
       <div class="field" role="group" aria-labelledby="recording-roles-label" aria-describedby="recording-roles-hint">
@@ -227,6 +233,7 @@
   <form method="post" action="/hubs/{{.ID}}" class="block">
     <h2 class="block-header" id="edit" tabindex="-1">Edit hub</h2>
     {{with $.Hubs.RefusalFor "edit"}}{{template "refusal" .}}{{end}}
+    {{if .Saved}}{{template "saved"}}{{end}}
     <input type="hidden" name="version" value="{{.Form.Version}}">
     <input type="hidden" name="loaded_channel_name" value="{{.Form.LoadedChannelName}}">
     <div class="block-row">
@@ -250,11 +257,12 @@
     <div class="block-row">
       <label class="field">
         <span class="field-label">Permission source</span>
-        <select name="permission_source" data-field="permission_source">
+        <select name="permission_source" data-field="permission_source" aria-describedby="permission-source-hint">
           <option value="category"{{if eq .Form.PermissionSource "category"}} selected{{end}}>Category</option>
           <option value="hub_channel"{{if eq .Form.PermissionSource "hub_channel"}} selected{{end}}>Hub channel</option>
         </select>
       </label>
+      <span class="field-hint" id="permission-source-hint">What a spawned channel inherits its permissions from when it's made, and again when it's unlocked. Hub channel suits a hub stricter than the rest of its category.</span>
     </div>
     <div class="block-row">
       <div class="field" data-field="guild_moderator_roles">
@@ -282,7 +290,7 @@
         <span class="field-label">Bitrate</span>
         <input type="number" name="bitrate" data-field="bitrate" value="{{.Form.Bitrate}}" min="8000" max="{{.BitrateMax}}" step="1000" required aria-describedby="bitrate-hint">
       </label>
-      <span class="field-hint" id="bitrate-hint">the server's boost tier allows up to {{.BitrateMax}}.</span>
+      <span class="field-hint" id="bitrate-hint">In bits per second, so Discord's 64&nbsp;kbps is 64000 here. The server's boost tier allows 8000 to {{.BitrateMax}}, which is {{.BitrateMaxKbps}}&nbsp;kbps.</span>
     </div>
     <div class="block-row">
       <label class="field">

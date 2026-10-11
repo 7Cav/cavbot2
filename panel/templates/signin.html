@@ -5,6 +5,7 @@
   <div class="narrow">
     {{if eq .Cause "expired"}}<div class="note note--neutral">Your session ended. Please sign in again.</div>{{end}}
     {{if eq .Cause "unfinished"}}<div class="note note--neutral">The sign-in didn't finish, so you are not signed in.</div>{{end}}
+    {{if eq .Cause "signed-out"}}<div role="status"><div class="note note--ok">You're signed out.</div></div>{{end}}
     {{if eq .Cause "refused"}}<div class="note">The forum would not tell Cavbot2 who you are, so you are not signed in.</div>{{end}}
     <div class="block">
       <h2 class="block-header">Use your 7cav.us forum account</h2>

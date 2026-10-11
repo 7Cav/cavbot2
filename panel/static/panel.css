@@ -87,13 +87,19 @@ img { max-width: 100%; }
 /* The filled danger button is a danger confirm's Confirm, below. */
 .btn--danger-filled { color: #fff; background: var(--danger-hi); border-color: var(--danger-lo) var(--danger-hi) var(--danger-hi) var(--danger-lo); }
 .btn--danger-filled:hover { background: var(--danger-lo); color: #fff; }
+/* A disabled button looks off whatever its kind: no fill, a grey label and
+   a grey edge, so a gold or red one never reads as a dim live one. The
+   label is 5.4:1 on a block, 4.85:1 on the selection bar. */
+.btn[disabled], .btn[disabled]:hover { color: var(--text-mute); background: transparent; border-color: var(--line-hi); cursor: not-allowed; }
+.btn[disabled]:active { transform: none; }
 
-/* Blocks, as the forum draws them. */
-.block { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 2px 2px 2px rgba(0,0,0,.04); margin-bottom: 12px; }
+/* Blocks, as the forum draws them, less the forum's 4% block shadow and
+   its header text shadow, which can't be seen on this dark ground. */
+.block { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 12px; }
 .block-header {
   padding: 12px 14px; font-size: 18px; color: var(--text-hi); background: var(--surface-2);
   border-bottom: 2px solid var(--gold); box-shadow: inset 0 1px 0 0 var(--line-hi);
-  border-radius: var(--radius) var(--radius) 0 0; text-shadow: 0 0 4px #1f1f1f;
+  border-radius: var(--radius) var(--radius) 0 0;
 }
 .block-row { padding: 12px 14px; }
 .block-row + .block-row { border-top: 1px solid var(--line); }
@@ -231,7 +237,8 @@ h2[tabindex="-1"]:focus { outline: none; }
 .fx-count { margin-left: 4px; font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
 .fx-list th { padding: 8px 12px; }
 .fx-list td { padding: 7px 12px; }
-.fx-list tbody tr:hover td { background: var(--surface-2); }
+/* A row under the pointer lifts to --surface-3, 1.11:1 on the block. */
+.fx-list tbody tr:hover td { background: var(--surface-3); }
 .fx-member { min-width: 220px; }
 .fx-name { color: var(--text-hi); font-weight: 500; }
 .fx-user { font-size: 13px; color: var(--text-mute); }
@@ -249,6 +256,8 @@ h2[tabindex="-1"]:focus { outline: none; }
 .note--inline { margin-bottom: 0; }
 .hub-name { color: var(--text-hi); font-weight: 500; }
 .fx-hint { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--text-mute); }
+/* The link to the list at the top of the page, shown at phone width. */
+.fx-jump { display: none; }
 
 /* A holder's note, and the form that edits it: in the row's note cell with
    script, above the holder list without. */
@@ -275,7 +284,6 @@ h2[tabindex="-1"]:focus { outline: none; }
    reached by Shift+Tab up the list would otherwise sit under it. 6rem
    clears the bar on one line and wrapped onto two. */
 .fx-selbar ~ .scroll :is(a, input, button) { scroll-margin-top: 6rem; }
-.fx-selbar .btn[disabled] { opacity: .4; cursor: not-allowed; }
 .fx-check { width: 36px; }
 .fx-check input { width: 16px; height: 16px; margin: 0; vertical-align: middle; accent-color: var(--gold); }
 .fx-refusal { margin-bottom: 12px; }
@@ -291,7 +299,6 @@ h2[tabindex="-1"]:focus { outline: none; }
 .fx-radios .check { display: inline-block; margin-right: 14px; }
 .fx-readd { border-top: 1px solid var(--line-2); }
 .fx-readdcount { margin: 0; color: var(--text-hi); }
-.btn[disabled] { opacity: .4; cursor: not-allowed; }
 /* A preview's gold edge; a danger confirm keeps its red one. */
 .fx-pending:not(.block--danger) { border-color: var(--gold-lo); }
 .fx-pending p { margin: 0 0 6px; }
@@ -307,6 +314,7 @@ h2[tabindex="-1"]:focus { outline: none; }
 .fx-reportmembers { margin: 0; padding-left: 18px; font-size: 14px; }
 .fx-reportmembers li + li { margin-top: 2px; }
 .fx-reporthead { font-size: 14px; color: var(--text-mute); }
+.fx-reporttally { font-size: 14px; color: var(--text-hi); font-variant-numeric: tabular-nums; }
 /* The last report folded to one line while a preview is open above it:
    the action and how it ended, then its counts. The marker is drawn, so a
    screen reader reads the line alone. */
@@ -370,22 +378,37 @@ h2[tabindex="-1"]:focus { outline: none; }
 .desc { font-size: 13px; color: var(--text-mute); margin: 0 0 12px; }
 .narrow { max-width: 720px; }
 
-/* Under 768px the rail becomes a top bar and the page goes single column. */
+/* Under 768px the rail becomes a top bar of two short rows, the logo and
+   the page links, then who is signed in, Sign out and the forum link, and
+   the page goes single column. Signed out, the forum link sits beside the
+   logo on one row. */
 @media (max-width: 767px) {
   .console { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
   .moderators, .recording-roles { grid-template-columns: minmax(0, 1fr); }
-  .rail { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; border-right: 0; border-bottom: 1px solid var(--line); }
-  .rail .mark { border-bottom: 0; padding: 12px 16px; }
-  .rail nav { padding: 0; }
-  .rail .item { border-left: 0; border-bottom: 3px solid transparent; }
+  .rail {
+    position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line);
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;
+  }
+  .rail .mark { grid-column: 1; border-bottom: 0; padding: 10px 6px 10px 16px; }
+  .rail .mark img { height: 20px; }
+  .rail nav { grid-column: 2 / -1; display: flex; flex-wrap: wrap; padding: 0 10px 0 0; }
+  .rail .item { padding: 12px 8px 9px; border-left: 0; border-bottom: 3px solid transparent; }
   .rail .item.is-selected { border-bottom-color: var(--gold); background: transparent; }
-  .rail .me { margin: 0 0 0 auto; border-top: 0; padding: 8px 16px; display: flex; align-items: center; gap: 10px; }
+  .rail .me {
+    grid-column: 1 / 3; grid-row: 2; display: flex; align-items: center; gap: 10px; min-width: 0;
+    margin: 0; padding: 6px 8px 6px 16px; border-top: 1px solid var(--line);
+  }
   .rail .me small { display: none; }
-  .change-fields > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
-  .rail .me .name { margin: 0; }
-  .rail .foot { margin: 0 0 0 auto; border-top: 0; padding: 8px 16px; }
-  .rail .me + .foot { margin-left: 0; }
+  .rail .me .name { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rail .me .btn { padding: 4px 10px; font-size: 13px; }
+  .rail .foot { grid-column: 3; grid-row: 2; align-self: stretch; display: flex; align-items: center; margin: 0; padding: 0 16px 0 8px; border-top: 1px solid var(--line); }
+  .rail .mark + .foot { grid-row: 1; border-top: 0; }
+  /* The forum link is a 13px line; its padding makes a 34px target. */
+  .rail .foot a { padding: 8px 0; }
   .rail .ver { display: none; }
+  .fx-jump { display: block; margin: -4px 0 12px; font-size: 14px; }
+  .fx-jump a { display: inline-block; padding: 6px 0; }
+  .change-fields > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .body { padding: 10px 16px 40px; }
 }
 

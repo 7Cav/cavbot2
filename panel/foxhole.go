@@ -140,6 +140,16 @@ func (v foxholeView) Pending() bool {
 	return v.PurgeConfirm != nil || v.RemovePreview != nil || v.AddPreview != nil || v.RosterPreview != nil || v.RetryConfirm != nil
 }
 
+// ListAnchor is the ID of the block holding the list the page shows, the
+// holder list or the no-role view, which its search and the phone-width
+// link at the top of the page open it at.
+func (v foxholeView) ListAnchor() string {
+	if v.NoRoleView {
+		return noRoleAnchor
+	}
+	return holderListAnchor
+}
+
 // listNotice is the one-line notice in the holder list's place while the
 // member list is partial: how far along the list is. It ends in a Reload
 // link to the view's Reload address.
@@ -681,6 +691,16 @@ func (h holderRow) holdsRole(role commands.FoxholeRole) bool {
 	return (role == commands.FoxholeInternal && h.Internal) || (role == commands.FoxholeExternal && h.External)
 }
 
+// adding is the row with the "no rank role" flag the holder list gives the
+// member once they hold the role too. A preview shows a member under the
+// roles they hold now, flagged as they will be after the add.
+func (h holderRow) adding(role commands.FoxholeRole) holderRow {
+	if role == commands.FoxholeInternal && h.RankRole == "" {
+		h.NoRankRole = true
+	}
+	return h
+}
+
 // view reads the Foxhole page from the store's Foxhole records and change
 // log, then from one snapshot of the guild's roles and one of its member
 // list, through the manager seam, never Discord's API. The store comes
@@ -926,7 +946,7 @@ func (s foxholeService) lists(list commands.MemberListSnapshot, records map[stri
 	view.NoHolders = len(holders) == 0
 	view.ReAdd = reAddCountsOf(holders)
 	view.NoRoleLink = filterLink{Name: filterNoRole, Label: "No role, with a note", Count: len(matchedNoRole),
-		Href: foxholeAddress(req.Query, filterNoRole), On: noRoleView}
+		Href: listAddress(req.Query, filterNoRole), On: noRoleView}
 	if noRoleView {
 		view.NoRoleView, view.NoRoleRows, view.NoNotes = true, matchedNoRole, len(noRole) == 0
 	}
@@ -935,9 +955,9 @@ func (s foxholeService) lists(list commands.MemberListSnapshot, records map[stri
 	switch {
 	case strings.TrimSpace(req.Query) == "":
 	case noRoleView && len(matchedHolders) > 0:
-		view.AlsoMatches = &alsoMatches{Count: len(matchedHolders), Href: foxholeAddress(req.Query, filterAll)}
+		view.AlsoMatches = &alsoMatches{Count: len(matchedHolders), Href: listAddress(req.Query, filterAll)}
 	case !noRoleView && len(matchedNoRole) > 0:
-		view.AlsoMatches = &alsoMatches{Count: len(matchedNoRole), ToNoRoleView: true, Href: foxholeAddress(req.Query, filterNoRole)}
+		view.AlsoMatches = &alsoMatches{Count: len(matchedNoRole), ToNoRoleView: true, Href: listAddress(req.Query, filterNoRole)}
 	}
 	return view
 }
@@ -1242,7 +1262,7 @@ func knownFilter(filter string) string {
 func listView(matched []holderRow, query, filter string) foxholeView {
 	page := foxholeView{Query: query, Filter: filter}
 	for _, f := range holderFilters {
-		link := filterLink{Name: f.name, Label: f.label, Href: foxholeAddress(query, f.name), On: f.name == page.Filter}
+		link := filterLink{Name: f.name, Label: f.label, Href: listAddress(query, f.name), On: f.name == page.Filter}
 		for _, h := range matched {
 			if f.keeps(h) {
 				link.Count++
@@ -1260,6 +1280,24 @@ func listView(matched []holderRow, query, filter string) foxholeView {
 // filter, leaving out each that is the default.
 func foxholeAddress(query, filter string) string {
 	return foxholeLink(query, filter, "")
+}
+
+// The IDs the holder list's block and the no-role view's block carry in
+// foxhole.html. A filter link, a search and a link to the other view open
+// the page at the list they show, which at phone width sits far below the
+// action blocks.
+const (
+	holderListAnchor = "holders"
+	noRoleAnchor     = "no-role"
+)
+
+// listAddress is foxholeAddress opened at the list the filter shows.
+func listAddress(query, filter string) string {
+	anchor := holderListAnchor
+	if filter == filterNoRole {
+		anchor = noRoleAnchor
+	}
+	return foxholeAddress(query, filter) + "#" + anchor
 }
 
 // foxholeURL is foxholeAddress with the note form of the member whose ID

@@ -123,6 +123,19 @@ func TestAddPreviewRowGivesEachLinesResultAndWhatItMatched(t *testing.T) {
 	}
 }
 
+// An add preview of Internal gives a member it would leave holding Internal
+// with no rank role the holder list's "no rank role" flag, so the manager
+// sees it before Confirm rather than in the list afterwards.
+func TestAddPreviewOfInternalFlagsAMemberWithNoRankRole(t *testing.T) {
+	w := newFoxholeWorld(t)
+
+	row := pastedRow(t, pastePreview(t, w, "internal", memberKestrel.Username), 1)
+
+	if findElement(row, "", "data-flag", "no-rank-role") == nil {
+		t.Errorf("the add preview of Internal leaves %s, who holds no rank role, unflagged, want the no-rank-role flag", memberKestrel.Username)
+	}
+}
+
 // addRows returns the add preview's rows, in the order the page lists them.
 func addRows(preview *html.Node) []*html.Node {
 	var rows []*html.Node

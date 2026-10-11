@@ -950,6 +950,20 @@ func TestSignoutEndsSessionWithoutTheForum(t *testing.T) {
 	assertRedirect(t, b.get("/"), "/signin")
 }
 
+// Signing out lands on the sign-in page saying the sign-out took, so a
+// member on a shared computer can tell they are signed out.
+func TestSignoutLandsOnTheSigninPageSayingSo(t *testing.T) {
+	f := newFakeForum(t)
+	b := newBrowser(t, newTestPanel(t, f))
+	signIn(t, f, b)
+
+	loc := assertRedirect(t, b.post("/auth/signout"), "/signin")
+
+	if cause, ok := mainCause(t, b.get(loc.RequestURI())); !ok || cause != "signed-out" {
+		t.Errorf("sign-out lands on a sign-in page with data-cause=%q, want signed-out", cause)
+	}
+}
+
 func TestHomeWithoutSessionIsPlainSignin(t *testing.T) {
 	b := newBrowser(t, newTestPanel(t, newFakeForum(t)))
 

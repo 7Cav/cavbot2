@@ -208,6 +208,23 @@ func TestRosterPreviewGivesEachTroopersResult(t *testing.T) {
 	}
 }
 
+// A roster add gives Internal, so the roster preview gives a trooper in the
+// server with no rank role the holder list's "no rank role" flag, the one
+// they would carry in the list once added.
+func TestRosterPreviewFlagsAMemberWithNoRankRole(t *testing.T) {
+	w := newFoxholeWorld(t)
+	serveRoster(t, trooper("Kestrel.T", memberKestrel.ID))
+
+	row := rosterRows(rosterPreviewBlock(t, parseHTML(t, previewRoster(t, w, "D/ACD"))))["Kestrel.T"]
+
+	if row == nil {
+		t.Fatal("the roster preview has no row for Kestrel.T")
+	}
+	if findElement(row, "", "data-flag", "no-rank-role") == nil {
+		t.Errorf("the roster preview leaves Kestrel.T, whose member holds no rank role, unflagged, want the no-rank-role flag")
+	}
+}
+
 // Managers pick from the validated units and never type one, so a typo
 // can't add half the regiment. A Preview roster posting a unit outside the
 // registry, as a crafted form could, is refused before any roster fetch.

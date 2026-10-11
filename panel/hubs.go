@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -361,6 +362,15 @@ type hubPage struct {
 	// Removed is the removal the request names, as the store holds it now,
 	// which the hub list names. Nil for none.
 	Removed *removedHub
+	// Added is the hub a create or register just added, which the hub list
+	// names while the hub is still there. Nil for none.
+	Added *addedHub
+}
+
+// addedHub is a hub just added, as the line over the hub list names it.
+type addedHub struct {
+	ID         int64
+	BaseString string
 }
 
 // removedHub is a hub's removal as the hub list names it, read back from
@@ -399,6 +409,44 @@ const hubEditAnchor = "edit"
 // hubEditAddress is the address of a hub's edit form, opened at the form.
 func hubEditAddress(id int64) string {
 	return "/?hub=" + strconv.FormatInt(id, 10) + "#" + hubEditAnchor
+}
+
+// addedAddress is the address a create or register lands on: the hub list,
+// naming the hub it added.
+func addedAddress(hubID int64) string {
+	return "/?added=" + strconv.FormatInt(hubID, 10) + "#" + hubListAnchor
+}
+
+// paramSaved is the query parameter naming the form a save just saved.
+const paramSaved = "saved"
+
+// paramVersion is the query parameter carrying the version a save left its
+// record at.
+const paramVersion = "version"
+
+// savedAddress is the address a save of the form lands on: the hub page,
+// with hubID's edit form for formEdit, opened at the form. It names the
+// form and the version the save left its record at, so the page says the
+// form saved while the record is still at that version, and a reload after
+// a later save of it doesn't. Each form a save lands on carries the form's
+// name as its heading's ID in home.html, as hubEditAnchor is the edit
+// form's.
+func savedAddress(form string, version, hubID int64) string {
+	q := url.Values{paramSaved: {form}, paramVersion: {strconv.FormatInt(version, 10)}}
+	if hubID != 0 {
+		q.Set("hub", strconv.FormatInt(hubID, 10))
+	}
+	return "/?" + q.Encode() + "#" + form
+}
+
+// savedFromQuery narrows a query value to the forms a save lands on, so any
+// other value names none.
+func savedFromQuery(raw string) string {
+	switch raw {
+	case formModerators, formRecordingRoles, formEdit:
+		return raw
+	}
+	return ""
 }
 
 // RefusalFor is the refusal to render on a form, or nil when the error
@@ -444,6 +492,22 @@ type pageRequest struct {
 	// Removed is the ID of the change log entry of a removal just made,
 	// which the hub list names. Zero names none.
 	Removed int64
+	// Added is the ID of a hub a create or register just added, which the
+	// hub list names. Zero names none.
+	Added int64
+	// Saved is the form a save just saved, and SavedVersion the version it
+	// left the form's record at. The form says it saved while its record is
+	// still at that version. Empty for none.
+	Saved        string
+	SavedVersion int64
+}
+
+// savedAt reports whether the request names a save of the form that left
+// its record at the version the record is at now. A save leaves a record at
+// version 1 or later, so an address with no version names none, even for a
+// set never saved, which is at version 0.
+func (r pageRequest) savedAt(form string, version int64) bool {
+	return r.Saved == form && r.SavedVersion > 0 && r.SavedVersion == version
 }
 
 // hubRemovePreview is the preview a hub's removal waits on (PRODUCT.md,
@@ -491,7 +555,12 @@ type editPage struct {
 	Form       editInput
 	// Changes are the hub's last entries, newest first.
 	Changes []changeView
+	// Saved is the form showing a save of it just made.
+	Saved bool
 }
+
+// BitrateMaxKbps is BitrateMax in the kbps Discord's own settings show.
+func (p editPage) BitrateMaxKbps() int { return p.BitrateMax / 1000 }
 
 // unavailableReason is why a stored moderator role is no longer eligible:
 // deleted, when no live role has the ID, or managed.
@@ -830,6 +899,9 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 			return hubPage{}, err
 		}
 	}
+	if hub, ok := sn.hubByID(req.Added); ok {
+		page.Added = &addedHub{ID: hub.ID, BaseString: hub.BaseString}
+	}
 	if req.Remove != 0 {
 		hub, ok := sn.hubByID(req.Remove)
 		if !ok {
@@ -941,7 +1013,8 @@ func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo,
 	}
 	page := &editPage{ID: hub.ID, Broken: st.Broken, CategoryName: st.CategoryName, Form: form,
 		Picker: rolePicker(fieldModeratorRoles, guild, hub.ModeratorRoleIDs, form.ModeratorRoleIDs), BitrateMax: guild.bitrateMax,
-		GuildRoles: rolePicker(fieldModeratorRoles, guild, guildWide, guildWide).Tags, Changes: changeViews(entries, guild.names)}
+		GuildRoles: rolePicker(fieldModeratorRoles, guild, guildWide, guildWide).Tags, Changes: changeViews(entries, guild.names),
+		Saved: req.savedAt(formEdit, hub.Version)}
 	return page, nil
 }
 

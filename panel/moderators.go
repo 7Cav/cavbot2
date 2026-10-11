@@ -37,6 +37,8 @@ type moderatorsPage struct {
 	Version string
 	Picker  pickerView
 	Changes []changeView
+	// Saved is the section showing a save of it just made.
+	Saved bool
 }
 
 // moderatorsSection builds the guild-wide section from the guild read and
@@ -55,7 +57,8 @@ func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, sto
 	}
 	picker := rolePicker(fieldModeratorRoles, guild, stored.RoleIDs, selected)
 	picker.AddFor = "to the moderator roles for every hub"
-	return moderatorsPage{Version: version, Picker: picker, Changes: changeViews(entries, guild.names)}, nil
+	return moderatorsPage{Version: version, Picker: picker, Changes: changeViews(entries, guild.names),
+		Saved: req.savedAt(formModerators, stored.Version)}, nil
 }
 
 // setModerators saves the guild-wide moderator roles: it validates the
@@ -65,11 +68,12 @@ func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, sto
 // applies the set to the runtime, so the voice commands honour it at once.
 // A refusal is a *fieldError naming the roles field, and nothing is written.
 // A section loaded at a version the set is no longer at is refused first,
-// as errStaleModerators, before the guild read.
-func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by actor) ([]string, error) {
+// as errStaleModerators, before the guild read. It returns the set as
+// stored, at the version the save left it at.
+func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by actor) (store.GuildModeratorRoles, error) {
 	unlock, err := s.lockSave(ctx)
 	if err != nil {
-		return nil, err
+		return store.GuildModeratorRoles{}, err
 	}
 	defer unlock()
 	// The stored set is read before validation: it is what an unavailable
@@ -77,35 +81,37 @@ func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by a
 	// loaded.
 	before, err := s.deps.Store.GetGuildModeratorRoles(ctx, s.deps.GuildID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", guildModeratorRolesRead, err)
+		return store.GuildModeratorRoles{}, fmt.Errorf("%s: %w", guildModeratorRolesRead, err)
 	}
 	if !formIsCurrent(in.Version, before.Version) {
-		return nil, errStaleModerators
+		return store.GuildModeratorRoles{}, errStaleModerators
 	}
 	guild, err := s.readGuild(ctx)
 	if err != nil {
-		return nil, err
+		return store.GuildModeratorRoles{}, err
 	}
 	roles, err := acceptedRoles(in.RoleIDs, guild.info, before.RoleIDs, errIneligibleModeratorRole)
 	if err != nil {
-		return nil, err
+		return store.GuildModeratorRoles{}, err
 	}
 	d := diff{fieldModeratorRoles: {Before: sortedRoles(before.RoleIDs), After: sortedRoles(roles)}}
 	entry, err := changeEntry(store.ChangeModerators, d, by)
 	if err != nil {
-		return nil, err
+		return store.GuildModeratorRoles{}, err
 	}
 	saved := store.GuildModeratorRoles{RoleIDs: roles, Version: before.Version}
 	err = s.deps.Store.SaveGuildModeratorRoles(ctx, s.deps.GuildID, saved, entry)
 	if errors.Is(err, store.ErrStale) {
 		// Another process saved the set after this save's read.
-		return nil, errStaleModerators
+		return store.GuildModeratorRoles{}, errStaleModerators
 	}
 	if err != nil {
-		return nil, fmt.Errorf("write guild moderator roles: %w", err)
+		return store.GuildModeratorRoles{}, fmt.Errorf("write guild moderator roles: %w", err)
 	}
 	s.deps.Runtime.ApplyGuildModeratorRoles(roles)
-	return roles, nil
+	// The write took the set one version on from the one it was saved at.
+	saved.Version++
+	return saved, nil
 }
 
 // errIneligibleModeratorRole is the refusal a moderator picker's save gets
