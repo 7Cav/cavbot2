@@ -459,8 +459,7 @@ The panel's test of the signed-in forum user's forum groups, primary or
 secondary, on every request. The groups decide what the panel session can
 see. They never end it. One of the panel's admin groups makes them a panel
 admin. The Foxhole group makes them a Foxhole manager. An outsider sees
-only the recordings they started, or, having started none, the no-access
-page.
+only the recordings they started.
 _Avoid_: allowlist check, permission check, authorisation, role check.
 
 **Panel admin**:
@@ -478,7 +477,8 @@ in neither group, user in no group, guest, unprivileged user.
 **No-access page**:
 The panel page for a request the visitor's forum groups don't allow, or for
 a recording they didn't start, and an outsider's Recordings page when they
-have no recordings.
+have no recordings. Deleting their last recording still lands an outsider on
+the Recordings page.
 _Avoid_: forbidden page, access denied page, 403 page.
 
 **Block**:
