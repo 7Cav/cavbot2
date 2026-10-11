@@ -2,10 +2,12 @@ package panel
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"mime"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"time"
 
@@ -309,6 +311,36 @@ func (p *Panel) deleteRecording(w http.ResponseWriter, r *http.Request, sess ses
 		q.Set(paramView, viewAll)
 	}
 	http.Redirect(w, r, recordingsPath+"?"+q.Encode(), http.StatusSeeOther)
+}
+
+// recordingStatusPath is the recording status endpoint's address, which the
+// deploy workflow polls (.github/scripts/wait-for-recordings.sh).
+const recordingStatusPath = "/recording-status"
+
+// recordingStatus is GET /recording-status, open to anyone with no panel
+// session: whether a recording is running, as {"recording": true|false},
+// and nothing else (spec #381, #394). The deploy workflow polls it and
+// waits while one runs, so a deploy doesn't cut a recording. Anyone can
+// read it, so it names no channel and no member. A recording a restart cut
+// short counts as running until startup recovery closes it.
+func (p *Panel) recordingStatus(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := panelClock.WithTimeout(r.Context(), storeTimeout)
+	defer cancel()
+	recs, err := p.recordings.All(ctx)
+	if errors.Is(err, context.Canceled) {
+		// The poll left before the answer: expected, so no Sentry event.
+		utils.Info("Panel recording status abandoned")
+		return
+	}
+	if err != nil {
+		p.serverError(w, "recording status", err)
+		return
+	}
+	running := slices.ContainsFunc(recs, func(rec store.Recording) bool { return rec.StoppedAt.IsZero() })
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Recording bool `json:"recording"`
+	}{running})
 }
 
 // attachment is a Content-Disposition that saves a download under the name

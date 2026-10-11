@@ -7,6 +7,12 @@ name: Build and Push Docker Image
 # and the fix is a dispatch with the last good tag. After a successful deploy
 # the sentry job records the release and the deploy in Sentry.
 #
+# Before it touches the host, the deploy waits while a recording is running,
+# so a deploy doesn't cut a meeting (spec #381, #394). The wait gives up and
+# fails the run after five and a half hours. A dispatch with force skips the
+# wait. To push a release past a recording, cancel its waiting run, then
+# dispatch the same tag with force.
+#
 # One quirk of the rollback path: a dispatch of a tag older than 0.16.0 rolls
 # the host back but fails the probe, because those builds have no panel to
 # report a version. The deployment is then recorded as failed even though the
@@ -20,6 +26,11 @@ on:
         description: Release tag to deploy. Bare semver, already pushed to Docker Hub.
         required: true
         type: string
+      force:
+        description: Deploy now, even while a recording is running.
+        required: false
+        default: false
+        type: boolean
 
 # The tag this run deploys, for the deploy and sentry jobs. The build job's
 # github.ref_name is the same tag on a release event.
@@ -67,11 +78,11 @@ jobs:
           && (needs.build.result == 'success' || needs.build.result == 'skipped')
           && (github.event_name == 'workflow_dispatch' || !github.event.release.prerelease) }}
     runs-on: ubuntu-latest
-    # A host that accepts no connection would otherwise hold this job for the
-    # six hour default, and the concurrency group below would queue every
-    # later deploy behind it. Fifteen minutes covers the pull, the recreate
-    # and the full probe window with room to spare.
-    timeout-minutes: 15
+    # GitHub's limit for a job. The wait for recordings takes most of it, and
+    # its own timeout leaves the steps after it the fifteen minutes they get
+    # between them, so a deploy never starts on the host with too little time
+    # left to finish.
+    timeout-minutes: 360
     environment:
       name: production
       url: https://cavbot2.7cav.us
@@ -79,10 +90,13 @@ jobs:
     # for it instead of cancelling it, so the host is never left mid-recreate.
     # (GitHub keeps only the newest waiting run; older waiting runs are
     # cancelled before they start, which is fine, they never touched the host.)
+    # A run waiting for a recording holds the group too, so a dispatch with
+    # force queues behind it until that run is cancelled.
     concurrency:
       group: deploy-production
       cancel-in-progress: false
     env:
+      STATUS_URL: https://cavbot2.7cav.us/recording-status
       PROBE_URL: https://cavbot2.7cav.us/signin
       # Longer than the API's 120 s. The panel listener starts after slash
       # command registration, and Discord rate-limits that to about 40 s on
@@ -100,12 +114,28 @@ jobs:
             exit 1
           fi
 
+      - name: Checkout code
+        if: ${{ !inputs.force }}
+        uses: actions/checkout@v7.0.1
+
+      # Polls the panel's recording status endpoint each minute and goes on
+      # once no recording is running. A build from before the endpoint, or a
+      # panel that doesn't answer, doesn't hold the deploy (see the script).
+      # Past the timeout the step fails, the host is left as it is, and the
+      # deployment is recorded as failed.
+      - name: Wait while a recording is running
+        if: ${{ !inputs.force }}
+        timeout-minutes: 330
+        run: .github/scripts/wait-for-recordings.sh "$STATUS_URL" 60
+
       # The command string is the bare tag and nothing else. The host's forced
       # command reads it from SSH_ORIGINAL_COMMAND, writes it to the stack .env,
       # then runs docker compose pull and up -d. Host key checking is strict
       # against the pinned DEPLOY_KNOWN_HOSTS. A non-zero exit from the host
-      # fails the job.
+      # fails the job. A host that accepts no connection fails it at the
+      # timeout.
       - name: Deploy the tag over SSH
+        timeout-minutes: 10
         env:
           DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
           DEPLOY_USER: ${{ vars.DEPLOY_USER }}
@@ -131,6 +161,7 @@ jobs:
       # 0.16.01. Past the timeout the job fails and the deployment is recorded
       # as failed.
       - name: Wait for the signin page to report the tag
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           deadline=$((SECONDS + PROBE_TIMEOUT_SECONDS))
