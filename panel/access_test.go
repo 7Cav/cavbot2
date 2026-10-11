@@ -71,6 +71,22 @@ func TestPageLoadByAnOutsiderIsRefused(t *testing.T) {
 	}
 }
 
+// A signed-in visitor can go back to the forum from the page, as a
+// signed-out one can. The outsider is the case that matters most: the
+// no-access page is a dead end in the panel.
+func TestSignedInVisitorCanGoBackToTheForum(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signInAs(t, w.forum, w.b, addOutsider(w.forum))
+
+	doc := parseHTML(t, follow(t, w.b, w.b.get("/")))
+
+	assertNoAccessPage(t, doc)
+	forum := w.forum.srv.URL + "/"
+	if findElement(doc, "a", "href", forum) == nil {
+		t.Errorf("the page has no link to the forum, %s", forum)
+	}
+}
+
 // settingsSaveCases is a case for each save the hub page posts: a hub's
 // create, register, update and remove, the guild-wide moderator roles and
 // the recording roles.

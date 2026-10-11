@@ -44,6 +44,31 @@ var shownFields = slices.Concat([]string{fieldChannelName}, diffFields, []string
 // roleFields are the fields whose values are role IDs, shown by name.
 var roleFields = []string{fieldModeratorRoles, fieldRecordingRoles}
 
+// fieldLabels name the fields a diff can carry as the change log shows
+// them: in the words of the form's label for each, as the Foxhole page's
+// change log names its own fields.
+var fieldLabels = map[string]string{
+	fieldChannelName:      "hub channel name",
+	fieldHubChannel:       "hub channel",
+	fieldBaseString:       "base string",
+	fieldPermissionSource: "permission source",
+	fieldModeratorRoles:   "moderator roles",
+	fieldUserLimit:        "user limit",
+	fieldBitrate:          "bitrate",
+	fieldDeleteDelay:      "delete delay in minutes",
+	fieldEnabled:          "enabled",
+	fieldRenamingAllowed:  "renaming allowed",
+	fieldLockingAllowed:   "locking allowed",
+	fieldRecordingRoles:   "recording roles",
+}
+
+// permissionSourceNames are the permission source's stored values as the
+// form's options name them.
+var permissionSourceNames = map[string]string{
+	string(store.PermissionCategory):   "category",
+	string(store.PermissionHubChannel): "hub channel",
+}
+
 // sortedRoles is a role set as a diff records it: sorted, and never null,
 // so two sets compare and read the same whatever order the store returned
 // them in.
@@ -123,6 +148,17 @@ type changeView struct {
 	Fields   []fieldView
 }
 
+// Label is the entry's action as the change log names it. A save of the
+// guild-wide moderator roles or of the recording roles updates the one set
+// its section holds, and its field already names the set.
+func (c changeView) Label() string {
+	switch c.Action {
+	case store.ChangeModerators, store.ChangeRecordingRoles:
+		return string(store.ChangeUpdate)
+	}
+	return string(c.Action)
+}
+
 // fieldView is one changed field of an entry, its values rendered as text.
 type fieldView struct {
 	Field  string
@@ -130,11 +166,20 @@ type fieldView struct {
 	After  string
 }
 
+// Label is the field as the change log names it.
+func (f fieldView) Label() string {
+	if label, ok := fieldLabels[f.Field]; ok {
+		return label
+	}
+	return f.Field
+}
+
 // changeViews decodes stored entries for the form. Moderator and recording
 // roles are stored as IDs and shown by name where the guild still has the
-// role; roleNames maps the guild's roles as read at this page load. An
-// entry whose diff does not decode is shown with no fields rather than
-// dropped: the save happened.
+// role; roleNames maps the guild's roles as read at this page load. A
+// permission source shows as its form option names it. An entry whose diff
+// does not decode is shown with no fields rather than dropped: the save
+// happened.
 func changeViews(entries []store.ChangeLogEntry, roleNames map[string]string) []changeView {
 	views := make([]changeView, 0, len(entries))
 	for _, e := range entries {
@@ -146,9 +191,12 @@ func changeViews(entries []store.ChangeLogEntry, roleNames map[string]string) []
 				if !ok {
 					continue
 				}
-				names := roleNames
-				if !slices.Contains(roleFields, field) {
-					names = nil
+				var names map[string]string
+				switch {
+				case slices.Contains(roleFields, field):
+					names = roleNames
+				case field == fieldPermissionSource:
+					names = permissionSourceNames
 				}
 				v.Fields = append(v.Fields, fieldView{Field: field, Before: valueText(c.Before, names), After: valueText(c.After, names)})
 			}
@@ -160,13 +208,16 @@ func changeViews(entries []store.ChangeLogEntry, roleNames map[string]string) []
 
 // valueText renders one decoded diff value for the form: a string as
 // itself, a list joined with commas, a bool as on or off, null and an empty
-// list as none, a number as written. names, when set, replaces each list
-// item that is a key of it; an item with no name shows as itself.
+// list as none, a number as written. names, when set, replaces a string or
+// each list item that is a key of it; one with no name shows as itself.
 func valueText(v any, names map[string]string) string {
 	switch v := v.(type) {
 	case nil:
 		return "none"
 	case string:
+		if name, ok := names[v]; ok {
+			return name
+		}
 		return v
 	case bool:
 		if v {
