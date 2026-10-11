@@ -29,6 +29,8 @@ const (
 	// causeUnfinished is a sign-in the forum sent back without finishing:
 	// Deny on its consent page, or a request it refused.
 	causeUnfinished cause = "unfinished"
+	// causeSignedOut is the session the user ended with Sign out.
+	causeSignedOut cause = "signed-out"
 )
 
 // causeFromQuery narrows a query value to the enum, so an unknown value is a
@@ -41,6 +43,8 @@ func causeFromQuery(raw string) cause {
 		return causeRefused
 	case causeUnfinished:
 		return causeUnfinished
+	case causeSignedOut:
+		return causeSignedOut
 	}
 	return causeNone
 }

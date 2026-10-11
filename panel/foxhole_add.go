@@ -294,7 +294,7 @@ func (s foxholeService) addPreviewOf(list commands.MemberListSnapshot, records m
 			row.Result = lineNoMatch
 		case n == 1:
 			match := line.matches[0]
-			holder := guild.rowOf(match.member, records[match.member.ID])
+			holder := guild.rowOf(match.member, records[match.member.ID]).adding(paste.Role)
 			row.Member = &addMember{holderRow: holder, Matched: match.by}
 			row.lineOutcome = memberOutcome(holder, paste.Role, claimed)
 			if row.Result != lineSameMember {
@@ -313,7 +313,7 @@ func (s foxholeService) addPreviewOf(list commands.MemberListSnapshot, records m
 			continue
 		}
 		for _, match := range row.matches {
-			holder := guild.rowOf(match.member, records[match.member.ID])
+			holder := guild.rowOf(match.member, records[match.member.ID]).adding(paste.Role)
 			row.Choices = append(row.Choices, addChoice{addMember: addMember{holderRow: holder, Matched: match.by},
 				lineOutcome: memberOutcome(holder, paste.Role, claimed)})
 		}

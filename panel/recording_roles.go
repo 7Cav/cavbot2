@@ -46,6 +46,8 @@ type recordingRolesPage struct {
 	Version string
 	Picker  pickerView
 	Changes []changeView
+	// Saved is the section showing a save of it just made.
+	Saved bool
 }
 
 // recordingRolesSection builds the recording roles section from the guild
@@ -68,7 +70,8 @@ func (s *hubService) recordingRolesSection(ctx context.Context, guild guildInfo,
 	}
 	picker := rolePicker(fieldRecordingRoles, guild, stored.RoleIDs, selected)
 	picker.AddFor = "to the recording roles"
-	return recordingRolesPage{Version: version, Picker: picker, Changes: changeViews(entries, guild.names)}, nil
+	return recordingRolesPage{Version: version, Picker: picker, Changes: changeViews(entries, guild.names),
+		Saved: req.savedAt(formRecordingRoles, stored.Version)}, nil
 }
 
 // setRecordingRoles saves the recording roles: it writes the set with a
@@ -79,44 +82,46 @@ func (s *hubService) recordingRolesSection(ctx context.Context, guild guildInfo,
 // written. A valid set that is the stored one is refused as
 // errRecordingRolesUnchanged. A section loaded at a version the set is no
 // longer at is refused first, as errStaleRecordingRoles, before the guild
-// read.
-func (s *hubService) setRecordingRoles(ctx context.Context, in recordingRolesInput, by actor) ([]string, error) {
+// read. It returns the set as stored, at the version the save left it at.
+func (s *hubService) setRecordingRoles(ctx context.Context, in recordingRolesInput, by actor) (store.RecordingRoles, error) {
 	unlock, err := s.lockSave(ctx)
 	if err != nil {
-		return nil, err
+		return store.RecordingRoles{}, err
 	}
 	defer unlock()
 	before, err := s.deps.Store.GetRecordingRoles(ctx, s.deps.GuildID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", recordingRolesRead, err)
+		return store.RecordingRoles{}, fmt.Errorf("%s: %w", recordingRolesRead, err)
 	}
 	if !formIsCurrent(in.Version, before.Version) {
-		return nil, errStaleRecordingRoles
+		return store.RecordingRoles{}, errStaleRecordingRoles
 	}
 	guild, err := s.readGuild(ctx)
 	if err != nil {
-		return nil, err
+		return store.RecordingRoles{}, err
 	}
 	roles, err := acceptedRoles(in.RoleIDs, guild.info, before.RoleIDs, errIneligibleRecordingRole)
 	if err != nil {
-		return nil, err
+		return store.RecordingRoles{}, err
 	}
 	if slices.Equal(sortedRoles(roles), sortedRoles(before.RoleIDs)) {
-		return nil, errRecordingRolesUnchanged
+		return store.RecordingRoles{}, errRecordingRolesUnchanged
 	}
 	d := diff{fieldRecordingRoles: {Before: sortedRoles(before.RoleIDs), After: sortedRoles(roles)}}
 	entry, err := changeEntry(store.ChangeRecordingRoles, d, by)
 	if err != nil {
-		return nil, err
+		return store.RecordingRoles{}, err
 	}
 	saved := store.RecordingRoles{RoleIDs: roles, Version: before.Version}
 	err = s.deps.Store.SaveRecordingRoles(ctx, s.deps.GuildID, saved, entry)
 	if errors.Is(err, store.ErrStale) {
 		// Another process saved the set after this save's read.
-		return nil, errStaleRecordingRoles
+		return store.RecordingRoles{}, errStaleRecordingRoles
 	}
 	if err != nil {
-		return nil, fmt.Errorf("write recording roles: %w", err)
+		return store.RecordingRoles{}, fmt.Errorf("write recording roles: %w", err)
 	}
-	return roles, nil
+	// The write took the set one version on from the one it was saved at.
+	saved.Version++
+	return saved, nil
 }

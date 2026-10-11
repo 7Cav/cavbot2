@@ -635,11 +635,12 @@ func pairs(list *html.Node) []string {
 }
 
 // A finished purge's report gives who started it, when it started and
-// ended, and its outcome, then four lists, each with a count: the members
-// changed, with each role taken; those skipped; those Discord refused, with
-// its reason in plain words and never its raw answer; and, last, those
-// never attempted.
-func TestPurgeReportListsWhatItChangedFailedAndNeverAttempted(t *testing.T) {
+// ended, and its outcome, then how many members it changed, skipped, failed
+// on and never attempted, and a list of each kind it has any of: the
+// members changed, with each role taken, and those Discord refused, with
+// its reason in plain words and never its raw answer. A kind with nobody in
+// it gets its count and no list.
+func TestPurgeReportListsWhatItChangedAndFailedOn(t *testing.T) {
 	w := newFoxholeWorld(t)
 	w.discord.failRoleWrites(memberKestrel.ID, missingPermissions())
 
@@ -658,19 +659,17 @@ func TestPurgeReportListsWhatItChangedFailedAndNeverAttempted(t *testing.T) {
 	if got := outcomeOf(report); got != "done" {
 		t.Errorf("the report's outcome is %q, want done", got)
 	}
+	if got, want := reportTally(report), map[string]string{"changed": "4", "skipped": "0", "failed": "1", "not-attempted": "0"}; !maps.Equal(got, want) {
+		t.Errorf("the report counts %v, want %v", got, want)
+	}
 	var lists []string
 	eachElement(report, func(n *html.Node) {
 		if name, ok := attrValue(n, "data-list"); ok {
 			lists = append(lists, name)
-			if findElement(n, "", "data-field", "count") == nil {
-				t.Errorf("the %s list gives no count", name)
-			}
 		}
 	})
-	if want := []string{"changed", "failed", "not-attempted", "skipped"}; !slices.Equal(slices.Sorted(slices.Values(lists)), want) {
+	if want := []string{"changed", "failed"}; !slices.Equal(slices.Sorted(slices.Values(lists)), want) {
 		t.Errorf("the report has the lists %v, want %v", lists, want)
-	} else if lists[len(lists)-1] != "not-attempted" {
-		t.Errorf("the report's lists come in the order %v, want not attempted last", lists)
 	}
 	changed := []string{
 		memberDoe.ID + " internal", memberAsh.ID + " internal",
@@ -688,9 +687,18 @@ func TestPurgeReportListsWhatItChangedFailedAndNeverAttempted(t *testing.T) {
 	if reason == "" || strings.Contains(reason, missingPermissionsBody) {
 		t.Errorf("the failure's reason reads %q, want Discord's reason in plain words", reason)
 	}
-	if got := fieldText(t, reportList(t, report, "not-attempted"), "count"); got != "0" {
-		t.Errorf("the report counts %s not attempted, want 0", got)
-	}
+}
+
+// reportTally is the count a report gives of each kind of member, by kind:
+// changed, skipped, failed and not-attempted.
+func reportTally(report *html.Node) map[string]string {
+	counts := map[string]string{}
+	eachElement(report, func(n *html.Node) {
+		if kind, ok := attrValue(n, "data-count"); ok {
+			counts[kind] = textOf(n)
+		}
+	})
+	return counts
 }
 
 // A purge's report is its entry in the Foxhole page's change log: the entry

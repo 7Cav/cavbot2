@@ -178,7 +178,7 @@ func (s foxholeService) rosterPreviewOf(list commands.MemberListSnapshot, record
 		case !inServer:
 			row.Result = rosterNotInServer
 		default:
-			holder := guild.rowOf(mem, records[t.DiscordID])
+			holder := guild.rowOf(mem, records[t.DiscordID]).adding(commands.FoxholeInternal)
 			row.Member, row.Result = &holder, rosterGets
 			if holder.Internal {
 				row.Result = rosterHolding

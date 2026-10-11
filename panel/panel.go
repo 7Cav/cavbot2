@@ -586,7 +586,7 @@ func (p *Panel) authSignout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	clearCookie(w, sessionCookie)
-	http.Redirect(w, r, signinURL(causeNone, ""), http.StatusSeeOther)
+	http.Redirect(w, r, signinURL(causeSignedOut, ""), http.StatusSeeOther)
 }
 
 // endSession drops the session and its cookie and records why.
@@ -598,15 +598,16 @@ func (p *Panel) endSession(w http.ResponseWriter, id string, sess session, reaso
 
 // homePage is the hub page: the list, and the register form or, with a hub
 // named in the query, that hub's edit form. With a hub named to remove, its
-// remove preview shows first, and with a removal named, the list names the
-// hub that went. A value in any of them that isn't an ID gets the not-found
-// page.
+// remove preview shows first, with a removal named, the list names the hub
+// that went, and with a hub named as added, the list names it. A value in
+// any of them that isn't an ID gets the not-found page. A save named, with
+// the version it left its form's record at, has that form say it saved.
 func (p *Panel) homePage(w http.ResponseWriter, r *http.Request, sess session) {
 	var req pageRequest
 	params := []struct {
 		name string
 		id   *int64
-	}{{"hub", &req.HubID}, {"remove", &req.Remove}, {"removed", &req.Removed}}
+	}{{"hub", &req.HubID}, {"remove", &req.Remove}, {"removed", &req.Removed}, {"added", &req.Added}}
 	for _, param := range params {
 		raw := r.URL.Query().Get(param.name)
 		if raw == "" {
@@ -619,6 +620,10 @@ func (p *Panel) homePage(w http.ResponseWriter, r *http.Request, sess session) {
 		}
 		*param.id = id
 	}
+	req.Saved = savedFromQuery(r.URL.Query().Get(paramSaved))
+	// A version that isn't a number matches no record, so the page says
+	// nothing saved.
+	req.SavedVersion, _ = strconv.ParseInt(r.URL.Query().Get(paramVersion), 10, 64)
 	p.renderHubs(w, r, sess, http.StatusOK, req)
 }
 
@@ -739,8 +744,8 @@ func (p *Panel) createOrRegisterHub(w http.ResponseWriter, r *http.Request, sess
 }
 
 // createHub is the create half of POST /hubs: one service call, then a
-// redirect to the list where the new hub appears, or the page again with the
-// refused field named. The form is already parsed.
+// redirect to the list, where the new hub appears and a line names it, or
+// the page again with the refused field named. The form is already parsed.
 func (p *Panel) createHub(w http.ResponseWriter, r *http.Request, sess session) {
 	in := createInput{
 		CategoryID:  r.PostForm.Get(fieldCategory),
@@ -759,12 +764,12 @@ func (p *Panel) createHub(w http.ResponseWriter, r *http.Request, sess session) 
 	}
 	utils.Info("Panel hub created", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
 		"base_string", hub.BaseString, "username", sess.username, "forum_user_id", sess.userID)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, addedAddress(hub.ID), http.StatusSeeOther)
 }
 
 // registerHub is the register half of POST /hubs: one service call, then a
-// redirect to the list where the new hub appears, or the page again with the
-// refused field named. The form is already parsed.
+// redirect to the list, where the new hub appears and a line names it, or
+// the page again with the refused field named. The form is already parsed.
 func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session) {
 	in := registerInput{ChannelID: r.PostForm.Get(fieldHubChannel), BaseString: r.PostForm.Get(fieldBaseString)}
 	ctx, hubs := p.saving(r)
@@ -779,7 +784,7 @@ func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session
 	}
 	utils.Info("Panel hub registered", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
 		"base_string", hub.BaseString, "username", sess.username, "forum_user_id", sess.userID)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, addedAddress(hub.ID), http.StatusSeeOther)
 }
 
 // saving is what a save handler runs its save through. A save begins once
@@ -825,8 +830,8 @@ func hubIDOf(r *http.Request) (int64, bool) {
 }
 
 // updateHub is POST /hubs/{id}: one service call, then a redirect to the
-// hub's form, opened at the form, where the saved values show, or the form
-// again with the refused field named.
+// hub's form, opened at the form, where the saved values show and the form
+// says it saved, or the form again with the refused field named.
 func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) {
 	id, ok := hubIDOf(r)
 	if !ok {
@@ -872,7 +877,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 	}
 	utils.Info("Panel hub updated", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
 		"username", sess.username, "forum_user_id", sess.userID)
-	http.Redirect(w, r, hubEditAddress(hub.ID), http.StatusSeeOther)
+	http.Redirect(w, r, savedAddress(formEdit, hub.Version, hub.ID), http.StatusSeeOther)
 }
 
 // removeHub is POST /hubs/{id}/remove, the remove preview's Confirm: one
@@ -909,8 +914,9 @@ func (p *Panel) removeHub(w http.ResponseWriter, r *http.Request, sess session) 
 }
 
 // saveModerators is POST /moderators: one service call, then a redirect to
-// the page where the saved set shows, or the page again with the refused
-// field named on the guild-wide section.
+// the page, opened at the guild-wide section, where the saved set shows and
+// the section says it saved, or the page again with the refused field named
+// on the guild-wide section.
 func (p *Panel) saveModerators(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -918,7 +924,7 @@ func (p *Panel) saveModerators(w http.ResponseWriter, r *http.Request, sess sess
 	}
 	in := moderatorsInput{Version: r.PostForm.Get(fieldVersion), RoleIDs: r.PostForm[fieldModeratorRoles]}
 	ctx, hubs := p.saving(r)
-	roles, err := hubs.setModerators(ctx, in, sess.actor())
+	saved, err := hubs.setModerators(ctx, in, sess.actor())
 	if refusal, ok := asFieldError(err); ok {
 		p.renderRefused(w, r, sess, pageRequest{Moderators: &in, Error: refusal, Refused: formModerators})
 		return
@@ -927,13 +933,14 @@ func (p *Panel) saveModerators(w http.ResponseWriter, r *http.Request, sess sess
 		p.saveFailed(w, sess, "moderators save", "/", err)
 		return
 	}
-	utils.Info("Panel guild moderator roles saved", "role_ids", roles, "username", sess.username, "forum_user_id", sess.userID)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	utils.Info("Panel guild moderator roles saved", "role_ids", saved.RoleIDs, "username", sess.username, "forum_user_id", sess.userID)
+	http.Redirect(w, r, savedAddress(formModerators, saved.Version, 0), http.StatusSeeOther)
 }
 
 // saveRecordingRoles is POST /recording-roles: one service call, then a
-// redirect to the page where the saved set shows, or the page again with
-// the refusal on the recording roles section.
+// redirect to the page, opened at the recording roles section, where the
+// saved set shows and the section says it saved, or the page again with the
+// refusal on the recording roles section.
 func (p *Panel) saveRecordingRoles(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -941,7 +948,7 @@ func (p *Panel) saveRecordingRoles(w http.ResponseWriter, r *http.Request, sess 
 	}
 	in := recordingRolesInput{Version: r.PostForm.Get(fieldVersion), RoleIDs: r.PostForm[fieldRecordingRoles]}
 	ctx, hubs := p.saving(r)
-	roles, err := hubs.setRecordingRoles(ctx, in, sess.actor())
+	saved, err := hubs.setRecordingRoles(ctx, in, sess.actor())
 	if refusal, ok := asFieldError(err); ok {
 		p.renderRefused(w, r, sess, pageRequest{RecordingRoles: &in, Error: refusal, Refused: formRecordingRoles})
 		return
@@ -950,6 +957,6 @@ func (p *Panel) saveRecordingRoles(w http.ResponseWriter, r *http.Request, sess 
 		p.saveFailed(w, sess, "recording roles save", "/", err)
 		return
 	}
-	utils.Info("Panel recording roles saved", "role_ids", roles, "username", sess.username, "forum_user_id", sess.userID)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	utils.Info("Panel recording roles saved", "role_ids", saved.RoleIDs, "username", sess.username, "forum_user_id", sess.userID)
+	http.Redirect(w, r, savedAddress(formRecordingRoles, saved.Version, 0), http.StatusSeeOther)
 }

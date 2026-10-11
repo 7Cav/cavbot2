@@ -3,6 +3,8 @@
   <h1 class="title">Foxhole</h1>
   <p class="desc">Everyone holding a Foxhole role, and every approved collaborator. Changes here go straight to Discord.</p>
   {{with .Foxhole}}
+  {{- /* At phone width the action blocks stack above the list, so a link here reaches it in one tap. Wider, it hides. */}}
+  {{if not .ListNotice}}<p class="fx-jump"><a href="#{{.ListAnchor}}">{{if .NoRoleView}}Go to the members with a note{{else}}Go to the holder list{{end}}</a></p>{{end}}
   {{- /* Whatever is pending shows first: the result or refusal of what the manager just did, then the preview or confirmation a Foxhole action waits on, then any action running and the last report. A preview's heading carries the ID the address that opens it names, so the browser scrolls to it and focuses it. */}}
   <div role="status" data-note-result>{{with .Cleared}}<div class="note note--ok" data-field="note-result" data-cleared="{{.MemberID}}">Cleared the note on {{.MemberName}} <span class="fx-user">@{{.MemberUsername}}</span>. They hold no Foxhole role, so they're no longer listed.</div>{{end}}</div>
   {{with .ApprovalRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
@@ -70,6 +72,7 @@
     <h2 class="block-header" id="add-preview" tabindex="-1">Add {{.Name}}?</h2>
     {{template "add-form" .Paste}}
     {{template "note-count" .Notes}}
+    {{if .Rows}}
     <div class="scroll"><table class="hublist fx-list fx-addpreview">
       <thead><tr><th>Line</th><th>Pasted</th><th>Member</th><th>Result</th></tr></thead>
       <tbody>
@@ -82,11 +85,12 @@
           </ul>{{else}}<span class="off">none</span>{{end}}{{end}}</td>
           <td><span class="tag" data-field="result">{{.ResultLabel}}</span></td>
         </tr>
-      {{else}}
-        <tr><td colspan="4" class="off">The paste box is empty.</td></tr>
       {{end}}
       </tbody>
     </table></div>
+    {{else}}
+    <div class="block-row off">The paste box is empty.</div>
+    {{end}}
     <form method="post" action="/foxhole/add" id="fx-add-confirm" class="submit-row" data-field="add-confirm">
       <input type="hidden" name="role" value="{{.Role}}">
       <input type="hidden" name="lines" value="{{.Paste.Text}}">
@@ -182,6 +186,7 @@
   <section class="block fx-report" data-field="report" data-report="{{.ID}}" data-action="{{.Action}}" data-outcome="{{.Outcome}}">
     <h2 class="block-header">{{.Name}}: {{template "outcome" .}}</h2>
     {{template "report-head" .}}
+    {{template "report-tally" .}}
     {{template "report-lists" .}}
     {{template "retry" .}}
   </section>
@@ -237,9 +242,10 @@
     </section>
   </div>
   {{if .NoRoleView}}
-  <section class="block" data-field="no-role">
+  <section class="block" id="no-role" data-field="no-role">
     <h2 class="block-header">Members with a note and no Foxhole role</h2>
     {{template "fx-toolbar" .}}
+    {{if .NoRoleRows}}
     <div class="scroll"><table class="hublist fx-list">
       <thead><tr><th>Member</th><th>Note</th></tr></thead>
       <tbody>
@@ -248,15 +254,16 @@
           {{template "member-cell" .}}
           {{template "note-cell" .}}
         </tr>
-      {{else}}
-        <tr><td colspan="2" class="off">{{if $.Foxhole.NoNotes}}Nobody without a Foxhole role has a note.{{else}}No member without a Foxhole role matches.{{end}}</td></tr>
       {{end}}
       </tbody>
     </table></div>
+    {{else}}
+    <div class="block-row off">{{if .NoNotes}}Nobody without a Foxhole role has a note.{{else}}No member without a Foxhole role matches.{{end}}</div>
+    {{end}}
     {{template "also-matches" .AlsoMatches}}
   </section>
   {{else}}
-  <section class="block" data-field="holders">
+  <section class="block" id="holders" data-field="holders">
     <h2 class="block-header">Foxhole role holders</h2>
     {{template "fx-toolbar" .}}
     <form method="post" action="/foxhole/approvals" id="fx-selection" class="fx-selbar" data-field="selection">
@@ -269,6 +276,8 @@
       <button type="submit" name="remove" value="internal" formmethod="get" formaction="/foxhole#remove-preview" class="btn btn--small btn--danger" data-remove="internal"{{if .Busy}} disabled{{else}} data-needs-selection{{end}}>Remove Internal</button>
       <button type="submit" name="remove" value="external" formmethod="get" formaction="/foxhole#remove-preview" class="btn btn--small btn--danger" data-remove="external"{{if .Busy}} disabled{{else}} data-needs-selection{{end}}>Remove External</button>
     </form>
+    {{- /* An empty list says why in a row of the block, not in the table, whose minimum width would cut the sentence off at phone width. */}}
+    {{if .Holders}}
     <div class="scroll"><table class="hublist fx-list">
       <thead><tr><th class="fx-check"><span class="visually-hidden">Select</span></th><th>Member</th><th>Roles</th><th>Rank role</th><th>Note</th><th>Approved</th></tr></thead>
       <tbody>
@@ -281,11 +290,12 @@
           {{template "note-cell" .}}
           <td class="fx-nowrap">{{if .Approved}}<span class="tag tag--approved" data-approved>Approved</span>{{end}}</td>
         </tr>
-      {{else}}
-        <tr><td colspan="6" class="off">{{if $.Foxhole.NoHolders}}Nobody holds a Foxhole role or is an approved collaborator.{{else}}No member matches.{{end}}</td></tr>
       {{end}}
       </tbody>
     </table></div>
+    {{else}}
+    <div class="block-row off">{{if .NoHolders}}Nobody holds a Foxhole role or is an approved collaborator.{{else}}No member matches.{{end}}</div>
+    {{end}}
     {{template "also-matches" .AlsoMatches}}
   </section>
   {{end}}
@@ -316,6 +326,7 @@
       <div class="fx-changereport">
         <p>{{.Name}}: {{template "outcome" .}}</p>
         {{template "report-head" .}}
+        {{template "report-tally" .}}
         <div class="change-fields">
         {{template "report-lists" .}}
         {{template "retry" .}}
@@ -343,7 +354,7 @@
 {{end}}
 
 {{define "fx-toolbar"}}<div class="block-row fx-toolbar">
-  <form method="get" action="/foxhole" class="fx-searchform" role="search" data-field="search">
+  <form method="get" action="/foxhole#{{.ListAnchor}}" class="fx-searchform" role="search" data-field="search">
     {{if ne .Filter "all"}}<input type="hidden" name="filter" value="{{.Filter}}">{{end}}
     <input type="search" name="q" value="{{.Query}}" class="search-input fx-search" placeholder="Search name, username, ID or note" aria-label="Search name, username, ID or note">
     <button type="submit" class="btn btn--small">Search</button>
@@ -402,12 +413,15 @@
 </form>{{end}}
 
 {{define "roster-member"}}<span class="fx-name" data-field="display_name">{{.DisplayName}}</span> <span class="fx-user">@<span data-field="username">{{.Username}}</span></span>
-  <span class="fx-addinfo">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else}}<span class="off">no rank role</span>{{end}}
+  <span class="fx-addinfo">{{template "preview-rank" .}}
   {{- if .Internal}} <span class="tag fx-role" data-role="internal">Internal</span>{{end}}{{if .External}} <span class="tag fx-role" data-role="external">External</span>{{end}}</span>{{end}}
+
+{{- /* A previewed member's rank role, or, when they have none, the holder list's flag if the action leaves them holding Internal. */}}
+{{define "preview-rank"}}{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else if .NoRankRole}}<span class="tag tag--warn" data-flag="no-rank-role">no rank role</span>{{else}}<span class="off">no rank role</span>{{end}}{{end}}
 
 {{define "add-member"}}<span class="fx-name" data-field="display_name">{{.DisplayName}}</span> <span class="fx-user">@<span data-field="username">{{.Username}}</span></span>
   <span class="fx-matched">matched by {{.MatchedLabel}}</span>
-  <span class="fx-addinfo">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else}}<span class="off">no rank role</span>{{end}}
+  <span class="fx-addinfo">{{template "preview-rank" .}}
   {{- if .Internal}} <span class="tag fx-role" data-role="internal">Internal</span>{{end}}{{if .External}} <span class="tag fx-role" data-role="external">External</span>{{end}}</span>
   {{- with .Note}}<span class="fx-previewnote">Note: <span data-field="note">{{.}}</span></span>{{end}}{{end}}
 
@@ -418,11 +432,14 @@
 {{define "report-counts"}}Changed <span data-count="changed">{{len .Changed}}</span>, skipped <span data-count="skipped">{{len .Skipped}}</span>, failed <span data-count="failed">{{len .Failed}}</span>, not attempted <span data-count="not-attempted">{{len .NotAttempted}}</span>
   {{- with .AddedNobody}}, lines that added nobody <span data-count="added-nobody">{{len .}}</span>{{end}}{{end}}
 
+{{- /* A report's tally counts every kind of member, and its lists show only the kinds it has any of. */}}
+{{define "report-tally"}}<div class="block-row fx-reporttally">{{template "report-counts" .}}.</div>{{end}}
+
 {{define "report-lists"}}
-<div class="block-row fx-reportlist" data-list="changed"><h3>Changed <span class="fx-count" data-field="count">{{len .Changed}}</span></h3>{{template "report-members" .Changed}}</div>
-<div class="block-row fx-reportlist" data-list="skipped"><h3>Skipped <span class="fx-count" data-field="count">{{len .Skipped}}</span></h3>{{template "report-members" .Skipped}}</div>
-<div class="block-row fx-reportlist" data-list="failed"><h3>Failed <span class="fx-count" data-field="count">{{len .Failed}}</span></h3>{{template "report-members" .Failed}}</div>
-<div class="block-row fx-reportlist" data-list="not-attempted"><h3>Not attempted <span class="fx-count" data-field="count">{{len .NotAttempted}}</span></h3>{{template "report-members" .NotAttempted}}</div>
+{{with .Changed}}<div class="block-row fx-reportlist" data-list="changed"><h3>Changed <span class="fx-count" data-field="count">{{len .}}</span></h3>{{template "report-members" .}}</div>{{end}}
+{{with .Skipped}}<div class="block-row fx-reportlist" data-list="skipped"><h3>Skipped <span class="fx-count" data-field="count">{{len .}}</span></h3>{{template "report-members" .}}</div>{{end}}
+{{with .Failed}}<div class="block-row fx-reportlist" data-list="failed"><h3>Failed <span class="fx-count" data-field="count">{{len .}}</span></h3>{{template "report-members" .}}</div>{{end}}
+{{with .NotAttempted}}<div class="block-row fx-reportlist" data-list="not-attempted"><h3>Not attempted <span class="fx-count" data-field="count">{{len .}}</span></h3>{{template "report-members" .}}</div>{{end}}
 {{with .AddedNobody}}<div class="block-row fx-reportlist" data-list="added-nobody"><h3>Lines that added nobody <span class="fx-count" data-field="count">{{len .}}</span></h3>
   <ul class="fx-reportmembers">{{range .}}<li data-line="{{.Line}}" data-reason="{{.Reason}}"{{with .SameAs}} data-same-as="{{.}}"{{end}}{{with .Matches}} data-matches="{{.}}"{{end}}><code data-field="text">{{.Text}}</code>: <span data-field="reason">{{.Why}}</span></li>{{end}}</ul></div>{{end}}
 {{end}}
