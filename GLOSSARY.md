@@ -536,8 +536,8 @@ _Avoid_: failed recording, aborted recording, broken recording.
 
 **Recordings page**:
 The panel page that lists the recordings a signed-in forum user started, with
-each one's downloads and deletion date. A panel admin can switch it to every
-recording. The link a recording notice gets at stop opens the recording here.
+each one's downloads, its deletion date and a Delete that removes it sooner.
+A panel admin can switch it to every recording. The link a recording notice gets at stop opens the recording here.
 _Avoid_: recordings dashboard, recordings list.
 
 **Recording notice**:

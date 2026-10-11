@@ -46,9 +46,10 @@ Shipped:
 - The Foxhole page: the holder list with flags and notes, approved collaborators, add, remove, roster add, purge, re-add, retry, reports and its own change log, plus a second view of members who have a note but no Foxhole role.
 - The Recordings page (#390): a starter's own recordings with their mix and zip downloads and deletion dates, each recording's own page that the recording notice links to, and a panel admin's switch to every recording.
 - The 30-day retention (#392): within an hour of its deletion date, a recording leaves the Recordings page and its files leave the disk, whether or not recording is on.
+- Deleting a recording early (#391): its starter or a panel admin deletes it whole, files and row, through a danger confirm on its own page. A log line names the recording and the forum user who deleted it.
 
 Planned, not built:
-- Deleting a recording early (#391) and turning recording on in the live guild (#564).
+- Turning recording on in the live guild (#564).
 
 Constraints:
 - **Rendering.** The panel is Go HTML templates plus one stylesheet and one plain JavaScript file, all embedded in the bot binary. There is no framework, no build step and no CDN, and no page fetches from a third party, which is why the font is embedded (ADR 0013).
@@ -83,7 +84,7 @@ Constraints:
 
 1. **A person decides every removal.** The panel never drops a stored setting, an approval, a note or someone's authority on its own. A refused action changes nothing and says so.
 2. **Show it before changing it.** Removing a hub and every Foxhole action go through a preview first, and the Confirm acts on what the preview showed. Re-add is the one exception. It runs at once, because it only gives External back to approved collaborators a person already chose, and its block shows the count before it runs. A form save, such as a hub's settings or a note, has no preview. The form shows what it will store, and the change log keeps the old values. The heaviest confirm and the fullest report belong to the riskiest action. Today that's a purge, which takes a role from every holder at once. Once recordings ship, it's deleting a recording, the one panel action nobody can undo.
-3. **Every change names who made it.** Each save and each Foxhole action leaves a change log entry with the forum user, the time, and the old and new values.
+3. **Every change names who made it.** Each save and each Foxhole action leaves a change log entry with the forum user, the time, and the old and new values. Deleting a recording is the exception (#381). It leaves a log line naming the recording and the forum user who deleted it, since no page could show an entry for a recording that's gone.
 4. **The least practised visitor comes first in the parts everyone sees.** The rail, sign-in, the no-access page and shared wording must make sense to a recording starter who has never opened the panel and doesn't know what a hub is. Each page then serves its own audience, so staff pages can stay dense.
 5. **Desktop first for staff, phone first for starters.** Staff pages are built for a desk and must still work at phone width, with no sideways scroll and every action reachable. The Recordings page is designed at phone width first, because its link arrives in Discord.
 

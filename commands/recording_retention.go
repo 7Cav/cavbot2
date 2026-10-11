@@ -47,17 +47,12 @@ func (r *RecordingRuntime) sweepRetention() {
 
 // expireRecording deletes a recording past its deletion date: its files,
 // then its row. A failure goes to Sentry and leaves the row, so the next
-// pass tries again: the files go first because the row is what the sweep
-// finds them by.
+// pass tries again.
 func (r *RecordingRuntime) expireRecording(rec store.Recording) {
-	if err := recordingRemoveAll(recordingDir(r.dir, rec.ID)); err != nil {
-		captureError("Recording files not deleted after retention", err, "recording_id", rec.ID)
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)
 	defer cancel()
-	if err := r.st.DeleteRecording(ctx, rec.ID); err != nil {
-		captureError("Recording row not deleted after retention", err, "recording_id", rec.ID)
+	if err := removeRecording(ctx, r.st, r.dir, rec.ID); err != nil {
+		captureError("Recording not deleted after retention", err, "recording_id", rec.ID)
 		return
 	}
 	utils.Info("Recording deleted after its retention", "recording_id", rec.ID, "stopped_at", rec.StoppedAt)
