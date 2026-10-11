@@ -55,6 +55,18 @@ const (
 	// failureNoGuildData is a hub page or a save that found no data for the
 	// guild in the gateway state: Discord has not sent it to the bot.
 	failureNoGuildData failure = "no-guild-data"
+	// failureSigninNotStarted is a callback from a browser with no sign-in
+	// in progress: it carries no sign-in cookie.
+	failureSigninNotStarted failure = "signin-not-started"
+	// failureSigninTooSlow is a callback whose pending sign-in is gone: its
+	// five minutes ran out, or the bot restarted since it began.
+	failureSigninTooSlow failure = "signin-too-slow"
+	// failureSigninMismatch is a callback whose state is not the one its
+	// pending sign-in sent to the forum.
+	failureSigninMismatch failure = "signin-mismatch"
+	// failureSigninNoCode is a callback that carries neither a code nor the
+	// forum's error.
+	failureSigninNoCode failure = "signin-no-code"
 )
 
 // pageData is what every template renders from. SignedIn switches the rail
@@ -81,6 +93,9 @@ type pageData struct {
 	Message string
 	// Retry is where the error page's Try again link leads.
 	Retry string
+	// SignInAgain puts Sign in again on the error page in place of Try
+	// again, for a sign-in that didn't finish.
+	SignInAgain bool
 }
 
 // nav is which pages the rail links to: the ones this request's group check

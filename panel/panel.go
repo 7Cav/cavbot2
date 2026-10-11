@@ -292,18 +292,18 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 	clearCookie(w, signinCookie)
 	c, err := r.Cookie(signinCookie)
 	if err != nil {
-		http.Error(w, "no sign-in in progress", http.StatusBadRequest)
+		p.signinFailed(w, failureSigninNotStarted)
 		return
 	}
 	pending, ok := p.sessions.takePending(c.Value, panelClock.Now())
 	if !ok {
-		http.Error(w, "the sign-in took too long or was not started here", http.StatusBadRequest)
+		p.signinFailed(w, failureSigninTooSlow)
 		return
 	}
 	q := r.URL.Query()
 	if q.Get("state") == "" || q.Get("state") != pending.state {
 		utils.Warn("Panel sign-in refused: state mismatch")
-		http.Error(w, "the sign-in did not come back the way it left", http.StatusBadRequest)
+		p.signinFailed(w, failureSigninMismatch)
 		return
 	}
 	if q.Get("error") != "" {
@@ -315,7 +315,7 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	code := q.Get("code")
 	if code == "" {
-		http.Error(w, "the forum sent no code", http.StatusBadRequest)
+		p.signinFailed(w, failureSigninNoCode)
 		return
 	}
 
@@ -357,6 +357,27 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 		utils.Info("Panel sign-in refused", "cause", string(outcome.cause()), "username", user.Username, "forum_user_id", user.UserID)
 		http.Redirect(w, r, signinURL(outcome.cause()), http.StatusSeeOther)
 	}
+}
+
+// signinFailures is the title and the sentence of each callback the panel
+// can't finish.
+var signinFailures = map[failure]struct{ title, message string }{
+	failureSigninNotStarted: {"This sign-in didn't start here",
+		"This browser has no sign-in in progress, so you are not signed in."},
+	failureSigninTooSlow: {"The sign-in took too long",
+		"A sign-in has five minutes to come back from the forum, so you are not signed in."},
+	failureSigninMismatch: {"The sign-in didn't match",
+		"The forum sent back a sign-in this browser didn't start, so you are not signed in."},
+	failureSigninNoCode: {"The forum didn't finish the sign-in",
+		"The forum sent you back without signing you in, so you are not signed in."},
+}
+
+// signinFailed answers a callback the panel can't finish with the error
+// page for the failure and a 400. Its Sign in again starts a fresh sign-in.
+func (p *Panel) signinFailed(w http.ResponseWriter, f failure) {
+	utils.Info("Panel sign-in not completed", "failure", string(f))
+	text := signinFailures[f]
+	p.render(w, http.StatusBadRequest, "error", pageData{Title: text.title, Message: text.message, Failure: f, SignInAgain: true})
 }
 
 // forumUnavailable renders the error page with the 502 the forum outage
