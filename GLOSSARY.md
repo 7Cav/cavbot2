@@ -430,8 +430,8 @@ _Avoid_: login, token session, forum session, auth cookie.
 
 **Pending sign-in**:
 The panel's record of one sign-in between the redirect to the forum and the
-callback. Consumed by the callback, whatever its outcome, or dropped after
-five minutes.
+callback, with the panel page the sign-in comes back to. Consumed by the
+callback, whatever its outcome, or dropped after five minutes.
 _Avoid_: auth request, login attempt, OAuth state, flow.
 
 **Group check**:
