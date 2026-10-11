@@ -6,14 +6,33 @@
     <a href="/recordings"{{if not .Recordings.All}} class="is-on" aria-current="page"{{end}}>Yours</a>
     <a href="/recordings?view=all" data-field="view-all"{{if .Recordings.All}} class="is-on" aria-current="page"{{end}}>Every recording</a>
   </nav>{{end}}
+  {{if .Recordings.Deleted}}<div role="status"><div class="note note--ok" data-field="deleted">Recording deleted. Nobody can download it now.</div></div>{{end}}
   {{if .Recordings.Gone}}
   <div class="block" data-field="recording-gone"><div class="block-row">This recording isn't in the panel. Recordings are deleted 30 days after they stop.</div></div>
+  {{else if .Recordings.Delete}}
+  {{range .Recordings.Recordings}}{{template "delete-preview" .}}{{end}}
   {{else}}
   {{range .Recordings.Recordings}}
   <section class="block" data-recording="{{.ID}}">
-    <h2 class="block-header" data-field="title">{{if .Title}}{{.Title}}{{else}}Untitled recording{{end}}</h2>
+    <h2 class="block-header" data-field="title">{{template "recording-title" .}}</h2>
+    {{template "recording-facts" .}}
+    {{if not .Running}}<div class="submit-row rec-downloads">
+      {{template "recording-downloads" .}}
+      <a class="btn btn--danger" href="{{.DeleteURL}}" data-field="delete">Delete</a>
+    </div>{{end}}
+  </section>
+  {{else}}
+  <div class="block"><div class="block-row">{{if $.Recordings.Deleted}}No recordings left.{{else}}No recordings yet.{{end}}</div></div>
+  {{end}}
+  {{end}}
+</main>
+{{end}}
+
+{{define "recording-title"}}{{if .Title}}{{.Title}}{{else}}Untitled recording{{end}}{{end}}
+
+{{define "recording-facts"}}
     <dl class="rec-facts">
-      {{if $.Recordings.ShowStarter}}<dt>Started by</dt><dd data-starter="{{.StarterID}}">{{.Starter}}</dd>{{end}}
+      {{if .ShowStarter}}<dt>Started by</dt><dd data-starter="{{.StarterID}}">{{.Starter}}</dd>{{end}}
       <dt>Channel</dt><dd data-field="channel">{{if .Channel}}{{.Channel}}{{else}}<span class="off">unknown</span>{{end}}</dd>
       <dt>Started</dt><dd><time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04"}} UTC</time></dd>
       <dt>Length</dt><dd data-field="length">{{if .Running}}Still recording{{else}}{{.Length}}{{end}}</dd>
@@ -21,16 +40,36 @@
       <dt>Mix</dt><dd data-field="mix">{{template "mix-state" .}}</dd>
       <dt>Deleted on</dt><dd>{{if .Running}}30 days after it stops{{else}}<time data-field="deletes" datetime="{{.DeletesAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.DeletesAt.UTC.Format "2 Jan 2006"}}</time>{{end}}</dd>
     </dl>
-    {{if not .Running}}<div class="submit-row rec-downloads">
+{{end}}
+
+{{define "recording-downloads"}}
       {{if eq .Mix "ready"}}<a class="btn btn--cta" href="{{.MixURL}}" data-field="mix-download">Download the mix</a>{{end}}
       <a class="btn" href="{{.ZipURL}}" data-field="zip-download">Download each speaker's track (zip)</a>
-    </div>{{end}}
+{{end}}
+
+{{define "delete-preview"}}
+  <section class="block block--danger" data-recording="{{.ID}}" data-field="delete-preview">
+    <h2 class="block-header">Delete {{template "recording-title" .}}?</h2>
+    {{template "recording-facts" .}}
+    {{if .Running}}
+    <div class="block-row">It's still recording. Stop it first, then delete it.</div>
+    {{else}}
+    <div class="block-row confirm-list" data-list="goes">
+      <h3>Goes for good</h3>
+      <ul>
+        <li>Each speaker's track{{if eq .Mix "ready"}} and the mix{{end}}.</li>
+        <li>The info file.</li>
+        <li>The link in Discord stops working.</li>
+      </ul>
+      <p>Nobody can get it back, not even a panel admin. Download anything you want to keep first.</p>
+    </div>
+    <div class="block-row rec-downloads">{{template "recording-downloads" .}}</div>
+    <form method="post" action="{{.DeleteURL}}" class="submit-row" data-field="delete-confirm">
+      <button type="submit" class="btn btn--danger-filled" data-field="confirm">Delete the recording</button>
+      <a class="btn" href="/recordings/{{.ID}}" data-field="cancel">Cancel</a>
+    </form>
+    {{end}}
   </section>
-  {{else}}
-  <div class="block"><div class="block-row">No recordings yet.</div></div>
-  {{end}}
-  {{end}}
-</main>
 {{end}}
 
 {{define "mix-state"}}{{if .Running}}<span class="tag">recording</span>{{else if eq .Mix "ready"}}<span class="tag tag--on">ready</span>{{else if eq .Mix "failed"}}<span class="tag tag--warn">failed</span> The tracks can still be downloaded.{{else}}<span class="tag">being mixed</span> Ready a few minutes after the stop.{{end}}{{end}}

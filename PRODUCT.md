@@ -46,9 +46,10 @@ Shipped:
 - The Foxhole page: the holder list with flags and notes, approved collaborators, add, remove, roster add, purge, re-add, retry, reports and its own change log, plus a second view of members who have a note but no Foxhole role.
 - The Recordings page (#390): a starter's own recordings with their mix and zip downloads and deletion dates, each recording's own page that the recording notice links to, and a panel admin's switch to every recording.
 - The 30-day retention (#392): within an hour of its deletion date, a recording leaves the Recordings page and its files leave the disk, whether or not recording is on.
+- Deleting a recording early (#391): its starter or a panel admin deletes it whole, files and row, through a danger confirm on its own page. A log line names the recording and the forum user who deleted it.
 
 Planned, not built:
-- Deleting a recording early (#391) and turning recording on in the live guild (#564).
+- Turning recording on in the live guild (#564).
 
 Constraints:
 - **Rendering.** The panel is Go HTML templates plus one stylesheet and one plain JavaScript file, all embedded in the bot binary. There is no framework, no build step and no CDN, and no page fetches from a third party, which is why the font is embedded (ADR 0013).

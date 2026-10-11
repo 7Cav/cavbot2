@@ -41,6 +41,10 @@ func RecordingPath(id int64) string {
 // nothing to download.
 var ErrMixNotReady = errors.New("recording: mix not ready")
 
+// ErrRecordingRunning: the recording is still running, so it can't be
+// deleted until it stops.
+var ErrRecordingRunning = errors.New("recording: still running")
+
 // RecordingLibrary reads the recordings of one guild.
 type RecordingLibrary struct {
 	st      store.Store
@@ -89,6 +93,25 @@ func (l *RecordingLibrary) Recording(ctx context.Context, id int64) (store.Recor
 		}
 	}
 	return store.Recording{}, store.ErrNotFound
+}
+
+// Delete deletes a stopped recording whole, before its deletion date: its
+// files, then its row. The files go first, so a failure part way leaves the
+// row, and the recording listed for another try, never files no row leads
+// to. ErrRecordingRunning while it runs.
+func (l *RecordingLibrary) Delete(ctx context.Context, rec store.Recording) error {
+	if rec.StoppedAt.IsZero() {
+		// The runtime is still writing its tracks and will write its row
+		// at the stop.
+		return ErrRecordingRunning
+	}
+	if err := recordingRemoveAll(recordingDir(l.dir, rec.ID)); err != nil {
+		return fmt.Errorf("delete the files of recording %d: %w", rec.ID, err)
+	}
+	if err := l.st.DeleteRecording(ctx, rec.ID); err != nil {
+		return fmt.Errorf("delete the row of recording %d: %w", rec.ID, err)
+	}
+	return nil
 }
 
 // RecordingFileName names a download of a recording: its title, else its

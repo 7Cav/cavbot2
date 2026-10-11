@@ -245,14 +245,31 @@ func (w *testWorld) recorder(t *testing.T) *recordingRig {
 // returns the recording's ID.
 func (w *testWorld) record(t *testing.T, discordID string) int64 {
 	t.Helper()
+	id := w.startRecording(t, discordID)
+	w.stopRecording(t, discordID)
+	return id
+}
+
+// startRecording has the member with the Discord ID given start a recording
+// in the fixture's channel and say one frame into it, and leaves it
+// running. It returns the recording's ID.
+func (w *testWorld) startRecording(t *testing.T, discordID string) int64 {
+	t.Helper()
 	rig := w.recorder(t)
-	by := commands.Invoker{UserID: discordID, Username: "tester", Roles: []string{testRecordingRole, testRankSGT}}
 	w.discord.setVoice(discordID, testRecordChannel)
-	if _, err := rig.rt.Start(by, ""); err != nil {
+	if _, err := rig.rt.Start(starterInvoker(discordID), ""); err != nil {
 		t.Fatalf("starting a recording as %s: %v", discordID, err)
 	}
 	rig.voice.hear(t, voice.Frame{UserID: discordID, SSRC: 1, Opus: []byte{0xF8, 'x'}})
-	if _, err := rig.rt.Stop(by); err != nil {
+	return newestRecordingOf(t, w.store, discordID).ID
+}
+
+// stopRecording has the member with the Discord ID given stop the recording
+// they started, and waits for its mix.
+func (w *testWorld) stopRecording(t *testing.T, discordID string) {
+	t.Helper()
+	rig := w.recorder(t)
+	if _, err := rig.rt.Stop(starterInvoker(discordID)); err != nil {
 		t.Fatalf("stopping %s's recording: %v", discordID, err)
 	}
 	w.discord.setVoice(discordID, "")
@@ -261,7 +278,12 @@ func (w *testWorld) record(t *testing.T, discordID string) int64 {
 	case <-time.After(5 * time.Second):
 		t.Fatalf("%s's recording was never mixed", discordID)
 	}
-	return newestRecordingOf(t, w.store, discordID).ID
+}
+
+// starterInvoker is the member with the Discord ID given running /record,
+// holding the recording role and a rank role.
+func starterInvoker(discordID string) commands.Invoker {
+	return commands.Invoker{UserID: discordID, Username: "tester", Roles: []string{testRecordingRole, testRankSGT}}
 }
 
 // newestRecordingOf is the latest recording the member with the Discord ID
@@ -396,8 +418,8 @@ type recordingRoute struct {
 	served func(t *testing.T, who string, res *http.Response, id int64)
 }
 
-// downloadHref reads the address of a download link, by its data-field,
-// off a recording's block on the Recordings page.
+// downloadHref reads the address of a link, such as a download, by its
+// data-field, off a recording's block on the Recordings page.
 func downloadHref(field string) func(t *testing.T, page *html.Node, id int64) string {
 	return func(t *testing.T, page *html.Node, id int64) string {
 		t.Helper()
@@ -426,7 +448,7 @@ func readBody(t *testing.T, res *http.Response) []byte {
 }
 
 // recordingRoutes is a case for each route that serves one recording: its
-// page, the notice link's target, and its two downloads.
+// page, the notice link's target, its two downloads and its delete preview.
 var recordingRoutes = []recordingRoute{
 	{
 		name: "page",
@@ -449,6 +471,17 @@ var recordingRoutes = []recordingRoute{
 			t.Helper()
 			if body := readBody(t, res); res.StatusCode != http.StatusOK || !bytes.Equal(body, testMix) {
 				t.Errorf("%s downloading recording %d's mix got %d with %q, want 200 with the mixer's %q", who, id, res.StatusCode, body, testMix)
+			}
+		},
+	},
+	{
+		name: "delete preview",
+		href: downloadHref("delete"),
+		served: func(t *testing.T, who string, res *http.Response, id int64) {
+			t.Helper()
+			row, ok := listedRecordings(t, parseHTML(t, res))[id]
+			if !ok || findElement(row, "form", "data-field", "delete-confirm") == nil {
+				t.Errorf("recording %d's delete preview, as %s sees it, has no Confirm for it", id, who)
 			}
 		},
 	},
