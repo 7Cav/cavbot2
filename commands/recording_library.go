@@ -66,6 +66,32 @@ func (l *RecordingLibrary) StartedBy(ctx context.Context, discordID string) ([]s
 	return slices.DeleteFunc(recs, func(rec store.Recording) bool { return rec.StarterID != discordID }), nil
 }
 
+// Recording reads the recording with the ID given, store.ErrNotFound when
+// there is none.
+func (l *RecordingLibrary) Recording(ctx context.Context, id int64) (store.Recording, error) {
+	recs, err := l.st.ListRecordings(ctx, l.guildID)
+	if err != nil {
+		return store.Recording{}, err
+	}
+	for _, rec := range recs {
+		if rec.ID == id {
+			return rec, nil
+		}
+	}
+	return store.Recording{}, store.ErrNotFound
+}
+
+// RecordingFileName names a download of a recording: its title, else its
+// channel's name, and the day it started in UTC, then suffix. A starter who
+// downloads several recordings tells them apart by it.
+func RecordingFileName(rec store.Recording, suffix string) string {
+	base := safeFileName(cmp.Or(rec.Title, rec.ChannelName))
+	if base == "" {
+		base = "Recording " + strconv.FormatInt(rec.ID, 10)
+	}
+	return base + " " + rec.StartedAt.UTC().Format("2006-01-02") + suffix
+}
+
 // OpenMix opens a recording's mix for reading. ErrMixNotReady unless the
 // mix is ready.
 func (l *RecordingLibrary) OpenMix(rec store.Recording) (*os.File, error) {

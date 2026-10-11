@@ -1,8 +1,11 @@
 package panel
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -358,5 +361,127 @@ func TestRecordingsAllViewOpenedByAStarterListsTheirOwnOnly(t *testing.T) {
 	}
 	if _, ok := listed[recB]; ok {
 		t.Errorf("A's all view lists B's recording %d", recB)
+	}
+}
+
+// recordingRoute is one route a recording's starter and panel admins reach:
+// how to read its address for a recording off the Recordings page the
+// starter sees, and the check that a response is what the route serves.
+type recordingRoute struct {
+	name   string
+	href   func(t *testing.T, page *html.Node, id int64) string
+	served func(t *testing.T, who string, res *http.Response, id int64)
+}
+
+// downloadHref reads the address of a download link, by its data-field,
+// off a recording's block on the Recordings page.
+func downloadHref(field string) func(t *testing.T, page *html.Node, id int64) string {
+	return func(t *testing.T, page *html.Node, id int64) string {
+		t.Helper()
+		row, ok := listedRecordings(t, page)[id]
+		if !ok {
+			t.Fatalf("the Recordings page doesn't list recording %d", id)
+		}
+		link := findElement(row, "a", "data-field", field)
+		if link == nil {
+			t.Fatalf("recording %d's block has no %s link", id, field)
+		}
+		href, _ := attrValue(link, "href")
+		return href
+	}
+}
+
+// readBody reads a response's whole body.
+func readBody(t *testing.T, res *http.Response) []byte {
+	t.Helper()
+	defer func() { _ = res.Body.Close() }()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return body
+}
+
+// recordingRoutes is a case for each route that serves one recording: its
+// page, the notice link's target, and its two downloads.
+var recordingRoutes = []recordingRoute{
+	{
+		name: "page",
+		href: func(_ *testing.T, _ *html.Node, id int64) string { return commands.RecordingPath(id) },
+		served: func(t *testing.T, who string, res *http.Response, id int64) {
+			t.Helper()
+			doc := parseHTML(t, res)
+			if got := pageOf(t, doc); got != pageRecordings {
+				t.Errorf("%s opened recording %d's page and got page %q, want %s", who, id, got, pageRecordings)
+			}
+			if _, ok := listedRecordings(t, doc)[id]; !ok {
+				t.Errorf("recording %d's page, as %s sees it, doesn't show it", id, who)
+			}
+		},
+	},
+	{
+		name: "mix",
+		href: downloadHref("mix-download"),
+		served: func(t *testing.T, who string, res *http.Response, id int64) {
+			t.Helper()
+			if body := readBody(t, res); res.StatusCode != http.StatusOK || !bytes.Equal(body, testMix) {
+				t.Errorf("%s downloading recording %d's mix got %d with %q, want 200 with the mixer's %q", who, id, res.StatusCode, body, testMix)
+			}
+		},
+	},
+	{
+		name: "zip",
+		href: downloadHref("zip-download"),
+		served: func(t *testing.T, who string, res *http.Response, id int64) {
+			t.Helper()
+			body := readBody(t, res)
+			zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+			if res.StatusCode != http.StatusOK || err != nil || len(zr.File) == 0 {
+				t.Errorf("%s downloading recording %d's zip got %d, a zip read error %v, want 200 with a zip holding its files", who, id, res.StatusCode, err)
+			}
+		},
+	},
+}
+
+// assertRecordingRefused checks a response to a recording's route is the
+// no-access page, and carries neither the mix nor a zip.
+func assertRecordingRefused(t *testing.T, res *http.Response) {
+	t.Helper()
+	body := readBody(t, res)
+	if bytes.Equal(body, testMix) {
+		t.Fatal("the refused request got the mix")
+	}
+	if _, err := zip.NewReader(bytes.NewReader(body), int64(len(body))); err == nil {
+		t.Fatal("the refused request got a zip")
+	}
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	assertNoAccessPage(t, doc)
+}
+
+// A recording's page and its downloads are served to its starter and to a
+// panel admin, and refused to anyone else, here a starter of another
+// recording.
+func TestRecordingIsServedToItsStarterAndPanelAdminsOnly(t *testing.T) {
+	for _, route := range recordingRoutes {
+		t.Run(route.name, func(t *testing.T) {
+			w := newTestWorld(t)
+			a := w.addStarter(5001, "Able.A", "discord-a")
+			b := w.addStarter(5002, "Baker.B", "discord-b")
+			recA := w.record(t, a.discordID)
+			w.record(t, b.discordID)
+			signInAs(t, w.forum, w.b, a.account)
+			href := route.href(t, parseHTML(t, w.b.get(recordingsPath)), recA)
+			admin := newBrowser(t, w.p)
+			signIn(t, w.forum, admin)
+			other := newBrowser(t, w.p)
+			signInAs(t, w.forum, other, b.account)
+
+			route.served(t, "the starter", w.b.get(href), recA)
+			route.served(t, "a panel admin", admin.get(href), recA)
+			assertRecordingRefused(t, other.get(href))
+		})
 	}
 }

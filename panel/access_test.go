@@ -382,6 +382,13 @@ func TestEveryRouteHasAnOutsiderCaseOrIsOpen(t *testing.T) {
 	for _, tc := range pageLoadCases {
 		reach(http.MethodGet, tc.path)
 	}
+	starter := w.addStarter(5001, "Able.A", "discord-a")
+	rec := w.record(t, starter.discordID)
+	signInAs(t, w.forum, w.b, starter.account)
+	page := parseHTML(t, w.b.get(recordingsPath))
+	for _, route := range recordingRoutes {
+		reach(http.MethodGet, route.href(t, page, rec))
+	}
 	for _, rt := range w.p.routes() {
 		if !reached[rt.pattern] && !slices.Contains(openRoutes, rt.pattern) {
 			t.Errorf("%s has no outsider case and isn't in openRoutes", rt.pattern)

@@ -266,6 +266,8 @@ img { max-width: 100%; }
 .rec-facts dd { margin: 0; color: var(--text-hi); overflow-wrap: anywhere; }
 .rec-facts .off { color: var(--text-mute); }
 .rec-switch { margin-bottom: 12px; }
+.rec-downloads { display: flex; flex-wrap: wrap; gap: 8px; }
+.rec-downloads .btn { white-space: normal; text-align: center; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 /* The rail and the page beside it. */
