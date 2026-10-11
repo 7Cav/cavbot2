@@ -395,7 +395,7 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 // can't finish.
 var signinFailures = map[failure]struct{ title, message string }{
 	failureSigninNotStarted: {"This sign-in didn't start here",
-		"This browser has no sign-in in progress, so you are not signed in."},
+		"This browser has no sign-in in progress, so this one can't finish here."},
 	failureSigninTooSlow: {"The sign-in took too long",
 		"A sign-in has five minutes to come back from the forum, so you are not signed in."},
 	failureSigninMismatch: {"The sign-in didn't match",
