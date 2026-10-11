@@ -116,9 +116,9 @@ func formIn(t *testing.T, doc, block *html.Node) (string, url.Values) {
 	return attrOf(form, "action"), formFields(doc, form)
 }
 
-// withAttr returns the first element under n carrying attr, whatever its
-// value, nil for none.
-func withAttr(n *html.Node, attr string) *html.Node {
+// firstWithAttr returns the first element under n carrying attr, whatever
+// its value, nil for none.
+func firstWithAttr(n *html.Node, attr string) *html.Node {
 	var found *html.Node
 	eachElement(n, func(el *html.Node) {
 		if _, ok := attrValue(el, attr); ok && found == nil {
@@ -128,9 +128,10 @@ func withAttr(n *html.Node, attr string) *html.Node {
 	return found
 }
 
-// isHeading reports whether n is a heading a screen reader lists as one.
+// isHeading reports whether n is a heading a screen reader lists as one:
+// an h1 to h6, or an element with the heading role.
 func isHeading(n *html.Node) bool {
-	return slices.Contains([]string{"h1", "h2", "h3", "h4", "h5", "h6"}, n.Data)
+	return slices.Contains([]string{"h1", "h2", "h3", "h4", "h5", "h6"}, n.Data) || attrOf(n, "role") == "heading"
 }
 
 // hubEditBlock is the hub-1 edit section on a page.
@@ -159,36 +160,31 @@ func savedByAnother(t *testing.T, w *testWorld, page string, block func(*testing
 	}
 }
 
-// moderatorsBlock is the guild-wide moderator roles section on a page.
-func moderatorsBlock(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
-	t.Helper()
-	return moderatorsSection(t, doc)
-}
-
-// recordingRolesBlock is the recording roles section on a page.
-func recordingRolesBlock(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
-	t.Helper()
-	return recordingRolesSection(t, doc)
-}
-
-// createBlock is the Create a hub form on a page.
-func createBlock(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
-	t.Helper()
-	form := findElement(doc, "form", "data-section", formCreate)
-	if form == nil {
-		t.Fatal("page has no form under data-section=create")
+// sectionNamed is a block finder for the element a page marks with
+// data-section=name: the moderator and recording roles sections, and the
+// create and register forms.
+func sectionNamed(name string) func(*testing.T, *testWorld, *html.Node) *html.Node {
+	return func(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
+		t.Helper()
+		block := findElement(doc, "", "data-section", name)
+		if block == nil {
+			t.Fatalf("page has nothing under data-section=%s", name)
+		}
+		return block
 	}
-	return form
 }
 
-// registerBlock is the Register a voice channel as a hub form on a page.
-func registerBlock(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
+var (
+	moderatorsBlock     = sectionNamed(formModerators)
+	recordingRolesBlock = sectionNamed(formRecordingRoles)
+	createBlock         = sectionNamed(formCreate)
+	registerBlock       = sectionNamed(formRegister)
+)
+
+// removePreviewOn is the remove preview on a page.
+func removePreviewOn(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
 	t.Helper()
-	form := findElement(doc, "form", "data-section", formRegister)
-	if form == nil {
-		t.Fatal("page has no form under data-section=register")
-	}
-	return form
+	return removePreviewBlock(t, doc)
 }
 
 var refusedSaves = []refusedSave{
@@ -220,7 +216,7 @@ var refusedSaves = []refusedSave{
 		status: http.StatusUnprocessableEntity,
 		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
 			doc := parseHTML(t, w.b.get("/"))
-			return formIn(t, doc, moderatorsSection(t, doc))
+			return formIn(t, doc, moderatorsBlock(t, w, doc))
 		},
 		block: moderatorsBlock,
 	},
@@ -230,7 +226,7 @@ var refusedSaves = []refusedSave{
 		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
 			doc := parseHTML(t, w.b.get("/"))
 			savedByAnother(t, w, "/", moderatorsBlock, func(f url.Values) { f.Add(fieldModeratorRoles, "role-mp") })
-			return formIn(t, doc, moderatorsSection(t, doc))
+			return formIn(t, doc, moderatorsBlock(t, w, doc))
 		},
 		block: moderatorsBlock,
 	},
@@ -239,7 +235,7 @@ var refusedSaves = []refusedSave{
 		status: http.StatusUnprocessableEntity,
 		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
 			doc := parseHTML(t, w.b.get("/"))
-			return formIn(t, doc, recordingRolesSection(t, doc))
+			return formIn(t, doc, recordingRolesBlock(t, w, doc))
 		},
 		block: recordingRolesBlock,
 	},
@@ -249,7 +245,7 @@ var refusedSaves = []refusedSave{
 		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
 			doc := parseHTML(t, w.b.get("/"))
 			savedByAnother(t, w, "/", recordingRolesBlock, func(f url.Values) { f.Add(fieldRecordingRoles, "role-mp") })
-			return formIn(t, doc, recordingRolesSection(t, doc))
+			return formIn(t, doc, recordingRolesBlock(t, w, doc))
 		},
 		block: recordingRolesBlock,
 	},
@@ -282,9 +278,9 @@ var refusedSaves = []refusedSave{
 		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
 			doc := openHubRemovePreview(t, w.b, storedHubID(t, w.st, "hub-1"))
 			savedByAnother(t, w, hubEditPage(t, w), hubEditBlock, func(f url.Values) { f.Set("user_limit", "5") })
-			return formIn(t, doc, removePreviewBlock(t, doc))
+			return formIn(t, doc, removePreviewOn(t, w, doc))
 		},
-		block: func(t *testing.T, _ *testWorld, doc *html.Node) *html.Node { return removePreviewBlock(t, doc) },
+		block: removePreviewOn,
 	},
 }
 
@@ -314,7 +310,7 @@ func TestARefusedSaveLandsOnItsForm(t *testing.T) {
 			if got := attrOf(heading, "tabindex"); got != "-1" {
 				t.Errorf("the landed heading has tabindex %q, want -1 so it takes focus without joining the tab order", got)
 			}
-			note := withAttr(block, "data-error")
+			note := firstWithAttr(block, "data-error")
 			if note == nil {
 				t.Fatal("the refused form's block carries no refusal note")
 			}
@@ -342,13 +338,13 @@ func TestARefusedEditOfABrokenHubLandsOnTheBrokenHubBlock(t *testing.T) {
 		t.Fatalf("status = %d, want the edit refused", res.StatusCode)
 	}
 	doc = parseHTML(t, res)
-	heading := landedOn(doc, fragment)
-	if heading == nil || !isHeading(heading) || !within(heading, hubEditBlock(t, w, doc)) {
-		t.Fatalf("the answer opens at fragment %q, want a heading in the hub's section", fragment)
+	section := hubEditBlock(t, w, doc)
+	if findElement(section, "", "data-field", "broken") == nil {
+		t.Fatal("the answer's hub section shows no Broken hub block")
 	}
-	// The block a heading heads is its parent.
-	if findElement(heading.Parent, "", "data-field", "broken") == nil {
-		t.Error("the answer lands on a heading whose block shows no broken marker, want the Broken hub block's")
+	heading := landedOn(doc, fragment)
+	if heading == nil || !isHeading(heading) || !within(heading, section) {
+		t.Fatalf("the answer opens at fragment %q, want the Broken hub block's heading", fragment)
 	}
 	if got := attrOf(heading, "tabindex"); got != "-1" {
 		t.Errorf("the landed heading has tabindex %q, want -1 so it takes focus without joining the tab order", got)
@@ -384,13 +380,13 @@ func TestASaveThatGoesThroughLandsOnWhatItChanged(t *testing.T) {
 	}{
 		{"the moderator roles for every hub", func(t *testing.T, w *testWorld) (string, url.Values) {
 			doc := parseHTML(t, w.b.get("/"))
-			action, fields := formIn(t, doc, moderatorsSection(t, doc))
+			action, fields := formIn(t, doc, moderatorsBlock(t, w, doc))
 			fields.Add(fieldModeratorRoles, "role-mp")
 			return action, fields
 		}, moderatorsBlock, ""},
 		{"the recording roles", func(t *testing.T, w *testWorld) (string, url.Values) {
 			doc := parseHTML(t, w.b.get("/"))
-			action, fields := formIn(t, doc, recordingRolesSection(t, doc))
+			action, fields := formIn(t, doc, recordingRolesBlock(t, w, doc))
 			fields.Add(fieldRecordingRoles, "role-mp")
 			return action, fields
 		}, recordingRolesBlock, ""},
@@ -411,7 +407,7 @@ func TestASaveThatGoesThroughLandsOnWhatItChanged(t *testing.T) {
 		}, hubListBlock, "Squad Voice"},
 		{"a removal", func(t *testing.T, w *testWorld) (string, url.Values) {
 			doc := openHubRemovePreview(t, w.b, storedHubID(t, w.st, "hub-1"))
-			return formIn(t, doc, removePreviewBlock(t, doc))
+			return formIn(t, doc, removePreviewOn(t, w, doc))
 		}, hubListBlock, ""},
 	}
 	for _, tc := range cases {

@@ -412,7 +412,7 @@ const hubListAnchor = "hubs"
 // home.html. Every address the panel sends a panel admin to a hub's edit
 // form by opens the page there, below the sections above it, with the
 // heading focused.
-const hubEditAnchor = "edit"
+const hubEditAnchor = formEdit
 
 // hubEditAddress is the address of a hub's edit form, opened at the form.
 func hubEditAddress(id int64) string {
