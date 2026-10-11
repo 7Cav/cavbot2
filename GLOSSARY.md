@@ -183,9 +183,8 @@ for the role).
 
 **Foxhole page**:
 The panel page that lists every Foxhole role holder and approved
-collaborator with their notes, and starts Foxhole actions. A second view
-lists the members with a note who hold no Foxhole role and aren't approved
-collaborators.
+collaborator with their notes, and starts Foxhole actions. Its second view
+is the no-role view.
 _Avoid_: warden page, warden dashboard.
 
 **Holder list**:
@@ -193,6 +192,11 @@ The Foxhole page's list of every Foxhole role holder and every approved
 collaborator, read from the member list as it stands when the page loads.
 _Avoid_: roster (a unit's roster), member list (the bot's copy of the whole
 guild).
+
+**No-role view**:
+The Foxhole page's second view, which lists the members with a note who hold
+no Foxhole role and aren't approved collaborators.
+_Avoid_: holder list (nobody in it holds a Foxhole role).
 
 **Flag**:
 A display-only mark on a holder list row that points a Foxhole manager at a
@@ -404,6 +408,14 @@ save that fails leaves the store as it was, though a Discord change it
 already made may stay.
 _Avoid_: submit, submission, write, commit.
 
+**Refusal**:
+The answer that turns a request down before anything changes: a command's
+reply to a run, the note a panel form shows on a refused save, or the
+no-access page for a request the visitor may not make. Only the person who
+asked sees it.
+_Avoid_: rejection, error reply (which also covers a run that failed after
+it started).
+
 **Change log**:
 The panel's record of each change made through it: who made it, when, and
 what changed. Every save that takes effect has one entry, holding the old
@@ -559,14 +571,6 @@ start, and edited at stop to say it stopped, or that it was cut short, with
 a link to the recording in the panel. If the channel is gone by then, the
 starter gets that link by DM instead.
 _Avoid_: recording panel (the panel is the web UI), banner, announcement.
-
-## Commands and the panel
-
-**Refusal**:
-A command's reply or a panel page that turns a request down before acting on
-it. Only the person who asked sees it, and it says that nothing changed.
-_Avoid_: rejection, error reply (which also covers a run that failed after
-it started).
 
 ## External systems
 
