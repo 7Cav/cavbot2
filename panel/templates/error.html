@@ -3,7 +3,7 @@
   <h1 class="title">{{.Title}}</h1>
   <div class="block narrow">
     <div class="block-row"><p>{{.Message}}</p></div>
-    <div class="submit-row"><a class="btn" href="{{.Retry}}" data-retry>Try again</a></div>
+    <div class="submit-row">{{if .SignInAgain}}<form method="post" action="/auth/start">{{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}<button type="submit" class="btn btn--cta">Sign in again</button></form>{{else if .Back}}<a class="btn" href="{{.Back}}" data-back>{{.BackLabel}}</a>{{else}}<a class="btn" href="{{.Retry}}" data-retry>Try again</a>{{end}}</div>
   </div>
 </main>
 {{end}}

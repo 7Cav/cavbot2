@@ -26,6 +26,9 @@ const (
 	causeNone    cause = ""
 	causeExpired cause = "expired"
 	causeRefused cause = "refused"
+	// causeUnfinished is a sign-in the forum sent back without finishing:
+	// Deny on its consent page, or a request it refused.
+	causeUnfinished cause = "unfinished"
 )
 
 // causeFromQuery narrows a query value to the enum, so an unknown value is a
@@ -36,6 +39,8 @@ func causeFromQuery(raw string) cause {
 		return causeExpired
 	case causeRefused:
 		return causeRefused
+	case causeUnfinished:
+		return causeUnfinished
 	}
 	return causeNone
 }
@@ -55,6 +60,21 @@ const (
 	// failureNoGuildData is a hub page or a save that found no data for the
 	// guild in the gateway state: Discord has not sent it to the bot.
 	failureNoGuildData failure = "no-guild-data"
+	// failureNotFound is an address that names nothing in the panel: no
+	// page, or no hub with the ID it names.
+	failureNotFound failure = "not-found"
+	// failureSigninNotStarted is a callback from a browser with no sign-in
+	// in progress: it carries no sign-in cookie.
+	failureSigninNotStarted failure = "signin-not-started"
+	// failureSigninTooSlow is a callback whose pending sign-in is gone: its
+	// five minutes ran out, or the bot restarted since it began.
+	failureSigninTooSlow failure = "signin-too-slow"
+	// failureSigninMismatch is a callback whose state is not the one its
+	// pending sign-in sent to the forum.
+	failureSigninMismatch failure = "signin-mismatch"
+	// failureSigninNoCode is a callback that carries neither a code nor the
+	// forum's error.
+	failureSigninNoCode failure = "signin-no-code"
 )
 
 // pageData is what every template renders from. SignedIn switches the rail
@@ -72,8 +92,11 @@ type pageData struct {
 	Page     string
 	Username string
 	Cause    cause
-	Hubs     hubPage
-	Foxhole  foxholeView
+	// Next is the address the sign-in form, on the sign-in page or the
+	// error page's Sign in again, posts for its sign-in to come back to.
+	Next    string
+	Hubs    hubPage
+	Foxhole foxholeView
 	// Recordings is filled for the Recordings page alone.
 	Recordings recordingsView
 	Failure    failure
@@ -81,6 +104,13 @@ type pageData struct {
 	Message string
 	// Retry is where the error page's Try again link leads.
 	Retry string
+	// SignInAgain puts Sign in again on the error page in place of Try
+	// again, for a sign-in that didn't finish.
+	SignInAgain bool
+	// Back, on the not-found page, is where its way back leads in place of
+	// Try again, and BackLabel names it.
+	Back      string
+	BackLabel string
 }
 
 // nav is which pages the rail links to: the ones this request's group check

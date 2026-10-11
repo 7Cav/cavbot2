@@ -4,10 +4,11 @@
   <p class="desc">Cavbot2 uses your 7cav.us forum account.</p>
   <div class="narrow">
     {{if eq .Cause "expired"}}<div class="note note--neutral">Your session ended. Please sign in again.</div>{{end}}
+    {{if eq .Cause "unfinished"}}<div class="note note--neutral">The sign-in didn't finish, so you are not signed in.</div>{{end}}
     {{if eq .Cause "refused"}}<div class="note">The forum would not tell Cavbot2 who you are, so you are not signed in.</div>{{end}}
     <div class="block">
       <h2 class="block-header">Use your forum account</h2>
-      <div class="submit-row"><form method="post" action="/auth/start"><button type="submit" class="btn btn--cta">Sign in with the forum</button></form></div>
+      <div class="submit-row"><form method="post" action="/auth/start">{{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}<button type="submit" class="btn btn--cta">Sign in with the forum</button></form></div>
     </div>
   </div>
 </main>

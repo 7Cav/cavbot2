@@ -26,12 +26,14 @@ const (
 )
 
 // pendingSignin is one sign-in between the redirect to the forum and the
-// callback: the state the callback must echo and the PKCE verifier the
-// exchange must send.
+// callback: the state the callback must echo, the PKCE verifier the
+// exchange must send, and next, the panel address the sign-in comes back
+// to, checked by returnPath.
 type pendingSignin struct {
 	state    string
 	verifier string
 	started  time.Time
+	next     string
 }
 
 func (p pendingSignin) expired(at time.Time) bool {
