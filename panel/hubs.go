@@ -233,6 +233,11 @@ const (
 var errStaleHub = &fieldError{kind: refusalStale, Message: "Someone saved this hub after you opened this form, so your changes were not saved. " +
 	"Their save is at the top of the change log below. Your values are still in the form. Save again to keep them."}
 
+// errHubUnchanged is the refusal an update gets when it posts the hub as
+// stored and leaves the channel name as it is: a save that would change
+// nothing says so and writes nothing, not even a change log entry.
+var errHubUnchanged = &fieldError{kind: refusalUnchanged, Message: "Those are already this hub's settings, so nothing was saved."}
+
 // errStaleRemoval is the refusal a Confirm from a stale remove preview
 // gets: the hub is not at the version the preview showed, or the Confirm
 // posts none, as a one-click Remove form from before the preview did.
@@ -1171,7 +1176,8 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 //
 // A stale form is refused before anything else, as errStaleHub (#373). Then
 // a broken hub: its channel is gone or has no category, and the page offers
-// Remove alone.
+// Remove alone. A valid form that changes no field and leaves the channel
+// name as it is is refused as errHubUnchanged, before any Discord call.
 //
 // The hub channel's name is not stored, so no version covers it, and a
 // rename made in Discord never makes a form stale. The save renames the
@@ -1224,6 +1230,9 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by a
 		return store.Hub{}, err
 	}
 	d := diffHubs(&before, &hub)
+	if len(d) == 0 && !rename {
+		return store.Hub{}, errHubUnchanged
+	}
 	if rename {
 		reason := "Panel: hub channel renamed by " + by.String()
 		if _, err := s.deps.Manager.ChannelEdit(hub.HubChannelID, &discordgo.ChannelEdit{Name: channelName}, reason); err != nil {

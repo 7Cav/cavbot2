@@ -261,7 +261,9 @@ func TestUnavailableRoleIsKeptOrRemovedOnlyByASave(t *testing.T) {
 	// a deleted one, so the runtime is asked through a rename in the managed
 	// rows alone. The removed rows pass since #315's fix to the pickers; the
 	// keep rows are what the validator's stored exception turns green. A
-	// removed role's tag is gone from the posted form (#343).
+	// removed role's tag is gone from the posted form (#343). The keep rows
+	// also add role-hq, so each save changes the set: a save of the stored
+	// set alone changes nothing and is refused (#566).
 	cases := []struct {
 		form   string
 		roleID string
@@ -296,7 +298,7 @@ func TestUnavailableRoleIsKeptOrRemovedOnlyByASave(t *testing.T) {
 			}
 			posted := []string{"role-mp"}
 			if tc.keep {
-				posted = append(posted, tc.roleID)
+				posted = append(posted, tc.roleID, "role-hq")
 			}
 
 			res := w.postRoles(t, tc.form, posted...)
