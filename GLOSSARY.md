@@ -338,15 +338,13 @@ _Avoid_: request to join, let in (a lock's term, and done by the bot).
 
 **Eligible role**:
 A live Discord role that is not managed and is not `@everyone`. The only
-kind a moderator picker or the recording roles picker offers, and the only
-kind a save may add.
+kind a role picker offers, and the only kind a save may add.
 _Avoid_: offered role, valid role, pickable role, selectable role.
 
-**Unavailable moderator role**:
-A stored moderator role that is no longer eligible, kept with its authority
-until a person removes it in the panel. Two reasons: deleted, when the role
-is gone from Discord, and managed. A stored recording role that is no
-longer eligible is kept the same way.
+**Unavailable role**:
+A stored role that is no longer eligible, kept with whatever it grants until
+a person removes it in the panel. Two reasons: deleted, when the role is
+gone from Discord, and managed.
 _Avoid_: legacy role, stale role, orphaned role, ghost role.
 
 **Permission source**:
@@ -462,15 +460,13 @@ _Avoid_: card and section (for a page unit; the helpline card is a Discord
 message), widget.
 
 **Tag**:
-One selected item as a picker shows it, with its remove control. A role tag
-is a moderator picker's or the recording roles picker's, and shows a stored
-role that is no longer eligible with its reason.
+One selected item as a picker shows it, with its remove control. A role
+picker's tag shows an unavailable role with its reason.
 _Avoid_: chip, pill, badge.
 
 **Search list**:
 The list of candidates a picker's add control opens, filtered as the person
-types. A moderator picker's or the recording roles picker's role search
-offers the eligible roles not yet selected. The register picker's channel
+types. A role picker's search offers the eligible roles not yet selected. The register picker's channel
 search offers the voice channels that are not hubs.
 _Avoid_: dropdown, popover, menu, combobox.
 
