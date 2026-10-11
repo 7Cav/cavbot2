@@ -171,6 +171,13 @@
     </form>
     {{end}}
   </section>
+  {{else if $.Foxhole.Pending}}
+  <details class="block fx-report" data-field="report" data-report="{{.ID}}" data-action="{{.Action}}" data-outcome="{{.Outcome}}">
+    <summary class="fx-reportsummary"><span class="fx-reportname">{{.Name}}: {{template "outcome" .}}.</span> <span class="fx-reportcounts">{{template "report-counts" .}}.</span></summary>
+    {{template "report-head" .}}
+    {{template "report-lists" .}}
+    {{template "retry" .}}
+  </details>
   {{else}}
   <section class="block fx-report" data-field="report" data-report="{{.ID}}" data-action="{{.Action}}" data-outcome="{{.Outcome}}">
     <h2 class="block-header">{{.Name}}: {{template "outcome" .}}</h2>
@@ -402,6 +409,9 @@
 {{define "outcome"}}{{if .StoppedBy}}Stopped by <span data-field="stopped-by">{{.StoppedBy}}</span>{{else}}{{.OutcomeLabel}}{{end}}{{end}}
 
 {{define "report-head"}}<div class="block-row fx-reporthead">Started by <span data-field="started-by">{{.StartedBy}}</span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>{{if not .EndedAt.IsZero}}, ended at <time data-field="ended" datetime="{{.EndedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.EndedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>{{end}}.</div>{{end}}
+
+{{define "report-counts"}}Changed <span data-count="changed">{{len .Changed}}</span>, skipped <span data-count="skipped">{{len .Skipped}}</span>, failed <span data-count="failed">{{len .Failed}}</span>, not attempted <span data-count="not-attempted">{{len .NotAttempted}}</span>
+  {{- with .AddedNobody}}, lines that added nobody <span data-count="added-nobody">{{len .}}</span>{{end}}{{end}}
 
 {{define "report-lists"}}
 <div class="block-row fx-reportlist" data-list="changed"><h3>Changed <span class="fx-count" data-field="count">{{len .Changed}}</span></h3>{{template "report-members" .Changed}}</div>

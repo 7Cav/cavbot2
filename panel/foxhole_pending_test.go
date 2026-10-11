@@ -1,11 +1,15 @@
 package panel
 
 import (
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/7cav/cavbot2/commands"
+	"github.com/7cav/cavbot2/store"
 	"golang.org/x/net/html"
 )
 
@@ -106,5 +110,46 @@ func TestAPreviewOpensAboveTheLastReport(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// foldedSummary returns a report's summary line when the report is folded
+// to it, a closed <details>, and nil when the report shows in full.
+func foldedSummary(report *html.Node) *html.Node {
+	if _, open := attrValue(report, "open"); report.Data != "details" || open {
+		return nil
+	}
+	return findElement(report, "summary", "", "")
+}
+
+// While a preview is open, the last report folds to one line naming the
+// action, how it ended, and how many members it changed, skipped, failed
+// on and never attempted. With nothing open it shows in full.
+func TestTheLastReportFoldsToOneLineWhileAPreviewIsOpen(t *testing.T) {
+	w := stoppedPurge(t)
+	page := parseHTML(t, w.b.get(foxholePath))
+	if foldedSummary(reportBlock(t, page)) != nil {
+		t.Error("with nothing open the report is folded, want it in full")
+	}
+
+	summary := foldedSummary(reportBlock(t, parseHTML(t, openPurge(t, w.b, page, "external"))))
+
+	if summary == nil {
+		t.Fatal("with the purge confirmation open the report shows in full, want it folded")
+	}
+	if got := fieldText(t, summary, "stopped-by"); got != managerUsername {
+		t.Errorf("the folded report says it was stopped by %q, want %q", got, managerUsername)
+	}
+	if name := commands.FoxholeActionName(store.ChangePurge, commands.ActionReport{Scope: commands.PurgeBoth}); !strings.Contains(textOf(summary), name) {
+		t.Errorf("the folded report reads %q, want it to name the action, %q", textOf(summary), name)
+	}
+	counts := map[string]string{}
+	eachElement(summary, func(n *html.Node) {
+		if list, ok := attrValue(n, "data-count"); ok {
+			counts[list] = textOf(n)
+		}
+	})
+	if want := map[string]string{"changed": "3", "failed": "1", "skipped": "0", "not-attempted": "2"}; !maps.Equal(counts, want) {
+		t.Errorf("the folded report counts %v, want %v", counts, want)
 	}
 }
