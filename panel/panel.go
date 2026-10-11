@@ -195,6 +195,7 @@ func (p *Panel) routes() []route {
 		{"POST /auth/start", http.HandlerFunc(p.authStart)},
 		{"GET /auth/callback", http.HandlerFunc(p.authCallback)},
 		{"POST /auth/signout", http.HandlerFunc(p.authSignout)},
+		{"GET " + recordingStatusPath, http.HandlerFunc(p.recordingStatus)},
 		{"GET /{$}", p.withPanelAdmin(p.homePage)},
 		{"POST /hubs", p.withPanelAdmin(p.createOrRegisterHub)},
 		{"POST /hubs/{id}", p.withPanelAdmin(p.updateHub)},
