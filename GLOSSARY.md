@@ -440,8 +440,8 @@ The panel's test of the signed-in forum user's forum groups, primary or
 secondary, on every request. The groups decide what the panel session can
 see. They never end it. One of the panel's admin groups makes them a panel
 admin. The Foxhole group makes them a Foxhole manager. An outsider sees
-only their recordings, or, having started none, a page saying their roles
-grant no access.
+only the recordings they started, or, having started none, the no-access
+page.
 _Avoid_: allowlist check, permission check, authorisation, role check.
 
 **Panel admin**:
@@ -455,6 +455,12 @@ A signed-in forum user the group check finds in none of the panel's groups,
 neither a panel admin nor a Foxhole manager.
 _Avoid_: user outside the admin groups (a Foxhole manager is one too), user
 in neither group, user in no group, guest, unprivileged user.
+
+**No-access page**:
+The panel page for a request the visitor's forum groups don't allow, or for
+a recording they didn't start, and an outsider's Recordings page when they
+have no recordings.
+_Avoid_: forbidden page, access denied page, 403 page.
 
 **Block**:
 One bordered unit of a panel page, with a gold header rule. The unit a
@@ -547,12 +553,11 @@ a link to the recording in the panel. If the channel is gone by then, the
 starter gets that link by DM instead.
 _Avoid_: recording panel (the panel is the web UI), banner, announcement.
 
-## Slash commands
+## Commands and the panel
 
 **Refusal**:
-A command's reply that turns a run down before the command acts on it: bad
-input, a run outside a server, or a Foxhole action running on the Foxhole
-page. Only the member who ran it sees it, and nothing changed.
+A command's reply or a panel page that turns a request down before acting on
+it. Only the person who asked sees it, and it says that nothing changed.
 _Avoid_: rejection, error reply (which also covers a run that failed after
 it started).
 
