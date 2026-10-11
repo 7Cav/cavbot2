@@ -3,12 +3,15 @@
 ## Status
 
 Accepted. Decided in the triage of issue #315, before its implementation.
+**Amended 2026-10-11**: the scope names what the decision covers by kind,
+not by listing settings (#568).
 
 ## Scope
 
-Durable panel configuration: hub rows and moderator role assignments, per hub
-and guild-wide. Spawned channel rows are outside it. The runtime deletes them
-when the channel empties. That is a lifecycle, not configuration.
+Everything a save stores that refers to a Discord object. What the runtime
+writes and removes on its own is outside it, such as spawned channel rows,
+which it deletes when the channel empties. That is a lifecycle, not
+configuration.
 
 ## Decision
 
@@ -18,8 +21,8 @@ removes it. The panel never removes it on its own, whether at a page load,
 a save or startup.
 
 A save's validator accepts an ineligible role ID on one condition only: the
-exact record being saved already stores it. An ID another hub stores, or the
-guild-wide set stores, is refused for this record.
+exact record being saved already stores it. An ID that only another record
+stores is refused for this record.
 
 ## Why
 
@@ -48,8 +51,8 @@ A startup warning that names the records is a reporting decision, separable
 from this one, and not decided here.
 
 Broken hubs share the principle and differ in consequence. A broken hub can
-only be removed, and it spawns nothing meanwhile. An unavailable moderator
-role can be kept through a save, and it grants authority meanwhile.
+only be removed, and it spawns nothing meanwhile. An unavailable role can be
+kept through a save, and it grants authority meanwhile.
 
 ## How to apply
 

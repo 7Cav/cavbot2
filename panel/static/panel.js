@@ -9,7 +9,7 @@
    load and hidden until the add control opens it. A row is shown when no
    tag carries its ID and its label contains the typed text. Choosing a row
    clones the picker's <template> into a tag; removing a tag re-offers the
-   row, when the row exists: an unavailable moderator role has none. */
+   row, when the row exists: an unavailable role has none. */
 (function () {
   'use strict';
 

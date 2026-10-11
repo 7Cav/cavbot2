@@ -14,7 +14,7 @@ import (
 	"golang.org/x/net/html"
 )
 
-// Eligible roles and unavailable moderator roles (#315, ADR 0012): both
+// Eligible roles and unavailable roles (#315, ADR 0012): both
 // moderator pickers offer eligible roles only, a stored role that is no
 // longer eligible renders as unavailable with its reason, and only a person
 // removes it. The data-unavailable attribute is the test contract; labels
@@ -522,7 +522,7 @@ func TestRoleColourRendersOnTheSearchRowWithoutAnEscapingFailure(t *testing.T) {
 func TestSaveWithoutScriptLeavesTheModeratorRolesAsStored(t *testing.T) {
 	// ADR 0013: with the script never run, the tags post what the page
 	// loaded, so a save of the other fields keeps the stored set, an
-	// unavailable moderator role included.
+	// unavailable role included.
 	hub := testHub()
 	hub.ModeratorRoleIDs = []string{"role-mp", "role-gone"}
 	w := newTestWorld(t, hub)
