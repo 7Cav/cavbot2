@@ -1342,7 +1342,8 @@ func (t *tracer) traceBindings(v *ssa.FreeVar, f *frame) bool {
 // local that holds addr. made says whether a call handed addr counts as
 // putting values in it. It doesn't for a container loaded out of a variable,
 // which may be one the function got as a parameter and is checked where it
-// is passed. A call handed an address within addr counts either way.
+// is passed. A call handed an address within addr, or the free variable of
+// a method value bound to addr, counts either way.
 func (t *tracer) traceStores(addr ssa.Value, f *frame, made bool) bool {
 	for _, ref := range *addr.Referrers() {
 		if call, ok := ref.(ssa.CallInstruction); ok {
@@ -1385,7 +1386,7 @@ func (t *tracer) traceStores(addr ssa.Value, f *frame, made bool) bool {
 		}
 		// A closure that captures addr puts values in it through its free
 		// variable.
-		if fv := capture(ref, addr); fv != nil && t.traceStores(fv, &frame{fn: fv.Parent(), parent: f}, made) {
+		if fv := capture(ref, addr); fv != nil && t.traceStores(fv, &frame{fn: fv.Parent(), parent: f}, true) {
 			return true
 		}
 	}

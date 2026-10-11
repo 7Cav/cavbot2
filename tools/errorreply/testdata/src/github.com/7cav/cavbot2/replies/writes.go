@@ -148,3 +148,18 @@ func repliesWithWhatAHelperWroteIntoTheWriterNextToTheErrorItLogged(err error) {
 	writeFixedFailure(&b, err)
 	utils.HandleError(nil, nil, b.String())
 }
+
+// notes collects the lines of a reply.
+type notes struct{ lines []string }
+
+func (n *notes) add(line string) { n.lines = append(n.lines, line) }
+
+// page holds the notes a reply is built from.
+type page struct{ notes *notes }
+
+func repliesWithWhatAMethodValueOfItsNotesAdded(err error) {
+	p := &page{notes: &notes{}}
+	add := p.notes.add
+	add(err.Error())
+	utils.HandleError(nil, nil, "❌ Failed: "+strings.Join(p.notes.lines, " ")) // want "Discord"
+}
