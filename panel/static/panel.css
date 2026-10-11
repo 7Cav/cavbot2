@@ -410,6 +410,13 @@ h2[tabindex="-1"]:focus { outline: none; }
   /* The forum link is a 13px line; its padding makes a 34px target. */
   .rail .foot a { padding: 8px 0; }
   .rail .ver { display: none; }
+  /* The Foxhole search box keeps room for its whole hint, the placeholder in
+     foxhole.html's fx-toolbar. That is 185px of text in 15px Roboto, and
+     with 20px of padding and 2px of border it fits in 14em, 210px, with 3px
+     to spare. A longer hint needs a wider box. The Search button drops under
+     the box on a screen too narrow for both, under about 340px. */
+  .fx-searchform { flex-wrap: wrap; }
+  .fx-search { min-width: 14em; }
   .fx-jump { display: block; margin: -4px 0 12px; font-size: 14px; }
   .fx-jump a { display: inline-block; padding: 6px 0; }
   .change-fields > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
