@@ -382,6 +382,13 @@ Two kinds: a failure Discord returned on the create or the move-into, and a
 refusal the bot decided itself, which only a broken hub causes.
 _Avoid_: create failure, failed create, failed join, refused join.
 
+**Preview**:
+What the panel shows of a change before making it, with the Confirm that
+makes it. Removing a hub, deleting a recording and every Foxhole action but a
+re-add have one, and a purge's, like a Retry's of a purge or re-add, is
+called its confirmation.
+_Avoid_: dry run, summary.
+
 **Save**:
 One submitted panel form that changes what the panel stores. It begins once
 the group check allows it, runs to its end whether or not the browser waits,
