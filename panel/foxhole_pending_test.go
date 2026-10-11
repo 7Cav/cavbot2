@@ -153,3 +153,26 @@ func TestTheLastReportFoldsToOneLineWhileAPreviewIsOpen(t *testing.T) {
 		t.Errorf("the folded report counts %v, want %v", counts, want)
 	}
 }
+
+// The address each preview's control opens names the preview in its
+// fragment, so the browser lands on the block the manager asked for, with
+// or without the page script. A Retry lands on the block that says what it
+// retries, above the confirmation it opens.
+func TestOpeningAPreviewLandsOnIt(t *testing.T) {
+	for _, opener := range pendingOpeners {
+		t.Run(opener.name, func(t *testing.T) {
+			w := stoppedPurge(t)
+			control, res := opener.open(t, w, parseHTML(t, w.b.get(foxholePath)))
+
+			doc, fragment := landing(t, w.b, control, res)
+
+			target := landedOn(doc, fragment)
+			if target == nil {
+				t.Fatalf("the page opens at fragment %q, which names no block, want the %s", fragment, opener.blocks[0])
+			}
+			if got := attrOf(target, "data-field"); got != opener.blocks[0] {
+				t.Errorf("the page lands on %q, want the %s", got, opener.blocks[0])
+			}
+		})
+	}
+}

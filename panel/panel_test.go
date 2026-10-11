@@ -347,6 +347,39 @@ func (b *browser) postForm(target string, form url.Values) *http.Response {
 	return b.do(http.MethodPost, target, http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}, strings.NewReader(form.Encode()))
 }
 
+// landing follows an answer to a control whose address is control the way
+// a browser does, and returns the page it lands on and the fragment its
+// address ends with: a redirect's own fragment, or the control's when the
+// redirect names none.
+func landing(t *testing.T, b *browser, control string, res *http.Response) (*html.Node, string) {
+	t.Helper()
+	at, err := url.Parse(control)
+	if err != nil {
+		t.Fatalf("control address %q: %v", control, err)
+	}
+	for res.StatusCode >= 300 && res.StatusCode <= 399 {
+		next := location(t, res)
+		if next.Fragment == "" {
+			next.Fragment = at.Fragment
+		}
+		at = next
+		res = b.get(at.String())
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("landed with status %d, want 200", res.StatusCode)
+	}
+	return parseHTML(t, res), at.Fragment
+}
+
+// landedOn returns the element a page's address fragment names, nil when
+// the fragment is empty or names nothing on the page.
+func landedOn(doc *html.Node, fragment string) *html.Node {
+	if fragment == "" {
+		return nil
+	}
+	return findElement(doc, "", "id", fragment)
+}
+
 // setCookie is a cookie the test sets by hand, such as one from a session the
 // panel has already ended.
 func (b *browser) setCookie(name, value string) {

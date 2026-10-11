@@ -120,10 +120,15 @@ func (reportView) PauseLimit() string {
 // and missed someone.
 func (r reportView) CanRetry() bool { return !r.Running && len(r.Missed) > 0 }
 
-// RetryHref is the address of the page with the report's Retry open.
+// RetryHref is the address of the page with the report's Retry open, at
+// the block that says what it retries.
 func (r reportView) RetryHref() string {
-	return foxholePath + "?" + url.Values{paramRetry: {strconv.FormatInt(r.ID, 10)}}.Encode()
+	return foxholePath + "?" + url.Values{paramRetry: {strconv.FormatInt(r.ID, 10)}}.Encode() + "#" + retryAnchor
 }
+
+// retryAnchor is the ID foxhole.html gives the block a Retry opens above
+// its preview, which says what it retries.
+const retryAnchor = "retry"
 
 // OutcomeCode is the report's data-outcome marker: how the action ended,
 // or running while it runs.
