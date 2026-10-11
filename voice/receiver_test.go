@@ -187,6 +187,36 @@ func TestReceiverHoldsFramesUntilTheirSSRCMaps(t *testing.T) {
 	}
 }
 
+// A speaker who says something as they join, before op 5 names them, and
+// then stays quiet still has those words in their track: the held frames
+// are handed over once their SSRC maps, with nothing more from that speaker
+// to carry them out.
+func TestReceiverHandsOverHeldFramesOnceTheSSRCMapsWithNothingAfter(t *testing.T) {
+	const otherSpeaker, otherSSRC = "301", 8
+	conn := newFakeReceiveConn()
+	conn.mapSSRC(otherSSRC, otherSpeaker)
+	h := newHeard()
+	startReceiver(t, conn, h.handle)
+
+	conn.send(testSpeakerSSRC, 1000, sealFor(testSpeaker, "radio"))
+	conn.send(testSpeakerSSRC, 1960, sealFor(testSpeaker, "check"))
+	// The receiver reads one packet at a time, so once another speaker's
+	// later frame is handed over, both early frames are held.
+	conn.send(otherSSRC, 5000, sealFor(otherSpeaker, "copy"))
+	if f := h.next(t); f.UserID != otherSpeaker {
+		t.Fatalf("first frame handed over = %+v (%q), want %s's, the only speaker mapped", f, f.Opus, otherSpeaker)
+	}
+	conn.mapSSRC(testSpeakerSSRC, testSpeaker)
+
+	for _, want := range []string{"radio", "check"} {
+		f := h.next(t)
+		if f.UserID != testSpeaker || string(f.Opus) != want || f.SSRC != testSpeakerSSRC {
+			t.Errorf("frame handed over = %+v (%q), want %q from %s on SSRC %d",
+				f, f.Opus, want, testSpeaker, testSpeakerSSRC)
+		}
+	}
+}
+
 // A panic while a frame is handed over, a bug in the code writing tracks,
 // is recovered and reported to Sentry, so it can't take the bot down with
 // temp VC and every command.

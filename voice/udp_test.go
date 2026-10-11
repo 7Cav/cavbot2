@@ -135,3 +135,26 @@ func TestUDPConnReadsAPacketAsDiscordsServerSendsIt(t *testing.T) {
 		return
 	}
 }
+
+// A recorder never speaks, so through a long silence nothing but its
+// keepalive leaves the socket to keep a NAT delivering audio. One goes out
+// as soon as the connection opens.
+func TestUDPConnSendsAKeepaliveOnceOpen(t *testing.T) {
+	server := newFakeVoiceServer(t)
+	conn := newUDPConn(godave.NewNoopSession(slog.New(slog.DiscardHandler), "", nil), nil)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	discovered := make(chan net.Addr, 1)
+	go func() { discovered <- server.answerDiscovery(t) }()
+	ctx, cancel := context.WithTimeout(context.Background(), waitFor)
+	defer cancel()
+	if _, _, err := conn.Open(ctx, "127.0.0.1", server.port(), 42); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	<-discovered
+
+	_ = server.conn.SetReadDeadline(time.Now().Add(waitFor))
+	if _, _, err := server.conn.ReadFrom(make([]byte, 1500)); err != nil {
+		t.Errorf("no keepalive reached the voice server after Open: %v", err)
+	}
+}
