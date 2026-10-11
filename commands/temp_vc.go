@@ -450,7 +450,9 @@ type GuildSnapshot struct {
 	Status GuildDataStatus
 	// Connected is false while the bot's gateway connection is down. The
 	// cache then holds the guild as it was when the connection dropped, and
-	// events missed meanwhile arrive once the session resumes.
+	// events missed meanwhile arrive once the session resumes. It can also
+	// read false for a moment after the connection comes up, as discordgo
+	// hands Connect to the handler on a goroutine of its own.
 	Connected bool
 	// Channels are the guild's channels, threads left out, each with its
 	// ID, guild, name, type, parent and position.
