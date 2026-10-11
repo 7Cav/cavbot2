@@ -333,7 +333,9 @@ h2[tabindex="-1"]:focus { outline: none; }
 }
 .fx-report[open] > .fx-reportsummary { border-bottom: 1px solid var(--line); border-radius: var(--radius) var(--radius) 0 0; }
 .fx-report[open] > .fx-reportsummary::before { transform: rotate(90deg); }
-.fx-reportsummary:hover { background: var(--surface-2); }
+/* The line under the pointer lifts to --surface-3, 1.11:1 on the block, as
+   a holder row does. */
+.fx-reportsummary:hover { background: var(--surface-3); }
 .fx-reportsummary:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
 .fx-reportname { margin-right: 6px; color: var(--text-hi); font-weight: 500; }
 .fx-reportcounts { font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
@@ -364,7 +366,10 @@ h2[tabindex="-1"]:focus { outline: none; }
 .rail .mark img { height: 26px; width: auto; display: block; }
 .rail nav { padding: 10px 0; }
 .rail .item { display: block; padding: 10px 18px; color: var(--text-hi); text-decoration: none; border-left: 3px solid transparent; }
-.rail .item:hover { background: var(--surface-2); color: var(--text-hi); }
+/* An item under the pointer lifts to --surface-3, 1.11:1 on the rail. The
+   selected item's rules come after this one and win the tie, so hovering the
+   current page changes nothing. */
+.rail .item:hover { background: var(--surface-3); color: var(--text-hi); }
 .rail .item.is-selected { border-left-color: var(--gold); background: var(--surface-3); font-weight: 500; }
 /* An item spans the rail edge to edge, so its ring sits inside it. */
 .rail .item:focus-visible { outline-offset: -2px; }
