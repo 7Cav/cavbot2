@@ -172,7 +172,8 @@ h2[tabindex="-1"]:focus { outline: none; }
   font: inherit; font-size: 17px; line-height: 1.2; cursor: pointer; border-radius: var(--radius);
 }
 .tag-remove:hover { color: var(--text-hi); background: var(--btn-hi); }
-.tag-remove:focus-visible { outline: 2px solid var(--gold); }
+/* Flush with the button, so the ring stays inside its tag. */
+.tag-remove:focus-visible { outline: 2px solid var(--gold); outline-offset: 0; }
 .dot { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; flex: none; vertical-align: middle; }
 .dot--none { background: var(--line-hi); }
 .search { margin-top: 8px; max-width: 420px; }
