@@ -105,8 +105,9 @@ type access struct {
 func (a access) foxholePage() bool { return a.panelAdmin || a.foxholeManager }
 
 // landing is the address of the page the session lands on at sign-in: the
-// hub page for a panel admin, else the Foxhole page for a Foxhole manager.
-// Empty when the session opens no page, and the no-access page shows.
+// hub page for a panel admin, else the Foxhole page for a Foxhole manager,
+// else the Recordings page, which lists the recordings the user started and
+// is the no-access page to anyone who started none.
 func (a access) landing() string {
 	switch {
 	case a.panelAdmin:
@@ -114,7 +115,7 @@ func (a access) landing() string {
 	case a.foxholePage():
 		return foxholePath
 	}
-	return ""
+	return recordingsPath
 }
 
 // accessOf is the group check's rule: the user's primary group or any

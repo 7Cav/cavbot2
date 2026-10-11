@@ -1,0 +1,36 @@
+{{define "content"}}
+<main class="body narrow" data-page="{{.Page}}">
+  <h1 class="title">Recordings</h1>
+  {{if .Recordings.Single}}<p class="desc"><a href="/recordings">All your recordings</a></p>{{else if .Recordings.All}}<p class="desc">Every recording, whoever started it.</p>{{else}}<p class="desc">The recordings you started. Only you and panel admins can download them.</p>{{end}}
+  {{if and .Recordings.Switch (not .Recordings.Single)}}<nav class="fx-filters rec-switch" aria-label="Whose recordings">
+    <a href="/recordings"{{if not .Recordings.All}} class="is-on" aria-current="page"{{end}}>Yours</a>
+    <a href="/recordings?view=all" data-field="view-all"{{if .Recordings.All}} class="is-on" aria-current="page"{{end}}>Every recording</a>
+  </nav>{{end}}
+  {{if .Recordings.Gone}}
+  <div class="block" data-field="recording-gone"><div class="block-row">This recording isn't in the panel. Recordings are deleted 30 days after they stop.</div></div>
+  {{else}}
+  {{range .Recordings.Recordings}}
+  <section class="block" data-recording="{{.ID}}">
+    <h2 class="block-header" data-field="title">{{if .Title}}{{.Title}}{{else}}Untitled recording{{end}}</h2>
+    <dl class="rec-facts">
+      {{if $.Recordings.ShowStarter}}<dt>Started by</dt><dd data-starter="{{.StarterID}}">{{.Starter}}</dd>{{end}}
+      <dt>Channel</dt><dd data-field="channel">{{if .Channel}}{{.Channel}}{{else}}<span class="off">unknown</span>{{end}}</dd>
+      <dt>Started</dt><dd><time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04"}} UTC</time></dd>
+      <dt>Length</dt><dd data-field="length">{{if .Running}}Still recording{{else}}{{.Length}}{{end}}</dd>
+      <dt>Speakers</dt><dd data-field="speakers">{{range $i, $s := .Speakers}}{{if $i}}, {{end}}{{$s}}{{else}}<span class="off">{{if .Running}}listed at the stop{{else}}nobody spoke{{end}}</span>{{end}}</dd>
+      <dt>Mix</dt><dd data-field="mix">{{template "mix-state" .}}</dd>
+      <dt>Deleted on</dt><dd>{{if .Running}}30 days after it stops{{else}}<time data-field="deletes" datetime="{{.DeletesAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.DeletesAt.UTC.Format "2 Jan 2006"}}</time>{{end}}</dd>
+    </dl>
+    {{if not .Running}}<div class="submit-row rec-downloads">
+      {{if eq .Mix "ready"}}<a class="btn btn--cta" href="{{.MixURL}}" data-field="mix-download">Download the mix</a>{{end}}
+      <a class="btn" href="{{.ZipURL}}" data-field="zip-download">Download each speaker's track (zip)</a>
+    </div>{{end}}
+  </section>
+  {{else}}
+  <div class="block"><div class="block-row">No recordings yet.</div></div>
+  {{end}}
+  {{end}}
+</main>
+{{end}}
+
+{{define "mix-state"}}{{if .Running}}<span class="tag">recording</span>{{else if eq .Mix "ready"}}<span class="tag tag--on">ready</span>{{else if eq .Mix "failed"}}<span class="tag tag--warn">failed</span> The tracks can still be downloaded.{{else}}<span class="tag">being mixed</span> Ready a few minutes after the stop.{{end}}{{end}}

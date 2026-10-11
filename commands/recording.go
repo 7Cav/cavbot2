@@ -123,6 +123,9 @@ type RecordingManager interface {
 	// MemberList is TempVCManager's: one copied snapshot of the guild's
 	// member list, which names a recording's speakers at its stop.
 	MemberList(guildID string) MemberListSnapshot
+	// UserChannelCreate opens the DM channel with a member, for the link
+	// to a recording whose notice is gone by its stop.
+	UserChannelCreate(recipientID string) (*discordgo.Channel, error)
 }
 
 // RecordingRuntime holds the recordings running now. Built on every host
@@ -139,6 +142,10 @@ type RecordingRuntime struct {
 	// dir is the recordings directory, which holds a directory of tracks
 	// per recording.
 	dir string
+	// panelURL is the panel's base URL, which a stopped recording's link
+	// starts with. Empty when the panel is off, and then a stop gives no
+	// link.
+	panelURL string
 
 	mu sync.Mutex
 	// running maps each busy recorder's user ID to its recording.
@@ -181,8 +188,9 @@ func (rec *activeRecording) mayStop(userID string, holdsRole, inChannel bool) bo
 // NewRecordingRuntime builds the recording runtime over the Discord
 // session's manager, the store, temp VC (which knows the hubs) and the
 // voice adapter, whose recorders it takes now. Tracks go under dir, and
-// the mixer builds each recording's mix there.
-func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guildID string, rv RecorderVoice, mixer Mixer, dir string) *RecordingRuntime {
+// the mixer builds each recording's mix there. A stopped recording's link
+// starts with panelURL, the panel's base URL, empty when the panel is off.
+func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guildID string, rv RecorderVoice, mixer Mixer, dir, panelURL string) *RecordingRuntime {
 	return &RecordingRuntime{
 		mgr:       mgr,
 		st:        st,
@@ -192,6 +200,7 @@ func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guild
 		guildID:   guildID,
 		recorders: rv.UserIDs(),
 		dir:       dir,
+		panelURL:  panelURL,
 		running:   make(map[string]*activeRecording),
 	}
 }

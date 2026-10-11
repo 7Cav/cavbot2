@@ -326,6 +326,10 @@ type TempVCManager interface {
 	// no retry on rate limit. The allowed mentions travel in data, so a test
 	// can read who a message may ping.
 	ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error)
+	// UserChannelCreate opens the DM channel with a member, with no retry
+	// on rate limit. The recording runtime sends a stopped recording's link
+	// through it when the recording notice is gone.
+	UserChannelCreate(recipientID string) (*discordgo.Channel, error)
 	// GuildMember fetches one guild member from the API. The startup
 	// Administrator check reads the bot's own member through it.
 	GuildMember(guildID, userID string) (*discordgo.Member, error)
@@ -582,6 +586,10 @@ func (m *sessionTempVCManager) GuildMemberMove(guildID, userID string, channelID
 
 func (m *sessionTempVCManager) ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error) {
 	return m.s.ChannelMessageSendComplex(channelID, data, discordgo.WithRetryOnRatelimit(false))
+}
+
+func (m *sessionTempVCManager) UserChannelCreate(recipientID string) (*discordgo.Channel, error) {
+	return m.s.UserChannelCreate(recipientID, discordgo.WithRetryOnRatelimit(false))
 }
 
 func (m *sessionTempVCManager) GuildMember(guildID, userID string) (*discordgo.Member, error) {

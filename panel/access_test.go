@@ -47,6 +47,7 @@ var pageLoadCases = []struct {
 	{foxholePath, func(t *testing.T, f *fakeForum, b *browser) *http.Response {
 		return signInAs(t, f, b, addFoxholeManager(f))
 	}, pageFoxhole},
+	{recordingsPath, signIn, pageRecordings},
 }
 
 // An outsider who loads a page behind a gate gets the no-access page, with
@@ -381,6 +382,13 @@ func TestEveryRouteHasAnOutsiderCaseOrIsOpen(t *testing.T) {
 	for _, tc := range pageLoadCases {
 		reach(http.MethodGet, tc.path)
 	}
+	starter := w.addStarter(5001, "Able.A", "discord-a")
+	rec := w.record(t, starter.discordID)
+	signInAs(t, w.forum, w.b, starter.account)
+	page := parseHTML(t, w.b.get(recordingsPath))
+	for _, route := range recordingRoutes {
+		reach(http.MethodGet, route.href(t, page, rec))
+	}
 	for _, rt := range w.p.routes() {
 		if !reached[rt.pattern] && !slices.Contains(openRoutes, rt.pattern) {
 			t.Errorf("%s has no outsider case and isn't in openRoutes", rt.pattern)
@@ -395,7 +403,7 @@ func TestPanelAdminWhoLeavesTheAdminGroupsDropsToTheNoAccessPage(t *testing.T) {
 	signIn(t, w.forum, w.b)
 	w.forum.setUserinfo(http.StatusOK, userinfoJSON(2, []int{35, 72}))
 
-	res := w.b.get("/")
+	res := follow(t, w.b, w.b.get("/"))
 
 	assertNoAccessPage(t, parseHTML(t, res))
 }

@@ -56,7 +56,9 @@ type fakeDiscord struct {
 	created     []fakeCreate
 	edited      []fakeEdit
 	deleted     []string
-	spawned     int
+	// messageEdits is the content of every message edit, in order.
+	messageEdits []string
+	spawned      int
 	// voice stands in for the state cache's voice states: user ID to
 	// channel ID, connected members only.
 	voice map[string]string
@@ -236,6 +238,12 @@ func (f *fakeDiscord) GuildMemberMove(_, _ string, _ *string) error {
 func (f *fakeDiscord) ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error) {
 	f.countWrite()
 	return &discordgo.Message{ChannelID: channelID, Content: data.Content}, nil
+}
+
+// UserChannelCreate opens a DM channel with a user: a write the fake counts.
+func (f *fakeDiscord) UserChannelCreate(userID string) (*discordgo.Channel, error) {
+	f.countWrite()
+	return &discordgo.Channel{ID: "dm-" + userID, Type: discordgo.ChannelTypeDM}, nil
 }
 
 // countWrite counts a write through Discord's API that the fake records
@@ -492,7 +500,19 @@ func (f *fakeDiscord) MemberRanks(g *discordgo.Guild) map[string]int {
 // read no message the runtime posts or edits.
 func (f *fakeDiscord) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {
 	f.countWrite()
+	if edit.Content != nil {
+		f.mu.Lock()
+		f.messageEdits = append(f.messageEdits, *edit.Content)
+		f.mu.Unlock()
+	}
 	return &discordgo.Message{ID: edit.ID, ChannelID: edit.Channel}, nil
+}
+
+// editedContents is the content of every message edit, in order.
+func (f *fakeDiscord) editedContents() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.messageEdits)
 }
 
 // setVoice puts a member in a channel in the fake cache, or disconnects
@@ -690,6 +710,17 @@ type testWorld struct {
 	pause *pauseClock
 	// clock is the clock the panel runs on.
 	clock *testClock
+	// store is the store the panel was built over, the fake or a wrapper
+	// of it.
+	store store.Store
+	// milpacs answers the 7Cav API's milpac lookups, which tell the panel
+	// a signed-in forum user's Discord ID.
+	milpacs *milpacAPI
+	// recordingsDir is the recordings directory the panel's recording
+	// library reads.
+	recordingsDir string
+	// rig is the recording runtime, built the first time a test records.
+	rig *recordingRig
 }
 
 // newTestWorld builds the panel over a store holding the given hubs. The
@@ -733,12 +764,16 @@ func newTestWorldConfigured(t *testing.T, st store.Store, f *fakeForum, cfg Conf
 	if err != nil {
 		t.Fatalf("NewFoxholeRuntime: %v", err)
 	}
-	p, err := New(cfg, testVersion, Deps{Store: st, Runtime: runtime, Manager: discord, Foxhole: foxhole, GuildID: testGuildID})
+	milpacs := serveMilpacs(t)
+	recordingsDir := t.TempDir()
+	p, err := New(cfg, testVersion, Deps{Store: st, Runtime: runtime, Manager: discord, Foxhole: foxhole,
+		Recordings: commands.NewRecordingLibrary(st, testGuildID, recordingsDir), GuildID: testGuildID})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	fake, _ := st.(*store.Fake)
-	return &testWorld{forum: f, st: fake, discord: discord, runtime: runtime, foxhole: foxhole, p: p, b: newBrowser(t, p), clock: clock}
+	return &testWorld{forum: f, st: fake, discord: discord, runtime: runtime, foxhole: foxhole, p: p, b: newBrowser(t, p), clock: clock,
+		store: st, milpacs: milpacs, recordingsDir: recordingsDir}
 }
 
 // testHub is a stored hub on hub-1 with the defaults a register writes.

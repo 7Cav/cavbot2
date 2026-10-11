@@ -74,7 +74,9 @@ type pageData struct {
 	Cause    cause
 	Hubs     hubPage
 	Foxhole  foxholeView
-	Failure  failure
+	// Recordings is filled for the Recordings page alone.
+	Recordings recordingsView
+	Failure    failure
 	// Message is the error page's one sentence.
 	Message string
 	// Retry is where the error page's Try again link leads.
@@ -82,19 +84,23 @@ type pageData struct {
 }
 
 // nav is which pages the rail links to: the ones this request's group check
-// lets the session open.
+// lets the session open. Every panel admin gets the Recordings link. Anyone
+// else gets it on the Recordings page, which shows them their own: the
+// rail doesn't read the store to learn who started a recording.
 type nav struct {
-	Hubs    bool
-	Foxhole bool
+	Hubs       bool
+	Foxhole    bool
+	Recordings bool
 }
 
 // Any reports whether the session opens any page.
-func (n nav) Any() bool { return n.Hubs || n.Foxhole }
+func (n nav) Any() bool { return n.Hubs || n.Foxhole || n.Recordings }
 
 // The pages the rail links to, as Page names them.
 const (
-	pageHubs    = "hubs"
-	pageFoxhole = "foxhole"
+	pageHubs       = "hubs"
+	pageFoxhole    = "foxhole"
+	pageRecordings = "recordings"
 )
 
 // pages are the templates, one per screen, each parsed with the shared layout
@@ -103,7 +109,7 @@ type pages map[string]*template.Template
 
 func parsePages() (pages, error) {
 	out := pages{}
-	for _, name := range []string{"signin", "home", "error", "noaccess", "foxhole"} {
+	for _, name := range []string{"signin", "home", "error", "noaccess", "foxhole", "recordings"} {
 		t, err := template.New("layout.html").ParseFS(templateFS, "templates/layout.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", name, err)

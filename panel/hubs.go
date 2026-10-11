@@ -29,7 +29,10 @@ type Deps struct {
 	// Foxhole is the runtime the Foxhole page starts its Foxhole actions
 	// through.
 	Foxhole *commands.FoxholeRuntime
-	GuildID string
+	// Recordings is the recording library the Recordings page lists and
+	// downloads through.
+	Recordings *commands.RecordingLibrary
+	GuildID    string
 }
 
 // hubService is the service layer under the hub page's handlers: validation,
