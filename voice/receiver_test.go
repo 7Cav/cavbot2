@@ -141,6 +141,19 @@ func (h *heard) next(t *testing.T) Frame {
 	}
 }
 
+// expectSpeaker waits for the frames handed over next to be words, in
+// order, each from testSpeaker on their SSRC.
+func (h *heard) expectSpeaker(t *testing.T, words ...string) {
+	t.Helper()
+	for _, want := range words {
+		f := h.next(t)
+		if f.UserID != testSpeaker || string(f.Opus) != want || f.SSRC != testSpeakerSSRC {
+			t.Errorf("frame handed over = %+v (%q), want %q from %s on SSRC %d",
+				f, f.Opus, want, testSpeaker, testSpeakerSSRC)
+		}
+	}
+}
+
 // eventually waits until cond holds.
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
@@ -178,13 +191,31 @@ func TestReceiverHoldsFramesUntilTheirSSRCMaps(t *testing.T) {
 	conn.mapSSRC(testSpeakerSSRC, testSpeaker)
 	conn.send(testSpeakerSSRC, 2920, sealFor(testSpeaker, "third"))
 
-	for _, want := range []string{"first", "second", "third"} {
-		f := h.next(t)
-		if f.UserID != testSpeaker || string(f.Opus) != want || f.SSRC != testSpeakerSSRC {
-			t.Errorf("frame handed over = %+v (%q), want %q from %s on SSRC %d",
-				f, f.Opus, want, testSpeaker, testSpeakerSSRC)
-		}
+	h.expectSpeaker(t, "first", "second", "third")
+}
+
+// A speaker who says something as they join, before op 5 names them, and
+// then stays quiet still has those words in their track: the held frames
+// are handed over once their SSRC maps, with nothing more from that speaker
+// to carry them out.
+func TestReceiverHandsOverHeldFramesOnceTheSSRCMapsWithNothingAfter(t *testing.T) {
+	const otherSpeaker, otherSSRC = "301", 8
+	conn := newFakeReceiveConn()
+	conn.mapSSRC(otherSSRC, otherSpeaker)
+	h := newHeard()
+	startReceiver(t, conn, h.handle)
+
+	conn.send(testSpeakerSSRC, 1000, sealFor(testSpeaker, "radio"))
+	conn.send(testSpeakerSSRC, 1960, sealFor(testSpeaker, "check"))
+	// The receiver reads one packet at a time, so once another speaker's
+	// later frame is handed over, both early frames are held.
+	conn.send(otherSSRC, 5000, sealFor(otherSpeaker, "copy"))
+	if f := h.next(t); f.UserID != otherSpeaker {
+		t.Fatalf("first frame handed over = %+v (%q), want %s's, the only speaker mapped", f, f.Opus, otherSpeaker)
 	}
+	conn.mapSSRC(testSpeakerSSRC, testSpeaker)
+
+	h.expectSpeaker(t, "radio", "check")
 }
 
 // A panic while a frame is handed over, a bug in the code writing tracks,
