@@ -120,9 +120,11 @@ func TestRecordingDeletedByItsStarterOrAPanelAdminIsGone(t *testing.T) {
 	}
 }
 
-// Another starter who posts the Confirm of a recording they didn't start
-// gets the no-access page, and nothing is deleted: its starter's page
-// still lists it, and its mix still downloads.
+// Anyone who is neither a recording's starter nor a panel admin, here
+// another starter, an outsider and a Foxhole manager, who posts its Confirm
+// gets the no-access page saying the recording is open only to its starter
+// and panel admins, and nothing is deleted: its starter's page still lists
+// it, and its mix still downloads.
 func TestRecordingDeletePostedByAnotherStarterDeletesNothing(t *testing.T) {
 	w := newTestWorld(t)
 	a := w.addStarter(5001, "Able.A", "discord-a")
@@ -132,17 +134,22 @@ func TestRecordingDeletePostedByAnotherStarterDeletesNothing(t *testing.T) {
 	signInAs(t, w.forum, w.b, a.account)
 	confirm := deleteConfirm(t, w.b, rec)
 	mix := linkHref("mix-download")(t, parseHTML(t, w.b.get(recordingsPath)), rec)
-	other := newBrowser(t, w.p)
-	signInAs(t, w.forum, other, b.account)
 
-	res := submit(t, other, confirm)
+	for _, v := range recordingRefusedVisitors(w, b) {
+		t.Run(v.who, func(t *testing.T) {
+			visitor := newBrowser(t, w.p)
+			signInAs(t, w.forum, visitor, v.account)
 
-	assertNoAccessPage(t, parseHTML(t, res))
-	if _, ok := listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))[rec]; !ok {
-		t.Errorf("the starter's Recordings page no longer lists recording %d", rec)
-	}
-	if body := readBody(t, w.b.get(mix)); !bytes.Equal(body, testMix) {
-		t.Errorf("recording %d's mix no longer downloads", rec)
+			res := submit(t, visitor, confirm)
+
+			assertNoAccessSays(t, parseHTML(t, res), noAccessRecording)
+			if _, ok := listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))[rec]; !ok {
+				t.Errorf("the starter's Recordings page no longer lists recording %d", rec)
+			}
+			if body := readBody(t, w.b.get(mix)); !bytes.Equal(body, testMix) {
+				t.Errorf("recording %d's mix no longer downloads", rec)
+			}
+		})
 	}
 }
 
@@ -239,6 +246,24 @@ func TestRecordingDeleteLandsOnAPageSayingItWasDeleted(t *testing.T) {
 
 	doc := parseHTML(t, follow(t, w.b, submit(t, w.b, deleteConfirm(t, w.b, rec))))
 
+	if findElement(doc, "", "data-field", "deleted") == nil {
+		t.Error("the page the delete lands on doesn't say the recording was deleted")
+	}
+}
+
+// A Foxhole manager who started a recording and deletes it, their only
+// one, lands on the Recordings page saying it was deleted and that none are
+// left, as a panel admin does.
+func TestFoxholeManagerWhoDeletesTheirLastRecordingLandsOnTheRecordingsPage(t *testing.T) {
+	w := newTestWorld(t)
+	manager := addFoxholeManager(w.forum)
+	w.milpacs.set(managerUsername, "discord-m")
+	rec := w.record(t, "discord-m")
+	signInAs(t, w.forum, w.b, manager)
+
+	doc := parseHTML(t, follow(t, w.b, submit(t, w.b, deleteConfirm(t, w.b, rec))))
+
+	assertRecordingsPageEmpty(t, doc, noRecordingsLeft)
 	if findElement(doc, "", "data-field", "deleted") == nil {
 		t.Error("the page the delete lands on doesn't say the recording was deleted")
 	}

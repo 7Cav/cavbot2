@@ -35,6 +35,16 @@ func assertNoAccessPage(t *testing.T, doc *html.Node) {
 	}
 }
 
+// assertNoAccessSays checks a page is the no-access page and says the
+// sentence given, one of the no-access page's sentences.
+func assertNoAccessSays(t *testing.T, doc *html.Node, want string) {
+	t.Helper()
+	assertNoAccessPage(t, doc)
+	if el := findElement(doc, "", "data-field", "no-access"); el != nil && textOf(el) != want {
+		t.Errorf("the no-access page says %q, want %q", textOf(el), want)
+	}
+}
+
 // pageLoadCases is a case for each page the panel serves behind a gate:
 // the path loaded, the sign-in of a user the page admits, and the page that
 // user gets there.
@@ -134,8 +144,9 @@ var settingsSaveCases = []struct {
 }
 
 // A forum user in none of the panel's admin groups saves nothing: each
-// settings save they post answers with the no-access page, which says
-// nothing changed, and leaves the store as it was. A panel admin then
+// settings save they post answers with the no-access page, which says their
+// forum groups don't allow it and nothing changed, and leaves the store as
+// it was. A panel admin then
 // posts the same form and it saves, so no row passes on a form the save
 // would refuse anyway. The Foxhole manager's rows are regression pins: they
 // passed before the Foxhole page existed, when the group check read a
@@ -159,7 +170,7 @@ func TestUserOutsideTheAdminGroupsSavesNothing(t *testing.T) {
 
 				res := w.b.postForm(path, form)
 
-				assertNoAccessPage(t, parseHTML(t, follow(t, w.b, res)))
+				assertNoAccessSays(t, parseHTML(t, follow(t, w.b, res)), noAccessRefused)
 				if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
 					t.Errorf("the store after the %s's save = %+v, want it as before, %+v", u.name, after, before)
 				}
@@ -171,6 +182,26 @@ func TestUserOutsideTheAdminGroupsSavesNothing(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A panel admin removed from every panel admin group while a hub's edit
+// form is open in their browser presses Save. The group check now finds an
+// outsider, whose save the no-access page refuses, saying nothing changed,
+// and the store is as it was.
+func TestPanelAdminWhoLeftEveryGroupSavesNothingFromAnOpenForm(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	path, form := hubPath(t, w.st, "hub-1"), updateForm(t, w.st)
+	form.Set("base_string", "Bravo Voice")
+	before := readSavedState(t, w.st)
+	w.forum.setUserinfo(http.StatusOK, userinfoJSON(2, []int{35, 72}))
+
+	res := w.b.postForm(path, form)
+
+	assertNoAccessSays(t, parseHTML(t, follow(t, w.b, res)), noAccessRefused)
+	if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
+		t.Errorf("the store after the save = %+v, want it as before, %+v", after, before)
 	}
 }
 
@@ -345,8 +376,9 @@ func thenNoRoleChangeNamesTheOutsider(t *testing.T, w *testWorld, started func(*
 }
 
 // An outsider changes nothing through any Foxhole POST route: each answers
-// with the no-access page, and no store write, role change, action or 7Cav
-// API request follows. A Foxhole manager then posts the same form and it
+// with the no-access page, which says their forum groups don't allow it and
+// nothing changed, and no store write, role change, action or 7Cav API
+// request follows. A Foxhole manager then posts the same form and it
 // does what the route does, so no case passes on a form the route would
 // refuse anyway.
 func TestFoxholePostByAnOutsiderDoesNothing(t *testing.T) {
@@ -361,12 +393,33 @@ func TestFoxholePostByAnOutsiderDoesNothing(t *testing.T) {
 
 			res := outsider.postForm(path, form)
 
-			assertNoAccessPage(t, parseHTML(t, res))
+			assertNoAccessSays(t, parseHTML(t, res), noAccessRefused)
 			if after := readFoxholeEffects(t, w, api); !reflect.DeepEqual(after, before) {
 				t.Errorf("after the outsider's post:\n%+v\nwant it as before:\n%+v", after, before)
 			}
 			tookEffect(t, w.b.postForm(path, form))
 		})
+	}
+}
+
+// A Foxhole manager removed from the Foxhole group while the Foxhole page
+// is open in their browser saves a note from it. The group check now finds
+// an outsider, whose save the no-access page refuses, saying nothing
+// changed, and the store is as it was.
+func TestFoxholeManagerWhoLeftTheFoxholeGroupSavesNoNote(t *testing.T) {
+	w := newFoxholeWorld(t)
+	leaver := w.forum.addUser(8642, "Leaves.L", 2, []int{35, testFoxholeGroupID})
+	manager := newBrowser(t, w.p)
+	signInAs(t, w.forum, manager, leaver)
+	form := noteSaveForm(memberDoe.ID, "", "discharged 12 Sep")
+	before := readNoteState(t, w.st)
+	w.forum.setGroups(leaver, 2, []int{35})
+
+	res := manager.postForm(foxholeNotesPath, form)
+
+	assertNoAccessSays(t, parseHTML(t, follow(t, manager, res)), noAccessRefused)
+	if after := readNoteState(t, w.st); !reflect.DeepEqual(after, before) {
+		t.Errorf("the store after the save = %+v, want it as before, %+v", after, before)
 	}
 }
 

@@ -104,6 +104,10 @@ type access struct {
 // admins and Foxhole managers do.
 func (a access) foxholePage() bool { return a.panelAdmin || a.foxholeManager }
 
+// outsider reports whether the session is an outsider's: neither a panel
+// admin nor a Foxhole manager.
+func (a access) outsider() bool { return !a.panelAdmin && !a.foxholeManager }
+
 // landing is the address of the page the session lands on at sign-in: the
 // hub page for a panel admin, else the Foxhole page for a Foxhole manager,
 // else the Recordings page, which lists the recordings the user started and
