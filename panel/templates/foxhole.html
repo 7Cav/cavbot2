@@ -360,6 +360,7 @@
 </main>
 {{end}}
 
+{{- /* The search and filter links both views share. Under 768px panel.css sizes the search box to its whole hint, so a longer hint needs a wider box there. */}}
 {{define "fx-toolbar"}}<div class="block-row fx-toolbar">
   <form method="get" action="/foxhole#{{.ListAnchor}}" class="fx-searchform" role="search" data-field="search">
     {{if ne .Filter "all"}}<input type="hidden" name="filter" value="{{.Filter}}">{{end}}
