@@ -53,7 +53,7 @@ func submitSelection(t *testing.T, b *browser, doc *html.Node, op string, member
 		method = strings.ToUpper(v)
 	}
 	if method == http.MethodGet {
-		return b.get(action + "?" + fields.Encode())
+		return b.getForm(action, fields)
 	}
 	return b.postForm(action, fields)
 }

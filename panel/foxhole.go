@@ -133,6 +133,13 @@ type foxholeView struct {
 	Report *reportView
 }
 
+// Pending reports whether the page opens a preview or a confirmation a
+// Foxhole action waits on. The page shows it first, and folds the last
+// report to one line below it.
+func (v foxholeView) Pending() bool {
+	return v.PurgeConfirm != nil || v.RemovePreview != nil || v.AddPreview != nil || v.RosterPreview != nil || v.RetryConfirm != nil
+}
+
 // listNotice is the one-line notice in the holder list's place while the
 // member list is partial: how far along the list is. It ends in a Reload
 // link to the view's Reload address.

@@ -31,7 +31,14 @@ import (
 // ID.
 func formPosts(t *testing.T, doc *html.Node, action string) url.Values {
 	t.Helper()
-	form := findElement(doc, "form", "action", action)
+	// A form posts to its action without the fragment, which only says
+	// where the answer opens.
+	var form *html.Node
+	eachElement(doc, func(n *html.Node) {
+		if posts, _, _ := strings.Cut(attrOf(n, "action"), "#"); form == nil && n.Data == "form" && posts == action {
+			form = n
+		}
+	})
 	if form == nil {
 		t.Fatalf("page has no form posting to %s", action)
 	}

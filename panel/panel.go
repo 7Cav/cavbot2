@@ -722,8 +722,8 @@ func hubIDOf(r *http.Request) (int64, bool) {
 }
 
 // updateHub is POST /hubs/{id}: one service call, then a redirect to the
-// hub's form where the saved values show, or the form again with the refused
-// field named.
+// hub's form, opened at the form, where the saved values show, or the form
+// again with the refused field named.
 func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) {
 	id, ok := hubIDOf(r)
 	if !ok {
@@ -769,7 +769,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 	}
 	utils.Info("Panel hub updated", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
 		"username", sess.username, "forum_user_id", sess.userID)
-	http.Redirect(w, r, "/?hub="+strconv.FormatInt(hub.ID, 10), http.StatusSeeOther)
+	http.Redirect(w, r, hubEditAddress(hub.ID), http.StatusSeeOther)
 }
 
 // removeHub is POST /hubs/{id}/remove, the remove preview's Confirm: one

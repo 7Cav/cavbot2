@@ -37,7 +37,7 @@ func pressRemove(t *testing.T, b *browser, doc, scope *html.Node) *http.Response
 	if strings.EqualFold(attrOf(form, "method"), http.MethodPost) {
 		return b.postForm(action, fields)
 	}
-	return b.get(action + "?" + fields.Encode())
+	return b.getForm(action, fields)
 }
 
 // removeForm is the remove preview's Confirm of the hub on hub-1 as a

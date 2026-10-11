@@ -84,6 +84,11 @@ img { max-width: 100%; }
 .block-row { padding: 12px 14px; }
 .block-row + .block-row { border-top: 1px solid var(--line); }
 .submit-row { padding: 12px 14px; background: rgba(23,23,23,.9); border-top: 1px solid var(--line-2); border-radius: 0 0 var(--radius) var(--radius); }
+/* A block a page opens at, by its own ID or its heading's in the address's
+   fragment: a little room above it. The heading takes focus only from the
+   landing, never from Tab, so it draws no ring. */
+.block[id], .block-header[id] { scroll-margin-top: 12px; }
+h2[tabindex="-1"]:focus { outline: none; }
 
 /* A danger confirm: the preview a removal waits on. The forum draws no such
    state, so PRODUCT.md's Look allows a red header rule here, and a filled
@@ -257,8 +262,8 @@ img { max-width: 100%; }
 .fx-readd { border-top: 1px solid var(--line-2); }
 .fx-readdcount { margin: 0; color: var(--text-hi); }
 .btn[disabled] { opacity: .4; cursor: not-allowed; }
-.fx-pending { border-color: var(--gold-lo); }
-.fx-pending--danger { border-color: var(--danger-hi); }
+/* A preview's gold edge; a danger confirm keeps its red one. */
+.fx-pending:not(.block--danger) { border-color: var(--gold-lo); }
 .fx-pending p { margin: 0 0 6px; }
 .fx-previewnote { display: block; font-size: 13px; color: var(--text-mute); overflow-wrap: anywhere; }
 .fx-actions--alone { grid-template-columns: minmax(0, 36rem); margin-bottom: 12px; }
@@ -272,8 +277,30 @@ img { max-width: 100%; }
 .fx-reportmembers { margin: 0; padding-left: 18px; font-size: 14px; }
 .fx-reportmembers li + li { margin-top: 2px; }
 .fx-reporthead { font-size: 14px; color: var(--text-mute); }
+/* The last report folded to one line while a preview is open above it:
+   the action and how it ended, then its counts. The marker is drawn, so a
+   screen reader reads the line alone. */
+.fx-reportsummary {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 14px; cursor: pointer; list-style: none; border-radius: var(--radius);
+}
+.fx-reportsummary::-webkit-details-marker { display: none; }
+.fx-reportsummary::before {
+  content: ""; flex: none; width: 0; height: 0; margin-top: 5px;
+  border-style: solid; border-width: 5px 0 5px 7px; border-color: transparent transparent transparent var(--text-mute);
+}
+.fx-report[open] > .fx-reportsummary { border-bottom: 1px solid var(--line); border-radius: var(--radius) var(--radius) 0 0; }
+.fx-report[open] > .fx-reportsummary::before { transform: rotate(90deg); }
+.fx-reportsummary:hover { background: var(--surface-2); }
+.fx-reportsummary:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+.fx-reportname { margin-right: 6px; color: var(--text-hi); font-weight: 500; }
+.fx-reportcounts { font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
+/* A report in the change log: its name and its "Started by" line above the
+   grid that pairs each list's heading with its members. */
+.fx-changereport { font-size: 14px; }
 .fx-changereport > p { margin: 0 0 6px; color: var(--text-hi); }
 .fx-changereport .block-row { padding: 6px 0; }
+.fx-changereport > .change-fields { border-top: 1px solid var(--line); }
 @media (max-width: 1100px) {
   .fx-actions { grid-template-columns: minmax(0, 1fr); }
 }

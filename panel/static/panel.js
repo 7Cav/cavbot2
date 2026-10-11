@@ -609,3 +609,22 @@
   hideHint(progress);
   setTimeout(load, every);
 })();
+
+/* Landing on a block (ADR 0013). A control that opens a block below the top
+   of the page, as each Foxhole preview's opener and a hub's Edit do, names
+   the block's heading in its address's fragment. The heading is marked
+   tabindex="-1", so the browser scrolls to it and focuses it, with or
+   without script, and a keyboard or screen reader user starts at the block
+   rather than at the top of the page. The script focuses it too, on load
+   and when the fragment changes, for a browser that only scrolls. */
+(function () {
+  'use strict';
+
+  function land() {
+    var heading = location.hash.length > 1 && document.getElementById(location.hash.slice(1));
+    if (heading && heading.matches('[tabindex="-1"]')) { heading.focus({ preventScroll: true }); }
+  }
+
+  land();
+  window.addEventListener('hashchange', land);
+})();

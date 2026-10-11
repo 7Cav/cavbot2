@@ -290,6 +290,8 @@ func (b *browser) do(method, target string, header http.Header, body io.Reader) 
 // net/http cancels when the browser's connection closes.
 func (b *browser) doContext(ctx context.Context, method, target string, header http.Header, body io.Reader) *http.Response {
 	b.t.Helper()
+	// A browser keeps an address's fragment to itself and never sends it.
+	target, _, _ = strings.Cut(target, "#")
 	req := httptest.NewRequestWithContext(ctx, method, testBaseURL+target, body)
 	for k, v := range header {
 		req.Header[k] = v
@@ -327,10 +329,55 @@ func (b *browser) post(target string) *http.Response {
 	return b.postForm(target, nil)
 }
 
+// getForm submits a GET form the way a browser does: the form's fields
+// replace the query of its action, whose fragment stays in the address.
+func (b *browser) getForm(action string, fields url.Values) *http.Response {
+	b.t.Helper()
+	u, err := url.Parse(action)
+	if err != nil {
+		b.t.Fatalf("form action %q: %v", action, err)
+	}
+	u.RawQuery = fields.Encode()
+	return b.get(u.String())
+}
+
 // postForm submits a form the way a browser does.
 func (b *browser) postForm(target string, form url.Values) *http.Response {
 	b.t.Helper()
 	return b.do(http.MethodPost, target, http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}, strings.NewReader(form.Encode()))
+}
+
+// landing follows an answer to a control whose address is control the way
+// a browser does, and returns the page it lands on and the fragment its
+// address ends with: a redirect's own fragment, or the control's when the
+// redirect names none.
+func landing(t *testing.T, b *browser, control string, res *http.Response) (*html.Node, string) {
+	t.Helper()
+	at, err := url.Parse(control)
+	if err != nil {
+		t.Fatalf("control address %q: %v", control, err)
+	}
+	for res.StatusCode >= 300 && res.StatusCode <= 399 {
+		next := location(t, res)
+		if next.Fragment == "" {
+			next.Fragment = at.Fragment
+		}
+		at = next
+		res = b.get(at.String())
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("landed with status %d, want 200", res.StatusCode)
+	}
+	return parseHTML(t, res), at.Fragment
+}
+
+// landedOn returns the element a page's address fragment names, nil when
+// the fragment is empty or names nothing on the page.
+func landedOn(doc *html.Node, fragment string) *html.Node {
+	if fragment == "" {
+		return nil
+	}
+	return findElement(doc, "", "id", fragment)
 }
 
 // setCookie is a cookie the test sets by hand, such as one from a session the
