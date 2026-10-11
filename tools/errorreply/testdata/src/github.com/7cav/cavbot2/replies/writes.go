@@ -54,22 +54,6 @@ func repliesFromAMapAClosureLoggedNextToTheError(err error) {
 	utils.HandleError(nil, nil, failures["roster"])
 }
 
-// patrol is a sweep that schedules its own next run.
-type patrol struct {
-	stop func()
-	note string
-}
-
-func every(fn func()) func() { return fn }
-
-func (s *patrol) schedule() { s.stop = every(s.schedule) }
-
-func repliesFromWhatSchedulesItselfThroughAMethodValue() {
-	s := &patrol{note: fetchFailed}
-	s.stop = every(s.schedule)
-	utils.HandleError(nil, nil, s.note)
-}
-
 func repliesWithWhatFprintfWroteIntoABuilder(err error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "❌ Failed: %v", err)
@@ -152,4 +136,15 @@ func repliesWithWhatAHelperWroteThroughTheDraftItKeptTheBuilderIn(err error) {
 	var b strings.Builder
 	writeThroughADraft(&b, err)
 	utils.HandleError(nil, nil, "❌ Failed: "+b.String()) // want "Discord"
+}
+
+func writeFixedFailure(w io.Writer, err error) {
+	io.WriteString(w, fetchFailed)
+	log.Print(err)
+}
+
+func repliesWithWhatAHelperWroteIntoTheWriterNextToTheErrorItLogged(err error) {
+	var b strings.Builder
+	writeFixedFailure(&b, err)
+	utils.HandleError(nil, nil, b.String())
 }

@@ -81,19 +81,22 @@
 //     one at a time. The check also took eight times as long. The check
 //     follows a store, a map update, a send, and a call handed the container
 //     directly, in an interface such as the io.Writer fmt.Fprintf takes, or
-//     in a variadic argument list such as fmt.Sscan's. A call into a function of
-//     the package being checked puts there what the function's body puts in
-//     that parameter, unless the body puts the parameter in another
-//     container. Any other call puts there everything else it is handed. A
-//     value read out of a package-level variable is a logger or a client
-//     more often than not, so no call counts as writing into it. The check
-//     follows each write at an address or within it, through a closure that
-//     captured it, and through a local that holds it. A container read out
-//     of a variable may be one the function was handed, which is checked
-//     where it is handed on, so a call handed that container doesn't count
-//     as writing into it, though a call handed an address within it does.
-//     The check doesn't follow a write through a container a call returned,
-//     or through an address kept in a slice, map or struct field.
+//     in a variadic argument list such as fmt.Sscan's. A call puts there
+//     everything else it is handed, apart from a call into a function of
+//     the package being checked that is handed the container read out of a
+//     local or in an interface, as a closure or fmt.Fprintf hands it on.
+//     That call puts there what the function's body puts in its parameter,
+//     so that a helper a closure calls with a captured container doesn't
+//     count as writing what it only reads. A value read out of a
+//     package-level variable is a logger or a client more often than not,
+//     so no call counts as writing into it. The check follows each write at
+//     an address or within it, through a closure that captured it, and
+//     through a local that holds it. A container read out of a variable may
+//     be one the function was handed, which is checked where it is handed
+//     on, so a call handed that container doesn't count as writing into it,
+//     though a call handed an address within it does. The check doesn't
+//     follow a write through a container a call returned, or through an
+//     address kept in a slice, map or struct field.
 //   - A value that reaches a panel page through the store or the temp VC
 //     runtime. The check can't follow a value through either, so it checks
 //     the two fields named above, where they are stored, and no other.
@@ -955,9 +958,8 @@ type frame struct {
 	// call is the call that entered fn, or nil for a closure reached through
 	// a variable.
 	call ssa.CallInstruction
-	// closure is the closure value the tracer entered fn through: the
-	// closure call calls, or the closure that captured the variable the
-	// tracer reached fn through. It is nil when call calls fn by name.
+	// closure is the closure value call calls, or nil when call calls fn by
+	// name or there is no call.
 	closure *ssa.MakeClosure
 	// parent is the frame call is made in, or the frame a closure's
 	// enclosing function runs in. A closure's calls are made there too.
@@ -1317,8 +1319,8 @@ func (t *tracer) traceBindings(v *ssa.FreeVar, f *frame) bool {
 	index := slices.Index(closure.FreeVars, v)
 	if closure.Parent() == nil {
 		// A method value bound to its receiver has no enclosing function, and
-		// any function may make it. The tracer can only have entered its body
-		// through a closure value, which binds its receiver.
+		// any function may make it. The tracer enters its body only through a
+		// call of the closure value, which binds its receiver.
 		return t.trace(f.closure.Bindings[index], f.parent)
 	}
 	if f.runs(closure) {
@@ -1383,7 +1385,7 @@ func (t *tracer) traceStores(addr ssa.Value, f *frame, made bool) bool {
 		}
 		// A closure that captures addr puts values in it through its free
 		// variable.
-		if fv, inner := capture(ref, addr, f); fv != nil && t.traceStores(fv, inner, made) {
+		if fv := capture(ref, addr); fv != nil && t.traceStores(fv, &frame{fn: fv.Parent(), parent: f}, made) {
 			return true
 		}
 	}
@@ -1391,27 +1393,33 @@ func (t *tracer) traceStores(addr ssa.Value, f *frame, made bool) bool {
 }
 
 // traceCallPuts traces what call puts in addr, one of the containers it is
-// handed. A call into a function of the package being checked puts there
-// what the function's body puts in the parameter addr is handed as, unless
-// the body puts that parameter in another container. That call, and any
-// other, puts there everything else it is handed, as puts has it.
+// handed. A call into a function of the package being checked that is
+// handed addr read out of a local or held in an interface, as a closure or
+// fmt.Fprintf hands a container on, puts there what the function's body
+// puts in the parameter addr is handed as. Any other call puts there
+// everything else it is handed, as puts has it.
 func (t *tracer) traceCallPuts(call ssa.CallInstruction, addr ssa.Value, f *frame) bool {
-	if callee := t.callee(call, f); callee != nil {
+	if callee := t.callee(call, f); callee != nil && handedOn(addr) {
 		for _, op := range operands(call.Common()) {
-			if op.v != addr || !writable(addr) {
-				continue
-			}
-			param := callee.Params[op.param]
-			if keeps(param) {
-				return t.traceHanded(call, addr, f)
-			}
-			if t.traceStores(param, enter(callee, call, f), true) {
+			if op.v == addr && writable(addr) && t.traceStores(callee.Params[op.param], enter(callee, call, f), true) {
 				return true
 			}
 		}
 		return false
 	}
 	return t.traceHanded(call, addr, f)
+}
+
+// handedOn reports whether v is a container read out of a local or held in
+// an interface.
+func handedOn(v ssa.Value) bool {
+	switch v := v.(type) {
+	case *ssa.UnOp:
+		return v.Op == token.MUL
+	case *ssa.MakeInterface:
+		return true
+	}
+	return false
 }
 
 // traceHanded traces everything call is handed besides addr, which puts has
@@ -1423,20 +1431,6 @@ func (t *tracer) traceHanded(call ssa.CallInstruction, addr ssa.Value, f *frame)
 		}
 		for _, v := range p.values {
 			if t.trace(v, f) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// keeps reports whether a function puts v, a container it is handed, in
-// another container, as puts has it. The walk from a container doesn't
-// follow it there.
-func keeps(v ssa.Value) bool {
-	for _, ref := range *v.Referrers() {
-		for _, p := range puts(ref) {
-			if slices.Contains(p.values, v) {
 				return true
 			}
 		}
@@ -1458,7 +1452,7 @@ func (t *tracer) traceThrough(holder ssa.Value, f *frame, made bool) bool {
 		if load, ok := ref.(*ssa.UnOp); ok && load.Op == token.MUL && t.traceStores(load, f, made) {
 			return true
 		}
-		if fv, inner := capture(ref, holder, f); fv != nil && t.traceThrough(fv, inner, made) {
+		if fv := capture(ref, holder); fv != nil && t.traceThrough(fv, &frame{fn: fv.Parent(), parent: f}, made) {
 			return true
 		}
 	}
@@ -1466,17 +1460,14 @@ func (t *tracer) traceThrough(holder ssa.Value, f *frame, made bool) bool {
 }
 
 // capture returns the free variable through which the closure instr makes
-// reaches addr, and the frame of the closure's body, entered from f, that
-// reaches it there. Both are nil when instr makes no closure that captures
-// addr.
-func capture(instr ssa.Instruction, addr ssa.Value, f *frame) (*ssa.FreeVar, *frame) {
+// reaches addr, or nil when instr makes no closure that captures addr.
+func capture(instr ssa.Instruction, addr ssa.Value) *ssa.FreeVar {
 	mk, ok := instr.(*ssa.MakeClosure)
 	if !ok {
-		return nil, nil
+		return nil
 	}
 	if i := slices.Index(mk.Bindings, addr); i >= 0 {
-		fv := mk.Fn.(*ssa.Function).FreeVars[i]
-		return fv, &frame{fn: fv.Parent(), closure: mk, parent: f}
+		return mk.Fn.(*ssa.Function).FreeVars[i]
 	}
-	return nil, nil
+	return nil
 }
