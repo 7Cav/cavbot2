@@ -54,7 +54,7 @@
       <h3>Goes with the hub</h3>
       <ul>
         <li>Every setting in its edit form.</li>
-        {{with .Roles}}<li>Its own moderator roles: {{range .}}<span class="tag" data-role="{{.ID}}"{{if .Unavailable}} data-unavailable="{{.Unavailable}}"{{end}}>{{.Label}}{{template "role-note" .}}</span> {{end}}They can no longer rename, lock or unlock its spawned channels.</li>{{end}}
+        {{with .Roles}}<li>Its own moderator roles: {{range $i, $role := .}}{{if $i}}, {{end}}<span class="tag" data-role="{{$role.ID}}"{{if $role.Unavailable}} data-unavailable="{{$role.Unavailable}}"{{end}}>{{$role.Label}}{{template "role-note" $role}}</span>{{end}}. They can no longer rename, lock or unlock its spawned channels.</li>{{end}}
         <li>Its change log. No page shows it once the hub is gone.</li>
       </ul>
     </div>

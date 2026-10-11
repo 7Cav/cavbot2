@@ -94,7 +94,6 @@ img { max-width: 100%; }
 .confirm-list h3 { margin: 0 0 6px; font-size: 14px; font-weight: 500; color: var(--text-hi); }
 .confirm-list ul { margin: 0; padding-left: 18px; }
 .confirm-list li + li { margin-top: 4px; }
-.confirm-list .tag { margin-right: 2px; }
 .confirm-count { margin-left: 4px; font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
 
 /* One note style for the ended-session causes. */
