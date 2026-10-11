@@ -128,3 +128,35 @@ func TestSigninFromASaveWithNoSessionLandsOnTheLanding(t *testing.T) {
 
 	assertRedirect(t, res, "/")
 }
+
+// A first try that didn't finish keeps the page the sign-in is for: after
+// Deny, the sign-in page, and after a state that didn't match, the error
+// page's Sign in again, each sign in back to it.
+func TestSigninThatDidNotFinishKeepsThePage(t *testing.T) {
+	cases := []struct {
+		name string
+		// fail answers the forum's consent the way it didn't finish, given
+		// the state the forum was sent.
+		fail func(w *testWorld, state string) *http.Response
+	}{
+		{"Deny on the forum", func(w *testWorld, state string) *http.Response {
+			return w.b.get("/auth/callback?error=access_denied&state=" + url.QueryEscape(state))
+		}},
+		{"a state that didn't match", func(w *testWorld, _ string) *http.Response {
+			return w.b.get("/auth/callback?code=" + testCode + "&state=not-the-one-issued")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			id := storedHubID(t, w.st, "hub-1")
+			signin := parseHTML(t, follow(t, w.b, w.b.get("/?hub="+strconv.FormatInt(id, 10))))
+			q := assertRedirect(t, w.b.postForm("/auth/start", formPosts(t, signin, "/auth/start")), "/oauth2/authorize").Query()
+			w.forum.setChallenge(q.Get("code_challenge"))
+
+			res := signInThrough(t, w, tc.fail(w, q.Get("state")))
+
+			assertOnHubEditForm(t, parseHTML(t, follow(t, w.b, res)), id)
+		})
+	}
+}

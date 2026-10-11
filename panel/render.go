@@ -92,8 +92,8 @@ type pageData struct {
 	Page     string
 	Username string
 	Cause    cause
-	// Next is the address the sign-in page's form posts for its sign-in to
-	// come back to.
+	// Next is the address the sign-in form, on the sign-in page or the
+	// error page's Sign in again, posts for its sign-in to come back to.
 	Next    string
 	Hubs    hubPage
 	Foxhole foxholeView

@@ -321,18 +321,18 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 	clearCookie(w, signinCookie)
 	c, err := r.Cookie(signinCookie)
 	if err != nil {
-		p.signinFailed(w, failureSigninNotStarted)
+		p.signinFailed(w, failureSigninNotStarted, "")
 		return
 	}
 	pending, ok := p.sessions.takePending(c.Value, panelClock.Now())
 	if !ok {
-		p.signinFailed(w, failureSigninTooSlow)
+		p.signinFailed(w, failureSigninTooSlow, "")
 		return
 	}
 	q := r.URL.Query()
 	if q.Get("state") == "" || q.Get("state") != pending.state {
 		utils.Warn("Panel sign-in refused: state mismatch")
-		p.signinFailed(w, failureSigninMismatch)
+		p.signinFailed(w, failureSigninMismatch, pending.next)
 		return
 	}
 	if q.Get("error") != "" {
@@ -340,12 +340,12 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 		// refused the request. Back to the sign-in page, which says the
 		// sign-in didn't finish.
 		utils.Info("Panel sign-in not completed", "forum_error", q.Get("error"))
-		http.Redirect(w, r, signinURL(causeUnfinished, ""), http.StatusSeeOther)
+		http.Redirect(w, r, signinURL(causeUnfinished, pending.next), http.StatusSeeOther)
 		return
 	}
 	code := q.Get("code")
 	if code == "" {
-		p.signinFailed(w, failureSigninNoCode)
+		p.signinFailed(w, failureSigninNoCode, pending.next)
 		return
 	}
 
@@ -403,11 +403,13 @@ var signinFailures = map[failure]struct{ title, message string }{
 }
 
 // signinFailed answers a callback the panel can't finish with the error
-// page for the failure and a 400. Its Sign in again starts a fresh sign-in.
-func (p *Panel) signinFailed(w http.ResponseWriter, f failure) {
+// page for the failure and a 400. Its Sign in again starts a fresh sign-in
+// that comes back to next, the pending sign-in's address when the callback
+// found one.
+func (p *Panel) signinFailed(w http.ResponseWriter, f failure, next string) {
 	utils.Info("Panel sign-in not completed", "failure", string(f))
 	text := signinFailures[f]
-	p.render(w, http.StatusBadRequest, "error", pageData{Title: text.title, Message: text.message, Failure: f, SignInAgain: true})
+	p.render(w, http.StatusBadRequest, "error", pageData{Title: text.title, Message: text.message, Failure: f, SignInAgain: true, Next: next})
 }
 
 // forumUnavailable renders the error page with the 502 the forum outage
