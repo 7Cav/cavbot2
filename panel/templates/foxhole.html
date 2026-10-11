@@ -8,7 +8,7 @@
   {{with .ApprovalRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
   {{with .ActionRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
   {{with .Skipped}}<div class="note" data-field="approve-skipped">Not approved, since {{if eq (len .) 1}}this member doesn't{{else}}these members don't{{end}} hold External: {{range $i, $m := .}}{{if $i}}, {{end}}<span data-skipped="{{$m.ID}}">{{if $m.DisplayName}}{{$m.DisplayName}} <span class="fx-user">@{{$m.Username}}</span>{{else}}{{$m.ID}}{{end}}</span>{{end}}. Nothing changed for them.</div>{{end}}
-  {{if .Disconnected}}<div class="note" data-notice="disconnected">Cavbot2 has lost its connection to Discord. The holder list may be out of date.</div>{{end}}
+  {{if .Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. The holder list may be out of date.</div>{{end}}
   {{with .Retry}}
   <section class="block fx-pending" data-field="retrying" data-report="{{.ID}}" data-action="{{.Action}}">
     <h2 class="block-header" id="retry" tabindex="-1">Retry: {{.Name}}</h2>
@@ -207,14 +207,14 @@
       {{- /* While the purge confirmation is open, its Confirm is the page's one live Purge: the form here drops its scopes, turns its Purge off and points there. */}}
       <form method="get" action="/foxhole#purge-confirm" data-field="purge">
         <div class="block-row">
-          <div class="field fx-radios"><span class="field-label">Purge</span>
+          <div class="field fx-radios"{{if not .PurgeConfirm}} role="radiogroup" aria-labelledby="purge-label" aria-describedby="purge-hint"{{end}}><span class="field-label" id="purge-label">Purge</span>
             {{- if not .PurgeConfirm}}
             <label class="check"><input type="radio" name="purge" value="both" checked> Internal and External</label>
             <label class="check"><input type="radio" name="purge" value="internal"> Internal only</label>
             <label class="check"><input type="radio" name="purge" value="external"> External only</label>
             {{- end}}
           </div>
-          <span class="field-hint">Run when a war ends. You confirm on the next step. Notes and approvals stay.</span>
+          <span class="field-hint" id="purge-hint">Run when a war ends. You confirm on the next step. Notes and approvals stay.</span>
         </div>
         <div class="submit-row"><button type="submit" class="btn btn--danger"{{if or .Busy .PurgeConfirm}} disabled{{end}}>Purge</button>
           {{- with .PurgeConfirm}} <span class="fx-hint" data-field="purge-open">Confirm or cancel <a href="#purge-confirm">the purge of {{.Label}}</a> at the top of the page first.</span>
@@ -297,7 +297,7 @@
     </section>
   </div>
   {{end}}{{with .ListNotice}}
-  <div class="note" role="status" data-notice="member-list" data-list-status="{{.Status}}">
+  <div class="note note--neutral" role="status" data-notice="member-list" data-list-status="{{.Status}}">
     {{- if eq .Status "arriving"}}Waiting for the member list from Discord{{if .Expected}} (<span data-field="parts_received">{{.Received}}</span> of <span data-field="parts_expected">{{.Expected}}</span>){{end}}.
     {{- else if eq .Status "refused"}}Discord stopped the member list fetch. Retrying in <span data-field="retry_in">{{.RetryIn}}</span> s.
     {{- else if eq .Status "late"}}Discord took too long to send the member list.
@@ -378,15 +378,15 @@
 
 {{define "add-form"}}<form method="post" action="/foxhole/add/preview#add-preview" data-field="add-form">
   <div class="block-row">
-    <div class="field fx-radios"><span class="field-label">Role</span>
+    <div class="field fx-radios" role="radiogroup" aria-labelledby="add-role-label"><span class="field-label" id="add-role-label">Role</span>
       <label class="check"><input type="radio" name="role" value="internal"{{if ne .Role "external"}} checked{{end}}> Internal</label>
       <label class="check"><input type="radio" name="role" value="external"{{if eq .Role "external"}} checked{{end}}> External</label>
     </div>
     <label class="field"><span class="field-label">Members, one a line</span>
-      <textarea name="lines" rows="5" class="fx-paste" autocomplete="off" spellcheck="false">
+      <textarea name="lines" rows="5" class="fx-paste" autocomplete="off" spellcheck="false" aria-describedby="add-lines-hint">
 {{.Text}}</textarea>
-      <span class="field-hint">Discord IDs, mentions, usernames, nicknames or global names. You see what each line matched before anything changes.</span>
     </label>
+    <span class="field-hint" id="add-lines-hint">Discord IDs, mentions, usernames, nicknames or global names. You see what each line matched before anything changes.</span>
   </div>
   <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="preview">{{if .AbovePreview}}Preview again{{else}}Preview{{end}}</button></div>
 </form>{{end}}
@@ -394,9 +394,9 @@
 {{define "roster-form"}}<form method="post" action="/foxhole/roster/preview#roster-preview" data-field="roster-form">
   <div class="block-row">
     <label class="field"><span class="field-label">Validated unit</span>
-      <select name="unit">{{range .Units}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select>
-      <span class="field-hint">Adds the unit's whole roster to Internal. You see each trooper on it before anything changes.</span>
+      <select name="unit" aria-describedby="roster-unit-hint">{{range .Units}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select>
     </label>
+    <span class="field-hint" id="roster-unit-hint">Adds the unit's whole roster to Internal. You see each trooper on it before anything changes.</span>
   </div>
   <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="preview-roster">Preview roster</button></div>
 </form>{{end}}

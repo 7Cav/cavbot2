@@ -26,6 +26,10 @@ type pickerView struct {
 	Dots bool
 	// AddLabel is the add control's text.
 	AddLabel string
+	// AddFor ends the add control's accessible name after AddLabel, naming
+	// the set it adds to, where another picker on the page shares AddLabel.
+	// A screen reader reads it; the page doesn't show it.
+	AddFor string
 	// SearchLabel is the search input's accessible name.
 	SearchLabel string
 	Tags        []pickerItem

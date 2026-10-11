@@ -53,7 +53,9 @@ func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, sto
 	if err != nil {
 		return moderatorsPage{}, fmt.Errorf("%s: %w", moderatorChangesRead, err)
 	}
-	return moderatorsPage{Version: version, Picker: rolePicker(fieldModeratorRoles, guild, stored.RoleIDs, selected), Changes: changeViews(entries, guild.names)}, nil
+	picker := rolePicker(fieldModeratorRoles, guild, stored.RoleIDs, selected)
+	picker.AddFor = "to the moderator roles for every hub"
+	return moderatorsPage{Version: version, Picker: picker, Changes: changeViews(entries, guild.names)}, nil
 }
 
 // setModerators saves the guild-wide moderator roles: it validates the
