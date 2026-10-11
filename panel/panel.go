@@ -447,10 +447,10 @@ func signinURL(c cause, next string) string {
 	return "/signin?" + q.Encode()
 }
 
-// pageAddressOf is the address of the page a request asks for, for its
-// sign-in to come back to: a GET's path and query. Any other request asks
-// for no page, and its sign-in lands on the landing.
-func pageAddressOf(r *http.Request) string {
+// returnAddressOf is the address a request's sign-in comes back to: a
+// GET's path and query, the page it asked for. Any other request asks for
+// no page, so it has none, and its sign-in lands on the landing.
+func returnAddressOf(r *http.Request) string {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return ""
 	}
@@ -467,18 +467,18 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookie)
 		if err != nil {
-			http.Redirect(w, r, signinURL(causeNone, pageAddressOf(r)), http.StatusSeeOther)
+			http.Redirect(w, r, signinURL(causeNone, returnAddressOf(r)), http.StatusSeeOther)
 			return
 		}
 		sess, ok := p.sessions.get(c.Value)
 		if !ok {
 			clearCookie(w, sessionCookie)
-			http.Redirect(w, r, signinURL(causeNone, pageAddressOf(r)), http.StatusSeeOther)
+			http.Redirect(w, r, signinURL(causeNone, returnAddressOf(r)), http.StatusSeeOther)
 			return
 		}
 		if sess.expired(panelClock.Now()) {
 			p.endSession(w, c.Value, sess, string(causeExpired))
-			http.Redirect(w, r, signinURL(causeExpired, pageAddressOf(r)), http.StatusSeeOther)
+			http.Redirect(w, r, signinURL(causeExpired, returnAddressOf(r)), http.StatusSeeOther)
 			return
 		}
 		user, outcome, err := p.groupCheck(r.Context(), sess.accessToken)
@@ -492,7 +492,7 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 			p.forumUnavailable(w, &sess)
 		default:
 			p.endSession(w, c.Value, sess, string(outcome.cause()))
-			http.Redirect(w, r, signinURL(outcome.cause(), pageAddressOf(r)), http.StatusSeeOther)
+			http.Redirect(w, r, signinURL(outcome.cause(), returnAddressOf(r)), http.StatusSeeOther)
 		}
 	}
 }
@@ -541,13 +541,15 @@ func (p *Panel) refuse(w http.ResponseWriter, r *http.Request, sess session) {
 	p.noAccess(w, sess)
 }
 
-// The not-found page's titles and sentences: an address with no page, and
-// one naming a hub no hub has the ID of.
+// The not-found page's titles and sentences: an address with no page, one
+// naming a hub no hub has the ID of, and a save to such a hub, which says
+// nothing changed.
 const (
-	noPageTitle   = "Page not found"
-	noPageMessage = "The panel has no page at this address."
-	noHubTitle    = "Hub not found"
-	noHubMessage  = "No hub has this address. Someone may have removed it."
+	noPageTitle      = "Page not found"
+	noPageMessage    = "The panel has no page at this address."
+	noHubTitle       = "Hub not found"
+	noHubMessage     = "No hub has this address. Someone may have removed it."
+	noHubSaveMessage = "No hub has this address, so nothing changed. Someone may have removed it."
 )
 
 // noPage is any GET the panel has no route for.
@@ -826,7 +828,7 @@ func hubIDOf(r *http.Request) (int64, bool) {
 func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) {
 	id, ok := hubIDOf(r)
 	if !ok {
-		p.notFound(w, sess, noHubTitle, noHubMessage)
+		p.notFound(w, sess, noHubTitle, noHubSaveMessage)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -855,7 +857,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 	ctx, hubs := p.saving(r)
 	hub, err := hubs.update(ctx, id, in, sess.actor())
 	if errors.Is(err, store.ErrNotFound) {
-		p.notFound(w, sess, noHubTitle, noHubMessage)
+		p.notFound(w, sess, noHubTitle, noHubSaveMessage)
 		return
 	}
 	if refusal, ok := asFieldError(err); ok {
@@ -878,7 +880,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 func (p *Panel) removeHub(w http.ResponseWriter, r *http.Request, sess session) {
 	id, ok := hubIDOf(r)
 	if !ok {
-		p.notFound(w, sess, noHubTitle, noHubMessage)
+		p.notFound(w, sess, noHubTitle, noHubSaveMessage)
 		return
 	}
 	if err := r.ParseForm(); err != nil {

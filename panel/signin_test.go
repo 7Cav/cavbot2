@@ -15,9 +15,22 @@ import (
 // the forum would hand back.
 func startSignin(t *testing.T, f *fakeForum, b *browser) string {
 	t.Helper()
-	q := assertRedirect(t, b.post("/auth/start"), "/oauth2/authorize").Query()
+	return startSigninWith(t, f, b, nil)
+}
+
+// startSigninWith is startSignin through a sign-in form that posts form.
+func startSigninWith(t *testing.T, f *fakeForum, b *browser, form url.Values) string {
+	t.Helper()
+	q := assertRedirect(t, b.postForm("/auth/start", form), "/oauth2/authorize").Query()
 	f.setChallenge(q.Get("code_challenge"))
 	return q.Get("state")
+}
+
+// forumSendsBack is the forum's consent page handing the default user's code
+// back with the state given.
+func forumSendsBack(b *browser, state string) *http.Response {
+	b.t.Helper()
+	return b.get("/auth/callback?code=" + url.QueryEscape(testCode) + "&state=" + url.QueryEscape(state))
 }
 
 // A callback the panel can't finish answers with a panel page that says
@@ -69,9 +82,7 @@ func TestCallbackFailureOffersSignInAgain(t *testing.T) {
 func signInThrough(t *testing.T, w *testWorld, res *http.Response) *http.Response {
 	t.Helper()
 	doc := parseHTML(t, follow(t, w.b, res))
-	q := assertRedirect(t, w.b.postForm("/auth/start", formPosts(t, doc, "/auth/start")), "/oauth2/authorize").Query()
-	w.forum.setChallenge(q.Get("code_challenge"))
-	return w.b.get("/auth/callback?code=" + url.QueryEscape(testCode) + "&state=" + url.QueryEscape(q.Get("state")))
+	return forumSendsBack(w.b, startSigninWith(t, w.forum, w.b, formPosts(t, doc, "/auth/start")))
 }
 
 // assertOnHubEditForm checks a page shows the hub's edit form: an element
@@ -119,14 +130,16 @@ func TestSigninComesBackToThePageThatSentThere(t *testing.T) {
 }
 
 // A save posted with no session is not a page to come back to, so its
-// sign-in lands where any sign-in does.
+// sign-in lands where any sign-in does: a panel admin's on the Hubs page.
 func TestSigninFromASaveWithNoSessionLandsOnTheLanding(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	id := storedHubID(t, w.st, "hub-1")
 
 	res := signInThrough(t, w, w.b.postForm("/hubs/"+strconv.FormatInt(id, 10), updateForm(t, w.st)))
 
-	assertRedirect(t, res, "/")
+	if got := pageOf(t, parseHTML(t, follow(t, w.b, res))); got != pageHubs {
+		t.Errorf("the sign-in lands on page %q, want %s", got, pageHubs)
+	}
 }
 
 // A first try that didn't finish keeps the page the sign-in is for: after
@@ -151,10 +164,9 @@ func TestSigninThatDidNotFinishKeepsThePage(t *testing.T) {
 			w := newTestWorld(t, testHub())
 			id := storedHubID(t, w.st, "hub-1")
 			signin := parseHTML(t, follow(t, w.b, w.b.get("/?hub="+strconv.FormatInt(id, 10))))
-			q := assertRedirect(t, w.b.postForm("/auth/start", formPosts(t, signin, "/auth/start")), "/oauth2/authorize").Query()
-			w.forum.setChallenge(q.Get("code_challenge"))
+			state := startSigninWith(t, w.forum, w.b, formPosts(t, signin, "/auth/start"))
 
-			res := signInThrough(t, w, tc.fail(w, q.Get("state")))
+			res := signInThrough(t, w, tc.fail(w, state))
 
 			assertOnHubEditForm(t, parseHTML(t, follow(t, w.b, res)), id)
 		})
@@ -174,11 +186,9 @@ func TestSigninNeverComesBackOffThePanel(t *testing.T) {
 	} {
 		t.Run(next, func(t *testing.T) {
 			w := newTestWorld(t)
-			start := w.b.postForm("/auth/start", url.Values{"next": {next}})
-			q := assertRedirect(t, start, "/oauth2/authorize").Query()
-			w.forum.setChallenge(q.Get("code_challenge"))
+			state := startSigninWith(t, w.forum, w.b, url.Values{"next": {next}})
 
-			res := w.b.get("/auth/callback?code=" + testCode + "&state=" + url.QueryEscape(q.Get("state")))
+			res := forumSendsBack(w.b, state)
 
 			if got := res.Header.Get("Location"); got != "/" {
 				t.Errorf("the sign-in comes back to %q, want /", got)

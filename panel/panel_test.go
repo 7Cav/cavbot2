@@ -768,9 +768,8 @@ func signInAs(t *testing.T, f *fakeForum, b *browser, a *forumAccount) *http.Res
 // consent page would hand back for the user.
 func signInWithCode(t *testing.T, f *fakeForum, b *browser, code string) *http.Response {
 	t.Helper()
-	q := assertRedirect(t, b.post("/auth/start"), "/oauth2/authorize").Query()
-	f.setChallenge(q.Get("code_challenge"))
-	return b.get("/auth/callback?code=" + url.QueryEscape(code) + "&state=" + url.QueryEscape(q.Get("state")))
+	state := startSignin(t, f, b)
+	return b.get("/auth/callback?code=" + url.QueryEscape(code) + "&state=" + url.QueryEscape(state))
 }
 
 func TestCallbackWithMatchingStateSignsIn(t *testing.T) {
