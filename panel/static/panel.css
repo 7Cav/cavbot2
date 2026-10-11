@@ -15,7 +15,14 @@
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+/* The page is dark throughout, so the browser draws its own parts dark too:
+   scrollbars, select popups and the form controls it renders. --line-strong
+   is the panel's own token, not the forum's. A field draws its edge in it,
+   which AA wants at 3:1, and a neutral notice its stripe. It is 3.52:1 on
+   --bg, 3.36:1 on --surface, 3.23:1 on --surface-2 and 3.02:1 on
+   --surface-3. */
 :root {
+  color-scheme: dark;
   --bg: #121212;
   --surface: #171717;
   --surface-2: #1b1b1b;
@@ -23,6 +30,7 @@
   --line: #2b2b2b;
   --line-2: #353535;
   --line-hi: #4d4d4d;
+  --line-strong: #6b6b6b;
   --text: #a1a1a1;
   --text-hi: #f1f1f1;
   --text-mute: #8d8d8d;
@@ -48,6 +56,12 @@ body {
 }
 a { color: var(--gold); }
 a:hover { color: var(--gold-hi); }
+/* Keyboard focus draws the buttons' gold ring on every control, links and
+   checkboxes included, rather than the browser's blue. Gold is 9.76:1 or
+   more on every surface. */
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+/* Muted text, 5.64:1 on a field's --bg, where the browser's grey is 4.07:1. */
+::placeholder { color: var(--text-mute); opacity: 1; }
 h1, h2, h3 { margin: 0; color: var(--text-hi); font-weight: 400; }
 p { margin: 0 0 10px; }
 p:last-child { margin-bottom: 0; }
@@ -101,12 +115,16 @@ h2[tabindex="-1"]:focus { outline: none; }
 .confirm-list li + li { margin-top: 4px; }
 .confirm-count { margin-left: 4px; font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
 
-/* One note style for the ended-session causes. */
+/* A note is a refusal, with the red stripe, unless a modifier says
+   otherwise. A notice that refuses nothing, such as an ended session, takes
+   the neutral stripe, so red always means something was refused. A result
+   takes the green one, .note--ok below. */
 .note {
   padding: 12px 14px; color: var(--text-hi); background: var(--surface);
   border: 1px solid var(--line); border-left: 3px solid var(--danger-hi); border-radius: var(--radius);
   margin-bottom: 12px;
 }
+.note--neutral { border-left-color: var(--line-strong); }
 
 /* The hub list. */
 .scroll { overflow-x: auto; }
@@ -132,7 +150,7 @@ h2[tabindex="-1"]:focus { outline: none; }
 .field-hint { display: block; font-size: 13px; color: var(--text-mute); margin-top: 6px; }
 .field input, .field select, .field textarea {
   display: block; width: 100%; padding: 8px 10px; font: inherit; color: var(--text-hi);
-  background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--radius);
+  background: var(--bg); border: 1px solid var(--line-strong); border-radius: var(--radius);
 }
 .field textarea { resize: vertical; min-height: 7em; }
 .field input:focus, .field select:focus, .field textarea:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); }
@@ -154,21 +172,26 @@ h2[tabindex="-1"]:focus { outline: none; }
   font: inherit; font-size: 17px; line-height: 1.2; cursor: pointer; border-radius: var(--radius);
 }
 .tag-remove:hover { color: var(--text-hi); background: var(--btn-hi); }
-.tag-remove:focus-visible { outline: 2px solid var(--gold); }
+/* Flush with the button, so the ring stays inside its tag. */
+.tag-remove:focus-visible { outline: 2px solid var(--gold); outline-offset: 0; }
 .dot { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; flex: none; vertical-align: middle; }
 .dot--none { background: var(--line-hi); }
 .search { margin-top: 8px; max-width: 420px; }
 .search-input {
   display: block; width: 100%; padding: 8px 10px; font: inherit; color: var(--text-hi);
-  background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--bg); border: 1px solid var(--line-strong); border-radius: var(--radius) var(--radius) 0 0;
 }
 .search-input:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); }
 .search-list {
   list-style: none; margin: 0; padding: 4px 0; max-height: 330px; overflow-y: auto;
-  background: var(--surface-2); border: 1px solid var(--line-2); border-top: 0; border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--surface-2); border: 1px solid var(--line-strong); border-top: 0; border-radius: 0 0 var(--radius) var(--radius);
 }
 .search-list li[role=option] { display: flex; align-items: center; padding: 6px 10px; color: var(--text-hi); cursor: pointer; }
 .search-list li[role=option]:hover, .search-list li.is-active { background: var(--surface-3); }
+/* The row Enter would choose. Focus stays in the search box, so the row
+   draws the focus ring itself, inside its edges where the list can't clip
+   it. */
+.search-list li.is-active { outline: 2px solid var(--gold); outline-offset: -2px; }
 .search-list li[hidden] { display: none; }
 .search-none { padding: 6px 10px; font-size: 13px; }
 
@@ -181,8 +204,11 @@ h2[tabindex="-1"]:focus { outline: none; }
 .change { padding: 8px 14px; }
 .change-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; cursor: pointer; list-style: none; }
 .change-head::-webkit-details-marker { display: none; }
-.change-head::before { content: "\25B8"; color: var(--text-mute); font-size: 12px; width: 12px; }
-.change[open] > .change-head::before { content: "\25BE"; }
+/* The chevron is drawn, not read. Its empty alternative text keeps it out
+   of the line a screen reader reads, and a browser that can't parse the
+   second content keeps the first. */
+.change-head::before { content: "\25B8"; content: "\25B8" / ""; color: var(--text-mute); font-size: 12px; width: 12px; }
+.change[open] > .change-head::before { content: "\25BE"; content: "\25BE" / ""; }
 .change[open] > .change-head { margin-bottom: 6px; }
 .change-head:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: var(--radius); }
 .change-who { color: var(--text-hi); font-weight: 500; }
@@ -245,6 +271,10 @@ h2[tabindex="-1"]:focus { outline: none; }
   padding: 8px 14px; background: var(--surface-3); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
 }
 .fx-selcount { margin-right: 6px; color: var(--text-hi); font-variant-numeric: tabular-nums; }
+/* A control in the list that takes focus scrolls clear of the bar, as one
+   reached by Shift+Tab up the list would otherwise sit under it. 6rem
+   clears the bar on one line and wrapped onto two. */
+.fx-selbar ~ .scroll :is(a, input, button) { scroll-margin-top: 6rem; }
 .fx-selbar .btn[disabled] { opacity: .4; cursor: not-allowed; }
 .fx-check { width: 36px; }
 .fx-check input { width: 16px; height: 16px; margin: 0; vertical-align: middle; accent-color: var(--gold); }
@@ -324,6 +354,8 @@ h2[tabindex="-1"]:focus { outline: none; }
 .rail .item { display: block; padding: 10px 18px; color: var(--text-hi); text-decoration: none; border-left: 3px solid transparent; }
 .rail .item:hover { background: var(--surface-2); color: var(--text-hi); }
 .rail .item.is-selected { border-left-color: var(--gold); background: var(--surface-3); font-weight: 500; }
+/* An item spans the rail edge to edge, so its ring sits inside it. */
+.rail .item:focus-visible { outline-offset: -2px; }
 .rail .me { margin-top: auto; padding: 16px 18px; border-top: 1px solid var(--line); }
 .rail .me small { display: block; color: var(--text-mute); font-size: 12px; }
 .rail .me .name { color: var(--text-hi); font-weight: 500; margin-bottom: 10px; }

@@ -1,7 +1,7 @@
 {{define "content"}}
 <main class="body" data-page="{{.Page}}">
   <h1 class="title">Hubs</h1>
-  {{if .Hubs.Disconnected}}<div class="note" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Channel and role details on this page may be out of date.</div>{{end}}
+  {{if .Hubs.Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Channel and role details on this page may be out of date.</div>{{end}}
   {{if .Hubs.Remove}}{{template "remove-preview" .Hubs}}{{else}}{{with .Hubs.RefusalFor "remove"}}<div class="note" data-error="{{.DataError}}">{{.Message}}</div>{{end}}{{end}}
   {{template "moderators" .}}
   {{template "recording-roles" .}}
@@ -87,13 +87,13 @@
     {{with .Hubs.RefusalFor "moderators"}}{{template "refusal" .}}{{end}}
     <input type="hidden" name="version" value="{{.Hubs.Moderators.Version}}">
     <div class="block-row">
-      <div class="field">
-        <span class="field-label">Roles</span>
+      <div class="field" role="group" aria-labelledby="moderator-roles-label" aria-describedby="moderator-roles-hint">
+        <span class="field-label" id="moderator-roles-label">Roles</span>
         {{template "picker" .Hubs.Moderators.Picker}}
-        <span class="field-hint">These roles rename any spawned channel of a hub that allows renaming, including hubs added later. Each hub adds its own roles in its form.</span>
+        <span class="field-hint" id="moderator-roles-hint">These roles rename any spawned channel of a hub that allows renaming, including hubs added later. Each hub adds its own roles in its form.</span>
       </div>
     </div>
-    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save</button></div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save<span class="visually-hidden"> the moderator roles for every hub</span></button></div>
   </form>
   <div class="block">
     {{template "changes" .Hubs.Moderators.Changes}}
@@ -108,13 +108,13 @@
     {{with .Hubs.RefusalFor "recording-roles"}}{{template "refusal" .}}{{end}}
     <input type="hidden" name="version" value="{{.Hubs.RecordingRoles.Version}}">
     <div class="block-row">
-      <div class="field">
-        <span class="field-label">Roles</span>
+      <div class="field" role="group" aria-labelledby="recording-roles-label" aria-describedby="recording-roles-hint">
+        <span class="field-label" id="recording-roles-label">Roles</span>
         {{template "picker" .Hubs.RecordingRoles.Picker}}
-        <span class="field-hint">Cav members holding one of these roles can start a recording, and stop one in a channel they are in. With none set, nobody can record.</span>
+        <span class="field-hint" id="recording-roles-hint">Cav members holding one of these roles can start a recording, and stop one in a channel they are in. With none set, nobody can record.</span>
       </div>
     </div>
-    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save</button></div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save<span class="visually-hidden"> the recording roles</span></button></div>
   </form>
   <div class="block">
     {{template "changes" .Hubs.RecordingRoles.Changes}}
@@ -126,7 +126,7 @@
 
 {{define "picker"}}<div class="picker" data-field="{{.Field}}" data-picker{{if .Single}} data-single{{end}}>
   <ul class="tags" data-tags>{{range .Tags}}{{template "picker-tag" .}}{{end}}</ul>
-  <button type="button" class="btn btn--small" data-add aria-expanded="false">{{.AddLabel}}</button>
+  <button type="button" class="btn btn--small" data-add aria-expanded="false">{{.AddLabel}}{{with .AddFor}}<span class="visually-hidden"> {{.}}</span>{{end}}</button>
   <div class="search" data-search hidden>
     <input type="search" class="search-input" data-search-input autocomplete="off" placeholder="Type to filter" aria-label="{{.SearchLabel}}">
     <ul class="search-list" role="listbox" data-list>
@@ -184,9 +184,9 @@
     <div class="block-row">
       <label class="field">
         <span class="field-label">Base string</span>
-        <input type="text" name="base_string" data-field="base_string" value="{{.Hubs.Create.BaseString}}" maxlength="90" required>
-        <span class="field-hint">Cavbot2 names spawned channels from it: "Arma Voice" gives "Arma Voice - 1".</span>
+        <input type="text" name="base_string" data-field="base_string" value="{{.Hubs.Create.BaseString}}" maxlength="90" required aria-describedby="create-base-string-hint">
       </label>
+      <span class="field-hint" id="create-base-string-hint">Cavbot2 names spawned channels from it: "Arma Voice" gives "Arma Voice - 1".</span>
     </div>
     <div class="submit-row"><button type="submit" class="btn btn--cta">Create</button></div>
   </form>
@@ -197,18 +197,18 @@
     <h2 class="block-header">Register a voice channel as a hub</h2>
     {{with .Hubs.RefusalFor "register"}}{{template "refusal" .}}{{end}}
     <div class="block-row">
-      <div class="field">
-        <span class="field-label">Voice channel</span>
+      <div class="field" role="group" aria-labelledby="register-channel-label" aria-describedby="register-channel-hint">
+        <span class="field-label" id="register-channel-label">Voice channel</span>
         {{template "picker" .Hubs.Picker}}
-        <span class="field-hint">Channels that are already hubs are hidden.</span>
+        <span class="field-hint" id="register-channel-hint">Channels that are already hubs are hidden.</span>
       </div>
     </div>
     <div class="block-row">
       <label class="field">
         <span class="field-label">Base string</span>
-        <input type="text" name="base_string" data-field="base_string" value="{{.Hubs.Register.BaseString}}" maxlength="90" required>
-        <span class="field-hint">Cavbot2 names spawned channels from it: "Arma Voice" gives "Arma Voice - 1".</span>
+        <input type="text" name="base_string" data-field="base_string" value="{{.Hubs.Register.BaseString}}" maxlength="90" required aria-describedby="register-base-string-hint">
       </label>
+      <span class="field-hint" id="register-base-string-hint">Cavbot2 names spawned channels from it: "Arma Voice" gives "Arma Voice - 1".</span>
     </div>
     <div class="submit-row"><button type="submit" class="btn btn--cta">Register</button></div>
   </form>
@@ -263,43 +263,43 @@
       </div>
     </div>
     <div class="block-row">
-      <div class="field">
-        <span class="field-label">Moderator roles for this hub</span>
+      <div class="field" role="group" aria-labelledby="hub-moderator-roles-label" aria-describedby="hub-moderator-roles-hint">
+        <span class="field-label" id="hub-moderator-roles-label">Moderator roles for this hub</span>
         {{template "picker" .Picker}}
-        <span class="field-hint">These roles rename, lock and unlock any channel this hub spawns, as far as the settings below allow.</span>
+        <span class="field-hint" id="hub-moderator-roles-hint">These roles rename, lock and unlock any channel this hub spawns, as far as the settings below allow.</span>
       </div>
     </div>
     <div class="block-row">
       <label class="field">
         <span class="field-label">User limit</span>
-        <input type="number" name="user_limit" data-field="user_limit" value="{{.Form.UserLimit}}" min="0" max="99" required>
-        <span class="field-hint">0 to 99. 0 means no limit.</span>
+        <input type="number" name="user_limit" data-field="user_limit" value="{{.Form.UserLimit}}" min="0" max="99" required aria-describedby="user-limit-hint">
       </label>
+      <span class="field-hint" id="user-limit-hint">0 to 99. 0 means no limit.</span>
     </div>
     <div class="block-row">
       <label class="field">
         <span class="field-label">Bitrate</span>
-        <input type="number" name="bitrate" data-field="bitrate" value="{{.Form.Bitrate}}" min="8000" max="{{.BitrateMax}}" step="1000" required>
-        <span class="field-hint">the server's boost tier allows up to {{.BitrateMax}}.</span>
+        <input type="number" name="bitrate" data-field="bitrate" value="{{.Form.Bitrate}}" min="8000" max="{{.BitrateMax}}" step="1000" required aria-describedby="bitrate-hint">
       </label>
+      <span class="field-hint" id="bitrate-hint">the server's boost tier allows up to {{.BitrateMax}}.</span>
     </div>
     <div class="block-row">
       <label class="field">
         <span class="field-label">Delete delay</span>
-        <input type="number" name="delete_delay_minutes" data-field="delete_delay_minutes" value="{{.Form.DeleteDelay}}" min="0" max="240" required>
-        <span class="field-hint">How long, in minutes, an empty channel waits before it's deleted.</span>
+        <input type="number" name="delete_delay_minutes" data-field="delete_delay_minutes" value="{{.Form.DeleteDelay}}" min="0" max="240" required aria-describedby="delete-delay-hint">
       </label>
+      <span class="field-hint" id="delete-delay-hint">How long, in minutes, an empty channel waits before it's deleted.</span>
     </div>
     <div class="block-row">
       <label class="check"><input type="checkbox" name="enabled" data-field="enabled"{{if .Form.Enabled}} checked{{end}}> Enabled</label>
     </div>
     <div class="block-row">
-      <label class="check"><input type="checkbox" name="renaming_allowed" data-field="renaming_allowed"{{if .Form.RenamingAllowed}} checked{{end}}> Renaming allowed</label>
-      <span class="field-hint">The owner or a moderator can rename this hub's channels with /voice-rename.</span>
+      <label class="check"><input type="checkbox" name="renaming_allowed" data-field="renaming_allowed" aria-describedby="renaming-allowed-hint"{{if .Form.RenamingAllowed}} checked{{end}}> Renaming allowed</label>
+      <span class="field-hint" id="renaming-allowed-hint">The owner or a moderator can rename this hub's channels with /voice-rename.</span>
     </div>
     <div class="block-row">
-      <label class="check"><input type="checkbox" name="locking_allowed" data-field="locking_allowed"{{if .Form.LockingAllowed}} checked{{end}}> Locking allowed</label>
-      <span class="field-hint">The owner or a moderator can lock this hub's channels with /voice-lock.</span>
+      <label class="check"><input type="checkbox" name="locking_allowed" data-field="locking_allowed" aria-describedby="locking-allowed-hint"{{if .Form.LockingAllowed}} checked{{end}}> Locking allowed</label>
+      <span class="field-hint" id="locking-allowed-hint">The owner or a moderator can lock this hub's channels with /voice-lock.</span>
     </div>
     <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save</button> <a class="btn" href="/">Back to the list</a></div>
   </form>
