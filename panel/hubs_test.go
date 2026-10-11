@@ -1906,6 +1906,80 @@ func TestUnchangedHubChannelNameMakesNoEditCall(t *testing.T) {
 	}
 }
 
+// A save of the hub as stored would change nothing: it is refused before
+// any Discord call and writes nothing, so the hub's version stays and
+// another tab holding its form is not made stale (#566).
+func TestHubSaveThatChangesNothingIsRefused(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	before := storedHubs(t, w.st)[0]
+
+	res := w.b.postForm(hubPath(t, w.st, "hub-1"), updateForm(t, w.st))
+
+	if !isClientError(res.StatusCode) {
+		t.Errorf("status = %d, want 4xx", res.StatusCode)
+	}
+	if findElement(editSection(t, res, before.ID), "", "data-error", "unchanged") == nil {
+		t.Error("the hub's edit form carries no data-error=unchanged note")
+	}
+	if after := storedHubs(t, w.st)[0]; !sameHubSettings(after, before) || after.Version != before.Version {
+		t.Errorf("stored hub = %+v, want it as before, %+v", after, before)
+	}
+	if entries := storedChangeLog(t, w.st, before.ID); len(entries) != 0 {
+		t.Errorf("the hub has %d entries, want none", len(entries))
+	}
+	if edits := w.discord.edits(); len(edits) != 0 {
+		t.Errorf("Discord edits = %+v, want none", edits)
+	}
+}
+
+// A form loaded before another save of its hub is stale even when it posts
+// what that save stored: the stale refusal comes before the unchanged one,
+// so the form says someone else saved (#566).
+func TestStaleHubSaveOfTheStoredValuesIsRefusedAsStale(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	id := storedHubID(t, w.st, "hub-1")
+	loadedBefore := updateForm(t, w.st)
+	saving := updateForm(t, w.st)
+	saving.Set("user_limit", "5")
+	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), saving), "/")
+	loadedBefore.Set("user_limit", "5")
+
+	res := w.b.postForm(hubPath(t, w.st, "hub-1"), loadedBefore)
+
+	if res.StatusCode != http.StatusConflict {
+		t.Errorf("status = %d, want 409", res.StatusCode)
+	}
+	if findElement(editSection(t, res, id), "", "data-error", "stale") == nil {
+		t.Error("the hub's edit form carries no data-error=stale note")
+	}
+}
+
+// A save whose only change is the channel name changes something: the
+// rename joins the diff only once Discord makes it, so the save is not
+// refused as unchanged (#566).
+func TestHubSaveThatOnlyRenamesTheChannelSaves(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	id := storedHubID(t, w.st, "hub-1")
+	form := updateForm(t, w.st)
+	form.Set("channel_name", "Join here")
+
+	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), form), "/")
+
+	if edits := w.discord.edits(); len(edits) != 1 || edits[0].ChannelID != "hub-1" || edits[0].Name != "Join here" {
+		t.Errorf("Discord edits = %+v, want hub-1 renamed to Join here", edits)
+	}
+	entries := storedChangeLog(t, w.st, id)
+	if len(entries) != 1 {
+		t.Fatalf("the hub has %d entries, want 1", len(entries))
+	}
+	if _, ok := decodeDiff(t, entries[0])["channel_name"]; !ok {
+		t.Error("the entry carries no channel_name")
+	}
+}
+
 func TestRefusedHubChannelRenameWritesNothingAndShowsWhy(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)

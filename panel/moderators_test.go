@@ -22,21 +22,25 @@ import (
 // posts it: the roles, and the version the store holds for the set now.
 func moderatorsForm(t *testing.T, st store.Store, roleIDs ...string) url.Values {
 	t.Helper()
-	roles, err := st.GetGuildModeratorRoles(context.Background(), testGuildID)
-	if err != nil {
-		t.Fatalf("GetGuildModeratorRoles: %v", err)
-	}
-	return url.Values{"moderator_roles": roleIDs, "version": {strconv.FormatInt(roles.Version, 10)}}
+	version := storedGuildModerators(t, st).Version
+	return url.Values{"moderator_roles": roleIDs, "version": {strconv.FormatInt(version, 10)}}
 }
 
-// storedGuildRoles reads the guild-wide set back through the store.
-func storedGuildRoles(t *testing.T, st store.Store) []string {
+// storedGuildModerators reads the guild-wide set and its version back
+// through the store.
+func storedGuildModerators(t *testing.T, st store.Store) store.GuildModeratorRoles {
 	t.Helper()
 	roles, err := st.GetGuildModeratorRoles(context.Background(), testGuildID)
 	if err != nil {
 		t.Fatalf("GetGuildModeratorRoles: %v", err)
 	}
-	return roles.RoleIDs
+	return roles
+}
+
+// storedGuildRoles reads the guild-wide set back through the store.
+func storedGuildRoles(t *testing.T, st store.Store) []string {
+	t.Helper()
+	return storedGuildModerators(t, st).RoleIDs
 }
 
 // sameSet reports whether two role lists hold the same IDs, in any order.
@@ -115,6 +119,52 @@ func TestModeratorsSecondSaveRecordsTheEarlierSetAsBefore(t *testing.T) {
 	}
 	if after := roleSet(t, c.After); !sameSet(after, []string{"role-hq"}) {
 		t.Errorf("newest entry after = %v, want role-hq", after)
+	}
+}
+
+// A save that posts the stored set, in any order, would change nothing: it
+// is refused and writes nothing, so the set's version stays and another tab
+// holding the section is not made stale (#566).
+func TestModeratorsSaveThatChangesNothingIsRefused(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-mp", "role-hq")), "/")
+	before := storedGuildModerators(t, w.st)
+	reordered := slices.Clone(before.RoleIDs)
+	slices.Reverse(reordered)
+
+	res := w.b.postForm("/moderators", moderatorsForm(t, w.st, reordered...))
+
+	if !isClientError(res.StatusCode) {
+		t.Errorf("status = %d, want 4xx", res.StatusCode)
+	}
+	if findElement(moderatorsSection(t, parseHTML(t, res)), "", "data-error", "unchanged") == nil {
+		t.Error("the guild-wide section carries no data-error=unchanged note")
+	}
+	if after := storedGuildModerators(t, w.st); !sameSet(after.RoleIDs, before.RoleIDs) || after.Version != before.Version {
+		t.Errorf("stored guild roles = %+v, want them as before, %+v", after, before)
+	}
+	if entries := storedChangeLog(t, w.st, 0); len(entries) != 1 {
+		t.Errorf("%d entries under no hub, want the first save's alone", len(entries))
+	}
+}
+
+// A section loaded before another save is stale even when it posts the set
+// that save stored: the stale refusal comes before the unchanged one, so
+// the page says someone else saved (#566).
+func TestStaleModeratorsSaveOfTheStoredSetIsRefusedAsStale(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	loadedBefore := moderatorsForm(t, w.st, "role-mp")
+	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-mp")), "/")
+
+	res := w.b.postForm("/moderators", loadedBefore)
+
+	if res.StatusCode != http.StatusConflict {
+		t.Errorf("status = %d, want 409", res.StatusCode)
+	}
+	if findElement(moderatorsSection(t, parseHTML(t, res)), "", "data-error", "stale") == nil {
+		t.Error("the guild-wide section carries no data-error=stale note")
 	}
 }
 
