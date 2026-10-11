@@ -168,10 +168,14 @@ func TestOpeningAPreviewLandsOnIt(t *testing.T) {
 
 			target := landedOn(doc, fragment)
 			if target == nil {
-				t.Fatalf("the page opens at fragment %q, which names no block, want the %s", fragment, opener.blocks[0])
+				t.Fatalf("the page opens at fragment %q, which names nothing, want the %s", fragment, opener.blocks[0])
 			}
-			if got := attrOf(target, "data-field"); got != opener.blocks[0] {
-				t.Errorf("the page lands on %q, want the %s", got, opener.blocks[0])
+			block := findElement(doc, "", "data-field", opener.blocks[0])
+			if block == nil {
+				t.Fatalf("the page has no %s", opener.blocks[0])
+			}
+			if !within(target, block) {
+				t.Errorf("the page lands outside the %s, want on it", opener.blocks[0])
 			}
 		})
 	}

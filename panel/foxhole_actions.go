@@ -126,8 +126,8 @@ func (r reportView) RetryHref() string {
 	return foxholePath + "?" + url.Values{paramRetry: {strconv.FormatInt(r.ID, 10)}}.Encode() + "#" + retryAnchor
 }
 
-// retryAnchor is the ID foxhole.html gives the block a Retry opens above
-// its preview, which says what it retries.
+// retryAnchor is the ID foxhole.html gives the heading of the block a
+// Retry opens above its preview, which says what it retries.
 const retryAnchor = "retry"
 
 // OutcomeCode is the report's data-outcome marker: how the action ended,

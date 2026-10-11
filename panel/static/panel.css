@@ -84,10 +84,10 @@ img { max-width: 100%; }
 .block-row { padding: 12px 14px; }
 .block-row + .block-row { border-top: 1px solid var(--line); }
 .submit-row { padding: 12px 14px; background: rgba(23,23,23,.9); border-top: 1px solid var(--line-2); border-radius: 0 0 var(--radius) var(--radius); }
-/* A block a page opens at, named by the address's fragment: a little room
-   above it, and a heading only the page script focuses, so it draws no
-   ring. */
-.block[id], section[id] { scroll-margin-top: 12px; }
+/* A block a page opens at, by its own ID or its heading's in the address's
+   fragment: a little room above it. The heading takes focus only from the
+   landing, never from Tab, so it draws no ring. */
+.block[id], .block-header[id] { scroll-margin-top: 12px; }
 h2[tabindex="-1"]:focus { outline: none; }
 
 /* A danger confirm: the preview a removal waits on. The forum draws no such
@@ -281,19 +281,19 @@ h2[tabindex="-1"]:focus { outline: none; }
    the action and how it ended, then its counts. The marker is drawn, so a
    screen reader reads the line alone. */
 .fx-reportsummary {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px;
+  display: flex; align-items: flex-start; gap: 10px;
   padding: 10px 14px; cursor: pointer; list-style: none; border-radius: var(--radius);
 }
 .fx-reportsummary::-webkit-details-marker { display: none; }
 .fx-reportsummary::before {
-  content: ""; align-self: center; width: 0; height: 0;
+  content: ""; flex: none; width: 0; height: 0; margin-top: 5px;
   border-style: solid; border-width: 5px 0 5px 7px; border-color: transparent transparent transparent var(--text-mute);
 }
 .fx-report[open] > .fx-reportsummary { border-bottom: 1px solid var(--line); border-radius: var(--radius) var(--radius) 0 0; }
 .fx-report[open] > .fx-reportsummary::before { transform: rotate(90deg); }
 .fx-reportsummary:hover { background: var(--surface-2); }
 .fx-reportsummary:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
-.fx-reportname { color: var(--text-hi); font-weight: 500; }
+.fx-reportname { margin-right: 6px; color: var(--text-hi); font-weight: 500; }
 .fx-reportcounts { font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
 /* A report in the change log: its name and its "Started by" line above the
    grid that pairs each list's heading with its members. */

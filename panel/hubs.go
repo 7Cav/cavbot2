@@ -387,9 +387,10 @@ const (
 // hub is in view.
 const hubListAnchor = "hubs"
 
-// hubEditAnchor is the ID a hub's edit section carries in home.html. Every
-// address the panel sends a panel admin to a hub's edit form by opens the
-// page there, below the sections above it.
+// hubEditAnchor is the ID the heading of a hub's edit section carries in
+// home.html. Every address the panel sends a panel admin to a hub's edit
+// form by opens the page there, below the sections above it, with the
+// heading focused.
 const hubEditAnchor = "edit"
 
 // hubEditAddress is the address of a hub's edit form, opened at the form.

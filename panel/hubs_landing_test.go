@@ -78,8 +78,8 @@ func TestEditFormOpensAtTheForm(t *testing.T) {
 				t.Fatalf("the page opens at fragment %q, which names nothing, want the hub's edit form", fragment)
 			}
 			section := hubSection(t, doc, id)
-			if !within(section, target) {
-				t.Error("the page lands on a block that doesn't hold the hub's edit form")
+			if !within(target, section) {
+				t.Error("the page lands outside the hub's edit section, want on it")
 			}
 			if findElement(section, "", "data-field", "save") == nil {
 				t.Error("the page lands on the hub's section, which shows no edit form")
