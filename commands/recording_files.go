@@ -1,8 +1,12 @@
 package commands
 
 import (
+	"context"
+	"fmt"
 	"path/filepath"
 	"strconv"
+
+	"github.com/7cav/cavbot2/store"
 )
 
 // A recording's files (spec #381, #389). Each recording has a directory of
@@ -34,4 +38,19 @@ func infoPath(dir string, id int64) string {
 // Opus file's extension.
 func mixPath(dir string, id int64) string {
 	return filepath.Join(recordingDir(dir, id), "mix.opus")
+}
+
+// removeRecording deletes a recording whole: its directory, then its row.
+// The files go first, because the row is what finds them: a failure part
+// way leaves the row, and the recording listed for another try, never files
+// no row leads to. Retention and an early delete from the panel both delete
+// through it.
+func removeRecording(ctx context.Context, st store.Store, dir string, id int64) error {
+	if err := recordingRemoveAll(recordingDir(dir, id)); err != nil {
+		return fmt.Errorf("delete the files of recording %d: %w", id, err)
+	}
+	if err := st.DeleteRecording(ctx, id); err != nil {
+		return fmt.Errorf("delete the row of recording %d: %w", id, err)
+	}
+	return nil
 }

@@ -205,6 +205,8 @@ func (p *Panel) routes() []route {
 		{"GET " + recordingsPath + "/{id}", p.withSession(p.recordingPage)},
 		{"GET " + recordingsPath + "/{id}/mix", p.withSession(p.downloadMix)},
 		{"GET " + recordingsPath + "/{id}/zip", p.withSession(p.downloadZip)},
+		{"GET " + recordingsPath + "/{id}/delete", p.withSession(p.deletePreview)},
+		{"POST " + recordingsPath + "/{id}/delete", p.withSession(p.deleteRecording)},
 		{"GET " + foxholePath, p.withFoxholePage(p.foxholePage)},
 		{"POST " + foxholeNotesPath, p.withFoxholePage(p.saveNote)},
 		{"POST " + foxholeApprovalsPath, p.withFoxholePage(p.saveApprovals)},

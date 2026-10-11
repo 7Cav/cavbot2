@@ -3,6 +3,7 @@ package commands
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -46,13 +47,24 @@ func (r *RecordingRuntime) mix(rec store.Recording) {
 	mixCtx, cancelMix := context.WithTimeout(context.Background(), recordingMixTimeout)
 	defer cancelMix()
 	state := store.MixReady
-	if err := r.mixer.Mix(mixCtx, tracks, mixPath(r.dir, rec.ID)); err != nil {
+	mixErr := r.mixer.Mix(mixCtx, tracks, mixPath(r.dir, rec.ID))
+	if mixErr != nil {
 		state = store.MixFailed
-		captureError("Mix failed", err, "recording_id", rec.ID)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)
 	defer cancel()
-	if err := r.st.SetRecordingMix(ctx, rec.ID, state); err != nil {
+	err := r.st.SetRecordingMix(ctx, rec.ID, state)
+	if errors.Is(err, store.ErrNotFound) {
+		// Its starter or a panel admin deleted it while the mix was being
+		// built, files and all, which is what failed the mixer if it
+		// failed.
+		utils.Info("Recording deleted while it was mixed", "recording_id", rec.ID)
+		return
+	}
+	if mixErr != nil {
+		captureError("Mix failed", mixErr, "recording_id", rec.ID)
+	}
+	if err != nil {
 		captureError("Mix state not written", err, "recording_id", rec.ID, "mix", string(state))
 		return
 	}

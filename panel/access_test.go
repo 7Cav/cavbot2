@@ -390,6 +390,8 @@ func TestEveryRouteHasAnOutsiderCaseOrIsOpen(t *testing.T) {
 	for _, route := range recordingRoutes {
 		reach(http.MethodGet, route.href(t, page, rec))
 	}
+	confirm, _ := attrValue(deleteConfirm(t, w.b, rec), "action")
+	reach(http.MethodPost, confirm)
 	for _, rt := range w.p.routes() {
 		if !reached[rt.pattern] && !slices.Contains(openRoutes, rt.pattern) {
 			t.Errorf("%s has no outsider case and isn't in openRoutes", rt.pattern)
