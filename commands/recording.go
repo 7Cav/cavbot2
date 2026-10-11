@@ -395,11 +395,7 @@ func (r *RecordingRuntime) runningInLocked(channelID string) *activeRecording {
 // member who stopped it, empty when it stopped by itself.
 func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEnd, stoppedBy string) {
 	recorderID := target.row.RecorderID
-	r.mu.Lock()
-	cancelDiskCheck := target.cancelDiskCheck
-	r.mu.Unlock()
-	target.cancelCap()
-	cancelDiskCheck()
+	r.cancelTimers(target)
 	r.leave(target.conn)
 	stoppedAt := recordingNow()
 	if err := target.tracks.close(stoppedAt); err != nil {
@@ -421,6 +417,16 @@ func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEn
 	utils.Info("Recording stopped", "recording_id", row.ID, "channel_id", row.ChannelID,
 		"recorder", recorderID, "ended", string(end), "stopped_by", stoppedBy)
 	r.startMix(row)
+}
+
+// cancelTimers cancels a recording a stop or the shutdown has taken: its
+// stop at the cap and its next disk check.
+func (r *RecordingRuntime) cancelTimers(rec *activeRecording) {
+	r.mu.Lock()
+	cancelDiskCheck := rec.cancelDiskCheck
+	r.mu.Unlock()
+	rec.cancelCap()
+	cancelDiskCheck()
 }
 
 // speakersOf names everyone a recording heard by their display name in the
@@ -509,11 +515,7 @@ func (r *RecordingRuntime) Shutdown() {
 	r.mu.Unlock()
 	now := recordingNow()
 	for _, rec := range taken {
-		r.mu.Lock()
-		cancelDiskCheck := rec.cancelDiskCheck
-		r.mu.Unlock()
-		rec.cancelCap()
-		cancelDiskCheck()
+		r.cancelTimers(rec)
 		if err := rec.tracks.close(now); err != nil {
 			captureError("Tracks not closed at shutdown", err, "recording_id", rec.row.ID)
 		}

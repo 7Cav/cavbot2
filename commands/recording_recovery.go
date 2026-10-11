@@ -1,11 +1,8 @@
 package commands
 
 import (
-	"bufio"
 	"context"
-	"encoding/binary"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,37 +141,13 @@ func keepAudioTracks(dir string, id int64) (userIDs []string, longest uint64, er
 	return userIDs, longest, errors.Join(errs...)
 }
 
-// trackEnd reads how far a track on disk runs, in 48 kHz samples: the
-// granule position of its last whole page. A crash can leave the page it
-// was writing cut short, and that page doesn't count. Zero means no audio
-// reached the disk.
+// trackEnd reads how far a track on disk runs, in 48 kHz samples. Zero
+// means no audio reached the disk.
 func trackEnd(path string) (uint64, error) {
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = f.Close() }()
-	br := bufio.NewReader(f)
-	var end uint64
-	hdr := make([]byte, 27)
-	for {
-		if _, err := io.ReadFull(br, hdr); err != nil {
-			return end, nil
-		}
-		if string(hdr[:4]) != "OggS" {
-			return end, nil
-		}
-		lacing := make([]byte, hdr[26])
-		if _, err := io.ReadFull(br, lacing); err != nil {
-			return end, nil
-		}
-		size := 0
-		for _, l := range lacing {
-			size += int(l)
-		}
-		if n, _ := br.Discard(size); n < size {
-			return end, nil
-		}
-		end = binary.LittleEndian.Uint64(hdr[6:14])
-	}
+	return oggStreamEnd(f)
 }

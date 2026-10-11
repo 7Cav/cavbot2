@@ -69,7 +69,7 @@ func recordingEndPhrase(end store.RecordingEnd) string {
 	case store.RecordingEndRecorderLeft:
 		return "the recorder left the channel"
 	case store.RecordingEndCutShort:
-		return "cut short when the bot shut down or crashed; what reached the disk is kept"
+		return "cut short when the bot restarted; what reached the disk is kept"
 	default:
 		return string(end)
 	}

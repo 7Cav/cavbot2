@@ -52,6 +52,18 @@ func (sc *recordScene) assertCutShort(t *testing.T) {
 	}
 }
 
+// startCrashFixture starts a recording in which one speaker is heard before
+// a flush, and another only after it, so a crash then leaves the first on
+// disk and the second not.
+func (sc *recordScene) startCrashFixture(t *testing.T) {
+	t.Helper()
+	sc.startIn(t, recStarter, recordChannel)
+	sc.clock.advance(time.Second)
+	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
+	sc.clock.advance(trackFlushInterval)
+	sc.hear(t, recordChannel, frame(speakerB, 22, 90000, "b1"))
+}
+
 // A crash keeps what reached the disk: the next process closes the
 // recording as cut short, and the track of a speaker heard before the last
 // flush holds what they said. A speaker first heard after it has nothing on
@@ -59,11 +71,7 @@ func (sc *recordScene) assertCutShort(t *testing.T) {
 // a track that holds none.
 func TestRecordingCutShortByACrashKeepsWhatReachedTheDisk(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
-	sc.startIn(t, recStarter, recordChannel)
-	sc.clock.advance(time.Second)
-	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
-	sc.clock.advance(trackFlushInterval)
-	sc.hear(t, recordChannel, frame(speakerB, 22, 90000, "b1"))
+	sc.startCrashFixture(t)
 
 	sc.restart(t, testRecorder)
 	sc.clock.advance(0)
@@ -123,9 +131,9 @@ func TestRecordingCutShortStopsWhenTheShutdownCame(t *testing.T) {
 	}
 }
 
-// crashMidRecording starts a recording that hears one frame, and crashes
-// once the frame is on disk.
-func (sc *recordScene) crashMidRecording(t *testing.T) {
+// recordFlushedFrame starts a recording that hears one frame, and lets a
+// flush write it to disk.
+func (sc *recordScene) recordFlushedFrame(t *testing.T) {
 	t.Helper()
 	sc.startIn(t, recStarter, recordChannel)
 	sc.clock.advance(time.Second)
@@ -134,21 +142,21 @@ func (sc *recordScene) crashMidRecording(t *testing.T) {
 }
 
 // Recovery tells the channel the recording was cut short the way a stop
-// does: the notice is edited with the link to the recording in the panel,
-// and nobody gets a DM. Only when the notice is gone, here with its channel
-// deleted (10003), does the starter get the link by DM instead: one DM,
-// to the starter, carrying it.
+// tells it the recording stopped: the notice is edited to say so, with the
+// link to the recording in the panel, and nobody gets a DM. Only when the
+// notice is gone, here with its channel deleted (10003), does the starter
+// get that by DM instead: one DM, to the starter, carrying both.
 func TestRecordingCutShortEditsTheNoticeOrSendsTheLink(t *testing.T) {
 	t.Run("notice edited", func(t *testing.T) {
 		sc := newRecordScene(t, testRecorder)
-		sc.crashMidRecording(t)
+		sc.recordFlushedFrame(t)
 
 		sc.restart(t, testRecorder)
 		sc.clock.advance(0)
 
 		edit := noticeEdit(t, sc.fake, recordingNotice(t, sc.fake, recordChannel))
-		if !strings.Contains(deref(edit.Content), testPanelURL) {
-			t.Errorf("notice edit content = %q, want a link into the panel at %s", deref(edit.Content), testPanelURL)
+		if content := deref(edit.Content); !strings.Contains(content, testPanelURL) || !strings.Contains(content, recordingCutShort) {
+			t.Errorf("notice edit content = %q, want it to say it %s, with a link into the panel at %s", content, recordingCutShort, testPanelURL)
 		}
 		if dms := sc.fake.sentDMs(); len(dms) != 0 {
 			t.Errorf("DMs after the notice edit went through = %+v, want none", dms)
@@ -156,7 +164,7 @@ func TestRecordingCutShortEditsTheNoticeOrSendsTheLink(t *testing.T) {
 	})
 	t.Run("notice gone", func(t *testing.T) {
 		sc := newRecordScene(t, testRecorder)
-		sc.crashMidRecording(t)
+		sc.recordFlushedFrame(t)
 		sc.fake.messageEditErr = restError(http.StatusNotFound, discordgo.ErrCodeUnknownChannel, rawBodyMarker)
 
 		sc.restart(t, testRecorder)
@@ -166,9 +174,9 @@ func TestRecordingCutShortEditsTheNoticeOrSendsTheLink(t *testing.T) {
 		if len(dms) != 1 {
 			t.Fatalf("DMs after the notice edit failed with 10003 = %+v, want one", dms)
 		}
-		if dms[0].to != recStarter.id || !strings.Contains(dms[0].data.Content, testPanelURL) {
-			t.Errorf("DM to %s = %q, want one to the starter %s with a link into the panel at %s",
-				dms[0].to, dms[0].data.Content, recStarter.id, testPanelURL)
+		if dms[0].to != recStarter.id || !strings.Contains(dms[0].data.Content, testPanelURL) || !strings.Contains(dms[0].data.Content, recordingCutShort) {
+			t.Errorf("DM to %s = %q, want one to the starter %s saying the recording %s, with a link into the panel at %s",
+				dms[0].to, dms[0].data.Content, recStarter.id, recordingCutShort, testPanelURL)
 		}
 	})
 }
@@ -177,7 +185,7 @@ func TestRecordingCutShortEditsTheNoticeOrSendsTheLink(t *testing.T) {
 // ready once the next process has recovered it.
 func TestRecordingCutShortIsMixed(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
-	sc.crashMidRecording(t)
+	sc.recordFlushedFrame(t)
 
 	sc.restart(t, testRecorder)
 	sc.clock.advance(0)
@@ -191,7 +199,7 @@ func TestRecordingCutShortIsMixed(t *testing.T) {
 // recording's row.
 func TestRecordingRecoveryFailureReachesSentry(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
-	sc.crashMidRecording(t)
+	sc.recordFlushedFrame(t)
 	sc.faults.stopRecordingErr = errors.New("connection refused")
 	captures := countCaptures(t)
 
@@ -210,11 +218,7 @@ func TestRecordingRecoveryFailureReachesSentry(t *testing.T) {
 // check.
 func TestRecordingCutShortIsClosedWithRecordingOff(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
-	sc.startIn(t, recStarter, recordChannel)
-	sc.clock.advance(time.Second)
-	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
-	sc.clock.advance(trackFlushInterval)
-	sc.hear(t, recordChannel, frame(speakerB, 22, 90000, "b1"))
+	sc.startCrashFixture(t)
 
 	sc.restart(t)
 	sc.clock.advance(0)
@@ -227,7 +231,7 @@ func TestRecordingCutShortIsClosedWithRecordingOff(t *testing.T) {
 // with no recording of this process holding it, is disconnected.
 func TestRecordingRecoveryLeavesNoRecorderInVoice(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
-	sc.crashMidRecording(t)
+	sc.recordFlushedFrame(t)
 	sc.fake.setVoice(testRecorder, recordChannel)
 
 	sc.restart(t, testRecorder)
@@ -244,7 +248,7 @@ func TestRecordingRecoveryLeavesNoRecorderInVoice(t *testing.T) {
 // closed.
 func TestRecordingStartedBeforeRecoveryRunsKeepsRunning(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
-	sc.crashMidRecording(t)
+	sc.recordFlushedFrame(t)
 	sc.restart(t, testRecorder)
 	sc.fake.setVoice(testRecorder, recordOtherChannel)
 	sc.startIn(t, recHolder, recordOtherChannel)
@@ -273,7 +277,7 @@ func TestRecordingStartedBeforeRecoveryRunsKeepsRunning(t *testing.T) {
 // The zip's info file, which names every speaker, shows it.
 func TestRecordingCutShortNamesItsSpeakersOnceTheMemberListArrives(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
-	sc.crashMidRecording(t)
+	sc.recordFlushedFrame(t)
 	sc.fake.setListArriving(true)
 	sc.restart(t, testRecorder)
 	sc.clock.advance(0)
@@ -296,7 +300,7 @@ func TestRecordingCutShortNamesItsSpeakersOnceTheMemberListArrives(t *testing.T)
 // deploy's status check stops reporting it.
 func TestRecordingCutShortIsClosedWhenTheMemberListNeverArrives(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
-	sc.crashMidRecording(t)
+	sc.recordFlushedFrame(t)
 	sc.fake.setListArriving(true)
 	sc.restart(t, testRecorder)
 
