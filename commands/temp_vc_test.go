@@ -1109,9 +1109,17 @@ func rateLimitError(retryAfter time.Duration) *discordgo.RateLimitError {
 // else reaches the Fake.
 type failingStore struct {
 	*store.Fake
-	upsertSpawnedErr  error
-	listSpawnedErr    error
-	startRecordingErr error
+	upsertSpawnedErr   error
+	listSpawnedErr     error
+	startRecordingErr  error
+	deleteRecordingErr error
+}
+
+func (f *failingStore) DeleteRecording(ctx context.Context, id int64) error {
+	if f.deleteRecordingErr != nil {
+		return f.deleteRecordingErr
+	}
+	return f.Fake.DeleteRecording(ctx, id)
 }
 
 func (f *failingStore) StartRecording(ctx context.Context, rec store.Recording) (store.Recording, error) {
