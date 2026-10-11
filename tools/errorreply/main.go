@@ -403,41 +403,30 @@ func writable(v ssa.Value) bool {
 }
 
 // listed returns the values in the variadic argument list call is handed at
-// position i, or nil when it is handed no such list there. Go builds the
-// list as an array it fills element by element and slices whole. An array
-// put to any other use is a slice the function made, not a list.
+// position i, or nil when it is handed no such list there.
 func listed(call *ssa.CallCommon, i int) []ssa.Value {
-	if !call.Signature().Variadic() || i != len(call.Args)-1 {
-		return nil
-	}
 	list, ok := call.Args[i].(*ssa.Slice)
-	if !ok {
-		return nil
-	}
-	array, ok := list.X.(*ssa.Alloc)
-	if !ok {
+	if !ok || !isList(list.X) {
 		return nil
 	}
 	var values []ssa.Value
-	for _, ref := range *array.Referrers() {
-		switch ref := ref.(type) {
-		case *ssa.Slice:
-			if ref != list {
-				return nil
+	for _, ref := range *list.X.Referrers() {
+		if elem, ok := ref.(*ssa.IndexAddr); ok {
+			for _, use := range *elem.Referrers() {
+				values = append(values, use.(*ssa.Store).Val)
 			}
-		case *ssa.IndexAddr:
-			for _, use := range *ref.Referrers() {
-				store, ok := use.(*ssa.Store)
-				if !ok || store.Addr != ref {
-					return nil
-				}
-				values = append(values, store.Val)
-			}
-		default:
-			return nil
 		}
 	}
 	return values
+}
+
+// isList reports whether v is the array of a variadic argument list. Go
+// builds one for each call that is handed values for its variadic
+// parameter, stores each value in it, and hands the call the whole array as
+// a slice. No other code refers to the array.
+func isList(v ssa.Value) bool {
+	array, ok := v.(*ssa.Alloc)
+	return ok && array.Comment == "varargs"
 }
 
 // listedIn returns the call whose variadic argument list instr puts v in,
@@ -448,18 +437,12 @@ func listedIn(instr ssa.Instruction, v ssa.Value) ssa.CallInstruction {
 		return nil
 	}
 	elem, ok := store.Addr.(*ssa.IndexAddr)
-	if !ok {
+	if !ok || !isList(elem.X) {
 		return nil
 	}
 	for _, ref := range *elem.X.Referrers() {
-		list, ok := ref.(*ssa.Slice)
-		if !ok {
-			continue
-		}
-		for _, use := range *list.Referrers() {
-			if call, ok := use.(ssa.CallInstruction); ok && slices.Contains(listed(call.Common(), len(call.Common().Args)-1), v) {
-				return call
-			}
+		if list, ok := ref.(*ssa.Slice); ok {
+			return (*list.Referrers())[0].(ssa.CallInstruction)
 		}
 	}
 	return nil
@@ -968,8 +951,9 @@ type frame struct {
 	// call is the call that entered fn, or nil for a closure reached through
 	// a variable.
 	call ssa.CallInstruction
-	// made is the closure value of fn that captured the variable, for a
-	// closure reached through a variable.
+	// made is the closure value the tracer entered fn through: the closure
+	// call calls, or the closure that captured the variable the tracer
+	// reached fn through. It is nil when call calls fn by name.
 	made *ssa.MakeClosure
 	// parent is the frame call is made in, or the frame a closure's
 	// enclosing function runs in. A closure's calls are made there too.
@@ -987,20 +971,10 @@ func (f *frame) runs(fn *ssa.Function) bool {
 	return f != nil && f != anywhere && f.fn == fn
 }
 
-// closure returns the closure value of fn that f was entered through, or nil
-// when f isn't a frame of fn's body or wasn't entered through one.
-func (f *frame) closure(fn *ssa.Function) *ssa.MakeClosure {
-	if !f.runs(fn) {
-		return nil
-	}
-	if f.made != nil {
-		return f.made
-	}
-	if f.call != nil {
-		mk, _ := f.call.Common().Value.(*ssa.MakeClosure)
-		return mk
-	}
-	return nil
+// enter returns the frame of callee's body that call, made in f, enters.
+func enter(callee *ssa.Function, call ssa.CallInstruction, f *frame) *frame {
+	made, _ := call.Common().Value.(*ssa.MakeClosure)
+	return &frame{fn: callee, call: call, made: made, parent: f}
 }
 
 func (f *frame) entered(fn *ssa.Function) bool {
@@ -1230,7 +1204,7 @@ func (t *tracer) follow(call *ssa.Call, f *frame) (*ssa.Function, *funcFact) {
 func (t *tracer) traceCall(call *ssa.Call, index int, f *frame) bool {
 	switch callee, fact := t.follow(call, f); {
 	case callee != nil:
-		return t.traceReturns(callee, &frame{fn: callee, call: call, parent: f}, index)
+		return t.traceReturns(callee, enter(callee, call, f), index)
 	case fact != nil:
 		return t.traceResults(call, fact, index, f)
 	}
@@ -1339,12 +1313,9 @@ func (t *tracer) traceBindings(v *ssa.FreeVar, f *frame) bool {
 	index := slices.Index(closure.FreeVars, v)
 	if closure.Parent() == nil {
 		// A method value bound to its receiver has no enclosing function, and
-		// any function may make it. Its receiver is what the closure value the
-		// tracer entered it through binds.
-		if mk := f.closure(closure); mk != nil {
-			return t.trace(mk.Bindings[index], f.parent)
-		}
-		return true
+		// any function may make it. The tracer can only have entered its body
+		// through a closure value, which binds its receiver.
+		return t.trace(f.made.Bindings[index], f.parent)
 	}
 	if f.runs(closure) {
 		f = f.parent
@@ -1392,7 +1363,7 @@ func (t *tracer) traceStores(addr ssa.Value, f *frame, made bool) bool {
 			return true
 		}
 		// An interface that holds addr is written through as addr is.
-		if v := converted(ref, addr); v != nil && t.traceStores(v, f, made) {
+		if v, ok := ref.(*ssa.MakeInterface); ok && v.X == addr && t.traceStores(v, f, made) {
 			return true
 		}
 		// A channel, map, slice or pointer loaded out of addr shares what
@@ -1415,22 +1386,6 @@ func (t *tracer) traceStores(addr ssa.Value, f *frame, made bool) bool {
 	return false
 }
 
-// converted returns the interface instr converts v to, or nil when instr
-// converts no v to an interface.
-func converted(instr ssa.Instruction, v ssa.Value) ssa.Value {
-	switch instr := instr.(type) {
-	case *ssa.MakeInterface:
-		if instr.X == v {
-			return instr
-		}
-	case *ssa.ChangeInterface:
-		if instr.X == v {
-			return instr
-		}
-	}
-	return nil
-}
-
 // traceCallPuts traces what call puts in addr, one of the containers it is
 // handed. A call into a function of the package being checked puts there
 // what the function's body puts in the parameter addr is handed as. Any
@@ -1443,7 +1398,7 @@ func (t *tracer) traceCallPuts(call ssa.CallInstruction, addr ssa.Value, f *fram
 			continue
 		}
 		if callee != nil {
-			if t.traceStores(callee.Params[op.param], &frame{fn: callee, call: call, parent: f}, true) {
+			if t.traceStores(callee.Params[op.param], enter(callee, call, f), true) {
 				return true
 			}
 			continue

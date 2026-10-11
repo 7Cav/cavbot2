@@ -112,3 +112,19 @@ func repliesWithWhoJoined(name string) {
 	fmt.Fprintf(&b, "✅ %s joined", name)
 	utils.HandleError(nil, nil, b.String())
 }
+
+type roster struct{ failure string }
+
+func (r *roster) describe() string { return r.failure }
+
+func repliesWithWhatAMethodValueReturns(err error) {
+	r := &roster{failure: err.Error()}
+	describe := r.describe
+	utils.HandleError(nil, nil, "❌ Failed: "+describe()) // want "Discord"
+}
+
+func repliesWithFixedTextAMethodValueReturns() {
+	r := &roster{failure: fetchFailed}
+	describe := r.describe
+	utils.HandleError(nil, nil, describe())
+}
