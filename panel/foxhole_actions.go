@@ -122,8 +122,12 @@ func (r reportView) CanRetry() bool { return !r.Running && len(r.Missed) > 0 }
 
 // RetryHref is the address of the page with the report's Retry open, at
 // the block that says what it retries.
-func (r reportView) RetryHref() string {
-	return foxholePath + "?" + url.Values{paramRetry: {strconv.FormatInt(r.ID, 10)}}.Encode() + "#" + retryAnchor
+func (r reportView) RetryHref() string { return retryAddress(r.ID) }
+
+// retryAddress is the address of the page with the Retry of the report
+// with the ID given open, at the block that says what it retries.
+func retryAddress(report int64) string {
+	return foxholePath + "?" + url.Values{paramRetry: {strconv.FormatInt(report, 10)}}.Encode() + "#" + retryAnchor
 }
 
 // retryAnchor is the ID foxhole.html gives the heading of the block a
@@ -217,6 +221,28 @@ type purgeConfirm struct {
 // changes.
 func (c *purgeConfirm) NobodyHint() string { return nobodyToPurge(c.Scope) }
 
+// Reopen is the link that opens this confirmation again: the address the
+// After a war block's Purge opens for the same scope.
+func (c *purgeConfirm) Reopen() reopenLink {
+	return reopenLink{Href: foxholePath + "?" + url.Values{paramPurge: {string(c.Scope)}}.Encode() + "#" + purgeConfirmAnchor, What: "purge"}
+}
+
+// reopenLink is the link a preview gives beside its Confirm while another
+// Foxhole action runs and the Confirm is off: the address that opens the
+// same preview again, read from Discord as it is then, and what the link
+// names, as "open this <What> again". Following it once that action has
+// ended gives a working Confirm. A Confirm never turns back on in place,
+// since a purge acts on whoever holds the role when it starts, not on the
+// count its confirmation showed.
+type reopenLink struct {
+	Href string
+	What string
+}
+
+// purgeConfirmAnchor is the ID foxhole.html gives the purge confirmation's
+// heading.
+const purgeConfirmAnchor = "purge-confirm"
+
 // purgeRole is one role a purge takes, and how many hold it at this load.
 type purgeRole struct {
 	Role    commands.FoxholeRole
@@ -291,7 +317,14 @@ type removePreview struct {
 	// Back is the address of the view the selection was made in, where
 	// Cancel leads.
 	Back string
+	// reopen is the address that opens this preview again: the same role
+	// and members selected, from the same view, or the Retry's address when
+	// a Retry opened it.
+	reopen string
 }
+
+// Reopen is the link that opens this preview again.
+func (p *removePreview) Reopen() reopenLink { return reopenLink{Href: p.reopen, What: "removal"} }
 
 // NobodyHint is the hint the preview gives in Confirm's place when nobody
 // selected loses the role.
@@ -329,11 +362,12 @@ func (m previewMember) Why() string {
 
 // removePreviewOf is the preview of a removal of the request's role from
 // the members it selected, in display name order, read from a complete
-// member list and the guild's Foxhole records.
-func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, req foxholeRequest) *removePreview {
+// member list and the guild's Foxhole records. reopen is the address that
+// opens it again.
+func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, req foxholeRequest, reopen string) *removePreview {
 	guild := s.foxholeGuildOf()
 	name := req.Remove.Label()
-	preview := &removePreview{Role: req.Remove, Name: name, Back: foxholeAddress(req.Query, req.Filter)}
+	preview := &removePreview{Role: req.Remove, Name: name, Back: foxholeAddress(req.Query, req.Filter), reopen: reopen}
 	for _, id := range distinct(req.RemoveMembers) {
 		rec := records[id]
 		member := previewMember{ID: id, DisplayName: rec.DisplayName, Username: rec.Username, Note: rec.Note, RoleName: name}
@@ -364,6 +398,20 @@ func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, record
 	preview.Estimate = estimateFor(len(preview.Loses))
 	return preview
 }
+
+// removeAddress is the address the selection bar's Remove opens for the
+// request's role and members, from the request's view: the page with that
+// remove preview open, at it.
+func (req foxholeRequest) removeAddress() string {
+	v := viewValues(req.Query, req.Filter)
+	v.Set(paramRemove, string(req.Remove))
+	v[fieldMember] = distinct(req.RemoveMembers)
+	return foxholePath + "?" + v.Encode() + "#" + removePreviewAnchor
+}
+
+// removePreviewAnchor is the ID foxhole.html gives the remove preview's
+// heading.
+const removePreviewAnchor = "remove-preview"
 
 // reAddCounts is what the After a war block says a re-add would do: how
 // many approved collaborators hold External already, how many in the server

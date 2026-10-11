@@ -60,7 +60,7 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 		view.AddPreview = s.addPreviewOf(list, records, pasteBox{Role: report.Role, Text: strings.Join(ids, "\n")}, nil)
 	case store.ChangeRemoval:
 		view.RemovePreview = s.removePreviewOf(list, records,
-			foxholeRequest{Query: req.Query, Filter: req.Filter, Remove: report.Role, RemoveMembers: ids})
+			foxholeRequest{Query: req.Query, Filter: req.Filter, Remove: report.Role, RemoveMembers: ids}, report.RetryHref())
 	case store.ChangeRosterAdd:
 		unit, ok := commands.LookupValidatedInternalUnitLabelled(report.Unit)
 		if !ok {
@@ -97,6 +97,12 @@ type retryConfirm struct {
 	// once, though a purge of both roles can list a member under each.
 	Notes    int
 	Estimate estimate
+}
+
+// Reopen is the link that opens this confirmation again: the Retry's
+// address.
+func (c retryConfirm) Reopen() reopenLink {
+	return reopenLink{Href: c.Report.RetryHref(), What: "Retry"}
 }
 
 // Purge reports whether the Retry is a purge's, which takes each member's
