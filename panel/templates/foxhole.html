@@ -3,48 +3,11 @@
   <h1 class="title">Foxhole</h1>
   <p class="desc">Everyone holding a Foxhole role, and every approved collaborator. Changes here go straight to Discord.</p>
   {{with .Foxhole}}
-  {{with .Commands}}
-  <section class="block fx-progress" role="status" data-field="command-running">
-    <h2 class="block-header">{{if eq (len .) 1}}A Foxhole command is running{{else}}Foxhole commands are running{{end}}</h2>
-    {{range .}}<div class="block-row"><code data-field="command">{{.Command}}</code>, run by <span data-member="{{.By.MemberID}}">{{.By.DisplayName}} <span class="fx-user">@{{.By.Username}}</span></span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>.</div>{{end}}
-    <div class="block-row">A Foxhole action on this page can start once {{if eq (len .) 1}}it ends{{else}}they end{{end}}. Commands don't report how far they've got. <a href="{{$.Foxhole.Reload}}">Reload the page</a> to check.</div>
-  </section>
-  {{end}}
-  {{with .Report}}{{if .Running}}
-  <section class="block fx-progress" role="status" data-field="progress" data-report="{{.ID}}" data-action="{{.Action}}">
-    <h2 class="block-header">{{.Name}} is running</h2>
-    {{- /* The script moves the count every few seconds, so a screen reader leaves this row out of the block's announcements. The script hides the reload hint. */}}
-    <div class="block-row" data-field="how-far" aria-live="off">Started by <span data-field="started-by">{{.StartedBy}}</span>. <span data-field="done">{{.Done}}</span> of <span data-field="total">{{.Total}}</span> done, <span data-field="left" data-seconds="{{.Left.Seconds}}">about {{.Left.Text}}</span> left. It keeps going if you close this tab.<span data-field="reload-hint"> <a href="{{$.Foxhole.Reload}}" data-field="reload">Reload the page</a> to see how far it has got.</span></div>
-    {{if .Paused}}<div class="block-row" data-field="paused">Paused: waiting for the member list from Discord. It stops if the list hasn't arrived after {{.PauseLimit}}.</div>{{end}}
-    {{if .StopPressedBy}}
-    <div class="block-row" data-field="stopping">Stopping: <span data-field="stopped-by">{{.StopPressedBy}}</span> pressed Stop. It stops after the change in flight, and the rest is listed as not attempted.</div>
-    {{else}}
-    <form method="post" action="/foxhole/stop" class="submit-row" data-field="stop">
-      <input type="hidden" name="report" value="{{.ID}}">
-      <button type="submit" class="btn btn--danger">Stop</button>
-      <span class="fx-hint">Stops after the change in flight. The rest is listed as not attempted.</span>
-    </form>
-    {{end}}
-  </section>
-  {{else}}
-  <section class="block fx-report" data-field="report" data-report="{{.ID}}" data-action="{{.Action}}" data-outcome="{{.Outcome}}">
-    <h2 class="block-header">{{.Name}}: {{template "outcome" .}}</h2>
-    {{template "report-head" .}}
-    {{template "report-lists" .}}
-    {{template "retry" .}}
-  </section>
-  {{end}}{{end}}
-  {{with .NoteForm}}
-  <section class="block narrow" data-field="note-block">
-    <h2 class="block-header">Note on {{if .DisplayName}}{{.DisplayName}} <span class="fx-user">@{{.Username}}</span>{{else}}{{.MemberID}}{{end}}</h2>
-    <div class="block-row">{{template "note-form" .}}</div>
-  </section>
-  {{end}}
+  {{- /* Whatever is pending shows first: the result or refusal of what the manager just did, then the preview or confirmation a Foxhole action waits on, then any action running and the last report. */}}
   <div role="status" data-note-result>{{with .Cleared}}<div class="note note--ok" data-field="note-result" data-cleared="{{.MemberID}}">Cleared the note on {{.MemberName}} <span class="fx-user">@{{.MemberUsername}}</span>. They hold no Foxhole role, so they're no longer listed.</div>{{end}}</div>
   {{with .ApprovalRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
   {{with .ActionRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
   {{with .Skipped}}<div class="note" data-field="approve-skipped">Not approved, since {{if eq (len .) 1}}this member doesn't{{else}}these members don't{{end}} hold External: {{range $i, $m := .}}{{if $i}}, {{end}}<span data-skipped="{{$m.ID}}">{{if $m.DisplayName}}{{$m.DisplayName}} <span class="fx-user">@{{$m.Username}}</span>{{else}}{{$m.ID}}{{end}}</span>{{end}}. Nothing changed for them.</div>{{end}}
-  {{if not .ListNotice}}
   {{if .Disconnected}}<div class="note" data-notice="disconnected">Cavbot2 has lost its connection to Discord. The holder list may be out of date.</div>{{end}}
   {{with .Retry}}
   <section class="block fx-pending" data-field="retrying" data-report="{{.ID}}" data-action="{{.Action}}">
@@ -55,7 +18,7 @@
   </section>
   {{end}}
   {{with .PurgeConfirm}}
-  <section class="block fx-pending fx-pending--danger" data-field="purge-confirm" data-scope="{{.Scope}}">
+  <section class="block block--danger fx-pending" data-field="purge-confirm" data-scope="{{.Scope}}">
     <h2 class="block-header">Purge {{.Label}}?</h2>
     <div class="block-row">
       {{range .Roles}}<p data-purge-role="{{.Role}}">Takes {{.Name}} off <span data-field="holders">{{.Holders}}</span> {{if eq .Holders 1}}holder{{else}}holders{{end}}{{if eq .Role "external"}}, approved collaborators included. Re-add approved collaborators gives it back to them{{end}}.</p>{{end}}
@@ -67,7 +30,7 @@
     {{if .ChangeCount}}
     <form method="post" action="/foxhole/purge" class="submit-row">
       <input type="hidden" name="scope" value="{{.Scope}}">
-      <button type="submit" class="btn btn--danger" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Purge {{.Label}}</button>
+      <button type="submit" class="btn btn--danger-filled" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Purge {{.Label}}</button>
       <a class="btn" href="/foxhole">Cancel</a>
     </form>
     {{else}}
@@ -76,7 +39,7 @@
   </section>
   {{end}}
   {{with .RemovePreview}}
-  <section class="block fx-pending fx-pending--danger" data-field="remove-preview" data-role="{{.Role}}">
+  <section class="block block--danger fx-pending" data-field="remove-preview" data-role="{{.Role}}">
     <h2 class="block-header">Remove {{.Name}}?</h2>
     {{template "note-count" .Notes}}
     <div class="block-row fx-reportlist" data-list="loses"><h3>Loses {{.Name}} <span class="fx-count" data-field="count">{{len .Loses}}</span></h3>{{template "preview-members" .Loses}}</div>
@@ -94,7 +57,7 @@
       {{- range .Cleared}}
       <input type="hidden" name="approval-cleared" value="{{.ID}}">
       {{- end}}
-      <button type="submit" class="btn btn--danger" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Remove {{.Name}} from {{len .Loses}} {{if eq (len .Loses) 1}}member{{else}}members{{end}}</button>
+      <button type="submit" class="btn btn--danger-filled" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Remove {{.Name}} from {{len .Loses}} {{if eq (len .Loses) 1}}member{{else}}members{{end}}</button>
       <a class="btn" href="{{.Back}}">Cancel</a>
     </form>
     {{else}}
@@ -168,7 +131,7 @@
   </section>
   {{end}}
   {{with .RetryConfirm}}
-  <section class="block fx-pending{{if .Purge}} fx-pending--danger{{end}}" data-field="retry-confirm" data-action="{{.Report.Action}}" data-report="{{.Report.ID}}">
+  <section class="block{{if .Purge}} block--danger{{end}} fx-pending" data-field="retry-confirm" data-action="{{.Report.Action}}" data-report="{{.Report.ID}}">
     <h2 class="block-header">Retry {{.Report.Name}}?</h2>
     {{template "note-count" .Notes}}
     <div class="block-row fx-reportlist" data-list="changes"><h3>{{if .Purge}}Loses the role{{else}}Gets External{{end}} <span class="fx-count" data-field="count">{{len .Changes}}</span></h3>{{template "preview-members" .Changes}}</div>
@@ -177,7 +140,7 @@
     <div class="block-row">{{if .Purge}}<p data-field="keeps">Notes and approvals stay.</p>{{end}}<p>Takes <span data-field="estimate" data-seconds="{{.Estimate.Seconds}}">about {{.Estimate.Text}}</span> at one change a second. It keeps going if you close this tab.</p></div>
     <form method="post" action="/foxhole/retry" class="submit-row">
       <input type="hidden" name="report" value="{{.Report.ID}}">
-      <button type="submit" class="btn {{if .Purge}}btn--danger{{else}}btn--cta{{end}}" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Retry {{len .Changes}} {{if eq (len .Changes) 1}}member{{else}}members{{end}}</button>
+      <button type="submit" class="btn {{if .Purge}}btn--danger-filled{{else}}btn--cta{{end}}" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Retry {{len .Changes}} {{if eq (len .Changes) 1}}member{{else}}members{{end}}</button>
       <a class="btn" href="/foxhole">Cancel</a>
     </form>
     {{else}}
@@ -185,6 +148,44 @@
     {{end}}
   </section>
   {{end}}
+  {{with .Commands}}
+  <section class="block fx-progress" role="status" data-field="command-running">
+    <h2 class="block-header">{{if eq (len .) 1}}A Foxhole command is running{{else}}Foxhole commands are running{{end}}</h2>
+    {{range .}}<div class="block-row"><code data-field="command">{{.Command}}</code>, run by <span data-member="{{.By.MemberID}}">{{.By.DisplayName}} <span class="fx-user">@{{.By.Username}}</span></span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>.</div>{{end}}
+    <div class="block-row">A Foxhole action on this page can start once {{if eq (len .) 1}}it ends{{else}}they end{{end}}. Commands don't report how far they've got. <a href="{{$.Foxhole.Reload}}">Reload the page</a> to check.</div>
+  </section>
+  {{end}}
+  {{with .Report}}{{if .Running}}
+  <section class="block fx-progress" role="status" data-field="progress" data-report="{{.ID}}" data-action="{{.Action}}">
+    <h2 class="block-header">{{.Name}} is running</h2>
+    {{- /* The script moves the count every few seconds, so a screen reader leaves this row out of the block's announcements. The script hides the reload hint. */}}
+    <div class="block-row" data-field="how-far" aria-live="off">Started by <span data-field="started-by">{{.StartedBy}}</span>. <span data-field="done">{{.Done}}</span> of <span data-field="total">{{.Total}}</span> done, <span data-field="left" data-seconds="{{.Left.Seconds}}">about {{.Left.Text}}</span> left. It keeps going if you close this tab.<span data-field="reload-hint"> <a href="{{$.Foxhole.Reload}}" data-field="reload">Reload the page</a> to see how far it has got.</span></div>
+    {{if .Paused}}<div class="block-row" data-field="paused">Paused: waiting for the member list from Discord. It stops if the list hasn't arrived after {{.PauseLimit}}.</div>{{end}}
+    {{if .StopPressedBy}}
+    <div class="block-row" data-field="stopping">Stopping: <span data-field="stopped-by">{{.StopPressedBy}}</span> pressed Stop. It stops after the change in flight, and the rest is listed as not attempted.</div>
+    {{else}}
+    <form method="post" action="/foxhole/stop" class="submit-row" data-field="stop">
+      <input type="hidden" name="report" value="{{.ID}}">
+      <button type="submit" class="btn btn--danger">Stop</button>
+      <span class="fx-hint">Stops after the change in flight. The rest is listed as not attempted.</span>
+    </form>
+    {{end}}
+  </section>
+  {{else}}
+  <section class="block fx-report" data-field="report" data-report="{{.ID}}" data-action="{{.Action}}" data-outcome="{{.Outcome}}">
+    <h2 class="block-header">{{.Name}}: {{template "outcome" .}}</h2>
+    {{template "report-head" .}}
+    {{template "report-lists" .}}
+    {{template "retry" .}}
+  </section>
+  {{end}}{{end}}
+  {{with .NoteForm}}
+  <section class="block narrow" data-field="note-block">
+    <h2 class="block-header">Note on {{if .DisplayName}}{{.DisplayName}} <span class="fx-user">@{{.Username}}</span>{{else}}{{.MemberID}}{{end}}</h2>
+    <div class="block-row">{{template "note-form" .}}</div>
+  </section>
+  {{end}}
+  {{if not .ListNotice}}
   <div class="fx-actions" data-field="actions">
     <section class="block" data-field="add-members">
       <h2 class="block-header">Add members</h2>
@@ -300,11 +301,13 @@
         <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
       </summary>
       {{if .Report}}{{with .Report}}
-      <div class="change-fields fx-changereport">
+      <div class="fx-changereport">
         <p>{{.Name}}: {{template "outcome" .}}</p>
         {{template "report-head" .}}
+        <div class="change-fields">
         {{template "report-lists" .}}
         {{template "retry" .}}
+        </div>
       </div>
       {{end}}{{else}}
       <dl class="change-fields">

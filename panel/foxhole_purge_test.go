@@ -74,7 +74,7 @@ func openPurge(t *testing.T, b *browser, doc *html.Node, scope string) *http.Res
 	t.Helper()
 	form := purgeForm(t, doc)
 	action, _ := attrValue(form, "action")
-	return b.get(action + "?" + url.Values{paramPurge: {scope}}.Encode())
+	return b.getForm(action, url.Values{paramPurge: {scope}})
 }
 
 // purgeConfirmation returns the page's purge confirmation, and fails the

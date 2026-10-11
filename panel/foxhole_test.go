@@ -371,7 +371,7 @@ func submitSearch(t *testing.T, b *browser, doc *html.Node, query string) *http.
 		}
 		fields.Add(name, value)
 	})
-	return b.get(action + "?" + fields.Encode())
+	return b.getForm(action, fields)
 }
 
 // Search lists the holders whose display name, username or Discord ID

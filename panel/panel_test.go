@@ -290,6 +290,8 @@ func (b *browser) do(method, target string, header http.Header, body io.Reader) 
 // net/http cancels when the browser's connection closes.
 func (b *browser) doContext(ctx context.Context, method, target string, header http.Header, body io.Reader) *http.Response {
 	b.t.Helper()
+	// A browser keeps an address's fragment to itself and never sends it.
+	target, _, _ = strings.Cut(target, "#")
 	req := httptest.NewRequestWithContext(ctx, method, testBaseURL+target, body)
 	for k, v := range header {
 		req.Header[k] = v
@@ -325,6 +327,18 @@ func (b *browser) get(target string) *http.Response {
 func (b *browser) post(target string) *http.Response {
 	b.t.Helper()
 	return b.postForm(target, nil)
+}
+
+// getForm submits a GET form the way a browser does: the form's fields
+// replace the query of its action, whose fragment stays in the address.
+func (b *browser) getForm(action string, fields url.Values) *http.Response {
+	b.t.Helper()
+	u, err := url.Parse(action)
+	if err != nil {
+		b.t.Fatalf("form action %q: %v", action, err)
+	}
+	u.RawQuery = fields.Encode()
+	return b.get(u.String())
 }
 
 // postForm submits a form the way a browser does.
