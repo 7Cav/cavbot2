@@ -410,6 +410,11 @@ h2[tabindex="-1"]:focus { outline: none; }
   /* The forum link is a 13px line; its padding makes a 34px target. */
   .rail .foot a { padding: 8px 0; }
   .rail .ver { display: none; }
+  /* The search box keeps room for its whole hint, 185px of text in 15px
+     Roboto, and the Search button drops under it on a screen too narrow
+     for both, under about 340px. */
+  .fx-searchform { flex-wrap: wrap; }
+  .fx-search { min-width: 14em; }
   .fx-jump { display: block; margin: -4px 0 12px; font-size: 14px; }
   .fx-jump a { display: inline-block; padding: 6px 0; }
   .change-fields > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }

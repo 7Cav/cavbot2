@@ -363,7 +363,7 @@
 {{define "fx-toolbar"}}<div class="block-row fx-toolbar">
   <form method="get" action="/foxhole#{{.ListAnchor}}" class="fx-searchform" role="search" data-field="search">
     {{if ne .Filter "all"}}<input type="hidden" name="filter" value="{{.Filter}}">{{end}}
-    <input type="search" name="q" value="{{.Query}}" class="search-input fx-search" placeholder="Search name, username, ID or note" aria-label="Search name, username, ID or note">
+    <input type="search" name="q" value="{{.Query}}" class="search-input fx-search" placeholder="Name, username, ID or note" aria-label="Search name, username, ID or note">
     <button type="submit" class="btn btn--small">Search</button>
   </form>
   <nav class="fx-filters" aria-label="Filter the list" data-filters>
