@@ -157,3 +157,26 @@ func TestUDPConnSendsAKeepaliveOnceOpen(t *testing.T) {
 		t.Errorf("no keepalive reached the voice server after Open: %v", err)
 	}
 }
+
+// With nothing arriving, a read gives up with a timeout, so the receiver
+// gets back to the frames it holds and to its stop in a silent channel.
+func TestUDPConnReadTimesOutWithNothingSent(t *testing.T) {
+	conn, _ := openUDPConn(t, newFakeVoiceServer(t))
+	if err := conn.SetSecretKey(disgovoice.EncryptionModeAEADAES256GCMRTPSize, bytes.Repeat([]byte{7}, 32)); err != nil {
+		t.Fatalf("SetSecretKey: %v", err)
+	}
+
+	read := make(chan error, 1)
+	go func() {
+		_, err := conn.ReadPacket()
+		read <- err
+	}()
+	select {
+	case err := <-read:
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Errorf("ReadPacket with nothing sent = %v, want a read timeout", err)
+		}
+	case <-time.After(waitFor):
+		t.Error("ReadPacket with nothing sent hasn't returned")
+	}
+}
