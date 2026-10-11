@@ -41,14 +41,15 @@ func (r *RecordingRuntime) sweepRetention() {
 		if rec.StoppedAt.IsZero() || now.Before(RecordingDeletesAt(rec)) {
 			continue
 		}
-		r.deleteRecording(rec)
+		r.expireRecording(rec)
 	}
 }
 
-// deleteRecording deletes a recording's files, then its row. A failure goes
-// to Sentry and leaves the row, so the next pass tries again: the files go
-// first because the row is what the sweep finds them by.
-func (r *RecordingRuntime) deleteRecording(rec store.Recording) {
+// expireRecording deletes a recording past its deletion date: its files,
+// then its row. A failure goes to Sentry and leaves the row, so the next
+// pass tries again: the files go first because the row is what the sweep
+// finds them by.
+func (r *RecordingRuntime) expireRecording(rec store.Recording) {
 	if err := recordingRemoveAll(recordingDir(r.dir, rec.ID)); err != nil {
 		captureError("Recording files not deleted after retention", err, "recording_id", rec.ID)
 		return
