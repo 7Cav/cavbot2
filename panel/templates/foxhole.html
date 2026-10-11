@@ -34,7 +34,7 @@
       <input type="hidden" name="scope" value="{{.Scope}}">
       <button type="submit" class="btn btn--danger-filled" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Purge {{.Label}}</button>
       <a class="btn" href="/foxhole">Cancel</a>
-      {{- if $.Foxhole.Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Once it ends, <a href="{{.Reopen}}" data-field="reopen">open this purge again</a> to confirm it.</span>{{end}}
+      {{- if $.Foxhole.Busy}} {{template "busy-reopen" .Reopen}}{{end}}
     </form>
     {{else}}
     <div class="submit-row"><a class="btn" href="/foxhole">Cancel</a> <span class="fx-hint" data-field="nobody-to-purge">{{.NobodyHint}}</span></div>
@@ -62,7 +62,7 @@
       {{- end}}
       <button type="submit" class="btn btn--danger-filled" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Remove {{.Name}} from {{len .Loses}} {{if eq (len .Loses) 1}}member{{else}}members{{end}}</button>
       <a class="btn" href="{{.Back}}" data-field="cancel">Cancel</a>
-      {{- if $.Foxhole.Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Once it ends, <a href="{{.Reopen}}" data-field="reopen">open this removal again</a> to confirm it.</span>{{end}}
+      {{- if $.Foxhole.Busy}} {{template "busy-reopen" .Reopen}}{{end}}
     </form>
     {{else}}
     <div class="submit-row"><a class="btn" href="{{.Back}}">Cancel</a> <span class="fx-hint" data-field="nobody-to-remove">{{.NobodyHint}}</span></div>
@@ -132,7 +132,7 @@
       {{if .CanAdd}}<button type="submit" class="btn btn--cta" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>{{if .Retry}}Add everyone listed to Internal{{else}}Add the {{.Unit.Label}} roster to Internal{{end}}</button>{{end}}
       <a class="btn" href="/foxhole">Cancel</a>
       {{- if not .CanAdd}} <span class="fx-hint" data-field="nobody-to-add">{{.NobodyHint}}</span>
-      {{- else if and $.Foxhole.Busy .Retry}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Once it ends, <a href="{{.RetryHref}}" data-field="reopen">open this Retry again</a> to confirm it.</span>
+      {{- else if and $.Foxhole.Busy .Retry}} {{template "busy-reopen" .Reopen}}
       {{- else if $.Foxhole.Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Once it ends, press Preview again to confirm.</span>
       <button type="submit" formaction="/foxhole/roster/preview#roster-preview" class="btn btn--small" data-field="reopen">Preview again</button>{{end}}
     </form>
@@ -150,7 +150,7 @@
       <input type="hidden" name="report" value="{{.Report.ID}}">
       <button type="submit" class="btn {{if .Purge}}btn--danger-filled{{else}}btn--cta{{end}}" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Retry {{len .Changes}} {{if eq (len .Changes) 1}}member{{else}}members{{end}}</button>
       <a class="btn" href="/foxhole">Cancel</a>
-      {{- if $.Foxhole.Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Once it ends, <a href="{{.Report.RetryHref}}" data-field="reopen">open this Retry again</a> to confirm it.</span>{{end}}
+      {{- if $.Foxhole.Busy}} {{template "busy-reopen" .Reopen}}{{end}}
     </form>
     {{else}}
     <div class="submit-row"><a class="btn" href="/foxhole">Cancel</a> {{if .Purge}}<span class="fx-hint" data-field="nobody-to-purge">Nobody listed still holds the role they were to lose, so there's nothing to purge.</span>{{else}}<span class="fx-hint" data-field="nobody-to-re-add">Everybody listed holds External or has left the server, so there's nobody to re-add.</span>{{end}}</div>
@@ -389,6 +389,9 @@
   <a href="{{.Back}}" class="fx-notecancel" data-field="cancel_note">Cancel</a>
   {{if .NoRoleRow}}<p class="fx-hint" id="note-hint" data-field="note-hint">An empty note takes this member off the page.</p>{{end}}
 </form>{{end}}
+
+{{- /* What a preview says beside its Confirm while another Foxhole action runs and the Confirm is off: why, and the link that opens the same preview again once that action has ended. */}}
+{{define "busy-reopen"}}<span class="fx-hint" data-field="busy">Another Foxhole action is running. Once it ends, <a href="{{.Href}}" data-field="reopen">open this {{.What}} again</a> to confirm it.</span>{{end}}
 
 {{define "note-count"}}{{with .}}<div class="block-row" data-field="notes"><span data-field="note-count">{{.}}</span> {{if eq . 1}}member in this preview has{{else}}members in this preview have{{end}} a note.</div>{{end}}{{end}}
 

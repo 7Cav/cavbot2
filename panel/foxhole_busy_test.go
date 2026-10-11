@@ -38,17 +38,30 @@ type busyPreview struct {
 	block string
 }
 
-// busyPreviews are the previews that, before issue #582, turned their
-// Confirm off with no word of why.
-var busyPreviews = []busyPreview{
-	{name: "purge confirmation", block: "purge-confirm", open: func(t *testing.T, w *testWorld, before *html.Node) *html.Node {
+// The previews whose Confirm a running Foxhole action turns off, each
+// opened the way a manager opens it.
+var (
+	purgeBusy = busyPreview{name: "purge confirmation", block: "purge-confirm", open: func(t *testing.T, w *testWorld, before *html.Node) *html.Node {
 		return parseHTML(t, openPurge(t, w.b, before, "external"))
-	}},
-	{name: "remove preview", block: "remove-preview", open: func(t *testing.T, w *testWorld, before *html.Node) *html.Node {
+	}}
+	removeBusy = busyPreview{name: "remove preview", block: "remove-preview", open: func(t *testing.T, w *testWorld, before *html.Node) *html.Node {
 		return parseHTML(t, submitSelection(t, w.b, before, "internal", memberAsh.ID, memberKestrel.ID))
-	}},
-	{name: "Retry confirmation", block: "retry-confirm", ready: failedPurge, open: openRetryOf},
-}
+	}}
+	retryBusy = busyPreview{name: "Retry confirmation", block: "retry-confirm", ready: failedPurge, open: openRetryOf}
+	addBusy   = busyPreview{name: "add preview", block: "add-preview", open: func(t *testing.T, w *testWorld, before *html.Node) *html.Node {
+		// Doe doesn't hold External, so the add gives it to them.
+		return parseHTML(t, previewPaste(t, w.b, before, addForm(t, before), "external", "jdoe"))
+	}}
+	rosterBusy = busyPreview{name: "roster preview", block: "roster-preview",
+		ready: func(t *testing.T, _ *testWorld) { serveRoster(t, trooperVance, trooperDoe) },
+		open: func(t *testing.T, w *testWorld, _ *html.Node) *html.Node {
+			return parseHTML(t, previewRoster(t, w, "D/ACD"))
+		}}
+)
+
+// busyPreviews are every preview with a Confirm a running Foxhole action
+// turns off.
+var busyPreviews = []busyPreview{purgeBusy, removeBusy, retryBusy, addBusy, rosterBusy}
 
 // failedPurge runs a purge of External to its end with Discord refusing
 // Kestrel's change, so its report offers Retry of Kestrel, who still holds
@@ -155,7 +168,7 @@ func markersOf(t *testing.T, doc *html.Node, field string, keys ...string) []str
 // Confirm a running action turned off, opened as a manager opens it, and
 // as a Retry does where that gives the preview another address.
 var busyReopens = []busyReopen{
-	{busyPreview: busyPreviews[0], same: func(t *testing.T, doc *html.Node) []string {
+	{busyPreview: purgeBusy, same: func(t *testing.T, doc *html.Node) []string {
 		return markersOf(t, doc, "purge-confirm", "data-scope")
 	}},
 	{busyPreview: busyPreview{name: "remove preview from a searched and filtered view", block: "remove-preview",
@@ -169,14 +182,13 @@ var busyReopens = []busyReopen{
 		same: func(t *testing.T, doc *html.Node) []string {
 			return append(markersOf(t, doc, "retrying", "data-report"), removeConfirms(t, doc)...)
 		}},
-	{busyPreview: busyPreviews[2], same: func(t *testing.T, doc *html.Node) []string {
+	{busyPreview: retryBusy, same: func(t *testing.T, doc *html.Node) []string {
 		return markersOf(t, doc, "retry-confirm", "data-report", "data-action")
 	}},
-	{busyPreview: busyPreview{name: "roster preview", block: "roster-preview",
-		ready: func(t *testing.T, _ *testWorld) { serveRoster(t, trooperVance, trooperDoe) },
-		open: func(t *testing.T, w *testWorld, _ *html.Node) *html.Node {
-			return parseHTML(t, previewRoster(t, w, "D/ACD"))
-		}},
+	{busyPreview: addBusy, same: func(t *testing.T, doc *html.Node) []string {
+		return append(markersOf(t, doc, "add-preview", "data-role"), "lines="+formFields(doc, addPreviewForm(t, doc)).Get(fieldLines))
+	}, reopen: pressPreviewAgain},
+	{busyPreview: rosterBusy,
 		same: func(t *testing.T, doc *html.Node) []string {
 			return markersOf(t, doc, "roster-preview", "data-unit")
 		},
@@ -217,6 +229,30 @@ func pressReopen(t *testing.T, w *testWorld, doc, block *html.Node) *html.Node {
 	res := w.b.postForm(attrOf(button, "formaction"), formFields(doc, form))
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("previewing again answered %d, want 200", res.StatusCode)
+	}
+	return parseHTML(t, res)
+}
+
+// addPreviewForm returns the paste box in the page's add preview, whose
+// Preview again previews the add again, and fails the test when there's
+// none.
+func addPreviewForm(t *testing.T, doc *html.Node) *html.Node {
+	t.Helper()
+	form := findElement(pendingBlock(t, doc, "add-preview"), "form", "data-field", "add-form")
+	if form == nil {
+		t.Fatal("the add preview has no paste box")
+	}
+	return form
+}
+
+// pressPreviewAgain presses Preview again in a busy add preview's paste box
+// as the box stands, the way a browser posts it.
+func pressPreviewAgain(t *testing.T, w *testWorld, doc, _ *html.Node) *html.Node {
+	t.Helper()
+	form := addPreviewForm(t, doc)
+	res := w.b.postForm(attrOf(form, "action"), formFields(doc, form))
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Preview again answered %d, want 200", res.StatusCode)
 	}
 	return parseHTML(t, res)
 }
@@ -325,7 +361,7 @@ func TestABusyPreviewThatWouldChangeNobodySaysOnlyThat(t *testing.T) {
 		{busyPreview{name: "purge confirmation", block: "purge-confirm",
 			// Nobody left holds External.
 			ready: func(_ *testing.T, w *testWorld) { setMembers(w, memberDoe, memberAsh, memberVance) },
-			open:  busyPreviews[0].open}, "nobody-to-purge"},
+			open:  purgeBusy.open}, "nobody-to-purge"},
 		{busyPreview{name: "remove preview", block: "remove-preview",
 			open: func(t *testing.T, w *testWorld, before *html.Node) *html.Node {
 				// Doe doesn't hold External.
@@ -357,5 +393,23 @@ func TestABusyPreviewThatWouldChangeNobodySaysOnlyThat(t *testing.T) {
 				t.Error("the block offers a Confirm, want none")
 			}
 		})
+	}
+}
+
+// While the purge confirmation is open, its Purge is the page's one way to
+// start a purge, so After a war points at it in place of its own busy
+// hint, even while another Foxhole action runs: the confirmation says why
+// its Purge is off.
+func TestAfterAWarPointsAtAnOpenPurgeConfirmationWhileAnActionRuns(t *testing.T) {
+	w := newFoxholeWorld(t)
+
+	doc, _, _ := openBusy(t, w, purgeBusy)
+
+	form := purgeForm(t, doc)
+	if findElement(form, "", "data-field", "purge-open") == nil {
+		t.Error("After a war doesn't point at the open purge confirmation")
+	}
+	if findElement(form, "", "data-field", "busy") != nil {
+		t.Error("After a war gives its busy hint, want its pointer to the open purge confirmation in its place")
 	}
 }

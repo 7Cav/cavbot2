@@ -221,13 +221,22 @@ type purgeConfirm struct {
 // changes.
 func (c *purgeConfirm) NobodyHint() string { return nobodyToPurge(c.Scope) }
 
-// Reopen is the address of the page with this confirmation open again, at
-// it: the address the After a war block's Purge opens for the same scope.
-// While another Foxhole action runs, the confirmation links it beside its
-// Confirm, which is off, so a manager confirms against the holders once
-// that action has ended.
-func (c *purgeConfirm) Reopen() string {
-	return foxholePath + "?" + url.Values{paramPurge: {string(c.Scope)}}.Encode() + "#" + purgeConfirmAnchor
+// Reopen is the link that opens this confirmation again: the address the
+// After a war block's Purge opens for the same scope.
+func (c *purgeConfirm) Reopen() reopenLink {
+	return reopenLink{Href: foxholePath + "?" + url.Values{paramPurge: {string(c.Scope)}}.Encode() + "#" + purgeConfirmAnchor, What: "purge"}
+}
+
+// reopenLink is the link a preview gives beside its Confirm while another
+// Foxhole action runs and the Confirm is off: the address that opens the
+// same preview again, read from Discord as it is then, and what the link
+// names, as "open this <What> again". Following it once that action has
+// ended gives a working Confirm. A Confirm never turns back on in place,
+// since a purge acts on whoever holds the role when it starts, not on the
+// count its confirmation showed.
+type reopenLink struct {
+	Href string
+	What string
 }
 
 // purgeConfirmAnchor is the ID foxhole.html gives the purge confirmation's
@@ -308,13 +317,14 @@ type removePreview struct {
 	// Back is the address of the view the selection was made in, where
 	// Cancel leads.
 	Back string
-	// Reopen is the address of the page with this preview open again, at
-	// it: the same role and members selected, from the same view, or the
-	// Retry's address when a Retry opened it. While another Foxhole action
-	// runs, the preview links it beside its Confirm, which is off, so a
-	// manager confirms against Discord once that action has ended.
-	Reopen string
+	// reopen is the address that opens this preview again: the same role
+	// and members selected, from the same view, or the Retry's address when
+	// a Retry opened it.
+	reopen string
 }
+
+// Reopen is the link that opens this preview again.
+func (p *removePreview) Reopen() reopenLink { return reopenLink{Href: p.reopen, What: "removal"} }
 
 // NobodyHint is the hint the preview gives in Confirm's place when nobody
 // selected loses the role.
@@ -352,11 +362,12 @@ func (m previewMember) Why() string {
 
 // removePreviewOf is the preview of a removal of the request's role from
 // the members it selected, in display name order, read from a complete
-// member list and the guild's Foxhole records.
-func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, req foxholeRequest) *removePreview {
+// member list and the guild's Foxhole records. reopen is the address that
+// opens it again.
+func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, req foxholeRequest, reopen string) *removePreview {
 	guild := s.foxholeGuildOf()
 	name := req.Remove.Label()
-	preview := &removePreview{Role: req.Remove, Name: name, Back: foxholeAddress(req.Query, req.Filter), Reopen: removeAddress(req)}
+	preview := &removePreview{Role: req.Remove, Name: name, Back: foxholeAddress(req.Query, req.Filter), reopen: reopen}
 	for _, id := range distinct(req.RemoveMembers) {
 		rec := records[id]
 		member := previewMember{ID: id, DisplayName: rec.DisplayName, Username: rec.Username, Note: rec.Note, RoleName: name}
@@ -391,14 +402,10 @@ func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, record
 // removeAddress is the address the selection bar's Remove opens for the
 // request's role and members, from the request's view: the page with that
 // remove preview open, at it.
-func removeAddress(req foxholeRequest) string {
-	v := url.Values{paramRemove: {string(req.Remove)}, fieldMember: distinct(req.RemoveMembers)}
-	if req.Filter != filterAll {
-		v.Set(paramFilter, req.Filter)
-	}
-	if req.Query != "" {
-		v.Set(paramQuery, req.Query)
-	}
+func (req foxholeRequest) removeAddress() string {
+	v := viewValues(req.Query, req.Filter)
+	v.Set(paramRemove, string(req.Remove))
+	v[fieldMember] = distinct(req.RemoveMembers)
 	return foxholePath + "?" + v.Encode() + "#" + removePreviewAnchor
 }
 

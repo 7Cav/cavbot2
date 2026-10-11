@@ -250,10 +250,12 @@ func (p *rosterPreview) NobodyHint() string {
 	return nobodyOnRoster(p.Unit.Label)
 }
 
-// RetryHref is the address that opens again the Retry whose preview this
-// is. While another Foxhole action runs, a Retry's preview links it beside
-// its Confirm, which is off.
-func (p *rosterPreview) RetryHref() string { return retryAddress(p.Retry) }
+// Reopen is the link that opens a Retry's preview again: the Retry's
+// address. A preview of the whole roster opens again by its Preview again
+// button instead, which posts the unit.
+func (p *rosterPreview) Reopen() reopenLink {
+	return reopenLink{Href: retryAddress(p.Retry), What: "Retry"}
+}
 
 // CanAdd reports whether confirming the preview could give Internal to
 // anyone: a trooper in the server who doesn't hold it. A preview that

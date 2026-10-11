@@ -741,7 +741,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 			view.PurgeConfirm = s.purgeConfirmOf(list, req.Purge)
 		}
 		if req.Remove != "" {
-			view.RemovePreview = s.removePreviewOf(list, records, req)
+			view.RemovePreview = s.removePreviewOf(list, records, req, req.removeAddress())
 		}
 		if req.Paste != nil {
 			view.AddPreview = s.addPreviewOf(list, records, *req.Paste, nil)
@@ -1323,13 +1323,7 @@ func skippedAddress(query, filter string, skipped []string) string {
 // foxholeLink is foxholeAddress with the parameter key set to each of
 // values, left out when there are none or they are empty.
 func foxholeLink(query, filter, key string, values ...string) string {
-	v := url.Values{}
-	if filter != filterAll {
-		v.Set(paramFilter, filter)
-	}
-	if query != "" {
-		v.Set(paramQuery, query)
-	}
+	v := viewValues(query, filter)
 	for _, value := range values {
 		if value != "" {
 			v.Add(key, value)
@@ -1339,4 +1333,17 @@ func foxholeLink(query, filter, key string, values ...string) string {
 		return foxholePath
 	}
 	return foxholePath + "?" + v.Encode()
+}
+
+// viewValues are the query parameters of the view the search and the
+// filter name, leaving out each that is the default.
+func viewValues(query, filter string) url.Values {
+	v := url.Values{}
+	if filter != filterAll {
+		v.Set(paramFilter, filter)
+	}
+	if query != "" {
+		v.Set(paramQuery, query)
+	}
+	return v
 }
