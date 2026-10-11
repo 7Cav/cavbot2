@@ -410,8 +410,9 @@ _Avoid_: submit, submission, write, commit.
 
 **Refusal**:
 The answer that turns a request down before anything changes: a command's
-reply to a run, or the note a panel form shows on a refused save. Only the
-person who asked sees it.
+reply to a run, the note a panel form shows on a refused save, or the
+no-access page for a request the visitor may not make. Only the person who
+asked sees it.
 _Avoid_: rejection, error reply (which also covers a run that failed after
 it started).
 
@@ -458,8 +459,8 @@ The panel's test of the signed-in forum user's forum groups, primary or
 secondary, on every request. The groups decide what the panel session can
 see. They never end it. One of the panel's admin groups makes them a panel
 admin. The Foxhole group makes them a Foxhole manager. An outsider sees
-only their recordings, or, having started none, a page saying their roles
-grant no access.
+only the recordings they started, or, having started none, the no-access
+page.
 _Avoid_: allowlist check, permission check, authorisation, role check.
 
 **Panel admin**:
@@ -473,6 +474,12 @@ A signed-in forum user the group check finds in none of the panel's groups,
 neither a panel admin nor a Foxhole manager.
 _Avoid_: user outside the admin groups (a Foxhole manager is one too), user
 in neither group, user in no group, guest, unprivileged user.
+
+**No-access page**:
+The panel page for a request the visitor's forum groups don't allow, or for
+a recording they didn't start, and an outsider's Recordings page when they
+have no recordings.
+_Avoid_: forbidden page, access denied page, 403 page.
 
 **Block**:
 One bordered unit of a panel page, with a gold header rule. The unit a
