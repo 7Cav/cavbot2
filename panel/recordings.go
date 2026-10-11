@@ -94,9 +94,9 @@ type recordingsView struct {
 	Deleted bool
 }
 
-// Empty is what the page says when it lists no recordings: that none are
-// left after a delete, and that there are none yet otherwise.
-func (v recordingsView) Empty() string {
+// EmptyNote is what the page says when it lists no recordings: that none
+// are left after a delete, and that there are none yet otherwise.
+func (v recordingsView) EmptyNote() string {
 	if v.Deleted {
 		return noRecordingsLeft
 	}

@@ -502,14 +502,14 @@ var recordingRoutes = []recordingRoute{
 // assertRecordingRefused checks a response to a recording's route is the
 // no-access page saying the recording is open only to its starter and panel
 // admins, and carries neither the mix nor a zip.
-func assertRecordingRefused(t *testing.T, who string, res *http.Response) {
+func assertRecordingRefused(t *testing.T, res *http.Response) {
 	t.Helper()
 	body := readBody(t, res)
 	if bytes.Equal(body, testMix) {
-		t.Fatalf("%s's refused request got the mix", who)
+		t.Fatal("the refused request got the mix")
 	}
 	if _, err := zip.NewReader(bytes.NewReader(body), int64(len(body))); err == nil {
-		t.Fatalf("%s's refused request got a zip", who)
+		t.Fatal("the refused request got a zip")
 	}
 	doc, err := html.Parse(bytes.NewReader(body))
 	if err != nil {
@@ -555,9 +555,12 @@ func TestRecordingIsServedToItsStarterAndPanelAdminsOnly(t *testing.T) {
 			route.served(t, "the starter", w.b.get(href), recA)
 			route.served(t, "a panel admin", admin.get(href), recA)
 			for _, v := range recordingRefusedVisitors(w, b) {
-				visitor := newBrowser(t, w.p)
-				signInAs(t, w.forum, visitor, v.account)
-				assertRecordingRefused(t, v.who, visitor.get(href))
+				t.Run(v.who, func(t *testing.T) {
+					visitor := newBrowser(t, w.p)
+					signInAs(t, w.forum, visitor, v.account)
+
+					assertRecordingRefused(t, visitor.get(href))
+				})
 			}
 		})
 	}

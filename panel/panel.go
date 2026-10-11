@@ -583,7 +583,7 @@ const (
 	// a panel admin.
 	noAccessRecording = "This recording is open only to its starter and panel admins. Nothing changed."
 	// noAccessNoRecordings is an outsider's Recordings page when they have
-	// no recordings. It refuses nothing, so it says nothing changed.
+	// no recordings. It refuses nothing, so it doesn't say nothing changed.
 	noAccessNoRecordings = "You have no recordings to download, and your forum groups don't open any other page."
 )
 

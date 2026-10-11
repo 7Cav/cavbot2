@@ -125,7 +125,7 @@ func TestRecordingDeletedByItsStarterOrAPanelAdminIsGone(t *testing.T) {
 // gets the no-access page saying the recording is open only to its starter
 // and panel admins, and nothing is deleted: its starter's page still lists
 // it, and its mix still downloads.
-func TestRecordingDeletePostedByAnotherStarterDeletesNothing(t *testing.T) {
+func TestRecordingDeletePostedByAnyoneElseDeletesNothing(t *testing.T) {
 	w := newTestWorld(t)
 	a := w.addStarter(5001, "Able.A", "discord-a")
 	b := w.addStarter(5002, "Baker.B", "discord-b")
