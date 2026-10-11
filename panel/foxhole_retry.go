@@ -61,6 +61,7 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 	case store.ChangeRemoval:
 		view.RemovePreview = s.removePreviewOf(list, records,
 			foxholeRequest{Query: req.Query, Filter: req.Filter, Remove: report.Role, RemoveMembers: ids})
+		view.RemovePreview.Reopen = report.RetryHref()
 	case store.ChangeRosterAdd:
 		unit, ok := commands.LookupValidatedInternalUnitLabelled(report.Unit)
 		if !ok {

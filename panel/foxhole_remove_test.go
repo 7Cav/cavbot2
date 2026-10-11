@@ -308,9 +308,10 @@ func TestRemovePressedWhileTheMemberListIsPartialIsRefused(t *testing.T) {
 }
 
 // One Foxhole action runs at a time. While a purge runs, the selection
-// bar's Remove buttons are disabled, and so is the Confirm of a remove
-// preview opened anyway, from a page loaded before the purge started.
-func TestRemoveControlsAreDisabledWhileAnActionRuns(t *testing.T) {
+// bar says removing is off in place of its Remove buttons, and the Confirm
+// of a remove preview opened anyway, from a page loaded before the purge
+// started, is off.
+func TestRemoveControlsAreOffWhileAnActionRuns(t *testing.T) {
 	w := newFoxholeWorld(t)
 	before := parseHTML(t, w.b.get(foxholePath))
 	hold := holdRoleWrites(t, w)
@@ -319,10 +320,19 @@ func TestRemoveControlsAreDisabledWhileAnActionRuns(t *testing.T) {
 
 	page := parseHTML(t, w.b.get(foxholePath))
 
-	for _, role := range []string{"internal", "external"} {
-		if !disabled(removeButton(t, page, role)) {
-			t.Errorf("the Remove %s button is enabled while a purge runs", role)
+	bar := findElement(page, "form", "data-field", "selection")
+	if bar == nil {
+		t.Fatal("the page has no selection bar")
+	}
+	eachLiveElement(page, func(n *html.Node) {
+		// The way submitSelection presses a Remove button: by the role its
+		// value names.
+		if value := attrOf(n, "value"); n.Data == "button" && ownedBy(n, bar) && (value == "internal" || value == "external") {
+			t.Errorf("the selection bar offers Remove %s while a purge runs, want the reason in its place", value)
 		}
+	})
+	if findElement(bar, "", "data-field", "busy") == nil {
+		t.Error("the selection bar doesn't say why it offers no Remove while a purge runs")
 	}
 	preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, before, "external", memberKestrel.ID)))
 	if button := findElement(preview, "", "data-field", "confirm"); button == nil || !disabled(button) {

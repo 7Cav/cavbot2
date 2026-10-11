@@ -121,7 +121,7 @@ type foxholeView struct {
 	ReAdd *reAddCounts
 	// Busy is a Foxhole action running at this load, started on the page or
 	// by a role-changing command: the controls that would start another are
-	// disabled.
+	// off, and each says why.
 	Busy bool
 	// Commands are the role-changing Foxhole commands running at this load,
 	// the first started first. The page names each and shows no count, since
