@@ -222,6 +222,13 @@ ended, and lists the members it changed, skipped, failed on and never
 attempted.
 _Avoid_: summary, results, receipt.
 
+**Result line**:
+A line on the Foxhole page telling a Foxhole manager what their last save
+did that the list alone doesn't show: the members an Approve skipped for not
+holding External, or a cleared note that took its member off the page.
+_Avoid_: result note (a note is a Foxhole manager's text about a member),
+message.
+
 ## Temporary voice channels
 
 The bot replaces MEE6's "Temporary Channels" plugin. A member joins a hub, the
