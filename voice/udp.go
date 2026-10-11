@@ -52,8 +52,10 @@ type udpConn struct {
 	mu        sync.Mutex
 	conn      net.Conn
 	encrypter disgovoice.Encrypter
-	// stopKeepalive ends the keepalive of the socket open now.
+	// stopKeepalive ends the keepalive of the socket open now, and
+	// keepaliveDone closes once it has returned.
 	stopKeepalive chan struct{}
+	keepaliveDone chan struct{}
 
 	// buf is the receive buffer. Only the receiver reads.
 	buf []byte
@@ -88,7 +90,7 @@ func (u *udpConn) Open(ctx context.Context, ip string, port int, ssrc uint32) (s
 	}
 	u.dave.AssignSsrcToCodec(ssrc, godave.CodecOpus)
 
-	stop := make(chan struct{})
+	stop, done := make(chan struct{}), make(chan struct{})
 	u.mu.Lock()
 	if u.conn != nil {
 		_ = u.conn.Close()
@@ -96,9 +98,9 @@ func (u *udpConn) Open(ctx context.Context, ip string, port int, ssrc uint32) (s
 	if u.stopKeepalive != nil {
 		close(u.stopKeepalive)
 	}
-	u.conn, u.stopKeepalive = conn, stop
+	u.conn, u.stopKeepalive, u.keepaliveDone = conn, stop, done
 	u.mu.Unlock()
-	go keepalive(conn, stop)
+	go keepalive(conn, stop, done)
 	return addr, ourPort, nil
 }
 
@@ -128,8 +130,10 @@ func discoverIP(conn net.Conn, ssrc uint32) (string, int, error) {
 }
 
 // keepalive sends 8 bytes, a little-endian counter, every keepaliveInterval
-// until stop, as Discord's own JavaScript library does.
-func keepalive(conn net.Conn, stop chan struct{}) {
+// until stop, as Discord's own JavaScript library does. It closes done as it
+// returns.
+func keepalive(conn net.Conn, stop <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
 	defer utils.RecoverPanic("recorder-keepalive")
 	ticker := time.NewTicker(keepaliveInterval)
 	defer ticker.Stop()
@@ -250,18 +254,22 @@ func (u *udpConn) Read(b []byte) (int, error) {
 // Write refuses: a recorder sends no audio.
 func (u *udpConn) Write([]byte) (int, error) { return 0, errNoAudioSent }
 
-// Close closes the socket and stops its keepalive. disgo may open it again.
+// Close closes the socket and returns once its keepalive has stopped. disgo
+// may open it again.
 func (u *udpConn) Close() error {
 	u.mu.Lock()
-	defer u.mu.Unlock()
-	if u.stopKeepalive != nil {
-		close(u.stopKeepalive)
-		u.stopKeepalive = nil
+	var err error
+	if u.conn != nil {
+		err = u.conn.Close()
 	}
-	if u.conn == nil {
-		return nil
+	stop, done := u.stopKeepalive, u.keepaliveDone
+	u.stopKeepalive, u.keepaliveDone = nil, nil
+	u.mu.Unlock()
+	if stop != nil {
+		close(stop)
+		<-done
 	}
-	return u.conn.Close()
+	return err
 }
 
 func (u *udpConn) LocalAddr() net.Addr {
