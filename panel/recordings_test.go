@@ -746,3 +746,45 @@ func TestSignInWhoseMilpacLookupFailsIsReported(t *testing.T) {
 		t.Errorf("sent %d Sentry events, want 1", n)
 	}
 }
+
+// restartRecorder ends the world's recording runtime the way SIGTERM does,
+// and starts the next one over the same store and recordings directory.
+// Its startup recovery closes the recording left running as cut short, and
+// this waits for that recording's mix.
+func (w *testWorld) restartRecorder(t *testing.T) {
+	t.Helper()
+	w.recorder(t).rt.Shutdown()
+	rig := &recordingRig{voice: &fakeRecorders{}, mixed: make(chan struct{}, 16)}
+	rig.rt = commands.NewRecordingRuntime(w.discord, mixWatch{Store: w.store, mixed: rig.mixed}, w.runtime, testGuildID,
+		rig.voice, fakeMixer{}, w.recordingsDir, testBaseURL)
+	w.rig = rig
+	select {
+	case <-rig.mixed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the recording cut short by the restart was never mixed")
+	}
+}
+
+// The Recordings page marks a recording a restart cut short, and leaves a
+// recording that stopped as usual unmarked.
+func TestRecordingsPageMarksARecordingCutShort(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	stopped := w.record(t, a.discordID)
+	cut := w.startRecording(t, a.discordID)
+	w.restartRecorder(t)
+	signInAs(t, w.forum, w.b, a.account)
+
+	rows := listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))
+
+	for id, wantMark := range map[int64]bool{cut: true, stopped: false} {
+		row, ok := rows[id]
+		if !ok {
+			t.Errorf("the page doesn't list recording %d", id)
+			continue
+		}
+		if marked := findElement(row, "", "data-field", "cut-short") != nil; marked != wantMark {
+			t.Errorf("recording %d marked cut short = %t, want %t", id, marked, wantMark)
+		}
+	}
+}

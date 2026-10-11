@@ -685,10 +685,10 @@ func (p *Postgres) ListRecordingRoleChanges(ctx context.Context, limit int) ([]C
 func (p *Postgres) StartRecording(ctx context.Context, rec Recording) (Recording, error) {
 	rec.StoppedAt, rec.Ended, rec.Mix, rec.Speakers = time.Time{}, "", "", nil
 	err := p.db.QueryRowContext(ctx, `
-		INSERT INTO recordings (guild_id, channel_id, channel_name, starter_id, title, recorder_id, started_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO recordings (guild_id, channel_id, channel_name, starter_id, title, recorder_id, notice_id, started_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id`,
-		rec.GuildID, rec.ChannelID, rec.ChannelName, rec.StarterID, rec.Title, rec.RecorderID, rec.StartedAt).Scan(&rec.ID)
+		rec.GuildID, rec.ChannelID, rec.ChannelName, rec.StarterID, rec.Title, rec.RecorderID, rec.NoticeID, rec.StartedAt).Scan(&rec.ID)
 	if err != nil {
 		return Recording{}, fmt.Errorf("start recording of channel %q: %w", rec.ChannelID, err)
 	}
@@ -761,7 +761,7 @@ func (p *Postgres) ListRecordings(ctx context.Context, guildID string) ([]Record
 			speakersJSON []byte
 		)
 		if err := row.Scan(&rec.ID, &rec.GuildID, &rec.ChannelID, &rec.ChannelName, &rec.StarterID,
-			&rec.Title, &rec.RecorderID, &rec.StartedAt, &stopped, &ended, &mix, &speakersJSON); err != nil {
+			&rec.Title, &rec.RecorderID, &rec.NoticeID, &rec.StartedAt, &stopped, &ended, &mix, &speakersJSON); err != nil {
 			return rec, err
 		}
 		rec.StoppedAt, rec.Ended, rec.Mix = stopped.Time, RecordingEnd(ended.String), MixState(mix.String)
@@ -773,8 +773,8 @@ func (p *Postgres) ListRecordings(ctx context.Context, guildID string) ([]Record
 			rec.Speakers = append(rec.Speakers, Speaker(sp))
 		}
 		return rec, nil
-	}, `SELECT id, guild_id, channel_id, channel_name, starter_id, title, recorder_id, started_at, stopped_at, ended,
-			mix, speakers
+	}, `SELECT id, guild_id, channel_id, channel_name, starter_id, title, recorder_id, notice_id, started_at, stopped_at,
+			ended, mix, speakers
 		FROM recordings WHERE guild_id = $1`, guildID)
 	if err != nil {
 		return nil, fmt.Errorf("list recordings of guild %q: %w", guildID, err)

@@ -127,7 +127,11 @@ type Recording struct {
 	Title string
 	// RecorderID is the user ID of the recorder that recorded it.
 	RecorderID string
-	StartedAt  time.Time
+	// NoticeID is the message ID of its recording notice, in the recorded
+	// channel's text chat, which the stop edits. A process that recovers
+	// the recording after a crash finds the notice by it.
+	NoticeID  string
+	StartedAt time.Time
 	// StoppedAt is zero while the recording runs.
 	StoppedAt time.Time
 	// Ended is how the recording ended, empty while it runs.
@@ -176,6 +180,9 @@ const (
 	// RecordingEndRecorderLeft: the recorder left the channel, moved out,
 	// disconnected, or with the channel deleted.
 	RecordingEndRecorderLeft RecordingEnd = "recorder_left"
+	// RecordingEndCutShort: the bot shut down or crashed while it ran, and
+	// the next process closed it.
+	RecordingEndCutShort RecordingEnd = "cut_short"
 )
 
 // SpawnedChannel is one row of the spawned channels table, written at create

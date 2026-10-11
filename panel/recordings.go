@@ -98,7 +98,9 @@ type recordingItem struct {
 	Speakers  []string
 	// Running is set while the recording runs.
 	Running bool
-	Mix     store.MixState
+	// CutShort is set for a recording a restart or a crash cut short.
+	CutShort bool
+	Mix      store.MixState
 	// StarterID is the starter's Discord ID, and Starter their display
 	// name, for a page that names the starter, which sets ShowStarter.
 	StarterID   string
@@ -364,7 +366,8 @@ func recordingItems(recs []store.Recording) []recordingItem {
 	for _, rec := range recs {
 		page := commands.RecordingPath(rec.ID)
 		item := recordingItem{ID: rec.ID, Title: rec.Title, Channel: rec.ChannelName, StartedAt: rec.StartedAt,
-			Running: rec.StoppedAt.IsZero(), Mix: rec.Mix, StarterID: rec.StarterID, PageURL: page, MixURL: page + "/mix", ZipURL: page + "/zip",
+			Running: rec.StoppedAt.IsZero(), CutShort: rec.Ended == store.RecordingEndCutShort, Mix: rec.Mix, StarterID: rec.StarterID,
+			PageURL: page, MixURL: page + "/mix", ZipURL: page + "/zip",
 			DeleteURL: recordingDeletePath(rec.ID)}
 		if !item.Running {
 			item.Length = rec.StoppedAt.Sub(rec.StartedAt).Round(time.Second).String()

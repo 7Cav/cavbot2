@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"bufio"
 	"encoding/binary"
+	"errors"
 	"io"
 )
 
@@ -13,6 +15,12 @@ const opusSampleRate = 48000
 
 // oggMaxSegments is the most lacing values one Ogg page holds (RFC 3533).
 const oggMaxSegments = 255
+
+// oggPageHeaderSize is the fixed part of an Ogg page's header, ahead of its
+// lacing values: capture pattern, version, flags, granule position,
+// serial, sequence number, CRC, and the segment count last (RFC 3533,
+// section 6).
+const oggPageHeaderSize = 27
 
 // oggWriter writes one Ogg Opus stream. Packets gather into a page until the
 // page is full or flush writes it out, so a page holds whole packets only.
@@ -109,20 +117,59 @@ func (o *oggWriter) emit(flags byte) error {
 
 // page writes one page.
 func (o *oggWriter) page(lacing, body []byte, granule uint64, flags byte) error {
-	hdr := make([]byte, 27+len(lacing))
+	hdr := make([]byte, oggPageHeaderSize+len(lacing))
 	copy(hdr, "OggS")
 	hdr[5] = flags
 	binary.LittleEndian.PutUint64(hdr[6:], granule)
 	binary.LittleEndian.PutUint32(hdr[14:], o.serial)
 	binary.LittleEndian.PutUint32(hdr[18:], o.pageSeq)
-	hdr[26] = byte(len(lacing))
-	copy(hdr[27:], lacing)
+	hdr[oggPageHeaderSize-1] = byte(len(lacing))
+	copy(hdr[oggPageHeaderSize:], lacing)
 	binary.LittleEndian.PutUint32(hdr[22:], oggCRC(oggCRC(0, hdr), body))
 	o.pageSeq++
 	if _, err := o.w.Write(hdr); err != nil {
 		return err
 	}
 	_, err := o.w.Write(body)
+	return err
+}
+
+// oggStreamEnd reads how far an Ogg stream runs, in samples: the granule
+// position of its last whole page. A stream a crash left with its last page
+// cut short ends at the page before, and one with no audio page ends at 0.
+// A read that fails for any other reason is an error.
+func oggStreamEnd(r io.Reader) (uint64, error) {
+	br := bufio.NewReader(r)
+	hdr := make([]byte, oggPageHeaderSize)
+	var end uint64
+	for {
+		if _, err := io.ReadFull(br, hdr); err != nil {
+			return end, unlessCutShort(err)
+		}
+		if string(hdr[:4]) != "OggS" {
+			return end, nil
+		}
+		lacing := make([]byte, hdr[oggPageHeaderSize-1])
+		if _, err := io.ReadFull(br, lacing); err != nil {
+			return end, unlessCutShort(err)
+		}
+		size := 0
+		for _, l := range lacing {
+			size += int(l)
+		}
+		if _, err := br.Discard(size); err != nil {
+			return end, unlessCutShort(err)
+		}
+		end = binary.LittleEndian.Uint64(hdr[6:])
+	}
+}
+
+// unlessCutShort is a read's error, or nil when the stream merely ended,
+// whole or part way through a page.
+func unlessCutShort(err error) error {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil
+	}
 	return err
 }
 
