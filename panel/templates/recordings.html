@@ -6,6 +6,9 @@
     <a href="/recordings"{{if not .Recordings.All}} class="is-on" aria-current="page"{{end}}>Yours</a>
     <a href="/recordings?view=all" data-field="view-all"{{if .Recordings.All}} class="is-on" aria-current="page"{{end}}>Every recording</a>
   </nav>{{end}}
+  {{if .Recordings.Gone}}
+  <div class="block" data-field="recording-gone"><div class="block-row">This recording isn't in the panel. Recordings are deleted 30 days after they stop.</div></div>
+  {{else}}
   {{range .Recordings.Recordings}}
   <section class="block" data-recording="{{.ID}}">
     <h2 class="block-header" data-field="title">{{if .Title}}{{.Title}}{{else}}Untitled recording{{end}}</h2>
@@ -25,6 +28,7 @@
   </section>
   {{else}}
   <div class="block"><div class="block-row">No recordings yet.</div></div>
+  {{end}}
   {{end}}
 </main>
 {{end}}

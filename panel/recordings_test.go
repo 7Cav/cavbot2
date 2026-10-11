@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -43,13 +44,16 @@ type milpacAPI struct {
 	mu         sync.Mutex
 	discordIDs map[string]string
 	statuses   map[string]int
+	// held maps a username whose lookup waits, until the request's context
+	// ends, to the channel closed once it is waiting.
+	held map[string]chan struct{}
 }
 
 // serveMilpacs points the 7Cav API at a milpac lookup that knows no one yet,
 // for the rest of the test.
 func serveMilpacs(t *testing.T) *milpacAPI {
 	t.Helper()
-	api := &milpacAPI{discordIDs: map[string]string{}, statuses: map[string]int{}}
+	api := &milpacAPI{discordIDs: map[string]string{}, statuses: map[string]int{}, held: map[string]chan struct{}{}}
 	srv := httptest.NewServer(http.HandlerFunc(api.serve))
 	t.Cleanup(srv.Close)
 	t.Cleanup(utils.SetAPIBaseURLForTest(srv.URL))
@@ -57,13 +61,22 @@ func serveMilpacs(t *testing.T) *milpacAPI {
 }
 
 func (a *milpacAPI) serve(w http.ResponseWriter, r *http.Request) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	username, ok := strings.CutPrefix(r.URL.Path, milpacProfilePath)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
+	a.mu.Lock()
+	waiting, held := a.held[username]
+	delete(a.held, username)
+	a.mu.Unlock()
+	if held {
+		close(waiting)
+		<-r.Context().Done()
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if status, ok := a.statuses[username]; ok {
 		w.WriteHeader(status)
 		return
@@ -82,6 +95,15 @@ func (a *milpacAPI) set(username, discordID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.discordIDs[username] = discordID
+}
+
+// hold makes the next lookup of a forum username wait until its request's
+// context ends. The channel closes once it is waiting.
+func (a *milpacAPI) hold(username string) <-chan struct{} {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.held[username] = make(chan struct{})
+	return a.held[username]
 }
 
 // fail makes the lookup of a forum username answer the status given.
@@ -637,5 +659,57 @@ func TestRecordingPageForNoRecordingIsNotTheNoAccessPage(t *testing.T) {
 	}
 	if findElement(parseHTML(t, res), "", "data-field", "no-access") != nil {
 		t.Error("a panel admin got the no-access page for a recording that doesn't exist")
+	}
+}
+
+// signInLeavingAt walks a browser through sign-in as the account given and
+// closes its connection once waiting has closed, mid-callback. It returns
+// once the panel's handler has.
+func signInLeavingAt(t *testing.T, f *fakeForum, b *browser, a *forumAccount, waiting <-chan struct{}) {
+	t.Helper()
+	q := assertRedirect(t, b.post("/auth/start"), "/oauth2/authorize").Query()
+	f.setChallenge(q.Get("code_challenge"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		b.doContext(ctx, http.MethodGet, "/auth/callback?code="+url.QueryEscape(a.code)+"&state="+url.QueryEscape(q.Get("state")), nil, nil)
+	}()
+	select {
+	case <-waiting:
+	case <-time.After(neverReleased):
+		t.Fatal("the sign-in never reached the milpac lookup")
+	}
+	cancel()
+	<-done
+}
+
+// A sign-in whose browser leaves while the milpac lookup waits is an
+// abandoned page load, which sends nothing to Sentry.
+func TestSignInAbandonedDuringTheMilpacLookupIsNotReported(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	reported := recordSentry(t)
+	waiting := w.milpacs.hold("Able.A")
+
+	signInLeavingAt(t, w.forum, w.b, a.account, waiting)
+
+	if n := len(reported.recorded()); n != 0 {
+		t.Errorf("sent %d Sentry events, want none", n)
+	}
+}
+
+// A milpac lookup that fails at sign-in reaches Sentry, once.
+func TestSignInWhoseMilpacLookupFailsIsReported(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	w.milpacs.fail("Able.A", http.StatusInternalServerError)
+	reported := recordSentry(t)
+
+	signInAs(t, w.forum, w.b, a.account)
+
+	if n := len(reported.recorded()); n != 1 {
+		t.Errorf("sent %d Sentry events, want 1", n)
 	}
 }

@@ -37,6 +37,10 @@ func (p *Panel) discordIDOf(ctx context.Context, username string) string {
 	case errors.Is(err, utils.ErrNotFound):
 		utils.Info("Panel sign-in found no milpac", "username", username)
 		return ""
+	case errors.Is(err, context.Canceled):
+		// The browser left the callback: expected, so no Sentry event.
+		utils.Info("Panel sign-in abandoned during the milpac lookup", "username", username)
+		return ""
 	case err != nil:
 		utils.CaptureError("Panel milpac lookup failed at sign-in", err, "username", username)
 		return ""
@@ -67,6 +71,9 @@ type recordingsView struct {
 	// the list of every recording, and on the page of a recording the
 	// viewer didn't start.
 	ShowStarter bool
+	// Gone is set on the page of a recording the panel doesn't hold, such
+	// as one deleted since its link was sent.
+	Gone bool
 }
 
 // recordingItem is one recording as the page shows it.
@@ -118,18 +125,16 @@ func (p *Panel) recordingsPage(w http.ResponseWriter, r *http.Request, sess sess
 	if !sess.access.panelAdmin && len(recs) == 0 {
 		// Someone who is neither a panel admin nor the starter of a
 		// recording has nothing here.
-		p.render(w, http.StatusForbidden, "noaccess", sess.page("No access"))
+		p.noAccess(w, sess)
 		return
 	}
-	data := sess.page("Recordings")
-	data.Page = pageRecordings
-	data.Nav.Recordings = true
-	p.renderRecordings(w, sess, recordingsView{Recordings: recordingItems(recs), Switch: sess.access.panelAdmin, All: all, ShowStarter: all})
+	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: recordingItems(recs), Switch: sess.access.panelAdmin, All: all, ShowStarter: all})
 }
 
-// renderRecordings renders the Recordings page with the view given, naming
-// each recording's starter by their display name when the view shows them.
-func (p *Panel) renderRecordings(w http.ResponseWriter, sess session, view recordingsView) {
+// renderRecordings renders the Recordings page with the status and view
+// given, naming each recording's starter by their display name when the
+// view shows them.
+func (p *Panel) renderRecordings(w http.ResponseWriter, sess session, status int, view recordingsView) {
 	if view.ShowStarter {
 		members := p.hubs.deps.Manager.MemberList(p.hubs.deps.GuildID)
 		for i := range view.Recordings {
@@ -140,7 +145,7 @@ func (p *Panel) renderRecordings(w http.ResponseWriter, sess session, view recor
 	data.Page = pageRecordings
 	data.Nav.Recordings = true
 	data.Recordings = view
-	p.render(w, http.StatusOK, "recordings", data)
+	p.render(w, status, "recordings", data)
 }
 
 // recordingPage is GET /recordings/{id}: one recording, the page the link
@@ -150,7 +155,7 @@ func (p *Panel) recordingPage(w http.ResponseWriter, r *http.Request, sess sessi
 	if !ok {
 		return
 	}
-	p.renderRecordings(w, sess, recordingsView{Recordings: recordingItems([]store.Recording{rec}), Single: true,
+	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: recordingItems([]store.Recording{rec}), Single: true,
 		ShowStarter: rec.StarterID != sess.discordID})
 }
 
@@ -163,7 +168,9 @@ func (p *Panel) downloadMix(w http.ResponseWriter, r *http.Request, sess session
 	}
 	f, err := p.recordings.OpenMix(rec)
 	if errors.Is(err, commands.ErrMixNotReady) {
-		http.Error(w, "this recording's mix is not ready", http.StatusNotFound)
+		// Only an address typed by hand gets here: the page offers the mix
+		// once it is ready. The recording's page says how far it has got.
+		http.Redirect(w, r, commands.RecordingPath(rec.ID), http.StatusSeeOther)
 		return
 	}
 	if err != nil {
@@ -189,7 +196,9 @@ func (p *Panel) downloadZip(w http.ResponseWriter, r *http.Request, sess session
 		return
 	}
 	if rec.StoppedAt.IsZero() {
-		http.Error(w, "this recording is still running", http.StatusNotFound)
+		// The page offers no download while the recording runs, and says
+		// it is still recording.
+		http.Redirect(w, r, commands.RecordingPath(rec.ID), http.StatusSeeOther)
 		return
 	}
 	utils.Info("Panel recording downloaded", "recording_id", rec.ID, "file", "zip", "username", sess.username, "forum_user_id", sess.userID)
@@ -214,8 +223,9 @@ func attachment(name string) string {
 
 // recordingFor reads the recording the route names, for a session that may
 // open it: its starter or a panel admin. It answers the request itself and
-// returns false when the route names no recording, the read fails, or the
-// session may not open it, which gets the no-access page.
+// returns false when the route names no recording, which gets a page saying
+// so, when the read fails, or when the session may not open it, which gets
+// the no-access page.
 func (p *Panel) recordingFor(w http.ResponseWriter, r *http.Request, sess session, step string) (store.Recording, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
@@ -227,7 +237,7 @@ func (p *Panel) recordingFor(w http.ResponseWriter, r *http.Request, sess sessio
 	rec, err := p.recordings.Recording(ctx, id)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		http.NotFound(w, r)
+		p.renderRecordings(w, sess, http.StatusNotFound, recordingsView{Single: true, Gone: true})
 		return store.Recording{}, false
 	case errors.Is(err, context.Canceled):
 		utils.Info("Panel page abandoned", "step", step, "username", sess.username, "forum_user_id", sess.userID)
@@ -238,7 +248,7 @@ func (p *Panel) recordingFor(w http.ResponseWriter, r *http.Request, sess sessio
 	}
 	if !sess.access.panelAdmin && (sess.discordID == "" || rec.StarterID != sess.discordID) {
 		utils.Info("Panel recording refused", "recording_id", rec.ID, "step", step, "username", sess.username, "forum_user_id", sess.userID)
-		p.render(w, http.StatusForbidden, "noaccess", sess.page("No access"))
+		p.noAccess(w, sess)
 		return store.Recording{}, false
 	}
 	return rec, true

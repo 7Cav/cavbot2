@@ -464,6 +464,12 @@ func (p *Panel) refuse(w http.ResponseWriter, r *http.Request, sess session) {
 		utils.Info("Panel save refused: not a panel admin", "path", r.URL.Path,
 			"username", sess.username, "forum_user_id", sess.userID)
 	}
+	p.noAccess(w, sess)
+}
+
+// noAccess renders the no-access page: the session's groups don't open
+// what was asked for.
+func (p *Panel) noAccess(w http.ResponseWriter, sess session) {
 	p.render(w, http.StatusForbidden, "noaccess", sess.page("No access"))
 }
 
