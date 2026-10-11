@@ -118,6 +118,18 @@ func (a access) landing() string {
 	return recordingsPath
 }
 
+// landingLabel is the label of a link to landing, naming the page as the
+// rail does.
+func (a access) landingLabel() string {
+	switch {
+	case a.panelAdmin:
+		return "Go to Hubs"
+	case a.foxholePage():
+		return "Go to Foxhole"
+	}
+	return "Go to Recordings"
+}
+
 // accessOf is the group check's rule: the user's primary group or any
 // secondary group decides what the session opens.
 func (p *Panel) accessOf(u forumUser) access {

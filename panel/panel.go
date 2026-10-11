@@ -216,6 +216,9 @@ func (p *Panel) routes() []route {
 		{"POST " + foxholeReAddPath, p.withFoxholePage(p.startReAdd)},
 		{"POST " + foxholeStopPath, p.withFoxholePage(p.stopAction)},
 		{"POST " + foxholeRetryPath, p.withFoxholePage(p.startRetry)},
+		// Every other GET: the not-found page, the same to any signed-in
+		// user.
+		{"GET /", p.withSession(p.noPage)},
 	}
 }
 
@@ -488,6 +491,30 @@ func (p *Panel) refuse(w http.ResponseWriter, r *http.Request, sess session) {
 	p.noAccess(w, sess)
 }
 
+// The not-found page's titles and sentences: an address with no page, and
+// one naming a hub no hub has the ID of.
+const (
+	noPageTitle   = "Page not found"
+	noPageMessage = "The panel has no page at this address."
+	noHubTitle    = "Hub not found"
+	noHubMessage  = "No hub has this address. Someone may have removed it."
+)
+
+// noPage is any GET the panel has no route for.
+func (p *Panel) noPage(w http.ResponseWriter, _ *http.Request, sess session) {
+	p.notFound(w, sess, noPageTitle, noPageMessage)
+}
+
+// notFound renders the not-found page with a 404 and the title and
+// sentence given. The rail stays, and the way back leads to the page the
+// session lands on.
+func (p *Panel) notFound(w http.ResponseWriter, sess session, title, message string) {
+	data := sess.page(title)
+	data.Failure, data.Message = failureNotFound, message
+	data.Back, data.BackLabel = sess.access.landing(), sess.access.landingLabel()
+	p.render(w, http.StatusNotFound, "error", data)
+}
+
 // noAccess renders the no-access page: the session's groups don't open
 // what was asked for.
 func (p *Panel) noAccess(w http.ResponseWriter, sess session) {
@@ -518,7 +545,8 @@ func (p *Panel) endSession(w http.ResponseWriter, id string, sess session, reaso
 // homePage is the hub page: the list, and the register form or, with a hub
 // named in the query, that hub's edit form. With a hub named to remove, its
 // remove preview shows first, and with a removal named, the list names the
-// hub that went.
+// hub that went. A value in any of them that isn't an ID gets the not-found
+// page.
 func (p *Panel) homePage(w http.ResponseWriter, r *http.Request, sess session) {
 	var req pageRequest
 	params := []struct {
@@ -532,7 +560,7 @@ func (p *Panel) homePage(w http.ResponseWriter, r *http.Request, sess session) {
 		}
 		id, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || id <= 0 {
-			http.NotFound(w, r)
+			p.notFound(w, sess, noHubTitle, noHubMessage)
 			return
 		}
 		*param.id = id
@@ -542,8 +570,8 @@ func (p *Panel) homePage(w http.ResponseWriter, r *http.Request, sess session) {
 
 // renderHubs renders the hub page read now: the list, and the form the
 // request asks for with its refusal when there is one. A request for a hub
-// that does not exist is 404: the edit form's hub is a bare 404, and a
-// remove preview's renders the page saying the hub is gone.
+// that does not exist is 404: the edit form's hub gets the not-found page,
+// and a remove preview's renders the page saying the hub is gone.
 func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session, status int, req pageRequest) {
 	// The budget's start is taken before its deadline is set, so a page that
 	// fails on the deadline never reports less time than the budget.
@@ -555,7 +583,7 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 	page, err := p.hubs.forPage(reads).page(ctx, req)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		http.NotFound(w, r)
+		p.notFound(w, sess, noHubTitle, noHubMessage)
 		return
 	case errors.Is(err, context.Canceled):
 		// An abandoned page load: the connection closed before the page
@@ -748,7 +776,7 @@ func hubIDOf(r *http.Request) (int64, bool) {
 func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) {
 	id, ok := hubIDOf(r)
 	if !ok {
-		http.NotFound(w, r)
+		p.notFound(w, sess, noHubTitle, noHubMessage)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -777,7 +805,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 	ctx, hubs := p.saving(r)
 	hub, err := hubs.update(ctx, id, in, sess.actor())
 	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
+		p.notFound(w, sess, noHubTitle, noHubMessage)
 		return
 	}
 	if refusal, ok := asFieldError(err); ok {
@@ -800,7 +828,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 func (p *Panel) removeHub(w http.ResponseWriter, r *http.Request, sess session) {
 	id, ok := hubIDOf(r)
 	if !ok {
-		http.NotFound(w, r)
+		p.notFound(w, sess, noHubTitle, noHubMessage)
 		return
 	}
 	if err := r.ParseForm(); err != nil {

@@ -224,12 +224,12 @@ func attachment(name string) string {
 // recordingFor reads the recording the route names, for a session that may
 // open it: its starter or a panel admin. It answers the request itself and
 // returns false when the route names no recording, which gets a page saying
-// so, when the read fails, or when the session may not open it, which gets
-// the no-access page.
+// so, an ID that isn't one included, when the read fails, or when the
+// session may not open it, which gets the no-access page.
 func (p *Panel) recordingFor(w http.ResponseWriter, r *http.Request, sess session, step string) (store.Recording, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
-		http.NotFound(w, r)
+		p.renderRecordings(w, sess, http.StatusNotFound, recordingsView{Single: true, Gone: true})
 		return store.Recording{}, false
 	}
 	ctx, cancel := panelClock.WithTimeout(r.Context(), storeTimeout)

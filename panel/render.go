@@ -55,6 +55,9 @@ const (
 	// failureNoGuildData is a hub page or a save that found no data for the
 	// guild in the gateway state: Discord has not sent it to the bot.
 	failureNoGuildData failure = "no-guild-data"
+	// failureNotFound is an address that names nothing in the panel: no
+	// page, or no hub with the ID it names.
+	failureNotFound failure = "not-found"
 	// failureSigninNotStarted is a callback from a browser with no sign-in
 	// in progress: it carries no sign-in cookie.
 	failureSigninNotStarted failure = "signin-not-started"
@@ -96,6 +99,10 @@ type pageData struct {
 	// SignInAgain puts Sign in again on the error page in place of Try
 	// again, for a sign-in that didn't finish.
 	SignInAgain bool
+	// Back, on the not-found page, is where its way back leads in place of
+	// Try again, and BackLabel names it.
+	Back      string
+	BackLabel string
 }
 
 // nav is which pages the rail links to: the ones this request's group check
