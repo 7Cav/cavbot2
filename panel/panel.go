@@ -481,23 +481,34 @@ func (p *Panel) endSession(w http.ResponseWriter, id string, sess session, reaso
 }
 
 // homePage is the hub page: the list, and the register form or, with a hub
-// named in the query, that hub's edit form.
+// named in the query, that hub's edit form. With a hub named to remove, its
+// remove preview shows first, and with a removal named, the list names the
+// hub that went.
 func (p *Panel) homePage(w http.ResponseWriter, r *http.Request, sess session) {
 	var req pageRequest
-	if raw := r.URL.Query().Get("hub"); raw != "" {
+	params := []struct {
+		name string
+		id   *int64
+	}{{"hub", &req.HubID}, {"remove", &req.Remove}, {"removed", &req.Removed}}
+	for _, param := range params {
+		raw := r.URL.Query().Get(param.name)
+		if raw == "" {
+			continue
+		}
 		id, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || id <= 0 {
 			http.NotFound(w, r)
 			return
 		}
-		req.HubID = id
+		*param.id = id
 	}
 	p.renderHubs(w, r, sess, http.StatusOK, req)
 }
 
 // renderHubs renders the hub page read now: the list, and the form the
 // request asks for with its refusal when there is one. A request for a hub
-// that does not exist is 404.
+// that does not exist is 404: the edit form's hub is a bare 404, and a
+// remove preview's renders the page saying the hub is gone.
 func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session, status int, req pageRequest) {
 	// The budget's start is taken before its deadline is set, so a page that
 	// fails on the deadline never reports less time than the budget.
@@ -528,6 +539,9 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 		}
 		p.pageFailed(w, sess, "hub page", pageAddress(req), err, report)
 		return
+	}
+	if page.Error == errHubGone {
+		status = http.StatusNotFound
 	}
 	data := sess.page("Hubs")
 	data.Page, data.Hubs = pageHubs, page
@@ -744,18 +758,28 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 	http.Redirect(w, r, "/?hub="+strconv.FormatInt(hub.ID, 10), http.StatusSeeOther)
 }
 
-// removeHub is POST /hubs/{id}/remove: one service call, then a redirect to
-// the list the hub is gone from.
+// removeHub is POST /hubs/{id}/remove, the remove preview's Confirm: one
+// service call, then a redirect to the list the hub is gone from, which
+// names it by the removal's entry and opens at the list, or the preview
+// again with the refusal on it.
 func (p *Panel) removeHub(w http.ResponseWriter, r *http.Request, sess session) {
 	id, ok := hubIDOf(r)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "the form could not be read", http.StatusBadRequest)
+		return
+	}
 	ctx, hubs := p.saving(r)
-	hub, err := hubs.remove(ctx, id, sess.actor())
+	hub, entryID, err := hubs.remove(ctx, id, r.PostForm.Get(fieldVersion), sess.actor())
 	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
+		p.renderHubs(w, r, sess, http.StatusNotFound, pageRequest{Remove: id})
+		return
+	}
+	if refusal, ok := asFieldError(err); ok {
+		p.renderRefused(w, r, sess, pageRequest{Remove: id, Error: refusal, Refused: formRemove}, "hub_id", id)
 		return
 	}
 	if err != nil {
@@ -764,7 +788,7 @@ func (p *Panel) removeHub(w http.ResponseWriter, r *http.Request, sess session) 
 	}
 	utils.Info("Panel hub removed", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
 		"base_string", hub.BaseString, "username", sess.username, "forum_user_id", sess.userID)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/?removed="+strconv.FormatInt(entryID, 10)+"#"+hubListAnchor, http.StatusSeeOther)
 }
 
 // saveModerators is POST /moderators: one service call, then a redirect to

@@ -34,6 +34,7 @@
   --btn-edge-d: #212121;
   --btn-edge-l: #3b3b3b;
   --danger-hi: #c84448;
+  --danger-lo: #b3393d;
   --ok: #4f8a4f;
   --radius: 3px;
   --sans: 'Roboto', 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif;
@@ -69,6 +70,9 @@ img { max-width: 100%; }
 .btn--cta:hover { background: #eed14e; color: #000; }
 .btn--danger { border-color: var(--danger-hi); color: #f1c9cb; }
 .btn--danger:hover { background: var(--danger-hi); color: #fff; }
+/* The filled danger button is a danger confirm's Confirm, below. */
+.btn--danger-filled { color: #fff; background: var(--danger-hi); border-color: var(--danger-lo) var(--danger-hi) var(--danger-hi) var(--danger-lo); }
+.btn--danger-filled:hover { background: var(--danger-lo); color: #fff; }
 
 /* Blocks, as the forum draws them. */
 .block { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 2px 2px 2px rgba(0,0,0,.04); margin-bottom: 12px; }
@@ -80,6 +84,17 @@ img { max-width: 100%; }
 .block-row { padding: 12px 14px; }
 .block-row + .block-row { border-top: 1px solid var(--line); }
 .submit-row { padding: 12px 14px; background: rgba(23,23,23,.9); border-top: 1px solid var(--line-2); border-radius: 0 0 var(--radius) var(--radius); }
+
+/* A danger confirm: the preview a removal waits on. The forum draws no such
+   state, so PRODUCT.md's Look allows a red header rule here, and a filled
+   danger button for its Confirm. White on the fill is 4.8:1, and the fill's
+   edge against the block 3.7:1. */
+.block--danger { border-color: var(--danger-hi); overflow-wrap: anywhere; }
+.block--danger > .block-header { border-bottom-color: var(--danger-hi); }
+.confirm-list h3 { margin: 0 0 6px; font-size: 14px; font-weight: 500; color: var(--text-hi); }
+.confirm-list ul { margin: 0; padding-left: 18px; }
+.confirm-list li + li { margin-top: 4px; }
+.confirm-count { margin-left: 4px; font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
 
 /* One note style for the ended-session causes. */
 .note {
@@ -199,6 +214,9 @@ img { max-width: 100%; }
 .fx-gone { color: var(--text-mute); border-style: dashed; }
 .fx-also { font-size: 13px; }
 .note--ok { border-left-color: var(--ok); }
+/* A note inside a block's row, where the row already gives the space. */
+.note--inline { margin-bottom: 0; }
+.hub-name { color: var(--text-hi); font-weight: 500; }
 .fx-hint { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--text-mute); }
 
 /* A holder's note, and the form that edits it: in the row's note cell with

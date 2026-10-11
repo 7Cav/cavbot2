@@ -341,7 +341,8 @@ func TestSaveWithADiffThatIsNotJSONWritesNothing(t *testing.T) {
 			return err
 		}},
 		{"RemoveHub", func(ctx context.Context, s Store, hubID int64) error {
-			return s.RemoveHub(ctx, hubID, notJSON())
+			_, err := s.RemoveHub(ctx, hubID, notJSON())
+			return err
 		}},
 		{"SaveGuildModeratorRoles", func(ctx context.Context, s Store, _ int64) error {
 			return saveGuildRoles(t, s, []string{"role-hq"}, notJSON())
@@ -424,7 +425,7 @@ func TestRemoveHub(t *testing.T) {
 		ctx := context.Background()
 		hubID := storeHub(t, s, "hub-1")
 
-		if err := s.RemoveHub(ctx, hubID, removeEntry(1)); err != nil {
+		if _, err := s.RemoveHub(ctx, hubID, removeEntry(1)); err != nil {
 			t.Fatalf("RemoveHub: %v", err)
 		}
 		if _, err := s.GetHub(ctx, hubID); !errors.Is(err, ErrNotFound) {
@@ -438,7 +439,7 @@ func TestRemoveHub(t *testing.T) {
 			t.Errorf("ListHubs after remove = %v, want none", hubChannelIDs(hubs))
 		}
 		before := readState(t, s)
-		if err := s.RemoveHub(ctx, hubID, removeEntry(2)); !errors.Is(err, ErrNotFound) {
+		if _, err := s.RemoveHub(ctx, hubID, removeEntry(2)); !errors.Is(err, ErrNotFound) {
 			t.Errorf("second RemoveHub error = %v, want ErrNotFound", err)
 		}
 		if after := readState(t, s); !reflect.DeepEqual(after, before) {
@@ -789,7 +790,7 @@ func TestRemoveHubKeepsSpawned(t *testing.T) {
 			t.Fatalf("UpsertSpawnedChannel: %v", err)
 		}
 
-		if err := s.RemoveHub(ctx, hubID, removeEntry(1)); err != nil {
+		if _, err := s.RemoveHub(ctx, hubID, removeEntry(1)); err != nil {
 			t.Fatalf("RemoveHub: %v", err)
 		}
 		rows, err := s.ListSpawnedChannels(ctx)
@@ -1004,7 +1005,7 @@ func TestSaveOfARemovedHubIsNotFoundAndInsertsNothing(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetHub: %v", err)
 		}
-		if err := s.RemoveHub(ctx, hubID, removeEntry(1)); err != nil {
+		if _, err := s.RemoveHub(ctx, hubID, removeEntry(1)); err != nil {
 			t.Fatalf("RemoveHub: %v", err)
 		}
 		before := readState(t, s)
@@ -1161,7 +1162,7 @@ func TestRemoveHubListsItsEntryAndTheHubsEarlierOnesUnderNoHub(t *testing.T) {
 		ctx := context.Background()
 		hubID := storeHub(t, s, "hub-1")
 
-		if err := s.RemoveHub(ctx, hubID, removeEntry(2)); err != nil {
+		if _, err := s.RemoveHub(ctx, hubID, removeEntry(2)); err != nil {
 			t.Fatalf("RemoveHub: %v", err)
 		}
 		if got := listedOrdinals(t, s, hubID); len(got) != 0 {
@@ -1169,6 +1170,42 @@ func TestRemoveHubListsItsEntryAndTheHubsEarlierOnesUnderNoHub(t *testing.T) {
 		}
 		if got := listedOrdinals(t, s, 0); !slices.Equal(got, []int{2, 0}) {
 			t.Errorf("entries under no hub are ordinals %v, want [2 0]: the remove's, then the hub's earlier one", got)
+		}
+	})
+}
+
+// A hub's removal reads back by the ID RemoveHub returns: HubRemoval gives
+// the entry the removal appended, who removed the hub and the diff. The ID
+// of an entry that records anything else, and an ID no entry has, are
+// ErrNotFound.
+func TestHubRemovalReadsBackTheEntryRemoveHubAppended(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		hubID := storeHub(t, s, "hub-1")
+		entryID, err := s.RemoveHub(ctx, hubID, removeEntry(1))
+		if err != nil {
+			t.Fatalf("RemoveHub: %v", err)
+		}
+		if err := saveGuildRoles(t, s, []string{"role-hq"}, moderatorsEntry(2)); err != nil {
+			t.Fatalf("SaveGuildModeratorRoles: %v", err)
+		}
+		saves, err := s.ListModeratorChanges(ctx, 1)
+		if err != nil || len(saves) != 1 {
+			t.Fatalf("ListModeratorChanges = %v, %v; want the one save", saves, err)
+		}
+
+		got, err := s.HubRemoval(ctx, entryID)
+
+		if err != nil {
+			t.Fatalf("HubRemoval(%d): %v", entryID, err)
+		}
+		if got.ID != entryID || got.Action != ChangeRemove || got.ForumUserID != 1234 || got.ForumUsername != "Doe.J" || ordinalOf(t, got) != 1 {
+			t.Errorf("HubRemoval(%d) = %+v, want the remove's entry: action remove by 1234 Doe.J, ordinal 1", entryID, got)
+		}
+		for _, id := range []int64{saves[0].ID, entryID + saves[0].ID + 100} {
+			if _, err := s.HubRemoval(ctx, id); !errors.Is(err, ErrNotFound) {
+				t.Errorf("HubRemoval(%d) error = %v, want ErrNotFound", id, err)
+			}
 		}
 	})
 }
@@ -1194,7 +1231,7 @@ func TestModeratorChangesListReturnsTheLastNNewestFirst(t *testing.T) {
 			}
 		}
 		removed := storeHub(t, s, "hub-2")
-		if err := s.RemoveHub(ctx, removed, removeEntry(98)); err != nil {
+		if _, err := s.RemoveHub(ctx, removed, removeEntry(98)); err != nil {
 			t.Fatalf("RemoveHub: %v", err)
 		}
 		if _, err := s.SaveHub(ctx, sampleHub("guild-1", "hub-1"), moderatorsEntry(99)); err != nil {
@@ -1351,7 +1388,7 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 				_, err := s.SaveHub(done, sampleHub("guild-1", "hub-2"), changeEntry(2))
 				return err
 			},
-			"RemoveHub": func() error { return s.RemoveHub(done, hubID, removeEntry(3)) },
+			"RemoveHub": func() error { _, err := s.RemoveHub(done, hubID, removeEntry(3)); return err },
 			"UpsertSpawnedChannel": func() error {
 				return s.UpsertSpawnedChannel(done, SpawnedChannel{ChannelID: "chan-2", HubID: hubID, Number: 2})
 			},
