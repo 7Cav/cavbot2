@@ -20,11 +20,35 @@ import (
 // runtime's startup recovery closes each one as cut short, keeping what
 // reached the disk, on every host with a bot store, recording on or off.
 
+// recordingRecoveryPoll is how often recovery reads the member list while
+// it waits for it.
+const recordingRecoveryPoll = 5 * time.Second
+
+// recordingRecoveryWait is the longest recovery waits for the member list:
+// as long as a list counts as on time. A list still partial by then is
+// late, and Sentry hears of it.
+const recordingRecoveryWait = memberListLateAfter
+
+// recoverWhenListed runs recovery once the member list is complete with the
+// bot connected, which a restart has to fetch again: a recording cut short
+// names its speakers from it. The voice states have arrived by then too, so
+// the cache shows where each recorder is. Once recordingRecoveryWait has
+// passed it runs anyway, naming whoever the list lacks by their Discord ID,
+// so no recording stays open for want of a list.
+func (r *RecordingRuntime) recoverWhenListed() {
+	if !listReady(r.mgr.MemberList(r.guildID)) && recordingNow().Before(r.builtAt.Add(recordingRecoveryWait)) {
+		recordingAfterFunc(recordingRecoveryPoll, r.recoverWhenListed)
+		return
+	}
+	r.recoverCutShort()
+}
+
 // recoverCutShort closes every recording the last process left running as
 // cut short. A recording this process started is never one of them, even
 // one a member started before recovery ran.
 func (r *RecordingRuntime) recoverCutShort() {
 	defer utils.RecoverPanic("recording-recovery")
+	r.disconnectIdleRecorders()
 	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)
 	recs, err := r.st.ListRecordings(ctx, r.guildID)
 	cancel()
@@ -32,10 +56,32 @@ func (r *RecordingRuntime) recoverCutShort() {
 		captureError("Recordings unreadable for recovery", err)
 		return
 	}
+	members := r.mgr.MemberList(r.guildID)
 	for _, rec := range recs {
 		if rec.StoppedAt.IsZero() && rec.StartedAt.Before(r.builtAt) {
-			r.recoverRecording(rec)
+			r.recoverRecording(rec, members)
 		}
+	}
+}
+
+// disconnectIdleRecorders disconnects each recorder the cache shows in a
+// voice channel with no recording of this process holding it: the last
+// process left it there. With recording off there is none to check.
+func (r *RecordingRuntime) disconnectIdleRecorders() {
+	snap := r.mgr.VoiceStates(r.guildID)
+	for _, id := range r.recorders {
+		channelID := snap.channelOf(id)
+		r.mu.Lock()
+		_, held := r.running[id]
+		r.mu.Unlock()
+		if channelID == "" || held {
+			continue
+		}
+		if err := r.mgr.GuildMemberMove(r.guildID, id, nil); err != nil {
+			captureError("Recorder not disconnected at recovery", err, "recorder", id, "channel_id", channelID)
+			continue
+		}
+		utils.Info("Recorder disconnected at recovery", "recorder", id, "channel_id", channelID)
 	}
 }
 
@@ -43,21 +89,25 @@ func (r *RecordingRuntime) recoverCutShort() {
 // cut short. A track with no audio on disk goes, since ffmpeg won't mix it.
 // The recording stopped where its longest track ends: when the shutdown
 // came, since a shutdown ends every track there, or a crash's last flush.
-func (r *RecordingRuntime) recoverRecording(rec store.Recording) {
-	_, longest, err := keepAudioTracks(r.dir, rec.ID)
+func (r *RecordingRuntime) recoverRecording(rec store.Recording, members MemberListSnapshot) {
+	userIDs, longest, err := keepAudioTracks(r.dir, rec.ID)
 	if err != nil {
 		captureError("Tracks not read at recovery", err, "recording_id", rec.ID)
 	}
-	stoppedAt := rec.StartedAt.Add(time.Duration(longest) * time.Second / opusSampleRate)
+	rec.StoppedAt = rec.StartedAt.Add(time.Duration(longest) * time.Second / opusSampleRate)
+	rec.Ended, rec.Speakers = store.RecordingEndCutShort, speakersOf(members, userIDs)
+	if err := writeRecordingInfo(r.dir, rec, members.DisplayName(rec.StarterID)); err != nil {
+		captureError("Info file not written at recovery", err, "recording_id", rec.ID)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)
 	defer cancel()
-	if err := r.st.StopRecording(ctx, rec.ID, stoppedAt, store.RecordingEndCutShort, nil); err != nil {
+	if err := r.st.StopRecording(ctx, rec.ID, rec.StoppedAt, rec.Ended, rec.Speakers); err != nil {
 		captureError("Recording row not closed at recovery", err, "recording_id", rec.ID)
 		return
 	}
-	rec.StoppedAt, rec.Ended = stoppedAt, store.RecordingEndCutShort
 	r.closeRecordingNotice(rec)
 	utils.Info("Recording cut short", "recording_id", rec.ID, "channel_id", rec.ChannelID)
+	r.startMix(rec)
 }
 
 // keepAudioTracks removes each of a recording's tracks that holds no audio

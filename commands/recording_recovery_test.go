@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"bytes"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -169,4 +171,136 @@ func TestRecordingCutShortEditsTheNoticeOrSendsTheLink(t *testing.T) {
 				dms[0].to, dms[0].data.Content, recStarter.id, testPanelURL)
 		}
 	})
+}
+
+// A recording cut short is mixed like one that stopped: its mix reaches
+// ready once the next process has recovered it.
+func TestRecordingCutShortIsMixed(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.crashMidRecording(t)
+
+	sc.restart(t, testRecorder)
+	sc.clock.advance(0)
+
+	if rec := sc.onlyRecording(t); rec.Mix != store.MixReady {
+		t.Errorf("mix = %q after recovery, want %q", rec.Mix, store.MixReady)
+	}
+}
+
+// A recovery that fails reaches Sentry: here the store refuses to close the
+// recording's row.
+func TestRecordingRecoveryFailureReachesSentry(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.crashMidRecording(t)
+	sc.faults.stopRecordingErr = errors.New("connection refused")
+	captures := countCaptures(t)
+
+	sc.restart(t, testRecorder)
+	sc.clock.advance(0)
+
+	if *captures == 0 {
+		t.Error("the failed recovery sent nothing to Sentry")
+	}
+}
+
+// A recording left running is closed as cut short on a host whose restart
+// turned recording off, so the deploy's status check stops reporting it.
+// The crash fixture once more, recovered by a runtime with no recorder.
+// A regression pin: it goes red if recovery ever waits on a recorder to
+// check.
+func TestRecordingCutShortIsClosedWithRecordingOff(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.startIn(t, recStarter, recordChannel)
+	sc.clock.advance(time.Second)
+	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
+	sc.clock.advance(trackFlushInterval)
+	sc.hear(t, recordChannel, frame(speakerB, 22, 90000, "b1"))
+
+	sc.restart(t)
+	sc.clock.advance(0)
+
+	sc.assertCutShort(t)
+}
+
+// No recorder is left sitting in voice after recovery: a recorder the
+// cache shows in the channel it recorded when the last process went down,
+// with no recording of this process holding it, is disconnected.
+func TestRecordingRecoveryLeavesNoRecorderInVoice(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.crashMidRecording(t)
+	sc.fake.setVoice(testRecorder, recordChannel)
+
+	sc.restart(t, testRecorder)
+	sc.clock.advance(0)
+
+	if ch := sc.fake.VoiceStates(testTempVCGuild).channelOf(testRecorder); ch != "" {
+		t.Errorf("the recorder is in %s after recovery, want it in no channel", ch)
+	}
+}
+
+// A recording a member starts after the restart, before recovery has run,
+// is never taken for one the last process left: it keeps running and its
+// recorder stays in its channel, while the one the crash cut short is
+// closed.
+func TestRecordingStartedBeforeRecoveryRunsKeepsRunning(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.crashMidRecording(t)
+	sc.restart(t, testRecorder)
+	sc.fake.setVoice(testRecorder, recordOtherChannel)
+	sc.startIn(t, recHolder, recordOtherChannel)
+
+	sc.clock.advance(0)
+
+	for _, rec := range sc.recordings(t) {
+		switch rec.ChannelID {
+		case recordChannel:
+			if rec.Ended != store.RecordingEndCutShort {
+				t.Errorf("the crashed recording ended %q, want %q", rec.Ended, store.RecordingEndCutShort)
+			}
+		case recordOtherChannel:
+			if !rec.StoppedAt.IsZero() {
+				t.Errorf("the recording started after the restart stopped at %v, ended %q, want it running", rec.StoppedAt, rec.Ended)
+			}
+		}
+	}
+	if ch := sc.fake.VoiceStates(testTempVCGuild).channelOf(testRecorder); ch != recordOtherChannel {
+		t.Errorf("the recorder is in %q after recovery, want it still in %s, recording it", ch, recordOtherChannel)
+	}
+}
+
+// A recording cut short names its speakers by their display names, so
+// recovery waits for the member list, which a restart has to fetch again.
+// The zip's info file, which names every speaker, shows it.
+func TestRecordingCutShortNamesItsSpeakersOnceTheMemberListArrives(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.crashMidRecording(t)
+	sc.fake.setListArriving(true)
+	sc.restart(t, testRecorder)
+	sc.clock.advance(0)
+
+	sc.nameSpeakers(map[string]string{speakerA: "doej"})
+	sc.fake.setListArriving(false)
+	sc.clock.advance(recordingRecoveryPoll)
+
+	info, ok := sc.zipEntries(t, sc.onlyRecording(t))[infoFileName]
+	if !ok {
+		t.Fatalf("the zip holds no %s", infoFileName)
+	}
+	if !bytes.Contains(info, []byte("doej")) {
+		t.Errorf("the info file doesn't name the speaker doej:\n%s", info)
+	}
+}
+
+// A member list that never arrives holds recovery up for only so long: once
+// the wait runs out, the recording is closed as cut short anyway, so the
+// deploy's status check stops reporting it.
+func TestRecordingCutShortIsClosedWhenTheMemberListNeverArrives(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.crashMidRecording(t)
+	sc.fake.setListArriving(true)
+	sc.restart(t, testRecorder)
+
+	sc.clock.advance(recordingRecoveryWait)
+
+	sc.assertCutShort(t)
 }

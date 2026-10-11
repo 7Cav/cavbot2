@@ -29,7 +29,7 @@ import (
 // store at each start and stop, so a panel save takes effect at once.
 //
 // A recording's notice (recording_notice.go) is posted once its recorder is
-// in the channel, and its row written after that. The row is closed with
+// in the channel, and its row written after that, with the notice's ID. The row is closed with
 // its stop time and how it ended once the recorder has left, and the notice
 // edited to say it stopped. Its tracks (recording_tracks.go) take what the
 // recorder hears from the row write on, and end at the stop time. Besides
@@ -109,7 +109,8 @@ type RecorderVoice interface {
 }
 
 // RecordingManager is the subset of the Discord session the recording
-// runtime reads, all of it from discordgo's state cache.
+// runtime uses: what it reads, all of it from discordgo's state cache, and
+// the calls it makes.
 type RecordingManager interface {
 	// VoiceStates is TempVCManager's: one copied snapshot of who is in
 	// which voice channel.
@@ -126,6 +127,9 @@ type RecordingManager interface {
 	// UserChannelCreate opens the DM channel with a member, for the link
 	// to a recording whose notice is gone by its stop.
 	UserChannelCreate(recipientID string) (*discordgo.Channel, error)
+	// GuildMemberMove is TempVCManager's. With no channel it disconnects a
+	// recorder the last process left in voice.
+	GuildMemberMove(guildID, userID string, channelID *string) error
 }
 
 // RecordingRuntime holds the recordings running now. Built on every host
@@ -192,7 +196,8 @@ func (rec *activeRecording) mayStop(userID string, holdsRole, inChannel bool) bo
 // the mixer builds each recording's mix there. A stopped recording's link
 // starts with panelURL, the panel's base URL, empty when the panel is off.
 // The retention sweep (recording_retention.go) starts now, with or without
-// a recorder.
+// a recorder, and so does the recovery of every recording the last process
+// left running (recording_recovery.go).
 func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guildID string, rv RecorderVoice, mixer Mixer, dir, panelURL string) *RecordingRuntime {
 	r := &RecordingRuntime{
 		mgr:       mgr,
@@ -208,7 +213,7 @@ func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guild
 		running:   make(map[string]*activeRecording),
 	}
 	recordingAfterFunc(0, r.sweepRetention)
-	recordingAfterFunc(0, r.recoverCutShort)
+	recordingAfterFunc(0, r.recoverWhenListed)
 	return r
 }
 

@@ -389,6 +389,14 @@ func main() {
 		}()
 	}
 
+	// Recording (#393): a stop closes every running recording's tracks
+	// before any other step of the shutdown, so what they captured is on
+	// disk within Docker's 10 s. Deferred last, so it runs first. The next
+	// process closes each such recording as cut short.
+	if recording != nil {
+		defer recording.Shutdown()
+	}
+
 	// The startup sync (ADR 0006). A stop while Discord holds it ends startup
 	// here. Any other failure, such as a command Discord rejects, stops the
 	// bot, and the deferred shutdown still runs.
