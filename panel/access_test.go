@@ -47,6 +47,7 @@ var pageLoadCases = []struct {
 	{foxholePath, func(t *testing.T, f *fakeForum, b *browser) *http.Response {
 		return signInAs(t, f, b, addFoxholeManager(f))
 	}, pageFoxhole},
+	{recordingsPath, signIn, pageRecordings},
 }
 
 // An outsider who loads a page behind a gate gets the no-access page, with
@@ -395,7 +396,7 @@ func TestPanelAdminWhoLeavesTheAdminGroupsDropsToTheNoAccessPage(t *testing.T) {
 	signIn(t, w.forum, w.b)
 	w.forum.setUserinfo(http.StatusOK, userinfoJSON(2, []int{35, 72}))
 
-	res := w.b.get("/")
+	res := follow(t, w.b, w.b.get("/"))
 
 	assertNoAccessPage(t, parseHTML(t, res))
 }

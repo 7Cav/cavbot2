@@ -696,6 +696,17 @@ type testWorld struct {
 	pause *pauseClock
 	// clock is the clock the panel runs on.
 	clock *testClock
+	// store is the store the panel was built over, the fake or a wrapper
+	// of it.
+	store store.Store
+	// milpacs answers the 7Cav API's milpac lookups, which tell the panel
+	// a signed-in forum user's Discord ID.
+	milpacs *milpacAPI
+	// recordingsDir is the recordings directory the panel's recording
+	// library reads.
+	recordingsDir string
+	// rig is the recording runtime, built the first time a test records.
+	rig *recordingRig
 }
 
 // newTestWorld builds the panel over a store holding the given hubs. The
@@ -739,12 +750,16 @@ func newTestWorldConfigured(t *testing.T, st store.Store, f *fakeForum, cfg Conf
 	if err != nil {
 		t.Fatalf("NewFoxholeRuntime: %v", err)
 	}
-	p, err := New(cfg, testVersion, Deps{Store: st, Runtime: runtime, Manager: discord, Foxhole: foxhole, GuildID: testGuildID})
+	milpacs := serveMilpacs(t)
+	recordingsDir := t.TempDir()
+	p, err := New(cfg, testVersion, Deps{Store: st, Runtime: runtime, Manager: discord, Foxhole: foxhole,
+		Recordings: commands.NewRecordingLibrary(st, testGuildID, recordingsDir), GuildID: testGuildID})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	fake, _ := st.(*store.Fake)
-	return &testWorld{forum: f, st: fake, discord: discord, runtime: runtime, foxhole: foxhole, p: p, b: newBrowser(t, p), clock: clock}
+	return &testWorld{forum: f, st: fake, discord: discord, runtime: runtime, foxhole: foxhole, p: p, b: newBrowser(t, p), clock: clock,
+		store: st, milpacs: milpacs, recordingsDir: recordingsDir}
 }
 
 // testHub is a stored hub on hub-1 with the defaults a register writes.

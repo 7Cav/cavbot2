@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/7cav/cavbot2/commands"
 	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
 	"golang.org/x/oauth2"
@@ -37,6 +38,8 @@ type Panel struct {
 	version string
 	hubs    *hubService
 	foxhole foxholeService
+	// recordings lists the recordings and streams their files.
+	recordings *commands.RecordingLibrary
 	// forumURL is the forum's origin, derived from the authorize URL, for the
 	// "Back to the forum" link and the wordmark. No extra variable to keep in
 	// parity for a link.
@@ -76,8 +79,8 @@ const storeTimeout = 5 * time.Second
 // never at a request. Every field of deps is required: the hub page reads the
 // store, the guild and the runtime on every load.
 func New(cfg Config, version string, deps Deps) (*Panel, error) {
-	if deps.Store == nil || deps.Runtime == nil || deps.Manager == nil || deps.Foxhole == nil || deps.GuildID == "" {
-		return nil, fmt.Errorf("panel needs a store, a runtime, a manager, a Foxhole runtime and a guild ID")
+	if deps.Store == nil || deps.Runtime == nil || deps.Manager == nil || deps.Foxhole == nil || deps.Recordings == nil || deps.GuildID == "" {
+		return nil, fmt.Errorf("panel needs a store, a runtime, a manager, a Foxhole runtime, a recording library and a guild ID")
 	}
 	pg, err := parsePages()
 	if err != nil {
@@ -88,12 +91,13 @@ func New(cfg Config, version string, deps Deps) (*Panel, error) {
 		return nil, fmt.Errorf("PANEL_OAUTH_AUTHORIZE_URL: %w", err)
 	}
 	return &Panel{
-		cfg:      cfg,
-		version:  version,
-		hubs:     &hubService{deps: deps, saveLock: &sync.Mutex{}},
-		foxhole:  foxholeService{manager: deps.Manager, store: deps.Store, actions: deps.Foxhole, guildID: deps.GuildID},
-		forumURL: forumURL,
-		pages:    pg,
+		cfg:        cfg,
+		version:    version,
+		hubs:       &hubService{deps: deps, saveLock: &sync.Mutex{}},
+		foxhole:    foxholeService{manager: deps.Manager, store: deps.Store, actions: deps.Foxhole, guildID: deps.GuildID},
+		recordings: deps.Recordings,
+		forumURL:   forumURL,
+		pages:      pg,
 		oauth: &oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
@@ -196,6 +200,7 @@ func (p *Panel) routes() []route {
 		{"POST /hubs/{id}/remove", p.withPanelAdmin(p.removeHub)},
 		{"POST /moderators", p.withPanelAdmin(p.saveModerators)},
 		{"POST /recording-roles", p.withPanelAdmin(p.saveRecordingRoles)},
+		{"GET " + recordingsPath, p.withSession(p.recordingsPage)},
 		{"GET " + foxholePath, p.withFoxholePage(p.foxholePage)},
 		{"POST " + foxholeNotesPath, p.withFoxholePage(p.saveNote)},
 		{"POST " + foxholeApprovalsPath, p.withFoxholePage(p.saveApprovals)},
@@ -331,14 +336,14 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 	user, outcome, err := p.groupCheck(r.Context(), tok.AccessToken)
 	switch outcome {
 	case checkPassed:
-		sess := session{accessToken: tok.AccessToken, signedIn: panelClock.Now()}
+		sess := session{accessToken: tok.AccessToken, signedIn: panelClock.Now(), discordID: p.discordIDOf(r.Context(), user.Username)}
 		sess.identify(user, p.accessOf(user))
 		id, err := p.sessions.add(sess)
 		if err != nil {
 			p.serverError(w, "session create", err)
 			return
 		}
-		utils.Info("Panel sign-in", "username", user.Username, "forum_user_id", user.UserID,
+		utils.Info("Panel sign-in", "username", user.Username, "forum_user_id", user.UserID, "discord_id", sess.discordID,
 			"panel_admin", sess.access.panelAdmin, "foxhole_manager", sess.access.foxholeManager)
 		setCookie(w, sessionCookie, id)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -440,13 +445,13 @@ func (p *Panel) withAccess(opens func(access) bool, next func(http.ResponseWrite
 }
 
 // refuse answers a request the session's groups don't allow. A page load
-// by a user who opens some other page goes to the page they land on: the
-// hub page sits at the panel's root, where sign-in and the rail's mark
-// lead, so a Foxhole manager who reaches it gets the Foxhole page. Every
-// other request, and every save, gets the no-access page and does nothing.
+// goes to the page the user lands on: the hub page sits at the panel's
+// root, where sign-in and the rail's mark lead, so a Foxhole manager who
+// reaches it gets the Foxhole page, and anyone else the Recordings page.
+// Every save gets the no-access page and does nothing.
 func (p *Panel) refuse(w http.ResponseWriter, r *http.Request, sess session) {
-	if to := sess.access.landing(); r.Method == http.MethodGet && to != "" {
-		http.Redirect(w, r, to, http.StatusSeeOther)
+	if r.Method == http.MethodGet {
+		http.Redirect(w, r, sess.access.landing(), http.StatusSeeOther)
 		return
 	}
 	// A panel admin passes every gate, so a refused save, a note save

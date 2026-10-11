@@ -259,6 +259,12 @@ img { max-width: 100%; }
 @media (max-width: 1100px) {
   .fx-actions { grid-template-columns: minmax(0, 1fr); }
 }
+/* The Recordings page (#390): one block per recording, its facts as a
+   two-column list that stays two columns at phone width. */
+.rec-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; margin: 0; padding: 12px 14px; }
+.rec-facts dt { color: var(--text-mute); }
+.rec-facts dd { margin: 0; color: var(--text-hi); overflow-wrap: anywhere; }
+.rec-facts .off { color: var(--text-mute); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 /* The rail and the page beside it. */

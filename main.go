@@ -307,7 +307,10 @@ func main() {
 			Runtime: tempVC,
 			Manager: discordManager,
 			Foxhole: foxhole,
-			GuildID: GuildID,
+			// The Recordings page lists and downloads through the library,
+			// recording on or off.
+			Recordings: commands.NewRecordingLibrary(botStore, GuildID, recordingsDir()),
+			GuildID:    GuildID,
 		})
 	}
 
