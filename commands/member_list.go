@@ -89,7 +89,9 @@ type MemberListSnapshot struct {
 	Status MemberListStatus
 	// Connected is false while the bot's gateway connection is down. A
 	// complete list then holds the members as they were when it dropped,
-	// and the events missed meanwhile arrive once the session resumes.
+	// and the events missed meanwhile arrive once the session resumes. It
+	// can also read false for a moment after the connection comes up, as
+	// discordgo hands Connect to the handler on a goroutine of its own.
 	Connected bool
 	// PartsReceived and PartsExpected count the parts of the request in
 	// flight. PartsExpected is 0 until the first part arrives.

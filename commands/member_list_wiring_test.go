@@ -141,7 +141,8 @@ func (g *fakeGateway) memberRequest() memberRequestFrame {
 
 // Regression pin: green on arrival, no code was written for it. The
 // session asks the gateway itself for the whole list after the guild's
-// GUILD_CREATE, and a RATE_LIMITED dispatch for that request, which
+// GUILD_CREATE, the snapshot reads connected once discordgo has handed the
+// handler Connect, and a RATE_LIMITED dispatch for that request, which
 // discordgo hands only to handlers of the raw event, brings the next
 // request once its wait passes.
 func TestMemberListIsWiredToTheSessionsGateway(t *testing.T) {
@@ -187,8 +188,18 @@ func TestMemberListIsWiredToTheSessionsGateway(t *testing.T) {
 		t.Fatalf("member request = guild %s, query %v, limit %d, nonce %q, want the whole list of %s with a nonce",
 			first.GuildID, first.Query, first.Limit, first.Nonce, testTempVCGuild)
 	}
-	if snap := mgr.MemberList(testTempVCGuild); snap.Status != MemberListArriving || !snap.Connected {
-		t.Errorf("after the request, snapshot = status %v, connected %v, want arriving and connected", snap.Status, snap.Connected)
+	// discordgo hands Connect to the handler on a goroutine of its own, so
+	// the snapshot may read connected a moment after the request is out.
+	snap := mgr.MemberList(testTempVCGuild)
+	for deadline := time.Now().Add(readDeadline); (snap.Status != MemberListArriving || !snap.Connected) && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+		snap = mgr.MemberList(testTempVCGuild)
+	}
+	if !snap.Connected {
+		t.Error("the snapshot never read connected: discordgo never handed the handler Connect")
+	}
+	if snap.Status != MemberListArriving {
+		t.Errorf("after the request, status = %v, want arriving", snap.Status)
 	}
 	// The GUILD_CREATE's late and stall waits are on the clock before the
 	// request goes out.
