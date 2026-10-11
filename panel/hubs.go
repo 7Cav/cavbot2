@@ -387,6 +387,16 @@ const (
 // hub is in view.
 const hubListAnchor = "hubs"
 
+// hubEditAnchor is the ID a hub's edit section carries in home.html. Every
+// address the panel sends a panel admin to a hub's edit form by opens the
+// page there, below the sections above it.
+const hubEditAnchor = "edit"
+
+// hubEditAddress is the address of a hub's edit form, opened at the form.
+func hubEditAddress(id int64) string {
+	return "/?hub=" + strconv.FormatInt(id, 10) + "#" + hubEditAnchor
+}
+
 // RefusalFor is the refusal to render on a form, or nil when the error
 // belongs to another form or there is none. The template calls it once per
 // form so the note lands on the form that was posted.
@@ -822,7 +832,11 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 			page.Error, page.Refused = errHubGone, formRemove
 			return page, nil
 		}
-		page.Remove = s.removePreviewOf(sn, hub, pageAddress(pageRequest{HubID: req.HubID}))
+		back := "/"
+		if req.HubID != 0 {
+			back = hubEditAddress(req.HubID)
+		}
+		page.Remove = s.removePreviewOf(sn, hub, back)
 	}
 	return page, nil
 }
