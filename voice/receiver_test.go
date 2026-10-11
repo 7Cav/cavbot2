@@ -141,6 +141,19 @@ func (h *heard) next(t *testing.T) Frame {
 	}
 }
 
+// expectSpeaker waits for the frames handed over next to be words, in
+// order, each from testSpeaker on their SSRC.
+func (h *heard) expectSpeaker(t *testing.T, words ...string) {
+	t.Helper()
+	for _, want := range words {
+		f := h.next(t)
+		if f.UserID != testSpeaker || string(f.Opus) != want || f.SSRC != testSpeakerSSRC {
+			t.Errorf("frame handed over = %+v (%q), want %q from %s on SSRC %d",
+				f, f.Opus, want, testSpeaker, testSpeakerSSRC)
+		}
+	}
+}
+
 // eventually waits until cond holds.
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
@@ -178,13 +191,7 @@ func TestReceiverHoldsFramesUntilTheirSSRCMaps(t *testing.T) {
 	conn.mapSSRC(testSpeakerSSRC, testSpeaker)
 	conn.send(testSpeakerSSRC, 2920, sealFor(testSpeaker, "third"))
 
-	for _, want := range []string{"first", "second", "third"} {
-		f := h.next(t)
-		if f.UserID != testSpeaker || string(f.Opus) != want || f.SSRC != testSpeakerSSRC {
-			t.Errorf("frame handed over = %+v (%q), want %q from %s on SSRC %d",
-				f, f.Opus, want, testSpeaker, testSpeakerSSRC)
-		}
-	}
+	h.expectSpeaker(t, "first", "second", "third")
 }
 
 // A speaker who says something as they join, before op 5 names them, and
@@ -208,13 +215,7 @@ func TestReceiverHandsOverHeldFramesOnceTheSSRCMapsWithNothingAfter(t *testing.T
 	}
 	conn.mapSSRC(testSpeakerSSRC, testSpeaker)
 
-	for _, want := range []string{"radio", "check"} {
-		f := h.next(t)
-		if f.UserID != testSpeaker || string(f.Opus) != want || f.SSRC != testSpeakerSSRC {
-			t.Errorf("frame handed over = %+v (%q), want %q from %s on SSRC %d",
-				f, f.Opus, want, testSpeaker, testSpeakerSSRC)
-		}
-	}
+	h.expectSpeaker(t, "radio", "check")
 }
 
 // A panic while a frame is handed over, a bug in the code writing tracks,

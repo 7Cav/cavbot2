@@ -61,6 +61,25 @@ func (s *fakeVoiceServer) answerDiscovery(t *testing.T) net.Addr {
 	return client
 }
 
+// openUDPConn opens a recorder's UDP connection to server, which answers its
+// IP discovery, and returns it with the address the server sees it at. It
+// closes when the test ends.
+func openUDPConn(t *testing.T, server *fakeVoiceServer) (disgovoice.UDPConn, net.Addr) {
+	t.Helper()
+	conn := newUDPConn(godave.NewNoopSession(slog.New(slog.DiscardHandler), "", nil), nil)
+	t.Cleanup(func() { _ = conn.Close() })
+	discovered := make(chan net.Addr, 1)
+	go func() { discovered <- server.answerDiscovery(t) }()
+	ctx, cancel := context.WithTimeout(context.Background(), waitFor)
+	defer cancel()
+	_, _, err := conn.Open(ctx, "127.0.0.1", server.port(), 42)
+	client := <-discovered
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	return conn, client
+}
+
 // serverPacket is a voice packet as Discord's voice server sends it in the
 // aead_aes256_gcm_rtpsize mode (Discord's voice docs, "Transport Encryption
 // Modes"): the RTP header with the extension bit set, then the extension's
@@ -98,17 +117,7 @@ func serverPacket(t *testing.T, key []byte, ssrc, timestamp uint32, counter uint
 // receiver.
 func TestUDPConnReadsAPacketAsDiscordsServerSendsIt(t *testing.T) {
 	server := newFakeVoiceServer(t)
-	conn := newUDPConn(godave.NewNoopSession(slog.New(slog.DiscardHandler), "", nil), nil)
-	t.Cleanup(func() { _ = conn.Close() })
-
-	discovered := make(chan net.Addr, 1)
-	go func() { discovered <- server.answerDiscovery(t) }()
-	ctx, cancel := context.WithTimeout(context.Background(), waitFor)
-	defer cancel()
-	if _, _, err := conn.Open(ctx, "127.0.0.1", server.port(), 42); err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	client := <-discovered
+	conn, client := openUDPConn(t, server)
 	key := bytes.Repeat([]byte{7}, 32)
 	if err := conn.SetSecretKey(disgovoice.EncryptionModeAEADAES256GCMRTPSize, key); err != nil {
 		t.Fatalf("SetSecretKey: %v", err)
@@ -141,17 +150,7 @@ func TestUDPConnReadsAPacketAsDiscordsServerSendsIt(t *testing.T) {
 // as soon as the connection opens.
 func TestUDPConnSendsAKeepaliveOnceOpen(t *testing.T) {
 	server := newFakeVoiceServer(t)
-	conn := newUDPConn(godave.NewNoopSession(slog.New(slog.DiscardHandler), "", nil), nil)
-	t.Cleanup(func() { _ = conn.Close() })
-
-	discovered := make(chan net.Addr, 1)
-	go func() { discovered <- server.answerDiscovery(t) }()
-	ctx, cancel := context.WithTimeout(context.Background(), waitFor)
-	defer cancel()
-	if _, _, err := conn.Open(ctx, "127.0.0.1", server.port(), 42); err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	<-discovered
+	openUDPConn(t, server)
 
 	_ = server.conn.SetReadDeadline(time.Now().Add(waitFor))
 	if _, _, err := server.conn.ReadFrom(make([]byte, 1500)); err != nil {
