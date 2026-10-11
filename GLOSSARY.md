@@ -536,10 +536,18 @@ speaker who leaves and rejoins keeps one track.
 _Avoid_: stream, channel (that is Discord's), file.
 
 **Speaker**:
-Anyone whose voice a recording captured. Not necessarily a Cav member: an
-applicant in an S2 interview is a speaker. A recruit holds the `RCT` rank
-role, so is a Cav member; an applicant holds none.
+Anyone the recorder heard during a recording. They stay a speaker when their
+track was lost, so the recording still says who was in the room. Not
+necessarily a Cav member: an applicant in an S2 interview is a speaker. A
+recruit holds the `RCT` rank role, so is a Cav member; an applicant holds
+none.
 _Avoid_: participant, attendee, member (for this role).
+
+**Lost track**:
+A speaker's track the recorder could not keep writing, so their audio is
+gone or stops early. The speaker stays listed, and the recording says so
+beside their name wherever it names its speakers.
+_Avoid_: missing track, failed track, broken track.
 
 **Mix**:
 One file of every track in a recording played together, built when the
@@ -549,7 +557,7 @@ _Avoid_: mixdown, combined track, merged audio.
 **Info file**:
 The text file kept with a recording, and in its zip, that names its title,
 channel, starter, start and stop times in Zulu, how it ended, and each
-speaker's display name and Discord ID.
+speaker's display name and Discord ID, marking a lost track.
 _Avoid_: metadata, manifest, readme.
 
 **Cut-short recording**:
