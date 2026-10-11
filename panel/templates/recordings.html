@@ -22,7 +22,7 @@
     </div>{{end}}
   </section>
   {{else}}
-  <div class="block"><div class="block-row">{{if $.Recordings.Deleted}}No recordings left.{{else}}No recordings yet.{{end}}</div></div>
+  <div class="block"><div class="block-row" data-field="no-recordings">{{$.Recordings.EmptyNote}}</div></div>
   {{end}}
   {{end}}
 </main>

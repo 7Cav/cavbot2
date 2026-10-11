@@ -62,6 +62,13 @@ const (
 // recording a delete's redirect says has gone.
 const paramDeleted = "deleted"
 
+// The Recordings page's sentences for a list with nothing in it: after a
+// delete, and otherwise.
+const (
+	noRecordingsLeft = "No recordings left."
+	noRecordingsYet  = "No recordings yet."
+)
+
 // recordingsView is the Recordings page's data: the recordings it lists,
 // the newest first.
 type recordingsView struct {
@@ -85,6 +92,15 @@ type recordingsView struct {
 	DeletePreview bool
 	// Deleted is set when the page says a recording has just been deleted.
 	Deleted bool
+}
+
+// EmptyNote is what the page says when it lists no recordings: that none
+// are left after a delete, and that there are none yet otherwise.
+func (v recordingsView) EmptyNote() string {
+	if v.Deleted {
+		return noRecordingsLeft
+	}
+	return noRecordingsYet
 }
 
 // recordingItem is one recording as the page shows it.
@@ -116,10 +132,10 @@ type recordingItem struct {
 	DeleteURL string
 }
 
-// recordingsPage is GET /recordings: the recordings the user started. A
-// user who started none and isn't a panel admin gets the no-access page. A
-// panel admin's switch lists every recording instead, with its starter;
-// the switch's address shows anyone else their own.
+// recordingsPage is GET /recordings: the recordings the user started. An
+// outsider who started none gets the no-access page. A panel admin's
+// switch lists every recording instead, with its starter; the switch's
+// address shows anyone else their own.
 func (p *Panel) recordingsPage(w http.ResponseWriter, r *http.Request, sess session) {
 	ctx, cancel := panelClock.WithTimeout(r.Context(), hubPageBudget)
 	defer cancel()
@@ -143,11 +159,12 @@ func (p *Panel) recordingsPage(w http.ResponseWriter, r *http.Request, sess sess
 		p.pageFailed(w, sess, "recordings page", recordingsPath, err, nil)
 		return
 	}
-	if !sess.access.panelAdmin && len(recs) == 0 {
-		// Someone who is neither a panel admin nor the starter of a
-		// recording has nothing here. A starter who has just deleted their
+	if sess.access.outsider() && len(recs) == 0 {
+		// An outsider who started no recording has nothing here, and their
+		// forum groups open no other page. One who has just deleted their
 		// last recording lands here too, told it went.
 		data := sess.page("No access")
+		data.Message = noAccessNoRecordings
 		data.Recordings.Deleted = deleted
 		p.render(w, http.StatusForbidden, "noaccess", data)
 		return
@@ -354,7 +371,8 @@ func attachment(name string) string {
 // returns false in three cases. A route that names no recording, or an ID
 // that isn't one, gets a page saying the recording isn't in the panel. A
 // read that fails gets the error page. A session that may not open it gets
-// the no-access page.
+// the no-access page, saying the recording is open only to its starter and
+// panel admins.
 func (p *Panel) recordingFor(w http.ResponseWriter, r *http.Request, sess session, step string) (store.Recording, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
@@ -377,7 +395,7 @@ func (p *Panel) recordingFor(w http.ResponseWriter, r *http.Request, sess sessio
 	}
 	if !sess.access.panelAdmin && (sess.discordID == "" || rec.StarterID != sess.discordID) {
 		utils.Info("Panel recording refused", "recording_id", rec.ID, "step", step, "username", sess.username, "forum_user_id", sess.userID)
-		p.noAccess(w, sess)
+		p.noAccess(w, sess, noAccessRecording)
 		return store.Recording{}, false
 	}
 	return rec, true

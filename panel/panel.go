@@ -528,7 +528,8 @@ func (p *Panel) withAccess(opens func(access) bool, next func(http.ResponseWrite
 // goes to the page the user lands on: the hub page sits at the panel's
 // root, where sign-in and the rail's mark lead, so a Foxhole manager who
 // reaches it gets the Foxhole page, and anyone else the Recordings page.
-// Every save gets the no-access page and does nothing.
+// Every save gets the no-access page, saying the session's forum groups
+// don't allow it and nothing changed, and does nothing.
 func (p *Panel) refuse(w http.ResponseWriter, r *http.Request, sess session) {
 	if r.Method == http.MethodGet {
 		http.Redirect(w, r, sess.access.landing(), http.StatusSeeOther)
@@ -541,7 +542,7 @@ func (p *Panel) refuse(w http.ResponseWriter, r *http.Request, sess session) {
 		utils.Info("Panel save refused: not a panel admin", "path", r.URL.Path,
 			"username", sess.username, "forum_user_id", sess.userID)
 	}
-	p.noAccess(w, sess)
+	p.noAccess(w, sess, noAccessRefused)
 }
 
 // The not-found page's titles and sentences: an address with no page, one
@@ -570,10 +571,29 @@ func (p *Panel) notFound(w http.ResponseWriter, sess session, title, message str
 	p.render(w, http.StatusNotFound, "error", data)
 }
 
-// noAccess renders the no-access page: the session's groups don't open
-// what was asked for.
-func (p *Panel) noAccess(w http.ResponseWriter, sess session) {
-	p.render(w, http.StatusForbidden, "noaccess", sess.page("No access"))
+// The no-access page's sentences, one for each reason the page is shown.
+// The page says the one its caller gives, so what it says follows why the
+// visitor is there and not which pages the rail links to.
+const (
+	// noAccessRefused refuses a request the visitor's forum groups don't
+	// allow: a settings save, or a Foxhole page POST.
+	noAccessRefused = "Your forum groups don't allow this. Nothing changed."
+	// noAccessRecording refuses a request about a recording, its page, a
+	// download or its delete, from someone who is neither its starter nor
+	// a panel admin.
+	noAccessRecording = "This recording is open only to its starter and panel admins. Nothing changed."
+	// noAccessNoRecordings is an outsider's Recordings page when they have
+	// no recordings. It refuses nothing, so it doesn't say nothing changed.
+	noAccessNoRecordings = "You have no recordings to download, and your forum groups don't open any other page."
+)
+
+// noAccess renders the no-access page, saying message, one of the
+// no-access page's sentences: the session's groups don't open what was
+// asked for.
+func (p *Panel) noAccess(w http.ResponseWriter, sess session, message string) {
+	data := sess.page("No access")
+	data.Message = message
+	p.render(w, http.StatusForbidden, "noaccess", data)
 }
 
 // authSignout ends the session the cookie names and nothing else: no group

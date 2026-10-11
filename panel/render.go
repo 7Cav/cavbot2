@@ -104,7 +104,8 @@ type pageData struct {
 	// Recordings is filled for the Recordings page alone.
 	Recordings recordingsView
 	Failure    failure
-	// Message is the error page's one sentence.
+	// Message is the one sentence of the error page, and of the no-access
+	// page.
 	Message string
 	// Retry is where the error page's Try again link leads.
 	Retry string
@@ -126,9 +127,6 @@ type nav struct {
 	Foxhole    bool
 	Recordings bool
 }
-
-// Any reports whether the session opens any page.
-func (n nav) Any() bool { return n.Hubs || n.Foxhole || n.Recordings }
 
 // The pages the rail links to, as Page names them.
 const (

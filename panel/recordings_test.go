@@ -500,7 +500,8 @@ var recordingRoutes = []recordingRoute{
 }
 
 // assertRecordingRefused checks a response to a recording's route is the
-// no-access page, and carries neither the mix nor a zip.
+// no-access page saying the recording is open only to its starter and panel
+// admins, and carries neither the mix nor a zip.
 func assertRecordingRefused(t *testing.T, res *http.Response) {
 	t.Helper()
 	body := readBody(t, res)
@@ -514,12 +515,30 @@ func assertRecordingRefused(t *testing.T, res *http.Response) {
 	if err != nil {
 		t.Fatalf("parse body: %v", err)
 	}
-	assertNoAccessPage(t, doc)
+	assertNoAccessSays(t, doc, noAccessRecording)
+}
+
+// recordingRefusedVisitor is someone who is neither a recording's starter
+// nor a panel admin, and the forum account they sign in with.
+type recordingRefusedVisitor struct {
+	who     string
+	account *forumAccount
+}
+
+// recordingRefusedVisitors makes the forum know, beside the starter given,
+// one of each visitor a recording that starter started refuses: a starter
+// of another recording, an outsider and a Foxhole manager.
+func recordingRefusedVisitors(w *testWorld, other starter) []recordingRefusedVisitor {
+	return []recordingRefusedVisitor{
+		{"another starter", other.account},
+		{"an outsider", addOutsider(w.forum)},
+		{"a Foxhole manager", addFoxholeManager(w.forum)},
+	}
 }
 
 // A recording's page and its downloads are served to its starter and to a
 // panel admin, and refused to anyone else, here a starter of another
-// recording.
+// recording, an outsider and a Foxhole manager.
 func TestRecordingIsServedToItsStarterAndPanelAdminsOnly(t *testing.T) {
 	for _, route := range recordingRoutes {
 		t.Run(route.name, func(t *testing.T) {
@@ -532,12 +551,65 @@ func TestRecordingIsServedToItsStarterAndPanelAdminsOnly(t *testing.T) {
 			href := route.href(t, parseHTML(t, w.b.get(recordingsPath)), recA)
 			admin := newBrowser(t, w.p)
 			signIn(t, w.forum, admin)
-			other := newBrowser(t, w.p)
-			signInAs(t, w.forum, other, b.account)
 
 			route.served(t, "the starter", w.b.get(href), recA)
 			route.served(t, "a panel admin", admin.get(href), recA)
-			assertRecordingRefused(t, other.get(href))
+			for _, v := range recordingRefusedVisitors(w, b) {
+				t.Run(v.who, func(t *testing.T) {
+					visitor := newBrowser(t, w.p)
+					signInAs(t, w.forum, visitor, v.account)
+
+					assertRecordingRefused(t, visitor.get(href))
+				})
+			}
+		})
+	}
+}
+
+// assertRecordingsPageEmpty checks a page is the Recordings page and says it
+// has no recordings to list, in the sentence given.
+func assertRecordingsPageEmpty(t *testing.T, doc *html.Node, want string) {
+	t.Helper()
+	if got := pageOf(t, doc); got != pageRecordings {
+		t.Fatalf("the page is %q, want %s", got, pageRecordings)
+	}
+	el := findElement(doc, "", "data-field", "no-recordings")
+	if el == nil {
+		t.Fatal("the Recordings page has no data-field=no-recordings")
+	}
+	if got := textOf(el); got != want {
+		t.Errorf("the Recordings page says %q, want %q", got, want)
+	}
+}
+
+// A forum user who started no recording opens the Recordings page while
+// someone else's recording is held. An outsider gets the no-access page,
+// which refuses nothing and so doesn't say nothing changed. A Foxhole
+// manager gets the Recordings page, saying they have none yet, as a panel
+// admin does.
+func TestRecordingsPageOfSomeoneWithNoRecordings(t *testing.T) {
+	cases := []struct {
+		who    string
+		add    func(*fakeForum) *forumAccount
+		landed func(t *testing.T, doc *html.Node)
+	}{
+		{"an outsider", addOutsider, func(t *testing.T, doc *html.Node) {
+			t.Helper()
+			assertNoAccessSays(t, doc, noAccessNoRecordings)
+		}},
+		{"a Foxhole manager", addFoxholeManager, func(t *testing.T, doc *html.Node) {
+			t.Helper()
+			assertRecordingsPageEmpty(t, doc, noRecordingsYet)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.who, func(t *testing.T) {
+			w := newTestWorld(t)
+			a := w.addStarter(5001, "Able.A", "discord-a")
+			w.record(t, a.discordID)
+			signInAs(t, w.forum, w.b, tc.add(w.forum))
+
+			tc.landed(t, parseHTML(t, w.b.get(recordingsPath)))
 		})
 	}
 }
