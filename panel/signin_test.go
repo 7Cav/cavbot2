@@ -160,3 +160,29 @@ func TestSigninThatDidNotFinishKeepsThePage(t *testing.T) {
 		})
 	}
 }
+
+// A sign-in started from a form that names an address off the panel's own
+// origin, or one a browser would read as off it, lands on the landing. A
+// form posted from anywhere can name any address, so the check holds
+// without the sign-in page.
+func TestSigninNeverComesBackOffThePanel(t *testing.T) {
+	for _, next := range []string{
+		"https://evil.example/",
+		"//evil.example",
+		`/\evil.example`,
+		"/\t/evil.example",
+	} {
+		t.Run(next, func(t *testing.T) {
+			w := newTestWorld(t)
+			start := w.b.postForm("/auth/start", url.Values{"next": {next}})
+			q := assertRedirect(t, start, "/oauth2/authorize").Query()
+			w.forum.setChallenge(q.Get("code_challenge"))
+
+			res := w.b.get("/auth/callback?code=" + testCode + "&state=" + url.QueryEscape(q.Get("state")))
+
+			if got := res.Header.Get("Location"); got != "/" {
+				t.Errorf("the sign-in comes back to %q, want /", got)
+			}
+		})
+	}
+}
