@@ -238,6 +238,12 @@ func (f *fakeDiscord) ChannelMessageSendComplex(channelID string, data *discordg
 	return &discordgo.Message{ChannelID: channelID, Content: data.Content}, nil
 }
 
+// UserChannelCreate opens a DM channel with a user: a write the fake counts.
+func (f *fakeDiscord) UserChannelCreate(userID string) (*discordgo.Channel, error) {
+	f.countWrite()
+	return &discordgo.Channel{ID: "dm-" + userID, Type: discordgo.ChannelTypeDM}, nil
+}
+
 // countWrite counts a write through Discord's API that the fake records
 // nothing else about.
 func (f *fakeDiscord) countWrite() {

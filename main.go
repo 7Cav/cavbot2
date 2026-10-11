@@ -174,6 +174,16 @@ func recordingsDir() string {
 	return "recordings"
 }
 
+// recordingLinkBase is the base URL a stopped recording's link starts
+// with: the panel's, or empty when the panel is off, and a stop then gives
+// no link.
+func recordingLinkBase(cfg panel.Config) string {
+	if !cfg.Enabled() {
+		return ""
+	}
+	return cfg.BaseURL
+}
+
 func main() {
 	// Signal handling comes first, so a stop at any point during startup
 	// shuts down like one after it (#470): main returns and the deferred
@@ -286,7 +296,7 @@ func main() {
 		// VC is, and checks for hubs through it. The recorder tokens only
 		// fill its recorders: with none, every /record start is refused as
 		// recording off.
-		recording = commands.NewRecordingRuntime(discordManager, botStore, tempVC, GuildID, recorders, commands.FFmpegMixer{}, recordingsDir())
+		recording = commands.NewRecordingRuntime(discordManager, botStore, tempVC, GuildID, recorders, commands.FFmpegMixer{}, recordingsDir(), recordingLinkBase(panelCfg))
 		// Its voice events and channel deletes stop a recording by itself
 		// (#388): the last human leaving, or the recorder leaving.
 		recording.Listen(dg)

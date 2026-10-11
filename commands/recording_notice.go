@@ -1,9 +1,11 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 )
@@ -84,11 +86,31 @@ func (r *RecordingRuntime) postRecordingNotice(channelID, starterID, title strin
 // has stopped.
 const recordingNoticeStoppedLine = "⏹️ This channel is no longer being recorded."
 
+// recordingLink is the link to a recording's page in the panel, empty when
+// the panel is off.
+func (r *RecordingRuntime) recordingLink(id int64) string {
+	if r.panelURL == "" {
+		return ""
+	}
+	return r.panelURL + RecordingPath(id)
+}
+
+// recordingNoticeStopped is the notice's content once the recording has
+// stopped, with the link to it in the panel when there is one. The angle
+// brackets keep Discord from previewing the panel's sign-in page.
+func recordingNoticeStopped(link string) string {
+	if link == "" {
+		return recordingNoticeStoppedLine
+	}
+	return recordingNoticeStoppedLine + "\nThe starter and panel admins can get the recording in the panel: <" + link + ">"
+}
+
 // closeRecordingNotice edits a stopped recording's notice to say it stopped,
-// and removes its button. A failed edit is a WARN line and never holds up
-// the stop, which has already happened.
+// with the link to the recording in the panel, and removes its button. A
+// failed edit is a WARN line and never holds up the stop, which has already
+// happened.
 func (r *RecordingRuntime) closeRecordingNotice(rec *activeRecording) {
-	content := recordingNoticeStoppedLine
+	content := recordingNoticeStopped(r.recordingLink(rec.row.ID))
 	_, err := r.mgr.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		ID:              rec.noticeID,
 		Channel:         rec.row.ChannelID,
@@ -96,10 +118,52 @@ func (r *RecordingRuntime) closeRecordingNotice(rec *activeRecording) {
 		Components:      &[]discordgo.MessageComponent{},
 		AllowedMentions: noMentions(),
 	})
-	if err != nil {
-		utils.Warn("Recording notice not edited at stop", "recording_id", rec.row.ID,
-			"channel_id", rec.row.ChannelID, "message_id", rec.noticeID, "error", err)
+	if err == nil {
+		return
 	}
+	utils.Warn("Recording notice not edited at stop", "recording_id", rec.row.ID,
+		"channel_id", rec.row.ChannelID, "message_id", rec.noticeID, "error", err)
+	if noticeGone(err) {
+		r.sendRecordingLink(rec.row)
+	}
+}
+
+// noticeGone reports whether a notice edit failed because the notice is
+// gone: its channel deleted (Unknown Channel) or the message itself
+// (Unknown Message).
+func noticeGone(err error) bool {
+	var restErr *discordgo.RESTError
+	if !errors.As(err, &restErr) || restErr.Message == nil {
+		return false
+	}
+	return restErr.Message.Code == discordgo.ErrCodeUnknownChannel || restErr.Message.Code == discordgo.ErrCodeUnknownMessage
+}
+
+// sendRecordingLink DMs a stopped recording's starter the link to it in the
+// panel, for a recording whose notice is gone. With the panel off there is
+// no link, so no DM. A DM that fails, such as to a starter whose DMs are
+// closed, is a WARN line: the recording is in the panel either way.
+func (r *RecordingRuntime) sendRecordingLink(rec store.Recording) {
+	link := r.recordingLink(rec.ID)
+	if link == "" {
+		return
+	}
+	dm, err := r.mgr.UserChannelCreate(rec.StarterID)
+	if err == nil {
+		_, err = r.mgr.ChannelMessageSendComplex(dm.ID, &discordgo.MessageSend{
+			Content:         recordingLinkDM(rec.ChannelName, link),
+			AllowedMentions: noMentions(),
+		})
+	}
+	if err != nil {
+		utils.Warn("Recording link not sent by DM", "recording_id", rec.ID, "starter", rec.StarterID, "error", err)
+	}
+}
+
+// recordingLinkDM is the DM a starter gets when their recording's notice is
+// gone by its stop. The channel name is the one the recording started in.
+func recordingLinkDM(channelName, link string) string {
+	return fmt.Sprintf("⏹️ Your recording of %s has stopped. Get it in the panel: <%s>", orNone(channelName), link)
 }
 
 // runRecordingNoticeComponent answers a press on a recording notice's

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -19,6 +20,12 @@ import (
 // them. It lists them from the store and streams their files from the
 // recordings directory (recording_files.go), so it works whether recording
 // is on or off.
+
+// RecordingPath is the panel's path of a recording's page, which the link
+// a stop gives leads to.
+func RecordingPath(id int64) string {
+	return "/recordings/" + strconv.FormatInt(id, 10)
+}
 
 // ErrMixNotReady: the recording's mix is processing or failed, so there is
 // nothing to download.
