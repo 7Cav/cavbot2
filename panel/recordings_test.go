@@ -581,3 +581,61 @@ func TestRecordingsPageShowsTheDeletionDateThirtyDaysAfterTheStop(t *testing.T) 
 		t.Errorf("recording %d is deleted on %s, want %s, 30 days after its stop at %v", rec, got, want, stopped)
 	}
 }
+
+// ListRecordings is the read every recording route makes.
+func (s *ctxStore) ListRecordings(ctx context.Context, guildID string) ([]store.Recording, error) {
+	if err := s.gate(ctx, "ListRecordings"); err != nil {
+		return nil, err
+	}
+	return s.Fake.ListRecordings(ctx, guildID)
+}
+
+// A recordings read that fails gives the starter the could-not-load page,
+// on the Recordings page and on their recording's page alike, and never
+// the no-access page, which would tell them their roles grant them nothing.
+func TestRecordingRouteWhoseReadFailsSaysItCouldNotLoad(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path func(id int64) string
+	}{
+		{"the Recordings page", func(int64) string { return recordingsPath }},
+		{"the recording's page", commands.RecordingPath},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, st := newCtxWorld(t)
+			a := w.addStarter(5001, "Able.A", "discord-a")
+			rec := w.record(t, a.discordID)
+			signInAs(t, w.forum, w.b, a.account)
+			st.failRead("ListRecordings")
+
+			doc := parseHTML(t, w.b.get(tc.path(rec)))
+
+			if findElement(doc, "", "data-field", "no-access") != nil {
+				t.Error("the starter got the no-access page")
+			}
+			if got := failureOf(t, doc); got != string(failureReadFailed) {
+				t.Errorf("failure page = %q, want %s", got, failureReadFailed)
+			}
+		})
+	}
+}
+
+// A recording's page at an address naming no recording, the way a link to
+// a deleted recording does, refuses a panel admin as a client error, and
+// not with the no-access page: a panel admin opens every recording there
+// is.
+func TestRecordingPageForNoRecordingIsNotTheNoAccessPage(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	rec := w.record(t, a.discordID)
+	signIn(t, w.forum, w.b)
+
+	res := w.b.get(commands.RecordingPath(rec + 1))
+
+	if !isClientError(res.StatusCode) {
+		t.Errorf("status = %d, want a client error", res.StatusCode)
+	}
+	if findElement(parseHTML(t, res), "", "data-field", "no-access") != nil {
+		t.Error("a panel admin got the no-access page for a recording that doesn't exist")
+	}
+}

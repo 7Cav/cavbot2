@@ -3,7 +3,6 @@ package panel
 import (
 	"context"
 	"errors"
-	"fmt"
 	"mime"
 	"net/http"
 	"strconv"
@@ -76,7 +75,7 @@ type recordingItem struct {
 	Title     string
 	Channel   string
 	StartedAt time.Time
-	// Length is how long it ran, empty while it runs.
+	// Length is how long it ran, such as 1h2m3s, empty while it runs.
 	Length string
 	// DeletesAt is when it is deleted, zero while it runs.
 	DeletesAt time.Time
@@ -172,15 +171,13 @@ func (p *Panel) downloadMix(w http.ResponseWriter, r *http.Request, sess session
 		return
 	}
 	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		p.serverError(w, "mix download", err)
-		return
-	}
 	utils.Info("Panel recording downloaded", "recording_id", rec.ID, "file", "mix", "username", sess.username, "forum_user_id", sess.userID)
 	w.Header().Set("Content-Type", "audio/ogg")
 	w.Header().Set("Content-Disposition", attachment(commands.RecordingFileName(rec, ".opus")))
-	http.ServeContent(w, r, "", info.ModTime(), f)
+	// ServeContent answers a range request too, so a download cut off
+	// partway resumes. The mix never changes once built, so no time goes
+	// with it.
+	http.ServeContent(w, r, "", time.Time{}, f)
 }
 
 // downloadZip is GET /recordings/{id}/zip: a zip of the recording's tracks
@@ -212,10 +209,7 @@ func (p *Panel) downloadZip(w http.ResponseWriter, r *http.Request, sess session
 // attachment is a Content-Disposition that saves a download under the name
 // given, encoded for a name outside ASCII.
 func attachment(name string) string {
-	if v := mime.FormatMediaType("attachment", map[string]string{"filename": name}); v != "" {
-		return v
-	}
-	return "attachment"
+	return mime.FormatMediaType("attachment", map[string]string{"filename": name})
 }
 
 // recordingFor reads the recording the route names, for a session that may
@@ -267,7 +261,7 @@ func recordingItems(recs []store.Recording) []recordingItem {
 		item := recordingItem{ID: rec.ID, Title: rec.Title, Channel: rec.ChannelName, StartedAt: rec.StartedAt,
 			Running: rec.StoppedAt.IsZero(), Mix: rec.Mix, StarterID: rec.StarterID, MixURL: page + "/mix", ZipURL: page + "/zip"}
 		if !item.Running {
-			item.Length = recordingLength(rec.StoppedAt.Sub(rec.StartedAt))
+			item.Length = rec.StoppedAt.Sub(rec.StartedAt).Round(time.Second).String()
 			item.DeletesAt = commands.RecordingDeletesAt(rec)
 		}
 		for _, sp := range rec.Speakers {
@@ -276,16 +270,4 @@ func recordingItems(recs []store.Recording) []recordingItem {
 		out = append(out, item)
 	}
 	return out
-}
-
-// recordingLength says how long a recording ran, to the second under an
-// hour and to the minute from an hour up.
-func recordingLength(d time.Duration) string {
-	switch d = d.Round(time.Second); {
-	case d >= time.Hour:
-		return fmt.Sprintf("%d h %d min", int(d.Hours()), int(d.Minutes())%60)
-	case d >= time.Minute:
-		return fmt.Sprintf("%d min %d s", int(d.Minutes()), int(d.Seconds())%60)
-	}
-	return fmt.Sprintf("%d s", int(d.Seconds()))
 }
