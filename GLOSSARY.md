@@ -383,11 +383,9 @@ refusal the bot decided itself, which only a broken hub causes.
 _Avoid_: create failure, failed create, failed join, refused join.
 
 **Save**:
-One submitted panel form that changes what the panel stores: a hub's create,
-register, update or remove, the guild-wide moderator roles, the recording
-roles, a note, or an approval given or cleared. It begins once the group
-check allows it, runs to its end whether or not the browser waits, and takes
-effect when the store holds the change. A refused save changes nothing. A
+One submitted panel form that changes what the panel stores. It begins once
+the group check allows it, runs to its end whether or not the browser waits,
+and takes effect when the store holds the change. A refused save changes nothing. A
 save that fails leaves the store as it was, though a Discord change it
 already made may stay.
 _Avoid_: submit, submission, write, commit.
@@ -395,17 +393,15 @@ _Avoid_: submit, submission, write, commit.
 **Change log**:
 The panel's record of each change made through it: who made it, when, and
 what changed. Every save that takes effect has one entry, holding the old
-and new values. Every Foxhole action started on the Foxhole page has one
-too, its report. Each hub's form shows the hub's own entries, the guild-wide
-moderator section and the recording roles section each the entries of its
-own saves, which reference no hub, and the Foxhole page its own. A change
-made by a command or by hand in Discord has none.
+and new values, except a recording's deletion. Every Foxhole action started
+on the Foxhole page has one too, its report. A change made by a command or
+by hand in Discord has none.
 _Avoid_: audit trail, audit log (that is Discord's), history.
 
 **Stale form**:
-A hub's edit form, the guild-wide moderator section or the recording roles
-section, loaded before another save of the same settings took effect. A save
-from it is refused. A rename made in Discord does not make a form stale.
+A form loaded before another save of what it shows took effect, whose own
+save would undo that save unseen. A save from it is refused. A rename made
+in Discord does not make a form stale.
 _Avoid_: conflict, collision, race, outdated form, edit conflict.
 
 **Rank ladder**:
