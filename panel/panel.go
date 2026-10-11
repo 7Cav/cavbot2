@@ -249,17 +249,42 @@ func (p *Panel) Handler() http.Handler {
 	})
 }
 
+// paramNext is the query parameter, and the sign-in form's field, that
+// carries the address a sign-in comes back to.
+const paramNext = "next"
+
+// signinPage is the sign-in page. Its form posts the address the query
+// names to come back to as it stands: authStart checks it, since a form
+// posted from anywhere else skips this page.
 func (p *Panel) signinPage(w http.ResponseWriter, r *http.Request) {
 	p.render(w, http.StatusOK, "signin", pageData{
 		Title: "Sign in",
 		Cause: causeFromQuery(r.URL.Query().Get("cause")),
+		Next:  r.URL.Query().Get(paramNext),
 	})
 }
 
+// returnPath is raw when it is a path on the panel's own origin for a
+// sign-in to come back to, and "/" otherwise. It starts with one "/": a
+// second "/", or a "\" a browser reads as one, would name another host.
+// net/url parses it, which refuses control characters, since a browser drops
+// a tab or a line break from an address and would read "/\t/host" as
+// "//host".
+func returnPath(raw string) string {
+	if raw == "" || raw[0] != '/' || len(raw) > 1 && (raw[1] == '/' || raw[1] == '\\') {
+		return "/"
+	}
+	if _, err := url.Parse(raw); err != nil {
+		return "/"
+	}
+	return raw
+}
+
 // authStart begins a sign-in: a fresh state and PKCE verifier, kept under a
-// pending ID the sign-in cookie carries, and a redirect to the forum's consent
-// page. The confidential client sends PKCE S256 anyway; the forum verifies it
-// when present.
+// pending ID the sign-in cookie carries with the address the form posts to
+// come back to, and a redirect to the forum's consent page. The
+// confidential client sends PKCE S256 anyway; the forum verifies it when
+// present.
 func (p *Panel) authStart(w http.ResponseWriter, r *http.Request) {
 	state, err := newID()
 	if err != nil {
@@ -267,7 +292,8 @@ func (p *Panel) authStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verifier := oauth2.GenerateVerifier()
-	id, err := p.sessions.addPending(pendingSignin{state: state, verifier: verifier, started: panelClock.Now()})
+	id, err := p.sessions.addPending(pendingSignin{state: state, verifier: verifier, started: panelClock.Now(),
+		next: returnPath(r.PostFormValue(paramNext))})
 	if err != nil {
 		p.serverError(w, "sign-in start", err)
 		return
@@ -314,7 +340,7 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 		// refused the request. Back to the sign-in page, which says the
 		// sign-in didn't finish.
 		utils.Info("Panel sign-in not completed", "forum_error", q.Get("error"))
-		http.Redirect(w, r, signinURL(causeUnfinished), http.StatusSeeOther)
+		http.Redirect(w, r, signinURL(causeUnfinished, ""), http.StatusSeeOther)
 		return
 	}
 	code := q.Get("code")
@@ -332,7 +358,7 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 		var retrieve *oauth2.RetrieveError
 		if errors.As(err, &retrieve) && retrieve.Response.StatusCode < 500 {
 			utils.Warn("Panel sign-in refused by the forum", "status", retrieve.Response.StatusCode, "body", string(retrieve.Body))
-			http.Redirect(w, r, signinURL(causeNone), http.StatusSeeOther)
+			http.Redirect(w, r, signinURL(causeNone, ""), http.StatusSeeOther)
 			return
 		}
 		utils.Warn("Panel token exchange failed", "error", err)
@@ -353,13 +379,13 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 		utils.Info("Panel sign-in", "username", user.Username, "forum_user_id", user.UserID, "discord_id", sess.discordID,
 			"panel_admin", sess.access.panelAdmin, "foxhole_manager", sess.access.foxholeManager)
 		setCookie(w, sessionCookie, id)
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, pending.next, http.StatusSeeOther)
 	case checkUnavailable:
 		utils.Warn("Panel group check unavailable at sign-in", "error", err)
 		p.forumUnavailable(w, nil)
 	default:
 		utils.Info("Panel sign-in refused", "cause", string(outcome.cause()), "username", user.Username, "forum_user_id", user.UserID)
-		http.Redirect(w, r, signinURL(outcome.cause()), http.StatusSeeOther)
+		http.Redirect(w, r, signinURL(outcome.cause(), ""), http.StatusSeeOther)
 	}
 }
 
@@ -401,35 +427,54 @@ func (p *Panel) forumUnavailable(w http.ResponseWriter, sess *session) {
 }
 
 // signinURL is the sign-in page with the cause of the ended session, which
-// the page renders as the data-cause attribute and one sentence.
-func signinURL(c cause) string {
-	if c == causeNone {
+// the page renders as the data-cause attribute and one sentence, and the
+// address its sign-in comes back to when that is not the landing.
+func signinURL(c cause, next string) string {
+	q := url.Values{}
+	if c != causeNone {
+		q.Set("cause", string(c))
+	}
+	if next != "" && next != "/" {
+		q.Set(paramNext, next)
+	}
+	if len(q) == 0 {
 		return "/signin"
 	}
-	return "/signin?cause=" + url.QueryEscape(string(c))
+	return "/signin?" + q.Encode()
+}
+
+// pageAddressOf is the address of the page a request asks for, for its
+// sign-in to come back to: a GET's path and query. Any other request asks
+// for no page, and its sign-in lands on the landing.
+func pageAddressOf(r *http.Request) string {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return ""
+	}
+	return r.URL.RequestURI()
 }
 
 // withSession is the gate every signed-in page sits behind: the session
 // cookie must name a live session, and the group check must pass on this
 // request. Expiry by the clock ends the session before the forum is asked.
 // The session next sees carries what this request's group check lets it
-// open.
+// open. A request the gate sends to sign in carries the page it asked for,
+// for the sign-in to come back to.
 func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookie)
 		if err != nil {
-			http.Redirect(w, r, signinURL(causeNone), http.StatusSeeOther)
+			http.Redirect(w, r, signinURL(causeNone, pageAddressOf(r)), http.StatusSeeOther)
 			return
 		}
 		sess, ok := p.sessions.get(c.Value)
 		if !ok {
 			clearCookie(w, sessionCookie)
-			http.Redirect(w, r, signinURL(causeNone), http.StatusSeeOther)
+			http.Redirect(w, r, signinURL(causeNone, pageAddressOf(r)), http.StatusSeeOther)
 			return
 		}
 		if sess.expired(panelClock.Now()) {
 			p.endSession(w, c.Value, sess, string(causeExpired))
-			http.Redirect(w, r, signinURL(causeExpired), http.StatusSeeOther)
+			http.Redirect(w, r, signinURL(causeExpired, pageAddressOf(r)), http.StatusSeeOther)
 			return
 		}
 		user, outcome, err := p.groupCheck(r.Context(), sess.accessToken)
@@ -443,7 +488,7 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 			p.forumUnavailable(w, &sess)
 		default:
 			p.endSession(w, c.Value, sess, string(outcome.cause()))
-			http.Redirect(w, r, signinURL(outcome.cause()), http.StatusSeeOther)
+			http.Redirect(w, r, signinURL(outcome.cause(), pageAddressOf(r)), http.StatusSeeOther)
 		}
 	}
 }
@@ -533,7 +578,7 @@ func (p *Panel) authSignout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	clearCookie(w, sessionCookie)
-	http.Redirect(w, r, signinURL(causeNone), http.StatusSeeOther)
+	http.Redirect(w, r, signinURL(causeNone, ""), http.StatusSeeOther)
 }
 
 // endSession drops the session and its cookie and records why.

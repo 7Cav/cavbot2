@@ -92,8 +92,11 @@ type pageData struct {
 	Page     string
 	Username string
 	Cause    cause
-	Hubs     hubPage
-	Foxhole  foxholeView
+	// Next is the address the sign-in page's form posts for its sign-in to
+	// come back to.
+	Next    string
+	Hubs    hubPage
+	Foxhole foxholeView
 	// Recordings is filled for the Recordings page alone.
 	Recordings recordingsView
 	Failure    failure
