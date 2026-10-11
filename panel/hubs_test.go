@@ -56,7 +56,9 @@ type fakeDiscord struct {
 	created     []fakeCreate
 	edited      []fakeEdit
 	deleted     []string
-	spawned     int
+	// messageEdits is the content of every message edit, in order.
+	messageEdits []string
+	spawned      int
 	// voice stands in for the state cache's voice states: user ID to
 	// channel ID, connected members only.
 	voice map[string]string
@@ -498,7 +500,19 @@ func (f *fakeDiscord) MemberRanks(g *discordgo.Guild) map[string]int {
 // read no message the runtime posts or edits.
 func (f *fakeDiscord) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {
 	f.countWrite()
+	if edit.Content != nil {
+		f.mu.Lock()
+		f.messageEdits = append(f.messageEdits, *edit.Content)
+		f.mu.Unlock()
+	}
 	return &discordgo.Message{ID: edit.ID, ChannelID: edit.Channel}, nil
+}
+
+// editedContents is the content of every message edit, in order.
+func (f *fakeDiscord) editedContents() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.messageEdits)
 }
 
 // setVoice puts a member in a channel in the fake cache, or disconnects

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -511,5 +512,34 @@ func TestRecordingsPageAfterAFailedMilpacLookupIsTheNoAccessPage(t *testing.T) {
 				t.Errorf("X's page lists their recording %d, which the panel couldn't know was theirs", rec)
 			}
 		})
+	}
+}
+
+// panelLink matches a link into the test panel.
+var panelLink = regexp.MustCompile(regexp.QuoteMeta(testBaseURL) + `[^\s<>]*`)
+
+// The link a stop puts on the recording notice, opened by the starter,
+// shows that recording.
+func TestRecordingNoticeLinkOpensTheRecordingForItsStarter(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	rec := w.record(t, a.discordID)
+	edits := w.discord.editedContents()
+	if len(edits) == 0 {
+		t.Fatal("the stop edited no message")
+	}
+	link := panelLink.FindString(edits[len(edits)-1])
+	if link == "" {
+		t.Fatalf("the notice edit %q carries no link into the panel", edits[len(edits)-1])
+	}
+	signInAs(t, w.forum, w.b, a.account)
+
+	doc := parseHTML(t, w.b.get(strings.TrimPrefix(link, testBaseURL)))
+
+	if got := pageOf(t, doc); got != pageRecordings {
+		t.Fatalf("the link %s lands on page %q, want %s", link, got, pageRecordings)
+	}
+	if _, ok := listedRecordings(t, doc)[rec]; !ok {
+		t.Errorf("the link %s doesn't show recording %d", link, rec)
 	}
 }
