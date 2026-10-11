@@ -397,6 +397,13 @@ save that fails leaves the store as it was, though a Discord change it
 already made may stay.
 _Avoid_: submit, submission, write, commit.
 
+**Refusal**:
+The answer that turns a request down before anything changes: a command's
+reply to a run, or the note a panel form shows on a refused save. Only the
+person who asked sees it.
+_Avoid_: rejection, error reply (which also covers a run that failed after
+it started).
+
 **Change log**:
 The panel's record of each change made through it: who made it, when, and
 what changed. Every save that takes effect has one entry, holding the old
@@ -546,15 +553,6 @@ start, and edited at stop to say it stopped, or that it was cut short, with
 a link to the recording in the panel. If the channel is gone by then, the
 starter gets that link by DM instead.
 _Avoid_: recording panel (the panel is the web UI), banner, announcement.
-
-## Slash commands
-
-**Refusal**:
-A command's reply that turns a run down before the command acts on it: bad
-input, a run outside a server, or a Foxhole action running on the Foxhole
-page. Only the member who ran it sees it, and nothing changed.
-_Avoid_: rejection, error reply (which also covers a run that failed after
-it started).
 
 ## External systems
 
