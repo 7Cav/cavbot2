@@ -203,7 +203,7 @@ func (p *Postgres) ListHubs(ctx context.Context, guildID string) ([]Hub, error) 
 // SaveHub implements Store.
 func (p *Postgres) SaveHub(ctx context.Context, hub Hub, entry ChangeLogEntry) (Hub, error) {
 	var stored Hub
-	err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
+	_, err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
 		var err error
 		if hub.ID == 0 {
 			stored, err = insertHub(ctx, tx, hub)
@@ -220,17 +220,20 @@ func (p *Postgres) SaveHub(ctx context.Context, hub Hub, entry ChangeLogEntry) (
 
 // saveWithEntry makes a save's one store write: write stores the settings
 // and returns the hub the entry goes under, zero for none, and the entry is
-// appended under it, both in one transaction. A write that fails appends
-// nothing.
-func (p *Postgres) saveWithEntry(ctx context.Context, entry ChangeLogEntry, write func(tx *sql.Tx) (hubID int64, err error)) error {
-	return p.inTx(ctx, func(tx *sql.Tx) error {
+// appended under it, both in one transaction. It returns the entry's ID. A
+// write that fails appends nothing.
+func (p *Postgres) saveWithEntry(ctx context.Context, entry ChangeLogEntry, write func(tx *sql.Tx) (hubID int64, err error)) (int64, error) {
+	var entryID int64
+	err := p.inTx(ctx, func(tx *sql.Tx) error {
 		hubID, err := write(tx)
 		if err != nil {
 			return err
 		}
 		entry.HubID = hubID
-		return insertChange(ctx, tx, entry)
+		entryID, err = insertChange(ctx, tx, entry)
+		return err
 	})
+	return entryID, err
 }
 
 // inTx runs fn in one transaction and commits it, or rolls it back when fn
@@ -327,14 +330,28 @@ func updateHub(ctx context.Context, tx *sql.Tx, hub Hub) (Hub, error) {
 }
 
 // RemoveHub implements Store.
-func (p *Postgres) RemoveHub(ctx context.Context, id int64, entry ChangeLogEntry) error {
-	err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
+func (p *Postgres) RemoveHub(ctx context.Context, id int64, entry ChangeLogEntry) (int64, error) {
+	entryID, err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
 		return 0, deleteHub(ctx, tx, id)
 	})
 	if err != nil {
-		return fmt.Errorf("remove hub %d: %w", id, err)
+		return 0, fmt.Errorf("remove hub %d: %w", id, err)
 	}
-	return nil
+	return entryID, nil
+}
+
+// HubRemoval implements Store.
+func (p *Postgres) HubRemoval(ctx context.Context, id int64) (ChangeLogEntry, error) {
+	e, err := scanChangeLogEntry(p.db.QueryRowContext(ctx, `
+		SELECT id, hub_id, forum_user_id, forum_username, at, action, diff
+		FROM change_log WHERE id = $1 AND action = $2`, id, string(ChangeRemove)))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ChangeLogEntry{}, ErrNotFound
+	}
+	if err != nil {
+		return ChangeLogEntry{}, fmt.Errorf("read hub removal %d: %w", id, err)
+	}
+	return e, nil
 }
 
 // deleteHub deletes the hub row, and is ErrNotFound when there is none. The
@@ -471,7 +488,7 @@ func (p *Postgres) GetGuildModeratorRoles(ctx context.Context, guildID string) (
 
 // SaveGuildModeratorRoles implements Store.
 func (p *Postgres) SaveGuildModeratorRoles(ctx context.Context, guildID string, roles GuildModeratorRoles, entry ChangeLogEntry) error {
-	err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
+	_, err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
 		return 0, setGuildModeratorRoles(ctx, tx, guildID, roles)
 	})
 	if err != nil {
@@ -542,7 +559,7 @@ func (p *Postgres) GetRecordingRoles(ctx context.Context, guildID string) (Recor
 
 // SaveRecordingRoles implements Store.
 func (p *Postgres) SaveRecordingRoles(ctx context.Context, guildID string, roles RecordingRoles, entry ChangeLogEntry) error {
-	err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
+	_, err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
 		return 0, setRecordingRoles(ctx, tx, guildID, roles)
 	})
 	if err != nil {
@@ -588,16 +605,18 @@ func setRecordingRoles(ctx context.Context, tx *sql.Tx, guildID string, roles Re
 // insertChange appends one change log entry. A zero HubID is stored as
 // NULL, the same as a spawned row's cleared reference. The diff goes in as
 // JSONB, so bytes that are not a JSON value are refused here.
-func insertChange(ctx context.Context, tx *sql.Tx, e ChangeLogEntry) error {
-	_, err := tx.ExecContext(ctx, `
+func insertChange(ctx context.Context, tx *sql.Tx, e ChangeLogEntry) (int64, error) {
+	var id int64
+	err := tx.QueryRowContext(ctx, `
 		INSERT INTO change_log (hub_id, forum_user_id, forum_username, action, diff)
-		VALUES ($1, $2, $3, $4, $5)`,
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id`,
 		sql.NullInt64{Int64: e.HubID, Valid: e.HubID != 0},
-		e.ForumUserID, e.ForumUsername, string(e.Action), []byte(e.Diff))
+		e.ForumUserID, e.ForumUsername, string(e.Action), []byte(e.Diff)).Scan(&id)
 	if err != nil {
-		return fmt.Errorf("append change log entry for hub %d: %w", e.HubID, err)
+		return 0, fmt.Errorf("append change log entry for hub %d: %w", e.HubID, err)
 	}
-	return nil
+	return id, nil
 }
 
 // scanChangeLogEntry reads one row: id, hub_id, forum_user_id,

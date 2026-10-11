@@ -1384,6 +1384,9 @@ func TestUnknownHubIsNotFound(t *testing.T) {
 			if res.StatusCode != http.StatusNotFound {
 				t.Errorf("status = %d, want 404", res.StatusCode)
 			}
+			if strings.HasSuffix(path, "/remove") && findElement(parseHTML(t, res), "", "data-error", refusalGone) == nil {
+				t.Error("the remove's page does not say the hub is gone")
+			}
 			if hubs := storedHubs(t, w.st); len(hubs) != 1 || hubs[0].BaseString != "Arma Voice" {
 				t.Errorf("stored hubs = %+v, want the one pre-stored hub unchanged", hubs)
 			}
@@ -1402,7 +1405,7 @@ func TestRemoveDeletesTheRowLeavesTheChannelAndStopsSpawning(t *testing.T) {
 		t.Fatalf("the first join made %d creates, want 1", n)
 	}
 
-	res := w.b.postForm(hubPath(t, w.st, "hub-1")+"/remove", nil)
+	res := removeHubThroughThePreview(t, w.b, storedHubID(t, w.st, "hub-1"))
 
 	assertRedirect(t, res, "/")
 	if hubs := storedHubs(t, w.st); len(hubs) != 0 {
@@ -1507,7 +1510,7 @@ func TestRemoveAppendsAnEntryWithNullAfter(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 
-	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1")+"/remove", nil), "/")
+	assertRedirect(t, removeHubThroughThePreview(t, w.b, storedHubID(t, w.st, "hub-1")), "/")
 
 	entries := storedChangeLog(t, w.st, 0)
 	if len(entries) != 1 {

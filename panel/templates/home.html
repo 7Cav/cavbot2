@@ -2,10 +2,13 @@
 <main class="body" data-page="{{.Page}}">
   <h1 class="title">Hubs</h1>
   {{if .Hubs.Disconnected}}<div class="note" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Channel and role details on this page may be out of date.</div>{{end}}
+  {{if .Hubs.Remove}}{{template "remove-preview" .Hubs}}{{else}}{{with .Hubs.RefusalFor "remove"}}<div class="note" data-error="{{.DataError}}">{{.Message}}</div>{{end}}{{end}}
   {{template "moderators" .}}
   {{template "recording-roles" .}}
-  <div class="block">
+  <div class="block" id="hubs">
     <h2 class="block-header">Hubs</h2>
+    {{with .Hubs.Removed}}<div class="block-row" role="status"><div class="note note--ok note--inline" data-field="removed">{{.By}} removed hub <span class="hub-name" data-field="base_string">{{.BaseString}}</span> at <time datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 15:04"}} UTC</time>.
+      {{- with .ChannelName}} Its voice channel, {{.}}, stays in Discord. Register it below to make it a hub again, starting from the default settings.{{end}}</div></div>{{end}}
     {{if .Hubs.Hubs}}
     <div class="scroll"><table class="hublist">
       <thead><tr><th>Hub</th><th>Channel</th><th>Category</th><th>State</th><th class="num">Spawned</th><th>Last failure</th><th></th></tr></thead>
@@ -18,7 +21,7 @@
           <td>{{if .Broken}}<span class="tag tag--warn" data-field="broken">broken</span> {{end}}<span data-field="enabled">{{if .Enabled}}<span class="tag tag--on">enabled</span>{{else}}<span class="tag">disabled</span>{{end}}</span></td>
           <td class="num" data-field="spawned">{{.Spawned}}</td>
           <td class="failure">{{with .Failure}}<span data-field="failure_cause">{{.Cause}}</span> <time data-field="failure_at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 15:04"}} UTC</time>{{else}}<span class="off">none</span>{{end}}</td>
-          <td class="num">{{if .Broken}}<form method="post" action="/hubs/{{.ID}}/remove" class="inline"><button type="submit" class="btn btn--danger btn--small" data-field="remove">Remove</button></form>{{else}}<a href="/?hub={{.ID}}" data-field="edit">Edit</a>{{end}}</td>
+          <td class="num">{{if .Broken}}<a class="btn btn--danger btn--small" href="/?remove={{.ID}}" data-field="remove">Remove</a>{{else}}<a href="/?hub={{.ID}}" data-field="edit">Edit</a>{{end}}</td>
         </tr>
       {{end}}
       </tbody>
@@ -35,6 +38,44 @@
   {{template "register" .}}
   {{end}}
 </main>
+{{end}}
+
+{{define "remove-preview"}}
+{{with .Remove}}
+  <section class="block block--danger" data-field="remove-preview" data-remove-hub="{{.ID}}">
+    <h2 class="block-header">Remove hub {{.BaseString}}?</h2>
+    {{with $.RefusalFor "remove"}}{{template "refusal" .}}{{end}}
+    <div class="block-row">
+      {{- if not .ChannelName}}Its voice channel is gone from Discord, so the hub creates nothing now.
+      {{- else if .Broken}}Its voice channel, {{.ChannelName}}, has no category, so the hub creates nothing now.
+      {{- else}}Cavbot2 stops creating a spawned channel for anyone who joins {{.ChannelName}}.{{end}}
+    </div>
+    <div class="block-row confirm-list" data-list="goes">
+      <h3>Goes with the hub</h3>
+      <ul>
+        <li>Every setting in its edit form.</li>
+        {{with .Roles}}<li>Its own moderator roles: {{range .}}<span class="tag" data-role="{{.ID}}"{{if .Unavailable}} data-unavailable="{{.Unavailable}}"{{end}}>{{.Label}}{{template "role-note" .}}</span> {{end}}They can no longer rename, lock or unlock its spawned channels.</li>{{end}}
+        <li>Its change log. No page shows it once the hub is gone.</li>
+      </ul>
+    </div>
+    <div class="block-row confirm-list">
+      <h3>Spawned channels open now <span class="confirm-count" data-field="spawned">{{.Spawned}}</span></h3>
+      {{if .Spawned}}<p>{{if eq .Spawned 1}}It stays{{else}}Each stays{{end}} until it empties, then goes at once, with no delete delay. Until then, only its owner and the moderator roles for every hub can rename it. Nobody can lock it, and a locked one stays locked.</p>{{end}}
+    </div>
+    <div class="block-row confirm-list" data-list="stays">
+      <h3>Stays</h3>
+      <ul>
+        {{with .ChannelName}}<li>The voice channel <span data-field="channel_name">{{.}}</span>, in Discord. Register it again to make it a hub, starting from the default settings.</li>{{end}}
+        <li>The moderator roles for every hub, and the recording roles.</li>
+      </ul>
+    </div>
+    <form method="post" action="/hubs/{{.ID}}/remove" class="submit-row">
+      <input type="hidden" name="version" value="{{.Version}}">
+      <button type="submit" class="btn btn--danger-filled" data-field="confirm">Remove hub {{.BaseString}}</button>
+      <a class="btn" href="{{.Back}}" data-field="cancel">Cancel</a>
+    </form>
+  </section>
+{{end}}
 {{end}}
 
 {{define "refusal"}}<div class="block-row"><div class="note" data-error="{{.DataError}}">{{.Message}}</div></div>{{end}}
@@ -263,10 +304,10 @@
     <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save</button> <a class="btn" href="/">Back to the list</a></div>
   </form>
   {{end}}
-  <form method="post" action="/hubs/{{.ID}}/remove" class="block">
+  <div class="block">
     <h2 class="block-header">Remove this hub</h2>
-    <div class="submit-row"><button type="submit" class="btn btn--danger" data-field="remove">Remove hub</button></div>
-  </form>
+    <div class="submit-row"><a class="btn btn--danger" href="/?hub={{.ID}}&amp;remove={{.ID}}" data-field="remove">Remove hub</a></div>
+  </div>
   <div class="block">
     {{template "changes" .Changes}}
   </div>

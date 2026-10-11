@@ -163,9 +163,14 @@ func (s leavingStore) SaveHub(ctx context.Context, hub store.Hub, entry store.Ch
 	return s.st.SaveHub(ctx, hub, entry)
 }
 
-func (s leavingStore) RemoveHub(ctx context.Context, id int64, entry store.ChangeLogEntry) error {
+func (s leavingStore) RemoveHub(ctx context.Context, id int64, entry store.ChangeLogEntry) (int64, error) {
 	s.d.leave()
 	return s.st.RemoveHub(ctx, id, entry)
+}
+
+func (s leavingStore) HubRemoval(ctx context.Context, id int64) (store.ChangeLogEntry, error) {
+	s.d.leave()
+	return s.st.HubRemoval(ctx, id)
 }
 
 func (s leavingStore) UpsertSpawnedChannel(ctx context.Context, sc store.SpawnedChannel) error {
@@ -335,7 +340,7 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 			name: "remove",
 			hubs: []store.Hub{testHub()},
 			path: func(t *testing.T, st store.Store) string { return hubPath(t, st, "hub-1") + "/remove" },
-			form: fixedForm(nil),
+			form: removeForm,
 			checkSaved: func(t *testing.T, st store.Store) int64 {
 				if hubs := storedHubs(t, st); len(hubs) != 0 {
 					t.Errorf("stored hubs after the remove = %+v, want none", hubs)
@@ -525,8 +530,8 @@ func (refusingStore) SaveHub(context.Context, store.Hub, store.ChangeLogEntry) (
 	return store.Hub{}, errStoreRefused
 }
 
-func (refusingStore) RemoveHub(context.Context, int64, store.ChangeLogEntry) error {
-	return errStoreRefused
+func (refusingStore) RemoveHub(context.Context, int64, store.ChangeLogEntry) (int64, error) {
+	return 0, errStoreRefused
 }
 
 func (refusingStore) SaveGuildModeratorRoles(context.Context, string, store.GuildModeratorRoles, store.ChangeLogEntry) error {
@@ -622,7 +627,7 @@ func TestSaveWhoseStoreWriteFailsLeavesTheRuntimeAsItWas(t *testing.T) {
 		{
 			name: "remove",
 			path: func(t *testing.T, st store.Store) string { return hubPath(t, st, "hub-1") + "/remove" },
-			form: fixedForm(nil),
+			form: removeForm,
 			checkRuntime: func(t *testing.T, w *testWorld) {
 				w.join("user-a", "hub-1")
 				if n := w.discord.createCount(); n != 1 {

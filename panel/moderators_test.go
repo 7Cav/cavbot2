@@ -188,7 +188,7 @@ func TestModeratorsSectionShowsItsOwnLastTenEntriesNewestFirst(t *testing.T) {
 		assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, role)), "/")
 	}
 	// A remove lands under no hub too, newest of all, and must not show here.
-	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1")+"/remove", nil), "/")
+	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1")+"/remove", removeForm(t, w.st)), "/")
 
 	res := w.b.get("/")
 

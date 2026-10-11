@@ -394,7 +394,7 @@ func (s *otherWriterStore) SaveHub(ctx context.Context, hub store.Hub, entry sto
 	return s.Fake.SaveHub(ctx, hub, entry)
 }
 
-func (s *otherWriterStore) RemoveHub(ctx context.Context, id int64, entry store.ChangeLogEntry) error {
+func (s *otherWriterStore) RemoveHub(ctx context.Context, id int64, entry store.ChangeLogEntry) (int64, error) {
 	s.land("RemoveHub")
 	return s.Fake.RemoveHub(ctx, id, entry)
 }
@@ -633,11 +633,14 @@ func TestSaveWhoseRecordChangesBeforeItsWriteWritesNothing(t *testing.T) {
 			method: "RemoveHub",
 			other:  otherRemove,
 			post: func(t *testing.T, w *testWorld, st *otherWriterStore) *http.Response {
-				return w.b.postForm(hubPath(t, st.Fake, "hub-1")+"/remove", nil)
+				return w.b.postForm(hubPath(t, st.Fake, "hub-1")+"/remove", removeForm(t, st.Fake))
 			},
 			check: func(t *testing.T, _ *testWorld, st *otherWriterStore, res *http.Response, rec *sentryRecorder) {
 				if res.StatusCode != http.StatusNotFound {
 					t.Errorf("status = %d, want 404", res.StatusCode)
+				}
+				if findElement(parseHTML(t, res), "", "data-error", refusalGone) == nil {
+					t.Error("the page does not say the hub is gone")
 				}
 				if hubs := storedHubs(t, st.Fake); len(hubs) != 0 {
 					t.Errorf("stored hubs = %+v, want none", hubs)
@@ -800,7 +803,7 @@ func (s *holdingStore) SaveHub(ctx context.Context, hub store.Hub, entry store.C
 	return s.Fake.SaveHub(ctx, hub, entry)
 }
 
-func (s *holdingStore) RemoveHub(ctx context.Context, id int64, entry store.ChangeLogEntry) error {
+func (s *holdingStore) RemoveHub(ctx context.Context, id int64, entry store.ChangeLogEntry) (int64, error) {
 	s.write()
 	return s.Fake.RemoveHub(ctx, id, entry)
 }
@@ -902,12 +905,13 @@ func TestTwoSavesOfAHubTakeTurns(t *testing.T) {
 func TestUpdateThatWaitsForARemoveOfItsHubIsNotFound(t *testing.T) {
 	w, b, st := holdingWorld(t, testHub())
 	path := hubPath(t, st.Fake, "hub-1")
+	removal := removeForm(t, st.Fake)
 	form := updateForm(t, st.Fake)
 	form.Set("channel_name", "Bravo Room")
 	form.Set("user_limit", "5")
 
 	resRemove, resUpdate := duringHold(t, w, st,
-		func() *http.Response { return w.b.postForm(path+"/remove", nil) },
+		func() *http.Response { return w.b.postForm(path+"/remove", removal) },
 		func() *http.Response { return b.postForm(path, form) })
 
 	assertRedirect(t, resRemove, "/")

@@ -364,12 +364,17 @@ type Store interface {
 	// it made.
 	SaveHub(ctx context.Context, hub Hub, entry ChangeLogEntry) (Hub, error)
 	// RemoveHub deletes the hub and appends a remove's change log entry
-	// together. The entry references no hub, whatever HubID the caller set,
-	// since the row is gone, and the hub's earlier entries clear their
-	// reference to match. Spawned channel rows of the hub keep their rows
-	// with the hub reference cleared. Removing a hub that does not exist is
-	// ErrNotFound and appends no entry, since nothing took effect.
-	RemoveHub(ctx context.Context, id int64, entry ChangeLogEntry) error
+	// together, and returns the entry's ID, which HubRemoval reads it back
+	// by. The entry references no hub, whatever HubID the caller set, since
+	// the row is gone, and the hub's earlier entries clear their reference
+	// to match. Spawned channel rows of the hub keep their rows with the hub
+	// reference cleared. Removing a hub that does not exist is ErrNotFound
+	// and appends no entry, since nothing took effect.
+	RemoveHub(ctx context.Context, id int64, entry ChangeLogEntry) (int64, error)
+	// HubRemoval returns the change log entry of a hub's removal by the ID
+	// RemoveHub returned. ErrNotFound when no entry has the ID, or the entry
+	// records anything but a hub's removal.
+	HubRemoval(ctx context.Context, id int64) (ChangeLogEntry, error)
 
 	// UpsertSpawnedChannel inserts the row, or updates the existing row for
 	// the same ChannelID in place. It writes hub, number and owner, never the
