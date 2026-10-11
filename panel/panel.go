@@ -311,9 +311,10 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if q.Get("error") != "" {
 		// The user pressed Deny on the forum's consent page, or the forum
-		// refused the request. Back to the plain sign-in page.
+		// refused the request. Back to the sign-in page, which says the
+		// sign-in didn't finish.
 		utils.Info("Panel sign-in not completed", "forum_error", q.Get("error"))
-		http.Redirect(w, r, "/signin", http.StatusSeeOther)
+		http.Redirect(w, r, signinURL(causeUnfinished), http.StatusSeeOther)
 		return
 	}
 	code := q.Get("code")

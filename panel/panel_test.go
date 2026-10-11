@@ -1014,6 +1014,8 @@ func TestSessionEndsTwoHoursAfterSignin(t *testing.T) {
 	}
 }
 
+// Deny on the forum's consent page returns to the sign-in page, which says
+// the sign-in didn't finish.
 func TestCallbackWithForumErrorReturnsToSignin(t *testing.T) {
 	f := newFakeForum(t)
 	b := newBrowser(t, newTestPanel(t, f))
@@ -1022,8 +1024,8 @@ func TestCallbackWithForumErrorReturnsToSignin(t *testing.T) {
 	res := b.get("/auth/callback?error=access_denied&state=" + url.QueryEscape(q.Get("state")))
 
 	loc := assertRedirect(t, res, "/signin")
-	if cause, ok := mainCause(t, b.get(loc.RequestURI())); ok {
-		t.Errorf("a denied consent carries data-cause=%q, want none", cause)
+	if cause, ok := mainCause(t, b.get(loc.RequestURI())); !ok || cause != "unfinished" {
+		t.Errorf("sign-in page data-cause = %q (present %v), want unfinished", cause, ok)
 	}
 	if c := cookieNamed(res, sessionCookie); c != nil && c.Value != "" {
 		t.Errorf("denied consent set a session cookie %q", c.Value)
