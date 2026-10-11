@@ -183,9 +183,8 @@ for the role).
 
 **Foxhole page**:
 The panel page that lists every Foxhole role holder and approved
-collaborator with their notes, and starts Foxhole actions. A second view
-lists the members with a note who hold no Foxhole role and aren't approved
-collaborators.
+collaborator with their notes, and starts Foxhole actions. Its second view
+is the no-role view.
 _Avoid_: warden page, warden dashboard.
 
 **Holder list**:
@@ -193,6 +192,11 @@ The Foxhole page's list of every Foxhole role holder and every approved
 collaborator, read from the member list as it stands when the page loads.
 _Avoid_: roster (a unit's roster), member list (the bot's copy of the whole
 guild).
+
+**No-role view**:
+The Foxhole page's second view, which lists the members with a note who hold
+no Foxhole role and aren't approved collaborators.
+_Avoid_: holder list (nobody in it holds a Foxhole role).
 
 **Flag**:
 A display-only mark on a holder list row that points a Foxhole manager at a
