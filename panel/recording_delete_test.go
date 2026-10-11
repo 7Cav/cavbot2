@@ -102,7 +102,7 @@ func TestRecordingDeletedByItsStarterOrAPanelAdminIsGone(t *testing.T) {
 			a := w.addStarter(5001, "Able.A", "discord-a")
 			rec := w.record(t, a.discordID)
 			signInAs(t, w.forum, w.b, a.account)
-			mix := downloadHref("mix-download")(t, parseHTML(t, w.b.get(recordingsPath)), rec)
+			mix := linkHref("mix-download")(t, parseHTML(t, w.b.get(recordingsPath)), rec)
 			deleter := tc.deleter(t, w)
 
 			submit(t, deleter, deleteConfirm(t, deleter, rec))
@@ -131,7 +131,7 @@ func TestRecordingDeletePostedByAnotherStarterDeletesNothing(t *testing.T) {
 	w.record(t, b.discordID)
 	signInAs(t, w.forum, w.b, a.account)
 	confirm := deleteConfirm(t, w.b, rec)
-	mix := downloadHref("mix-download")(t, parseHTML(t, w.b.get(recordingsPath)), rec)
+	mix := linkHref("mix-download")(t, parseHTML(t, w.b.get(recordingsPath)), rec)
 	other := newBrowser(t, w.p)
 	signInAs(t, w.forum, other, b.account)
 
@@ -222,7 +222,7 @@ func TestRecordingStillRecordingIsNotDeleted(t *testing.T) {
 	if _, ok := listedRecordings(t, page)[rec]; !ok {
 		t.Fatalf("recording %d isn't listed once stopped", rec)
 	}
-	res := w.b.get(downloadHref("zip-download")(t, page, rec))
+	res := w.b.get(linkHref("zip-download")(t, page, rec))
 	body := readBody(t, res)
 	if _, err := zip.NewReader(bytes.NewReader(body), int64(len(body))); res.StatusCode != http.StatusOK || err != nil {
 		t.Errorf("recording %d's zip answered %d, a zip read error %v, want 200 with a zip", rec, res.StatusCode, err)
@@ -230,8 +230,7 @@ func TestRecordingStillRecordingIsNotDeleted(t *testing.T) {
 }
 
 // A starter who deletes their only recording lands on a page saying it was
-// deleted, and not on the no-access page that having no recordings would
-// otherwise give them.
+// deleted.
 func TestRecordingDeleteLandsOnAPageSayingItWasDeleted(t *testing.T) {
 	w := newTestWorld(t)
 	a := w.addStarter(5001, "Able.A", "discord-a")
@@ -243,7 +242,36 @@ func TestRecordingDeleteLandsOnAPageSayingItWasDeleted(t *testing.T) {
 	if findElement(doc, "", "data-field", "deleted") == nil {
 		t.Error("the page the delete lands on doesn't say the recording was deleted")
 	}
-	if findElement(doc, "", "data-field", "no-access") != nil {
-		t.Error("the delete landed on the no-access page")
+}
+
+// A forum user who started no recording, and isn't a panel admin, gets the
+// no-access page on the Recordings page whatever its address says, even one
+// saying a recording was deleted.
+func TestRecordingsPageSayingADeleteIsTheNoAccessPageForAnOutsider(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	rec := w.record(t, a.discordID)
+	signInAs(t, w.forum, w.b, addOutsider(w.forum))
+
+	res := w.b.get(recordingsPath + "?" + paramDeleted + "=" + strconv.FormatInt(rec+1, 10))
+
+	assertNoAccessPage(t, parseHTML(t, res))
+}
+
+// A panel admin who deletes a recording someone else started, as for an S6
+// deletion ticket, lands on the list of every recording, where the next
+// one is.
+func TestRecordingDeletedByAPanelAdminLandsOnEveryRecording(t *testing.T) {
+	w := newTestWorld(t)
+	b := w.addStarter(5002, "Baker.B", "discord-b")
+	c := w.addStarter(5003, "Charlie.C", "discord-c")
+	recB := w.record(t, b.discordID)
+	recC := w.record(t, c.discordID)
+	signIn(t, w.forum, w.b)
+
+	doc := parseHTML(t, follow(t, w.b, submit(t, w.b, deleteConfirm(t, w.b, recB))))
+
+	if _, ok := listedRecordings(t, doc)[recC]; !ok {
+		t.Errorf("the page the admin's delete lands on doesn't list C's recording %d", recC)
 	}
 }

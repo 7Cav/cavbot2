@@ -6,10 +6,10 @@
     <a href="/recordings"{{if not .Recordings.All}} class="is-on" aria-current="page"{{end}}>Yours</a>
     <a href="/recordings?view=all" data-field="view-all"{{if .Recordings.All}} class="is-on" aria-current="page"{{end}}>Every recording</a>
   </nav>{{end}}
-  {{if .Recordings.Deleted}}<div role="status"><div class="note note--ok" data-field="deleted">Recording deleted. Nobody can download it now.</div></div>{{end}}
+  {{if .Recordings.Deleted}}{{template "deleted-note"}}{{end}}
   {{if .Recordings.Gone}}
   <div class="block" data-field="recording-gone"><div class="block-row">This recording isn't in the panel. Recordings are deleted 30 days after they stop.</div></div>
-  {{else if .Recordings.Delete}}
+  {{else if .Recordings.DeletePreview}}
   {{range .Recordings.Recordings}}{{template "delete-preview" .}}{{end}}
   {{else}}
   {{range .Recordings.Recordings}}
@@ -57,7 +57,7 @@
     <div class="block-row confirm-list" data-list="goes">
       <h3>Goes for good</h3>
       <ul>
-        <li>Each speaker's track{{if eq .Mix "ready"}} and the mix{{end}}.</li>
+        <li>Each speaker's track{{if ne .Mix "failed"}} and the mix{{end}}.</li>
         <li>The info file.</li>
         <li>The link in Discord stops working.</li>
       </ul>
@@ -66,7 +66,7 @@
     <div class="block-row rec-downloads">{{template "recording-downloads" .}}</div>
     <form method="post" action="{{.DeleteURL}}" class="submit-row" data-field="delete-confirm">
       <button type="submit" class="btn btn--danger-filled" data-field="confirm">Delete the recording</button>
-      <a class="btn" href="/recordings/{{.ID}}" data-field="cancel">Cancel</a>
+      <a class="btn" href="{{.PageURL}}" data-field="cancel">Cancel</a>
     </form>
     {{end}}
   </section>

@@ -418,9 +418,9 @@ type recordingRoute struct {
 	served func(t *testing.T, who string, res *http.Response, id int64)
 }
 
-// downloadHref reads the address of a link, such as a download, by its
+// linkHref reads the address of a link, such as a download, by its
 // data-field, off a recording's block on the Recordings page.
-func downloadHref(field string) func(t *testing.T, page *html.Node, id int64) string {
+func linkHref(field string) func(t *testing.T, page *html.Node, id int64) string {
 	return func(t *testing.T, page *html.Node, id int64) string {
 		t.Helper()
 		row, ok := listedRecordings(t, page)[id]
@@ -466,7 +466,7 @@ var recordingRoutes = []recordingRoute{
 	},
 	{
 		name: "mix",
-		href: downloadHref("mix-download"),
+		href: linkHref("mix-download"),
 		served: func(t *testing.T, who string, res *http.Response, id int64) {
 			t.Helper()
 			if body := readBody(t, res); res.StatusCode != http.StatusOK || !bytes.Equal(body, testMix) {
@@ -476,7 +476,7 @@ var recordingRoutes = []recordingRoute{
 	},
 	{
 		name: "delete preview",
-		href: downloadHref("delete"),
+		href: linkHref("delete"),
 		served: func(t *testing.T, who string, res *http.Response, id int64) {
 			t.Helper()
 			row, ok := listedRecordings(t, parseHTML(t, res))[id]
@@ -487,7 +487,7 @@ var recordingRoutes = []recordingRoute{
 	},
 	{
 		name: "zip",
-		href: downloadHref("zip-download"),
+		href: linkHref("zip-download"),
 		served: func(t *testing.T, who string, res *http.Response, id int64) {
 			t.Helper()
 			body := readBody(t, res)

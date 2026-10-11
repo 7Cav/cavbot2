@@ -5,6 +5,7 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -78,8 +79,8 @@ type recordingsView struct {
 	// Gone is set on the page of a recording the panel doesn't hold, such
 	// as one deleted since its link was sent.
 	Gone bool
-	// Delete is set on a recording's delete preview.
-	Delete bool
+	// DeletePreview is set on a recording's delete preview.
+	DeletePreview bool
 	// Deleted is set when the page says a recording has just been deleted.
 	Deleted bool
 }
@@ -103,8 +104,9 @@ type recordingItem struct {
 	StarterID   string
 	Starter     string
 	ShowStarter bool
-	// MixURL and ZipURL are the downloads' addresses, and DeleteURL its
-	// delete preview's.
+	// PageURL is the recording's page's address, MixURL and ZipURL the
+	// downloads', and DeleteURL its delete preview's.
+	PageURL   string
 	MixURL    string
 	ZipURL    string
 	DeleteURL string
@@ -137,11 +139,13 @@ func (p *Panel) recordingsPage(w http.ResponseWriter, r *http.Request, sess sess
 		p.pageFailed(w, sess, "recordings page", recordingsPath, err, nil)
 		return
 	}
-	if !sess.access.panelAdmin && len(recs) == 0 && !deleted {
+	if !sess.access.panelAdmin && len(recs) == 0 {
 		// Someone who is neither a panel admin nor the starter of a
 		// recording has nothing here. A starter who has just deleted their
-		// last recording is told it went instead.
-		p.noAccess(w, sess)
+		// last recording lands here too, told it went.
+		data := sess.page("No access")
+		data.Recordings.Deleted = deleted
+		p.render(w, http.StatusForbidden, "noaccess", data)
 		return
 	}
 	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: recordingItems(recs), Switch: sess.access.panelAdmin, All: all,
@@ -261,7 +265,7 @@ func (p *Panel) deletePreview(w http.ResponseWriter, r *http.Request, sess sessi
 	if !ok {
 		return
 	}
-	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: recordingItems([]store.Recording{rec}), Single: true, Delete: true,
+	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: recordingItems([]store.Recording{rec}), Single: true, DeletePreview: true,
 		ShowStarter: rec.StarterID != sess.discordID})
 }
 
@@ -285,13 +289,24 @@ func (p *Panel) deleteRecording(w http.ResponseWriter, r *http.Request, sess ses
 		return
 	}
 	if err != nil {
-		p.serverError(w, "recording delete", err)
+		// The files may have gone before the failure, so the event names
+		// who deleted them too.
+		utils.CaptureError("Panel recording delete failed", err, "recording_id", rec.ID, "username", sess.username, "forum_user_id", sess.userID)
+		http.Error(w, serverErrorText, http.StatusInternalServerError)
 		return
 	}
-	// The trail a questioned deletion is traced by. A deletion isn't a
-	// change log entry: the change log holds settings saves only.
+	// The trail a questioned deletion is traced by. A deletion has no
+	// change log entry (spec #381): the recording it would describe is
+	// gone, and no page could show it.
 	utils.Info("Panel recording deleted", "recording_id", rec.ID, "username", sess.username, "forum_user_id", sess.userID)
-	http.Redirect(w, r, recordingsPath+"?"+paramDeleted+"="+strconv.FormatInt(rec.ID, 10), http.StatusSeeOther)
+	q := url.Values{paramDeleted: {strconv.FormatInt(rec.ID, 10)}}
+	if rec.StarterID != sess.discordID {
+		// Only a panel admin deletes a recording someone else started, such
+		// as for an S6 deletion ticket: back to every recording, where the
+		// next one is.
+		q.Set(paramView, viewAll)
+	}
+	http.Redirect(w, r, recordingsPath+"?"+q.Encode(), http.StatusSeeOther)
 }
 
 // attachment is a Content-Disposition that saves a download under the name
@@ -348,7 +363,7 @@ func recordingItems(recs []store.Recording) []recordingItem {
 	for _, rec := range recs {
 		page := commands.RecordingPath(rec.ID)
 		item := recordingItem{ID: rec.ID, Title: rec.Title, Channel: rec.ChannelName, StartedAt: rec.StartedAt,
-			Running: rec.StoppedAt.IsZero(), Mix: rec.Mix, StarterID: rec.StarterID, MixURL: page + "/mix", ZipURL: page + "/zip",
+			Running: rec.StoppedAt.IsZero(), Mix: rec.Mix, StarterID: rec.StarterID, PageURL: page, MixURL: page + "/mix", ZipURL: page + "/zip",
 			DeleteURL: recordingDeletePath(rec.ID)}
 		if !item.Running {
 			item.Length = rec.StoppedAt.Sub(rec.StartedAt).Round(time.Second).String()
