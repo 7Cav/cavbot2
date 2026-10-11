@@ -68,6 +68,8 @@ func recordingEndPhrase(end store.RecordingEnd) string {
 		return "disk space ran low"
 	case store.RecordingEndRecorderLeft:
 		return "the recorder left the channel"
+	case store.RecordingEndCutShort:
+		return "cut short when the bot restarted; what reached the disk is kept"
 	default:
 		return string(end)
 	}

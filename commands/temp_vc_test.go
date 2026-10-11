@@ -82,6 +82,9 @@ type fakeTempVCManager struct {
 	bots map[string]bool
 	// members is the guild's member list, complete, as MemberList reads it.
 	members []ListedMember
+	// listArriving makes MemberList read as a list whose parts are still on
+	// their way, which holds no members.
+	listArriving bool
 
 	// overwrites stands in for Discord's own record of the overwrite list on
 	// each channel the bot created or edited, kept apart from the cache so
@@ -312,6 +315,9 @@ func (f *fakeTempVCManager) lagCacheBehindEdits() {
 	}
 }
 
+// GuildMemberMove records a move. A move to no channel disconnects the
+// member, and the cache stops showing them in voice, as Discord's voice
+// state update would have it.
 func (f *fakeTempVCManager) GuildMemberMove(_ string, userID string, channelID *string) error {
 	if f.moveHook != nil {
 		f.moveHook()
@@ -322,6 +328,9 @@ func (f *fakeTempVCManager) GuildMemberMove(_ string, userID string, channelID *
 		return f.moveErr
 	}
 	f.moves = append(f.moves, fakeMove{userID: userID, channelID: channelID})
+	if channelID == nil {
+		delete(f.voice, userID)
+	}
 	return nil
 }
 
@@ -422,13 +431,25 @@ func (f *fakeTempVCManager) GuildData(_ string) GuildSnapshot {
 	return GuildSnapshot{}
 }
 
-// MemberList reads the members setMember added, as a complete list. The
-// recording runtime names speakers from it. The member list's own tests
-// drive the production adapter.
+// MemberList reads the members setMember added, as a complete list, or as
+// one still arriving, which holds no members, while setListArriving says
+// so. The recording runtime names speakers from it. The member list's own
+// tests drive the production adapter.
 func (f *fakeTempVCManager) MemberList(_ string) MemberListSnapshot {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.listArriving {
+		return MemberListSnapshot{Status: MemberListArriving, Connected: true}
+	}
 	return MemberListSnapshot{Status: MemberListComplete, Connected: true, Members: append([]ListedMember(nil), f.members...)}
+}
+
+// setListArriving makes the member list read as still arriving, or as
+// complete again.
+func (f *fakeTempVCManager) setListArriving(arriving bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listArriving = arriving
 }
 
 // setMember adds a member to the guild's member list.
@@ -1112,7 +1133,15 @@ type failingStore struct {
 	upsertSpawnedErr   error
 	listSpawnedErr     error
 	startRecordingErr  error
+	stopRecordingErr   error
 	deleteRecordingErr error
+}
+
+func (f *failingStore) StopRecording(ctx context.Context, id int64, at time.Time, end store.RecordingEnd, speakers []store.Speaker) error {
+	if f.stopRecordingErr != nil {
+		return f.stopRecordingErr
+	}
+	return f.Fake.StopRecording(ctx, id, at, end, speakers)
 }
 
 func (f *failingStore) DeleteRecording(ctx context.Context, id int64) error {

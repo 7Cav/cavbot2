@@ -114,6 +114,7 @@ func sampleRecording() Recording {
 		StarterID:   "user-s",
 		Title:       "S2 interview",
 		RecorderID:  "user-recorder",
+		NoticeID:    "msg-notice",
 		StartedAt:   time.Date(2026, time.October, 10, 18, 0, 0, 0, time.UTC),
 	}
 }
