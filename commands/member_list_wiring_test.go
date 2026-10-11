@@ -190,16 +190,23 @@ func TestMemberListIsWiredToTheSessionsGateway(t *testing.T) {
 	}
 	// discordgo hands Connect to the handler on a goroutine of its own, so
 	// the snapshot may read connected a moment after the request is out.
-	snap := mgr.MemberList(testTempVCGuild)
-	for deadline := time.Now().Add(readDeadline); (snap.Status != MemberListArriving || !snap.Connected) && time.Now().Before(deadline); {
+	// The bot owes the snapshot soon after the request, not at its instant.
+	deadline := time.Now().Add(readDeadline)
+	for {
+		snap := mgr.MemberList(testTempVCGuild)
+		if snap.Status == MemberListArriving && snap.Connected {
+			break
+		}
+		if time.Now().After(deadline) {
+			if !snap.Connected {
+				t.Error("the snapshot never read connected: the handler never recorded Connect")
+			}
+			if snap.Status != MemberListArriving {
+				t.Errorf("after the request, status = %v, want arriving", snap.Status)
+			}
+			break
+		}
 		time.Sleep(time.Millisecond)
-		snap = mgr.MemberList(testTempVCGuild)
-	}
-	if !snap.Connected {
-		t.Error("the snapshot never read connected: discordgo never handed the handler Connect")
-	}
-	if snap.Status != MemberListArriving {
-		t.Errorf("after the request, status = %v, want arriving", snap.Status)
 	}
 	// The GUILD_CREATE's late and stall waits are on the clock before the
 	// request goes out.
