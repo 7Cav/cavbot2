@@ -22,21 +22,25 @@ import (
 // posts it: the roles, and the version the store holds for the set now.
 func moderatorsForm(t *testing.T, st store.Store, roleIDs ...string) url.Values {
 	t.Helper()
-	roles, err := st.GetGuildModeratorRoles(context.Background(), testGuildID)
-	if err != nil {
-		t.Fatalf("GetGuildModeratorRoles: %v", err)
-	}
-	return url.Values{"moderator_roles": roleIDs, "version": {strconv.FormatInt(roles.Version, 10)}}
+	version := storedGuildModerators(t, st).Version
+	return url.Values{"moderator_roles": roleIDs, "version": {strconv.FormatInt(version, 10)}}
 }
 
-// storedGuildRoles reads the guild-wide set back through the store.
-func storedGuildRoles(t *testing.T, st store.Store) []string {
+// storedGuildModerators reads the guild-wide set and its version back
+// through the store.
+func storedGuildModerators(t *testing.T, st store.Store) store.GuildModeratorRoles {
 	t.Helper()
 	roles, err := st.GetGuildModeratorRoles(context.Background(), testGuildID)
 	if err != nil {
 		t.Fatalf("GetGuildModeratorRoles: %v", err)
 	}
-	return roles.RoleIDs
+	return roles
+}
+
+// storedGuildRoles reads the guild-wide set back through the store.
+func storedGuildRoles(t *testing.T, st store.Store) []string {
+	t.Helper()
+	return storedGuildModerators(t, st).RoleIDs
 }
 
 // sameSet reports whether two role lists hold the same IDs, in any order.
@@ -125,10 +129,7 @@ func TestModeratorsSaveThatChangesNothingIsRefused(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-mp", "role-hq")), "/")
-	before, err := w.st.GetGuildModeratorRoles(context.Background(), testGuildID)
-	if err != nil {
-		t.Fatalf("GetGuildModeratorRoles: %v", err)
-	}
+	before := storedGuildModerators(t, w.st)
 	reordered := slices.Clone(before.RoleIDs)
 	slices.Reverse(reordered)
 
@@ -140,11 +141,7 @@ func TestModeratorsSaveThatChangesNothingIsRefused(t *testing.T) {
 	if findElement(moderatorsSection(t, parseHTML(t, res)), "", "data-error", "unchanged") == nil {
 		t.Error("the guild-wide section carries no data-error=unchanged note")
 	}
-	after, err := w.st.GetGuildModeratorRoles(context.Background(), testGuildID)
-	if err != nil {
-		t.Fatalf("GetGuildModeratorRoles: %v", err)
-	}
-	if !sameSet(after.RoleIDs, before.RoleIDs) || after.Version != before.Version {
+	if after := storedGuildModerators(t, w.st); !sameSet(after.RoleIDs, before.RoleIDs) || after.Version != before.Version {
 		t.Errorf("stored guild roles = %+v, want them as before, %+v", after, before)
 	}
 	if entries := storedChangeLog(t, w.st, 0); len(entries) != 1 {

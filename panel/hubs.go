@@ -1195,8 +1195,8 @@ func (s *hubService) register(ctx context.Context, in registerInput, by actor) (
 // the mismatch is traceable from Sentry. That error never reads as
 // store.ErrNotFound, even when another process removed the hub between the
 // read and the write: the rename changed something, so the save failed
-// with a 500, and the 404 is for an update that changed nothing (#373
-// rules 7 and 9).
+// with a 500, and the 404 is for an update that renamed nothing and wrote
+// nothing (#373 rules 7 and 9).
 func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by actor) (store.Hub, error) {
 	unlock, err := s.lockSave(ctx)
 	if err != nil {
