@@ -548,7 +548,7 @@
       "refersTo": "rail",
       "description": "The 240px column every signed-in page sits beside. The selected page steps up a shade and takes a gold left edge.",
       "html": "<nav class=\"ds-rail\"><a class=\"ds-rail-item\" href=\"#\">Hubs</a><a class=\"ds-rail-item is-selected\" href=\"#\" aria-current=\"page\">Foxhole</a><a class=\"ds-rail-item\" href=\"#\">Recordings</a></nav>",
-      "css": ".ds-rail { width: 240px; padding: 10px 0; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); background: var(--surface, #171717); border-right: 1px solid var(--line, #2b2b2b); } .ds-rail-item { display: block; padding: 10px 18px; color: var(--text-hi, #f1f1f1); text-decoration: none; border-left: 3px solid transparent; } .ds-rail-item:hover { background: var(--surface-2, #1b1b1b); } .ds-rail-item.is-selected { border-left-color: var(--gold, #ebc729); background: var(--surface-3, #212121); font-weight: 500; } .ds-rail-item:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: -2px; }"
+      "css": ".ds-rail { width: 240px; padding: 10px 0; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); background: var(--surface, #171717); border-right: 1px solid var(--line, #2b2b2b); } .ds-rail-item { display: block; padding: 10px 18px; color: var(--text-hi, #f1f1f1); text-decoration: none; border-left: 3px solid transparent; } .ds-rail-item:hover { background: var(--surface-3, #212121); } .ds-rail-item.is-selected { border-left-color: var(--gold, #ebc729); background: var(--surface-3, #212121); font-weight: 500; } .ds-rail-item:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: -2px; }"
     }
   ],
   "narrative": {
