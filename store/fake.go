@@ -201,21 +201,39 @@ func (f *Fake) hubByChannelLocked(hubChannelID string) (Hub, bool) {
 }
 
 // RemoveHub implements Store.
-func (f *Fake) RemoveHub(ctx context.Context, id int64, entry ChangeLogEntry) error {
-	return f.removeHub(ctx, id, &entry)
+func (f *Fake) RemoveHub(ctx context.Context, id int64, entry ChangeLogEntry) (int64, error) {
+	appended, err := f.appendToLog(ctx, &f.changes, &entry, f.removeHubLocked(id))
+	return appended.ID, err
+}
+
+// HubRemoval implements Store.
+func (f *Fake) HubRemoval(ctx context.Context, id int64) (ChangeLogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return ChangeLogEntry{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, e := range f.changes.entries {
+		if e.ID == id && e.Action == ChangeRemove {
+			e.Diff = slices.Clone(e.Diff)
+			return e, nil
+		}
+	}
+	return ChangeLogEntry{}, ErrNotFound
 }
 
 // DeleteHub is RemoveHub with no entry, a setup method off the Store
 // interface.
 func (f *Fake) DeleteHub(ctx context.Context, id int64) error {
-	return f.removeHub(ctx, id, nil)
+	return f.writeAllOrNothing(ctx, nil, f.removeHubLocked(id))
 }
 
-// removeHub removes the hub row and clears the hub reference of its spawned
-// rows and its entries, as the foreign keys' ON DELETE SET NULL does. The
-// entry, if any, goes under no hub. ErrNotFound when no row has the ID.
-func (f *Fake) removeHub(ctx context.Context, id int64, entry *ChangeLogEntry) error {
-	return f.writeAllOrNothing(ctx, entry, func() (int64, error) {
+// removeHubLocked is the write that removes the hub row and clears the hub
+// reference of its spawned rows and its entries, as the foreign keys' ON
+// DELETE SET NULL does, for appendToLog to run under mu. The entry, if any,
+// goes under no hub. ErrNotFound when no row has the ID.
+func (f *Fake) removeHubLocked(id int64) func() (int64, error) {
+	return func() (int64, error) {
 		if _, ok := f.hubs[id]; !ok {
 			return 0, ErrNotFound
 		}
@@ -232,7 +250,7 @@ func (f *Fake) removeHub(ctx context.Context, id int64, entry *ChangeLogEntry) e
 			}
 		}
 		return 0, nil
-	})
+	}
 }
 
 // UpsertSpawnedChannel implements Store. The caller's lock is ignored: an

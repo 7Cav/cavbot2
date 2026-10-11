@@ -250,7 +250,7 @@ func TestFoxholeChangesAreKeptApartFromTheHubPagesLog(t *testing.T) {
 		ctx := context.Background()
 		hubID := storeHub(t, s, "hub-1")
 		removed := storeHub(t, s, "hub-2")
-		if err := s.RemoveHub(ctx, removed, removeEntry(1)); err != nil {
+		if _, err := s.RemoveHub(ctx, removed, removeEntry(1)); err != nil {
 			t.Fatalf("RemoveHub: %v", err)
 		}
 		if err := saveGuildRoles(t, s, []string{"role-mp"}, moderatorsEntry(2)); err != nil {

@@ -46,10 +46,16 @@ func (b boundedStore) SaveHub(ctx context.Context, hub store.Hub, entry store.Ch
 	return b.store.SaveHub(ctx, hub, entry)
 }
 
-func (b boundedStore) RemoveHub(ctx context.Context, id int64, entry store.ChangeLogEntry) error {
+func (b boundedStore) RemoveHub(ctx context.Context, id int64, entry store.ChangeLogEntry) (int64, error) {
 	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
 	defer cancel()
 	return b.store.RemoveHub(ctx, id, entry)
+}
+
+func (b boundedStore) HubRemoval(ctx context.Context, id int64) (store.ChangeLogEntry, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.HubRemoval(ctx, id)
 }
 
 func (b boundedStore) UpsertSpawnedChannel(ctx context.Context, sc store.SpawnedChannel) error {

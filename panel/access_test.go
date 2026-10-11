@@ -103,7 +103,7 @@ var settingsSaveCases = []struct {
 	{
 		name: "remove",
 		path: func(t *testing.T, st store.Store) string { return hubPath(t, st, "hub-1") + "/remove" },
-		form: fixedForm(nil),
+		form: removeForm,
 	},
 	{
 		name: "moderators",

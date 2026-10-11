@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -214,12 +215,14 @@ const (
 	fieldLoadedChannelName = "loaded_channel_name"
 )
 
-// refusalStale is the data-error value on a stale refusal's note, and
-// refusalUnchanged on the note of a save that would change nothing, test
-// contracts like the field names.
+// refusalStale is the data-error value on a stale refusal's note,
+// refusalUnchanged on the note of a save that would change nothing, and
+// refusalGone on the note of a remove preview or Confirm whose hub is gone,
+// test contracts like the field names.
 const (
 	refusalStale     = "stale"
 	refusalUnchanged = "unchanged"
+	refusalGone      = "gone"
 )
 
 // errStaleHub is the refusal a save from a stale hub form gets: the hub is
@@ -228,6 +231,18 @@ const (
 // carrying the hub's version now, so a second save goes through.
 var errStaleHub = &fieldError{kind: refusalStale, Message: "Someone saved this hub after you opened this form, so your changes were not saved. " +
 	"Their save is at the top of the change log below. Your values are still in the form. Save again to keep them."}
+
+// errStaleRemoval is the refusal a Confirm from a stale remove preview
+// gets: the hub is not at the version the preview showed, or the Confirm
+// posts none, as a one-click Remove form from before the preview did.
+// Nothing is removed, and the handler answers with the preview read again.
+var errStaleRemoval = &fieldError{kind: refusalStale, Message: "Someone saved this hub after you opened this preview, so nothing changed. " +
+	"The preview below shows the hub as it is now. Confirm again to remove it."}
+
+// errHubGone is what a remove preview or its Confirm shows when no hub has
+// the ID: someone removed it, or the Confirm was pressed twice. The page
+// says so where the preview would be, and nothing is written.
+var errHubGone = &fieldError{kind: refusalGone, Message: "That hub is no longer in the panel, so there's nothing to remove. Nothing changed."}
 
 // formIsCurrent reports whether a form was loaded at the version its
 // record is at now. A version that is missing or does not parse is not
@@ -340,6 +355,23 @@ type hubPage struct {
 	// formEdit, formModerators or formRecordingRoles. Empty with no error.
 	Refused string
 	Edit    *editPage
+	// Remove is the remove preview the request asked for, shown first on
+	// the page. Nil for none.
+	Remove *hubRemovePreview
+	// Removed is the removal the request names, as the store holds it now,
+	// which the hub list names. Nil for none.
+	Removed *removedHub
+}
+
+// removedHub is a hub's removal as the hub list names it, read back from
+// its change log entry: the hub's base string, who removed it and when,
+// and its channel's name, when the guild still has the channel and no hub
+// stands on it again, so the line can say how to make it a hub again.
+type removedHub struct {
+	BaseString  string
+	By          string
+	At          time.Time
+	ChannelName string
 }
 
 // The forms a refusal can belong to, as Refused names them and as the
@@ -350,7 +382,13 @@ const (
 	formEdit           = "edit"
 	formModerators     = "moderators"
 	formRecordingRoles = "recording-roles"
+	formRemove         = "remove"
 )
+
+// hubListAnchor is the ID the hub list's block carries in home.html. A
+// removal's redirect opens the page there, so the line naming the removed
+// hub is in view.
+const hubListAnchor = "hubs"
 
 // RefusalFor is the refusal to render on a form, or nil when the error
 // belongs to another form or there is none. The template calls it once per
@@ -390,6 +428,34 @@ type pageRequest struct {
 	Error          *fieldError
 	// Refused is the form Error belongs to.
 	Refused string
+	// Remove names the hub whose remove preview shows. Zero shows none.
+	Remove int64
+	// Removed is the ID of the change log entry of a removal just made,
+	// which the hub list names. Zero names none.
+	Removed int64
+}
+
+// hubRemovePreview is the preview a hub's removal waits on (PRODUCT.md,
+// Principle 2): the hub as this load reads it, at the version its Confirm
+// posts, so the removal acts on the hub the preview showed. It says what
+// goes with the hub and what stays, as remove does it.
+type hubRemovePreview struct {
+	ID         int64
+	Version    int64
+	BaseString string
+	// ChannelName is the hub channel's name in the guild at this load,
+	// empty when the channel is gone.
+	ChannelName string
+	// Broken is the broken hub state: the channel is gone or has no
+	// category, so the hub spawns nothing already.
+	Broken bool
+	// Roles are the hub's own moderator roles, which go with it.
+	Roles []pickerItem
+	// Spawned is how many of the hub's spawned channels are open now.
+	Spawned int
+	// Back is the address of the page Remove was pressed on, the hub list
+	// or the hub's edit page, where Cancel leads.
+	Back string
 }
 
 // editPage is one hub's edit form: the category the form shows read-only,
@@ -562,6 +628,7 @@ const (
 	recordingRolesRead       = "read recording roles"
 	recordingRoleChangesRead = "list recording roles changes"
 	changeLogRead            = "list change log"
+	hubRemovalRead           = "read hub removal"
 )
 
 // read reads the guild from the gateway state, then the hub rows from the
@@ -747,7 +814,57 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 			return hubPage{}, err
 		}
 	}
+	if req.Removed != 0 {
+		if page.Removed, err = s.removedHubOf(ctx, sn, req.Removed); err != nil {
+			return hubPage{}, err
+		}
+	}
+	if req.Remove != 0 {
+		hub, ok := sn.hubByID(req.Remove)
+		if !ok {
+			page.Error, page.Refused = errHubGone, formRemove
+			return page, nil
+		}
+		page.Remove = s.removePreviewOf(sn, hub, pageAddress(pageRequest{HubID: req.HubID}))
+	}
 	return page, nil
+}
+
+// removedHubOf reads the removal whose entry has the ID back from the
+// store, nil when no removal has it. The base string and the channel come
+// from the entry's diff, which carries every field the hub had. An entry
+// whose diff does not decode still names who removed a hub, and when.
+func (s *hubService) removedHubOf(ctx context.Context, sn snapshot, entryID int64) (*removedHub, error) {
+	entry, err := s.deps.Store.HubRemoval(ctx, entryID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", hubRemovalRead, err)
+	}
+	removed := &removedHub{By: entry.ForumUsername, At: entry.At}
+	var d diff
+	if json.Unmarshal(entry.Diff, &d) != nil {
+		return removed, nil
+	}
+	removed.BaseString, _ = d[fieldBaseString].Before.(string)
+	channelID, _ := d[fieldHubChannel].Before.(string)
+	if ch, ok := sn.channels.voiceChannel(channelID); ok {
+		if _, isHub := sn.hubOn(channelID); !isHub {
+			removed.ChannelName = ch.Name
+		}
+	}
+	return removed, nil
+}
+
+// removePreviewOf is the remove preview of a hub read from the snapshot,
+// with its live spawned count from the runtime. back is where its Cancel
+// leads.
+func (s *hubService) removePreviewOf(sn snapshot, hub store.Hub, back string) *hubRemovePreview {
+	st := sn.channels.hubChannel(hub)
+	return &hubRemovePreview{ID: hub.ID, Version: hub.Version, BaseString: hub.BaseString,
+		ChannelName: st.Name, Broken: st.Broken, Spawned: s.deps.Runtime.SpawnedCount(hub.ID), Back: back,
+		Roles: rolePicker(fieldModeratorRoles, sn.info, hub.ModeratorRoleIDs, hub.ModeratorRoleIDs).Tags}
 }
 
 // rows merges the store's hub rows with the guild's channel list and the
@@ -1045,7 +1162,11 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by a
 
 // remove deletes a hub's row with a change log entry carrying every field
 // with a null after, in one store write, then drops the hub from the
-// runtime, so a join to its channel spawns nothing more. No Discord call:
+// runtime, so a join to its channel spawns nothing more. It returns the
+// removed hub and the ID of the removal's entry, which the page the save
+// lands on reads the removal back by. version is the hub's version its
+// preview showed: at another, or none, the removal is refused with
+// errStaleRemoval and nothing is written. No Discord call:
 // the hub channel stays, so a removal is undone by registering the channel
 // again. Spawned channels of the hub keep their rows and die when empty,
 // which the runtime does on its own; those already waiting out the hub's
@@ -1056,22 +1177,26 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by a
 // The entry references no hub: the row is gone, and the store clears the
 // hub's earlier entries to match, so the whole log of a removed hub lists
 // under no hub.
-func (s *hubService) remove(ctx context.Context, hubID int64, by actor) (store.Hub, error) {
+func (s *hubService) remove(ctx context.Context, hubID int64, version string, by actor) (store.Hub, int64, error) {
 	s.saveLock.Lock()
 	defer s.saveLock.Unlock()
 	hub, err := s.deps.Store.GetHub(ctx, hubID)
 	if err != nil {
-		return store.Hub{}, err
+		return store.Hub{}, 0, err
+	}
+	if !formIsCurrent(version, hub.Version) {
+		return store.Hub{}, 0, errStaleRemoval
 	}
 	entry, err := changeEntry(store.ChangeRemove, diffHubs(&hub, nil), by)
 	if err != nil {
-		return store.Hub{}, err
+		return store.Hub{}, 0, err
 	}
-	if err := s.deps.Store.RemoveHub(ctx, hub.ID, entry); err != nil {
-		return store.Hub{}, fmt.Errorf("remove hub: %w", err)
+	entryID, err := s.deps.Store.RemoveHub(ctx, hub.ID, entry)
+	if err != nil {
+		return store.Hub{}, 0, fmt.Errorf("remove hub: %w", err)
 	}
 	s.deps.Runtime.RemoveHub(hub.HubChannelID)
-	return hub, nil
+	return hub, entryID, nil
 }
 
 // applyEdit validates the edit form against the guild as read now and puts
