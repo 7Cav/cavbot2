@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -266,12 +267,13 @@ func (p *Panel) signinPage(w http.ResponseWriter, r *http.Request) {
 
 // returnPath is raw when it is a path on the panel's own origin for a
 // sign-in to come back to, and "/" otherwise. It starts with one "/": a
-// second "/", or a "\" a browser reads as one, would name another host.
-// net/url parses it, which refuses control characters, since a browser drops
-// a tab or a line break from an address and would read "/\t/host" as
-// "//host".
+// second would name another host. It holds no "\", which a browser reads as
+// "/", anywhere: http.Redirect cleans the path, so "/./\host" leaves as
+// "/\host". net/url parses it, which refuses control characters, since a
+// browser drops a tab or a line break from an address and would read
+// "/\t/host" as "//host".
 func returnPath(raw string) string {
-	if raw == "" || raw[0] != '/' || len(raw) > 1 && (raw[1] == '/' || raw[1] == '\\') {
+	if raw == "" || raw[0] != '/' || len(raw) > 1 && raw[1] == '/' || strings.Contains(raw, `\`) {
 		return "/"
 	}
 	if _, err := url.Parse(raw); err != nil {

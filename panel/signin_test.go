@@ -169,7 +169,7 @@ func TestSigninNeverComesBackOffThePanel(t *testing.T) {
 	for _, next := range []string{
 		"https://evil.example/",
 		"//evil.example",
-		`/\evil.example`,
+		`/./\evil.example`,
 		"/\t/evil.example",
 	} {
 		t.Run(next, func(t *testing.T) {
