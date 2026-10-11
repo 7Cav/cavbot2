@@ -130,3 +130,26 @@ func repliesWithFixedTextAMethodValueReturns() {
 	describe := r.describe
 	utils.HandleError(nil, nil, describe())
 }
+
+// drafts holds a builder for each reply a command sends.
+type drafts struct{ replies []strings.Builder }
+
+func repliesWithWhatWasWrittenIntoABuilderItsDraftsHold(err error) {
+	d := &drafts{replies: make([]strings.Builder, 1)}
+	d.replies[0].WriteString(err.Error())
+	utils.HandleError(nil, nil, "❌ Failed: "+d.replies[0].String()) // want "Discord"
+}
+
+// draft keeps the builder a reply is written into.
+type draft struct{ b *strings.Builder }
+
+func writeThroughADraft(b *strings.Builder, err error) {
+	d := draft{b: b}
+	d.b.WriteString(err.Error())
+}
+
+func repliesWithWhatAHelperWroteThroughTheDraftItKeptTheBuilderIn(err error) {
+	var b strings.Builder
+	writeThroughADraft(&b, err)
+	utils.HandleError(nil, nil, "❌ Failed: "+b.String()) // want "Discord"
+}

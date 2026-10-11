@@ -73,23 +73,27 @@
 //   - Writes into a pointer, slice, map or channel. Failing closed there
 //     reported 54 places in the bot's code, and none carried data from an
 //     error. Most began at a handler's or callback's parameter, which the
-//     check can't follow. The rest came from one error kept in a struct
-//     field that is only compared to nil, which reached the struct's other
-//     fields because the check reads a struct whole. The check follows a
-//     store, a map update, a send, and a call handed the container
+//     check can't follow, and clearing them needs a looser rule for such a
+//     parameter, one that stops catching replies the check reports today.
+//     The rest came from one error kept in a struct field that is only
+//     compared to nil, which reached the struct's other fields because the
+//     check reads a struct whole, and clearing them needs it to read fields
+//     one at a time. The check also took eight times as long. The check
+//     follows a store, a map update, a send, and a call handed the container
 //     directly, in an interface such as the io.Writer fmt.Fprintf takes, or
-//     in a variadic argument list such as fmt.Sscan's. A call into a
-//     function of the package being checked puts there what the function's
-//     body puts in that parameter. Any other call puts there everything else
-//     it is handed. A value read out of a package-level variable is a logger
-//     or a client more often than not, so no call counts as writing into it.
-//     The check follows each write at an address or within it, through a
-//     closure that captured it, and through a local that holds it. A
-//     container read out of a variable may be one the function was handed,
-//     which is checked where it is handed on, so a call counts as writing
-//     into it only when the function made it. The check doesn't follow a
-//     write through a container a call returned, or through an address kept
-//     in a slice, map or struct field.
+//     in a variadic argument list such as fmt.Sscan's. A call into a function of
+//     the package being checked puts there what the function's body puts in
+//     that parameter, unless the body puts the parameter in another
+//     container. Any other call puts there everything else it is handed. A
+//     value read out of a package-level variable is a logger or a client
+//     more often than not, so no call counts as writing into it. The check
+//     follows each write at an address or within it, through a closure that
+//     captured it, and through a local that holds it. A container read out
+//     of a variable may be one the function was handed, which is checked
+//     where it is handed on, so a call handed that container doesn't count
+//     as writing into it, though a call handed an address within it does.
+//     The check doesn't follow a write through a container a call returned,
+//     or through an address kept in a slice, map or struct field.
 //   - A value that reaches a panel page through the store or the temp VC
 //     runtime. The check can't follow a value through either, so it checks
 //     the two fields named above, where they are stored, and no other.
@@ -1333,10 +1337,10 @@ func (t *tracer) traceBindings(v *ssa.FreeVar, f *frame) bool {
 // traceStores traces every value put in addr, or in an address or a slice
 // within it, as puts lists them, whether the function puts it there, a
 // closure it captures addr in, a container it loads out of addr, or another
-// local that holds addr. made says whether addr is a container the function
-// made, or one within it. A call counts as putting values in addr only then:
-// a container loaded out of a variable may be one the function got as a
-// parameter, which is checked where it is passed.
+// local that holds addr. made says whether a call handed addr counts as
+// putting values in it. It doesn't for a container loaded out of a variable,
+// which may be one the function got as a parameter and is checked where it
+// is passed. A call handed an address within addr counts either way.
 func (t *tracer) traceStores(addr ssa.Value, f *frame, made bool) bool {
 	for _, ref := range *addr.Referrers() {
 		if call, ok := ref.(ssa.CallInstruction); ok {
@@ -1355,7 +1359,7 @@ func (t *tracer) traceStores(addr ssa.Value, f *frame, made bool) bool {
 				}
 			}
 		}
-		if v, ok := ref.(ssa.Value); ok && within(v) == addr && t.traceStores(v, f, made) {
+		if v, ok := ref.(ssa.Value); ok && within(v) == addr && t.traceStores(v, f, true) {
 			return true
 		}
 		// A call is handed addr in its variadic argument list.
@@ -1388,23 +1392,51 @@ func (t *tracer) traceStores(addr ssa.Value, f *frame, made bool) bool {
 
 // traceCallPuts traces what call puts in addr, one of the containers it is
 // handed. A call into a function of the package being checked puts there
-// what the function's body puts in the parameter addr is handed as. Any
-// other call puts there everything else it is handed, as puts has it.
+// what the function's body puts in the parameter addr is handed as, unless
+// the body puts that parameter in another container. That call, and any
+// other, puts there everything else it is handed, as puts has it.
 func (t *tracer) traceCallPuts(call ssa.CallInstruction, addr ssa.Value, f *frame) bool {
 	if callee := t.callee(call, f); callee != nil {
 		for _, op := range operands(call.Common()) {
-			if op.v == addr && writable(addr) && t.traceStores(callee.Params[op.param], enter(callee, call, f), true) {
+			if op.v != addr || !writable(addr) {
+				continue
+			}
+			param := callee.Params[op.param]
+			if keeps(param) {
+				return t.traceHanded(call, addr, f)
+			}
+			if t.traceStores(param, enter(callee, call, f), true) {
 				return true
 			}
 		}
 		return false
 	}
+	return t.traceHanded(call, addr, f)
+}
+
+// traceHanded traces everything call is handed besides addr, which puts has
+// call put in addr.
+func (t *tracer) traceHanded(call ssa.CallInstruction, addr ssa.Value, f *frame) bool {
 	for _, p := range puts(call) {
 		if p.into != addr {
 			continue
 		}
 		for _, v := range p.values {
 			if t.trace(v, f) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// keeps reports whether a function puts v, a container it is handed, in
+// another container, as puts has it. The walk from a container doesn't
+// follow it there.
+func keeps(v ssa.Value) bool {
+	for _, ref := range *v.Referrers() {
+		for _, p := range puts(ref) {
+			if slices.Contains(p.values, v) {
 				return true
 			}
 		}
