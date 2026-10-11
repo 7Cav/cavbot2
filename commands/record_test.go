@@ -120,8 +120,11 @@ type recordScene struct {
 	clock    *fakeClock
 	fake     *fakeTempVCManager
 	st       *store.Fake
-	tv       *TempVC
-	voice    *fakeRecorderVoice
+	// faults wraps st for the runtime, so a test can fail a store call the
+	// runtime makes. Nothing fails until a test arms it.
+	faults *failingStore
+	tv     *TempVC
+	voice  *fakeRecorderVoice
 	// mixer builds every mix, writing "fake mix" until a test sets
 	// otherwise.
 	mixer *fakeMixer
@@ -144,7 +147,8 @@ func newRecordScene(t *testing.T, recorders ...string) *recordScene {
 	sc.voice = &fakeRecorderVoice{recorders: recorders}
 	sc.tv = newTestTempVC(t, sc.fake, sc.st)
 	sc.mixer = &fakeMixer{out: []byte("fake mix")}
-	sc.rt = NewRecordingRuntime(sc.fake, sc.st, sc.tv, testTempVCGuild, sc.voice, sc.mixer, sc.dir, testPanelURL)
+	sc.faults = &failingStore{Fake: sc.st}
+	sc.rt = NewRecordingRuntime(sc.fake, sc.faults, sc.tv, testTempVCGuild, sc.voice, sc.mixer, sc.dir, testPanelURL)
 	sc.lib = NewRecordingLibrary(sc.st, testTempVCGuild, sc.dir)
 	return sc
 }

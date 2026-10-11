@@ -190,8 +190,10 @@ func (rec *activeRecording) mayStop(userID string, holdsRole, inChannel bool) bo
 // voice adapter, whose recorders it takes now. Tracks go under dir, and
 // the mixer builds each recording's mix there. A stopped recording's link
 // starts with panelURL, the panel's base URL, empty when the panel is off.
+// The retention sweep (recording_retention.go) starts now, with or without
+// a recorder.
 func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guildID string, rv RecorderVoice, mixer Mixer, dir, panelURL string) *RecordingRuntime {
-	return &RecordingRuntime{
+	r := &RecordingRuntime{
 		mgr:       mgr,
 		st:        st,
 		tv:        tv,
@@ -203,6 +205,8 @@ func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guild
 		panelURL:  panelURL,
 		running:   make(map[string]*activeRecording),
 	}
+	recordingAfterFunc(0, r.sweepRetention)
+	return r
 }
 
 // Start starts a recording of the voice channel the invoker is in, with a

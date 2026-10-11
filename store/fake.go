@@ -543,6 +543,17 @@ func (f *Fake) ListRecordings(ctx context.Context, guildID string) ([]Recording,
 	return out, nil
 }
 
+// DeleteRecording implements Store.
+func (f *Fake) DeleteRecording(ctx context.Context, id int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.recordings, id)
+	return nil
+}
+
 // ListFoxholeRecords implements Store.
 func (f *Fake) ListFoxholeRecords(ctx context.Context, guildID string) ([]FoxholeRecord, error) {
 	if err := ctx.Err(); err != nil {
