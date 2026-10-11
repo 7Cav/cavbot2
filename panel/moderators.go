@@ -29,6 +29,11 @@ var errStaleModerators = &fieldError{kind: refusalStale, Message: "Someone saved
 	"so your changes were not saved. Their save is at the top of the change log below. " +
 	"Your roles are still in the picker. Save again to keep them."}
 
+// errModeratorsUnchanged is the refusal a guild-wide save gets when it
+// posts the stored set: a save that would change nothing says so and
+// writes nothing, not even a change log entry.
+var errModeratorsUnchanged = &fieldError{kind: refusalUnchanged, Message: "Those are already the moderator roles for every hub, so nothing was saved."}
+
 // moderatorsPage is the guild-wide section as the page renders it: the
 // picker with the stored set as tags, or the form as posted when a save
 // was refused, the version the section posts, and the section's last
@@ -67,6 +72,7 @@ func (s *hubService) moderatorsSection(ctx context.Context, guild guildInfo, sto
 // action and a diff in the shape a hub save writes, in one store write, then
 // applies the set to the runtime, so the voice commands honour it at once.
 // A refusal is a *fieldError naming the roles field, and nothing is written.
+// A valid set that is the stored one is refused as errModeratorsUnchanged.
 // A section loaded at a version the set is no longer at is refused first,
 // as errStaleModerators, before the guild read. It returns the set as
 // stored, at the version the save left it at.
@@ -93,6 +99,9 @@ func (s *hubService) setModerators(ctx context.Context, in moderatorsInput, by a
 	roles, err := acceptedRoles(in.RoleIDs, guild.info, before.RoleIDs, errIneligibleModeratorRole)
 	if err != nil {
 		return store.GuildModeratorRoles{}, err
+	}
+	if slices.Equal(sortedRoles(roles), sortedRoles(before.RoleIDs)) {
+		return store.GuildModeratorRoles{}, errModeratorsUnchanged
 	}
 	d := diff{fieldModeratorRoles: {Before: sortedRoles(before.RoleIDs), After: sortedRoles(roles)}}
 	entry, err := changeEntry(store.ChangeModerators, d, by)
