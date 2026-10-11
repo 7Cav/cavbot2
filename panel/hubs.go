@@ -358,7 +358,8 @@ type hubPage struct {
 	Create     createInput
 	Error      *fieldError
 	// Refused is which form the error belongs to: formCreate, formRegister,
-	// formEdit, formModerators or formRecordingRoles. Empty with no error.
+	// formEdit, formModerators, formRecordingRoles or formRemove. Empty with
+	// no error.
 	Refused string
 	Edit    *editPage
 	// Remove is the remove preview the request asked for, shown first on
@@ -390,7 +391,9 @@ type removedHub struct {
 }
 
 // The forms a refusal can belong to, as Refused names them and as the
-// template asks RefusalFor.
+// template asks RefusalFor. Each is also the ID of its form's heading in
+// home.html, which the form's action names in its fragment, so a refused
+// save's answer, the page at that address, opens at the form.
 const (
 	formCreate         = "create"
 	formRegister       = "register"
@@ -409,7 +412,7 @@ const hubListAnchor = "hubs"
 // home.html. Every address the panel sends a panel admin to a hub's edit
 // form by opens the page there, below the sections above it, with the
 // heading focused.
-const hubEditAnchor = "edit"
+const hubEditAnchor = formEdit
 
 // hubEditAddress is the address of a hub's edit form, opened at the form.
 func hubEditAddress(id int64) string {

@@ -695,11 +695,11 @@ func (p *Panel) pageFailed(w http.ResponseWriter, sess session, step, retry stri
 }
 
 // pageAddress is the GET address of the page a request shows: the hub list,
-// or the hub's edit form. Try again leads there, so a save is never posted
-// twice.
+// or the hub's edit form, opened at the form. Try again leads there, so a
+// save is never posted twice.
 func pageAddress(req pageRequest) string {
 	if req.HubID != 0 {
-		return "/?hub=" + strconv.FormatInt(req.HubID, 10)
+		return hubEditAddress(req.HubID)
 	}
 	return "/"
 }
@@ -811,9 +811,11 @@ func (p *Panel) saveFailed(w http.ResponseWriter, sess session, step, retry stri
 }
 
 // renderRefused answers a refused save with the page again, the form as
-// posted and the refusal's note on it. A stale form, whose save met
-// another save, answers 409 and logs one INFO line with the signed-in user
-// and kv, the hub for a hub's form (#373). Every other refusal answers 422.
+// posted and the refusal's note on it. The answer is at the form's action,
+// whose fragment names the form's heading, so it opens at the form. A stale
+// form, whose save met another save, answers 409 and logs one INFO line with
+// the signed-in user and kv, the hub for a hub's form (#373). Every other
+// refusal answers 422.
 func (p *Panel) renderRefused(w http.ResponseWriter, r *http.Request, sess session, req pageRequest, kv ...any) {
 	status := http.StatusUnprocessableEntity
 	if req.Error.stale() {

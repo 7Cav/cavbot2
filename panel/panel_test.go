@@ -353,6 +353,18 @@ func (b *browser) postForm(target string, form url.Values) *http.Response {
 // redirect names none.
 func landing(t *testing.T, b *browser, control string, res *http.Response) (*html.Node, string) {
 	t.Helper()
+	res, fragment := arrive(t, b, control, res)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("landed with status %d, want 200", res.StatusCode)
+	}
+	return parseHTML(t, res), fragment
+}
+
+// arrive is landing for an answer of any status: it returns the answer the
+// browser ends on and the fragment its address ends with. An answer that is
+// no redirect, such as a refused save's page, keeps the control's address.
+func arrive(t *testing.T, b *browser, control string, res *http.Response) (*http.Response, string) {
+	t.Helper()
 	at, err := url.Parse(control)
 	if err != nil {
 		t.Fatalf("control address %q: %v", control, err)
@@ -365,10 +377,7 @@ func landing(t *testing.T, b *browser, control string, res *http.Response) (*htm
 		at = next
 		res = b.get(at.String())
 	}
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("landed with status %d, want 200", res.StatusCode)
-	}
-	return parseHTML(t, res), at.Fragment
+	return res, at.Fragment
 }
 
 // landedOn returns the element a page's address fragment names, nil when
