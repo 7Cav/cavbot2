@@ -39,7 +39,7 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/voice-rename` | Rename the spawned voice channel you are in, optionally making it a knock channel (🚦) |
 | `/voice-lock` | Lock the spawned voice channel you are in to the people inside it and the hub's moderators, and post a lock notice in its chat with Unlock and Let someone in buttons |
 | `/voice-unlock` | Unlock the spawned voice channel you are in |
-| `/record start`, `/record stop` | Start recording the voice or stage channel you are in, with an optional title, and stop it. A recorder joins the channel at the start and leaves at the stop. Needs a recording role (set in the panel) and a rank role |
+| `/record start`, `/record stop` | Start recording the voice or stage channel you are in, with an optional title, and stop it. A recorder joins the channel at the start and leaves at the stop, and the recording notice then links to the recording on the panel's Recordings page, or the starter gets the link by DM when the notice's channel is gone. Needs a recording role (set in the panel) and a rank role |
 
 The registered set lives in `commands/registry.go` — update this table when it changes.
 
@@ -253,6 +253,9 @@ Sunday, a real person gets your test output. Prefer a test guild.
 | `DAVE decrypt failures` goes to Sentry with `recorder`, `user_id` and `frames` | Half a second of that speaker's audio in a row failed end-to-end decryption, and it's missing from their track. `DAVE decrypt recovered` in the log, with `frames_lost`, marks when it came back |
 | `Voice packets unreadable` goes to Sentry with `recorder` | Half a second of the channel's packets in a row failed transport decryption, so no speaker's audio reached the tracks |
 | `Track not written` goes to Sentry with `recording_id` and `user_id` | The bot couldn't create or write that speaker's track under `RECORDINGS_DIR`, usually a full disk or a directory it can't write to. The track keeps what reached the disk before, and takes nothing more |
+| `Panel milpac lookup failed at sign-in` goes to Sentry with `username` | The 7Cav API didn't answer the milpac lookup that tells the panel a forum user's Discord ID. They're signed in, but their Recordings page doesn't show their recordings until they sign in again with the API up. Check `BEARER` and `api.7cav.us` |
+| A starter's Recordings page is the no-access page though they started a recording | The panel found no Discord ID for them at sign-in: `Panel sign-in found no milpac` in the log means their forum username has no milpac, and a `Panel sign-in` line with an empty `discord_id` means their milpac names no Discord ID |
+| `Panel zip download failed` goes to Sentry with `recording_id` | The bot couldn't read a track or the info file under `RECORDINGS_DIR` while it streamed the zip, so the browser got a cut-off file |
 | `/foxhole` replies that a Foxhole action is running on the Foxhole page | A manager started an action on the panel's Foxhole page, and the role-changing commands refuse until it ends. Try again then, or press Stop on the page's progress block |
 | `/foxhole` fails with a permissions error | Bot invited without Manage Roles / Manage Channels, or its own role sits below the role it is editing |
 | Commands never appear | Bot invited without `applications.commands`, or `GUILD_ID` is not the server you are in |

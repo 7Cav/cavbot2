@@ -39,14 +39,19 @@ func (p pendingSignin) expired(at time.Time) bool {
 }
 
 // session is one signed-in browser. It holds the access token the group check
-// sends on every request, the identity shown in the rail, and what the
-// latest group check lets it open.
+// sends on every request, the identity shown in the rail, what the latest
+// group check lets it open, and the Discord ID its recordings are found by.
 type session struct {
 	accessToken string
 	userID      int
 	username    string
 	access      access
 	signedIn    time.Time
+	// discordID is the Discord ID the user's milpac carried at sign-in,
+	// found by their forum username. Empty when the lookup found no milpac,
+	// failed, or found one with no Discord ID, and then the user started no
+	// recording the panel can find.
+	discordID string
 }
 
 func (s session) expired(at time.Time) bool {
@@ -68,7 +73,7 @@ func (s session) actor() actor {
 // identity block, and a link to each page the session opens.
 func (s session) page(title string) pageData {
 	return pageData{Title: title, SignedIn: true, Username: s.username,
-		Nav: nav{Hubs: s.access.panelAdmin, Foxhole: s.access.foxholePage()}}
+		Nav: nav{Hubs: s.access.panelAdmin, Foxhole: s.access.foxholePage(), Recordings: s.access.panelAdmin}}
 }
 
 // sessions is the in-memory store of pending sign-ins and sessions, each

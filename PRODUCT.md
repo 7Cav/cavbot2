@@ -15,7 +15,7 @@ The panel at `cavbot2.7cav.us` has four kinds of visitor. Any forum user can sig
 - **Panel admins** are the forum groups Genstaff (71, Regimental HQ), S6 HQ (47) and Regimental Technical Aides (44), all held as secondary groups (#256). They set up hubs for temporary voice channels, the guild-wide moderator roles and the recording roles. Once recordings ship, they can also see and delete every recording. They open every page.
 - **Foxhole managers** are the members of the forum's Foxhole group (323). They work the Foxhole page: notes, approved collaborators, adding and removing members, roster adds, and the purge and re-add when a war ends.
 - **Recording starters** are Cav members holding a recording role. They will come to the panel from a link in a recording notice or a DM, sign in with their forum account, and list, download and delete their own recordings (#381). They are the panel's first visitors who aren't staff, and many will be opening it for the first time.
-- **Outsiders** are any other forum users. They see only the page saying their roles grant no access.
+- **Outsiders** are any other forum users. One who started a recording sees the Recordings page with their own recordings. Everyone else sees only the page saying their roles grant no access.
 
 In Discord, Cav members run the slash commands listed in the README. `/awol`, `/loa`, `/afsm` and `/s6-it-check` answer personnel questions from the milpacs and the forum. Members in temporary voice channels see the ownership, lock and recording notices.
 
@@ -44,9 +44,10 @@ Shipped:
 - Forum sign-in and the group check.
 - The hub page: list hubs with live counts, create, register, edit and remove a hub, the guild-wide moderator roles, the recording roles, and the change log.
 - The Foxhole page: the holder list with flags and notes, approved collaborators, add, remove, roster add, purge, re-add, retry, reports and its own change log, plus a second view of members who have a note but no Foxhole role.
+- The Recordings page (#390): a starter's own recordings with their mix and zip downloads and deletion dates, each recording's own page that the recording notice links to, and a panel admin's switch to every recording.
 
 Planned, not built:
-- The Recordings page (#390), deleting a recording early (#391), the 30-day retention (#392), and turning recording on in the live guild (#564).
+- Deleting a recording early (#391), the 30-day retention (#392), and turning recording on in the live guild (#564).
 
 Constraints:
 - **Rendering.** The panel is Go HTML templates plus one stylesheet and one plain JavaScript file, all embedded in the bot binary. There is no framework, no build step and no CDN, and no page fetches from a third party, which is why the font is embedded (ADR 0013).

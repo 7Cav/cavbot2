@@ -18,6 +18,7 @@
     <nav>
       {{- if .Nav.Hubs}}<a class="item{{if eq .Page "hubs"}} is-selected{{end}}" href="/" data-nav="hubs">Hubs</a>{{end -}}
       {{- if .Nav.Foxhole}}<a class="item{{if eq .Page "foxhole"}} is-selected{{end}}" href="/foxhole" data-nav="foxhole">Foxhole</a>{{end -}}
+      {{- if .Nav.Recordings}}<a class="item{{if eq .Page "recordings"}} is-selected{{end}}" href="/recordings" data-nav="recordings">Recordings</a>{{end -}}
     </nav>
     <div class="me">
       <small>Signed in as</small>

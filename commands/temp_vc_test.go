@@ -39,6 +39,9 @@ type fakeTempVCManager struct {
 	// messageEditErr, when set, is what every message edit returns instead.
 	messageEdits   []discordgo.MessageEdit
 	messageEditErr error
+	// dmChannels maps each DM channel UserChannelCreate opened to the user
+	// it reaches. A message posted to one is a DM.
+	dmChannels map[string]string
 
 	channelErr error
 	createErr  error
@@ -331,6 +334,39 @@ func (f *fakeTempVCManager) ChannelMessageSendComplex(channelID string, data *di
 	id := fmt.Sprintf("msg-%d", len(f.messages)+1)
 	f.messages = append(f.messages, fakeMessage{id: id, channelID: channelID, data: data})
 	return &discordgo.Message{ID: id, ChannelID: channelID, Content: data.Content}, nil
+}
+
+// UserChannelCreate opens a DM channel with a user, one per user, as
+// Discord does.
+func (f *fakeTempVCManager) UserChannelCreate(userID string) (*discordgo.Channel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.dmChannels == nil {
+		f.dmChannels = make(map[string]string)
+	}
+	id := "dm-" + userID
+	f.dmChannels[id] = userID
+	return &discordgo.Channel{ID: id, Type: discordgo.ChannelTypeDM}, nil
+}
+
+// fakeDM is one DM the fake let through: the user it reached and what was
+// sent.
+type fakeDM struct {
+	to   string
+	data *discordgo.MessageSend
+}
+
+// sentDMs lists every message posted to a DM channel, in order.
+func (f *fakeTempVCManager) sentDMs() []fakeDM {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []fakeDM
+	for _, m := range f.messages {
+		if to, ok := f.dmChannels[m.channelID]; ok {
+			out = append(out, fakeDM{to: to, data: m.data})
+		}
+	}
+	return out
 }
 
 func (f *fakeTempVCManager) GuildMember(_, _ string) (*discordgo.Member, error) {

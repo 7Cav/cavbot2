@@ -422,9 +422,10 @@ _Avoid_: dashboard, admin UI, settings screen, config.
 
 **Panel session**:
 The panel's record that a browser is signed in as one forum user. Created at
-the OAuth callback, for any forum user. Ended by sign-out, or by the forum
-refusing the token or refusing to say who the user is. A group check that
-grants nothing leaves it running.
+the OAuth callback, for any forum user, and holds the Discord ID their milpac
+names, if any, which finds the recordings they started. Ended by sign-out, or
+by the forum refusing the token or refusing to say who the user is. A group
+check that grants nothing leaves it running.
 _Avoid_: login, token session, forum session, auth cookie.
 
 **Pending sign-in**:
@@ -438,7 +439,8 @@ The panel's test of the signed-in forum user's forum groups, primary or
 secondary, on every request. The groups decide what the panel session can
 see. They never end it. One of the panel's admin groups makes them a panel
 admin. The Foxhole group makes them a Foxhole manager. An outsider sees
-only a page saying their roles grant no access.
+only their recordings, or, having started none, a page saying their roles
+grant no access.
 _Avoid_: allowlist check, permission check, authorisation, role check.
 
 **Panel admin**:
@@ -474,7 +476,7 @@ _Avoid_: dropdown, popover, menu, combobox.
 
 ## Voice recording
 
-Designed in #10, not built yet. The bot replaces Craig. A member starts a
+Designed in #10. The bot replaces Craig. A member starts a
 recording of the voice channel they are in, a recorder joins it, and the bot
 keeps what each speaker said as a separate track.
 
@@ -531,6 +533,12 @@ A recording that ended because the bot shut down or crashed, not by a stop,
 the time cap, or the last person leaving. What it captured up to then is
 kept.
 _Avoid_: failed recording, aborted recording, broken recording.
+
+**Recordings page**:
+The panel page that lists the recordings a signed-in forum user started, with
+each one's downloads and deletion date. A panel admin can switch it to every
+recording. The link a recording notice gets at stop opens the recording here.
+_Avoid_: recordings dashboard, recordings list.
 
 **Recording notice**:
 The bot message in the recorded channel's text chat that says a recording is
@@ -592,7 +600,7 @@ fails at once, whatever read it is waiting on, and the page says it took too
 long. A load still waiting on Discord fails at once too, and the page says
 Discord has not sent the data. The Foxhole page is the exception. It shows
 everything that doesn't need the member list, with a notice in place of the
-rest.
+rest. Downloading a recording's mix or zip has no time budget.
 _Avoid_: page timeout, deadline.
 
 **Failed start**:

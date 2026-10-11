@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/7cav/cavbot2/store"
@@ -19,6 +21,21 @@ import (
 // them. It lists them from the store and streams their files from the
 // recordings directory (recording_files.go), so it works whether recording
 // is on or off.
+
+// RecordingRetention is how long a recording is kept after it stops, as
+// its notice promises.
+const RecordingRetention = 30 * 24 * time.Hour
+
+// RecordingDeletesAt is when a stopped recording is deleted.
+func RecordingDeletesAt(rec store.Recording) time.Time {
+	return rec.StoppedAt.Add(RecordingRetention)
+}
+
+// RecordingPath is the panel's path of a recording's page, which the link
+// a stop gives leads to.
+func RecordingPath(id int64) string {
+	return "/recordings/" + strconv.FormatInt(id, 10)
+}
 
 // ErrMixNotReady: the recording's mix is processing or failed, so there is
 // nothing to download.
@@ -57,6 +74,32 @@ func (l *RecordingLibrary) StartedBy(ctx context.Context, discordID string) ([]s
 		return nil, err
 	}
 	return slices.DeleteFunc(recs, func(rec store.Recording) bool { return rec.StarterID != discordID }), nil
+}
+
+// Recording reads the recording with the ID given, store.ErrNotFound when
+// there is none.
+func (l *RecordingLibrary) Recording(ctx context.Context, id int64) (store.Recording, error) {
+	recs, err := l.st.ListRecordings(ctx, l.guildID)
+	if err != nil {
+		return store.Recording{}, err
+	}
+	for _, rec := range recs {
+		if rec.ID == id {
+			return rec, nil
+		}
+	}
+	return store.Recording{}, store.ErrNotFound
+}
+
+// RecordingFileName names a download of a recording: its title, else its
+// channel's name, and the day it started in UTC, then suffix. A starter who
+// downloads several recordings tells them apart by it.
+func RecordingFileName(rec store.Recording, suffix string) string {
+	base := safeFileName(cmp.Or(rec.Title, rec.ChannelName))
+	if base == "" {
+		base = "Recording " + strconv.FormatInt(rec.ID, 10)
+	}
+	return base + " " + rec.StartedAt.UTC().Format("2006-01-02") + suffix
 }
 
 // OpenMix opens a recording's mix for reading. ErrMixNotReady unless the

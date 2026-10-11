@@ -24,7 +24,8 @@ import (
 const rosterSearchPath = "/milpacs/position/search/D/ACD"
 
 // rosterAPI plays the 7Cav API's position-group search for D/ACD and counts
-// every request it gets, at any path.
+// the searches it gets. Any other path answers 404 uncounted, so a sign-in's
+// milpac lookup adds nothing to the count.
 type rosterAPI struct {
 	mu       sync.Mutex
 	status   int
@@ -46,11 +47,11 @@ func serveRoster(t *testing.T, troopers ...utils.LiteProfileResponse) *rosterAPI
 func (a *rosterAPI) serve(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.requests++
 	if r.URL.Path != rosterSearchPath {
 		http.NotFound(w, r)
 		return
 	}
+	a.requests++
 	if a.status != http.StatusOK {
 		w.WriteHeader(a.status)
 		return
@@ -63,7 +64,7 @@ func (a *rosterAPI) serve(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(utils.LiteRosterResponse{LiteProfiles: profiles})
 }
 
-// requestCount is how many requests the API has had.
+// requestCount is how many roster searches the API has had.
 func (a *rosterAPI) requestCount() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
