@@ -2227,3 +2227,45 @@ func TestChangeLogEntriesFoldWithTheNewestOpen(t *testing.T) {
 		t.Error("the folded entry carries no data-change=user_limit element")
 	}
 }
+
+// The Hubs page's change logs name each field, each action and each
+// setting's value in words, as the Foxhole page's does, never by a form's
+// raw key such as moderator_roles. Every multi-word key is snake_case and
+// no value here carries an underscore, so an underscore is a raw key. A
+// create carries every field of a hub, and the update sets the permission
+// source to the value whose key is hub_channel.
+func TestHubsChangeLogsShowNoRawKeys(t *testing.T) {
+	w := newTestWorld(t)
+	signIn(t, w.forum, w.b)
+	assertRedirect(t, w.b.postForm("/hubs", createForm("cat-1", "Squad Join", "Squad Voice")), "/")
+	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "spawn-1"), url.Values{
+		"channel_name":         {"Squad Join"},
+		"loaded_channel_name":  {"Squad Join"},
+		"base_string":          {"Squad Voice"},
+		"permission_source":    {"hub_channel"},
+		"user_limit":           {"0"},
+		"bitrate":              {"64000"},
+		"delete_delay_minutes": {"0"},
+		"enabled":              {"on"},
+		"renaming_allowed":     {"on"},
+		"version":              {storedVersion(t, w.st, "spawn-1")},
+	}), "/")
+	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-mp")), "/")
+	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-hq")), "/")
+
+	doc := parseHTML(t, w.b.get("/?hub="+strconv.FormatInt(storedHubID(t, w.st, "spawn-1"), 10)))
+
+	var actions []string
+	for _, entry := range entryElements(doc) {
+		action, _ := attrValue(entry, "data-action")
+		actions = append(actions, action)
+		if text := strings.Join(strings.Fields(textOf(entry)), " "); strings.Contains(text, "_") {
+			t.Errorf("the %s entry reads %q, which shows a raw key", action, text)
+		}
+	}
+	for _, want := range []store.ChangeAction{store.ChangeCreate, store.ChangeUpdate, store.ChangeModerators, store.ChangeRecordingRoles} {
+		if !slices.Contains(actions, string(want)) {
+			t.Errorf("the page shows entries for %v, want one for %s", actions, want)
+		}
+	}
+}

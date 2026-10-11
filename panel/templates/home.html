@@ -1,6 +1,7 @@
 {{define "content"}}
 <main class="body" data-page="{{.Page}}">
   <h1 class="title">Hubs</h1>
+  <p class="desc">Joining a hub moves a member into a new spawned channel. This page also sets the moderator roles and the recording roles.</p>
   {{if .Hubs.Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Channel and role details on this page may be out of date.</div>{{end}}
   {{if .Hubs.Remove}}{{template "remove-preview" .Hubs}}{{else}}{{with .Hubs.RefusalFor "remove"}}<div class="note" data-error="{{.DataError}}">{{.Message}}</div>{{end}}{{end}}
   {{template "moderators" .}}
@@ -148,17 +149,17 @@
     <details class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}"{{if eq $i 0}} open{{end}}>
       <summary class="change-head">
         <span class="change-who" data-field="username">{{.Username}}</span>
-        <span class="tag" data-field="action">{{.Action}}</span>
+        <span class="tag" data-field="action">{{.Label}}</span>
         <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
       </summary>
       {{if .Fields}}
       <dl class="change-fields">
-        {{range .Fields}}<div data-change="{{.Field}}"><dt>{{.Field}}</dt><dd><span data-field="before">{{.Before}}</span> <span class="arrow">&rarr;</span> <span data-field="after">{{.After}}</span></dd></div>{{end}}
+        {{range .Fields}}<div data-change="{{.Field}}"><dt>{{.Label}}</dt><dd><span data-field="before">{{.Before}}</span> <span class="arrow">&rarr;</span> <span data-field="after">{{.After}}</span></dd></div>{{end}}
       </dl>
       {{else}}<div class="off">No field changed.</div>{{end}}
     </details>
     {{else}}
-    <div class="block-row">No saves recorded yet.</div>
+    {{template "no-changes"}}
     {{end}}
 {{end}}
 

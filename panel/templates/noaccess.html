@@ -3,7 +3,7 @@
   <h1 class="title">{{.Title}}</h1>
   {{if .Recordings.Deleted}}{{template "deleted-note"}}{{end}}
   <div class="block narrow">
-    <div class="block-row"><p data-field="no-access">{{if .Nav.Any}}Your current roles don't allow this. Nothing changed.{{else}}Your current roles grant you no access.{{end}}</p></div>
+    <div class="block-row"><p data-field="no-access">{{if .Nav.Any}}Your forum groups don't allow this. Nothing changed.{{else}}You have no recordings to download, and your forum groups don't open any other page.{{end}}</p></div>
   </div>
 </main>
 {{end}}
