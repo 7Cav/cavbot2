@@ -293,3 +293,70 @@ func TestRecordingsPageListsTheStartersOwnRecordingsOnly(t *testing.T) {
 		t.Errorf("A's page lists B's recording %d", recB)
 	}
 }
+
+// viewAllHref is the address the Recordings page's switch to every
+// recording leads to, and fails the test when the page carries none.
+func viewAllHref(t *testing.T, doc *html.Node) string {
+	t.Helper()
+	link := findElement(doc, "a", "data-field", "view-all")
+	if link == nil {
+		t.Fatal("the Recordings page has no switch to every recording")
+	}
+	href, _ := attrValue(link, "href")
+	return href
+}
+
+// A panel admin sees their own recordings by default. The switch the page
+// carries shows every recording, each with its starter.
+func TestRecordingsPageSwitchShowsAPanelAdminEveryRecordingWithItsStarter(t *testing.T) {
+	w := newTestWorld(t)
+	w.milpacs.set(testUsername, "discord-admin")
+	b := w.addStarter(5002, "Baker.B", "discord-b")
+	own := w.record(t, "discord-admin")
+	other := w.record(t, b.discordID)
+	signIn(t, w.forum, w.b)
+
+	doc := parseHTML(t, w.b.get(recordingsPath))
+
+	if got := slices.Sorted(maps.Keys(listedRecordings(t, doc))); !slices.Equal(got, []int64{own}) {
+		t.Errorf("the admin's default view lists recordings %v, want their own %d alone", got, own)
+	}
+	all := listedRecordings(t, parseHTML(t, w.b.get(viewAllHref(t, doc))))
+	for id, starterID := range map[int64]string{own: "discord-admin", other: b.discordID} {
+		row, ok := all[id]
+		if !ok {
+			t.Errorf("the all view doesn't list recording %d", id)
+			continue
+		}
+		if got := valuesOf(row, "data-starter"); !slices.Equal(got, []string{starterID}) {
+			t.Errorf("recording %d's starter in the all view = %v, want %s", id, got, starterID)
+		}
+	}
+}
+
+// The switch's address, opened by a starter who isn't a panel admin, shows
+// them the Recordings page with their own recordings and nobody else's.
+func TestRecordingsAllViewOpenedByAStarterListsTheirOwnOnly(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	b := w.addStarter(5002, "Baker.B", "discord-b")
+	recA := w.record(t, a.discordID)
+	recB := w.record(t, b.discordID)
+	signIn(t, w.forum, w.b)
+	href := viewAllHref(t, parseHTML(t, w.b.get(recordingsPath)))
+	starterA := newBrowser(t, w.p)
+	signInAs(t, w.forum, starterA, a.account)
+
+	doc := parseHTML(t, starterA.get(href))
+
+	if got := pageOf(t, doc); got != pageRecordings {
+		t.Fatalf("A opening the all view landed on page %q, want %s", got, pageRecordings)
+	}
+	listed := listedRecordings(t, doc)
+	if _, ok := listed[recA]; !ok {
+		t.Errorf("A's all view lists recordings %v, want A's %d among them", slices.Sorted(maps.Keys(listed)), recA)
+	}
+	if _, ok := listed[recB]; ok {
+		t.Errorf("A's all view lists B's recording %d", recB)
+	}
+}

@@ -42,10 +42,23 @@ func (p *Panel) discordIDOf(ctx context.Context, username string) string {
 	return profile.DiscordID
 }
 
+// The Recordings page's switch: its query parameter, and the value that
+// lists every recording.
+const (
+	paramView = "view"
+	viewAll   = "all"
+)
+
 // recordingsView is the Recordings page's data: the recordings it lists,
 // the newest first.
 type recordingsView struct {
 	Recordings []recordingItem
+	// Switch is set for a panel admin, whose page switches between their
+	// own recordings and every recording.
+	Switch bool
+	// All is set when the page lists every recording, each with its
+	// starter.
+	All bool
 }
 
 // recordingItem is one recording as the page shows it.
@@ -60,14 +73,27 @@ type recordingItem struct {
 	// Running is set while the recording runs.
 	Running bool
 	Mix     store.MixState
+	// StarterID is the starter's Discord ID, and Starter their display
+	// name, for the list of every recording.
+	StarterID string
+	Starter   string
 }
 
 // recordingsPage is GET /recordings: the recordings the user started. A
-// user who started none and isn't a panel admin gets the no-access page.
+// user who started none and isn't a panel admin gets the no-access page. A
+// panel admin's switch lists every recording instead, with its starter;
+// the switch's address shows anyone else their own.
 func (p *Panel) recordingsPage(w http.ResponseWriter, r *http.Request, sess session) {
 	ctx, cancel := panelClock.WithTimeout(r.Context(), hubPageBudget)
 	defer cancel()
-	recs, err := p.ownRecordings(ctx, sess)
+	all := sess.access.panelAdmin && r.URL.Query().Get(paramView) == viewAll
+	var recs []store.Recording
+	var err error
+	if all {
+		recs, err = p.recordings.All(ctx)
+	} else {
+		recs, err = p.ownRecordings(ctx, sess)
+	}
 	if errors.Is(err, context.Canceled) {
 		utils.Info("Panel page abandoned", "step", "recordings page", "username", sess.username, "forum_user_id", sess.userID)
 		return
@@ -85,7 +111,14 @@ func (p *Panel) recordingsPage(w http.ResponseWriter, r *http.Request, sess sess
 	data := sess.page("Recordings")
 	data.Page = pageRecordings
 	data.Nav.Recordings = true
-	data.Recordings = recordingsView{Recordings: recordingItems(recs)}
+	view := recordingsView{Recordings: recordingItems(recs), Switch: sess.access.panelAdmin, All: all}
+	if all {
+		members := p.hubs.deps.Manager.MemberList(p.hubs.deps.GuildID)
+		for i := range view.Recordings {
+			view.Recordings[i].Starter = members.DisplayName(view.Recordings[i].StarterID)
+		}
+	}
+	data.Recordings = view
 	p.render(w, http.StatusOK, "recordings", data)
 }
 
@@ -103,7 +136,7 @@ func recordingItems(recs []store.Recording) []recordingItem {
 	out := make([]recordingItem, 0, len(recs))
 	for _, rec := range recs {
 		item := recordingItem{ID: rec.ID, Title: rec.Title, Channel: rec.ChannelName, StartedAt: rec.StartedAt,
-			Running: rec.StoppedAt.IsZero(), Mix: rec.Mix}
+			Running: rec.StoppedAt.IsZero(), Mix: rec.Mix, StarterID: rec.StarterID}
 		if !item.Running {
 			item.Length = recordingLength(rec.StoppedAt.Sub(rec.StartedAt))
 		}
