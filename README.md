@@ -206,7 +206,11 @@ by then, and a stop still shuts the bot down cleanly.
 `7cav/cavbot2:<tag>`, then deploys that tag to the host over SSH. GitHub
 records the result as a deployment in the `production` environment. A
 prerelease pushes and stops. To redeploy or roll back, run the workflow by hand
-with a tag Docker Hub already holds. After a deploy succeeds, the workflow
+with a tag Docker Hub already holds. Before it touches the host, a deploy waits
+while a recording is running, polling the panel's `/recording-status`, which
+says only whether one is. It fails after five and a half hours of waiting. To
+deploy past a recording, cancel the waiting run and run the workflow by hand
+with the same tag and **force** checked. After a deploy succeeds, the workflow
 records it in Sentry as the release `cavbot2@<tag>` with the commits since the
 previous release, so a `Fixes CAVBOT2-N` line in a commit resolves that Sentry
 issue once its release deploys. The bot sends the same name with its events;
