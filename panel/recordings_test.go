@@ -485,3 +485,31 @@ func TestRecordingIsServedToItsStarterAndPanelAdminsOnly(t *testing.T) {
 		})
 	}
 }
+
+// A starter whose milpac lookup fails at sign-in, or finds no milpac, still
+// signs in. Their Recordings page is the no-access page, not the error
+// page, and doesn't list the recording they started.
+func TestRecordingsPageAfterAFailedMilpacLookupIsTheNoAccessPage(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusNotFound} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			w := newTestWorld(t)
+			x := w.addStarter(5003, "Xray.X", "discord-x")
+			rec := w.record(t, x.discordID)
+			w.milpacs.fail("Xray.X", status)
+
+			res := signInAs(t, w.forum, w.b, x.account)
+
+			assertRedirect(t, res, "/")
+			doc := parseHTML(t, follow(t, w.b, res))
+			if m := findElement(doc, "main", "", ""); m != nil {
+				if failure, ok := attrValue(m, "data-failure"); ok {
+					t.Errorf("X got the error page, data-failure=%q, want the no-access page", failure)
+				}
+			}
+			assertNoAccessPage(t, doc)
+			if _, ok := listedRecordings(t, doc)[rec]; ok {
+				t.Errorf("X's page lists their recording %d, which the panel couldn't know was theirs", rec)
+			}
+		})
+	}
+}
