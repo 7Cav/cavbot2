@@ -146,6 +146,9 @@ type RecordingRuntime struct {
 	// starts with. Empty when the panel is off, and then a stop gives no
 	// link.
 	panelURL string
+	// builtAt is when the runtime was built. A recording that started
+	// before it is one the last process left running.
+	builtAt time.Time
 
 	mu sync.Mutex
 	// running maps each busy recorder's user ID to its recording.
@@ -158,8 +161,6 @@ type activeRecording struct {
 	row    store.Recording
 	conn   voice.Conn
 	tracks *recordingTracks
-	// noticeID is the recording notice's message ID.
-	noticeID string
 	// cancelCap cancels the stop at the cap, and cancelDiskCheck the next
 	// disk check. Both are set before the recording is running, so a stop
 	// always finds them. A disk check sets cancelDiskCheck again under the
@@ -203,9 +204,11 @@ func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guild
 		recorders: rv.UserIDs(),
 		dir:       dir,
 		panelURL:  panelURL,
+		builtAt:   recordingNow(),
 		running:   make(map[string]*activeRecording),
 	}
 	recordingAfterFunc(0, r.sweepRetention)
+	recordingAfterFunc(0, r.recoverCutShort)
 	return r
 }
 
@@ -263,6 +266,7 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 		StarterID:   by.UserID,
 		Title:       title,
 		RecorderID:  recorderID,
+		NoticeID:    noticeID,
 		StartedAt:   recordingNow(),
 	}
 	storeCtx, cancelStore := context.WithTimeout(context.Background(), recordingStoreTimeout)
@@ -282,7 +286,7 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	// find it, so the stop's leave ends the receiving.
 	tracks := newRecordingTracks(r.dir, row.ID, row.StartedAt)
 	conn.Receive(func(f voice.Frame) { tracks.write(f, recordingNow()) })
-	rec := &activeRecording{row: row, conn: conn, tracks: tracks, noticeID: noticeID}
+	rec := &activeRecording{row: row, conn: conn, tracks: tracks}
 	rec.cancelCap = recordingAfterFunc(recordingCap, func() { r.autoStop(rec, store.RecordingEndCap) })
 	rec.cancelDiskCheck = recordingAfterFunc(recordingDiskCheckInterval, func() { r.checkDisk(rec) })
 	r.mu.Lock()
@@ -408,7 +412,7 @@ func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEn
 		captureError("Recording row not closed at stop", err, "recording_id", row.ID)
 	}
 	r.release(recorderID)
-	r.closeRecordingNotice(target)
+	r.closeRecordingNotice(row)
 	utils.Info("Recording stopped", "recording_id", row.ID, "channel_id", row.ChannelID,
 		"recorder", recorderID, "ended", string(end), "stopped_by", stoppedBy)
 	r.startMix(row)
@@ -481,4 +485,33 @@ func (r *RecordingRuntime) channelName(channelID string) string {
 		return ""
 	}
 	return ch.Name
+}
+
+// Shutdown closes every running recording's tracks at SIGTERM, so what was
+// captured up to now is on disk within Docker's 10 s. Each row stays open
+// and each notice as it is: the next process closes the recording as cut
+// short (recording_recovery.go). main.go calls it before anything else
+// closes.
+func (r *RecordingRuntime) Shutdown() {
+	r.mu.Lock()
+	var taken []*activeRecording
+	for _, rec := range r.running {
+		if rec.live() {
+			rec.stopping = true
+			taken = append(taken, rec)
+		}
+	}
+	r.mu.Unlock()
+	now := recordingNow()
+	for _, rec := range taken {
+		r.mu.Lock()
+		cancelDiskCheck := rec.cancelDiskCheck
+		r.mu.Unlock()
+		rec.cancelCap()
+		cancelDiskCheck()
+		if err := rec.tracks.close(now); err != nil {
+			captureError("Tracks not closed at shutdown", err, "recording_id", rec.row.ID)
+		}
+	}
+	utils.Info("Recordings closed for shutdown", "count", len(taken))
 }

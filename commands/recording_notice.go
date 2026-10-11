@@ -95,25 +95,33 @@ func (r *RecordingRuntime) recordingLink(id int64) string {
 	return r.panelURL + RecordingPath(id)
 }
 
+// recordingNoticeCutShortLine is the notice's content once the recording
+// has been cut short by a shutdown or a crash.
+const recordingNoticeCutShortLine = "⏹️ This recording was cut short when the bot restarted. What it captured up to then is kept."
+
 // recordingNoticeStopped is the notice's content once the recording has
-// stopped, with the link to it in the panel when there is one. The angle
-// brackets keep Discord from previewing the panel's sign-in page.
-func recordingNoticeStopped(link string) string {
-	if link == "" {
-		return recordingNoticeStoppedLine
+// ended as end says, with the link to it in the panel when there is one.
+// The angle brackets keep Discord from previewing the panel's sign-in page.
+func recordingNoticeStopped(end store.RecordingEnd, link string) string {
+	line := recordingNoticeStoppedLine
+	if end == store.RecordingEndCutShort {
+		line = recordingNoticeCutShortLine
 	}
-	return recordingNoticeStoppedLine + "\nThe starter and panel admins can get the recording in the panel: <" + link + ">"
+	if link == "" {
+		return line
+	}
+	return line + "\nThe starter and panel admins can get the recording in the panel: <" + link + ">"
 }
 
-// closeRecordingNotice edits a stopped recording's notice to say it stopped,
-// with the link to the recording in the panel, and removes its button. A
-// failed edit is a WARN line and never holds up the stop, which has already
-// happened.
-func (r *RecordingRuntime) closeRecordingNotice(rec *activeRecording) {
-	content := recordingNoticeStopped(r.recordingLink(rec.row.ID))
+// closeRecordingNotice edits an ended recording's notice to say it stopped,
+// or was cut short, with the link to the recording in the panel, and
+// removes its button. A failed edit is a WARN line and never holds up the
+// stop, which has already happened.
+func (r *RecordingRuntime) closeRecordingNotice(rec store.Recording) {
+	content := recordingNoticeStopped(rec.Ended, r.recordingLink(rec.ID))
 	_, err := r.mgr.ChannelMessageEditComplex(&discordgo.MessageEdit{
-		ID:              rec.noticeID,
-		Channel:         rec.row.ChannelID,
+		ID:              rec.NoticeID,
+		Channel:         rec.ChannelID,
 		Content:         &content,
 		Components:      &[]discordgo.MessageComponent{},
 		AllowedMentions: noMentions(),
@@ -121,10 +129,10 @@ func (r *RecordingRuntime) closeRecordingNotice(rec *activeRecording) {
 	if err == nil {
 		return
 	}
-	utils.Warn("Recording notice not edited at stop", "recording_id", rec.row.ID,
-		"channel_id", rec.row.ChannelID, "message_id", rec.noticeID, "error", err)
+	utils.Warn("Recording notice not edited at stop", "recording_id", rec.ID,
+		"channel_id", rec.ChannelID, "message_id", rec.NoticeID, "error", err)
 	if noticeGone(err) {
-		r.sendRecordingLink(rec.row)
+		r.sendRecordingLink(rec)
 	}
 }
 
@@ -139,7 +147,7 @@ func noticeGone(err error) bool {
 	return restErr.Message.Code == discordgo.ErrCodeUnknownChannel || restErr.Message.Code == discordgo.ErrCodeUnknownMessage
 }
 
-// sendRecordingLink DMs a stopped recording's starter the link to it in the
+// sendRecordingLink DMs an ended recording's starter the link to it in the
 // panel, for a recording whose notice is gone. With the panel off there is
 // no link, so no DM. A DM that fails, such as to a starter whose DMs are
 // closed, is a WARN line: the recording is in the panel either way.
@@ -151,7 +159,7 @@ func (r *RecordingRuntime) sendRecordingLink(rec store.Recording) {
 	dm, err := r.mgr.UserChannelCreate(rec.StarterID)
 	if err == nil {
 		_, err = r.mgr.ChannelMessageSendComplex(dm.ID, &discordgo.MessageSend{
-			Content:         recordingLinkDM(rec.ChannelName, link),
+			Content:         recordingLinkDM(rec.Ended, rec.ChannelName, link),
 			AllowedMentions: noMentions(),
 		})
 	}
@@ -161,8 +169,12 @@ func (r *RecordingRuntime) sendRecordingLink(rec store.Recording) {
 }
 
 // recordingLinkDM is the DM a starter gets when their recording's notice is
-// gone by its stop. The channel name is the one the recording started in.
-func recordingLinkDM(channelName, link string) string {
+// gone by its stop, or by the recovery of a recording cut short. The
+// channel name is the one the recording started in.
+func recordingLinkDM(end store.RecordingEnd, channelName, link string) string {
+	if end == store.RecordingEndCutShort {
+		return fmt.Sprintf("⏹️ Your recording of %s was cut short when the bot restarted. Get what it captured in the panel: <%s>", orNone(channelName), link)
+	}
 	return fmt.Sprintf("⏹️ Your recording of %s has stopped. Get it in the panel: <%s>", orNone(channelName), link)
 }
 
