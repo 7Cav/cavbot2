@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/7cav/cavbot2/store"
@@ -20,6 +21,15 @@ import (
 // them. It lists them from the store and streams their files from the
 // recordings directory (recording_files.go), so it works whether recording
 // is on or off.
+
+// RecordingRetention is how long a recording is kept after it stops, as
+// its notice promises.
+const RecordingRetention = 30 * 24 * time.Hour
+
+// RecordingDeletesAt is when a stopped recording is deleted.
+func RecordingDeletesAt(rec store.Recording) time.Time {
+	return rec.StoppedAt.Add(RecordingRetention)
+}
 
 // RecordingPath is the panel's path of a recording's page, which the link
 // a stop gives leads to.

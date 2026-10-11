@@ -543,3 +543,41 @@ func TestRecordingNoticeLinkOpensTheRecordingForItsStarter(t *testing.T) {
 		t.Errorf("the link %s doesn't show recording %d", link, rec)
 	}
 }
+
+// parseDatetime reads a <time> element's datetime as an instant, in either
+// form HTML gives a date: a full RFC 3339 time or a date alone.
+func parseDatetime(t *testing.T, el *html.Node) time.Time {
+	t.Helper()
+	raw, _ := attrValue(el, "datetime")
+	for _, layout := range []string{time.RFC3339, time.DateOnly} {
+		if at, err := time.Parse(layout, raw); err == nil {
+			return at
+		}
+	}
+	t.Fatalf("datetime=%q is neither an RFC 3339 time nor a date", raw)
+	return time.Time{}
+}
+
+// The page shows a stopped recording's deletion date: 30 days after it
+// stopped, as the recording notice promises.
+func TestRecordingsPageShowsTheDeletionDateThirtyDaysAfterTheStop(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	rec := w.record(t, a.discordID)
+	stopped := newestRecordingOf(t, w.store, a.discordID).StoppedAt
+	signInAs(t, w.forum, w.b, a.account)
+
+	row, ok := listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))[rec]
+
+	if !ok {
+		t.Fatalf("the page doesn't list recording %d", rec)
+	}
+	el := findElement(row, "time", "data-field", "deletes")
+	if el == nil {
+		t.Fatalf("recording %d's block shows no deletion date", rec)
+	}
+	want := stopped.Add(30 * 24 * time.Hour).UTC().Format(time.DateOnly)
+	if got := parseDatetime(t, el).UTC().Format(time.DateOnly); got != want {
+		t.Errorf("recording %d is deleted on %s, want %s, 30 days after its stop at %v", rec, got, want, stopped)
+	}
+}

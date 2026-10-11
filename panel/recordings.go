@@ -77,8 +77,10 @@ type recordingItem struct {
 	Channel   string
 	StartedAt time.Time
 	// Length is how long it ran, empty while it runs.
-	Length   string
-	Speakers []string
+	Length string
+	// DeletesAt is when it is deleted, zero while it runs.
+	DeletesAt time.Time
+	Speakers  []string
 	// Running is set while the recording runs.
 	Running bool
 	Mix     store.MixState
@@ -266,6 +268,7 @@ func recordingItems(recs []store.Recording) []recordingItem {
 			Running: rec.StoppedAt.IsZero(), Mix: rec.Mix, StarterID: rec.StarterID, MixURL: page + "/mix", ZipURL: page + "/zip"}
 		if !item.Running {
 			item.Length = recordingLength(rec.StoppedAt.Sub(rec.StartedAt))
+			item.DeletesAt = commands.RecordingDeletesAt(rec)
 		}
 		for _, sp := range rec.Speakers {
 			item.Speakers = append(item.Speakers, sp.DisplayName)

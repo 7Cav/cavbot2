@@ -16,6 +16,7 @@
       <dt>Length</dt><dd data-field="length">{{if .Running}}Still recording{{else}}{{.Length}}{{end}}</dd>
       <dt>Speakers</dt><dd data-field="speakers">{{range $i, $s := .Speakers}}{{if $i}}, {{end}}{{$s}}{{else}}<span class="off">{{if .Running}}listed at the stop{{else}}nobody spoke{{end}}</span>{{end}}</dd>
       <dt>Mix</dt><dd data-field="mix">{{template "mix-state" .}}</dd>
+      <dt>Deleted on</dt><dd>{{if .Running}}30 days after it stops{{else}}<time data-field="deletes" datetime="{{.DeletesAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.DeletesAt.UTC.Format "2 Jan 2006"}}</time>{{end}}</dd>
     </dl>
     {{if not .Running}}<div class="submit-row rec-downloads">
       {{if eq .Mix "ready"}}<a class="btn btn--cta" href="{{.MixURL}}" data-field="mix-download">Download the mix</a>{{end}}
