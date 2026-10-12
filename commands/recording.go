@@ -78,8 +78,8 @@ var (
 	// errRecordTitleTooLong: the title is over recordTitleLimit characters,
 	// which would push the recording notice past Discord's message limit.
 	errRecordTitleTooLong = errors.New("recording: title is too long")
-	// errAlreadyRecorded: a recording of the invoker's channel runs, or is
-	// starting. A channel has one recording at a time.
+	// errAlreadyRecorded: a recording of the invoker's channel is starting,
+	// running or stopping. A channel has one recording at a time.
 	errAlreadyRecorded = errors.New("recording: channel is already being recorded")
 )
 
@@ -463,8 +463,9 @@ func speakersOf(members MemberListSnapshot, heard []store.Speaker) []store.Speak
 // reserveRecorder marks the first free recorder, in configured order, busy
 // with a recording of the channel whose join is about to go out, and
 // returns it. A channel already being recorded is refused before any
-// recorder is looked at. A recording counts from its reservation on, its
-// join in flight or not, so two starts in one channel can't both pass.
+// recorder is looked at. A recording counts from its reservation until its
+// recorder is released at the end of its stop, its join in flight or not, so
+// two starts in one channel can't both pass.
 func (r *RecordingRuntime) reserveRecorder(channelID string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

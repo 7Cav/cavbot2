@@ -47,8 +47,8 @@ var (
 
 // fakeRecorderVoice stands in for the voice adapter: the recorders
 // configured, and every voice connection they joined. joinErr, when set, is
-// what every join returns instead. hold, when set, is the next join's, which
-// holdNextJoin describes.
+// what every join returns instead. hold, when set, holds the next join
+// (holdNextJoin).
 type fakeRecorderVoice struct {
 	mu        sync.Mutex
 	recorders []string
@@ -98,15 +98,13 @@ func (v *fakeRecorderVoice) Join(_ context.Context, recorderID, guildID, channel
 
 // holdNextJoin keeps the next join from returning until release is called.
 // That join counts, and its recorder is in the channel, from the moment it
-// goes out, which closes joined. Later joins return at once. release may be
-// called more than once.
+// goes out, which closes joined. Later joins return at once.
 func (v *fakeRecorderVoice) holdNextJoin() (joined <-chan struct{}, release func()) {
 	hold := &joinHold{joined: make(chan struct{}), release: make(chan struct{})}
 	v.mu.Lock()
 	v.hold = hold
 	v.mu.Unlock()
-	var once sync.Once
-	return hold.joined, func() { once.Do(func() { close(hold.release) }) }
+	return hold.joined, func() { close(hold.release) }
 }
 
 func (c *fakeVoiceConn) Leave(context.Context) {
@@ -303,8 +301,9 @@ func TestRecordStartJoinsARecorderAndWritesItsRow(t *testing.T) {
 }
 
 // recordRefusal is one /record start refusal: a scene with the recorders
-// given, a setup that leaves exactly one precondition unmet for the caller,
-// and what the reply must and must not carry.
+// given, a setup that leaves one precondition unmet for the caller, or two
+// where the row pins which refusal wins, and what the reply must and must
+// not carry.
 type recordRefusal struct {
 	name      string
 	recorders []string
@@ -405,9 +404,10 @@ var recordRefusals = []recordRefusal{
 
 // A start is refused when any one precondition fails: no recorder joins,
 // no row is written, and the reply is an ephemeral ❌ carrying that
-// precondition's refusal. Each fixture meets every other precondition. No
-// wording is asserted beyond the refusal constants that tell the cases
-// apart, and the channel the no-free-recorder refusal names.
+// precondition's refusal. Each fixture meets every other precondition,
+// except where two fail and the row's lacks pins which refusal the member
+// hears. No wording is asserted beyond the refusal constants that tell the
+// cases apart, and the channel the no-free-recorder refusal names.
 func TestRecordStartRefusals(t *testing.T) {
 	for _, tc := range recordRefusals {
 		t.Run(tc.name, func(t *testing.T) {
