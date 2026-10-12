@@ -169,8 +169,8 @@ func TestRecordingStartsAndStops(t *testing.T) {
 	})
 }
 
-// A stop records who spoke, and the recording reads back with them and its
-// mix processing.
+// A stop records who spoke, and whose track was lost, and the recording
+// reads back with them and its mix processing.
 func TestRecordingStopKeepsItsSpeakersAndLeavesTheMixProcessing(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
@@ -178,7 +178,7 @@ func TestRecordingStopKeepsItsSpeakersAndLeavesTheMixProcessing(t *testing.T) {
 		if err != nil {
 			t.Fatalf("StartRecording: %v", err)
 		}
-		speakers := []Speaker{{ID: "user-a", DisplayName: "SGT Doe.J"}, {ID: "user-b", DisplayName: "applicant"}}
+		speakers := []Speaker{{ID: "user-a", DisplayName: "SGT Doe.J"}, {ID: "user-b", DisplayName: "applicant", TrackLost: true}}
 
 		if err := s.StopRecording(ctx, started.ID, started.StartedAt.Add(time.Hour), RecordingEndStopped, speakers); err != nil {
 			t.Fatalf("StopRecording: %v", err)

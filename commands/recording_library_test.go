@@ -5,9 +5,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
+	"maps"
 	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -23,8 +28,8 @@ import (
 // goroutine of its own, which the fake clock runs at its next advance.
 
 // fakeMixer stands in for ffmpeg. It writes out to the mix's path, or fails
-// with err when a test sets one. Handed no tracks, it fails as ffmpeg does.
-// calls counts every mix it was asked for.
+// with err when a test sets one. Handed no tracks, or a track that isn't on
+// disk, it fails as ffmpeg does. calls counts every mix it was asked for.
 type fakeMixer struct {
 	mu    sync.Mutex
 	out   []byte
@@ -38,6 +43,11 @@ func (m *fakeMixer) Mix(_ context.Context, tracks []string, out string) error {
 	m.calls++
 	if len(tracks) == 0 {
 		return errors.New("ffmpeg: amix needs at least one input")
+	}
+	for _, track := range tracks {
+		if _, err := os.Stat(track); err != nil {
+			return fmt.Errorf("ffmpeg: %s: %w", track, err)
+		}
 	}
 	if m.err != nil {
 		return m.err
@@ -364,5 +374,299 @@ func TestRecordingZipEntryNamesStayInTheirFolder(t *testing.T) {
 	}
 	if name := holding[0]; strings.Contains(name, "/") || !strings.Contains(name, "doej") {
 		t.Errorf("the track's zip entry is %q, want a name with no / that still carries doej", name)
+	}
+}
+
+// removeTrack removes the track holding marker from the recordings
+// directory, as someone clearing files by hand would.
+func (sc *recordScene) removeTrack(t *testing.T, marker string) {
+	t.Helper()
+	if err := os.Remove(trackWith(t, sc.tracks(t), marker).path); err != nil {
+		t.Fatalf("removing the track holding %q: %v", marker, err)
+	}
+}
+
+// recordTwoAndRemoveOne records speakers A and B, lets the mix finish, and
+// removes A's track from the disk.
+func (sc *recordScene) recordTwoAndRemoveOne(t *testing.T) store.Recording {
+	t.Helper()
+	sc.recordSpeakers(t, speakerA, speakerB)
+	sc.clock.advance(0)
+	sc.removeTrack(t, speakerA)
+	return sc.onlyRecording(t)
+}
+
+// A speaker's track gone from the disk leaves the zip whole (#623): it
+// holds the other speaker's track and the info file, and writing it fails
+// nothing.
+func TestRecordingZipSkipsATrackNotOnDisk(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	rec := sc.recordTwoAndRemoveOne(t)
+
+	entries := sc.zipEntries(t, rec)
+
+	if got := entriesHolding(t, entries, speakerB); len(got) != 1 {
+		t.Errorf("zip entries holding the kept track = %v, want one", got)
+	}
+	if got := entriesHolding(t, entries, speakerA); len(got) != 0 {
+		t.Errorf("zip entries holding the removed track = %v, want none", got)
+	}
+	if _, ok := entries[infoFileName]; !ok {
+		t.Errorf("the zip holds no %s", infoFileName)
+	}
+}
+
+// A track gone from the disk that the recording doesn't count as lost, such
+// as one removed by hand, is one WARN line naming the recording and the
+// speaker when the zip skips it, and nothing reaches Sentry.
+func TestRecordingZipWarnsOfATrackGoneThatWasNotLost(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	rec := sc.recordTwoAndRemoveOne(t)
+	logs := captureLogs(t)
+	captures := countCaptures(t)
+
+	sc.zipEntries(t, rec)
+
+	fields := map[string]string{"recording_id": strconv.FormatInt(rec.ID, 10), "user_id": speakerA}
+	if warns := logRecordsWith(t, logs, "WARN", fields); len(warns) != 1 {
+		t.Errorf("WARN lines naming the recording and the removed track's speaker = %v, want one", warns)
+	}
+	if *captures != 0 {
+		t.Errorf("the zip sent %d events to Sentry, want none", *captures)
+	}
+}
+
+// removeFiles removes every file and directory under the recordings
+// directory whose name is name, or every one when name is empty.
+func (sc *recordScene) removeFiles(t *testing.T, name string) {
+	t.Helper()
+	var paths []string
+	err := filepath.WalkDir(sc.dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || path == sc.dir {
+			return err
+		}
+		if name == "" || d.Name() == name {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("reading the recordings directory: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Fatalf("nothing named %q under the recordings directory", name)
+	}
+	for _, path := range paths {
+		if err := os.RemoveAll(path); err != nil {
+			t.Fatalf("removing %s: %v", path, err)
+		}
+	}
+}
+
+// An info file gone from the disk is rendered from the recording's row for
+// the zip (#623): the zip holds every track, and an info file that names
+// the recording's title, each speaker, and the starter by Discord ID.
+func TestRecordingZipRendersAnInfoFileNotOnDisk(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	names := map[string]string{speakerA: "doej", speakerB: "smitha"}
+	sc.nameSpeakers(names)
+	const title = "S2 interview"
+	sc.fake.setVoice(recStarter.id, recordChannel)
+	recordAs(t, sc.rt, recStarter, "start", stringOption("title", title))
+	sc.clock.advance(time.Second)
+	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, speakerA))
+	sc.hear(t, recordChannel, frame(speakerB, 22, 5000, speakerB))
+	recordAs(t, sc.rt, recStarter, "stop")
+	sc.clock.advance(0)
+	sc.removeFiles(t, infoFileName)
+
+	entries := sc.zipEntries(t, sc.onlyRecording(t))
+
+	for _, id := range []string{speakerA, speakerB} {
+		if got := entriesHolding(t, entries, id); len(got) != 1 {
+			t.Errorf("zip entries holding %s's track = %v, want one", id, got)
+		}
+	}
+	info, ok := entries[infoFileName]
+	if !ok {
+		t.Fatalf("the zip holds no %s", infoFileName)
+	}
+	for _, want := range []string{title, names[speakerA], names[speakerB], recStarter.id} {
+		if !bytes.Contains(info, []byte(want)) {
+			t.Errorf("the rendered info file doesn't name %q:\n%s", want, info)
+		}
+	}
+}
+
+// A recording with none of its files left on disk still downloads: the zip
+// holds the info file rendered from its row, and nothing else.
+func TestRecordingZipOfARecordingWithNoFilesHoldsOnlyTheInfoFile(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.recordSpeakers(t, speakerA, speakerB)
+	sc.clock.advance(0)
+	sc.removeFiles(t, "")
+
+	entries := sc.zipEntries(t, sc.onlyRecording(t))
+
+	if _, ok := entries[infoFileName]; len(entries) != 1 || !ok {
+		names := slices.Sorted(maps.Keys(entries))
+		t.Errorf("the zip holds %v, want %s alone", names, infoFileName)
+	}
+}
+
+// trackLostMarker is what marks a lost track's speaker wherever a recording
+// names its speakers. The brief fixes it verbatim, so tests quote it.
+const trackLostMarker = "(track lost)"
+
+// failTrackCreates makes every track created from now on fail, as a full or
+// read-only disk does.
+func failTrackCreates(t *testing.T) {
+	t.Helper()
+	prev := recordingCreateTrack
+	recordingCreateTrack = func(string) (*os.File, error) { return nil, errors.New("no space left on device") }
+	t.Cleanup(func() { recordingCreateTrack = prev })
+}
+
+// recordWithALostTrack records doej (speaker A) and smitha (speaker B),
+// whose track can't be created when they first speak, and stops.
+func (sc *recordScene) recordWithALostTrack(t *testing.T) store.Recording {
+	t.Helper()
+	sc.nameSpeakers(map[string]string{speakerA: "doej", speakerB: "smitha"})
+	sc.startIn(t, recStarter, recordChannel)
+	sc.clock.advance(time.Second)
+	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, speakerA))
+	failTrackCreates(t)
+	sc.hear(t, recordChannel, frame(speakerB, 22, 5000, speakerB))
+	recordAs(t, sc.rt, recStarter, "stop")
+	return sc.onlyRecording(t)
+}
+
+// A speaker whose track couldn't be created stays a speaker after the stop,
+// with their track counted as lost. The other speaker's isn't.
+func TestRecordingStopListsASpeakerWhoseTrackFailedAsLost(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	rec := sc.recordWithALostTrack(t)
+
+	lost := map[string]bool{}
+	for _, sp := range rec.Speakers {
+		lost[sp.ID] = sp.TrackLost
+	}
+	if want := map[string]bool{speakerA: false, speakerB: true}; !maps.Equal(lost, want) {
+		t.Errorf("speakers' tracks lost = %v, want %v", lost, want)
+	}
+}
+
+// infoLine is the line of an info file that names name, failing the test
+// unless exactly one does.
+func infoLine(t *testing.T, info []byte, name string) string {
+	t.Helper()
+	var found []string
+	for line := range strings.Lines(string(info)) {
+		if strings.Contains(line, name) {
+			found = append(found, line)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("info file lines naming %s = %q, want one:\n%s", name, found, info)
+	}
+	return found[0]
+}
+
+// The info file marks the speaker whose track was lost, after their name,
+// and leaves the other speaker unmarked.
+func TestRecordingInfoFileMarksALostTrack(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	rec := sc.recordWithALostTrack(t)
+
+	info := sc.zipEntries(t, rec)[infoFileName]
+
+	lostLine := infoLine(t, info, "smitha")
+	if i := strings.Index(lostLine, trackLostMarker); i < strings.Index(lostLine, "smitha") {
+		t.Errorf("the lost track's speaker's line is %q, want %s after their name", lostLine, trackLostMarker)
+	}
+	if keptLine := infoLine(t, info, "doej"); strings.Contains(keptLine, trackLostMarker) {
+		t.Errorf("the kept track's speaker's line is %q, want no %s", keptLine, trackLostMarker)
+	}
+}
+
+// A recording with a lost track still downloads whole: the zip holds the
+// other speaker's track.
+func TestRecordingZipOfARecordingWithALostTrackHoldsTheOthers(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	rec := sc.recordWithALostTrack(t)
+
+	entries := sc.zipEntries(t, rec)
+
+	if got := entriesHolding(t, entries, speakerA); len(got) != 1 {
+		t.Errorf("zip entries holding the kept track = %v, want one", got)
+	}
+}
+
+// A lost track the zip leaves out was reported when it was lost, so the
+// zip logs no WARN line for it and sends nothing to Sentry.
+func TestRecordingZipIsQuietAboutALostTrack(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	rec := sc.recordWithALostTrack(t)
+	logs := captureLogs(t)
+	captures := countCaptures(t)
+
+	sc.zipEntries(t, rec)
+
+	if warns := logRecordsWith(t, logs, "WARN", map[string]string{"user_id": speakerB}); len(warns) != 0 {
+		t.Errorf("WARN lines naming the lost track's speaker = %v, want none", warns)
+	}
+	if *captures != 0 {
+		t.Errorf("the zip sent %d events to Sentry, want none", *captures)
+	}
+}
+
+// fillTrackWrites makes every track created from now on refuse its writes
+// with ENOSPC, as a full disk does: the file opens, but none of the audio
+// reaches it. It hands back Linux's /dev/full, and skips the test where
+// there is none.
+func fillTrackWrites(t *testing.T) {
+	t.Helper()
+	full, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)
+	if err != nil {
+		t.Skipf("no /dev/full to stand in for a full disk: %v", err)
+	}
+	_ = full.Close()
+	prev := recordingCreateTrack
+	recordingCreateTrack = func(string) (*os.File, error) { return os.OpenFile("/dev/full", os.O_WRONLY, 0) }
+	t.Cleanup(func() { recordingCreateTrack = prev })
+}
+
+// A speaker whose track's audio first meets a full disk at the stop, when
+// the stop writes it out, is listed with their track lost. The other
+// speaker isn't.
+func TestRecordingStopListsASpeakerWhoseTrackFailedAtTheStopAsLost(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.startIn(t, recStarter, recordChannel)
+	sc.clock.advance(time.Second)
+	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, speakerA))
+	fillTrackWrites(t)
+	sc.hear(t, recordChannel, frame(speakerB, 22, 5000, speakerB))
+	recordAs(t, sc.rt, recStarter, "stop")
+
+	lost := map[string]bool{}
+	for _, sp := range sc.onlyRecording(t).Speakers {
+		lost[sp.ID] = sp.TrackLost
+	}
+	if want := map[string]bool{speakerA: false, speakerB: true}; !maps.Equal(lost, want) {
+		t.Errorf("speakers' tracks lost = %v, want %v", lost, want)
+	}
+}
+
+// A track gone from the disk before the mix is built leaves the mix to the
+// tracks that are: it ends ready.
+func TestRecordingMixIsBuiltFromTheTracksOnDisk(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.recordSpeakers(t, speakerA, speakerB)
+	sc.removeTrack(t, speakerA)
+
+	sc.clock.advance(0)
+
+	if rec := sc.onlyRecording(t); rec.Mix != store.MixReady {
+		t.Errorf("mix with a track gone from the disk = %q, want %q", rec.Mix, store.MixReady)
 	}
 }

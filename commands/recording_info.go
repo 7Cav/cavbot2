@@ -11,7 +11,13 @@ import (
 // A recording's info file (spec #381, #389): a text file beside its tracks,
 // and in its zip, that documents the recording. It names the title, the
 // channel, the starter, the start and stop times in Zulu, how the recording
-// ended, and each speaker's display name and Discord ID.
+// ended, and each speaker's display name and Discord ID, marking a lost
+// track.
+
+// TrackLostMarker follows the name of a speaker whose track was lost
+// (GLOSSARY.md, Lost track), wherever a recording names its speakers: its
+// info file and the Recordings page.
+const TrackLostMarker = "(track lost)"
 
 // zuluLayout is how the info file writes a time: a UTC date, then the time
 // with the regiment's z suffix (GLOSSARY.md, Zulu).
@@ -26,14 +32,19 @@ func writeRecordingInfo(dir string, rec store.Recording, starterName string) err
 	return os.WriteFile(infoPath(dir, rec.ID), []byte(recordingInfo(rec, starterName)), 0o600)
 }
 
-// recordingInfo is the info file's text.
+// recordingInfo is the info file's text. starterName is the starter's
+// display name, or empty to name them by Discord ID alone.
 func recordingInfo(rec store.Recording, starterName string) string {
 	var b strings.Builder
 	line := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
 	line("Recording %d", rec.ID)
 	line("Title: %s", orNone(rec.Title))
 	line("Channel: %s (%s)", orNone(rec.ChannelName), rec.ChannelID)
-	line("Started by: %s (%s)", starterName, rec.StarterID)
+	if starterName == "" {
+		line("Started by: %s", rec.StarterID)
+	} else {
+		line("Started by: %s (%s)", starterName, rec.StarterID)
+	}
 	line("Started: %s", rec.StartedAt.UTC().Format(zuluLayout))
 	line("Stopped: %s", rec.StoppedAt.UTC().Format(zuluLayout))
 	line("Ended: %s", recordingEndPhrase(rec.Ended))
@@ -42,7 +53,11 @@ func recordingInfo(rec store.Recording, starterName string) string {
 		line("  (none)")
 	}
 	for _, sp := range rec.Speakers {
-		line("  %s (%s)", sp.DisplayName, sp.ID)
+		if sp.TrackLost {
+			line("  %s (%s) %s", sp.DisplayName, sp.ID, TrackLostMarker)
+		} else {
+			line("  %s (%s)", sp.DisplayName, sp.ID)
+		}
 	}
 	return b.String()
 }

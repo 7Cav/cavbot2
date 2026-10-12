@@ -150,6 +150,10 @@ type Speaker struct {
 	// DisplayName is the name they showed in the server when the recording
 	// stopped.
 	DisplayName string
+	// TrackLost is set when their track was lost (GLOSSARY.md, Lost track):
+	// the recorder couldn't keep writing it, so their audio is gone or stops
+	// early.
+	TrackLost bool
 }
 
 // MixState is how far a recording's mix (GLOSSARY.md) has got.

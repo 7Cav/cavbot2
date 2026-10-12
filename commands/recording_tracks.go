@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/7cav/cavbot2/voice"
 )
@@ -175,6 +176,10 @@ func (t *track) end(end int64) error {
 	return t.ogg.closeAt(uint64(max(end, 0)))
 }
 
+// recordingCreateTrack creates a track's file, a package var so tests can
+// make it fail.
+var recordingCreateTrack = os.Create
+
 // open creates a speaker's track, and the recording's directory with the
 // first one. A track that can't be created comes back with the error.
 func (tracks *recordingTracks) open(userID string) (*track, error) {
@@ -182,7 +187,7 @@ func (tracks *recordingTracks) open(userID string) (*track, error) {
 	if err := os.MkdirAll(recordingDir(tracks.dir, tracks.recordingID), 0o750); err != nil {
 		return t, err
 	}
-	f, err := os.Create(trackPath(tracks.dir, tracks.recordingID, userID))
+	f, err := recordingCreateTrack(trackPath(tracks.dir, tracks.recordingID, userID))
 	if err != nil {
 		return t, err
 	}
@@ -223,15 +228,22 @@ func (t *track) close(end int64) error {
 	return err
 }
 
-// speakerIDs lists the user ID of everyone the tracks heard, in order.
-func (tracks *recordingTracks) speakerIDs() []string {
+// heard lists everyone the tracks heard, in order of user ID, each with
+// whether their track was lost: it couldn't be created, or a write to it
+// failed, so their audio is gone or stops early.
+func (tracks *recordingTracks) heard() []store.Speaker {
 	tracks.mu.Lock()
 	defer tracks.mu.Unlock()
-	return slices.Sorted(maps.Keys(tracks.bySpeaker))
+	out := make([]store.Speaker, 0, len(tracks.bySpeaker))
+	for _, userID := range slices.Sorted(maps.Keys(tracks.bySpeaker)) {
+		out = append(out, store.Speaker{ID: userID, TrackLost: tracks.bySpeaker[userID].err != nil})
+	}
+	return out
 }
 
 // close ends every track at stop, the recording's end, and closes its
-// file. Frames that arrive after are dropped.
+// file. A track whose end can't be written counts as lost. Frames that
+// arrive after are dropped.
 func (tracks *recordingTracks) close(stop time.Time) error {
 	tracks.mu.Lock()
 	defer tracks.mu.Unlock()
@@ -240,8 +252,12 @@ func (tracks *recordingTracks) close(stop time.Time) error {
 	end := tracks.samplesAt(stop)
 	var errs []error
 	for _, t := range tracks.bySpeaker {
-		if t.err == nil {
-			errs = append(errs, t.close(end))
+		if t.err != nil {
+			continue
+		}
+		if err := t.close(end); err != nil {
+			t.err = err
+			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)

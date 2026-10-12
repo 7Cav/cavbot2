@@ -404,7 +404,7 @@ func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEn
 	}
 	row := target.row
 	members := r.mgr.MemberList(r.guildID)
-	row.StoppedAt, row.Ended, row.Speakers = stoppedAt, end, speakersOf(members, target.tracks.speakerIDs())
+	row.StoppedAt, row.Ended, row.Speakers = stoppedAt, end, speakersOf(members, target.tracks.heard())
 	if err := writeRecordingInfo(r.dir, row, members.DisplayName(row.StarterID)); err != nil {
 		captureError("Info file not written", err, "recording_id", row.ID)
 	}
@@ -432,10 +432,11 @@ func (r *RecordingRuntime) cancelTimers(rec *activeRecording) {
 
 // speakersOf names everyone a recording heard by their display name in the
 // member list, in the order of their names.
-func speakersOf(members MemberListSnapshot, userIDs []string) []store.Speaker {
-	out := make([]store.Speaker, 0, len(userIDs))
-	for _, id := range userIDs {
-		out = append(out, store.Speaker{ID: id, DisplayName: members.DisplayName(id)})
+func speakersOf(members MemberListSnapshot, heard []store.Speaker) []store.Speaker {
+	out := make([]store.Speaker, 0, len(heard))
+	for _, sp := range heard {
+		sp.DisplayName = members.DisplayName(sp.ID)
+		out = append(out, sp)
 	}
 	slices.SortFunc(out, func(a, b store.Speaker) int {
 		return cmp.Or(strings.Compare(strings.ToLower(a.DisplayName), strings.ToLower(b.DisplayName)), strings.Compare(a.ID, b.ID))
