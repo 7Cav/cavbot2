@@ -90,7 +90,9 @@ func (r *RecordingRuntime) setMix(id int64, state store.MixState, mixErr error) 
 // mixed by amix, as long as the longest, encoded to Ogg Opus. Each track
 // keeps its level, since amix's default divides every voice by the number
 // of tracks. The mix is written under a temporary name and renamed into
-// place, so a mix cut short never sits at its path.
+// place, so a mix cut short never sits at its path. A mix killed with the
+// process leaves its temporary file behind, which the next process's mix
+// of the recording overwrites, since ffmpeg runs with -y.
 type FFmpegMixer struct{}
 
 // ffmpegErrTail is the most of ffmpeg's error output a failure keeps.

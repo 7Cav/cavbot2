@@ -197,7 +197,7 @@ func (rec *activeRecording) mayStop(userID string, holdsRole, inChannel bool) bo
 // starts with panelURL, the panel's base URL, empty when the panel is off.
 // The retention sweep (recording_retention.go) starts now, with or without
 // a recorder, and so does the recovery of every recording the last process
-// left running (recording_recovery.go).
+// left running, or stopped with its mix unbuilt (recording_recovery.go).
 func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guildID string, rv RecorderVoice, mixer Mixer, dir, panelURL string) *RecordingRuntime {
 	r := &RecordingRuntime{
 		mgr:       mgr,

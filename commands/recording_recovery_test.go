@@ -3,6 +3,7 @@ package commands
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -210,6 +211,80 @@ func TestRecordingCutShortIsMixed(t *testing.T) {
 
 	if rec := sc.onlyRecording(t); rec.Mix != store.MixReady {
 		t.Errorf("mix = %q after recovery, want %q", rec.Mix, store.MixReady)
+	}
+}
+
+// A mix the last process was building when it went down is built by the
+// next process (#622): the recording stopped, and its mix never ran before
+// the crash. Once the next process has recovered, the library lists the mix
+// ready and serves the mixer's bytes. The process is down a minute between
+// the two.
+func TestRecordingMixCutOffByARestartIsBuiltByTheNextProcess(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.recordOneSpeaker(t)
+	sc.crash(t)
+	sc.clock.advance(time.Minute)
+
+	want := []byte("the next process's mix")
+	sc.mixer.set(want, nil)
+	sc.restart(t, testRecorder)
+	sc.clock.advance(0)
+
+	rec := sc.onlyRecording(t)
+	if rec.Mix != store.MixReady {
+		t.Fatalf("mix after the next process recovered = %q, stopped at %v, want %q", rec.Mix, rec.StoppedAt, store.MixReady)
+	}
+	f, err := sc.lib.OpenMix(rec)
+	if err != nil {
+		t.Fatalf("OpenMix: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	got, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatalf("reading the mix: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("the library served %q as the mix, want the mixer's %q", got, want)
+	}
+}
+
+// A mix the next process builds again and fails is marked failed, and
+// Sentry hears of it once, as a failed mix after a stop is.
+func TestRecordingMixCutOffByARestartThatFailsReachesSentryOnce(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	captures := countCaptures(t)
+	sc.recordOneSpeaker(t)
+	sc.crash(t)
+	sc.clock.advance(time.Minute)
+
+	sc.mixer.set(nil, errors.New("ffmpeg exited with status 1"))
+	before := *captures
+	sc.restart(t, testRecorder)
+	sc.clock.advance(0)
+
+	if rec := sc.onlyRecording(t); rec.Mix != store.MixFailed {
+		t.Errorf("mix after the next process failed to build it = %q, want %q", rec.Mix, store.MixFailed)
+	}
+	if n := *captures - before; n != 1 {
+		t.Errorf("the failed mix sent %d events to Sentry, want one", n)
+	}
+}
+
+// A mix this process is building is never taken for one the last process
+// left: a recording stopped before recovery runs, its mix still
+// processing when recovery reads it, is mixed once. The scene's runtime
+// has just been built, so its recovery runs at the clock's first advance,
+// ahead of the stop's mix.
+func TestRecordingStoppedBeforeRecoveryRunsIsMixedOnce(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.startIn(t, recStarter, recordChannel)
+	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
+	sc.stopAsStarter(t)
+
+	sc.clock.advance(0)
+
+	if n := sc.mixer.mixes(); n != 1 {
+		t.Errorf("the mixer was asked for %d mixes of the recording, want one", n)
 	}
 }
 
