@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/net/html"
 )
@@ -112,6 +114,37 @@ func announcedText(n *html.Node) string {
 				sb.WriteString(" ")
 				return
 			case "input", "select", "textarea", "template", "script", "style":
+				return
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return collapseSpace(sb.String())
+}
+
+// shownText is the text a sighted user reads in n's subtree: a hidden
+// subtree shows nothing, and neither do the words the panel's
+// visually-hidden class keeps for a screen reader alone.
+func shownText(n *html.Node) string {
+	var sb strings.Builder
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		switch n.Type {
+		case html.TextNode:
+			sb.WriteString(n.Data)
+			return
+		case html.ElementNode:
+			if _, hidden := attrValue(n, "hidden"); hidden {
+				return
+			}
+			if class, _ := attrValue(n, "class"); slices.Contains(strings.Fields(class), "visually-hidden") {
+				return
+			}
+			switch n.Data {
+			case "img", "input", "select", "textarea", "template", "script", "style":
 				return
 			}
 		}
@@ -530,5 +563,201 @@ func TestEachRoleTagsRemoveControlNamesItsPickersSet(t *testing.T) {
 			}
 			named[name] = tc.set
 		})
+	}
+}
+
+// A screen reader user picking from the Foxhole page's links list hears
+// each link's name alone. Each row's note link names its member, whether or
+// not they have a note, so a list of holders reads as its members and not
+// as "Add a note" over and over.
+func TestEachNoteLinkNamesItsMember(t *testing.T) {
+	w := newNoRoleWorld(t)
+	holders := parseHTML(t, w.b.get(foxholePath))
+	noRole := openNoRoleView(t, w.b)
+
+	for _, view := range []struct {
+		name string
+		doc  *html.Node
+		rows map[string]*html.Node
+		// want maps each member the view lists to their display name.
+		want map[string]string
+	}{
+		// Kestrel has a note and Ash has none.
+		{"the holder list", holders, holderRows(t, holders), map[string]string{memberAsh.ID: "Rowan Ash", memberKestrel.ID: "kestrel_tlr"}},
+		{"the no-role view", noRole, noRoleRows(t, noRole), map[string]string{memberDoe.ID: "SGT Doe.J", memberMarsh.ID: "CPT Marsh.E"}},
+	} {
+		t.Run(view.name, func(t *testing.T) {
+			named := map[string]string{}
+			for id, display := range view.want {
+				row, ok := view.rows[id]
+				if !ok {
+					t.Errorf("the view has no row for %s", display)
+					continue
+				}
+				name := accessibleName(view.doc, noteLink(t, row))
+				if !strings.Contains(name, display) {
+					t.Errorf("%s's note link is named %q, which doesn't name them", display, name)
+				}
+				if other, taken := named[name]; taken {
+					t.Errorf("%s's note link shares the name %q with %s's", display, name, other)
+				}
+				named[name] = display
+			}
+		})
+	}
+}
+
+// A sighted manager reads a note link's label as before: one label on a
+// member with a note and another on one without. The words naming the
+// member are for a screen reader alone.
+func TestNoteLinkShowsALabelMatchingTheNote(t *testing.T) {
+	w := newFoxholeWorld(t)
+	assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
+
+	rows := holderRows(t, parseHTML(t, w.b.get(foxholePath)))
+
+	shown := map[string]string{}
+	for id, display := range map[string]string{memberDoe.ID: "SGT Doe.J", memberAsh.ID: "Rowan Ash"} {
+		row, ok := rows[id]
+		if !ok {
+			t.Fatalf("the holder list has no row for %s", display)
+		}
+		shown[id] = shownText(noteLink(t, row))
+		if shown[id] == "" || strings.Contains(shown[id], display) {
+			t.Errorf("%s's note link shows %q, want a label without their name", display, shown[id])
+		}
+	}
+	if shown[memberDoe.ID] == shown[memberAsh.ID] {
+		t.Errorf("the note links of a member with a note and one without both show %q", shown[memberDoe.ID])
+	}
+}
+
+// recordingLinks are the links on a recording's block that act on it, by
+// data-field: its mix download, its track download and its Delete.
+var recordingLinks = []string{"mix-download", "zip-download", "delete"}
+
+// shownAs is how a recording's block on the list names it to a sighted
+// user: the title its heading shows and the start time its facts show. It
+// fails the test when the block shows either empty.
+func shownAs(t *testing.T, block *html.Node) (title, started string) {
+	t.Helper()
+	title, started = fieldText(t, block, "title"), fieldText(t, block, "started")
+	if title == "" || started == "" {
+		t.Fatalf("recording %s shows the title %q and the start time %q, want both", attrOf(block, "data-recording"), title, started)
+	}
+	return title, started
+}
+
+// A screen reader user picking from the Recordings page's links list hears
+// each link's name alone. Each download and Delete names its recording by
+// title and by its start time as the page shows them, so two untitled
+// recordings' links read apart, and no two links on the page share a name.
+func TestEachRecordingLinkNamesItsRecording(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	now := time.Now()
+	// stored maps each recording to the title it was started with, empty
+	// for none.
+	stored := map[int64]string{
+		w.storeRecording(t, a.discordID, "", now.Add(-3*time.Hour)):              "",
+		w.storeRecording(t, a.discordID, "", now.Add(-2*time.Hour)):              "",
+		w.storeRecording(t, a.discordID, "Weekly briefing", now.Add(-time.Hour)): "Weekly briefing",
+	}
+	signInAs(t, w.forum, w.b, a.account)
+
+	doc := parseHTML(t, w.b.get(recordingsPath))
+
+	listed := listedRecordings(t, doc)
+	for id, title := range stored {
+		block, ok := listed[id]
+		if !ok {
+			t.Errorf("the page doesn't list recording %d", id)
+			continue
+		}
+		heading, started := shownAs(t, block)
+		for _, field := range recordingLinks {
+			link := findElement(block, "a", "data-field", field)
+			if link == nil {
+				t.Errorf("recording %d has no %s link", id, field)
+				continue
+			}
+			name := accessibleName(doc, link)
+			// An untitled recording's empty title is in every name.
+			for _, want := range []string{heading, started, title} {
+				if !strings.Contains(name, want) {
+					t.Errorf("recording %d's %s link is named %q, which doesn't name %q", id, field, name, want)
+				}
+			}
+		}
+	}
+	counts := map[string]int{}
+	eachLiveElement(doc, func(n *html.Node) {
+		if n.Data == "a" {
+			counts[accessibleName(doc, n)]++
+		}
+	})
+	for name, n := range counts {
+		if n > 1 {
+			t.Errorf("%d links on the page share the name %q", n, name)
+		}
+	}
+}
+
+// A recording's delete preview offers its downloads beside the warning that
+// it goes for good. Their names say which recording they fetch, as the
+// list's do.
+func TestDeletePreviewsDownloadLinksNameTheRecording(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	rec := w.storeRecording(t, a.discordID, "", time.Now().Add(-time.Hour))
+	signInAs(t, w.forum, w.b, a.account)
+	page := parseHTML(t, w.b.get(recordingsPath))
+	listed, ok := listedRecordings(t, page)[rec]
+	if !ok {
+		t.Fatalf("the page doesn't list recording %d", rec)
+	}
+	title, started := shownAs(t, listed)
+
+	doc := parseHTML(t, w.b.get(linkHref("delete")(t, page, rec)))
+
+	block, ok := listedRecordings(t, doc)[rec]
+	if !ok || attrOf(block, "data-field") != "delete-preview" {
+		t.Fatalf("the page doesn't show recording %d's delete preview", rec)
+	}
+	for _, field := range []string{"mix-download", "zip-download"} {
+		link := findElement(block, "a", "data-field", field)
+		if link == nil {
+			t.Errorf("the delete preview has no %s link", field)
+			continue
+		}
+		if name := accessibleName(doc, link); !strings.Contains(name, title) || !strings.Contains(name, started) {
+			t.Errorf("the preview's %s link is named %q, want it to name %s, started %s", field, name, title, started)
+		}
+	}
+}
+
+// A sighted user reads a recording's download and Delete links as before.
+// The words naming the recording are for a screen reader alone.
+func TestRecordingLinksShowNoWordsNamingTheRecording(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	rec := w.storeRecording(t, a.discordID, "Weekly briefing", time.Now().Add(-time.Hour))
+	signInAs(t, w.forum, w.b, a.account)
+
+	block, ok := listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))[rec]
+
+	if !ok {
+		t.Fatalf("the page doesn't list recording %d", rec)
+	}
+	title, started := shownAs(t, block)
+	for _, field := range recordingLinks {
+		link := findElement(block, "a", "data-field", field)
+		if link == nil {
+			t.Errorf("recording %d has no %s link", rec, field)
+			continue
+		}
+		if shown := shownText(link); strings.Contains(shown, title) || strings.Contains(shown, started) {
+			t.Errorf("the %s link shows %q, want neither the title nor the start time in sight", field, shown)
+		}
 	}
 }

@@ -249,11 +249,15 @@
   }
 
   // show puts a note in the cell as the server would render it: the note
-  // text, the loaded note the next form starts from, and the link's label.
+  // text, the loaded note the next form starts from, and the link's label
+  // and the name naming the member, read from the row.
   function show(cell, note) {
+    var link = cell.querySelector('[data-field="edit_note"]');
+    var member = cell.closest('[data-member]').querySelector('[data-field="display_name"]').textContent;
     cell.setAttribute('data-note', note);
     cell.querySelector('[data-field="note"]').textContent = note;
-    cell.querySelector('[data-field="edit_note"]').textContent = note ? 'Edit' : 'Add a note';
+    link.textContent = note ? 'Edit' : 'Add a note';
+    link.setAttribute('aria-label', (note ? 'Edit the note on ' : 'Add a note on ') + member);
   }
 
   // swap replaces this page's element matching the selector with the one

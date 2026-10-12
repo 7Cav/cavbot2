@@ -133,11 +133,7 @@ func openNoRoleNote(t *testing.T, b *browser, memberID string) *html.Node {
 	if !ok {
 		t.Fatalf("the no-role view has no row for %s", memberID)
 	}
-	link := findElement(row, "a", "data-field", "edit_note")
-	if link == nil {
-		t.Fatalf("%s's row has no Edit link", memberID)
-	}
-	href, _ := attrValue(link, "href")
+	href, _ := attrValue(noteLink(t, row), "href")
 	return parseHTML(t, follow(t, b, b.get(href)))
 }
 
