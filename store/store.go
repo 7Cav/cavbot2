@@ -162,7 +162,7 @@ const (
 	MixReady MixState = "ready"
 	// MixFailed: the mix couldn't be built. The tracks are still there.
 	MixFailed MixState = "failed"
-	// MixNone: nobody spoke, so the recording has no track to mix and no
+	// MixNone: the recording has no speakers, so no track to mix and no
 	// mix.
 	MixNone MixState = "none"
 )

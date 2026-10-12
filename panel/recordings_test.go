@@ -203,6 +203,16 @@ func (m *fakeMixer) Mix(_ context.Context, _ []string, out string) error {
 	return os.WriteFile(out, testMix, 0o600)
 }
 
+// hold makes every mix from now on wait until the channel it returns is
+// closed.
+func (m *fakeMixer) hold() chan<- struct{} {
+	held := make(chan struct{})
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.held = held
+	return held
+}
+
 // mixWatch is the store with a signal each time the runtime writes a
 // recording's mix state, so a test knows the mix has landed with no sleep.
 type mixWatch struct {
@@ -232,10 +242,7 @@ type recordingRig struct {
 // no mix is left writing to the recordings directory.
 func (rig *recordingRig) holdMix(t *testing.T) {
 	t.Helper()
-	held := make(chan struct{})
-	rig.mixer.mu.Lock()
-	rig.mixer.held = held
-	rig.mixer.mu.Unlock()
+	held := rig.mixer.hold()
 	t.Cleanup(func() {
 		close(held)
 		select {
@@ -244,6 +251,16 @@ func (rig *recordingRig) holdMix(t *testing.T) {
 			t.Error("the held mix never landed")
 		}
 	})
+}
+
+// newRecordingRig builds a recording runtime over the world's store and
+// recordings directory, and makes it the world's.
+func (w *testWorld) newRecordingRig() *recordingRig {
+	rig := &recordingRig{voice: &fakeRecorders{}, mixer: &fakeMixer{}, mixed: make(chan struct{}, 16)}
+	rig.rt = commands.NewRecordingRuntime(w.discord, mixWatch{Store: w.store, mixed: rig.mixed}, w.runtime, testGuildID,
+		rig.voice, rig.mixer, w.recordingsDir, testBaseURL)
+	w.rig = rig
+	return rig
 }
 
 // recorder builds the world's recording runtime the first time a test
@@ -263,11 +280,7 @@ func (w *testWorld) recorder(t *testing.T) *recordingRig {
 	if err := w.store.SaveRecordingRoles(ctx, testGuildID, roles, entry); err != nil {
 		t.Fatalf("SaveRecordingRoles: %v", err)
 	}
-	rig := &recordingRig{voice: &fakeRecorders{}, mixer: &fakeMixer{}, mixed: make(chan struct{}, 16)}
-	rig.rt = commands.NewRecordingRuntime(w.discord, mixWatch{Store: w.store, mixed: rig.mixed}, w.runtime, testGuildID,
-		rig.voice, rig.mixer, w.recordingsDir, testBaseURL)
-	w.rig = rig
-	return rig
+	return w.newRecordingRig()
 }
 
 // record has the member with the Discord ID given start a recording in the
@@ -875,10 +888,7 @@ func TestSignInWhoseMilpacLookupFailsIsReported(t *testing.T) {
 func (w *testWorld) restartRecorder(t *testing.T) {
 	t.Helper()
 	w.recorder(t).rt.Shutdown()
-	rig := &recordingRig{voice: &fakeRecorders{}, mixer: &fakeMixer{}, mixed: make(chan struct{}, 16)}
-	rig.rt = commands.NewRecordingRuntime(w.discord, mixWatch{Store: w.store, mixed: rig.mixed}, w.runtime, testGuildID,
-		rig.voice, rig.mixer, w.recordingsDir, testBaseURL)
-	w.rig = rig
+	rig := w.newRecordingRig()
 	select {
 	case <-rig.mixed:
 	case <-time.After(5 * time.Second):

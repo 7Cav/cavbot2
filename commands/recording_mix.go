@@ -18,7 +18,7 @@ import (
 // A recording's mix (spec #381, #389): one Ogg Opus file of every track
 // played together, built once the recording stops. Its state on the row goes
 // from processing to ready, or to failed, which Sentry hears of. The tracks
-// stay downloadable either way. A recording nobody spoke in goes to none:
+// stay downloadable either way. A recording with no speakers goes to none:
 // it has nothing to mix, and the mixer never runs.
 
 // Mixer builds a recording's mix from its tracks.
@@ -39,8 +39,8 @@ func (r *RecordingRuntime) startMix(rec store.Recording) {
 }
 
 // mix builds a stopped recording's mix and records how it went. A
-// recording nobody spoke in has no track, and ffmpeg won't mix none, so it
-// gets no mix.
+// recording with no speakers has no track, and ffmpeg won't mix none, so
+// it gets no mix.
 func (r *RecordingRuntime) mix(rec store.Recording) {
 	defer utils.RecoverPanic("recording-mix", "recording_id", rec.ID)
 	if len(rec.Speakers) == 0 {
