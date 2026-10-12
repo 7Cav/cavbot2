@@ -194,7 +194,7 @@ func changeViews(entries []store.ChangeLogEntry, guild guildInfo) []changeView {
 				var names map[string]string
 				switch {
 				case slices.Contains(roleFields, field):
-					names = guild.names
+					names = guild.roleNames
 				case field == fieldHubChannel:
 					names = guild.channelNames
 				case field == fieldPermissionSource:

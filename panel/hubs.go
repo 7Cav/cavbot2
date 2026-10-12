@@ -868,10 +868,10 @@ type guildInfo struct {
 	// live is every role but @everyone, keyed by ID: the eligible ones and
 	// the managed ones, for the reason a stored role is unavailable.
 	live map[string]*discordgo.Role
-	// names maps each role's ID to its name, for a change log entry that
+	// roleNames maps each role's ID to its name, for a change log entry that
 	// stores IDs. Every role the guild returned is here, managed and
 	// @everyone included, so an older entry that names one still reads.
-	names map[string]string
+	roleNames map[string]string
 	// channelNames maps each channel's ID to its name, for a change log
 	// entry that stores a hub channel's ID (#593).
 	channelNames map[string]string
@@ -903,13 +903,13 @@ func (g guildInfo) isEligible(id string) bool {
 // the guild's, is not live here: every member holds it.
 func (s *hubService) guildInfoOf(g commands.GuildSnapshot) guildInfo {
 	info := guildInfo{eligible: make([]*discordgo.Role, 0, len(g.Roles)), live: make(map[string]*discordgo.Role, len(g.Roles)),
-		names: make(map[string]string, len(g.Roles)), channelNames: make(map[string]string, len(g.Channels)),
+		roleNames: make(map[string]string, len(g.Roles)), channelNames: make(map[string]string, len(g.Channels)),
 		bitrateMax: bitrateCeiling(g.PremiumTier)}
 	for _, ch := range g.Channels {
 		info.channelNames[ch.ID] = ch.Name
 	}
 	for _, r := range g.Roles {
-		info.names[r.ID] = r.Name
+		info.roleNames[r.ID] = r.Name
 		if r.ID != s.deps.GuildID {
 			info.live[r.ID] = r
 		}
