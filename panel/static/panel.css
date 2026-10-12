@@ -140,6 +140,12 @@ h2[tabindex="-1"]:focus { outline: none; }
 .hublist tr:last-child td { border-bottom: 0; }
 .hublist .hub { color: var(--text-hi); font-weight: 500; }
 .hublist .num { text-align: right; font-variant-numeric: tabular-nums; }
+/* Visually hidden text is absolutely positioned. A header whose only text
+   is hidden is positioned itself, so the text stays inside the table's
+   scroll box and doesn't widen the page on a phone. A cell with text on
+   show stays unpositioned: a positioned box painted after the sticky rail
+   gets a layer of its own, which loses subpixel text. */
+.hublist .head-hidden { position: relative; }
 .hublist .off { color: var(--text-mute); }
 .tag { display: inline-block; padding: 1px .4em; font-size: 12px; line-height: 1.3; border-radius: var(--radius); border: 1px solid var(--line-2); color: var(--text); }
 .tag--on { color: #cfe5cf; border-color: var(--ok); }

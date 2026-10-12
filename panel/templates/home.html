@@ -10,10 +10,13 @@
     <h2 class="block-header">Hubs</h2>
     {{with .Hubs.Removed}}<div class="block-row" role="status"><div class="note note--ok note--inline" data-field="removed">{{.By}} removed hub <span class="hub-name" data-field="base_string">{{.BaseString}}</span> at <time datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 15:04"}} UTC</time>.
       {{- with .ChannelName}} Its voice channel, {{.}}, stays in Discord. Register it below to make it a hub again, starting from the default settings.{{end}}</div></div>{{end}}
-    {{with .Hubs.Added}}<div class="block-row" role="status"><div class="note note--ok note--inline" data-field="added">Added hub <span class="hub-name" data-field="base_string">{{.BaseString}}</span>. <a href="/?hub={{.ID}}#edit">Edit it</a> to change its other settings.</div></div>{{end}}
+    {{with .Hubs.Added}}<div class="block-row" role="status"><div class="note note--ok note--inline" data-field="added">Added hub <span class="hub-name" data-field="base_string">{{.BaseString}}</span>. <a href="/?hub={{.ID}}#edit">Edit it<span class="visually-hidden"> (hub {{.BaseString}})</span></a> to change its other settings.</div></div>{{end}}
     {{if .Hubs.Hubs}}
+    {{- /* A row's link names its hub in aria-label. Hidden text in it would
+         be positioned outside the table's scroll box, and widen the page
+         on a phone. */}}
     <div class="scroll"><table class="hublist">
-      <thead><tr><th>Hub</th><th>Channel</th><th>Category</th><th>State</th><th class="num">Spawned</th><th>Last failure</th><th></th></tr></thead>
+      <thead><tr><th>Hub</th><th>Channel</th><th>Category</th><th>State</th><th class="num">Spawned</th><th>Last failure</th><th class="head-hidden"><span class="visually-hidden">Edit or remove</span></th></tr></thead>
       <tbody>
       {{range .Hubs.Hubs}}
         <tr data-hub="{{.ID}}"{{if .Broken}} class="broken"{{end}}>
@@ -23,7 +26,7 @@
           <td>{{if .Broken}}<span class="tag tag--warn" data-field="broken">broken</span> {{end}}<span data-field="enabled">{{if .Enabled}}<span class="tag tag--on">enabled</span>{{else}}<span class="tag">disabled</span>{{end}}</span></td>
           <td class="num" data-field="spawned">{{.Spawned}}</td>
           <td class="failure">{{with .Failure}}<span data-field="failure_cause">{{.Cause}}</span> <time data-field="failure_at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 15:04"}} UTC</time>{{else}}<span class="off">none</span>{{end}}</td>
-          <td class="num">{{if .Broken}}<a class="btn btn--danger btn--small" href="/?remove={{.ID}}" data-field="remove">Remove</a>{{else}}<a href="/?hub={{.ID}}#edit" data-field="edit">Edit</a>{{end}}</td>
+          <td class="num">{{if .Broken}}<a class="btn btn--danger btn--small" href="/?remove={{.ID}}" data-field="remove" aria-label="Remove hub {{.BaseString}}">Remove</a>{{else}}<a href="/?hub={{.ID}}#edit" data-field="edit" aria-label="Edit hub {{.BaseString}}">Edit</a>{{end}}</td>
         </tr>
       {{end}}
       </tbody>
@@ -75,7 +78,7 @@
     <form method="post" action="/hubs/{{.ID}}/remove#remove" class="submit-row">
       <input type="hidden" name="version" value="{{.Version}}">
       <button type="submit" class="btn btn--danger-filled" data-field="confirm">Remove hub {{.BaseString}}</button>
-      <a class="btn" href="{{.Back}}" data-field="cancel">Cancel</a>
+      <a class="btn" href="{{.Back}}" data-field="cancel">Cancel<span class="visually-hidden"> removing hub {{.BaseString}}</span></a>
     </form>
   </section>
 {{end}}
@@ -136,7 +139,7 @@
 
 {{define "picker"}}<div class="picker" data-field="{{.Field}}" data-picker{{if .Single}} data-single{{end}}>
   <ul class="tags" data-tags>{{range .Tags}}{{template "picker-tag" .}}{{end}}</ul>
-  <button type="button" class="btn btn--small" data-add aria-expanded="false">{{.AddLabel}}{{with .AddFor}}<span class="visually-hidden"> {{.}}</span>{{end}}</button>
+  <button type="button" class="btn btn--small" data-add aria-expanded="false">{{.AddLabel}}{{with .Set}}<span class="visually-hidden"> to {{.}}</span>{{end}}</button>
   <div class="search" data-search hidden>
     <input type="search" class="search-input" data-search-input autocomplete="off" placeholder="Type to filter" aria-label="{{.SearchLabel}}">
     <ul class="search-list" role="listbox" data-list>
@@ -148,7 +151,7 @@
   <template data-tag-template>{{template "picker-tag" .Blank}}</template>
 </div>{{end}}
 
-{{define "picker-tag"}}<li class="tag tag--pick" data-tag="{{.ID}}"><input type="hidden" name="{{.Field}}" value="{{.ID}}"{{if .Unavailable}} data-unavailable="{{.Unavailable}}"{{end}}>{{template "dot" .}}<span data-label>{{.Label}}</span>{{template "role-note" .}} <button type="button" class="tag-remove" data-remove aria-label="Remove {{.Label}}">&times;</button></li>{{end}}
+{{define "picker-tag"}}<li class="tag tag--pick" data-tag="{{.ID}}"><input type="hidden" name="{{.Field}}" value="{{.ID}}"{{if .Unavailable}} data-unavailable="{{.Unavailable}}"{{end}}>{{template "dot" .}}<span data-label>{{.Label}}</span>{{template "role-note" .}} <button type="button" class="tag-remove" data-remove><span aria-hidden="true">&times;</span><span class="visually-hidden">Remove <span data-label>{{.Label}}</span>{{with .Set}} from {{.}}{{end}}</span></button></li>{{end}}
 
 {{define "dot"}}{{if .Dot}}{{if .Colour}}<span class="dot" style="background:{{.Colour}}"></span>{{else}}<span class="dot dot--none"></span>{{end}}{{end}}{{end}}
 
@@ -342,7 +345,7 @@
   {{end}}
   <div class="block">
     <h2 class="block-header">Remove this hub</h2>
-    <div class="submit-row"><a class="btn btn--danger" href="/?hub={{.ID}}&amp;remove={{.ID}}" data-field="remove">Remove hub</a></div>
+    <div class="submit-row"><a class="btn btn--danger" href="/?hub={{.ID}}&amp;remove={{.ID}}" data-field="remove">Remove hub<span class="visually-hidden"> {{.BaseString}}</span></a></div>
   </div>
   <div class="block">
     {{template "changes" .Changes}}
