@@ -172,12 +172,9 @@ func TestRecordingCutShortEditsTheNoticeOrSendsTheLink(t *testing.T) {
 		sc.clock.advance(0)
 
 		dms := sc.fake.sentDMs()
-		if len(dms) != 1 {
-			t.Fatalf("DMs after the notice edit failed with 10003 = %+v, want one", dms)
-		}
-		if dms[0].to != recStarter.id || !strings.Contains(dms[0].data.Content, testPanelURL) || !strings.Contains(dms[0].data.Content, recordingCutShort) {
-			t.Errorf("DM to %s = %q, want one to the starter %s saying the recording %s, with a link into the panel at %s",
-				dms[0].to, dms[0].data.Content, recStarter.id, recordingCutShort, testPanelURL)
+		assertOneLinkDM(t, dms)
+		if !strings.Contains(dms[0].data.Content, recordingCutShort) {
+			t.Errorf("DM = %q, want it to say the recording %s", dms[0].data.Content, recordingCutShort)
 		}
 	})
 }
