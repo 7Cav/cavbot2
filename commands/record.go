@@ -138,6 +138,7 @@ const (
 	// noFreeRecorderRefusal opens the refusal of a start when every
 	// recorder is recording. The channels they record follow it.
 	noFreeRecorderRefusal   = "❌ Every recorder is busy."
+	alreadyRecordedRefusal  = "❌ This channel is already being recorded."
 	nothingToStopRefusal    = "❌ There's no recording here for you to stop."
 	notAllowedToStopRefusal = "❌ Only the person who started this recording, or someone with a recording role, can stop it."
 )
@@ -164,6 +165,8 @@ func startRefusal(err error) (reply string, refused bool) {
 		return notCavMemberRefusal, true
 	case errors.Is(err, errRecordTitleTooLong):
 		return recordTitleTooLongRefusal, true
+	case errors.Is(err, errAlreadyRecorded):
+		return alreadyRecordedRefusal, true
 	case errors.As(err, &busy):
 		mentions := make([]string, len(busy.ChannelIDs))
 		for i, id := range busy.ChannelIDs {

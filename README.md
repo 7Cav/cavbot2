@@ -96,7 +96,8 @@ ignore it.
    bot, since its token sits in the same environment (ADR 0014).
 
 Another recorder is another application, its token added to `RECORDER_TOKENS`
-after a comma, with no code change.
+after a comma, with no code change. Two recorders record two channels at once,
+never one channel twice.
 
 ### 2. IDs
 
