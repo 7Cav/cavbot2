@@ -374,7 +374,29 @@ type hubPage struct {
 	// Added is the hub a create or register just added, which the hub list
 	// names while the hub is still there. Nil for none.
 	Added *addedHub
+	// RemovedHubs are the removed hubs the block below the hub list shows,
+	// newest removal first.
+	RemovedHubs []removedHubView
 }
+
+// removedHubView is one removed hub (GLOSSARY.md) as its row below the hub
+// list shows it: the hub as its removal's entry recorded it, who removed
+// it and when, and the hub's last entries, the removal's first.
+type removedHubView struct {
+	// ID is the removed hub's ID, which its entries still reference.
+	ID         int64
+	BaseString string
+	// ChannelName is the name of the hub's voice channel in the guild at
+	// this load, empty when the channel is gone.
+	ChannelName string
+	By          string
+	At          time.Time
+	Changes     []changeView
+}
+
+// removedHubsLimit is how many removed hubs the Hubs page lists, newest
+// removal first.
+const removedHubsLimit = 10
 
 // addedHub is a hub just added, as the line over the hub list names it.
 type addedHub struct {
@@ -720,6 +742,7 @@ const (
 	recordingRoleChangesRead = "list recording roles changes"
 	changeLogRead            = "list change log"
 	hubRemovalRead           = "read hub removal"
+	hubRemovalsRead          = "list hub removals"
 )
 
 // read reads the guild from the gateway state, then the hub rows from the
@@ -880,7 +903,8 @@ func (s *hubService) guildInfoOf(g commands.GuildSnapshot) guildInfo {
 // page reads everything the hub page renders from, once: the guild from
 // the gateway state, for the list, the pickers, the guild-wide section and
 // the edit form, then from the store the hub rows, the guild-wide set and
-// its last entries, and, when an edit form shows, the hub's last entries.
+// its last entries, when an edit form shows, the hub's last entries, and
+// the removed hubs with each one's last entries.
 // store.ErrNotFound means no hub has the requested ID. ctx carries the
 // page's time budget; a store read the budget runs out on fails with it.
 func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error) {
@@ -909,6 +933,9 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 		if page.Removed, err = s.removedHubOf(ctx, sn, req.Removed); err != nil {
 			return hubPage{}, err
 		}
+	}
+	if page.RemovedHubs, err = s.removedHubs(ctx, sn); err != nil {
+		return hubPage{}, err
 	}
 	if hub, ok := sn.hubByID(req.Added); ok {
 		page.Added = &addedHub{ID: hub.ID, BaseString: hub.BaseString}
@@ -953,6 +980,36 @@ func (s *hubService) removedHubOf(ctx context.Context, sn snapshot, entryID int6
 		}
 	}
 	return removed, nil
+}
+
+// removedHubs reads the removed hubs the Hubs page lists from the store:
+// the newest removals that reference the hub they removed, each with that
+// hub's last entries. The base string and the channel come from the
+// removal's diff, which carries every setting the hub had. A removal whose
+// diff does not decode still names who removed the hub, and when.
+func (s *hubService) removedHubs(ctx context.Context, sn snapshot) ([]removedHubView, error) {
+	removals, err := s.deps.Store.ListHubRemovals(ctx, removedHubsLimit)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", hubRemovalsRead, err)
+	}
+	views := make([]removedHubView, 0, len(removals))
+	for _, removal := range removals {
+		entries, err := s.deps.Store.ListChangeLog(ctx, removal.HubID, changeLogLimit)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", changeLogRead, err)
+		}
+		view := removedHubView{ID: removal.HubID, By: removal.ForumUsername, At: removal.At, Changes: changeViews(entries, sn.info.names)}
+		var d diff
+		if json.Unmarshal(removal.Diff, &d) == nil {
+			view.BaseString, _ = d[fieldBaseString].Before.(string)
+			channelID, _ := d[fieldHubChannel].Before.(string)
+			if ch, ok := sn.channels.channel(channelID); ok {
+				view.ChannelName = ch.Name
+			}
+		}
+		views = append(views, view)
+	}
+	return views, nil
 }
 
 // removePreviewOf is the remove preview of a hub read from the snapshot,
@@ -1277,9 +1334,9 @@ func (s *hubService) update(ctx context.Context, hubID int64, in editInput, by a
 // the read or, when another process removed it in between, at the write;
 // either way nothing is written.
 //
-// The entry references no hub: the row is gone, and the store clears the
-// hub's earlier entries to match, so the whole log of a removed hub lists
-// under no hub.
+// The entry references the removed hub, and the hub's earlier entries keep
+// their reference, so the Hubs page lists the removed hub's whole log under
+// Removed hubs (#579).
 func (s *hubService) remove(ctx context.Context, hubID int64, version string, by actor) (store.Hub, int64, error) {
 	s.saveLock.Lock()
 	defer s.saveLock.Unlock()

@@ -224,6 +224,21 @@ h2[tabindex="-1"]:focus { outline: none; }
 .change-fields dt { color: var(--text-mute); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
 .change-fields dd { margin: 0; color: var(--text-hi); overflow-wrap: anywhere; }
 .change-fields .arrow { color: var(--text-mute); padding: 0 4px; }
+/* The removed hubs below the hub list (#579). Each row is a <details>
+   folded to one line, the hub as it was removed, and opens to its change
+   log, the entries indented under the line's text. The line lifts under
+   the pointer, as the folded report line does, and draws the change log's
+   chevron. */
+.removed-hub + .removed-hub { border-top: 1px solid var(--line); }
+.removed-hub-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 10px 14px; cursor: pointer; list-style: none; font-size: 14px; }
+.removed-hub-head::-webkit-details-marker { display: none; }
+.removed-hub-head::before { content: "\25B8"; content: "\25B8" / ""; color: var(--text-mute); font-size: 12px; width: 12px; }
+.removed-hub[open] > .removed-hub-head::before { content: "\25BE"; content: "\25BE" / ""; }
+.removed-hub[open] > .removed-hub-head { border-bottom: 1px solid var(--line); }
+.removed-hub-head:hover { background: var(--surface-3); }
+.removed-hub-head:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+.removed-hub-head .off, .removed-hub-head time { font-size: 13px; color: var(--text-mute); }
+.removed-hub .change { padding-left: 36px; }
 
 /* The Foxhole page (spec #434, prototype variant A): the holder list, its
    search and its filter links. */
