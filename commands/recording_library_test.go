@@ -23,20 +23,33 @@ import (
 // goroutine of its own, which the fake clock runs at its next advance.
 
 // fakeMixer stands in for ffmpeg. It writes out to the mix's path, or fails
-// with err when a test sets one.
+// with err when a test sets one. Handed no tracks, it fails as ffmpeg does.
+// calls counts every mix it was asked for.
 type fakeMixer struct {
-	mu  sync.Mutex
-	out []byte
-	err error
+	mu    sync.Mutex
+	out   []byte
+	err   error
+	calls int
 }
 
-func (m *fakeMixer) Mix(_ context.Context, _ []string, out string) error {
+func (m *fakeMixer) Mix(_ context.Context, tracks []string, out string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.calls++
+	if len(tracks) == 0 {
+		return errors.New("ffmpeg: amix needs at least one input")
+	}
 	if m.err != nil {
 		return m.err
 	}
 	return os.WriteFile(out, m.out, 0o600)
+}
+
+// mixes is how many mixes the mixer was asked for.
+func (m *fakeMixer) mixes() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
 }
 
 // set makes the next mix write out, or fail with err when it isn't nil.
@@ -189,6 +202,28 @@ func TestRecordingMixFailureLeavesTheTracksDownloadable(t *testing.T) {
 		if got := entriesHolding(t, entries, speaker); len(got) != 1 {
 			t.Errorf("zip entries holding %s's track = %v, want one", speaker, got)
 		}
+	}
+}
+
+// A recording nobody spoke in has no track, so there is nothing to mix: it
+// stops with no mix, the mixer is never asked for one, and Sentry hears
+// nothing of it.
+func TestRecordingNobodySpokeInHasNoMix(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	captures := countCaptures(t)
+	sc.startIn(t, recStarter, recordChannel)
+	sc.clock.advance(time.Second)
+	recordAs(t, sc.rt, recStarter, "stop")
+	sc.clock.advance(0)
+
+	if rec := sc.onlyRecording(t); rec.Mix != store.MixNone {
+		t.Errorf("mix of a recording nobody spoke in = %q, want %q", rec.Mix, store.MixNone)
+	}
+	if n := sc.mixer.mixes(); n != 0 {
+		t.Errorf("the mixer was asked for %d mixes, want none", n)
+	}
+	if *captures != 0 {
+		t.Errorf("a recording nobody spoke in sent %d events to Sentry, want none", *captures)
 	}
 }
 

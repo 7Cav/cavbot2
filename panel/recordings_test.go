@@ -186,10 +186,20 @@ func (c *fakeVoiceConn) Receive(handle func(voice.Frame)) {
 	c.handle = handle
 }
 
-// fakeMixer stands in for ffmpeg: every mix is testMix.
-type fakeMixer struct{}
+// fakeMixer stands in for ffmpeg: every mix is testMix. While a test holds
+// it, a mix waits, still processing, until the test lets it go.
+type fakeMixer struct {
+	mu   sync.Mutex
+	held chan struct{}
+}
 
-func (fakeMixer) Mix(_ context.Context, _ []string, out string) error {
+func (m *fakeMixer) Mix(_ context.Context, _ []string, out string) error {
+	m.mu.Lock()
+	held := m.held
+	m.mu.Unlock()
+	if held != nil {
+		<-held
+	}
 	return os.WriteFile(out, testMix, 0o600)
 }
 
@@ -212,8 +222,28 @@ func (s mixWatch) SetRecordingMix(ctx context.Context, id int64, mix store.MixSt
 // recordings directory, linking to the test panel.
 type recordingRig struct {
 	voice *fakeRecorders
+	mixer *fakeMixer
 	rt    *commands.RecordingRuntime
 	mixed chan struct{}
+}
+
+// holdMix makes the next mix the rig starts wait, still processing, until
+// the test ends. Then it goes ahead, and the test waits for it to land, so
+// no mix is left writing to the recordings directory.
+func (rig *recordingRig) holdMix(t *testing.T) {
+	t.Helper()
+	held := make(chan struct{})
+	rig.mixer.mu.Lock()
+	rig.mixer.held = held
+	rig.mixer.mu.Unlock()
+	t.Cleanup(func() {
+		close(held)
+		select {
+		case <-rig.mixed:
+		case <-time.After(5 * time.Second):
+			t.Error("the held mix never landed")
+		}
+	})
 }
 
 // recorder builds the world's recording runtime the first time a test
@@ -233,9 +263,9 @@ func (w *testWorld) recorder(t *testing.T) *recordingRig {
 	if err := w.store.SaveRecordingRoles(ctx, testGuildID, roles, entry); err != nil {
 		t.Fatalf("SaveRecordingRoles: %v", err)
 	}
-	rig := &recordingRig{voice: &fakeRecorders{}, mixed: make(chan struct{}, 16)}
+	rig := &recordingRig{voice: &fakeRecorders{}, mixer: &fakeMixer{}, mixed: make(chan struct{}, 16)}
 	rig.rt = commands.NewRecordingRuntime(w.discord, mixWatch{Store: w.store, mixed: rig.mixed}, w.runtime, testGuildID,
-		rig.voice, fakeMixer{}, w.recordingsDir, testBaseURL)
+		rig.voice, rig.mixer, w.recordingsDir, testBaseURL)
 	w.rig = rig
 	return rig
 }
@@ -250,17 +280,36 @@ func (w *testWorld) record(t *testing.T, discordID string) int64 {
 	return id
 }
 
+// recordSilence has the member with the Discord ID given start a recording
+// in the fixture's channel and stop it with nobody having spoken, and waits
+// for its mix state. It returns the recording's ID.
+func (w *testWorld) recordSilence(t *testing.T, discordID string) int64 {
+	t.Helper()
+	id := w.startSilentRecording(t, discordID)
+	w.stopRecording(t, discordID)
+	return id
+}
+
 // startRecording has the member with the Discord ID given start a recording
 // in the fixture's channel and say one frame into it, and leaves it
 // running. It returns the recording's ID.
 func (w *testWorld) startRecording(t *testing.T, discordID string) int64 {
+	t.Helper()
+	id := w.startSilentRecording(t, discordID)
+	w.recorder(t).voice.hear(t, voice.Frame{UserID: discordID, SSRC: 1, Opus: []byte{0xF8, 'x'}})
+	return id
+}
+
+// startSilentRecording has the member with the Discord ID given start a
+// recording in the fixture's channel, and leaves it running with nobody
+// heard. It returns the recording's ID.
+func (w *testWorld) startSilentRecording(t *testing.T, discordID string) int64 {
 	t.Helper()
 	rig := w.recorder(t)
 	w.discord.setVoice(discordID, testRecordChannel)
 	if _, err := rig.rt.Start(starterInvoker(discordID), ""); err != nil {
 		t.Fatalf("starting a recording as %s: %v", discordID, err)
 	}
-	rig.voice.hear(t, voice.Frame{UserID: discordID, SSRC: 1, Opus: []byte{0xF8, 'x'}})
 	return newestRecordingOf(t, w.store, discordID).ID
 }
 
@@ -826,9 +875,9 @@ func TestSignInWhoseMilpacLookupFailsIsReported(t *testing.T) {
 func (w *testWorld) restartRecorder(t *testing.T) {
 	t.Helper()
 	w.recorder(t).rt.Shutdown()
-	rig := &recordingRig{voice: &fakeRecorders{}, mixed: make(chan struct{}, 16)}
+	rig := &recordingRig{voice: &fakeRecorders{}, mixer: &fakeMixer{}, mixed: make(chan struct{}, 16)}
 	rig.rt = commands.NewRecordingRuntime(w.discord, mixWatch{Store: w.store, mixed: rig.mixed}, w.runtime, testGuildID,
-		rig.voice, fakeMixer{}, w.recordingsDir, testBaseURL)
+		rig.voice, rig.mixer, w.recordingsDir, testBaseURL)
 	w.rig = rig
 	select {
 	case <-rig.mixed:
@@ -858,5 +907,74 @@ func TestRecordingsPageMarksARecordingCutShort(t *testing.T) {
 		if marked := findElement(row, "", "data-field", "cut-short") != nil; marked != wantMark {
 			t.Errorf("recording %d marked cut short = %t, want %t", id, marked, wantMark)
 		}
+	}
+}
+
+// The Recordings page marks a recording nobody spoke in as having no mix,
+// offers no mix to download, and its delete preview lists no mix among
+// what goes. A recording with a speaker, once mixed, shows none of that:
+// it offers its mix, and its delete preview lists it.
+func TestRecordingsPageShowsARecordingNobodySpokeInHasNoMix(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	silent := w.recordSilence(t, a.discordID)
+	spoken := w.record(t, a.discordID)
+	signInAs(t, w.forum, w.b, a.account)
+
+	page := parseHTML(t, w.b.get(recordingsPath))
+	rows := listedRecordings(t, page)
+
+	for id, noMix := range map[int64]bool{silent: true, spoken: false} {
+		row, ok := rows[id]
+		if !ok {
+			t.Errorf("the page doesn't list recording %d", id)
+			continue
+		}
+		mix := findElement(row, "", "data-field", "mix")
+		if marked := mix != nil && findElement(mix, "", "data-field", "no-mix") != nil; marked != noMix {
+			t.Errorf("recording %d's mix marked as none = %t, want %t", id, marked, noMix)
+		}
+		if offered := findElement(row, "a", "data-field", "mix-download") != nil; offered == noMix {
+			t.Errorf("recording %d offers its mix to download = %t, want %t", id, offered, !noMix)
+		}
+		preview, ok := listedRecordings(t, parseHTML(t, w.b.get(linkHref("delete")(t, page, id))))[id]
+		if !ok {
+			t.Errorf("recording %d's delete preview doesn't show it", id)
+			continue
+		}
+		goes := findElement(preview, "", "data-list", "goes")
+		if listed := goes != nil && findElement(goes, "", "data-field", "goes-mix") != nil; listed == noMix {
+			t.Errorf("recording %d's delete preview lists the mix among what goes = %t, want %t", id, listed, !noMix)
+		}
+	}
+}
+
+// A recording nobody spoke in has no mix to download: its mix's address,
+// typed by hand, is refused just as the address of a mix still being built
+// is.
+func TestRecordingMixNobodySpokeInIsRefusedLikeOneBeingMixed(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	silent := w.recordSilence(t, a.discordID)
+	rig := w.recorder(t)
+	rig.holdMix(t)
+	mixing := w.startRecording(t, a.discordID)
+	if _, err := rig.rt.Stop(starterInvoker(a.discordID)); err != nil {
+		t.Fatalf("stopping %s's recording: %v", a.discordID, err)
+	}
+	signInAs(t, w.forum, w.b, a.account)
+
+	// refusal is how the panel answers a recording's mix address, with the
+	// recording's own page written the same for either.
+	refusal := func(id int64) string {
+		t.Helper()
+		res := w.b.get(commands.RecordingPath(id) + "/mix")
+		if body := readBody(t, res); bytes.Equal(body, testMix) {
+			t.Fatalf("recording %d's mix address served a mix", id)
+		}
+		return strconv.Itoa(res.StatusCode) + " " + strings.ReplaceAll(res.Header.Get("Location"), commands.RecordingPath(id), "{recording}")
+	}
+	if got, want := refusal(silent), refusal(mixing); got != want {
+		t.Errorf("the mix of a recording nobody spoke in got %q, want %q, as the mix of one being mixed gets", got, want)
 	}
 }

@@ -195,6 +195,28 @@ func TestRecordingCutShortIsMixed(t *testing.T) {
 	}
 }
 
+// A recording cut short before anything its one speaker said reached the
+// disk has nothing to mix: recovery drops the empty track, and the
+// recording gets no mix without the mixer being asked for one. The crash
+// comes before the first flush, which is what leaves the track empty.
+func TestRecordingCutShortWithNoAudioOnDiskHasNoMix(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.startIn(t, recStarter, recordChannel)
+	sc.clock.advance(time.Second)
+	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
+
+	sc.restart(t, testRecorder)
+	sc.clock.advance(0)
+
+	sc.assertCutShort(t)
+	if rec := sc.onlyRecording(t); rec.Mix != store.MixNone {
+		t.Errorf("mix of a recording cut short with no audio on disk = %q, want %q", rec.Mix, store.MixNone)
+	}
+	if n := sc.mixer.mixes(); n != 0 {
+		t.Errorf("the mixer was asked for %d mixes, want none", n)
+	}
+}
+
 // A recovery that fails reaches Sentry: here the store refuses to close the
 // recording's row.
 func TestRecordingRecoveryFailureReachesSentry(t *testing.T) {
