@@ -215,6 +215,14 @@ func recordLogs(t *testing.T) *logRecorder {
 
 // infoLinesCarrying counts the INFO records with a time attribute at when.
 func (r *logRecorder) infoLinesCarrying(when time.Time) int {
+	return r.infoLinesWhere(func(a slog.Attr) bool {
+		v := a.Value.Resolve()
+		return v.Kind() == slog.KindTime && v.Time().Equal(when)
+	})
+}
+
+// infoLinesWhere counts the INFO records with an attribute that matches.
+func (r *logRecorder) infoLinesWhere(matches func(slog.Attr) bool) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	n := 0
@@ -224,8 +232,7 @@ func (r *logRecorder) infoLinesCarrying(when time.Time) int {
 		}
 		carries := false
 		rec.Attrs(func(a slog.Attr) bool {
-			v := a.Value.Resolve()
-			carries = v.Kind() == slog.KindTime && v.Time().Equal(when)
+			carries = matches(a)
 			return !carries
 		})
 		if carries {

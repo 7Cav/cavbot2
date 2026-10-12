@@ -113,23 +113,7 @@ func TestGatewayWatch_AConnectWithinTheDelaySendsNothing(t *testing.T) {
 
 // infoLinesWith counts the INFO records carrying key=value.
 func (r *logRecorder) infoLinesWith(key, value string) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	n := 0
-	for _, rec := range r.records {
-		if rec.Level != slog.LevelInfo {
-			continue
-		}
-		carries := false
-		rec.Attrs(func(a slog.Attr) bool {
-			carries = a.Key == key && a.Value.String() == value
-			return !carries
-		})
-		if carries {
-			n++
-		}
-	}
-	return n
+	return r.infoLinesWhere(func(a slog.Attr) bool { return a.Key == key && a.Value.String() == value })
 }
 
 // The Connect that ends an outage Sentry heard of is logged, so the log says

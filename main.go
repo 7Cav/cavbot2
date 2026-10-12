@@ -349,7 +349,7 @@ func main() {
 	// gateway and stays off reaches Sentry while the bot runs. A bot off the
 	// gateway answers no command. Shutdown closes it on purpose, so the
 	// watch stands down first.
-	gateway := utils.WatchGateway(dg, utils.GatewayOfflineAfter, "session", "main")
+	watch := utils.WatchGateway(dg, utils.GatewayOfflineAfter, "session", "main")
 
 	// Not dg.Open() directly: a session can open without ever reaching READY,
 	// which leaves dg.State.User nil for the command registration below.
@@ -357,7 +357,7 @@ func main() {
 		panic(fmt.Sprintf("Discord session unavailable: %v", err))
 	}
 	defer func() {
-		gateway.StandDown()
+		watch.StandDown()
 		err := dg.Close()
 		if err != nil {
 			panic(fmt.Sprintf("Error closing Discord connection: %v", err))

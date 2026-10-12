@@ -28,15 +28,20 @@ var errGatewayOffline = errors.New("gateway session disconnected and not reconne
 // 600 s between tries, and tells only its logger when a try fails. It emits
 // Connect once a try gets back on. Sentry hears of the outage from here,
 // since no log line reaches it (ADR 0001).
+//
+// The watch counts on discordgo v0.29.0 emitting Disconnect only from its
+// Close, which a failed try never calls. So no Disconnect arrives late in an
+// outage without a Connect before it. Check that again on a discordgo
+// upgrade, or one outage could send a second event.
 type GatewayWatch struct {
 	after time.Duration
 	kv    []any
 
 	mu sync.Mutex
-	// event numbers the session's Connect and Disconnect events, so a report
+	// seq numbers the session's Connect and Disconnect events, so a report
 	// fires only while the Disconnect that set it is the latest event.
 	// reported is set once Sentry has heard of the outage.
-	event     uint64
+	seq       uint64
 	reported  bool
 	stoodDown bool
 }
@@ -64,17 +69,17 @@ func (w *GatewayWatch) disconnected() {
 	if w.stoodDown {
 		return
 	}
-	w.event++
-	event := w.event
-	time.AfterFunc(w.after, func() { w.fire(event) })
+	w.seq++
+	seq := w.seq
+	time.AfterFunc(w.after, func() { w.fire(seq) })
 }
 
 // fire sends the outage to Sentry, unless the session has had another event
-// since the Disconnect numbered event, or the watch stood down.
-func (w *GatewayWatch) fire(event uint64) {
+// since the Disconnect numbered seq, or the watch stood down.
+func (w *GatewayWatch) fire(seq uint64) {
 	defer RecoverPanic("gateway-watch", w.kv...)
 	w.mu.Lock()
-	if event != w.event || w.stoodDown {
+	if seq != w.seq || w.stoodDown {
 		w.mu.Unlock()
 		return
 	}
@@ -88,7 +93,7 @@ func (w *GatewayWatch) fire(event uint64) {
 func (w *GatewayWatch) connected() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.event++
+	w.seq++
 	if w.reported {
 		w.reported = false
 		Info("Gateway session back online", w.kv...)
