@@ -566,17 +566,6 @@ func TestEachRoleTagsRemoveControlNamesItsPickersSet(t *testing.T) {
 	}
 }
 
-// noteLink is the note link in a Foxhole page row, and fails the test when
-// the row has none.
-func noteLink(t *testing.T, row *html.Node) *html.Node {
-	t.Helper()
-	link := findElement(row, "a", "data-field", "edit_note")
-	if link == nil {
-		t.Fatalf("the row for %s has no note link", attrOf(row, "data-member"))
-	}
-	return link
-}
-
 // A screen reader user picking from the Foxhole page's links list hears
 // each link's name alone. Each row's note link names its member, whether or
 // not they have a note, so a list of holders reads as its members and not
@@ -618,8 +607,8 @@ func TestEachNoteLinkNamesItsMember(t *testing.T) {
 	}
 }
 
-// A sighted manager reads a note link's label as before: "Edit" on a
-// member with a note and "Add a note" on one without. The words naming the
+// A sighted manager reads a note link's label as before: one label on a
+// member with a note and another on one without. The words naming the
 // member are for a screen reader alone.
 func TestNoteLinkShowsALabelMatchingTheNote(t *testing.T) {
 	w := newFoxholeWorld(t)
@@ -627,15 +616,19 @@ func TestNoteLinkShowsALabelMatchingTheNote(t *testing.T) {
 
 	rows := holderRows(t, parseHTML(t, w.b.get(foxholePath)))
 
-	for id, want := range map[string]string{memberDoe.ID: "Edit", memberAsh.ID: "Add a note"} {
+	shown := map[string]string{}
+	for id, display := range map[string]string{memberDoe.ID: "SGT Doe.J", memberAsh.ID: "Rowan Ash"} {
 		row, ok := rows[id]
 		if !ok {
-			t.Errorf("the holder list has no row for %s", id)
-			continue
+			t.Fatalf("the holder list has no row for %s", display)
 		}
-		if got := shownText(noteLink(t, row)); got != want {
-			t.Errorf("%s's note link shows %q, want %q", id, got, want)
+		shown[id] = shownText(noteLink(t, row))
+		if shown[id] == "" || strings.Contains(shown[id], display) {
+			t.Errorf("%s's note link shows %q, want a label without their name", display, shown[id])
 		}
+	}
+	if shown[memberDoe.ID] == shown[memberAsh.ID] {
+		t.Errorf("the note links of a member with a note and one without both show %q", shown[memberDoe.ID])
 	}
 }
 
@@ -643,43 +636,45 @@ func TestNoteLinkShowsALabelMatchingTheNote(t *testing.T) {
 // data-field: its mix download, its track download and its Delete.
 var recordingLinks = []string{"mix-download", "zip-download", "delete"}
 
-// shownStart is the start time a recording's block shows, and fails the
-// test when it shows none.
-func shownStart(t *testing.T, block *html.Node) string {
+// shownAs is how a recording's block on the list names it to a sighted
+// user: the title its heading shows and the start time its facts show. It
+// fails the test when the block shows either empty.
+func shownAs(t *testing.T, block *html.Node) (title, started string) {
 	t.Helper()
-	started := fieldText(t, block, "started")
-	if started == "" {
-		t.Fatalf("recording %s shows no start time", attrOf(block, "data-recording"))
+	title, started = fieldText(t, block, "title"), fieldText(t, block, "started")
+	if title == "" || started == "" {
+		t.Fatalf("recording %s shows the title %q and the start time %q, want both", attrOf(block, "data-recording"), title, started)
 	}
-	return started
+	return title, started
 }
 
 // A screen reader user picking from the Recordings page's links list hears
 // each link's name alone. Each download and Delete names its recording by
-// title and by its start time as the page shows it, so two untitled
-// recordings' links read apart.
+// title and by its start time as the page shows them, so two untitled
+// recordings' links read apart, and no two links on the page share a name.
 func TestEachRecordingLinkNamesItsRecording(t *testing.T) {
 	w := newTestWorld(t)
 	a := w.addStarter(5001, "Able.A", "discord-a")
 	now := time.Now()
-	titles := map[int64]string{
-		w.storedRecording(t, a.discordID, "", now.Add(-3*time.Hour)):              "Untitled recording",
-		w.storedRecording(t, a.discordID, "", now.Add(-2*time.Hour)):              "Untitled recording",
-		w.storedRecording(t, a.discordID, "Weekly briefing", now.Add(-time.Hour)): "Weekly briefing",
+	// stored maps each recording to the title it was started with, empty
+	// for none.
+	stored := map[int64]string{
+		w.storeRecording(t, a.discordID, "", now.Add(-3*time.Hour)):              "",
+		w.storeRecording(t, a.discordID, "", now.Add(-2*time.Hour)):              "",
+		w.storeRecording(t, a.discordID, "Weekly briefing", now.Add(-time.Hour)): "Weekly briefing",
 	}
 	signInAs(t, w.forum, w.b, a.account)
 
 	doc := parseHTML(t, w.b.get(recordingsPath))
 
 	listed := listedRecordings(t, doc)
-	named := map[string]string{}
-	for id, title := range titles {
+	for id, title := range stored {
 		block, ok := listed[id]
 		if !ok {
 			t.Errorf("the page doesn't list recording %d", id)
 			continue
 		}
-		started := shownStart(t, block)
+		heading, started := shownAs(t, block)
 		for _, field := range recordingLinks {
 			link := findElement(block, "a", "data-field", field)
 			if link == nil {
@@ -687,13 +682,23 @@ func TestEachRecordingLinkNamesItsRecording(t *testing.T) {
 				continue
 			}
 			name := accessibleName(doc, link)
-			if !strings.Contains(name, title) || !strings.Contains(name, started) {
-				t.Errorf("recording %d's %s link is named %q, want it to name %s, started %s", id, field, name, title, started)
+			// An untitled recording's empty title is in every name.
+			for _, want := range []string{heading, started, title} {
+				if !strings.Contains(name, want) {
+					t.Errorf("recording %d's %s link is named %q, which doesn't name %q", id, field, name, want)
+				}
 			}
-			if other, taken := named[name]; taken {
-				t.Errorf("recording %d's %s link shares the name %q with %s", id, field, name, other)
-			}
-			named[name] = fmt.Sprintf("recording %d's %s link", id, field)
+		}
+	}
+	counts := map[string]int{}
+	eachLiveElement(doc, func(n *html.Node) {
+		if n.Data == "a" {
+			counts[accessibleName(doc, n)]++
+		}
+	})
+	for name, n := range counts {
+		if n > 1 {
+			t.Errorf("%d links on the page share the name %q", n, name)
 		}
 	}
 }
@@ -704,9 +709,14 @@ func TestEachRecordingLinkNamesItsRecording(t *testing.T) {
 func TestDeletePreviewsDownloadLinksNameTheRecording(t *testing.T) {
 	w := newTestWorld(t)
 	a := w.addStarter(5001, "Able.A", "discord-a")
-	rec := w.storedRecording(t, a.discordID, "", time.Now().Add(-time.Hour))
+	rec := w.storeRecording(t, a.discordID, "", time.Now().Add(-time.Hour))
 	signInAs(t, w.forum, w.b, a.account)
 	page := parseHTML(t, w.b.get(recordingsPath))
+	listed, ok := listedRecordings(t, page)[rec]
+	if !ok {
+		t.Fatalf("the page doesn't list recording %d", rec)
+	}
+	title, started := shownAs(t, listed)
 
 	doc := parseHTML(t, w.b.get(linkHref("delete")(t, page, rec)))
 
@@ -714,15 +724,14 @@ func TestDeletePreviewsDownloadLinksNameTheRecording(t *testing.T) {
 	if !ok || attrOf(block, "data-field") != "delete-preview" {
 		t.Fatalf("the page doesn't show recording %d's delete preview", rec)
 	}
-	started := shownStart(t, block)
 	for _, field := range []string{"mix-download", "zip-download"} {
 		link := findElement(block, "a", "data-field", field)
 		if link == nil {
 			t.Errorf("the delete preview has no %s link", field)
 			continue
 		}
-		if name := accessibleName(doc, link); !strings.Contains(name, "Untitled recording") || !strings.Contains(name, started) {
-			t.Errorf("the preview's %s link is named %q, want it to name Untitled recording, started %s", field, name, started)
+		if name := accessibleName(doc, link); !strings.Contains(name, title) || !strings.Contains(name, started) {
+			t.Errorf("the preview's %s link is named %q, want it to name %s, started %s", field, name, title, started)
 		}
 	}
 }
@@ -732,7 +741,7 @@ func TestDeletePreviewsDownloadLinksNameTheRecording(t *testing.T) {
 func TestRecordingLinksShowNoWordsNamingTheRecording(t *testing.T) {
 	w := newTestWorld(t)
 	a := w.addStarter(5001, "Able.A", "discord-a")
-	rec := w.storedRecording(t, a.discordID, "Weekly briefing", time.Now().Add(-time.Hour))
+	rec := w.storeRecording(t, a.discordID, "Weekly briefing", time.Now().Add(-time.Hour))
 	signInAs(t, w.forum, w.b, a.account)
 
 	block, ok := listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))[rec]
@@ -740,14 +749,14 @@ func TestRecordingLinksShowNoWordsNamingTheRecording(t *testing.T) {
 	if !ok {
 		t.Fatalf("the page doesn't list recording %d", rec)
 	}
-	started := shownStart(t, block)
+	title, started := shownAs(t, block)
 	for _, field := range recordingLinks {
 		link := findElement(block, "a", "data-field", field)
 		if link == nil {
 			t.Errorf("recording %d has no %s link", rec, field)
 			continue
 		}
-		if shown := shownText(link); strings.Contains(shown, "Weekly briefing") || strings.Contains(shown, started) {
+		if shown := shownText(link); strings.Contains(shown, title) || strings.Contains(shown, started) {
 			t.Errorf("the %s link shows %q, want neither the title nor the start time in sight", field, shown)
 		}
 	}

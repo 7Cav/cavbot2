@@ -1088,11 +1088,11 @@ func TestRecordingsPageMarksASpeakerWhoseTrackWasLost(t *testing.T) {
 	}
 }
 
-// storedRecording writes a recording of the fixture's channel through the
+// storeRecording writes a recording of the fixture's channel through the
 // store as a stop leaves it, started by the member with the Discord ID
 // given at start, with the title given, stopped half an hour on with one
 // speaker, and its mix ready. It returns the recording's ID.
-func (w *testWorld) storedRecording(t *testing.T, discordID, title string, start time.Time) int64 {
+func (w *testWorld) storeRecording(t *testing.T, discordID, title string, start time.Time) int64 {
 	t.Helper()
 	ctx := context.Background()
 	rec, err := w.store.StartRecording(ctx, store.Recording{GuildID: testGuildID, ChannelID: testRecordChannel,

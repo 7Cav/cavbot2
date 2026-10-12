@@ -14,6 +14,17 @@ import (
 	"golang.org/x/net/html"
 )
 
+// noteLink is the note link in a Foxhole page row, and fails the test when
+// the row has none.
+func noteLink(t *testing.T, row *html.Node) *html.Node {
+	t.Helper()
+	link := findElement(row, "a", "data-field", "edit_note")
+	if link == nil {
+		t.Fatalf("the row for %s has no note link", attrOf(row, "data-member"))
+	}
+	return link
+}
+
 // editNoteLink returns the href of a holder row's Edit link, and fails the
 // test when the row or its link is missing.
 func editNoteLink(t *testing.T, doc *html.Node, memberID string) string {
@@ -22,11 +33,7 @@ func editNoteLink(t *testing.T, doc *html.Node, memberID string) string {
 	if !ok {
 		t.Fatalf("the holder list has no row for %s", memberID)
 	}
-	link := findElement(row, "a", "data-field", "edit_note")
-	if link == nil {
-		t.Fatalf("%s's row has no Edit link", memberID)
-	}
-	href, _ := attrValue(link, "href")
+	href, _ := attrValue(noteLink(t, row), "href")
 	return href
 }
 
