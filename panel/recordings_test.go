@@ -744,6 +744,28 @@ func TestRecordingNoticeLinkOpensTheRecordingForItsStarter(t *testing.T) {
 	}
 }
 
+// A Foxhole manager who started a recording lands on the Foxhole page, and
+// the rail's Recordings link there opens the Recordings page listing it.
+func TestFoxholeManagerReachesTheirRecordingFromTheRail(t *testing.T) {
+	w := newTestWorld(t)
+	manager := addFoxholeManager(w.forum)
+	w.milpacs.set(managerUsername, "discord-m")
+	rec := w.record(t, "discord-m")
+
+	landed := parseHTML(t, follow(t, w.b, signInAs(t, w.forum, w.b, manager)))
+
+	if got := pageOf(t, landed); got != pageFoxhole {
+		t.Fatalf("the manager lands on page %q, want %s", got, pageFoxhole)
+	}
+	href, ok := railLinks(t, landed)["recordings"]
+	if !ok {
+		t.Fatal("the Foxhole page's rail has no Recordings link")
+	}
+	if _, ok := listedRecordings(t, parseHTML(t, follow(t, w.b, w.b.get(href))))[rec]; !ok {
+		t.Errorf("the rail's Recordings link, %s, doesn't list the manager's recording %d", href, rec)
+	}
+}
+
 // parseDatetime reads a <time> element's datetime as an instant, in either
 // form HTML gives a date: a full RFC 3339 time or a date alone.
 func parseDatetime(t *testing.T, el *html.Node) time.Time {

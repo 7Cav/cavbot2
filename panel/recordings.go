@@ -194,7 +194,6 @@ func (p *Panel) renderRecordings(w http.ResponseWriter, sess session, status int
 	}
 	data := sess.page("Recordings")
 	data.Page = pageRecordings
-	data.Nav.Recordings = true
 	data.Recordings = view
 	p.render(w, status, "recordings", data)
 }

@@ -186,7 +186,8 @@ func TestUserOutsideTheAdminGroupsSavesNothing(t *testing.T) {
 // A panel admin removed from every panel admin group while a hub's edit
 // form is open in their browser presses Save. The group check now finds an
 // outsider, whose save the no-access page refuses, saying nothing changed,
-// and the store is as it was.
+// and the store is as it was. The page's rail still leads to the
+// Recordings page, which every signed-in visitor opens.
 func TestPanelAdminWhoLeftEveryGroupSavesNothingFromAnOpenForm(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
@@ -197,9 +198,13 @@ func TestPanelAdminWhoLeftEveryGroupSavesNothingFromAnOpenForm(t *testing.T) {
 
 	res := w.b.postForm(path, form)
 
-	assertNoAccessSays(t, parseHTML(t, follow(t, w.b, res)), noAccessRefused)
+	doc := parseHTML(t, follow(t, w.b, res))
+	assertNoAccessSays(t, doc, noAccessRefused)
 	if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
 		t.Errorf("the store after the save = %+v, want it as before, %+v", after, before)
+	}
+	if _, ok := railLinks(t, doc)["recordings"]; !ok {
+		t.Error("the no-access page's rail has no Recordings link")
 	}
 }
 
