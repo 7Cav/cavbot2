@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -112,6 +113,37 @@ func announcedText(n *html.Node) string {
 				sb.WriteString(" ")
 				return
 			case "input", "select", "textarea", "template", "script", "style":
+				return
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return collapseSpace(sb.String())
+}
+
+// shownText is the text a sighted user reads in n's subtree: a hidden
+// subtree shows nothing, and neither do the words the panel's
+// visually-hidden class keeps for a screen reader alone.
+func shownText(n *html.Node) string {
+	var sb strings.Builder
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		switch n.Type {
+		case html.TextNode:
+			sb.WriteString(n.Data)
+			return
+		case html.ElementNode:
+			if _, hidden := attrValue(n, "hidden"); hidden {
+				return
+			}
+			if class, _ := attrValue(n, "class"); slices.Contains(strings.Fields(class), "visually-hidden") {
+				return
+			}
+			switch n.Data {
+			case "img", "input", "select", "textarea", "template", "script", "style":
 				return
 			}
 		}
@@ -530,5 +562,78 @@ func TestEachRoleTagsRemoveControlNamesItsPickersSet(t *testing.T) {
 			}
 			named[name] = tc.set
 		})
+	}
+}
+
+// noteLink is the note link in a Foxhole page row, and fails the test when
+// the row has none.
+func noteLink(t *testing.T, row *html.Node) *html.Node {
+	t.Helper()
+	link := findElement(row, "a", "data-field", "edit_note")
+	if link == nil {
+		t.Fatalf("the row for %s has no note link", attrOf(row, "data-member"))
+	}
+	return link
+}
+
+// A screen reader user picking from the Foxhole page's links list hears
+// each link's name alone. Each row's note link names its member, whether or
+// not they have a note, so a list of holders reads as its members and not
+// as "Add a note" over and over.
+func TestEachNoteLinkNamesItsMember(t *testing.T) {
+	w := newNoRoleWorld(t)
+	holders := parseHTML(t, w.b.get(foxholePath))
+	noRole := openNoRoleView(t, w.b)
+
+	for _, view := range []struct {
+		name string
+		doc  *html.Node
+		rows map[string]*html.Node
+		// want maps each member the view lists to their display name.
+		want map[string]string
+	}{
+		// Kestrel has a note and Ash has none.
+		{"the holder list", holders, holderRows(t, holders), map[string]string{memberAsh.ID: "Rowan Ash", memberKestrel.ID: "kestrel_tlr"}},
+		{"the no-role view", noRole, noRoleRows(t, noRole), map[string]string{memberDoe.ID: "SGT Doe.J", memberMarsh.ID: "CPT Marsh.E"}},
+	} {
+		t.Run(view.name, func(t *testing.T) {
+			named := map[string]string{}
+			for id, display := range view.want {
+				row, ok := view.rows[id]
+				if !ok {
+					t.Errorf("the view has no row for %s", display)
+					continue
+				}
+				name := accessibleName(view.doc, noteLink(t, row))
+				if !strings.Contains(name, display) {
+					t.Errorf("%s's note link is named %q, which doesn't name them", display, name)
+				}
+				if other, taken := named[name]; taken {
+					t.Errorf("%s's note link shares the name %q with %s's", display, name, other)
+				}
+				named[name] = display
+			}
+		})
+	}
+}
+
+// A sighted manager reads a note link's label as before: "Edit" on a
+// member with a note and "Add a note" on one without. The words naming the
+// member are for a screen reader alone.
+func TestNoteLinkShowsALabelMatchingTheNote(t *testing.T) {
+	w := newFoxholeWorld(t)
+	assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
+
+	rows := holderRows(t, parseHTML(t, w.b.get(foxholePath)))
+
+	for id, want := range map[string]string{memberDoe.ID: "Edit", memberAsh.ID: "Add a note"} {
+		row, ok := rows[id]
+		if !ok {
+			t.Errorf("the holder list has no row for %s", id)
+			continue
+		}
+		if got := shownText(noteLink(t, row)); got != want {
+			t.Errorf("%s's note link shows %q, want %q", id, got, want)
+		}
 	}
 }
