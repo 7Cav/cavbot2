@@ -551,7 +551,7 @@ _Avoid_: missing track, failed track, broken track.
 
 **Mix**:
 One file of every track in a recording played together, built when the
-recording stops.
+recording stops. A recording with no speakers has no mix.
 _Avoid_: mixdown, combined track, merged audio.
 
 **Info file**:

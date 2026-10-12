@@ -37,8 +37,8 @@ func RecordingPath(id int64) string {
 	return "/recordings/" + strconv.FormatInt(id, 10)
 }
 
-// ErrMixNotReady: the recording's mix is processing or failed, so there is
-// nothing to download.
+// ErrMixNotReady: the recording's mix is processing or failed, or it has
+// none since it has no speakers, so there is nothing to download.
 var ErrMixNotReady = errors.New("recording: mix not ready")
 
 // ErrRecordingRunning: the recording is still running, so it can't be

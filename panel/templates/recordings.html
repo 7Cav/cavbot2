@@ -57,7 +57,7 @@
     <div class="block-row confirm-list" data-list="goes">
       <h3>Goes for good</h3>
       <ul>
-        <li>Each speaker's track{{if ne .Mix "failed"}} and the mix{{end}}.</li>
+        <li>Each speaker's track{{if not (eq .Mix "failed" "none")}} <span data-field="goes-mix">and the mix</span>{{end}}.</li>
         <li>The info file.</li>
         <li>The link in Discord stops working.</li>
       </ul>
@@ -72,4 +72,4 @@
   </section>
 {{end}}
 
-{{define "mix-state"}}{{if .Running}}<span class="tag">recording</span>{{else if eq .Mix "ready"}}<span class="tag tag--on">ready</span>{{else if eq .Mix "failed"}}<span class="tag tag--warn">failed</span> The tracks can still be downloaded.{{else}}<span class="tag">being mixed</span> Ready a few minutes after the stop.{{end}}{{end}}
+{{define "mix-state"}}{{if .Running}}<span class="tag">recording</span>{{else if eq .Mix "ready"}}<span class="tag tag--on">ready</span>{{else if eq .Mix "failed"}}<span class="tag tag--warn">failed</span> The tracks can still be downloaded.{{else if eq .Mix "none"}}<span class="tag" data-field="no-mix">none</span> Nobody spoke, so there's nothing to mix.{{else}}<span class="tag">being mixed</span> Ready a few minutes after the stop.{{end}}{{end}}
