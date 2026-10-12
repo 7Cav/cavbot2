@@ -39,6 +39,9 @@ type fakeTempVCManager struct {
 	// messageEditErr, when set, is what every message edit returns instead.
 	messageEdits   []discordgo.MessageEdit
 	messageEditErr error
+	// messageDeleteErr, when set, is what every message delete returns
+	// instead.
+	messageDeleteErr error
 	// dmChannels maps each DM channel UserChannelCreate opened to the user
 	// it reaches. A message posted to one is a DM.
 	dmChannels map[string]string
@@ -147,6 +150,9 @@ type fakeMessage struct {
 	id        string
 	channelID string
 	data      *discordgo.MessageSend
+	// deleted is set once a delete has taken the message out of its
+	// channel's chat.
+	deleted bool
 }
 
 const (
@@ -503,6 +509,24 @@ func (f *fakeTempVCManager) ChannelMessageEditComplex(edit *discordgo.MessageEdi
 	return &discordgo.Message{ID: edit.ID, ChannelID: edit.Channel}, nil
 }
 
+// ChannelMessageDelete takes a message the fake let through out of its
+// channel's chat, or returns messageDeleteErr and deletes nothing. A
+// message the channel doesn't hold is Unknown Message, as Discord answers.
+func (f *fakeTempVCManager) ChannelMessageDelete(channelID, messageID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.messageDeleteErr != nil {
+		return f.messageDeleteErr
+	}
+	for i := range f.messages {
+		if m := &f.messages[i]; m.id == messageID && m.channelID == channelID && !m.deleted {
+			m.deleted = true
+			return nil
+		}
+	}
+	return restError(http.StatusNotFound, discordgo.ErrCodeUnknownMessage, rawBodyMarker)
+}
+
 // CanSeeChannel judges the way the production adapter does: discordgo's
 // permission calculation over the channel's list as overwritesOf reads it,
 // the permission fixture's guild roles, and the roles given. A channel the
@@ -691,11 +715,17 @@ func (f *fakeTempVCManager) recordedMoves() []fakeMove {
 	return out
 }
 
+// recordedMessages lists the messages the fake let through that are still
+// up, in order. A deleted one is gone from its channel's chat.
 func (f *fakeTempVCManager) recordedMessages() []fakeMessage {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]fakeMessage, len(f.messages))
-	copy(out, f.messages)
+	out := make([]fakeMessage, 0, len(f.messages))
+	for _, m := range f.messages {
+		if !m.deleted {
+			out = append(out, m)
+		}
+	}
 	return out
 }
 

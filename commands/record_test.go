@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -515,8 +516,9 @@ func TestRecordStartJoinFailureIsReportedAndFreesTheRecorder(t *testing.T) {
 }
 
 // A start whose row can't be written is reported to Sentry, and no
-// recorder is left in the channel recording with no row.
-func TestRecordStartRowWriteFailureLeavesNoRecorderInTheChannel(t *testing.T) {
+// recorder is left in the channel recording with no row. The notice it
+// posted is gone too, so the channel isn't told it's being recorded.
+func TestRecordStartRowWriteFailureLeavesNoRecorderOrNoticeInTheChannel(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 	captures := countCaptures(t)
 	failing := &failingStore{Fake: sc.st, startRecordingErr: errors.New("connection refused")}
@@ -530,6 +532,35 @@ func TestRecordStartRowWriteFailureLeavesNoRecorderInTheChannel(t *testing.T) {
 	}
 	if got := sc.voice.inChannel(recordChannel); len(got) != 0 {
 		t.Errorf("recorders in %s after the failed write = %v, want none", recordChannel, got)
+	}
+	if notices := noticesIn(t, sc.fake, recordChannel); len(notices) != 0 {
+		t.Errorf("messages in %s after the failed write = %d, want no recording notice", recordChannel, len(notices))
+	}
+}
+
+// A notice the failed start can't delete changes nothing the starter or
+// Sentry sees: the start fails the same way, reported once. The log holds a
+// WARN naming the channel and the notice left up.
+func TestRecordStartNoticeThatWontDeleteIsLogged(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	captures := countCaptures(t)
+	logs := captureLogs(t)
+	sc.faults.startRecordingErr = errors.New("connection refused")
+	sc.fake.messageDeleteErr = restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, rawBodyMarker)
+	sc.fake.setVoice(recStarter.id, recordChannel)
+
+	reply := recordAs(t, sc.rt, recStarter, "start")
+
+	if reply != recordFailedReply {
+		t.Errorf("reply = %q, want %q", reply, recordFailedReply)
+	}
+	if *captures != 1 {
+		t.Errorf("Sentry captures = %d, want 1", *captures)
+	}
+	notice := recordingNotice(t, sc.fake, recordChannel)
+	fields := map[string]string{"channel_id": recordChannel, "message_id": notice.id}
+	if warns := logRecordsWith(t, logs, "WARN", fields); len(warns) == 0 {
+		t.Errorf("WARN records with %v = none, want the notice left up logged", fields)
 	}
 }
 

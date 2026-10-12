@@ -29,7 +29,8 @@ import (
 // store at each start and stop, so a panel save takes effect at once.
 //
 // A recording's notice (recording_notice.go) is posted once its recorder is
-// in the channel, and its row written after that, with the notice's ID. The row is closed with
+// in the channel, and its row written after that, with the notice's ID. A
+// start whose row isn't written removes the notice again. The row is closed with
 // its stop time and how it ended once the recorder has left, and the notice
 // edited to say it stopped. Its tracks (recording_tracks.go) take what the
 // recorder hears from the row write on, and end at the stop time. Besides
@@ -121,6 +122,9 @@ type RecordingManager interface {
 	ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error)
 	// ChannelMessageEditComplex edits the recording notice at stop.
 	ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error)
+	// ChannelMessageDelete removes the recording notice of a start that
+	// failed after posting it.
+	ChannelMessageDelete(channelID, messageID string) error
 	// MemberList is TempVCManager's: one copied snapshot of the guild's
 	// member list, which names a recording's speakers at its stop.
 	MemberList(guildID string) MemberListSnapshot
@@ -280,9 +284,11 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	row, err = r.st.StartRecording(storeCtx, row)
 	if err != nil {
 		// A recording with no row is one the panel and the deploy gate
-		// can't see, so the recorder leaves rather than record it.
+		// can't see, so the recorder leaves rather than record it, and the
+		// notice goes with it.
 		r.leave(conn)
 		r.release(recorderID)
+		r.removeRecordingNotice(channelID, noticeID)
 		captureError("Recording row not written at start", err, "recorder", recorderID, "channel_id", channelID)
 		return "", errRecordingFailed
 	}
