@@ -136,11 +136,11 @@ type recordingItem struct {
 }
 
 // recordingSpeaker is one of a recording's speakers as the page names
-// them: their display name, and Lost, the lost track marker when their
+// them: their display name, and Marker, the lost track marker when their
 // track was lost (GLOSSARY.md, Lost track), else empty.
 type recordingSpeaker struct {
-	Name string
-	Lost string
+	Name   string
+	Marker string
 }
 
 // recordingsPage is GET /recordings: the recordings the user started, the
@@ -426,7 +426,7 @@ func recordingItems(recs []store.Recording) []recordingItem {
 		for _, sp := range rec.Speakers {
 			speaker := recordingSpeaker{Name: sp.DisplayName}
 			if sp.TrackLost {
-				speaker.Lost = commands.TrackLostMarker
+				speaker.Marker = commands.TrackLostMarker
 			}
 			item.Speakers = append(item.Speakers, speaker)
 		}

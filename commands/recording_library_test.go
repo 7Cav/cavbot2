@@ -436,29 +436,43 @@ func TestRecordingZipWarnsOfATrackGoneThatWasNotLost(t *testing.T) {
 	}
 }
 
-// removeFiles removes every file and directory under the recordings
-// directory whose name is name, or every one when name is empty.
-func (sc *recordScene) removeFiles(t *testing.T, name string) {
+// removeFilesNamed removes every file under the recordings directory whose
+// name is name, failing the test when there is none.
+func (sc *recordScene) removeFilesNamed(t *testing.T, name string) {
 	t.Helper()
 	var paths []string
 	err := filepath.WalkDir(sc.dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || path == sc.dir {
-			return err
-		}
-		if name == "" || d.Name() == name {
+		if err == nil && !d.IsDir() && d.Name() == name {
 			paths = append(paths, path)
 		}
-		return nil
+		return err
 	})
 	if err != nil {
 		t.Fatalf("reading the recordings directory: %v", err)
 	}
 	if len(paths) == 0 {
-		t.Fatalf("nothing named %q under the recordings directory", name)
+		t.Fatalf("no %s under the recordings directory", name)
 	}
 	for _, path := range paths {
-		if err := os.RemoveAll(path); err != nil {
+		if err := os.Remove(path); err != nil {
 			t.Fatalf("removing %s: %v", path, err)
+		}
+	}
+}
+
+// removeEverything empties the recordings directory.
+func (sc *recordScene) removeEverything(t *testing.T) {
+	t.Helper()
+	entries, err := os.ReadDir(sc.dir)
+	if err != nil {
+		t.Fatalf("reading the recordings directory: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("the recordings directory is already empty")
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(sc.dir, e.Name())); err != nil {
+			t.Fatalf("removing %s: %v", e.Name(), err)
 		}
 	}
 }
@@ -478,7 +492,7 @@ func TestRecordingZipRendersAnInfoFileNotOnDisk(t *testing.T) {
 	sc.hear(t, recordChannel, frame(speakerB, 22, 5000, speakerB))
 	recordAs(t, sc.rt, recStarter, "stop")
 	sc.clock.advance(0)
-	sc.removeFiles(t, infoFileName)
+	sc.removeFilesNamed(t, infoFileName)
 
 	entries := sc.zipEntries(t, sc.onlyRecording(t))
 
@@ -504,7 +518,7 @@ func TestRecordingZipOfARecordingWithNoFilesHoldsOnlyTheInfoFile(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 	sc.recordSpeakers(t, speakerA, speakerB)
 	sc.clock.advance(0)
-	sc.removeFiles(t, "")
+	sc.removeEverything(t)
 
 	entries := sc.zipEntries(t, sc.onlyRecording(t))
 
@@ -514,17 +528,34 @@ func TestRecordingZipOfARecordingWithNoFilesHoldsOnlyTheInfoFile(t *testing.T) {
 	}
 }
 
-// trackLostMarker is what marks a lost track's speaker wherever a recording
+// trackLostVerbatim is what marks a lost track's speaker wherever a recording
 // names its speakers. The brief fixes it verbatim, so tests quote it.
-const trackLostMarker = "(track lost)"
+const trackLostVerbatim = "(track lost)"
+
+// createTracksWith makes create create every track from now on, until the
+// test ends.
+func createTracksWith(t *testing.T, create func(string) (*os.File, error)) {
+	t.Helper()
+	prev := recordingCreateTrack
+	recordingCreateTrack = create
+	t.Cleanup(func() { recordingCreateTrack = prev })
+}
 
 // failTrackCreates makes every track created from now on fail, as a full or
 // read-only disk does.
 func failTrackCreates(t *testing.T) {
 	t.Helper()
-	prev := recordingCreateTrack
-	recordingCreateTrack = func(string) (*os.File, error) { return nil, errors.New("no space left on device") }
-	t.Cleanup(func() { recordingCreateTrack = prev })
+	createTracksWith(t, func(string) (*os.File, error) { return nil, errors.New("no space left on device") })
+}
+
+// tracksLost maps each of a recording's speakers to whether their track
+// was lost.
+func tracksLost(rec store.Recording) map[string]bool {
+	lost := map[string]bool{}
+	for _, sp := range rec.Speakers {
+		lost[sp.ID] = sp.TrackLost
+	}
+	return lost
 }
 
 // recordWithALostTrack records doej (speaker A) and smitha (speaker B),
@@ -547,11 +578,7 @@ func TestRecordingStopListsASpeakerWhoseTrackFailedAsLost(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 	rec := sc.recordWithALostTrack(t)
 
-	lost := map[string]bool{}
-	for _, sp := range rec.Speakers {
-		lost[sp.ID] = sp.TrackLost
-	}
-	if want := map[string]bool{speakerA: false, speakerB: true}; !maps.Equal(lost, want) {
+	if lost, want := tracksLost(rec), map[string]bool{speakerA: false, speakerB: true}; !maps.Equal(lost, want) {
 		t.Errorf("speakers' tracks lost = %v, want %v", lost, want)
 	}
 }
@@ -581,11 +608,11 @@ func TestRecordingInfoFileMarksALostTrack(t *testing.T) {
 	info := sc.zipEntries(t, rec)[infoFileName]
 
 	lostLine := infoLine(t, info, "smitha")
-	if i := strings.Index(lostLine, trackLostMarker); i < strings.Index(lostLine, "smitha") {
-		t.Errorf("the lost track's speaker's line is %q, want %s after their name", lostLine, trackLostMarker)
+	if i := strings.Index(lostLine, trackLostVerbatim); i < strings.Index(lostLine, "smitha") {
+		t.Errorf("the lost track's speaker's line is %q, want %s after their name", lostLine, trackLostVerbatim)
 	}
-	if keptLine := infoLine(t, info, "doej"); strings.Contains(keptLine, trackLostMarker) {
-		t.Errorf("the kept track's speaker's line is %q, want no %s", keptLine, trackLostMarker)
+	if keptLine := infoLine(t, info, "doej"); strings.Contains(keptLine, trackLostVerbatim) {
+		t.Errorf("the kept track's speaker's line is %q, want no %s", keptLine, trackLostVerbatim)
 	}
 }
 
@@ -631,9 +658,7 @@ func fillTrackWrites(t *testing.T) {
 		t.Skipf("no /dev/full to stand in for a full disk: %v", err)
 	}
 	_ = full.Close()
-	prev := recordingCreateTrack
-	recordingCreateTrack = func(string) (*os.File, error) { return os.OpenFile("/dev/full", os.O_WRONLY, 0) }
-	t.Cleanup(func() { recordingCreateTrack = prev })
+	createTracksWith(t, func(string) (*os.File, error) { return os.OpenFile("/dev/full", os.O_WRONLY, 0) })
 }
 
 // A speaker whose track's audio first meets a full disk at the stop, when
@@ -648,11 +673,7 @@ func TestRecordingStopListsASpeakerWhoseTrackFailedAtTheStopAsLost(t *testing.T)
 	sc.hear(t, recordChannel, frame(speakerB, 22, 5000, speakerB))
 	recordAs(t, sc.rt, recStarter, "stop")
 
-	lost := map[string]bool{}
-	for _, sp := range sc.onlyRecording(t).Speakers {
-		lost[sp.ID] = sp.TrackLost
-	}
-	if want := map[string]bool{speakerA: false, speakerB: true}; !maps.Equal(lost, want) {
+	if lost, want := tracksLost(sc.onlyRecording(t)), map[string]bool{speakerA: false, speakerB: true}; !maps.Equal(lost, want) {
 		t.Errorf("speakers' tracks lost = %v, want %v", lost, want)
 	}
 }

@@ -55,14 +55,13 @@ func (r *RecordingRuntime) mix(rec store.Recording) {
 		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 			// ffmpeg won't open a track that isn't there, and the tracks
 			// that are still make a mix.
-			noteTrackMissing(rec, sp)
+			noteTrackNotOnDisk(rec, sp)
 			continue
 		}
 		tracks = append(tracks, path)
 	}
 	if len(tracks) == 0 {
-		// Every track was lost or removed. ffmpeg won't mix none, and the
-		// stop or recovery already reported each loss.
+		// Every track was lost or removed, and ffmpeg won't mix none.
 		if r.setMix(rec.ID, store.MixFailed, nil) {
 			utils.Info("Recording not mixed, no track on disk", "recording_id", rec.ID)
 		}

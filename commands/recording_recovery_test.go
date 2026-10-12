@@ -316,11 +316,7 @@ func TestRecordingCutShortListsASpeakerWithNothingOnDiskAsLost(t *testing.T) {
 	sc.restart(t, testRecorder)
 	sc.clock.advance(0)
 
-	lost := map[string]bool{}
-	for _, sp := range sc.onlyRecording(t).Speakers {
-		lost[sp.ID] = sp.TrackLost
-	}
-	if want := map[string]bool{speakerA: false, speakerB: true}; !maps.Equal(lost, want) {
+	if lost, want := tracksLost(sc.onlyRecording(t)), map[string]bool{speakerA: false, speakerB: true}; !maps.Equal(lost, want) {
 		t.Errorf("speakers' tracks lost after recovery = %v, want %v", lost, want)
 	}
 }

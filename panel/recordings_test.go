@@ -1022,9 +1022,9 @@ func TestRecordingMixNobodySpokeInIsRefusedLikeOneBeingMixed(t *testing.T) {
 	}
 }
 
-// trackLostMarker is what marks a lost track's speaker wherever a recording
+// trackLostVerbatim is what marks a lost track's speaker wherever a recording
 // names its speakers. The brief fixes it verbatim, so tests quote it.
-const trackLostMarker = "(track lost)"
+const trackLostVerbatim = "(track lost)"
 
 // speakerSegments splits a recording's speakers text by speaker: each
 // name's segment runs from the name to the next name in the text, or to
@@ -1080,10 +1080,10 @@ func TestRecordingsPageMarksASpeakerWhoseTrackWasLost(t *testing.T) {
 		t.Fatal("the recording shows no speakers")
 	}
 	segments := speakerSegments(t, textOf(field), kept, lost)
-	if !strings.Contains(segments[lost], trackLostMarker) {
-		t.Errorf("the lost track's speaker reads %q, want %s after their name", segments[lost], trackLostMarker)
+	if !strings.Contains(segments[lost], trackLostVerbatim) {
+		t.Errorf("the lost track's speaker reads %q, want %s after their name", segments[lost], trackLostVerbatim)
 	}
-	if strings.Contains(segments[kept], trackLostMarker) {
-		t.Errorf("the kept track's speaker reads %q, want no %s", segments[kept], trackLostMarker)
+	if strings.Contains(segments[kept], trackLostVerbatim) {
+		t.Errorf("the kept track's speaker reads %q, want no %s", segments[kept], trackLostVerbatim)
 	}
 }

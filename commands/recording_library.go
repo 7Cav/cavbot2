@@ -168,7 +168,7 @@ func (l *RecordingLibrary) WriteZip(w io.Writer, rec store.Recording) error {
 func (l *RecordingLibrary) addTrack(zw *zip.Writer, rec store.Recording, sp store.Speaker, name string) error {
 	f, err := os.Open(trackPath(l.dir, rec.ID, sp.ID))
 	if errors.Is(err, fs.ErrNotExist) {
-		noteTrackMissing(rec, sp)
+		noteTrackNotOnDisk(rec, sp)
 		return nil
 	}
 	if err != nil {
