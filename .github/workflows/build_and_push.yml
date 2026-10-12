@@ -210,7 +210,7 @@ jobs:
           fetch-depth: 0
 
       - name: Record the release in Sentry
-        uses: getsentry/action-release@v3.7.0
+        uses: getsentry/action-release@v3.7.1
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: syniron
