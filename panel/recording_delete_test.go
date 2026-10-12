@@ -251,18 +251,17 @@ func TestRecordingDeleteLandsOnAPageSayingItWasDeleted(t *testing.T) {
 	}
 }
 
-// A starter who isn't a panel admin, a Foxhole manager or an outsider,
-// deletes their only recording and lands on the Recordings page saying it
-// was deleted and that none are left, as a panel admin does.
+// A starter who isn't a panel admin, here a Foxhole manager and an
+// outsider, deletes their only recording and lands on the Recordings page
+// saying it was deleted and that none are left, as a panel admin does.
 func TestStarterWhoDeletesTheirLastRecordingLandsOnTheRecordingsPage(t *testing.T) {
 	cases := []struct {
 		who      string
 		add      func(*fakeForum) *forumAccount
 		username string
-		outsider bool
 	}{
-		{"a Foxhole manager", addFoxholeManager, managerUsername, false},
-		{"an outsider", addOutsider, outsiderUsername, true},
+		{"a Foxhole manager", addFoxholeManager, managerUsername},
+		{"an outsider", addOutsider, outsiderUsername},
 	}
 	for _, tc := range cases {
 		t.Run(tc.who, func(t *testing.T) {

@@ -129,10 +129,10 @@ func railLinks(t *testing.T, doc *html.Node) map[string]string {
 
 // The rail shows the Hubs link to panel admins alone, the Foxhole link to
 // panel admins and Foxhole managers, and the Recordings link to everyone,
-// and every link it shows, the mark included, lands on the page it names. The panel admin row's Hubs link is a
-// regression pin: panel admins keep the hub page as it was. The row in both
-// groups catches a root that sends every Foxhole manager to the Foxhole
-// page, panel admins among them.
+// and every link it shows, the mark included, lands on the page it names.
+// The panel admin row's Hubs link is a regression pin: panel admins keep the
+// hub page as it was. The row in both groups catches a root that sends
+// every Foxhole manager to the Foxhole page, panel admins among them.
 func TestRailShowsOnlyThePagesTheUserOpensAndEachLinkOpensIt(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -180,8 +180,8 @@ func TestRailShowsOnlyThePagesTheUserOpensAndEachLinkOpensIt(t *testing.T) {
 
 // A Foxhole manager whose forum account leaves the Foxhole group keeps their
 // panel session: their next load of the Foxhole page lands on the
-// Recordings page, and once the forum puts them back in the group the page opens with no new
-// sign-in.
+// Recordings page, and once the forum puts them back in the group the page
+// opens with no new sign-in.
 func TestFoxholeManagerWhoLeavesTheGroupKeepsTheSession(t *testing.T) {
 	w := newTestWorld(t)
 	manager := addFoxholeManager(w.forum)

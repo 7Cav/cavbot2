@@ -666,7 +666,7 @@ func TestRecordingsPageOfSomeoneWithNoRecordings(t *testing.T) {
 			w.record(t, a.discordID)
 			follow(t, w.b, signInAs(t, w.forum, w.b, tc.add(w.forum)))
 
-			assertEmptyRecordingsPage(t, w.b.get(recordingsPath), noRecordingsYet, tc.outsider)
+			assertEmptyRecordingsPageFor(t, w.b.get(recordingsPath), noRecordingsYet, tc.outsider)
 		})
 	}
 }
@@ -680,11 +680,11 @@ func assertRecordingsPage(t *testing.T, res *http.Response) {
 	}
 }
 
-// assertEmptyRecordingsPage checks a response is the Recordings page with
+// assertEmptyRecordingsPageFor checks a response is the Recordings page with
 // a 200, listing nothing and saying so in the sentence given, and that it
 // says the visitor's forum groups open no other page when outsider is set,
 // and only then.
-func assertEmptyRecordingsPage(t *testing.T, res *http.Response, want string, outsider bool) {
+func assertEmptyRecordingsPageFor(t *testing.T, res *http.Response, want string, outsider bool) {
 	t.Helper()
 	if res.StatusCode != http.StatusOK {
 		t.Errorf("the Recordings page's status is %d, want 200", res.StatusCode)
@@ -710,7 +710,7 @@ func TestRecordingsPageAfterAFailedMilpacLookupIsEmpty(t *testing.T) {
 			res := signInAs(t, w.forum, w.b, x.account)
 
 			assertRedirect(t, res, "/")
-			assertEmptyRecordingsPage(t, follow(t, w.b, res), noRecordingsYet, true)
+			assertEmptyRecordingsPageFor(t, follow(t, w.b, res), noRecordingsYet, true)
 		})
 	}
 }
