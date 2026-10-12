@@ -300,3 +300,71 @@ func TestNoteStartsOnAnApprovedCollaboratorWithNoFoxholeRole(t *testing.T) {
 		t.Errorf("%s's row shows the note %q, want the one saved", memberKestrel.ID, got)
 	}
 }
+
+// Approve on a selection that would approve nobody and skip nobody changes
+// nothing: every selected member is an approved collaborator already, or
+// nothing was ticked, which only a browser without the page script sends.
+// The save is refused with the nobody-to-change reason, and the store and
+// the change log are as before.
+func TestApproveThatWouldChangeNobodyIsRefused(t *testing.T) {
+	cases := []struct {
+		name    string
+		members []string
+	}{
+		{"everyone selected is approved", []string{memberKestrel.ID, memberMarsh.ID}},
+		{"nothing ticked", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			approveThroughThePage(t, w, memberKestrel.ID, memberMarsh.ID)
+			page := parseHTML(t, w.b.get(foxholePath))
+			before := readNoteState(t, w.st)
+
+			res := submitSelection(t, w.b, page, opApprove, tc.members...)
+
+			assertRefused(t, res, refusalNobodyToChange, w.st, before)
+		})
+	}
+}
+
+// An Approve that approves nobody but skips someone isn't a no-op the page
+// has nothing to say about: the save lands, and the page it lands on names
+// the member skipped for not holding External, as it does today.
+func TestApproveThatOnlySkipsSomeoneStillLandsWithTheSkipLine(t *testing.T) {
+	w := newFoxholeWorld(t)
+	approveThroughThePage(t, w, memberKestrel.ID)
+	page := parseHTML(t, w.b.get(foxholePath))
+
+	res := submitSelection(t, w.b, page, opApprove, memberKestrel.ID, memberDoe.ID)
+
+	assertRedirect(t, res, foxholePath)
+	if got, want := valuesOf(parseHTML(t, follow(t, w.b, res)), "data-skipped"), []string{memberDoe.ID}; !slices.Equal(got, want) {
+		t.Errorf("the page says it skipped %v, want %v", got, want)
+	}
+}
+
+// Clear approval on a selection with no approved collaborator in it, or
+// with nothing ticked, changes nothing. The save is refused with the
+// nobody-to-change reason, and the store and the change log are as before.
+func TestClearApprovalThatWouldChangeNobodyIsRefused(t *testing.T) {
+	cases := []struct {
+		name    string
+		members []string
+	}{
+		{"nobody selected is approved", []string{memberMarsh.ID, memberDoe.ID}},
+		{"nothing ticked", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			approveThroughThePage(t, w, memberKestrel.ID)
+			page := parseHTML(t, w.b.get(foxholePath))
+			before := readNoteState(t, w.st)
+
+			res := submitSelection(t, w.b, page, opClear, tc.members...)
+
+			assertRefused(t, res, refusalNobodyToChange, w.st, before)
+		})
+	}
+}

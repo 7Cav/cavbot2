@@ -540,7 +540,7 @@ const nobodyToReAdd = "Every approved collaborator in the server holds External,
 // or preview loaded before something else changed its members. hint is the
 // action's preview hint.
 func nobodyToChangeRefusal(hint string) *saveRefusal {
-	return &saveRefusal{Kind: "nobody-to-change", status: http.StatusConflict,
+	return &saveRefusal{Kind: refusalNobodyToChange, status: http.StatusConflict,
 		log:     "Panel action refused: nobody to change",
 		Message: hint + " Nothing changed."}
 }
