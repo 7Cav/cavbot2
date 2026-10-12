@@ -89,7 +89,10 @@
     }
 
     // choose makes a tag for the row from the picker's template and hides
-    // the row. A single picker drops its earlier tag first.
+    // the row. A single picker drops its earlier tag first. The label goes
+    // in each [data-label]: the one the tag shows, and the one in its
+    // remove control's name, which the template already ends with the set
+    // the picker edits.
     function choose(row) {
       var tag = blank.content.firstElementChild.cloneNode(true);
       var colour = row.getAttribute('data-colour');
@@ -97,8 +100,7 @@
       var dot = tag.querySelector('.dot');
       tag.setAttribute('data-tag', row.getAttribute('data-option'));
       tag.querySelector('input').value = row.getAttribute('data-option');
-      tag.querySelector('[data-label]').textContent = label;
-      tag.querySelector('[data-remove]').setAttribute('aria-label', 'Remove ' + label);
+      tag.querySelectorAll('[data-label]').forEach(function (el) { el.textContent = label; });
       if (dot && colour) {
         dot.classList.remove('dot--none');
         dot.style.background = colour;

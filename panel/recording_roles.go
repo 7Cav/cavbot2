@@ -68,10 +68,8 @@ func (s *hubService) recordingRolesSection(ctx context.Context, guild guildInfo,
 	if err != nil {
 		return recordingRolesPage{}, fmt.Errorf("%s: %w", recordingRoleChangesRead, err)
 	}
-	picker := rolePicker(fieldRecordingRoles, guild, stored.RoleIDs, selected)
-	picker.AddFor = "to the recording roles"
-	return recordingRolesPage{Version: version, Picker: picker, Changes: changeViews(entries, guild.names),
-		Saved: req.savedAt(formRecordingRoles, stored.Version)}, nil
+	return recordingRolesPage{Version: version, Picker: rolePicker(fieldRecordingRoles, setRecordingRoles, guild, stored.RoleIDs, selected),
+		Changes: changeViews(entries, guild.names), Saved: req.savedAt(formRecordingRoles, stored.Version)}, nil
 }
 
 // setRecordingRoles saves the recording roles: it writes the set with a

@@ -584,6 +584,9 @@ type hubRemovePreview struct {
 // back after a refusal.
 type editPage struct {
 	ID int64
+	// BaseString is the hub's as stored, which names the hub where the
+	// form's own may be a refused save's.
+	BaseString string
 	// Broken is the broken hub state: the section shows the remove form and
 	// the change log, and no edit form.
 	Broken bool
@@ -1017,7 +1020,7 @@ func (s *hubService) removePreviewOf(sn snapshot, hub store.Hub, back string) *h
 	st := sn.channels.hubChannel(hub)
 	return &hubRemovePreview{ID: hub.ID, Version: hub.Version, BaseString: hub.BaseString,
 		ChannelName: st.Name, Broken: st.Broken, Spawned: s.deps.Runtime.SpawnedCount(hub.ID), Back: back,
-		Roles: rolePicker(fieldModeratorRoles, sn.info, hub.ModeratorRoleIDs, hub.ModeratorRoleIDs).Tags}
+		Roles: rolePicker(fieldModeratorRoles, setHubModerators, sn.info, hub.ModeratorRoleIDs, hub.ModeratorRoleIDs).Tags}
 }
 
 // rows merges the store's hub rows with the guild's channel list and the
@@ -1077,9 +1080,9 @@ func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo,
 		form = *req.Edit
 		form.Version = postedBackVersion(hub.Version, req.Edit.Version, req.staleFor(formEdit))
 	}
-	page := &editPage{ID: hub.ID, Broken: st.Broken, CategoryName: st.CategoryName, Form: form,
-		Picker: rolePicker(fieldModeratorRoles, guild, hub.ModeratorRoleIDs, form.ModeratorRoleIDs), BitrateMax: guild.bitrateMax,
-		GuildRoles: rolePicker(fieldModeratorRoles, guild, guildWide, guildWide).Tags, Changes: changeViews(entries, guild.names),
+	page := &editPage{ID: hub.ID, BaseString: hub.BaseString, Broken: st.Broken, CategoryName: st.CategoryName, Form: form,
+		Picker: rolePicker(fieldModeratorRoles, setHubModerators, guild, hub.ModeratorRoleIDs, form.ModeratorRoleIDs), BitrateMax: guild.bitrateMax,
+		GuildRoles: rolePicker(fieldModeratorRoles, setGuildModerators, guild, guildWide, guildWide).Tags, Changes: changeViews(entries, guild.names),
 		Saved: req.savedAt(formEdit, hub.Version)}
 	return page, nil
 }

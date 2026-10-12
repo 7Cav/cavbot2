@@ -1,6 +1,8 @@
 package panel
 
 import (
+	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,7 +18,8 @@ import (
 
 // accessibleName is n's name: the text of the elements aria-labelledby
 // names, else aria-label, else for a form control its labels, else for a
-// fieldset its legend, else for a button, link or summary its own text.
+// fieldset its legend, else for a button, link, summary or column header
+// its own text.
 func accessibleName(doc, n *html.Node) string {
 	if ids, ok := attrValue(n, "aria-labelledby"); ok {
 		return textOfIDs(doc, ids)
@@ -33,7 +36,7 @@ func accessibleName(doc, n *html.Node) string {
 				return announcedText(c)
 			}
 		}
-	case "button", "a", "summary":
+	case "button", "a", "summary", "th":
 		return announcedText(n)
 	}
 	return ""
@@ -323,6 +326,191 @@ func TestEachSetOfFoxholeRadiosIsAGroupNamedForWhatItChooses(t *testing.T) {
 			if radios == 0 {
 				t.Fatal("form has no radios")
 			}
+		})
+	}
+}
+
+// hubLink is what a link on the Hubs page opens: a hub's removal preview,
+// or its edit form.
+type hubLink struct {
+	hub     int64
+	preview bool
+}
+
+// hubOpened is what the link to href opens, and false for a link that opens
+// neither a hub's edit form nor its removal preview.
+func hubOpened(href string) (hubLink, bool) {
+	u, err := url.Parse(href)
+	if err != nil || u.Path != "/" {
+		return hubLink{}, false
+	}
+	for _, key := range []string{"remove", "hub"} {
+		if v := u.Query().Get(key); v != "" {
+			id, err := strconv.ParseInt(v, 10, 64)
+			return hubLink{hub: id, preview: key == "remove"}, err == nil
+		}
+	}
+	return hubLink{}, false
+}
+
+// A screen reader user picking from the page's links list hears each
+// link's name alone. A link that opens a hub's edit form or removal preview
+// names the hub by its base string, so six hubs' Edit links read as six
+// hubs.
+func TestEachLinkThatOpensAHubNamesIt(t *testing.T) {
+	w := newTestWorld(t, testHub(), secondHub())
+	signIn(t, w.forum, w.b)
+	w.discord.breakChannel("hub-1", false)
+	broken, healthy := storedHubID(t, w.st, "hub-1"), storedHubID(t, w.st, "vc-2")
+	landed, _ := landing(t, w.b, "/hubs", w.b.postForm("/hubs", createForm("cat-1", "Ops Join", "Ops Voice")))
+	bases := map[int64]string{}
+	var created int64
+	for _, h := range storedHubs(t, w.st) {
+		bases[h.ID] = h.BaseString
+		if h.BaseString == "Ops Voice" {
+			created = h.ID
+		}
+	}
+
+	for _, page := range []struct {
+		name string
+		doc  *html.Node
+		// want are the links the page must hold, so the test never passes
+		// on a page with none.
+		want []hubLink
+	}{
+		{"the hub list", parseHTML(t, w.b.get("/")), []hubLink{{healthy, false}, {broken, true}}},
+		{"a hub's edit page", parseHTML(t, w.b.get("/?hub="+strconv.FormatInt(healthy, 10))), []hubLink{{healthy, true}}},
+		{"the page a create lands on", landed, []hubLink{{created, false}}},
+	} {
+		t.Run(page.name, func(t *testing.T) {
+			found := map[hubLink]bool{}
+			eachLiveElement(findElement(page.doc, "main", "", ""), func(n *html.Node) {
+				href, _ := attrValue(n, "href")
+				link, ok := hubOpened(href)
+				if n.Data != "a" || !ok {
+					return
+				}
+				found[link] = true
+				base, stored := bases[link.hub]
+				if !stored {
+					t.Errorf("link to %s opens hub %d, which the store doesn't hold", href, link.hub)
+					return
+				}
+				if name := accessibleName(page.doc, n); !strings.Contains(name, base) {
+					t.Errorf("link to %s is named %q, which doesn't name hub %s", href, name, base)
+				}
+			})
+			for _, want := range page.want {
+				if !found[want] {
+					t.Errorf("no link opens hub %s (removal preview: %t)", bases[want.hub], want.preview)
+				}
+			}
+		})
+	}
+}
+
+// A refused edit save shows the form as posted, base string included. Its
+// remove link still opens the removal preview of the hub as stored, so it
+// names the hub as the store holds it, the way that preview does.
+func TestARefusedEditsRemoveLinkNamesTheHubAsStored(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	id := storedHubID(t, w.st, "hub-1")
+	stale := updateForm(t, w.st)
+	another := updateForm(t, w.st)
+	another.Set("user_limit", "5")
+	assertRedirect(t, w.b.postForm(hubPath(t, w.st, "hub-1"), another), "/")
+	stale.Set("base_string", "Typed Voice")
+
+	res := w.b.postForm(hubPath(t, w.st, "hub-1"), stale)
+
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 for the stale form", res.StatusCode)
+	}
+	doc := parseHTML(t, res)
+	var names []string
+	eachLiveElement(hubSection(t, doc, id), func(n *html.Node) {
+		href, _ := attrValue(n, "href")
+		if link, ok := hubOpened(href); n.Data == "a" && ok && link == (hubLink{id, true}) {
+			names = append(names, accessibleName(doc, n))
+		}
+	})
+	if len(names) == 0 {
+		t.Fatal("the refused form has no link to the hub's removal preview")
+	}
+	for _, name := range names {
+		if !strings.Contains(name, "Arma Voice") {
+			t.Errorf("the remove link is named %q, want it to name hub Arma Voice as stored", name)
+		}
+	}
+}
+
+// A screen reader moving along a hub list row, or down a column, announces
+// each column's header. Every column has one, the column of Edit and Remove
+// links included.
+func TestEachHubListColumnHasAHeader(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+
+	doc := parseHTML(t, w.b.get("/"))
+
+	headers := 0
+	eachLiveElement(findElement(doc, "main", "", ""), func(n *html.Node) {
+		if n.Data != "th" {
+			return
+		}
+		headers++
+		if accessibleName(doc, n) == "" {
+			t.Errorf("column header %d has no name", headers)
+		}
+	})
+	if headers == 0 {
+		t.Fatal("the hub list has no column headers")
+	}
+}
+
+// One role can sit in all three role pickers of a hub's edit page. A screen
+// reader user moving by buttons hears each tag's remove control name alone,
+// so each names the set its picker edits, and removes the role from the set
+// they meant.
+func TestEachRoleTagsRemoveControlNamesItsPickersSet(t *testing.T) {
+	hub := testHub()
+	hub.ModeratorRoleIDs = []string{"role-mp"}
+	w := newTestWorld(t, hub)
+	signIn(t, w.forum, w.b)
+	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-mp")), "/")
+	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp")), "/")
+	id := storedHubID(t, w.st, "hub-1")
+
+	doc := parseHTML(t, w.b.get("/?hub="+strconv.FormatInt(id, 10)))
+
+	named := map[string]string{}
+	for _, tc := range []struct {
+		set    string
+		within func(*testing.T, *html.Node) *html.Node
+	}{
+		{setGuildModerators, moderatorsSection},
+		{setRecordingRoles, recordingRolesSection},
+		{setHubModerators, func(t *testing.T, doc *html.Node) *html.Node { return hubSection(t, doc, id) }},
+	} {
+		t.Run(tc.set, func(t *testing.T) {
+			tag := findElement(tc.within(t, doc), "", "data-tag", "role-mp")
+			if tag == nil {
+				t.Fatal("the picker has no tag for Military Police")
+			}
+			remove := findElement(tag, "", "data-remove", "")
+			if remove == nil {
+				t.Fatal("the tag has no remove control")
+			}
+			name := accessibleName(doc, remove)
+			if !strings.Contains(name, "Military Police") || !strings.Contains(name, tc.set) {
+				t.Errorf("the remove control is named %q, want it to name Military Police and %s", name, tc.set)
+			}
+			if other, taken := named[name]; taken {
+				t.Errorf("the remove control shares the name %q with the one in %s", name, other)
+			}
+			named[name] = tc.set
 		})
 	}
 }

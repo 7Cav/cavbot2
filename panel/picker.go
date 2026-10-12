@@ -13,6 +13,13 @@ import (
 // filters it, adds a tag for a chosen row and removes a tag. A page that
 // never runs the script posts the tags as rendered (ADR 0013).
 
+// The sets the role pickers edit, as a role picker's Set names them.
+const (
+	setGuildModerators = "the moderator roles for every hub"
+	setRecordingRoles  = "the recording roles"
+	setHubModerators   = "the moderator roles for this hub"
+)
+
 // pickerView is one tag picker as the template renders it.
 type pickerView struct {
 	// Field is the form field name every tag posts under, and the
@@ -26,21 +33,25 @@ type pickerView struct {
 	Dots bool
 	// AddLabel is the add control's text.
 	AddLabel string
-	// AddFor ends the add control's accessible name after AddLabel, naming
-	// the set it adds to, where another picker on the page shares AddLabel.
-	// A screen reader reads it; the page doesn't show it.
-	AddFor string
+	// Set names the set a role picker edits, and is empty for the register
+	// picker. It ends the add control's accessible name and each tag's
+	// remove control's, since one role can be a tag in all three role
+	// pickers of a page. A screen reader reads it; the page doesn't show
+	// it.
+	Set string
 	// SearchLabel is the search input's accessible name.
 	SearchLabel string
 	Tags        []pickerItem
 	Candidates  []pickerItem
 }
 
-// pickerItem is one item a picker shows, as a tag or as a search row. Field
-// and Dot are the picker's, copied onto each item so the tag template, which
-// renders one item, knows what it posts under and whether to draw a dot.
+// pickerItem is one item a picker shows, as a tag or as a search row.
+// Field, Dot and Set are the picker's, copied onto each item so the tag
+// template, which renders one item, knows what it posts under, whether to
+// draw a dot and what its remove control removes the item from.
 type pickerItem struct {
 	Field string
+	Set   string
 	ID    string
 	// Label is the item's text: a role's name, or its ID for a deleted
 	// role, whose name nothing remembers; a channel's name with its
@@ -58,7 +69,7 @@ type pickerItem struct {
 
 // item is an item of the picker with the ID and label.
 func (v pickerView) item(id, label string) pickerItem {
-	return pickerItem{Field: v.Field, ID: id, Label: label, Dot: v.Dots}
+	return pickerItem{Field: v.Field, Set: v.Set, ID: id, Label: label, Dot: v.Dots}
 }
 
 // Blank is an empty item of the picker, rendered inside its <template>.
@@ -68,18 +79,18 @@ func (v pickerView) Blank() pickerItem {
 }
 
 // rolePicker builds a role picker, a moderator picker or the recording
-// roles picker, whose tags post under field. The tags are the selected
-// roles: the eligible ones highest position first, then the stored ones no
-// longer eligible by ID, each with its reason. The candidates are the eligible roles
-// not selected, highest position first, so the role search never offers a
-// selected role or an unavailable one (ADR 0012). stored is the record's
-// set, what an unavailable role may be shown from; selected decides the
-// tags. A page load passes the stored set as selected. A refusal passes the
-// form as posted, so a removed unavailable role stays removed until the
-// page is loaded again, and a posted ID the record never stored renders no
-// tag.
-func rolePicker(field string, guild guildInfo, stored, selected []string) pickerView {
-	view := pickerView{Field: field, Dots: true, AddLabel: "Add a role", SearchLabel: "Search roles"}
+// roles picker, which edits set and whose tags post under field. The tags
+// are the selected roles: the eligible ones highest position first, then
+// the stored ones no longer eligible by ID, each with its reason. The
+// candidates are the eligible roles not selected, highest position first,
+// so the role search never offers a selected role or an unavailable one
+// (ADR 0012). stored is the record's set, what an unavailable role may be
+// shown from; selected decides the tags. A page load passes the stored set
+// as selected. A refusal passes the form as posted, so a removed
+// unavailable role stays removed until the page is loaded again, and a
+// posted ID the record never stored renders no tag.
+func rolePicker(field, set string, guild guildInfo, stored, selected []string) pickerView {
+	view := pickerView{Field: field, Set: set, Dots: true, AddLabel: "Add a role", SearchLabel: "Search roles"}
 	for _, r := range guild.eligible {
 		item := view.item(r.ID, r.Name)
 		item.Colour = roleColour(r.Color)
