@@ -902,8 +902,8 @@ func spawnInto(tv *TempVC, fake *fakeTempVCManager, userID, channelID string, m 
 	fake.deliver(tv, voiceEvent(userID, channelID, m))
 }
 
-// noticesIn returns the messages sent to one channel's text chat, in order,
-// and checks each pings nobody: allowed mentions present, nothing parsed, no
+// noticesIn returns the messages still up in one channel's text chat, in
+// order, and checks each pings nobody: allowed mentions present, nothing parsed, no
 // users, no roles. Every ownership notice reads through here, so the check
 // is written once.
 func noticesIn(t *testing.T, fake *fakeTempVCManager, channelID string) []fakeMessage {

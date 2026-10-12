@@ -521,11 +521,10 @@ func TestRecordStartJoinFailureIsReportedAndFreesTheRecorder(t *testing.T) {
 func TestRecordStartRowWriteFailureLeavesNoRecorderOrNoticeInTheChannel(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 	captures := countCaptures(t)
-	failing := &failingStore{Fake: sc.st, startRecordingErr: errors.New("connection refused")}
-	rt := NewRecordingRuntime(sc.fake, failing, sc.tv, testTempVCGuild, sc.voice, sc.mixer, sc.dir, testPanelURL)
+	sc.faults.startRecordingErr = errors.New("connection refused")
 	sc.fake.setVoice(recStarter.id, recordChannel)
 
-	recordAs(t, rt, recStarter, "start")
+	recordAs(t, sc.rt, recStarter, "start")
 
 	if *captures != 1 {
 		t.Errorf("Sentry captures = %d, want 1", *captures)
