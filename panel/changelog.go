@@ -175,12 +175,12 @@ func (f fieldView) Label() string {
 }
 
 // changeViews decodes stored entries for the form. Moderator and recording
-// roles are stored as IDs and shown by name where the guild still has the
-// role; roleNames maps the guild's roles as read at this page load. A
+// roles and the hub channel are stored as IDs, and each is shown by name
+// where the guild still has it, as guild was read at this page load. A
 // permission source shows as its form option names it. An entry whose diff
 // does not decode is shown with no fields rather than dropped: the save
 // happened.
-func changeViews(entries []store.ChangeLogEntry, roleNames map[string]string) []changeView {
+func changeViews(entries []store.ChangeLogEntry, guild guildInfo) []changeView {
 	views := make([]changeView, 0, len(entries))
 	for _, e := range entries {
 		v := changeView{ID: e.ID, Username: e.ForumUsername, At: e.At, Action: e.Action}
@@ -194,7 +194,9 @@ func changeViews(entries []store.ChangeLogEntry, roleNames map[string]string) []
 				var names map[string]string
 				switch {
 				case slices.Contains(roleFields, field):
-					names = roleNames
+					names = guild.roleNames
+				case field == fieldHubChannel:
+					names = guild.channelNames
 				case field == fieldPermissionSource:
 					names = permissionSourceNames
 				}
