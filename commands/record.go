@@ -21,6 +21,12 @@ import (
 // recordCommandName is the registered slash-command name.
 const recordCommandName = "record"
 
+// recordTitleLimit caps a recording's title, in characters, both in the
+// option the Discord client enforces and in the start's own check (#625). A
+// title far longer would push the recording notice past Discord's message
+// limit.
+const recordTitleLimit = 100
+
 // Record declares /record over the recording runtime, nil on a host with no
 // bot store.
 func Record(rt *RecordingRuntime) Command {
@@ -37,6 +43,7 @@ func Record(rt *RecordingRuntime) Command {
 						Type:        discordgo.ApplicationCommandOptionString,
 						Name:        "title",
 						Description: "A title to find the recording by",
+						MaxLength:   recordTitleLimit,
 					}},
 				},
 				{
@@ -118,7 +125,8 @@ func replyRecordError(r utils.InteractionResponder, interaction *discordgo.Inter
 	replyError(r, interaction, recordFailedReply)
 }
 
-// The refusals of /record, one per reason.
+// The refusals of /record, one per reason. recordTitleTooLongRefusal, below
+// them, names the title cap, so it is built rather than constant.
 const (
 	// recordingOffRefusal answers /record on a host where recording is
 	// off: no recorder token, or no bot store.
@@ -133,6 +141,11 @@ const (
 	nothingToStopRefusal    = "❌ There's no recording here for you to stop."
 	notAllowedToStopRefusal = "❌ Only the person who started this recording, or someone with a recording role, can stop it."
 )
+
+// recordTitleTooLongRefusal answers a start whose title is over
+// recordTitleLimit, which reaches the bot only from a client that let it
+// through.
+var recordTitleTooLongRefusal = fmt.Sprintf("❌ `title` must be at most %d characters.", recordTitleLimit)
 
 // startRefusal renders a refused start as the member's reply. refused is
 // false for a start that failed after its checks.
@@ -149,6 +162,8 @@ func startRefusal(err error) (reply string, refused bool) {
 		return noRecordingRoleRefusal, true
 	case errors.Is(err, errNotCavMember):
 		return notCavMemberRefusal, true
+	case errors.Is(err, errRecordTitleTooLong):
+		return recordTitleTooLongRefusal, true
 	case errors.As(err, &busy):
 		mentions := make([]string, len(busy.ChannelIDs))
 		for i, id := range busy.ChannelIDs {
