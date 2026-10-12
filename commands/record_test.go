@@ -376,6 +376,60 @@ func TestRecordStartRefusals(t *testing.T) {
 	}
 }
 
+// A title over the cap is refused as the member's own input (#625): the
+// reply is the ❌ refusal that names the cap, not the failed reply, no
+// recorder joins, no row is written, and Sentry hears nothing. The refused
+// start held no recorder: the next start, with a title at the cap, joins.
+func TestRecordStartRefusesATitleOverTheCap(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	captures := countCaptures(t)
+	sc.fake.setVoice(recStarter.id, recordChannel)
+
+	reply := recordAs(t, sc.rt, recStarter, "start", stringOption("title", strings.Repeat("a", recordTitleLimit+1)))
+
+	if !strings.HasPrefix(reply, "❌") || !strings.Contains(reply, recordTitleTooLongRefusal) {
+		t.Errorf("reply = %q, want a ❌ verdict carrying %q", reply, recordTitleTooLongRefusal)
+	}
+	if got := sc.voice.joinCount(); got != 0 {
+		t.Errorf("joins = %d, want none from the refused start", got)
+	}
+	if recs := sc.recordings(t); len(recs) != 0 {
+		t.Errorf("recordings after the refused start = %+v, want none", recs)
+	}
+	if *captures != 0 {
+		t.Errorf("Sentry captures = %d, want none for a refusal", *captures)
+	}
+
+	recordAs(t, sc.rt, recStarter, "start", stringOption("title", strings.Repeat("a", recordTitleLimit)))
+	if got := sc.voice.inChannel(recordChannel); !slices.Equal(got, []string{testRecorder}) {
+		t.Errorf("recorders in %s after the next start = %v, want [%s]", recordChannel, got, testRecorder)
+	}
+}
+
+// The cap counts characters, not bytes (#625): a title of 100 two-byte
+// characters starts the recording, and the notice and the row hold it as
+// typed.
+func TestRecordStartTakesAMultiByteTitleAtTheCap(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.fake.setVoice(recStarter.id, recordChannel)
+	title := strings.Repeat("é", recordTitleLimit)
+
+	reply := recordAs(t, sc.rt, recStarter, "start", stringOption("title", title))
+
+	if !strings.HasPrefix(reply, "✅") {
+		t.Errorf("reply = %q, want a ✅ verdict", reply)
+	}
+	if got := sc.voice.inChannel(recordChannel); !slices.Equal(got, []string{testRecorder}) {
+		t.Errorf("recorders in %s = %v, want [%s]", recordChannel, got, testRecorder)
+	}
+	if notice := recordingNotice(t, sc.fake, recordChannel); !strings.Contains(notice.data.Content, title) {
+		t.Errorf("notice = %q, want it to show the title %q", notice.data.Content, title)
+	}
+	if recs := sc.recordings(t); len(recs) != 1 || recs[0].Title != title {
+		t.Errorf("recordings = %+v, want one titled %q", recs, title)
+	}
+}
+
 // startIn has m start a recording of a channel, and fails the test unless a
 // recorder joined it.
 func (sc *recordScene) startIn(t *testing.T, m permMember, channelID string) {
@@ -575,6 +629,32 @@ func TestRegistryDeclaresRecordWhetherRecordingIsOnOrOff(t *testing.T) {
 				t.Errorf("%s is not registered", recordCommandName)
 			}
 		})
+	}
+}
+
+// The Discord client stops a member typing a title past 100 characters
+// (#625): the registered /record start's title option says so.
+func TestRecordStartTitleOptionCarriesItsMaximumLength(t *testing.T) {
+	def, ok := registeredDefinitions()[recordCommandName]
+	if !ok {
+		t.Fatalf("/%s is not registered", recordCommandName)
+	}
+	var title *discordgo.ApplicationCommandOption
+	for _, sub := range def.Options {
+		if sub.Name != "start" {
+			continue
+		}
+		for _, opt := range sub.Options {
+			if opt.Name == "title" {
+				title = opt
+			}
+		}
+	}
+	if title == nil {
+		t.Fatalf("/%s start has no title option", recordCommandName)
+	}
+	if title.MaxLength != 100 {
+		t.Errorf("/%s start title max length = %d, want 100", recordCommandName, title.MaxLength)
 	}
 }
 

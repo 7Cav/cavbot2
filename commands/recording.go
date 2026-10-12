@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
@@ -74,6 +75,9 @@ var (
 	// so isn't a Cav member, and the panel couldn't find the recording for
 	// them.
 	errNotCavMember = errors.New("recording: invoker holds no rank role")
+	// errRecordTitleTooLong: the title is over recordTitleLimit characters,
+	// which would push the recording notice past Discord's message limit.
+	errRecordTitleTooLong = errors.New("recording: title is too long")
 )
 
 // errRecordingFailed is a start or stop that failed after the checks passed,
@@ -245,6 +249,9 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	}
 	if _, ok := SeniorRankRole(by.Roles); !ok {
 		return "", errNotCavMember
+	}
+	if utf8.RuneCountInString(title) > recordTitleLimit {
+		return "", errRecordTitleTooLong
 	}
 
 	recorderID, err := r.reserveRecorder(channelID)
