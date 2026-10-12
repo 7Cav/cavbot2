@@ -58,6 +58,12 @@ func (b boundedStore) HubRemoval(ctx context.Context, id int64) (store.ChangeLog
 	return b.store.HubRemoval(ctx, id)
 }
 
+func (b boundedStore) ListHubRemovals(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.ListHubRemovals(ctx, limit)
+}
+
 func (b boundedStore) UpsertSpawnedChannel(ctx context.Context, sc store.SpawnedChannel) error {
 	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
 	defer cancel()

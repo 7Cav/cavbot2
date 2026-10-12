@@ -1552,11 +1552,13 @@ func TestRemoveAppendsAnEntryWithNullAfter(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 
-	assertRedirect(t, removeHubThroughThePreview(t, w.b, storedHubID(t, w.st, "hub-1")), "/")
+	id := storedHubID(t, w.st, "hub-1")
 
-	entries := storedChangeLog(t, w.st, 0)
+	assertRedirect(t, removeHubThroughThePreview(t, w.b, id), "/")
+
+	entries := storedChangeLog(t, w.st, id)
 	if len(entries) != 1 {
-		t.Fatalf("%d entries under no hub, want 1", len(entries))
+		t.Fatalf("%d entries under the removed hub, want 1", len(entries))
 	}
 	assertActor(t, entries[0], store.ChangeRemove)
 	diff := decodeDiff(t, entries[0])

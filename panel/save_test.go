@@ -172,6 +172,11 @@ func (s hookedStore) HubRemoval(ctx context.Context, id int64) (store.ChangeLogE
 	return s.st.HubRemoval(ctx, id)
 }
 
+func (s hookedStore) ListHubRemovals(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	s.hook(ctx)
+	return s.st.ListHubRemovals(ctx, limit)
+}
+
 func (s hookedStore) UpsertSpawnedChannel(ctx context.Context, sc store.SpawnedChannel) error {
 	s.hook(ctx)
 	return s.st.UpsertSpawnedChannel(ctx, sc)
@@ -349,7 +354,11 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 				if hubs := storedHubs(t, st); len(hubs) != 0 {
 					t.Errorf("stored hubs after the remove = %+v, want none", hubs)
 				}
-				return 0
+				removals, err := st.ListHubRemovals(context.Background(), 10)
+				if err != nil || len(removals) != 1 {
+					t.Fatalf("ListHubRemovals = %+v, %v; want the one removal", removals, err)
+				}
+				return removals[0].HubID
 			},
 			action: store.ChangeRemove,
 		},
@@ -600,7 +609,8 @@ func (refusingStore) SaveRecordingRoles(context.Context, string, store.Recording
 
 // savedState is everything a save can write, read back through the store:
 // the test guild's hubs, its guild-wide moderator roles, its recording
-// roles, and the change log under each hub and under none.
+// roles, and the change log under each hub, live or removed, and under
+// none.
 type savedState struct {
 	Hubs      []store.Hub
 	Roles     store.GuildModeratorRoles
@@ -621,6 +631,13 @@ func readSavedState(t *testing.T, st store.Store) savedState {
 		Entries: map[int64][]store.ChangeLogEntry{0: storedChangeLog(t, st, 0)}}
 	for _, h := range hubs {
 		state.Entries[h.ID] = storedChangeLog(t, st, h.ID)
+	}
+	removals, err := st.ListHubRemovals(context.Background(), 100)
+	if err != nil {
+		t.Fatalf("ListHubRemovals: %v", err)
+	}
+	for _, e := range removals {
+		state.Entries[e.HubID] = storedChangeLog(t, st, e.HubID)
 	}
 	return state
 }

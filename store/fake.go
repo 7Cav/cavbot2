@@ -222,6 +222,14 @@ func (f *Fake) HubRemoval(ctx context.Context, id int64) (ChangeLogEntry, error)
 	return ChangeLogEntry{}, ErrNotFound
 }
 
+// ListHubRemovals implements Store.
+func (f *Fake) ListHubRemovals(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.listChanges(&f.changes, limit, func(e ChangeLogEntry) bool { return e.HubID != 0 && e.Action == ChangeRemove }), nil
+}
+
 // DeleteHub is RemoveHub with no entry, a setup method off the Store
 // interface.
 func (f *Fake) DeleteHub(ctx context.Context, id int64) error {
@@ -229,9 +237,10 @@ func (f *Fake) DeleteHub(ctx context.Context, id int64) error {
 }
 
 // removeHubLocked is the write that removes the hub row and clears the hub
-// reference of its spawned rows and its entries, as the foreign keys' ON
-// DELETE SET NULL does, for appendToLog to run under mu. The entry, if any,
-// goes under no hub. ErrNotFound when no row has the ID.
+// reference of its spawned rows, as their foreign key's ON DELETE SET NULL
+// does, for appendToLog to run under mu. The hub's entries keep their
+// reference, and the entry, if any, goes under the removed hub. ErrNotFound
+// when no row has the ID.
 func (f *Fake) removeHubLocked(id int64) func() (int64, error) {
 	return func() (int64, error) {
 		if _, ok := f.hubs[id]; !ok {
@@ -244,12 +253,7 @@ func (f *Fake) removeHubLocked(id int64) func() (int64, error) {
 				f.spawned[channelID] = sp
 			}
 		}
-		for i := range f.changes.entries {
-			if f.changes.entries[i].HubID == id {
-				f.changes.entries[i].HubID = 0
-			}
-		}
-		return 0, nil
+		return id, nil
 	}
 }
 

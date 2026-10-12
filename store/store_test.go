@@ -1154,24 +1154,117 @@ func TestChangeLogEntryRoundTrips(t *testing.T) {
 	})
 }
 
-// T13: a remove's one entry references no hub, and removing a hub keeps its
-// earlier entries and clears their hub reference, so the whole log of a
-// removed hub lists under no hub.
-func TestRemoveHubListsItsEntryAndTheHubsEarlierOnesUnderNoHub(t *testing.T) {
+// T13 (#579): a removed hub keeps its whole change log under its own ID,
+// the removal's entry first, so the panel can still show who removed it
+// and what it was. This case guards against clearing the reference again.
+func TestRemoveHubKeepsItsChangeLogUnderItsID(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
 		hubID := storeHub(t, s, "hub-1")
+		resaveHub(t, s, hubID, changeEntry(1))
 
 		if _, err := s.RemoveHub(ctx, hubID, removeEntry(2)); err != nil {
 			t.Fatalf("RemoveHub: %v", err)
 		}
-		if got := listedOrdinals(t, s, hubID); len(got) != 0 {
-			t.Errorf("entries under the removed hub are ordinals %v, want none", got)
-		}
-		if got := listedOrdinals(t, s, 0); !slices.Equal(got, []int{2, 0}) {
-			t.Errorf("entries under no hub are ordinals %v, want [2 0]: the remove's, then the hub's earlier one", got)
+
+		if got := listedOrdinals(t, s, hubID); !slices.Equal(got, []int{2, 1, 0}) {
+			t.Errorf("entries under the removed hub are ordinals %v, want [2 1 0]: the removal, then the hub's earlier ones", got)
 		}
 	})
+}
+
+// #579: removing a hub changes nothing the guild-wide moderator section or
+// the recording roles section lists: each still lists its own saves, and
+// none of the removed hub's entries.
+func TestHubRemovalLeavesTheModeratorAndRecordingRolesListingsAsTheyWere(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		seedGuildRoles(t, s)
+		seedRecordingRoles(t, s)
+		hubID := storeHub(t, s, "hub-1")
+		resaveHub(t, s, hubID, changeEntry(3))
+		listings := func() [2][]ChangeLogEntry {
+			moderators, err := s.ListModeratorChanges(ctx, 10)
+			if err != nil {
+				t.Fatalf("ListModeratorChanges: %v", err)
+			}
+			recording, err := s.ListRecordingRoleChanges(ctx, 10)
+			if err != nil {
+				t.Fatalf("ListRecordingRoleChanges: %v", err)
+			}
+			return [2][]ChangeLogEntry{moderators, recording}
+		}
+		before := listings()
+
+		if _, err := s.RemoveHub(ctx, hubID, removeEntry(4)); err != nil {
+			t.Fatalf("RemoveHub: %v", err)
+		}
+
+		if after := listings(); !reflect.DeepEqual(after, before) {
+			t.Errorf("the moderator and recording roles listings after the removal = %+v, want them as before, %+v", after, before)
+		}
+	})
+}
+
+// #579: ListHubRemovals returns at most limit removals, newest first in
+// append order, each referencing the hub it removed, and none of the other
+// entries.
+func TestHubRemovalsListReturnsTheLastNNewestFirst(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		removed := map[int]int64{}
+		for i := 1; i <= 12; i++ {
+			hubID := storeHub(t, s, fmt.Sprintf("hub-%d", i))
+			if _, err := s.RemoveHub(ctx, hubID, removeEntry(i)); err != nil {
+				t.Fatalf("RemoveHub(%d): %v", hubID, err)
+			}
+			removed[i] = hubID
+		}
+		resaveHub(t, s, storeHub(t, s, "hub-live"), changeEntry(98))
+		if err := saveGuildRoles(t, s, []string{"role-hq"}, moderatorsEntry(99)); err != nil {
+			t.Fatalf("SaveGuildModeratorRoles: %v", err)
+		}
+
+		entries, err := s.ListHubRemovals(ctx, 10)
+
+		if err != nil {
+			t.Fatalf("ListHubRemovals: %v", err)
+		}
+		var got []int
+		for _, e := range entries {
+			n := ordinalOf(t, e)
+			got = append(got, n)
+			if e.Action != ChangeRemove || e.HubID != removed[n] {
+				t.Errorf("entry ordinal %d is action %s under hub %d, want a removal under hub %d", n, e.Action, e.HubID, removed[n])
+			}
+		}
+		if want := []int{12, 11, 10, 9, 8, 7, 6, 5, 4, 3}; !slices.Equal(got, want) {
+			t.Errorf("ListHubRemovals lists ordinals %v, want %v: the ten newest removals, newest first", got, want)
+		}
+	})
+}
+
+// #579: a removal written before its migration, which the older release
+// wrote with no hub reference, comes through it unlisted by
+// ListHubRemovals: nothing ties it to a hub, so it can't list as one.
+func TestHubRemovalsListLeavesOutARemovalWrittenBeforeItsMigration(t *testing.T) {
+	// The recording notice's migration is the last one before #579's.
+	raw := migratedTo(t, 20261010235900)
+	if _, err := raw.ExecContext(context.Background(), `
+		INSERT INTO change_log (hub_id, forum_user_id, forum_username, action, diff)
+		VALUES (NULL, 1234, 'Doe.J', 'remove', '{"base_string": {"before": "Arma Voice", "after": null}}')`); err != nil {
+		t.Fatalf("insert an older removal: %v", err)
+	}
+
+	s := openMigrated(t)
+
+	entries, err := s.ListHubRemovals(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("ListHubRemovals: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("ListHubRemovals lists %+v, want none: the older removal references no hub", entries)
+	}
 }
 
 // A hub's removal reads back by the ID RemoveHub returns: HubRemoval gives
@@ -1220,8 +1313,8 @@ func moderatorsEntry(ordinal int) ChangeLogEntry {
 
 // T14 (#296): ListModeratorChanges returns at most limit guild-wide
 // moderator saves, newest first in append order, and none of the other
-// entries under no hub, such as a remove's, nor a moderators entry that
-// references a hub.
+// entries, such as a hub's removal, nor a moderators entry that references
+// a hub.
 func TestModeratorChangesListReturnsTheLastNNewestFirst(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
