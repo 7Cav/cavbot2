@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"slices"
 	"sync"
@@ -57,17 +58,20 @@ var errAuthenticationFailed = errors.New("websocket: close 4004: Authentication 
 // any other.
 type fakeGateway struct {
 	accounts map[string]string
-	// asked is every token the gateway was asked to open, in order.
+	// asked is every token the gateway was asked to open, in order, and
+	// places the place in the list each was opened as.
 	asked  []string
+	places map[string]int
 	opened []*fakeSession
 }
 
 func newFakeGateway(accounts map[string]string) *fakeGateway {
-	return &fakeGateway{accounts: accounts}
+	return &fakeGateway{accounts: accounts, places: map[string]int{}}
 }
 
-func (g *fakeGateway) open(token string) (GatewaySession, error) {
+func (g *fakeGateway) open(recorder int, token string) (GatewaySession, error) {
 	g.asked = append(g.asked, token)
+	g.places[token] = recorder
 	userID, ok := g.accounts[token]
 	if !ok {
 		return nil, errAuthenticationFailed
@@ -197,5 +201,18 @@ func TestJoinGoesThroughTheNamedRecorder(t *testing.T) {
 	conn.Leave(context.Background())
 	if !b.conns[0].left {
 		t.Error("recorder id-b still in vc-1 after Leave")
+	}
+}
+
+// Each recorder opens as its token's place in RECORDER_TOKENS, from 1, the
+// number its reports name it by. A token that fails keeps its place.
+func TestEachRecorderOpensAsItsPlaceInTheList(t *testing.T) {
+	gw := newFakeGateway(map[string]string{"tok-a": "id-a", "tok-c": "id-c"})
+
+	Connect("tok-a,tok-bad,tok-c", gw.open)
+
+	want := map[string]int{"tok-a": 1, "tok-bad": 2, "tok-c": 3}
+	if !maps.Equal(gw.places, want) {
+		t.Errorf("recorders opened at places %v, want %v", gw.places, want)
 	}
 }
