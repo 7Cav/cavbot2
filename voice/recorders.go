@@ -48,8 +48,10 @@ type Frame struct {
 	Opus []byte
 }
 
-// Opener opens one recorder's gateway session from its token.
-type Opener func(token string) (GatewaySession, error)
+// Opener opens one recorder's gateway session from its token. recorder is
+// the token's place in the list, from 1, which names the recorder in its
+// reports.
+type Opener func(recorder int, token string) (GatewaySession, error)
 
 // Recorders is the set of recorders connected at startup.
 type Recorders struct {
@@ -78,7 +80,7 @@ func Connect(raw string, open Opener) *Recorders {
 		return r
 	}
 	for i, token := range tokens {
-		s, err := open(token)
+		s, err := open(i+1, token)
 		if err != nil {
 			utils.CaptureError("Recorder failed to connect", err, "recorder", i+1)
 			continue
