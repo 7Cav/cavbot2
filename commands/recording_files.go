@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/7cav/cavbot2/store"
+	"github.com/7cav/cavbot2/utils"
 )
 
 // A recording's files (spec #381, #389). Each recording has a directory of
@@ -53,4 +54,14 @@ func removeRecording(ctx context.Context, st store.Store, dir string, id int64) 
 		return fmt.Errorf("delete the row of recording %d: %w", id, err)
 	}
 	return nil
+}
+
+// noteTrackNotOnDisk logs a speaker's track left out of the zip or the mix
+// because it isn't on disk. A track the recording counts as lost logs
+// nothing: the recording already says so beside its speaker's name. Any
+// other, such as one removed by hand, is a WARN line.
+func noteTrackNotOnDisk(rec store.Recording, sp store.Speaker) {
+	if !sp.TrackLost {
+		utils.Warn("Track not on disk", "recording_id", rec.ID, "user_id", sp.ID)
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strconv"
@@ -38,9 +39,10 @@ func (r *RecordingRuntime) startMix(rec store.Recording) {
 	recordingAfterFunc(0, func() { r.mix(rec) })
 }
 
-// mix builds a stopped recording's mix and records how it went. A
-// recording with no speakers has no track, and ffmpeg won't mix none, so
-// it gets no mix.
+// mix builds a stopped recording's mix from its tracks on disk and records
+// how it went. A recording with no speakers has no track, and ffmpeg won't
+// mix none, so it gets no mix. One whose speakers' tracks are all gone
+// from the disk gets a failed mix, without ffmpeg.
 func (r *RecordingRuntime) mix(rec store.Recording) {
 	defer utils.RecoverPanic("recording-mix", "recording_id", rec.ID)
 	if len(rec.Speakers) == 0 {
@@ -49,7 +51,21 @@ func (r *RecordingRuntime) mix(rec store.Recording) {
 	}
 	tracks := make([]string, 0, len(rec.Speakers))
 	for _, sp := range rec.Speakers {
-		tracks = append(tracks, trackPath(r.dir, rec.ID, sp.ID))
+		path := trackPath(r.dir, rec.ID, sp.ID)
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+			// ffmpeg won't open a track that isn't there, and the tracks
+			// that are still make a mix.
+			noteTrackNotOnDisk(rec, sp)
+			continue
+		}
+		tracks = append(tracks, path)
+	}
+	if len(tracks) == 0 {
+		// Every track was lost or removed, and ffmpeg won't mix none.
+		if r.setMix(rec.ID, store.MixFailed, nil) {
+			utils.Info("Recording not mixed, no track on disk", "recording_id", rec.ID)
+		}
+		return
 	}
 	mixCtx, cancelMix := context.WithTimeout(context.Background(), recordingMixTimeout)
 	defer cancelMix()

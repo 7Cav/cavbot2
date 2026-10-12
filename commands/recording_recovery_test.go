@@ -3,6 +3,7 @@ package commands
 import (
 	"bytes"
 	"errors"
+	"maps"
 	"net/http"
 	"strings"
 	"testing"
@@ -279,24 +280,44 @@ func TestRecordingStoppedBeforeRecoveryRunsIsMixedOnce(t *testing.T) {
 }
 
 // A recording cut short before anything its one speaker said reached the
-// disk has nothing to mix: recovery drops the empty track, and the
-// recording gets no mix without the mixer being asked for one. The crash
-// comes before the first flush, which is what leaves the track empty.
-func TestRecordingCutShortWithNoAudioOnDiskHasNoMix(t *testing.T) {
+// disk has nothing to mix (#623): recovery drops the empty track and keeps
+// its speaker, with their track lost, so the mix fails without the mixer
+// being asked for one, and Sentry hears nothing of it. The crash comes
+// before the first flush, which is what leaves the track empty.
+func TestRecordingCutShortWithNoAudioOnDiskFailsItsMixQuietly(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 	sc.startIn(t, recStarter, recordChannel)
 	sc.clock.advance(time.Second)
 	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
+	captures := countCaptures(t)
 
 	sc.restart(t, testRecorder)
 	sc.clock.advance(0)
 
 	sc.assertCutShort(t)
-	if rec := sc.onlyRecording(t); rec.Mix != store.MixNone {
-		t.Errorf("mix of a recording cut short with no audio on disk = %q, want %q", rec.Mix, store.MixNone)
+	if rec := sc.onlyRecording(t); rec.Mix != store.MixFailed {
+		t.Errorf("mix of a recording cut short with no audio on disk = %q, want %q", rec.Mix, store.MixFailed)
 	}
 	if n := sc.mixer.mixes(); n != 0 {
 		t.Errorf("the mixer was asked for %d mixes, want none", n)
+	}
+	if *captures != 0 {
+		t.Errorf("recovery and the mix sent %d events to Sentry, want none", *captures)
+	}
+}
+
+// A speaker heard only after the last flush before a crash has nothing on
+// disk, so recovery keeps them as a speaker with their track lost (#623).
+// The speaker heard before it keeps their track.
+func TestRecordingCutShortListsASpeakerWithNothingOnDiskAsLost(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.startCrashFixture(t)
+
+	sc.restart(t, testRecorder)
+	sc.clock.advance(0)
+
+	if lost, want := tracksLost(sc.onlyRecording(t)), map[string]bool{speakerA: false, speakerB: true}; !maps.Equal(lost, want) {
+		t.Errorf("speakers' tracks lost after recovery = %v, want %v", lost, want)
 	}
 }
 

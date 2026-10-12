@@ -92,16 +92,17 @@ func (r *RecordingRuntime) disconnectIdleRecorders() {
 }
 
 // recoverRecording closes one recording the last process left running as
-// cut short. A track with no audio on disk goes, since ffmpeg won't mix it.
+// cut short. A track with no audio on disk goes, since ffmpeg won't mix it,
+// and its speaker stays listed with their track lost.
 // The recording stopped where its longest track ends: when the shutdown
 // came, since a shutdown ends every track there, or a crash's last flush.
 func (r *RecordingRuntime) recoverRecording(rec store.Recording, members MemberListSnapshot) {
-	userIDs, longest, err := keepAudioTracks(r.dir, rec.ID)
+	heard, longest, err := keepAudioTracks(r.dir, rec.ID)
 	if err != nil {
 		captureError("Tracks not read at recovery", err, "recording_id", rec.ID)
 	}
 	rec.StoppedAt = rec.StartedAt.Add(time.Duration(longest) * time.Second / opusSampleRate)
-	rec.Ended, rec.Speakers = store.RecordingEndCutShort, speakersOf(members, userIDs)
+	rec.Ended, rec.Speakers = store.RecordingEndCutShort, speakersOf(members, heard)
 	if err := writeRecordingInfo(r.dir, rec, members.DisplayName(rec.StarterID)); err != nil {
 		captureError("Info file not written at recovery", err, "recording_id", rec.ID)
 	}
@@ -118,9 +119,10 @@ func (r *RecordingRuntime) recoverRecording(rec store.Recording, members MemberL
 
 // keepAudioTracks removes each of a recording's tracks that holds no audio
 // on disk, such as one whose speaker was first heard after the last flush.
-// It returns the user ID of each speaker whose track it kept, and how far
-// the longest runs, in 48 kHz samples.
-func keepAudioTracks(dir string, id int64) (userIDs []string, longest uint64, err error) {
+// It returns every speaker with a track on disk, each whose track it
+// removed with their track lost, and how far the longest kept track runs,
+// in 48 kHz samples.
+func keepAudioTracks(dir string, id int64) (heard []store.Speaker, longest uint64, err error) {
 	entries, err := os.ReadDir(recordingDir(dir, id))
 	if errors.Is(err, os.ErrNotExist) {
 		// Nobody was heard, so no track was opened.
@@ -141,13 +143,14 @@ func keepAudioTracks(dir string, id int64) (userIDs []string, longest uint64, er
 		case err != nil:
 			errs = append(errs, err)
 		case end == 0:
+			heard = append(heard, store.Speaker{ID: userID, TrackLost: true})
 			errs = append(errs, os.Remove(path))
 		default:
-			userIDs = append(userIDs, userID)
+			heard = append(heard, store.Speaker{ID: userID})
 			longest = max(longest, end)
 		}
 	}
-	return userIDs, longest, errors.Join(errs...)
+	return heard, longest, errors.Join(errs...)
 }
 
 // trackEnd reads how far a track on disk runs, in 48 kHz samples. Zero

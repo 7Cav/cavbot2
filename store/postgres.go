@@ -739,6 +739,8 @@ func (p *Postgres) SetRecordingMix(ctx context.Context, id int64, mix MixState) 
 type storedSpeaker struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"display_name"`
+	// TrackLost is absent from every row stopped before it was kept.
+	TrackLost bool `json:"track_lost,omitempty"`
 }
 
 // storedSpeakers is the speakers column's value for a stop's speakers:

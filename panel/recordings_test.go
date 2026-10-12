@@ -1021,3 +1021,69 @@ func TestRecordingMixNobodySpokeInIsRefusedLikeOneBeingMixed(t *testing.T) {
 		t.Errorf("the mix of a recording nobody spoke in got %q, want %q, as the mix of one being mixed gets", got, want)
 	}
 }
+
+// trackLostVerbatim is what marks a lost track's speaker wherever a recording
+// names its speakers. The brief fixes it verbatim, so tests quote it.
+const trackLostVerbatim = "(track lost)"
+
+// speakerSegments splits a recording's speakers text by speaker: each
+// name's segment runs from the name to the next name in the text, or to
+// its end. No name may contain another.
+func speakerSegments(t *testing.T, text string, names ...string) map[string]string {
+	t.Helper()
+	at := map[string]int{}
+	for _, name := range names {
+		i := strings.Index(text, name)
+		if i < 0 {
+			t.Fatalf("the speakers %q don't name %s", text, name)
+		}
+		at[name] = i
+	}
+	out := map[string]string{}
+	for _, name := range names {
+		end := len(text)
+		for _, other := range names {
+			if at[other] > at[name] && at[other] < end {
+				end = at[other]
+			}
+		}
+		out[name] = text[at[name]:end]
+	}
+	return out
+}
+
+// The Recordings page marks a speaker whose track was lost after their
+// name, and leaves a speaker whose track was kept unmarked (#623). The row
+// is the one a stop writes, through the store.
+func TestRecordingsPageMarksASpeakerWhoseTrackWasLost(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	ctx := context.Background()
+	rec, err := w.store.StartRecording(ctx, store.Recording{GuildID: testGuildID, ChannelID: testRecordChannel,
+		ChannelName: "Briefing Room", StarterID: a.discordID, RecorderID: testRecorder, StartedAt: time.Now().Add(-time.Hour)})
+	if err != nil {
+		t.Fatalf("StartRecording: %v", err)
+	}
+	const kept, lost = "Doe.J", "Smith.A"
+	speakers := []store.Speaker{{ID: "discord-kept", DisplayName: kept}, {ID: "discord-lost", DisplayName: lost, TrackLost: true}}
+	if err := w.store.StopRecording(ctx, rec.ID, rec.StartedAt.Add(30*time.Minute), store.RecordingEndStopped, speakers); err != nil {
+		t.Fatalf("StopRecording: %v", err)
+	}
+	signInAs(t, w.forum, w.b, a.account)
+
+	row, ok := listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))[rec.ID]
+	if !ok {
+		t.Fatalf("the page doesn't list recording %d", rec.ID)
+	}
+	field := findElement(row, "", "data-field", "speakers")
+	if field == nil {
+		t.Fatal("the recording shows no speakers")
+	}
+	segments := speakerSegments(t, textOf(field), kept, lost)
+	if !strings.Contains(segments[lost], trackLostVerbatim) {
+		t.Errorf("the lost track's speaker reads %q, want %s after their name", segments[lost], trackLostVerbatim)
+	}
+	if strings.Contains(segments[kept], trackLostVerbatim) {
+		t.Errorf("the kept track's speaker reads %q, want no %s", segments[kept], trackLostVerbatim)
+	}
+}

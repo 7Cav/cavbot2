@@ -116,7 +116,7 @@ type recordingItem struct {
 	Length string
 	// DeletesAt is when it is deleted, zero while it runs.
 	DeletesAt time.Time
-	Speakers  []string
+	Speakers  []recordingSpeaker
 	// Running is set while the recording runs.
 	Running bool
 	// CutShort is set for a recording a restart or a crash cut short.
@@ -133,6 +133,14 @@ type recordingItem struct {
 	MixURL    string
 	ZipURL    string
 	DeleteURL string
+}
+
+// recordingSpeaker is one of a recording's speakers as the page names
+// them: their display name, and Marker, the lost track marker when their
+// track was lost (GLOSSARY.md, Lost track), else empty.
+type recordingSpeaker struct {
+	Name   string
+	Marker string
 }
 
 // recordingsPage is GET /recordings: the recordings the user started, the
@@ -416,7 +424,11 @@ func recordingItems(recs []store.Recording) []recordingItem {
 			item.DeletesAt = commands.RecordingDeletesAt(rec)
 		}
 		for _, sp := range rec.Speakers {
-			item.Speakers = append(item.Speakers, sp.DisplayName)
+			speaker := recordingSpeaker{Name: sp.DisplayName}
+			if sp.TrackLost {
+				speaker.Marker = commands.TrackLostMarker
+			}
+			item.Speakers = append(item.Speakers, speaker)
 		}
 		out = append(out, item)
 	}

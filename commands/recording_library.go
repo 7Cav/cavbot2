@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"slices"
 	"strconv"
@@ -132,7 +133,10 @@ func (l *RecordingLibrary) OpenMix(rec store.Recording) (*os.File, error) {
 
 // WriteZip writes a zip of a recording's tracks and its info file to w,
 // each track named by its speaker's display name. Tracks are already
-// compressed, so they go in stored as they are.
+// compressed, so they go in stored as they are. Only a file on disk that
+// can't be read, or w failing, is an error: a track that isn't on disk is
+// left out, and an info file that isn't is rendered from the row, naming
+// the starter by Discord ID since the library has no member list.
 func (l *RecordingLibrary) WriteZip(w io.Writer, rec store.Recording) error {
 	zw := zip.NewWriter(w)
 	names := trackEntryNames(rec.Speakers)
@@ -142,6 +146,9 @@ func (l *RecordingLibrary) WriteZip(w io.Writer, rec store.Recording) error {
 		}
 	}
 	info, err := os.ReadFile(infoPath(l.dir, rec.ID))
+	if errors.Is(err, fs.ErrNotExist) {
+		info, err = []byte(recordingInfo(rec, "")), nil
+	}
 	if err != nil {
 		return fmt.Errorf("read the info file of recording %d: %w", rec.ID, err)
 	}
@@ -155,9 +162,15 @@ func (l *RecordingLibrary) WriteZip(w io.Writer, rec store.Recording) error {
 	return zw.Close()
 }
 
-// addTrack copies a speaker's track into the zip under name.
+// addTrack copies a speaker's track into the zip under name. A track that
+// isn't on disk is left out, so one lost or removed file doesn't cost the
+// starter every other track.
 func (l *RecordingLibrary) addTrack(zw *zip.Writer, rec store.Recording, sp store.Speaker, name string) error {
 	f, err := os.Open(trackPath(l.dir, rec.ID, sp.ID))
+	if errors.Is(err, fs.ErrNotExist) {
+		noteTrackNotOnDisk(rec, sp)
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("open the track of %s in recording %d: %w", sp.ID, rec.ID, err)
 	}
