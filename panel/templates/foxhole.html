@@ -3,7 +3,7 @@
   <h1 class="title">Foxhole</h1>
   <p class="desc">Everyone holding a Foxhole role, and every approved collaborator. Changes here go straight to Discord.</p>
   {{with .Foxhole}}
-  {{- /* At phone width the action blocks stack above the list, so a link here reaches it in one tap. Wider, it hides. */}}
+  {{- /* Where the action blocks stack above the list, a link here reaches it in one tap. Where they sit side by side, it hides. */}}
   {{if not .ListNotice}}<p class="fx-jump"><a href="#{{.ListAnchor}}">{{if .NoRoleView}}Go to the members with a note{{else}}Go to the holder list{{end}}</a></p>{{end}}
   {{- /* Whatever is pending shows first: the result or refusal of what the manager just did, then the preview or confirmation a Foxhole action waits on, then any action running and the last report. A preview's heading carries the ID the address that opens it names, so the browser scrolls to it and focuses it. */}}
   <div role="status" data-note-result>{{with .Cleared}}<div class="note note--ok" data-field="note-result" data-cleared="{{.MemberID}}">Cleared the note on {{.MemberName}} <span class="fx-user">@{{.MemberUsername}}</span>. They hold no Foxhole role, so they're no longer listed.</div>{{end}}</div>

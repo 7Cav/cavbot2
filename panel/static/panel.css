@@ -256,7 +256,8 @@ h2[tabindex="-1"]:focus { outline: none; }
 .note--inline { margin-bottom: 0; }
 .hub-name { color: var(--text-hi); font-weight: 500; }
 .fx-hint { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--text-mute); }
-/* The link to the list at the top of the page, shown at phone width. */
+/* The link to the list at the top of the page, shown while the action
+   blocks stack above the list. */
 .fx-jump { display: none; }
 
 /* A holder's note, and the form that edits it: in the row's note cell with
@@ -347,6 +348,8 @@ h2[tabindex="-1"]:focus { outline: none; }
 .fx-changereport > .change-fields { border-top: 1px solid var(--line); }
 @media (max-width: 1100px) {
   .fx-actions { grid-template-columns: minmax(0, 1fr); }
+  .fx-jump { display: block; margin: -4px 0 12px; font-size: 14px; }
+  .fx-jump a { display: inline-block; padding: 6px 0; }
 }
 /* The Recordings page (#390): one block per recording, its facts as a
    two-column list that stays two columns at phone width. */
@@ -422,8 +425,6 @@ h2[tabindex="-1"]:focus { outline: none; }
      the box on a screen too narrow for both, under about 340px. */
   .fx-searchform { flex-wrap: wrap; }
   .fx-search { min-width: 14em; }
-  .fx-jump { display: block; margin: -4px 0 12px; font-size: 14px; }
-  .fx-jump a { display: inline-block; padding: 6px 0; }
   .change-fields > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .body { padding: 10px 16px 40px; }
 }

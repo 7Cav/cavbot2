@@ -314,7 +314,7 @@ The page is a two-column grid: a 240px rail and the body beside it. The rail is 
 
 A page opens with its title, then one line of muted description, then blocks stacked 12px apart. Block headers, rows and submit rows use 12px top and bottom and 14px at the sides. Change log entries tighten to 8px top and bottom. Controls in a row sit 6px to 10px apart. Sign-in, the no-access and error pages, the hub forms and the Recordings page cap at 720px.
 
-The moderator roles and the recording roles each sit beside their change log as equal columns with a 12px gutter. The three Foxhole action blocks share one row of equal heights with their buttons pinned to each block's foot, and stack into one column under 1100px. Tables keep a 640px minimum and scroll sideways inside their block, never the page.
+The moderator roles and the recording roles each sit beside their change log as equal columns with a 12px gutter. The three Foxhole action blocks share one row of equal heights with their buttons pinned to each block's foot, and stack into one column under 1100px. While they stack, a link under the page description goes to the list below them. Tables keep a 640px minimum and scroll sideways inside their block, never the page.
 
 Under 768px the rail becomes a top bar of two short rows. The logo (20px) and page links sit on the first, and the name, a small Sign out and the forum link on the second. Every grid drops to one column, the side padding drops to 16px, and each change log entry stacks its field name above its values. The Recordings page's facts list stays two columns even at phone width.
 
