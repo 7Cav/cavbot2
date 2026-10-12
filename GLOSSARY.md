@@ -512,8 +512,9 @@ keeps what each speaker said as a separate track.
 **Recording**:
 The audio of one voice channel captured by a recorder from the moment its
 starter starts it until it stops, kept as one track per speaker and a mix.
-Deleted 30 days after it stops, or sooner, whole, by its starter or a panel
-admin.
+A channel has one recording at a time, so a start in a channel already
+being recorded is refused. Deleted 30 days after it stops, or sooner, whole,
+by its starter or a panel admin.
 _Avoid_: session, capture, craig (as a verb).
 
 **Starter**:

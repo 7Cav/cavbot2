@@ -32,6 +32,10 @@ const (
 	testRecordingRole  = "role-recording"
 )
 
+// testSecondRecorder is a second recorder account's user ID, for a host
+// with two recorder tokens.
+const testSecondRecorder = "user-recorder-2"
+
 // The fixture's members. The starter and the holder each hold the recording
 // role and a rank role, so either may start or stop a recording. The
 // outsider is a Cav member with no recording role.
@@ -43,12 +47,20 @@ var (
 
 // fakeRecorderVoice stands in for the voice adapter: the recorders
 // configured, and every voice connection they joined. joinErr, when set, is
-// what every join returns instead.
+// what every join returns instead. hold, when set, is the next join's, which
+// holdNextJoin describes.
 type fakeRecorderVoice struct {
 	mu        sync.Mutex
 	recorders []string
 	conns     []*fakeVoiceConn
 	joinErr   error
+	hold      *joinHold
+}
+
+// joinHold keeps one join from returning: joined closes once it has gone
+// out, and it returns once release closes.
+type joinHold struct {
+	joined, release chan struct{}
 }
 
 // fakeVoiceConn is one recorder in one channel, until it leaves. handle is
@@ -68,13 +80,33 @@ func (v *fakeRecorderVoice) UserIDs() []string {
 
 func (v *fakeRecorderVoice) Join(_ context.Context, recorderID, guildID, channelID string) (voice.Conn, error) {
 	v.mu.Lock()
-	defer v.mu.Unlock()
 	if v.joinErr != nil {
+		v.mu.Unlock()
 		return nil, v.joinErr
 	}
 	c := &fakeVoiceConn{v: v, recorderID: recorderID, channelID: channelID}
 	v.conns = append(v.conns, c)
+	hold := v.hold
+	v.hold = nil
+	v.mu.Unlock()
+	if hold != nil {
+		close(hold.joined)
+		<-hold.release
+	}
 	return c, nil
+}
+
+// holdNextJoin keeps the next join from returning until release is called.
+// That join counts, and its recorder is in the channel, from the moment it
+// goes out, which closes joined. Later joins return at once. release may be
+// called more than once.
+func (v *fakeRecorderVoice) holdNextJoin() (joined <-chan struct{}, release func()) {
+	hold := &joinHold{joined: make(chan struct{}), release: make(chan struct{})}
+	v.mu.Lock()
+	v.hold = hold
+	v.mu.Unlock()
+	var once sync.Once
+	return hold.joined, func() { once.Do(func() { close(hold.release) }) }
 }
 
 func (c *fakeVoiceConn) Leave(context.Context) {
@@ -329,6 +361,38 @@ var recordRefusals = []recordRefusal{
 		carries: []string{noFreeRecorderRefusal, "<#" + recordChannel + ">"},
 	},
 	{
+		name:      "channel already recorded, another recorder free",
+		recorders: []string{testRecorder, testSecondRecorder},
+		setup: func(t *testing.T, sc *recordScene) permMember {
+			sc.startIn(t, recHolder, recordChannel)
+			sc.fake.setVoice(recStarter.id, recordChannel)
+			return recStarter
+		},
+		carries: []string{alreadyRecordedRefusal},
+	},
+	{
+		name:      "channel already recorded, no recorder free",
+		recorders: []string{testRecorder},
+		setup: func(t *testing.T, sc *recordScene) permMember {
+			sc.startIn(t, recHolder, recordChannel)
+			sc.fake.setVoice(recStarter.id, recordChannel)
+			return recStarter
+		},
+		carries: []string{alreadyRecordedRefusal},
+		lacks:   []string{noFreeRecorderRefusal},
+	},
+	{
+		name:      "no recording role, in a recorded channel",
+		recorders: []string{testRecorder},
+		setup: func(t *testing.T, sc *recordScene) permMember {
+			sc.startIn(t, recHolder, recordChannel)
+			sc.fake.setVoice(recOutsider.id, recordChannel)
+			return recOutsider
+		},
+		carries: []string{noRecordingRoleRefusal},
+		lacks:   []string{alreadyRecordedRefusal},
+	},
+	{
 		name: "recording off",
 		setup: func(_ *testing.T, sc *recordScene) permMember {
 			sc.fake.setVoice(recStarter.id, recordChannel)
@@ -373,6 +437,53 @@ func TestRecordStartRefusals(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A start refused in a channel already being recorded leaves that recording
+// running, and takes no recorder with it: with two recorders, the next start
+// in another channel gets the second.
+func TestRecordStartInARecordedChannelLeavesItsRecordingAndTheFreeRecorder(t *testing.T) {
+	sc := newRecordScene(t, testRecorder, testSecondRecorder)
+	sc.startIn(t, recHolder, recordChannel)
+	sc.fake.setVoice(recStarter.id, recordChannel)
+	recordAs(t, sc.rt, recStarter, "start")
+
+	sc.assertRunning(t, recordChannel)
+
+	sc.fake.setVoice(recStarter.id, recordOtherChannel)
+	reply := recordAs(t, sc.rt, recStarter, "start")
+	if !strings.HasPrefix(reply, "✅") {
+		t.Errorf("reply = %q, want a ✅ verdict", reply)
+	}
+	if got := sc.voice.inChannel(recordOtherChannel); !slices.Equal(got, []string{testSecondRecorder}) {
+		t.Errorf("recorders in %s = %v, want [%s]", recordOtherChannel, got, testSecondRecorder)
+	}
+}
+
+// Two starts in one channel can't both record it: a second start while the
+// first one's recorder is still joining is refused, and no second join goes
+// out.
+func TestRecordStartWhileTheChannelsRecorderIsJoiningIsRefused(t *testing.T) {
+	sc := newRecordScene(t, testRecorder, testSecondRecorder)
+	sc.fake.setVoice(recHolder.id, recordChannel)
+	sc.fake.setVoice(recStarter.id, recordChannel)
+	joined, release := sc.voice.holdNextJoin()
+	first := make(chan struct{})
+	go func() {
+		defer close(first)
+		runRecord(&fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}, sc.rt, recordInteraction(recHolder, "start"))
+	}()
+	t.Cleanup(func() { release(); <-first })
+	<-joined
+
+	reply := recordAs(t, sc.rt, recStarter, "start")
+
+	if !strings.HasPrefix(reply, "❌") || !strings.Contains(reply, alreadyRecordedRefusal) {
+		t.Errorf("reply = %q, want a ❌ verdict carrying %q", reply, alreadyRecordedRefusal)
+	}
+	if got := sc.voice.joinCount(); got != 1 {
+		t.Errorf("joins = %d, want 1, none from the refused start", got)
 	}
 }
 
