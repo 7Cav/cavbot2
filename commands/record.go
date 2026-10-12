@@ -125,7 +125,8 @@ func replyRecordError(r utils.InteractionResponder, interaction *discordgo.Inter
 	replyError(r, interaction, recordFailedReply)
 }
 
-// The refusals of /record, one per reason.
+// The refusals of /record, one per reason. recordTitleTooLongRefusal, below
+// them, names the title cap, so it is built rather than constant.
 const (
 	// recordingOffRefusal answers /record on a host where recording is
 	// off: no recorder token, or no bot store.
