@@ -141,8 +141,8 @@ func (v foxholeView) Pending() bool {
 }
 
 // ListAnchor is the ID of the block holding the list the page shows, the
-// holder list or the no-role view, which its search and the phone-width
-// link at the top of the page open it at.
+// holder list or the no-role view, which its search and the link at the
+// top of the page open it at.
 func (v foxholeView) ListAnchor() string {
 	if v.NoRoleView {
 		return noRoleAnchor
@@ -1315,8 +1315,8 @@ func foxholeAddress(query, filter string) string {
 
 // The IDs the holder list's block and the no-role view's block carry in
 // foxhole.html. A filter link, a search and a link to the other view open
-// the page at the list they show, which at phone width sits far below the
-// action blocks.
+// the page at the list they show, which sits far below the action blocks
+// wherever they stack.
 const (
 	holderListAnchor = "holders"
 	noRoleAnchor     = "no-role"
