@@ -277,6 +277,10 @@ h2[tabindex="-1"]:focus { outline: none; }
 .note--ok { border-left-color: var(--ok); }
 /* A note inside a block's row, where the row already gives the space. */
 .note--inline { margin-bottom: 0; }
+/* A list's result region, under the list's heading. Empty, it stays on the
+   page as the live region the page script fills, and takes no room or rule. */
+.fx-result:empty { padding: 0; }
+.fx-result:empty + .block-row { border-top: 0; }
 .hub-name { color: var(--text-hi); font-weight: 500; }
 .fx-hint { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--text-mute); }
 /* The link to the list at the top of the page, shown while the action
