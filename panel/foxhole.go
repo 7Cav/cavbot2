@@ -326,6 +326,14 @@ var errStaleNote = &saveRefusal{Kind: "stale", status: http.StatusConflict,
 	log:     "Panel save refused: stale form",
 	Message: "Someone changed this note after you opened it, so yours wasn't saved. Save again to replace their note with the text in the box."}
 
+// errNoteUnchanged refuses a note save whose typed note is the note the
+// store holds now, a member with no record holding the empty note, so a
+// form kept from an earlier load is refused too. It carries the data-error
+// value a hub save that changes nothing carries, and answers as that does.
+var errNoteUnchanged = &saveRefusal{Kind: refusalUnchanged, status: http.StatusUnprocessableEntity,
+	log:     "Panel save refused: note unchanged",
+	Message: "That's already this member's note, so nothing was saved."}
+
 // errNoteListPartial refuses a save that would start a note while the
 // member list is partial: the save can't see whether the member holds a
 // Foxhole role. An edit of a note a member has reads no list and stays
@@ -340,6 +348,22 @@ var errNoteListPartial = &saveRefusal{Kind: "member-list", status: http.StatusSe
 var errApproveListPartial = &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
 	log:     "Panel save refused: member list partial",
 	Message: "Awaiting the member list from Discord, so nobody was approved. Try again shortly."}
+
+// errNobodyToApprove refuses an Approve that would approve nobody and skip
+// nobody: every selected member is an approved collaborator already, or
+// nothing was selected, which only a browser without the page script
+// posts. It answers as nobodyToChangeRefusal does, since a selection bar
+// kept from an earlier load posts the same way.
+var errNobodyToApprove = &saveRefusal{Kind: "nobody-to-change", status: http.StatusConflict,
+	log:     "Panel save refused: nobody to change",
+	Message: "Everyone selected is approved already, so nothing changed."}
+
+// errNobodyToClear refuses a Clear approval with no approved collaborator
+// among the members selected, or nothing selected. It answers as
+// errNobodyToApprove does.
+var errNobodyToClear = &saveRefusal{Kind: "nobody-to-change", status: http.StatusConflict,
+	log:     "Panel save refused: nobody to change",
+	Message: "Nobody selected is approved, so nothing changed."}
 
 // foxholeChange is one entry of the Foxhole page's change log as the page
 // shows it: who saved, and what. A note save's names the member it touched
@@ -546,12 +570,6 @@ func (p *Panel) saveNote(w http.ResponseWriter, r *http.Request, sess session) {
 	}
 	if in.MemberID == "" {
 		http.Error(w, "the form names no member", http.StatusBadRequest)
-		return
-	}
-	if in.Note == in.Loaded {
-		// The form posts the note it loaded: nothing changed, so nothing is
-		// saved and the change log gains no entry.
-		http.Redirect(w, r, foxholeAddress(in.Query, in.Filter), http.StatusSeeOther)
 		return
 	}
 	// The save runs to its end whether or not the browser waits, as a hub
@@ -1008,14 +1026,20 @@ func (req foxholeRequest) blankNoteForm() noteForm {
 
 // saveNote saves a member's note over the note the form loaded, and its
 // change log entry with it, under the names the member list shows now, or
-// the record's when the list doesn't hold the member. A save that starts a
-// note, on a member with no record, must find them holding a Foxhole role.
+// the record's when the list doesn't hold the member. A save of the note
+// the store holds now is refused as errNoteUnchanged before any other
+// check, since it would change nothing whatever else holds. A save that
+// starts a note, on a member with no record, must find them holding a
+// Foxhole role.
 func (s foxholeService) saveNote(ctx context.Context, in noteInput, by actor) error {
 	records, err := s.records(ctx)
 	if err != nil {
 		return err
 	}
 	rec, hasRecord := records[in.MemberID]
+	if in.Note == rec.Note {
+		return errNoteUnchanged
+	}
 	names := store.MemberNames{MemberID: in.MemberID, DisplayName: rec.DisplayName, Username: rec.Username}
 	list := s.manager.MemberList(s.guildID)
 	member, inList := list.Member(in.MemberID)
@@ -1052,7 +1076,8 @@ func (s foxholeService) saveNote(ctx context.Context, in noteInput, by actor) er
 // reads the member list, never Discord's API, and grants no role, and it
 // is refused while the list is partial. A member who is approved already is
 // left as they are, and one who doesn't hold External is skipped: approve
-// returns their IDs. With nobody to approve it writes nothing.
+// returns their IDs. With nobody to approve it writes nothing, and with
+// nobody skipped either it is refused as errNobodyToApprove.
 func (s foxholeService) approve(ctx context.Context, memberIDs []string, by actor) (skipped []string, err error) {
 	records, err := s.records(ctx)
 	if err != nil {
@@ -1076,6 +1101,9 @@ func (s foxholeService) approve(ctx context.Context, memberIDs []string, by acto
 		approving = append(approving, store.MemberNames{MemberID: id, DisplayName: mem.DisplayName(), Username: mem.Username})
 	}
 	if len(approving) == 0 {
+		if len(skipped) == 0 {
+			return nil, errNobodyToApprove
+		}
 		return skipped, nil
 	}
 	entry, err := approvalEntry(store.ChangeApprove, approving, by)
@@ -1089,7 +1117,7 @@ func (s foxholeService) approve(ctx context.Context, memberIDs []string, by acto
 // approved collaborator, and writes the save's change log entry with it,
 // naming them under the names their records hold. It reads the store
 // alone: no member list, and no Discord call. With nobody approved among
-// them it writes nothing.
+// them it is refused as errNobodyToClear and writes nothing.
 func (s foxholeService) clearApprovals(ctx context.Context, memberIDs []string, by actor) error {
 	records, err := s.records(ctx)
 	if err != nil {
@@ -1104,7 +1132,7 @@ func (s foxholeService) clearApprovals(ctx context.Context, memberIDs []string, 
 		clearing = append(clearing, store.MemberNames{MemberID: id, DisplayName: rec.DisplayName, Username: rec.Username})
 	}
 	if len(clearing) == 0 {
-		return nil
+		return errNobodyToClear
 	}
 	entry, err := approvalEntry(store.ChangeClearApproval, clearing, by)
 	if err != nil {

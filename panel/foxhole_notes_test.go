@@ -184,7 +184,7 @@ func readNoteState(t *testing.T, st store.Store) noteState {
 	return noteState{Records: records, Entries: entries}
 }
 
-// assertRefused checks a note save answered with the page naming the
+// assertRefused checks a save answered with the page naming the
 // refusal's reason, and that the store holds what it held before. It
 // returns the page.
 func assertRefused(t *testing.T, res *http.Response, reason string, st store.Store, before noteState) *html.Node {
@@ -383,20 +383,37 @@ func TestFoxholePageWhoseStoreReadFailsShowsTheCouldNotLoadPage(t *testing.T) {
 	}
 }
 
-// A note save that changes nothing writes nothing: the note form posted
-// with the note it loaded lands back on the list, and the change log gains
-// no entry with the same text before and after.
-func TestNoteSaveThatChangesNothingWritesNoEntry(t *testing.T) {
+// A note save whose typed note is the note the store holds changes
+// nothing. It is refused with the unchanged reason, the note form stays
+// open holding the text typed, and the store and the change log are as
+// before.
+func TestNoteSaveThatChangesNothingIsRefused(t *testing.T) {
 	w := newFoxholeWorld(t)
 	assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
 	before := readNoteState(t, w.st)
 
 	res := submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep")
 
-	assertRedirect(t, res, foxholePath)
-	if after := readNoteState(t, w.st); !reflect.DeepEqual(after, before) {
-		t.Errorf("the store after the unchanged save = %+v, want it as before, %+v", after, before)
+	doc := assertRefused(t, res, "unchanged", w.st, before)
+	if got := typedNote(t, doc); got != "discharged 12 Sep" {
+		t.Errorf("the note box holds %q, want the text typed", got)
 	}
+}
+
+// typedNote returns the text the page's note form holds in its note box,
+// and fails the test when the page has no note form.
+func typedNote(t *testing.T, doc *html.Node) string {
+	t.Helper()
+	form := findLive(doc, "form", "data-field", "note-form")
+	if form == nil {
+		t.Fatal("the page has no note form")
+	}
+	box := findElement(form, "input", "name", fieldNote)
+	if box == nil {
+		t.Fatal("the note form has no note box")
+	}
+	typed, _ := attrValue(box, "value")
+	return typed
 }
 
 // The name refresh is bookkeeping for a later load: a page load whose
@@ -429,4 +446,47 @@ func TestFoxholePageWhoseNameRefreshFailsStillShowsTheHolderList(t *testing.T) {
 	if n := len(reported.recorded()); n != 1 {
 		t.Errorf("sent %d Sentry events, want 1", n)
 	}
+}
+
+// The no-op test runs before every other check on a note save, since a
+// save of the note the store holds changes nothing whatever else holds. A
+// member with no record holds the empty note, so saving an empty note on
+// one is refused as unchanged even while the member list is partial and
+// they hold no Foxhole role, the cases that refuse a note from starting.
+func TestEmptyNoteOnAMemberWithNoRecordIsRefusedAsUnchangedWhileTheListIsPartial(t *testing.T) {
+	w := newFoxholeWorld(t)
+	w.discord.setMemberList(arrivingList)
+	before := readNoteState(t, w.st)
+
+	res := w.b.postForm(foxholeNotesPath, noteSaveForm(memberVance.ID, "", ""))
+
+	assertRefused(t, res, "unchanged", w.st, before)
+}
+
+// A note form kept from an earlier load and saved unedited after someone
+// else changed the note is no no-op: it would write the old note back over
+// theirs. It is refused as stale, showing their note, and writes nothing.
+func TestKeptNoteFormSavedUneditedAfterAnotherSaveIsStale(t *testing.T) {
+	w := newFoxholeWorld(t)
+	kept := openNote(t, w.b, memberDoe.ID)
+	assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
+	before := readNoteState(t, w.st)
+
+	res := submitNote(t, w.b, kept, "")
+
+	assertRefused(t, res, "stale", w.st, before)
+}
+
+// A kept note form whose typed text someone else has since saved would
+// change nothing, though the form loaded an older note. It is refused as
+// unchanged, not stale, and writes nothing.
+func TestKeptNoteFormTypingTheNoteSomeoneElseSavedIsUnchanged(t *testing.T) {
+	w := newFoxholeWorld(t)
+	kept := openNote(t, w.b, memberDoe.ID)
+	assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
+	before := readNoteState(t, w.st)
+
+	res := submitNote(t, w.b, kept, "discharged 12 Sep")
+
+	assertRefused(t, res, "unchanged", w.st, before)
 }

@@ -308,11 +308,9 @@
 
   function save(cell, form, restore) {
     var input = form.querySelector('[data-note-input]');
-    var loaded = form.querySelector('[name="loaded"]').value;
-    if (input.value.trim() === loaded && !form.querySelector('[data-error]')) {
-      restore();
-      return;
-    }
+    // A save of the note as it stands posts like any other, so the server
+    // refuses it as unchanged, or as stale when the note changed under a
+    // kept form, and the refusal shows in the form.
     var id = cell.closest('[data-member]').getAttribute('data-member');
     form.querySelector('[type="submit"]').disabled = true;
     fetch(form.action, { method: 'POST', body: new URLSearchParams(new FormData(form)), credentials: 'same-origin' })
