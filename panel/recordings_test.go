@@ -1087,3 +1087,25 @@ func TestRecordingsPageMarksASpeakerWhoseTrackWasLost(t *testing.T) {
 		t.Errorf("the kept track's speaker reads %q, want no %s", segments[kept], trackLostVerbatim)
 	}
 }
+
+// storedRecording writes a recording of the fixture's channel through the
+// store as a stop leaves it, started by the member with the Discord ID
+// given at start, with the title given, stopped half an hour on with one
+// speaker, and its mix ready. It returns the recording's ID.
+func (w *testWorld) storedRecording(t *testing.T, discordID, title string, start time.Time) int64 {
+	t.Helper()
+	ctx := context.Background()
+	rec, err := w.store.StartRecording(ctx, store.Recording{GuildID: testGuildID, ChannelID: testRecordChannel,
+		ChannelName: "Briefing Room", StarterID: discordID, Title: title, RecorderID: testRecorder, StartedAt: start})
+	if err != nil {
+		t.Fatalf("StartRecording: %v", err)
+	}
+	speakers := []store.Speaker{{ID: discordID, DisplayName: "Doe.J"}}
+	if err := w.store.StopRecording(ctx, rec.ID, start.Add(30*time.Minute), store.RecordingEndStopped, speakers); err != nil {
+		t.Fatalf("StopRecording: %v", err)
+	}
+	if err := w.store.SetRecordingMix(ctx, rec.ID, store.MixReady); err != nil {
+		t.Fatalf("SetRecordingMix: %v", err)
+	}
+	return rec.ID
+}

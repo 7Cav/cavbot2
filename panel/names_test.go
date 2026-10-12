@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/net/html"
 )
@@ -634,6 +635,120 @@ func TestNoteLinkShowsALabelMatchingTheNote(t *testing.T) {
 		}
 		if got := shownText(noteLink(t, row)); got != want {
 			t.Errorf("%s's note link shows %q, want %q", id, got, want)
+		}
+	}
+}
+
+// recordingLinks are the links on a recording's block that act on it, by
+// data-field: its mix download, its track download and its Delete.
+var recordingLinks = []string{"mix-download", "zip-download", "delete"}
+
+// shownStart is the start time a recording's block shows, and fails the
+// test when it shows none.
+func shownStart(t *testing.T, block *html.Node) string {
+	t.Helper()
+	started := fieldText(t, block, "started")
+	if started == "" {
+		t.Fatalf("recording %s shows no start time", attrOf(block, "data-recording"))
+	}
+	return started
+}
+
+// A screen reader user picking from the Recordings page's links list hears
+// each link's name alone. Each download and Delete names its recording by
+// title and by its start time as the page shows it, so two untitled
+// recordings' links read apart.
+func TestEachRecordingLinkNamesItsRecording(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	now := time.Now()
+	titles := map[int64]string{
+		w.storedRecording(t, a.discordID, "", now.Add(-3*time.Hour)):              "Untitled recording",
+		w.storedRecording(t, a.discordID, "", now.Add(-2*time.Hour)):              "Untitled recording",
+		w.storedRecording(t, a.discordID, "Weekly briefing", now.Add(-time.Hour)): "Weekly briefing",
+	}
+	signInAs(t, w.forum, w.b, a.account)
+
+	doc := parseHTML(t, w.b.get(recordingsPath))
+
+	listed := listedRecordings(t, doc)
+	named := map[string]string{}
+	for id, title := range titles {
+		block, ok := listed[id]
+		if !ok {
+			t.Errorf("the page doesn't list recording %d", id)
+			continue
+		}
+		started := shownStart(t, block)
+		for _, field := range recordingLinks {
+			link := findElement(block, "a", "data-field", field)
+			if link == nil {
+				t.Errorf("recording %d has no %s link", id, field)
+				continue
+			}
+			name := accessibleName(doc, link)
+			if !strings.Contains(name, title) || !strings.Contains(name, started) {
+				t.Errorf("recording %d's %s link is named %q, want it to name %s, started %s", id, field, name, title, started)
+			}
+			if other, taken := named[name]; taken {
+				t.Errorf("recording %d's %s link shares the name %q with %s", id, field, name, other)
+			}
+			named[name] = fmt.Sprintf("recording %d's %s link", id, field)
+		}
+	}
+}
+
+// A recording's delete preview offers its downloads beside the warning that
+// it goes for good. Their names say which recording they fetch, as the
+// list's do.
+func TestDeletePreviewsDownloadLinksNameTheRecording(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	rec := w.storedRecording(t, a.discordID, "", time.Now().Add(-time.Hour))
+	signInAs(t, w.forum, w.b, a.account)
+	page := parseHTML(t, w.b.get(recordingsPath))
+
+	doc := parseHTML(t, w.b.get(linkHref("delete")(t, page, rec)))
+
+	block, ok := listedRecordings(t, doc)[rec]
+	if !ok || attrOf(block, "data-field") != "delete-preview" {
+		t.Fatalf("the page doesn't show recording %d's delete preview", rec)
+	}
+	started := shownStart(t, block)
+	for _, field := range []string{"mix-download", "zip-download"} {
+		link := findElement(block, "a", "data-field", field)
+		if link == nil {
+			t.Errorf("the delete preview has no %s link", field)
+			continue
+		}
+		if name := accessibleName(doc, link); !strings.Contains(name, "Untitled recording") || !strings.Contains(name, started) {
+			t.Errorf("the preview's %s link is named %q, want it to name Untitled recording, started %s", field, name, started)
+		}
+	}
+}
+
+// A sighted user reads a recording's download and Delete links as before.
+// The words naming the recording are for a screen reader alone.
+func TestRecordingLinksShowNoWordsNamingTheRecording(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	rec := w.storedRecording(t, a.discordID, "Weekly briefing", time.Now().Add(-time.Hour))
+	signInAs(t, w.forum, w.b, a.account)
+
+	block, ok := listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))[rec]
+
+	if !ok {
+		t.Fatalf("the page doesn't list recording %d", rec)
+	}
+	started := shownStart(t, block)
+	for _, field := range recordingLinks {
+		link := findElement(block, "a", "data-field", field)
+		if link == nil {
+			t.Errorf("recording %d has no %s link", rec, field)
+			continue
+		}
+		if shown := shownText(link); strings.Contains(shown, "Weekly briefing") || strings.Contains(shown, started) {
+			t.Errorf("the %s link shows %q, want neither the title nor the start time in sight", field, shown)
 		}
 	}
 }

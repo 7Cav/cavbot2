@@ -18,7 +18,7 @@
     {{template "recording-facts" .}}
     {{if not .Running}}<div class="submit-row rec-downloads">
       {{template "recording-downloads" .}}
-      <a class="btn btn--danger" href="{{.DeleteURL}}" data-field="delete">Delete</a>
+      <a class="btn btn--danger" href="{{.DeleteURL}}" data-field="delete">Delete<span class="visually-hidden"> {{template "recording-name" .}}</span></a>
     </div>{{end}}
   </section>
   {{else}}
@@ -30,11 +30,16 @@
 
 {{define "recording-title"}}{{if .Title}}{{.Title}}{{else}}Untitled recording{{end}}{{end}}
 
+{{define "recording-started"}}{{.StartedAt.UTC.Format "2 Jan 2006 15:04"}} UTC{{end}}
+
+{{- /* How a recording's download and Delete links name it for a screen reader, whose links list reads each link's name alone: its title and its start time, as its block shows them. */}}
+{{define "recording-name"}}{{template "recording-title" .}}, started {{template "recording-started" .}}{{end}}
+
 {{define "recording-facts"}}
     <dl class="rec-facts">
       {{if .ShowStarter}}<dt>Started by</dt><dd data-starter="{{.StarterID}}">{{.Starter}}</dd>{{end}}
       <dt>Channel</dt><dd data-field="channel">{{if .Channel}}{{.Channel}}{{else}}<span class="off">unknown</span>{{end}}</dd>
-      <dt>Started</dt><dd><time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04"}} UTC</time></dd>
+      <dt>Started</dt><dd><time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "recording-started" .}}</time></dd>
       <dt>Length</dt><dd data-field="length">{{if .Running}}Still recording{{else}}{{.Length}}{{if .CutShort}} <span class="tag tag--warn" data-field="cut-short">cut short by a restart</span>{{end}}{{end}}</dd>
       <dt>Speakers</dt><dd data-field="speakers">{{range $i, $s := .Speakers}}{{if $i}}, {{end}}{{$s.Name}}{{with $s.Marker}} {{.}}{{end}}{{else}}<span class="off">{{if .Running}}listed at the stop{{else}}nobody spoke{{end}}</span>{{end}}</dd>
       <dt>Mix</dt><dd data-field="mix">{{template "mix-state" .}}</dd>
@@ -43,8 +48,8 @@
 {{end}}
 
 {{define "recording-downloads"}}
-      {{if eq .Mix "ready"}}<a class="btn btn--cta" href="{{.MixURL}}" data-field="mix-download">Download the mix</a>{{end}}
-      <a class="btn" href="{{.ZipURL}}" data-field="zip-download">Download each speaker's track (zip)</a>
+      {{if eq .Mix "ready"}}<a class="btn btn--cta" href="{{.MixURL}}" data-field="mix-download">Download the mix<span class="visually-hidden"> of {{template "recording-name" .}}</span></a>{{end}}
+      <a class="btn" href="{{.ZipURL}}" data-field="zip-download">Download each speaker's track (zip)<span class="visually-hidden"> of {{template "recording-name" .}}</span></a>
 {{end}}
 
 {{define "delete-preview"}}
