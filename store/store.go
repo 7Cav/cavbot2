@@ -339,7 +339,7 @@ type MemberNames struct {
 // Store is the one seam between the bot and its database. Postgres
 // implements it here, and Fake implements it for tests.
 //
-// A new method also goes on panel's boundedStore and its test leavingStore,
+// A new method also goes on panel's boundedStore and its test hookedStore,
 // which write out every method, so the build fails until each has it.
 //
 // A new read that a panel page makes goes on up to two more, and the build
