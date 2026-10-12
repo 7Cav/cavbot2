@@ -137,7 +137,7 @@ func (r *RecordingRuntime) closeRecordingNotice(rec store.Recording) {
 		utils.Warn("Recording notice not edited at stop", "recording_id", rec.ID,
 			"channel_id", rec.ChannelID, "message_id", rec.NoticeID, "error", err)
 	}
-	if _, spawned := r.tv.Owner(rec.ChannelID); spawned || noticeGone(err) {
+	if r.tv.IsSpawned(rec.ChannelID) || noticeGone(err) {
 		r.sendRecordingLink(rec)
 	}
 }

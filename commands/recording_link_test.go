@@ -11,10 +11,11 @@ import (
 // The link at stop (#390). A stop edits the recording notice with a link to
 // the recording's page in the panel. The starter gets the link by DM as
 // well in a spawned channel (#620), and instead in any other channel whose
-// notice is gone, the channel or the message itself. The stop runs on the command's goroutine, the notice edit and
-// any DM included, before the command replies, so a test reads the fake
-// Discord manager once the stop's ✅ has arrived. A link is recognised by
-// the panel's base URL the runtime was built with.
+// notice is gone, the channel or the message itself. The stop runs on the
+// command's goroutine, the notice edit and any DM included, before the
+// command replies, so a test reads the fake Discord manager once the
+// stop's ✅ has arrived. A link is recognised by the panel's base URL the
+// runtime was built with.
 
 // testPanelURL is the panel's base URL every recording scene's runtime
 // links to.
@@ -72,14 +73,7 @@ func TestRecordingLinkGoesToTheStarterByDMWhenTheNoticeIsGone(t *testing.T) {
 
 			sc.stopAsStarter(t)
 
-			dms := sc.fake.sentDMs()
-			if len(dms) != 1 {
-				t.Fatalf("DMs after the notice edit failed with %d = %+v, want one", tc.code, dms)
-			}
-			if dms[0].to != recStarter.id || !strings.Contains(dms[0].data.Content, testPanelURL) {
-				t.Errorf("DM to %s = %q, want one to the starter %s with a link into the panel at %s",
-					dms[0].to, dms[0].data.Content, recStarter.id, testPanelURL)
-			}
+			assertOneLinkDM(t, sc.fake.sentDMs())
 		})
 	}
 }
@@ -172,7 +166,8 @@ func TestRecordingInAGoneSpawnedChannelSendsTheStarterOneDM(t *testing.T) {
 }
 
 // With the panel off there is no link, so a stop in a spawned channel DMs
-// nobody. The notice is still edited to say the recording stopped.
+// nobody. The notice edit shows the stop closed the notice before the DMs
+// are read.
 func TestRecordingInASpawnedChannelSendsNoDMWithThePanelOff(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 	sc.rt = NewRecordingRuntime(sc.fake, sc.faults, sc.tv, testTempVCGuild, sc.voice, sc.mixer, sc.dir, "")
