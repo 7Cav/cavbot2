@@ -320,8 +320,10 @@ type ChangeLogEntry struct {
 	// removal references the hub it removed, and a removed hub's entries
 	// keep their reference, so the reference can name a hub row that no
 	// longer exists (#579). It never names another hub, since no hub ID is
-	// handed out twice. An entry written before #579 of a hub removed since,
-	// its removal's included, references no hub. Set by the store from the
+	// handed out twice. A removal written by a release before #579
+	// references no hub. So does every earlier entry of a hub removed while
+	// the foreign key stood, which cleared them; one removed by such a
+	// release run on the newer schema keeps them. Set by the store from the
 	// save that writes the entry.
 	HubID         int64
 	ForumUserID   int

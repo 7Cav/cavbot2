@@ -19,8 +19,8 @@ func removedHubsBlock(doc *html.Node) *html.Node {
 	return findElement(doc, "", "data-section", "removed-hubs")
 }
 
-// removedHubRow returns the Removed hubs block's row of a removed hub.
-func removedHubRow(t *testing.T, doc *html.Node, hubID int64) *html.Node {
+// removedRowOf returns the Removed hubs block's row of a removed hub.
+func removedRowOf(t *testing.T, doc *html.Node, hubID int64) *html.Node {
 	t.Helper()
 	block := removedHubsBlock(doc)
 	if block == nil {
@@ -93,7 +93,7 @@ func TestRemovedHubsBlockListsARemovedHubWithItsChangeLog(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("GET / status = %d, want 200", res.StatusCode)
 	}
-	row := removedHubRow(t, parseHTML(t, res), id)
+	row := removedRowOf(t, parseHTML(t, res), id)
 	facts := removedHubFacts(t, row)
 	if got := fieldText(t, facts, "base_string"); got != "Arma Voice" {
 		t.Errorf("the row names the hub %q, want Arma Voice", got)
@@ -150,7 +150,7 @@ func TestRemovedHubRowNamesItsChannelWhileItIsInDiscord(t *testing.T) {
 	id := storedHubID(t, w.st, "hub-1")
 	assertRedirect(t, removeHubThroughThePreview(t, w.b, id), "/")
 
-	facts := removedHubFacts(t, removedHubRow(t, parseHTML(t, w.b.get("/")), id))
+	facts := removedHubFacts(t, removedRowOf(t, parseHTML(t, w.b.get("/")), id))
 
 	if got := fieldText(t, facts, "channel_name"); got != "Join to create" {
 		t.Errorf("the row names the channel %q, want Join to create", got)
@@ -160,7 +160,7 @@ func TestRemovedHubRowNamesItsChannelWhileItIsInDiscord(t *testing.T) {
 	}
 
 	w.discord.breakChannel("hub-1", true)
-	facts = removedHubFacts(t, removedHubRow(t, parseHTML(t, w.b.get("/")), id))
+	facts = removedHubFacts(t, removedRowOf(t, parseHTML(t, w.b.get("/")), id))
 
 	if !hasField(facts, "channel_gone") {
 		t.Error("the row does not say the channel is gone once it is")
@@ -224,7 +224,7 @@ func TestRegisteringARemovedHubsChannelAgainStartsANewChangeLog(t *testing.T) {
 	if got := actionsOf(hubSection(t, doc, again)); !slices.Equal(got, []string{"register"}) {
 		t.Errorf("the new hub's form lists entries %v, want its register alone", got)
 	}
-	if got := actionsOf(removedHubRow(t, doc, removed)); !slices.Equal(got, []string{"remove", "update", "register"}) {
+	if got := actionsOf(removedRowOf(t, doc, removed)); !slices.Equal(got, []string{"remove", "update", "register"}) {
 		t.Errorf("the removed hub's row lists entries %v, want its own: [remove update register]", got)
 	}
 }

@@ -5,6 +5,12 @@
 -- entries by its ID. The reference can name a hub row that no longer
 -- exists. It can never name another hub, since hubs.id is a BIGSERIAL and
 -- no ID is handed out twice.
+--
+-- The drop lands in the release that needs it, not one later: it only
+-- loosens the schema, so the previous release runs on it as before. What a
+-- rollback changes is what that release's removal leaves. It writes its
+-- removal with no hub reference, and with no foreign key to clear them, the
+-- hub's earlier entries keep theirs, so no page lists either.
 ALTER TABLE change_log DROP CONSTRAINT change_log_hub_id_fkey;
 
 -- +goose Down

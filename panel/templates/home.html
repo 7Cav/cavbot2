@@ -69,7 +69,7 @@
       <ul>
         {{with .ChannelName}}<li>The voice channel <span data-field="channel_name">{{.}}</span>, in Discord. Register it again to make it a hub, starting from the default settings.</li>{{end}}
         <li>The moderator roles for every hub, and the recording roles.</li>
-        <li data-item="change-log">Its change log, with every setting it had, under Removed hubs on this page.</li>
+        <li data-item="change-log">Its change log, with every setting it had, under Removed hubs on this page until ten more hubs are removed.</li>
       </ul>
     </div>
     <form method="post" action="/hubs/{{.ID}}/remove#remove" class="submit-row">
