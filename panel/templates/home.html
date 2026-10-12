@@ -78,7 +78,7 @@
     <form method="post" action="/hubs/{{.ID}}/remove#remove" class="submit-row">
       <input type="hidden" name="version" value="{{.Version}}">
       <button type="submit" class="btn btn--danger-filled" data-field="confirm">Remove hub {{.BaseString}}</button>
-      <a class="btn" href="{{.Back}}" data-field="cancel">Cancel</a>
+      <a class="btn" href="{{.Back}}" data-field="cancel">Cancel<span class="visually-hidden"> removing hub {{.BaseString}}</span></a>
     </form>
   </section>
 {{end}}

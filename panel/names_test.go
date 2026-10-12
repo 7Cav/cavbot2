@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -344,13 +345,28 @@ func hubOpened(href string) (hubLink, bool) {
 	if err != nil || u.Path != "/" {
 		return hubLink{}, false
 	}
-	for _, key := range []string{"remove", "hub"} {
-		if v := u.Query().Get(key); v != "" {
-			id, err := strconv.ParseInt(v, 10, 64)
-			return hubLink{hub: id, preview: key == "remove"}, err == nil
-		}
+	// An edit page's remove link names the hub twice, and opens the
+	// removal preview over the edit form.
+	if v := u.Query().Get("remove"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		return hubLink{hub: id, preview: true}, err == nil
+	}
+	if v := u.Query().Get("hub"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		return hubLink{hub: id}, err == nil
 	}
 	return hubLink{}, false
+}
+
+// eachHubLink calls visit with each live link under n that opens a hub's
+// edit form or removal preview, and what it opens.
+func eachHubLink(n *html.Node, visit func(a *html.Node, link hubLink)) {
+	eachLiveElement(n, func(el *html.Node) {
+		href, _ := attrValue(el, "href")
+		if link, ok := hubOpened(href); el.Data == "a" && ok {
+			visit(el, link)
+		}
+	})
 }
 
 // A screen reader user picking from the page's links list hears each
@@ -372,33 +388,36 @@ func TestEachLinkThatOpensAHubNamesIt(t *testing.T) {
 		}
 	}
 
+	main := func(doc *html.Node) *html.Node { return findElement(doc, "main", "", "") }
+	list := parseHTML(t, w.b.get("/"))
+	edit := parseHTML(t, w.b.get("/?hub="+strconv.FormatInt(healthy, 10)))
+	previewed := parseHTML(t, w.b.get(fmt.Sprintf("/?hub=%d&remove=%d", healthy, healthy)))
 	for _, page := range []struct {
 		name string
 		doc  *html.Node
-		// want are the links the page must hold, so the test never passes
-		// on a page with none.
+		// within is the part of the page the test reads.
+		within *html.Node
+		// want are the links it must hold, so the test never passes on a
+		// page with none.
 		want []hubLink
 	}{
-		{"the hub list", parseHTML(t, w.b.get("/")), []hubLink{{healthy, false}, {broken, true}}},
-		{"a hub's edit page", parseHTML(t, w.b.get("/?hub="+strconv.FormatInt(healthy, 10))), []hubLink{{healthy, true}}},
-		{"the page a create lands on", landed, []hubLink{{created, false}}},
+		{"the hub list", list, main(list), []hubLink{{healthy, false}, {broken, true}}},
+		{"a hub's edit page", edit, main(edit), []hubLink{{healthy, true}}},
+		{"the page a create lands on", landed, main(landed), []hubLink{{created, false}}},
+		// Its Cancel leads back to the hub's edit form.
+		{"the removal preview opened from a hub's edit page", previewed, removePreviewBlock(t, previewed), []hubLink{{healthy, false}}},
 	} {
 		t.Run(page.name, func(t *testing.T) {
 			found := map[hubLink]bool{}
-			eachLiveElement(findElement(page.doc, "main", "", ""), func(n *html.Node) {
-				href, _ := attrValue(n, "href")
-				link, ok := hubOpened(href)
-				if n.Data != "a" || !ok {
-					return
-				}
+			eachHubLink(page.within, func(a *html.Node, link hubLink) {
 				found[link] = true
 				base, stored := bases[link.hub]
 				if !stored {
-					t.Errorf("link to %s opens hub %d, which the store doesn't hold", href, link.hub)
+					t.Errorf("link to %s opens hub %d, which the store doesn't hold", attrOf(a, "href"), link.hub)
 					return
 				}
-				if name := accessibleName(page.doc, n); !strings.Contains(name, base) {
-					t.Errorf("link to %s is named %q, which doesn't name hub %s", href, name, base)
+				if name := accessibleName(page.doc, a); !strings.Contains(name, base) {
+					t.Errorf("link to %s is named %q, which doesn't name hub %s", attrOf(a, "href"), name, base)
 				}
 			})
 			for _, want := range page.want {
@@ -430,10 +449,9 @@ func TestARefusedEditsRemoveLinkNamesTheHubAsStored(t *testing.T) {
 	}
 	doc := parseHTML(t, res)
 	var names []string
-	eachLiveElement(hubSection(t, doc, id), func(n *html.Node) {
-		href, _ := attrValue(n, "href")
-		if link, ok := hubOpened(href); n.Data == "a" && ok && link == (hubLink{id, true}) {
-			names = append(names, accessibleName(doc, n))
+	eachHubLink(hubSection(t, doc, id), func(a *html.Node, link hubLink) {
+		if link == (hubLink{id, true}) {
+			names = append(names, accessibleName(doc, a))
 		}
 	})
 	if len(names) == 0 {
