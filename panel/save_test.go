@@ -138,183 +138,182 @@ func TestCreateTheBrowserLeavesDuringTheChannelCreateStillSaves(t *testing.T) {
 	}
 }
 
-// leavingStore is the store fake with the browser leaving as anything first
-// calls it: each call runs d.leave and then goes through with the context it
-// was handed. Every method is written out, with no embedded store to fall
-// through to, so the leave fires at a save's first store call, whichever
-// that is.
-type leavingStore struct {
-	st store.Store
-	d  *departure
+// hookedStore is a store with a hook that runs as anything calls it: each
+// call hands hook the context it was given and then goes through to st with
+// it. Every method is written out, with no embedded store to fall through
+// to, so the hook runs at every call, whichever method it is.
+type hookedStore struct {
+	st   store.Store
+	hook func(ctx context.Context)
 }
 
-func (s leavingStore) GetHub(ctx context.Context, id int64) (store.Hub, error) {
-	s.d.leave()
+func (s hookedStore) GetHub(ctx context.Context, id int64) (store.Hub, error) {
+	s.hook(ctx)
 	return s.st.GetHub(ctx, id)
 }
 
-func (s leavingStore) ListHubs(ctx context.Context, guildID string) ([]store.Hub, error) {
-	s.d.leave()
+func (s hookedStore) ListHubs(ctx context.Context, guildID string) ([]store.Hub, error) {
+	s.hook(ctx)
 	return s.st.ListHubs(ctx, guildID)
 }
 
-func (s leavingStore) SaveHub(ctx context.Context, hub store.Hub, entry store.ChangeLogEntry) (store.Hub, error) {
-	s.d.leave()
+func (s hookedStore) SaveHub(ctx context.Context, hub store.Hub, entry store.ChangeLogEntry) (store.Hub, error) {
+	s.hook(ctx)
 	return s.st.SaveHub(ctx, hub, entry)
 }
 
-func (s leavingStore) RemoveHub(ctx context.Context, id int64, entry store.ChangeLogEntry) (int64, error) {
-	s.d.leave()
+func (s hookedStore) RemoveHub(ctx context.Context, id int64, entry store.ChangeLogEntry) (int64, error) {
+	s.hook(ctx)
 	return s.st.RemoveHub(ctx, id, entry)
 }
 
-func (s leavingStore) HubRemoval(ctx context.Context, id int64) (store.ChangeLogEntry, error) {
-	s.d.leave()
+func (s hookedStore) HubRemoval(ctx context.Context, id int64) (store.ChangeLogEntry, error) {
+	s.hook(ctx)
 	return s.st.HubRemoval(ctx, id)
 }
 
-func (s leavingStore) UpsertSpawnedChannel(ctx context.Context, sc store.SpawnedChannel) error {
-	s.d.leave()
+func (s hookedStore) UpsertSpawnedChannel(ctx context.Context, sc store.SpawnedChannel) error {
+	s.hook(ctx)
 	return s.st.UpsertSpawnedChannel(ctx, sc)
 }
 
-func (s leavingStore) SetSpawnedChannelLock(ctx context.Context, channelID string, lock store.ChannelLock) error {
-	s.d.leave()
+func (s hookedStore) SetSpawnedChannelLock(ctx context.Context, channelID string, lock store.ChannelLock) error {
+	s.hook(ctx)
 	return s.st.SetSpawnedChannelLock(ctx, channelID, lock)
 }
 
-func (s leavingStore) DeleteSpawnedChannel(ctx context.Context, channelID string) error {
-	s.d.leave()
+func (s hookedStore) DeleteSpawnedChannel(ctx context.Context, channelID string) error {
+	s.hook(ctx)
 	return s.st.DeleteSpawnedChannel(ctx, channelID)
 }
 
-func (s leavingStore) ListSpawnedChannels(ctx context.Context) ([]store.SpawnedChannel, error) {
-	s.d.leave()
+func (s hookedStore) ListSpawnedChannels(ctx context.Context) ([]store.SpawnedChannel, error) {
+	s.hook(ctx)
 	return s.st.ListSpawnedChannels(ctx)
 }
 
-func (s leavingStore) GetGuildModeratorRoles(ctx context.Context, guildID string) (store.GuildModeratorRoles, error) {
-	s.d.leave()
+func (s hookedStore) GetGuildModeratorRoles(ctx context.Context, guildID string) (store.GuildModeratorRoles, error) {
+	s.hook(ctx)
 	return s.st.GetGuildModeratorRoles(ctx, guildID)
 }
 
-func (s leavingStore) SaveGuildModeratorRoles(ctx context.Context, guildID string, roles store.GuildModeratorRoles, entry store.ChangeLogEntry) error {
-	s.d.leave()
+func (s hookedStore) SaveGuildModeratorRoles(ctx context.Context, guildID string, roles store.GuildModeratorRoles, entry store.ChangeLogEntry) error {
+	s.hook(ctx)
 	return s.st.SaveGuildModeratorRoles(ctx, guildID, roles, entry)
 }
 
-func (s leavingStore) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]store.ChangeLogEntry, error) {
-	s.d.leave()
+func (s hookedStore) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]store.ChangeLogEntry, error) {
+	s.hook(ctx)
 	return s.st.ListChangeLog(ctx, hubID, limit)
 }
 
-func (s leavingStore) ListModeratorChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
-	s.d.leave()
+func (s hookedStore) ListModeratorChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	s.hook(ctx)
 	return s.st.ListModeratorChanges(ctx, limit)
 }
 
-func (s leavingStore) GetRecordingRoles(ctx context.Context, guildID string) (store.RecordingRoles, error) {
-	s.d.leave()
+func (s hookedStore) GetRecordingRoles(ctx context.Context, guildID string) (store.RecordingRoles, error) {
+	s.hook(ctx)
 	return s.st.GetRecordingRoles(ctx, guildID)
 }
 
-func (s leavingStore) SaveRecordingRoles(ctx context.Context, guildID string, roles store.RecordingRoles, entry store.ChangeLogEntry) error {
-	s.d.leave()
+func (s hookedStore) SaveRecordingRoles(ctx context.Context, guildID string, roles store.RecordingRoles, entry store.ChangeLogEntry) error {
+	s.hook(ctx)
 	return s.st.SaveRecordingRoles(ctx, guildID, roles, entry)
 }
 
-func (s leavingStore) ListRecordingRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
-	s.d.leave()
+func (s hookedStore) ListRecordingRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	s.hook(ctx)
 	return s.st.ListRecordingRoleChanges(ctx, limit)
 }
 
-func (s leavingStore) StartRecording(ctx context.Context, rec store.Recording) (store.Recording, error) {
-	s.d.leave()
+func (s hookedStore) StartRecording(ctx context.Context, rec store.Recording) (store.Recording, error) {
+	s.hook(ctx)
 	return s.st.StartRecording(ctx, rec)
 }
 
-func (s leavingStore) StopRecording(ctx context.Context, id int64, at time.Time, end store.RecordingEnd, speakers []store.Speaker) error {
-	s.d.leave()
+func (s hookedStore) StopRecording(ctx context.Context, id int64, at time.Time, end store.RecordingEnd, speakers []store.Speaker) error {
+	s.hook(ctx)
 	return s.st.StopRecording(ctx, id, at, end, speakers)
 }
 
-func (s leavingStore) SetRecordingMix(ctx context.Context, id int64, mix store.MixState) error {
-	s.d.leave()
+func (s hookedStore) SetRecordingMix(ctx context.Context, id int64, mix store.MixState) error {
+	s.hook(ctx)
 	return s.st.SetRecordingMix(ctx, id, mix)
 }
 
-func (s leavingStore) ListRecordings(ctx context.Context, guildID string) ([]store.Recording, error) {
-	s.d.leave()
+func (s hookedStore) ListRecordings(ctx context.Context, guildID string) ([]store.Recording, error) {
+	s.hook(ctx)
 	return s.st.ListRecordings(ctx, guildID)
 }
 
-func (s leavingStore) DeleteRecording(ctx context.Context, id int64) error {
-	s.d.leave()
+func (s hookedStore) DeleteRecording(ctx context.Context, id int64) error {
+	s.hook(ctx)
 	return s.st.DeleteRecording(ctx, id)
 }
 
-func (s leavingStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
-	s.d.leave()
+func (s hookedStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
+	s.hook(ctx)
 	return s.st.ListFoxholeRecords(ctx, guildID)
 }
 
-func (s leavingStore) SaveFoxholeNote(ctx context.Context, guildID string, save store.NoteSave, entry store.ChangeLogEntry) error {
-	s.d.leave()
+func (s hookedStore) SaveFoxholeNote(ctx context.Context, guildID string, save store.NoteSave, entry store.ChangeLogEntry) error {
+	s.hook(ctx)
 	return s.st.SaveFoxholeNote(ctx, guildID, save, entry)
 }
 
-func (s leavingStore) ApproveFoxholeMembers(ctx context.Context, guildID string, members []store.MemberNames, entry store.ChangeLogEntry) error {
-	s.d.leave()
+func (s hookedStore) ApproveFoxholeMembers(ctx context.Context, guildID string, members []store.MemberNames, entry store.ChangeLogEntry) error {
+	s.hook(ctx)
 	return s.st.ApproveFoxholeMembers(ctx, guildID, members, entry)
 }
 
-func (s leavingStore) ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry store.ChangeLogEntry) error {
-	s.d.leave()
+func (s hookedStore) ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry store.ChangeLogEntry) error {
+	s.hook(ctx)
 	return s.st.ClearFoxholeApprovals(ctx, guildID, memberIDs, entry)
 }
 
-func (s leavingStore) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string) (bool, error) {
-	s.d.leave()
+func (s hookedStore) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string) (bool, error) {
+	s.hook(ctx)
 	return s.st.ClearFoxholeApprovalForRemoval(ctx, guildID, memberID)
 }
 
-func (s leavingStore) SetFoxholeRecordNames(ctx context.Context, guildID string, names []store.MemberNames) error {
-	s.d.leave()
+func (s hookedStore) SetFoxholeRecordNames(ctx context.Context, guildID string, names []store.MemberNames) error {
+	s.hook(ctx)
 	return s.st.SetFoxholeRecordNames(ctx, guildID, names)
 }
 
-func (s leavingStore) ListFoxholeChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
-	s.d.leave()
+func (s hookedStore) ListFoxholeChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	s.hook(ctx)
 	return s.st.ListFoxholeChanges(ctx, limit)
 }
 
-func (s leavingStore) StartFoxholeReport(ctx context.Context, entry store.ChangeLogEntry) (store.ChangeLogEntry, error) {
-	s.d.leave()
+func (s hookedStore) StartFoxholeReport(ctx context.Context, entry store.ChangeLogEntry) (store.ChangeLogEntry, error) {
+	s.hook(ctx)
 	return s.st.StartFoxholeReport(ctx, entry)
 }
 
-func (s leavingStore) UpdateFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
-	s.d.leave()
+func (s hookedStore) UpdateFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
+	s.hook(ctx)
 	return s.st.UpdateFoxholeReport(ctx, id, diff)
 }
 
-func (s leavingStore) EndFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
-	s.d.leave()
+func (s hookedStore) EndFoxholeReport(ctx context.Context, id int64, diff json.RawMessage) error {
+	s.hook(ctx)
 	return s.st.EndFoxholeReport(ctx, id, diff)
 }
 
-func (s leavingStore) RunningFoxholeReports(ctx context.Context) ([]store.ChangeLogEntry, error) {
-	s.d.leave()
+func (s hookedStore) RunningFoxholeReports(ctx context.Context) ([]store.ChangeLogEntry, error) {
+	s.hook(ctx)
 	return s.st.RunningFoxholeReports(ctx)
 }
 
-func (s leavingStore) LastFoxholeReport(ctx context.Context) (store.FoxholeReport, error) {
-	s.d.leave()
+func (s hookedStore) LastFoxholeReport(ctx context.Context) (store.FoxholeReport, error) {
+	s.hook(ctx)
 	return s.st.LastFoxholeReport(ctx)
 }
 
-func (s leavingStore) FoxholeReport(ctx context.Context, id int64) (store.FoxholeReport, error) {
-	s.d.leave()
+func (s hookedStore) FoxholeReport(ctx context.Context, id int64) (store.FoxholeReport, error) {
+	s.hook(ctx)
 	return s.st.FoxholeReport(ctx, id)
 }
 
@@ -389,7 +388,7 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 				}
 			}
 			d := &departure{}
-			w := newTestWorldOver(t, leavingStore{st: fake, d: d}, newFakeForum(t))
+			w := newTestWorldOver(t, hookedStore{st: fake, hook: func(context.Context) { d.leave() }}, newFakeForum(t))
 			signIn(t, w.forum, w.b)
 
 			res := w.b.postFormAndLeave(tc.path(t, fake), tc.form(t, fake), d)
@@ -517,6 +516,58 @@ func TestSaveStoreCallPastItsDeadlineFailsTheSave(t *testing.T) {
 	}
 	if !errors.Is(errs[0], context.DeadlineExceeded) {
 		t.Errorf("the event's error %v does not wrap context.DeadlineExceeded", errs[0])
+	}
+}
+
+// The bounded store a save runs on gives every call its own deadline,
+// whichever method it is: the store beneath gets a live context that ends
+// storeTimeout after the call starts, on the panel's clock. Saves reach only
+// some methods today, so this calls each method of store.Store, read off the
+// interface, and a method added to it is checked too.
+func TestSaveStoreCallOfEveryMethodRunsUnderItsOwnDeadline(t *testing.T) {
+	clock := installClock(t)
+	var reached context.Context
+	var live bool
+	bounded := store.Store(boundedStore{
+		store: hookedStore{st: store.NewFake(), hook: func(ctx context.Context) {
+			reached, live = ctx, ctx.Err() == nil
+		}},
+		timeout: storeTimeout,
+	})
+	storeType := reflect.TypeFor[store.Store]()
+	for i := range storeType.NumMethod() {
+		m := storeType.Method(i)
+		t.Run(m.Name, func(t *testing.T) {
+			reached, live = nil, false
+			args := make([]reflect.Value, m.Type.NumIn())
+			for j := range args {
+				if in := m.Type.In(j); in == reflect.TypeFor[context.Context]() {
+					args[j] = reflect.ValueOf(context.Background())
+				} else {
+					args[j] = reflect.Zero(in)
+				}
+			}
+			start := clock.Now()
+
+			// The hook has run by the time the store beneath sees the zero
+			// arguments, so whatever it makes of them, a panic included, is
+			// no part of the check.
+			func() {
+				defer func() { _ = recover() }()
+				reflect.ValueOf(&bounded).Elem().Method(i).Call(args)
+			}()
+
+			if reached == nil {
+				t.Fatalf("%s never reached the store beneath", m.Name)
+			}
+			if deadline, ok := reached.Deadline(); !ok || !deadline.Equal(start.Add(storeTimeout)) {
+				t.Errorf("%s handed the store a context with deadline %v (set: %t), want storeTimeout from the call's start, %v",
+					m.Name, deadline, ok, start.Add(storeTimeout))
+			}
+			if !live {
+				t.Errorf("%s handed the store a context already done", m.Name)
+			}
+		})
 	}
 }
 
