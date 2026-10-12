@@ -859,8 +859,8 @@ func (s *hubService) guildStateOf(data commands.GuildSnapshot) guildState {
 
 // guildInfo is what one read of the guild gives a page load or a save: the
 // eligible roles the two moderator pickers offer and a save may add, the
-// name of every role for the change log, and the bitrate ceiling the
-// guild's boost tier allows.
+// name of every role and every channel for the change log, and the bitrate
+// ceiling the guild's boost tier allows.
 type guildInfo struct {
 	// eligible are the eligible roles of GLOSSARY.md, live, not managed and
 	// not @everyone, highest position first.
@@ -871,8 +871,11 @@ type guildInfo struct {
 	// names maps each role's ID to its name, for a change log entry that
 	// stores IDs. Every role the guild returned is here, managed and
 	// @everyone included, so an older entry that names one still reads.
-	names      map[string]string
-	bitrateMax int
+	names map[string]string
+	// channelNames maps each channel's ID to its name, for a change log
+	// entry that stores a hub channel's ID (#593).
+	channelNames map[string]string
+	bitrateMax   int
 }
 
 // unavailability is why a role with the ID is not eligible, or empty when
@@ -895,12 +898,16 @@ func (g guildInfo) isEligible(id string) bool {
 	return g.unavailability(id) == ""
 }
 
-// guildInfoOf builds the eligible roles, the role names and the bitrate
-// bound from one read of the guild. The @everyone role, whose ID is the
-// guild's, is not live here: every member holds it.
+// guildInfoOf builds the eligible roles, the role and channel names and the
+// bitrate bound from one read of the guild. The @everyone role, whose ID is
+// the guild's, is not live here: every member holds it.
 func (s *hubService) guildInfoOf(g commands.GuildSnapshot) guildInfo {
 	info := guildInfo{eligible: make([]*discordgo.Role, 0, len(g.Roles)), live: make(map[string]*discordgo.Role, len(g.Roles)),
-		names: make(map[string]string, len(g.Roles)), bitrateMax: bitrateCeiling(g.PremiumTier)}
+		names: make(map[string]string, len(g.Roles)), channelNames: make(map[string]string, len(g.Channels)),
+		bitrateMax: bitrateCeiling(g.PremiumTier)}
+	for _, ch := range g.Channels {
+		info.channelNames[ch.ID] = ch.Name
+	}
 	for _, r := range g.Roles {
 		info.names[r.ID] = r.Name
 		if r.ID != s.deps.GuildID {
@@ -1008,7 +1015,7 @@ func (s *hubService) removedHubs(ctx context.Context, sn snapshot) ([]removedHub
 		if ch, ok := sn.channels.voiceChannel(channelID); ok {
 			removed.ChannelName = ch.Name
 		}
-		rows = append(rows, removedHubRow{removedHub: removed, ID: entry.HubID, Changes: changeViews(entries, sn.info.names)})
+		rows = append(rows, removedHubRow{removedHub: removed, ID: entry.HubID, Changes: changeViews(entries, sn.info)})
 	}
 	return rows, nil
 }
@@ -1082,7 +1089,7 @@ func (s *hubService) editForm(ctx context.Context, sn snapshot, guild guildInfo,
 	}
 	page := &editPage{ID: hub.ID, BaseString: hub.BaseString, Broken: st.Broken, CategoryName: st.CategoryName, Form: form,
 		Picker: rolePicker(fieldModeratorRoles, setHubModerators, guild, hub.ModeratorRoleIDs, form.ModeratorRoleIDs), BitrateMax: guild.bitrateMax,
-		GuildRoles: rolePicker(fieldModeratorRoles, setGuildModerators, guild, guildWide, guildWide).Tags, Changes: changeViews(entries, guild.names),
+		GuildRoles: rolePicker(fieldModeratorRoles, setGuildModerators, guild, guildWide, guildWide).Tags, Changes: changeViews(entries, guild),
 		Saved: req.savedAt(formEdit, hub.Version)}
 	return page, nil
 }
