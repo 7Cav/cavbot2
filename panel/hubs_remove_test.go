@@ -250,8 +250,9 @@ func TestCancelReturnsToWhereRemoveWasPressed(t *testing.T) {
 
 // The remove preview says what the removal takes and what it leaves: the
 // hub's own moderator roles, which lose their say over its spawned
-// channels, how many spawned channels are open now, and the hub channel,
-// which stays in Discord.
+// channels, how many spawned channels are open now, the hub channel, which
+// stays in Discord, and the hub's change log, which stays on the Hubs page
+// (#579).
 func TestRemovePreviewNamesWhatGoesAndWhatStays(t *testing.T) {
 	hub := testHub()
 	hub.ModeratorRoleIDs = []string{"role-hq"}
@@ -277,6 +278,12 @@ func TestRemovePreviewNamesWhatGoesAndWhatStays(t *testing.T) {
 	}
 	if got := fieldText(t, stays, "channel_name"); got != "Join to create" {
 		t.Errorf("the preview names %q as the channel that stays, want Join to create", got)
+	}
+	if findElement(stays, "", "data-item", "change-log") == nil {
+		t.Error("the preview does not list the hub's change log as staying")
+	}
+	if findElement(goes, "", "data-item", "change-log") != nil {
+		t.Error("the preview lists the hub's change log as going with the hub")
 	}
 }
 

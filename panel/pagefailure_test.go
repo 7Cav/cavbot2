@@ -176,6 +176,13 @@ func (s *ctxStore) ListChangeLog(ctx context.Context, hubID int64, limit int) ([
 	return s.Fake.ListChangeLog(ctx, hubID, limit)
 }
 
+func (s *ctxStore) ListHubRemovals(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	if err := s.gate(ctx, "ListHubRemovals"); err != nil {
+		return nil, err
+	}
+	return s.Fake.ListHubRemovals(ctx, limit)
+}
+
 // newCtxWorld is the test world over a ctxStore holding the given hubs, and
 // that store. The world's st is nil; a test reads back through the store's
 // Fake.

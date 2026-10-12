@@ -387,6 +387,11 @@ shows the hub and never stores it. A join can reach only the no-category
 kind, and it spawns nothing.
 _Avoid_: orphaned hub, stale hub, dead hub, unhealthy hub.
 
+**Removed hub**:
+A hub that a removal deleted. The panel keeps its change log, and its voice
+channel may still be in Discord.
+_Avoid_: deleted hub, former hub, archived hub, old hub.
+
 **Spawn failure**:
 A join to an enabled hub that ends with no spawned channel for the member.
 Two kinds: a failure Discord returned on the create or the move-into, and a
@@ -420,8 +425,12 @@ it started).
 The panel's record of each change made through it: who made it, when, and
 what changed. Every save that takes effect has one entry, holding the old
 and new values, except a recording's deletion. Every Foxhole action started
-on the Foxhole page has one too, its report. A change made by a command or
-by hand in Discord has none.
+on the Foxhole page has one too, its report. Each hub's form shows the hub's
+own entries, and each removed hub's row on the Hubs page shows that hub's,
+its removal included. The guild-wide moderator section and the recording
+roles section each show the entries of their own saves, which reference no
+hub, and the Foxhole page shows its own. A change made by a command or by
+hand in Discord has none.
 _Avoid_: audit trail, audit log (that is Discord's), history.
 
 **Stale form**:

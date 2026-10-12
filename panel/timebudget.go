@@ -149,3 +149,9 @@ func (s pageStore) HubRemoval(ctx context.Context, id int64) (store.ChangeLogEnt
 		return s.Store.HubRemoval(ctx, id)
 	})
 }
+
+func (s pageStore) ListHubRemovals(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	return timeStoreRead(s.reads, hubRemovalsRead, func() ([]store.ChangeLogEntry, error) {
+		return s.Store.ListHubRemovals(ctx, limit)
+	})
+}

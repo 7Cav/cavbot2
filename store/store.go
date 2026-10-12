@@ -316,9 +316,15 @@ type ChangeLogEntry struct {
 	// ID is the surrogate key, set by the store.
 	ID int64
 	// HubID is the hub the save was about, or zero for a save about no hub:
-	// the guild-wide moderator roles, the recording roles, a remove, and
-	// every entry of a hub whose row has since been deleted, since the reference clears with the
-	// row. Set by the store from the save that writes the entry.
+	// the guild-wide moderator roles and the recording roles. A hub's
+	// removal references the hub it removed, and a removed hub's entries
+	// keep their reference, so the reference can name a hub row that no
+	// longer exists (#579). It never names another hub, since no hub ID is
+	// handed out twice. A removal written by a release before #579
+	// references no hub. So does every earlier entry of a hub removed while
+	// the foreign key stood, which cleared them; one removed by such a
+	// release run on the newer schema keeps them. Set by the store from the
+	// save that writes the entry.
 	HubID         int64
 	ForumUserID   int
 	ForumUsername string
@@ -379,16 +385,22 @@ type Store interface {
 	SaveHub(ctx context.Context, hub Hub, entry ChangeLogEntry) (Hub, error)
 	// RemoveHub deletes the hub and appends a remove's change log entry
 	// together, and returns the entry's ID, which HubRemoval reads it back
-	// by. The entry references no hub, whatever HubID the caller set, since
-	// the row is gone, and the hub's earlier entries clear their reference
-	// to match. Spawned channel rows of the hub keep their rows with the hub
-	// reference cleared. Removing a hub that does not exist is ErrNotFound
-	// and appends no entry, since nothing took effect.
+	// by. The entry references the removed hub, whatever HubID the caller
+	// set, and the hub's earlier entries keep their reference, so
+	// ListChangeLog lists the removed hub's whole log by its ID. Spawned
+	// channel rows of the hub keep their rows with the hub reference
+	// cleared. Removing a hub that does not exist is ErrNotFound and appends
+	// no entry, since nothing took effect.
 	RemoveHub(ctx context.Context, id int64, entry ChangeLogEntry) (int64, error)
 	// HubRemoval returns the change log entry of a hub's removal by the ID
 	// RemoveHub returned. ErrNotFound when no entry has the ID, or the entry
 	// records anything but a hub's removal.
 	HubRemoval(ctx context.Context, id int64) (ChangeLogEntry, error)
+	// ListHubRemovals returns at most limit entries of hubs' removals that
+	// reference the hub they removed, newest first in append order: the
+	// removed hubs the Hubs page lists, each found by its entry's HubID. A
+	// removal written before #579 references no hub and is left out.
+	ListHubRemovals(ctx context.Context, limit int) ([]ChangeLogEntry, error)
 
 	// UpsertSpawnedChannel inserts the row, or updates the existing row for
 	// the same ChannelID in place. It writes hub, number and owner, never the
@@ -417,14 +429,14 @@ type Store interface {
 	SaveGuildModeratorRoles(ctx context.Context, guildID string, roles GuildModeratorRoles, entry ChangeLogEntry) error
 
 	// ListChangeLog returns at most limit entries whose hub reference is
-	// hubID, newest first in append order. A hubID of zero lists the entries
-	// that reference no hub.
+	// hubID, newest first in append order, for a live hub or a removed one.
+	// A hubID of zero lists the entries that reference no hub.
 	ListChangeLog(ctx context.Context, hubID int64, limit int) ([]ChangeLogEntry, error)
 	// ListModeratorChanges returns at most limit guild-wide moderator saves,
 	// the entries with action ChangeModerators that reference no hub, newest
-	// first in append order. The no-hub bucket also holds every remove and
-	// the earlier entries of removed hubs; this is the panel's guild-wide
-	// section reading its own.
+	// first in append order. The no-hub bucket also holds the recording
+	// roles saves, and the entries written before #579 of hubs removed
+	// since; this is the panel's guild-wide section reading its own.
 	ListModeratorChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
 
 	// GetRecordingRoles returns the recording roles with their version. A

@@ -332,7 +332,7 @@ func updateHub(ctx context.Context, tx *sql.Tx, hub Hub) (Hub, error) {
 // RemoveHub implements Store.
 func (p *Postgres) RemoveHub(ctx context.Context, id int64, entry ChangeLogEntry) (int64, error) {
 	entryID, err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
-		return 0, deleteHub(ctx, tx, id)
+		return id, deleteHub(ctx, tx, id)
 	})
 	if err != nil {
 		return 0, fmt.Errorf("remove hub %d: %w", id, err)
@@ -354,9 +354,22 @@ func (p *Postgres) HubRemoval(ctx context.Context, id int64) (ChangeLogEntry, er
 	return e, nil
 }
 
+// ListHubRemovals implements Store.
+func (p *Postgres) ListHubRemovals(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	entries, err := queryAll(ctx, p.db, scanChangeLogEntry,
+		`SELECT id, hub_id, forum_user_id, forum_username, at, action, diff
+		 FROM change_log WHERE hub_id IS NOT NULL AND action = $1 ORDER BY id DESC LIMIT $2`,
+		string(ChangeRemove), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list hub removals: %w", err)
+	}
+	return entries, nil
+}
+
 // deleteHub deletes the hub row, and is ErrNotFound when there is none. The
-// spawned rows' and the entries' hub reference clears through the foreign
-// keys' ON DELETE SET NULL, so nothing here touches them.
+// spawned rows' hub reference clears through their foreign key's ON DELETE
+// SET NULL. The entries have no foreign key and keep theirs, so nothing
+// here touches either.
 func deleteHub(ctx context.Context, tx *sql.Tx, id int64) error {
 	res, err := tx.ExecContext(ctx, `DELETE FROM hubs WHERE id = $1`, id)
 	if err != nil {
