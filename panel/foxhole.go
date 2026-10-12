@@ -288,7 +288,8 @@ type noteForm struct {
 	// save returns to.
 	Query  string
 	Filter string
-	// Back is the address of that view, where Cancel leads.
+	// Back is the address of that view opened at its list, where Cancel
+	// leads, as the save does.
 	Back string
 	// NoRoleRow is the form opened from the no-role view, whose member an
 	// empty note takes off the page. The form then says so.
@@ -557,8 +558,8 @@ func (p *Panel) renderFoxhole(w http.ResponseWriter, r *http.Request, sess sessi
 }
 
 // saveNote is POST /foxhole/notes: one service call, then a redirect to the
-// view the note form was opened from. A note save changes no Discord role
-// and makes no Discord call.
+// view the note form was opened from, opened at its list. A note save
+// changes no Discord role and makes no Discord call.
 func (p *Panel) saveNote(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -595,7 +596,7 @@ func (p *Panel) saveNote(w http.ResponseWriter, r *http.Request, sess session) {
 		http.Redirect(w, r, clearedAddress(in.Query, in.Filter, in.MemberID), http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, foxholeAddress(in.Query, in.Filter), http.StatusSeeOther)
+	http.Redirect(w, r, listAddress(in.Query, in.Filter), http.StatusSeeOther)
 }
 
 // noteInput is a note save as posted.
@@ -609,8 +610,8 @@ type noteInput struct {
 
 // saveApprovals is POST /foxhole/approvals, the selection bar's save: one
 // service call for the button pressed, over the members selected, then a
-// redirect to the view the bar was in. An approvals save changes no Discord
-// role and makes no Discord call.
+// redirect to the view the bar was in, opened at its list. An approvals save
+// changes no Discord role and makes no Discord call.
 func (p *Panel) saveApprovals(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -1024,7 +1025,7 @@ func noteFormFor(req foxholeRequest, list commands.MemberListSnapshot, records m
 // saved, it returns to that view, and opened from the no-role view it says
 // an empty note takes the member off the page.
 func (req foxholeRequest) blankNoteForm() noteForm {
-	return noteForm{Query: req.Query, Filter: req.Filter, Back: foxholeAddress(req.Query, req.Filter), NoRoleRow: req.Filter == filterNoRole}
+	return noteForm{Query: req.Query, Filter: req.Filter, Back: listAddress(req.Query, req.Filter), NoRoleRow: req.Filter == filterNoRole}
 }
 
 // saveNote saves a member's note over the note the form loaded, and its
@@ -1322,13 +1323,17 @@ const (
 	noRoleAnchor     = "no-role"
 )
 
+// listAnchor is the ID of the block holding the list the filter shows.
+func listAnchor(filter string) string {
+	if filter == filterNoRole {
+		return noRoleAnchor
+	}
+	return holderListAnchor
+}
+
 // listAddress is foxholeAddress opened at the list the filter shows.
 func listAddress(query, filter string) string {
-	anchor := holderListAnchor
-	if filter == filterNoRole {
-		anchor = noRoleAnchor
-	}
-	return foxholeAddress(query, filter) + "#" + anchor
+	return foxholeAddress(query, filter) + "#" + listAnchor(filter)
 }
 
 // foxholeURL is foxholeAddress with the note form of the member whose ID
@@ -1337,18 +1342,18 @@ func foxholeURL(query, filter, noteMember string) string {
 	return foxholeLink(query, filter, paramNoteMember, noteMember)
 }
 
-// clearedAddress is foxholeAddress after a save that cleared the note of
-// the member whose ID is member. The page says so when that took them off
-// it.
+// clearedAddress is listAddress after a save that cleared the note of the
+// member whose ID is member. The list's block says so when that took them
+// off the page.
 func clearedAddress(query, filter, member string) string {
-	return foxholeLink(query, filter, paramCleared, member)
+	return foxholeLink(query, filter, paramCleared, member) + "#" + listAnchor(filter)
 }
 
-// skippedAddress is foxholeAddress after an Approve that skipped the
-// members whose IDs are skipped. The page names those of them it still
+// skippedAddress is listAddress after an Approve that skipped the members
+// whose IDs are skipped. The list's block names those of them it still
 // would.
 func skippedAddress(query, filter string, skipped []string) string {
-	return foxholeLink(query, filter, paramSkipped, skipped...)
+	return foxholeLink(query, filter, paramSkipped, skipped...) + "#" + listAnchor(filter)
 }
 
 // foxholeLink is foxholeAddress with the parameter key set to each of
