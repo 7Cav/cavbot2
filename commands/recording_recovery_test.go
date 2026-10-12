@@ -3,7 +3,6 @@ package commands
 import (
 	"bytes"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -234,16 +233,7 @@ func TestRecordingMixCutOffByARestartIsBuiltByTheNextProcess(t *testing.T) {
 	if rec.Mix != store.MixReady {
 		t.Fatalf("mix after the next process recovered = %q, stopped at %v, want %q", rec.Mix, rec.StoppedAt, store.MixReady)
 	}
-	f, err := sc.lib.OpenMix(rec)
-	if err != nil {
-		t.Fatalf("OpenMix: %v", err)
-	}
-	defer func() { _ = f.Close() }()
-	got, err := io.ReadAll(f)
-	if err != nil {
-		t.Fatalf("reading the mix: %v", err)
-	}
-	if !bytes.Equal(got, want) {
+	if got := sc.servedMix(t, rec); !bytes.Equal(got, want) {
 		t.Errorf("the library served %q as the mix, want the mixer's %q", got, want)
 	}
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/7cav/cavbot2/utils"
 )
 
-// Cut-short recordings (spec #381, #393). A recording the last process was
+// Startup recovery (spec #381, #393, #622). A recording the last process was
 // in the middle of when it shut down or crashed still has its row open. The
 // runtime's startup recovery closes each one as cut short, keeping what
 // reached the disk, on every host with a bot store, recording on or off.
@@ -40,14 +40,14 @@ func (r *RecordingRuntime) recoverWhenListed() {
 		recordingAfterFunc(recordingRecoveryPoll, r.recoverWhenListed)
 		return
 	}
-	r.recoverCutShort()
+	r.recoverLastProcess()
 }
 
-// recoverCutShort closes every recording the last process left running as
-// cut short, and builds each mix it went down while building. A recording
-// this process started or stopped is never one of them, even one a member
-// started or stopped before recovery ran.
-func (r *RecordingRuntime) recoverCutShort() {
+// recoverLastProcess closes every recording the last process left running
+// as cut short, and builds each mix it went down while building. A
+// recording this process started or stopped is never one of them, even one
+// a member started or stopped before recovery ran.
+func (r *RecordingRuntime) recoverLastProcess() {
 	defer utils.RecoverPanic("recording-recovery")
 	r.disconnectIdleRecorders()
 	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)

@@ -151,7 +151,8 @@ type RecordingRuntime struct {
 	// link.
 	panelURL string
 	// builtAt is when the runtime was built. A recording that started
-	// before it is one the last process left running.
+	// before it is one the last process left running, and one that stopped
+	// before it with its mix unbuilt is one the last process was mixing.
 	builtAt time.Time
 
 	mu sync.Mutex
