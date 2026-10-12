@@ -127,25 +127,26 @@ func railLinks(t *testing.T, doc *html.Node) map[string]string {
 	return links
 }
 
-// The rail shows the Hubs link to panel admins alone and the Foxhole link to
-// panel admins and Foxhole managers, and every link it shows, the mark
-// included, lands on the page it names. The panel admin row's Hubs link is a
-// regression pin: panel admins keep the hub page as it was. The row in both
-// groups catches a root that sends every Foxhole manager to the Foxhole
-// page, panel admins among them.
+// The rail shows the Hubs link to panel admins alone, the Foxhole link to
+// panel admins and Foxhole managers, and the Recordings link to everyone,
+// and every link it shows, the mark included, lands on the page it names.
+// The panel admin row's Hubs link is a regression pin: panel admins keep the
+// hub page as it was. The row in both groups catches a root that sends
+// every Foxhole manager to the Foxhole page, panel admins among them.
 func TestRailShowsOnlyThePagesTheUserOpensAndEachLinkOpensIt(t *testing.T) {
 	cases := []struct {
-		name      string
-		primary   int
-		secondary []int
-		hubs      bool
-		foxhole   bool
-		landing   string
+		name       string
+		primary    int
+		secondary  []int
+		hubs       bool
+		foxhole    bool
+		recordings bool
+		landing    string
 	}{
-		{"panel admin", 2, []int{47}, true, true, "hubs"},
-		{"Foxhole manager", 2, []int{testFoxholeGroupID}, false, true, "foxhole"},
-		{"panel admin and Foxhole manager", 2, []int{47, testFoxholeGroupID}, true, true, "hubs"},
-		{"outsider", 2, []int{35}, false, false, ""},
+		{"panel admin", 2, []int{47}, true, true, true, "hubs"},
+		{"Foxhole manager", 2, []int{testFoxholeGroupID}, false, true, true, "foxhole"},
+		{"panel admin and Foxhole manager", 2, []int{47, testFoxholeGroupID}, true, true, true, "hubs"},
+		{"outsider", 2, []int{35}, false, false, true, "recordings"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -160,8 +161,8 @@ func TestRailShowsOnlyThePagesTheUserOpensAndEachLinkOpensIt(t *testing.T) {
 			if _, ok := links["foxhole"]; ok != tc.foxhole {
 				t.Errorf("the rail shows the Foxhole link: %v, want %v", ok, tc.foxhole)
 			}
-			if tc.landing == "" {
-				return
+			if _, ok := links["recordings"]; ok != tc.recordings {
+				t.Errorf("the rail shows the Recordings link: %v, want %v", ok, tc.recordings)
 			}
 			for nav, href := range links {
 				want := nav
@@ -178,9 +179,9 @@ func TestRailShowsOnlyThePagesTheUserOpensAndEachLinkOpensIt(t *testing.T) {
 }
 
 // A Foxhole manager whose forum account leaves the Foxhole group keeps their
-// panel session: their next load of the Foxhole page is the no-access page,
-// and once the forum puts them back in the group the page opens with no new
-// sign-in.
+// panel session: their next load of the Foxhole page lands on the
+// Recordings page, and once the forum puts them back in the group the page
+// opens with no new sign-in.
 func TestFoxholeManagerWhoLeavesTheGroupKeepsTheSession(t *testing.T) {
 	w := newTestWorld(t)
 	manager := addFoxholeManager(w.forum)
@@ -189,7 +190,7 @@ func TestFoxholeManagerWhoLeavesTheGroupKeepsTheSession(t *testing.T) {
 
 	res := follow(t, w.b, w.b.get("/foxhole"))
 
-	assertNoAccessPage(t, parseHTML(t, res))
+	assertRecordingsPage(t, res)
 	w.forum.setGroups(manager, 2, []int{35, testFoxholeGroupID})
 	if got := pageOf(t, parseHTML(t, follow(t, w.b, w.b.get("/foxhole")))); got != "foxhole" {
 		t.Errorf("back in the group, the Foxhole page address lands on page %q, want foxhole", got)

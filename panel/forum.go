@@ -110,8 +110,8 @@ func (a access) outsider() bool { return !a.panelAdmin && !a.foxholeManager }
 
 // landing is the address of the page the session lands on at sign-in: the
 // hub page for a panel admin, else the Foxhole page for a Foxhole manager,
-// else the Recordings page, which lists the recordings the user started and
-// is the no-access page to anyone who started none.
+// else the Recordings page, which lists the recordings the user started or
+// says they have none yet.
 func (a access) landing() string {
 	switch {
 	case a.panelAdmin:

@@ -134,8 +134,8 @@ func TestFoxholeGroupUnsetOrEmptyIs323(t *testing.T) {
 }
 
 // FOXHOLE_GROUP_ID set names the Foxhole group in place of 323: a user in
-// the group it names lands on the Foxhole page, and a user in 323 alone gets
-// the no-access page.
+// the group it names lands on the Foxhole page, and a user in 323 alone
+// lands on the Recordings page.
 func TestFoxholeGroupIsTheOneTheVariableNames(t *testing.T) {
 	f := newFakeForum(t)
 	setPanelEnv(t, f)
@@ -150,7 +150,7 @@ func TestFoxholeGroupIsTheOneTheVariableNames(t *testing.T) {
 		t.Errorf("a user in group 400 lands on page %q with status %d, want foxhole with 200", got, res.StatusCode)
 	}
 	b := newBrowser(t, w.p)
-	assertNoAccessPage(t, parseHTML(t, follow(t, b, signInAs(t, f, b, other))))
+	assertRecordingsPage(t, follow(t, b, signInAs(t, f, b, other)))
 }
 
 // A FOXHOLE_GROUP_ID that isn't a number stops startup with an error naming

@@ -159,7 +159,7 @@ func TestActionRunsToItsEndAfterItsManagerLeavesTheFoxholeGroup(t *testing.T) {
 	stop := stopForm(t, progressBlock(t, parseHTML(t, manager.get(foxholePath))))
 	w.forum.setGroups(leaver, 2, []int{35})
 
-	assertNoAccessPage(t, parseHTML(t, follow(t, manager, manager.get(foxholePath))))
+	assertRecordingsPage(t, follow(t, manager, manager.get(foxholePath)))
 	assertNoAccessPage(t, parseHTML(t, submit(t, manager, stop)))
 
 	hold.open()
@@ -174,7 +174,7 @@ func TestActionRunsToItsEndAfterItsManagerLeavesTheFoxholeGroup(t *testing.T) {
 	if got, want := pairs(reportList(t, report, "changed")), []string{memberKestrel.ID + " external", memberMarsh.ID + " external"}; !slices.Equal(got, want) {
 		t.Errorf("the report changed %v, want %v", got, want)
 	}
-	assertNoAccessPage(t, parseHTML(t, follow(t, manager, manager.get(foxholePath))))
+	assertRecordingsPage(t, follow(t, manager, manager.get(foxholePath)))
 }
 
 // A Stop from a page loaded while an earlier action ran stops nothing that

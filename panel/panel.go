@@ -1,7 +1,7 @@
 // Package panel is the bot's web UI, an HTTP server inside the cavbot2 binary
 // signed in through the forum's OAuth2; the decision and its reasons are in
 // docs/temp-vc-decisions.md. It holds the sign-in, the panel session, the
-// group check, the no-access page every forum user who opens no page gets,
+// group check, the no-access page for a request the groups don't allow,
 // the hub page and the Foxhole page. The hub page is the guild-wide
 // moderator section and the recording roles section, each with its change
 // log, the hub list with each hub's live spawned count, its last spawn
@@ -582,9 +582,6 @@ const (
 	// download or its delete, from someone who is neither its starter nor
 	// a panel admin.
 	noAccessRecording = "This recording is open only to its starter and panel admins. Nothing changed."
-	// noAccessNoRecordings is an outsider's Recordings page when they have
-	// no recordings. It refuses nothing, so it doesn't say nothing changed.
-	noAccessNoRecordings = "You have no recordings to download, and your forum groups don't open any other page."
 )
 
 // noAccess renders the no-access page, saying message, one of the

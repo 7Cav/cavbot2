@@ -119,9 +119,10 @@ type pageData struct {
 }
 
 // nav is which pages the rail links to: the ones this request's group check
-// lets the session open. Every panel admin gets the Recordings link. Anyone
-// else gets it on the Recordings page, which shows them their own: the
-// rail doesn't read the store to learn who started a recording.
+// lets the session open. Every signed-in visitor opens the Recordings page,
+// which lists the recordings they started or says they have none yet, so
+// every session gets its link: the rail doesn't read the store to learn who
+// started a recording.
 type nav struct {
 	Hubs       bool
 	Foxhole    bool

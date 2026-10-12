@@ -251,36 +251,38 @@ func TestRecordingDeleteLandsOnAPageSayingItWasDeleted(t *testing.T) {
 	}
 }
 
-// A Foxhole manager who started a recording and deletes it, their only
-// one, lands on the Recordings page saying it was deleted and that none are
-// left, as a panel admin does.
-func TestFoxholeManagerWhoDeletesTheirLastRecordingLandsOnTheRecordingsPage(t *testing.T) {
-	w := newTestWorld(t)
-	manager := addFoxholeManager(w.forum)
-	w.milpacs.set(managerUsername, "discord-m")
-	rec := w.record(t, "discord-m")
-	signInAs(t, w.forum, w.b, manager)
-
-	doc := parseHTML(t, follow(t, w.b, submit(t, w.b, deleteConfirm(t, w.b, rec))))
-
-	assertRecordingsPageEmpty(t, doc, noRecordingsLeft)
-	if findElement(doc, "", "data-field", "deleted") == nil {
-		t.Error("the page the delete lands on doesn't say the recording was deleted")
+// A starter who isn't a panel admin, here a Foxhole manager and an
+// outsider, deletes their only recording and lands on the Recordings page
+// saying it was deleted and that none are left, as a panel admin does.
+func TestStarterWhoDeletesTheirLastRecordingLandsOnTheRecordingsPage(t *testing.T) {
+	cases := []struct {
+		who      string
+		add      func(*fakeForum) *forumAccount
+		username string
+	}{
+		{"a Foxhole manager", addFoxholeManager, managerUsername},
+		{"an outsider", addOutsider, outsiderUsername},
 	}
-}
+	for _, tc := range cases {
+		t.Run(tc.who, func(t *testing.T) {
+			w := newTestWorld(t)
+			account := tc.add(w.forum)
+			w.milpacs.set(tc.username, "discord-m")
+			rec := w.record(t, "discord-m")
+			signInAs(t, w.forum, w.b, account)
 
-// A forum user who started no recording, and isn't a panel admin, gets the
-// no-access page on the Recordings page whatever its address says, even one
-// saying a recording was deleted.
-func TestRecordingsPageSayingADeleteIsTheNoAccessPageForAnOutsider(t *testing.T) {
-	w := newTestWorld(t)
-	a := w.addStarter(5001, "Able.A", "discord-a")
-	rec := w.record(t, a.discordID)
-	signInAs(t, w.forum, w.b, addOutsider(w.forum))
+			res := follow(t, w.b, submit(t, w.b, deleteConfirm(t, w.b, rec)))
 
-	res := w.b.get(recordingsPath + "?" + paramDeleted + "=" + strconv.FormatInt(rec+1, 10))
-
-	assertNoAccessPage(t, parseHTML(t, res))
+			if res.StatusCode != http.StatusOK {
+				t.Errorf("the page the delete lands on has status %d, want 200", res.StatusCode)
+			}
+			doc := parseHTML(t, res)
+			assertRecordingsPageEmpty(t, doc, noRecordingsLeft)
+			if findElement(doc, "", "data-field", "deleted") == nil {
+				t.Error("the page the delete lands on doesn't say the recording was deleted")
+			}
+		})
+	}
 }
 
 // A panel admin who deletes a recording someone else started, as for an S6

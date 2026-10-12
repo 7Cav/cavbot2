@@ -1,7 +1,6 @@
 {{define "content"}}
 <main class="body">
   <h1 class="title">{{.Title}}</h1>
-  {{if .Recordings.Deleted}}{{template "deleted-note"}}{{end}}
   <div class="block narrow">
     <div class="block-row"><p data-field="no-access">{{.Message}}</p></div>
   </div>

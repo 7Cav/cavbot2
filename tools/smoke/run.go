@@ -529,7 +529,7 @@ func (s *supervisor) announce() {
 	s.logf("ready: %s on the test guild", s.st.Version)
 	s.logf("  panel       %s", panelBaseURL)
 	if s.opts.forum == forumFake {
-		s.logf("  sign-in     fake forum at %s, pick Panel admin, Foxhole manager or No access", forumBrowserURL)
+		s.logf("  sign-in     fake forum at %s, pick Panel admin, Foxhole manager or Outsider", forumBrowserURL)
 	} else {
 		s.logf("  sign-in     the 7cav.us forum")
 	}
