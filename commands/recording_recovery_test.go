@@ -143,9 +143,10 @@ func (sc *recordScene) recordFlushedFrame(t *testing.T) {
 
 // Recovery tells the channel the recording was cut short the way a stop
 // tells it the recording stopped: the notice is edited to say so, with the
-// link to the recording in the panel, and nobody gets a DM. Only when the
-// notice is gone, here with its channel deleted (10003), does the starter
-// get that by DM instead: one DM, to the starter, carrying both.
+// link to the recording in the panel, and nobody gets a DM. In a channel
+// that isn't spawned, only a notice that is gone, here with its channel
+// deleted (10003), sends the starter that by DM instead: one DM, to the
+// starter, carrying both.
 func TestRecordingCutShortEditsTheNoticeOrSendsTheLink(t *testing.T) {
 	t.Run("notice edited", func(t *testing.T) {
 		sc := newRecordScene(t, testRecorder)
@@ -179,6 +180,26 @@ func TestRecordingCutShortEditsTheNoticeOrSendsTheLink(t *testing.T) {
 				dms[0].to, dms[0].data.Content, recStarter.id, recordingCutShort, testPanelURL)
 		}
 	})
+}
+
+// Recovery DMs the starter of a recording cut short in a spawned channel as
+// a stop there does, edit or no edit (#620): after the restart the channel
+// may still be waiting out its hub's delete delay. One DM, saying the
+// recording was cut short, with the link.
+func TestRecordingCutShortInASpawnedChannelSendsTheStarterOneDM(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.startInSpawned(t)
+	sc.clock.advance(time.Second)
+	before := len(sc.fake.sentDMs())
+
+	sc.restart(t, testRecorder)
+	sc.clock.advance(0)
+
+	dms := sc.fake.sentDMs()[before:]
+	assertOneLinkDM(t, dms)
+	if !strings.Contains(dms[0].data.Content, recordingCutShort) {
+		t.Errorf("DM = %q, want it to say the recording %s", dms[0].data.Content, recordingCutShort)
+	}
 }
 
 // A recording cut short is mixed like one that stopped: its mix reaches

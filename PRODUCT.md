@@ -32,7 +32,7 @@ The panel runs inside the bot and signs people in with the regiment's own forum 
 ## Operating Context
 
 - **Sign-in.** Visitors go from 7cav.us to the forum's OAuth page and back to the panel. The panel should read as part of the same site the whole way.
-- **From Discord to the panel.** A recording notice links to the recording in the panel when the recording stops. If the channel is gone by then, the starter gets the link by DM instead. That link is often opened on a phone.
+- **From Discord to the panel.** A recording notice links to the recording in the panel when the recording stops. In a spawned channel the starter gets the link by DM as well, since the channel and its notice go once everyone has left. In any other channel the DM goes only when the channel is gone by then. That link is often opened on a phone.
 - **The war cycle.** A Foxhole war ends with a purge of the Foxhole roles, then a re-add of the approved collaborators. These are the panel's busiest moments for Foxhole managers.
 - **Scale.** The live guild is near Discord's caps for roles and channels, so pickers can hold thousands of candidates (ADR 0013).
 - **Latency.** At its slowest a page load takes about 20 seconds: a 10-second group check, then the page's 10-second time budget. The reverse proxy cuts requests off at 90 seconds. Foxhole actions run in the background, and their request redirects at once.
