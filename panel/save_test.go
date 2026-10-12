@@ -519,11 +519,11 @@ func TestSaveStoreCallPastItsDeadlineFailsTheSave(t *testing.T) {
 	}
 }
 
-// Every store call a save makes runs under its own deadline, whichever
-// method it calls: the store beneath gets a live context that ends
+// The bounded store a save runs on gives every call its own deadline,
+// whichever method it is: the store beneath gets a live context that ends
 // storeTimeout after the call starts, on the panel's clock. Saves reach only
-// some methods, so this calls each method of store.Store, read off the
-// interface, so a method added to it is checked too.
+// some methods today, so this calls each method of store.Store, read off the
+// interface, and a method added to it is checked too.
 func TestSaveStoreCallOfEveryMethodRunsUnderItsOwnDeadline(t *testing.T) {
 	clock := installClock(t)
 	var reached context.Context
@@ -534,9 +534,9 @@ func TestSaveStoreCallOfEveryMethodRunsUnderItsOwnDeadline(t *testing.T) {
 		}},
 		timeout: storeTimeout,
 	})
-	methods := reflect.TypeFor[store.Store]()
-	for i := range methods.NumMethod() {
-		m := methods.Method(i)
+	storeType := reflect.TypeFor[store.Store]()
+	for i := range storeType.NumMethod() {
+		m := storeType.Method(i)
 		t.Run(m.Name, func(t *testing.T) {
 			reached, live = nil, false
 			args := make([]reflect.Value, m.Type.NumIn())
