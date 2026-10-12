@@ -323,7 +323,7 @@ func TestApproveThatWouldChangeNobodyIsRefused(t *testing.T) {
 
 			res := submitSelection(t, w.b, page, opApprove, tc.members...)
 
-			assertRefused(t, res, "nobody-to-change", w.st, before)
+			assertRefused(t, res, refusalNobodyToChange, w.st, before)
 		})
 	}
 }
@@ -364,7 +364,7 @@ func TestClearApprovalThatWouldChangeNobodyIsRefused(t *testing.T) {
 
 			res := submitSelection(t, w.b, page, opClear, tc.members...)
 
-			assertRefused(t, res, "nobody-to-change", w.st, before)
+			assertRefused(t, res, refusalNobodyToChange, w.st, before)
 		})
 	}
 }

@@ -217,13 +217,16 @@ const (
 )
 
 // refusalStale is the data-error value on a stale refusal's note,
-// refusalUnchanged on the note of a save that would change nothing, and
-// refusalGone on the note of a remove preview or Confirm whose hub is gone,
-// test contracts like the field names.
+// refusalUnchanged on the note of a save that would change nothing,
+// refusalNobodyToChange on the Foxhole page's note of an action or an
+// approvals save that would change nobody, and refusalGone on the note of
+// a remove preview or Confirm whose hub is gone, test contracts like the
+// field names.
 const (
-	refusalStale     = "stale"
-	refusalUnchanged = "unchanged"
-	refusalGone      = "gone"
+	refusalStale          = "stale"
+	refusalUnchanged      = "unchanged"
+	refusalNobodyToChange = "nobody-to-change"
+	refusalGone           = "gone"
 )
 
 // errStaleHub is the refusal a save from a stale hub form gets: the hub is

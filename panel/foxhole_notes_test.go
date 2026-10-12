@@ -394,7 +394,7 @@ func TestNoteSaveThatChangesNothingIsRefused(t *testing.T) {
 
 	res := submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep")
 
-	doc := assertRefused(t, res, "unchanged", w.st, before)
+	doc := assertRefused(t, res, refusalUnchanged, w.st, before)
 	if got := typedNote(t, doc); got != "discharged 12 Sep" {
 		t.Errorf("the note box holds %q, want the text typed", got)
 	}
@@ -460,7 +460,7 @@ func TestEmptyNoteOnAMemberWithNoRecordIsRefusedAsUnchangedWhileTheListIsPartial
 
 	res := w.b.postForm(foxholeNotesPath, noteSaveForm(memberVance.ID, "", ""))
 
-	assertRefused(t, res, "unchanged", w.st, before)
+	assertRefused(t, res, refusalUnchanged, w.st, before)
 }
 
 // A note form kept from an earlier load and saved unedited after someone
@@ -474,7 +474,7 @@ func TestKeptNoteFormSavedUneditedAfterAnotherSaveIsStale(t *testing.T) {
 
 	res := submitNote(t, w.b, kept, "")
 
-	assertRefused(t, res, "stale", w.st, before)
+	assertRefused(t, res, refusalStale, w.st, before)
 }
 
 // A kept note form whose typed text someone else has since saved would
@@ -488,5 +488,5 @@ func TestKeptNoteFormTypingTheNoteSomeoneElseSavedIsUnchanged(t *testing.T) {
 
 	res := submitNote(t, w.b, kept, "discharged 12 Sep")
 
-	assertRefused(t, res, "unchanged", w.st, before)
+	assertRefused(t, res, refusalUnchanged, w.st, before)
 }

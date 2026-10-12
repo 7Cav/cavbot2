@@ -349,21 +349,24 @@ var errApproveListPartial = &saveRefusal{Kind: "member-list", status: http.Statu
 	log:     "Panel save refused: member list partial",
 	Message: "Awaiting the member list from Discord, so nobody was approved. Try again shortly."}
 
+// nobodyToChangeSave is the refusal of an approvals save that would change
+// nobody, with the sentence that says why. It answers as
+// nobodyToChangeRefusal does, since a selection bar kept from an earlier
+// load posts the same way a kept action form does.
+func nobodyToChangeSave(message string) *saveRefusal {
+	return &saveRefusal{Kind: refusalNobodyToChange, status: http.StatusConflict,
+		log: "Panel save refused: nobody to change", Message: message}
+}
+
 // errNobodyToApprove refuses an Approve that would approve nobody and skip
 // nobody: every selected member is an approved collaborator already, or
 // nothing was selected, which only a browser without the page script
-// posts. It answers as nobodyToChangeRefusal does, since a selection bar
-// kept from an earlier load posts the same way.
-var errNobodyToApprove = &saveRefusal{Kind: "nobody-to-change", status: http.StatusConflict,
-	log:     "Panel save refused: nobody to change",
-	Message: "Everyone selected is approved already, so nothing changed."}
-
-// errNobodyToClear refuses a Clear approval with no approved collaborator
-// among the members selected, or nothing selected. It answers as
-// errNobodyToApprove does.
-var errNobodyToClear = &saveRefusal{Kind: "nobody-to-change", status: http.StatusConflict,
-	log:     "Panel save refused: nobody to change",
-	Message: "Nobody selected is approved, so nothing changed."}
+// posts. errNobodyToClear refuses a Clear approval with no approved
+// collaborator among the members selected, or nothing selected.
+var (
+	errNobodyToApprove = nobodyToChangeSave("Everyone selected is approved already, so nothing changed.")
+	errNobodyToClear   = nobodyToChangeSave("Nobody selected is approved, so nothing changed.")
+)
 
 // foxholeChange is one entry of the Foxhole page's change log as the page
 // shows it: who saved, and what. A note save's names the member it touched
