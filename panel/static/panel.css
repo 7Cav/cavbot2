@@ -228,9 +228,11 @@ h2[tabindex="-1"]:focus { outline: none; }
    folded to one line, the hub as it was removed, and opens to its change
    log, the entries indented under the line's text. The line lifts under
    the pointer, as the folded report line does, and draws the change log's
-   chevron. */
+   chevron. Its facts wrap as one group beside the chevron, so a narrow
+   screen's second line starts under the hub's name. */
 .removed-hub + .removed-hub { border-top: 1px solid var(--line); }
-.removed-hub-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 10px 14px; cursor: pointer; list-style: none; font-size: 14px; }
+.removed-hub-head { display: flex; align-items: baseline; gap: 10px; padding: 10px 14px; cursor: pointer; list-style: none; font-size: 14px; }
+.removed-hub-facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .removed-hub-head::-webkit-details-marker { display: none; }
 .removed-hub-head::before { content: "\25B8"; content: "\25B8" / ""; color: var(--text-mute); font-size: 12px; width: 12px; }
 .removed-hub[open] > .removed-hub-head::before { content: "\25BE"; content: "\25BE" / ""; }

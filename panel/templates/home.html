@@ -159,12 +159,12 @@
     <h2 class="block-header">Removed hubs</h2>
     {{range .}}
     <details class="removed-hub" data-removed-hub="{{.ID}}">
-      <summary class="removed-hub-head">
+      <summary class="removed-hub-head"><span class="removed-hub-facts">
         <span class="hub-name" data-field="base_string">{{.BaseString}}</span>
         <span>Channel {{if .ChannelName}}<span data-field="channel_name">{{.ChannelName}}</span>{{else}}<span class="off" data-field="channel_gone">not in the server</span>{{end}}</span>
         <span>Removed by <span class="change-who" data-field="removed_by">{{.By}}</span></span>
         <time data-field="removed_at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
-      </summary>
+      </span></summary>
       {{template "change-entries" .Changes}}
     </details>
     {{end}}
