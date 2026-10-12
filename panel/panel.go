@@ -582,9 +582,6 @@ const (
 	// download or its delete, from someone who is neither its starter nor
 	// a panel admin.
 	noAccessRecording = "This recording is open only to its starter and panel admins. Nothing changed."
-	// noAccessNoRecordings is an outsider's Recordings page when they have
-	// no recordings. It refuses nothing, so it doesn't say nothing changed.
-	noAccessNoRecordings = "You have no recordings to download, and your forum groups don't open any other page."
 )
 
 // noAccess renders the no-access page, saying message, one of the

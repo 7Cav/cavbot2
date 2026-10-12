@@ -628,12 +628,6 @@ func TestPageNamesAnIconThePanelServes(t *testing.T) {
 				}
 			},
 		},
-		{
-			name:   "no-access page as an outsider",
-			path:   "/",
-			admit:  func(t *testing.T, f *fakeForum, b *browser) { signInAs(t, f, b, addOutsider(f)) },
-			landed: assertNoAccessPage,
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -72,7 +72,7 @@ check needs:
 |---------|----------|
 | Panel admin | The Hubs page, and opens the Foxhole page too |
 | Foxhole manager | The Foxhole page |
-| No access | The no-access page |
+| Outsider | The Recordings page |
 
 Sign out from the rail to switch persona. `go run ./tools/smoke forum
 expired`, `refused` or `down` makes the forum answer the next group check with

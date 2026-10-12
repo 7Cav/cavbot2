@@ -644,62 +644,73 @@ func assertRecordingsPageEmpty(t *testing.T, doc *html.Node, want string) {
 	}
 }
 
-// A forum user who started no recording opens the Recordings page while
-// someone else's recording is held. An outsider gets the no-access page,
-// which refuses nothing and so doesn't say nothing changed. A Foxhole
-// manager gets the Recordings page, saying they have none yet, as a panel
-// admin does.
+// A forum user who started no recording signs in while someone else's
+// recording is held, and opens the Recordings page. Each gets it, saying
+// they have none yet. An outsider's also says their forum groups open no
+// other page. A panel admin's and a Foxhole manager's say nothing about
+// their groups, since theirs open other pages.
 func TestRecordingsPageOfSomeoneWithNoRecordings(t *testing.T) {
 	cases := []struct {
-		who    string
-		add    func(*fakeForum) *forumAccount
-		landed func(t *testing.T, doc *html.Node)
+		who      string
+		add      func(*fakeForum) *forumAccount
+		outsider bool
 	}{
-		{"an outsider", addOutsider, func(t *testing.T, doc *html.Node) {
-			t.Helper()
-			assertNoAccessSays(t, doc, noAccessNoRecordings)
-		}},
-		{"a Foxhole manager", addFoxholeManager, func(t *testing.T, doc *html.Node) {
-			t.Helper()
-			assertRecordingsPageEmpty(t, doc, noRecordingsYet)
-		}},
+		{"an outsider", addOutsider, true},
+		{"a Foxhole manager", addFoxholeManager, false},
+		{"a panel admin", func(f *fakeForum) *forumAccount { return f.addUser(1357, "Admin.A", 2, []int{47}) }, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.who, func(t *testing.T) {
 			w := newTestWorld(t)
 			a := w.addStarter(5001, "Able.A", "discord-a")
 			w.record(t, a.discordID)
-			signInAs(t, w.forum, w.b, tc.add(w.forum))
+			follow(t, w.b, signInAs(t, w.forum, w.b, tc.add(w.forum)))
 
-			tc.landed(t, parseHTML(t, w.b.get(recordingsPath)))
+			assertEmptyRecordingsPage(t, w.b.get(recordingsPath), noRecordingsYet, tc.outsider)
 		})
 	}
 }
 
+// assertRecordingsPage checks a response is the Recordings page with a 200,
+// the page every signed-in visitor opens.
+func assertRecordingsPage(t *testing.T, res *http.Response) {
+	t.Helper()
+	if got := pageOf(t, parseHTML(t, res)); res.StatusCode != http.StatusOK || got != pageRecordings {
+		t.Errorf("landed on page %q with status %d, want %s with 200", got, res.StatusCode, pageRecordings)
+	}
+}
+
+// assertEmptyRecordingsPage checks a response is the Recordings page with
+// a 200, listing nothing and saying so in the sentence given, and that it
+// says the visitor's forum groups open no other page when outsider is set,
+// and only then.
+func assertEmptyRecordingsPage(t *testing.T, res *http.Response, want string, outsider bool) {
+	t.Helper()
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("the Recordings page's status is %d, want 200", res.StatusCode)
+	}
+	doc := parseHTML(t, res)
+	assertRecordingsPageEmpty(t, doc, want)
+	if got := findElement(doc, "", "data-field", "no-other-page") != nil; got != outsider {
+		t.Errorf("the page says the visitor's forum groups open no other page: %v, want %v", got, outsider)
+	}
+}
+
 // A starter whose milpac lookup fails at sign-in, or finds no milpac, still
-// signs in. Their Recordings page is the no-access page, not the error
-// page, and doesn't list the recording they started.
-func TestRecordingsPageAfterAFailedMilpacLookupIsTheNoAccessPage(t *testing.T) {
+// signs in. They land on the Recordings page an outsider who started none
+// gets, since the panel couldn't know the recording is theirs.
+func TestRecordingsPageAfterAFailedMilpacLookupIsEmpty(t *testing.T) {
 	for _, status := range []int{http.StatusInternalServerError, http.StatusNotFound} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			w := newTestWorld(t)
 			x := w.addStarter(5003, "Xray.X", "discord-x")
-			rec := w.record(t, x.discordID)
+			w.record(t, x.discordID)
 			w.milpacs.fail("Xray.X", status)
 
 			res := signInAs(t, w.forum, w.b, x.account)
 
 			assertRedirect(t, res, "/")
-			doc := parseHTML(t, follow(t, w.b, res))
-			if m := findElement(doc, "main", "", ""); m != nil {
-				if failure, ok := attrValue(m, "data-failure"); ok {
-					t.Errorf("X got the error page, data-failure=%q, want the no-access page", failure)
-				}
-			}
-			assertNoAccessPage(t, doc)
-			if _, ok := listedRecordings(t, doc)[rec]; ok {
-				t.Errorf("X's page lists their recording %d, which the panel couldn't know was theirs", rec)
-			}
+			assertEmptyRecordingsPage(t, follow(t, w.b, res), noRecordingsYet, true)
 		})
 	}
 }

@@ -50,7 +50,7 @@ type persona struct {
 var personas = []persona{
 	{Key: "admin", Label: "Panel admin", UserID: 900001, Username: "Smoke Admin", Primary: registeredGroupID, Secondary: []int{adminGroupID}},
 	{Key: "foxhole", Label: "Foxhole manager", UserID: 900002, Username: "Smoke Foxhole", Primary: registeredGroupID, Secondary: []int{foxholeGroupID}},
-	{Key: "member", Label: "No access", UserID: 900003, Username: "Smoke Member", Primary: registeredGroupID, Secondary: []int{}},
+	{Key: "member", Label: "Outsider", UserID: 900003, Username: "Smoke Member", Primary: registeredGroupID, Secondary: []int{}},
 }
 
 // Groups is the persona's groups as the consent page shows them.

@@ -57,12 +57,11 @@ var pageLoadCases = []struct {
 	{foxholePath, func(t *testing.T, f *fakeForum, b *browser) *http.Response {
 		return signInAs(t, f, b, addFoxholeManager(f))
 	}, pageFoxhole},
-	{recordingsPath, signIn, pageRecordings},
 }
 
-// An outsider who loads a page behind a gate gets the no-access page, with
-// no settings on it. A user the page admits then loads it and gets the
-// page, so no case passes on a route that refuses everyone.
+// An outsider who loads a page behind a gate lands on the Recordings page,
+// the one page their forum groups open. A user the page admits then loads
+// it and gets the page, so no case passes on a route that refuses everyone.
 func TestPageLoadByAnOutsiderIsRefused(t *testing.T) {
 	for _, tc := range pageLoadCases {
 		t.Run("GET "+tc.path, func(t *testing.T) {
@@ -71,7 +70,7 @@ func TestPageLoadByAnOutsiderIsRefused(t *testing.T) {
 
 			res := follow(t, w.b, w.b.get(tc.path))
 
-			assertNoAccessPage(t, parseHTML(t, res))
+			assertRecordingsPage(t, res)
 			admitted := newBrowser(t, w.p)
 			tc.admit(t, w.forum, admitted)
 			if got := pageOf(t, parseHTML(t, follow(t, admitted, admitted.get(tc.path)))); got != tc.page {
@@ -82,15 +81,14 @@ func TestPageLoadByAnOutsiderIsRefused(t *testing.T) {
 }
 
 // A signed-in visitor can go back to the forum from the page, as a
-// signed-out one can. The outsider is the case that matters most: the
-// no-access page is a dead end in the panel.
+// signed-out one can. The outsider is the case that matters most: their
+// forum groups open no page but the Recordings page.
 func TestSignedInVisitorCanGoBackToTheForum(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signInAs(t, w.forum, w.b, addOutsider(w.forum))
 
 	doc := parseHTML(t, follow(t, w.b, w.b.get("/")))
 
-	assertNoAccessPage(t, doc)
 	forum := w.forum.srv.URL + "/"
 	if findElement(doc, "a", "href", forum) == nil {
 		t.Errorf("the page has no link to the forum, %s", forum)
@@ -424,11 +422,11 @@ func TestFoxholeManagerWhoLeftTheFoxholeGroupSavesNoNote(t *testing.T) {
 }
 
 // openRoutes is every route the panel serves to anyone, signed in or not,
-// by its pattern as routes() writes it, and the not-found page's, which
-// every signed-in user gets alike. The recording status endpoint is open so
-// the deploy workflow can poll it with no session.
+// by its pattern as routes() writes it, and the Recordings page's and the
+// not-found page's, which every signed-in user opens. The recording status
+// endpoint is open so the deploy workflow can poll it with no session.
 var openRoutes = []string{"GET /static/", "GET /signin", "POST /auth/start", "GET /auth/callback", "POST /auth/signout",
-	"GET /recording-status", "GET /"}
+	"GET /recording-status", "GET " + recordingsPath, "GET /"}
 
 // Every route the panel serves is in openRoutes or has an outsider case, a
 // case whose request the route serves. A route added later fails here until
@@ -471,15 +469,15 @@ func TestEveryRouteHasAnOutsiderCaseOrIsOpen(t *testing.T) {
 }
 
 // A panel admin whose forum account leaves every panel admin group keeps
-// their panel session, and their next page is the no-access page.
-func TestPanelAdminWhoLeavesTheAdminGroupsDropsToTheNoAccessPage(t *testing.T) {
+// their panel session, and their next page is the Recordings page.
+func TestPanelAdminWhoLeavesTheAdminGroupsDropsToTheRecordingsPage(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 	w.forum.setUserinfo(http.StatusOK, userinfoJSON(2, []int{35, 72}))
 
 	res := follow(t, w.b, w.b.get("/"))
 
-	assertNoAccessPage(t, parseHTML(t, res))
+	assertRecordingsPage(t, res)
 }
 
 // A form on another site can post to the panel from a signed-in manager's

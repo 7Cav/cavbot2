@@ -458,8 +458,8 @@ _Avoid_: auth request, login attempt, OAuth state, flow.
 The panel's test of the signed-in forum user's forum groups, primary or
 secondary, on every request. The groups decide what the panel session can
 see. They never end it. One of the panel's admin groups makes them a panel
-admin. The Foxhole group makes them a Foxhole manager. An outsider sees
-only the recordings they started.
+admin. The Foxhole group makes them a Foxhole manager. An outsider opens the
+Recordings page alone.
 _Avoid_: allowlist check, permission check, authorisation, role check.
 
 **Panel admin**:
@@ -470,16 +470,21 @@ channel's), Foxhole manager (a narrower role).
 
 **Outsider**:
 A signed-in forum user the group check finds in none of the panel's groups,
-neither a panel admin nor a Foxhole manager.
+neither a panel admin nor a Foxhole manager. Opens the Recordings page, which
+lists the recordings they started, or says they have none yet.
 _Avoid_: user outside the admin groups (a Foxhole manager is one too), user
 in neither group, user in no group, guest, unprivileged user.
 
 **No-access page**:
 The panel page for a request the visitor's forum groups don't allow, or for
-a recording they didn't start, and an outsider's Recordings page when they
-have no recordings. Deleting their last recording still lands an outsider on
-the Recordings page.
+a recording they didn't start.
 _Avoid_: forbidden page, access denied page, 403 page.
+
+**Rail**:
+The side column on every signed-in page: the identity block, Sign out, the
+version line and a link to each page the visitor may open. Every signed-in
+visitor may open the Recordings page.
+_Avoid_: sidebar, nav, menu.
 
 **Block**:
 One bordered unit of a panel page, with a gold header rule. The unit a
@@ -567,8 +572,9 @@ kept.
 _Avoid_: failed recording, aborted recording, broken recording.
 
 **Recordings page**:
-The panel page that lists the recordings a signed-in forum user started, with
-each one's downloads, its deletion date and a Delete that removes it sooner.
+The panel page every signed-in forum user opens, listing the recordings they
+started, with each one's downloads, its deletion date and a Delete that
+removes it sooner. One who started none reads that there are none yet.
 A panel admin can switch it to every recording. The link a recording notice gets at stop opens the recording here.
 _Avoid_: recordings dashboard, recordings list.
 

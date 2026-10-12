@@ -92,6 +92,9 @@ type recordingsView struct {
 	DeletePreview bool
 	// Deleted is set when the page says a recording has just been deleted.
 	Deleted bool
+	// Outsider is set for an outsider's list, which, when it lists
+	// nothing, says their forum groups open no other page.
+	Outsider bool
 }
 
 // EmptyNote is what the page says when it lists no recordings: that none
@@ -132,10 +135,10 @@ type recordingItem struct {
 	DeleteURL string
 }
 
-// recordingsPage is GET /recordings: the recordings the user started. An
-// outsider who started none gets the no-access page. A panel admin's
-// switch lists every recording instead, with its starter; the switch's
-// address shows anyone else their own.
+// recordingsPage is GET /recordings: the recordings the user started, the
+// page every signed-in visitor opens. A panel admin's switch lists every
+// recording instead, with its starter; the switch's address shows anyone
+// else their own.
 func (p *Panel) recordingsPage(w http.ResponseWriter, r *http.Request, sess session) {
 	ctx, cancel := panelClock.WithTimeout(r.Context(), hubPageBudget)
 	defer cancel()
@@ -159,18 +162,8 @@ func (p *Panel) recordingsPage(w http.ResponseWriter, r *http.Request, sess sess
 		p.pageFailed(w, sess, "recordings page", recordingsPath, err, nil)
 		return
 	}
-	if sess.access.outsider() && len(recs) == 0 {
-		// An outsider who started no recording has nothing here, and their
-		// forum groups open no other page. One who has just deleted their
-		// last recording lands here too, told it went.
-		data := sess.page("No access")
-		data.Message = noAccessNoRecordings
-		data.Recordings.Deleted = deleted
-		p.render(w, http.StatusForbidden, "noaccess", data)
-		return
-	}
 	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: recordingItems(recs), Switch: sess.access.panelAdmin, All: all,
-		ShowStarter: all, Deleted: deleted})
+		ShowStarter: all, Deleted: deleted, Outsider: sess.access.outsider()})
 }
 
 // wasDeleted reports whether the recording the Recordings page's deleted

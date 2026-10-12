@@ -178,8 +178,8 @@ func TestRailShowsOnlyThePagesTheUserOpensAndEachLinkOpensIt(t *testing.T) {
 }
 
 // A Foxhole manager whose forum account leaves the Foxhole group keeps their
-// panel session: their next load of the Foxhole page is the no-access page,
-// and once the forum puts them back in the group the page opens with no new
+// panel session: their next load of the Foxhole page lands on the
+// Recordings page, and once the forum puts them back in the group the page opens with no new
 // sign-in.
 func TestFoxholeManagerWhoLeavesTheGroupKeepsTheSession(t *testing.T) {
 	w := newTestWorld(t)
@@ -189,7 +189,7 @@ func TestFoxholeManagerWhoLeavesTheGroupKeepsTheSession(t *testing.T) {
 
 	res := follow(t, w.b, w.b.get("/foxhole"))
 
-	assertNoAccessPage(t, parseHTML(t, res))
+	assertRecordingsPage(t, res)
 	w.forum.setGroups(manager, 2, []int{35, testFoxholeGroupID})
 	if got := pageOf(t, parseHTML(t, follow(t, w.b, w.b.get("/foxhole")))); got != "foxhole" {
 		t.Errorf("back in the group, the Foxhole page address lands on page %q, want foxhole", got)
