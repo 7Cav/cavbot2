@@ -20,6 +20,24 @@ func listBlock(t *testing.T, doc *html.Node, field string) *html.Node {
 	return block
 }
 
+// namedOnlyIn checks the page's result lines name the member by attr, or
+// nobody when member is empty, and that every line naming them lies within
+// the block.
+func namedOnlyIn(t *testing.T, doc, block *html.Node, attr, member string) {
+	t.Helper()
+	var want []string
+	if member != "" {
+		want = []string{member}
+	}
+	if got := valuesOf(doc, attr); !slices.Equal(got, want) {
+		t.Errorf("the page's result lines name %v by %s, want %v", got, attr, want)
+		return
+	}
+	if got := valuesOf(block, attr); !slices.Equal(got, want) {
+		t.Errorf("the list's block names %v by %s, want %v: a result line sits outside it", got, attr, want)
+	}
+}
+
 // A Foxhole page save that sends the manager back to a list lands on that
 // list's block, which sits below the action blocks wherever they stack.
 // A result line the save leaves, naming a member an Approve skipped or one
@@ -69,15 +87,8 @@ func TestAFoxholeSaveLandsOnTheListItWasMadeFrom(t *testing.T) {
 			if target := landedOn(doc, fragment); target == nil || !within(target, block) {
 				t.Fatalf("the save lands at fragment %q, want on the %s block", fragment, tc.block)
 			}
-			for attr, member := range map[string]string{"data-skipped": tc.skipped, "data-cleared": tc.cleared} {
-				var want []string
-				if member != "" {
-					want = []string{member}
-				}
-				if got := valuesOf(doc, attr); !slices.Equal(got, want) || !slices.Equal(valuesOf(block, attr), want) {
-					t.Errorf("the page's result lines name %v by %s, want %v, all in the %s block", got, attr, want, tc.block)
-				}
-			}
+			namedOnlyIn(t, doc, block, "data-skipped", tc.skipped)
+			namedOnlyIn(t, doc, block, "data-cleared", tc.cleared)
 		})
 	}
 }

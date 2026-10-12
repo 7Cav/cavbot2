@@ -144,10 +144,7 @@ func (v foxholeView) Pending() bool {
 // holder list or the no-role view, which its search and the link at the
 // top of the page open it at.
 func (v foxholeView) ListAnchor() string {
-	if v.NoRoleView {
-		return noRoleAnchor
-	}
-	return holderListAnchor
+	return listAnchor(v.Filter)
 }
 
 // listNotice is the one-line notice in the holder list's place while the
@@ -1315,9 +1312,9 @@ func foxholeAddress(query, filter string) string {
 }
 
 // The IDs the holder list's block and the no-role view's block carry in
-// foxhole.html. A filter link, a search and a link to the other view open
-// the page at the list they show, which sits far below the action blocks
-// wherever they stack.
+// foxhole.html. A filter link, a search, a link to the other view, a save
+// that returns to a list and the note form's Cancel open the page at the
+// list, which sits far below the action blocks wherever they stack.
 const (
 	holderListAnchor = "holders"
 	noRoleAnchor     = "no-role"
@@ -1333,7 +1330,7 @@ func listAnchor(filter string) string {
 
 // listAddress is foxholeAddress opened at the list the filter shows.
 func listAddress(query, filter string) string {
-	return foxholeAddress(query, filter) + "#" + listAnchor(filter)
+	return listLink(query, filter, "")
 }
 
 // foxholeURL is foxholeAddress with the note form of the member whose ID
@@ -1346,14 +1343,19 @@ func foxholeURL(query, filter, noteMember string) string {
 // member whose ID is member. The list's block says so when that took them
 // off the page.
 func clearedAddress(query, filter, member string) string {
-	return foxholeLink(query, filter, paramCleared, member) + "#" + listAnchor(filter)
+	return listLink(query, filter, paramCleared, member)
 }
 
 // skippedAddress is listAddress after an Approve that skipped the members
 // whose IDs are skipped. The list's block names those of them it still
 // would.
 func skippedAddress(query, filter string, skipped []string) string {
-	return foxholeLink(query, filter, paramSkipped, skipped...) + "#" + listAnchor(filter)
+	return listLink(query, filter, paramSkipped, skipped...)
+}
+
+// listLink is foxholeLink opened at the list the filter shows.
+func listLink(query, filter, key string, values ...string) string {
+	return foxholeLink(query, filter, key, values...) + "#" + listAnchor(filter)
 }
 
 // foxholeLink is foxholeAddress with the parameter key set to each of
