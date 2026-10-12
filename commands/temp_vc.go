@@ -365,6 +365,10 @@ type TempVCManager interface {
 	// removes every component, and a nil one leaves them. The unlock edits
 	// the lock notice through it.
 	ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error)
+	// ChannelMessageDelete deletes a message the bot posted, with no retry
+	// on rate limit. A recording start that fails after posting its notice
+	// removes the notice through it.
+	ChannelMessageDelete(channelID, messageID string) error
 	// MemberList reads one copied snapshot of the guild's member list,
 	// taken under the state's lock and never from the API (#440). It holds
 	// the members only once the list is complete. The panel's Foxhole page
@@ -725,6 +729,10 @@ func (m *sessionTempVCManager) ChannelPermissionSet(channelID, targetID string, 
 
 func (m *sessionTempVCManager) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {
 	return m.s.ChannelMessageEditComplex(edit, discordgo.WithRetryOnRatelimit(false))
+}
+
+func (m *sessionTempVCManager) ChannelMessageDelete(channelID, messageID string) error {
+	return m.s.ChannelMessageDelete(channelID, messageID, discordgo.WithRetryOnRatelimit(false))
 }
 
 // CanSeeChannel goes through State.MessagePermissions, discordgo's one

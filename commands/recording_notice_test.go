@@ -32,8 +32,8 @@ func TestRecordingNoticeIsPostedAtStartAndPingsNobody(t *testing.T) {
 }
 
 // A notice Discord refuses fails the start: nobody would be told about the
-// recording, so the recorder leaves, no row is written, and the starter's
-// reply is a ❌.
+// recording, so the recorder leaves, no row is written, the channel's chat
+// holds no notice, and the starter's reply is a ❌.
 func TestRecordingNoticeThatFailsToPostFailsTheStart(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 	sc.fake.messageErr = restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, rawBodyMarker)
@@ -49,6 +49,9 @@ func TestRecordingNoticeThatFailsToPostFailsTheStart(t *testing.T) {
 	}
 	if recs := sc.recordings(t); len(recs) != 0 {
 		t.Errorf("recordings after the refused notice = %+v, want none", recs)
+	}
+	if notices := noticesIn(t, sc.fake, recordChannel); len(notices) != 0 {
+		t.Errorf("messages in %s after the refused notice = %d, want no recording notice", recordChannel, len(notices))
 	}
 }
 

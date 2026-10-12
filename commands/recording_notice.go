@@ -82,6 +82,17 @@ func (r *RecordingRuntime) postRecordingNotice(channelID, starterID, title strin
 	return msg.ID, nil
 }
 
+// removeRecordingNotice deletes the notice of a start that failed after
+// posting it, so the channel isn't told it's being recorded. A failed
+// delete is a WARN line and changes nothing else: the start has already
+// failed, and Sentry has its cause.
+func (r *RecordingRuntime) removeRecordingNotice(channelID, noticeID string) {
+	if err := r.mgr.ChannelMessageDelete(channelID, noticeID); err != nil {
+		utils.Warn("Recording notice not removed after a failed start", "channel_id", channelID,
+			"message_id", noticeID, "error", err)
+	}
+}
+
 // recordingNoticeStoppedLine is the notice's content once the recording
 // has stopped.
 const recordingNoticeStoppedLine = "⏹️ This channel is no longer being recorded."

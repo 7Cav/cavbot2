@@ -508,6 +508,13 @@ func (f *fakeDiscord) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*d
 	return &discordgo.Message{ID: edit.ID, ChannelID: edit.Channel}, nil
 }
 
+// ChannelMessageDelete answers every delete as done: a write the fake
+// counts.
+func (f *fakeDiscord) ChannelMessageDelete(_, _ string) error {
+	f.countWrite()
+	return nil
+}
+
 // editedContents is the content of every message edit, in order.
 func (f *fakeDiscord) editedContents() []string {
 	f.mu.Lock()

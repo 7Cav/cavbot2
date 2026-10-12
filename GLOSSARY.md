@@ -581,11 +581,11 @@ _Avoid_: recordings dashboard, recordings list.
 **Recording notice**:
 The bot message in the recorded channel's text chat that says a recording is
 running, names its starter, and carries the control to stop it. Posted at
-start, and edited at stop to say it stopped, or that it was cut short, with
-a link to the recording in the panel. The starter gets that link by DM as
-well when the channel is a spawned channel, since its hub's delete delay
-takes the notice away once everyone has left, and instead when the notice
-is gone by then.
+start, taken down if the start then fails, and edited at stop to say it
+stopped, or that it was cut short, with a link to the recording in the
+panel. The starter gets that link by DM as well when the channel is a
+spawned channel, since its hub's delete delay takes the notice away once
+everyone has left, and instead when the notice is gone by then.
 _Avoid_: recording panel (the panel is the web UI), banner, announcement.
 
 ## External systems
