@@ -327,8 +327,8 @@ type TempVCManager interface {
 	// can read who a message may ping.
 	ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error)
 	// UserChannelCreate opens the DM channel with a member, with no retry
-	// on rate limit. The recording runtime sends a stopped recording's link
-	// through it when the recording notice is gone.
+	// on rate limit. The recording runtime sends an ended recording's link
+	// through it.
 	UserChannelCreate(recipientID string) (*discordgo.Channel, error)
 	// GuildMember fetches one guild member from the API. The startup
 	// Administrator check reads the bot's own member through it.
@@ -979,6 +979,17 @@ func (t *TempVC) IsHub(channelID string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	_, ok := t.hubs[channelID]
+	return ok
+}
+
+// IsSpawned reports whether a channel is a spawned channel the runtime
+// tracks. A hub channel or any other channel is not. A recording that ends
+// in one DMs its starter the link, since the hub's delete delay takes the
+// recording notice away once everyone has left.
+func (t *TempVC) IsSpawned(channelID string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, ok := t.occupants[channelID]
 	return ok
 }
 

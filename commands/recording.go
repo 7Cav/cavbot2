@@ -125,7 +125,7 @@ type RecordingManager interface {
 	// member list, which names a recording's speakers at its stop.
 	MemberList(guildID string) MemberListSnapshot
 	// UserChannelCreate opens the DM channel with a member, for the link
-	// to a recording whose notice is gone by its stop.
+	// to an ended recording (closeRecordingNotice).
 	UserChannelCreate(recipientID string) (*discordgo.Channel, error)
 	// GuildMemberMove is TempVCManager's. With no channel it disconnects a
 	// recorder the last process left in voice.
