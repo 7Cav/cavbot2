@@ -165,6 +165,15 @@ func TestRecordingMixIsProcessingUntilTheMixerCompletes(t *testing.T) {
 	if rec.Mix != store.MixReady {
 		t.Fatalf("mix after the mixer completed = %q, want %q", rec.Mix, store.MixReady)
 	}
+	if got := sc.servedMix(t, rec); !bytes.Equal(got, want) {
+		t.Errorf("the library served %q as the mix, want the mixer's %q", got, want)
+	}
+}
+
+// servedMix downloads a recording's mix through the library and returns
+// its bytes.
+func (sc *recordScene) servedMix(t *testing.T, rec store.Recording) []byte {
+	t.Helper()
 	f, err := sc.lib.OpenMix(rec)
 	if err != nil {
 		t.Fatalf("OpenMix: %v", err)
@@ -174,9 +183,7 @@ func TestRecordingMixIsProcessingUntilTheMixerCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the mix: %v", err)
 	}
-	if !bytes.Equal(got, want) {
-		t.Errorf("the library served %q as the mix, want the mixer's %q", got, want)
-	}
+	return got
 }
 
 // A mix that fails is marked failed and reaches Sentry, and the tracks still

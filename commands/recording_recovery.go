@@ -12,10 +12,13 @@ import (
 	"github.com/7cav/cavbot2/utils"
 )
 
-// Cut-short recordings (spec #381, #393). A recording the last process was
+// Startup recovery (spec #381, #393, #622). A recording the last process was
 // in the middle of when it shut down or crashed still has its row open. The
 // runtime's startup recovery closes each one as cut short, keeping what
 // reached the disk, on every host with a bot store, recording on or off.
+// It also builds each mix the last process went down while building
+// (#622): a recording that stopped before this runtime was built, its mix
+// still processing, goes to the mixer as it would at a stop.
 
 // recordingRecoveryPoll is how often recovery reads the member list while
 // it waits for it.
@@ -37,13 +40,14 @@ func (r *RecordingRuntime) recoverWhenListed() {
 		recordingAfterFunc(recordingRecoveryPoll, r.recoverWhenListed)
 		return
 	}
-	r.recoverCutShort()
+	r.recoverLastProcess()
 }
 
-// recoverCutShort closes every recording the last process left running as
-// cut short. A recording this process started is never one of them, even
-// one a member started before recovery ran.
-func (r *RecordingRuntime) recoverCutShort() {
+// recoverLastProcess closes every recording the last process left running
+// as cut short, and builds each mix it went down while building. A
+// recording this process started or stopped is never one of them, even one
+// a member started or stopped before recovery ran.
+func (r *RecordingRuntime) recoverLastProcess() {
 	defer utils.RecoverPanic("recording-recovery")
 	r.disconnectIdleRecorders()
 	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)
@@ -55,8 +59,13 @@ func (r *RecordingRuntime) recoverCutShort() {
 	}
 	members := r.mgr.MemberList(r.guildID)
 	for _, rec := range recs {
-		if rec.StoppedAt.IsZero() && rec.StartedAt.Before(r.builtAt) {
+		switch {
+		case rec.StoppedAt.IsZero() && rec.StartedAt.Before(r.builtAt):
 			r.recoverRecording(rec, members)
+		case rec.Mix == store.MixProcessing && rec.StoppedAt.Before(r.builtAt):
+			// The last process stopped it and went down before its mix was
+			// built (#622).
+			r.startMix(rec)
 		}
 	}
 }
