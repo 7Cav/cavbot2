@@ -115,7 +115,7 @@ type foxholeView struct {
 	// is partial: the Add members block shows alone above the notice, with
 	// the lines pasted, to send again once the list is back.
 	PasteAlone bool
-	// ReAdd counts the approved collaborators by what a re-add would do with
+	// ReAdd counts each role's approvals by what a re-add would do with
 	// each, for the After a war block. Nil while the member list isn't
 	// complete.
 	ReAdd *reAddCounts

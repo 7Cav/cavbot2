@@ -61,23 +61,49 @@ func reAddBlock(t *testing.T, doc *html.Node) *html.Node {
 	return reAdd
 }
 
-// The After a war block counts the approved collaborators by what a re-add
-// would do with each: those who hold External already, those in the server
-// who don't, and those who left the server. A manager knows what Re-add
-// will do before pressing it.
-func TestAfterAWarBlockCountsApprovedCollaboratorsByWhatReAddWouldDo(t *testing.T) {
+// reAddCountLine returns the re-add's count line for the role given, and
+// fails the test when it has none.
+func reAddCountLine(t *testing.T, reAdd *html.Node, role string) *html.Node {
+	t.Helper()
+	line := findElement(reAdd, "", "data-readd-role", role)
+	if line == nil {
+		t.Fatalf("the re-add has no %s line", role)
+	}
+	return line
+}
+
+// The After a war block counts each role's approvals on a line of its own,
+// by what a re-add would do with each: the approved Foxholers who hold the
+// role already, those in the server who don't, and those who left the
+// server. A member approved for both roles counts on both lines, as Marsh,
+// Vance and the member who left do. A manager knows what Re-add will do
+// before pressing it.
+func TestAfterAWarBlockCountsEachRolesApprovalsByWhatReAddWouldDo(t *testing.T) {
 	w := newFoxholeWorld(t)
-	seedApproved(t, w, namesOf(memberKestrel), namesOf(memberMarsh),
-		namesOf(memberDoe), namesOf(memberAsh), namesOf(memberVance), foxholerGone)
+	seedApprovals(t, w,
+		store.MemberApprovals{MemberNames: namesOf(memberDoe), Approved: internalApproval},
+		store.MemberApprovals{MemberNames: namesOf(memberAsh), Approved: externalApproval},
+		store.MemberApprovals{MemberNames: namesOf(memberKestrel), Approved: externalApproval},
+		store.MemberApprovals{MemberNames: namesOf(memberMarsh), Approved: bothApprovals},
+		store.MemberApprovals{MemberNames: namesOf(memberVance), Approved: bothApprovals},
+		store.MemberApprovals{MemberNames: foxholerGone, Approved: bothApprovals})
 
 	block := reAddBlock(t, parseHTML(t, w.b.get(foxholePath)))
 
-	got := map[string]string{}
-	for _, field := range []string{"holding", "not-holding", "not-in-server"} {
-		got[field] = fieldText(t, block, field)
+	fields := []string{"approved", "holding", "not-holding", "not-in-server"}
+	want := map[string]map[string]string{
+		"internal": {"approved": "4", "holding": "2", "not-holding": "1", "not-in-server": "1"},
+		"external": {"approved": "5", "holding": "2", "not-holding": "2", "not-in-server": "1"},
 	}
-	if want := map[string]string{"holding": "2", "not-holding": "3", "not-in-server": "1"}; !maps.Equal(got, want) {
-		t.Errorf("the re-add counts approved collaborators %v, want %v", got, want)
+	for role, counts := range want {
+		line := reAddCountLine(t, block, role)
+		got := map[string]string{}
+		for _, field := range fields {
+			got[field] = fieldText(t, line, field)
+		}
+		if !maps.Equal(got, counts) {
+			t.Errorf("the re-add's %s line counts %v, want %v", role, got, counts)
+		}
 	}
 }
 
@@ -311,31 +337,47 @@ func TestReAddWhileAPurgeRunsIsRefused(t *testing.T) {
 	}
 }
 
-// Re-add is disabled while it would give External to nobody, since no
-// approved collaborator in the server lacks it. A press then would only put
-// an empty report in place of the last one, which after a war names who
-// lost each role. With someone to give External to, it is enabled.
-func TestReAddIsDisabledWithNobodyToGiveExternalTo(t *testing.T) {
+// Re-add is enabled while either role's line has someone in the server
+// without the role, and disabled while neither has, when a press would only
+// put an empty report in place of the last one, which after a war names who
+// lost each role. Disabled, it gives the nobody-to-re-add hint.
+func TestReAddIsEnabledWhileEitherRoleHasSomeoneToReAdd(t *testing.T) {
 	cases := []struct {
-		name     string
-		approved []store.MemberNames
-		disabled bool
+		name      string
+		approvals []store.MemberApprovals
+		disabled  bool
 	}{
-		{"each approved collaborator holds External or left", []store.MemberNames{namesOf(memberKestrel), foxholerGone}, true},
-		{"an approved collaborator in the server lacks External", []store.MemberNames{namesOf(memberDoe)}, false},
+		// Vance, approved for Internal, doesn't hold it. Kestrel holds External.
+		{"only Internal has someone to re-add", []store.MemberApprovals{
+			{MemberNames: namesOf(memberVance), Approved: internalApproval},
+			{MemberNames: namesOf(memberKestrel), Approved: externalApproval}}, false},
+		// A regression pin. Doe, approved for External, doesn't hold it. Ash
+		// holds Internal.
+		{"only External has someone to re-add", []store.MemberApprovals{
+			{MemberNames: namesOf(memberDoe), Approved: externalApproval},
+			{MemberNames: namesOf(memberAsh), Approved: internalApproval}}, false},
+		// A regression pin. Marsh holds both roles, and the member approved
+		// for Internal has left the server.
+		{"neither has someone to re-add", []store.MemberApprovals{
+			{MemberNames: namesOf(memberMarsh), Approved: bothApprovals},
+			{MemberNames: foxholerGone, Approved: internalApproval}}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFoxholeWorld(t)
-			seedApproved(t, w, tc.approved...)
+			seedApprovals(t, w, tc.approvals...)
 
-			button := findElement(reAddBlock(t, parseHTML(t, w.b.get(foxholePath))), "button", "", "")
+			block := reAddBlock(t, parseHTML(t, w.b.get(foxholePath)))
 
+			button := findElement(block, "button", "", "")
 			if button == nil {
 				t.Fatal("the re-add has no button")
 			}
 			if got := disabled(button); got != tc.disabled {
 				t.Errorf("the Re-add button is disabled %v, want %v", got, tc.disabled)
+			}
+			if hinted := findElement(block, "", "data-field", "nobody-to-re-add") != nil; hinted != tc.disabled {
+				t.Errorf("the nobody-to-re-add hint shows: %v, want %v", hinted, tc.disabled)
 			}
 		})
 	}
