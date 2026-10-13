@@ -52,6 +52,18 @@ func (r FoxholeRole) Label() string {
 	return ""
 }
 
+// ApprovedRoles are the Foxhole roles the approvals name, Internal first.
+func ApprovedRoles(a store.FoxholeApprovals) []FoxholeRole {
+	var roles []FoxholeRole
+	if a.Internal {
+		roles = append(roles, FoxholeInternal)
+	}
+	if a.External {
+		roles = append(roles, FoxholeExternal)
+	}
+	return roles
+}
+
 // RemovalClearsApproval reports whether a removal of the role on the
 // Foxhole page clears the approval of each member it takes the role from.
 // Only External's does: approved collaborators are External only. A purge

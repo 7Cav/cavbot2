@@ -345,7 +345,7 @@
         <div data-change="member"><dt>member</dt><dd data-touched="{{.MemberID}}">{{.MemberName}} <span class="fx-user">@{{.MemberUsername}}</span></dd></div>
         <div data-change="note"><dt>note</dt><dd><span data-field="before">{{.Before}}</span>{{if not .Before}}<span class="off">none</span>{{end}} <span class="arrow">&rarr;</span> <span data-field="after">{{.After}}</span>{{if not .After}}<span class="off">none</span>{{end}}</dd></div>
         {{else}}
-        <div data-change="members"><dt>members</dt><dd>{{range $i, $m := .Members}}{{if $i}}, {{end}}<span data-touched="{{$m.ID}}">{{$m.DisplayName}} <span class="fx-user">@{{$m.Username}}</span></span>{{end}}</dd></div>
+        <div data-change="members"><dt>members</dt><dd>{{range $i, $m := .Members}}{{if $i}}, {{end}}<span data-touched="{{$m.ID}}">{{$m.DisplayName}} <span class="fx-user">@{{$m.Username}}</span>{{range $m.Roles}} <span class="tag fx-role" data-role="{{.}}">{{.Label}}</span>{{end}}</span>{{end}}</dd></div>
         <div data-change="approved"><dt>approved</dt><dd>{{if eq .Action "approve"}}no{{else}}yes{{end}} <span class="arrow">&rarr;</span> {{if eq .Action "approve"}}yes{{else}}no{{end}}</dd></div>
         {{end}}
       </dl>

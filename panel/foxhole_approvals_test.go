@@ -1,6 +1,8 @@
 package panel
 
 import (
+	"context"
+	"encoding/json"
 	"maps"
 	"net/http"
 	"slices"
@@ -207,6 +209,75 @@ func TestApprovedFilterListsEveryoneWithAnApproval(t *testing.T) {
 	href, _ := attrValue(link, "href")
 	if got := keys(holderRows(t, parseHTML(t, w.b.get(href)))); !slices.Equal(got, want) {
 		t.Errorf("the approved link lists %v, want %v", got, want)
+	}
+}
+
+// touchedRoles returns the roles a change log entry names for each member
+// it touched, by member ID, each sorted.
+func touchedRoles(entry *html.Node) map[string][]string {
+	out := map[string][]string{}
+	eachElement(entry, func(n *html.Node) {
+		if id, ok := attrValue(n, "data-touched"); ok {
+			roles := valuesOf(n, "data-role")
+			slices.Sort(roles)
+			out[id] = roles
+		}
+	})
+	return out
+}
+
+// onlyEntry returns the change log's one entry of the action given, and
+// fails the test unless there is exactly one.
+func onlyEntry(t *testing.T, doc *html.Node, action string) *html.Node {
+	t.Helper()
+	entries := changeEntries(t, doc, action)
+	if len(entries) != 1 {
+		t.Fatalf("the change log holds %d %s entries, want 1", len(entries), action)
+	}
+	return entries[0]
+}
+
+// The change log entry of an Approve names the role of each approval it
+// gave, and that of a Clear approval the role of each approval it cleared:
+// Marsh's Clear approval names both of his.
+func TestApprovalsChangeLogEntriesNameEachApprovalsRole(t *testing.T) {
+	w := newFoxholeWorld(t)
+	approveThroughThePage(t, w, memberDoe.ID, memberKestrel.ID, memberMarsh.ID)
+
+	res := submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opClear, memberMarsh.ID)
+
+	assertRedirect(t, res, foxholePath)
+	page := parseHTML(t, follow(t, w.b, res))
+	approved := map[string][]string{
+		memberDoe.ID:     {"internal"},
+		memberKestrel.ID: {"external"},
+		memberMarsh.ID:   {"external", "internal"},
+	}
+	if got := touchedRoles(onlyEntry(t, page, "approve")); !maps.EqualFunc(got, approved, slices.Equal) {
+		t.Errorf("the Approve's entry names the approvals %v, want %v", got, approved)
+	}
+	cleared := map[string][]string{memberMarsh.ID: {"external", "internal"}}
+	if got := touchedRoles(onlyEntry(t, page, "clear_approval")); !maps.EqualFunc(got, cleared, slices.Equal) {
+		t.Errorf("the Clear approval's entry names the approvals %v, want %v", got, cleared)
+	}
+}
+
+// An approvals entry written before approvals named a role names each
+// member's approval as External, the only kind Approve gave then.
+func TestAnApprovalsEntryWrittenBeforeRolesNamesExternal(t *testing.T) {
+	w := newFoxholeWorld(t)
+	entry := store.ChangeLogEntry{ForumUserID: managerUserID, ForumUsername: managerUsername, Action: store.ChangeApprove,
+		Diff: json.RawMessage(`{"members": [{"id": "` + memberKestrel.ID + `", "display_name": "kestrel_tlr", "username": "kestrel_tlr"}]}`)}
+	approval := store.MemberApprovals{MemberNames: namesOf(memberKestrel), Approved: store.FoxholeApprovals{External: true}}
+	if err := w.st.ApproveFoxholeMembers(context.Background(), testGuildID, []store.MemberApprovals{approval}, entry); err != nil {
+		t.Fatalf("seed an older approvals entry: %v", err)
+	}
+
+	page := parseHTML(t, w.b.get(foxholePath))
+
+	want := map[string][]string{memberKestrel.ID: {"external"}}
+	if got := touchedRoles(onlyEntry(t, page, "approve")); !maps.EqualFunc(got, want, slices.Equal) {
+		t.Errorf("the older entry names the approvals %v, want %v", got, want)
 	}
 }
 

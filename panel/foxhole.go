@@ -369,7 +369,7 @@ var (
 // foxholeChange is one entry of the Foxhole page's change log as the page
 // shows it: who saved, and what. A note save's names the member it touched
 // and the note's old and new text; an approvals save's names each member
-// it approved or whose approval it cleared.
+// it approved or whose approvals it cleared, with the roles.
 type foxholeChange struct {
 	ID       int64
 	Username string
@@ -383,8 +383,9 @@ type foxholeChange struct {
 	Before         string
 	After          string
 	// Members are the members an approvals save touched, under the names
-	// the panel saw at the save.
-	Members []changedMember
+	// the panel saw at the save, each with the roles of the approvals it
+	// gave or cleared.
+	Members []approvalMember
 	// Report is a Foxhole action's entry: the action's report.
 	Report *reportView
 }
@@ -1108,11 +1109,7 @@ func (s foxholeService) approve(ctx context.Context, memberIDs []string, by acto
 		}
 		return skipped, nil
 	}
-	names := make([]store.MemberNames, 0, len(approving))
-	for _, a := range approving {
-		names = append(names, a.MemberNames)
-	}
-	entry, err := approvalEntry(store.ChangeApprove, names, by)
+	entry, err := approvalEntry(store.ChangeApprove, approving, by)
 	if err != nil {
 		return nil, err
 	}
@@ -1129,13 +1126,14 @@ func (s foxholeService) clearApprovals(ctx context.Context, memberIDs []string, 
 	if err != nil {
 		return err
 	}
-	var clearing []store.MemberNames
+	var clearing []store.MemberApprovals
 	for _, id := range distinct(memberIDs) {
 		rec := records[id]
 		if !rec.Approved.Any() {
 			continue
 		}
-		clearing = append(clearing, store.MemberNames{MemberID: id, DisplayName: rec.DisplayName, Username: rec.Username})
+		clearing = append(clearing, store.MemberApprovals{
+			MemberNames: store.MemberNames{MemberID: id, DisplayName: rec.DisplayName, Username: rec.Username}, Approved: rec.Approved})
 	}
 	if len(clearing) == 0 {
 		return errNobodyToClear
@@ -1166,18 +1164,28 @@ func distinct(ids []string) []string {
 }
 
 // approvalDiff is an approvals save's change log diff: the members the save
-// approved or whose approval it cleared, under the names the panel saw
-// then. The entry's action says which.
+// approved or whose approvals it cleared, under the names the panel saw
+// then, with the roles. The entry's action says which.
 type approvalDiff struct {
-	Members []changedMember `json:"members"`
+	Members []approvalMember `json:"members"`
+}
+
+// approvalMember is a member an approvals save touched, with the roles of
+// the approvals it gave or cleared, Internal first. An entry written before
+// approvals named a role has none, and its approvals were External.
+type approvalMember struct {
+	changedMember
+	Roles []commands.FoxholeRole `json:"roles"`
 }
 
 // approvalEntry is the change log entry of an approvals save by the actor
-// that touched the members given.
-func approvalEntry(action store.ChangeAction, members []store.MemberNames, by actor) (store.ChangeLogEntry, error) {
+// that gave or cleared the approvals given.
+func approvalEntry(action store.ChangeAction, approvals []store.MemberApprovals, by actor) (store.ChangeLogEntry, error) {
 	var diff approvalDiff
-	for _, n := range members {
-		diff.Members = append(diff.Members, changedMember{ID: n.MemberID, DisplayName: n.DisplayName, Username: n.Username})
+	for _, a := range approvals {
+		diff.Members = append(diff.Members, approvalMember{
+			changedMember: changedMember{ID: a.MemberID, DisplayName: a.DisplayName, Username: a.Username},
+			Roles:         commands.ApprovedRoles(a.Approved)})
 	}
 	raw, err := json.Marshal(diff)
 	if err != nil {
@@ -1246,7 +1254,12 @@ func foxholeChanges(entries []store.ChangeLogEntry) []foxholeChange {
 		} else {
 			var d approvalDiff
 			if err := json.Unmarshal(e.Diff, &d); err == nil {
-				v.Members = d.Members
+				for _, m := range d.Members {
+					if len(m.Roles) == 0 {
+						m.Roles = []commands.FoxholeRole{commands.FoxholeExternal}
+					}
+					v.Members = append(v.Members, m)
+				}
 			}
 		}
 		views = append(views, v)
