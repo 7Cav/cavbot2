@@ -56,7 +56,7 @@ Constraints:
 - **Pages without script.** A page stays safe when its script doesn't run. A scripted control posts the stored state rather than an empty or partial one, and there is no second rendering for the no-script case. The Foxhole note is the one exception (ADR 0013).
 - **Stored references.** A stored setting whose Discord object is gone or no longer eligible stays stored and is shown as unavailable, with the reason, until a person removes it (ADR 0012).
 - **Saves.** A preview comes before every Confirm, and a Confirm acts only on what its preview showed. A preview or save that would change nothing says so and stops. A save ends in a Post/Redirect/Get, and the GET works out the result again (CODING_STANDARDS.md).
-- **Error data.** Nothing the panel sends a browser, and no reply in Discord, carries error data except a time (ADR 0016, ADR 0017).
+- **Error data.** Nothing the panel sends a browser, and no reply in Discord, carries error data except a time (ADR 0016, ADR 0018).
 - **Deploy probe.** The release workflow's deploy probe reads the signed-out rail's version line. Its text must stay exactly `cavbot2 <version>`, as the comment in `panel/templates/layout.html` explains.
 - **Test hooks.** Templates carry `data-*` attributes (`data-field`, `data-cause`, `data-failure`, `data-rail`) that the panel tests read. Keep them through visual changes.
 

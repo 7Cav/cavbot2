@@ -34,6 +34,14 @@
 // to the packages that call it. Any other use is reported where the data
 // left the error. A bool, a time, a duration and an error are clean, so data
 // that becomes one stops there.
+//
+// The log is log/slog and Sentry is sentry-go, and what a call into either
+// returns carries what it was handed. Three things point the log or Sentry
+// at code or a place the check doesn't read, and each is reported where it
+// happens: a value of another package's type converted to an interface
+// either declares, a function handed to either other than a scope
+// configurator, and a writer other than os.Stdout and os.Stderr handed to
+// log/slog.
 package main
 
 import (
@@ -52,7 +60,7 @@ var analyzer = &analysis.Analyzer{
 	Doc:       "reports where data leaves an error for anywhere but the log, Sentry or a comparison",
 	Requires:  []*analysis.Analyzer{buildssa.Analyzer},
 	Run:       run,
-	FactTypes: []analysis.Fact{new(logParams), new(outsideError)},
+	FactTypes: []analysis.Fact{new(logParams), new(wrapsError)},
 }
 
 func main() { singlechecker.Main(analyzer) }
@@ -77,14 +85,14 @@ func (f *logParams) String() string {
 	return "logParams(" + b.String() + ")"
 }
 
-// outsideError marks an error type of the module whose Error method returns
+// wrapsError marks an error type of the module whose Error method returns
 // data from another error, so the check reads it as it reads an error from
 // outside the module.
-type outsideError struct{}
+type wrapsError struct{}
 
-func (*outsideError) AFact() {}
+func (*wrapsError) AFact() {}
 
-func (*outsideError) String() string { return "outsideError" }
+func (*wrapsError) String() string { return "wrapsError" }
 
 var errorType = types.Universe.Lookup("error").Type().Underlying().(*types.Interface)
 
@@ -131,20 +139,27 @@ func held(v ssa.Value) types.Type {
 
 type checker struct {
 	pass *analysis.Pass
-	// local holds the parameters each function of the package being
+	// logParamsOf holds the parameters each function of the package being
 	// checked hands only to the log or Sentry.
-	local map[*ssa.Function][]bool
+	logParamsOf map[*ssa.Function][]bool
 	// globalUses holds the instructions that use each package-level
 	// variable, which go/ssa doesn't record.
 	globalUses map[*ssa.Global][]ssa.Instruction
-	// outside holds the package's error types whose Error method returns
+	// wrapping holds the package's error types whose Error method returns
 	// data from another error.
-	outside map[*types.TypeName]bool
-	// returning is the Error method findOutside is reading, and returned
-	// whether data from an error reaches one of its returns.
-	returning *ssa.Function
-	returned  bool
+	wrapping map[*types.TypeName]bool
 }
+
+// walk is one walk over where data that left an error goes: the values it
+// has read and, while findWrapping reads an Error method, that method and
+// whether the data reaches one of its returns.
+type walk struct {
+	seen        map[ssa.Value]bool
+	errorMethod *ssa.Function
+	returned    bool
+}
+
+func newWalk() *walk { return &walk{seen: map[ssa.Value]bool{}} }
 
 func run(pass *analysis.Pass) (any, error) {
 	if !inModule(pass.Pkg.Path()) {
@@ -152,22 +167,26 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 	ssaInfo := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
 	c := &checker{
-		pass:       pass,
-		local:      map[*ssa.Function][]bool{},
-		globalUses: map[*ssa.Global][]ssa.Instruction{},
-		outside:    map[*types.TypeName]bool{},
+		pass:        pass,
+		logParamsOf: map[*ssa.Function][]bool{},
+		globalUses:  map[*ssa.Global][]ssa.Instruction{},
+		wrapping:    map[*types.TypeName]bool{},
 	}
 	c.findGlobalUses(ssaInfo.Pkg, ssaInfo.SrcFuncs)
 	c.summarize(ssaInfo.SrcFuncs)
-	c.findOutside(ssaInfo.SrcFuncs)
+	c.findWrapping(ssaInfo.SrcFuncs)
 	for _, fn := range ssaInfo.SrcFuncs {
 		for _, b := range fn.Blocks {
 			for _, instr := range b.Instrs {
+				if redirects(instr) {
+					c.pass.Reportf(posOf(instr, fn), "this points the log or Sentry at code or a place the check doesn't read, so data from an error handed to it can go anywhere (ADR 0018)")
+					continue
+				}
 				v, ok := c.source(instr)
 				if !ok {
 					continue
 				}
-				if v != nil && c.contained(v, map[ssa.Value]bool{}) {
+				if v != nil && c.contained(v, newWalk()) {
 					continue
 				}
 				c.pass.Reportf(posOf(instr, fn), "data from an error leaves it here for somewhere other than the log, Sentry, fmt.Errorf, a panic or a comparison (ADR 0018)")
@@ -213,14 +232,14 @@ func (c *checker) summarize(fns []*ssa.Function) {
 		for i := range params {
 			params[i] = true
 		}
-		c.local[fn] = params
+		c.logParamsOf[fn] = params
 	}
 	for changed := true; changed; {
 		changed = false
 		for _, fn := range fns {
 			for i, p := range fn.Params {
-				if c.local[fn][i] && !c.contained(p, map[ssa.Value]bool{}) {
-					c.local[fn][i] = false
+				if c.logParamsOf[fn][i] && !c.contained(p, newWalk()) {
+					c.logParamsOf[fn][i] = false
 					changed = true
 				}
 			}
@@ -228,48 +247,47 @@ func (c *checker) summarize(fns []*ssa.Function) {
 	}
 	for _, fn := range fns {
 		if obj, ok := fn.Object().(*types.Func); ok && obj.Pkg() == c.pass.Pkg {
-			c.pass.ExportObjectFact(obj, &logParams{Params: c.local[fn]})
+			c.pass.ExportObjectFact(obj, &logParams{Params: c.logParamsOf[fn]})
 		}
 	}
 }
 
-// findOutside works out which of the package's error types return data from
-// another error from their Error method. Once one does, a call of its
+// findWrapping works out which of the package's error types return data
+// from another error from their Error method. Once one does, a call of its
 // methods takes data out of an error, which can make another type's Error
 // method return some, so it repeats until a whole pass finds no more, then
 // records the answer for packages that use these types.
-func (c *checker) findOutside(fns []*ssa.Function) {
+func (c *checker) findWrapping(fns []*ssa.Function) {
 	for changed := true; changed; {
 		changed = false
 		for _, fn := range fns {
 			t := errorMethodOf(fn)
-			if t == nil || t.Pkg() != c.pass.Pkg || c.outside[t] {
+			if t == nil || t.Pkg() != c.pass.Pkg || c.wrapping[t] {
 				continue
 			}
 			if c.returnsErrorData(fn) {
-				c.outside[t] = true
+				c.wrapping[t] = true
 				changed = true
 			}
 		}
 	}
-	for t := range c.outside {
-		c.pass.ExportObjectFact(t, &outsideError{})
+	for t := range c.wrapping {
+		c.pass.ExportObjectFact(t, &wrapsError{})
 	}
 }
 
 // returnsErrorData reports whether data from an error reaches a return of
 // fn.
 func (c *checker) returnsErrorData(fn *ssa.Function) bool {
-	c.returning, c.returned = fn, false
-	defer func() { c.returning, c.returned = nil, false }()
+	w := &walk{seen: map[ssa.Value]bool{}, errorMethod: fn}
 	for _, b := range fn.Blocks {
 		for _, instr := range b.Instrs {
 			if v, ok := c.source(instr); ok && v != nil {
-				c.contained(v, map[ssa.Value]bool{})
+				c.contained(v, w)
 			}
 		}
 	}
-	return c.returned
+	return w.returned
 }
 
 // errorMethodOf returns the type fn is the Error method of, when fn, a
@@ -291,31 +309,31 @@ func namedOf(t types.Type) *types.Named {
 	return n
 }
 
-// isOutside reports whether t, a type of the module, returns data from
-// another error from its Error method.
-func (c *checker) isOutside(t *types.TypeName) bool {
+// wraps reports whether t, a type of the module, returns data from another
+// error from its Error method.
+func (c *checker) wraps(t *types.TypeName) bool {
 	if t.Pkg() == c.pass.Pkg {
-		return c.outside[t]
+		return c.wrapping[t]
 	}
-	return c.pass.ImportObjectFact(t, new(outsideError))
+	return c.pass.ImportObjectFact(t, new(wrapsError))
 }
 
 // fromOutside reports whether a method or field obj of a value of type t
 // gives data from an error the check reads as one from outside the module:
-// obj is declared outside the module, or t is an outside error type.
+// obj is declared outside the module, or t wraps another error.
 func (c *checker) fromOutside(obj types.Object, t types.Type) bool {
 	if obj == nil || obj.Pkg() == nil || !inModule(obj.Pkg().Path()) {
 		return true
 	}
 	n := namedOf(t)
-	return n != nil && c.isOutside(n.Obj())
+	return n != nil && c.wraps(n.Obj())
 }
 
 // logParam reports whether fn hands its i'th parameter only to the log or
 // Sentry.
 func (c *checker) logParam(fn *ssa.Function, i int) bool {
 	if fn.Pkg != nil && fn.Pkg.Pkg == c.pass.Pkg {
-		params, ok := c.local[fn]
+		params, ok := c.logParamsOf[fn]
 		return ok && params[i]
 	}
 	var fact logParams
@@ -361,9 +379,9 @@ func (c *checker) source(instr ssa.Instruction) (ssa.Value, bool) {
 	case *ssa.TypeAssert:
 		return in, isError(in.X.Type()) && types.IsInterface(in.AssertedType) && !types.Implements(in.AssertedType, errorType)
 	case *ssa.Field:
-		return in, c.outsideField(in.X.Type(), in.Field)
+		return in, c.leavingField(in.X.Type(), in.Field)
 	case *ssa.FieldAddr:
-		return in, c.outsideField(in.X.Type().Underlying().(*types.Pointer).Elem(), in.Field)
+		return in, c.leavingField(in.X.Type().Underlying().(*types.Pointer).Elem(), in.Field)
 	}
 	return nil, false
 }
@@ -378,10 +396,7 @@ func (c *checker) source(instr ssa.Instruction) (ssa.Value, bool) {
 // it is judged by what it returns alone: what the module's code writes is
 // read where it writes it.
 func (c *checker) handedError(common *ssa.CallCommon) bool {
-	callee := common.StaticCallee()
-	if callee == nil {
-		callee = c.varFunction(common.Value)
-	}
+	callee := c.callee(common)
 	if callee != nil {
 		if c.errorTypeArg(callee) {
 			return true
@@ -476,7 +491,7 @@ func (c *checker) holdsError(t types.Type, seen map[types.Type]bool) bool {
 	seen[t] = true
 	if isError(t) {
 		n := namedOf(t)
-		if n == nil || n.Obj().Pkg() == nil || !inModule(n.Obj().Pkg().Path()) || c.isOutside(n.Obj()) {
+		if n == nil || n.Obj().Pkg() == nil || !inModule(n.Obj().Pkg().Path()) || c.wraps(n.Obj()) {
 			return true
 		}
 	}
@@ -529,8 +544,8 @@ func errorsAsTarget(mi *ssa.MakeInterface) bool {
 
 // errorMethod reports whether fn is a method of an error that takes data out
 // of it: the method itself, a method expression's thunk, or a method value's
-// bound wrapper, of a method declared outside the module or of an outside
-// error type.
+// bound wrapper, of a method declared outside the module or of an error type
+// that wraps another.
 func (c *checker) errorMethod(fn *ssa.Function) bool {
 	obj, ok := fn.Object().(*types.Func)
 	if !ok {
@@ -540,9 +555,9 @@ func (c *checker) errorMethod(fn *ssa.Function) bool {
 	return recv != nil && isError(recv.Type()) && c.fromOutside(obj, recv.Type())
 }
 
-// outsideField reports whether reading the field'th field of a struct of
+// leavingField reports whether reading the field'th field of a struct of
 // type t takes data out of an error.
-func (c *checker) outsideField(t types.Type, field int) bool {
+func (c *checker) leavingField(t types.Type, field int) bool {
 	if !isError(t) {
 		return false
 	}
@@ -552,11 +567,11 @@ func (c *checker) outsideField(t types.Type, field int) bool {
 // contained reports whether every use of v, a value carrying data from an
 // error, keeps it to the log, Sentry or a comparison. A use the check has no
 // rule for counts as one that doesn't.
-func (c *checker) contained(v ssa.Value, seen map[ssa.Value]bool) bool {
-	if v == nil || seen[v] {
+func (c *checker) contained(v ssa.Value, w *walk) bool {
+	if v == nil || w.seen[v] {
 		return true
 	}
-	seen[v] = true
+	w.seen[v] = true
 	if clean(held(v)) {
 		return true
 	}
@@ -566,11 +581,11 @@ func (c *checker) contained(v ssa.Value, seen map[ssa.Value]bool) bool {
 	}
 	ok := true
 	for _, r := range *refs {
-		if !c.containedUse(v, r, seen) {
+		if !c.containedUse(v, r, w) {
 			ok = false
-			// findOutside reads every use, so it finds a return a use
+			// findWrapping reads every use, so it finds a return a use
 			// the check has no rule for would otherwise hide.
-			if c.returning == nil {
+			if w.errorMethod == nil {
 				return false
 			}
 		}
@@ -578,76 +593,78 @@ func (c *checker) contained(v ssa.Value, seen map[ssa.Value]bool) bool {
 	return ok
 }
 
-func (c *checker) containedUse(v ssa.Value, r ssa.Instruction, seen map[ssa.Value]bool) bool {
+func (c *checker) containedUse(v ssa.Value, r ssa.Instruction, w *walk) bool {
 	switch r := r.(type) {
 	case *ssa.DebugRef, *ssa.Panic:
 		return true
 	case *ssa.Return:
-		if r.Parent() == c.returning {
-			c.returned = true
+		if r.Parent() == w.errorMethod {
+			w.returned = true
 			return true
 		}
 		t := errorMethodOf(r.Parent())
-		return t != nil && c.isOutside(t)
+		return t != nil && c.wraps(t)
 	case *ssa.BinOp, *ssa.Slice, *ssa.UnOp, *ssa.TypeAssert, *ssa.Extract, *ssa.MakeInterface, *ssa.ChangeInterface, *ssa.Field, *ssa.FieldAddr, *ssa.Phi, *ssa.Convert, *ssa.ChangeType:
-		return c.contained(r.(ssa.Value), seen)
+		return c.contained(r.(ssa.Value), w)
 	case *ssa.IndexAddr:
 		if r.X != v {
 			// An index picks an element, as a key does.
 			return true
 		}
-		return c.contained(r, seen)
+		return c.contained(r, w)
 	case *ssa.Lookup:
 		if r.X != v {
 			// A key picks a fixed message out of a table.
 			return true
 		}
-		return c.contained(r, seen)
+		return c.contained(r, w)
 	case *ssa.Store:
 		if r.Addr == v {
 			return true
 		}
 		root, ok := localContainer(r.Addr)
-		return ok && c.contained(root, seen)
+		return ok && c.contained(root, w)
 	case *ssa.MapUpdate:
 		if r.Map == v {
 			return true
 		}
 		root, ok := localContainer(r.Map)
-		return ok && c.contained(root, seen)
+		return ok && c.contained(root, w)
 	case *ssa.MakeClosure:
 		fn := r.Fn.(*ssa.Function)
 		for i, b := range r.Bindings {
-			if b == v && !c.contained(fn.FreeVars[i], seen) {
+			if b == v && !c.contained(fn.FreeVars[i], w) {
 				return false
 			}
 		}
 		return true
 	case ssa.CallInstruction:
-		return c.containedCall(v, r, seen)
+		return c.containedCall(v, r, w)
 	}
 	return false
 }
 
 // containedCall reports whether a call handed v keeps it to the log or
 // Sentry.
-func (c *checker) containedCall(v ssa.Value, call ssa.CallInstruction, seen map[ssa.Value]bool) bool {
+func (c *checker) containedCall(v ssa.Value, call ssa.CallInstruction, w *walk) bool {
 	common := call.Common()
 	if common.Value == v {
-		return c.contained(result(call), seen)
+		return c.contained(result(call), w)
 	}
 	if b, ok := common.Value.(*ssa.Builtin); ok {
-		return c.containedBuiltin(v, b, call, seen)
+		return c.containedBuiltin(v, b, call, w)
 	}
-	callee := common.StaticCallee()
-	if callee == nil {
-		callee = c.varFunction(common.Value)
-	}
+	callee := c.callee(common)
 	if callee == nil {
 		return false
 	}
-	if sink(callee) || digest(callee) {
+	if digest(callee) {
 		return true
+	}
+	if sink(callee) {
+		// What the log or Sentry returns, such as an slog.Value, carries
+		// what it was handed.
+		return c.contained(result(call), w)
 	}
 	if callee.Pkg == nil || !inModule(callee.Pkg.Pkg.Path()) {
 		return predicate(callee.Signature)
@@ -663,18 +680,18 @@ func (c *checker) containedCall(v ssa.Value, call ssa.CallInstruction, seen map[
 // containedBuiltin reports whether a call of a builtin handed v keeps it to
 // the log, Sentry or a comparison. What append returns carries v, and so does
 // the slice it appends to, since append may write into that slice's array.
-func (c *checker) containedBuiltin(v ssa.Value, b *ssa.Builtin, call ssa.CallInstruction, seen map[ssa.Value]bool) bool {
+func (c *checker) containedBuiltin(v ssa.Value, b *ssa.Builtin, call ssa.CallInstruction, w *walk) bool {
 	args := call.Common().Args
 	switch b.Name() {
 	case "len", "cap":
-		return c.contained(result(call), seen)
+		return c.contained(result(call), w)
 	case "append":
 		if args[0] != v {
-			if _, ok := localSlice(args[0]); !ok || !c.contained(args[0], seen) {
+			if _, ok := localSlice(args[0]); !ok || !c.contained(args[0], w) {
 				return false
 			}
 		}
-		return c.contained(result(call), seen)
+		return c.contained(result(call), w)
 	}
 	return false
 }
@@ -738,6 +755,16 @@ func localSlice(s ssa.Value) (ssa.Value, bool) {
 	return nil, false
 }
 
+// callee returns the function common calls, when the check can tell: its
+// static callee, or the function held by a package-level variable it calls
+// through.
+func (c *checker) callee(common *ssa.CallCommon) *ssa.Function {
+	if fn := common.StaticCallee(); fn != nil {
+		return fn
+	}
+	return c.varFunction(common.Value)
+}
+
 // varFunction returns the function a call through v calls when v is read out
 // of a package-level variable of this package that is set once, in its
 // declaration, to a function, and used nowhere else but to read it, as a seam
@@ -767,6 +794,124 @@ func (c *checker) varFunction(v ssa.Value) *ssa.Function {
 		}
 	}
 	return fn
+}
+
+// redirects reports whether instr points the log or Sentry away from the
+// process's output and Sentry's client, where data from an error handed to
+// them would go on to code or a place the check doesn't read: a value of
+// another package's type converted to an interface log/slog or sentry-go
+// declares, such as a slog.Handler of the module's own; a function handed to
+// either package, directly or in a field of an options struct, other than a
+// scope configurator; or a writer other than os.Stdout and os.Stderr handed
+// to log/slog.
+func redirects(instr ssa.Instruction) bool {
+	switch in := instr.(type) {
+	case *ssa.MakeInterface:
+		return logPackage(in.Type()) && !logPackage(in.X.Type())
+	case ssa.CallInstruction:
+		callee := in.Common().StaticCallee()
+		if callee == nil || !logPackage(callee.Signature) && !logFunction(callee) {
+			return false
+		}
+		sig := in.Common().Signature()
+		args := in.Common().Args
+		if sig.Recv() != nil {
+			args = args[1:]
+		}
+		for i, a := range args {
+			if handsCode(a) {
+				return true
+			}
+			if i < sig.Params().Len() && writer(sig.Params().At(i).Type()) && logFunction(callee) && !processOutput(a) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// logFunction reports whether fn is declared in log/slog or sentry-go.
+func logFunction(fn *ssa.Function) bool {
+	if o := fn.Origin(); o != nil {
+		fn = o
+	}
+	obj := fn.Object()
+	return obj != nil && obj.Pkg() != nil && logPath(obj.Pkg().Path())
+}
+
+func logPath(path string) bool {
+	return path == "log/slog" || path == "github.com/getsentry/sentry-go"
+}
+
+// logPackage reports whether t is a type log/slog or sentry-go declares, or
+// a pointer to one.
+func logPackage(t types.Type) bool {
+	n := namedOf(t)
+	return n != nil && n.Obj().Pkg() != nil && logPath(n.Obj().Pkg().Path())
+}
+
+// handsCode reports whether v hands the log or Sentry code to call: a
+// function, or an options struct of theirs that holds one, other than a
+// scope configurator, a function of nothing but their own pointers that
+// returns nothing, as sentry.WithScope takes.
+func handsCode(v ssa.Value) bool {
+	if sig, ok := v.Type().Underlying().(*types.Signature); ok {
+		return !configurator(sig)
+	}
+	if load, ok := v.(*ssa.UnOp); ok && load.Op == token.MUL {
+		v = load.X
+	}
+	alloc, ok := v.(*ssa.Alloc)
+	if !ok || !logPackage(alloc.Type()) {
+		return false
+	}
+	for _, r := range *alloc.Referrers() {
+		field, ok := r.(*ssa.FieldAddr)
+		if !ok {
+			continue
+		}
+		for _, fr := range *field.Referrers() {
+			if st, ok := fr.(*ssa.Store); ok && st.Addr == field && handsCode(st.Val) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// configurator reports whether a function of sig only configures one of the
+// log's or Sentry's own values: it takes nothing but pointers to them and
+// returns nothing.
+func configurator(sig *types.Signature) bool {
+	if sig.Results().Len() > 0 {
+		return false
+	}
+	for i := range sig.Params().Len() {
+		t := sig.Params().At(i).Type()
+		if _, ok := t.Underlying().(*types.Pointer); !ok || !logPackage(t) {
+			return false
+		}
+	}
+	return true
+}
+
+// writer reports whether t is io.Writer.
+func writer(t types.Type) bool {
+	n, ok := types.Unalias(t).(*types.Named)
+	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "io" && n.Obj().Name() == "Writer"
+}
+
+// processOutput reports whether v is os.Stdout or os.Stderr.
+func processOutput(v ssa.Value) bool {
+	if mi, ok := v.(*ssa.MakeInterface); ok {
+		v = mi.X
+	}
+	load, ok := v.(*ssa.UnOp)
+	if !ok {
+		return false
+	}
+	g, ok := load.X.(*ssa.Global)
+	return ok && g.Pkg != nil && g.Pkg.Pkg.Path() == "os" && (g.Name() == "Stdout" || g.Name() == "Stderr")
 }
 
 // sink reports whether fn is a place data from an error may go: the log,

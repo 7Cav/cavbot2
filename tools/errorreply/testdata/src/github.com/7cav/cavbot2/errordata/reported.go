@@ -1,3 +1,6 @@
+// Each function here takes an error's data somewhere other than the log,
+// Sentry or a comparison, and the check reports it where it leaves.
+
 package errordata
 
 import (

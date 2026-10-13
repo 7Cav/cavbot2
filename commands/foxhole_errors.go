@@ -216,10 +216,10 @@ func recordLookupFault(sink lookupFaultSink, err error, sampleUser, captureMsg s
 	captureError(captureMsg, err, kv...)
 }
 
-// lookupReply is the error a Foxhole member or role lookup fails with. Its
-// text is the reply the member reads: fixed text, what the member typed, and
-// classifyDiscordError's phrases. The gate's errorreply check reads what each
-// lookup puts in it, so an error's own text there fails the gate (ADR 0016).
+// lookupReply is the error reply a Foxhole member or role lookup fails with.
+// Its text is the reply the member reads: fixed text, what the member typed,
+// and classifyDiscordError's phrases. An error's own text put in it fails the
+// gate where it leaves the error (ADR 0016, ADR 0018).
 type lookupReply struct {
 	reply string
 }

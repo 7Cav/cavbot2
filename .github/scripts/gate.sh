@@ -83,8 +83,8 @@ step "data from an error goes only to the log, Sentry or a comparison"
 # nothing to a member or a panel user, and the tools under tools/ answer the
 # maintainer, so the check reads the bot's production code only.
 listed=$(go list ./... | grep -v '/tools/')
-mapfile -t bot <<<"$listed"
-go run ./tools/errorreply -test=false "${bot[@]}"
+mapfile -t bot_packages <<<"$listed"
+go run ./tools/errorreply -test=false "${bot_packages[@]}"
 
 step "go.mod and go.sum are tidy"
 go mod tidy -diff

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"os"
 	"os/signal"
 	"strconv"
@@ -25,6 +24,19 @@ import (
 
 var Version = "dev"
 
+// startFailure is the panic that stops a start: what failed and the error it
+// failed with. Its text is what the container log shows and what the failed
+// start sends to Sentry, which groups failed starts by it, so the README's
+// troubleshooting table can quote it.
+type startFailure struct {
+	what string
+	err  error
+}
+
+func (f *startFailure) Error() string { return f.what + ": " + f.err.Error() }
+
+func (f *startFailure) Unwrap() error { return f.err }
+
 var (
 	Token    string
 	GuildID  string
@@ -43,7 +55,7 @@ func init() {
 	//
 	// This must stay in init(), not main(): the panics below run first.
 	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
-		panic(fmt.Errorf("found .env but could not load it: %w", err))
+		panic(&startFailure{"Found .env but could not load it", err})
 	}
 
 	Token = os.Getenv("DISCORD_TOKEN")
@@ -121,7 +133,7 @@ func initBotStore() *store.Postgres {
 
 	s, err := store.Open(context.Background(), dsn)
 	if err != nil {
-		panic(fmt.Errorf("bot store unavailable: %w", err))
+		panic(&startFailure{"Bot store unavailable", err})
 	}
 	return s
 }
@@ -135,7 +147,7 @@ func initBotStore() *store.Postgres {
 func initPanelConfig(storeConfigured bool) panel.Config {
 	cfg, err := panel.ConfigFromEnv()
 	if err != nil {
-		panic(fmt.Errorf("panel misconfigured: %w", err))
+		panic(&startFailure{"Panel misconfigured", err})
 	}
 	if !cfg.Enabled() {
 		utils.Warn("PANEL_ADDR not set, panel disabled")
@@ -159,7 +171,7 @@ func initPanel(cfg panel.Config, deps panel.Deps) *panel.Panel {
 	}
 	p, err := panel.New(cfg, Version, deps)
 	if err != nil {
-		panic(fmt.Errorf("panel unavailable: %w", err))
+		panic(&startFailure{"Panel unavailable", err})
 	}
 	return p
 }
@@ -241,7 +253,7 @@ func main() {
 
 	dg, err := discordgo.New("Bot " + Token)
 	if err != nil {
-		panic(fmt.Errorf("error creating Discord session: %w", err))
+		panic(&startFailure{"Error creating Discord session", err})
 	}
 	dg.LogLevel = utils.DiscordgoLogLevel()
 	// IntentsGuildMembers is a Privileged Gateway Intent — must be toggled on
@@ -282,7 +294,7 @@ func main() {
 		var err error
 		tempVC, err = commands.StartTempVC(dg, discordManager, GuildID, botStore, recorders.UserIDs())
 		if err != nil {
-			panic(fmt.Errorf("bot store unavailable: %w", err))
+			panic(&startFailure{"Bot store unavailable", err})
 		}
 		// The Foxhole page's actions read the member list through the
 		// manager and change roles through the commands' role calls, which
@@ -290,7 +302,7 @@ func main() {
 		// action the last process left running as stopped by a restart.
 		foxhole, err = commands.NewFoxholeRuntime(discordManager, commands.NewSessionGuildManager(dg), botStore, GuildID)
 		if err != nil {
-			panic(fmt.Errorf("bot store unavailable: %w", err))
+			panic(&startFailure{"Bot store unavailable", err})
 		}
 		// Recording (spec #381) is built on every host with a store, as temp
 		// VC is, and checks for hubs through it. The recorder tokens only
@@ -354,13 +366,13 @@ func main() {
 	// Not dg.Open() directly: a session can open without ever reaching READY,
 	// which leaves dg.State.User nil for the command registration below.
 	if err := utils.OpenSession(dg); err != nil {
-		panic(fmt.Errorf("the Discord session is unavailable: %w", err))
+		panic(&startFailure{"Discord session unavailable", err})
 	}
 	defer func() {
 		watch.StandDown()
 		err := dg.Close()
 		if err != nil {
-			panic(fmt.Errorf("error closing Discord connection: %w", err))
+			panic(&startFailure{"Error closing Discord connection", err})
 		}
 	}()
 	if shuttingDown() {
@@ -385,7 +397,7 @@ func main() {
 	// found as a 502 later.
 	if webPanel != nil {
 		if err := webPanel.Start(); err != nil {
-			panic(fmt.Errorf("panel unavailable: %w", err))
+			panic(&startFailure{"Panel unavailable", err})
 		}
 		defer func() {
 			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -412,7 +424,7 @@ func main() {
 		if shuttingDown() {
 			return
 		}
-		panic(fmt.Errorf("cannot register commands: %w", err))
+		panic(&startFailure{"Cannot register commands", err})
 	}
 	utils.Info("Commands registered", "count", len(registry.GetCommands()))
 

@@ -825,7 +825,7 @@ func resolveFoxholeRoleIDs(
 	command string,
 	guildID string,
 	roleScope string,
-) (roleIDs []string, roleNames []string, err *lookupReply) {
+) (roleIDs []string, roleNames []string, reply *lookupReply) {
 	roleNames = resolveFoxholeRoleNames(roleScope)
 	roleIDs = make([]string, 0, len(roleNames))
 

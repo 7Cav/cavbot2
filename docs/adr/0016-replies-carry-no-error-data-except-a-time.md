@@ -10,7 +10,7 @@ reads. The gate's `tools/errorreply` check holds every reply, channel post and
 panel answer to this (#528, #534). A message is built from an error when data
 from an error flows into it. That covers the error's `Error()` text, a format
 verb applied to it, a status code, a response body, and any other field read
-off it. Two kinds of data from an error pass.
+off it. Three kinds of data from an error pass.
 
 - **A time or a duration read off an error**, such as the wait Discord sends
   with a 429. A time can't carry Discord's words, and dropping it costs the
@@ -21,8 +21,13 @@ off it. Two kinds of data from an error pass.
   it.** The panel's refusals are error values whose message is fixed text,
   and a Foxhole lookup's reply can be one too. Such a value passes while
   everything stored in it is fixed text, member input, a time, or a phrase
-  chosen by inspecting an error. The check reports the line that stores an
-  error's data in it.
+  chosen by inspecting an error. The check reports where an error's data
+  stored in it leaves the error (ADR 0018).
+- **A SHA-256 digest of an error's text.** A digest can only be compared, so
+  it can't carry Discord's words either. A failed start keeps the digest of
+  its panic on disk to tell a repeat from a new failure, so a restart loop
+  sends Sentry one event an hour instead of one a minute. Added with
+  ADR 0018.
 
 Choosing between fixed messages by inspecting an error also passes, whether
 with `errors.Is`, `errors.As` or a classifier like `classifyDiscordError`.
