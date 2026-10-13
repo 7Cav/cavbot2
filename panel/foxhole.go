@@ -252,16 +252,19 @@ type holderRow struct {
 	// RankRole is the name of the member's rank role, the most senior on
 	// the rank ladder they hold. Empty when they hold none.
 	RankRole string
-	// NoRankRole is the "no rank role" flag: an Internal holder with no
-	// rank role. Display only; the bot acts on no flag.
+	// NoRankRole is the "no rank role" flag: an Internal holder, or a
+	// member in the server with an Internal approval, with no rank role.
+	// Display only; the bot acts on no flag.
 	NoRankRole bool
 	// NotInServer is the "not in the server" flag: a member the member list
 	// doesn't hold, shown under the names the panel last saw.
 	NotInServer bool
 	// Approved is the Foxhole roles the member has an approval for.
 	Approved store.FoxholeApprovals
-	// ApprovedNoExternal is the "approved, doesn't hold External" flag: an
-	// approved collaborator in the server without External. Display only.
+	// ApprovedNoInternal and ApprovedNoExternal are the "approved, doesn't
+	// hold Internal" and "approved, doesn't hold External" flags: a member
+	// in the server approved for the role who doesn't hold it. Display only.
+	ApprovedNoInternal bool
 	ApprovedNoExternal bool
 	// Note is the member's note, empty when they have none.
 	Note string
@@ -649,7 +652,9 @@ func (p *Panel) saveApprovals(w http.ResponseWriter, r *http.Request, sess sessi
 }
 
 // flagged reports whether the holder carries a flag.
-func (h holderRow) flagged() bool { return h.NoRankRole || h.NotInServer || h.ApprovedNoExternal }
+func (h holderRow) flagged() bool {
+	return h.NoRankRole || h.NotInServer || h.ApprovedNoInternal || h.ApprovedNoExternal
+}
 
 // matches reports whether the holder's display name, username, Discord ID
 // or note holds the search, ignoring case. An empty search matches
@@ -698,7 +703,8 @@ func (g foxholeGuild) rowOf(mem commands.ListedMember, rec store.FoxholeRecord) 
 	if rank, ok := commands.SeniorRankRole(mem.RoleIDs); ok {
 		row.RankRole = cmp.Or(g.roleNames[rank], rank)
 	}
-	row.NoRankRole = row.Internal && row.RankRole == ""
+	row.NoRankRole = (row.Internal || row.Approved.Internal) && row.RankRole == ""
+	row.ApprovedNoInternal = row.Approved.Internal && !row.Internal
 	row.ApprovedNoExternal = row.Approved.External && !row.External
 	return row
 }

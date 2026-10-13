@@ -430,6 +430,55 @@ func TestHolderListShowsApprovedCollaboratorsWithTheirFlags(t *testing.T) {
 	}
 }
 
+// flagsOf returns the flags a holder list row carries, sorted.
+func flagsOf(row *html.Node) []string {
+	flags := valuesOf(row, "data-flag")
+	slices.Sort(flags)
+	return flags
+}
+
+// A purge leaves each approval as it is. Marsh, approved for both roles,
+// loses both, keeps both approvals, and is flagged for each role he's
+// approved for and no longer holds. A hand removal in Discord, or a
+// /foxhole command's, reaches the page the same way, as a member list
+// without the role.
+func TestAPurgeKeepsApprovalsAndTheRowFlagsEachApprovedRoleNotHeld(t *testing.T) {
+	w := newFoxholeWorld(t)
+	approveThroughThePage(t, w, memberMarsh.ID)
+	startPurge(t, w, "both")
+	w.awaitActionEnd(t)
+
+	page := parseHTML(t, w.b.get(foxholePath))
+
+	if got, want := approvedRoles(t, page)[memberMarsh.ID], []string{"external", "internal"}; !slices.Equal(got, want) {
+		t.Errorf("after the purge %s's approvals are %v, want %v", memberMarsh.ID, got, want)
+	}
+	if got, want := flagsOf(holderRows(t, page)[memberMarsh.ID]), []string{"approved-not-external", "approved-not-internal"}; !slices.Equal(got, want) {
+		t.Errorf("after the purge %s's flags = %v, want %v", memberMarsh.ID, got, want)
+	}
+}
+
+// A member in the server with an Internal approval and no rank role is
+// flagged "no rank role" whether or not they hold Internal now, so a
+// manager sees it before Re-add gives Internal back. Ash, approved for
+// Internal, has lost it by hand.
+func TestAnInternalApprovalWithNoRankRoleIsFlaggedWithoutInternal(t *testing.T) {
+	w := newFoxholeWorld(t)
+	approveThroughThePage(t, w, memberAsh.ID)
+	ash := memberAsh
+	ash.RoleIDs = nil
+	setMembers(w, memberDoe, ash, memberKestrel, memberMarsh, memberVance)
+
+	row := holderRows(t, parseHTML(t, w.b.get(foxholePath)))[memberAsh.ID]
+
+	if row == nil {
+		t.Fatalf("the holder list has no row for %s", memberAsh.ID)
+	}
+	if got := flagsOf(row); !slices.Contains(got, "no-rank-role") {
+		t.Errorf("%s's flags = %v, want no-rank-role among them", memberAsh.ID, got)
+	}
+}
+
 // A note starts on an approved collaborator as on a Foxhole role holder,
 // even once they hold no Foxhole role: the row's Edit link opens the note
 // form, and the note saved shows on the row.
