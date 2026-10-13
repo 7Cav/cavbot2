@@ -78,7 +78,8 @@ func removeHubThroughThePreview(t *testing.T, b *browser, hubID int64) *http.Res
 }
 
 // Remove, on a broken hub's list row or on a hub's edit page, opens the
-// remove preview of that hub and removes nothing (PRODUCT.md, Principle 2).
+// remove preview of that hub over the page it was pressed on, and removes
+// nothing (PRODUCT.md, Principle 2).
 func TestRemoveOpensThePreviewAndRemovesNothing(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -104,10 +105,12 @@ func TestRemoveOpensThePreviewAndRemovesNothing(t *testing.T) {
 			if res.StatusCode != http.StatusOK {
 				t.Fatalf("status = %d, want 200", res.StatusCode)
 			}
-			preview := removePreviewBlock(t, parseHTML(t, res))
+			answer := parseHTML(t, res)
+			preview := removePreviewBlock(t, answer)
 			if got := attrOf(preview, "data-remove-hub"); got != strconv.FormatInt(id, 10) {
 				t.Errorf("the preview removes hub %q, want %d", got, id)
 			}
+			tc.scope(t, answer, id)
 			if hubs := storedHubs(t, w.st); len(hubs) != 1 {
 				t.Errorf("stored hubs = %+v, want hub-1 still stored", hubs)
 			}
