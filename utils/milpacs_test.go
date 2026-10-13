@@ -465,7 +465,7 @@ func (rt *recordingTransport) urls() []string {
 func ranksURL(t *testing.T) []string {
 	t.Helper()
 	rt := &recordingTransport{}
-	t.Cleanup(SetAPITransportForTest(rt))
+	withAPITransport(t, rt)
 	if _, err := GetRanks(context.Background()); err != nil {
 		t.Fatalf("lookup failed: %v", err)
 	}
@@ -585,21 +585,22 @@ func TestInitAPIBaseURL_LogsTheAddressInUseOnce(t *testing.T) {
 		value      string
 		wantOrigin string
 	}{
-		{"default", "", "https://api.7cav.us"},
+		{"unset", "", "https://api.7cav.us"},
 		{"set", "http://7cav-api:11000", "http://7cav-api:11000"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("CAV_API_BASE_URL", tc.value)
+			if tc.value == "" {
+				_ = os.Unsetenv("CAV_API_BASE_URL")
+			}
 			logs := recordLogs(t)
 			initAPIBaseURL(t)
 
-			namesAddress := func(rec slog.Record) bool {
-				return carries(rec, func(a slog.Attr) bool {
-					u, err := url.Parse(a.Value.String())
-					return err == nil && u.Scheme+"://"+u.Host == tc.wantOrigin
-				})
+			namesAddress := func(a slog.Attr) bool {
+				u, err := url.Parse(a.Value.String())
+				return err == nil && u.Scheme+"://"+u.Host == tc.wantOrigin
 			}
-			if n := logs.count(slog.LevelInfo, namesAddress); n != 1 {
+			if n := logs.infoLinesWhere(namesAddress); n != 1 {
 				t.Errorf("logged %d INFO lines naming %s, want 1", n, tc.wantOrigin)
 			}
 		})

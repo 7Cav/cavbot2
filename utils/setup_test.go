@@ -3,12 +3,14 @@ package utils
 import (
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"sync"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/go-resty/resty/v2"
 )
 
 // TestMain initializes the package-level Logger so calls to Info/Warn/Debug
@@ -23,6 +25,17 @@ func TestMain(m *testing.M) {
 func withTestAPIServer(t *testing.T, srv *httptest.Server) {
 	t.Helper()
 	t.Cleanup(SetAPIBaseURLForTest(srv.URL))
+}
+
+// withAPITransport sends every 7Cav API call through rt in place of the
+// network for the duration of the test. Tests use it to see the URL a lookup
+// requests when that URL is one no test can serve, such as the public
+// address.
+func withAPITransport(t *testing.T, rt http.RoundTripper) {
+	t.Helper()
+	prev := newAPIClient
+	t.Cleanup(func() { newAPIClient = prev })
+	newAPIClient = func() *resty.Client { return resty.New().SetTransport(rt) }
 }
 
 type recordedCall struct {

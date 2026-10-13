@@ -227,23 +227,7 @@ func (r *logRecorder) infoLinesCarrying(when time.Time) int {
 
 // infoLinesWhere counts the INFO records with an attribute that matches.
 func (r *logRecorder) infoLinesWhere(matches func(slog.Attr) bool) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	n := 0
-	for _, rec := range r.records {
-		if rec.Level != slog.LevelInfo {
-			continue
-		}
-		carries := false
-		rec.Attrs(func(a slog.Attr) bool {
-			carries = matches(a)
-			return !carries
-		})
-		if carries {
-			n++
-		}
-	}
-	return n
+	return r.count(slog.LevelInfo, func(rec slog.Record) bool { return carries(rec, matches) })
 }
 
 // count returns how many records at level match.

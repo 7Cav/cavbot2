@@ -111,7 +111,11 @@ var rosterMap = map[string]string{
 // Cloudflare.
 const defaultAPIOrigin = "https://api.7cav.us"
 
-var apiBaseURL = defaultAPIOrigin + "/api/v1"
+// apiVersionPath follows the origin in every lookup's URL. The lookup paths
+// and the responses they decode are v1's.
+const apiVersionPath = "/api/v1"
+
+var apiBaseURL = defaultAPIOrigin + apiVersionPath
 
 // newAPIClient builds the client for one 7Cav API call. Every call gets a
 // fresh one.
@@ -129,16 +133,21 @@ func InitAPIBaseURL() {
 		if parsed, ok := parseAPIOrigin(raw); ok {
 			origin = parsed
 		} else {
+			// A warning rather than CaptureError, whose log line is an
+			// ERROR: the bot works around the value, and lookups go on.
+			// The event carries the message tag CaptureError's events do.
+			const msg = "CAV_API_BASE_URL rejected, using the public address"
 			shown := redactPassword(raw)
-			Warn("CAV_API_BASE_URL rejected, using the public address", "value", shown, "address", defaultAPIOrigin)
+			Warn(msg, "value", shown, "address", defaultAPIOrigin)
 			sentry.WithScope(func(scope *sentry.Scope) {
 				scope.SetLevel(sentry.LevelWarning)
+				scope.SetTag("message", msg)
 				setExtras(scope, []any{"value", shown})
-				sentry.CaptureMessage("CAV_API_BASE_URL rejected")
+				sentry.CaptureMessage(msg)
 			})
 		}
 	}
-	apiBaseURL = origin + "/api/v1"
+	apiBaseURL = origin + apiVersionPath
 	Info("7Cav API address", "address", origin)
 }
 
