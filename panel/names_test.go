@@ -761,3 +761,28 @@ func TestRecordingLinksShowNoWordsNamingTheRecording(t *testing.T) {
 		}
 	}
 }
+
+// A recording with no track offers its info file in the zip's place
+// (#648). That download names its recording to a screen reader as the
+// others do.
+func TestInfoDownloadLinkNamesItsRecording(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	rec := w.recordSilence(t, a.discordID)
+	signInAs(t, w.forum, w.b, a.account)
+
+	doc := parseHTML(t, w.b.get(recordingsPath))
+
+	block, ok := listedRecordings(t, doc)[rec]
+	if !ok {
+		t.Fatalf("the page doesn't list recording %d", rec)
+	}
+	title, started := shownAs(t, block)
+	link := findElement(block, "a", "data-field", "info-download")
+	if link == nil {
+		t.Fatalf("recording %d has no info-download link", rec)
+	}
+	if name := accessibleName(doc, link); !strings.Contains(name, title) || !strings.Contains(name, started) {
+		t.Errorf("recording %d's info-download link is named %q, want it to name %s, started %s", rec, name, title, started)
+	}
+}

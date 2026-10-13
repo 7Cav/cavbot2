@@ -131,12 +131,26 @@ func (l *RecordingLibrary) OpenMix(rec store.Recording) (*os.File, error) {
 	return f, nil
 }
 
+// HasTrack reports whether any of a recording's speakers' tracks is on
+// disk, so its zip holds a track. A speaker whose track was lost may still
+// have one, holding what reached the disk before the recorder stopped
+// writing it. A track that can't be checked counts, since the zip leaves
+// out only a track that isn't there.
+func (l *RecordingLibrary) HasTrack(rec store.Recording) bool {
+	for _, sp := range rec.Speakers {
+		if _, err := os.Stat(trackPath(l.dir, rec.ID, sp.ID)); !errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+	}
+	return false
+}
+
 // WriteZip writes a zip of a recording's tracks and its info file to w,
 // each track named by its speaker's display name. Tracks are already
 // compressed, so they go in stored as they are. Only a file on disk that
 // can't be read, or w failing, is an error: a track that isn't on disk is
-// left out, and an info file that isn't is rendered from the row, naming
-// the starter by Discord ID since the library has no member list.
+// left out, and an info file that isn't is rendered from the row, as
+// InfoFile renders it.
 func (l *RecordingLibrary) WriteZip(w io.Writer, rec store.Recording) error {
 	zw := zip.NewWriter(w)
 	names := trackEntryNames(rec.Speakers)
@@ -145,12 +159,9 @@ func (l *RecordingLibrary) WriteZip(w io.Writer, rec store.Recording) error {
 			return err
 		}
 	}
-	info, err := os.ReadFile(infoPath(l.dir, rec.ID))
-	if errors.Is(err, fs.ErrNotExist) {
-		info, err = []byte(recordingInfo(rec, "")), nil
-	}
+	info, err := l.InfoFile(rec)
 	if err != nil {
-		return fmt.Errorf("read the info file of recording %d: %w", rec.ID, err)
+		return err
 	}
 	entry, err := zw.CreateHeader(&zip.FileHeader{Name: infoFileName, Method: zip.Deflate, Modified: rec.StoppedAt})
 	if err != nil {
@@ -160,6 +171,20 @@ func (l *RecordingLibrary) WriteZip(w io.Writer, rec store.Recording) error {
 		return err
 	}
 	return zw.Close()
+}
+
+// InfoFile reads a recording's info file. One that isn't on disk is
+// rendered from the row, naming the starter by Discord ID since the library
+// has no member list.
+func (l *RecordingLibrary) InfoFile(rec store.Recording) ([]byte, error) {
+	info, err := os.ReadFile(infoPath(l.dir, rec.ID))
+	if errors.Is(err, fs.ErrNotExist) {
+		return []byte(recordingInfo(rec, "")), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read the info file of recording %d: %w", rec.ID, err)
+	}
+	return info, nil
 }
 
 // addTrack copies a speaker's track into the zip under name. A track that

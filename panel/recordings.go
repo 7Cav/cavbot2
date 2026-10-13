@@ -119,6 +119,10 @@ type recordingItem struct {
 	Speakers  []recordingSpeaker
 	// Running is set while the recording runs.
 	Running bool
+	// HasTrack is set when a stopped recording has a speaker's track on
+	// disk, so its zip holds a track. One without offers its info file in
+	// the zip's place.
+	HasTrack bool
 	// CutShort is set for a recording a restart or a crash cut short.
 	CutShort bool
 	Mix      store.MixState
@@ -127,11 +131,12 @@ type recordingItem struct {
 	StarterID   string
 	Starter     string
 	ShowStarter bool
-	// PageURL is the recording's page's address, MixURL and ZipURL the
-	// downloads', and DeleteURL its delete preview's.
+	// PageURL is the recording's page's address, MixURL, ZipURL and InfoURL
+	// the downloads', and DeleteURL its delete preview's.
 	PageURL   string
 	MixURL    string
 	ZipURL    string
+	InfoURL   string
 	DeleteURL string
 }
 
@@ -170,7 +175,7 @@ func (p *Panel) recordingsPage(w http.ResponseWriter, r *http.Request, sess sess
 		p.pageFailed(w, sess, "recordings page", recordingsPath, err, nil)
 		return
 	}
-	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: recordingItems(recs), Switch: sess.access.panelAdmin, All: all,
+	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: p.recordingItems(recs), Switch: sess.access.panelAdmin, All: all,
 		ShowStarter: all, Deleted: deleted, Outsider: sess.access.outsider()})
 }
 
@@ -213,7 +218,7 @@ func (p *Panel) recordingPage(w http.ResponseWriter, r *http.Request, sess sessi
 	if !ok {
 		return
 	}
-	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: recordingItems([]store.Recording{rec}), Single: true,
+	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: p.recordingItems([]store.Recording{rec}), Single: true,
 		ShowStarter: rec.StarterID != sess.discordID})
 }
 
@@ -249,14 +254,8 @@ func (p *Panel) downloadMix(w http.ResponseWriter, r *http.Request, sess session
 // and its info file, written as it streams, with no time budget. A running
 // recording has no zip yet.
 func (p *Panel) downloadZip(w http.ResponseWriter, r *http.Request, sess session) {
-	rec, ok := p.recordingFor(w, r, sess, "zip download")
+	rec, ok := p.stoppedRecordingFor(w, r, sess, "zip download")
 	if !ok {
-		return
-	}
-	if rec.StoppedAt.IsZero() {
-		// The page offers no download while the recording runs, and says
-		// it is still recording.
-		http.Redirect(w, r, commands.RecordingPath(rec.ID), http.StatusSeeOther)
 		return
 	}
 	utils.Info("Panel recording downloaded", "recording_id", rec.ID, "file", "zip", "username", sess.username, "forum_user_id", sess.userID)
@@ -273,6 +272,25 @@ func (p *Panel) downloadZip(w http.ResponseWriter, r *http.Request, sess session
 	}
 }
 
+// downloadInfo is GET /recordings/{id}/info: the recording's info file
+// alone, which the page offers in the zip's place for a recording with no
+// track on disk (#648). A running recording has no info file yet.
+func (p *Panel) downloadInfo(w http.ResponseWriter, r *http.Request, sess session) {
+	rec, ok := p.stoppedRecordingFor(w, r, sess, "info download")
+	if !ok {
+		return
+	}
+	info, err := p.recordings.InfoFile(rec)
+	if err != nil {
+		p.serverError(w, "info download", err)
+		return
+	}
+	utils.Info("Panel recording downloaded", "recording_id", rec.ID, "file", "info", "username", sess.username, "forum_user_id", sess.userID)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", attachment(commands.RecordingFileName(rec, " info.txt")))
+	_, _ = w.Write(info)
+}
+
 // recordingDeletePath is the address of a recording's delete preview, and
 // of its Confirm.
 func recordingDeletePath(id int64) string {
@@ -286,7 +304,7 @@ func (p *Panel) deletePreview(w http.ResponseWriter, r *http.Request, sess sessi
 	if !ok {
 		return
 	}
-	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: recordingItems([]store.Recording{rec}), Single: true, DeletePreview: true,
+	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: p.recordingItems([]store.Recording{rec}), Single: true, DeletePreview: true,
 		ShowStarter: rec.StarterID != sess.discordID})
 }
 
@@ -401,6 +419,19 @@ func (p *Panel) recordingFor(w http.ResponseWriter, r *http.Request, sess sessio
 	return rec, true
 }
 
+// stoppedRecordingFor is recordingFor for a download that a running
+// recording doesn't have yet. A running recording's download redirects to
+// its page, which offers no download while it runs and says it is still
+// recording.
+func (p *Panel) stoppedRecordingFor(w http.ResponseWriter, r *http.Request, sess session, step string) (store.Recording, bool) {
+	rec, ok := p.recordingFor(w, r, sess, step)
+	if ok && rec.StoppedAt.IsZero() {
+		http.Redirect(w, r, commands.RecordingPath(rec.ID), http.StatusSeeOther)
+		return store.Recording{}, false
+	}
+	return rec, ok
+}
+
 // ownRecordings lists the recordings the session's user started, none when
 // the panel found no Discord ID for them at sign-in.
 func (p *Panel) ownRecordings(ctx context.Context, sess session) ([]store.Recording, error) {
@@ -411,17 +442,18 @@ func (p *Panel) ownRecordings(ctx context.Context, sess session) ([]store.Record
 }
 
 // recordingItems is each recording as the page shows it, in the order given.
-func recordingItems(recs []store.Recording) []recordingItem {
+func (p *Panel) recordingItems(recs []store.Recording) []recordingItem {
 	out := make([]recordingItem, 0, len(recs))
 	for _, rec := range recs {
 		page := commands.RecordingPath(rec.ID)
 		item := recordingItem{ID: rec.ID, Title: rec.Title, Channel: rec.ChannelName, StartedAt: rec.StartedAt,
 			Running: rec.StoppedAt.IsZero(), CutShort: rec.Ended == store.RecordingEndCutShort, Mix: rec.Mix, StarterID: rec.StarterID,
-			PageURL: page, MixURL: page + "/mix", ZipURL: page + "/zip",
+			PageURL: page, MixURL: page + "/mix", ZipURL: page + "/zip", InfoURL: page + "/info",
 			DeleteURL: recordingDeletePath(rec.ID)}
 		if !item.Running {
 			item.Length = rec.StoppedAt.Sub(rec.StartedAt).Round(time.Second).String()
 			item.DeletesAt = commands.RecordingDeletesAt(rec)
+			item.HasTrack = p.recordings.HasTrack(rec)
 		}
 		for _, sp := range rec.Speakers {
 			speaker := recordingSpeaker{Name: sp.DisplayName}

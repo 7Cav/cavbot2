@@ -49,7 +49,8 @@
 
 {{define "recording-downloads"}}
       {{if eq .Mix "ready"}}<a class="btn btn--cta" href="{{.MixURL}}" data-field="mix-download">Download the mix<span class="visually-hidden"> of {{template "recording-name" .}}</span></a>{{end}}
-      <a class="btn" href="{{.ZipURL}}" data-field="zip-download">Download each speaker's track (zip)<span class="visually-hidden"> of {{template "recording-name" .}}</span></a>
+      {{if .HasTrack}}<a class="btn" href="{{.ZipURL}}" data-field="zip-download">Download each speaker's track (zip)<span class="visually-hidden"> of {{template "recording-name" .}}</span></a>
+      {{else}}<a class="btn" href="{{.InfoURL}}" data-field="info-download">Download the info file<span class="visually-hidden"> of {{template "recording-name" .}}</span></a>{{end}}
 {{end}}
 
 {{define "delete-preview"}}
@@ -62,7 +63,8 @@
     <div class="block-row confirm-list" data-list="goes">
       <h3>Goes for good</h3>
       <ul>
-        <li>Each speaker's track{{if not (eq .Mix "failed" "none")}} <span data-field="goes-mix">and the mix</span>{{end}}.</li>
+        {{if .HasTrack}}<li data-field="goes-tracks">Each speaker's track{{if not (eq .Mix "failed" "none")}} <span data-field="goes-mix">and the mix</span>{{end}}.</li>
+        {{else if eq .Mix "ready"}}<li data-field="goes-mix">The mix.</li>{{end}}
         <li>The info file.</li>
         <li>The link in Discord stops working.</li>
       </ul>
@@ -77,4 +79,4 @@
   </section>
 {{end}}
 
-{{define "mix-state"}}{{if .Running}}<span class="tag">recording</span>{{else if eq .Mix "ready"}}<span class="tag tag--on">ready</span>{{else if eq .Mix "failed"}}<span class="tag tag--warn">failed</span> The tracks can still be downloaded.{{else if eq .Mix "none"}}<span class="tag" data-field="no-mix">none</span> Nobody spoke, so there's nothing to mix.{{else}}<span class="tag">being mixed</span> Ready a few minutes after the stop.{{end}}{{end}}
+{{define "mix-state"}}{{if .Running}}<span class="tag">recording</span>{{else if eq .Mix "ready"}}<span class="tag tag--on">ready</span>{{else if eq .Mix "failed"}}<span class="tag tag--warn">failed</span> {{if .HasTrack}}<span data-field="tracks-downloadable">The tracks can still be downloaded.</span>{{else}}<span data-field="no-audio-kept">No speaker's audio was kept, so there was nothing to mix.</span>{{end}}{{else if eq .Mix "none"}}<span class="tag" data-field="no-mix">none</span> Nobody spoke, so there's nothing to mix.{{else}}<span class="tag">being mixed</span> Ready a few minutes after the stop.{{end}}{{end}}

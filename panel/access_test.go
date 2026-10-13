@@ -458,12 +458,12 @@ func TestEveryRouteHasAnOutsiderCaseOrIsOpen(t *testing.T) {
 		reach(http.MethodGet, tc.path)
 	}
 	starter := w.addStarter(5001, "Able.A", "discord-a")
-	rec := w.record(t, starter.discordID)
 	signInAs(t, w.forum, w.b, starter.account)
-	page := parseHTML(t, w.b.get(recordingsPath))
 	for _, route := range recordingRoutes {
-		reach(http.MethodGet, route.href(t, page, rec))
+		id := route.recording(w, t, starter.discordID)
+		reach(http.MethodGet, route.href(t, parseHTML(t, w.b.get(recordingsPath)), id))
 	}
+	rec := w.record(t, starter.discordID)
 	confirm, _ := attrValue(deleteConfirm(t, w.b, rec), "action")
 	reach(http.MethodPost, confirm)
 	for _, rt := range w.p.routes() {
