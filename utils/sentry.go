@@ -84,7 +84,7 @@ func CaptureError(msg string, err error, kv ...any) {
 
 	sentry.WithScope(func(scope *sentry.Scope) {
 		scope.SetTag("message", msg)
-		setExtras(scope, extrasFrom(kv))
+		setExtras(scope, kv)
 		promoteCommandTag(scope, kv)
 
 		sentry.CaptureException(err)
@@ -117,15 +117,17 @@ func ReportPanic(ctx string, r any, kv ...any) {
 	sentry.WithScope(func(scope *sentry.Scope) {
 		scope.SetTag("context", ctx)
 		promoteCommandTag(scope, kv)
-		setExtras(scope, extrasFrom(kv))
+		setExtras(scope, kv)
 		sentry.CurrentHub().RecoverWithContext(context.Background(), r)
 	})
 	sentry.Flush(2 * time.Second)
 }
 
-// extrasFrom collects a capture's string-keyed key/values for the event's
-// extra context.
-func extrasFrom(kv []any) map[string]any {
+// setExtras puts a capture's string-keyed key/values on the scope as its
+// extra context, when there are any. It hands them straight to the scope, so
+// an error's data a caller puts in kv goes to Sentry and nowhere else
+// (ADR 0018).
+func setExtras(scope *sentry.Scope, kv []any) {
 	extras := make(map[string]any)
 	for i := 0; i+1 < len(kv); i += 2 {
 		key, ok := kv[i].(string)
@@ -134,11 +136,6 @@ func extrasFrom(kv []any) map[string]any {
 		}
 		extras[key] = kv[i+1]
 	}
-	return extras
-}
-
-// setExtras puts extras on the scope as its extra context, when there are any.
-func setExtras(scope *sentry.Scope, extras map[string]any) {
 	if len(extras) > 0 {
 		scope.SetContext("extra", extras)
 	}

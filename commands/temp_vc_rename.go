@@ -186,7 +186,7 @@ func (t *TempVC) channelChangeFailed(channelID, action string, captured map[int6
 		return true
 	}
 	fields := slices.Concat([]any{"channel_id", channelID, "hub_id", hubID}, kv)
-	utils.Warn("Temp VC "+action+" failed", slices.Concat(fields, []any{"error", err})...)
+	utils.Warn("Temp VC "+action+" failed", append([]any{"error", err}, fields...)...)
 	if fault.capturesOnChannelChange() {
 		t.captureOncePerStreak(captured, hubID, "Temp VC "+action+" failed", err,
 			slices.Concat(fields, []any{"guild_id", t.guildID})...)

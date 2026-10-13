@@ -116,7 +116,7 @@ func (f *fakeForum) handler() http.Handler {
 	return mux
 }
 
-var consentTemplate = template.Must(template.New("consent").Parse(`<!doctype html>
+var consentTemplate = mustParse("consent", `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -138,7 +138,20 @@ small { color: #555; }
 </form>
 </body>
 </html>
-`))
+`)
+
+// mustParse parses a page template and panics on a parse error, as
+// template.Must does. template.Must is handed the error along with the
+// template it returns, and the error data check counts a call outside the
+// module that is handed an error and returns anything else as taking data out
+// of it (ADR 0018).
+func mustParse(name, text string) *template.Template {
+	t, err := template.New(name).Parse(text)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
 
 // authorizeParams are the authorize request's parameters the consent page
 // carries through its form.
