@@ -79,13 +79,17 @@ func HandleError(r InteractionResponder, i *discordgo.InteractionCreate, message
 
 // deliverErrorReply sends the prepared error response and handles delivery
 // failure. The normal path — respond succeeds, or the already-acknowledged
-// respond falls back to an edit that succeeds — captures nothing. A genuine
-// delivery fault does page Sentry via captureError (ADR 0001):
+// respond falls back to an edit that succeeds — captures nothing. Neither
+// does an edit of a message someone deleted while the command ran, such as a
+// slash command's placeholder or the message a button sits on: the reply goes
+// out as an ephemeral follow-up instead (#651). A genuine delivery fault does
+// page Sentry via captureError (ADR 0001):
 //
 //   - a respond failure that is NOT "already acknowledged" is a genuine system
-//     fault (the reply never reached Discord), and
-//   - a fallback-edit failure after an already-acknowledged respond means the
-//     user's error reply was lost.
+//     fault (the reply never reached Discord),
+//   - a fallback-edit failure after an already-acknowledged respond, other
+//     than a deleted message, means the user's error reply was lost, and
+//   - so does a failed follow-up for a deleted message.
 //
 // Only the sanitized `message` is ever shown to the user; the raw delivery error
 // goes to captureError, never into the user-facing content.
@@ -103,9 +107,14 @@ func deliverErrorReply(r InteractionResponder, i *discordgo.InteractionCreate, m
 
 	if isAlreadyAcknowledged(err) {
 		Debug("Retrying error response as edit", "error", err)
-		if editErr := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		editErr := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 			Content: &message,
-		}); editErr != nil {
+		})
+		switch {
+		case editErr == nil:
+		case isUnknownMessage(editErr):
+			followUpErrorReply(r, i, message)
+		default:
 			captureError("Failed to deliver interaction error reply via edit fallback", editErr,
 				append(interactionCaptureContext(i), "guild_id", i.GuildID)...)
 		}
@@ -114,6 +123,23 @@ func deliverErrorReply(r InteractionResponder, i *discordgo.InteractionCreate, m
 
 	captureError("Failed to deliver interaction error reply", err,
 		append(interactionCaptureContext(i), "guild_id", i.GuildID)...)
+}
+
+// followUpErrorReply sends message as an ephemeral follow-up only the member
+// sees, for an error reply whose message was deleted before the edit could
+// reach it. The deletion was a member's or another bot's doing, since the
+// bot never deletes a reply, so a follow-up that lands is an INFO line. One
+// that fails means the reply never reached the member, and goes to Sentry.
+func followUpErrorReply(r InteractionResponder, i *discordgo.InteractionCreate, message string) {
+	if err := r.FollowupMessageCreate(i.Interaction, false, &discordgo.WebhookParams{
+		Content: message,
+		Flags:   discordgo.MessageFlagsEphemeral,
+	}); err != nil {
+		captureError("Failed to deliver interaction error reply via follow-up", err,
+			append(interactionCaptureContext(i), "guild_id", i.GuildID)...)
+		return
+	}
+	Info("Error reply sent as a follow-up, its message was deleted", interactionCaptureContext(i)...)
 }
 
 // interactionCaptureContext builds the command attribution for a capture: the
@@ -162,4 +188,11 @@ func isAlreadyAcknowledged(err error) bool {
 		return true
 	}
 	return strings.Contains(err.Error(), "already been acknowledged")
+}
+
+// isUnknownMessage reports whether Discord answered with 10008 Unknown
+// Message: the message the call names is gone.
+func isUnknownMessage(err error) bool {
+	var restErr *discordgo.RESTError
+	return errors.As(err, &restErr) && restErr.Message != nil && restErr.Message.Code == discordgo.ErrCodeUnknownMessage
 }
