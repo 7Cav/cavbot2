@@ -95,8 +95,9 @@
   </section>
 {{end}}
 
-{{- /* A refused form's note. One form at most is refused per page, so its
-     ID is unique, and the form's heading names it in aria-describedby. */}}
+{{- /* A refusal's note. One form at most is refused per page, so its ID is
+     unique, and the heading of the block it sits in, the form's or the one
+     shown in the form's place, names it in aria-describedby. */}}
 {{define "refusal"}}<div class="block-row"><div class="note" id="refusal" data-error="{{.DataError}}">{{.Message}}</div></div>{{end}}
 
 {{- /* The line a save lands on, in the form it saved. */}}

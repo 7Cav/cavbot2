@@ -928,8 +928,10 @@ func (s *hubService) guildInfoOf(g commands.GuildSnapshot) guildInfo {
 // the edit form, then from the store the hub rows, the guild-wide set and
 // its last entries, when an edit form shows, the hub's last entries, and
 // the removed hubs with each one's last entries.
-// store.ErrNotFound means no hub has the requested ID. ctx carries the
-// page's time budget; a store read the budget runs out on fails with it.
+// store.ErrNotFound means no hub has the ID of the requested edit form,
+// unless the request removes that hub too, which gets the page saying the
+// hub is gone. ctx carries the page's time budget; a store read the budget
+// runs out on fails with it.
 func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error) {
 	sn, err := s.read(ctx)
 	if err != nil {
@@ -947,7 +949,12 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 	if page.RecordingRoles, err = s.recordingRolesSection(ctx, sn.info, req); err != nil {
 		return hubPage{}, err
 	}
-	if req.HubID != 0 {
+	// Remove hub on the edit page of a hub that has since gone names the
+	// remove block, so the page says there that the hub is gone, as a
+	// Remove from the hub list does, rather than answering with the
+	// not-found page an edit form of a gone hub gets.
+	_, stored := sn.hubByID(req.HubID)
+	if req.HubID != 0 && (stored || req.Remove != req.HubID) {
 		if page.Edit, err = s.editForm(ctx, sn, sn.info, guildWide.RoleIDs, req); err != nil {
 			return hubPage{}, err
 		}
