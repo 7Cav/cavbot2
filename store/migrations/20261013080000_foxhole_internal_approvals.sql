@@ -4,9 +4,9 @@
 -- reads as External, and approved_internal holds the Internal one.
 --
 -- The previous release runs on it as before, and reads an Internal approval
--- as none. A rollback changes one thing: that release's note save and
--- approval clear drop a record left with no note and no External approval,
--- an Internal approval with it.
+-- as none. After a rollback, that release's note save and approval clear
+-- drop a record left with no note and no External approval, and an
+-- Internal approval goes with it.
 ALTER TABLE foxhole_records ADD COLUMN approved_internal BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- +goose Down
