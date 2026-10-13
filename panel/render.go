@@ -82,20 +82,20 @@ const (
 )
 
 // pageData is what every template renders from. SignedIn switches the rail
-// between the identity block and the forum link, and Rail lists the pages
-// the rail links to beside the identity block. Page names the page shown, for
-// its rail link and its data-page. Hubs is filled for the hub page alone,
-// Foxhole for the Foxhole page alone, and Failure, Message and Retry for the
-// error page alone.
+// between the identity block and the forum link, and RailPages lists the
+// pages the rail links to beside the identity block. Page names the page
+// shown, for its rail link and its data-page. Hubs is filled for the hub
+// page alone, Foxhole for the Foxhole page alone, and Failure, Message and
+// Retry for the error page alone.
 type pageData struct {
-	Title    string
-	Version  string
-	ForumURL string
-	SignedIn bool
-	Rail     railPages
-	Page     string
-	Username string
-	Cause    cause
+	Title     string
+	Version   string
+	ForumURL  string
+	SignedIn  bool
+	RailPages railPages
+	Page      string
+	Username  string
+	Cause     cause
 	// Next is the address the sign-in form, on the sign-in page or the
 	// error page's Sign in again, posts for its sign-in to come back to.
 	Next    string
