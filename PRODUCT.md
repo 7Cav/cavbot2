@@ -58,7 +58,7 @@ Constraints:
 - **Saves.** A preview comes before every Confirm, and a Confirm acts only on what its preview showed. A preview or save that would change nothing says so and stops. A save ends in a Post/Redirect/Get, and the GET works out the result again (CODING_STANDARDS.md).
 - **Error data.** Nothing the panel sends a browser, and no reply in Discord, carries error data except a time (ADR 0016, ADR 0017).
 - **Deploy probe.** The release workflow's deploy probe reads the signed-out rail's version line. Its text must stay exactly `cavbot2 <version>`, as the comment in `panel/templates/layout.html` explains.
-- **Test hooks.** Templates carry `data-*` attributes (`data-field`, `data-cause`, `data-failure`, `data-nav`) that the panel tests read. Keep them through visual changes.
+- **Test hooks.** Templates carry `data-*` attributes (`data-field`, `data-cause`, `data-failure`, `data-rail`) that the panel tests read. Keep them through visual changes.
 
 ## Brand Commitments
 
