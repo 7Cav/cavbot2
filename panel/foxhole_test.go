@@ -105,9 +105,9 @@ func TestFoxholeManagerAskingForAHubLandsOnTheFoxholePage(t *testing.T) {
 	}
 }
 
-// railLinks returns each link in the rail that carries data-nav, keyed by
-// it: a nav link names the page it opens, and the mark names "landing",
-// the page the user lands on.
+// railLinks returns each link in the rail that carries data-rail, keyed by
+// that value. A page's link carries the name of the page it opens, and the
+// mark's link carries "landing", the page the user lands on.
 func railLinks(t *testing.T, doc *html.Node) map[string]string {
 	t.Helper()
 	rail := findElement(doc, "aside", "", "")
@@ -119,9 +119,9 @@ func railLinks(t *testing.T, doc *html.Node) map[string]string {
 		if n.Data != "a" {
 			return
 		}
-		if nav, ok := attrValue(n, "data-nav"); ok {
+		if page, ok := attrValue(n, "data-rail"); ok {
 			href, _ := attrValue(n, "href")
-			links[nav] = href
+			links[page] = href
 		}
 	})
 	return links
@@ -164,14 +164,14 @@ func TestRailShowsOnlyThePagesTheUserOpensAndEachLinkOpensIt(t *testing.T) {
 			if _, ok := links["recordings"]; ok != tc.recordings {
 				t.Errorf("the rail shows the Recordings link: %v, want %v", ok, tc.recordings)
 			}
-			for nav, href := range links {
-				want := nav
-				if nav == "landing" {
+			for page, href := range links {
+				want := page
+				if page == "landing" {
 					want = tc.landing
 				}
 				res := follow(t, w.b, w.b.get(href))
 				if got := pageOf(t, parseHTML(t, res)); res.StatusCode != http.StatusOK || got != want {
-					t.Errorf("the %s link to %s lands on page %q with status %d, want page %q with 200", nav, href, got, res.StatusCode, want)
+					t.Errorf("the %s link to %s lands on page %q with status %d, want page %q with 200", page, href, got, res.StatusCode, want)
 				}
 			}
 		})
