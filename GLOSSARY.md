@@ -11,12 +11,21 @@ wiki at https://wiki.7cav.us/ is the member-facing reference for the
 regiment's structure and terms.
 
 **Cav member**:
-A Discord member who holds a rank role, one of the 29 roles on the rank
-ladder. The two descriptions name one set: every Cav member holds a rank
-role, and every rank-role holder is a Cav member. Member-facing copy says
-"Cav member". The handover rule and the code say "rank role", the test the
-bot applies.
+A Discord member who holds a rank role. The two descriptions name one set:
+every Cav member holds a rank role, and every rank-role holder is a Cav
+member. Member-facing copy says "Cav member". The handover rule and the code
+say "rank role", the test the bot applies.
 _Avoid_: rank holder (in copy), trooper (in copy), verified member, Cav.
+
+**Rank ladder**:
+The regiment's 29 ranks in seniority order, most senior first. The handover
+rule ranks occupants by the rank role each one holds.
+_Avoid_: rank list, rank table, seniority list, role ladder.
+
+**Rank role**:
+The Discord role that counts as one rank on the rank ladder, set by a panel
+admin. A rank has one or none, and a role counts for one rank at most.
+_Avoid_: Cav role, member role, rank (for the role).
 
 **Department**:
 One of the twelve parts of the regiment /afsm checks: S1 (Personnel), S2
@@ -273,17 +282,21 @@ _Avoid_: temp channel, temp VC, temporary channel, personal channel.
 **Owner**:
 The occupant a spawned channel belongs to, or nobody. Owning is what lets a
 member rename or lock it, as far as its hub allows each; a moderator role
-does both without owning. The owner always holds a rank role. The creator at
-first, if they hold one; after a handover, whoever the handover named. A
-bot-internal marker that grants no Discord permission.
+does both without owning. The owner held a rank role when they took the
+channel, and losing it in Discord later does not end the ownership. The
+creator at first, if they hold one; after a handover, whoever the handover
+named. A bot-internal marker that grants no Discord permission.
 _Avoid_: interim controller, controller, creator (for the current owner).
 
 **Handover**:
 The bot giving ownership of a spawned channel to an occupant. When the owner
 leaves, the highest-ranked occupant with a rank role takes over, ties broken
 by lowest user ID; with no such occupant the channel has no owner. When a
-rank-role holder joins a channel with no owner, they take over. A handover
-is final: a returning creator is an ordinary occupant.
+rank-role holder joins a channel with no owner, they take over. A save of
+the rank roles applies the rule to every spawned channel at once. An owner
+who no longer holds a rank role hands over, and a channel with no owner goes
+to its highest-ranked occupant who holds one. A handover is final: a
+returning creator is an ordinary occupant.
 _Avoid_: hand off, hand back, succession, transfer, loan.
 
 **Restart sweep**:
@@ -420,8 +433,9 @@ _Avoid_: create failure, failed create, failed join, refused join.
 **Preview**:
 What the panel shows of a change before making it, with the Confirm that
 makes it. Removing a hub, deleting a recording and every Foxhole action but a
-re-add have one, and a purge's, like a Retry's of a purge or re-add, is
-called its confirmation.
+re-add have one. So does a rank roles save that stops anyone counting as a
+Cav member. A purge's, like a Retry's of a purge or re-add, is called its
+confirmation.
 _Avoid_: dry run, summary.
 
 **Save**:
@@ -446,10 +460,10 @@ what changed. Every save that takes effect has one entry, holding the old
 and new values, except a recording's deletion. Every Foxhole action started
 on the Foxhole page has one too, its report. Each hub's form shows the hub's
 own entries, and each removed hub's row on the Hubs page shows that hub's,
-its removal included. The guild-wide moderator section and the recording
-roles section each show the entries of their own saves, which reference no
-hub, and the Foxhole page shows its own. A change made by a command or by
-hand in Discord has none.
+its removal included. The guild-wide moderator section, the rank roles
+section and the recording roles section each show the entries of their own
+saves, which reference no hub, and the Foxhole page shows its own. A change
+made by a command or by hand in Discord has none.
 _Avoid_: audit trail, audit log (that is Discord's), history.
 
 **Stale form**:
@@ -457,11 +471,6 @@ A form loaded before another save of what it shows took effect, whose own
 save would undo that save unseen. A save from it is refused. A rename made
 in Discord does not make a form stale.
 _Avoid_: conflict, collision, race, outdated form, edit conflict.
-
-**Rank ladder**:
-The rank roles in seniority order, most senior first, that the handover rule
-ranks occupants by.
-_Avoid_: rank list, rank table, seniority list, role ladder.
 
 **Panel**:
 cavbot2's web UI at `cavbot2.7cav.us`. Any forum user can sign in through
@@ -507,6 +516,11 @@ in neither group, user in no group, guest, unprivileged user.
 The panel page for a request the visitor's forum groups don't allow, or for
 a recording they didn't start.
 _Avoid_: forbidden page, access denied page, 403 page.
+
+**Settings page**:
+The panel page where a panel admin sets the guild-wide settings that belong
+to no hub: the rank roles and the recording roles.
+_Avoid_: admin page, config page, preferences.
 
 **Rail**:
 The side column on every signed-in page: the identity block, Sign out, the
