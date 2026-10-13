@@ -147,19 +147,25 @@ _Avoid_: season, round.
 
 **Purge**:
 Taking a Foxhole role off every holder in one Foxhole action when a war ends.
-Re-adding the approved collaborators afterwards is a separate Foxhole action.
+Re-adding the approved Foxholers afterwards is a separate Foxhole action.
 _Avoid_: reset, wipe, clear.
 
-**Approved collaborator**:
-An outside collaborator marked on the panel to get External back after every
-purge, such as an allied group's leader. The mark outlives a purge and the
-member leaving the server, and only a person clears it, by hand or by
-removing their External on the panel.
+**Approval**:
+A Foxhole manager's mark that a Discord member gets one Foxhole role back
+after every purge, and a member can carry one for each role. It outlives a
+purge and the member leaving the server, and only a person clears it, by hand
+or by removing that role from the member on the panel.
 _Avoid_: locked (a spawned channel's term), whitelisted, pinned, preset.
+
+**Approved Foxholer**:
+A Discord member with an approval for at least one Foxhole role, a Cav member
+and an outside collaborator alike.
+_Avoid_: approved collaborator (an outside one only), approved member (reads
+as a Cav member), approved player.
 
 **Note**:
 A Foxhole manager's free text about one Discord member, one per member,
-started only on a Foxhole role holder or an approved collaborator. It
+started only on a Foxhole role holder or an approved Foxholer. It
 outlives a purge, the member losing the role and the member leaving the
 server, and only a person changes or clears it.
 _Avoid_: comment, remark, reason (Discord's audit log word for why a change
@@ -182,26 +188,27 @@ _Avoid_: warden manager, warden admin, Foxhole leader (as the panel's name
 for the role).
 
 **Foxhole page**:
-The panel page that lists every Foxhole role holder and approved
-collaborator with their notes, and starts Foxhole actions. Its second view
+The panel page that lists every Foxhole role holder and approved Foxholer
+with their notes, and starts Foxhole actions. Its second view
 is the no-role view.
 _Avoid_: warden page, warden dashboard.
 
 **Holder list**:
 The Foxhole page's list of every Foxhole role holder and every approved
-collaborator, read from the member list as it stands when the page loads.
+Foxholer, read from the member list as it stands when the page loads.
 _Avoid_: roster (a unit's roster), member list (the bot's copy of the whole
 guild).
 
 **No-role view**:
 The Foxhole page's second view, which lists the members with a note who hold
-no Foxhole role and aren't approved collaborators.
+no Foxhole role and have no approval.
 _Avoid_: holder list (nobody in it holds a Foxhole role).
 
 **Flag**:
 A display-only mark on a holder list row that points a Foxhole manager at a
 member worth a second look. The marks are "no rank role" on an Internal
-holder, "not in the server", and "approved, doesn't hold External".
+holder or a member with an Internal approval, "not in the server", and
+"approved, doesn't hold Internal" or "approved, doesn't hold External".
 _Avoid_: warning, alert, issue.
 
 **Member list**:
@@ -213,7 +220,7 @@ _Avoid_: member cache, roster (a unit's roster is a different list).
 **Foxhole action**:
 One change to who holds the Foxhole roles, made on the Foxhole page or by a
 `/foxhole` command: an add, a removal, a roster add, a purge or a re-add of
-the approved collaborators. One started on the page never runs alongside
+the approved Foxholers. One started on the page never runs alongside
 another from either path, though two commands may still run together.
 _Avoid_: bulk action, job, task, operation, lock (a spawned channel's
 state, not the rule that keeps two actions apart), starter for who started
@@ -228,8 +235,8 @@ _Avoid_: summary, results, receipt.
 
 **Result line**:
 A line on the Foxhole page telling a Foxhole manager what their last save
-did that the list alone doesn't show: the members an Approve skipped for not
-holding External, or a cleared note that took its member off the page.
+did that the list alone doesn't show: the members an Approve skipped for
+holding no Foxhole role, or a cleared note that took its member off the page.
 _Avoid_: result note (a note is a Foxhole manager's text about a member),
 message.
 
