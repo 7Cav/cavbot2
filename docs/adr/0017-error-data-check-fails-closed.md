@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0018
+---
+
 # The error data check fails closed
 
 The gate's `tools/errorreply` check (ADR 0016) counted anything it had no rule

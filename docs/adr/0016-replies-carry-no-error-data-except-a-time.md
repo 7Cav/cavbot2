@@ -21,8 +21,8 @@ off it. Two kinds of data from an error pass.
   it.** The panel's refusals are error values whose message is fixed text,
   and a Foxhole lookup's reply can be one too. Such a value passes while
   everything stored in it is fixed text, member input, a time, or a phrase
-  chosen by inspecting an error. The check reports the line that stores an
-  error's data in it.
+  chosen by inspecting an error. The check reports where an error's data
+  stored in it leaves the error (ADR 0018).
 
 Choosing between fixed messages by inspecting an error also passes, whether
 with `errors.Is`, `errors.As` or a classifier like `classifyDiscordError`.

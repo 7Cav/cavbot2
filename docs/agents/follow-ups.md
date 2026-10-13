@@ -16,7 +16,7 @@ This prints the labelled PRs, open and closed. End the run with the command's er
 
 Judge each follow-up from its entry's evidence and current `develop`.
 
-- **Dropped.** `develop` no longer has the gap, no member, panel user or maintainer would notice it, or an issue already declined it as `wontfix`.
+- **Dropped.** `develop` no longer has the gap, no member, panel user or maintainer would notice it, an issue already declined it as `wontfix`, or it is a way past the error data check that no code on `develop` takes (ADR 0018).
 - **Duplicate.** An open issue covers it.
 - **Filed.** Every other follow-up. Create its issue the way `docs/agents/issue-tracker.md` says, labelled `needs-triage`. Describe the gap as behavior: what happens now, what should happen, and how to see it.
 

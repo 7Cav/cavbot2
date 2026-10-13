@@ -281,15 +281,15 @@ func foxholeCommandRun(interaction *discordgo.InteractionCreate, typed string) C
 }
 
 func handleFoxholeAdd(r utils.InteractionResponder, gm GuildManager, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
-	member, err := findGuildMember(gm, guildID, query)
-	if err != nil {
-		editEphemeral(r, interaction, err.Error())
+	member, reply := findGuildMember(gm, guildID, query)
+	if reply != nil {
+		editEphemeral(r, interaction, reply.Error())
 		return
 	}
 
-	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
-	if err != nil {
-		editEphemeral(r, interaction, err.Error())
+	roleIDs, roleNames, reply := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
+	if reply != nil {
+		editEphemeral(r, interaction, reply.Error())
 		return
 	}
 
@@ -329,15 +329,15 @@ func handleFoxholeRemove(
 	query string,
 	roleScope string,
 ) {
-	member, err := findGuildMember(gm, guildID, query)
-	if err != nil {
-		editEphemeral(r, interaction, err.Error())
+	member, reply := findGuildMember(gm, guildID, query)
+	if reply != nil {
+		editEphemeral(r, interaction, reply.Error())
 		return
 	}
 
-	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
-	if err != nil {
-		editEphemeral(r, interaction, err.Error())
+	roleIDs, roleNames, reply := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
+	if reply != nil {
+		editEphemeral(r, interaction, reply.Error())
 		return
 	}
 
@@ -383,9 +383,9 @@ func handleFoxholeBulkAdd(
 		return
 	}
 
-	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
-	if err != nil {
-		editEphemeral(r, interaction, err.Error())
+	roleIDs, roleNames, reply := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
+	if reply != nil {
+		editEphemeral(r, interaction, reply.Error())
 		return
 	}
 
@@ -421,9 +421,9 @@ func handleFoxholeBulkAdd(
 		// A lookup system fault feeds the lookup collector keyed by signature
 		// instead of capturing once per entry, so a 5xx storm during resolution
 		// pages once per signature rather than once per roster entry (#216).
-		member, memberErr := findGuildMemberCollecting(gm, guildID, singleQuery, lookupFaultCapture.recordSystemFault)
-		if memberErr != nil {
-			failures = append(failures, memberErr.Error())
+		member, memberReply := findGuildMemberCollecting(gm, guildID, singleQuery, lookupFaultCapture.recordSystemFault)
+		if memberReply != nil {
+			failures = append(failures, memberReply.Error())
 			continue
 		}
 
@@ -485,9 +485,9 @@ func runFoxholePurge(
 	guildID string,
 	roleScope string,
 ) {
-	roleIDsToRecreate, roleNamesToRecreate, err := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
-	if err != nil {
-		editEphemeral(r, interaction, err.Error())
+	roleIDsToRecreate, roleNamesToRecreate, reply := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
+	if reply != nil {
+		editEphemeral(r, interaction, reply.Error())
 		return
 	}
 
@@ -825,7 +825,7 @@ func resolveFoxholeRoleIDs(
 	command string,
 	guildID string,
 	roleScope string,
-) (roleIDs []string, roleNames []string, err error) {
+) (roleIDs []string, roleNames []string, reply *lookupReply) {
 	roleNames = resolveFoxholeRoleNames(roleScope)
 	roleIDs = make([]string, 0, len(roleNames))
 
@@ -986,7 +986,7 @@ func formatUser(member *discordgo.Member) string {
 // genuine lookup system fault to Sentry inline. It is the entry point for the
 // single /foxhole add and /foxhole remove sites, which capture immediately; the
 // bulk loop uses findGuildMemberCollecting with a collector-backed sink instead.
-func findGuildMember(gm GuildManager, guildID, query string) (*discordgo.Member, error) {
+func findGuildMember(gm GuildManager, guildID, query string) (*discordgo.Member, *lookupReply) {
 	return findGuildMemberCollecting(gm, guildID, query, nil)
 }
 
@@ -997,7 +997,7 @@ func findGuildMember(gm GuildManager, guildID, query string) (*discordgo.Member,
 // faultCollector so a lookup-fault storm collapses to one event per signature
 // (#216). The user-facing messages and the non-captured outcomes (empty/too-long
 // query, not-in-server, no match, too many matches, 4xx) are identical either way.
-func findGuildMemberCollecting(gm GuildManager, guildID, query string, faultSink lookupFaultSink) (*discordgo.Member, error) {
+func findGuildMemberCollecting(gm GuildManager, guildID, query string, faultSink lookupFaultSink) (*discordgo.Member, *lookupReply) {
 	trimmedQuery := strings.TrimSpace(query)
 	if trimmedQuery == "" {
 		return nil, lookupReplyf("❌ Empty query")
@@ -1064,7 +1064,7 @@ func MentionUserID(query string) (string, bool) {
 // failure is routed through the shared classifier so a genuine system fault is
 // captured (inline when faultSink is nil, or collected when the bulk loop supplies
 // a collector-backed sink) and the raw Discord body never reaches the reply.
-func resolveMemberByID(gm GuildManager, guildID, userID string, faultSink lookupFaultSink) (*discordgo.Member, error) {
+func resolveMemberByID(gm GuildManager, guildID, userID string, faultSink lookupFaultSink) (*discordgo.Member, *lookupReply) {
 	member, err := gm.GuildMember(guildID, userID)
 	if err != nil {
 		class := classifyDiscordError(err)

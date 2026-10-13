@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -27,10 +29,13 @@ type StartWatch struct {
 	ended bool
 }
 
-// sentFailure is the record of the last failed start sent to Sentry.
+// sentFailure is the record of the last failed start sent to Sentry. It
+// keeps the SHA-256 digest of the message, which is all a later start needs
+// to tell a repeat, so the panic's text goes to Sentry and nowhere else
+// (ADR 0018).
 type sentFailure struct {
-	Message string    `json:"message"`
-	SentAt  time.Time `json:"sent_at"`
+	Digest string    `json:"digest"`
+	SentAt time.Time `json:"sent_at"`
 }
 
 // NewStartWatch returns a watch over this start. now is the clock.
@@ -51,7 +56,11 @@ func (w *StartWatch) ReportFailure() {
 	if r == nil {
 		return
 	}
-	w.send(fmt.Sprint(r))
+	err, ok := r.(error)
+	if !ok {
+		err = fmt.Errorf("%v", r)
+	}
+	w.send(err)
 	panic(r)
 }
 
@@ -59,24 +68,27 @@ func (w *StartWatch) ReportFailure() {
 // whose exception carries a stack trace. Sentry groups an event with no stack
 // trace by its message, so each cause of a failed start gets its own issue
 // instead of every cause from one panic site sharing one.
-func (w *StartWatch) send(msg string) {
+func (w *StartWatch) send(failure error) {
+	msg := failure.Error()
+	sum := sha256.Sum256([]byte(msg))
+	digest := hex.EncodeToString(sum[:])
 	path := recordPath()
 	now := w.now()
 	if data, err := os.ReadFile(path); err == nil {
 		var last sentFailure
-		if json.Unmarshal(data, &last) == nil && last.Message == msg && now.Sub(last.SentAt) < repeatWindow {
+		if json.Unmarshal(data, &last) == nil && last.Digest == digest && now.Sub(last.SentAt) < repeatWindow {
 			Info("Failed start already sent to Sentry", "sent_at", last.SentAt)
 			return
 		}
 	}
 
-	event := sentry.NewEvent()
-	event.Level = sentry.LevelFatal
-	event.Message = msg
-	sentry.CaptureEvent(event)
+	sentry.WithScope(func(scope *sentry.Scope) {
+		scope.SetLevel(sentry.LevelFatal)
+		sentry.CaptureMessage(msg)
+	})
 	sentry.Flush(2 * time.Second)
 
-	data, _ := json.Marshal(sentFailure{Message: msg, SentAt: now})
+	data, _ := json.Marshal(sentFailure{Digest: digest, SentAt: now})
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		Warn("Cannot record the failed start sent to Sentry", "error", err)
 	}

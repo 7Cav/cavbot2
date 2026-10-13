@@ -66,9 +66,6 @@ type Recorders struct {
 // the recorder account.
 func Connect(raw string, open Opener) *Recorders {
 	var tokens []string
-	// strings.Split, not SplitSeq: the gate's error data check can't follow
-	// a value out of a range-over-func loop, and every recorder session is
-	// built from a token.
 	for _, token := range strings.Split(raw, ",") {
 		if token = strings.TrimSpace(token); token != "" {
 			tokens = append(tokens, token)

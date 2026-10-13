@@ -3,10 +3,11 @@
 # `linters.default: standard` keeps the standard linter set (errcheck, govet,
 # ineffassign, staticcheck, unused) as it was before this file existed.
 # depguard and gosec on top of it hold the panel's security rules, so review
-# needn't. forbidigo holds the panel's production code to its clock and to
-# registering routes only through routes(). It holds the commands package's
-# error replies to refuse and replyError. nolintlint makes every //nolint name
-# its linter and say why.
+# needn't, and depguard keeps unsafe out of production code, which the error
+# data check can't see through (ADR 0018). forbidigo holds the panel's
+# production code to its clock and to registering routes only through
+# routes(). It holds the commands package's error replies to refuse and
+# replyError. nolintlint makes every //nolint name its linter and say why.
 #
 # gofmt is a *formatter* in v2, not a linter: `golangci-lint run` reports diffs
 # as issues, and `golangci-lint fmt` rewrites them in place.
@@ -32,6 +33,13 @@ linters:
           deny:
             - pkg: text/template
               desc: panel pages render with html/template, which escapes each value for where it lands
+        no-unsafe:
+          files:
+            - "$all"
+            - "!$test"
+          deny:
+            - pkg: unsafe
+              desc: the error data check can't see what unsafe does with an error's data (ADR 0018)
     gosec:
       # G201 and G202 catch SQL built from values by formatting or
       # concatenation: queries take values as parameters. G201 misses a

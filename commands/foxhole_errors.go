@@ -216,10 +216,10 @@ func recordLookupFault(sink lookupFaultSink, err error, sampleUser, captureMsg s
 	captureError(captureMsg, err, kv...)
 }
 
-// lookupReply is the error a Foxhole member or role lookup fails with. Its
-// text is the reply the member reads: fixed text, what the member typed, and
-// classifyDiscordError's phrases. The gate's errorreply check reads what each
-// lookup puts in it, so an error's own text there fails the gate (ADR 0016).
+// lookupReply is the error reply a Foxhole member or role lookup fails with.
+// Its text is the reply the member reads: fixed text, what the member typed,
+// and classifyDiscordError's phrases. An error's own text put in it fails the
+// gate where it leaves the error (ADR 0016, ADR 0018).
 type lookupReply struct {
 	reply string
 }
@@ -227,7 +227,7 @@ type lookupReply struct {
 func (e *lookupReply) Error() string { return e.reply }
 
 // lookupReplyf formats a lookup's reply as the error it fails with.
-func lookupReplyf(format string, a ...any) error {
+func lookupReplyf(format string, a ...any) *lookupReply {
 	return &lookupReply{reply: fmt.Sprintf(format, a...)}
 }
 
@@ -236,7 +236,7 @@ func lookupReplyf(format string, a ...any) error {
 // caller decides whether and how to send the fault to Sentry (inline for the
 // single lookup sites, via the faultCollector for the bulk loop). The raw Discord
 // response body is never interpolated.
-func searchErrorMessage(class discordErrorClass) error {
+func searchErrorMessage(class discordErrorClass) *lookupReply {
 	if class.SystemFault {
 		if class.ConfigFault {
 			return lookupReplyf("❌ Member search failed: %s", configFaultHint(class))
@@ -252,7 +252,7 @@ func searchErrorMessage(class discordErrorClass) error {
 // returns the same body-free, operator-facing error searchErrorMessage builds.
 // sampleUser is the roster entry that triggered the lookup, carried into the
 // collapsed bulk event as sample_user; it is ignored on the inline path.
-func searchErrorReply(err error, faultSink lookupFaultSink, sampleUser string) error {
+func searchErrorReply(err error, faultSink lookupFaultSink, sampleUser string) *lookupReply {
 	class := classifyDiscordError(err)
 	if class.SystemFault {
 		recordLookupFault(faultSink, err, sampleUser, "Failed to search members")
@@ -327,7 +327,7 @@ func purgePartialDeleteSummary(roleName, newRoleID, oldRoleID string, err error,
 // raw Discord response body (discordgo's "HTTP <status>, <json>") is never
 // interpolated — only a sanitized classifier phrase is shown. captureMsg/kv carry
 // the call site's command/guild context to Sentry.
-func roleResolveErrorReply(err error, captureMsg string, kv ...any) error {
+func roleResolveErrorReply(err error, captureMsg string, kv ...any) *lookupReply {
 	class := classifyDiscordError(err)
 	if class.SystemFault {
 		captureError(captureMsg, err, kv...)
@@ -347,7 +347,7 @@ func roleResolveErrorReply(err error, captureMsg string, kv ...any) error {
 // Discord response body (discordgo's "HTTP <status>, <json>") is never
 // interpolated — only a sanitized classifier phrase is shown. captureMsg/kv
 // carry the call site's command/guild context to Sentry.
-func channelsResolveErrorReply(err error, captureMsg string, kv ...any) error {
+func channelsResolveErrorReply(err error, captureMsg string, kv ...any) *lookupReply {
 	class := classifyDiscordError(err)
 	if class.SystemFault {
 		captureError(captureMsg, err, kv...)
@@ -406,31 +406,44 @@ func roleMutationErrorReply(action, roleName, userLabel string, err error, captu
 	return roleMutationErrorMessage(action, roleName, userLabel, class)
 }
 
-// faultSignature identifies a distinct captured fault for collapse: the pair of
-// HTTP status and Discord application error code. It is read straight off the
-// *discordgo.RESTError (the same status and Message.Code the classifier branches
-// on), so the collector does not need classifyDiscordError's contract to change.
-// A transport/connection error has no HTTP response, so it keys on the zero
-// signature {0, 0}; that is distinct from a real 5xx (status 500, code 0), so
-// the two never fold together.
-type faultSignature struct {
-	status      int
-	discordCode int
+// sameFault reports whether a and b are the same captured fault for
+// collapse: the same HTTP status and Discord application error code, read
+// straight off each *discordgo.RESTError (the same status and Message.Code the
+// classifier branches on), so the collector does not need
+// classifyDiscordError's contract to change. A transport/connection error has
+// no HTTP response, so it matches only another such error; it never folds
+// together with a real 5xx (status 500, code 0). The collector compares faults
+// rather than keying on their codes because a code is data from an error,
+// which only a comparison or the log and Sentry may take (ADR 0018).
+func sameFault(a, b error) bool {
+	var restA, restB *discordgo.RESTError
+	hasA := errors.As(a, &restA) && restA.Response != nil
+	hasB := errors.As(b, &restB) && restB.Response != nil
+	if !hasA || !hasB {
+		return hasA == hasB
+	}
+	codeA, codeB := 0, 0
+	if restA.Message != nil {
+		codeA = restA.Message.Code
+	}
+	if restB.Message != nil {
+		codeB = restB.Message.Code
+	}
+	return restA.Response.StatusCode == restB.Response.StatusCode && codeA == codeB
 }
 
-// faultSignatureOf extracts the (status, Discord code) signature from a Discord
-// REST failure. Anything without a structured HTTP response (a transport error)
-// returns the zero signature.
-func faultSignatureOf(err error) faultSignature {
+// captureFault captures err with kv, plus its HTTP status and Discord code as
+// http_status and discord_code, each 0 for a transport/connection error.
+func captureFault(captureMsg string, err error, kv ...any) {
+	status, code := 0, 0
 	var restErr *discordgo.RESTError
-	if !errors.As(err, &restErr) || restErr.Response == nil {
-		return faultSignature{}
+	if errors.As(err, &restErr) && restErr.Response != nil {
+		status = restErr.Response.StatusCode
+		if restErr.Message != nil {
+			code = restErr.Message.Code
+		}
 	}
-	sig := faultSignature{status: restErr.Response.StatusCode}
-	if restErr.Message != nil {
-		sig.discordCode = restErr.Message.Code
-	}
-	return sig
+	captureError(captureMsg, err, append([]any{"http_status", status, "discord_code", code}, kv...)...)
 }
 
 // collectedFault is the running tally for one fault signature within a single
@@ -459,13 +472,13 @@ type collectedFault struct {
 // class.SystemFault, since non-captured client faults (403, not-in-server 404)
 // must stay uncaptured per ADR 0001.
 type faultCollector struct {
-	// order preserves first-seen signature order so flush emits deterministically.
-	order   []faultSignature
-	entries map[faultSignature]*collectedFault
+	// faults holds one tally per distinct fault in first-seen order, so flush
+	// emits deterministically.
+	faults []*collectedFault
 }
 
 func newFaultCollector() *faultCollector {
-	return &faultCollector{entries: map[faultSignature]*collectedFault{}}
+	return &faultCollector{}
 }
 
 // recordSystemFault records one captured system fault for the signature of err,
@@ -481,21 +494,16 @@ func newFaultCollector() *faultCollector {
 // counts attempts; for the lookup phase, which resolves one entry per iteration,
 // affected_count counts failed lookups (one per entry).
 //
-// The entries map is lazy-initialized here, so the zero-value faultCollector is
-// safe to record into even if a caller skipped newFaultCollector(); it can never
-// nil-panic on the first record.
+// The zero-value faultCollector is safe to record into even if a caller
+// skipped newFaultCollector(); it can never nil-panic on the first record.
 func (fc *faultCollector) recordSystemFault(err error, sampleUser string) {
-	sig := faultSignatureOf(err)
-	if fc.entries == nil {
-		fc.entries = map[faultSignature]*collectedFault{}
+	for _, entry := range fc.faults {
+		if sameFault(entry.firstErr, err) {
+			entry.count++
+			return
+		}
 	}
-	entry, ok := fc.entries[sig]
-	if !ok {
-		entry = &collectedFault{firstErr: err, sampleUser: sampleUser}
-		fc.entries[sig] = entry
-		fc.order = append(fc.order, sig)
-	}
-	entry.count++
+	fc.faults = append(fc.faults, &collectedFault{count: 1, firstErr: err, sampleUser: sampleUser})
 }
 
 // flush emits one captureError per distinct signature collected this run, each
@@ -504,15 +512,12 @@ func (fc *faultCollector) recordSystemFault(err error, sampleUser string) {
 // run context (command/guild, plus unit for the internal command). Calling it on
 // a collector that saw no system faults is a no-op, so a clean run pages nothing.
 func (fc *faultCollector) flush(captureMsg string, baseKV ...any) {
-	for _, sig := range fc.order {
-		entry := fc.entries[sig]
+	for _, entry := range fc.faults {
 		kv := append([]any(nil), baseKV...)
 		kv = append(kv,
 			"affected_count", entry.count,
 			"sample_user", entry.sampleUser,
-			"http_status", sig.status,
-			"discord_code", sig.discordCode,
 		)
-		captureError(captureMsg, entry.firstErr, kv...)
+		captureFault(captureMsg, entry.firstErr, kv...)
 	}
 }
