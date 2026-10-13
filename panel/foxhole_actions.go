@@ -433,7 +433,7 @@ func reAddCountsOf(holders []holderRow) *reAddCounts {
 	c := &reAddCounts{}
 	for _, h := range holders {
 		switch {
-		case !h.Approved:
+		case !h.Approved.External:
 		case h.NotInServer:
 			c.NotInServer++
 		case h.External:

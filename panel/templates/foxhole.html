@@ -295,7 +295,7 @@
           <td class="fx-nowrap">{{if .Internal}}<span class="tag fx-role" data-role="internal">Internal</span> {{end}}{{if .External}}<span class="tag fx-role" data-role="external">External</span>{{end}}</td>
           <td class="fx-nowrap">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else if .NoRankRole}}<span class="tag tag--warn" data-flag="no-rank-role">no rank role</span>{{else}}<span class="off">none</span>{{end}}</td>
           {{template "note-cell" .}}
-          <td class="fx-nowrap">{{if .Approved}}<span class="tag tag--approved" data-approved>Approved</span>{{end}}</td>
+          <td class="fx-nowrap">{{if .Approved.Internal}}<span class="tag tag--approved" data-approved="internal">Internal</span> {{end}}{{if .Approved.External}}<span class="tag tag--approved" data-approved="external">External</span>{{end}}</td>
         </tr>
       {{end}}
       </tbody>
@@ -362,7 +362,7 @@
 
 {{- /* The result lines of the manager's last save, in the block of the list the save lands on, so they show beside the rows they name at every width. The page script puts a note save's result in the live region, so the region is there, empty, on every load. */}}
 {{define "fx-results"}}<div class="block-row fx-result" role="status" data-note-result>{{with .Cleared}}<div class="note note--ok note--inline" data-field="note-result" data-cleared="{{.MemberID}}">Cleared the note on {{.MemberName}} <span class="fx-user">@{{.MemberUsername}}</span>. They hold no Foxhole role, so they're no longer listed.</div>{{end}}</div>
-{{- with .Skipped}}<div class="block-row"><div class="note note--inline" data-field="approve-skipped">Not approved, since {{if eq (len .) 1}}this member doesn't{{else}}these members don't{{end}} hold External: {{range $i, $m := .}}{{if $i}}, {{end}}<span data-skipped="{{$m.ID}}">{{if $m.DisplayName}}{{$m.DisplayName}} <span class="fx-user">@{{$m.Username}}</span>{{else}}{{$m.ID}}{{end}}</span>{{end}}. Nothing changed for them.</div></div>{{end}}{{end}}
+{{- with .Skipped}}<div class="block-row"><div class="note note--inline" data-field="approve-skipped">Skipped, since {{if eq (len .) 1}}this member holds{{else}}these members hold{{end}} no Foxhole role to approve: {{range $i, $m := .}}{{if $i}}, {{end}}<span data-skipped="{{$m.ID}}">{{if $m.DisplayName}}{{$m.DisplayName}} <span class="fx-user">@{{$m.Username}}</span>{{else}}{{$m.ID}}{{end}}</span>{{end}}. Nothing changed for them.</div></div>{{end}}{{end}}
 
 {{- /* The search and filter links both views share. Under 768px panel.css sizes the search box to its whole hint, so a longer hint needs a wider box there. */}}
 {{define "fx-toolbar"}}<div class="block-row fx-toolbar">

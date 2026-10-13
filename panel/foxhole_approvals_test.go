@@ -1,12 +1,14 @@
 package panel
 
 import (
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/7cav/cavbot2/store"
 	"golang.org/x/net/html"
 )
 
@@ -90,24 +92,44 @@ func newestChange(t *testing.T, doc *html.Node) (string, []string) {
 	return action, touched
 }
 
-// Approve on a selection marks each selected External holder approved and
-// skips the selected member who doesn't hold External. The page it lands on
-// says it skipped them, and the change log's one new entry names the
-// members the save approved.
-func TestApproveMarksTheExternalHoldersAndSkipsOneWithoutExternal(t *testing.T) {
+// approvedRoles returns the roles each holder list row's Approved tags name,
+// by member ID, each sorted. A row with no approval is left out.
+func approvedRoles(t *testing.T, doc *html.Node) map[string][]string {
+	t.Helper()
+	out := map[string][]string{}
+	for id, row := range holderRows(t, doc) {
+		if roles := valuesOf(row, "data-approved"); len(roles) > 0 {
+			slices.Sort(roles)
+			out[id] = roles
+		}
+	}
+	return out
+}
+
+// Approve on a selection gives each selected member an approval for each
+// Foxhole role they hold: Doe holds Internal, Kestrel External and Marsh
+// both. Nobody is skipped, so the page it lands on names nobody as
+// skipped, and the change log's one new entry names the members the save
+// approved.
+func TestApproveGivesEachMemberAnApprovalForEachFoxholeRoleTheyHold(t *testing.T) {
 	w := newFoxholeWorld(t)
 
-	res := submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opApprove, memberKestrel.ID, memberMarsh.ID, memberDoe.ID)
+	res := submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opApprove, memberDoe.ID, memberKestrel.ID, memberMarsh.ID)
 
 	assertRedirect(t, res, foxholePath)
 	page := parseHTML(t, follow(t, w.b, res))
-	approved := []string{memberKestrel.ID, memberMarsh.ID}
-	if got := approvedRows(t, page); !slices.Equal(got, approved) {
-		t.Errorf("the rows marked approved are %v, want %v", got, approved)
+	want := map[string][]string{
+		memberDoe.ID:     {"internal"},
+		memberKestrel.ID: {"external"},
+		memberMarsh.ID:   {"external", "internal"},
 	}
-	if got, want := valuesOf(page, "data-skipped"), []string{memberDoe.ID}; !slices.Equal(got, want) {
-		t.Errorf("the page says it skipped %v, want %v", got, want)
+	if got := approvedRoles(t, page); !maps.EqualFunc(got, want, slices.Equal) {
+		t.Errorf("the rows' approvals are %v, want %v", got, want)
 	}
+	if got := valuesOf(page, "data-skipped"); len(got) != 0 {
+		t.Errorf("the page says it skipped %v, want nobody", got)
+	}
+	approved := sorted([]string{memberDoe.ID, memberKestrel.ID, memberMarsh.ID})
 	if action, touched := newestChange(t, page); action != "approve" || !slices.Equal(touched, approved) {
 		t.Errorf("the newest change log entry is %s touching %v, want approve touching %v", action, touched, approved)
 	}
@@ -116,21 +138,75 @@ func TestApproveMarksTheExternalHoldersAndSkipsOneWithoutExternal(t *testing.T) 
 	}
 }
 
-// The line naming a member Approve skipped shows only while it is still
-// true. Once the skipped member holds External, the address the save
-// redirected to, reloaded or reached by Back, no longer names them.
-func TestApproveSkipLineGoesOnceTheMemberHoldsExternal(t *testing.T) {
+// withoutFoxholeRoles is the fixture's member list with Kestrel holding no
+// Foxhole role, as after a purge: an approved Foxholer is the one member
+// the holder list shows with none.
+func withoutFoxholeRoles(w *testWorld) {
+	kestrel := memberKestrel
+	kestrel.RoleIDs = nil
+	setMembers(w, memberDoe, memberAsh, kestrel, memberMarsh, memberVance)
+}
+
+// Approve skips a selected member who holds no Foxhole role, so has no role
+// to be approved for, and approves the rest of the selection. The page it
+// lands on names the member it skipped.
+func TestApproveSkipsAMemberHoldingNoFoxholeRoleAndApprovesTheRest(t *testing.T) {
 	w := newFoxholeWorld(t)
+	approveThroughThePage(t, w, memberKestrel.ID)
+	withoutFoxholeRoles(w)
+
+	res := submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opApprove, memberKestrel.ID, memberDoe.ID)
+
+	assertRedirect(t, res, foxholePath)
+	page := parseHTML(t, follow(t, w.b, res))
+	if got, want := approvedRoles(t, page)[memberDoe.ID], []string{"internal"}; !slices.Equal(got, want) {
+		t.Errorf("%s's approvals are %v, want %v", memberDoe.ID, got, want)
+	}
+	if got, want := valuesOf(page, "data-skipped"), []string{memberKestrel.ID}; !slices.Equal(got, want) {
+		t.Errorf("the page says it skipped %v, want %v", got, want)
+	}
+}
+
+// The line naming a member Approve skipped shows only while it is still
+// true. Once the skipped member holds a Foxhole role again, Internal here,
+// the address the save redirected to, reloaded or reached by Back, no
+// longer names them.
+func TestApproveSkipLineGoesOnceTheMemberHoldsAFoxholeRole(t *testing.T) {
+	w := newFoxholeWorld(t)
+	approveThroughThePage(t, w, memberKestrel.ID)
+	withoutFoxholeRoles(w)
 	res := submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opApprove, memberKestrel.ID, memberDoe.ID)
 	landing := location(t, res).RequestURI()
-	doe := memberDoe
-	doe.RoleIDs = append(slices.Clone(doe.RoleIDs), roleExternal)
-	setMembers(w, doe, memberAsh, memberKestrel, memberMarsh, memberVance)
+	kestrel := memberKestrel
+	kestrel.RoleIDs = []string{roleInternal}
+	setMembers(w, memberDoe, memberAsh, kestrel, memberMarsh, memberVance)
 
 	page := parseHTML(t, w.b.get(landing))
 
 	if got := valuesOf(page, "data-skipped"); len(got) != 0 {
 		t.Errorf("reloading %s says it skipped %v, want none", landing, got)
+	}
+}
+
+// The Approved filter counts and lists every member with an approval,
+// whichever role it is for: Ash approved for Internal, Kestrel for
+// External and Marsh for both.
+func TestApprovedFilterListsEveryoneWithAnApproval(t *testing.T) {
+	w := newFoxholeWorld(t)
+	seedApprovals(t, w,
+		store.MemberApprovals{MemberNames: namesOf(memberAsh), Approved: store.FoxholeApprovals{Internal: true}},
+		store.MemberApprovals{MemberNames: namesOf(memberKestrel), Approved: store.FoxholeApprovals{External: true}},
+		store.MemberApprovals{MemberNames: namesOf(memberMarsh), Approved: store.FoxholeApprovals{Internal: true, External: true}})
+
+	link := filterAnchor(t, parseHTML(t, w.b.get(foxholePath)), "approved")
+
+	want := sorted([]string{memberAsh.ID, memberKestrel.ID, memberMarsh.ID})
+	if got := fieldText(t, link, "count"); got != strconv.Itoa(len(want)) {
+		t.Errorf("the approved link's count = %q, want %d", got, len(want))
+	}
+	href, _ := attrValue(link, "href")
+	if got := keys(holderRows(t, parseHTML(t, w.b.get(href)))); !slices.Equal(got, want) {
+		t.Errorf("the approved link lists %v, want %v", got, want)
 	}
 }
 
@@ -330,16 +406,17 @@ func TestApproveThatWouldChangeNobodyIsRefused(t *testing.T) {
 
 // An Approve that approves nobody but skips someone isn't a no-op the page
 // has nothing to say about: the save lands, and the page it lands on names
-// the member skipped for not holding External, as it does today.
+// the member skipped for holding no Foxhole role.
 func TestApproveThatOnlySkipsSomeoneStillLandsWithTheSkipLine(t *testing.T) {
 	w := newFoxholeWorld(t)
 	approveThroughThePage(t, w, memberKestrel.ID)
+	withoutFoxholeRoles(w)
 	page := parseHTML(t, w.b.get(foxholePath))
 
-	res := submitSelection(t, w.b, page, opApprove, memberKestrel.ID, memberDoe.ID)
+	res := submitSelection(t, w.b, page, opApprove, memberKestrel.ID)
 
 	assertRedirect(t, res, foxholePath)
-	if got, want := valuesOf(parseHTML(t, follow(t, w.b, res)), "data-skipped"), []string{memberDoe.ID}; !slices.Equal(got, want) {
+	if got, want := valuesOf(parseHTML(t, follow(t, w.b, res)), "data-skipped"), []string{memberKestrel.ID}; !slices.Equal(got, want) {
 		t.Errorf("the page says it skipped %v, want %v", got, want)
 	}
 }

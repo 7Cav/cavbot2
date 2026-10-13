@@ -79,8 +79,8 @@ type foxholeView struct {
 	// for none.
 	Cleared *foxholeChange
 	// Skipped is the result of the Approve before this load: the members it
-	// skipped for not holding External, those of them still not approved and
-	// not holding External at this load. Empty for none.
+	// skipped for holding no Foxhole role, those of them still holding none
+	// at this load. Empty for none.
 	Skipped []changedMember
 	// ApprovalRefusal is why the approvals save this page answers was
 	// refused, nil for a page that answers none.
@@ -235,12 +235,12 @@ var holderFilters = []holderFilter{
 	{filterAll, "All", func(holderRow) bool { return true }},
 	{"internal", "Internal", func(h holderRow) bool { return h.Internal }},
 	{"external", "External", func(h holderRow) bool { return h.External }},
-	{"approved", "Approved", func(h holderRow) bool { return h.Approved }},
+	{"approved", "Approved", func(h holderRow) bool { return h.Approved.Any() }},
 	{"flagged", "Flagged", holderRow.flagged},
 }
 
-// holderRow is one Foxhole role holder or approved collaborator as the
-// holder list shows them, or one member as the no-role view does.
+// holderRow is one Foxhole role holder or approved Foxholer as the holder
+// list shows them, or one member as the no-role view does.
 type holderRow struct {
 	ID string
 	// DisplayName is the name the member shows in the server: their server
@@ -258,8 +258,8 @@ type holderRow struct {
 	// NotInServer is the "not in the server" flag: a member the member list
 	// doesn't hold, shown under the names the panel last saw.
 	NotInServer bool
-	// Approved is the member an approved collaborator.
-	Approved bool
+	// Approved is the Foxhole roles the member has an approval for.
+	Approved store.FoxholeApprovals
 	// ApprovedNoExternal is the "approved, doesn't hold External" flag: an
 	// approved collaborator in the server without External. Display only.
 	ApprovedNoExternal bool
@@ -341,8 +341,8 @@ var errNoteListPartial = &saveRefusal{Kind: "member-list", status: http.StatusSe
 	Message: "Cavbot2 doesn't have the whole member list from Discord yet, so it can't check this member holds a Foxhole role. Nothing was saved. Save again in a minute."}
 
 // errApproveListPartial refuses an Approve while the member list is
-// partial: the save can't see who holds External. Clear approval reads no
-// list and stays open.
+// partial: the save can't see who holds which Foxhole role. Clear approval
+// reads no list and stays open.
 var errApproveListPartial = &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
 	log:     "Panel save refused: member list partial",
 	Message: "Awaiting the member list from Discord, so nobody was approved. Try again shortly."}
@@ -357,12 +357,12 @@ func nobodyToChangeSave(message string) *saveRefusal {
 }
 
 // errNobodyToApprove refuses an Approve that would approve nobody and skip
-// nobody: every selected member is an approved collaborator already, or
-// nothing was selected, which only a browser without the page script
-// posts. errNobodyToClear refuses a Clear approval with no approved
-// collaborator among the members selected, or nothing selected.
+// nobody: every selected member has an approval already for each Foxhole
+// role they hold, or nothing was selected, which only a browser without the
+// page script posts. errNobodyToClear refuses a Clear approval with no
+// approved Foxholer among the members selected, or nothing selected.
 var (
-	errNobodyToApprove = nobodyToChangeSave("Everyone selected is approved already, so nothing changed.")
+	errNobodyToApprove = nobodyToChangeSave("Everyone selected is already approved for each Foxhole role they hold, so nothing changed.")
 	errNobodyToClear   = nobodyToChangeSave("Nobody selected is approved, so nothing changed.")
 )
 
@@ -488,7 +488,7 @@ type foxholeRequest struct {
 	// cleared, taking them off the page, empty for none.
 	Cleared string
 	// Skipped are the IDs of the members the Approve before this load
-	// skipped for not holding External.
+	// skipped for holding no Foxhole role.
 	Skipped []string
 	// ApprovalRefusal is the refusal of the approvals save this page
 	// answers, nil for none.
@@ -691,14 +691,14 @@ func (g foxholeGuild) rowOf(mem commands.ListedMember, rec store.FoxholeRecord) 
 		Username:    mem.Username,
 		Internal:    g.internalID != "" && slices.Contains(mem.RoleIDs, g.internalID),
 		External:    g.externalID != "" && slices.Contains(mem.RoleIDs, g.externalID),
-		Approved:    rec.Approved.External,
+		Approved:    rec.Approved,
 		Note:        rec.Note,
 	}
 	if rank, ok := commands.SeniorRankRole(mem.RoleIDs); ok {
 		row.RankRole = cmp.Or(g.roleNames[rank], rank)
 	}
 	row.NoRankRole = row.Internal && row.RankRole == ""
-	row.ApprovedNoExternal = row.Approved && !row.External
+	row.ApprovedNoExternal = row.Approved.External && !row.External
 	return row
 }
 
@@ -859,10 +859,10 @@ func (s foxholeService) memberList(ctx context.Context, await bool) (commands.Me
 	return list, nil
 }
 
-// stillSkipped is the members an Approve skipped for not holding External
-// who, at this load, still aren't approved and still don't hold External,
-// under the names the member list shows, or the record's when it doesn't
-// hold them. A list that isn't complete can't tell, and gives none.
+// stillSkipped is the members an Approve skipped for holding no Foxhole
+// role who, at this load, still hold none, under the names the member list
+// shows, or the record's when it doesn't hold them. A list that isn't
+// complete can't tell, and gives none.
 func (s foxholeService) stillSkipped(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, skipped []string) []changedMember {
 	if list.Status != commands.MemberListComplete {
 		return nil
@@ -871,12 +871,9 @@ func (s foxholeService) stillSkipped(list commands.MemberListSnapshot, records m
 	var out []changedMember
 	for _, id := range distinct(skipped) {
 		rec := records[id]
-		if rec.Approved.External {
-			continue
-		}
 		member := changedMember{ID: id, DisplayName: rec.DisplayName, Username: rec.Username}
 		if mem, ok := list.Member(id); ok {
-			if guild.rowOf(mem, rec).External {
+			if guild.rowOf(mem, rec).holds() {
 				continue
 			}
 			member.DisplayName, member.Username = mem.DisplayName(), mem.Username
@@ -924,7 +921,7 @@ func (s foxholeService) records(ctx context.Context) (map[string]store.FoxholeRe
 }
 
 // lists builds the page's two lists from a complete member list: the holder
-// list, every holder and every approved collaborator, and the no-role view,
+// list, every holder and every approved Foxholer, and the no-role view,
 // every member with a note who isn't on the holder list. The members who
 // left the server among them show under the names the panel last saw. Each
 // row carries its note and its Edit link. Both lists are narrowed to the
@@ -937,7 +934,7 @@ func (s foxholeService) lists(list commands.MemberListSnapshot, records map[stri
 	listed := map[string]bool{}
 	for _, mem := range list.Members {
 		inServer[mem.ID] = mem
-		if row := guild.rowOf(mem, records[mem.ID]); row.holds() || row.Approved {
+		if row := guild.rowOf(mem, records[mem.ID]); row.holds() || row.Approved.Any() {
 			holders = append(holders, row)
 			listed[mem.ID] = true
 		}
@@ -946,14 +943,14 @@ func (s foxholeService) lists(list commands.MemberListSnapshot, records map[stri
 		if listed[id] {
 			continue
 		}
-		row := holderRow{ID: id, DisplayName: rec.DisplayName, Username: rec.Username, Approved: rec.Approved.External, Note: rec.Note, NotInServer: true}
+		row := holderRow{ID: id, DisplayName: rec.DisplayName, Username: rec.Username, Approved: rec.Approved, Note: rec.Note, NotInServer: true}
 		if mem, ok := inServer[id]; ok {
 			row = guild.rowOf(mem, rec)
 		}
 		switch {
-		case row.Approved:
-			// An approved collaborator who left the server, whom the panel
-			// never drops on its own (ADR 0012).
+		case row.Approved.Any():
+			// An approved Foxholer who left the server, whom the panel never
+			// drops on its own (ADR 0012).
 			holders = append(holders, row)
 		case row.Note != "":
 			noRole = append(noRole, row)
@@ -1071,14 +1068,15 @@ func (s foxholeService) saveNote(ctx context.Context, in noteInput, by actor) er
 	return err
 }
 
-// approve marks each member named who holds External an approved
-// collaborator, and writes the save's change log entry with the approvals,
-// naming the members it approved under the names the member list shows. It
-// reads the member list, never Discord's API, and grants no role, and it
-// is refused while the list is partial. A member who is approved already is
-// left as they are, and one who doesn't hold External is skipped: approve
-// returns their IDs. With nobody to approve it writes nothing, and with
-// nobody skipped either it is refused as errNobodyToApprove.
+// approve gives each member named an approval for each Foxhole role they
+// hold and have no approval for, and writes the save's change log entry
+// with the approvals, naming the members it approved under the names the
+// member list shows. It reads the member list, never Discord's API, and
+// grants no role, and it is refused while the list is partial. A member
+// approved already for each role they hold is left as they are, and one
+// who holds no Foxhole role, one not in the server included, is skipped:
+// approve returns their IDs. With nobody to approve it writes nothing, and
+// with nobody skipped either it is refused as errNobodyToApprove.
 func (s foxholeService) approve(ctx context.Context, memberIDs []string, by actor) (skipped []string, err error) {
 	records, err := s.records(ctx)
 	if err != nil {
@@ -1091,16 +1089,18 @@ func (s foxholeService) approve(ctx context.Context, memberIDs []string, by acto
 	guild := s.foxholeGuildOf()
 	var approving []store.MemberApprovals
 	for _, id := range distinct(memberIDs) {
-		if records[id].Approved.External {
-			continue
-		}
 		mem, ok := list.Member(id)
-		if !ok || !guild.rowOf(mem, records[id]).External {
+		row := guild.rowOf(mem, records[id])
+		if !ok || !row.holds() {
 			skipped = append(skipped, id)
 			continue
 		}
-		approving = append(approving, store.MemberApprovals{MemberNames: store.MemberNames{MemberID: id, DisplayName: mem.DisplayName(), Username: mem.Username},
-			Approved: store.FoxholeApprovals{External: true}})
+		adding := store.FoxholeApprovals{Internal: row.Internal && !row.Approved.Internal, External: row.External && !row.Approved.External}
+		if !adding.Any() {
+			continue
+		}
+		approving = append(approving, store.MemberApprovals{
+			MemberNames: store.MemberNames{MemberID: id, DisplayName: mem.DisplayName(), Username: mem.Username}, Approved: adding})
 	}
 	if len(approving) == 0 {
 		if len(skipped) == 0 {
@@ -1119,8 +1119,8 @@ func (s foxholeService) approve(ctx context.Context, memberIDs []string, by acto
 	return skipped, s.store.ApproveFoxholeMembers(ctx, s.guildID, approving, entry)
 }
 
-// clearApprovals clears the approval of each member named who is an
-// approved collaborator, and writes the save's change log entry with it,
+// clearApprovals clears every approval of each member named who is an
+// approved Foxholer, and writes the save's change log entry with it,
 // naming them under the names their records hold. It reads the store
 // alone: no member list, and no Discord call. With nobody approved among
 // them it is refused as errNobodyToClear and writes nothing.
