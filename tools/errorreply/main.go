@@ -272,18 +272,14 @@ func (c *checker) returnsErrorData(fn *ssa.Function) bool {
 	return c.returned
 }
 
-// errorMethodOf returns the type fn is the Error method of, when fn is the
-// Error method of a named type of the module.
+// errorMethodOf returns the type fn is the Error method of, when fn, a
+// function of the module, is one.
 func errorMethodOf(fn *ssa.Function) *types.TypeName {
 	recv := fn.Signature.Recv()
 	if recv == nil || fn.Name() != "Error" {
 		return nil
 	}
-	n := namedOf(recv.Type())
-	if n == nil || n.Obj().Pkg() == nil || !inModule(n.Obj().Pkg().Path()) {
-		return nil
-	}
-	return n.Obj()
+	return namedOf(recv.Type()).Obj()
 }
 
 // namedOf returns the named type t is, or points to.
@@ -322,15 +318,9 @@ func (c *checker) logParam(fn *ssa.Function, i int) bool {
 		params, ok := c.local[fn]
 		return ok && params[i]
 	}
-	obj, ok := fn.Object().(*types.Func)
-	if !ok {
-		return false
-	}
 	var fact logParams
-	if !c.pass.ImportObjectFact(obj, &fact) || i >= len(fact.Params) {
-		return false
-	}
-	return fact.Params[i]
+	obj, _ := fn.Object().(*types.Func)
+	return obj != nil && c.pass.ImportObjectFact(obj, &fact) && i < len(fact.Params) && fact.Params[i]
 }
 
 // source reports whether instr takes data out of an error, and if so the
@@ -404,7 +394,7 @@ func (c *checker) handedError(common *ssa.CallCommon) bool {
 		}
 	}
 	for _, a := range common.Args {
-		if !isError(a.Type()) {
+		if !handsErrors(a.Type()) {
 			continue
 		}
 		if callee == nil {
@@ -491,16 +481,11 @@ func (c *checker) holdsError(t types.Type, seen map[types.Type]bool) bool {
 		}
 	}
 	switch u := t.Underlying().(type) {
-	case *types.Pointer:
-		return c.holdsError(u.Elem(), seen)
-	case *types.Slice:
-		return c.holdsError(u.Elem(), seen)
-	case *types.Array:
-		return c.holdsError(u.Elem(), seen)
-	case *types.Chan:
-		return c.holdsError(u.Elem(), seen)
 	case *types.Map:
 		return c.holdsError(u.Key(), seen) || c.holdsError(u.Elem(), seen)
+	case interface{ Elem() types.Type }:
+		// A pointer, slice, array or channel.
+		return c.holdsError(u.Elem(), seen)
 	case *types.Struct:
 		for i := range u.NumFields() {
 			f := u.Field(i)
@@ -518,15 +503,12 @@ func asTarget(common *ssa.CallCommon) (types.Type, bool) {
 	if callee == nil || callee.Pkg == nil || callee.Pkg.Pkg.Path() != "errors" || callee.Name() != "As" {
 		return nil, false
 	}
-	mi, ok := common.Args[1].(*ssa.MakeInterface)
-	if !ok {
-		return nil, false
+	if mi, ok := common.Args[1].(*ssa.MakeInterface); ok {
+		if p, ok := mi.X.Type().Underlying().(*types.Pointer); ok {
+			return p.Elem(), true
+		}
 	}
-	p, ok := mi.X.Type().Underlying().(*types.Pointer)
-	if !ok {
-		return nil, false
-	}
-	return p.Elem(), true
+	return nil, false
 }
 
 // errorsAsTarget reports whether mi only hands errors.As the address of an
@@ -611,6 +593,13 @@ func (c *checker) containedUse(v ssa.Value, r ssa.Instruction, seen map[ssa.Valu
 		return c.contained(r.(ssa.Value), seen)
 	case *ssa.IndexAddr:
 		if r.X != v {
+			// An index picks an element, as a key does.
+			return true
+		}
+		return c.contained(r, seen)
+	case *ssa.Lookup:
+		if r.X != v {
+			// A key picks a fixed message out of a table.
 			return true
 		}
 		return c.contained(r, seen)
@@ -704,32 +693,27 @@ func digest(fn *ssa.Function) bool {
 // strings.Contains does.
 func predicate(sig *types.Signature) bool {
 	results := sig.Results()
-	if results.Len() == 0 {
-		return false
-	}
 	for i := range results.Len() {
 		if b, ok := results.At(i).Type().Underlying().(*types.Basic); !ok || b.Kind() != types.Bool {
 			return false
 		}
 	}
-	if sig.Recv() != nil && !inert(sig.Recv().Type()) {
-		return false
-	}
-	for i := range sig.Params().Len() {
-		if !inert(sig.Params().At(i).Type()) {
-			return false
-		}
-	}
-	return true
+	return results.Len() > 0 && inertSignature(sig)
 }
 
 // inert reports whether a function handed a value of t can't write through
-// it, or can write only errors: a string, a number, a bool, an error, or a
-// slice of errors, as errors.Join takes.
+// it, or can write only errors: a string, a number, a bool, or what
+// handsErrors accepts.
 func inert(t types.Type) bool {
 	if _, ok := t.Underlying().(*types.Basic); ok {
 		return true
 	}
+	return handsErrors(t)
+}
+
+// handsErrors reports whether a value of t is an error, or a slice of them,
+// which a variadic ...error parameter takes.
+func handsErrors(t types.Type) bool {
 	if s, ok := t.Underlying().(*types.Slice); ok {
 		return isError(s.Elem())
 	}
@@ -771,9 +755,7 @@ func (c *checker) varFunction(v ssa.Value) *ssa.Function {
 	for _, r := range c.globalUses[g] {
 		switch r := r.(type) {
 		case *ssa.UnOp:
-			if r.Op != token.MUL {
-				return nil
-			}
+			// A load, the only operation on a variable's address.
 		case *ssa.Store:
 			f, ok := r.Val.(*ssa.Function)
 			if !ok || fn != nil || r.Parent() != g.Pkg.Func("init") {
@@ -840,28 +822,17 @@ func result(call ssa.CallInstruction) ssa.Value {
 }
 
 // posOf is where to report instr: its own position, or else that of the
-// first instruction using its value that has one.
+// first instruction using its value, or a use of that, that has one.
 func posOf(instr ssa.Instruction, fn *ssa.Function) token.Pos {
-	seen := map[ssa.Instruction]bool{}
-	queue := []ssa.Instruction{instr}
-	for len(queue) > 0 {
-		in := queue[0]
-		queue = queue[1:]
-		if seen[in] {
-			continue
-		}
-		seen[in] = true
+	for in := instr; in != nil; {
 		if in.Pos().IsValid() {
 			return in.Pos()
 		}
-		if v, ok := in.(ssa.Value); ok && v.Referrers() != nil {
-			queue = append(queue, *v.Referrers()...)
+		v, ok := in.(ssa.Value)
+		if !ok || v.Referrers() == nil || len(*v.Referrers()) == 0 {
+			break
 		}
-		if st, ok := in.(*ssa.Store); ok {
-			if a, ok := st.Addr.(ssa.Instruction); ok {
-				queue = append(queue, a)
-			}
-		}
+		in = (*v.Referrers())[0]
 	}
 	return fn.Pos()
 }
