@@ -10,7 +10,7 @@ import (
 )
 
 // Classification of Discord errors on the spawned channel paths (create,
-// move-into, delete). classifyDiscordError in foxhole_errors.go is not used
+// delete, rename, lock and unlock). classifyDiscordError in foxhole_errors.go is not used
 // here: its not-found branch pages on Unknown Channel, and for a spawned
 // channel "already gone" is the normal end of a hand delete. Nothing here
 // changes the Foxhole command paths.
@@ -77,13 +77,6 @@ func classifySpawnedChannelError(err error) spawnedChannelFault {
 		forbidden: forbidden,
 		hardFault: forbidden || status >= 500,
 	}
-}
-
-// capturesOnCreate reports whether a create or move-into failure with these
-// facts reaches Sentry: the cap, 403, 429, 5xx, transport. Any other 4xx is a
-// WARN line.
-func (f spawnedChannelFault) capturesOnCreate() bool {
-	return f.full || f.rateLimited || f.hardFault
 }
 
 // capturesOnChannelChange reports whether a failure to change a spawned

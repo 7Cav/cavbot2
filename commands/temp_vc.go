@@ -67,7 +67,7 @@ import (
 // for the panel, cleared by the next successful spawn from that hub. A
 // failure Discord returned reaches Sentry once per streak per hub; a refusal
 // the bot makes itself, a hub with no category, never does.
-// temp_vc_errors.go classifies the Discord errors on these paths.
+// temp_vc_errors.go reads a failed create's cause off its Discord error.
 //
 // discordgo applies every gateway event to its state cache in gateway order
 // before it starts any handler goroutine, and the handlers run unordered, so
@@ -1934,10 +1934,8 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		t.recordSpawnFailure(hub.ID, cause)
 		utils.Warn("Temp VC create failed",
 			"user_id", vs.UserID, "hub_channel_id", hub.HubChannelID, "cause", cause, "error", err)
-		if fault.capturesOnCreate() {
-			t.captureOncePerStreak(t.createCaptured, hub.ID, "Temp VC create failed", err,
-				"user_id", vs.UserID, "hub_channel_id", hub.HubChannelID, "guild_id", t.guildID)
-		}
+		t.captureOncePerStreak(t.createCaptured, hub.ID, "Temp VC create failed", err,
+			"user_id", vs.UserID, "hub_channel_id", hub.HubChannelID, "guild_id", t.guildID)
 		t.messageHubJoiner(hub, vs.UserID, cause)
 		return
 	}
@@ -1985,10 +1983,8 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		t.recordSpawnFailure(hub.ID, SpawnFailureMove)
 		utils.Warn("Temp VC move-into failed, deleting channel",
 			"user_id", vs.UserID, "channel_id", channel.ID, "hub_channel_id", hub.HubChannelID, "error", err)
-		if classifySpawnedChannelError(err).capturesOnCreate() {
-			t.captureOncePerStreak(t.createCaptured, hub.ID, "Temp VC move-into failed, deleting channel", err,
-				"user_id", vs.UserID, "channel_id", channel.ID, "hub_channel_id", hub.HubChannelID)
-		}
+		t.captureOncePerStreak(t.createCaptured, hub.ID, "Temp VC move-into failed, deleting channel", err,
+			"user_id", vs.UserID, "channel_id", channel.ID, "hub_channel_id", hub.HubChannelID)
 		t.abandonSpawn(channel.ID, hub, vs.UserID)
 		t.messageHubJoiner(hub, vs.UserID, SpawnFailureMove)
 		return
@@ -2100,6 +2096,11 @@ func ownershipNoticeLine(event noticeEvent, owner string, renamingAllowed bool) 
 	return fmt.Sprintf("%s and can rename it with /%s.", owns, voiceRenameCommandName)
 }
 
+// spawnFailureReportedNote closes the text a member reads for a failure
+// Discord returned on the create or the move-into, the cap aside. The first
+// failure of the hub's streak has reached Sentry, so S6 has it.
+const spawnFailureReportedNote = "The error has been reported to S6."
+
 // messageHubJoiner tells a member whose channel could not be created, in the
 // hub channel's text chat. The content mentions them and the allowed mentions
 // name them alone, so nobody else is pinged. No DM, no disconnect, and the
@@ -2123,7 +2124,7 @@ func (t *TempVC) messageHubJoiner(hub store.Hub, userID string, cause SpawnFailu
 	case SpawnFailureNoCategory:
 		content = fmt.Sprintf("<@%s> Cavbot could not create your channel.", userID)
 	default:
-		content = fmt.Sprintf("<@%s> Cavbot could not create your channel. The error has been reported to S6.", userID)
+		content = fmt.Sprintf("<@%s> Cavbot could not create your channel. %s", userID, spawnFailureReportedNote)
 	}
 	_, err := t.mgr.ChannelMessageSendComplex(hub.HubChannelID, &discordgo.MessageSend{
 		Content:         content,

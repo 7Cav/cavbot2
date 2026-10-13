@@ -442,7 +442,7 @@ func TestTempVCRefusedCompensatingDeleteKeepsTheChannelWithAnOwner(t *testing.T)
 			fake := newFakeTempVCManager()
 			st := seedStore(t, testHub())
 			tv := newTestTempVC(t, fake, st)
-			captures := countCaptures(t)
+			countCaptures(t)
 			logs := captureLogs(t)
 			a := member("A", testRankSGT)
 			fake.moveErr = restError(http.StatusBadRequest, discordgo.ErrCodeTargetIsNotConnectedToVoice, "Target user is not connected to voice")
@@ -478,9 +478,6 @@ func TestTempVCRefusedCompensatingDeleteKeepsTheChannelWithAnOwner(t *testing.T)
 			}
 			if lines := logRecordsWith(t, logs, "INFO", map[string]string{"reason": "channel occupied", "channel_id": "new-chan"}); len(lines) != 1 {
 				t.Errorf("INFO lines with reason \"channel occupied\" for new-chan = %d, want one", len(lines))
-			}
-			if *captures != 0 {
-				t.Errorf("captures = %d, want 0", *captures)
 			}
 		})
 	}
