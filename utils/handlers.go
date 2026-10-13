@@ -115,28 +115,32 @@ func deliverErrorReply(r InteractionResponder, i *discordgo.InteractionCreate, m
 		case isUnknownMessage(editErr):
 			followUpErrorReply(r, i, message)
 		default:
-			captureError("Failed to deliver interaction error reply via edit fallback", editErr,
-				append(interactionCaptureContext(i), "guild_id", i.GuildID)...)
+			captureLostReply("Failed to deliver interaction error reply via edit fallback", editErr, i)
 		}
 		return
 	}
 
-	captureError("Failed to deliver interaction error reply", err,
-		append(interactionCaptureContext(i), "guild_id", i.GuildID)...)
+	captureLostReply("Failed to deliver interaction error reply", err, i)
+}
+
+// captureLostReply sends a failure to deliver i's error reply to Sentry, with
+// the command and guild it came from.
+func captureLostReply(msg string, err error, i *discordgo.InteractionCreate) {
+	captureError(msg, err, append(interactionCaptureContext(i), "guild_id", i.GuildID)...)
 }
 
 // followUpErrorReply sends message as an ephemeral follow-up only the member
 // sees, for an error reply whose message was deleted before the edit could
-// reach it. The deletion was a member's or another bot's doing, since the
-// bot never deletes a reply, so a follow-up that lands is an INFO line. One
-// that fails means the reply never reached the member, and goes to Sentry.
+// reach it. The bot deletes no interaction reply, so the deletion was a
+// member's or another bot's doing, and a follow-up that lands is an INFO
+// line. One that fails means the reply never reached the member, and goes to
+// Sentry.
 func followUpErrorReply(r InteractionResponder, i *discordgo.InteractionCreate, message string) {
 	if err := r.FollowupMessageCreate(i.Interaction, false, &discordgo.WebhookParams{
 		Content: message,
 		Flags:   discordgo.MessageFlagsEphemeral,
 	}); err != nil {
-		captureError("Failed to deliver interaction error reply via follow-up", err,
-			append(interactionCaptureContext(i), "guild_id", i.GuildID)...)
+		captureLostReply("Failed to deliver interaction error reply via follow-up", err, i)
 		return
 	}
 	Info("Error reply sent as a follow-up, its message was deleted", interactionCaptureContext(i)...)
