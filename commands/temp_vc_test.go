@@ -1667,10 +1667,10 @@ func categoryCapErr() error {
 	return e
 }
 
-// badNameLengthErr is an Invalid Form Body that is not the category cap. Its
-// name field carries BASE_TYPE_BAD_LENGTH, and the body holds no
-// CHANNEL_PARENT_MAX_CHANNELS. It has the authored shape of categoryCapErr,
-// so the field error is the only difference between the two.
+// badNameLengthErr is an Invalid Form Body that is not the category cap. It
+// has the authored shape of categoryCapErr, with the name field and
+// BASE_TYPE_BAD_LENGTH where that one has parent_id and
+// CHANNEL_PARENT_MAX_CHANNELS.
 func badNameLengthErr() error {
 	e := restError(http.StatusBadRequest, discordgo.ErrCodeInvalidFormBody, "Invalid Form Body")
 	e.ResponseBody = []byte(`{"message": "Invalid Form Body", "code": 50035, "errors": {"name": {"_errors": [{"code": "BASE_TYPE_BAD_LENGTH", "message": "Must be between 1 and 100 in length."}]}}}`)
