@@ -4,7 +4,7 @@
 // response body out of every reply, channel post and panel answer
 // (ADR 0016), without following where a reply's data came from.
 //
-// Data leaves an error in these ways, and no others outside unsafe:
+// The check reads data leaving an error in these ways:
 //
 //   - a call of one of its methods, a method value or a method expression
 //   - a read of one of its fields
@@ -42,6 +42,10 @@
 // either declares, a function handed to either other than a scope
 // configurator, and a writer other than os.Stdout and os.Stderr handed to
 // log/slog.
+//
+// Other ways past the check exist, such as fmt printing an unexported field
+// by reflection. Such a way counts as a bug only when the bot's code takes
+// it (ADR 0018).
 package main
 
 import (
@@ -57,7 +61,7 @@ import (
 
 var analyzer = &analysis.Analyzer{
 	Name:      "errorreply",
-	Doc:       "reports where data leaves an error for anywhere but the log, Sentry or a comparison",
+	Doc:       "reports where data leaves an error for anywhere but the log, Sentry, fmt.Errorf, a panic or a comparison",
 	Requires:  []*analysis.Analyzer{buildssa.Analyzer},
 	Run:       run,
 	FactTypes: []analysis.Fact{new(logParams), new(wrapsError)},
@@ -118,13 +122,16 @@ func clean(t types.Type) bool {
 	if b, ok := t.Underlying().(*types.Basic); ok && b.Kind() == types.Bool {
 		return true
 	}
-	if n, ok := types.Unalias(t).(*types.Named); ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "time" {
-		switch n.Obj().Name() {
-		case "Time", "Duration":
-			return true
-		}
+	if n, ok := types.Unalias(t).(*types.Named); ok && (declared(n.Obj(), "time", "Time") || declared(n.Obj(), "time", "Duration")) {
+		return true
 	}
 	return types.Implements(t, errorType)
+}
+
+// declared reports whether obj is the declaration called name in the package
+// at path.
+func declared(obj types.Object, path, name string) bool {
+	return obj != nil && obj.Pkg() != nil && obj.Pkg().Path() == path && obj.Name() == name
 }
 
 // held is the type of what v holds: the field or element an address points
@@ -481,9 +488,9 @@ func inertSignature(sig *types.Signature) bool {
 // holdsError reports whether a value of t, handed to fmt, a template or
 // encoding/json, can show data from an error: t is an error the check reads
 // as one from outside the module, or holds one in an exported field, an
-// element or a pointer. fmt prints an unexported field without calling its
-// Error method, and templates and encoding/json can't read one, so
-// unexported fields don't count.
+// element or a pointer. Unexported fields don't count. Templates and
+// encoding/json can't read one, and fmt prints one by reflection without
+// calling Error, a way past the check ADR 0018 accepts.
 func (c *checker) holdsError(t types.Type, seen map[types.Type]bool) bool {
 	if seen[t] {
 		return false
@@ -515,7 +522,7 @@ func (c *checker) holdsError(t types.Type, seen map[types.Type]bool) bool {
 // asTarget returns the type errors.As fills, when common calls errors.As.
 func asTarget(common *ssa.CallCommon) (types.Type, bool) {
 	callee := common.StaticCallee()
-	if callee == nil || callee.Pkg == nil || callee.Pkg.Pkg.Path() != "errors" || callee.Name() != "As" {
+	if callee == nil || !declared(callee.Object(), "errors", "As") {
 		return nil, false
 	}
 	if mi, ok := common.Args[1].(*ssa.MakeInterface); ok {
@@ -700,8 +707,7 @@ func (c *checker) containedBuiltin(v ssa.Value, b *ssa.Builtin, call ssa.CallIns
 // only be compared, as a time can only be read: no text of what it was
 // handed survives in it.
 func digest(fn *ssa.Function) bool {
-	obj := fn.Object()
-	return obj != nil && obj.Pkg() != nil && obj.Pkg().Path() == "crypto/sha256" && obj.Name() == "Sum256"
+	return declared(fn.Object(), "crypto/sha256", "Sum256")
 }
 
 // predicate reports whether a function of sig can only answer yes or no
@@ -807,10 +813,10 @@ func (c *checker) varFunction(v ssa.Value) *ssa.Function {
 func redirects(instr ssa.Instruction) bool {
 	switch in := instr.(type) {
 	case *ssa.MakeInterface:
-		return logPackage(in.Type()) && !logPackage(in.X.Type())
+		return logType(in.Type()) && !logType(in.X.Type())
 	case ssa.CallInstruction:
 		callee := in.Common().StaticCallee()
-		if callee == nil || !logPackage(callee.Signature) && !logFunction(callee) {
+		if callee == nil || !logFunction(callee) {
 			return false
 		}
 		sig := in.Common().Signature()
@@ -843,9 +849,9 @@ func logPath(path string) bool {
 	return path == "log/slog" || path == "github.com/getsentry/sentry-go"
 }
 
-// logPackage reports whether t is a type log/slog or sentry-go declares, or
-// a pointer to one.
-func logPackage(t types.Type) bool {
+// logType reports whether t is a type log/slog or sentry-go declares, or a
+// pointer to one.
+func logType(t types.Type) bool {
 	n := namedOf(t)
 	return n != nil && n.Obj().Pkg() != nil && logPath(n.Obj().Pkg().Path())
 }
@@ -862,7 +868,7 @@ func handsCode(v ssa.Value) bool {
 		v = load.X
 	}
 	alloc, ok := v.(*ssa.Alloc)
-	if !ok || !logPackage(alloc.Type()) {
+	if !ok || !logType(alloc.Type()) {
 		return false
 	}
 	for _, r := range *alloc.Referrers() {
@@ -888,7 +894,7 @@ func configurator(sig *types.Signature) bool {
 	}
 	for i := range sig.Params().Len() {
 		t := sig.Params().At(i).Type()
-		if _, ok := t.Underlying().(*types.Pointer); !ok || !logPackage(t) {
+		if _, ok := t.Underlying().(*types.Pointer); !ok || !logType(t) {
 			return false
 		}
 	}
@@ -898,7 +904,7 @@ func configurator(sig *types.Signature) bool {
 // writer reports whether t is io.Writer.
 func writer(t types.Type) bool {
 	n, ok := types.Unalias(t).(*types.Named)
-	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "io" && n.Obj().Name() == "Writer"
+	return ok && declared(n.Obj(), "io", "Writer")
 }
 
 // processOutput reports whether v is os.Stdout or os.Stderr.
@@ -911,26 +917,13 @@ func processOutput(v ssa.Value) bool {
 		return false
 	}
 	g, ok := load.X.(*ssa.Global)
-	return ok && g.Pkg != nil && g.Pkg.Pkg.Path() == "os" && (g.Name() == "Stdout" || g.Name() == "Stderr")
+	return ok && (declared(g.Object(), "os", "Stdout") || declared(g.Object(), "os", "Stderr"))
 }
 
 // sink reports whether fn is a place data from an error may go: the log,
 // Sentry, or fmt.Errorf, which keeps it inside an error.
 func sink(fn *ssa.Function) bool {
-	if o := fn.Origin(); o != nil {
-		fn = o
-	}
-	obj := fn.Object()
-	if obj == nil || obj.Pkg() == nil {
-		return false
-	}
-	switch obj.Pkg().Path() {
-	case "log/slog", "github.com/getsentry/sentry-go":
-		return true
-	case "fmt":
-		return obj.Name() == "Errorf"
-	}
-	return false
+	return logFunction(fn) || declared(fn.Object(), "fmt", "Errorf")
 }
 
 // module is the path of the module whose code the check reads.

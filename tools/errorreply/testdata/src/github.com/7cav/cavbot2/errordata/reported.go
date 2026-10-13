@@ -68,7 +68,7 @@ func WrittenTo(err error) {
 	utils.HandleError(nil, nil, b.String())
 }
 
-func Remembered2(err error) {
+func RememberedInReceiver(err error) {
 	var p errtext.Printer
 	p.Remember(err) // want ""
 	utils.HandleError(nil, nil, p.Last())

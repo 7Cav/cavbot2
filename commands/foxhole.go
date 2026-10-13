@@ -281,15 +281,15 @@ func foxholeCommandRun(interaction *discordgo.InteractionCreate, typed string) C
 }
 
 func handleFoxholeAdd(r utils.InteractionResponder, gm GuildManager, interaction *discordgo.InteractionCreate, guildID, query, roleScope string) {
-	member, err := findGuildMember(gm, guildID, query)
-	if err != nil {
-		editEphemeral(r, interaction, err.Error())
+	member, reply := findGuildMember(gm, guildID, query)
+	if reply != nil {
+		editEphemeral(r, interaction, reply.Error())
 		return
 	}
 
-	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
-	if err != nil {
-		editEphemeral(r, interaction, err.Error())
+	roleIDs, roleNames, reply := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
+	if reply != nil {
+		editEphemeral(r, interaction, reply.Error())
 		return
 	}
 
@@ -329,15 +329,15 @@ func handleFoxholeRemove(
 	query string,
 	roleScope string,
 ) {
-	member, err := findGuildMember(gm, guildID, query)
-	if err != nil {
-		editEphemeral(r, interaction, err.Error())
+	member, reply := findGuildMember(gm, guildID, query)
+	if reply != nil {
+		editEphemeral(r, interaction, reply.Error())
 		return
 	}
 
-	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
-	if err != nil {
-		editEphemeral(r, interaction, err.Error())
+	roleIDs, roleNames, reply := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
+	if reply != nil {
+		editEphemeral(r, interaction, reply.Error())
 		return
 	}
 
@@ -383,9 +383,9 @@ func handleFoxholeBulkAdd(
 		return
 	}
 
-	roleIDs, roleNames, err := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
-	if err != nil {
-		editEphemeral(r, interaction, err.Error())
+	roleIDs, roleNames, reply := resolveFoxholeRoleIDs(gm, commandNameOf(interaction), guildID, roleScope)
+	if reply != nil {
+		editEphemeral(r, interaction, reply.Error())
 		return
 	}
 
@@ -421,9 +421,9 @@ func handleFoxholeBulkAdd(
 		// A lookup system fault feeds the lookup collector keyed by signature
 		// instead of capturing once per entry, so a 5xx storm during resolution
 		// pages once per signature rather than once per roster entry (#216).
-		member, memberErr := findGuildMemberCollecting(gm, guildID, singleQuery, lookupFaultCapture.recordSystemFault)
-		if memberErr != nil {
-			failures = append(failures, memberErr.Error())
+		member, memberReply := findGuildMemberCollecting(gm, guildID, singleQuery, lookupFaultCapture.recordSystemFault)
+		if memberReply != nil {
+			failures = append(failures, memberReply.Error())
 			continue
 		}
 

@@ -76,7 +76,7 @@ fi
 step "lint"
 golangci-lint run --timeout=5m
 
-step "data from an error goes only to the log, Sentry or a comparison"
+step "data from an error goes only to the log, Sentry, fmt.Errorf, a panic or a comparison"
 # A message the bot sends to Discord, or a panel answer, carries no data from
 # an error, except a time (ADR 0016). The check reports where the bot's code
 # takes data out of an error for anywhere else (ADR 0018). Test code shows

@@ -27,7 +27,8 @@ var Version = "dev"
 // startFailure is the panic that stops a start: what failed and the error it
 // failed with. Its text is what the container log shows and what the failed
 // start sends to Sentry, which groups failed starts by it, so the README's
-// troubleshooting table can quote it.
+// troubleshooting table can quote it. A Discord session that fails to close
+// at shutdown panics with one too.
 type startFailure struct {
 	what string
 	err  error
