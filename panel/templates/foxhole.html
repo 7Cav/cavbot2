@@ -242,7 +242,7 @@
           {{- else}}
           <p class="fx-readdcount">No approved Foxholers yet. Approve role holders in the list below.</p>
           {{- end}}
-          <span class="field-hint">Gives each approved Foxholer in the server each role they're approved for and don't hold, straight away with no preview. Anyone not in the server is skipped and listed.</span>
+          <span class="field-hint">Gives each approved Foxholer in the server each role they're approved for and don't hold, straight away with no preview. It skips and lists anyone not in the server.</span>
         </div>
         <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="re-add-start"{{if or $.Foxhole.Busy (not .ToReAdd)}} disabled{{end}}>Re-add approved Foxholers</button>
           {{- if and .AnyApproved (not .ToReAdd)}} <span class="fx-hint" data-field="nobody-to-re-add">{{.NobodyHint}}</span>
