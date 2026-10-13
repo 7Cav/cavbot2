@@ -452,7 +452,7 @@ func (reAddCounts) NobodyHint() string { return nobodyToReAdd }
 // counts on both lines.
 func reAddCountsOf(holders []holderRow) *reAddCounts {
 	c := &reAddCounts{}
-	for _, role := range []commands.FoxholeRole{commands.FoxholeInternal, commands.FoxholeExternal} {
+	for _, role := range commands.FoxholeRoles() {
 		line := reAddLine{Role: role, Name: role.Label()}
 		for _, h := range holders {
 			switch {
@@ -534,7 +534,7 @@ func roleMissingRefusal(what, role string) *saveRefusal {
 // as the scope's label has them: "Internal or External".
 func nobodyToPurge(scope commands.PurgeScope) string {
 	var names []string
-	for _, role := range []commands.FoxholeRole{commands.FoxholeInternal, commands.FoxholeExternal} {
+	for _, role := range commands.FoxholeRoles() {
 		if slices.Contains(scope.Roles(), role) {
 			names = append(names, role.Label())
 		}

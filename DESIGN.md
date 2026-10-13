@@ -355,7 +355,7 @@ Forum-issue hardware: plain, bevelled, sure.
 
 ### Tags
 - **Style.** No fill, a 1px edge, 3px corners and a 12px label. The edge colour and the words both carry the state.
-- **States.** A grey edge for neutral ("disabled", "recording", a change log's action). A green edge with Mint words for on ("enabled", "ready"). A red edge with Blush words when something is wrong ("broken", "failed", "cut short by a restart", "approved, doesn't hold External"). A gold edge with gold words for an approved Foxholer's role. A dashed grey edge with muted words for "not in the server".
+- **States.** A grey edge for neutral ("disabled", "recording", a change log's action). A green edge with Mint words for on ("enabled", "ready"). A red edge with Blush words when something is wrong ("broken", "failed", "cut short by a restart", "approved, doesn't hold Internal" or External). A gold edge with gold words for an approved Foxholer's role. A dashed grey edge with muted words for "not in the server".
 - **Picker tag.** Raised Charcoal fill, a 14px bright label, an optional role colour dot, and a × that removes it. The ×'s focus ring sits flush inside the tag.
 
 ### Blocks

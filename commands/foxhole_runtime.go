@@ -52,9 +52,9 @@ func (r FoxholeRole) Label() string {
 	return ""
 }
 
-// foxholeRoles are the two Foxhole roles, Internal first, the order a
-// re-add's report lists them in.
-var foxholeRoles = []FoxholeRole{FoxholeInternal, FoxholeExternal}
+// FoxholeRoles are the two Foxhole roles, Internal first: the order the
+// Foxhole page names them in, and a re-add's report lists them in.
+func FoxholeRoles() []FoxholeRole { return []FoxholeRole{FoxholeInternal, FoxholeExternal} }
 
 // ApprovedIn reports whether the approvals name the role.
 func (r FoxholeRole) ApprovedIn(a store.FoxholeApprovals) bool {
@@ -70,7 +70,7 @@ func (r FoxholeRole) ApprovedIn(a store.FoxholeApprovals) bool {
 // ApprovedRoles are the Foxhole roles the approvals name, Internal first.
 func ApprovedRoles(a store.FoxholeApprovals) []FoxholeRole {
 	var roles []FoxholeRole
-	for _, role := range foxholeRoles {
+	for _, role := range FoxholeRoles() {
 		if role.ApprovedIn(a) {
 			roles = append(roles, role)
 		}
@@ -799,7 +799,7 @@ const ReAddReason = "Panel: Foxhole re-add of approved Foxholers by "
 // reAddSpec is a re-add of the approved Foxholers, as ReAdd and a re-add's
 // Retry start it, but for its plan. It changes both roles.
 func reAddSpec() actionSpec {
-	return actionSpec{action: store.ChangeReAdd, roles: foxholeRoles, grant: true, reason: ReAddReason}
+	return actionSpec{action: store.ChangeReAdd, roles: FoxholeRoles(), grant: true, reason: ReAddReason}
 }
 
 // Remove starts a removal of the role given from the members given,
@@ -1098,7 +1098,7 @@ func purgePlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, scope Pu
 // it, and the records' last-seen names those who left.
 func reAddPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange {
 	var plan []plannedChange
-	for _, role := range foxholeRoles {
+	for _, role := range FoxholeRoles() {
 		var changes []plannedChange
 		for _, rec := range records {
 			if !role.ApprovedIn(rec.Approved) {

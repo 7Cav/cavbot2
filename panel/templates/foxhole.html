@@ -301,7 +301,7 @@
           <td class="fx-nowrap">{{if .Internal}}<span class="tag fx-role" data-role="internal">Internal</span> {{end}}{{if .External}}<span class="tag fx-role" data-role="external">External</span>{{end}}</td>
           <td class="fx-nowrap">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else if .NoRankRole}}<span class="tag tag--warn" data-flag="no-rank-role">no rank role</span>{{else}}<span class="off">none</span>{{end}}</td>
           {{template "note-cell" .}}
-          <td class="fx-nowrap">{{if .Approved.Internal}}<span class="tag tag--approved" data-approved="internal">Internal</span> {{end}}{{if .Approved.External}}<span class="tag tag--approved" data-approved="external">External</span>{{end}}</td>
+          <td class="fx-nowrap">{{with .ApprovedRoles}}<span class="tag tag--approved">Approved: {{range $i, $r := .}}{{if $i}}, {{end}}<span data-approved="{{$r}}">{{$r.Label}}</span>{{end}}</span>{{end}}</td>
         </tr>
       {{end}}
       </tbody>

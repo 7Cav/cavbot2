@@ -709,6 +709,10 @@ func (g foxholeGuild) rowOf(mem commands.ListedMember, rec store.FoxholeRecord) 
 	return row
 }
 
+// ApprovedRoles are the Foxhole roles the row's member has an approval
+// for, Internal first, as the Approved column names them.
+func (h holderRow) ApprovedRoles() []commands.FoxholeRole { return commands.ApprovedRoles(h.Approved) }
+
 // holds reports whether the row's member holds a Foxhole role.
 func (h holderRow) holds() bool { return h.Internal || h.External }
 
