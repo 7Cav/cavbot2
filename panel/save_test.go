@@ -488,6 +488,20 @@ func (discardTransport) Close()                                {}
 // instead of hanging the suite.
 const stallLimit = 2 * time.Second
 
+// stallUntilDone holds a store call until its context is done, while the
+// panel's clock passes the store timeout, and reports whether the context
+// ended. It reports false after stallLimit for a call made with no
+// deadline.
+func stallUntilDone(ctx context.Context, clock *testClock) bool {
+	clock.advance(storeTimeout)
+	select {
+	case <-ctx.Done():
+		return true
+	case <-time.After(stallLimit):
+		return false
+	}
+}
+
 // stallingStore is the store fake with its hub write stalled: the call
 // answers only when its context is done, with the context's error, the way
 // a Postgres write blocked on a lock does. While it stalls, the panel's
@@ -498,13 +512,10 @@ type stallingStore struct {
 }
 
 func (s stallingStore) SaveHub(ctx context.Context, _ store.Hub, _ store.ChangeLogEntry) (store.Hub, error) {
-	s.clock.advance(storeTimeout)
-	select {
-	case <-ctx.Done():
-		return store.Hub{}, ctx.Err()
-	case <-time.After(stallLimit):
+	if !stallUntilDone(ctx, s.clock) {
 		return store.Hub{}, errors.New("stalled store: the call reached no deadline")
 	}
+	return store.Hub{}, ctx.Err()
 }
 
 // A save whose store call stalls past its deadline fails, and the failure
