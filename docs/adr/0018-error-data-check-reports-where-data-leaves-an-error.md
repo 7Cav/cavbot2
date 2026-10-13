@@ -27,10 +27,17 @@ and #646, superseding ADR 0017.
 ## Consequences
 
 - Data from an error fails even when no person sees it, such as a Sentry
-  dedup key built from a status code.
-- The check judges a call outside the module by its signature and doesn't
-  read another package's unexported fields. Lint keeps `unsafe` out of
-  production code.
+  dedup key built from a status code. A SHA-256 digest of it passes, since
+  a digest can only be compared.
+- The check doesn't read unexported fields. fmt prints one without calling
+  its `Error` method, and templates and `encoding/json` can't read one.
+- The check judges a call outside the module by its signature. A call
+  through an interface or a function value may be the module's own code,
+  whose writes the check reads where they happen, so it is judged by what it
+  returns.
+- Lint keeps `unsafe` out of production code.
+- The gate runs the check over the bot's packages. The tools under `tools/`
+  answer the maintainer, not a member or a panel user.
 
 ## Considered options
 

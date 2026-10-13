@@ -22,6 +22,7 @@ import (
 // sentryEvent is the part of an event item the failed start tests read.
 type sentryEvent struct {
 	Message   string            `json:"message"`
+	Level     string            `json:"level"`
 	Release   string            `json:"release"`
 	Exception []json.RawMessage `json:"exception"`
 	Threads   []json.RawMessage `json:"threads"`
@@ -124,6 +125,9 @@ func TestFailedStart_SendsItsMessageBeforeThePanicGoesOn(t *testing.T) {
 	}
 	if got[0].Message != msg {
 		t.Errorf("event message = %q, want %q", got[0].Message, msg)
+	}
+	if got[0].Level != string(sentry.LevelFatal) {
+		t.Errorf("event level = %q, want %q", got[0].Level, sentry.LevelFatal)
 	}
 	if got[0].Release != "cavbot2@1.2.3" {
 		t.Errorf("event release = %q, want %q", got[0].Release, "cavbot2@1.2.3")

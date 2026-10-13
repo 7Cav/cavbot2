@@ -76,12 +76,15 @@ fi
 step "lint"
 golangci-lint run --timeout=5m
 
-step "messages and panel answers carry no data from an error"
+step "data from an error goes only to the log, Sentry or a comparison"
 # A message the bot sends to Discord, or a panel answer, carries no data from
-# an error, except a time (ADR 0016). The error goes to the log or to Sentry.
-# Test code shows nothing to a member or a panel user, so the check reads
-# production code only.
-go run ./tools/errorreply -test=false ./...
+# an error, except a time (ADR 0016). The check reports where the bot's code
+# takes data out of an error for anywhere else (ADR 0018). Test code shows
+# nothing to a member or a panel user, and the tools under tools/ answer the
+# maintainer, so the check reads the bot's production code only.
+listed=$(go list ./... | grep -v '/tools/')
+mapfile -t bot <<<"$listed"
+go run ./tools/errorreply -test=false "${bot[@]}"
 
 step "go.mod and go.sum are tidy"
 go mod tidy -diff

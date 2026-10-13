@@ -1,123 +1,46 @@
-// Command errorreply reports what the bot shows a person that carries data
-// from an error. That is a message to Discord: anything the bot hands
-// discordgo, such as an interaction reply, a channel post, a channel or role
-// name, or an audit-log reason, and a utils.HandleError reply. A call of a
-// method of any interface named like one of *discordgo.Session's counts as
-// the session's method. It is also a panel answer: whatever a call outside
-// the module is handed along with the panel's response writer, such as the
-// text of an http.Error, the URL of a redirect, the data a page renders, or
-// what is written or encoded to the writer. Each is checked whole, embeds
-// and page data included. A Foxhole report member's failure reason and a
-// spawn failure's cause reach a panel page through the store or the temp VC
-// runtime, where the check can't follow them, so a value stored into either
-// is checked where it is stored. ADR 0016 says which data from an error a
-// message or a panel answer may carry. The gate runs the check over the
-// module's production code (.github/scripts/gate.sh).
+// Command errorreply reports where the bot's code takes data out of an error
+// and hands it to anything but the log, Sentry, fmt.Errorf, a panic or a
+// comparison (ADR 0018). That keeps an error's text, status code and
+// response body out of every reply, channel post and panel answer
+// (ADR 0016), without following where a reply's data came from.
 //
-// The check fails closed (ADR 0017). A value passes only when the check has
-// a rule for everything it is built from. A value it has no rule for counts
-// as data from an error, so a route the check can't follow fails the gate
-// where the value reaches a person. The rules follow.
+// Data leaves an error in these ways, and no others outside unsafe:
 //
-// The check reads one package at a time. It follows a call into another
-// package of the module by what that package's check recorded: whether each
-// result of the function carries data from an error, which parameters it is
-// built from, and which it hands on, itself or through the functions it
-// calls, to a message, a panel answer, an error type that reaches one, or
-// another package's variable. A call that passes such a parameter data from
-// an error is reported where it's made, with the diagnostic the function's
-// own package gives it. It judges a value of a struct error type the module
-// defines by what is stored in it. A store in the package being checked is
-// reported at its line. Another package's stores are recorded with the type,
-// so a value that carries an error's data from them is reported where it
-// reaches a person. A call into a package outside the module counts as built
-// from all its arguments, and an error type from outside the module, or one
-// that isn't a struct, counts as built from an error on sight. A call through
-// a function value counts as built from that value too.
+//   - a call of one of its methods, a method value or a method expression
+//   - a read of one of its fields
+//   - a conversion of it, or of a value holding it in an exported field, an
+//     element or a pointer, to an interface other than error, including a
+//     type assertion and an errors.As target that isn't an error
+//   - recover
+//   - a call into code the check doesn't read that is handed one: a call
+//     outside the module passes when its signature can return and write
+//     nothing but bools, times and errors, as errors.Is's does, and a call
+//     through an interface or a function value when it returns nothing else
+//   - a generic function instantiated with one for a type parameter that
+//     may not be an error
 //
-// A value read out of a slice, array, map, channel or interface counts as
-// built from everything put in it: an element read by index or by range, a
-// map's key or value, a type assertion, a receive. So does the whole
-// container. The index or key it is read with, a range's position in a
-// string, and the second result of a comma-ok read carry none of it.
+// Methods and fields this module declares aren't ways out: what an error
+// type of the module holds was checked where it was put there. A type of
+// the module whose Error method returns data from another error counts as
+// an error from outside the module, so its text may be logged but not
+// replied with.
 //
-// A closure is read as part of the function that makes it, and a closure
-// value counts as built from what it captured. What the closure puts in a
-// variable it captured counts as put there, whoever calls the closure, and
-// so does what it stores, sends or sets through a channel, map, slice or
-// pointer it loads out of that variable. So does what a call writes there,
-// when the function made that container, as the first item below says. A
-// parameter of the enclosing function that the closure reads is a parameter
-// of that function. The closure's own parameter is built from what each
-// call of it in the package passes it. When the package also uses the
-// closure as a value, some of those calls are hidden from the check, so the
-// parameter counts as a value the check can't follow. The same holds for a
-// function that puts its parameter in a package-level variable.
-//
-// A local counts as built from everything written through another local that
-// holds its address, even after that local points elsewhere.
-//
-// A package-level variable counts as built from everything its package puts
-// in it: its declared value, a store at an address within it, a map update
-// or a send on it, a call it's passed to, and what each call in the package
-// passes a function that puts its parameter there. Another package of the
-// module that reads the variable gets the verdict its package recorded. The
-// check can't follow a value that one package puts in another's variable to
-// where the variable is read, so it reports that store where it's made, and
-// a call that passes a value to another package's function that puts it in a
-// variable.
-//
-// Three places follow the routes the check knows instead of failing closed
-// (ADR 0017). A reply missed anywhere else is a bug in the fail-closed rule.
-//
-//   - Writes into a pointer, slice, map or channel. Failing closed there
-//     reported 54 places in the bot's code, and none carried data from an
-//     error. Most began at a handler's or callback's parameter, which the
-//     check can't follow, and clearing them needs a looser rule for such a
-//     parameter, one that stops catching replies the check reports today.
-//     The rest came from one error kept in a struct field that is only
-//     compared to nil, which reached the struct's other fields because the
-//     check reads a struct whole, and clearing them needs it to read fields
-//     one at a time. The check also took eight times as long. The check
-//     follows a store, a map update, a send, and a call handed the container
-//     directly, in an interface such as the io.Writer fmt.Fprintf takes, or
-//     in a variadic argument list such as fmt.Sscan's. A call puts there
-//     everything else it is handed, apart from a call into a function of
-//     the package being checked that is handed the container read out of a
-//     local or in an interface, as a closure or fmt.Fprintf hands it on.
-//     That call puts there what the function's body puts in its parameter,
-//     so that a helper a closure calls with a captured container doesn't
-//     count as writing what it only reads. A value read out of a
-//     package-level variable is a logger or a client more often than not,
-//     so no call counts as writing into it. The check follows each write at
-//     an address or within it, through a closure that captured it, and
-//     through a local that holds it. A container read out of a variable may
-//     be one the function was handed, which is checked where it is handed
-//     on, so a call handed that container doesn't count as writing into it,
-//     though a call handed an address within it does. The check doesn't
-//     follow a write through a container a call returned, or through an
-//     address kept in a slice, map or struct field.
-//   - A value that reaches a panel page through the store or the temp VC
-//     runtime. The check can't follow a value through either, so it checks
-//     the two fields named above, where they are stored, and no other.
-//   - A function called through a function value. When such a function hands
-//     its parameter on to a message or a panel answer, the check reports its
-//     direct calls only. Failing closed there reported 47 places in the
-//     bot's code: the slash command handlers the command registry calls that
-//     way, the gateway event handlers discordgo calls, the panel routes and
-//     middleware net/http calls, and the panel's background actions its
-//     action runner calls.
+// Data that has left an error passes when every use of it, followed through
+// the function, is a comparison, a call that can only answer yes or no about
+// it, such as strings.Contains, crypto/sha256's Sum256, the log or Sentry,
+// fmt.Errorf, or a panic. It may pass through local variables, containers
+// the function made, closures, and functions of the module whose parameter
+// reaches only those, which the check works out for each function and hands
+// to the packages that call it. Any other use is reported where the data
+// left the error. A bool, a time, a duration and an error are clean, so data
+// that becomes one stops there.
 package main
 
 import (
 	"go/token"
 	"go/types"
-	"maps"
-	"reflect"
-	"slices"
 	"strings"
 
-	"github.com/bwmarrin/discordgo"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/buildssa"
 	"golang.org/x/tools/go/analysis/singlechecker"
@@ -126,1152 +49,462 @@ import (
 
 var analyzer = &analysis.Analyzer{
 	Name:      "errorreply",
-	Doc:       "reports a message to Discord or a panel answer that carries data from an error",
+	Doc:       "reports where data leaves an error for anywhere but the log, Sentry or a comparison",
 	Requires:  []*analysis.Analyzer{buildssa.Analyzer},
 	Run:       run,
-	FactTypes: []analysis.Fact{new(funcFact), new(typeFact), new(varFact)},
+	FactTypes: []analysis.Fact{new(logParams), new(outsideError)},
 }
 
 func main() { singlechecker.Main(analyzer) }
 
-// module is the path of the module whose code the check reads. A package
-// outside it, the standard library or a dependency, is read through its
-// types alone, so a call into one counts as built from all its arguments.
-const module = "github.com/7cav/cavbot2"
-
-// funcFact is what the check of a function's package records about the
-// function for the checks of the packages that call it: what each of its
-// results is built from, which of its parameters it stores into an error
-// type the package defines, which, counting a method's receiver first, it
-// puts in a package-level variable of the package, and which it hands on
-// to a message, a panel answer, an error type that reaches one, or another
-// package's variable, with the diagnostic for each.
-type funcFact struct {
-	Results    []result
-	Stores     []store
-	VarParams  []int
-	SinkParams map[int]string
+// logParams marks which parameters of a function of the module reach only
+// the log or Sentry, so data from an error may be handed to them.
+type logParams struct {
+	Params []bool
 }
 
-func (*funcFact) AFact() {}
+func (*logParams) AFact() {}
 
-// result is what one result of a function is built from: data from an
-// error, or the parameters at Params, counting a method's receiver first.
-type result struct {
-	Carries bool
-	Params  []int
+func (f *logParams) String() string {
+	var b strings.Builder
+	for _, p := range f.Params {
+		if p {
+			b.WriteByte('L')
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	return "logParams(" + b.String() + ")"
 }
 
-// store is a parameter of a function, counting a method's receiver first,
-// that the function stores into the error type of its package named Type.
-type store struct {
-	Param int
-	Type  string
-}
+// outsideError marks an error type of the module whose Error method returns
+// data from another error, so the check reads it as it reads an error from
+// outside the module.
+type outsideError struct{}
 
-// typeFact is what the check of an error type's package records about the
-// type for the checks of the packages that read a value of it: whether a
-// store in its package puts data from an error in it.
-type typeFact struct {
-	Carries bool
-}
+func (*outsideError) AFact() {}
 
-func (*typeFact) AFact() {}
-
-// varFact is what the check of a package-level variable's package records
-// about the variable for the checks of the packages that read it: whether
-// what its package puts in it carries data from an error.
-type varFact struct {
-	Carries bool
-}
-
-func (*varFact) AFact() {}
-
-// The function that sends a member its error reply, and the position of the
-// parameter that carries the reply's text.
-const (
-	sinkPackage = "github.com/7cav/cavbot2/utils"
-	sinkName    = "HandleError"
-	sinkParam   = 2
-)
-
-const discordgoPackage = "github.com/bwmarrin/discordgo"
-
-// The panel's package, whose calls that answer a browser are panel answers.
-// Another package of the module that answers a browser, such as the smoke
-// tool's fake forum, answers a maintainer, not a panel user.
-const panelPackage = module + "/panel"
-
-// The fields of commands' types whose value reaches a panel page through the
-// store or the temp VC runtime, where the check can't follow it, by type and
-// field name.
-var panelFields = map[string]bool{
-	"github.com/7cav/cavbot2/commands.ReportMember.Failure": true,
-	"github.com/7cav/cavbot2/commands.SpawnFailure.Cause":   true,
-}
-
-// The diagnostics, one for each place a value is handed on to.
-const (
-	toDiscord  = "this message to Discord carries data from an error, or data the check can't follow; send fixed text and log the error or capture it (ADR 0016, ADR 0017)"
-	toPanel    = "this panel answer carries data from an error, or data the check can't follow; answer with fixed text and log the error or capture it (ADR 0016, ADR 0017)"
-	toVariable = "this puts data from an error, or data the check can't follow, in another package's variable, and the check doesn't follow a variable to where another package reads it; put fixed text there and log the error or capture it (ADR 0016, ADR 0017)"
-)
+func (*outsideError) String() string { return "outsideError" }
 
 var errorType = types.Universe.Lookup("error").Type().Underlying().(*types.Interface)
 
+// isError reports whether a value of t is an error: t, or a pointer to t,
+// has an Error method.
+func isError(t types.Type) bool {
+	if types.Implements(t, errorType) {
+		return true
+	}
+	if types.IsInterface(t) {
+		return false
+	}
+	if _, ok := t.Underlying().(*types.Pointer); ok {
+		return false
+	}
+	return types.Implements(types.NewPointer(t), errorType)
+}
+
+// clean reports whether a value of t carries none of an error's data that a
+// person could read: a bool, a time or a duration (ADR 0016), or an error
+// itself, which the check reads again wherever data leaves it.
+func clean(t types.Type) bool {
+	if b, ok := t.Underlying().(*types.Basic); ok && b.Kind() == types.Bool {
+		return true
+	}
+	if n, ok := types.Unalias(t).(*types.Named); ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "time" {
+		switch n.Obj().Name() {
+		case "Time", "Duration":
+			return true
+		}
+	}
+	return types.Implements(t, errorType)
+}
+
+// held is the type of what v holds: the field or element an address points
+// at, or else v's own type.
+func held(v ssa.Value) types.Type {
+	switch v := v.(type) {
+	case *ssa.FieldAddr, *ssa.IndexAddr:
+		return v.Type().Underlying().(*types.Pointer).Elem()
+	}
+	return v.Type()
+}
+
+type checker struct {
+	pass *analysis.Pass
+	// local holds the parameters each function of the package being
+	// checked hands only to the log or Sentry.
+	local map[*ssa.Function][]bool
+	// globalUses holds the instructions that use each package-level
+	// variable, which go/ssa doesn't record.
+	globalUses map[*ssa.Global][]ssa.Instruction
+	// outside holds the package's error types whose Error method returns
+	// data from another error.
+	outside map[*types.TypeName]bool
+	// returning is the Error method findOutside is reading, and returned
+	// whether data from an error reaches one of its returns.
+	returning *ssa.Function
+	returned  bool
+}
+
 func run(pass *analysis.Pass) (any, error) {
-	if !inModule(pass.Pkg) {
+	if !inModule(pass.Pkg.Path()) {
 		return nil, nil
 	}
-	src := newSource(pass)
-	wrappers := flow(&sinks{src: src, reached: map[*types.TypeName]string{}}, func(pos token.Pos, diag string) {
-		pass.Reportf(pos, "%s", diag)
-	})
-	stores := exportTypes(src)
-	varParams := exportVars(src)
-	exportFuncs(src, stores, varParams, wrappers)
+	ssaInfo := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
+	c := &checker{
+		pass:       pass,
+		local:      map[*ssa.Function][]bool{},
+		globalUses: map[*ssa.Global][]ssa.Instruction{},
+		outside:    map[*types.TypeName]bool{},
+	}
+	c.findGlobalUses(ssaInfo.Pkg, ssaInfo.SrcFuncs)
+	c.summarize(ssaInfo.SrcFuncs)
+	c.findOutside(ssaInfo.SrcFuncs)
+	for _, fn := range ssaInfo.SrcFuncs {
+		for _, b := range fn.Blocks {
+			for _, instr := range b.Instrs {
+				v, ok := c.source(instr)
+				if !ok {
+					continue
+				}
+				if v != nil && c.contained(v, map[ssa.Value]bool{}) {
+					continue
+				}
+				c.pass.Reportf(posOf(instr, fn), "data from an error leaves it here for somewhere other than the log, Sentry, fmt.Errorf, a panic or a comparison (ADR 0018)")
+			}
+		}
+	}
 	return nil, nil
 }
 
-// inModule reports whether pkg is a package of the module.
-func inModule(pkg *types.Package) bool {
-	return pkg.Path() == module || strings.HasPrefix(pkg.Path(), module+"/")
-}
-
-// source is the code of the package being checked: its functions, the
-// values they put in each of its package-level variables, the calls they
-// make to each function with a body, and the functions they also use as a
-// value, whose calls through that value the check can't see.
-type source struct {
-	pass   *analysis.Pass
-	pkg    *ssa.Package
-	funcs  []*ssa.Function
-	writes map[*ssa.Global][]ssa.Value
-	calls  map[*ssa.Function][]ssa.CallInstruction
-	values map[*ssa.Function]bool
-}
-
-// newSource reads the package pass checks. Its functions take in the
-// package initializer, which buildssa leaves out of the package's source
-// functions and which holds each variable's declared value.
-func newSource(pass *analysis.Pass) *source {
-	built := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
-	src := &source{pass: pass, pkg: built.Pkg, funcs: built.SrcFuncs, writes: map[*ssa.Global][]ssa.Value{}, calls: map[*ssa.Function][]ssa.CallInstruction{}, values: map[*ssa.Function]bool{}}
-	if init := built.Pkg.Func("init"); init != nil {
-		src.funcs = append(src.funcs, init)
-	}
-	for _, fn := range src.funcs {
-		for _, block := range fn.Blocks {
-			for _, instr := range block.Instrs {
-				for _, p := range puts(instr) {
-					if g := variable(p.into); g != nil && g.Pkg == built.Pkg {
-						src.writes[g] = append(src.writes[g], p.values...)
-					}
-				}
-				if call, ok := instr.(ssa.CallInstruction); ok {
-					if callee := call.Common().StaticCallee(); callee != nil {
-						src.calls[callee] = append(src.calls[callee], call)
-					}
-				}
-				for _, fn := range usedAsValues(instr) {
-					src.values[fn] = true
-				}
-			}
-		}
-	}
-	return src
-}
-
-// usedAsValues returns the functions instr uses as a value: every function
-// among its operands, and every closure it is handed, apart from the
-// function a call calls and the function a closure is made of.
-func usedAsValues(instr ssa.Instruction) []*ssa.Function {
-	var called ssa.Value
-	switch instr := instr.(type) {
-	case ssa.CallInstruction:
-		if !instr.Common().IsInvoke() {
-			called = instr.Common().Value
-		}
-	case *ssa.MakeClosure:
-		called = instr.Fn
-	}
-	var fns []*ssa.Function
-	for _, op := range instr.Operands(nil) {
-		if op == nil || *op == nil || *op == called {
-			continue
-		}
-		switch v := (*op).(type) {
-		case *ssa.Function:
-			fns = append(fns, v)
-		case *ssa.MakeClosure:
-			fns = append(fns, v.Fn.(*ssa.Function))
-		}
-	}
-	return fns
-}
-
-// sessionMethods holds the names of *discordgo.Session's methods, read off
-// the discordgo the module builds with, so that a package that doesn't
-// import discordgo has them too.
-var sessionMethods = func() map[string]bool {
-	names := map[string]bool{}
-	session := reflect.TypeFor[*discordgo.Session]()
-	for i := range session.NumMethod() {
-		names[session.Method(i).Name] = true
-	}
-	return names
-}()
-
-// tracer returns a tracer of values in the package. through is as the
-// tracer's field says.
-func (src *source) tracer(through bool) *tracer {
-	return &tracer{src: src, seen: map[visit]bool{}, held: map[visit]bool{}, through: through}
-}
-
-// putting is a container an instruction puts values in, and those values.
-type putting struct {
-	into   ssa.Value
-	values []ssa.Value
-}
-
-// puts returns each container instr puts values in: the address a store
-// writes, the map a map update sets, the channel a send sends on, and each
-// pointer, slice, map, channel or interface a call is handed, since the
-// call may write what else it is handed there, as a strings.Builder's
-// WriteString does, or fmt.Fprintf into the io.Writer it is handed. What a
-// call is handed out of a package-level variable is left out. It is a
-// logger or a client kept there, more often than not, and what a call passes
-// it isn't kept in the variable.
-func puts(instr ssa.Instruction) []putting {
-	switch instr := instr.(type) {
-	case *ssa.Store:
-		return []putting{{instr.Addr, []ssa.Value{instr.Val}}}
-	case *ssa.MapUpdate:
-		return []putting{{instr.Map, []ssa.Value{instr.Key, instr.Value}}}
-	case *ssa.Send:
-		return []putting{{instr.Chan, []ssa.Value{instr.X}}}
-	case ssa.CallInstruction:
-		var out []putting
-		handed := operands(instr.Common())
-		for i, op := range handed {
-			if writable(op.v) {
-				out = append(out, putting{op.v, others(handed, i)})
-			}
-		}
-		return out
-	}
-	return nil
-}
-
-// operand is a value a call is handed, and the position of the parameter
-// it is handed as, counting a method's receiver first, or -1 for the
-// interface value an interface's method is called on.
-type operand struct {
-	v     ssa.Value
-	param int
-}
-
-// operands returns what call is handed: its arguments, with the values in a
-// variadic argument list in place of the list, and for a call of an
-// interface's method, the interface value it is called on.
-func operands(call *ssa.CallCommon) []operand {
-	var out []operand
-	if call.IsInvoke() {
-		out = append(out, operand{call.Value, -1})
-	}
-	for i, arg := range call.Args {
-		if values := listed(call, i); values != nil {
-			for _, v := range values {
-				out = append(out, operand{v, i})
-			}
-			continue
-		}
-		out = append(out, operand{arg, i})
-	}
-	return out
-}
-
-// others returns the values of handed apart from the one at i.
-func others(handed []operand, i int) []ssa.Value {
-	var values []ssa.Value
-	for j, op := range handed {
-		if j != i {
-			values = append(values, op.v)
-		}
-	}
-	return values
-}
-
-// writable reports whether a call may write what else it is handed into v,
-// one of its operands: a pointer, slice, map, channel or interface that
-// isn't read out of a package-level variable.
-func writable(v ssa.Value) bool {
-	return (isContainer(v.Type()) || types.IsInterface(v.Type())) && !loadedFromVariable(v)
-}
-
-// listed returns the values in the variadic argument list call is handed at
-// position i, or nil when it is handed no such list there.
-func listed(call *ssa.CallCommon, i int) []ssa.Value {
-	list, ok := call.Args[i].(*ssa.Slice)
-	if !ok || !isList(list.X) {
-		return nil
-	}
-	var values []ssa.Value
-	for _, ref := range *list.X.Referrers() {
-		if elem, ok := ref.(*ssa.IndexAddr); ok {
-			for _, use := range *elem.Referrers() {
-				values = append(values, use.(*ssa.Store).Val)
-			}
-		}
-	}
-	return values
-}
-
-// isList reports whether v is the array of a variadic argument list. Go
-// builds one for each call that is handed values for its variadic
-// parameter, stores each value in it, and hands the call the whole array as
-// a slice. No other code refers to the array.
-func isList(v ssa.Value) bool {
-	array, ok := v.(*ssa.Alloc)
-	return ok && array.Comment == "varargs"
-}
-
-// listedIn returns the call whose variadic argument list instr puts v in,
-// or nil when instr puts v in none.
-func listedIn(instr ssa.Instruction, v ssa.Value) ssa.CallInstruction {
-	store, ok := instr.(*ssa.Store)
-	if !ok || store.Val != v {
-		return nil
-	}
-	elem, ok := store.Addr.(*ssa.IndexAddr)
-	if !ok || !isList(elem.X) {
-		return nil
-	}
-	for _, ref := range *elem.X.Referrers() {
-		if list, ok := ref.(*ssa.Slice); ok {
-			return (*list.Referrers())[0].(ssa.CallInstruction)
-		}
-	}
-	return nil
-}
-
-// loadedFromVariable reports whether v is read out of a package-level
-// variable, or out of an address within one.
-func loadedFromVariable(v ssa.Value) bool {
-	load, ok := v.(*ssa.UnOp)
-	return ok && load.Op == token.MUL && variable(load) != nil
-}
-
-// isContainer reports whether a value of typ shares what it holds with its
-// copies: a pointer, slice, map or channel.
-func isContainer(typ types.Type) bool {
-	switch typ.Underlying().(type) {
-	case *types.Pointer, *types.Slice, *types.Map, *types.Chan:
-		return true
-	}
-	return false
-}
-
-// within returns the container v is an address or a slice within, or nil.
-func within(v ssa.Value) ssa.Value {
-	switch v := v.(type) {
-	case *ssa.IndexAddr:
-		return v.X
-	case *ssa.FieldAddr:
-		return v.X
-	case *ssa.Slice:
-		return v.X
-	}
-	return nil
-}
-
-// variable returns the package-level variable v is, or is within, or is
-// loaded from, or nil when v is none of those.
-func variable(v ssa.Value) *ssa.Global {
-	for v != nil {
-		if g, ok := v.(*ssa.Global); ok {
-			return g
-		}
-		if load, ok := v.(*ssa.UnOp); ok && load.Op == token.MUL {
-			v = load.X
-		} else {
-			v = within(v)
-		}
-	}
-	return nil
-}
-
-// flow traces each value the package's functions hand on to s and reports
-// each one built from an error.
-//
-// A function that passes one of its parameters on to a sink is a sink for
-// that parameter too, and once a value of an error type the module defines
-// reaches a sink, each store into that type is checked. Each round over the
-// package finds the wrappers and the types the sinks known so far reach,
-// until a round finds none. flow returns the wrappers.
-func flow(s *sinks, report func(token.Pos, string)) map[*ssa.Function]map[int]string {
-	src, reached := s.src, s.reached
-	s.wrappers = map[*ssa.Function]map[int]string{}
-	reported := map[token.Pos]bool{}
-	for found := true; found; {
-		found = false
-		for _, fn := range src.funcs {
-			for _, block := range fn.Blocks {
-				for _, instr := range block.Instrs {
-					for _, out := range s.outgoing(instr) {
-						t := src.tracer(false)
-						if t.trace(out.v, nil) && !reported[instr.Pos()] {
-							reported[instr.Pos()] = true
-							report(instr.Pos(), out.diag)
-						}
-						for _, forwarded := range t.forwarded {
-							// A closure can pass on a parameter of the
-							// function that encloses it, which makes that
-							// function the wrapper.
-							owner := forwarded.Parent()
-							index := slices.Index(owner.Params, forwarded)
-							if s.wrappers[owner] == nil {
-								s.wrappers[owner] = map[int]string{}
-							}
-							if _, ok := s.wrappers[owner][index]; !ok {
-								s.wrappers[owner][index] = out.diag
-								found = true
-							}
-						}
-						for _, typ := range t.reached {
-							if _, ok := reached[typ]; !ok {
-								reached[typ] = out.diag
-								found = true
-							}
-						}
+// findGlobalUses records the instructions that use each package-level
+// variable of the package, in its source functions and in the init function
+// that sets the variables' declared values.
+func (c *checker) findGlobalUses(pkg *ssa.Package, fns []*ssa.Function) {
+	visit := func(fn *ssa.Function) {
+		for _, b := range fn.Blocks {
+			for _, instr := range b.Instrs {
+				for _, op := range instr.Operands(nil) {
+					if g, ok := (*op).(*ssa.Global); ok {
+						c.globalUses[g] = append(c.globalUses[g], instr)
 					}
 				}
 			}
 		}
 	}
-	return s.wrappers
+	init := []*ssa.Function{pkg.Func("init")}
+	for len(init) > 0 {
+		fn := init[0]
+		init = append(init[1:], fn.AnonFuncs...)
+		visit(fn)
+	}
+	for _, fn := range fns {
+		visit(fn)
+	}
 }
 
-// exportTypes records, for each struct error type the package defines,
-// whether a store in the package puts data from an error in it, for the
-// checks of the packages that read a value of the type. It returns, for
-// each function, the parameters it stores into one of those types.
-func exportTypes(src *source) map[*ssa.Function][]store {
-	stores := map[*ssa.Function][]store{}
-	scope := src.pass.Pkg.Scope()
-	for _, name := range scope.Names() {
-		obj, ok := scope.Lookup(name).(*types.TypeName)
-		if !ok || !isStruct(obj) || !isError(obj.Type()) {
-			continue
+// summarize works out which parameters of the package's functions reach only
+// the log or Sentry. It starts by assuming every one does and takes each back
+// that a use disproves, until a whole pass changes none, then records the
+// answer for packages that call these functions.
+func (c *checker) summarize(fns []*ssa.Function) {
+	for _, fn := range fns {
+		params := make([]bool, len(fn.Params))
+		for i := range params {
+			params[i] = true
 		}
-		fact := &typeFact{}
-		wrappers := flow(&sinks{src: src, storesOnly: true, reached: map[*types.TypeName]string{obj: ""}}, func(token.Pos, string) {
-			fact.Carries = true
-		})
-		src.pass.ExportObjectFact(obj, fact)
-		for fn, params := range wrappers {
-			for param := range params {
-				stores[fn] = append(stores[fn], store{Param: param, Type: name})
-			}
-		}
+		c.local[fn] = params
 	}
-	return stores
-}
-
-// exportVars records, for each package-level variable of the package,
-// whether what the package puts in it carries data from an error, for the
-// checks of the packages that read it. It returns, for each function, the
-// parameters it puts in one of the variables.
-func exportVars(src *source) map[*ssa.Function][]int {
-	for _, member := range src.pkg.Members {
-		g, ok := member.(*ssa.Global)
-		if !ok || g.Object() == nil {
-			continue
-		}
-		src.pass.ExportObjectFact(g.Object(), &varFact{Carries: src.tracer(true).traceVariable(g)})
-	}
-	varParams := map[*ssa.Function][]int{}
-	wrappers := flow(&sinks{src: src, storesOnly: true, ownVars: true, reached: map[*types.TypeName]string{}}, func(token.Pos, string) {})
-	for fn, params := range wrappers {
-		varParams[fn] = slices.Sorted(maps.Keys(params))
-	}
-	return varParams
-}
-
-// isError reports whether typ, or a pointer to it, is an error.
-func isError(typ types.Type) bool {
-	return types.Implements(typ, errorType) || types.Implements(types.NewPointer(typ), errorType)
-}
-
-// exportFuncs records, for each function of the package, what each of its
-// results is built from, the parameters it stores into the package's error
-// types or puts in its variables, and the parameters wrappers holds for it,
-// for the checks of the packages that call it.
-func exportFuncs(src *source, stores map[*ssa.Function][]store, varParams map[*ssa.Function][]int, wrappers map[*ssa.Function]map[int]string) {
-	type export struct {
-		obj  *types.Func
-		fact *funcFact
-	}
-	// Each fact is exported once all are found, so that finding one never
-	// reads another this package recorded.
-	var exports []export
-	for _, fn := range src.funcs {
-		obj, ok := fn.Object().(*types.Func)
-		if !ok {
-			continue
-		}
-		fact := &funcFact{Results: make([]result, fn.Signature.Results().Len()), Stores: stores[fn], VarParams: varParams[fn], SinkParams: wrappers[fn]}
-		for i := range fact.Results {
-			t := src.tracer(true)
-			fact.Results[i].Carries = t.traceReturns(fn, nil, i)
-			for _, param := range t.forwarded {
-				if index := slices.Index(fn.Params, param); index >= 0 && !slices.Contains(fact.Results[i].Params, index) {
-					fact.Results[i].Params = append(fact.Results[i].Params, index)
+	for changed := true; changed; {
+		changed = false
+		for _, fn := range fns {
+			for i, p := range fn.Params {
+				if c.local[fn][i] && !c.contained(p, map[ssa.Value]bool{}) {
+					c.local[fn][i] = false
+					changed = true
 				}
 			}
 		}
-		exports = append(exports, export{obj, fact})
 	}
-	for _, e := range exports {
-		src.pass.ExportObjectFact(e.obj, e.fact)
+	for _, fn := range fns {
+		if obj, ok := fn.Object().(*types.Func); ok && obj.Pkg() == c.pass.Pkg {
+			c.pass.ExportObjectFact(obj, &logParams{Params: c.local[fn]})
+		}
 	}
 }
 
-// sinks is what one flow over a package hands a value on to. Unless
-// storesOnly is set, that is a checked call, a store into a panel field,
-// and a value put in another package's variable. Either way a value stored
-// into one of the reached error types is handed on, since such a value
-// carries what is stored in it.
-type sinks struct {
-	src *source
-	// storesOnly leaves out the checked calls, fields and other packages'
-	// variables, so that only a store into a reached type, or a call that
-	// passes a value on to one, hands a value on.
-	storesOnly bool
-	// ownVars hands on each value put in a package-level variable of the
-	// package, so that the flow finds the functions that put a parameter
-	// in one.
-	ownVars bool
-	// wrappers holds the functions of the package that pass a parameter on
-	// to a sink, and the diagnostic for each such parameter.
-	wrappers map[*ssa.Function]map[int]string
-	// reached holds the error types of the module that reach a sink, and
-	// the diagnostic for a store into each.
-	reached map[*types.TypeName]string
-}
-
-// sent is a value an instruction hands on toward a person, and the
-// diagnostic that names where it goes.
-type sent struct {
-	v    ssa.Value
-	diag string
-}
-
-// outgoing returns the values instr hands on toward a person: the arguments
-// of a sink call that carry the message or the answer, the value stored
-// into a panel field or into a field of an error type that reaches a sink,
-// or the values put in a package-level variable that s hands on.
-func (s *sinks) outgoing(instr ssa.Instruction) []sent {
-	values := s.variables(instr)
-	switch instr := instr.(type) {
-	case ssa.CallInstruction:
-		answers := instr.Parent().Pkg.Pkg.Path() == panelPackage
-		for param, diag := range s.params(instr.Common(), answers) {
-			values = append(values, sent{instr.Common().Args[param], diag})
-		}
-	case *ssa.Store:
-		if diag, ok := s.field(instr.Addr); ok {
-			values = append(values, sent{instr.Val, diag})
-		}
-	}
-	return values
-}
-
-// variables returns the values instr puts in a package-level variable that
-// s hands on: one of the package's own when ownVars is set, or else one of
-// another package of the module, whose check can't follow the value to
-// where the variable is read.
-func (s *sinks) variables(instr ssa.Instruction) []sent {
-	var out []sent
-	for _, p := range puts(instr) {
-		g := variable(p.into)
-		if g == nil {
-			continue
-		}
-		var diag string
-		switch {
-		case s.ownVars && g.Pkg == s.src.pkg:
-			// This flow only finds the functions that put a parameter in
-			// a variable, and reports nothing, so no diagnostic is needed.
-		case !s.storesOnly && g.Pkg != s.src.pkg && inModule(g.Pkg.Pkg):
-			diag = toVariable
-		default:
-			continue
-		}
-		for _, v := range p.values {
-			out = append(out, sent{v, diag})
-		}
-	}
-	return out
-}
-
-// field returns the diagnostic for a value stored at addr into a panel
-// field, or into a field of an error type that reaches a sink.
-func (s *sinks) field(addr ssa.Value) (string, bool) {
-	if field, ok := addr.(*ssa.FieldAddr); ok && !s.storesOnly && panelFields[fieldName(field)] {
-		return toPanel, true
-	}
-	for {
-		field, ok := addr.(*ssa.FieldAddr)
-		if !ok {
-			return "", false
-		}
-		if diag, ok := s.reached[typeName(field.X.Type())]; ok {
-			return diag, true
-		}
-		addr = field.X
-	}
-}
-
-// fieldName returns the field field addresses, named by its package path,
-// its type's name and its own name, or "" when its type has no name.
-func fieldName(field *ssa.FieldAddr) string {
-	obj := typeName(field.X.Type())
-	if obj == nil {
-		return ""
-	}
-	if st, ok := obj.Type().Underlying().(*types.Struct); ok {
-		return obj.Pkg().Path() + "." + obj.Name() + "." + st.Field(field.Field).Name()
-	}
-	return ""
-}
-
-// params returns the positions of call's arguments that reach a person,
-// each with the diagnostic that names where it goes. answers says whether
-// call is made in the panel's package.
-func (s *sinks) params(call *ssa.CallCommon, answers bool) map[int]string {
-	if !s.storesOnly {
-		if params := checkedParams(call, answers); params != nil {
-			return params
-		}
-	}
-	callee := call.StaticCallee()
-	params := maps.Clone(s.wrappers[callee])
-	if params == nil {
-		params = map[int]string{}
-	}
-	if fact := importFuncFact(s.src.pass, call); fact != nil {
-		// A function of another package of the module that stores a
-		// parameter into one of its error types passes that parameter on
-		// to a sink once the type reaches one.
-		for _, st := range fact.Stores {
-			obj, _ := callee.Object().Pkg().Scope().Lookup(st.Type).(*types.TypeName)
-			if diag, ok := s.reached[obj]; ok {
-				params[st.Param] = diag
+// findOutside works out which of the package's error types return data from
+// another error from their Error method. Once one does, a call of its
+// methods takes data out of an error, which can make another type's Error
+// method return some, so it repeats until a whole pass finds no more, then
+// records the answer for packages that use these types.
+func (c *checker) findOutside(fns []*ssa.Function) {
+	for changed := true; changed; {
+		changed = false
+		for _, fn := range fns {
+			t := errorMethodOf(fn)
+			if t == nil || t.Pkg() != c.pass.Pkg || c.outside[t] {
+				continue
+			}
+			if c.returnsErrorData(fn) {
+				c.outside[t] = true
+				changed = true
 			}
 		}
-		// One that puts a parameter in a package-level variable puts it
-		// where this check can't follow it.
-		if !s.storesOnly {
-			for _, param := range fact.VarParams {
-				params[param] = toVariable
-			}
-			// One whose check found it handing a parameter on to a sink is
-			// a sink for that parameter too, with the same diagnostic.
-			maps.Copy(params, fact.SinkParams)
-		}
 	}
-	return params
+	for t := range c.outside {
+		c.pass.ExportObjectFact(t, &outsideError{})
+	}
 }
 
-// checkedParams returns the positions of the arguments of call that carry a
-// message to Discord or, when answers is set, a panel answer, each with the
-// diagnostic that names where it goes, or nil when call is no checked call.
-func checkedParams(call *ssa.CallCommon, answers bool) map[int]string {
-	if answers && handsOnWriter(call) {
-		// What a call outside the module is handed along with the response
-		// writer goes to the browser, apart from the writer and a method's
-		// receiver.
-		params := arguments(call, receivers(call), toPanel)
-		for i, arg := range call.Args {
-			if carriesWriter(arg) {
-				delete(params, i)
+// returnsErrorData reports whether data from an error reaches a return of
+// fn.
+func (c *checker) returnsErrorData(fn *ssa.Function) bool {
+	c.returning, c.returned = fn, false
+	defer func() { c.returning, c.returned = nil, false }()
+	for _, b := range fn.Blocks {
+		for _, instr := range b.Instrs {
+			if v, ok := c.source(instr); ok && v != nil {
+				c.contained(v, map[ssa.Value]bool{})
 			}
 		}
-		return params
 	}
-	if call.IsInvoke() {
-		// A method of any interface named like one of *discordgo.Session's
-		// is taken for it. Its receiver isn't among the call's arguments.
-		if sessionMethods[call.Method.Name()] {
-			return arguments(call, 0, toDiscord)
-		}
+	return c.returned
+}
+
+// errorMethodOf returns the type fn is the Error method of, when fn is the
+// Error method of a named type of the module.
+func errorMethodOf(fn *ssa.Function) *types.TypeName {
+	recv := fn.Signature.Recv()
+	if recv == nil || fn.Name() != "Error" {
 		return nil
 	}
-	callee := call.StaticCallee()
-	if callee == nil {
+	n := namedOf(recv.Type())
+	if n == nil || n.Obj().Pkg() == nil || !inModule(n.Obj().Pkg().Path()) {
 		return nil
 	}
-	if obj, ok := callee.Object().(*types.Func); ok && isInterfaceMethod(obj) && callee.Signature.Recv() == nil && sessionMethods[obj.Name()] {
-		// A method value taken from an interface is called through a
-		// wrapper bound to the interface value, so its receiver isn't among
-		// the call's arguments.
-		return arguments(call, 0, toDiscord)
-	}
-	if obj, ok := callee.Object().(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == discordgoPackage {
-		// What a call hands discordgo goes to Discord. A method's receiver,
-		// the call's first argument, is the session or the value the method
-		// reads.
-		return arguments(call, receivers(call), toDiscord)
-	}
-	if callee.Name() == sinkName && callee.Pkg != nil && callee.Pkg.Pkg.Path() == sinkPackage && len(call.Args) > sinkParam {
-		return map[int]string{sinkParam: toDiscord}
-	}
-	return nil
+	return n.Obj()
 }
 
-// isInterfaceMethod reports whether fn is a method of an interface.
-func isInterfaceMethod(fn *types.Func) bool {
-	recv := fn.Signature().Recv()
-	return recv != nil && types.IsInterface(recv.Type())
-}
-
-// leavesModule reports whether call goes to code outside the module, or to
-// code it doesn't name: an interface's method or a function value.
-func leavesModule(call *ssa.CallCommon) bool {
-	callee := call.StaticCallee()
-	switch {
-	case call.IsInvoke() || callee == nil:
-		return true
-	case callee.Pkg != nil:
-		return !inModule(callee.Pkg.Pkg)
+// namedOf returns the named type t is, or points to.
+func namedOf(t types.Type) *types.Named {
+	if p, ok := types.Unalias(t).(*types.Pointer); ok {
+		t = p.Elem()
 	}
-	obj, ok := callee.Object().(*types.Func)
-	return !ok || obj.Pkg() == nil || !inModule(obj.Pkg())
+	n, _ := types.Unalias(t).(*types.Named)
+	return n
 }
 
-// handsOnWriter reports whether call goes outside the module and carries
-// the panel's response writer, as an argument or as the value an interface
-// method is called on.
-func handsOnWriter(call *ssa.CallCommon) bool {
-	if !leavesModule(call) {
-		return false
+// isOutside reports whether t, a type of the module, returns data from
+// another error from its Error method.
+func (c *checker) isOutside(t *types.TypeName) bool {
+	if t.Pkg() == c.pass.Pkg {
+		return c.outside[t]
 	}
-	return call.IsInvoke() && carriesWriter(call.Value) || slices.ContainsFunc(call.Args, carriesWriter)
+	return c.pass.ImportObjectFact(t, new(outsideError))
 }
 
-// carriesWriter reports whether v is the panel's response writer, converted
-// to another interface such as io.Writer, or what a call outside the module
-// that carries the writer returns, such as json.NewEncoder(w).
-func carriesWriter(v ssa.Value) bool {
-	if isNamed(v.Type(), "net/http", "ResponseWriter") {
+// fromOutside reports whether a method or field obj of a value of type t
+// gives data from an error the check reads as one from outside the module:
+// obj is declared outside the module, or t is an outside error type.
+func (c *checker) fromOutside(obj types.Object, t types.Type) bool {
+	if obj == nil || obj.Pkg() == nil || !inModule(obj.Pkg().Path()) {
 		return true
 	}
-	if conv, ok := v.(*ssa.ChangeInterface); ok {
-		return carriesWriter(conv.X)
+	n := namedOf(t)
+	return n != nil && c.isOutside(n.Obj())
+}
+
+// logParam reports whether fn hands its i'th parameter only to the log or
+// Sentry.
+func (c *checker) logParam(fn *ssa.Function, i int) bool {
+	if fn.Pkg != nil && fn.Pkg.Pkg == c.pass.Pkg {
+		params, ok := c.local[fn]
+		return ok && params[i]
 	}
-	call := resultOf(v)
-	return call != nil && handsOnWriter(&call.Call)
-}
-
-// resultOf returns the call v is a result of, or nil when v is no call's
-// result.
-func resultOf(v ssa.Value) *ssa.Call {
-	switch v := v.(type) {
-	case *ssa.Call:
-		return v
-	case *ssa.Extract:
-		call, _ := v.Tuple.(*ssa.Call)
-		return call
-	}
-	return nil
-}
-
-// receivers returns how many of call's arguments are a method's receiver:
-// one for a call to a method by its name, and none otherwise.
-func receivers(call *ssa.CallCommon) int {
-	if callee := call.StaticCallee(); callee != nil && callee.Signature.Recv() != nil {
-		return 1
-	}
-	return 0
-}
-
-// arguments returns the positions of call's arguments from first on, each
-// with diag.
-func arguments(call *ssa.CallCommon, first int, diag string) map[int]string {
-	params := map[int]string{}
-	for i := first; i < len(call.Args); i++ {
-		params[i] = diag
-	}
-	return params
-}
-
-// isNamed reports whether typ, or the type it points to, is one of the types
-// names in the package at path.
-func isNamed(typ types.Type, path string, names ...string) bool {
-	obj := typeName(typ)
-	return obj != nil && obj.Pkg() != nil && obj.Pkg().Path() == path && slices.Contains(names, obj.Name())
-}
-
-// tracer reports whether any value a value is built from is an error, other
-// than a time and a value of an error type the module defines, which is
-// judged by what was stored in it (ADR 0016), or is a value it has no rule
-// for (ADR 0017).
-// It follows a call into a function of the package being checked, through
-// its return values and back out through its parameters to the call's
-// arguments, and a call into another package of the module by what that
-// package's check recorded about it. A call into any other function counts
-// as built from all its arguments. It follows a read out of a container to
-// what was put in it, and a package-level variable to what its package puts
-// in it.
-type tracer struct {
-	src  *source
-	seen map[visit]bool
-	// held holds the locals traced for what is written through the address
-	// each holds.
-	held map[visit]bool
-	// forwarded holds the parameters of the traced function, or of a
-	// function enclosing it, that the value was built from.
-	forwarded []*ssa.Parameter
-	// reached holds the error types the module defines that the value was
-	// built from. Their stores carry the value's data.
-	reached []*types.TypeName
-	// through, set while recording a function's results for the checks of
-	// other packages, traces a value of an error type the package defines
-	// on to what was stored in it. A caller in another package that gets
-	// the value as an error reads only the result's fact, not the type's.
-	through bool
-}
-
-// visit is a value traced inside the chain of frames f the tracer entered to
-// reach it.
-type visit struct {
-	v ssa.Value
-	f *frame
-}
-
-// frame is a function body the tracer followed a value into: the callee of
-// a call, or a closure it reached through a variable the closure puts values
-// in, which runs at each call of the closure.
-type frame struct {
-	fn *ssa.Function
-	// call is the call that entered fn, or nil for a closure reached through
-	// a variable.
-	call ssa.CallInstruction
-	// closure is the closure value call calls, or nil when call calls fn by
-	// name or there is no call.
-	closure *ssa.MakeClosure
-	// parent is the frame call is made in, or the frame a closure's
-	// enclosing function runs in. A closure's calls are made there too.
-	parent *frame
-}
-
-// anywhere is the frame of a value the tracer reached through a
-// package-level variable. Any call of the function that stores the value
-// may run the store, so a parameter there is built from what each call in
-// the package passes it.
-var anywhere = &frame{}
-
-// runs reports whether f is a frame of fn's body.
-func (f *frame) runs(fn *ssa.Function) bool {
-	return f != nil && f != anywhere && f.fn == fn
-}
-
-// enter returns the frame of callee's body that call, made in f, enters.
-func enter(callee *ssa.Function, call ssa.CallInstruction, f *frame) *frame {
-	closure, _ := call.Common().Value.(*ssa.MakeClosure)
-	return &frame{fn: callee, call: call, closure: closure, parent: f}
-}
-
-func (f *frame) entered(fn *ssa.Function) bool {
-	for ; f != nil && f != anywhere; f = f.parent {
-		if f.runs(fn) {
-			return true
-		}
-	}
-	return false
-}
-
-func (t *tracer) trace(v ssa.Value, f *frame) bool {
-	if v == nil || t.seen[visit{v, f}] {
+	obj, ok := fn.Object().(*types.Func)
+	if !ok {
 		return false
 	}
-	t.seen[visit{v, f}] = true
-	if isTime(v.Type()) {
+	var fact logParams
+	if !c.pass.ImportObjectFact(obj, &fact) || i >= len(fact.Params) {
 		return false
 	}
-	if types.Implements(v.Type(), errorType) {
-		obj := typeName(v.Type())
-		var fact typeFact
-		switch {
-		case obj != nil && isStruct(obj) && obj.Pkg() == t.src.pass.Pkg:
-			if !t.through {
-				t.reached = append(t.reached, obj)
-				return false
-			}
-		case obj != nil && isStruct(obj) && t.src.pass.ImportObjectFact(obj, &fact):
-			// An error type another package of the module defines carries
-			// what that package stores in it, and what this one does.
-			t.reached = append(t.reached, obj)
-			return fact.Carries
-		case !t.followable(v, f):
-			return true
-		}
-	}
-	switch v := v.(type) {
-	case *ssa.Call:
-		return t.traceCall(v, -1, f)
-	case *ssa.Extract:
-		switch tuple := v.Tuple.(type) {
-		case *ssa.Call:
-			return t.traceCall(tuple, v.Index, f)
-		case *ssa.Next:
-			// A range step's results are whether it got an element, the
-			// element's key and its value. The key of a range over a string
-			// is a position in it, and carries none of the string.
-			if iter, ok := tuple.Iter.(*ssa.Range); ok && (v.Index == 2 || v.Index == 1 && !tuple.IsString) {
-				return t.trace(iter.X, f)
-			}
-			return false
-		// The second result of a comma-ok lookup, type assertion or receive
-		// says whether it got a value, and carries none of it.
-		case *ssa.Lookup:
-			return v.Index == 0 && t.trace(tuple.X, f)
-		case *ssa.TypeAssert:
-			return v.Index == 0 && t.trace(tuple.X, f)
-		case *ssa.UnOp:
-			return v.Index == 0 && t.trace(tuple.X, f)
-		case *ssa.Select:
-			// A select's first two results say which case it took and
-			// whether a receive got a value. The rest are what its receive
-			// cases got, in order.
-			recv := v.Index - 2
-			for _, state := range tuple.States {
-				if state.Dir != types.RecvOnly {
-					continue
-				}
-				if recv == 0 {
-					return t.trace(state.Chan, f)
-				}
-				recv--
-			}
-			return false
-		}
-	case *ssa.Parameter:
-		switch {
-		case f == nil:
-			t.forwarded = append(t.forwarded, v)
-			return false
-		case f == anywhere:
-			return t.traceCallers(v, anywhere)
-		case f.fn != v.Parent():
-		case f.call != nil:
-			return t.trace(f.call.Common().Args[slices.Index(v.Parent().Params, v)], f.parent)
-		default:
-			// A closure reached through a variable runs at each call of it,
-			// which its enclosing function makes.
-			return t.traceCallers(v, f.parent)
-		}
-	case *ssa.BinOp:
-		switch v.Op {
-		case token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
-			// A comparison inspects its operands and carries none of them.
-			return false
-		}
-		return t.trace(v.X, f) || t.trace(v.Y, f)
-	case *ssa.Phi:
-		for _, edge := range v.Edges {
-			if t.trace(edge, f) {
-				return true
-			}
-		}
-		return false
-	case *ssa.Slice:
-		return t.trace(v.X, f)
-	case *ssa.Convert:
-		return t.trace(v.X, f)
-	case *ssa.ChangeType:
-		return t.trace(v.X, f)
+	return fact.Params[i]
+}
+
+// source reports whether instr takes data out of an error, and if so the
+// value that carries it. A nil value means the data leaves where the check
+// can't follow it, so instr is reported whatever comes after.
+func (c *checker) source(instr ssa.Instruction) (ssa.Value, bool) {
+	switch in := instr.(type) {
 	case *ssa.MakeInterface:
-		return t.trace(v.X, f)
-	case *ssa.ChangeInterface:
-		return t.trace(v.X, f)
-	case *ssa.Alloc, *ssa.MakeSlice, *ssa.MakeMap, *ssa.MakeChan:
-		return t.traceStores(v, f, true)
-	case *ssa.FreeVar:
-		return t.traceBindings(v, f)
-	case *ssa.UnOp:
-		return t.trace(v.X, f)
-	case *ssa.FieldAddr:
-		return t.trace(v.X, f)
-	case *ssa.Field:
-		return t.trace(v.X, f)
-	case *ssa.IndexAddr:
-		return t.trace(v.X, f)
-	case *ssa.Index:
-		return t.trace(v.X, f)
-	case *ssa.Lookup:
-		return t.trace(v.X, f)
-	case *ssa.TypeAssert:
-		return t.trace(v.X, f)
-	case *ssa.Global:
-		return t.traceVariable(v)
-	case *ssa.Const, *ssa.Function, *ssa.Builtin:
-		// A constant is fixed text, and a function carries no data.
-		return false
-	case *ssa.MakeClosure:
-		// A closure carries what it captured.
-		for _, binding := range v.Bindings {
-			if t.trace(binding, f) {
-				return true
-			}
+		if types.Implements(in.Type(), errorType) || errorsAsTarget(in) {
+			return nil, false
 		}
-		return false
+		return in, c.holdsError(in.X.Type(), map[types.Type]bool{})
+	case *ssa.ChangeInterface:
+		return in, isError(in.X.Type()) && !types.Implements(in.Type(), errorType)
+	case ssa.CallInstruction:
+		common := in.Common()
+		if t, ok := asTarget(common); ok && !isError(t) {
+			// errors.As fills a target that isn't an error with the
+			// error itself, seen through another interface, which the
+			// check can't follow from here.
+			return nil, true
+		}
+		if b, ok := common.Value.(*ssa.Builtin); ok {
+			// A recovered panic's value may be an error.
+			return result(in), b.Name() == "recover"
+		}
+		if common.IsInvoke() && isError(common.Value.Type()) {
+			return result(in), true
+		}
+		// A call through a method value's closure isn't one: the data left
+		// the error where the closure was made.
+		if callee, ok := common.Value.(*ssa.Function); ok && c.errorMethod(callee) {
+			return result(in), true
+		}
+		return nil, c.handedError(common)
+	case *ssa.MakeClosure:
+		return in, c.errorMethod(in.Fn.(*ssa.Function))
+	case *ssa.TypeAssert:
+		return in, isError(in.X.Type()) && types.IsInterface(in.AssertedType) && !types.Implements(in.AssertedType, errorType)
+	case *ssa.Field:
+		return in, c.outsideField(in.X.Type(), in.Field)
+	case *ssa.FieldAddr:
+		return in, c.outsideField(in.X.Type().Underlying().(*types.Pointer).Elem(), in.Field)
 	}
-	// A value the tracer has no rule for counts as built from an error, so
-	// that a route it can't follow fails the gate (ADR 0017).
+	return nil, false
+}
+
+// handedError reports whether common hands an error to code the check
+// doesn't read, outside the module, that could return it or write it
+// somewhere: a call whose signature leaves it nothing to return or write but
+// bools, times and errors, such as errors.Is, passes. So does a call into
+// the module, whose code the check reads, unless it instantiates a generic
+// function with an error for a type parameter that may not be one. A call
+// through an interface or a function value may be the module's own code, so
+// it is judged by what it returns alone: what the module's code writes is
+// read where it writes it.
+func (c *checker) handedError(common *ssa.CallCommon) bool {
+	callee := common.StaticCallee()
+	if callee == nil {
+		callee = c.varFunction(common.Value)
+	}
+	if callee != nil {
+		if c.errorTypeArg(callee) {
+			return true
+		}
+		if moduleFunction(callee) || sink(callee) {
+			return false
+		}
+		if _, ok := asTarget(common); ok {
+			return false
+		}
+	}
+	for _, a := range common.Args {
+		if !isError(a.Type()) {
+			continue
+		}
+		if callee == nil {
+			return !cleanResults(common.Signature())
+		}
+		return !inertSignature(common.Signature())
+	}
+	return false
+}
+
+// cleanResults reports whether a function of sig returns nothing but bools,
+// times and errors.
+func cleanResults(sig *types.Signature) bool {
+	for i := range sig.Results().Len() {
+		if !clean(sig.Results().At(i).Type()) {
+			return false
+		}
+	}
 	return true
 }
 
-// traceVariable traces every value the package puts in the package-level
-// variable g, or reads what the check of g's package recorded about it.
-// What a variable holds doesn't depend on the call the tracer reached it in.
-func (t *tracer) traceVariable(g *ssa.Global) bool {
-	if g.Pkg != t.src.pkg {
-		var fact varFact
-		return g.Object() != nil && t.src.pass.ImportObjectFact(g.Object(), &fact) && fact.Carries
+// errorTypeArg reports whether fn is a generic function instantiated with a
+// type that holds an error for a type parameter that may not be an error,
+// so the function's code, read with the type parameter, can't tell.
+func (c *checker) errorTypeArg(fn *ssa.Function) bool {
+	targs := fn.TypeArgs()
+	if len(targs) == 0 || fn.Origin() == nil {
+		return false
 	}
-	for _, v := range t.src.writes[g] {
-		if t.trace(v, anywhere) {
+	params := fn.Origin().Signature.TypeParams()
+	if recv := fn.Origin().Signature.RecvTypeParams(); recv.Len() > 0 {
+		params = recv
+	}
+	for i, t := range targs {
+		if i < params.Len() && !types.Implements(params.At(i), errorType) && c.holdsError(t, map[types.Type]bool{}) {
 			return true
 		}
 	}
 	return false
 }
 
-// traceCallers traces what each call in the package passes the parameter p,
-// inside the frame f the calls are made in. A function the package also
-// uses as a value has calls the check can't see, so its parameter counts as
-// a value the check can't follow.
-func (t *tracer) traceCallers(p *ssa.Parameter, f *frame) bool {
-	if t.src.values[p.Parent()] {
-		return true
+// moduleFunction reports whether the check reads fn's code: fn, or the
+// method a wrapper stands for, is declared in the module.
+func moduleFunction(fn *ssa.Function) bool {
+	if fn.Pkg != nil {
+		return inModule(fn.Pkg.Pkg.Path())
 	}
-	index := slices.Index(p.Parent().Params, p)
-	for _, call := range t.src.calls[p.Parent()] {
-		if args := call.Common().Args; index < len(args) && t.trace(args[index], f) {
-			return true
-		}
-	}
-	return false
+	obj := fn.Object()
+	return obj != nil && obj.Pkg() != nil && inModule(obj.Pkg().Path())
 }
 
-// isTime reports whether typ is a time or a duration, which can't carry an
-// error's words even when read off an error (ADR 0016).
-func isTime(typ types.Type) bool {
-	return isNamed(typ, "time", "Time", "Duration")
-}
-
-// followable reports whether the tracer can follow the error value v to
-// where it was made: v is nil, converted to an interface, or returned by a
-// call into the module. Any other error value carries its error's data.
-func (t *tracer) followable(v ssa.Value, f *frame) bool {
-	switch v := v.(type) {
-	case *ssa.Const, *ssa.MakeInterface, *ssa.ChangeInterface, *ssa.Phi:
-		return true
-	case *ssa.Call, *ssa.Extract:
-		call := resultOf(v)
-		if call == nil {
+// inertSignature reports whether a function of sig can return nothing but
+// bools, times and errors, and takes nothing it could write into.
+func inertSignature(sig *types.Signature) bool {
+	if !cleanResults(sig) {
+		return false
+	}
+	if sig.Recv() != nil && !inert(sig.Recv().Type()) {
+		return false
+	}
+	for i := range sig.Params().Len() {
+		if !inert(sig.Params().At(i).Type()) {
 			return false
 		}
-		callee, fact := t.follow(call, f)
-		return callee != nil || fact != nil
-	case *ssa.Parameter:
-		return f.runs(v.Parent()) && f.call != nil
 	}
-	return false
+	return true
 }
 
-// follow returns what the tracer follows call by: the body of a function
-// of the package being checked, or else what the check of another package
-// of the module recorded about the function. Both are nil when the tracer
-// can't follow call.
-func (t *tracer) follow(call *ssa.Call, f *frame) (*ssa.Function, *funcFact) {
-	if callee := t.callee(call, f); callee != nil {
-		return callee, nil
+// holdsError reports whether a value of t, handed to fmt, a template or
+// encoding/json, can show data from an error: t is an error the check reads
+// as one from outside the module, or holds one in an exported field, an
+// element or a pointer. fmt prints an unexported field without calling its
+// Error method, and templates and encoding/json can't read one, so
+// unexported fields don't count.
+func (c *checker) holdsError(t types.Type, seen map[types.Type]bool) bool {
+	if seen[t] {
+		return false
 	}
-	return nil, importFuncFact(t.src.pass, &call.Call)
-}
-
-// traceCall traces the result of call at index, or every result when index
-// is negative. When the tracer can't follow call, each of its results counts
-// as built from all its arguments and the interface value a method call is
-// made on.
-func (t *tracer) traceCall(call *ssa.Call, index int, f *frame) bool {
-	switch callee, fact := t.follow(call, f); {
-	case callee != nil:
-		return t.traceReturns(callee, enter(callee, call, f), index)
-	case fact != nil:
-		return t.traceResults(call, fact, index, f)
-	}
-	// A method call on an interface value, or a call of a function value,
-	// is built from that value too.
-	if (call.Call.IsInvoke() || call.Call.StaticCallee() == nil) && t.trace(call.Call.Value, f) {
-		return true
-	}
-	for _, arg := range call.Call.Args {
-		if t.trace(arg, f) {
+	seen[t] = true
+	if isError(t) {
+		n := namedOf(t)
+		if n == nil || n.Obj().Pkg() == nil || !inModule(n.Obj().Pkg().Path()) || c.isOutside(n.Obj()) {
 			return true
 		}
 	}
-	return false
-}
-
-// callee returns the function of the package being checked that call
-// enters, or nil when the tracer can't follow call into its body.
-func (t *tracer) callee(call ssa.CallInstruction, f *frame) *ssa.Function {
-	callee := call.Common().StaticCallee()
-	if callee == nil || callee.Blocks == nil || f.entered(callee) {
-		return nil
-	}
-	return callee
-}
-
-// importFuncFact returns what the check of another package of the module
-// recorded about the function call enters, or nil when it recorded nothing.
-func importFuncFact(pass *analysis.Pass, call *ssa.CallCommon) *funcFact {
-	callee := call.StaticCallee()
-	if callee == nil || callee.Object() == nil {
-		return nil
-	}
-	obj := callee.Object().(*types.Func)
-	// A method's facts count its receiver as the first parameter, so they
-	// fit a call that passes the receiver as its first argument, and not a
-	// call to the method bound to a receiver.
-	params := obj.Signature().Params().Len()
-	if obj.Signature().Recv() != nil {
-		params++
-	}
-	var fact funcFact
-	if len(call.Args) != params || !pass.ImportObjectFact(obj, &fact) {
-		return nil
-	}
-	return &fact
-}
-
-// traceResults traces the result at index of a call into another package of
-// the module, or every result when index is negative, by what that
-// package's check recorded about it.
-func (t *tracer) traceResults(call *ssa.Call, fact *funcFact, index int, f *frame) bool {
-	for i, r := range fact.Results {
-		if index >= 0 && i != index {
-			continue
-		}
-		if r.Carries {
-			return true
-		}
-		for _, param := range r.Params {
-			if param < len(call.Call.Args) && t.trace(call.Call.Args[param], f) {
+	switch u := t.Underlying().(type) {
+	case *types.Pointer:
+		return c.holdsError(u.Elem(), seen)
+	case *types.Slice:
+		return c.holdsError(u.Elem(), seen)
+	case *types.Array:
+		return c.holdsError(u.Elem(), seen)
+	case *types.Chan:
+		return c.holdsError(u.Elem(), seen)
+	case *types.Map:
+		return c.holdsError(u.Key(), seen) || c.holdsError(u.Elem(), seen)
+	case *types.Struct:
+		for i := range u.NumFields() {
+			f := u.Field(i)
+			if f.Exported() && c.holdsError(f.Type(), seen) {
 				return true
 			}
 		}
@@ -1279,196 +512,356 @@ func (t *tracer) traceResults(call *ssa.Call, fact *funcFact, index int, f *fram
 	return false
 }
 
-// typeName returns the name of the named type typ is, or points to.
-func typeName(typ types.Type) *types.TypeName {
-	if ptr, ok := typ.(*types.Pointer); ok {
-		typ = ptr.Elem()
+// asTarget returns the type errors.As fills, when common calls errors.As.
+func asTarget(common *ssa.CallCommon) (types.Type, bool) {
+	callee := common.StaticCallee()
+	if callee == nil || callee.Pkg == nil || callee.Pkg.Pkg.Path() != "errors" || callee.Name() != "As" {
+		return nil, false
 	}
-	if named, ok := typ.(*types.Named); ok {
-		return named.Obj()
+	mi, ok := common.Args[1].(*ssa.MakeInterface)
+	if !ok {
+		return nil, false
 	}
-	return nil
+	p, ok := mi.X.Type().Underlying().(*types.Pointer)
+	if !ok {
+		return nil, false
+	}
+	return p.Elem(), true
 }
 
-func isStruct(obj *types.TypeName) bool {
-	_, ok := obj.Type().Underlying().(*types.Struct)
+// errorsAsTarget reports whether mi only hands errors.As the address of an
+// error to fill, which carries none of the error's data.
+func errorsAsTarget(mi *ssa.MakeInterface) bool {
+	for _, r := range *mi.Referrers() {
+		call, ok := r.(ssa.CallInstruction)
+		if !ok {
+			return false
+		}
+		t, ok := asTarget(call.Common())
+		if !ok || !isError(t) {
+			return false
+		}
+	}
+	return true
+}
+
+// errorMethod reports whether fn is a method of an error that takes data out
+// of it: the method itself, a method expression's thunk, or a method value's
+// bound wrapper, of a method declared outside the module or of an outside
+// error type.
+func (c *checker) errorMethod(fn *ssa.Function) bool {
+	obj, ok := fn.Object().(*types.Func)
+	if !ok {
+		return false
+	}
+	recv := obj.Type().(*types.Signature).Recv()
+	return recv != nil && isError(recv.Type()) && c.fromOutside(obj, recv.Type())
+}
+
+// outsideField reports whether reading the field'th field of a struct of
+// type t takes data out of an error.
+func (c *checker) outsideField(t types.Type, field int) bool {
+	if !isError(t) {
+		return false
+	}
+	return c.fromOutside(t.Underlying().(*types.Struct).Field(field), t)
+}
+
+// contained reports whether every use of v, a value carrying data from an
+// error, keeps it to the log, Sentry or a comparison. A use the check has no
+// rule for counts as one that doesn't.
+func (c *checker) contained(v ssa.Value, seen map[ssa.Value]bool) bool {
+	if v == nil || seen[v] {
+		return true
+	}
+	seen[v] = true
+	if clean(held(v)) {
+		return true
+	}
+	refs := v.Referrers()
+	if refs == nil {
+		return true
+	}
+	ok := true
+	for _, r := range *refs {
+		if !c.containedUse(v, r, seen) {
+			ok = false
+			// findOutside reads every use, so it finds a return a use
+			// the check has no rule for would otherwise hide.
+			if c.returning == nil {
+				return false
+			}
+		}
+	}
 	return ok
 }
 
-// traceReturns traces the value fn returns at index, or every value it
-// returns when index is negative, inside the call f entered.
-func (t *tracer) traceReturns(fn *ssa.Function, f *frame, index int) bool {
-	for _, block := range fn.Blocks {
-		ret, ok := block.Instrs[len(block.Instrs)-1].(*ssa.Return)
-		if !ok {
-			continue
+func (c *checker) containedUse(v ssa.Value, r ssa.Instruction, seen map[ssa.Value]bool) bool {
+	switch r := r.(type) {
+	case *ssa.DebugRef, *ssa.Panic:
+		return true
+	case *ssa.Return:
+		if r.Parent() == c.returning {
+			c.returned = true
+			return true
 		}
-		for i, result := range ret.Results {
-			if (index < 0 || i == index) && t.trace(result, f) {
-				return true
+		t := errorMethodOf(r.Parent())
+		return t != nil && c.isOutside(t)
+	case *ssa.BinOp, *ssa.Slice, *ssa.UnOp, *ssa.TypeAssert, *ssa.Extract, *ssa.MakeInterface, *ssa.ChangeInterface, *ssa.Field, *ssa.FieldAddr, *ssa.Phi, *ssa.Convert, *ssa.ChangeType:
+		return c.contained(r.(ssa.Value), seen)
+	case *ssa.IndexAddr:
+		if r.X != v {
+			return true
+		}
+		return c.contained(r, seen)
+	case *ssa.Store:
+		if r.Addr == v {
+			return true
+		}
+		root, ok := localContainer(r.Addr)
+		return ok && c.contained(root, seen)
+	case *ssa.MapUpdate:
+		if r.Map == v {
+			return true
+		}
+		root, ok := localContainer(r.Map)
+		return ok && c.contained(root, seen)
+	case *ssa.MakeClosure:
+		fn := r.Fn.(*ssa.Function)
+		for i, b := range r.Bindings {
+			if b == v && !c.contained(fn.FreeVars[i], seen) {
+				return false
 			}
 		}
+		return true
+	case ssa.CallInstruction:
+		return c.containedCall(v, r, seen)
 	}
 	return false
 }
 
-// traceBindings traces what each closure the enclosing function makes binds
-// to the free variable v, in the frame the enclosing function runs in.
-func (t *tracer) traceBindings(v *ssa.FreeVar, f *frame) bool {
-	closure := v.Parent()
-	index := slices.Index(closure.FreeVars, v)
-	if closure.Parent() == nil {
-		// A method value bound to its receiver has no enclosing function, and
-		// any function may make it. The tracer enters its body only through a
-		// call of the closure value, which binds its receiver.
-		return t.trace(f.closure.Bindings[index], f.parent)
+// containedCall reports whether a call handed v keeps it to the log or
+// Sentry.
+func (c *checker) containedCall(v ssa.Value, call ssa.CallInstruction, seen map[ssa.Value]bool) bool {
+	common := call.Common()
+	if common.Value == v {
+		return c.contained(result(call), seen)
 	}
-	if f.runs(closure) {
-		f = f.parent
+	if b, ok := common.Value.(*ssa.Builtin); ok {
+		return c.containedBuiltin(v, b, call, seen)
 	}
-	for _, block := range closure.Parent().Blocks {
-		for _, instr := range block.Instrs {
-			if mk, ok := instr.(*ssa.MakeClosure); ok && mk.Fn == closure && t.trace(mk.Bindings[index], f) {
-				return true
-			}
-		}
+	callee := common.StaticCallee()
+	if callee == nil {
+		callee = c.varFunction(common.Value)
 	}
-	return false
-}
-
-// traceStores traces every value put in addr, or in an address or a slice
-// within it, as puts lists them, whether the function puts it there, a
-// closure it captures addr in, a container it loads out of addr, or another
-// local that holds addr. made says whether a call handed addr counts as
-// putting values in it. It doesn't for a container loaded out of a variable,
-// which may be one the function got as a parameter and is checked where it
-// is passed. A call handed an address within addr, or the free variable of
-// a method value bound to addr, counts either way.
-func (t *tracer) traceStores(addr ssa.Value, f *frame, made bool) bool {
-	for _, ref := range *addr.Referrers() {
-		if call, ok := ref.(ssa.CallInstruction); ok {
-			if made && t.traceCallPuts(call, addr, f) {
-				return true
-			}
-			continue
-		}
-		for _, p := range puts(ref) {
-			if p.into != addr {
-				continue
-			}
-			for _, v := range p.values {
-				if t.trace(v, f) {
-					return true
-				}
-			}
-		}
-		if v, ok := ref.(ssa.Value); ok && within(v) == addr && t.traceStores(v, f, true) {
-			return true
-		}
-		// A call is handed addr in its variadic argument list.
-		if call := listedIn(ref, addr); call != nil && made && t.traceCallPuts(call, addr, f) {
-			return true
-		}
-		// An interface that holds addr is written through as addr is.
-		if v, ok := ref.(*ssa.MakeInterface); ok && v.X == addr && t.traceStores(v, f, made) {
-			return true
-		}
-		// A channel, map, slice or pointer loaded out of addr shares what
-		// is put in it with the one addr holds.
-		if load, ok := ref.(*ssa.UnOp); ok && load.Op == token.MUL && isContainer(load.Type()) && t.traceStores(load, f, false) {
-			return true
-		}
-		// A local that holds addr puts in it what is written through it.
-		if store, ok := ref.(*ssa.Store); ok && store.Val == addr {
-			if holder, ok := store.Addr.(*ssa.Alloc); ok && t.traceThrough(holder, f, made) {
-				return true
-			}
-		}
-		// A closure that captures addr puts values in it through its free
-		// variable.
-		if fv := capture(ref, addr); fv != nil && t.traceStores(fv, &frame{fn: fv.Parent(), parent: f}, true) {
-			return true
-		}
-	}
-	return false
-}
-
-// traceCallPuts traces what call puts in addr, one of the containers it is
-// handed. A call into a function of the package being checked that is
-// handed addr read out of a local or held in an interface, as a closure or
-// fmt.Fprintf hands a container on, puts there what the function's body
-// puts in the parameter addr is handed as. Any other call puts there
-// everything else it is handed, as puts has it.
-func (t *tracer) traceCallPuts(call ssa.CallInstruction, addr ssa.Value, f *frame) bool {
-	if callee := t.callee(call, f); callee != nil && handedOn(addr) {
-		for _, op := range operands(call.Common()) {
-			if op.v == addr && writable(addr) && t.traceStores(callee.Params[op.param], enter(callee, call, f), true) {
-				return true
-			}
-		}
+	if callee == nil {
 		return false
 	}
-	return t.traceHanded(call, addr, f)
-}
-
-// handedOn reports whether v is a container read out of a local or held in
-// an interface.
-func handedOn(v ssa.Value) bool {
-	switch v := v.(type) {
-	case *ssa.UnOp:
-		return v.Op == token.MUL
-	case *ssa.MakeInterface:
+	if sink(callee) || digest(callee) {
 		return true
 	}
+	if callee.Pkg == nil || !inModule(callee.Pkg.Pkg.Path()) {
+		return predicate(callee.Signature)
+	}
+	for i, a := range common.Args {
+		if a == v && !c.logParam(callee, i) {
+			return false
+		}
+	}
+	return true
+}
+
+// containedBuiltin reports whether a call of a builtin handed v keeps it to
+// the log, Sentry or a comparison. What append returns carries v, and so does
+// the slice it appends to, since append may write into that slice's array.
+func (c *checker) containedBuiltin(v ssa.Value, b *ssa.Builtin, call ssa.CallInstruction, seen map[ssa.Value]bool) bool {
+	args := call.Common().Args
+	switch b.Name() {
+	case "len", "cap":
+		return c.contained(result(call), seen)
+	case "append":
+		if args[0] != v {
+			if _, ok := localSlice(args[0]); !ok || !c.contained(args[0], seen) {
+				return false
+			}
+		}
+		return c.contained(result(call), seen)
+	}
 	return false
 }
 
-// traceHanded traces everything call is handed besides addr, which puts has
-// call put in addr.
-func (t *tracer) traceHanded(call ssa.CallInstruction, addr ssa.Value, f *frame) bool {
-	for _, p := range puts(call) {
-		if p.into != addr {
+// digest reports whether fn is crypto/sha256's Sum256, whose result can
+// only be compared, as a time can only be read: no text of what it was
+// handed survives in it.
+func digest(fn *ssa.Function) bool {
+	obj := fn.Object()
+	return obj != nil && obj.Pkg() != nil && obj.Pkg().Path() == "crypto/sha256" && obj.Name() == "Sum256"
+}
+
+// predicate reports whether a function of sig can only answer yes or no
+// about what it is handed: it returns bools alone and takes nothing it could
+// write into, so a call outside the module picks between fixed messages, as
+// strings.Contains does.
+func predicate(sig *types.Signature) bool {
+	results := sig.Results()
+	if results.Len() == 0 {
+		return false
+	}
+	for i := range results.Len() {
+		if b, ok := results.At(i).Type().Underlying().(*types.Basic); !ok || b.Kind() != types.Bool {
+			return false
+		}
+	}
+	if sig.Recv() != nil && !inert(sig.Recv().Type()) {
+		return false
+	}
+	for i := range sig.Params().Len() {
+		if !inert(sig.Params().At(i).Type()) {
+			return false
+		}
+	}
+	return true
+}
+
+// inert reports whether a function handed a value of t can't write through
+// it, or can write only errors: a string, a number, a bool, an error, or a
+// slice of errors, as errors.Join takes.
+func inert(t types.Type) bool {
+	if _, ok := t.Underlying().(*types.Basic); ok {
+		return true
+	}
+	if s, ok := t.Underlying().(*types.Slice); ok {
+		return isError(s.Elem())
+	}
+	return isError(t)
+}
+
+// localSlice reports whether s is a slice this function made, or nil, so
+// that what append writes into it stays where the check follows it.
+func localSlice(s ssa.Value) (ssa.Value, bool) {
+	switch s := s.(type) {
+	case *ssa.Const:
+		return s, s.IsNil()
+	case *ssa.Slice:
+		return localContainer(s.X)
+	case *ssa.MakeSlice:
+		return s, true
+	case *ssa.Call:
+		if b, ok := s.Call.Value.(*ssa.Builtin); ok && b.Name() == "append" {
+			return s, true
+		}
+	}
+	return nil, false
+}
+
+// varFunction returns the function a call through v calls when v is read out
+// of a package-level variable of this package that is set once, in its
+// declaration, to a function, and used nowhere else but to read it, as a seam
+// a test swaps is.
+func (c *checker) varFunction(v ssa.Value) *ssa.Function {
+	load, ok := v.(*ssa.UnOp)
+	if !ok || load.Op != token.MUL {
+		return nil
+	}
+	g, ok := load.X.(*ssa.Global)
+	if !ok || g.Pkg == nil || g.Pkg.Pkg != c.pass.Pkg {
+		return nil
+	}
+	var fn *ssa.Function
+	for _, r := range c.globalUses[g] {
+		switch r := r.(type) {
+		case *ssa.UnOp:
+			if r.Op != token.MUL {
+				return nil
+			}
+		case *ssa.Store:
+			f, ok := r.Val.(*ssa.Function)
+			if !ok || fn != nil || r.Parent() != g.Pkg.Func("init") {
+				return nil
+			}
+			fn = f
+		default:
+			return nil
+		}
+	}
+	return fn
+}
+
+// sink reports whether fn is a place data from an error may go: the log,
+// Sentry, or fmt.Errorf, which keeps it inside an error.
+func sink(fn *ssa.Function) bool {
+	if o := fn.Origin(); o != nil {
+		fn = o
+	}
+	obj := fn.Object()
+	if obj == nil || obj.Pkg() == nil {
+		return false
+	}
+	switch obj.Pkg().Path() {
+	case "log/slog", "github.com/getsentry/sentry-go":
+		return true
+	case "fmt":
+		return obj.Name() == "Errorf"
+	}
+	return false
+}
+
+// module is the path of the module whose code the check reads.
+const module = "github.com/7cav/cavbot2"
+
+func inModule(path string) bool {
+	return path == module || strings.HasPrefix(path, module+"/")
+}
+
+// localContainer returns the array, struct or slice made in this function
+// that addr points into, if any.
+func localContainer(addr ssa.Value) (ssa.Value, bool) {
+	for {
+		switch a := addr.(type) {
+		case *ssa.Alloc, *ssa.MakeMap, *ssa.MakeSlice:
+			return a, true
+		case *ssa.IndexAddr:
+			addr = a.X
+		case *ssa.FieldAddr:
+			addr = a.X
+		default:
+			return nil, false
+		}
+	}
+}
+
+// result returns what call returns, or nil for a go or defer statement,
+// which returns nothing.
+func result(call ssa.CallInstruction) ssa.Value {
+	if v := call.Value(); v != nil {
+		return v
+	}
+	return nil
+}
+
+// posOf is where to report instr: its own position, or else that of the
+// first instruction using its value that has one.
+func posOf(instr ssa.Instruction, fn *ssa.Function) token.Pos {
+	seen := map[ssa.Instruction]bool{}
+	queue := []ssa.Instruction{instr}
+	for len(queue) > 0 {
+		in := queue[0]
+		queue = queue[1:]
+		if seen[in] {
 			continue
 		}
-		for _, v := range p.values {
-			if t.trace(v, f) {
-				return true
+		seen[in] = true
+		if in.Pos().IsValid() {
+			return in.Pos()
+		}
+		if v, ok := in.(ssa.Value); ok && v.Referrers() != nil {
+			queue = append(queue, *v.Referrers()...)
+		}
+		if st, ok := in.(*ssa.Store); ok {
+			if a, ok := st.Addr.(ssa.Instruction); ok {
+				queue = append(queue, a)
 			}
 		}
 	}
-	return false
-}
-
-// traceThrough traces what is written through the address the local holder
-// holds, there or in a closure that captures holder. What is put in holder
-// itself is left out, since it points holder elsewhere. made is as
-// traceStores has it for the address holder holds.
-func (t *tracer) traceThrough(holder ssa.Value, f *frame, made bool) bool {
-	// Two locals that hold each other's addresses in turn are traced once.
-	if t.held[visit{holder, f}] {
-		return false
-	}
-	t.held[visit{holder, f}] = true
-	for _, ref := range *holder.Referrers() {
-		if load, ok := ref.(*ssa.UnOp); ok && load.Op == token.MUL && t.traceStores(load, f, made) {
-			return true
-		}
-		if fv := capture(ref, holder); fv != nil && t.traceThrough(fv, &frame{fn: fv.Parent(), parent: f}, made) {
-			return true
-		}
-	}
-	return false
-}
-
-// capture returns the free variable through which the closure instr makes
-// reaches addr, or nil when instr makes no closure that captures addr.
-func capture(instr ssa.Instruction, addr ssa.Value) *ssa.FreeVar {
-	mk, ok := instr.(*ssa.MakeClosure)
-	if !ok {
-		return nil
-	}
-	if i := slices.Index(mk.Bindings, addr); i >= 0 {
-		return mk.Fn.(*ssa.Function).FreeVars[i]
-	}
-	return nil
+	return fn.Pos()
 }

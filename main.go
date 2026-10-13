@@ -43,7 +43,7 @@ func init() {
 	//
 	// This must stay in init(), not main(): the panics below run first.
 	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
-		panic(fmt.Errorf("Found .env but could not load it: %w", err))
+		panic(fmt.Errorf("found .env but could not load it: %w", err))
 	}
 
 	Token = os.Getenv("DISCORD_TOKEN")
@@ -121,7 +121,7 @@ func initBotStore() *store.Postgres {
 
 	s, err := store.Open(context.Background(), dsn)
 	if err != nil {
-		panic(fmt.Errorf("Bot store unavailable: %w", err))
+		panic(fmt.Errorf("bot store unavailable: %w", err))
 	}
 	return s
 }
@@ -135,7 +135,7 @@ func initBotStore() *store.Postgres {
 func initPanelConfig(storeConfigured bool) panel.Config {
 	cfg, err := panel.ConfigFromEnv()
 	if err != nil {
-		panic(fmt.Errorf("Panel misconfigured: %w", err))
+		panic(fmt.Errorf("panel misconfigured: %w", err))
 	}
 	if !cfg.Enabled() {
 		utils.Warn("PANEL_ADDR not set, panel disabled")
@@ -159,7 +159,7 @@ func initPanel(cfg panel.Config, deps panel.Deps) *panel.Panel {
 	}
 	p, err := panel.New(cfg, Version, deps)
 	if err != nil {
-		panic(fmt.Errorf("Panel unavailable: %w", err))
+		panic(fmt.Errorf("panel unavailable: %w", err))
 	}
 	return p
 }
@@ -241,7 +241,7 @@ func main() {
 
 	dg, err := discordgo.New("Bot " + Token)
 	if err != nil {
-		panic(fmt.Errorf("Error creating Discord session: %w", err))
+		panic(fmt.Errorf("error creating Discord session: %w", err))
 	}
 	dg.LogLevel = utils.DiscordgoLogLevel()
 	// IntentsGuildMembers is a Privileged Gateway Intent — must be toggled on
@@ -282,7 +282,7 @@ func main() {
 		var err error
 		tempVC, err = commands.StartTempVC(dg, discordManager, GuildID, botStore, recorders.UserIDs())
 		if err != nil {
-			panic(fmt.Errorf("Bot store unavailable: %w", err))
+			panic(fmt.Errorf("bot store unavailable: %w", err))
 		}
 		// The Foxhole page's actions read the member list through the
 		// manager and change roles through the commands' role calls, which
@@ -290,7 +290,7 @@ func main() {
 		// action the last process left running as stopped by a restart.
 		foxhole, err = commands.NewFoxholeRuntime(discordManager, commands.NewSessionGuildManager(dg), botStore, GuildID)
 		if err != nil {
-			panic(fmt.Errorf("Bot store unavailable: %w", err))
+			panic(fmt.Errorf("bot store unavailable: %w", err))
 		}
 		// Recording (spec #381) is built on every host with a store, as temp
 		// VC is, and checks for hubs through it. The recorder tokens only
@@ -354,13 +354,13 @@ func main() {
 	// Not dg.Open() directly: a session can open without ever reaching READY,
 	// which leaves dg.State.User nil for the command registration below.
 	if err := utils.OpenSession(dg); err != nil {
-		panic(fmt.Errorf("Discord session unavailable: %w", err))
+		panic(fmt.Errorf("the Discord session is unavailable: %w", err))
 	}
 	defer func() {
 		watch.StandDown()
 		err := dg.Close()
 		if err != nil {
-			panic(fmt.Errorf("Error closing Discord connection: %w", err))
+			panic(fmt.Errorf("error closing Discord connection: %w", err))
 		}
 	}()
 	if shuttingDown() {
@@ -385,7 +385,7 @@ func main() {
 	// found as a 502 later.
 	if webPanel != nil {
 		if err := webPanel.Start(); err != nil {
-			panic(fmt.Errorf("Panel unavailable: %w", err))
+			panic(fmt.Errorf("panel unavailable: %w", err))
 		}
 		defer func() {
 			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -412,7 +412,7 @@ func main() {
 		if shuttingDown() {
 			return
 		}
-		panic(fmt.Errorf("Cannot register commands: %w", err))
+		panic(fmt.Errorf("cannot register commands: %w", err))
 	}
 	utils.Info("Commands registered", "count", len(registry.GetCommands()))
 

@@ -1,9 +1,9 @@
 package commands
 
 import (
-	"bytes"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -73,7 +73,7 @@ func classifySpawnedChannelError(err error) spawnedChannelFault {
 	return spawnedChannelFault{
 		gone: code == discordgo.ErrCodeUnknownChannel,
 		full: code == discordgo.ErrCodeMaximumNumberOfGuildChannelsReached ||
-			(code == discordgo.ErrCodeInvalidFormBody && bytes.Contains(restErr.ResponseBody, []byte(categoryCapMarker))),
+			(code == discordgo.ErrCodeInvalidFormBody && strings.Contains(string(restErr.ResponseBody), categoryCapMarker)),
 		forbidden: forbidden,
 		hardFault: forbidden || status >= 500,
 	}
