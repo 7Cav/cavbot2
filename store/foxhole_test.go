@@ -147,7 +147,7 @@ func TestNoteSaveOverAnotherNoteIsStaleAndWritesNothing(t *testing.T) {
 	}
 }
 
-// Saving an empty note on a member who isn't an approved collaborator
+// Saving an empty note on a member who isn't an approved Foxholer
 // removes their record, since the store holds one only for a member with a
 // note or an approval, and the save's entry lands with the old text the
 // panel put in it.

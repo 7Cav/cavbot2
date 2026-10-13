@@ -204,7 +204,7 @@ func TestRunningReportsAreTheReportsNotYetEnded(t *testing.T) {
 	})
 }
 
-// A re-add of the approved collaborators keeps its report in the Foxhole
+// A re-add of the approved Foxholers keeps its report in the Foxhole
 // change log as a purge does: started, it reads back as the newest report,
 // running, under its own action.
 func TestReAddReportReadsBackRunningUnderItsAction(t *testing.T) {

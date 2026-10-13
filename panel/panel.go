@@ -9,7 +9,7 @@
 // hub's edit form with its change log, and the remove action. The Foxhole
 // page lists the Foxhole role holders from the member list, with search,
 // filters and each holder's note, starts a purge and a re-add of the
-// approved collaborators through the Foxhole runtime and shows its progress
+// approved Foxholers through the Foxhole runtime and shows its progress
 // and report, and keeps its own change log of saves and reports.
 package panel
 

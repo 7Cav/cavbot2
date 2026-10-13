@@ -14,9 +14,9 @@ import (
 	"golang.org/x/net/html"
 )
 
-// foxholerGone is an approved collaborator who left the server: the
-// member list doesn't hold them, and the store holds the names the panel
-// last saw.
+// foxholerGone is an approved Foxholer who left the server: the member
+// list doesn't hold them, and the store holds the names the panel last
+// saw.
 var foxholerGone = store.MemberNames{MemberID: "100000000000000009", DisplayName: "LT Wren.A", Username: "awren"}
 
 // namesOf is a member's names as the member list shows them.
@@ -234,12 +234,12 @@ func TestReAddRetryGivesBackEachRoleTheReAddMissed(t *testing.T) {
 	}
 }
 
-// A re-add checks each approved collaborator against the member list when
-// it reaches them. One who left the server, and one who holds External
+// A re-add checks each approved Foxholer against the member list when it
+// reaches them. One who left the server, and one who holds External
 // already, are each skipped with that reason, so the report names whom a
 // manager has to chase. A re-add with someone to give External to runs
 // whoever else it skips, and its report lists both.
-func TestReAddReportSkipsCollaboratorsNotInTheServerOrHoldingExternal(t *testing.T) {
+func TestReAddReportSkipsApprovedFoxholersNotInTheServerOrHoldingTheRole(t *testing.T) {
 	w := newFoxholeWorld(t)
 	seedApproved(t, w, namesOf(memberDoe), namesOf(memberKestrel), foxholerGone)
 

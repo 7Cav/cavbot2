@@ -311,11 +311,11 @@ func TestABusyPreviewReopensWithItsConfirmOnOnceTheActionEnds(t *testing.T) {
 	}
 }
 
-// While a Foxhole action runs, Re-add approved collaborators is off and
+// While a Foxhole action runs, Re-add approved Foxholers is off and
 // says why beside its button, as After a war's Purge does. Which hint shows
 // follows what a press would do: with nobody to re-add the nobody hint
 // shows instead, the reason that holds once the action ends too, and with
-// no approved collaborators neither shows. Doe, approved without External,
+// no approved Foxholers neither shows. Doe, approved without External,
 // is someone to re-add; Kestrel, approved holding it, is not.
 func TestReAddSaysWhyItIsOffWhileAnActionRuns(t *testing.T) {
 	cases := []struct {
@@ -327,7 +327,7 @@ func TestReAddSaysWhyItIsOffWhileAnActionRuns(t *testing.T) {
 	}{
 		{"someone to re-add", []store.MemberNames{namesOf(memberDoe)}, "busy"},
 		{"nobody to re-add", []store.MemberNames{namesOf(memberKestrel)}, "nobody-to-re-add"},
-		{"no approved collaborators", nil, ""},
+		{"no approved Foxholers", nil, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

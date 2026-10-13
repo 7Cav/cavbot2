@@ -173,8 +173,8 @@ func retryConfirmation(t *testing.T, doc *html.Node, action string) *html.Node {
 }
 
 // A re-add has no preview of its own, so its Retry opens a confirmation
-// listing the approved collaborators the re-add failed on or never
-// attempted, and none it gave External to.
+// listing the approved Foxholers the re-add failed on or never attempted,
+// and none it gave a role to.
 func TestReAddRetryOpensAConfirmationListingTheMisses(t *testing.T) {
 	w := newFoxholeWorld(t)
 	seedApproved(t, w, namesOf(memberDoe), namesOf(memberAsh), namesOf(memberVance))
@@ -185,7 +185,7 @@ func TestReAddRetryOpensAConfirmationListingTheMisses(t *testing.T) {
 	confirm := retryConfirmation(t, openRetry(t, w.b), "re_add")
 
 	if got, want := namedIn(confirm), []string{memberAsh.ID}; !slices.Equal(got, want) {
-		t.Errorf("the Retry confirmation names %v, want only the failed collaborator %v", got, want)
+		t.Errorf("the Retry confirmation names %v, want only the member it failed on, %v", got, want)
 	}
 }
 
@@ -264,9 +264,9 @@ func rolePairs(writes []fakeRoleWrite) []string {
 // A purge's Retry stays a purge. Opened from the purge's change log entry
 // after a re-add has replaced its report at the top, it lists each member
 // the purge never reached with the role they still had to lose. Confirming
-// takes just those roles: the collaborator re-added since keeps External,
-// the approved collaborator who loses it stays approved, and the change log
-// records the Retry as a purge.
+// takes just those roles: the member re-added since keeps External, the
+// approved Foxholer who loses it stays approved, and the change log records
+// the Retry as a purge.
 func TestPurgeRetryPurgesJustTheMissesAndKeepsApprovals(t *testing.T) {
 	w := newFoxholeWorld(t)
 	seedApproved(t, w, namesOf(memberKestrel), namesOf(memberMarsh))
@@ -307,7 +307,7 @@ func TestPurgeRetryPurgesJustTheMissesAndKeepsApprovals(t *testing.T) {
 	}
 	page := parseHTML(t, w.b.get(foxholePath))
 	if got, want := approvedRows(t, page), sorted([]string{memberKestrel.ID, memberMarsh.ID}); !slices.Equal(got, want) {
-		t.Errorf("after the Retry the approved collaborators are %v, want %v still", got, want)
+		t.Errorf("after the Retry the approved Foxholers are %v, want %v still", got, want)
 	}
 	if action, _ := newestChange(t, page); action != "purge" {
 		t.Errorf("the change log's newest entry is a %s, want the Retry's purge", action)
@@ -354,7 +354,7 @@ func notesShown(confirm *html.Node) map[string]string {
 // note, read-only, as the store holds it when the confirmation opens, with
 // a line counting the members with one, as every other preview does. A
 // re-add has no preview of its own, so its Retry confirmation is the one
-// page that lists the collaborators before External goes back on.
+// page that lists the approved Foxholers before their roles go back on.
 func TestRetryConfirmationShowsEachListedMembersNoteWithACount(t *testing.T) {
 	cases := []struct {
 		name   string

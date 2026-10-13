@@ -66,9 +66,9 @@ func seedNote(t *testing.T, w *testWorld, names store.MemberNames, note string) 
 }
 
 // The remove preview of a selection lists who loses the role, who is
-// skipped for not holding it, a member who left the server among them, and,
-// for External, the approved collaborators among the losers, whose approval
-// the removal clears. It gives the rough time at one change a second, and
+// skipped for not holding it, a member who left the server among them, and
+// the losers approved for the role, whose approval for it the removal
+// clears. It gives the rough time at one change a second, and
 // each member's note with a count of them. Opening it changes nothing: no
 // Discord call, and no report.
 func TestRemovePreviewListsWhoLosesTheRoleWhoIsSkippedAndWhoseApprovalItClears(t *testing.T) {
@@ -159,11 +159,11 @@ func confirmRemoval(t *testing.T, b *browser, preview *html.Node) *http.Response
 }
 
 // Confirming a remove preview takes the role off each member it lists as
-// losing it, as a Foxhole action. An approved collaborator the removal
-// takes External from loses the approval, and the report marks them; one
-// who isn't approved has nothing to clear. The report is the removal's one
+// losing it, as a Foxhole action. An approved Foxholer the removal takes
+// External from loses the External approval, and the report marks them;
+// one who isn't approved has nothing to clear. The report is the removal's one
 // entry in the change log.
-func TestConfirmedRemovalTakesExternalAndClearsTheApprovalOfAnApprovedCollaborator(t *testing.T) {
+func TestConfirmedRemovalTakesExternalAndClearsTheExternalApproval(t *testing.T) {
 	w := newFoxholeWorld(t)
 	seedApproved(t, w, namesOf(memberMarsh))
 	preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID, memberMarsh.ID)))

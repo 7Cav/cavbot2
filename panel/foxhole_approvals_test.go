@@ -381,13 +381,13 @@ func filterAnchor(t *testing.T, doc *html.Node, filter string) *html.Node {
 	return link
 }
 
-// The holder list keeps listing approved collaborators who no longer hold
-// External. One who left the server shows under the names the panel last
+// The holder list keeps listing approved Foxholers who no longer hold the
+// role they're approved for. One who left the server shows under the names the panel last
 // saw, flagged "not in the server"; one in the server without External is
 // flagged "approved, doesn't hold External". Both carry the approved mark.
 // Flagged counts and lists them with the Internal holder who has no rank
-// role, and Approved counts and lists the approved collaborators.
-func TestHolderListShowsApprovedCollaboratorsWithTheirFlags(t *testing.T) {
+// role, and Approved counts and lists the approved Foxholers.
+func TestHolderListShowsApprovedFoxholersWithTheirFlags(t *testing.T) {
 	w := newFoxholeWorld(t)
 	approveThroughThePage(t, w, memberKestrel.ID, memberMarsh.ID)
 	marsh := memberMarsh
@@ -479,10 +479,10 @@ func TestAnInternalApprovalWithNoRankRoleIsFlaggedWithoutInternal(t *testing.T) 
 	}
 }
 
-// A note starts on an approved collaborator as on a Foxhole role holder,
+// A note starts on an approved Foxholer as on a Foxhole role holder,
 // even once they hold no Foxhole role: the row's Edit link opens the note
 // form, and the note saved shows on the row.
-func TestNoteStartsOnAnApprovedCollaboratorWithNoFoxholeRole(t *testing.T) {
+func TestNoteStartsOnAnApprovedFoxholerWithNoFoxholeRole(t *testing.T) {
 	w := newFoxholeWorld(t)
 	approveThroughThePage(t, w, memberKestrel.ID)
 	kestrel := memberKestrel
@@ -498,8 +498,8 @@ func TestNoteStartsOnAnApprovedCollaboratorWithNoFoxholeRole(t *testing.T) {
 }
 
 // Approve on a selection that would approve nobody and skip nobody changes
-// nothing: every selected member is an approved collaborator already, or
-// nothing was ticked, which only a browser without the page script sends.
+// nothing: every selected member is approved already for each Foxhole role
+// they hold, or nothing was ticked, which only a browser without the page script sends.
 // The save is refused with the nobody-to-change reason, and the store and
 // the change log are as before.
 func TestApproveThatWouldChangeNobodyIsRefused(t *testing.T) {
@@ -541,7 +541,7 @@ func TestApproveThatOnlySkipsSomeoneStillLandsWithTheSkipLine(t *testing.T) {
 	}
 }
 
-// Clear approval on a selection with no approved collaborator in it, or
+// Clear approval on a selection with no approved Foxholer in it, or
 // with nothing ticked, changes nothing. The save is refused with the
 // nobody-to-change reason, and the store and the change log are as before.
 func TestClearApprovalThatWouldChangeNobodyIsRefused(t *testing.T) {
