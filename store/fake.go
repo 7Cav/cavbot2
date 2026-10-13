@@ -637,7 +637,8 @@ func (f *Fake) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memb
 // and no approval, and reports whether they had one. The caller holds mu.
 func (f *Fake) clearApproval(guildID, memberID string, roles FoxholeApprovals) bool {
 	m, ok := f.members[guildID][memberID]
-	if !ok || !(roles.Internal && m.Approved.Internal || roles.External && m.Approved.External) {
+	clearing := FoxholeApprovals{Internal: roles.Internal && m.Approved.Internal, External: roles.External && m.Approved.External}
+	if !ok || !clearing.Any() {
 		return false
 	}
 	m.Approved.Internal = m.Approved.Internal && !roles.Internal
