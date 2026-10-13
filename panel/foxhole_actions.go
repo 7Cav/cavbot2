@@ -302,9 +302,9 @@ func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope c
 }
 
 // removePreview is the preview a removal waits on: the role, the members
-// selected who lose it, those it skips, for External the approved
-// collaborators among the losers, whose approval it clears, how many of
-// its members have a note, and the rough time at one change a second.
+// selected who lose it, those it skips, the members among the losers
+// approved for the role, whose approval for it the removal clears, how many
+// of its members have a note, and the rough time at one change a second.
 type removePreview struct {
 	Role    commands.FoxholeRole
 	Name    string
@@ -387,7 +387,7 @@ func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, record
 			preview.Skipped = append(preview.Skipped, member)
 		default:
 			preview.Loses = append(preview.Loses, member)
-			if req.Remove.RemovalClearsApproval() && rec.Approved.External {
+			if req.Remove.ApprovedIn(rec.Approved) {
 				preview.Cleared = append(preview.Cleared, member)
 			}
 		}

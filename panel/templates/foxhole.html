@@ -45,7 +45,7 @@
     {{template "note-count" .Notes}}
     <div class="block-row fx-reportlist" data-list="loses"><h3>Loses {{.Name}} <span class="fx-count" data-field="count">{{len .Loses}}</span></h3>{{template "preview-members" .Loses}}</div>
     {{with .Cleared}}<div class="block-row fx-reportlist" data-list="approval-cleared"><h3>Approval cleared <span class="fx-count" data-field="count">{{len .}}</span></h3>
-      <p>Removing External also clears the approval of {{if eq (len .) 1}}this approved collaborator{{else}}these approved collaborators{{end}}, so Re-add won't give it back to them.</p>
+      <p>Removing {{$.Foxhole.RemovePreview.Name}} also clears {{if eq (len .) 1}}this member's{{else}}these members'{{end}} {{$.Foxhole.RemovePreview.Name}} approval, so Re-add won't give it back to them.</p>
       <ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}">{{.DisplayName}} <span class="fx-user">@{{.Username}}</span></li>{{end}}</ul></div>{{end}}
     <div class="block-row fx-reportlist" data-list="skipped"><h3>Skipped <span class="fx-count" data-field="count">{{len .Skipped}}</span></h3>{{template "preview-members" .Skipped}}</div>
     {{if .Loses}}

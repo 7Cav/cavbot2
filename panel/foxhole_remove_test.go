@@ -183,14 +183,8 @@ func TestConfirmedRemovalTakesExternalAndClearsTheApprovalOfAnApprovedCollaborat
 	if got, want := pairs(changed), sorted([]string{memberKestrel.ID + " external", memberMarsh.ID + " external"}); !slices.Equal(got, want) {
 		t.Errorf("the report changed %v, want %v", got, want)
 	}
-	var cleared []string
-	eachElement(changed, func(n *html.Node) {
-		if _, ok := attrValue(n, "data-approval-cleared"); ok {
-			cleared = append(cleared, attrOf(n, "data-member"))
-		}
-	})
-	if want := []string{memberMarsh.ID}; !slices.Equal(cleared, want) {
-		t.Errorf("the report marks %v as losing their approval, want %v", cleared, want)
+	if got, want := approvalClearedIn(changed), []string{memberMarsh.ID}; !slices.Equal(got, want) {
+		t.Errorf("the report marks %v as losing their approval, want %v", got, want)
 	}
 	entries := changeEntries(t, page, "removal")
 	if len(entries) != 1 {
@@ -199,6 +193,18 @@ func TestConfirmedRemovalTakesExternalAndClearsTheApprovalOfAnApprovedCollaborat
 	if got, want := attrOf(entries[0], "data-entry"), attrOf(report, "data-report"); got != want {
 		t.Errorf("the removal's change log entry is %s, want the report, %s", got, want)
 	}
+}
+
+// approvalClearedIn returns the members a report list marks as losing
+// their approval, in the order it lists them.
+func approvalClearedIn(list *html.Node) []string {
+	var out []string
+	eachElement(list, func(n *html.Node) {
+		if _, ok := attrValue(n, "data-approval-cleared"); ok {
+			out = append(out, attrOf(n, "data-member"))
+		}
+	})
+	return out
 }
 
 // assertLostExternalKeptApproval fails the test unless the member no longer
@@ -366,14 +372,19 @@ func TestRemovePreviewWithNobodyLosingTheRoleCantBeConfirmed(t *testing.T) {
 	}
 }
 
-// Only a removal of External clears an approval. Marsh, approved and
-// holding both roles, loses Internal and keeps the approval, and the report
-// marks nobody as losing theirs. A regression pin: green from the removal's
-// first build, it guards the runner's own check that the role is External.
-func TestRemovalOfInternalKeepsTheApproval(t *testing.T) {
+// A removal of Internal clears the Internal approval of each member its
+// preview named, as a removal of External clears the External one, and
+// leaves the member's other approval. Marsh, approved for both roles, loses
+// Internal: the preview names his approval as one it clears, his row keeps
+// the External approval alone, and the report marks him as losing the
+// Internal one.
+func TestRemovalOfInternalClearsTheInternalApprovalAndKeepsTheExternalOne(t *testing.T) {
 	w := newFoxholeWorld(t)
-	seedApproved(t, w, namesOf(memberMarsh))
+	seedApprovals(t, w, store.MemberApprovals{MemberNames: namesOf(memberMarsh), Approved: bothApprovals})
 	preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "internal", memberMarsh.ID)))
+	if got, want := slices.Sorted(maps.Keys(previewList(preview, "approval-cleared"))), []string{memberMarsh.ID}; !slices.Equal(got, want) {
+		t.Errorf("the preview clears the approval of %v, want %v", got, want)
+	}
 
 	assertRedirect(t, confirmRemoval(t, w.b, preview), foxholePath)
 	w.awaitActionEnd(t)
@@ -382,10 +393,10 @@ func TestRemovalOfInternalKeepsTheApproval(t *testing.T) {
 		t.Errorf("after the removal %v hold Internal, want %s among them no more", holders, memberMarsh.ID)
 	}
 	page := parseHTML(t, w.b.get(foxholePath))
-	if got, want := approvedRows(t, page), []string{memberMarsh.ID}; !slices.Equal(got, want) {
-		t.Errorf("after the removal the rows %v carry the approved mark, want %v", got, want)
+	if got, want := approvedRoles(t, page)[memberMarsh.ID], []string{"external"}; !slices.Equal(got, want) {
+		t.Errorf("after the removal %s's approvals are %v, want %v", memberMarsh.ID, got, want)
 	}
-	if got := valuesOf(reportBlock(t, page), "data-approval-cleared"); len(got) != 0 {
-		t.Errorf("the report marks %d members as losing their approval, want none", len(got))
+	if got, want := approvalClearedIn(reportList(t, reportBlock(t, page), "changed")), []string{memberMarsh.ID}; !slices.Equal(got, want) {
+		t.Errorf("the report marks %v as losing their approval, want %v", got, want)
 	}
 }

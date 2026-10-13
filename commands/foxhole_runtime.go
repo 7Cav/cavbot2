@@ -78,11 +78,10 @@ func ApprovedRoles(a store.FoxholeApprovals) []FoxholeRole {
 	return roles
 }
 
-// RemovalClearsApproval reports whether a removal of the role on the
-// Foxhole page clears the approval of each member it takes the role from.
-// Only External's does: approved collaborators are External only. A purge
-// never clears one.
-func (r FoxholeRole) RemovalClearsApproval() bool { return r == FoxholeExternal }
+// approval is the approvals naming the role alone.
+func (r FoxholeRole) approval() store.FoxholeApprovals {
+	return store.FoxholeApprovals{Internal: r == FoxholeInternal, External: r == FoxholeExternal}
+}
 
 // PurgeScope is which Foxhole roles a purge takes off their holders: both,
 // or Internal or External alone.
@@ -393,8 +392,8 @@ type ReportMember struct {
 	// Failure is why Discord refused a failed member's change, in plain
 	// words.
 	Failure string `json:"failure,omitempty"`
-	// ApprovalCleared is a member a removal took External from whose
-	// approval it cleared.
+	// ApprovalCleared is a member a removal took the role from whose
+	// approval for it the removal cleared.
 	ApprovalCleared bool `json:"approval_cleared,omitempty"`
 }
 
@@ -718,8 +717,8 @@ type actionRun struct {
 	grant    bool
 	reportID int64
 	reason   string
-	// approvalsToClear are the members, by ID, whose approval a removal of
-	// External clears when it takes the role from them.
+	// approvalsToClear are the members, by ID, whose approval for the role
+	// a removal clears when it takes the role from them.
 	approvalsToClear map[string]bool
 	// absent is the reason a member not in the server is skipped with.
 	absent SkipReason
@@ -739,8 +738,8 @@ type actionSpec struct {
 	roles []FoxholeRole
 	// grant is an action giving the role. One that doesn't takes it.
 	grant bool
-	// approvalsToClear are the members, by ID, whose approval a removal of
-	// External clears when it takes the role from them.
+	// approvalsToClear are the members, by ID, whose approval for the role
+	// a removal clears when it takes the role from them.
 	approvalsToClear map[string]bool
 	// reason is the audit log reason's wording before the forum user who
 	// started the action.
@@ -807,16 +806,15 @@ func reAddSpec() actionSpec {
 // started by the forum user given, and returns once its report is written.
 // It starts as start says. The removal then runs in the background, with no
 // deadline of ctx's, to its end: one member at a time, it takes the role
-// off each. Taking External off a member among approvalsToClear, the
-// approved collaborators its preview named, clears their approval too,
-// which a purge never does. It clears no other approval, so one given
-// since the preview opened stays.
+// off each. Taking the role off a member among approvalsToClear, the
+// approved Foxholers its preview named, clears their approval for that
+// role too, which a purge never does. It clears no other approval, so one
+// given since the preview opened stays, as does the member's approval for
+// the other role.
 func (r *FoxholeRuntime) Remove(ctx context.Context, role FoxholeRole, memberIDs, approvalsToClear []string, by ForumUser) error {
 	clears := map[string]bool{}
-	if role.RemovalClearsApproval() {
-		for _, id := range approvalsToClear {
-			clears[id] = true
-		}
+	for _, id := range approvalsToClear {
+		clears[id] = true
 	}
 	return r.start(ctx, actionSpec{
 		action: store.ChangeRemoval, role: role, roles: []FoxholeRole{role}, approvalsToClear: clears,
@@ -1250,7 +1248,7 @@ func (r *FoxholeRuntime) changeEach(run actionRun, plan []plannedChange, report 
 				report.Failed = append(report.Failed, member)
 			} else {
 				if run.approvalsToClear[member.ID] {
-					member.ApprovalCleared = r.clearApproval(member.ID)
+					member.ApprovalCleared = r.clearApproval(member.ID, member.Role)
 				}
 				report.Changed = append(report.Changed, member)
 			}
@@ -1281,15 +1279,15 @@ func (run actionRun) skip(list MemberListSnapshot, p plannedChange) SkipReason {
 	return ""
 }
 
-// clearApproval clears the approval of a member whose External a removal
-// took, and reports whether they had one. A clear that fails reaches Sentry
-// and the action goes on: the member keeps the approval, their row flags
-// them "approved, doesn't hold External", and the report says nothing
-// cleared.
-func (r *FoxholeRuntime) clearApproval(memberID string) bool {
+// clearApproval clears the approval for the role given of a member a
+// removal took that role from, and reports whether they had one. A clear
+// that fails reaches Sentry and the action goes on: the member keeps the
+// approval, their row flags them as approved without the role, and the
+// report says nothing cleared.
+func (r *FoxholeRuntime) clearApproval(memberID string, role FoxholeRole) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), foxholeStoreTimeout)
 	defer cancel()
-	cleared, err := r.store.ClearFoxholeApprovalForRemoval(ctx, r.guildID, memberID, store.FoxholeApprovals{External: true})
+	cleared, err := r.store.ClearFoxholeApprovalForRemoval(ctx, r.guildID, memberID, role.approval())
 	if err != nil {
 		captureError("Foxhole removal approval clear failed", err, "member_id", memberID)
 		return false
