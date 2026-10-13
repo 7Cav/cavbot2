@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"io"
 	"maps"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -186,21 +188,33 @@ func (c *fakeVoiceConn) Receive(handle func(voice.Frame)) {
 	c.handle = handle
 }
 
-// fakeMixer stands in for ffmpeg: every mix is testMix. While a test holds
-// it, a mix waits, still processing, until the test lets it go.
+// fakeMixer stands in for ffmpeg: every mix is testMix, or fails once a
+// test makes it. While a test holds it, a mix waits, still processing,
+// until the test lets it go.
 type fakeMixer struct {
 	mu   sync.Mutex
 	held chan struct{}
+	err  error
 }
 
 func (m *fakeMixer) Mix(_ context.Context, _ []string, out string) error {
 	m.mu.Lock()
-	held := m.held
+	held, err := m.held, m.err
 	m.mu.Unlock()
 	if held != nil {
 		<-held
 	}
+	if err != nil {
+		return err
+	}
 	return os.WriteFile(out, testMix, 0o600)
+}
+
+// fail makes every mix from now on fail with err, as ffmpeg failing does.
+func (m *fakeMixer) fail(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
 }
 
 // hold makes every mix from now on wait until the channel it returns is
@@ -473,11 +487,25 @@ func TestRecordingsAllViewOpenedByAStarterListsTheirOwnOnly(t *testing.T) {
 
 // recordingRoute is one route a recording's starter and panel admins reach:
 // how to read its address for a recording off the Recordings page the
-// starter sees, and the check that a response is what the route serves.
+// starter sees, and the check that a response is what the route serves,
+// given the browser that got it. record makes the recording the route
+// serves, started by the member with the Discord ID given, when it needs
+// one other than a recording they speak in.
 type recordingRoute struct {
 	name   string
+	record func(w *testWorld, t *testing.T, discordID string) int64
 	href   func(t *testing.T, page *html.Node, id int64) string
-	served func(t *testing.T, who string, res *http.Response, id int64)
+	served func(t *testing.T, who string, b *browser, res *http.Response, id int64)
+}
+
+// recording makes the recording the route serves, started by the member
+// with the Discord ID given.
+func (r recordingRoute) recording(w *testWorld, t *testing.T, discordID string) int64 {
+	t.Helper()
+	if r.record != nil {
+		return r.record(w, t, discordID)
+	}
+	return w.record(t, discordID)
 }
 
 // linkHref reads the address of a link, such as a download, by its
@@ -510,12 +538,12 @@ func readBody(t *testing.T, res *http.Response) []byte {
 }
 
 // recordingRoutes is a case for each route that serves one recording: its
-// page, the notice link's target, its two downloads and its delete preview.
+// page, the notice link's target, its downloads and its delete preview.
 var recordingRoutes = []recordingRoute{
 	{
 		name: "page",
 		href: func(_ *testing.T, _ *html.Node, id int64) string { return commands.RecordingPath(id) },
-		served: func(t *testing.T, who string, res *http.Response, id int64) {
+		served: func(t *testing.T, who string, _ *browser, res *http.Response, id int64) {
 			t.Helper()
 			doc := parseHTML(t, res)
 			if got := pageOf(t, doc); got != pageRecordings {
@@ -529,7 +557,7 @@ var recordingRoutes = []recordingRoute{
 	{
 		name: "mix",
 		href: linkHref("mix-download"),
-		served: func(t *testing.T, who string, res *http.Response, id int64) {
+		served: func(t *testing.T, who string, _ *browser, res *http.Response, id int64) {
 			t.Helper()
 			if body := readBody(t, res); res.StatusCode != http.StatusOK || !bytes.Equal(body, testMix) {
 				t.Errorf("%s downloading recording %d's mix got %d with %q, want 200 with the mixer's %q", who, id, res.StatusCode, body, testMix)
@@ -539,7 +567,7 @@ var recordingRoutes = []recordingRoute{
 	{
 		name: "delete preview",
 		href: linkHref("delete"),
-		served: func(t *testing.T, who string, res *http.Response, id int64) {
+		served: func(t *testing.T, who string, _ *browser, res *http.Response, id int64) {
 			t.Helper()
 			row, ok := listedRecordings(t, parseHTML(t, res))[id]
 			if !ok || findElement(row, "form", "data-field", "delete-confirm") == nil {
@@ -550,12 +578,30 @@ var recordingRoutes = []recordingRoute{
 	{
 		name: "zip",
 		href: linkHref("zip-download"),
-		served: func(t *testing.T, who string, res *http.Response, id int64) {
+		served: func(t *testing.T, who string, _ *browser, res *http.Response, id int64) {
 			t.Helper()
 			body := readBody(t, res)
 			zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
 			if res.StatusCode != http.StatusOK || err != nil || len(zr.File) == 0 {
 				t.Errorf("%s downloading recording %d's zip got %d, a zip read error %v, want 200 with a zip holding its files", who, id, res.StatusCode, err)
+			}
+		},
+	},
+	{
+		// A recording with no track offers its info file in the zip's
+		// place (#648).
+		name:   "info file",
+		record: (*testWorld).recordSilence,
+		href:   linkHref("info-download"),
+		served: func(t *testing.T, who string, b *browser, res *http.Response, id int64) {
+			t.Helper()
+			body := readBody(t, res)
+			media, _, err := mime.ParseMediaType(res.Header.Get("Content-Type"))
+			if res.StatusCode != http.StatusOK || err != nil || media != "text/plain" {
+				t.Errorf("%s downloading recording %d's info file got %d as %q, want 200 as text/plain", who, id, res.StatusCode, res.Header.Get("Content-Type"))
+			}
+			if want := zipEntry(t, b.get(commands.RecordingPath(id)+"/zip"), "info.txt"); !bytes.Equal(body, want) {
+				t.Errorf("%s downloading recording %d's info file got %q, want the info file its zip holds, %q", who, id, body, want)
 			}
 		},
 	},
@@ -607,15 +653,15 @@ func TestRecordingIsServedToItsStarterAndPanelAdminsOnly(t *testing.T) {
 			w := newTestWorld(t)
 			a := w.addStarter(5001, "Able.A", "discord-a")
 			b := w.addStarter(5002, "Baker.B", "discord-b")
-			recA := w.record(t, a.discordID)
-			w.record(t, b.discordID)
 			signInAs(t, w.forum, w.b, a.account)
+			recA := route.recording(w, t, a.discordID)
+			w.record(t, b.discordID)
 			href := route.href(t, parseHTML(t, w.b.get(recordingsPath)), recA)
 			admin := newBrowser(t, w.p)
 			signIn(t, w.forum, admin)
 
-			route.served(t, "the starter", w.b.get(href), recA)
-			route.served(t, "a panel admin", admin.get(href), recA)
+			route.served(t, "the starter", w.b, w.b.get(href), recA)
+			route.served(t, "a panel admin", admin, admin.get(href), recA)
 			for _, v := range recordingRefusedVisitors(w, b) {
 				t.Run(v.who, func(t *testing.T) {
 					visitor := newBrowser(t, w.p)
@@ -1091,7 +1137,8 @@ func TestRecordingsPageMarksASpeakerWhoseTrackWasLost(t *testing.T) {
 // storeRecording writes a recording of the fixture's channel through the
 // store as a stop leaves it, started by the member with the Discord ID
 // given at start, with the title given, stopped half an hour on with one
-// speaker, and its mix ready. It returns the recording's ID.
+// speaker whose track is on disk, and its mix ready. It returns the
+// recording's ID.
 func (w *testWorld) storeRecording(t *testing.T, discordID, title string, start time.Time) int64 {
 	t.Helper()
 	ctx := context.Background()
@@ -1106,6 +1153,15 @@ func (w *testWorld) storeRecording(t *testing.T, discordID, title string, start 
 	}
 	if err := w.store.SetRecordingMix(ctx, rec.ID, store.MixReady); err != nil {
 		t.Fatalf("SetRecordingMix: %v", err)
+	}
+	// The runtime's layout: a directory per recording named by its ID,
+	// holding a track per speaker named by their Discord ID.
+	dir := filepath.Join(w.recordingsDir, strconv.FormatInt(rec.ID, 10))
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("making recording %d's directory: %v", rec.ID, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, discordID+".ogg"), []byte("OggS"), 0o600); err != nil {
+		t.Fatalf("writing recording %d's track: %v", rec.ID, err)
 	}
 	return rec.ID
 }

@@ -164,7 +164,8 @@ const (
 	MixProcessing MixState = "processing"
 	// MixReady: the mix is built and can be downloaded.
 	MixReady MixState = "ready"
-	// MixFailed: the mix couldn't be built. The tracks are still there.
+	// MixFailed: the mix couldn't be built: the mixer failed, or no
+	// speaker's track was on disk to mix. Any track that was is still there.
 	MixFailed MixState = "failed"
 	// MixNone: the recording has no speakers, so no track to mix and no
 	// mix.

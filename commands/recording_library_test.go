@@ -691,3 +691,63 @@ func TestRecordingMixIsBuiltFromTheTracksOnDisk(t *testing.T) {
 		t.Errorf("mix with a track gone from the disk = %q, want %q", rec.Mix, store.MixReady)
 	}
 }
+
+// A speaker whose track failed partway is listed with their track lost, but
+// what reached the disk before the failure is still their track: the
+// recording has a track, which the Recordings page reads to offer the zip
+// (#648).
+func TestRecordingWhoseOnlyTrackFailedPartwayStillHasATrack(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	var mu sync.Mutex
+	var track *os.File
+	createTracksWith(t, func(path string) (*os.File, error) {
+		f, err := os.Create(filepath.Clean(path))
+		mu.Lock()
+		track = f
+		mu.Unlock()
+		return f, err
+	})
+	sc.startIn(t, recStarter, recordChannel)
+	sc.clock.advance(time.Second)
+	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
+	sc.clock.advance(trackFlushInterval)
+	// The file closes under the track, so its next flush fails.
+	mu.Lock()
+	_ = track.Close()
+	mu.Unlock()
+	sc.hear(t, recordChannel, frame(speakerA, 11, 5000+opusFrameSamples, "a2"))
+	sc.clock.advance(trackFlushInterval)
+	recordAs(t, sc.rt, recStarter, "stop")
+	rec := sc.onlyRecording(t)
+	if lost := tracksLost(rec); !maps.Equal(lost, map[string]bool{speakerA: true}) {
+		t.Fatalf("speakers' tracks lost = %v, want %s's alone", lost, speakerA)
+	}
+	if got := entriesHolding(t, sc.zipEntries(t, rec), "a1"); len(got) != 1 {
+		t.Fatalf("zip entries holding what reached the disk = %v, want one", got)
+	}
+
+	if !sc.lib.HasTrack(rec) {
+		t.Error("a recording whose only track failed partway has no track, want one")
+	}
+}
+
+// A crash before the first flush leaves nothing its speaker said on the
+// disk: recovery keeps them listed with their track lost, and the recording
+// has no track (#648).
+func TestRecordingCutShortBeforeAnyAudioReachedTheDiskHasNoTrack(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.startIn(t, recStarter, recordChannel)
+	sc.clock.advance(time.Second)
+	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
+
+	sc.restart(t, testRecorder)
+	sc.clock.advance(0)
+	rec := sc.onlyRecording(t)
+	if lost := tracksLost(rec); !maps.Equal(lost, map[string]bool{speakerA: true}) {
+		t.Fatalf("speakers' tracks lost after recovery = %v, want %s's alone", lost, speakerA)
+	}
+
+	if sc.lib.HasTrack(rec) {
+		t.Error("a recording cut short before any audio reached the disk has a track, want none")
+	}
+}
