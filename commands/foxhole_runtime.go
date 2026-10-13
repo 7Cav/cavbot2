@@ -1071,7 +1071,7 @@ func purgePlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, scope Pu
 func reAddPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange {
 	var plan []plannedChange
 	for _, rec := range records {
-		if !rec.Approved {
+		if !rec.Approved.External {
 			continue
 		}
 		seen := store.MemberNames{MemberID: rec.MemberID, DisplayName: rec.DisplayName, Username: rec.Username}
@@ -1255,7 +1255,7 @@ func (run actionRun) skip(list MemberListSnapshot, p plannedChange) SkipReason {
 func (r *FoxholeRuntime) clearApproval(memberID string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), foxholeStoreTimeout)
 	defer cancel()
-	cleared, err := r.store.ClearFoxholeApprovalForRemoval(ctx, r.guildID, memberID)
+	cleared, err := r.store.ClearFoxholeApprovalForRemoval(ctx, r.guildID, memberID, store.FoxholeApprovals{External: true})
 	if err != nil {
 		captureError("Foxhole removal approval clear failed", err, "member_id", memberID)
 		return false

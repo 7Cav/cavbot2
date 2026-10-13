@@ -24,12 +24,24 @@ func namesOf(m commands.ListedMember) store.MemberNames {
 	return store.MemberNames{MemberID: m.ID, DisplayName: m.DisplayName(), Username: m.Username}
 }
 
-// seedApproved marks the members given approved collaborators in the store,
+// seedApproved gives the members given an External approval in the store,
 // as an Approve saved earlier would have, whatever roles they hold now.
 func seedApproved(t *testing.T, w *testWorld, members ...store.MemberNames) {
 	t.Helper()
+	approvals := make([]store.MemberApprovals, 0, len(members))
+	for _, m := range members {
+		approvals = append(approvals, store.MemberApprovals{MemberNames: m, Approved: store.FoxholeApprovals{External: true}})
+	}
+	seedApprovals(t, w, approvals...)
+}
+
+// seedApprovals gives each member given the approvals given with them in
+// the store, as an Approve saved earlier would have, whatever roles they
+// hold now.
+func seedApprovals(t *testing.T, w *testWorld, approvals ...store.MemberApprovals) {
+	t.Helper()
 	entry := store.ChangeLogEntry{ForumUserID: managerUserID, ForumUsername: managerUsername, Action: store.ChangeApprove, Diff: json.RawMessage(`{}`)}
-	if err := w.st.ApproveFoxholeMembers(context.Background(), testGuildID, members, entry); err != nil {
+	if err := w.st.ApproveFoxholeMembers(context.Background(), testGuildID, approvals, entry); err != nil {
 		t.Fatalf("seed approvals: %v", err)
 	}
 }

@@ -809,9 +809,9 @@ func (p *Postgres) DeleteRecording(ctx context.Context, id int64) error {
 func (p *Postgres) ListFoxholeRecords(ctx context.Context, guildID string) ([]FoxholeRecord, error) {
 	members, err := queryAll(ctx, p.db, func(row scanner) (FoxholeRecord, error) {
 		var m FoxholeRecord
-		err := row.Scan(&m.MemberID, &m.Note, &m.Approved, &m.DisplayName, &m.Username)
+		err := row.Scan(&m.MemberID, &m.Note, &m.Approved.Internal, &m.Approved.External, &m.DisplayName, &m.Username)
 		return m, err
-	}, `SELECT member_id, note, approved, last_display_name, last_username
+	}, `SELECT member_id, note, approved_internal, approved, last_display_name, last_username
 		FROM foxhole_records WHERE guild_id = $1 ORDER BY member_id`, guildID)
 	if err != nil {
 		return nil, fmt.Errorf("list Foxhole records of guild %q: %w", guildID, err)
@@ -825,10 +825,7 @@ func (p *Postgres) SaveFoxholeNote(ctx context.Context, guildID string, save Not
 		if err := writeNote(ctx, tx, guildID, save); err != nil {
 			return err
 		}
-		// A record holds a note or an approval. One left with neither goes.
-		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM foxhole_records WHERE guild_id = $1 AND member_id = $2 AND note = '' AND NOT approved`,
-			guildID, save.MemberID); err != nil {
+		if err := dropEmptyRecord(ctx, tx, guildID, save.MemberID); err != nil {
 			return err
 		}
 		return insertFoxholeChange(ctx, tx, entry)
@@ -891,16 +888,18 @@ func insertNote(ctx context.Context, tx *sql.Tx, guildID string, save NoteSave) 
 }
 
 // ApproveFoxholeMembers implements Store. The records go in before the
-// entry, in one transaction.
-func (p *Postgres) ApproveFoxholeMembers(ctx context.Context, guildID string, members []MemberNames, entry ChangeLogEntry) error {
+// entry, in one transaction. approved holds the External approval.
+func (p *Postgres) ApproveFoxholeMembers(ctx context.Context, guildID string, approvals []MemberApprovals, entry ChangeLogEntry) error {
 	err := p.inTx(ctx, func(tx *sql.Tx) error {
-		for _, n := range members {
+		for _, a := range approvals {
 			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO foxhole_records (guild_id, member_id, approved, last_display_name, last_username)
-				VALUES ($1, $2, TRUE, $3, $4)
-				ON CONFLICT (guild_id, member_id) DO UPDATE SET approved = TRUE,
+				INSERT INTO foxhole_records (guild_id, member_id, approved_internal, approved, last_display_name, last_username)
+				VALUES ($1, $2, $3, $4, $5, $6)
+				ON CONFLICT (guild_id, member_id) DO UPDATE SET
+					approved_internal = foxhole_records.approved_internal OR EXCLUDED.approved_internal,
+					approved = foxhole_records.approved OR EXCLUDED.approved,
 					last_display_name = EXCLUDED.last_display_name, last_username = EXCLUDED.last_username, updated_at = now()`,
-				guildID, n.MemberID, n.DisplayName, n.Username); err != nil {
+				guildID, a.MemberID, a.Approved.Internal, a.Approved.External, a.DisplayName, a.Username); err != nil {
 				return err
 			}
 		}
@@ -917,7 +916,7 @@ func (p *Postgres) ApproveFoxholeMembers(ctx context.Context, guildID string, me
 func (p *Postgres) ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry ChangeLogEntry) error {
 	err := p.inTx(ctx, func(tx *sql.Tx) error {
 		for _, id := range memberIDs {
-			if _, err := clearApproval(ctx, tx, guildID, id); err != nil {
+			if _, err := clearApproval(ctx, tx, guildID, id, FoxholeApprovals{Internal: true, External: true}); err != nil {
 				return err
 			}
 		}
@@ -932,10 +931,10 @@ func (p *Postgres) ClearFoxholeApprovals(ctx context.Context, guildID string, me
 // ClearFoxholeApprovalForRemoval implements Store. The clear and the drop
 // of a record left with neither a note nor an approval run in one
 // transaction.
-func (p *Postgres) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string) (bool, error) {
+func (p *Postgres) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string, roles FoxholeApprovals) (bool, error) {
 	var cleared bool
 	err := p.inTx(ctx, func(tx *sql.Tx) (err error) {
-		cleared, err = clearApproval(ctx, tx, guildID, memberID)
+		cleared, err = clearApproval(ctx, tx, guildID, memberID, roles)
 		return err
 	})
 	if err != nil {
@@ -944,13 +943,15 @@ func (p *Postgres) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, 
 	return cleared, nil
 }
 
-// clearApproval clears the member's approval, when they have one, drops
-// their record when that leaves it with no note, and reports whether they
-// had one.
-func clearApproval(ctx context.Context, tx *sql.Tx, guildID, memberID string) (bool, error) {
+// clearApproval clears the member's approval for each role set in roles,
+// when they have one, drops their record when that leaves it with no note
+// and no approval, and reports whether they had one. approved holds the
+// External approval.
+func clearApproval(ctx context.Context, tx *sql.Tx, guildID, memberID string, roles FoxholeApprovals) (bool, error) {
 	res, err := tx.ExecContext(ctx, `
-		UPDATE foxhole_records SET approved = FALSE, updated_at = now()
-		WHERE guild_id = $1 AND member_id = $2 AND approved`, guildID, memberID)
+		UPDATE foxhole_records SET approved_internal = approved_internal AND NOT $3, approved = approved AND NOT $4, updated_at = now()
+		WHERE guild_id = $1 AND member_id = $2 AND (approved_internal AND $3 OR approved AND $4)`,
+		guildID, memberID, roles.Internal, roles.External)
 	if err != nil {
 		return false, err
 	}
@@ -958,10 +959,19 @@ func clearApproval(ctx context.Context, tx *sql.Tx, guildID, memberID string) (b
 	if err != nil || n == 0 {
 		return false, err
 	}
-	// A record holds a note or an approval. One left with neither goes.
-	_, err = tx.ExecContext(ctx, `
-		DELETE FROM foxhole_records WHERE guild_id = $1 AND member_id = $2 AND note = ''`, guildID, memberID)
+	err = dropEmptyRecord(ctx, tx, guildID, memberID)
 	return err == nil, err
+}
+
+// dropEmptyRecord drops the member's record when it holds no note and no
+// approval: a record holds a note or an approval. approved holds the
+// External approval.
+func dropEmptyRecord(ctx context.Context, tx *sql.Tx, guildID, memberID string) error {
+	_, err := tx.ExecContext(ctx, `
+		DELETE FROM foxhole_records
+		WHERE guild_id = $1 AND member_id = $2 AND note = '' AND NOT approved_internal AND NOT approved`,
+		guildID, memberID)
+	return err
 }
 
 // SetFoxholeRecordNames implements Store. The few updates run in one

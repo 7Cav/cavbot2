@@ -216,7 +216,7 @@ func TestWhileTheMemberListIsPartialApproveIsRefusedAndClearApprovalSaves(t *tes
 
 		assertRedirect(t, res, foxholePath)
 		for _, rec := range readNoteState(t, w.st).Records {
-			if rec.MemberID == memberKestrel.ID && rec.Approved {
+			if rec.MemberID == memberKestrel.ID && rec.Approved.Any() {
 				t.Errorf("%s is still approved after the clear", memberKestrel.ID)
 			}
 		}

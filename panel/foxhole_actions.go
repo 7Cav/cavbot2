@@ -387,7 +387,7 @@ func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, record
 			preview.Skipped = append(preview.Skipped, member)
 		default:
 			preview.Loses = append(preview.Loses, member)
-			if req.Remove.RemovalClearsApproval() && rec.Approved {
+			if req.Remove.RemovalClearsApproval() && rec.Approved.External {
 				preview.Cleared = append(preview.Cleared, member)
 			}
 		}

@@ -691,7 +691,7 @@ func (g foxholeGuild) rowOf(mem commands.ListedMember, rec store.FoxholeRecord) 
 		Username:    mem.Username,
 		Internal:    g.internalID != "" && slices.Contains(mem.RoleIDs, g.internalID),
 		External:    g.externalID != "" && slices.Contains(mem.RoleIDs, g.externalID),
-		Approved:    rec.Approved,
+		Approved:    rec.Approved.External,
 		Note:        rec.Note,
 	}
 	if rank, ok := commands.SeniorRankRole(mem.RoleIDs); ok {
@@ -871,7 +871,7 @@ func (s foxholeService) stillSkipped(list commands.MemberListSnapshot, records m
 	var out []changedMember
 	for _, id := range distinct(skipped) {
 		rec := records[id]
-		if rec.Approved {
+		if rec.Approved.External {
 			continue
 		}
 		member := changedMember{ID: id, DisplayName: rec.DisplayName, Username: rec.Username}
@@ -946,7 +946,7 @@ func (s foxholeService) lists(list commands.MemberListSnapshot, records map[stri
 		if listed[id] {
 			continue
 		}
-		row := holderRow{ID: id, DisplayName: rec.DisplayName, Username: rec.Username, Approved: rec.Approved, Note: rec.Note, NotInServer: true}
+		row := holderRow{ID: id, DisplayName: rec.DisplayName, Username: rec.Username, Approved: rec.Approved.External, Note: rec.Note, NotInServer: true}
 		if mem, ok := inServer[id]; ok {
 			row = guild.rowOf(mem, rec)
 		}
@@ -1089,9 +1089,9 @@ func (s foxholeService) approve(ctx context.Context, memberIDs []string, by acto
 		return nil, errApproveListPartial
 	}
 	guild := s.foxholeGuildOf()
-	var approving []store.MemberNames
+	var approving []store.MemberApprovals
 	for _, id := range distinct(memberIDs) {
-		if records[id].Approved {
+		if records[id].Approved.External {
 			continue
 		}
 		mem, ok := list.Member(id)
@@ -1099,7 +1099,8 @@ func (s foxholeService) approve(ctx context.Context, memberIDs []string, by acto
 			skipped = append(skipped, id)
 			continue
 		}
-		approving = append(approving, store.MemberNames{MemberID: id, DisplayName: mem.DisplayName(), Username: mem.Username})
+		approving = append(approving, store.MemberApprovals{MemberNames: store.MemberNames{MemberID: id, DisplayName: mem.DisplayName(), Username: mem.Username},
+			Approved: store.FoxholeApprovals{External: true}})
 	}
 	if len(approving) == 0 {
 		if len(skipped) == 0 {
@@ -1107,7 +1108,11 @@ func (s foxholeService) approve(ctx context.Context, memberIDs []string, by acto
 		}
 		return skipped, nil
 	}
-	entry, err := approvalEntry(store.ChangeApprove, approving, by)
+	names := make([]store.MemberNames, 0, len(approving))
+	for _, a := range approving {
+		names = append(names, a.MemberNames)
+	}
+	entry, err := approvalEntry(store.ChangeApprove, names, by)
 	if err != nil {
 		return nil, err
 	}
@@ -1127,7 +1132,7 @@ func (s foxholeService) clearApprovals(ctx context.Context, memberIDs []string, 
 	var clearing []store.MemberNames
 	for _, id := range distinct(memberIDs) {
 		rec := records[id]
-		if !rec.Approved {
+		if !rec.Approved.Any() {
 			continue
 		}
 		clearing = append(clearing, store.MemberNames{MemberID: id, DisplayName: rec.DisplayName, Username: rec.Username})

@@ -248,7 +248,7 @@ var foxholePostCases = map[string]foxholePostCase{
 		form.Set(fieldOp, opApprove)
 		return form, func(t *testing.T, _ *http.Response) {
 			t.Helper()
-			if got := recordOf(t, w, memberKestrel.ID); !got.Approved {
+			if got := recordOf(t, w, memberKestrel.ID); !got.Approved.Any() {
 				t.Errorf("%s's record after the manager's Approve = %+v, want them approved", memberKestrel.ID, got)
 			}
 		}

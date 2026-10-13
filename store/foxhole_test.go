@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"testing"
 )
@@ -300,8 +301,12 @@ func TestFoxholeChangesAreKeptApartFromTheHubPagesLog(t *testing.T) {
 	})
 }
 
-// memberKestrel is a second member, one the cases approve with no record.
-const memberKestrel = "100000000000000003"
+// memberKestrel and memberMarsh are members the cases approve with no
+// record.
+const (
+	memberKestrel = "100000000000000003"
+	memberMarsh   = "100000000000000004"
+)
 
 // approvalEntry is an approvals save's change log entry, its diff naming the
 // members it touched. The panel decides the diff's shape; the store keeps
@@ -311,35 +316,82 @@ func approvalEntry(action ChangeAction, memberIDs ...string) ChangeLogEntry {
 	return ChangeLogEntry{ForumUserID: 1234, ForumUsername: "Doe.J", Action: action, Diff: raw}
 }
 
-// doeNames and kestrelNames are the names an approvals save gives each
-// member.
+// doeNames, kestrelNames and marshNames are the names an approvals save
+// gives each member.
 var (
 	doeNames     = MemberNames{MemberID: memberDoe, DisplayName: "SGT Doe.J", Username: "jdoe"}
 	kestrelNames = MemberNames{MemberID: memberKestrel, DisplayName: "kestrel_tlr", Username: "kestrel_tlr"}
+	marshNames   = MemberNames{MemberID: memberMarsh, DisplayName: "CPT Marsh.E", Username: "emarsh"}
 )
 
-// Approving a member with a note marks their record approved and keeps the
-// note. Approving a member with no record starts one, approved with no
-// note, under the names the save gave. The Foxhole change log gains the
-// save's one entry, as given.
-func TestApproveMarksEachMemberAndAppendsOneEntry(t *testing.T) {
+// The approvals a member can carry: one for Internal, one for External, or
+// both.
+var (
+	internalApproval = FoxholeApprovals{Internal: true}
+	externalApproval = FoxholeApprovals{External: true}
+	bothApprovals    = FoxholeApprovals{Internal: true, External: true}
+)
+
+// approve gives the members the approvals each is named with in guild-1,
+// with an approve entry naming them.
+func approve(t *testing.T, s Store, approvals ...MemberApprovals) {
+	t.Helper()
+	ids := make([]string, 0, len(approvals))
+	for _, a := range approvals {
+		ids = append(ids, a.MemberID)
+	}
+	if err := s.ApproveFoxholeMembers(context.Background(), "guild-1", approvals, approvalEntry(ChangeApprove, ids...)); err != nil {
+		t.Fatalf("ApproveFoxholeMembers: %v", err)
+	}
+}
+
+// Approving gives each member the approvals the save names them with, one
+// Foxhole role or both. A member with a note keeps it and takes the names
+// given; one with no record gets one, with no note, under the names given.
+// The Foxhole change log gains the save's one entry, as given.
+func TestApproveGivesEachMemberTheApprovalsNamed(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		if err := saveNote(s, memberDoe, "", "allied liaison"); err != nil {
 			t.Fatalf("seed save: %v", err)
 		}
-		entry := approvalEntry(ChangeApprove, memberDoe, memberKestrel)
+		entry := approvalEntry(ChangeApprove, memberDoe, memberKestrel, memberMarsh)
 
-		err := s.ApproveFoxholeMembers(context.Background(), "guild-1", []MemberNames{doeNames, kestrelNames}, entry)
+		err := s.ApproveFoxholeMembers(context.Background(), "guild-1", []MemberApprovals{
+			{MemberNames: doeNames, Approved: internalApproval},
+			{MemberNames: kestrelNames, Approved: externalApproval},
+			{MemberNames: marshNames, Approved: bothApprovals},
+		}, entry)
 
 		if err != nil {
 			t.Fatalf("ApproveFoxholeMembers: %v", err)
 		}
 		want := map[string]FoxholeRecord{
-			memberDoe:     {MemberID: memberDoe, Note: "allied liaison", Approved: true, DisplayName: "SGT Doe.J", Username: "jdoe"},
-			memberKestrel: {MemberID: memberKestrel, Approved: true, DisplayName: "kestrel_tlr", Username: "kestrel_tlr"},
+			memberDoe:     {MemberID: memberDoe, Note: "allied liaison", Approved: internalApproval, DisplayName: "SGT Doe.J", Username: "jdoe"},
+			memberKestrel: {MemberID: memberKestrel, Approved: externalApproval, DisplayName: "kestrel_tlr", Username: "kestrel_tlr"},
+			memberMarsh:   {MemberID: memberMarsh, Approved: bothApprovals, DisplayName: "CPT Marsh.E", Username: "emarsh"},
 		}
 		if got := foxholeRecords(t, s); !reflect.DeepEqual(got, want) {
 			t.Errorf("records = %+v, want %+v", got, want)
+		}
+		assertNewestEntry(t, s, 2, entry)
+	})
+}
+
+// An approval for one role adds to the approval a member has for the
+// other, which stays. The save appends its one entry.
+func TestApprovingAnotherRoleKeepsTheApprovalAMemberHas(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		approve(t, s, MemberApprovals{MemberNames: doeNames, Approved: internalApproval})
+		entry := approvalEntry(ChangeApprove, memberDoe)
+
+		err := s.ApproveFoxholeMembers(context.Background(), "guild-1",
+			[]MemberApprovals{{MemberNames: doeNames, Approved: externalApproval}}, entry)
+
+		if err != nil {
+			t.Fatalf("ApproveFoxholeMembers: %v", err)
+		}
+		if got := foxholeRecords(t, s)[memberDoe].Approved; got != bothApprovals {
+			t.Errorf("%s's approvals = %+v, want %+v", memberDoe, got, bothApprovals)
 		}
 		assertNewestEntry(t, s, 2, entry)
 	})
@@ -362,30 +414,21 @@ func assertNewestEntry(t *testing.T, s Store, n int, entry ChangeLogEntry) {
 	}
 }
 
-// approveDoeAndKestrel marks Doe and Kestrel approved in guild-1, with an
-// entry.
-func approveDoeAndKestrel(t *testing.T, s Store) {
-	t.Helper()
-	if err := s.ApproveFoxholeMembers(context.Background(), "guild-1", []MemberNames{doeNames, kestrelNames},
-		approvalEntry(ChangeApprove, memberDoe, memberKestrel)); err != nil {
-		t.Fatalf("ApproveFoxholeMembers: %v", err)
-	}
-}
-
-// Clearing the approval of a member with a note keeps their record, with
-// the note, no longer approved. Clearing it on a member with no note
-// removes their record, since the store holds one only for a member with a
-// note or an approval. The Foxhole change log gains the save's one entry,
-// as given.
-func TestClearApprovalKeepsARecordWithANoteAndRemovesOneWithout(t *testing.T) {
+// Clearing approvals clears every approval of each member given, both
+// roles' on a member approved for both. A member with a note keeps their
+// record, with the note and no approval. One with no note loses their
+// record, since the store holds one only for a member with a note or an
+// approval. The Foxhole change log gains the save's one entry, as given.
+func TestClearApprovalsClearsEveryApprovalOfEachMember(t *testing.T) {
 	forEachStore(t, func(t *testing.T, s Store) {
 		if err := saveNote(s, memberDoe, "", "allied liaison"); err != nil {
 			t.Fatalf("seed save: %v", err)
 		}
-		approveDoeAndKestrel(t, s)
-		entry := approvalEntry(ChangeClearApproval, memberDoe, memberKestrel)
+		approve(t, s, MemberApprovals{MemberNames: doeNames, Approved: bothApprovals},
+			MemberApprovals{MemberNames: marshNames, Approved: bothApprovals})
+		entry := approvalEntry(ChangeClearApproval, memberDoe, memberMarsh)
 
-		err := s.ClearFoxholeApprovals(context.Background(), "guild-1", []string{memberDoe, memberKestrel}, entry)
+		err := s.ClearFoxholeApprovals(context.Background(), "guild-1", []string{memberDoe, memberMarsh}, entry)
 
 		if err != nil {
 			t.Fatalf("ClearFoxholeApprovals: %v", err)
@@ -412,7 +455,8 @@ func TestApprovalsSaveWithADiffThatIsNotJSONWritesNothing(t *testing.T) {
 		action ChangeAction
 	}{
 		{"approve", func(s Store, entry ChangeLogEntry) error {
-			return s.ApproveFoxholeMembers(context.Background(), "guild-1", []MemberNames{kestrelNames}, entry)
+			return s.ApproveFoxholeMembers(context.Background(), "guild-1",
+				[]MemberApprovals{{MemberNames: kestrelNames, Approved: externalApproval}}, entry)
 		}, ChangeApprove},
 		{"clear approval", func(s Store, entry ChangeLogEntry) error {
 			return s.ClearFoxholeApprovals(context.Background(), "guild-1", []string{memberDoe}, entry)
@@ -421,10 +465,7 @@ func TestApprovalsSaveWithADiffThatIsNotJSONWritesNothing(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			forEachStore(t, func(t *testing.T, s Store) {
-				if err := s.ApproveFoxholeMembers(context.Background(), "guild-1", []MemberNames{doeNames},
-					approvalEntry(ChangeApprove, memberDoe)); err != nil {
-					t.Fatalf("seed approve: %v", err)
-				}
+				approve(t, s, MemberApprovals{MemberNames: doeNames, Approved: externalApproval})
 				before := readFoxholeState(t, s)
 				entry := approvalEntry(tc.action, memberDoe)
 				entry.Diff = notJSON().Diff
@@ -442,54 +483,57 @@ func TestApprovalsSaveWithADiffThatIsNotJSONWritesNothing(t *testing.T) {
 	}
 }
 
-// Clearing the note of an approved collaborator keeps their record,
-// approved: the store drops a record only once it holds neither a note nor
-// an approval. A regression pin: the note save's delete checked the
-// approval from its first case, though nothing could set one until
-// approvals.
-func TestEmptyNoteOnAnApprovedCollaboratorKeepsTheRecord(t *testing.T) {
-	forEachStore(t, func(t *testing.T, s Store) {
-		approveDoeAndKestrel(t, s)
-		if err := saveNote(s, memberKestrel, "", "allied group lead"); err != nil {
-			t.Fatalf("seed save: %v", err)
-		}
+// Clearing the note of an approved Foxholer keeps their record, with their
+// approval, whichever role it is for: the store drops a record only once
+// it holds neither a note nor an approval.
+func TestEmptyNoteOnAnApprovedFoxholerKeepsTheRecord(t *testing.T) {
+	for name, approved := range map[string]FoxholeApprovals{"internal": internalApproval, "external": externalApproval} {
+		t.Run(name, func(t *testing.T) {
+			forEachStore(t, func(t *testing.T, s Store) {
+				approve(t, s, MemberApprovals{MemberNames: kestrelNames, Approved: approved})
+				if err := saveNote(s, memberKestrel, "", "allied group lead"); err != nil {
+					t.Fatalf("seed save: %v", err)
+				}
 
-		if err := saveNote(s, memberKestrel, "allied group lead", ""); err != nil {
-			t.Fatalf("SaveFoxholeNote with an empty note: %v", err)
-		}
+				if err := saveNote(s, memberKestrel, "allied group lead", ""); err != nil {
+					t.Fatalf("SaveFoxholeNote with an empty note: %v", err)
+				}
 
-		got, ok := foxholeRecords(t, s)[memberKestrel]
-		if !ok || !got.Approved || got.Note != "" {
-			t.Errorf("%s's record = %+v (present: %v), want it kept, approved, with no note", memberKestrel, got, ok)
-		}
-	})
+				got, ok := foxholeRecords(t, s)[memberKestrel]
+				if !ok || got.Approved != approved || got.Note != "" {
+					t.Errorf("%s's record = %+v (present: %v), want it kept, approved %+v, with no note", memberKestrel, got, ok, approved)
+				}
+			})
+		})
+	}
 }
 
-// A removal that takes External from an approved collaborator clears their
-// approval, and says whether there was one to clear. A member with a note
-// keeps the record and the note; one with no note loses the record. A
-// member with no approval, with a note or with no record at all, is left as
-// they were, and the call says there was none. The Foxhole change log gains
-// no entry in any case: the removal's report names the approval it cleared.
-func TestRemovalClearsAnApprovalWithNoEntryOfItsOwn(t *testing.T) {
-	const memberVance = "100000000000000005"
+// A removal that takes a Foxhole role from an approved Foxholer clears
+// their approval for that role alone, and says whether there was one to
+// clear. A member left with a note or another approval keeps the record; one
+// left with neither loses it. A member with no approval for the role, or
+// with no record at all, is left as they were, and the call says there was
+// none. The Foxhole change log gains no entry in any case: the removal's
+// report names the approval it cleared.
+func TestRemovalClearsTheApprovalForTheRoleItTookWithNoEntryOfItsOwn(t *testing.T) {
 	cases := []struct {
 		name    string
 		member  string
+		role    FoxholeApprovals
 		cleared bool
-		want    map[string]FoxholeRecord
+		// want is the member's record after the call, nil for none.
+		want *FoxholeRecord
 	}{
-		{"approved with a note", memberDoe, true, map[string]FoxholeRecord{
-			memberDoe:     {MemberID: memberDoe, Note: "allied liaison", DisplayName: "SGT Doe.J", Username: "jdoe"},
-			memberKestrel: {MemberID: memberKestrel, Approved: true, DisplayName: "kestrel_tlr", Username: "kestrel_tlr"},
-			memberVance:   {MemberID: memberVance, Note: "ask before re-adding", DisplayName: "SGT Doe.J", Username: "jdoe"},
-		}},
-		{"approved with no note", memberKestrel, true, map[string]FoxholeRecord{
-			memberDoe:   {MemberID: memberDoe, Note: "allied liaison", Approved: true, DisplayName: "SGT Doe.J", Username: "jdoe"},
-			memberVance: {MemberID: memberVance, Note: "ask before re-adding", DisplayName: "SGT Doe.J", Username: "jdoe"},
-		}},
-		{"a note and no approval", memberVance, false, nil},
-		{"no record", "100000000000000009", false, nil},
+		{"Internal from a member approved for both", memberMarsh, internalApproval, true,
+			&FoxholeRecord{MemberID: memberMarsh, Approved: externalApproval, DisplayName: "CPT Marsh.E", Username: "emarsh"}},
+		{"External from a member approved for both", memberMarsh, externalApproval, true,
+			&FoxholeRecord{MemberID: memberMarsh, Approved: internalApproval, DisplayName: "CPT Marsh.E", Username: "emarsh"}},
+		{"the only approval of a member with a note", memberDoe, externalApproval, true,
+			&FoxholeRecord{MemberID: memberDoe, Note: "allied liaison", DisplayName: "SGT Doe.J", Username: "jdoe"}},
+		{"the only approval of a member with no note", memberKestrel, internalApproval, true, nil},
+		{"a role the member has no approval for", memberDoe, internalApproval, false,
+			&FoxholeRecord{MemberID: memberDoe, Note: "allied liaison", Approved: externalApproval, DisplayName: "SGT Doe.J", Username: "jdoe"}},
+		{"a member with no record", "100000000000000009", externalApproval, false, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -497,17 +541,17 @@ func TestRemovalClearsAnApprovalWithNoEntryOfItsOwn(t *testing.T) {
 				if err := saveNote(s, memberDoe, "", "allied liaison"); err != nil {
 					t.Fatalf("seed save: %v", err)
 				}
-				if err := saveNote(s, memberVance, "", "ask before re-adding"); err != nil {
-					t.Fatalf("seed save: %v", err)
-				}
-				approveDoeAndKestrel(t, s)
+				approve(t, s, MemberApprovals{MemberNames: doeNames, Approved: externalApproval},
+					MemberApprovals{MemberNames: kestrelNames, Approved: internalApproval},
+					MemberApprovals{MemberNames: marshNames, Approved: bothApprovals})
 				before := readFoxholeState(t, s)
-				want := tc.want
-				if want == nil {
-					want = before.Members
+				want := maps.Clone(before.Members)
+				delete(want, tc.member)
+				if tc.want != nil {
+					want[tc.member] = *tc.want
 				}
 
-				cleared, err := s.ClearFoxholeApprovalForRemoval(context.Background(), "guild-1", tc.member)
+				cleared, err := s.ClearFoxholeApprovalForRemoval(context.Background(), "guild-1", tc.member, tc.role)
 
 				if err != nil {
 					t.Fatalf("ClearFoxholeApprovalForRemoval: %v", err)
@@ -523,5 +567,27 @@ func TestRemovalClearsAnApprovalWithNoEntryOfItsOwn(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// #662: an approval stored before approvals named a role comes through the
+// migration as an External approval, the only kind Approve gave until then.
+func TestAnApprovalStoredBeforeRolesReadsAsAnExternalApproval(t *testing.T) {
+	// The change log migration that keeps removed hubs is the last one
+	// before approvals named a role.
+	raw := migratedTo(t, 20261012170230)
+	if _, err := raw.ExecContext(context.Background(), `
+		INSERT INTO foxhole_records (guild_id, member_id, approved, last_display_name, last_username)
+		VALUES ('guild-1', $1, TRUE, 'kestrel_tlr', 'kestrel_tlr')`, memberKestrel); err != nil {
+		t.Fatalf("insert an older approval: %v", err)
+	}
+
+	s := openMigrated(t)
+
+	want := map[string]FoxholeRecord{
+		memberKestrel: {MemberID: memberKestrel, Approved: externalApproval, DisplayName: "kestrel_tlr", Username: "kestrel_tlr"},
+	}
+	if got := foxholeRecords(t, s); !reflect.DeepEqual(got, want) {
+		t.Errorf("records = %+v, want %+v", got, want)
 	}
 }
