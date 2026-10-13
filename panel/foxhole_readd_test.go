@@ -14,10 +14,10 @@ import (
 	"golang.org/x/net/html"
 )
 
-// collaboratorGone is an approved collaborator who left the server: the
+// foxholerGone is an approved collaborator who left the server: the
 // member list doesn't hold them, and the store holds the names the panel
 // last saw.
-var collaboratorGone = store.MemberNames{MemberID: "100000000000000009", DisplayName: "LT Wren.A", Username: "awren"}
+var foxholerGone = store.MemberNames{MemberID: "100000000000000009", DisplayName: "LT Wren.A", Username: "awren"}
 
 // namesOf is a member's names as the member list shows them.
 func namesOf(m commands.ListedMember) store.MemberNames {
@@ -68,7 +68,7 @@ func reAddBlock(t *testing.T, doc *html.Node) *html.Node {
 func TestAfterAWarBlockCountsApprovedCollaboratorsByWhatReAddWouldDo(t *testing.T) {
 	w := newFoxholeWorld(t)
 	seedApproved(t, w, namesOf(memberKestrel), namesOf(memberMarsh),
-		namesOf(memberDoe), namesOf(memberAsh), namesOf(memberVance), collaboratorGone)
+		namesOf(memberDoe), namesOf(memberAsh), namesOf(memberVance), foxholerGone)
 
 	block := reAddBlock(t, parseHTML(t, w.b.get(foxholePath)))
 
@@ -89,34 +89,122 @@ func pressReAdd(t *testing.T, b *browser) *http.Response {
 	return follow(t, b, postReAdd(t, b, parseHTML(t, b.get(foxholePath))))
 }
 
-// After a purge of External, one press of Re-add, with no preview, gives
-// External back to the approved collaborators: Kestrel, approved, holds it
-// again, and Marsh, who held it unapproved, doesn't. The report names
-// Kestrel as changed, and so does the re-add's change log entry, which is
+// reportEntries returns each member a report list names as "<id> <role>",
+// with " <reason>" after it when the list gives one, in the order the list
+// shows them.
+func reportEntries(list *html.Node) []string {
+	var out []string
+	eachElement(list, func(n *html.Node) {
+		if id, ok := attrValue(n, "data-member"); ok {
+			entry := id + " " + attrOf(n, "data-role")
+			if reason, ok := attrValue(n, "data-reason"); ok {
+				entry += " " + reason
+			}
+			out = append(out, entry)
+		}
+	})
+	return out
+}
+
+// Approvals for one role or both, as a seed names them.
+var (
+	internalApproval = store.FoxholeApprovals{Internal: true}
+	externalApproval = store.FoxholeApprovals{External: true}
+	bothApprovals    = store.FoxholeApprovals{Internal: true, External: true}
+)
+
+// After a purge of both roles, one press of Re-add, with no preview, gives
+// each approved Foxholer in the server each role they're approved for, and
+// nobody else anything: Doe, who held Internal unapproved, doesn't get it
+// back. Ash gets Internal with no rank role, as every Internal grant does.
+// The report lists one change per member and role, Internal first, then
+// External, each in display name order, and the member who left the server
+// once for each role they're approved for. The re-add's change log entry is
 // the report.
-func TestReAddAfterAPurgeGivesExternalBackToApprovedCollaboratorsOnly(t *testing.T) {
+func TestReAddAfterAPurgeGivesEachApprovedFoxholerEachApprovedRole(t *testing.T) {
 	w := newFoxholeWorld(t)
-	approveThroughThePage(t, w, memberKestrel.ID)
-	startPurge(t, w, "external")
+	approveThroughThePage(t, w, memberAsh.ID, memberKestrel.ID, memberMarsh.ID)
+	seedApprovals(t, w, store.MemberApprovals{MemberNames: foxholerGone, Approved: bothApprovals})
+	startPurge(t, w, "both")
 	w.awaitActionEnd(t)
 
 	pressReAdd(t, w.b)
 	w.awaitActionEnd(t)
 
-	if got, want := w.discord.holdersOf(roleExternal), []string{memberKestrel.ID}; !slices.Equal(got, want) {
-		t.Errorf("after the re-add %v hold External, want %v", got, want)
+	holders := map[string][]string{"Internal": w.discord.holdersOf(roleInternal), "External": w.discord.holdersOf(roleExternal)}
+	want := map[string][]string{"Internal": sorted([]string{memberAsh.ID, memberMarsh.ID}), "External": sorted([]string{memberKestrel.ID, memberMarsh.ID})}
+	if !maps.EqualFunc(holders, want, slices.Equal) {
+		t.Errorf("after the re-add the holders are %v, want %v", holders, want)
 	}
 	page := parseHTML(t, w.b.get(foxholePath))
-	want := []string{memberKestrel.ID + " external"}
-	if got := pairs(reportList(t, reportBlock(t, page), "changed")); !slices.Equal(got, want) {
-		t.Errorf("the report changed %v, want %v", got, want)
+	report := reportBlock(t, page)
+	changed := []string{memberMarsh.ID + " internal", memberAsh.ID + " internal", memberMarsh.ID + " external", memberKestrel.ID + " external"}
+	if got := reportEntries(reportList(t, report, "changed")); !slices.Equal(got, changed) {
+		t.Errorf("the report changed %v, want %v in that order", got, changed)
+	}
+	skipped := []string{foxholerGone.MemberID + " internal left", foxholerGone.MemberID + " external left"}
+	if got := reportEntries(reportList(t, report, "skipped")); !slices.Equal(got, skipped) {
+		t.Errorf("the report skipped %v, want %v", got, skipped)
 	}
 	entries := changeEntries(t, page, "re_add")
 	if len(entries) != 1 {
 		t.Fatalf("the change log holds %d re-add entries, want 1", len(entries))
 	}
-	if got := pairs(reportList(t, entries[0], "changed")); !slices.Equal(got, want) {
-		t.Errorf("the re-add's change log entry changed %v, want %v", got, want)
+	if got := reportEntries(reportList(t, entries[0], "changed")); !slices.Equal(got, changed) {
+		t.Errorf("the re-add's change log entry changed %v, want %v", got, changed)
+	}
+}
+
+// After a purge of Internal alone, Re-add gives Internal back to each
+// member approved for it, and skips each External approval, whose member
+// still holds External.
+func TestReAddAfterAnInternalPurgeGivesInternalBackAndSkipsExternalHolders(t *testing.T) {
+	w := newFoxholeWorld(t)
+	approveThroughThePage(t, w, memberAsh.ID, memberKestrel.ID, memberMarsh.ID)
+	startPurge(t, w, "internal")
+	w.awaitActionEnd(t)
+
+	pressReAdd(t, w.b)
+	w.awaitActionEnd(t)
+
+	if got, want := w.discord.holdersOf(roleInternal), sorted([]string{memberAsh.ID, memberMarsh.ID}); !slices.Equal(got, want) {
+		t.Errorf("after the re-add %v hold Internal, want %v", got, want)
+	}
+	report := reportBlock(t, parseHTML(t, w.b.get(foxholePath)))
+	if got, want := pairs(reportList(t, report, "changed")), sorted([]string{memberAsh.ID + " internal", memberMarsh.ID + " internal"}); !slices.Equal(got, want) {
+		t.Errorf("the report changed %v, want %v", got, want)
+	}
+	skipped := sorted([]string{memberKestrel.ID + " external holding", memberMarsh.ID + " external holding"})
+	if got := sorted(reportEntries(reportList(t, report, "skipped"))); !slices.Equal(got, skipped) {
+		t.Errorf("the report skipped %v, want %v", got, skipped)
+	}
+}
+
+// A Retry of a re-add gives back each role the re-add missed, Internal and
+// External alike: Ash's Internal and Kestrel's External both failed, and
+// the Retry gives each back.
+func TestReAddRetryGivesBackEachRoleTheReAddMissed(t *testing.T) {
+	w := newFoxholeWorld(t)
+	seedApprovals(t, w, store.MemberApprovals{MemberNames: namesOf(memberAsh), Approved: internalApproval},
+		store.MemberApprovals{MemberNames: namesOf(memberKestrel), Approved: externalApproval})
+	ash, kestrel := memberAsh, memberKestrel
+	ash.RoleIDs, kestrel.RoleIDs = nil, nil
+	setMembers(w, memberDoe, ash, kestrel, memberMarsh, memberVance)
+	for _, id := range []string{memberAsh.ID, memberKestrel.ID} {
+		w.discord.failRoleWrites(id, missingPermissions())
+	}
+	pressReAdd(t, w.b)
+	w.awaitActionEnd(t)
+	for _, id := range []string{memberAsh.ID, memberKestrel.ID} {
+		w.discord.failRoleWrites(id, nil)
+	}
+
+	assertRedirect(t, w.b.postForm(foxholeRetryPath, formPosts(t, openRetry(t, w.b), foxholeRetryPath)), foxholePath)
+	w.awaitActionEnd(t)
+
+	holders := map[string][]string{"Internal": w.discord.holdersOf(roleInternal), "External": w.discord.holdersOf(roleExternal)}
+	if !slices.Contains(holders["Internal"], memberAsh.ID) || !slices.Contains(holders["External"], memberKestrel.ID) {
+		t.Errorf("after the Retry the holders are %v, want %s holding Internal and %s External", holders, memberAsh.ID, memberKestrel.ID)
 	}
 }
 
@@ -127,7 +215,7 @@ func TestReAddAfterAPurgeGivesExternalBackToApprovedCollaboratorsOnly(t *testing
 // whoever else it skips, and its report lists both.
 func TestReAddReportSkipsCollaboratorsNotInTheServerOrHoldingExternal(t *testing.T) {
 	w := newFoxholeWorld(t)
-	seedApproved(t, w, namesOf(memberDoe), namesOf(memberKestrel), collaboratorGone)
+	seedApproved(t, w, namesOf(memberDoe), namesOf(memberKestrel), foxholerGone)
 
 	pressReAdd(t, w.b)
 	w.awaitActionEnd(t)
@@ -137,7 +225,7 @@ func TestReAddReportSkipsCollaboratorsNotInTheServerOrHoldingExternal(t *testing
 		t.Errorf("the report changed %v, want %v", got, want)
 	}
 	skipped := listedReasons(reportList(t, report, "skipped"))
-	want := map[string]string{collaboratorGone.MemberID: string(commands.SkipLeft), memberKestrel.ID: string(commands.SkipHolding)}
+	want := map[string]string{foxholerGone.MemberID: string(commands.SkipLeft), memberKestrel.ID: string(commands.SkipHolding)}
 	if !maps.Equal(skipped, want) {
 		t.Errorf("the report skipped %v, want %v", skipped, want)
 	}
@@ -157,7 +245,7 @@ func TestReAddRoleChangesNameTheReAddAndTheForumUserWhoStartedIt(t *testing.T) {
 	if len(writes) == 0 {
 		t.Fatal("the re-add changed no role")
 	}
-	want := "Panel: Foxhole re-add of approved collaborators by " + managerUsername + " (forum user " + strconv.Itoa(managerUserID) + ")"
+	want := commands.ReAddReason + managerUsername + " (forum user " + strconv.Itoa(managerUserID) + ")"
 	for _, write := range writes {
 		if write.Reason != want {
 			t.Errorf("the change to %s carries the reason %q, want %q", write.MemberID, write.Reason, want)
@@ -233,7 +321,7 @@ func TestReAddIsDisabledWithNobodyToGiveExternalTo(t *testing.T) {
 		approved []store.MemberNames
 		disabled bool
 	}{
-		{"each approved collaborator holds External or left", []store.MemberNames{namesOf(memberKestrel), collaboratorGone}, true},
+		{"each approved collaborator holds External or left", []store.MemberNames{namesOf(memberKestrel), foxholerGone}, true},
 		{"an approved collaborator in the server lacks External", []store.MemberNames{namesOf(memberDoe)}, false},
 	}
 	for _, tc := range cases {

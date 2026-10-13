@@ -52,14 +52,28 @@ func (r FoxholeRole) Label() string {
 	return ""
 }
 
+// foxholeRoles are the two Foxhole roles, Internal first, the order a
+// re-add's report lists them in.
+var foxholeRoles = []FoxholeRole{FoxholeInternal, FoxholeExternal}
+
+// ApprovedIn reports whether the approvals name the role.
+func (r FoxholeRole) ApprovedIn(a store.FoxholeApprovals) bool {
+	switch r {
+	case FoxholeInternal:
+		return a.Internal
+	case FoxholeExternal:
+		return a.External
+	}
+	return false
+}
+
 // ApprovedRoles are the Foxhole roles the approvals name, Internal first.
 func ApprovedRoles(a store.FoxholeApprovals) []FoxholeRole {
 	var roles []FoxholeRole
-	if a.Internal {
-		roles = append(roles, FoxholeInternal)
-	}
-	if a.External {
-		roles = append(roles, FoxholeExternal)
+	for _, role := range foxholeRoles {
+		if role.ApprovedIn(a) {
+			roles = append(roles, role)
+		}
 	}
 	return roles
 }
@@ -285,7 +299,7 @@ type ActionReport struct {
 var foxholeActionNames = map[store.ChangeAction]string{
 	store.ChangePurge:   "Purge",
 	store.ChangeRemoval: "Remove",
-	store.ChangeReAdd:   "Re-add approved collaborators",
+	store.ChangeReAdd:   "Re-add approved Foxholers",
 	store.ChangeAdd:     "Add",
 	// A roster add's name follows its unit, as in "D/ACD roster add".
 	store.ChangeRosterAdd: "roster add",
@@ -766,23 +780,27 @@ func purgeSpec(scope PurgeScope) actionSpec {
 	return actionSpec{action: store.ChangePurge, scope: scope, roles: scope.Roles(), reason: "Panel: Foxhole purge by "}
 }
 
-// ReAdd starts a re-add of the approved collaborators, started by the forum
+// ReAdd starts a re-add of the approved Foxholers, started by the forum
 // user given, and returns once its report is written. It starts as start
 // says. The re-add then runs in the background, with no deadline of ctx's,
-// to its end: one member at a time, it gives External to each approved
-// collaborator the store held at the start. One who left the server, or
-// who holds External already, is skipped with that reason.
+// to its end: one change at a time, it gives each approved Foxholer the
+// store held at the start each role they're approved for, with no rank
+// role check. One who left the server, or who holds the role already, is
+// skipped with that reason, once for each role.
 func (r *FoxholeRuntime) ReAdd(ctx context.Context, by ForumUser) error {
 	spec := reAddSpec()
 	spec.plan = reAddPlan
 	return r.start(ctx, spec, by)
 }
 
-// reAddSpec is a re-add of the approved collaborators, as ReAdd and a
-// re-add's Retry start it, but for its plan.
+// ReAddReason is the audit log reason each role change of a re-add sends,
+// before the forum user who started it.
+const ReAddReason = "Panel: Foxhole re-add of approved Foxholers by "
+
+// reAddSpec is a re-add of the approved Foxholers, as ReAdd and a re-add's
+// Retry start it, but for its plan. It changes both roles.
 func reAddSpec() actionSpec {
-	return actionSpec{action: store.ChangeReAdd, roles: []FoxholeRole{FoxholeExternal}, grant: true,
-		reason: "Panel: Foxhole re-add of approved collaborators by "}
+	return actionSpec{action: store.ChangeReAdd, roles: foxholeRoles, grant: true, reason: ReAddReason}
 }
 
 // Remove starts a removal of the role given from the members given,
@@ -1076,20 +1094,24 @@ func purgePlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, scope Pu
 	return plan
 }
 
-// reAddPlan is a re-add's role changes: External for every approved
-// collaborator, in display name order, whether or not they are in the
-// server. The member list names those in it, and the records' last-seen
-// names those who left.
+// reAddPlan is a re-add's role changes: each role for every member approved
+// for it, Internal first, then External, each in display name order,
+// whether or not they are in the server. The member list names those in
+// it, and the records' last-seen names those who left.
 func reAddPlan(list MemberListSnapshot, roleIDs map[FoxholeRole]string, records []store.FoxholeRecord) []plannedChange {
 	var plan []plannedChange
-	for _, rec := range records {
-		if !rec.Approved.External {
-			continue
+	for _, role := range foxholeRoles {
+		var changes []plannedChange
+		for _, rec := range records {
+			if !role.ApprovedIn(rec.Approved) {
+				continue
+			}
+			seen := store.MemberNames{MemberID: rec.MemberID, DisplayName: rec.DisplayName, Username: rec.Username}
+			changes = append(changes, plannedChange{member: plannedMember(list, seen, role), roleID: roleIDs[role]})
 		}
-		seen := store.MemberNames{MemberID: rec.MemberID, DisplayName: rec.DisplayName, Username: rec.Username}
-		plan = append(plan, plannedChange{member: plannedMember(list, seen, FoxholeExternal), roleID: roleIDs[FoxholeExternal]})
+		plan = append(plan, byDisplayName(changes)...)
 	}
-	return byDisplayName(plan)
+	return plan
 }
 
 // removalPlan is a removal's role changes: the role for each member given,

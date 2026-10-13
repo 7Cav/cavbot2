@@ -37,7 +37,7 @@ func TestKeptFormOfAnActionThatWouldChangeNobodyIsRefused(t *testing.T) {
 		{name: "purge of both", action: "purge", refusal: "nobody-to-change", stale: stalePurge("both")},
 		{name: "re-add", action: "re_add", refusal: "nobody-to-change", stale: func(t *testing.T, w *testWorld) func() *http.Response {
 			// The collaborator who left counts for nobody: the re-add would skip them.
-			seedApproved(t, w, namesOf(memberDoe), collaboratorGone)
+			seedApproved(t, w, namesOf(memberDoe), foxholerGone)
 			page := parseHTML(t, w.b.get(foxholePath))
 			pressReAdd(t, w.b)
 			w.awaitActionEnd(t)

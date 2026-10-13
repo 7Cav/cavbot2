@@ -209,7 +209,7 @@ func TestRetryIsANewRunNamedForWhoConfirmedItWithTheActionsReason(t *testing.T) 
 			w.discord.failRoleWrites(memberAsh.ID, missingPermissions())
 			pressReAdd(t, w.b)
 			return memberAsh.ID
-		}, "Panel: Foxhole re-add of approved collaborators by Jones.K (forum user 1357)"},
+		}, commands.ReAddReason + "Jones.K (forum user 1357)"},
 		{"roster add", func(t *testing.T, w *testWorld) string {
 			serveRoster(t, trooperVance)
 			w.discord.failRoleWrites(memberVance.ID, missingPermissions())

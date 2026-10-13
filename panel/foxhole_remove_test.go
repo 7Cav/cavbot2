@@ -79,9 +79,9 @@ func TestRemovePreviewListsWhoLosesTheRoleWhoIsSkippedAndWhoseApprovalItClears(t
 		skipped  map[string]string
 		cleared  []string
 	}{
-		{"external", []string{memberKestrel.ID, memberMarsh.ID, memberDoe.ID, collaboratorGone.MemberID},
+		{"external", []string{memberKestrel.ID, memberMarsh.ID, memberDoe.ID, foxholerGone.MemberID},
 			[]string{memberKestrel.ID, memberMarsh.ID},
-			map[string]string{memberDoe.ID: "not-holding", collaboratorGone.MemberID: "left"},
+			map[string]string{memberDoe.ID: "not-holding", foxholerGone.MemberID: "left"},
 			[]string{memberMarsh.ID}},
 		{"internal", []string{memberDoe.ID, memberMarsh.ID},
 			[]string{memberDoe.ID, memberMarsh.ID}, map[string]string{}, nil},
@@ -89,7 +89,7 @@ func TestRemovePreviewListsWhoLosesTheRoleWhoIsSkippedAndWhoseApprovalItClears(t
 	for _, tc := range cases {
 		t.Run(tc.role, func(t *testing.T) {
 			w := newFoxholeWorld(t)
-			seedApproved(t, w, namesOf(memberMarsh), collaboratorGone)
+			seedApproved(t, w, namesOf(memberMarsh), foxholerGone)
 			seedNote(t, w, namesOf(memberMarsh), "keeps External through the next war")
 			seedNote(t, w, namesOf(memberDoe), "discharged 12 Sep")
 			page := parseHTML(t, w.b.get(foxholePath))
