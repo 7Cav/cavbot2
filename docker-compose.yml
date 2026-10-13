@@ -10,6 +10,7 @@ services:
         condition: service_healthy
     environment:
       BEARER: ${BEARER}
+      CAV_API_BASE_URL: ${CAV_API_BASE_URL}
       DISCORD_TOKEN: ${DISCORD_TOKEN}
       GUILD_ID: ${GUILD_ID}
       BM_TOKEN: ${BM_TOKEN}

@@ -227,24 +227,40 @@ func (r *logRecorder) infoLinesCarrying(when time.Time) int {
 
 // infoLinesWhere counts the INFO records with an attribute that matches.
 func (r *logRecorder) infoLinesWhere(matches func(slog.Attr) bool) int {
+	return r.count(slog.LevelInfo, func(rec slog.Record) bool { return carries(rec, matches) })
+}
+
+// count returns how many records at level match.
+func (r *logRecorder) count(level slog.Level, matches func(slog.Record) bool) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	n := 0
 	for _, rec := range r.records {
-		if rec.Level != slog.LevelInfo {
-			continue
-		}
-		carries := false
-		rec.Attrs(func(a slog.Attr) bool {
-			carries = matches(a)
-			return !carries
-		})
-		if carries {
+		if rec.Level == level && matches(rec) {
 			n++
 		}
 	}
 	return n
 }
+
+// all returns every record kept so far.
+func (r *logRecorder) all() []slog.Record {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]slog.Record(nil), r.records...)
+}
+
+// carries reports whether any of rec's attributes match.
+func carries(rec slog.Record, matches func(slog.Attr) bool) bool {
+	found := false
+	rec.Attrs(func(a slog.Attr) bool {
+		found = matches(a)
+		return !found
+	})
+	return found
+}
+
+func anyRecord(slog.Record) bool { return true }
 
 // A start that fails the same way in a restart loop would spend the org's
 // Sentry quota, so a repeat within the hour stays in the container log.

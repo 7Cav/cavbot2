@@ -229,6 +229,10 @@ func main() {
 
 	utils.Info("CavBot2 starting", "version", Version)
 
+	// After InitSentry, so a rejected CAV_API_BASE_URL reaches Sentry, and
+	// before anything that looks up a milpac.
+	utils.InitAPIBaseURL()
+
 	commands.LogFoxholeRoleBaseName()
 
 	initLOACache()
