@@ -1702,6 +1702,11 @@ func createFails(err error) func(f *fakeTempVCManager) {
 	return func(f *fakeTempVCManager) { f.createErr = err }
 }
 
+// moveFails is the setup that makes every move-into return err.
+func moveFails(err error) func(f *fakeTempVCManager) {
+	return func(f *fakeTempVCManager) { f.moveErr = err }
+}
+
 // hubWithoutParent is the setup that moves the hub channel out of its
 // category, the one broken hub a join can reach.
 func hubWithoutParent(f *fakeTempVCManager) {
@@ -1838,43 +1843,32 @@ func (f *fakeTempVCManager) setCreateErr(err error) {
 }
 
 func TestTempVCCreateFailuresCaptureOncePerStreakPerHub(t *testing.T) {
-	t.Run("each capturing class captures on its first failure", func(t *testing.T) {
-		cases := []struct {
-			name string
-			err  error
-		}{
-			{"guild cap", restError(http.StatusBadRequest, discordgo.ErrCodeMaximumNumberOfGuildChannelsReached, "Maximum number of guild channels reached (500)")},
-			{"429", rateLimitError(4 * time.Minute)},
-			{"500", restError(http.StatusInternalServerError, 0, "Internal Server Error")},
-			{"transport", errors.New("dial tcp: connection refused")},
-		}
-		for _, tc := range cases {
-			t.Run(tc.name, func(t *testing.T) {
-				fake := newFakeTempVCManager()
-				fake.createErr = tc.err
-				tv := newSeededTempVC(t, fake)
-				captures := countCaptures(t)
+	t.Run("the cap captures on its first failure", func(t *testing.T) {
+		fake := newFakeTempVCManager()
+		fake.createErr = restError(http.StatusBadRequest, discordgo.ErrCodeMaximumNumberOfGuildChannelsReached, "Maximum number of guild channels reached (500)")
+		tv := newSeededTempVC(t, fake)
+		captures := countCaptures(t)
 
-				fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+		fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
-				if *captures != 1 {
-					t.Errorf("captures = %d, want 1", *captures)
-				}
-			})
+		if *captures != 1 {
+			t.Errorf("captures = %d, want 1", *captures)
 		}
 	})
 
 	t.Run("a streak captures once and a success opens the next", func(t *testing.T) {
 		fake := newFakeTempVCManager()
-		serverErr := restError(http.StatusInternalServerError, 0, "Internal Server Error")
-		fake.createErr = serverErr
+		badRequest := restError(http.StatusBadRequest, 0, "Bad Request")
+		fake.createErr = badRequest
 		tv := newSeededTempVC(t, fake)
 		captures := countCaptures(t)
 
+		// A 4xx opens the streak and a 5xx joins it.
 		fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+		fake.setCreateErr(restError(http.StatusInternalServerError, 0, "Internal Server Error"))
 		fake.deliver(tv, voiceEvent("user-2", testTempVCHub, member("B")))
 		if *captures != 1 {
-			t.Fatalf("captures = %d after two failures, want 1", *captures)
+			t.Fatalf("captures = %d after a 400 and a 500, want 1", *captures)
 		}
 
 		fake.setCreateErr(nil)
@@ -1882,7 +1876,7 @@ func TestTempVCCreateFailuresCaptureOncePerStreakPerHub(t *testing.T) {
 		fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 		fake.deliver(tv, voiceEvent("user-1", "new-chan", member("A")))
 
-		fake.setCreateErr(serverErr)
+		fake.setCreateErr(badRequest)
 		fake.deliver(tv, voiceEvent("user-2", "", member("B")))
 		fake.deliver(tv, voiceEvent("user-2", testTempVCHub, member("B")))
 		if *captures != 2 {
@@ -1910,18 +1904,48 @@ func TestTempVCCreateFailuresCaptureOncePerStreakPerHub(t *testing.T) {
 	})
 }
 
-// An Invalid Form Body without the category cap marker is an ordinary 4xx.
-// The bot logs a WARN line and sends nothing to Sentry.
-func TestTempVCCreateFailureWith50035WithoutTheCapMarkerCapturesNothing(t *testing.T) {
-	fake := newFakeTempVCManager()
-	fake.createErr = badNameLengthErr()
-	tv := newSeededTempVC(t, fake)
-	captures := countCaptures(t)
+// A member told the error has been reported to S6 can count on S6 finding it
+// in Sentry (#675): a failure Discord returns on the create or the move-into
+// captures on the first join of the hub's streak, whatever its status.
+func TestTempVCReportedSpawnFailureHasACapture(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(f *fakeTempVCManager)
+	}{
+		{"create 400 with no code", createFails(restError(http.StatusBadRequest, 0, "Bad Request"))},
+		{"create 50035 without the cap marker", createFails(badNameLengthErr())},
+		{"create 403", createFails(restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, "Missing Permissions"))},
+		{"create 429", createFails(rateLimitError(4 * time.Minute))},
+		{"create 500", createFails(restError(http.StatusInternalServerError, 0, "Internal Server Error"))},
+		{"create transport", createFails(errors.New("dial tcp: connection refused"))},
+		// The cache still shows the member in the hub, so a 40032 here is not
+		// a member who left.
+		{"move-into 40032", moveFails(restError(http.StatusBadRequest, discordgo.ErrCodeTargetIsNotConnectedToVoice, "Target user is not connected to voice"))},
+		{"move-into 403", moveFails(restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, "Missing Permissions"))},
+		{"move-into 429", moveFails(rateLimitError(4 * time.Minute))},
+		{"move-into 500", moveFails(restError(http.StatusInternalServerError, 0, "Internal Server Error"))},
+		{"move-into transport", moveFails(errors.New("dial tcp: connection refused"))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeTempVCManager()
+			tc.setup(fake)
+			tv := newSeededTempVC(t, fake)
+			captures := countCaptures(t)
 
-	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+			fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
-	if *captures != 0 {
-		t.Errorf("captures = %d, want 0: a 50035 without the cap marker is a WARN line", *captures)
+			msgs := hubMessagesMentioning(t, fake, "user-1")
+			if len(msgs) != 1 {
+				t.Fatalf("messages = %d, want one", len(msgs))
+			}
+			if !strings.Contains(msgs[0].data.Content, spawnFailureReportedNote) {
+				t.Fatalf("message %q does not say the error was reported to S6", msgs[0].data.Content)
+			}
+			if *captures != 1 {
+				t.Errorf("captures = %d, want 1: the member was told S6 has the error", *captures)
+			}
+		})
 	}
 }
 

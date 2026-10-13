@@ -79,13 +79,6 @@ func classifySpawnedChannelError(err error) spawnedChannelFault {
 	}
 }
 
-// capturesOnCreate reports whether a create or move-into failure with these
-// facts reaches Sentry: the cap, 403, 429, 5xx, transport. Any other 4xx is a
-// WARN line.
-func (f spawnedChannelFault) capturesOnCreate() bool {
-	return f.full || f.rateLimited || f.hardFault
-}
-
 // capturesOnChannelChange reports whether a failure to change a spawned
 // channel reaches Sentry: a delete, a rename, a lock or unlock edit. 403,
 // 5xx and transport capture. A 429 and any other 4xx is a WARN line. On a
