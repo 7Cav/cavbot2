@@ -692,11 +692,11 @@ func TestRecordingMixIsBuiltFromTheTracksOnDisk(t *testing.T) {
 	}
 }
 
-// A speaker whose track failed partway is listed with their track lost, but
-// what reached the disk before the failure is still their track: the
-// recording has a track, which the Recordings page reads to offer the zip
-// (#648).
-func TestRecordingWhoseOnlyTrackFailedPartwayStillHasATrack(t *testing.T) {
+// A speaker whose track was lost partway is listed with their track lost,
+// but what reached the disk before the recorder stopped writing it is still
+// their track: the recording has a track, which the Recordings page reads
+// to offer the zip (#648).
+func TestRecordingWhoseOnlyTrackWasLostPartwayStillHasATrack(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 	var mu sync.Mutex
 	var track *os.File
@@ -727,7 +727,7 @@ func TestRecordingWhoseOnlyTrackFailedPartwayStillHasATrack(t *testing.T) {
 	}
 
 	if !sc.lib.HasTrack(rec) {
-		t.Error("a recording whose only track failed partway has no track, want one")
+		t.Error("a recording whose only track was lost partway has no track, want one")
 	}
 }
 

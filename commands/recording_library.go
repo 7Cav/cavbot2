@@ -133,9 +133,9 @@ func (l *RecordingLibrary) OpenMix(rec store.Recording) (*os.File, error) {
 
 // HasTrack reports whether any of a recording's speakers' tracks is on
 // disk, so its zip holds a track. A speaker whose track was lost may still
-// have one, holding what reached the disk before it failed. A track that
-// can't be checked counts, since the zip leaves out only a track that isn't
-// there.
+// have one, holding what reached the disk before the recorder stopped
+// writing it. A track that can't be checked counts, since the zip leaves
+// out only a track that isn't there.
 func (l *RecordingLibrary) HasTrack(rec store.Recording) bool {
 	for _, sp := range rec.Speakers {
 		if _, err := os.Stat(trackPath(l.dir, rec.ID, sp.ID)); !errors.Is(err, fs.ErrNotExist) {

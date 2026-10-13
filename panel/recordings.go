@@ -254,14 +254,8 @@ func (p *Panel) downloadMix(w http.ResponseWriter, r *http.Request, sess session
 // and its info file, written as it streams, with no time budget. A running
 // recording has no zip yet.
 func (p *Panel) downloadZip(w http.ResponseWriter, r *http.Request, sess session) {
-	rec, ok := p.recordingFor(w, r, sess, "zip download")
+	rec, ok := p.stoppedRecordingFor(w, r, sess, "zip download")
 	if !ok {
-		return
-	}
-	if rec.StoppedAt.IsZero() {
-		// The page offers no download while the recording runs, and says
-		// it is still recording.
-		http.Redirect(w, r, commands.RecordingPath(rec.ID), http.StatusSeeOther)
 		return
 	}
 	utils.Info("Panel recording downloaded", "recording_id", rec.ID, "file", "zip", "username", sess.username, "forum_user_id", sess.userID)
@@ -282,14 +276,8 @@ func (p *Panel) downloadZip(w http.ResponseWriter, r *http.Request, sess session
 // alone, which the page offers in the zip's place for a recording with no
 // track on disk (#648). A running recording has no info file yet.
 func (p *Panel) downloadInfo(w http.ResponseWriter, r *http.Request, sess session) {
-	rec, ok := p.recordingFor(w, r, sess, "info download")
+	rec, ok := p.stoppedRecordingFor(w, r, sess, "info download")
 	if !ok {
-		return
-	}
-	if rec.StoppedAt.IsZero() {
-		// The page offers no download while the recording runs, and says
-		// it is still recording.
-		http.Redirect(w, r, commands.RecordingPath(rec.ID), http.StatusSeeOther)
 		return
 	}
 	info, err := p.recordings.InfoFile(rec)
@@ -429,6 +417,19 @@ func (p *Panel) recordingFor(w http.ResponseWriter, r *http.Request, sess sessio
 		return store.Recording{}, false
 	}
 	return rec, true
+}
+
+// stoppedRecordingFor is recordingFor for a download that a running
+// recording doesn't have yet. A running recording's download redirects to
+// its page, which offers no download while it runs and says it is still
+// recording.
+func (p *Panel) stoppedRecordingFor(w http.ResponseWriter, r *http.Request, sess session, step string) (store.Recording, bool) {
+	rec, ok := p.recordingFor(w, r, sess, step)
+	if ok && rec.StoppedAt.IsZero() {
+		http.Redirect(w, r, commands.RecordingPath(rec.ID), http.StatusSeeOther)
+		return store.Recording{}, false
+	}
+	return rec, ok
 }
 
 // ownRecordings lists the recordings the session's user started, none when

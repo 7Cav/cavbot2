@@ -485,6 +485,10 @@ func TestRecordingsAllViewOpenedByAStarterListsTheirOwnOnly(t *testing.T) {
 	}
 }
 
+// recordingMaker makes a recording through the world, started by the member
+// with the Discord ID given, and returns its ID.
+type recordingMaker func(w *testWorld, t *testing.T, discordID string) int64
+
 // recordingRoute is one route a recording's starter and panel admins reach:
 // how to read its address for a recording off the Recordings page the
 // starter sees, and the check that a response is what the route serves,
@@ -493,7 +497,7 @@ func TestRecordingsAllViewOpenedByAStarterListsTheirOwnOnly(t *testing.T) {
 // one other than a recording they speak in.
 type recordingRoute struct {
 	name   string
-	record func(w *testWorld, t *testing.T, discordID string) int64
+	record recordingMaker
 	href   func(t *testing.T, page *html.Node, id int64) string
 	served func(t *testing.T, who string, b *browser, res *http.Response, id int64)
 }
@@ -1154,14 +1158,25 @@ func (w *testWorld) storeRecording(t *testing.T, discordID, title string, start 
 	if err := w.store.SetRecordingMix(ctx, rec.ID, store.MixReady); err != nil {
 		t.Fatalf("SetRecordingMix: %v", err)
 	}
-	// The runtime's layout: a directory per recording named by its ID,
-	// holding a track per speaker named by their Discord ID.
-	dir := filepath.Join(w.recordingsDir, strconv.FormatInt(rec.ID, 10))
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		t.Fatalf("making recording %d's directory: %v", rec.ID, err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, discordID+".ogg"), []byte("OggS"), 0o600); err != nil {
-		t.Fatalf("writing recording %d's track: %v", rec.ID, err)
-	}
+	w.putTrack(t, rec.ID, discordID, []byte("OggS"))
 	return rec.ID
+}
+
+// trackPath is where the recording runtime keeps a speaker's track: in a
+// directory per recording named by its ID, under the speaker's Discord ID.
+// A fixture that puts a track on disk, or takes one off it, finds it here.
+func (w *testWorld) trackPath(id int64, speakerID string) string {
+	return filepath.Join(w.recordingsDir, strconv.FormatInt(id, 10), speakerID+".ogg")
+}
+
+// putTrack writes a speaker's track for a recording, holding content.
+func (w *testWorld) putTrack(t *testing.T, id int64, speakerID string, content []byte) {
+	t.Helper()
+	path := w.trackPath(id, speakerID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("making recording %d's directory: %v", id, err)
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("writing recording %d's track for %s: %v", id, speakerID, err)
+	}
 }
