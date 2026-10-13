@@ -67,7 +67,7 @@ import (
 // for the panel, cleared by the next successful spawn from that hub. A
 // failure Discord returned reaches Sentry once per streak per hub; a refusal
 // the bot makes itself, a hub with no category, never does.
-// temp_vc_errors.go classifies the Discord errors on these paths.
+// temp_vc_errors.go reads a failed create's cause off its Discord error.
 //
 // discordgo applies every gateway event to its state cache in gateway order
 // before it starts any handler goroutine, and the handlers run unordered, so
@@ -2097,7 +2097,8 @@ func ownershipNoticeLine(event noticeEvent, owner string, renamingAllowed bool) 
 }
 
 // spawnFailureReportedNote closes the text a member reads for a failure
-// Discord returned. Every such failure reaches Sentry, so S6 has it.
+// Discord returned on the create or the move-into, the cap aside. The first
+// failure of the hub's streak has reached Sentry, so S6 has it.
 const spawnFailureReportedNote = "The error has been reported to S6."
 
 // messageHubJoiner tells a member whose channel could not be created, in the

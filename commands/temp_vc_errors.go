@@ -10,7 +10,7 @@ import (
 )
 
 // Classification of Discord errors on the spawned channel paths (create,
-// move-into, delete). classifyDiscordError in foxhole_errors.go is not used
+// delete, rename, lock and unlock). classifyDiscordError in foxhole_errors.go is not used
 // here: its not-found branch pages on Unknown Channel, and for a spawned
 // channel "already gone" is the normal end of a hand delete. Nothing here
 // changes the Foxhole command paths.

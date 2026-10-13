@@ -1677,16 +1677,17 @@ func badNameLengthErr() error {
 	return e
 }
 
-// failedSpawnMessage runs one join under the one member and hub fixture,
-// after setup has broken the fake one way, and returns the content of the
-// hub chat message. The fixture is the same for every call, so the cause of
-// the failure is the only thing that can change the text.
-func failedSpawnMessage(t *testing.T, setup func(f *fakeTempVCManager)) string {
+// failedSpawn runs one join under the one member and hub fixture, after
+// setup has broken the fake one way, and returns the content of the hub chat
+// message and how many failures reached Sentry. The fixture is the same for
+// every call, so the cause of the failure is the only thing that can change
+// either.
+func failedSpawn(t *testing.T, setup func(f *fakeTempVCManager)) (content string, captures int) {
 	t.Helper()
 	fake := newFakeTempVCManager()
 	setup(fake)
 	tv := newSeededTempVC(t, fake)
-	countCaptures(t)
+	n := countCaptures(t)
 
 	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
 
@@ -1694,7 +1695,14 @@ func failedSpawnMessage(t *testing.T, setup func(f *fakeTempVCManager)) string {
 	if len(msgs) != 1 {
 		t.Fatalf("messages = %d, want one", len(msgs))
 	}
-	return msgs[0].data.Content
+	return msgs[0].data.Content, *n
+}
+
+// failedSpawnMessage is failedSpawn's hub chat message alone.
+func failedSpawnMessage(t *testing.T, setup func(f *fakeTempVCManager)) string {
+	t.Helper()
+	content, _ := failedSpawn(t, setup)
+	return content
 }
 
 // createFails is the setup that makes every create return err.
@@ -1842,7 +1850,7 @@ func (f *fakeTempVCManager) setCreateErr(err error) {
 	f.createErr = err
 }
 
-func TestTempVCCreateFailuresCaptureOncePerStreakPerHub(t *testing.T) {
+func TestTempVCSpawnFailuresCaptureOncePerStreakPerHub(t *testing.T) {
 	t.Run("the cap captures on its first failure", func(t *testing.T) {
 		fake := newFakeTempVCManager()
 		fake.createErr = restError(http.StatusBadRequest, discordgo.ErrCodeMaximumNumberOfGuildChannelsReached, "Maximum number of guild channels reached (500)")
@@ -1928,22 +1936,13 @@ func TestTempVCReportedSpawnFailureHasACapture(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fake := newFakeTempVCManager()
-			tc.setup(fake)
-			tv := newSeededTempVC(t, fake)
-			captures := countCaptures(t)
+			content, captures := failedSpawn(t, tc.setup)
 
-			fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
-
-			msgs := hubMessagesMentioning(t, fake, "user-1")
-			if len(msgs) != 1 {
-				t.Fatalf("messages = %d, want one", len(msgs))
+			if !strings.Contains(content, spawnFailureReportedNote) {
+				t.Fatalf("message %q does not say the error was reported to S6", content)
 			}
-			if !strings.Contains(msgs[0].data.Content, spawnFailureReportedNote) {
-				t.Fatalf("message %q does not say the error was reported to S6", msgs[0].data.Content)
-			}
-			if *captures != 1 {
-				t.Errorf("captures = %d, want 1: the member was told S6 has the error", *captures)
+			if captures != 1 {
+				t.Errorf("captures = %d, want 1: the member was told S6 has the error", captures)
 			}
 		})
 	}
