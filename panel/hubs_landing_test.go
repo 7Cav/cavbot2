@@ -90,6 +90,96 @@ func TestEditFormOpensAtTheForm(t *testing.T) {
 	}
 }
 
+// brokenHubListRemove breaks hub-1, loads the hub list and returns the
+// address its row's Remove names.
+func brokenHubListRemove(t *testing.T, w *testWorld) string {
+	t.Helper()
+	w.discord.breakChannel("hub-1", true)
+	return removeAddress(t, listRow(t, parseHTML(t, w.b.get("/")), storedHubID(t, w.st, "hub-1")))
+}
+
+// removeOpeners are the two controls that open a hub's remove preview.
+// control loads the page hub-1's control is on and returns the address it
+// names.
+var removeOpeners = []struct {
+	name    string
+	control func(t *testing.T, w *testWorld) string
+}{
+	{"Remove on a broken hub's list row", brokenHubListRemove},
+	{"Remove hub on the hub's edit form", func(t *testing.T, w *testWorld) string {
+		doc := parseHTML(t, w.b.get(hubEditPage(t, w)))
+		return removeAddress(t, hubEditBlock(t, w, doc))
+	}},
+}
+
+// removeAddress is the address of the Remove control inside scope.
+func removeAddress(t *testing.T, scope *html.Node) string {
+	t.Helper()
+	remove := findElement(scope, "a", "data-field", "remove")
+	if remove == nil {
+		t.Fatal("no Remove link")
+	}
+	return attrOf(remove, "href")
+}
+
+// Remove opens the page at the remove preview's heading, which takes focus,
+// not at the top of the Hubs page, where a panel admin's first Tab goes to
+// the rail.
+func TestRemoveOpensAtThePreviewsHeading(t *testing.T) {
+	for _, tc := range removeOpeners {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			control := tc.control(t, w)
+
+			doc, fragment := landing(t, w.b, control, w.b.get(control))
+
+			heading := landedOn(doc, fragment)
+			if heading == nil || !isHeading(heading) || !within(heading, removePreviewBlock(t, doc)) {
+				t.Fatalf("Remove opens at fragment %q, want the remove preview's heading", fragment)
+			}
+			if got := attrOf(heading, "tabindex"); got != "-1" {
+				t.Errorf("the landed heading has tabindex %q, want -1 so it takes focus without joining the tab order", got)
+			}
+		})
+	}
+}
+
+// A broken hub's Remove from a hub list loaded before another panel admin
+// removed the hub answers that the hub is gone. The page lands on the
+// heading of the block that says so, whose description is the refusal, so
+// the panel admin hears why there is nothing to confirm. Remove hub on a
+// stale edit page gets the Hub not found page instead, as every address
+// naming a gone hub's edit form does, and that page opens at its top.
+func TestRemoveOfAGoneHubLandsOnWhyNothingHappened(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	control := brokenHubListRemove(t, w)
+	assertRedirect(t, removeHubThroughThePreview(t, secondBrowser(t, w), storedHubID(t, w.st, "hub-1")), "/")
+
+	res, fragment := arrive(t, w.b, control, w.b.get(control))
+
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", res.StatusCode)
+	}
+	doc := parseHTML(t, res)
+	block := hubGoneBlock(t, w, doc)
+	heading := landedOn(doc, fragment)
+	if heading == nil || !isHeading(heading) || !within(heading, block) {
+		t.Fatalf("the answer opens at fragment %q, want the heading of the block saying the hub is gone", fragment)
+	}
+	if got := attrOf(heading, "tabindex"); got != "-1" {
+		t.Errorf("the landed heading has tabindex %q, want -1 so it takes focus without joining the tab order", got)
+	}
+	note := findElement(block, "", "data-error", refusalGone)
+	if note == nil {
+		t.Fatal("the block does not say the hub is gone")
+	}
+	if got, want := accessibleDescription(doc, heading), announcedText(note); got != want {
+		t.Errorf("the landed heading's description is %q, want the refusal note, %q", got, want)
+	}
+}
+
 // refusedSave is one way a save of a Hubs page form is refused, driven the
 // way a browser drives it: the form, its action and its fields come from
 // the page the panel renders.
@@ -187,6 +277,17 @@ func removePreviewOn(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
 	return removePreviewBlock(t, doc)
 }
 
+// hubGoneBlock is the block a page shows in place of a remove preview whose
+// hub is gone.
+func hubGoneBlock(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
+	t.Helper()
+	block := findElement(doc, "", "data-field", "hub-gone")
+	if block == nil {
+		t.Fatal("page has no block saying the hub is gone")
+	}
+	return block
+}
+
 var refusedSaves = []refusedSave{
 	{
 		name:   "a hub edit with a blank base string",
@@ -281,6 +382,16 @@ var refusedSaves = []refusedSave{
 			return formIn(t, doc, removePreviewOn(t, w, doc))
 		},
 		block: removePreviewOn,
+	},
+	{
+		name:   "a remove preview's Confirm pressed again after it removed the hub",
+		status: http.StatusNotFound,
+		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := openHubRemovePreview(t, w.b, storedHubID(t, w.st, "hub-1"))
+			assertRedirect(t, confirmRemoval(t, w.b, removePreviewOn(t, w, doc)), "/")
+			return formIn(t, doc, removePreviewOn(t, w, doc))
+		},
+		block: hubGoneBlock,
 	},
 }
 
