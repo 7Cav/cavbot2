@@ -1667,6 +1667,16 @@ func categoryCapErr() error {
 	return e
 }
 
+// badNameLengthErr is an Invalid Form Body that is not the category cap. Its
+// name field carries BASE_TYPE_BAD_LENGTH, and the body holds no
+// CHANNEL_PARENT_MAX_CHANNELS. It has the authored shape of categoryCapErr,
+// so the field error is the only difference between the two.
+func badNameLengthErr() error {
+	e := restError(http.StatusBadRequest, discordgo.ErrCodeInvalidFormBody, "Invalid Form Body")
+	e.ResponseBody = []byte(`{"message": "Invalid Form Body", "code": 50035, "errors": {"name": {"_errors": [{"code": "BASE_TYPE_BAD_LENGTH", "message": "Must be between 1 and 100 in length."}]}}}`)
+	return e
+}
+
 // failedSpawnMessage runs one join under the one member and hub fixture,
 // after setup has broken the fake one way, and returns the content of the
 // hub chat message. The fixture is the same for every call, so the cause of
@@ -1703,6 +1713,7 @@ func TestTempVCSpawnFailureMessagesAreThreeTexts(t *testing.T) {
 	categoryCap := failedSpawnMessage(t, createFails(categoryCapErr()))
 	forbidden := failedSpawnMessage(t, createFails(restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, "Missing Permissions")))
 	serverError := failedSpawnMessage(t, createFails(restError(http.StatusInternalServerError, 0, "Internal Server Error")))
+	badNameLength := failedSpawnMessage(t, createFails(badNameLengthErr()))
 	refusal := failedSpawnMessage(t, hubWithoutParent)
 
 	if guildCap != categoryCap {
@@ -1710,6 +1721,9 @@ func TestTempVCSpawnFailureMessagesAreThreeTexts(t *testing.T) {
 	}
 	if forbidden != serverError {
 		t.Errorf("403 %q and 500 %q differ, want the one generic text", forbidden, serverError)
+	}
+	if badNameLength != serverError {
+		t.Errorf("50035 without the cap marker %q and 500 %q differ, want the one generic text", badNameLength, serverError)
 	}
 	if guildCap == forbidden {
 		t.Errorf("cap and generic texts are both %q, want two texts", guildCap)
@@ -1896,6 +1910,21 @@ func TestTempVCCreateFailuresCaptureOncePerStreakPerHub(t *testing.T) {
 	})
 }
 
+// An Invalid Form Body without the category cap marker is an ordinary 4xx.
+// The bot logs a WARN line and sends nothing to Sentry.
+func TestTempVCCreateFailureWith50035WithoutTheCapMarkerCapturesNothing(t *testing.T) {
+	fake := newFakeTempVCManager()
+	fake.createErr = badNameLengthErr()
+	tv := newSeededTempVC(t, fake)
+	captures := countCaptures(t)
+
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+
+	if *captures != 0 {
+		t.Errorf("captures = %d, want 0: a 50035 without the cap marker is a WARN line", *captures)
+	}
+}
+
 // setDeleteErr changes what the next deletes return, under the fake's lock.
 func (f *fakeTempVCManager) setDeleteErr(err error) {
 	f.mu.Lock()
@@ -1995,6 +2024,7 @@ func TestTempVCSpawnFailureRecordsItsCause(t *testing.T) {
 	}{
 		{"guild cap", restError(http.StatusBadRequest, discordgo.ErrCodeMaximumNumberOfGuildChannelsReached, "Maximum number of guild channels reached (500)"), SpawnFailureFull},
 		{"429", rateLimitError(4 * time.Minute), SpawnFailureRateLimited},
+		{"50035 without the cap marker", badNameLengthErr(), SpawnFailureDiscordError},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
