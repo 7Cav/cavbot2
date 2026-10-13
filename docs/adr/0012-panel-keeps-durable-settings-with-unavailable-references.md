@@ -5,6 +5,9 @@
 Accepted. Decided in the triage of issue #315, before its implementation.
 **Amended 2026-10-11**: the scope names what the decision covers by kind,
 not by listing settings (#568).
+**Amended 2026-10-13**: a rank role that is not in the guild reaches
+on-call, when it is deleted and at startup (#680). Every other unavailable
+reference shows on the panel only.
 
 ## Scope
 
@@ -62,5 +65,5 @@ kept through a save, and it grants authority meanwhile.
 - A validator accepts an ineligible ID only from the stored set of the exact
   record being saved, read in the same request before validation.
 - Never add a cleanup that removes such a reference without a person's save.
-- To add operational reporting of unavailable references, write a separate
-  decision.
+- Only a rank role that is not in the guild reaches on-call (#680). To
+  report any other unavailable reference, write a separate decision.
