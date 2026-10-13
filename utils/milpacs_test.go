@@ -2,10 +2,16 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -323,5 +329,279 @@ func TestGetMilpacByDiscordID_MapsConsoleGamertag(t *testing.T) {
 	}
 	if got.Gamertag != "DrakenActual" {
 		t.Fatalf("Gamertag = %q, want %q (decoded from consoleGamertag key)", got.Gamertag, "DrakenActual")
+	}
+}
+
+// apiRequest is one request a fake 7Cav API received.
+type apiRequest struct {
+	path string
+	auth string
+}
+
+// recordingAPI is a fake 7Cav API that answers 200 {} to everything and
+// records each request. A bare handler, so a doubled slash reaches it as
+// sent rather than as a redirect.
+type recordingAPI struct {
+	*httptest.Server
+	mu       sync.Mutex
+	received []apiRequest
+}
+
+func newRecordingAPI(t *testing.T) *recordingAPI {
+	t.Helper()
+	api := &recordingAPI{}
+	api.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api.mu.Lock()
+		api.received = append(api.received, apiRequest{path: r.URL.Path, auth: r.Header.Get("Authorization")})
+		api.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	t.Cleanup(api.Close)
+	return api
+}
+
+func (a *recordingAPI) requests() []apiRequest {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]apiRequest(nil), a.received...)
+}
+
+// initAPIBaseURL runs the startup read of CAV_API_BASE_URL and puts the
+// lookups back where they were when the test ends.
+func initAPIBaseURL(t *testing.T) {
+	t.Helper()
+	prev := apiBaseURL
+	t.Cleanup(func() { apiBaseURL = prev })
+	InitAPIBaseURL()
+}
+
+func TestInitAPIBaseURL_EveryLookupGoesToTheConfiguredOrigin(t *testing.T) {
+	t.Setenv("BEARER", "token-652")
+	lookups := []struct {
+		name     string
+		wantPath string
+		call     func(ctx context.Context) error
+	}{
+		{"GetMilpacByUsername", "/api/v1/milpacs/profile/username/alice", func(ctx context.Context) error {
+			_, err := GetMilpacByUsername(ctx, "alice")
+			return err
+		}},
+		{"GetMilpacByDiscordID", "/api/v1/milpac/discord/123456789", func(ctx context.Context) error {
+			_, err := GetMilpacByDiscordID(ctx, "123456789")
+			return err
+		}},
+		{"GetUserByGamertag", "/api/v1/milpac/gamertag/tag42", func(ctx context.Context) error {
+			_, err := GetUserByGamertag(ctx, "tag42")
+			return err
+		}},
+		{"GetRosterByFuzzyPositionSearch", "/api/v1/milpacs/position/search/a/acd", func(ctx context.Context) error {
+			_, err := GetRosterByFuzzyPositionSearch(ctx, "a/acd")
+			return err
+		}},
+		{"GetRanks", "/api/v1/milpacs/ranks", func(ctx context.Context) error {
+			_, err := GetRanks(ctx)
+			return err
+		}},
+	}
+	for _, tc := range lookups {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newRecordingAPI(t)
+			t.Setenv("CAV_API_BASE_URL", api.URL)
+			initAPIBaseURL(t)
+
+			if err := tc.call(context.Background()); err != nil {
+				t.Fatalf("lookup failed: %v", err)
+			}
+			want := []apiRequest{{path: tc.wantPath, auth: "Bearer token-652"}}
+			if got := api.requests(); !slices.Equal(got, want) {
+				t.Fatalf("the configured API received %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestInitAPIBaseURL_TrailingSlashLeavesTheRequestUnchanged(t *testing.T) {
+	api := newRecordingAPI(t)
+	t.Setenv("CAV_API_BASE_URL", api.URL+"/")
+	initAPIBaseURL(t)
+
+	if _, err := GetRanks(context.Background()); err != nil {
+		t.Fatalf("lookup failed: %v", err)
+	}
+	got := api.requests()
+	if len(got) != 1 || got[0].path != "/api/v1/milpacs/ranks" {
+		t.Fatalf("the configured API received %+v, want one request for /api/v1/milpacs/ranks", got)
+	}
+}
+
+// recordingTransport stands in for the network under every lookup. It
+// answers each request 200 {} and records the URL it was sent to.
+type recordingTransport struct {
+	mu   sync.Mutex
+	sent []string
+}
+
+func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt.mu.Lock()
+	rt.sent = append(rt.sent, req.URL.String())
+	rt.mu.Unlock()
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{}`)),
+		Request:    req,
+	}, nil
+}
+
+func (rt *recordingTransport) urls() []string {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return append([]string(nil), rt.sent...)
+}
+
+// ranksURL returns the URL a GetRanks lookup is sent to, caught before it
+// reaches the network.
+func ranksURL(t *testing.T) []string {
+	t.Helper()
+	rt := &recordingTransport{}
+	t.Cleanup(SetAPITransportForTest(rt))
+	if _, err := GetRanks(context.Background()); err != nil {
+		t.Fatalf("lookup failed: %v", err)
+	}
+	return rt.urls()
+}
+
+const publicRanksURL = "https://api.7cav.us/api/v1/milpacs/ranks"
+
+func TestInitAPIBaseURL_UnsetOrEmptyUsesThePublicAPIWithoutWarning(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		unset bool
+	}{
+		{name: "unset", unset: true},
+		{name: "empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CAV_API_BASE_URL", "")
+			if tc.unset {
+				_ = os.Unsetenv("CAV_API_BASE_URL")
+			}
+			logs := recordLogs(t)
+			events := initSentryWithTransport(t)
+			initAPIBaseURL(t)
+
+			if n := logs.count(slog.LevelWarn, anyRecord); n != 0 {
+				t.Errorf("logged %d warnings, want none", n)
+			}
+			if n := len(events.Events()); n != 0 {
+				t.Errorf("sent %d Sentry events, want none", n)
+			}
+			if got, want := ranksURL(t), []string{publicRanksURL}; !slices.Equal(got, want) {
+				t.Fatalf("the lookup went to %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestInitAPIBaseURL_MalformedValueKeepsThePublicAPIAndWarnsOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{"path", "http://7cav-api:11000/api/v1"},
+		{"scheme", "ftp://7cav-api:11000"},
+		{"no host", "http://:11000"},
+		{"does not parse", "http://7cav-api:port"},
+		{"query", "http://7cav-api:11000?x=1"},
+		{"empty query", "http://7cav-api:11000?"},
+		{"fragment", "http://7cav-api:11000#x"},
+		{"user info", "http://ops@7cav-api:11000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CAV_API_BASE_URL", tc.value)
+			logs := recordLogs(t)
+			events := initSentryWithTransport(t)
+			initAPIBaseURL(t) // returning at all is the bot running on
+
+			namesValue := func(rec slog.Record) bool {
+				return carries(rec, func(a slog.Attr) bool { return a.Value.String() == tc.value })
+			}
+			if n := logs.count(slog.LevelWarn, namesValue); n != 1 {
+				t.Errorf("logged %d warnings naming %q, want 1", n, tc.value)
+			}
+			if n := len(events.Events()); n != 1 {
+				t.Errorf("sent %d Sentry events, want 1", n)
+			}
+			if got, want := ranksURL(t), []string{publicRanksURL}; !slices.Equal(got, want) {
+				t.Fatalf("the lookup went to %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestInitAPIBaseURL_RejectedValueKeepsItsPasswordOutOfTheLogAndSentry(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{"parses", "http://ops:hunter2@7cav-api:11000"},
+		{"does not parse", "http://ops:hunter2@7cav-api:bad"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CAV_API_BASE_URL", tc.value)
+			logs := recordLogs(t)
+			events := initSentryWithTransport(t)
+			initAPIBaseURL(t)
+
+			carriesPassword := func(a slog.Attr) bool { return strings.Contains(a.Value.String(), "hunter2") }
+			for _, rec := range logs.all() {
+				if strings.Contains(rec.Message, "hunter2") || carries(rec, carriesPassword) {
+					t.Errorf("log record %q carries the password", rec.Message)
+				}
+			}
+			for _, ev := range events.Events() {
+				data, err := json.Marshal(ev)
+				if err != nil {
+					t.Fatalf("marshal Sentry event: %v", err)
+				}
+				if strings.Contains(string(data), "hunter2") {
+					t.Errorf("Sentry event carries the password: %s", data)
+				}
+			}
+			namesHost := func(rec slog.Record) bool {
+				return carries(rec, func(a slog.Attr) bool { return strings.Contains(a.Value.String(), "7cav-api") })
+			}
+			if n := logs.count(slog.LevelWarn, namesHost); n != 1 {
+				t.Errorf("logged %d warnings naming the value's host, want 1", n)
+			}
+		})
+	}
+}
+
+func TestInitAPIBaseURL_LogsTheAddressInUseOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		value      string
+		wantOrigin string
+	}{
+		{"default", "", "https://api.7cav.us"},
+		{"set", "http://7cav-api:11000", "http://7cav-api:11000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CAV_API_BASE_URL", tc.value)
+			logs := recordLogs(t)
+			initAPIBaseURL(t)
+
+			namesAddress := func(rec slog.Record) bool {
+				return carries(rec, func(a slog.Attr) bool {
+					u, err := url.Parse(a.Value.String())
+					return err == nil && u.Scheme+"://"+u.Host == tc.wantOrigin
+				})
+			}
+			if n := logs.count(slog.LevelInfo, namesAddress); n != 1 {
+				t.Errorf("logged %d INFO lines naming %s, want 1", n, tc.wantOrigin)
+			}
+		})
 	}
 }

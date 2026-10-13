@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -105,7 +107,72 @@ var rosterMap = map[string]string{
 	"ROSTER_TYPE_PAST_MEMBERS":  "Past Members",
 }
 
-var apiBaseURL = "https://api.7cav.us/api/v1"
+// defaultAPIOrigin is the 7Cav API's public address, which goes through
+// Cloudflare.
+const defaultAPIOrigin = "https://api.7cav.us"
+
+var apiBaseURL = defaultAPIOrigin + "/api/v1"
+
+// newAPIClient builds the client for one 7Cav API call. Every call gets a
+// fresh one.
+var newAPIClient = resty.New
+
+// InitAPIBaseURL points every 7Cav API lookup at the origin CAV_API_BASE_URL
+// holds, plus /api/v1, and logs the address in use. main calls it once at
+// startup, after InitSentry. Unset or empty keeps the public address. So does
+// a value that isn't an http or https origin, with a warning and a Sentry
+// event: a typo in .env shouldn't leave members with a bot whose lookups all
+// fail while the public address still serves them.
+func InitAPIBaseURL() {
+	origin := defaultAPIOrigin
+	if raw := os.Getenv("CAV_API_BASE_URL"); raw != "" {
+		if parsed, ok := parseAPIOrigin(raw); ok {
+			origin = parsed
+		} else {
+			shown := redactPassword(raw)
+			Warn("CAV_API_BASE_URL rejected, using the public address", "value", shown, "address", defaultAPIOrigin)
+			sentry.WithScope(func(scope *sentry.Scope) {
+				scope.SetLevel(sentry.LevelWarning)
+				setExtras(scope, []any{"value", shown})
+				sentry.CaptureMessage("CAV_API_BASE_URL rejected")
+			})
+		}
+	}
+	apiBaseURL = origin + "/api/v1"
+	Info("7Cav API address", "address", origin)
+}
+
+// redactPassword masks the password in raw's user info, as url.URL.Redacted
+// does, without needing raw to parse. It takes the user info to run up to
+// the last @, so a password holding a / or an @ is masked whole.
+func redactPassword(raw string) string {
+	prefix, rest := "", raw
+	if i := strings.Index(raw, "://"); i >= 0 {
+		prefix, rest = raw[:i+3], raw[i+3:]
+	}
+	at := strings.LastIndex(rest, "@")
+	if at < 0 {
+		return raw
+	}
+	user, _, hasPassword := strings.Cut(rest[:at], ":")
+	if !hasPassword {
+		return raw
+	}
+	return prefix + user + ":xxxxx" + rest[at:]
+}
+
+// parseAPIOrigin returns raw as scheme://host[:port] with any trailing slash
+// dropped, or false when raw is anything else.
+func parseAPIOrigin(raw string) (string, bool) {
+	u, err := url.Parse(strings.TrimRight(raw, "/"))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return "", false
+	}
+	if u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return "", false
+	}
+	return u.Scheme + "://" + u.Host, true
+}
 
 // ErrNotFound is the error a 7Cav API lookup wraps when the API answers 404:
 // nothing matches what was asked for.
@@ -113,7 +180,7 @@ var ErrNotFound = errors.New("the 7Cav API answered 404")
 
 func makeAPIRequest[T any](ctx context.Context, path string, identifier string) (*T, error) {
 	start := time.Now()
-	client := resty.New()
+	client := newAPIClient()
 
 	var result T
 	response, err := client.R().
