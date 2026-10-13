@@ -2,6 +2,7 @@ package utils
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -364,6 +365,88 @@ func TestHandleError_Component_AlreadyAck_EditSucceeds_NoCapture(t *testing.T) {
 
 	if len(*captured) != 0 {
 		t.Fatalf("expected 0 captures when the edit fallback succeeds, got %d: %+v", len(*captured), *captured)
+	}
+}
+
+// unknownMessageErr is Discord's answer to an edit of a message someone
+// deleted, as discordgo returns it: 404 with code 10008 Unknown Message.
+func unknownMessageErr() error {
+	return &discordgo.RESTError{
+		Response:     &http.Response{StatusCode: http.StatusNotFound, Status: "404 Not Found"},
+		ResponseBody: []byte(`{"message": "Unknown Message", "code": 10008}`),
+		Message:      &discordgo.APIErrorMessage{Code: discordgo.ErrCodeUnknownMessage, Message: "Unknown Message"},
+	}
+}
+
+// errorReplyTypes are the interactions an error reply answers: a slash
+// command, whose reply edits its placeholder, and a button click, whose
+// reply edits the message the button sits on.
+var errorReplyTypes = []discordgo.InteractionType{
+	discordgo.InteractionApplicationCommand,
+	discordgo.InteractionMessageComponent,
+}
+
+// When the message an error reply would edit is gone, deleted by a member
+// or another bot while the command ran, the member gets the reply as an
+// ephemeral follow-up only they see. A deletion is someone's action, not a
+// bot failure, so Sentry hears nothing (#651, ADR 0001).
+func TestHandleError_MessageGone_RepliesAsEphemeralFollowup(t *testing.T) {
+	for _, typ := range errorReplyTypes {
+		t.Run(typ.String(), func(t *testing.T) {
+			captured := swapCaptureError(t)
+			f := &fakeResponder{
+				RespondErrs: []error{errors.New("already been acknowledged")},
+				EditErrs:    []error{unknownMessageErr()},
+			}
+			i := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{Type: typ}}
+
+			HandleError(f, i, "❌ boom")
+
+			var followups []*discordgo.WebhookParams
+			for _, c := range f.Calls() {
+				if c.Method == "Followup" {
+					followups = append(followups, c.Params)
+				}
+			}
+			if len(followups) != 1 {
+				t.Fatalf("follow-ups = %d, want the reply as one follow-up; calls %+v", len(followups), f.Calls())
+			}
+			if followups[0].Content != "❌ boom" {
+				t.Errorf("follow-up content = %q, want the reply %q", followups[0].Content, "❌ boom")
+			}
+			if followups[0].Flags&discordgo.MessageFlagsEphemeral == 0 {
+				t.Errorf("follow-up flags = %v, want ephemeral so only the member sees it", followups[0].Flags)
+			}
+			if len(*captured) != 0 {
+				t.Errorf("captures = %+v, want none for a deleted message", *captured)
+			}
+		})
+	}
+}
+
+// When the follow-up fails too, the reply never reached the member, and
+// Sentry gets the follow-up's error.
+func TestHandleError_MessageGone_FollowupFails_Captures(t *testing.T) {
+	for _, typ := range errorReplyTypes {
+		t.Run(typ.String(), func(t *testing.T) {
+			captured := swapCaptureError(t)
+			followupErr := errors.New("HTTP 500 Internal Server Error")
+			f := &fakeResponder{
+				RespondErrs:  []error{errors.New("already been acknowledged")},
+				EditErrs:     []error{unknownMessageErr()},
+				FollowupErrs: []error{followupErr},
+			}
+			i := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{Type: typ}}
+
+			HandleError(f, i, "❌ boom")
+
+			if len(*captured) != 1 {
+				t.Fatalf("captures = %d, want 1 for a reply that never arrived: %+v", len(*captured), *captured)
+			}
+			if !errors.Is((*captured)[0].err, followupErr) {
+				t.Errorf("captured err = %v, want the follow-up's error %v", (*captured)[0].err, followupErr)
+			}
+		})
 	}
 }
 
