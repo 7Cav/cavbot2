@@ -586,7 +586,7 @@ func (f *Fake) SaveFoxholeNote(ctx context.Context, guildID string, save NoteSav
 		}
 		m.MemberID, m.Note, m.DisplayName, m.Username = save.MemberID, save.Note, save.DisplayName, save.Username
 		members[save.MemberID] = m
-		if m.Note == "" && !m.Approved {
+		if m.Note == "" && !m.Approved.Any() {
 			delete(members, save.MemberID)
 		}
 		return 0, nil
@@ -594,17 +594,19 @@ func (f *Fake) SaveFoxholeNote(ctx context.Context, guildID string, save NoteSav
 }
 
 // ApproveFoxholeMembers implements Store.
-func (f *Fake) ApproveFoxholeMembers(ctx context.Context, guildID string, members []MemberNames, entry ChangeLogEntry) error {
+func (f *Fake) ApproveFoxholeMembers(ctx context.Context, guildID string, approvals []MemberApprovals, entry ChangeLogEntry) error {
 	return f.writeToLog(ctx, &f.foxholeChanges, &entry, func() (int64, error) {
 		records := f.members[guildID]
 		if records == nil {
 			records = map[string]FoxholeRecord{}
 			f.members[guildID] = records
 		}
-		for _, n := range members {
-			m := records[n.MemberID]
-			m.MemberID, m.Approved, m.DisplayName, m.Username = n.MemberID, true, n.DisplayName, n.Username
-			records[n.MemberID] = m
+		for _, a := range approvals {
+			m := records[a.MemberID]
+			m.MemberID, m.DisplayName, m.Username = a.MemberID, a.DisplayName, a.Username
+			m.Approved.Internal = m.Approved.Internal || a.Approved.Internal
+			m.Approved.External = m.Approved.External || a.Approved.External
+			records[a.MemberID] = m
 		}
 		return 0, nil
 	})
@@ -614,33 +616,35 @@ func (f *Fake) ApproveFoxholeMembers(ctx context.Context, guildID string, member
 func (f *Fake) ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry ChangeLogEntry) error {
 	return f.writeToLog(ctx, &f.foxholeChanges, &entry, func() (int64, error) {
 		for _, id := range memberIDs {
-			f.clearApproval(guildID, id)
+			f.clearApproval(guildID, id, FoxholeApprovals{Internal: true, External: true})
 		}
 		return 0, nil
 	})
 }
 
 // ClearFoxholeApprovalForRemoval implements Store.
-func (f *Fake) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string) (bool, error) {
+func (f *Fake) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string, roles FoxholeApprovals) (bool, error) {
 	cleared := false
 	err := f.writeAllOrNothing(ctx, nil, func() (int64, error) {
-		cleared = f.clearApproval(guildID, memberID)
+		cleared = f.clearApproval(guildID, memberID, roles)
 		return 0, nil
 	})
 	return cleared, err
 }
 
-// clearApproval clears the member's approval, when they have one, drops
-// their record when that leaves it with no note, and reports whether they
-// had one. The caller holds mu.
-func (f *Fake) clearApproval(guildID, memberID string) bool {
+// clearApproval clears the member's approval for each role set in roles,
+// when they have one, drops their record when that leaves it with no note
+// and no approval, and reports whether they had one. The caller holds mu.
+func (f *Fake) clearApproval(guildID, memberID string, roles FoxholeApprovals) bool {
 	m, ok := f.members[guildID][memberID]
-	if !ok || !m.Approved {
+	clearing := FoxholeApprovals{Internal: roles.Internal && m.Approved.Internal, External: roles.External && m.Approved.External}
+	if !ok || !clearing.Any() {
 		return false
 	}
-	m.Approved = false
+	m.Approved.Internal = m.Approved.Internal && !roles.Internal
+	m.Approved.External = m.Approved.External && !roles.External
 	f.members[guildID][memberID] = m
-	if m.Note == "" {
+	if m.Note == "" && !m.Approved.Any() {
 		delete(f.members[guildID], memberID)
 	}
 	return true

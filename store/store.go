@@ -246,9 +246,8 @@ const (
 	// ChangeNote is a save of one member's note on the Foxhole page. Its
 	// entry goes in the Foxhole change log, never the hub page's.
 	ChangeNote ChangeAction = "note"
-	// ChangeApprove is an approvals save on the Foxhole page that marks
-	// members approved collaborators. Its entry goes in the Foxhole change
-	// log.
+	// ChangeApprove is an approvals save on the Foxhole page that gives
+	// members approvals. Its entry goes in the Foxhole change log.
 	ChangeApprove ChangeAction = "approve"
 	// ChangeClearApproval is an approvals save on the Foxhole page that
 	// clears members' approvals. Its entry goes in the Foxhole change log.
@@ -256,7 +255,7 @@ const (
 	// ChangePurge is a purge started on the Foxhole page. Its entry is the
 	// purge's report, in the Foxhole change log.
 	ChangePurge ChangeAction = "purge"
-	// ChangeReAdd is a re-add of the approved collaborators started on the
+	// ChangeReAdd is a re-add of the approved Foxholers started on the
 	// Foxhole page. Its entry is the re-add's report, in the Foxhole change
 	// log.
 	ChangeReAdd ChangeAction = "re_add"
@@ -285,18 +284,36 @@ type FoxholeReport struct {
 }
 
 // FoxholeRecord is one member's Foxhole record (spec #434): their note,
-// whether they are an approved collaborator, and the display name and
+// the Foxhole roles they are approved for, and the display name and
 // username the panel last saw them under. The store holds one for each
 // member of the guild with a note or an approval, and nothing about who
 // holds a Foxhole role: a command purge recreates the role under a new ID.
 type FoxholeRecord struct {
 	MemberID string
 	Note     string
-	Approved bool
+	Approved FoxholeApprovals
 	// DisplayName and Username are the names the panel last saw, so a
 	// member who left the server still shows under a name.
 	DisplayName string
 	Username    string
+}
+
+// FoxholeApprovals is the Foxhole roles a member has an approval for
+// (GLOSSARY.md, Approval): Internal, External, both or neither. An approval
+// stored before approvals named a role is an External one (#662).
+type FoxholeApprovals struct {
+	Internal bool
+	External bool
+}
+
+// Any reports whether the approvals name either role.
+func (a FoxholeApprovals) Any() bool { return a.Internal || a.External }
+
+// MemberApprovals is a member, under the names the panel sees them by now,
+// and the approvals an approvals save gives them.
+type MemberApprovals struct {
+	MemberNames
+	Approved FoxholeApprovals
 }
 
 // NoteSave is one save of a member's note: the note as the saver loaded it,
@@ -485,23 +502,25 @@ type Store interface {
 	// member with no note and no approval removes their record, since the
 	// store holds records only for members with one or the other.
 	SaveFoxholeNote(ctx context.Context, guildID string, save NoteSave, entry ChangeLogEntry) error
-	// ApproveFoxholeMembers marks each member given an approved
-	// collaborator and appends the save's entry to the Foxhole change log
-	// together. A member with a record keeps their note and takes the names
-	// given; one with none gets a record, approved with no note, under the
-	// names given.
-	ApproveFoxholeMembers(ctx context.Context, guildID string, members []MemberNames, entry ChangeLogEntry) error
-	// ClearFoxholeApprovals clears the approval of each member given and
+	// ApproveFoxholeMembers gives each member given the approvals given
+	// with them, keeping any approval they have, and appends the save's
+	// entry to the Foxhole change log together. A member with a record keeps
+	// their note and takes the names given; one with none gets a record,
+	// with no note, under the names given. Each member given has at least
+	// one approval to give.
+	ApproveFoxholeMembers(ctx context.Context, guildID string, approvals []MemberApprovals, entry ChangeLogEntry) error
+	// ClearFoxholeApprovals clears every approval of each member given and
 	// appends the save's entry to the Foxhole change log together. A member
 	// left with no note and no approval loses their record, as in
 	// SaveFoxholeNote. A member with no record is left with none.
 	ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry ChangeLogEntry) error
-	// ClearFoxholeApprovalForRemoval clears the member's approval, when they
-	// have one, and reports whether they had. It appends no entry: a removal
-	// that took External from the member makes the call, and the removal's
-	// report names the approval it cleared. A member left with no note and no
-	// approval loses their record, as in ClearFoxholeApprovals.
-	ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string) (bool, error)
+	// ClearFoxholeApprovalForRemoval clears the member's approval for each
+	// role set in roles, when they have one, and reports whether they had.
+	// It appends no entry: a removal that took that role from the member
+	// makes the call, and the removal's report names the approval it
+	// cleared. A member left with no note and no approval loses their
+	// record, as in ClearFoxholeApprovals.
+	ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string, roles FoxholeApprovals) (bool, error)
 	// SetFoxholeRecordNames replaces the last-seen names of each member
 	// given who has a record, and starts no record for one who hasn't. It
 	// appends no entry: no person made the change.

@@ -299,7 +299,7 @@ h2[tabindex="-1"]:focus { outline: none; }
 .fx-notenow { color: var(--text-hi); }
 .fx-notecancel { font-size: 13px; }
 
-/* Approved collaborators, and the selection bar that approves them: it
+/* Approved Foxholers' tags, and the selection bar that approves them: it
    sticks to the top of the window while the holder list scrolls under it.
    The count shows once the page script runs. */
 .tag--approved { color: var(--gold); border-color: var(--gold-lo); }

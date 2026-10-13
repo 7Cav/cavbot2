@@ -302,9 +302,9 @@ func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope c
 }
 
 // removePreview is the preview a removal waits on: the role, the members
-// selected who lose it, those it skips, for External the approved
-// collaborators among the losers, whose approval it clears, how many of
-// its members have a note, and the rough time at one change a second.
+// selected who lose it, those it skips, the members among the losers
+// approved for the role, whose approval for it the removal clears, how many
+// of its members have a note, and the rough time at one change a second.
 type removePreview struct {
 	Role    commands.FoxholeRole
 	Name    string
@@ -387,7 +387,7 @@ func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, record
 			preview.Skipped = append(preview.Skipped, member)
 		default:
 			preview.Loses = append(preview.Loses, member)
-			if req.Remove.RemovalClearsApproval() && rec.Approved {
+			if req.Remove.ApprovedIn(rec.Approved) {
 				preview.Cleared = append(preview.Cleared, member)
 			}
 		}
@@ -413,34 +413,59 @@ func (req foxholeRequest) removeAddress() string {
 // heading.
 const removePreviewAnchor = "remove-preview"
 
-// reAddCounts is what the After a war block says a re-add would do: how
-// many approved collaborators hold External already, how many in the server
-// don't, and how many left the server.
+// reAddCounts is what the After a war block says a re-add would do, a line
+// for each Foxhole role, Internal first.
 type reAddCounts struct {
+	Lines []reAddLine
+}
+
+// reAddLine is what a re-add would do with one role's approvals: how many
+// of the members approved for it hold it already, how many in the server
+// don't, and how many left the server.
+type reAddLine struct {
+	Role                             commands.FoxholeRole
+	Name                             string
 	Holding, NotHolding, NotInServer int
 }
 
-// Approved is how many approved collaborators there are.
-func (c reAddCounts) Approved() int { return c.Holding + c.NotHolding + c.NotInServer }
+// Approved is how many members are approved for the line's role.
+func (l reAddLine) Approved() int { return l.Holding + l.NotHolding + l.NotInServer }
+
+// AnyApproved reports whether anyone is approved for either role.
+func (c reAddCounts) AnyApproved() bool {
+	return slices.ContainsFunc(c.Lines, func(l reAddLine) bool { return l.Approved() > 0 })
+}
+
+// ToReAdd reports whether a re-add would give somebody a role: someone in
+// the server lacks a role they're approved for.
+func (c reAddCounts) ToReAdd() bool {
+	return slices.ContainsFunc(c.Lines, func(l reAddLine) bool { return l.NotHolding > 0 })
+}
 
 // NobodyHint is the hint the After a war block gives beside Re-add when
-// every approved collaborator in the server holds External.
+// every approved Foxholer in the server holds each role they're approved
+// for.
 func (reAddCounts) NobodyHint() string { return nobodyToReAdd }
 
-// reAddCountsOf counts the approved collaborators among the holder list's
-// rows, by the flags the rows show.
+// reAddCountsOf counts each role's approvals among the holder list's rows,
+// by the roles and flags the rows show. A member approved for both roles
+// counts on both lines.
 func reAddCountsOf(holders []holderRow) *reAddCounts {
 	c := &reAddCounts{}
-	for _, h := range holders {
-		switch {
-		case !h.Approved:
-		case h.NotInServer:
-			c.NotInServer++
-		case h.External:
-			c.Holding++
-		default:
-			c.NotHolding++
+	for _, role := range commands.FoxholeRoles() {
+		line := reAddLine{Role: role, Name: role.Label()}
+		for _, h := range holders {
+			switch {
+			case !role.ApprovedIn(h.Approved):
+			case h.NotInServer:
+				line.NotInServer++
+			case h.holdsRole(role):
+				line.Holding++
+			default:
+				line.NotHolding++
+			}
 		}
+		c.Lines = append(c.Lines, line)
 	}
 	return c
 }
@@ -509,7 +534,7 @@ func roleMissingRefusal(what, role string) *saveRefusal {
 // as the scope's label has them: "Internal or External".
 func nobodyToPurge(scope commands.PurgeScope) string {
 	var names []string
-	for _, role := range []commands.FoxholeRole{commands.FoxholeInternal, commands.FoxholeExternal} {
+	for _, role := range commands.FoxholeRoles() {
 		if slices.Contains(scope.Roles(), role) {
 			names = append(names, role.Label())
 		}
@@ -533,7 +558,7 @@ func nobodyOnRoster(unit string) string {
 }
 
 // nobodyToReAdd is a re-add's hint.
-const nobodyToReAdd = "Every approved collaborator in the server holds External, so there's nobody to re-add."
+const nobodyToReAdd = "Every approved Foxholer in the server holds each role they're approved for, so there's nobody to re-add."
 
 // nobodyToChangeRefusal refuses a Foxhole action that would change nobody
 // when it starts (commands.ErrNobodyToChange), as one confirmed from a page
@@ -596,8 +621,8 @@ func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess sessio
 }
 
 // startReAdd is POST /foxhole/re-add, the After a war block's Re-add
-// approved collaborators: one button with no preview, which starts the
-// re-add as startAction says.
+// approved Foxholers: one button with no preview, which starts the re-add
+// as startAction says.
 func (p *Panel) startReAdd(w http.ResponseWriter, r *http.Request, sess session) {
 	p.startAction(w, r, sess, actionPage, "the re-add", nobodyToChangeRefusal(nobodyToReAdd), p.foxhole.actions.ReAdd)
 }

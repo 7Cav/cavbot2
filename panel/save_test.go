@@ -267,9 +267,9 @@ func (s hookedStore) SaveFoxholeNote(ctx context.Context, guildID string, save s
 	return s.st.SaveFoxholeNote(ctx, guildID, save, entry)
 }
 
-func (s hookedStore) ApproveFoxholeMembers(ctx context.Context, guildID string, members []store.MemberNames, entry store.ChangeLogEntry) error {
+func (s hookedStore) ApproveFoxholeMembers(ctx context.Context, guildID string, approvals []store.MemberApprovals, entry store.ChangeLogEntry) error {
 	s.hook(ctx)
-	return s.st.ApproveFoxholeMembers(ctx, guildID, members, entry)
+	return s.st.ApproveFoxholeMembers(ctx, guildID, approvals, entry)
 }
 
 func (s hookedStore) ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry store.ChangeLogEntry) error {
@@ -277,9 +277,9 @@ func (s hookedStore) ClearFoxholeApprovals(ctx context.Context, guildID string, 
 	return s.st.ClearFoxholeApprovals(ctx, guildID, memberIDs, entry)
 }
 
-func (s hookedStore) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string) (bool, error) {
+func (s hookedStore) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string, roles store.FoxholeApprovals) (bool, error) {
 	s.hook(ctx)
-	return s.st.ClearFoxholeApprovalForRemoval(ctx, guildID, memberID)
+	return s.st.ClearFoxholeApprovalForRemoval(ctx, guildID, memberID, roles)
 }
 
 func (s hookedStore) SetFoxholeRecordNames(ctx context.Context, guildID string, names []store.MemberNames) error {

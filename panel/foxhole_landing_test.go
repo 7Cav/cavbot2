@@ -57,8 +57,10 @@ func TestAFoxholeSaveLandsOnTheListItWasMadeFrom(t *testing.T) {
 		skipped, cleared string
 	}{
 		{"an Approve that skips a member", newFoxholeWorld, func(t *testing.T, w *testWorld) (string, *http.Response) {
+			approveThroughThePage(t, w, memberKestrel.ID)
+			withoutFoxholeRoles(w)
 			return foxholeApprovalsPath, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opApprove, memberKestrel.ID, memberDoe.ID)
-		}, "holders", memberDoe.ID, ""},
+		}, "holders", memberKestrel.ID, ""},
 		{"a Clear approval", newFoxholeWorld, func(t *testing.T, w *testWorld) (string, *http.Response) {
 			approveThroughThePage(t, w, memberKestrel.ID)
 			return foxholeApprovalsPath, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opClear, memberKestrel.ID)

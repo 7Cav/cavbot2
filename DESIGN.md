@@ -246,7 +246,7 @@ Issue #288 rejected two looks: a centred sign-in gate over the map with Teko dis
 A grey ladder from near-black to near-white, one gold accent, and a red and a green that mark state.
 
 ### Primary
-- **Cavalry Gold** (#ebc729): the patch yellow in the logo and the forum's accent. It draws the rule under every block header, links, the focus ring, the selected rail item and filter link, an approved collaborator's tag, and the fill of the one forward button in a row of actions. At 10.87:1 on a block it is safe as text.
+- **Cavalry Gold** (#ebc729): the patch yellow in the logo and the forum's accent. It draws the rule under every block header, links, the focus ring, the selected rail item and filter link, an approved Foxholer's tag, and the fill of the one forward button in a row of actions. At 10.87:1 on a block it is safe as text.
 - **Gold Highlight** (#edcd40): the light bevel edges of the gold button, and a link under the pointer.
 - **Gold Shade** (#e5bf15): the dark bevel edges of the gold button, the approved tag's edge, and the border of a block that waits on a Confirm or shows a running Foxhole action.
 - **Gold Hover** (#eed14e): the gold button's fill under the pointer.
@@ -355,7 +355,7 @@ Forum-issue hardware: plain, bevelled, sure.
 
 ### Tags
 - **Style.** No fill, a 1px edge, 3px corners and a 12px label. The edge colour and the words both carry the state.
-- **States.** A grey edge for neutral ("disabled", "recording", a change log's action). A green edge with Mint words for on ("enabled", "ready"). A red edge with Blush words when something is wrong ("broken", "failed", "cut short by a restart", "approved, doesn't hold External"). A gold edge with gold words for an approved collaborator. A dashed grey edge with muted words for "not in the server".
+- **States.** A grey edge for neutral ("disabled", "recording", a change log's action). A green edge with Mint words for on ("enabled", "ready"). A red edge with Blush words when something is wrong ("broken", "failed", "cut short by a restart", "approved, doesn't hold Internal" or External). A gold edge with gold words for an approved Foxholer's role. A dashed grey edge with muted words for "not in the server".
 - **Picker tag.** Raised Charcoal fill, a 14px bright label, an optional role colour dot, and a × that removes it. The ×'s focus ring sits flush inside the tag.
 
 ### Blocks

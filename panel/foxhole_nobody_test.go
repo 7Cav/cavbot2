@@ -36,8 +36,8 @@ func TestKeptFormOfAnActionThatWouldChangeNobodyIsRefused(t *testing.T) {
 		{name: "purge of External", action: "purge", refusal: "nobody-to-change", stale: stalePurge("external")},
 		{name: "purge of both", action: "purge", refusal: "nobody-to-change", stale: stalePurge("both")},
 		{name: "re-add", action: "re_add", refusal: "nobody-to-change", stale: func(t *testing.T, w *testWorld) func() *http.Response {
-			// The collaborator who left counts for nobody: the re-add would skip them.
-			seedApproved(t, w, namesOf(memberDoe), collaboratorGone)
+			// The member who left counts for nobody: the re-add would skip them.
+			seedApproved(t, w, namesOf(memberDoe), foxholerGone)
 			page := parseHTML(t, w.b.get(foxholePath))
 			pressReAdd(t, w.b)
 			w.awaitActionEnd(t)
@@ -150,7 +150,7 @@ func TestActionStartsRightAfterARefusalOfOneThatWouldChangeNobody(t *testing.T) 
 	refused := parseHTML(t, postReAdd(t, w.b, parseHTML(t, w.b.get(foxholePath))))
 
 	if findLive(refused, "", "data-error", "nobody-to-change") == nil {
-		t.Fatal("the re-add of a collaborator holding External wasn't refused")
+		t.Fatal("the re-add of an approved Foxholer holding External wasn't refused")
 	}
 	startPurge(t, w, "internal")
 }

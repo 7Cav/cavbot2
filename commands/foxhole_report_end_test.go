@@ -91,7 +91,7 @@ func (f failingRoleChange) GuildMemberRoleAdd(guildID, userID, roleID, reason st
 	return restError(403, 50013, "Missing Permissions")
 }
 
-// bobID is an approved collaborator who isn't in the page's guild.
+// bobID is an approved Foxholer who isn't in the page's guild.
 const bobID = "100000000000000009"
 
 // endedReport reads the report with the ID given from the store, and fails
@@ -116,13 +116,16 @@ func TestAReportWhoseEndWriteFailsEndsOnceTheStoreIsBack(t *testing.T) {
 	clock := installFoxholeClock(t)
 	fake := store.NewFake()
 	ctx := context.Background()
-	approved := []store.MemberNames{
+	var approved []store.MemberApprovals
+	for _, n := range []store.MemberNames{
 		{MemberID: kestrelID, Username: "kestrel"}, {MemberID: ashID, Username: "ash"},
 		{MemberID: doeID, Username: "doe"}, {MemberID: bobID, DisplayName: "bob", Username: "bob"},
+	} {
+		approved = append(approved, store.MemberApprovals{MemberNames: n, Approved: store.FoxholeApprovals{External: true}})
 	}
 	if err := fake.ApproveFoxholeMembers(ctx, "guild-1", approved,
 		store.ChangeLogEntry{Action: store.ChangeApprove, Diff: json.RawMessage(`{}`)}); err != nil {
-		t.Fatalf("approve the collaborators: %v", err)
+		t.Fatalf("approve the members: %v", err)
 	}
 	st := &storeOutage{Store: fake}
 	fx, hold := newPageRuntimeWith(t, st, func(h *pageHold) FoxholeRoleWriter { return failingRoleChange{h, doeID} })

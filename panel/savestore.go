@@ -172,10 +172,10 @@ func (b boundedStore) SaveFoxholeNote(ctx context.Context, guildID string, save 
 	return b.store.SaveFoxholeNote(ctx, guildID, save, entry)
 }
 
-func (b boundedStore) ApproveFoxholeMembers(ctx context.Context, guildID string, members []store.MemberNames, entry store.ChangeLogEntry) error {
+func (b boundedStore) ApproveFoxholeMembers(ctx context.Context, guildID string, approvals []store.MemberApprovals, entry store.ChangeLogEntry) error {
 	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
 	defer cancel()
-	return b.store.ApproveFoxholeMembers(ctx, guildID, members, entry)
+	return b.store.ApproveFoxholeMembers(ctx, guildID, approvals, entry)
 }
 
 func (b boundedStore) ClearFoxholeApprovals(ctx context.Context, guildID string, memberIDs []string, entry store.ChangeLogEntry) error {
@@ -184,10 +184,10 @@ func (b boundedStore) ClearFoxholeApprovals(ctx context.Context, guildID string,
 	return b.store.ClearFoxholeApprovals(ctx, guildID, memberIDs, entry)
 }
 
-func (b boundedStore) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string) (bool, error) {
+func (b boundedStore) ClearFoxholeApprovalForRemoval(ctx context.Context, guildID, memberID string, roles store.FoxholeApprovals) (bool, error) {
 	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
 	defer cancel()
-	return b.store.ClearFoxholeApprovalForRemoval(ctx, guildID, memberID)
+	return b.store.ClearFoxholeApprovalForRemoval(ctx, guildID, memberID, roles)
 }
 
 func (b boundedStore) SetFoxholeRecordNames(ctx context.Context, guildID string, names []store.MemberNames) error {

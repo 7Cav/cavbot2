@@ -861,7 +861,7 @@ func TestNoteAndApproveSaveWhileAPurgeRuns(t *testing.T) {
 	approveThroughThePage(t, w, memberKestrel.ID)
 
 	records := readNoteState(t, w.st).Records
-	if len(records) != 1 || records[0].MemberID != memberKestrel.ID || records[0].Note != "allied group lead" || !records[0].Approved {
+	if len(records) != 1 || records[0].MemberID != memberKestrel.ID || records[0].Note != "allied group lead" || !records[0].Approved.Any() {
 		t.Errorf("records = %+v, want %s's note saved and their approval", records, memberKestrel.ID)
 	}
 }

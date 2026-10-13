@@ -13,7 +13,7 @@ web
 The panel at `cavbot2.7cav.us` has four kinds of visitor. Any forum user can sign in. The group check runs on every request and decides which pages each visitor sees.
 
 - **Panel admins** are the forum groups Genstaff (71, Regimental HQ), S6 HQ (47) and Regimental Technical Aides (44), all held as secondary groups (#256). They set up hubs for temporary voice channels, the guild-wide moderator roles and the recording roles. Once recordings ship, they can also see and delete every recording. They open every page.
-- **Foxhole managers** are the members of the forum's Foxhole group (323). They work the Foxhole page: notes, approved collaborators, adding and removing members, roster adds, and the purge and re-add when a war ends.
+- **Foxhole managers** are the members of the forum's Foxhole group (323). They work the Foxhole page: notes, approvals, adding and removing members, roster adds, and the purge and re-add when a war ends.
 - **Recording starters** are Cav members holding a recording role. They will come to the panel from a link in a recording notice or a DM, sign in with their forum account, and list, download and delete their own recordings (#381). They are the panel's first visitors who aren't staff, and many will be opening it for the first time.
 - **Outsiders** are any other forum users. They see the Recordings page: their own recordings when they started any, and otherwise a note that they have none yet and that their forum groups open no other page.
 
@@ -27,13 +27,13 @@ It's working when staff do these jobs without opening Discord's settings screens
 
 ## Positioning
 
-The panel runs inside the bot and signs people in with the regiment's own forum account. It reads the regiment's own records: forum groups, milpacs, unit rosters and the rank ladder. MEE6 and Craig can't know who is in Genstaff, which troopers belong to D/ACD, or which forum user changed a hub. The panel also speaks the regiment's vocabulary (hub, spawned channel, purge, approved collaborator, starter), defined once in GLOSSARY.md.
+The panel runs inside the bot and signs people in with the regiment's own forum account. It reads the regiment's own records: forum groups, milpacs, unit rosters and the rank ladder. MEE6 and Craig can't know who is in Genstaff, which troopers belong to D/ACD, or which forum user changed a hub. The panel also speaks the regiment's vocabulary (hub, spawned channel, purge, approved Foxholer, starter), defined once in GLOSSARY.md.
 
 ## Operating Context
 
 - **Sign-in.** Visitors go from 7cav.us to the forum's OAuth page and back to the panel. The panel should read as part of the same site the whole way.
 - **From Discord to the panel.** A recording notice links to the recording in the panel when the recording stops. In a spawned channel the starter gets the link by DM as well, since the channel and its notice go once everyone has left. In any other channel the DM goes only when the notice is gone by then. That link is often opened on a phone.
-- **The war cycle.** A Foxhole war ends with a purge of the Foxhole roles, then a re-add of the approved collaborators. These are the panel's busiest moments for Foxhole managers.
+- **The war cycle.** A Foxhole war ends with a purge of the Foxhole roles, then a re-add of the approved Foxholers. These are the panel's busiest moments for Foxhole managers.
 - **Scale.** The live guild is near Discord's caps for roles and channels, so pickers can hold thousands of candidates (ADR 0013).
 - **Latency.** At its slowest a page load takes about 20 seconds: a 10-second group check, then the page's 10-second time budget. The reverse proxy cuts requests off at 90 seconds. Foxhole actions run in the background, and their request redirects at once.
 - **Release.** A change members or panel users can see gets smoke-tested on a test guild before the release that ships it (ADR 0015, `docs/smoke-test.md`). Panel checks run in the desktop app's built-in browser.
@@ -43,7 +43,7 @@ The panel runs inside the bot and signs people in with the regiment's own forum 
 Shipped:
 - Forum sign-in and the group check.
 - The hub page: list hubs with live counts, create, register, edit and remove a hub, the guild-wide moderator roles, the recording roles, and the change log.
-- The Foxhole page: the holder list with flags and notes, approved collaborators, add, remove, roster add, purge, re-add, retry, reports and its own change log, plus a second view of members who have a note but no Foxhole role.
+- The Foxhole page: the holder list with flags and notes, approvals, add, remove, roster add, purge, re-add, retry, reports and its own change log, plus a second view of members who have a note but no Foxhole role.
 - The Recordings page (#390): a starter's own recordings with their mix and zip downloads and deletion dates, each recording's own page that the recording notice links to, and a panel admin's switch to every recording.
 - The 30-day retention (#392): within an hour of its deletion date, a recording leaves the Recordings page and its files leave the disk, whether or not recording is on.
 - Deleting a recording early (#391): its starter or a panel admin deletes it whole, files and row, through a danger confirm on its own page. A log line names the recording and the forum user who deleted it.
@@ -83,7 +83,7 @@ Constraints:
 ## Product Principles
 
 1. **A person decides every removal.** The panel never drops a stored setting, an approval, a note or someone's authority on its own. A refused action changes nothing and says so.
-2. **Show it before changing it.** Removing a hub and every Foxhole action go through a preview first, and the Confirm acts on what the preview showed. Re-add is the one exception. It runs at once, because it only gives External back to approved collaborators a person already chose, and its block shows the count before it runs. A form save, such as a hub's settings or a note, has no preview. The form shows what it will store, and the change log keeps the old values. The heaviest confirm and the fullest report belong to the riskiest action. Today that's a purge, which takes a role from every holder at once. Once recordings ship, it's deleting a recording, the one panel action nobody can undo.
+2. **Show it before changing it.** Removing a hub and every Foxhole action go through a preview first, and the Confirm acts on what the preview showed. Re-add is the one exception. It runs at once, because it only gives roles back to approved Foxholers a person already chose, and its block shows the count before it runs. A form save, such as a hub's settings or a note, has no preview. The form shows what it will store, and the change log keeps the old values. The heaviest confirm and the fullest report belong to the riskiest action. Today that's a purge, which takes a role from every holder at once. Once recordings ship, it's deleting a recording, the one panel action nobody can undo.
 3. **Every change names who made it.** Each save and each Foxhole action leaves a change log entry with the forum user, the time, and the old and new values. Deleting a recording is the exception (#381). It leaves a log line naming the recording and the forum user who deleted it, since no page could show an entry for a recording that's gone.
 4. **The least practised visitor comes first in the parts everyone sees.** The rail, sign-in, the no-access page and shared wording must make sense to a recording starter who has never opened the panel and doesn't know what a hub is. Each page then serves its own audience, so staff pages can stay dense.
 5. **Desktop first for staff, phone first for starters.** Staff pages are built for a desk and must still work at phone width, with no sideways scroll and every action reachable. The Recordings page is designed at phone width first, because its link arrives in Discord.
