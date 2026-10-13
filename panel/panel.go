@@ -648,7 +648,8 @@ func (p *Panel) homePage(w http.ResponseWriter, r *http.Request, sess session) {
 // renderHubs renders the hub page read now: the list, and the form the
 // request asks for with its refusal when there is one. A request for a hub
 // that does not exist is 404: the edit form's hub gets the not-found page,
-// and a remove preview's renders the page saying the hub is gone.
+// and a remove preview's, opened from the hub list or the edit form,
+// renders the page saying the hub is gone.
 func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session, status int, req pageRequest) {
 	// The budget's start is taken before its deadline is set, so a page that
 	// fails on the deadline never reports less time than the budget.

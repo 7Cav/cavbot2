@@ -3,7 +3,7 @@
   <h1 class="title">Hubs</h1>
   <p class="desc">Joining a hub moves a member into a new spawned channel. This page also sets the moderator roles and the recording roles.</p>
   {{if .Hubs.Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Channel and role details on this page may be out of date.</div>{{end}}
-  {{if .Hubs.Remove}}{{template "remove-preview" .Hubs}}{{else}}{{with .Hubs.RefusalFor "remove"}}<div class="note" data-error="{{.DataError}}">{{.Message}}</div>{{end}}{{end}}
+  {{if .Hubs.Remove}}{{template "remove-preview" .Hubs}}{{else}}{{with .Hubs.RefusalFor "remove"}}{{template "hub-gone" .}}{{end}}{{end}}
   {{template "moderators" .}}
   {{template "recording-roles" .}}
   <div class="block" id="hubs">
@@ -26,7 +26,7 @@
           <td>{{if .Broken}}<span class="tag tag--warn" data-field="broken">broken</span> {{end}}<span data-field="enabled">{{if .Enabled}}<span class="tag tag--on">enabled</span>{{else}}<span class="tag">disabled</span>{{end}}</span></td>
           <td class="num" data-field="spawned">{{.Spawned}}</td>
           <td class="failure">{{with .Failure}}<span data-field="failure_cause">{{.Cause}}</span> <time data-field="failure_at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 15:04"}} UTC</time>{{else}}<span class="off">none</span>{{end}}</td>
-          <td class="num">{{if .Broken}}<a class="btn btn--danger btn--small" href="/?remove={{.ID}}" data-field="remove" aria-label="Remove hub {{.BaseString}}">Remove</a>{{else}}<a href="/?hub={{.ID}}#edit" data-field="edit" aria-label="Edit hub {{.BaseString}}">Edit</a>{{end}}</td>
+          <td class="num">{{if .Broken}}<a class="btn btn--danger btn--small" href="/?remove={{.ID}}#remove" data-field="remove" aria-label="Remove hub {{.BaseString}}">Remove</a>{{else}}<a href="/?hub={{.ID}}#edit" data-field="edit" aria-label="Edit hub {{.BaseString}}">Edit</a>{{end}}</td>
         </tr>
       {{end}}
       </tbody>
@@ -84,8 +84,20 @@
 {{end}}
 {{end}}
 
-{{- /* A refused form's note. One form at most is refused per page, so its
-     ID is unique, and the form's heading names it in aria-describedby. */}}
+{{- /* What the page shows in place of a remove preview whose hub is gone.
+     A Remove or Confirm from a page loaded before the hub was removed gets
+     it. Its heading carries the preview's ID, which those addresses name,
+     so the page lands on it, and the refusal is its description. */}}
+{{define "hub-gone"}}
+  <section class="block" data-field="hub-gone">
+    <h2 class="block-header" id="remove" tabindex="-1" aria-describedby="refusal">Remove hub</h2>
+    {{template "refusal" .}}
+  </section>
+{{end}}
+
+{{- /* A refusal's note. One form at most is refused per page, so its ID is
+     unique, and the heading of the block it sits in, the form's or the one
+     shown in the form's place, names it in aria-describedby. */}}
 {{define "refusal"}}<div class="block-row"><div class="note" id="refusal" data-error="{{.DataError}}">{{.Message}}</div></div>{{end}}
 
 {{- /* The line a save lands on, in the form it saved. */}}
@@ -345,7 +357,7 @@
   {{end}}
   <div class="block">
     <h2 class="block-header">Remove this hub</h2>
-    <div class="submit-row"><a class="btn btn--danger" href="/?hub={{.ID}}&amp;remove={{.ID}}" data-field="remove">Remove hub<span class="visually-hidden"> {{.BaseString}}</span></a></div>
+    <div class="submit-row"><a class="btn btn--danger" href="/?hub={{.ID}}&amp;remove={{.ID}}#remove" data-field="remove">Remove hub<span class="visually-hidden"> {{.BaseString}}</span></a></div>
   </div>
   <div class="block">
     {{template "changes" .Changes}}

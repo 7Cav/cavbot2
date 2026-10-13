@@ -90,18 +90,91 @@ func TestEditFormOpensAtTheForm(t *testing.T) {
 	}
 }
 
+// removeOpeners are the two controls that open a hub's remove preview.
+// control loads the page hub-1's control is on and returns the address it
+// names.
+var removeOpeners = []struct {
+	name    string
+	control func(t *testing.T, w *testWorld) string
+}{
+	{"Remove on a broken hub's list row", func(t *testing.T, w *testWorld) string {
+		w.discord.breakChannel("hub-1", true)
+		return removeLinkAddress(t, listRow(t, parseHTML(t, w.b.get("/")), storedHubID(t, w.st, "hub-1")))
+	}},
+	{"Remove hub on the hub's edit form", func(t *testing.T, w *testWorld) string {
+		doc := parseHTML(t, w.b.get(hubEditPage(t, w)))
+		return removeLinkAddress(t, hubEditBlock(t, w, doc))
+	}},
+}
+
+// removeLinkAddress is the address of the Remove link inside scope.
+func removeLinkAddress(t *testing.T, scope *html.Node) string {
+	t.Helper()
+	remove := findElement(scope, "a", "data-field", "remove")
+	if remove == nil {
+		t.Fatal("no Remove link")
+	}
+	return attrOf(remove, "href")
+}
+
+// Remove opens the page at the remove preview's heading, which takes focus,
+// not at the top of the Hubs page, where a panel admin's first Tab goes to
+// the rail.
+func TestRemoveOpensAtThePreviewsHeading(t *testing.T) {
+	for _, tc := range removeOpeners {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			control := tc.control(t, w)
+
+			doc, fragment := landing(t, w.b, control, w.b.get(control))
+
+			landedHeading(t, doc, fragment, removePreviewBlock(t, doc), "the remove preview's heading")
+		})
+	}
+}
+
+// A Remove from a page loaded before another panel admin removed its hub
+// answers that the hub is gone, the edit page's as well as the hub list's,
+// though an edit page of a gone hub alone gets the not-found page. The page
+// lands on the heading of the block that says so, whose description is the
+// refusal, so the panel admin hears why there is nothing to confirm.
+func TestRemoveOfAGoneHubLandsOnWhyNothingHappened(t *testing.T) {
+	for _, tc := range removeOpeners {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			control := tc.control(t, w)
+			assertRedirect(t, removeHubThroughThePreview(t, secondBrowser(t, w), storedHubID(t, w.st, "hub-1")), "/")
+
+			res, fragment := arrive(t, w.b, control, w.b.get(control))
+
+			if res.StatusCode != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404", res.StatusCode)
+			}
+			doc := parseHTML(t, res)
+			block := hubGoneBlock(t, w, doc)
+			heading := landedHeading(t, doc, fragment, block, "the heading of the block saying the hub is gone")
+			if got := attrOf(refusalDescribing(t, doc, heading, block), "data-error"); got != refusalGone {
+				t.Errorf("the block's refusal is %q, want %q", got, refusalGone)
+			}
+		})
+	}
+}
+
 // refusedSave is one way a save of a Hubs page form is refused, driven the
 // way a browser drives it: the form, its action and its fields come from
 // the page the panel renders.
 type refusedSave struct {
 	name string
 	// status is the refusal's: 422 for a refused field or a save that
-	// changes nothing, 409 for a stale form.
+	// changes nothing, 409 for a stale form, 404 for a hub that is gone.
 	status int
 	// refuse loads the page the form is on and returns the form's action
 	// and the fields its refused save posts.
 	refuse func(t *testing.T, w *testWorld) (action string, fields url.Values)
-	// block is the form's block on the answer's page.
+	// block is the form's block on the answer's page, or the block shown
+	// in its place when the form's hub is gone.
 	block func(t *testing.T, w *testWorld, doc *html.Node) *html.Node
 }
 
@@ -132,6 +205,36 @@ func firstWithAttr(n *html.Node, attr string) *html.Node {
 // an h1 to h6, or an element with the heading role.
 func isHeading(n *html.Node) bool {
 	return slices.Contains([]string{"h1", "h2", "h3", "h4", "h5", "h6"}, n.Data) || attrOf(n, "role") == "heading"
+}
+
+// landedHeading is the element a page opened at fragment lands on, which
+// must be a heading inside block that takes focus without joining the tab
+// order. want names the heading in a failure.
+func landedHeading(t *testing.T, doc *html.Node, fragment string, block *html.Node, want string) *html.Node {
+	t.Helper()
+	heading := landedOn(doc, fragment)
+	if heading == nil || !isHeading(heading) || !within(heading, block) {
+		t.Fatalf("the page opens at fragment %q, want %s", fragment, want)
+	}
+	if got := attrOf(heading, "tabindex"); got != "-1" {
+		t.Errorf("the landed heading has tabindex %q, want -1 so it takes focus without joining the tab order", got)
+	}
+	return heading
+}
+
+// refusalDescribing is the refusal note in block, which must be heading's
+// accessible description, so a screen reader says why nothing changed as
+// focus lands.
+func refusalDescribing(t *testing.T, doc, heading, block *html.Node) *html.Node {
+	t.Helper()
+	note := firstWithAttr(block, "data-error")
+	if note == nil {
+		t.Fatal("the block carries no refusal note")
+	}
+	if got, want := accessibleDescription(doc, heading), announcedText(note); got != want {
+		t.Errorf("the landed heading's description is %q, want the refusal note, %q", got, want)
+	}
+	return note
 }
 
 // hubEditBlock is the hub-1 edit section on a page.
@@ -185,6 +288,17 @@ var (
 func removePreviewOn(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
 	t.Helper()
 	return removePreviewBlock(t, doc)
+}
+
+// hubGoneBlock is the block a page shows in place of a remove preview whose
+// hub is gone.
+func hubGoneBlock(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
+	t.Helper()
+	block := findElement(doc, "", "data-field", "hub-gone")
+	if block == nil {
+		t.Fatal("page has no block saying the hub is gone")
+	}
+	return block
 }
 
 var refusedSaves = []refusedSave{
@@ -282,10 +396,21 @@ var refusedSaves = []refusedSave{
 		},
 		block: removePreviewOn,
 	},
+	{
+		name:   "a remove preview's Confirm pressed again after it removed the hub",
+		status: http.StatusNotFound,
+		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
+			doc := openHubRemovePreview(t, w.b, storedHubID(t, w.st, "hub-1"))
+			assertRedirect(t, confirmRemoval(t, w.b, removePreviewOn(t, w, doc)), "/")
+			return formIn(t, doc, removePreviewOn(t, w, doc))
+		},
+		block: hubGoneBlock,
+	},
 }
 
 // A refused save answers with the page, which opens at the refused form's
-// block rather than at the top, sections above it: the browser lands on
+// block, or the block shown in its place when the form's hub is gone,
+// rather than at the top, sections above it: the browser lands on
 // the block's heading, which takes focus and whose description is the
 // refusal's note, so the panel admin sees and hears why nothing saved
 // (PRODUCT.md, Principle 1).
@@ -303,20 +428,8 @@ func TestARefusedSaveLandsOnItsForm(t *testing.T) {
 			}
 			doc := parseHTML(t, res)
 			block := tc.block(t, w, doc)
-			heading := landedOn(doc, fragment)
-			if heading == nil || !isHeading(heading) || !within(heading, block) {
-				t.Fatalf("the answer opens at fragment %q, want the heading of the refused form's block", fragment)
-			}
-			if got := attrOf(heading, "tabindex"); got != "-1" {
-				t.Errorf("the landed heading has tabindex %q, want -1 so it takes focus without joining the tab order", got)
-			}
-			note := firstWithAttr(block, "data-error")
-			if note == nil {
-				t.Fatal("the refused form's block carries no refusal note")
-			}
-			if got, want := accessibleDescription(doc, heading), announcedText(note); got != want {
-				t.Errorf("the landed heading's description is %q, want the refusal note, %q", got, want)
-			}
+			heading := landedHeading(t, doc, fragment, block, "the heading of the block carrying the refusal")
+			refusalDescribing(t, doc, heading, block)
 		})
 	}
 }
@@ -342,13 +455,7 @@ func TestARefusedEditOfABrokenHubLandsOnTheBrokenHubBlock(t *testing.T) {
 	if findElement(section, "", "data-field", "broken") == nil {
 		t.Fatal("the answer's hub section shows no Broken hub block")
 	}
-	heading := landedOn(doc, fragment)
-	if heading == nil || !isHeading(heading) || !within(heading, section) {
-		t.Fatalf("the answer opens at fragment %q, want the Broken hub block's heading", fragment)
-	}
-	if got := attrOf(heading, "tabindex"); got != "-1" {
-		t.Errorf("the landed heading has tabindex %q, want -1 so it takes focus without joining the tab order", got)
-	}
+	landedHeading(t, doc, fragment, section, "the Broken hub block's heading")
 }
 
 // hubListBlock is the hub list's block on a page.
