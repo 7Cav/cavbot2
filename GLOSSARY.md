@@ -199,6 +199,11 @@ Foxholer, read from the member list as it stands when the page loads.
 _Avoid_: roster (a unit's roster), member list (the bot's copy of the whole
 guild).
 
+**Selection bar**:
+The holder list's buttons that act on the members ticked in it: Approve,
+Clear approval, Remove Internal and Remove External.
+_Avoid_: toolbar (the list's search and filters), bulk actions.
+
 **No-role view**:
 The Foxhole page's second view, which lists the members with a note who hold
 no Foxhole role and have no approval.
@@ -232,6 +237,13 @@ action's change log entry. It names who started the action and how it
 ended, and lists the members it changed, skipped, failed on and never
 attempted.
 _Avoid_: summary, results, receipt.
+
+**Retry**:
+Starting a finished Foxhole action again on only the members its report
+missed: those it failed on, then those it never attempted. It opens that
+action's preview, or a purge's or re-add's confirmation, holding only them.
+_Avoid_: re-run, resume, re-add (giving approved Foxholers their roles back
+after a war).
 
 **Result line**:
 A line on the Foxhole page telling a Foxhole manager what their last save
