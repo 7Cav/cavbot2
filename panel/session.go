@@ -75,7 +75,7 @@ func (s session) actor() actor {
 // identity block, and a link to each page the session opens.
 func (s session) page(title string) pageData {
 	return pageData{Title: title, SignedIn: true, Username: s.username,
-		Nav: nav{Hubs: s.access.panelAdmin, Foxhole: s.access.foxholePage(), Recordings: true}}
+		Rail: railPages{Hubs: s.access.panelAdmin, Foxhole: s.access.foxholePage(), Recordings: true}}
 }
 
 // sessions is the in-memory store of pending sign-ins and sessions, each

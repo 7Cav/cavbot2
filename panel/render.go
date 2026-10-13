@@ -82,8 +82,8 @@ const (
 )
 
 // pageData is what every template renders from. SignedIn switches the rail
-// between the identity block and the forum link, and Nav lists the pages the
-// rail links to beside the identity block. Page names the page shown, for
+// between the identity block and the forum link, and Rail lists the pages
+// the rail links to beside the identity block. Page names the page shown, for
 // its rail link and its data-page. Hubs is filled for the hub page alone,
 // Foxhole for the Foxhole page alone, and Failure, Message and Retry for the
 // error page alone.
@@ -92,7 +92,7 @@ type pageData struct {
 	Version  string
 	ForumURL string
 	SignedIn bool
-	Nav      nav
+	Rail     railPages
 	Page     string
 	Username string
 	Cause    cause
@@ -118,12 +118,12 @@ type pageData struct {
 	BackLabel string
 }
 
-// nav is which pages the rail links to: the ones this request's group check
-// lets the session open. Every signed-in visitor opens the Recordings page,
-// which lists the recordings they started or says they have none yet, so
-// every session gets its link: the rail doesn't read the store to learn who
-// started a recording.
-type nav struct {
+// railPages is which pages the rail links to, the ones this request's
+// group check lets the session open. Every signed-in visitor opens the
+// Recordings page, which lists the recordings they started or says they
+// have none yet. Every session gets its link, so the rail doesn't read the
+// store to learn who started a recording.
+type railPages struct {
 	Hubs       bool
 	Foxhole    bool
 	Recordings bool
