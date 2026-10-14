@@ -98,8 +98,8 @@ type pageData struct {
 	Cause     cause
 	// Next is the address the sign-in form, on the sign-in page or the
 	// error page's Sign in again, posts for its sign-in to come back to.
-	Next    string
-	Hubs    hubPage
+	Next string
+	Hubs hubPage
 	// Settings is filled for the Settings page alone.
 	Settings settingsView
 	Foxhole  foxholeView

@@ -3,7 +3,7 @@
   <h1 class="title">Settings</h1>
   <p class="desc">The settings here apply to the whole server, not to one hub.</p>
   {{if .Settings.Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Role details on this page may be out of date.</div>{{end}}
-  {{template "rank-roles" .Settings.RankRoles}}
+  {{template "rank-roles" .Settings}}
 </main>
 {{end}}
 
@@ -12,8 +12,11 @@
      offers the roles from the one list under OptionsID. */}}
 {{define "rank-roles"}}
   <section class="rank-roles" data-section="rank-roles">
-  <div class="block">
-    <h2 class="block-header" id="rank-roles" tabindex="-1">Rank roles</h2>
+  <form method="post" action="/rank-roles#rank-roles" class="block">
+    <h2 class="block-header" id="rank-roles" tabindex="-1"{{if .RefusalFor "rank-roles"}} aria-describedby="refusal"{{end}}>Rank roles</h2>
+    {{with .RefusalFor "rank-roles"}}{{template "refusal" .}}{{end}}
+    {{with .RankRoles}}
+    <input type="hidden" name="version" value="{{.Version}}">
     <div class="block-row field-hint" id="rank-roles-hint">A member holding a rank's role counts as a Cav member of that rank. Each rank has one role or none, and a role counts for one rank at most.</div>
     <div class="scroll"><table class="ranklist" aria-describedby="rank-roles-hint">
       <thead><tr><th>Rank</th><th>Rank role</th></tr></thead>
@@ -27,6 +30,8 @@
       </tbody>
     </table></div>
     <template id="{{.OptionsID}}">{{range .Options}}{{template "picker-option" .}}{{end}}</template>
-  </div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save<span class="visually-hidden"> the rank roles</span></button></div>
+    {{end}}
+  </form>
   </section>
 {{end}}

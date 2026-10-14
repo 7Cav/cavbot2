@@ -26,6 +26,18 @@ type settingsView struct {
 	// the hub page.
 	Disconnected bool
 	RankRoles    rankRolesPage
+	Error        *fieldError
+	// Refused is the form Error belongs to.
+	Refused string
+}
+
+// RefusalFor is the refusal to render on a form, or nil when the error
+// belongs to another form or there is none, as on the hub page.
+func (v settingsView) RefusalFor(form string) *fieldError {
+	if v.Refused != form {
+		return nil
+	}
+	return v.Error
 }
 
 // rankRoleOptions is the ID of the one list of roles every rank's picker
@@ -52,6 +64,14 @@ type rankRow struct {
 	Picker pickerView
 }
 
+// rankRoleSet is a rank's role as a picker's set: the one ID, or none.
+func rankRoleSet(id string) []string {
+	if id == "" {
+		return nil
+	}
+	return []string{id}
+}
+
 // rankRoleField is the form field a rank's rank role posts under.
 func rankRoleField(abbrev string) string { return "rank_role_" + abbrev }
 
@@ -61,19 +81,20 @@ const rankRolesRead = "read rank roles"
 
 // settingsPage is GET /settings.
 func (p *Panel) settingsPage(w http.ResponseWriter, r *http.Request, sess session) {
-	p.renderSettings(w, r, sess, http.StatusOK)
+	p.renderSettings(w, r, sess, http.StatusOK, pageRequest{})
 }
 
-// renderSettings renders the Settings page read now, under the hub page's
-// time budget and with its failures answered the way the hub page answers
-// its own.
-func (p *Panel) renderSettings(w http.ResponseWriter, r *http.Request, sess session, status int) {
+// renderSettings renders the Settings page read now, with the form the
+// request names as posted and its refusal, under the hub page's time
+// budget and with its failures answered the way the hub page answers its
+// own.
+func (p *Panel) renderSettings(w http.ResponseWriter, r *http.Request, sess session, status int, req pageRequest) {
 	start := panelClock.Now()
 	ctx, cancel := panelClock.WithTimeout(r.Context(), hubPageBudget)
 	defer cancel()
 	deadline, _ := ctx.Deadline()
 	reads := newPageReads(start, deadline)
-	view, err := p.hubs.forPage(reads).settings(ctx)
+	view, err := p.hubs.forPage(reads).settings(ctx, req)
 	switch {
 	case errors.Is(err, context.Canceled):
 		utils.Info("Panel page abandoned", "step", "settings page", "username", sess.username, "forum_user_id", sess.userID)
@@ -94,15 +115,27 @@ func (p *Panel) renderSettings(w http.ResponseWriter, r *http.Request, sess sess
 	p.render(w, status, "settings", data)
 }
 
+// renderSettingsRefused answers a refused save of a Settings page form with
+// the page again, the form as posted and the refusal's note on it, the way
+// renderRefused answers one on the hub page.
+func (p *Panel) renderSettingsRefused(w http.ResponseWriter, r *http.Request, sess session, req pageRequest) {
+	status := http.StatusUnprocessableEntity
+	if req.Error.stale() {
+		status = http.StatusConflict
+		utils.Info("Panel save refused: stale form", "username", sess.username, "forum_user_id", sess.userID)
+	}
+	p.renderSettings(w, r, sess, status, req)
+}
+
 // settings reads everything the Settings page renders from, once: the
 // guild from the gateway state, then the rank roles from the store.
-func (s *hubService) settings(ctx context.Context) (settingsView, error) {
+func (s *hubService) settings(ctx context.Context, req pageRequest) (settingsView, error) {
 	guild, err := s.readGuild(ctx)
 	if err != nil {
 		return settingsView{}, err
 	}
-	view := settingsView{Disconnected: guild.disconnected}
-	if view.RankRoles, err = s.rankRolesSection(ctx, guild.info); err != nil {
+	view := settingsView{Disconnected: guild.disconnected, Error: req.Error, Refused: req.Refused}
+	if view.RankRoles, err = s.rankRolesSection(ctx, guild.info, req); err != nil {
 		return settingsView{}, err
 	}
 	return view, nil
@@ -110,19 +143,24 @@ func (s *hubService) settings(ctx context.Context) (settingsView, error) {
 
 // rankRolesSection builds the Rank roles section from the guild read and
 // the store: each rank with the rank role the stored ladder gives it, the
-// role IDs in code while nothing is saved.
-func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo) (rankRolesPage, error) {
+// role IDs in code while nothing is saved, or the form as posted back after
+// a refusal with the version postedBackVersion gives it.
+func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req pageRequest) (rankRolesPage, error) {
 	stored, err := s.deps.Store.GetRankRoles(ctx, s.deps.GuildID)
 	if err != nil {
 		return rankRolesPage{}, fmt.Errorf("%s: %w", rankRolesRead, err)
 	}
 	page := rankRolesPage{Version: strconv.FormatInt(stored.Version, 10), OptionsID: rankRoleOptions}
+	posted := req.RankRoles
+	if posted != nil {
+		page.Version = postedBackVersion(stored.Version, posted.Version, req.staleFor(formRankRoles))
+	}
 	for _, rank := range commands.RankLadderOf(stored).Ranks() {
-		var roles []string
-		if rank.RoleID != "" {
-			roles = []string{rank.RoleID}
+		roles, selected := rankRoleSet(rank.RoleID), rankRoleSet(rank.RoleID)
+		if posted != nil {
+			selected = rankRoleSet(posted.Roles[rank.Abbrev])
 		}
-		picker := rolePicker(rankRoleField(rank.Abbrev), "the "+rank.Abbrev+" rank", guild, roles, roles)
+		picker := rolePicker(rankRoleField(rank.Abbrev), "the "+rank.Abbrev+" rank", guild, roles, selected)
 		picker.Single, picker.AddLabel, picker.Candidates, picker.OptionsFrom = true, "Choose a role", nil, rankRoleOptions
 		page.Rows = append(page.Rows, rankRow{Abbrev: rank.Abbrev, Picker: picker})
 	}
@@ -158,8 +196,13 @@ func (p *Panel) saveRankRoles(w http.ResponseWriter, r *http.Request, sess sessi
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
 		return
 	}
+	in := rankRolesInputOf(r)
 	ctx, hubs := p.saving(r)
-	saved, err := hubs.setRankRoles(ctx, rankRolesInputOf(r), sess.actor())
+	saved, err := hubs.setRankRoles(ctx, in, sess.actor())
+	if refusal, ok := asFieldError(err); ok {
+		p.renderSettingsRefused(w, r, sess, pageRequest{RankRoles: &in, Error: refusal, Refused: formRankRoles})
+		return
+	}
 	if err != nil {
 		p.saveFailed(w, sess, "rank roles save", settingsPath, err)
 		return
@@ -183,7 +226,15 @@ func (s *hubService) setRankRoles(ctx context.Context, in rankRolesInput, by act
 	if err != nil {
 		return store.RankRoles{}, fmt.Errorf("%s: %w", rankRolesRead, err)
 	}
-	before, after := commands.RankLadderOf(stored), commands.NewRankLadder(in.Roles)
+	guild, err := s.readGuild(ctx)
+	if err != nil {
+		return store.RankRoles{}, err
+	}
+	before := commands.RankLadderOf(stored)
+	after, err := acceptedRankRoles(in.Roles, guild.info, before)
+	if err != nil {
+		return store.RankRoles{}, err
+	}
 	entry, err := changeEntry(store.ChangeRankRoles, diffRankRoles(before, after), by)
 	if err != nil {
 		return store.RankRoles{}, err
@@ -195,6 +246,34 @@ func (s *hubService) setRankRoles(ctx context.Context, in rankRolesInput, by act
 	s.deps.Runtime.ApplyRankRoles(after)
 	saved.Version++
 	return saved, nil
+}
+
+// acceptedRankRoles checks each rank's posted role and returns the ladder
+// they make. A rank may have no role. A role must be eligible, unless it is
+// the role the stored ladder already gives that same rank, the role IDs in
+// code included while nothing is saved, so a save keeps an unavailable role
+// on its rank and never adds one to another (ADR 0012). And a role may be
+// the rank role of one rank only. A refusal is a *fieldError naming the
+// rank's field.
+func acceptedRankRoles(posted map[string]string, guild guildInfo, stored commands.RankLadder) (commands.RankLadder, error) {
+	was := stored.Roles()
+	rankOf := map[string]string{}
+	for _, rank := range stored.Ranks() {
+		id := posted[rank.Abbrev]
+		if id == "" {
+			continue
+		}
+		if !guild.isEligible(id) && id != was[rank.Abbrev] {
+			return commands.RankLadder{}, &fieldError{Field: rankRoleField(rank.Abbrev),
+				Message: "That role can't be " + rank.Abbrev + "'s rank role. Choose another role for " + rank.Abbrev + "."}
+		}
+		if other, taken := rankOf[id]; taken {
+			return commands.RankLadder{}, &fieldError{Field: rankRoleField(rank.Abbrev),
+				Message: other + " and " + rank.Abbrev + " have the same role. A role can be the rank role of one rank only."}
+		}
+		rankOf[id] = rank.Abbrev
+	}
+	return commands.NewRankLadder(posted), nil
 }
 
 // diffRankRoles is a rank roles save's diff: each rank whose role changed,

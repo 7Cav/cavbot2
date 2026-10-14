@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
 	"strconv"
 	"testing"
@@ -196,5 +197,85 @@ func TestRankRolesSaveShowsOnTheFoxholePageAtOnce(t *testing.T) {
 	}
 	if flags := valuesOf(row, "data-flag"); slices.Contains(flags, "no-rank-role") {
 		t.Errorf("Ash's row is flagged %v, want no no-rank-role flag", flags)
+	}
+}
+
+// rankRolesSection returns the Rank roles section of a parsed page.
+func rankRolesSection(t *testing.T, doc *html.Node) *html.Node {
+	t.Helper()
+	sec := findElement(doc, "section", "data-section", "rank-roles")
+	if sec == nil {
+		t.Fatal("page has no section under data-section=rank-roles")
+	}
+	return sec
+}
+
+// refusalIn returns the data-error of the refusal under n, and whether
+// there is one.
+func refusalIn(n *html.Node) (string, bool) {
+	var kind string
+	found := false
+	eachElement(n, func(el *html.Node) {
+		if v, ok := attrValue(el, "data-error"); ok && !found {
+			kind, found = v, true
+		}
+	})
+	return kind, found
+}
+
+// A save naming one role for two ranks is refused, and so is one adding
+// @everyone or a role an integration manages. Each answers with the section
+// carrying a refusal, and writes nothing.
+func TestRankRolesSaveRefusesARoleNoRankMayHave(t *testing.T) {
+	cases := []struct {
+		name    string
+		changes map[string]string
+	}{
+		{"one role for two ranks", map[string]string{"SGT": "role-hq", "CPL": "role-hq"}},
+		{"@everyone", map[string]string{"SGT": testGuildID}},
+		{"a managed role", map[string]string{"SGT": "role-bot"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			before := readSavedState(t, w.st)
+
+			res := w.b.postForm("/rank-roles", rankRolesForm(t, w.st, tc.changes))
+
+			if !isClientError(res.StatusCode) {
+				t.Errorf("status = %d, want 4xx", res.StatusCode)
+			}
+			if _, ok := refusalIn(rankRolesSection(t, parseHTML(t, res))); !ok {
+				t.Error("the Rank roles section carries no refusal")
+			}
+			if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
+				t.Errorf("the store after the refused save = %+v, want it as before, %+v", after, before)
+			}
+		})
+	}
+}
+
+// A save that changes one rank keeps each other rank's role as stored, an
+// unavailable one included: a role the code holds for CPT that the guild
+// lacks, while nothing is saved, and once saved, a role saved for CPL and
+// deleted in Discord since.
+func TestRankRolesSaveKeepsAnotherRanksUnavailableRole(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	codeCPT := commands.DefaultRankLadder().Roles()["CPT"]
+
+	assertRedirect(t, w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"CPL": "role-mp"})), settingsPath)
+
+	if got := storedRankRoles(t, w.st).Roles["CPT"]; got != codeCPT {
+		t.Errorf("CPT's role after the first save = %q, want the code's %s, kept though the guild lacks it", got, codeCPT)
+	}
+
+	w.discord.removeRole("role-mp")
+	assertRedirect(t, w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": "role-hq"})), settingsPath)
+
+	roles := storedRankRoles(t, w.st).Roles
+	if roles["CPL"] != "role-mp" || roles["CPT"] != codeCPT {
+		t.Errorf("after the second save CPL = %q and CPT = %q, want role-mp and %s, both kept", roles["CPL"], roles["CPT"], codeCPT)
 	}
 }
