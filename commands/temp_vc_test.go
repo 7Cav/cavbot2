@@ -465,10 +465,10 @@ func (f *fakeTempVCManager) setMember(m ListedMember) {
 	f.members = append(f.members, m)
 }
 
-// MemberRanks reads the payload through the shared helper. The fake holds
+// MemberRoles reads the payload through the shared helper. The fake holds
 // no lock: nothing else writes into a test's payload.
-func (f *fakeTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
-	return GuildMemberRanks(g)
+func (f *fakeTempVCManager) MemberRoles(g *discordgo.Guild) map[string][]string {
+	return GuildMemberRoles(g)
 }
 
 // ChannelPermissionSet records the call and, as Discord does, replaces the

@@ -232,6 +232,21 @@ func (s hookedStore) ListRecordingRoleChanges(ctx context.Context, limit int) ([
 	return s.st.ListRecordingRoleChanges(ctx, limit)
 }
 
+func (s hookedStore) GetRankRoles(ctx context.Context, guildID string) (store.RankRoles, error) {
+	s.hook(ctx)
+	return s.st.GetRankRoles(ctx, guildID)
+}
+
+func (s hookedStore) SaveRankRoles(ctx context.Context, guildID string, roles store.RankRoles, entry store.ChangeLogEntry) error {
+	s.hook(ctx)
+	return s.st.SaveRankRoles(ctx, guildID, roles, entry)
+}
+
+func (s hookedStore) ListRankRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	s.hook(ctx)
+	return s.st.ListRankRoleChanges(ctx, limit)
+}
+
 func (s hookedStore) StartRecording(ctx context.Context, rec store.Recording) (store.Recording, error) {
 	s.hook(ctx)
 	return s.st.StartRecording(ctx, rec)

@@ -490,10 +490,10 @@ func (f *fakeDiscord) addRoles(roles ...*discordgo.Role) {
 	f.roles = append(f.roles, roles...)
 }
 
-// MemberRanks reads the payload through the runtime's shared helper. The
+// MemberRoles reads the payload through the runtime's shared helper. The
 // panel's tests never run a sweep; the fake carries it for the interface.
-func (f *fakeDiscord) MemberRanks(g *discordgo.Guild) map[string]int {
-	return commands.GuildMemberRanks(g)
+func (f *fakeDiscord) MemberRoles(g *discordgo.Guild) map[string][]string {
+	return commands.GuildMemberRoles(g)
 }
 
 // ChannelMessageEditComplex answers every edit as done. The panel's tests

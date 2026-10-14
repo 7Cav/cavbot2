@@ -26,8 +26,8 @@ var ErrNotFound = errors.New("store: not found")
 // ErrStale is returned by a combined write whose record is not as the
 // caller read it (#373): SaveHub of a hub whose row is at another version,
 // or of a new hub on a channel a hub already stands on,
-// SaveGuildModeratorRoles or SaveRecordingRoles of a set whose row is at
-// another version, and SaveFoxholeNote over a note that isn't the one the
+// SaveGuildModeratorRoles, SaveRecordingRoles or SaveRankRoles of a set
+// whose row is at another version, and SaveFoxholeNote over a note that isn't the one the
 // saver loaded. The write lands neither the settings nor the entry. Compare
 // with errors.Is.
 var ErrStale = errors.New("store: the record changed since it was read")
@@ -106,6 +106,21 @@ type RecordingRoles struct {
 	RoleIDs []string
 	// Version counts the saves of the set that took effect, as
 	// GuildModeratorRoles.Version does. A guild with no row is at version 0.
+	Version int64
+}
+
+// RankRoles is a guild's rank roles (GLOSSARY.md, Rank role): the role that
+// counts as each rank on the rank ladder, saved for the whole ladder at
+// once (#680). The store never reads the ladder: it keeps what a save gives
+// it.
+type RankRoles struct {
+	// Roles maps each rank's abbreviation to its rank role's ID, empty for a
+	// rank with none.
+	Roles map[string]string
+	// Version counts the saves of the rank roles that took effect, as
+	// RecordingRoles.Version does. A guild with no row is at version 0: no
+	// panel admin has saved them, so the rank ladder's role IDs in code
+	// apply.
 	Version int64
 }
 
@@ -243,6 +258,8 @@ const (
 	ChangeModerators ChangeAction = "moderators"
 	// ChangeRecordingRoles is a save of the recording roles.
 	ChangeRecordingRoles ChangeAction = "recording_roles"
+	// ChangeRankRoles is a save of the rank roles.
+	ChangeRankRoles ChangeAction = "rank_roles"
 	// ChangeNote is a save of one member's note on the Foxhole page. Its
 	// entry goes in the Foxhole change log, never the hub page's.
 	ChangeNote ChangeAction = "note"
@@ -334,7 +351,8 @@ type ChangeLogEntry struct {
 	// ID is the surrogate key, set by the store.
 	ID int64
 	// HubID is the hub the save was about, or zero for a save about no hub:
-	// the guild-wide moderator roles and the recording roles. A hub's
+	// the guild-wide moderator roles, the recording roles and the rank
+	// roles. A hub's
 	// removal references the hub it removed, and a removed hub's entries
 	// keep their reference, so the reference can name a hub row that no
 	// longer exists (#579). It never names another hub, since no hub ID is
@@ -377,9 +395,9 @@ type MemberNames struct {
 // page needs a method there, or the page failure tests cannot block or fail
 // it.
 //
-// A panel save is one call: SaveHub, RemoveHub, SaveGuildModeratorRoles or
-// SaveRecordingRoles writes the save's settings and its change log entry in
-// one transaction, so both land or neither does, and no method writes either
+// A panel save is one call: SaveHub, RemoveHub, SaveGuildModeratorRoles,
+// SaveRecordingRoles or SaveRankRoles writes the save's settings and its
+// change log entry in one transaction, so both land or neither does, and no method writes either
 // alone (#362).
 // The transaction never leaves the store. The pool holds two connections,
 // and a transaction handed to panel code would hold one of them while that
@@ -472,6 +490,21 @@ type Store interface {
 	// newest first in append order: the panel's recording roles section
 	// reading its own.
 	ListRecordingRoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
+
+	// GetRankRoles returns the rank roles with their version. A guild with
+	// no row reads back as no roles at version 0, with no error.
+	GetRankRoles(ctx context.Context, guildID string) (RankRoles, error)
+	// SaveRankRoles replaces the rank roles with roles.Roles and appends the
+	// save's change log entry together, only while the guild's row is at
+	// roles.Version, 0 meaning no row, and the row ends one version on.
+	// ErrStale when it is at another version. The entry references no hub,
+	// whatever HubID the caller set.
+	SaveRankRoles(ctx context.Context, guildID string, roles RankRoles, entry ChangeLogEntry) error
+	// ListRankRoleChanges returns at most limit rank roles saves, the
+	// entries with action ChangeRankRoles that reference no hub, newest
+	// first in append order: the panel's rank roles section reading its
+	// own.
+	ListRankRoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
 
 	// StartRecording writes a running recording's row and returns it with
 	// its ID set. The caller's ID, StoppedAt and Ended are ignored: a new

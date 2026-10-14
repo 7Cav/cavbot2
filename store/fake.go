@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -39,6 +40,8 @@ type Fake struct {
 	guildRoles map[string]GuildModeratorRoles
 	// recordingRoles holds each guild's recording roles and their version.
 	recordingRoles map[string]RecordingRoles
+	// rankRoles holds each guild's rank roles and their version.
+	rankRoles map[string]RankRoles
 	// changes is the hub page's change log, and foxholeChanges the Foxhole
 	// page's, kept apart as the two tables keep them.
 	changes        changeLog
@@ -69,6 +72,7 @@ func NewFake() *Fake {
 		spawned:         make(map[string]SpawnedChannel),
 		guildRoles:      make(map[string]GuildModeratorRoles),
 		recordingRoles:  make(map[string]RecordingRoles),
+		rankRoles:       make(map[string]RankRoles),
 		changes:         changeLog{nextID: 1},
 		foxholeChanges:  changeLog{nextID: 1},
 		members:         make(map[string]map[string]FoxholeRecord),
@@ -388,6 +392,35 @@ func (f *Fake) SaveRecordingRoles(ctx context.Context, guildID string, roles Rec
 	})
 }
 
+// GetRankRoles implements Store.
+func (f *Fake) GetRankRoles(ctx context.Context, guildID string) (RankRoles, error) {
+	if err := ctx.Err(); err != nil {
+		return RankRoles{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	roles := f.rankRoles[guildID]
+	roles.Roles = maps.Clone(roles.Roles)
+	return roles, nil
+}
+
+// SaveRankRoles implements Store. A guild with no rank roles stored is at
+// version 0.
+func (f *Fake) SaveRankRoles(ctx context.Context, guildID string, roles RankRoles, entry ChangeLogEntry) error {
+	return f.writeAllOrNothing(ctx, &entry, func() (int64, error) {
+		current := f.rankRoles[guildID]
+		if current.Version != roles.Version {
+			return 0, ErrStale
+		}
+		saved := maps.Clone(roles.Roles)
+		if saved == nil {
+			saved = map[string]string{}
+		}
+		f.rankRoles[guildID] = RankRoles{Roles: saved, Version: current.Version + 1}
+		return 0, nil
+	})
+}
+
 // AppendChangeLog adds one entry under the caller's HubID with nothing else
 // written, a setup method off the Store interface. The caller's ID and At
 // are ignored.
@@ -465,6 +498,14 @@ func (f *Fake) ListRecordingRoleChanges(ctx context.Context, limit int) ([]Chang
 		return nil, err
 	}
 	return f.listChanges(&f.changes, limit, func(e ChangeLogEntry) bool { return e.HubID == 0 && e.Action == ChangeRecordingRoles }), nil
+}
+
+// ListRankRoleChanges implements Store.
+func (f *Fake) ListRankRoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.listChanges(&f.changes, limit, func(e ChangeLogEntry) bool { return e.HubID == 0 && e.Action == ChangeRankRoles }), nil
 }
 
 // listChanges returns at most limit entries of log that pass keep, newest

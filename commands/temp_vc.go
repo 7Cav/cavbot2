@@ -225,65 +225,33 @@ var tempVCRankRoles = []rankRole{
 // a var.)
 var noRankIndex = len(tempVCRankRoles)
 
-// rankRoleIndex maps a role ID to its seniority index, derived from the ordered
-// ladder so that slice is the single source of truth. Blank rank IDs (not yet
-// configured) are skipped.
-var rankRoleIndex = func() map[string]int {
-	idx := make(map[string]int, len(tempVCRankRoles))
-	for i, rr := range tempVCRankRoles {
-		if rr.roleID != "" {
-			idx[rr.roleID] = i
-		}
-	}
-	return idx
-}()
-
-// lowestRoleIndex returns the smallest index among the member's roles that appear
-// in idx, or fallback when the member holds none of them (or is nil).
-func lowestRoleIndex(m *discordgo.Member, idx map[string]int, fallback int) int {
-	best := fallback
-	if m == nil {
-		return best
-	}
-	for _, r := range m.Roles {
-		if i, ok := idx[r]; ok && i < best {
-			best = i
-		}
-	}
-	return best
-}
-
 // SeniorRankRole returns the most senior rank role among the role IDs, by
-// the rank ladder, and false when none of them is a rank role. The panel's
-// Foxhole page shows it, by the same rank rule the voice handlers apply.
+// the rank ladder with the role IDs in code, and false when none of them is
+// a rank role. The panel's Foxhole page shows it.
 func SeniorRankRole(roleIDs []string) (string, bool) {
-	i := lowestRoleIndex(&discordgo.Member{Roles: roleIDs}, rankRoleIndex, noRankIndex)
-	if i == noRankIndex {
-		return "", false
-	}
-	return tempVCRankRoles[i].roleID, true
+	return DefaultRankLadder().SeniorRankRole(roleIDs)
 }
 
-// GuildMemberRanks reads a GUILD_CREATE guild's rank data into a user ID to
-// rank index map, the guild's member list first and the members its voice
-// states carry second, by the same rank rule the voice handlers apply. It
-// keeps no reference to the guild's members or roles. The production
-// adapter calls it under State.RLock, because discordgo shares the
-// payload's slices with its state cache; the test fakes call it as it is.
-// One helper for all three, so the rank rule cannot diverge.
-func GuildMemberRanks(g *discordgo.Guild) map[string]int {
-	ranks := make(map[string]int, len(g.Members))
+// GuildMemberRoles reads a GUILD_CREATE guild's members into a user ID to
+// role IDs map, the guild's member list first and the members its voice
+// states carry second. Every role list is a copy, so it keeps no reference
+// to the guild's members. The production adapter calls it under
+// State.RLock, because discordgo shares the payload's slices with its state
+// cache; the test fakes call it as it is. One helper for all three, so what
+// the runtime ranks cannot diverge.
+func GuildMemberRoles(g *discordgo.Guild) map[string][]string {
+	roles := make(map[string][]string, len(g.Members))
 	for _, m := range g.Members {
 		if m != nil && m.User != nil {
-			ranks[m.User.ID] = lowestRoleIndex(m, rankRoleIndex, noRankIndex)
+			roles[m.User.ID] = slices.Clone(m.Roles)
 		}
 	}
 	for _, vs := range g.VoiceStates {
 		if vs != nil && vs.Member != nil {
-			ranks[vs.UserID] = lowestRoleIndex(vs.Member, rankRoleIndex, noRankIndex)
+			roles[vs.UserID] = slices.Clone(vs.Member.Roles)
 		}
 	}
-	return ranks
+	return roles
 }
 
 // TempVCManager is the subset of *discordgo.Session the temp-VC lifecycle
@@ -346,11 +314,11 @@ type TempVCManager interface {
 	// boost tier from discordgo's state cache, never the API. The panel's
 	// hub page and its saves read the guild through it (#400).
 	GuildData(guildID string) GuildSnapshot
-	// MemberRanks reads a GUILD_CREATE guild's rank data into a user ID to
-	// rank index map, through GuildMemberRanks. The production adapter
-	// reads under the state's lock, because discordgo shares the payload's
-	// slices with its cache (#335).
-	MemberRanks(g *discordgo.Guild) map[string]int
+	// MemberRoles reads a GUILD_CREATE guild's members into a user ID to
+	// role IDs map, through GuildMemberRoles. The production adapter reads
+	// under the state's lock, because discordgo shares the payload's slices
+	// with its cache (#335).
+	MemberRoles(g *discordgo.Guild) map[string][]string
 	// ChannelPermissionSet sets one permission overwrite on a channel, the
 	// target's whole overwrite, with the given audit-log reason. It is the
 	// one call that retries on a 429, after the wait Discord gives: a guest
@@ -709,17 +677,17 @@ func (m *sessionTempVCManager) GuildData(guildID string) GuildSnapshot {
 	return GuildSnapshot{}
 }
 
-// MemberRanks reads the payload under State.RLock. Before any handler runs,
+// MemberRoles reads the payload under State.RLock. Before any handler runs,
 // discordgo stores the GUILD_CREATE guild's pointer, or copies the struct
 // over the cached one. From then on the payload's member and voice state
 // slices are the cache's, written under State.Lock: a member update writes
 // over the shared member, and a voice event replaces or removes an element.
-// The lock covers the whole read. The map holds indexes only, so nothing
+// The lock covers the whole read. The map holds copies only, so nothing
 // shared is kept.
-func (m *sessionTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
+func (m *sessionTempVCManager) MemberRoles(g *discordgo.Guild) map[string][]string {
 	m.s.State.RLock()
 	defer m.s.State.RUnlock()
-	return GuildMemberRanks(g)
+	return GuildMemberRoles(g)
 }
 
 func (m *sessionTempVCManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error {
@@ -769,6 +737,10 @@ type TempVC struct {
 	// the store at startup; a hub's effective moderator set is the union of
 	// these and its own.
 	guildModeratorRoles []string
+	// ladder is the rank ladder with the rank roles saved for the guild, or
+	// the role IDs in code while nothing is saved. Loaded from the store at
+	// startup.
+	ladder RankLadder
 	// userChannel tracks every member's current voice channel (any channel,
 	// not just spawned ones) so a VOICE_STATE_UPDATE can be diffed into a
 	// leave + join. It is the diff base, not the truth: discordgo's state
@@ -801,11 +773,10 @@ type TempVC struct {
 	// minutes; the runtime refuses the third itself so a 429 never sleeps a
 	// handler. Pruned at each rename and cleared with the channel.
 	renames map[string][]time.Time
-	// memberRank caches each seen member's index on the rank ladder, read
-	// from the member object a gateway event carries, so a handover ranks
-	// occupants without a REST call. Keyed by user ID; a member holding no
-	// rank role is noRankIndex.
-	memberRank map[string]int
+	// memberRoles caches each seen member's role IDs, read from the member
+	// object a gateway event carries, so a handover ranks occupants against
+	// the ladder without a REST call. Keyed by user ID.
+	memberRoles map[string][]string
 	// lastFailure holds each hub's last spawn failure, keyed by hub row ID.
 	// Absent once a spawn from that hub succeeds. Never written to the store.
 	lastFailure map[int64]SpawnFailure
@@ -866,8 +837,8 @@ type TempVC struct {
 }
 
 // NewTempVC builds the runtime state around a manager and a store and loads
-// the guild's hubs and guild-wide moderator roles from the store. A store
-// that cannot read them is an error: the bot must not run with no hubs when
+// the guild's hubs, guild-wide moderator roles and rank roles from the
+// store. A store that cannot read them is an error: the bot must not run with no hubs when
 // hubs exist. StartTempVC is the production caller; the panel's tests build a
 // runtime over their own fakes through it, so a register through the panel
 // can be followed by a join.
@@ -885,7 +856,7 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		pending:        make(map[int64]map[int]struct{}),
 		deleting:       make(map[string]struct{}),
 		renames:        make(map[string][]time.Time),
-		memberRank:     make(map[string]int),
+		memberRoles:    make(map[string][]string),
 		lastFailure:    make(map[int64]SpawnFailure),
 		createCaptured: make(map[int64]struct{}),
 		deleteCaptured: make(map[int64]struct{}),
@@ -912,6 +883,11 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		return nil, fmt.Errorf("load guild moderator roles: %w", err)
 	}
 	t.guildModeratorRoles = roles.RoleIDs
+	ranks, err := st.GetRankRoles(ctx, guildID)
+	if err != nil {
+		return nil, fmt.Errorf("load rank roles: %w", err)
+	}
+	t.ladder = RankLadderOf(ranks)
 	return t, nil
 }
 
@@ -1143,10 +1119,10 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 		return
 	}
 
-	// The payload's rank data is copied before anything waits: the read is
-	// the sweep's only look at the payload's slices, under the state's
-	// lock, and the copy holds indexes alone.
-	ranks := t.mgr.MemberRanks(g.Guild)
+	// The payload's members' roles are copied before anything waits: the
+	// read is the sweep's only look at the payload's slices, under the
+	// state's lock, and the copy shares nothing with them.
+	memberRoles := t.mgr.MemberRoles(g.Guild)
 
 	// One sweep at a time. A GUILD_CREATE that lands during a sweep waits
 	// for it and then runs in full over its own snapshot: its payload may
@@ -1208,11 +1184,11 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	// else is rebuilt from the rows below.
 	protected := t.keepSpawnsInFlightLocked()
 	// pending is left alone: a create in flight across a reconnect still
-	// holds its number and releases it itself. memberRank is kept and
-	// overlaid from the payload's copy: a rank learnt before the reconnect
-	// is still a rank, and a handover at the sweep needs no REST fetch.
-	for userID, rank := range ranks {
-		t.memberRank[userID] = rank
+	// holds its number and releases it itself. memberRoles is kept and
+	// overlaid from the payload's copy: roles learnt before the reconnect
+	// still rank a member, and a handover at the sweep needs no REST fetch.
+	for userID, roles := range memberRoles {
+		t.memberRoles[userID] = roles
 	}
 
 	var gone, empty []string
@@ -1516,20 +1492,18 @@ func (t *TempVC) applyJoinLocked(userID, channelID string) bool {
 	return true
 }
 
-// rememberMemberLocked caches a member's rank index, read from their roles,
-// for later handovers. Caller holds mu.
+// rememberMemberLocked caches a member's role IDs for later handovers.
+// Caller holds mu.
 func (t *TempVC) rememberMemberLocked(userID string, m *discordgo.Member) {
-	t.memberRank[userID] = lowestRoleIndex(m, rankRoleIndex, noRankIndex)
+	t.memberRoles[userID] = slices.Clone(m.Roles)
 }
 
-// rankLocked returns a member's cached rank index, or noRankIndex when no
-// gateway payload has carried their member object, so an occupant of unknown
-// rank is never a candidate. Caller holds mu.
+// rankLocked returns a member's place on the rank ladder as it stands now,
+// from their cached roles, or noRankIndex when they hold no rank role or no
+// gateway payload has carried their member object, so an occupant of
+// unknown rank is never a candidate. Caller holds mu.
 func (t *TempVC) rankLocked(userID string) int {
-	if r, ok := t.memberRank[userID]; ok {
-		return r
-	}
-	return noRankIndex
+	return t.ladder.seniority(t.memberRoles[userID])
 }
 
 // reconcileOwnerLocked applies the handover rule to a spawned channel whose
