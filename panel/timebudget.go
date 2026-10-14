@@ -155,3 +155,15 @@ func (s pageStore) ListHubRemovals(ctx context.Context, limit int) ([]store.Chan
 		return s.Store.ListHubRemovals(ctx, limit)
 	})
 }
+
+func (s pageStore) GetRankRoles(ctx context.Context, guildID string) (store.RankRoles, error) {
+	return timeStoreRead(s.reads, rankRolesRead, func() (store.RankRoles, error) {
+		return s.Store.GetRankRoles(ctx, guildID)
+	})
+}
+
+func (s pageStore) ListRankRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	return timeStoreRead(s.reads, rankRoleChangesRead, func() ([]store.ChangeLogEntry, error) {
+		return s.Store.ListRankRoleChanges(ctx, limit)
+	})
+}

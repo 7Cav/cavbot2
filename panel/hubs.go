@@ -221,6 +221,7 @@ const (
 )
 
 // refusalStale is the data-error value on a stale refusal's note,
+// refusalChanged on a rank roles Confirm whose preview no longer holds,
 // refusalUnchanged on the note of a save that would change nothing,
 // refusalNobodyToChange on the Foxhole page's note of an action or an
 // approvals save that would change nobody, and refusalGone on the note of
@@ -228,6 +229,7 @@ const (
 // field names.
 const (
 	refusalStale          = "stale"
+	refusalChanged        = "changed"
 	refusalUnchanged      = "unchanged"
 	refusalNobodyToChange = "nobody-to-change"
 	refusalGone           = "gone"
@@ -354,9 +356,7 @@ type hubPage struct {
 	Disconnected bool
 	// Moderators is the guild-wide section at the top of the page.
 	Moderators moderatorsPage
-	// RecordingRoles is the recording roles section beside it.
-	RecordingRoles recordingRolesPage
-	Hubs           []hubRow
+	Hubs       []hubRow
 	// Picker is the register picker: the chosen channel as a tag, if any,
 	// and the voice channels its channel search offers.
 	Picker     pickerView
@@ -365,8 +365,7 @@ type hubPage struct {
 	Create     createInput
 	Error      *fieldError
 	// Refused is which form the error belongs to: formCreate, formRegister,
-	// formEdit, formModerators, formRecordingRoles or formRemove. Empty with
-	// no error.
+	// formEdit, formModerators or formRemove. Empty with no error.
 	Refused string
 	Edit    *editPage
 	// Remove is the remove preview the request asked for, shown first on
@@ -434,8 +433,9 @@ func removalOf(entry store.ChangeLogEntry) (removed removedHub, channelID string
 
 // The forms a refusal can belong to, as Refused names them and as the
 // template asks RefusalFor. Each is also the ID of its form's heading in
-// home.html, which the form's action names in its fragment, so a refused
-// save's answer, the page at that address, opens at the form.
+// home.html, or settings.html for the recording roles, which the form's
+// action names in its fragment, so a refused save's answer, the page at
+// that address, opens at the form.
 const (
 	formCreate         = "create"
 	formRegister       = "register"
@@ -503,10 +503,19 @@ func savedAddress(form string, version, hubID int64) string {
 // other value names none.
 func savedFromQuery(raw string) string {
 	switch raw {
-	case formModerators, formRecordingRoles, formEdit:
+	case formModerators, formRecordingRoles, formRankRoles, formEdit:
 		return raw
 	}
 	return ""
+}
+
+// settingsSavedAddress is the address a save of a Settings page form lands
+// on. It opens the Settings page at the form and names the form and the
+// version the save left its record at, as savedAddress does on the hub
+// page.
+func settingsSavedAddress(form string, version int64) string {
+	q := url.Values{paramSaved: {form}, paramVersion: {strconv.FormatInt(version, 10)}}
+	return settingsPath + "?" + q.Encode() + "#" + form
 }
 
 // RefusalFor is the refusal to render on a form, or nil when the error
@@ -517,6 +526,14 @@ func (p hubPage) RefusalFor(form string) *fieldError {
 		return nil
 	}
 	return p.Error
+}
+
+// refusalOn is the request's refusal when it belongs to the form, or nil.
+func (r pageRequest) refusalOn(form string) *fieldError {
+	if r.Refused != form {
+		return nil
+	}
+	return r.Error
 }
 
 // staleFor reports whether the request shows a stale refusal on the form.
@@ -544,7 +561,13 @@ type pageRequest struct {
 	// RecordingRoles is the recording roles section's form as posted back
 	// after a refusal. Nil shows the stored set.
 	RecordingRoles *recordingRolesInput
-	Error          *fieldError
+	// RankRoles is the Settings page's Rank roles form as posted back after
+	// a refusal or with its preview. Nil shows the stored ladder.
+	RankRoles *rankRolesInput
+	// RankRolesPreview is the preview a rank roles save waits on, nil for
+	// none.
+	RankRolesPreview *rankRolesPreview
+	Error            *fieldError
 	// Refused is the form Error belongs to.
 	Refused string
 	// Remove names the hub whose remove preview shows. Zero shows none.
@@ -962,9 +985,6 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 		return hubPage{}, fmt.Errorf("%s: %w", guildModeratorRolesRead, err)
 	}
 	if page.Moderators, err = s.moderatorsSection(ctx, sn.info, guildWide, req); err != nil {
-		return hubPage{}, err
-	}
-	if page.RecordingRoles, err = s.recordingRolesSection(ctx, sn.info, req); err != nil {
 		return hubPage{}, err
 	}
 	// Remove hub on the edit page of a hub that has since gone names the

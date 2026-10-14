@@ -240,12 +240,13 @@ func TestHubEditPageGivesEachSaveAndAddControlItsOwnName(t *testing.T) {
 // A sighted user reads which set a picker edits from the label above it. A
 // screen reader user hears the same label as the name of the group they
 // enter at the picker's first control.
-func TestEachHubPagePickerIsAGroupNamedForWhatItEdits(t *testing.T) {
+func TestEachPickerIsAGroupNamedForWhatItEdits(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 	id := storedHubID(t, w.st, "hub-1")
 	list := parseHTML(t, w.b.get("/"))
 	edit := parseHTML(t, w.b.get("/?hub="+strconv.FormatInt(id, 10)))
+	settings := parseHTML(t, w.b.get(settingsPath))
 
 	for _, tc := range []struct {
 		picker string
@@ -253,7 +254,7 @@ func TestEachHubPagePickerIsAGroupNamedForWhatItEdits(t *testing.T) {
 		within func(*testing.T, *html.Node) *html.Node
 	}{
 		{"moderator roles for every hub", edit, moderatorsSection},
-		{"recording roles", edit, recordingRolesSection},
+		{"recording roles", settings, recordingRolesSection},
 		{"a hub's own moderator roles", edit, func(t *testing.T, doc *html.Node) *html.Node { return hubSection(t, doc, id) }},
 		{"the register form's voice channel", list, func(t *testing.T, doc *html.Node) *html.Node { return pickerRoot(t, doc, fieldHubChannel) }},
 	} {
@@ -608,7 +609,8 @@ func TestEachHubListColumnHasAHeader(t *testing.T) {
 	}
 }
 
-// One role can sit in all three role pickers of a hub's edit page. A screen
+// One role can sit in both role pickers of a hub's edit page, and in the
+// recording roles picker and a rank's picker on the Settings page. A screen
 // reader user moving by buttons hears each tag's remove control name alone,
 // so each names the set its picker edits, and removes the role from the set
 // they meant.
@@ -618,21 +620,26 @@ func TestEachRoleTagsRemoveControlNamesItsPickersSet(t *testing.T) {
 	w := newTestWorld(t, hub)
 	signIn(t, w.forum, w.b)
 	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-mp")), "/")
-	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp")), "/")
+	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp")), settingsPath)
+	assertRedirect(t, w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": "role-mp"})), settingsPath)
 	id := storedHubID(t, w.st, "hub-1")
 
-	doc := parseHTML(t, w.b.get("/?hub="+strconv.FormatInt(id, 10)))
+	edit := parseHTML(t, w.b.get("/?hub="+strconv.FormatInt(id, 10)))
+	settings := parseHTML(t, w.b.get(settingsPath))
 
 	named := map[string]string{}
 	for _, tc := range []struct {
 		set    string
+		doc    *html.Node
 		within func(*testing.T, *html.Node) *html.Node
 	}{
-		{setGuildModerators, moderatorsSection},
-		{setRecordingRoles, recordingRolesSection},
-		{setHubModerators, func(t *testing.T, doc *html.Node) *html.Node { return hubSection(t, doc, id) }},
+		{setGuildModerators, edit, moderatorsSection},
+		{setHubModerators, edit, func(t *testing.T, doc *html.Node) *html.Node { return hubSection(t, doc, id) }},
+		{setRecordingRoles, settings, recordingRolesSection},
+		{"the SGT rank", settings, func(t *testing.T, doc *html.Node) *html.Node { return pickerRoot(t, doc, rankRoleField("SGT")) }},
 	} {
 		t.Run(tc.set, func(t *testing.T) {
+			doc := tc.doc
 			tag := findElement(tc.within(t, doc), "", "data-tag", "role-mp")
 			if tag == nil {
 				t.Fatal("the picker has no tag for Military Police")

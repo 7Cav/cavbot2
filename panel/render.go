@@ -98,9 +98,11 @@ type pageData struct {
 	Cause     cause
 	// Next is the address the sign-in form, on the sign-in page or the
 	// error page's Sign in again, posts for its sign-in to come back to.
-	Next    string
-	Hubs    hubPage
-	Foxhole foxholeView
+	Next string
+	Hubs hubPage
+	// Settings is filled for the Settings page alone.
+	Settings settingsView
+	Foxhole  foxholeView
 	// Recordings is filled for the Recordings page alone.
 	Recordings recordingsView
 	Failure    failure
@@ -127,6 +129,7 @@ type railPages struct {
 	Hubs       bool
 	Foxhole    bool
 	Recordings bool
+	Settings   bool
 }
 
 // The pages the rail links to, as Page names them.
@@ -134,6 +137,7 @@ const (
 	pageHubs       = "hubs"
 	pageFoxhole    = "foxhole"
 	pageRecordings = "recordings"
+	pageSettings   = "settings"
 )
 
 // pages are the templates, one per screen, each parsed with the shared layout
@@ -142,8 +146,8 @@ type pages map[string]*template.Template
 
 func parsePages() (pages, error) {
 	out := pages{}
-	for _, name := range []string{"signin", "home", "error", "noaccess", "foxhole", "recordings"} {
-		t, err := template.New("layout.html").ParseFS(templateFS, "templates/layout.html", "templates/"+name+".html")
+	for _, name := range []string{"signin", "home", "error", "noaccess", "foxhole", "recordings", "settings"} {
+		t, err := template.New("layout.html").ParseFS(templateFS, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", name, err)
 		}

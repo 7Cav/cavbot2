@@ -12,9 +12,9 @@ import (
 
 // Startup checks (spec #285). After READY the bot tells on-call, through
 // Sentry, when the guild has changed under it. The rank ladder in code no
-// longer matches the milpacs API, or the bot's own member has lost
-// Administrator. Either one breaks spawning or handover with no other
-// signal. A check that cannot fetch what it needs is a WARN line and no
+// longer matches the milpacs API, the bot's own member has lost
+// Administrator, or a rank role is gone from the guild (#680). Each one
+// breaks spawning or handover with no other signal. A check that cannot fetch what it needs is a WARN line and no
 // capture (ADR 0001), and each check runs whether or not the other could.
 
 // startupCheckTimeout bounds the rank ladder fetch. The checks run in their
@@ -33,6 +33,11 @@ var errRankLadderDrift = errors.New("rank ladder in code differs from the milpac
 // it spawning, handover and /foxhole all fail at the next call.
 var errAdministratorMissing = errors.New("bot member does not hold Administrator")
 
+// errRankRolesMissing is the identity of a missing rank roles event in
+// Sentry. Holders of a rank whose role is gone count as Cav members no
+// longer, until a panel admin saves another role for the rank.
+var errRankRolesMissing = errors.New("rank roles missing from the guild")
+
 // rankDrift is one position where the ladder in code and the API disagree.
 // An empty side means that list ended first.
 type rankDrift struct {
@@ -42,10 +47,45 @@ type rankDrift struct {
 
 // RunStartupChecks runs the one-time checks the bot makes after the Discord
 // session reaches READY. main starts it in a goroutine so the gateway
-// handlers never wait on it.
-func RunStartupChecks(ctx context.Context, mgr TempVCManager, guildID, botUserID string) {
+// handlers never wait on it. tv is the temp VC runtime, whose rank roles
+// the last check reads. A bot with no store has none, and nothing that
+// ranks members, so the check is skipped.
+func RunStartupChecks(ctx context.Context, mgr TempVCManager, guildID, botUserID string, tv *TempVC) {
 	checkRankLadder(ctx)
 	checkAdministrator(mgr, guildID, botUserID)
+	if tv != nil {
+		checkRankRoles(mgr, guildID, tv.RankLadder())
+	}
+}
+
+// checkRankRoles fetches the guild's roles and captures once, naming every
+// rank whose rank role the guild lacks. That catches a role deleted while
+// the bot was down, which the role delete handler never saw. A rank with no
+// rank role is not missing. On a guild that never saved its rank roles the
+// check reads the ladder's role IDs in code, so the test guild captures at
+// every start until an admin clears the ranks it lacks.
+func checkRankRoles(mgr TempVCManager, guildID string, ladder RankLadder) {
+	guild, err := mgr.Guild(guildID)
+	if err != nil {
+		utils.Warn("Rank roles check skipped, guild fetch failed", "error", err, "guild_id", guildID)
+		return
+	}
+	live := make(map[string]struct{}, len(guild.Roles))
+	for _, r := range guild.Roles {
+		live[r.ID] = struct{}{}
+	}
+	var missing []Rank
+	for _, r := range ladder.Ranks() {
+		if _, ok := live[r.RoleID]; r.RoleID != "" && !ok {
+			missing = append(missing, r)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	captureError("Rank roles missing from the guild",
+		fmt.Errorf("%w: %d rank(s)", errRankRolesMissing, len(missing)),
+		"guild_id", guildID, "missing", missing)
 }
 
 // checkRankLadder fetches the milpacs rank list, drops Tester, and captures

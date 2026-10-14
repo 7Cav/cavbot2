@@ -1,0 +1,142 @@
+package commands
+
+import (
+	"errors"
+	"slices"
+
+	"github.com/7cav/cavbot2/store"
+)
+
+// The rank ladder and its rank roles (GLOSSARY.md, #680). The ranks and
+// their order live in code, tempVCRankRoles. The role that counts as each
+// rank is a panel admin's to set on the Settings page, and a guild with
+// nothing saved uses the role IDs in code. Everything that asks whether a
+// member is a Cav member, or how senior, reads one RankLadder. The
+// handover rule, /record start and the panel's Foxhole page all do.
+
+// errRankRoleDeleted is the identity of a deleted rank role's event in
+// Sentry. Every member holding it stops counting as a Cav member, and only a
+// panel admin's save of the rank roles brings the rank back (ADR 0012).
+var errRankRoleDeleted = errors.New("a rank role was deleted in Discord")
+
+// Rank is one rank on the rank ladder and its rank role, by ID, empty when
+// the rank has none.
+type Rank struct {
+	Abbrev string
+	RoleID string
+}
+
+// RankLadder is the rank ladder with the rank role each rank has, most
+// senior first. It never changes once built. A save builds another, so a
+// reader may keep one and share it.
+type RankLadder struct {
+	ranks []Rank
+	// position maps each rank role's ID to its rank's place on the ladder.
+	position map[string]int
+}
+
+// newRankLadder builds a ladder of the code's ranks, in their order, each
+// with the role roleOf gives it. A role given to two ranks counts for the
+// more senior one.
+func newRankLadder(roleOf func(rankRole) string) RankLadder {
+	l := RankLadder{ranks: make([]Rank, len(tempVCRankRoles)), position: make(map[string]int, len(tempVCRankRoles))}
+	for i, rr := range tempVCRankRoles {
+		id := roleOf(rr)
+		l.ranks[i] = Rank{Abbrev: rr.abbrev, RoleID: id}
+		if _, taken := l.position[id]; id != "" && !taken {
+			l.position[id] = i
+		}
+	}
+	return l
+}
+
+// DefaultRankLadder is the ladder with the role IDs in code, the one a
+// guild uses until a panel admin saves the rank roles.
+func DefaultRankLadder() RankLadder {
+	return newRankLadder(func(rr rankRole) string { return rr.roleID })
+}
+
+// NewRankLadder is the ladder with the rank roles given, keyed by rank
+// abbreviation. A rank the map leaves out, or maps to empty, has none.
+func NewRankLadder(roles map[string]string) RankLadder {
+	return newRankLadder(func(rr rankRole) string { return roles[rr.abbrev] })
+}
+
+// RankLadderOf is the ladder a guild's stored rank roles give. While
+// nothing is saved, at version 0, that is the role IDs in code. From the
+// first save on it is the saved roles, and the code's IDs never apply to
+// that guild again.
+func RankLadderOf(saved store.RankRoles) RankLadder {
+	if saved.Version == 0 {
+		return DefaultRankLadder()
+	}
+	return NewRankLadder(saved.Roles)
+}
+
+// Ranks returns the ladder's ranks, most senior first.
+func (l RankLadder) Ranks() []Rank {
+	return slices.Clone(l.ranks)
+}
+
+// Roles returns each rank's rank role by abbreviation, empty for a rank
+// with none. A save of the ladder stores this map.
+func (l RankLadder) Roles() map[string]string {
+	roles := make(map[string]string, len(l.ranks))
+	for _, r := range l.ranks {
+		roles[r.Abbrev] = r.RoleID
+	}
+	return roles
+}
+
+// seniority is the ladder place of the most senior rank role among the role
+// IDs, or noRankIndex when none of them is a rank role.
+func (l RankLadder) seniority(roleIDs []string) int {
+	best := noRankIndex
+	for _, id := range roleIDs {
+		if i, ok := l.position[id]; ok && i < best {
+			best = i
+		}
+	}
+	return best
+}
+
+// SeniorRankRole returns the most senior rank role among the role IDs, and
+// false when none of them is a rank role, so their holder is no Cav member.
+func (l RankLadder) SeniorRankRole(roleIDs []string) (string, bool) {
+	i := l.seniority(roleIDs)
+	if i == noRankIndex {
+		return "", false
+	}
+	return l.ranks[i].RoleID, true
+}
+
+// Drops reports whether a member holding the role IDs counts as a Cav
+// member on this ladder and as none on the ladder next, so a save from this
+// ladder to next stops them counting.
+func (l RankLadder) Drops(next RankLadder, roleIDs []string) bool {
+	_, was := l.SeniorRankRole(roleIDs)
+	_, is := next.SeniorRankRole(roleIDs)
+	return was && !is
+}
+
+// TakesARoleOff reports whether a role that counts for a rank on this
+// ladder counts for none on the ladder next, so a save from this ladder to
+// next may stop some member counting as a Cav member.
+func (l RankLadder) TakesARoleOff(next RankLadder) bool {
+	for _, r := range l.ranks {
+		if _, still := next.position[r.RoleID]; r.RoleID != "" && !still {
+			return true
+		}
+	}
+	return false
+}
+
+// RankOf returns the abbreviation of the rank whose rank role the role is,
+// and false when it is no rank's.
+func (l RankLadder) RankOf(roleID string) (string, bool) {
+	i, ok := l.position[roleID]
+	if !ok {
+		return "", false
+	}
+	return l.ranks[i].Abbrev, true
+}

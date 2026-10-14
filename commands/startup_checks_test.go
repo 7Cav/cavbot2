@@ -133,7 +133,7 @@ func singleCapture(t *testing.T, rec *captureRecorder, want error) []any {
 }
 
 func runChecks(mgr TempVCManager) {
-	RunStartupChecks(context.Background(), mgr, testTempVCGuild, testBotUserID)
+	RunStartupChecks(context.Background(), mgr, testTempVCGuild, testBotUserID, nil)
 }
 
 func TestStartupChecksHealthyGuildCapturesNothing(t *testing.T) {

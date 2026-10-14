@@ -79,7 +79,7 @@ check needs:
 
 | Persona | Lands on |
 |---------|----------|
-| Panel admin | The Hubs page, and opens the Foxhole page too |
+| Panel admin | The Hubs page, and opens the Foxhole and Settings pages too |
 | Foxhole manager | The Foxhole page |
 | Outsider | The Recordings page |
 
@@ -99,6 +99,17 @@ as the bot, with `{guild}` standing for the test guild's ID. Use it to set up
 fixtures, such as roles and nicknames, and to read results from roles, the
 audit log and the registered commands. Write down each fixture as you make it,
 for step 5.
+
+**Cav members.** The test guild has none of the rank roles the code holds for
+production, so no test account counts as a Cav member until a panel admin sets
+a rank role. A check that needs a Cav member, such as owning a spawned channel
+or running `/record start`, starts on the Settings page. Sign in as the panel
+admin and give one rank, such as SGT, a test guild role. Clear the ranks whose
+roles show as not in the server, then save. Give the test account that role
+with `smoke api`, and write the grant down as a fixture. The smoke database
+keeps the rank roles between runs, so look at the Settings page before you set
+them again. Until you clear those ranks, every start logs a "Rank roles
+missing from the guild" capture. Expect it on the test guild.
 
 **Slash commands.** A slash command runs from a person's Discord account. Ask
 the person once per run to let you post as them, then use Claude in Chrome,

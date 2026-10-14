@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -85,6 +86,10 @@ type fakeTempVCManager struct {
 	bots map[string]bool
 	// members is the guild's member list, complete, as MemberList reads it.
 	members []ListedMember
+	// cachedRoles is each member's role IDs as the state cache holds them
+	// now, which CachedMemberRoles reads. A member who took a role in
+	// Discord after their last voice event shows it here.
+	cachedRoles map[string][]string
 	// listArriving makes MemberList read as a list whose parts are still on
 	// their way, which holds no members.
 	listArriving bool
@@ -465,10 +470,10 @@ func (f *fakeTempVCManager) setMember(m ListedMember) {
 	f.members = append(f.members, m)
 }
 
-// MemberRanks reads the payload through the shared helper. The fake holds
+// MemberRoles reads the payload through the shared helper. The fake holds
 // no lock: nothing else writes into a test's payload.
-func (f *fakeTempVCManager) MemberRanks(g *discordgo.Guild) map[string]int {
-	return GuildMemberRanks(g)
+func (f *fakeTempVCManager) MemberRoles(g *discordgo.Guild) map[string][]string {
+	return GuildMemberRoles(g)
 }
 
 // ChannelPermissionSet records the call and, as Discord does, replaces the
@@ -569,6 +574,31 @@ func (f *fakeTempVCManager) setVoice(userID, channelID string) {
 		return
 	}
 	f.voice[userID] = channelID
+}
+
+// setCachedRoles sets the role IDs the fake cache holds for a member, as a
+// GUILD_MEMBER_UPDATE leaves them.
+func (f *fakeTempVCManager) setCachedRoles(userID string, roleIDs ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.cachedRoles == nil {
+		f.cachedRoles = make(map[string][]string)
+	}
+	f.cachedRoles[userID] = roleIDs
+}
+
+// CachedMemberRoles answers from the roles setCachedRoles set, each a copy.
+func (f *fakeTempVCManager) CachedMemberRoles(guildID string) map[string][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[string][]string, len(f.cachedRoles))
+	if guildID != testTempVCGuild {
+		return out
+	}
+	for id, roles := range f.cachedRoles {
+		out[id] = slices.Clone(roles)
+	}
+	return out
 }
 
 // setBot marks a user as a bot in the fake cache.

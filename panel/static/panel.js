@@ -9,7 +9,10 @@
    load and hidden until the add control opens it. A row is shown when no
    tag carries its ID and its label contains the typed text. Choosing a row
    clones the picker's <template> into a tag; removing a tag re-offers the
-   row, when the row exists: an unavailable role has none. */
+   row, when the row exists: an unavailable role has none. A picker with
+   data-options-from renders no rows of its own and copies them from the
+   <template> with that ID, so the Settings page's rank pickers share one
+   list of the guild's roles. */
 (function () {
   'use strict';
 
@@ -48,6 +51,9 @@
     var empty = root.querySelector('[data-empty]');
     var none = root.querySelector('[data-none]');
     var blank = root.querySelector('[data-tag-template]');
+    var shared = root.hasAttribute('data-options-from') &&
+      document.getElementById(root.getAttribute('data-options-from'));
+    if (shared) { list.appendChild(shared.content.cloneNode(true)); }
     var rows = Array.from(list.querySelectorAll('[data-option]'));
     var prefix = 'picker' + (++pickers) + '-';
     // active is the row the arrow keys point at, an index into the rows

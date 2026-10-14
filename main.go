@@ -384,14 +384,16 @@ func main() {
 		return
 	}
 
-	// Startup checks (spec #285): rank ladder drift and a missing Administrator
-	// each capture to Sentry, once per process start. Their own goroutine, so
-	// neither fetch holds up command registration or a gateway handler. They
-	// need no store. The checks write nothing, and Administrator protects
+	// Startup checks (spec #285): rank ladder drift, a missing Administrator
+	// and rank roles missing from the guild (#680) each capture to Sentry,
+	// once per process start. Their own goroutine, so no fetch holds up
+	// command registration or a gateway handler. The first two need no
+	// store. The rank roles check reads the runtime's, and a bot with no
+	// store skips it. The checks write nothing, and Administrator protects
 	// /foxhole as much as spawning.
 	go func() {
 		defer utils.RecoverPanic("startup-checks")
-		commands.RunStartupChecks(context.Background(), discordManager, GuildID, dg.State.User.ID)
+		commands.RunStartupChecks(context.Background(), discordManager, GuildID, dg.State.User.ID, tempVC)
 	}()
 
 	// Panel (spec #285): the web UI listens once the session is READY, since

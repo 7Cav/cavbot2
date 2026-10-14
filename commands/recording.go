@@ -250,7 +250,7 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	if !holds {
 		return "", errNoRecordingRole
 	}
-	if _, ok := SeniorRankRole(by.Roles); !ok {
+	if _, ok := r.tv.RankLadder().SeniorRankRole(by.Roles); !ok {
 		return "", errNotCavMember
 	}
 	if utf8.RuneCountInString(title) > recordTitleLimit {

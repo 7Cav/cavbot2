@@ -1,0 +1,93 @@
+{{define "content"}}
+<main class="body" data-page="{{.Page}}">
+  <h1 class="title">Settings</h1>
+  <p class="desc">The settings here apply to the whole server, not to one hub.</p>
+  {{if .Settings.Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Role details on this page may be out of date.</div>{{end}}
+  {{template "rank-roles" .Settings}}
+  {{template "recording-roles" .}}
+</main>
+{{end}}
+
+{{- /* The rank roles (#680): one row per rank of the rank ladder, most
+     senior first, each with a picker holding its rank role. Every picker
+     offers the roles from the one list under OptionsID. */}}
+{{define "rank-roles"}}
+  <section class="rank-roles" data-section="rank-roles">
+  {{with .RankRoles.Preview}}{{template "rank-roles-preview" .}}{{end}}
+  <form method="post" action="/rank-roles#rank-roles" class="block">
+    {{- /* With a preview shown, the preview carries the heading's ID and
+         any refusal. */}}
+    {{if .RankRoles.Preview}}<h2 class="block-header">Rank roles</h2>
+    {{else}}<h2 class="block-header" id="rank-roles" tabindex="-1"{{if .RefusalFor "rank-roles"}} aria-describedby="refusal"{{end}}>Rank roles</h2>
+    {{with .RefusalFor "rank-roles"}}{{template "refusal" .}}{{end}}{{end}}
+    {{if .RankRoles.Saved}}{{template "saved"}}{{end}}
+    {{with .RankRoles}}
+    <input type="hidden" name="version" value="{{.Version}}">
+    <div class="block-row field-hint" id="rank-roles-hint">A member holding a rank's role counts as a Cav member of that rank. Each rank has one role or none, and a role counts for one rank at most. Members is how many members hold each rank's saved role.</div>
+    <div class="scroll"><table class="ranklist" aria-describedby="rank-roles-hint">
+      <thead><tr><th>Rank</th><th>Rank role</th><th class="num">Members</th></tr></thead>
+      <tbody>
+      {{range .Rows}}
+        <tr data-rank="{{.Abbrev}}">
+          <th scope="row" class="rank">{{.Abbrev}}</th>
+          <td class="rank-role">{{if not .Picker.Tags}}<span class="off rank-role-none" data-field="no-role">No role</span>{{end}}{{template "picker" .Picker}}</td>
+          <td class="num">{{if .HasRole}}<span data-holders="{{.Holders}}">{{if .HoldersKnown}}{{.Holders}}{{else}}<span class="off">unknown</span>{{end}}</span>{{end}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table></div>
+    <template id="{{.OptionsID}}">{{range .Options}}{{template "picker-option" .}}{{end}}</template>
+    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save<span class="visually-hidden"> the rank roles</span></button></div>
+    {{end}}
+  </form>
+  <div class="block">
+    {{template "changes" .RankRoles.Changes}}
+  </div>
+  </section>
+{{end}}
+
+{{- /* A rank roles save that may stop members counting as Cav members
+     waits on this (GLOSSARY.md, Preview). It carries the section's heading
+     ID, which the save's address names, so the answer opens on it. Its
+     Confirm posts the form as the save posted it. */}}
+{{define "rank-roles-preview"}}
+  <div class="block block--danger" data-field="rank-roles-preview">
+    <h2 class="block-header" id="rank-roles" tabindex="-1"{{if .Refusal}} aria-describedby="refusal"{{end}}>Save the rank roles?</h2>
+    {{with .Refusal}}{{template "refusal" .}}{{end}}
+    <div class="block-row">
+      {{- if .Counted}}<span data-dropped="{{.DroppedValue}}">{{.Dropped}}</span> {{if eq .Dropped 1}}member stops{{else}}members stop{{end}} counting as a Cav member.
+      {{- else}}<span data-dropped="{{.DroppedValue}}">Cavbot2 hasn't loaded the server's member list yet, so it can't say how many members stop counting as Cav members.</span> This save takes a role off the rank ladder, so some may.{{end}}
+      <span data-channels="{{.Channels}}">{{.Channels}}</span> spawned {{if eq .Channels 1}}channel changes{{else}}channels change{{end}} owner. An owner who loses a channel doesn't get it back if you save again.
+    </div>
+    <form method="post" action="/rank-roles#rank-roles" class="submit-row">
+      <input type="hidden" name="version" value="{{.Version}}">
+      <input type="hidden" name="confirm" value="1">
+      <input type="hidden" name="shown" value="{{.Shown}}">
+      {{- range .Fields}}<input type="hidden" name="{{.Field}}" value="{{.RoleID}}">{{end}}
+      <button type="submit" class="btn btn--danger-filled" data-field="confirm">Save the rank roles</button>
+      <a class="btn" href="/settings#rank-roles" data-field="cancel">Cancel<span class="visually-hidden"> saving the rank roles</span></a>
+    </form>
+  </div>
+{{end}}
+
+{{define "recording-roles"}}
+  <section class="recording-roles" data-section="recording-roles">
+  <form method="post" action="/recording-roles#recording-roles" class="block">
+    <h2 class="block-header" id="recording-roles" tabindex="-1"{{if .Settings.RefusalFor "recording-roles"}} aria-describedby="refusal"{{end}}>Recording roles</h2>
+    {{with .Settings.RefusalFor "recording-roles"}}{{template "refusal" .}}{{end}}
+    {{if .Settings.RecordingRoles.Saved}}{{template "saved"}}{{end}}
+    <input type="hidden" name="version" value="{{.Settings.RecordingRoles.Version}}">
+    <div class="block-row">
+      <div class="field" role="group" aria-labelledby="recording-roles-label" aria-describedby="recording-roles-hint">
+        <span class="field-label" id="recording-roles-label">Roles</span>
+        {{template "picker" .Settings.RecordingRoles.Picker}}
+        <span class="field-hint" id="recording-roles-hint">Cav members holding one of these roles can start a recording, and stop one in a channel they are in. With none set, nobody can record.</span>
+      </div>
+    </div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save<span class="visually-hidden"> the recording roles</span></button></div>
+  </form>
+  <div class="block">
+    {{template "changes" .Settings.RecordingRoles.Changes}}
+  </div>
+  </section>
+{{end}}

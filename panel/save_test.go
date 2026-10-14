@@ -232,6 +232,21 @@ func (s hookedStore) ListRecordingRoleChanges(ctx context.Context, limit int) ([
 	return s.st.ListRecordingRoleChanges(ctx, limit)
 }
 
+func (s hookedStore) GetRankRoles(ctx context.Context, guildID string) (store.RankRoles, error) {
+	s.hook(ctx)
+	return s.st.GetRankRoles(ctx, guildID)
+}
+
+func (s hookedStore) SaveRankRoles(ctx context.Context, guildID string, roles store.RankRoles, entry store.ChangeLogEntry) error {
+	s.hook(ctx)
+	return s.st.SaveRankRoles(ctx, guildID, roles, entry)
+}
+
+func (s hookedStore) ListRankRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	s.hook(ctx)
+	return s.st.ListRankRoleChanges(ctx, limit)
+}
+
 func (s hookedStore) StartRecording(ctx context.Context, rec store.Recording) (store.Recording, error) {
 	s.hook(ctx)
 	return s.st.StartRecording(ctx, rec)
@@ -335,6 +350,9 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 		// its entry references, zero for none.
 		checkSaved func(t *testing.T, st store.Store) int64
 		action     store.ChangeAction
+		// landsOn is the page the save redirects to, the hub page when
+		// empty.
+		landsOn string
 	}{
 		{
 			name: "register",
@@ -376,9 +394,10 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 			action: store.ChangeModerators,
 		},
 		{
-			name: "recording roles",
-			path: func(*testing.T, store.Store) string { return "/recording-roles" },
-			form: func(t *testing.T, st store.Store) url.Values { return recordingRolesForm(t, st, "role-hq") },
+			name:    "recording roles",
+			landsOn: settingsPath,
+			path:    func(*testing.T, store.Store) string { return "/recording-roles" },
+			form:    func(t *testing.T, st store.Store) url.Values { return recordingRolesForm(t, st, "role-hq") },
 			checkSaved: func(t *testing.T, st store.Store) int64 {
 				if got := storedRecordingRoles(t, st).RoleIDs; !sameSet(got, []string{"role-hq"}) {
 					t.Errorf("stored recording roles = %v, want role-hq alone", got)
@@ -403,7 +422,7 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 			res := w.b.postFormAndLeave(tc.path(t, fake), tc.form(t, fake), d)
 
 			assertLeft(t, d)
-			assertRedirect(t, res, "/")
+			assertRedirect(t, res, cmp.Or(tc.landsOn, "/"))
 			hubID := tc.checkSaved(t, fake)
 			entries := storedChangeLog(t, fake, hubID)
 			if len(entries) != 1 || entries[0].Action != tc.action {
@@ -626,6 +645,7 @@ type savedState struct {
 	Hubs      []store.Hub
 	Roles     store.GuildModeratorRoles
 	Recording store.RecordingRoles
+	Ranks     store.RankRoles
 	Entries   map[int64][]store.ChangeLogEntry
 }
 
@@ -638,7 +658,7 @@ func readSavedState(t *testing.T, st store.Store) savedState {
 	if err != nil {
 		t.Fatalf("GetGuildModeratorRoles: %v", err)
 	}
-	state := savedState{Hubs: hubs, Roles: roles, Recording: storedRecordingRoles(t, st),
+	state := savedState{Hubs: hubs, Roles: roles, Recording: storedRecordingRoles(t, st), Ranks: storedRankRoles(t, st),
 		Entries: map[int64][]store.ChangeLogEntry{0: storedChangeLog(t, st, 0)}}
 	for _, h := range hubs {
 		state.Entries[h.ID] = storedChangeLog(t, st, h.ID)
