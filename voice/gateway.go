@@ -121,6 +121,8 @@ type renewableGateway struct {
 	gw disgovoice.Gateway
 	// channelID is the channel the gateway last opened in: the call's.
 	channelID snowflake.ID
+	// opened is whether the gateway has opened since its last renew.
+	opened bool
 }
 
 func (g *renewableGateway) current() disgovoice.Gateway {
@@ -134,6 +136,14 @@ func (g *renewableGateway) renew() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.gw = g.build()
+	g.opened = false
+}
+
+// openedSinceRenew reports whether the new gateway has opened.
+func (g *renewableGateway) openedSinceRenew() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.opened
 }
 
 func (g *renewableGateway) SSRC() uint32 { return g.current().SSRC() }
@@ -141,6 +151,7 @@ func (g *renewableGateway) SSRC() uint32 { return g.current().SSRC() }
 func (g *renewableGateway) Open(ctx context.Context, state disgovoice.State) error {
 	g.mu.Lock()
 	g.channelID = state.ChannelID
+	g.opened = true
 	gw := g.gw
 	g.mu.Unlock()
 	return gw.Open(ctx, state)
@@ -190,12 +201,16 @@ func (s *discordgoSession) watchClose(gateway *renewableGateway, onClose disgovo
 		defer utils.RecoverPanic("recorder-voice-close", "recorder", s.userID)
 		s.gaveUp.Store(false)
 		forDisgo := err
-		if closedWith(err, disgovoice.GatewayCloseEventCodeCallTerminated.Code) && s.channelExists(gateway.channel()) {
+		moved := closedWith(err, disgovoice.GatewayCloseEventCodeCallTerminated.Code) && s.channelExists(gateway.channel())
+		if moved {
 			gateway.renew()
 			forDisgo = errCallMoved
 		}
 		onClose(g, forDisgo)
-		if s.gaveUp.Load() {
+		// disgo starts no fresh connection once Discord has taken the
+		// recorder out of the channel, and sends no leave either. The call
+		// moved, and the recorder couldn't follow it.
+		if s.gaveUp.Load() || moved && !gateway.openedSinceRenew() {
 			utils.CaptureError(lostConnectionMessage, err, "recorder", s.userID)
 		}
 	}

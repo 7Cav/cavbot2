@@ -192,13 +192,17 @@ func (u voiceUpdate) String() string {
 
 // channelAPI stands in for Discord's API on the recorder's session. It
 // answers a read of the recorded channel, there or gone, and fails the test
-// on anything else.
+// on anything else. during, when set, runs while it answers.
 type channelAPI struct {
-	t    *testing.T
-	gone atomic.Bool
+	t      *testing.T
+	gone   atomic.Bool
+	during func()
 }
 
 func (a *channelAPI) RoundTrip(r *http.Request) (*http.Response, error) {
+	if a.during != nil {
+		a.during()
+	}
 	status, body := http.StatusOK, fmt.Sprintf(`{"id":"%d","guild_id":"%d","type":2,"name":"Ops"}`, callChannel, callGuild)
 	switch {
 	case r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, fmt.Sprintf("/channels/%d", callChannel)):
@@ -438,6 +442,32 @@ func TestRecorderLeavesWhenItsChannelIsDeleted(t *testing.T) {
 
 	if got := h.sent(); len(got) != 1 || got[0].String() != "leave" {
 		t.Errorf("voice state updates after the close = %v, want the recorder taken out and no rejoin", got)
+	}
+}
+
+// Discord can take the recorder out of the channel while the recorder asks
+// whether the channel is still there after a 4022. disgo then starts no
+// fresh connection, and the recorder is out as surely as after a rejoin
+// that fails, so Sentry hears of it once.
+func TestRecorderReportsAMovedCallItCouldNotRejoin(t *testing.T) {
+	events := recordSentry(t)
+	h := newCallHarness(t)
+	h.join()
+	h.waitOpen()
+	h.api.during = func() {
+		h.conn.HandleVoiceStateUpdate(gateway.EventVoiceStateUpdate{VoiceState: discord.VoiceState{
+			GuildID: callGuild, UserID: callRecorder, SessionID: "sess-1",
+		}})
+	}
+
+	h.closeCall(4022)
+
+	got := events.Events()
+	if len(got) != 1 {
+		t.Fatalf("Sentry events = %d, want 1 for the lost connection", len(got))
+	}
+	if msg := got[0].Tags["message"]; msg != lostConnectionMessage {
+		t.Errorf("Sentry event = %q, want %q", msg, lostConnectionMessage)
 	}
 }
 
