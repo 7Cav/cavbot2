@@ -266,15 +266,15 @@
 
 {{define "edit"}}
 {{with .Hubs.Edit}}
-  <section class="narrow" data-hub="{{.ID}}">
+  <section class="narrow hub-edit" data-hub="{{.ID}}">
   {{if .Broken}}
   <div class="block">
-    <h2 class="block-header" id="edit" tabindex="-1">Broken hub</h2>
+    <h2 class="block-header" id="edit" tabindex="-1">Broken hub {{.BaseString}}</h2>
     <div class="block-row"><span class="tag tag--warn" data-field="broken">broken</span> The hub's voice channel is gone from Discord or sits outside a category, so nothing spawns. If the channel still exists, move it into a category and the hub works again. If it was deleted, remove the hub. Its settings stay until then.</div>
   </div>
   {{else}}
   <form method="post" action="/hubs/{{.ID}}#edit" class="block">
-    <h2 class="block-header" id="edit" tabindex="-1"{{if $.Hubs.RefusalFor "edit"}} aria-describedby="refusal"{{end}}>Edit hub</h2>
+    <h2 class="block-header" id="edit" tabindex="-1"{{if $.Hubs.RefusalFor "edit"}} aria-describedby="refusal"{{end}}>Edit hub {{.BaseString}}</h2>
     {{with $.Hubs.RefusalFor "edit"}}{{template "refusal" .}}{{end}}
     {{if .Saved}}{{template "saved"}}{{end}}
     <input type="hidden" name="version" value="{{.Form.Version}}">

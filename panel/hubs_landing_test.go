@@ -32,11 +32,7 @@ func TestEditFormOpensAtTheForm(t *testing.T) {
 		open func(t *testing.T, w *testWorld, id int64) (control string, res *http.Response)
 	}{
 		{"Edit on the hub list", func(t *testing.T, w *testWorld, id int64) (string, *http.Response) {
-			edit := findElement(listRow(t, parseHTML(t, w.b.get("/")), id), "a", "data-field", "edit")
-			if edit == nil {
-				t.Fatal("the hub's list row offers no Edit")
-			}
-			href := attrOf(edit, "href")
+			href := editLinkAddress(t, listRow(t, parseHTML(t, w.b.get("/")), id))
 			return href, w.b.get(href)
 		}},
 		{"the edit form's Save", func(t *testing.T, w *testWorld, id int64) (string, *http.Response) {
@@ -111,6 +107,16 @@ func cancelAddress(t *testing.T, preview *html.Node) string {
 		t.Fatal("the preview has no Cancel")
 	}
 	return attrOf(cancel, "href")
+}
+
+// editLinkAddress is the address of the Edit link inside scope.
+func editLinkAddress(t *testing.T, scope *html.Node) string {
+	t.Helper()
+	edit := findElement(scope, "a", "data-field", "edit")
+	if edit == nil {
+		t.Fatal("no Edit link")
+	}
+	return attrOf(edit, "href")
 }
 
 // removeLinkAddress is the address of the Remove link inside scope.
