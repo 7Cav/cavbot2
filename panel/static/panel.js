@@ -13,7 +13,30 @@
 (function () {
   'use strict';
 
+  var roots = document.querySelectorAll('[data-picker]');
+  if (!roots.length) { return; }
+
   var pickers = 0;
+
+  // A press is a mousedown and the mouseup that ends it, or the dragend
+  // when the press drags something. pressed is the element the press began
+  // on, and null between presses. afterPress, when set, runs as the press
+  // ends and is called with that element. That comes before the click,
+  // whose target the press has already fixed.
+  var pressed = null;
+  var afterPress = null;
+
+  function endPress() {
+    var target = pressed;
+    var run = afterPress;
+    pressed = null;
+    afterPress = null;
+    if (run) { run(target); }
+  }
+
+  document.addEventListener('mousedown', function (e) { pressed = e.target; }, true);
+  document.addEventListener('mouseup', endPress, true);
+  document.addEventListener('dragend', endPress, true);
 
   function setUp(root) {
     var single = root.hasAttribute('data-single');
@@ -177,13 +200,35 @@
     });
 
     // Focus leaving the picker closes the search. A click on a row moves
-    // focus to the row, inside the picker, so the click still lands.
+    // focus to the row, inside the picker, so the click still lands. A
+    // press elsewhere moves focus on its mousedown. Closing then would
+    // move what sits below the list up before the mouseup, and the press
+    // would make no click (#682). So a press closes the search once it
+    // ends, unless closing would move what the press was on. Then the
+    // search stays open, so a second press there lands too.
     root.addEventListener('focusout', function (e) {
-      if (!search.hidden && !root.contains(e.relatedTarget)) { close(); }
+      if (search.hidden || root.contains(e.relatedTarget)) { return; }
+      if (!pressed) {
+        close();
+        return;
+      }
+      afterPress = function (target) {
+        // Hiding the search to measure can clamp the page's scroll, so the
+        // scroll goes back too. Nothing paints between the hide and the
+        // show.
+        var x = window.scrollX;
+        var y = window.scrollY;
+        var top = target.getBoundingClientRect().top;
+        search.hidden = true;
+        var moved = target.getBoundingClientRect().top !== top;
+        search.hidden = false;
+        window.scrollTo(x, y);
+        if (!moved) { close(); }
+      };
     });
   }
 
-  document.querySelectorAll('[data-picker]').forEach(setUp);
+  roots.forEach(setUp);
 })();
 
 /* Inline note edit on the Foxhole page (spec #434, ADR 0013). A row's Edit

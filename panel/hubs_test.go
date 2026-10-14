@@ -2102,6 +2102,18 @@ func (f *fakeDiscord) breakChannel(channelID string, gone bool) {
 	}
 }
 
+// moveIntoCategory edits the fake guild so the channel sits in the
+// category, as a move in Discord's own client does.
+func (f *fakeDiscord) moveIntoCategory(channelID, categoryID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, ch := range f.channels {
+		if ch.ID == channelID {
+			ch.ParentID = categoryID
+		}
+	}
+}
+
 // secondHub is a stored hub on vc-2, healthy beside a broken hub-1.
 func secondHub() store.Hub {
 	return store.Hub{
