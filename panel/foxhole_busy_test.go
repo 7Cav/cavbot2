@@ -209,10 +209,11 @@ func markersOf(t *testing.T, doc *html.Node, field string, keys ...string) []str
 	return out
 }
 
-// busyReopens are the ways back to a working Confirm: each preview with a
-// Confirm a running action turned off, opened as a manager opens it, and
-// as a Retry does where that gives the preview another address.
-var busyReopens = []busyReopen{
+// busyLinks are the previews whose busy sentence carries the control that
+// opens them again: each preview with a Confirm a running action turned
+// off, opened as a manager opens it, and as a Retry does where that gives
+// the preview another address.
+var busyLinks = []busyReopen{
 	{busyPreview: purgeBusy, same: func(t *testing.T, doc *html.Node) []string {
 		return markersOf(t, doc, "purge-confirm", "data-scope")
 	}},
@@ -230,17 +231,23 @@ var busyReopens = []busyReopen{
 	{busyPreview: retryBusy, same: func(t *testing.T, doc *html.Node) []string {
 		return markersOf(t, doc, "retry-confirm", "data-report", "data-action")
 	}},
+	{busyPreview: busyPreview{name: "roster preview a roster add's Retry opened", block: "roster-preview", ready: failedRosterAdd, open: openRetryOf},
+		same: func(t *testing.T, doc *html.Node) []string {
+			return append(markersOf(t, doc, "retrying", "data-report"), markersOf(t, doc, "roster-preview", "data-unit")...)
+		}},
+}
+
+// busyReopens are the ways back to a working Confirm: the busy sentence's
+// control, and the Preview again of the add preview and the whole roster's
+// preview.
+var busyReopens = slices.Concat(busyLinks, []busyReopen{
 	{busyPreview: addBusy, same: func(t *testing.T, doc *html.Node) []string {
 		return append(markersOf(t, doc, "add-preview", "data-role"), "lines="+formFields(doc, addPreviewForm(t, doc)).Get(fieldLines))
 	}, reopen: pressPreviewAgain},
 	{busyPreview: rosterBusy, same: func(t *testing.T, doc *html.Node) []string {
 		return markersOf(t, doc, "roster-preview", "data-unit")
 	}},
-	{busyPreview: busyPreview{name: "roster preview a roster add's Retry opened", block: "roster-preview", ready: failedRosterAdd, open: openRetryOf},
-		same: func(t *testing.T, doc *html.Node) []string {
-			return append(markersOf(t, doc, "retrying", "data-report"), markersOf(t, doc, "roster-preview", "data-unit")...)
-		}},
-}
+})
 
 // failedRosterAdd runs a roster add of D/ACD to its end with Discord
 // refusing Vance's change, so its report offers Retry of Vance, who still
@@ -326,6 +333,56 @@ func TestABusyPreviewReopensWithItsConfirmOnOnceTheActionEnds(t *testing.T) {
 			}
 			if got := r.same(t, reopened); !slices.Equal(got, want) {
 				t.Errorf("the reopened preview confirms %v, want the busy one's %v", got, want)
+			}
+		})
+	}
+}
+
+// A press of a busy preview's control while the action still runs opens
+// the busy preview again, and the control on the page it opens still
+// works: pressed once the action has ended, it opens the same preview with
+// its Confirm on. That holds for a tab already at the address the control
+// opens, as one is after the first press.
+func TestABusyPreviewOpenedAgainWhileTheActionRunsReopensOnceItEnds(t *testing.T) {
+	for _, r := range busyLinks {
+		t.Run(r.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			doc, block, held := openBusy(t, w, r.busyPreview)
+			want := r.same(t, doc)
+			still := pressReopen(t, w, doc, block)
+			held.release()
+
+			reopened := pressReopen(t, w, still, pendingBlock(t, still, r.block))
+
+			if !enabledConfirm(pendingBlock(t, reopened, r.block)) {
+				t.Error("the reopened preview's Confirm is missing or off once the action ended, want it on")
+			}
+			if got := r.same(t, reopened); !slices.Equal(got, want) {
+				t.Errorf("the reopened preview confirms %v, want the busy one's %v", got, want)
+			}
+		})
+	}
+}
+
+// Once the action ends, a busy preview's control opens the page at the
+// preview's heading, where the control that opened the preview landed: a
+// Retry's at the block above its preview that says what it retries.
+func TestABusyPreviewReopensAtItsHeading(t *testing.T) {
+	for _, r := range busyLinks {
+		t.Run(r.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			doc, block, held := openBusy(t, w, r.busyPreview)
+			held.release()
+
+			reopened, fragment := landReopen(t, w, doc, block)
+
+			target := landedOn(reopened, fragment)
+			if target == nil {
+				t.Fatalf("the page opens at fragment %q, which names nothing, want the %s", fragment, r.block)
+			}
+			retrying := findElement(reopened, "", "data-field", "retrying")
+			if !within(target, pendingBlock(t, reopened, r.block)) && (retrying == nil || !within(target, retrying)) {
+				t.Errorf("the page opens at fragment %q, outside the %s and any Retry above it, want on it", fragment, r.block)
 			}
 		})
 	}
