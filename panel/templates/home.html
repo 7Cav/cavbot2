@@ -6,8 +6,8 @@
   {{if .Hubs.Remove}}{{template "remove-preview" .Hubs}}{{else}}{{with .Hubs.RefusalFor "remove"}}{{template "hub-gone" .}}{{end}}{{end}}
   {{template "moderators" .}}
   {{template "recording-roles" .}}
-  <div class="block" id="hubs">
-    <h2 class="block-header">Hubs</h2>
+  <div class="block" data-section="hub-list">
+    <h2 class="block-header" id="hubs" tabindex="-1">Hubs</h2>
     {{with .Hubs.Removed}}<div class="block-row" role="status"><div class="note note--ok note--inline" data-field="removed">{{.By}} removed hub <span class="hub-name" data-field="base_string">{{.BaseString}}</span> at <time datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 15:04"}} UTC</time>.
       {{- with .ChannelName}} Its voice channel, {{.}}, stays in Discord. Register it below to make it a hub again, starting from the default settings.{{end}}</div></div>{{end}}
     {{with .Hubs.Added}}<div class="block-row" role="status"><div class="note note--ok note--inline" data-field="added">Added hub <span class="hub-name" data-field="base_string">{{.BaseString}}</span>. <a href="/?hub={{.ID}}#edit">Edit it<span class="visually-hidden"> (hub {{.BaseString}})</span></a> to change its other settings.</div></div>{{end}}
@@ -77,6 +77,7 @@
     </div>
     <form method="post" action="/hubs/{{.ID}}/remove#remove" class="submit-row">
       <input type="hidden" name="version" value="{{.Version}}">
+      {{- if .FromEdit}}<input type="hidden" name="from" value="edit">{{end}}
       <button type="submit" class="btn btn--danger-filled" data-field="confirm">Remove hub {{.BaseString}}</button>
       <a class="btn" href="{{.Back}}" data-field="cancel">Cancel<span class="visually-hidden"> removing hub {{.BaseString}}</span></a>
     </form>
@@ -352,7 +353,7 @@
       <label class="check"><input type="checkbox" name="locking_allowed" data-field="locking_allowed" aria-describedby="locking-allowed-hint"{{if .Form.LockingAllowed}} checked{{end}}> Locking allowed</label>
       <span class="field-hint" id="locking-allowed-hint">The owner or a moderator can lock this hub's channels with /voice-lock.</span>
     </div>
-    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save</button> <a class="btn" href="/">Back to the list</a></div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save</button> <a class="btn" href="/#hubs" data-field="back">Back to the list</a></div>
   </form>
   {{end}}
   <div class="block">

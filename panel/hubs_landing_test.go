@@ -264,8 +264,8 @@ func savedByAnother(t *testing.T, w *testWorld, page string, block func(*testing
 }
 
 // sectionNamed is a block finder for the element a page marks with
-// data-section=name: the moderator and recording roles sections, and the
-// create and register forms.
+// data-section=name: the moderator and recording roles sections, the hub
+// list, and the create and register forms.
 func sectionNamed(name string) func(*testing.T, *testWorld, *html.Node) *html.Node {
 	return func(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
 		t.Helper()
@@ -459,19 +459,140 @@ func TestARefusedEditOfABrokenHubLandsOnTheBrokenHubBlock(t *testing.T) {
 }
 
 // hubListBlock is the hub list's block on a page.
-func hubListBlock(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
-	t.Helper()
-	block := findElement(doc, "", "id", hubListAnchor)
-	if block == nil {
-		t.Fatal("page has no hub list block")
+var hubListBlock = sectionNamed("hub-list")
+
+// Every link back to the hub list lands on the list's heading, not on the
+// top of the Hubs page, sections above the list: Cancel on a remove preview
+// opened from a broken hub's list row, and Back to the list on a hub's edit
+// form.
+func TestLinksBackToTheHubListLandOnItsHeading(t *testing.T) {
+	cases := []struct {
+		name string
+		// link loads the page the link is on and returns the address it
+		// names.
+		link func(t *testing.T, w *testWorld) string
+	}{
+		{"Cancel on a remove preview opened from a broken hub's list row", func(t *testing.T, w *testWorld) string {
+			w.discord.breakChannel("hub-1", true)
+			doc := parseHTML(t, w.b.get("/"))
+			preview := removePreviewBlock(t, parseHTML(t, pressRemove(t, w.b, doc, listRow(t, doc, storedHubID(t, w.st, "hub-1")))))
+			cancel := findElement(preview, "a", "data-field", "cancel")
+			if cancel == nil {
+				t.Fatal("the remove preview has no Cancel")
+			}
+			return attrOf(cancel, "href")
+		}},
+		{"Back to the list on a hub's edit form", func(t *testing.T, w *testWorld) string {
+			back := findElement(hubEditBlock(t, w, parseHTML(t, w.b.get(hubEditPage(t, w)))), "a", "data-field", "back")
+			if back == nil {
+				t.Fatal("the edit form has no Back to the list")
+			}
+			return attrOf(back, "href")
+		}},
 	}
-	return block
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			link := tc.link(t, w)
+
+			doc, fragment := landing(t, w.b, link, w.b.get(link))
+
+			landedHeading(t, doc, fragment, hubListBlock(t, w, doc), "the hub list's heading")
+		})
+	}
 }
 
-// A save that goes through lands on what it changed, though its form's
-// action names the form's own block for a refusal to land on: a section's
-// save on the section, an added hub on the hub list naming it, and a
-// removal on the hub list. A hub edit's save is
+// A Confirm refused because another panel admin saved the hub after its
+// preview loaded answers with the preview again, and its Cancel still leads
+// back to where Remove was pressed: the hub list's heading for Remove on a
+// broken hub's list row, and for Remove hub on the hub's edit form, the
+// form's heading, with the answer showing the form as the page Remove was
+// pressed on did.
+func TestAStaleConfirmsCancelLeadsBackToWhereRemoveWasPressed(t *testing.T) {
+	cases := []struct {
+		name string
+		// open presses Remove on hub-1 from where the case says and returns
+		// the preview's page.
+		open func(t *testing.T, w *testWorld) *html.Node
+		// back is the block, on the page Cancel opens, whose heading it
+		// lands on.
+		back func(t *testing.T, w *testWorld, doc *html.Node) *html.Node
+		// edit is the refused Confirm's answer showing the hub's edit form.
+		edit bool
+	}{
+		{"Remove hub on the hub's edit form", func(t *testing.T, w *testWorld) *html.Node {
+			return openHubRemovePreview(t, w.b, storedHubID(t, w.st, "hub-1"))
+		}, hubEditBlock, true},
+		{"Remove on a broken hub's list row", func(t *testing.T, w *testWorld) *html.Node {
+			w.discord.breakChannel("hub-1", false)
+			doc := parseHTML(t, w.b.get("/"))
+			preview := parseHTML(t, pressRemove(t, w.b, doc, listRow(t, doc, storedHubID(t, w.st, "hub-1"))))
+			// A broken hub shows no edit form. Its channel goes back into
+			// its category, so another panel admin can save the hub.
+			w.discord.moveIntoCategory("hub-1", "cat-1")
+			return preview
+		}, hubListBlock, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			preview := tc.open(t, w)
+			savedByAnother(t, w, hubEditPage(t, w), hubEditBlock, func(f url.Values) { f.Set("user_limit", "5") })
+
+			res := confirmRemoval(t, w.b, removePreviewBlock(t, preview))
+
+			if res.StatusCode != http.StatusConflict {
+				t.Fatalf("status = %d, want 409", res.StatusCode)
+			}
+			refused := parseHTML(t, res)
+			id := strconv.FormatInt(storedHubID(t, w.st, "hub-1"), 10)
+			if tc.edit && findElement(refused, "section", "data-hub", id) == nil {
+				t.Error("the answer shows no edit form for the hub, want the one Remove was pressed on")
+			}
+			cancel := findElement(removePreviewBlock(t, refused), "a", "data-field", "cancel")
+			if cancel == nil {
+				t.Fatal("the refused preview has no Cancel")
+			}
+			href := attrOf(cancel, "href")
+			doc, fragment := landing(t, w.b, href, w.b.get(href))
+			landedHeading(t, doc, fragment, tc.back(t, w, doc), "the heading of where Remove was pressed")
+		})
+	}
+}
+
+// A refused Confirm's answer never shows the edit form of a hub other than
+// the one being removed, whatever hub the Confirm names beside its own
+// route.
+func TestAStaleConfirmShowsNoOtherHubsEditForm(t *testing.T) {
+	w := newTestWorld(t, testHub(), secondHub())
+	signIn(t, w.forum, w.b)
+	doc := openHubRemovePreview(t, w.b, storedHubID(t, w.st, "hub-1"))
+	savedByAnother(t, w, hubEditPage(t, w), hubEditBlock, func(f url.Values) { f.Set("user_limit", "5") })
+	action, fields := formIn(t, doc, removePreviewBlock(t, doc))
+	other := strconv.FormatInt(storedHubID(t, w.st, "vc-2"), 10)
+	target, err := url.Parse(action)
+	if err != nil {
+		t.Fatalf("the Confirm's action %q: %v", action, err)
+	}
+	target.RawQuery = url.Values{"hub": {other}}.Encode()
+	fields.Set("hub", other)
+
+	res := w.b.postForm(target.String(), fields)
+
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", res.StatusCode)
+	}
+	if findElement(parseHTML(t, res), "section", "data-hub", other) != nil {
+		t.Error("the refused Confirm's answer shows the edit form of a hub other than the one being removed")
+	}
+}
+
+// A save that goes through lands on the heading of what it changed, though
+// its form's action names the form's own block for a refusal to land on: a
+// section's save on the section, an added hub on the hub list naming it,
+// and a removal on the hub list. A hub edit's save is
 // TestEditFormOpensAtTheForm's.
 func TestASaveThatGoesThroughLandsOnWhatItChanged(t *testing.T) {
 	cases := []struct {
@@ -526,9 +647,7 @@ func TestASaveThatGoesThroughLandsOnWhatItChanged(t *testing.T) {
 			doc, fragment := landing(t, w.b, action, w.b.postForm(action, fields))
 
 			block := tc.block(t, w, doc)
-			if target := landedOn(doc, fragment); target == nil || !within(target, block) {
-				t.Fatalf("the save lands at fragment %q, want on the block it changed", fragment)
-			}
+			landedHeading(t, doc, fragment, block, "the heading of the block it changed")
 			if tc.added == "" {
 				return
 			}

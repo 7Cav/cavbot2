@@ -214,6 +214,10 @@ const (
 	// inputs, and fieldVersion the guild-wide section's too.
 	fieldVersion           = "version"
 	fieldLoadedChannelName = "loaded_channel_name"
+	// fieldRemoveFrom is the remove preview's hidden input naming where
+	// Remove was pressed: formEdit for the hub's edit form, absent for the
+	// hub list.
+	fieldRemoveFrom = "from"
 )
 
 // refusalStale is the data-error value on a stale refusal's note,
@@ -441,10 +445,14 @@ const (
 	formRemove         = "remove"
 )
 
-// hubListAnchor is the ID the hub list's block carries in home.html. A
-// removal's redirect opens the page there, so the line naming the removed
-// hub is in view.
+// hubListAnchor is the ID the hub list's heading carries in home.html. A
+// create, a register, a removal, Back to the list and Cancel on a preview
+// opened from the list all open the page there, with the heading focused,
+// so the line naming a hub just added or removed is in view and read next.
 const hubListAnchor = "hubs"
+
+// hubListAddress is the address of the hub list, opened at the list.
+const hubListAddress = "/#" + hubListAnchor
 
 // hubEditAnchor is the ID the heading of a hub's edit section carries in
 // home.html. Every address the panel sends a panel admin to a hub's edit
@@ -574,6 +582,10 @@ type hubRemovePreview struct {
 	Roles []pickerItem
 	// Spawned is how many of the hub's spawned channels are open now.
 	Spawned int
+	// FromEdit is Remove pressed on the hub's edit form rather than on the
+	// hub list. The Confirm posts it, so a refused Confirm's answer shows the
+	// form again and its Cancel still leads back there.
+	FromEdit bool
 	// Back is the address of the page Remove was pressed on, the hub list
 	// or the hub's edit page, where Cancel leads.
 	Back string
@@ -976,11 +988,10 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 			page.Error, page.Refused = errHubGone, formRemove
 			return page, nil
 		}
-		back := "/"
+		page.Remove = s.removePreviewOf(sn, hub, hubListAddress)
 		if req.HubID != 0 {
-			back = hubEditAddress(req.HubID)
+			page.Remove.FromEdit, page.Remove.Back = true, hubEditAddress(req.HubID)
 		}
-		page.Remove = s.removePreviewOf(sn, hub, back)
 	}
 	return page, nil
 }

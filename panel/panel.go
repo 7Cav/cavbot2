@@ -905,7 +905,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 // removeHub is POST /hubs/{id}/remove, the remove preview's Confirm: one
 // service call, then a redirect to the list the hub is gone from, which
 // names it by the removal's entry and opens at the list, or the preview
-// again with the refusal on it.
+// again with the refusal on it, over the page Remove was pressed on.
 func (p *Panel) removeHub(w http.ResponseWriter, r *http.Request, sess session) {
 	id, ok := hubIDOf(r)
 	if !ok {
@@ -923,7 +923,13 @@ func (p *Panel) removeHub(w http.ResponseWriter, r *http.Request, sess session) 
 		return
 	}
 	if refusal, ok := asFieldError(err); ok {
-		p.renderRefused(w, r, sess, pageRequest{Remove: id, Error: refusal, Refused: formRemove}, "hub_id", id)
+		req := pageRequest{Remove: id, Error: refusal, Refused: formRemove}
+		// Remove pressed on the hub's edit form answers with that form
+		// again. It is the removed hub's own, whatever the Confirm posts.
+		if r.PostForm.Get(fieldRemoveFrom) == formEdit {
+			req.HubID = id
+		}
+		p.renderRefused(w, r, sess, req, "hub_id", id)
 		return
 	}
 	if err != nil {
