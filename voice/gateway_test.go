@@ -149,6 +149,28 @@ func TestRecorderVoiceStateUpdateWithTheGatewayDownIsAnError(t *testing.T) {
 	}
 }
 
+// A recorder the bot stopped logging in, as after Discord refused its
+// token, has no gateway connection. A join through it fails, as a join
+// Discord never completes does, so /record start gets the reply a failed
+// join gets, and nothing panics.
+func TestRecorderJoinWithItsGatewayStoppedFails(t *testing.T) {
+	dg, err := discordgo.New("Bot test")
+	if err != nil {
+		t.Fatalf("discordgo.New: %v", err)
+	}
+	s := &discordgoSession{dg: dg, userID: "300"}
+	updateVoiceState := func(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
+		return s.updateVoiceState(ctx, guildID, channelID, selfMute, selfDeaf)
+	}
+	s.voice = disgovoice.NewManager(updateVoiceState, snowflake.ID(300))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := s.Join(ctx, "100", "200"); err == nil {
+		t.Error("Join through a recorder with no gateway connection = nil error, want one")
+	}
+}
+
 // Closing the session at shutdown takes the recorder out of its voice
 // channels.
 func TestRecorderCloseLeavesVoice(t *testing.T) {
@@ -539,8 +561,10 @@ func TestARecorderOfflineIsNamedByItsPlaceAndUserIDNeverItsToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discordgo.New: %v", err)
 	}
-	s := &discordgoSession{dg: dg, userID: "300", voice: &fakeManager{}}
+	s := &discordgoSession{dg: dg, voice: &fakeManager{}}
+	// Watched before it opens, and named once READY has told its user ID.
 	s.watchGateway(2, recorderWatchAfter)
+	s.named("300")
 
 	// discordgo closes a session whose gateway connection drops, and the
 	// close emits its Disconnect.

@@ -33,8 +33,9 @@ const lookupTimeout = 5 * time.Second
 // OpenGateway is the production Opener: a discordgo session for the recorder
 // account, open once READY has named it. A session that opened without
 // reaching READY is closed again, so a failed recorder holds no connection.
-// Once open, the session is watched, so a recorder that drops off the
-// gateway and stays off reaches Sentry while the bot runs.
+// The session is watched, so a recorder that drops off the gateway and stays
+// off reaches Sentry while the bot runs, and one whose token Discord refuses
+// stops logging in.
 func OpenGateway(recorder int, token string) (GatewaySession, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
@@ -42,16 +43,23 @@ func OpenGateway(recorder int, token string) (GatewaySession, error) {
 	}
 	dg.LogLevel = utils.DiscordgoLogLevel()
 	dg.Identify.Intents = recorderIntents
+	s := &discordgoSession{dg: dg}
+	// Watched from before it opens, so the watch reads every close Discord
+	// sends the session. A failed open is a close on purpose, and sends
+	// nothing beyond its own report.
+	s.watchGateway(recorder, utils.GatewayOfflineAfter)
 	if err := utils.OpenSession(dg); err != nil {
+		s.watch.StandDown()
 		_ = dg.Close()
 		return nil, err
 	}
 	userID, err := snowflake.Parse(dg.State.User.ID)
 	if err != nil {
+		s.watch.StandDown()
 		_ = dg.Close()
 		return nil, err
 	}
-	s := &discordgoSession{dg: dg, userID: dg.State.User.ID}
+	s.named(dg.State.User.ID)
 	// Closures rather than method values here and below: the gate's error
 	// data check follows a closure, and not a method value.
 	updateVoiceState := func(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
@@ -67,9 +75,6 @@ func OpenGateway(recorder int, token string) (GatewaySession, error) {
 	// recorder before its first join.
 	dg.AddHandler(func(_ *discordgo.Session, e *discordgo.VoiceStateUpdate) { s.onVoiceStateUpdate(e) })
 	dg.AddHandler(func(_ *discordgo.Session, e *discordgo.VoiceServerUpdate) { s.onVoiceServerUpdate(e) })
-	// Watched only once READY has named the recorder, after every close
-	// above, so a failed open sends nothing beyond its own report.
-	s.watchGateway(recorder, utils.GatewayOfflineAfter)
 	return s, nil
 }
 
@@ -363,8 +368,15 @@ func (s *discordgoSession) onVoiceServerUpdate(e *discordgo.VoiceServerUpdate) {
 }
 
 // watchGateway watches the recorder's gateway session, so an outage that
-// lasts reaches Sentry by the recorder's place in RECORDER_TOKENS and its
-// user ID, never by its token.
+// lasts reaches Sentry by the recorder's place in RECORDER_TOKENS and,
+// once named, its user ID, never by its token.
 func (s *discordgoSession) watchGateway(recorder int, after time.Duration) {
-	s.watch = utils.WatchGateway(s.dg, after, "session", "recorder", "recorder", recorder, "user_id", s.userID)
+	s.watch = utils.WatchGateway(s.dg, after, "session", "recorder", "recorder", recorder)
+}
+
+// named records the recorder's user ID, which READY tells, and has the
+// watch name the recorder by it.
+func (s *discordgoSession) named(userID string) {
+	s.userID = userID
+	s.watch.AddPairs("user_id", userID)
 }

@@ -363,9 +363,10 @@ func main() {
 	}
 
 	// Watched from before it opens, so a main session that drops off the
-	// gateway and stays off reaches Sentry while the bot runs. A bot off the
-	// gateway answers no command. Shutdown closes it on purpose, so the
-	// watch stands down first.
+	// gateway and stays off reaches Sentry while the bot runs, and one whose
+	// token Discord refuses stops logging in. A bot off the gateway answers
+	// no command. Shutdown closes it on purpose, so the watch stands down
+	// first.
 	watch := utils.WatchGateway(dg, utils.GatewayOfflineAfter, "session", "main")
 
 	// Not dg.Open() directly: a session can open without ever reaching READY,
