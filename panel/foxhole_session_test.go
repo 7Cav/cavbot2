@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -20,22 +19,10 @@ func signInFrom(t *testing.T, w *testWorld, page *html.Node, a *forumAccount) *h
 	return parseHTML(t, follow(t, w.b, res))
 }
 
-// submitNoteFrom is submitNote with the Referer a browser sends with a
-// form, which is the address of the page the form is on.
-func submitNoteFrom(t *testing.T, b *browser, address string, doc *html.Node, text string) *http.Response {
-	t.Helper()
-	fields := formPosts(t, doc, foxholeNotesPath)
-	fields.Set(fieldNote, text)
-	return b.do(http.MethodPost, foxholeNotesPath, http.Header{
-		"Content-Type": {"application/x-www-form-urlencoded"},
-		"Referer":      {testBaseURL + address},
-	}, strings.NewReader(fields.Encode()))
-}
-
-// A note saved from a panel session that has ended is turned away before
-// it changes anything, whichever way the session ended. The sign-in page
-// the save lands on has no page to come back to, since a save is not a
-// page. The page script reads that to tell a turned-away save from one
+// The panel turns away a note saved from a panel session that has ended
+// before the save changes anything, whichever way the session ended. The
+// sign-in page the save lands on has no page to come back to, since a save
+// is not a page. The page script reads that to tell a turned-away save from one
 // that went through, so a return address here would show a lost note as
 // saved (#688). Signed in again, the manager finds the old note on its row
 // and the change log as it was.
@@ -61,11 +48,11 @@ func TestNoteSaveFromAnEndedSessionChangesNothingAndHasNoPageToComeBackTo(t *tes
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFoxholeWorld(t)
 			assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
-			form, address := openNote(t, w.b, memberDoe.ID), w.b.at
+			form := openNote(t, w.b, memberDoe.ID)
 			before := foxholeChangeLog(t, form)
 			tc.end(w)
 
-			signin := parseHTML(t, follow(t, w.b, submitNoteFrom(t, w.b, address, form, "on leave until 3 Oct")))
+			signin := parseHTML(t, follow(t, w.b, submitNote(t, w.b, form, "on leave until 3 Oct")))
 
 			if next := formPosts(t, signin, "/auth/start").Get(paramNext); next != "" {
 				t.Errorf("the sign-in after the save comes back to %q, want no page", next)

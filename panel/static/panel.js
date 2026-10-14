@@ -258,13 +258,18 @@
   var template = document.querySelector('[data-note-template]');
   if (!template) { return; }
 
-  // own gives each ID under root the member's suffix, and the note box's
+  // memberOf is the ID of the member whose row holds the cell.
+  function memberOf(cell) {
+    return cell.closest('[data-member]').getAttribute('data-member');
+  }
+
+  // ownIDs gives each ID under root the member's suffix, and the note box's
   // description with them. A form in a row carries the IDs the page's own
   // note form uses: the hint's, and on a refused save the refusal's. A form
   // with a line the script put at its top carries the line's too. Each
   // member's form gets its own, so forms open at once share none, and its
   // note box names its own line and hint.
-  function own(root, member) {
+  function ownIDs(root, member) {
     var input = root.querySelector('[data-note-input]');
     root.querySelectorAll('[id]').forEach(function (el) { el.id += '-' + member; });
     var described = input.getAttribute('aria-describedby');
@@ -281,7 +286,7 @@
   function mount(cell, form, restore) {
     var input = form.querySelector('[data-note-input]');
     var cancel = form.querySelector('[data-field="cancel_note"]');
-    own(form, cell.closest('[data-member]').getAttribute('data-member'));
+    ownIDs(form, memberOf(cell));
     cell.replaceChildren(form);
     form.addEventListener('submit', function (e) {
       e.preventDefault();
@@ -318,8 +323,8 @@
     };
   }
 
-  // fill is a fresh note form from the page's template, holding values,
-  // which are keyed by field name. A field values leaves out keeps the
+  // fill is a fresh note form from the page's template, holding values, an
+  // object keyed by field name. A field values leaves out keeps the
   // template's value, as the view's search and filter do.
   function fill(values) {
     var form = template.content.firstElementChild.cloneNode(true);
@@ -331,7 +336,7 @@
 
   function open(cell) {
     var note = cell.getAttribute('data-note');
-    var form = fill({ member: cell.closest('[data-member]').getAttribute('data-member'), loaded: note, note: note });
+    var form = fill({ member: memberOf(cell), loaded: note, note: note });
     focusBox(mount(cell, form, restorer(cell)));
   }
 
@@ -345,6 +350,14 @@
     cell.querySelector('[data-field="note"]').textContent = note;
     link.textContent = note ? 'Edit' : 'Add a note';
     link.setAttribute('aria-label', (note ? 'Edit the note on ' : 'Add a note on ') + member);
+  }
+
+  // answerOf reads a response the script fetched: whether it was OK,
+  // whether it came through a redirect, and its page.
+  function answerOf(res) {
+    return res.text().then(function (text) {
+      return { ok: res.ok, redirected: res.redirected, doc: new DOMParser().parseFromString(text, 'text/html') };
+    });
   }
 
   // swap replaces this page's element matching the selector with the one
@@ -469,12 +482,33 @@
   // kept notes through the forum's sign-in. Closing the tab drops it.
   var keptKey = 'foxhole-kept-notes';
 
+  // waiting is the notes the tab's storage holds for the forum user signed
+  // in, as a kept note whose block didn't load leaves there.
+  function waiting() {
+    try {
+      var kept = JSON.parse(sessionStorage.getItem(keptKey));
+      return kept && kept.user === signedInAs() ? kept.notes : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // store puts the notes in the tab's storage, with the forum user who
+  // typed them. Without session storage the page goes on, and the notes
+  // are lost, as without script.
+  function store(notes) {
+    try {
+      sessionStorage.setItem(keptKey, JSON.stringify({ user: signedInAs(), notes: notes }));
+    } catch (e) {
+      // With no session storage, there is nowhere to keep them.
+    }
+  }
+
   // keep stores each note form open in a row whose text differs from the
-  // note it loaded, with the forum user who typed them. The form of the
-  // member named first goes first. Without session storage the sign-in
-  // still goes ahead, and the typed notes are lost, as without script.
+  // note it loaded, after any notes still waiting in storage. The form of
+  // the member named first goes first.
   function keep(first) {
-    var notes = [];
+    var notes = waiting();
     document.querySelectorAll('[data-note-cell] [data-field="note-form"]').forEach(function (form) {
       var values = posted(form);
       var note = { member: values.member, loaded: values.loaded, note: values.note };
@@ -485,11 +519,7 @@
         notes.push(note);
       }
     });
-    try {
-      sessionStorage.setItem(keptKey, JSON.stringify({ user: signedInAs(), notes: notes }));
-    } catch (e) {
-      // With no session storage, the sign-in goes ahead without the notes.
-    }
+    store(notes);
   }
 
   // signInAgain keeps the typed notes, then starts a sign-in that comes
@@ -516,7 +546,7 @@
     var button = document.createElement('button');
     row.className = 'fx-notesignin';
     button.type = 'button';
-    button.className = 'btn btn--small';
+    button.className = 'btn btn--small btn--cta';
     button.setAttribute('data-field', 'sign_in_again');
     button.textContent = 'Sign in again';
     button.addEventListener('click', function () { signInAgain(first); });
@@ -531,7 +561,7 @@
     var fresh = fill(posted(form));
     var said = noteLine('note-ended', endedUnsaved);
     describe(fresh, said);
-    said.after(signInRow(cell.closest('[data-member]').getAttribute('data-member')));
+    said.after(signInRow(memberOf(cell)));
     focusBox(mount(cell, fresh, restore));
   }
 
@@ -545,7 +575,7 @@
     restore();
     show(cell, note);
     cell.querySelectorAll('[data-ended]').forEach(function (el) { el.remove(); });
-    var said = noteLine('note-ended-' + cell.closest('[data-member]').getAttribute('data-member'), endedSaved);
+    var said = noteLine('note-ended-' + memberOf(cell), endedSaved);
     var row = signInRow(null);
     var button = row.querySelector('button');
     said.setAttribute('data-ended', '');
@@ -555,41 +585,74 @@
     button.focus();
   }
 
-  // above opens a kept note in a "Note on ..." block above the list, where
-  // the Edit link opens a note form without script, for a member this view
-  // doesn't list. The block comes from this view's page with the member's
-  // note form open, loaded in the background. Its Save posts the page's
-  // way, without script. A load that fails drops the note.
-  function above(note, first) {
+  // aboveList puts el where the page puts a note block, under whatever is
+  // pending and over the action blocks and the list.
+  function aboveList(el) {
+    document.querySelector('main [data-field="actions"], main [data-notice="member-list"], main [data-field="changes"]').before(el);
+  }
+
+  // notLoaded is what the page says when a kept note's block didn't load.
+  var notLoaded = 'A note you typed before signing in again didn\'t load.';
+
+  // unopened puts a note whose block didn't load back in storage, and says
+  // so above the list, once however many didn't. Its Reload the page
+  // button keeps the notes typed in the rows too, so the next load opens
+  // them all. The line is an alert, so a screen reader reads it out as it
+  // appears.
+  function unopened(note) {
+    store(waiting().concat([note]));
+    if (document.querySelector('[data-field="kept-unopened"]')) { return; }
+    var said = document.createElement('div');
+    var reload = document.createElement('button');
+    said.className = 'note note--neutral';
+    said.setAttribute('role', 'alert');
+    said.setAttribute('data-field', 'kept-unopened');
+    reload.type = 'button';
+    reload.className = 'btn btn--small btn--cta';
+    reload.textContent = 'Reload the page';
+    reload.addEventListener('click', function () {
+      keep(null);
+      location.reload();
+    });
+    said.append(notLoaded + ' ', reload);
+    aboveList(said);
+  }
+
+  // openAboveList opens a kept note in a "Note on ..." block above the
+  // list, where the Edit link opens a note form without script, for a
+  // member this view doesn't list. The block comes from this view's page
+  // with the member's note form open, loaded in the background. Its Save
+  // posts the page's way, without script.
+  function openAboveList(note, first) {
     var url = new URL(viewAddress(), location.href);
     url.searchParams.set('note', note.member);
     fetch(url, { credentials: 'same-origin' })
-      .then(function (res) {
-        return res.text().then(function (text) {
-          return { ok: res.ok, doc: new DOMParser().parseFromString(text, 'text/html') };
-        });
-      })
+      .then(answerOf)
       .then(function (answer) {
         var page = answer.ok && answer.doc.querySelector('main[data-page="foxhole"]');
         var block = page && page.querySelector('[data-field="note-block"]');
-        if (!block) { return; }
+        if (!block) {
+          unopened(note);
+          return;
+        }
         block = document.adoptNode(block);
         var form = block.querySelector('[data-field="note-form"]');
         form.querySelector('[name="loaded"]').value = note.loaded;
         form.querySelector('[name="note"]').value = note.note;
         describe(form, noteLine('note-kept', notSavedYet));
-        own(block, note.member);
-        document.querySelector('main [data-field="actions"], main [data-notice="member-list"], main [data-field="changes"]').before(block);
+        ownIDs(block, note.member);
+        aboveList(block);
         if (first) { focusBox(form.querySelector('[data-note-input]')); }
       })
-      .catch(function () {});
+      .catch(function () { unopened(note); });
   }
 
   // bringBack opens the notes kept before a sign-in, on the first Foxhole
   // page the tab loads after it, when the forum user who typed them is
   // signed in. That load drops them either way. Each opens in its row with
-  // its typed text and the note its form loaded, so a save over a note
-  // someone changed meanwhile is refused as stale. The first takes focus.
+  // its typed text and the note its form loaded, so the server refuses as
+  // stale a save over a note someone changed meanwhile. The first takes
+  // focus.
   function bringBack() {
     var kept;
     try {
@@ -602,7 +665,7 @@
     kept.notes.forEach(function (note, i) {
       var cell = document.querySelector('[data-member="' + CSS.escape(note.member) + '"] [data-note-cell]');
       if (!cell) {
-        above(note, i === 0);
+        openAboveList(note, i === 0);
         return;
       }
       var form = fill({ member: note.member, loaded: note.loaded, note: note.note });
@@ -617,18 +680,14 @@
     // A save of the note as it stands posts like any other, so the server
     // refuses it as unchanged, or as stale when the note changed under a
     // kept form, and the refusal shows in the form.
-    var id = cell.closest('[data-member]').getAttribute('data-member');
+    var id = memberOf(cell);
     form.querySelector('[type="submit"]').disabled = true;
     fetch(form.action, { method: 'POST', body: new URLSearchParams(new FormData(form)), credentials: 'same-origin' })
-      .then(function (res) {
-        return res.text().then(function (text) {
-          return { ok: res.ok, redirected: res.redirected, doc: new DOMParser().parseFromString(text, 'text/html') };
-        });
-      })
+      .then(answerOf)
       .then(function (answer) {
-        // A save from a panel session that has ended is sent to sign in.
-        // The sign-in page's form comes back to no page when the session
-        // ended before the save, which then stored nothing. When the
+        // The panel sends a save from a panel session that has ended to
+        // sign in. The sign-in page's form comes back to no page when the
+        // session ended before the save, which then stored nothing. When the
         // session ended after the save went through, on the Foxhole page
         // the save redirects to, the form comes back to that page.
         var signin = answer.doc.querySelector('main form[action="' + startAddress + '"]');
