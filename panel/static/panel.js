@@ -13,22 +13,30 @@
 (function () {
   'use strict';
 
+  var roots = document.querySelectorAll('[data-picker]');
+  if (!roots.length) { return; }
+
   var pickers = 0;
 
-  // A press is a mousedown and the mouseup that ends it. pressed is the
-  // element the press began on, from the mousedown to the mouseup, and
-  // null between presses. ending holds what waits for the press to end,
-  // each called with that element. They run at the mouseup, when the
-  // press has already fixed what its click lands on.
+  // A press is a mousedown and the mouseup that ends it, or the dragend
+  // when the press drags something. pressed is the element the press began
+  // on, and null between presses. afterPress, when set, runs as the press
+  // ends and is called with that element. That comes before the click,
+  // whose target the press has already fixed.
   var pressed = null;
-  var ending = [];
+  var afterPress = null;
+
+  function endPress() {
+    var target = pressed;
+    var run = afterPress;
+    pressed = null;
+    afterPress = null;
+    if (run) { run(target); }
+  }
 
   document.addEventListener('mousedown', function (e) { pressed = e.target; }, true);
-  document.addEventListener('mouseup', function () {
-    var target = pressed;
-    pressed = null;
-    ending.splice(0).forEach(function (run) { run(target); });
-  }, true);
+  document.addEventListener('mouseup', endPress, true);
+  document.addEventListener('dragend', endPress, true);
 
   function setUp(root) {
     var single = root.hasAttribute('data-single');
@@ -193,26 +201,32 @@
 
     // Focus leaving the picker closes the search. A click on a row moves
     // focus to the row, inside the picker, so the click still lands. A
-    // press outside the picker moves focus on its mousedown. Closing then
-    // would move what sits below the list up before the mouseup, and the
-    // press would make no click (#682). So a press closes the search once
-    // it ends, and the page scrolls by as much as the close moved the
-    // pressed element, so it stays under the pointer.
+    // press elsewhere moves focus on its mousedown. Closing then would
+    // move what sits below the list up before the mouseup, and the press
+    // would make no click (#682). So a press closes the search once it
+    // ends, unless closing would move what the press was on. Then the
+    // search stays open, so a second press there lands too.
     root.addEventListener('focusout', function (e) {
       if (search.hidden || root.contains(e.relatedTarget)) { return; }
       if (!pressed) {
         close();
         return;
       }
-      ending.push(function (target) {
+      afterPress = function (target) {
+        // Hiding the search to measure can clamp the page's scroll, so the
+        // scroll goes back too. Nothing paints between the hide and here.
+        var y = window.scrollY;
         var top = target.getBoundingClientRect().top;
-        close();
-        window.scrollBy(0, target.getBoundingClientRect().top - top);
-      });
+        search.hidden = true;
+        var moved = target.getBoundingClientRect().top !== top;
+        search.hidden = false;
+        window.scrollTo(0, y);
+        if (!moved) { close(); }
+      };
     });
   }
 
-  document.querySelectorAll('[data-picker]').forEach(setUp);
+  roots.forEach(setUp);
 })();
 
 /* Inline note edit on the Foxhole page (spec #434, ADR 0013). A row's Edit
