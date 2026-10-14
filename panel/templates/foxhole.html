@@ -321,7 +321,7 @@
     {{- if eq .Status "arriving"}}Waiting for the member list from Discord{{if .Expected}} (<span data-field="parts_received">{{.Received}}</span> of <span data-field="parts_expected">{{.Expected}}</span>){{end}}.
     {{- else if eq .Status "refused"}}Discord stopped the member list fetch. Retrying in <span data-field="retry_in">{{.RetryIn}}</span> s.
     {{- else if eq .Status "late"}}Discord took too long to send the member list.
-    {{- else}}Discord's member list didn't arrive. Wait a bit and try again.{{end}} <a href="{{$.Foxhole.Reload}}" data-field="reload">Reload</a></div>
+    {{- else}}Discord's member list didn't arrive. Wait a bit and try again.{{end}} <a href="{{.Reload}}" data-field="reload">Reload</a></div>
   {{end}}{{end}}
   <section class="block" data-field="changes">
     <h2 class="block-header" id="change-log" tabindex="-1">Change log</h2>

@@ -294,8 +294,7 @@ func TestRemovalRoleChangesNameTheRemovalAndTheForumUserWhoStartedIt(t *testing.
 
 // While the member list is partial the page can't tell who holds a role,
 // so a Remove pressed then is refused: the page says so, which says nothing
-// changed, opens no preview and makes no Discord call. The selection isn't
-// kept, and the manager selects again once the rows are back.
+// changed, opens no preview and makes no Discord call.
 func TestRemovePressedWhileTheMemberListIsPartialIsRefused(t *testing.T) {
 	w := newFoxholeWorld(t)
 	page := parseHTML(t, w.b.get(foxholePath))
@@ -418,11 +417,23 @@ func vanceWithInternal() commands.ListedMember {
 func removeUnderASearchAndAFilter(role string, memberIDs ...string) func(*testing.T, *testWorld) *html.Node {
 	return func(t *testing.T, w *testWorld) *html.Node {
 		t.Helper()
-		internal := attrOf(filterAnchor(t, parseHTML(t, w.b.get(foxholePath)), "internal"), "href")
-		listed := parseHTML(t, submitSearch(t, w.b, parseHTML(t, w.b.get(internal)), "r"))
-		return parseHTML(t, submitSelection(t, w.b, listed, role, memberIDs...))
+		return parseHTML(t, submitSelection(t, w.b, listUnderASearchAndAFilter(t, w), role, memberIDs...))
 	}
 }
+
+// listUnderASearchAndAFilter opens the holder list under the search "r"
+// and the Internal filter, the way a browser with no script does, and
+// returns the page. With Vance holding Internal it lists Ash, Marsh and
+// Vance alone: the search leaves out Doe, and the filter Kestrel.
+func listUnderASearchAndAFilter(t *testing.T, w *testWorld) *html.Node {
+	t.Helper()
+	internal := attrOf(filterAnchor(t, parseHTML(t, w.b.get(foxholePath)), "internal"), "href")
+	return parseHTML(t, submitSearch(t, w.b, parseHTML(t, w.b.get(internal)), "r"))
+}
+
+// listedUnderSearchAndFilter are the members listUnderASearchAndAFilter
+// lists, sorted.
+var listedUnderSearchAndFilter = sorted([]string{memberAsh.ID, memberMarsh.ID, memberVance.ID})
 
 // tickedRows returns the members whose holder list row is ticked, sorted.
 func tickedRows(t *testing.T, doc *html.Node) []string {
@@ -448,7 +459,6 @@ func tickedRows(t *testing.T, doc *html.Node) []string {
 // the preview skips included.
 func TestRemovePreviewCancelReturnsToWhereRemoveWasPressed(t *testing.T) {
 	ashAndMarsh := sorted([]string{memberAsh.ID, memberMarsh.ID})
-	underSearchAndFilter := sorted([]string{memberAsh.ID, memberMarsh.ID, memberVance.ID})
 	cases := []struct {
 		name string
 		// open opens a remove preview as a browser with no script does, and
@@ -464,15 +474,15 @@ func TestRemovePreviewCancelReturnsToWhereRemoveWasPressed(t *testing.T) {
 		listed []string
 	}{
 		{"Remove External, which skips a member", removeUnderASearchAndAFilter("external", ashAndMarsh...),
-			"holders", ashAndMarsh, underSearchAndFilter},
-		{"Remove Internal", removeUnderASearchAndAFilter("internal", ashAndMarsh...), "holders", ashAndMarsh, underSearchAndFilter},
+			"holders", ashAndMarsh, listedUnderSearchAndFilter},
+		{"Remove Internal", removeUnderASearchAndAFilter("internal", ashAndMarsh...), "holders", ashAndMarsh, listedUnderSearchAndFilter},
 		{"a preview where nobody selected holds the role", func(t *testing.T, w *testWorld) *html.Node {
 			page := removeUnderASearchAndAFilter("external", memberAsh.ID)(t, w)
 			if findElement(removePreviewBlock(t, page), "", "data-field", "confirm") != nil {
 				t.Fatal("the preview offers a Confirm, want one where nobody selected holds External")
 			}
 			return page
-		}, "holders", []string{memberAsh.ID}, underSearchAndFilter},
+		}, "holders", []string{memberAsh.ID}, listedUnderSearchAndFilter},
 		{"a remove address typed with the no-role filter", func(t *testing.T, w *testWorld) *html.Node {
 			typed := url.Values{paramFilter: {filterNoRole}, paramRemove: {"external"}, fieldMember: {memberKestrel.ID}}
 			return parseHTML(t, w.b.get(foxholePath+"?"+typed.Encode()+"#"+removePreviewAnchor))

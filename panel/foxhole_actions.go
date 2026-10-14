@@ -252,7 +252,14 @@ type reopenLink struct {
 // never names the address the tab shows, and a press always loads the
 // page afresh, however the tab reached the preview.
 func reopenOf(address, what string) reopenLink {
-	return reopenLink{Href: foxholeReopenPath + strings.TrimPrefix(address, foxholePath), What: what}
+	return reopenLink{Href: reopenAddress(address), What: what}
+}
+
+// reopenAddress is address, a Foxhole page address with a fragment, through
+// foxholeReopenPath, so following it loads the page afresh even from a tab
+// that shows that address.
+func reopenAddress(address string) string {
+	return foxholeReopenPath + strings.TrimPrefix(address, foxholePath)
 }
 
 // purgeConfirmAnchor is the ID foxhole.html gives the purge confirmation's
@@ -547,12 +554,12 @@ var errAddListPartial = &saveRefusal{Kind: "member-list", status: http.StatusSer
 
 // removeListPartialRefusal refuses a removal of the role named, its preview
 // opened or its Confirm pressed while the member list is partial: it can't
-// tell who holds the role. The page keeps no selection, so the manager
-// selects again once the holder list is back.
+// tell who holds the role. The member list notice's Reload opens the
+// preview again, the selection ticked, once the list has arrived.
 func removeListPartialRefusal(role string) *saveRefusal {
 	return &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
 		log:     "Panel action refused: member list partial",
-		Message: fmt.Sprintf("Cavbot2 doesn't have the whole member list from Discord yet, so it can't tell who holds %s. Nothing changed. Select the members again once the list has arrived.", role)}
+		Message: fmt.Sprintf("Cavbot2 doesn't have the whole member list from Discord yet, so it can't tell who holds %s. Nothing changed. Once the list has arrived, Reload opens the removal again with your selection.", role)}
 }
 
 // roleMissingRefusal refuses a Foxhole action, named by what, that changes
