@@ -42,8 +42,8 @@ func namedOnlyIn(t *testing.T, doc, block *html.Node, attr, member string) {
 // The Foxhole page saves the landing tests make as a browser with no script
 // does. Each returns the address of the form it posted and the answer.
 
-// approveThatSkipsKestrel approves Kestrel, who then holds no Foxhole role,
-// with Doe, so the Approve skips Kestrel.
+// approveThatSkipsKestrel approves Kestrel, takes away Kestrel's Foxhole
+// role, then approves Kestrel again with Doe, so the Approve skips Kestrel.
 func approveThatSkipsKestrel(t *testing.T, w *testWorld) (string, *http.Response) {
 	t.Helper()
 	approveThroughThePage(t, w, memberKestrel.ID)
