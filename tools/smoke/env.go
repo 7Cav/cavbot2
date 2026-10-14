@@ -155,10 +155,11 @@ func botEnv(base []string, file, overrides map[string]string, extra []string) []
 	return append(env, extra...)
 }
 
-// extraValue is the value an --env flag gives key, if one does.
-func extraValue(extra []string, key string) (string, bool) {
+// envValue is the value a KEY=VALUE list gives key, if it does. A repeated
+// key takes its last value, as os/exec does for a process's environment.
+func envValue(env []string, key string) (string, bool) {
 	val, found := "", false
-	for _, kv := range extra {
+	for _, kv := range env {
 		if k, v, _ := strings.Cut(kv, "="); k == key {
 			val, found = v, true
 		}

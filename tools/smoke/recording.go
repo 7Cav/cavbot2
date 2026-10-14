@@ -28,8 +28,8 @@ type recorderTally struct {
 // error first, so the last match is the bot's own.
 var recorderPlace = regexp.MustCompile(`\brecorder=(\d+)\b`)
 
-// read counts line if it is one of the bot's recorder lines.
-func (r *recorderTally) read(line string) {
+// count tallies line if it is one of the bot's recorder lines.
+func (r *recorderTally) count(line string) {
 	switch {
 	case strings.Contains(line, "RECORDER_TOKENS not set, recording off"):
 		r.Off = true
@@ -54,12 +54,13 @@ const (
 )
 
 // checkMix judges whether a bot started with env can build a mix.
-func checkMix(env []string) mixVerdict {
-	ffmpeg, ok := lookPathIn("ffmpeg", envValue(env, "PATH"))
+func checkMix(ctx context.Context, env []string) mixVerdict {
+	path, _ := envValue(env, "PATH")
+	ffmpeg, ok := lookPathIn("ffmpeg", path)
 	if !ok {
 		return mixNoFFmpeg
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, ffmpeg, "-hide_banner", "-encoders")
 	cmd.Env = env
@@ -83,18 +84,6 @@ func listsEncoder(out, name string) bool {
 		}
 	}
 	return false
-}
-
-// envValue is key's value in env as a process started with it sees it:
-// os/exec keeps the last of a repeated key.
-func envValue(env []string, key string) string {
-	val := ""
-	for _, kv := range env {
-		if k, v, _ := strings.Cut(kv, "="); k == key {
-			val = v
-		}
-	}
-	return val
 }
 
 // lookPathIn finds file in the directories of path, a PATH value, the way
@@ -122,14 +111,13 @@ type recordingReport struct {
 	Mix       mixVerdict    `json:"mix"`
 }
 
-// recorders is the report's line on the recorders. It names a failed one
-// by its place in RECORDER_TOKENS, as the bot's log does.
-func (r recordingReport) recorders() string {
-	t := r.Recorders
+// line is the report's line on the recorders. It names a failed one by its
+// place in RECORDER_TOKENS, as the bot's log does.
+func (t recorderTally) line() string {
 	if t.Off {
 		return "none, and recording is off because RECORDER_TOKENS is empty"
 	}
-	line := fmt.Sprintf("%d connected", t.Connected)
+	text := fmt.Sprintf("%d connected", t.Connected)
 	if len(t.Failed) > 0 {
 		places := make([]string, len(t.Failed))
 		for i, n := range t.Failed {
@@ -139,19 +127,19 @@ func (r recordingReport) recorders() string {
 		if len(places) > 1 {
 			named = "recorders " + strings.Join(places[:len(places)-1], ", ") + " and " + places[len(places)-1]
 		}
-		line += fmt.Sprintf(", %d failed. The bot log says why %s in RECORDER_TOKENS failed", len(t.Failed), named)
+		text += fmt.Sprintf(", %d failed. The bot log says why %s in RECORDER_TOKENS failed", len(t.Failed), named)
 	}
 	if t.Connected == 0 {
-		line += ". No recording check can run"
+		text += ". No recording check can run"
 	}
-	return line
+	return text
 }
 
-// mixes is the report's line on building a mix.
-func (r recordingReport) mixes() string {
-	switch r.Mix {
+// line is the report's line on building a mix.
+func (v mixVerdict) line() string {
+	switch v {
 	case mixReady:
-		return "can be built"
+		return "will work"
 	case mixNoFFmpeg:
 		return "will fail because ffmpeg is not on the bot's PATH"
 	case mixNoLibopus:

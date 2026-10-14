@@ -58,10 +58,11 @@ the run, `up` names it, and `go run ./tools/smoke down` stops it from
 anywhere. Start every bot through the tool, so the lock covers it.
 `go run ./tools/smoke help` lists the commands and flags.
 
-The ready block's `recorders` line counts the recorders that connected, and
-its `mixes` line says whether the bot can build a mix. When your list has a
-recording check and those lines say it can't run, set up what the first-run
-note under "When `up` fails" lists, then `down` and `up` again. If you can't,
+The ready block's `recorders` line counts the recorders that connected. A
+check needs one for each channel it records at the same time. The `mixes`
+line says whether the bot can build a mix. When your list has a recording
+check and those lines say it can't run, set up what the first-run note under
+"When `up` fails" lists, then `down` and `up` again. If you can't,
 write the check down as unreachable, with the line as its reason.
 `go run ./tools/smoke status` shows the same lines while the run is up.
 
@@ -173,6 +174,3 @@ also need:
 - ffmpeg with the libopus encoder on the `PATH` the bot starts with.
   `ffmpeg -hide_banner -encoders | grep libopus` shows whether a build has it.
   `up --env PATH=<dir>:$PATH` points the bot at one in `<dir>`.
-
-`up` reports the recorders on its ready block's `recorders` line and ffmpeg on
-its `mixes` line.

@@ -59,7 +59,7 @@ func recorderLog(t *testing.T, raw string, refused ...string) []string {
 func tallyOf(lines []string) recorderTally {
 	var r recorderTally
 	for _, line := range lines {
-		r.read(line)
+		r.count(line)
 	}
 	return r
 }
@@ -86,22 +86,9 @@ func TestRecorderTallyNamesARefusedTokenByItsPlaceInTheList(t *testing.T) {
 }
 
 // Encoder lists as ffmpeg -hide_banner -encoders prints them, cut to the
-// legend and the Opus encoders. The native opus encoder is in every build;
-// libopus only in one built with it.
+// legend and the Opus encoders. The native opus encoder is in every build,
+// and libopus only in one built with it.
 const (
-	encodersWithLibopus = `Encoders:
- V..... = Video
- A..... = Audio
- S..... = Subtitle
- .F.... = Frame-level multithreading
- ..S... = Slice-level multithreading
- ...X.. = Codec is experimental
- ....B. = Supports draw_horiz_band
- .....D = Supports direct rendering method 1
- ------
- V....D a64multi             Multicolor charset for Commodore 64 (codec a64_multi)
- A..X.D opus                 Opus
- A....D libopus              libopus Opus (codec opus)`
 	encodersWithoutLibopus = `Encoders:
  V..... = Video
  A..... = Audio
@@ -114,6 +101,8 @@ const (
  ------
  V....D a64multi             Multicolor charset for Commodore 64 (codec a64_multi)
  A..X.D opus                 Opus`
+	encodersWithLibopus = encodersWithoutLibopus + `
+ A....D libopus              libopus Opus (codec opus)`
 )
 
 // fakeFFmpeg returns a directory holding an ffmpeg that prints encoders
@@ -135,33 +124,33 @@ func fakeFFmpeg(t *testing.T, encoders string) string {
 
 func TestMixCheckFindsNoFFmpegOffTheBotsPath(t *testing.T) {
 	t.Setenv("PATH", fakeFFmpeg(t, encodersWithLibopus))
-	if got := checkMix([]string{"PATH=" + t.TempDir()}); got != mixNoFFmpeg {
+	if got := checkMix(context.Background(), []string{"PATH=" + t.TempDir()}); got != mixNoFFmpeg {
 		t.Errorf("verdict %q, want %q", got, mixNoFFmpeg)
 	}
 }
 
 func TestMixCheckPassesAnFFmpegWithLibopusOnTheBotsPath(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	if got := checkMix([]string{"PATH=" + fakeFFmpeg(t, encodersWithLibopus)}); got != mixReady {
+	if got := checkMix(context.Background(), []string{"PATH=" + fakeFFmpeg(t, encodersWithLibopus)}); got != mixReady {
 		t.Errorf("verdict %q, want %q", got, mixReady)
 	}
 }
 
 func TestMixCheckFailsAnFFmpegBuiltWithoutLibopus(t *testing.T) {
-	if got := checkMix([]string{"PATH=" + fakeFFmpeg(t, encodersWithoutLibopus)}); got != mixNoLibopus {
+	if got := checkMix(context.Background(), []string{"PATH=" + fakeFFmpeg(t, encodersWithoutLibopus)}); got != mixNoLibopus {
 		t.Errorf("verdict %q, want %q", got, mixNoLibopus)
 	}
 }
 
 func TestMixCheckSaysAnFFmpegThatFailsDoesNotRun(t *testing.T) {
-	if got := checkMix([]string{"PATH=" + fakeFFmpeg(t, "")}); got != mixFFmpegFails {
+	if got := checkMix(context.Background(), []string{"PATH=" + fakeFFmpeg(t, "")}); got != mixFFmpegFails {
 		t.Errorf("verdict %q, want %q", got, mixFFmpegFails)
 	}
 }
 
 func TestMixCheckReadsThePathAnEnvFlagGivesTheBot(t *testing.T) {
 	shell, flag := "PATH="+t.TempDir(), "PATH="+fakeFFmpeg(t, encodersWithLibopus)
-	if got := checkMix(botEnv([]string{shell}, nil, nil, []string{flag})); got != mixReady {
+	if got := checkMix(context.Background(), botEnv([]string{shell}, nil, nil, []string{flag})); got != mixReady {
 		t.Errorf("verdict %q, want %q", got, mixReady)
 	}
 }
