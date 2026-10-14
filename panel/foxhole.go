@@ -37,8 +37,9 @@ type foxholeView struct {
 	// names none, or one the page doesn't know.
 	Filter string
 	// Reload is the page in the view it shows, with any note form it shows
-	// open: the address the member list notice's and the progress block's
-	// Reload links load, and the page's script loads in the background. It
+	// open. The progress block's Reload link loads it, and so does the page's
+	// script in the background. The member list notice's Reload link loads
+	// it too, unless the page answers a refused selection bar action. It
 	// names no fragment, so it opens at the top of the page, where those
 	// blocks sit, not at the note block below them.
 	Reload string
@@ -154,7 +155,7 @@ func (v foxholeView) ListAnchor() string {
 
 // listNotice is the one-line notice in the holder list's place while the
 // member list is partial: how far along the list is. It ends in a Reload
-// link to the view's Reload address.
+// link.
 type listNotice struct {
 	// Status is the list's state as the notice names it.
 	Status listState
@@ -165,6 +166,11 @@ type listNotice struct {
 	// RetryIn is the whole seconds until the bot asks again after a
 	// refusal.
 	RetryIn int
+	// Reload is the address the Reload link loads, and the page's script
+	// loads in the background: the view's Reload, or, on a page answering a
+	// refused selection bar action, the address that brings the selection
+	// back once the list has arrived.
+	Reload string
 }
 
 // listState is a partial member list's state as the notice names it, its
@@ -421,11 +427,13 @@ const (
 const fieldScope = "scope"
 
 // The remove preview's fields beside the members it posts as fieldMember:
-// the role it confirms, and the ID of each member whose approval it named
-// as cleared.
+// the role it confirms, the ID of each member whose approval it named as
+// cleared, and, for a preview the selection bar opened, the ID of each
+// member selected, beside the view's query and filter.
 const (
 	fieldRole            = "role"
 	fieldApprovalCleared = "approval-cleared"
+	fieldSelected        = "selected"
 )
 
 // fieldReport is the Stop form's field: the ID of the report of the action
@@ -647,9 +655,10 @@ type noteInput struct {
 // saveApprovals is POST /foxhole/approvals, the selection bar's save: one
 // service call for the button pressed, over the members selected, then a
 // redirect to the view the bar was in, opened at its list. A refused save
-// answers with the page itself. The bar posts to an address that names the
-// list's heading, so that page opens there. An approvals save changes no
-// Discord role and makes no Discord call.
+// answers with the page itself, the members selected still ticked. The bar
+// posts to an address that names the list's heading, so that page opens
+// there. An approvals save changes no Discord role and makes no Discord
+// call.
 func (p *Panel) saveApprovals(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -676,7 +685,7 @@ func (p *Panel) saveApprovals(w http.ResponseWriter, r *http.Request, sess sessi
 	var refusal *saveRefusal
 	if errors.As(err, &refusal) {
 		utils.Info(refusal.log, "op", op, "members", len(members), "username", sess.username, "forum_user_id", sess.userID)
-		p.renderFoxhole(w, r, sess, refusal.status, foxholeRequest{Query: query, Filter: filter, ApprovalRefusal: refusal})
+		p.renderFoxhole(w, r, sess, refusal.status, foxholeRequest{Query: query, Filter: filter, Selection: distinct(members), ApprovalRefusal: refusal})
 		return
 	}
 	if err != nil {
@@ -811,6 +820,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 		}
 		if req.Remove != "" {
 			view.RemovePreview = s.removePreviewOf(list, records, req.Remove, req.Selection, req.selectionAddress(), req.removeAddress())
+			view.RemovePreview.Selection = &removeSelection{Query: req.Query, Filter: req.Filter, Members: req.Selection}
 		}
 		if req.Paste != nil {
 			view.AddPreview = s.addPreviewOf(list, records, *req.Paste, nil)
@@ -850,6 +860,9 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	}
 	view.Query, view.Filter = req.Query, req.Filter
 	view.Reload = foxholeURL(req.Query, req.Filter, req.NoteMember)
+	if view.ListNotice != nil {
+		view.ListNotice.Reload = req.noticeReload(view.Reload)
+	}
 	view.Units = commands.ValidatedInternalUnits()
 	view.NoteTemplate = req.blankNoteForm()
 	view.Changes, view.OpenEntry = foxholeChanges(entries), req.OpenEntry
@@ -861,7 +874,13 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	}
 	view.Skipped = s.stillSkipped(list, records, req.Skipped)
 	view.ApprovalRefusal = req.ApprovalRefusal
-	if req.ActionRefusal != nil {
+	switch {
+	case req.ActionRefusal == nil:
+	case view.RemovePreview != nil && view.RemovePreview.Selection != nil:
+		// A refused Confirm of a preview the selection bar opened answers
+		// with the preview again, and the refusal under its heading.
+		view.RemovePreview.Refusal = req.ActionRefusal
+	default:
 		view.ActionRefusal = req.ActionRefusal
 	}
 	running, busy := s.actions.Running()
@@ -871,6 +890,24 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	view.Commands = s.actions.RunningCommands()
 	view.Report, view.Busy = report, busy || len(view.Commands) > 0
 	return view, nil
+}
+
+// noticeReload is the address the member list notice's Reload loads on the
+// page the request asks for, whose own Reload is reload. A page that
+// answers a removal refused for the partial list, its preview opened or
+// its Confirm pressed, reloads to that preview, and one that answers a
+// refused Approve or Clear approval to the holder list with the selection
+// ticked. Any other page reloads to reload. The preview's address goes
+// through foxholeReopenPath: the tab may show that very address, refused,
+// and a link to it would only scroll.
+func (req foxholeRequest) noticeReload(reload string) string {
+	switch {
+	case req.Remove != "":
+		return reopenAddress(req.removeAddress())
+	case req.ApprovalRefusal != nil:
+		return req.selectionAddress()
+	}
+	return reload
 }
 
 // memberList reads the member list through the manager seam, never

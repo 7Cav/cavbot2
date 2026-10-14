@@ -252,7 +252,14 @@ type reopenLink struct {
 // never names the address the tab shows, and a press always loads the
 // page afresh, however the tab reached the preview.
 func reopenOf(address, what string) reopenLink {
-	return reopenLink{Href: foxholeReopenPath + strings.TrimPrefix(address, foxholePath), What: what}
+	return reopenLink{Href: reopenAddress(address), What: what}
+}
+
+// reopenAddress is address, a Foxhole page address with a fragment, through
+// foxholeReopenPath, so following it loads the page afresh even from a tab
+// that shows that address.
+func reopenAddress(address string) string {
+	return foxholeReopenPath + strings.TrimPrefix(address, foxholePath)
 }
 
 // purgeConfirmAnchor is the ID foxhole.html gives the purge confirmation's
@@ -352,6 +359,23 @@ type removePreview struct {
 	// and members selected, from the same view, or the Retry's address when
 	// a Retry opened it.
 	reopen string
+	// Selection is the selection the selection bar opened the preview with,
+	// which its Confirm posts back, so a refused Confirm opens the preview
+	// again with it. Nil for a preview a Retry opened, whose members were
+	// never a selection.
+	Selection *removeSelection
+	// Refusal is why the Confirm this preview answers was refused, nil for
+	// a preview opened afresh. It shows under the preview's heading, which
+	// the Confirm's address names.
+	Refusal *saveRefusal
+}
+
+// removeSelection is the selection a remove preview was opened with, those
+// it skips included, and the search and the filter it was made under.
+type removeSelection struct {
+	Query   string
+	Filter  string
+	Members []string
 }
 
 // Reopen is the link that opens this preview again.
@@ -547,12 +571,12 @@ var errAddListPartial = &saveRefusal{Kind: "member-list", status: http.StatusSer
 
 // removeListPartialRefusal refuses a removal of the role named, its preview
 // opened or its Confirm pressed while the member list is partial: it can't
-// tell who holds the role. The page keeps no selection, so the manager
-// selects again once the holder list is back.
+// tell who holds the role. The member list notice's Reload opens the
+// preview again, the selection ticked, once the list has arrived.
 func removeListPartialRefusal(role string) *saveRefusal {
 	return &saveRefusal{Kind: "member-list", status: http.StatusServiceUnavailable,
 		log:     "Panel action refused: member list partial",
-		Message: fmt.Sprintf("Cavbot2 doesn't have the whole member list from Discord yet, so it can't tell who holds %s. Nothing changed. Select the members again once the list has arrived.", role)}
+		Message: fmt.Sprintf("Cavbot2 doesn't have the whole member list from Discord yet, so it can't tell who holds %s. Nothing changed. Once the list has arrived, Reload opens the removal again with your selection.", role)}
 }
 
 // roleMissingRefusal refuses a Foxhole action, named by what, that changes
@@ -629,7 +653,10 @@ func (p *Panel) startPurge(w http.ResponseWriter, r *http.Request, sess session)
 // startRemoval is POST /foxhole/remove, the remove preview's Confirm: it
 // starts the removal of the role confirmed from the members the preview
 // listed as losing it, clearing only the approvals it listed under
-// Approval cleared, as startAction says.
+// Approval cleared, as startAction says. A refused Confirm of a preview the
+// selection bar opened answers with that preview again, for the selection
+// it posts back, under the same search and filter. One a Retry opened
+// posts no selection, and answers with the Foxhole page with nothing open.
 func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -646,12 +673,19 @@ func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess sessio
 		return
 	}
 	approvals := r.PostForm[fieldApprovalCleared]
+	back, selected := actionPage, distinct(r.PostForm[fieldSelected])
+	if len(selected) > 0 {
+		back = foxholeRequest{Query: r.PostForm.Get(paramQuery), Filter: knownFilter(r.PostForm.Get(paramFilter)), Remove: role, Selection: selected}
+	}
 	nobody := nobodyToChangeRefusal(nobodyToRemove(role.Label()))
-	p.startAction(w, r, sess, actionPage, "the removal", nobody, func(ctx context.Context, by commands.ForumUser) error {
+	p.startAction(w, r, sess, back, "the removal", nobody, func(ctx context.Context, by commands.ForumUser) error {
+		// The members selected only say which preview a refusal opens again:
+		// the removal acts on those the preview listed as losing the role.
 		err := p.foxhole.actions.Remove(ctx, role, members, approvals, by)
-		if errors.Is(err, commands.ErrMemberListPartial) {
-			// The page the refusal answers with keeps no selection: it says
-			// to select again, as the preview's refusal does.
+		if errors.Is(err, commands.ErrMemberListPartial) && len(selected) > 0 {
+			// The refusal a preview opened on a partial list gives, since the
+			// notice's Reload opens this preview again too. A Retry's preview
+			// has no selection to bring back, and gets startAction's.
 			return removeListPartialRefusal(role.Label())
 		}
 		return err
