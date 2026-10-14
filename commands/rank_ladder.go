@@ -110,6 +110,27 @@ func (l RankLadder) SeniorRankRole(roleIDs []string) (string, bool) {
 	return l.ranks[i].RoleID, true
 }
 
+// Drops reports whether a member holding the role IDs counts as a Cav
+// member on this ladder and as none on the ladder next, so a save from this
+// ladder to next stops them counting.
+func (l RankLadder) Drops(next RankLadder, roleIDs []string) bool {
+	_, was := l.SeniorRankRole(roleIDs)
+	_, is := next.SeniorRankRole(roleIDs)
+	return was && !is
+}
+
+// TakesARoleOff reports whether a role that counts for a rank on this
+// ladder counts for none on the ladder next, so a save from this ladder to
+// next may stop some member counting as a Cav member.
+func (l RankLadder) TakesARoleOff(next RankLadder) bool {
+	for _, r := range l.ranks {
+		if _, still := next.position[r.RoleID]; r.RoleID != "" && !still {
+			return true
+		}
+	}
+	return false
+}
+
 // RankOf returns the abbreviation of the rank whose rank role the role is,
 // and false when it is no rank's.
 func (l RankLadder) RankOf(roleID string) (string, bool) {

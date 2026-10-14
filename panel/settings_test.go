@@ -50,11 +50,6 @@ func TestPanelAdminOpensTheSettingsPageFromTheRail(t *testing.T) {
 	}
 }
 
-// noAccessPageLoads are the pages whose address answers anyone but a panel
-// admin with the no-access page, where other settings pages send them on
-// to the page they land on.
-var noAccessPageLoads = []string{settingsPath}
-
 // A Foxhole manager and an outsider find no Settings link in the rail of
 // the page they land on, and the page's address answers them with the
 // no-access page.
@@ -74,14 +69,12 @@ func TestSettingsPageIsForPanelAdminsAlone(t *testing.T) {
 				t.Error("the rail links to the Settings page")
 			}
 
-			for _, path := range noAccessPageLoads {
-				res := w.b.get(path)
+			res := w.b.get(settingsPath)
 
-				if res.StatusCode != http.StatusForbidden {
-					t.Errorf("GET %s status = %d, want 403", path, res.StatusCode)
-				}
-				assertNoAccessSays(t, parseHTML(t, res), noAccessRefused)
+			if res.StatusCode != http.StatusForbidden {
+				t.Errorf("GET %s status = %d, want 403", settingsPath, res.StatusCode)
 			}
+			assertNoAccessSays(t, parseHTML(t, res), noAccessRefused)
 		})
 	}
 }

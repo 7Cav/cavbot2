@@ -481,9 +481,10 @@ type foxholeService struct {
 	manager commands.TempVCManager
 	store   store.Store
 	actions *commands.FoxholeRuntime
-	// ranks is the temp VC runtime, whose rank ladder the holder list ranks
-	// members by, so a save of the rank roles shows on the page at once.
-	ranks   *commands.TempVC
+	// runtime is the temp VC runtime, whose rank ladder the holder list
+	// ranks members by, so a save of the rank roles shows on the page at
+	// once.
+	runtime *commands.TempVC
 	guildID string
 }
 
@@ -719,7 +720,7 @@ func (s foxholeService) foxholeGuildOf() foxholeGuild {
 	guild := s.manager.GuildData(s.guildID)
 	ids := commands.FoxholeRoleIDs(guild)
 	g := foxholeGuild{internalID: ids[commands.FoxholeInternal], externalID: ids[commands.FoxholeExternal],
-		roleNames: make(map[string]string, len(guild.Roles)), ladder: s.ranks.RankLadder()}
+		roleNames: make(map[string]string, len(guild.Roles)), ladder: s.runtime.RankLadder()}
 	for _, r := range guild.Roles {
 		g.roleNames[r.ID] = r.Name
 	}

@@ -183,21 +183,6 @@ func (p *Panel) renderSettings(w http.ResponseWriter, r *http.Request, sess sess
 	p.render(w, status, "settings", data)
 }
 
-// renderSettingsRefused answers a refused save of a Settings page form with
-// the page again, the form as posted and the refusal's note on it, the way
-// renderRefused answers one on the hub page.
-func (p *Panel) renderSettingsRefused(w http.ResponseWriter, r *http.Request, sess session, req pageRequest) {
-	status := http.StatusUnprocessableEntity
-	switch {
-	case req.Error.stale():
-		status = http.StatusConflict
-		utils.Info("Panel save refused: stale form", "username", sess.username, "forum_user_id", sess.userID)
-	case req.Error.kind == refusalChanged:
-		status = http.StatusConflict
-	}
-	p.renderSettings(w, r, sess, status, req)
-}
-
 // settings reads everything the Settings page renders from, once. It reads
 // the guild from the gateway state, then the rank roles and the recording
 // roles from the store.
@@ -362,7 +347,8 @@ func (p *Panel) saveRankRoles(w http.ResponseWriter, r *http.Request, sess sessi
 	ctx, hubs := p.saving(r)
 	saved, preview, err := hubs.setRankRoles(ctx, in, sess.actor())
 	if refusal, ok := asFieldError(err); ok {
-		p.renderSettingsRefused(w, r, sess, pageRequest{RankRoles: &in, RankRolesPreview: preview, Error: refusal, Refused: formRankRoles})
+		p.renderSettings(w, r, sess, refusalStatus(sess, refusal),
+			pageRequest{RankRoles: &in, RankRolesPreview: preview, Error: refusal, Refused: formRankRoles})
 		return
 	}
 	if preview != nil {
@@ -450,16 +436,14 @@ func (s *hubService) rankRolesPreviewOf(before, after commands.RankLadder) *rank
 	preview := &rankRolesPreview{Channels: s.deps.Runtime.RankRolesHandovers(after)}
 	list := s.deps.Manager.MemberList(s.deps.GuildID)
 	if list.Status != commands.MemberListComplete {
-		if !takesARoleOff(before, after) {
+		if !before.TakesARoleOff(after) {
 			return nil
 		}
 		return preview
 	}
 	preview.Counted = true
 	for _, m := range list.Members {
-		_, was := before.SeniorRankRole(m.RoleIDs)
-		_, is := after.SeniorRankRole(m.RoleIDs)
-		if was && !is {
+		if before.Drops(after, m.RoleIDs) {
 			preview.Dropped++
 		}
 	}
@@ -467,17 +451,6 @@ func (s *hubService) rankRolesPreviewOf(before, after commands.RankLadder) *rank
 		return nil
 	}
 	return preview
-}
-
-// takesARoleOff reports whether a role that counts for a rank on the ladder
-// before counts for none on the ladder after.
-func takesARoleOff(before, after commands.RankLadder) bool {
-	for _, rank := range before.Ranks() {
-		if _, still := after.RankOf(rank.RoleID); rank.RoleID != "" && !still {
-			return true
-		}
-	}
-	return false
 }
 
 // acceptedRankRoles checks each rank's posted role and returns the ladder

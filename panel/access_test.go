@@ -471,9 +471,8 @@ func TestEveryRouteHasAnOutsiderCaseOrIsOpen(t *testing.T) {
 	for _, tc := range pageLoadCases {
 		reach(http.MethodGet, tc.path)
 	}
-	for _, path := range noAccessPageLoads {
-		reach(http.MethodGet, path)
-	}
+	// TestSettingsPageIsForPanelAdminsAlone is the Settings page's case.
+	reach(http.MethodGet, settingsPath)
 	starter := w.addStarter(5001, "Able.A", "discord-a")
 	signInAs(t, w.forum, w.b, starter.account)
 	for _, route := range recordingRoutes {

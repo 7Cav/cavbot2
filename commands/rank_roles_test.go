@@ -4,7 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"slices"
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -182,22 +183,10 @@ func capturesOf(rec *captureRecorder, want error) [][]any {
 	return out
 }
 
-// missingRanksOf returns the ranks a missing rank roles capture names,
-// found by type so no key name is asserted.
-func missingRanksOf(t *testing.T, kv []any) []string {
-	t.Helper()
-	for _, v := range kv {
-		if missing, ok := v.([]missingRankRole); ok {
-			var ranks []string
-			for _, m := range missing {
-				ranks = append(ranks, m.Rank)
-			}
-			slices.Sort(ranks)
-			return ranks
-		}
-	}
-	t.Fatalf("capture carries no missing rank roles: %v", kv)
-	return nil
+// namesRank reports whether a capture's key/values name the rank, in
+// whatever shape they carry it.
+func namesRank(kv []any, abbrev string) bool {
+	return regexp.MustCompile(`\b` + abbrev + `\b`).MatchString(fmt.Sprint(kv))
 }
 
 // A startup reaches on-call once, naming each rank whose rank role is not in
@@ -219,8 +208,10 @@ func TestStartupChecksCaptureRankRolesMissingFromTheGuild(t *testing.T) {
 	if len(captures) != 1 {
 		t.Fatalf("missing rank roles captures = %d, want 1", len(captures))
 	}
-	if got := missingRanksOf(t, captures[0]); !slices.Equal(got, []string{"GEN", "PVT"}) {
-		t.Errorf("capture names ranks %v, want GEN and PVT", got)
+	for abbrev, missing := range map[string]bool{"GEN": true, "PVT": true, "SGT": false, "GOA": false} {
+		if namesRank(captures[0], abbrev) != missing {
+			t.Errorf("capture %v names %s: %v, want %v", captures[0], abbrev, !missing, missing)
+		}
 	}
 
 	mgr.guild.Roles = append(mgr.guild.Roles, &discordgo.Role{ID: "role-gen"}, &discordgo.Role{ID: "role-pvt"})

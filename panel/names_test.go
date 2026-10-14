@@ -240,7 +240,7 @@ func TestHubEditPageGivesEachSaveAndAddControlItsOwnName(t *testing.T) {
 // A sighted user reads which set a picker edits from the label above it. A
 // screen reader user hears the same label as the name of the group they
 // enter at the picker's first control.
-func TestEachHubPagePickerIsAGroupNamedForWhatItEdits(t *testing.T) {
+func TestEachPickerIsAGroupNamedForWhatItEdits(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 	id := storedHubID(t, w.st, "hub-1")

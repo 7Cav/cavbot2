@@ -38,12 +38,6 @@ var errAdministratorMissing = errors.New("bot member does not hold Administrator
 // longer, until a panel admin saves another role for the rank.
 var errRankRolesMissing = errors.New("rank roles missing from the guild")
 
-// missingRankRole is one rank whose rank role the guild does not have.
-type missingRankRole struct {
-	Rank   string
-	RoleID string
-}
-
 // rankDrift is one position where the ladder in code and the API disagree.
 // An empty side means that list ended first.
 type rankDrift struct {
@@ -80,10 +74,10 @@ func checkRankRoles(mgr TempVCManager, guildID string, ladder RankLadder) {
 	for _, r := range guild.Roles {
 		live[r.ID] = struct{}{}
 	}
-	var missing []missingRankRole
+	var missing []Rank
 	for _, r := range ladder.Ranks() {
 		if _, ok := live[r.RoleID]; r.RoleID != "" && !ok {
-			missing = append(missing, missingRankRole{Rank: r.Abbrev, RoleID: r.RoleID})
+			missing = append(missing, r)
 		}
 	}
 	if len(missing) == 0 {
