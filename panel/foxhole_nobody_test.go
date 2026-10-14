@@ -29,8 +29,10 @@ func TestKeptFormOfAnActionThatWouldChangeNobodyIsRefused(t *testing.T) {
 		// another way, and returns the post of the kept form.
 		stale func(t *testing.T, w *testWorld) func() *http.Response
 		// paste is an add's pasted lines, whose refusal lands on its preview
-		// with them kept. The others land on the Foxhole page.
-		paste string
+		// with them kept. reopens is the data-field of the preview a
+		// removal's refusal opens again. The others land on the Foxhole page
+		// with nothing open.
+		paste, reopens string
 	}{
 		{name: "purge of Internal", action: "purge", refusal: "nobody-to-change", stale: stalePurge("internal")},
 		{name: "purge of External", action: "purge", refusal: "nobody-to-change", stale: stalePurge("external")},
@@ -43,7 +45,7 @@ func TestKeptFormOfAnActionThatWouldChangeNobodyIsRefused(t *testing.T) {
 			w.awaitActionEnd(t)
 			return func() *http.Response { return postReAdd(t, w.b, page) }
 		}},
-		{name: "removal", action: "removal", refusal: "nobody-to-change", stale: func(t *testing.T, w *testWorld) func() *http.Response {
+		{name: "removal", action: "removal", refusal: "nobody-to-change", reopens: "remove-preview", stale: func(t *testing.T, w *testWorld) func() *http.Response {
 			preview := func() *html.Node {
 				return removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID)))
 			}
@@ -98,7 +100,8 @@ func TestKeptFormOfAnActionThatWouldChangeNobodyIsRefused(t *testing.T) {
 			if findLive(doc, "", "data-error", tc.refusal) == nil {
 				t.Errorf("the page doesn't give the %s refusal", tc.refusal)
 			}
-			if tc.paste != "" {
+			switch {
+			case tc.paste != "":
 				form := findElement(addPreviewBlock(t, doc), "form", "data-field", "add-form")
 				if form == nil {
 					t.Fatal("the add preview has no paste box")
@@ -106,7 +109,11 @@ func TestKeptFormOfAnActionThatWouldChangeNobodyIsRefused(t *testing.T) {
 				if got := formFields(doc, form).Get(fieldLines); got != tc.paste {
 					t.Errorf("the paste box holds %q, want the pasted lines %q", got, tc.paste)
 				}
-			} else {
+			case tc.reopens != "":
+				if findElement(doc, "", "data-field", tc.reopens) == nil {
+					t.Errorf("the refusal doesn't open the %s again", tc.reopens)
+				}
+			default:
 				for _, pending := range []string{"purge-confirm", "remove-preview", "add-preview", "roster-preview", "retry-confirm"} {
 					if findElement(doc, "", "data-field", pending) != nil {
 						t.Errorf("the refusal opens the %s, want the Foxhole page with nothing open", pending)

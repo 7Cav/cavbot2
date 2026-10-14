@@ -5,7 +5,7 @@
   {{with .Foxhole}}
   {{- /* Where the action blocks stack above the list, a link here reaches it in one tap. Where they sit side by side, it hides. */}}
   {{if not .ListNotice}}<p class="fx-jump"><a href="#{{.ListAnchor}}" data-field="list-jump">{{if .NoRoleView}}Go to the members with a note{{else}}Go to the holder list{{end}}</a></p>{{end}}
-  {{- /* Whatever is pending shows first: the refusal of what the manager just did, then the preview or confirmation a Foxhole action waits on, then any action running and the last report. A preview's heading carries the ID the address that opens it names, so the browser scrolls to it and focuses it. A save's result shows in the list's block, under the list's heading, where the save lands. A refused Approve or Clear approval's note shows there too. It shows here, at the top, only while the member list notice stands in the holder list's place. */}}
+  {{- /* Whatever is pending shows first: the refusal of what the manager just did, then the preview or confirmation a Foxhole action waits on, then any action running and the last report. A preview's heading carries the ID the address that opens it names, so the browser scrolls to it and focuses it. A save's result shows in the list's block, under the list's heading, where the save lands. A refused Approve or Clear approval's note shows there too. A refused Confirm of a remove preview the selection bar opened opens the preview again, with its note under the preview's heading. Each of those notes shows here, at the top, only while the member list notice stands in the list's or the preview's place. */}}
   {{if .ListNotice}}{{with .ApprovalRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}{{end}}
   {{with .ActionRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
   {{if .Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. The holder list may be out of date.</div>{{end}}
@@ -41,7 +41,9 @@
   {{end}}
   {{with .RemovePreview}}
   <section class="block block--danger fx-pending" data-field="remove-preview" data-role="{{.Role}}">
-    <h2 class="block-header" id="remove-preview" tabindex="-1">Remove {{.Name}}?</h2>
+    {{- /* A refused Confirm of a preview the selection bar opened answers with the preview again, at the address its form names, so the page opens at this heading. The refusal note sits under the heading and is its description. */}}
+    <h2 class="block-header" id="remove-preview" tabindex="-1"{{if .Refusal}} aria-describedby="remove-refusal"{{end}}>Remove {{.Name}}?</h2>
+    {{with .Refusal}}<div class="block-row"><div class="note note--inline" id="remove-refusal" data-error="{{.Kind}}">{{.Message}}</div></div>{{end}}
     {{template "note-count" .Notes}}
     <div class="block-row fx-reportlist" data-list="loses"><h3>Loses {{.Name}} <span class="fx-count" data-field="count">{{len .Loses}}</span></h3>{{template "preview-members" .Loses}}</div>
     {{with .Cleared}}<div class="block-row fx-reportlist" data-list="approval-cleared"><h3>Approval cleared <span class="fx-count" data-field="count">{{len .}}</span></h3>
@@ -50,13 +52,21 @@
     <div class="block-row fx-reportlist" data-list="skipped"><h3>Skipped <span class="fx-count" data-field="count">{{len .Skipped}}</span></h3>{{template "preview-members" .Skipped}}</div>
     {{if .Loses}}
     <div class="block-row"><p>Takes <span data-field="estimate" data-seconds="{{.Estimate.Seconds}}">about {{.Estimate.Text}}</span> at one change a second. It keeps going if you close this tab.</p></div>
-    <form method="post" action="/foxhole/remove" class="submit-row">
+    <form method="post" action="/foxhole/remove{{if .From}}#remove-preview{{end}}" class="submit-row">
       <input type="hidden" name="role" value="{{.Role}}">
       {{- range .Loses}}
       <input type="hidden" name="member" value="{{.ID}}">
       {{- end}}
       {{- range .Cleared}}
       <input type="hidden" name="approval-cleared" value="{{.ID}}">
+      {{- end}}
+      {{- /* The selection the preview was opened with goes back with the Confirm, so a refused Confirm opens this preview again with it. The removal acts on the members above alone. */}}
+      {{- with .From}}
+      <input type="hidden" name="q" value="{{.Query}}">
+      <input type="hidden" name="filter" value="{{.Filter}}">
+      {{- range .Members}}
+      <input type="hidden" name="selected" value="{{.}}">
+      {{- end}}
       {{- end}}
       <button type="submit" class="btn btn--danger-filled" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Remove {{.Name}} from {{len .Loses}} {{if eq (len .Loses) 1}}member{{else}}members{{end}}</button>
       <a class="btn" href="{{.Back}}" data-field="cancel">Cancel</a>

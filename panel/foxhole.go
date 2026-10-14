@@ -427,11 +427,13 @@ const (
 const fieldScope = "scope"
 
 // The remove preview's fields beside the members it posts as fieldMember:
-// the role it confirms, and the ID of each member whose approval it named
-// as cleared.
+// the role it confirms, the ID of each member whose approval it named as
+// cleared, and, for a preview the selection bar opened, the ID of each
+// member selected, beside the view's query and filter.
 const (
 	fieldRole            = "role"
 	fieldApprovalCleared = "approval-cleared"
+	fieldSelected        = "selected"
 )
 
 // fieldReport is the Stop form's field: the ID of the report of the action
@@ -818,6 +820,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 		}
 		if req.Remove != "" {
 			view.RemovePreview = s.removePreviewOf(list, records, req.Remove, req.Selection, req.selectionAddress(), req.removeAddress())
+			view.RemovePreview.From = &removeSelection{Query: req.Query, Filter: req.Filter, Members: req.Selection}
 		}
 		if req.Paste != nil {
 			view.AddPreview = s.addPreviewOf(list, records, *req.Paste, nil)
@@ -871,7 +874,13 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	}
 	view.Skipped = s.stillSkipped(list, records, req.Skipped)
 	view.ApprovalRefusal = req.ApprovalRefusal
-	if req.ActionRefusal != nil {
+	switch {
+	case req.ActionRefusal == nil:
+	case view.RemovePreview != nil && view.RemovePreview.From != nil:
+		// A refused Confirm of a preview the selection bar opened answers
+		// with the preview again, and the refusal under its heading.
+		view.RemovePreview.Refusal = req.ActionRefusal
+	default:
 		view.ActionRefusal = req.ActionRefusal
 	}
 	running, busy := s.actions.Running()
