@@ -611,8 +611,10 @@ type noteInput struct {
 
 // saveApprovals is POST /foxhole/approvals, the selection bar's save: one
 // service call for the button pressed, over the members selected, then a
-// redirect to the view the bar was in, opened at its list. An approvals save
-// changes no Discord role and makes no Discord call.
+// redirect to the view the bar was in, opened at its list. A refused save
+// answers with the page, at the address the bar posts to, which names the
+// list's heading. An approvals save changes no Discord role and makes no
+// Discord call.
 func (p *Panel) saveApprovals(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -1341,9 +1343,9 @@ func foxholeAddress(query, filter string) string {
 
 // The IDs the holder list's heading and the no-role view's heading carry in
 // foxhole.html. A filter link, a search, a link to the other view, a save
-// that returns to a list and the note form's Cancel open the page at the
-// list, which sits far below the action blocks wherever they stack, with
-// its heading focused.
+// that returns to a list, a refused Approve or Clear approval and the note
+// form's Cancel open the page at the list, which sits far below the action
+// blocks wherever they stack, with its heading focused.
 const (
 	holderListAnchor = "holders"
 	noRoleAnchor     = "no-role"

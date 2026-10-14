@@ -178,6 +178,90 @@ func TestAFoxholeSaveResultLineDescribesTheListHeading(t *testing.T) {
 	}
 }
 
+// refusalNotes returns the data-error kind of each refusal note on the page.
+func refusalNotes(doc *html.Node) []string {
+	var kinds []string
+	eachLiveElement(doc, func(n *html.Node) {
+		if kind, ok := attrValue(n, "data-error"); ok {
+			kinds = append(kinds, kind)
+		}
+	})
+	return kinds
+}
+
+// A refused Approve or Clear approval answers with the page, not a
+// redirect. The page opens at the holder list's heading, where the manager
+// pressed the button, not at the top far above the list. The refusal note
+// shows once, in the list's block under the heading, and is the heading's
+// description, so a screen reader says why nothing changed as focus lands.
+// PRODUCT.md's Accessibility & Inclusion asks this of every refused save.
+// Only a browser without the page script sends a press with nothing ticked.
+func TestARefusedApprovalsSaveLandsOnTheHolderList(t *testing.T) {
+	cases := []struct {
+		name    string
+		op      string
+		members []string
+	}{
+		{"an Approve on a member approved for each Foxhole role they hold", opApprove, []string{memberKestrel.ID}},
+		{"an Approve with nothing ticked", opApprove, nil},
+		{"a Clear approval on a member with no approval", opClear, []string{memberMarsh.ID}},
+		{"a Clear approval with nothing ticked", opClear, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			approveThroughThePage(t, w, memberKestrel.ID)
+			page := parseHTML(t, w.b.get(foxholePath))
+
+			res, fragment := arrive(t, w.b, attrOf(selectionForm(t, page), "action"), submitSelection(t, w.b, page, tc.op, tc.members...))
+
+			if res.StatusCode != http.StatusConflict {
+				t.Fatalf("status = %d, want %d", res.StatusCode, http.StatusConflict)
+			}
+			doc := parseHTML(t, res)
+			heading, block := landedOnList(t, doc, fragment, "holders")
+			refusalDescribing(t, doc, heading, block)
+			if got, want := refusalNotes(doc), []string{refusalNobodyToChange}; !slices.Equal(got, want) {
+				t.Errorf("the page shows refusal notes %v, want the one nobody-to-change note", got)
+			}
+		})
+	}
+}
+
+// While the member list is partial, the member list notice stands in the
+// holder list's place, so a refused Approve or Clear approval has no list
+// to open at. The panel refuses Approve for the partial list. Clear approval
+// reads no list, so the panel refuses a Clear approval on a member with no
+// approval as changing nobody. Either answer shows its note once, with no
+// holder list.
+func TestARefusedApprovalsSaveWhileTheMemberListIsPartialShowsItsNoteOnce(t *testing.T) {
+	cases := []struct {
+		name   string
+		op     string
+		reason string
+	}{
+		{"an Approve", opApprove, "member-list"},
+		{"a Clear approval on a member with no approval", opClear, refusalNobodyToChange},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			page := parseHTML(t, w.b.get(foxholePath))
+			w.discord.setMemberList(arrivingList)
+
+			doc := parseHTML(t, submitSelection(t, w.b, page, tc.op, memberMarsh.ID))
+
+			if got, want := refusalNotes(doc), []string{tc.reason}; !slices.Equal(got, want) {
+				t.Errorf("the page shows refusal notes %v, want the one %s note", got, tc.reason)
+			}
+			if findLive(doc, "section", "data-field", "holders") != nil {
+				t.Error("the page shows a holder list block, want the member list notice in its place")
+			}
+			describedByResolves(t, doc)
+		})
+	}
+}
+
 // The no-script note form's Cancel goes back where its Save does: to the
 // view the form was opened from, at that view's list's heading.
 func TestNoteFormCancelLandsOnTheListItWasOpenedFrom(t *testing.T) {
