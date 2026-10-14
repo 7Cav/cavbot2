@@ -218,6 +218,11 @@ The holder list's buttons that act on the selection: Approve, Clear
 approval, Remove Internal and Remove External.
 _Avoid_: toolbar (the list's search and filters), bulk actions.
 
+**Action block**:
+One of the three Foxhole page blocks that start Foxhole actions: Add
+members, Add a unit's roster and After a war.
+_Avoid_: action panel, action form.
+
 **No-role view**:
 The Foxhole page's second view, which lists the members with a note who hold
 no Foxhole role and have no approval.
@@ -251,6 +256,11 @@ action's change log entry. It names who started the action and how it
 ended, and lists the members it changed, skipped, failed on and never
 attempted.
 _Avoid_: summary, results, receipt.
+
+**Latest report**:
+The report of the most recent Foxhole action started on the Foxhole page,
+which the page shows above the action blocks.
+_Avoid_: current report, last report. "Last" can read as the final one.
 
 **Retry**:
 Starting a finished Foxhole action again on only the members its report
