@@ -65,11 +65,11 @@ func RunStartupChecks(ctx context.Context, mgr TempVCManager, guildID, botUserID
 }
 
 // checkRankRoles fetches the guild's roles and captures once, naming every
-// rank whose rank role the guild lacks: one deleted while the bot was down,
-// which the role delete handler never saw. A rank with no rank role is not
-// missing. On a guild that never saved its rank roles the ladder's role IDs
-// in code are checked, so the test guild captures at every start until an
-// admin clears the ranks it lacks.
+// rank whose rank role the guild lacks. That catches a role deleted while
+// the bot was down, which the role delete handler never saw. A rank with no
+// rank role is not missing. On a guild that never saved its rank roles the
+// check reads the ladder's role IDs in code, so the test guild captures at
+// every start until an admin clears the ranks it lacks.
 func checkRankRoles(mgr TempVCManager, guildID string, ladder RankLadder) {
 	guild, err := mgr.Guild(guildID)
 	if err != nil {

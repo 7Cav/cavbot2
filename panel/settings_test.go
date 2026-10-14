@@ -143,9 +143,9 @@ func storedRankRoles(t *testing.T, st store.Store) store.RankRoles {
 }
 
 // rankRolesForm is the Rank roles section's form as a page loaded now posts
-// it, with the changes given made: each rank's role as the stored ladder
-// gives it, a change's role in its rank's place, and no role for a change
-// to empty.
+// it, with the changes given made. Each rank posts its role as the stored
+// ladder gives it, a changed rank posts its change's role, and a change to
+// empty posts no role.
 func rankRolesForm(t *testing.T, st store.Store, changes map[string]string) url.Values {
 	t.Helper()
 	stored := storedRankRoles(t, st)
@@ -162,7 +162,7 @@ func rankRolesForm(t *testing.T, st store.Store, changes map[string]string) url.
 	return form
 }
 
-// A save that gives SGT a role makes its holders Cav members at once: one
+// A save that gives SGT a role makes its holders Cav members at once. One
 // who joins a hub owns the channel it spawns.
 func TestRankRolesSaveMakesARoleHolderOwnTheirSpawnedChannel(t *testing.T) {
 	w := newTestWorld(t, testHub())
@@ -178,7 +178,7 @@ func TestRankRolesSaveMakesARoleHolderOwnTheirSpawnedChannel(t *testing.T) {
 	}
 }
 
-// A save that gives RCT a role shows on the Foxhole page at once: an
+// A save that gives RCT a role shows on the Foxhole page at once. An
 // Internal holder of that role shows it as their rank role, unflagged.
 func TestRankRolesSaveShowsOnTheFoxholePageAtOnce(t *testing.T) {
 	w := newFoxholeWorld(t)
@@ -257,9 +257,9 @@ func TestRankRolesSaveRefusesARoleNoRankMayHave(t *testing.T) {
 }
 
 // A save that changes one rank keeps each other rank's role as stored, an
-// unavailable one included: a role the code holds for CPT that the guild
-// lacks, while nothing is saved, and once saved, a role saved for CPL and
-// deleted in Discord since.
+// unavailable one included. While nothing is saved that covers the role
+// the code holds for CPT, which the guild lacks. Once saved it covers a
+// role saved for CPL and deleted in Discord since.
 func TestRankRolesSaveKeepsAnotherRanksUnavailableRole(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
@@ -416,7 +416,7 @@ func TestRankRolesSaveWritesOneEntryTheSectionShows(t *testing.T) {
 }
 
 // A save from a Rank roles form loaded before another save of the rank
-// roles is stale: refused with a 409 and nothing written. So is a save that
+// roles is stale, so it is refused with a 409 and writes nothing. So is a save that
 // changes no rank's role, with its own refusal.
 func TestRankRolesSaveRefusesAStaleFormAndAnUnchangedSave(t *testing.T) {
 	w := newTestWorld(t, testHub())

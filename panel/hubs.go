@@ -508,7 +508,7 @@ func savedFromQuery(raw string) string {
 }
 
 // settingsSavedAddress is the address a save of a Settings page form lands
-// on: the Settings page, opened at the form, naming the form and the
+// on. It opens the Settings page at the form and names the form and the
 // version the save left its record at, as savedAddress does on the hub
 // page.
 func settingsSavedAddress(form string, version int64) string {

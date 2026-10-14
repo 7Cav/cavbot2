@@ -616,7 +616,7 @@ func setRecordingRoles(ctx context.Context, tx *sql.Tx, guildID string, roles Re
 }
 
 // GetRankRoles implements Store. No row is no roles at version 0, not an
-// error: no panel admin has saved the rank roles.
+// error, since no panel admin has saved the rank roles.
 func (p *Postgres) GetRankRoles(ctx context.Context, guildID string) (RankRoles, error) {
 	var (
 		raw []byte

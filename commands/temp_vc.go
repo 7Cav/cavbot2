@@ -692,9 +692,9 @@ func (m *sessionTempVCManager) MemberRoles(g *discordgo.Guild) map[string][]stri
 // CachedMemberRoles takes State.RLock once and scans State.Guilds itself, as
 // VoiceStates does and for the same reasons. A member update writes over
 // the cached member under State.Lock, so each role list is copied while the
-// lock is held. The member list comes first: a GUILD_MEMBER_UPDATE keeps it
-// current, where a voice state's member is as of that member's last voice
-// event.
+// lock is held. The member list comes first, since a GUILD_MEMBER_UPDATE
+// keeps it current. A voice state's member is as of that member's last
+// voice event.
 func (m *sessionTempVCManager) CachedMemberRoles(guildID string) map[string][]string {
 	st := m.s.State
 	st.RLock()
@@ -867,8 +867,8 @@ type TempVC struct {
 
 // NewTempVC builds the runtime state around a manager and a store and loads
 // the guild's hubs, guild-wide moderator roles and rank roles from the
-// store. A store that cannot read them is an error: the bot must not run with no hubs when
-// hubs exist. StartTempVC is the production caller; the panel's tests build a
+// store. A store that cannot read them is an error, since the bot must not
+// run with no hubs when hubs exist. StartTempVC is the production caller; the panel's tests build a
 // runtime over their own fakes through it, so a register through the panel
 // can be followed by a join.
 func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, error) {
@@ -1043,8 +1043,9 @@ func (t *TempVC) rankHandoverPlanLocked(ladder RankLadder, roles map[string][]st
 	return plan
 }
 
-// RankLadder returns the rank ladder with the rank roles in force now: the
-// guild's saved ones, or the role IDs in code while nothing is saved.
+// RankLadder returns the rank ladder with the rank roles in force now. Those
+// are the guild's saved ones, or the role IDs in code while nothing is
+// saved.
 // Everything that asks whether a member is a Cav member reads it here, so
 // a save reaches /record start and the panel's Foxhole page at once.
 func (t *TempVC) RankLadder() RankLadder {
@@ -1264,7 +1265,7 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 		return
 	}
 
-	// The payload's members' roles are copied before anything waits: the
+	// The payload's members' roles are copied before anything waits. This
 	// read is the sweep's only look at the payload's slices, under the
 	// state's lock, and the copy shares nothing with them.
 	memberRoles := t.mgr.MemberRoles(g.Guild)
@@ -1330,7 +1331,7 @@ func (t *TempVC) handleGuildCreate(g *discordgo.GuildCreate) {
 	protected := t.keepSpawnsInFlightLocked()
 	// pending is left alone: a create in flight across a reconnect still
 	// holds its number and releases it itself. memberRoles is kept and
-	// overlaid from the payload's copy: roles learnt before the reconnect
+	// overlaid from the payload's copy. Roles learnt before the reconnect
 	// still rank a member, and a handover at the sweep needs no REST fetch.
 	for userID, roles := range memberRoles {
 		t.memberRoles[userID] = roles
@@ -1729,10 +1730,10 @@ func (t *TempVC) electPresentOwnerLocked(channelID string, snap VoiceSnapshot, r
 	return electOwner(present, rank)
 }
 
-// electOwner picks the occupant the handover rule names: the highest rank
-// on the ladder, as rank gives it, then the lowest user ID. An occupant
-// holding no rank role, or whose roles no payload has carried, is not a
-// candidate. Empty means there is none.
+// electOwner picks the occupant the handover rule names. That is the
+// highest rank on the ladder, as rankOf gives it, then the lowest user ID.
+// An occupant holding no rank role, or whose roles no payload has carried,
+// is not a candidate. Empty means there is none.
 func electOwner(occ map[string]struct{}, rankOf func(userID string) int) string {
 	best, bestRank := "", noRankIndex
 	for uid := range occ {

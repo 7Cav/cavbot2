@@ -513,7 +513,7 @@ func (p *Panel) withPanelAdmin(next func(http.ResponseWriter, *http.Request, ses
 	return p.withAccess(func(a access) bool { return a.panelAdmin }, next)
 }
 
-// withSettingsPage is the gate the Settings page sits behind: this
+// withSettingsPage is the gate the Settings page sits behind. This
 // request's group check must find a panel admin. Anyone else gets the
 // no-access page at the page's address, a page load included, where the
 // hub page sends them on to the page they land on.

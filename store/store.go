@@ -111,7 +111,7 @@ type RecordingRoles struct {
 
 // RankRoles is a guild's rank roles (GLOSSARY.md, Rank role): the role that
 // counts as each rank on the rank ladder, saved for the whole ladder at
-// once (#680). The store never reads the ladder: it keeps what a save gives
+// once (#680). The store never reads the ladder. It keeps what a save gives
 // it.
 type RankRoles struct {
 	// Roles maps each rank's abbreviation to its rank role's ID, empty for a
@@ -502,8 +502,8 @@ type Store interface {
 	SaveRankRoles(ctx context.Context, guildID string, roles RankRoles, entry ChangeLogEntry) error
 	// ListRankRoleChanges returns at most limit rank roles saves, the
 	// entries with action ChangeRankRoles that reference no hub, newest
-	// first in append order: the panel's rank roles section reading its
-	// own.
+	// first in append order. The panel's rank roles section reads its own
+	// through it.
 	ListRankRoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
 
 	// StartRecording writes a running recording's row and returns it with

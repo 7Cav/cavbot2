@@ -11,8 +11,8 @@ import (
 // their order live in code, tempVCRankRoles. The role that counts as each
 // rank is a panel admin's to set on the Settings page, and a guild with
 // nothing saved uses the role IDs in code. Everything that asks whether a
-// member is a Cav member, or how senior, reads one RankLadder: the handover
-// rule, /record start and the panel's Foxhole page.
+// member is a Cav member, or how senior, reads one RankLadder. The
+// handover rule, /record start and the panel's Foxhole page all do.
 
 // errRankRoleDeleted is the identity of a deleted rank role's event in
 // Sentry. Every member holding it stops counting as a Cav member, and only a
@@ -27,7 +27,7 @@ type Rank struct {
 }
 
 // RankLadder is the rank ladder with the rank role each rank has, most
-// senior first. It never changes once built: a save builds another, so a
+// senior first. It never changes once built. A save builds another, so a
 // reader may keep one and share it.
 type RankLadder struct {
 	ranks []Rank
@@ -62,9 +62,10 @@ func NewRankLadder(roles map[string]string) RankLadder {
 	return newRankLadder(func(rr rankRole) string { return roles[rr.abbrev] })
 }
 
-// RankLadderOf is the ladder a guild's stored rank roles give: the role IDs
-// in code while nothing is saved, at version 0, and the saved roles from
-// the first save on, so the code's IDs never apply to that guild again.
+// RankLadderOf is the ladder a guild's stored rank roles give. While
+// nothing is saved, at version 0, that is the role IDs in code. From the
+// first save on it is the saved roles, and the code's IDs never apply to
+// that guild again.
 func RankLadderOf(saved store.RankRoles) RankLadder {
 	if saved.Version == 0 {
 		return DefaultRankLadder()
@@ -78,7 +79,7 @@ func (l RankLadder) Ranks() []Rank {
 }
 
 // Roles returns each rank's rank role by abbreviation, empty for a rank
-// with none: what a save of the ladder stores.
+// with none. A save of the ladder stores this map.
 func (l RankLadder) Roles() map[string]string {
 	roles := make(map[string]string, len(l.ranks))
 	for _, r := range l.ranks {
@@ -100,7 +101,7 @@ func (l RankLadder) seniority(roleIDs []string) int {
 }
 
 // SeniorRankRole returns the most senior rank role among the role IDs, and
-// false when none of them is a rank role: the member is no Cav member.
+// false when none of them is a rank role, so their holder is no Cav member.
 func (l RankLadder) SeniorRankRole(roleIDs []string) (string, bool) {
 	i := l.seniority(roleIDs)
 	if i == noRankIndex {

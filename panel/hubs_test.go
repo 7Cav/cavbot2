@@ -491,8 +491,8 @@ func (f *fakeDiscord) addRoles(roles ...*discordgo.Role) {
 }
 
 // CachedMemberRoles answers from the member list's members, whatever its
-// status, each role list a copy: the state cache holds members while the
-// list is still arriving.
+// status, each role list a copy, since the state cache holds members while
+// the list is still arriving.
 func (f *fakeDiscord) CachedMemberRoles(string) map[string][]string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

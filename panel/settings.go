@@ -14,7 +14,7 @@ import (
 	"github.com/7cav/cavbot2/utils"
 )
 
-// The Settings page (#680, GLOSSARY.md): where a panel admin sets the
+// The Settings page (#680, GLOSSARY.md) is where a panel admin sets the
 // guild-wide settings that belong to no hub. Its Rank roles section sets the
 // role that counts as each rank on the rank ladder.
 
@@ -44,7 +44,7 @@ func (v settingsView) RefusalFor(form string) *fieldError {
 }
 
 // rankRoleOptions is the ID of the one list of roles every rank's picker
-// offers, rendered once for the section rather than once per rank: the
+// offers. The section renders it once rather than once per rank, since the
 // live guild is near Discord's cap of 250 roles.
 const rankRoleOptions = "rank-role-options"
 
@@ -67,8 +67,8 @@ type rankRolesPage struct {
 	Saved bool
 }
 
-// rankRolesPreviewView is a preview as the section shows it: its counts,
-// and what its Confirm posts, the form as the save posted it.
+// rankRolesPreviewView is a preview as the section shows it. It holds the
+// counts, and the form as the save posted it, which its Confirm posts.
 type rankRolesPreviewView struct {
 	rankRolesPreview
 	Version string
@@ -81,8 +81,9 @@ type rankRoleFieldValue struct {
 	RoleID string
 }
 
-// rankRow is one rank's row: its abbreviation, its picker, holding its
-// rank role as the one tag, or none, and how many members hold that role.
+// rankRow is one rank's row. It has the rank's abbreviation, a picker
+// holding its rank role as the one tag or none, and how many members hold
+// that role.
 type rankRow struct {
 	Abbrev string
 	Picker pickerView
@@ -95,7 +96,7 @@ type rankRow struct {
 }
 
 // holdersUnknown is a row's holder count while the member list has not
-// loaded: unknown, never 0.
+// loaded, never 0.
 const holdersUnknown = "unknown"
 
 // roleHolders counts the members of a complete member list holding each
@@ -113,7 +114,7 @@ func roleHolders(list commands.MemberListSnapshot) map[string]int {
 	return counts
 }
 
-// rankRoleSet is a rank's role as a picker's set: the one ID, or none.
+// rankRoleSet is a rank's role as a picker's set, the one ID or none.
 func rankRoleSet(id string) []string {
 	if id == "" {
 		return nil
@@ -188,9 +189,9 @@ func (p *Panel) renderSettingsRefused(w http.ResponseWriter, r *http.Request, se
 	p.renderSettings(w, r, sess, status, req)
 }
 
-// settings reads everything the Settings page renders from, once: the
-// guild from the gateway state, then the rank roles and the recording roles
-// from the store.
+// settings reads everything the Settings page renders from, once. It reads
+// the guild from the gateway state, then the rank roles and the recording
+// roles from the store.
 func (s *hubService) settings(ctx context.Context, req pageRequest) (settingsView, error) {
 	guild, err := s.readGuild(ctx)
 	if err != nil {
@@ -207,9 +208,10 @@ func (s *hubService) settings(ctx context.Context, req pageRequest) (settingsVie
 }
 
 // rankRolesSection builds the Rank roles section from the guild read and
-// the store: each rank with the rank role the stored ladder gives it, the
-// role IDs in code while nothing is saved, or the form as posted back after
-// a refusal with the version postedBackVersion gives it.
+// the store. Each rank shows the rank role the stored ladder gives it, the
+// role IDs in code while nothing is saved. After a refusal or with a
+// preview it shows the form as posted, with the version postedBackVersion
+// gives it.
 func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req pageRequest) (rankRolesPage, error) {
 	stored, err := s.deps.Store.GetRankRoles(ctx, s.deps.GuildID)
 	if err != nil {
@@ -253,9 +255,9 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 	return page, nil
 }
 
-// rankRolesInput is the Rank roles section's form as posted: the ladder's
-// version when the section loaded, and each rank's role, empty for none.
-// Confirmed is the post of a preview's Confirm.
+// rankRolesInput is the Rank roles section's form as posted. It carries the
+// ladder's version when the section loaded and each rank's role, empty for
+// none. Confirmed marks the post of a preview's Confirm.
 type rankRolesInput struct {
 	Version   string
 	Roles     map[string]string
@@ -269,7 +271,7 @@ var errStaleRankRoles = &fieldError{kind: refusalStale, Message: "Someone saved 
 	"Your roles are still in the form. Save again to keep them."}
 
 // errRankRolesUnchanged is the refusal a rank roles save gets when it posts
-// the ladder as stored: a save that would change nothing says so and writes
+// the ladder as stored. A save that would change nothing says so and writes
 // nothing, not even a change log entry.
 var errRankRolesUnchanged = &fieldError{kind: refusalUnchanged, Message: "Those are already the rank roles, so nothing was saved."}
 
@@ -277,8 +279,8 @@ var errRankRolesUnchanged = &fieldError{kind: refusalUnchanged, Message: "Those 
 const fieldConfirm = "confirm"
 
 // rankRolesPreview is what a rank roles save that may stop members counting
-// as Cav members waits on (GLOSSARY.md, Preview): how many stop, and how
-// many spawned channels change owner. A handover is final, so an owner who
+// as Cav members waits on (GLOSSARY.md, Preview). It counts the members who
+// stop and the spawned channels that change owner. A handover is final, so an owner who
 // loses a channel to a mistaken save does not get it back when the admin
 // saves again.
 type rankRolesPreview struct {
@@ -293,7 +295,7 @@ type rankRolesPreview struct {
 }
 
 // DroppedValue is the member count as the preview's data-dropped carries
-// it: the number, or unknown.
+// it, the number or unknown.
 func (p rankRolesPreview) DroppedValue() string {
 	if !p.Counted {
 		return "unknown"
@@ -305,8 +307,8 @@ func (p rankRolesPreview) DroppedValue() string {
 // name it, and the ID of its heading.
 const formRankRoles = "rank-roles"
 
-// rankRolesInputOf reads the Rank roles section's form off a parsed post:
-// one role, or none, for each rank of the ladder.
+// rankRolesInputOf reads the Rank roles section's form off a parsed post,
+// one role or none for each rank of the ladder.
 func rankRolesInputOf(r *http.Request) rankRolesInput {
 	in := rankRolesInput{Version: r.PostForm.Get(fieldVersion), Roles: map[string]string{}, Confirmed: r.PostForm.Get(fieldConfirm) != ""}
 	for _, rank := range commands.DefaultRankLadder().Ranks() {
@@ -315,9 +317,9 @@ func rankRolesInputOf(r *http.Request) rankRolesInput {
 	return in
 }
 
-// saveRankRoles is POST /rank-roles: one service call, then a redirect to
-// the Settings page, opened at the Rank roles section, where the saved
-// roles show and the section says it saved. A refusal answers with the page
+// saveRankRoles is POST /rank-roles. It makes one service call, then
+// redirects to the Settings page, opened at the Rank roles section, where
+// the saved roles show and the section says it saved. A refusal answers with the page
 // again and the refusal on the section, and a save that waits on its
 // preview with the page showing it above the form as posted.
 func (p *Panel) saveRankRoles(w http.ResponseWriter, r *http.Request, sess session) {
@@ -344,10 +346,10 @@ func (p *Panel) saveRankRoles(w http.ResponseWriter, r *http.Request, sess sessi
 	http.Redirect(w, r, settingsSavedAddress(formRankRoles, saved.Version), http.StatusSeeOther)
 }
 
-// setRankRoles saves the rank roles: it writes the whole ladder's roles
+// setRankRoles saves the rank roles. It writes the whole ladder's roles
 // with a change log entry under no hub naming each rank whose role changed,
-// in one store write, then applies the ladder to the runtime, so every test
-// of whether a member is a Cav member reads it at once. It returns the
+// in one store write. Then it applies the ladder to the runtime, so every
+// test of whether a member is a Cav member reads it at once. It returns the
 // roles as stored. A section loaded at a version the rank roles are no
 // longer at is refused first, as errStaleRankRoles, before the guild read.
 // A valid ladder that is the stored one is refused as
@@ -470,8 +472,9 @@ func acceptedRankRoles(posted map[string]string, guild guildInfo, stored command
 	return commands.NewRankLadder(posted), nil
 }
 
-// diffRankRoles is a rank roles save's diff: each rank whose role changed,
-// under its form field, with its role before and after, null for none.
+// diffRankRoles is a rank roles save's diff. It holds each rank whose role
+// changed, under its form field, with its role before and after, null for
+// none.
 func diffRankRoles(before, after commands.RankLadder) diff {
 	d := diff{}
 	was, is := before.Roles(), after.Roles()
@@ -483,7 +486,7 @@ func diffRankRoles(before, after commands.RankLadder) diff {
 	return d
 }
 
-// roleOrNull is a rank's role as a diff records it: its ID, or null for a
+// roleOrNull is a rank's role as a diff records it, its ID or null for a
 // rank with none.
 func roleOrNull(id string) any {
 	if id == "" {

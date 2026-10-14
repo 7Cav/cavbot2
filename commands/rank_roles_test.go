@@ -36,7 +36,7 @@ func saveRankRoles(t *testing.T, st store.Store, roles map[string]string) {
 	}
 }
 
-// A runtime started over saved rank roles ranks by them: a hub joiner
+// A runtime started over saved rank roles ranks by them. A hub joiner
 // holding the role saved for SGT owns the channel they spawn, and one
 // holding only the ladder's SGT role in code, which the save cleared, owns
 // nothing.
@@ -58,7 +58,7 @@ func TestTempVCStartedOverSavedRankRolesRanksJoinersByThem(t *testing.T) {
 }
 
 // ladderWithout is the ladder with the role IDs in code, but with no rank
-// role for the ranks given: a save that cleared them.
+// role for the ranks given, as a save that cleared them leaves it.
 func ladderWithout(abbrevs ...string) RankLadder {
 	roles := make(map[string]string, len(tempVCRankRoles))
 	for _, rr := range tempVCRankRoles {
@@ -71,8 +71,8 @@ func ladderWithout(abbrevs ...string) RankLadder {
 }
 
 // A save that clears SGT hands each channel an SGT owns over at once, by
-// the handover rule: to the highest-ranked occupant who still holds a rank
-// role, or to nobody when none does. Each handover writes the channel's row
+// the handover rule. The highest-ranked occupant who still holds a rank
+// role takes it, or nobody when none does. Each handover writes the channel's row
 // and posts one ownership notice, naming the new owner or nobody.
 func TestTempVCSaveClearingARankHandsItsOwnersChannelsOver(t *testing.T) {
 	fake := newFakeTempVCManager()
@@ -114,7 +114,7 @@ func TestTempVCSaveClearingARankHandsItsOwnersChannelsOver(t *testing.T) {
 
 // A save that makes a role SGT's rank role gives a channel with no owner to
 // its occupant who holds that role, with no join or leave. The occupant took
-// the role in Discord after joining, so their join carried none of it: the
+// the role in Discord after joining, so their join carried none of it. The
 // save reads their roles from the gateway state cache.
 func TestTempVCSaveSettingARankGivesAnOwnerlessChannelToItsHolder(t *testing.T) {
 	fake := newFakeTempVCManager()
@@ -233,7 +233,7 @@ func TestStartupChecksCaptureRankRolesMissingFromTheGuild(t *testing.T) {
 }
 
 // A save that gives SGT a role makes its holders Cav members to /record
-// start at once: a recording role holder holding it is refused as no Cav
+// start at once. A recording role holder holding it is refused as no Cav
 // member before the save, and starts a recording after it.
 func TestRecordStartReadsTheSavedRankRoles(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
