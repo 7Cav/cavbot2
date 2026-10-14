@@ -230,12 +230,8 @@ func TestCancelReturnsToWhereRemoveWasPressed(t *testing.T) {
 			id := storedHubID(t, w.st, "hub-1")
 			doc := parseHTML(t, w.b.get(tc.page(id)))
 			preview := removePreviewBlock(t, parseHTML(t, pressRemove(t, w.b, doc, tc.scope(t, doc, id))))
-			cancel := findElement(preview, "a", "data-field", "cancel")
-			if cancel == nil {
-				t.Fatal("the remove preview has no Cancel")
-			}
 
-			res := w.b.get(attrOf(cancel, "href"))
+			res := w.b.get(cancelAddress(t, preview))
 
 			if res.StatusCode != http.StatusOK {
 				t.Fatalf("status = %d, want 200", res.StatusCode)
