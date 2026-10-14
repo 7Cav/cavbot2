@@ -47,6 +47,11 @@ type foxholeView struct {
 	// search it lists.
 	Filters []filterLink
 	Holders []holderRow
+	// HiddenSelection is the selected holders the search or the filter
+	// leaves out of Holders. The holder list shows them ticked in a group at
+	// its top, so the selection bar acts on nobody the manager can't see.
+	// Empty in the no-role view, which shows nothing of the selection.
+	HiddenSelection []holderRow
 	// NoHolders is nobody holding a Foxhole role at this load, whatever the
 	// search. The empty list then says so, instead of saying no holder
 	// matches.
@@ -534,8 +539,9 @@ type foxholeRequest struct {
 	// none.
 	Remove commands.FoxholeRole
 	// Selection is the IDs of the members the address names as selected,
-	// each once: the holder list ticks their rows, and the remove preview,
-	// when Remove names a role, is of them.
+	// each once: the holder list ticks their rows, showing those the search
+	// or the filter hides at its top, and the remove preview, when Remove
+	// names a role, is of them.
 	Selection []string
 	// ActionRefusal is the refusal of the Foxhole action this page answers,
 	// nil for none.
@@ -784,8 +790,9 @@ func (h holderRow) adding(role commands.FoxholeRole) holderRow {
 // list, through the manager seam, never Discord's API. The store comes
 // first, so a page load that waits out its time budget for the list still
 // has what it shows in the list's place. The holder list keeps the holders
-// who match the search and the filter named. A member list that isn't
-// complete holds no members, and the page has no holder list.
+// who match the search and the filter named, below the selected holders
+// they leave out. A member list that isn't complete holds no members, and
+// the page has no holder list.
 func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeView, error) {
 	records, err := s.records(ctx)
 	if err != nil {
@@ -1052,6 +1059,8 @@ func (s foxholeService) lists(list commands.MemberListSnapshot, records map[stri
 		Href: listAddress(req.Query, filterNoRole), On: noRoleView}
 	if noRoleView {
 		view.NoRoleView, view.NoRoleRows, view.NoNotes = true, matchedNoRole, len(noRole) == 0
+	} else {
+		view.HiddenSelection = hiddenSelection(holders, view.Holders, req)
 	}
 	// A search runs in the view the manager is on, and says under its
 	// results when the other view matches too, whether or not this one did.
@@ -1065,20 +1074,33 @@ func (s foxholeService) lists(list commands.MemberListSnapshot, records map[stri
 	return view
 }
 
-// matching keeps the rows that hold the request's search, each with its
-// Edit link and ticked when the request selects it, in display name order.
+// matching keeps the rows that hold the request's search, as listed.
 func matching(rows []holderRow, req foxholeRequest) []holderRow {
 	search := strings.ToLower(strings.TrimSpace(req.Query))
-	var matched []holderRow
+	return listed(rows, req, func(row holderRow) bool { return row.matches(search) })
+}
+
+// hiddenSelection keeps the holders the request selects that shown, the
+// rows the search and the filter keep, leaves out, as listed.
+func hiddenSelection(holders, shown []holderRow, req foxholeRequest) []holderRow {
+	return listed(holders, req, func(row holderRow) bool {
+		return slices.Contains(req.Selection, row.ID) && !slices.ContainsFunc(shown, func(h holderRow) bool { return h.ID == row.ID })
+	})
+}
+
+// listed keeps the rows keep reports, each with its Edit link and ticked
+// when the request selects it, in display name order.
+func listed(rows []holderRow, req foxholeRequest, keep func(holderRow) bool) []holderRow {
+	var out []holderRow
 	for _, row := range rows {
-		if row.matches(search) {
+		if keep(row) {
 			row.EditHref = noteAddress(req.Query, req.Filter, row.ID)
 			row.Selected = slices.Contains(req.Selection, row.ID)
-			matched = append(matched, row)
+			out = append(out, row)
 		}
 	}
-	slices.SortFunc(matched, func(a, b holderRow) int { return byName(a.DisplayName, a.ID, b.DisplayName, b.ID) })
-	return matched
+	slices.SortFunc(out, func(a, b holderRow) int { return byName(a.DisplayName, a.ID, b.DisplayName, b.ID) })
+	return out
 }
 
 // byName orders two members the way the page lists them: by display name,

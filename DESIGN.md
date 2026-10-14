@@ -266,7 +266,7 @@ A grey ladder from near-black to near-white, one gold accent, and a red and a gr
 - **Header Charcoal** (#1b1b1b): block headers and the picker's search list.
 - **Raised Charcoal** (#212121): the selected rail item, a rail item, a holder row or the folded report line under the pointer, a picker tag, the sticky selection bar, the search option Enter would choose.
 - **Seam** (#2b2b2b): block edges and the dividers between rows.
-- **Strong Seam** (#353535): the line above a submit row, a plain tag's edge, the divider before the no-role view link.
+- **Strong Seam** (#353535): the line above a submit row, a plain tag's edge, the divider before the no-role view link, and the rule under the holder list's group of selected members a search or a filter hides.
 - **Bevel Highlight** (#4d4d4d): the one-pixel highlight along a block header's top, a disabled button's edge, a role with no colour.
 - **Field Edge** (#6b6b6b): the border of every text field and search box, and the stripe of a neutral notice. The panel added it, since the forum's edges miss AA's 3:1. It measures 3.52:1 on the ground and 3.02:1 on Raised Charcoal.
 - **Bright Text** (#f1f1f1): headings, names, values, field input. 15.87:1 on a block.
@@ -384,7 +384,7 @@ Forum-issue hardware: plain, bevelled, sure.
 - **Filter links.** A row of plain Body Grey links, 6px by 10px. The current one turns bright with a 2px gold underline. The Foxhole filters and the Recordings page's "Yours / Every recording" switch both use them.
 
 ### Tables
-The hub list and the Foxhole holder list fill their block. Cells are 14px with 12px by 14px padding, tighter on the Foxhole list at 7px by 12px. A 1px Seam divides the rows. Headers are 12px uppercase Muted Grey, numbers sit right-aligned in tabular figures, and a hovered Foxhole row steps to Raised Charcoal.
+The hub list and the Foxhole holder list fill their block. Cells are 14px with 12px by 14px padding, tighter on the Foxhole list at 7px by 12px. A 1px Seam divides the rows. Headers are 12px uppercase Muted Grey, numbers sit right-aligned in tabular figures, and a hovered Foxhole row steps to Raised Charcoal. Selected members that a search or a filter hides head the holder list in a group of their own. A header row spanning the table names the group, and a Strong Seam closes it off from the matching rows.
 
 ### Tag picker
 The selected set shows as picker tags. A small add button opens a search box with a list hanging below it, in Header Charcoal behind a Field Edge border. The list shows ten rows, then scrolls inside itself, so a guild with thousands of roles never grows the page. Focus stays in the box, so the row Enter would choose draws its own inset gold ring on Raised Charcoal.

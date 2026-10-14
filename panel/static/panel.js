@@ -782,6 +782,64 @@
   refresh();
 })();
 
+/* Carrying the Foxhole selection, issue #701 under ADR 0013. The selection
+   lasts through a search, a filter link, a visit to the no-role view and
+   back, and a Reload. Each control marked data-keeps-selection opens the
+   page again in a view. When one is followed, the script gives its address
+   a member value for each member selected, and the page that opens ticks
+   them, with those the search or the filter hides in a group at the top of
+   the holder list. In the holder list the selected members are the boxes
+   ticked. A page with no selection bar, as the no-role view, has no boxes,
+   so they are the members its own address names. The server renders each
+   control naming no member, so without script the selection drops, and a
+   box a manager unticked never comes back ticked. */
+(function () {
+  'use strict';
+
+  // selection is the IDs of the members selected now.
+  function selection() {
+    if (document.querySelector('[data-field="selection"]')) {
+      return Array.from(document.querySelectorAll('[data-select]:checked')).map(function (box) { return box.value; });
+    }
+    return new URLSearchParams(location.search).getAll('member');
+  }
+
+  // carry is the address with the selection in place of the members it
+  // names. It keeps the address's fragment, which names the list.
+  function carry(address) {
+    var url = new URL(address, location.href);
+    url.searchParams.delete('member');
+    selection().forEach(function (id) { url.searchParams.append('member', id); });
+    return url.href;
+  }
+
+  // carryOnPress gives a marked link the selection as it is pressed, so a
+  // link opened in a new tab carries it too.
+  function carryOnPress(e) {
+    var link = e.target.closest('a[data-keeps-selection]');
+    if (link) { link.href = carry(link.href); }
+  }
+  document.addEventListener('click', carryOnPress);
+  document.addEventListener('auxclick', carryOnPress);
+
+  // The search sends its form's fields as the address, and the script adds
+  // one for each member selected. It first drops any it added on an earlier
+  // submit, since Back can bring the page back with them.
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (!form.matches('form[data-keeps-selection]')) { return; }
+    form.querySelectorAll('[data-carried]').forEach(function (field) { field.remove(); });
+    selection().forEach(function (id) {
+      var field = document.createElement('input');
+      field.type = 'hidden';
+      field.name = 'member';
+      field.value = id;
+      field.setAttribute('data-carried', '');
+      form.appendChild(field);
+    });
+  });
+})();
+
 /* The member list notice on the Foxhole page (spec #434, ADR 0013). While
    the member list is partial a notice stands in the holder list's place,
    with a Reload link to the page in the view it shows, or, on a page that
@@ -950,6 +1008,7 @@
     line.className = 'block-row';
     line.setAttribute('data-field', 'reload-changes');
     link.href = address;
+    link.setAttribute('data-keeps-selection', '');
     link.textContent = 'Reload the page to see the changes';
     line.appendChild(link);
     report = document.adoptNode(report);

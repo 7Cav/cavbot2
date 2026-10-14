@@ -273,6 +273,10 @@ h2[tabindex="-1"]:focus { outline: none; }
 .fx-list td { padding: 7px 12px; }
 /* A row under the pointer lifts to --surface-3, 1.11:1 on the block. */
 .fx-list tbody tr:hover td { background: var(--surface-3); }
+/* The selected members a search or a filter hides head the holder list in
+   a row group of their own. A Strong Seam sets them off from the rows the
+   search and the filter match. */
+.fx-selhidden + tbody tr:first-child td { border-top: 1px solid var(--line-2); }
 .fx-member { min-width: 220px; }
 .fx-name { color: var(--text-hi); font-weight: 500; }
 .fx-user { font-size: 13px; color: var(--text-mute); }
