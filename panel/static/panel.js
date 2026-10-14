@@ -1001,13 +1001,15 @@
    scrolls to it and focuses it, with or without script, and a keyboard or
    screen reader user starts at the block rather than at the top of the
    page. The script focuses it too, on load and when the fragment changes,
-   for a browser that only scrolls. */
+   for a browser that only scrolls. Cancel on a Retry pressed in a Foxhole
+   change log entry names that entry's summary line instead, which takes
+   focus with no mark. */
 (function () {
   'use strict';
 
   function land() {
-    var heading = location.hash.length > 1 && document.getElementById(location.hash.slice(1));
-    if (heading && heading.matches('[tabindex="-1"]')) { heading.focus({ preventScroll: true }); }
+    var target = location.hash.length > 1 && document.getElementById(location.hash.slice(1));
+    if (target && target.matches('[tabindex="-1"], summary')) { target.focus({ preventScroll: true }); }
   }
 
   land();

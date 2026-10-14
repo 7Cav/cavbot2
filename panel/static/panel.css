@@ -105,9 +105,11 @@ img { max-width: 100%; }
 .block-row + .block-row { border-top: 1px solid var(--line); }
 .submit-row { padding: 12px 14px; background: rgba(23,23,23,.9); border-top: 1px solid var(--line-2); border-radius: 0 0 var(--radius) var(--radius); }
 /* A block a page opens at, by its own ID or its heading's in the address's
-   fragment: a little room above it. The heading takes focus only from the
-   landing, never from Tab, so it draws no ring. */
-.block[id], .block-header[id] { scroll-margin-top: 12px; }
+   fragment, or a change log entry by its summary line's: a little room
+   above it. The heading takes focus only from the landing, never from Tab,
+   so it draws no ring. A summary line is in the tab order, and keeps its
+   ring. */
+.block[id], .block-header[id], .change-head[id] { scroll-margin-top: 12px; }
 h2[tabindex="-1"]:focus { outline: none; }
 
 /* A danger confirm: the preview a removal waits on. The forum draws no such
