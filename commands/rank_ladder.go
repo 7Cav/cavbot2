@@ -77,6 +77,16 @@ func (l RankLadder) Ranks() []Rank {
 	return slices.Clone(l.ranks)
 }
 
+// Roles returns each rank's rank role by abbreviation, empty for a rank
+// with none: what a save of the ladder stores.
+func (l RankLadder) Roles() map[string]string {
+	roles := make(map[string]string, len(l.ranks))
+	for _, r := range l.ranks {
+		roles[r.Abbrev] = r.RoleID
+	}
+	return roles
+}
+
 // seniority is the ladder place of the most senior rank role among the role
 // IDs, or noRankIndex when none of them is a rank role.
 func (l RankLadder) seniority(roleIDs []string) int {

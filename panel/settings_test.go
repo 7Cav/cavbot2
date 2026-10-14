@@ -1,10 +1,15 @@
 package panel
 
 import (
+	"context"
 	"net/http"
+	"net/url"
+	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/7cav/cavbot2/commands"
+	"github.com/7cav/cavbot2/store"
 	"github.com/bwmarrin/discordgo"
 	"golang.org/x/net/html"
 )
@@ -122,5 +127,74 @@ func TestRankRolesSectionShowsTheLadderInCodeWithNothingSaved(t *testing.T) {
 		if got, _ := attrValue(inputs[0], "data-unavailable"); got != want {
 			t.Errorf("rank %s role is marked data-unavailable=%q, want %q", rank.Abbrev, got, want)
 		}
+	}
+}
+
+// storedRankRoles reads the rank roles back through the store, the read the
+// runtime makes at startup.
+func storedRankRoles(t *testing.T, st store.Store) store.RankRoles {
+	t.Helper()
+	roles, err := st.GetRankRoles(context.Background(), testGuildID)
+	if err != nil {
+		t.Fatalf("GetRankRoles: %v", err)
+	}
+	return roles
+}
+
+// rankRolesForm is the Rank roles section's form as a page loaded now posts
+// it, with the changes given made: each rank's role as the stored ladder
+// gives it, a change's role in its rank's place, and no role for a change
+// to empty.
+func rankRolesForm(t *testing.T, st store.Store, changes map[string]string) url.Values {
+	t.Helper()
+	stored := storedRankRoles(t, st)
+	form := url.Values{"version": {strconv.FormatInt(stored.Version, 10)}}
+	for _, rank := range commands.RankLadderOf(stored).Ranks() {
+		id := rank.RoleID
+		if changed, ok := changes[rank.Abbrev]; ok {
+			id = changed
+		}
+		if id != "" {
+			form.Set(rankRoleField(rank.Abbrev), id)
+		}
+	}
+	return form
+}
+
+// A save that gives SGT a role makes its holders Cav members at once: one
+// who joins a hub owns the channel it spawns.
+func TestRankRolesSaveMakesARoleHolderOwnTheirSpawnedChannel(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+
+	res := w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": "role-hq"}))
+
+	assertRedirect(t, res, settingsPath)
+	w.joinAs("user-hq", "hub-1", "role-hq")
+	w.joinAs("user-hq", "spawn-1", "role-hq")
+	if owner, _ := w.runtime.Owner("spawn-1"); owner != "user-hq" {
+		t.Errorf("Owner(spawn-1) = %q, want user-hq, who holds the role saved for SGT", owner)
+	}
+}
+
+// A save that gives RCT a role shows on the Foxhole page at once: an
+// Internal holder of that role shows it as their rank role, unflagged.
+func TestRankRolesSaveShowsOnTheFoxholePageAtOnce(t *testing.T) {
+	w := newFoxholeWorld(t)
+	w.discord.addRoles(&discordgo.Role{ID: "role-recruit", Name: "Recruit"})
+	w.discord.editMember(memberAsh.ID, func(m *commands.ListedMember) { m.RoleIDs = append(m.RoleIDs, "role-recruit") })
+	admin := secondBrowser(t, w)
+
+	assertRedirect(t, admin.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"RCT": "role-recruit"})), settingsPath)
+
+	row := holderRows(t, parseHTML(t, w.b.get(foxholePath)))[memberAsh.ID]
+	if row == nil {
+		t.Fatalf("no holder row for %s", memberAsh.ID)
+	}
+	if got := fieldText(t, row, "rank_role"); got != "Recruit" {
+		t.Errorf("Ash's rank role = %q, want Recruit, the role saved for RCT", got)
+	}
+	if flags := valuesOf(row, "data-flag"); slices.Contains(flags, "no-rank-role") {
+		t.Errorf("Ash's row is flagged %v, want no no-rank-role flag", flags)
 	}
 }

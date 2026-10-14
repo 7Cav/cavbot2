@@ -226,13 +226,6 @@ var tempVCRankRoles = []rankRole{
 // a var.)
 var noRankIndex = len(tempVCRankRoles)
 
-// SeniorRankRole returns the most senior rank role among the role IDs, by
-// the rank ladder with the role IDs in code, and false when none of them is
-// a rank role. The panel's Foxhole page shows it.
-func SeniorRankRole(roleIDs []string) (string, bool) {
-	return DefaultRankLadder().SeniorRankRole(roleIDs)
-}
-
 // GuildMemberRoles reads a GUILD_CREATE guild's members into a user ID to
 // role IDs map, the guild's member list first and the members its voice
 // states carry second. Every role list is a copy, so it keeps no reference

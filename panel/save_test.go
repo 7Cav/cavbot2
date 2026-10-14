@@ -641,6 +641,7 @@ type savedState struct {
 	Hubs      []store.Hub
 	Roles     store.GuildModeratorRoles
 	Recording store.RecordingRoles
+	Ranks     store.RankRoles
 	Entries   map[int64][]store.ChangeLogEntry
 }
 
@@ -653,7 +654,7 @@ func readSavedState(t *testing.T, st store.Store) savedState {
 	if err != nil {
 		t.Fatalf("GetGuildModeratorRoles: %v", err)
 	}
-	state := savedState{Hubs: hubs, Roles: roles, Recording: storedRecordingRoles(t, st),
+	state := savedState{Hubs: hubs, Roles: roles, Recording: storedRecordingRoles(t, st), Ranks: storedRankRoles(t, st),
 		Entries: map[int64][]store.ChangeLogEntry{0: storedChangeLog(t, st, 0)}}
 	for _, h := range hubs {
 		state.Entries[h.ID] = storedChangeLog(t, st, h.ID)

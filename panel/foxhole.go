@@ -481,6 +481,9 @@ type foxholeService struct {
 	manager commands.TempVCManager
 	store   store.Store
 	actions *commands.FoxholeRuntime
+	// ranks is the temp VC runtime, whose rank ladder the holder list ranks
+	// members by, so a save of the rank roles shows on the page at once.
+	ranks   *commands.TempVC
 	guildID string
 }
 
@@ -701,11 +704,13 @@ func (h holderRow) matches(search string) bool {
 
 // foxholeGuild is what the page reads from one snapshot of the guild's
 // roles: the Foxhole roles' IDs, found by exact name as the commands find
-// them, and every role's name by ID.
+// them, and every role's name by ID. It also holds the rank ladder the
+// holder rows are ranked by, read at the same time.
 type foxholeGuild struct {
 	internalID string
 	externalID string
 	roleNames  map[string]string
+	ladder     commands.RankLadder
 }
 
 // foxholeGuildOf reads the Foxhole roles from the guild's roles, through
@@ -714,7 +719,7 @@ func (s foxholeService) foxholeGuildOf() foxholeGuild {
 	guild := s.manager.GuildData(s.guildID)
 	ids := commands.FoxholeRoleIDs(guild)
 	g := foxholeGuild{internalID: ids[commands.FoxholeInternal], externalID: ids[commands.FoxholeExternal],
-		roleNames: make(map[string]string, len(guild.Roles))}
+		roleNames: make(map[string]string, len(guild.Roles)), ladder: s.ranks.RankLadder()}
 	for _, r := range guild.Roles {
 		g.roleNames[r.ID] = r.Name
 	}
@@ -733,7 +738,7 @@ func (g foxholeGuild) rowOf(mem commands.ListedMember, rec store.FoxholeRecord) 
 		Approved:    rec.Approved,
 		Note:        rec.Note,
 	}
-	if rank, ok := commands.SeniorRankRole(mem.RoleIDs); ok {
+	if rank, ok := g.ladder.SeniorRankRole(mem.RoleIDs); ok {
 		row.RankRole = cmp.Or(g.roleNames[rank], rank)
 	}
 	row.NoRankRole = (row.Internal || row.Approved.Internal) && row.RankRole == ""

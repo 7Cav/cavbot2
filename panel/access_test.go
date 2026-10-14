@@ -102,9 +102,9 @@ func TestSignedInVisitorCanGoBackToTheForum(t *testing.T) {
 	}
 }
 
-// settingsSaveCases is a case for each save the hub page posts: a hub's
-// create, register, update and remove, the guild-wide moderator roles and
-// the recording roles.
+// settingsSaveCases is a case for each save the hub page and the Settings
+// page post: a hub's create, register, update and remove, the guild-wide
+// moderator roles, the recording roles and the rank roles.
 // Each reads the path it posts to and its form off a store that holds
 // testHub.
 var settingsSaveCases = []struct {
@@ -145,6 +145,13 @@ var settingsSaveCases = []struct {
 		name: "recording roles",
 		path: func(*testing.T, store.Store) string { return "/recording-roles" },
 		form: func(t *testing.T, st store.Store) url.Values { return recordingRolesForm(t, st, "role-hq") },
+	},
+	{
+		name: "rank roles",
+		path: func(*testing.T, store.Store) string { return "/rank-roles" },
+		form: func(t *testing.T, st store.Store) url.Values {
+			return rankRolesForm(t, st, map[string]string{"SGT": "role-hq"})
+		},
 	},
 }
 

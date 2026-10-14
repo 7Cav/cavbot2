@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/7cav/cavbot2/commands"
+	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
 )
 
@@ -126,4 +128,93 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo) (ran
 	}
 	page.Options = rolePicker("", "", guild, nil, nil).Candidates
 	return page, nil
+}
+
+// rankRolesInput is the Rank roles section's form as posted: the ladder's
+// version when the section loaded, and each rank's role, empty for none.
+type rankRolesInput struct {
+	Version string
+	Roles   map[string]string
+}
+
+// formRankRoles is the Rank roles section's form, as a refusal and a save
+// name it, and the ID of its heading.
+const formRankRoles = "rank-roles"
+
+// rankRolesInputOf reads the Rank roles section's form off a parsed post:
+// one role, or none, for each rank of the ladder.
+func rankRolesInputOf(r *http.Request) rankRolesInput {
+	in := rankRolesInput{Version: r.PostForm.Get(fieldVersion), Roles: map[string]string{}}
+	for _, rank := range commands.DefaultRankLadder().Ranks() {
+		in.Roles[rank.Abbrev] = strings.TrimSpace(r.PostForm.Get(rankRoleField(rank.Abbrev)))
+	}
+	return in
+}
+
+// saveRankRoles is POST /rank-roles: one service call, then a redirect to
+// the Settings page, opened at the Rank roles section.
+func (p *Panel) saveRankRoles(w http.ResponseWriter, r *http.Request, sess session) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "the form could not be read", http.StatusBadRequest)
+		return
+	}
+	ctx, hubs := p.saving(r)
+	saved, err := hubs.setRankRoles(ctx, rankRolesInputOf(r), sess.actor())
+	if err != nil {
+		p.saveFailed(w, sess, "rank roles save", settingsPath, err)
+		return
+	}
+	utils.Info("Panel rank roles saved", "roles", saved.Roles, "username", sess.username, "forum_user_id", sess.userID)
+	http.Redirect(w, r, settingsPath+"#"+formRankRoles, http.StatusSeeOther)
+}
+
+// setRankRoles saves the rank roles: it writes the whole ladder's roles
+// with a change log entry under no hub naming each rank whose role changed,
+// in one store write, then applies the ladder to the runtime, so every test
+// of whether a member is a Cav member reads it at once. It returns the
+// roles as stored.
+func (s *hubService) setRankRoles(ctx context.Context, in rankRolesInput, by actor) (store.RankRoles, error) {
+	unlock, err := s.lockSave(ctx)
+	if err != nil {
+		return store.RankRoles{}, err
+	}
+	defer unlock()
+	stored, err := s.deps.Store.GetRankRoles(ctx, s.deps.GuildID)
+	if err != nil {
+		return store.RankRoles{}, fmt.Errorf("%s: %w", rankRolesRead, err)
+	}
+	before, after := commands.RankLadderOf(stored), commands.NewRankLadder(in.Roles)
+	entry, err := changeEntry(store.ChangeRankRoles, diffRankRoles(before, after), by)
+	if err != nil {
+		return store.RankRoles{}, err
+	}
+	saved := store.RankRoles{Roles: after.Roles(), Version: stored.Version}
+	if err := s.deps.Store.SaveRankRoles(ctx, s.deps.GuildID, saved, entry); err != nil {
+		return store.RankRoles{}, fmt.Errorf("write rank roles: %w", err)
+	}
+	s.deps.Runtime.ApplyRankRoles(after)
+	saved.Version++
+	return saved, nil
+}
+
+// diffRankRoles is a rank roles save's diff: each rank whose role changed,
+// under its form field, with its role before and after, null for none.
+func diffRankRoles(before, after commands.RankLadder) diff {
+	d := diff{}
+	was, is := before.Roles(), after.Roles()
+	for abbrev, id := range is {
+		if was[abbrev] != id {
+			d[rankRoleField(abbrev)] = change{Before: roleOrNull(was[abbrev]), After: roleOrNull(id)}
+		}
+	}
+	return d
+}
+
+// roleOrNull is a rank's role as a diff records it: its ID, or null for a
+// rank with none.
+func roleOrNull(id string) any {
+	if id == "" {
+		return nil
+	}
+	return id
 }
