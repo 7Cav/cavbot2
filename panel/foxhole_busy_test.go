@@ -163,40 +163,6 @@ func landReopen(t *testing.T, w *testWorld, doc, block *html.Node) (*html.Node, 
 	return landing(t, w.b, target, res)
 }
 
-// press presses a link or a form's button the way a browser does with no
-// script: it follows the link, or submits the form that owns the button,
-// with the button's own formaction and formmethod where it has them. It
-// returns the address the press sent the browser to and the answer.
-func press(t *testing.T, b *browser, doc, control *html.Node) (string, *http.Response) {
-	t.Helper()
-	switch control.Data {
-	case "a":
-		href := attrOf(control, "href")
-		return href, b.get(href)
-	case "button":
-		var form *html.Node
-		eachElement(doc, func(n *html.Node) {
-			if form == nil && n.Data == "form" && ownedBy(control, n) {
-				form = n
-			}
-		})
-		if form == nil {
-			t.Fatal("the button belongs to no form")
-		}
-		fields := formFields(doc, form)
-		if name := attrOf(control, "name"); name != "" {
-			fields.Set(name, attrOf(control, "value"))
-		}
-		action := cmp.Or(attrOf(control, "formaction"), attrOf(form, "action"))
-		if strings.EqualFold(cmp.Or(attrOf(control, "formmethod"), attrOf(form, "method")), http.MethodPost) {
-			return action, b.postForm(action, fields)
-		}
-		return action, b.getForm(action, fields)
-	}
-	t.Fatalf("the control is a <%s>, no link or button", control.Data)
-	return "", nil
-}
-
 // markersOf reads the attribute key of the block with the data-field
 // marker given, failing the test when the page has no such block.
 func markersOf(t *testing.T, doc *html.Node, field string, keys ...string) []string {
@@ -349,10 +315,10 @@ func TestABusyPreviewOpenedAgainWhileTheActionRunsReopensOnceItEnds(t *testing.T
 			w := newFoxholeWorld(t)
 			doc, block, held := openBusy(t, w, r.busyPreview)
 			want := r.same(t, doc)
-			still := pressReopen(t, w, doc, block)
+			stillBusy := pressReopen(t, w, doc, block)
 			held.release()
 
-			reopened := pressReopen(t, w, still, pendingBlock(t, still, r.block))
+			reopened := pressReopen(t, w, stillBusy, pendingBlock(t, stillBusy, r.block))
 
 			if !enabledConfirm(pendingBlock(t, reopened, r.block)) {
 				t.Error("the reopened preview's Confirm is missing or off once the action ended, want it on")

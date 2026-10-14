@@ -2,6 +2,7 @@ package panel
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -383,6 +384,40 @@ func (b *browser) getForm(action string, fields url.Values) *http.Response {
 func (b *browser) postForm(target string, form url.Values) *http.Response {
 	b.t.Helper()
 	return b.do(http.MethodPost, target, http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}, strings.NewReader(form.Encode()))
+}
+
+// press presses a link or a form's button the way a browser does with no
+// script: it follows the link, or submits the form that owns the button,
+// with the button's own formaction and formmethod where it has them. It
+// returns the address the press sent the browser to and the answer.
+func press(t *testing.T, b *browser, doc, control *html.Node) (string, *http.Response) {
+	t.Helper()
+	switch control.Data {
+	case "a":
+		href := attrOf(control, "href")
+		return href, b.get(href)
+	case "button":
+		var form *html.Node
+		eachElement(doc, func(n *html.Node) {
+			if form == nil && n.Data == "form" && ownedBy(control, n) {
+				form = n
+			}
+		})
+		if form == nil {
+			t.Fatal("the button belongs to no form")
+		}
+		fields := formFields(doc, form)
+		if name := attrOf(control, "name"); name != "" {
+			fields.Set(name, attrOf(control, "value"))
+		}
+		action := cmp.Or(attrOf(control, "formaction"), attrOf(form, "action"))
+		if strings.EqualFold(cmp.Or(attrOf(control, "formmethod"), attrOf(form, "method")), http.MethodPost) {
+			return action, b.postForm(action, fields)
+		}
+		return action, b.getForm(action, fields)
+	}
+	t.Fatalf("the control is a <%s>, no link or button", control.Data)
+	return "", nil
 }
 
 // landing follows an answer to a control whose address is control the way
