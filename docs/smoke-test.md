@@ -58,7 +58,16 @@ the run, `up` names it, and `go run ./tools/smoke down` stops it from
 anywhere. Start every bot through the tool, so the lock covers it.
 `go run ./tools/smoke help` lists the commands and flags.
 
-Done when `up` prints `ready` and the build, such as `smoke-09dccef`.
+The ready block's `recorders` line counts the recorders that connected. A
+check needs one for each channel it records at the same time. The `mixes`
+line says whether the bot can build a mix. When your list has a recording
+check and those lines say it can't run, set up what the first-run note under
+"When `up` fails" lists, then `down` and `up` again. If you can't,
+write the check down as unreachable, with the line as its reason.
+`go run ./tools/smoke status` shows the same lines while the run is up.
+
+Done when `up` prints `ready` and the build, such as `smoke-09dccef`, and
+every recording check on your list can run or has its reason.
 
 ## 3. Run each check
 
@@ -154,4 +163,14 @@ removes the label too.
 | Any other exit during startup | Use the README's troubleshooting table |
 
 A first run needs the README's setup steps 1 to 3: a test guild, a bot invited
-to it, and a filled-in `.env` at the main checkout's root.
+to it, and a filled-in `.env` at the main checkout's root. Recording checks
+also need:
+
+- A recorder application invited to the test guild, with its token in
+  `RECORDER_TOKENS`. The README's
+  [Recorder applications](../README.md#recorder-applications) section sets one
+  up.
+- A second recorder, for checks that record two channels at once.
+- ffmpeg with the libopus encoder on the `PATH` the bot starts with.
+  `ffmpeg -hide_banner -encoders | grep libopus` shows whether a build has it.
+  `up --env PATH=<dir>:$PATH` points the bot at one in `<dir>`.

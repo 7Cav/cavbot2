@@ -52,6 +52,8 @@ type runState struct {
 	PanelURL   string    `json:"panel_url"`
 	ForumURL   string    `json:"forum_url,omitempty"`
 	ManagedDB  bool      `json:"managed_db"`
+	// The supervisor sets Recording once the bot is ready.
+	Recording *recordingReport `json:"recording,omitempty"`
 }
 
 type statePaths struct{ dir string }
@@ -280,6 +282,9 @@ type supervisor struct {
 	botExited bool
 	// logDone closes once the bot's output is all in the bot log.
 	logDone chan struct{}
+	// report gets its mix verdict before the bot starts, and its recorders
+	// from the bot's output until the bot is ready.
+	report recordingReport
 }
 
 func (s *supervisor) logf(format string, args ...any) {
@@ -343,6 +348,8 @@ func (s *supervisor) run(ctx context.Context) error {
 	if ready != nil {
 		select {
 		case <-ready:
+			report := s.report
+			s.st.Recording = &report
 			s.announce()
 			s.st.State = stateReady
 			s.save()
@@ -393,7 +400,7 @@ func (s *supervisor) start(ctx context.Context) (<-chan struct{}, error) {
 		return nil, err
 	}
 	effective := func(key string) string {
-		if v, ok := extraValue(s.opts.extra, key); ok {
+		if v, ok := envValue(s.opts.extra, key); ok {
 			return v
 		}
 		return vals[key]
@@ -428,7 +435,7 @@ func (s *supervisor) start(ctx context.Context) (<-chan struct{}, error) {
 		}
 	}
 
-	dsn, ownDSN := extraValue(s.opts.extra, "BOT_DB_DSN")
+	dsn, ownDSN := envValue(s.opts.extra, "BOT_DB_DSN")
 	if !ownDSN {
 		if err := ensurePostgres(ctx, s.opts.freshDB, s.logf); err != nil {
 			return nil, err
@@ -460,15 +467,18 @@ func (s *supervisor) start(ctx context.Context) (<-chan struct{}, error) {
 		go func() { _ = s.forum.Serve(ln) }()
 		s.logf("fake forum listening on %s", forumBrowserURL)
 	}
+	env := botEnv(os.Environ(), vals, smokeOverrides(s.opts.forum, dsn), s.opts.extra)
+	s.report.Mix = checkMix(ctx, env)
 	if ctx.Err() != nil {
 		return nil, nil
 	}
-	return s.startBot(botEnv(os.Environ(), vals, smokeOverrides(s.opts.forum, dsn), s.opts.extra))
+	return s.startBot(env)
 }
 
 // startBot launches the built bot in the state directory, which has no .env,
 // so the environment is its whole configuration. Its output goes to the bot
-// log, and the returned channel closes at "Bot is now running".
+// log, and the returned channel closes at "Bot is now running". The bot
+// reports every recorder before that line, so the tally is whole by then.
 func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
 	logFile, err := os.Create(s.paths.botLog())
 	if err != nil {
@@ -509,6 +519,9 @@ func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
 		for sc.Scan() {
 			line := sc.Text()
 			_, _ = fmt.Fprintln(logFile, line)
+			if !closed {
+				s.report.Recorders.count(line)
+			}
 			switch {
 			case strings.Contains(line, "Panel listening"):
 				panel = true
@@ -533,6 +546,8 @@ func (s *supervisor) announce() {
 	} else {
 		s.logf("  sign-in     the 7cav.us forum")
 	}
+	s.logf("  recorders   %s", s.st.Recording.Recorders.line())
+	s.logf("  mixes       %s", s.st.Recording.Mix.line())
 	s.logf("  bot log     %s", s.paths.botLog())
 	s.logf("  stop with   go run ./tools/smoke down")
 }
@@ -791,6 +806,10 @@ func cmdStatus(args []string) error {
 	fmt.Printf("  panel          %s\n", st.PanelURL)
 	if st.ForumURL != "" {
 		fmt.Printf("  fake forum     %s\n", st.ForumURL)
+	}
+	if st.Recording != nil {
+		fmt.Printf("  recorders      %s\n", st.Recording.Recorders.line())
+		fmt.Printf("  mixes          %s\n", st.Recording.Mix.line())
 	}
 	fmt.Printf("  bot log        %s\n", p.botLog())
 	fmt.Printf("  supervisor log %s\n", p.supervisorLog())
