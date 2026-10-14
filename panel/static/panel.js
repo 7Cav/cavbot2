@@ -240,7 +240,11 @@
    nothing else on the page reloads. A save that took the member off the
    page, as an empty note on a member with no role does, drops the row and
    swaps in the list's counts instead. A refused save swaps in the form the
-   server sends back, with its reason and the text typed. */
+   server sends back, with its reason and the text typed. Any other answer
+   that isn't OK and didn't come through a redirect swaps in a fresh form
+   with the text typed and the sentence the answer carries. An answer with
+   no sentence, or none at all, gets a line saying the panel didn't confirm
+   the save. */
 (function () {
   'use strict';
 
@@ -351,15 +355,38 @@
     if (search) { search.focus(); }
   }
 
-  // failed tells the manager in the form that the save didn't reach the
-  // panel, and leaves the form open with their text.
-  function failed(form) {
-    var line = form.querySelector('[data-note-failed]') || document.createElement('div');
-    line.setAttribute('data-note-failed', '');
+  // unconfirmed is what the row says when no answer came, or one that
+  // carries no page, as the plain-text answer to a failure inside the
+  // panel. Either can come after the note was stored.
+  var unconfirmed = 'The panel didn\'t confirm this save. Reload the page to see whether the note saved.';
+
+  // said is the sentence a page carries when it answered a save in place
+  // and isn't the Foxhole page, as the no-access page and the error pages
+  // do. It is null for an answer with no page.
+  function said(doc) {
+    var line = doc.querySelector('main [data-field="no-access"], main[data-failure] p');
+    return line && line.textContent.trim();
+  }
+
+  // failed puts a fresh form in the cell holding what the manager posted,
+  // with the sentence where a refused note's sits. The note box names it
+  // first in its description, and mount focuses the box, so a screen
+  // reader reads the sentence out as focus lands. Save posts the note
+  // again, and Cancel puts back what the cell showed before.
+  function failed(cell, form, restore, sentence) {
+    var fresh = template.content.firstElementChild.cloneNode(true);
+    new FormData(form).forEach(function (value, name) {
+      fresh.querySelector('[name="' + name + '"]').value = value;
+    });
+    var line = document.createElement('div');
+    line.id = 'note-failed';
     line.className = 'note fx-noterefusal';
-    line.textContent = 'The note could not be saved. Reload the page and try again.';
-    form.prepend(line);
-    form.querySelector('[type="submit"]').disabled = false;
+    line.textContent = sentence;
+    fresh.prepend(line);
+    var input = fresh.querySelector('[data-note-input]');
+    var described = input.getAttribute('aria-describedby');
+    input.setAttribute('aria-describedby', described ? line.id + ' ' + described : line.id);
+    mount(cell, fresh, restore);
   }
 
   function save(cell, form, restore) {
@@ -372,11 +399,14 @@
     fetch(form.action, { method: 'POST', body: new URLSearchParams(new FormData(form)), credentials: 'same-origin' })
       .then(function (res) {
         return res.text().then(function (text) {
-          return { ok: res.ok, doc: new DOMParser().parseFromString(text, 'text/html') };
+          return { ok: res.ok, redirected: res.redirected, doc: new DOMParser().parseFromString(text, 'text/html') };
         });
       })
       .then(function (answer) {
-        if (!answer.ok) {
+        // A save that went through redirects to the Foxhole page. When
+        // that page fails to load, the answer holds none of what follows,
+        // and the note shows as saved.
+        if (!answer.ok && !answer.redirected) {
           var refused = answer.doc.querySelector('main [data-field="note-form"]');
           if (refused) {
             // The refused form loads the note as it stands now, which may
@@ -388,7 +418,7 @@
               show(cell, current);
             });
           } else {
-            failed(form);
+            failed(cell, form, restore, said(answer.doc) || unconfirmed);
           }
           return;
         }
@@ -408,7 +438,7 @@
         restore();
         show(cell, input.value.trim());
       })
-      .catch(function () { failed(form); });
+      .catch(function () { failed(cell, form, restore, unconfirmed); });
   }
 
   document.addEventListener('click', function (e) {

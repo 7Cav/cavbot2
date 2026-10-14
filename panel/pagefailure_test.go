@@ -162,6 +162,13 @@ func (s *ctxStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]st
 	return s.Fake.ListFoxholeRecords(ctx, guildID)
 }
 
+func (s *ctxStore) ListFoxholeChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	if err := s.gate(ctx, "ListFoxholeChanges"); err != nil {
+		return nil, err
+	}
+	return s.Fake.ListFoxholeChanges(ctx, limit)
+}
+
 func (s *ctxStore) SetFoxholeRecordNames(ctx context.Context, guildID string, names []store.MemberNames) error {
 	if err := s.gate(ctx, "SetFoxholeRecordNames"); err != nil {
 		return err

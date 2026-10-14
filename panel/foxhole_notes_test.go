@@ -390,6 +390,30 @@ func TestFoxholePageWhoseStoreReadFailsShowsTheCouldNotLoadPage(t *testing.T) {
 	}
 }
 
+// A note save the server refuses, whose page then fails to load, answers
+// with the error page in place, not a redirect. The page script shows a
+// note as saved when the save's answer came through a redirect, so a
+// redirect here would tell a manager saving from a row that a refused note
+// saved (#685). The change log read fails, which the page makes and the
+// save doesn't.
+func TestARefusedNoteSaveWhosePageFailsAnswersWithTheErrorPageInPlace(t *testing.T) {
+	var st *ctxStore
+	w := newFoxholeWorldWith(t, func(fake store.Store) store.Store {
+		st = &ctxStore{Fake: fake.(*store.Fake)}
+		return st
+	})
+	assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
+	page := openNote(t, w.b, memberDoe.ID)
+	st.failRead("ListFoxholeChanges")
+
+	res := submitNote(t, w.b, page, "discharged 12 Sep")
+
+	if res.StatusCode < http.StatusBadRequest {
+		t.Fatalf("status = %d, want the error page's own, not a success or a redirect", res.StatusCode)
+	}
+	failureOf(t, parseHTML(t, res))
+}
+
 // A note save whose typed note is the note the store holds changes
 // nothing. It is refused with the unchanged reason, the note form stays
 // open holding the text typed, and the store and the change log are as
