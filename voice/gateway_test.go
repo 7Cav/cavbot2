@@ -255,18 +255,23 @@ func (a *channelAPI) RoundTrip(r *http.Request) (*http.Response, error) {
 // it opens again, since a 4022 leaves disgo's gateway holding what it
 // resumes with and a rejoin keeps the session ID, while one that never
 // opened identifies. Revisit the rule if a disgo bump adds a way to drop a
-// session. sent hears every op sent on the gateway. A silent gateway never
-// answers: its Open tells pending, then waits out its context.
+// session. Like disgo's, it refuses an open while it holds a connection,
+// from the start of an open until the open fails or the gateway closes.
+// sent hears every op sent on the gateway. A silent gateway never answers,
+// nor does a voice server that answers rejects: Open tells pending, then
+// waits out its context.
 type answeringGateway struct {
 	disgovoice.Gateway
-	dave    godave.Session
-	onEvent disgovoice.EventHandlerFunc
-	onClose disgovoice.CloseHandlerFunc
-	opened  chan<- gatewayOpen
-	sent    func(disgovoice.Opcode)
-	opens   atomic.Int32
-	silent  bool
-	pending chan<- struct{}
+	dave      godave.Session
+	onEvent   disgovoice.EventHandlerFunc
+	onClose   disgovoice.CloseHandlerFunc
+	opened    chan<- gatewayOpen
+	sent      func(disgovoice.Opcode)
+	answers   func(endpoint string) bool
+	opens     atomic.Int32
+	connected atomic.Bool
+	silent    bool
+	pending   chan<- struct{}
 }
 
 // gatewayOpen is one gateway's Open: the state it opened with, and whether
@@ -278,10 +283,14 @@ type gatewayOpen struct {
 }
 
 func (g *answeringGateway) Open(ctx context.Context, state disgovoice.State) error {
+	if !g.connected.CompareAndSwap(false, true) {
+		return discord.ErrGatewayAlreadyConnected
+	}
 	identified := g.opens.Add(1) == 1
-	if g.silent {
+	if g.silent || !g.answers(state.Endpoint) {
 		g.pending <- struct{}{}
 		<-ctx.Done()
+		g.connected.Store(false)
 		return ctx.Err()
 	}
 	g.dave.OnSelectProtocolAck(callDAVEVersion)
@@ -299,7 +308,7 @@ func (g *answeringGateway) Send(_ context.Context, op disgovoice.Opcode, _ disgo
 	return nil
 }
 
-func (g *answeringGateway) Close() {}
+func (g *answeringGateway) Close() { g.connected.Store(false) }
 
 // callHarness is a recorder's disgo voice connection over answering
 // gateways, with Discord played around it, and a dave-go DAVE session as
@@ -314,10 +323,12 @@ type callHarness struct {
 	// down does.
 	down atomic.Bool
 	// silent has every gateway built from then on never answer, as a voice
-	// server that doesn't. pending hears each open such a gateway leaves
+	// server that doesn't. pending hears each open a gateway leaves
 	// waiting.
 	silent  atomic.Bool
 	pending chan struct{}
+	// answerDelay is how long Discord takes to answer a join.
+	answerDelay atomic.Int64
 
 	opened chan gatewayOpen
 	// connected is the gateway the recorder is connected through.
@@ -327,12 +338,16 @@ type callHarness struct {
 	updates []voiceUpdate
 	// ops is every op sent on any gateway, in order.
 	ops []disgovoice.Opcode
+	// serving is the voice server serving the call, which Discord names
+	// in its answer to a join, and left the one a 4022 moved it from,
+	// which answers no open since.
+	serving, left string
 }
 
 func newCallHarness(t *testing.T) *callHarness {
 	t.Helper()
 	h := &callHarness{t: t, s: recorderSession(t, &fakeManager{}), api: &channelAPI{t: t},
-		opened: make(chan gatewayOpen, 4), pending: make(chan struct{}, 4)}
+		opened: make(chan gatewayOpen, 64), pending: make(chan struct{}, 64), serving: oldEndpoint}
 	h.s.dg.Client = &http.Client{Transport: h.api}
 	opts := append(h.s.connOpts(h.newGateway),
 		disgovoice.WithConnDaveSessionCreateFunc(session.CreateFunc()),
@@ -344,7 +359,7 @@ func newCallHarness(t *testing.T) *callHarness {
 
 func (h *callHarness) newGateway(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, _ ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
 	return &answeringGateway{dave: dave, onEvent: onEvent, onClose: onClose, opened: h.opened, sent: h.sentOp,
-		silent: h.silent.Load(), pending: h.pending}
+		answers: h.answersAt, silent: h.silent.Load(), pending: h.pending}
 }
 
 // callManager is the recorder session's voice manager over the harness's
@@ -355,6 +370,14 @@ type callManager struct {
 }
 
 func (m callManager) CreateConn(snowflake.ID) disgovoice.Conn { return m.conn }
+
+// answersAt reports whether the voice server at endpoint answers an open:
+// any but the one the call left.
+func (h *callHarness) answersAt(endpoint string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return endpoint != h.left
+}
 
 func (h *callHarness) sentOp(op disgovoice.Opcode) {
 	h.mu.Lock()
@@ -408,11 +431,15 @@ func (h *callHarness) updateVoiceState(ctx context.Context, guildID snowflake.ID
 	return nil
 }
 
-// answer is Discord's answer to the recorder joining a channel: its voice
-// state, and the voice server now serving the call.
+// answer is Discord's answer to the recorder joining a channel, after
+// answerDelay: its voice state, and the voice server now serving the call.
 func (h *callHarness) answer(channelID snowflake.ID) {
+	time.Sleep(time.Duration(h.answerDelay.Load()))
+	h.mu.Lock()
+	serving := h.serving
+	h.mu.Unlock()
 	h.conn.HandleVoiceStateUpdate(recorderVoiceState(channelID))
-	h.conn.HandleVoiceServerUpdate(voiceServer("token-2", newEndpoint))
+	h.conn.HandleVoiceServerUpdate(voiceServer("token-2", serving))
 }
 
 // join sends the events Discord sends once it has let the recorder into the
@@ -439,8 +466,16 @@ func (h *callHarness) waitOpen() gatewayOpen {
 
 // closeCall closes the gateway the recorder is connected through with code,
 // as disgo's gateway hands its close handler the close Discord sent. It
-// returns once disgo has dealt with the close: rejoined, or left.
+// returns once disgo has dealt with the close: rejoined, or left. A 4022
+// ends the call at its voice server, and Discord moves it to newEndpoint.
 func (h *callHarness) closeCall(code int) {
+	if code == disgovoice.GatewayCloseEventCodeCallTerminated.Code {
+		h.mu.Lock()
+		h.left, h.serving = h.serving, newEndpoint
+		h.mu.Unlock()
+	}
+	// disgo's gateway drops its connection before its close handler runs.
+	h.connected.connected.Store(false)
 	h.connected.onClose(h.connected, &websocket.CloseError{Code: code})
 }
 
@@ -624,6 +659,30 @@ func TestRecorderStartsDAVEOverWhenItsSetupStalls(t *testing.T) {
 		if n := h.keyPackagesSent(); n < 2 {
 			t.Errorf("DAVE key packages sent = %d, want a new one after the stall beside the join's", n)
 		}
+		if left := slices.ContainsFunc(h.sent(), func(u voiceUpdate) bool { return u.channelID == nil }); left {
+			t.Errorf("voice state updates = %v, want the recorder never to leave", h.sent())
+		}
+	})
+}
+
+// Stalls follow moves, so Discord can move the call again while the
+// recorder's DAVE setup is stalled, and answer the rejoin only once the
+// stall's 3 s have passed. The recorder follows the call there, and the
+// recording carries on: the recorder never leaves the channel, though
+// disgo gives up on a rejoin after 30 s.
+func TestRecorderFollowsACallThatMovesDuringAStall(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.record(func(Frame) {})
+		defer conn.Leave(context.Background())
+
+		time.Sleep(2500 * time.Millisecond)
+		h.answerDelay.Store(int64(2 * time.Second))
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(32500 * time.Millisecond)
+		synctest.Wait()
+
 		if left := slices.ContainsFunc(h.sent(), func(u voiceUpdate) bool { return u.channelID == nil }); left {
 			t.Errorf("voice state updates = %v, want the recorder never to leave", h.sent())
 		}
