@@ -441,6 +441,43 @@ func noteFormAction(t *testing.T, doc *html.Node) string {
 	return attrOf(form, "action")
 }
 
+// refusedNoteSaves are the four ways the server refuses a note save. Each
+// posts a holder row's note form, which sends the same fields whether
+// script clones it into the row or the Edit link opens it.
+var refusedNoteSaves = []struct {
+	name string
+	// refuse opens a note form through the page and saves it as a browser
+	// with no script does, so the save is refused, and returns the page it
+	// saved from and the answer.
+	refuse func(*testing.T, *testWorld) (*html.Node, *http.Response)
+	// kind is the refusal's data-error kind.
+	kind string
+	// now is the note as the store holds it, which the refusal shows when
+	// its note form is stale, and empty for any other.
+	now string
+}{
+	{"a save that changes nothing", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
+		assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
+		page := openNote(t, w.b, memberDoe.ID)
+		return page, submitNote(t, w.b, page, "discharged 12 Sep")
+	}, refusalUnchanged, ""},
+	{"a form another save got to first", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
+		kept := openNote(t, w.b, memberDoe.ID)
+		assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
+		return kept, submitNote(t, w.b, kept, "rejoined, fine to re-add")
+	}, refusalStale, "discharged 12 Sep"},
+	{"a note started on a member who has since lost their Foxhole role", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
+		page := openNote(t, w.b, memberKestrel.ID)
+		withoutFoxholeRoles(w)
+		return page, submitNote(t, w.b, page, "allied group lead")
+	}, "not-holder", ""},
+	{"a note started while the member list is partial", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
+		page := openNote(t, w.b, memberKestrel.ID)
+		w.discord.setMemberList(arrivingList)
+		return page, submitNote(t, w.b, page, "allied group lead")
+	}, "member-list", ""},
+}
+
 // A refused note save answers with the page, not a redirect, at the address
 // the note form posts to. Without script the page opens at the note block's
 // heading, not at the top far above the form. The refusal note shows under
@@ -448,37 +485,7 @@ func noteFormAction(t *testing.T, doc *html.Node) string {
 // saved as focus lands. PRODUCT.md's Accessibility & Inclusion asks this of
 // every refused save, whatever refused it.
 func TestARefusedNoteSaveLandsOnTheNoteBlock(t *testing.T) {
-	cases := []struct {
-		name string
-		// refuse opens a note form through the page and saves it as a
-		// browser with no script does, so the save is refused, and returns
-		// the page it saved from and the answer.
-		refuse func(*testing.T, *testWorld) (*html.Node, *http.Response)
-		// kind is the refusal's data-error kind.
-		kind string
-	}{
-		{"a save that changes nothing", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
-			assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
-			page := openNote(t, w.b, memberDoe.ID)
-			return page, submitNote(t, w.b, page, "discharged 12 Sep")
-		}, refusalUnchanged},
-		{"a form another save got to first", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
-			kept := openNote(t, w.b, memberDoe.ID)
-			assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
-			return kept, submitNote(t, w.b, kept, "rejoined, fine to re-add")
-		}, refusalStale},
-		{"a note started on a member who has since lost their Foxhole role", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
-			page := openNote(t, w.b, memberKestrel.ID)
-			withoutFoxholeRoles(w)
-			return page, submitNote(t, w.b, page, "allied group lead")
-		}, "not-holder"},
-		{"a note started while the member list is partial", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
-			page := openNote(t, w.b, memberKestrel.ID)
-			w.discord.setMemberList(arrivingList)
-			return page, submitNote(t, w.b, page, "allied group lead")
-		}, "member-list"},
-	}
-	for _, tc := range cases {
+	for _, tc := range refusedNoteSaves {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFoxholeWorld(t)
 			page, res := tc.refuse(t, w)
