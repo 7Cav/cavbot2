@@ -67,7 +67,8 @@ func findLive(n *html.Node, tag, attr, value string) *html.Node {
 }
 
 // submitNote submits the page's note form with text typed in its note box,
-// the way a browser posts a form.
+// the way a browser posts a form, with the address of the page the browser
+// shows as the Referer.
 func submitNote(t *testing.T, b *browser, doc *html.Node, text string) *http.Response {
 	t.Helper()
 	if findLive(doc, "form", "data-field", "note-form") == nil {
@@ -75,7 +76,10 @@ func submitNote(t *testing.T, b *browser, doc *html.Node, text string) *http.Res
 	}
 	fields := formPosts(t, doc, foxholeNotesPath)
 	fields.Set(fieldNote, text)
-	return b.postForm(foxholeNotesPath, fields)
+	return b.do(http.MethodPost, foxholeNotesPath, http.Header{
+		"Content-Type": {"application/x-www-form-urlencoded"},
+		"Referer":      {testBaseURL + b.at},
+	}, strings.NewReader(fields.Encode()))
 }
 
 // noteOf returns the note a holder row shows: the text of its note field,

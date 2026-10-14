@@ -298,6 +298,12 @@ h2[tabindex="-1"]:focus { outline: none; }
 .fx-noterefusal { flex-basis: 100%; margin: 0; }
 .fx-notenow { color: var(--text-hi); }
 .fx-notecancel { font-size: 13px; }
+/* The Sign in again button sits in a row of its own under the line saying
+   the panel session has ended. Under a saved note, outside a note form,
+   the line and the button sit below the note's text. */
+.fx-notesignin { flex-basis: 100%; }
+.fx-note > .note { margin: 8px 0 0; }
+.fx-note > .fx-notesignin { margin-top: 6px; }
 
 /* Approved Foxholers' tags, and the selection bar that approves them: it
    sticks to the top of the window while the holder list scrolls under it.

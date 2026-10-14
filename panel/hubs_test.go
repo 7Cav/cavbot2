@@ -715,6 +715,9 @@ type testWorld struct {
 	// pause is the clock the world's Foxhole actions pause on, in a world
 	// built by newFoxholeWorld.
 	pause *pauseClock
+	// manager is the Foxhole manager the browser signed in as, in a world
+	// built by newFoxholeWorld.
+	manager *forumAccount
 	// clock is the clock the panel runs on.
 	clock *testClock
 	// store is the store the panel was built over, the fake or a wrapper
