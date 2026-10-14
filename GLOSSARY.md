@@ -208,9 +208,14 @@ Foxholer, read from the member list as it stands when the page loads.
 _Avoid_: roster (a unit's roster), member list (the bot's copy of the whole
 guild).
 
+**Selection**:
+The members ticked in the holder list.
+_Avoid_: ticked members, selected set. A picker's selected set is its
+stored items.
+
 **Selection bar**:
-The holder list's buttons that act on the members ticked in it: Approve,
-Clear approval, Remove Internal and Remove External.
+The holder list's buttons that act on the selection: Approve, Clear
+approval, Remove Internal and Remove External.
 _Avoid_: toolbar (the list's search and filters), bulk actions.
 
 **No-role view**:
