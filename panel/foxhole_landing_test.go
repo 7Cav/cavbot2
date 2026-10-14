@@ -3,6 +3,7 @@ package panel
 import (
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"golang.org/x/net/html"
@@ -38,11 +39,37 @@ func namedOnlyIn(t *testing.T, doc, block *html.Node, attr, member string) {
 	}
 }
 
+// The Foxhole page saves the landing tests make as a browser with no script
+// does. Each returns the address of the form it posted and the answer.
+
+// approveThatSkipsKestrel approves Kestrel, who then holds no Foxhole role,
+// with Doe, so the Approve skips Kestrel.
+func approveThatSkipsKestrel(t *testing.T, w *testWorld) (string, *http.Response) {
+	t.Helper()
+	approveThroughThePage(t, w, memberKestrel.ID)
+	withoutFoxholeRoles(w)
+	return foxholeApprovalsPath, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opApprove, memberKestrel.ID, memberDoe.ID)
+}
+
+// clearKestrelsApproval clears the approval Kestrel was given.
+func clearKestrelsApproval(t *testing.T, w *testWorld) (string, *http.Response) {
+	t.Helper()
+	approveThroughThePage(t, w, memberKestrel.ID)
+	return foxholeApprovalsPath, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opClear, memberKestrel.ID)
+}
+
+// clearDoesNoRoleNote clears the note on Doe's no-role row, which takes
+// Doe off the page.
+func clearDoesNoRoleNote(t *testing.T, w *testWorld) (string, *http.Response) {
+	t.Helper()
+	return foxholeNotesPath, submitNote(t, w.b, openNoRoleNote(t, w.b, memberDoe.ID), "")
+}
+
 // A Foxhole page save that sends the manager back to a list lands on that
-// list's block, which sits below the action blocks wherever they stack.
-// A result line the save leaves, naming a member an Approve skipped or one
-// a note clear took off the page, shows in that block and nowhere else on
-// the page.
+// list's heading, in the list's block below the action blocks wherever they
+// stack, so a keyboard or screen reader user starts at the list. A result
+// line the save leaves, naming a member an Approve skipped or one a note
+// clear took off the page, shows in that block and nowhere else on the page.
 func TestAFoxholeSaveLandsOnTheListItWasMadeFrom(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -56,15 +83,8 @@ func TestAFoxholeSaveLandsOnTheListItWasMadeFrom(t *testing.T) {
 		// skipped or as cleared off the page, empty for no such line.
 		skipped, cleared string
 	}{
-		{"an Approve that skips a member", newFoxholeWorld, func(t *testing.T, w *testWorld) (string, *http.Response) {
-			approveThroughThePage(t, w, memberKestrel.ID)
-			withoutFoxholeRoles(w)
-			return foxholeApprovalsPath, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opApprove, memberKestrel.ID, memberDoe.ID)
-		}, "holders", memberKestrel.ID, ""},
-		{"a Clear approval", newFoxholeWorld, func(t *testing.T, w *testWorld) (string, *http.Response) {
-			approveThroughThePage(t, w, memberKestrel.ID)
-			return foxholeApprovalsPath, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opClear, memberKestrel.ID)
-		}, "holders", "", ""},
+		{"an Approve that skips a member", newFoxholeWorld, approveThatSkipsKestrel, "holders", memberKestrel.ID, ""},
+		{"a Clear approval", newFoxholeWorld, clearKestrelsApproval, "holders", "", ""},
 		{"a note saved on a holder", newFoxholeWorld, func(t *testing.T, w *testWorld) (string, *http.Response) {
 			return foxholeNotesPath, submitNote(t, w.b, openNote(t, w.b, memberKestrel.ID), "allied group lead")
 		}, "holders", "", ""},
@@ -74,9 +94,7 @@ func TestAFoxholeSaveLandsOnTheListItWasMadeFrom(t *testing.T) {
 		{"a note saved in the no-role view", newNoRoleWorld, func(t *testing.T, w *testWorld) (string, *http.Response) {
 			return foxholeNotesPath, submitNote(t, w.b, openNoRoleNote(t, w.b, memberDoe.ID), "discharged 12 Sep")
 		}, "no-role", "", ""},
-		{"a note clear that takes a member off the no-role view", newNoRoleWorld, func(t *testing.T, w *testWorld) (string, *http.Response) {
-			return foxholeNotesPath, submitNote(t, w.b, openNoRoleNote(t, w.b, memberDoe.ID), "")
-		}, "no-role", "", memberDoe.ID},
+		{"a note clear that takes a member off the no-role view", newNoRoleWorld, clearDoesNoRoleNote, "no-role", "", memberDoe.ID},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,17 +104,72 @@ func TestAFoxholeSaveLandsOnTheListItWasMadeFrom(t *testing.T) {
 			doc, fragment := landing(t, w.b, control, res)
 
 			block := listBlock(t, doc, tc.block)
-			if target := landedOn(doc, fragment); target == nil || !within(target, block) {
-				t.Fatalf("the save lands at fragment %q, want on the %s block", fragment, tc.block)
-			}
+			landedHeading(t, doc, fragment, block, "the "+tc.block+" list's heading")
+			describedByResolves(t, doc)
 			namedOnlyIn(t, doc, block, "data-skipped", tc.skipped)
 			namedOnlyIn(t, doc, block, "data-cleared", tc.cleared)
 		})
 	}
 }
 
+// A save that lands on a list with a result line makes the line the list
+// heading's description, so a screen reader says who the save skipped, or
+// whose note it cleared, as focus lands, though the line was on the page
+// before any live region could announce it. A save that leaves no result
+// line leaves the heading undescribed.
+func TestAFoxholeSaveResultLineDescribesTheListHeading(t *testing.T) {
+	cases := []struct {
+		name  string
+		world func(*testing.T) *testWorld
+		save  func(*testing.T, *testWorld) (string, *http.Response)
+		// block is the data-field of the list block the save lands on.
+		block string
+		// line finds the result line the heading's description reads, nil
+		// for a save that leaves none.
+		line func(*html.Node) *html.Node
+		// names is text the description carries, such as a member the line
+		// names, empty for none to check.
+		names string
+	}{
+		{"an Approve that skips a member", newFoxholeWorld, approveThatSkipsKestrel, "holders", func(doc *html.Node) *html.Node {
+			return findLive(doc, "", "data-field", "approve-skipped")
+		}, memberKestrel.Username},
+		{"a note clear that takes a member off the no-role view", newNoRoleWorld, clearDoesNoRoleNote, "no-role", func(doc *html.Node) *html.Node {
+			return findLive(doc, "", "data-cleared", memberDoe.ID)
+		}, ""},
+		{"a Clear approval", newFoxholeWorld, clearKestrelsApproval, "holders", nil, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := tc.world(t)
+			control, res := tc.save(t, w)
+
+			doc, fragment := landing(t, w.b, control, res)
+
+			heading := landedHeading(t, doc, fragment, listBlock(t, doc, tc.block), "the "+tc.block+" list's heading")
+			got := accessibleDescription(doc, heading)
+			if tc.line == nil {
+				if got != "" {
+					t.Errorf("the landed heading's description is %q, want none", got)
+				}
+				return
+			}
+			line := tc.line(doc)
+			if line == nil {
+				t.Fatal("the page shows no result line")
+			}
+			if want := announcedText(line); got != want {
+				t.Errorf("the landed heading's description is %q, want the result line, %q", got, want)
+			}
+			if !strings.Contains(got, tc.names) {
+				t.Errorf("the landed heading's description is %q, want it to name %s", got, tc.names)
+			}
+		})
+	}
+}
+
 // The no-script note form's Cancel goes back where its Save does: to the
-// view the form was opened from, at that view's list.
+// view the form was opened from, at that view's list's heading.
 func TestNoteFormCancelLandsOnTheListItWasOpenedFrom(t *testing.T) {
 	w := newNoRoleWorld(t)
 	form := findLive(openNoRoleNote(t, w.b, memberDoe.ID), "form", "data-field", "note-form")
@@ -111,8 +184,51 @@ func TestNoteFormCancelLandsOnTheListItWasOpenedFrom(t *testing.T) {
 
 	doc, fragment := landing(t, w.b, href, w.b.get(href))
 
-	if target := landedOn(doc, fragment); target == nil || !within(target, listBlock(t, doc, "no-role")) {
-		t.Errorf("Cancel lands at fragment %q, want on the no-role block", fragment)
+	landedHeading(t, doc, fragment, listBlock(t, doc, "no-role"), "the no-role list's heading")
+	describedByResolves(t, doc)
+}
+
+// Each link and form that opens a list from the Foxhole page lands on that
+// list's heading: a filter link, the search, the link to the no-role view,
+// and the link at the top of the page that skips past the action blocks.
+func TestFoxholeLinksToAListLandOnItsHeading(t *testing.T) {
+	cases := []struct {
+		name string
+		// open follows the control one way from a fresh load of the page,
+		// and returns the address the control names and the answer.
+		open func(*testing.T, *browser, *html.Node) (string, *http.Response)
+		// block is the data-field of the list block the control opens.
+		block string
+	}{
+		{"a filter link", func(t *testing.T, b *browser, doc *html.Node) (string, *http.Response) {
+			href := attrOf(filterAnchor(t, doc, "internal"), "href")
+			return href, b.get(href)
+		}, "holders"},
+		{"a search", func(t *testing.T, b *browser, doc *html.Node) (string, *http.Response) {
+			return attrOf(findElement(doc, "form", "data-field", "search"), "action"), submitSearch(t, b, doc, "kestrel")
+		}, "holders"},
+		{"the link to the no-role view", func(t *testing.T, b *browser, doc *html.Node) (string, *http.Response) {
+			href := attrOf(noRoleLink(t, doc), "href")
+			return href, b.get(href)
+		}, "no-role"},
+		{"the link past the action blocks", func(t *testing.T, b *browser, doc *html.Node) (string, *http.Response) {
+			jump := findElement(doc, "a", "data-field", "list-jump")
+			if jump == nil {
+				t.Fatal("the page has no link past the action blocks")
+			}
+			return attrOf(jump, "href"), b.get(foxholePath)
+		}, "holders"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newNoRoleWorld(t)
+			control, res := tc.open(t, w.b, parseHTML(t, w.b.get(foxholePath)))
+
+			doc, fragment := landing(t, w.b, control, res)
+
+			landedHeading(t, doc, fragment, listBlock(t, doc, tc.block), "the "+tc.block+" list's heading")
+			describedByResolves(t, doc)
+		})
 	}
 }
 
