@@ -350,6 +350,9 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 		// its entry references, zero for none.
 		checkSaved func(t *testing.T, st store.Store) int64
 		action     store.ChangeAction
+		// landsOn is the page the save redirects to, the hub page when
+		// empty.
+		landsOn string
 	}{
 		{
 			name: "register",
@@ -391,9 +394,10 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 			action: store.ChangeModerators,
 		},
 		{
-			name: "recording roles",
-			path: func(*testing.T, store.Store) string { return "/recording-roles" },
-			form: func(t *testing.T, st store.Store) url.Values { return recordingRolesForm(t, st, "role-hq") },
+			name:    "recording roles",
+			landsOn: settingsPath,
+			path:    func(*testing.T, store.Store) string { return "/recording-roles" },
+			form:    func(t *testing.T, st store.Store) url.Values { return recordingRolesForm(t, st, "role-hq") },
 			checkSaved: func(t *testing.T, st store.Store) int64 {
 				if got := storedRecordingRoles(t, st).RoleIDs; !sameSet(got, []string{"role-hq"}) {
 					t.Errorf("stored recording roles = %v, want role-hq alone", got)
@@ -418,7 +422,7 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 			res := w.b.postFormAndLeave(tc.path(t, fake), tc.form(t, fake), d)
 
 			assertLeft(t, d)
-			assertRedirect(t, res, "/")
+			assertRedirect(t, res, cmp.Or(tc.landsOn, "/"))
 			hubID := tc.checkSaved(t, fake)
 			entries := storedChangeLog(t, fake, hubID)
 			if len(entries) != 1 || entries[0].Action != tc.action {

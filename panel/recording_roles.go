@@ -11,9 +11,9 @@ import (
 )
 
 // The recording roles (#383, GLOSSARY.md): the roles whose holders may start
-// a recording, set once for the guild in the section beside the guild-wide
-// moderator roles. The recording runtime reads them from the store at each
-// start, so a save has nothing running to apply to.
+// a recording, set once for the guild in their section on the Settings page
+// (#680). The recording runtime reads them from the store at each start, so
+// a save has nothing running to apply to.
 
 // recordingRolesInput is the recording roles section's form as posted.
 type recordingRolesInput struct {

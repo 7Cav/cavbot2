@@ -4,6 +4,7 @@
   <p class="desc">The settings here apply to the whole server, not to one hub.</p>
   {{if .Settings.Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Role details on this page may be out of date.</div>{{end}}
   {{template "rank-roles" .Settings}}
+  {{template "recording-roles" .}}
 </main>
 {{end}}
 
@@ -16,6 +17,7 @@
   <form method="post" action="/rank-roles#rank-roles" class="block">
     <h2 class="block-header"{{if not .RankRoles.Preview}} id="rank-roles" tabindex="-1"{{end}}{{if .RefusalFor "rank-roles"}} aria-describedby="refusal"{{end}}>Rank roles</h2>
     {{with .RefusalFor "rank-roles"}}{{template "refusal" .}}{{end}}
+    {{if .RankRoles.Saved}}{{template "saved"}}{{end}}
     {{with .RankRoles}}
     <input type="hidden" name="version" value="{{.Version}}">
     <div class="block-row field-hint" id="rank-roles-hint">A member holding a rank's role counts as a Cav member of that rank. Each rank has one role or none, and a role counts for one rank at most. Holders counts the members holding each rank's saved role.</div>
@@ -61,4 +63,26 @@
       <a class="btn" href="/settings#rank-roles" data-field="cancel">Cancel<span class="visually-hidden"> saving the rank roles</span></a>
     </form>
   </div>
+{{end}}
+
+{{define "recording-roles"}}
+  <section class="recording-roles" data-section="recording-roles">
+  <form method="post" action="/recording-roles#recording-roles" class="block">
+    <h2 class="block-header" id="recording-roles" tabindex="-1"{{if .Settings.RefusalFor "recording-roles"}} aria-describedby="refusal"{{end}}>Recording roles</h2>
+    {{with .Settings.RefusalFor "recording-roles"}}{{template "refusal" .}}{{end}}
+    {{if .Settings.RecordingRoles.Saved}}{{template "saved"}}{{end}}
+    <input type="hidden" name="version" value="{{.Settings.RecordingRoles.Version}}">
+    <div class="block-row">
+      <div class="field" role="group" aria-labelledby="recording-roles-label" aria-describedby="recording-roles-hint">
+        <span class="field-label" id="recording-roles-label">Roles</span>
+        {{template "picker" .Settings.RecordingRoles.Picker}}
+        <span class="field-hint" id="recording-roles-hint">Cav members holding one of these roles can start a recording, and stop one in a channel they are in. With none set, nobody can record.</span>
+      </div>
+    </div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save<span class="visually-hidden"> the recording roles</span></button></div>
+  </form>
+  <div class="block">
+    {{template "changes" .Settings.RecordingRoles.Changes}}
+  </div>
+  </section>
 {{end}}

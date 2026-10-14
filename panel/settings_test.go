@@ -495,3 +495,28 @@ func TestRankRolesSectionCountsEachRolesHolders(t *testing.T) {
 		t.Errorf("SGT holders while the member list loads = %q, want unknown", got)
 	}
 }
+
+// The recording roles section is on the Settings page, and the hub page no
+// longer has it. A save of it lands back on the Settings page, which shows
+// the saved set.
+func TestRecordingRolesSectionMovedToTheSettingsPage(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+
+	if findElement(parseHTML(t, w.b.get("/")), "section", "data-section", "recording-roles") != nil {
+		t.Error("the hub page still has the recording roles section")
+	}
+	form := loadedForm(t, w.b, settingsPath, "/recording-roles")
+	form["recording_roles"] = []string{"role-hq"}
+
+	res := w.b.postForm("/recording-roles", form)
+
+	assertRedirect(t, res, settingsPath)
+	if got := storedRecordingRoles(t, w.st).RoleIDs; !sameSet(got, []string{"role-hq"}) {
+		t.Errorf("stored recording roles = %v, want role-hq", got)
+	}
+	sec := recordingRolesSection(t, parseHTML(t, follow(t, w.b, res)))
+	if got := postedControls(sec, "recording_roles"); !sameSet(got, []string{"role-hq"}) {
+		t.Errorf("the Settings page's recording roles section holds %v, want role-hq", got)
+	}
+}

@@ -360,7 +360,7 @@ var refusedSaves = []refusedSave{
 		name:   "recording roles that change nothing",
 		status: http.StatusUnprocessableEntity,
 		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
-			doc := parseHTML(t, w.b.get("/"))
+			doc := parseHTML(t, w.b.get(settingsPath))
 			return formIn(t, doc, recordingRolesBlock(t, w, doc))
 		},
 		block: recordingRolesBlock,
@@ -369,8 +369,8 @@ var refusedSaves = []refusedSave{
 		name:   "stale recording roles",
 		status: http.StatusConflict,
 		refuse: func(t *testing.T, w *testWorld) (string, url.Values) {
-			doc := parseHTML(t, w.b.get("/"))
-			savedByAnother(t, w, "/", recordingRolesBlock, func(f url.Values) { f.Add(fieldRecordingRoles, "role-mp") })
+			doc := parseHTML(t, w.b.get(settingsPath))
+			savedByAnother(t, w, settingsPath, recordingRolesBlock, func(f url.Values) { f.Add(fieldRecordingRoles, "role-mp") })
 			return formIn(t, doc, recordingRolesBlock(t, w, doc))
 		},
 		block: recordingRolesBlock,
@@ -621,7 +621,7 @@ func TestASaveThatGoesThroughLandsOnWhatItChanged(t *testing.T) {
 			return action, fields
 		}, moderatorsBlock, ""},
 		{"the recording roles", func(t *testing.T, w *testWorld) (string, url.Values) {
-			doc := parseHTML(t, w.b.get("/"))
+			doc := parseHTML(t, w.b.get(settingsPath))
 			action, fields := formIn(t, doc, recordingRolesBlock(t, w, doc))
 			fields.Add(fieldRecordingRoles, "role-mp")
 			return action, fields

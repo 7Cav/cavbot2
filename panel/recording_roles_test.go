@@ -12,10 +12,9 @@ import (
 	"golang.org/x/net/html"
 )
 
-// The recording roles (#383): the section beside the guild-wide moderator
-// roles saves the roles whose holders may record, change-logs each save
-// under no hub, and refuses a stale form, the way the guild-wide section
-// does.
+// The recording roles (#383): the section on the Settings page saves the
+// roles whose holders may record, change-logs each save under no hub, and
+// refuses a stale form, the way the guild-wide moderator section does.
 
 // recordingRolesForm is the recording roles section's form as a page loaded
 // now posts it: the roles, and the version the store holds for the set now.
@@ -41,7 +40,7 @@ func TestRecordingRolesSaveWritesTheSetAndOneEntry(t *testing.T) {
 
 	res := w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp", "role-hq"))
 
-	assertRedirect(t, res, "/")
+	assertRedirect(t, res, settingsPath)
 	if got := storedRecordingRoles(t, w.st).RoleIDs; !sameSet(got, []string{"role-hq", "role-mp"}) {
 		t.Errorf("stored recording roles = %v, want role-hq and role-mp", got)
 	}
@@ -61,7 +60,7 @@ func TestRecordingRolesSaveWritesTheSetAndOneEntry(t *testing.T) {
 		t.Errorf("diff after = %v, want role-hq and role-mp", after)
 	}
 
-	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-hq")), "/")
+	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-hq")), settingsPath)
 
 	entries = storedChangeLog(t, w.st, 0)
 	if len(entries) != 2 {
@@ -95,10 +94,10 @@ func TestStaleRecordingRolesSectionIsRefusedThenItsRenderedSectionSaves(t *testi
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 	b := secondBrowser(t, w)
-	formA := loadedForm(t, w.b, "/", "/recording-roles")
-	formB := loadedForm(t, b, "/", "/recording-roles")
+	formA := loadedForm(t, w.b, settingsPath, "/recording-roles")
+	formB := loadedForm(t, b, settingsPath, "/recording-roles")
 	formA["recording_roles"] = []string{"role-mp"}
-	assertRedirect(t, w.b.postForm("/recording-roles", formA), "/")
+	assertRedirect(t, w.b.postForm("/recording-roles", formA), settingsPath)
 	formB["recording_roles"] = []string{"role-hq"}
 
 	res := b.postForm("/recording-roles", formB)
@@ -117,7 +116,7 @@ func TestStaleRecordingRolesSectionIsRefusedThenItsRenderedSectionSaves(t *testi
 		t.Fatalf("%d entries under no hub, want A's one", len(entries))
 	}
 
-	assertRedirect(t, b.postForm("/recording-roles", formPosts(t, doc, "/recording-roles")), "/")
+	assertRedirect(t, b.postForm("/recording-roles", formPosts(t, doc, "/recording-roles")), settingsPath)
 
 	entries := storedChangeLog(t, w.st, 0)
 	if len(entries) != 2 {
@@ -163,7 +162,7 @@ func TestRecordingRolesSaveWhoseSetChangesBeforeItsWriteIsStale(t *testing.T) {
 func TestRecordingRolesSaveRefusesAManagedRoleAndWritesNothing(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
-	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp")), "/")
+	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp")), settingsPath)
 	before := storedRecordingRoles(t, w.st)
 
 	res := w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp", "role-bot"))
@@ -210,10 +209,10 @@ func TestStoredRecordingRoleNoLongerEligibleRendersAsUnavailable(t *testing.T) {
 			seedRecordingRoles(t, w.st, "role-mp", tc.roleID)
 			signIn(t, w.forum, w.b)
 
-			res := w.b.get("/")
+			res := w.b.get(settingsPath)
 
 			if res.StatusCode != http.StatusOK {
-				t.Fatalf("GET / status = %d, want 200", res.StatusCode)
+				t.Fatalf("GET %s status = %d, want 200", settingsPath, res.StatusCode)
 			}
 			picker := pickerRoot(t, recordingRolesSection(t, parseHTML(t, res)), "recording_roles")
 			var reason string
@@ -244,7 +243,7 @@ func TestRecordingRolesSaveKeepsAStoredRoleSinceMadeManaged(t *testing.T) {
 
 	res := w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp", "role-bot", "role-hq"))
 
-	assertRedirect(t, res, "/")
+	assertRedirect(t, res, settingsPath)
 	if got := storedRecordingRoles(t, w.st).RoleIDs; !sameSet(got, []string{"role-bot", "role-hq", "role-mp"}) {
 		t.Errorf("stored recording roles = %v, want role-bot kept beside role-hq and role-mp", got)
 	}
@@ -255,9 +254,9 @@ func TestRecordingRolesSaveKeepsAStoredRoleSinceMadeManaged(t *testing.T) {
 func TestRecordingRolesSectionShowsItsOwnSavesNewestFirst(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
-	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp")), "/")
+	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp")), settingsPath)
 	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-hq")), "/")
-	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-hq")), "/")
+	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-hq")), settingsPath)
 	// Under no hub, newest first: the second recording roles save, the
 	// moderators save, the first recording roles save.
 	saves := storedChangeLog(t, w.st, 0)
@@ -266,10 +265,10 @@ func TestRecordingRolesSectionShowsItsOwnSavesNewestFirst(t *testing.T) {
 	}
 	want := []int64{saves[0].ID, saves[2].ID}
 
-	res := w.b.get("/")
+	res := w.b.get(settingsPath)
 
 	if res.StatusCode != http.StatusOK {
-		t.Fatalf("GET / status = %d, want 200", res.StatusCode)
+		t.Fatalf("GET %s status = %d, want 200", settingsPath, res.StatusCode)
 	}
 	sec := recordingRolesSection(t, parseHTML(t, res))
 	if got := entryIDs(t, sec); !slices.Equal(got, want) {
@@ -295,7 +294,7 @@ func TestRecordingRolesSectionShowsItsOwnSavesNewestFirst(t *testing.T) {
 func TestRecordingRolesSaveThatChangesNothingIsRefused(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
-	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp", "role-hq")), "/")
+	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp", "role-hq")), settingsPath)
 	before := storedRecordingRoles(t, w.st)
 
 	res := w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-hq", "role-mp"))

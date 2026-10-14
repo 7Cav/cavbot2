@@ -2,15 +2,16 @@
 // signed in through the forum's OAuth2; the decision and its reasons are in
 // docs/temp-vc-decisions.md. It holds the sign-in, the panel session, the
 // group check, the no-access page for a request the groups don't allow,
-// the hub page and the Foxhole page. The hub page is the guild-wide
-// moderator section and the recording roles section, each with its change
-// log, the hub list with each hub's live spawned count, its last spawn
+// the hub page, the Settings page and the Foxhole page. The hub page is the
+// guild-wide moderator section with its change log, the hub list with each hub's live spawned count, its last spawn
 // failure and its broken hub state, the create and register forms, each
 // hub's edit form with its change log, and the remove action. The Foxhole
 // page lists the Foxhole role holders from the member list, with search,
 // filters and each holder's note, starts a purge and a re-add of the
 // approved Foxholers through the Foxhole runtime and shows its progress
-// and report, and keeps its own change log of saves and reports.
+// and report, and keeps its own change log of saves and reports. The
+// Settings page is the rank roles and the recording roles, each with its
+// change log.
 package panel
 
 import (
@@ -998,9 +999,9 @@ func (p *Panel) saveModerators(w http.ResponseWriter, r *http.Request, sess sess
 }
 
 // saveRecordingRoles is POST /recording-roles: one service call, then a
-// redirect to the page, opened at the recording roles section, where the
-// saved set shows and the section says it saved, or the page again with the
-// refusal on the recording roles section.
+// redirect to the Settings page, opened at the recording roles section,
+// where the saved set shows and the section says it saved, or the page
+// again with the refusal on the recording roles section.
 func (p *Panel) saveRecordingRoles(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -1010,13 +1011,13 @@ func (p *Panel) saveRecordingRoles(w http.ResponseWriter, r *http.Request, sess 
 	ctx, hubs := p.saving(r)
 	saved, err := hubs.setRecordingRoles(ctx, in, sess.actor())
 	if refusal, ok := asFieldError(err); ok {
-		p.renderRefused(w, r, sess, pageRequest{RecordingRoles: &in, Error: refusal, Refused: formRecordingRoles})
+		p.renderSettingsRefused(w, r, sess, pageRequest{RecordingRoles: &in, Error: refusal, Refused: formRecordingRoles})
 		return
 	}
 	if err != nil {
-		p.saveFailed(w, sess, "recording roles save", "/", err)
+		p.saveFailed(w, sess, "recording roles save", settingsPath, err)
 		return
 	}
 	utils.Info("Panel recording roles saved", "role_ids", saved.RoleIDs, "username", sess.username, "forum_user_id", sess.userID)
-	http.Redirect(w, r, savedAddress(formRecordingRoles, saved.Version, 0), http.StatusSeeOther)
+	http.Redirect(w, r, settingsSavedAddress(formRecordingRoles, saved.Version), http.StatusSeeOther)
 }

@@ -354,9 +354,7 @@ type hubPage struct {
 	Disconnected bool
 	// Moderators is the guild-wide section at the top of the page.
 	Moderators moderatorsPage
-	// RecordingRoles is the recording roles section beside it.
-	RecordingRoles recordingRolesPage
-	Hubs           []hubRow
+	Hubs       []hubRow
 	// Picker is the register picker: the chosen channel as a tag, if any,
 	// and the voice channels its channel search offers.
 	Picker     pickerView
@@ -365,8 +363,7 @@ type hubPage struct {
 	Create     createInput
 	Error      *fieldError
 	// Refused is which form the error belongs to: formCreate, formRegister,
-	// formEdit, formModerators, formRecordingRoles or formRemove. Empty with
-	// no error.
+	// formEdit, formModerators or formRemove. Empty with no error.
 	Refused string
 	Edit    *editPage
 	// Remove is the remove preview the request asked for, shown first on
@@ -434,8 +431,9 @@ func removalOf(entry store.ChangeLogEntry) (removed removedHub, channelID string
 
 // The forms a refusal can belong to, as Refused names them and as the
 // template asks RefusalFor. Each is also the ID of its form's heading in
-// home.html, which the form's action names in its fragment, so a refused
-// save's answer, the page at that address, opens at the form.
+// home.html, or settings.html for the recording roles, which the form's
+// action names in its fragment, so a refused save's answer, the page at
+// that address, opens at the form.
 const (
 	formCreate         = "create"
 	formRegister       = "register"
@@ -503,10 +501,19 @@ func savedAddress(form string, version, hubID int64) string {
 // other value names none.
 func savedFromQuery(raw string) string {
 	switch raw {
-	case formModerators, formRecordingRoles, formEdit:
+	case formModerators, formRecordingRoles, formRankRoles, formEdit:
 		return raw
 	}
 	return ""
+}
+
+// settingsSavedAddress is the address a save of a Settings page form lands
+// on: the Settings page, opened at the form, naming the form and the
+// version the save left its record at, as savedAddress does on the hub
+// page.
+func settingsSavedAddress(form string, version int64) string {
+	q := url.Values{paramSaved: {form}, paramVersion: {strconv.FormatInt(version, 10)}}
+	return settingsPath + "?" + q.Encode() + "#" + form
 }
 
 // RefusalFor is the refusal to render on a form, or nil when the error
@@ -968,9 +975,6 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 		return hubPage{}, fmt.Errorf("%s: %w", guildModeratorRolesRead, err)
 	}
 	if page.Moderators, err = s.moderatorsSection(ctx, sn.info, guildWide, req); err != nil {
-		return hubPage{}, err
-	}
-	if page.RecordingRoles, err = s.recordingRolesSection(ctx, sn.info, req); err != nil {
 		return hubPage{}, err
 	}
 	// Remove hub on the edit page of a hub that has since gone names the

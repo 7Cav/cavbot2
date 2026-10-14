@@ -2362,21 +2362,28 @@ func TestHubsChangeLogsShowNoRawKeys(t *testing.T) {
 		"version":              {storedVersion(t, w.st, "spawn-1")},
 	}), "/")
 	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-mp")), "/")
-	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-hq")), "/")
+	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-hq")), settingsPath)
+	assertRedirect(t, w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": "role-mp"})), settingsPath)
 
-	doc := parseHTML(t, w.b.get("/?hub="+strconv.FormatInt(storedHubID(t, w.st, "spawn-1"), 10)))
-
-	var actions []string
-	for _, entry := range entryElements(doc) {
-		action, _ := attrValue(entry, "data-action")
-		actions = append(actions, action)
-		if text := strings.Join(strings.Fields(textOf(entry)), " "); strings.Contains(text, "_") {
-			t.Errorf("the %s entry reads %q, which shows a raw key", action, text)
+	for _, page := range []struct {
+		path string
+		want []store.ChangeAction
+	}{
+		{"/?hub=" + strconv.FormatInt(storedHubID(t, w.st, "spawn-1"), 10), []store.ChangeAction{store.ChangeCreate, store.ChangeUpdate, store.ChangeModerators}},
+		{settingsPath, []store.ChangeAction{store.ChangeRecordingRoles, store.ChangeRankRoles}},
+	} {
+		var actions []string
+		for _, entry := range entryElements(parseHTML(t, w.b.get(page.path))) {
+			action, _ := attrValue(entry, "data-action")
+			actions = append(actions, action)
+			if text := strings.Join(strings.Fields(textOf(entry)), " "); strings.Contains(text, "_") {
+				t.Errorf("%s: the %s entry reads %q, which shows a raw key", page.path, action, text)
+			}
 		}
-	}
-	for _, want := range []store.ChangeAction{store.ChangeCreate, store.ChangeUpdate, store.ChangeModerators, store.ChangeRecordingRoles} {
-		if !slices.Contains(actions, string(want)) {
-			t.Errorf("the page shows entries for %v, want one for %s", actions, want)
+		for _, want := range page.want {
+			if !slices.Contains(actions, string(want)) {
+				t.Errorf("%s shows entries for %v, want one for %s", page.path, actions, want)
+			}
 		}
 	}
 }

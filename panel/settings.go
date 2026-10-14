@@ -27,7 +27,9 @@ type settingsView struct {
 	// the hub page.
 	Disconnected bool
 	RankRoles    rankRolesPage
-	Error        *fieldError
+	// RecordingRoles is the recording roles section below it.
+	RecordingRoles recordingRolesPage
+	Error          *fieldError
 	// Refused is the form Error belongs to.
 	Refused string
 }
@@ -61,6 +63,8 @@ type rankRolesPage struct {
 	OptionsID string
 	// Changes are the section's last entries, newest first.
 	Changes []changeView
+	// Saved is the section showing a save of it just made.
+	Saved bool
 }
 
 // rankRolesPreviewView is a preview as the section shows it: its counts,
@@ -131,9 +135,14 @@ const (
 	rankRoleChangesRead = "list rank roles changes"
 )
 
-// settingsPage is GET /settings.
+// settingsPage is GET /settings. A save named, with the version it left
+// its form's record at, has that form say it saved.
 func (p *Panel) settingsPage(w http.ResponseWriter, r *http.Request, sess session) {
-	p.renderSettings(w, r, sess, http.StatusOK, pageRequest{})
+	req := pageRequest{Saved: savedFromQuery(r.URL.Query().Get(paramSaved))}
+	// A version that isn't a number matches no record, so the page says
+	// nothing saved.
+	req.SavedVersion, _ = strconv.ParseInt(r.URL.Query().Get(paramVersion), 10, 64)
+	p.renderSettings(w, r, sess, http.StatusOK, req)
 }
 
 // renderSettings renders the Settings page read now, with the form the
@@ -180,7 +189,8 @@ func (p *Panel) renderSettingsRefused(w http.ResponseWriter, r *http.Request, se
 }
 
 // settings reads everything the Settings page renders from, once: the
-// guild from the gateway state, then the rank roles from the store.
+// guild from the gateway state, then the rank roles and the recording roles
+// from the store.
 func (s *hubService) settings(ctx context.Context, req pageRequest) (settingsView, error) {
 	guild, err := s.readGuild(ctx)
 	if err != nil {
@@ -188,6 +198,9 @@ func (s *hubService) settings(ctx context.Context, req pageRequest) (settingsVie
 	}
 	view := settingsView{Disconnected: guild.disconnected, Error: req.Error, Refused: req.Refused}
 	if view.RankRoles, err = s.rankRolesSection(ctx, guild.info, req); err != nil {
+		return settingsView{}, err
+	}
+	if view.RecordingRoles, err = s.recordingRolesSection(ctx, guild.info, req); err != nil {
 		return settingsView{}, err
 	}
 	return view, nil
@@ -202,7 +215,8 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 	if err != nil {
 		return rankRolesPage{}, fmt.Errorf("%s: %w", rankRolesRead, err)
 	}
-	page := rankRolesPage{Version: strconv.FormatInt(stored.Version, 10), OptionsID: rankRoleOptions}
+	page := rankRolesPage{Version: strconv.FormatInt(stored.Version, 10), OptionsID: rankRoleOptions,
+		Saved: req.savedAt(formRankRoles, stored.Version)}
 	posted := req.RankRoles
 	if posted != nil {
 		page.Version = postedBackVersion(stored.Version, posted.Version, req.staleFor(formRankRoles))
@@ -302,7 +316,10 @@ func rankRolesInputOf(r *http.Request) rankRolesInput {
 }
 
 // saveRankRoles is POST /rank-roles: one service call, then a redirect to
-// the Settings page, opened at the Rank roles section.
+// the Settings page, opened at the Rank roles section, where the saved
+// roles show and the section says it saved. A refusal answers with the page
+// again and the refusal on the section, and a save that waits on its
+// preview with the page showing it above the form as posted.
 func (p *Panel) saveRankRoles(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
@@ -324,7 +341,7 @@ func (p *Panel) saveRankRoles(w http.ResponseWriter, r *http.Request, sess sessi
 		return
 	}
 	utils.Info("Panel rank roles saved", "roles", saved.Roles, "username", sess.username, "forum_user_id", sess.userID)
-	http.Redirect(w, r, settingsPath+"#"+formRankRoles, http.StatusSeeOther)
+	http.Redirect(w, r, settingsSavedAddress(formRankRoles, saved.Version), http.StatusSeeOther)
 }
 
 // setRankRoles saves the rank roles: it writes the whole ladder's roles
