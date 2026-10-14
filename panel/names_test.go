@@ -52,6 +52,27 @@ func accessibleDescription(doc, n *html.Node) string {
 	return textOfIDs(doc, ids)
 }
 
+// describedByResolves checks that every ID in every aria-describedby on the
+// page names an element the page carries, so no description points at
+// nothing.
+func describedByResolves(t *testing.T, doc *html.Node) {
+	t.Helper()
+	ids := map[string]bool{}
+	eachLiveElement(doc, func(n *html.Node) {
+		if id, ok := attrValue(n, "id"); ok {
+			ids[id] = true
+		}
+	})
+	eachLiveElement(doc, func(n *html.Node) {
+		refs, _ := attrValue(n, "aria-describedby")
+		for id := range strings.FieldsSeq(refs) {
+			if !ids[id] {
+				t.Errorf("a <%s> is described by %q, which names nothing on the page", n.Data, id)
+			}
+		}
+	})
+}
+
 // labelsOf is the text of a form control's labels: each <label> naming its
 // ID, and the <label> around it.
 func labelsOf(doc, control *html.Node) string {

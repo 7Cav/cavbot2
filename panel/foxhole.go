@@ -140,7 +140,7 @@ func (v foxholeView) Pending() bool {
 	return v.PurgeConfirm != nil || v.RemovePreview != nil || v.AddPreview != nil || v.RosterPreview != nil || v.RetryConfirm != nil
 }
 
-// ListAnchor is the ID of the block holding the list the page shows, the
+// ListAnchor is the ID of the heading of the list the page shows, the
 // holder list or the no-role view, which its search and the link at the
 // top of the page open it at.
 func (v foxholeView) ListAnchor() string {
@@ -1339,16 +1339,17 @@ func foxholeAddress(query, filter string) string {
 	return foxholeLink(query, filter, "")
 }
 
-// The IDs the holder list's block and the no-role view's block carry in
+// The IDs the holder list's heading and the no-role view's heading carry in
 // foxhole.html. A filter link, a search, a link to the other view, a save
 // that returns to a list and the note form's Cancel open the page at the
-// list, which sits far below the action blocks wherever they stack.
+// list, which sits far below the action blocks wherever they stack, with
+// its heading focused.
 const (
 	holderListAnchor = "holders"
 	noRoleAnchor     = "no-role"
 )
 
-// listAnchor is the ID of the block holding the list the filter shows.
+// listAnchor is the ID of the heading of the list the filter shows.
 func listAnchor(filter string) string {
 	if filter == filterNoRole {
 		return noRoleAnchor

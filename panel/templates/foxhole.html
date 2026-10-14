@@ -4,8 +4,8 @@
   <p class="desc">Everyone holding a Foxhole role, and every approved Foxholer. Changes here go straight to Discord.</p>
   {{with .Foxhole}}
   {{- /* Where the action blocks stack above the list, a link here reaches it in one tap. Where they sit side by side, it hides. */}}
-  {{if not .ListNotice}}<p class="fx-jump"><a href="#{{.ListAnchor}}">{{if .NoRoleView}}Go to the members with a note{{else}}Go to the holder list{{end}}</a></p>{{end}}
-  {{- /* Whatever is pending shows first: the refusal of what the manager just did, then the preview or confirmation a Foxhole action waits on, then any action running and the last report. A preview's heading carries the ID the address that opens it names, so the browser scrolls to it and focuses it. A save's result shows in the list's block, where the save lands. */}}
+  {{if not .ListNotice}}<p class="fx-jump"><a href="#{{.ListAnchor}}" data-field="list-jump">{{if .NoRoleView}}Go to the members with a note{{else}}Go to the holder list{{end}}</a></p>{{end}}
+  {{- /* Whatever is pending shows first: the refusal of what the manager just did, then the preview or confirmation a Foxhole action waits on, then any action running and the last report. A preview's heading carries the ID the address that opens it names, so the browser scrolls to it and focuses it. A save's result shows in the list's block, under the list's heading, where the save lands. */}}
   {{with .ApprovalRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
   {{with .ActionRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
   {{if .Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. The holder list may be out of date.</div>{{end}}
@@ -252,8 +252,8 @@
     </section>
   </div>
   {{if .NoRoleView}}
-  <section class="block" id="no-role" data-field="no-role">
-    <h2 class="block-header">Members with a note and no Foxhole role</h2>
+  <section class="block" data-field="no-role">
+    <h2 class="block-header" id="{{.ListAnchor}}" tabindex="-1"{{template "fx-described" .}}>Members with a note and no Foxhole role</h2>
     {{template "fx-results" .}}
     {{template "fx-toolbar" .}}
     {{if .NoRoleRows}}
@@ -274,8 +274,8 @@
     {{template "also-matches" .AlsoMatches}}
   </section>
   {{else}}
-  <section class="block" id="holders" data-field="holders">
-    <h2 class="block-header">Foxhole role holders</h2>
+  <section class="block" data-field="holders">
+    <h2 class="block-header" id="{{.ListAnchor}}" tabindex="-1"{{template "fx-described" .}}>Foxhole role holders</h2>
     {{template "fx-results" .}}
     {{template "fx-toolbar" .}}
     <form method="post" action="/foxhole/approvals" id="fx-selection" class="fx-selbar" data-field="selection">
@@ -367,8 +367,11 @@
 {{end}}
 
 {{- /* The result lines of the manager's last save, in the block of the list the save lands on, so they show beside the rows they name at every width. The page script puts a note save's result in the live region, so the region is there, empty, on every load. */}}
-{{define "fx-results"}}<div class="block-row fx-result" role="status" data-note-result>{{with .Cleared}}<div class="note note--ok note--inline" data-field="note-result" data-cleared="{{.MemberID}}">Cleared the note on {{.MemberName}} <span class="fx-user">@{{.MemberUsername}}</span>. They hold no Foxhole role, so they're no longer listed.</div>{{end}}</div>
-{{- with .Skipped}}<div class="block-row"><div class="note note--inline" data-field="approve-skipped">Skipped, since {{if eq (len .) 1}}this member holds{{else}}these members hold{{end}} no Foxhole role to approve: {{range $i, $m := .}}{{if $i}}, {{end}}<span data-skipped="{{$m.ID}}">{{if $m.DisplayName}}{{$m.DisplayName}} <span class="fx-user">@{{$m.Username}}</span>{{else}}{{$m.ID}}{{end}}</span>{{end}}. Nothing changed for them.</div></div>{{end}}{{end}}
+{{define "fx-results"}}<div class="block-row fx-result" role="status" data-note-result>{{with .Cleared}}<div class="note note--ok note--inline" id="note-cleared" data-field="note-result" data-cleared="{{.MemberID}}">Cleared the note on {{.MemberName}} <span class="fx-user">@{{.MemberUsername}}</span>. They hold no Foxhole role, so they're no longer listed.</div>{{end}}</div>
+{{- with .Skipped}}<div class="block-row"><div class="note note--inline" id="approve-skipped" data-field="approve-skipped">Skipped, since {{if eq (len .) 1}}this member holds{{else}}these members hold{{end}} no Foxhole role to approve: {{range $i, $m := .}}{{if $i}}, {{end}}<span data-skipped="{{$m.ID}}">{{if $m.DisplayName}}{{$m.DisplayName}} <span class="fx-user">@{{$m.Username}}</span>{{else}}{{$m.ID}}{{end}}</span>{{end}}. Nothing changed for them.</div></div>{{end}}{{end}}
+
+{{- /* The list heading's description: the IDs of the result lines fx-results shows, so a screen reader reads them as focus lands on the heading. A block with none leaves the heading undescribed. */}}
+{{define "fx-described"}}{{if or .Cleared .Skipped}} aria-describedby="{{if .Cleared}}note-cleared{{end}}{{if and .Cleared .Skipped}} {{end}}{{if .Skipped}}approve-skipped{{end}}"{{end}}{{end}}
 
 {{- /* The search and filter links both views share. Under 768px panel.css sizes the search box to its whole hint, so a longer hint needs a wider box there. */}}
 {{define "fx-toolbar"}}<div class="block-row fx-toolbar">
