@@ -704,7 +704,8 @@ _Avoid_: crash, boot failure, startup panic.
 
 **Gateway outage**:
 The span from a gateway session, the bot's own or a recorder's, losing its
-connection to Discord until it next connects. One that lasts a minute sends
+connection to Discord, other than by a close on purpose as at shutdown, until
+Discord answers a login with READY or RESUMED. One that lasts a minute sends
 one Sentry event however long it goes on, and one that ends sooner sends
-nothing. Closing a session on purpose, as at shutdown, is not one.
+nothing.
 _Avoid_: disconnect (the moment it starts), downtime.
