@@ -253,7 +253,7 @@
   </div>
   {{if .NoRoleView}}
   <section class="block" data-field="no-role">
-    <h2 class="block-header" id="no-role" tabindex="-1"{{template "fx-described" .}}>Members with a note and no Foxhole role</h2>
+    <h2 class="block-header" id="{{.ListAnchor}}" tabindex="-1"{{template "fx-described" .}}>Members with a note and no Foxhole role</h2>
     {{template "fx-results" .}}
     {{template "fx-toolbar" .}}
     {{if .NoRoleRows}}
@@ -275,7 +275,7 @@
   </section>
   {{else}}
   <section class="block" data-field="holders">
-    <h2 class="block-header" id="holders" tabindex="-1"{{template "fx-described" .}}>Foxhole role holders</h2>
+    <h2 class="block-header" id="{{.ListAnchor}}" tabindex="-1"{{template "fx-described" .}}>Foxhole role holders</h2>
     {{template "fx-results" .}}
     {{template "fx-toolbar" .}}
     <form method="post" action="/foxhole/approvals" id="fx-selection" class="fx-selbar" data-field="selection">

@@ -21,6 +21,18 @@ func listBlock(t *testing.T, doc *html.Node, field string) *html.Node {
 	return block
 }
 
+// landedOnList returns the heading a page opened at fragment lands on and
+// the list block holding it, the one whose data-field is field. It fails the
+// test unless the heading is that list's, and unless every aria-describedby
+// on the page names an element the page carries.
+func landedOnList(t *testing.T, doc *html.Node, fragment, field string) (heading, block *html.Node) {
+	t.Helper()
+	block = listBlock(t, doc, field)
+	heading = landedHeading(t, doc, fragment, block, "the "+field+" list's heading")
+	describedByResolves(t, doc)
+	return heading, block
+}
+
 // namedOnlyIn checks the page's result lines name the member by attr, or
 // nobody when member is empty, and that every line naming them lies within
 // the block.
@@ -58,9 +70,9 @@ func clearKestrelsApproval(t *testing.T, w *testWorld) (string, *http.Response) 
 	return foxholeApprovalsPath, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opClear, memberKestrel.ID)
 }
 
-// clearDoesNoRoleNote clears the note on Doe's no-role row, which takes
+// clearNoRoleNoteOnDoe clears the note on Doe's no-role row, which takes
 // Doe off the page.
-func clearDoesNoRoleNote(t *testing.T, w *testWorld) (string, *http.Response) {
+func clearNoRoleNoteOnDoe(t *testing.T, w *testWorld) (string, *http.Response) {
 	t.Helper()
 	return foxholeNotesPath, submitNote(t, w.b, openNoRoleNote(t, w.b, memberDoe.ID), "")
 }
@@ -94,7 +106,7 @@ func TestAFoxholeSaveLandsOnTheListItWasMadeFrom(t *testing.T) {
 		{"a note saved in the no-role view", newNoRoleWorld, func(t *testing.T, w *testWorld) (string, *http.Response) {
 			return foxholeNotesPath, submitNote(t, w.b, openNoRoleNote(t, w.b, memberDoe.ID), "discharged 12 Sep")
 		}, "no-role", "", ""},
-		{"a note clear that takes a member off the no-role view", newNoRoleWorld, clearDoesNoRoleNote, "no-role", "", memberDoe.ID},
+		{"a note clear that takes a member off the no-role view", newNoRoleWorld, clearNoRoleNoteOnDoe, "no-role", "", memberDoe.ID},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -103,9 +115,7 @@ func TestAFoxholeSaveLandsOnTheListItWasMadeFrom(t *testing.T) {
 
 			doc, fragment := landing(t, w.b, control, res)
 
-			block := listBlock(t, doc, tc.block)
-			landedHeading(t, doc, fragment, block, "the "+tc.block+" list's heading")
-			describedByResolves(t, doc)
+			_, block := landedOnList(t, doc, fragment, tc.block)
 			namedOnlyIn(t, doc, block, "data-skipped", tc.skipped)
 			namedOnlyIn(t, doc, block, "data-cleared", tc.cleared)
 		})
@@ -134,7 +144,7 @@ func TestAFoxholeSaveResultLineDescribesTheListHeading(t *testing.T) {
 		{"an Approve that skips a member", newFoxholeWorld, approveThatSkipsKestrel, "holders", func(doc *html.Node) *html.Node {
 			return findLive(doc, "", "data-field", "approve-skipped")
 		}, memberKestrel.Username},
-		{"a note clear that takes a member off the no-role view", newNoRoleWorld, clearDoesNoRoleNote, "no-role", func(doc *html.Node) *html.Node {
+		{"a note clear that takes a member off the no-role view", newNoRoleWorld, clearNoRoleNoteOnDoe, "no-role", func(doc *html.Node) *html.Node {
 			return findLive(doc, "", "data-cleared", memberDoe.ID)
 		}, ""},
 		{"a Clear approval", newFoxholeWorld, clearKestrelsApproval, "holders", nil, ""},
@@ -146,7 +156,7 @@ func TestAFoxholeSaveResultLineDescribesTheListHeading(t *testing.T) {
 
 			doc, fragment := landing(t, w.b, control, res)
 
-			heading := landedHeading(t, doc, fragment, listBlock(t, doc, tc.block), "the "+tc.block+" list's heading")
+			heading, _ := landedOnList(t, doc, fragment, tc.block)
 			got := accessibleDescription(doc, heading)
 			if tc.line == nil {
 				if got != "" {
@@ -161,7 +171,7 @@ func TestAFoxholeSaveResultLineDescribesTheListHeading(t *testing.T) {
 			if want := announcedText(line); got != want {
 				t.Errorf("the landed heading's description is %q, want the result line, %q", got, want)
 			}
-			if !strings.Contains(got, tc.names) {
+			if tc.names != "" && !strings.Contains(got, tc.names) {
 				t.Errorf("the landed heading's description is %q, want it to name %s", got, tc.names)
 			}
 		})
@@ -184,8 +194,7 @@ func TestNoteFormCancelLandsOnTheListItWasOpenedFrom(t *testing.T) {
 
 	doc, fragment := landing(t, w.b, href, w.b.get(href))
 
-	landedHeading(t, doc, fragment, listBlock(t, doc, "no-role"), "the no-role list's heading")
-	describedByResolves(t, doc)
+	landedOnList(t, doc, fragment, "no-role")
 }
 
 // Each link and form that opens a list from the Foxhole page lands on that
@@ -226,8 +235,7 @@ func TestFoxholeLinksToAListLandOnItsHeading(t *testing.T) {
 
 			doc, fragment := landing(t, w.b, control, res)
 
-			landedHeading(t, doc, fragment, listBlock(t, doc, tc.block), "the "+tc.block+" list's heading")
-			describedByResolves(t, doc)
+			landedOnList(t, doc, fragment, tc.block)
 		})
 	}
 }
