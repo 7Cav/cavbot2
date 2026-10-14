@@ -158,9 +158,10 @@ h2[tabindex="-1"]:focus { outline: none; }
 .hublist form.inline { display: inline; margin: 0; }
 .btn--small { padding: 4px 10px; font-size: 13px; }
 
-/* A hub's edit section. Its headings name the hub by its base string, which
-   can run 90 characters with no space, so a long one wraps anywhere, as in
-   the removal preview, rather than widen the page on a phone. */
+/* A hub's edit section wraps a long word anywhere, as the removal preview
+   does. Its landing headings name the hub by its base string, which can run
+   90 characters with no space and would otherwise widen the page on a
+   phone. */
 .hub-edit { overflow-wrap: anywhere; }
 
 /* Form fields, as the forum draws them. */

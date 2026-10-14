@@ -560,11 +560,8 @@ func TestTheHeadingAHubsEditLandsOnNamesTheHub(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newTestWorld(t, testHub())
 			signIn(t, w.forum, w.b)
-			edit := findElement(listRow(t, parseHTML(t, w.b.get("/")), storedHubID(t, w.st, "hub-1")), "a", "data-field", "edit")
-			if edit == nil {
-				t.Fatal("the hub's list row offers no Edit")
-			}
-			control, res := tc.open(t, w, attrOf(edit, "href"))
+			edit := editLinkAddress(t, listRow(t, parseHTML(t, w.b.get("/")), storedHubID(t, w.st, "hub-1")))
+			control, res := tc.open(t, w, edit)
 
 			res, fragment := arrive(t, w.b, control, res)
 
