@@ -390,7 +390,7 @@ The hub list and the Foxhole holder list fill their block. Cells are 14px with 1
 The selected set shows as picker tags. A small add button opens a search box with a list hanging below it, in Header Charcoal behind a Field Edge border. The list shows ten rows, then scrolls inside itself, so a guild with thousands of roles never grows the page. Focus stays in the box, so the row Enter would choose draws its own inset gold ring on Raised Charcoal.
 
 ### Change log
-Each entry is a disclosure folded to one line: a drawn chevron, the forum user's name at 500, the action as a tag and the time in Muted Grey. Opened, it lists each field name in mono on the left and "before → after" on the right. The newest entry starts open.
+Each entry is a disclosure folded to one line: a drawn chevron, the forum user's name at 500, the action as a tag and the time in Muted Grey. Opened, it lists each field name in mono on the left and "before → after" on the right. The newest entry starts open. On the Foxhole page an address can name an entry, as Cancel on a Retry pressed in that entry does. The page then opens that entry as well as the newest, and lands on its one-line summary with focus on it.
 
 ## Do's and Don'ts
 

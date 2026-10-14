@@ -55,6 +55,10 @@ type reportView struct {
 	Missed []reportMember
 	// AddedNobody are an add's pasted lines that added nobody.
 	AddedNobody []reportLine
+	// InEntry is the report as its change log entry shows it, whose Retry
+	// says it was pressed there. False is the latest report above the
+	// action blocks.
+	InEntry bool
 	// StopPressedBy is the forum user who pressed Stop on the running
 	// action, which stops after the change in flight. Empty until someone
 	// does.
@@ -121,18 +125,18 @@ func (reportView) PauseLimit() string {
 func (r reportView) CanRetry() bool { return !r.Running && len(r.Missed) > 0 }
 
 // RetryHref is the address of the page with the report's Retry open, at
-// the block that says what it retries.
-func (r reportView) RetryHref() string { return retryAddress(r.ID) }
-
-// retryAddress is the address of the page with the Retry of the report
-// with the ID given open, at the block that says what it retries.
-func retryAddress(report int64) string {
-	return foxholePath + "?" + url.Values{paramRetry: {strconv.FormatInt(report, 10)}}.Encode() + "#" + retryAnchor
-}
+// the block that says what it retries. It says where the Retry was
+// pressed: in the report's change log entry, or in the latest report.
+func (r reportView) RetryHref() string { return retryPress{Report: r.ID, InEntry: r.InEntry}.address() }
 
 // retryAnchor is the ID foxhole.html gives the heading of the block a
 // Retry opens above its preview, which says what it retries.
 const retryAnchor = "retry"
+
+// latestReportAnchor is the ID foxhole.html gives the latest report's
+// heading once its action has ended. Cancel on a Retry pressed there lands
+// on it.
+const latestReportAnchor = "latest-report"
 
 // OutcomeCode is the report's data-outcome marker: how the action ended,
 // or running while it runs.
@@ -215,6 +219,9 @@ type purgeConfirm struct {
 	// role's holders together. At 0 the page offers no Confirm.
 	ChangeCount int
 	Estimate    estimate
+	// Back is the address Cancel leads to: the After a war block, where
+	// Purge was pressed.
+	Back string
 }
 
 // NobodyHint is the hint the confirmation gives in Confirm's place at 0
@@ -251,6 +258,20 @@ func reopenOf(address, what string) reopenLink {
 // purgeConfirmAnchor is the ID foxhole.html gives the purge confirmation's
 // heading.
 const purgeConfirmAnchor = "purge-confirm"
+
+// The IDs foxhole.html gives the action blocks' headings. Cancel on a
+// preview an action block opened lands on that block's heading: the blocks
+// sit below the latest report, and stack in one column under 1100px, so
+// the page's top is far from the block the manager came from.
+const (
+	addMembersAnchor = "add-members"
+	addRosterAnchor  = "add-roster"
+	afterAWarAnchor  = "after-a-war"
+)
+
+// foxholeAt is the Foxhole page's address opened at the element whose ID
+// is anchor, such as an action block's heading.
+func foxholeAt(anchor string) string { return foxholePath + "#" + anchor }
 
 // purgeRole is one role a purge takes, and how many hold it at this load.
 type purgeRole struct {
@@ -295,7 +316,7 @@ func estimateFor(changes int) estimate {
 // itself makes, so the count confirmed is the count the purge sets out on.
 func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope commands.PurgeScope) *purgeConfirm {
 	roleIDs := commands.FoxholeRoleIDs(s.manager.GuildData(s.guildID))
-	confirm := &purgeConfirm{Scope: scope, Label: scope.Label()}
+	confirm := &purgeConfirm{Scope: scope, Label: scope.Label(), Back: foxholeAt(afterAWarAnchor)}
 	for _, role := range scope.Roles() {
 		holders := 0
 		for _, mem := range list.Members {
@@ -324,8 +345,8 @@ type removePreview struct {
 	Notes    int
 	Estimate estimate
 	// Back is the address Cancel leads to: the view the selection was made
-	// in, at its list with the selection ticked, or the page's top when a
-	// Retry opened the preview.
+	// in, at its list with the selection ticked, or where the Retry was
+	// pressed when a Retry opened the preview.
 	Back string
 	// reopen is the address that opens this preview again: the same role
 	// and members selected, from the same view, or the Retry's address when

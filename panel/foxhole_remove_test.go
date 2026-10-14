@@ -424,23 +424,6 @@ func removeUnderASearchAndAFilter(role string, memberIDs ...string) func(*testin
 	}
 }
 
-// landsOn checks a page opened at fragment lands on the heading of the
-// block whose data-field is field, or at the page's top when field is
-// empty.
-func landsOn(t *testing.T, doc *html.Node, fragment, field string) {
-	t.Helper()
-	if field == "" {
-		if fragment != "" {
-			t.Errorf("the page opens at fragment %q, want its top", fragment)
-		}
-		return
-	}
-	heading := landedOn(doc, fragment)
-	if heading == nil || !isHeading(heading) || !within(heading, foxholeBlock(t, doc, field)) {
-		t.Errorf("the page opens at fragment %q, want the heading of the %s block", fragment, field)
-	}
-}
-
 // tickedRows returns the members whose holder list row is ticked, sorted.
 func tickedRows(t *testing.T, doc *html.Node) []string {
 	t.Helper()
@@ -458,10 +441,11 @@ func tickedRows(t *testing.T, doc *html.Node) []string {
 // selection bar it lands on the holder list's heading, under the search and
 // the filter the selection was made under, whether or not anyone selected
 // holds the role. A remove address with the no-role filter lands on the
-// no-role view's heading. A Retry of a removal has no selection to return
-// to, and its Cancel opens the page at its top with no box ticked. The
-// preview page's own holder list shows the selection ticked, and so does
-// the page Cancel opens, a member the preview skips included.
+// no-role view's heading. A Retry of a removal pressed in the latest report
+// has no selection to return to, and its Cancel lands on the latest
+// report's heading with no box ticked. The preview page's own holder list
+// shows the selection ticked, and so does the page Cancel opens, a member
+// the preview skips included.
 func TestRemovePreviewCancelReturnsToWhereRemoveWasPressed(t *testing.T) {
 	ashAndMarsh := sorted([]string{memberAsh.ID, memberMarsh.ID})
 	underSearchAndFilter := sorted([]string{memberAsh.ID, memberMarsh.ID, memberVance.ID})
@@ -470,8 +454,7 @@ func TestRemovePreviewCancelReturnsToWhereRemoveWasPressed(t *testing.T) {
 		// open opens a remove preview as a browser with no script does, and
 		// returns the page it opens.
 		open func(*testing.T, *testWorld) *html.Node
-		// block is the data-field of the list block Cancel lands on, empty
-		// for the page's top.
+		// block is the data-field of the block Cancel lands on.
 		block string
 		// selection is the members ticked when Remove was pressed, nil for
 		// a preview the selection bar didn't open.
@@ -500,7 +483,7 @@ func TestRemovePreviewCancelReturnsToWhereRemoveWasPressed(t *testing.T) {
 			assertRedirect(t, confirmRemoval(t, w.b, preview), foxholePath)
 			w.awaitActionEnd(t)
 			return openRetry(t, w.b)
-		}, "", nil, nil},
+		}, "report", nil, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -516,7 +499,7 @@ func TestRemovePreviewCancelReturnsToWhereRemoveWasPressed(t *testing.T) {
 
 			doc, fragment := landing(t, w.b, cancel, w.b.get(cancel))
 
-			landsOn(t, doc, fragment, tc.block)
+			landedOnBlock(t, doc, fragment, tc.block)
 			// The no-role view has no boxes to tick.
 			if tc.block != "no-role" {
 				if got := tickedRows(t, doc); !slices.Equal(got, tc.selection) {

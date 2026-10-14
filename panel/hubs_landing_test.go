@@ -103,12 +103,12 @@ var removeOpeners = []struct {
 	}},
 }
 
-// cancelAddress is the address of a remove preview's Cancel.
+// cancelAddress is the address of a preview's Cancel.
 func cancelAddress(t *testing.T, preview *html.Node) string {
 	t.Helper()
 	cancel := findElement(preview, "a", "data-field", "cancel")
 	if cancel == nil {
-		t.Fatal("the remove preview has no Cancel")
+		t.Fatal("the preview has no Cancel")
 	}
 	return attrOf(cancel, "href")
 }

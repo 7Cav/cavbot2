@@ -31,11 +31,11 @@
     <form method="post" action="/foxhole/purge" class="submit-row">
       <input type="hidden" name="scope" value="{{.Scope}}">
       <button type="submit" class="btn btn--danger-filled" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Purge {{.Label}}</button>
-      <a class="btn" href="/foxhole">Cancel</a>
+      <a class="btn" href="{{.Back}}" data-field="cancel">Cancel</a>
       {{- if $.Foxhole.Busy}} {{template "busy-reopen" .Reopen}}{{end}}
     </form>
     {{else}}
-    <div class="submit-row"><a class="btn" href="/foxhole">Cancel</a> <span class="fx-hint" data-field="nobody-to-purge">{{.NobodyHint}}</span></div>
+    <div class="submit-row"><a class="btn" href="{{.Back}}" data-field="cancel">Cancel</a> <span class="fx-hint" data-field="nobody-to-purge">{{.NobodyHint}}</span></div>
     {{end}}
   </section>
   {{end}}
@@ -96,7 +96,7 @@
       <input type="hidden" name="lines" value="{{.Paste.Text}}">
       <input type="hidden" name="named" value="{{.Named}}">
       {{if .CanAdd}}<button type="submit" class="btn btn--cta" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Add {{.Name}}</button>{{end}}
-      <a class="btn" href="/foxhole">Cancel</a>
+      <a class="btn" href="{{.Back}}" data-field="cancel">Cancel</a>
       {{- if not .CanAdd}} <span class="fx-hint" data-field="nobody-to-add">{{.NobodyHint}}</span>
       {{- else if $.Foxhole.Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Once it ends, press Preview again to confirm.</span>{{end}}
     </form>
@@ -128,7 +128,7 @@
       <input type="hidden" name="roster" value="{{.Listed}}">
       {{- end}}
       {{if .CanAdd}}<button type="submit" class="btn btn--cta" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>{{if .Retry}}Add everyone listed to Internal{{else}}Add the {{.Unit.Label}} roster to Internal{{end}}</button>{{end}}
-      <a class="btn" href="/foxhole">Cancel</a>
+      <a class="btn" href="{{.Back}}" data-field="cancel">Cancel</a>
       {{- if not .CanAdd}} <span class="fx-hint" data-field="nobody-to-add">{{.NobodyHint}}</span>
       {{- else if and $.Foxhole.Busy .Retry}} {{template "busy-reopen" .Reopen}}
       {{- else if $.Foxhole.Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Once it ends, press Preview again to confirm.</span>
@@ -147,11 +147,11 @@
     <form method="post" action="/foxhole/retry" class="submit-row">
       <input type="hidden" name="report" value="{{.Report.ID}}">
       <button type="submit" class="btn {{if .Purge}}btn--danger-filled{{else}}btn--cta{{end}}" data-field="confirm"{{if $.Foxhole.Busy}} disabled{{end}}>Retry {{len .Changes}} {{if eq (len .Changes) 1}}member{{else}}members{{end}}</button>
-      <a class="btn" href="/foxhole">Cancel</a>
+      <a class="btn" href="{{.Back}}" data-field="cancel">Cancel</a>
       {{- if $.Foxhole.Busy}} {{template "busy-reopen" .Reopen}}{{end}}
     </form>
     {{else}}
-    <div class="submit-row"><a class="btn" href="/foxhole">Cancel</a> {{if .Purge}}<span class="fx-hint" data-field="nobody-to-purge">Nobody listed still holds the role they were to lose, so there's nothing to purge.</span>{{else}}<span class="fx-hint" data-field="nobody-to-re-add">Everybody listed holds External or has left the server, so there's nobody to re-add.</span>{{end}}</div>
+    <div class="submit-row"><a class="btn" href="{{.Back}}" data-field="cancel">Cancel</a> {{if .Purge}}<span class="fx-hint" data-field="nobody-to-purge">Nobody listed still holds the role they were to lose, so there's nothing to purge.</span>{{else}}<span class="fx-hint" data-field="nobody-to-re-add">Everybody listed holds External or has left the server, so there's nobody to re-add.</span>{{end}}</div>
     {{end}}
   </section>
   {{end}}
@@ -187,7 +187,7 @@
   </details>
   {{else}}
   <section class="block fx-report" data-field="report" data-report="{{.ID}}" data-action="{{.Action}}" data-outcome="{{.Outcome}}">
-    <h2 class="block-header">{{.Name}}: {{template "outcome" .}}</h2>
+    <h2 class="block-header" id="latest-report" tabindex="-1">{{.Name}}: {{template "outcome" .}}</h2>
     {{template "report-head" .}}
     {{template "report-tally" .}}
     {{template "report-lists" .}}
@@ -203,16 +203,13 @@
   {{end}}
   {{if not .ListNotice}}
   <div class="fx-actions" data-field="actions">
-    <section class="block" data-field="add-members">
-      <h2 class="block-header">Add members</h2>
-      {{template "add-form" .Paste}}
-    </section>
+    {{template "add-members-block" .Paste}}
     <section class="block" data-field="add-roster">
-      <h2 class="block-header">Add a unit's roster</h2>
+      <h2 class="block-header" id="add-roster" tabindex="-1">Add a unit's roster</h2>
       {{template "roster-form" .}}
     </section>
     <section class="block" data-field="after-a-war">
-      <h2 class="block-header">After a war</h2>
+      <h2 class="block-header" id="after-a-war" tabindex="-1">After a war</h2>
       {{- /* While the purge confirmation is open, its Confirm is the page's one live Purge: the form here drops its scopes, turns its Purge off and points there. */}}
       <form method="get" action="/foxhole#purge-confirm" data-field="purge">
         <div class="block-row">
@@ -317,10 +314,7 @@
   {{end}}
   {{else}}{{if .PasteAlone}}
   <div class="fx-actions fx-actions--alone" data-field="actions">
-    <section class="block" data-field="add-members">
-      <h2 class="block-header">Add members</h2>
-      {{template "add-form" .Paste}}
-    </section>
+    {{template "add-members-block" .Paste}}
   </div>
   {{end}}{{with .ListNotice}}
   <div class="note note--neutral" role="status" data-notice="member-list" data-list-status="{{.Status}}">
@@ -330,10 +324,10 @@
     {{- else}}Discord's member list didn't arrive. Wait a bit and try again.{{end}} <a href="{{$.Foxhole.Reload}}" data-field="reload">Reload</a></div>
   {{end}}{{end}}
   <section class="block" data-field="changes">
-    <h2 class="block-header">Change log</h2>
+    <h2 class="block-header" id="change-log" tabindex="-1">Change log</h2>
     {{range $i, $_ := .Changes}}
-    <details class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}"{{with .Report}} data-outcome="{{.OutcomeCode}}"{{end}}{{if eq $i 0}} open{{end}}>
-      <summary class="change-head">
+    <details class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}"{{with .Report}} data-outcome="{{.OutcomeCode}}"{{end}}{{if or (eq $i 0) (eq .ID $.Foxhole.OpenEntry)}} open{{end}}>
+      <summary class="change-head" id="entry-{{.ID}}">
         <span class="change-who" data-field="username">{{.Username}}</span>
         <span class="tag" data-field="action">{{.Label}}</span>
         <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
@@ -415,6 +409,12 @@
 {{define "note-count"}}{{with .}}<div class="block-row" data-field="notes"><span data-field="note-count">{{.}}</span> {{if eq . 1}}member in this preview has{{else}}members in this preview have{{end}} a note.</div>{{end}}{{end}}
 
 {{define "preview-members"}}{{with .}}<ul class="fx-reportmembers">{{range .}}<li data-member="{{.ID}}"{{with .Role}} data-role="{{.}}"{{end}}{{with .Skip}} data-reason="{{.}}"{{end}}>{{if .DisplayName}}{{.DisplayName}} <span class="fx-user">@{{.Username}}</span>{{else}}{{.ID}}{{end}}{{if .Role}} <span class="tag fx-role">{{.RoleName}}</span>{{end}}{{with .Why}} <span data-field="reason">{{.}}</span>{{end}}{{with .Note}} <span class="fx-previewnote">Note: <span data-field="note">{{.}}</span></span>{{end}}</li>{{end}}</ul>{{else}}<span class="off">none</span>{{end}}{{end}}
+
+{{- /* The Add members block, in the row of action blocks or alone above the member list notice. Cancel on an add preview names its heading, so both renderings carry it. */}}
+{{define "add-members-block"}}<section class="block" data-field="add-members">
+      <h2 class="block-header" id="add-members" tabindex="-1">Add members</h2>
+      {{template "add-form" .}}
+    </section>{{end}}
 
 {{define "add-form"}}<form method="post" action="/foxhole/add/preview#add-preview" data-field="add-form">
   <div class="block-row">
