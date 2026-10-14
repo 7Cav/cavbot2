@@ -256,14 +256,15 @@
     // A form in a row carries the IDs the page's own note form uses: the
     // hint's, and on a refused save the refusal's. Each row's form gets its
     // own, so rows with forms open at once share none. Its input names its
-    // own hint, so a screen reader reads the warning out.
-    var hint = form.querySelector('[data-field="note-hint"]');
-    if (hint) {
-      hint.id = 'note-hint-' + member;
-      input.setAttribute('aria-describedby', hint.id);
+    // own refusal and hint, so a screen reader reads out why the save was
+    // refused, then the warning, as focus lands.
+    form.querySelectorAll('[id]').forEach(function (el) { el.id += '-' + member; });
+    var described = input.getAttribute('aria-describedby');
+    if (described) {
+      input.setAttribute('aria-describedby', described.split(' ').map(function (id) {
+        return id + '-' + member;
+      }).join(' '));
     }
-    var refusal = form.querySelector('#note-refusal');
-    if (refusal) { refusal.id = 'note-refusal-' + member; }
     cell.replaceChildren(form);
     form.addEventListener('submit', function (e) {
       e.preventDefault();

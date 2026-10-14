@@ -3,6 +3,7 @@ package panel
 import (
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/7cav/cavbot2/commands"
@@ -167,6 +168,29 @@ func TestNoteFormOnANoRoleRowWarnsThatAnEmptyNoteTakesTheMemberOff(t *testing.T)
 	}
 	if noteHint(t, openNote(t, w.b, memberKestrel.ID)) {
 		t.Errorf("the note form on holder %s's row carries the hint", memberKestrel.ID)
+	}
+}
+
+// A refused save from a no-role row's note form keeps the hint. The note
+// box the row gets back carries the refusal in its description, and the
+// warning that an empty note takes the member off the page. A screen reader
+// reads both as focus lands in it.
+func TestRefusedNoteSaveOnANoRoleRowKeepsTheHintInTheNoteBoxDescription(t *testing.T) {
+	w := newNoRoleWorld(t)
+
+	res := submitNote(t, w.b, openNoRoleNote(t, w.b, memberDoe.ID), "allied liaison, discharged 12 Sep")
+
+	form := rowNoteForm(t, parseHTML(t, res))
+	refusal := findElement(form, "", "data-error", refusalUnchanged)
+	hint := findElement(form, "", "data-field", "note-hint")
+	if refusal == nil || hint == nil {
+		t.Fatalf("the refused note form carries a refusal: %t, the hint: %t, want both", refusal != nil, hint != nil)
+	}
+	got := noteBoxDescription(t, form)
+	for _, el := range []*html.Node{refusal, hint} {
+		if want := announcedText(el); !strings.Contains(got, want) {
+			t.Errorf("the note box's description is %q, want it to carry %q", got, want)
+		}
 	}
 }
 

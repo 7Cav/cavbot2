@@ -396,13 +396,14 @@
 {{- /* The note link names its member in aria-label, as the hub list's row links name their hub. Hidden text in it would be positioned outside the table's scroll box. The page script sets both the label and the name again when it shows a note in place. */}}
 {{define "note-cell"}}<td class="fx-note" data-note-cell data-note="{{.Note}}"><span class="fx-notetext" data-field="note">{{.Note}}</span> <a href="{{.EditHref}}" class="fx-noteedit" data-field="edit_note" aria-label="{{if .Note}}Edit the note on {{.DisplayName}}{{else}}Add a note on {{.DisplayName}}{{end}}">{{if .Note}}Edit{{else}}Add a note{{end}}</a></td>{{end}}
 
+{{- /* On a refused save the note box names the refusal in its description, ahead of the no-role hint. The page script puts this form alone in a row and focuses the box, so a screen reader says why nothing saved as focus lands. */}}
 {{define "note-form"}}<form method="post" action="/foxhole/notes#note" class="fx-noteform" data-field="note-form">
   {{with .Refusal}}<div class="note fx-noterefusal" id="note-refusal" data-error="{{.Kind}}">{{.Message}}{{if eq .Kind "stale"}} Their note: <span class="fx-notenow">{{if $.Loaded}}{{$.Loaded}}{{else}}none{{end}}</span>{{end}}</div>{{end}}
   <input type="hidden" name="member" value="{{.MemberID}}">
   <input type="hidden" name="loaded" value="{{.Loaded}}">
   <input type="hidden" name="q" value="{{.Query}}">
   <input type="hidden" name="filter" value="{{.Filter}}">
-  <input type="text" name="note" value="{{.Note}}" class="search-input fx-noteinput" aria-label="Note" autocomplete="off" data-note-input{{if .NoRoleRow}} aria-describedby="note-hint"{{end}}>
+  <input type="text" name="note" value="{{.Note}}" class="search-input fx-noteinput" aria-label="Note" autocomplete="off" data-note-input{{if or .Refusal .NoRoleRow}} aria-describedby="{{if .Refusal}}note-refusal{{end}}{{if and .Refusal .NoRoleRow}} {{end}}{{if .NoRoleRow}}note-hint{{end}}"{{end}}>
   <button type="submit" class="btn btn--small btn--cta" data-field="save_note">Save</button>
   <a href="{{.Back}}" class="fx-notecancel" data-field="cancel_note">Cancel</a>
   {{if .NoRoleRow}}<p class="fx-hint" id="note-hint" data-field="note-hint">An empty note takes this member off the page.</p>{{end}}

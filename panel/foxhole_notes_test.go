@@ -497,3 +497,58 @@ func TestKeptNoteFormTypingTheNoteSomeoneElseSavedIsUnchanged(t *testing.T) {
 
 	assertRefused(t, res, refusalUnchanged, w.st, before)
 }
+
+// rowNoteForm returns the note form the page script takes from a refused
+// save's answer and puts in a row. That is the first in the answer's
+// <main>, outside any <template>. It fails the test when the answer has
+// none.
+func rowNoteForm(t *testing.T, doc *html.Node) *html.Node {
+	t.Helper()
+	main := findElement(doc, "main", "", "")
+	if main == nil {
+		t.Fatal("the answer has no <main>")
+	}
+	form := findLive(main, "", "data-field", "note-form")
+	if form == nil {
+		t.Fatal("the answer's <main> holds no note form")
+	}
+	return form
+}
+
+// noteBoxDescription is what a screen reader reads as the description of
+// the form's note box. It reads only the elements the form carries, since a
+// row holds the form alone, not the page around it.
+func noteBoxDescription(t *testing.T, form *html.Node) string {
+	t.Helper()
+	box := findElement(form, "input", "name", fieldNote)
+	if box == nil {
+		t.Fatal("the note form has no note box")
+	}
+	return accessibleDescription(form, box)
+}
+
+// With script, a refused note save from a row puts the form the server
+// answers with in the row and focuses its note box. The box's description
+// carries the refusal, so a screen reader says why nothing saved as focus
+// lands. When the form was stale, it carries the note as it stands now too.
+func TestARefusedNoteSaveNamesItsRefusalInTheNoteBoxDescription(t *testing.T) {
+	for _, tc := range refusedNoteSaves {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			_, res := tc.refuse(t, w)
+
+			form := rowNoteForm(t, parseHTML(t, res))
+			refusal := findElement(form, "", "data-error", tc.kind)
+			if refusal == nil {
+				t.Fatalf("the note form carries no %q refusal", tc.kind)
+			}
+			got := noteBoxDescription(t, form)
+			if want := announcedText(refusal); !strings.Contains(got, want) {
+				t.Errorf("the note box's description is %q, want it to carry the refusal, %q", got, want)
+			}
+			if !strings.Contains(got, tc.now) {
+				t.Errorf("the note box's description is %q, want it to carry the note as it stands now, %q", got, tc.now)
+			}
+		})
+	}
+}
