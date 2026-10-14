@@ -10,10 +10,10 @@ import (
 	"golang.org/x/net/html"
 )
 
-// selectedUnder is the Foxhole page's address with the view and the
+// addressSelecting is the Foxhole page's address with the view and the
 // selection given, the way the page script carries a selection through a
 // search, a filter link or a visit to the no-role view.
-func selectedUnder(view url.Values, memberIDs ...string) string {
+func addressSelecting(view url.Values, memberIDs ...string) string {
 	v := maps.Clone(view)
 	if v == nil {
 		v = url.Values{}
@@ -62,7 +62,7 @@ func groupMembers(rows []*html.Node) ([]string, map[string]bool) {
 			continue
 		}
 		ids = append(ids, id)
-		_, ticked[id] = attrValue(findElement(row, "input", "type", "checkbox"), "checked")
+		ticked[id] = boxTicked(row)
 	}
 	return ids, ticked
 }
@@ -81,7 +81,7 @@ func matchingRows(t *testing.T, doc *html.Node) map[string]bool {
 	out := map[string]bool{}
 	for id, row := range holderRows(t, doc) {
 		if !inGroup[id] {
-			_, out[id] = attrValue(findElement(row, "input", "type", "checkbox"), "checked")
+			out[id] = boxTicked(row)
 		}
 	}
 	return out
@@ -95,7 +95,7 @@ func matchingRows(t *testing.T, doc *html.Node) map[string]bool {
 // matching rows, and Marsh, matched and not selected, stays unticked.
 func TestHolderListShowsTheSelectionASearchHidesAtItsTop(t *testing.T) {
 	w := newFoxholeWorld(t)
-	address := selectedUnder(url.Values{paramQuery: {"a"}}, memberDoe.ID, memberKestrel.ID, memberAsh.ID)
+	address := addressSelecting(url.Values{paramQuery: {"a"}}, memberDoe.ID, memberKestrel.ID, memberAsh.ID)
 
 	doc := parseHTML(t, w.b.get(address))
 
@@ -103,8 +103,8 @@ func TestHolderListShowsTheSelectionASearchHidesAtItsTop(t *testing.T) {
 	if len(rows) == 0 {
 		t.Fatal("the group of the hidden selection has no rows")
 	}
-	if id, named := attrValue(rows[0], "data-member"); named {
-		t.Errorf("the group's first row is %s's, want its label row, which names no member", id)
+	if label := findElement(rows[0], "", "data-field", "group-label"); label == nil || textOf(label) == "" {
+		t.Error("the group's first row is no label row, want the label heading the group")
 	}
 	ids, ticked := groupMembers(rows)
 	if want := []string{memberKestrel.ID, memberDoe.ID}; !slices.Equal(ids, want) {
@@ -128,7 +128,7 @@ func TestHolderListShowsTheSelectionAFilterHidesAtItsTop(t *testing.T) {
 	w := newFoxholeWorld(t)
 	approveThroughThePage(t, w, memberAsh.ID)
 
-	doc := parseHTML(t, w.b.get(selectedUnder(url.Values{paramFilter: {"external"}}, memberAsh.ID)))
+	doc := parseHTML(t, w.b.get(addressSelecting(url.Values{paramFilter: {"external"}}, memberAsh.ID)))
 
 	rows := groupRows(t, doc)
 	ids, ticked := groupMembers(rows)
@@ -148,7 +148,7 @@ func TestHolderListShowsTheSelectionAFilterHidesAtItsTop(t *testing.T) {
 func TestHolderListShowsTheHiddenSelectionAboveAnEmptySearch(t *testing.T) {
 	w := newFoxholeWorld(t)
 
-	doc := parseHTML(t, w.b.get(selectedUnder(url.Values{paramQuery: {"zzz"}}, memberDoe.ID)))
+	doc := parseHTML(t, w.b.get(addressSelecting(url.Values{paramQuery: {"zzz"}}, memberDoe.ID)))
 
 	ids, ticked := groupMembers(groupRows(t, doc))
 	if want := []string{memberDoe.ID}; !slices.Equal(ids, want) || !ticked[memberDoe.ID] {
@@ -175,7 +175,7 @@ func TestHolderListShowsTheHiddenSelectionAboveAnEmptySearch(t *testing.T) {
 func TestClearApprovalActsOnTheSelectionTheSearchHides(t *testing.T) {
 	w := newFoxholeWorld(t)
 	approveThroughThePage(t, w, memberDoe.ID, memberKestrel.ID, memberAsh.ID)
-	doc := parseHTML(t, w.b.get(selectedUnder(url.Values{paramQuery: {"a"}}, memberDoe.ID, memberKestrel.ID, memberAsh.ID)))
+	doc := parseHTML(t, w.b.get(addressSelecting(url.Values{paramQuery: {"a"}}, memberDoe.ID, memberKestrel.ID, memberAsh.ID)))
 
 	res := submitSelection(t, w.b, doc, opClear)
 
@@ -190,7 +190,7 @@ func TestClearApprovalActsOnTheSelectionTheSearchHides(t *testing.T) {
 // from the group, and Marsh from the matching rows.
 func TestRemovePreviewTakesTheSelectionTheFilterHides(t *testing.T) {
 	w := newFoxholeWorld(t)
-	doc := parseHTML(t, w.b.get(selectedUnder(url.Values{paramFilter: {"internal"}}, memberKestrel.ID, memberMarsh.ID)))
+	doc := parseHTML(t, w.b.get(addressSelecting(url.Values{paramFilter: {"internal"}}, memberKestrel.ID, memberMarsh.ID)))
 
 	preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, doc, "external")))
 
@@ -219,7 +219,7 @@ func TestFilterCountsLeaveOutTheHiddenSelection(t *testing.T) {
 	search := url.Values{paramQuery: {"a"}}
 	plain := filterCounts(t, parseHTML(t, w.b.get(foxholePath+"?"+search.Encode())))
 
-	selected := filterCounts(t, parseHTML(t, w.b.get(selectedUnder(search, memberDoe.ID, memberKestrel.ID))))
+	selected := filterCounts(t, parseHTML(t, w.b.get(addressSelecting(search, memberDoe.ID, memberKestrel.ID))))
 
 	if !maps.Equal(selected, plain) {
 		t.Errorf("with Doe and Kestrel selected the filter links count %v, want %v as with nobody selected", selected, plain)
@@ -229,10 +229,11 @@ func TestFilterCountsLeaveOutTheHiddenSelection(t *testing.T) {
 // viewAddresses returns the address of each control on the page that opens
 // the page again in a view: the search form's fields, as the address it
 // sends, each filter link, the link to the no-role view, the line counting
-// the other view's matches and the progress block's Reload. It fails the
+// the other view's matches and the Reload in the block named busy, the
+// progress block or the block naming the commands running. It fails the
 // test when the page lacks the search form, the line or the Reload, so a
 // page that shows none can't pass for one whose addresses name no members.
-func viewAddresses(t *testing.T, doc *html.Node) map[string]string {
+func viewAddresses(t *testing.T, doc *html.Node, busy string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	form := findElement(doc, "form", "data-field", "search")
@@ -250,39 +251,57 @@ func viewAddresses(t *testing.T, doc *html.Node) map[string]string {
 		t.Fatal("the page has no line counting the other view's matches")
 	}
 	out["also matches"] = attrOf(findElement(also, "a", "", ""), "href")
-	reload := findElement(progressBlock(t, doc), "a", "data-field", "reload")
+	block := findElement(doc, "", "data-field", busy)
+	if block == nil {
+		t.Fatalf("the page has no %s block", busy)
+	}
+	reload := findElement(block, "a", "data-keeps-selection", "")
 	if reload == nil {
-		t.Fatal("the progress block has no Reload link")
+		t.Fatalf("the %s block has no Reload link", busy)
 	}
 	out["reload"] = attrOf(reload, "href")
 	return out
+}
+
+// holdAction starts a purge of Internal held at its first role change, so
+// the page shows the progress block.
+func holdAction(t *testing.T, w *testWorld) {
+	t.Helper()
+	hold := holdRoleWrites(t, w)
+	startPurge(t, w, "internal")
+	hold.next(t)
 }
 
 // Without script the selection doesn't travel, so a box a manager unticked
 // never comes back ticked. A page whose address names members renders every
 // control that opens the page again in a view with an address that names
 // none: the search, the filter links, the link to the no-role view and back,
-// the line counting the other view's matches, and the progress block's
-// Reload while an action runs. The search "a" matches holders and Vance,
-// whose note puts him in the no-role view.
+// the line counting the other view's matches, and the Reload while an
+// action or a /foxhole command runs. The search "a" matches holders and
+// Vance, whose note puts him in the no-role view.
 func TestViewAddressesNameNoSelection(t *testing.T) {
-	w := newFoxholeWorld(t)
-	seedNote(t, w, store.MemberNames{MemberID: memberVance.ID, DisplayName: "SGT Vance.R", Username: "rvance"}, "left the regiment")
-	hold := holdRoleWrites(t, w)
-	startPurge(t, w, "internal")
-	hold.next(t)
-	views := []struct {
+	cases := []struct {
 		name string
 		view url.Values
+		// busy starts what the page shows a Reload for, and names the block
+		// that shows it.
+		busy  func(*testing.T, *testWorld)
+		block string
 	}{
-		{"the holder list", url.Values{paramQuery: {"a"}}},
-		{"the no-role view", url.Values{paramQuery: {"a"}, paramFilter: {filterNoRole}}},
+		{"the holder list while an action runs", url.Values{paramQuery: {"a"}}, holdAction, "progress"},
+		{"the holder list while a /foxhole command runs", url.Values{paramQuery: {"a"}},
+			func(t *testing.T, w *testWorld) { holdFoxholeAdd(t, w) }, "command-running"},
+		{"the no-role view while an action runs", url.Values{paramQuery: {"a"}, paramFilter: {filterNoRole}}, holdAction, "progress"},
 	}
-	for _, v := range views {
-		t.Run(v.name, func(t *testing.T) {
-			doc := parseHTML(t, w.b.get(selectedUnder(v.view, memberDoe.ID, memberAsh.ID)))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			seedNote(t, w, store.MemberNames{MemberID: memberVance.ID, DisplayName: "SGT Vance.R", Username: "rvance"}, "left the regiment")
+			tc.busy(t, w)
 
-			for control, address := range viewAddresses(t, doc) {
+			doc := parseHTML(t, w.b.get(addressSelecting(tc.view, memberDoe.ID, memberAsh.ID)))
+
+			for control, address := range viewAddresses(t, doc, tc.block) {
 				u, err := url.Parse(address)
 				if err != nil {
 					t.Fatalf("%s: address %q: %v", control, address, err)
@@ -300,7 +319,7 @@ func TestViewAddressesNameNoSelection(t *testing.T) {
 // hid.
 func TestApprovalsSaveEndsTheSelectionTheSearchHid(t *testing.T) {
 	w := newFoxholeWorld(t)
-	address := selectedUnder(url.Values{paramQuery: {"a"}}, memberDoe.ID, memberKestrel.ID, memberAsh.ID)
+	address := addressSelecting(url.Values{paramQuery: {"a"}}, memberDoe.ID, memberKestrel.ID, memberAsh.ID)
 	for _, op := range []string{opApprove, opClear} {
 		res := submitSelection(t, w.b, parseHTML(t, w.b.get(address)), op)
 
@@ -321,7 +340,7 @@ func TestNoRoleViewShowsNothingOfTheSelection(t *testing.T) {
 	seedNote(t, w, store.MemberNames{MemberID: memberVance.ID, DisplayName: "SGT Vance.R", Username: "rvance"}, "left the regiment")
 	selected := []string{memberDoe.ID, memberKestrel.ID}
 
-	doc := parseHTML(t, w.b.get(selectedUnder(url.Values{paramFilter: {filterNoRole}}, selected...)))
+	doc := parseHTML(t, w.b.get(addressSelecting(url.Values{paramFilter: {filterNoRole}}, selected...)))
 
 	if findElement(doc, "tr", "data-member", memberVance.ID) == nil {
 		t.Fatal("the no-role view has no row for Vance")

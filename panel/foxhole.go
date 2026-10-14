@@ -791,8 +791,8 @@ func (h holderRow) adding(role commands.FoxholeRole) holderRow {
 // first, so a page load that waits out its time budget for the list still
 // has what it shows in the list's place. The holder list keeps the holders
 // who match the search and the filter named, below the selected holders
-// they leave out. A member list that isn't
-// complete holds no members, and the page has no holder list.
+// they leave out. A member list that isn't complete holds no members, and
+// the page has no holder list.
 func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeView, error) {
 	records, err := s.records(ctx)
 	if err != nil {
@@ -1074,36 +1074,33 @@ func (s foxholeService) lists(list commands.MemberListSnapshot, records map[stri
 	return view
 }
 
-// matching keeps the rows that hold the request's search, each with its
-// Edit link and ticked when the request selects it, in display name order.
+// matching keeps the rows that hold the request's search, as listed.
 func matching(rows []holderRow, req foxholeRequest) []holderRow {
 	search := strings.ToLower(strings.TrimSpace(req.Query))
-	var matched []holderRow
-	for _, row := range rows {
-		if row.matches(search) {
-			row.EditHref = noteAddress(req.Query, req.Filter, row.ID)
-			row.Selected = slices.Contains(req.Selection, row.ID)
-			matched = append(matched, row)
-		}
-	}
-	slices.SortFunc(matched, func(a, b holderRow) int { return byName(a.DisplayName, a.ID, b.DisplayName, b.ID) })
-	return matched
+	return listed(rows, req, func(row holderRow) bool { return row.matches(search) })
 }
 
-// hiddenSelection is the holders the request selects that shown leaves
-// out, each with its Edit link and ticked, in display name order. shown is
-// the rows the search and the filter keep.
+// hiddenSelection keeps the holders the request selects that shown, the
+// rows the search and the filter keep, leaves out, as listed.
 func hiddenSelection(holders, shown []holderRow, req foxholeRequest) []holderRow {
-	var hidden []holderRow
-	for _, row := range holders {
-		if !slices.Contains(req.Selection, row.ID) || slices.ContainsFunc(shown, func(h holderRow) bool { return h.ID == row.ID }) {
-			continue
+	return listed(holders, req, func(row holderRow) bool {
+		return slices.Contains(req.Selection, row.ID) && !slices.ContainsFunc(shown, func(h holderRow) bool { return h.ID == row.ID })
+	})
+}
+
+// listed keeps the rows keep reports, each with its Edit link and ticked
+// when the request selects it, in display name order.
+func listed(rows []holderRow, req foxholeRequest, keep func(holderRow) bool) []holderRow {
+	var out []holderRow
+	for _, row := range rows {
+		if keep(row) {
+			row.EditHref = noteAddress(req.Query, req.Filter, row.ID)
+			row.Selected = slices.Contains(req.Selection, row.ID)
+			out = append(out, row)
 		}
-		row.EditHref, row.Selected = noteAddress(req.Query, req.Filter, row.ID), true
-		hidden = append(hidden, row)
 	}
-	slices.SortFunc(hidden, func(a, b holderRow) int { return byName(a.DisplayName, a.ID, b.DisplayName, b.ID) })
-	return hidden
+	slices.SortFunc(out, func(a, b holderRow) int { return byName(a.DisplayName, a.ID, b.DisplayName, b.ID) })
+	return out
 }
 
 // byName orders two members the way the page lists them: by display name,

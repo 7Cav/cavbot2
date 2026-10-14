@@ -796,6 +796,7 @@
 (function () {
   'use strict';
 
+  // selection is the IDs of the members selected now.
   function selection() {
     if (document.querySelector('[data-field="selection"]')) {
       return Array.from(document.querySelectorAll('[data-select]:checked')).map(function (box) { return box.value; });
@@ -812,14 +813,14 @@
     return url.href;
   }
 
-  // A link takes the selection as it is pressed, so a link opened in a new
-  // tab carries it too.
-  function press(e) {
+  // carryOnPress gives a marked link the selection as it is pressed, so a
+  // link opened in a new tab carries it too.
+  function carryOnPress(e) {
     var link = e.target.closest('a[data-keeps-selection]');
     if (link) { link.href = carry(link.href); }
   }
-  document.addEventListener('click', press);
-  document.addEventListener('auxclick', press);
+  document.addEventListener('click', carryOnPress);
+  document.addEventListener('auxclick', carryOnPress);
 
   // The search sends its form's fields as the address, and the script adds
   // one for each member selected. It first drops any it added on an earlier

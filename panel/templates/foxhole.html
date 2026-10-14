@@ -306,7 +306,7 @@
       {{- /* The selected members the search or the filter hides head the list, so the selection bar acts on nobody the manager can't see. */}}
       {{with .HiddenSelection}}
       <tbody class="fx-selhidden" data-field="hidden-selection">
-        <tr><th colspan="6" scope="rowgroup">Selected, not in this search or filter</th></tr>
+        <tr><th colspan="6" scope="rowgroup" data-field="group-label">Selected, not in this search or filter</th></tr>
       {{range .}}
         {{template "holder-row" .}}
       {{end}}

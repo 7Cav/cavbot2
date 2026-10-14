@@ -447,12 +447,18 @@ func tickedRows(t *testing.T, doc *html.Node) []string {
 	t.Helper()
 	var out []string
 	for id, row := range holderRows(t, doc) {
-		if _, ticked := attrValue(findElement(row, "input", "type", "checkbox"), "checked"); ticked {
+		if boxTicked(row) {
 			out = append(out, id)
 		}
 	}
 	slices.Sort(out)
 	return out
+}
+
+// boxTicked reports whether the holder list row's checkbox is ticked.
+func boxTicked(row *html.Node) bool {
+	_, ticked := attrValue(findElement(row, "input", "type", "checkbox"), "checked")
+	return ticked
 }
 
 // Cancel on a remove preview returns to where Remove was pressed. From the
