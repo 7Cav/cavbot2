@@ -57,6 +57,9 @@ type addPreview struct {
 	// Notes counts the members the preview names who have a note, each once
 	// however many lines name them.
 	Notes int
+	// Back is the address Cancel leads to: the Add members block, where
+	// Preview was pressed.
+	Back string
 }
 
 // NobodyHint is the hint the preview gives in Confirm's place when no line
@@ -282,7 +285,7 @@ func (s foxholeService) addPreviewOf(list commands.MemberListSnapshot, records m
 	guild := s.foxholeGuildOf()
 	name := paste.Role.Label()
 	paste.AbovePreview = true
-	preview := &addPreview{Role: paste.Role, Name: name, Paste: paste}
+	preview := &addPreview{Role: paste.Role, Name: name, Paste: paste, Back: actionBlockAddress(addMembersAnchor)}
 	// claimed is the line that named each member first.
 	claimed := map[string]int{}
 	for _, line := range matchLines(list, paste.Text) {

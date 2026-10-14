@@ -215,6 +215,9 @@ type purgeConfirm struct {
 	// role's holders together. At 0 the page offers no Confirm.
 	ChangeCount int
 	Estimate    estimate
+	// Back is the address Cancel leads to: the After a war block, where
+	// Purge was pressed.
+	Back string
 }
 
 // NobodyHint is the hint the confirmation gives in Confirm's place at 0
@@ -251,6 +254,20 @@ func reopenOf(address, what string) reopenLink {
 // purgeConfirmAnchor is the ID foxhole.html gives the purge confirmation's
 // heading.
 const purgeConfirmAnchor = "purge-confirm"
+
+// The IDs foxhole.html gives the action blocks' headings. Cancel on a
+// preview an action block opened lands on that block's heading: the blocks
+// sit below the latest report, and stack in one column under 1100px, so
+// the page's top is far from the block the manager came from.
+const (
+	addMembersAnchor = "add-members"
+	addRosterAnchor  = "add-roster"
+	afterAWarAnchor  = "after-a-war"
+)
+
+// actionBlockAddress is the Foxhole page's address opened at the action
+// block whose heading carries the ID anchor.
+func actionBlockAddress(anchor string) string { return foxholePath + "#" + anchor }
 
 // purgeRole is one role a purge takes, and how many hold it at this load.
 type purgeRole struct {
@@ -295,7 +312,7 @@ func estimateFor(changes int) estimate {
 // itself makes, so the count confirmed is the count the purge sets out on.
 func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope commands.PurgeScope) *purgeConfirm {
 	roleIDs := commands.FoxholeRoleIDs(s.manager.GuildData(s.guildID))
-	confirm := &purgeConfirm{Scope: scope, Label: scope.Label()}
+	confirm := &purgeConfirm{Scope: scope, Label: scope.Label(), Back: actionBlockAddress(afterAWarAnchor)}
 	for _, role := range scope.Roles() {
 		holders := 0
 		for _, mem := range list.Members {

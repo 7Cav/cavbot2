@@ -66,6 +66,9 @@ type rosterPreview struct {
 	// troopers its roster add missed, 0 for a preview of the whole roster.
 	// Its Confirm posts the report instead of the roster.
 	Retry int64
+	// Back is the address Cancel leads to: the Add a unit's roster block,
+	// where Preview roster was pressed.
+	Back string
 }
 
 // rosterRow is one trooper on the roster as the roster preview shows them:
@@ -162,7 +165,7 @@ func rosterTroopers(ctx context.Context, unit commands.ValidatedInternalUnit) ([
 // records.
 func (s foxholeService) rosterPreviewOf(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, unit commands.ValidatedInternalUnit, troopers []commands.RosterTrooper) *rosterPreview {
 	guild := s.foxholeGuildOf()
-	preview := &rosterPreview{Unit: unit}
+	preview := &rosterPreview{Unit: unit, Back: actionBlockAddress(addRosterAnchor)}
 	for _, t := range troopers {
 		row := rosterRow{RosterTrooper: t}
 		if t.DiscordID != "" {
