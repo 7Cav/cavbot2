@@ -257,7 +257,7 @@ func (p *rosterPreview) NobodyHint() string {
 // address. A preview of the whole roster opens again by its Preview again
 // button instead, which posts the unit.
 func (p *rosterPreview) Reopen() reopenLink {
-	return reopenOf(retryAddress(p.Retry), "Retry")
+	return reopenOf(retryPress{Report: p.Retry}.address(), "Retry")
 }
 
 // CanAdd reports whether confirming the preview could give Internal to

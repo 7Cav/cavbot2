@@ -55,6 +55,10 @@ type reportView struct {
 	Missed []reportMember
 	// AddedNobody are an add's pasted lines that added nobody.
 	AddedNobody []reportLine
+	// InLog is the report as its change log entry shows it, whose Retry
+	// says it was pressed there. False is the latest report above the
+	// action blocks.
+	InLog bool
 	// StopPressedBy is the forum user who pressed Stop on the running
 	// action, which stops after the change in flight. Empty until someone
 	// does.
@@ -121,18 +125,18 @@ func (reportView) PauseLimit() string {
 func (r reportView) CanRetry() bool { return !r.Running && len(r.Missed) > 0 }
 
 // RetryHref is the address of the page with the report's Retry open, at
-// the block that says what it retries.
-func (r reportView) RetryHref() string { return retryAddress(r.ID) }
-
-// retryAddress is the address of the page with the Retry of the report
-// with the ID given open, at the block that says what it retries.
-func retryAddress(report int64) string {
-	return foxholePath + "?" + url.Values{paramRetry: {strconv.FormatInt(report, 10)}}.Encode() + "#" + retryAnchor
-}
+// the block that says what it retries. It says where the Retry was
+// pressed: in the report's change log entry, or in the latest report.
+func (r reportView) RetryHref() string { return retryPress{Report: r.ID, InEntry: r.InLog}.address() }
 
 // retryAnchor is the ID foxhole.html gives the heading of the block a
 // Retry opens above its preview, which says what it retries.
 const retryAnchor = "retry"
+
+// latestReportAnchor is the ID foxhole.html gives the latest report's
+// heading once its action has ended. Cancel on a Retry pressed there lands
+// on it.
+const latestReportAnchor = "latest-report"
 
 // OutcomeCode is the report's data-outcome marker: how the action ended,
 // or running while it runs.
@@ -341,8 +345,8 @@ type removePreview struct {
 	Notes    int
 	Estimate estimate
 	// Back is the address Cancel leads to: the view the selection was made
-	// in, at its list with the selection ticked, or the page's top when a
-	// Retry opened the preview.
+	// in, at its list with the selection ticked, or where the Retry was
+	// pressed when a Retry opened the preview.
 	Back string
 	// reopen is the address that opens this preview again: the same role
 	// and members selected, from the same view, or the Retry's address when

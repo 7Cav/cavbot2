@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -21,6 +22,50 @@ import (
 // foxholeRetryPath is the Confirm of a Retry opened for a purge, a re-add
 // or a roster add, which posts the report as fieldReport.
 const foxholeRetryPath = "/foxhole/retry"
+
+// retryPress is a Retry as its address names it: the report it retries,
+// and whether it was pressed in that report's change log entry rather than
+// in the latest report. Both open the same Retry, and differ only in where
+// Cancel leads. An address that doesn't say where, such as one from before
+// it said, counts as pressed in the latest report.
+type retryPress struct {
+	Report  int64
+	InEntry bool
+}
+
+// The values of paramRetryFrom: a Retry pressed in the latest report, and
+// one pressed in a change log entry.
+const (
+	retryFromReport = "report"
+	retryFromEntry  = "entry"
+)
+
+// retryPressOf is the Retry a page address's query names, with a zero
+// Report for none.
+func retryPressOf(q url.Values) retryPress {
+	report, _ := strconv.ParseInt(q.Get(paramRetry), 10, 64)
+	return retryPress{Report: report, InEntry: q.Get(paramRetryFrom) == retryFromEntry}
+}
+
+// address is the address of the page with the Retry open, at the block
+// that says what it retries.
+func (p retryPress) address() string {
+	from := retryFromReport
+	if p.InEntry {
+		from = retryFromEntry
+	}
+	q := url.Values{paramRetry: {strconv.FormatInt(p.Report, 10)}, paramRetryFrom: {from}}
+	return foxholePath + "?" + q.Encode() + "#" + retryAnchor
+}
+
+// back is the address Cancel on the Retry's confirmation or preview leads
+// to: where the Retry was pressed.
+func (p retryPress) back() string {
+	if p.InEntry {
+		return entryAddress(p.Report)
+	}
+	return foxholePath + "#" + latestReportAnchor
+}
 
 // retryReport reads the report with the ID given for its Retry: nil when no
 // report has the ID, or its action still runs, or it missed nobody.
@@ -39,16 +84,17 @@ func (s foxholeService) retryReport(ctx context.Context, id int64) (*reportView,
 	return report, nil
 }
 
-// openRetry opens on the page the Retry of the report the request names:
-// the report, whose failures the page shows again, and the action's
-// preview, holding only the members it missed, read from a complete member
-// list and the guild's Foxhole records. A report with nothing to retry
-// opens nothing.
-func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, req foxholeRequest) error {
-	report, err := s.retryReport(ctx, req.Retry)
+// openRetry opens on the page the Retry the address names: the report,
+// whose failures the page shows again, and the action's preview, holding
+// only the members it missed, read from a complete member list and the
+// guild's Foxhole records. Its Cancel leads back to where the Retry was
+// pressed. A report with nothing to retry opens nothing.
+func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, press retryPress) error {
+	report, err := s.retryReport(ctx, press.Report)
 	if err != nil || report == nil {
 		return err
 	}
+	back := press.back()
 	var ids []string
 	for _, m := range report.Missed {
 		ids = append(ids, m.ID)
@@ -58,8 +104,9 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 		// A line naming a member's ID matches them alone, so the preview
 		// names each member the add missed, whatever their names now.
 		view.AddPreview = s.addPreviewOf(list, records, pasteBox{Role: report.Role, Text: strings.Join(ids, "\n")}, nil)
+		view.AddPreview.Back = back
 	case store.ChangeRemoval:
-		view.RemovePreview = s.removePreviewOf(list, records, report.Role, ids, foxholeAddress(req.Query, req.Filter), report.RetryHref())
+		view.RemovePreview = s.removePreviewOf(list, records, report.Role, ids, back, report.RetryHref())
 	case store.ChangeRosterAdd:
 		unit, ok := commands.LookupValidatedInternalUnitLabelled(report.Unit)
 		if !ok {
@@ -72,9 +119,10 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 			troopers = append(troopers, commands.RosterTrooper{Username: m.Trooper, DiscordID: m.ID})
 		}
 		view.RosterPreview = s.rosterPreviewOf(list, records, unit, troopers)
-		view.RosterPreview.Retry = report.ID
+		view.RosterPreview.Retry, view.RosterPreview.Back = report.ID, back
 	case store.ChangeReAdd, store.ChangePurge:
 		view.RetryConfirm = s.retryConfirmOf(report, list, records)
+		view.RetryConfirm.Back = back
 	}
 	view.Retry = report
 	return nil
@@ -96,6 +144,8 @@ type retryConfirm struct {
 	// once, though a purge of both roles can list a member under each.
 	Notes    int
 	Estimate estimate
+	// Back is the address Cancel leads to: where the Retry was pressed.
+	Back string
 }
 
 // Reopen is the link that opens this confirmation again, at the Retry's
