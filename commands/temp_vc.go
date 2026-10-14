@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"sync"
@@ -319,6 +320,11 @@ type TempVCManager interface {
 	// under the state's lock, because discordgo shares the payload's slices
 	// with its cache (#335).
 	MemberRoles(g *discordgo.Guild) map[string][]string
+	// CachedMemberRoles reads the role IDs of every member discordgo's
+	// state cache holds for the guild, never the API: its member list, and
+	// the members its voice states carry for anyone the list lacks. A rank
+	// roles save re-ranks the runtime's members through it (#680).
+	CachedMemberRoles(guildID string) map[string][]string
 	// ChannelPermissionSet sets one permission overwrite on a channel, the
 	// target's whole overwrite, with the given audit-log reason. It is the
 	// one call that retries on a 429, after the wait Discord gives: a guest
@@ -690,6 +696,36 @@ func (m *sessionTempVCManager) MemberRoles(g *discordgo.Guild) map[string][]stri
 	return GuildMemberRoles(g)
 }
 
+// CachedMemberRoles takes State.RLock once and scans State.Guilds itself, as
+// VoiceStates does and for the same reasons. A member update writes over
+// the cached member under State.Lock, so each role list is copied while the
+// lock is held. The member list comes first: a GUILD_MEMBER_UPDATE keeps it
+// current, where a voice state's member is as of that member's last voice
+// event.
+func (m *sessionTempVCManager) CachedMemberRoles(guildID string) map[string][]string {
+	st := m.s.State
+	st.RLock()
+	defer st.RUnlock()
+	for _, g := range st.Guilds {
+		if g.ID != guildID {
+			continue
+		}
+		roles := make(map[string][]string, len(g.Members))
+		for _, mem := range g.Members {
+			if mem != nil && mem.User != nil {
+				roles[mem.User.ID] = slices.Clone(mem.Roles)
+			}
+		}
+		for _, vs := range g.VoiceStates {
+			if _, listed := roles[vs.UserID]; !listed && vs.Member != nil {
+				roles[vs.UserID] = slices.Clone(vs.Member.Roles)
+			}
+		}
+		return roles
+	}
+	return map[string][]string{}
+}
+
 func (m *sessionTempVCManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error {
 	return m.s.ChannelPermissionSet(channelID, targetID, targetType, allow, deny,
 		auditLogReason(auditReason), discordgo.WithRetryOnRatelimit(true))
@@ -931,6 +967,76 @@ func (t *TempVC) ApplyGuildModeratorRoles(roleIDs []string) {
 	t.guildModeratorRoles = slices.Clone(roleIDs)
 }
 
+// ApplyRankRoles replaces the rank ladder's rank roles with a save's. The
+// panel's service layer calls it after its store write succeeds, the same
+// arrangement as ApplyGuildModeratorRoles, so every handover ranks by the
+// saved roles from then on. The save applies the handover rule to every
+// spawned channel at once (GLOSSARY.md, Handover). An owner who no longer
+// holds a rank role hands over, and a channel with no owner goes to its
+// highest-ranked occupant who holds one. Each handover's row write and
+// ownership notice go out before it returns.
+//
+// A member may have taken or lost a role in Discord since their last voice
+// event, so the save first re-reads the roles of every member the runtime
+// ranks from the gateway state cache. One the cache no longer holds keeps
+// the roles last seen.
+func (t *TempVC) ApplyRankRoles(ladder RankLadder) {
+	cached := t.mgr.CachedMemberRoles(t.guildID)
+	t.mu.Lock()
+	t.ladder = ladder
+	for userID := range t.memberRoles {
+		if roles, ok := cached[userID]; ok {
+			t.memberRoles[userID] = roles
+		}
+	}
+	handovers := t.rankHandoversLocked()
+	t.mu.Unlock()
+	for _, row := range handovers {
+		t.applyHandover(row)
+	}
+}
+
+// rankHandoversLocked applies the handover rule the way a rank roles save
+// does to every spawned channel with someone inside, and returns the rows
+// of those whose owner changed, for the caller to write off-lock with their
+// notices. A spawn in flight is left alone, since its create path writes
+// its row with the owner it decided on. A missing guild confirms nobody, so
+// nothing changes. Caller holds mu.
+func (t *TempVC) rankHandoversLocked() []store.SpawnedChannel {
+	snap := t.mgr.VoiceStates(t.guildID)
+	if !snap.Present {
+		return nil
+	}
+	var rows []store.SpawnedChannel
+	for _, channelID := range slices.Sorted(maps.Keys(t.occupants)) {
+		occ := t.occupants[channelID]
+		if _, inFlight := t.inFlight[channelID]; inFlight || len(occ) == 0 {
+			continue
+		}
+		current := t.owners[channelID]
+		if _, present := occ[current]; current != "" && present && t.rankLocked(current) < noRankIndex {
+			continue
+		}
+		elected := t.electPresentOwnerLocked(channelID, snap)
+		if elected == current {
+			continue
+		}
+		t.setOwnerLocked(channelID, elected)
+		rows = append(rows, t.rowLocked(channelID, elected))
+	}
+	return rows
+}
+
+// RankLadder returns the rank ladder with the rank roles in force now: the
+// guild's saved ones, or the role IDs in code while nothing is saved.
+// Everything that asks whether a member is a Cav member reads it here, so
+// a save reaches /record start and the panel's Foxhole page at once.
+func (t *TempVC) RankLadder() RankLadder {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.ladder
+}
+
 // LastSpawnFailure reports a hub's last spawn failure since the last
 // successful spawn from it, or false when there is none. The panel's hub list
 // reads it per hub row ID.
@@ -1052,7 +1158,30 @@ func StartTempVC(dg *discordgo.Session, mgr TempVCManager, guildID string, st st
 		defer utils.RecoverPanic("tempvc-channel-delete")
 		t.handleChannelDelete(c)
 	})
+	dg.AddHandler(func(_ *discordgo.Session, r *discordgo.GuildRoleDelete) {
+		defer utils.RecoverPanic("tempvc-role-delete")
+		t.handleRoleDelete(r)
+	})
 	return t, nil
+}
+
+// handleRoleDelete tells on-call when Discord deletes a role that is a
+// rank's rank role (ADR 0012, amended by #680). Every holder of that rank
+// stops counting as a Cav member at once, and nothing else would say so
+// until a member asked why they lost their channel. The rank keeps the
+// deleted role until a panel admin saves another, and the Settings page
+// shows it as not in the server.
+func (t *TempVC) handleRoleDelete(r *discordgo.GuildRoleDelete) {
+	if r == nil || r.GuildID != t.guildID {
+		return
+	}
+	t.mu.Lock()
+	rank, ok := t.ladder.RankOf(r.RoleID)
+	t.mu.Unlock()
+	if !ok {
+		return
+	}
+	captureError("Rank role deleted", errRankRoleDeleted, "rank", rank, "role_id", r.RoleID)
 }
 
 // handleChannelDelete untracks a spawned channel deleted outside the bot (an

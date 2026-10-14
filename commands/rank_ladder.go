@@ -1,6 +1,11 @@
 package commands
 
-import "github.com/7cav/cavbot2/store"
+import (
+	"errors"
+	"slices"
+
+	"github.com/7cav/cavbot2/store"
+)
 
 // The rank ladder and its rank roles (GLOSSARY.md, #680). The ranks and
 // their order live in code, tempVCRankRoles. The role that counts as each
@@ -8,6 +13,11 @@ import "github.com/7cav/cavbot2/store"
 // nothing saved uses the role IDs in code. Everything that asks whether a
 // member is a Cav member, or how senior, reads one RankLadder: the handover
 // rule, /record start and the panel's Foxhole page.
+
+// errRankRoleDeleted is the identity of a deleted rank role's event in
+// Sentry. Every member holding it stops counting as a Cav member, and only a
+// panel admin's save of the rank roles brings the rank back (ADR 0012).
+var errRankRoleDeleted = errors.New("a rank role was deleted in Discord")
 
 // Rank is one rank on the rank ladder and its rank role, by ID, empty when
 // the rank has none.
@@ -62,6 +72,11 @@ func RankLadderOf(saved store.RankRoles) RankLadder {
 	return NewRankLadder(saved.Roles)
 }
 
+// Ranks returns the ladder's ranks, most senior first.
+func (l RankLadder) Ranks() []Rank {
+	return slices.Clone(l.ranks)
+}
+
 // seniority is the ladder place of the most senior rank role among the role
 // IDs, or noRankIndex when none of them is a rank role.
 func (l RankLadder) seniority(roleIDs []string) int {
@@ -82,4 +97,14 @@ func (l RankLadder) SeniorRankRole(roleIDs []string) (string, bool) {
 		return "", false
 	}
 	return l.ranks[i].RoleID, true
+}
+
+// RankOf returns the abbreviation of the rank whose rank role the role is,
+// and false when it is no rank's.
+func (l RankLadder) RankOf(roleID string) (string, bool) {
+	i, ok := l.position[roleID]
+	if !ok {
+		return "", false
+	}
+	return l.ranks[i].Abbrev, true
 }

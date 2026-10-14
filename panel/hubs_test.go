@@ -490,6 +490,19 @@ func (f *fakeDiscord) addRoles(roles ...*discordgo.Role) {
 	f.roles = append(f.roles, roles...)
 }
 
+// CachedMemberRoles answers from the member list's members, whatever its
+// status, each role list a copy: the state cache holds members while the
+// list is still arriving.
+func (f *fakeDiscord) CachedMemberRoles(string) map[string][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[string][]string, len(f.memberList.Members))
+	for _, m := range f.memberList.Members {
+		out[m.ID] = slices.Clone(m.RoleIDs)
+	}
+	return out
+}
+
 // MemberRoles reads the payload through the runtime's shared helper. The
 // panel's tests never run a sweep; the fake carries it for the interface.
 func (f *fakeDiscord) MemberRoles(g *discordgo.Guild) map[string][]string {
