@@ -33,10 +33,7 @@ func submitSelection(t *testing.T, b *browser, doc *html.Node, op string, member
 		}
 		box.Attr = append(box.Attr, html.Attribute{Key: "checked"})
 	}
-	form := findElement(doc, "form", "action", foxholeApprovalsPath)
-	if form == nil {
-		t.Fatal("the page has no selection form")
-	}
+	form := selectionForm(t, doc)
 	var button *html.Node
 	eachLiveElement(doc, func(n *html.Node) {
 		if v, _ := attrValue(n, "value"); n.Data == "button" && v == op && ownedBy(n, form) {
@@ -46,10 +43,10 @@ func submitSelection(t *testing.T, b *browser, doc *html.Node, op string, member
 	if button == nil {
 		t.Fatalf("the selection form has no %s button", op)
 	}
-	fields := formPosts(t, doc, foxholeApprovalsPath)
+	fields := formFields(doc, form)
 	name, _ := attrValue(button, "name")
 	fields.Set(name, op)
-	action, method := foxholeApprovalsPath, http.MethodPost
+	action, method := attrOf(form, "action"), http.MethodPost
 	if v, ok := attrValue(button, "formaction"); ok {
 		action = v
 	}
@@ -60,6 +57,18 @@ func submitSelection(t *testing.T, b *browser, doc *html.Node, op string, member
 		return b.getForm(action, fields)
 	}
 	return b.postForm(action, fields)
+}
+
+// selectionForm returns the holder list's selection form, by the ID its
+// checkboxes name in their form attribute, and fails the test when the page
+// has none.
+func selectionForm(t *testing.T, doc *html.Node) *html.Node {
+	t.Helper()
+	form := findElement(doc, "form", "id", "fx-selection")
+	if form == nil {
+		t.Fatal("the page has no selection form")
+	}
+	return form
 }
 
 // approvedRows returns the holder list's rows that carry the approved mark,
