@@ -38,7 +38,9 @@ type foxholeView struct {
 	Filter string
 	// Reload is the page in the view it shows, with any note form it shows
 	// open: the address the member list notice's and the progress block's
-	// Reload links load, and the page's script loads in the background.
+	// Reload links load, and the page's script loads in the background. It
+	// names no fragment, so it opens at the top of the page, where those
+	// blocks sit, not at the note block below them.
 	Reload string
 	// Filters are the filter links, each with how many holders matching the
 	// search it lists.
@@ -269,7 +271,7 @@ type holderRow struct {
 	// Note is the member's note, empty when they have none.
 	Note string
 	// EditHref is the row's Edit link: the page, in the view it shows, with
-	// the member's note form open.
+	// the member's note form open, at the note block.
 	EditHref string
 }
 
@@ -1011,7 +1013,7 @@ func matching(rows []holderRow, req foxholeRequest) []holderRow {
 	var matched []holderRow
 	for _, row := range rows {
 		if row.matches(search) {
-			row.EditHref = foxholeURL(req.Query, req.Filter, row.ID)
+			row.EditHref = noteAddress(req.Query, req.Filter, row.ID)
 			matched = append(matched, row)
 		}
 	}
@@ -1381,6 +1383,19 @@ func listAddress(query, filter string) string {
 // is noteMember open, none when it is empty.
 func foxholeURL(query, filter, noteMember string) string {
 	return foxholeLink(query, filter, paramNoteMember, noteMember)
+}
+
+// noteAnchor is the ID foxhole.html gives the note block's heading. A
+// row's note link and the note form's action name it, so the page they open
+// shows the form with its heading focused, a refused save's page included.
+// A save that goes through redirects to its list with that list's own
+// fragment.
+const noteAnchor = "note"
+
+// noteAddress is foxholeURL with the member's note form open, at the note
+// block.
+func noteAddress(query, filter, member string) string {
+	return foxholeURL(query, filter, member) + "#" + noteAnchor
 }
 
 // clearedAddress is listAddress after a save that cleared the note of the

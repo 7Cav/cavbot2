@@ -252,14 +252,18 @@
   function mount(cell, form, restore) {
     var input = form.querySelector('[data-note-input]');
     var cancel = form.querySelector('[data-field="cancel_note"]');
-    // A form cloned into a row carries the hint ID the page's own form
-    // uses. Each row's form gets its own, so its input names its own hint
-    // and a screen reader reads the warning out.
+    var member = cell.closest('[data-member]').getAttribute('data-member');
+    // A form in a row carries the IDs the page's own note form uses: the
+    // hint's, and on a refused save the refusal's. Each row's form gets its
+    // own, so rows with forms open at once share none. Its input names its
+    // own hint, so a screen reader reads the warning out.
     var hint = form.querySelector('[data-field="note-hint"]');
     if (hint) {
-      hint.id = 'note-hint-' + cell.closest('[data-member]').getAttribute('data-member');
+      hint.id = 'note-hint-' + member;
       input.setAttribute('aria-describedby', hint.id);
     }
+    var refusal = form.querySelector('#note-refusal');
+    if (refusal) { refusal.id = 'note-refusal-' + member; }
     cell.replaceChildren(form);
     form.addEventListener('submit', function (e) {
       e.preventDefault();
@@ -660,14 +664,15 @@
 })();
 
 /* Landing on a block (ADR 0013). A control that opens a block below the top
-   of the page, as each Foxhole preview's opener, each way to a Foxhole list
-   and a hub's Edit do, names the block's heading in its address's fragment.
-   So does each Hubs form's action, and the Foxhole selection bar's, since a
-   refused save answers at that address. The heading is marked
-   tabindex="-1", so the browser scrolls to it and focuses it, with or
-   without script, and a keyboard or screen reader user starts at the block
-   rather than at the top of the page. The script focuses it too, on load
-   and when the fragment changes, for a browser that only scrolls. */
+   of the page, as each Foxhole preview's opener, each way to a Foxhole list,
+   a Foxhole row's note link and a hub's Edit do, names the block's heading
+   in its address's fragment. So does each Hubs form's action, and the
+   Foxhole selection bar's and note form's, since a refused save answers at
+   that address. The heading is marked tabindex="-1", so the browser
+   scrolls to it and focuses it, with or without script, and a keyboard or
+   screen reader user starts at the block rather than at the top of the
+   page. The script focuses it too, on load and when the fragment changes,
+   for a browser that only scrolls. */
 (function () {
   'use strict';
 

@@ -196,7 +196,8 @@
   {{end}}{{end}}
   {{with .NoteForm}}
   <section class="block narrow" data-field="note-block">
-    <h2 class="block-header">Note on {{if .DisplayName}}{{.DisplayName}} <span class="fx-user">@{{.Username}}</span>{{else}}{{.MemberID}}{{end}}</h2>
+    {{- /* A row's note link and the note form's action name this heading. A refused note save answers with the page at the form's address, so the page opens here, and the refusal note in the form is the heading's description. */}}
+    <h2 class="block-header" id="note" tabindex="-1"{{if .Refusal}} aria-describedby="note-refusal"{{end}}>Note on {{if .DisplayName}}{{.DisplayName}} <span class="fx-user">@{{.Username}}</span>{{else}}{{.MemberID}}{{end}}</h2>
     <div class="block-row">{{template "note-form" .}}</div>
   </section>
   {{end}}
@@ -395,8 +396,8 @@
 {{- /* The note link names its member in aria-label, as the hub list's row links name their hub. Hidden text in it would be positioned outside the table's scroll box. The page script sets both the label and the name again when it shows a note in place. */}}
 {{define "note-cell"}}<td class="fx-note" data-note-cell data-note="{{.Note}}"><span class="fx-notetext" data-field="note">{{.Note}}</span> <a href="{{.EditHref}}" class="fx-noteedit" data-field="edit_note" aria-label="{{if .Note}}Edit the note on {{.DisplayName}}{{else}}Add a note on {{.DisplayName}}{{end}}">{{if .Note}}Edit{{else}}Add a note{{end}}</a></td>{{end}}
 
-{{define "note-form"}}<form method="post" action="/foxhole/notes" class="fx-noteform" data-field="note-form">
-  {{with .Refusal}}<div class="note fx-noterefusal" data-error="{{.Kind}}">{{.Message}}{{if eq .Kind "stale"}} Their note: <span class="fx-notenow">{{if $.Loaded}}{{$.Loaded}}{{else}}none{{end}}</span>{{end}}</div>{{end}}
+{{define "note-form"}}<form method="post" action="/foxhole/notes#note" class="fx-noteform" data-field="note-form">
+  {{with .Refusal}}<div class="note fx-noterefusal" id="note-refusal" data-error="{{.Kind}}">{{.Message}}{{if eq .Kind "stale"}} Their note: <span class="fx-notenow">{{if $.Loaded}}{{$.Loaded}}{{else}}none{{end}}</span>{{end}}</div>{{end}}
   <input type="hidden" name="member" value="{{.MemberID}}">
   <input type="hidden" name="loaded" value="{{.Loaded}}">
   <input type="hidden" name="q" value="{{.Query}}">

@@ -9,10 +9,10 @@ import (
 	"golang.org/x/net/html"
 )
 
-// listBlock returns the Foxhole page's block holding the list whose
-// data-field is field, holders or no-role, and fails the test when the page
-// has none.
-func listBlock(t *testing.T, doc *html.Node, field string) *html.Node {
+// foxholeBlock returns the Foxhole page's block whose data-field is field:
+// the holders or no-role list's, or the note block, which holds the note
+// form the page opens. It fails the test when the page has none.
+func foxholeBlock(t *testing.T, doc *html.Node, field string) *html.Node {
 	t.Helper()
 	block := findElement(doc, "section", "data-field", field)
 	if block == nil {
@@ -21,14 +21,14 @@ func listBlock(t *testing.T, doc *html.Node, field string) *html.Node {
 	return block
 }
 
-// landedOnList returns the heading a page opened at fragment lands on and
-// the list block holding it, the one whose data-field is field. It fails the
-// test unless the heading is that list's, and unless every aria-describedby
-// on the page names an element the page carries.
-func landedOnList(t *testing.T, doc *html.Node, fragment, field string) (heading, block *html.Node) {
+// landedOnBlock returns the heading a page opened at fragment lands on and
+// the block holding it, the one whose data-field is field. It fails the
+// test unless the heading is that block's, and unless every
+// aria-describedby on the page names an element the page carries.
+func landedOnBlock(t *testing.T, doc *html.Node, fragment, field string) (heading, block *html.Node) {
 	t.Helper()
-	block = listBlock(t, doc, field)
-	heading = landedHeading(t, doc, fragment, block, "the "+field+" list's heading")
+	block = foxholeBlock(t, doc, field)
+	heading = landedHeading(t, doc, fragment, block, "the heading of the "+field+" block")
 	describedByResolves(t, doc)
 	return heading, block
 }
@@ -117,7 +117,7 @@ func TestAFoxholeSaveLandsOnTheListItWasMadeFrom(t *testing.T) {
 
 			doc, fragment := landing(t, w.b, control, res)
 
-			_, block := landedOnList(t, doc, fragment, tc.block)
+			_, block := landedOnBlock(t, doc, fragment, tc.block)
 			namedOnlyIn(t, doc, block, "data-skipped", tc.skipped)
 			namedOnlyIn(t, doc, block, "data-cleared", tc.cleared)
 		})
@@ -158,7 +158,7 @@ func TestAFoxholeSaveResultLineDescribesTheListHeading(t *testing.T) {
 
 			doc, fragment := landing(t, w.b, control, res)
 
-			heading, _ := landedOnList(t, doc, fragment, tc.block)
+			heading, _ := landedOnBlock(t, doc, fragment, tc.block)
 			got := accessibleDescription(doc, heading)
 			if tc.line == nil {
 				if got != "" {
@@ -221,7 +221,7 @@ func TestARefusedApprovalsSaveLandsOnTheHolderList(t *testing.T) {
 				t.Fatalf("status = %d, want %d", res.StatusCode, http.StatusConflict)
 			}
 			doc := parseHTML(t, res)
-			heading, block := landedOnList(t, doc, fragment, "holders")
+			heading, block := landedOnBlock(t, doc, fragment, "holders")
 			refusalDescribing(t, doc, heading, block)
 			if got, want := refusalKinds(doc), []string{refusalNobodyToChange}; !slices.Equal(got, want) {
 				t.Errorf("the page shows refusal notes %v, want the one nobody-to-change note", got)
@@ -280,7 +280,7 @@ func TestNoteFormCancelLandsOnTheListItWasOpenedFrom(t *testing.T) {
 
 	doc, fragment := landing(t, w.b, href, w.b.get(href))
 
-	landedOnList(t, doc, fragment, "no-role")
+	landedOnBlock(t, doc, fragment, "no-role")
 }
 
 // Each link and form that opens a list from the Foxhole page lands on that
@@ -321,7 +321,7 @@ func TestFoxholeLinksToAListLandOnItsHeading(t *testing.T) {
 
 			doc, fragment := landing(t, w.b, control, res)
 
-			landedOnList(t, doc, fragment, tc.block)
+			landedOnBlock(t, doc, fragment, tc.block)
 		})
 	}
 }
@@ -355,11 +355,11 @@ func resultRegionsWithin(t *testing.T, doc, block *html.Node, page string) {
 func TestNoRoleViewKeepsTheResultRegionInItsBlock(t *testing.T) {
 	w := newNoRoleWorld(t)
 	fresh := openNoRoleView(t, w.b)
-	resultRegionsWithin(t, fresh, listBlock(t, fresh, "no-role"), "a fresh load of the no-role view")
+	resultRegionsWithin(t, fresh, foxholeBlock(t, fresh, "no-role"), "a fresh load of the no-role view")
 
 	doc, _ := landing(t, w.b, foxholeNotesPath, submitNote(t, w.b, openNoRoleNote(t, w.b, memberDoe.ID), ""))
 
-	resultRegionsWithin(t, doc, listBlock(t, doc, "no-role"), "the page the clear answers with")
+	resultRegionsWithin(t, doc, foxholeBlock(t, doc, "no-role"), "the page the clear answers with")
 	line := findLive(doc, "", "data-cleared", memberDoe.ID)
 	if line == nil {
 		t.Fatalf("the page the clear answers with says nothing of %s's note being cleared", memberDoe.ID)
@@ -371,5 +371,126 @@ func TestNoRoleViewKeepsTheResultRegionInItsBlock(t *testing.T) {
 		if _, ok := attrValue(n, "data-note-result"); ok {
 			break
 		}
+	}
+}
+
+// Without script, a row's note link opens the page at the note block, with
+// its heading focused, not at the top far above the form it opens. The
+// form shows no refusal, so the heading reads no description.
+func TestANoteLinkLandsOnTheNoteBlock(t *testing.T) {
+	cases := []struct {
+		name  string
+		world func(*testing.T) *testWorld
+		// link is the address of the row's note link on a fresh load of its
+		// view.
+		link func(*testing.T, *browser) string
+	}{
+		{"a holder row's Add a note", newFoxholeWorld, func(t *testing.T, b *browser) string {
+			return editNoteLink(t, parseHTML(t, b.get(foxholePath)), memberDoe.ID)
+		}},
+		{"a no-role row's Edit", newNoRoleWorld, func(t *testing.T, b *browser) string {
+			return noRoleNoteLink(t, b, memberDoe.ID)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := tc.world(t)
+			href := tc.link(t, w.b)
+
+			doc, fragment := landing(t, w.b, href, w.b.get(href))
+
+			heading, _ := landedOnBlock(t, doc, fragment, "note-block")
+			if got := accessibleDescription(doc, heading); got != "" {
+				t.Errorf("the note block's heading is described as %q, want no description", got)
+			}
+		})
+	}
+}
+
+// A Reload link opens the page at its top even with a note form open. The
+// blocks that carry one, such as the member list notice, sit above the note
+// block, so landing there would scroll past the block the manager reloaded
+// to check.
+func TestReloadWithANoteFormOpenLandsAtTheTop(t *testing.T) {
+	w := newFoxholeWorld(t)
+	href := editNoteLink(t, parseHTML(t, w.b.get(foxholePath)), memberDoe.ID)
+	w.discord.setMemberList(arrivingList)
+	doc, _ := landing(t, w.b, href, w.b.get(href))
+	foxholeBlock(t, doc, "note-block")
+	reload := findElement(memberListNotice(t, doc), "a", "data-field", "reload")
+	if reload == nil {
+		t.Fatal("the notice has no Reload link")
+	}
+	to := attrOf(reload, "href")
+
+	_, fragment := landing(t, w.b, to, w.b.get(to))
+
+	if fragment != "" {
+		t.Errorf("Reload opens the page at fragment %q, want its top", fragment)
+	}
+}
+
+// noteFormAction is the address the page's note form posts to, fragment
+// and all, and fails the test when the page has no note form.
+func noteFormAction(t *testing.T, doc *html.Node) string {
+	t.Helper()
+	form := findLive(doc, "form", "data-field", "note-form")
+	if form == nil {
+		t.Fatal("the page has no note form")
+	}
+	return attrOf(form, "action")
+}
+
+// A refused note save answers with the page, not a redirect, at the address
+// the note form posts to. Without script the page opens at the note block's
+// heading, not at the top far above the form. The refusal note shows under
+// the heading and is its description, so a screen reader says why nothing
+// saved as focus lands. PRODUCT.md's Accessibility & Inclusion asks this of
+// every refused save, whatever refused it.
+func TestARefusedNoteSaveLandsOnTheNoteBlock(t *testing.T) {
+	cases := []struct {
+		name string
+		// refuse opens a note form through the page and saves it as a
+		// browser with no script does, so the save is refused, and returns
+		// the page it saved from and the answer.
+		refuse func(*testing.T, *testWorld) (*html.Node, *http.Response)
+		// kind is the refusal's data-error kind.
+		kind string
+	}{
+		{"a save that changes nothing", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
+			assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
+			page := openNote(t, w.b, memberDoe.ID)
+			return page, submitNote(t, w.b, page, "discharged 12 Sep")
+		}, refusalUnchanged},
+		{"a form another save got to first", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
+			kept := openNote(t, w.b, memberDoe.ID)
+			assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
+			return kept, submitNote(t, w.b, kept, "rejoined, fine to re-add")
+		}, refusalStale},
+		{"a note started on a member who has since lost their Foxhole role", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
+			page := openNote(t, w.b, memberKestrel.ID)
+			withoutFoxholeRoles(w)
+			return page, submitNote(t, w.b, page, "allied group lead")
+		}, "not-holder"},
+		{"a note started while the member list is partial", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
+			page := openNote(t, w.b, memberKestrel.ID)
+			w.discord.setMemberList(arrivingList)
+			return page, submitNote(t, w.b, page, "allied group lead")
+		}, "member-list"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			page, res := tc.refuse(t, w)
+
+			res, fragment := arrive(t, w.b, noteFormAction(t, page), res)
+
+			doc := parseHTML(t, res)
+			heading, block := landedOnBlock(t, doc, fragment, "note-block")
+			note := refusalDescribing(t, doc, heading, block)
+			if got := attrOf(note, "data-error"); got != tc.kind {
+				t.Errorf("the note block shows a %q refusal, want %q", got, tc.kind)
+			}
+		})
 	}
 }
