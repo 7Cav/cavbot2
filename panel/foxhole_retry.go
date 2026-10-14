@@ -69,9 +69,9 @@ func (p retryPress) address() string {
 	return foxholePath + "?" + p.query() + "#" + retryAnchor
 }
 
-// back is the address of Cancel on the Retry's confirmation or preview,
-// which leads where retryBack says.
-func (p retryPress) back() string {
+// cancelAddress is the address of Cancel on the Retry's confirmation or
+// preview, which leads where retryBack says.
+func (p retryPress) cancelAddress() string {
 	return foxholeRetryCancelPath + "?" + p.query()
 }
 
@@ -82,12 +82,12 @@ func (p retryPress) back() string {
 // Change log's heading.
 func (s foxholeService) retryBack(ctx context.Context, press retryPress) (string, error) {
 	if !press.InEntry {
-		last, err := s.store.LastFoxholeReport(ctx)
-		switch {
-		case err == nil && last.Entry.ID == press.Report:
-			return foxholePath + "#" + latestReportAnchor, nil
-		case err != nil && !errors.Is(err, store.ErrNotFound):
-			return "", fmt.Errorf("read the last Foxhole report: %w", err)
+		latest, err := s.lastReport(ctx)
+		if err != nil {
+			return "", err
+		}
+		if latest != nil && latest.ID == press.Report {
+			return foxholeAt(latestReportAnchor), nil
 		}
 	}
 	entries, err := s.store.ListFoxholeChanges(ctx, changeLogLimit)
@@ -97,7 +97,7 @@ func (s foxholeService) retryBack(ctx context.Context, press retryPress) (string
 	if slices.ContainsFunc(entries, func(e store.ChangeLogEntry) bool { return e.ID == press.Report }) {
 		return entryAddress(press.Report), nil
 	}
-	return foxholePath + "#" + changeLogAnchor, nil
+	return foxholeAt(changeLogAnchor), nil
 }
 
 // cancelRetry is GET /foxhole/retry/cancel, Cancel on a Retry's
@@ -115,7 +115,7 @@ func (p *Panel) cancelRetry(w http.ResponseWriter, r *http.Request, sess session
 		return
 	}
 	if err != nil {
-		p.pageFailed(w, sess, "foxhole retry cancel", press.back(), err, nil)
+		p.pageFailed(w, sess, "foxhole retry cancel", press.cancelAddress(), err, nil)
 		return
 	}
 	http.Redirect(w, r, back, http.StatusSeeOther)
@@ -148,7 +148,7 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 	if err != nil || report == nil {
 		return err
 	}
-	back, reopen := press.back(), press.address()
+	back, reopen := press.cancelAddress(), press.address()
 	var ids []string
 	for _, m := range report.Missed {
 		ids = append(ids, m.ID)

@@ -286,7 +286,7 @@ func (s foxholeService) addPreviewOf(list commands.MemberListSnapshot, records m
 	guild := s.foxholeGuildOf()
 	name := paste.Role.Label()
 	paste.AbovePreview = true
-	preview := &addPreview{Role: paste.Role, Name: name, Paste: paste, Back: actionBlockAddress(addMembersAnchor)}
+	preview := &addPreview{Role: paste.Role, Name: name, Paste: paste, Back: foxholeAt(addMembersAnchor)}
 	// claimed is the line that named each member first.
 	claimed := map[string]int{}
 	for _, line := range matchLines(list, paste.Text) {

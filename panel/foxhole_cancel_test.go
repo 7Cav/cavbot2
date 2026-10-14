@@ -3,7 +3,6 @@ package panel
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"slices"
 	"testing"
 
@@ -180,6 +179,36 @@ func TestCancelOnARetryPressedInAChangeLogEntryLandsOnTheEntry(t *testing.T) {
 	}
 }
 
+// A Retry pressed in the latest report cancels to the latest report's
+// heading, from the Retry confirmation and from the add and roster previews
+// a Retry opens. TestRemovePreviewCancelReturnsToWhereRemoveWasPressed
+// covers the remove preview's.
+func TestCancelOnARetryPressedInTheLatestReportLandsOnIt(t *testing.T) {
+	cases := []struct {
+		name string
+		// fail runs an action to its end with a member it failed on, so its
+		// report offers Retry.
+		fail func(*testing.T, *testWorld)
+		// preview is the data-field marker of what the Retry opens.
+		preview string
+	}{
+		{"purge Retry confirmation", failedPurge, "retry-confirm"},
+		{"add preview", failedAdd, "add-preview"},
+		{"roster preview", failedRosterAdd, "roster-preview"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			tc.fail(t, w)
+			cancel := cancelAddress(t, pendingBlock(t, openRetry(t, w.b), tc.preview))
+
+			doc, fragment := landing(t, w.b, cancel, w.b.get(cancel))
+
+			landedOnBlock(t, doc, fragment, "report")
+		})
+	}
+}
+
 // cancelOfAPurgeRetry runs a purge of External that fails on Kestrel, then
 // opens the Retry its latest report offers, the way a browser follows the
 // link. It returns the address of the Retry confirmation's Cancel and the
@@ -236,14 +265,11 @@ func TestCancelOnARetryWhoseEntryLeftTheChangeLogLandsOnTheChangeLog(t *testing.
 func TestCancelOnARetryWhoseAddressDoesntSayWhereLandsOnTheLatestReport(t *testing.T) {
 	w := newFoxholeWorld(t)
 	failedPurge(t, w)
-	retry, err := url.Parse(attrOf(retryLink(reportBlock(t, parseHTML(t, w.b.get(foxholePath)))), "href"))
-	if err != nil {
-		t.Fatalf("Retry address: %v", err)
-	}
-	q := retry.Query()
-	q.Del(paramRetryFrom)
-	retry.RawQuery = q.Encode()
-	cancel := cancelAddress(t, pendingBlock(t, parseHTML(t, w.b.get(retry.String())), "retry-confirm"))
+	report := attrOf(reportBlock(t, parseHTML(t, w.b.get(foxholePath))), "data-report")
+	// The address the latest report's Retry had before it said where it was
+	// pressed.
+	retry := "/foxhole?retry=" + report + "#retry"
+	cancel := cancelAddress(t, pendingBlock(t, parseHTML(t, w.b.get(retry)), "retry-confirm"))
 
 	doc, fragment := landing(t, w.b, cancel, w.b.get(cancel))
 

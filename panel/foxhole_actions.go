@@ -55,10 +55,10 @@ type reportView struct {
 	Missed []reportMember
 	// AddedNobody are an add's pasted lines that added nobody.
 	AddedNobody []reportLine
-	// InLog is the report as its change log entry shows it, whose Retry
+	// InEntry is the report as its change log entry shows it, whose Retry
 	// says it was pressed there. False is the latest report above the
 	// action blocks.
-	InLog bool
+	InEntry bool
 	// StopPressedBy is the forum user who pressed Stop on the running
 	// action, which stops after the change in flight. Empty until someone
 	// does.
@@ -127,7 +127,7 @@ func (r reportView) CanRetry() bool { return !r.Running && len(r.Missed) > 0 }
 // RetryHref is the address of the page with the report's Retry open, at
 // the block that says what it retries. It says where the Retry was
 // pressed: in the report's change log entry, or in the latest report.
-func (r reportView) RetryHref() string { return retryPress{Report: r.ID, InEntry: r.InLog}.address() }
+func (r reportView) RetryHref() string { return retryPress{Report: r.ID, InEntry: r.InEntry}.address() }
 
 // retryAnchor is the ID foxhole.html gives the heading of the block a
 // Retry opens above its preview, which says what it retries.
@@ -269,9 +269,9 @@ const (
 	afterAWarAnchor  = "after-a-war"
 )
 
-// actionBlockAddress is the Foxhole page's address opened at the action
-// block whose heading carries the ID anchor.
-func actionBlockAddress(anchor string) string { return foxholePath + "#" + anchor }
+// foxholeAt is the Foxhole page's address opened at the element whose ID
+// is anchor, such as an action block's heading.
+func foxholeAt(anchor string) string { return foxholePath + "#" + anchor }
 
 // purgeRole is one role a purge takes, and how many hold it at this load.
 type purgeRole struct {
@@ -316,7 +316,7 @@ func estimateFor(changes int) estimate {
 // itself makes, so the count confirmed is the count the purge sets out on.
 func (s foxholeService) purgeConfirmOf(list commands.MemberListSnapshot, scope commands.PurgeScope) *purgeConfirm {
 	roleIDs := commands.FoxholeRoleIDs(s.manager.GuildData(s.guildID))
-	confirm := &purgeConfirm{Scope: scope, Label: scope.Label(), Back: actionBlockAddress(afterAWarAnchor)}
+	confirm := &purgeConfirm{Scope: scope, Label: scope.Label(), Back: foxholeAt(afterAWarAnchor)}
 	for _, role := range scope.Roles() {
 		holders := 0
 		for _, mem := range list.Members {

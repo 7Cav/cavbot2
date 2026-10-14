@@ -169,7 +169,7 @@ func rosterTroopers(ctx context.Context, unit commands.ValidatedInternalUnit) ([
 // records.
 func (s foxholeService) rosterPreviewOf(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, unit commands.ValidatedInternalUnit, troopers []commands.RosterTrooper) *rosterPreview {
 	guild := s.foxholeGuildOf()
-	preview := &rosterPreview{Unit: unit, Back: actionBlockAddress(addRosterAnchor)}
+	preview := &rosterPreview{Unit: unit, Back: foxholeAt(addRosterAnchor)}
 	for _, t := range troopers {
 		row := rosterRow{RosterTrooper: t}
 		if t.DiscordID != "" {

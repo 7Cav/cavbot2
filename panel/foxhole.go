@@ -534,9 +534,9 @@ type foxholeRequest struct {
 	Roster *rosterRequest
 	// Retry is the Retry the page opens, with a zero Report for none.
 	Retry retryPress
-	// Entry is the ID of the change log entry the page opens beside the
+	// OpenEntry is the ID of the change log entry the page opens beside the
 	// newest, 0 for none.
-	Entry int64
+	OpenEntry int64
 }
 
 // foxholePage is GET /foxhole, the Foxhole page. It reads the guild's roles
@@ -550,7 +550,7 @@ func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session
 	p.renderFoxhole(w, r, sess, http.StatusOK,
 		foxholeRequest{Query: q.Get(paramQuery), Filter: knownFilter(q.Get(paramFilter)), NoteMember: q.Get(paramNoteMember),
 			Cleared: q.Get(paramCleared), Skipped: q[paramSkipped], AwaitList: true, Purge: purge,
-			Remove: remove, Selection: distinct(q[fieldMember]), Retry: retryPressOf(q), Entry: entry})
+			Remove: remove, Selection: distinct(q[fieldMember]), Retry: retryPressOf(q), OpenEntry: entry})
 }
 
 // reopenPreview is GET /foxhole/reopen, the link a preview gives beside a
@@ -846,7 +846,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	view.Reload = foxholeURL(req.Query, req.Filter, req.NoteMember)
 	view.Units = commands.ValidatedInternalUnits()
 	view.NoteTemplate = req.blankNoteForm()
-	view.Changes, view.OpenEntry = foxholeChanges(entries), req.Entry
+	view.Changes, view.OpenEntry = foxholeChanges(entries), req.OpenEntry
 	if req.Cleared != "" && s.offPage(list, records, req.Cleared) {
 		view.Cleared = newestAbout(view.Changes, req.Cleared)
 	}
@@ -1298,7 +1298,7 @@ func foxholeChanges(entries []store.ChangeLogEntry) []foxholeChange {
 			// The entry is the report. The entry alone doesn't say whether
 			// the action still runs; a report with no outcome yet does.
 			if report, err := reportViewOf(store.FoxholeReport{Entry: e}); err == nil {
-				report.Running, report.InLog = report.Outcome == "", true
+				report.Running, report.InEntry = report.Outcome == "", true
 				v.Report = report
 			}
 			views = append(views, v)
