@@ -63,7 +63,7 @@
       {{- if $.Foxhole.Busy}} {{template "busy-reopen" .Reopen}}{{end}}
     </form>
     {{else}}
-    <div class="submit-row"><a class="btn" href="{{.Back}}">Cancel</a> <span class="fx-hint" data-field="nobody-to-remove">{{.NobodyHint}}</span></div>
+    <div class="submit-row"><a class="btn" href="{{.Back}}" data-field="cancel">Cancel</a> <span class="fx-hint" data-field="nobody-to-remove">{{.NobodyHint}}</span></div>
     {{end}}
   </section>
   {{end}}
@@ -299,7 +299,7 @@
       <tbody>
       {{range .Holders}}
         <tr data-member="{{.ID}}">
-          <td class="fx-check"><input type="checkbox" name="member" value="{{.ID}}" form="fx-selection" aria-label="Select {{.DisplayName}}" data-select></td>
+          <td class="fx-check"><input type="checkbox" name="member" value="{{.ID}}" form="fx-selection" aria-label="Select {{.DisplayName}}" data-select{{if .Selected}} checked{{end}}></td>
           {{template "member-cell" .}}
           <td class="fx-nowrap">{{if .Internal}}<span class="tag fx-role" data-role="internal">Internal</span> {{end}}{{if .External}}<span class="tag fx-role" data-role="external">External</span>{{end}}</td>
           <td class="fx-nowrap">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else if .NoRankRole}}<span class="tag tag--warn" data-flag="no-rank-role">no rank role</span>{{else}}<span class="off">none</span>{{end}}</td>

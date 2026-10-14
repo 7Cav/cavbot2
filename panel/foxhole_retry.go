@@ -60,7 +60,8 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 		view.AddPreview = s.addPreviewOf(list, records, pasteBox{Role: report.Role, Text: strings.Join(ids, "\n")}, nil)
 	case store.ChangeRemoval:
 		view.RemovePreview = s.removePreviewOf(list, records,
-			foxholeRequest{Query: req.Query, Filter: req.Filter, Remove: report.Role, RemoveMembers: ids}, report.RetryHref())
+			foxholeRequest{Query: req.Query, Filter: req.Filter, Remove: report.Role, Selection: ids},
+			foxholeAddress(req.Query, req.Filter), report.RetryHref())
 	case store.ChangeRosterAdd:
 		unit, ok := commands.LookupValidatedInternalUnitLabelled(report.Unit)
 		if !ok {

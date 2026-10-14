@@ -323,8 +323,9 @@ type removePreview struct {
 	// Notes counts the members the preview names who have a note.
 	Notes    int
 	Estimate estimate
-	// Back is the address of the view the selection was made in, where
-	// Cancel leads.
+	// Back is the address Cancel leads to: the view the selection was made
+	// in, at its list with the selection ticked, or the page's top when a
+	// Retry opened the preview.
 	Back string
 	// reopen is the address that opens this preview again: the same role
 	// and members selected, from the same view, or the Retry's address when
@@ -371,13 +372,13 @@ func (m previewMember) Why() string {
 
 // removePreviewOf is the preview of a removal of the request's role from
 // the members it selected, in display name order, read from a complete
-// member list and the guild's Foxhole records. reopen is the address that
-// opens it again.
-func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, req foxholeRequest, reopen string) *removePreview {
+// member list and the guild's Foxhole records. back is the address its
+// Cancel leads to, and reopen the address that opens it again.
+func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, req foxholeRequest, back, reopen string) *removePreview {
 	guild := s.foxholeGuildOf()
 	name := req.Remove.Label()
-	preview := &removePreview{Role: req.Remove, Name: name, Back: foxholeAddress(req.Query, req.Filter), reopen: reopen}
-	for _, id := range distinct(req.RemoveMembers) {
+	preview := &removePreview{Role: req.Remove, Name: name, Back: back, reopen: reopen}
+	for _, id := range distinct(req.Selection) {
 		rec := records[id]
 		member := previewMember{ID: id, DisplayName: rec.DisplayName, Username: rec.Username, Note: rec.Note, RoleName: name}
 		mem, inServer := list.Member(id)
@@ -414,8 +415,15 @@ func (s foxholeService) removePreviewOf(list commands.MemberListSnapshot, record
 func (req foxholeRequest) removeAddress() string {
 	v := viewValues(req.Query, req.Filter)
 	v.Set(paramRemove, string(req.Remove))
-	v[fieldMember] = distinct(req.RemoveMembers)
+	v[fieldMember] = distinct(req.Selection)
 	return foxholePath + "?" + v.Encode() + "#" + removePreviewAnchor
+}
+
+// cancelAddress is the address the selection bar's remove preview's Cancel
+// leads to: the request's view at its list, with the members selected for
+// the removal ticked again.
+func (req foxholeRequest) cancelAddress() string {
+	return listLink(req.Query, req.Filter, fieldMember, distinct(req.Selection)...)
 }
 
 // removePreviewAnchor is the ID foxhole.html gives the remove preview's

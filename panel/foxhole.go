@@ -273,6 +273,9 @@ type holderRow struct {
 	// EditHref is the row's Edit link: the page, in the view it shows, with
 	// the member's note form open, at the note block.
 	EditHref string
+	// Selected is the row's member among those the page's address names as
+	// selected, which ticks the row's box.
+	Selected bool
 }
 
 // noteForm is the form that saves one member's note, as the page opens it.
@@ -509,9 +512,12 @@ type foxholeRequest struct {
 	// empty for none.
 	Purge commands.PurgeScope
 	// Remove is the role whose remove preview the page opens, empty for
-	// none, and RemoveMembers the IDs of the members selected for it.
-	Remove        commands.FoxholeRole
-	RemoveMembers []string
+	// none.
+	Remove commands.FoxholeRole
+	// Selection is the IDs of the members the address names as selected:
+	// the holder list ticks their rows, and the remove preview, when Remove
+	// names a role, is of them.
+	Selection []string
 	// ActionRefusal is the refusal of the Foxhole action this page answers,
 	// nil for none.
 	ActionRefusal *saveRefusal
@@ -534,7 +540,7 @@ func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session
 	p.renderFoxhole(w, r, sess, http.StatusOK,
 		foxholeRequest{Query: q.Get(paramQuery), Filter: knownFilter(q.Get(paramFilter)), NoteMember: q.Get(paramNoteMember),
 			Cleared: q.Get(paramCleared), Skipped: q[paramSkipped], AwaitList: true, Purge: purge,
-			Remove: remove, RemoveMembers: q[fieldMember], Retry: retry})
+			Remove: remove, Selection: q[fieldMember], Retry: retry})
 }
 
 // reopenPreview is GET /foxhole/reopen, the link a preview gives beside a
@@ -788,7 +794,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 			view.PurgeConfirm = s.purgeConfirmOf(list, req.Purge)
 		}
 		if req.Remove != "" {
-			view.RemovePreview = s.removePreviewOf(list, records, req, req.removeAddress())
+			view.RemovePreview = s.removePreviewOf(list, records, req, req.cancelAddress(), req.removeAddress())
 		}
 		if req.Paste != nil {
 			view.AddPreview = s.addPreviewOf(list, records, *req.Paste, nil)
@@ -1007,13 +1013,14 @@ func (s foxholeService) lists(list commands.MemberListSnapshot, records map[stri
 }
 
 // matching keeps the rows that hold the request's search, each with its
-// Edit link, in display name order.
+// Edit link and ticked when the request selects it, in display name order.
 func matching(rows []holderRow, req foxholeRequest) []holderRow {
 	search := strings.ToLower(strings.TrimSpace(req.Query))
 	var matched []holderRow
 	for _, row := range rows {
 		if row.matches(search) {
 			row.EditHref = noteAddress(req.Query, req.Filter, row.ID)
+			row.Selected = slices.Contains(req.Selection, row.ID)
 			matched = append(matched, row)
 		}
 	}
@@ -1358,9 +1365,10 @@ func foxholeAddress(query, filter string) string {
 
 // The IDs the holder list's heading and the no-role view's heading carry in
 // foxhole.html. A filter link, a search, a link to the other view, a save
-// that returns to a list, a refused Approve or Clear approval and the note
-// form's Cancel open the page at the list, which sits far below the action
-// blocks wherever they stack, with its heading focused.
+// that returns to a list, a refused Approve or Clear approval, the note
+// form's Cancel and the Cancel of a remove preview the selection bar opened
+// open the page at the list, which sits far below the action blocks
+// wherever they stack, with its heading focused.
 const (
 	holderListAnchor = "holders"
 	noRoleAnchor     = "no-role"

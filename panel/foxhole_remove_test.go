@@ -4,11 +4,13 @@ import (
 	"context"
 	"maps"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/7cav/cavbot2/commands"
 	"github.com/7cav/cavbot2/store"
 	"golang.org/x/net/html"
 )
@@ -398,5 +400,144 @@ func TestRemovalOfInternalClearsTheInternalApprovalAndKeepsTheExternalOne(t *tes
 	}
 	if got, want := approvalClearedIn(reportList(t, reportBlock(t, page), "changed")), []string{memberMarsh.ID}; !slices.Equal(got, want) {
 		t.Errorf("the report marks %v as losing their approval, want %v", got, want)
+	}
+}
+
+// vanceWithInternal is Vance once he holds Internal.
+func vanceWithInternal() commands.ListedMember {
+	vance := memberVance
+	vance.RoleIDs = []string{roleSGT, roleInternal}
+	return vance
+}
+
+// removeUnderASearchAndAFilter opens the holder list under the search "r"
+// and the Internal filter, which together list Ash, Marsh and Vance alone,
+// ticks the members given, and presses the selection bar's Remove for the
+// role, the way a browser with no script does. It returns the page Remove
+// opens.
+func removeUnderASearchAndAFilter(role string, memberIDs ...string) func(*testing.T, *testWorld) *html.Node {
+	return func(t *testing.T, w *testWorld) *html.Node {
+		t.Helper()
+		internal := attrOf(filterAnchor(t, parseHTML(t, w.b.get(foxholePath)), "internal"), "href")
+		listed := parseHTML(t, submitSearch(t, w.b, parseHTML(t, w.b.get(internal)), "r"))
+		return parseHTML(t, submitSelection(t, w.b, listed, role, memberIDs...))
+	}
+}
+
+// landsOn checks a page opened at fragment lands on the heading of the
+// block whose data-field is field, or at the page's top when field is
+// empty.
+func landsOn(t *testing.T, doc *html.Node, fragment, field string) {
+	t.Helper()
+	if field == "" {
+		if fragment != "" {
+			t.Errorf("the page opens at fragment %q, want its top", fragment)
+		}
+		return
+	}
+	heading := landedOn(doc, fragment)
+	if heading == nil || !isHeading(heading) || !within(heading, foxholeBlock(t, doc, field)) {
+		t.Errorf("the page opens at fragment %q, want the heading of the %s block", fragment, field)
+	}
+}
+
+// tickedRows returns the members whose holder list row is ticked, sorted.
+func tickedRows(t *testing.T, doc *html.Node) []string {
+	t.Helper()
+	var out []string
+	for id, row := range holderRows(t, doc) {
+		if _, ticked := attrValue(findElement(row, "input", "type", "checkbox"), "checked"); ticked {
+			out = append(out, id)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// Cancel on a remove preview returns to where Remove was pressed. From the
+// selection bar it lands on the holder list's heading, under the search and
+// the filter the selection was made under, whether or not anyone selected
+// holds the role. A remove address with the no-role filter lands on the
+// no-role view's heading. A Retry of a removal has no selection to return
+// to, and its Cancel opens the page at its top with no box ticked. The
+// preview page's own holder list shows the selection ticked, and so does
+// the page Cancel opens, a member the preview skips included.
+func TestRemovePreviewCancelReturnsToWhereRemoveWasPressed(t *testing.T) {
+	ashAndMarsh := sorted([]string{memberAsh.ID, memberMarsh.ID})
+	cases := []struct {
+		name string
+		// open opens a remove preview as a browser with no script does, and
+		// returns the page it opens.
+		open func(*testing.T, *testWorld) *html.Node
+		// block is the data-field of the list block Cancel lands on, empty
+		// for the page's top.
+		block string
+		// selection is the members ticked when Remove was pressed, nil for
+		// a preview the selection bar didn't open.
+		selection []string
+	}{
+		{"Remove External, which skips a member", removeUnderASearchAndAFilter("external", ashAndMarsh...), "holders", ashAndMarsh},
+		{"Remove Internal", removeUnderASearchAndAFilter("internal", ashAndMarsh...), "holders", ashAndMarsh},
+		{"a preview where nobody selected holds the role", removeUnderASearchAndAFilter("external", memberAsh.ID),
+			"holders", []string{memberAsh.ID}},
+		{"a remove address typed with the no-role filter", func(t *testing.T, w *testWorld) *html.Node {
+			typed := url.Values{paramFilter: {filterNoRole}, paramRemove: {"external"}, fieldMember: {memberKestrel.ID}}
+			return parseHTML(t, w.b.get(foxholePath+"?"+typed.Encode()+"#"+removePreviewAnchor))
+		}, "no-role", nil},
+		{"the Retry of a removal", func(t *testing.T, w *testWorld) *html.Node {
+			w.discord.failRoleWrites(memberKestrel.ID, missingPermissions())
+			preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID)))
+			assertRedirect(t, confirmRemoval(t, w.b, preview), foxholePath)
+			w.awaitActionEnd(t)
+			return openRetry(t, w.b)
+		}, "", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			setMembers(w, memberDoe, memberAsh, memberKestrel, memberMarsh, vanceWithInternal())
+			page := tc.open(t, w)
+			if tc.selection != nil {
+				if got := tickedRows(t, page); !slices.Equal(got, tc.selection) {
+					t.Errorf("the preview page's holder list ticks %v, want the selection %v", got, tc.selection)
+				}
+			}
+			cancel := cancelAddress(t, removePreviewBlock(t, page))
+
+			doc, fragment := landing(t, w.b, cancel, w.b.get(cancel))
+
+			landsOn(t, doc, fragment, tc.block)
+			// The no-role view has no boxes to tick.
+			if tc.block != "no-role" {
+				if got := tickedRows(t, doc); !slices.Equal(got, tc.selection) {
+					t.Errorf("the page Cancel opens ticks %v, want %v", got, tc.selection)
+				}
+			}
+			if tc.selection != nil {
+				want := sorted([]string{memberAsh.ID, memberMarsh.ID, memberVance.ID})
+				if got := keys(holderRows(t, doc)); !slices.Equal(got, want) {
+					t.Errorf("the page Cancel opens lists %v, want %v under the search and the filter", got, want)
+				}
+			}
+		})
+	}
+}
+
+// A member the selection names who has no holder list row by the time
+// Cancel is followed, such as one who lost their Foxhole roles meanwhile,
+// is left out: the page still opens, with the rest of the selection ticked.
+func TestRemovePreviewCancelTicksTheSelectionStillListed(t *testing.T) {
+	w := newFoxholeWorld(t)
+	setMembers(w, memberDoe, memberAsh, memberKestrel, memberMarsh, vanceWithInternal())
+	page := removeUnderASearchAndAFilter("internal", memberAsh.ID, memberMarsh.ID)(t, w)
+	cancel := cancelAddress(t, removePreviewBlock(t, page))
+	marsh := memberMarsh
+	marsh.RoleIDs = []string{roleCPT}
+	setMembers(w, memberDoe, memberAsh, memberKestrel, marsh, vanceWithInternal())
+
+	doc, _ := landing(t, w.b, cancel, w.b.get(cancel))
+
+	if got, want := tickedRows(t, doc), []string{memberAsh.ID}; !slices.Equal(got, want) {
+		t.Errorf("the page Cancel opens ticks %v, want %v", got, want)
 	}
 }
