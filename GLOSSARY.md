@@ -209,7 +209,9 @@ _Avoid_: roster (a unit's roster), member list (the bot's copy of the whole
 guild).
 
 **Selection**:
-The members ticked in the holder list.
+The members a Foxhole manager has ticked in the holder list. It lasts
+through searches, filters and visits to the no-role view, and ends when an
+Approve, a Clear approval or a removal made from it goes ahead.
 _Avoid_: ticked members, selected set. A picker's selected set is its
 stored items.
 
