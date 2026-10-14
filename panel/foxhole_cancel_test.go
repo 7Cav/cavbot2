@@ -2,6 +2,7 @@ package panel
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 	"slices"
 	"testing"
@@ -282,5 +283,32 @@ func TestCancelOnARetryOpenedAgainLandsWhereTheRetryWasFirstPressed(t *testing.T
 
 			landedOnEntry(t, doc, fragment, report)
 		})
+	}
+}
+
+// Cancel on a Retry reads the store to tell where it lands. A read that
+// fails gets the panel's could-not-load page and reaches Sentry once.
+func TestCancelOnARetryWhoseStoreReadFailsSaysSoAndIsReported(t *testing.T) {
+	var st *ctxStore
+	w := newFoxholeWorldWith(t, func(fake store.Store) store.Store {
+		st = &ctxStore{Fake: fake.(*store.Fake)}
+		return st
+	})
+	failedPurge(t, w)
+	page, _ := retryFromItsEntry(t, w)
+	cancel := cancelAddress(t, pendingBlock(t, page, "retry-confirm"))
+	reported := recordSentry(t)
+	st.failRead("ListFoxholeChanges")
+
+	res := w.b.get(cancel)
+
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", res.StatusCode)
+	}
+	if got := failureOf(t, parseHTML(t, res)); got != string(failureReadFailed) {
+		t.Errorf("failure page = %q, want %s", got, failureReadFailed)
+	}
+	if n := len(reported.recorded()); n != 1 {
+		t.Errorf("sent %d Sentry events, want 1", n)
 	}
 }
