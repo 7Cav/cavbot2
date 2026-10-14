@@ -514,9 +514,9 @@ type foxholeRequest struct {
 	// Remove is the role whose remove preview the page opens, empty for
 	// none.
 	Remove commands.FoxholeRole
-	// Selection is the IDs of the members the address names as selected:
-	// the holder list ticks their rows, and the remove preview, when Remove
-	// names a role, is of them.
+	// Selection is the IDs of the members the address names as selected,
+	// each once: the holder list ticks their rows, and the remove preview,
+	// when Remove names a role, is of them.
 	Selection []string
 	// ActionRefusal is the refusal of the Foxhole action this page answers,
 	// nil for none.
@@ -540,7 +540,7 @@ func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session
 	p.renderFoxhole(w, r, sess, http.StatusOK,
 		foxholeRequest{Query: q.Get(paramQuery), Filter: knownFilter(q.Get(paramFilter)), NoteMember: q.Get(paramNoteMember),
 			Cleared: q.Get(paramCleared), Skipped: q[paramSkipped], AwaitList: true, Purge: purge,
-			Remove: remove, Selection: q[fieldMember], Retry: retry})
+			Remove: remove, Selection: distinct(q[fieldMember]), Retry: retry})
 }
 
 // reopenPreview is GET /foxhole/reopen, the link a preview gives beside a
@@ -794,7 +794,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 			view.PurgeConfirm = s.purgeConfirmOf(list, req.Purge)
 		}
 		if req.Remove != "" {
-			view.RemovePreview = s.removePreviewOf(list, records, req, req.cancelAddress(), req.removeAddress())
+			view.RemovePreview = s.removePreviewOf(list, records, req.Remove, req.Selection, req.selectionAddress(), req.removeAddress())
 		}
 		if req.Paste != nil {
 			view.AddPreview = s.addPreviewOf(list, records, *req.Paste, nil)
@@ -1365,10 +1365,10 @@ func foxholeAddress(query, filter string) string {
 
 // The IDs the holder list's heading and the no-role view's heading carry in
 // foxhole.html. A filter link, a search, a link to the other view, a save
-// that returns to a list, a refused Approve or Clear approval, the note
-// form's Cancel and the Cancel of a remove preview the selection bar opened
-// open the page at the list, which sits far below the action blocks
-// wherever they stack, with its heading focused.
+// that returns to a list, a refused Approve or Clear approval and the note
+// form's Cancel open the page at the list, which sits far below the action
+// blocks wherever they stack, with its heading focused. So does Cancel on a
+// remove preview, when the selection bar opened it.
 const (
 	holderListAnchor = "holders"
 	noRoleAnchor     = "no-role"

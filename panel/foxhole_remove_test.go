@@ -464,6 +464,7 @@ func tickedRows(t *testing.T, doc *html.Node) []string {
 // the page Cancel opens, a member the preview skips included.
 func TestRemovePreviewCancelReturnsToWhereRemoveWasPressed(t *testing.T) {
 	ashAndMarsh := sorted([]string{memberAsh.ID, memberMarsh.ID})
+	underSearchAndFilter := sorted([]string{memberAsh.ID, memberMarsh.ID, memberVance.ID})
 	cases := []struct {
 		name string
 		// open opens a remove preview as a browser with no script does, and
@@ -475,22 +476,31 @@ func TestRemovePreviewCancelReturnsToWhereRemoveWasPressed(t *testing.T) {
 		// selection is the members ticked when Remove was pressed, nil for
 		// a preview the selection bar didn't open.
 		selection []string
+		// listed are the holder list's rows on the page Cancel opens, nil
+		// for none to check.
+		listed []string
 	}{
-		{"Remove External, which skips a member", removeUnderASearchAndAFilter("external", ashAndMarsh...), "holders", ashAndMarsh},
-		{"Remove Internal", removeUnderASearchAndAFilter("internal", ashAndMarsh...), "holders", ashAndMarsh},
-		{"a preview where nobody selected holds the role", removeUnderASearchAndAFilter("external", memberAsh.ID),
-			"holders", []string{memberAsh.ID}},
+		{"Remove External, which skips a member", removeUnderASearchAndAFilter("external", ashAndMarsh...),
+			"holders", ashAndMarsh, underSearchAndFilter},
+		{"Remove Internal", removeUnderASearchAndAFilter("internal", ashAndMarsh...), "holders", ashAndMarsh, underSearchAndFilter},
+		{"a preview where nobody selected holds the role", func(t *testing.T, w *testWorld) *html.Node {
+			page := removeUnderASearchAndAFilter("external", memberAsh.ID)(t, w)
+			if findElement(removePreviewBlock(t, page), "", "data-field", "confirm") != nil {
+				t.Fatal("the preview offers a Confirm, want one where nobody selected holds External")
+			}
+			return page
+		}, "holders", []string{memberAsh.ID}, underSearchAndFilter},
 		{"a remove address typed with the no-role filter", func(t *testing.T, w *testWorld) *html.Node {
 			typed := url.Values{paramFilter: {filterNoRole}, paramRemove: {"external"}, fieldMember: {memberKestrel.ID}}
 			return parseHTML(t, w.b.get(foxholePath+"?"+typed.Encode()+"#"+removePreviewAnchor))
-		}, "no-role", nil},
+		}, "no-role", nil, nil},
 		{"the Retry of a removal", func(t *testing.T, w *testWorld) *html.Node {
 			w.discord.failRoleWrites(memberKestrel.ID, missingPermissions())
 			preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID)))
 			assertRedirect(t, confirmRemoval(t, w.b, preview), foxholePath)
 			w.awaitActionEnd(t)
 			return openRetry(t, w.b)
-		}, "", nil},
+		}, "", nil, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -513,10 +523,9 @@ func TestRemovePreviewCancelReturnsToWhereRemoveWasPressed(t *testing.T) {
 					t.Errorf("the page Cancel opens ticks %v, want %v", got, tc.selection)
 				}
 			}
-			if tc.selection != nil {
-				want := sorted([]string{memberAsh.ID, memberMarsh.ID, memberVance.ID})
-				if got := keys(holderRows(t, doc)); !slices.Equal(got, want) {
-					t.Errorf("the page Cancel opens lists %v, want %v under the search and the filter", got, want)
+			if tc.listed != nil {
+				if got := keys(holderRows(t, doc)); !slices.Equal(got, tc.listed) {
+					t.Errorf("the page Cancel opens lists %v, want %v under the search and the filter", got, tc.listed)
 				}
 			}
 		})

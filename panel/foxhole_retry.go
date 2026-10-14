@@ -59,9 +59,7 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 		// names each member the add missed, whatever their names now.
 		view.AddPreview = s.addPreviewOf(list, records, pasteBox{Role: report.Role, Text: strings.Join(ids, "\n")}, nil)
 	case store.ChangeRemoval:
-		view.RemovePreview = s.removePreviewOf(list, records,
-			foxholeRequest{Query: req.Query, Filter: req.Filter, Remove: report.Role, Selection: ids},
-			foxholeAddress(req.Query, req.Filter), report.RetryHref())
+		view.RemovePreview = s.removePreviewOf(list, records, report.Role, ids, foxholeAddress(req.Query, req.Filter), report.RetryHref())
 	case store.ChangeRosterAdd:
 		unit, ok := commands.LookupValidatedInternalUnitLabelled(report.Unit)
 		if !ok {
