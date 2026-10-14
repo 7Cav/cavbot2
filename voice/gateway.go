@@ -124,8 +124,9 @@ type renewableGateway struct {
 
 	mu sync.Mutex
 	gw disgovoice.Gateway
-	// channelID is the channel the gateway last opened in: the call's.
-	channelID snowflake.ID
+	// state is the voice state the gateway last opened with: the call's
+	// channel, and the voice server and token it was connected with.
+	state disgovoice.State
 	// opened is whether the gateway has opened since its last renew.
 	opened bool
 }
@@ -155,7 +156,7 @@ func (g *renewableGateway) SSRC() uint32 { return g.current().SSRC() }
 
 func (g *renewableGateway) Open(ctx context.Context, state disgovoice.State) error {
 	g.mu.Lock()
-	g.channelID = state.ChannelID
+	g.state = state
 	g.opened = true
 	gw := g.gw
 	g.mu.Unlock()
@@ -166,7 +167,23 @@ func (g *renewableGateway) Open(ctx context.Context, state disgovoice.State) err
 func (g *renewableGateway) channel() snowflake.ID {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.channelID
+	return g.state.ChannelID
+}
+
+// reopen closes the gateway and opens a new one with the voice state it
+// last opened with. The new gateway identifies, so the voice server starts
+// the connection afresh: a new UDP socket, and a session description that
+// starts DAVE over. The close is on purpose, so disgo's close handler hears
+// nothing of it. It carries the code disgo's gateway closes with before it
+// reconnects, not 1000: on Discord's main gateway, a 1000 ends the session
+// the new connection identifies with.
+func (g *renewableGateway) reopen(ctx context.Context) error {
+	g.mu.Lock()
+	old, state := g.gw, g.state
+	g.gw = g.build()
+	g.mu.Unlock()
+	old.CloseWithCode(websocket.CloseServiceRestart, "starting DAVE over")
+	return g.Open(ctx, state)
 }
 
 func (g *renewableGateway) Close() { g.current().Close() }
@@ -302,8 +319,27 @@ func (c *disgoConn) Receive(handle func(Frame)) {
 	if c.rcv != nil {
 		return
 	}
-	c.rcv = newReceiver(c.conn, handle, c.recorder)
+	c.rcv = newReceiver(callConn{c.conn}, handle, c.recorder)
 	c.rcv.open()
+}
+
+// callConn is a recorder's disgo voice connection as its receiver reads it.
+type callConn struct {
+	disgovoice.Conn
+}
+
+// errNotRenewable is reconnect's answer on a connection whose gateway the
+// recorder's connection options didn't build.
+var errNotRenewable = errors.New("voice: the connection's gateway can't reopen")
+
+// reconnect opens a fresh voice connection where the call is, through the
+// gateway the recorder's connection options built.
+func (c callConn) reconnect(ctx context.Context) error {
+	g, ok := c.Gateway().(*renewableGateway)
+	if !ok {
+		return errNotRenewable
+	}
+	return g.reopen(ctx)
 }
 
 // Leave stops the receiver, so no frame is handed over after it returns,

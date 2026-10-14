@@ -2,16 +2,21 @@ package voice
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"log/slog"
 	"os"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	disgovoice "github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/godave"
 	"github.com/disgoorg/snowflake/v2"
+	"github.com/thomas-vilte/dave-go/session"
 )
 
 // The audio receiver, over a fake voice connection: the test queues the
@@ -28,13 +33,19 @@ const (
 // waitFor is how long a case waits on the receiver's goroutine.
 const waitFor = 2 * time.Second
 
-// fakeReceiveConn is a voice connection as the receiver reads it.
+// The channel every case records.
+const testChannel = "200"
+
+// fakeReceiveConn is a voice connection as the receiver reads it, its DAVE
+// session the fake one unless a case gives it another. reconnects is when
+// the receiver asked for each fresh connection.
 type fakeReceiveConn struct {
 	udp  *fakeVoiceUDP
-	dave *fakeDAVE
+	dave godave.Session
 
-	mu    sync.Mutex
-	users map[uint32]snowflake.ID
+	mu         sync.Mutex
+	users      map[uint32]snowflake.ID
+	reconnects []time.Time
 }
 
 func newFakeReceiveConn() *fakeReceiveConn {
@@ -47,6 +58,29 @@ func newFakeReceiveConn() *fakeReceiveConn {
 
 func (c *fakeReceiveConn) UDP() disgovoice.UDPConn { return c.udp }
 func (c *fakeReceiveConn) DAVE() godave.Session    { return c.dave }
+
+// holdFrames has the fake DAVE session hold frames, as one whose setup
+// hasn't finished does, or stop holding them.
+func (c *fakeReceiveConn) holdFrames(hold bool) { c.dave.(*fakeDAVE).holding.Store(hold) }
+
+// reconnectTimes is when the receiver asked for each fresh connection.
+func (c *fakeReceiveConn) reconnectTimes() []time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.reconnects)
+}
+
+func (c *fakeReceiveConn) ChannelID() *snowflake.ID {
+	id := snowflake.MustParse(testChannel)
+	return &id
+}
+
+func (c *fakeReceiveConn) reconnect(context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reconnects = append(c.reconnects, time.Now())
+	return nil
+}
 
 func (c *fakeReceiveConn) UserIDBySSRC(ssrc uint32) snowflake.ID {
 	c.mu.Lock()
@@ -97,12 +131,15 @@ func (u *fakeVoiceUDP) ReadPacket() (*disgovoice.Packet, error) {
 }
 
 // fakeDAVE is the DAVE session. A frame sealed for a user opens only as
-// that user, and as no one else, the unmapped user 0 included.
+// that user, and as no one else, the unmapped user 0 included. It holds
+// frames while holding is set.
 type fakeDAVE struct {
 	godave.Session
+	holding atomic.Bool
 }
 
-func (d *fakeDAVE) Ready() bool                                      { return true }
+func (d *fakeDAVE) Ready() bool                                      { return !d.holding.Load() }
+func (d *fakeDAVE) ShouldHoldFrames() bool                           { return d.holding.Load() }
 func (d *fakeDAVE) MaxDecryptedFrameSize(_ godave.UserID, n int) int { return n }
 
 func (d *fakeDAVE) Decrypt(userID godave.UserID, frame, out []byte) (int, error) {
@@ -167,11 +204,12 @@ func eventually(t *testing.T, what string, cond func() bool) {
 }
 
 // startReceiver runs a receiver over conn until the test ends.
-func startReceiver(t *testing.T, conn *fakeReceiveConn, handle func(Frame)) {
+func startReceiver(t *testing.T, conn *fakeReceiveConn, handle func(Frame)) *receiver {
 	t.Helper()
 	r := newReceiver(conn, handle, "recorder-1")
 	r.open()
 	t.Cleanup(r.close)
+	return r
 }
 
 // A speaker's first frames can arrive before op 5 says whose SSRC they came
@@ -273,4 +311,118 @@ func TestReceiverReportsABurstOfUnreadablePacketsOnce(t *testing.T) {
 	if got := len(events.Events()); got != 1 {
 		t.Errorf("Sentry events = %d, want 1 for the burst", got)
 	}
+}
+
+// Once DAVE sets up after a stall, the speaker's frames reach the recording
+// as theirs again, and the log says how long the recorder couldn't hear.
+func TestReceiverHearsTheSpeakerAgainOnceDAVESetsUpAfterAStall(t *testing.T) {
+	recordSentry(t)
+	logs := captureLogs(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		conn.mapSSRC(testSpeakerSSRC, testSpeaker)
+		conn.holdFrames(true)
+		h := newHeard()
+		unheardFrom := time.Now()
+		startReceiver(t, conn, h.handle)
+
+		time.Sleep(3500 * time.Millisecond)
+		synctest.Wait()
+		if len(conn.reconnectTimes()) == 0 {
+			t.Fatal("no fresh connection asked for 3.5 s into the stall")
+		}
+		// The fresh connection's DAVE setup finishes.
+		conn.holdFrames(false)
+		heardFrom := time.Now()
+		conn.send(testSpeakerSSRC, 1000, sealFor(testSpeaker, "back"))
+
+		if f := h.next(t); f.UserID != testSpeaker || string(f.Opus) != "back" {
+			t.Errorf("frame handed over = %+v (%q), want %q from %s", f, f.Opus, "back", testSpeaker)
+		}
+		want := heardFrom.Sub(unheardFrom)
+		if d, ok := logs.duration(slog.LevelInfo, daveRecoveredMessage); !ok || d < want || d >= want+time.Second {
+			t.Errorf("Info line %q carries %v (found %v), want how long the recorder couldn't hear, %v", daveRecoveredMessage, d, ok, want)
+		}
+	})
+}
+
+// DAVE that never sets up is one stall, however long it lasts: Sentry hears
+// of it once, and the recorder keeps asking for a fresh connection, at most
+// once every 3 s, until the recording stops.
+func TestReceiverRetriesAStallAtMostEvery3sAndReportsItOnce(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		conn.holdFrames(true)
+		r := startReceiver(t, conn, func(Frame) {})
+
+		time.Sleep(10 * time.Second)
+		r.close()
+		atStop := conn.reconnectTimes()
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+
+		if len(atStop) < 2 {
+			t.Errorf("fresh connections asked for in 10 s of a stall = %d, want the recorder to keep trying", len(atStop))
+		}
+		got := conn.reconnectTimes()
+		for i := 1; i < len(got); i++ {
+			if gap := got[i].Sub(got[i-1]); gap < 3*time.Second {
+				t.Errorf("fresh connections asked for %v apart, want at least 3 s", gap)
+			}
+		}
+		if after := len(got) - len(atStop); after != 0 {
+			t.Errorf("fresh connections asked for after the stop = %d, want none", after)
+		}
+		if n := len(events.Events()); n != 1 {
+			t.Errorf("Sentry events = %d, want 1 for the whole stall", n)
+		}
+	})
+}
+
+// A DAVE setup that holds frames for under 2 s, as a join or a move's
+// does, is no stall: Sentry hears nothing and nothing starts over.
+func TestReceiverLeavesAShortDAVESetupAlone(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		conn.holdFrames(true)
+		startReceiver(t, conn, func(Frame) {})
+
+		time.Sleep(1900 * time.Millisecond)
+		conn.holdFrames(false)
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+
+		if n := len(conn.reconnectTimes()); n != 0 {
+			t.Errorf("fresh connections asked for = %d, want none for a setup that finished", n)
+		}
+		if n := len(events.Events()); n != 0 {
+			t.Errorf("Sentry events = %d, want none for a setup that finished", n)
+		}
+	})
+}
+
+// A transport-only call, DAVE protocol version 0, never sets DAVE up, and
+// that's no stall: dave-go's session is never ready there, and holds no
+// frame.
+func TestReceiverNeverCountsATransportOnlyCallAStall(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		dave := session.New(godave.UserID(testSpeaker), nil)
+		dave.OnSelectProtocolAck(0)
+		conn.dave = dave
+		startReceiver(t, conn, func(Frame) {})
+
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+
+		if n := len(conn.reconnectTimes()); n != 0 {
+			t.Errorf("fresh connections asked for = %d, want none in a transport-only call", n)
+		}
+		if n := len(events.Events()); n != 0 {
+			t.Errorf("Sentry events = %d, want none in a transport-only call", n)
+		}
+	})
 }

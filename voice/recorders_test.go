@@ -3,7 +3,6 @@ package voice
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"maps"
 	"os"
@@ -17,10 +16,70 @@ import (
 )
 
 // TestMain sets the utils Logger once, before any test runs, so Connect's
-// log lines do not dereference a nil *slog.Logger.
+// log lines do not dereference a nil *slog.Logger. Written once, before any
+// test goroutine: a later write would race the goroutines that read it.
 func TestMain(m *testing.M) {
-	utils.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	utils.Logger = slog.New(testLogs)
 	os.Exit(m.Run())
+}
+
+// testLogs keeps every record at Info and above the package logs in its
+// tests.
+var testLogs = &logRecorder{}
+
+// logRecorder is a slog handler that keeps the records it handles. The
+// voice package binds no attributes or groups to its logger, so the
+// handler keeps none either.
+type logRecorder struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (l *logRecorder) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= slog.LevelInfo
+}
+func (l *logRecorder) WithAttrs([]slog.Attr) slog.Handler { return l }
+func (l *logRecorder) WithGroup(string) slog.Handler      { return l }
+
+func (l *logRecorder) Handle(_ context.Context, r slog.Record) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.records = append(l.records, r.Clone())
+	return nil
+}
+
+// captureLogs forgets the records logged so far and returns the log the
+// test writes from then on.
+func captureLogs(t *testing.T) *logRecorder {
+	t.Helper()
+	testLogs.mu.Lock()
+	defer testLogs.mu.Unlock()
+	testLogs.records = nil
+	return testLogs
+}
+
+// duration is the time.Duration the first record at level with message
+// msg carries, and whether there is one.
+func (l *logRecorder) duration(level slog.Level, msg string) (time.Duration, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, r := range l.records {
+		if r.Level != level || r.Message != msg {
+			continue
+		}
+		var d time.Duration
+		found := false
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Value.Kind() == slog.KindDuration {
+				d, found = a.Value.Duration(), true
+			}
+			return !found
+		})
+		if found {
+			return d, true
+		}
+	}
+	return 0, false
 }
 
 // fakeSession is one recorder's gateway session as the fake gateway opens it.
