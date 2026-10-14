@@ -212,6 +212,7 @@ func (p *Panel) routes() []route {
 		{"POST " + recordingsPath + "/{id}/delete", p.withSession(p.deleteRecording)},
 		{"GET " + foxholePath, p.withFoxholePage(p.foxholePage)},
 		{"GET " + foxholeReopenPath, p.withFoxholePage(p.reopenPreview)},
+		{"GET " + foxholeRetryCancelPath, p.withFoxholePage(p.cancelRetry)},
 		{"POST " + foxholeNotesPath, p.withFoxholePage(p.saveNote)},
 		{"POST " + foxholeApprovalsPath, p.withFoxholePage(p.saveApprovals)},
 		{"POST " + foxholePurgePath, p.withFoxholePage(p.startPurge)},

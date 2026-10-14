@@ -1,8 +1,11 @@
 package panel
 
 import (
+	"fmt"
+	"slices"
 	"testing"
 
+	"github.com/7cav/cavbot2/store"
 	"golang.org/x/net/html"
 )
 
@@ -173,4 +176,54 @@ func TestCancelOnARetryPressedInAChangeLogEntryLandsOnTheEntry(t *testing.T) {
 			landedOnEntry(t, doc, fragment, report)
 		})
 	}
+}
+
+// cancelOfAPurgeRetry runs a purge of External that fails on Kestrel, then
+// opens the Retry its latest report offers, the way a browser follows the
+// link. It returns the address of the Retry confirmation's Cancel and the
+// report's ID. Another action then starts in a later step, before the
+// manager presses Cancel.
+func cancelOfAPurgeRetry(t *testing.T, w *testWorld) (cancel, report string) {
+	t.Helper()
+	failedPurge(t, w)
+	report = attrOf(reportBlock(t, parseHTML(t, w.b.get(foxholePath))), "data-report")
+	return cancelAddress(t, pendingBlock(t, openRetry(t, w.b), "retry-confirm")), report
+}
+
+// A Retry pressed in the latest report cancels to that report's change log
+// entry when another action has started since, so the latest report is a
+// different one by the time the manager presses Cancel.
+func TestCancelOnARetryWhoseReportIsNoLongerLatestLandsOnItsEntry(t *testing.T) {
+	w := newFoxholeWorld(t)
+	cancel, report := cancelOfAPurgeRetry(t, w)
+	startPurge(t, w, "internal")
+	w.awaitActionEnd(t)
+
+	doc, fragment := landing(t, w.b, cancel, w.b.get(cancel))
+
+	landedOnEntry(t, doc, fragment, report)
+}
+
+// Once the report's entry has also dropped off the change log, which shows
+// only the newest changes, Cancel on its Retry lands on the Change log's
+// heading.
+func TestCancelOnARetryWhoseEntryLeftTheChangeLogLandsOnTheChangeLog(t *testing.T) {
+	w := newFoxholeWorld(t)
+	cancel, report := cancelOfAPurgeRetry(t, w)
+	startPurge(t, w, "internal")
+	w.awaitActionEnd(t)
+	// A note save on each of as many members as the change log shows.
+	for i := range changeLogLimit {
+		seedNote(t, w, store.MemberNames{MemberID: fmt.Sprintf("2%017d", i), DisplayName: fmt.Sprintf("Member %d", i),
+			Username: fmt.Sprintf("member_%d", i)}, "left before the war")
+	}
+	if entries := changeEntries(t, parseHTML(t, w.b.get(foxholePath)), "purge"); slices.ContainsFunc(entries, func(e *html.Node) bool {
+		return attrOf(e, "data-entry") == report
+	}) {
+		t.Fatal("the change log still shows the report's entry")
+	}
+
+	doc, fragment := landing(t, w.b, cancel, w.b.get(cancel))
+
+	landedOnBlock(t, doc, fragment, "changes")
 }

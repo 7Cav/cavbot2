@@ -61,6 +61,9 @@ var pageLoadCases = []struct {
 	{foxholeReopenPath, func(t *testing.T, f *fakeForum, b *browser) *http.Response {
 		return signInAs(t, f, b, addFoxholeManager(f))
 	}, pageFoxhole},
+	{foxholeRetryCancelPath, func(t *testing.T, f *fakeForum, b *browser) *http.Response {
+		return signInAs(t, f, b, addFoxholeManager(f))
+	}, pageFoxhole},
 }
 
 // An outsider who loads a page behind a gate lands on the Recordings page,

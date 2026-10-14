@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/7cav/cavbot2/commands"
 	"github.com/7cav/cavbot2/store"
+	"github.com/7cav/cavbot2/utils"
 )
 
 // The Foxhole page's Retry (spec #434, "The progress block, the report and
@@ -22,6 +24,11 @@ import (
 // foxholeRetryPath is the Confirm of a Retry opened for a purge, a re-add
 // or a roster add, which posts the report as fieldReport.
 const foxholeRetryPath = "/foxhole/retry"
+
+// foxholeRetryCancelPath is Cancel on a Retry's confirmation or preview,
+// with the Retry's query. Where it leads is read when the manager presses
+// it, since another action may have started since the Retry opened.
+const foxholeRetryCancelPath = "/foxhole/retry/cancel"
 
 // retryPress is a Retry as its address names it: the report it retries,
 // and whether it was pressed in that report's change log entry rather than
@@ -47,24 +54,71 @@ func retryPressOf(q url.Values) retryPress {
 	return retryPress{Report: report, InEntry: q.Get(paramRetryFrom) == retryFromEntry}
 }
 
-// address is the address of the page with the Retry open, at the block
-// that says what it retries.
-func (p retryPress) address() string {
+// query is the Retry's query: the report, and where it was pressed.
+func (p retryPress) query() string {
 	from := retryFromReport
 	if p.InEntry {
 		from = retryFromEntry
 	}
-	q := url.Values{paramRetry: {strconv.FormatInt(p.Report, 10)}, paramRetryFrom: {from}}
-	return foxholePath + "?" + q.Encode() + "#" + retryAnchor
+	return url.Values{paramRetry: {strconv.FormatInt(p.Report, 10)}, paramRetryFrom: {from}}.Encode()
 }
 
-// back is the address Cancel on the Retry's confirmation or preview leads
-// to: where the Retry was pressed.
+// address is the address of the page with the Retry open, at the block
+// that says what it retries.
+func (p retryPress) address() string {
+	return foxholePath + "?" + p.query() + "#" + retryAnchor
+}
+
+// back is the address of Cancel on the Retry's confirmation or preview,
+// which leads where retryBack says.
 func (p retryPress) back() string {
-	if p.InEntry {
-		return entryAddress(p.Report)
+	return foxholeRetryCancelPath + "?" + p.query()
+}
+
+// retryBack is where Cancel on the Retry leads, read as the manager presses
+// it: the latest report's heading, for a Retry pressed there whose report
+// is still the latest; else the report's change log entry, open at its
+// summary line; else, once the entry has dropped off the change log, the
+// Change log's heading.
+func (s foxholeService) retryBack(ctx context.Context, press retryPress) (string, error) {
+	if !press.InEntry {
+		last, err := s.store.LastFoxholeReport(ctx)
+		switch {
+		case err == nil && last.Entry.ID == press.Report:
+			return foxholePath + "#" + latestReportAnchor, nil
+		case err != nil && !errors.Is(err, store.ErrNotFound):
+			return "", fmt.Errorf("read the last Foxhole report: %w", err)
+		}
 	}
-	return foxholePath + "#" + latestReportAnchor
+	entries, err := s.store.ListFoxholeChanges(ctx, changeLogLimit)
+	if err != nil {
+		return "", fmt.Errorf("list Foxhole changes: %w", err)
+	}
+	if slices.ContainsFunc(entries, func(e store.ChangeLogEntry) bool { return e.ID == press.Report }) {
+		return entryAddress(press.Report), nil
+	}
+	return foxholePath + "#" + changeLogAnchor, nil
+}
+
+// cancelRetry is GET /foxhole/retry/cancel, Cancel on a Retry's
+// confirmation or preview: a redirect to where retryBack says, under the
+// page's time budget. A read that fails gets the could-not-load page, as
+// the page's own load does, with Try again at this address, and an
+// abandoned request answers nobody.
+func (p *Panel) cancelRetry(w http.ResponseWriter, r *http.Request, sess session) {
+	press := retryPressOf(r.URL.Query())
+	ctx, cancel := panelClock.WithTimeout(r.Context(), hubPageBudget)
+	defer cancel()
+	back, err := p.foxhole.retryBack(ctx, press)
+	if errors.Is(err, context.Canceled) {
+		utils.Info("Panel page abandoned", "step", "foxhole retry cancel", "username", sess.username, "forum_user_id", sess.userID)
+		return
+	}
+	if err != nil {
+		p.pageFailed(w, sess, "foxhole retry cancel", press.back(), err, nil)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
 // retryReport reads the report with the ID given for its Retry: nil when no

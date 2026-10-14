@@ -324,7 +324,7 @@
     {{- else}}Discord's member list didn't arrive. Wait a bit and try again.{{end}} <a href="{{$.Foxhole.Reload}}" data-field="reload">Reload</a></div>
   {{end}}{{end}}
   <section class="block" data-field="changes">
-    <h2 class="block-header">Change log</h2>
+    <h2 class="block-header" id="change-log" tabindex="-1">Change log</h2>
     {{range $i, $_ := .Changes}}
     <details class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}"{{with .Report}} data-outcome="{{.OutcomeCode}}"{{end}}{{if or (eq $i 0) (eq .ID $.Foxhole.OpenEntry)}} open{{end}}>
       <summary class="change-head" id="entry-{{.ID}}">
