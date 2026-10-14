@@ -527,10 +527,12 @@ func noteBoxDescription(t *testing.T, form *html.Node) string {
 	return accessibleDescription(form, box)
 }
 
-// With script, a refused note save from a row puts the form the server
-// answers with in the row and focuses its note box. The box's description
-// carries the refusal, so a screen reader says why nothing saved as focus
-// lands. When the form was stale, it carries the note as it stands now too.
+// A refused note save answers with a note form whose note box carries the
+// refusal in its description, read from the form alone. The page script
+// puts that form in a row unchanged and focuses the box, so a screen reader
+// says why nothing saved as focus lands. When the form was stale, the
+// description carries the note as it stands now too. The script's per-row
+// IDs have no test here, and the PR's smoke checks cover them.
 func TestARefusedNoteSaveNamesItsRefusalInTheNoteBoxDescription(t *testing.T) {
 	for _, tc := range refusedNoteSaves {
 		t.Run(tc.name, func(t *testing.T) {
@@ -546,7 +548,7 @@ func TestARefusedNoteSaveNamesItsRefusalInTheNoteBoxDescription(t *testing.T) {
 			if want := announcedText(refusal); !strings.Contains(got, want) {
 				t.Errorf("the note box's description is %q, want it to carry the refusal, %q", got, want)
 			}
-			if !strings.Contains(got, tc.now) {
+			if tc.now != "" && !strings.Contains(got, tc.now) {
 				t.Errorf("the note box's description is %q, want it to carry the note as it stands now, %q", got, tc.now)
 			}
 		})
