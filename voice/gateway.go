@@ -2,6 +2,7 @@ package voice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -12,6 +13,7 @@ import (
 	disgovoice "github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/godave"
 	"github.com/disgoorg/snowflake/v2"
+	"github.com/gorilla/websocket"
 	"github.com/thomas-vilte/dave-go/session"
 )
 
@@ -88,32 +90,134 @@ type discordgoSession struct {
 
 // connOpts configures every voice connection the recorder opens: the
 // recorder's own UDP connection, and a voice gateway whose close handler is
-// watched for a connection lost mid-recording. newGateway builds the
-// gateway, disgo's NewGateway outside tests.
+// watched for a connection lost mid-recording or a call that moved.
+// newGateway builds the gateway, disgo's NewGateway outside tests.
 func (s *discordgoSession) connOpts(newGateway disgovoice.GatewayCreateFunc) []disgovoice.ConnConfigOpt {
 	return []disgovoice.ConnConfigOpt{
 		disgovoice.WithUDPConnCreateFunc(newUDPConn),
 		disgovoice.WithConnGatewayCreateFunc(func(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, opts ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
-			return newGateway(dave, onEvent, s.watchClose(onClose), opts...)
+			g := &renewableGateway{}
+			g.build = func() disgovoice.Gateway {
+				return newGateway(dave, onEvent, s.watchClose(g, onClose), opts...)
+			}
+			g.gw = g.build()
+			return g
 		}),
 	}
 }
 
+// renewableGateway is the voice gateway disgo's connection holds. It hands
+// every call to a disgo gateway, which renew swaps for a new one. disgo's
+// gateway keeps what it resumes with through a close, and resumes when it
+// next opens, but a voice server the call moved to never had that session.
+// A new gateway identifies there instead.
+type renewableGateway struct {
+	build func() disgovoice.Gateway
+
+	mu sync.Mutex
+	gw disgovoice.Gateway
+	// channelID is the channel the gateway last opened in: the call's.
+	channelID snowflake.ID
+}
+
+func (g *renewableGateway) current() disgovoice.Gateway {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.gw
+}
+
+// renew swaps the gateway, closed by now, for a new one to open next.
+func (g *renewableGateway) renew() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.gw = g.build()
+}
+
+func (g *renewableGateway) SSRC() uint32 { return g.current().SSRC() }
+
+func (g *renewableGateway) Open(ctx context.Context, state disgovoice.State) error {
+	g.mu.Lock()
+	g.channelID = state.ChannelID
+	gw := g.gw
+	g.mu.Unlock()
+	return gw.Open(ctx, state)
+}
+
+// channel is the channel of the call the gateway last opened for.
+func (g *renewableGateway) channel() snowflake.ID {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.channelID
+}
+
+func (g *renewableGateway) Close() { g.current().Close() }
+
+func (g *renewableGateway) CloseWithCode(code int, message string) {
+	g.current().CloseWithCode(code, message)
+}
+
+func (g *renewableGateway) Status() disgovoice.Status { return g.current().Status() }
+
+func (g *renewableGateway) Send(ctx context.Context, op disgovoice.Opcode, d disgovoice.GatewayMessageData) error {
+	return g.current().Send(ctx, op, d)
+}
+
+func (g *renewableGateway) Latency() time.Duration { return g.current().Latency() }
+
+// callTerminated is the voice gateway close Discord sends every client in a
+// call it ends: the channel was deleted, or the call moved to another voice
+// server, as a region change makes it do.
+const callTerminated = 4022
+
+// errCallMoved is what disgo's close handler gets in place of a 4022. disgo
+// answers a close that isn't a websocket close with a fresh connection in
+// the same channel, where a 4022 would take the recorder out.
+var errCallMoved = errors.New("voice: the call moved to another voice server")
+
+// lostConnectionMessage is what Sentry hears when disgo takes the recorder
+// out of the channel on its own.
+const lostConnectionMessage = "Voice connection lost mid-recording"
+
 // watchClose wraps disgo's handler for a voice gateway that closed and
 // couldn't resume. disgo opens a fresh connection when the close allows it,
-// and a voice reconnect ends there. Otherwise, or when the fresh connection
-// fails, disgo takes the recorder out of the channel itself: the voice
-// connection is lost mid-recording, and Sentry hears of it with the close
-// that started it.
-func (s *discordgoSession) watchClose(onClose disgovoice.CloseHandlerFunc) disgovoice.CloseHandlerFunc {
+// and a voice reconnect ends there. A call that moved to another voice
+// server gets one too, through a new gateway, unless its channel is gone.
+// Otherwise, or when the fresh connection fails, disgo takes the recorder
+// out of the channel itself: the voice connection is lost mid-recording,
+// and Sentry hears of it with the close that started it.
+func (s *discordgoSession) watchClose(gateway *renewableGateway, onClose disgovoice.CloseHandlerFunc) disgovoice.CloseHandlerFunc {
 	return func(g disgovoice.Gateway, err error) {
 		defer utils.RecoverPanic("recorder-voice-close", "recorder", s.userID)
 		s.gaveUp.Store(false)
-		onClose(g, err)
+		handled := err
+		if closedWith(err, callTerminated) && s.channelExists(gateway.channel()) {
+			gateway.renew()
+			handled = errCallMoved
+		}
+		onClose(g, handled)
 		if s.gaveUp.Load() {
-			utils.CaptureError("Voice connection lost mid-recording", err, "recorder", s.userID)
+			utils.CaptureError(lostConnectionMessage, err, "recorder", s.userID)
 		}
 	}
+}
+
+// channelExists reports whether Discord's API still has a channel. Its
+// delete can reach the recorder's session after the 4022 that ended its
+// call, so the session's state can't say. Only Discord answering that the
+// channel is unknown counts as gone. A lookup that fails otherwise leaves
+// the rejoin to find out.
+func (s *discordgoSession) channelExists(channelID snowflake.ID) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
+	defer cancel()
+	_, err := s.dg.Channel(channelID.String(), discordgo.WithContext(ctx))
+	var restErr *discordgo.RESTError
+	return !errors.As(err, &restErr) || restErr.Message == nil || restErr.Message.Code != discordgo.ErrCodeUnknownChannel
+}
+
+// closedWith reports whether err is a voice gateway close with code.
+func closedWith(err error, code int) bool {
+	var closeErr *websocket.CloseError
+	return errors.As(err, &closeErr) && closeErr.Code == code
 }
 
 func (s *discordgoSession) UserID() string { return s.userID }
@@ -200,6 +304,10 @@ func (c *disgoConn) Leave(ctx context.Context) {
 // recorder's own gateway. discordgo's ChannelVoiceJoinManual sends exactly
 // that without starting discordgo's own voice code. No channel leaves.
 // discordgo writes to its websocket without checking that one is open, and
+// a write to none panics holding discordgo's write lock, which would hold up
+// every later write on the session, its heartbeats included. So an update
+// goes out only while the session is connected, and the session's lock
+// keeps it from closing meanwhile, as discordgo's own status update does.
 // disgo calls this from its own goroutines when it reconnects, where a panic
 // would end the process, so a panic comes back as an error.
 func (s *discordgoSession) updateVoiceState(_ context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) (err error) {
@@ -213,6 +321,11 @@ func (s *discordgoSession) updateVoiceState(_ context.Context, guildID snowflake
 		cid = channelID.String()
 	} else if !s.leaving.Load() {
 		s.gaveUp.Store(true)
+	}
+	s.dg.RLock()
+	defer s.dg.RUnlock()
+	if !s.dg.DataReady {
+		return discordgo.ErrWSNotFound
 	}
 	return s.dg.ChannelVoiceJoinManual(guildID.String(), cid, selfMute, selfDeaf)
 }
