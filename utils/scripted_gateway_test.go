@@ -186,6 +186,17 @@ func sendFrame(c *websocket.Conn, frame string) bool {
 	return c.WriteMessage(websocket.TextMessage, []byte(frame)) == nil
 }
 
+// helloFrame is the Op 10 packet discordgo requires as the first frame of
+// the handshake; Open() rejects anything else outright. Its heartbeat
+// interval outlasts any test, so discordgo sends one heartbeat and waits.
+const helloFrame = `{"op":10,"d":{"heartbeat_interval":45000},"s":null,"t":null}`
+
+// invalidSessionFrame is Op 9, which Discord sends in response to IDENTIFY
+// when it cannot start a session — an identify that is rate limited or over
+// the session-start limit, or a resume it will not honour, as for a token it
+// has refused.
+const invalidSessionFrame = `{"op":9,"d":false,"s":null,"t":null}`
+
 const resumedFrame = `{"op":0,"s":2,"t":"RESUMED","d":{}}`
 
 // paddedReadyFrame is a READY padded past 64 KiB, as a live one can run, and
@@ -194,6 +205,10 @@ const resumedFrame = `{"op":0,"s":2,"t":"RESUMED","d":{}}`
 // field discordgo ignores, of DEL bytes: a reader out of step with the
 // frames reads a DEL as a header claiming a payload of exabytes, and never
 // gets back in step to see the close.
+//
+// The READY carries only what State.onReady needs to populate State.User.
+// It is hand-built, not captured from a live gateway, so it pins discordgo's
+// handling of a READY-shaped frame, not Discord's actual READY schema.
 var (
 	paddedReadyFrame  = `{"op":0,"s":1,"t":"READY","d":{"v":10,"session_id":"sess","user":{"id":"999","username":"cavbot","bot":true},"guilds":[],"padding":"` + strings.Repeat("\x7f", 70_000) + `"}}`
 	paddedTypingFrame = `{"op":0,"s":2,"t":"TYPING_START","d":{"channel_id":"1","user_id":"2","padding":"` + strings.Repeat("\x7f", 1_000) + `"}}`

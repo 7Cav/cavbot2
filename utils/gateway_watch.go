@@ -73,11 +73,13 @@ func WatchGateway(dg *discordgo.Session, after time.Duration, kv ...any) *Gatewa
 // closed hears the code of a close Discord sent the session. After a 4004,
 // Discord has refused the session's token, so no login can succeed, and the
 // session logs in no more. It runs on the goroutine that read the close.
-// Live, that is discordgo's listener, which reconnects from there next and
-// reads ShouldReconnectOnError as it starts. A 4004 that fails an Open
-// instead leaves a reconnect loop already running to back off as for any
-// failed login. discordgo's Open holds the session's lock while it reads,
-// so closed takes none of the session's locks.
+// For a session that was running, that is discordgo's listener. Discord
+// answers its resume with Op 9, discordgo sends the identify from inside
+// Open, and the 4004 for that identify comes after Open has returned. The
+// listener reconnects next, and reads ShouldReconnectOnError as it starts.
+// A 4004 during the session's first Open fails its start instead.
+// discordgo's Open holds the session's lock while it reads, so closed takes
+// none of the session's locks.
 func (w *GatewayWatch) closed(code int) {
 	if code != closeAuthenticationFailed {
 		return
@@ -128,10 +130,10 @@ func (w *GatewayWatch) online() {
 	}
 }
 
-// Name adds pairs that name the session, for what only READY tells, such
-// as a recorder's user ID. It builds the pairs anew, so those a report
+// AddPairs adds pairs that name the session, for what only READY tells,
+// such as a recorder's user ID. It builds the pairs anew, so those a report
 // already read stay as they were.
-func (w *GatewayWatch) Name(kv ...any) {
+func (w *GatewayWatch) AddPairs(kv ...any) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.kv = append(w.kv[:len(w.kv):len(w.kv)], kv...)

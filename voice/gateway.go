@@ -378,5 +378,5 @@ func (s *discordgoSession) watchGateway(recorder int, after time.Duration) {
 // watch name the recorder by it.
 func (s *discordgoSession) named(userID string) {
 	s.userID = userID
-	s.watch.Name("user_id", userID)
+	s.watch.AddPairs("user_id", userID)
 }

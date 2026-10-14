@@ -46,14 +46,18 @@ func waitForOutageEvents(t *testing.T, tr *mockTransport, n int) []*sentry.Event
 	return tr.Events()
 }
 
-// waitForSentry waits up to ten seconds for Sentry to have at least n
-// events.
+// waitForSentry waits for Sentry to have at least n events.
 func waitForSentry(tr *mockTransport, n int) []*sentry.Event {
+	waitUntil(func() bool { return len(tr.Events()) >= n })
+	return tr.Events()
+}
+
+// waitUntil waits up to ten seconds for done to hold.
+func waitUntil(done func() bool) {
 	deadline := time.Now().Add(10 * time.Second)
-	for len(tr.Events()) < n && time.Now().Before(deadline) {
+	for !done() && time.Now().Before(deadline) {
 		time.Sleep(gatewayWatchAfter / 10)
 	}
-	return tr.Events()
 }
 
 // linesSaying counts the records, at any level, with message msg and the
@@ -100,13 +104,37 @@ func TestGatewayWatch_ARefusedTokenStopsTheLoginsAndSendsOneEvent(t *testing.T) 
 	}
 }
 
+// dropRecorder keeps the time of each Disconnect a session emits.
+type dropRecorder struct {
+	mu sync.Mutex
+	at []time.Time
+}
+
+// recordDrops stamps each Disconnect dg emits from now on.
+func recordDrops(dg *discordgo.Session) *dropRecorder {
+	r := &dropRecorder{}
+	dg.AddHandler(func(_ *discordgo.Session, _ *discordgo.Disconnect) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.at = append(r.at, time.Now())
+	})
+	return r
+}
+
+func (r *dropRecorder) times() []time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]time.Time(nil), r.at...)
+}
+
+// handlerSlack is room for the goroutines discordgo runs its handlers on to
+// start late, so a drop's stamp can trail the watch's own by that much.
+const handlerSlack = 500 * time.Millisecond
+
 // waitForLogins waits for the gateway to have seen at least n logins.
 func waitForLogins(t *testing.T, g *scriptedGateway, n int) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for g.loginCount() < n && time.Now().Before(deadline) {
-		time.Sleep(gatewayWatchAfter / 10)
-	}
+	waitUntil(func() bool { return g.loginCount() >= n })
 	if got := g.loginCount(); got < n {
 		t.Errorf("the gateway saw %d logins, want at least %d", got, n)
 	}
@@ -114,7 +142,9 @@ func waitForLogins(t *testing.T, g *scriptedGateway, n int) {
 
 // Discord answering every resume with Op 9, and dropping the connection
 // after the identify with no 4004, leaves the session offline however often
-// it logs in. It keeps logging in, and Sentry hears of the outage once.
+// it logs in. It keeps logging in, and Sentry hears of the outage once, a
+// delay after the first drop. The delay outlasts the second or so between
+// drops, so a watch that restarted it on each drop would never report.
 func TestGatewayWatch_LoginsThatGetNoReadyStayOneOutage(t *testing.T) {
 	tr := initSentryWithTransport(t)
 	g := newScriptedGateway(t, func(login int) gatewayLogin {
@@ -123,10 +153,10 @@ func TestGatewayWatch_LoginsThatGetNoReadyStayOneOutage(t *testing.T) {
 		}
 		return gatewayLogin{invalid: true, close: 4000}
 	})
-	openWatchedSession(t, gatewayWatchAfter)
+	openWatchedSession(t, 2*time.Second)
 	t.Cleanup(func() { g.settle(t, 5*time.Second) })
 
-	waitForOutageEvents(t, tr, 1)
+	waitForSentry(tr, 1)
 	waitForLogins(t, g, g.loginCount()+3)
 
 	if n := len(tr.Events()); n != 1 {
@@ -236,26 +266,15 @@ func TestGatewayWatch_EachOutageGetsItsWholeDelay(t *testing.T) {
 		}
 		return gatewayLogin{refuse: true}
 	})
-	dg := openWatchedSession(t, after)
-	var mu sync.Mutex
-	var drops []time.Time
-	dg.AddHandler(func(_ *discordgo.Session, _ *discordgo.Disconnect) {
-		mu.Lock()
-		defer mu.Unlock()
-		drops = append(drops, time.Now())
-	})
+	drops := recordDrops(openWatchedSession(t, after))
 	t.Cleanup(func() { g.settle(t, 10*time.Second) })
 
 	events := waitForSentry(tr, 1)
 
-	mu.Lock()
-	defer mu.Unlock()
-	if len(events) != 1 || len(drops) < 2 {
+	if drops := drops.times(); len(events) != 1 || len(drops) < 2 {
 		t.Fatalf("Sentry got %d events after %d drops, want 1 after 2", len(events), len(drops))
 	}
-	// Room for the goroutines discordgo runs its handlers on to start late.
-	const slack = 500 * time.Millisecond
-	if early := drops[1].Add(after).Sub(events[0].Timestamp); early > slack {
+	if early := drops.times()[1].Add(after).Sub(events[0].Timestamp); early > handlerSlack {
 		t.Errorf("the second outage reached Sentry %v before its delay ran out", early)
 	}
 }
