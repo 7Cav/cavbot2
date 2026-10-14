@@ -27,6 +27,9 @@ const recorderIntents = discordgo.IntentsGuilds | discordgo.IntentsGuildVoiceSta
 // closeTimeout bounds the leave a failed join or a shutdown sends.
 const closeTimeout = 5 * time.Second
 
+// lookupTimeout bounds the channel lookup a 4022 makes before the rejoin.
+const lookupTimeout = 5 * time.Second
+
 // OpenGateway is the production Opener: a discordgo session for the recorder
 // account, open once READY has named it. A session that opened without
 // reaching READY is closed again, so a failed recorder holds no connection.
@@ -164,11 +167,6 @@ func (g *renewableGateway) Send(ctx context.Context, op disgovoice.Opcode, d dis
 
 func (g *renewableGateway) Latency() time.Duration { return g.current().Latency() }
 
-// callTerminated is the voice gateway close Discord sends every client in a
-// call it ends: the channel was deleted, or the call moved to another voice
-// server, as a region change makes it do.
-const callTerminated = 4022
-
 // errCallMoved is what disgo's close handler gets in place of a 4022. disgo
 // answers a close that isn't a websocket close with a fresh connection in
 // the same channel, where a 4022 would take the recorder out.
@@ -180,8 +178,10 @@ const lostConnectionMessage = "Voice connection lost mid-recording"
 
 // watchClose wraps disgo's handler for a voice gateway that closed and
 // couldn't resume. disgo opens a fresh connection when the close allows it,
-// and a voice reconnect ends there. A call that moved to another voice
-// server gets one too, through a new gateway, unless its channel is gone.
+// and a voice reconnect ends there. Discord ends a call with 4022, "Call
+// terminated", when its channel is deleted or the call moves to another
+// voice server, as a region change makes it do. A call that moved gets a
+// fresh connection too, through a new gateway, unless its channel is gone.
 // Otherwise, or when the fresh connection fails, disgo takes the recorder
 // out of the channel itself: the voice connection is lost mid-recording,
 // and Sentry hears of it with the close that started it.
@@ -189,12 +189,12 @@ func (s *discordgoSession) watchClose(gateway *renewableGateway, onClose disgovo
 	return func(g disgovoice.Gateway, err error) {
 		defer utils.RecoverPanic("recorder-voice-close", "recorder", s.userID)
 		s.gaveUp.Store(false)
-		handled := err
-		if closedWith(err, callTerminated) && s.channelExists(gateway.channel()) {
+		forDisgo := err
+		if closedWith(err, disgovoice.GatewayCloseEventCodeCallTerminated.Code) && s.channelExists(gateway.channel()) {
 			gateway.renew()
-			handled = errCallMoved
+			forDisgo = errCallMoved
 		}
-		onClose(g, handled)
+		onClose(g, forDisgo)
 		if s.gaveUp.Load() {
 			utils.CaptureError(lostConnectionMessage, err, "recorder", s.userID)
 		}
@@ -207,7 +207,7 @@ func (s *discordgoSession) watchClose(gateway *renewableGateway, onClose disgovo
 // channel is unknown counts as gone. A lookup that fails otherwise leaves
 // the rejoin to find out.
 func (s *discordgoSession) channelExists(channelID snowflake.ID) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), lookupTimeout)
 	defer cancel()
 	_, err := s.dg.Channel(channelID.String(), discordgo.WithContext(ctx))
 	var restErr *discordgo.RESTError

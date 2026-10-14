@@ -162,50 +162,6 @@ func TestRecorderCloseLeavesVoice(t *testing.T) {
 	}
 }
 
-// fakeVoiceGateway stands in for disgo's voice gateway, which a test can't
-// open without a voice server. Its other methods belong to the nil Gateway
-// it embeds, so a call to one fails the test.
-type fakeVoiceGateway struct {
-	disgovoice.Gateway
-}
-
-func (g *fakeVoiceGateway) Close() {}
-
-// voiceConnWithClose builds disgo's own voice connection with the recorder
-// session's connection options, its gateway faked, and returns the close
-// handler disgo gave that gateway, as the recorder's options wrap it.
-func voiceConnWithClose(t *testing.T, s *discordgoSession) disgovoice.CloseHandlerFunc {
-	t.Helper()
-	var onClose disgovoice.CloseHandlerFunc
-	newGateway := func(_ godave.Session, _ disgovoice.EventHandlerFunc, closeHandler disgovoice.CloseHandlerFunc, _ ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
-		onClose = closeHandler
-		return &fakeVoiceGateway{}
-	}
-	stateUpdate := func(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
-		return s.updateVoiceState(ctx, guildID, channelID, selfMute, selfDeaf)
-	}
-	opts := append(s.connOpts(newGateway), disgovoice.WithConnDaveSessionLogger(slog.New(slog.DiscardHandler)))
-	disgovoice.NewConn(snowflake.ID(100), snowflake.ID(300), stateUpdate, func() {}, opts...)
-	if onClose == nil {
-		t.Fatal("disgo built no voice gateway")
-	}
-	return onClose
-}
-
-// A voice gateway that closes in a way disgo won't reconnect from, so that
-// disgo takes the recorder out of the channel itself, is a voice connection
-// lost mid-recording, and Sentry hears of it.
-func TestRecorderReportsAVoiceConnectionDisgoGivesUpOn(t *testing.T) {
-	events := recordSentry(t)
-	onClose := voiceConnWithClose(t, recorderSession(t, &fakeManager{}))
-
-	onClose(&fakeVoiceGateway{}, &websocket.CloseError{Code: 4004, Text: "Authentication failed"})
-
-	if got := len(events.Events()); got != 1 {
-		t.Errorf("Sentry events = %d, want 1 for the lost connection", got)
-	}
-}
-
 // Discord moving a recorded call to another voice server, over disgo's own
 // voice connection built with the recorder session's connection options.
 // The test plays Discord around it: the voice gateways, the answer to each
@@ -401,6 +357,22 @@ func recorderVoiceState(channelID snowflake.ID) gateway.EventVoiceStateUpdate {
 // voiceServer is a VOICE_SERVER_UPDATE naming endpoint.
 func voiceServer(token, endpoint string) gateway.EventVoiceServerUpdate {
 	return gateway.EventVoiceServerUpdate{Token: token, GuildID: callGuild, Endpoint: &endpoint}
+}
+
+// A voice gateway that closes in a way disgo won't reconnect from, so that
+// disgo takes the recorder out of the channel itself, is a voice connection
+// lost mid-recording, and Sentry hears of it.
+func TestRecorderReportsAVoiceConnectionDisgoGivesUpOn(t *testing.T) {
+	events := recordSentry(t)
+	h := newCallHarness(t)
+	h.join()
+	h.waitOpen()
+
+	h.closeCall(4004)
+
+	if got := len(events.Events()); got != 1 {
+		t.Errorf("Sentry events = %d, want 1 for the lost connection", got)
+	}
 }
 
 // A call Discord moves to another voice server, as a region change makes
