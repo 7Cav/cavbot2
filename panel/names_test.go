@@ -13,16 +13,17 @@ import (
 	"golang.org/x/net/html"
 )
 
-// What a screen reader announces for a panel control: its accessible name
-// and description, worked out from the page as the server renders it, with
-// no script run. accessibleName follows the parts of the W3C accessible name
-// computation the panel's markup can reach, in the order a browser tries
-// them, so a control named any way a browser honours gets the name it would.
+// What a screen reader announces for a panel control or heading: its
+// accessible name and description, worked out from the page as the server
+// renders it, with no script run. accessibleName follows the parts of the
+// W3C accessible name computation the panel's markup can reach, in the order
+// a browser tries them, so a control named any way a browser honours gets
+// the name it would.
 
 // accessibleName is n's name: the text of the elements aria-labelledby
 // names, else aria-label, else for a form control its labels, else for a
-// fieldset its legend, else for a button, link, summary or column header
-// its own text.
+// fieldset its legend, else for a button, link, summary, column header or
+// heading its own text.
 func accessibleName(doc, n *html.Node) string {
 	if ids, ok := attrValue(n, "aria-labelledby"); ok {
 		return textOfIDs(doc, ids)
@@ -40,6 +41,9 @@ func accessibleName(doc, n *html.Node) string {
 			}
 		}
 	case "button", "a", "summary", "th":
+		return announcedText(n)
+	}
+	if isHeading(n) {
 		return announcedText(n)
 	}
 	return ""
@@ -515,6 +519,71 @@ func TestARefusedEditsRemoveLinkNamesTheHubAsStored(t *testing.T) {
 		if !strings.Contains(name, "Arma Voice") {
 			t.Errorf("the remove link is named %q, want it to name hub Arma Voice as stored", name)
 		}
+	}
+}
+
+// A screen reader user who follows "Edit hub Arma Voice" hears the heading
+// the page lands on as focus arrives. It names the hub by its base string as
+// stored, so they know which hub opened before reading on.
+func TestTheHeadingAHubsEditLandsOnNamesTheHub(t *testing.T) {
+	cases := []struct {
+		name string
+		// open goes on from the hub list row's Edit address, edit, and
+		// returns the address it followed last and the answer.
+		open func(t *testing.T, w *testWorld, edit string) (control string, res *http.Response)
+		// status is the answer's once the browser stops following redirects.
+		status int
+		// typed is the base string the form posted in place of the stored
+		// one, which the heading must not name, empty for no post.
+		typed string
+	}{
+		{"Edit on the hub list", func(t *testing.T, w *testWorld, edit string) (string, *http.Response) {
+			return edit, w.b.get(edit)
+		}, http.StatusOK, ""},
+		// A broken hub's row offers Remove, not Edit, so the Edit is from a
+		// list loaded before the hub's channel left its category.
+		{"Edit of a hub that broke after the list loaded", func(t *testing.T, w *testWorld, edit string) (string, *http.Response) {
+			w.discord.breakChannel("hub-1", false)
+			return edit, w.b.get(edit)
+		}, http.StatusOK, ""},
+		// The refused form shows the base string as typed. The heading names
+		// the hub as the store holds it.
+		{"a stale save that changed the base string", func(t *testing.T, w *testWorld, edit string) (string, *http.Response) {
+			doc := parseHTML(t, w.b.get(edit))
+			savedByAnother(t, w, edit, hubEditBlock, func(f url.Values) { f.Set("user_limit", "5") })
+			action, fields := formIn(t, doc, hubEditBlock(t, w, doc))
+			fields.Set("base_string", "Typed Voice")
+			return action, w.b.postForm(action, fields)
+		}, http.StatusConflict, "Typed Voice"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			edit := findElement(listRow(t, parseHTML(t, w.b.get("/")), storedHubID(t, w.st, "hub-1")), "a", "data-field", "edit")
+			if edit == nil {
+				t.Fatal("the hub's list row offers no Edit")
+			}
+			control, res := tc.open(t, w, attrOf(edit, "href"))
+
+			res, fragment := arrive(t, w.b, control, res)
+
+			if res.StatusCode != tc.status {
+				t.Fatalf("status = %d, want %d", res.StatusCode, tc.status)
+			}
+			doc := parseHTML(t, res)
+			heading := landedOn(doc, fragment)
+			if heading == nil || !isHeading(heading) {
+				t.Fatalf("the page opens at fragment %q, which names no heading", fragment)
+			}
+			name := accessibleName(doc, heading)
+			if !strings.Contains(name, "Arma Voice") {
+				t.Errorf("the landed heading is named %q, want it to name hub Arma Voice", name)
+			}
+			if tc.typed != "" && strings.Contains(name, tc.typed) {
+				t.Errorf("the landed heading is named %q, which names the typed %s, want the hub as stored", name, tc.typed)
+			}
+		})
 	}
 }
 
