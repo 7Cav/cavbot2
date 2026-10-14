@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -76,11 +77,36 @@ type rankRoleFieldValue struct {
 	RoleID string
 }
 
-// rankRow is one rank's row: its abbreviation and its picker, holding its
-// rank role as the one tag, or none.
+// rankRow is one rank's row: its abbreviation, its picker, holding its
+// rank role as the one tag, or none, and how many members hold that role.
 type rankRow struct {
 	Abbrev string
 	Picker pickerView
+	// HasRole is whether the rank has a rank role stored, whose holders
+	// Holders counts.
+	HasRole bool
+	// Holders is the count of the members holding the rank's stored role,
+	// from the member list, or unknown while the list has not loaded.
+	Holders string
+}
+
+// holdersUnknown is a row's holder count while the member list has not
+// loaded: unknown, never 0.
+const holdersUnknown = "unknown"
+
+// roleHolders counts the members of a complete member list holding each
+// role, by role ID. It is nil while the list has not loaded.
+func roleHolders(list commands.MemberListSnapshot) map[string]int {
+	if list.Status != commands.MemberListComplete {
+		return nil
+	}
+	counts := map[string]int{}
+	for _, m := range list.Members {
+		for _, id := range m.RoleIDs {
+			counts[id]++
+		}
+	}
+	return counts
 }
 
 // rankRoleSet is a rank's role as a picker's set: the one ID, or none.
@@ -181,6 +207,7 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 	if posted != nil {
 		page.Version = postedBackVersion(stored.Version, posted.Version, req.staleFor(formRankRoles))
 	}
+	holders := roleHolders(s.deps.Manager.MemberList(s.deps.GuildID))
 	for _, rank := range commands.RankLadderOf(stored).Ranks() {
 		roles, selected := rankRoleSet(rank.RoleID), rankRoleSet(rank.RoleID)
 		if posted != nil {
@@ -188,7 +215,11 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 		}
 		picker := rolePicker(rankRoleField(rank.Abbrev), "the "+rank.Abbrev+" rank", guild, roles, selected)
 		picker.Single, picker.AddLabel, picker.Candidates, picker.OptionsFrom = true, "Choose a role", nil, rankRoleOptions
-		page.Rows = append(page.Rows, rankRow{Abbrev: rank.Abbrev, Picker: picker})
+		row := rankRow{Abbrev: rank.Abbrev, Picker: picker, HasRole: rank.RoleID != "", Holders: holdersUnknown}
+		if holders != nil {
+			row.Holders = strconv.Itoa(holders[rank.RoleID])
+		}
+		page.Rows = append(page.Rows, row)
 	}
 	page.Options = rolePicker("", "", guild, nil, nil).Candidates
 	entries, err := s.deps.Store.ListRankRoleChanges(ctx, changeLogLimit)
@@ -216,6 +247,17 @@ type rankRolesInput struct {
 	Roles     map[string]string
 	Confirmed bool
 }
+
+// errStaleRankRoles is the refusal a save from a stale Rank roles form
+// gets, answered the way errStaleRecordingRoles is.
+var errStaleRankRoles = &fieldError{kind: refusalStale, Message: "Someone saved the rank roles after you opened this page, " +
+	"so your changes were not saved. Their save is at the top of the change log below. " +
+	"Your roles are still in the form. Save again to keep them."}
+
+// errRankRolesUnchanged is the refusal a rank roles save gets when it posts
+// the ladder as stored: a save that would change nothing says so and writes
+// nothing, not even a change log entry.
+var errRankRolesUnchanged = &fieldError{kind: refusalUnchanged, Message: "Those are already the rank roles, so nothing was saved."}
 
 // fieldConfirm is the hidden input a rank roles preview's Confirm posts.
 const fieldConfirm = "confirm"
@@ -289,7 +331,10 @@ func (p *Panel) saveRankRoles(w http.ResponseWriter, r *http.Request, sess sessi
 // with a change log entry under no hub naming each rank whose role changed,
 // in one store write, then applies the ladder to the runtime, so every test
 // of whether a member is a Cav member reads it at once. It returns the
-// roles as stored.
+// roles as stored. A section loaded at a version the rank roles are no
+// longer at is refused first, as errStaleRankRoles, before the guild read.
+// A valid ladder that is the stored one is refused as
+// errRankRolesUnchanged.
 //
 // A save that may stop members counting as Cav members writes nothing and
 // returns its preview instead, unless it is the preview's Confirm.
@@ -303,6 +348,9 @@ func (s *hubService) setRankRoles(ctx context.Context, in rankRolesInput, by act
 	if err != nil {
 		return store.RankRoles{}, nil, fmt.Errorf("%s: %w", rankRolesRead, err)
 	}
+	if !formIsCurrent(in.Version, stored.Version) {
+		return store.RankRoles{}, nil, errStaleRankRoles
+	}
 	guild, err := s.readGuild(ctx)
 	if err != nil {
 		return store.RankRoles{}, nil, err
@@ -311,6 +359,9 @@ func (s *hubService) setRankRoles(ctx context.Context, in rankRolesInput, by act
 	after, err := acceptedRankRoles(in.Roles, guild.info, before)
 	if err != nil {
 		return store.RankRoles{}, nil, err
+	}
+	if maps.Equal(after.Roles(), before.Roles()) {
+		return store.RankRoles{}, nil, errRankRolesUnchanged
 	}
 	if !in.Confirmed {
 		if preview := s.rankRolesPreviewOf(before, after); preview != nil {
@@ -322,7 +373,12 @@ func (s *hubService) setRankRoles(ctx context.Context, in rankRolesInput, by act
 		return store.RankRoles{}, nil, err
 	}
 	saved := store.RankRoles{Roles: after.Roles(), Version: stored.Version}
-	if err := s.deps.Store.SaveRankRoles(ctx, s.deps.GuildID, saved, entry); err != nil {
+	err = s.deps.Store.SaveRankRoles(ctx, s.deps.GuildID, saved, entry)
+	if errors.Is(err, store.ErrStale) {
+		// Another process saved the rank roles after this save's read.
+		return store.RankRoles{}, nil, errStaleRankRoles
+	}
+	if err != nil {
 		return store.RankRoles{}, nil, fmt.Errorf("write rank roles: %w", err)
 	}
 	s.deps.Runtime.ApplyRankRoles(after)

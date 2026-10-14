@@ -18,14 +18,15 @@
     {{with .RefusalFor "rank-roles"}}{{template "refusal" .}}{{end}}
     {{with .RankRoles}}
     <input type="hidden" name="version" value="{{.Version}}">
-    <div class="block-row field-hint" id="rank-roles-hint">A member holding a rank's role counts as a Cav member of that rank. Each rank has one role or none, and a role counts for one rank at most.</div>
+    <div class="block-row field-hint" id="rank-roles-hint">A member holding a rank's role counts as a Cav member of that rank. Each rank has one role or none, and a role counts for one rank at most. Holders counts the members holding each rank's saved role.</div>
     <div class="scroll"><table class="ranklist" aria-describedby="rank-roles-hint">
-      <thead><tr><th>Rank</th><th>Rank role</th></tr></thead>
+      <thead><tr><th>Rank</th><th>Rank role</th><th class="num">Holders</th></tr></thead>
       <tbody>
       {{range .Rows}}
         <tr data-rank="{{.Abbrev}}">
           <th scope="row" class="rank">{{.Abbrev}}</th>
           <td>{{template "picker" .Picker}}</td>
+          <td class="num">{{if .HasRole}}<span data-holders="{{.Holders}}">{{if eq .Holders "unknown"}}<span class="off">unknown</span>{{else}}{{.Holders}}{{end}}</span>{{else}}<span class="off">none</span>{{end}}</td>
         </tr>
       {{end}}
       </tbody>

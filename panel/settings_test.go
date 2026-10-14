@@ -414,3 +414,84 @@ func TestRankRolesSaveWritesOneEntryTheSectionShows(t *testing.T) {
 		t.Errorf("the listed entry shows changes %v, want SGT's and CPL's", got)
 	}
 }
+
+// A save from a Rank roles form loaded before another save of the rank
+// roles is stale: refused with a 409 and nothing written. So is a save that
+// changes no rank's role, with its own refusal.
+func TestRankRolesSaveRefusesAStaleFormAndAnUnchangedSave(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	loaded := rankRolesForm(t, w.st, map[string]string{"SGT": "role-mp"})
+	assertRedirect(t, w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": "role-hq"})), settingsPath)
+	before := readSavedState(t, w.st)
+
+	res := w.b.postForm("/rank-roles", loaded)
+
+	if res.StatusCode != http.StatusConflict {
+		t.Errorf("stale save status = %d, want 409", res.StatusCode)
+	}
+	if kind, _ := refusalIn(rankRolesSection(t, parseHTML(t, res))); kind != refusalStale {
+		t.Errorf("stale save's refusal is data-error=%q, want %s", kind, refusalStale)
+	}
+	if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
+		t.Errorf("the store after the stale save = %+v, want it as before, %+v", after, before)
+	}
+
+	res = w.b.postForm("/rank-roles", rankRolesForm(t, w.st, nil))
+
+	if !isClientError(res.StatusCode) {
+		t.Errorf("unchanged save status = %d, want 4xx", res.StatusCode)
+	}
+	if kind, _ := refusalIn(rankRolesSection(t, parseHTML(t, res))); kind != refusalUnchanged {
+		t.Errorf("unchanged save's refusal is data-error=%q, want %s", kind, refusalUnchanged)
+	}
+	if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
+		t.Errorf("the store after the unchanged save = %+v, want it as before, %+v", after, before)
+	}
+}
+
+// holdersOf reads the holder count a rank's row carries in data-holders.
+func holdersOf(t *testing.T, doc *html.Node, abbrev string) string {
+	t.Helper()
+	for _, row := range rankRows(t, doc) {
+		if got, _ := attrValue(row, "data-rank"); got != abbrev {
+			continue
+		}
+		var holders string
+		eachElement(row, func(n *html.Node) {
+			if v, ok := attrValue(n, "data-holders"); ok {
+				holders = v
+			}
+		})
+		return holders
+	}
+	t.Fatalf("no row for rank %s", abbrev)
+	return ""
+}
+
+// Each rank's row counts the members holding its role, from the member
+// list. While the list has not loaded, the count is unknown, never 0.
+func TestRankRolesSectionCountsEachRolesHolders(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
+		Members: []commands.ListedMember{testBotMember,
+			{ID: "user-1", Username: "one", RoleIDs: []string{testRankSGT}},
+			{ID: "user-2", Username: "two", RoleIDs: []string{"role-hq", testRankSGT}},
+			{ID: "user-3", Username: "three", RoleIDs: []string{testRankPVT}}}})
+	signIn(t, w.forum, w.b)
+
+	doc := parseHTML(t, w.b.get(settingsPath))
+
+	for abbrev, want := range map[string]string{"SGT": "2", "PVT": "1", "CPT": "0"} {
+		if got := holdersOf(t, doc, abbrev); got != want {
+			t.Errorf("%s holders = %q, want %s", abbrev, got, want)
+		}
+	}
+
+	w.discord.setListStatus(commands.MemberListArriving, true)
+	doc = parseHTML(t, w.b.get(settingsPath))
+
+	if got := holdersOf(t, doc, "SGT"); got != "unknown" {
+		t.Errorf("SGT holders while the member list loads = %q, want unknown", got)
+	}
+}
