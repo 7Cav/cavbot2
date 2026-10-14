@@ -161,3 +161,9 @@ func (s pageStore) GetRankRoles(ctx context.Context, guildID string) (store.Rank
 		return s.Store.GetRankRoles(ctx, guildID)
 	})
 }
+
+func (s pageStore) ListRankRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	return timeStoreRead(s.reads, rankRoleChangesRead, func() ([]store.ChangeLogEntry, error) {
+		return s.Store.ListRankRoleChanges(ctx, limit)
+	})
+}

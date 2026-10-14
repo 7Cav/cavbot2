@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/7cav/cavbot2/commands"
 	"github.com/7cav/cavbot2/store"
 )
 
@@ -36,13 +37,23 @@ var diffFields = []string{fieldHubChannel, fieldBaseString, fieldPermissionSourc
 	fieldModeratorRoles, fieldUserLimit, fieldBitrate, fieldDeleteDelay, fieldEnabled, fieldRenamingAllowed,
 	fieldLockingAllowed}
 
+// rankRoleFields are the fields of a rank roles save's diff, one per rank,
+// most senior first.
+var rankRoleFields = func() []string {
+	var fields []string
+	for _, rank := range commands.DefaultRankLadder().Ranks() {
+		fields = append(fields, rankRoleField(rank.Abbrev))
+	}
+	return fields
+}()
+
 // shownFields are every field a diff can carry, in the form's order: a
 // hub's fields, then the recording roles, the one field of their section's
-// diffs.
-var shownFields = slices.Concat([]string{fieldChannelName}, diffFields, []string{fieldRecordingRoles})
+// diffs, then the rank roles.
+var shownFields = slices.Concat([]string{fieldChannelName}, diffFields, []string{fieldRecordingRoles}, rankRoleFields)
 
 // roleFields are the fields whose values are role IDs, shown by name.
-var roleFields = []string{fieldModeratorRoles, fieldRecordingRoles}
+var roleFields = slices.Concat([]string{fieldModeratorRoles, fieldRecordingRoles}, rankRoleFields)
 
 // fieldLabels name the fields a diff can carry as the change log shows
 // them: in the words of the form's label for each, as the Foxhole page's
@@ -153,7 +164,7 @@ type changeView struct {
 // its section holds, and its field already names the set.
 func (c changeView) Label() string {
 	switch c.Action {
-	case store.ChangeModerators, store.ChangeRecordingRoles:
+	case store.ChangeModerators, store.ChangeRecordingRoles, store.ChangeRankRoles:
 		return string(store.ChangeUpdate)
 	}
 	return string(c.Action)
@@ -166,10 +177,14 @@ type fieldView struct {
 	After  string
 }
 
-// Label is the field as the change log names it.
+// Label is the field as the change log names it. A rank's field is named
+// by its rank.
 func (f fieldView) Label() string {
 	if label, ok := fieldLabels[f.Field]; ok {
 		return label
+	}
+	if abbrev, ok := strings.CutPrefix(f.Field, rankRoleFieldPrefix); ok {
+		return abbrev + " rank role"
 	}
 	return f.Field
 }

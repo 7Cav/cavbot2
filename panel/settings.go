@@ -58,6 +58,8 @@ type rankRolesPage struct {
 	// rank's picker offers from the list under OptionsID.
 	Options   []pickerItem
 	OptionsID string
+	// Changes are the section's last entries, newest first.
+	Changes []changeView
 }
 
 // rankRolesPreviewView is a preview as the section shows it: its counts,
@@ -89,12 +91,19 @@ func rankRoleSet(id string) []string {
 	return []string{id}
 }
 
+// rankRoleFieldPrefix starts the form field each rank's rank role posts
+// under, which a rank roles save's diff keys the rank by.
+const rankRoleFieldPrefix = "rank_role_"
+
 // rankRoleField is the form field a rank's rank role posts under.
-func rankRoleField(abbrev string) string { return "rank_role_" + abbrev }
+func rankRoleField(abbrev string) string { return rankRoleFieldPrefix + abbrev }
 
 // The names the Settings page's store reads' errors carry, as the hub
 // page's do.
-const rankRolesRead = "read rank roles"
+const (
+	rankRolesRead       = "read rank roles"
+	rankRoleChangesRead = "list rank roles changes"
+)
 
 // settingsPage is GET /settings.
 func (p *Panel) settingsPage(w http.ResponseWriter, r *http.Request, sess session) {
@@ -182,6 +191,11 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 		page.Rows = append(page.Rows, rankRow{Abbrev: rank.Abbrev, Picker: picker})
 	}
 	page.Options = rolePicker("", "", guild, nil, nil).Candidates
+	entries, err := s.deps.Store.ListRankRoleChanges(ctx, changeLogLimit)
+	if err != nil {
+		return rankRolesPage{}, fmt.Errorf("%s: %w", rankRoleChangesRead, err)
+	}
+	page.Changes = changeViews(entries, guild)
 	if req.RankRolesPreview != nil && posted != nil {
 		view := &rankRolesPreviewView{rankRolesPreview: *req.RankRolesPreview, Version: posted.Version}
 		for _, rank := range commands.DefaultRankLadder().Ranks() {

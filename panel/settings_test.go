@@ -378,3 +378,39 @@ func TestRankRolesSaveSkipsThePreviewOnlyWhenItDropsNobody(t *testing.T) {
 		t.Errorf("preview's member count = %q, want unknown", dropped)
 	}
 }
+
+// Each rank roles save writes one change log entry under no hub, naming
+// each rank whose role changed with its role before and after, and no
+// other rank. The Rank roles section lists it with those ranks.
+func TestRankRolesSaveWritesOneEntryTheSectionShows(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	codeCPL := commands.DefaultRankLadder().Roles()["CPL"]
+
+	assertRedirect(t, w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": "role-hq", "CPL": ""})), settingsPath)
+
+	entries, err := w.st.ListRankRoleChanges(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("ListRankRoleChanges: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("%d rank roles entries, want 1", len(entries))
+	}
+	assertActor(t, entries[0], store.ChangeRankRoles)
+	want := map[string]fieldChange{
+		rankRoleField("SGT"): {Before: testRankSGT, After: "role-hq"},
+		rankRoleField("CPL"): {Before: codeCPL, After: nil},
+	}
+	if got := decodeDiff(t, entries[0]); !reflect.DeepEqual(got, want) {
+		t.Errorf("diff = %+v, want %+v", got, want)
+	}
+
+	sec := rankRolesSection(t, parseHTML(t, w.b.get(settingsPath)))
+	entry := findElement(sec, "", "data-entry", strconv.FormatInt(entries[0].ID, 10))
+	if entry == nil {
+		t.Fatal("the Rank roles section does not list the save's entry")
+	}
+	if got := valuesOf(entry, "data-change"); !sameSet(got, []string{rankRoleField("SGT"), rankRoleField("CPL")}) {
+		t.Errorf("the listed entry shows changes %v, want SGT's and CPL's", got)
+	}
+}
