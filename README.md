@@ -39,7 +39,7 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/voice-rename` | Rename the spawned voice channel you are in, optionally making it a knock channel (🚦) |
 | `/voice-lock` | Lock the spawned voice channel you are in to the people inside it and the hub's moderators, and post a lock notice in its chat with Unlock and Let someone in buttons |
 | `/voice-unlock` | Unlock the spawned voice channel you are in |
-| `/record start`, `/record stop` | Start recording the voice or stage channel you are in, with an optional title of up to 100 characters, and stop it. A recorder joins the channel at the start and leaves at the stop, and the recording notice then links to the recording on the panel's Recordings page, and the starter gets the link by DM as well in a spawned channel, or instead when the notice's channel is gone. Needs a recording role (set in the panel) and a rank role |
+| `/record start`, `/record stop` | Start recording the voice or stage channel you are in, with an optional title of up to 100 characters, and stop it. A recorder joins the channel at the start and leaves at the stop, and the recording notice then links to the recording on the panel's Recordings page, and the starter gets the link by DM as well in a spawned channel, or instead when the notice's channel is gone. Needs a recording role and a rank role, both set on the panel's Settings page |
 
 The registered set lives in `commands/registry.go` — update this table when it changes.
 
