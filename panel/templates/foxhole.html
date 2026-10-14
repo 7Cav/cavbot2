@@ -52,7 +52,7 @@
     <div class="block-row fx-reportlist" data-list="skipped"><h3>Skipped <span class="fx-count" data-field="count">{{len .Skipped}}</span></h3>{{template "preview-members" .Skipped}}</div>
     {{if .Loses}}
     <div class="block-row"><p>Takes <span data-field="estimate" data-seconds="{{.Estimate.Seconds}}">about {{.Estimate.Text}}</span> at one change a second. It keeps going if you close this tab.</p></div>
-    <form method="post" action="/foxhole/remove{{if .From}}#remove-preview{{end}}" class="submit-row">
+    <form method="post" action="/foxhole/remove{{if .Selection}}#remove-preview{{end}}" class="submit-row">
       <input type="hidden" name="role" value="{{.Role}}">
       {{- range .Loses}}
       <input type="hidden" name="member" value="{{.ID}}">
@@ -61,7 +61,7 @@
       <input type="hidden" name="approval-cleared" value="{{.ID}}">
       {{- end}}
       {{- /* The selection the preview was opened with goes back with the Confirm, so a refused Confirm opens this preview again with it. The removal acts on the members above alone. */}}
-      {{- with .From}}
+      {{- with .Selection}}
       <input type="hidden" name="q" value="{{.Query}}">
       <input type="hidden" name="filter" value="{{.Filter}}">
       {{- range .Members}}

@@ -29,7 +29,7 @@ func TestARefusedApprovalsSaveKeepsTheSelection(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFoxholeWorld(t)
-			setMembers(w, memberDoe, memberAsh, memberKestrel, memberMarsh, vanceWithInternal())
+			setMembersWithVanceOnInternal(w)
 			approveThroughThePage(t, w, memberMarsh.ID)
 
 			res := submitSelection(t, w.b, listUnderASearchAndAFilter(t, w), tc.op, tc.member)
@@ -65,13 +65,12 @@ func noticeReload(t *testing.T, doc *html.Node) string {
 // the same search and filter, with the members the bar posted ticked.
 func TestApproveRefusedWhileTheMemberListIsPartialReloadsToTheSelection(t *testing.T) {
 	w := newFoxholeWorld(t)
-	members := []commands.ListedMember{memberDoe, memberAsh, memberKestrel, memberMarsh, vanceWithInternal()}
-	setMembers(w, members...)
+	setMembersWithVanceOnInternal(w)
 	listed := listUnderASearchAndAFilter(t, w)
 	w.discord.setMemberList(arrivingList)
 	refused := parseHTML(t, submitSelection(t, w.b, listed, opApprove, memberAsh.ID, memberMarsh.ID))
 	reload := noticeReload(t, refused)
-	setMembers(w, members...)
+	setMembersWithVanceOnInternal(w)
 
 	doc, fragment := landing(t, w.b, reload, w.b.get(reload))
 
@@ -85,25 +84,23 @@ func TestApproveRefusedWhileTheMemberListIsPartialReloadsToTheSelection(t *testi
 }
 
 // A page load that shows the member list notice answers no refusal, so its
-// Reload stays the page in the view it shows, with no member and no
-// fragment, even when its address names a selection, as the address Cancel
+// Reload opens the page in the view it shows, at its top with no box
+// ticked, even when its address names a selection, as the address Cancel
 // on a remove preview opens does.
 func TestMemberListNoticeOfAPageLoadReloadsNoSelection(t *testing.T) {
 	w := newFoxholeWorld(t)
 	w.discord.setMemberList(arrivingList)
 	selection := url.Values{paramQuery: {"r"}, paramFilter: {"internal"}, fieldMember: {memberAsh.ID, memberMarsh.ID}}
-
 	reload := noticeReload(t, parseHTML(t, w.b.get(foxholePath+"?"+selection.Encode()+"#"+holderListAnchor)))
+	setMembersWithVanceOnInternal(w)
 
-	at, err := url.Parse(reload)
-	if err != nil {
-		t.Fatalf("the notice's Reload %q: %v", reload, err)
+	doc, fragment := landing(t, w.b, reload, w.b.get(reload))
+
+	if got := tickedRows(t, doc); len(got) != 0 {
+		t.Errorf("the notice's Reload %s ticks %v, want no box ticked", reload, got)
 	}
-	if got := at.Query()[fieldMember]; len(got) != 0 {
-		t.Errorf("the notice's Reload %s names the members %v, want none", reload, got)
-	}
-	if at.Fragment != "" {
-		t.Errorf("the notice's Reload %s opens at %q, want the top of the page", reload, at.Fragment)
+	if fragment != "" {
+		t.Errorf("the notice's Reload %s opens at %q, want the top of the page", reload, fragment)
 	}
 }
 
@@ -124,8 +121,7 @@ func previewMembers(preview *html.Node) []string {
 // holder list.
 func TestRemoveRefusedWhileTheMemberListIsPartialReloadsToItsPreview(t *testing.T) {
 	w := newFoxholeWorld(t)
-	members := []commands.ListedMember{memberDoe, memberAsh, memberKestrel, memberMarsh, vanceWithInternal()}
-	setMembers(w, members...)
+	setMembersWithVanceOnInternal(w)
 	listed := listUnderASearchAndAFilter(t, w)
 	w.discord.setMemberList(arrivingList)
 	refused := parseHTML(t, submitSelection(t, w.b, listed, "external", memberAsh.ID, memberMarsh.ID))
@@ -133,7 +129,7 @@ func TestRemoveRefusedWhileTheMemberListIsPartialReloadsToItsPreview(t *testing.
 		t.Fatal("the page doesn't say the removal was refused for the member list")
 	}
 	reload := noticeReload(t, refused)
-	setMembers(w, members...)
+	setMembersWithVanceOnInternal(w)
 
 	doc, fragment := landing(t, w.b, reload, w.b.get(reload))
 
@@ -159,7 +155,7 @@ func TestRemoveRefusedWhileTheMemberListIsPartialReloadsToItsPreview(t *testing.
 // with no script does. It returns the preview page and the preview.
 func openRemovalOfAshAndMarsh(t *testing.T, w *testWorld) (*html.Node, *html.Node) {
 	t.Helper()
-	setMembers(w, memberDoe, memberAsh, memberKestrel, memberMarsh, vanceWithInternal())
+	setMembersWithVanceOnInternal(w)
 	page := removeUnderASearchAndAFilter("external", memberAsh.ID, memberMarsh.ID)(t, w)
 	return page, removePreviewBlock(t, page)
 }
@@ -183,7 +179,7 @@ func TestConfirmRefusedWhileTheMemberListIsPartialReloadsToItsPreview(t *testing
 		t.Error("the page opens a remove preview from a partial member list")
 	}
 	reload := noticeReload(t, refused)
-	setMembers(w, memberDoe, memberAsh, memberKestrel, memberMarsh, vanceWithInternal())
+	setMembersWithVanceOnInternal(w)
 	doc, fragment := landing(t, w.b, reload, w.b.get(reload))
 	landedOnBlock(t, doc, fragment, "remove-preview")
 	selection := sorted([]string{memberAsh.ID, memberMarsh.ID})
@@ -353,7 +349,7 @@ func TestConfirmRefusedOnARetrysRemovePreviewOpensNothing(t *testing.T) {
 // page ticks the rest and says nothing about him.
 func TestARefusedSaveLeavesOutASelectedMemberWithNoRow(t *testing.T) {
 	w := newFoxholeWorld(t)
-	setMembers(w, memberDoe, memberAsh, memberKestrel, memberMarsh, vanceWithInternal())
+	setMembersWithVanceOnInternal(w)
 	page := parseHTML(t, w.b.get(foxholePath))
 	setMembers(w, memberDoe, memberAsh, memberKestrel, memberMarsh)
 

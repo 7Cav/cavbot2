@@ -359,20 +359,19 @@ type removePreview struct {
 	// and members selected, from the same view, or the Retry's address when
 	// a Retry opened it.
 	reopen string
-	// From is the selection the selection bar opened the preview with, which
-	// its Confirm posts back, so a refused Confirm opens the preview again
-	// with it. Nil for a preview a Retry opened, whose members were never a
-	// selection.
-	From *removeSelection
+	// Selection is the selection the selection bar opened the preview with,
+	// which its Confirm posts back, so a refused Confirm opens the preview
+	// again with it. Nil for a preview a Retry opened, whose members were
+	// never a selection.
+	Selection *removeSelection
 	// Refusal is why the Confirm this preview answers was refused, nil for
 	// a preview opened afresh. It shows under the preview's heading, which
 	// the Confirm's address names.
 	Refusal *saveRefusal
 }
 
-// removeSelection is the selection a remove preview was opened with: every
-// member selected, those it skips included, and the search and the filter
-// they were selected under.
+// removeSelection is the selection a remove preview was opened with, those
+// it skips included, and the search and the filter it was made under.
 type removeSelection struct {
 	Query   string
 	Filter  string
@@ -674,8 +673,8 @@ func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess sessio
 		return
 	}
 	approvals := r.PostForm[fieldApprovalCleared]
-	back := actionPage
-	if selected := distinct(r.PostForm[fieldSelected]); len(selected) > 0 {
+	back, selected := actionPage, distinct(r.PostForm[fieldSelected])
+	if len(selected) > 0 {
 		back = foxholeRequest{Query: r.PostForm.Get(paramQuery), Filter: knownFilter(r.PostForm.Get(paramFilter)), Remove: role, Selection: selected}
 	}
 	nobody := nobodyToChangeRefusal(nobodyToRemove(role.Label()))
@@ -683,8 +682,10 @@ func (p *Panel) startRemoval(w http.ResponseWriter, r *http.Request, sess sessio
 		// The members selected only say which preview a refusal opens again:
 		// the removal acts on those the preview listed as losing the role.
 		err := p.foxhole.actions.Remove(ctx, role, members, approvals, by)
-		if errors.Is(err, commands.ErrMemberListPartial) {
-			// Refused in the words a preview opened on a partial list is.
+		if errors.Is(err, commands.ErrMemberListPartial) && len(selected) > 0 {
+			// The refusal a preview opened on a partial list gives, since the
+			// notice's Reload opens this preview again too. A Retry's preview
+			// has no selection to bring back, and gets startAction's.
 			return removeListPartialRefusal(role.Label())
 		}
 		return err

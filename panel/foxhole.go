@@ -37,11 +37,11 @@ type foxholeView struct {
 	// names none, or one the page doesn't know.
 	Filter string
 	// Reload is the page in the view it shows, with any note form it shows
-	// open: the address the progress block's Reload link loads, and the
-	// page's script loads in the background, and the member list notice's
-	// on a page that answers no refused selection bar action. It names no
-	// fragment, so it opens at the top of the page, where those blocks sit,
-	// not at the note block below them.
+	// open. The progress block's Reload link loads it, and so does the page's
+	// script in the background. The member list notice's Reload link loads
+	// it too, unless the page answers a refused selection bar action. It
+	// names no fragment, so it opens at the top of the page, where those
+	// blocks sit, not at the note block below them.
 	Reload string
 	// Filters are the filter links, each with how many holders matching the
 	// search it lists.
@@ -820,7 +820,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 		}
 		if req.Remove != "" {
 			view.RemovePreview = s.removePreviewOf(list, records, req.Remove, req.Selection, req.selectionAddress(), req.removeAddress())
-			view.RemovePreview.From = &removeSelection{Query: req.Query, Filter: req.Filter, Members: req.Selection}
+			view.RemovePreview.Selection = &removeSelection{Query: req.Query, Filter: req.Filter, Members: req.Selection}
 		}
 		if req.Paste != nil {
 			view.AddPreview = s.addPreviewOf(list, records, *req.Paste, nil)
@@ -876,7 +876,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 	view.ApprovalRefusal = req.ApprovalRefusal
 	switch {
 	case req.ActionRefusal == nil:
-	case view.RemovePreview != nil && view.RemovePreview.From != nil:
+	case view.RemovePreview != nil && view.RemovePreview.Selection != nil:
 		// A refused Confirm of a preview the selection bar opened answers
 		// with the preview again, and the refusal under its heading.
 		view.RemovePreview.Refusal = req.ActionRefusal

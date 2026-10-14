@@ -421,6 +421,13 @@ func removeUnderASearchAndAFilter(role string, memberIDs ...string) func(*testin
 	}
 }
 
+// setMembersWithVanceOnInternal makes the member list complete with Doe,
+// Ash, Kestrel, Marsh and Vance, Vance holding Internal, the members
+// listUnderASearchAndAFilter is written for.
+func setMembersWithVanceOnInternal(w *testWorld) {
+	setMembers(w, memberDoe, memberAsh, memberKestrel, memberMarsh, vanceWithInternal())
+}
+
 // listUnderASearchAndAFilter opens the holder list under the search "r"
 // and the Internal filter, the way a browser with no script does, and
 // returns the page. With Vance holding Internal it lists Ash, Marsh and
@@ -498,7 +505,7 @@ func TestRemovePreviewCancelReturnsToWhereRemoveWasPressed(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFoxholeWorld(t)
-			setMembers(w, memberDoe, memberAsh, memberKestrel, memberMarsh, vanceWithInternal())
+			setMembersWithVanceOnInternal(w)
 			page := tc.open(t, w)
 			if tc.selection != nil {
 				if got := tickedRows(t, page); !slices.Equal(got, tc.selection) {
@@ -530,7 +537,7 @@ func TestRemovePreviewCancelReturnsToWhereRemoveWasPressed(t *testing.T) {
 // is left out: the page still opens, with the rest of the selection ticked.
 func TestRemovePreviewCancelTicksTheSelectionStillListed(t *testing.T) {
 	w := newFoxholeWorld(t)
-	setMembers(w, memberDoe, memberAsh, memberKestrel, memberMarsh, vanceWithInternal())
+	setMembersWithVanceOnInternal(w)
 	page := removeUnderASearchAndAFilter("internal", memberAsh.ID, memberMarsh.ID)(t, w)
 	cancel := cancelAddress(t, removePreviewBlock(t, page))
 	marsh := memberMarsh
