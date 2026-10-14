@@ -38,7 +38,9 @@ type foxholeView struct {
 	Filter string
 	// Reload is the page in the view it shows, with any note form it shows
 	// open: the address the member list notice's and the progress block's
-	// Reload links load, and the page's script loads in the background.
+	// Reload links load, and the page's script loads in the background. It
+	// names no fragment, so it opens at the top of the page, where those
+	// blocks sit, not at the note block below them.
 	Reload string
 	// Filters are the filter links, each with how many holders matching the
 	// search it lists.
@@ -1391,8 +1393,7 @@ func foxholeURL(query, filter, noteMember string) string {
 const noteAnchor = "note"
 
 // noteAddress is foxholeURL with the member's note form open, at the note
-// block. Reload keeps foxholeURL's address, with no fragment. Its blocks
-// sit above the note block, so landing there would scroll past them.
+// block.
 func noteAddress(query, filter, member string) string {
 	return foxholeURL(query, filter, member) + "#" + noteAnchor
 }

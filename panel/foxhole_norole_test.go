@@ -124,17 +124,24 @@ func TestNoRoleViewFlagsAMemberWhoLeftTheServerUnderTheirLastNames(t *testing.T)
 	}
 }
 
-// openNoRoleNote follows a no-role row's Edit link from a fresh load of the
-// no-role view, as a browser with no script does, and returns the page it
-// lands on.
-func openNoRoleNote(t *testing.T, b *browser, memberID string) *html.Node {
+// noRoleNoteLink returns the href of a no-role row's Edit link on a fresh
+// load of the no-role view, and fails the test when the view has no row for
+// the member.
+func noRoleNoteLink(t *testing.T, b *browser, memberID string) string {
 	t.Helper()
 	row, ok := noRoleRows(t, openNoRoleView(t, b))[memberID]
 	if !ok {
 		t.Fatalf("the no-role view has no row for %s", memberID)
 	}
-	href, _ := attrValue(noteLink(t, row), "href")
-	return parseHTML(t, follow(t, b, b.get(href)))
+	return attrOf(noteLink(t, row), "href")
+}
+
+// openNoRoleNote follows a no-role row's Edit link from a fresh load of the
+// no-role view, as a browser with no script does, and returns the page it
+// lands on.
+func openNoRoleNote(t *testing.T, b *browser, memberID string) *html.Node {
+	t.Helper()
+	return parseHTML(t, follow(t, b, b.get(noRoleNoteLink(t, b, memberID))))
 }
 
 // noteHint reports whether the page's note form carries the hint that an
