@@ -43,6 +43,11 @@ type pickerView struct {
 	SearchLabel string
 	Tags        []pickerItem
 	Candidates  []pickerItem
+	// OptionsFrom, when set, is the ID of a <template> holding the search
+	// rows, which the script copies into the picker's list in place of its
+	// own Candidates. Many pickers on one page then share one rendering of
+	// the guild's roles.
+	OptionsFrom string
 }
 
 // pickerItem is one item a picker shows, as a tag or as a search row.

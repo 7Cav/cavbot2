@@ -203,6 +203,7 @@ func (p *Panel) routes() []route {
 		{"POST /hubs/{id}/remove", p.withPanelAdmin(p.removeHub)},
 		{"POST /moderators", p.withPanelAdmin(p.saveModerators)},
 		{"POST /recording-roles", p.withPanelAdmin(p.saveRecordingRoles)},
+		{"GET " + settingsPath, p.withSettingsPage(p.settingsPage)},
 		{"GET " + recordingsPath, p.withSession(p.recordingsPage)},
 		{"GET " + recordingsPath + "/{id}", p.withSession(p.recordingPage)},
 		{"GET " + recordingsPath + "/{id}/mix", p.withSession(p.downloadMix)},
@@ -508,6 +509,20 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 // request's group check must find a panel admin.
 func (p *Panel) withPanelAdmin(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
 	return p.withAccess(func(a access) bool { return a.panelAdmin }, next)
+}
+
+// withSettingsPage is the gate the Settings page sits behind: this
+// request's group check must find a panel admin. Anyone else gets the
+// no-access page at the page's address, a page load included, where the
+// hub page sends them on to the page they land on.
+func (p *Panel) withSettingsPage(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
+	return p.withSession(func(w http.ResponseWriter, r *http.Request, sess session) {
+		if !sess.access.panelAdmin {
+			p.noAccess(w, sess, noAccessRefused)
+			return
+		}
+		next(w, r, sess)
+	})
 }
 
 // withFoxholePage is the gate the Foxhole page sits behind: this request's

@@ -96,14 +96,6 @@
   </section>
 {{end}}
 
-{{- /* A refusal's note. One form at most is refused per page, so its ID is
-     unique, and the heading of the block it sits in, the form's or the one
-     shown in the form's place, names it in aria-describedby. */}}
-{{define "refusal"}}<div class="block-row"><div class="note" id="refusal" data-error="{{.DataError}}">{{.Message}}</div></div>{{end}}
-
-{{- /* The line a save lands on, in the form it saved. */}}
-{{define "saved"}}<div class="block-row" role="status"><div class="note note--ok note--inline" data-field="saved">Saved.</div></div>{{end}}
-
 {{define "moderators"}}
   <section class="moderators" data-section="moderators">
   <form method="post" action="/moderators#moderators" class="block">
@@ -148,26 +140,6 @@
   </section>
 {{end}}
 
-{{define "role-note"}}{{if eq .Unavailable "deleted"}} <span class="off">not in the server</span>{{else if eq .Unavailable "managed"}} <span class="off">managed by an integration</span>{{end}}{{end}}
-
-{{define "picker"}}<div class="picker" data-field="{{.Field}}" data-picker{{if .Single}} data-single{{end}}>
-  <ul class="tags" data-tags>{{range .Tags}}{{template "picker-tag" .}}{{end}}</ul>
-  <button type="button" class="btn btn--small" data-add aria-expanded="false">{{.AddLabel}}{{with .Set}}<span class="visually-hidden"> to {{.}}</span>{{end}}</button>
-  <div class="search" data-search hidden>
-    <input type="search" class="search-input" data-search-input autocomplete="off" placeholder="Type to filter" aria-label="{{.SearchLabel}}">
-    <ul class="search-list" role="listbox" data-list>
-      {{range .Candidates}}<li role="option" data-option="{{.ID}}" data-label="{{.Label}}" data-colour="{{.Colour}}" tabindex="-1">{{template "dot" .}}{{.Label}}</li>{{end}}
-    </ul>
-    <div class="off search-none" data-empty hidden>No match.</div>
-    <div class="off search-none" data-none hidden>Nothing left to add.</div>
-  </div>
-  <template data-tag-template>{{template "picker-tag" .Blank}}</template>
-</div>{{end}}
-
-{{define "picker-tag"}}<li class="tag tag--pick" data-tag="{{.ID}}"><input type="hidden" name="{{.Field}}" value="{{.ID}}"{{if .Unavailable}} data-unavailable="{{.Unavailable}}"{{end}}>{{template "dot" .}}<span data-label>{{.Label}}</span>{{template "role-note" .}} <button type="button" class="tag-remove" data-remove><span aria-hidden="true">&times;</span><span class="visually-hidden">Remove <span data-label>{{.Label}}</span>{{with .Set}} from {{.}}{{end}}</span></button></li>{{end}}
-
-{{define "dot"}}{{if .Dot}}{{if .Colour}}<span class="dot" style="background:{{.Colour}}"></span>{{else}}<span class="dot dot--none"></span>{{end}}{{end}}{{end}}
-
 {{- /* The removed hubs (#579), newest removal first. Each row folds to the
      hub as it was removed and opens to its change log with no script. */}}
 {{define "removed-hubs"}}
@@ -185,31 +157,6 @@
     </details>
     {{end}}
   </div>
-{{end}}
-
-{{define "changes"}}
-    <h2 class="block-header">Change log</h2>
-    {{template "change-entries" .}}
-{{end}}
-
-{{- /* A change log's entries, newest first, the newest open. */}}
-{{define "change-entries"}}
-    {{range $i, $_ := .}}
-    <details class="block-row change" data-entry="{{.ID}}" data-action="{{.Action}}"{{if eq $i 0}} open{{end}}>
-      <summary class="change-head">
-        <span class="change-who" data-field="username">{{.Username}}</span>
-        <span class="tag" data-field="action">{{.Label}}</span>
-        <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
-      </summary>
-      {{if .Fields}}
-      <dl class="change-fields">
-        {{range .Fields}}<div data-change="{{.Field}}"><dt>{{.Label}}</dt><dd><span data-field="before">{{.Before}}</span> <span class="arrow">&rarr;</span> <span data-field="after">{{.After}}</span></dd></div>{{end}}
-      </dl>
-      {{else}}<div class="off">No field changed.</div>{{end}}
-    </details>
-    {{else}}
-    {{template "no-changes"}}
-    {{end}}
 {{end}}
 
 {{define "create"}}

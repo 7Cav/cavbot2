@@ -1,0 +1,32 @@
+{{define "content"}}
+<main class="body" data-page="{{.Page}}">
+  <h1 class="title">Settings</h1>
+  <p class="desc">The settings here apply to the whole server, not to one hub.</p>
+  {{if .Settings.Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Role details on this page may be out of date.</div>{{end}}
+  {{template "rank-roles" .Settings.RankRoles}}
+</main>
+{{end}}
+
+{{- /* The rank roles (#680): one row per rank of the rank ladder, most
+     senior first, each with a picker holding its rank role. Every picker
+     offers the roles from the one list under OptionsID. */}}
+{{define "rank-roles"}}
+  <section class="rank-roles" data-section="rank-roles">
+  <div class="block">
+    <h2 class="block-header" id="rank-roles" tabindex="-1">Rank roles</h2>
+    <div class="block-row field-hint" id="rank-roles-hint">A member holding a rank's role counts as a Cav member of that rank. Each rank has one role or none, and a role counts for one rank at most.</div>
+    <div class="scroll"><table class="ranklist" aria-describedby="rank-roles-hint">
+      <thead><tr><th>Rank</th><th>Rank role</th></tr></thead>
+      <tbody>
+      {{range .Rows}}
+        <tr data-rank="{{.Abbrev}}">
+          <th scope="row" class="rank">{{.Abbrev}}</th>
+          <td>{{template "picker" .Picker}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table></div>
+    <template id="{{.OptionsID}}">{{range .Options}}{{template "picker-option" .}}{{end}}</template>
+  </div>
+  </section>
+{{end}}
