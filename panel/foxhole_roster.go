@@ -67,8 +67,12 @@ type rosterPreview struct {
 	// Its Confirm posts the report instead of the roster.
 	Retry int64
 	// Back is the address Cancel leads to: the Add a unit's roster block,
-	// where Preview roster was pressed.
+	// where Preview roster was pressed, or where the Retry was pressed for a
+	// Retry's preview.
 	Back string
+	// reopen is a Retry's preview's Retry address, which says where the
+	// Retry was pressed. Empty for a preview of the whole roster.
+	reopen string
 }
 
 // rosterRow is one trooper on the roster as the roster preview shows them:
@@ -257,7 +261,7 @@ func (p *rosterPreview) NobodyHint() string {
 // address. A preview of the whole roster opens again by its Preview again
 // button instead, which posts the unit.
 func (p *rosterPreview) Reopen() reopenLink {
-	return reopenOf(retryPress{Report: p.Retry}.address(), "Retry")
+	return reopenOf(p.reopen, "Retry")
 }
 
 // CanAdd reports whether confirming the preview could give Internal to

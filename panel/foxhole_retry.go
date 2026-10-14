@@ -148,7 +148,7 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 	if err != nil || report == nil {
 		return err
 	}
-	back := press.back()
+	back, reopen := press.back(), press.address()
 	var ids []string
 	for _, m := range report.Missed {
 		ids = append(ids, m.ID)
@@ -160,7 +160,7 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 		view.AddPreview = s.addPreviewOf(list, records, pasteBox{Role: report.Role, Text: strings.Join(ids, "\n")}, nil)
 		view.AddPreview.Back = back
 	case store.ChangeRemoval:
-		view.RemovePreview = s.removePreviewOf(list, records, report.Role, ids, back, report.RetryHref())
+		view.RemovePreview = s.removePreviewOf(list, records, report.Role, ids, back, reopen)
 	case store.ChangeRosterAdd:
 		unit, ok := commands.LookupValidatedInternalUnitLabelled(report.Unit)
 		if !ok {
@@ -173,10 +173,10 @@ func (s foxholeService) openRetry(ctx context.Context, view *foxholeView, list c
 			troopers = append(troopers, commands.RosterTrooper{Username: m.Trooper, DiscordID: m.ID})
 		}
 		view.RosterPreview = s.rosterPreviewOf(list, records, unit, troopers)
-		view.RosterPreview.Retry, view.RosterPreview.Back = report.ID, back
+		view.RosterPreview.Retry, view.RosterPreview.Back, view.RosterPreview.reopen = report.ID, back, reopen
 	case store.ChangeReAdd, store.ChangePurge:
 		view.RetryConfirm = s.retryConfirmOf(report, list, records)
-		view.RetryConfirm.Back = back
+		view.RetryConfirm.Back, view.RetryConfirm.reopen = back, reopen
 	}
 	view.Retry = report
 	return nil
@@ -200,12 +200,14 @@ type retryConfirm struct {
 	Estimate estimate
 	// Back is the address Cancel leads to: where the Retry was pressed.
 	Back string
+	// reopen is the Retry's address, which says where it was pressed.
+	reopen string
 }
 
 // Reopen is the link that opens this confirmation again, at the Retry's
 // address.
 func (c retryConfirm) Reopen() reopenLink {
-	return reopenOf(c.Report.RetryHref(), "Retry")
+	return reopenOf(c.reopen, "Retry")
 }
 
 // Purge reports whether the Retry is a purge's, which takes each member's

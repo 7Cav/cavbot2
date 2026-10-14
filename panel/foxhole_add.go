@@ -58,7 +58,8 @@ type addPreview struct {
 	// however many lines name them.
 	Notes int
 	// Back is the address Cancel leads to: the Add members block, where
-	// Preview was pressed.
+	// Preview was pressed, or where the Retry was pressed for a Retry's
+	// preview.
 	Back string
 }
 

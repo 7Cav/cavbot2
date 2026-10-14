@@ -248,3 +248,39 @@ func TestCancelOnARetryWhoseAddressDoesntSayWhereLandsOnTheLatestReport(t *testi
 
 	landedOnBlock(t, doc, fragment, "report")
 }
+
+// A Retry's confirmation or preview opened while another Foxhole action
+// runs offers a link to open the Retry again once that action ends. Cancel
+// on the Retry that link opens still lands where the Retry was first
+// pressed. Here that's the latest report's own change log entry, made older
+// than the newest by a note save, and the action running is a /foxhole
+// command, which leaves the latest report as it was.
+func TestCancelOnARetryOpenedAgainLandsWhereTheRetryWasFirstPressed(t *testing.T) {
+	cases := []struct {
+		name string
+		// fail runs an action to its end with a member it failed on, so its
+		// report offers Retry.
+		fail func(*testing.T, *testWorld)
+		// preview is the data-field marker of what the Retry opens.
+		preview string
+	}{
+		{"Retry confirmation", failedPurge, "retry-confirm"},
+		{"roster preview", failedRosterAdd, "roster-preview"},
+		{"remove preview", failedRemoval, "remove-preview"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			tc.fail(t, w)
+			held := holdFoxholeAdd(t, w)
+			page, report := retryFromItsEntry(t, w)
+			held.release()
+			reopened, _ := landReopen(t, w, page, pendingBlock(t, page, tc.preview))
+			cancel := cancelAddress(t, pendingBlock(t, reopened, tc.preview))
+
+			doc, fragment := landing(t, w.b, cancel, w.b.get(cancel))
+
+			landedOnEntry(t, doc, fragment, report)
+		})
+	}
+}
