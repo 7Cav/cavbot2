@@ -1,10 +1,10 @@
 package voice
 
 import (
+	"context"
 	"errors"
 	"net"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/7cav/cavbot2/utils"
@@ -19,13 +19,20 @@ import (
 // channel, and drops a speaker's frames that arrive before op 5 names them.
 // This one reads packets with only the transport encryption off, takes the
 // DAVE encryption off itself as the speaker the SSRC maps to, and holds a
-// frame whose SSRC isn't mapped yet until it is.
+// frame whose SSRC isn't mapped yet until it is. It also watches DAVE's
+// setup, which Discord can leave unanswered: a setup that stalls reaches
+// Sentry, and the recorder starts it over on a fresh voice connection.
 
 // receiveConn is a disgo voice connection as the receiver reads it.
 type receiveConn interface {
 	UDP() disgovoice.UDPConn
 	DAVE() godave.Session
 	UserIDBySSRC(ssrc uint32) snowflake.ID
+	// ChannelID is the call's channel, nil while there is none.
+	ChannelID() *snowflake.ID
+	// reconnect opens a fresh voice connection in the call, which starts
+	// DAVE over, and returns once it has opened, or with ctx's error.
+	reconnect(ctx context.Context) error
 }
 
 const (
@@ -43,7 +50,24 @@ const (
 	// can't decrypt. Half a second of one speaker's audio. A join or leave
 	// costs a frame or two at most.
 	failureBurst = 25
+	// stallAfter is how long one DAVE setup may hold frames before the
+	// recorder counts it a stall. Every setup seen on the test guild
+	// finished within 0.7 s of the session description.
+	stallAfter = 3 * time.Second
+	// reconnectTimeout bounds the open of one fresh voice connection.
+	reconnectTimeout = 5 * time.Second
 )
+
+// stallMessage is what Sentry hears when DAVE stalls: the recorder hears
+// nobody in the channel. daveRecoveredMessage is the Info line once it
+// hears the channel again.
+const (
+	stallMessage         = "DAVE setup stalled"
+	daveRecoveredMessage = "DAVE setup recovered"
+)
+
+// errDAVEStalled is the error a stall reaches Sentry with.
+var errDAVEStalled = errors.New("voice: DAVE held every frame past the stall limit")
 
 // receiver reads one voice connection's packets on a goroutine of its own
 // and hands each speaker's frames over, in the order they arrived.
@@ -52,9 +76,10 @@ type receiver struct {
 	handle   func(Frame)
 	recorder string
 
-	stop chan struct{}
-	done chan struct{}
-	once sync.Once
+	// ctx ends at close, and with it any fresh connection in flight.
+	ctx    context.Context
+	cancel context.CancelFunc
+	done   chan struct{}
 
 	// held is the frames read on each SSRC no user is mapped to yet, still
 	// DAVE-encrypted, since DAVE decrypts as a user. Only the receiver's
@@ -66,16 +91,26 @@ type receiver struct {
 	// receiver's goroutine touches them.
 	failing    map[snowflake.ID]int
 	unreadable int
+	// unheardSince is when DAVE started holding frames, zero while it
+	// holds none, and setupSince when the DAVE setup holding them now
+	// started: then, or at the last fresh connection. stalled is whether
+	// Sentry has heard of the stall. Only the receiver's goroutine touches
+	// them.
+	unheardSince time.Time
+	setupSince   time.Time
+	stalled      bool
 }
 
 // newReceiver builds the receiver of a recorder's connection. It hands
 // frames to handle once open starts it.
 func newReceiver(conn receiveConn, handle func(Frame), recorderID string) *receiver {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &receiver{
 		conn:     conn,
 		handle:   handle,
 		recorder: recorderID,
-		stop:     make(chan struct{}),
+		ctx:      ctx,
+		cancel:   cancel,
 		done:     make(chan struct{}),
 		held:     make(map[uint32][]*disgovoice.Packet),
 		failing:  make(map[snowflake.ID]int),
@@ -88,18 +123,13 @@ func (r *receiver) open() { go r.run() }
 // close stops reading and returns once the receiver's goroutine has, so no
 // frame is handed over after. The receiver must have been opened.
 func (r *receiver) close() {
-	r.once.Do(func() { close(r.stop) })
+	r.cancel()
 	<-r.done
 }
 
 func (r *receiver) run() {
 	defer close(r.done)
-	for {
-		select {
-		case <-r.stop:
-			return
-		default:
-		}
+	for r.ctx.Err() == nil {
 		r.step()
 	}
 }
@@ -112,9 +142,10 @@ func (r *receiver) run() {
 func (r *receiver) step() {
 	defer utils.RecoverPanic("recorder-receive", "recorder", r.recorder)
 	if holdFrames(r.conn.DAVE()) {
-		r.pause(notReadyPause)
+		r.waitForDAVE()
 		return
 	}
+	r.hearing()
 	r.release()
 	p, err := r.conn.UDP().ReadPacket()
 	switch {
@@ -145,10 +176,59 @@ func holdFrames(s godave.Session) bool {
 	return !s.Ready()
 }
 
+// waitForDAVE pauses while DAVE holds frames. A setup that holds them past
+// stallAfter has stalled, and the recorder hears nobody: Sentry hears of
+// it, and the recorder opens a fresh voice connection, whose session
+// description starts DAVE over.
+func (r *receiver) waitForDAVE() {
+	now := time.Now()
+	if r.unheardSince.IsZero() {
+		r.unheardSince, r.setupSince = now, now
+	}
+	if now.Sub(r.setupSince) <= stallAfter {
+		r.pause(notReadyPause)
+		return
+	}
+	if !r.stalled {
+		r.stalled = true
+		utils.CaptureError(stallMessage, errDAVEStalled, "recorder", r.recorder, "channel_id", channelOf(r.conn))
+	}
+	r.reconnect()
+	r.setupSince = time.Now()
+}
+
+// hearing notes DAVE passing frames. After a stall, the log says how long
+// the recorder couldn't hear.
+func (r *receiver) hearing() {
+	if r.stalled {
+		utils.Info(daveRecoveredMessage, "recorder", r.recorder, "channel_id", channelOf(r.conn),
+			"unheard", time.Since(r.unheardSince))
+	}
+	r.unheardSince, r.stalled = time.Time{}, false
+}
+
+// reconnect opens a fresh voice connection. One that fails leaves DAVE
+// holding frames, so the next stall tries again.
+func (r *receiver) reconnect() {
+	ctx, cancel := context.WithTimeout(r.ctx, reconnectTimeout)
+	defer cancel()
+	if err := r.conn.reconnect(ctx); err != nil && r.ctx.Err() == nil {
+		utils.Warn("Fresh voice connection failed", "recorder", r.recorder, "error", err)
+	}
+}
+
+// channelOf is the ID of conn's channel, empty while it has none.
+func channelOf(conn receiveConn) string {
+	if id := conn.ChannelID(); id != nil {
+		return id.String()
+	}
+	return ""
+}
+
 // pause sleeps for d, or until close.
 func (r *receiver) pause(d time.Duration) {
 	select {
-	case <-r.stop:
+	case <-r.ctx.Done():
 	case <-time.After(d):
 	}
 }
