@@ -258,10 +258,11 @@
     var cancel = form.querySelector('[data-field="cancel_note"]');
     var member = cell.closest('[data-member]').getAttribute('data-member');
     // A form in a row carries the IDs the page's own note form uses: the
-    // hint's, and on a refused save the refusal's. Each row's form gets its
-    // own, so rows with forms open at once share none. Its input names its
-    // own refusal and hint, so a screen reader reads out why the save was
-    // refused, then the warning, as focus lands.
+    // hint's, and on a refused save the refusal's. A form failed() makes
+    // carries its line's too. Each row's form gets its own, so rows with
+    // forms open at once share none. Its input names its own line and hint,
+    // so a screen reader reads out why the save didn't land, then the
+    // warning, as focus lands.
     form.querySelectorAll('[id]').forEach(function (el) { el.id += '-' + member; });
     var described = input.getAttribute('aria-describedby');
     if (described) {
@@ -357,22 +358,24 @@
 
   // unconfirmed is what the row says when no answer came, or one that
   // carries no page, as the plain-text answer to a failure inside the
-  // panel. Either can come after the note was stored.
+  // panel. Either can come after the note was stored, so the line refuses
+  // nothing and takes the neutral stripe.
   var unconfirmed = 'The panel didn\'t confirm this save. Reload the page to see whether the note saved.';
 
-  // said is the sentence a page carries when it answered a save in place
-  // and isn't the Foxhole page, as the no-access page and the error pages
-  // do. It is null for an answer with no page.
-  function said(doc) {
+  // sentenceOf is the sentence a page carries when it answered a save in
+  // place and isn't the Foxhole page, as the no-access page and the error
+  // pages do. It is null for an answer with no page.
+  function sentenceOf(doc) {
     var line = doc.querySelector('main [data-field="no-access"], main[data-failure] p');
     return line && line.textContent.trim();
   }
 
   // failed puts a fresh form in the cell holding what the manager posted,
-  // with the sentence where a refused note's sits. The note box names it
-  // first in its description, and mount focuses the box, so a screen
-  // reader reads the sentence out as focus lands. Save posts the note
-  // again, and Cancel puts back what the cell showed before.
+  // with the answer's sentence where a refused note's sits, or the
+  // unconfirmed line when the sentence is null. The note box names the line
+  // first in its description, and mount focuses the box, so a screen reader
+  // reads it out as focus lands. Save posts the note again, and Cancel puts
+  // back what the cell showed before.
   function failed(cell, form, restore, sentence) {
     var fresh = template.content.firstElementChild.cloneNode(true);
     new FormData(form).forEach(function (value, name) {
@@ -380,8 +383,8 @@
     });
     var line = document.createElement('div');
     line.id = 'note-failed';
-    line.className = 'note fx-noterefusal';
-    line.textContent = sentence;
+    line.className = sentence ? 'note fx-noterefusal' : 'note note--neutral fx-noterefusal';
+    line.textContent = sentence || unconfirmed;
     fresh.prepend(line);
     var input = fresh.querySelector('[data-note-input]');
     var described = input.getAttribute('aria-describedby');
@@ -418,7 +421,7 @@
               show(cell, current);
             });
           } else {
-            failed(cell, form, restore, said(answer.doc) || unconfirmed);
+            failed(cell, form, restore, sentenceOf(answer.doc));
           }
           return;
         }
@@ -438,7 +441,7 @@
         restore();
         show(cell, input.value.trim());
       })
-      .catch(function () { failed(cell, form, restore, unconfirmed); });
+      .catch(function () { failed(cell, form, restore, null); });
   }
 
   document.addEventListener('click', function (e) {
