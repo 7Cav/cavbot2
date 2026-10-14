@@ -15,6 +15,21 @@
 
   var pickers = 0;
 
+  // A press is a mousedown and the mouseup that ends it. pressed is the
+  // element the press began on, from the mousedown to the mouseup, and
+  // null between presses. ending holds what waits for the press to end,
+  // each called with that element. They run at the mouseup, when the
+  // press has already fixed what its click lands on.
+  var pressed = null;
+  var ending = [];
+
+  document.addEventListener('mousedown', function (e) { pressed = e.target; }, true);
+  document.addEventListener('mouseup', function () {
+    var target = pressed;
+    pressed = null;
+    ending.splice(0).forEach(function (run) { run(target); });
+  }, true);
+
   function setUp(root) {
     var single = root.hasAttribute('data-single');
     var tags = root.querySelector('[data-tags]');
@@ -177,9 +192,23 @@
     });
 
     // Focus leaving the picker closes the search. A click on a row moves
-    // focus to the row, inside the picker, so the click still lands.
+    // focus to the row, inside the picker, so the click still lands. A
+    // press outside the picker moves focus on its mousedown. Closing then
+    // would move what sits below the list up before the mouseup, and the
+    // press would make no click (#682). So a press closes the search once
+    // it ends, and the page scrolls by as much as the close moved the
+    // pressed element, so it stays under the pointer.
     root.addEventListener('focusout', function (e) {
-      if (!search.hidden && !root.contains(e.relatedTarget)) { close(); }
+      if (search.hidden || root.contains(e.relatedTarget)) { return; }
+      if (!pressed) {
+        close();
+        return;
+      }
+      ending.push(function (target) {
+        var top = target.getBoundingClientRect().top;
+        close();
+        window.scrollBy(0, target.getBoundingClientRect().top - top);
+      });
     });
   }
 
