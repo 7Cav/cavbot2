@@ -221,10 +221,10 @@ type purgeConfirm struct {
 // changes.
 func (c *purgeConfirm) NobodyHint() string { return nobodyToPurge(c.Scope) }
 
-// Reopen is the link that opens this confirmation again: the address the
+// Reopen is the link that opens this confirmation again, at the address the
 // After a war block's Purge opens for the same scope.
 func (c *purgeConfirm) Reopen() reopenLink {
-	return reopenLink{Href: foxholePath + "?" + url.Values{paramPurge: {string(c.Scope)}}.Encode() + "#" + purgeConfirmAnchor, What: "purge"}
+	return reopenOf(foxholePath+"?"+url.Values{paramPurge: {string(c.Scope)}}.Encode()+"#"+purgeConfirmAnchor, "purge")
 }
 
 // reopenLink is the link a preview gives beside its Confirm while another
@@ -237,6 +237,15 @@ func (c *purgeConfirm) Reopen() reopenLink {
 type reopenLink struct {
 	Href string
 	What string
+}
+
+// reopenOf is the link that opens again the preview at address, a Foxhole
+// page address with the preview's heading as its fragment. The link goes
+// through foxholeReopenPath with the address's query and fragment, so it
+// never names the address the tab shows, and a press always loads the
+// page afresh, however the tab reached the preview.
+func reopenOf(address, what string) reopenLink {
+	return reopenLink{Href: foxholeReopenPath + strings.TrimPrefix(address, foxholePath), What: what}
 }
 
 // purgeConfirmAnchor is the ID foxhole.html gives the purge confirmation's
@@ -324,7 +333,7 @@ type removePreview struct {
 }
 
 // Reopen is the link that opens this preview again.
-func (p *removePreview) Reopen() reopenLink { return reopenLink{Href: p.reopen, What: "removal"} }
+func (p *removePreview) Reopen() reopenLink { return reopenOf(p.reopen, "removal") }
 
 // NobodyHint is the hint the preview gives in Confirm's place when nobody
 // selected loses the role.

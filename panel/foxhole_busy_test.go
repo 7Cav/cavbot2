@@ -138,18 +138,63 @@ type busyReopen struct {
 	// members, report or unit, as markers on the page.
 	same func(t *testing.T, doc *html.Node) []string
 	// reopen presses the preview's reopen control and returns the page it
-	// opens. Nil follows the block's reopen link.
+	// opens. Nil presses the block's control marked reopen.
 	reopen func(t *testing.T, w *testWorld, doc, block *html.Node) *html.Node
 }
 
-// followReopen follows the reopen link in a busy preview's block.
-func followReopen(t *testing.T, w *testWorld, _, block *html.Node) *html.Node {
+// pressReopen presses the control in a busy preview's block that opens the
+// preview again, and returns the page the browser lands on.
+func pressReopen(t *testing.T, w *testWorld, doc, block *html.Node) *html.Node {
 	t.Helper()
-	link := findElement(block, "a", "data-field", "reopen")
-	if link == nil {
-		t.Fatal("the block offers no link to open it again")
+	page, _ := landReopen(t, w, doc, block)
+	return page
+}
+
+// landReopen presses the control in a busy preview's block that opens the
+// preview again, link or button, the way a browser does with no script,
+// and returns the page it lands on and the fragment its address ends with.
+func landReopen(t *testing.T, w *testWorld, doc, block *html.Node) (*html.Node, string) {
+	t.Helper()
+	control := findElement(block, "", "data-field", "reopen")
+	if control == nil {
+		t.Fatal("the block offers no control to open it again")
 	}
-	return parseHTML(t, w.b.get(attrOf(link, "href")))
+	target, res := press(t, w.b, doc, control)
+	return landing(t, w.b, target, res)
+}
+
+// press presses a link or a form's button the way a browser does with no
+// script: it follows the link, or submits the form that owns the button,
+// with the button's own formaction and formmethod where it has them. It
+// returns the address the press sent the browser to and the answer.
+func press(t *testing.T, b *browser, doc, control *html.Node) (string, *http.Response) {
+	t.Helper()
+	switch control.Data {
+	case "a":
+		href := attrOf(control, "href")
+		return href, b.get(href)
+	case "button":
+		var form *html.Node
+		eachElement(doc, func(n *html.Node) {
+			if form == nil && n.Data == "form" && ownedBy(control, n) {
+				form = n
+			}
+		})
+		if form == nil {
+			t.Fatal("the button belongs to no form")
+		}
+		fields := formFields(doc, form)
+		if name := attrOf(control, "name"); name != "" {
+			fields.Set(name, attrOf(control, "value"))
+		}
+		action := cmp.Or(attrOf(control, "formaction"), attrOf(form, "action"))
+		if strings.EqualFold(cmp.Or(attrOf(control, "formmethod"), attrOf(form, "method")), http.MethodPost) {
+			return action, b.postForm(action, fields)
+		}
+		return action, b.getForm(action, fields)
+	}
+	t.Fatalf("the control is a <%s>, no link or button", control.Data)
+	return "", nil
 }
 
 // markersOf reads the attribute key of the block with the data-field
@@ -188,11 +233,9 @@ var busyReopens = []busyReopen{
 	{busyPreview: addBusy, same: func(t *testing.T, doc *html.Node) []string {
 		return append(markersOf(t, doc, "add-preview", "data-role"), "lines="+formFields(doc, addPreviewForm(t, doc)).Get(fieldLines))
 	}, reopen: pressPreviewAgain},
-	{busyPreview: rosterBusy,
-		same: func(t *testing.T, doc *html.Node) []string {
-			return markersOf(t, doc, "roster-preview", "data-unit")
-		},
-		reopen: pressReopen},
+	{busyPreview: rosterBusy, same: func(t *testing.T, doc *html.Node) []string {
+		return markersOf(t, doc, "roster-preview", "data-unit")
+	}},
 	{busyPreview: busyPreview{name: "roster preview a roster add's Retry opened", block: "roster-preview", ready: failedRosterAdd, open: openRetryOf},
 		same: func(t *testing.T, doc *html.Node) []string {
 			return append(markersOf(t, doc, "retrying", "data-report"), markersOf(t, doc, "roster-preview", "data-unit")...)
@@ -208,29 +251,6 @@ func failedRosterAdd(t *testing.T, w *testWorld) {
 	w.discord.failRoleWrites(memberVance.ID, missingPermissions())
 	assertRedirect(t, confirmRoster(t, w.b, parseHTML(t, previewRoster(t, w, "D/ACD"))), foxholePath)
 	w.awaitActionEnd(t)
-}
-
-// pressReopen presses the button in a busy preview's block that previews it
-// again, which posts the block's form to the button's own formaction, the
-// way a browser does.
-func pressReopen(t *testing.T, w *testWorld, doc, block *html.Node) *html.Node {
-	t.Helper()
-	button := findElement(block, "button", "data-field", "reopen")
-	if button == nil {
-		t.Fatal("the block offers no button to preview it again")
-	}
-	form := button.Parent
-	for form != nil && form.Data != "form" {
-		form = form.Parent
-	}
-	if form == nil {
-		t.Fatal("the button that previews the block again belongs to no form")
-	}
-	res := w.b.postForm(attrOf(button, "formaction"), formFields(doc, form))
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("previewing again answered %d, want 200", res.StatusCode)
-	}
-	return parseHTML(t, res)
 }
 
 // addPreviewForm returns the paste box in the page's add preview, whose
@@ -296,7 +316,7 @@ func TestABusyPreviewReopensWithItsConfirmOnOnceTheActionEnds(t *testing.T) {
 
 			reopen := r.reopen
 			if reopen == nil {
-				reopen = followReopen
+				reopen = pressReopen
 			}
 
 			reopened := reopen(t, w, doc, block)

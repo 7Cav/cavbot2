@@ -393,12 +393,14 @@ type foxholeChange struct {
 	Report *reportView
 }
 
-// The Foxhole page's addresses: the page, the note save its note form
-// posts to, the approvals save its selection bar posts to, the purge its
-// purge confirmation starts, the removal its remove preview starts, the
-// re-add its After a war block starts, and the Stop on its progress block.
+// The Foxhole page's addresses: the page, the link a busy preview gives to
+// open itself again, the note save its note form posts to, the approvals
+// save its selection bar posts to, the purge its purge confirmation starts,
+// the removal its remove preview starts, the re-add its After a war block
+// starts, and the Stop on its progress block.
 const (
 	foxholePath          = "/foxhole"
+	foxholeReopenPath    = "/foxhole/reopen"
 	foxholeNotesPath     = "/foxhole/notes"
 	foxholeApprovalsPath = "/foxhole/approvals"
 	foxholePurgePath     = "/foxhole/purge"
@@ -531,6 +533,17 @@ func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session
 		foxholeRequest{Query: q.Get(paramQuery), Filter: knownFilter(q.Get(paramFilter)), NoteMember: q.Get(paramNoteMember),
 			Cleared: q.Get(paramCleared), Skipped: q[paramSkipped], AwaitList: true, Purge: purge,
 			Remove: remove, RemoveMembers: q[fieldMember], Retry: retry})
+}
+
+// reopenPreview is GET /foxhole/reopen, the link a preview gives beside a
+// Confirm a running Foxhole action turned off. It redirects to the Foxhole
+// page with the link's query, which opens the same preview again, read from
+// Discord as it is then. The redirect names no fragment, so the browser
+// keeps the link's, which names the preview's heading. A link straight to
+// the preview's address would fetch nothing from a tab that shows that
+// address: the browser only scrolls to the fragment.
+func (p *Panel) reopenPreview(w http.ResponseWriter, r *http.Request, _ session) {
+	http.Redirect(w, r, (&url.URL{Path: foxholePath, RawQuery: r.URL.RawQuery}).String(), http.StatusSeeOther)
 }
 
 // renderFoxhole renders the Foxhole page read now, under the page's time
