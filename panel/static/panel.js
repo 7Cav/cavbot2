@@ -214,13 +214,15 @@
       }
       afterPress = function (target) {
         // Hiding the search to measure can clamp the page's scroll, so the
-        // scroll goes back too. Nothing paints between the hide and here.
+        // scroll goes back too. Nothing paints between the hide and the
+        // show.
+        var x = window.scrollX;
         var y = window.scrollY;
         var top = target.getBoundingClientRect().top;
         search.hidden = true;
         var moved = target.getBoundingClientRect().top !== top;
         search.hidden = false;
-        window.scrollTo(0, y);
+        window.scrollTo(x, y);
         if (!moved) { close(); }
       };
     });
