@@ -73,6 +73,8 @@ type rankRolesPreviewView struct {
 	rankRolesPreview
 	Version string
 	Fields  []rankRoleFieldValue
+	// Refusal is a refused Confirm's, shown on the preview it shows again.
+	Refusal *fieldError
 }
 
 // rankRoleFieldValue is one rank's role as a preview's Confirm posts it.
@@ -98,6 +100,10 @@ type rankRow struct {
 // holdersUnknown is a row's holder count while the member list has not
 // loaded, never 0.
 const holdersUnknown = "unknown"
+
+// HoldersKnown reports whether the row's holder count is a number, which it
+// is once the member list has loaded.
+func (r rankRow) HoldersKnown() bool { return r.Holders != holdersUnknown }
 
 // roleHolders counts the members of a complete member list holding each
 // role, by role ID. It is nil while the list has not loaded.
@@ -182,9 +188,12 @@ func (p *Panel) renderSettings(w http.ResponseWriter, r *http.Request, sess sess
 // renderRefused answers one on the hub page.
 func (p *Panel) renderSettingsRefused(w http.ResponseWriter, r *http.Request, sess session, req pageRequest) {
 	status := http.StatusUnprocessableEntity
-	if req.Error.stale() {
+	switch {
+	case req.Error.stale():
 		status = http.StatusConflict
 		utils.Info("Panel save refused: stale form", "username", sess.username, "forum_user_id", sess.userID)
+	case req.Error.kind == refusalChanged:
+		status = http.StatusConflict
 	}
 	p.renderSettings(w, r, sess, status, req)
 }
@@ -244,7 +253,7 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 	}
 	page.Changes = changeViews(entries, guild)
 	if req.RankRolesPreview != nil && posted != nil {
-		view := &rankRolesPreviewView{rankRolesPreview: *req.RankRolesPreview, Version: posted.Version}
+		view := &rankRolesPreviewView{rankRolesPreview: *req.RankRolesPreview, Version: posted.Version, Refusal: req.refusalOn(formRankRoles)}
 		for _, rank := range commands.DefaultRankLadder().Ranks() {
 			if id := posted.Roles[rank.Abbrev]; id != "" {
 				view.Fields = append(view.Fields, rankRoleFieldValue{Field: rankRoleField(rank.Abbrev), RoleID: id})
@@ -257,11 +266,13 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 
 // rankRolesInput is the Rank roles section's form as posted. It carries the
 // ladder's version when the section loaded and each rank's role, empty for
-// none. Confirmed marks the post of a preview's Confirm.
+// none. Confirmed marks the post of a preview's Confirm, and Shown is the
+// counts that preview showed.
 type rankRolesInput struct {
 	Version   string
 	Roles     map[string]string
 	Confirmed bool
+	Shown     string
 }
 
 // errStaleRankRoles is the refusal a save from a stale Rank roles form
@@ -275,8 +286,21 @@ var errStaleRankRoles = &fieldError{kind: refusalStale, Message: "Someone saved 
 // nothing, not even a change log entry.
 var errRankRolesUnchanged = &fieldError{kind: refusalUnchanged, Message: "Those are already the rank roles, so nothing was saved."}
 
-// fieldConfirm is the hidden input a rank roles preview's Confirm posts.
-const fieldConfirm = "confirm"
+// fieldConfirm is the hidden input a rank roles preview's Confirm posts,
+// and fieldShown the one carrying the counts that preview showed.
+const (
+	fieldConfirm = "confirm"
+	fieldShown   = "shown"
+)
+
+// errRankRolesChanged refuses a rank roles preview's Confirm when the save
+// would now stop a different count of members counting as Cav members, or
+// change the owner of a different count of channels, than its preview
+// showed (CODING_STANDARDS.md, "A Confirm acts on what its preview
+// showed"). A handover is final, so the page shows the preview as it
+// stands now, to check and confirm again.
+var errRankRolesChanged = &fieldError{kind: refusalChanged, Message: "The members or channels this save changes are not what the preview showed, " +
+	"so nothing was saved. Check the preview below and confirm again."}
 
 // rankRolesPreview is what a rank roles save that may stop members counting
 // as Cav members waits on (GLOSSARY.md, Preview). It counts the members who
@@ -294,11 +318,17 @@ type rankRolesPreview struct {
 	Channels int
 }
 
+// Shown is the preview's counts as its Confirm posts them back, so the save
+// can tell whether they still hold.
+func (p rankRolesPreview) Shown() string {
+	return p.DroppedValue() + "/" + strconv.Itoa(p.Channels)
+}
+
 // DroppedValue is the member count as the preview's data-dropped carries
 // it, the number or unknown.
 func (p rankRolesPreview) DroppedValue() string {
 	if !p.Counted {
-		return "unknown"
+		return holdersUnknown
 	}
 	return strconv.Itoa(p.Dropped)
 }
@@ -310,7 +340,8 @@ const formRankRoles = "rank-roles"
 // rankRolesInputOf reads the Rank roles section's form off a parsed post,
 // one role or none for each rank of the ladder.
 func rankRolesInputOf(r *http.Request) rankRolesInput {
-	in := rankRolesInput{Version: r.PostForm.Get(fieldVersion), Roles: map[string]string{}, Confirmed: r.PostForm.Get(fieldConfirm) != ""}
+	in := rankRolesInput{Version: r.PostForm.Get(fieldVersion), Roles: map[string]string{},
+		Confirmed: r.PostForm.Get(fieldConfirm) != "", Shown: r.PostForm.Get(fieldShown)}
 	for _, rank := range commands.DefaultRankLadder().Ranks() {
 		in.Roles[rank.Abbrev] = strings.TrimSpace(r.PostForm.Get(rankRoleField(rank.Abbrev)))
 	}
@@ -330,12 +361,12 @@ func (p *Panel) saveRankRoles(w http.ResponseWriter, r *http.Request, sess sessi
 	in := rankRolesInputOf(r)
 	ctx, hubs := p.saving(r)
 	saved, preview, err := hubs.setRankRoles(ctx, in, sess.actor())
-	if preview != nil {
-		p.renderSettings(w, r, sess, http.StatusOK, pageRequest{RankRoles: &in, RankRolesPreview: preview})
+	if refusal, ok := asFieldError(err); ok {
+		p.renderSettingsRefused(w, r, sess, pageRequest{RankRoles: &in, RankRolesPreview: preview, Error: refusal, Refused: formRankRoles})
 		return
 	}
-	if refusal, ok := asFieldError(err); ok {
-		p.renderSettingsRefused(w, r, sess, pageRequest{RankRoles: &in, Error: refusal, Refused: formRankRoles})
+	if preview != nil {
+		p.renderSettings(w, r, sess, http.StatusOK, pageRequest{RankRoles: &in, RankRolesPreview: preview})
 		return
 	}
 	if err != nil {
@@ -356,7 +387,9 @@ func (p *Panel) saveRankRoles(w http.ResponseWriter, r *http.Request, sess sessi
 // errRankRolesUnchanged.
 //
 // A save that may stop members counting as Cav members writes nothing and
-// returns its preview instead, unless it is the preview's Confirm.
+// returns its preview instead, unless it is the preview's Confirm. A Confirm
+// whose preview no longer holds is refused as errRankRolesChanged, and
+// returns the preview as it stands now with the refusal.
 func (s *hubService) setRankRoles(ctx context.Context, in rankRolesInput, by actor) (store.RankRoles, *rankRolesPreview, error) {
 	unlock, err := s.lockSave(ctx)
 	if err != nil {
@@ -382,9 +415,12 @@ func (s *hubService) setRankRoles(ctx context.Context, in rankRolesInput, by act
 	if maps.Equal(after.Roles(), before.Roles()) {
 		return store.RankRoles{}, nil, errRankRolesUnchanged
 	}
-	if !in.Confirmed {
-		if preview := s.rankRolesPreviewOf(before, after); preview != nil {
+	if preview := s.rankRolesPreviewOf(before, after); preview != nil {
+		switch {
+		case !in.Confirmed:
 			return store.RankRoles{}, preview, nil
+		case preview.Shown() != in.Shown:
+			return store.RankRoles{}, preview, errRankRolesChanged
 		}
 	}
 	entry, err := changeEntry(store.ChangeRankRoles, diffRankRoles(before, after), by)

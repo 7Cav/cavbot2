@@ -15,20 +15,23 @@
   <section class="rank-roles" data-section="rank-roles">
   {{with .RankRoles.Preview}}{{template "rank-roles-preview" .}}{{end}}
   <form method="post" action="/rank-roles#rank-roles" class="block">
-    <h2 class="block-header"{{if not .RankRoles.Preview}} id="rank-roles" tabindex="-1"{{end}}{{if .RefusalFor "rank-roles"}} aria-describedby="refusal"{{end}}>Rank roles</h2>
-    {{with .RefusalFor "rank-roles"}}{{template "refusal" .}}{{end}}
+    {{- /* With a preview shown, the preview carries the heading's ID and
+         any refusal. */}}
+    {{if .RankRoles.Preview}}<h2 class="block-header">Rank roles</h2>
+    {{else}}<h2 class="block-header" id="rank-roles" tabindex="-1"{{if .RefusalFor "rank-roles"}} aria-describedby="refusal"{{end}}>Rank roles</h2>
+    {{with .RefusalFor "rank-roles"}}{{template "refusal" .}}{{end}}{{end}}
     {{if .RankRoles.Saved}}{{template "saved"}}{{end}}
     {{with .RankRoles}}
     <input type="hidden" name="version" value="{{.Version}}">
-    <div class="block-row field-hint" id="rank-roles-hint">A member holding a rank's role counts as a Cav member of that rank. Each rank has one role or none, and a role counts for one rank at most. Holders counts the members holding each rank's saved role.</div>
+    <div class="block-row field-hint" id="rank-roles-hint">A member holding a rank's role counts as a Cav member of that rank. Each rank has one role or none, and a role counts for one rank at most. Members is how many members hold each rank's saved role.</div>
     <div class="scroll"><table class="ranklist" aria-describedby="rank-roles-hint">
-      <thead><tr><th>Rank</th><th>Rank role</th><th class="num">Holders</th></tr></thead>
+      <thead><tr><th>Rank</th><th>Rank role</th><th class="num">Members</th></tr></thead>
       <tbody>
       {{range .Rows}}
         <tr data-rank="{{.Abbrev}}">
           <th scope="row" class="rank">{{.Abbrev}}</th>
-          <td>{{template "picker" .Picker}}</td>
-          <td class="num">{{if .HasRole}}<span data-holders="{{.Holders}}">{{if eq .Holders "unknown"}}<span class="off">unknown</span>{{else}}{{.Holders}}{{end}}</span>{{else}}<span class="off">none</span>{{end}}</td>
+          <td class="rank-role">{{if not .Picker.Tags}}<span class="off rank-role-none" data-field="no-role">No role</span>{{end}}{{template "picker" .Picker}}</td>
+          <td class="num">{{if .HasRole}}<span data-holders="{{.Holders}}">{{if .HoldersKnown}}{{.Holders}}{{else}}<span class="off">unknown</span>{{end}}</span>{{end}}</td>
         </tr>
       {{end}}
       </tbody>
@@ -49,7 +52,8 @@
      Confirm posts the form as the save posted it. */}}
 {{define "rank-roles-preview"}}
   <div class="block block--danger" data-field="rank-roles-preview">
-    <h2 class="block-header" id="rank-roles" tabindex="-1">Save the rank roles?</h2>
+    <h2 class="block-header" id="rank-roles" tabindex="-1"{{if .Refusal}} aria-describedby="refusal"{{end}}>Save the rank roles?</h2>
+    {{with .Refusal}}{{template "refusal" .}}{{end}}
     <div class="block-row">
       {{- if .Counted}}<span data-dropped="{{.DroppedValue}}">{{.Dropped}}</span> {{if eq .Dropped 1}}member stops{{else}}members stop{{end}} counting as a Cav member.
       {{- else}}<span data-dropped="{{.DroppedValue}}">Cavbot2 hasn't loaded the server's member list yet, so it can't say how many members stop counting as Cav members.</span> This save takes a role off the rank ladder, so some may.{{end}}
@@ -58,6 +62,7 @@
     <form method="post" action="/rank-roles#rank-roles" class="submit-row">
       <input type="hidden" name="version" value="{{.Version}}">
       <input type="hidden" name="confirm" value="1">
+      <input type="hidden" name="shown" value="{{.Shown}}">
       {{- range .Fields}}<input type="hidden" name="{{.Field}}" value="{{.RoleID}}">{{end}}
       <button type="submit" class="btn btn--danger-filled" data-field="confirm">Save the rank roles</button>
       <a class="btn" href="/settings#rank-roles" data-field="cancel">Cancel<span class="visually-hidden"> saving the rank roles</span></a>

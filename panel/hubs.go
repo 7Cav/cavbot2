@@ -221,6 +221,7 @@ const (
 )
 
 // refusalStale is the data-error value on a stale refusal's note,
+// refusalChanged on a rank roles Confirm whose preview no longer holds,
 // refusalUnchanged on the note of a save that would change nothing,
 // refusalNobodyToChange on the Foxhole page's note of an action or an
 // approvals save that would change nobody, and refusalGone on the note of
@@ -228,6 +229,7 @@ const (
 // field names.
 const (
 	refusalStale          = "stale"
+	refusalChanged        = "changed"
 	refusalUnchanged      = "unchanged"
 	refusalNobodyToChange = "nobody-to-change"
 	refusalGone           = "gone"
@@ -524,6 +526,14 @@ func (p hubPage) RefusalFor(form string) *fieldError {
 		return nil
 	}
 	return p.Error
+}
+
+// refusalOn is the request's refusal when it belongs to the form, or nil.
+func (r pageRequest) refusalOn(form string) *fieldError {
+	if r.Refused != form {
+		return nil
+	}
+	return r.Error
 }
 
 // staleFor reports whether the request shows a stale refusal on the form.

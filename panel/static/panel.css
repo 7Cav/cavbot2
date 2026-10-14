@@ -185,6 +185,9 @@ h2[tabindex="-1"]:focus { outline: none; }
    role count. */
 .tags { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .tags:empty { margin: 0; }
+/* A rank with no rank role says so until its picker holds a tag. */
+.rank-role:has(.tags > li) > .rank-role-none { display: none; }
+.rank-role-none { display: block; margin: 0 0 8px; }
 .tag--pick { display: inline-flex; align-items: center; padding: 3px 2px 3px 8px; font-size: 14px; color: var(--text-hi); background: var(--surface-3); }
 .tag--pick .off { margin-left: 4px; }
 .tag-remove {

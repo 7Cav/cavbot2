@@ -24,7 +24,8 @@ func settingsLink(doc *html.Node) *html.Node {
 	return findElement(doc, "a", "data-rail", "settings")
 }
 
-// A panel admin finds the Settings page in the rail and opens it.
+// A panel admin finds the Settings page in the rail and opens it. The brief
+// names the page "Settings" verbatim, so the link and the title say so.
 func TestPanelAdminOpensTheSettingsPageFromTheRail(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
@@ -33,12 +34,19 @@ func TestPanelAdminOpensTheSettingsPageFromTheRail(t *testing.T) {
 	if link == nil {
 		t.Fatal("the panel admin's rail has no data-rail=settings link")
 	}
+	if got := textOf(link); got != "Settings" {
+		t.Errorf("the rail's link reads %q, want Settings", got)
+	}
 	href, _ := attrValue(link, "href")
 
 	res := w.b.get(href)
 
-	if got := pageOf(t, parseHTML(t, res)); res.StatusCode != http.StatusOK || got != "settings" {
+	doc := parseHTML(t, res)
+	if got := pageOf(t, doc); res.StatusCode != http.StatusOK || got != "settings" {
 		t.Errorf("the rail's link %s answers page %q with status %d, want settings with 200", href, got, res.StatusCode)
+	}
+	if h1 := findElement(doc, "h1", "", ""); h1 == nil || textOf(h1) != "Settings" {
+		t.Error("the page's title is not Settings")
 	}
 }
 
@@ -518,5 +526,81 @@ func TestRecordingRolesSectionMovedToTheSettingsPage(t *testing.T) {
 	sec := recordingRolesSection(t, parseHTML(t, follow(t, w.b, res)))
 	if got := postedControls(sec, "recording_roles"); !sameSet(got, []string{"role-hq"}) {
 		t.Errorf("the Settings page's recording roles section holds %v, want role-hq", got)
+	}
+}
+
+// rowOfRank returns the Rank roles section's row for a rank.
+func rowOfRank(t *testing.T, doc *html.Node, abbrev string) *html.Node {
+	t.Helper()
+	for _, row := range rankRows(t, doc) {
+		if got, _ := attrValue(row, "data-rank"); got == abbrev {
+			return row
+		}
+	}
+	t.Fatalf("no row for rank %s", abbrev)
+	return nil
+}
+
+// A rank whose role a save cleared says it has none in its row, and a rank
+// with a role does not.
+func TestRankRolesSectionSaysWhenARankHasNoRole(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	assertRedirect(t, w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": "role-hq", "CPL": ""})), settingsPath)
+
+	doc := parseHTML(t, w.b.get(settingsPath))
+
+	if findElement(rowOfRank(t, doc, "CPL"), "", "data-field", "no-role") == nil {
+		t.Error("CPL's row, with no role, does not say it has none")
+	}
+	if findElement(rowOfRank(t, doc, "SGT"), "", "data-field", "no-role") != nil {
+		t.Error("SGT's row, with a role, says it has none")
+	}
+}
+
+// A rank roles preview's Confirm acts on what the preview showed. When a
+// second SGT spawns a channel between the preview and its Confirm, the save
+// would hand over one more channel than the preview counted, so the Confirm
+// is refused and writes nothing, and the preview shows again with the
+// channels as they stand now. Its Confirm then saves.
+func TestRankRolesConfirmIsRefusedWhenItsPreviewMoved(t *testing.T) {
+	w := withSergeantInSpawn(t)
+	res := w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": ""}))
+	shown := previewIn(t, parseHTML(t, res))
+	if shown == nil {
+		t.Fatal("the save shows no preview")
+	}
+	confirm := formPosts(t, shown, "/rank-roles")
+	w.joinAs("user-sgt2", "hub-1", testRankSGT)
+	w.joinAs("user-sgt2", "spawn-2", testRankSGT)
+	before := readSavedState(t, w.st)
+
+	res = w.b.postForm("/rank-roles", confirm)
+
+	if res.StatusCode != http.StatusConflict {
+		t.Errorf("status = %d, want 409", res.StatusCode)
+	}
+	doc := parseHTML(t, res)
+	if kind, _ := refusalIn(rankRolesSection(t, doc)); kind != "changed" {
+		t.Errorf("refusal is data-error=%q, want changed", kind)
+	}
+	again := previewIn(t, doc)
+	if again == nil {
+		t.Fatal("the refused Confirm shows no preview")
+	}
+	if _, channels := previewCounts(t, again); channels != "2" {
+		t.Errorf("the preview shown again counts %s channels, want 2", channels)
+	}
+	if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
+		t.Errorf("the store after the refused Confirm = %+v, want it as before, %+v", after, before)
+	}
+	if owner, _ := w.runtime.Owner("spawn-1"); owner != "user-sgt" {
+		t.Errorf("Owner(spawn-1) after the refused Confirm = %q, want user-sgt still", owner)
+	}
+
+	assertRedirect(t, w.b.postForm("/rank-roles", formPosts(t, again, "/rank-roles")), settingsPath)
+
+	if got := storedRankRoles(t, w.st).Roles["SGT"]; got != "" {
+		t.Errorf("SGT's role after the second Confirm = %q, want none", got)
 	}
 }

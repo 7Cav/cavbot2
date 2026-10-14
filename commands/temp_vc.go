@@ -226,13 +226,17 @@ var tempVCRankRoles = []rankRole{
 // a var.)
 var noRankIndex = len(tempVCRankRoles)
 
-// GuildMemberRoles reads a GUILD_CREATE guild's members into a user ID to
-// role IDs map, the guild's member list first and the members its voice
-// states carry second. Every role list is a copy, so it keeps no reference
-// to the guild's members. The production adapter calls it under
-// State.RLock, because discordgo shares the payload's slices with its state
-// cache; the test fakes call it as it is. One helper for all three, so what
-// the runtime ranks cannot diverge.
+// GuildMemberRoles reads a guild's members into a user ID to role IDs map:
+// its member list, and the members its voice states carry for anyone the
+// list lacks. The list wins, since a GUILD_MEMBER_UPDATE keeps it current,
+// where a voice state's member is as of that member's last voice event. A
+// GUILD_CREATE's voice states carry no member, so for its payload the list
+// is all there is. Every role list is a copy, so it keeps no reference to
+// the guild's members. The production adapter calls it under State.RLock,
+// for a GUILD_CREATE's payload and for the cached guild alike, because
+// discordgo shares the slices with its state cache; the test fakes call it
+// as it is. One helper for all of them, so what the runtime ranks cannot
+// diverge.
 func GuildMemberRoles(g *discordgo.Guild) map[string][]string {
 	roles := make(map[string][]string, len(g.Members))
 	for _, m := range g.Members {
@@ -241,7 +245,7 @@ func GuildMemberRoles(g *discordgo.Guild) map[string][]string {
 		}
 	}
 	for _, vs := range g.VoiceStates {
-		if vs != nil && vs.Member != nil {
+		if _, listed := roles[vs.UserID]; vs != nil && !listed && vs.Member != nil {
 			roles[vs.UserID] = slices.Clone(vs.Member.Roles)
 		}
 	}
@@ -690,31 +694,17 @@ func (m *sessionTempVCManager) MemberRoles(g *discordgo.Guild) map[string][]stri
 }
 
 // CachedMemberRoles takes State.RLock once and scans State.Guilds itself, as
-// VoiceStates does and for the same reasons. A member update writes over
-// the cached member under State.Lock, so each role list is copied while the
-// lock is held. The member list comes first, since a GUILD_MEMBER_UPDATE
-// keeps it current. A voice state's member is as of that member's last
-// voice event.
+// VoiceStates does and for the same reasons, then reads the cached guild
+// through GuildMemberRoles. A member update writes over the cached member
+// under State.Lock, so each role list is copied while the lock is held.
 func (m *sessionTempVCManager) CachedMemberRoles(guildID string) map[string][]string {
 	st := m.s.State
 	st.RLock()
 	defer st.RUnlock()
 	for _, g := range st.Guilds {
-		if g.ID != guildID {
-			continue
+		if g.ID == guildID {
+			return GuildMemberRoles(g)
 		}
-		roles := make(map[string][]string, len(g.Members))
-		for _, mem := range g.Members {
-			if mem != nil && mem.User != nil {
-				roles[mem.User.ID] = slices.Clone(mem.Roles)
-			}
-		}
-		for _, vs := range g.VoiceStates {
-			if _, listed := roles[vs.UserID]; !listed && vs.Member != nil {
-				roles[vs.UserID] = slices.Clone(vs.Member.Roles)
-			}
-		}
-		return roles
 	}
 	return map[string][]string{}
 }
@@ -976,7 +966,7 @@ func (t *TempVC) ApplyGuildModeratorRoles(roleIDs []string) {
 func (t *TempVC) ApplyRankRoles(ladder RankLadder) {
 	cached := t.mgr.CachedMemberRoles(t.guildID)
 	t.mu.Lock()
-	t.memberRoles = t.memberRolesWithLocked(cached)
+	t.memberRoles = t.freshMemberRolesLocked(cached)
 	t.ladder = ladder
 	plan := t.rankHandoverPlanLocked(ladder, t.memberRoles)
 	handovers := make([]store.SpawnedChannel, 0, len(plan))
@@ -998,13 +988,13 @@ func (t *TempVC) RankRolesHandovers(ladder RankLadder) int {
 	cached := t.mgr.CachedMemberRoles(t.guildID)
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return len(t.rankHandoverPlanLocked(ladder, t.memberRolesWithLocked(cached)))
+	return len(t.rankHandoverPlanLocked(ladder, t.freshMemberRolesLocked(cached)))
 }
 
-// memberRolesWithLocked is a copy of the cached member roles with each
+// freshMemberRolesLocked is a copy of the runtime's member roles with each
 // member the cache read holds taking the roles it gives. Members the
 // runtime has not seen are left out. Caller holds mu.
-func (t *TempVC) memberRolesWithLocked(cached map[string][]string) map[string][]string {
+func (t *TempVC) freshMemberRolesLocked(cached map[string][]string) map[string][]string {
 	roles := maps.Clone(t.memberRoles)
 	for userID := range roles {
 		if fresh, ok := cached[userID]; ok {
@@ -1016,11 +1006,12 @@ func (t *TempVC) memberRolesWithLocked(cached map[string][]string) map[string][]
 
 // rankHandoverPlanLocked applies the handover rule the way a rank roles
 // save does, with members ranked on the ladder by the roles given, to every
-// spawned channel with someone inside. It returns the owner each channel
-// whose owner changes goes to, empty for none, and changes nothing. A spawn
-// in flight is left alone, since its create path writes its row with the
-// owner it decided on. A missing guild confirms nobody, so nothing changes.
-// Caller holds mu.
+// spawned channel with someone inside, a spawn in flight included. It
+// returns the owner each channel whose owner changes goes to, empty for
+// none, and changes nothing. A spawn in flight's create path writes its row
+// and its notice with the owner in memory when it gets there, so a save in
+// between reaches its channel too. A missing guild confirms nobody, so
+// nothing changes. Caller holds mu.
 func (t *TempVC) rankHandoverPlanLocked(ladder RankLadder, roles map[string][]string) map[string]string {
 	snap := t.mgr.VoiceStates(t.guildID)
 	if !snap.Present {
@@ -1029,7 +1020,7 @@ func (t *TempVC) rankHandoverPlanLocked(ladder RankLadder, roles map[string][]st
 	rank := func(userID string) int { return ladder.seniority(roles[userID]) }
 	plan := map[string]string{}
 	for channelID, occ := range t.occupants {
-		if _, inFlight := t.inFlight[channelID]; inFlight || len(occ) == 0 {
+		if len(occ) == 0 {
 			continue
 		}
 		current := t.owners[channelID]
@@ -2111,10 +2102,13 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	}
 
 	// The spawn succeeded: the hub's last failure is cleared and its next
-	// Discord-side failure will capture again.
+	// Discord-side failure will capture again. The owner is read again, as a
+	// rank roles save made while the spawn was in flight may have handed the
+	// channel over.
 	t.mu.Lock()
 	delete(t.lastFailure, hub.ID)
 	delete(t.createCaptured, hub.ID)
+	owner = t.owners[channel.ID]
 	t.mu.Unlock()
 
 	// The row write settles the spawn; the create notice follows, as at a

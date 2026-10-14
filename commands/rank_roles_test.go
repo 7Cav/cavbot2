@@ -254,3 +254,35 @@ func TestRecordStartReadsTheSavedRankRoles(t *testing.T) {
 		t.Errorf("recorders in %s after the save's start = %v, want one", recordChannel, got)
 	}
 }
+
+// A save lands while an SGT's spawn is in flight, after the create and
+// before the row write, and clears SGT. The save's handover rule reaches
+// that channel too, so the SGT does not keep it: the channel ends with no
+// owner, in memory and in its row, and its last ownership notice names
+// nobody.
+func TestTempVCSaveDuringASpawnInFlightReachesItsChannel(t *testing.T) {
+	fake := newFakeTempVCManager()
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+	fake.setNextChannel("chan-f")
+	fake.moveHook = func() { tv.ApplyRankRoles(ladderWithout("SGT")) }
+	sgt := member("SgtF", testRankSGT)
+
+	fake.deliver(tv, voiceEvent("sgt-f", testTempVCHub, sgt))
+	fake.moveHook = nil
+	fake.deliver(tv, voiceEvent("sgt-f", "chan-f", sgt))
+
+	if owner, tracked := tv.Owner("chan-f"); owner != "" || !tracked {
+		t.Errorf("Owner(chan-f) = %q, %v, want no owner, tracked: the save cleared the creator's only rank role", owner, tracked)
+	}
+	if row, ok := rowFor(t, st, "chan-f"); !ok || row.OwnerUserID != "" {
+		t.Errorf("chan-f row = %+v (present %v), want no owner", row, ok)
+	}
+	notices := noticesIn(t, fake, "chan-f")
+	if len(notices) == 0 {
+		t.Fatal("no ownership notice in chan-f")
+	}
+	if last := notices[len(notices)-1].data.Content; strings.Contains(last, "sgt-f") {
+		t.Errorf("the last notice %q names sgt-f, want no user ID", last)
+	}
+}
