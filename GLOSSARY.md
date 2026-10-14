@@ -480,8 +480,9 @@ _Avoid_: dashboard, admin UI, settings screen, config.
 **Panel session**:
 The panel's record that a browser is signed in as one forum user. Created at
 the OAuth callback, for any forum user, and holds the Discord ID their milpac
-names, if any, which finds the recordings they started. Ended by sign-out, or
-by the forum refusing the token or refusing to say who the user is. A group
+names, if any, which finds the recordings they started. Ended by sign-out,
+two hours after sign-in, or by the forum refusing the token or refusing to
+say who the user is. A group
 check that grants nothing leaves it running.
 _Avoid_: login, token session, forum session, auth cookie.
 
