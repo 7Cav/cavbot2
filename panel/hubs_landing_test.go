@@ -58,11 +58,7 @@ func TestEditFormOpensAtTheForm(t *testing.T) {
 			return action, w.b.postForm(action, fields)
 		}},
 		{"Cancel on a remove preview opened from the form", func(t *testing.T, w *testWorld, id int64) (string, *http.Response) {
-			cancel := findElement(removePreviewBlock(t, openHubRemovePreview(t, w.b, id)), "a", "data-field", "cancel")
-			if cancel == nil {
-				t.Fatal("the remove preview has no Cancel")
-			}
-			href := attrOf(cancel, "href")
+			href := cancelAddress(t, removePreviewBlock(t, openHubRemovePreview(t, w.b, id)))
 			return href, w.b.get(href)
 		}},
 	}
@@ -105,6 +101,16 @@ var removeOpeners = []struct {
 		doc := parseHTML(t, w.b.get(hubEditPage(t, w)))
 		return removeLinkAddress(t, hubEditBlock(t, w, doc))
 	}},
+}
+
+// cancelAddress is the address of a remove preview's Cancel.
+func cancelAddress(t *testing.T, preview *html.Node) string {
+	t.Helper()
+	cancel := findElement(preview, "a", "data-field", "cancel")
+	if cancel == nil {
+		t.Fatal("the remove preview has no Cancel")
+	}
+	return attrOf(cancel, "href")
 }
 
 // removeLinkAddress is the address of the Remove link inside scope.
@@ -475,12 +481,7 @@ func TestLinksBackToTheHubListLandOnItsHeading(t *testing.T) {
 		{"Cancel on a remove preview opened from a broken hub's list row", func(t *testing.T, w *testWorld) string {
 			w.discord.breakChannel("hub-1", true)
 			doc := parseHTML(t, w.b.get("/"))
-			preview := removePreviewBlock(t, parseHTML(t, pressRemove(t, w.b, doc, listRow(t, doc, storedHubID(t, w.st, "hub-1")))))
-			cancel := findElement(preview, "a", "data-field", "cancel")
-			if cancel == nil {
-				t.Fatal("the remove preview has no Cancel")
-			}
-			return attrOf(cancel, "href")
+			return cancelAddress(t, removePreviewBlock(t, parseHTML(t, pressRemove(t, w.b, doc, listRow(t, doc, storedHubID(t, w.st, "hub-1"))))))
 		}},
 		{"Back to the list on a hub's edit form", func(t *testing.T, w *testWorld) string {
 			back := findElement(hubEditBlock(t, w, parseHTML(t, w.b.get(hubEditPage(t, w)))), "a", "data-field", "back")
@@ -518,8 +519,9 @@ func TestAStaleConfirmsCancelLeadsBackToWhereRemoveWasPressed(t *testing.T) {
 		// back is the block, on the page Cancel opens, whose heading it
 		// lands on.
 		back func(t *testing.T, w *testWorld, doc *html.Node) *html.Node
-		// edit is the refused Confirm's answer showing the hub's edit form.
-		edit bool
+		// onEdit is the refused Confirm's answer showing the hub's edit
+		// form.
+		onEdit bool
 	}{
 		{"Remove hub on the hub's edit form", func(t *testing.T, w *testWorld) *html.Node {
 			return openHubRemovePreview(t, w.b, storedHubID(t, w.st, "hub-1"))
@@ -548,14 +550,10 @@ func TestAStaleConfirmsCancelLeadsBackToWhereRemoveWasPressed(t *testing.T) {
 			}
 			refused := parseHTML(t, res)
 			id := strconv.FormatInt(storedHubID(t, w.st, "hub-1"), 10)
-			if tc.edit && findElement(refused, "section", "data-hub", id) == nil {
+			if tc.onEdit && findElement(refused, "section", "data-hub", id) == nil {
 				t.Error("the answer shows no edit form for the hub, want the one Remove was pressed on")
 			}
-			cancel := findElement(removePreviewBlock(t, refused), "a", "data-field", "cancel")
-			if cancel == nil {
-				t.Fatal("the refused preview has no Cancel")
-			}
-			href := attrOf(cancel, "href")
+			href := cancelAddress(t, removePreviewBlock(t, refused))
 			doc, fragment := landing(t, w.b, href, w.b.get(href))
 			landedHeading(t, doc, fragment, tc.back(t, w, doc), "the heading of where Remove was pressed")
 		})
@@ -584,7 +582,11 @@ func TestAStaleConfirmShowsNoOtherHubsEditForm(t *testing.T) {
 	if res.StatusCode != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", res.StatusCode)
 	}
-	if findElement(parseHTML(t, res), "section", "data-hub", other) != nil {
+	refused := parseHTML(t, res)
+	// The answer shows hub-1's own edit form, so the lookup below would
+	// find another hub's form if the page showed one.
+	hubSection(t, refused, storedHubID(t, w.st, "hub-1"))
+	if findElement(refused, "section", "data-hub", other) != nil {
 		t.Error("the refused Confirm's answer shows the edit form of a hub other than the one being removed")
 	}
 }

@@ -988,10 +988,7 @@ func (s *hubService) page(ctx context.Context, req pageRequest) (hubPage, error)
 			page.Error, page.Refused = errHubGone, formRemove
 			return page, nil
 		}
-		page.Remove = s.removePreviewOf(sn, hub, hubListAddress)
-		if req.HubID != 0 {
-			page.Remove.FromEdit, page.Remove.Back = true, hubEditAddress(req.HubID)
-		}
+		page.Remove = s.removePreviewOf(sn, hub, req.HubID)
 	}
 	return page, nil
 }
@@ -1039,13 +1036,18 @@ func (s *hubService) removedHubs(ctx context.Context, sn snapshot) ([]removedHub
 }
 
 // removePreviewOf is the remove preview of a hub read from the snapshot,
-// with its live spawned count from the runtime. back is where its Cancel
-// leads.
-func (s *hubService) removePreviewOf(sn snapshot, hub store.Hub, back string) *hubRemovePreview {
+// with its live spawned count from the runtime. editID is the hub whose
+// edit form Remove was pressed on, or zero when it was pressed on the hub
+// list. Cancel leads back there.
+func (s *hubService) removePreviewOf(sn snapshot, hub store.Hub, editID int64) *hubRemovePreview {
 	st := sn.channels.hubChannel(hub)
-	return &hubRemovePreview{ID: hub.ID, Version: hub.Version, BaseString: hub.BaseString,
-		ChannelName: st.Name, Broken: st.Broken, Spawned: s.deps.Runtime.SpawnedCount(hub.ID), Back: back,
+	preview := &hubRemovePreview{ID: hub.ID, Version: hub.Version, BaseString: hub.BaseString,
+		ChannelName: st.Name, Broken: st.Broken, Spawned: s.deps.Runtime.SpawnedCount(hub.ID), Back: hubListAddress,
 		Roles: rolePicker(fieldModeratorRoles, setHubModerators, sn.info, hub.ModeratorRoleIDs, hub.ModeratorRoleIDs).Tags}
+	if editID != 0 {
+		preview.FromEdit, preview.Back = true, hubEditAddress(editID)
+	}
+	return preview
 }
 
 // rows merges the store's hub rows with the guild's channel list and the
