@@ -273,7 +273,8 @@ func newFoxholeWorldWith(t *testing.T, wrap func(store.Store) store.Store) *test
 	w.discord.addRoles(foxholeGuildRoles...)
 	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
 		Members: []commands.ListedMember{memberDoe, memberAsh, memberKestrel, memberMarsh, memberVance}})
-	signInAs(t, w.forum, w.b, addFoxholeManager(w.forum))
+	w.manager = addFoxholeManager(w.forum)
+	signInAs(t, w.forum, w.b, w.manager)
 	return w
 }
 

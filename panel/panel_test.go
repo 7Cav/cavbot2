@@ -150,6 +150,14 @@ func (f *fakeForum) setGroups(a *forumAccount, primary int, secondary []int) {
 	a.body = forumUserJSON(me.Me.UserID, me.Me.Username, primary, secondary)
 }
 
+// setStatus sets the status /api/me answers a user the forum knows with,
+// over the same body.
+func (f *fakeForum) setStatus(a *forumAccount, status int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a.status = status
+}
+
 func (f *fakeForum) setUserinfoDrop(drop bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

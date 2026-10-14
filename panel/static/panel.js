@@ -244,32 +244,44 @@
    that isn't OK and didn't come through a redirect swaps in a fresh form
    with the text typed and the sentence the answer carries. An answer with
    no sentence, or none at all, gets a line saying the panel didn't confirm
-   the save. */
+   the save.
+
+   A save from a panel session that has ended answers with the sign-in
+   page. The row then says whether the note saved, beside a Sign in again
+   button. The button keeps the notes typed in the page's rows in the
+   tab's session storage, and the Foxhole page the sign-in comes back to
+   opens them again. Without script the save shows the sign-in page, and
+   the typed note is lost. */
 (function () {
   'use strict';
 
   var template = document.querySelector('[data-note-template]');
   if (!template) { return; }
 
-  // mount puts a note form in the cell and wires its keys and buttons.
-  // restore puts back what the cell showed before the form opened.
-  function mount(cell, form, restore) {
-    var input = form.querySelector('[data-note-input]');
-    var cancel = form.querySelector('[data-field="cancel_note"]');
-    var member = cell.closest('[data-member]').getAttribute('data-member');
-    // A form in a row carries the IDs the page's own note form uses: the
-    // hint's, and on a refused save the refusal's. A form failed() makes
-    // carries its line's too. Each row's form gets its own, so rows with
-    // forms open at once share none. Its input names its own line and hint,
-    // so a screen reader reads out why the save didn't land, then the
-    // warning, as focus lands.
-    form.querySelectorAll('[id]').forEach(function (el) { el.id += '-' + member; });
+  // own gives each ID under root the member's suffix, and the note box's
+  // description with them. A form in a row carries the IDs the page's own
+  // note form uses: the hint's, and on a refused save the refusal's. A form
+  // with a line the script put at its top carries the line's too. Each
+  // member's form gets its own, so forms open at once share none, and its
+  // note box names its own line and hint.
+  function own(root, member) {
+    var input = root.querySelector('[data-note-input]');
+    root.querySelectorAll('[id]').forEach(function (el) { el.id += '-' + member; });
     var described = input.getAttribute('aria-describedby');
     if (described) {
       input.setAttribute('aria-describedby', described.split(' ').map(function (id) {
         return id + '-' + member;
       }).join(' '));
     }
+  }
+
+  // mount puts a note form in the cell, wires its keys and buttons, and
+  // returns its note box. restore puts back what the cell showed before
+  // the form opened.
+  function mount(cell, form, restore) {
+    var input = form.querySelector('[data-note-input]');
+    var cancel = form.querySelector('[data-field="cancel_note"]');
+    own(form, cell.closest('[data-member]').getAttribute('data-member'));
     cell.replaceChildren(form);
     form.addEventListener('submit', function (e) {
       e.preventDefault();
@@ -285,22 +297,42 @@
       e.preventDefault();
       restore();
     });
+    return input;
+  }
+
+  // focusBox focuses a note box with the caret after its text. A screen
+  // reader reads out the box's description as focus lands.
+  function focusBox(input) {
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
   }
 
-  function open(cell) {
+  // restorer is what Cancel calls for a form about to open in the cell. It
+  // puts back what the cell shows now and focuses the cell's Edit link.
+  function restorer(cell) {
     var shown = Array.from(cell.childNodes);
-    var note = cell.getAttribute('data-note');
-    var form = template.content.firstElementChild.cloneNode(true);
-    form.querySelector('[name="member"]').value = cell.closest('[data-member]').getAttribute('data-member');
-    form.querySelector('[name="loaded"]').value = note;
-    form.querySelector('[name="note"]').value = note;
-    mount(cell, form, function () {
+    return function () {
       cell.replaceChildren.apply(cell, shown);
       var link = cell.querySelector('[data-field="edit_note"]');
       if (link) { link.focus(); }
+    };
+  }
+
+  // fill is a fresh note form from the page's template, holding values,
+  // which are keyed by field name. A field values leaves out keeps the
+  // template's value, as the view's search and filter do.
+  function fill(values) {
+    var form = template.content.firstElementChild.cloneNode(true);
+    Object.keys(values).forEach(function (name) {
+      form.querySelector('[name="' + name + '"]').value = values[name];
     });
+    return form;
+  }
+
+  function open(cell) {
+    var note = cell.getAttribute('data-note');
+    var form = fill({ member: cell.closest('[data-member]').getAttribute('data-member'), loaded: note, note: note });
+    focusBox(mount(cell, form, restorer(cell)));
   }
 
   // show puts a note in the cell as the server would render it: the note
@@ -370,26 +402,214 @@
     return line && line.textContent.trim();
   }
 
+  // The lines a row shows when the panel session has ended. No answer
+  // carries a sentence that fits, so the script owns them. Each refuses
+  // nothing, so each takes the neutral stripe.
+  var endedUnsaved = 'Your session ended, so this note was not saved. Sign in again and it will be here to save.';
+  var endedSaved = 'The note saved, but your session has ended. Sign in again before your next change.';
+  var notSavedYet = 'This note is not saved yet. Press Save to save it.';
+
+  // noteLine is a note with the ID given, for the top of a note form. It
+  // takes the red stripe only when refused says it refuses something.
+  function noteLine(id, text, refused) {
+    var el = document.createElement('div');
+    el.id = id;
+    el.className = refused ? 'note fx-noterefusal' : 'note note--neutral fx-noterefusal';
+    el.textContent = text;
+    return el;
+  }
+
+  // describe puts the line at the top of the form, where a refused note's
+  // sentence sits, and names it first in the note box's description, so a
+  // screen reader reads it out as focus lands in the box.
+  function describe(form, el) {
+    form.prepend(el);
+    var input = form.querySelector('[data-note-input]');
+    var described = input.getAttribute('aria-describedby');
+    input.setAttribute('aria-describedby', described ? el.id + ' ' + described : el.id);
+  }
+
+  // posted is what the form posts, keyed by field name.
+  function posted(form) {
+    var values = {};
+    new FormData(form).forEach(function (value, name) { values[name] = value; });
+    return values;
+  }
+
   // failed puts a fresh form in the cell holding what the manager posted,
   // with the answer's sentence where a refused note's sits, or the
-  // unconfirmed line when the sentence is null. The note box names the line
-  // first in its description, and mount focuses the box, so a screen reader
-  // reads it out as focus lands. Save posts the note again, and Cancel puts
-  // back what the cell showed before.
+  // unconfirmed line when the sentence is null. Save posts the note again,
+  // and Cancel puts back what the cell showed before.
   function failed(cell, form, restore, sentence) {
-    var fresh = template.content.firstElementChild.cloneNode(true);
-    new FormData(form).forEach(function (value, name) {
-      fresh.querySelector('[name="' + name + '"]').value = value;
+    var fresh = fill(posted(form));
+    describe(fresh, noteLine('note-failed', sentence || unconfirmed, Boolean(sentence)));
+    focusBox(mount(cell, fresh, restore));
+  }
+
+  // startAddress starts a sign-in at the forum. The sign-in page's form
+  // posts there, and a field named next carries the panel address the
+  // sign-in comes back to.
+  var startAddress = '/auth/start';
+
+  // viewAddress is the address of the view this page shows, with its
+  // search and filter. It is the note form's Cancel address without the
+  // fragment that opens it at the list, so a sign-in that comes back to it
+  // lands at the top of the page with nothing focused, and a kept note can
+  // take focus.
+  function viewAddress() {
+    return template.content.querySelector('[data-field="cancel_note"]').getAttribute('href').split('#')[0];
+  }
+
+  // signedInAs is the forum user the rail names.
+  function signedInAs() {
+    return document.querySelector('.rail [data-field="username"]').textContent;
+  }
+
+  // keptKey names the entry in the tab's session storage that holds the
+  // kept notes through the forum's sign-in. Closing the tab drops it.
+  var keptKey = 'foxhole-kept-notes';
+
+  // keep stores each note form open in a row whose text differs from the
+  // note it loaded, with the forum user who typed them. The form of the
+  // member named first goes first. Without session storage the sign-in
+  // still goes ahead, and the typed notes are lost, as without script.
+  function keep(first) {
+    var notes = [];
+    document.querySelectorAll('[data-note-cell] [data-field="note-form"]').forEach(function (form) {
+      var values = posted(form);
+      var note = { member: values.member, loaded: values.loaded, note: values.note };
+      if (note.note.trim() === note.loaded) { return; }
+      if (note.member === first) {
+        notes.unshift(note);
+      } else {
+        notes.push(note);
+      }
     });
-    var line = document.createElement('div');
-    line.id = 'note-failed';
-    line.className = sentence ? 'note fx-noterefusal' : 'note note--neutral fx-noterefusal';
-    line.textContent = sentence || unconfirmed;
-    fresh.prepend(line);
-    var input = fresh.querySelector('[data-note-input]');
-    var described = input.getAttribute('aria-describedby');
-    input.setAttribute('aria-describedby', described ? line.id + ' ' + described : line.id);
-    mount(cell, fresh, restore);
+    try {
+      sessionStorage.setItem(keptKey, JSON.stringify({ user: signedInAs(), notes: notes }));
+    } catch (e) {
+      // With no session storage, the sign-in goes ahead without the notes.
+    }
+  }
+
+  // signInAgain keeps the typed notes, then starts a sign-in that comes
+  // back to this view.
+  function signInAgain(first) {
+    keep(first);
+    var start = document.createElement('form');
+    var next = document.createElement('input');
+    start.method = 'post';
+    start.action = startAddress;
+    next.type = 'hidden';
+    next.name = 'next';
+    next.value = viewAddress();
+    start.appendChild(next);
+    document.body.appendChild(start);
+    start.submit();
+  }
+
+  // signInRow is the Sign in again button, in a row of its own under a
+  // line saying the session has ended. first is the member whose note
+  // takes focus when the notes open again, null for none in particular.
+  function signInRow(first) {
+    var row = document.createElement('div');
+    var button = document.createElement('button');
+    row.className = 'fx-notesignin';
+    button.type = 'button';
+    button.className = 'btn btn--small';
+    button.setAttribute('data-field', 'sign_in_again');
+    button.textContent = 'Sign in again';
+    button.addEventListener('click', function () { signInAgain(first); });
+    row.appendChild(button);
+    return row;
+  }
+
+  // turnedAway is failed for a save the ended session turned away, so
+  // nothing was stored. Its line says so, with the Sign in again button
+  // under it.
+  function turnedAway(cell, form, restore) {
+    var fresh = fill(posted(form));
+    var said = noteLine('note-ended', endedUnsaved);
+    describe(fresh, said);
+    said.after(signInRow(cell.closest('[data-member]').getAttribute('data-member')));
+    focusBox(mount(cell, fresh, restore));
+  }
+
+  // savedEnded shows the note as saved in the cell, as a save that went
+  // through does, for a save the session ended after. Under the note go
+  // the line saying the session has ended and the Sign in again button,
+  // in place of any an earlier save left there. The button takes focus
+  // and names the line as its description, so a screen reader reads both
+  // out.
+  function savedEnded(cell, restore, note) {
+    restore();
+    show(cell, note);
+    cell.querySelectorAll('[data-ended]').forEach(function (el) { el.remove(); });
+    var said = noteLine('note-ended-' + cell.closest('[data-member]').getAttribute('data-member'), endedSaved);
+    var row = signInRow(null);
+    var button = row.querySelector('button');
+    said.setAttribute('data-ended', '');
+    row.setAttribute('data-ended', '');
+    button.setAttribute('aria-describedby', said.id);
+    cell.append(said, row);
+    button.focus();
+  }
+
+  // above opens a kept note in a "Note on ..." block above the list, where
+  // the Edit link opens a note form without script, for a member this view
+  // doesn't list. The block comes from this view's page with the member's
+  // note form open, loaded in the background. Its Save posts the page's
+  // way, without script. A load that fails drops the note.
+  function above(note, first) {
+    var url = new URL(viewAddress(), location.href);
+    url.searchParams.set('note', note.member);
+    fetch(url, { credentials: 'same-origin' })
+      .then(function (res) {
+        return res.text().then(function (text) {
+          return { ok: res.ok, doc: new DOMParser().parseFromString(text, 'text/html') };
+        });
+      })
+      .then(function (answer) {
+        var page = answer.ok && answer.doc.querySelector('main[data-page="foxhole"]');
+        var block = page && page.querySelector('[data-field="note-block"]');
+        if (!block) { return; }
+        block = document.adoptNode(block);
+        var form = block.querySelector('[data-field="note-form"]');
+        form.querySelector('[name="loaded"]').value = note.loaded;
+        form.querySelector('[name="note"]').value = note.note;
+        describe(form, noteLine('note-kept', notSavedYet));
+        own(block, note.member);
+        document.querySelector('main [data-field="actions"], main [data-notice="member-list"], main [data-field="changes"]').before(block);
+        if (first) { focusBox(form.querySelector('[data-note-input]')); }
+      })
+      .catch(function () {});
+  }
+
+  // bringBack opens the notes kept before a sign-in, on the first Foxhole
+  // page the tab loads after it, when the forum user who typed them is
+  // signed in. That load drops them either way. Each opens in its row with
+  // its typed text and the note its form loaded, so a save over a note
+  // someone changed meanwhile is refused as stale. The first takes focus.
+  function bringBack() {
+    var kept;
+    try {
+      kept = JSON.parse(sessionStorage.getItem(keptKey));
+      sessionStorage.removeItem(keptKey);
+    } catch (e) {
+      return;
+    }
+    if (!kept || kept.user !== signedInAs()) { return; }
+    kept.notes.forEach(function (note, i) {
+      var cell = document.querySelector('[data-member="' + CSS.escape(note.member) + '"] [data-note-cell]');
+      if (!cell) {
+        above(note, i === 0);
+        return;
+      }
+      var form = fill({ member: note.member, loaded: note.loaded, note: note.note });
+      describe(form, noteLine('note-kept', notSavedYet));
+      var input = mount(cell, form, restorer(cell));
+      if (i === 0) { focusBox(input); }
+    });
   }
 
   function save(cell, form, restore) {
@@ -406,6 +626,20 @@
         });
       })
       .then(function (answer) {
+        // A save from a panel session that has ended is sent to sign in.
+        // The sign-in page's form comes back to no page when the session
+        // ended before the save, which then stored nothing. When the
+        // session ended after the save went through, on the Foxhole page
+        // the save redirects to, the form comes back to that page.
+        var signin = answer.doc.querySelector('main form[action="' + startAddress + '"]');
+        if (signin) {
+          if (signin.querySelector('[name="next"]')) {
+            savedEnded(cell, restore, input.value.trim());
+          } else {
+            turnedAway(cell, form, restore);
+          }
+          return;
+        }
         // A save that went through redirects to the Foxhole page. When
         // that page fails to load, the answer holds none of what follows,
         // and the note shows as saved.
@@ -416,10 +650,10 @@
             // be another manager's. Cancel shows that note, not the one the
             // row loaded.
             var current = refused.querySelector('[name="loaded"]').value;
-            mount(cell, document.adoptNode(refused), function () {
+            focusBox(mount(cell, document.adoptNode(refused), function () {
               restore();
               show(cell, current);
-            });
+            }));
           } else {
             failed(cell, form, restore, sentenceOf(answer.doc));
           }
@@ -451,6 +685,8 @@
     e.preventDefault();
     open(cell);
   });
+
+  bringBack();
 })();
 
 /* The Foxhole page's selection bar (spec #434, ADR 0013): how many rows are
