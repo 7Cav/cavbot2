@@ -269,7 +269,7 @@ type holderRow struct {
 	// Note is the member's note, empty when they have none.
 	Note string
 	// EditHref is the row's Edit link: the page, in the view it shows, with
-	// the member's note form open.
+	// the member's note form open, at the note block.
 	EditHref string
 }
 
@@ -1011,7 +1011,7 @@ func matching(rows []holderRow, req foxholeRequest) []holderRow {
 	var matched []holderRow
 	for _, row := range rows {
 		if row.matches(search) {
-			row.EditHref = foxholeURL(req.Query, req.Filter, row.ID)
+			row.EditHref = noteAddress(req.Query, req.Filter, row.ID)
 			matched = append(matched, row)
 		}
 	}
@@ -1381,6 +1381,20 @@ func listAddress(query, filter string) string {
 // is noteMember open, none when it is empty.
 func foxholeURL(query, filter, noteMember string) string {
 	return foxholeLink(query, filter, paramNoteMember, noteMember)
+}
+
+// noteAnchor is the ID foxhole.html gives the note block's heading. A
+// row's note link and the note form's action name it, so the page they open
+// shows the form with its heading focused, a refused save's page included.
+// A save that goes through redirects to its list with that list's own
+// fragment.
+const noteAnchor = "note"
+
+// noteAddress is foxholeURL with the member's note form open, at the note
+// block. Reload keeps foxholeURL's address, with no fragment. Its blocks
+// sit above the note block, so landing there would scroll past them.
+func noteAddress(query, filter, member string) string {
+	return foxholeURL(query, filter, member) + "#" + noteAnchor
 }
 
 // clearedAddress is listAddress after a save that cleared the note of the

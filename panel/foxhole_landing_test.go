@@ -373,3 +373,151 @@ func TestNoRoleViewKeepsTheResultRegionInItsBlock(t *testing.T) {
 		}
 	}
 }
+
+// noteBlock returns the Foxhole page's note block, the one holding the
+// note form it opens, and fails the test when the page has none.
+func noteBlock(t *testing.T, doc *html.Node) *html.Node {
+	t.Helper()
+	block := findElement(doc, "section", "data-field", "note-block")
+	if block == nil {
+		t.Fatal("the page has no note block")
+	}
+	return block
+}
+
+// landedOnNote returns the heading a page opened at fragment lands on and
+// the note block holding it. It fails the test unless the heading is the
+// note block's, and unless every aria-describedby on the page names an
+// element the page carries.
+func landedOnNote(t *testing.T, doc *html.Node, fragment string) (heading, block *html.Node) {
+	t.Helper()
+	block = noteBlock(t, doc)
+	heading = landedHeading(t, doc, fragment, block, "the note block's heading")
+	describedByResolves(t, doc)
+	return heading, block
+}
+
+// Without script, a row's note link opens the page at the note block, with
+// its heading focused, not at the top far above the form it opens. The
+// form shows no refusal, so the heading reads no description.
+func TestANoteLinkLandsOnTheNoteBlock(t *testing.T) {
+	cases := []struct {
+		name  string
+		world func(*testing.T) *testWorld
+		// link is the address of the row's note link on a fresh load of its
+		// view.
+		link func(*testing.T, *browser) string
+	}{
+		{"a holder row's Add a note", newFoxholeWorld, func(t *testing.T, b *browser) string {
+			return editNoteLink(t, parseHTML(t, b.get(foxholePath)), memberDoe.ID)
+		}},
+		{"a no-role row's Edit", newNoRoleWorld, func(t *testing.T, b *browser) string {
+			row, ok := noRoleRows(t, openNoRoleView(t, b))[memberDoe.ID]
+			if !ok {
+				t.Fatalf("the no-role view has no row for %s", memberDoe.ID)
+			}
+			return attrOf(noteLink(t, row), "href")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := tc.world(t)
+			href := tc.link(t, w.b)
+
+			doc, fragment := landing(t, w.b, href, w.b.get(href))
+
+			heading, _ := landedOnNote(t, doc, fragment)
+			if got := accessibleDescription(doc, heading); got != "" {
+				t.Errorf("the note block's heading is described as %q, want no description", got)
+			}
+		})
+	}
+}
+
+// A Reload link opens the page at its top even with a note form open. The
+// blocks that carry one, such as the member list notice, sit above the note
+// block, so landing there would scroll past the block the manager reloaded
+// to check.
+func TestReloadWithANoteFormOpenLandsAtTheTop(t *testing.T) {
+	w := newFoxholeWorld(t)
+	href := editNoteLink(t, parseHTML(t, w.b.get(foxholePath)), memberDoe.ID)
+	w.discord.setMemberList(arrivingList)
+	doc, _ := landing(t, w.b, href, w.b.get(href))
+	noteBlock(t, doc)
+	reload := findElement(memberListNotice(t, doc), "a", "data-field", "reload")
+	if reload == nil {
+		t.Fatal("the notice has no Reload link")
+	}
+	to := attrOf(reload, "href")
+
+	_, fragment := landing(t, w.b, to, w.b.get(to))
+
+	if fragment != "" {
+		t.Errorf("Reload opens the page at fragment %q, want its top", fragment)
+	}
+}
+
+// noteFormAction is the address the page's note form posts to, fragment
+// and all, and fails the test when the page has no note form.
+func noteFormAction(t *testing.T, doc *html.Node) string {
+	t.Helper()
+	form := findLive(doc, "form", "data-field", "note-form")
+	if form == nil {
+		t.Fatal("the page has no note form")
+	}
+	return attrOf(form, "action")
+}
+
+// A refused note save answers with the page, not a redirect, at the address
+// the note form posts to. Without script the page opens at the note block's
+// heading, not at the top far above the form. The refusal note shows under
+// the heading and is its description, so a screen reader says why nothing
+// saved as focus lands. PRODUCT.md's Accessibility & Inclusion asks this of
+// every refused save, whatever refused it.
+func TestARefusedNoteSaveLandsOnTheNoteBlock(t *testing.T) {
+	cases := []struct {
+		name string
+		// refuse opens a note form through the page and saves it as a
+		// browser with no script does, so the save is refused, and returns
+		// the page it saved from and the answer.
+		refuse func(*testing.T, *testWorld) (*html.Node, *http.Response)
+		// kind is the refusal's data-error kind.
+		kind string
+	}{
+		{"a save that changes nothing", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
+			assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
+			page := openNote(t, w.b, memberDoe.ID)
+			return page, submitNote(t, w.b, page, "discharged 12 Sep")
+		}, refusalUnchanged},
+		{"a form another save got to first", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
+			kept := openNote(t, w.b, memberDoe.ID)
+			assertRedirect(t, submitNote(t, w.b, openNote(t, w.b, memberDoe.ID), "discharged 12 Sep"), foxholePath)
+			return kept, submitNote(t, w.b, kept, "rejoined, fine to re-add")
+		}, refusalStale},
+		{"a note started on a member who has since lost their Foxhole role", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
+			page := openNote(t, w.b, memberKestrel.ID)
+			withoutFoxholeRoles(w)
+			return page, submitNote(t, w.b, page, "allied group lead")
+		}, "not-holder"},
+		{"a note started while the member list is partial", func(t *testing.T, w *testWorld) (*html.Node, *http.Response) {
+			page := openNote(t, w.b, memberKestrel.ID)
+			w.discord.setMemberList(arrivingList)
+			return page, submitNote(t, w.b, page, "allied group lead")
+		}, "member-list"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
+			page, res := tc.refuse(t, w)
+
+			res, fragment := arrive(t, w.b, noteFormAction(t, page), res)
+
+			doc := parseHTML(t, res)
+			heading, block := landedOnNote(t, doc, fragment)
+			note := refusalDescribing(t, doc, heading, block)
+			if got := attrOf(note, "data-error"); got != tc.kind {
+				t.Errorf("the note block shows a %q refusal, want %q", got, tc.kind)
+			}
+		})
+	}
+}
