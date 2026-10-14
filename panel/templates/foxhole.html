@@ -169,14 +169,14 @@
   <section class="block fx-progress" role="status" data-field="command-running">
     <h2 class="block-header">{{if eq (len .) 1}}A Foxhole command is running{{else}}Foxhole commands are running{{end}}</h2>
     {{range .}}<div class="block-row"><code data-field="command">{{.Command}}</code>, run by <span data-member="{{.By.MemberID}}">{{.By.DisplayName}} <span class="fx-user">@{{.By.Username}}</span></span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>.</div>{{end}}
-    <div class="block-row">A Foxhole action on this page can start once {{if eq (len .) 1}}it ends{{else}}they end{{end}}. Commands don't report how far they've got. <a href="{{$.Foxhole.Reload}}">Reload the page</a> to check.</div>
+    <div class="block-row">A Foxhole action on this page can start once {{if eq (len .) 1}}it ends{{else}}they end{{end}}. Commands don't report how far they've got. <a href="{{$.Foxhole.Reload}}" data-keeps-selection>Reload the page</a> to check.</div>
   </section>
   {{end}}
   {{with .Report}}{{if .Running}}
   <section class="block fx-progress" role="status" data-field="progress" data-report="{{.ID}}" data-action="{{.Action}}">
     <h2 class="block-header">{{.Name}} is running</h2>
     {{- /* The script moves the count every few seconds, so a screen reader leaves this row out of the block's announcements. The script hides the reload hint. */}}
-    <div class="block-row" data-field="how-far" aria-live="off">Started by <span data-field="started-by">{{.StartedBy}}</span>. <span data-field="done">{{.Done}}</span> of <span data-field="total">{{.Total}}</span> done, <span data-field="left" data-seconds="{{.Left.Seconds}}">about {{.Left.Text}}</span> left. It keeps going if you close this tab.<span data-field="reload-hint"> <a href="{{$.Foxhole.Reload}}" data-field="reload">Reload the page</a> to see how far it has got.</span></div>
+    <div class="block-row" data-field="how-far" aria-live="off">Started by <span data-field="started-by">{{.StartedBy}}</span>. <span data-field="done">{{.Done}}</span> of <span data-field="total">{{.Total}}</span> done, <span data-field="left" data-seconds="{{.Left.Seconds}}">about {{.Left.Text}}</span> left. It keeps going if you close this tab.<span data-field="reload-hint"> <a href="{{$.Foxhole.Reload}}" data-field="reload" data-keeps-selection>Reload the page</a> to see how far it has got.</span></div>
     {{if .Paused}}<div class="block-row" data-field="paused">Paused: waiting for the member list from Discord. It stops if the list hasn't arrived after {{.PauseLimit}}.</div>{{end}}
     {{if .StopPressedBy}}
     <div class="block-row" data-field="stopping">Stopping: <span data-field="stopped-by">{{.StopPressedBy}}</span> pressed Stop. It stops after the change in flight, and the rest is listed as not attempted.</div>
@@ -300,24 +300,29 @@
       <button type="submit" name="remove" value="external" formmethod="get" formaction="/foxhole#remove-preview" class="btn btn--small btn--danger" data-remove="external" data-needs-selection>Remove External</button>{{end}}
     </form>
     {{- /* An empty list says why in a row of the block, not in the table, whose minimum width would cut the sentence off at phone width. */}}
-    {{if .Holders}}
+    {{if or .HiddenSelection .Holders}}
     <div class="scroll"><table class="hublist fx-list">
       <thead><tr><th class="fx-check"><span class="visually-hidden">Select</span></th><th>Member</th><th>Roles</th><th>Rank role</th><th>Note</th><th>Approved</th></tr></thead>
-      <tbody>
-      {{range .Holders}}
-        <tr data-member="{{.ID}}">
-          <td class="fx-check"><input type="checkbox" name="member" value="{{.ID}}" form="fx-selection" aria-label="Select {{.DisplayName}}" data-select{{if .Selected}} checked{{end}}></td>
-          {{template "member-cell" .}}
-          <td class="fx-nowrap">{{if .Internal}}<span class="tag fx-role" data-role="internal">Internal</span> {{end}}{{if .External}}<span class="tag fx-role" data-role="external">External</span>{{end}}</td>
-          <td class="fx-nowrap">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else if .NoRankRole}}<span class="tag tag--warn" data-flag="no-rank-role">no rank role</span>{{else}}<span class="off">none</span>{{end}}</td>
-          {{template "note-cell" .}}
-          <td class="fx-nowrap">{{with .ApprovedRoles}}<span class="tag tag--approved">Approved: {{range $i, $r := .}}{{if $i}}, {{end}}<span data-approved="{{$r}}">{{$r.Label}}</span>{{end}}</span>{{end}}</td>
-        </tr>
+      {{- /* The selected members the search or the filter hides head the list, so the selection bar acts on nobody the manager can't see. */}}
+      {{with .HiddenSelection}}
+      <tbody class="fx-selhidden" data-field="hidden-selection">
+        <tr><th colspan="6" scope="rowgroup">Selected, not in this search or filter</th></tr>
+      {{range .}}
+        {{template "holder-row" .}}
       {{end}}
       </tbody>
+      {{end}}
+      {{with .Holders}}
+      <tbody>
+      {{range .}}
+        {{template "holder-row" .}}
+      {{end}}
+      </tbody>
+      {{end}}
     </table></div>
-    {{else}}
-    <div class="block-row off">{{if .NoHolders}}Nobody holds a Foxhole role or has an approval.{{else}}No member matches.{{end}}</div>
+    {{end}}
+    {{if not .Holders}}
+    <div class="block-row off" data-field="list-empty">{{if .NoHolders}}Nobody holds a Foxhole role or has an approval.{{else}}No member matches.{{end}}</div>
     {{end}}
     {{template "also-matches" .AlsoMatches}}
   </section>
@@ -380,20 +385,29 @@
 {{- /* The list heading's description: the IDs of the result lines fx-results shows, so a screen reader reads them as focus lands on the heading. A block with none leaves the heading undescribed. */}}
 {{define "fx-described"}}{{if or .Cleared .Skipped}} aria-describedby="{{if .Cleared}}note-cleared{{end}}{{if and .Cleared .Skipped}} {{end}}{{if .Skipped}}approve-skipped{{end}}"{{end}}{{end}}
 
-{{- /* The search and filter links both views share. Under 768px panel.css sizes the search box to its whole hint, so a longer hint needs a wider box there. */}}
+{{- /* The search and filter links both views share. Under 768px panel.css sizes the search box to its whole hint, so a longer hint needs a wider box there. Each control marked data-keeps-selection opens the page again in a view, and the page script adds the selection to its address. The server renders it naming no member, so without script the selection drops. */}}
 {{define "fx-toolbar"}}<div class="block-row fx-toolbar">
-  <form method="get" action="/foxhole#{{.ListAnchor}}" class="fx-searchform" role="search" data-field="search">
+  <form method="get" action="/foxhole#{{.ListAnchor}}" class="fx-searchform" role="search" data-field="search" data-keeps-selection>
     {{if ne .Filter "all"}}<input type="hidden" name="filter" value="{{.Filter}}">{{end}}
     <input type="search" name="q" value="{{.Query}}" class="search-input fx-search" placeholder="Name, username, ID or note" aria-label="Search name, username, ID or note">
     <button type="submit" class="btn btn--small">Search</button>
   </form>
   <nav class="fx-filters" aria-label="Filter the list" data-filters>
-    {{- range .Filters}}<a href="{{.Href}}" data-filter="{{.Name}}"{{if .On}} class="is-on" aria-current="page"{{end}}>{{.Label}} <span class="fx-count" data-field="count">{{.Count}}</span></a>{{end -}}
-    {{- with .NoRoleLink}}<a href="{{.Href}}" data-filter="{{.Name}}" class="fx-viewlink{{if .On}} is-on{{end}}"{{if .On}} aria-current="page"{{end}}>{{.Label}} <span class="fx-count">(<span data-field="count">{{.Count}}</span>)</span></a>{{end -}}
+    {{- range .Filters}}<a href="{{.Href}}" data-filter="{{.Name}}" data-keeps-selection{{if .On}} class="is-on" aria-current="page"{{end}}>{{.Label}} <span class="fx-count" data-field="count">{{.Count}}</span></a>{{end -}}
+    {{- with .NoRoleLink}}<a href="{{.Href}}" data-filter="{{.Name}}" data-keeps-selection class="fx-viewlink{{if .On}} is-on{{end}}"{{if .On}} aria-current="page"{{end}}>{{.Label}} <span class="fx-count">(<span data-field="count">{{.Count}}</span>)</span></a>{{end -}}
   </nav>
 </div>{{end}}
 
-{{define "also-matches"}}{{with .}}<div class="block-row fx-also" data-field="also-matches"><a href="{{.Href}}"><span data-field="count">{{.Count}}</span> {{if eq .Count 1}}member{{else}}members{{end}} {{if .ToNoRoleView}}with no role{{else}}in the holder list{{end}} also {{if eq .Count 1}}matches{{else}}match{{end}}</a></div>{{end}}{{end}}
+{{define "also-matches"}}{{with .}}<div class="block-row fx-also" data-field="also-matches"><a href="{{.Href}}" data-keeps-selection><span data-field="count">{{.Count}}</span> {{if eq .Count 1}}member{{else}}members{{end}} {{if .ToNoRoleView}}with no role{{else}}in the holder list{{end}} also {{if eq .Count 1}}matches{{else}}match{{end}}</a></div>{{end}}{{end}}
+
+{{define "holder-row"}}<tr data-member="{{.ID}}">
+          <td class="fx-check"><input type="checkbox" name="member" value="{{.ID}}" form="fx-selection" aria-label="Select {{.DisplayName}}" data-select{{if .Selected}} checked{{end}}></td>
+          {{template "member-cell" .}}
+          <td class="fx-nowrap">{{if .Internal}}<span class="tag fx-role" data-role="internal">Internal</span> {{end}}{{if .External}}<span class="tag fx-role" data-role="external">External</span>{{end}}</td>
+          <td class="fx-nowrap">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else if .NoRankRole}}<span class="tag tag--warn" data-flag="no-rank-role">no rank role</span>{{else}}<span class="off">none</span>{{end}}</td>
+          {{template "note-cell" .}}
+          <td class="fx-nowrap">{{with .ApprovedRoles}}<span class="tag tag--approved">Approved: {{range $i, $r := .}}{{if $i}}, {{end}}<span data-approved="{{$r}}">{{$r.Label}}</span>{{end}}</span>{{end}}</td>
+        </tr>{{end}}
 
 {{define "member-cell"}}<td class="fx-member"><span class="fx-name" data-field="display_name">{{.DisplayName}}</span> <span class="fx-user">@<span data-field="username">{{.Username}}</span></span>{{if .NotInServer}} <span class="tag fx-gone" data-flag="not-in-server">not in the server</span>{{end}}{{if .ApprovedNoInternal}} <span class="tag tag--warn" data-flag="approved-not-internal">approved, doesn't hold Internal</span>{{end}}{{if .ApprovedNoExternal}} <span class="tag tag--warn" data-flag="approved-not-external">approved, doesn't hold External</span>{{end}}</td>{{end}}
 
