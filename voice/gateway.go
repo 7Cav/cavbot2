@@ -174,13 +174,15 @@ func (g *renewableGateway) channel() snowflake.ID {
 // last opened with. The new gateway identifies, so the voice server starts
 // the connection afresh: a new UDP socket, and a session description that
 // starts DAVE over. The close is on purpose, so disgo's close handler hears
-// nothing of it.
+// nothing of it. It carries the code disgo's gateway closes with before it
+// reconnects, not 1000: on Discord's main gateway, a 1000 ends the session
+// the new connection identifies with.
 func (g *renewableGateway) reopen(ctx context.Context) error {
 	g.mu.Lock()
 	old, state := g.gw, g.state
 	g.gw = g.build()
 	g.mu.Unlock()
-	old.Close()
+	old.CloseWithCode(websocket.CloseServiceRestart, "starting DAVE over")
 	return g.Open(ctx, state)
 }
 

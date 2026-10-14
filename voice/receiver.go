@@ -142,10 +142,10 @@ func (r *receiver) run() {
 func (r *receiver) step() {
 	defer utils.RecoverPanic("recorder-receive", "recorder", r.recorder)
 	if holdFrames(r.conn.DAVE()) {
-		r.waitForDAVE()
+		r.waitOrStartOver()
 		return
 	}
-	r.hearing()
+	r.endStall()
 	r.release()
 	p, err := r.conn.UDP().ReadPacket()
 	switch {
@@ -176,11 +176,12 @@ func holdFrames(s godave.Session) bool {
 	return !s.Ready()
 }
 
-// waitForDAVE pauses while DAVE holds frames. A setup that holds them past
-// stallAfter has stalled, and the recorder hears nobody: Sentry hears of
-// it, and the recorder opens a fresh voice connection, whose session
-// description starts DAVE over.
-func (r *receiver) waitForDAVE() {
+// waitOrStartOver pauses while DAVE holds frames. A setup that holds them
+// past stallAfter has stalled, and the recorder hears nobody: Sentry hears
+// of the stall once, and the recorder opens a fresh voice connection, whose
+// session description starts DAVE over. That can take up to
+// reconnectTimeout.
+func (r *receiver) waitOrStartOver() {
 	now := time.Now()
 	if r.unheardSince.IsZero() {
 		r.unheardSince, r.setupSince = now, now
@@ -197,9 +198,9 @@ func (r *receiver) waitForDAVE() {
 	r.setupSince = time.Now()
 }
 
-// hearing notes DAVE passing frames. After a stall, the log says how long
-// the recorder couldn't hear.
-func (r *receiver) hearing() {
+// endStall notes DAVE passing frames, which ends any stall. After one, the
+// log says how long the recorder couldn't hear.
+func (r *receiver) endStall() {
 	if r.stalled {
 		utils.Info(daveRecoveredMessage, "recorder", r.recorder, "channel_id", channelOf(r.conn),
 			"unheard", time.Since(r.unheardSince))
