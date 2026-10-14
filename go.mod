@@ -19,8 +19,8 @@ require (
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/thomas-vilte/dave-go v0.5.1
 	golang.org/x/oauth2 v0.37.0
-	golang.org/x/sync v0.23.0
-	golang.org/x/tools v0.50.0
+	golang.org/x/sync v0.24.0
+	golang.org/x/tools v0.51.0
 )
 
 require (
