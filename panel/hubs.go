@@ -465,6 +465,12 @@ func hubEditAddress(id int64) string {
 	return "/?hub=" + strconv.FormatInt(id, 10) + "#" + hubEditAnchor
 }
 
+// hubAddress is the hub's own address: its edit form's save posts there,
+// and a GET of it redirects to hubEditAddress.
+func hubAddress(id int64) string {
+	return "/hubs/" + strconv.FormatInt(id, 10)
+}
+
 // addedAddress is the address a create or register lands on: the hub list,
 // naming the hub it added.
 func addedAddress(hubID int64) string {

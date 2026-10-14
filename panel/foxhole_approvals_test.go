@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/7cav/cavbot2/store"
@@ -43,20 +42,8 @@ func submitSelection(t *testing.T, b *browser, doc *html.Node, op string, member
 	if button == nil {
 		t.Fatalf("the selection form has no %s button", op)
 	}
-	fields := formFields(doc, form)
-	name, _ := attrValue(button, "name")
-	fields.Set(name, op)
-	action, method := attrOf(form, "action"), http.MethodPost
-	if v, ok := attrValue(button, "formaction"); ok {
-		action = v
-	}
-	if v, ok := attrValue(button, "formmethod"); ok {
-		method = strings.ToUpper(v)
-	}
-	if method == http.MethodGet {
-		return b.getForm(action, fields)
-	}
-	return b.postForm(action, fields)
+	_, res := press(t, b, doc, button)
+	return res
 }
 
 // selectionForm returns the holder list's selection form, by the ID its

@@ -1,6 +1,8 @@
 package panel
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -269,11 +271,35 @@ func newTestPanel(t *testing.T, f *fakeForum) *Panel {
 // browser drives the panel's handler the way a browser would: it carries the
 // cookies each response sets into the next request and drops a cookie the
 // response deletes, whichever deletion idiom the response used. It never
-// follows a redirect; a test reads the Location itself.
+// follows a redirect; a test reads the Location itself. Like a browser's
+// tab, it shows the last page it was answered with, and a GET of that
+// page's address plus a fragment only scrolls: it fetches nothing and
+// answers with the page it shows. Following a redirect is the same
+// navigation going on, so it always fetches.
 type browser struct {
 	t       *testing.T
 	h       http.Handler
 	cookies map[string]string
+	// at is the address of the page the browser shows, without its
+	// fragment, and shown that page's answer. Empty before the first page.
+	at    string
+	shown shownPage
+	// redirect is the Location of the redirect the last answer was,
+	// without its fragment, empty when it was none.
+	redirect string
+}
+
+// shownPage is the answer a browser shows, kept so a fragment navigation
+// can answer with it again.
+type shownPage struct {
+	status int
+	header http.Header
+	body   []byte
+}
+
+// answer is the page shown as an answer a test reads afresh.
+func (p shownPage) answer() *http.Response {
+	return &http.Response{StatusCode: p.status, Header: p.header.Clone(), Body: io.NopCloser(bytes.NewReader(p.body))}
 }
 
 func newBrowser(t *testing.T, p *Panel) *browser {
@@ -291,7 +317,14 @@ func (b *browser) do(method, target string, header http.Header, body io.Reader) 
 func (b *browser) doContext(ctx context.Context, method, target string, header http.Header, body io.Reader) *http.Response {
 	b.t.Helper()
 	// A browser keeps an address's fragment to itself and never sends it.
-	target, _, _ = strings.Cut(target, "#")
+	target, _, hasFragment := strings.Cut(target, "#")
+	following := target == b.redirect
+	b.redirect = ""
+	if method == http.MethodGet && hasFragment && target == b.at && !following {
+		// The HTML navigate algorithm's fragment navigation: the page the
+		// tab shows stays, scrolled to the fragment.
+		return b.shown.answer()
+	}
 	req := httptest.NewRequestWithContext(ctx, method, testBaseURL+target, body)
 	for k, v := range header {
 		req.Header[k] = v
@@ -303,6 +336,12 @@ func (b *browser) doContext(ctx context.Context, method, target string, header h
 	b.h.ServeHTTP(rec, req)
 	res := rec.Result()
 	b.absorbCookies(res)
+	if res.StatusCode >= 300 && res.StatusCode <= 399 {
+		b.redirect, _, _ = strings.Cut(res.Header.Get("Location"), "#")
+	} else {
+		b.at = target
+		b.shown = shownPage{status: res.StatusCode, header: res.Header.Clone(), body: bytes.Clone(rec.Body.Bytes())}
+	}
 	return res
 }
 
@@ -345,6 +384,40 @@ func (b *browser) getForm(action string, fields url.Values) *http.Response {
 func (b *browser) postForm(target string, form url.Values) *http.Response {
 	b.t.Helper()
 	return b.do(http.MethodPost, target, http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}, strings.NewReader(form.Encode()))
+}
+
+// press presses a link or a form's button the way a browser does with no
+// script: it follows the link, or submits the form that owns the button,
+// with the button's own formaction and formmethod where it has them. It
+// returns the address the press sent the browser to and the answer.
+func press(t *testing.T, b *browser, doc, control *html.Node) (string, *http.Response) {
+	t.Helper()
+	switch control.Data {
+	case "a":
+		href := attrOf(control, "href")
+		return href, b.get(href)
+	case "button":
+		var form *html.Node
+		eachElement(doc, func(n *html.Node) {
+			if form == nil && n.Data == "form" && ownedBy(control, n) {
+				form = n
+			}
+		})
+		if form == nil {
+			t.Fatal("the button belongs to no form")
+		}
+		fields := formFields(doc, form)
+		if name := attrOf(control, "name"); name != "" {
+			fields.Set(name, attrOf(control, "value"))
+		}
+		action := cmp.Or(attrOf(control, "formaction"), attrOf(form, "action"))
+		if strings.EqualFold(cmp.Or(attrOf(control, "formmethod"), attrOf(form, "method")), http.MethodPost) {
+			return action, b.postForm(action, fields)
+		}
+		return action, b.getForm(action, fields)
+	}
+	t.Fatalf("the control is a <%s>, no link or button", control.Data)
+	return "", nil
 }
 
 // landing follows an answer to a control whose address is control the way

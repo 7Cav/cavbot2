@@ -198,6 +198,7 @@ func (p *Panel) routes() []route {
 		{"GET " + recordingStatusPath, http.HandlerFunc(p.recordingStatus)},
 		{"GET /{$}", p.withPanelAdmin(p.homePage)},
 		{"POST /hubs", p.withPanelAdmin(p.createOrRegisterHub)},
+		{"GET /hubs/{id}", p.withPanelAdmin(p.openHub)},
 		{"POST /hubs/{id}", p.withPanelAdmin(p.updateHub)},
 		{"POST /hubs/{id}/remove", p.withPanelAdmin(p.removeHub)},
 		{"POST /moderators", p.withPanelAdmin(p.saveModerators)},
@@ -210,6 +211,7 @@ func (p *Panel) routes() []route {
 		{"GET " + recordingsPath + "/{id}/delete", p.withSession(p.deletePreview)},
 		{"POST " + recordingsPath + "/{id}/delete", p.withSession(p.deleteRecording)},
 		{"GET " + foxholePath, p.withFoxholePage(p.foxholePage)},
+		{"GET " + foxholeReopenPath, p.withFoxholePage(p.reopenPreview)},
 		{"POST " + foxholeNotesPath, p.withFoxholePage(p.saveNote)},
 		{"POST " + foxholeApprovalsPath, p.withFoxholePage(p.saveApprovals)},
 		{"POST " + foxholePurgePath, p.withFoxholePage(p.startPurge)},
@@ -714,13 +716,26 @@ func (p *Panel) pageFailed(w http.ResponseWriter, sess session, step, retry stri
 }
 
 // pageAddress is the GET address of the page a request shows: the hub list,
-// or the hub's edit form, opened at the form. Try again leads there, so a
-// save is never posted twice.
+// or the address that opens the hub's edit form at the form. Try again
+// leads there, so a save is never posted twice.
 func pageAddress(req pageRequest) string {
 	if req.HubID != 0 {
-		return hubEditAddress(req.HubID)
+		return hubAddress(req.HubID)
 	}
 	return "/"
+}
+
+// openHub is GET /hubs/{id}, a hub's edit form's Try again: a redirect to
+// the hub's edit form. The error page Try again sits on can be at the edit
+// form's own address, when its load failed, and a link straight there would
+// fetch nothing: the browser only scrolls to the fragment.
+func (p *Panel) openHub(w http.ResponseWriter, r *http.Request, sess session) {
+	id, ok := hubIDOf(r)
+	if !ok {
+		p.notFound(w, sess, noHubTitle, noHubMessage)
+		return
+	}
+	http.Redirect(w, r, hubEditAddress(id), http.StatusSeeOther)
 }
 
 // noGuildData renders the error page, with a 503, for a page load or a save

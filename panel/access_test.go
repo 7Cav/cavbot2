@@ -54,7 +54,11 @@ var pageLoadCases = []struct {
 	page  string
 }{
 	{"/", signIn, pageHubs},
+	{"/hubs/1", signIn, pageHubs},
 	{foxholePath, func(t *testing.T, f *fakeForum, b *browser) *http.Response {
+		return signInAs(t, f, b, addFoxholeManager(f))
+	}, pageFoxhole},
+	{foxholeReopenPath, func(t *testing.T, f *fakeForum, b *browser) *http.Response {
 		return signInAs(t, f, b, addFoxholeManager(f))
 	}, pageFoxhole},
 }

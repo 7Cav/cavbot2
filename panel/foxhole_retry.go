@@ -99,10 +99,10 @@ type retryConfirm struct {
 	Estimate estimate
 }
 
-// Reopen is the link that opens this confirmation again: the Retry's
+// Reopen is the link that opens this confirmation again, at the Retry's
 // address.
 func (c retryConfirm) Reopen() reopenLink {
-	return reopenLink{Href: c.Report.RetryHref(), What: "Retry"}
+	return reopenOf(c.Report.RetryHref(), "Retry")
 }
 
 // Purge reports whether the Retry is a purge's, which takes each member's
