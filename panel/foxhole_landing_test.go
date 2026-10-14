@@ -60,14 +60,16 @@ func approveThatSkipsKestrel(t *testing.T, w *testWorld) (string, *http.Response
 	t.Helper()
 	approveThroughThePage(t, w, memberKestrel.ID)
 	withoutFoxholeRoles(w)
-	return foxholeApprovalsPath, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opApprove, memberKestrel.ID, memberDoe.ID)
+	page := parseHTML(t, w.b.get(foxholePath))
+	return attrOf(selectionForm(t, page), "action"), submitSelection(t, w.b, page, opApprove, memberKestrel.ID, memberDoe.ID)
 }
 
 // clearKestrelsApproval clears the approval Kestrel was given.
 func clearKestrelsApproval(t *testing.T, w *testWorld) (string, *http.Response) {
 	t.Helper()
 	approveThroughThePage(t, w, memberKestrel.ID)
-	return foxholeApprovalsPath, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), opClear, memberKestrel.ID)
+	page := parseHTML(t, w.b.get(foxholePath))
+	return attrOf(selectionForm(t, page), "action"), submitSelection(t, w.b, page, opClear, memberKestrel.ID)
 }
 
 // clearNoRoleNoteOnDoe clears the note on Doe's no-role row, which takes
@@ -178,8 +180,8 @@ func TestAFoxholeSaveResultLineDescribesTheListHeading(t *testing.T) {
 	}
 }
 
-// refusalNotes returns the data-error kind of each refusal note on the page.
-func refusalNotes(doc *html.Node) []string {
+// refusalKinds returns the data-error kind of each refusal note on the page.
+func refusalKinds(doc *html.Node) []string {
 	var kinds []string
 	eachLiveElement(doc, func(n *html.Node) {
 		if kind, ok := attrValue(n, "data-error"); ok {
@@ -221,7 +223,7 @@ func TestARefusedApprovalsSaveLandsOnTheHolderList(t *testing.T) {
 			doc := parseHTML(t, res)
 			heading, block := landedOnList(t, doc, fragment, "holders")
 			refusalDescribing(t, doc, heading, block)
-			if got, want := refusalNotes(doc), []string{refusalNobodyToChange}; !slices.Equal(got, want) {
+			if got, want := refusalKinds(doc), []string{refusalNobodyToChange}; !slices.Equal(got, want) {
 				t.Errorf("the page shows refusal notes %v, want the one nobody-to-change note", got)
 			}
 		})
@@ -251,7 +253,7 @@ func TestARefusedApprovalsSaveWhileTheMemberListIsPartialShowsItsNoteOnce(t *tes
 
 			doc := parseHTML(t, submitSelection(t, w.b, page, tc.op, memberMarsh.ID))
 
-			if got, want := refusalNotes(doc), []string{tc.reason}; !slices.Equal(got, want) {
+			if got, want := refusalKinds(doc), []string{tc.reason}; !slices.Equal(got, want) {
 				t.Errorf("the page shows refusal notes %v, want the one %s note", got, tc.reason)
 			}
 			if findLive(doc, "section", "data-field", "holders") != nil {

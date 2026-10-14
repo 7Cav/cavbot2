@@ -5,7 +5,7 @@
   {{with .Foxhole}}
   {{- /* Where the action blocks stack above the list, a link here reaches it in one tap. Where they sit side by side, it hides. */}}
   {{if not .ListNotice}}<p class="fx-jump"><a href="#{{.ListAnchor}}" data-field="list-jump">{{if .NoRoleView}}Go to the members with a note{{else}}Go to the holder list{{end}}</a></p>{{end}}
-  {{- /* Whatever is pending shows first: the refusal of what the manager just did, then the preview or confirmation a Foxhole action waits on, then any action running and the last report. A preview's heading carries the ID the address that opens it names, so the browser scrolls to it and focuses it. A save's result shows in the list's block, under the list's heading, where the save lands. So does a refused Approve or Clear approval's note, which shows here only while the member list notice stands in the holder list's place. */}}
+  {{- /* Whatever is pending shows first: the refusal of what the manager just did, then the preview or confirmation a Foxhole action waits on, then any action running and the last report. A preview's heading carries the ID the address that opens it names, so the browser scrolls to it and focuses it. A save's result shows in the list's block, under the list's heading, where the save lands. A refused Approve or Clear approval's note shows there too. It shows here, at the top, only while the member list notice stands in the holder list's place. */}}
   {{if .ListNotice}}{{with .ApprovalRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}{{end}}
   {{with .ActionRefusal}}<div class="note fx-refusal" role="alert" data-error="{{.Kind}}">{{.Message}}</div>{{end}}
   {{if .Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. The holder list may be out of date.</div>{{end}}
@@ -275,7 +275,7 @@
   </section>
   {{else}}
   <section class="block" data-field="holders">
-    {{- /* The selection bar's address names the list's heading. A refused Approve or Clear approval answers with the page at that address, so it opens here, with its note under the heading as the heading's description. A refused answer shows no result line, so the heading describes only the note. */}}
+    {{- /* The selection bar's address names the list's heading. A refused Approve or Clear approval answers with the page at that address, so the page opens at this heading. The refusal note sits under the heading and is its description. A refused answer shows no result line, so the heading describes only the note. */}}
     <h2 class="block-header" id="{{.ListAnchor}}" tabindex="-1"{{if .ApprovalRefusal}} aria-describedby="approval-refusal"{{else}}{{template "fx-described" .}}{{end}}>Foxhole role holders</h2>
     {{template "fx-results" .}}
     {{with .ApprovalRefusal}}<div class="block-row"><div class="note note--inline" id="approval-refusal" data-error="{{.Kind}}">{{.Message}}</div></div>{{end}}

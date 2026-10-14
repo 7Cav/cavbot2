@@ -612,9 +612,9 @@ type noteInput struct {
 // saveApprovals is POST /foxhole/approvals, the selection bar's save: one
 // service call for the button pressed, over the members selected, then a
 // redirect to the view the bar was in, opened at its list. A refused save
-// answers with the page, at the address the bar posts to, which names the
-// list's heading. An approvals save changes no Discord role and makes no
-// Discord call.
+// answers with the page itself. The bar posts to an address that names the
+// list's heading, so that page opens there. An approvals save changes no
+// Discord role and makes no Discord call.
 func (p *Panel) saveApprovals(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)

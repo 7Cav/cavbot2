@@ -618,11 +618,11 @@
    of the page, as each Foxhole preview's opener, each way to a Foxhole list
    and a hub's Edit do, names the block's heading in its address's fragment.
    So does each Hubs form's action, and the Foxhole selection bar's, since a
-   refused save answers at that address. The heading is marked tabindex="-1", so the browser scrolls to it
-   and focuses it, with or without script, and a keyboard or screen reader
-   user starts at the block rather than at the top of the page. The script
-   focuses it too, on load and when the fragment changes, for a browser that
-   only scrolls. */
+   refused save answers at that address. The heading is marked
+   tabindex="-1", so the browser scrolls to it and focuses it, with or
+   without script, and a keyboard or screen reader user starts at the block
+   rather than at the top of the page. The script focuses it too, on load
+   and when the fragment changes, for a browser that only scrolls. */
 (function () {
   'use strict';
 
