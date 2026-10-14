@@ -2,6 +2,7 @@ package panel
 
 import (
 	"fmt"
+	"net/url"
 	"slices"
 	"testing"
 
@@ -226,4 +227,24 @@ func TestCancelOnARetryWhoseEntryLeftTheChangeLogLandsOnTheChangeLog(t *testing.
 	doc, fragment := landing(t, w.b, cancel, w.b.get(cancel))
 
 	landedOnBlock(t, doc, fragment, "changes")
+}
+
+// A Retry address that doesn't say where the Retry was pressed, such as
+// one kept in the browser's history from before Retry said so, cancels as
+// if pressed in the latest report.
+func TestCancelOnARetryWhoseAddressDoesntSayWhereLandsOnTheLatestReport(t *testing.T) {
+	w := newFoxholeWorld(t)
+	failedPurge(t, w)
+	retry, err := url.Parse(attrOf(retryLink(reportBlock(t, parseHTML(t, w.b.get(foxholePath)))), "href"))
+	if err != nil {
+		t.Fatalf("Retry address: %v", err)
+	}
+	q := retry.Query()
+	q.Del(paramRetryFrom)
+	retry.RawQuery = q.Encode()
+	cancel := cancelAddress(t, pendingBlock(t, parseHTML(t, w.b.get(retry.String())), "retry-confirm"))
+
+	doc, fragment := landing(t, w.b, cancel, w.b.get(cancel))
+
+	landedOnBlock(t, doc, fragment, "report")
 }
