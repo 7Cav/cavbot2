@@ -279,3 +279,102 @@ func TestRankRolesSaveKeepsAnotherRanksUnavailableRole(t *testing.T) {
 		t.Errorf("after the second save CPL = %q and CPT = %q, want role-mp and %s, both kept", roles["CPL"], roles["CPT"], codeCPT)
 	}
 }
+
+// previewIn returns the Rank roles section's preview, or nil.
+func previewIn(t *testing.T, doc *html.Node) *html.Node {
+	t.Helper()
+	return findElement(rankRolesSection(t, doc), "", "data-field", "rank-roles-preview")
+}
+
+// previewCounts reads a preview's member count and channel count, each as
+// its data-* value carries it.
+func previewCounts(t *testing.T, preview *html.Node) (dropped, channels string) {
+	t.Helper()
+	eachElement(preview, func(n *html.Node) {
+		if v, ok := attrValue(n, "data-dropped"); ok {
+			dropped = v
+		}
+		if v, ok := attrValue(n, "data-channels"); ok {
+			channels = v
+		}
+	})
+	return dropped, channels
+}
+
+// testRankPVT is the PVT role ID of the ladder in code, as testRankSGT is
+// its SGT one.
+const testRankPVT = "899328617081864202"
+
+// withSergeantInSpawn is the test world with a member holding the code's
+// SGT role in the member list, who owns the channel their hub join spawned,
+// spawn-1, where a PVT sits with them.
+func withSergeantInSpawn(t *testing.T) *testWorld {
+	t.Helper()
+	w := newTestWorld(t, testHub())
+	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
+		Members: []commands.ListedMember{testBotMember,
+			{ID: "user-sgt", Username: "sgt", RoleIDs: []string{testRankSGT}},
+			{ID: "user-pvt", Username: "pvt", RoleIDs: []string{testRankPVT}}}})
+	w.joinAs("user-sgt", "hub-1", testRankSGT)
+	w.joinAs("user-sgt", "spawn-1", testRankSGT)
+	w.joinAs("user-pvt", "spawn-1", testRankPVT)
+	signIn(t, w.forum, w.b)
+	return w
+}
+
+// A save that would stop a member counting as a Cav member shows a preview
+// naming how many members stop and how many channels change owner, and
+// changes nothing. Its Confirm makes the save.
+func TestRankRolesSaveThatDropsACavMemberWaitsOnItsPreview(t *testing.T) {
+	w := withSergeantInSpawn(t)
+	before := readSavedState(t, w.st)
+
+	res := w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": ""}))
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 with the preview", res.StatusCode)
+	}
+	preview := previewIn(t, parseHTML(t, res))
+	if preview == nil {
+		t.Fatal("the Rank roles section shows no preview")
+	}
+	if dropped, channels := previewCounts(t, preview); dropped != "1" || channels != "1" {
+		t.Errorf("preview counts %s members and %s channels, want 1 and 1", dropped, channels)
+	}
+	if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
+		t.Errorf("the store after the preview = %+v, want it as before, %+v", after, before)
+	}
+	if owner, _ := w.runtime.Owner("spawn-1"); owner != "user-sgt" {
+		t.Errorf("Owner(spawn-1) after the preview = %q, want user-sgt still", owner)
+	}
+
+	assertRedirect(t, w.b.postForm("/rank-roles", formPosts(t, preview, "/rank-roles")), settingsPath)
+
+	if got := storedRankRoles(t, w.st).Roles["SGT"]; got != "" {
+		t.Errorf("SGT's role after Confirm = %q, want none", got)
+	}
+	if owner, _ := w.runtime.Owner("spawn-1"); owner != "user-pvt" {
+		t.Errorf("Owner(spawn-1) after Confirm = %q, want user-pvt", owner)
+	}
+}
+
+// A save that stops nobody counting as a Cav member saves straight away. So
+// does one that keeps every Cav member, and with the member list not
+// loaded, a save that takes a role off the ladder previews with the member
+// count unknown, since nothing can rule a drop out.
+func TestRankRolesSaveSkipsThePreviewOnlyWhenItDropsNobody(t *testing.T) {
+	w := withSergeantInSpawn(t)
+
+	assertRedirect(t, w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"RCT": "role-hq"})), settingsPath)
+
+	w.discord.setListStatus(commands.MemberListArriving, true)
+	res := w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"CPL": ""}))
+
+	preview := previewIn(t, parseHTML(t, res))
+	if preview == nil {
+		t.Fatalf("status %d with no preview, want the preview while the member list loads", res.StatusCode)
+	}
+	if dropped, _ := previewCounts(t, preview); dropped != "unknown" {
+		t.Errorf("preview's member count = %q, want unknown", dropped)
+	}
+}

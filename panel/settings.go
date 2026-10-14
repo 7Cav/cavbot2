@@ -51,10 +51,27 @@ const rankRoleOptions = "rank-role-options"
 type rankRolesPage struct {
 	Version string
 	Rows    []rankRow
+	// Preview is the preview a save waits on, shown above the form as
+	// posted, nil for none.
+	Preview *rankRolesPreviewView
 	// Options are the eligible roles, highest position first, which each
 	// rank's picker offers from the list under OptionsID.
 	Options   []pickerItem
 	OptionsID string
+}
+
+// rankRolesPreviewView is a preview as the section shows it: its counts,
+// and what its Confirm posts, the form as the save posted it.
+type rankRolesPreviewView struct {
+	rankRolesPreview
+	Version string
+	Fields  []rankRoleFieldValue
+}
+
+// rankRoleFieldValue is one rank's role as a preview's Confirm posts it.
+type rankRoleFieldValue struct {
+	Field  string
+	RoleID string
 }
 
 // rankRow is one rank's row: its abbreviation and its picker, holding its
@@ -165,14 +182,53 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 		page.Rows = append(page.Rows, rankRow{Abbrev: rank.Abbrev, Picker: picker})
 	}
 	page.Options = rolePicker("", "", guild, nil, nil).Candidates
+	if req.RankRolesPreview != nil && posted != nil {
+		view := &rankRolesPreviewView{rankRolesPreview: *req.RankRolesPreview, Version: posted.Version}
+		for _, rank := range commands.DefaultRankLadder().Ranks() {
+			if id := posted.Roles[rank.Abbrev]; id != "" {
+				view.Fields = append(view.Fields, rankRoleFieldValue{Field: rankRoleField(rank.Abbrev), RoleID: id})
+			}
+		}
+		page.Preview = view
+	}
 	return page, nil
 }
 
 // rankRolesInput is the Rank roles section's form as posted: the ladder's
 // version when the section loaded, and each rank's role, empty for none.
+// Confirmed is the post of a preview's Confirm.
 type rankRolesInput struct {
-	Version string
-	Roles   map[string]string
+	Version   string
+	Roles     map[string]string
+	Confirmed bool
+}
+
+// fieldConfirm is the hidden input a rank roles preview's Confirm posts.
+const fieldConfirm = "confirm"
+
+// rankRolesPreview is what a rank roles save that may stop members counting
+// as Cav members waits on (GLOSSARY.md, Preview): how many stop, and how
+// many spawned channels change owner. A handover is final, so an owner who
+// loses a channel to a mistaken save does not get it back when the admin
+// saves again.
+type rankRolesPreview struct {
+	// Dropped is how many members hold a rank role before the save and none
+	// after it, counted from the member list.
+	Dropped int
+	// Counted is false while the member list has not loaded, when Dropped
+	// is unknown.
+	Counted bool
+	// Channels is how many spawned channels change owner.
+	Channels int
+}
+
+// DroppedValue is the member count as the preview's data-dropped carries
+// it: the number, or unknown.
+func (p rankRolesPreview) DroppedValue() string {
+	if !p.Counted {
+		return "unknown"
+	}
+	return strconv.Itoa(p.Dropped)
 }
 
 // formRankRoles is the Rank roles section's form, as a refusal and a save
@@ -182,7 +238,7 @@ const formRankRoles = "rank-roles"
 // rankRolesInputOf reads the Rank roles section's form off a parsed post:
 // one role, or none, for each rank of the ladder.
 func rankRolesInputOf(r *http.Request) rankRolesInput {
-	in := rankRolesInput{Version: r.PostForm.Get(fieldVersion), Roles: map[string]string{}}
+	in := rankRolesInput{Version: r.PostForm.Get(fieldVersion), Roles: map[string]string{}, Confirmed: r.PostForm.Get(fieldConfirm) != ""}
 	for _, rank := range commands.DefaultRankLadder().Ranks() {
 		in.Roles[rank.Abbrev] = strings.TrimSpace(r.PostForm.Get(rankRoleField(rank.Abbrev)))
 	}
@@ -198,7 +254,11 @@ func (p *Panel) saveRankRoles(w http.ResponseWriter, r *http.Request, sess sessi
 	}
 	in := rankRolesInputOf(r)
 	ctx, hubs := p.saving(r)
-	saved, err := hubs.setRankRoles(ctx, in, sess.actor())
+	saved, preview, err := hubs.setRankRoles(ctx, in, sess.actor())
+	if preview != nil {
+		p.renderSettings(w, r, sess, http.StatusOK, pageRequest{RankRoles: &in, RankRolesPreview: preview})
+		return
+	}
 	if refusal, ok := asFieldError(err); ok {
 		p.renderSettingsRefused(w, r, sess, pageRequest{RankRoles: &in, Error: refusal, Refused: formRankRoles})
 		return
@@ -216,36 +276,83 @@ func (p *Panel) saveRankRoles(w http.ResponseWriter, r *http.Request, sess sessi
 // in one store write, then applies the ladder to the runtime, so every test
 // of whether a member is a Cav member reads it at once. It returns the
 // roles as stored.
-func (s *hubService) setRankRoles(ctx context.Context, in rankRolesInput, by actor) (store.RankRoles, error) {
+//
+// A save that may stop members counting as Cav members writes nothing and
+// returns its preview instead, unless it is the preview's Confirm.
+func (s *hubService) setRankRoles(ctx context.Context, in rankRolesInput, by actor) (store.RankRoles, *rankRolesPreview, error) {
 	unlock, err := s.lockSave(ctx)
 	if err != nil {
-		return store.RankRoles{}, err
+		return store.RankRoles{}, nil, err
 	}
 	defer unlock()
 	stored, err := s.deps.Store.GetRankRoles(ctx, s.deps.GuildID)
 	if err != nil {
-		return store.RankRoles{}, fmt.Errorf("%s: %w", rankRolesRead, err)
+		return store.RankRoles{}, nil, fmt.Errorf("%s: %w", rankRolesRead, err)
 	}
 	guild, err := s.readGuild(ctx)
 	if err != nil {
-		return store.RankRoles{}, err
+		return store.RankRoles{}, nil, err
 	}
 	before := commands.RankLadderOf(stored)
 	after, err := acceptedRankRoles(in.Roles, guild.info, before)
 	if err != nil {
-		return store.RankRoles{}, err
+		return store.RankRoles{}, nil, err
+	}
+	if !in.Confirmed {
+		if preview := s.rankRolesPreviewOf(before, after); preview != nil {
+			return store.RankRoles{}, preview, nil
+		}
 	}
 	entry, err := changeEntry(store.ChangeRankRoles, diffRankRoles(before, after), by)
 	if err != nil {
-		return store.RankRoles{}, err
+		return store.RankRoles{}, nil, err
 	}
 	saved := store.RankRoles{Roles: after.Roles(), Version: stored.Version}
 	if err := s.deps.Store.SaveRankRoles(ctx, s.deps.GuildID, saved, entry); err != nil {
-		return store.RankRoles{}, fmt.Errorf("write rank roles: %w", err)
+		return store.RankRoles{}, nil, fmt.Errorf("write rank roles: %w", err)
 	}
 	s.deps.Runtime.ApplyRankRoles(after)
 	saved.Version++
-	return saved, nil
+	return saved, nil, nil
+}
+
+// rankRolesPreviewOf is the preview a save from the ladder before to the
+// ladder after waits on, or nil when the save stops nobody counting as a
+// Cav member and needs none. The members are counted from the member list.
+// While it has not loaded the count is unknown, and any save that takes a
+// role off the ladder may stop someone, so it previews.
+func (s *hubService) rankRolesPreviewOf(before, after commands.RankLadder) *rankRolesPreview {
+	preview := &rankRolesPreview{Channels: s.deps.Runtime.RankRolesHandovers(after)}
+	list := s.deps.Manager.MemberList(s.deps.GuildID)
+	if list.Status != commands.MemberListComplete {
+		if !takesARoleOff(before, after) {
+			return nil
+		}
+		return preview
+	}
+	preview.Counted = true
+	for _, m := range list.Members {
+		_, was := before.SeniorRankRole(m.RoleIDs)
+		_, is := after.SeniorRankRole(m.RoleIDs)
+		if was && !is {
+			preview.Dropped++
+		}
+	}
+	if preview.Dropped == 0 {
+		return nil
+	}
+	return preview
+}
+
+// takesARoleOff reports whether a role that counts for a rank on the ladder
+// before counts for none on the ladder after.
+func takesARoleOff(before, after commands.RankLadder) bool {
+	for _, rank := range before.Ranks() {
+		if _, still := after.RankOf(rank.RoleID); rank.RoleID != "" && !still {
+			return true
+		}
+	}
+	return false
 }
 
 // acceptedRankRoles checks each rank's posted role and returns the ladder

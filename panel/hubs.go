@@ -545,9 +545,12 @@ type pageRequest struct {
 	// after a refusal. Nil shows the stored set.
 	RecordingRoles *recordingRolesInput
 	// RankRoles is the Settings page's Rank roles form as posted back after
-	// a refusal. Nil shows the stored ladder.
+	// a refusal or with its preview. Nil shows the stored ladder.
 	RankRoles *rankRolesInput
-	Error     *fieldError
+	// RankRolesPreview is the preview a rank roles save waits on, nil for
+	// none.
+	RankRolesPreview *rankRolesPreview
+	Error            *fieldError
 	// Refused is the form Error belongs to.
 	Refused string
 	// Remove names the hub whose remove preview shows. Zero shows none.

@@ -12,8 +12,9 @@
      offers the roles from the one list under OptionsID. */}}
 {{define "rank-roles"}}
   <section class="rank-roles" data-section="rank-roles">
+  {{with .RankRoles.Preview}}{{template "rank-roles-preview" .}}{{end}}
   <form method="post" action="/rank-roles#rank-roles" class="block">
-    <h2 class="block-header" id="rank-roles" tabindex="-1"{{if .RefusalFor "rank-roles"}} aria-describedby="refusal"{{end}}>Rank roles</h2>
+    <h2 class="block-header"{{if not .RankRoles.Preview}} id="rank-roles" tabindex="-1"{{end}}{{if .RefusalFor "rank-roles"}} aria-describedby="refusal"{{end}}>Rank roles</h2>
     {{with .RefusalFor "rank-roles"}}{{template "refusal" .}}{{end}}
     {{with .RankRoles}}
     <input type="hidden" name="version" value="{{.Version}}">
@@ -34,4 +35,26 @@
     {{end}}
   </form>
   </section>
+{{end}}
+
+{{- /* A rank roles save that may stop members counting as Cav members
+     waits on this (GLOSSARY.md, Preview). It carries the section's heading
+     ID, which the save's address names, so the answer opens on it. Its
+     Confirm posts the form as the save posted it. */}}
+{{define "rank-roles-preview"}}
+  <div class="block block--danger" data-field="rank-roles-preview">
+    <h2 class="block-header" id="rank-roles" tabindex="-1">Save the rank roles?</h2>
+    <div class="block-row">
+      {{- if .Counted}}<span data-dropped="{{.DroppedValue}}">{{.Dropped}}</span> {{if eq .Dropped 1}}member stops{{else}}members stop{{end}} counting as a Cav member.
+      {{- else}}<span data-dropped="{{.DroppedValue}}">Cavbot2 hasn't loaded the server's member list yet, so it can't count the members who stop counting as Cav members.</span> This save takes a role off the rank ladder, so some may.{{end}}
+      <span data-channels="{{.Channels}}">{{.Channels}}</span> spawned {{if eq .Channels 1}}channel changes{{else}}channels change{{end}} owner, and a channel's owner doesn't get it back if you save again.
+    </div>
+    <form method="post" action="/rank-roles#rank-roles" class="submit-row">
+      <input type="hidden" name="version" value="{{.Version}}">
+      <input type="hidden" name="confirm" value="1">
+      {{- range .Fields}}<input type="hidden" name="{{.Field}}" value="{{.RoleID}}">{{end}}
+      <button type="submit" class="btn btn--danger-filled" data-field="confirm">Save the rank roles</button>
+      <a class="btn" href="/settings#rank-roles" data-field="cancel">Cancel<span class="visually-hidden"> saving the rank roles</span></a>
+    </form>
+  </div>
 {{end}}

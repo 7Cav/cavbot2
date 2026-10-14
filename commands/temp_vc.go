@@ -976,48 +976,71 @@ func (t *TempVC) ApplyGuildModeratorRoles(roleIDs []string) {
 func (t *TempVC) ApplyRankRoles(ladder RankLadder) {
 	cached := t.mgr.CachedMemberRoles(t.guildID)
 	t.mu.Lock()
+	t.memberRoles = t.memberRolesWithLocked(cached)
 	t.ladder = ladder
-	for userID := range t.memberRoles {
-		if roles, ok := cached[userID]; ok {
-			t.memberRoles[userID] = roles
-		}
+	plan := t.rankHandoverPlanLocked(ladder, t.memberRoles)
+	handovers := make([]store.SpawnedChannel, 0, len(plan))
+	for _, channelID := range slices.Sorted(maps.Keys(plan)) {
+		t.setOwnerLocked(channelID, plan[channelID])
+		handovers = append(handovers, t.rowLocked(channelID, plan[channelID]))
 	}
-	handovers := t.rankHandoversLocked()
 	t.mu.Unlock()
 	for _, row := range handovers {
 		t.applyHandover(row)
 	}
 }
 
-// rankHandoversLocked applies the handover rule the way a rank roles save
-// does to every spawned channel with someone inside, and returns the rows
-// of those whose owner changed, for the caller to write off-lock with their
-// notices. A spawn in flight is left alone, since its create path writes
-// its row with the owner it decided on. A missing guild confirms nobody, so
-// nothing changes. Caller holds mu.
-func (t *TempVC) rankHandoversLocked() []store.SpawnedChannel {
+// RankRolesHandovers counts the spawned channels a save of the ladder would
+// hand over now, by the rule ApplyRankRoles applies, with the members'
+// roles re-read from the gateway state cache the same way. It changes
+// nothing. The panel's preview of a rank roles save shows the count.
+func (t *TempVC) RankRolesHandovers(ladder RankLadder) int {
+	cached := t.mgr.CachedMemberRoles(t.guildID)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.rankHandoverPlanLocked(ladder, t.memberRolesWithLocked(cached)))
+}
+
+// memberRolesWithLocked is a copy of the cached member roles with each
+// member the cache read holds taking the roles it gives. Members the
+// runtime has not seen are left out. Caller holds mu.
+func (t *TempVC) memberRolesWithLocked(cached map[string][]string) map[string][]string {
+	roles := maps.Clone(t.memberRoles)
+	for userID := range roles {
+		if fresh, ok := cached[userID]; ok {
+			roles[userID] = fresh
+		}
+	}
+	return roles
+}
+
+// rankHandoverPlanLocked applies the handover rule the way a rank roles
+// save does, with members ranked on the ladder by the roles given, to every
+// spawned channel with someone inside. It returns the owner each channel
+// whose owner changes goes to, empty for none, and changes nothing. A spawn
+// in flight is left alone, since its create path writes its row with the
+// owner it decided on. A missing guild confirms nobody, so nothing changes.
+// Caller holds mu.
+func (t *TempVC) rankHandoverPlanLocked(ladder RankLadder, roles map[string][]string) map[string]string {
 	snap := t.mgr.VoiceStates(t.guildID)
 	if !snap.Present {
 		return nil
 	}
-	var rows []store.SpawnedChannel
-	for _, channelID := range slices.Sorted(maps.Keys(t.occupants)) {
-		occ := t.occupants[channelID]
+	rank := func(userID string) int { return ladder.seniority(roles[userID]) }
+	plan := map[string]string{}
+	for channelID, occ := range t.occupants {
 		if _, inFlight := t.inFlight[channelID]; inFlight || len(occ) == 0 {
 			continue
 		}
 		current := t.owners[channelID]
-		if _, present := occ[current]; current != "" && present && t.rankLocked(current) < noRankIndex {
+		if _, present := occ[current]; current != "" && present && rank(current) < noRankIndex {
 			continue
 		}
-		elected := t.electPresentOwnerLocked(channelID, snap)
-		if elected == current {
-			continue
+		if elected := t.electPresentOwnerLocked(channelID, snap, rank); elected != current {
+			plan[channelID] = elected
 		}
-		t.setOwnerLocked(channelID, elected)
-		rows = append(rows, t.rowLocked(channelID, elected))
 	}
-	return rows
+	return plan
 }
 
 // RankLadder returns the rank ladder with the rank roles in force now: the
@@ -1658,7 +1681,7 @@ func (t *TempVC) reconcileOwnerLocked(channelID string) (row store.SpawnedChanne
 	if !snap.Present {
 		return row, false
 	}
-	elected := t.electPresentOwnerLocked(channelID, snap)
+	elected := t.electPresentOwnerLocked(channelID, snap, t.rankLocked)
 	t.setOwnerLocked(channelID, elected)
 	if elected == current {
 		return row, false
@@ -1688,12 +1711,12 @@ func (t *TempVC) rowLocked(channelID, owner string) store.SpawnedChannel {
 }
 
 // electPresentOwnerLocked runs the election over the record's occupants of
-// a channel that the snapshot confirms are inside it. The record is the only
-// candidate source, because the cache carries no rank; a member whose join
-// handler has not run yet is elected by that handler when it runs, since an
-// ownerless channel takes the first rank holder to join. A missing guild
-// confirms nobody. Caller holds mu.
-func (t *TempVC) electPresentOwnerLocked(channelID string, snap VoiceSnapshot) string {
+// a channel that the snapshot confirms are inside it, each ranked by rank.
+// The record is the only candidate source, because the cache carries no
+// rank; a member whose join handler has not run yet is elected by that
+// handler when it runs, since an ownerless channel takes the first rank
+// holder to join. A missing guild confirms nobody. Caller holds mu.
+func (t *TempVC) electPresentOwnerLocked(channelID string, snap VoiceSnapshot, rank func(userID string) int) string {
 	if !snap.Present {
 		return ""
 	}
@@ -1703,17 +1726,17 @@ func (t *TempVC) electPresentOwnerLocked(channelID string, snap VoiceSnapshot) s
 			present[uid] = struct{}{}
 		}
 	}
-	return t.electOwnerLocked(present)
+	return electOwner(present, rank)
 }
 
-// electOwnerLocked picks the occupant the handover rule names: the highest
-// rank on the ladder, then the lowest user ID. An occupant holding no rank
-// role, or whose roles no payload has carried, is not a candidate. Empty
-// means there is none. Caller holds mu.
-func (t *TempVC) electOwnerLocked(occ map[string]struct{}) string {
+// electOwner picks the occupant the handover rule names: the highest rank
+// on the ladder, as rank gives it, then the lowest user ID. An occupant
+// holding no rank role, or whose roles no payload has carried, is not a
+// candidate. Empty means there is none.
+func electOwner(occ map[string]struct{}, rankOf func(userID string) int) string {
 	best, bestRank := "", noRankIndex
 	for uid := range occ {
-		rank := t.rankLocked(uid)
+		rank := rankOf(uid)
 		if rank >= noRankIndex {
 			continue
 		}
@@ -2126,7 +2149,7 @@ func (t *TempVC) abandonSpawn(channelID string, hub store.Hub, creator string) {
 	utils.Info("Temp VC compensating delete refused, channel kept",
 		"channel_id", channelID, "user_id", creator, "hub_channel_id", hub.HubChannelID, "reason", outcome.reason())
 	t.mu.Lock()
-	elected := t.electPresentOwnerLocked(channelID, t.mgr.VoiceStates(t.guildID))
+	elected := t.electPresentOwnerLocked(channelID, t.mgr.VoiceStates(t.guildID), t.rankLocked)
 	t.setOwnerLocked(channelID, elected)
 	row := t.rowLocked(channelID, elected)
 	t.mu.Unlock()
