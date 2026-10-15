@@ -103,8 +103,8 @@ func (s *discordgoSession) voiceManager(update disgovoice.StateUpdateFunc, userI
 	return disgovoice.NewManager(update, userID, append(opts, disgovoice.WithConnCreateFunc(s.connCreate(newGateway)))...)
 }
 
-// connCreate builds each of the recorder's voice connections: disgo's own,
-// held by a recorderConn.
+// connCreate builds each of the recorder's voice connections. Each is
+// disgo's own, held by a recorderConn.
 func (s *discordgoSession) connCreate(newGateway disgovoice.GatewayCreateFunc) disgovoice.ConnCreateFunc {
 	return func(guildID, userID snowflake.ID, update disgovoice.StateUpdateFunc, remove func(), opts ...disgovoice.ConnConfigOpt) disgovoice.Conn {
 		c := &recorderConn{s: s, guildID: guildID, userID: userID, update: update}
@@ -153,18 +153,19 @@ type recorderConn struct {
 	gateway *renewableGateway
 
 	// closed is set once the recorder closes the connection, for a stop, a
-	// failed join or a shutdown, and left once the leave that close sends
+	// failed join or a shutdown. leaveSent is set once that close's leave
 	// has gone out. gaveUp is set when disgo takes the recorder out on its
-	// own: it couldn't keep the connection.
-	closed atomic.Bool
-	left   atomic.Bool
-	gaveUp atomic.Bool
+	// own, because it couldn't keep the connection.
+	closed    atomic.Bool
+	leaveSent atomic.Bool
+	gaveUp    atomic.Bool
 
 	mu sync.Mutex
-	// named is the last voice server Discord named for the call. dropped
-	// is named once disgo has thrown it away: Discord named it before the
-	// join under way started, and since the gateway last opened.
-	named, dropped *gateway.EventVoiceServerUpdate
+	// lastServer is the last voice server Discord named for the call.
+	// droppedServer is a server disgo threw away and still needs. Discord
+	// named it after the gateway last opened, but before the join under
+	// way started.
+	lastServer, droppedServer *gateway.EventVoiceServerUpdate
 }
 
 // errConnClosed is what disgo gets for a voice state update on a connection
@@ -172,7 +173,8 @@ type recorderConn struct {
 var errConnClosed = errors.New("voice: the recorder closed the connection")
 
 // Close takes the recorder out of the call and closes the connection. disgo
-// may still be waiting on a rejoin, and has it send nothing past this leave.
+// may still be waiting on a rejoin. That rejoin sends nothing after this
+// leave.
 func (c *recorderConn) Close(ctx context.Context) {
 	c.closed.Store(true)
 	c.Conn.Close(ctx)
@@ -180,43 +182,43 @@ func (c *recorderConn) Close(ctx context.Context) {
 
 // updateVoiceState is the voice state update disgo sends for the
 // connection. A join is disgo starting to connect, and a leave the
-// recorder didn't ask for is disgo giving up. A leave takes the recorder
-// out of the guild's voice channel, whichever it is in, so once the
-// recorder closes the connection only the leave of that close goes out: a
-// later one could take it out of a recording started since.
+// recorder didn't ask for is disgo giving up. Once the recorder closes the
+// connection, only the leave of that close goes out. A leave takes the
+// recorder out of whichever voice channel of the guild it is in, so a later
+// one could take it out of a recording started since.
 func (c *recorderConn) updateVoiceState(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
 	switch {
 	case c.closed.Load():
-		if channelID != nil || c.left.Swap(true) {
+		if channelID != nil || c.leaveSent.Swap(true) {
 			return errConnClosed
 		}
 	case channelID == nil:
 		c.gaveUp.Store(true)
 	default:
-		c.joining()
+		c.joinStarted()
 	}
 	return c.update(ctx, guildID, channelID, selfMute, selfDeaf)
 }
 
-// joining notes disgo starting a join, which throws away the voice server
-// disgo held. A server Discord named since the gateway last opened is the
-// one the call moved to, so it is dropped.
-func (c *recorderConn) joining() {
+// joinStarted notes disgo starting a join, which throws away the voice
+// server disgo held. A server Discord named since the gateway last opened
+// is the one the call moved to, so disgo dropped it.
+func (c *recorderConn) joinStarted() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.dropped = nil
-	if c.named != nil && !c.gateway.openedAt(*c.named) {
-		c.dropped = c.named
+	c.droppedServer = nil
+	if c.lastServer != nil && !c.gateway.openedAt(*c.lastServer) {
+		c.droppedServer = c.lastServer
 	}
 }
 
 // HandleVoiceServerUpdate hands disgo a voice server Discord named, and
-// keeps it. disgo has it from the join under way on.
+// keeps it. disgo keeps it too, unless a join starts after.
 func (c *recorderConn) HandleVoiceServerUpdate(e gateway.EventVoiceServerUpdate) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if e.GuildID == c.guildID && e.Endpoint != nil {
-		c.named, c.dropped = &e, nil
+		c.lastServer, c.droppedServer = &e, nil
 	}
 	c.Conn.HandleVoiceServerUpdate(e)
 }
@@ -232,7 +234,7 @@ func (c *recorderConn) HandleVoiceStateUpdate(e gateway.EventVoiceStateUpdate) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if dropped := c.dropped; dropped != nil {
+	if dropped := c.droppedServer; dropped != nil {
 		time.AfterFunc(answerWait, func() { c.redeliver(dropped) })
 	}
 }
@@ -240,13 +242,13 @@ func (c *recorderConn) HandleVoiceStateUpdate(e gateway.EventVoiceStateUpdate) {
 // redeliver hands disgo the voice server it dropped, unless Discord has
 // named another since or the recorder has closed the connection.
 func (c *recorderConn) redeliver(dropped *gateway.EventVoiceServerUpdate) {
-	defer utils.RecoverPanic("recorder-voice-server", "recorder", c.userID.String())
+	defer utils.RecoverPanic("recorder-voice-redeliver", "recorder", c.s.userID)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.dropped != dropped || c.closed.Load() {
+	if c.droppedServer != dropped || c.closed.Load() {
 		return
 	}
-	c.dropped = nil
+	c.droppedServer = nil
 	c.Conn.HandleVoiceServerUpdate(*dropped)
 }
 

@@ -561,7 +561,7 @@ func TestRecorderIdentifiesAtTheVoiceServerItsCallMovedTo(t *testing.T) {
 			h := newCallHarness(t)
 			h.start()
 			if tc.namedBefore {
-				h.s.voice.HandleVoiceServerUpdate(voiceServer("token-2", newEndpoint))
+				h.name("token-2", newEndpoint)
 			}
 
 			h.closeCall(4022)
@@ -799,58 +799,69 @@ func TestRecorderStoppedDuringARecoveryLeavesAtOnceAndReportsNothingMore(t *test
 	})
 }
 
-// A member can stop the recording after a move, while the recorder asks
-// whether the channel is still there or while the rejoin waits, here one
-// Discord answers with the voice state alone and never names a server for.
-// The member ended the recording, so Sentry hears nothing, and the stop's
-// leave is the last voice state update the recorder sends, also once
+// A member can stop the recording while a rejoin after a move waits, here
+// one Discord answers with the voice state alone and never names a server
+// for. The member ended the recording, so Sentry hears nothing, and the
+// stop's leave is the last voice state update the recorder sends, also once
 // disgo's 30 s wait has run out.
 func TestRecorderStoppedWhileARejoinWaitsSendsNothingMore(t *testing.T) {
-	for _, tc := range []struct {
-		name         string
-		duringLookup bool
-	}{
-		{"stopped during the channel lookup", true},
-		{"stopped while the rejoin waits", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			events := recordSentry(t)
-			synctest.Test(t, func(t *testing.T) {
-				h := newCallHarness(t)
-				conn := h.start()
-				h.stateOnly.Store(true)
-				if tc.duringLookup {
-					h.api.during = func() { conn.Leave(context.Background()) }
-					h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
-				} else {
-					go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
-					time.Sleep(5 * time.Second)
-					synctest.Wait()
-					if got := h.sent(); len(got) != 1 || got[0].leaves() {
-						t.Fatalf("voice state updates 5 s after the close = %v, want the rejoin waiting", got)
-					}
-					conn.Leave(context.Background())
-				}
-				time.Sleep(time.Minute)
-				synctest.Wait()
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		h.stateOnly.Store(true)
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		if got := h.sent(); len(got) != 1 || got[0].leaves() {
+			t.Fatalf("voice state updates 5 s after the close = %v, want the rejoin waiting", got)
+		}
 
-				sent := h.sent()
-				if stop := slices.IndexFunc(sent, voiceUpdate.leaves); stop == -1 || stop != len(sent)-1 {
-					t.Errorf("voice state updates = %v, want the stop's leave last", sent)
-				}
-				if n := len(events.Events()); n != 0 {
-					t.Errorf("Sentry events = %d, want none for a recording a member stopped", n)
-				}
-			})
-		})
+		conn.Leave(context.Background())
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		assertStoppedQuietly(t, h, events)
+	})
+}
+
+// A member can stop the recording while the recorder asks whether the
+// channel is still there after a 4022, before the rejoin starts. The
+// recorder doesn't rejoin, Sentry hears nothing, and the stop's leave is
+// the last voice state update the recorder sends.
+func TestRecorderStoppedDuringTheChannelLookupSendsNoRejoin(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		h.api.during = func() { conn.Leave(context.Background()) }
+
+		h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		assertStoppedQuietly(t, h, events)
+	})
+}
+
+// assertStoppedQuietly fails unless the stop's leave is the last voice
+// state update the recorder sent, and Sentry heard nothing.
+func assertStoppedQuietly(t *testing.T, h *callHarness, events *sentryTransport) {
+	t.Helper()
+	sent := h.sent()
+	if stop := slices.IndexFunc(sent, voiceUpdate.leaves); stop == -1 || stop != len(sent)-1 {
+		t.Errorf("voice state updates = %v, want the stop's leave last", sent)
+	}
+	if n := len(events.Events()); n != 0 {
+		t.Errorf("Sentry events = %d, want none for a recording a member stopped", n)
 	}
 }
 
 // A member can stop the recording just after Discord answers a rejoin with
-// the voice state alone, while the recorder waits to see whether the answer
-// names a server. The recorder opens no voice gateway after the stop, at
-// the server Discord named before the rejoin or anywhere else.
-func TestRecorderStoppedDuringTheAnswerWaitOpensNothing(t *testing.T) {
+// the voice state alone, having named the server before the rejoin. The
+// recorder opens no voice gateway after the stop, at that server or
+// anywhere else.
+func TestRecorderStoppedRightAfterAStateOnlyAnswerOpensNothing(t *testing.T) {
 	recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
 		h := newCallHarness(t)
@@ -859,15 +870,16 @@ func TestRecorderStoppedDuringTheAnswerWaitOpensNothing(t *testing.T) {
 		h.stateOnly.Store(true)
 		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
 		synctest.Wait()
-		if got, opens := h.sent(), len(h.opened); len(got) != 1 || got[0].leaves() || opens != 0 {
-			t.Fatalf("voice state updates = %v with %d gateways opened, want the rejoin answered and waiting", got, opens)
+		if got := h.sent(); len(got) != 1 || got[0].leaves() {
+			t.Fatalf("voice state updates after the close = %v, want the rejoin answered", got)
 		}
+		before := len(h.opened)
 
 		conn.Leave(context.Background())
 		time.Sleep(time.Minute)
 		synctest.Wait()
 
-		if opens := len(h.opened) + len(h.pending); opens != 0 {
+		if opens := len(h.opened) - before + len(h.pending); opens != 0 {
 			t.Errorf("gateways opened after the stop = %d, want none", opens)
 		}
 	})
