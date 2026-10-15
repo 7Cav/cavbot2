@@ -238,12 +238,12 @@ func (c *recorderConn) HandleVoiceStateUpdate(e gateway.EventVoiceStateUpdate) {
 }
 
 // redeliver hands disgo the voice server it dropped, unless Discord has
-// named another since.
+// named another since or the recorder has closed the connection.
 func (c *recorderConn) redeliver(dropped *gateway.EventVoiceServerUpdate) {
 	defer utils.RecoverPanic("recorder-voice-server", "recorder", c.userID.String())
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.dropped != dropped {
+	if c.dropped != dropped || c.closed.Load() {
 		return
 	}
 	c.dropped = nil

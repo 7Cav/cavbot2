@@ -846,6 +846,33 @@ func TestRecorderStoppedWhileARejoinWaitsSendsNothingMore(t *testing.T) {
 	}
 }
 
+// A member can stop the recording just after Discord answers a rejoin with
+// the voice state alone, while the recorder waits to see whether the answer
+// names a server. The recorder opens no voice gateway after the stop, at
+// the server Discord named before the rejoin or anywhere else.
+func TestRecorderStoppedDuringTheAnswerWaitOpensNothing(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		h.api.during = func() { h.name("token-3", newEndpoint) }
+		h.stateOnly.Store(true)
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		synctest.Wait()
+		if got, opens := h.sent(), len(h.opened); len(got) != 1 || got[0].leaves() || opens != 0 {
+			t.Fatalf("voice state updates = %v with %d gateways opened, want the rejoin answered and waiting", got, opens)
+		}
+
+		conn.Leave(context.Background())
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if opens := len(h.opened) + len(h.pending); opens != 0 {
+			t.Errorf("gateways opened after the stop = %d, want none", opens)
+		}
+	})
+}
+
 // A stop releases the recorder at once, so a recording can start on it in
 // the same guild while disgo still waits on the rejoin the stop abandoned.
 // A leave names no channel, so one sent when that wait runs out would take
