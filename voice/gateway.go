@@ -31,6 +31,11 @@ const closeTimeout = 5 * time.Second
 // lookupTimeout bounds the channel lookup a 4022 makes before the rejoin.
 const lookupTimeout = 5 * time.Second
 
+// answerWait is how long a join's answer has to name a voice server after
+// the recorder's voice state. Discord sends the two together when it names
+// one, and discordgo hands each event to a goroutine of its own.
+const answerWait = 250 * time.Millisecond
+
 // OpenGateway is the production Opener: a discordgo session for the recorder
 // account, open once READY has named it. A session that opened without
 // reaching READY is closed again, so a failed recorder holds no connection.
@@ -191,7 +196,8 @@ func (c *recorderConn) HandleVoiceServerUpdate(e gateway.EventVoiceServerUpdate)
 }
 
 // HandleVoiceStateUpdate hands disgo a voice state. When it is Discord's
-// answer to a join and disgo dropped the voice server, disgo gets the
+// answer to a join and disgo dropped the voice server, the answer may still
+// name another. If it names none within answerWait, disgo gets the dropped
 // server again and connects there.
 func (c *recorderConn) HandleVoiceStateUpdate(e gateway.EventVoiceStateUpdate) {
 	c.Conn.HandleVoiceStateUpdate(e)
@@ -200,11 +206,22 @@ func (c *recorderConn) HandleVoiceStateUpdate(e gateway.EventVoiceStateUpdate) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.dropped != nil {
-		server := *c.dropped
-		c.dropped = nil
-		c.Conn.HandleVoiceServerUpdate(server)
+	if dropped := c.dropped; dropped != nil {
+		time.AfterFunc(answerWait, func() { c.redeliver(dropped) })
 	}
+}
+
+// redeliver hands disgo the voice server it dropped, unless Discord has
+// named another since.
+func (c *recorderConn) redeliver(dropped *gateway.EventVoiceServerUpdate) {
+	defer utils.RecoverPanic("recorder-voice-server", "recorder", c.userID.String())
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.dropped != dropped {
+		return
+	}
+	c.dropped = nil
+	c.Conn.HandleVoiceServerUpdate(*dropped)
 }
 
 // renewableGateway is the voice gateway disgo's connection holds. It hands

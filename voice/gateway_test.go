@@ -198,6 +198,9 @@ const (
 	callRecorder = snowflake.ID(300)
 	oldEndpoint  = "c-dfw-1.discord.media:443"
 	newEndpoint  = "c-rtm-1.discord.media:443"
+	// earlyEndpoint is a voice server Discord names for a moved call
+	// before it names newEndpoint.
+	earlyEndpoint = "c-ams-1.discord.media:443"
 	// callDAVEVersion is the DAVE protocol version every voice server
 	// announces: the call is end-to-end encrypted.
 	callDAVEVersion = 1
@@ -609,6 +612,31 @@ func TestRecorderFollowsAMoveWhoseServerDiscordNamedBeforeTheRejoin(t *testing.T
 			})
 		})
 	}
+}
+
+// Discord can name one voice server before the rejoin starts and another
+// in its answer, the voice state then the server, when it moves the call
+// twice. The server named last counts: the recorder opens one gateway, and
+// opens it there.
+func TestRecorderFollowsAMoveToTheServerDiscordNamedLast(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.start()
+		h.api.during = func() { h.name("token-3", earlyEndpoint) }
+
+		h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		o := h.waitOpen()
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if o.state.Endpoint != newEndpoint || o.state.Token != "token-2" {
+			t.Errorf("gateway opened at %s with token %s, want %s with token-2, the server named last",
+				o.state.Endpoint, o.state.Token, newEndpoint)
+		}
+		if more := len(h.opened) + len(h.pending); more != 0 {
+			t.Errorf("gateways opened after the first = %d, want none", more)
+		}
+	})
 }
 
 // A 4022 also ends the call in a channel someone deleted. Discord's API says
