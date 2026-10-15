@@ -329,8 +329,11 @@ type callHarness struct {
 	// hears each open a gateway leaves waiting.
 	silent  atomic.Bool
 	pending chan struct{}
-	// answerDelay is how long Discord takes to answer a join.
+	// answerDelay is how long Discord takes to answer a join, and
+	// stateOnly has the answer carry the recorder's voice state alone, with
+	// no voice server.
 	answerDelay atomic.Int64
+	stateOnly   atomic.Bool
 
 	opened chan gatewayOpen
 	// connected is the gateway the recorder is connected through.
@@ -435,14 +438,23 @@ func (h *callHarness) updateVoiceState(ctx context.Context, guildID snowflake.ID
 }
 
 // answer is Discord's answer to the recorder joining a channel, after
-// answerDelay: its voice state, and the voice server now serving the call.
+// answerDelay: its voice state, then the voice server now serving the call
+// unless stateOnly.
 func (h *callHarness) answer(channelID snowflake.ID) {
 	time.Sleep(time.Duration(h.answerDelay.Load()))
 	h.mu.Lock()
 	serving := h.serving
 	h.mu.Unlock()
 	h.s.voice.HandleVoiceStateUpdate(recorderVoiceState(channelID))
-	h.s.voice.HandleVoiceServerUpdate(voiceServer("token-2", serving))
+	if !h.stateOnly.Load() {
+		h.name("token-2", serving)
+	}
+}
+
+// name is Discord naming the voice server at endpoint for the call, with
+// token.
+func (h *callHarness) name(token, endpoint string) {
+	h.s.voice.HandleVoiceServerUpdate(voiceServer(token, endpoint))
 }
 
 // waitOpen waits for a gateway to open and returns the open. The recorder
@@ -554,6 +566,47 @@ func TestRecorderIdentifiesAtTheVoiceServerItsCallMovedTo(t *testing.T) {
 			if o := h.waitOpen(); o.state.Endpoint != newEndpoint || !o.identified {
 				t.Errorf("gateway opened at %s with identified=%v, want an identify at %s", o.state.Endpoint, o.identified, newEndpoint)
 			}
+		})
+	}
+}
+
+// Discord can name the voice server a call moved to before the rejoin
+// starts, and then answer the rejoin with the recorder's voice state alone,
+// as it did once in 8 moves on the test guild. The recorder still
+// identifies at the server Discord named, with the token it gave, and
+// nothing reaches Sentry. That holds whether Discord named it while the old
+// gateway was still open or while the recorder asked whether the channel is
+// still there.
+func TestRecorderFollowsAMoveWhoseServerDiscordNamedBeforeTheRejoin(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		namedBefore bool
+	}{
+		{"named before the close", true},
+		{"named during the channel lookup", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := recordSentry(t)
+			synctest.Test(t, func(t *testing.T) {
+				h := newCallHarness(t)
+				h.start()
+				if tc.namedBefore {
+					h.name("token-3", newEndpoint)
+				} else {
+					h.api.during = func() { h.name("token-3", newEndpoint) }
+				}
+				h.stateOnly.Store(true)
+
+				h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+
+				if o := h.waitOpen(); o.state.Endpoint != newEndpoint || o.state.Token != "token-3" || !o.identified {
+					t.Errorf("gateway opened at %s with token %s and identified=%v, want an identify at %s with token-3",
+						o.state.Endpoint, o.state.Token, o.identified, newEndpoint)
+				}
+				if got := len(events.Events()); got != 0 {
+					t.Errorf("Sentry events = %d, want none for a call the recorder followed", got)
+				}
+			})
 		})
 	}
 }

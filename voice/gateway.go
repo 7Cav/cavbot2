@@ -10,6 +10,7 @@ import (
 
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/gateway"
 	disgovoice "github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/godave"
 	"github.com/disgoorg/snowflake/v2"
@@ -100,14 +101,27 @@ type discordgoSession struct {
 // builds each voice gateway, disgo's NewGateway outside tests, and opts
 // configure the rest.
 func (s *discordgoSession) voiceManager(update disgovoice.StateUpdateFunc, userID snowflake.ID, newGateway disgovoice.GatewayCreateFunc, opts ...disgovoice.ManagerConfigOpt) disgovoice.Manager {
-	return disgovoice.NewManager(update, userID, append(opts, disgovoice.WithConnConfigOpts(s.connOpts(newGateway)...))...)
+	return disgovoice.NewManager(update, userID, append(opts, disgovoice.WithConnCreateFunc(s.connCreate(newGateway)))...)
 }
 
-// connOpts configures every voice connection the recorder opens: the
-// recorder's own UDP connection, and a voice gateway whose close handler is
-// watched for a connection lost mid-recording or a call that moved.
-// newGateway builds the gateway, disgo's NewGateway outside tests.
-func (s *discordgoSession) connOpts(newGateway disgovoice.GatewayCreateFunc) []disgovoice.ConnConfigOpt {
+// connCreate builds each of the recorder's voice connections: disgo's own,
+// held by a recorderConn.
+func (s *discordgoSession) connCreate(newGateway disgovoice.GatewayCreateFunc) disgovoice.ConnCreateFunc {
+	return func(guildID, userID snowflake.ID, update disgovoice.StateUpdateFunc, remove func(), opts ...disgovoice.ConnConfigOpt) disgovoice.Conn {
+		c := &recorderConn{guildID: guildID, userID: userID, update: update}
+		updateVoiceState := func(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
+			return c.updateVoiceState(ctx, guildID, channelID, selfMute, selfDeaf)
+		}
+		c.Conn = disgovoice.NewConn(guildID, userID, updateVoiceState, remove, append(opts, s.connOpts(c, newGateway)...)...)
+		return c
+	}
+}
+
+// connOpts configures the voice connection c holds: the recorder's own UDP
+// connection, and a voice gateway whose close handler is watched for a
+// connection lost mid-recording or a call that moved. newGateway builds the
+// gateway, disgo's NewGateway outside tests.
+func (s *discordgoSession) connOpts(c *recorderConn, newGateway disgovoice.GatewayCreateFunc) []disgovoice.ConnConfigOpt {
 	return []disgovoice.ConnConfigOpt{
 		disgovoice.WithUDPConnCreateFunc(newUDPConn),
 		disgovoice.WithConnGatewayCreateFunc(func(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, opts ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
@@ -116,8 +130,80 @@ func (s *discordgoSession) connOpts(newGateway disgovoice.GatewayCreateFunc) []d
 				return newGateway(dave, onEvent, s.watchClose(g, onClose), opts...)
 			}
 			g.gw = g.build()
+			c.gateway = g
 			return g
 		}),
+	}
+}
+
+// recorderConn is disgo's voice connection to one guild's calls, as the
+// recorder's voice manager holds it. disgo connects only once it has both
+// the recorder's voice state and a voice server Discord named after the
+// join started, and throws away any server named before. Discord can name
+// the server a call moved to before the rejoin starts, then answer the
+// rejoin with the voice state alone. So the connection keeps the last
+// server Discord named, and hands it to disgo again when disgo threw it
+// away.
+type recorderConn struct {
+	disgovoice.Conn
+	guildID, userID snowflake.ID
+	// update is the recorder session's voice state update.
+	update  disgovoice.StateUpdateFunc
+	gateway *renewableGateway
+
+	mu sync.Mutex
+	// named is the last voice server Discord named for the call. dropped
+	// is named once disgo has thrown it away: Discord named it before the
+	// join under way started, and since the gateway last opened.
+	named, dropped *gateway.EventVoiceServerUpdate
+}
+
+// updateVoiceState is the voice state update disgo sends for the
+// connection. A join is disgo starting to connect.
+func (c *recorderConn) updateVoiceState(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
+	if channelID != nil {
+		c.joining()
+	}
+	return c.update(ctx, guildID, channelID, selfMute, selfDeaf)
+}
+
+// joining notes disgo starting a join, which throws away the voice server
+// disgo held. A server Discord named since the gateway last opened is the
+// one the call moved to, so it is dropped.
+func (c *recorderConn) joining() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.dropped = nil
+	if c.named != nil && !c.gateway.openedAt(*c.named) {
+		c.dropped = c.named
+	}
+}
+
+// HandleVoiceServerUpdate hands disgo a voice server Discord named, and
+// keeps it. disgo has it from the join under way on.
+func (c *recorderConn) HandleVoiceServerUpdate(e gateway.EventVoiceServerUpdate) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e.GuildID == c.guildID && e.Endpoint != nil {
+		c.named, c.dropped = &e, nil
+	}
+	c.Conn.HandleVoiceServerUpdate(e)
+}
+
+// HandleVoiceStateUpdate hands disgo a voice state. When it is Discord's
+// answer to a join and disgo dropped the voice server, disgo gets the
+// server again and connects there.
+func (c *recorderConn) HandleVoiceStateUpdate(e gateway.EventVoiceStateUpdate) {
+	c.Conn.HandleVoiceStateUpdate(e)
+	if e.GuildID != c.guildID || e.UserID != c.userID || e.ChannelID == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.dropped != nil {
+		server := *c.dropped
+		c.dropped = nil
+		c.Conn.HandleVoiceServerUpdate(server)
 	}
 }
 
@@ -150,6 +236,14 @@ func (g *renewableGateway) renew() {
 	defer g.mu.Unlock()
 	g.gw = g.build()
 	g.opened = false
+}
+
+// openedAt reports whether the gateway last opened at the voice server e
+// names, with its token.
+func (g *renewableGateway) openedAt(e gateway.EventVoiceServerUpdate) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.state.Endpoint == *e.Endpoint && g.state.Token == e.Token
 }
 
 // openedSinceRenew reports whether the new gateway has opened.
