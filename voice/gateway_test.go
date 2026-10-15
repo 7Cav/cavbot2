@@ -799,6 +799,38 @@ func TestRecorderStoppedDuringARecoveryLeavesAtOnceAndReportsNothingMore(t *test
 	})
 }
 
+// A member can stop the recording while a rejoin after a move waits, here
+// one Discord answers with the voice state alone and never names a server
+// for. The member ended the recording, so Sentry hears nothing, and the
+// stop's leave is the last voice state update the recorder sends, also once
+// disgo's 30 s wait has run out.
+func TestRecorderStoppedWhileARejoinWaitsSendsNothingMore(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		h.stateOnly.Store(true)
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		if got := h.sent(); len(got) != 1 || got[0].leaves() {
+			t.Fatalf("voice state updates 5 s after the close = %v, want the rejoin waiting", got)
+		}
+
+		conn.Leave(context.Background())
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		sent := h.sent()
+		if stop := slices.IndexFunc(sent, voiceUpdate.leaves); stop == -1 || stop != len(sent)-1 {
+			t.Errorf("voice state updates = %v, want the stop's leave last", sent)
+		}
+		if n := len(events.Events()); n != 0 {
+			t.Errorf("Sentry events = %d, want none for a recording a member stopped", n)
+		}
+	})
+}
+
 // eventMentions reports whether some text the Sentry event carries contains
 // want.
 func eventMentions(e *sentry.Event, want string) bool {
