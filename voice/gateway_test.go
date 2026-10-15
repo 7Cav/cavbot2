@@ -187,10 +187,10 @@ func TestRecorderCloseLeavesVoice(t *testing.T) {
 }
 
 // Discord moving a recorded call to another voice server, over disgo's own
-// voice connection built with the recorder session's connection options.
-// The test plays Discord around it: the voice gateways, the answer to each
-// voice state update the recorder sends, and the API that says whether the
-// channel is still there.
+// voice manager built as the recorder session builds it. The test plays
+// Discord around it: the voice gateways, the answer to each voice state
+// update the recorder sends, and the API that says whether the channel is
+// still there.
 
 const (
 	callGuild    = snowflake.ID(100)
@@ -313,14 +313,14 @@ func (g *answeringGateway) Close() { g.holdsConn.Store(false) }
 
 func (g *answeringGateway) CloseWithCode(int, string) { g.Close() }
 
-// callHarness is a recorder's disgo voice connection over answering
-// gateways, with Discord played around it, and a dave-go DAVE session as
-// the recorder's session gives it. The call starts at oldEndpoint.
+// callHarness is a recorder session whose disgo voice connections run over
+// answering gateways, with Discord played around them, and a dave-go DAVE
+// session as the recorder's session gives each. The call starts at
+// oldEndpoint.
 type callHarness struct {
-	t    *testing.T
-	s    *discordgoSession
-	conn disgovoice.Conn
-	api  *channelAPI
+	t   *testing.T
+	s   *discordgoSession
+	api *channelAPI
 
 	// down fails every voice state update, as the recorder's gateway being
 	// down does.
@@ -351,11 +351,9 @@ func newCallHarness(t *testing.T) *callHarness {
 	h := &callHarness{t: t, s: recorderSession(t, &fakeManager{}), api: &channelAPI{t: t},
 		opened: make(chan gatewayOpen, 64), pending: make(chan struct{}, 64), serving: oldEndpoint}
 	h.s.dg.Client = &http.Client{Transport: h.api}
-	opts := append(h.s.connOpts(h.newGateway),
-		disgovoice.WithConnDaveSessionCreateFunc(session.CreateFunc()),
-		disgovoice.WithConnDaveSessionLogger(slog.New(slog.DiscardHandler)))
-	h.conn = disgovoice.NewConn(callGuild, callRecorder, h.updateVoiceState, func() {}, opts...)
-	h.s.voice = callManager{conn: h.conn}
+	h.s.voice = h.s.voiceManager(h.updateVoiceState, callRecorder, h.newGateway,
+		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
+		disgovoice.WithDaveSessionLogger(slog.New(slog.DiscardHandler)))
 	return h
 }
 
@@ -363,15 +361,6 @@ func (h *callHarness) newGateway(dave godave.Session, onEvent disgovoice.EventHa
 	return &answeringGateway{dave: dave, onEvent: onEvent, onClose: onClose, opened: h.opened, sent: h.sentOp,
 		answers: h.answersAt, pending: h.pending}
 }
-
-// callManager is the recorder session's voice manager over the harness's
-// connection, which every join opens.
-type callManager struct {
-	disgovoice.Manager
-	conn disgovoice.Conn
-}
-
-func (m callManager) CreateConn(snowflake.ID) disgovoice.Conn { return m.conn }
 
 // answersAt reports whether the voice server at endpoint answers an open:
 // any but the one the call left, unless none answers.
@@ -405,12 +394,24 @@ func (h *callHarness) keyPackagesSent() int {
 // frames to handle.
 func (h *callHarness) record(handle func(Frame)) Conn {
 	h.t.Helper()
+	conn := h.start()
+	conn.Receive(handle)
+	return conn
+}
+
+// start has the recorder session join the channel, as a recording's start
+// does, and returns once the connection's gateway has opened. The voice
+// state updates sent count from then.
+func (h *callHarness) start() Conn {
+	h.t.Helper()
 	conn, err := h.s.Join(context.Background(), callGuild.String(), callChannel.String())
 	if err != nil {
 		h.t.Fatalf("Join: %v", err)
 	}
 	h.waitOpen()
-	conn.Receive(handle)
+	h.mu.Lock()
+	h.updates = nil
+	h.mu.Unlock()
 	return conn
 }
 
@@ -440,16 +441,8 @@ func (h *callHarness) answer(channelID snowflake.ID) {
 	h.mu.Lock()
 	serving := h.serving
 	h.mu.Unlock()
-	h.conn.HandleVoiceStateUpdate(recorderVoiceState(channelID))
-	h.conn.HandleVoiceServerUpdate(voiceServer("token-2", serving))
-}
-
-// join sends the events Discord sends once it has let the recorder into the
-// channel at the old voice server, and the connection opens its gateway
-// there.
-func (h *callHarness) join() {
-	h.conn.HandleVoiceStateUpdate(recorderVoiceState(callChannel))
-	h.conn.HandleVoiceServerUpdate(voiceServer("token-1", oldEndpoint))
+	h.s.voice.HandleVoiceStateUpdate(recorderVoiceState(channelID))
+	h.s.voice.HandleVoiceServerUpdate(voiceServer("token-2", serving))
 }
 
 // waitOpen waits for a gateway to open and returns the open. The recorder
@@ -481,7 +474,8 @@ func (h *callHarness) closeCall(code int) {
 	h.connected.onClose(h.connected, &websocket.CloseError{Code: code})
 }
 
-// sent is the voice state updates the recorder session was asked to send.
+// sent is the voice state updates the recorder session was asked to send
+// since the last start.
 func (h *callHarness) sent() []voiceUpdate {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -507,8 +501,7 @@ func voiceServer(token, endpoint string) gateway.EventVoiceServerUpdate {
 func TestRecorderReportsAVoiceConnectionDisgoGivesUpOn(t *testing.T) {
 	events := recordSentry(t)
 	h := newCallHarness(t)
-	h.join()
-	h.waitOpen()
+	h.start()
 
 	h.closeCall(4004)
 
@@ -524,8 +517,7 @@ func TestRecorderReportsAVoiceConnectionDisgoGivesUpOn(t *testing.T) {
 func TestRecorderRejoinsWhenItsCallMovesToAnotherVoiceServer(t *testing.T) {
 	events := recordSentry(t)
 	h := newCallHarness(t)
-	h.join()
-	h.waitOpen()
+	h.start()
 
 	h.closeCall(4022)
 
@@ -552,10 +544,9 @@ func TestRecorderIdentifiesAtTheVoiceServerItsCallMovedTo(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newCallHarness(t)
-			h.join()
-			h.waitOpen()
+			h.start()
 			if tc.namedBefore {
-				h.conn.HandleVoiceServerUpdate(voiceServer("token-2", newEndpoint))
+				h.s.voice.HandleVoiceServerUpdate(voiceServer("token-2", newEndpoint))
 			}
 
 			h.closeCall(4022)
@@ -572,8 +563,7 @@ func TestRecorderIdentifiesAtTheVoiceServerItsCallMovedTo(t *testing.T) {
 // the delete may not have reached the recorder's session yet.
 func TestRecorderLeavesWhenItsChannelIsDeleted(t *testing.T) {
 	h := newCallHarness(t)
-	h.join()
-	h.waitOpen()
+	h.start()
 	h.api.gone.Store(true)
 
 	h.closeCall(4022)
@@ -590,10 +580,9 @@ func TestRecorderLeavesWhenItsChannelIsDeleted(t *testing.T) {
 func TestRecorderReportsAMovedCallItCouldNotRejoin(t *testing.T) {
 	events := recordSentry(t)
 	h := newCallHarness(t)
-	h.join()
-	h.waitOpen()
+	h.start()
 	h.api.during = func() {
-		h.conn.HandleVoiceStateUpdate(gateway.EventVoiceStateUpdate{VoiceState: discord.VoiceState{
+		h.s.voice.HandleVoiceStateUpdate(gateway.EventVoiceStateUpdate{VoiceState: discord.VoiceState{
 			GuildID: callGuild, UserID: callRecorder, SessionID: "sess-1",
 		}})
 	}
@@ -615,8 +604,7 @@ func TestRecorderReportsAMovedCallItCouldNotRejoin(t *testing.T) {
 func TestRecorderReportsARejoinThatFails(t *testing.T) {
 	events := recordSentry(t)
 	h := newCallHarness(t)
-	h.join()
-	h.waitOpen()
+	h.start()
 	h.down.Store(true)
 
 	h.closeCall(4022)

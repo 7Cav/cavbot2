@@ -65,11 +65,10 @@ func OpenGateway(recorder int, token string) (GatewaySession, error) {
 	updateVoiceState := func(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
 		return s.updateVoiceState(ctx, guildID, channelID, selfMute, selfDeaf)
 	}
-	s.voice = disgovoice.NewManager(updateVoiceState, userID,
+	s.voice = s.voiceManager(updateVoiceState, userID, disgovoice.NewGateway,
 		disgovoice.WithLogger(utils.Logger),
 		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
 		disgovoice.WithDaveSessionLogger(utils.Logger),
-		disgovoice.WithConnConfigOpts(s.connOpts(disgovoice.NewGateway)...),
 	)
 	// Added after READY, once the manager exists: no voice event reaches a
 	// recorder before its first join.
@@ -94,6 +93,14 @@ type discordgoSession struct {
 
 	// watch reports a gateway outage that lasts.
 	watch *utils.GatewayWatch
+}
+
+// voiceManager builds the recorder's disgo voice manager, which every join
+// goes through. update sends the recorder's voice state updates, newGateway
+// builds each voice gateway, disgo's NewGateway outside tests, and opts
+// configure the rest.
+func (s *discordgoSession) voiceManager(update disgovoice.StateUpdateFunc, userID snowflake.ID, newGateway disgovoice.GatewayCreateFunc, opts ...disgovoice.ManagerConfigOpt) disgovoice.Manager {
+	return disgovoice.NewManager(update, userID, append(opts, disgovoice.WithConnConfigOpts(s.connOpts(newGateway)...))...)
 }
 
 // connOpts configures every voice connection the recorder opens: the
