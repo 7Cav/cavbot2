@@ -846,6 +846,32 @@ func TestRecorderStoppedWhileARejoinWaitsSendsNothingMore(t *testing.T) {
 	}
 }
 
+// A stop releases the recorder at once, so a recording can start on it in
+// the same guild while disgo still waits on the rejoin the stop abandoned.
+// A leave names no channel, so one sent when that wait runs out would take
+// the recorder out of the new recording's channel. The recorder stays in.
+func TestRecorderStartedWhileAnAbandonedRejoinWaitsStaysIn(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		h.stateOnly.Store(true)
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		conn.Leave(context.Background())
+		h.stateOnly.Store(false)
+
+		h.start()
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if left := slices.ContainsFunc(h.sent(), voiceUpdate.leaves); left {
+			t.Errorf("voice state updates after the new start = %v, want the recorder left in the channel", h.sent())
+		}
+	})
+}
+
 // eventMentions reports whether some text the Sentry event carries contains
 // want.
 func eventMentions(e *sentry.Event, want string) bool {
