@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -412,8 +413,9 @@ type foxholeChange struct {
 	Report *reportView
 }
 
-// The Foxhole page's addresses: the page, the link a busy preview gives to
-// open itself again, the note save its note form posts to, the approvals
+// The Foxhole page's addresses: the page, the link that loads it afresh,
+// which a busy preview gives to open itself again and the error page's Try
+// again follows, the note save its note form posts to, the approvals
 // save its selection bar posts to, the purge its purge confirmation starts,
 // the removal its remove preview starts, the re-add its After a war block
 // starts, and the Stop on its progress block.
@@ -572,12 +574,13 @@ func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session
 }
 
 // reopenPreview is GET /foxhole/reopen, the link a preview gives beside a
-// Confirm a running Foxhole action turned off. It redirects to the Foxhole
-// page with the link's query, which opens the same preview again, read from
-// Discord as it is then. The redirect names no fragment, so the browser
-// keeps the link's, which names the preview's heading. A link straight to
-// the preview's address would fetch nothing from a tab that shows that
-// address: the browser only scrolls to the fragment.
+// Confirm a running Foxhole action turned off, and the error page's Try
+// again after a Foxhole page failed to load. It redirects to the Foxhole
+// page with the link's query, which opens the same preview or page again,
+// read from Discord as it is then. The redirect names no fragment, so the
+// browser keeps the link's, which names the heading of the block it opens.
+// A link straight to the page's address would fetch nothing from a tab that
+// shows that address: the browser only scrolls to the fragment.
 func (p *Panel) reopenPreview(w http.ResponseWriter, r *http.Request, _ session) {
 	http.Redirect(w, r, (&url.URL{Path: foxholePath, RawQuery: r.URL.RawQuery}).String(), http.StatusSeeOther)
 }
@@ -594,7 +597,7 @@ func (p *Panel) renderFoxhole(w http.ResponseWriter, r *http.Request, sess sessi
 		return
 	}
 	if err != nil {
-		p.pageFailed(w, sess, "foxhole page", foxholeAddress(req.Query, req.Filter), err, nil)
+		p.pageFailed(w, sess, "foxhole page", req.tryAgainAddress(), err, nil)
 		return
 	}
 	if view.ListNotice != nil && view.ListNotice.Status == listNoGuild {
@@ -915,6 +918,72 @@ func (req foxholeRequest) noticeReload(reload string) string {
 		return req.selectionAddress()
 	}
 	return reload
+}
+
+// tryAgainAddress is where the error page's Try again leads when the page
+// the request asks for fails to load: that page again, by GET, with every
+// part of the request an address carries, at the heading of the block it
+// opens. A page that answers a POST opens the form or action block the POST
+// came from, and the pasted lines, the unit picked, the refusal and the
+// typed note, which came with the POST, don't come back. The address goes
+// through foxholeReopenPath, since the error page can sit at that very
+// address, and a link to it would only scroll.
+func (req foxholeRequest) tryAgainAddress() string {
+	v := viewValues(req.Query, req.Filter)
+	if req.NoteMember != "" {
+		v.Set(paramNoteMember, req.NoteMember)
+	}
+	if req.Cleared != "" {
+		v.Set(paramCleared, req.Cleared)
+	}
+	if req.Purge != "" {
+		v.Set(paramPurge, string(req.Purge))
+	}
+	if req.Remove != "" {
+		v.Set(paramRemove, string(req.Remove))
+	}
+	for _, member := range req.Selection {
+		v.Add(fieldMember, member)
+	}
+	if req.Retry.Report != 0 {
+		maps.Copy(v, req.Retry.values())
+	}
+	if req.OpenEntry != 0 {
+		v.Set(paramEntry, strconv.FormatInt(req.OpenEntry, 10))
+	}
+	for _, member := range req.Skipped {
+		v.Add(paramSkipped, member)
+	}
+	return reopenAddress((&url.URL{Path: foxholePath, RawQuery: v.Encode(), Fragment: req.landingAnchor()}).String())
+}
+
+// landingAnchor is the ID of the heading the page the request asks for
+// opens at, the one the panel's own link to that block names: the action
+// block a preview was posted from, the confirmation, preview, form or change
+// log entry the request opens, else the list a search, a filter, a
+// selection or a save's result line opens it at, else none, for the top of
+// the page.
+func (req foxholeRequest) landingAnchor() string {
+	switch {
+	case req.Paste != nil:
+		return addMembersAnchor
+	case req.Roster != nil:
+		return addRosterAnchor
+	case req.Purge != "":
+		return purgeConfirmAnchor
+	case req.Remove != "":
+		return removePreviewAnchor
+	case req.Retry.Report != 0:
+		return retryAnchor
+	case req.NoteMember != "":
+		return noteAnchor
+	case req.OpenEntry != 0:
+		return entryAnchorPrefix + strconv.FormatInt(req.OpenEntry, 10)
+	case req.Cleared != "" || len(req.Skipped) > 0 || len(req.Selection) > 0 ||
+		req.Query != "" || req.Filter != filterAll:
+		return listAnchor(req.Filter)
+	}
+	return ""
 }
 
 // memberList reads the member list through the manager seam, never

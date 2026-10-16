@@ -255,7 +255,7 @@ func reopenOf(address, what string) reopenLink {
 	return reopenLink{Href: reopenAddress(address), What: what}
 }
 
-// reopenAddress is address, a Foxhole page address with a fragment, through
+// reopenAddress is address, a Foxhole page address, through
 // foxholeReopenPath, so following it loads the page afresh even from a tab
 // that shows that address.
 func reopenAddress(address string) string {
