@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"io/fs"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -47,19 +46,19 @@ func submitDeclared(t *testing.T, b *browser, form *html.Node, header http.Heade
 	t.Helper()
 	action, _ := attrValue(form, "action")
 	method, _ := attrValue(form, "method")
+	doc := form
+	for doc.Parent != nil {
+		doc = doc.Parent
+	}
+	entries := formEntries(doc, form, nil)
 	if !strings.EqualFold(method, http.MethodPost) {
-		u, err := url.Parse(action)
-		if err != nil {
-			t.Fatalf("form action %q: %v", action, err)
-		}
-		u.RawQuery = formValues(form).Encode()
-		return b.do(http.MethodGet, u.String(), header, nil)
+		return b.do(http.MethodGet, formAddress(t, action, entries), header, nil)
 	}
 	h := http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}
 	for k, v := range header {
 		h[k] = v
 	}
-	return b.do(http.MethodPost, action, h, strings.NewReader(formValues(form).Encode()))
+	return b.do(http.MethodPost, action, h, strings.NewReader(entries.values().Encode()))
 }
 
 // regularFiles lists every regular file under a directory.

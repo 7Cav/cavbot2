@@ -3,7 +3,6 @@ package panel
 import (
 	"maps"
 	"net/http"
-	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -54,8 +53,7 @@ type pendingOpener struct {
 // waits on, run against stoppedPurge's world.
 var pendingOpeners = []pendingOpener{
 	{"purge", func(t *testing.T, w *testWorld, doc *html.Node) (string, *http.Response) {
-		action := attrOf(purgeForm(t, doc), "action")
-		return action, w.b.getForm(action, url.Values{paramPurge: {"both"}})
+		return attrOf(purgeForm(t, doc), "action"), openPurge(t, w.b, doc, "both")
 	}, []string{"purge-confirm"}},
 	{"remove", func(t *testing.T, w *testWorld, doc *html.Node) (string, *http.Response) {
 		control := attrOf(removeButton(t, doc, "internal"), "formaction")
