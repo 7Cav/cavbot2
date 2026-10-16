@@ -75,10 +75,11 @@ func (l entryList) query() string {
 }
 
 // formEntries is the entry list a browser builds when the button submitter
-// submits form, one of the page doc's, by the HTML standard's
-// "constructing the entry list". It holds the fields formPosts reads, in
-// tree order, and the submitter's name and value at the submitter's place.
-// No other button sends anything. A nil submitter presses no button.
+// submits form, one of the page doc's, as the HTML standard's
+// "constructing the entry list" orders it for the controls the panel's
+// pages use. It holds the fields formPosts reads, in tree order, and the
+// submitter's name and value at the submitter's place. No other <button>
+// sends anything. A nil submitter presses no button.
 func formEntries(doc, form, submitter *html.Node) entryList {
 	var out entryList
 	eachLiveElement(doc, func(n *html.Node) {

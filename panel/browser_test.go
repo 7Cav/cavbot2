@@ -10,7 +10,7 @@ import (
 
 // The test browser submits a GET form the way a browser does, so a test
 // that compares a link's address with a form's agrees with a browser on
-// whether the press loads the page or only scrolls (issue #714). The page
+// whether the press loads the page or only scrolls (#714). The page
 // here belongs to the test, so no panel template decides the address.
 // Chromium sends the same address for it.
 func TestAGETFormSendsItsFieldsInTheOrderABrowserDoes(t *testing.T) {

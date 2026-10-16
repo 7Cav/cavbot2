@@ -376,16 +376,9 @@ func (b *browser) post(target string) *http.Response {
 	return b.postForm(target, nil)
 }
 
-// getForm submits a GET form the way a browser does: the form's entry
-// list, in its order, replaces the query of its action, whose fragment
-// stays in the address.
-func (b *browser) getForm(action string, entries entryList) *http.Response {
-	b.t.Helper()
-	return b.get(formAddress(b.t, action, entries))
-}
-
 // formAddress is the address a GET form with the action given sends its
-// entry list to.
+// entry list to, the way a browser builds it: the list, in its order,
+// replaces the query of the action, whose fragment stays in the address.
 func formAddress(t *testing.T, action string, entries entryList) string {
 	t.Helper()
 	u, err := url.Parse(action)
@@ -427,7 +420,7 @@ func press(t *testing.T, b *browser, doc, control *html.Node) (string, *http.Res
 		if strings.EqualFold(cmp.Or(attrOf(control, "formmethod"), attrOf(form, "method")), http.MethodPost) {
 			return action, b.postForm(action, entries.values())
 		}
-		return action, b.getForm(action, entries)
+		return action, b.get(formAddress(t, action, entries))
 	}
 	t.Fatalf("the control is a <%s>, no link or button", control.Data)
 	return "", nil
