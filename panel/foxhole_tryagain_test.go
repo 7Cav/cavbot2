@@ -239,6 +239,11 @@ func TestTryAgainAfterAFoxholePostWhosePageFailsOpensTheBlockItCameFrom(t *testi
 				}
 			}
 		}},
+		{"a refused Approve with nobody ticked", func(t *testing.T, w *testWorld) (func() *http.Response, func(*testing.T, *html.Node, string)) {
+			// Only a browser without the page script sends it.
+			page := parseHTML(t, w.b.get(foxholePath))
+			return func() *http.Response { return submitSelection(t, w.b, page, opApprove) }, landedOnBlockOf("holders")
+		}},
 		{"a refused Confirm on a remove preview the selection bar opened", func(t *testing.T, w *testWorld) (func() *http.Response, func(*testing.T, *html.Node, string)) {
 			preview := removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID)))
 			// Kestrel loses External before the Confirm, so it removes nobody.

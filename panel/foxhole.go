@@ -573,6 +573,38 @@ func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session
 			Remove: remove, Selection: distinct(q[fieldMember]), Retry: retryPressOf(q), OpenEntry: entry})
 }
 
+// values are the query parameters of the page the request asks for: every
+// part of it foxholePage reads from an address, leaving out each that is
+// empty or the default.
+func (req foxholeRequest) values() url.Values {
+	v := viewValues(req.Query, req.Filter)
+	if req.NoteMember != "" {
+		v.Set(paramNoteMember, req.NoteMember)
+	}
+	if req.Cleared != "" {
+		v.Set(paramCleared, req.Cleared)
+	}
+	for _, member := range req.Skipped {
+		v.Add(paramSkipped, member)
+	}
+	if req.Purge != "" {
+		v.Set(paramPurge, string(req.Purge))
+	}
+	if req.Remove != "" {
+		v.Set(paramRemove, string(req.Remove))
+	}
+	for _, member := range req.Selection {
+		v.Add(fieldMember, member)
+	}
+	if req.Retry.Report != 0 {
+		maps.Copy(v, req.Retry.values())
+	}
+	if req.OpenEntry != 0 {
+		v.Set(paramEntry, strconv.FormatInt(req.OpenEntry, 10))
+	}
+	return v
+}
+
 // reopenPreview is GET /foxhole/reopen, the link a preview gives beside a
 // Confirm a running Foxhole action turned off, and the error page's Try
 // again after a Foxhole page failed to load. It redirects to the Foxhole
@@ -923,38 +955,17 @@ func (req foxholeRequest) noticeReload(reload string) string {
 // tryAgainAddress is where the error page's Try again leads when the page
 // the request asks for fails to load: that page again, by GET, with every
 // part of the request an address carries, at the heading of the block it
-// opens. A page that answers a POST opens the form or action block the POST
-// came from, and the pasted lines, the unit picked, the refusal and the
-// typed note, which came with the POST, don't come back. The address goes
-// through foxholeReopenPath, since the error page can sit at that very
-// address, and a link to it would only scroll.
+// opens. A page that answers a refused save opens its note form or its
+// selection, one that answers a refused Confirm of a remove preview the
+// selection bar opened opens that preview, and one that answers a preview
+// or a refused add opens the action block it was posted from. The pasted
+// lines, the unit picked, the refusal and the typed note came with the
+// POST, so they don't come back, and any other refused Foxhole action opens
+// the top of the page, as its answer did. The address goes through
+// foxholeReopenPath, since the error page can sit at that very address, and
+// a link to it would only scroll.
 func (req foxholeRequest) tryAgainAddress() string {
-	v := viewValues(req.Query, req.Filter)
-	if req.NoteMember != "" {
-		v.Set(paramNoteMember, req.NoteMember)
-	}
-	if req.Cleared != "" {
-		v.Set(paramCleared, req.Cleared)
-	}
-	if req.Purge != "" {
-		v.Set(paramPurge, string(req.Purge))
-	}
-	if req.Remove != "" {
-		v.Set(paramRemove, string(req.Remove))
-	}
-	for _, member := range req.Selection {
-		v.Add(fieldMember, member)
-	}
-	if req.Retry.Report != 0 {
-		maps.Copy(v, req.Retry.values())
-	}
-	if req.OpenEntry != 0 {
-		v.Set(paramEntry, strconv.FormatInt(req.OpenEntry, 10))
-	}
-	for _, member := range req.Skipped {
-		v.Add(paramSkipped, member)
-	}
-	return reopenAddress((&url.URL{Path: foxholePath, RawQuery: v.Encode(), Fragment: req.landingAnchor()}).String())
+	return reopenAddress((&url.URL{Path: foxholePath, RawQuery: req.values().Encode(), Fragment: req.landingAnchor()}).String())
 }
 
 // landingAnchor is the ID of the heading the page the request asks for
@@ -978,8 +989,8 @@ func (req foxholeRequest) landingAnchor() string {
 	case req.NoteMember != "":
 		return noteAnchor
 	case req.OpenEntry != 0:
-		return entryAnchorPrefix + strconv.FormatInt(req.OpenEntry, 10)
-	case req.Cleared != "" || len(req.Skipped) > 0 || len(req.Selection) > 0 ||
+		return entryAnchor(req.OpenEntry)
+	case req.Cleared != "" || len(req.Skipped) > 0 || len(req.Selection) > 0 || req.ApprovalRefusal != nil ||
 		req.Query != "" || req.Filter != filterAll:
 		return listAnchor(req.Filter)
 	}
@@ -1417,8 +1428,13 @@ const entryAnchorPrefix = "entry-"
 // the ID given open, at its summary line. The page opens the newest entry
 // on every load, and this one too.
 func entryAddress(id int64) string {
-	ref := strconv.FormatInt(id, 10)
-	return foxholePath + "?" + url.Values{paramEntry: {ref}}.Encode() + "#" + entryAnchorPrefix + ref
+	return foxholePath + "?" + url.Values{paramEntry: {strconv.FormatInt(id, 10)}}.Encode() + "#" + entryAnchor(id)
+}
+
+// entryAnchor is the ID foxhole.html gives the summary line of the change
+// log entry of the ID given.
+func entryAnchor(id int64) string {
+	return entryAnchorPrefix + strconv.FormatInt(id, 10)
 }
 
 // foxholeChanges decodes the Foxhole change log's entries for the page. An
@@ -1516,12 +1532,6 @@ func listView(matched []holderRow, query, filter string) foxholeView {
 	return page
 }
 
-// foxholeAddress is the Foxhole page's address with the search and the
-// filter, leaving out each that is the default.
-func foxholeAddress(query, filter string) string {
-	return foxholeLink(query, filter, "")
-}
-
 // The IDs the holder list's heading and the no-role view's heading carry in
 // foxhole.html. A filter link, a search, a link to the other view, a save
 // that returns to a list, a refused Approve or Clear approval and the note
@@ -1541,13 +1551,16 @@ func listAnchor(filter string) string {
 	return holderListAnchor
 }
 
-// listAddress is foxholeAddress opened at the list the filter shows.
+// listAddress is the Foxhole page's address with the search and the
+// filter, leaving out each that is the default, opened at the list the
+// filter shows.
 func listAddress(query, filter string) string {
 	return listLink(query, filter, "")
 }
 
-// foxholeURL is foxholeAddress with the note form of the member whose ID
-// is noteMember open, none when it is empty.
+// foxholeURL is the Foxhole page's address with the search and the filter,
+// leaving out each that is the default, and the note form of the member
+// whose ID is noteMember open, none when it is empty.
 func foxholeURL(query, filter, noteMember string) string {
 	return foxholeLink(query, filter, paramNoteMember, noteMember)
 }
@@ -1584,8 +1597,9 @@ func listLink(query, filter, key string, values ...string) string {
 	return foxholeLink(query, filter, key, values...) + "#" + listAnchor(filter)
 }
 
-// foxholeLink is foxholeAddress with the parameter key set to each of
-// values, left out when there are none or they are empty.
+// foxholeLink is the Foxhole page's address with the search and the
+// filter, leaving out each that is the default, and the parameter key set
+// to each of values, left out when there are none or they are empty.
 func foxholeLink(query, filter, key string, values ...string) string {
 	v := viewValues(query, filter)
 	for _, value := range values {
