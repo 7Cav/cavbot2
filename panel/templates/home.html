@@ -192,9 +192,10 @@
 {{with .Hubs.Edit}}
   <section class="narrow hub-edit" data-hub="{{.ID}}">
   {{if .Broken}}
-  <div class="block">
+  <div class="block" data-section="broken-hub">
     <h2 class="block-header" id="edit" tabindex="-1">Broken hub {{.BaseString}}</h2>
     <div class="block-row"><span class="tag tag--warn" data-field="broken">broken</span> The hub's voice channel is gone from Discord or sits outside a category, so nothing spawns. If the channel still exists, move it into a category and the hub works again. If it was deleted, remove the hub. Its settings stay until then.</div>
+    <div class="submit-row"><a class="btn" href="/#hubs" data-field="back">Back to the list</a></div>
   </div>
   {{else}}
   <form method="post" action="/hubs/{{.ID}}#edit" class="block">

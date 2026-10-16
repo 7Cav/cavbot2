@@ -473,10 +473,26 @@ func TestARefusedEditOfABrokenHubLandsOnTheBrokenHubBlock(t *testing.T) {
 // hubListBlock is the hub list's block on a page.
 var hubListBlock = sectionNamed("hub-list")
 
+// brokenHubBlock is the Broken hub block a broken hub's section shows in
+// place of its edit form.
+var brokenHubBlock = sectionNamed("broken-hub")
+
+// backLinkAddress is the address of the Back to the list link inside scope.
+func backLinkAddress(t *testing.T, scope *html.Node) string {
+	t.Helper()
+	back := findElement(scope, "a", "data-field", "back")
+	if back == nil {
+		t.Fatal("no Back to the list")
+	}
+	return attrOf(back, "href")
+}
+
 // Every link back to the hub list lands on the list's heading, not on the
 // top of the Hubs page, sections above the list: Cancel on a remove preview
-// opened from a broken hub's list row, and Back to the list on a hub's edit
-// form.
+// opened from a broken hub's list row, Back to the list on a hub's edit
+// form, and Back to the list in the Broken hub block a broken hub's page
+// shows in the form's place, whether loaded at its edit address or as the
+// answer to an edit refused because the hub broke after its form loaded.
 func TestLinksBackToTheHubListLandOnItsHeading(t *testing.T) {
 	cases := []struct {
 		name string
@@ -495,6 +511,17 @@ func TestLinksBackToTheHubListLandOnItsHeading(t *testing.T) {
 				t.Fatal("the edit form has no Back to the list")
 			}
 			return attrOf(back, "href")
+		}},
+		{"Back to the list on a broken hub's page", func(t *testing.T, w *testWorld) string {
+			w.discord.breakChannel("hub-1", true)
+			return backLinkAddress(t, brokenHubBlock(t, w, parseHTML(t, w.b.get(hubEditPage(t, w)))))
+		}},
+		{"Back to the list on the answer to an edit refused because the hub broke", func(t *testing.T, w *testWorld) string {
+			doc := parseHTML(t, w.b.get(hubEditPage(t, w)))
+			action, fields := formIn(t, doc, hubEditBlock(t, w, doc))
+			fields.Set("base_string", "Bravo Voice")
+			w.discord.breakChannel("hub-1", false)
+			return backLinkAddress(t, brokenHubBlock(t, w, parseHTML(t, w.b.postForm(action, fields))))
 		}},
 	}
 	for _, tc := range cases {
