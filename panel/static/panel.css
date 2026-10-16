@@ -19,14 +19,16 @@
    scrollbars, select popups and the form controls it renders. --line-strong
    is the panel's own token, not the forum's. A field draws its edge in it,
    which AA wants at 3:1, and a neutral notice its stripe. It is 3.52:1 on
-   --bg, 3.36:1 on --surface, 3.23:1 on --surface-2 and 3.02:1 on
-   --surface-3. */
+   --bg, 3.36:1 on --surface, 3.23:1 on --surface-2, 3.20:1 on --field and
+   3.02:1 on --surface-3. --gold-tint is the forum's hover fill: a gold
+   label on it is 7.81:1 or more over every surface. */
 :root {
   color-scheme: dark;
   --bg: #121212;
   --surface: #171717;
   --surface-2: #1b1b1b;
   --surface-3: #212121;
+  --field: #1c1c1c;
   --line: #2b2b2b;
   --line-2: #353535;
   --line-hi: #4d4d4d;
@@ -37,13 +39,14 @@
   --gold: #ebc729;
   --gold-hi: #edcd40;
   --gold-lo: #e5bf15;
+  --gold-tint: rgba(235, 199, 41, .1);
   --btn: #2e2e2e;
   --btn-hi: #424242;
   --btn-edge-d: #212121;
   --btn-edge-l: #3b3b3b;
   --danger-hi: #c84448;
   --danger-lo: #b3393d;
-  --ok: #4f8a4f;
+  --ok: #509652;
   --radius: 3px;
   --sans: 'Roboto', 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif;
 }
@@ -60,7 +63,8 @@ a:hover { color: var(--gold-hi); }
    checkboxes included, rather than the browser's blue. Gold is 9.76:1 or
    more on every surface. */
 :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-/* Muted text, 5.64:1 on a field's --bg, where the browser's grey is 4.07:1. */
+/* Muted text, 5.13:1 on a field and 4.85:1 on a focused one, where the
+   forum's faint grey is 2.15:1. */
 ::placeholder { color: var(--text-mute); opacity: 1; }
 h1, h2, h3 { margin: 0; color: var(--text-hi); font-weight: 400; }
 p { margin: 0 0 10px; }
@@ -68,20 +72,22 @@ p:last-child { margin-bottom: 0; }
 form { margin: 0; }
 img { max-width: 100%; }
 
-/* Buttons, as the forum draws them. */
+/* Buttons, as the forum draws them. Under the pointer a default or gold
+   button keeps its bevel and turns to a gold label on the gold tint, the
+   7Cav theme's hover over stock XenForo's. The danger buttons are the
+   panel's own and fill red instead. */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: .5em;
-  padding: 8px 14px; font: inherit; font-size: 15px; line-height: 1.4;
+  padding: 8px 10px; font: inherit; font-size: 15px; line-height: 1.4;
   color: #fff; background: var(--btn);
   border: 1px solid; border-color: var(--btn-edge-d) var(--btn-edge-l) var(--btn-edge-l) var(--btn-edge-d);
   border-radius: var(--radius); cursor: pointer; text-decoration: none; white-space: nowrap;
-  transition: background-color .075s ease;
+  transition: background-color .15s, border-color .15s, color .15s;
 }
-.btn:hover { background: var(--btn-hi); color: #fff; }
+.btn:hover { background: var(--gold-tint); color: var(--gold); }
 .btn:active { transform: translateY(1px); }
 .btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .btn--cta { color: #000; background: var(--gold); border-color: var(--gold-lo) var(--gold-hi) var(--gold-hi) var(--gold-lo); }
-.btn--cta:hover { background: #eed14e; color: #000; }
 .btn--danger { border-color: var(--danger-hi); color: #f1c9cb; }
 .btn--danger:hover { background: var(--danger-hi); color: #fff; }
 /* The filled danger button is a danger confirm's Confirm, below. */
@@ -168,16 +174,20 @@ h2[tabindex="-1"]:focus { outline: none; }
    phone. */
 .hub-edit { overflow-wrap: anywhere; }
 
-/* Form fields, as the forum draws them. */
+/* Form fields, as the forum draws them: body text on --field with 12px of
+   padding all round, stepping up to --surface-3 on focus. The edge and the
+   gold focus ring are AA's, since the forum's edge is 1.20:1 against its
+   field and its focus is only that step up. Under 568px, below, a field's
+   text is 16px, as on the forum, so a phone doesn't zoom in on a tap. */
 .field { display: block; }
 .field-label { display: block; color: var(--text-hi); font-weight: 500; margin-bottom: 6px; }
 .field-hint { display: block; font-size: 13px; color: var(--text-mute); margin-top: 6px; }
 .field input, .field select, .field textarea {
-  display: block; width: 100%; padding: 8px 10px; font: inherit; color: var(--text-hi);
-  background: var(--bg); border: 1px solid var(--line-strong); border-radius: var(--radius);
+  display: block; width: 100%; padding: 12px; font: inherit; color: var(--text);
+  background: var(--field); border: 1px solid var(--line-strong); border-radius: var(--radius);
 }
 .field textarea { resize: vertical; min-height: 7em; }
-.field input:focus, .field select:focus, .field textarea:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); }
+.field input:focus, .field select:focus, .field textarea:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); background: var(--surface-3); }
 .field input[type=hidden] { display: none; }
 .check { display: block; padding: 4px 0; color: var(--text-hi); }
 .check input { width: auto; display: inline; margin: 0 6px 0 0; vertical-align: middle; accent-color: var(--gold); }
@@ -228,10 +238,10 @@ h2[tabindex="-1"]:focus { outline: none; }
 .dot--none { background: var(--line-hi); }
 .search { margin-top: 8px; max-width: 420px; }
 .search-input {
-  display: block; width: 100%; padding: 8px 10px; font: inherit; color: var(--text-hi);
-  background: var(--bg); border: 1px solid var(--line-strong); border-radius: var(--radius) var(--radius) 0 0;
+  display: block; width: 100%; padding: 12px; font: inherit; color: var(--text);
+  background: var(--field); border: 1px solid var(--line-strong); border-radius: var(--radius) var(--radius) 0 0;
 }
-.search-input:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); }
+.search-input:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); background: var(--surface-3); }
 .search-list {
   list-style: none; margin: 0; padding: 4px 0; max-height: 330px; overflow-y: auto;
   background: var(--surface-2); border: 1px solid var(--line-strong); border-top: 0; border-radius: 0 0 var(--radius) var(--radius);
@@ -497,14 +507,20 @@ h2[tabindex="-1"]:focus { outline: none; }
   .rail .foot a { padding: 8px 0; }
   .rail .ver { display: none; }
   /* The Foxhole search box keeps room for its whole hint, the placeholder in
-     foxhole.html's fx-toolbar. That is 185px of text in 15px Roboto, and
-     with 20px of padding and 2px of border it fits in 14em, 210px, with 3px
-     to spare. A longer hint needs a wider box. The Search button drops under
-     the box on a screen too narrow for both, under about 340px. */
+     foxhole.html's fx-toolbar. That is 185px of text in 15px Roboto. With
+     24px of padding, 2px of border and Chrome's clear button, which takes
+     about 15px even while hidden, the box needs 226px, and 15.25em is 229px.
+     Under 568px the text is 16px, the box needs 238px, and 15.25em is 244px.
+     A longer hint needs a wider box. The Search button drops under the box
+     on a screen too narrow for both, under about 374px. */
   .fx-searchform { flex-wrap: wrap; }
-  .fx-search { min-width: 14em; }
+  .fx-search { min-width: 15.25em; }
   .change-fields > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .body { padding: 10px 16px 40px; }
+}
+
+@media (max-width: 568px) {
+  .field input, .field select, .field textarea, .search-input { font-size: 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

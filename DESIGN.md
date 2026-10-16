@@ -6,6 +6,7 @@ colors:
   surface: "#171717"
   surface-2: "#1b1b1b"
   surface-3: "#212121"
+  field: "#1c1c1c"
   line: "#2b2b2b"
   line-2: "#353535"
   line-hi: "#4d4d4d"
@@ -16,7 +17,7 @@ colors:
   gold: "#ebc729"
   gold-hi: "#edcd40"
   gold-lo: "#e5bf15"
-  gold-hover: "#eed14e"
+  gold-tint: "rgba(235, 199, 41, 0.1)"
   btn: "#2e2e2e"
   btn-hi: "#424242"
   btn-edge-d: "#212121"
@@ -24,7 +25,7 @@ colors:
   danger-hi: "#c84448"
   danger-lo: "#b3393d"
   danger-text: "#f1c9cb"
-  ok: "#4f8a4f"
+  ok: "#509652"
   ok-text: "#cfe5cf"
   on-fill: "#ffffff"
   on-gold: "#000000"
@@ -101,23 +102,25 @@ components:
     textColor: "{colors.on-fill}"
     typography: "{typography.body}"
     rounded: "{rounded.base}"
-    padding: "8px 14px"
+    padding: "8px 10px"
   button-hover:
-    backgroundColor: "{colors.btn-hi}"
+    backgroundColor: "{colors.gold-tint}"
+    textColor: "{colors.gold}"
   button-cta:
     backgroundColor: "{colors.gold}"
     textColor: "{colors.on-gold}"
     typography: "{typography.body}"
     rounded: "{rounded.base}"
-    padding: "8px 14px"
+    padding: "8px 10px"
   button-cta-hover:
-    backgroundColor: "{colors.gold-hover}"
+    backgroundColor: "{colors.gold-tint}"
+    textColor: "{colors.gold}"
   button-danger:
     backgroundColor: "{colors.btn}"
     textColor: "{colors.danger-text}"
     typography: "{typography.body}"
     rounded: "{rounded.base}"
-    padding: "8px 14px"
+    padding: "8px 10px"
   button-danger-hover:
     backgroundColor: "{colors.danger-hi}"
     textColor: "{colors.on-fill}"
@@ -126,7 +129,7 @@ components:
     textColor: "{colors.on-fill}"
     typography: "{typography.body}"
     rounded: "{rounded.base}"
-    padding: "8px 14px"
+    padding: "8px 10px"
   button-danger-filled-hover:
     backgroundColor: "{colors.danger-lo}"
   button-small:
@@ -156,11 +159,13 @@ components:
     rounded: "{rounded.base}"
     padding: "12px 14px"
   field-input:
-    backgroundColor: "{colors.bg}"
-    textColor: "{colors.text-hi}"
+    backgroundColor: "{colors.field}"
+    textColor: "{colors.text}"
     typography: "{typography.body}"
     rounded: "{rounded.base}"
-    padding: "8px 10px"
+    padding: "12px"
+  field-input-focus:
+    backgroundColor: "{colors.surface-3}"
   field-label:
     textColor: "{colors.text-hi}"
     typography: "{typography.body-strong}"
@@ -229,7 +234,7 @@ components:
 
 The panel is a back room of 7cav.us. Someone who signs in through the forum, or taps a recording link in Discord, lands on the same charcoal blocks, the same gold rule under each header and the same Roboto they just left. The look is the forum's stylesheet as it stood on 2026-09-17, and it is frozen. PRODUCT.md owns that commitment and the short list of places the panel may depart from it. This file records how the look is built, so a new page matches it without guessing.
 
-Plain, dense, dependable. Every page is a title, a one-line description and a stack of blocks beside a 240px rail, on a near-black ground where the forum's night-map image shows faintly at the top. The Hubs and Foxhole pages pack tables, forms and change logs at 14px and 15px, because panel admins and Foxhole managers use them at a desk and know the words. The Recordings page is laid out for a phone first, because its link arrives in Discord. Nothing moves except a button. Its fill changes in 75ms and it sinks 1px when pressed.
+Plain, dense, dependable. Every page is a title, a one-line description and a stack of blocks beside a 240px rail, on a near-black ground where the forum's night-map image shows faintly at the top. The Hubs and Foxhole pages pack tables, forms and change logs at 14px and 15px, because panel admins and Foxhole managers use them at a desk and know the words. The Recordings page is laid out for a phone first, because its link arrives in Discord. Nothing moves except a button. Its colours change in 150ms and it sinks 1px when pressed.
 
 Issue #288 rejected two looks: a centred sign-in gate over the map with Teko display type, and a split-screen sign-in with Teko titles. Neither comes back.
 
@@ -249,7 +254,7 @@ A grey ladder from near-black to near-white, one gold accent, and a red and a gr
 - **Cavalry Gold** (#ebc729): the patch yellow in the logo and the forum's accent. It draws the rule under every block header, links, the focus ring, the selected rail item and filter link, an approved Foxholer's tag, and the fill of the one forward button in a row of actions. At 10.87:1 on a block it is safe as text.
 - **Gold Highlight** (#edcd40): the light bevel edges of the gold button, and a link under the pointer.
 - **Gold Shade** (#e5bf15): the dark bevel edges of the gold button, the approved tag's edge, and the border of a block that waits on a Confirm or shows a running Foxhole action.
-- **Gold Hover** (#eed14e): the gold button's fill under the pointer.
+- **Gold Tint** (rgba(235, 199, 41, 0.1)): the fill of a default or gold button under the pointer, which is the 7Cav theme's hover over stock XenForo's. The label on it turns gold, at 7.81:1 or more over every surface.
 
 ### Secondary
 - **Refusal Red** (#c84448): the stripe on a refusal notice, the edge of a danger button and a red tag, the border and header rule of a danger confirm, and the fill of its Confirm. It is 3.74:1 on a block, so it never carries text. It appears as a line, or as a fill under white text at 4.8:1.
@@ -257,26 +262,28 @@ A grey ladder from near-black to near-white, one gold accent, and a red and a gr
 - **Blush** (#f1c9cb): text on a red-edged part, the danger button's label and a red tag's words. 11.92:1 on a block.
 
 ### Tertiary
-- **Done Green** (#4f8a4f): the stripe on a result notice ("Saved.", "You're signed out.") and the edge of an "enabled" or "ready" tag. At 4.34:1 it is a line only.
+- **Done Green** (#509652): the forum's success stripe. It marks a result notice ("Saved.", "You're signed out.") and edges an "enabled" or "ready" tag. It is 4.97:1 on a block and stays a line.
 - **Mint** (#cfe5cf): the words inside a green-edged tag.
 
 ### Neutral
-- **Night Ground** (#121212): the page behind everything, and the well of every text field.
+- **Night Ground** (#121212): the page behind everything.
 - **Block Charcoal** (#171717): blocks, notices and the rail.
 - **Header Charcoal** (#1b1b1b): block headers and the picker's search list.
-- **Raised Charcoal** (#212121): the selected rail item, a rail item, a holder row or the folded report line under the pointer, a picker tag, the sticky selection bar, the search option Enter would choose.
+- **Field Charcoal** (#1c1c1c): the well of every text field and search box, as on the forum.
+- **Raised Charcoal** (#212121): the selected rail item, a rail item, a holder row or the folded report line under the pointer, a picker tag, the sticky selection bar, the search option Enter would choose, a field with focus.
 - **Seam** (#2b2b2b): block edges and the dividers between rows.
 - **Strong Seam** (#353535): the line above a submit row, a plain tag's edge, the divider before the no-role view link, and the rule under the holder list's group of selected members a search or a filter hides.
 - **Bevel Highlight** (#4d4d4d): the one-pixel highlight along a block header's top, a disabled button's edge, a role with no colour.
-- **Field Edge** (#6b6b6b): the border of every text field and search box, and the stripe of a neutral notice. The panel added it, since the forum's edges miss AA's 3:1. It measures 3.52:1 on the ground and 3.02:1 on Raised Charcoal.
-- **Bright Text** (#f1f1f1): headings, names, values, field input. 15.87:1 on a block.
-- **Body Grey** (#a1a1a1): running text. 6.94:1 on a block.
-- **Muted Grey** (#8d8d8d): hints, times, counts, column headers, placeholders. 5.4:1 on a block.
-- **Button Grey** (#2e2e2e) and **Button Hover** (#424242): the default button's fill at rest and under the pointer, with bevel edges of #212121 and #3b3b3b.
+- **Field Edge** (#6b6b6b): the border of every text field and search box, and the stripe of a neutral notice. The panel added it, since the forum's field edge is 1.20:1 against its field. It measures 3.52:1 on the ground, 3.20:1 on Field Charcoal and 3.02:1 on Raised Charcoal.
+- **Bright Text** (#f1f1f1): headings, names, values. 15.87:1 on a block.
+- **Body Grey** (#a1a1a1): running text and what a field holds. 6.94:1 on a block, 6.23:1 in a field with focus.
+- **Muted Grey** (#8d8d8d): hints, times, counts, column headers, placeholders. 5.4:1 on a block, 4.85:1 in a field with focus.
+- **Button Grey** (#2e2e2e): the default button's fill, with bevel edges of #212121 and #3b3b3b.
+- **Lifted Grey** (#424242): a picker tag's × under the pointer.
 - **White** (#ffffff) and **Black** (#000000): labels on the grey and red fills, and the label on gold.
 
 ### Named Rules
-**The Lines Not Fills Rule.** Colour comes as a line, an edge, a stripe or text. Gold fills only the forward button in a row of actions. Red fills only a danger confirm's Confirm, and a danger button while the pointer is on it. Nothing else gets a coloured background.
+**The Lines Not Fills Rule.** Colour comes as a line, an edge, a stripe or text. Gold fills only the forward button in a row of actions, and the Gold Tint sits behind a default or gold button while the pointer is on it. Red fills only a danger confirm's Confirm, and a danger button while the pointer is on it. Nothing else gets a coloured background.
 
 **The Red Means Refused Rule.** Red marks a refusal or a removal and nothing else. A notice that refuses nothing, such as an ended session, takes the grey stripe. A result takes the green one.
 
@@ -345,8 +352,8 @@ Lines come in three weights. 1px draws an edge or a divider. 2px draws a header 
 ### Buttons
 Forum-issue hardware: plain, bevelled, sure.
 - **Shape.** 3px corners and the forum's two-tone bevel, a 1px edge that is dark on the top and left and light on the bottom and right.
-- **Default.** Button Grey with a white label, 8px by 14px, 15px type. The fill steps to Button Hover in 75ms. A press moves the button down 1px.
-- **Gold.** The forward action of a form or a row of actions: Save, Create, Sign in, Preview, Download the mix. Black label on gold, gold bevel. A row of actions has at most one.
+- **Default.** Button Grey with a white label, 8px by 10px, 15px type. Under the pointer it keeps its bevel, and in 150ms the label turns gold on the Gold Tint, as on the forum. A press moves the button down 1px.
+- **Gold.** The forward action of a form or a row of actions: Save, Create, Sign in, Preview, Download the mix. Black label on gold, gold bevel. Under the pointer it takes the default's hover and keeps its gold bevel, so the fill gives way to the tint. A row of actions has at most one.
 - **Danger.** Red edge, blush label, grey fill, and a red fill with a white label under the pointer. It starts a removal, which then waits on a danger confirm, or stops a running Foxhole action. It never deletes anything by itself.
 - **Danger filled.** The Confirm inside a danger confirm, and nowhere else. White label on red, with deep-red bevel and hover.
 - **Small.** 4px by 10px at 13px, for the picker's add button, row actions in a table and the Foxhole note's Save.
@@ -373,8 +380,8 @@ Forum-issue hardware: plain, bevelled, sure.
 - **Variants.** A red stripe is a refusal, and it is the default. A Field Edge grey stripe is a notice that refuses nothing, such as an ended session or a lost connection to Discord. A green stripe is a result. Inside a block row, a notice drops its bottom margin.
 
 ### Inputs / Fields
-- **Style.** A Night Ground well, a 1px Field Edge border, 3px corners, 8px by 10px, bright 15px text and Muted Grey placeholder. The label sits above at 15px/500 with a 6px gap, and the hint below at 13px muted.
-- **Focus.** The border turns gold, and a 2px gold outline sits 1px outside it.
+- **Style.** A Field Charcoal well, a 1px Field Edge border, 3px corners, 12px padding all round, Body Grey 15px text and Muted Grey placeholder. Under 568px the text is 16px, as on the forum, so a phone doesn't zoom in when someone taps the field. The label sits above at 15px/500 with a 6px gap, and the hint below at 13px muted.
+- **Focus.** The well steps up to Raised Charcoal, as on the forum. The border turns gold, and a 2px gold outline sits 1px outside it.
 - **Checkboxes.** Native, with a gold accent colour.
 - **Error.** Fields have no red state. A refusal notice at the top of the block says what was refused and that nothing changed.
 
@@ -410,8 +417,8 @@ Each entry is a disclosure folded to one line: a drawn chevron, the forum user's
 - **Don't** add a display face such as Teko, or load a font, image or script from a third party.
 - **Don't** centre a sign-in gate over the map or split the sign-in screen in two. Issue #288 rejected both.
 - **Don't** add drop shadows, gradients, glows or blur.
-- **Don't** fill anything with gold, red or green except the gold forward button and the red Confirm.
+- **Don't** fill anything with gold, red or green except the gold forward button, the red Confirm and the Gold Tint under the pointer.
 - **Don't** use red for anything that isn't a refusal or a removal.
 - **Don't** show a state by colour alone.
 - **Don't** round a corner past 3px or give anything fully rounded ends.
-- **Don't** add motion beyond the 75ms button fill and the 1px press. Under reduced motion the stylesheet drops every transition, so the fill changes at once.
+- **Don't** add motion beyond the 150ms change of a button's colours and the 1px press. Under reduced motion the stylesheet drops every transition, so the colours change at once.
