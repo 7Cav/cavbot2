@@ -196,6 +196,13 @@
       if (row && !row.hidden) { choose(row); }
     });
 
+    // The list's tabindex keeps it out of the Tab order, but it also lets a
+    // press on the list's scrollbar focus it. There typing filters nothing
+    // and the arrow keys only scroll, so focus goes back to the search box.
+    // A press on a row focuses the row, not the list, so the row's click
+    // still chooses it (#717).
+    list.addEventListener('focus', function () { input.focus(); });
+
     tags.addEventListener('click', function (e) {
       var remove = e.target.closest('[data-remove]');
       if (!remove) { return; }
