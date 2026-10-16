@@ -105,8 +105,9 @@ func TestMemberListNoticeOfAPageLoadReloadsNoSelection(t *testing.T) {
 	}
 }
 
-// A filter link the page script carried the selection through opens an
-// address that names members. While the member list is partial, that page
+// A filter link the page script carries the selection through opens an
+// address that names the search, the filter and the members. This test
+// loads such an address by hand. While the member list is partial, the page
 // shows the member list notice. Once the list is complete, the notice's
 // Reload opens the holder list at its heading under the same search and
 // filter. Ash is ticked among the matching rows, and Kestrel, whom the
@@ -114,7 +115,8 @@ func TestMemberListNoticeOfAPageLoadReloadsNoSelection(t *testing.T) {
 func TestMemberListNoticeOfAPageLoadReloadsToTheSelectionItsAddressNames(t *testing.T) {
 	w := newFoxholeWorld(t)
 	w.discord.setMemberList(arrivingList)
-	address := foxholePath + "?q=r&filter=internal&member=" + memberAsh.ID + "&member=" + memberKestrel.ID + "#" + holderListAnchor
+	address := foxholePath + "?" + paramQuery + "=r&" + paramFilter + "=internal&" +
+		fieldMember + "=" + memberAsh.ID + "&" + fieldMember + "=" + memberKestrel.ID + "#" + holderListAnchor
 	reload := noticeReload(t, parseHTML(t, w.b.get(address)))
 	setMembersWithVanceOnInternal(w)
 

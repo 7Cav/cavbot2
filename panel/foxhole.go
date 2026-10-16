@@ -173,9 +173,10 @@ type listNotice struct {
 	// refusal.
 	RetryIn int
 	// Reload is the address the Reload link loads, and the page's script
-	// loads in the background: the view's Reload, or, on a page answering a
-	// refused selection bar action or at an address that names members, the
-	// address that brings the selection back once the list has arrived.
+	// loads in the background. It is the view's Reload on most pages. A page
+	// that answers a refused selection bar action, or whose address names
+	// members, gets the address that brings the selection back once the list
+	// has arrived.
 	Reload string
 }
 
@@ -936,15 +937,16 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 
 // noticeReload is the address the member list notice's Reload loads on the
 // page the request asks for, whose own Reload is reload. A page that
-// answers a removal refused for the partial list, its preview opened or
-// its Confirm pressed, reloads to that preview, and one that answers a
-// refused Approve or Clear approval to the holder list with the selection
-// ticked. So does a page load whose address names members. The notice
-// page renders no boxes, so those members are the whole selection. Any
-// other page reloads to reload. The preview's address, and the selection's
-// on a page load, go through foxholeReopenPath. The tab may show that very
-// address, as Cancel on a remove preview leaves it, and a link to the
-// address a tab shows only scrolls.
+// answers a removal refused for the partial list, its preview opened or its
+// Confirm pressed, reloads to that preview, and one that answers a refused
+// Approve or Clear approval to the holder list with the selection ticked. A
+// page load whose address names members reloads to the holder list with
+// those members ticked too. The notice page renders no boxes, so those
+// members are the whole selection. Any other page reloads to reload. The
+// preview's address, and the selection's on a page load, go through
+// foxholeReopenPath. The tab may show that very address, as Cancel on a
+// remove preview leaves it, and a link to the address a tab shows only
+// scrolls.
 func (req foxholeRequest) noticeReload(reload string) string {
 	switch {
 	case req.Remove != "":
