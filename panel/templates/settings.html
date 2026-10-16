@@ -24,13 +24,13 @@
     {{with .RankRoles}}
     <input type="hidden" name="version" value="{{.Version}}">
     <div class="block-row field-hint" id="rank-roles-hint">A member holding a rank's role counts as a Cav member of that rank. Each rank has one role or none, and a role counts for one rank at most. Members is how many members hold each rank's saved role.</div>
-    <div class="scroll"><table class="ranklist" aria-describedby="rank-roles-hint">
+    <div class="scroll"><table class="hublist ranklist" aria-describedby="rank-roles-hint">
       <thead><tr><th>Rank</th><th>Rank role</th><th class="num">Members</th></tr></thead>
       <tbody>
       {{range .Rows}}
         <tr data-rank="{{.Abbrev}}">
           <th scope="row" class="rank">{{.Abbrev}}</th>
-          <td class="rank-role">{{if not .Picker.Tags}}<span class="off rank-role-none" data-field="no-role">No role</span>{{end}}{{template "picker" .Picker}}</td>
+          <td><div class="rank-role">{{if not .Picker.Tags}}<span class="off rank-role-none" data-field="no-role">No role</span>{{end}}{{template "picker" .Picker}}</div></td>
           <td class="num">{{if .HasRole}}<span data-holders="{{.Holders}}">{{if .HoldersKnown}}{{.Holders}}{{else}}<span class="off">unknown</span>{{end}}</span>{{end}}</td>
         </tr>
       {{end}}

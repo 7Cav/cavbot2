@@ -185,9 +185,33 @@ h2[tabindex="-1"]:focus { outline: none; }
    role count. */
 .tags { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .tags:empty { margin: 0; }
-/* A rank with no rank role says so until its picker holds a tag. */
+/* The rank list on the Settings page (#680, #737) is the hub list's table
+   at the Foxhole list's tighter spacing, since the ladder runs to 29 ranks.
+   It has no minimum width, so it fits a phone. Each rank's abbreviation
+   heads its row in bright text, as a hub's name does. The rank and the
+   count take the width they need, and the role takes the rest. */
+.ranklist { min-width: 0; }
+.ranklist thead th { padding: 8px 12px; }
+.ranklist tbody th, .ranklist td { padding: 7px 12px; vertical-align: baseline; }
+.ranklist tbody th { font-size: 14px; font-weight: 500; color: var(--text-hi); text-transform: none; letter-spacing: normal; }
+.ranklist tbody tr:last-child th { border-bottom: 0; }
+.ranklist .rank, .ranklist .num { width: 1%; white-space: nowrap; }
+/* A rank's role and the button that changes it share one line, and the
+   search opens on the line below. The picker's own box steps aside, so its
+   parts line up with "No role". The buttons line up down the right of the
+   column whatever each role's name, and the rank and its count sit on the
+   role's line, open search or not. A rank with no rank role says so until
+   its picker holds a tag. A role the server lacks shows as its ID, which
+   breaks where it must, so the list still fits a phone. */
+.rank-role { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.rank-role > .picker { display: contents; }
+.rank-role [data-add] { margin-left: auto; }
+.rank-role .tags, .rank-role .tag--pick { min-width: 0; }
+.rank-role .tag--pick [data-label] { overflow-wrap: anywhere; }
+.rank-role .tags { margin: 0; }
+.rank-role .tags:empty { display: none; }
+.rank-role .search { flex-basis: 100%; margin-top: 0; }
 .rank-role:has(.tags > li) > .rank-role-none { display: none; }
-.rank-role-none { display: block; margin: 0 0 8px; }
 .tag--pick { display: inline-flex; align-items: center; padding: 3px 2px 3px 8px; font-size: 14px; color: var(--text-hi); background: var(--surface-3); }
 .tag--pick .off { margin-left: 4px; }
 .tag-remove {
@@ -218,9 +242,11 @@ h2[tabindex="-1"]:focus { outline: none; }
 .search-list li[hidden] { display: none; }
 .search-none { padding: 6px 10px; font-size: 13px; }
 
-/* The guild-wide moderator section and the recording roles section: each
-   form beside its change log. */
-.moderators, .recording-roles { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; align-items: start; }
+/* The guild-wide moderator section, the rank roles section and the
+   recording roles section: each form beside its change log. A rank roles
+   preview spans both columns above them. */
+.moderators, .rank-roles, .recording-roles { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; align-items: start; }
+.rank-roles > .block--danger { grid-column: 1 / -1; }
 
 /* The change log under a hub's form. Each entry is a <details> folded to
    its head line; the newest starts open. */
@@ -394,8 +420,11 @@ h2[tabindex="-1"]:focus { outline: none; }
 .fx-changereport > p { margin: 0 0 6px; color: var(--text-hi); }
 .fx-changereport .block-row { padding: 6px 0; }
 .fx-changereport > .change-fields { border-top: 1px solid var(--line); }
+/* Under 1100px the Foxhole action blocks stack. The rank roles section
+   stacks too, its change log under the rank list, since a rank's role and
+   its button no longer fit one line beside it. */
 @media (max-width: 1100px) {
-  .fx-actions { grid-template-columns: minmax(0, 1fr); }
+  .fx-actions, .rank-roles { grid-template-columns: minmax(0, 1fr); }
   .fx-jump { display: block; margin: -4px 0 12px; font-size: 14px; }
   .fx-jump a { display: inline-block; padding: 6px 0; }
 }
