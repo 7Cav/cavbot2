@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -83,15 +84,15 @@ func TestApproveRefusedWhileTheMemberListIsPartialReloadsToTheSelection(t *testi
 	}
 }
 
-// A page load that shows the member list notice answers no refusal, so its
-// Reload opens the page in the view it shows, at its top with no box
-// ticked, even when its address names a selection, as the address Cancel
-// on a remove preview opens does.
+// A page load at an address that names no member shows the member list
+// notice while the list is partial. It answers no refusal and has no
+// selection, so the notice's Reload opens the page at its top with no box
+// ticked, even though the address names the holder list's heading.
 func TestMemberListNoticeOfAPageLoadReloadsNoSelection(t *testing.T) {
 	w := newFoxholeWorld(t)
 	w.discord.setMemberList(arrivingList)
-	selection := url.Values{paramQuery: {"r"}, paramFilter: {"internal"}, fieldMember: {memberAsh.ID, memberMarsh.ID}}
-	reload := noticeReload(t, parseHTML(t, w.b.get(foxholePath+"?"+selection.Encode()+"#"+holderListAnchor)))
+	view := url.Values{paramQuery: {"r"}, paramFilter: {"internal"}}
+	reload := noticeReload(t, parseHTML(t, w.b.get(foxholePath+"?"+view.Encode()+"#"+holderListAnchor)))
 	setMembersWithVanceOnInternal(w)
 
 	doc, fragment := landing(t, w.b, reload, w.b.get(reload))
@@ -101,6 +102,85 @@ func TestMemberListNoticeOfAPageLoadReloadsNoSelection(t *testing.T) {
 	}
 	if fragment != "" {
 		t.Errorf("the notice's Reload %s opens at %q, want the top of the page", reload, fragment)
+	}
+}
+
+// A filter link the page script carries the selection through opens an
+// address that names the search, the filter and the members. This test
+// loads such an address by hand. While the member list is partial, the page
+// shows the member list notice. Once the list is complete, the notice's
+// Reload opens the holder list at its heading under the same search and
+// filter. Ash is ticked among the matching rows, and Kestrel, whom the
+// Internal filter hides, is ticked in the group at the list's top.
+func TestMemberListNoticeOfAPageLoadReloadsToTheSelectionItsAddressNames(t *testing.T) {
+	w := newFoxholeWorld(t)
+	w.discord.setMemberList(arrivingList)
+	address := foxholePath + "?" + paramQuery + "=r&" + paramFilter + "=internal&" +
+		fieldMember + "=" + memberAsh.ID + "&" + fieldMember + "=" + memberKestrel.ID + "#" + holderListAnchor
+	reload := noticeReload(t, parseHTML(t, w.b.get(address)))
+	setMembersWithVanceOnInternal(w)
+
+	doc, fragment := landing(t, w.b, reload, w.b.get(reload))
+
+	landedOnBlock(t, doc, fragment, "holders")
+	want := map[string]bool{memberAsh.ID: true, memberMarsh.ID: false, memberVance.ID: false}
+	if got := matchingRows(t, doc); !maps.Equal(got, want) {
+		t.Errorf("the notice's Reload %s lists the matching rows %v, each with whether it is ticked, want %v", reload, got, want)
+	}
+	ids, ticked := groupMembers(groupRows(t, doc))
+	if !slices.Equal(ids, []string{memberKestrel.ID}) || !ticked[memberKestrel.ID] {
+		t.Errorf("the notice's Reload %s shows %v at the list's top, ticked %v, want Kestrel ticked", reload, ids, ticked)
+	}
+}
+
+// The selection bar opens a remove preview. Pressing its Cancel while the
+// member list is partial opens the member list notice at the address that
+// names the selection. Once the list is complete, the notice's Reload,
+// pressed in that same tab, opens the holder list at its heading under the
+// same search and filter with the members ticked.
+func TestNoticeAfterARemovePreviewsCancelReloadsToTheSelection(t *testing.T) {
+	w := newFoxholeWorld(t)
+	setMembersWithVanceOnInternal(w)
+	page := removeUnderASearchAndAFilter("external", memberAsh.ID, memberMarsh.ID)(t, w)
+	w.discord.setMemberList(arrivingList)
+	_, res := press(t, w.b, page, findElement(removePreviewBlock(t, page), "a", "data-field", "cancel"))
+	reload := noticeReload(t, parseHTML(t, res))
+	setMembersWithVanceOnInternal(w)
+
+	doc, fragment := landing(t, w.b, reload, w.b.get(reload))
+
+	landedOnBlock(t, doc, fragment, "holders")
+	if got, want := tickedRows(t, doc), sorted([]string{memberAsh.ID, memberMarsh.ID}); !slices.Equal(got, want) {
+		t.Errorf("the notice's Reload %s ticks %v, want the selection %v", reload, got, want)
+	}
+	if got := keys(holderRows(t, doc)); !slices.Equal(got, listedUnderSearchAndFilter) {
+		t.Errorf("the notice's Reload %s lists %v, want %v under the search and the filter", reload, got, listedUnderSearchAndFilter)
+	}
+}
+
+// Vance leaves the server before the member list arrives, so the holder
+// list has no row for Vance. The page the notice's Reload opens leaves Vance
+// out, ticks the other member the address names, and says nothing about
+// Vance.
+func TestNoticeReloadLeavesOutANamedMemberWithNoRow(t *testing.T) {
+	w := newFoxholeWorld(t)
+	w.discord.setMemberList(arrivingList)
+	selection := url.Values{paramQuery: {"r"}, paramFilter: {"internal"}, fieldMember: {memberAsh.ID, memberVance.ID}}
+	reload := noticeReload(t, parseHTML(t, w.b.get(foxholePath+"?"+selection.Encode()+"#"+holderListAnchor)))
+	setMembers(w, memberDoe, memberAsh, memberKestrel, memberMarsh)
+
+	doc, _ := landing(t, w.b, reload, w.b.get(reload))
+
+	if _, ok := holderRows(t, doc)[memberVance.ID]; ok {
+		t.Errorf("the notice's Reload %s lists Vance, who left the server, want no row", reload)
+	}
+	if got, want := tickedRows(t, doc), []string{memberAsh.ID}; !slices.Equal(got, want) {
+		t.Errorf("the notice's Reload %s ticks %v, want %v", reload, got, want)
+	}
+	for _, name := range []string{memberVance.ID, memberVance.Username} {
+		if strings.Contains(textOf(doc), name) {
+			t.Errorf("the page's text names %s, who left the server, want nothing said about Vance", name)
+		}
 	}
 }
 
