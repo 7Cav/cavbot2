@@ -506,11 +506,16 @@ func TestLinksBackToTheHubListLandOnItsHeading(t *testing.T) {
 			return cancelAddress(t, removePreviewBlock(t, parseHTML(t, pressRemove(t, w.b, doc, listRow(t, doc, storedHubID(t, w.st, "hub-1"))))))
 		}},
 		{"Back to the list on a hub's edit form", func(t *testing.T, w *testWorld) string {
-			back := findElement(hubEditBlock(t, w, parseHTML(t, w.b.get(hubEditPage(t, w)))), "a", "data-field", "back")
-			if back == nil {
-				t.Fatal("the edit form has no Back to the list")
+			var backs []*html.Node
+			eachElement(hubEditBlock(t, w, parseHTML(t, w.b.get(hubEditPage(t, w)))), func(el *html.Node) {
+				if el.Data == "a" && attrOf(el, "data-field") == "back" {
+					backs = append(backs, el)
+				}
+			})
+			if len(backs) != 1 {
+				t.Fatalf("the edit form has %d Back to the list links, want 1", len(backs))
 			}
-			return attrOf(back, "href")
+			return attrOf(backs[0], "href")
 		}},
 		{"Back to the list on a broken hub's page", func(t *testing.T, w *testWorld) string {
 			w.discord.breakChannel("hub-1", true)
