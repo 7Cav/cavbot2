@@ -156,6 +156,10 @@ h2[tabindex="-1"]:focus { outline: none; }
 .hublist .failure { font-size: 13px; }
 .hublist .failure time { display: block; color: var(--text-mute); }
 .hublist form.inline { display: inline; margin: 0; }
+/* The Foxhole holder list and the Rank roles table run long, so their
+   cells sit tighter than the hub list's. */
+.fx-list th, .ranklist thead th { padding: 8px 12px; }
+.fx-list td, .ranklist tbody th, .ranklist td { padding: 7px 12px; }
 .btn--small { padding: 4px 10px; font-size: 13px; }
 
 /* A hub's edit section wraps a long word anywhere, as the removal preview
@@ -185,14 +189,13 @@ h2[tabindex="-1"]:focus { outline: none; }
    role count. */
 .tags { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .tags:empty { margin: 0; }
-/* The rank list on the Settings page (#680, #737) is the hub list's table
-   at the Foxhole list's tighter spacing, since the ladder runs to 29 ranks.
-   It has no minimum width, so it fits a phone. Each rank's abbreviation
-   heads its row in bright text, as a hub's name does. The rank and the
-   count take the width they need, and the role takes the rest. */
+/* The Rank roles table on the Settings page (#680, #737) is the hub list's
+   table with no minimum width, so it fits a phone. Each rank's
+   abbreviation heads its row in bright text, as a hub's name does. The
+   rank and the count take the width they need, and the role takes the
+   rest. */
 .ranklist { min-width: 0; }
-.ranklist thead th { padding: 8px 12px; }
-.ranklist tbody th, .ranklist td { padding: 7px 12px; vertical-align: baseline; }
+.ranklist tbody th, .ranklist td { vertical-align: baseline; }
 .ranklist tbody th { font-size: 14px; font-weight: 500; color: var(--text-hi); text-transform: none; letter-spacing: normal; }
 .ranklist tbody tr:last-child th { border-bottom: 0; }
 .ranklist .rank, .ranklist .num { width: 1%; white-space: nowrap; }
@@ -206,9 +209,9 @@ h2[tabindex="-1"]:focus { outline: none; }
 .rank-role { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .rank-role > .picker { display: contents; }
 .rank-role [data-add] { margin-left: auto; }
-.rank-role .tags, .rank-role .tag--pick { min-width: 0; }
+.rank-role .tags { margin: 0; min-width: 0; }
+.rank-role .tag--pick { min-width: 0; }
 .rank-role .tag--pick [data-label] { overflow-wrap: anywhere; }
-.rank-role .tags { margin: 0; }
 .rank-role .tags:empty { display: none; }
 .rank-role .search { flex-basis: 100%; margin-top: 0; }
 .rank-role:has(.tags > li) > .rank-role-none { display: none; }
@@ -295,8 +298,6 @@ h2[tabindex="-1"]:focus { outline: none; }
 .fx-filters a:hover { color: var(--text-hi); }
 .fx-filters a.is-on { color: var(--text-hi); border-bottom-color: var(--gold); }
 .fx-count { margin-left: 4px; font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
-.fx-list th { padding: 8px 12px; }
-.fx-list td { padding: 7px 12px; }
 /* A row under the pointer lifts to --surface-3, 1.11:1 on the block. */
 .fx-list tbody tr:hover td { background: var(--surface-3); }
 /* The selected members a search or a filter hides head the holder list in
@@ -421,8 +422,8 @@ h2[tabindex="-1"]:focus { outline: none; }
 .fx-changereport .block-row { padding: 6px 0; }
 .fx-changereport > .change-fields { border-top: 1px solid var(--line); }
 /* Under 1100px the Foxhole action blocks stack. The rank roles section
-   stacks too, its change log under the rank list, since a rank's role and
-   its button no longer fit one line beside it. */
+   stacks too, its change log under the Rank roles table, since a rank's
+   role and its button no longer fit one line beside it. */
 @media (max-width: 1100px) {
   .fx-actions, .rank-roles { grid-template-columns: minmax(0, 1fr); }
   .fx-jump { display: block; margin: -4px 0 12px; font-size: 14px; }
