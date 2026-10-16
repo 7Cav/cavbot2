@@ -26,9 +26,11 @@
   // browser that opens its menu at the mousedown, as Chrome on Linux does,
   // lets the menu take the mouseup (#718). pressed is the element the
   // press began on, and null between presses. rightPress is whether the
-  // right button made the press. afterPress, when set, runs as the press
-  // ends and is called with that element. That comes before the click,
-  // whose target the press has already fixed.
+  // right button made the press, and false between presses. afterPress,
+  // when set, runs as the press ends and is called with that element. That
+  // comes before the click, whose target the press has already fixed. A
+  // right-click makes no click, so afterPress waits for the next press to
+  // end instead.
   var pressed = null;
   var rightPress = false;
   var afterPress = null;
@@ -36,7 +38,12 @@
   function endPress() {
     var target = pressed;
     var run = afterPress;
+    if (!target) { return; }
     pressed = null;
+    if (rightPress) {
+      rightPress = false;
+      return;
+    }
     afterPress = null;
     if (run) { run(target); }
   }
@@ -232,16 +239,13 @@
     // ends, unless closing would move what the press was on. Then the
     // search stays open, so a second press there lands too. A right-click
     // makes no click, so nothing has to stay under the pointer. It closes
-    // the search at once, unless it began inside the picker, as on a tag
-    // (#718).
+    // the search at once, unless it began inside the picker, as on a tag.
+    // Then the search stays open through the menu, and the next press
+    // closes it as a left press would (#718).
     root.addEventListener('focusout', function (e) {
       if (search.hidden || root.contains(e.relatedTarget)) { return; }
-      if (!pressed) {
+      if (!pressed || (rightPress && !root.contains(pressed))) {
         close();
-        return;
-      }
-      if (rightPress) {
-        if (!root.contains(pressed)) { close(); }
         return;
       }
       afterPress = function (target) {
