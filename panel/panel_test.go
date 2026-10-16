@@ -376,16 +376,24 @@ func (b *browser) post(target string) *http.Response {
 	return b.postForm(target, nil)
 }
 
-// getForm submits a GET form the way a browser does: the form's fields
-// replace the query of its action, whose fragment stays in the address.
-func (b *browser) getForm(action string, fields url.Values) *http.Response {
+// getForm submits a GET form the way a browser does: the form's entry
+// list, in its order, replaces the query of its action, whose fragment
+// stays in the address.
+func (b *browser) getForm(action string, entries entryList) *http.Response {
 	b.t.Helper()
+	return b.get(formAddress(b.t, action, entries))
+}
+
+// formAddress is the address a GET form with the action given sends its
+// entry list to.
+func formAddress(t *testing.T, action string, entries entryList) string {
+	t.Helper()
 	u, err := url.Parse(action)
 	if err != nil {
-		b.t.Fatalf("form action %q: %v", action, err)
+		t.Fatalf("form action %q: %v", action, err)
 	}
-	u.RawQuery = fields.Encode()
-	return b.get(u.String())
+	u.RawQuery = entries.query()
+	return u.String()
 }
 
 // postForm submits a form the way a browser does.
@@ -414,15 +422,12 @@ func press(t *testing.T, b *browser, doc, control *html.Node) (string, *http.Res
 		if form == nil {
 			t.Fatal("the button belongs to no form")
 		}
-		fields := formFields(doc, form)
-		if name := attrOf(control, "name"); name != "" {
-			fields.Set(name, attrOf(control, "value"))
-		}
+		entries := formEntries(doc, form, control)
 		action := cmp.Or(attrOf(control, "formaction"), attrOf(form, "action"))
 		if strings.EqualFold(cmp.Or(attrOf(control, "formmethod"), attrOf(form, "method")), http.MethodPost) {
-			return action, b.postForm(action, fields)
+			return action, b.postForm(action, entries.values())
 		}
-		return action, b.getForm(action, fields)
+		return action, b.getForm(action, entries)
 	}
 	t.Fatalf("the control is a <%s>, no link or button", control.Data)
 	return "", nil

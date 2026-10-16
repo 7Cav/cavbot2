@@ -3,7 +3,6 @@ package panel
 import (
 	"maps"
 	"net/http"
-	"net/url"
 	"slices"
 	"strconv"
 	"testing"
@@ -351,8 +350,8 @@ func keys[V any](m map[string]V) []string {
 	return slices.Sorted(maps.Keys(m))
 }
 
-// submitSearch submits the page's search form with the query typed in its
-// search box, the way a browser submits a GET form: every field it carries
+// submitSearch types the query into the page's search box and presses
+// Search, the way a browser submits a GET form: every field it carries
 // goes in the address's query.
 func submitSearch(t *testing.T, b *browser, doc *html.Node, query string) *http.Response {
 	t.Helper()
@@ -360,20 +359,18 @@ func submitSearch(t *testing.T, b *browser, doc *html.Node, query string) *http.
 	if form == nil {
 		t.Fatal("the page has no search form")
 	}
-	action, _ := attrValue(form, "action")
-	fields := url.Values{}
-	eachElement(form, func(n *html.Node) {
-		name, ok := attrValue(n, "name")
-		if n.Data != "input" || !ok {
-			return
-		}
-		value, _ := attrValue(n, "value")
-		if kind, _ := attrValue(n, "type"); kind == "search" {
-			value = query
-		}
-		fields.Add(name, value)
-	})
-	return b.getForm(action, fields)
+	box := findElement(form, "input", "type", "search")
+	if box == nil {
+		t.Fatal("the search form has no search box")
+	}
+	box.Attr = slices.DeleteFunc(box.Attr, func(a html.Attribute) bool { return a.Key == "value" })
+	box.Attr = append(box.Attr, html.Attribute{Key: "value", Val: query})
+	button := findElement(form, "button", "", "")
+	if button == nil {
+		t.Fatal("the search form has no button")
+	}
+	_, res := press(t, b, doc, button)
+	return res
 }
 
 // Search lists the holders whose display name, username or Discord ID

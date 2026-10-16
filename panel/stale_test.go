@@ -47,13 +47,50 @@ func formPosts(t *testing.T, doc *html.Node, action string) url.Values {
 
 // formFields is formPosts for the form given, one of the page doc's.
 func formFields(doc, form *html.Node) url.Values {
+	return formEntries(doc, form, nil).values()
+}
+
+// formEntry is one name and value of what a form submits.
+type formEntry struct{ name, value string }
+
+// entryList is what a form submits, in the order a browser sends it.
+type entryList []formEntry
+
+// values is the list as a server reads it, by name.
+func (l entryList) values() url.Values {
 	out := url.Values{}
+	for _, e := range l {
+		out.Add(e.name, e.value)
+	}
+	return out
+}
+
+// query is the list as a GET form's address carries it, in its order.
+func (l entryList) query() string {
+	pairs := make([]string, 0, len(l))
+	for _, e := range l {
+		pairs = append(pairs, url.QueryEscape(e.name)+"="+url.QueryEscape(e.value))
+	}
+	return strings.Join(pairs, "&")
+}
+
+// formEntries is the entry list a browser builds when the button submitter
+// submits form, one of the page doc's, by the HTML standard's
+// "constructing the entry list". It holds the fields formPosts reads, in
+// tree order, and the submitter's name and value at the submitter's place.
+// No other button sends anything. A nil submitter presses no button.
+func formEntries(doc, form, submitter *html.Node) entryList {
+	var out entryList
 	eachLiveElement(doc, func(n *html.Node) {
 		if !ownedBy(n, form) {
 			return
 		}
 		name, _ := attrValue(n, "name")
 		if name == "" {
+			return
+		}
+		if n == submitter {
+			out = append(out, formEntry{name, attrOf(n, "value")})
 			return
 		}
 		if _, disabled := attrValue(n, "disabled"); disabled {
@@ -71,7 +108,7 @@ func formFields(doc, form *html.Node) url.Values {
 					value = "on"
 				}
 			}
-			out.Add(name, value)
+			out = append(out, formEntry{name, value})
 		case "select":
 			var first, chosen *html.Node
 			eachLiveElement(n, func(o *html.Node) {
@@ -90,10 +127,10 @@ func formFields(doc, form *html.Node) url.Values {
 			}
 			if chosen != nil {
 				value, _ := attrValue(chosen, "value")
-				out.Add(name, value)
+				out = append(out, formEntry{name, value})
 			}
 		case "textarea":
-			out.Add(name, textOf(n))
+			out = append(out, formEntry{name, textOf(n)})
 		}
 	})
 	return out

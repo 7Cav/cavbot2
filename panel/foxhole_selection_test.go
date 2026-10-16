@@ -240,7 +240,7 @@ func viewAddresses(t *testing.T, doc *html.Node, busy string) map[string]string 
 	if form == nil {
 		t.Fatal("the page has no search form")
 	}
-	out["search"] = "?" + formFields(doc, form).Encode()
+	out["search"] = "?" + formEntries(doc, form, nil).query()
 	eachElement(doc, func(n *html.Node) {
 		if filter, ok := attrValue(n, "data-filter"); ok && n.Data == "a" {
 			out["filter "+filter] = attrOf(n, "href")
