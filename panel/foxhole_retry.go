@@ -54,13 +54,19 @@ func retryPressOf(q url.Values) retryPress {
 	return retryPress{Report: report, InEntry: q.Get(paramRetryFrom) == retryFromEntry}
 }
 
-// query is the Retry's query: the report, and where it was pressed.
-func (p retryPress) query() string {
+// values are the Retry's query parameters: the report, and where it was
+// pressed.
+func (p retryPress) values() url.Values {
 	from := retryFromReport
 	if p.InEntry {
 		from = retryFromEntry
 	}
-	return url.Values{paramRetry: {strconv.FormatInt(p.Report, 10)}, paramRetryFrom: {from}}.Encode()
+	return url.Values{paramRetry: {strconv.FormatInt(p.Report, 10)}, paramRetryFrom: {from}}
+}
+
+// query is the Retry's query.
+func (p retryPress) query() string {
+	return p.values().Encode()
 }
 
 // address is the address of the page with the Retry open, at the block

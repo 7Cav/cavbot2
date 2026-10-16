@@ -78,7 +78,7 @@ func TestFoxholeViewOpenedAfterTheForumRefusesTheTokenSignsInBackToIt(t *testing
 	w := newFoxholeWorld(t)
 	w.forum.setStatus(w.manager, http.StatusUnauthorized)
 
-	signin := parseHTML(t, follow(t, w.b, w.b.get(foxholeAddress("", filterNoRole))))
+	signin := parseHTML(t, follow(t, w.b, w.b.get(foxholeURL("", filterNoRole, ""))))
 
 	w.forum.setStatus(w.manager, http.StatusOK)
 	if page := signInFrom(t, w, signin, w.manager); findElement(page, "", "data-field", "no-role") == nil {
