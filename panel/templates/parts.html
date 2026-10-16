@@ -11,12 +11,16 @@
 
 {{define "role-note"}}{{if eq .Unavailable "deleted"}} <span class="off">not in the server</span>{{else if eq .Unavailable "managed"}} <span class="off">managed by an integration</span>{{end}}{{end}}
 
+{{- /* A tag picker. The search box takes the keys that pick a row, so Tab
+     from it leaves the picker. Chrome makes a scrolling list a Tab stop
+     when nothing in it takes Tab, and the search list's negative tabindex
+     keeps it out of the Tab order (#717). */}}
 {{define "picker"}}<div class="picker" data-field="{{.Field}}" data-picker{{if .Single}} data-single{{end}}{{with .OptionsFrom}} data-options-from="{{.}}"{{end}}>
   <ul class="tags" data-tags>{{range .Tags}}{{template "picker-tag" .}}{{end}}</ul>
   <button type="button" class="btn btn--small" data-add aria-expanded="false">{{.AddLabel}}{{with .Set}}<span class="visually-hidden"> {{if $.Single}}for{{else}}to{{end}} {{.}}</span>{{end}}</button>
   <div class="search" data-search hidden>
     <input type="search" class="search-input" data-search-input autocomplete="off" placeholder="Type to filter" aria-label="{{.SearchLabel}}">
-    <ul class="search-list" role="listbox" data-list>
+    <ul class="search-list" role="listbox" data-list tabindex="-1">
       {{range .Candidates}}{{template "picker-option" .}}{{end}}
     </ul>
     <div class="off search-none" data-empty hidden>No match.</div>
