@@ -814,19 +814,19 @@
 
 /* Carrying the Foxhole selection, issues #701 and #723 under ADR 0013. The
    selection lasts through a search, a filter link, a visit to the no-role
-   view and back, the page's Reload links, and a browser reload of the
-   Foxhole page. Each control marked data-keeps-selection opens the page
-   again in a view. When one is followed, the script gives its address a
-   member value for each member selected, and the page that opens ticks
-   them, with those the search or the filter hides in a group at the top of
-   the holder list. In the holder list the selected members are the boxes
-   ticked. A page with no selection bar, as the no-role view, has no boxes,
-   so they are the members its own address names. On the Foxhole page
-   itself, at /foxhole, the tab's address names the boxes ticked now, so a
-   reload, or a Back that loads the page again, ticks them as the manager
-   left them. A page that answers a sent form, as a refused Approve does,
-   keeps its address, and a reload there asks to send the form again. The
-   server renders each control naming no member, so without script the
+   view and back, a Reload link marked data-keeps-selection, and a browser
+   reload of the Foxhole page. Each control marked data-keeps-selection
+   opens the page again in a view. When one is followed, the script gives
+   its address a member value for each member selected, and the page that
+   opens ticks them, with those the search or the filter hides in a group at
+   the top of the holder list. In the holder list the selected members are
+   the boxes ticked. A page with no selection bar, as the no-role view, has
+   no boxes, so they are the members its own address names. On the Foxhole
+   page itself, at /foxhole, the tab's address names the boxes ticked now,
+   so a reload, or a Back that loads the page again, ticks them as the
+   manager left them. A page that answers a sent form, as a refused Approve
+   does, keeps its address, and a reload there asks to send the form again.
+   The server renders each control naming no member, so without script the
    selection drops, and a box a manager unticked never comes back ticked. */
 (function () {
   'use strict';
@@ -848,12 +848,20 @@
     return url.href;
   }
 
+  // atViewAddress says whether the tab is at the path the search opens,
+  // /foxhole, where the address names the view. Every other path that
+  // shows boxes answers a sent form, and a GET of its address finds no
+  // page.
+  function atViewAddress() {
+    var search = document.querySelector('form[data-field="search"]');
+    return search !== null && location.pathname === new URL(search.action).pathname;
+  }
+
   // Each box change at /foxhole puts the selection in the tab's address.
   // It replaces the tab's history entry and adds none, so one Back still
-  // leaves the page. Other paths keep their address. Most answer a sent
-  // form, and a GET of their address finds no page.
+  // leaves the page.
   document.addEventListener('change', function (e) {
-    if (e.target.matches('[data-select]') && location.pathname === '/foxhole') {
+    if (e.target.matches('[data-select]') && atViewAddress()) {
       history.replaceState(history.state, '', carry(location.href));
     }
   });
