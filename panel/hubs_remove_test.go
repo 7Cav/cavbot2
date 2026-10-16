@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/7cav/cavbot2/store"
@@ -14,30 +13,15 @@ import (
 )
 
 // pressRemove presses the Remove control under scope the way a browser
-// does: a link is followed, and a form's button submits its form by the
-// form's method, with the fields the form owns on doc.
+// does: a link is followed, and a form's button submits its form.
 func pressRemove(t *testing.T, b *browser, doc, scope *html.Node) *http.Response {
 	t.Helper()
 	control := findElement(scope, "", "data-field", "remove")
 	if control == nil {
 		t.Fatal("no Remove control")
 	}
-	if control.Data == "a" {
-		return b.get(attrOf(control, "href"))
-	}
-	form := control.Parent
-	for form != nil && form.Data != "form" {
-		form = form.Parent
-	}
-	if form == nil {
-		t.Fatal("the Remove control is neither a link nor a form's button")
-	}
-	fields := formFields(doc, form)
-	action := attrOf(form, "action")
-	if strings.EqualFold(attrOf(form, "method"), http.MethodPost) {
-		return b.postForm(action, fields)
-	}
-	return b.getForm(action, fields)
+	_, res := press(t, b, doc, control)
+	return res
 }
 
 // removeForm is the remove preview's Confirm of the hub on hub-1 as a

@@ -68,13 +68,26 @@ func TestAfterAWarBlockSitsAboveTheHolderListAndOffersEachPurgeScope(t *testing.
 	}
 }
 
-// openPurge submits the page's purge form with the scope picked, the way a
-// browser submits a GET form, and returns the page it opens.
+// openPurge picks the scope in the page's purge form and presses Purge,
+// the way a browser submits a GET form, and returns the page it opens.
 func openPurge(t *testing.T, b *browser, doc *html.Node, scope string) *http.Response {
 	t.Helper()
-	form := purgeForm(t, doc)
-	action, _ := attrValue(form, "action")
-	return b.getForm(action, url.Values{paramPurge: {scope}})
+	var picked *html.Node
+	eachElement(purgeForm(t, doc), func(n *html.Node) {
+		if name, _ := attrValue(n, "name"); n.Data != "input" || name != paramPurge {
+			return
+		}
+		n.Attr = slices.DeleteFunc(n.Attr, func(a html.Attribute) bool { return a.Key == "checked" })
+		if attrOf(n, "value") == scope {
+			picked = n
+		}
+	})
+	if picked == nil {
+		t.Fatalf("the purge form offers no %s scope", scope)
+	}
+	picked.Attr = append(picked.Attr, html.Attribute{Key: "checked"})
+	_, res := press(t, b, doc, purgeButton(t, doc))
+	return res
 }
 
 // purgeConfirmation returns the page's purge confirmation, and fails the
