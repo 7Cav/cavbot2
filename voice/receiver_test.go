@@ -75,10 +75,10 @@ func (c *fakeReceiveConn) ChannelID() *snowflake.ID {
 	return &id
 }
 
-// connected is always true here: the call harness covers the connection
-// coming and going.
-func (c *fakeReceiveConn) connected() bool { return true }
-func (c *fakeReceiveConn) server() string  { return "c-dfw-1.discord.media:443" }
+// connection is always connected here: the call harness covers the
+// connection coming and going.
+func (c *fakeReceiveConn) connection() (bool, time.Time) { return true, time.Time{} }
+func (c *fakeReceiveConn) server() string                { return "c-dfw-1.discord.media:443" }
 
 func (c *fakeReceiveConn) reconnect(context.Context) error {
 	c.mu.Lock()
@@ -163,12 +163,13 @@ func sealFor(userID, plaintext string) []byte {
 }
 
 // listener is a Listener that hands each frame to frame, when set, and keeps
-// the gap events it hears in order.
+// the gap events it hears in order, and when each gap started.
 type listener struct {
 	frame func(Frame)
 
-	mu   sync.Mutex
-	gaps []string
+	mu     sync.Mutex
+	gaps   []string
+	starts []time.Time
 }
 
 // The gap events a listener keeps.
@@ -185,8 +186,21 @@ func (l *listener) Frame(f Frame) {
 	}
 }
 
-func (l *listener) GapStarted(time.Time) { l.note(gapStarted) }
-func (l *listener) GapEnded()            { l.note(gapEnded) }
+func (l *listener) GapStarted(since time.Time) {
+	l.mu.Lock()
+	l.starts = append(l.starts, since)
+	l.mu.Unlock()
+	l.note(gapStarted)
+}
+
+func (l *listener) GapEnded() { l.note(gapEnded) }
+
+// gapStarts is when each gap heard so far started, in order.
+func (l *listener) gapStarts() []time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.starts)
+}
 
 func (l *listener) note(event string) {
 	l.mu.Lock()

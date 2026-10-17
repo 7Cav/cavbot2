@@ -408,8 +408,10 @@ type renewableGateway struct {
 	describedDial chan struct{}
 	// connected is whether the gateway is connected in the call, at the
 	// voice server Discord named last: the session description that
-	// completes a connection arrived after its last dial started.
+	// completes a connection arrived after its last dial started. lostAt is
+	// when it last stopped being connected, zero before it ever was.
 	connected bool
+	lostAt    time.Time
 }
 
 func (g *renewableGateway) current() disgovoice.Gateway {
@@ -423,7 +425,22 @@ func (g *renewableGateway) renew() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.gw = g.build()
-	g.connected = false
+	g.disconnectLocked(time.Now())
+}
+
+// lose notes that the recorder lost its connection to the call at at.
+func (g *renewableGateway) lose(at time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.disconnectLocked(at)
+}
+
+// disconnectLocked notes the gateway not connected, from at when it was.
+// Caller holds mu.
+func (g *renewableGateway) disconnectLocked(at time.Time) {
+	if g.connected {
+		g.connected, g.lostAt = false, at
+	}
 }
 
 // watchEvents wraps disgo's handler for the gateway's events, to note the
@@ -447,7 +464,11 @@ func (g *renewableGateway) described(gw disgovoice.Gateway) {
 	if gw != g.gw {
 		return
 	}
-	g.connected = e == nil || dialedAt(g.state, *e)
+	if e == nil || dialedAt(g.state, *e) {
+		g.connected = true
+	} else {
+		g.disconnectLocked(time.Now())
+	}
 	if g.describedDial != nil {
 		close(g.describedDial)
 		g.describedDial = nil
@@ -469,12 +490,13 @@ func (g *renewableGateway) server() string {
 	return ""
 }
 
-// isConnected reports whether the gateway is connected in the call, at the
-// voice server Discord named last.
-func (g *renewableGateway) isConnected() bool {
+// connection reports whether the gateway is connected in the call, at the
+// voice server Discord named last, and when it last stopped being
+// connected, zero before it ever was.
+func (g *renewableGateway) connection() (connected bool, lostAt time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.connected
+	return g.connected, g.lostAt
 }
 
 // openedAt reports whether the gateway last opened at the voice server e
@@ -583,7 +605,8 @@ func (g *renewableGateway) namedLastIs(state disgovoice.State) bool {
 func (g *renewableGateway) replace(gw disgovoice.Gateway) {
 	g.mu.Lock()
 	if g.gw == gw {
-		g.gw, g.connected = g.build(), false
+		g.gw = g.build()
+		g.disconnectLocked(time.Now())
 	}
 	g.mu.Unlock()
 	gw.CloseWithCode(websocket.CloseServiceRestart, "Discord named a later voice server")
@@ -608,7 +631,8 @@ func (g *renewableGateway) startDial(state disgovoice.State, redial context.Canc
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.state, g.redial, g.connected = state, redial, false
+	g.state, g.redial = state, redial
+	g.disconnectLocked(time.Now())
 	g.describedDial = make(chan struct{})
 	return g.gw, state, g.describedDial
 }
@@ -647,7 +671,8 @@ func (g *renewableGateway) channel() snowflake.ID {
 func (g *renewableGateway) reopen(ctx context.Context) error {
 	g.mu.Lock()
 	old, state := g.gw, g.state
-	g.gw, g.connected = g.build(), false
+	g.gw = g.build()
+	g.disconnectLocked(time.Now())
 	g.mu.Unlock()
 	old.CloseWithCode(websocket.CloseServiceRestart, "starting DAVE over")
 	return g.Open(ctx, state)
@@ -694,6 +719,9 @@ const lostConnectionMessage = "Voice connection lost mid-recording"
 func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.CloseHandlerFunc) disgovoice.CloseHandlerFunc {
 	return func(g disgovoice.Gateway, err error) {
 		defer utils.RecoverPanic("recorder-voice-close", "recorder", c.s.userID)
+		// The recorder can't hear the call from the close on, whatever the
+		// lookup below costs.
+		gw.lose(time.Now())
 		moved := closedWith(err, disgovoice.GatewayCloseEventCodeCallTerminated.Code) && c.s.channelExists(gw.channel())
 		if !moved && !getsFreshConnection(err) {
 			c.gaveUp.Store(false)
@@ -826,11 +854,15 @@ func (c callConn) renewable() (*renewableGateway, bool) {
 	return g, ok
 }
 
-// connected reports whether the recorder's gateway is connected in the
-// call, at the voice server Discord named last.
-func (c callConn) connected() bool {
+// connection reports whether the recorder's gateway is connected in the
+// call, at the voice server Discord named last, and when it last stopped
+// being connected, zero before it ever was.
+func (c callConn) connection() (connected bool, lostAt time.Time) {
 	g, ok := c.renewable()
-	return ok && g.isConnected()
+	if !ok {
+		return false, time.Time{}
+	}
+	return g.connection()
 }
 
 // server is the voice server the recorder's gateway dials: the one Discord

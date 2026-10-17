@@ -1135,6 +1135,33 @@ func TestRecorderLeavesWhenItsChannelIsDeleted(t *testing.T) {
 	}
 }
 
+// A 4022 has the recorder ask Discord's API whether the channel is still
+// there, and the answer can take the lookup's full 5 s. The recorder could
+// not hear the call from the close on, so the gap the recording hears
+// starts at the close. The server the call moved to is out of reach for
+// now, so the gap lasts.
+func TestRecorderStartsTheGapOfAMovedCallAtTheClose(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.api.during = func() { time.Sleep(5 * time.Second) }
+		h.setReachable(newEndpoint, false)
+
+		closed := time.Now()
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if got := l.gapStarts(); len(got) == 0 || !got[0].Equal(closed) {
+			t.Errorf("gap starts = %v, want the first at the close, %v", got, closed)
+		}
+	})
+}
+
 // Discord can take the recorder out of the channel while the recorder asks
 // whether the channel is still there after a 4022. disgo then starts no
 // fresh connection, and the recorder is out as surely as after a rejoin

@@ -30,9 +30,10 @@ type receiveConn interface {
 	UserIDBySSRC(ssrc uint32) snowflake.ID
 	// ChannelID is the call's channel, nil while there is none.
 	ChannelID() *snowflake.ID
-	// connected reports whether the recorder is connected in the call, at
-	// the voice server Discord named last.
-	connected() bool
+	// connection reports whether the recorder is connected in the call, at
+	// the voice server Discord named last, and when it last stopped being
+	// connected, zero before it ever was.
+	connection() (connected bool, lostAt time.Time)
 	// server is the voice server the recorder connects to: the one Discord
 	// named last for the call.
 	server() string
@@ -161,7 +162,12 @@ func (r *receiver) run() {
 func (r *receiver) step() {
 	defer utils.RecoverPanic("recorder-receive", "recorder", r.recorder)
 	holding := holdFrames(r.conn.DAVE())
-	r.watchGap(r.conn.connected() && !holding)
+	connected, lostAt := r.conn.connection()
+	since := time.Now()
+	if !connected && !lostAt.IsZero() {
+		since = lostAt
+	}
+	r.watchGap(connected && !holding, since)
 	if holding {
 		r.waitOrStartOver()
 		return
@@ -187,12 +193,14 @@ func (r *receiver) step() {
 }
 
 // watchGap tells the listener when the recorder stops hearing the channel,
-// and when it hears it again. A gap that reaches GapReportedAfter reaches
-// Sentry once, with the voice server the recorder is trying.
-func (r *receiver) watchGap(hearing bool) {
+// and when it hears it again. A gap starts at since: when the connection to
+// the call dropped, which the receiver can learn of only later, or now. A
+// gap that reaches GapReportedAfter reaches Sentry once, with the voice
+// server the recorder is trying.
+func (r *receiver) watchGap(hearing bool, since time.Time) {
 	switch {
 	case !hearing && !r.inGap:
-		r.inGap, r.gapSince, r.gapReported = true, time.Now(), false
+		r.inGap, r.gapSince, r.gapReported = true, since, false
 		r.listener.GapStarted(r.gapSince)
 	case !hearing && !r.gapReported && time.Since(r.gapSince) >= GapReportedAfter:
 		r.gapReported = true
