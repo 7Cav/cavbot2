@@ -641,12 +641,12 @@ func (req foxholeRequest) addRole() commands.FoxholeRole {
 // reopenPreview is GET /foxhole/reopen, the link a preview gives beside a
 // Confirm a running Foxhole action turned off, the roster block's Preview
 // roster, and the error page's Try again after a Foxhole page failed to
-// load. It redirects to the Foxhole
-// page with the link's query, which opens the same preview or page again,
-// read from Discord as it is then. The redirect names no fragment, so the
-// browser keeps the link's, which names the heading of the block it opens.
-// A link straight to the page's address would fetch nothing from a tab that
-// shows that address: the browser only scrolls to the fragment.
+// load. It redirects to the Foxhole page with the link's query, which opens
+// the same preview or page again, read from Discord as it is then. The
+// redirect names no fragment, so the browser keeps the link's, which names
+// the heading of the block it opens. A link straight to the page's address
+// would fetch nothing from a tab that shows that address: the browser only
+// scrolls to the fragment.
 func (p *Panel) reopenPreview(w http.ResponseWriter, r *http.Request, _ session) {
 	http.Redirect(w, r, (&url.URL{Path: foxholePath, RawQuery: r.URL.RawQuery}).String(), http.StatusSeeOther)
 }
@@ -936,8 +936,8 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 			view.Paste, view.PasteAlone, view.ActionRefusal = *req.Paste, true, errAddListPartial
 		case req.AddRole != "":
 			// An add preview's address names no paste, so nothing was refused.
-			// The paste box shows for the page script to put the tab's kept
-			// paste back in.
+			// The paste box shows, so the page script can put back the paste
+			// the tab keeps.
 			view.Paste, view.PasteAlone = pasteBox{Role: req.AddRole}, true
 		}
 		if req.Roster != nil {

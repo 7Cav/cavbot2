@@ -211,10 +211,11 @@ func landedOnBlockOf(field string) func(*testing.T, *html.Node, string) {
 // Try again on the error page of a POST whose answer is the Foxhole page,
 // such as a refused save or a preview, loads by GET the block the POST was
 // made from: it never posts again. The pasted lines, the refusal and the
-// typed note came in the posted form or the answer, so they don't come
-// back, and the manager pastes again. A roster add refused because the
-// roster changed names its unit, as the roster preview's address does, so
-// Try again opens that preview afresh.
+// typed note came in the posted form or the answer, so without script they
+// don't come back, and the manager pastes again. An add's Try again names
+// the role picked, as the add preview's address does. A roster add refused
+// because the roster changed names its unit, as the roster preview's
+// address does, so Try again opens that preview afresh.
 func TestTryAgainAfterAFoxholePostWhosePageFailsOpensTheBlockItCameFrom(t *testing.T) {
 	cases := []struct {
 		name string

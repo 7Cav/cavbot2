@@ -312,8 +312,8 @@
   // none.
   var blockForm = document.querySelector('main [data-field="note-block"] [data-field="note-form"]');
 
-  // unsaved is blockForm while it holds text a save sent and the panel
-  // refused, or text kept from such a save, null otherwise.
+  // unsaved is blockForm while it holds an unsaved edit: text a save sent
+  // and the panel refused, or that text brought back, null otherwise.
   var unsaved = answersForm && blockForm && blockForm.querySelector('[data-error]') ? blockForm : null;
 
   // memberOf is the ID of the member whose row holds the cell.
@@ -710,11 +710,11 @@
     return location.pathname + location.search;
   }
 
-  // keepIn puts a kept note in blockForm when that form is the member's,
-  // marked not saved yet, and reports whether it did. The mark is the
-  // block's heading's description too, as a refusal is, since the page
-  // opens at that heading.
-  function keepIn(note) {
+  // intoBlock puts a note's unsaved edit in blockForm when that form is
+  // the member's, marked not saved yet, and reports whether it did. The
+  // mark is the block's heading's description too, as a refusal is, since
+  // the page opens at that heading.
+  function intoBlock(note) {
     if (!blockForm || blockForm.querySelector('[name="member"]').value !== note.member) { return false; }
     blockForm.querySelector('[name="loaded"]').value = note.loaded;
     blockForm.querySelector('[name="note"]').value = note.note;
@@ -727,8 +727,8 @@
 
   // bringBack opens the notes kept before a sign-in, on the first Foxhole
   // page the tab loads after it, when the forum user who typed them is
-  // signed in. A note kept from a refused save opens only on a load of the
-  // address it was typed at. That load drops them either way. Each opens in
+  // signed in. The unsaved edit of a refused save opens only on a load of
+  // the address it was typed at. That load drops them either way. Each opens in
   // its row, or in the note form above the list when that form is its
   // member's, with its typed text and the note its form loaded, so the
   // server refuses as stale a save over a note someone changed meanwhile.
@@ -746,7 +746,7 @@
     kept.notes.forEach(function (note) {
       if (note.address && (answersForm || note.address !== here())) { return; }
       var first = opened++ === 0;
-      if (keepIn(note)) { return; }
+      if (intoBlock(note)) { return; }
       var cell = document.querySelector('[data-member="' + CSS.escape(note.member) + '"] [data-note-cell]');
       if (!cell) {
         openAboveList(note, first);
@@ -759,9 +759,9 @@
     });
   }
 
-  // Leaving the page keeps the text of a refused save, with the note its
-  // form loaded and the address the tab shows, in place of any kept from
-  // an earlier visit. Text the same as the note loaded keeps nothing.
+  // Leaving the page keeps the unsaved edit of a refused save, with the
+  // note its form loaded and the address the tab shows, in place of one
+  // from an earlier visit. Text the same as the note loaded is no edit.
   window.addEventListener('pagehide', function () {
     if (!unsaved) { return; }
     var values = posted(unsaved);
@@ -973,24 +973,26 @@
    an add preview's address, the script keeps what the page's first paste
    box holds, the one above the preview when there is one, in the tab's
    session storage, with the forum user signed in. A load of such an
-   address puts the kept paste back in the paste box and loads the preview
-   again in the background through the Preview's own address. The preview
-   then takes its place above the action blocks, and the latest report
-   folds, as on the page the Preview answers with. A line that matches
-   several members comes back unpicked, as the preview offers it. Pressing
-   the add's Confirm drops the kept paste. In another tab, or without
-   script, the address opens the paste box empty with the role picked. */
+   address puts that paste back in the paste box and loads the preview
+   again in the background through the address the Preview posts to. The
+   preview then takes its place above the action blocks, and the latest
+   report folds, as on the page the Preview answers with. A line that
+   matches several members comes back unpicked, as the preview offers it.
+   Pressing the add's Confirm drops the paste from the tab. In another tab,
+   or without script, the address opens the paste box empty with the role
+   picked. */
 (function () {
   'use strict';
 
-  var keptKey = 'foxhole-kept-paste';
-  // previewAddress is where the paste box's Preview posts.
-  var previewAddress = '/foxhole/add/preview';
+  // pasteKey names the entry in the tab's session storage that holds the
+  // paste. Closing the tab drops it.
+  var pasteKey = 'foxhole-unsaved-paste';
   var starting = false;
 
-  // atAddPreview says whether the tab shows an add preview's address.
+  // atAddPreview says whether the tab shows an add preview's address. A
+  // page that answers a sent form shows it by now.
   function atAddPreview() {
-    return location.pathname === '/foxhole' && new URLSearchParams(location.search).has('add');
+    return new URLSearchParams(location.search).has('add');
   }
 
   // signedInAs is the forum user the rail names, empty for none.
@@ -1012,20 +1014,20 @@
     var role = form.querySelector('[name="role"]:checked');
     try {
       if (lines.trim() === '' || !role) {
-        sessionStorage.removeItem(keptKey);
+        sessionStorage.removeItem(pasteKey);
         return;
       }
-      sessionStorage.setItem(keptKey, JSON.stringify({ user: signedInAs(), role: role.value, lines: lines }));
+      sessionStorage.setItem(pasteKey, JSON.stringify({ user: signedInAs(), role: role.value, lines: lines }));
     } catch (e) {
       // With no session storage, there is nowhere to keep it.
     }
   }
 
-  // kept is the paste the tab keeps for the forum user signed in, null for
-  // none.
-  function kept() {
+  // waiting is the paste the tab keeps for the forum user signed in, null
+  // for none.
+  function waiting() {
     try {
-      var paste = JSON.parse(sessionStorage.getItem(keptKey));
+      var paste = JSON.parse(sessionStorage.getItem(pasteKey));
       return paste && paste.user === signedInAs() ? paste : null;
     } catch (e) {
       return null;
@@ -1051,15 +1053,15 @@
     if (location.hash === '#add-preview') { preview.querySelector('#add-preview').focus(); }
   }
 
-  // bringBack fills the paste box with the kept paste and loads its
-  // preview. An answer with no preview, as a sign-in page or a page that
+  // bringBack fills the paste box with the paste the tab keeps, and loads
+  // its preview from the address the box's Preview posts to. An answer with no preview, as a sign-in page or a page that
   // can't match lines while the member list is partial, leaves the paste in
   // the box to preview by hand.
   function bringBack(paste, form) {
     form.querySelector('[name="lines"]').value = paste.lines;
     var role = form.querySelector('[name="role"][value="' + CSS.escape(paste.role) + '"]');
     if (role) { role.checked = true; }
-    fetch(previewAddress, { method: 'POST', body: new URLSearchParams({ role: paste.role, lines: paste.lines }), credentials: 'same-origin' })
+    fetch(form.getAttribute('action').split('#')[0], { method: 'POST', body: new URLSearchParams({ role: paste.role, lines: paste.lines }), credentials: 'same-origin' })
       .then(function (res) { return res.text(); })
       .then(function (text) { show(new DOMParser().parseFromString(text, 'text/html'), form); })
       .catch(function () {});
@@ -1069,7 +1071,7 @@
     if (e.target.matches('form[data-field="add-confirm"]')) {
       starting = true;
       try {
-        sessionStorage.removeItem(keptKey);
+        sessionStorage.removeItem(pasteKey);
       } catch (err) {
         // With no session storage, nothing was kept.
       }
@@ -1082,7 +1084,7 @@
   });
 
   var form = pasteBox();
-  var paste = kept();
+  var paste = waiting();
   if (form && paste && atAddPreview() && !document.querySelector('main[data-address]')) {
     bringBack(paste, form);
   }

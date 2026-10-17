@@ -257,8 +257,8 @@ func TestOldRosterPreviewAddressRedirectsToThePreview(t *testing.T) {
 
 // A reload of an add preview while the member list is partial still shows
 // the paste box, with the role the address names picked, so the page script
-// has a box to put the kept paste back in. It says nothing was refused:
-// nothing was sent. Once the list has arrived, the member list notice's
+// has a box to put back the paste the tab keeps. It says nothing was
+// refused: nothing was sent. Once the list has arrived, the member list notice's
 // Reload opens the add preview's address again.
 func TestAddPreviewAddressWhileTheMemberListIsPartialShowsThePasteBox(t *testing.T) {
 	w := newFoxholeWorld(t)

@@ -269,7 +269,10 @@ func (p *rosterPreview) NobodyHint() string {
 // Retry's address, or a preview of the whole roster, at its own, which its
 // Preview again link opens.
 func (p *rosterPreview) Reopen() reopenLink {
-	return reopenOf(p.reopen, "Retry")
+	if p.Retry != 0 {
+		return reopenOf(p.reopen, "Retry")
+	}
+	return reopenOf(p.reopen, "roster preview")
 }
 
 // CanAdd reports whether confirming the preview could give Internal to
