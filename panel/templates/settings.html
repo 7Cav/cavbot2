@@ -14,7 +14,7 @@
 {{define "rank-roles"}}
   <section class="rank-roles" data-section="rank-roles">
   {{with .RankRoles.Preview}}{{template "rank-roles-preview" .}}{{end}}
-  <form method="post" action="/rank-roles#rank-roles" class="block">
+  <form method="post" action="/rank-roles#rank-roles" class="block" data-edit="rank-roles" data-stored="/settings#rank-roles"{{if .RankRoles.Posted}} data-posted{{end}}>
     {{- /* With a preview shown, the preview carries the heading's ID and
          any refusal. */}}
     {{if .RankRoles.Preview}}<h2 class="block-header">Rank roles</h2>
@@ -72,7 +72,7 @@
 
 {{define "recording-roles"}}
   <section class="recording-roles" data-section="recording-roles">
-  <form method="post" action="/recording-roles#recording-roles" class="block">
+  <form method="post" action="/recording-roles#recording-roles" class="block" data-edit="recording-roles"{{if .Settings.RefusalFor "recording-roles"}} data-posted{{end}}>
     <h2 class="block-header" id="recording-roles" tabindex="-1"{{if .Settings.RefusalFor "recording-roles"}} aria-describedby="refusal"{{end}}>Recording roles</h2>
     {{with .Settings.RefusalFor "recording-roles"}}{{template "refusal" .}}{{end}}
     {{if .Settings.RecordingRoles.Saved}}{{template "saved"}}{{end}}

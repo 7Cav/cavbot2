@@ -66,6 +66,9 @@ type rankRolesPage struct {
 	Changes []changeView
 	// Saved is the section showing a save of it just made.
 	Saved bool
+	// Posted is the form showing the rank roles as a save posted them, or
+	// as the preview's address carries them, rather than as stored.
+	Posted bool
 }
 
 // rankRolesPreviewView is a preview as the section shows it. It holds the
@@ -255,7 +258,7 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 		Saved: req.savedAt(formRankRoles, stored.Version)}
 	posted := req.RankRoles
 	if posted != nil {
-		page.Version = postedBackVersion(stored.Version, posted.Version, req.staleFor(formRankRoles))
+		page.Version, page.Posted = postedBackVersion(stored.Version, posted.Version, req.staleFor(formRankRoles)), true
 	}
 	holders := roleHolders(s.deps.Manager.MemberList(s.deps.GuildID))
 	for _, rank := range commands.RankLadderOf(stored).Ranks() {

@@ -101,7 +101,7 @@
     {{else}}
     <div class="block-row off">The paste box is empty.</div>
     {{end}}
-    <form method="post" action="/foxhole/add" id="fx-add-confirm" class="submit-row" data-field="add-confirm">
+    <form method="post" action="/foxhole/add" id="fx-add-confirm" class="submit-row" data-field="add-confirm" data-edit="add">
       <input type="hidden" name="role" value="{{.Role}}">
       <input type="hidden" name="lines" value="{{.Paste.Text}}">
       <input type="hidden" name="named" value="{{.Named}}">
@@ -415,7 +415,7 @@
 {{define "note-cell"}}<td class="fx-note" data-note-cell data-note="{{.Note}}"><span class="fx-notetext" data-field="note">{{.Note}}</span> <a href="{{.EditHref}}" class="fx-noteedit" data-field="edit_note" aria-label="{{if .Note}}Edit the note on {{.DisplayName}}{{else}}Add a note on {{.DisplayName}}{{end}}">{{if .Note}}Edit{{else}}Add a note{{end}}</a></td>{{end}}
 
 {{- /* On a refused save the note box names the refusal in its description, ahead of the no-role hint. The page script puts this form alone in a row and focuses the box, so a screen reader says why nothing saved as focus lands. */}}
-{{define "note-form"}}<form method="post" action="/foxhole/notes#note" class="fx-noteform" data-field="note-form">
+{{define "note-form"}}<form method="post" action="/foxhole/notes#note" class="fx-noteform" data-field="note-form"{{with .MemberID}} data-edit="note-{{.}}"{{end}}{{if .Refusal}} data-posted{{end}}>
   {{with .Refusal}}<div class="note fx-noterefusal" id="note-refusal" data-error="{{.Kind}}">{{.Message}}{{if eq .Kind "stale"}} Their note: <span class="fx-notenow">{{if $.Loaded}}{{$.Loaded}}{{else}}none{{end}}</span>{{end}}</div>{{end}}
   <input type="hidden" name="member" value="{{.MemberID}}">
   <input type="hidden" name="loaded" value="{{.Loaded}}">
@@ -440,7 +440,7 @@
       {{template "add-form" .}}
     </section>{{end}}
 
-{{define "add-form"}}<form method="post" action="/foxhole/add/preview#add-preview" data-field="add-form">
+{{define "add-form"}}<form method="post" action="/foxhole/add/preview#add-preview" data-field="add-form" data-edit="add"{{if .Text}} data-posted{{end}}>
   <div class="block-row">
     <div class="field fx-radios" role="radiogroup" aria-labelledby="add-role-label"><span class="field-label" id="add-role-label">Role</span>
       <label class="check"><input type="radio" name="role" value="internal"{{if ne .Role "external"}} checked{{end}}> Internal</label>

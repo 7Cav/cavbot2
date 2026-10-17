@@ -97,7 +97,7 @@
 
 {{define "moderators"}}
   <section class="moderators" data-section="moderators">
-  <form method="post" action="/moderators#moderators" class="block">
+  <form method="post" action="/moderators#moderators" class="block" data-edit="moderators"{{if .Hubs.RefusalFor "moderators"}} data-posted{{end}}>
     <h2 class="block-header" id="moderators" tabindex="-1"{{if .Hubs.RefusalFor "moderators"}} aria-describedby="refusal"{{end}}>Moderator roles for every hub</h2>
     {{with .Hubs.RefusalFor "moderators"}}{{template "refusal" .}}{{end}}
     {{if .Hubs.Moderators.Saved}}{{template "saved"}}{{end}}
@@ -137,7 +137,7 @@
 {{end}}
 
 {{define "create"}}
-  <form method="post" action="/hubs#create" class="block narrow" data-section="create">
+  <form method="post" action="/hubs#create" class="block narrow" data-section="create" data-edit="create"{{if .Hubs.RefusalFor "create"}} data-posted{{end}}>
     <h2 class="block-header" id="create" tabindex="-1"{{if .Hubs.RefusalFor "create"}} aria-describedby="refusal"{{end}}>Create a hub</h2>
     {{with .Hubs.RefusalFor "create"}}{{template "refusal" .}}{{end}}
     <div class="block-row">
@@ -167,7 +167,7 @@
 {{end}}
 
 {{define "register"}}
-  <form method="post" action="/hubs#register" class="block narrow" data-section="register">
+  <form method="post" action="/hubs#register" class="block narrow" data-section="register" data-edit="register"{{if .Hubs.RefusalFor "register"}} data-posted{{end}}>
     <h2 class="block-header" id="register" tabindex="-1"{{if .Hubs.RefusalFor "register"}} aria-describedby="refusal"{{end}}>Register a voice channel as a hub</h2>
     {{with .Hubs.RefusalFor "register"}}{{template "refusal" .}}{{end}}
     <div class="block-row">
@@ -198,7 +198,7 @@
     <div class="submit-row"><a class="btn" href="/#hubs" data-field="back">Back to the list</a></div>
   </div>
   {{else}}
-  <form method="post" action="/hubs/{{.ID}}#edit" class="block">
+  <form method="post" action="/hubs/{{.ID}}#edit" class="block" data-edit="hub-{{.ID}}"{{if $.Hubs.RefusalFor "edit"}} data-posted{{end}}>
     <h2 class="block-header" id="edit" tabindex="-1"{{if $.Hubs.RefusalFor "edit"}} aria-describedby="refusal"{{end}}>Edit hub {{.BaseString}}</h2>
     {{with $.Hubs.RefusalFor "edit"}}{{template "refusal" .}}{{end}}
     {{if .Saved}}{{template "saved"}}{{end}}
