@@ -459,6 +459,8 @@ func TestEveryRouteHasAnOutsiderCaseOrIsOpen(t *testing.T) {
 	}
 	reached := map[string]bool{}
 	reach := func(method, path string) {
+		// A browser sends an address without its fragment.
+		path, _, _ = strings.Cut(path, "#")
 		_, pattern := mux.Handler(httptest.NewRequest(method, path, nil))
 		reached[pattern] = true
 	}

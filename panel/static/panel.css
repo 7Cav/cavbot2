@@ -125,12 +125,12 @@ img { max-width: 100%; }
 .block-row + .block-row { border-top: 1px solid var(--line); }
 .submit-row { padding: 12px 14px; background: rgba(23,23,23,.9); border-top: 1px solid var(--line-2); border-radius: 0 0 var(--radius-inner) var(--radius-inner); }
 /* A block a page opens at, by its own ID or its heading's in the address's
-   fragment, or a change log entry by its summary line's: a little room
-   above it. The heading takes focus only from the landing, never from Tab,
-   so it draws no ring. A summary line is in the tab order, and keeps its
-   ring. */
-.block[id], .block-header[id], .change-head[id] { scroll-margin-top: 12px; }
-h2[tabindex="-1"]:focus { outline: none; }
+   fragment, a change log entry by its summary line's, or the note a
+   recording's delete lands on: a little room above it. The heading and the
+   note take focus only from the landing, never from Tab, so they draw no
+   ring. A summary line is in the tab order, and keeps its ring. */
+.block[id], .block-header[id], .change-head[id], .note[id] { scroll-margin-top: 12px; }
+h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
 
 /* A danger confirm: the preview a removal waits on. The forum draws no such
    state, so PRODUCT.md's Look allows a red header rule here, and a filled
@@ -141,6 +141,10 @@ h2[tabindex="-1"]:focus { outline: none; }
 .confirm-list h3 { margin: 0 0 6px; font-size: 14px; font-weight: 500; color: var(--text-hi); }
 .confirm-list ul { margin: 0; padding-left: 18px; }
 .confirm-list li + li { margin-top: 4px; }
+/* A confirm's warning after its list, such as a recording's "Nobody can
+   get it back", stands apart from the last item and reads in bright text,
+   since it is what the list leads up to. */
+.confirm-warning { margin-top: 10px; color: var(--text-hi); }
 .confirm-count { margin-left: 4px; font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
 
 /* A note is a refusal, with the red stripe, unless a modifier says
@@ -459,6 +463,9 @@ h2[tabindex="-1"]:focus { outline: none; }
 .rec-facts dt { color: var(--text-mute); }
 .rec-facts dd { margin: 0; color: var(--text-hi); overflow-wrap: anywhere; }
 .rec-facts .off { color: var(--text-mute); }
+/* A speaker's name, rank and lost track marker move to the next line
+   together, and only a name too long for a line of its own breaks. */
+.rec-speaker { display: inline-block; max-width: 100%; }
 .rec-switch { margin-bottom: 12px; }
 .rec-downloads { display: flex; flex-wrap: wrap; gap: 8px; }
 .rec-downloads .btn { white-space: normal; text-align: center; }
