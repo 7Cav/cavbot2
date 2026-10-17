@@ -61,7 +61,7 @@ type GatewayWatch struct {
 // INFO line with them. Watch a session before it opens, so the watch reads the
 // close of every connection it makes, and stand the watch down before
 // closing the session on purpose, since that close emits Disconnect too.
-// CloseSession does both.
+// CloseSession does both, for a session that failed to open.
 func WatchGateway(dg *discordgo.Session, after time.Duration, kv ...any) *GatewayWatch {
 	w := &GatewayWatch{dg: dg, after: after, kv: kv}
 	dg.Dialer = gatewayDialer(w.closed)

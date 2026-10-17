@@ -323,3 +323,20 @@ func TestGatewayWatch_ASessionClosedAfterAFailedOpenLogsInNoMore(t *testing.T) {
 		t.Errorf("the gateway saw %d logins, want 1: none after the close", n)
 	}
 }
+
+// A session closed with CloseSession is closed on purpose, and the watch
+// sends nothing for it.
+func TestGatewayWatch_CloseSessionSendsNothing(t *testing.T) {
+	tr := initSentryWithTransport(t)
+	dg, err := discordgo.New("Bot fake-token-for-test")
+	if err != nil {
+		t.Fatalf("discordgo.New: %v", err)
+	}
+	w := WatchGateway(dg, gatewayWatchAfter, "session", "recorder")
+
+	_ = w.CloseSession()
+
+	if events := waitForOutageEvents(t, tr, 0); len(events) != 0 {
+		t.Errorf("Sentry got %d events after CloseSession, want none", len(events))
+	}
+}
