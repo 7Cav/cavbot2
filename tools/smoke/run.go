@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,11 +18,14 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/7cav/cavbot2/utils"
 )
 
 const (
@@ -475,11 +479,24 @@ func (s *supervisor) start(ctx context.Context) (<-chan struct{}, error) {
 	return s.startBot(env)
 }
 
+// panelNotListening opens the warning that the bot got ready with no word
+// from its panel.
+const panelNotListening = "the bot is running but its panel is not listening"
+
 // startBot launches the built bot in the state directory, which has no .env,
 // so the environment is its whole configuration. Its output goes to the bot
 // log, and the returned channel closes at "Bot is now running". The bot
 // reports every recorder before that line, so the tally is whole by then.
+//
+// Most of the lines the run reads print at INFO, so a LOG_LEVEL above INFO
+// starts the bot at INFO. The bot log then leaves out the lines LOG_LEVEL
+// would have kept the bot from printing.
 func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
+	runValue, _ := envValue(env, "LOG_LEVEL")
+	runLevel := utils.ParseLogLevel(runValue)
+	if runLevel > slog.LevelInfo {
+		env = append(slices.Clip(env), "LOG_LEVEL=INFO")
+	}
 	logFile, err := os.Create(s.paths.botLog())
 	if err != nil {
 		return nil, err
@@ -518,7 +535,9 @@ func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
 		panel, closed := false, false
 		for sc.Scan() {
 			line := sc.Text()
-			_, _ = fmt.Fprintln(logFile, line)
+			if keptInBotLog(line, runLevel) {
+				_, _ = fmt.Fprintln(logFile, line)
+			}
 			if !closed {
 				s.report.Recorders.count(line)
 			}
@@ -527,7 +546,7 @@ func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
 				panel = true
 			case strings.Contains(line, "Bot is now running") && !closed:
 				if !panel {
-					s.logf("the bot is running but its panel is not listening; see %s", s.paths.botLog())
+					s.logf("%s; see %s", panelNotListening, s.paths.botLog())
 				}
 				closed = true
 				close(ready)
@@ -536,6 +555,24 @@ func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
 		_, _ = io.Copy(logFile, pr)
 	}()
 	return ready, nil
+}
+
+// botLineLevel finds the level of a line the bot's logger wrote.
+var botLineLevel = regexp.MustCompile(`^time=\S+ level=(\S+)`)
+
+// keptInBotLog reports whether a run at level keeps line in the bot log. It
+// keeps the logger's lines at level or above, and every line the logger
+// didn't write, such as a panic's.
+func keptInBotLog(line string, level slog.Level) bool {
+	m := botLineLevel.FindStringSubmatch(line)
+	if m == nil {
+		return true
+	}
+	var lineLevel slog.Level
+	if lineLevel.UnmarshalText([]byte(m[1])) != nil {
+		return true
+	}
+	return lineLevel >= level
 }
 
 func (s *supervisor) announce() {
