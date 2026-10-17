@@ -280,9 +280,16 @@ type answeringGateway struct {
 	reachable func(endpoint string) bool
 	// daveVersion is the DAVE protocol version the voice server announces.
 	daveVersion uint16
-	pending     chan<- struct{}
-	opens       atomic.Int32
-	holdsConn   atomic.Bool
+	// opening runs as an open at an endpoint completes, before Open
+	// returns, or after it when describeLate.
+	opening func(endpoint string)
+	// describeLate has Open return at the voice server's Ready, as disgo's
+	// gateway does, with the session description following it 100 ms
+	// later.
+	describeLate bool
+	pending      chan<- struct{}
+	opens        atomic.Int32
+	holdsConn    atomic.Bool
 }
 
 // gatewayOpen is one gateway's Open: the state it opened with, and whether
@@ -319,6 +326,22 @@ func (g *answeringGateway) Open(ctx context.Context, state disgovoice.State) err
 		g.holdsConn.Store(false)
 		return ctx.Err()
 	}
+	if g.describeLate {
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			g.opening(state.Endpoint)
+			g.describe(state, identified)
+		}()
+		return nil
+	}
+	g.describe(state, identified)
+	g.opening(state.Endpoint)
+	return nil
+}
+
+// describe sends the session description that completes the connection
+// Open opened, and reports the open.
+func (g *answeringGateway) describe(state disgovoice.State, identified bool) {
 	g.dave.OnSelectProtocolAck(g.daveVersion)
 	g.onEvent(g, disgovoice.OpcodeSessionDescription, 0, disgovoice.GatewayMessageDataSessionDescription{
 		Mode:                disgovoice.EncryptionModeAEADAES256GCMRTPSize,
@@ -326,7 +349,6 @@ func (g *answeringGateway) Open(ctx context.Context, state disgovoice.State) err
 		DaveProtocolVersion: int(g.daveVersion),
 	})
 	g.opened <- gatewayOpen{gateway: g, state: state, identified: identified}
-	return nil
 }
 
 // nextDialDelay is disgo's wait before its gateway dials again, after it
@@ -363,6 +385,9 @@ type callHarness struct {
 	// hears each open a gateway leaves waiting.
 	silent  atomic.Bool
 	pending chan struct{}
+	// describeLate has gateways built from then on send their session
+	// description only after their open has returned.
+	describeLate atomic.Bool
 	// transportOnly makes the call one without DAVE, as a stage channel's
 	// is, for gateways built from then on. DAVE then holds no frame, where
 	// in an end-to-end encrypted call it holds every frame here: no voice
@@ -388,13 +413,16 @@ type callHarness struct {
 	serving, left string
 	// unreachable is the voice servers the recorder can't dial.
 	unreachable map[string]bool
+	// whileOpening maps an endpoint to what happens once as an open there
+	// completes.
+	whileOpening map[string]func()
 }
 
 func newCallHarness(t *testing.T) *callHarness {
 	t.Helper()
 	h := &callHarness{t: t, s: recorderSession(t, &fakeManager{}), api: &channelAPI{t: t},
 		opened: make(chan gatewayOpen, 64), pending: make(chan struct{}, 64), serving: oldEndpoint,
-		unreachable: make(map[string]bool)}
+		unreachable: make(map[string]bool), whileOpening: make(map[string]func())}
 	h.s.dg.Client = &http.Client{Transport: h.api}
 	h.s.voice = h.s.voiceManager(h.updateVoiceState, callRecorder, h.newGateway,
 		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
@@ -408,7 +436,8 @@ func (h *callHarness) newGateway(dave godave.Session, onEvent disgovoice.EventHa
 		version = 0
 	}
 	return &answeringGateway{dave: dave, onEvent: onEvent, onClose: onClose, opened: h.opened, sent: h.sentOp,
-		answers: h.answersAt, reachable: h.reachable, daveVersion: version, pending: h.pending}
+		answers: h.answersAt, reachable: h.reachable, daveVersion: version, opening: h.opening,
+		describeLate: h.describeLate.Load(), pending: h.pending}
 }
 
 // answersAt reports whether the voice server at endpoint answers an open:
@@ -425,6 +454,25 @@ func (h *callHarness) reachable(endpoint string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return !h.unreachable[endpoint]
+}
+
+// opening runs what was to happen as an open at endpoint completes, once.
+func (h *callHarness) opening(endpoint string) {
+	h.mu.Lock()
+	f := h.whileOpening[endpoint]
+	delete(h.whileOpening, endpoint)
+	h.mu.Unlock()
+	if f != nil {
+		f()
+	}
+}
+
+// onOpening has f happen as the next open at endpoint completes, before
+// the recorder's gateway hears it opened.
+func (h *callHarness) onOpening(endpoint string, f func()) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.whileOpening[endpoint] = f
 }
 
 // setReachable makes the voice server at endpoint one the recorder can
@@ -876,6 +924,46 @@ func TestRecorderConnectsOnceTheServerItsCallMovedToIsReachable(t *testing.T) {
 			t.Errorf("voice state updates = %v, want the recorder never to leave", h.sent())
 		}
 	})
+}
+
+// Discord can name a later voice server for the call just as the
+// recorder's connection to the one it named before completes: as the
+// gateway opens, or between the voice server's Ready and its session
+// description. The call isn't there anymore, so the recorder doesn't stay
+// there: it connects at the server named last, with the token Discord gave
+// for it, through a gateway that identifies.
+func TestRecorderMovesOnFromAServerDiscordReplacedAsItConnected(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		describeLate bool
+	}{
+		{"named as the gateway opens", false},
+		{"named before the session description", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recordSentry(t)
+			synctest.Test(t, func(t *testing.T) {
+				h := newCallHarness(t)
+				conn := h.start()
+				defer h.hangUp(conn)
+				h.describeLate.Store(tc.describeLate)
+				h.onOpening(newEndpoint, func() { h.name("token-3", laterEndpoint) })
+
+				go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+				time.Sleep(time.Second)
+				synctest.Wait()
+
+				var last gatewayOpen
+				for len(h.opened) > 0 {
+					last = <-h.opened
+				}
+				if last.state.Endpoint != laterEndpoint || last.state.Token != "token-3" || !last.identified {
+					t.Errorf("last gateway open at %s with token %s and identified=%v, want an identify at %s with token-3",
+						last.state.Endpoint, last.state.Token, last.identified, laterEndpoint)
+				}
+			})
+		})
+	}
 }
 
 // A gap that reaches 10 s reaches Sentry once, naming the recorder, the

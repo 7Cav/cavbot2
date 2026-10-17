@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/7cav/cavbot2/store"
 	"github.com/bwmarrin/discordgo"
@@ -228,28 +229,38 @@ type gapLine struct {
 	length     time.Duration
 }
 
-// parseGapLine reads an info file Gap line, "Gap: START to END (LENGTH)",
-// with its times in the info file's Zulu layout.
+// zuluTime matches a time as the info file's Zulu layout writes it.
+var zuluTime = regexp.MustCompile(`\d{4}-\d{2}-\d{2} \d{4}z`)
+
+// parseGapLine reads an info file Gap line's values in order: the two times,
+// in the info file's Zulu layout, and the one word that reads as a length.
 func parseGapLine(t *testing.T, line string) gapLine {
 	t.Helper()
-	span, length, ok := strings.Cut(strings.TrimSpace(strings.TrimPrefix(line, infoGapLabel)), " (")
-	from, to, ok2 := strings.Cut(span, " to ")
-	if !ok || !ok2 || !strings.HasSuffix(length, ")") {
-		t.Fatalf("Gap line %q isn't START to END (LENGTH)", line)
+	times := zuluTime.FindAllString(line, -1)
+	if len(times) != 2 {
+		t.Fatalf("Gap line %q holds %d Zulu times, want a start and an end", line, len(times))
 	}
-	start, err := time.Parse(zuluLayout, from)
-	if err != nil {
-		t.Fatalf("Gap line %q start: %v", line, err)
+	var got gapLine
+	for i, at := range []*time.Time{&got.start, &got.end} {
+		parsed, err := time.Parse(zuluLayout, times[i])
+		if err != nil {
+			t.Fatalf("Gap line %q time %q: %v", line, times[i], err)
+		}
+		*at = parsed
 	}
-	end, err := time.Parse(zuluLayout, to)
-	if err != nil {
-		t.Fatalf("Gap line %q end: %v", line, err)
+	var lengths []time.Duration
+	for _, word := range strings.FieldsFunc(zuluTime.ReplaceAllString(line, ""), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '.'
+	}) {
+		if d, err := time.ParseDuration(word); err == nil {
+			lengths = append(lengths, d)
+		}
 	}
-	d, err := time.ParseDuration(strings.TrimSuffix(length, ")"))
-	if err != nil {
-		t.Fatalf("Gap line %q length: %v", line, err)
+	if len(lengths) != 1 {
+		t.Fatalf("Gap line %q holds lengths %v, want one", line, lengths)
 	}
-	return gapLine{start: start, end: end, length: d}
+	got.length = lengths[0]
+	return got
 }
 
 // The info file lists each gap past 10 s, in order, with its start, end

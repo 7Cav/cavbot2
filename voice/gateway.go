@@ -181,7 +181,7 @@ var errConnClosed = errors.New("voice: the recorder closed the connection")
 // rejoin may still be waiting. It ends, and sends nothing after this leave.
 func (c *recorderConn) Close(ctx context.Context) {
 	c.closed.Store(true)
-	c.endRejoin()
+	c.cancelRejoin()
 	c.Conn.Close(ctx)
 }
 
@@ -211,7 +211,7 @@ func (c *recorderConn) rejoin() bool {
 	}
 	c.stopRejoin = cancel
 	c.mu.Unlock()
-	defer c.endRejoin()
+	defer c.cancelRejoin()
 	err := c.Open(ctx, *channelID, selfMute, selfDeaf)
 	if err != nil && ctx.Err() == nil {
 		closeCtx, cancelClose := context.WithTimeout(context.Background(), closeTimeout)
@@ -221,8 +221,8 @@ func (c *recorderConn) rejoin() bool {
 	return err == nil
 }
 
-// endRejoin ends the rejoin under way, if any.
-func (c *recorderConn) endRejoin() {
+// cancelRejoin ends the rejoin under way, if any.
+func (c *recorderConn) cancelRejoin() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.stopRejoin != nil {
@@ -294,7 +294,7 @@ func (c *recorderConn) HandleVoiceStateUpdate(e gateway.EventVoiceStateUpdate) {
 	}
 	if e.ChannelID == nil {
 		// Discord took the recorder out, so no rejoin can bring it back.
-		c.endRejoin()
+		c.cancelRejoin()
 		return
 	}
 	c.mu.Lock()
@@ -339,8 +339,11 @@ type renewableGateway struct {
 	stopDialing context.CancelFunc
 	dialed      chan struct{}
 	// redial ends the dial in flight, so the next one dials the voice
-	// server Discord named since. nil while none is in flight.
-	redial context.CancelFunc
+	// server Discord named since, and describedDial closes once the
+	// session description that completes its connection arrives. Both are
+	// nil while no dial is in flight.
+	redial        context.CancelFunc
+	describedDial chan struct{}
 	// connected is whether the gateway is connected in the call, at the
 	// voice server Discord named last: the session description that
 	// completes a connection arrived after its last dial started.
@@ -372,13 +375,27 @@ func (g *renewableGateway) watchEvents(onEvent disgovoice.EventHandlerFunc) disg
 	}
 }
 
-// described notes a session description on gw. It connects the gateway
-// when gw is the one dialed last, and dialed the server Discord named last.
+// described notes a session description on gw, which completes the dial in
+// flight when gw is the gateway it dialed. It connects the gateway when that
+// dial went to the server Discord named last.
 func (g *renewableGateway) described(gw disgovoice.Gateway) {
 	e := g.named()
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.connected = gw == g.gw && (e == nil || g.state.Endpoint == *e.Endpoint && g.state.Token == e.Token)
+	if gw != g.gw {
+		return
+	}
+	g.connected = e == nil || dialedAt(g.state, *e)
+	if g.describedDial != nil {
+		close(g.describedDial)
+		g.describedDial = nil
+	}
+}
+
+// dialedAt reports whether state is at the voice server e names, with its
+// token.
+func dialedAt(state disgovoice.State, e gateway.EventVoiceServerUpdate) bool {
+	return state.Endpoint == *e.Endpoint && state.Token == e.Token
 }
 
 // server is the voice server Discord named last for the call, which every
@@ -403,7 +420,7 @@ func (g *renewableGateway) isConnected() bool {
 func (g *renewableGateway) openedAt(e gateway.EventVoiceServerUpdate) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.state.Endpoint == *e.Endpoint && g.state.Token == e.Token
+	return dialedAt(g.state, e)
 }
 
 func (g *renewableGateway) SSRC() uint32 { return g.current().SSRC() }
@@ -442,35 +459,76 @@ func (g *renewableGateway) dial(state disgovoice.State) <-chan error {
 	go func() {
 		defer close(dialed)
 		defer stop()
+		err := errDialPanicked
+		defer func() { result <- err }()
+		defer utils.RecoverPanic("recorder-voice-dial")
 		if prev != nil {
 			<-prev
 		}
-		result <- g.dialUntilOpen(ctx, state)
+		err = g.dialUntilOpen(ctx, state)
 	}()
 	return result
 }
 
+// errDialPanicked is Open's answer when disgo's gateway panicked opening.
+var errDialPanicked = errors.New("voice: opening the voice gateway panicked")
+
 // dialUntilOpen opens the gateway, dialing again at each voice server
-// Discord names meanwhile, until it opens or ctx ends. disgo's gateway dials
-// the state it was given again and again while it can't reach its server,
-// so a server Discord names ends that dial, and the next one dials the new
-// server.
+// Discord names meanwhile, until it opens at the one named last or ctx ends.
+// disgo's gateway dials the state it was given again and again while it
+// can't reach its server, so a server Discord names ends that dial, and the
+// next one dials the new server. A dial ends once the session description
+// completes its connection, which comes after disgo's open returns. Discord
+// can name another server before then. The call isn't there anymore, so
+// that gateway closes, and a new one dials the server named last.
 func (g *renewableGateway) dialUntilOpen(ctx context.Context, state disgovoice.State) error {
 	for {
 		dial, redial := context.WithCancel(ctx)
-		gw, at := g.startDial(state, redial)
+		gw, at, described := g.startDial(state, redial)
 		err := gw.Open(dial, at)
+		if err == nil {
+			select {
+			case <-described:
+			case <-dial.Done():
+			}
+		}
 		redialed := dial.Err() != nil && ctx.Err() == nil
-		g.endDial()
+		g.dialEnded()
 		redial()
-		if !redialed {
+		switch {
+		case err == nil && ctx.Err() != nil:
+			return ctx.Err()
+		case err == nil && g.namedLastIs(at):
+			return nil
+		case err == nil:
+			g.replace(gw)
+		case !redialed:
 			return err
 		}
 	}
 }
 
-// stopDial ends the dialing under way, if any.
-func (g *renewableGateway) stopDial() {
+// namedLastIs reports whether state is at the voice server Discord named
+// last, with its token.
+func (g *renewableGateway) namedLastIs(state disgovoice.State) bool {
+	e := g.named()
+	return e == nil || dialedAt(state, *e)
+}
+
+// replace closes gw, which opened at a voice server Discord has replaced
+// since, and puts a new gateway in its place, one that identifies. The close
+// is on purpose, so disgo's close handler hears nothing of it.
+func (g *renewableGateway) replace(gw disgovoice.Gateway) {
+	g.mu.Lock()
+	if g.gw == gw {
+		g.gw, g.connected = g.build(), false
+	}
+	g.mu.Unlock()
+	gw.CloseWithCode(websocket.CloseServiceRestart, "Discord named a later voice server")
+}
+
+// cancelDialing ends the dialing under way, if any.
+func (g *renewableGateway) cancelDialing() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.stopDialing != nil {
@@ -479,23 +537,25 @@ func (g *renewableGateway) stopDial() {
 }
 
 // startDial notes a dial of state at the voice server Discord named last,
-// which redial ends, and returns the gateway to dial and the state to dial
-// with.
-func (g *renewableGateway) startDial(state disgovoice.State, redial context.CancelFunc) (disgovoice.Gateway, disgovoice.State) {
+// which redial ends. It returns the gateway to dial, the state to dial with,
+// and a channel that closes once the session description completes the
+// dial's connection.
+func (g *renewableGateway) startDial(state disgovoice.State, redial context.CancelFunc) (disgovoice.Gateway, disgovoice.State, <-chan struct{}) {
 	if e := g.named(); e != nil {
 		state.Endpoint, state.Token = *e.Endpoint, e.Token
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.state, g.redial, g.connected = state, redial, false
-	return g.gw, state
+	g.describedDial = make(chan struct{})
+	return g.gw, state, g.describedDial
 }
 
-// endDial notes that the dial in flight has ended.
-func (g *renewableGateway) endDial() {
+// dialEnded notes that the dial in flight has ended.
+func (g *renewableGateway) dialEnded() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.redial = nil
+	g.redial, g.describedDial = nil, nil
 }
 
 // redialFor ends the dial in flight when it dials a voice server other than
@@ -503,7 +563,7 @@ func (g *renewableGateway) endDial() {
 func (g *renewableGateway) redialFor(e gateway.EventVoiceServerUpdate) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.redial != nil && (g.state.Endpoint != *e.Endpoint || g.state.Token != e.Token) {
+	if g.redial != nil && !dialedAt(g.state, e) {
 		g.redial()
 	}
 }
@@ -534,12 +594,12 @@ func (g *renewableGateway) reopen(ctx context.Context) error {
 // Close ends any dialing, then closes the gateway: disgo closes it when the
 // recorder leaves or Discord takes it out.
 func (g *renewableGateway) Close() {
-	g.stopDial()
+	g.cancelDialing()
 	g.current().Close()
 }
 
 func (g *renewableGateway) CloseWithCode(code int, message string) {
-	g.stopDial()
+	g.cancelDialing()
 	g.current().CloseWithCode(code, message)
 }
 
@@ -697,18 +757,24 @@ type callConn struct {
 // recorder's connection options didn't build.
 var errNotRenewable = errors.New("voice: the connection's gateway can't reopen")
 
-// connected reports whether the gateway the recorder's connection options
-// built is connected in the call, at the voice server Discord named last.
-func (c callConn) connected() bool {
+// renewable is the gateway the recorder's connection options built, false
+// on a connection they didn't build.
+func (c callConn) renewable() (*renewableGateway, bool) {
 	g, ok := c.Gateway().(*renewableGateway)
+	return g, ok
+}
+
+// connected reports whether the recorder's gateway is connected in the
+// call, at the voice server Discord named last.
+func (c callConn) connected() bool {
+	g, ok := c.renewable()
 	return ok && g.isConnected()
 }
 
-// server is the voice server the gateway the recorder's connection options
-// built dials: the one Discord named last for the call, empty before
-// Discord names one.
+// server is the voice server the recorder's gateway dials: the one Discord
+// named last for the call, empty before Discord names one.
 func (c callConn) server() string {
-	g, ok := c.Gateway().(*renewableGateway)
+	g, ok := c.renewable()
 	if !ok {
 		return ""
 	}
@@ -718,7 +784,7 @@ func (c callConn) server() string {
 // reconnect opens a fresh voice connection where the call is, through the
 // gateway the recorder's connection options built.
 func (c callConn) reconnect(ctx context.Context) error {
-	g, ok := c.Gateway().(*renewableGateway)
+	g, ok := c.renewable()
 	if !ok {
 		return errNotRenewable
 	}

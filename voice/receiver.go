@@ -79,7 +79,7 @@ var errDAVEStalled = errors.New("voice: DAVE held every frame past the stall lim
 // errGap the error it comes with.
 const gapMessage = "Recorder can't hear the channel"
 
-var errGap = errors.New("voice: the recorder heard nothing for the gap report's limit")
+var errGap = errors.New("voice: the recorder couldn't hear the channel for 10 s")
 
 // receiver reads one voice connection's packets on a goroutine of its own
 // and hands each speaker's frames over, in the order they arrived. It tells

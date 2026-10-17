@@ -35,6 +35,9 @@ type gapSpan struct {
 	start, end time.Time
 }
 
+// length is how long the gap lasted, rounded to the second.
+func (g gapSpan) length() time.Duration { return g.end.Sub(g.start).Round(time.Second) }
+
 // writeRecordingInfo writes a stopped recording's info file. starterName is
 // the starter's display name, and gaps the recording's gaps past 10 s, in
 // order.
@@ -63,8 +66,7 @@ func recordingInfo(rec store.Recording, starterName string, gaps []gapSpan) stri
 	line("Stopped: %s", rec.StoppedAt.UTC().Format(zuluLayout))
 	line("Ended: %s", recordingEndPhrase(rec.Ended))
 	for _, g := range gaps {
-		line("%s %s to %s (%s)", infoGapLabel, g.start.UTC().Format(zuluLayout), g.end.UTC().Format(zuluLayout),
-			g.end.Sub(g.start).Round(time.Second))
+		line("%s %s to %s (%s)", infoGapLabel, g.start.UTC().Format(zuluLayout), g.end.UTC().Format(zuluLayout), g.length())
 	}
 	line("Speakers:")
 	if len(rec.Speakers) == 0 {
