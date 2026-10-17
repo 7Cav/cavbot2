@@ -878,6 +878,75 @@ func TestRecorderConnectsOnceTheServerItsCallMovedToIsReachable(t *testing.T) {
 	})
 }
 
+// A gap that reaches 10 s reaches Sentry once, naming the recorder, the
+// channel and the voice server the recorder is trying to reach, while the
+// recording still runs.
+func TestRecorderReportsAGapThatReaches10s(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		conn := h.record(listen(nil))
+		defer h.hangUp(conn)
+		h.setReachable(newEndpoint, false)
+
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(15 * time.Second)
+		synctest.Wait()
+
+		got := events.Events()
+		if len(got) != 1 || got[0].Tags["message"] != gapMessage {
+			t.Fatalf("Sentry events = %v, want one %q", eventMessages(got), gapMessage)
+		}
+		for _, want := range []string{callRecorder.String(), callChannel.String(), newEndpoint} {
+			if !eventMentions(got[0], want) {
+				t.Errorf("Sentry event %v doesn't name %s", eventTexts(got[0]), want)
+			}
+		}
+	})
+}
+
+// A gap that ends before 10 s is no news for Sentry, however long the
+// recording goes on after it.
+func TestRecorderReportsNothingOfAGapUnder10s(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		conn := h.record(listen(nil))
+		defer h.hangUp(conn)
+		h.setReachable(newEndpoint, false)
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(9 * time.Second)
+
+		h.name("token-3", laterEndpoint)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if got := events.Events(); len(got) != 0 {
+			t.Errorf("Sentry events = %v, want none for a gap under 10 s", eventMessages(got))
+		}
+	})
+}
+
+// A stalled DAVE setup is a gap that has already reached Sentry, as a
+// stall. Past 10 s Sentry hears nothing more of it.
+func TestRecorderReportsAStallPast10sOnlyAsAStall(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.record(listen(nil))
+		defer h.hangUp(conn)
+
+		time.Sleep(15 * time.Second)
+		synctest.Wait()
+
+		if got := events.Events(); len(got) != 1 || got[0].Tags["message"] != stallMessage {
+			t.Errorf("Sentry events = %v, want one %q", eventMessages(got), stallMessage)
+		}
+	})
+}
+
 // Once Discord has named a later voice server for the call, the recorder
 // never connects to an earlier one, even when the earlier one becomes
 // reachable while the later one still isn't: the call isn't there anymore.

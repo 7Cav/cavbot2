@@ -33,6 +33,9 @@ type receiveConn interface {
 	// connected reports whether the recorder is connected in the call, at
 	// the voice server Discord named last.
 	connected() bool
+	// server is the voice server the recorder connects to: the one it is
+	// connected to, or trying to reach.
+	server() string
 	// reconnect opens a fresh voice connection in the call, which starts
 	// DAVE over, and returns once it has opened, or with ctx's error.
 	reconnect(ctx context.Context) error
@@ -72,6 +75,12 @@ const (
 // errDAVEStalled is the error a stall reaches Sentry with.
 var errDAVEStalled = errors.New("voice: DAVE held every frame past the stall limit")
 
+// gapMessage is what Sentry hears when a gap reaches GapReportedAfter, and
+// errGap the error it comes with.
+const gapMessage = "Recorder can't hear the channel"
+
+var errGap = errors.New("voice: the recorder heard nothing for the gap report's limit")
+
 // receiver reads one voice connection's packets on a goroutine of its own
 // and hands each speaker's frames over, in the order they arrived. It tells
 // its listener when a gap starts and ends.
@@ -103,9 +112,12 @@ type receiver struct {
 	unheardSince time.Time
 	setupSince   time.Time
 	stalled      bool
-	// inGap is whether the listener was last told a gap started. Only the
-	// receiver's goroutine touches it.
-	inGap bool
+	// inGap is whether the listener was last told a gap started, at
+	// gapSince. gapReported is whether Sentry has heard of that gap. Only
+	// the receiver's goroutine touches them.
+	inGap       bool
+	gapSince    time.Time
+	gapReported bool
 }
 
 // newReceiver builds the receiver of a recorder's connection. It hands
@@ -175,12 +187,17 @@ func (r *receiver) step() {
 }
 
 // watchGap tells the listener when the recorder stops hearing the channel,
-// and when it hears it again.
+// and when it hears it again. A gap that reaches GapReportedAfter reaches
+// Sentry once, with the voice server the recorder is trying.
 func (r *receiver) watchGap(hearing bool) {
 	switch {
 	case !hearing && !r.inGap:
-		r.inGap = true
+		r.inGap, r.gapSince, r.gapReported = true, time.Now(), false
 		r.listener.GapStarted()
+	case !hearing && !r.gapReported && time.Since(r.gapSince) >= GapReportedAfter:
+		r.gapReported = true
+		utils.CaptureError(gapMessage, errGap, "recorder", r.recorder, "channel_id", channelOf(r.conn),
+			"voice_server", r.conn.server())
 	case hearing && r.inGap:
 		r.inGap = false
 		r.listener.GapEnded()
@@ -213,7 +230,8 @@ func (r *receiver) waitOrStartOver() {
 		return
 	}
 	if !r.stalled {
-		r.stalled = true
+		// The stall's report is the gap's too: Sentry hears no more of it.
+		r.stalled, r.gapReported = true, true
 		utils.CaptureError(stallMessage, errDAVEStalled, "recorder", r.recorder, "channel_id", channelOf(r.conn))
 	}
 	r.reconnect()

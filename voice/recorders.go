@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/7cav/cavbot2/utils"
 )
@@ -47,6 +48,11 @@ type Listener interface {
 	GapStarted()
 	GapEnded()
 }
+
+// GapReportedAfter is how long a gap lasts before it is reported: Sentry
+// hears of it, and the recording posts a gap notice and lists the gap in its
+// info file.
+const GapReportedAfter = 10 * time.Second
 
 // Frame is one Opus packet a speaker sent, as Discord delivered it, with
 // both encryptions taken off.

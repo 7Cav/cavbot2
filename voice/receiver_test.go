@@ -78,6 +78,7 @@ func (c *fakeReceiveConn) ChannelID() *snowflake.ID {
 // connected is always true here: the call harness covers the connection
 // coming and going.
 func (c *fakeReceiveConn) connected() bool { return true }
+func (c *fakeReceiveConn) server() string  { return "c-dfw-1.discord.media:443" }
 
 func (c *fakeReceiveConn) reconnect(context.Context) error {
 	c.mu.Lock()
@@ -393,6 +394,33 @@ func TestReceiverHearsTheSpeakerAgainOnceDAVESetsUpAfterAStall(t *testing.T) {
 		want := heardFrom.Sub(unheardFrom)
 		if d, ok := logs.duration(slog.LevelInfo, daveRecoveredMessage); !ok || d < want || d >= want+time.Second {
 			t.Errorf("Info line %q carries %v (found %v), want how long the recorder couldn't hear, %v", daveRecoveredMessage, d, ok, want)
+		}
+	})
+}
+
+// DAVE holding every frame is a gap: the recorder hears nobody. The gap
+// ends once DAVE passes frames again, and the listener hears of it once
+// each way, however long DAVE held them.
+func TestReceiverToldOfAGapWhileDAVEHoldsFrames(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		l := listen(nil)
+		startListening(t, conn, l)
+		time.Sleep(time.Second)
+
+		conn.holdFrames(true)
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted}) {
+			t.Errorf("gap events while DAVE holds frames = %v, want one gap started", got)
+		}
+		conn.holdFrames(false)
+		time.Sleep(time.Second)
+		synctest.Wait()
+
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted, gapEnded}) {
+			t.Errorf("gap events once DAVE passes frames = %v, want the gap started and ended", got)
 		}
 	})
 }
