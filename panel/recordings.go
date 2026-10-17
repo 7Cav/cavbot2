@@ -89,7 +89,7 @@ func (p *Panel) lookAgain(r *http.Request, sess *session, step string) bool {
 	case d.lookup == discordNotConnected:
 		utils.Info("Panel page found a milpac with no Discord account", "step", step, "username", sess.username)
 	}
-	sess.discord = p.sessions.lookedUp(sess.id, d)
+	sess.discord = p.sessions.keepLookup(sess.id, d)
 	return true
 }
 
@@ -165,12 +165,12 @@ type recordingsView struct {
 	// Outsider is set for an outsider's list, which, when it lists
 	// nothing, says their forum groups open no other page.
 	Outsider bool
-	// Discord is set when the panel couldn't find the visitor's Discord
-	// account, and names the note the page shows in place of their own
-	// recordings. Its Check again link opens CheckAgain, the page's own
+	// DiscordNote is set when the panel couldn't find the visitor's
+	// Discord account, and names the note the page shows in place of their
+	// own recordings. Its Check again link opens CheckAgain, the page's own
 	// address.
-	Discord    discordNote
-	CheckAgain string
+	DiscordNote discordNote
+	CheckAgain  string
 }
 
 // EmptyNote is what the page says when it lists no recordings: that none
@@ -340,7 +340,7 @@ func (p *Panel) recordingsPage(w http.ResponseWriter, r *http.Request, sess sess
 	view := recordingsView{Recordings: items, Switch: sess.access.panelAdmin, All: all,
 		ShowStarter: all, Deleted: deleted != 0, DeletedLast: deleted != 0 && !placed && len(items) > 0, Outsider: sess.access.outsider()}
 	if !all {
-		view.Discord, view.CheckAgain = sess.discord.note(), recordingsPath
+		view.DiscordNote, view.CheckAgain = sess.discord.note(), recordingsPath
 	}
 	p.renderRecordings(w, sess, http.StatusOK, view)
 }
@@ -620,7 +620,7 @@ func (p *Panel) recordingUnmatched(w http.ResponseWriter, r *http.Request, sess 
 		http.Redirect(w, r, page, http.StatusSeeOther)
 		return
 	}
-	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Single: true, Discord: note, CheckAgain: page})
+	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Single: true, DiscordNote: note, CheckAgain: page})
 }
 
 // stoppedRecordingFor is recordingFor for a download that a running
@@ -637,7 +637,7 @@ func (p *Panel) stoppedRecordingFor(w http.ResponseWriter, r *http.Request, sess
 }
 
 // ownRecordings lists the recordings the session's user started, none when
-// the panel found no Discord ID for them at sign-in.
+// the panel has found no Discord ID for them.
 func (p *Panel) ownRecordings(ctx context.Context, sess session) ([]store.Recording, error) {
 	if sess.discord.id == "" {
 		return nil, nil

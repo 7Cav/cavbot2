@@ -207,11 +207,11 @@ func (s *sessions) update(id string, sess session) {
 	}
 }
 
-// lookedUp keeps what a recording page's milpac lookup found on a
+// keepLookup keeps what a recording page's milpac lookup found on a
 // session, and returns the Discord account the session then holds. A found
 // ID stays for the rest of the session, so a slower lookup on a concurrent
 // request that fails after it can't drop it.
-func (s *sessions) lookedUp(id string, d discordAccount) discordAccount {
+func (s *sessions) keepLookup(id string, d discordAccount) discordAccount {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.active[id]

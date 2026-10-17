@@ -126,6 +126,14 @@ func (a *milpacAPI) restore(username string) {
 	delete(a.statuses, username)
 }
 
+// lookupsDuring is how many lookups of a forum username the API gets
+// while load runs.
+func (a *milpacAPI) lookupsDuring(username string, load func()) int {
+	before := a.lookupsOf(username)
+	load()
+	return a.lookupsOf(username) - before
+}
+
 // lookupsOf is how many lookups of a forum username the API has had.
 func (a *milpacAPI) lookupsOf(username string) int {
 	a.mu.Lock()
@@ -775,13 +783,14 @@ func TestRecordingsPageOfAForumUserWithNoMilpacIsEmpty(t *testing.T) {
 	w.milpacs.fail("Xray.X", http.StatusNotFound)
 
 	res := signInAs(t, w.forum, w.b, x.account)
-	lookups := w.milpacs.lookupsOf("Xray.X")
 
 	assertRedirect(t, res, "/")
-	assertEmptyRecordingsPageFor(t, follow(t, w.b, res), noRecordingsYet, true)
-	w.b.get(recordingsPath)
-	if got := w.milpacs.lookupsOf("Xray.X"); got != lookups {
-		t.Errorf("the page loads after sign-in made %d milpac lookups, want none", got-lookups)
+	n := w.milpacs.lookupsDuring("Xray.X", func() {
+		assertEmptyRecordingsPageFor(t, follow(t, w.b, res), noRecordingsYet, true)
+		w.b.get(recordingsPath)
+	})
+	if n != 0 {
+		t.Errorf("the page loads after sign-in made %d milpac lookups, want none", n)
 	}
 }
 

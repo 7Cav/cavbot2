@@ -19,26 +19,28 @@ import (
 // the recording pages say so and say what to do, in place of saying the
 // starter has none or that the recording isn't theirs.
 
-// discordNoteIn is the note a page shows when the panel couldn't find the
-// visitor's Discord account, or nil.
-func discordNoteIn(doc *html.Node) *html.Node {
-	return findElement(doc, "", "data-field", "discord-note")
+// checkAgainIn is the note a page shows when the panel couldn't find the
+// visitor's Discord account, and the note's Check again link.
+func checkAgainIn(t *testing.T, doc *html.Node) (note, link *html.Node) {
+	t.Helper()
+	note = findElement(doc, "", "data-field", "discord-note")
+	if note == nil {
+		t.Fatal("the page shows no note about the visitor's Discord account")
+	}
+	link = findElement(note, "a", "data-field", "check-again")
+	if link == nil {
+		t.Fatal("the note has no Check again link")
+	}
+	return note, link
 }
 
 // assertDiscordNote checks a page shows the note of the kind given, with a
 // Check again link to the address given, and returns the note.
 func assertDiscordNote(t *testing.T, doc *html.Node, want discordNote, checkAgain string) *html.Node {
 	t.Helper()
-	note := discordNoteIn(doc)
-	if note == nil {
-		t.Fatal("the page shows no note about the visitor's Discord account")
-	}
+	note, link := checkAgainIn(t, doc)
 	if got, _ := attrValue(note, "data-note"); got != string(want) {
 		t.Errorf("the note is %q, want %q", got, want)
-	}
-	link := findElement(note, "a", "data-field", "check-again")
-	if link == nil {
-		t.Fatal("the note has no Check again link")
 	}
 	if href, _ := attrValue(link, "href"); href != checkAgain {
 		t.Errorf("the note's Check again link goes to %q, want %s", href, checkAgain)
@@ -87,14 +89,7 @@ func TestRecordingsPageOfAStarterWithNoConnectedDiscordAccountSaysSo(t *testing.
 // about the visitor's Discord account.
 func pressCheckAgain(t *testing.T, b *browser, doc *html.Node) *html.Node {
 	t.Helper()
-	note := discordNoteIn(doc)
-	if note == nil {
-		t.Fatal("the page shows no note about the visitor's Discord account")
-	}
-	link := findElement(note, "a", "data-field", "check-again")
-	if link == nil {
-		t.Fatal("the note has no Check again link")
-	}
+	_, link := checkAgainIn(t, doc)
 	_, res := press(t, b, doc, link)
 	return parseHTML(t, res)
 }
@@ -105,38 +100,36 @@ func pressCheckAgain(t *testing.T, b *browser, doc *html.Node) *html.Node {
 // Check again, shows their recording, and the load after it makes no
 // milpac lookup.
 func TestRecordingPagesFindTheStarterOnceTheMilpacLookupCan(t *testing.T) {
-	recovers := func(api *milpacAPI, _ starter) { api.restore("Xray.X") }
-	failing := func(api *milpacAPI, _ starter) { api.fail("Xray.X", http.StatusInternalServerError) }
+	recovers := func(api *milpacAPI) { api.restore("Xray.X") }
+	failing := func(api *milpacAPI) { api.fail("Xray.X", http.StatusInternalServerError) }
 	listPage := func(int64) string { return recordingsPath }
 	for _, tc := range []struct {
 		name            string
-		atSignin, later func(api *milpacAPI, s starter)
+		atSignin, later func(api *milpacAPI)
 		page            func(rec int64) string
 	}{
 		{"the 7Cav API recovers, on the Recordings page", failing, recovers, listPage},
 		{"the 7Cav API recovers, on the recording's address", failing, recovers, commands.RecordingPath},
 		{"the milpac names their Discord account, on the Recordings page",
-			func(api *milpacAPI, _ starter) { api.set("Xray.X", "") },
-			func(api *milpacAPI, s starter) { api.set("Xray.X", s.discordID) }, listPage},
+			func(api *milpacAPI) { api.set("Xray.X", "") },
+			func(api *milpacAPI) { api.set("Xray.X", "discord-x") }, listPage},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newTestWorld(t)
 			x := w.addStarter(5003, "Xray.X", "discord-x")
 			rec := w.record(t, x.discordID)
-			tc.atSignin(w.milpacs, x)
+			tc.atSignin(w.milpacs)
 			signInAs(t, w.forum, w.b, x.account)
 			unmatched := parseHTML(t, w.b.get(tc.page(rec)))
-			tc.later(w.milpacs, x)
+			tc.later(w.milpacs)
 
 			doc := pressCheckAgain(t, w.b, unmatched)
 
 			if _, ok := listedRecordings(t, doc)[rec]; !ok {
 				t.Errorf("%s doesn't show recording %d", tc.page(rec), rec)
 			}
-			lookups := w.milpacs.lookupsOf("Xray.X")
-			w.b.get(tc.page(rec))
-			if got := w.milpacs.lookupsOf("Xray.X"); got != lookups {
-				t.Errorf("the load after made %d milpac lookups, want none", got-lookups)
+			if n := w.milpacs.lookupsDuring("Xray.X", func() { w.b.get(tc.page(rec)) }); n != 0 {
+				t.Errorf("the load after made %d milpac lookups, want none", n)
 			}
 		})
 	}
@@ -166,10 +159,8 @@ func TestRecordingsPageGoesByItsOwnMilpacLookup(t *testing.T) {
 		w.milpacs.fail("Xray.X", http.StatusNotFound)
 
 		assertEmptyRecordingsPageFor(t, w.b.get(recordingsPath), noRecordingsYet, true)
-		lookups := w.milpacs.lookupsOf("Xray.X")
-		w.b.get(recordingsPath)
-		if got := w.milpacs.lookupsOf("Xray.X"); got != lookups {
-			t.Errorf("the load after made %d milpac lookups, want none", got-lookups)
+		if n := w.milpacs.lookupsDuring("Xray.X", func() { w.b.get(recordingsPath) }); n != 0 {
+			t.Errorf("the load after made %d milpac lookups, want none", n)
 		}
 	})
 }
@@ -235,13 +226,14 @@ func TestRecordingPagesOfAStarterFoundAtSignInLookNoMore(t *testing.T) {
 	a := w.addStarter(5001, "Able.A", "discord-a")
 	rec := w.record(t, a.discordID)
 	signInAs(t, w.forum, w.b, a.account)
-	lookups := w.milpacs.lookupsOf("Able.A")
 
-	w.b.get(recordingsPath)
-	w.b.get(commands.RecordingPath(rec))
+	n := w.milpacs.lookupsDuring("Able.A", func() {
+		w.b.get(recordingsPath)
+		w.b.get(commands.RecordingPath(rec))
+	})
 
-	if got := w.milpacs.lookupsOf("Able.A"); got != lookups {
-		t.Errorf("the page loads made %d milpac lookups, want none", got-lookups)
+	if n != 0 {
+		t.Errorf("the page loads made %d milpac lookups, want none", n)
 	}
 }
 
@@ -321,14 +313,15 @@ func TestRecordingsPageWhoseMilpacLookupFailsIsReported(t *testing.T) {
 	w := newTestWorld(t)
 	x := w.addStarter(5003, "Xray.X", "discord-x")
 	w.milpacs.fail("Xray.X", http.StatusInternalServerError)
-	signInAs(t, w.forum, w.b, x.account)
 	reported := recordSentry(t)
+	signInAs(t, w.forum, w.b, x.account)
+	atSignin := sentryMessages(t, reported)
 
 	w.b.get(recordingsPath)
 
-	got := sentryMessages(t, reported)
-	if len(got) != 1 || got[0] == "Panel milpac lookup failed at sign-in" {
-		t.Errorf("sent events under %q, want one under a message of its own", got)
+	got := sentryMessages(t, reported)[len(atSignin):]
+	if len(atSignin) != 1 || len(got) != 1 || got[0] == atSignin[0] {
+		t.Errorf("sign-in sent events under %q and the page load under %q, want one each under different messages", atSignin, got)
 	}
 }
 
@@ -419,12 +412,15 @@ func TestFoundDiscordIDOutlastsAConcurrentGroupCheck(t *testing.T) {
 	release()
 	<-done
 
-	lookups := w.milpacs.lookupsOf("Xray.X")
-	if _, ok := listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))[rec]; !ok {
+	var listed bool
+	n := w.milpacs.lookupsDuring("Xray.X", func() {
+		_, listed = listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))[rec]
+	})
+	if !listed {
 		t.Errorf("the next Recordings page load doesn't list recording %d", rec)
 	}
-	if got := w.milpacs.lookupsOf("Xray.X"); got != lookups {
-		t.Errorf("the next load made %d milpac lookups, want none", got-lookups)
+	if n != 0 {
+		t.Errorf("the next load made %d milpac lookups, want none", n)
 	}
 }
 
@@ -460,11 +456,14 @@ func TestFoundDiscordIDOutlastsASlowerFailedLookup(t *testing.T) {
 	w.clock.advance(3 * time.Second)
 	<-done
 
-	lookups := w.milpacs.lookupsOf("Xray.X")
-	if _, ok := listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))[rec]; !ok {
+	var listed bool
+	n := w.milpacs.lookupsDuring("Xray.X", func() {
+		_, listed = listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))[rec]
+	})
+	if !listed {
 		t.Errorf("the next Recordings page load doesn't list recording %d", rec)
 	}
-	if got := w.milpacs.lookupsOf("Xray.X"); got != lookups {
-		t.Errorf("the next load made %d milpac lookups, want none", got-lookups)
+	if n != 0 {
+		t.Errorf("the next load made %d milpac lookups, want none", n)
 	}
 }
