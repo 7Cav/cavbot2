@@ -47,8 +47,8 @@
 </body>
 </html>
 
-{{/* The note a recording's delete lands on, on the Recordings page. */}}
-{{define "deleted-note"}}<div role="status"><div class="note note--ok" data-field="deleted">Recording deleted. Nobody can download it now.</div></div>{{end}}
+{{/* The note a recording's delete lands on, on the Recordings page, where the recording was listed. The delete's address opens the page at it. */}}
+{{define "deleted-note"}}<div role="status"><div class="note note--ok" id="deleted" tabindex="-1" data-field="deleted">Recording deleted. Nobody can download it now.</div></div>{{end}}
 
 {{/* An empty change log, in the same words on every page that has one. */}}
 {{define "no-changes"}}<div class="block-row">No changes made through the panel yet.</div>{{end}}

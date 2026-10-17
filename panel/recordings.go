@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime"
 	"net/http"
 	"net/url"
@@ -62,6 +63,10 @@ const (
 // recording a delete's redirect says has gone.
 const paramDeleted = "deleted"
 
+// deletedAnchor is the ID of the note saying a recording was deleted,
+// which a delete's redirect opens the Recordings page at.
+const deletedAnchor = "deleted"
+
 // The Recordings page's sentences for a list with nothing in it: after a
 // delete, and otherwise.
 const (
@@ -91,7 +96,11 @@ type recordingsView struct {
 	// DeletePreview is set on a recording's delete preview.
 	DeletePreview bool
 	// Deleted is set when the page says a recording has just been deleted.
-	Deleted bool
+	// The note saying so sits where the recording was: above the item
+	// whose DeletedAbove is set, below the list when DeletedLast is, and
+	// above the empty list when the page lists nothing.
+	Deleted     bool
+	DeletedLast bool
 	// Outsider is set for an outsider's list, which, when it lists
 	// nothing, says their forum groups open no other page.
 	Outsider bool
@@ -106,13 +115,37 @@ func (v recordingsView) EmptyNote() string {
 	return noRecordingsYet
 }
 
+// backLink is a link from a recording's own page back to a list.
+type backLink struct {
+	URL   string
+	Label string
+}
+
+// Back is the way back from a recording's own page to the list it belongs
+// to, open at the recording: every recording for a panel admin on one
+// someone else started, and the visitor's own list otherwise. The page of
+// a recording the panel doesn't hold leads to the visitor's own list.
+func (v recordingsView) Back() backLink {
+	if len(v.Recordings) == 0 {
+		return backLink{URL: recordingsPath, Label: "All your recordings"}
+	}
+	id := v.Recordings[0].ID
+	if v.ShowStarter {
+		return backLink{URL: listURL(true, id), Label: "Every recording"}
+	}
+	return backLink{URL: listURL(false, id), Label: "All your recordings"}
+}
+
 // recordingItem is one recording as the page shows it.
 type recordingItem struct {
 	ID        int64
 	Title     string
 	Channel   string
 	StartedAt time.Time
-	// Length is how long it ran, such as 1h2m3s, empty while it runs.
+	// StoppedAt is when it stopped, zero while it runs.
+	StoppedAt time.Time
+	// Length is how long it ran, as a media player shows it, such as
+	// 1:02:03 or 47:12, empty while it runs.
 	Length string
 	// DeletesAt is when it is deleted, zero while it runs.
 	DeletesAt time.Time
@@ -138,14 +171,59 @@ type recordingItem struct {
 	ZipURL    string
 	InfoURL   string
 	DeleteURL string
+	// From names the list showing the recording, fromAll or fromList, and
+	// is empty on its own page. Its Delete carries it to the delete
+	// preview.
+	From string
+	// CancelURL, on a delete preview, is where its Cancel leads: back to
+	// the page whose Delete opened it, at the recording.
+	CancelURL string
+	// DeletedAbove is set on the item a just-deleted recording was listed
+	// above, where the note saying it was deleted sits.
+	DeletedAbove bool
+}
+
+// Anchor is the ID of the recording's heading, which an address opens a
+// list at.
+func (it recordingItem) Anchor() string {
+	return recordingAnchor(it.ID)
+}
+
+// recordingAnchor is the ID of recording id's heading on a page that shows
+// it.
+func recordingAnchor(id int64) string {
+	return "recording-" + strconv.FormatInt(id, 10)
+}
+
+// The delete preview's query parameter naming the list its Delete was
+// pressed in, so its Cancel goes back there: every recording, or the
+// visitor's own. With none, Delete was pressed on the recording's own
+// page.
+const (
+	paramFrom = "from"
+	fromAll   = "all"
+	fromList  = "list"
+)
+
+// listURL is the address of the Recordings page's list of every recording
+// when all is set, and of the visitor's own otherwise, opening at
+// recording id's heading.
+func listURL(all bool, id int64) string {
+	path := recordingsPath
+	if all {
+		path += "?" + paramView + "=" + viewAll
+	}
+	return path + "#" + recordingAnchor(id)
 }
 
 // recordingSpeaker is one of a recording's speakers as the page names
 // them: their display name, and Marker, the lost track marker when their
-// track was lost (GLOSSARY.md, Lost track), else empty.
+// track was lost (GLOSSARY.md, Lost track), else empty. Last is set on the
+// last one named, which takes no comma after it.
 type recordingSpeaker struct {
 	Name   string
 	Marker string
+	Last   bool
 }
 
 // recordingsPage is GET /recordings: the recordings the user started, the
@@ -163,7 +241,7 @@ func (p *Panel) recordingsPage(w http.ResponseWriter, r *http.Request, sess sess
 	} else {
 		recs, err = p.ownRecordings(ctx, sess)
 	}
-	var deleted bool
+	var deleted int64
 	if err == nil {
 		deleted, err = p.wasDeleted(ctx, r.URL.Query().Get(paramDeleted))
 	}
@@ -175,23 +253,38 @@ func (p *Panel) recordingsPage(w http.ResponseWriter, r *http.Request, sess sess
 		p.pageFailed(w, sess, "recordings page", recordingsPath, err, nil)
 		return
 	}
-	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: p.recordingItems(recs), Switch: sess.access.panelAdmin, All: all,
-		ShowStarter: all, Deleted: deleted, Outsider: sess.access.outsider()})
+	items := p.recordingItems(recs)
+	// The list runs newest first and a recording's ID grows with its
+	// start, so a deleted recording was listed above the first one with a
+	// lower ID, or last when there is none.
+	placed := false
+	for i := range items {
+		items[i].From = fromList
+		if all {
+			items[i].From = fromAll
+		}
+		if deleted != 0 && !placed && items[i].ID < deleted {
+			items[i].DeletedAbove, placed = true, true
+		}
+	}
+	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: items, Switch: sess.access.panelAdmin, All: all,
+		ShowStarter: all, Deleted: deleted != 0, DeletedLast: deleted != 0 && !placed && len(items) > 0, Outsider: sess.access.outsider()})
 }
 
-// wasDeleted reports whether the recording the Recordings page's deleted
-// parameter names is gone: the result a delete's redirect shows, worked out
-// again at each load. A parameter that names no recording ID shows nothing.
-func (p *Panel) wasDeleted(ctx context.Context, raw string) (bool, error) {
+// wasDeleted is the ID the Recordings page's deleted parameter names when
+// that recording is gone, and 0 otherwise: the result a delete's redirect
+// shows, worked out again at each load. A parameter that names no
+// recording ID shows nothing.
+func (p *Panel) wasDeleted(ctx context.Context, raw string) (int64, error) {
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || id <= 0 {
-		return false, nil
+		return 0, nil
 	}
 	_, err = p.recordings.Recording(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
-		return true, nil
+		return id, nil
 	}
-	return false, err
+	return 0, err
 }
 
 // renderRecordings renders the Recordings page with the status and view
@@ -298,13 +391,22 @@ func recordingDeletePath(id int64) string {
 }
 
 // deletePreview is GET /recordings/{id}/delete: the danger confirm a
-// recording's delete waits on, for its starter and panel admins.
+// recording's delete waits on, for its starter and panel admins. Its
+// Cancel goes back to the list its from parameter names, at the
+// recording, or to the recording's own page.
 func (p *Panel) deletePreview(w http.ResponseWriter, r *http.Request, sess session) {
 	rec, ok := p.recordingFor(w, r, sess, "delete preview")
 	if !ok {
 		return
 	}
-	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: p.recordingItems([]store.Recording{rec}), Single: true, DeletePreview: true,
+	item := p.recordingItems([]store.Recording{rec})[0]
+	switch from := r.URL.Query().Get(paramFrom); from {
+	case fromAll, fromList:
+		item.From, item.CancelURL = from, listURL(from == fromAll, rec.ID)
+	default:
+		item.CancelURL = item.PageURL
+	}
+	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: []recordingItem{item}, Single: true, DeletePreview: true,
 		ShowStarter: rec.StarterID != sess.discordID})
 }
 
@@ -339,13 +441,16 @@ func (p *Panel) deleteRecording(w http.ResponseWriter, r *http.Request, sess ses
 	// gone, and no page could show it.
 	utils.Info("Panel recording deleted", "recording_id", rec.ID, "username", sess.username, "forum_user_id", sess.userID)
 	q := url.Values{paramDeleted: {strconv.FormatInt(rec.ID, 10)}}
-	if rec.StarterID != sess.discordID {
+	if rec.StarterID != sess.discordID || r.PostFormValue(paramFrom) == fromAll {
 		// Only a panel admin deletes a recording someone else started, such
-		// as for an S6 deletion ticket: back to every recording, where the
+		// as for an S6 deletion ticket, and one who deleted from every
+		// recording goes back there too: back to every recording, where the
 		// next one is.
 		q.Set(paramView, viewAll)
 	}
-	http.Redirect(w, r, recordingsPath+"?"+q.Encode(), http.StatusSeeOther)
+	// The page opens at the note saying it was deleted, which sits where
+	// the recording was listed, just above the next one.
+	http.Redirect(w, r, recordingsPath+"?"+q.Encode()+"#"+deletedAnchor, http.StatusSeeOther)
 }
 
 // recordingStatusPath is the recording status endpoint's address, which the
@@ -441,17 +546,27 @@ func (p *Panel) ownRecordings(ctx context.Context, sess session) ([]store.Record
 	return p.recordings.StartedBy(ctx, sess.discordID)
 }
 
+// playerLength is how long a recording ran, to the second, as a media
+// player shows a length: 1:02:03 from an hour up, 47:12 under one.
+func playerLength(d time.Duration) string {
+	secs := int64(d.Round(time.Second) / time.Second)
+	if secs >= 3600 {
+		return fmt.Sprintf("%d:%02d:%02d", secs/3600, secs/60%60, secs%60)
+	}
+	return fmt.Sprintf("%d:%02d", secs/60, secs%60)
+}
+
 // recordingItems is each recording as the page shows it, in the order given.
 func (p *Panel) recordingItems(recs []store.Recording) []recordingItem {
 	out := make([]recordingItem, 0, len(recs))
 	for _, rec := range recs {
 		page := commands.RecordingPath(rec.ID)
-		item := recordingItem{ID: rec.ID, Title: rec.Title, Channel: rec.ChannelName, StartedAt: rec.StartedAt,
+		item := recordingItem{ID: rec.ID, Title: rec.Title, Channel: rec.ChannelName, StartedAt: rec.StartedAt, StoppedAt: rec.StoppedAt,
 			Running: rec.StoppedAt.IsZero(), CutShort: rec.Ended == store.RecordingEndCutShort, Mix: rec.Mix, StarterID: rec.StarterID,
 			PageURL: page, MixURL: page + "/mix", ZipURL: page + "/zip", InfoURL: page + "/info",
 			DeleteURL: recordingDeletePath(rec.ID)}
 		if !item.Running {
-			item.Length = rec.StoppedAt.Sub(rec.StartedAt).Round(time.Second).String()
+			item.Length = playerLength(rec.StoppedAt.Sub(rec.StartedAt))
 			item.DeletesAt = commands.RecordingDeletesAt(rec)
 			item.HasTrack = p.recordings.HasTrack(rec)
 		}
@@ -461,6 +576,9 @@ func (p *Panel) recordingItems(recs []store.Recording) []recordingItem {
 				speaker.Marker = commands.TrackLostMarker
 			}
 			item.Speakers = append(item.Speakers, speaker)
+		}
+		if n := len(item.Speakers); n > 0 {
+			item.Speakers[n-1].Last = true
 		}
 		out = append(out, item)
 	}

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/7cav/cavbot2/commands"
 	"golang.org/x/net/html"
@@ -299,5 +300,45 @@ func TestRecordingDeletedByAPanelAdminLandsOnEveryRecording(t *testing.T) {
 
 	if _, ok := listedRecordings(t, doc)[recC]; !ok {
 		t.Errorf("the page the admin's delete lands on doesn't list C's recording %d", recC)
+	}
+}
+
+// A recording's Delete opens its delete preview at the preview, with the
+// preview's heading focused, so a keyboard or screen reader user starts at
+// the question rather than at the top of the page.
+func TestRecordingDeleteOpensAtItsPreview(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	start := time.Date(2026, 10, 14, 19, 30, 0, 0, time.UTC)
+	rec := w.storeStopped(t, a.discordID, start, start.Add(time.Hour))
+	signInAs(t, w.forum, w.b, a.account)
+	href := linkHref("delete")(t, parseHTML(t, w.b.get(recordingsPath)), rec)
+
+	doc, fragment := landing(t, w.b, href, w.b.get(href))
+
+	preview := findElement(doc, "", "data-field", "delete-preview")
+	if preview == nil {
+		t.Fatalf("recording %d's Delete opens no delete preview", rec)
+	}
+	landedHeading(t, doc, fragment, preview, "the delete preview's heading")
+}
+
+// The delete preview of a recording still running, reached by an address
+// typed by hand since its page offers no Delete then, deletes nothing and
+// leads back to the recording.
+func TestRecordingStillRecordingDeletePreviewLeadsBackToIt(t *testing.T) {
+	w := newTestWorld(t)
+	a := w.addStarter(5001, "Able.A", "discord-a")
+	rec := w.storeRunning(t, a.discordID, time.Date(2026, 10, 14, 19, 30, 0, 0, time.UTC))
+	signInAs(t, w.forum, w.b, a.account)
+
+	preview := parseHTML(t, w.b.get(recordingDeletePath(rec)))
+
+	back := findElement(preview, "a", "data-field", "back-to-recording")
+	if back == nil {
+		t.Fatalf("recording %d's delete preview, while it runs, has no way back to it", rec)
+	}
+	if _, ok := listedRecordings(t, parseHTML(t, w.b.get(attrOf(back, "href"))))[rec]; !ok {
+		t.Errorf("the way back from recording %d's delete preview opens a page that doesn't show it", rec)
 	}
 }
