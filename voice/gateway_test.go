@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -915,11 +917,10 @@ func TestRecorderStaysInWhileItCantReachTheServerItsCallMovedTo(t *testing.T) {
 	})
 }
 
-// Only a stop quiets a voice connection's log. A rejoin that can't connect
-// while the recording runs, here at a voice server the recorder can't reach
-// yet, still has disgo's ERROR in the bot log once disgo's 30 s wait for
-// the open runs out.
-func TestRecorderLogsTheErrorsOfARejoinThatCantConnectYet(t *testing.T) {
+// A recorder still trying to reach the voice server its call moved to has
+// lost nothing yet, so the bot log has no ERROR for it. disgo's ERROR, once
+// its 30 s wait for the open runs out, reaches the bot log at WARN.
+func TestRecorderLogsNoErrorWhileItTriesToReachTheServerItsCallMovedTo(t *testing.T) {
 	recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
 		h := newCallHarness(t)
@@ -932,8 +933,12 @@ func TestRecorderLogsTheErrorsOfARejoinThatCantConnectYet(t *testing.T) {
 		time.Sleep(time.Minute)
 		synctest.Wait()
 
-		if errs := h.logs.errorsFrom(closed); len(errs) == 0 {
-			t.Error("bot log ERRORs in the minute after the close = none, want disgo's for the rejoin that can't connect")
+		if errs := h.logs.errorsFrom(closed); len(errs) != 0 {
+			t.Errorf("bot log ERRORs in the minute after the close = %q, want none", messages(errs))
+		}
+		const openFailed = "error opening voice gateway"
+		if warns := h.logs.messagesAt(slog.LevelWarn); !slices.Contains(warns, openFailed) {
+			t.Errorf("bot log WARNs = %q, want disgo's %q", warns, openFailed)
 		}
 	})
 }
@@ -1017,7 +1022,7 @@ func TestRecorderMovesOnFromAServerDiscordReplacedAsItConnected(t *testing.T) {
 
 // A gap that reaches 10 s reaches Sentry once, naming the recorder, the
 // channel and the voice server the recorder is trying to reach, while the
-// recording still runs.
+// recording still runs. The bot log has it at ERROR.
 func TestRecorderReportsAGapThatReaches10s(t *testing.T) {
 	events := recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
@@ -1039,6 +1044,9 @@ func TestRecorderReportsAGapThatReaches10s(t *testing.T) {
 			if !eventMentions(got[0], want) {
 				t.Errorf("Sentry event %v doesn't name %s", eventTexts(got[0]), want)
 			}
+		}
+		if errs := h.logs.messagesAt(slog.LevelError); !slices.Contains(errs, gapMessage) {
+			t.Errorf("bot log ERRORs = %q, want %q", errs, gapMessage)
 		}
 	})
 }
@@ -1477,44 +1485,81 @@ func TestRecorderStartedWhileAnAbandonedRejoinWaitsStaysIn(t *testing.T) {
 	})
 }
 
-// quietVoiceServer is a voice server on localhost, over TLS, that accepts
-// each connection and says nothing on it, as one that hasn't greeted the
-// recorder yet. connected closes once it has accepted one.
+// localVoiceServer is a voice server on localhost, over TLS. play plays the
+// nth connection it accepts, counting from 1. Once play returns, the server
+// reads what the recorder sends until the connection closes.
+type localVoiceServer struct {
+	srv *httptest.Server
+}
+
+func newLocalVoiceServer(t *testing.T, play func(n int32, conn *websocket.Conn)) *localVoiceServer {
+	t.Helper()
+	var accepted atomic.Int32
+	upgrader := websocket.Upgrader{}
+	s := &localVoiceServer{srv: httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		play(accepted.Add(1), conn)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))}
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
+// endpoint is the server's address, as Discord names a voice server.
+func (s *localVoiceServer) endpoint() string { return s.srv.Listener.Addr().String() }
+
+// dialer is a voice gateway dialer that trusts the server's certificate.
+func (s *localVoiceServer) dialer() *websocket.Dialer {
+	roots := x509.NewCertPool()
+	roots.AddCert(s.srv.Certificate())
+	return &websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: roots}}
+}
+
+// quietVoiceServer is a voice server that accepts each connection and says
+// nothing on it, as one that hasn't greeted the recorder yet. connected
+// closes once it has accepted one.
 type quietVoiceServer struct {
-	srv       *httptest.Server
+	*localVoiceServer
 	connected chan struct{}
 }
 
 func newQuietVoiceServer(t *testing.T) *quietVoiceServer {
 	t.Helper()
 	s := &quietVoiceServer{connected: make(chan struct{})}
-	var once sync.Once
-	upgrader := websocket.Upgrader{}
-	s.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
+	s.localVoiceServer = newLocalVoiceServer(t, func(n int32, _ *websocket.Conn) {
+		if n == 1 {
+			close(s.connected)
 		}
-		defer func() { _ = conn.Close() }()
-		once.Do(func() { close(s.connected) })
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				return
-			}
-		}
-	}))
-	t.Cleanup(s.srv.Close)
+	})
 	return s
 }
 
-// endpoint is the server's address, as Discord names a voice server.
-func (s *quietVoiceServer) endpoint() string { return s.srv.Listener.Addr().String() }
+// useDisgoGateway has the recorder session's voice connections run over
+// disgo's own voice gateway from now on, dialing voice servers through
+// dialer.
+func (h *callHarness) useDisgoGateway(dialer *websocket.Dialer) {
+	h.s.voice = h.voiceManager(disgovoice.NewGateway,
+		disgovoice.WithConnConfigOpts(disgovoice.WithConnGatewayConfigOpts(disgovoice.WithGatewayDialer(dialer))))
+}
 
-// dialer is a voice gateway dialer that trusts the server's certificate.
-func (s *quietVoiceServer) dialer() *websocket.Dialer {
-	roots := x509.NewCertPool()
-	roots.AddCert(s.srv.Certificate())
-	return &websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: roots}}
+// joinInBackground has the recorder session join the channel, and returns
+// without waiting for the join to complete. The join ends with the test.
+func (h *callHarness) joinInBackground() {
+	ctx, cancel := context.WithCancel(context.Background())
+	joined := make(chan struct{})
+	go func() {
+		defer close(joined)
+		_, _ = h.s.Join(ctx, callGuild.String(), callChannel.String())
+	}()
+	h.t.Cleanup(func() { cancel(); <-joined })
 }
 
 // With the bot log at DEBUG, a voice connection the recorder hasn't closed
@@ -1528,15 +1573,8 @@ func TestRecorderVoiceConnectionLogsReachTheBotLogAtDebug(t *testing.T) {
 	h := newCallHarness(t)
 	h.logLevel = slog.LevelDebug
 	h.serving = server.endpoint()
-	h.s.voice = h.voiceManager(disgovoice.NewGateway,
-		disgovoice.WithConnConfigOpts(disgovoice.WithConnGatewayConfigOpts(disgovoice.WithGatewayDialer(server.dialer()))))
-	ctx, cancel := context.WithCancel(context.Background())
-	joined := make(chan struct{})
-	go func() {
-		defer close(joined)
-		_, _ = h.s.Join(ctx, callGuild.String(), callChannel.String())
-	}()
-	defer func() { cancel(); <-joined }()
+	h.useDisgoGateway(server.dialer())
+	h.joinInBackground()
 
 	select {
 	case <-server.connected:
@@ -1550,6 +1588,163 @@ func TestRecorderVoiceConnectionLogsReachTheBotLogAtDebug(t *testing.T) {
 			t.Errorf("bot log DEBUG records = %q, want %q", debug, want)
 		}
 	}
+}
+
+// unreachableDialer is a voice gateway dialer that can't reach any voice
+// server, as when the host's resolver doesn't know its hostname. dials
+// hears each dial.
+func unreachableDialer(dials chan<- struct{}) *websocket.Dialer {
+	return &websocket.Dialer{NetDialContext: func(_ context.Context, _, addr string) (net.Conn, error) {
+		dials <- struct{}{}
+		return nil, fmt.Errorf("dial tcp: lookup %s: no such host", addr)
+	}}
+}
+
+// joinUnreachable has the recorder session join the channel through disgo's
+// own voice gateway, which can't reach the voice server, and returns once
+// disgo has dialed it twice. disgo logs a failed dial before it dials again.
+// The join is still under way, so the connection is the recorder's. The
+// join ends with the test.
+func (h *callHarness) joinUnreachable() {
+	dials := make(chan struct{}, 64)
+	h.useDisgoGateway(unreachableDialer(dials))
+	h.joinInBackground()
+	<-dials
+	<-dials
+}
+
+// The recorder goes on dialing a voice server it can't reach yet, and has
+// lost nothing while it does. disgo's ERRORs for each failed dial reach the
+// bot log at WARN.
+func TestRecorderLogsAFailedDialOfTheVoiceServerAtWarn(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+
+		h.joinUnreachable()
+
+		if errs := h.logs.messagesAt(slog.LevelError); len(errs) != 0 {
+			t.Errorf("bot log ERRORs = %q, want none", errs)
+		}
+		warns := h.logs.messagesAt(slog.LevelWarn)
+		for _, want := range []string{"error connecting to the voice gateway", "failed to reconnect voice gateway"} {
+			if !slices.Contains(warns, want) {
+				t.Errorf("bot log WARNs = %q, want disgo's %q", warns, want)
+			}
+		}
+	})
+}
+
+// terminatingVoiceServer is a voice server that connects the recorder on
+// the first connection it accepts, as Discord's does, and then ends that
+// call with 4022. Each later connection it accepts and says nothing on.
+// rejoined closes once it has accepted a second.
+type terminatingVoiceServer struct {
+	*localVoiceServer
+	udp      *fakeVoiceServer
+	rejoined chan struct{}
+}
+
+func newTerminatingVoiceServer(t *testing.T) *terminatingVoiceServer {
+	t.Helper()
+	s := &terminatingVoiceServer{udp: newFakeVoiceServer(t), rejoined: make(chan struct{})}
+	s.localVoiceServer = newLocalVoiceServer(t, func(n int32, conn *websocket.Conn) {
+		switch n {
+		case 1:
+			s.connectThenTerminate(t, conn)
+		case 2:
+			close(s.rejoined)
+		}
+	})
+	return s
+}
+
+// connectThenTerminate plays Discord's voice server for one connection, from
+// Hello to the session description that completes it, with no DAVE. Once
+// the recorder's first heartbeat arrives, it ends the call with 4022. disgo
+// starts its heartbeat at Hello, and its close races that start under -race
+// until a heartbeat has gone out.
+func (s *terminatingVoiceServer) connectThenTerminate(t *testing.T, conn *websocket.Conn) {
+	send := func(op disgovoice.Opcode, d disgovoice.GatewayMessageData) {
+		if err := conn.WriteJSON(disgovoice.GatewayMessage{Op: op, D: d}); err != nil {
+			t.Errorf("voice server sending op %d: %v", op, err)
+		}
+	}
+	send(disgovoice.OpcodeHello, disgovoice.GatewayMessageDataHello{HeartbeatInterval: 50})
+	awaitOp(t, conn, disgovoice.OpcodeIdentify)
+	go s.udp.answerDiscovery(t)
+	send(disgovoice.OpcodeReady, disgovoice.GatewayMessageDataReady{SSRC: 42, IP: "127.0.0.1", Port: s.udp.port(),
+		Modes: []disgovoice.EncryptionMode{disgovoice.EncryptionModeAEADAES256GCMRTPSize}})
+	awaitOp(t, conn, disgovoice.OpcodeSelectProtocol)
+	send(disgovoice.OpcodeSessionDescription, disgovoice.GatewayMessageDataSessionDescription{
+		Mode: disgovoice.EncryptionModeAEADAES256GCMRTPSize, SecretKey: make([]byte, 32)})
+	awaitOp(t, conn, disgovoice.OpcodeHeartbeat)
+	terminated := websocket.FormatCloseMessage(disgovoice.GatewayCloseEventCodeCallTerminated.Code, "Call terminated")
+	if err := conn.WriteMessage(websocket.CloseMessage, terminated); err != nil {
+		t.Errorf("voice server sending 4022: %v", err)
+	}
+}
+
+// awaitOp reads what the recorder sends on conn until a message with op.
+func awaitOp(t *testing.T, conn *websocket.Conn, op disgovoice.Opcode) {
+	for {
+		mt, data, err := conn.ReadMessage()
+		if err != nil {
+			t.Errorf("voice server waiting for op %d: %v", op, err)
+			return
+		}
+		var m struct {
+			Op disgovoice.Opcode `json:"op"`
+		}
+		if mt == websocket.TextMessage && json.Unmarshal(data, &m) == nil && m.Op == op {
+			return
+		}
+	}
+}
+
+// The recorder rejoins a call its voice server ended with 4022, and has lost
+// nothing yet. disgo's ERROR for the close reaches the bot log at WARN.
+func TestRecorderLogsACallItsVoiceServerEndedAtWarn(t *testing.T) {
+	recordSentry(t)
+	server := newTerminatingVoiceServer(t)
+	h := newCallHarness(t)
+	h.serving = server.endpoint()
+	h.useDisgoGateway(server.dialer())
+	ctx, cancel := context.WithTimeout(context.Background(), waitFor)
+	defer cancel()
+	conn, err := h.s.Join(ctx, callGuild.String(), callChannel.String())
+	if err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+	defer conn.Leave(context.Background())
+
+	select {
+	case <-server.rejoined:
+	case <-time.After(waitFor):
+		t.Fatal("the recorder never rejoined after the 4022")
+	}
+
+	if errs := h.logs.messagesAt(slog.LevelError); len(errs) != 0 {
+		t.Errorf("bot log ERRORs = %q, want none", errs)
+	}
+	const closeReceived = "voice gateway close received"
+	if warns := h.logs.messagesAt(slog.LevelWarn); !slices.Contains(warns, closeReceived) {
+		t.Errorf("bot log WARNs = %q, want disgo's %q", warns, closeReceived)
+	}
+}
+
+// With the bot log at ERROR, as LOG_LEVEL=ERROR sets it, disgo's ERRORs are
+// WARN lines it leaves out.
+func TestRecorderLeavesAFailedDialOutOfABotLogAtError(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.logLevel = slog.LevelError
+
+		h.joinUnreachable()
+
+		if warns := h.logs.messagesAt(slog.LevelWarn); len(warns) != 0 {
+			t.Errorf("bot log WARNs = %q, want none in a bot log at ERROR", warns)
+		}
+	})
 }
 
 // eventMentions reports whether some text the Sentry event carries contains

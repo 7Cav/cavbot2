@@ -131,11 +131,12 @@ func (s *discordgoSession) connCreate(newGateway disgovoice.GatewayCreateFunc, n
 // watched for a connection lost mid-recording or a call that moved.
 // newGateway builds the gateway, disgo's NewGateway outside tests. disgo
 // gives the gateway and UDP connection loggers of their own from logger, so
-// one level holds for all three. The manager hands every connection its own
-// logger first, and this one takes its place.
+// one level holds for all three, and disgo's ERRORs reach logger at WARN
+// from all three. The manager hands every connection its own logger first,
+// and this one takes its place.
 func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc, logger *slog.Logger) []disgovoice.ConnConfigOpt {
 	return []disgovoice.ConnConfigOpt{
-		disgovoice.WithConnLogger(logger),
+		disgovoice.WithConnLogger(slog.New(errorsAsWarnings{next: logger.Handler()})),
 		disgovoice.WithUDPConnCreateFunc(newUDPConn),
 		disgovoice.WithConnGatewayCreateFunc(func(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, opts ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
 			g := &renewableGateway{named: c.namedLast}
@@ -147,6 +148,44 @@ func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc, logger 
 			return g
 		}),
 	}
+}
+
+// errorsAsWarnings hands each record on to next, at WARN when it was logged
+// at ERROR or above. disgo logs at ERROR for every dial, open or close of a
+// voice connection that fails, while the recorder goes on trying and the
+// recording runs. A loss gets an ERROR of the bot's own, with its Sentry
+// event, so an ERROR in the bot log means the recorder lost something. The
+// gate's error data check accepts this handler by name without reading it
+// (ADR 0018), so keep it to moving a record's level and handing the record
+// on.
+type errorsAsWarnings struct {
+	next slog.Handler
+}
+
+func (h errorsAsWarnings) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.next.Enabled(ctx, asWarning(level))
+}
+
+func (h errorsAsWarnings) Handle(ctx context.Context, r slog.Record) error {
+	r.Level = asWarning(r.Level)
+	return h.next.Handle(ctx, r)
+}
+
+func (h errorsAsWarnings) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return errorsAsWarnings{next: h.next.WithAttrs(attrs)}
+}
+
+func (h errorsAsWarnings) WithGroup(name string) slog.Handler {
+	return errorsAsWarnings{next: h.next.WithGroup(name)}
+}
+
+// asWarning moves level down to WARN when it is ERROR or above, and leaves
+// it as it is below.
+func asWarning(level slog.Level) slog.Level {
+	if level >= slog.LevelError {
+		return slog.LevelWarn
+	}
+	return level
 }
 
 // recorderConn is disgo's voice connection to one guild's calls, as the

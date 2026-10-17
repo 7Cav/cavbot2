@@ -37,6 +37,27 @@ func DiscordLogger(s *discordgo.Session) *slog.Logger {
 	return slog.New(&discordHandler{s: s}) // want ""
 }
 
+// errorsAsWarnings has the name of the handler the check accepts in the
+// voice package, and posts each record to a Discord channel.
+type errorsAsWarnings struct {
+	s *discordgo.Session
+}
+
+func (h errorsAsWarnings) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h errorsAsWarnings) Handle(_ context.Context, r slog.Record) error {
+	_, err := h.s.ChannelMessageSend("1", r.Message)
+	return err
+}
+
+func (h errorsAsWarnings) WithAttrs([]slog.Attr) slog.Handler { return h } // want ""
+
+func (h errorsAsWarnings) WithGroup(string) slog.Handler { return h } // want ""
+
+func PostingLogger(s *discordgo.Session) *slog.Logger {
+	return slog.New(errorsAsWarnings{s: s}) // want ""
+}
+
 func BufferLogger(err error) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil)) // want ""
