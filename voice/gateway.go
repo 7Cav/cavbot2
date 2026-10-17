@@ -195,8 +195,9 @@ func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc, logger 
 		disgovoice.WithUDPConnCreateFunc(newUDPConn),
 		disgovoice.WithConnGatewayCreateFunc(func(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, opts ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
 			g := &renewableGateway{named: c.namedLast}
+			g.dropped = c.watchClose(g, onClose)
 			g.build = func() disgovoice.Gateway {
-				return newGateway(dave, g.watchEvents(onEvent), c.watchClose(g, onClose), opts...)
+				return newGateway(dave, g.watchEvents(onEvent), g.dropped, opts...)
 			}
 			g.gw = g.build()
 			c.gateway = g
@@ -467,6 +468,20 @@ type renewableGateway struct {
 	// when it last stopped being connected, zero before it ever was.
 	connected bool
 	lostAt    time.Time
+
+	// dropped is the close handler of every gateway built, which a voice
+	// server gone silent reaches as a close.
+	dropped disgovoice.CloseHandlerFunc
+	// interval is the heartbeat interval the voice server named in its
+	// Hello, answered when the gateway last heard that Hello or a heartbeat
+	// answer, and heard when it last heard anything from the server. silence
+	// fires once the server's heartbeat answer is overdue, while the gateway
+	// is connected, and watches counts the times it was set. Each new
+	// gateway starts them over.
+	interval        time.Duration
+	answered, heard time.Time
+	silence         *time.Timer
+	watches         int
 }
 
 func (g *renewableGateway) current() disgovoice.Gateway {
@@ -481,6 +496,7 @@ func (g *renewableGateway) renew() {
 	defer g.mu.Unlock()
 	g.gw = g.build()
 	g.disconnectLocked(time.Now())
+	g.unwatchLocked()
 }
 
 // lose notes that the recorder lost its connection to the call at at.
@@ -499,14 +515,101 @@ func (g *renewableGateway) disconnectLocked(at time.Time) {
 }
 
 // watchEvents wraps disgo's handler for the gateway's events, to note the
-// session description that completes a connection.
+// session description that completes a connection, and to watch for a
+// voice server that goes silent. disgo's gateway hands it every message the
+// voice server sends, as it arrives.
 func (g *renewableGateway) watchEvents(onEvent disgovoice.EventHandlerFunc) disgovoice.EventHandlerFunc {
 	return func(gw disgovoice.Gateway, op disgovoice.Opcode, seq int, data disgovoice.GatewayMessageData) {
 		if op == disgovoice.OpcodeSessionDescription {
 			g.described(gw)
 		}
+		g.heardFrom(gw, data)
 		onEvent(gw, op, seq, data)
 	}
+}
+
+// heartbeatMargin is how long past its heartbeat interval since its last
+// answer a voice server may go without answering a heartbeat before the
+// recorder counts the connection dropped. disgo's gateway notices only at
+// the heartbeat after the one left unanswered, up to two intervals on, and
+// Discord names an interval of over 13 s.
+const heartbeatMargin = 3 * time.Second
+
+// errVoiceServerSilent is the close a voice server that stopped answering
+// heartbeats reaches the gateway's close handler with.
+var errVoiceServerSilent = errors.New("voice: the voice server stopped answering heartbeats")
+
+// heardFrom notes a message from the voice server on gw. Its Hello names
+// the heartbeat interval, and it and each heartbeat answer start the
+// silence watch over.
+func (g *renewableGateway) heardFrom(gw disgovoice.Gateway, data disgovoice.GatewayMessageData) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if gw != g.gw {
+		return
+	}
+	now := time.Now()
+	g.heard = now
+	switch d := data.(type) {
+	case disgovoice.GatewayMessageDataHello:
+		g.interval, g.answered = time.Duration(d.HeartbeatInterval*float64(time.Millisecond)), now
+	case disgovoice.GatewayMessageDataHeartbeatACK:
+		g.answered = now
+	default:
+		return
+	}
+	g.watchLocked(gw)
+}
+
+// watchLocked starts the silence watch over gw afresh from the voice
+// server's last answer, while gw is connected and its server has named a
+// heartbeat interval. Caller holds mu.
+func (g *renewableGateway) watchLocked(gw disgovoice.Gateway) {
+	if g.silence != nil {
+		g.silence.Stop()
+		g.silence = nil
+	}
+	if !g.connected || g.interval <= 0 {
+		return
+	}
+	g.watches++
+	watch := g.watches
+	g.silence = time.AfterFunc(time.Until(g.answered.Add(g.interval+heartbeatMargin)), func() { g.wentSilent(gw, watch) })
+}
+
+// unwatch ends the silence watch, for a gateway that closes.
+func (g *renewableGateway) unwatch() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.unwatchLocked()
+}
+
+// unwatchLocked ends the silence watch and forgets what it knew, for a
+// gateway that closed or gave way to a new one. Caller holds mu.
+func (g *renewableGateway) unwatchLocked() {
+	if g.silence != nil {
+		g.silence.Stop()
+	}
+	g.silence, g.interval, g.answered, g.heard = nil, 0, time.Time{}, time.Time{}
+}
+
+// wentSilent drops gw, whose voice server's heartbeat answer is overdue,
+// unless watch has given way to a later one or the gateway to a new one.
+// The recorder couldn't hear the call from the server's last message on.
+// The close is on purpose, so disgo's close handler hears nothing of it,
+// and the gateway's own takes the drop as it takes a close.
+func (g *renewableGateway) wentSilent(gw disgovoice.Gateway, watch int) {
+	defer utils.RecoverPanic("recorder-voice-silence")
+	g.mu.Lock()
+	if gw != g.gw || watch != g.watches || !g.connected {
+		g.mu.Unlock()
+		return
+	}
+	g.disconnectLocked(g.heard)
+	g.unwatchLocked()
+	g.mu.Unlock()
+	gw.CloseWithCode(websocket.CloseServiceRestart, "heartbeat answer overdue")
+	g.dropped(gw, errVoiceServerSilent)
 }
 
 // described notes a session description on gw, which completes the dial in
@@ -521,6 +624,7 @@ func (g *renewableGateway) described(gw disgovoice.Gateway) {
 	}
 	if e == nil || dialedAt(g.state, *e) {
 		g.connected = true
+		g.watchLocked(gw)
 	} else {
 		g.disconnectLocked(time.Now())
 	}
@@ -662,6 +766,7 @@ func (g *renewableGateway) replace(gw disgovoice.Gateway) {
 	if g.gw == gw {
 		g.gw = g.build()
 		g.disconnectLocked(time.Now())
+		g.unwatchLocked()
 	}
 	g.mu.Unlock()
 	gw.CloseWithCode(websocket.CloseServiceRestart, "Discord named a later voice server")
@@ -728,6 +833,7 @@ func (g *renewableGateway) reopen(ctx context.Context) error {
 	old, state := g.gw, g.state
 	g.gw = g.build()
 	g.disconnectLocked(time.Now())
+	g.unwatchLocked()
 	g.mu.Unlock()
 	old.CloseWithCode(websocket.CloseServiceRestart, "starting DAVE over")
 	return g.Open(ctx, state)
@@ -737,11 +843,13 @@ func (g *renewableGateway) reopen(ctx context.Context) error {
 // recorder leaves or Discord takes it out.
 func (g *renewableGateway) Close() {
 	g.cancelDialing()
+	g.unwatch()
 	g.current().Close()
 }
 
 func (g *renewableGateway) CloseWithCode(code int, message string) {
 	g.cancelDialing()
+	g.unwatch()
 	g.current().CloseWithCode(code, message)
 }
 

@@ -373,6 +373,22 @@ func (g *answeringGateway) Send(_ context.Context, op disgovoice.Opcode, _ disgo
 
 func (g *answeringGateway) Close() { g.holdsConn.Store(false) }
 
+// hello is the voice server's Hello, naming its heartbeat interval, as
+// disgo's gateway hands it to its event handler.
+func (g *answeringGateway) hello(interval time.Duration) {
+	g.onEvent(g, disgovoice.OpcodeHello, 0, disgovoice.GatewayMessageDataHello{HeartbeatInterval: float64(interval.Milliseconds())})
+}
+
+// answerHeartbeat is the voice server's answer to a heartbeat.
+func (g *answeringGateway) answerHeartbeat() {
+	g.onEvent(g, disgovoice.OpcodeHeartbeatACK, 0, disgovoice.GatewayMessageDataHeartbeatACK{T: time.Now().UnixMilli()})
+}
+
+// speaking is the voice server naming a speaker's SSRC.
+func (g *answeringGateway) speaking() {
+	g.onEvent(g, disgovoice.OpcodeSpeaking, 0, disgovoice.GatewayMessageDataSpeaking{SSRC: 7, UserID: 400})
+}
+
 func (g *answeringGateway) CloseWithCode(int, string) { g.Close() }
 
 // callHarness is a recorder session whose disgo voice connections run over
@@ -1124,6 +1140,49 @@ func TestRecorderLeavesWhenItsChannelIsDeleted(t *testing.T) {
 	if got := h.sent(); len(got) != 1 || got[0].String() != "leave" {
 		t.Errorf("voice state updates after the close = %v, want the recorder taken out and no rejoin", got)
 	}
+}
+
+// A voice server can stop answering without closing the connection, as when
+// the network between it and the recorder stops passing traffic. The
+// recorder counts the connection dropped once the server's heartbeat answer
+// is overdue, a few seconds past the heartbeat interval, and rejoins. The
+// recording's gap starts at the last message the server sent, here one
+// naming a speaker after the last heartbeat answer. The server is out of
+// reach from then, so the gap lasts.
+func TestRecorderStartsTheGapOfASilentVoiceServerAtItsLastMessage(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		server := h.connected
+		server.hello(time.Second)
+		for range 30 {
+			time.Sleep(time.Second)
+			server.answerHeartbeat()
+		}
+		synctest.Wait()
+		if got := l.gapEvents(); len(got) != 0 {
+			t.Fatalf("gap events while the server answers = %v, want none", got)
+		}
+		time.Sleep(300 * time.Millisecond)
+		server.speaking()
+		last := time.Now()
+		h.setReachable(oldEndpoint, false)
+
+		time.Sleep(time.Second + 5*time.Second)
+		synctest.Wait()
+
+		starts := l.gapStarts()
+		if len(starts) == 0 {
+			t.Fatal("no gap 6 s after the server's last message, want one")
+		}
+		if !starts[0].Equal(last) {
+			t.Errorf("gap started %v after the server's last message, want at it", starts[0].Sub(last))
+		}
+	})
 }
 
 // A 4022 has the recorder ask Discord's API whether the channel is still
