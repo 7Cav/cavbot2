@@ -9,12 +9,15 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/binary"
+	"errors"
 	"io"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -296,5 +299,77 @@ func TestVoiceDialerAsksAgainOnEachDial(t *testing.T) {
 
 	if err := dial(t, d, gw); err != nil {
 		t.Errorf("dial once the nameserver has the record: %v", err)
+	}
+}
+
+// A smoke run drops the recorders' voice connections on demand through the
+// file SMOKE_VOICE_DROP_FILE names (docs/smoke-test.md). Dropped abruptly, a
+// live connection's next read fails at once as a connection the network
+// broke does, which disgo resumes from. It isn't a close of the recorder's
+// own, which disgo doesn't resume from, so a smoke check of the drop would
+// pass without reaching the resume.
+func TestSmokeDropFailsALiveConnectionsReadAsTheNetworkDoes(t *testing.T) {
+	dropFile := filepath.Join(t.TempDir(), "drop")
+	t.Setenv(smokeDropEnv, dropFile)
+	server := newQuietVoiceServer(t)
+	d := newVoiceDialer().websocket()
+	d.TLSClientConfig = server.dialer().TLSClientConfig
+	ctx, cancel := context.WithTimeout(context.Background(), waitFor)
+	defer cancel()
+	conn, _, err := d.DialContext(ctx, "wss://"+server.endpoint(), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if err := os.WriteFile(dropFile, []byte("abrupt\n"), 0o600); err != nil {
+		t.Fatalf("writing the drop file: %v", err)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(waitFor))
+	_, _, err = conn.ReadMessage()
+	var netErr net.Error
+	switch {
+	case err == nil:
+		t.Fatal("read after the drop = a message, want it to fail")
+	case errors.As(err, &netErr) && netErr.Timeout():
+		t.Fatalf("read after the drop = %v, want it to fail at the drop", err)
+	case errors.Is(err, net.ErrClosed):
+		t.Errorf("read after the drop = %v, want a connection error, not the recorder's own close", err)
+	}
+}
+
+// The DNS switch a smoke run sets, SMOKE_VOICE_DNS_FAIL_FILE, works beside
+// the drop switch: while its file exists, a dial of a voice server fails as
+// a lookup answering "no such host", and once the file is gone it connects.
+func TestSmokeDNSFailMakesVoiceServersUnreachableWhileItsFileExists(t *testing.T) {
+	failFile := filepath.Join(t.TempDir(), "dns-fail")
+	t.Setenv(smokeDNSFailEnv, failFile)
+	t.Setenv(smokeDropEnv, filepath.Join(t.TempDir(), "drop"))
+	server := newQuietVoiceServer(t)
+	d := newVoiceDialer().websocket()
+	d.TLSClientConfig = server.dialer().TLSClientConfig
+	dialServer := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), waitFor)
+		defer cancel()
+		conn, _, err := d.DialContext(ctx, "wss://"+server.endpoint(), nil)
+		if err == nil {
+			_ = conn.Close()
+		}
+		return err
+	}
+	if err := os.WriteFile(failFile, nil, 0o600); err != nil {
+		t.Fatalf("writing the DNS fail file: %v", err)
+	}
+
+	var dnsErr *net.DNSError
+	if err := dialServer(); !errors.As(err, &dnsErr) || !dnsErr.IsNotFound {
+		t.Errorf("dial with the DNS fail file = %v, want no such host", err)
+	}
+	if err := os.Remove(failFile); err != nil {
+		t.Fatalf("removing the DNS fail file: %v", err)
+	}
+	if err := dialServer(); err != nil {
+		t.Errorf("dial once the DNS fail file is gone = %v, want it to connect", err)
 	}
 }
