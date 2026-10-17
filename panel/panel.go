@@ -456,10 +456,9 @@ func (p *Panel) forumUnavailable(w http.ResponseWriter, sess session) {
 
 // signinForumUnavailable renders the 502 page for a sign-in the forum did
 // not answer. Its Sign in again starts a fresh sign-in that comes back to
-// next, the pending sign-in's address. Like signinURL, it carries no next
-// for the landing, where a sign-in with none lands.
+// next, the pending sign-in's address, and carries no next for the landing.
 func (p *Panel) signinForumUnavailable(w http.ResponseWriter, next string) {
-	if next == "/" {
+	if !namesAPage(next) {
 		next = ""
 	}
 	p.render(w, http.StatusBadGateway, "error", pageData{Title: forumUnavailableTitle,
@@ -475,13 +474,20 @@ func signinURL(c cause, next string) string {
 	if c != causeNone {
 		q.Set("cause", string(c))
 	}
-	if next != "" && next != "/" {
+	if namesAPage(next) {
 		q.Set(paramNext, next)
 	}
 	if len(q) == 0 {
 		return "/signin"
 	}
 	return "/signin?" + q.Encode()
+}
+
+// namesAPage reports whether a sign-in's address names a page to come back
+// to. The landing does not, since a sign-in with no next lands there, so a
+// sign-in form carries no next for it.
+func namesAPage(next string) bool {
+	return next != "" && next != "/"
 }
 
 // returnAddressOf is the address a request's sign-in comes back to: a
