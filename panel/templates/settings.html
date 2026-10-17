@@ -30,7 +30,7 @@
       {{range .Rows}}
         <tr data-rank="{{.Abbrev}}">
           <th scope="row" class="rank">{{.Abbrev}}</th>
-          <td><div class="rank-role">{{if not .Picker.Tags}}<span class="off rank-role-none" data-field="no-role">No role</span>{{end}}{{template "picker" .Picker}}</div></td>
+          <td><div class="rank-role"><span class="off rank-role-none" data-field="no-role"{{if .Picker.Tags}} hidden{{end}}>No role</span>{{template "picker" .Picker}}</div></td>
           <td class="num">{{if .HasRole}}<span data-holders="{{.Holders}}">{{if .HoldersKnown}}{{.Holders}}{{else}}<span class="off">unknown</span>{{end}}</span>{{end}}</td>
         </tr>
       {{end}}
