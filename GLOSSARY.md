@@ -479,6 +479,12 @@ asked sees it.
 _Avoid_: rejection, error reply (which also covers a run that failed after
 it started).
 
+**Unsaved edit**:
+What a panel user typed into a form and has not saved, which the panel
+brings back marked not saved yet. A Foxhole note the panel keeps through a
+sign-in is one.
+_Avoid_: draft, kept values, kept note.
+
 **Change log**:
 The panel's record of each change made through it: who made it, when, and
 what changed. Every save that takes effect has one entry, holding the old
