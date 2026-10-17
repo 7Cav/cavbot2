@@ -97,19 +97,23 @@ type discordgoSession struct {
 	watch *utils.GatewayWatch
 }
 
+// connLoggerFunc builds the logger one voice connection logs through, and the
+// LevelVar that holds its level, which starts at the bot log's.
+type connLoggerFunc func() (*slog.Logger, *slog.LevelVar)
+
 // voiceManager builds the recorder's disgo voice manager, which every join
 // goes through. update sends the recorder's voice state updates, newGateway
 // builds each voice gateway, disgo's NewGateway outside tests, newLogger
 // builds the log of each voice connection, utils.NewLogger outside tests,
 // and opts configure the rest.
-func (s *discordgoSession) voiceManager(update disgovoice.StateUpdateFunc, userID snowflake.ID, newGateway disgovoice.GatewayCreateFunc, newLogger func() (*slog.Logger, *slog.LevelVar), opts ...disgovoice.ManagerConfigOpt) disgovoice.Manager {
+func (s *discordgoSession) voiceManager(update disgovoice.StateUpdateFunc, userID snowflake.ID, newGateway disgovoice.GatewayCreateFunc, newLogger connLoggerFunc, opts ...disgovoice.ManagerConfigOpt) disgovoice.Manager {
 	return disgovoice.NewManager(update, userID, append(opts, disgovoice.WithConnCreateFunc(s.connCreate(newGateway, newLogger)))...)
 }
 
 // connCreate builds each of the recorder's voice connections. Each is
 // disgo's own, held by a recorderConn, and logs through a logger of its own
 // from newLogger.
-func (s *discordgoSession) connCreate(newGateway disgovoice.GatewayCreateFunc, newLogger func() (*slog.Logger, *slog.LevelVar)) disgovoice.ConnCreateFunc {
+func (s *discordgoSession) connCreate(newGateway disgovoice.GatewayCreateFunc, newLogger connLoggerFunc) disgovoice.ConnCreateFunc {
 	return func(guildID, userID snowflake.ID, update disgovoice.StateUpdateFunc, remove func(), opts ...disgovoice.ConnConfigOpt) disgovoice.Conn {
 		c := &recorderConn{s: s, guildID: guildID, userID: userID, update: update}
 		logger, level := newLogger()

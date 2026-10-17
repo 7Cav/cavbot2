@@ -433,11 +433,18 @@ func newCallHarness(t *testing.T) *callHarness {
 		opened: make(chan gatewayOpen, 64), pending: make(chan struct{}, 64), serving: oldEndpoint,
 		unreachable: make(map[string]bool), whileOpening: make(map[string]func())}
 	h.s.dg.Client = &http.Client{Transport: h.api}
-	h.s.voice = h.s.voiceManager(h.updateVoiceState, callRecorder, h.newGateway, h.newLogger,
+	h.s.voice = h.voiceManager(h.newGateway)
+	return h
+}
+
+// voiceManager builds the recorder session's voice manager over newGateway,
+// with disgo logging as the recorder's session wires it, and opts on top.
+func (h *callHarness) voiceManager(newGateway disgovoice.GatewayCreateFunc, opts ...disgovoice.ManagerConfigOpt) disgovoice.Manager {
+	return h.s.voiceManager(h.updateVoiceState, callRecorder, newGateway, h.newLogger, append([]disgovoice.ManagerConfigOpt{
 		disgovoice.WithLogger(utils.Logger),
 		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
-		disgovoice.WithDaveSessionLogger(slog.New(slog.DiscardHandler)))
-	return h
+		disgovoice.WithDaveSessionLogger(slog.New(slog.DiscardHandler)),
+	}, opts...)...)
 }
 
 func (h *callHarness) newGateway(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, _ ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
@@ -456,7 +463,7 @@ func (h *callHarness) newGateway(dave godave.Session, onEvent disgovoice.EventHa
 func (h *callHarness) newLogger() (*slog.Logger, *slog.LevelVar) {
 	level := new(slog.LevelVar)
 	level.Set(h.logLevel)
-	return slog.New(slog.NewTextHandler(logLines{h.logs}, &slog.HandlerOptions{Level: level})), level
+	return slog.New(slog.NewTextHandler(logfmtWriter{h.logs}, &slog.HandlerOptions{Level: level})), level
 }
 
 // answersAt reports whether the voice server at endpoint answers an open:
@@ -1146,8 +1153,8 @@ func TestRecorderReportsAMovedCallItCouldNotRejoin(t *testing.T) {
 }
 
 // A rejoin that fails, here because the recorder's own gateway is down
-// when the rejoin goes out, ends as a lost connection does: the recorder is
-// taken out, and Sentry hears of it once.
+// when the rejoin goes out, ends as a lost connection does. The recorder is
+// taken out, Sentry hears of it once, and the bot log has it at ERROR.
 func TestRecorderReportsARejoinThatFails(t *testing.T) {
 	events := recordSentry(t)
 	h := newCallHarness(t)
@@ -1165,6 +1172,9 @@ func TestRecorderReportsARejoinThatFails(t *testing.T) {
 	}
 	if msg := got[0].Tags["message"]; msg != lostConnectionMessage {
 		t.Errorf("Sentry event = %q, want %q", msg, lostConnectionMessage)
+	}
+	if errs := h.logs.messagesAt(slog.LevelError); !slices.Contains(errs, lostConnectionMessage) {
+		t.Errorf("bot log ERRORs = %q, want %q", errs, lostConnectionMessage)
 	}
 }
 
@@ -1508,8 +1518,8 @@ func (s *quietVoiceServer) dialer() *websocket.Dialer {
 }
 
 // With the bot log at DEBUG, a voice connection the recorder hasn't closed
-// logs there what the move smoke checks read: disgo opening the connection,
-// and opening its voice gateway. disgo's gateway logs its identify through
+// logs there what #735's move smoke check reads, word for word: disgo
+// opening the connection, and opening its voice gateway. disgo's gateway logs its identify through
 // the same logger, but only after a voice server's Hello. Hello starts a
 // heartbeat that disgo's close races under -race, so this server never
 // greets.
@@ -1518,10 +1528,7 @@ func TestRecorderVoiceConnectionLogsReachTheBotLogAtDebug(t *testing.T) {
 	h := newCallHarness(t)
 	h.logLevel = slog.LevelDebug
 	h.serving = server.endpoint()
-	h.s.voice = h.s.voiceManager(h.updateVoiceState, callRecorder, disgovoice.NewGateway, h.newLogger,
-		disgovoice.WithLogger(utils.Logger),
-		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
-		disgovoice.WithDaveSessionLogger(slog.New(slog.DiscardHandler)),
+	h.s.voice = h.voiceManager(disgovoice.NewGateway,
 		disgovoice.WithConnConfigOpts(disgovoice.WithConnGatewayConfigOpts(disgovoice.WithGatewayDialer(server.dialer()))))
 	ctx, cancel := context.WithCancel(context.Background())
 	joined := make(chan struct{})

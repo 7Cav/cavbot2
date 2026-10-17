@@ -3,10 +3,12 @@ package utils
 import (
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/go-logfmt/logfmt"
 )
 
 func TestHandleError_AppCommand_RespondSucceeds(t *testing.T) {
@@ -520,4 +522,73 @@ func TestHandleError_Component_CaptureBoundsCommandToRoutingPrefix(t *testing.T)
 	if got, _ := kvValue((*captured)[0].kv, "custom_id"); got != "somecmd::confirm::feature/some-user-branch" {
 		t.Errorf("custom_id = %v, want the full CustomID", got)
 	}
+}
+
+// A logger from NewLogger writes where the bot log does, at the level
+// LOG_LEVEL gives the bot log. A DEBUG record goes out with the bot log at
+// DEBUG, and not with it at INFO.
+func TestNewLoggerWritesAtTheBotLogsLevel(t *testing.T) {
+	for _, tc := range []struct {
+		level string
+		want  int
+	}{
+		{"DEBUG", 1},
+		{"INFO", 0},
+	} {
+		t.Run(tc.level, func(t *testing.T) {
+			records := stdoutRecords(t, func() {
+				InitLogger(tc.level)
+				logger, _ := NewLogger()
+				logger.Debug("connecting")
+			})
+
+			got := 0
+			for _, r := range records {
+				if r["level"] == "DEBUG" && r["msg"] == "connecting" {
+					got++
+				}
+			}
+			if got != tc.want {
+				t.Errorf("DEBUG records %q with LOG_LEVEL=%s = %d, want %d, in %v", "connecting", tc.level, got, tc.want, records)
+			}
+		})
+	}
+}
+
+// stdoutRecords runs f with the process's stdout in a file, and returns each
+// line f wrote there, decoded as the logfmt the bot log writes. The bot log,
+// its level and stdout are left as they were.
+func stdoutRecords(t *testing.T, f func()) []map[string]string {
+	t.Helper()
+	out, err := os.Create(t.TempDir() + "/stdout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = out.Close() }()
+	prevLogger, prevLevel, prevStdout := Logger, logLevel, os.Stdout
+	t.Cleanup(func() { Logger, logLevel, os.Stdout = prevLogger, prevLevel, prevStdout })
+	os.Stdout = out
+	f()
+
+	b, err := os.ReadFile(out.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []map[string]string
+	dec := logfmt.NewDecoder(strings.NewReader(string(b)))
+	for dec.ScanRecord() {
+		r := map[string]string{}
+		for dec.ScanKeyval() {
+			// A pair named as one of the record's own, such as the level
+			// InitLogger logs, comes after it and doesn't replace it.
+			if key := string(dec.Key()); r[key] == "" {
+				r[key] = string(dec.Value())
+			}
+		}
+		records = append(records, r)
+	}
+	if err := dec.Err(); err != nil {
+		t.Fatalf("stdout is not logfmt: %v\n%s", err, b)
+	}
+	return records
 }

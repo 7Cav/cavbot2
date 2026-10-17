@@ -60,12 +60,12 @@ func captureLogs(t *testing.T) *logRecorder {
 	return testLogs
 }
 
-// logLines is a writer that hands l each line of slog's text format written
-// to it. Each line becomes a record of its level, message and other pairs,
+// logfmtWriter is a writer that hands l each line of slog's text format
+// written to it. Each line becomes a record of its level, message and other pairs,
 // dated when it is written, which is when it was logged.
-type logLines struct{ l *logRecorder }
+type logfmtWriter struct{ l *logRecorder }
 
-func (w logLines) Write(p []byte) (int, error) {
+func (w logfmtWriter) Write(p []byte) (int, error) {
 	dec := logfmt.NewDecoder(bytes.NewReader(p))
 	for dec.ScanRecord() {
 		var level slog.Level
