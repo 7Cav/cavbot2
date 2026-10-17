@@ -253,8 +253,8 @@
         close();
         return;
       }
-      afterPress = function closeAfter(target, menu) {
-        if (menu) {
+      afterPress = function closeAfter(target, byMenu) {
+        if (byMenu) {
           if (root.contains(target)) {
             afterPress = closeAfter;
           } else {
