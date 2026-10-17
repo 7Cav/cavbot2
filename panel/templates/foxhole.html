@@ -12,7 +12,7 @@
   {{with .Retry}}
   <section class="block fx-pending" data-field="retrying" data-report="{{.ID}}" data-action="{{.Action}}">
     <h2 class="block-header" id="retry" tabindex="-1">Retry: {{.Name}}</h2>
-    <div class="block-row">Started by <span data-field="started-by">{{.StartedBy}}</span> at <time datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>. Below are only the {{len .Missed}} {{if eq (len .Missed) 1}}member{{else}}members{{end}} it failed on or didn't attempt, checked against Discord as it is now. Confirming starts a new run in your name.</div>
+    <div class="block-row">Started by <span data-field="started-by">{{.StartedBy}}</span> at <time datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "zulu" .StartedAt}}</time>. Below are only the {{len .Missed}} {{if eq (len .Missed) 1}}member{{else}}members{{end}} it failed on or didn't attempt, checked against Discord as it is now. Confirming starts a new run in your name.</div>
     {{with .Failed}}<div class="block-row fx-reportlist" data-list="failed"><h3>Failed last time <span class="fx-count" data-field="count">{{len .}}</span></h3>{{template "report-members" .}}
       <p class="fx-hint">If Discord refused for a missing permission or a deleted role, fix that in Discord first, or these fail again.</p></div>{{end}}
   </section>
@@ -168,7 +168,7 @@
   {{with .Commands}}
   <section class="block fx-progress" role="status" data-field="command-running">
     <h2 class="block-header">{{if eq (len .) 1}}A Foxhole command is running{{else}}Foxhole commands are running{{end}}</h2>
-    {{range .}}<div class="block-row"><code data-field="command">{{.Command}}</code>, run by <span data-member="{{.By.MemberID}}">{{.By.DisplayName}} <span class="fx-user">@{{.By.Username}}</span></span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>.</div>{{end}}
+    {{range .}}<div class="block-row"><code data-field="command">{{.Command}}</code>, run by <span data-member="{{.By.MemberID}}">{{.By.DisplayName}} <span class="fx-user">@{{.By.Username}}</span></span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "zulu" .StartedAt}}</time>.</div>{{end}}
     <div class="block-row">A Foxhole action on this page can start once {{if eq (len .) 1}}it ends{{else}}they end{{end}}. Commands don't report how far they've got. <a href="{{$.Foxhole.Reload}}" data-keeps-selection>Reload the page</a> to check.</div>
   </section>
   {{end}}
@@ -345,7 +345,7 @@
       <summary class="change-head" id="entry-{{.ID}}">
         <span class="change-who" data-field="username">{{.Username}}</span>
         <span class="tag" data-field="action">{{.Label}}</span>
-        <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
+        <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "zulu" .At}}</time>
       </summary>
       {{if .Report}}{{with .Report}}
       <div class="fx-changereport">
@@ -480,7 +480,7 @@
 
 {{define "outcome"}}{{if .StoppedBy}}Stopped by <span data-field="stopped-by">{{.StoppedBy}}</span>{{else}}{{.OutcomeLabel}}{{end}}{{end}}
 
-{{define "report-head"}}<div class="block-row fx-reporthead">Started by <span data-field="started-by">{{.StartedBy}}</span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.StartedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>{{if not .EndedAt.IsZero}}, ended at <time data-field="ended" datetime="{{.EndedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.EndedAt.UTC.Format "2 Jan 2006 15:04:05"}} UTC</time>{{end}}.</div>{{end}}
+{{define "report-head"}}<div class="block-row fx-reporthead">Started by <span data-field="started-by">{{.StartedBy}}</span> at <time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "zulu" .StartedAt}}</time>{{if not .EndedAt.IsZero}}, ended at <time data-field="ended" datetime="{{.EndedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "zulu" .EndedAt}}</time>{{end}}.</div>{{end}}
 
 {{define "report-counts"}}Changed <span data-count="changed">{{len .Changed}}</span>, skipped <span data-count="skipped">{{len .Skipped}}</span>, failed <span data-count="failed">{{len .Failed}}</span>, not attempted <span data-count="not-attempted">{{len .NotAttempted}}</span>
   {{- with .AddedNobody}}, lines that added nobody <span data-count="added-nobody">{{len .}}</span>{{end}}{{end}}

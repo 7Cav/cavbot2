@@ -55,6 +55,9 @@ type Fake struct {
 	// next start gets.
 	recordings      map[int64]Recording
 	nextRecordingID int64
+	// holdIn is the zone HoldTimesIn holds each change log entry's time
+	// in, and nil for the local zone time.Now gives.
+	holdIn *time.Location
 }
 
 // changeLog is one change log in append order, and the ID its next entry
@@ -80,6 +83,16 @@ func NewFake() *Fake {
 		recordings:      make(map[int64]Recording),
 		nextRecordingID: 1,
 	}
+}
+
+// HoldTimesIn holds the time of each change log entry stamped from now on
+// in loc, the same instant in another zone, as Postgres hands a time back
+// in the bot's zone, whatever it is. A setup method off the Store
+// interface, so a test can hold a time in a zone other than UTC.
+func (f *Fake) HoldTimesIn(loc *time.Location) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.holdIn = loc
 }
 
 // GetHub implements Store.
@@ -470,6 +483,9 @@ func (f *Fake) appendToLog(ctx context.Context, log *changeLog, entry *ChangeLog
 	log.nextID++
 	e.HubID = hubID
 	e.At = time.Now()
+	if f.holdIn != nil {
+		e.At = e.At.In(f.holdIn)
+	}
 	e.Diff = slices.Clone(e.Diff)
 	log.entries = append(log.entries, e)
 	e.Diff = slices.Clone(e.Diff)

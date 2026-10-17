@@ -47,9 +47,6 @@
 
 {{define "recording-title"}}{{if .Title}}{{.Title}}{{else}}Untitled recording{{end}}{{end}}
 
-{{- /* A time as the regiment writes it, in Zulu (GLOSSARY.md). */}}
-{{define "zulu"}}{{.UTC.Format "2 Jan 2006 1504"}}z{{end}}
-
 {{define "recording-started"}}{{template "zulu" .StartedAt}}{{end}}
 
 {{- /* How a recording's download and Delete links name it for a screen reader, whose links list reads each link's name alone: its title and its start time, as its block shows them. */}}

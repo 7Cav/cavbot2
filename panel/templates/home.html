@@ -7,7 +7,7 @@
   {{template "moderators" .}}
   <div class="block" data-section="hub-list">
     <h2 class="block-header" id="hubs" tabindex="-1">Hubs</h2>
-    {{with .Hubs.Removed}}<div class="block-row" role="status"><div class="note note--ok note--inline" data-field="removed">{{.By}} removed hub <span class="hub-name" data-field="base_string">{{.BaseString}}</span> at <time datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 15:04"}} UTC</time>.
+    {{with .Hubs.Removed}}<div class="block-row" role="status"><div class="note note--ok note--inline" data-field="removed">{{.By}} removed hub <span class="hub-name" data-field="base_string">{{.BaseString}}</span> at <time datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "zulu" .At}}</time>.
       {{- with .ChannelName}} Its voice channel, {{.}}, stays in Discord. Register it below to make it a hub again, starting from the default settings.{{end}}</div></div>{{end}}
     {{with .Hubs.Added}}<div class="block-row" role="status"><div class="note note--ok note--inline" data-field="added">Added hub <span class="hub-name" data-field="base_string">{{.BaseString}}</span>. <a href="/?hub={{.ID}}#edit">Edit it<span class="visually-hidden"> (hub {{.BaseString}})</span></a> to change its other settings.</div></div>{{end}}
     {{if .Hubs.Hubs}}
@@ -24,7 +24,7 @@
           <td data-field="category_name">{{if .CategoryName}}{{.CategoryName}}{{else}}<span class="off">none</span>{{end}}</td>
           <td>{{if .Broken}}<span class="tag tag--warn" data-field="broken">broken</span> {{end}}<span data-field="enabled">{{if .Enabled}}<span class="tag tag--on">enabled</span>{{else}}<span class="tag">disabled</span>{{end}}</span></td>
           <td class="num" data-field="spawned">{{.Spawned}}</td>
-          <td class="failure">{{with .Failure}}<span data-field="failure_cause">{{.Cause}}</span> <time data-field="failure_at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 15:04"}} UTC</time>{{else}}<span class="off">none</span>{{end}}</td>
+          <td class="failure">{{with .Failure}}<span data-field="failure_cause">{{.Cause}}</span> <time data-field="failure_at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "zulu" .At}}</time>{{else}}<span class="off">none</span>{{end}}</td>
           <td class="num">{{if .Broken}}<a class="btn btn--danger btn--small" href="/?remove={{.ID}}#remove" data-field="remove" aria-label="Remove hub {{.BaseString}}">Remove</a>{{else}}<a href="/?hub={{.ID}}#edit" data-field="edit" aria-label="Edit hub {{.BaseString}}">Edit</a>{{end}}</td>
         </tr>
       {{end}}
@@ -128,7 +128,7 @@
         <span class="hub-name" data-field="base_string">{{.BaseString}}</span>
         <span>Channel {{if .ChannelName}}<span data-field="channel_name">{{.ChannelName}}</span>{{else}}<span class="off" data-field="channel_gone">not in the server</span>{{end}}</span>
         <span>Removed by <span class="change-who" data-field="removed_by">{{.By}}</span></span>
-        <time data-field="removed_at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
+        <time data-field="removed_at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "zulu" .At}}</time>
       </span></summary>
       {{template "change-entries" .Changes}}
     </details>
