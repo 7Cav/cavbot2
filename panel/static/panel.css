@@ -233,9 +233,9 @@ h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
    column whatever each role's name, and the rank and its count sit on the
    role's line, open search or not. A rank reads "No role" whenever its
    picker holds no tag, after × too (#756). On a rank that loads with a
-   role, the text starts hidden, and the second rule shows it once the tag
-   goes. A browser without :has shows each rank's text as the page loaded
-   it. A role the server lacks shows as its ID, which breaks where it
+   role, the text starts hidden, and the :not(:has()) rule shows it once
+   the tag goes. A browser without :has shows each rank's text as the page
+   loaded it. A role the server lacks shows as its ID, which breaks where it
    must, so the list still fits a phone. */
 .rank-role { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .rank-role > .picker { display: contents; }

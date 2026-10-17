@@ -535,10 +535,14 @@ func rowOfRank(t *testing.T, doc *html.Node, abbrev string) *html.Node {
 	return nil
 }
 
+// noRoleVerbatim is what a rank's row reads while its picker holds no tag.
+// The brief fixes it verbatim (#756), so tests quote it.
+const noRoleVerbatim = "No role"
+
 // A rank whose role a save cleared reads "No role" in its row at load, and
-// a rank with a role does not (#756). The brief gives the words verbatim.
-// The test browser applies no stylesheet, so this checks the page as a
-// browser without the stylesheet's :has rules shows it.
+// a rank with a role does not (#756). The test browser applies no
+// stylesheet, so this checks the page as a browser without the
+// stylesheet's :has rules shows it.
 func TestRankRolesSectionSaysWhenARankHasNoRole(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
@@ -546,11 +550,11 @@ func TestRankRolesSectionSaysWhenARankHasNoRole(t *testing.T) {
 
 	doc := parseHTML(t, w.b.get(settingsPath))
 
-	if shown := shownText(rowOfRank(t, doc, "CPL")); !strings.Contains(shown, "No role") {
-		t.Errorf("CPL's row, with no role, reads %q, want it to say No role", shown)
+	if shown := shownText(rowOfRank(t, doc, "CPL")); !strings.Contains(shown, noRoleVerbatim) {
+		t.Errorf("CPL's row, with no role, reads %q, want it to say %s", shown, noRoleVerbatim)
 	}
-	if shown := shownText(rowOfRank(t, doc, "SGT")); strings.Contains(shown, "No role") {
-		t.Errorf("SGT's row, with a role, reads %q, which says No role", shown)
+	if shown := shownText(rowOfRank(t, doc, "SGT")); strings.Contains(shown, noRoleVerbatim) {
+		t.Errorf("SGT's row, with a role, reads %q, which says %s", shown, noRoleVerbatim)
 	}
 }
 
