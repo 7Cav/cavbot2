@@ -193,7 +193,7 @@ func (r *receiver) watchGap(hearing bool) {
 	switch {
 	case !hearing && !r.inGap:
 		r.inGap, r.gapSince, r.gapReported = true, time.Now(), false
-		r.listener.GapStarted()
+		r.listener.GapStarted(r.gapSince)
 	case !hearing && !r.gapReported && time.Since(r.gapSince) >= GapReportedAfter:
 		r.gapReported = true
 		utils.CaptureError(gapMessage, errGap, "recorder", r.recorder, "channel_id", channelOf(r.conn),

@@ -40,12 +40,12 @@ type Conn interface {
 type Listener interface {
 	// Frame is one frame a speaker sent.
 	Frame(Frame)
-	// GapStarted is the recorder ceasing to hear the channel: its voice
-	// connection to the call closed, or DAVE holds every frame. GapEnded is
-	// the recorder hearing it again, connected at the voice server Discord
-	// named last with DAVE passing frames. The two take turns, GapStarted
-	// first.
-	GapStarted()
+	// GapStarted is the recorder ceasing to hear the channel since then:
+	// its voice connection to the call dropped, or DAVE holds every frame.
+	// GapEnded is the recorder hearing it again, connected at the voice
+	// server Discord named last with DAVE passing frames. The two take
+	// turns, GapStarted first.
+	GapStarted(since time.Time)
 	GapEnded()
 }
 

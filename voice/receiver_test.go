@@ -185,8 +185,8 @@ func (l *listener) Frame(f Frame) {
 	}
 }
 
-func (l *listener) GapStarted() { l.note(gapStarted) }
-func (l *listener) GapEnded()   { l.note(gapEnded) }
+func (l *listener) GapStarted(time.Time) { l.note(gapStarted) }
+func (l *listener) GapEnded()            { l.note(gapEnded) }
 
 func (l *listener) note(event string) {
 	l.mu.Lock()
