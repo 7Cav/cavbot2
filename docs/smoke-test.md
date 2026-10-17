@@ -100,6 +100,15 @@ fixtures, such as roles and nicknames, and to read results from roles, the
 audit log and the registered commands. Write down each fixture as you make it,
 for step 5.
 
+**Unreachable voice servers.** A recording check that needs the recorder cut
+off from its call's voice server starts the run with `go run ./tools/smoke up
+--env SMOKE_VOICE_DNS_FAIL_FILE=/tmp/cavbot2-voice-dns-fail`. While that file
+exists, every lookup a recorder makes of a voice server answers "no such
+host", from the host's resolver and the zone's nameservers alike. A join fails then
+too, so create the file only once the recording runs, then move the call with
+`smoke api`. Remove the file to let the recorder reach the server, and before
+`down`, so the next run with the flag doesn't start cut off.
+
 **Cav members.** The test guild has none of the rank roles the code holds for
 production, so no test account counts as a Cav member until a panel admin sets
 a rank role. A check that needs a Cav member, such as owning a spawned channel
