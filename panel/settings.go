@@ -158,7 +158,7 @@ func (p *Panel) settingsPage(w http.ResponseWriter, r *http.Request, sess sessio
 	req.SavedVersion, _ = strconv.ParseInt(q.Get(paramVersion), 10, 64)
 	if q.Get(paramPreview) == formRankRoles {
 		in := rankRolesInputOf(q)
-		req.RankRoles, req.PreviewRankRoles = &in, true
+		req.RankRoles, req.LoadsRankRolesPreview = &in, true
 	}
 	p.renderSettings(w, r, sess, http.StatusOK, req)
 }
@@ -210,16 +210,16 @@ func (p *Panel) renderSettings(w http.ResponseWriter, r *http.Request, sess sess
 		return
 	}
 	data := sess.page("Settings")
-	data.Page, data.Settings, data.Address = pageSettings, view, req.settingsAddress()
+	data.Page, data.Settings, data.Address = pageSettings, view, req.settingsPageAddress()
 	p.render(w, r, status, "settings", data)
 }
 
-// settingsAddress is the GET address that shows the Settings page the
+// settingsPageAddress is the GET address that shows the Settings page the
 // request asks for as it stands then, for a page that answers a form (ADR
 // 0019): the page opened at the section whose save was refused, or at the
 // rank roles preview the page shows. The refusal and any other form as
 // posted came with the POST, so they don't come back.
-func (req pageRequest) settingsAddress() string {
+func (req pageRequest) settingsPageAddress() string {
 	if req.RankRolesPreview != nil && req.RankRoles != nil {
 		return rankRolesPreviewAddress(*req.RankRoles)
 	}
@@ -281,7 +281,7 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 	}
 	page.Changes = changeViews(entries, guild)
 	preview := req.RankRolesPreview
-	if req.PreviewRankRoles && posted != nil {
+	if req.LoadsRankRolesPreview && posted != nil {
 		// The preview's address shows the preview whatever the counts are
 		// now, none dropped included, so a reload of it never saves.
 		counts := s.rankRolesCounts(commands.RankLadderOf(stored), commands.NewRankLadder(posted.Roles))

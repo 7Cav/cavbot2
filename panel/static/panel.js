@@ -358,10 +358,11 @@ var unsavedEdits = (function () {
   'use strict';
 
   // storageKey names the entry in the tab's session storage that holds the
-  // edits. It holds the forum user they belong to, each edit by name with
-  // the values its form posts and the address it was typed at, the edit
-  // whose form was sent last, until the page that answers it loads, and
-  // whether the next page brings the edits back.
+  // edits. It holds the forum user they belong to and each edit by name,
+  // with the values its form posts, the names of its form's fields and the
+  // address it was typed at. It also holds the edit whose form was sent
+  // last, until the page that answers it loads, and whether the next page
+  // brings the edits back.
   var storageKey = 'panel-unsaved-edits';
 
   // signedInAs is the forum user the rail names, empty on a page with no
@@ -398,6 +399,13 @@ var unsavedEdits = (function () {
     return location.pathname + location.search + location.hash;
   }
 
+  // shows says whether the tab shows the page at address, whatever block
+  // it opens at.
+  function shows(address) {
+    var at = new URL(address, location.href);
+    return at.pathname + at.search === location.pathname + location.search;
+  }
+
   // navigation is how the tab came to load this page: navigate, reload or
   // back_forward.
   var navigation = (function () {
@@ -417,22 +425,34 @@ var unsavedEdits = (function () {
     return values;
   }
 
-  // fill puts the values back in the form's fields: each picker's tags,
-  // each box's and button's check, and each other field's value. A field
-  // the values leave out keeps what the page gave it.
-  function fill(form, values) {
+  // namesOf is the name of every field the form has. A box left unticked
+  // posts nothing, so its name alone says it was there.
+  function namesOf(form) {
+    var names = [];
+    Array.from(form.elements).forEach(function (field) {
+      if (field.name && names.indexOf(field.name) === -1) { names.push(field.name); }
+    });
+    return names;
+  }
+
+  // fill puts an edit back in the form's fields: each picker's tags, each
+  // box's and button's check, and each other field's value. A field the
+  // edit's form didn't have keeps what the page gave it.
+  function fill(form, edit) {
     var given = {};
-    values.forEach(function (pair) { (given[pair[0]] = given[pair[0]] || []).push(pair[1]); });
+    var had = edit.names || [];
+    edit.values.forEach(function (pair) { (given[pair[0]] = given[pair[0]] || []).push(pair[1]); });
     form.querySelectorAll('[data-picker]').forEach(function (picker) {
       picker.dispatchEvent(new CustomEvent('panel:select', { detail: given[picker.getAttribute('data-field')] || [] }));
     });
     var used = {};
     Array.from(form.elements).forEach(function (field) {
-      if (!field.name || !(field.name in given) || field.closest('[data-picker]')) { return; }
+      if (!field.name || field.closest('[data-picker]')) { return; }
       if (field.type === 'checkbox' || field.type === 'radio') {
-        field.checked = given[field.name].indexOf(field.value) !== -1;
+        if (had.indexOf(field.name) !== -1) { field.checked = (given[field.name] || []).indexOf(field.value) !== -1; }
         return;
       }
+      if (!(field.name in given)) { return; }
       var i = used[field.name] || 0;
       used[field.name] = i + 1;
       if (i < given[field.name].length) { field.value = given[field.name][i]; }
@@ -442,7 +462,7 @@ var unsavedEdits = (function () {
   // keep puts what the form posts now in the tab as the edit named, typed
   // at address, the address the tab shows when none is given.
   function keep(name, form, address) {
-    state.edits[name] = { values: valuesOf(form), address: address || here() };
+    state.edits[name] = { values: valuesOf(form), names: namesOf(form), address: address || here() };
     write();
   }
 
@@ -516,8 +536,7 @@ var unsavedEdits = (function () {
     link.addEventListener('click', function (e) {
       drop(name);
       delete live[name];
-      var to = new URL(link.href);
-      if (to.pathname + to.search === location.pathname + location.search) {
+      if (shows(link.href)) {
         e.preventDefault();
         history.replaceState(history.state, '', link.href);
         location.reload();
@@ -569,7 +588,7 @@ var unsavedEdits = (function () {
       placed[name] = form;
       var edit = state.edits[name];
       if (restoring && edit) {
-        fill(form, edit.values);
+        fill(form, edit);
         restored.push(form);
         keep(name, form);
         follow(name, form);
@@ -617,7 +636,7 @@ var unsavedEdits = (function () {
     keep: keep,
     drop: drop,
     follow: follow,
-    fill: fill,
+    shows: shows,
     marked: marked,
     storedLink: storedLink,
     storedAddress: storedAddress,
@@ -1052,7 +1071,7 @@ var unsavedEdits = (function () {
       .catch(unopened);
   }
 
-  // noteOf reads a kept note off the values its form posted.
+  // noteOf reads a note brought back off the values its form posted.
   function noteOf(values) {
     var note = {};
     values.forEach(function (pair) { note[pair[0]] = pair[1]; });
@@ -1078,8 +1097,7 @@ var unsavedEdits = (function () {
     var edits = unsavedEdits.edits();
     var opened = 0;
     Object.keys(edits).forEach(function (name) {
-      var at = new URL(edits[name].address, location.href);
-      if (name.indexOf('note-') !== 0 || unsavedEdits.placed(name) || at.pathname + at.search !== location.pathname + location.search) { return; }
+      if (name.indexOf('note-') !== 0 || unsavedEdits.placed(name) || !unsavedEdits.shows(edits[name].address)) { return; }
       var note = noteOf(edits[name].values);
       var first = opened++ === 0;
       var cell = document.querySelector('[data-member="' + CSS.escape(note.member) + '"] [data-note-cell]');

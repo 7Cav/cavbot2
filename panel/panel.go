@@ -363,7 +363,7 @@ func (p *Panel) failedInside(w http.ResponseWriter, r *http.Request, sess *sessi
 		data = sess.page(title)
 	}
 	data.Failure, data.Retry, data.Address = failureServer, retry, retry
-	data.Message = "Cavbot2 ran into a fault of its own and stopped. Part of what you asked for may have happened, so Try again shows the page as it is now."
+	data.Message = "Cavbot2 hit a fault of its own and stopped before it finished. Try again shows the page as it stands now."
 	p.render(w, r, http.StatusInternalServerError, "error", data)
 }
 
@@ -768,17 +768,17 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 		status = http.StatusNotFound
 	}
 	data := sess.page("Hubs")
-	data.Page, data.Hubs, data.Address = pageHubs, page, req.address()
+	data.Page, data.Hubs, data.Address = pageHubs, page, req.hubPageAddress()
 	p.render(w, r, status, "home", data)
 }
 
-// address is the GET address that shows the hub page the request asks for
-// as it stands then, for a page that answers a form (ADR 0019): the page
+// hubPageAddress is the GET address that shows the hub page the request
+// asks for as it stands then, for a page that answers a form (ADR 0019): the page
 // with the hub's edit form and the remove preview the request names,
 // opened at the form that was refused, or at the remove preview. The
 // refusal and the form as posted came with the POST, so they don't come
 // back.
-func (req pageRequest) address() string {
+func (req pageRequest) hubPageAddress() string {
 	q := url.Values{}
 	if req.HubID != 0 {
 		q.Set("hub", strconv.FormatInt(req.HubID, 10))
@@ -1063,7 +1063,7 @@ func (p *Panel) removeHub(w http.ResponseWriter, r *http.Request, sess session) 
 		return
 	}
 	if err != nil {
-		p.serverError(w, r, &sess, "hub remove", preview.address(), err)
+		p.serverError(w, r, &sess, "hub remove", preview.hubPageAddress(), err)
 		return
 	}
 	utils.Info("Panel hub removed", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
