@@ -1,5 +1,5 @@
 {{define "content"}}
-<main class="body" data-page="{{.Page}}">
+<main class="body" data-page="{{.Page}}"{{with .Foxhole.Address}} data-address="{{.}}"{{end}}>
   <h1 class="title">Foxhole</h1>
   <p class="desc">Everyone holding a Foxhole role, and every approved Foxholer. Changes here go straight to Discord.</p>
   {{with .Foxhole}}
@@ -142,7 +142,7 @@
       {{- if not .CanAdd}} <span class="fx-hint" data-field="nobody-to-add">{{.NobodyHint}}</span>
       {{- else if and $.Foxhole.Busy .Retry}} {{template "busy-reopen" .Reopen}}
       {{- else if $.Foxhole.Busy}} <span class="fx-hint" data-field="busy">Another Foxhole action is running. Once it ends, press Preview again to confirm.</span>
-      <button type="submit" formaction="/foxhole/roster/preview#roster-preview" class="btn btn--small" data-field="reopen">Preview again</button>{{end}}
+      <a href="{{.Reopen.Href}}" class="btn btn--small" data-field="reopen">Preview again</a>{{end}}
     </form>
   </section>
   {{end}}
@@ -455,7 +455,8 @@
   <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="preview">{{if .AbovePreview}}Preview again{{else}}Preview{{end}}</button></div>
 </form>{{end}}
 
-{{define "roster-form"}}<form method="post" action="/foxhole/roster/preview#roster-preview" data-field="roster-form">
+{{- /* Preview roster loads the page by GET, with the unit in the address, so a reload of the preview reads the roster again and sends no form (ADR 0019). */}}
+{{define "roster-form"}}<form method="get" action="/foxhole#roster-preview" data-field="roster-form">
   <div class="block-row">
     <label class="field"><span class="field-label">Validated unit</span>
       <select name="unit" aria-describedby="roster-unit-hint">{{range .Units}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select>

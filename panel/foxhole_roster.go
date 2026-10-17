@@ -21,20 +21,26 @@ import (
 // registry the roster add command's picker offers (ADR 0009), and a unit's
 // roster comes from the 7Cav API through the unit's registry row alone.
 
-// The roster block's addresses: the Preview roster its form posts to, and
-// the roster add the roster preview's Confirm starts.
+// The roster block's addresses: the one its Preview roster posted to before
+// it became a GET of the Foxhole page, and the roster add the roster
+// preview's Confirm starts.
 const (
 	foxholeRosterPreviewPath = "/foxhole/roster/preview"
 	foxholeRosterPath        = "/foxhole/roster"
 )
 
 // fieldUnit is the roster block's field: the value of the validated
-// internal unit picked. The roster preview's Confirm posts it beside who
-// the preview listed, as fieldRoster.
+// internal unit picked, which Preview roster puts in the page's address.
+// The roster preview's Confirm posts it beside who the preview listed, as
+// fieldRoster.
 const (
 	fieldUnit   = "unit"
 	fieldRoster = "roster"
 )
+
+// rosterPreviewAnchor is the ID foxhole.html gives the roster preview's
+// heading, which Preview roster's address names.
+const rosterPreviewAnchor = "roster-preview"
 
 // rosterResult is what a roster add does with one trooper on the roster,
 // its data-result marker. Each but rosterGets is a reason the add skips
@@ -70,8 +76,9 @@ type rosterPreview struct {
 	// where Preview roster was pressed, or where the Retry was pressed for a
 	// Retry's preview.
 	Back string
-	// reopen is a Retry's preview's Retry address, which says where the
-	// Retry was pressed. Empty for a preview of the whole roster.
+	// reopen is the address that opens the preview again: the roster
+	// preview's own, or a Retry's preview's Retry address, which says where
+	// the Retry was pressed.
 	reopen string
 }
 
@@ -169,7 +176,8 @@ func rosterTroopers(ctx context.Context, unit commands.ValidatedInternalUnit) ([
 // records.
 func (s foxholeService) rosterPreviewOf(list commands.MemberListSnapshot, records map[string]store.FoxholeRecord, unit commands.ValidatedInternalUnit, troopers []commands.RosterTrooper) *rosterPreview {
 	guild := s.foxholeGuildOf()
-	preview := &rosterPreview{Unit: unit, Back: foxholeAt(addRosterAnchor)}
+	preview := &rosterPreview{Unit: unit, Back: foxholeAt(addRosterAnchor),
+		reopen: foxholeRequest{Filter: filterAll, Roster: &rosterRequest{Unit: unit}}.address()}
 	for _, t := range troopers {
 		row := rosterRow{RosterTrooper: t}
 		if t.DiscordID != "" {
@@ -257,9 +265,9 @@ func (p *rosterPreview) NobodyHint() string {
 	return nobodyOnRoster(p.Unit.Label)
 }
 
-// Reopen is the link that opens a Retry's preview again, at the Retry's
-// address. A preview of the whole roster opens again by its Preview again
-// button instead, which posts the unit.
+// Reopen is the link that opens the preview again: a Retry's, at the
+// Retry's address, or a preview of the whole roster, at its own, which its
+// Preview again link opens.
 func (p *rosterPreview) Reopen() reopenLink {
 	return reopenOf(p.reopen, "Retry")
 }
@@ -306,10 +314,12 @@ func (p *Panel) startRosterAdd(w http.ResponseWriter, r *http.Request, sess sess
 	}, kv...)
 }
 
-// previewRoster is POST /foxhole/roster/preview, the roster block's Preview
-// roster: the Foxhole page with the roster preview of the unit picked. A
-// value outside the registry is refused before any roster fetch.
-func (p *Panel) previewRoster(w http.ResponseWriter, r *http.Request, sess session) {
+// previewRoster is POST /foxhole/roster/preview, where the roster block's
+// Preview roster posted before it became a GET of the Foxhole page (ADR
+// 0019). A tab loaded before then still posts here, so for one release it
+// redirects to the roster preview's address, which previews. A value
+// outside the registry is refused before any roster fetch.
+func (p *Panel) previewRoster(w http.ResponseWriter, r *http.Request, _ session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
 		return
@@ -319,5 +329,5 @@ func (p *Panel) previewRoster(w http.ResponseWriter, r *http.Request, sess sessi
 		http.Error(w, "the form names no validated internal unit, so nothing changed", http.StatusBadRequest)
 		return
 	}
-	p.renderFoxhole(w, r, sess, http.StatusOK, foxholeRequest{Filter: filterAll, AwaitList: true, Roster: &rosterRequest{Unit: unit}})
+	http.Redirect(w, r, foxholeRequest{Filter: filterAll, Roster: &rosterRequest{Unit: unit}}.address(), http.StatusSeeOther)
 }

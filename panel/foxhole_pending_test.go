@@ -65,14 +65,7 @@ var pendingOpeners = []pendingOpener{
 	}, []string{"add-preview"}},
 	{"roster add", func(t *testing.T, w *testWorld, doc *html.Node) (string, *http.Response) {
 		serveRoster(t, trooperVance, trooperDoe)
-		form := findElement(rosterBlock(t, doc), "form", "data-field", "roster-form")
-		if form == nil {
-			t.Fatal("the Add a unit's roster block has no form")
-		}
-		fields := formFields(doc, form)
-		fields.Set(fieldUnit, "D/ACD")
-		action := attrOf(form, "action")
-		return action, w.b.postForm(action, fields)
+		return pressPreviewRosterOn(t, w.b, doc, "D/ACD")
 	}, []string{"roster-preview"}},
 	{"retry", func(t *testing.T, w *testWorld, doc *html.Node) (string, *http.Response) {
 		link := retryLink(reportBlock(t, doc))

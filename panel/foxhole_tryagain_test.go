@@ -123,6 +123,15 @@ func TestTryAgainAfterAFailedFoxholePageLoadRepeatsIt(t *testing.T) {
 				}
 			}
 		}},
+		{"a roster preview", func(t *testing.T, _ *testWorld) (string, func(*testing.T, *html.Node, string)) {
+			serveRoster(t, trooperVance, trooperDoe)
+			return "/foxhole?unit=D%2FACD#roster-preview", func(t *testing.T, doc *html.Node, fragment string) {
+				_, block := landedOnBlock(t, doc, fragment, "roster-preview")
+				if got := attrOf(block, "data-unit"); got != "D/ACD" {
+					t.Errorf("the page opens the roster preview of %q, want D/ACD", got)
+				}
+			}
+		}},
 		{"a member's note form", func(*testing.T, *testWorld) (string, func(*testing.T, *html.Node, string)) {
 			return "/foxhole?note=" + memberDoe.ID + "#note", func(t *testing.T, doc *html.Node, fragment string) {
 				heading, _ := landedOnBlock(t, doc, fragment, "note-block")
@@ -201,9 +210,11 @@ func landedOnBlockOf(field string) func(*testing.T, *html.Node, string) {
 
 // Try again on the error page of a POST whose answer is the Foxhole page,
 // such as a refused save or a preview, loads by GET the block the POST was
-// made from: it never posts again. The pasted lines, the picked unit, the
-// refusal and the typed note came in the posted form or the answer, so they
-// don't come back, and the manager pastes or picks again.
+// made from: it never posts again. The pasted lines, the refusal and the
+// typed note came in the posted form or the answer, so they don't come
+// back, and the manager pastes again. A roster add refused because the
+// roster changed names its unit, as the roster preview's address does, so
+// Try again opens that preview afresh.
 func TestTryAgainAfterAFoxholePostWhosePageFailsOpensTheBlockItCameFrom(t *testing.T) {
 	cases := []struct {
 		name string
@@ -268,22 +279,11 @@ func TestTryAgainAfterAFoxholePostWhosePageFailsOpensTheBlockItCameFrom(t *testi
 			setMembers(w, doe, memberAsh, memberKestrel, memberMarsh, memberVance)
 			return func() *http.Response { return confirmAdd(t, w.b, preview, nil) }, landedOnBlockOf("add-members")
 		}},
-		{"the roster block's Preview roster", func(t *testing.T, w *testWorld) (func() *http.Response, func(*testing.T, *html.Node, string)) {
-			serveRoster(t, trooperVance, trooperDoe)
-			page := parseHTML(t, w.b.get(foxholePath))
-			form := findElement(rosterBlock(t, page), "form", "data-field", "roster-form")
-			if form == nil {
-				t.Fatal("the Add a unit's roster block has no form")
-			}
-			fields := formFields(page, form)
-			fields.Set(fieldUnit, "D/ACD")
-			return func() *http.Response { return w.b.postForm(attrOf(form, "action"), fields) }, landedOnBlockOf("add-roster")
-		}},
 		{"a roster add refused because the roster changed", func(t *testing.T, w *testWorld) (func() *http.Response, func(*testing.T, *html.Node, string)) {
 			api := serveRoster(t, trooperVance)
 			preview := parseHTML(t, previewRoster(t, w, "D/ACD"))
 			api.setTroopers(trooperVance, trooper("Kestrel.T", memberKestrel.ID))
-			return func() *http.Response { return confirmRoster(t, w.b, preview) }, landedOnBlockOf("add-roster")
+			return func() *http.Response { return confirmRoster(t, w.b, preview) }, landedOnBlockOf("roster-preview")
 		}},
 		{"a refused purge", func(t *testing.T, w *testWorld) (func() *http.Response, func(*testing.T, *html.Node, string)) {
 			confirm := purgeConfirmation(t, parseHTML(t, openPurge(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external")))

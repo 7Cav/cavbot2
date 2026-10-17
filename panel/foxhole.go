@@ -143,6 +143,11 @@ type foxholeView struct {
 	// OpenEntry is the ID of the change log entry the page's address names,
 	// which shows open beside the newest, 0 for none.
 	OpenEntry int64
+	// Address is the address that shows this page by GET, on a page that
+	// answers a Foxhole form, empty on a page load. The page script puts it
+	// in the tab in place of the form's history entry, so a reload never
+	// sends the form again (ADR 0019).
+	Address string
 }
 
 // Pending reports whether the page opens a preview or a confirmation a
@@ -470,6 +475,7 @@ const (
 	paramRetry      = "retry"
 	paramRetryFrom  = "from"
 	paramEntry      = "entry"
+	paramAdd        = "add"
 )
 
 // The note form's fields beside the view's query and filter: the member,
@@ -551,6 +557,10 @@ type foxholeRequest struct {
 	ActionRefusal *saveRefusal
 	// Paste is the paste box the page answers the Preview of, nil for none.
 	Paste *pasteBox
+	// AddRole is the role an add preview's address names, which the Add
+	// members block picks with its paste box empty, empty for none. The
+	// paste stays out of the address (ADR 0019).
+	AddRole commands.FoxholeRole
 	// Roster is the roster preview the page opens, nil for none.
 	Roster *rosterRequest
 	// Retry is the Retry the page opens, with a zero Report for none.
@@ -562,16 +572,23 @@ type foxholeRequest struct {
 
 // foxholePage is GET /foxhole, the Foxhole page. It reads the guild's roles
 // and the member list from the gateway state and makes no Discord call. The
-// search is a plain GET form, so it works without script.
+// search is a plain GET form, so it works without script, and so is Preview
+// roster, whose preview fetches the unit's roster from the 7Cav API.
 func (p *Panel) foxholePage(w http.ResponseWriter, r *http.Request, sess session) {
 	q := r.URL.Query()
 	purge, _ := commands.ParsePurgeScope(q.Get(paramPurge))
 	remove, _ := commands.ParseFoxholeRole(q.Get(paramRemove))
 	entry, _ := strconv.ParseInt(q.Get(paramEntry), 10, 64)
-	p.renderFoxhole(w, r, sess, http.StatusOK,
-		foxholeRequest{Query: q.Get(paramQuery), Filter: knownFilter(q.Get(paramFilter)), NoteMember: q.Get(paramNoteMember),
-			Cleared: q.Get(paramCleared), Skipped: q[paramSkipped], AwaitList: true, Purge: purge,
-			Remove: remove, Selection: distinct(q[fieldMember]), Retry: retryPressOf(q), OpenEntry: entry})
+	req := foxholeRequest{Query: q.Get(paramQuery), Filter: knownFilter(q.Get(paramFilter)), NoteMember: q.Get(paramNoteMember),
+		Cleared: q.Get(paramCleared), Skipped: q[paramSkipped], AwaitList: true, Purge: purge,
+		Remove: remove, Selection: distinct(q[fieldMember]), Retry: retryPressOf(q), OpenEntry: entry}
+	// A unit outside the registry opens no roster preview and fetches no
+	// roster (ADR 0009).
+	if unit, ok := commands.LookupValidatedInternalUnit(q.Get(fieldUnit)); ok {
+		req.Roster = &rosterRequest{Unit: unit}
+	}
+	req.AddRole, _ = commands.ParseFoxholeRole(q.Get(paramAdd))
+	p.renderFoxhole(w, r, sess, http.StatusOK, req)
 }
 
 // values are the query parameters of the page the request asks for: every
@@ -603,7 +620,22 @@ func (req foxholeRequest) values() url.Values {
 	if req.OpenEntry != 0 {
 		v.Set(paramEntry, strconv.FormatInt(req.OpenEntry, 10))
 	}
+	if req.Roster != nil {
+		v.Set(fieldUnit, req.Roster.Unit.Value)
+	}
+	if role := req.addRole(); role != "" {
+		v.Set(paramAdd, string(role))
+	}
 	return v
+}
+
+// addRole is the role of the add the request previews or names, empty for
+// none.
+func (req foxholeRequest) addRole() commands.FoxholeRole {
+	if req.Paste != nil {
+		return req.Paste.Role
+	}
+	return req.AddRole
 }
 
 // reopenPreview is GET /foxhole/reopen, the link a preview gives beside a
@@ -637,6 +669,9 @@ func (p *Panel) renderFoxhole(w http.ResponseWriter, r *http.Request, sess sessi
 		// Discord's delay, as on the hub page, though the page itself shows,
 		// with the notice in the list's place.
 		logNoGuildData(sess, "foxhole page", errNoGuildData)
+	}
+	if r.Method == http.MethodPost {
+		view.Address = req.address()
 	}
 	data := sess.page("Foxhole")
 	data.Page, data.Foxhole = pageFoxhole, view
@@ -868,6 +903,7 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 		if req.Paste != nil {
 			view.AddPreview = s.addPreviewOf(list, records, *req.Paste, nil)
 		}
+		view.Paste.Role = req.AddRole
 		if req.Roster != nil {
 			troopers := req.Roster.Troopers
 			var err error
@@ -894,8 +930,14 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 		if req.Remove != "" {
 			view.ActionRefusal = removeListPartialRefusal(req.Remove.Label())
 		}
-		if req.Paste != nil {
+		switch {
+		case req.Paste != nil:
 			view.Paste, view.PasteAlone, view.ActionRefusal = *req.Paste, true, errAddListPartial
+		case req.AddRole != "":
+			// An add preview's address names no paste, so nothing was refused.
+			// The paste box shows for the page script to put the tab's kept
+			// paste back in.
+			view.Paste, view.PasteAlone = pasteBox{Role: req.AddRole}, true
 		}
 		if req.Roster != nil {
 			view.ActionRefusal = errRosterListPartial
@@ -938,22 +980,25 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 // noticeReload is the address the member list notice's Reload loads on the
 // page the request asks for, whose own Reload is reload. A page that
 // answers a removal refused for the partial list, its preview opened or its
-// Confirm pressed, reloads to that preview, and one that answers a refused
-// Approve or Clear approval to the holder list with the selection ticked. A
-// page load whose address names members reloads to the holder list with
-// those members ticked too. The notice page renders no boxes, so those
-// members are the whole selection. Any other page reloads to reload. The
-// preview's address, and the selection's on a page load, go through
-// foxholeReopenPath. The tab may show that very address, as Cancel on a
-// remove preview leaves it, and a link to the address a tab shows only
-// scrolls.
+// Confirm pressed, reloads to that preview. A page that answers an add's
+// Preview or Confirm, or loads an add preview's address, reloads to that
+// address, where the page script opens the preview again from the paste the
+// tab keeps. One that answers a refused Approve or Clear approval reloads
+// to the holder list with the selection ticked. A page load whose address
+// names members reloads to the holder list with those members ticked too.
+// The notice page renders no boxes, so those members are the whole
+// selection. Any other page reloads to reload. Each address but reload
+// goes through foxholeReopenPath. The tab may show that very address, as
+// Cancel on a remove preview leaves it, or as the page script puts the
+// address a page answering a form names in its tab (ADR 0019), and a link
+// to the address a tab shows only scrolls.
 func (req foxholeRequest) noticeReload(reload string) string {
 	switch {
 	case req.Remove != "":
 		return reopenAddress(req.removeAddress())
-	case req.ApprovalRefusal != nil:
-		return req.selectionAddress()
-	case len(req.Selection) > 0:
+	case req.addRole() != "":
+		return reopenAddress(foxholeRequest{Query: req.Query, Filter: req.Filter, Selection: req.Selection, AddRole: req.addRole()}.address())
+	case req.ApprovalRefusal != nil || len(req.Selection) > 0:
 		return reopenAddress(req.selectionAddress())
 	}
 	return reload
@@ -975,6 +1020,27 @@ func (req foxholeRequest) tryAgainAddress() string {
 	return reopenAddress((&url.URL{Path: foxholePath, RawQuery: req.values().Encode(), Fragment: req.landingAnchor()}).String())
 }
 
+// address is the address that shows the page the request asks for by GET,
+// as it stands then, for a page that answers a Foxhole form (ADR 0019): the
+// page with every part of the request an address carries, at the heading of
+// the block it opens. A refused Approve or Clear approval opens its view
+// with the selection ticked, a refused note save its note form, a refused
+// Confirm of a remove preview the selection bar opened that preview, a
+// roster add refused because the roster changed its roster preview, and
+// any other refused Foxhole action the top of the page. The refusal and the
+// typed note came with the POST, so they don't come back. An add preview's,
+// a refused add's included, names the role and the preview's heading but no
+// pasted line, since the paste box has no line cap and the proxy in front
+// of the panel turns away a long address. The page script keeps the paste
+// in the tab and opens the preview again there.
+func (req foxholeRequest) address() string {
+	anchor := req.landingAnchor()
+	if req.Paste != nil {
+		anchor = addPreviewAnchor
+	}
+	return (&url.URL{Path: foxholePath, RawQuery: req.values().Encode(), Fragment: anchor}).String()
+}
+
 // landingAnchor is the ID of the heading the page the request asks for
 // opens at, the one the panel's own link to that block names: the action
 // block a preview was posted from, the confirmation, preview, form or change
@@ -985,8 +1051,10 @@ func (req foxholeRequest) landingAnchor() string {
 	switch {
 	case req.Paste != nil:
 		return addMembersAnchor
+	case req.AddRole != "":
+		return addPreviewAnchor
 	case req.Roster != nil:
-		return addRosterAnchor
+		return rosterPreviewAnchor
 	case req.Purge != "":
 		return purgeConfirmAnchor
 	case req.Remove != "":
