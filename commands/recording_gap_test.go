@@ -31,12 +31,13 @@ func discordTimes(content string) []int64 {
 	return out
 }
 
-// startGap has the recorder in channelID stop hearing it, as the voice
+// startGap has the recorder in channelID stop hearing it now, as the voice
 // adapter tells the runtime, and returns when.
 func (sc *recordScene) startGap(t *testing.T, channelID string) time.Time {
 	t.Helper()
-	sc.listener(t, channelID).GapStarted()
-	return sc.clock.read()
+	start := sc.clock.read()
+	sc.listener(t, channelID).GapStarted(start)
+	return start
 }
 
 // gapNotices is the messages posted in channelID since the scene had
@@ -91,6 +92,58 @@ func (sc *recordScene) infoGapLines(t *testing.T) []string {
 		}
 	}
 	return out
+}
+
+// The voice adapter can tell of a gap only after it started, as when the
+// recorder notices a voice server went silent. The gap starts when the
+// adapter says: its notice posts 10 s from then and names that start, and
+// the info file's Gap line starts there too. Here the start falls in the
+// minute before the adapter tells, which the info file's minutes show.
+func TestRecordingGapToldLateCountsFromItsStart(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.startIn(t, recStarter, recordChannel)
+	before := len(noticesIn(t, sc.fake, recordChannel))
+	sc.clock.advance(2*time.Minute + 2*time.Second)
+	start := sc.clock.read().Add(-4 * time.Second)
+	sc.listener(t, recordChannel).GapStarted(start)
+
+	sc.clock.advance(5 * time.Second)
+	if notices := gapNotices(t, sc, recordChannel, before); len(notices) != 0 {
+		t.Fatalf("messages posted 9 s into the gap = %d, want none", len(notices))
+	}
+	sc.clock.advance(time.Second)
+
+	notices := gapNotices(t, sc, recordChannel, before)
+	if len(notices) != 1 {
+		t.Fatalf("messages posted 10 s into the gap = %d, want one gap notice", len(notices))
+	}
+	if got := discordTimes(notices[0].data.Content); !slices.Equal(got, []int64{start.Unix()}) {
+		t.Errorf("gap notice %q names times %v, want the gap's start, %d", notices[0].data.Content, got, start.Unix())
+	}
+	recordAs(t, sc.rt, recStarter, "stop")
+	lines := sc.infoGapLines(t)
+	if len(lines) != 1 {
+		t.Fatalf("info file Gap lines = %q, want one", lines)
+	}
+	if got := parseGapLine(t, lines[0]); !got.start.Equal(start.Truncate(time.Minute)) {
+		t.Errorf("Gap line %q starts %v, want the gap's start, %v", lines[0], got.start, start.Truncate(time.Minute))
+	}
+}
+
+// A gap told late reaches the 10-minute limit 10 minutes from its start,
+// not from when the adapter told of it.
+func TestRecordingGapToldLateEndsTheRecording10MinutesFromItsStart(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.startIn(t, recStarter, recordChannel)
+	start := sc.clock.read()
+	sc.clock.advance(4 * time.Second)
+	sc.listener(t, recordChannel).GapStarted(start)
+	sc.clock.advance(10*time.Minute - 5*time.Second)
+	sc.assertRunning(t, recordChannel)
+
+	sc.clock.advance(time.Second)
+
+	sc.assertStopped(t, recordChannel, store.RecordingEndRecorderLeft)
 }
 
 // A gap that ends before 10 s posts nothing, however long the recording

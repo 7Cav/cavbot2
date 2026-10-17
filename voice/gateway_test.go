@@ -373,6 +373,22 @@ func (g *answeringGateway) Send(_ context.Context, op disgovoice.Opcode, _ disgo
 
 func (g *answeringGateway) Close() { g.holdsConn.Store(false) }
 
+// hello is the voice server's Hello, naming its heartbeat interval, as
+// disgo's gateway hands it to its event handler.
+func (g *answeringGateway) hello(interval time.Duration) {
+	g.onEvent(g, disgovoice.OpcodeHello, 0, disgovoice.GatewayMessageDataHello{HeartbeatInterval: float64(interval.Milliseconds())})
+}
+
+// answerHeartbeat is the voice server's answer to a heartbeat.
+func (g *answeringGateway) answerHeartbeat() {
+	g.onEvent(g, disgovoice.OpcodeHeartbeatACK, 0, disgovoice.GatewayMessageDataHeartbeatACK{T: time.Now().UnixMilli()})
+}
+
+// speaking is the voice server naming a speaker's SSRC.
+func (g *answeringGateway) speaking() {
+	g.onEvent(g, disgovoice.OpcodeSpeaking, 0, disgovoice.GatewayMessageDataSpeaking{SSRC: 7, UserID: 400})
+}
+
 func (g *answeringGateway) CloseWithCode(int, string) { g.Close() }
 
 // callHarness is a recorder session whose disgo voice connections run over
@@ -435,18 +451,19 @@ func newCallHarness(t *testing.T) *callHarness {
 		opened: make(chan gatewayOpen, 64), pending: make(chan struct{}, 64), serving: oldEndpoint,
 		unreachable: make(map[string]bool), whileOpening: make(map[string]func())}
 	h.s.dg.Client = &http.Client{Transport: h.api}
-	h.s.voice = h.voiceManager(h.newGateway)
+	h.s.voice = h.voiceManager(h.newGateway, nil)
 	return h
 }
 
 // voiceManager builds the recorder session's voice manager over newGateway,
-// with disgo logging as the recorder's session wires it, and opts on top.
-func (h *callHarness) voiceManager(newGateway disgovoice.GatewayCreateFunc, opts ...disgovoice.ManagerConfigOpt) disgovoice.Manager {
-	return h.s.voiceManager(h.updateVoiceState, callRecorder, newGateway, h.newLogger, append([]disgovoice.ManagerConfigOpt{
+// dialing voice servers through dialer, with disgo logging as the
+// recorder's session wires it.
+func (h *callHarness) voiceManager(newGateway disgovoice.GatewayCreateFunc, dialer *websocket.Dialer) disgovoice.Manager {
+	return h.s.voiceManager(h.updateVoiceState, callRecorder, newGateway, h.newLogger, dialer,
 		disgovoice.WithLogger(utils.Logger),
 		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
 		disgovoice.WithDaveSessionLogger(slog.New(slog.DiscardHandler)),
-	}, opts...)...)
+	)
 }
 
 func (h *callHarness) newGateway(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, _ ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
@@ -647,12 +664,6 @@ func (h *callHarness) endConnection(err error) {
 	h.connected.onClose(h.connected, err)
 }
 
-// resumesRanOut is what disgo's gateway hands its close handler once every
-// try to resume after a close has failed, the last with err.
-func resumesRanOut(err error) error {
-	return fmt.Errorf("failed to reconnect voice gateway after 5 attempts: %w", err)
-}
-
 // sent is the voice state updates the recorder session was asked to send
 // since the last start.
 func (h *callHarness) sent() []voiceUpdate {
@@ -692,13 +703,12 @@ func TestRecorderReportsAVoiceConnectionDisgoGivesUpOn(t *testing.T) {
 	}
 }
 
-// disgo answers some closes with a fresh connection in the same channel.
-// 4006, 4009 and 4011 get one at once. A close disgo resumes from gets one
-// once every try to resume has failed, whether the last try failed on a
-// close, such as 4015 or a code disgo doesn't know, or on the dial. The
-// recorder rejoins the channel as it joined, self-muted and never
-// self-deafened, and identifies at the voice server, since a resume gets no
-// answer that opens audio. It never leaves, and nothing reaches Sentry.
+// disgo answers some closes with a fresh connection in the same channel:
+// 4006, 4009 and 4011. The recorder rejoins the channel as it joined,
+// self-muted and never self-deafened, and identifies at the voice server,
+// since a resume gets no answer that opens audio. It never leaves, and
+// nothing reaches Sentry. A close disgo would resume from goes the same way,
+// on disgo's own gateway (drop_test.go).
 func TestRecorderKeepsRecordingThroughACloseThatGetsAFreshConnection(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -707,9 +717,6 @@ func TestRecorderKeepsRecordingThroughACloseThatGetsAFreshConnection(t *testing.
 		{"4006", &websocket.CloseError{Code: 4006}},
 		{"4009", &websocket.CloseError{Code: 4009}},
 		{"4011", &websocket.CloseError{Code: 4011}},
-		{"resumes ran out on 4015", resumesRanOut(&websocket.CloseError{Code: 4015})},
-		{"resumes ran out on a code disgo doesn't know", resumesRanOut(&websocket.CloseError{Code: 4100})},
-		{"resumes ran out on the dial", resumesRanOut(errors.New("dial tcp: lookup c-dfw-1.discord.media: no such host"))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			events := recordSentry(t)
@@ -731,27 +738,34 @@ func TestRecorderKeepsRecordingThroughACloseThatGetsAFreshConnection(t *testing.
 	}
 }
 
-// A fresh connection that fails, here because the recorder's own gateway is
-// down when its rejoin goes out, ends as a lost connection does. disgo takes
-// the recorder out, and Sentry hears of it once.
-func TestRecorderReportsAFreshConnectionThatFails(t *testing.T) {
-	events := recordSentry(t)
-	h := newCallHarness(t)
-	h.start()
-	h.down.Store(true)
+// The recorder's own gateway can be down when its voice connection drops,
+// so the rejoin can't go out. The recorder waits for the gateway and
+// rejoins once it is back: the gap ends, and the recording keeps running,
+// since the recorder never left.
+func TestRecorderRejoinsOnceItsGatewayIsBack(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.down.Store(true)
+		go h.closeCall(4006)
+		time.Sleep(2 * time.Minute)
+		synctest.Wait()
 
-	h.closeCall(4006)
+		h.down.Store(false)
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
 
-	if got := h.sent(); len(got) == 0 || got[len(got)-1].String() != "leave" {
-		t.Errorf("voice state updates after the close = %v, want the recorder taken out last", got)
-	}
-	got := events.Events()
-	if len(got) != 1 {
-		t.Fatalf("Sentry events = %d, want 1 for the lost connection", len(got))
-	}
-	if msg := got[0].Tags["message"]; msg != lostConnectionMessage {
-		t.Errorf("Sentry event = %q, want %q", msg, lostConnectionMessage)
-	}
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted, gapEnded}) {
+			t.Errorf("gap events 5 s after the gateway is back = %v, want the gap started and ended", got)
+		}
+		if left := slices.ContainsFunc(h.sent(), voiceUpdate.leaves); left {
+			t.Errorf("voice state updates = %v, want the recorder never to leave", h.sent())
+		}
+	})
 }
 
 // A call Discord moves to another voice server, as a region change makes
@@ -1020,6 +1034,48 @@ func TestRecorderMovesOnFromAServerDiscordReplacedAsItConnected(t *testing.T) {
 	}
 }
 
+// The recorder can close a gateway on purpose, as when Discord names a later
+// voice server just as it connects, and the gateway can still hand its close
+// handler a close: disgo's own heartbeat check can fire on a gateway closing
+// under it. The recorder has left that gateway behind, so its close changes
+// nothing, and the recording hears no new gap. Every voice server is out of
+// reach by then, so a gap would last.
+func TestRecorderIgnoresACloseFromAGatewayItLeftBehind(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.onOpening(newEndpoint, func() { h.name("token-3", laterEndpoint) })
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Second)
+		synctest.Wait()
+		var replaced *answeringGateway
+		for len(h.opened) > 0 {
+			if o := <-h.opened; o.state.Endpoint == newEndpoint {
+				replaced = o.gateway
+			}
+		}
+		before := l.gapEvents()
+		if replaced == nil || len(before)%2 != 0 {
+			t.Fatalf("after the move: gateway at %s = %v, gap events = %v, want one replaced and the recorder hearing", newEndpoint, replaced, before)
+		}
+		for _, endpoint := range []string{oldEndpoint, newEndpoint, laterEndpoint} {
+			h.setReachable(endpoint, false)
+		}
+
+		go replaced.onClose(replaced, errResumeRefused)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if got := l.gapEvents(); !slices.Equal(got, before) {
+			t.Errorf("gap events after the left-behind gateway's close = %v, want them as before, %v", got, before)
+		}
+	})
+}
+
 // A gap that reaches 10 s reaches Sentry once, naming the recorder, the
 // channel and the voice server the recorder is trying to reach, while the
 // recording still runs. The bot log has it at ERROR.
@@ -1135,6 +1191,76 @@ func TestRecorderLeavesWhenItsChannelIsDeleted(t *testing.T) {
 	}
 }
 
+// A voice server can stop answering without closing the connection, as when
+// the network between it and the recorder stops passing traffic. The
+// recorder counts the connection dropped once the server's heartbeat answer
+// is overdue, a few seconds past the heartbeat interval, and rejoins. The
+// recording's gap starts at the last message the server sent, here one
+// naming a speaker after the last heartbeat answer. The server is out of
+// reach from then, so the gap lasts.
+func TestRecorderStartsTheGapOfASilentVoiceServerAtItsLastMessage(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		server := h.connected
+		server.hello(time.Second)
+		for range 30 {
+			time.Sleep(time.Second)
+			server.answerHeartbeat()
+		}
+		synctest.Wait()
+		if got := l.gapEvents(); len(got) != 0 {
+			t.Fatalf("gap events while the server answers = %v, want none", got)
+		}
+		time.Sleep(300 * time.Millisecond)
+		server.speaking()
+		last := time.Now()
+		h.setReachable(oldEndpoint, false)
+
+		time.Sleep(time.Second + 5*time.Second)
+		synctest.Wait()
+
+		starts := l.gapStarts()
+		if len(starts) == 0 {
+			t.Fatal("no gap 6 s after the server's last message, want one")
+		}
+		if !starts[0].Equal(last) {
+			t.Errorf("gap started %v after the server's last message, want at it", starts[0].Sub(last))
+		}
+	})
+}
+
+// A 4022 has the recorder ask Discord's API whether the channel is still
+// there, and the answer can take the lookup's full 5 s. The recorder could
+// not hear the call from the close on, so the gap the recording hears
+// starts at the close. The server the call moved to is out of reach for
+// now, so the gap lasts.
+func TestRecorderStartsTheGapOfAMovedCallAtTheClose(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.api.during = func() { time.Sleep(5 * time.Second) }
+		h.setReachable(newEndpoint, false)
+
+		closed := time.Now()
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if got := l.gapStarts(); len(got) == 0 || !got[0].Equal(closed) {
+			t.Errorf("gap starts = %v, want the first at the close, %v", got, closed)
+		}
+	})
+}
+
 // Discord can take the recorder out of the channel while the recorder asks
 // whether the channel is still there after a 4022. disgo then starts no
 // fresh connection, and the recorder is out as surely as after a rejoin
@@ -1160,30 +1286,63 @@ func TestRecorderReportsAMovedCallItCouldNotRejoin(t *testing.T) {
 	}
 }
 
-// A rejoin that fails, here because the recorder's own gateway is down
-// when the rejoin goes out, ends as a lost connection does. The recorder is
-// taken out, Sentry hears of it once, and the bot log has it at ERROR.
-func TestRecorderReportsARejoinThatFails(t *testing.T) {
+// Discord can take the recorder out of the channel while the recorder's own
+// gateway is down after its voice connection dropped: a session that
+// resumes hears what it missed before it counts as up again. The recorder
+// stays out once its gateway is back, sending no join, so the recording
+// ends as Discord taking the recorder out ends one.
+func TestRecorderTakenOutWhileItsGatewayIsDownStaysOut(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		defer h.hangUp(conn)
+		h.down.Store(true)
+		go h.closeCall(4006)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		h.leftChannel()
+		taken := len(h.sent())
+
+		h.down.Store(false)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if after := h.sent()[taken:]; slices.ContainsFunc(after, func(u voiceUpdate) bool { return !u.leaves() }) {
+			t.Errorf("voice state updates after Discord took the recorder out = %v, want no join", after)
+		}
+	})
+}
+
+// With the recorder's own gateway down past the 10-minute gap limit, the
+// recorder goes on waiting for it, and neither leaves nor reports a lost
+// connection on its own. The recording ends at the limit, and its stop is
+// the last voice state update the recorder sends.
+func TestRecorderWaitsForItsGatewayUntilTheRecordingStops(t *testing.T) {
 	events := recordSentry(t)
-	h := newCallHarness(t)
-	h.start()
-	h.down.Store(true)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		h.down.Store(true)
+		go h.closeCall(4022)
+		time.Sleep(11 * time.Minute)
+		synctest.Wait()
+		if left := slices.ContainsFunc(h.sent(), voiceUpdate.leaves); left {
+			t.Fatalf("voice state updates 11 min after the close = %v, want no leave", h.sent())
+		}
 
-	h.closeCall(4022)
+		conn.Leave(context.Background())
+		time.Sleep(time.Minute)
+		synctest.Wait()
 
-	if got := h.sent(); len(got) == 0 || got[len(got)-1].String() != "leave" {
-		t.Errorf("voice state updates after the close = %v, want the recorder taken out last", got)
-	}
-	got := events.Events()
-	if len(got) != 1 {
-		t.Fatalf("Sentry events = %d, want 1 for the lost connection", len(got))
-	}
-	if msg := got[0].Tags["message"]; msg != lostConnectionMessage {
-		t.Errorf("Sentry event = %q, want %q", msg, lostConnectionMessage)
-	}
-	if errs := h.logs.messagesAt(slog.LevelError); !slices.Contains(errs, lostConnectionMessage) {
-		t.Errorf("bot log ERRORs = %q, want %q", errs, lostConnectionMessage)
-	}
+		sent := h.sent()
+		if stop := slices.IndexFunc(sent, voiceUpdate.leaves); stop != len(sent)-1 {
+			t.Errorf("voice state updates = %v, want the stop's leave last", sent)
+		}
+		if lost := slices.Contains(eventMessages(events.Events()), lostConnectionMessage); lost {
+			t.Errorf("Sentry events = %v, want no %q", eventMessages(events.Events()), lostConnectionMessage)
+		}
+	})
 }
 
 // Discord can take the recorder out of the channel while it is still trying
@@ -1546,8 +1705,7 @@ func newQuietVoiceServer(t *testing.T) *quietVoiceServer {
 // disgo's own voice gateway from now on, dialing voice servers through
 // dialer.
 func (h *callHarness) useDisgoGateway(dialer *websocket.Dialer) {
-	h.s.voice = h.voiceManager(disgovoice.NewGateway,
-		disgovoice.WithConnConfigOpts(disgovoice.WithConnGatewayConfigOpts(disgovoice.WithGatewayDialer(dialer))))
+	h.s.voice = h.voiceManager(disgovoice.NewGateway, dialer)
 }
 
 // joinInBackground has the recorder session join the channel, and returns

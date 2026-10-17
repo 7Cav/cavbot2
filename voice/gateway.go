@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/gateway"
 	disgovoice "github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/godave"
@@ -51,7 +53,8 @@ func OpenGateway(recorder int, token string) (GatewaySession, error) {
 	}
 	dg.LogLevel = utils.DiscordgoLogLevel()
 	dg.Identify.Intents = recorderIntents
-	s := &discordgoSession{dg: dg}
+	dialer := newVoiceDialer()
+	s := &discordgoSession{dg: dg, drops: dialer.drops}
 	// Watched from before it opens, so the watch reads every close Discord
 	// sends the session. A failed open is a close on purpose, and sends
 	// nothing beyond its own report.
@@ -71,12 +74,10 @@ func OpenGateway(recorder int, token string) (GatewaySession, error) {
 	updateVoiceState := func(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
 		return s.updateVoiceState(ctx, guildID, channelID, selfMute, selfDeaf)
 	}
-	s.voice = s.voiceManager(updateVoiceState, userID, disgovoice.NewGateway, utils.NewLogger,
+	s.voice = s.voiceManager(updateVoiceState, userID, disgovoice.NewGateway, utils.NewLogger, dialer.websocket(),
 		disgovoice.WithLogger(utils.Logger),
 		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
 		disgovoice.WithDaveSessionLogger(utils.Logger),
-		disgovoice.WithConnConfigOpts(disgovoice.WithConnGatewayConfigOpts(
-			disgovoice.WithGatewayDialer(newVoiceDialer().websocket()))),
 	)
 	// Added after READY, once the manager exists: no voice event reaches a
 	// recorder before its first join.
@@ -95,6 +96,9 @@ type discordgoSession struct {
 
 	// watch reports a gateway outage that lasts.
 	watch *utils.GatewayWatch
+	// drops, when set, can drop the recorder's voice connections, as the
+	// smoke hook does.
+	drops *connDrops
 }
 
 // connLoggerFunc builds the logger one voice connection logs through, and the
@@ -105,9 +109,64 @@ type connLoggerFunc func() (*slog.Logger, *slog.LevelVar)
 // goes through. update sends the recorder's voice state updates, newGateway
 // builds each voice gateway, disgo's NewGateway outside tests, newLogger
 // builds the log of each voice connection, utils.NewLogger outside tests,
-// and opts configure the rest.
-func (s *discordgoSession) voiceManager(update disgovoice.StateUpdateFunc, userID snowflake.ID, newGateway disgovoice.GatewayCreateFunc, newLogger connLoggerFunc, opts ...disgovoice.ManagerConfigOpt) disgovoice.Manager {
-	return disgovoice.NewManager(update, userID, append(opts, disgovoice.WithConnCreateFunc(s.connCreate(newGateway, newLogger)))...)
+// dialer dials the voice servers, and opts configure the rest. A voice
+// gateway dials only when the recorder opens it (ownDialsOnly).
+func (s *discordgoSession) voiceManager(update disgovoice.StateUpdateFunc, userID snowflake.ID, newGateway disgovoice.GatewayCreateFunc, newLogger connLoggerFunc, dialer *websocket.Dialer, opts ...disgovoice.ManagerConfigOpt) disgovoice.Manager {
+	return disgovoice.NewManager(update, userID, append(opts,
+		disgovoice.WithConnConfigOpts(disgovoice.WithConnGatewayConfigOpts(disgovoice.WithGatewayDialer(ownDialsOnly(dialer)))),
+		disgovoice.WithConnCreateFunc(s.connCreate(newGateway, newLogger)))...)
+}
+
+// The recorder rejoins a call whose voice connection dropped, and never lets
+// disgo resume it. disgo's gateway resumes after a close it can come back
+// from, or a read that fails, and tells the recorder nothing until its
+// fifth try has failed, 15 s on. The recorder can't hear the call that
+// whole time, and gets no sound back from a resume that works: nobody has
+// seen one bring audio back. disgo sends the Resume's sequence number as
+// seq where Discord's v8 docs say seq_ack, and DAVE removes a member cut
+// off from the voice gateway from the call's encryption group, so the SFU
+// stops forwarding them its media. A rejoin brought sound back within 2.7 s
+// in #728's smoke pass. So every dial a voice gateway makes outside the
+// recorder's own open is refused. disgo's resume then fails at its first
+// try and hands the close to the recorder at once, which starts the gap and
+// rejoins through a new gateway that identifies.
+
+// ownDial marks the context of a dial the recorder's own open makes.
+type ownDial struct{}
+
+// errResumeRefused is what disgo's resume gets for its dial. disgo's gateway
+// stops trying at once on an already-connected error, and hands the close
+// handler this one: the recorder connects again on its own.
+var errResumeRefused = fmt.Errorf("voice: the recorder rejoins rather than resumes: %w", discord.ErrGatewayAlreadyConnected)
+
+// ownDialsOnly is dialer, nil for gorilla's default, refusing every dial but
+// those the recorder's own open of a voice gateway makes.
+func ownDialsOnly(dialer *websocket.Dialer) *websocket.Dialer {
+	d := websocket.Dialer{}
+	if dialer != nil {
+		d = *dialer
+	}
+	dial := d.NetDialContext
+	if dial == nil {
+		var nd net.Dialer
+		dial = nd.DialContext
+	}
+	d.NetDialContext = refuseOthers(dial)
+	if d.NetDialTLSContext != nil {
+		d.NetDialTLSContext = refuseOthers(d.NetDialTLSContext)
+	}
+	return &d
+}
+
+// refuseOthers is dial, refusing a dial whose context the recorder's own
+// open didn't mark.
+func refuseOthers(dial func(ctx context.Context, network, addr string) (net.Conn, error)) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if ctx.Value(ownDial{}) == nil {
+			return nil, errResumeRefused
+		}
+		return dial(ctx, network, addr)
+	}
 }
 
 // connCreate builds each of the recorder's voice connections. Each is
@@ -137,11 +196,12 @@ func (s *discordgoSession) connCreate(newGateway disgovoice.GatewayCreateFunc, n
 func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc, logger *slog.Logger) []disgovoice.ConnConfigOpt {
 	return []disgovoice.ConnConfigOpt{
 		disgovoice.WithConnLogger(slog.New(errorsAsWarnings{next: logger.Handler()})),
-		disgovoice.WithUDPConnCreateFunc(newUDPConn),
+		disgovoice.WithUDPConnCreateFunc(droppableUDPConns(c.s.drops)),
 		disgovoice.WithConnGatewayCreateFunc(func(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, opts ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
 			g := &renewableGateway{named: c.namedLast}
+			g.onDrop = c.watchClose(g, onClose)
 			g.build = func() disgovoice.Gateway {
-				return newGateway(dave, g.watchEvents(onEvent), c.watchClose(g, onClose), opts...)
+				return newGateway(dave, g.watchEvents(onEvent), g.onDrop, opts...)
 			}
 			g.gw = g.build()
 			c.gateway = g
@@ -196,9 +256,10 @@ func asWarning(level slog.Level) slog.Level {
 // rejoin with the voice state alone. So the connection keeps the last
 // server Discord named, and hands it to disgo again when disgo threw it
 // away. Once the recorder closes the connection, a rejoin disgo started
-// before sends nothing more. A rejoin after a close the recorder can come
+// before sends nothing more. A rejoin after a drop the recorder can come
 // back from is the connection's own (rejoin), with no time limit, so the
-// recording goes on while the call's new server can't be reached.
+// recording goes on while the call's server or the recorder's own gateway
+// can't be reached.
 type recorderConn struct {
 	disgovoice.Conn
 	s               *discordgoSession
@@ -251,13 +312,18 @@ func (c *recorderConn) Close(ctx context.Context) {
 // self-deafened, or Discord sends it no audio.
 const selfMute, selfDeaf = true, false
 
+// rejoinRetry is how often a rejoin whose voice state update couldn't go
+// out tries it again.
+const rejoinRetry = time.Second
+
 // rejoin opens a fresh voice connection in the call's channel, as disgo's
 // close handler does, and reports whether the recorder is connected there
 // again. disgo's gives up after 30 s and takes the recorder out, where a call
 // that moved to a voice server the recorder can't reach yet would end the
 // recording. This one waits until the recorder connects, closes the
-// connection, or Discord takes it out. A rejoin that can't go out at all,
-// as with the recorder's own gateway down, leaves as disgo's does.
+// connection, or Discord takes it out. A voice state update that can't go
+// out, as with the recorder's own gateway down, it sends again every
+// rejoinRetry, so the recorder rejoins once its gateway is back.
 func (c *recorderConn) rejoin() bool {
 	_ = c.UDP().Close()
 	channelID := c.ChannelID()
@@ -274,13 +340,19 @@ func (c *recorderConn) rejoin() bool {
 	c.stopRejoin = cancel
 	c.mu.Unlock()
 	defer c.cancelRejoin()
-	err := c.Open(ctx, *channelID, selfMute, selfDeaf)
-	if err != nil && ctx.Err() == nil {
-		closeCtx, cancelClose := context.WithTimeout(context.Background(), closeTimeout)
-		defer cancelClose()
-		c.Conn.Close(closeCtx)
+	for {
+		// Open fails before ctx ends only when its voice state update
+		// couldn't go out.
+		err := c.Open(ctx, *channelID, selfMute, selfDeaf)
+		if err == nil {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(rejoinRetry):
+		}
 	}
-	return err == nil
 }
 
 // cancelRejoin ends the rejoin under way, if any.
@@ -408,8 +480,42 @@ type renewableGateway struct {
 	describedDial chan struct{}
 	// connected is whether the gateway is connected in the call, at the
 	// voice server Discord named last: the session description that
-	// completes a connection arrived after its last dial started.
+	// completes a connection arrived after its last dial started. lostAt is
+	// when it last stopped being connected, zero before it ever was.
 	connected bool
+	lostAt    time.Time
+
+	// onDrop is the close handler of every gateway built, which a voice
+	// server gone silent reaches as a close.
+	onDrop disgovoice.CloseHandlerFunc
+	// heartbeat watches the voice server's heartbeat while the gateway is
+	// connected, and each new gateway starts it over. watches counts the
+	// times its timer was set.
+	heartbeat heartbeatWatch
+	watches   int
+}
+
+// heartbeatWatch is what the recorder knows of a voice server's heartbeat on
+// one gateway: the interval the server's Hello named, when the gateway last
+// heard that Hello or a heartbeat answer, and when it last heard anything
+// from the server. timer fires once the server's heartbeat answer is
+// overdue.
+type heartbeatWatch struct {
+	interval        time.Duration
+	answered, heard time.Time
+	timer           *time.Timer
+}
+
+// overdue is when the voice server's heartbeat answer is overdue:
+// heartbeatMargin past the interval since its last answer.
+func (w *heartbeatWatch) overdue() time.Time { return w.answered.Add(w.interval + heartbeatMargin) }
+
+// stop stops the timer, if it is set.
+func (w *heartbeatWatch) stop() {
+	if w.timer != nil {
+		w.timer.Stop()
+		w.timer = nil
+	}
 }
 
 func (g *renewableGateway) current() disgovoice.Gateway {
@@ -422,19 +528,128 @@ func (g *renewableGateway) current() disgovoice.Gateway {
 func (g *renewableGateway) renew() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.renewLocked()
+}
+
+// renewLocked swaps the gateway for a new one, not connected yet. Caller
+// holds mu.
+func (g *renewableGateway) renewLocked() {
 	g.gw = g.build()
-	g.connected = false
+	g.disconnectLocked(time.Now())
+	g.unwatchLocked()
+}
+
+// lost notes that the recorder lost its connection to the call at at, when
+// gw is the gateway it connects through, and reports whether it is.
+func (g *renewableGateway) lost(gw disgovoice.Gateway, at time.Time) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if gw != g.gw {
+		return false
+	}
+	g.disconnectLocked(at)
+	return true
+}
+
+// disconnectLocked notes the gateway not connected, from at when it was.
+// Caller holds mu.
+func (g *renewableGateway) disconnectLocked(at time.Time) {
+	if g.connected {
+		g.connected, g.lostAt = false, at
+	}
 }
 
 // watchEvents wraps disgo's handler for the gateway's events, to note the
-// session description that completes a connection.
+// session description that completes a connection, and to watch for a
+// voice server that goes silent. disgo's gateway hands it every message the
+// voice server sends, as it arrives.
 func (g *renewableGateway) watchEvents(onEvent disgovoice.EventHandlerFunc) disgovoice.EventHandlerFunc {
 	return func(gw disgovoice.Gateway, op disgovoice.Opcode, seq int, data disgovoice.GatewayMessageData) {
 		if op == disgovoice.OpcodeSessionDescription {
 			g.described(gw)
 		}
+		g.heardFrom(gw, data)
 		onEvent(gw, op, seq, data)
 	}
+}
+
+// heartbeatMargin is how long past its heartbeat interval since its last
+// answer a voice server may go without answering a heartbeat before the
+// recorder counts the connection dropped. disgo's gateway notices only at
+// the heartbeat after the one left unanswered, two intervals on, so the
+// recorder notices first whenever the interval is longer than this.
+const heartbeatMargin = 3 * time.Second
+
+// errVoiceServerSilent is the close a voice server that stopped answering
+// heartbeats reaches the gateway's close handler with.
+var errVoiceServerSilent = errors.New("voice: the voice server stopped answering heartbeats")
+
+// heardFrom notes a message from the voice server on gw. Its Hello names
+// the heartbeat interval, and it and each heartbeat answer start the
+// silence watch over.
+func (g *renewableGateway) heardFrom(gw disgovoice.Gateway, data disgovoice.GatewayMessageData) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if gw != g.gw {
+		return
+	}
+	now := time.Now()
+	g.heartbeat.heard = now
+	switch d := data.(type) {
+	case disgovoice.GatewayMessageDataHello:
+		g.heartbeat.interval, g.heartbeat.answered = time.Duration(d.HeartbeatInterval*float64(time.Millisecond)), now
+	case disgovoice.GatewayMessageDataHeartbeatACK:
+		g.heartbeat.answered = now
+	default:
+		return
+	}
+	g.watchLocked(gw)
+}
+
+// watchLocked starts the silence watch over gw afresh from the voice
+// server's last answer, while gw is connected and its server has named a
+// heartbeat interval. Caller holds mu.
+func (g *renewableGateway) watchLocked(gw disgovoice.Gateway) {
+	g.heartbeat.stop()
+	if !g.connected || g.heartbeat.interval <= 0 {
+		return
+	}
+	g.watches++
+	watch := g.watches
+	g.heartbeat.timer = time.AfterFunc(time.Until(g.heartbeat.overdue()), func() { g.wentSilent(gw, watch) })
+}
+
+// unwatch ends the silence watch, for a gateway that closes.
+func (g *renewableGateway) unwatch() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.unwatchLocked()
+}
+
+// unwatchLocked ends the silence watch and forgets what it knew, for a
+// gateway that closed or gave way to a new one. Caller holds mu.
+func (g *renewableGateway) unwatchLocked() {
+	g.heartbeat.stop()
+	g.heartbeat = heartbeatWatch{}
+}
+
+// wentSilent drops gw, whose voice server's heartbeat answer is overdue,
+// unless watch has given way to a later one or the gateway to a new one.
+// The recorder couldn't hear the call from the server's last message on.
+// The close is on purpose, so disgo's close handler hears nothing of it,
+// and the gateway's own takes the drop as it takes a close.
+func (g *renewableGateway) wentSilent(gw disgovoice.Gateway, watch int) {
+	defer utils.RecoverPanic("recorder-voice-silence")
+	g.mu.Lock()
+	if gw != g.gw || watch != g.watches || !g.connected {
+		g.mu.Unlock()
+		return
+	}
+	g.disconnectLocked(g.heartbeat.heard)
+	g.unwatchLocked()
+	g.mu.Unlock()
+	gw.CloseWithCode(websocket.CloseServiceRestart, "heartbeat answer overdue")
+	g.onDrop(gw, errVoiceServerSilent)
 }
 
 // described notes a session description on gw, which completes the dial in
@@ -447,7 +662,12 @@ func (g *renewableGateway) described(gw disgovoice.Gateway) {
 	if gw != g.gw {
 		return
 	}
-	g.connected = e == nil || dialedAt(g.state, *e)
+	if e == nil || dialedAt(g.state, *e) {
+		g.connected = true
+		g.watchLocked(gw)
+	} else {
+		g.disconnectLocked(time.Now())
+	}
 	if g.describedDial != nil {
 		close(g.describedDial)
 		g.describedDial = nil
@@ -469,12 +689,13 @@ func (g *renewableGateway) server() string {
 	return ""
 }
 
-// isConnected reports whether the gateway is connected in the call, at the
-// voice server Discord named last.
-func (g *renewableGateway) isConnected() bool {
+// connection reports whether the gateway is connected in the call, at the
+// voice server Discord named last, and when it last stopped being
+// connected, zero before it ever was.
+func (g *renewableGateway) connection() (connected bool, lostAt time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.connected
+	return g.connected, g.lostAt
 }
 
 // openedAt reports whether the gateway last opened at the voice server e
@@ -547,7 +768,7 @@ func (g *renewableGateway) dialUntilOpen(ctx context.Context, state disgovoice.S
 	for {
 		dial, redial := context.WithCancel(ctx)
 		gw, at, described := g.startDial(state, redial)
-		err := gw.Open(dial, at)
+		err := gw.Open(context.WithValue(dial, ownDial{}, true), at)
 		if err == nil {
 			select {
 			case <-described:
@@ -583,7 +804,7 @@ func (g *renewableGateway) namedLastIs(state disgovoice.State) bool {
 func (g *renewableGateway) replace(gw disgovoice.Gateway) {
 	g.mu.Lock()
 	if g.gw == gw {
-		g.gw, g.connected = g.build(), false
+		g.renewLocked()
 	}
 	g.mu.Unlock()
 	gw.CloseWithCode(websocket.CloseServiceRestart, "Discord named a later voice server")
@@ -608,7 +829,8 @@ func (g *renewableGateway) startDial(state disgovoice.State, redial context.Canc
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.state, g.redial, g.connected = state, redial, false
+	g.state, g.redial = state, redial
+	g.disconnectLocked(time.Now())
 	g.describedDial = make(chan struct{})
 	return g.gw, state, g.describedDial
 }
@@ -647,7 +869,7 @@ func (g *renewableGateway) channel() snowflake.ID {
 func (g *renewableGateway) reopen(ctx context.Context) error {
 	g.mu.Lock()
 	old, state := g.gw, g.state
-	g.gw, g.connected = g.build(), false
+	g.renewLocked()
 	g.mu.Unlock()
 	old.CloseWithCode(websocket.CloseServiceRestart, "starting DAVE over")
 	return g.Open(ctx, state)
@@ -657,11 +879,13 @@ func (g *renewableGateway) reopen(ctx context.Context) error {
 // recorder leaves or Discord takes it out.
 func (g *renewableGateway) Close() {
 	g.cancelDialing()
+	g.unwatch()
 	g.current().Close()
 }
 
 func (g *renewableGateway) CloseWithCode(code int, message string) {
 	g.cancelDialing()
+	g.unwatch()
 	g.current().CloseWithCode(code, message)
 }
 
@@ -677,23 +901,31 @@ func (g *renewableGateway) Latency() time.Duration { return g.current().Latency(
 // of the channel on its own.
 const lostConnectionMessage = "Voice connection lost mid-recording"
 
-// watchClose wraps disgo's handler for a voice gateway that closed and
-// couldn't resume. disgo opens a fresh connection when the close allows it,
-// and a voice reconnect ends there. Here the recorder's rejoin takes that
-// over, through a new gateway, which identifies. The old one would resume
-// the voice session, which the rejoin keeps, and a resume gets no answer
-// that opens audio. Discord ends a call with 4022, "Call terminated", when
-// its channel is deleted or the call moves to another voice server, as a
-// region change makes it do. A call that moved gets a fresh connection too,
-// unless its channel is gone. Otherwise disgo takes the recorder out of the
-// channel itself, and so does a rejoin that can't go out: the voice
-// connection is lost mid-recording, and Sentry hears of it with the close
-// that started it. So does Discord taking the recorder out before it is
-// back. A connection the recorder closed meanwhile ended with its
-// recording, and lost nothing.
+// watchClose wraps disgo's handler for a voice gateway that dropped: it
+// closed, its read failed, or its voice server went silent. The recorder
+// can't hear the call from then on. disgo opens a fresh connection when the
+// close allows it, and a voice reconnect ends there. Here the recorder's
+// rejoin takes that over, through a new gateway, which identifies. The old
+// one would resume the voice session, which the rejoin keeps, and a resume
+// gets no answer that opens audio (ownDialsOnly). Discord ends a call with
+// 4022, "Call terminated", when its channel is deleted or the call moves to
+// another voice server, as a region change makes it do. A call that moved
+// gets a fresh connection too, unless its channel is gone. Otherwise disgo
+// takes the recorder out of the channel itself: the voice connection is
+// lost mid-recording, and Sentry hears of it with the close that started
+// it. So does Discord taking the recorder out before it is back. A
+// connection the recorder closed meanwhile ended with its recording, and
+// lost nothing.
 func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.CloseHandlerFunc) disgovoice.CloseHandlerFunc {
 	return func(g disgovoice.Gateway, err error) {
 		defer utils.RecoverPanic("recorder-voice-close", "recorder", c.s.userID)
+		// The recorder can't hear the call from the close on, whatever the
+		// lookup below costs. A gateway the recorder left behind can still
+		// hand over a close, as when disgo's heartbeat check fires on one
+		// the recorder is closing, and it changes nothing.
+		if !gw.lost(g, time.Now()) {
+			return
+		}
 		moved := closedWith(err, disgovoice.GatewayCloseEventCodeCallTerminated.Code) && c.s.channelExists(gw.channel())
 		if !moved && !getsFreshConnection(err) {
 			c.gaveUp.Store(false)
@@ -726,8 +958,8 @@ func (s *discordgoSession) channelExists(channelID snowflake.ID) bool {
 // getsFreshConnection reports whether disgo's close handler answers err with
 // a fresh connection in the same channel. It does for anything but a voice
 // gateway close that disgo's close table says to leave on. disgo hands on a
-// close it resumes from only once every try to resume has failed, wrapping
-// the last close or dial error.
+// close it would resume from as the refusal of its resume's dial
+// (errResumeRefused).
 func getsFreshConnection(err error) bool {
 	var closeErr *websocket.CloseError
 	if !errors.As(err, &closeErr) {
@@ -826,11 +1058,15 @@ func (c callConn) renewable() (*renewableGateway, bool) {
 	return g, ok
 }
 
-// connected reports whether the recorder's gateway is connected in the
-// call, at the voice server Discord named last.
-func (c callConn) connected() bool {
+// connection reports whether the recorder's gateway is connected in the
+// call, at the voice server Discord named last, and when it last stopped
+// being connected, zero before it ever was.
+func (c callConn) connection() (connected bool, lostAt time.Time) {
 	g, ok := c.renewable()
-	return ok && g.isConnected()
+	if !ok {
+		return false, time.Time{}
+	}
+	return g.connection()
 }
 
 // server is the voice server the recorder's gateway dials: the one Discord

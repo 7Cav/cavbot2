@@ -13,12 +13,13 @@ import (
 )
 
 // A recording's gaps (#736, GLOSSARY.md Gap): the stretches its recorder
-// can't hear the channel, because the call moved to a voice server the
-// recorder hasn't reached yet or its DAVE setup stalled. The voice adapter
-// says when one starts and ends. One that passes 10 s gets a gap notice in
-// the recorded channel's chat, edited when the gap ends, and a line in the
-// info file. One that reaches 10 minutes ends the recording as the recorder
-// leaving the channel does.
+// can't hear the channel, because its connection to the voice server
+// dropped, the call moved to a voice server the recorder hasn't reached yet,
+// or its DAVE setup stalled. The voice adapter says when one starts and
+// ends, and can tell of a start only later (#769). One that passes 10 s gets
+// a gap notice in the recorded channel's chat, edited when the gap ends, and
+// a line in the info file. One that reaches 10 minutes ends the recording as
+// the recorder leaving the channel does.
 
 // gapNoticeAfter is how long a gap runs before its notice posts: as long as
 // the voice adapter waits before Sentry hears of it.
@@ -67,22 +68,24 @@ type recordingListener struct {
 	rec *activeRecording
 }
 
-func (l recordingListener) Frame(f voice.Frame) { l.rec.tracks.write(f, recordingNow()) }
-func (l recordingListener) GapStarted()         { l.r.gapStarted(l.rec) }
-func (l recordingListener) GapEnded()           { l.r.gapEnded(l.rec) }
+func (l recordingListener) Frame(f voice.Frame)        { l.rec.tracks.write(f, recordingNow()) }
+func (l recordingListener) GapStarted(since time.Time) { l.r.gapStarted(l.rec, since) }
+func (l recordingListener) GapEnded()                  { l.r.gapEnded(l.rec) }
 
-// gapStarted starts a gap in a recording no stop has taken, timing its
-// notice and its limit from now.
-func (r *RecordingRuntime) gapStarted(rec *activeRecording) {
+// gapStarted starts a gap in a recording no stop has taken, at since, and
+// times its notice and its limit from then. The voice adapter can tell of a
+// gap only after it started, as when a voice server went silent.
+func (r *RecordingRuntime) gapStarted(rec *activeRecording, since time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if rec.stopping || rec.gap != nil {
 		return
 	}
-	g := &recordingGap{gapSpan: gapSpan{start: recordingNow()}}
+	g := &recordingGap{gapSpan: gapSpan{start: since}}
 	rec.gap = g
-	g.cancelNotice = recordingAfterFunc(gapNoticeAfter, func() { r.postGapNotice(rec, g) })
-	g.cancelLimit = recordingAfterFunc(recordingGapLimit, func() { r.gapLimitReached(rec, g) })
+	elapsed := recordingNow().Sub(since)
+	g.cancelNotice = recordingAfterFunc(gapNoticeAfter-elapsed, func() { r.postGapNotice(rec, g) })
+	g.cancelLimit = recordingAfterFunc(recordingGapLimit-elapsed, func() { r.gapLimitReached(rec, g) })
 }
 
 // postGapNotice posts the notice of a gap still running in a recording no

@@ -59,12 +59,24 @@ type udpConn struct {
 
 	// buf is the receive buffer. Only the receiver reads.
 	buf []byte
+	// drops, when set, can drop each socket, as the smoke hook does.
+	drops *connDrops
 }
 
 // newUDPConn is a disgo UDPConnCreateFunc. The SSRC lookup goes unused:
 // DAVE decryption, which needs the speaker, is the receiver's.
 func newUDPConn(dave godave.Session, _ disgovoice.SsrcLookupFunc, _ ...disgovoice.UDPConnConfigOpt) disgovoice.UDPConn {
 	return &udpConn{dave: dave, buf: make([]byte, 1500)}
+}
+
+// droppableUDPConns is newUDPConn whose sockets drops, when set, can drop,
+// as the smoke hook does.
+func droppableUDPConns(drops *connDrops) disgovoice.UDPConnCreateFunc {
+	return func(dave godave.Session, lookup disgovoice.SsrcLookupFunc, opts ...disgovoice.UDPConnConfigOpt) disgovoice.UDPConn {
+		u := newUDPConn(dave, lookup, opts...).(*udpConn)
+		u.drops = drops
+		return u
+	}
 }
 
 // current is the socket and the transport encrypter in use now.
@@ -82,6 +94,9 @@ func (u *udpConn) Open(ctx context.Context, ip string, port int, ssrc uint32) (s
 	conn, err := dialer.DialContext(ctx, "udp", net.JoinHostPort(ip, strconv.Itoa(port)))
 	if err != nil {
 		return "", 0, fmt.Errorf("dial voice server: %w", err)
+	}
+	if u.drops != nil {
+		conn = u.drops.trackSocket(conn)
 	}
 	addr, ourPort, err := discoverIP(conn, ssrc)
 	if err != nil {
