@@ -211,7 +211,7 @@ func TestSigninComesBackToThePathAndQueryWhateverTheFragment(t *testing.T) {
 		{"a backslash", `/foxhole?filter=internal#hold\ers`, "/foxhole?filter=internal"},
 		{"dot segments then a backslash", `/foxhole#/../\evil.example`, "/foxhole"},
 		{"dot segments then two slashes", "/foxhole#/..//evil.example", "/foxhole"},
-		{"a heading after a query", "/foxhole?filter=internal#holders", "/foxhole?filter=internal#holders"},
+		{"a heading after a query", "/recordings?view=all#recording-12", "/recordings?view=all#recording-12"},
 		{"a heading on the landing", "/#hubs", "/#hubs"},
 	}
 	for _, tc := range cases {
@@ -225,7 +225,8 @@ func TestSigninComesBackToThePathAndQueryWhateverTheFragment(t *testing.T) {
 			if err != nil {
 				t.Fatalf("back %q: %v", tc.back, err)
 			}
-			if got := location(t, res); got.Path != want.Path || got.RawQuery != want.RawQuery || want.Fragment != "" && got.Fragment != want.Fragment {
+			got := location(t, res)
+			if got.Scheme != "" || got.Host != "" || got.Path != want.Path || got.RawQuery != want.RawQuery || want.Fragment != "" && got.Fragment != want.Fragment {
 				t.Errorf("the sign-in comes back to %q, want %s", res.Header.Get("Location"), tc.back)
 			}
 		})

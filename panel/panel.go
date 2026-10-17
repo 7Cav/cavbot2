@@ -287,17 +287,17 @@ func (p *Panel) signinPage(w http.ResponseWriter, r *http.Request) {
 // fragment as part of the path, and "/foxhole#/../\host" would leave as
 // "/\host".
 func returnPath(raw string) string {
-	address, fragment, _ := strings.Cut(raw, "#")
-	if address == "" || address[0] != '/' || len(address) > 1 && address[1] == '/' || strings.Contains(address, `\`) {
+	pathAndQuery, fragment, _ := strings.Cut(raw, "#")
+	if pathAndQuery == "" || pathAndQuery[0] != '/' || len(pathAndQuery) > 1 && pathAndQuery[1] == '/' || strings.Contains(pathAndQuery, `\`) {
 		return "/"
 	}
-	if _, err := url.Parse(address); err != nil {
+	if _, err := url.Parse(pathAndQuery); err != nil {
 		return "/"
 	}
 	if fragment == "" || strings.Trim(fragment, idChars) != "" {
-		return address
+		return pathAndQuery
 	}
-	return address + "#" + fragment
+	return pathAndQuery + "#" + fragment
 }
 
 // idChars is every character a fragment may hold and still come back from
