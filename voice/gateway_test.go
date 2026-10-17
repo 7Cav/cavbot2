@@ -545,10 +545,9 @@ func TestRecorderReportsAVoiceConnectionDisgoGivesUpOn(t *testing.T) {
 // 4006, 4009 and 4011 get one at once. A close disgo resumes from gets one
 // once every try to resume has failed, whether the last try failed on a
 // close, such as 4015 or a code disgo doesn't know, or on the dial. The
-// recorder rejoins the channel as it joined, self-muted and
-// never self-deafened, and identifies at the voice server, since a resume
-// gets no answer that opens audio. It never leaves, and nothing reaches
-// Sentry.
+// recorder rejoins the channel as it joined, self-muted and never
+// self-deafened, and identifies at the voice server, since a resume gets no
+// answer that opens audio. It never leaves, and nothing reaches Sentry.
 func TestRecorderKeepsRecordingThroughACloseThatGetsAFreshConnection(t *testing.T) {
 	for _, tc := range []struct {
 		name string
