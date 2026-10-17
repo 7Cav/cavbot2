@@ -379,16 +379,17 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 	tok, err := p.oauth.Exchange(ctx, code, oauth2.VerifierOption(pending.verifier))
 	if err != nil {
 		// A 4xx from the token endpoint is the forum refusing this sign-in
-		// (a stale code, a wrong secret): back to the sign-in page. Anything
-		// else is the forum not answering.
+		// (a stale code, a wrong secret): back to the sign-in page, whose
+		// sign-in comes back to the page this one was for. Anything else is
+		// the forum not answering.
 		var retrieve *oauth2.RetrieveError
 		if errors.As(err, &retrieve) && retrieve.Response.StatusCode < 500 {
 			utils.Warn("Panel sign-in refused by the forum", "status", retrieve.Response.StatusCode, "body", string(retrieve.Body))
-			http.Redirect(w, r, signinURL(causeNone, ""), http.StatusSeeOther)
+			http.Redirect(w, r, signinURL(causeNone, pending.next), http.StatusSeeOther)
 			return
 		}
 		utils.Warn("Panel token exchange failed", "error", err)
-		p.forumUnavailable(w, nil)
+		p.signinForumUnavailable(w, pending.next)
 		return
 	}
 
@@ -408,10 +409,10 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, pending.next, http.StatusSeeOther)
 	case checkUnavailable:
 		utils.Warn("Panel group check unavailable at sign-in", "error", err)
-		p.forumUnavailable(w, nil)
+		p.signinForumUnavailable(w, pending.next)
 	default:
 		utils.Info("Panel sign-in refused", "cause", string(outcome.cause()), "username", user.Username, "forum_user_id", user.UserID)
-		http.Redirect(w, r, signinURL(outcome.cause(), ""), http.StatusSeeOther)
+		http.Redirect(w, r, signinURL(outcome.cause(), pending.next), http.StatusSeeOther)
 	}
 }
 
@@ -438,20 +439,32 @@ func (p *Panel) signinFailed(w http.ResponseWriter, f failure, next string) {
 	p.render(w, http.StatusBadRequest, "error", pageData{Title: text.title, Message: text.message, Failure: f, SignInAgain: true, Next: next})
 }
 
+// forumUnavailableTitle is the title of the error page a forum outage
+// earns, at sign-in or in a session.
+const forumUnavailableTitle = "The forum did not answer"
+
 // forumUnavailable renders the error page with the 502 the forum outage
-// earns. With a session the page keeps the rail's identity and says the
-// session is kept; without one, at sign-in, it says only to try again.
-func (p *Panel) forumUnavailable(w http.ResponseWriter, sess *session) {
-	data := pageData{Title: "The forum did not answer",
-		Message: "The forum did not answer while you were signing in, so you are not signed in. Try again from the sign-in page.",
-		Retry:   "/signin"}
-	if sess != nil {
-		data = sess.page(data.Title)
-		data.Message = "Cavbot2 could not reach the forum. Nothing changed and you are still signed in."
-		data.Retry = "/"
-	}
+// earns to a signed-in visitor. The page keeps the rail's identity and says
+// the session is kept.
+func (p *Panel) forumUnavailable(w http.ResponseWriter, sess session) {
+	data := sess.page(forumUnavailableTitle)
+	data.Message = "Cavbot2 could not reach the forum. Nothing changed and you are still signed in."
+	data.Retry = "/"
 	data.Failure = failureForum
 	p.render(w, http.StatusBadGateway, "error", data)
+}
+
+// signinForumUnavailable renders the 502 page for a sign-in the forum did
+// not answer. Its Sign in again starts a fresh sign-in that comes back to
+// next, the pending sign-in's address. Like signinURL, it carries no next
+// for the landing, where a sign-in with none lands.
+func (p *Panel) signinForumUnavailable(w http.ResponseWriter, next string) {
+	if next == "/" {
+		next = ""
+	}
+	p.render(w, http.StatusBadGateway, "error", pageData{Title: forumUnavailableTitle,
+		Message: "The forum did not answer while you were signing in, so you are not signed in. Sign in again takes you back to the forum.",
+		Failure: failureForum, SignInAgain: true, Next: next})
 }
 
 // signinURL is the sign-in page with the cause of the ended session, which
@@ -513,7 +526,7 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 			next(w, r, sess)
 		case checkUnavailable:
 			utils.Warn("Panel group check unavailable, session kept", "username", sess.username, "error", err)
-			p.forumUnavailable(w, &sess)
+			p.forumUnavailable(w, sess)
 		default:
 			p.endSession(w, c.Value, sess, string(outcome.cause()))
 			http.Redirect(w, r, signinURL(outcome.cause(), returnAddressOf(r)), http.StatusSeeOther)
