@@ -840,9 +840,8 @@ func redirects(instr ssa.Instruction) bool {
 }
 
 // acceptedHandler reports whether t is the voice package's errorsAsWarnings,
-// the one slog.Handler of the module's that the check accepts. It moves
-// disgo's ERRORs down to WARN and hands each record on to the handler it
-// wraps. The check doesn't read what it does with a record (ADR 0018).
+// the one slog.Handler of the module's that the check accepts, as the
+// package doc says.
 func acceptedHandler(t types.Type) bool {
 	n := namedOf(t)
 	return n != nil && declared(n.Obj(), module+"/voice", "errorsAsWarnings")

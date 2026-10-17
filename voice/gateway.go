@@ -112,7 +112,7 @@ func (s *discordgoSession) voiceManager(update disgovoice.StateUpdateFunc, userI
 
 // connCreate builds each of the recorder's voice connections. Each is
 // disgo's own, held by a recorderConn, and logs through a logger of its own
-// from newLogger, with disgo's ERRORs moved down to WARN.
+// from newLogger.
 func (s *discordgoSession) connCreate(newGateway disgovoice.GatewayCreateFunc, newLogger connLoggerFunc) disgovoice.ConnCreateFunc {
 	return func(guildID, userID snowflake.ID, update disgovoice.StateUpdateFunc, remove func(), opts ...disgovoice.ConnConfigOpt) disgovoice.Conn {
 		c := &recorderConn{s: s, guildID: guildID, userID: userID, update: update}
@@ -121,9 +121,32 @@ func (s *discordgoSession) connCreate(newGateway disgovoice.GatewayCreateFunc, n
 		updateVoiceState := func(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
 			return c.updateVoiceState(ctx, guildID, channelID, selfMute, selfDeaf)
 		}
-		logger = slog.New(errorsAsWarnings{next: logger.Handler()})
 		c.Conn = disgovoice.NewConn(guildID, userID, updateVoiceState, remove, append(opts, c.connOpts(newGateway, logger)...)...)
 		return c
+	}
+}
+
+// connOpts configures the voice connection c holds: its logger, the
+// recorder's own UDP connection, and a voice gateway whose close handler is
+// watched for a connection lost mid-recording or a call that moved.
+// newGateway builds the gateway, disgo's NewGateway outside tests. disgo
+// gives the gateway and UDP connection loggers of their own from logger, so
+// one level holds for all three, and disgo's ERRORs reach logger at WARN
+// from all three. The manager hands every connection its own logger first,
+// and this one takes its place.
+func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc, logger *slog.Logger) []disgovoice.ConnConfigOpt {
+	return []disgovoice.ConnConfigOpt{
+		disgovoice.WithConnLogger(slog.New(errorsAsWarnings{next: logger.Handler()})),
+		disgovoice.WithUDPConnCreateFunc(newUDPConn),
+		disgovoice.WithConnGatewayCreateFunc(func(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, opts ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
+			g := &renewableGateway{named: c.namedLast}
+			g.build = func() disgovoice.Gateway {
+				return newGateway(dave, g.watchEvents(onEvent), c.watchClose(g, onClose), opts...)
+			}
+			g.gw = g.build()
+			c.gateway = g
+			return g
+		}),
 	}
 }
 
@@ -163,29 +186,6 @@ func asWarning(level slog.Level) slog.Level {
 		return slog.LevelWarn
 	}
 	return level
-}
-
-// connOpts configures the voice connection c holds: its logger, the
-// recorder's own UDP connection, and a voice gateway whose close handler is
-// watched for a connection lost mid-recording or a call that moved.
-// newGateway builds the gateway, disgo's NewGateway outside tests. disgo
-// gives the gateway and UDP connection loggers of their own from logger, so
-// one level holds for all three. The manager hands every connection its own
-// logger first, and this one takes its place.
-func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc, logger *slog.Logger) []disgovoice.ConnConfigOpt {
-	return []disgovoice.ConnConfigOpt{
-		disgovoice.WithConnLogger(logger),
-		disgovoice.WithUDPConnCreateFunc(newUDPConn),
-		disgovoice.WithConnGatewayCreateFunc(func(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, opts ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
-			g := &renewableGateway{named: c.namedLast}
-			g.build = func() disgovoice.Gateway {
-				return newGateway(dave, g.watchEvents(onEvent), c.watchClose(g, onClose), opts...)
-			}
-			g.gw = g.build()
-			c.gateway = g
-			return g
-		}),
-	}
 }
 
 // recorderConn is disgo's voice connection to one guild's calls, as the
