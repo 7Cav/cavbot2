@@ -296,3 +296,47 @@ func TestGatewayWatch_AStoodDownWatchSendsNothing(t *testing.T) {
 		t.Errorf("Sentry got %d events after the watch stood down, want none", len(events))
 	}
 }
+
+// reloginSlack is room for a heartbeat that raced a close to log in again
+// once the close lets go of the session's lock. A raced heartbeat logs in
+// again within a few milliseconds.
+const reloginSlack = 500 * time.Millisecond
+
+// A session that opened without READY, as when Discord answers every
+// identify with Op 9, is closed at once, before its first heartbeat. It logs
+// in no more, whichever of the close and its heartbeat ran first.
+func TestGatewayWatch_ASessionClosedAfterAFailedOpenLogsInNoMore(t *testing.T) {
+	g := newScriptedGateway(t, func(int) gatewayLogin { return gatewayLogin{invalid: true} })
+	dg, err := discordgo.New("Bot fake-token-for-test")
+	if err != nil {
+		t.Fatalf("discordgo.New: %v", err)
+	}
+	w := WatchGateway(dg, GatewayOfflineAfter, "session", "recorder")
+	if err := OpenSession(dg); err == nil {
+		t.Fatal("OpenSession reported success for a session that never became ready")
+	}
+
+	_ = w.CloseSession()
+	time.Sleep(reloginSlack)
+
+	if n := g.loginCount(); n != 1 {
+		t.Errorf("the gateway saw %d logins, want 1: none after the close", n)
+	}
+}
+
+// A session closed with CloseSession is closed on purpose, and the watch
+// sends nothing for it.
+func TestGatewayWatch_CloseSessionSendsNothing(t *testing.T) {
+	tr := initSentryWithTransport(t)
+	dg, err := discordgo.New("Bot fake-token-for-test")
+	if err != nil {
+		t.Fatalf("discordgo.New: %v", err)
+	}
+	w := WatchGateway(dg, gatewayWatchAfter, "session", "recorder")
+
+	_ = w.CloseSession()
+
+	if events := waitForOutageEvents(t, tr, 0); len(events) != 0 {
+		t.Errorf("Sentry got %d events after CloseSession, want none", len(events))
+	}
+}
