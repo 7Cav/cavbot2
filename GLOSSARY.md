@@ -626,10 +626,11 @@ _Avoid_: missing track, failed track, broken track.
 
 **Gap**:
 A stretch of a recording when the recorder could not hear the channel,
-because the call moved to a voice server it had not reached yet or its
-encryption setup stalled. Every track is silent there, whether or not
-anyone spoke. One that passes 10 seconds gets a gap notice and a line in
-the info file, and one that reaches 10 minutes ends the recording.
+because its connection to the voice server dropped, the call moved to a
+voice server it had not reached yet, or its encryption setup stalled. Every
+track is silent there, whether or not anyone spoke. One that passes 10
+seconds gets a gap notice and a line in the info file, and one that reaches
+10 minutes ends the recording.
 _Avoid_: dropout, outage, stall (one cause of a gap).
 
 **Mix**:
