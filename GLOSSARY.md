@@ -616,6 +616,14 @@ gone or stops early. The speaker stays listed, and the recording says so
 beside their name wherever it names its speakers.
 _Avoid_: missing track, failed track, broken track.
 
+**Gap**:
+A stretch of a recording when the recorder could not hear the channel,
+because the call moved to a voice server it had not reached yet or its
+encryption setup stalled. Every track is silent there, whether or not
+anyone spoke. One that passes 10 seconds gets a gap notice and a line in
+the info file, and one that reaches 10 minutes ends the recording.
+_Avoid_: dropout, outage, stall (one cause of a gap).
+
 **Mix**:
 One file of every track in a recording played together, built when the
 recording stops. A recording with no speakers has no mix.
@@ -623,8 +631,9 @@ _Avoid_: mixdown, combined track, merged audio.
 
 **Info file**:
 The text file kept with a recording, and in its zip, that names its title,
-channel, starter, start and stop times in Zulu, how it ended, and each
-speaker's display name and Discord ID, marking a lost track.
+channel, starter, start and stop times in Zulu, how it ended, each gap
+past 10 seconds, and each speaker's display name and Discord ID, marking a
+lost track.
 _Avoid_: metadata, manifest, readme.
 
 **Cut-short recording**:
@@ -649,6 +658,13 @@ panel. The starter gets that link by DM as well when the channel is a
 spawned channel, since its hub's delete delay takes the notice away once
 everyone has left, and instead when the notice is gone by then.
 _Avoid_: recording panel (the panel is the web UI), banner, announcement.
+
+**Gap notice**:
+The bot message in the recorded channel's text chat that says the recorder
+can't hear the channel and since when. Posted once a gap passes 10 seconds,
+pinging nobody, and edited when the gap ends to say what the recording
+missed.
+_Avoid_: reconnecting message, warning, alert.
 
 ## External systems
 
