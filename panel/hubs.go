@@ -567,6 +567,9 @@ type pageRequest struct {
 	// RankRolesPreview is the preview a rank roles save waits on, nil for
 	// none.
 	RankRolesPreview *rankRolesPreview
+	// PreviewRankRoles is a load of the rank roles preview's address, which
+	// shows the preview of RankRoles with the counts as they are now.
+	PreviewRankRoles bool
 	Error            *fieldError
 	// Refused is the form Error belongs to.
 	Refused string

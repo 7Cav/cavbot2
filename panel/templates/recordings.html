@@ -1,5 +1,5 @@
 {{define "content"}}
-<main class="body narrow" data-page="{{.Page}}">
+<main class="body narrow" data-page="{{.Page}}"{{with .Address}} data-address="{{.}}"{{end}}>
   <h1 class="title">Recordings</h1>
   {{if .Recordings.Single}}<p class="desc">{{with .Recordings.Back}}<a href="{{.URL}}" data-field="back">{{.Label}}</a>{{end}}</p>
   {{- else if .Recordings.Recordings}}{{$n := len .Recordings.Recordings}}<p class="desc"><span data-field="count">{{$n}}</span> {{if eq $n 1}}recording{{else}}recordings{{end}}

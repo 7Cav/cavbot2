@@ -327,7 +327,7 @@ func (p *Panel) recordingsPage(w http.ResponseWriter, r *http.Request, sess sess
 		return
 	}
 	if err != nil {
-		p.pageFailed(w, sess, "recordings page", recordingsPath, err, nil)
+		p.pageFailed(w, r, sess, "recordings page", recordingsPath, err, nil)
 		return
 	}
 	items := p.recordingItems(recs)
@@ -349,7 +349,7 @@ func (p *Panel) recordingsPage(w http.ResponseWriter, r *http.Request, sess sess
 	if !all {
 		view.DiscordNote, view.CheckAgain = sess.discord.note(), recordingsPath
 	}
-	p.renderRecordings(w, sess, http.StatusOK, view)
+	p.renderRecordings(w, r, sess, http.StatusOK, view)
 }
 
 // wasDeleted is the ID the Recordings page's deleted parameter names when
@@ -371,7 +371,7 @@ func (p *Panel) wasDeleted(ctx context.Context, raw string) (int64, error) {
 // renderRecordings renders the Recordings page with the status and view
 // given, naming each recording's starter by their display name when the
 // view shows them.
-func (p *Panel) renderRecordings(w http.ResponseWriter, sess session, status int, view recordingsView) {
+func (p *Panel) renderRecordings(w http.ResponseWriter, r *http.Request, sess session, status int, view recordingsView) {
 	if view.ShowStarter {
 		members := p.hubs.deps.Manager.MemberList(p.hubs.deps.GuildID)
 		for i := range view.Recordings {
@@ -382,7 +382,10 @@ func (p *Panel) renderRecordings(w http.ResponseWriter, sess session, status int
 	data := sess.page("Recordings")
 	data.Page = pageRecordings
 	data.Recordings = view
-	p.render(w, status, "recordings", data)
+	// A POST it answers, a delete, posts to the delete preview's address,
+	// whose GET shows the same page.
+	data.Address = r.URL.Path
+	p.render(w, r, status, "recordings", data)
 }
 
 // recordingPage is GET /recordings/{id}: one recording, the page the link
@@ -392,7 +395,7 @@ func (p *Panel) recordingPage(w http.ResponseWriter, r *http.Request, sess sessi
 	if !ok {
 		return
 	}
-	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: p.recordingItems([]store.Recording{rec}), Single: true,
+	p.renderRecordings(w, r, sess, http.StatusOK, recordingsView{Recordings: p.recordingItems([]store.Recording{rec}), Single: true,
 		ShowStarter: rec.StarterID != sess.discord.id})
 }
 
@@ -411,7 +414,7 @@ func (p *Panel) downloadMix(w http.ResponseWriter, r *http.Request, sess session
 		return
 	}
 	if err != nil {
-		p.serverError(w, "mix download", err)
+		p.serverError(w, r, &sess, "mix download", r.URL.RequestURI(), err)
 		return
 	}
 	defer func() { _ = f.Close() }()
@@ -456,7 +459,7 @@ func (p *Panel) downloadInfo(w http.ResponseWriter, r *http.Request, sess sessio
 	}
 	info, err := p.recordings.InfoFile(rec)
 	if err != nil {
-		p.serverError(w, "info download", err)
+		p.serverError(w, r, &sess, "info download", r.URL.RequestURI(), err)
 		return
 	}
 	utils.Info("Panel recording downloaded", "recording_id", rec.ID, "file", "info", "username", sess.username, "forum_user_id", sess.userID)
@@ -487,7 +490,7 @@ func (p *Panel) deletePreview(w http.ResponseWriter, r *http.Request, sess sessi
 	default:
 		item.CancelURL = item.PageURL
 	}
-	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Recordings: []recordingItem{item}, Single: true, DeletePreview: true,
+	p.renderRecordings(w, r, sess, http.StatusOK, recordingsView{Recordings: []recordingItem{item}, Single: true, DeletePreview: true,
 		ShowStarter: rec.StarterID != sess.discord.id})
 }
 
@@ -514,7 +517,10 @@ func (p *Panel) deleteRecording(w http.ResponseWriter, r *http.Request, sess ses
 		// The files may have gone before the failure, so the event names
 		// who deleted them too.
 		utils.CaptureError("Panel recording delete failed", err, "recording_id", rec.ID, "username", sess.username, "forum_user_id", sess.userID)
-		http.Error(w, serverErrorText, http.StatusInternalServerError)
+		// Try again opens the recording's page, which shows what is left
+		// of it. A link to the delete preview's own address, which the tab
+		// shows, would only scroll.
+		p.failedInside(w, r, &sess, commands.RecordingPath(rec.ID))
 		return
 	}
 	// The trail a questioned deletion is traced by. A deletion has no
@@ -554,7 +560,10 @@ func (p *Panel) recordingStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		p.serverError(w, "recording status", err)
+		// The deploy workflow reads this answer, and no one views it as a
+		// page, so it stays plain text.
+		utils.CaptureError("Panel request failed", err, "step", "recording status")
+		http.Error(w, serverErrorText, http.StatusInternalServerError)
 		return
 	}
 	running := slices.ContainsFunc(recs, func(rec store.Recording) bool { return rec.StoppedAt.IsZero() })
@@ -581,7 +590,7 @@ func attachment(name string) string {
 func (p *Panel) recordingFor(w http.ResponseWriter, r *http.Request, sess *session, step string) (store.Recording, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
-		p.renderRecordings(w, *sess, http.StatusNotFound, recordingsView{Single: true, Gone: true})
+		p.renderRecordings(w, r, *sess, http.StatusNotFound, recordingsView{Single: true, Gone: true})
 		return store.Recording{}, false
 	}
 	ctx, cancel := panelClock.WithTimeout(r.Context(), storeTimeout)
@@ -589,13 +598,13 @@ func (p *Panel) recordingFor(w http.ResponseWriter, r *http.Request, sess *sessi
 	rec, err := p.recordings.Recording(ctx, id)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		p.renderRecordings(w, *sess, http.StatusNotFound, recordingsView{Single: true, Gone: true})
+		p.renderRecordings(w, r, *sess, http.StatusNotFound, recordingsView{Single: true, Gone: true})
 		return store.Recording{}, false
 	case errors.Is(err, context.Canceled):
 		utils.Info("Panel page abandoned", "step", step, "username", sess.username, "forum_user_id", sess.userID)
 		return store.Recording{}, false
 	case err != nil:
-		p.pageFailed(w, *sess, step, recordingsPath, err, nil)
+		p.pageFailed(w, r, *sess, step, recordingsPath, err, nil)
 		return store.Recording{}, false
 	}
 	if sess.access.panelAdmin {
@@ -610,7 +619,7 @@ func (p *Panel) recordingFor(w http.ResponseWriter, r *http.Request, sess *sessi
 	}
 	if sess.discord.id == "" || rec.StarterID != sess.discord.id {
 		utils.Info("Panel recording refused", "recording_id", rec.ID, "step", step, "username", sess.username, "forum_user_id", sess.userID)
-		p.noAccess(w, *sess, noAccessRecording)
+		p.noAccess(w, r, *sess, noAccessRecording, r.URL.Path)
 		return store.Recording{}, false
 	}
 	return rec, true
@@ -627,7 +636,7 @@ func (p *Panel) recordingUnmatched(w http.ResponseWriter, r *http.Request, sess 
 		http.Redirect(w, r, page, http.StatusSeeOther)
 		return
 	}
-	p.renderRecordings(w, sess, http.StatusOK, recordingsView{Single: true, DiscordNote: note, CheckAgain: page})
+	p.renderRecordings(w, r, sess, http.StatusOK, recordingsView{Single: true, DiscordNote: note, CheckAgain: page})
 }
 
 // stoppedRecordingFor is recordingFor for a download that a running

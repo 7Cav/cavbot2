@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -143,13 +144,40 @@ const (
 )
 
 // settingsPage is GET /settings. A save named, with the version it left
-// its form's record at, has that form say it saved.
+// its form's record at, has that form say it saved. The rank roles
+// preview's address shows that preview over the form as the address
+// carries it.
 func (p *Panel) settingsPage(w http.ResponseWriter, r *http.Request, sess session) {
-	req := pageRequest{Saved: savedFromQuery(r.URL.Query().Get(paramSaved))}
+	q := r.URL.Query()
+	req := pageRequest{Saved: savedFromQuery(q.Get(paramSaved))}
 	// A version that isn't a number matches no record, so the page says
 	// nothing saved.
-	req.SavedVersion, _ = strconv.ParseInt(r.URL.Query().Get(paramVersion), 10, 64)
+	req.SavedVersion, _ = strconv.ParseInt(q.Get(paramVersion), 10, 64)
+	if q.Get(paramPreview) == formRankRoles {
+		in := rankRolesInputOf(q)
+		req.RankRoles, req.PreviewRankRoles = &in, true
+	}
 	p.renderSettings(w, r, sess, http.StatusOK, req)
+}
+
+// paramPreview is the query parameter naming the form whose preview the
+// Settings page's address opens.
+const paramPreview = "preview"
+
+// rankRolesPreviewAddress is the address of the preview a rank roles save
+// waits on (ADR 0019): the Settings page with the form as the save posted
+// it, each rank's role under its form field and the version, opened at the
+// preview. A rank with no role posts none, and the address names none for
+// it. With every rank filled the address is about a thousand characters,
+// well under the request line the proxy in front of the panel allows.
+func rankRolesPreviewAddress(in rankRolesInput) string {
+	q := url.Values{paramPreview: {formRankRoles}, fieldVersion: {in.Version}}
+	for _, rank := range commands.DefaultRankLadder().Ranks() {
+		if id := in.Roles[rank.Abbrev]; id != "" {
+			q.Set(rankRoleField(rank.Abbrev), id)
+		}
+	}
+	return (&url.URL{Path: settingsPath, RawQuery: q.Encode(), Fragment: formRankRoles}).String()
 }
 
 // renderSettings renders the Settings page read now, with the form the
@@ -168,19 +196,31 @@ func (p *Panel) renderSettings(w http.ResponseWriter, r *http.Request, sess sess
 		utils.Info("Panel page abandoned", "step", "settings page", "username", sess.username, "forum_user_id", sess.userID)
 		return
 	case errors.Is(err, errNoGuildData):
-		p.noGuildData(w, sess, "settings page", settingsPath, err)
+		p.noGuildData(w, r, sess, "settings page", settingsPath, err)
 		return
 	case err != nil:
 		var report *budgetReport
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			report = reads.report(hubPageBudget)
 		}
-		p.pageFailed(w, sess, "settings page", settingsPath, err, report)
+		p.pageFailed(w, r, sess, "settings page", settingsPath, err, report)
 		return
 	}
 	data := sess.page("Settings")
-	data.Page, data.Settings = pageSettings, view
-	p.render(w, status, "settings", data)
+	data.Page, data.Settings, data.Address = pageSettings, view, req.settingsAddress()
+	p.render(w, r, status, "settings", data)
+}
+
+// settingsAddress is the GET address that shows the Settings page the
+// request asks for as it stands then, for a page that answers a form (ADR
+// 0019): the page opened at the section whose save was refused, or at the
+// rank roles preview the page shows. The refusal and any other form as
+// posted came with the POST, so they don't come back.
+func (req pageRequest) settingsAddress() string {
+	if req.RankRolesPreview != nil && req.RankRoles != nil {
+		return rankRolesPreviewAddress(*req.RankRoles)
+	}
+	return (&url.URL{Path: settingsPath, Fragment: req.Refused}).String()
 }
 
 // settings reads everything the Settings page renders from, once. It reads
@@ -237,8 +277,15 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 		return rankRolesPage{}, fmt.Errorf("%s: %w", rankRoleChangesRead, err)
 	}
 	page.Changes = changeViews(entries, guild)
-	if req.RankRolesPreview != nil && posted != nil {
-		view := &rankRolesPreviewView{rankRolesPreview: *req.RankRolesPreview, Version: posted.Version, Refusal: req.refusalOn(formRankRoles)}
+	preview := req.RankRolesPreview
+	if req.PreviewRankRoles && posted != nil {
+		// The preview's address shows the preview whatever the counts are
+		// now, none dropped included, so a reload of it never saves.
+		counts := s.rankRolesCounts(commands.RankLadderOf(stored), commands.NewRankLadder(posted.Roles))
+		preview = &counts
+	}
+	if preview != nil && posted != nil {
+		view := &rankRolesPreviewView{rankRolesPreview: *preview, Version: posted.Version, Refusal: req.refusalOn(formRankRoles)}
 		for _, rank := range commands.DefaultRankLadder().Ranks() {
 			if id := posted.Roles[rank.Abbrev]; id != "" {
 				view.Fields = append(view.Fields, rankRoleFieldValue{Field: rankRoleField(rank.Abbrev), RoleID: id})
@@ -323,27 +370,29 @@ func (p rankRolesPreview) DroppedValue() string {
 const formRankRoles = "rank-roles"
 
 // rankRolesInputOf reads the Rank roles section's form off a parsed post,
-// one role or none for each rank of the ladder.
-func rankRolesInputOf(r *http.Request) rankRolesInput {
-	in := rankRolesInput{Version: r.PostForm.Get(fieldVersion), Roles: map[string]string{},
-		Confirmed: r.PostForm.Get(fieldConfirm) != "", Shown: r.PostForm.Get(fieldShown)}
+// or off the rank roles preview's address, one role or none for each rank
+// of the ladder.
+func rankRolesInputOf(form url.Values) rankRolesInput {
+	in := rankRolesInput{Version: form.Get(fieldVersion), Roles: map[string]string{},
+		Confirmed: form.Get(fieldConfirm) != "", Shown: form.Get(fieldShown)}
 	for _, rank := range commands.DefaultRankLadder().Ranks() {
-		in.Roles[rank.Abbrev] = strings.TrimSpace(r.PostForm.Get(rankRoleField(rank.Abbrev)))
+		in.Roles[rank.Abbrev] = strings.TrimSpace(form.Get(rankRoleField(rank.Abbrev)))
 	}
 	return in
 }
 
 // saveRankRoles is POST /rank-roles. It makes one service call, then
 // redirects to the Settings page, opened at the Rank roles section, where
-// the saved roles show and the section says it saved. A refusal answers with the page
-// again and the refusal on the section, and a save that waits on its
-// preview with the page showing it above the form as posted.
+// the saved roles show and the section says it saved. A refusal answers
+// with the page again and the refusal on the section. A save that waits on
+// its preview redirects to the preview's address, so a reload of the
+// preview never saves, with or without script (ADR 0019).
 func (p *Panel) saveRankRoles(w http.ResponseWriter, r *http.Request, sess session) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
 		return
 	}
-	in := rankRolesInputOf(r)
+	in := rankRolesInputOf(r.PostForm)
 	ctx, hubs := p.saving(r)
 	saved, preview, err := hubs.setRankRoles(ctx, in, sess.actor())
 	if refusal, ok := asFieldError(err); ok {
@@ -352,11 +401,11 @@ func (p *Panel) saveRankRoles(w http.ResponseWriter, r *http.Request, sess sessi
 		return
 	}
 	if preview != nil {
-		p.renderSettings(w, r, sess, http.StatusOK, pageRequest{RankRoles: &in, RankRolesPreview: preview})
+		http.Redirect(w, r, rankRolesPreviewAddress(in), http.StatusSeeOther)
 		return
 	}
 	if err != nil {
-		p.saveFailed(w, sess, "rank roles save", settingsPath, err)
+		p.saveFailed(w, r, sess, "rank roles save", settingsPath, err)
 		return
 	}
 	utils.Info("Panel rank roles saved", "roles", saved.Roles, "username", sess.username, "forum_user_id", sess.userID)
@@ -433,12 +482,21 @@ func (s *hubService) setRankRoles(ctx context.Context, in rankRolesInput, by act
 // While it has not loaded the count is unknown, and any save that takes a
 // role off the ladder may stop someone, so it previews.
 func (s *hubService) rankRolesPreviewOf(before, after commands.RankLadder) *rankRolesPreview {
-	preview := &rankRolesPreview{Channels: s.deps.Runtime.RankRolesHandovers(after)}
+	preview := s.rankRolesCounts(before, after)
+	if preview.Counted && preview.Dropped == 0 || !preview.Counted && !before.TakesARoleOff(after) {
+		return nil
+	}
+	return &preview
+}
+
+// rankRolesCounts is what a save from the ladder before to the ladder
+// after changes, as its preview counts it: the members it stops counting
+// as Cav members, from the member list, unknown while the list has not
+// loaded, and the spawned channels that change owner.
+func (s *hubService) rankRolesCounts(before, after commands.RankLadder) rankRolesPreview {
+	preview := rankRolesPreview{Channels: s.deps.Runtime.RankRolesHandovers(after)}
 	list := s.deps.Manager.MemberList(s.deps.GuildID)
 	if list.Status != commands.MemberListComplete {
-		if !before.TakesARoleOff(after) {
-			return nil
-		}
 		return preview
 	}
 	preview.Counted = true
@@ -446,9 +504,6 @@ func (s *hubService) rankRolesPreviewOf(before, after commands.RankLadder) *rank
 		if before.Drops(after, m.RoleIDs) {
 			preview.Dropped++
 		}
-	}
-	if preview.Dropped == 0 {
-		return nil
 	}
 	return preview
 }

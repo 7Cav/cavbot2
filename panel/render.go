@@ -79,6 +79,9 @@ const (
 	// failureSigninNoCode is a callback that carries neither a code nor the
 	// forum's error.
 	failureSigninNoCode failure = "signin-no-code"
+	// failureServer is a request the panel itself failed, such as a save
+	// whose store write was refused.
+	failureServer failure = "server"
 )
 
 // pageData is what every template renders from. SignedIn switches the rail
@@ -118,6 +121,12 @@ type pageData struct {
 	// Try again, and BackLabel names it.
 	Back      string
 	BackLabel string
+	// Address is the GET address that shows this page as it stands then.
+	// A page that answers a form's POST names it on <main>, and the page
+	// script puts it in the tab in place of the form's history entry, so a
+	// reload, a Back or a Forward never sends the form again (ADR 0019).
+	// render drops it from any other page.
+	Address string
 }
 
 // railPages is which pages the rail links to, the ones this request's
@@ -156,9 +165,14 @@ func parsePages() (pages, error) {
 	return out, nil
 }
 
-// render writes one page with the status. A template failure after the header
-// is written cannot be undone, so the page renders to a buffer first.
-func (p *Panel) render(w http.ResponseWriter, status int, page string, data pageData) {
+// render writes one page with the status, in answer to r. A template failure
+// after the header is written cannot be undone, so the page renders to a
+// buffer first. Only a page that answers a POST names its Address: a page
+// loaded by GET is at its address already.
+func (p *Panel) render(w http.ResponseWriter, r *http.Request, status int, page string, data pageData) {
+	if r.Method != http.MethodPost {
+		data.Address = ""
+	}
 	data.Version = p.version
 	data.ForumURL = p.forumURL
 	var buf bytes.Buffer

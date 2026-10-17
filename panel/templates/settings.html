@@ -1,5 +1,5 @@
 {{define "content"}}
-<main class="body" data-page="{{.Page}}">
+<main class="body" data-page="{{.Page}}"{{with .Address}} data-address="{{.}}"{{end}}>
   <h1 class="title">Settings</h1>
   <p class="desc">The settings here apply to the whole server, not to one hub.</p>
   {{if .Settings.Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Role details on this page may be out of date.</div>{{end}}

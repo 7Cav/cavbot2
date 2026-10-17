@@ -1,5 +1,5 @@
 {{define "content"}}
-<main class="body" data-page="{{.Page}}">
+<main class="body" data-page="{{.Page}}"{{with .Address}} data-address="{{.}}"{{end}}>
   <h1 class="title">Hubs</h1>
   <p class="desc">Joining a hub moves a member into a new spawned channel. This page also sets the moderator roles.</p>
   {{if .Hubs.Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Channel and role details on this page may be out of date.</div>{{end}}
