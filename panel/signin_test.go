@@ -196,3 +196,39 @@ func TestSigninNeverComesBackOffThePanel(t *testing.T) {
 		})
 	}
 }
+
+// A sign-in comes back to the path and query of the address its form
+// posted, whatever fragment follows them, and with the fragment when it
+// names a heading. The panel may drop any other fragment, but the fragment
+// never costs the path, the query or the panel's origin.
+func TestSigninComesBackToThePathAndQueryWhateverTheFragment(t *testing.T) {
+	cases := []struct {
+		name, next string
+		// back is the address the sign-in comes back to. Where it names no
+		// fragment, the panel may drop the one posted.
+		back string
+	}{
+		{"a backslash", `/foxhole?filter=internal#hold\ers`, "/foxhole?filter=internal"},
+		{"dot segments then a backslash", `/foxhole#/../\evil.example`, "/foxhole"},
+		{"dot segments then two slashes", "/foxhole#/..//evil.example", "/foxhole"},
+		{"a heading after a query", "/recordings?view=all#recording-12", "/recordings?view=all#recording-12"},
+		{"a heading on the landing", "/#hubs", "/#hubs"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t)
+			state := startSigninWith(t, w.forum, w.b, url.Values{"next": {tc.next}})
+
+			res := forumSendsBack(w.b, state)
+
+			want, err := url.Parse(tc.back)
+			if err != nil {
+				t.Fatalf("back %q: %v", tc.back, err)
+			}
+			got := location(t, res)
+			if got.Scheme != "" || got.Host != "" || got.Path != want.Path || got.RawQuery != want.RawQuery || want.Fragment != "" && got.Fragment != want.Fragment {
+				t.Errorf("the sign-in comes back to %q, want %s", res.Header.Get("Location"), tc.back)
+			}
+		})
+	}
+}

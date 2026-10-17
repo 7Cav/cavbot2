@@ -1135,3 +1135,34 @@
   land();
   window.addEventListener('hashchange', land);
 })();
+
+/* Signing in at a block, issue #757 under ADR 0013. A browser never sends
+   an address's fragment to the panel. So when the panel sends a visitor to
+   sign in, next names the page they asked for without the fragment that
+   opens it at a block. The browser keeps the fragment on the sign-in
+   page's own address. When the visitor sends a sign-in form, the script
+   puts that fragment on next, so the sign-in comes back to the block. The
+   landing's sign-in page has no next, and gets one. A save sent with no
+   session comes back from its sign-in to the landing, at the block its
+   form's action names when the landing has one. Without script, the
+   sign-in comes back to the top of the page. The Foxhole page's Sign in
+   again for kept notes sends its form with submit(), which fires no submit
+   event, so this script never sees it. That sign-in comes back to the view
+   with no fragment, and a kept note can take focus. */
+(function () {
+  'use strict';
+
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (!location.hash || !form.matches('form[action="/auth/start"]')) { return; }
+    var next = form.querySelector('input[name="next"]');
+    if (!next) {
+      next = document.createElement('input');
+      next.type = 'hidden';
+      next.name = 'next';
+      next.value = '/';
+      form.appendChild(next);
+    }
+    next.value = next.value.split('#')[0] + location.hash;
+  });
+})();

@@ -275,22 +275,36 @@ func (p *Panel) signinPage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// returnPath is raw when it is a path on the panel's own origin for a
-// sign-in to come back to, and "/" otherwise. It starts with one "/": a
-// second would name another host. It holds no "\", which a browser reads as
-// "/", anywhere: http.Redirect cleans the path, so "/./\host" leaves as
-// "/\host". net/url parses it, which refuses control characters, since a
-// browser drops a tab or a line break from an address and would read
-// "/\t/host" as "//host".
+// returnPath is the address a sign-in whose form posted raw comes back to:
+// raw's path and query when they are on the panel's own origin, and "/"
+// otherwise. They start with one "/": a second would name another host.
+// They hold no "\", which a browser reads as "/", anywhere: http.Redirect
+// cleans the path, so "/./\host" leaves as "/\host". net/url parses them,
+// which refuses control characters, since a browser drops a tab or a line
+// break from an address and would read "/\t/host" as "//host". raw's
+// fragment comes back after them when it holds idChars alone. returnPath
+// drops any other fragment, since with no query http.Redirect cleans the
+// fragment as part of the path, and "/foxhole#/../\host" would leave as
+// "/\host".
 func returnPath(raw string) string {
-	if raw == "" || raw[0] != '/' || len(raw) > 1 && raw[1] == '/' || strings.Contains(raw, `\`) {
+	pathAndQuery, fragment, _ := strings.Cut(raw, "#")
+	if pathAndQuery == "" || pathAndQuery[0] != '/' || len(pathAndQuery) > 1 && pathAndQuery[1] == '/' || strings.Contains(pathAndQuery, `\`) {
 		return "/"
 	}
-	if _, err := url.Parse(raw); err != nil {
+	if _, err := url.Parse(pathAndQuery); err != nil {
 		return "/"
 	}
-	return raw
+	if fragment == "" || strings.Trim(fragment, idChars) != "" {
+		return pathAndQuery
+	}
+	return pathAndQuery + "#" + fragment
 }
+
+// idChars is every character a fragment may hold and still come back from
+// a sign-in: letters, digits, "-" and "_". Neither a browser nor
+// http.Redirect treats any of them as a separator in an address, and every
+// heading ID the panel writes uses only these.
+const idChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
 
 // authStart begins a sign-in: a fresh state and PKCE verifier, kept under a
 // pending ID the sign-in cookie carries with the address the form posts to
