@@ -75,10 +75,10 @@ func TestCallbackFailureOffersSignInAgain(t *testing.T) {
 	}
 }
 
-// signInThrough follows res to the sign-in page and signs in from it the
-// way a browser does, as the forum's default user: Sign in with the forum
-// posts the page's form, and the forum hands back its code. It returns the
-// callback's answer.
+// signInThrough follows res to the page it leads to, the sign-in page or an
+// error page, and signs in from it the way a browser does, as the forum's
+// default user: the page's sign-in button posts its form, and the forum
+// hands back its code. It returns the callback's answer.
 func signInThrough(t *testing.T, w *testWorld, res *http.Response) *http.Response {
 	t.Helper()
 	doc := parseHTML(t, follow(t, w.b, res))
@@ -142,9 +142,37 @@ func TestSigninFromASaveWithNoSessionLandsOnTheLanding(t *testing.T) {
 	}
 }
 
-// A first try that didn't finish keeps the page the sign-in is for: after
-// Deny, the sign-in page, and after a state that didn't match, the error
-// page's Sign in again, each sign in back to it.
+// codeNeverIssued is the forum handing back a code it never issued, which
+// its token endpoint refuses with a 400.
+func codeNeverIssued(w *testWorld, state string) *http.Response {
+	return w.b.get("/auth/callback?code=never-issued&state=" + url.QueryEscape(state))
+}
+
+// tokenExchangeUnanswered is the forum handing back the default user's code
+// while its token endpoint closes the connection with no answer, as it
+// answers again once the callback is done.
+func tokenExchangeUnanswered(w *testWorld, state string) *http.Response {
+	w.forum.setTokenDrop(true)
+	defer w.forum.setTokenDrop(false)
+	return forumSendsBack(w.b, state)
+}
+
+// groupCheckAnswers is the forum handing back the default user's code while
+// its userinfo endpoint answers that user with status, as it answers again
+// once the callback is done.
+func groupCheckAnswers(status int) func(w *testWorld, state string) *http.Response {
+	return func(w *testWorld, state string) *http.Response {
+		w.forum.setStatus(w.forum.accounts[0], status)
+		defer w.forum.setStatus(w.forum.accounts[0], http.StatusOK)
+		return forumSendsBack(w.b, state)
+	}
+}
+
+// A first try that didn't finish keeps the page the sign-in is for, and the
+// heading its link opened at. After Deny or a refusal at the forum, the
+// sign-in page the callback sends to, and after a state that didn't match
+// or a forum that didn't answer, the error page's Sign in again, each sign
+// in back to it.
 func TestSigninThatDidNotFinishKeepsThePage(t *testing.T) {
 	cases := []struct {
 		name string
@@ -158,17 +186,88 @@ func TestSigninThatDidNotFinishKeepsThePage(t *testing.T) {
 		{"a state that didn't match", func(w *testWorld, _ string) *http.Response {
 			return w.b.get("/auth/callback?code=" + testCode + "&state=not-the-one-issued")
 		}},
+		{"the token endpoint refuses a code it never issued", codeNeverIssued},
+		{"the group check at sign-in gets a 401", groupCheckAnswers(http.StatusUnauthorized)},
+		{"the group check at sign-in gets a 403", groupCheckAnswers(http.StatusForbidden)},
+		{"the token exchange gets no answer", tokenExchangeUnanswered},
+		{"the group check at sign-in gets no answer", func(w *testWorld, state string) *http.Response {
+			w.forum.setUserinfoDrop(true)
+			defer w.forum.setUserinfoDrop(false)
+			return forumSendsBack(w.b, state)
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newTestWorld(t, testHub())
 			id := storedHubID(t, w.st, "hub-1")
-			signin := parseHTML(t, follow(t, w.b, w.b.get("/?hub="+strconv.FormatInt(id, 10))))
-			state := startSigninWith(t, w.forum, w.b, formPosts(t, signin, "/auth/start"))
+			hub := "hub=" + strconv.FormatInt(id, 10)
+			signin := parseHTML(t, follow(t, w.b, w.b.get("/?"+hub+"#edit")))
+			// The sign-in page's script puts the fragment of the address the
+			// gate answered on next, as the visit through the edit link has.
+			form := formPosts(t, signin, "/auth/start")
+			form.Set(paramNext, form.Get(paramNext)+"#edit")
+			state := startSigninWith(t, w.forum, w.b, form)
 
 			res := signInThrough(t, w, tc.fail(w, state))
 
+			if back := location(t, res); back.Path != "/" || back.RawQuery != hub || back.Fragment != "edit" {
+				t.Errorf("the second sign-in comes back to %q, want /?%s#edit", res.Header.Get("Location"), hub)
+			}
 			assertOnHubEditForm(t, parseHTML(t, follow(t, w.b, res)), id)
+		})
+	}
+}
+
+// A sign-in for the landing that didn't finish leaves the sign-in page, or
+// the 502 page, with no page to come back to, and its second sign-in lands
+// on the landing.
+func TestSigninForTheLandingThatDidNotFinishLandsOnTheLanding(t *testing.T) {
+	cases := []struct {
+		name string
+		fail func(w *testWorld, state string) *http.Response
+	}{
+		{"the token endpoint refuses a code it never issued", codeNeverIssued},
+		{"the token exchange gets no answer", tokenExchangeUnanswered},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t)
+			state := startSigninWith(t, w.forum, w.b, formPosts(t, parseHTML(t, w.b.get("/signin")), "/auth/start"))
+
+			page := parseHTML(t, follow(t, w.b, tc.fail(w, state)))
+
+			form := formPosts(t, page, "/auth/start")
+			if next, ok := form[paramNext]; ok {
+				t.Errorf("the page's sign-in comes back to %q, want no page", next)
+			}
+			res := forumSendsBack(w.b, startSigninWith(t, w.forum, w.b, form))
+			if got := pageOf(t, parseHTML(t, follow(t, w.b, res))); got != pageHubs {
+				t.Errorf("the second sign-in lands on page %q, want %s", got, pageHubs)
+			}
+		})
+	}
+}
+
+// A sign-in the group check refuses at the forum's 401 or 403 lands on the
+// sign-in page saying why, while it keeps a page to come back to.
+func TestSigninTheGroupCheckRefusesSaysWhy(t *testing.T) {
+	cases := []struct {
+		status int
+		cause  string
+	}{
+		{http.StatusUnauthorized, "expired"},
+		{http.StatusForbidden, "refused"},
+	}
+	for _, tc := range cases {
+		t.Run(strconv.Itoa(tc.status), func(t *testing.T) {
+			w := newTestWorld(t)
+			state := startSigninWith(t, w.forum, w.b, url.Values{paramNext: {foxholePath}})
+
+			res := groupCheckAnswers(tc.status)(w, state)
+
+			if cause, ok := mainCause(t, follow(t, w.b, res)); !ok || cause != tc.cause {
+				t.Errorf("sign-in page data-cause = %q (present %v), want %q", cause, ok, tc.cause)
+			}
 		})
 	}
 }
