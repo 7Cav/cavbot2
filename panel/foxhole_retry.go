@@ -121,7 +121,7 @@ func (p *Panel) cancelRetry(w http.ResponseWriter, r *http.Request, sess session
 		return
 	}
 	if err != nil {
-		p.pageFailed(w, sess, "foxhole retry cancel", press.cancelAddress(), err, nil)
+		p.pageFailed(w, r, sess, "foxhole retry cancel", press.cancelAddress(), err, nil)
 		return
 	}
 	http.Redirect(w, r, back, http.StatusSeeOther)

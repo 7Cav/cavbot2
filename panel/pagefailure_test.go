@@ -432,3 +432,38 @@ func TestReadFailureAfterTheConnectionClosedIsStillReported(t *testing.T) {
 		t.Errorf("reported %v, want the read's own failure", errs[0])
 	}
 }
+
+// A save the panel itself fails, as when the store refuses its write,
+// answers 500 with the panel's error page (ADR 0019), not a line of plain
+// text. Its Try again loads the page the save was made from by GET, so the
+// save is never posted twice: for a hub edit, the hub's edit form.
+func TestSaveThePanelFailsAnswersTheErrorPageWithTryAgain(t *testing.T) {
+	fake := store.NewFake()
+	if _, err := fake.UpsertHub(context.Background(), testHub()); err != nil {
+		t.Fatalf("UpsertHub: %v", err)
+	}
+	w := newTestWorldOver(t, refusingStore{fake}, newFakeForum(t))
+	signIn(t, w.forum, w.b)
+	id := storedHubID(t, fake, "hub-1")
+	form := updateForm(t, fake)
+	form.Set(fieldDeleteDelay, "30")
+
+	res := w.b.postForm(hubPath(t, fake, "hub-1"), form)
+
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", res.StatusCode)
+	}
+	doc := parseHTML(t, res)
+	if got := failureOf(t, doc); got != string(failureServer) {
+		t.Errorf("the page reports failure %q, want %q", got, failureServer)
+	}
+	retry := retryOf(t, doc)
+	page, fragment := landing(t, w.b, retry, w.b.get(retry))
+	section := hubSection(t, page, id)
+	if findElement(section, "", "data-field", "save") == nil {
+		t.Fatal("Try again opens a page whose hub section shows no edit form")
+	}
+	if target := landedOn(page, fragment); target == nil || !within(target, section) {
+		t.Errorf("Try again opens at fragment %q, want the hub's edit form", fragment)
+	}
+}

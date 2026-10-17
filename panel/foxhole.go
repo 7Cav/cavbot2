@@ -143,11 +143,6 @@ type foxholeView struct {
 	// OpenEntry is the ID of the change log entry the page's address names,
 	// which shows open beside the newest, 0 for none.
 	OpenEntry int64
-	// Address is the address that shows this page by GET, on a page that
-	// answers a Foxhole form, empty on a page load. The page script puts it
-	// in the tab in place of the form's history entry, so a reload never
-	// sends the form again (ADR 0019).
-	Address string
 }
 
 // Pending reports whether the page opens a preview or a confirmation a
@@ -663,7 +658,7 @@ func (p *Panel) renderFoxhole(w http.ResponseWriter, r *http.Request, sess sessi
 		return
 	}
 	if err != nil {
-		p.pageFailed(w, sess, "foxhole page", req.tryAgainAddress(), err, nil)
+		p.pageFailed(w, r, sess, "foxhole page", req.tryAgainAddress(), err, nil)
 		return
 	}
 	if view.ListNotice != nil && view.ListNotice.Status == listNoGuild {
@@ -671,12 +666,9 @@ func (p *Panel) renderFoxhole(w http.ResponseWriter, r *http.Request, sess sessi
 		// with the notice in the list's place.
 		logNoGuildData(sess, "foxhole page", errNoGuildData)
 	}
-	if r.Method == http.MethodPost {
-		view.Address = req.address()
-	}
 	data := sess.page("Foxhole")
-	data.Page, data.Foxhole = pageFoxhole, view
-	p.render(w, status, "foxhole", data)
+	data.Page, data.Foxhole, data.Address = pageFoxhole, view, req.address()
+	p.render(w, r, status, "foxhole", data)
 }
 
 // saveNote is POST /foxhole/notes: one service call, then a redirect to the
@@ -708,7 +700,7 @@ func (p *Panel) saveNote(w http.ResponseWriter, r *http.Request, sess session) {
 		return
 	}
 	if err != nil {
-		p.serverError(w, "note save", err)
+		p.serverError(w, r, &sess, "note save", foxholeRequest{Query: in.Query, Filter: in.Filter, NoteMember: in.MemberID}.tryAgainAddress(), err)
 		return
 	}
 	utils.Info("Panel Foxhole note saved", "member_id", in.MemberID, "username", sess.username, "forum_user_id", sess.userID)
@@ -767,7 +759,7 @@ func (p *Panel) saveApprovals(w http.ResponseWriter, r *http.Request, sess sessi
 		return
 	}
 	if err != nil {
-		p.serverError(w, "approvals save", err)
+		p.serverError(w, r, &sess, "approvals save", foxholeRequest{Query: query, Filter: filter, Selection: distinct(members)}.tryAgainAddress(), err)
 		return
 	}
 	utils.Info("Panel Foxhole approvals saved", "op", op, "members", len(members), "skipped", len(skipped),

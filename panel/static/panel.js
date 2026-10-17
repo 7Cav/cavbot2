@@ -12,7 +12,11 @@
    row, when the row exists: an unavailable role has none. A picker with
    data-options-from renders no rows of its own and copies them from the
    <template> with that ID, so the Settings page's rank pickers share one
-   list of the guild's roles. */
+   list of the guild's roles. A picker sends a change event each time its
+   tags change, and takes a panel:select event carrying the IDs it is to
+   hold, as the unsaved-edit block brings an edit back (issue #775). An ID
+   with no row, as an unavailable role has none, comes back only while a tag
+   still holds it. */
 (function () {
   'use strict';
 
@@ -135,12 +139,18 @@
       add.setAttribute('aria-expanded', 'false');
     }
 
-    // choose makes a tag for the row from the picker's template and hides
-    // the row. A single picker drops its earlier tag first. The label goes
-    // in each [data-label]: the one the tag shows, and the one in its
-    // remove control's name, which the template already ends with the set
-    // the picker edits.
-    function choose(row) {
+    // changed tells whoever listens, as the unsaved-edit block does, that
+    // the tags changed.
+    function changed() {
+      root.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    // tagFor makes a tag for the row from the picker's template and adds
+    // it. A single picker drops its earlier tag first. The label goes in
+    // each [data-label]: the one the tag shows, and the one in its remove
+    // control's name, which the template already ends with the set the
+    // picker edits.
+    function tagFor(row) {
       var tag = blank.content.firstElementChild.cloneNode(true);
       var colour = row.getAttribute('data-colour');
       var label = row.getAttribute('data-label');
@@ -156,6 +166,12 @@
         tags.querySelectorAll('[data-tag]').forEach(function (old) { old.remove(); });
       }
       tags.appendChild(tag);
+    }
+
+    // choose makes a tag for the row and hides the row.
+    function choose(row) {
+      tagFor(row);
+      changed();
       if (single) {
         close();
         add.focus();
@@ -229,9 +245,25 @@
       var remove = e.target.closest('[data-remove]');
       if (!remove) { return; }
       remove.closest('[data-tag]').remove();
+      changed();
       refresh();
       close();
       add.focus();
+    });
+
+    // A panel:select makes the tags the IDs it carries, without moving
+    // focus.
+    root.addEventListener('panel:select', function (e) {
+      var ids = e.detail;
+      tags.querySelectorAll('[data-tag]').forEach(function (tag) {
+        if (ids.indexOf(tag.getAttribute('data-tag')) === -1) { tag.remove(); }
+      });
+      var held = selectedIDs();
+      ids.forEach(function (id) {
+        var row = rows.filter(function (r) { return r.getAttribute('data-option') === id; })[0];
+        if (!held[id] && row) { tagFor(row); }
+      });
+      refresh();
     });
 
     // Focus leaving the picker closes the search. A click on a row moves
@@ -280,6 +312,357 @@
   roots.forEach(setUp);
 })();
 
+/* A reload never sends a form again, ADR 0019 (issues #770 and #775). A
+   page the panel renders in answer to a form names on <main> the address
+   that shows it as it stands. The script puts that address in the tab in
+   place of the form's history entry as the page loads. It adds no entry,
+   so one Back still leaves the page. A reload, a Back or a Forward that
+   loads the page again then loads that address by GET: it sends nothing
+   and shows no refusal note. Without script the tab keeps the form's
+   address, and a reload sends the form again after the browser asks. */
+(function () {
+  'use strict';
+
+  var named = document.querySelector('main[data-address]');
+  if (named) {
+    history.replaceState(history.state, '', named.getAttribute('data-address'));
+  }
+})();
+
+/* Unsaved edits, issue #775 under ADR 0019 (GLOSSARY.md, Unsaved edit).
+   What a panel user typed into a form and has not saved comes back marked
+   not saved yet when the page loads again. Each form whose edit is kept
+   carries data-edit, naming the edit, and data-posted when the server
+   rendered it from what a save posted, or what an address carries, rather
+   than from the store.
+
+   The tab's session storage keeps each edit under the forum user signed
+   in, from the moment its form is sent. On a page that shows a form posted
+   back, as a refused save's does, the edit is what the form shows. As the
+   user types there, or in a form that came back, the edit follows. It
+   keeps the version and the loaded values the page carried, so the panel
+   still refuses a save of it over a newer save as stale.
+
+   A reload, a Back or a Forward brings each edit back into its form on the
+   page. So does the page a failed save's Try again opens, the page a
+   sign-in returns to when a save or a reload met that sign-in, and the page
+   the Foxhole member list notice reloads. The form shows a line saying the
+   edit is not saved yet. Its link opens the form as stored, from the form's
+   data-stored address or else the page again, and drops the edit. Any other
+   load of a page that shows the form as stored drops the edit, a save's own
+   included. So does a page a save redirects to that doesn't show its form.
+   Closing the tab drops every edit. Another forum user signed in on the tab
+   never sees one. Without session storage, or without script, the page
+   goes on and the edit is lost. */
+var unsavedEdits = (function () {
+  'use strict';
+
+  // storageKey names the entry in the tab's session storage that holds the
+  // edits. It holds the forum user they belong to and each edit by name,
+  // with the values its form posts, the names of its form's fields and the
+  // address it was typed at. It also holds the edit whose form was sent
+  // last, until the page that answers it loads, and whether the next page
+  // brings the edits back.
+  var storageKey = 'panel-unsaved-edits';
+
+  // signedInAs is the forum user the rail names, empty on a page with no
+  // panel session, as the sign-in page is.
+  var signedInAs = (function () {
+    var name = document.querySelector('.rail [data-field="username"]');
+    return name ? name.textContent : '';
+  })();
+
+  function read() {
+    try {
+      return JSON.parse(sessionStorage.getItem(storageKey)) || {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  var state = read();
+  if (!state.edits) { state.edits = {}; }
+  if (signedInAs && state.user !== signedInAs) {
+    state = { user: signedInAs, edits: {} };
+  }
+
+  function write() {
+    try {
+      sessionStorage.setItem(storageKey, JSON.stringify(state));
+    } catch (e) {
+      // With no session storage, there is nowhere to keep the edits.
+    }
+  }
+
+  // here is the address the tab shows.
+  function here() {
+    return location.pathname + location.search + location.hash;
+  }
+
+  // shows says whether the tab shows the page at address, whatever block
+  // it opens at.
+  function shows(address) {
+    var at = new URL(address, location.href);
+    return at.pathname + at.search === location.pathname + location.search;
+  }
+
+  // navigation is how the tab came to load this page: navigate, reload or
+  // back_forward.
+  var navigation = (function () {
+    var entries = window.performance && performance.getEntriesByType ? performance.getEntriesByType('navigation') : [];
+    return entries.length ? entries[0].type : 'navigate';
+  })();
+  var again = navigation === 'reload' || navigation === 'back_forward';
+
+  // restoring says whether this page brings the edits back.
+  var restoring = signedInAs !== '' && (again || state.restore === true);
+
+  // valuesOf is what the form posts now, in order, as name and value
+  // pairs.
+  function valuesOf(form) {
+    var values = [];
+    new FormData(form).forEach(function (value, name) { values.push([name, value]); });
+    return values;
+  }
+
+  // namesOf is the name of every field the form has. A box left unticked
+  // posts nothing, so its name alone says it was there.
+  function namesOf(form) {
+    var names = [];
+    Array.from(form.elements).forEach(function (field) {
+      if (field.name && names.indexOf(field.name) === -1) { names.push(field.name); }
+    });
+    return names;
+  }
+
+  // fill puts an edit back in the form's fields: each picker's tags, each
+  // box's and button's check, and each other field's value. A field the
+  // edit's form didn't have keeps what the page gave it.
+  function fill(form, edit) {
+    var given = {};
+    var had = edit.names || [];
+    edit.values.forEach(function (pair) { (given[pair[0]] = given[pair[0]] || []).push(pair[1]); });
+    form.querySelectorAll('[data-picker]').forEach(function (picker) {
+      picker.dispatchEvent(new CustomEvent('panel:select', { detail: given[picker.getAttribute('data-field')] || [] }));
+    });
+    var used = {};
+    Array.from(form.elements).forEach(function (field) {
+      if (!field.name || field.closest('[data-picker]')) { return; }
+      if (field.type === 'checkbox' || field.type === 'radio') {
+        if (had.indexOf(field.name) !== -1) { field.checked = (given[field.name] || []).indexOf(field.value) !== -1; }
+        return;
+      }
+      if (!(field.name in given)) { return; }
+      var i = used[field.name] || 0;
+      used[field.name] = i + 1;
+      if (i < given[field.name].length) { field.value = given[field.name][i]; }
+    });
+  }
+
+  // keep puts what the form posts now in the tab as the edit named, typed
+  // at address, the address the tab shows when none is given.
+  function keep(name, form, address) {
+    state.edits[name] = { values: valuesOf(form), names: namesOf(form), address: address || here() };
+    write();
+  }
+
+  function drop(name) {
+    delete state.edits[name];
+    write();
+  }
+
+  // live is each form whose edit follows what the user types, by the name
+  // of its edit.
+  var live = {};
+
+  function follow(name, form) {
+    live[name] = form;
+  }
+
+  document.addEventListener('input', followTyping);
+  document.addEventListener('change', followTyping);
+  function followTyping(e) {
+    var form = e.target.closest && e.target.closest('form[data-edit]');
+    var name = form && form.getAttribute('data-edit');
+    if (name && live[name] === form) { keep(name, form); }
+  }
+
+  // A form sent the page's way keeps its edit from that moment. One the
+  // script sends itself, as a Foxhole row's note form, cancels the submit.
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (e.defaultPrevented || !form.matches('form[data-edit]')) { return; }
+    var name = form.getAttribute('data-edit');
+    keep(name, form);
+    state.sent = name;
+    write();
+  });
+
+  // restoreNext makes the next page the tab loads bring the edits back.
+  function restoreNext() {
+    state.restore = true;
+    write();
+  }
+
+  // Try again on a failed save's error page brings the edits back.
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('a[data-retry]')) { restoreNext(); }
+  });
+
+  // headingOf is the heading of the block the form sits in.
+  function headingOf(form) {
+    var block = form.querySelector('h2') ? form : form.closest('section, .block');
+    return block && block.querySelector('h2');
+  }
+
+  // storedAddress is the address that opens the form as stored: the
+  // form's data-stored, or this page, opened at the form's heading. A
+  // reload of this page shows a form as stored once its edit is dropped.
+  function storedAddress(form) {
+    if (form.hasAttribute('data-stored')) { return form.getAttribute('data-stored'); }
+    var heading = headingOf(form);
+    return location.pathname + location.search + (heading && heading.id ? '#' + heading.id : '');
+  }
+
+  // storedLink is the link, labelled label, that opens the form of the
+  // edit named as stored, at address, and drops the edit. The tab may show
+  // that very address, where a link would only scroll, so the link loads
+  // it again.
+  function storedLink(name, address, label) {
+    var link = document.createElement('a');
+    link.href = address;
+    link.setAttribute('data-field', 'stored');
+    link.textContent = label;
+    link.addEventListener('click', function (e) {
+      drop(name);
+      delete live[name];
+      if (shows(link.href)) {
+        e.preventDefault();
+        history.replaceState(history.state, '', link.href);
+        location.reload();
+      }
+    });
+    return link;
+  }
+
+  // marked puts the line saying the edit is not saved yet at the top of
+  // the form, where a refused save's note sits, and names it first in the
+  // description of the block's heading. A screen reader reads it out as
+  // focus lands on the heading. text is the line's sentence, which ends
+  // with its link to the form as stored, labelled stored.
+  function marked(form, name, text, stored) {
+    var line = document.createElement('div');
+    line.id = 'unsaved-' + name;
+    line.className = 'note note--neutral';
+    line.setAttribute('data-field', 'unsaved');
+    line.append(text + ' ', storedLink(name, storedAddress(form), stored), '.');
+    var heading = headingOf(form);
+    if (heading && form.contains(heading)) {
+      var row = document.createElement('div');
+      row.className = 'block-row';
+      row.appendChild(line);
+      heading.after(row);
+    } else {
+      form.prepend(line);
+    }
+    if (heading) {
+      var described = heading.getAttribute('aria-describedby');
+      heading.setAttribute('aria-describedby', described ? line.id + ' ' + described : line.id);
+    }
+    return line;
+  }
+
+  // placed is each form on the page whose edit is kept, by the name of its
+  // edit, and restored those of them that brought an edit back.
+  var placed = {};
+  var restored = [];
+
+  if (signedInAs) {
+    var answers = document.querySelector('main[data-address]') !== null;
+    var sent = state.sent;
+    delete state.sent;
+    delete state.restore;
+    document.querySelectorAll('form[data-edit]').forEach(function (form) {
+      var name = form.getAttribute('data-edit');
+      if (placed[name]) { return; }
+      placed[name] = form;
+      var edit = state.edits[name];
+      if (restoring && edit) {
+        fill(form, edit);
+        restored.push(form);
+        keep(name, form);
+        follow(name, form);
+      } else if (form.hasAttribute('data-posted')) {
+        keep(name, form);
+        follow(name, form);
+      } else {
+        delete state.edits[name];
+      }
+    });
+    // A save that went through redirects to a page that answers no form.
+    // When that page doesn't show the form, the save's edit goes too.
+    if (sent && !placed[sent] && !answers && !restoring) { delete state.edits[sent]; }
+    write();
+  }
+
+  // The sign-in page a save or a reload met. A save's sign-in comes back
+  // to the page the form was sent from, which the sign-in form names when
+  // the panel couldn't: it sends a save's visitor to sign in with no page
+  // to come back to. The page the sign-in comes back to brings the edits
+  // back.
+  var signin = document.querySelector('main form[action="/auth/start"]');
+  if (!signedInAs && signin) {
+    var edit = state.sent && state.edits[state.sent];
+    if (edit && !signin.querySelector('input[name="next"]')) {
+      var next = document.createElement('input');
+      next.type = 'hidden';
+      next.name = 'next';
+      next.value = edit.address;
+      signin.appendChild(next);
+    }
+    if (edit || again) {
+      signin.addEventListener('submit', function () {
+        delete state.sent;
+        restoreNext();
+      });
+    }
+  }
+
+  return {
+    restoring: restoring,
+    // edits is each edit the tab keeps for the forum user signed in, by
+    // name.
+    edits: function () { return state.edits; },
+    keep: keep,
+    drop: drop,
+    follow: follow,
+    shows: shows,
+    marked: marked,
+    storedLink: storedLink,
+    storedAddress: storedAddress,
+    restoreNext: restoreNext,
+    // placed reports whether a form on the page took the edit named as
+    // the page loaded.
+    placed: function (name) { return Boolean(placed[name]); },
+    // restored reports whether the form brought an edit back as the page
+    // loaded.
+    restored: function (form) { return restored.indexOf(form) !== -1; }
+  };
+})();
+
+/* The line on a form that brought an edit back, issue #775 under ADR 0019.
+   Two Foxhole forms are left to their own blocks below: a note form's line
+   names the note, and the paste box takes none, since its preview comes
+   back in its place. */
+(function () {
+  'use strict';
+
+  document.querySelectorAll('form[data-edit]').forEach(function (form) {
+    if (!unsavedEdits.restored(form) || form.matches('[data-field="add-form"], [data-field="note-form"]')) { return; }
+    unsavedEdits.marked(form, form.getAttribute('data-edit'), 'These changes are not saved yet. Press Save to keep them, or', 'show what is saved');
+  });
+})();
+
 /* Inline note edit on the Foxhole page (spec #434, ADR 0013). A row's Edit
    link opens the note form in the row's note cell: the same form the link
    opens above the list when script is off, cloned from the page's
@@ -297,37 +680,21 @@
 
    A save from a panel session that has ended answers with the sign-in
    page. The row then says whether the note saved, beside a Sign in again
-   button. The button keeps the notes typed in the page's rows in the
-   tab's session storage, and the Foxhole page the sign-in comes back to
-   opens them again. Without script the save shows the sign-in page, and
-   the typed note is lost.
+   button. The button keeps the notes typed in the page's rows as unsaved
+   edits (issue #775 under ADR 0019), and the Foxhole page the sign-in
+   comes back to opens them again, marked not saved yet. Without script the
+   save shows the sign-in page, and the typed note is lost.
 
    The note form above the list, the one the Edit link opens without
-   script, posts the page's way. A refused save there answers with the page
-   itself, which names the note form's address, and the script puts that
-   address in the tab (issue #770 under ADR 0019). When the tab leaves the
-   page, the script keeps the text in that form's box the same way, with
-   the note the form loaded and the address the tab shows. A load of that
-   address, as a reload or a Back that loads the page again, opens the form
-   with the text, marked not saved yet. Saving it over a note someone
-   changed meanwhile is refused as stale. Any other load drops it. */
+   script, posts the page's way, and its unsaved edit is kept as any form's
+   is. A reload of a refused save there, or a Back that loads the page
+   again, opens the form with the text, marked not saved yet. Saving it
+   over a note someone changed meanwhile is refused as stale. */
 (function () {
   'use strict';
 
   var template = document.querySelector('[data-note-template]');
   if (!template) { return; }
-
-  // answersForm says whether this page answers a sent form, as a refused
-  // save does. Such a page names the address that shows it.
-  var answersForm = document.querySelector('main[data-address]') !== null;
-
-  // blockForm is the note form the page opens above the list, null for
-  // none.
-  var blockForm = document.querySelector('main [data-field="note-block"] [data-field="note-form"]');
-
-  // unsaved is blockForm while it holds an unsaved edit: text a save sent
-  // and the panel refused, or that text brought back, null otherwise.
-  var unsaved = answersForm && blockForm && blockForm.querySelector('[data-error]') ? blockForm : null;
 
   // memberOf is the ID of the member whose row holds the cell.
   function memberOf(cell) {
@@ -491,7 +858,7 @@
   // nothing, so each takes the neutral stripe.
   var endedUnsaved = 'Your session ended, so this note was not saved. Sign in again and it will be here to save.';
   var endedSaved = 'The note saved, but your session has ended. Sign in again before your next change.';
-  var notSavedYet = 'This note is not saved yet. Press Save to save it.';
+  var notSavedYet = 'This note is not saved yet. Press Save to save it, or';
 
   // noteLine is a note with the ID given, for the top of a note form. It
   // takes the red stripe only when refused says it refuses something.
@@ -544,59 +911,34 @@
     return template.content.querySelector('[data-field="cancel_note"]').getAttribute('href').split('#')[0];
   }
 
-  // signedInAs is the forum user the rail names.
-  function signedInAs() {
-    return document.querySelector('.rail [data-field="username"]').textContent;
+  // editOf is the name a member's note is kept under as an unsaved edit.
+  function editOf(member) {
+    return 'note-' + member;
   }
 
-  // keptKey names the entry in the tab's session storage that holds the
-  // kept notes through the forum's sign-in. Closing the tab drops it.
-  var keptKey = 'foxhole-kept-notes';
-
-  // waiting is the notes the tab's storage holds for the forum user signed
-  // in, as a kept note whose block didn't load leaves there.
-  function waiting() {
-    try {
-      var kept = JSON.parse(sessionStorage.getItem(keptKey));
-      return kept && kept.user === signedInAs() ? kept.notes : [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  // store puts the notes in the tab's storage, with the forum user who
-  // typed them. Without session storage the page goes on, and the notes
-  // are lost, as without script.
-  function store(notes) {
-    try {
-      sessionStorage.setItem(keptKey, JSON.stringify({ user: signedInAs(), notes: notes }));
-    } catch (e) {
-      // With no session storage, there is nowhere to keep them.
-    }
-  }
-
-  // keep stores each note form open in a row whose text differs from the
-  // note it loaded, after any notes still waiting in storage. The form of
-  // the member named first goes first.
+  // keep keeps each note form open in a row whose text differs from the
+  // note it loaded as an unsaved edit typed at this view's address, where
+  // the sign-in comes back to. The form of the member named first goes
+  // before the rest, and any edit kept already, as one whose block didn't
+  // load, before them all.
   function keep(first) {
-    var notes = waiting();
-    document.querySelectorAll('[data-note-cell] [data-field="note-form"]').forEach(function (form) {
+    var forms = Array.from(document.querySelectorAll('[data-note-cell] [data-field="note-form"]')).filter(function (form) {
       var values = posted(form);
-      var note = { member: values.member, loaded: values.loaded, note: values.note };
-      if (note.note.trim() === note.loaded) { return; }
-      if (note.member === first) {
-        notes.unshift(note);
-      } else {
-        notes.push(note);
-      }
+      return values.note.trim() !== values.loaded;
     });
-    store(notes);
+    forms.sort(function (a, b) { return (posted(b).member === first) - (posted(a).member === first); });
+    forms.forEach(function (form) {
+      var name = editOf(posted(form).member);
+      unsavedEdits.drop(name);
+      unsavedEdits.keep(name, form, viewAddress());
+    });
   }
 
   // signInAgain keeps the typed notes, then starts a sign-in that comes
-  // back to this view.
+  // back to this view, which opens them again.
   function signInAgain(first) {
     keep(first);
+    unsavedEdits.restoreNext();
     var start = document.createElement('form');
     var next = document.createElement('input');
     start.method = 'post';
@@ -665,13 +1007,12 @@
   // notLoaded is what the page says when a kept note's block didn't load.
   var notLoaded = 'A note you typed before signing in again didn\'t load.';
 
-  // unopened puts a note whose block didn't load back in storage, and says
-  // so above the list, once however many didn't. Its Reload the page
+  // unopened says above the list that a note's block didn't load, once
+  // however many didn't. The tab keeps the note. Its Reload the page
   // button keeps the notes typed in the rows too, so the next load opens
   // them all. The line is an alert, so a screen reader reads it out as it
   // appears.
-  function unopened(note) {
-    store(waiting().concat([note]));
+  function unopened() {
     if (document.querySelector('[data-field="kept-unopened"]')) { return; }
     var said = document.createElement('div');
     var reload = document.createElement('button');
@@ -689,100 +1030,93 @@
     aboveList(said);
   }
 
+  // keptLine is the line at the top of a note form that brought a note
+  // back, saying it is not saved yet. It ends with a link that opens the
+  // member's note form as stored, at stored, and drops the note.
+  function keptLine(name, stored) {
+    var el = noteLine('note-kept', notSavedYet);
+    el.setAttribute('data-field', 'unsaved');
+    el.append(' ', unsavedEdits.storedLink(name, stored, 'show the saved note'), '.');
+    return el;
+  }
+
   // openAboveList opens a kept note in a "Note on ..." block above the
   // list, where the Edit link opens a note form without script, for a
   // member this view doesn't list. The block comes from this view's page
   // with the member's note form open, loaded in the background. Its Save
   // posts the page's way, without script.
-  function openAboveList(note, first) {
+  function openAboveList(name, note, first) {
     var url = new URL(viewAddress(), location.href);
     url.searchParams.set('note', note.member);
+    url.hash = 'note';
     fetch(url, { credentials: 'same-origin' })
       .then(answerOf)
       .then(function (answer) {
         var page = answer.ok && answer.doc.querySelector('main[data-page="foxhole"]');
         var block = page && page.querySelector('[data-field="note-block"]');
         if (!block) {
-          unopened(note);
+          unopened();
           return;
         }
         block = document.adoptNode(block);
         var form = block.querySelector('[data-field="note-form"]');
         form.querySelector('[name="loaded"]').value = note.loaded;
         form.querySelector('[name="note"]').value = note.note;
-        describe(form, noteLine('note-kept', notSavedYet));
+        describe(form, keptLine(name, url.href));
         ownIDs(block, note.member);
         aboveList(block);
+        unsavedEdits.follow(name, form);
         if (first) { focusBox(form.querySelector('[data-note-input]')); }
       })
-      .catch(function () { unopened(note); });
+      .catch(unopened);
   }
 
-  // here is the address the tab shows, without its fragment.
-  function here() {
-    return location.pathname + location.search;
+  // noteOf reads a note brought back off the values its form posted.
+  function noteOf(values) {
+    var note = {};
+    values.forEach(function (pair) { note[pair[0]] = pair[1]; });
+    return note;
   }
 
-  // intoBlock puts a note's unsaved edit in blockForm when that form is
-  // the member's, marked not saved yet, and reports whether it did. The
-  // mark is the block's heading's description too, as a refusal is, since
-  // the page opens at that heading.
-  function intoBlock(note) {
-    if (!blockForm || blockForm.querySelector('[name="member"]').value !== note.member) { return false; }
-    blockForm.querySelector('[name="loaded"]').value = note.loaded;
-    blockForm.querySelector('[name="note"]').value = note.note;
-    var said = noteLine('note-kept', notSavedYet);
-    describe(blockForm, said);
-    blockForm.closest('[data-field="note-block"]').querySelector('h2').setAttribute('aria-describedby', said.id);
-    unsaved = blockForm;
-    return true;
-  }
-
-  // bringBack opens the notes kept before a sign-in, on the first Foxhole
-  // page the tab loads after it, when the forum user who typed them is
-  // signed in. The unsaved edit of a refused save opens only on a load of
-  // the address it was typed at. That load drops them either way. Each opens in
-  // its row, or in the note form above the list when that form is its
-  // member's, with its typed text and the note its form loaded, so the
-  // server refuses as stale a save over a note someone changed meanwhile.
-  // The first in a row takes focus.
+  // bringBack opens the notes kept through a sign-in on the view the
+  // sign-in comes back to, or on a reload of it, each with its typed text
+  // and the note its form loaded, so the server refuses as stale a save
+  // over a note someone changed meanwhile. A note whose form is the one
+  // above the list came back into it as the page loaded, and takes its line
+  // here. Each other opens in its row, or in a block above the list for a
+  // member this view doesn't list. The first in a row takes focus. Cancel
+  // in a row drops the note, and a save drops it once it goes through.
   function bringBack() {
-    var kept;
-    try {
-      kept = JSON.parse(sessionStorage.getItem(keptKey));
-      sessionStorage.removeItem(keptKey);
-    } catch (e) {
-      return;
+    var block = document.querySelector('main [data-field="note-block"] [data-field="note-form"]');
+    if (block && unsavedEdits.restored(block)) {
+      var said = keptLine(block.getAttribute('data-edit'), unsavedEdits.storedAddress(block));
+      describe(block, said);
+      block.closest('[data-field="note-block"]').querySelector('h2').setAttribute('aria-describedby', said.id);
     }
-    if (!kept || kept.user !== signedInAs()) { return; }
+    if (!unsavedEdits.restoring) { return; }
+    var edits = unsavedEdits.edits();
     var opened = 0;
-    kept.notes.forEach(function (note) {
-      if (note.address && (answersForm || note.address !== here())) { return; }
+    Object.keys(edits).forEach(function (name) {
+      if (name.indexOf('note-') !== 0 || unsavedEdits.placed(name) || !unsavedEdits.shows(edits[name].address)) { return; }
+      var note = noteOf(edits[name].values);
       var first = opened++ === 0;
-      if (intoBlock(note)) { return; }
       var cell = document.querySelector('[data-member="' + CSS.escape(note.member) + '"] [data-note-cell]');
       if (!cell) {
-        openAboveList(note, first);
+        openAboveList(name, note, first);
         return;
       }
       var form = fill({ member: note.member, loaded: note.loaded, note: note.note });
-      describe(form, noteLine('note-kept', notSavedYet));
-      var input = mount(cell, form, restorer(cell));
+      form.setAttribute('data-edit', name);
+      describe(form, keptLine(name, cell.querySelector('[data-field="edit_note"]').href));
+      var restore = restorer(cell);
+      var input = mount(cell, form, function () {
+        unsavedEdits.drop(name);
+        restore();
+      });
+      unsavedEdits.follow(name, form);
       if (first) { focusBox(input); }
     });
   }
-
-  // Leaving the page keeps the unsaved edit of a refused save, with the
-  // note its form loaded and the address the tab shows, in place of one
-  // from an earlier visit. Text the same as the note loaded is no edit.
-  window.addEventListener('pagehide', function () {
-    if (!unsaved) { return; }
-    var values = posted(unsaved);
-    if (values.note.trim() === values.loaded) { return; }
-    store(waiting().filter(function (note) { return !note.address; }).concat([
-      { member: values.member, loaded: values.loaded, note: values.note, address: here() }
-    ]));
-  });
 
   function save(cell, form, restore) {
     var input = form.querySelector('[data-note-input]');
@@ -827,6 +1161,7 @@
           }
           return;
         }
+        unsavedEdits.drop(editOf(id));
         swap(answer.doc, '[data-field="changes"]');
         announce(answer.doc);
         var fresh = answer.doc.querySelector('[data-member="' + CSS.escape(id) + '"] [data-note-cell]');
@@ -898,23 +1233,14 @@
    its own address names. On the Foxhole page, at /foxhole, the tab's
    address names the boxes ticked now, so a reload, or a Back that loads the
    page again, ticks them as the manager left them. A page that answers a
-   sent form, as a refused Approve does, names the address at /foxhole that
-   shows it, and the script puts that address in the tab in place of the
-   form's as the page loads. So a reload there sends no form: it loads the
-   page as it stands, with the boxes the manager left ticked and no refusal
-   note. The server renders each control naming no member, so without
-   script the selection drops, and a box a manager unticked never comes back
-   ticked. Without script a page that answers a sent form keeps its
-   address, and a reload there sends the form again after the browser asks. */
+   sent form, as a refused Approve does, has the address at /foxhole that
+   shows it in the tab by now (ADR 0019), so the boxes changed there go in
+   that address too, and a reload loads the page as it stands, with the
+   boxes the manager left ticked and no refusal note. The server renders
+   each control naming no member, so without script the selection drops,
+   and a box a manager unticked never comes back ticked. */
 (function () {
   'use strict';
-
-  // The tab's history entry takes the address in place of the form's, and
-  // no entry is added, so one Back still leaves the page.
-  var named = document.querySelector('main[data-address]');
-  if (named) {
-    history.replaceState(history.state, '', named.getAttribute('data-address'));
-  }
 
   // selection is the IDs of the members selected now.
   function selection() {
@@ -978,29 +1304,22 @@
   });
 })();
 
-/* Keeping the add preview's paste, issue #770 under ADR 0019. The paste
-   box's Preview answers with the add preview, which names the address that
-   shows it: /foxhole with the role picked, at the preview's heading, and no
-   pasted line. The paste box has no line cap, and the proxy in front of the
-   panel turns away an address over 8KB. So when the tab leaves a page at
-   an add preview's address, the script keeps what the page's first paste
-   box holds, the one above the preview when there is one, in the tab's
-   session storage, with the forum user signed in. A load of such an
-   address puts that paste back in the paste box and loads the preview
+/* Keeping the add preview's paste, issues #770 and #775 under ADR 0019. The
+   paste box's Preview answers with the add preview, which names the address
+   that shows it: /foxhole with the role picked, at the preview's heading,
+   and no pasted line. The paste box has no line cap, and the proxy in front
+   of the panel turns away an address over 8KB. So the paste is an unsaved
+   edit the tab keeps, as every form's is. When a load of an add preview's
+   address brings it back into the paste box, the script loads the preview
    again in the background through the address the Preview posts to. The
    preview then takes its place above the action blocks, and the latest
    report folds, as on the page the Preview answers with. A line that
    matches several members comes back unpicked, as the preview offers it.
-   Pressing the add's Confirm drops the paste from the tab. In another tab,
-   or without script, the address opens the paste box empty with the role
-   picked. */
+   The add's Confirm keeps the paste as it is sent too, so a Confirm that
+   goes through drops it. In another tab, or without script, the address
+   opens the paste box empty with the role picked. */
 (function () {
   'use strict';
-
-  // pasteKey names the entry in the tab's session storage that holds the
-  // paste. Closing the tab drops it.
-  var pasteKey = 'foxhole-unsaved-paste';
-  var starting = false;
 
   // atAddPreview says whether the tab shows an add preview's address. A
   // page that answers a sent form shows it by now.
@@ -1008,50 +1327,12 @@
     return new URLSearchParams(location.search).has('add');
   }
 
-  // signedInAs is the forum user the rail names, empty for none.
-  function signedInAs() {
-    var name = document.querySelector('.rail [data-field="username"]');
-    return name ? name.textContent : '';
-  }
-
-  // pasteBox is the page's first paste box, null for none.
-  function pasteBox() {
-    return document.querySelector('main [data-field="add-form"]');
-  }
-
-  // keep puts what the paste box holds in the tab's storage, or drops what
-  // is there when the box is empty. Without session storage the paste is
-  // lost on a reload, as without script.
-  function keep(form) {
-    var lines = form.querySelector('[name="lines"]').value;
-    var role = form.querySelector('[name="role"]:checked');
-    try {
-      if (lines.trim() === '' || !role) {
-        sessionStorage.removeItem(pasteKey);
-        return;
-      }
-      sessionStorage.setItem(pasteKey, JSON.stringify({ user: signedInAs(), role: role.value, lines: lines }));
-    } catch (e) {
-      // With no session storage, there is nowhere to keep it.
-    }
-  }
-
-  // waiting is the paste the tab keeps for the forum user signed in, null
-  // for none.
-  function waiting() {
-    try {
-      var paste = JSON.parse(sessionStorage.getItem(pasteKey));
-      return paste && paste.user === signedInAs() ? paste : null;
-    } catch (e) {
-      return null;
-    }
-  }
-
   // show puts the answer's add preview where the page the Preview answers
   // with has it, above whatever runs, the latest report and the action
   // blocks, and the answer's latest report, folded, in place of this
   // page's. The paste box it was filled in goes back to how the page
-  // rendered it, since the preview has its own. Focus moves to the
+  // rendered it, since the preview has its own, and the paste the tab
+  // keeps follows what is typed in the preview's. Focus moves to the
   // preview's heading when the address names it.
   function show(doc, form) {
     var preview = doc.querySelector('main[data-page="foxhole"] [data-field="add-preview"]');
@@ -1063,44 +1344,24 @@
     var mine = document.querySelector('main [data-field="report"]');
     if (report && mine) { mine.replaceWith(document.adoptNode(report)); }
     form.reset();
+    var box = preview.querySelector('[data-field="add-form"]');
+    if (box) { unsavedEdits.follow('add', box); }
     if (location.hash === '#add-preview') { preview.querySelector('#add-preview').focus(); }
   }
 
-  // bringBack fills the paste box with the paste the tab keeps, and loads
-  // its preview from the address the box's Preview posts to. An answer with no preview, as a sign-in page or a page that
-  // can't match lines while the member list is partial, leaves the paste in
-  // the box to preview by hand.
-  function bringBack(paste, form) {
-    form.querySelector('[name="lines"]').value = paste.lines;
-    var role = form.querySelector('[name="role"][value="' + CSS.escape(paste.role) + '"]');
-    if (role) { role.checked = true; }
-    fetch(form.getAttribute('action').split('#')[0], { method: 'POST', body: new URLSearchParams({ role: paste.role, lines: paste.lines }), credentials: 'same-origin' })
+  // preview loads the preview of the paste the paste box brought back, from
+  // the address its Preview posts to. An answer with no preview, as a
+  // sign-in page or a page that can't match lines while the member list is
+  // partial, leaves the paste in the box to preview by hand.
+  function preview(form) {
+    fetch(form.getAttribute('action').split('#')[0], { method: 'POST', body: new URLSearchParams(new FormData(form)), credentials: 'same-origin' })
       .then(function (res) { return res.text(); })
       .then(function (text) { show(new DOMParser().parseFromString(text, 'text/html'), form); })
       .catch(function () {});
   }
 
-  document.addEventListener('submit', function (e) {
-    if (e.target.matches('form[data-field="add-confirm"]')) {
-      starting = true;
-      try {
-        sessionStorage.removeItem(pasteKey);
-      } catch (err) {
-        // With no session storage, nothing was kept.
-      }
-    }
-  });
-
-  window.addEventListener('pagehide', function () {
-    var form = pasteBox();
-    if (!starting && form && atAddPreview()) { keep(form); }
-  });
-
-  var form = pasteBox();
-  var paste = waiting();
-  if (form && paste && atAddPreview() && !document.querySelector('main[data-address]')) {
-    bringBack(paste, form);
-  }
+  var form = document.querySelector('main [data-field="add-form"]');
+  if (form && atAddPreview() && unsavedEdits.restored(form)) { preview(form); }
 })();
 
 /* The member list notice on the Foxhole page (spec #434, ADR 0013). While
@@ -1113,8 +1374,9 @@
    keeps this page's address, whatever the link in each answer names. An
    answer with no notice means the list has arrived, and the page reloads,
    unless a text box on it holds text, which a reload would lose. The notice
-   then says the list has arrived and links the reload. Without script the
-   Reload link does the same by hand. */
+   then says the list has arrived and links the reload. Either reload brings
+   the page's unsaved edits back, as the add preview's paste. Without script
+   the Reload link does the same by hand. */
 (function () {
   'use strict';
 
@@ -1138,6 +1400,7 @@
 
   function arrived() {
     if (!holdsText()) {
+      unsavedEdits.restoreNext();
       location.replace(address);
       return;
     }
@@ -1148,6 +1411,10 @@
     notice.setAttribute('data-list-status', 'arrived');
     notice.replaceChildren('The member list has arrived. ', link);
   }
+
+  notice.addEventListener('click', function (e) {
+    if (e.target.closest('[data-field="reload"]')) { unsavedEdits.restoreNext(); }
+  });
 
   // refresh puts the answer's notice in this one. The notice is a live
   // region, so it keeps its element and changes its contents only, and

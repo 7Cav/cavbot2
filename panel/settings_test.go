@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -331,7 +332,7 @@ func TestRankRolesSaveThatDropsACavMemberWaitsOnItsPreview(t *testing.T) {
 	w := withSergeantInSpawn(t)
 	before := readSavedState(t, w.st)
 
-	res := w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": ""}))
+	res := follow(t, w.b, w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": ""})))
 
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200 with the preview", res.StatusCode)
@@ -370,7 +371,7 @@ func TestRankRolesSaveSkipsThePreviewOnlyWhenItDropsNobody(t *testing.T) {
 	assertRedirect(t, w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"RCT": "role-hq"})), settingsPath)
 
 	w.discord.setListStatus(commands.MemberListArriving, true)
-	res := w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"CPL": ""}))
+	res := follow(t, w.b, w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"CPL": ""})))
 
 	preview := previewIn(t, parseHTML(t, res))
 	if preview == nil {
@@ -565,7 +566,7 @@ func TestRankRolesSectionSaysWhenARankHasNoRole(t *testing.T) {
 // channels as they stand now. Its Confirm then saves.
 func TestRankRolesConfirmIsRefusedWhenItsPreviewMoved(t *testing.T) {
 	w := withSergeantInSpawn(t)
-	res := w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": ""}))
+	res := follow(t, w.b, w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": ""})))
 	shown := previewIn(t, parseHTML(t, res))
 	if shown == nil {
 		t.Fatal("the save shows no preview")
@@ -602,5 +603,115 @@ func TestRankRolesConfirmIsRefusedWhenItsPreviewMoved(t *testing.T) {
 
 	if got := storedRankRoles(t, w.st).Roles["SGT"]; got != "" {
 		t.Errorf("SGT's role after the second Confirm = %q, want none", got)
+	}
+}
+
+// rankFields is the rank roles a Rank roles form posts, keyed by field, and
+// the version it posts beside them.
+func rankFields(form url.Values) (map[string]string, string) {
+	roles := map[string]string{}
+	for field, values := range form {
+		if strings.HasPrefix(field, rankRoleFieldPrefix) {
+			roles[field] = values[0]
+		}
+	}
+	return roles, form.Get(fieldVersion)
+}
+
+// rankRoleEntries is how many entries the Rank roles section's change log
+// shows.
+func rankRoleEntries(t *testing.T, doc *html.Node) int {
+	t.Helper()
+	return len(valuesOf(rankRolesSection(t, doc), "data-entry"))
+}
+
+// A rank roles save that waits on its preview answers with a redirect to
+// the address that shows the preview (ADR 0019), so a reload of the
+// preview loads it again and never saves. The address carries what the
+// save posted: in a browser that holds nothing else, the preview's Confirm
+// posts every rank's role and the version as the save did. With every rank
+// filled the address stays under the request line the proxy in front of
+// the panel allows.
+func TestRankRolesSaveThatWaitsOnItsPreviewRedirectsToItsAddress(t *testing.T) {
+	w := withSergeantInSpawn(t)
+	form := rankRolesForm(t, w.st, map[string]string{"SGT": "role-hq"})
+	posted, version := rankFields(form)
+	if len(posted) != len(commands.DefaultRankLadder().Ranks()) {
+		t.Fatalf("the save posts %d ranks' roles, want every rank filled", len(posted))
+	}
+
+	res := w.b.postForm("/rank-roles", form)
+
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", res.StatusCode, http.StatusSeeOther)
+	}
+	address := res.Header.Get("Location")
+	if len(address) >= proxyRequestLine {
+		t.Errorf("the preview's address is %d bytes long, want it under the proxy's %d-byte request line", len(address), proxyRequestLine)
+	}
+	fresh := newBrowser(t, w.p)
+	signIn(t, w.forum, fresh)
+	preview := previewIn(t, parseHTML(t, follow(t, fresh, fresh.get(address))))
+	if preview == nil {
+		t.Fatalf("a GET of %s shows no preview", address)
+	}
+	if dropped, channels := previewCounts(t, preview); dropped != "1" || channels != "1" {
+		t.Errorf("the preview counts %s members and %s channels, want 1 and 1", dropped, channels)
+	}
+	confirmed, confirmedVersion := rankFields(formPosts(t, preview, "/rank-roles"))
+	if !maps.Equal(confirmed, posted) || confirmedVersion != version {
+		t.Errorf("the preview's Confirm posts %v at version %q, want what the save posted, %v at version %q", confirmed, confirmedVersion, posted, version)
+	}
+}
+
+// A reload of a rank roles preview loads it again from its address and
+// saves nothing, even once the save would stop nobody counting as a Cav
+// member. The preview then shows that no member stops, with its Confirm.
+func TestRankRolesPreviewReloadedOnceNobodyDropsShowsZeroAndSavesNothing(t *testing.T) {
+	w := withSergeantInSpawn(t)
+	address := location(t, w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": "role-hq"}))).String()
+	entries := rankRoleEntries(t, parseHTML(t, w.b.get(settingsPath)))
+	w.discord.dropMember("user-sgt")
+
+	preview := previewIn(t, parseHTML(t, follow(t, w.b, w.b.get(address))))
+
+	if preview == nil {
+		t.Fatalf("a GET of %s shows no preview", address)
+	}
+	if dropped, _ := previewCounts(t, preview); dropped != "0" {
+		t.Errorf("the preview counts %s members, want 0", dropped)
+	}
+	if findElement(preview, "", "data-field", "confirm") == nil {
+		t.Error("the preview offers no Confirm")
+	}
+	if got := rankRoleEntries(t, parseHTML(t, w.b.get(settingsPath))); got != entries {
+		t.Errorf("the Rank roles change log shows %d entries after the reload, want %d: nothing saved", got, entries)
+	}
+}
+
+// The preview's address carries the version the save posted, so a Confirm
+// pressed after another panel admin saved the rank roles is refused as
+// stale and leaves their save in place.
+func TestRankRolesConfirmFromAStaleAddressIsRefusedAsStale(t *testing.T) {
+	w := withSergeantInSpawn(t)
+	address := location(t, w.b.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"SGT": "role-hq"}))).String()
+	preview := previewIn(t, parseHTML(t, follow(t, w.b, w.b.get(address))))
+	if preview == nil {
+		t.Fatalf("a GET of %s shows no preview", address)
+	}
+	other := secondBrowser(t, w)
+	assertRedirect(t, other.postForm("/rank-roles", rankRolesForm(t, w.st, map[string]string{"RCT": "role-mp"})), settingsPath)
+
+	res := w.b.postForm("/rank-roles", formPosts(t, preview, "/rank-roles"))
+
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", res.StatusCode)
+	}
+	if kind, _ := refusalIn(rankRolesSection(t, parseHTML(t, res))); kind != refusalStale {
+		t.Errorf("refusal is data-error=%q, want %s", kind, refusalStale)
+	}
+	stored, _ := rankFields(formPosts(t, parseHTML(t, w.b.get(settingsPath)), "/rank-roles"))
+	if stored[rankRoleField("RCT")] != "role-mp" || stored[rankRoleField("SGT")] != testRankSGT {
+		t.Errorf("the Settings page shows RCT %q and SGT %q, want the other admin's save: role-mp and %s still", stored[rankRoleField("RCT")], stored[rankRoleField("SGT")], testRankSGT)
 	}
 }

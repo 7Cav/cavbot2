@@ -251,8 +251,9 @@ func (p *Panel) Handler() http.Handler {
 	// A panic in a handler is recovered here and reported through the same
 	// path every other goroutine uses (ADR 0001), before net/http's own
 	// recovery would print it with the remote address through the stdlib
-	// logger. The request still gets an answer: serverError's text without
-	// its capture, so the panic is one event. The recovery runs before the
+	// logger. The request still gets an answer: serverErrorText, as plain
+	// text, since the error page might not render either, and with no
+	// capture, so the panic is one event. The recovery runs before the
 	// gate, and the answer needs no session. A panic can come after a store
 	// write, so the answer never says nothing changed.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -274,7 +275,7 @@ const paramNext = "next"
 // names to come back to as it stands: authStart checks it, since a form
 // posted from anywhere else skips this page.
 func (p *Panel) signinPage(w http.ResponseWriter, r *http.Request) {
-	p.render(w, http.StatusOK, "signin", pageData{
+	p.render(w, r, http.StatusOK, "signin", pageData{
 		Title: "Sign in",
 		Cause: causeFromQuery(r.URL.Query().Get("cause")),
 		Next:  r.URL.Query().Get(paramNext),
@@ -318,32 +319,52 @@ const idChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-
 // confidential client sends PKCE S256 anyway; the forum verifies it when
 // present.
 func (p *Panel) authStart(w http.ResponseWriter, r *http.Request) {
+	next := returnPath(r.PostFormValue(paramNext))
 	state, err := newID()
 	if err != nil {
-		p.serverError(w, "sign-in start", err)
+		p.serverError(w, r, nil, "sign-in start", signinURL(causeNone, next), err)
 		return
 	}
 	verifier := oauth2.GenerateVerifier()
-	id, err := p.sessions.addPending(pendingSignin{state: state, verifier: verifier, started: panelClock.Now(),
-		next: returnPath(r.PostFormValue(paramNext))})
+	id, err := p.sessions.addPending(pendingSignin{state: state, verifier: verifier, started: panelClock.Now(), next: next})
 	if err != nil {
-		p.serverError(w, "sign-in start", err)
+		p.serverError(w, r, nil, "sign-in start", signinURL(causeNone, next), err)
 		return
 	}
 	setCookie(w, signinCookie, id)
 	http.Redirect(w, r, p.oauth.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier)), http.StatusSeeOther)
 }
 
-// serverErrorText is the answer to a request the panel itself could not
-// complete. It says nothing of whether a change took effect.
+// serverErrorText is the plain-text answer to a request the panel failed
+// where no page answers: a handler that panicked, and the recording status
+// the deploy workflow reads. It says nothing of whether a change took
+// effect.
 const serverErrorText = "the panel could not complete the request"
 
 // serverError is a failure inside the panel itself, not a forum answer: the
-// random source or a template. It captures to Sentry (ADR 0001) and answers
-// a bare 500.
-func (p *Panel) serverError(w http.ResponseWriter, step string, err error) {
+// random source or a store write. It captures to Sentry (ADR 0001) and
+// answers with failedInside's page.
+func (p *Panel) serverError(w http.ResponseWriter, r *http.Request, sess *session, step, retry string, err error) {
 	utils.CaptureError("Panel request failed", err, "step", step)
-	http.Error(w, serverErrorText, http.StatusInternalServerError)
+	p.failedInside(w, r, sess, retry)
+}
+
+// failedInside renders the error page with a 500 for a request the panel
+// itself failed, whose failure is already captured. Try again leads to
+// retry, the GET address of the page the request was made from, so a save
+// is never posted twice, and a page answering a POST names it as its
+// address (ADR 0019). The failure can come after a store write, so the
+// page never says nothing changed. sess is the request's panel session,
+// nil for a request made signed out, whose page keeps the signed-out rail.
+func (p *Panel) failedInside(w http.ResponseWriter, r *http.Request, sess *session, retry string) {
+	const title = "The panel could not finish this"
+	data := pageData{Title: title}
+	if sess != nil {
+		data = sess.page(title)
+	}
+	data.Failure, data.Retry, data.Address = failureServer, retry, retry
+	data.Message = "Cavbot2 hit a fault of its own and stopped before it finished. Try again shows the page as it stands now."
+	p.render(w, r, http.StatusInternalServerError, "error", data)
 }
 
 // authCallback is the one GET that creates state, defended by the state value
@@ -353,18 +374,18 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 	clearCookie(w, signinCookie)
 	c, err := r.Cookie(signinCookie)
 	if err != nil {
-		p.signinFailed(w, failureSigninNotStarted, "")
+		p.signinFailed(w, r, failureSigninNotStarted, "")
 		return
 	}
 	pending, ok := p.sessions.takePending(c.Value, panelClock.Now())
 	if !ok {
-		p.signinFailed(w, failureSigninTooSlow, "")
+		p.signinFailed(w, r, failureSigninTooSlow, "")
 		return
 	}
 	q := r.URL.Query()
 	if q.Get("state") == "" || q.Get("state") != pending.state {
 		utils.Warn("Panel sign-in refused: state mismatch")
-		p.signinFailed(w, failureSigninMismatch, pending.next)
+		p.signinFailed(w, r, failureSigninMismatch, pending.next)
 		return
 	}
 	if q.Get("error") != "" {
@@ -377,7 +398,7 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	code := q.Get("code")
 	if code == "" {
-		p.signinFailed(w, failureSigninNoCode, pending.next)
+		p.signinFailed(w, r, failureSigninNoCode, pending.next)
 		return
 	}
 
@@ -395,7 +416,7 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		utils.Warn("Panel token exchange failed", "error", err)
-		p.signinForumUnavailable(w, pending.next)
+		p.signinForumUnavailable(w, r, pending.next)
 		return
 	}
 
@@ -406,7 +427,7 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 		sess.identify(user, p.accessOf(user))
 		id, err := p.sessions.add(sess)
 		if err != nil {
-			p.serverError(w, "session create", err)
+			p.serverError(w, r, nil, "session create", signinURL(causeNone, pending.next), err)
 			return
 		}
 		utils.Info("Panel sign-in", "username", user.Username, "forum_user_id", user.UserID, "discord_id", sess.discord.id,
@@ -415,7 +436,7 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, pending.next, http.StatusSeeOther)
 	case checkUnavailable:
 		utils.Warn("Panel group check unavailable at sign-in", "error", err)
-		p.signinForumUnavailable(w, pending.next)
+		p.signinForumUnavailable(w, r, pending.next)
 	default:
 		utils.Info("Panel sign-in refused", "cause", string(outcome.cause()), "username", user.Username, "forum_user_id", user.UserID)
 		http.Redirect(w, r, signinURL(outcome.cause(), pending.next), http.StatusSeeOther)
@@ -439,10 +460,10 @@ var signinFailures = map[failure]struct{ title, message string }{
 // page for the failure and a 400. Its Sign in again starts a fresh sign-in
 // that comes back to next, the pending sign-in's address when the callback
 // found one.
-func (p *Panel) signinFailed(w http.ResponseWriter, f failure, next string) {
+func (p *Panel) signinFailed(w http.ResponseWriter, r *http.Request, f failure, next string) {
 	utils.Info("Panel sign-in not completed", "failure", string(f))
 	text := signinFailures[f]
-	p.render(w, http.StatusBadRequest, "error", pageData{Title: text.title, Message: text.message, Failure: f, SignInAgain: true, Next: next})
+	p.render(w, r, http.StatusBadRequest, "error", pageData{Title: text.title, Message: text.message, Failure: f, SignInAgain: true, Next: next})
 }
 
 // forumUnavailableTitle is the title of the error page a forum outage
@@ -451,23 +472,24 @@ const forumUnavailableTitle = "The forum did not answer"
 
 // forumUnavailable renders the error page with the 502 the forum outage
 // earns to a signed-in visitor. The page keeps the rail's identity and says
-// the session is kept.
-func (p *Panel) forumUnavailable(w http.ResponseWriter, sess session) {
+// the session is kept. A page answering a save names Try again's address,
+// whose GET meets the same outage until the forum answers again.
+func (p *Panel) forumUnavailable(w http.ResponseWriter, r *http.Request, sess session) {
 	data := sess.page(forumUnavailableTitle)
 	data.Message = "Cavbot2 could not reach the forum. Nothing changed and you are still signed in."
-	data.Retry = "/"
+	data.Retry, data.Address = "/", "/"
 	data.Failure = failureForum
-	p.render(w, http.StatusBadGateway, "error", data)
+	p.render(w, r, http.StatusBadGateway, "error", data)
 }
 
 // signinForumUnavailable renders the 502 page for a sign-in the forum did
 // not answer. Its Sign in again starts a fresh sign-in that comes back to
 // next, the pending sign-in's address, and carries no next for the landing.
-func (p *Panel) signinForumUnavailable(w http.ResponseWriter, next string) {
+func (p *Panel) signinForumUnavailable(w http.ResponseWriter, r *http.Request, next string) {
 	if !namesAPage(next) {
 		next = ""
 	}
-	p.render(w, http.StatusBadGateway, "error", pageData{Title: forumUnavailableTitle,
+	p.render(w, r, http.StatusBadGateway, "error", pageData{Title: forumUnavailableTitle,
 		Message: "The forum did not answer while you were signing in, so you are not signed in. Sign in again takes you back to the forum.",
 		Failure: failureForum, SignInAgain: true, Next: next})
 }
@@ -538,7 +560,7 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 			next(w, r, sess)
 		case checkUnavailable:
 			utils.Warn("Panel group check unavailable, session kept", "username", sess.username, "error", err)
-			p.forumUnavailable(w, sess)
+			p.forumUnavailable(w, r, sess)
 		default:
 			p.endSession(w, c.Value, sess, string(outcome.cause()))
 			http.Redirect(w, r, signinURL(outcome.cause(), returnAddressOf(r)), http.StatusSeeOther)
@@ -557,8 +579,8 @@ func (p *Panel) withPanelAdmin(next func(http.ResponseWriter, *http.Request, ses
 // no-access page at the page's address, a page load included, where the
 // hub page sends them on to the page they land on.
 func (p *Panel) withSettingsPage(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
-	return p.withAccess(func(a access) bool { return a.panelAdmin }, func(w http.ResponseWriter, _ *http.Request, sess session) {
-		p.noAccess(w, sess, noAccessRefused)
+	return p.withAccess(func(a access) bool { return a.panelAdmin }, func(w http.ResponseWriter, r *http.Request, sess session) {
+		p.noAccess(w, r, sess, noAccessRefused, settingsPath)
 	}, next)
 }
 
@@ -586,7 +608,9 @@ func (p *Panel) withAccess(opens func(access) bool, refuse, next func(http.Respo
 // root, where sign-in and the rail's mark lead, so a Foxhole manager who
 // reaches it gets the Foxhole page, and anyone else the Recordings page.
 // Every save gets the no-access page, saying the session's forum groups
-// don't allow it and nothing changed, and does nothing.
+// don't allow it and nothing changed, and does nothing. Its address is the
+// Settings page's: every gate admits a panel admin, so the Settings page
+// gives the same no-access page to anyone refused here.
 func (p *Panel) refuse(w http.ResponseWriter, r *http.Request, sess session) {
 	if r.Method == http.MethodGet {
 		http.Redirect(w, r, sess.access.landing(), http.StatusSeeOther)
@@ -599,7 +623,7 @@ func (p *Panel) refuse(w http.ResponseWriter, r *http.Request, sess session) {
 		utils.Info("Panel save refused: not a panel admin", "path", r.URL.Path,
 			"username", sess.username, "forum_user_id", sess.userID)
 	}
-	p.noAccess(w, sess, noAccessRefused)
+	p.noAccess(w, r, sess, noAccessRefused, settingsPath)
 }
 
 // The not-found page's titles and sentences: an address with no page, one
@@ -614,18 +638,19 @@ const (
 )
 
 // noPage is any GET the panel has no route for.
-func (p *Panel) noPage(w http.ResponseWriter, _ *http.Request, sess session) {
-	p.notFound(w, sess, noPageTitle, noPageMessage)
+func (p *Panel) noPage(w http.ResponseWriter, r *http.Request, sess session) {
+	p.notFound(w, r, sess, noPageTitle, noPageMessage)
 }
 
 // notFound renders the not-found page with a 404 and the title and
 // sentence given. The rail stays, and the way back leads to the page the
-// session lands on.
-func (p *Panel) notFound(w http.ResponseWriter, sess session, title, message string) {
+// session lands on. A GET of the address a save was posted to finds nothing
+// either, so a page answering a save names it.
+func (p *Panel) notFound(w http.ResponseWriter, r *http.Request, sess session, title, message string) {
 	data := sess.page(title)
-	data.Failure, data.Message = failureNotFound, message
+	data.Failure, data.Message, data.Address = failureNotFound, message, r.URL.Path
 	data.Back, data.BackLabel = sess.access.landing(), sess.access.landingLabel()
-	p.render(w, http.StatusNotFound, "error", data)
+	p.render(w, r, http.StatusNotFound, "error", data)
 }
 
 // The no-access page's sentences, one for each reason the page is shown.
@@ -643,11 +668,12 @@ const (
 
 // noAccess renders the no-access page, saying message, one of the
 // no-access page's sentences: the session's groups don't open what was
-// asked for.
-func (p *Panel) noAccess(w http.ResponseWriter, sess session, message string) {
+// asked for. address is a GET address that gives the session the same
+// page, which the page names when it answers a POST (ADR 0019).
+func (p *Panel) noAccess(w http.ResponseWriter, r *http.Request, sess session, message, address string) {
 	data := sess.page("No access")
-	data.Message = message
-	p.render(w, http.StatusForbidden, "noaccess", data)
+	data.Message, data.Address = message, address
+	p.render(w, r, http.StatusForbidden, "noaccess", data)
 }
 
 // authSignout ends the session the cookie names and nothing else: no group
@@ -690,7 +716,7 @@ func (p *Panel) homePage(w http.ResponseWriter, r *http.Request, sess session) {
 		}
 		id, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || id <= 0 {
-			p.notFound(w, sess, noHubTitle, noHubMessage)
+			p.notFound(w, r, sess, noHubTitle, noHubMessage)
 			return
 		}
 		*param.id = id
@@ -718,7 +744,7 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 	page, err := p.hubs.forPage(reads).page(ctx, req)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		p.notFound(w, sess, noHubTitle, noHubMessage)
+		p.notFound(w, r, sess, noHubTitle, noHubMessage)
 		return
 	case errors.Is(err, context.Canceled):
 		// An abandoned page load: the connection closed before the page
@@ -728,22 +754,41 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 		utils.Info("Panel page abandoned", "step", "hub page", "username", sess.username, "forum_user_id", sess.userID)
 		return
 	case errors.Is(err, errNoGuildData):
-		p.noGuildData(w, sess, "hub page", pageAddress(req), err)
+		p.noGuildData(w, r, sess, "hub page", pageAddress(req), err)
 		return
 	case err != nil:
 		var report *budgetReport
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			report = reads.report(hubPageBudget)
 		}
-		p.pageFailed(w, sess, "hub page", pageAddress(req), err, report)
+		p.pageFailed(w, r, sess, "hub page", pageAddress(req), err, report)
 		return
 	}
 	if page.Error == errHubGone {
 		status = http.StatusNotFound
 	}
 	data := sess.page("Hubs")
-	data.Page, data.Hubs = pageHubs, page
-	p.render(w, status, "home", data)
+	data.Page, data.Hubs, data.Address = pageHubs, page, req.hubPageAddress()
+	p.render(w, r, status, "home", data)
+}
+
+// hubPageAddress is the GET address that shows the hub page the request
+// asks for as it stands then, for a page that answers a form (ADR 0019): the page
+// with the hub's edit form and the remove preview the request names,
+// opened at the form that was refused, or at the remove preview. The
+// refusal and the form as posted came with the POST, so they don't come
+// back.
+func (req pageRequest) hubPageAddress() string {
+	q := url.Values{}
+	if req.HubID != 0 {
+		q.Set("hub", strconv.FormatInt(req.HubID, 10))
+	}
+	anchor := req.Refused
+	if req.Remove != 0 {
+		q.Set("remove", strconv.FormatInt(req.Remove, 10))
+		anchor = formRemove
+	}
+	return (&url.URL{Path: "/", RawQuery: q.Encode(), Fragment: anchor}).String()
 }
 
 // pageFailed reports a page read that failed to Sentry (ADR 0001) and
@@ -751,8 +796,10 @@ func (p *Panel) renderHubs(w http.ResponseWriter, r *http.Request, sess session,
 // the time budget ran out, and could not load for any other failure. Try
 // again leads to retry, the page's GET address, so a refused save's page is
 // loaded afresh and never posted twice. report, set when the hub page's
-// budget had run out by the failure, goes on the event as time_budget.
-func (p *Panel) pageFailed(w http.ResponseWriter, sess session, step, retry string, err error, report *budgetReport) {
+// budget had run out by the failure, goes on the event as time_budget. A
+// page answering a POST names retry as its address too, so a reload loads
+// what Try again does.
+func (p *Panel) pageFailed(w http.ResponseWriter, r *http.Request, sess session, step, retry string, err error, report *budgetReport) {
 	kv := []any{"step", step}
 	if report != nil {
 		kv = append(kv, "time_budget", report)
@@ -765,8 +812,8 @@ func (p *Panel) pageFailed(w http.ResponseWriter, sess session, step, retry stri
 			"Cavbot2 took too long to load this page. Nothing changed and you are still signed in."
 	}
 	data := sess.page(title)
-	data.Failure, data.Message, data.Retry = kind, message, retry
-	p.render(w, http.StatusServiceUnavailable, "error", data)
+	data.Failure, data.Message, data.Retry, data.Address = kind, message, retry, retry
+	p.render(w, r, http.StatusServiceUnavailable, "error", data)
 }
 
 // pageAddress is the GET address of the page a request shows: the hub list,
@@ -786,7 +833,7 @@ func pageAddress(req pageRequest) string {
 func (p *Panel) openHub(w http.ResponseWriter, r *http.Request, sess session) {
 	id, ok := hubIDOf(r)
 	if !ok {
-		p.notFound(w, sess, noHubTitle, noHubMessage)
+		p.notFound(w, r, sess, noHubTitle, noHubMessage)
 		return
 	}
 	http.Redirect(w, r, hubEditAddress(id), http.StatusSeeOther)
@@ -797,14 +844,15 @@ func (p *Panel) openHub(w http.ResponseWriter, r *http.Request, sess session) {
 // sent it to the bot: for a moment after a deploy, or through an outage.
 // That is Discord's delay, which the bot's reconnect logs already record,
 // and nothing on-call can fix, so it is one INFO line and no Sentry event.
-// retry is the GET address Try again leads to.
-func (p *Panel) noGuildData(w http.ResponseWriter, sess session, step, retry string, err error) {
+// retry is the GET address Try again leads to, and the address a page
+// answering a save names, so a reload loads what Try again does.
+func (p *Panel) noGuildData(w http.ResponseWriter, r *http.Request, sess session, step, retry string, err error) {
 	logNoGuildData(sess, step, err)
 	data := sess.page("Discord has not sent the server's data")
-	data.Failure, data.Retry = failureNoGuildData, retry
+	data.Failure, data.Retry, data.Address = failureNoGuildData, retry, retry
 	data.Message = "Discord hasn't sent Cavbot2 this server's channels and roles. That happens for a moment after the bot restarts, " +
 		"and while Discord has trouble. Nothing changed and you are still signed in."
-	p.render(w, http.StatusServiceUnavailable, "error", data)
+	p.render(w, r, http.StatusServiceUnavailable, "error", data)
 }
 
 // logNoGuildData is the one INFO line of a page load or a save that found
@@ -848,7 +896,7 @@ func (p *Panel) createHub(w http.ResponseWriter, r *http.Request, sess session) 
 		return
 	}
 	if err != nil {
-		p.saveFailed(w, sess, "hub create", "/", err)
+		p.saveFailed(w, r, sess, "hub create", "/", err)
 		return
 	}
 	utils.Info("Panel hub created", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
@@ -868,7 +916,7 @@ func (p *Panel) registerHub(w http.ResponseWriter, r *http.Request, sess session
 		return
 	}
 	if err != nil {
-		p.saveFailed(w, sess, "hub register", "/", err)
+		p.saveFailed(w, r, sess, "hub register", "/", err)
 		return
 	}
 	utils.Info("Panel hub registered", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
@@ -889,13 +937,13 @@ func (p *Panel) saving(r *http.Request) (context.Context, *hubService) {
 // saveFailed answers a save that failed without a refusal. One that found
 // no data for the guild wrote nothing and gets the page that says so; any
 // other failure is the panel's own. retry is the GET address of the page
-// the save was made from.
-func (p *Panel) saveFailed(w http.ResponseWriter, sess session, step, retry string, err error) {
+// the save was made from, where either page's Try again leads.
+func (p *Panel) saveFailed(w http.ResponseWriter, r *http.Request, sess session, step, retry string, err error) {
 	if errors.Is(err, errNoGuildData) {
-		p.noGuildData(w, sess, step, retry, err)
+		p.noGuildData(w, r, sess, step, retry, err)
 		return
 	}
-	p.serverError(w, step, err)
+	p.serverError(w, r, &sess, step, retry, err)
 }
 
 // renderRefused answers a refused save with the page again, the form as
@@ -936,7 +984,7 @@ func hubIDOf(r *http.Request) (int64, bool) {
 func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) {
 	id, ok := hubIDOf(r)
 	if !ok {
-		p.notFound(w, sess, noHubTitle, noHubSaveMessage)
+		p.notFound(w, r, sess, noHubTitle, noHubSaveMessage)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -965,7 +1013,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 	ctx, hubs := p.saving(r)
 	hub, err := hubs.update(ctx, id, in, sess.actor())
 	if errors.Is(err, store.ErrNotFound) {
-		p.notFound(w, sess, noHubTitle, noHubSaveMessage)
+		p.notFound(w, r, sess, noHubTitle, noHubSaveMessage)
 		return
 	}
 	if refusal, ok := asFieldError(err); ok {
@@ -973,7 +1021,7 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 		return
 	}
 	if err != nil {
-		p.saveFailed(w, sess, "hub update", pageAddress(pageRequest{HubID: id}), err)
+		p.saveFailed(w, r, sess, "hub update", pageAddress(pageRequest{HubID: id}), err)
 		return
 	}
 	utils.Info("Panel hub updated", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
@@ -988,12 +1036,19 @@ func (p *Panel) updateHub(w http.ResponseWriter, r *http.Request, sess session) 
 func (p *Panel) removeHub(w http.ResponseWriter, r *http.Request, sess session) {
 	id, ok := hubIDOf(r)
 	if !ok {
-		p.notFound(w, sess, noHubTitle, noHubSaveMessage)
+		p.notFound(w, r, sess, noHubTitle, noHubSaveMessage)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "the form could not be read", http.StatusBadRequest)
 		return
+	}
+	// The preview over the page Remove was pressed on. Remove pressed on
+	// the hub's edit form answers with that form again. It is the removed
+	// hub's own, whatever the Confirm posts.
+	preview := pageRequest{Remove: id}
+	if r.PostForm.Get(fieldRemoveFrom) == formEdit {
+		preview.HubID = id
 	}
 	ctx, hubs := p.saving(r)
 	hub, entryID, err := hubs.remove(ctx, id, r.PostForm.Get(fieldVersion), sess.actor())
@@ -1002,17 +1057,13 @@ func (p *Panel) removeHub(w http.ResponseWriter, r *http.Request, sess session) 
 		return
 	}
 	if refusal, ok := asFieldError(err); ok {
-		req := pageRequest{Remove: id, Error: refusal, Refused: formRemove}
-		// Remove pressed on the hub's edit form answers with that form
-		// again. It is the removed hub's own, whatever the Confirm posts.
-		if r.PostForm.Get(fieldRemoveFrom) == formEdit {
-			req.HubID = id
-		}
+		req := preview
+		req.Error, req.Refused = refusal, formRemove
 		p.renderRefused(w, r, sess, req, "hub_id", id)
 		return
 	}
 	if err != nil {
-		p.serverError(w, "hub remove", err)
+		p.serverError(w, r, &sess, "hub remove", preview.hubPageAddress(), err)
 		return
 	}
 	utils.Info("Panel hub removed", "hub_id", hub.ID, "hub_channel_id", hub.HubChannelID,
@@ -1037,7 +1088,7 @@ func (p *Panel) saveModerators(w http.ResponseWriter, r *http.Request, sess sess
 		return
 	}
 	if err != nil {
-		p.saveFailed(w, sess, "moderators save", "/", err)
+		p.saveFailed(w, r, sess, "moderators save", "/", err)
 		return
 	}
 	utils.Info("Panel guild moderator roles saved", "role_ids", saved.RoleIDs, "username", sess.username, "forum_user_id", sess.userID)
@@ -1061,7 +1112,7 @@ func (p *Panel) saveRecordingRoles(w http.ResponseWriter, r *http.Request, sess 
 		return
 	}
 	if err != nil {
-		p.saveFailed(w, sess, "recording roles save", settingsPath, err)
+		p.saveFailed(w, r, sess, "recording roles save", settingsPath, err)
 		return
 	}
 	utils.Info("Panel recording roles saved", "role_ids", saved.RoleIDs, "username", sess.username, "forum_user_id", sess.userID)

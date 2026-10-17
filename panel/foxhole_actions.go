@@ -731,7 +731,7 @@ func (p *Panel) startAction(w http.ResponseWriter, r *http.Request, sess session
 		return
 	}
 	if err != nil {
-		p.serverError(w, "Foxhole action start", fmt.Errorf("start %s: %w", what, err))
+		p.serverError(w, r, &sess, "Foxhole action start", back.tryAgainAddress(), fmt.Errorf("start %s: %w", what, err))
 		return
 	}
 	http.Redirect(w, r, foxholePath, http.StatusSeeOther)
