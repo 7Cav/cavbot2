@@ -57,6 +57,13 @@ One trooper's record in MILPACS, the regiment's personnel record system.
 A member's handle on the forum, also stored on their milpac. The bot finds a
 member's milpac by it.
 
+**Connected Discord account**:
+The Discord account a forum user has connected to their forum account on the
+forum's connected accounts page. The Discord ID a milpac names is this
+account's, so a milpac whose forum user connected none names no Discord
+account.
+_Avoid_: linked Discord, Discord link, discordId.
+
 **Roster**:
 The troopers the milpacs list under a department or position group, such as
 everyone in S1 or in D/ACD.
