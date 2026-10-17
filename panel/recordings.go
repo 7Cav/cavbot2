@@ -29,11 +29,11 @@ const recordingsPath = "/recordings"
 // the page while the API doesn't answer.
 const milpacTimeout = 3 * time.Second
 
-// lookupReuse is how long a recording page goes by the session's latest
+// lookAgainAfter is how long a recording page goes by the session's latest
 // milpac lookup before it looks again, counted from when that lookup ended.
 // The page a sign-in lands on comes just after the sign-in's own lookup, so
 // it doesn't wait out a second one while the 7Cav API doesn't answer.
-const lookupReuse = 3 * time.Second
+const lookAgainAfter = 3 * time.Second
 
 // lookUpDiscord is what the milpac of the forum user with the username
 // given says of their connected Discord account, found through the 7Cav
@@ -75,11 +75,11 @@ func (p *Panel) discordAtSignin(ctx context.Context, username string) discordAcc
 }
 
 // lookAgain runs the milpac lookup again before a recording page renders,
-// for a session whose latest lookup failed or found no connected Discord
-// account and ended lookupReuse or more ago, and keeps what it finds on the
-// session and on sess. A failed lookup reaches Sentry under a message of
-// its own, apart from sign-in's. It reports false when the browser left
-// during the lookup, and then the page answers nothing.
+// when retries says the session's latest lookup calls for it. It keeps
+// what it finds on the session and on sess. A failed lookup reaches
+// Sentry under a message of its own, apart from sign-in's. It reports
+// false when the browser left during the lookup, and then the page
+// answers nothing.
 func (p *Panel) lookAgain(r *http.Request, sess *session, step string) bool {
 	if !sess.discord.retries(panelClock.Now()) {
 		return true

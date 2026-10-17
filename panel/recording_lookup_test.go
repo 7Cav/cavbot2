@@ -19,6 +19,10 @@ import (
 // the recording pages say so and say what to do, in place of saying the
 // starter has none or that the recording isn't theirs.
 
+// pageLooksAgainAfter is how long a recording page goes by the session's
+// latest milpac lookup, counted from when it ended, before it looks again.
+const pageLooksAgainAfter = 3 * time.Second
+
 // checkAgainIn is the note a page shows when the panel couldn't find the
 // visitor's Discord account, and the note's Check again link.
 func checkAgainIn(t *testing.T, doc *html.Node) (note, link *html.Node) {
@@ -101,9 +105,9 @@ func pressCheckAgain(t *testing.T, b *browser, doc *html.Node) *html.Node {
 }
 
 // A starter the panel couldn't find at sign-in is found once the 7Cav API
-// recovers, or once their milpac names their Discord account. The next load
-// of the Recordings page, or of the recording's address, from the note's
-// Check again 3 seconds after the sign-in's lookup, shows their recording,
+// recovers, or once their milpac names their Discord account. They press
+// the note's Check again 3 seconds after the sign-in's lookup. The
+// Recordings page, or the recording's address, then shows their recording,
 // and the load after it makes no milpac lookup.
 func TestRecordingPagesFindTheStarterOnceTheMilpacLookupCan(t *testing.T) {
 	recovers := func(api *milpacAPI) { api.restore("Xray.X") }
@@ -128,7 +132,7 @@ func TestRecordingPagesFindTheStarterOnceTheMilpacLookupCan(t *testing.T) {
 			signInAs(t, w.forum, w.b, x.account)
 			unmatched := parseHTML(t, w.b.get(tc.page(rec)))
 			tc.later(w.milpacs)
-			w.clock.advance(3 * time.Second)
+			w.clock.advance(pageLooksAgainAfter)
 
 			doc := pressCheckAgain(t, w.b, unmatched)
 
@@ -154,7 +158,7 @@ func TestRecordingsPageGoesByItsOwnMilpacLookup(t *testing.T) {
 		w.milpacs.set("Xray.X", "")
 		signInAs(t, w.forum, w.b, x.account)
 		w.milpacs.fail("Xray.X", http.StatusInternalServerError)
-		w.clock.advance(3 * time.Second)
+		w.clock.advance(pageLooksAgainAfter)
 
 		assertDiscordNote(t, parseHTML(t, w.b.get(recordingsPath)), noteLookupFailed, recordingsPath)
 	})
@@ -165,7 +169,7 @@ func TestRecordingsPageGoesByItsOwnMilpacLookup(t *testing.T) {
 		w.milpacs.fail("Xray.X", http.StatusInternalServerError)
 		signInAs(t, w.forum, w.b, x.account)
 		w.milpacs.fail("Xray.X", http.StatusNotFound)
-		w.clock.advance(3 * time.Second)
+		w.clock.advance(pageLooksAgainAfter)
 
 		assertEmptyRecordingsPageFor(t, w.b.get(recordingsPath), noRecordingsYet, true)
 		if n := w.milpacs.lookupsDuring("Xray.X", func() { w.b.get(recordingsPath) }); n != 0 {
@@ -194,7 +198,7 @@ func TestRecordingsPageGoesByALookupThatEndedUnderThreeSecondsAgo(t *testing.T) 
 			signInAs(t, w.forum, w.b, x.account)
 			w.milpacs.restore("Xray.X")
 			w.milpacs.set("Xray.X", x.discordID)
-			w.clock.advance(3*time.Second - time.Millisecond)
+			w.clock.advance(pageLooksAgainAfter - time.Millisecond)
 
 			var doc *html.Node
 			n := w.milpacs.lookupsDuring("Xray.X", func() { doc = parseHTML(t, w.b.get(recordingsPath)) })
@@ -265,14 +269,14 @@ func TestRecordingRoutesOfAStarterThePanelCantFindLeadToItsAddress(t *testing.T)
 }
 
 // A starter whose sign-in found their Discord account opens the Recordings
-// page and their recording's address with no further milpac lookup, then
-// and later.
+// page and their recording's address with no further milpac lookup, even
+// once a page would look again after a lookup that failed.
 func TestRecordingPagesOfAStarterFoundAtSignInLookNoMore(t *testing.T) {
 	w := newTestWorld(t)
 	a := w.addStarter(5001, "Able.A", "discord-a")
 	rec := w.record(t, a.discordID)
 	signInAs(t, w.forum, w.b, a.account)
-	w.clock.advance(3 * time.Second)
+	w.clock.advance(pageLooksAgainAfter)
 
 	n := w.milpacs.lookupsDuring("Able.A", func() {
 		w.b.get(recordingsPath)
@@ -334,7 +338,7 @@ func TestSignInWhileTheMilpacLookupHangsWaitsOutOneLookup(t *testing.T) {
 			case <-time.After(neverReleased):
 				t.Fatal("the sign-in never reached the milpac lookup")
 			}
-			// The 7Cav API still hangs for the lookup after.
+			// The 7Cav API still hangs, so the next lookup waits too.
 			onPage := w.milpacs.hold("Xray.X")
 			w.clock.advance(3 * time.Second)
 			var res *http.Response
@@ -402,7 +406,7 @@ func TestFailedMilpacLookupsAreReportedOnceEach(t *testing.T) {
 	atSignin := sentryMessages(t, reported)
 	follow(t, w.b, res)
 	landed := sentryMessages(t, reported)
-	w.clock.advance(3 * time.Second)
+	w.clock.advance(pageLooksAgainAfter)
 
 	w.b.get(recordingsPath)
 
@@ -423,7 +427,7 @@ func TestRecordingsPageOfAStarterWithNoConnectedDiscordAccountIsLoggedNotReporte
 	w.milpacs.set("Xray.X", "")
 	reported := recordSentry(t)
 	signInAs(t, w.forum, w.b, x.account)
-	w.clock.advance(3 * time.Second)
+	w.clock.advance(pageLooksAgainAfter)
 	logs := captureLogs(t)
 
 	w.b.get(recordingsPath)
@@ -447,7 +451,7 @@ func TestRecordingsPageAbandonedDuringTheMilpacLookupIsNotReported(t *testing.T)
 	x := w.addStarter(5003, "Xray.X", "discord-x")
 	w.milpacs.fail("Xray.X", http.StatusInternalServerError)
 	signInAs(t, w.forum, w.b, x.account)
-	w.clock.advance(3 * time.Second)
+	w.clock.advance(pageLooksAgainAfter)
 	reported := recordSentry(t)
 	waiting := w.milpacs.hold("Xray.X")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -482,7 +486,7 @@ func TestFoundDiscordIDOutlastsAConcurrentGroupCheck(t *testing.T) {
 	rec := w.record(t, x.discordID)
 	w.milpacs.fail("Xray.X", http.StatusInternalServerError)
 	signInAs(t, w.forum, w.b, x.account)
-	w.clock.advance(3 * time.Second)
+	w.clock.advance(pageLooksAgainAfter)
 	tab := newBrowser(t, w.p)
 	tab.cookies[sessionCookie] = w.b.cookies[sessionCookie]
 	waiting, release := w.forum.holdUserinfo()
@@ -525,7 +529,7 @@ func TestFoundDiscordIDOutlastsASlowerFailedLookup(t *testing.T) {
 	rec := w.record(t, x.discordID)
 	w.milpacs.fail("Xray.X", http.StatusInternalServerError)
 	signInAs(t, w.forum, w.b, x.account)
-	w.clock.advance(3 * time.Second)
+	w.clock.advance(pageLooksAgainAfter)
 	tab := newBrowser(t, w.p)
 	tab.cookies[sessionCookie] = w.b.cookies[sessionCookie]
 	waiting := w.milpacs.hold("Xray.X")

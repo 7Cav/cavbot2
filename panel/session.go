@@ -84,11 +84,12 @@ const (
 )
 
 // retries reports whether a recording page loaded at the time given looks
-// the account up again: after a lookup that failed or found no connected
-// Discord account, once lookupReuse has passed since it ended. A found ID
-// and a missing milpac stand for the rest of the session.
+// the account up again. It does after a lookup that failed or found no
+// connected Discord account, once lookAgainAfter has passed since that
+// lookup ended. A found ID and a missing milpac stand for the rest of the
+// session.
 func (d discordAccount) retries(at time.Time) bool {
-	return (d.lookup == discordLookupFailed || d.lookup == discordNotConnected) && !at.Before(d.ended.Add(lookupReuse))
+	return (d.lookup == discordLookupFailed || d.lookup == discordNotConnected) && !at.Before(d.ended.Add(lookAgainAfter))
 }
 
 // note is the note a recording page shows in place of the user's own
