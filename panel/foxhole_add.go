@@ -28,6 +28,10 @@ const (
 	foxholeAddPath        = "/foxhole/add"
 )
 
+// addPreviewAnchor is the ID foxhole.html gives the add preview's heading,
+// which the paste box's Preview and an add preview's address name.
+const addPreviewAnchor = "add-preview"
+
 // fieldLines is the paste box's field beside fieldRole: the lines pasted.
 // The add preview's Confirm posts the lines it previewed under it, beside
 // who each line named, as fieldNamed, and a pick row's choice picked, as

@@ -281,16 +281,13 @@ var foxholePostCases = map[string]foxholePostCase{
 		doc := parseHTML(t, previewPaste(t, w.b, page, addForm(t, page), "external", memberDoe.Username))
 		return formPosts(t, doc, foxholeAddPath), startedAction(t, w, store.ChangeAdd)
 	},
-	foxholeRosterPreviewPath: func(t *testing.T, w *testWorld, api *rosterAPI) (url.Values, func(*testing.T, *http.Response)) {
-		form := formPosts(t, parseHTML(t, w.b.get(foxholePath)), foxholeRosterPreviewPath)
-		form.Set(fieldUnit, "D/ACD")
-		calls := api.requestCount()
-		return form, func(t *testing.T, res *http.Response) {
+	// The address Preview roster posted to before it became a GET, which a
+	// tab loaded before then still posts to.
+	foxholeRosterPreviewPath: func(t *testing.T, w *testWorld, _ *rosterAPI) (url.Values, func(*testing.T, *http.Response)) {
+		return url.Values{fieldUnit: {"D/ACD"}}, func(t *testing.T, res *http.Response) {
 			t.Helper()
-			rosterPreviewBlock(t, parseHTML(t, res))
-			if api.requestCount() == calls {
-				t.Error("the manager's roster preview made no request of the 7Cav API")
-			}
+			doc, fragment := landing(t, w.b, foxholeRosterPreviewPath, res)
+			landedOnBlock(t, doc, fragment, "roster-preview")
 		}
 	},
 	foxholeRosterPath: func(t *testing.T, w *testWorld, _ *rosterAPI) (url.Values, func(*testing.T, *http.Response)) {

@@ -5,6 +5,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"sync"
 	"testing"
@@ -128,18 +129,46 @@ func TestRosterBlockOffersTheUnitsTheCommandsPickerOffers(t *testing.T) {
 }
 
 // previewRoster loads the Foxhole page and presses Preview roster in its Add
-// a unit's roster block with the unit given picked, the way a browser posts
-// the form.
+// a unit's roster block with the unit given picked, the way a browser sends
+// the form, and returns the page it lands on.
 func previewRoster(t *testing.T, w *testWorld, unit string) *http.Response {
 	t.Helper()
-	page := parseHTML(t, w.b.get(foxholePath))
-	form := findElement(rosterBlock(t, page), "form", "data-field", "roster-form")
-	if form == nil {
-		t.Fatal("the Add a unit's roster block has no form")
+	_, res := pressPreviewRoster(t, w, unit)
+	return follow(t, w.b, res)
+}
+
+// pressPreviewRoster is previewRoster, which also returns the address the
+// press sent the browser to.
+func pressPreviewRoster(t *testing.T, w *testWorld, unit string) (string, *http.Response) {
+	t.Helper()
+	return pressPreviewRosterOn(t, w.b, parseHTML(t, w.b.get(foxholePath)), unit)
+}
+
+// pressPreviewRosterOn presses Preview roster on page, the Foxhole page the
+// browser shows, with the unit given picked, the way a browser sends the
+// form. It returns the address the press sent the browser to and the
+// answer.
+func pressPreviewRosterOn(t *testing.T, b *browser, page *html.Node, unit string) (string, *http.Response) {
+	t.Helper()
+	block := rosterBlock(t, page)
+	picked := false
+	eachElement(block, func(n *html.Node) {
+		if n.Data != "option" {
+			return
+		}
+		n.Attr = slices.DeleteFunc(n.Attr, func(a html.Attribute) bool { return a.Key == "selected" })
+		if attrOf(n, "value") == unit {
+			n.Attr, picked = append(n.Attr, html.Attribute{Key: "selected"}), true
+		}
+	})
+	if !picked {
+		t.Fatalf("the Add a unit's roster block offers no unit %q", unit)
 	}
-	fields := formFields(page, form)
-	fields.Set(fieldUnit, unit)
-	return w.b.postForm(attrOf(form, "action"), fields)
+	button := findElement(block, "button", "data-field", "preview-roster")
+	if button == nil {
+		t.Fatal("the Add a unit's roster block has no Preview roster")
+	}
+	return press(t, b, page, button)
 }
 
 // rosterPreviewBlock returns the page's roster preview, and fails the test
@@ -226,19 +255,17 @@ func TestRosterPreviewFlagsAMemberWithNoRankRole(t *testing.T) {
 }
 
 // Managers pick from the validated units and never type one, so a typo
-// can't add half the regiment. A Preview roster posting a unit outside the
-// registry, as a crafted form could, is refused before any roster fetch.
-func TestRosterPreviewOfAUnitOutsideTheRegistryIsRefusedBeforeAnyFetch(t *testing.T) {
+// can't add half the regiment. An address naming a unit outside the
+// registry, as a crafted one could, opens no roster preview and fetches no
+// roster.
+func TestRosterPreviewOfAUnitOutsideTheRegistryFetchesNothing(t *testing.T) {
 	w := newFoxholeWorld(t)
 	api := serveRoster(t, trooperVance)
-	page := parseHTML(t, w.b.get(foxholePath))
-	fields := formFields(page, findElement(rosterBlock(t, page), "form", "data-field", "roster-form"))
-	fields.Set(fieldUnit, "7")
 
-	res := w.b.postForm(foxholeRosterPreviewPath, fields)
+	doc := parseHTML(t, w.b.get(foxholePath+"?"+url.Values{fieldUnit: {"7"}}.Encode()+"#"+rosterPreviewAnchor))
 
-	if !isClientError(res.StatusCode) {
-		t.Errorf("status = %d, want a client error", res.StatusCode)
+	if findElement(doc, "", "data-field", "roster-preview") != nil {
+		t.Error("the page opens a roster preview of a unit outside the registry")
 	}
 	if n := api.requestCount(); n != 0 {
 		t.Errorf("the 7Cav API got %d requests, want none", n)
@@ -297,10 +324,10 @@ func TestRosterPreviewWhileTheMemberListIsPartialIsRefused(t *testing.T) {
 	w := newFoxholeWorld(t)
 	api := serveRoster(t, trooperVance)
 	page := parseHTML(t, w.b.get(foxholePath))
-	fields := formFields(page, findElement(rosterBlock(t, page), "form", "data-field", "roster-form"))
 	w.discord.setMemberList(arrivingList)
 
-	doc := parseHTML(t, w.b.postForm(foxholeRosterPreviewPath, fields))
+	_, res := pressPreviewRosterOn(t, w.b, page, "D/ACD")
+	doc := parseHTML(t, follow(t, w.b, res))
 
 	if findLive(doc, "", "data-error", "member-list") == nil {
 		t.Error("the page doesn't say the preview was refused for the member list")

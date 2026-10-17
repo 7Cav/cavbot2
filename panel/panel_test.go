@@ -401,6 +401,21 @@ func (b *browser) get(target string) *http.Response {
 	return b.do(http.MethodGet, target, nil, nil)
 }
 
+// replaceState puts address in the tab in place of the address it shows,
+// as the page script's history.replaceState does: the tab shows the same
+// page, now at that address, and nothing is fetched.
+func (b *browser) replaceState(address string) {
+	b.at, _, _ = strings.Cut(address, "#")
+}
+
+// reload loads the page the tab shows again, the way a browser reloads a
+// page it loaded by GET: it fetches the tab's address afresh, where a link
+// to that address and a fragment would only scroll.
+func (b *browser) reload() *http.Response {
+	b.t.Helper()
+	return b.get(b.at)
+}
+
 // post submits an empty form, the way the sign-in and sign-out buttons do.
 func (b *browser) post(target string) *http.Response {
 	b.t.Helper()

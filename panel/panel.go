@@ -213,6 +213,10 @@ func (p *Panel) routes() []route {
 		{"GET " + recordingsPath + "/{id}/info", p.withSession(p.downloadInfo)},
 		{"GET " + recordingsPath + "/{id}/delete", p.withSession(p.deletePreview)},
 		{"POST " + recordingsPath + "/{id}/delete", p.withSession(p.deleteRecording)},
+		// A Foxhole form registers its route here. Each page a Foxhole form
+		// answers with names an address that shows it by GET, which the page
+		// script puts in the tab, so a reload never sends the form again (ADR
+		// 0019). A new form answers through renderFoxhole, which names it.
 		{"GET " + foxholePath, p.withFoxholePage(p.foxholePage)},
 		{"GET " + foxholeReopenPath, p.withFoxholePage(p.reopenPreview)},
 		{"GET " + foxholeRetryCancelPath, p.withFoxholePage(p.cancelRetry)},
@@ -221,6 +225,8 @@ func (p *Panel) routes() []route {
 		{"POST " + foxholePurgePath, p.withFoxholePage(p.startPurge)},
 		{"POST " + foxholeAddPreviewPath, p.withFoxholePage(p.previewAdd)},
 		{"POST " + foxholeAddPath, p.withFoxholePage(p.startAdd)},
+		// Preview roster's address before it became a GET, kept one release
+		// for tabs loaded before then.
 		{"POST " + foxholeRosterPreviewPath, p.withFoxholePage(p.previewRoster)},
 		{"POST " + foxholeRosterPath, p.withFoxholePage(p.startRosterAdd)},
 		{"POST " + foxholeRemovePath, p.withFoxholePage(p.startRemoval)},

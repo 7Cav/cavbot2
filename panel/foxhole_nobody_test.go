@@ -37,14 +37,7 @@ func TestKeptFormOfAnActionThatWouldChangeNobodyIsRefused(t *testing.T) {
 		{name: "purge of Internal", action: "purge", refusal: "nobody-to-change", stale: stalePurge("internal")},
 		{name: "purge of External", action: "purge", refusal: "nobody-to-change", stale: stalePurge("external")},
 		{name: "purge of both", action: "purge", refusal: "nobody-to-change", stale: stalePurge("both")},
-		{name: "re-add", action: "re_add", refusal: "nobody-to-change", stale: func(t *testing.T, w *testWorld) func() *http.Response {
-			// The member who left counts for nobody: the re-add would skip them.
-			seedApproved(t, w, namesOf(memberDoe), foxholerGone)
-			page := parseHTML(t, w.b.get(foxholePath))
-			pressReAdd(t, w.b)
-			w.awaitActionEnd(t)
-			return func() *http.Response { return postReAdd(t, w.b, page) }
-		}},
+		{name: "re-add", action: "re_add", refusal: "nobody-to-change", stale: staleReAdd},
 		{name: "removal", action: "removal", refusal: "nobody-to-change", reopens: "remove-preview", stale: func(t *testing.T, w *testWorld) func() *http.Response {
 			preview := func() *html.Node {
 				return removePreviewBlock(t, parseHTML(t, submitSelection(t, w.b, parseHTML(t, w.b.get(foxholePath)), "external", memberKestrel.ID)))
@@ -54,36 +47,9 @@ func TestKeptFormOfAnActionThatWouldChangeNobodyIsRefused(t *testing.T) {
 			w.awaitActionEnd(t)
 			return func() *http.Response { return confirmRemoval(t, w.b, kept) }
 		}},
-		{name: "add", action: "add", refusal: "nobody-to-change", paste: paste, stale: func(t *testing.T, w *testWorld) func() *http.Response {
-			preview := func() *html.Node {
-				page := parseHTML(t, w.b.get(foxholePath))
-				return parseHTML(t, previewPaste(t, w.b, page, addForm(t, page), "external", paste))
-			}
-			kept := preview()
-			assertRedirect(t, confirmAdd(t, w.b, preview(), nil), foxholePath)
-			w.awaitActionEnd(t)
-			return func() *http.Response { return confirmAdd(t, w.b, kept, nil) }
-		}},
-		{name: "roster add", action: "roster_add", refusal: "nobody-to-change", stale: func(t *testing.T, w *testWorld) func() *http.Response {
-			// Once Vance holds Internal, the roster holds only a trooper with no
-			// Discord account and members holding Internal already.
-			serveRoster(t, trooperVance, trooperDoe, trooperNolink)
-			kept := parseHTML(t, previewRoster(t, w, "D/ACD"))
-			assertRedirect(t, confirmRoster(t, w.b, parseHTML(t, previewRoster(t, w, "D/ACD"))), foxholePath)
-			w.awaitActionEnd(t)
-			return func() *http.Response { return confirmRoster(t, w.b, kept) }
-		}},
-		{name: "purge's Retry", action: "purge", refusal: "nothing-to-retry", stale: func(t *testing.T, w *testWorld) func() *http.Response {
-			w.discord.failRoleWrites(memberKestrel.ID, missingPermissions())
-			startPurge(t, w, "external")
-			w.awaitActionEnd(t)
-			kept := openRetry(t, w.b)
-			retryConfirmation(t, kept, "purge")
-			w.discord.editMember(memberKestrel.ID, func(m *commands.ListedMember) {
-				m.RoleIDs = slices.DeleteFunc(m.RoleIDs, func(id string) bool { return id == roleExternal })
-			})
-			return func() *http.Response { return w.b.postForm(foxholeRetryPath, formPosts(t, kept, foxholeRetryPath)) }
-		}},
+		{name: "add", action: "add", refusal: "nobody-to-change", paste: paste, stale: staleAdd(paste)},
+		{name: "roster add", action: "roster_add", refusal: "nobody-to-change", stale: staleRosterAdd},
+		{name: "purge's Retry", action: "purge", refusal: "nothing-to-retry", stale: stalePurgeRetry},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -146,6 +112,64 @@ func stalePurge(scope string) func(t *testing.T, w *testWorld) func() *http.Resp
 		w.awaitActionEnd(t)
 		return func() *http.Response { return confirmPurge(t, w.b, context.Background(), confirm) }
 	}
+}
+
+// staleReAdd keeps the re-add's form, runs the re-add to its end, and
+// returns the post of the kept form, which would re-add nobody. The member
+// who left counts for nobody: the re-add would skip them.
+func staleReAdd(t *testing.T, w *testWorld) func() *http.Response {
+	t.Helper()
+	seedApproved(t, w, namesOf(memberDoe), foxholerGone)
+	page := parseHTML(t, w.b.get(foxholePath))
+	pressReAdd(t, w.b)
+	w.awaitActionEnd(t)
+	return func() *http.Response { return postReAdd(t, w.b, page) }
+}
+
+// staleAdd keeps an add preview of External for the paste, runs that add to
+// its end from a second preview, and returns the Confirm of the kept one,
+// which would add nobody.
+func staleAdd(paste string) func(t *testing.T, w *testWorld) func() *http.Response {
+	return func(t *testing.T, w *testWorld) func() *http.Response {
+		t.Helper()
+		preview := func() *html.Node {
+			page := parseHTML(t, w.b.get(foxholePath))
+			return parseHTML(t, previewPaste(t, w.b, page, addForm(t, page), "external", paste))
+		}
+		kept := preview()
+		assertRedirect(t, confirmAdd(t, w.b, preview(), nil), foxholePath)
+		w.awaitActionEnd(t)
+		return func() *http.Response { return confirmAdd(t, w.b, kept, nil) }
+	}
+}
+
+// staleRosterAdd keeps a roster preview, runs that roster add to its end
+// from a second preview, and returns the Confirm of the kept one. Once
+// Vance holds Internal, the roster holds only a trooper with no Discord
+// account and members holding Internal already, so it would add nobody.
+func staleRosterAdd(t *testing.T, w *testWorld) func() *http.Response {
+	t.Helper()
+	serveRoster(t, trooperVance, trooperDoe, trooperNolink)
+	kept := parseHTML(t, previewRoster(t, w, "D/ACD"))
+	assertRedirect(t, confirmRoster(t, w.b, parseHTML(t, previewRoster(t, w, "D/ACD"))), foxholePath)
+	w.awaitActionEnd(t)
+	return func() *http.Response { return confirmRoster(t, w.b, kept) }
+}
+
+// stalePurgeRetry keeps the confirmation of a purge's Retry of Kestrel, who
+// then loses External elsewhere, and returns the post of the kept form,
+// which has nothing to retry.
+func stalePurgeRetry(t *testing.T, w *testWorld) func() *http.Response {
+	t.Helper()
+	w.discord.failRoleWrites(memberKestrel.ID, missingPermissions())
+	startPurge(t, w, "external")
+	w.awaitActionEnd(t)
+	kept := openRetry(t, w.b)
+	retryConfirmation(t, kept, "purge")
+	w.discord.editMember(memberKestrel.ID, func(m *commands.ListedMember) {
+		m.RoleIDs = slices.DeleteFunc(m.RoleIDs, func(id string) bool { return id == roleExternal })
+	})
+	return func() *http.Response { return w.b.postForm(foxholeRetryPath, formPosts(t, kept, foxholeRetryPath)) }
 }
 
 // A refused action gives the one-action-at-a-time rule back at once, so

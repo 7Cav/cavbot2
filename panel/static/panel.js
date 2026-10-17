@@ -287,12 +287,34 @@
    button. The button keeps the notes typed in the page's rows in the
    tab's session storage, and the Foxhole page the sign-in comes back to
    opens them again. Without script the save shows the sign-in page, and
-   the typed note is lost. */
+   the typed note is lost.
+
+   The note form above the list, the one the Edit link opens without
+   script, posts the page's way. A refused save there answers with the page
+   itself, which names the note form's address, and the script puts that
+   address in the tab (issue #770 under ADR 0019). When the tab leaves the
+   page, the script keeps the text in that form's box the same way, with
+   the note the form loaded and the address the tab shows. A load of that
+   address, as a reload or a Back that loads the page again, opens the form
+   with the text, marked not saved yet. Saving it over a note someone
+   changed meanwhile is refused as stale. Any other load drops it. */
 (function () {
   'use strict';
 
   var template = document.querySelector('[data-note-template]');
   if (!template) { return; }
+
+  // answersForm says whether this page answers a sent form, as a refused
+  // save does. Such a page names the address that shows it.
+  var answersForm = document.querySelector('main[data-address]') !== null;
+
+  // blockForm is the note form the page opens above the list, null for
+  // none.
+  var blockForm = document.querySelector('main [data-field="note-block"] [data-field="note-form"]');
+
+  // unsaved is blockForm while it holds an unsaved edit: text a save sent
+  // and the panel refused, or that text brought back, null otherwise.
+  var unsaved = answersForm && blockForm && blockForm.querySelector('[data-error]') ? blockForm : null;
 
   // memberOf is the ID of the member whose row holds the cell.
   function memberOf(cell) {
@@ -683,12 +705,34 @@
       .catch(function () { unopened(note); });
   }
 
+  // here is the address the tab shows, without its fragment.
+  function here() {
+    return location.pathname + location.search;
+  }
+
+  // intoBlock puts a note's unsaved edit in blockForm when that form is
+  // the member's, marked not saved yet, and reports whether it did. The
+  // mark is the block's heading's description too, as a refusal is, since
+  // the page opens at that heading.
+  function intoBlock(note) {
+    if (!blockForm || blockForm.querySelector('[name="member"]').value !== note.member) { return false; }
+    blockForm.querySelector('[name="loaded"]').value = note.loaded;
+    blockForm.querySelector('[name="note"]').value = note.note;
+    var said = noteLine('note-kept', notSavedYet);
+    describe(blockForm, said);
+    blockForm.closest('[data-field="note-block"]').querySelector('h2').setAttribute('aria-describedby', said.id);
+    unsaved = blockForm;
+    return true;
+  }
+
   // bringBack opens the notes kept before a sign-in, on the first Foxhole
   // page the tab loads after it, when the forum user who typed them is
-  // signed in. That load drops them either way. Each opens in its row with
-  // its typed text and the note its form loaded, so the server refuses as
-  // stale a save over a note someone changed meanwhile. The first takes
-  // focus.
+  // signed in. The unsaved edit of a refused save opens only on a load of
+  // the address it was typed at. That load drops them either way. Each opens in
+  // its row, or in the note form above the list when that form is its
+  // member's, with its typed text and the note its form loaded, so the
+  // server refuses as stale a save over a note someone changed meanwhile.
+  // The first in a row takes focus.
   function bringBack() {
     var kept;
     try {
@@ -698,18 +742,34 @@
       return;
     }
     if (!kept || kept.user !== signedInAs()) { return; }
-    kept.notes.forEach(function (note, i) {
+    var opened = 0;
+    kept.notes.forEach(function (note) {
+      if (note.address && (answersForm || note.address !== here())) { return; }
+      var first = opened++ === 0;
+      if (intoBlock(note)) { return; }
       var cell = document.querySelector('[data-member="' + CSS.escape(note.member) + '"] [data-note-cell]');
       if (!cell) {
-        openAboveList(note, i === 0);
+        openAboveList(note, first);
         return;
       }
       var form = fill({ member: note.member, loaded: note.loaded, note: note.note });
       describe(form, noteLine('note-kept', notSavedYet));
       var input = mount(cell, form, restorer(cell));
-      if (i === 0) { focusBox(input); }
+      if (first) { focusBox(input); }
     });
   }
+
+  // Leaving the page keeps the unsaved edit of a refused save, with the
+  // note its form loaded and the address the tab shows, in place of one
+  // from an earlier visit. Text the same as the note loaded is no edit.
+  window.addEventListener('pagehide', function () {
+    if (!unsaved) { return; }
+    var values = posted(unsaved);
+    if (values.note.trim() === values.loaded) { return; }
+    store(waiting().filter(function (note) { return !note.address; }).concat([
+      { member: values.member, loaded: values.loaded, note: values.note, address: here() }
+    ]));
+  });
 
   function save(cell, form, restore) {
     var input = form.querySelector('[data-note-input]');
@@ -812,24 +872,36 @@
   refresh();
 })();
 
-/* Carrying the Foxhole selection, issues #701 and #723 under ADR 0013. The
-   selection lasts through a search, a filter link, a visit to the no-role
-   view and back, a Reload link marked data-keeps-selection, and a browser
-   reload of the Foxhole page. Each control marked data-keeps-selection
-   opens the page again in a view. When one is followed, the script gives
-   its address a member value for each member selected, and the page that
-   opens ticks them, with those the search or the filter hides in a group at
-   the top of the holder list. In the holder list the selected members are
-   the boxes ticked. A page with no selection bar, as the no-role view, has
-   no boxes, so they are the members its own address names. On the Foxhole
-   page itself, at /foxhole, the tab's address names the boxes ticked now,
-   so a reload, or a Back that loads the page again, ticks them as the
-   manager left them. A page that answers a sent form, as a refused Approve
-   does, keeps its address, and a reload there asks to send the form again.
-   The server renders each control naming no member, so without script the
-   selection drops, and a box a manager unticked never comes back ticked. */
+/* Carrying the Foxhole selection, issues #701, #723 and #770 under ADR 0013
+   and ADR 0019. The selection lasts through a search, a filter link, a
+   visit to the no-role view and back, a Reload link marked
+   data-keeps-selection, and a browser reload of the Foxhole page. Each
+   control marked data-keeps-selection opens the page again in a view. When
+   one is followed, the script gives its address a member value for each
+   member selected, and the page that opens ticks them, with those the
+   search or the filter hides in a group at the top of the holder list. In
+   the holder list the selected members are the boxes ticked. A page with no
+   selection bar, as the no-role view, has no boxes, so they are the members
+   its own address names. On the Foxhole page, at /foxhole, the tab's
+   address names the boxes ticked now, so a reload, or a Back that loads the
+   page again, ticks them as the manager left them. A page that answers a
+   sent form, as a refused Approve does, names the address at /foxhole that
+   shows it, and the script puts that address in the tab in place of the
+   form's as the page loads. So a reload there sends no form: it loads the
+   page as it stands, with the boxes the manager left ticked and no refusal
+   note. The server renders each control naming no member, so without
+   script the selection drops, and a box a manager unticked never comes back
+   ticked. Without script a page that answers a sent form keeps its
+   address, and a reload there sends the form again after the browser asks. */
 (function () {
   'use strict';
+
+  // The tab's history entry takes the address in place of the form's, and
+  // no entry is added, so one Back still leaves the page.
+  var named = document.querySelector('main[data-address]');
+  if (named) {
+    history.replaceState(history.state, '', named.getAttribute('data-address'));
+  }
 
   // selection is the IDs of the members selected now.
   function selection() {
@@ -849,9 +921,9 @@
   }
 
   // atViewAddress says whether the tab is at the path the search opens,
-  // /foxhole, where the address names the view. Every other path that
-  // shows boxes answers a sent form, and a GET of its address finds no
-  // page.
+  // /foxhole, where the address names the view. A page that answers a sent
+  // form has its address in the tab by now. One that named none would
+  // still show the form's, which a GET finds no page at.
   function atViewAddress() {
     var search = document.querySelector('form[data-field="search"]');
     return search !== null && location.pathname === new URL(search.action).pathname;
@@ -891,6 +963,131 @@
       form.appendChild(field);
     });
   });
+})();
+
+/* Keeping the add preview's paste, issue #770 under ADR 0019. The paste
+   box's Preview answers with the add preview, which names the address that
+   shows it: /foxhole with the role picked, at the preview's heading, and no
+   pasted line. The paste box has no line cap, and the proxy in front of the
+   panel turns away an address over 8KB. So when the tab leaves a page at
+   an add preview's address, the script keeps what the page's first paste
+   box holds, the one above the preview when there is one, in the tab's
+   session storage, with the forum user signed in. A load of such an
+   address puts that paste back in the paste box and loads the preview
+   again in the background through the address the Preview posts to. The
+   preview then takes its place above the action blocks, and the latest
+   report folds, as on the page the Preview answers with. A line that
+   matches several members comes back unpicked, as the preview offers it.
+   Pressing the add's Confirm drops the paste from the tab. In another tab,
+   or without script, the address opens the paste box empty with the role
+   picked. */
+(function () {
+  'use strict';
+
+  // pasteKey names the entry in the tab's session storage that holds the
+  // paste. Closing the tab drops it.
+  var pasteKey = 'foxhole-unsaved-paste';
+  var starting = false;
+
+  // atAddPreview says whether the tab shows an add preview's address. A
+  // page that answers a sent form shows it by now.
+  function atAddPreview() {
+    return new URLSearchParams(location.search).has('add');
+  }
+
+  // signedInAs is the forum user the rail names, empty for none.
+  function signedInAs() {
+    var name = document.querySelector('.rail [data-field="username"]');
+    return name ? name.textContent : '';
+  }
+
+  // pasteBox is the page's first paste box, null for none.
+  function pasteBox() {
+    return document.querySelector('main [data-field="add-form"]');
+  }
+
+  // keep puts what the paste box holds in the tab's storage, or drops what
+  // is there when the box is empty. Without session storage the paste is
+  // lost on a reload, as without script.
+  function keep(form) {
+    var lines = form.querySelector('[name="lines"]').value;
+    var role = form.querySelector('[name="role"]:checked');
+    try {
+      if (lines.trim() === '' || !role) {
+        sessionStorage.removeItem(pasteKey);
+        return;
+      }
+      sessionStorage.setItem(pasteKey, JSON.stringify({ user: signedInAs(), role: role.value, lines: lines }));
+    } catch (e) {
+      // With no session storage, there is nowhere to keep it.
+    }
+  }
+
+  // waiting is the paste the tab keeps for the forum user signed in, null
+  // for none.
+  function waiting() {
+    try {
+      var paste = JSON.parse(sessionStorage.getItem(pasteKey));
+      return paste && paste.user === signedInAs() ? paste : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // show puts the answer's add preview where the page the Preview answers
+  // with has it, above whatever runs, the latest report and the action
+  // blocks, and the answer's latest report, folded, in place of this
+  // page's. The paste box it was filled in goes back to how the page
+  // rendered it, since the preview has its own. Focus moves to the
+  // preview's heading when the address names it.
+  function show(doc, form) {
+    var preview = doc.querySelector('main[data-page="foxhole"] [data-field="add-preview"]');
+    var below = document.querySelector('main [data-field="command-running"], main [data-field="progress"], main [data-field="report"], main [data-field="note-block"], main [data-field="actions"], main [data-notice="member-list"], main [data-field="changes"]');
+    if (!preview || !below) { return; }
+    preview = document.adoptNode(preview);
+    below.before(preview);
+    var report = doc.querySelector('main [data-field="report"]');
+    var mine = document.querySelector('main [data-field="report"]');
+    if (report && mine) { mine.replaceWith(document.adoptNode(report)); }
+    form.reset();
+    if (location.hash === '#add-preview') { preview.querySelector('#add-preview').focus(); }
+  }
+
+  // bringBack fills the paste box with the paste the tab keeps, and loads
+  // its preview from the address the box's Preview posts to. An answer with no preview, as a sign-in page or a page that
+  // can't match lines while the member list is partial, leaves the paste in
+  // the box to preview by hand.
+  function bringBack(paste, form) {
+    form.querySelector('[name="lines"]').value = paste.lines;
+    var role = form.querySelector('[name="role"][value="' + CSS.escape(paste.role) + '"]');
+    if (role) { role.checked = true; }
+    fetch(form.getAttribute('action').split('#')[0], { method: 'POST', body: new URLSearchParams({ role: paste.role, lines: paste.lines }), credentials: 'same-origin' })
+      .then(function (res) { return res.text(); })
+      .then(function (text) { show(new DOMParser().parseFromString(text, 'text/html'), form); })
+      .catch(function () {});
+  }
+
+  document.addEventListener('submit', function (e) {
+    if (e.target.matches('form[data-field="add-confirm"]')) {
+      starting = true;
+      try {
+        sessionStorage.removeItem(pasteKey);
+      } catch (err) {
+        // With no session storage, nothing was kept.
+      }
+    }
+  });
+
+  window.addEventListener('pagehide', function () {
+    var form = pasteBox();
+    if (!starting && form && atAddPreview()) { keep(form); }
+  });
+
+  var form = pasteBox();
+  var paste = waiting();
+  if (form && paste && atAddPreview() && !document.querySelector('main[data-address]')) {
+    bringBack(paste, form);
+  }
 })();
 
 /* The member list notice on the Foxhole page (spec #434, ADR 0013). While
