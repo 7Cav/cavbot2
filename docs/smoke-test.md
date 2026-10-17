@@ -113,14 +113,14 @@ too, so create the file only once the recording runs, then move the call with
 voice connection to drop mid-recording starts the run with `go run
 ./tools/smoke up --env SMOKE_VOICE_DROP_FILE=/tmp/cavbot2-voice-drop`. Each
 time that file appears, every voice connection the recorders hold then drops,
-and the bot log gets a "Smoke hook dropping voice gateway connections" WARN
-line. A file that says `silent` drops them silently, as a network that stops
-passing traffic. The recorder hears nothing more, and notices once the voice
-server has gone its heartbeat interval plus 3 s without answering a heartbeat.
-An empty file or any other content drops them abruptly, as a broken
-connection, which the recorder notices at once. Connections made after the
-file appears stay up, so the recorder can rejoin. Only the file's appearance
-counts, so remove it before the next drop, and before `down`.
+and the bot log gets a "Smoke hook dropping voice connections" WARN line. A
+file that says `silent` drops them silently, as a network that stops passing
+traffic, audio included. The recorder hears nothing more, and notices once the
+voice server has gone its heartbeat interval plus 3 s without answering a
+heartbeat. An empty file or any other content breaks the voice gateway
+connections abruptly, which the recorder notices at once. Connections made
+after the file appears stay up, so the recorder can rejoin. Only the file's
+appearance counts, so remove it before the next drop, and before `down`.
 
 **Cav members.** The test guild has none of the rank roles the code holds for
 production, so no test account counts as a Cav member until a panel admin sets

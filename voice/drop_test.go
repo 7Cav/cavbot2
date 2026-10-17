@@ -61,13 +61,14 @@ func newDroppingVoiceServer(t *testing.T) *droppingVoiceServer {
 	t.Helper()
 	s := &droppingVoiceServer{udp: newFakeVoiceServer(t), listening: make(chan struct{}), dropped: make(chan time.Time, 1)}
 	s.localVoiceServer = newLocalVoiceServer(t, func(n int32, conn *websocket.Conn) {
-		defer s.note(func() { s.played++ })
+		defer s.locked(func() { s.played++ })
 		s.play(t, n, conn)
 	})
 	return s
 }
 
-func (s *droppingVoiceServer) note(f func()) {
+// locked runs f holding the server's lock.
+func (s *droppingVoiceServer) locked(f func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f()
@@ -85,14 +86,14 @@ func (s *droppingVoiceServer) play(t *testing.T, n int32, conn *websocket.Conn) 
 			t.Errorf("voice server sending %d: %v", code, err)
 		}
 	}
-	s.note(func() { s.greeted++ })
+	s.locked(func() { s.greeted++ })
 	greeted := time.Now()
 	send(disgovoice.OpcodeHello, disgovoice.GatewayMessageDataHello{HeartbeatInterval: float64(dropHeartbeat.Milliseconds())}, 1)
 	op, ok := awaitOneOf(conn, disgovoice.OpcodeIdentify, disgovoice.OpcodeResume)
 	if !ok {
 		return
 	}
-	s.note(func() { s.opened = append(s.opened, op) })
+	s.locked(func() { s.opened = append(s.opened, op) })
 	time.Sleep(time.Until(greeted.Add(dropReadyAfter)))
 	switch {
 	case op == disgovoice.OpcodeResume:

@@ -43,8 +43,9 @@ type voiceDialer struct {
 	// answer "no such host" from both, which lets a smoke test make the
 	// server a call moves to unreachable (docs/smoke-test.md).
 	unresolvable func() bool
-	// drops, when set, can drop every connection the dialer made, which
-	// lets a smoke test drop a recording's voice connection.
+	// drops, when set, can drop every connection the dialer made, and the
+	// UDP sockets of the same recorder, which lets a smoke test drop a
+	// recording's voice connection.
 	drops *connDrops
 }
 
@@ -53,8 +54,8 @@ type voiceDialer struct {
 // smoke run sets it: the compose file's environment block doesn't carry it.
 const smokeDNSFailEnv = "SMOKE_VOICE_DNS_FAIL_FILE"
 
-// smokeDropEnv names a file whose appearance drops every voice gateway
-// connection the recorders hold then, as connDrops says. Only a smoke run
+// smokeDropEnv names a file whose appearance drops every voice connection
+// the recorders hold then, as connDrops says. Only a smoke run
 // sets it: the compose file's environment block doesn't carry it.
 const smokeDropEnv = "SMOKE_VOICE_DROP_FILE"
 
@@ -101,7 +102,7 @@ func (d *voiceDialer) dialContext(ctx context.Context, network, addr string) (ne
 	if err != nil || d.drops == nil {
 		return conn, err
 	}
-	return d.drops.track(conn), nil
+	return d.drops.trackGateway(conn), nil
 }
 
 // dial dials addr, a voice server's host and port. It looks the host up at
@@ -173,22 +174,27 @@ func notFound(err error) bool {
 // dropCheckEvery is how often the smoke hook looks for its drop file.
 const dropCheckEvery = 250 * time.Millisecond
 
-// How a connection drops. dropAbrupt is a connection the network broke:
-// its next read fails as a reset does, which disgo resumes from, where a
-// close of the recorder's own it doesn't. dropSilent is a network that
-// stops passing traffic: reads get nothing, writes vanish, and neither end
-// hears the connection close.
+// dropMode is how a connection drops. dropAbrupt is a voice gateway
+// connection the network broke: its next read fails as a reset does, which
+// disgo resumes from, where a close of the recorder's own it doesn't.
+// dropSilent is a network that stops passing traffic, audio included:
+// reads get nothing but their own deadline or close, writes vanish, and
+// neither end hears the connection close.
+type dropMode int32
+
 const (
-	dropAbrupt int32 = iota + 1
+	dropAbrupt dropMode = iota + 1
 	dropSilent
 )
 
 // errDropReset is the read error of a connection dropped abruptly.
 var errDropReset = &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
 
-// connDrops is the voice gateway connections the smoke hook can drop. Each
-// time the drop file appears, every connection open then drops: silently
-// when the file says "silent", abruptly otherwise. A connection dialed
+// connDrops is the voice connections the smoke hook can drop: the voice
+// gateway connections, and the UDP sockets audio arrives on. Each time the
+// drop file appears, every connection open then drops: silently when the
+// file says "silent", abruptly otherwise. An abrupt drop leaves the UDP
+// sockets alone, as a broken gateway connection does. A connection opened
 // while the file stays drops at its next appearance, so a recorder can
 // connect again after a drop.
 type connDrops struct {
@@ -219,9 +225,16 @@ func watchDrops(file string) *connDrops {
 	return c
 }
 
-// track hands back conn, which the next drop drops.
-func (c *connDrops) track(conn net.Conn) net.Conn {
-	dc := &droppableConn{Conn: conn, drops: c, closed: make(chan struct{})}
+// trackGateway hands back conn, a voice gateway connection, which the next
+// drop drops.
+func (c *connDrops) trackGateway(conn net.Conn) net.Conn { return c.track(conn, false) }
+
+// trackSocket hands back conn, a UDP socket audio arrives on, which the next
+// silent drop drops.
+func (c *connDrops) trackSocket(conn net.Conn) net.Conn { return c.track(conn, true) }
+
+func (c *connDrops) track(conn net.Conn, silentOnly bool) net.Conn {
+	dc := &droppableConn{Conn: conn, drops: c, silentOnly: silentOnly, closed: make(chan struct{})}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.live[dc] = struct{}{}
@@ -229,10 +242,10 @@ func (c *connDrops) track(conn net.Conn) net.Conn {
 }
 
 // dropAll drops every connection open now, the way mode says.
-func (c *connDrops) dropAll(mode int32) {
+func (c *connDrops) dropAll(mode dropMode) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	utils.Warn("Smoke hook dropping voice gateway connections", "connections", len(c.live), "silent", mode == dropSilent)
+	utils.Warn("Smoke hook dropping voice connections", "connections", len(c.live), "silent", mode == dropSilent)
 	for dc := range c.live {
 		dc.drop(mode)
 	}
@@ -244,10 +257,12 @@ func (c *connDrops) forget(dc *droppableConn) {
 	delete(c.live, dc)
 }
 
-// droppableConn is a voice gateway connection the smoke hook can drop.
+// droppableConn is a voice connection the smoke hook can drop. silentOnly
+// is a UDP socket, which only a silent drop drops.
 type droppableConn struct {
 	net.Conn
-	drops *connDrops
+	drops      *connDrops
+	silentOnly bool
 	// dropped is how the connection dropped, zero while it hasn't.
 	dropped atomic.Int32
 	// closed closes once the recorder closes the connection.
@@ -257,27 +272,43 @@ type droppableConn struct {
 
 // drop drops the connection the way mode says. An abrupt drop closes the
 // socket underneath, which ends a read waiting on it.
-func (dc *droppableConn) drop(mode int32) {
-	dc.dropped.Store(mode)
+func (dc *droppableConn) drop(mode dropMode) {
+	if dc.silentOnly && mode != dropSilent {
+		return
+	}
+	dc.dropped.Store(int32(mode))
 	if mode == dropAbrupt {
 		_ = dc.Conn.Close()
 	}
 }
 
+// Read reads as the connection underneath does until a drop. After an
+// abrupt one it fails as a reset. After a silent one nothing arrives: what
+// does is thrown away, and only the reader's own deadline or close ends the
+// read, since the peer's close would never arrive either.
 func (dc *droppableConn) Read(b []byte) (int, error) {
-	n, err := dc.Conn.Read(b)
-	switch dc.dropped.Load() {
-	case dropAbrupt:
-		return 0, errDropReset
-	case dropSilent:
-		<-dc.closed
-		return 0, net.ErrClosed
+	for {
+		n, err := dc.Conn.Read(b)
+		switch dropMode(dc.dropped.Load()) {
+		case dropAbrupt:
+			return 0, errDropReset
+		case dropSilent:
+			var netErr net.Error
+			switch {
+			case errors.As(err, &netErr) && netErr.Timeout(), errors.Is(err, net.ErrClosed):
+				return 0, err
+			case err != nil:
+				<-dc.closed
+				return 0, net.ErrClosed
+			}
+			continue
+		}
+		return n, err
 	}
-	return n, err
 }
 
 func (dc *droppableConn) Write(b []byte) (int, error) {
-	if dc.dropped.Load() == dropSilent {
+	if dropMode(dc.dropped.Load()) == dropSilent {
 		return len(b), nil
 	}
 	return dc.Conn.Write(b)
