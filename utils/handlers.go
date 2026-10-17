@@ -32,11 +32,24 @@ func ParseLogLevel(levelStr string) slog.Level {
 	}
 }
 
+// logLevel is the bot log's level, as InitLogger set it.
+var logLevel slog.Level
+
 func InitLogger(levelStr string) {
-	level := ParseLogLevel(levelStr)
-	opts := &slog.HandlerOptions{Level: level}
+	logLevel = ParseLogLevel(levelStr)
+	opts := &slog.HandlerOptions{Level: logLevel}
 	Logger = slog.New(slog.NewTextHandler(os.Stdout, opts))
-	Info("Logger initialized", "level", level)
+	Info("Logger initialized", "level", logLevel)
+}
+
+// NewLogger returns a logger that writes to stdout as the bot log does, and
+// the LevelVar that holds its level. The level starts at the bot log's. A
+// library keeps the logger it is handed, so setting the LevelVar is how the
+// owner changes what that library logs, and the bot log stays as it is.
+func NewLogger() (*slog.Logger, *slog.LevelVar) {
+	level := new(slog.LevelVar)
+	level.Set(logLevel)
+	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})), level
 }
 
 func Info(msg string, args ...any) {

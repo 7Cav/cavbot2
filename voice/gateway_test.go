@@ -2,11 +2,14 @@ package voice
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -15,6 +18,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/gateway"
@@ -377,6 +381,11 @@ type callHarness struct {
 	t   *testing.T
 	s   *discordgoSession
 	api *channelAPI
+	// logs is the bot log, empty when the harness is built. disgo logs to it
+	// as the recorder's session wires it. logLevel is its level, which a
+	// test sets before the start as LOG_LEVEL sets it, INFO otherwise.
+	logs     *logRecorder
+	logLevel slog.Level
 
 	// down fails every voice state update, as the recorder's gateway being
 	// down does.
@@ -420,11 +429,12 @@ type callHarness struct {
 
 func newCallHarness(t *testing.T) *callHarness {
 	t.Helper()
-	h := &callHarness{t: t, s: recorderSession(t, &fakeManager{}), api: &channelAPI{t: t},
+	h := &callHarness{t: t, s: recorderSession(t, &fakeManager{}), api: &channelAPI{t: t}, logs: captureLogs(t),
 		opened: make(chan gatewayOpen, 64), pending: make(chan struct{}, 64), serving: oldEndpoint,
 		unreachable: make(map[string]bool), whileOpening: make(map[string]func())}
 	h.s.dg.Client = &http.Client{Transport: h.api}
-	h.s.voice = h.s.voiceManager(h.updateVoiceState, callRecorder, h.newGateway,
+	h.s.voice = h.s.voiceManager(h.updateVoiceState, callRecorder, h.newGateway, h.newLogger,
+		disgovoice.WithLogger(utils.Logger),
 		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
 		disgovoice.WithDaveSessionLogger(slog.New(slog.DiscardHandler)))
 	return h
@@ -438,6 +448,15 @@ func (h *callHarness) newGateway(dave godave.Session, onEvent disgovoice.EventHa
 	return &answeringGateway{dave: dave, onEvent: onEvent, onClose: onClose, opened: h.opened, sent: h.sentOp,
 		answers: h.answersAt, reachable: h.reachable, daveVersion: version, opening: h.opening,
 		describeLate: h.describeLate.Load(), pending: h.pending}
+}
+
+// newLogger stands in for utils.NewLogger, which the recorder's session hands
+// its voice manager. It returns a logger in slog's text format at a level of
+// its own, starting at the bot log's, whose lines go to the bot log.
+func (h *callHarness) newLogger() (*slog.Logger, *slog.LevelVar) {
+	level := new(slog.LevelVar)
+	level.Set(h.logLevel)
+	return slog.New(slog.NewTextHandler(logLines{h.logs}, &slog.HandlerOptions{Level: level})), level
 }
 
 // answersAt reports whether the voice server at endpoint answers an open:
@@ -889,6 +908,29 @@ func TestRecorderStaysInWhileItCantReachTheServerItsCallMovedTo(t *testing.T) {
 	})
 }
 
+// Only a stop quiets a voice connection's log. A rejoin that can't connect
+// while the recording runs, here at a voice server the recorder can't reach
+// yet, still has disgo's ERROR in the bot log once disgo's 30 s wait for
+// the open runs out.
+func TestRecorderLogsTheErrorsOfARejoinThatCantConnectYet(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		defer h.hangUp(conn)
+		h.setReachable(newEndpoint, false)
+
+		closed := time.Now()
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if errs := h.logs.errorsFrom(closed); len(errs) == 0 {
+			t.Error("bot log ERRORs in the minute after the close = none, want disgo's for the rejoin that can't connect")
+		}
+	})
+}
+
 // Once the voice server a call moved to becomes reachable, past the 30 s
 // disgo gives a rejoin, the recorder connects there and hears the channel
 // again: the gap that started when the call closed ends. It never leaves
@@ -1296,11 +1338,38 @@ func TestRecorderStoppedWhileARejoinWaitsSendsNothingMore(t *testing.T) {
 			t.Fatalf("voice state updates 5 s after the close = %v, want the rejoin waiting", got)
 		}
 
+		stopped := time.Now()
 		conn.Leave(context.Background())
 		time.Sleep(time.Minute)
 		synctest.Wait()
 
-		assertStoppedQuietly(t, h, events)
+		assertStoppedQuietly(t, h, events, stopped)
+	})
+}
+
+// A member can stop the recording while a rejoin after a move tries a voice
+// server the recorder can't reach yet. Here Discord named it while the
+// recorder asked whether the channel is still there, then answered the
+// rejoin with the voice state alone. The stop is as quiet as any other,
+// also once disgo's 30 s wait has run out.
+func TestRecorderStoppedWhileARejoinTriesAServerItCantReachLogsNoError(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		h.api.during = func() { h.name("token-3", newEndpoint) }
+		h.stateOnly.Store(true)
+		h.setReachable(newEndpoint, false)
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+
+		stopped := time.Now()
+		conn.Leave(context.Background())
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		assertStoppedQuietly(t, h, events, stopped)
 	})
 }
 
@@ -1313,19 +1382,24 @@ func TestRecorderStoppedDuringTheChannelLookupSendsNoRejoin(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newCallHarness(t)
 		conn := h.start()
-		h.api.during = func() { conn.Leave(context.Background()) }
+		var stopped time.Time
+		h.api.during = func() {
+			stopped = time.Now()
+			conn.Leave(context.Background())
+		}
 
 		h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
 		time.Sleep(time.Minute)
 		synctest.Wait()
 
-		assertStoppedQuietly(t, h, events)
+		assertStoppedQuietly(t, h, events, stopped)
 	})
 }
 
 // assertStoppedQuietly fails unless the stop's leave is the last voice
-// state update the recorder sent, and Sentry heard nothing.
-func assertStoppedQuietly(t *testing.T, h *callHarness, events *sentryTransport) {
+// state update the recorder sent, Sentry heard nothing, and the bot log got
+// no ERROR from the stop at stopped on.
+func assertStoppedQuietly(t *testing.T, h *callHarness, events *sentryTransport, stopped time.Time) {
 	t.Helper()
 	sent := h.sent()
 	if stop := slices.IndexFunc(sent, voiceUpdate.leaves); stop == -1 || stop != len(sent)-1 {
@@ -1333,6 +1407,9 @@ func assertStoppedQuietly(t *testing.T, h *callHarness, events *sentryTransport)
 	}
 	if n := len(events.Events()); n != 0 {
 		t.Errorf("Sentry events = %d, want none for a recording a member stopped", n)
+	}
+	if errs := h.logs.errorsFrom(stopped); len(errs) != 0 {
+		t.Errorf("bot log ERRORs after the stop = %q, want none for a recording a member stopped", messages(errs))
 	}
 }
 
@@ -1388,6 +1465,84 @@ func TestRecorderStartedWhileAnAbandonedRejoinWaitsStaysIn(t *testing.T) {
 			t.Errorf("voice state updates after the new start = %v, want the recorder left in the channel", h.sent())
 		}
 	})
+}
+
+// quietVoiceServer is a voice server on localhost, over TLS, that accepts
+// each connection and says nothing on it, as one that hasn't greeted the
+// recorder yet. connected closes once it has accepted one.
+type quietVoiceServer struct {
+	srv       *httptest.Server
+	connected chan struct{}
+}
+
+func newQuietVoiceServer(t *testing.T) *quietVoiceServer {
+	t.Helper()
+	s := &quietVoiceServer{connected: make(chan struct{})}
+	var once sync.Once
+	upgrader := websocket.Upgrader{}
+	s.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		once.Do(func() { close(s.connected) })
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
+// endpoint is the server's address, as Discord names a voice server.
+func (s *quietVoiceServer) endpoint() string { return s.srv.Listener.Addr().String() }
+
+// dialer is a voice gateway dialer that trusts the server's certificate.
+func (s *quietVoiceServer) dialer() *websocket.Dialer {
+	roots := x509.NewCertPool()
+	roots.AddCert(s.srv.Certificate())
+	return &websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: roots}}
+}
+
+// With the bot log at DEBUG, a voice connection the recorder hasn't closed
+// logs there what the move smoke checks read: disgo opening the connection,
+// and opening its voice gateway. disgo's gateway logs its identify through
+// the same logger, but only after a voice server's Hello. Hello starts a
+// heartbeat that disgo's close races under -race, so this server never
+// greets.
+func TestRecorderVoiceConnectionLogsReachTheBotLogAtDebug(t *testing.T) {
+	server := newQuietVoiceServer(t)
+	h := newCallHarness(t)
+	h.logLevel = slog.LevelDebug
+	h.serving = server.endpoint()
+	h.s.voice = h.s.voiceManager(h.updateVoiceState, callRecorder, disgovoice.NewGateway, h.newLogger,
+		disgovoice.WithLogger(utils.Logger),
+		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
+		disgovoice.WithDaveSessionLogger(slog.New(slog.DiscardHandler)),
+		disgovoice.WithConnConfigOpts(disgovoice.WithConnGatewayConfigOpts(disgovoice.WithGatewayDialer(server.dialer()))))
+	ctx, cancel := context.WithCancel(context.Background())
+	joined := make(chan struct{})
+	go func() {
+		defer close(joined)
+		_, _ = h.s.Join(ctx, callGuild.String(), callChannel.String())
+	}()
+	defer func() { cancel(); <-joined }()
+
+	select {
+	case <-server.connected:
+	case <-time.After(waitFor):
+		t.Fatal("the voice gateway never connected")
+	}
+
+	debug := h.logs.messagesAt(slog.LevelDebug)
+	for _, want := range []string{"opening voice conn", "opening voice gateway connection"} {
+		if !slices.Contains(debug, want) {
+			t.Errorf("bot log DEBUG records = %q, want %q", debug, want)
+		}
+	}
 }
 
 // eventMentions reports whether some text the Sentry event carries contains

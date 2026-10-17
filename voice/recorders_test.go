@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/7cav/cavbot2/utils"
 	"github.com/getsentry/sentry-go"
+	"github.com/go-logfmt/logfmt"
 )
 
 // TestMain sets the utils Logger once, before any test runs, so Connect's
@@ -28,8 +30,8 @@ func TestMain(m *testing.M) {
 var testLogs = &logRecorder{}
 
 // logRecorder is a slog handler that keeps the records it handles. The
-// voice package binds no attributes or groups to its logger, so the
-// handler keeps none either.
+// voice package binds no attributes or groups to its logger, and no test
+// reads the name disgo binds to its own, so the handler keeps none.
 type logRecorder struct {
 	mu      sync.Mutex
 	records []slog.Record
@@ -56,6 +58,75 @@ func captureLogs(t *testing.T) *logRecorder {
 	defer testLogs.mu.Unlock()
 	testLogs.records = nil
 	return testLogs
+}
+
+// logLines is a writer that hands l each line of slog's text format written
+// to it. Each line becomes a record of its level, message and other pairs,
+// dated when it is written, which is when it was logged.
+type logLines struct{ l *logRecorder }
+
+func (w logLines) Write(p []byte) (int, error) {
+	dec := logfmt.NewDecoder(bytes.NewReader(p))
+	for dec.ScanRecord() {
+		var level slog.Level
+		var msg string
+		var attrs []slog.Attr
+		for dec.ScanKeyval() {
+			switch key := string(dec.Key()); key {
+			case "time":
+			case "level":
+				if err := level.UnmarshalText(dec.Value()); err != nil {
+					return 0, err
+				}
+			case "msg":
+				msg = string(dec.Value())
+			default:
+				attrs = append(attrs, slog.String(key, string(dec.Value())))
+			}
+		}
+		r := slog.NewRecord(time.Now(), level, msg, 0)
+		r.AddAttrs(attrs...)
+		_ = w.l.Handle(context.Background(), r)
+	}
+	return len(p), dec.Err()
+}
+
+// errorsFrom is the records at ERROR or above logged from start until now.
+// Records carry the clock of the bubble that logged them, so a test under
+// synctest reads its own bubble's.
+func (l *logRecorder) errorsFrom(start time.Time) []slog.Record {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	var out []slog.Record
+	for _, r := range l.records {
+		if r.Level >= slog.LevelError && !r.Time.Before(start) && !r.Time.After(now) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// messagesAt is the message of each record at level.
+func (l *logRecorder) messagesAt(level slog.Level) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []string
+	for _, r := range l.records {
+		if r.Level == level {
+			out = append(out, r.Message)
+		}
+	}
+	return out
+}
+
+// messages is the message of each record.
+func messages(records []slog.Record) []string {
+	out := make([]string, 0, len(records))
+	for _, r := range records {
+		out = append(out, r.Message)
+	}
+	return out
 }
 
 // duration is the time.Duration the first record at level with message
