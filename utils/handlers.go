@@ -17,20 +17,23 @@ var Logger *slog.Logger
 // 0001). This mirrors the swappable seam the Foxhole error helpers use.
 var captureError = CaptureError
 
-func InitLogger(levelStr string) {
-	var level slog.Level
+// ParseLogLevel is the level a LOG_LEVEL value sets. It reads only uppercase
+// DEBUG, INFO, WARN and ERROR, and anything else means INFO.
+func ParseLogLevel(levelStr string) slog.Level {
 	switch levelStr {
 	case "DEBUG":
-		level = slog.LevelDebug
-	case "INFO":
-		level = slog.LevelInfo
+		return slog.LevelDebug
 	case "WARN":
-		level = slog.LevelWarn
+		return slog.LevelWarn
 	case "ERROR":
-		level = slog.LevelError
+		return slog.LevelError
 	default:
-		level = slog.LevelInfo
+		return slog.LevelInfo
 	}
+}
+
+func InitLogger(levelStr string) {
+	level := ParseLogLevel(levelStr)
 	opts := &slog.HandlerOptions{Level: level}
 	Logger = slog.New(slog.NewTextHandler(os.Stdout, opts))
 	Info("Logger initialized", "level", level)
