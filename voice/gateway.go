@@ -74,6 +74,8 @@ func OpenGateway(recorder int, token string) (GatewaySession, error) {
 		disgovoice.WithLogger(utils.Logger),
 		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
 		disgovoice.WithDaveSessionLogger(utils.Logger),
+		disgovoice.WithConnConfigOpts(disgovoice.WithConnGatewayConfigOpts(
+			disgovoice.WithGatewayDialer(newVoiceDialer().websocket()))),
 	)
 	// Added after READY, once the manager exists: no voice event reaches a
 	// recorder before its first join.
