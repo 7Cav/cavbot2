@@ -199,8 +199,9 @@ const (
 	oldEndpoint  = "c-dfw-1.discord.media:443"
 	newEndpoint  = "c-rtm-1.discord.media:443"
 	// earlyEndpoint is a voice server Discord names for a moved call
-	// before it names newEndpoint.
+	// before it names newEndpoint, and laterEndpoint one it names after.
 	earlyEndpoint = "c-ams-1.discord.media:443"
+	laterEndpoint = "c-hel-1.discord.media:443"
 	// callDAVEVersion is the DAVE protocol version every voice server
 	// announces: the call is end-to-end encrypted.
 	callDAVEVersion = 1
@@ -264,7 +265,9 @@ func (a *channelAPI) RoundTrip(r *http.Request) (*http.Response, error) {
 // session. Like disgo's, it refuses an open while it holds a connection,
 // from the start of an open until the open fails or the gateway closes.
 // sent hears every op sent on the gateway. A voice server that answers
-// rejects never answers: Open tells pending, then waits out its context.
+// rejects never answers: Open tells pending, then waits out its context. One
+// that reachable rejects can't be dialed, as when the host's resolver answers
+// "no such host" for its hostname: Open dials again as disgo's gateway does.
 type answeringGateway struct {
 	disgovoice.Gateway
 	dave      godave.Session
@@ -273,6 +276,7 @@ type answeringGateway struct {
 	opened    chan<- gatewayOpen
 	sent      func(disgovoice.Opcode)
 	answers   func(endpoint string) bool
+	reachable func(endpoint string) bool
 	pending   chan<- struct{}
 	opens     atomic.Int32
 	holdsConn atomic.Bool
@@ -287,6 +291,21 @@ type gatewayOpen struct {
 }
 
 func (g *answeringGateway) Open(ctx context.Context, state disgovoice.State) error {
+	// disgo's gateway dials the same state again after a dial fails, 1 s
+	// after the first and twice as long each time after, up to 10 s, until
+	// ctx ends. It holds no connection meanwhile.
+	for delay := time.Duration(0); ; delay = nextDialDelay(delay) {
+		if delay > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+		if g.reachable(state.Endpoint) {
+			break
+		}
+	}
 	if !g.holdsConn.CompareAndSwap(false, true) {
 		return discord.ErrGatewayAlreadyConnected
 	}
@@ -305,6 +324,15 @@ func (g *answeringGateway) Open(ctx context.Context, state disgovoice.State) err
 	})
 	g.opened <- gatewayOpen{gateway: g, state: state, identified: identified}
 	return nil
+}
+
+// nextDialDelay is disgo's wait before its gateway dials again, after it
+// waited delay before the dial that just failed.
+func nextDialDelay(delay time.Duration) time.Duration {
+	if delay == 0 {
+		return time.Second
+	}
+	return min(2*delay, 10*time.Second)
 }
 
 func (g *answeringGateway) Send(_ context.Context, op disgovoice.Opcode, _ disgovoice.GatewayMessageData) error {
@@ -350,12 +378,15 @@ type callHarness struct {
 	// in its answer to a join, and left the one a 4022 moved it from,
 	// which answers no open since.
 	serving, left string
+	// unreachable is the voice servers the recorder can't dial.
+	unreachable map[string]bool
 }
 
 func newCallHarness(t *testing.T) *callHarness {
 	t.Helper()
 	h := &callHarness{t: t, s: recorderSession(t, &fakeManager{}), api: &channelAPI{t: t},
-		opened: make(chan gatewayOpen, 64), pending: make(chan struct{}, 64), serving: oldEndpoint}
+		opened: make(chan gatewayOpen, 64), pending: make(chan struct{}, 64), serving: oldEndpoint,
+		unreachable: make(map[string]bool)}
 	h.s.dg.Client = &http.Client{Transport: h.api}
 	h.s.voice = h.s.voiceManager(h.updateVoiceState, callRecorder, h.newGateway,
 		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
@@ -365,7 +396,7 @@ func newCallHarness(t *testing.T) *callHarness {
 
 func (h *callHarness) newGateway(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, _ ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
 	return &answeringGateway{dave: dave, onEvent: onEvent, onClose: onClose, opened: h.opened, sent: h.sentOp,
-		answers: h.answersAt, pending: h.pending}
+		answers: h.answersAt, reachable: h.reachable, pending: h.pending}
 }
 
 // answersAt reports whether the voice server at endpoint answers an open:
@@ -374,6 +405,30 @@ func (h *callHarness) answersAt(endpoint string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return !h.silent.Load() && endpoint != h.left
+}
+
+// reachable reports whether the recorder can dial the voice server at
+// endpoint.
+func (h *callHarness) reachable(endpoint string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return !h.unreachable[endpoint]
+}
+
+// setReachable makes the voice server at endpoint one the recorder can
+// dial, or one it can't.
+func (h *callHarness) setReachable(endpoint string, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.unreachable[endpoint] = !ok
+}
+
+// leftChannel is Discord taking the recorder out of the channel: its voice
+// state with no channel.
+func (h *callHarness) leftChannel() {
+	h.s.voice.HandleVoiceStateUpdate(gateway.EventVoiceStateUpdate{VoiceState: discord.VoiceState{
+		GuildID: callGuild, UserID: callRecorder, SessionID: "sess-1",
+	}})
 }
 
 func (h *callHarness) sentOp(op disgovoice.Opcode) {
@@ -419,6 +474,14 @@ func (h *callHarness) start() Conn {
 	h.updates = nil
 	h.mu.Unlock()
 	return conn
+}
+
+// hangUp stops the recording on conn, as a member's stop does, and waits a
+// minute out, so whatever the recorder still had in flight ends inside the
+// test's bubble. A test under synctest defers it, failing or not.
+func (h *callHarness) hangUp(conn Conn) {
+	conn.Leave(context.Background())
+	time.Sleep(time.Minute)
 }
 
 // updateVoiceState is the connection's voice state update: the recorder
@@ -717,6 +780,83 @@ func TestRecorderFollowsAMoveToTheServerDiscordNamedLast(t *testing.T) {
 	})
 }
 
+// A call can move to a voice server the recorder can't reach yet, such as
+// one whose hostname its resolver doesn't know, and then move again while
+// the recorder still tries it. Discord names the next server with a voice
+// server update alone. The recorder connects there next, and identifies
+// with the token Discord gave for it.
+func TestRecorderConnectsWhereDiscordNamesWhileItTriesAnEarlierServer(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		defer h.hangUp(conn)
+		h.setReachable(newEndpoint, false)
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(13 * time.Second)
+
+		h.name("token-3", laterEndpoint)
+		synctest.Wait()
+
+		if o := h.waitOpen(); o.state.Endpoint != laterEndpoint || o.state.Token != "token-3" || !o.identified {
+			t.Errorf("gateway opened at %s with token %s and identified=%v, want an identify at %s with token-3",
+				o.state.Endpoint, o.state.Token, o.identified, laterEndpoint)
+		}
+	})
+}
+
+// A recorder that can't reach the voice server its call moved to keeps
+// trying past the 30 s disgo gives a rejoin. It stays in the channel, so the
+// recording goes on, and its connection isn't lost.
+func TestRecorderStaysInWhileItCantReachTheServerItsCallMovedTo(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		defer h.hangUp(conn)
+		h.setReachable(newEndpoint, false)
+
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if left := slices.ContainsFunc(h.sent(), voiceUpdate.leaves); left {
+			t.Errorf("voice state updates = %v, want the recorder never to leave", h.sent())
+		}
+		if lost := slices.Contains(eventMessages(events.Events()), lostConnectionMessage); lost {
+			t.Errorf("Sentry events = %v, want no %q", eventMessages(events.Events()), lostConnectionMessage)
+		}
+	})
+}
+
+// Once Discord has named a later voice server for the call, the recorder
+// never connects to an earlier one, even when the earlier one becomes
+// reachable while the later one still isn't: the call isn't there anymore.
+func TestRecorderNeverGoesBackToAServerDiscordNamedBefore(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		defer h.hangUp(conn)
+		h.setReachable(newEndpoint, false)
+		h.setReachable(laterEndpoint, false)
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(13 * time.Second)
+		h.name("token-3", laterEndpoint)
+		time.Sleep(time.Second)
+
+		h.setReachable(newEndpoint, true)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		for len(h.opened) > 0 {
+			if o := <-h.opened; o.state.Endpoint == newEndpoint {
+				t.Errorf("gateway opened at %s, the server Discord named before %s", newEndpoint, laterEndpoint)
+			}
+		}
+	})
+}
+
 // A 4022 also ends the call in a channel someone deleted. Discord's API says
 // the channel is gone, so the recorder is taken out without a rejoin, though
 // the delete may not have reached the recorder's session yet.
@@ -780,6 +920,39 @@ func TestRecorderReportsARejoinThatFails(t *testing.T) {
 	}
 }
 
+// Discord can take the recorder out of the channel while it is still trying
+// to reach the voice server its call moved to. The recorder is out, so
+// Sentry hears of the lost connection once.
+func TestRecorderReportsBeingTakenOutWhileItTriesToReachTheCall(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		defer h.hangUp(conn)
+		h.setReachable(newEndpoint, false)
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(20 * time.Second)
+
+		h.leftChannel()
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		got := events.Events()
+		if len(got) != 1 || got[0].Tags["message"] != lostConnectionMessage {
+			t.Errorf("Sentry events = %v, want one %q", eventMessages(got), lostConnectionMessage)
+		}
+	})
+}
+
+// eventMessages is the message tag of each Sentry event.
+func eventMessages(events []*sentry.Event) []string {
+	out := make([]string, 0, len(events))
+	for _, e := range events {
+		out = append(out, e.Tags["message"])
+	}
+	return out
+}
+
 // Discord can leave the recorder's DAVE setup unanswered, as it did once
 // when the recorder and a speaker raced to commit after a move: dave-go
 // then holds every frame, and the recorder hears nobody. Past 3 s that's a
@@ -810,6 +983,28 @@ func TestRecorderStartsDAVEOverWhenItsSetupStalls(t *testing.T) {
 		}
 		if left := slices.ContainsFunc(h.sent(), voiceUpdate.leaves); left {
 			t.Errorf("voice state updates = %v, want the recorder never to leave", h.sent())
+		}
+	})
+}
+
+// Discord can name the voice server a call is moving to while the recorder
+// is still connected where it was, and the recorder's DAVE setup can stall
+// meanwhile. The fresh connection that starts DAVE over opens at the server
+// Discord named last, with its token.
+func TestRecorderStartsDAVEOverAtTheServerDiscordNamedLast(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.record(func(Frame) {})
+		defer conn.Leave(context.Background())
+
+		h.name("token-3", laterEndpoint)
+		time.Sleep(3500 * time.Millisecond)
+		synctest.Wait()
+
+		if o := h.waitOpen(); o.state.Endpoint != laterEndpoint || o.state.Token != "token-3" {
+			t.Errorf("fresh connection opened at %s with token %s, want %s with token-3",
+				o.state.Endpoint, o.state.Token, laterEndpoint)
 		}
 	})
 }

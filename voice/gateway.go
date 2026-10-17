@@ -123,7 +123,7 @@ func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc) []disgo
 	return []disgovoice.ConnConfigOpt{
 		disgovoice.WithUDPConnCreateFunc(newUDPConn),
 		disgovoice.WithConnGatewayCreateFunc(func(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, opts ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
-			g := &renewableGateway{}
+			g := &renewableGateway{named: c.namedLast}
 			g.build = func() disgovoice.Gateway {
 				return newGateway(dave, onEvent, c.watchClose(g, onClose), opts...)
 			}
@@ -142,7 +142,9 @@ func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc) []disgo
 // rejoin with the voice state alone. So the connection keeps the last
 // server Discord named, and hands it to disgo again when disgo threw it
 // away. Once the recorder closes the connection, a rejoin disgo started
-// before sends nothing more.
+// before sends nothing more. A rejoin after a close the recorder can come
+// back from is the connection's own (rejoin), with no time limit, so the
+// recording goes on while the call's new server can't be reached.
 type recorderConn struct {
 	disgovoice.Conn
 	s               *discordgoSession
@@ -165,18 +167,66 @@ type recorderConn struct {
 	// named it after the gateway last opened, but before the join under
 	// way started.
 	lastServer, droppedServer *gateway.EventVoiceServerUpdate
+	// stopRejoin ends the rejoin under way, nil while there is none.
+	stopRejoin context.CancelFunc
 }
 
 // errConnClosed is what disgo gets for a voice state update on a connection
 // the recorder closed.
 var errConnClosed = errors.New("voice: the recorder closed the connection")
 
-// Close takes the recorder out of the call and closes the connection. disgo
-// may still be waiting on a rejoin. That rejoin sends nothing after this
-// leave.
+// Close takes the recorder out of the call and closes the connection. A
+// rejoin may still be waiting. It ends, and sends nothing after this leave.
 func (c *recorderConn) Close(ctx context.Context) {
 	c.closed.Store(true)
+	c.endRejoin()
 	c.Conn.Close(ctx)
+}
+
+// The recorder joins self-muted, since it never speaks, and never
+// self-deafened, or Discord sends it no audio.
+const selfMute, selfDeaf = true, false
+
+// rejoin opens a fresh voice connection in the call's channel, as disgo's
+// close handler does, and reports whether the recorder is connected there
+// again. disgo's gives up after 30 s and takes the recorder out, where a call
+// that moved to a voice server the recorder can't reach yet would end the
+// recording. This one waits until the recorder connects, closes the
+// connection, or Discord takes it out. A rejoin that can't go out at all,
+// as with the recorder's own gateway down, leaves as disgo's does.
+func (c *recorderConn) rejoin() bool {
+	_ = c.UDP().Close()
+	channelID := c.ChannelID()
+	if channelID == nil {
+		return false
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c.mu.Lock()
+	if c.closed.Load() {
+		c.mu.Unlock()
+		return false
+	}
+	c.stopRejoin = cancel
+	c.mu.Unlock()
+	defer c.endRejoin()
+	err := c.Conn.Open(ctx, *channelID, selfMute, selfDeaf)
+	if err != nil && ctx.Err() == nil {
+		closeCtx, cancelClose := context.WithTimeout(context.Background(), closeTimeout)
+		defer cancelClose()
+		c.Conn.Close(closeCtx)
+	}
+	return err == nil
+}
+
+// endRejoin ends the rejoin under way, if any.
+func (c *recorderConn) endRejoin() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopRejoin != nil {
+		c.stopRejoin()
+		c.stopRejoin = nil
+	}
 }
 
 // updateVoiceState is the voice state update disgo sends for the
@@ -211,6 +261,14 @@ func (c *recorderConn) joinStarted() {
 	}
 }
 
+// namedLast is the last voice server Discord named for the call, nil before
+// it names one.
+func (c *recorderConn) namedLast() *gateway.EventVoiceServerUpdate {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastServer
+}
+
 // HandleVoiceServerUpdate hands disgo a voice server Discord named, and
 // keeps it. disgo keeps it too, unless a join starts after.
 func (c *recorderConn) HandleVoiceServerUpdate(e gateway.EventVoiceServerUpdate) {
@@ -218,6 +276,7 @@ func (c *recorderConn) HandleVoiceServerUpdate(e gateway.EventVoiceServerUpdate)
 	defer c.mu.Unlock()
 	if e.GuildID == c.guildID && e.Endpoint != nil {
 		c.lastServer, c.droppedServer = &e, nil
+		c.gateway.redialFor(e)
 	}
 	c.Conn.HandleVoiceServerUpdate(e)
 }
@@ -228,7 +287,12 @@ func (c *recorderConn) HandleVoiceServerUpdate(e gateway.EventVoiceServerUpdate)
 // server again and connects there.
 func (c *recorderConn) HandleVoiceStateUpdate(e gateway.EventVoiceStateUpdate) {
 	c.Conn.HandleVoiceStateUpdate(e)
-	if e.GuildID != c.guildID || e.UserID != c.userID || e.ChannelID == nil {
+	if e.GuildID != c.guildID || e.UserID != c.userID {
+		return
+	}
+	if e.ChannelID == nil {
+		// Discord took the recorder out, so no rejoin can bring it back.
+		c.endRejoin()
 		return
 	}
 	c.mu.Lock()
@@ -259,14 +323,22 @@ func (c *recorderConn) redeliver(dropped *gateway.EventVoiceServerUpdate) {
 // call moved to never had the session. A new gateway identifies instead.
 type renewableGateway struct {
 	build func() disgovoice.Gateway
+	// named is the last voice server Discord named for the call, nil
+	// before it names one.
+	named func() *gateway.EventVoiceServerUpdate
 
 	mu sync.Mutex
 	gw disgovoice.Gateway
 	// state is the voice state the gateway last opened with: the call's
 	// channel, and the voice server and token it was connected with.
 	state disgovoice.State
-	// opened is whether the gateway has opened since its last renew.
-	opened bool
+	// stopDialing ends the dialing under way, and dialed closes once it
+	// has. Both are nil before the first Open.
+	stopDialing context.CancelFunc
+	dialed      chan struct{}
+	// redial ends the dial in flight, so the next one dials the voice
+	// server Discord named since. nil while none is in flight.
+	redial context.CancelFunc
 }
 
 func (g *renewableGateway) current() disgovoice.Gateway {
@@ -280,7 +352,6 @@ func (g *renewableGateway) renew() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.gw = g.build()
-	g.opened = false
 }
 
 // openedAt reports whether the gateway last opened at the voice server e
@@ -291,22 +362,106 @@ func (g *renewableGateway) openedAt(e gateway.EventVoiceServerUpdate) bool {
 	return g.state.Endpoint == *e.Endpoint && g.state.Token == e.Token
 }
 
-// openedSinceRenew reports whether the new gateway has opened.
-func (g *renewableGateway) openedSinceRenew() bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.opened
-}
-
 func (g *renewableGateway) SSRC() uint32 { return g.current().SSRC() }
 
+// Open opens the gateway in the call state names, at the voice server
+// Discord named last, with its token. The state disgo hands over can name
+// an earlier one, and so can the state a fresh connection after a DAVE
+// stall reopens with. Open returns once the gateway has opened, or with
+// ctx's error. The dialing goes on past ctx, so a voice server the recorder
+// can't reach yet doesn't end the recording at the 30 s disgo gives an
+// open. It ends once the gateway opens or closes, or a later Open takes its
+// place.
 func (g *renewableGateway) Open(ctx context.Context, state disgovoice.State) error {
+	result := g.dial(state)
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// dial starts dialing state in place of the dialing under way, once that
+// has ended, and returns where its result arrives.
+func (g *renewableGateway) dial(state disgovoice.State) <-chan error {
+	ctx, stop := context.WithCancel(context.Background())
+	dialed := make(chan struct{})
 	g.mu.Lock()
-	g.state = state
-	g.opened = true
-	gw := g.gw
+	if g.stopDialing != nil {
+		g.stopDialing()
+	}
+	prev := g.dialed
+	g.stopDialing, g.dialed = stop, dialed
 	g.mu.Unlock()
-	return gw.Open(ctx, state)
+	result := make(chan error, 1)
+	go func() {
+		defer close(dialed)
+		defer stop()
+		if prev != nil {
+			<-prev
+		}
+		result <- g.dialUntilOpen(ctx, state)
+	}()
+	return result
+}
+
+// dialUntilOpen opens the gateway, dialing again at each voice server
+// Discord names meanwhile, until it opens or ctx ends. disgo's gateway dials
+// the state it was given again and again while it can't reach its server,
+// so a server Discord names ends that dial, and the next one dials the new
+// server.
+func (g *renewableGateway) dialUntilOpen(ctx context.Context, state disgovoice.State) error {
+	for {
+		dial, redial := context.WithCancel(ctx)
+		gw, at := g.startDial(state, redial)
+		err := gw.Open(dial, at)
+		redialed := dial.Err() != nil && ctx.Err() == nil
+		g.endDial()
+		redial()
+		if !redialed {
+			return err
+		}
+	}
+}
+
+// stopDial ends the dialing under way, if any.
+func (g *renewableGateway) stopDial() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stopDialing != nil {
+		g.stopDialing()
+	}
+}
+
+// startDial notes a dial of state at the voice server Discord named last,
+// which redial ends, and returns the gateway to dial and the state to dial
+// with.
+func (g *renewableGateway) startDial(state disgovoice.State, redial context.CancelFunc) (disgovoice.Gateway, disgovoice.State) {
+	if e := g.named(); e != nil {
+		state.Endpoint, state.Token = *e.Endpoint, e.Token
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.state, g.redial = state, redial
+	return g.gw, state
+}
+
+// endDial notes that the dial in flight has ended.
+func (g *renewableGateway) endDial() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.redial = nil
+}
+
+// redialFor ends the dial in flight when it dials a voice server other than
+// the one e names.
+func (g *renewableGateway) redialFor(e gateway.EventVoiceServerUpdate) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.redial != nil && (g.state.Endpoint != *e.Endpoint || g.state.Token != e.Token) {
+		g.redial()
+	}
 }
 
 // channel is the channel of the call the gateway last opened for.
@@ -332,9 +487,15 @@ func (g *renewableGateway) reopen(ctx context.Context) error {
 	return g.Open(ctx, state)
 }
 
-func (g *renewableGateway) Close() { g.current().Close() }
+// Close ends any dialing, then closes the gateway: disgo closes it when the
+// recorder leaves or Discord takes it out.
+func (g *renewableGateway) Close() {
+	g.stopDial()
+	g.current().Close()
+}
 
 func (g *renewableGateway) CloseWithCode(code int, message string) {
+	g.stopDial()
 	g.current().CloseWithCode(code, message)
 }
 
@@ -346,48 +507,38 @@ func (g *renewableGateway) Send(ctx context.Context, op disgovoice.Opcode, d dis
 
 func (g *renewableGateway) Latency() time.Duration { return g.current().Latency() }
 
-// errCallMoved is what disgo's close handler gets in place of a 4022. disgo
-// answers a close that isn't a websocket close with a fresh connection in
-// the same channel, where a 4022 would take the recorder out.
-var errCallMoved = errors.New("voice: the call moved to another voice server")
-
-// lostConnectionMessage is what Sentry hears when disgo takes the recorder
-// out of the channel on its own.
+// lostConnectionMessage is what Sentry hears when the recorder is taken out
+// of the channel on its own.
 const lostConnectionMessage = "Voice connection lost mid-recording"
 
 // watchClose wraps disgo's handler for a voice gateway that closed and
 // couldn't resume. disgo opens a fresh connection when the close allows it,
-// and a voice reconnect ends there. That connection goes through a new
-// gateway, which identifies. The old one would resume the voice session,
-// which the rejoin keeps, and a resume gets no answer that opens audio.
-// Discord ends a call with 4022, "Call terminated", when its channel is
-// deleted or the call moves to another voice server, as a region change
-// makes it do. A call that moved gets a fresh connection too, unless its
-// channel is gone. Otherwise, or when the fresh connection fails, disgo
-// takes the recorder out of the channel itself: the voice connection is
-// lost mid-recording, and Sentry hears of it with the close that started it.
-// A connection the recorder closed meanwhile ended with its recording, and
-// lost nothing.
+// and a voice reconnect ends there. Here the recorder's rejoin takes that
+// over, through a new gateway, which identifies. The old one would resume
+// the voice session, which the rejoin keeps, and a resume gets no answer
+// that opens audio. Discord ends a call with 4022, "Call terminated", when
+// its channel is deleted or the call moves to another voice server, as a
+// region change makes it do. A call that moved gets a fresh connection too,
+// unless its channel is gone. Otherwise disgo takes the recorder out of the
+// channel itself, and so does a rejoin that can't go out: the voice
+// connection is lost mid-recording, and Sentry hears of it with the close
+// that started it. So does Discord taking the recorder out before it is
+// back. A connection the recorder closed meanwhile ended with its
+// recording, and lost nothing.
 func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.CloseHandlerFunc) disgovoice.CloseHandlerFunc {
 	return func(g disgovoice.Gateway, err error) {
 		defer utils.RecoverPanic("recorder-voice-close", "recorder", c.s.userID)
-		c.gaveUp.Store(false)
-		forDisgo := err
 		moved := closedWith(err, disgovoice.GatewayCloseEventCodeCallTerminated.Code) && c.s.channelExists(gw.channel())
-		if moved {
-			forDisgo = errCallMoved
-		}
-		if getsFreshConnection(forDisgo) {
-			gw.renew()
-		}
-		onClose(g, forDisgo)
-		if c.closed.Load() {
+		if !moved && !getsFreshConnection(err) {
+			c.gaveUp.Store(false)
+			onClose(g, err)
+			if c.gaveUp.Load() && !c.closed.Load() {
+				utils.CaptureError(lostConnectionMessage, err, "recorder", c.s.userID)
+			}
 			return
 		}
-		// disgo starts no fresh connection once Discord has taken the
-		// recorder out of the channel, and sends no leave either. The call
-		// moved, and the recorder couldn't follow it.
-		if c.gaveUp.Load() || moved && !gw.openedSinceRenew() {
+		gw.renew()
+		if !c.rejoin() && !c.closed.Load() {
 			utils.CaptureError(lostConnectionMessage, err, "recorder", c.s.userID)
 		}
 	}
@@ -462,7 +613,7 @@ func (s *discordgoSession) Join(ctx context.Context, guildID, channelID string) 
 		return nil, fmt.Errorf("channel ID %q: %w", channelID, err)
 	}
 	conn := s.voice.CreateConn(gid)
-	if err := conn.Open(ctx, cid, true, false); err != nil {
+	if err := conn.Open(ctx, cid, selfMute, selfDeaf); err != nil {
 		closeCtx, cancel := context.WithTimeout(context.Background(), closeTimeout)
 		defer cancel()
 		conn.Close(closeCtx)
