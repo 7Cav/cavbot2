@@ -262,3 +262,24 @@ func TestRecorderStartsAGapWithin1sOfACloseDisgoResumesFrom(t *testing.T) {
 		})
 	}
 }
+
+// After a 4015 the recorder's next open at a voice server identifies, and no
+// Resume reaches any voice server: the gateway the close left behind dials
+// nothing more. A resume gets no answer that opens audio.
+func TestRecorderIdentifiesAfterACloseDisgoResumesFrom(t *testing.T) {
+	recordSentry(t)
+	server := newDroppingVoiceServer(t)
+	h := newCallHarness(t)
+	h.recordDropping(server, server.dialer())
+
+	server.awaitDrop(t)
+	within(time.Now(), waitFor, func() bool { return len(server.firstOps()) > 1 })
+
+	ops := server.firstOps()
+	if len(ops) < 2 || ops[1] != disgovoice.OpcodeIdentify {
+		t.Errorf("first ops after Hello = %v, want the second connection to identify (op %d)", ops, disgovoice.OpcodeIdentify)
+	}
+	if slices.Contains(ops, disgovoice.OpcodeResume) {
+		t.Errorf("first ops after Hello = %v, want no Resume (op %d)", ops, disgovoice.OpcodeResume)
+	}
+}

@@ -648,12 +648,6 @@ func (h *callHarness) endConnection(err error) {
 	h.connected.onClose(h.connected, err)
 }
 
-// resumesRanOut is what disgo's gateway hands its close handler once every
-// try to resume after a close has failed, the last with err.
-func resumesRanOut(err error) error {
-	return fmt.Errorf("failed to reconnect voice gateway after 5 attempts: %w", err)
-}
-
 // sent is the voice state updates the recorder session was asked to send
 // since the last start.
 func (h *callHarness) sent() []voiceUpdate {
@@ -693,13 +687,12 @@ func TestRecorderReportsAVoiceConnectionDisgoGivesUpOn(t *testing.T) {
 	}
 }
 
-// disgo answers some closes with a fresh connection in the same channel.
-// 4006, 4009 and 4011 get one at once. A close disgo resumes from gets one
-// once every try to resume has failed, whether the last try failed on a
-// close, such as 4015 or a code disgo doesn't know, or on the dial. The
-// recorder rejoins the channel as it joined, self-muted and never
-// self-deafened, and identifies at the voice server, since a resume gets no
-// answer that opens audio. It never leaves, and nothing reaches Sentry.
+// disgo answers some closes with a fresh connection in the same channel:
+// 4006, 4009 and 4011. The recorder rejoins the channel as it joined,
+// self-muted and never self-deafened, and identifies at the voice server,
+// since a resume gets no answer that opens audio. It never leaves, and
+// nothing reaches Sentry. A close disgo would resume from goes the same way,
+// on disgo's own gateway (drop_test.go).
 func TestRecorderKeepsRecordingThroughACloseThatGetsAFreshConnection(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -708,9 +701,6 @@ func TestRecorderKeepsRecordingThroughACloseThatGetsAFreshConnection(t *testing.
 		{"4006", &websocket.CloseError{Code: 4006}},
 		{"4009", &websocket.CloseError{Code: 4009}},
 		{"4011", &websocket.CloseError{Code: 4011}},
-		{"resumes ran out on 4015", resumesRanOut(&websocket.CloseError{Code: 4015})},
-		{"resumes ran out on a code disgo doesn't know", resumesRanOut(&websocket.CloseError{Code: 4100})},
-		{"resumes ran out on the dial", resumesRanOut(errors.New("dial tcp: lookup c-dfw-1.discord.media: no such host"))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			events := recordSentry(t)

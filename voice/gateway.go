@@ -809,8 +809,8 @@ func (s *discordgoSession) channelExists(channelID snowflake.ID) bool {
 // getsFreshConnection reports whether disgo's close handler answers err with
 // a fresh connection in the same channel. It does for anything but a voice
 // gateway close that disgo's close table says to leave on. disgo hands on a
-// close it resumes from only once every try to resume has failed, wrapping
-// the last close or dial error.
+// close it would resume from as the refusal of its resume's dial
+// (errResumeRefused).
 func getsFreshConnection(err error) bool {
 	var closeErr *websocket.CloseError
 	if !errors.As(err, &closeErr) {
