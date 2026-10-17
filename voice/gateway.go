@@ -252,9 +252,10 @@ func asWarning(level slog.Level) slog.Level {
 // rejoin with the voice state alone. So the connection keeps the last
 // server Discord named, and hands it to disgo again when disgo threw it
 // away. Once the recorder closes the connection, a rejoin disgo started
-// before sends nothing more. A rejoin after a close the recorder can come
+// before sends nothing more. A rejoin after a drop the recorder can come
 // back from is the connection's own (rejoin), with no time limit, so the
-// recording goes on while the call's new server can't be reached.
+// recording goes on while the call's server or the recorder's own gateway
+// can't be reached.
 type recorderConn struct {
 	disgovoice.Conn
 	s               *discordgoSession
@@ -542,8 +543,8 @@ func (g *renewableGateway) watchEvents(onEvent disgovoice.EventHandlerFunc) disg
 // heartbeatMargin is how long past its heartbeat interval since its last
 // answer a voice server may go without answering a heartbeat before the
 // recorder counts the connection dropped. disgo's gateway notices only at
-// the heartbeat after the one left unanswered, up to two intervals on, and
-// Discord names an interval of over 13 s.
+// the heartbeat after the one left unanswered, two intervals on, so the
+// recorder notices first whenever the interval is longer than this.
 const heartbeatMargin = 3 * time.Second
 
 // errVoiceServerSilent is the close a voice server that stopped answering
@@ -876,20 +877,21 @@ func (g *renewableGateway) Latency() time.Duration { return g.current().Latency(
 // of the channel on its own.
 const lostConnectionMessage = "Voice connection lost mid-recording"
 
-// watchClose wraps disgo's handler for a voice gateway that closed and
-// couldn't resume. disgo opens a fresh connection when the close allows it,
-// and a voice reconnect ends there. Here the recorder's rejoin takes that
-// over, through a new gateway, which identifies. The old one would resume
-// the voice session, which the rejoin keeps, and a resume gets no answer
-// that opens audio. Discord ends a call with 4022, "Call terminated", when
-// its channel is deleted or the call moves to another voice server, as a
-// region change makes it do. A call that moved gets a fresh connection too,
-// unless its channel is gone. Otherwise disgo takes the recorder out of the
-// channel itself, and so does a rejoin that can't go out: the voice
-// connection is lost mid-recording, and Sentry hears of it with the close
-// that started it. So does Discord taking the recorder out before it is
-// back. A connection the recorder closed meanwhile ended with its
-// recording, and lost nothing.
+// watchClose wraps disgo's handler for a voice gateway that dropped: it
+// closed, its read failed, or its voice server went silent. The recorder
+// can't hear the call from then on. disgo opens a fresh connection when the
+// close allows it, and a voice reconnect ends there. Here the recorder's
+// rejoin takes that over, through a new gateway, which identifies. The old
+// one would resume the voice session, which the rejoin keeps, and a resume
+// gets no answer that opens audio (ownDialsOnly). Discord ends a call with
+// 4022, "Call terminated", when its channel is deleted or the call moves to
+// another voice server, as a region change makes it do. A call that moved
+// gets a fresh connection too, unless its channel is gone. Otherwise disgo
+// takes the recorder out of the channel itself: the voice connection is
+// lost mid-recording, and Sentry hears of it with the close that started
+// it. So does Discord taking the recorder out before it is back. A
+// connection the recorder closed meanwhile ended with its recording, and
+// lost nothing.
 func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.CloseHandlerFunc) disgovoice.CloseHandlerFunc {
 	return func(g disgovoice.Gateway, err error) {
 		defer utils.RecoverPanic("recorder-voice-close", "recorder", c.s.userID)

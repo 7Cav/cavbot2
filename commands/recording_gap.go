@@ -13,12 +13,13 @@ import (
 )
 
 // A recording's gaps (#736, GLOSSARY.md Gap): the stretches its recorder
-// can't hear the channel, because the call moved to a voice server the
-// recorder hasn't reached yet or its DAVE setup stalled. The voice adapter
-// says when one starts and ends. One that passes 10 s gets a gap notice in
-// the recorded channel's chat, edited when the gap ends, and a line in the
-// info file. One that reaches 10 minutes ends the recording as the recorder
-// leaving the channel does.
+// can't hear the channel, because its connection to the voice server
+// dropped, the call moved to a voice server the recorder hasn't reached yet,
+// or its DAVE setup stalled. The voice adapter says when one starts and
+// ends, and can tell of a start only later (#769). One that passes 10 s gets
+// a gap notice in the recorded channel's chat, edited when the gap ends, and
+// a line in the info file. One that reaches 10 minutes ends the recording as
+// the recorder leaving the channel does.
 
 // gapNoticeAfter is how long a gap runs before its notice posts: as long as
 // the voice adapter waits before Sentry hears of it.
