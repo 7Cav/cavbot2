@@ -56,6 +56,29 @@ type fakeForum struct {
 	// with no answer, the transport error a forum outage produces.
 	userinfoDrop bool
 	tokenDrop    bool
+	// userinfoHold, when set, makes the next /api/me wait until the test
+	// lets it go.
+	userinfoHold *forumHold
+}
+
+// forumHold is one held /api/me request: waiting closes once it waits, and
+// it answers once release closes.
+type forumHold struct {
+	waiting chan struct{}
+	release chan struct{}
+}
+
+// holdUserinfo makes the next /api/me request, the group check of the next
+// request to the panel, wait until the test calls the release it returns,
+// or the test ends. The channel closes once the request is waiting.
+func (f *fakeForum) holdUserinfo() (<-chan struct{}, func()) {
+	hold := &forumHold{waiting: make(chan struct{}), release: make(chan struct{})}
+	f.mu.Lock()
+	f.userinfoHold = hold
+	f.mu.Unlock()
+	release := sync.OnceFunc(func() { close(hold.release) })
+	f.t.Cleanup(release)
+	return hold.waiting, release
 }
 
 // forumAccount is one user the fake forum knows: the code its consent page
@@ -229,6 +252,14 @@ func (f *fakeForum) token(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fakeForum) userinfo(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	hold := f.userinfoHold
+	f.userinfoHold = nil
+	f.mu.Unlock()
+	if hold != nil {
+		close(hold.waiting)
+		<-hold.release
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.userinfoRequests++

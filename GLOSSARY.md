@@ -505,7 +505,8 @@ _Avoid_: dashboard, admin UI, settings screen, config.
 **Panel session**:
 The panel's record that a browser is signed in as one forum user. Created at
 the OAuth callback, for any forum user, and holds the Discord ID their milpac
-names, if any, which finds the recordings they started. Ended by sign-out,
+names, if any, which finds the recordings they started. When sign-in can't
+find it for a user with a milpac, a recording page looks again. Ended by sign-out,
 two hours after sign-in, or by the forum refusing the token or refusing to
 say who the user is. A group
 check that grants nothing leaves it running.
@@ -653,6 +654,7 @@ _Avoid_: failed recording, aborted recording, broken recording.
 The panel page every signed-in forum user opens, listing the recordings they
 started, with each one's downloads, its deletion date and a Delete that
 removes it sooner. One who started none reads that there are none yet.
+One the panel can't yet find in Discord reads why, and what to do.
 A panel admin can switch it to every recording. The link a recording notice gets at stop opens the recording here.
 _Avoid_: recordings dashboard, recordings list.
 
