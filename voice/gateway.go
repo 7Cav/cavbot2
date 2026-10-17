@@ -254,8 +254,9 @@ func (c *recorderConn) redeliver(dropped *gateway.EventVoiceServerUpdate) {
 // renewableGateway is the voice gateway disgo's connection holds. It hands
 // every call to a disgo gateway, which renew swaps for a new one. disgo's
 // gateway keeps what it resumes with through a close, and resumes when it
-// next opens, but a voice server the call moved to never had that session.
-// A new gateway identifies there instead.
+// next opens, since disgo's fresh connection keeps the voice session ID. A
+// voice server answers that resume with nothing that opens audio, and one
+// the call moved to never had the session. A new gateway identifies instead.
 type renewableGateway struct {
 	build func() disgovoice.Gateway
 
@@ -356,14 +357,17 @@ const lostConnectionMessage = "Voice connection lost mid-recording"
 
 // watchClose wraps disgo's handler for a voice gateway that closed and
 // couldn't resume. disgo opens a fresh connection when the close allows it,
-// and a voice reconnect ends there. Discord ends a call with 4022, "Call
-// terminated", when its channel is deleted or the call moves to another
-// voice server, as a region change makes it do. A call that moved gets a
-// fresh connection too, through a new gateway, unless its channel is gone.
-// Otherwise, or when the fresh connection fails, disgo takes the recorder
-// out of the channel itself: the voice connection is lost mid-recording,
-// and Sentry hears of it with the close that started it. A connection the
-// recorder closed meanwhile ended with its recording, and lost nothing.
+// and a voice reconnect ends there. That connection goes through a new
+// gateway, which identifies. The old one would resume the voice session,
+// which the rejoin keeps, and a resume gets no answer that opens audio.
+// Discord ends a call with 4022, "Call terminated", when its channel
+// is deleted or the call moves to another voice server, as a region change
+// makes it do. A call that moved gets a fresh connection too, unless its
+// channel is gone. Otherwise, or when the fresh connection fails, disgo
+// takes the recorder out of the channel itself: the voice connection is
+// lost mid-recording, and Sentry hears of it with the close that started it.
+// A connection the recorder closed meanwhile ended with its recording, and
+// lost nothing.
 func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.CloseHandlerFunc) disgovoice.CloseHandlerFunc {
 	return func(g disgovoice.Gateway, err error) {
 		defer utils.RecoverPanic("recorder-voice-close", "recorder", c.s.userID)
@@ -371,8 +375,10 @@ func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.Close
 		forDisgo := err
 		moved := closedWith(err, disgovoice.GatewayCloseEventCodeCallTerminated.Code) && c.s.channelExists(gw.channel())
 		if moved {
-			gw.renew()
 			forDisgo = errCallMoved
+		}
+		if freshConnection(forDisgo) {
+			gw.renew()
 		}
 		onClose(g, forDisgo)
 		if c.closed.Load() {
@@ -398,6 +404,27 @@ func (s *discordgoSession) channelExists(channelID snowflake.ID) bool {
 	_, err := s.dg.Channel(channelID.String(), discordgo.WithContext(ctx))
 	var restErr *discordgo.RESTError
 	return !errors.As(err, &restErr) || restErr.Message == nil || restErr.Message.Code != discordgo.ErrCodeUnknownChannel
+}
+
+// freshConnection reports whether disgo's close handler answers err with a
+// fresh connection in the same channel. It does for anything but a voice
+// gateway close that disgo's close table says to leave on. disgo hands
+// on a close it resumes from only once every try to resume has failed,
+// wrapping the last close or dial error.
+func freshConnection(err error) bool {
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) {
+		return true
+	}
+	// disgo's GatewayCloseEventCodeByCode, written out as a comparison. The
+	// error data check (ADR 0018) fails a close code handed to a call that
+	// returns text, as that one does.
+	for _, cc := range disgovoice.GatewayCloseEventCodes {
+		if cc.Code == closeErr.Code {
+			return cc.NewConnection
+		}
+	}
+	return disgovoice.GatewayCloseEventCodeUnknown.NewConnection
 }
 
 // closedWith reports whether err is a voice gateway close with code.
