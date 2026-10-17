@@ -55,9 +55,9 @@ type Fake struct {
 	// next start gets.
 	recordings      map[int64]Recording
 	nextRecordingID int64
-	// stampZone is the zone a change log entry's time is held in, as
-	// HoldTimesIn sets it, and nil for the local zone time.Now gives.
-	stampZone *time.Location
+	// holdIn is the zone HoldTimesIn holds each change log entry's time
+	// in, and nil for the local zone time.Now gives.
+	holdIn *time.Location
 }
 
 // changeLog is one change log in append order, and the ID its next entry
@@ -92,7 +92,7 @@ func NewFake() *Fake {
 func (f *Fake) HoldTimesIn(loc *time.Location) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.stampZone = loc
+	f.holdIn = loc
 }
 
 // GetHub implements Store.
@@ -483,8 +483,8 @@ func (f *Fake) appendToLog(ctx context.Context, log *changeLog, entry *ChangeLog
 	log.nextID++
 	e.HubID = hubID
 	e.At = time.Now()
-	if f.stampZone != nil {
-		e.At = e.At.In(f.stampZone)
+	if f.holdIn != nil {
+		e.At = e.At.In(f.holdIn)
 	}
 	e.Diff = slices.Clone(e.Diff)
 	log.entries = append(log.entries, e)

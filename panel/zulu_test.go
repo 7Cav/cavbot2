@@ -23,12 +23,7 @@ func assertInZulu(t *testing.T, el *html.Node, place string) {
 		t.Errorf("%s shows no time", place)
 		return
 	}
-	raw := attrOf(el, "datetime")
-	at, err := time.Parse(time.RFC3339, raw)
-	if err != nil {
-		t.Errorf("%s's datetime %q is not RFC 3339: %v", place, raw, err)
-		return
-	}
+	at := parseDatetime(t, el)
 	text := textOf(el)
 	m := zuluText.FindStringSubmatch(text)
 	if m == nil {
@@ -47,7 +42,7 @@ func assertInZulu(t *testing.T, el *html.Node, place string) {
 	minute, _ := strconv.Atoi(m[5])
 	read := time.Date(year, month, day, hour, minute, 0, 0, time.UTC)
 	if want := at.UTC().Truncate(time.Minute); month == 0 || !read.Equal(want) {
-		t.Errorf("%s reads %q, want the UTC minute its datetime %s names", place, text, raw)
+		t.Errorf("%s reads %q, want the UTC minute its datetime names, %s", place, text, at.UTC().Format(time.RFC3339))
 	}
 }
 
