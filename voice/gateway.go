@@ -212,7 +212,7 @@ func (c *recorderConn) rejoin() bool {
 	c.stopRejoin = cancel
 	c.mu.Unlock()
 	defer c.endRejoin()
-	err := c.Conn.Open(ctx, *channelID, selfMute, selfDeaf)
+	err := c.Open(ctx, *channelID, selfMute, selfDeaf)
 	if err != nil && ctx.Err() == nil {
 		closeCtx, cancelClose := context.WithTimeout(context.Background(), closeTimeout)
 		defer cancelClose()

@@ -187,6 +187,11 @@ type activeRecording struct {
 	// recorderSeen is set once the cache has shown the recorder in the
 	// channel.
 	recorderSeen bool
+	// gap is the gap running now, nil while the recorder hears the
+	// channel, and gaps the gaps past 10 s that have ended, in order. The
+	// runtime's mutex guards both.
+	gap  *recordingGap
+	gaps []gapSpan
 }
 
 // live reports whether the recording runs and no stop has taken it: its
@@ -307,8 +312,8 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	// runtime's clock when it's handed over. It receives before a stop can
 	// find it, so the stop's leave ends the receiving.
 	tracks := newRecordingTracks(r.dir, row.ID, row.StartedAt)
-	conn.Receive(trackListener{tracks})
 	rec := &activeRecording{row: row, conn: conn, tracks: tracks}
+	conn.Receive(recordingListener{r, rec})
 	rec.cancelCap = recordingAfterFunc(recordingCap, func() { r.autoStop(rec, store.RecordingEndCap) })
 	rec.cancelDiskCheck = recordingAfterFunc(recordingDiskCheckInterval, func() { r.checkDisk(rec) })
 	r.mu.Lock()
@@ -415,13 +420,14 @@ func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEn
 	r.cancelTimers(target)
 	r.leave(target.conn)
 	stoppedAt := recordingNow()
+	gap := r.endGapAtStop(target, stoppedAt)
 	if err := target.tracks.close(stoppedAt); err != nil {
 		captureError("Tracks not closed at stop", err, "recording_id", target.row.ID)
 	}
 	row := target.row
 	members := r.mgr.MemberList(r.guildID)
 	row.StoppedAt, row.Ended, row.Speakers = stoppedAt, end, speakersOf(members, target.tracks.heard())
-	if err := writeRecordingInfo(r.dir, row, members.DisplayName(row.StarterID)); err != nil {
+	if err := writeRecordingInfo(r.dir, row, members.DisplayName(row.StarterID), r.gapsOf(target)); err != nil {
 		captureError("Info file not written", err, "recording_id", row.ID)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)
@@ -431,18 +437,13 @@ func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEn
 	}
 	r.release(recorderID)
 	r.closeRecordingNotice(row)
+	if gap != nil {
+		r.editGapNotice(target, gap, gap.stoppedContent())
+	}
 	utils.Info("Recording stopped", "recording_id", row.ID, "channel_id", row.ChannelID,
 		"recorder", recorderID, "ended", string(end), "stopped_by", stoppedBy)
 	r.startMix(row)
 }
-
-// trackListener hands every frame a recording's recorder hears to its
-// tracks, at the runtime's clock.
-type trackListener struct{ tracks *recordingTracks }
-
-func (l trackListener) Frame(f voice.Frame) { l.tracks.write(f, recordingNow()) }
-func (trackListener) GapStarted()           {}
-func (trackListener) GapEnded()             {}
 
 // cancelTimers cancels a recording a stop or the shutdown has taken: its
 // stop at the cap and its next disk check.

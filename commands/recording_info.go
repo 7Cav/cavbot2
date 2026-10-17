@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/7cav/cavbot2/store"
 )
@@ -12,29 +13,42 @@ import (
 // and in its zip, that documents the recording. It names the title, the
 // channel, the starter, the start and stop times in Zulu, how the recording
 // ended, and each speaker's display name and Discord ID, marking a lost
-// track.
+// track. Each gap past 10 s gets a line too (GLOSSARY.md, Gap), but only in
+// the file written at the stop: one rendered from the row lists none.
 
 // TrackLostMarker follows the name of a speaker whose track was lost
 // (GLOSSARY.md, Lost track), wherever a recording names its speakers: its
 // info file and the Recordings page.
 const TrackLostMarker = "(track lost)"
 
+// infoGapLabel opens the info file's line for each gap past 10 s
+// (GLOSSARY.md, Gap).
+const infoGapLabel = "Gap:"
+
 // zuluLayout is how the info file writes a time: a UTC date, then the time
 // with the regiment's z suffix (GLOSSARY.md, Zulu).
 const zuluLayout = "2006-01-02 1504z"
 
+// gapSpan is when a gap past 10 s started and ended, as the info file
+// lists it.
+type gapSpan struct {
+	start, end time.Time
+}
+
 // writeRecordingInfo writes a stopped recording's info file. starterName is
-// the starter's display name.
-func writeRecordingInfo(dir string, rec store.Recording, starterName string) error {
+// the starter's display name, and gaps the recording's gaps past 10 s, in
+// order.
+func writeRecordingInfo(dir string, rec store.Recording, starterName string, gaps []gapSpan) error {
 	if err := os.MkdirAll(recordingDir(dir, rec.ID), 0o750); err != nil {
 		return err
 	}
-	return os.WriteFile(infoPath(dir, rec.ID), []byte(recordingInfo(rec, starterName)), 0o600)
+	return os.WriteFile(infoPath(dir, rec.ID), []byte(recordingInfo(rec, starterName, gaps)), 0o600)
 }
 
 // recordingInfo is the info file's text. starterName is the starter's
-// display name, or empty to name them by Discord ID alone.
-func recordingInfo(rec store.Recording, starterName string) string {
+// display name, or empty to name them by Discord ID alone, and gaps the
+// recording's gaps past 10 s, in order.
+func recordingInfo(rec store.Recording, starterName string, gaps []gapSpan) string {
 	var b strings.Builder
 	line := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
 	line("Recording %d", rec.ID)
@@ -48,6 +62,10 @@ func recordingInfo(rec store.Recording, starterName string) string {
 	line("Started: %s", rec.StartedAt.UTC().Format(zuluLayout))
 	line("Stopped: %s", rec.StoppedAt.UTC().Format(zuluLayout))
 	line("Ended: %s", recordingEndPhrase(rec.Ended))
+	for _, g := range gaps {
+		line("%s %s to %s (%s)", infoGapLabel, g.start.UTC().Format(zuluLayout), g.end.UTC().Format(zuluLayout),
+			g.end.Sub(g.start).Round(time.Second))
+	}
 	line("Speakers:")
 	if len(rec.Speakers) == 0 {
 		line("  (none)")

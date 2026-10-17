@@ -554,7 +554,8 @@ func (sc *recordScene) startIn(t *testing.T, m permMember, channelID string) {
 
 // assertStopped checks that the recorder has left the channel, the
 // recording's one row has its stop time, the clock's now, and records that
-// it ended as end, and the recording notice was edited to lose its button.
+// it ended as end, and the recording notice the row names was edited to
+// lose its button.
 func (sc *recordScene) assertStopped(t *testing.T, channelID string, end store.RecordingEnd) {
 	t.Helper()
 	if got := sc.voice.inChannel(channelID); len(got) != 0 {
@@ -562,10 +563,10 @@ func (sc *recordScene) assertStopped(t *testing.T, channelID string, end store.R
 	}
 	recs := sc.recordings(t)
 	if len(recs) != 1 || !recs[0].StoppedAt.Equal(sc.clock.read()) || recs[0].Ended != end {
-		t.Errorf("recordings after the stop = %+v, want one stopped at %v, ended %q", recs, sc.clock.read(), end)
+		t.Fatalf("recordings after the stop = %+v, want one stopped at %v, ended %q", recs, sc.clock.read(), end)
 	}
 	// A nil list leaves the button in place; an empty one removes it.
-	edit := noticeEdit(t, sc.fake, recordingNotice(t, sc.fake, channelID))
+	edit := noticeEdit(t, sc.fake, fakeMessage{id: recs[0].NoticeID, channelID: channelID})
 	if edit.Components == nil || len(*edit.Components) != 0 {
 		t.Errorf("notice edit components = %v, want an empty list", edit.Components)
 	}
