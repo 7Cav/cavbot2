@@ -639,8 +639,9 @@ func (req foxholeRequest) addRole() commands.FoxholeRole {
 }
 
 // reopenPreview is GET /foxhole/reopen, the link a preview gives beside a
-// Confirm a running Foxhole action turned off, and the error page's Try
-// again after a Foxhole page failed to load. It redirects to the Foxhole
+// Confirm a running Foxhole action turned off, the roster block's Preview
+// roster, and the error page's Try again after a Foxhole page failed to
+// load. It redirects to the Foxhole
 // page with the link's query, which opens the same preview or page again,
 // read from Discord as it is then. The redirect names no fragment, so the
 // browser keeps the link's, which names the heading of the block it opens.

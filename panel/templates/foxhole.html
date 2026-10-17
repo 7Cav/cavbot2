@@ -455,8 +455,8 @@
   <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="preview">{{if .AbovePreview}}Preview again{{else}}Preview{{end}}</button></div>
 </form>{{end}}
 
-{{- /* Preview roster loads the page by GET, with the unit in the address, so a reload of the preview reads the roster again and sends no form (ADR 0019). */}}
-{{define "roster-form"}}<form method="get" action="/foxhole#roster-preview" data-field="roster-form">
+{{- /* Preview roster loads the page by GET, with the unit in the address, so a reload of the preview reads the roster again and sends no form (ADR 0019). It goes through /foxhole/reopen, which redirects to that address: pressed again from the open preview, a GET of the address the tab shows would only scroll. */}}
+{{define "roster-form"}}<form method="get" action="/foxhole/reopen#roster-preview" data-field="roster-form">
   <div class="block-row">
     <label class="field"><span class="field-label">Validated unit</span>
       <select name="unit" aria-describedby="roster-unit-hint">{{range .Units}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select>

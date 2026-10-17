@@ -65,7 +65,8 @@ var pendingOpeners = []pendingOpener{
 	}, []string{"add-preview"}},
 	{"roster add", func(t *testing.T, w *testWorld, doc *html.Node) (string, *http.Response) {
 		serveRoster(t, trooperVance, trooperDoe)
-		return pressPreviewRosterOn(t, w.b, doc, "D/ACD")
+		action, res := pressPreviewRosterOn(t, w.b, doc, "D/ACD")
+		return action, follow(t, w.b, res)
 	}, []string{"roster-preview"}},
 	{"retry", func(t *testing.T, w *testWorld, doc *html.Node) (string, *http.Response) {
 		link := retryLink(reportBlock(t, doc))

@@ -306,3 +306,23 @@ func TestNoticeReloadOfARefusedApproveLoadsFromTheAddressThePageNames(t *testing
 		t.Errorf("the notice's Reload %s ticks %v, want the selection %v", reload, got, want)
 	}
 }
+
+// Pressing Preview roster again from the open roster preview reads the
+// roster again, as the first press does. With one validated unit, the
+// second press asks for the very address the tab shows, which a browser
+// only scrolls to unless the press goes through a redirect.
+func TestPreviewRosterPressedAgainReadsTheRosterAgain(t *testing.T) {
+	w := newFoxholeWorld(t)
+	api := serveRoster(t, trooperVance)
+	address, res := pressPreviewRoster(t, w, "D/ACD")
+	doc, _ := landing(t, w.b, address, res)
+	api.setTroopers(trooperVance, trooperDoe)
+
+	address, res = pressPreviewRosterOn(t, w.b, doc, "D/ACD")
+
+	again, _ := landing(t, w.b, address, res)
+	rows := rosterRows(rosterPreviewBlock(t, again))
+	if got, want := slices.Sorted(maps.Keys(rows)), []string{"Doe.J", "Vance.R"}; !slices.Equal(got, want) {
+		t.Errorf("the second Preview roster lists %v, want the roster as it stands, %v", got, want)
+	}
+}

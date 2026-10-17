@@ -130,11 +130,11 @@ func TestRosterBlockOffersTheUnitsTheCommandsPickerOffers(t *testing.T) {
 
 // previewRoster loads the Foxhole page and presses Preview roster in its Add
 // a unit's roster block with the unit given picked, the way a browser sends
-// the form.
+// the form, and returns the page it lands on.
 func previewRoster(t *testing.T, w *testWorld, unit string) *http.Response {
 	t.Helper()
 	_, res := pressPreviewRoster(t, w, unit)
-	return res
+	return follow(t, w.b, res)
 }
 
 // pressPreviewRoster is previewRoster, which also returns the address the
@@ -327,7 +327,7 @@ func TestRosterPreviewWhileTheMemberListIsPartialIsRefused(t *testing.T) {
 	w.discord.setMemberList(arrivingList)
 
 	_, res := pressPreviewRosterOn(t, w.b, page, "D/ACD")
-	doc := parseHTML(t, res)
+	doc := parseHTML(t, follow(t, w.b, res))
 
 	if findLive(doc, "", "data-error", "member-list") == nil {
 		t.Error("the page doesn't say the preview was refused for the member list")
