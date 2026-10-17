@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-11T16:56:54Z",
+  "generatedAt": "2026-10-17T00:44:21Z",
   "title": "Design System: cavbot2 panel",
   "extensions": {
     "colorMeta": {
@@ -53,6 +53,21 @@
         "role": "neutral",
         "displayName": "Raised Charcoal",
         "canonical": "#212121",
+        "tonalRamp": [
+          "#121212",
+          "#1b1b1b",
+          "#2b2b2b",
+          "#4d4d4d",
+          "#6b6b6b",
+          "#8d8d8d",
+          "#a1a1a1",
+          "#f1f1f1"
+        ]
+      },
+      "field": {
+        "role": "neutral",
+        "displayName": "Field Charcoal",
+        "canonical": "#1c1c1c",
         "tonalRamp": [
           "#121212",
           "#1b1b1b",
@@ -189,14 +204,14 @@
         "displayName": "Gold Highlight",
         "canonical": "#edcd40",
         "tonalRamp": [
-          "oklch(15% 0.163 94.9)",
-          "oklch(26% 0.163 94.9)",
-          "oklch(38% 0.163 94.9)",
-          "oklch(49% 0.163 94.9)",
-          "oklch(61% 0.163 94.9)",
-          "oklch(72% 0.163 94.9)",
-          "oklch(84% 0.163 94.9)",
-          "oklch(95% 0.163 94.9)"
+          "oklch(15% 0.156 95.8)",
+          "oklch(26% 0.156 95.8)",
+          "oklch(38% 0.156 95.8)",
+          "oklch(49% 0.156 95.8)",
+          "oklch(61% 0.156 95.8)",
+          "oklch(72% 0.156 95.8)",
+          "oklch(84% 0.156 95.8)",
+          "oklch(95% 0.156 95.8)"
         ]
       },
       "gold-lo": {
@@ -204,20 +219,20 @@
         "displayName": "Gold Shade",
         "canonical": "#e5bf15",
         "tonalRamp": [
-          "oklch(15% 0.163 94.9)",
-          "oklch(26% 0.163 94.9)",
-          "oklch(38% 0.163 94.9)",
-          "oklch(49% 0.163 94.9)",
-          "oklch(61% 0.163 94.9)",
-          "oklch(72% 0.163 94.9)",
-          "oklch(84% 0.163 94.9)",
-          "oklch(95% 0.163 94.9)"
+          "oklch(15% 0.164 94.1)",
+          "oklch(26% 0.164 94.1)",
+          "oklch(38% 0.164 94.1)",
+          "oklch(49% 0.164 94.1)",
+          "oklch(61% 0.164 94.1)",
+          "oklch(72% 0.164 94.1)",
+          "oklch(84% 0.164 94.1)",
+          "oklch(95% 0.164 94.1)"
         ]
       },
-      "gold-hover": {
+      "gold-tint": {
         "role": "primary",
-        "displayName": "Gold Hover",
-        "canonical": "#eed14e",
+        "displayName": "Gold Tint",
+        "canonical": "rgba(235, 199, 41, 0.1)",
         "tonalRamp": [
           "oklch(15% 0.163 94.9)",
           "oklch(26% 0.163 94.9)",
@@ -246,7 +261,7 @@
       },
       "btn-hi": {
         "role": "neutral",
-        "displayName": "Button Hover",
+        "displayName": "Lifted Grey",
         "canonical": "#424242",
         "tonalRamp": [
           "#121212",
@@ -289,6 +304,51 @@
           "#f1f1f1"
         ]
       },
+      "btn-off": {
+        "role": "neutral",
+        "displayName": "Off Grey",
+        "canonical": "#262626",
+        "tonalRamp": [
+          "#121212",
+          "#1b1b1b",
+          "#2b2b2b",
+          "#4d4d4d",
+          "#6b6b6b",
+          "#8d8d8d",
+          "#a1a1a1",
+          "#f1f1f1"
+        ]
+      },
+      "btn-off-edge-d": {
+        "role": "neutral",
+        "displayName": "Off Bevel Dark",
+        "canonical": "#1a1a1a",
+        "tonalRamp": [
+          "#121212",
+          "#1b1b1b",
+          "#2b2b2b",
+          "#4d4d4d",
+          "#6b6b6b",
+          "#8d8d8d",
+          "#a1a1a1",
+          "#f1f1f1"
+        ]
+      },
+      "btn-off-edge-l": {
+        "role": "neutral",
+        "displayName": "Off Bevel Light",
+        "canonical": "#333333",
+        "tonalRamp": [
+          "#121212",
+          "#1b1b1b",
+          "#2b2b2b",
+          "#4d4d4d",
+          "#6b6b6b",
+          "#8d8d8d",
+          "#a1a1a1",
+          "#f1f1f1"
+        ]
+      },
       "danger-hi": {
         "role": "secondary",
         "displayName": "Refusal Red",
@@ -309,14 +369,14 @@
         "displayName": "Refusal Red Deep",
         "canonical": "#b3393d",
         "tonalRamp": [
-          "oklch(15% 0.168 22.5)",
-          "oklch(26% 0.168 22.5)",
-          "oklch(38% 0.168 22.5)",
-          "oklch(49% 0.168 22.5)",
-          "oklch(61% 0.168 22.5)",
-          "oklch(72% 0.168 22.5)",
-          "oklch(84% 0.168 22.5)",
-          "oklch(95% 0.168 22.5)"
+          "oklch(15% 0.158 22.7)",
+          "oklch(26% 0.158 22.7)",
+          "oklch(38% 0.158 22.7)",
+          "oklch(49% 0.158 22.7)",
+          "oklch(61% 0.158 22.7)",
+          "oklch(72% 0.158 22.7)",
+          "oklch(84% 0.158 22.7)",
+          "oklch(95% 0.158 22.7)"
         ]
       },
       "danger-text": {
@@ -337,16 +397,16 @@
       "ok": {
         "role": "tertiary",
         "displayName": "Done Green",
-        "canonical": "#4f8a4f",
+        "canonical": "#509652",
         "tonalRamp": [
-          "oklch(15% 0.108 144.0)",
-          "oklch(26% 0.108 144.0)",
-          "oklch(38% 0.108 144.0)",
-          "oklch(49% 0.108 144.0)",
-          "oklch(61% 0.108 144.0)",
-          "oklch(72% 0.108 144.0)",
-          "oklch(84% 0.108 144.0)",
-          "oklch(95% 0.108 144.0)"
+          "oklch(15% 0.123 144.5)",
+          "oklch(26% 0.123 144.5)",
+          "oklch(38% 0.123 144.5)",
+          "oklch(49% 0.123 144.5)",
+          "oklch(61% 0.123 144.5)",
+          "oklch(72% 0.123 144.5)",
+          "oklch(84% 0.123 144.5)",
+          "oklch(95% 0.123 144.5)"
         ]
       },
       "ok-text": {
@@ -446,9 +506,9 @@
     ],
     "motion": [
       {
-        "name": "button-fill",
-        "value": "background-color .075s ease",
-        "purpose": "A button's fill change under the pointer. Dropped under reduced motion."
+        "name": "button-colors",
+        "value": "background-color .15s, border-color .15s, color .15s",
+        "purpose": "A button's fill, edge and label change under the pointer, as on the forum. Under reduced motion the stylesheet drops every transition."
       },
       {
         "name": "button-press",
@@ -458,6 +518,11 @@
     ],
     "breakpoints": [
       {
+        "name": "field-text",
+        "value": "568px",
+        "purpose": "At or below: text fields and search boxes take 16px type, as on the forum, so a phone doesn't zoom in on tap."
+      },
+      {
         "name": "phone",
         "value": "767px",
         "purpose": "At or below: the rail becomes a two-row top bar and every grid drops to one column."
@@ -465,7 +530,7 @@
       {
         "name": "actions-stack",
         "value": "1100px",
-        "purpose": "At or below: the three Foxhole action blocks stack."
+        "purpose": "At or below: the three Foxhole action blocks stack, and the rank roles section stacks its change log under its table."
       }
     ]
   },
@@ -474,25 +539,33 @@
       "name": "Button",
       "kind": "button",
       "refersTo": "button",
-      "description": "The default action: Sign out, Cancel, a second download. Grey with the forum's two-tone bevel.",
-      "html": "<button class=\"ds-btn\">Sign out</button>",
-      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5em; padding: 8px 14px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: #fff; background: var(--btn, #2e2e2e); border: 1px solid; border-color: var(--btn-edge-d, #212121) var(--btn-edge-l, #3b3b3b) var(--btn-edge-l, #3b3b3b) var(--btn-edge-d, #212121); border-radius: var(--radius, 3px); cursor: pointer; text-decoration: none; white-space: nowrap; transition: background-color .075s ease; } .ds-btn:hover { background: var(--btn-hi, #424242); color: #fff; } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: 2px; } .ds-btn[disabled], .ds-btn[disabled]:hover { color: var(--text-mute, #8d8d8d); background: transparent; border-color: var(--line-hi, #4d4d4d); cursor: not-allowed; transform: none; } @media (prefers-reduced-motion: reduce) { .ds-btn { transition: none; } }"
+      "description": "The default action: Sign out, Cancel, a second download. Grey with the forum's two-tone bevel, a gold label on the Gold Tint under the pointer. Shown live, then disabled as the forum draws it.",
+      "html": "<button class=\"ds-btn\">Cancel</button> <button class=\"ds-btn\" disabled>Approve</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5em; padding: 8px 10px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: #fff; background: var(--btn, #2e2e2e); border: 1px solid; border-color: var(--btn-edge-d, #212121) var(--btn-edge-l, #3b3b3b) var(--btn-edge-l, #3b3b3b) var(--btn-edge-d, #212121); border-radius: var(--radius, 3px); cursor: pointer; text-decoration: none; white-space: nowrap; transition: background-color .15s, border-color .15s, color .15s; } .ds-btn:hover { background: var(--gold-tint, rgba(235, 199, 41, .1)); color: var(--gold, #ebc729); } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: 2px; } .ds-btn[disabled], .ds-btn[disabled]:hover { color: var(--text-mute, #8d8d8d); background: var(--btn-off, #262626); border-color: var(--btn-off-edge-d, #1a1a1a) var(--btn-off-edge-l, #333) var(--btn-off-edge-l, #333) var(--btn-off-edge-d, #1a1a1a); cursor: default; } .ds-btn[disabled]:active { transform: none; } @media (prefers-reduced-motion: reduce) { .ds-btn { transition: none; } }"
     },
     {
       "name": "Gold Button",
       "kind": "button",
       "refersTo": "button-cta",
-      "description": "The one forward action in a row: Save, Create, Sign in, Preview.",
+      "description": "The one forward action in a row: Save, Create, Sign in, Preview. Under the pointer the fill gives way to the Gold Tint and the bevel stays gold.",
       "html": "<button class=\"ds-btn ds-btn--cta\">Sign in with the forum</button>",
-      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5em; padding: 8px 14px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: #fff; background: var(--btn, #2e2e2e); border: 1px solid; border-color: var(--btn-edge-d, #212121) var(--btn-edge-l, #3b3b3b) var(--btn-edge-l, #3b3b3b) var(--btn-edge-d, #212121); border-radius: var(--radius, 3px); cursor: pointer; text-decoration: none; white-space: nowrap; transition: background-color .075s ease; } .ds-btn:hover { background: var(--btn-hi, #424242); color: #fff; } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: 2px; } .ds-btn[disabled], .ds-btn[disabled]:hover { color: var(--text-mute, #8d8d8d); background: transparent; border-color: var(--line-hi, #4d4d4d); cursor: not-allowed; transform: none; } @media (prefers-reduced-motion: reduce) { .ds-btn { transition: none; } } .ds-btn--cta { color: #000; background: var(--gold, #ebc729); border-color: var(--gold-lo, #e5bf15) var(--gold-hi, #edcd40) var(--gold-hi, #edcd40) var(--gold-lo, #e5bf15); } .ds-btn--cta:hover { background: #eed14e; color: #000; }"
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5em; padding: 8px 10px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: #fff; background: var(--btn, #2e2e2e); border: 1px solid; border-color: var(--btn-edge-d, #212121) var(--btn-edge-l, #3b3b3b) var(--btn-edge-l, #3b3b3b) var(--btn-edge-d, #212121); border-radius: var(--radius, 3px); cursor: pointer; text-decoration: none; white-space: nowrap; transition: background-color .15s, border-color .15s, color .15s; } .ds-btn:hover { background: var(--gold-tint, rgba(235, 199, 41, .1)); color: var(--gold, #ebc729); } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: 2px; } .ds-btn[disabled], .ds-btn[disabled]:hover { color: var(--text-mute, #8d8d8d); background: var(--btn-off, #262626); border-color: var(--btn-off-edge-d, #1a1a1a) var(--btn-off-edge-l, #333) var(--btn-off-edge-l, #333) var(--btn-off-edge-d, #1a1a1a); cursor: default; } .ds-btn[disabled]:active { transform: none; } @media (prefers-reduced-motion: reduce) { .ds-btn { transition: none; } } .ds-btn--cta { color: #000; background: var(--gold, #ebc729); border-color: var(--gold-lo, #e5bf15) var(--gold-hi, #edcd40) var(--gold-hi, #edcd40) var(--gold-lo, #e5bf15); }"
+    },
+    {
+      "name": "Small Button",
+      "kind": "button",
+      "refersTo": "button-small",
+      "description": "The forum's small button, 3px by 6px at 13px: the picker's add button, row actions in a table and the Foxhole note's Save.",
+      "html": "<button class=\"ds-btn ds-btn--small\">Choose a role</button> <button class=\"ds-btn ds-btn--small ds-btn--cta\">Save</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5em; padding: 8px 10px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: #fff; background: var(--btn, #2e2e2e); border: 1px solid; border-color: var(--btn-edge-d, #212121) var(--btn-edge-l, #3b3b3b) var(--btn-edge-l, #3b3b3b) var(--btn-edge-d, #212121); border-radius: var(--radius, 3px); cursor: pointer; text-decoration: none; white-space: nowrap; transition: background-color .15s, border-color .15s, color .15s; } .ds-btn:hover { background: var(--gold-tint, rgba(235, 199, 41, .1)); color: var(--gold, #ebc729); } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: 2px; } .ds-btn[disabled], .ds-btn[disabled]:hover { color: var(--text-mute, #8d8d8d); background: var(--btn-off, #262626); border-color: var(--btn-off-edge-d, #1a1a1a) var(--btn-off-edge-l, #333) var(--btn-off-edge-l, #333) var(--btn-off-edge-d, #1a1a1a); cursor: default; } .ds-btn[disabled]:active { transform: none; } @media (prefers-reduced-motion: reduce) { .ds-btn { transition: none; } } .ds-btn--cta { color: #000; background: var(--gold, #ebc729); border-color: var(--gold-lo, #e5bf15) var(--gold-hi, #edcd40) var(--gold-hi, #edcd40) var(--gold-lo, #e5bf15); } .ds-btn--small { padding: 3px 6px; font-size: 13px; }"
     },
     {
       "name": "Danger Button",
       "kind": "button",
       "refersTo": "button-danger",
       "description": "Starts a removal, which then waits on a danger confirm. Red edge, red fill only under the pointer.",
-      "html": "<button class=\"ds-btn ds-btn--danger\">Delete</button>",
-      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5em; padding: 8px 14px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: #fff; background: var(--btn, #2e2e2e); border: 1px solid; border-color: var(--btn-edge-d, #212121) var(--btn-edge-l, #3b3b3b) var(--btn-edge-l, #3b3b3b) var(--btn-edge-d, #212121); border-radius: var(--radius, 3px); cursor: pointer; text-decoration: none; white-space: nowrap; transition: background-color .075s ease; } .ds-btn:hover { background: var(--btn-hi, #424242); color: #fff; } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: 2px; } .ds-btn[disabled], .ds-btn[disabled]:hover { color: var(--text-mute, #8d8d8d); background: transparent; border-color: var(--line-hi, #4d4d4d); cursor: not-allowed; transform: none; } @media (prefers-reduced-motion: reduce) { .ds-btn { transition: none; } } .ds-btn--danger { border-color: var(--danger-hi, #c84448); color: #f1c9cb; } .ds-btn--danger:hover { background: var(--danger-hi, #c84448); color: #fff; }"
+      "html": "<button class=\"ds-btn ds-btn--danger\">Remove hub</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5em; padding: 8px 10px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: #fff; background: var(--btn, #2e2e2e); border: 1px solid; border-color: var(--btn-edge-d, #212121) var(--btn-edge-l, #3b3b3b) var(--btn-edge-l, #3b3b3b) var(--btn-edge-d, #212121); border-radius: var(--radius, 3px); cursor: pointer; text-decoration: none; white-space: nowrap; transition: background-color .15s, border-color .15s, color .15s; } .ds-btn:hover { background: var(--gold-tint, rgba(235, 199, 41, .1)); color: var(--gold, #ebc729); } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: 2px; } .ds-btn[disabled], .ds-btn[disabled]:hover { color: var(--text-mute, #8d8d8d); background: var(--btn-off, #262626); border-color: var(--btn-off-edge-d, #1a1a1a) var(--btn-off-edge-l, #333) var(--btn-off-edge-l, #333) var(--btn-off-edge-d, #1a1a1a); cursor: default; } .ds-btn[disabled]:active { transform: none; } @media (prefers-reduced-motion: reduce) { .ds-btn { transition: none; } } .ds-btn--danger { border-color: var(--danger-hi, #c84448); color: #f1c9cb; } .ds-btn--danger:hover { background: var(--danger-hi, #c84448); color: #fff; }"
     },
     {
       "name": "Danger Confirm Button",
@@ -500,60 +573,60 @@
       "refersTo": "button-danger-filled",
       "description": "The Confirm inside a danger confirm, and nowhere else.",
       "html": "<button class=\"ds-btn ds-btn--danger-filled\">Delete the recording</button>",
-      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5em; padding: 8px 14px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: #fff; background: var(--btn, #2e2e2e); border: 1px solid; border-color: var(--btn-edge-d, #212121) var(--btn-edge-l, #3b3b3b) var(--btn-edge-l, #3b3b3b) var(--btn-edge-d, #212121); border-radius: var(--radius, 3px); cursor: pointer; text-decoration: none; white-space: nowrap; transition: background-color .075s ease; } .ds-btn:hover { background: var(--btn-hi, #424242); color: #fff; } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: 2px; } .ds-btn[disabled], .ds-btn[disabled]:hover { color: var(--text-mute, #8d8d8d); background: transparent; border-color: var(--line-hi, #4d4d4d); cursor: not-allowed; transform: none; } @media (prefers-reduced-motion: reduce) { .ds-btn { transition: none; } } .ds-btn--danger-filled { color: #fff; background: var(--danger-hi, #c84448); border-color: var(--danger-lo, #b3393d) var(--danger-hi, #c84448) var(--danger-hi, #c84448) var(--danger-lo, #b3393d); } .ds-btn--danger-filled:hover { background: var(--danger-lo, #b3393d); color: #fff; }"
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5em; padding: 8px 10px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: #fff; background: var(--btn, #2e2e2e); border: 1px solid; border-color: var(--btn-edge-d, #212121) var(--btn-edge-l, #3b3b3b) var(--btn-edge-l, #3b3b3b) var(--btn-edge-d, #212121); border-radius: var(--radius, 3px); cursor: pointer; text-decoration: none; white-space: nowrap; transition: background-color .15s, border-color .15s, color .15s; } .ds-btn:hover { background: var(--gold-tint, rgba(235, 199, 41, .1)); color: var(--gold, #ebc729); } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: 2px; } .ds-btn[disabled], .ds-btn[disabled]:hover { color: var(--text-mute, #8d8d8d); background: var(--btn-off, #262626); border-color: var(--btn-off-edge-d, #1a1a1a) var(--btn-off-edge-l, #333) var(--btn-off-edge-l, #333) var(--btn-off-edge-d, #1a1a1a); cursor: default; } .ds-btn[disabled]:active { transform: none; } @media (prefers-reduced-motion: reduce) { .ds-btn { transition: none; } } .ds-btn--danger-filled { color: #fff; background: var(--danger-hi, #c84448); border-color: var(--danger-lo, #b3393d) var(--danger-hi, #c84448) var(--danger-hi, #c84448) var(--danger-lo, #b3393d); } .ds-btn--danger-filled:hover { background: var(--danger-lo, #b3393d); color: #fff; }"
     },
     {
       "name": "Block",
       "kind": "card",
       "refersTo": "block",
-      "description": "The unit every page is built from: a gold-ruled header, rows, and a submit row at the foot of a form.",
-      "html": "<section class=\"ds-block\"><h2 class=\"ds-block-header\">Use your 7cav.us forum account</h2><div class=\"ds-block-row\">Cavbot2 uses your 7cav.us forum account.</div><div class=\"ds-submit-row\"><button class=\"ds-btn ds-btn--cta\">Sign in with the forum</button></div></section>",
-      "css": ".ds-block { box-sizing: border-box; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: var(--text, #a1a1a1); background: var(--surface, #171717); border: 1px solid var(--line, #2b2b2b); border-radius: var(--radius, 3px); max-width: 720px; } .ds-block-header { margin: 0; padding: 12px 14px; font-size: 18px; font-weight: 400; color: var(--text-hi, #f1f1f1); background: var(--surface-2, #1b1b1b); border-bottom: 2px solid var(--gold, #ebc729); box-shadow: inset 0 1px 0 0 var(--line-hi, #4d4d4d); border-radius: var(--radius, 3px) var(--radius, 3px) 0 0; } .ds-block-row { padding: 12px 14px; } .ds-block-row + .ds-block-row { border-top: 1px solid var(--line, #2b2b2b); } .ds-submit-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; background: rgba(23,23,23,.9); border-top: 1px solid var(--line-2, #353535); border-radius: 0 0 var(--radius, 3px) var(--radius, 3px); } .ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5em; padding: 8px 14px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: #fff; background: var(--btn, #2e2e2e); border: 1px solid; border-color: var(--btn-edge-d, #212121) var(--btn-edge-l, #3b3b3b) var(--btn-edge-l, #3b3b3b) var(--btn-edge-d, #212121); border-radius: var(--radius, 3px); cursor: pointer; text-decoration: none; white-space: nowrap; transition: background-color .075s ease; } .ds-btn:hover { background: var(--btn-hi, #424242); color: #fff; } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: 2px; } .ds-btn[disabled], .ds-btn[disabled]:hover { color: var(--text-mute, #8d8d8d); background: transparent; border-color: var(--line-hi, #4d4d4d); cursor: not-allowed; transform: none; } @media (prefers-reduced-motion: reduce) { .ds-btn { transition: none; } } .ds-btn--cta { color: #000; background: var(--gold, #ebc729); border-color: var(--gold-lo, #e5bf15) var(--gold-hi, #edcd40) var(--gold-hi, #edcd40) var(--gold-lo, #e5bf15); } .ds-btn--cta:hover { background: #eed14e; color: #000; }"
+      "description": "The unit every page is built from: a gold-ruled header, rows, and a submit row at the foot of a form. The header and submit row round at 2px inside the block's 1px edge.",
+      "html": "<section class=\"ds-block\"><h2 class=\"ds-block-header\">Use your 7cav.us forum account</h2><div class=\"ds-submit-row\"><button class=\"ds-btn ds-btn--cta\">Sign in with the forum</button></div></section>",
+      "css": ".ds-block { font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: var(--text, #a1a1a1); background: var(--surface, #171717); border: 1px solid var(--line, #2b2b2b); border-radius: var(--radius, 3px); max-width: 720px; } .ds-block-header { margin: 0; padding: 12px 14px; font-size: 18px; font-weight: 400; color: var(--text-hi, #f1f1f1); background: var(--surface-2, #1b1b1b); border-bottom: 2px solid var(--gold, #ebc729); box-shadow: inset 0 1px 0 0 var(--line-hi, #4d4d4d); border-radius: var(--radius-inner, 2px) var(--radius-inner, 2px) 0 0; } .ds-block-row { padding: 12px 14px; } .ds-block-row + .ds-block-row { border-top: 1px solid var(--line, #2b2b2b); } .ds-submit-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; background: rgba(23,23,23,.9); border-top: 1px solid var(--line-2, #353535); border-radius: 0 0 var(--radius-inner, 2px) var(--radius-inner, 2px); } .ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5em; padding: 8px 10px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: #fff; background: var(--btn, #2e2e2e); border: 1px solid; border-color: var(--btn-edge-d, #212121) var(--btn-edge-l, #3b3b3b) var(--btn-edge-l, #3b3b3b) var(--btn-edge-d, #212121); border-radius: var(--radius, 3px); cursor: pointer; text-decoration: none; white-space: nowrap; transition: background-color .15s, border-color .15s, color .15s; } .ds-btn:hover { background: var(--gold-tint, rgba(235, 199, 41, .1)); color: var(--gold, #ebc729); } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: 2px; } .ds-btn[disabled], .ds-btn[disabled]:hover { color: var(--text-mute, #8d8d8d); background: var(--btn-off, #262626); border-color: var(--btn-off-edge-d, #1a1a1a) var(--btn-off-edge-l, #333) var(--btn-off-edge-l, #333) var(--btn-off-edge-d, #1a1a1a); cursor: default; } .ds-btn[disabled]:active { transform: none; } @media (prefers-reduced-motion: reduce) { .ds-btn { transition: none; } } .ds-btn--cta { color: #000; background: var(--gold, #ebc729); border-color: var(--gold-lo, #e5bf15) var(--gold-hi, #edcd40) var(--gold-hi, #edcd40) var(--gold-lo, #e5bf15); }"
     },
     {
       "name": "Danger Confirm",
       "kind": "custom",
       "refersTo": "block",
       "description": "The preview a removal waits on: red edge and header rule, what goes and what stays, then the filled Confirm and Cancel.",
-      "html": "<section class=\"ds-block ds-block--danger\"><h2 class=\"ds-block-header\">Remove hub Arma Voice?</h2><div class=\"ds-block-row ds-confirm\"><h3>Goes with the hub</h3><ul><li>Every setting in its edit form.</li><li>Its change log. No page shows it once the hub is gone.</li></ul></div><div class=\"ds-block-row ds-confirm\"><h3>Spawned channels open now <span class=\"ds-count\">2</span></h3></div><div class=\"ds-submit-row\"><button class=\"ds-btn ds-btn--danger-filled\">Remove hub Arma Voice</button><button class=\"ds-btn\">Cancel</button></div></section>",
-      "css": ".ds-block { box-sizing: border-box; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: var(--text, #a1a1a1); background: var(--surface, #171717); border: 1px solid var(--line, #2b2b2b); border-radius: var(--radius, 3px); max-width: 720px; } .ds-block-header { margin: 0; padding: 12px 14px; font-size: 18px; font-weight: 400; color: var(--text-hi, #f1f1f1); background: var(--surface-2, #1b1b1b); border-bottom: 2px solid var(--gold, #ebc729); box-shadow: inset 0 1px 0 0 var(--line-hi, #4d4d4d); border-radius: var(--radius, 3px) var(--radius, 3px) 0 0; } .ds-block-row { padding: 12px 14px; } .ds-block-row + .ds-block-row { border-top: 1px solid var(--line, #2b2b2b); } .ds-submit-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; background: rgba(23,23,23,.9); border-top: 1px solid var(--line-2, #353535); border-radius: 0 0 var(--radius, 3px) var(--radius, 3px); } .ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5em; padding: 8px 14px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: #fff; background: var(--btn, #2e2e2e); border: 1px solid; border-color: var(--btn-edge-d, #212121) var(--btn-edge-l, #3b3b3b) var(--btn-edge-l, #3b3b3b) var(--btn-edge-d, #212121); border-radius: var(--radius, 3px); cursor: pointer; text-decoration: none; white-space: nowrap; transition: background-color .075s ease; } .ds-btn:hover { background: var(--btn-hi, #424242); color: #fff; } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: 2px; } .ds-btn[disabled], .ds-btn[disabled]:hover { color: var(--text-mute, #8d8d8d); background: transparent; border-color: var(--line-hi, #4d4d4d); cursor: not-allowed; transform: none; } @media (prefers-reduced-motion: reduce) { .ds-btn { transition: none; } } .ds-btn--danger-filled { color: #fff; background: var(--danger-hi, #c84448); border-color: var(--danger-lo, #b3393d) var(--danger-hi, #c84448) var(--danger-hi, #c84448) var(--danger-lo, #b3393d); } .ds-btn--danger-filled:hover { background: var(--danger-lo, #b3393d); color: #fff; } .ds-block--danger { border-color: var(--danger-hi, #c84448); overflow-wrap: anywhere; } .ds-block--danger > .ds-block-header { border-bottom-color: var(--danger-hi, #c84448); } .ds-confirm h3 { margin: 0 0 6px; font-size: 14px; font-weight: 500; color: var(--text-hi, #f1f1f1); } .ds-confirm ul { margin: 0; padding-left: 18px; } .ds-confirm li + li { margin-top: 4px; } .ds-count { margin-left: 4px; font-size: 13px; color: var(--text-mute, #8d8d8d); font-variant-numeric: tabular-nums; }"
+      "html": "<section class=\"ds-block ds-block--danger\"><h2 class=\"ds-block-header\">Remove hub Arma Voice?</h2><div class=\"ds-block-row\">Cavbot2 stops creating a spawned channel for anyone who joins Arma Voice.</div><div class=\"ds-block-row ds-confirm\"><h3>Goes with the hub</h3><ul><li>Every setting in its edit form.</li></ul></div><div class=\"ds-block-row ds-confirm\"><h3>Spawned channels open now <span class=\"ds-count\">2</span></h3></div><div class=\"ds-block-row ds-confirm\"><h3>Stays</h3><ul><li>The moderator roles for every hub, and the recording roles.</li><li>Its change log, with every setting it had, under Removed hubs on this page until ten more hubs are removed.</li></ul></div><div class=\"ds-submit-row\"><button class=\"ds-btn ds-btn--danger-filled\">Remove hub Arma Voice</button><button class=\"ds-btn\">Cancel</button></div></section>",
+      "css": ".ds-block { font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: var(--text, #a1a1a1); background: var(--surface, #171717); border: 1px solid var(--line, #2b2b2b); border-radius: var(--radius, 3px); max-width: 720px; } .ds-block-header { margin: 0; padding: 12px 14px; font-size: 18px; font-weight: 400; color: var(--text-hi, #f1f1f1); background: var(--surface-2, #1b1b1b); border-bottom: 2px solid var(--gold, #ebc729); box-shadow: inset 0 1px 0 0 var(--line-hi, #4d4d4d); border-radius: var(--radius-inner, 2px) var(--radius-inner, 2px) 0 0; } .ds-block-row { padding: 12px 14px; } .ds-block-row + .ds-block-row { border-top: 1px solid var(--line, #2b2b2b); } .ds-submit-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; background: rgba(23,23,23,.9); border-top: 1px solid var(--line-2, #353535); border-radius: 0 0 var(--radius-inner, 2px) var(--radius-inner, 2px); } .ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5em; padding: 8px 10px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: #fff; background: var(--btn, #2e2e2e); border: 1px solid; border-color: var(--btn-edge-d, #212121) var(--btn-edge-l, #3b3b3b) var(--btn-edge-l, #3b3b3b) var(--btn-edge-d, #212121); border-radius: var(--radius, 3px); cursor: pointer; text-decoration: none; white-space: nowrap; transition: background-color .15s, border-color .15s, color .15s; } .ds-btn:hover { background: var(--gold-tint, rgba(235, 199, 41, .1)); color: var(--gold, #ebc729); } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: 2px; } .ds-btn[disabled], .ds-btn[disabled]:hover { color: var(--text-mute, #8d8d8d); background: var(--btn-off, #262626); border-color: var(--btn-off-edge-d, #1a1a1a) var(--btn-off-edge-l, #333) var(--btn-off-edge-l, #333) var(--btn-off-edge-d, #1a1a1a); cursor: default; } .ds-btn[disabled]:active { transform: none; } @media (prefers-reduced-motion: reduce) { .ds-btn { transition: none; } } .ds-btn--danger-filled { color: #fff; background: var(--danger-hi, #c84448); border-color: var(--danger-lo, #b3393d) var(--danger-hi, #c84448) var(--danger-hi, #c84448) var(--danger-lo, #b3393d); } .ds-btn--danger-filled:hover { background: var(--danger-lo, #b3393d); color: #fff; } .ds-block--danger { border-color: var(--danger-hi, #c84448); overflow-wrap: anywhere; } .ds-block--danger > .ds-block-header { border-bottom-color: var(--danger-hi, #c84448); } .ds-confirm h3 { margin: 0 0 6px; font-size: 14px; font-weight: 500; color: var(--text-hi, #f1f1f1); } .ds-confirm ul { margin: 0; padding-left: 18px; } .ds-confirm li + li { margin-top: 4px; } .ds-count { margin-left: 4px; font-size: 13px; color: var(--text-mute, #8d8d8d); font-variant-numeric: tabular-nums; }"
     },
     {
       "name": "Notices",
       "kind": "custom",
       "refersTo": "notice",
-      "description": "One strip, three stripes: red for a refusal, grey for a notice that refuses nothing, green for a result.",
-      "html": "<div class=\"ds-note\">The forum would not tell Cavbot2 who you are, so you are not signed in.</div><div class=\"ds-note ds-note--neutral\">Your session ended. Please sign in again.</div><div class=\"ds-note ds-note--ok\">Saved.</div>",
-      "css": ".ds-note { box-sizing: border-box; max-width: 720px; padding: 12px 14px; margin-bottom: 12px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: var(--text-hi, #f1f1f1); background: var(--surface, #171717); border: 1px solid var(--line, #2b2b2b); border-left: 3px solid var(--danger-hi, #c84448); border-radius: var(--radius, 3px); } .ds-note--neutral { border-left-color: var(--line-strong, #6b6b6b); } .ds-note--ok { border-left-color: var(--ok, #4f8a4f); }"
+      "description": "One strip, three stripes: red for a refusal, grey for a notice that refuses nothing, green for a result. A link inside keeps its underline.",
+      "html": "<div class=\"ds-note\">The forum would not tell Cavbot2 who you are, so you are not signed in.</div><div class=\"ds-note ds-note--neutral\">Discord's member list didn't arrive. Wait a bit and try again. <a href=\"#\">Reload</a></div><div class=\"ds-note ds-note--ok\">Saved.</div>",
+      "css": ".ds-note { max-width: 720px; padding: 12px 14px; margin-bottom: 12px; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); color: var(--text-hi, #f1f1f1); background: var(--surface, #171717); border: 1px solid var(--line, #2b2b2b); border-left: 3px solid var(--danger-hi, #c84448); border-radius: var(--radius, 3px); } .ds-note--neutral { border-left-color: var(--line-strong, #6b6b6b); } .ds-note--ok { border-left-color: var(--ok, #509652); } .ds-note a { color: var(--gold, #ebc729); } .ds-note a:hover { color: var(--gold-hi, #edcd40); } .ds-note a:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: 2px; }"
     },
     {
       "name": "Text Field",
       "kind": "input",
       "refersTo": "field-input",
-      "description": "Label above, a Night Ground well with a Field Edge border, hint below. Focus turns the edge gold.",
-      "html": "<div class=\"ds-field-ground\"><label class=\"ds-field\"><span class=\"ds-field-label\">Base string</span><input class=\"ds-input\" type=\"text\" value=\"Arma Voice\"><span class=\"ds-field-hint\">Cavbot2 names spawned channels from it: \"Arma Voice\" gives \"Arma Voice - 1\".</span></label></div>",
-      "css": ".ds-field-ground { box-sizing: border-box; max-width: 480px; padding: 12px 14px; background: var(--surface, #171717); font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); } .ds-field { display: block; } .ds-field-label { display: block; margin-bottom: 6px; font-weight: 500; color: var(--text-hi, #f1f1f1); } .ds-input { display: block; width: 100%; box-sizing: border-box; padding: 8px 10px; font: inherit; color: var(--text-hi, #f1f1f1); background: var(--bg, #121212); border: 1px solid var(--line-strong, #6b6b6b); border-radius: var(--radius, 3px); } .ds-input:focus { outline: 2px solid var(--gold, #ebc729); outline-offset: 1px; border-color: var(--gold, #ebc729); } .ds-field-hint { display: block; margin-top: 6px; font-size: 13px; color: var(--text-mute, #8d8d8d); }"
+      "description": "Label above, a Field Charcoal well with a Field Edge border, hint below. Focus raises the well and turns the edge gold.",
+      "html": "<div class=\"ds-field-ground\"><label class=\"ds-field\"><span class=\"ds-field-label\">Base string</span><input class=\"ds-input\" type=\"text\" value=\"Arma Voice\"></label><span class=\"ds-field-hint\">Cavbot2 names spawned channels from it: \"Arma Voice\" gives \"Arma Voice - 1\".</span></div>",
+      "css": ".ds-field-ground { max-width: 480px; padding: 12px 14px; background: var(--surface, #171717); font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); } .ds-field { display: block; } .ds-field-label { display: block; margin-bottom: 6px; font-weight: 500; color: var(--text-hi, #f1f1f1); } .ds-input { display: block; width: 100%; box-sizing: border-box; padding: 12px; font: inherit; color: var(--text, #a1a1a1); background: var(--field, #1c1c1c); border: 1px solid var(--line-strong, #6b6b6b); border-radius: var(--radius, 3px); } .ds-input::placeholder { color: var(--text-mute, #8d8d8d); opacity: 1; } .ds-input:focus { outline: 2px solid var(--gold, #ebc729); outline-offset: 1px; border-color: var(--gold, #ebc729); background: var(--surface-3, #212121); } .ds-field-hint { display: block; margin-top: 6px; font-size: 13px; color: var(--text-mute, #8d8d8d); } @media (max-width: 568px) { .ds-input { font-size: 16px; } }"
     },
     {
       "name": "Tags",
       "kind": "chip",
       "refersTo": "tag",
       "description": "Unfilled, 1px edge, words always present. Grey neutral, green on, red when something is wrong, gold approved, dashed gone.",
-      "html": "<div class=\"ds-tag-ground\"><span class=\"ds-tag\">disabled</span> <span class=\"ds-tag ds-tag--on\">enabled</span> <span class=\"ds-tag ds-tag--warn\">broken</span> <span class=\"ds-tag ds-tag--approved\">Approved</span> <span class=\"ds-tag ds-tag--gone\">not in the server</span></div>",
-      "css": ".ds-tag-ground { padding: 12px 14px; background: var(--surface, #171717); font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); } .ds-tag { display: inline-block; padding: 1px .4em; font-size: 12px; line-height: 1.3; color: var(--text, #a1a1a1); border: 1px solid var(--line-2, #353535); border-radius: var(--radius, 3px); } .ds-tag--on { color: #cfe5cf; border-color: var(--ok, #4f8a4f); } .ds-tag--warn { color: #f1c9cb; border-color: var(--danger-hi, #c84448); } .ds-tag--approved { color: var(--gold, #ebc729); border-color: var(--gold-lo, #e5bf15); } .ds-tag--gone { color: var(--text-mute, #8d8d8d); border-style: dashed; }"
+      "html": "<div class=\"ds-tag-ground\"><span class=\"ds-tag\">disabled</span> <span class=\"ds-tag ds-tag--on\">enabled</span> <span class=\"ds-tag ds-tag--warn\">broken</span> <span class=\"ds-tag ds-tag--approved\">Approved: Internal</span> <span class=\"ds-tag ds-tag--gone\">not in the server</span></div>",
+      "css": ".ds-tag-ground { padding: 12px 14px; background: var(--surface, #171717); font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); } .ds-tag { display: inline-block; padding: 1px .4em; font-size: 12px; line-height: 1.3; color: var(--text, #a1a1a1); border: 1px solid var(--line-2, #353535); border-radius: var(--radius, 3px); } .ds-tag--on { color: #cfe5cf; border-color: var(--ok, #509652); } .ds-tag--warn { color: #f1c9cb; border-color: var(--danger-hi, #c84448); } .ds-tag--approved { color: var(--gold, #ebc729); border-color: var(--gold-lo, #e5bf15); } .ds-tag--gone { color: var(--text-mute, #8d8d8d); border-style: dashed; }"
     },
     {
       "name": "Rail",
       "kind": "nav",
       "refersTo": "rail",
       "description": "The 240px column every signed-in page sits beside. The selected page steps up a shade and takes a gold left edge.",
-      "html": "<nav class=\"ds-rail\"><a class=\"ds-rail-item\" href=\"#\">Hubs</a><a class=\"ds-rail-item is-selected\" href=\"#\" aria-current=\"page\">Foxhole</a><a class=\"ds-rail-item\" href=\"#\">Recordings</a></nav>",
+      "html": "<nav class=\"ds-rail\"><a class=\"ds-rail-item\" href=\"#\">Hubs</a><a class=\"ds-rail-item is-selected\" href=\"#\" aria-current=\"page\">Foxhole</a><a class=\"ds-rail-item\" href=\"#\">Recordings</a><a class=\"ds-rail-item\" href=\"#\">Settings</a></nav>",
       "css": ".ds-rail { width: 240px; padding: 10px 0; font: 15px/1.4 var(--sans, Roboto, 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif); background: var(--surface, #171717); border-right: 1px solid var(--line, #2b2b2b); } .ds-rail-item { display: block; padding: 10px 18px; color: var(--text-hi, #f1f1f1); text-decoration: none; border-left: 3px solid transparent; } .ds-rail-item:hover { background: var(--surface-3, #212121); } .ds-rail-item.is-selected { border-left-color: var(--gold, #ebc729); background: var(--surface-3, #212121); font-weight: 500; } .ds-rail-item:focus-visible { outline: 2px solid var(--gold, #ebc729); outline-offset: -2px; }"
     }
   ],
   "narrative": {
     "northStar": "The Forum's Back Room",
-    "overview": "The panel is a back room of 7cav.us. Someone who signs in through the forum, or taps a recording link in Discord, lands on the same charcoal blocks, the same gold rule under each header and the same Roboto they just left. The look is the forum's stylesheet as it stood on 2026-09-17, and it is frozen. PRODUCT.md owns that commitment and the short list of places the panel may depart from it. This file records how the look is built, so a new page matches it without guessing.\n\nPlain, dense, dependable. Every page is a title, a one-line description and a stack of blocks beside a 240px rail, on a near-black ground where the forum's night-map image shows faintly at the top. The Hubs and Foxhole pages pack tables, forms and change logs at 14px and 15px, because panel admins and Foxhole managers use them at a desk and know the words. The Recordings page is laid out for a phone first, because its link arrives in Discord. Nothing moves except a button. Its fill changes in 75ms and it sinks 1px when pressed.\n\nIssue #288 rejected two looks: a centred sign-in gate over the map with Teko display type, and a split-screen sign-in with Teko titles. Neither comes back.",
+    "overview": "The panel is a back room of 7cav.us. Someone who signs in through the forum, or taps a recording link in Discord, lands on the same charcoal blocks, the same gold rule under each header and the same Roboto they just left. The look is the forum's stylesheet as it stood on 2026-09-17, and it is frozen. PRODUCT.md owns that commitment and the short list of places the panel may depart from it. This file records how the look is built, so a new page matches it without guessing.\n\nPlain, dense, dependable. Every page is a title, a one-line description and a stack of blocks beside a 240px rail, on a near-black ground where the forum's night-map image shows faintly at the top. The Hubs and Foxhole pages pack tables, forms and change logs at 14px and 15px, because panel admins and Foxhole managers use them at a desk and know the words. The Recordings page is laid out for a phone first, because its link arrives in Discord. Nothing moves except a button. Its colours change in 150ms and it sinks 1px when pressed.\n\nIssue #288 rejected two looks: a centred sign-in gate over the map with Teko display type, and a split-screen sign-in with Teko titles. Neither comes back.",
     "keyCharacteristics": [
       "Four charcoal steps carry all the depth. Nothing casts a drop shadow.",
       "A 2px gold rule sits under every block header. It turns red only on a danger confirm.",
@@ -565,7 +638,7 @@
     "rules": [
       {
         "name": "The Lines Not Fills Rule",
-        "body": "Colour comes as a line, an edge, a stripe or text. Gold fills only the forward button in a row of actions. Red fills only a danger confirm's Confirm, and a danger button while the pointer is on it. Nothing else gets a coloured background.",
+        "body": "Colour comes as a line, an edge, a stripe or text. Gold fills only the forward button in a row of actions, and the Gold Tint sits behind a default or gold button while the pointer is on it. Red fills only a danger confirm's Confirm, and a danger button while the pointer is on it. Nothing else gets a coloured background.",
         "section": "colors"
       },
       {
@@ -600,7 +673,7 @@
       },
       {
         "name": "The Three Pixel Rule",
-        "body": "Corners are 3px or a full circle, nothing between. No fully rounded ends, no 8px corners.",
+        "body": "Corners are 3px or a full circle. The one exception is 2px, on a part that fills a block's corner inside its edge. No fully rounded ends, no 8px corners.",
         "section": "shapes"
       }
     ],
@@ -618,11 +691,11 @@
       "Don't add a display face such as Teko, or load a font, image or script from a third party.",
       "Don't centre a sign-in gate over the map or split the sign-in screen in two. Issue #288 rejected both.",
       "Don't add drop shadows, gradients, glows or blur.",
-      "Don't fill anything with gold, red or green except the gold forward button and the red Confirm.",
+      "Don't fill anything with gold, red or green except the gold forward button, the red Confirm and the Gold Tint under the pointer.",
       "Don't use red for anything that isn't a refusal or a removal.",
       "Don't show a state by colour alone.",
       "Don't round a corner past 3px or give anything fully rounded ends.",
-      "Don't add motion beyond the 75ms button fill and the 1px press. Under reduced motion the stylesheet drops every transition, so the fill changes at once."
+      "Don't add motion beyond the 150ms change of a button's colours and the 1px press. Under reduced motion the stylesheet drops every transition, so the colours change at once."
     ]
   }
 }
