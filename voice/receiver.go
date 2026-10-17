@@ -30,6 +30,12 @@ type receiveConn interface {
 	UserIDBySSRC(ssrc uint32) snowflake.ID
 	// ChannelID is the call's channel, nil while there is none.
 	ChannelID() *snowflake.ID
+	// connected reports whether the recorder is connected in the call, at
+	// the voice server Discord named last.
+	connected() bool
+	// server is the voice server the recorder connects to: the one Discord
+	// named last for the call.
+	server() string
 	// reconnect opens a fresh voice connection in the call, which starts
 	// DAVE over, and returns once it has opened, or with ctx's error.
 	reconnect(ctx context.Context) error
@@ -69,11 +75,18 @@ const (
 // errDAVEStalled is the error a stall reaches Sentry with.
 var errDAVEStalled = errors.New("voice: DAVE held every frame past the stall limit")
 
+// gapMessage is what Sentry hears when a gap reaches GapReportedAfter, and
+// errGap the error it comes with.
+const gapMessage = "Recorder can't hear the channel"
+
+var errGap = errors.New("voice: the recorder couldn't hear the channel for 10 s")
+
 // receiver reads one voice connection's packets on a goroutine of its own
-// and hands each speaker's frames over, in the order they arrived.
+// and hands each speaker's frames over, in the order they arrived. It tells
+// its listener when a gap starts and ends.
 type receiver struct {
 	conn     receiveConn
-	handle   func(Frame)
+	listener Listener
 	recorder string
 
 	// ctx ends at close, and with it any fresh connection in flight.
@@ -99,15 +112,21 @@ type receiver struct {
 	unheardSince time.Time
 	setupSince   time.Time
 	stalled      bool
+	// inGap is whether the listener was last told a gap started, at
+	// gapSince. gapReported is whether Sentry has heard of that gap. Only
+	// the receiver's goroutine touches them.
+	inGap       bool
+	gapSince    time.Time
+	gapReported bool
 }
 
 // newReceiver builds the receiver of a recorder's connection. It hands
-// frames to handle once open starts it.
-func newReceiver(conn receiveConn, handle func(Frame), recorderID string) *receiver {
+// what it hears to l once open starts it.
+func newReceiver(conn receiveConn, l Listener, recorderID string) *receiver {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &receiver{
 		conn:     conn,
-		handle:   handle,
+		listener: l,
 		recorder: recorderID,
 		ctx:      ctx,
 		cancel:   cancel,
@@ -141,7 +160,9 @@ func (r *receiver) run() {
 // recording.
 func (r *receiver) step() {
 	defer utils.RecoverPanic("recorder-receive", "recorder", r.recorder)
-	if holdFrames(r.conn.DAVE()) {
+	holding := holdFrames(r.conn.DAVE())
+	r.watchGap(r.conn.connected() && !holding)
+	if holding {
 		r.waitOrStartOver()
 		return
 	}
@@ -162,6 +183,24 @@ func (r *receiver) step() {
 		if r.unreadable == failureBurst {
 			utils.CaptureError("Voice packets unreadable", err, "recorder", r.recorder, "packets", failureBurst)
 		}
+	}
+}
+
+// watchGap tells the listener when the recorder stops hearing the channel,
+// and when it hears it again. A gap that reaches GapReportedAfter reaches
+// Sentry once, with the voice server the recorder is trying.
+func (r *receiver) watchGap(hearing bool) {
+	switch {
+	case !hearing && !r.inGap:
+		r.inGap, r.gapSince, r.gapReported = true, time.Now(), false
+		r.listener.GapStarted()
+	case !hearing && !r.gapReported && time.Since(r.gapSince) >= GapReportedAfter:
+		r.gapReported = true
+		utils.CaptureError(gapMessage, errGap, "recorder", r.recorder, "channel_id", channelOf(r.conn),
+			"voice_server", r.conn.server())
+	case hearing && r.inGap:
+		r.inGap = false
+		r.listener.GapEnded()
 	}
 }
 
@@ -191,7 +230,8 @@ func (r *receiver) waitOrStartOver() {
 		return
 	}
 	if !r.stalled {
-		r.stalled = true
+		// The stall's report is the gap's too: Sentry hears no more of it.
+		r.stalled, r.gapReported = true, true
 		utils.CaptureError(stallMessage, errDAVEStalled, "recorder", r.recorder, "channel_id", channelOf(r.conn))
 	}
 	r.reconnect()
@@ -289,5 +329,5 @@ func (r *receiver) deliver(userID snowflake.ID, p *disgovoice.Packet) {
 		utils.Info("DAVE decrypt recovered", "recorder", r.recorder, "user_id", userID.String(), "frames_lost", failed)
 	}
 	delete(r.failing, userID)
-	r.handle(Frame{UserID: userID.String(), SSRC: p.SSRC, Timestamp: p.Timestamp, Opus: out[:n]})
+	r.listener.Frame(Frame{UserID: userID.String(), SSRC: p.SSRC, Timestamp: p.Timestamp, Opus: out[:n]})
 }

@@ -179,7 +179,7 @@ func (l *RecordingLibrary) WriteZip(w io.Writer, rec store.Recording) error {
 func (l *RecordingLibrary) InfoFile(rec store.Recording) ([]byte, error) {
 	info, err := os.ReadFile(infoPath(l.dir, rec.ID))
 	if errors.Is(err, fs.ErrNotExist) {
-		return []byte(recordingInfo(rec, "")), nil
+		return []byte(recordingInfo(rec, "", nil)), nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read the info file of recording %d: %w", rec.ID, err)

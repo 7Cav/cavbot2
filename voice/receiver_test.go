@@ -75,6 +75,11 @@ func (c *fakeReceiveConn) ChannelID() *snowflake.ID {
 	return &id
 }
 
+// connected is always true here: the call harness covers the connection
+// coming and going.
+func (c *fakeReceiveConn) connected() bool { return true }
+func (c *fakeReceiveConn) server() string  { return "c-dfw-1.discord.media:443" }
+
 func (c *fakeReceiveConn) reconnect(context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -157,6 +162,45 @@ func sealFor(userID, plaintext string) []byte {
 	return append(sealedPrefix(userID), plaintext...)
 }
 
+// listener is a Listener that hands each frame to frame, when set, and keeps
+// the gap events it hears in order.
+type listener struct {
+	frame func(Frame)
+
+	mu   sync.Mutex
+	gaps []string
+}
+
+// The gap events a listener keeps.
+const (
+	gapStarted = "started"
+	gapEnded   = "ended"
+)
+
+func listen(frame func(Frame)) *listener { return &listener{frame: frame} }
+
+func (l *listener) Frame(f Frame) {
+	if l.frame != nil {
+		l.frame(f)
+	}
+}
+
+func (l *listener) GapStarted() { l.note(gapStarted) }
+func (l *listener) GapEnded()   { l.note(gapEnded) }
+
+func (l *listener) note(event string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.gaps = append(l.gaps, event)
+}
+
+// gapEvents is the gap events heard so far, in order.
+func (l *listener) gapEvents() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.gaps)
+}
+
 // heard collects the frames a receiver hands over.
 type heard struct {
 	frames chan Frame
@@ -203,10 +247,18 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// startReceiver runs a receiver over conn until the test ends.
+// startReceiver runs a receiver over conn until the test ends, handing
+// each frame to handle.
 func startReceiver(t *testing.T, conn *fakeReceiveConn, handle func(Frame)) *receiver {
 	t.Helper()
-	r := newReceiver(conn, handle, "recorder-1")
+	return startListening(t, conn, listen(handle))
+}
+
+// startListening runs a receiver over conn until the test ends, handing
+// what it hears to l.
+func startListening(t *testing.T, conn *fakeReceiveConn, l Listener) *receiver {
+	t.Helper()
+	r := newReceiver(conn, l, "recorder-1")
 	r.open()
 	t.Cleanup(r.close)
 	return r
@@ -342,6 +394,33 @@ func TestReceiverHearsTheSpeakerAgainOnceDAVESetsUpAfterAStall(t *testing.T) {
 		want := heardFrom.Sub(unheardFrom)
 		if d, ok := logs.duration(slog.LevelInfo, daveRecoveredMessage); !ok || d < want || d >= want+time.Second {
 			t.Errorf("Info line %q carries %v (found %v), want how long the recorder couldn't hear, %v", daveRecoveredMessage, d, ok, want)
+		}
+	})
+}
+
+// DAVE holding every frame is a gap: the recorder hears nobody. The gap
+// ends once DAVE passes frames again, and the listener hears of it once
+// each way, however long DAVE held them.
+func TestReceiverToldOfAGapWhileDAVEHoldsFrames(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		l := listen(nil)
+		startListening(t, conn, l)
+		time.Sleep(time.Second)
+
+		conn.holdFrames(true)
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted}) {
+			t.Errorf("gap events while DAVE holds frames = %v, want one gap started", got)
+		}
+		conn.holdFrames(false)
+		time.Sleep(time.Second)
+		synctest.Wait()
+
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted, gapEnded}) {
+			t.Errorf("gap events once DAVE passes frames = %v, want the gap started and ended", got)
 		}
 	})
 }

@@ -47,18 +47,25 @@ func frame(userID string, ssrc, timestamp uint32, marker string) voice.Frame {
 // clock's now, the way the voice adapter delivers a frame.
 func (sc *recordScene) hear(t *testing.T, channelID string, f voice.Frame) {
 	t.Helper()
+	sc.listener(t, channelID).Frame(f)
+}
+
+// listener is what the runtime passed to Receive on the recorder in the
+// channel, which the voice adapter hands what the recorder hears.
+func (sc *recordScene) listener(t *testing.T, channelID string) voice.Listener {
+	t.Helper()
 	sc.voice.mu.Lock()
-	var handle func(voice.Frame)
+	defer sc.voice.mu.Unlock()
+	var l voice.Listener
 	for _, c := range sc.voice.conns {
 		if c.channelID == channelID && !c.left {
-			handle = c.handle
+			l = c.listener
 		}
 	}
-	sc.voice.mu.Unlock()
-	if handle == nil {
+	if l == nil {
 		t.Fatalf("no recorder in %s is receiving", channelID)
 	}
-	handle(f)
+	return l
 }
 
 // oggTrack is one track as read from disk: its audio packets, past the two

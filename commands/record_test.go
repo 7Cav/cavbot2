@@ -63,13 +63,13 @@ type joinHold struct {
 	joined, release chan struct{}
 }
 
-// fakeVoiceConn is one recorder in one channel, until it leaves. handle is
+// fakeVoiceConn is one recorder in one channel, until it leaves. listener is
 // what the runtime passed to Receive, nil before it does.
 type fakeVoiceConn struct {
 	v                     *fakeRecorderVoice
 	recorderID, channelID string
 	left                  bool
-	handle                func(voice.Frame)
+	listener              voice.Listener
 }
 
 func (v *fakeRecorderVoice) UserIDs() []string {
@@ -113,10 +113,10 @@ func (c *fakeVoiceConn) Leave(context.Context) {
 	c.left = true
 }
 
-func (c *fakeVoiceConn) Receive(handle func(voice.Frame)) {
+func (c *fakeVoiceConn) Receive(l voice.Listener) {
 	c.v.mu.Lock()
 	defer c.v.mu.Unlock()
-	c.handle = handle
+	c.listener = l
 }
 
 // joinCount is how many joins went out.
@@ -554,7 +554,8 @@ func (sc *recordScene) startIn(t *testing.T, m permMember, channelID string) {
 
 // assertStopped checks that the recorder has left the channel, the
 // recording's one row has its stop time, the clock's now, and records that
-// it ended as end, and the recording notice was edited to lose its button.
+// it ended as end, and the recording notice the row names was edited to
+// lose its button.
 func (sc *recordScene) assertStopped(t *testing.T, channelID string, end store.RecordingEnd) {
 	t.Helper()
 	if got := sc.voice.inChannel(channelID); len(got) != 0 {
@@ -562,10 +563,10 @@ func (sc *recordScene) assertStopped(t *testing.T, channelID string, end store.R
 	}
 	recs := sc.recordings(t)
 	if len(recs) != 1 || !recs[0].StoppedAt.Equal(sc.clock.read()) || recs[0].Ended != end {
-		t.Errorf("recordings after the stop = %+v, want one stopped at %v, ended %q", recs, sc.clock.read(), end)
+		t.Fatalf("recordings after the stop = %+v, want one stopped at %v, ended %q", recs, sc.clock.read(), end)
 	}
 	// A nil list leaves the button in place; an empty one removes it.
-	edit := noticeEdit(t, sc.fake, recordingNotice(t, sc.fake, channelID))
+	edit := noticeEdit(t, sc.fake, fakeMessage{id: recs[0].NoticeID, channelID: channelID})
 	if edit.Components == nil || len(*edit.Components) != 0 {
 		t.Errorf("notice edit components = %v, want an empty list", edit.Components)
 	}
