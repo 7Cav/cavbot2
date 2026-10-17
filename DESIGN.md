@@ -22,6 +22,9 @@ colors:
   btn-hi: "#424242"
   btn-edge-d: "#212121"
   btn-edge-l: "#3b3b3b"
+  btn-off: "#262626"
+  btn-off-edge-d: "#1a1a1a"
+  btn-off-edge-l: "#333333"
   danger-hi: "#c84448"
   danger-lo: "#b3393d"
   danger-text: "#f1c9cb"
@@ -84,6 +87,7 @@ typography:
     lineHeight: 1.4
 rounded:
   base: "3px"
+  inner: "2px"
   full: "50%"
 spacing:
   xs: "4px"
@@ -134,9 +138,9 @@ components:
     backgroundColor: "{colors.danger-lo}"
   button-small:
     typography: "{typography.meta}"
-    padding: "4px 10px"
+    padding: "3px 6px"
   button-disabled:
-    backgroundColor: "transparent"
+    backgroundColor: "{colors.btn-off}"
     textColor: "{colors.text-mute}"
   block:
     backgroundColor: "{colors.surface}"
@@ -145,6 +149,7 @@ components:
     backgroundColor: "{colors.surface-2}"
     textColor: "{colors.text-hi}"
     typography: "{typography.block-title}"
+    rounded: "{rounded.inner}"
     padding: "12px 14px"
   block-row:
     textColor: "{colors.text}"
@@ -152,6 +157,7 @@ components:
     padding: "12px 14px"
   submit-row:
     backgroundColor: "rgba(23, 23, 23, 0.9)"
+    rounded: "{rounded.inner}"
     padding: "12px 14px"
   notice:
     backgroundColor: "{colors.surface}"
@@ -273,12 +279,13 @@ A grey ladder from near-black to near-white, one gold accent, and a red and a gr
 - **Raised Charcoal** (#212121): the selected rail item, a rail item, a holder row or the folded report line under the pointer, a picker tag, the sticky selection bar, the search option Enter would choose, a field with focus.
 - **Seam** (#2b2b2b): block edges and the dividers between rows.
 - **Strong Seam** (#353535): the line above a submit row, a plain tag's edge, the divider before the no-role view link, and the rule under the holder list's group of selected members a search or a filter hides.
-- **Bevel Highlight** (#4d4d4d): the one-pixel highlight along a block header's top, a disabled button's edge, a role with no colour.
+- **Bevel Highlight** (#4d4d4d): the one-pixel highlight along a block header's top, a role with no colour.
 - **Field Edge** (#6b6b6b): the border of every text field and search box, and the stripe of a neutral notice. The panel added it, since the forum's field edge is 1.20:1 against its field. It measures 3.52:1 on the ground, 3.20:1 on Field Charcoal and 3.02:1 on Raised Charcoal.
 - **Bright Text** (#f1f1f1): headings, names, values. 15.87:1 on a block.
 - **Body Grey** (#a1a1a1): running text and what a field holds. 6.94:1 on a block, 6.23:1 in a field with focus.
 - **Muted Grey** (#8d8d8d): hints, times, counts, column headers, placeholders. 5.4:1 on a block, 4.85:1 in a field with focus.
 - **Button Grey** (#2e2e2e): the default button's fill, with bevel edges of #212121 and #3b3b3b.
+- **Off Grey** (#262626): a disabled button's fill, with bevel edges of #1a1a1a and #333333, as on the forum. Muted Grey on it is 4.56:1.
 - **Lifted Grey** (#424242): a picker tag's × under the pointer.
 - **White** (#ffffff) and **Black** (#000000): labels on the grey and red fills, and the label on gold.
 
@@ -340,12 +347,12 @@ The system is flat. Four charcoal steps carry depth: Night Ground, Block Charcoa
 
 ## Shapes
 
-Square-shouldered. Every block, button, field, tag and notice has 3px corners. A block rounds its top corners on the header and its bottom corners on the submit row. A search box squares its bottom corners where its list hangs from it. The 10px role colour dot is the only circle.
+Square-shouldered. Every block, button, field, tag and notice has 3px corners. The header and the submit row round the block corners they fill at 2px, as on the forum, so each curve sits inside the block's 1px edge. The Foxhole page's folded report line does the same. A search box squares its bottom corners where its list hangs from it. The 10px role colour dot is the only circle.
 
 Lines come in three weights. 1px draws an edge or a divider. 2px draws a header rule, a filter link's underline, a selected phone tab's underline and the focus ring. 3px draws a notice's stripe and the selected rail item's edge.
 
 ### Named Rules
-**The Three Pixel Rule.** Corners are 3px or a full circle, nothing between. No fully rounded ends, no 8px corners.
+**The Three Pixel Rule.** Corners are 3px or a full circle. The one exception is 2px, on a part that fills a block's corner inside its edge. No fully rounded ends, no 8px corners.
 
 ## Components
 
@@ -356,8 +363,8 @@ Forum-issue hardware: plain, bevelled, sure.
 - **Gold.** The forward action of a form or a row of actions: Save, Create, Sign in, Preview, Download the mix. Black label on gold, gold bevel. Under the pointer it takes the default's hover and keeps its gold bevel, so the fill gives way to the tint. A row of actions has at most one.
 - **Danger.** Red edge, blush label, grey fill, and a red fill with a white label under the pointer. It starts a removal, which then waits on a danger confirm, or stops a running Foxhole action. It never deletes anything by itself.
 - **Danger filled.** The Confirm inside a danger confirm, and nowhere else. White label on red, with deep-red bevel and hover.
-- **Small.** 4px by 10px at 13px, for the picker's add button, row actions in a table and the Foxhole note's Save.
-- **Disabled.** No fill, a Muted Grey label and a Bevel Highlight edge whatever the kind, and no press. A gold or red button never reads as a dim live one.
+- **Small.** 3px by 6px at 13px, as on the forum, for the picker's add button, row actions in a table and the Foxhole note's Save. It is 26px tall, over AA's 24px target size.
+- **Disabled.** Every kind takes the forum's disabled look, Off Grey with its darker bevel and a Muted Grey label. It doesn't change under the pointer, shows the plain arrow and doesn't sink when pressed. A gold or red button turns grey, so it never reads as a dim live one.
 - **Focus.** The 2px gold ring, 2px outside the edge.
 
 ### Tags
@@ -384,6 +391,9 @@ Forum-issue hardware: plain, bevelled, sure.
 - **Focus.** The well steps up to Raised Charcoal, as on the forum. The border turns gold, and a 2px gold outline sits 1px outside it.
 - **Checkboxes.** Native, with a gold accent colour.
 - **Error.** Fields have no red state. A refusal notice at the top of the block says what was refused and that nothing changed.
+
+### Links
+A text link is gold and underlined, and turns Gold Highlight under the pointer. The forum shows the underline only under the pointer. The panel keeps it at rest because gold is 1.57:1 against Body Grey, and AA wants more than colour to pick a link out of the words around it. PRODUCT.md lists this departure. Rail items, filter links and buttons carry no underline, since their place and shape mark them.
 
 ### Navigation
 - **Rail.** A 240px Block Charcoal column with a 1px Seam on its right. Items are full width, 10px by 18px, in bright 15px text, with a 3px left edge. Under the pointer an item steps to Raised Charcoal. The selected item sits at Raised Charcoal already, with a gold left edge and weight 500, and hovering it changes nothing. Its focus ring sits inside the item.

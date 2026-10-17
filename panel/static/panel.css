@@ -44,10 +44,14 @@
   --btn-hi: #424242;
   --btn-edge-d: #212121;
   --btn-edge-l: #3b3b3b;
+  --btn-off: #262626;
+  --btn-off-edge-d: #1a1a1a;
+  --btn-off-edge-l: #333;
   --danger-hi: #c84448;
   --danger-lo: #b3393d;
   --ok: #509652;
   --radius: 3px;
+  --radius-inner: 2px;
   --sans: 'Roboto', 'Segoe UI', 'Helvetica Neue', Helvetica, sans-serif;
 }
 *, *::before, *::after { box-sizing: border-box; }
@@ -57,6 +61,10 @@ body {
   min-height: 100dvh;
   background: var(--bg) url("/static/page-bg2-c1.png") no-repeat top center / 100% auto fixed;
 }
+/* A link keeps its underline at rest. The forum underlines one only under
+   the pointer, but gold is 1.57:1 against body text, so AA wants more than
+   colour to pick a link out of the words around it. PRODUCT.md's Look lists
+   this departure. */
 a { color: var(--gold); }
 a:hover { color: var(--gold-hi); }
 /* Keyboard focus draws the buttons' gold ring on every control, links and
@@ -93,23 +101,29 @@ img { max-width: 100%; }
 /* The filled danger button is a danger confirm's Confirm, below. */
 .btn--danger-filled { color: #fff; background: var(--danger-hi); border-color: var(--danger-lo) var(--danger-hi) var(--danger-hi) var(--danger-lo); }
 .btn--danger-filled:hover { background: var(--danger-lo); color: #fff; }
-/* A disabled button looks off whatever its kind: no fill, a grey label and
-   a grey edge, so a gold or red one never reads as a dim live one. The
-   label is 5.4:1 on a block, 4.85:1 on the selection bar. */
-.btn[disabled], .btn[disabled]:hover { color: var(--text-mute); background: transparent; border-color: var(--line-hi); cursor: not-allowed; }
+/* A disabled button looks as the forum draws one, whatever its kind. Its
+   darker grey fill and bevel and its grey label mean a gold or red one never
+   reads as a dim live one. It stays that way under the pointer and doesn't
+   sink when pressed. The label is 4.56:1 on the fill. */
+.btn[disabled], .btn[disabled]:hover {
+  color: var(--text-mute); background: var(--btn-off); cursor: default;
+  border-color: var(--btn-off-edge-d) var(--btn-off-edge-l) var(--btn-off-edge-l) var(--btn-off-edge-d);
+}
 .btn[disabled]:active { transform: none; }
 
 /* Blocks, as the forum draws them, less the forum's 4% block shadow and
-   its header text shadow, which can't be seen on this dark ground. */
+   its header text shadow, which can't be seen on this dark ground. A part
+   that fills a block's corner rounds it at 2px, as the forum's header and
+   submit bar do, so its curve sits inside the block's 1px edge. */
 .block { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 12px; }
 .block-header {
   padding: 12px 14px; font-size: 18px; color: var(--text-hi); background: var(--surface-2);
   border-bottom: 2px solid var(--gold); box-shadow: inset 0 1px 0 0 var(--line-hi);
-  border-radius: var(--radius) var(--radius) 0 0;
+  border-radius: var(--radius-inner) var(--radius-inner) 0 0;
 }
 .block-row { padding: 12px 14px; }
 .block-row + .block-row { border-top: 1px solid var(--line); }
-.submit-row { padding: 12px 14px; background: rgba(23,23,23,.9); border-top: 1px solid var(--line-2); border-radius: 0 0 var(--radius) var(--radius); }
+.submit-row { padding: 12px 14px; background: rgba(23,23,23,.9); border-top: 1px solid var(--line-2); border-radius: 0 0 var(--radius-inner) var(--radius-inner); }
 /* A block a page opens at, by its own ID or its heading's in the address's
    fragment, or a change log entry by its summary line's: a little room
    above it. The heading takes focus only from the landing, never from Tab,
@@ -166,7 +180,7 @@ h2[tabindex="-1"]:focus { outline: none; }
    cells sit tighter than the hub list's. */
 .fx-list th, .ranklist thead th { padding: 8px 12px; }
 .fx-list td, .ranklist tbody th, .ranklist td { padding: 7px 12px; }
-.btn--small { padding: 4px 10px; font-size: 13px; }
+.btn--small { padding: 3px 6px; font-size: 13px; }
 
 /* A hub's edit section wraps a long word anywhere, as the removal preview
    does. Its landing headings name the hub by its base string, which can run
@@ -410,14 +424,14 @@ h2[tabindex="-1"]:focus { outline: none; }
    screen reader reads the line alone. */
 .fx-reportsummary {
   display: flex; align-items: flex-start; gap: 10px;
-  padding: 10px 14px; cursor: pointer; list-style: none; border-radius: var(--radius);
+  padding: 10px 14px; cursor: pointer; list-style: none; border-radius: var(--radius-inner);
 }
 .fx-reportsummary::-webkit-details-marker { display: none; }
 .fx-reportsummary::before {
   content: ""; flex: none; width: 0; height: 0; margin-top: 5px;
   border-style: solid; border-width: 5px 0 5px 7px; border-color: transparent transparent transparent var(--text-mute);
 }
-.fx-report[open] > .fx-reportsummary { border-bottom: 1px solid var(--line); border-radius: var(--radius) var(--radius) 0 0; }
+.fx-report[open] > .fx-reportsummary { border-bottom: 1px solid var(--line); border-radius: var(--radius-inner) var(--radius-inner) 0 0; }
 .fx-report[open] > .fx-reportsummary::before { transform: rotate(90deg); }
 /* The line under the pointer lifts to --surface-3, 1.11:1 on the block, as
    a holder row does. */
