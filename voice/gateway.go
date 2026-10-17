@@ -381,11 +381,13 @@ func (g *renewableGateway) described(gw disgovoice.Gateway) {
 	g.connected = gw == g.gw && (e == nil || g.state.Endpoint == *e.Endpoint && g.state.Token == e.Token)
 }
 
-// endpoint is the voice server the gateway last dialed.
-func (g *renewableGateway) endpoint() string {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.state.Endpoint
+// server is the voice server Discord named last for the call, which every
+// dial goes to, empty before Discord names one.
+func (g *renewableGateway) server() string {
+	if e := g.named(); e != nil {
+		return *e.Endpoint
+	}
+	return ""
 }
 
 // isConnected reports whether the gateway is connected in the call, at the
@@ -703,13 +705,14 @@ func (c callConn) connected() bool {
 }
 
 // server is the voice server the gateway the recorder's connection options
-// built last dialed, empty before it dials.
+// built dials: the one Discord named last for the call, empty before
+// Discord names one.
 func (c callConn) server() string {
 	g, ok := c.Gateway().(*renewableGateway)
 	if !ok {
 		return ""
 	}
-	return g.endpoint()
+	return g.server()
 }
 
 // reconnect opens a fresh voice connection where the call is, through the

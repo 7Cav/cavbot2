@@ -33,8 +33,8 @@ type receiveConn interface {
 	// connected reports whether the recorder is connected in the call, at
 	// the voice server Discord named last.
 	connected() bool
-	// server is the voice server the recorder connects to: the one it is
-	// connected to, or trying to reach.
+	// server is the voice server the recorder connects to: the one Discord
+	// named last for the call.
 	server() string
 	// reconnect opens a fresh voice connection in the call, which starts
 	// DAVE over, and returns once it has opened, or with ctx's error.
