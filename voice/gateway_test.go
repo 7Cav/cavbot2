@@ -484,9 +484,22 @@ func (h *callHarness) closeCall(code int) {
 		h.left, h.serving = h.serving, newEndpoint
 		h.mu.Unlock()
 	}
+	h.endConnection(&websocket.CloseError{Code: code})
+}
+
+// endConnection hands err to the close handler of the gateway the recorder
+// is connected through, as disgo's gateway does when it gives up on its
+// connection. It returns once disgo has dealt with err.
+func (h *callHarness) endConnection(err error) {
 	// disgo's gateway drops its connection before its close handler runs.
 	h.connected.holdsConn.Store(false)
-	h.connected.onClose(h.connected, &websocket.CloseError{Code: code})
+	h.connected.onClose(h.connected, err)
+}
+
+// resumesRanOut is what disgo's gateway hands its close handler once every
+// try to resume after a close has failed, the last with err.
+func resumesRanOut(err error) error {
+	return fmt.Errorf("failed to reconnect voice gateway after 5 attempts: %w", err)
 }
 
 // sent is the voice state updates the recorder session was asked to send
@@ -520,8 +533,73 @@ func TestRecorderReportsAVoiceConnectionDisgoGivesUpOn(t *testing.T) {
 
 	h.closeCall(4004)
 
+	if got := h.sent(); len(got) != 1 || got[0].String() != "leave" {
+		t.Errorf("voice state updates after the close = %v, want the recorder taken out and no rejoin", got)
+	}
 	if got := len(events.Events()); got != 1 {
 		t.Errorf("Sentry events = %d, want 1 for the lost connection", got)
+	}
+}
+
+// disgo answers some closes with a fresh connection in the same channel.
+// 4006, 4009 and 4011 get one at once. A close disgo resumes from gets one
+// once every try to resume has failed, whether the last try failed on a
+// close, such as 4015 or a code disgo doesn't know, or on the dial. The
+// recorder rejoins the channel as it joined, self-muted and never
+// self-deafened, and identifies at the voice server, since a resume gets no
+// answer that opens audio. It never leaves, and nothing reaches Sentry.
+func TestRecorderKeepsRecordingThroughACloseThatGetsAFreshConnection(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"4006", &websocket.CloseError{Code: 4006}},
+		{"4009", &websocket.CloseError{Code: 4009}},
+		{"4011", &websocket.CloseError{Code: 4011}},
+		{"resumes ran out on 4015", resumesRanOut(&websocket.CloseError{Code: 4015})},
+		{"resumes ran out on a code disgo doesn't know", resumesRanOut(&websocket.CloseError{Code: 4100})},
+		{"resumes ran out on the dial", resumesRanOut(errors.New("dial tcp: lookup c-dfw-1.discord.media: no such host"))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := recordSentry(t)
+			h := newCallHarness(t)
+			h.start()
+
+			h.endConnection(tc.err)
+
+			if o := h.waitOpen(); !o.identified {
+				t.Errorf("gateway opened at %s with identified=false, want an identify", o.state.Endpoint)
+			}
+			if got := h.sent(); len(got) != 1 || got[0].String() != fmt.Sprintf("join %d mute=true deaf=false", callChannel) {
+				t.Errorf("voice state updates after the close = %v, want one joining %d self-muted and not self-deafened", got, callChannel)
+			}
+			if got := len(events.Events()); got != 0 {
+				t.Errorf("Sentry events = %d, want none for a fresh connection that opened", got)
+			}
+		})
+	}
+}
+
+// A fresh connection that fails, here because the recorder's own gateway is
+// down when its rejoin goes out, ends as a lost connection does. disgo takes
+// the recorder out, and Sentry hears of it once.
+func TestRecorderReportsAFreshConnectionThatFails(t *testing.T) {
+	events := recordSentry(t)
+	h := newCallHarness(t)
+	h.start()
+	h.down.Store(true)
+
+	h.closeCall(4006)
+
+	if got := h.sent(); len(got) == 0 || got[len(got)-1].String() != "leave" {
+		t.Errorf("voice state updates after the close = %v, want the recorder taken out last", got)
+	}
+	got := events.Events()
+	if len(got) != 1 {
+		t.Fatalf("Sentry events = %d, want 1 for the lost connection", len(got))
+	}
+	if msg := got[0].Tags["message"]; msg != lostConnectionMessage {
+		t.Errorf("Sentry event = %q, want %q", msg, lostConnectionMessage)
 	}
 }
 
