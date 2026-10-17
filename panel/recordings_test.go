@@ -165,27 +165,27 @@ func (v *fakeRecorders) hear(t *testing.T, f voice.Frame) {
 	conn := v.conn
 	v.mu.Unlock()
 	conn.mu.Lock()
-	handle := conn.handle
+	l := conn.listener
 	conn.mu.Unlock()
-	if handle == nil {
+	if l == nil {
 		t.Fatal("the recorder is not receiving")
 	}
-	handle(f)
+	l.Frame(f)
 }
 
-// fakeVoiceConn is the recorder in a channel. handle is what the runtime
+// fakeVoiceConn is the recorder in a channel. listener is what the runtime
 // passed to Receive.
 type fakeVoiceConn struct {
-	mu     sync.Mutex
-	handle func(voice.Frame)
+	mu       sync.Mutex
+	listener voice.Listener
 }
 
 func (c *fakeVoiceConn) Leave(context.Context) {}
 
-func (c *fakeVoiceConn) Receive(handle func(voice.Frame)) {
+func (c *fakeVoiceConn) Receive(l voice.Listener) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.handle = handle
+	c.listener = l
 }
 
 // fakeMixer stands in for ffmpeg: every mix is testMix, or fails once a

@@ -30,6 +30,9 @@ type receiveConn interface {
 	UserIDBySSRC(ssrc uint32) snowflake.ID
 	// ChannelID is the call's channel, nil while there is none.
 	ChannelID() *snowflake.ID
+	// connected reports whether the recorder is connected in the call, at
+	// the voice server Discord named last.
+	connected() bool
 	// reconnect opens a fresh voice connection in the call, which starts
 	// DAVE over, and returns once it has opened, or with ctx's error.
 	reconnect(ctx context.Context) error
@@ -70,10 +73,11 @@ const (
 var errDAVEStalled = errors.New("voice: DAVE held every frame past the stall limit")
 
 // receiver reads one voice connection's packets on a goroutine of its own
-// and hands each speaker's frames over, in the order they arrived.
+// and hands each speaker's frames over, in the order they arrived. It tells
+// its listener when a gap starts and ends.
 type receiver struct {
 	conn     receiveConn
-	handle   func(Frame)
+	listener Listener
 	recorder string
 
 	// ctx ends at close, and with it any fresh connection in flight.
@@ -99,15 +103,18 @@ type receiver struct {
 	unheardSince time.Time
 	setupSince   time.Time
 	stalled      bool
+	// inGap is whether the listener was last told a gap started. Only the
+	// receiver's goroutine touches it.
+	inGap bool
 }
 
 // newReceiver builds the receiver of a recorder's connection. It hands
-// frames to handle once open starts it.
-func newReceiver(conn receiveConn, handle func(Frame), recorderID string) *receiver {
+// what it hears to l once open starts it.
+func newReceiver(conn receiveConn, l Listener, recorderID string) *receiver {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &receiver{
 		conn:     conn,
-		handle:   handle,
+		listener: l,
 		recorder: recorderID,
 		ctx:      ctx,
 		cancel:   cancel,
@@ -141,7 +148,9 @@ func (r *receiver) run() {
 // recording.
 func (r *receiver) step() {
 	defer utils.RecoverPanic("recorder-receive", "recorder", r.recorder)
-	if holdFrames(r.conn.DAVE()) {
+	holding := holdFrames(r.conn.DAVE())
+	r.watchGap(r.conn.connected() && !holding)
+	if holding {
 		r.waitOrStartOver()
 		return
 	}
@@ -162,6 +171,19 @@ func (r *receiver) step() {
 		if r.unreadable == failureBurst {
 			utils.CaptureError("Voice packets unreadable", err, "recorder", r.recorder, "packets", failureBurst)
 		}
+	}
+}
+
+// watchGap tells the listener when the recorder stops hearing the channel,
+// and when it hears it again.
+func (r *receiver) watchGap(hearing bool) {
+	switch {
+	case !hearing && !r.inGap:
+		r.inGap = true
+		r.listener.GapStarted()
+	case hearing && r.inGap:
+		r.inGap = false
+		r.listener.GapEnded()
 	}
 }
 
@@ -289,5 +311,5 @@ func (r *receiver) deliver(userID snowflake.ID, p *disgovoice.Packet) {
 		utils.Info("DAVE decrypt recovered", "recorder", r.recorder, "user_id", userID.String(), "frames_lost", failed)
 	}
 	delete(r.failing, userID)
-	r.handle(Frame{UserID: userID.String(), SSRC: p.SSRC, Timestamp: p.Timestamp, Opus: out[:n]})
+	r.listener.Frame(Frame{UserID: userID.String(), SSRC: p.SSRC, Timestamp: p.Timestamp, Opus: out[:n]})
 }

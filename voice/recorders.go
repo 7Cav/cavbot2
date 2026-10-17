@@ -26,11 +26,26 @@ type GatewaySession interface {
 
 // Conn is one recorder's connection to a voice channel.
 type Conn interface {
-	// Receive hands every frame the recorder hears from now on to handle,
-	// one at a time, in the order they arrive, until Leave.
-	Receive(handle func(Frame))
+	// Receive hands what the recorder hears from now on to l, until Leave:
+	// every frame, one at a time, in the order they arrive, and each gap.
+	Receive(l Listener)
 	// Leave takes the recorder out of the channel.
 	Leave(ctx context.Context)
+}
+
+// Listener hears a call through its recorder (GLOSSARY.md, Gap). The voice
+// adapter calls it from one goroutine, one call at a time, so a call that
+// blocks holds up the frames after it.
+type Listener interface {
+	// Frame is one frame a speaker sent.
+	Frame(Frame)
+	// GapStarted is the recorder ceasing to hear the channel: its voice
+	// connection to the call closed, or DAVE holds every frame. GapEnded is
+	// the recorder hearing it again, connected at the voice server Discord
+	// named last with DAVE passing frames. The two take turns, GapStarted
+	// first.
+	GapStarted()
+	GapEnded()
 }
 
 // Frame is one Opus packet a speaker sent, as Discord delivered it, with

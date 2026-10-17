@@ -203,7 +203,8 @@ const (
 	earlyEndpoint = "c-ams-1.discord.media:443"
 	laterEndpoint = "c-hel-1.discord.media:443"
 	// callDAVEVersion is the DAVE protocol version every voice server
-	// announces: the call is end-to-end encrypted.
+	// announces, unless the call is transport-only: the call is end-to-end
+	// encrypted.
 	callDAVEVersion = 1
 )
 
@@ -277,9 +278,11 @@ type answeringGateway struct {
 	sent      func(disgovoice.Opcode)
 	answers   func(endpoint string) bool
 	reachable func(endpoint string) bool
-	pending   chan<- struct{}
-	opens     atomic.Int32
-	holdsConn atomic.Bool
+	// daveVersion is the DAVE protocol version the voice server announces.
+	daveVersion uint16
+	pending     chan<- struct{}
+	opens       atomic.Int32
+	holdsConn   atomic.Bool
 }
 
 // gatewayOpen is one gateway's Open: the state it opened with, and whether
@@ -316,11 +319,11 @@ func (g *answeringGateway) Open(ctx context.Context, state disgovoice.State) err
 		g.holdsConn.Store(false)
 		return ctx.Err()
 	}
-	g.dave.OnSelectProtocolAck(callDAVEVersion)
+	g.dave.OnSelectProtocolAck(g.daveVersion)
 	g.onEvent(g, disgovoice.OpcodeSessionDescription, 0, disgovoice.GatewayMessageDataSessionDescription{
 		Mode:                disgovoice.EncryptionModeAEADAES256GCMRTPSize,
 		SecretKey:           make([]byte, 32),
-		DaveProtocolVersion: callDAVEVersion,
+		DaveProtocolVersion: int(g.daveVersion),
 	})
 	g.opened <- gatewayOpen{gateway: g, state: state, identified: identified}
 	return nil
@@ -360,6 +363,11 @@ type callHarness struct {
 	// hears each open a gateway leaves waiting.
 	silent  atomic.Bool
 	pending chan struct{}
+	// transportOnly makes the call one without DAVE, as a stage channel's
+	// is, for gateways built from then on. DAVE then holds no frame, where
+	// in an end-to-end encrypted call it holds every frame here: no voice
+	// server answers its setup.
+	transportOnly atomic.Bool
 	// answerDelay is how long Discord takes to answer a join, and
 	// stateOnly has the answer carry the recorder's voice state alone, with
 	// no voice server.
@@ -395,8 +403,12 @@ func newCallHarness(t *testing.T) *callHarness {
 }
 
 func (h *callHarness) newGateway(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, _ ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
+	version := uint16(callDAVEVersion)
+	if h.transportOnly.Load() {
+		version = 0
+	}
 	return &answeringGateway{dave: dave, onEvent: onEvent, onClose: onClose, opened: h.opened, sent: h.sentOp,
-		answers: h.answersAt, reachable: h.reachable, pending: h.pending}
+		answers: h.answersAt, reachable: h.reachable, daveVersion: version, pending: h.pending}
 }
 
 // answersAt reports whether the voice server at endpoint answers an open:
@@ -452,11 +464,11 @@ func (h *callHarness) keyPackagesSent() int {
 
 // record starts a recording of the call, as /record start does: the
 // recorder session joins the channel, and the connection's receiver hands
-// frames to handle.
-func (h *callHarness) record(handle func(Frame)) Conn {
+// what it hears to l.
+func (h *callHarness) record(l Listener) Conn {
 	h.t.Helper()
 	conn := h.start()
-	conn.Receive(handle)
+	conn.Receive(l)
 	return conn
 }
 
@@ -829,6 +841,43 @@ func TestRecorderStaysInWhileItCantReachTheServerItsCallMovedTo(t *testing.T) {
 	})
 }
 
+// Once the voice server a call moved to becomes reachable, past the 30 s
+// disgo gives a rejoin, the recorder connects there and hears the channel
+// again: the gap that started when the call closed ends. It never leaves
+// the channel.
+func TestRecorderConnectsOnceTheServerItsCallMovedToIsReachable(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.setReachable(newEndpoint, false)
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted}) {
+			t.Fatalf("gap events 1 s after the close = %v, want a gap started", got)
+		}
+
+		time.Sleep(time.Minute)
+		h.setReachable(newEndpoint, true)
+		time.Sleep(11 * time.Second)
+		synctest.Wait()
+
+		if o := h.waitOpen(); o.state.Endpoint != newEndpoint {
+			t.Errorf("gateway opened at %s, want %s", o.state.Endpoint, newEndpoint)
+		}
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted, gapEnded}) {
+			t.Errorf("gap events once connected = %v, want the gap started and ended", got)
+		}
+		if left := slices.ContainsFunc(h.sent(), voiceUpdate.leaves); left {
+			t.Errorf("voice state updates = %v, want the recorder never to leave", h.sent())
+		}
+	})
+}
+
 // Once Discord has named a later voice server for the call, the recorder
 // never connects to an earlier one, even when the earlier one becomes
 // reachable while the later one still isn't: the call isn't there anymore.
@@ -964,7 +1013,7 @@ func TestRecorderStartsDAVEOverWhenItsSetupStalls(t *testing.T) {
 	events := recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
 		h := newCallHarness(t)
-		conn := h.record(func(Frame) {})
+		conn := h.record(listen(nil))
 		defer conn.Leave(context.Background())
 
 		time.Sleep(3500 * time.Millisecond)
@@ -995,7 +1044,7 @@ func TestRecorderStartsDAVEOverAtTheServerDiscordNamedLast(t *testing.T) {
 	recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
 		h := newCallHarness(t)
-		conn := h.record(func(Frame) {})
+		conn := h.record(listen(nil))
 		defer conn.Leave(context.Background())
 
 		h.name("token-3", laterEndpoint)
@@ -1018,7 +1067,7 @@ func TestRecorderFollowsACallThatMovesDuringAStall(t *testing.T) {
 	recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
 		h := newCallHarness(t)
-		conn := h.record(func(Frame) {})
+		conn := h.record(listen(nil))
 		defer conn.Leave(context.Background())
 
 		time.Sleep(2500 * time.Millisecond)
@@ -1041,7 +1090,7 @@ func TestRecorderStoppedDuringARecoveryLeavesAtOnceAndReportsNothingMore(t *test
 	events := recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
 		h := newCallHarness(t)
-		conn := h.record(func(Frame) {})
+		conn := h.record(listen(nil))
 		h.silent.Store(true)
 		select {
 		case <-h.pending:

@@ -307,7 +307,7 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	// runtime's clock when it's handed over. It receives before a stop can
 	// find it, so the stop's leave ends the receiving.
 	tracks := newRecordingTracks(r.dir, row.ID, row.StartedAt)
-	conn.Receive(func(f voice.Frame) { tracks.write(f, recordingNow()) })
+	conn.Receive(trackListener{tracks})
 	rec := &activeRecording{row: row, conn: conn, tracks: tracks}
 	rec.cancelCap = recordingAfterFunc(recordingCap, func() { r.autoStop(rec, store.RecordingEndCap) })
 	rec.cancelDiskCheck = recordingAfterFunc(recordingDiskCheckInterval, func() { r.checkDisk(rec) })
@@ -435,6 +435,14 @@ func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEn
 		"recorder", recorderID, "ended", string(end), "stopped_by", stoppedBy)
 	r.startMix(row)
 }
+
+// trackListener hands every frame a recording's recorder hears to its
+// tracks, at the runtime's clock.
+type trackListener struct{ tracks *recordingTracks }
+
+func (l trackListener) Frame(f voice.Frame) { l.tracks.write(f, recordingNow()) }
+func (trackListener) GapStarted()           {}
+func (trackListener) GapEnded()             {}
 
 // cancelTimers cancels a recording a stop or the shutdown has taken: its
 // stop at the cap and its next disk check.

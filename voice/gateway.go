@@ -125,7 +125,7 @@ func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc) []disgo
 		disgovoice.WithConnGatewayCreateFunc(func(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, opts ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
 			g := &renewableGateway{named: c.namedLast}
 			g.build = func() disgovoice.Gateway {
-				return newGateway(dave, onEvent, c.watchClose(g, onClose), opts...)
+				return newGateway(dave, g.watchEvents(onEvent), c.watchClose(g, onClose), opts...)
 			}
 			g.gw = g.build()
 			c.gateway = g
@@ -339,6 +339,10 @@ type renewableGateway struct {
 	// redial ends the dial in flight, so the next one dials the voice
 	// server Discord named since. nil while none is in flight.
 	redial context.CancelFunc
+	// connected is whether the gateway is connected in the call, at the
+	// voice server Discord named last: the session description that
+	// completes a connection arrived after its last dial started.
+	connected bool
 }
 
 func (g *renewableGateway) current() disgovoice.Gateway {
@@ -352,6 +356,35 @@ func (g *renewableGateway) renew() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.gw = g.build()
+	g.connected = false
+}
+
+// watchEvents wraps disgo's handler for the gateway's events, to note the
+// session description that completes a connection.
+func (g *renewableGateway) watchEvents(onEvent disgovoice.EventHandlerFunc) disgovoice.EventHandlerFunc {
+	return func(gw disgovoice.Gateway, op disgovoice.Opcode, seq int, data disgovoice.GatewayMessageData) {
+		if op == disgovoice.OpcodeSessionDescription {
+			g.described(gw)
+		}
+		onEvent(gw, op, seq, data)
+	}
+}
+
+// described notes a session description on gw. It connects the gateway
+// when gw is the one dialed last, and dialed the server Discord named last.
+func (g *renewableGateway) described(gw disgovoice.Gateway) {
+	e := g.named()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.connected = gw == g.gw && (e == nil || g.state.Endpoint == *e.Endpoint && g.state.Token == e.Token)
+}
+
+// isConnected reports whether the gateway is connected in the call, at the
+// voice server Discord named last.
+func (g *renewableGateway) isConnected() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.connected
 }
 
 // openedAt reports whether the gateway last opened at the voice server e
@@ -443,7 +476,7 @@ func (g *renewableGateway) startDial(state disgovoice.State, redial context.Canc
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.state, g.redial = state, redial
+	g.state, g.redial, g.connected = state, redial, false
 	return g.gw, state
 }
 
@@ -481,7 +514,7 @@ func (g *renewableGateway) channel() snowflake.ID {
 func (g *renewableGateway) reopen(ctx context.Context) error {
 	g.mu.Lock()
 	old, state := g.gw, g.state
-	g.gw = g.build()
+	g.gw, g.connected = g.build(), false
 	g.mu.Unlock()
 	old.CloseWithCode(websocket.CloseServiceRestart, "starting DAVE over")
 	return g.Open(ctx, state)
@@ -632,15 +665,15 @@ type disgoConn struct {
 }
 
 // Receive starts the recorder's audio receiver on the connection, which
-// hands handle every frame from now until Leave. Frames that arrived before
-// wait in the socket.
-func (c *disgoConn) Receive(handle func(Frame)) {
+// hands l every frame from now until Leave, and each gap. Frames that
+// arrived before wait in the socket.
+func (c *disgoConn) Receive(l Listener) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.rcv != nil {
 		return
 	}
-	c.rcv = newReceiver(callConn{c.conn}, handle, c.recorder)
+	c.rcv = newReceiver(callConn{c.conn}, l, c.recorder)
 	c.rcv.open()
 }
 
@@ -652,6 +685,13 @@ type callConn struct {
 // errNotRenewable is reconnect's answer on a connection whose gateway the
 // recorder's connection options didn't build.
 var errNotRenewable = errors.New("voice: the connection's gateway can't reopen")
+
+// connected reports whether the gateway the recorder's connection options
+// built is connected in the call, at the voice server Discord named last.
+func (c callConn) connected() bool {
+	g, ok := c.Gateway().(*renewableGateway)
+	return ok && g.isConnected()
+}
 
 // reconnect opens a fresh voice connection where the call is, through the
 // gateway the recorder's connection options built.

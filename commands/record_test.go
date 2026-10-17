@@ -63,13 +63,13 @@ type joinHold struct {
 	joined, release chan struct{}
 }
 
-// fakeVoiceConn is one recorder in one channel, until it leaves. handle is
+// fakeVoiceConn is one recorder in one channel, until it leaves. listener is
 // what the runtime passed to Receive, nil before it does.
 type fakeVoiceConn struct {
 	v                     *fakeRecorderVoice
 	recorderID, channelID string
 	left                  bool
-	handle                func(voice.Frame)
+	listener              voice.Listener
 }
 
 func (v *fakeRecorderVoice) UserIDs() []string {
@@ -113,10 +113,10 @@ func (c *fakeVoiceConn) Leave(context.Context) {
 	c.left = true
 }
 
-func (c *fakeVoiceConn) Receive(handle func(voice.Frame)) {
+func (c *fakeVoiceConn) Receive(l voice.Listener) {
 	c.v.mu.Lock()
 	defer c.v.mu.Unlock()
-	c.handle = handle
+	c.listener = l
 }
 
 // joinCount is how many joins went out.
