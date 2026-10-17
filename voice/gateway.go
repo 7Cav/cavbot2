@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/gateway"
 	disgovoice "github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/godave"
@@ -71,12 +73,10 @@ func OpenGateway(recorder int, token string) (GatewaySession, error) {
 	updateVoiceState := func(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
 		return s.updateVoiceState(ctx, guildID, channelID, selfMute, selfDeaf)
 	}
-	s.voice = s.voiceManager(updateVoiceState, userID, disgovoice.NewGateway, utils.NewLogger,
+	s.voice = s.voiceManager(updateVoiceState, userID, disgovoice.NewGateway, utils.NewLogger, newVoiceDialer().websocket(),
 		disgovoice.WithLogger(utils.Logger),
 		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
 		disgovoice.WithDaveSessionLogger(utils.Logger),
-		disgovoice.WithConnConfigOpts(disgovoice.WithConnGatewayConfigOpts(
-			disgovoice.WithGatewayDialer(newVoiceDialer().websocket()))),
 	)
 	// Added after READY, once the manager exists: no voice event reaches a
 	// recorder before its first join.
@@ -105,9 +105,64 @@ type connLoggerFunc func() (*slog.Logger, *slog.LevelVar)
 // goes through. update sends the recorder's voice state updates, newGateway
 // builds each voice gateway, disgo's NewGateway outside tests, newLogger
 // builds the log of each voice connection, utils.NewLogger outside tests,
-// and opts configure the rest.
-func (s *discordgoSession) voiceManager(update disgovoice.StateUpdateFunc, userID snowflake.ID, newGateway disgovoice.GatewayCreateFunc, newLogger connLoggerFunc, opts ...disgovoice.ManagerConfigOpt) disgovoice.Manager {
-	return disgovoice.NewManager(update, userID, append(opts, disgovoice.WithConnCreateFunc(s.connCreate(newGateway, newLogger)))...)
+// dialer dials the voice servers, and opts configure the rest. A voice
+// gateway dials only when the recorder opens it (ownDialsOnly).
+func (s *discordgoSession) voiceManager(update disgovoice.StateUpdateFunc, userID snowflake.ID, newGateway disgovoice.GatewayCreateFunc, newLogger connLoggerFunc, dialer *websocket.Dialer, opts ...disgovoice.ManagerConfigOpt) disgovoice.Manager {
+	return disgovoice.NewManager(update, userID, append(opts,
+		disgovoice.WithConnConfigOpts(disgovoice.WithConnGatewayConfigOpts(disgovoice.WithGatewayDialer(ownDialsOnly(dialer)))),
+		disgovoice.WithConnCreateFunc(s.connCreate(newGateway, newLogger)))...)
+}
+
+// The recorder rejoins a call whose voice connection dropped, and never lets
+// disgo resume it. disgo's gateway resumes after a close it can come back
+// from, or a read that fails, and tells the recorder nothing until its
+// fifth try has failed, 15 s on. The recorder can't hear the call that
+// whole time, and gets no sound back from a resume that works: nobody has
+// seen one bring audio back. disgo sends the Resume's sequence number as
+// seq where Discord's v8 docs say seq_ack, and DAVE removes a member cut
+// off from the voice gateway from the call's encryption group, so the SFU
+// stops forwarding them its media. A rejoin brought sound back within 2.7 s
+// in #728's smoke pass. So every dial a voice gateway makes outside the
+// recorder's own open is refused. disgo's resume then fails at its first
+// try and hands the close to the recorder at once, which starts the gap and
+// rejoins through a new gateway that identifies.
+
+// ownDial marks the context of a dial the recorder's own open makes.
+type ownDial struct{}
+
+// errResumeRefused is what disgo's resume gets for its dial. disgo's gateway
+// stops trying at once on an already-connected error, and hands the close
+// handler this one: the recorder connects again on its own.
+var errResumeRefused = fmt.Errorf("voice: the recorder rejoins rather than resumes: %w", discord.ErrGatewayAlreadyConnected)
+
+// ownDialsOnly is dialer, nil for gorilla's default, refusing every dial but
+// those the recorder's own open of a voice gateway makes.
+func ownDialsOnly(dialer *websocket.Dialer) *websocket.Dialer {
+	d := websocket.Dialer{}
+	if dialer != nil {
+		d = *dialer
+	}
+	dial := d.NetDialContext
+	if dial == nil {
+		var nd net.Dialer
+		dial = nd.DialContext
+	}
+	d.NetDialContext = refuseOthers(dial)
+	if d.NetDialTLSContext != nil {
+		d.NetDialTLSContext = refuseOthers(d.NetDialTLSContext)
+	}
+	return &d
+}
+
+// refuseOthers is dial, refusing a dial whose context the recorder's own
+// open didn't mark.
+func refuseOthers(dial func(ctx context.Context, network, addr string) (net.Conn, error)) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if ctx.Value(ownDial{}) == nil {
+			return nil, errResumeRefused
+		}
+		return dial(ctx, network, addr)
+	}
 }
 
 // connCreate builds each of the recorder's voice connections. Each is
@@ -569,7 +624,7 @@ func (g *renewableGateway) dialUntilOpen(ctx context.Context, state disgovoice.S
 	for {
 		dial, redial := context.WithCancel(ctx)
 		gw, at, described := g.startDial(state, redial)
-		err := gw.Open(dial, at)
+		err := gw.Open(context.WithValue(dial, ownDial{}, true), at)
 		if err == nil {
 			select {
 			case <-described:

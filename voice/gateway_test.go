@@ -435,18 +435,19 @@ func newCallHarness(t *testing.T) *callHarness {
 		opened: make(chan gatewayOpen, 64), pending: make(chan struct{}, 64), serving: oldEndpoint,
 		unreachable: make(map[string]bool), whileOpening: make(map[string]func())}
 	h.s.dg.Client = &http.Client{Transport: h.api}
-	h.s.voice = h.voiceManager(h.newGateway)
+	h.s.voice = h.voiceManager(h.newGateway, nil)
 	return h
 }
 
 // voiceManager builds the recorder session's voice manager over newGateway,
-// with disgo logging as the recorder's session wires it, and opts on top.
-func (h *callHarness) voiceManager(newGateway disgovoice.GatewayCreateFunc, opts ...disgovoice.ManagerConfigOpt) disgovoice.Manager {
-	return h.s.voiceManager(h.updateVoiceState, callRecorder, newGateway, h.newLogger, append([]disgovoice.ManagerConfigOpt{
+// dialing voice servers through dialer, with disgo logging as the
+// recorder's session wires it.
+func (h *callHarness) voiceManager(newGateway disgovoice.GatewayCreateFunc, dialer *websocket.Dialer) disgovoice.Manager {
+	return h.s.voiceManager(h.updateVoiceState, callRecorder, newGateway, h.newLogger, dialer,
 		disgovoice.WithLogger(utils.Logger),
 		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
 		disgovoice.WithDaveSessionLogger(slog.New(slog.DiscardHandler)),
-	}, opts...)...)
+	)
 }
 
 func (h *callHarness) newGateway(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, _ ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
@@ -1573,8 +1574,7 @@ func newQuietVoiceServer(t *testing.T) *quietVoiceServer {
 // disgo's own voice gateway from now on, dialing voice servers through
 // dialer.
 func (h *callHarness) useDisgoGateway(dialer *websocket.Dialer) {
-	h.s.voice = h.voiceManager(disgovoice.NewGateway,
-		disgovoice.WithConnConfigOpts(disgovoice.WithConnGatewayConfigOpts(disgovoice.WithGatewayDialer(dialer))))
+	h.s.voice = h.voiceManager(disgovoice.NewGateway, dialer)
 }
 
 // joinInBackground has the recorder session join the channel, and returns
