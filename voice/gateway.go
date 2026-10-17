@@ -38,7 +38,8 @@ const answerWait = 250 * time.Millisecond
 
 // OpenGateway is the production Opener: a discordgo session for the recorder
 // account, open once READY has named it. A session that opened without
-// reaching READY is closed again, so a failed recorder holds no connection.
+// reaching READY is closed again for good, so a failed recorder holds no
+// connection and its token logs in no more until the bot restarts.
 // The session is watched, so a recorder that drops off the gateway and stays
 // off reaches Sentry while the bot runs, and one whose token Discord refuses
 // stops logging in.
@@ -55,14 +56,12 @@ func OpenGateway(recorder int, token string) (GatewaySession, error) {
 	// nothing beyond its own report.
 	s.watchGateway(recorder, utils.GatewayOfflineAfter)
 	if err := utils.OpenSession(dg); err != nil {
-		s.watch.StandDown()
-		_ = dg.Close()
+		_ = s.watch.CloseSession()
 		return nil, err
 	}
 	userID, err := snowflake.Parse(dg.State.User.ID)
 	if err != nil {
-		s.watch.StandDown()
-		_ = dg.Close()
+		_ = s.watch.CloseSession()
 		return nil, err
 	}
 	s.named(dg.State.User.ID)

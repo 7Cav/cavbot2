@@ -61,6 +61,7 @@ type GatewayWatch struct {
 // INFO line with them. Watch a session before it opens, so the watch reads the
 // close of every connection it makes, and stand the watch down before
 // closing the session on purpose, since that close emits Disconnect too.
+// CloseSession does both.
 func WatchGateway(dg *discordgo.Session, after time.Duration, kv ...any) *GatewayWatch {
 	w := &GatewayWatch{dg: dg, after: after, kv: kv}
 	dg.Dialer = gatewayDialer(w.closed)
@@ -152,4 +153,17 @@ func (w *GatewayWatch) StandDown() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.stoodDown = true
+}
+
+// CloseSession stands the watch down and closes the session on purpose, and
+// the session logs in no more. Use it to close a session that failed to open.
+// discordgo's Open starts the session's heartbeat, and a close right after
+// Open nearly always beats the heartbeat's first write. That write fails, so
+// the heartbeat closes the session again and reconnects, unless
+// ShouldReconnectOnError is off. The heartbeat's own close waits for the
+// lock this close holds, so the heartbeat sees the flag off.
+func (w *GatewayWatch) CloseSession() error {
+	w.StandDown()
+	w.dg.ShouldReconnectOnError = false
+	return w.dg.Close()
 }
