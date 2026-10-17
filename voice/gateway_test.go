@@ -1034,6 +1034,48 @@ func TestRecorderMovesOnFromAServerDiscordReplacedAsItConnected(t *testing.T) {
 	}
 }
 
+// The recorder can close a gateway on purpose, as when Discord names a later
+// voice server just as it connects, and the gateway can still hand its close
+// handler a close: disgo's own heartbeat check can fire on a gateway closing
+// under it. The recorder has left that gateway behind, so its close changes
+// nothing, and the recording hears no new gap. Every voice server is out of
+// reach by then, so a gap would last.
+func TestRecorderIgnoresACloseFromAGatewayItLeftBehind(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.onOpening(newEndpoint, func() { h.name("token-3", laterEndpoint) })
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Second)
+		synctest.Wait()
+		var replaced *answeringGateway
+		for len(h.opened) > 0 {
+			if o := <-h.opened; o.state.Endpoint == newEndpoint {
+				replaced = o.gateway
+			}
+		}
+		before := l.gapEvents()
+		if replaced == nil || len(before)%2 != 0 {
+			t.Fatalf("after the move: gateway at %s = %v, gap events = %v, want one replaced and the recorder hearing", newEndpoint, replaced, before)
+		}
+		for _, endpoint := range []string{oldEndpoint, newEndpoint, laterEndpoint} {
+			h.setReachable(endpoint, false)
+		}
+
+		go replaced.onClose(replaced, errResumeRefused)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if got := l.gapEvents(); !slices.Equal(got, before) {
+			t.Errorf("gap events after the left-behind gateway's close = %v, want them as before, %v", got, before)
+		}
+	})
+}
+
 // A gap that reaches 10 s reaches Sentry once, naming the recorder, the
 // channel and the voice server the recorder is trying to reach, while the
 // recording still runs. The bot log has it at ERROR.

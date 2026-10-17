@@ -511,11 +511,16 @@ func (g *renewableGateway) renew() {
 	g.unwatchLocked()
 }
 
-// lose notes that the recorder lost its connection to the call at at.
-func (g *renewableGateway) lose(at time.Time) {
+// lost notes that the recorder lost its connection to the call at at, when
+// gw is the gateway it connects through, and reports whether it is.
+func (g *renewableGateway) lost(gw disgovoice.Gateway, at time.Time) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if gw != g.gw {
+		return false
+	}
 	g.disconnectLocked(at)
+	return true
 }
 
 // disconnectLocked notes the gateway not connected, from at when it was.
@@ -896,8 +901,12 @@ func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.Close
 	return func(g disgovoice.Gateway, err error) {
 		defer utils.RecoverPanic("recorder-voice-close", "recorder", c.s.userID)
 		// The recorder can't hear the call from the close on, whatever the
-		// lookup below costs.
-		gw.lose(time.Now())
+		// lookup below costs. A gateway the recorder left behind can still
+		// hand over a close, as when disgo's heartbeat check fires on one
+		// the recorder is closing, and it changes nothing.
+		if !gw.lost(g, time.Now()) {
+			return
+		}
 		moved := closedWith(err, disgovoice.GatewayCloseEventCodeCallTerminated.Code) && c.s.channelExists(gw.channel())
 		if !moved && !getsFreshConnection(err) {
 			c.gaveUp.Store(false)
