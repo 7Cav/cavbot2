@@ -307,13 +307,18 @@ func (c *recorderConn) Close(ctx context.Context) {
 // self-deafened, or Discord sends it no audio.
 const selfMute, selfDeaf = true, false
 
+// rejoinRetry is how often a rejoin whose voice state update couldn't go
+// out tries it again.
+const rejoinRetry = time.Second
+
 // rejoin opens a fresh voice connection in the call's channel, as disgo's
 // close handler does, and reports whether the recorder is connected there
 // again. disgo's gives up after 30 s and takes the recorder out, where a call
 // that moved to a voice server the recorder can't reach yet would end the
 // recording. This one waits until the recorder connects, closes the
-// connection, or Discord takes it out. A rejoin that can't go out at all,
-// as with the recorder's own gateway down, leaves as disgo's does.
+// connection, or Discord takes it out. A voice state update that can't go
+// out, as with the recorder's own gateway down, it sends again every
+// rejoinRetry, so the recorder rejoins once its gateway is back.
 func (c *recorderConn) rejoin() bool {
 	_ = c.UDP().Close()
 	channelID := c.ChannelID()
@@ -330,13 +335,19 @@ func (c *recorderConn) rejoin() bool {
 	c.stopRejoin = cancel
 	c.mu.Unlock()
 	defer c.cancelRejoin()
-	err := c.Open(ctx, *channelID, selfMute, selfDeaf)
-	if err != nil && ctx.Err() == nil {
-		closeCtx, cancelClose := context.WithTimeout(context.Background(), closeTimeout)
-		defer cancelClose()
-		c.Conn.Close(closeCtx)
+	for {
+		// Open fails before ctx ends only when its voice state update
+		// couldn't go out.
+		err := c.Open(ctx, *channelID, selfMute, selfDeaf)
+		if err == nil {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(rejoinRetry):
+		}
 	}
-	return err == nil
 }
 
 // cancelRejoin ends the rejoin under way, if any.
