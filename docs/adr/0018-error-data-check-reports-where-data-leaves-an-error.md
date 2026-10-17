@@ -35,6 +35,14 @@ closing routes.
   - What a library does beyond its signature.
   - The tools under `tools/`, which answer the maintainer, not a member or a
     panel user.
+  - The voice package's `errorsAsWarnings`, the one `slog.Handler` of the
+    module's own that the check accepts. disgo logs at ERROR for each voice
+    dial, open or close that fails, even while the recorder goes on trying.
+    This handler moves those lines down to WARN, so an ERROR in the bot log
+    means the recorder lost something (#767). In the standard library only a
+    handler or a `ReplaceAttr` function can move a record's level. The check
+    accepts this one by name without reading what it does with a record, so
+    review keeps it to moving the level and handing the record on.
 
 ## Considered options
 

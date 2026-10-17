@@ -112,7 +112,7 @@ func (s *discordgoSession) voiceManager(update disgovoice.StateUpdateFunc, userI
 
 // connCreate builds each of the recorder's voice connections. Each is
 // disgo's own, held by a recorderConn, and logs through a logger of its own
-// from newLogger.
+// from newLogger, with disgo's ERRORs moved down to WARN.
 func (s *discordgoSession) connCreate(newGateway disgovoice.GatewayCreateFunc, newLogger connLoggerFunc) disgovoice.ConnCreateFunc {
 	return func(guildID, userID snowflake.ID, update disgovoice.StateUpdateFunc, remove func(), opts ...disgovoice.ConnConfigOpt) disgovoice.Conn {
 		c := &recorderConn{s: s, guildID: guildID, userID: userID, update: update}
@@ -121,9 +121,48 @@ func (s *discordgoSession) connCreate(newGateway disgovoice.GatewayCreateFunc, n
 		updateVoiceState := func(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
 			return c.updateVoiceState(ctx, guildID, channelID, selfMute, selfDeaf)
 		}
+		logger = slog.New(errorsAsWarnings{next: logger.Handler()})
 		c.Conn = disgovoice.NewConn(guildID, userID, updateVoiceState, remove, append(opts, c.connOpts(newGateway, logger)...)...)
 		return c
 	}
+}
+
+// errorsAsWarnings hands each record on to next, at WARN when it was logged
+// at ERROR or above. disgo logs at ERROR for every dial, open or close of a
+// voice connection that fails, while the recorder goes on trying and the
+// recording runs. A loss gets an ERROR of the bot's own, with its Sentry
+// event, so an ERROR in the bot log means the recorder lost something. The
+// gate's error data check accepts this handler by name without reading it
+// (ADR 0018), so keep it to moving a record's level and handing the record
+// on.
+type errorsAsWarnings struct {
+	next slog.Handler
+}
+
+func (h errorsAsWarnings) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.next.Enabled(ctx, asWarning(level))
+}
+
+func (h errorsAsWarnings) Handle(ctx context.Context, r slog.Record) error {
+	r.Level = asWarning(r.Level)
+	return h.next.Handle(ctx, r)
+}
+
+func (h errorsAsWarnings) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return errorsAsWarnings{next: h.next.WithAttrs(attrs)}
+}
+
+func (h errorsAsWarnings) WithGroup(name string) slog.Handler {
+	return errorsAsWarnings{next: h.next.WithGroup(name)}
+}
+
+// asWarning moves level down to WARN when it is ERROR or above, and leaves
+// it as it is below.
+func asWarning(level slog.Level) slog.Level {
+	if level >= slog.LevelError {
+		return slog.LevelWarn
+	}
+	return level
 }
 
 // connOpts configures the voice connection c holds: its logger, the

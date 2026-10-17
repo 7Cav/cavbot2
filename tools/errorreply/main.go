@@ -41,7 +41,10 @@
 // happens: a value of another package's type converted to an interface
 // either declares, a function handed to either other than a scope
 // configurator, and a writer other than os.Stdout and os.Stderr handed to
-// log/slog.
+// log/slog. The check accepts one such value, the voice package's
+// errorsAsWarnings, a slog.Handler that moves disgo's ERRORs down to WARN
+// and hands each record on. It accepts it by name, without reading what it
+// does with a record (ADR 0018).
 //
 // Other ways past the check exist, such as fmt printing an unexported field
 // by reflection. Such a way counts as a bug only when the bot's code takes
@@ -806,14 +809,14 @@ func (c *checker) varFunction(v ssa.Value) *ssa.Function {
 // process's output and Sentry's client, where data from an error handed to
 // them would go on to code or a place the check doesn't read: a value of
 // another package's type converted to an interface log/slog or sentry-go
-// declares, such as a slog.Handler of the module's own; a function handed to
-// either package, directly or in a field of an options struct, other than a
-// scope configurator; or a writer other than os.Stdout and os.Stderr handed
-// to log/slog.
+// declares, such as a slog.Handler of the module's own, other than the one
+// handler the check accepts; a function handed to either package, directly
+// or in a field of an options struct, other than a scope configurator; or a
+// writer other than os.Stdout and os.Stderr handed to log/slog.
 func redirects(instr ssa.Instruction) bool {
 	switch in := instr.(type) {
 	case *ssa.MakeInterface:
-		return logType(in.Type()) && !logType(in.X.Type())
+		return logType(in.Type()) && !logType(in.X.Type()) && !acceptedHandler(in.X.Type())
 	case ssa.CallInstruction:
 		callee := in.Common().StaticCallee()
 		if callee == nil || !logFunction(callee) {
@@ -834,6 +837,15 @@ func redirects(instr ssa.Instruction) bool {
 		}
 	}
 	return false
+}
+
+// acceptedHandler reports whether t is the voice package's errorsAsWarnings,
+// the one slog.Handler of the module's that the check accepts. It moves
+// disgo's ERRORs down to WARN and hands each record on to the handler it
+// wraps. The check doesn't read what it does with a record (ADR 0018).
+func acceptedHandler(t types.Type) bool {
+	n := namedOf(t)
+	return n != nil && declared(n.Obj(), module+"/voice", "errorsAsWarnings")
 }
 
 // logFunction reports whether fn is declared in log/slog or sentry-go.
