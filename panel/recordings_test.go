@@ -41,21 +41,23 @@ const milpacProfilePath = "/milpacs/profile/username/"
 
 // milpacAPI plays the 7Cav API's milpac lookup by forum username: each
 // username it knows answers a milpac carrying its Discord ID, a username
-// given a status answers that status, and any other answers 404.
+// given a status answers that status, and any other answers 404. It counts
+// the lookups each username gets.
 type milpacAPI struct {
 	mu         sync.Mutex
 	discordIDs map[string]string
 	statuses   map[string]int
 	// held maps a username whose lookup waits, until the request's context
 	// ends, to the channel closed once it is waiting.
-	held map[string]chan struct{}
+	held    map[string]chan struct{}
+	lookups map[string]int
 }
 
 // serveMilpacs points the 7Cav API at a milpac lookup that knows no one yet,
 // for the rest of the test.
 func serveMilpacs(t *testing.T) *milpacAPI {
 	t.Helper()
-	api := &milpacAPI{discordIDs: map[string]string{}, statuses: map[string]int{}, held: map[string]chan struct{}{}}
+	api := &milpacAPI{discordIDs: map[string]string{}, statuses: map[string]int{}, held: map[string]chan struct{}{}, lookups: map[string]int{}}
 	srv := httptest.NewServer(http.HandlerFunc(api.serve))
 	t.Cleanup(srv.Close)
 	t.Cleanup(utils.SetAPIBaseURLForTest(srv.URL))
@@ -69,6 +71,7 @@ func (a *milpacAPI) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.mu.Lock()
+	a.lookups[username]++
 	waiting, held := a.held[username]
 	delete(a.held, username)
 	a.mu.Unlock()
@@ -113,6 +116,21 @@ func (a *milpacAPI) fail(username string, status int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.statuses[username] = status
+}
+
+// restore ends a fail, so the lookup of a forum username answers its
+// milpac again, or 404 when it has none.
+func (a *milpacAPI) restore(username string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.statuses, username)
+}
+
+// lookupsOf is how many lookups of a forum username the API has had.
+func (a *milpacAPI) lookupsOf(username string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.lookups[username]
 }
 
 // The fixture's recording setup: the recorder, the channel recorded, which
@@ -746,22 +764,24 @@ func assertEmptyRecordingsPageFor(t *testing.T, res *http.Response, want string,
 	}
 }
 
-// A starter whose milpac lookup fails at sign-in, or finds no milpac, still
-// signs in. They land on the Recordings page an outsider who started none
-// gets, since the panel couldn't know the recording is theirs.
-func TestRecordingsPageAfterAFailedMilpacLookupIsEmpty(t *testing.T) {
-	for _, status := range []int{http.StatusInternalServerError, http.StatusNotFound} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
-			w := newTestWorld(t)
-			x := w.addStarter(5003, "Xray.X", "discord-x")
-			w.record(t, x.discordID)
-			w.milpacs.fail("Xray.X", status)
+// A forum user whose milpac lookup finds no milpac still signs in. They
+// land on the Recordings page an outsider who started none gets, since the
+// panel has no Discord account to know a recording of theirs by, and later
+// loads of it make no milpac lookup.
+func TestRecordingsPageOfAForumUserWithNoMilpacIsEmpty(t *testing.T) {
+	w := newTestWorld(t)
+	x := w.addStarter(5003, "Xray.X", "discord-x")
+	w.record(t, x.discordID)
+	w.milpacs.fail("Xray.X", http.StatusNotFound)
 
-			res := signInAs(t, w.forum, w.b, x.account)
+	res := signInAs(t, w.forum, w.b, x.account)
+	lookups := w.milpacs.lookupsOf("Xray.X")
 
-			assertRedirect(t, res, "/")
-			assertEmptyRecordingsPageFor(t, follow(t, w.b, res), noRecordingsYet, true)
-		})
+	assertRedirect(t, res, "/")
+	assertEmptyRecordingsPageFor(t, follow(t, w.b, res), noRecordingsYet, true)
+	w.b.get(recordingsPath)
+	if got := w.milpacs.lookupsOf("Xray.X"); got != lookups {
+		t.Errorf("the page loads after sign-in made %d milpac lookups, want none", got-lookups)
 	}
 }
 

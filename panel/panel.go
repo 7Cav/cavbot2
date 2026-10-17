@@ -381,14 +381,14 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 	user, outcome, err := p.groupCheck(r.Context(), tok.AccessToken)
 	switch outcome {
 	case checkPassed:
-		sess := session{accessToken: tok.AccessToken, signedIn: panelClock.Now(), discordID: p.discordIDOf(r.Context(), user.Username)}
+		sess := session{accessToken: tok.AccessToken, signedIn: panelClock.Now(), discord: p.discordAtSignin(r.Context(), user.Username)}
 		sess.identify(user, p.accessOf(user))
 		id, err := p.sessions.add(sess)
 		if err != nil {
 			p.serverError(w, "session create", err)
 			return
 		}
-		utils.Info("Panel sign-in", "username", user.Username, "forum_user_id", user.UserID, "discord_id", sess.discordID,
+		utils.Info("Panel sign-in", "username", user.Username, "forum_user_id", user.UserID, "discord_id", sess.discord.id,
 			"panel_admin", sess.access.panelAdmin, "foxhole_manager", sess.access.foxholeManager)
 		setCookie(w, sessionCookie, id)
 		http.Redirect(w, r, pending.next, http.StatusSeeOther)

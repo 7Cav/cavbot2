@@ -27,12 +27,23 @@
     </div>{{end}}
   </section>
   {{else}}
-  <div class="block"><div class="block-row"><span data-field="no-recordings">{{$.Recordings.EmptyNote}}</span>{{if $.Recordings.Outsider}} <span data-field="no-other-page">Your forum groups don't open any other page.</span>{{end}}</div></div>
+  <div class="block">{{if $.Recordings.Discord}}<div class="block-row">{{template "discord-note" $.Recordings}}</div>{{if $.Recordings.Outsider}}<div class="block-row">{{template "no-other-page"}}</div>{{end}}
+    {{- else}}<div class="block-row"><span data-field="no-recordings">{{$.Recordings.EmptyNote}}</span>{{if $.Recordings.Outsider}} {{template "no-other-page"}}{{end}}</div>{{end}}</div>
   {{end}}
   {{if .Recordings.DeletedLast}}{{template "deleted-note"}}{{end}}
   {{end}}
 </main>
 {{end}}
+
+{{define "no-other-page"}}<span data-field="no-other-page">Your forum groups don't open any other page.</span>{{end}}
+
+{{- /* The note a recording page shows in place of the visitor's own recordings when the panel couldn't find their Discord account (#752). It refuses nothing, so it takes the neutral stripe. Its Check again loads the page again, which looks again. */}}
+{{define "discord-note"}}<div class="note note--neutral note--inline" data-field="discord-note" data-note="{{.Discord}}">
+  {{- if .Discord.Failed}}The panel couldn't check your Discord account just now, so it can't {{template "discord-note-finds" .}}.
+  {{- else}}Your forum account has no Discord account connected, so the panel can't {{template "discord-note-finds" .}}. Connect the Discord account you record with on the forum's <a href="https://7cav.us/account/connected-accounts/" data-field="connect-discord">connected accounts page</a>.{{end}}
+  <a href="{{.CheckAgain}}" data-field="check-again">Check again</a></div>{{end}}
+
+{{define "discord-note-finds"}}{{if .Single}}tell this recording is yours{{else}}find your recordings{{end}}{{end}}
 
 {{define "recording-title"}}{{if .Title}}{{.Title}}{{else}}Untitled recording{{end}}{{end}}
 

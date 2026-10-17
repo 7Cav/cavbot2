@@ -44,16 +44,60 @@ func (p pendingSignin) expired(at time.Time) bool {
 // sends on every request, the identity shown in the rail, what the latest
 // group check lets it open, and the Discord ID its recordings are found by.
 type session struct {
+	// id is the key the store holds the session under, the session
+	// cookie's value, set on each copy get returns.
+	id          string
 	accessToken string
 	userID      int
 	username    string
 	access      access
 	signedIn    time.Time
-	// discordID is the Discord ID the user's milpac carried at sign-in,
-	// found by their forum username. Empty when the lookup found no milpac,
-	// failed, or found one with no Discord ID, and then the user started no
+	// discord is what the latest milpac lookup found of the user's
+	// connected Discord account, by their forum username.
+	discord discordAccount
+}
+
+// discordAccount is what a milpac lookup found of a forum user's connected
+// Discord account (GLOSSARY.md), which finds the recordings they started.
+type discordAccount struct {
+	lookup discordLookup
+	// id is the Discord ID the milpac names, set when the lookup found it.
+	id string
+}
+
+// discordLookup is how a milpac lookup ended.
+type discordLookup int
+
+const (
+	// discordNoMilpac is a forum user with no milpac, who started no
 	// recording the panel can find.
-	discordID string
+	discordNoMilpac discordLookup = iota
+	// discordFound is a milpac that names a Discord ID.
+	discordFound
+	// discordLookupFailed is a lookup that failed or timed out.
+	discordLookupFailed
+	// discordNotConnected is a milpac that names no Discord account, since
+	// its forum user connected none.
+	discordNotConnected
+)
+
+// retries reports whether a recording page looks the account up again:
+// after a lookup that failed or found no connected Discord account. A found
+// ID and a missing milpac stand for the rest of the session.
+func (d discordAccount) retries() bool {
+	return d.lookup == discordLookupFailed || d.lookup == discordNotConnected
+}
+
+// note is the note a recording page shows in place of the user's own
+// recordings, empty when the panel needs none.
+func (d discordAccount) note() discordNote {
+	switch d.lookup {
+	case discordLookupFailed:
+		return noteLookupFailed
+	case discordNotConnected:
+		return noteNotConnected
+	}
+	return ""
 }
 
 func (s session) expired(at time.Time) bool {
@@ -144,17 +188,42 @@ func (s *sessions) get(id string) (session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.active[id]
+	if ok {
+		sess.id = id
+	}
 	return sess, ok
 }
 
 // update replaces a session's identity and access after a group check, so
-// the rail shows the username the forum reports now.
+// the rail shows the username the forum reports now. The Discord account
+// stays as the store holds it: a recording page on a concurrent request
+// may have looked it up since this request read the session.
 func (s *sessions) update(id string, sess session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.active[id]; ok {
+	if cur, ok := s.active[id]; ok {
+		sess.discord = cur.discord
 		s.active[id] = sess
 	}
+}
+
+// lookedUp keeps what a recording page's milpac lookup found on a
+// session, and returns the Discord account the session then holds. A found
+// ID stays for the rest of the session, so a slower lookup on a concurrent
+// request that fails after it can't drop it.
+func (s *sessions) lookedUp(id string, d discordAccount) discordAccount {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.active[id]
+	switch {
+	case !ok:
+		return d
+	case sess.discord.lookup == discordFound:
+		return sess.discord
+	}
+	sess.discord = d
+	s.active[id] = sess
+	return d
 }
 
 func (s *sessions) end(id string) {
