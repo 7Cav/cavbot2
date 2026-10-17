@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +32,9 @@ const (
 
 const stubCrashMessage = "stub bot: start failed"
 
+// logLevels are the LOG_LEVEL values the bot reads, lowest first.
+var logLevels = []string{"DEBUG", "INFO", "WARN", "ERROR"}
+
 func TestMain(m *testing.M) {
 	if scenario := os.Getenv(stubBotScenario); scenario != "" {
 		runStubBot(scenario)
@@ -52,13 +54,8 @@ func runStubBot(scenario string) {
 	utils.Info("Stub bot line")
 	utils.Warn("Stub bot line")
 	utils.Error("Stub bot line")
-	open := func(recorder int, token string) (voice.GatewaySession, error) {
-		if strings.HasPrefix(token, "refused") {
-			return nil, errors.New("websocket: close 4004: Authentication failed.")
-		}
-		return fakeRecorder{id: strconv.Itoa(1000 + recorder)}, nil
-	}
-	voice.Connect(os.Getenv("RECORDER_TOKENS"), open).Close()
+	refused := func(token string) bool { return strings.HasPrefix(token, "refused") }
+	voice.Connect(os.Getenv("RECORDER_TOKENS"), openRefusing(refused)).Close()
 	if scenario == stubCrash {
 		panic(stubCrashMessage)
 	}
@@ -154,7 +151,7 @@ func loggedLevels(t *testing.T, path string) []string {
 		seen = append(seen, strings.TrimPrefix(f[1], "level="))
 	}
 	var levels []string
-	for _, l := range []string{"DEBUG", "INFO", "WARN", "ERROR"} {
+	for _, l := range logLevels {
 		if slices.Contains(seen, l) {
 			levels = append(levels, l)
 		}
@@ -182,7 +179,7 @@ func TestBotLogKeepsOnlyTheLinesLogLevelAsksFor(t *testing.T) {
 }
 
 func TestRecorderTallyIsWholeAtEveryLogLevel(t *testing.T) {
-	for _, level := range []string{"DEBUG", "INFO", "WARN", "ERROR"} {
+	for _, level := range logLevels {
 		for _, tc := range []struct {
 			name   string
 			tokens string
@@ -221,7 +218,7 @@ func TestPanelWarningOnlyWhenThePanelIsNotListening(t *testing.T) {
 }
 
 func TestBotThatExitsBeforeReadyLeavesItsPanicInTheBotLog(t *testing.T) {
-	for _, level := range []string{"DEBUG", "INFO", "WARN", "ERROR"} {
+	for _, level := range logLevels {
 		t.Run(level, func(t *testing.T) {
 			s, ready, _ := launchStub(t, stubCrash, []string{"LOG_LEVEL=" + level})
 			if ready {

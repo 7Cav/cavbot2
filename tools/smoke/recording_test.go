@@ -25,6 +25,17 @@ func (f fakeRecorder) Join(context.Context, string, string) (voice.Conn, error) 
 }
 func (f fakeRecorder) Close() error { return nil }
 
+// openRefusing opens a recorder for each token, with Discord refusing each
+// token refused picks.
+func openRefusing(refused func(token string) bool) voice.Opener {
+	return func(recorder int, token string) (voice.GatewaySession, error) {
+		if refused(token) {
+			return nil, errors.New("websocket: close 4004: Authentication failed.")
+		}
+		return fakeRecorder{id: strconv.Itoa(1000 + recorder)}, nil
+	}
+}
+
 // recorderLog runs the bot's recorder connect on raw, a RECORDER_TOKENS
 // value, with Discord refusing the tokens in refused, and returns what the
 // bot logs, written by the logger the bot sets up for itself.
@@ -41,13 +52,7 @@ func recorderLog(t *testing.T, raw string, refused ...string) []string {
 	utils.InitLogger("INFO")
 	os.Stdout = prevStdout
 
-	open := func(recorder int, token string) (voice.GatewaySession, error) {
-		if slices.Contains(refused, token) {
-			return nil, errors.New("websocket: close 4004: Authentication failed.")
-		}
-		return fakeRecorder{id: strconv.Itoa(1000 + recorder)}, nil
-	}
-	voice.Connect(raw, open).Close()
+	voice.Connect(raw, openRefusing(func(token string) bool { return slices.Contains(refused, token) })).Close()
 
 	b, err := os.ReadFile(out.Name())
 	if err != nil {

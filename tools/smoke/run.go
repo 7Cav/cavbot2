@@ -492,8 +492,8 @@ const panelNotListening = "the bot is running but its panel is not listening"
 // starts the bot at INFO. The bot log then leaves out the lines LOG_LEVEL
 // would have kept the bot from printing.
 func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
-	runValue, _ := envValue(env, "LOG_LEVEL")
-	runLevel := utils.ParseLogLevel(runValue)
+	asked, _ := envValue(env, "LOG_LEVEL")
+	runLevel := utils.ParseLogLevel(asked)
 	if runLevel > slog.LevelInfo {
 		env = append(slices.Clip(env), "LOG_LEVEL=INFO")
 	}
