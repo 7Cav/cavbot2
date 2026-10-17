@@ -63,6 +63,8 @@ type discordAccount struct {
 	lookup discordLookup
 	// id is the Discord ID the milpac names, set when the lookup found it.
 	id string
+	// ended is when the lookup ended, on the panel's clock.
+	ended time.Time
 }
 
 // discordLookup is how a milpac lookup ended.
@@ -81,11 +83,12 @@ const (
 	discordNotConnected
 )
 
-// retries reports whether a recording page looks the account up again:
-// after a lookup that failed or found no connected Discord account. A found
-// ID and a missing milpac stand for the rest of the session.
-func (d discordAccount) retries() bool {
-	return d.lookup == discordLookupFailed || d.lookup == discordNotConnected
+// retries reports whether a recording page loaded at the time given looks
+// the account up again: after a lookup that failed or found no connected
+// Discord account, once lookupReuse has passed since it ended. A found ID
+// and a missing milpac stand for the rest of the session.
+func (d discordAccount) retries(at time.Time) bool {
+	return (d.lookup == discordLookupFailed || d.lookup == discordNotConnected) && !at.Before(d.ended.Add(lookupReuse))
 }
 
 // note is the note a recording page shows in place of the user's own

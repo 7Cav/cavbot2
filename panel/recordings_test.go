@@ -774,8 +774,8 @@ func assertEmptyRecordingsPageFor(t *testing.T, res *http.Response, want string,
 
 // A forum user whose milpac lookup finds no milpac still signs in. They
 // land on the Recordings page an outsider who started none gets, since the
-// panel has no Discord account to know a recording of theirs by, and later
-// loads of it make no milpac lookup.
+// panel has no Discord account to know a recording of theirs by, and loads
+// of it, then and later, make no milpac lookup.
 func TestRecordingsPageOfAForumUserWithNoMilpacIsEmpty(t *testing.T) {
 	w := newTestWorld(t)
 	x := w.addStarter(5003, "Xray.X", "discord-x")
@@ -787,6 +787,7 @@ func TestRecordingsPageOfAForumUserWithNoMilpacIsEmpty(t *testing.T) {
 	assertRedirect(t, res, "/")
 	n := w.milpacs.lookupsDuring("Xray.X", func() {
 		assertEmptyRecordingsPageFor(t, follow(t, w.b, res), noRecordingsYet, true)
+		w.clock.advance(3 * time.Second)
 		w.b.get(recordingsPath)
 	})
 	if n != 0 {

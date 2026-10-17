@@ -78,7 +78,13 @@ func TestRecordingsPageOfAStarterWithNoConnectedDiscordAccountSaysSo(t *testing.
 
 	doc := parseHTML(t, follow(t, w.b, signInAs(t, w.forum, w.b, x.account)))
 
-	note := assertDiscordNote(t, doc, noteNotConnected, recordingsPath)
+	assertLinksToConnectedAccounts(t, assertDiscordNote(t, doc, noteNotConnected, recordingsPath))
+}
+
+// assertLinksToConnectedAccounts checks a note links to the forum page
+// where a forum user connects a Discord account.
+func assertLinksToConnectedAccounts(t *testing.T, note *html.Node) {
+	t.Helper()
 	const connect = "https://7cav.us/account/connected-accounts/"
 	if findElement(note, "a", "href", connect) == nil {
 		t.Errorf("the note has no link to %s", connect)
@@ -97,8 +103,8 @@ func pressCheckAgain(t *testing.T, b *browser, doc *html.Node) *html.Node {
 // A starter the panel couldn't find at sign-in is found once the 7Cav API
 // recovers, or once their milpac names their Discord account. The next load
 // of the Recordings page, or of the recording's address, from the note's
-// Check again, shows their recording, and the load after it makes no
-// milpac lookup.
+// Check again 3 seconds after the sign-in's lookup, shows their recording,
+// and the load after it makes no milpac lookup.
 func TestRecordingPagesFindTheStarterOnceTheMilpacLookupCan(t *testing.T) {
 	recovers := func(api *milpacAPI) { api.restore("Xray.X") }
 	failing := func(api *milpacAPI) { api.fail("Xray.X", http.StatusInternalServerError) }
@@ -122,6 +128,7 @@ func TestRecordingPagesFindTheStarterOnceTheMilpacLookupCan(t *testing.T) {
 			signInAs(t, w.forum, w.b, x.account)
 			unmatched := parseHTML(t, w.b.get(tc.page(rec)))
 			tc.later(w.milpacs)
+			w.clock.advance(3 * time.Second)
 
 			doc := pressCheckAgain(t, w.b, unmatched)
 
@@ -147,6 +154,7 @@ func TestRecordingsPageGoesByItsOwnMilpacLookup(t *testing.T) {
 		w.milpacs.set("Xray.X", "")
 		signInAs(t, w.forum, w.b, x.account)
 		w.milpacs.fail("Xray.X", http.StatusInternalServerError)
+		w.clock.advance(3 * time.Second)
 
 		assertDiscordNote(t, parseHTML(t, w.b.get(recordingsPath)), noteLookupFailed, recordingsPath)
 	})
@@ -157,12 +165,49 @@ func TestRecordingsPageGoesByItsOwnMilpacLookup(t *testing.T) {
 		w.milpacs.fail("Xray.X", http.StatusInternalServerError)
 		signInAs(t, w.forum, w.b, x.account)
 		w.milpacs.fail("Xray.X", http.StatusNotFound)
+		w.clock.advance(3 * time.Second)
 
 		assertEmptyRecordingsPageFor(t, w.b.get(recordingsPath), noRecordingsYet, true)
 		if n := w.milpacs.lookupsDuring("Xray.X", func() { w.b.get(recordingsPath) }); n != 0 {
 			t.Errorf("the load after made %d milpac lookups, want none", n)
 		}
 	})
+}
+
+// A session whose latest milpac lookup ended less than 3 seconds ago goes
+// by it. The Recordings page makes no lookup of its own and shows the note
+// that lookup earned, even once the 7Cav API would find the starter.
+func TestRecordingsPageGoesByALookupThatEndedUnderThreeSecondsAgo(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		atSignin func(api *milpacAPI)
+		want     discordNote
+	}{
+		{"the lookup failed", func(api *milpacAPI) { api.fail("Xray.X", http.StatusInternalServerError) }, noteLookupFailed},
+		{"no Discord account connected", func(api *milpacAPI) { api.set("Xray.X", "") }, noteNotConnected},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t)
+			x := w.addStarter(5003, "Xray.X", "discord-x")
+			w.record(t, x.discordID)
+			tc.atSignin(w.milpacs)
+			signInAs(t, w.forum, w.b, x.account)
+			w.milpacs.restore("Xray.X")
+			w.milpacs.set("Xray.X", x.discordID)
+			w.clock.advance(3*time.Second - time.Millisecond)
+
+			var doc *html.Node
+			n := w.milpacs.lookupsDuring("Xray.X", func() { doc = parseHTML(t, w.b.get(recordingsPath)) })
+
+			if n != 0 {
+				t.Errorf("the page made %d milpac lookups, want none", n)
+			}
+			note := assertDiscordNote(t, doc, tc.want, recordingsPath)
+			if tc.want == noteNotConnected {
+				assertLinksToConnectedAccounts(t, note)
+			}
+		})
+	}
 }
 
 // A starter the panel couldn't find in Discord who opens their recording's
@@ -220,12 +265,14 @@ func TestRecordingRoutesOfAStarterThePanelCantFindLeadToItsAddress(t *testing.T)
 }
 
 // A starter whose sign-in found their Discord account opens the Recordings
-// page and their recording's address with no further milpac lookup.
+// page and their recording's address with no further milpac lookup, then
+// and later.
 func TestRecordingPagesOfAStarterFoundAtSignInLookNoMore(t *testing.T) {
 	w := newTestWorld(t)
 	a := w.addStarter(5001, "Able.A", "discord-a")
 	rec := w.record(t, a.discordID)
 	signInAs(t, w.forum, w.b, a.account)
+	w.clock.advance(3 * time.Second)
 
 	n := w.milpacs.lookupsDuring("Able.A", func() {
 		w.b.get(recordingsPath)
@@ -255,39 +302,74 @@ func TestPanelAdminWhoseMilpacLookupFailsSeesTheNoteInTheirOwnListOnly(t *testin
 	}
 }
 
-// A milpac lookup that hangs at sign-in ends the sign-in once 3 seconds
-// pass, and the starter lands on the failed-lookup note while the 7Cav API
-// is still down.
-func TestSignInWhoseMilpacLookupHangsEndsAfterThreeSeconds(t *testing.T) {
-	w := newTestWorld(t)
-	x := w.addStarter(5003, "Xray.X", "discord-x")
-	w.record(t, x.discordID)
-	waiting := w.milpacs.hold("Xray.X")
-	q := assertRedirect(t, w.b.post("/auth/start"), "/oauth2/authorize").Query()
-	w.forum.setChallenge(q.Get("code_challenge"))
-	done := make(chan *http.Response, 1)
-	go func() {
-		done <- w.b.get("/auth/callback?code=" + url.QueryEscape(x.account.code) + "&state=" + url.QueryEscape(q.Get("state")))
-	}()
-	select {
-	case <-waiting:
-	case <-time.After(neverReleased):
-		t.Fatal("the sign-in never reached the milpac lookup")
-	}
+// A sign-in while the 7Cav API hangs waits out one milpac lookup, not two.
+// The sign-in's lookup gives up after 3 seconds, and the page the sign-in
+// lands on goes by it. Wherever the sign-in began, that page answers 3
+// seconds after the callback began, makes no lookup of its own, and shows
+// the failed-lookup note.
+func TestSignInWhileTheMilpacLookupHangsWaitsOutOneLookup(t *testing.T) {
+	listPage := func(int64) string { return recordingsPath }
+	for _, tc := range []struct {
+		name             string
+		page, checkAgain func(rec int64) string
+	}{
+		{"the landing", func(int64) string { return "/" }, listPage},
+		{"the Recordings page", listPage, listPage},
+		{"a recording's address", commands.RecordingPath, commands.RecordingPath},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t)
+			x := w.addStarter(5003, "Xray.X", "discord-x")
+			rec := w.record(t, x.discordID)
+			signinPage := parseHTML(t, follow(t, w.b, w.b.get(tc.page(rec))))
+			state := startSigninWith(t, w.forum, w.b, formPosts(t, signinPage, "/auth/start"))
+			atSignin := w.milpacs.hold("Xray.X")
+			began := w.clock.Now()
+			callback := make(chan *http.Response, 1)
+			go func() {
+				callback <- w.b.get("/auth/callback?code=" + url.QueryEscape(x.account.code) + "&state=" + url.QueryEscape(state))
+			}()
+			select {
+			case <-atSignin:
+			case <-time.After(neverReleased):
+				t.Fatal("the sign-in never reached the milpac lookup")
+			}
+			// The 7Cav API still hangs for the lookup after.
+			onPage := w.milpacs.hold("Xray.X")
+			w.clock.advance(3 * time.Second)
+			var res *http.Response
+			select {
+			case res = <-callback:
+			case <-time.After(neverReleased):
+				// Let the lookup go, so the test can end.
+				w.clock.advance(time.Hour)
+				<-callback
+				t.Fatal("the sign-in still waits on the milpac lookup 3 seconds after it began")
+			}
 
-	w.clock.advance(3 * time.Second)
+			var landed *http.Response
+			n := w.milpacs.lookupsDuring("Xray.X", func() {
+				done := make(chan *http.Response, 1)
+				go func() { done <- follow(t, w.b, res) }()
+				select {
+				case landed = <-done:
+				case <-onPage:
+					// The page looked again, and its lookup gives up 3
+					// seconds on.
+					w.clock.advance(3 * time.Second)
+					landed = <-done
+				}
+			})
 
-	var res *http.Response
-	select {
-	case res = <-done:
-	case <-time.After(neverReleased):
-		// Let the lookup go, so the test can end.
-		w.clock.advance(time.Hour)
-		<-done
-		t.Fatal("the sign-in still waits on the milpac lookup 3 seconds after it began")
+			if waited := w.clock.since(began); waited != 3*time.Second {
+				t.Errorf("%s answered %s after the callback began, want 3s", tc.page(rec), waited)
+			}
+			if n != 0 {
+				t.Errorf("%s made %d milpac lookups of its own, want none", tc.page(rec), n)
+			}
+			assertDiscordNote(t, parseHTML(t, landed), noteLookupFailed, tc.checkAgain(rec))
+		})
 	}
-	w.milpacs.fail("Xray.X", http.StatusInternalServerError)
-	assertDiscordNote(t, parseHTML(t, follow(t, w.b, res)), noteLookupFailed, recordingsPath)
 }
 
 // sentryMessages is the message each event recorded was captured under,
@@ -307,21 +389,28 @@ func sentryMessages(t *testing.T, r *sentryRecorder) []string {
 	return out
 }
 
-// A page lookup that fails reaches Sentry once, under a message of its
+// A milpac lookup that fails reaches Sentry once. The page a sign-in lands
+// on goes by the sign-in's lookup, so the two send one event between them.
+// A page lookup that fails later sends its own, under a message of its
 // own, so staff can tell it from a lookup that failed at sign-in.
-func TestRecordingsPageWhoseMilpacLookupFailsIsReported(t *testing.T) {
+func TestFailedMilpacLookupsAreReportedOnceEach(t *testing.T) {
 	w := newTestWorld(t)
 	x := w.addStarter(5003, "Xray.X", "discord-x")
 	w.milpacs.fail("Xray.X", http.StatusInternalServerError)
 	reported := recordSentry(t)
-	signInAs(t, w.forum, w.b, x.account)
+	res := signInAs(t, w.forum, w.b, x.account)
 	atSignin := sentryMessages(t, reported)
+	follow(t, w.b, res)
+	landed := sentryMessages(t, reported)
+	w.clock.advance(3 * time.Second)
 
 	w.b.get(recordingsPath)
 
-	got := sentryMessages(t, reported)[len(atSignin):]
-	if len(atSignin) != 1 || len(got) != 1 || got[0] == atSignin[0] {
-		t.Errorf("sign-in sent events under %q and the page load under %q, want one each under different messages", atSignin, got)
+	if len(atSignin) != 1 || len(landed) != 1 {
+		t.Fatalf("the sign-in sent events under %q, and with the page it landed on under %q, want one in all", atSignin, landed)
+	}
+	if later := sentryMessages(t, reported)[1:]; len(later) != 1 || later[0] == atSignin[0] {
+		t.Errorf("the later page load sent events under %q, want one under a message other than the sign-in's %q", later, atSignin[0])
 	}
 }
 
@@ -334,6 +423,7 @@ func TestRecordingsPageOfAStarterWithNoConnectedDiscordAccountIsLoggedNotReporte
 	w.milpacs.set("Xray.X", "")
 	reported := recordSentry(t)
 	signInAs(t, w.forum, w.b, x.account)
+	w.clock.advance(3 * time.Second)
 	logs := captureLogs(t)
 
 	w.b.get(recordingsPath)
@@ -357,6 +447,7 @@ func TestRecordingsPageAbandonedDuringTheMilpacLookupIsNotReported(t *testing.T)
 	x := w.addStarter(5003, "Xray.X", "discord-x")
 	w.milpacs.fail("Xray.X", http.StatusInternalServerError)
 	signInAs(t, w.forum, w.b, x.account)
+	w.clock.advance(3 * time.Second)
 	reported := recordSentry(t)
 	waiting := w.milpacs.hold("Xray.X")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -391,6 +482,7 @@ func TestFoundDiscordIDOutlastsAConcurrentGroupCheck(t *testing.T) {
 	rec := w.record(t, x.discordID)
 	w.milpacs.fail("Xray.X", http.StatusInternalServerError)
 	signInAs(t, w.forum, w.b, x.account)
+	w.clock.advance(3 * time.Second)
 	tab := newBrowser(t, w.p)
 	tab.cookies[sessionCookie] = w.b.cookies[sessionCookie]
 	waiting, release := w.forum.holdUserinfo()
@@ -433,6 +525,7 @@ func TestFoundDiscordIDOutlastsASlowerFailedLookup(t *testing.T) {
 	rec := w.record(t, x.discordID)
 	w.milpacs.fail("Xray.X", http.StatusInternalServerError)
 	signInAs(t, w.forum, w.b, x.account)
+	w.clock.advance(3 * time.Second)
 	tab := newBrowser(t, w.p)
 	tab.cookies[sessionCookie] = w.b.cookies[sessionCookie]
 	waiting := w.milpacs.hold("Xray.X")

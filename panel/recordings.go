@@ -29,6 +29,12 @@ const recordingsPath = "/recordings"
 // the page while the API doesn't answer.
 const milpacTimeout = 3 * time.Second
 
+// lookupReuse is how long a recording page goes by the session's latest
+// milpac lookup before it looks again, counted from when that lookup ended.
+// The page a sign-in lands on comes just after the sign-in's own lookup, so
+// it doesn't wait out a second one while the 7Cav API doesn't answer.
+const lookupReuse = 3 * time.Second
+
 // lookUpDiscord is what the milpac of the forum user with the username
 // given says of their connected Discord account, found through the 7Cav
 // API. err is set when the lookup failed, and wraps context.Canceled when
@@ -37,15 +43,16 @@ func lookUpDiscord(ctx context.Context, username string) (discordAccount, error)
 	ctx, cancel := panelClock.WithTimeout(ctx, milpacTimeout)
 	defer cancel()
 	profile, err := utils.GetMilpacByUsername(ctx, username)
+	ended := panelClock.Now()
 	switch {
 	case errors.Is(err, utils.ErrNotFound):
-		return discordAccount{lookup: discordNoMilpac}, nil
+		return discordAccount{lookup: discordNoMilpac, ended: ended}, nil
 	case err != nil:
-		return discordAccount{lookup: discordLookupFailed}, err
+		return discordAccount{lookup: discordLookupFailed, ended: ended}, err
 	case profile.DiscordID == "":
-		return discordAccount{lookup: discordNotConnected}, nil
+		return discordAccount{lookup: discordNotConnected, ended: ended}, nil
 	}
-	return discordAccount{lookup: discordFound, id: profile.DiscordID}, nil
+	return discordAccount{lookup: discordFound, id: profile.DiscordID, ended: ended}, nil
 }
 
 // discordAtSignin is lookUpDiscord at sign-in, which goes on whatever it
@@ -69,12 +76,12 @@ func (p *Panel) discordAtSignin(ctx context.Context, username string) discordAcc
 
 // lookAgain runs the milpac lookup again before a recording page renders,
 // for a session whose latest lookup failed or found no connected Discord
-// account, and keeps what it finds on the session and on sess. A failed
-// lookup reaches Sentry under a message of its own, apart from sign-in's.
-// It reports false when the browser left during the lookup, and then the
-// page answers nothing.
+// account and ended lookupReuse or more ago, and keeps what it finds on the
+// session and on sess. A failed lookup reaches Sentry under a message of
+// its own, apart from sign-in's. It reports false when the browser left
+// during the lookup, and then the page answers nothing.
 func (p *Panel) lookAgain(r *http.Request, sess *session, step string) bool {
-	if !sess.discord.retries() {
+	if !sess.discord.retries(panelClock.Now()) {
 		return true
 	}
 	d, err := lookUpDiscord(r.Context(), sess.username)
