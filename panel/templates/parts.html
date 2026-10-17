@@ -1,6 +1,6 @@
 {{- /* The parts the Hubs page and the Settings page share: a refusal's
      note, a save's line, the role pickers and the change log. Parsed with
-     every page. */ -}}
+     every page, so it also holds the Zulu time every page writes. */ -}}
 {{- /* A refusal's note. One form at most is refused per page, so its ID is
      unique, and the heading of the block it sits in, the form's or the one
      shown in the form's place, names it in aria-describedby. */}}
@@ -35,6 +35,9 @@
 
 {{define "dot"}}{{if .Dot}}{{if .Colour}}<span class="dot" style="background:{{.Colour}}"></span>{{else}}<span class="dot dot--none"></span>{{end}}{{end}}{{end}}
 
+{{- /* A time as the regiment writes it, in Zulu (GLOSSARY.md). */}}
+{{define "zulu"}}{{.UTC.Format "2 Jan 2006 1504"}}z{{end}}
+
 {{define "changes"}}
     <h2 class="block-header">Change log</h2>
     {{template "change-entries" .}}
@@ -47,7 +50,7 @@
       <summary class="change-head">
         <span class="change-who" data-field="username">{{.Username}}</span>
         <span class="tag" data-field="action">{{.Label}}</span>
-        <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.UTC.Format "2 Jan 2006 15:04"}} UTC</time>
+        <time data-field="at" datetime="{{.At.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "zulu" .At}}</time>
       </summary>
       {{if .Fields}}
       <dl class="change-fields">
