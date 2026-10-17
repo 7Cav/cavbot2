@@ -27,15 +27,18 @@
   // lets the menu take the mouseup (#718). pressed is the element the
   // press began on, and null between presses. rightPress is whether the
   // right button made the press, and false between presses. afterPress,
-  // when set, runs as the press ends and is called with that element. That
-  // comes before the click, whose target the press has already fixed. A
-  // right-click makes no click, so afterPress waits for the next press to
-  // end instead.
+  // when set, runs as the press ends and is called with that element, and
+  // with whether a contextmenu ended it. That comes before the click, whose
+  // target the press has already fixed. A right-click makes no click, so
+  // afterPress waits for the next press to end instead. On macOS a
+  // Control+click opens the menu too, but Chrome and Safari report its
+  // mousedown as the left button. Only the contextmenu shows that the
+  // press was a right-click (#771).
   var pressed = null;
   var rightPress = false;
   var afterPress = null;
 
-  function endPress() {
+  function endPress(e) {
     var target = pressed;
     var run = afterPress;
     if (!target) { return; }
@@ -45,7 +48,7 @@
       return;
     }
     afterPress = null;
-    if (run) { run(target); }
+    if (run) { run(target, e.type === 'contextmenu'); }
   }
 
   document.addEventListener('mousedown', function (e) {
@@ -241,14 +244,24 @@
     // makes no click, so nothing has to stay under the pointer. It closes
     // the search at once, unless it began inside the picker, as on a tag.
     // Then the search stays open through the menu, and the next press
-    // closes it as a left press would (#718).
+    // closes it as a left press would (#718). A Control+click on macOS
+    // goes by the same rule. Its mousedown reports the left button, so the
+    // rule waits for its contextmenu (#771).
     root.addEventListener('focusout', function (e) {
       if (search.hidden || root.contains(e.relatedTarget)) { return; }
       if (!pressed || (rightPress && !root.contains(pressed))) {
         close();
         return;
       }
-      afterPress = function (target) {
+      afterPress = function closeAfter(target, byMenu) {
+        if (byMenu) {
+          if (root.contains(target)) {
+            afterPress = closeAfter;
+          } else {
+            close();
+          }
+          return;
+        }
         // Hiding the search to measure can clamp the page's scroll, so the
         // scroll goes back too. Nothing paints between the hide and the
         // show.
