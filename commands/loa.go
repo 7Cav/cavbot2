@@ -237,7 +237,7 @@ func loaThreadTag(threadID int64) string {
 	if threadID == 0 {
 		return ""
 	}
-	return fmt.Sprintf(" [[Thread]](https://7cav.us/threads/%d/)", threadID)
+	return fmt.Sprintf(" [[Thread]](%s)", loaThreadURL(threadID))
 }
 
 // loaUsersByState lists each LOA the 7Cav API states open, upcoming or

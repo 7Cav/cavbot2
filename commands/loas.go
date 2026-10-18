@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"fmt"
 	"strconv"
 	"time"
 
@@ -30,6 +31,11 @@ func callLOAsAlongside(call func() (*utils.LOAsResponse, error)) <-chan loasAnsw
 func loaThreadID(l utils.LOA) int64 {
 	threadID, _ := strconv.ParseInt(l.ThreadID, 10, 64)
 	return threadID
+}
+
+// loaThreadURL is the forum address of an LOA's thread.
+func loaThreadURL(threadID int64) string {
+	return fmt.Sprintf("https://7cav.us/threads/%d/", threadID)
 }
 
 // loaEntryOf reads an LOA's dates and thread, reporting false with a
