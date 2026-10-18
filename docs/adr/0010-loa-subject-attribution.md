@@ -2,9 +2,9 @@
 
 ## Status
 
-Superseded by #787. The bot no longer reads LOA posts and takes each LOA's
-Subject from the 7Cav API. Accepted earlier as the fix for #221, where `/loa`
-showed the person who filed an LOA instead of the trooper on leave.
+Superseded by ADR 0008 (#787). The bot no longer reads LOA posts and takes
+each LOA's Subject from the 7Cav API. Accepted earlier as the fix for #221,
+where `/loa` showed the person who filed an LOA instead of the trooper on leave.
 
 ## Decision
 

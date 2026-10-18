@@ -35,15 +35,6 @@ type LOAEntry struct {
 	ThreadID  int64
 }
 
-// isActiveAt reports whether the entry's LOA window is active at the instant
-// `now`. The window is inclusive at both bounds: an entry is active from its
-// StartDate through its EndDate (so Start==now and End==now both count as
-// active). Clock-injected so the boundary semantics are unit-testable at the
-// exact edge (cf. PR #135).
-func (e LOAEntry) isActiveAt(now time.Time) bool {
-	return !now.Before(e.StartDate) && !now.After(e.EndDate)
-}
-
 // coveredByLOA reports whether a UTC date is covered by any LOA window. An LOA
 // covers the inclusive range [StartDate, EndDate]; a zero-width range
 // (StartDate == EndDate) is valid and covers exactly that one day. Only an
@@ -146,14 +137,15 @@ func overage(accountable int) int {
 // overlap. The bool is false when no window is active. /awol uses this so the
 // On-LOA verdict, the days-AWOL calc, and the [[LOA]] thread link are all decided
 // against the SAME `now` — no boundary disagreement between selection and verdict
-// (PR #161 clock-skew item).
+// (PR #161 clock-skew item). A window is active from its StartDate through its
+// EndDate, both included.
 func ActiveWindow(windows []LOAEntry, now time.Time) (LOAEntry, bool) {
 	var (
 		best  LOAEntry
 		found bool
 	)
 	for _, w := range windows {
-		if !w.isActiveAt(now) {
+		if now.Before(w.StartDate) || now.After(w.EndDate) {
 			continue
 		}
 		if !found || w.EndDate.After(best.EndDate) {

@@ -2,8 +2,7 @@
 // spawned channels the runtime tracks across a restart, the change log of
 // every panel save, and the Foxhole page's notes and approvals, with a
 // change log of their own that also holds each Foxhole action's report. Postgres in production (postgres.go), an in-memory
-// Fake for other packages' tests (fake.go). The forum's MySQL stays in utils;
-// this package never touches it.
+// Fake for other packages' tests (fake.go).
 //
 // Migrations run at startup, and every one stays compatible with the previous
 // release, since a rollback runs the older image against the newer schema:

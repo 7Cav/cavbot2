@@ -6,6 +6,10 @@ Accepted. Implemented across #158 (LOA history store) and #159 (`/awol`
 accountable-day count). Supersedes the original `/awol` behavior where the
 **On LOA** indicator was purely informative and never affected the flag.
 
+**Amended 2026-10-18** (#787): LOAs come from the 7Cav API on every command in
+place of the LOA history store, and a needs-review LOA covers none of its
+dates.
+
 ## Decision
 
 `/awol` flags on **accountable days**, not raw time since last forum post.
