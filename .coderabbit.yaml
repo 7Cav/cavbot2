@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Only the settings that differ from CodeRabbit's defaults. While this file
+# exists, settings made in the CodeRabbit web app do not apply to this repo.
+
+reviews:
+  # A review with actionable comments requests changes, which holds the PR
+  # until CodeRabbit approves. It approves once it has reviewed the latest
+  # commit, every thread is resolved and no pre-merge check fails.
+  request_changes_workflow: true
+
+  # Leaves the PR description as written. The summary opens CodeRabbit's
+  # walkthrough comment instead. A factory run writes its Follow-ups into the
+  # description, and factory-eligible.sh reads closing keywords there.
+  high_level_summary_in_walkthrough: true
+
+  path_filters:
+    # DESIGN.md's sidecar, which the Impeccable documenter writes.
+    - "!.impeccable/design.json"
+
+  path_instructions:
+    # The maintainer's rule for every test. No repo doc holds it yet.
+    - path: "**/*_test.*"
+      instructions: |
+        A test pins behavior a caller sees. It goes red when that behavior
+        breaks, and a plausible single mutation of the behavior is enough to
+        turn it red. Flag a change detector, a test that fails when wording,
+        structure, formatting or other incidental output changes while the
+        behavior still meets its contract.
+    # How this repo changes an ADR. #798 amended ADR 0008 this way.
+    - path: "docs/adr/**"
+      instructions: |
+        A decision changes through a dated amendment: an "Amended YYYY-MM-DD"
+        line under Status, an "Amendment: ... (YYYY-MM-DD)" section, or both.
+        An amendment overrides the older text it names, so read the ADR with
+        its amendments and leave that older text as it stands. Say when a new
+        ADR or amendment contradicts another ADR.
+    # Restates ADR 0018's rule for what counts as a bug in the check.
+    - path: "tools/errorreply/**"
+      instructions: |
+        A way past this check is a bug only when code on develop, or in this
+        PR, takes it (ADR 0018). Report one together with the code that
+        takes it. The ADR lists the ways past it that the check accepts.
+
+  pre_merge_checks:
+    # No repo rule asks for a doc comment on every function.
+    docstrings:
+      mode: "off"
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    # Generated tests would not follow the tests instruction above.
+    unit_tests:
+      enabled: false
+
+knowledge_base:
+  code_guidelines:
+    # CLAUDE.md is read by default. These add the Standards review's rules,
+    # the terms it looks up, and the decisions it says win. A guideline
+    # applies only under its own directory, so the ADRs name the whole repo.
+    filePatterns:
+      - "CODING_STANDARDS.md"
+      - "GLOSSARY.md"
+      - files: "docs/adr/*.md"
+        applyTo: "**"
