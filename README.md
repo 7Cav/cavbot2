@@ -27,7 +27,7 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 | `/zulu` | Current Zulu time, or a given Zulu time shown in each viewer's own local time |
 | `/gamertag_search` | Search for a user by gamertag |
 | `/awol` | AWOL troopers for a position |
-| `/loa` | Active and upcoming LOAs for a position |
+| `/loa` | Active, upcoming and needs-review LOAs for a position |
 | `/afsm` | Users eligible for the AFSM in a department |
 | `/s3aar` | Disabled due to disuse |
 | `/s6-it-check` | S6 IT members eligible for full status |

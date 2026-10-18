@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,15 +13,45 @@ import (
 )
 
 // The headings /loa lists LOAs under: Active for the LOAs the 7Cav API
-// states open, Upcoming for the ones it states upcoming.
+// states open, Upcoming for the ones it states upcoming, and Needs review
+// for the ones it can't take as written.
 const (
-	loaActiveHeading   = "**Active LOAs**"
-	loaUpcomingHeading = "**Upcoming LOAs**"
+	loaActiveHeading      = "**Active LOAs**"
+	loaUpcomingHeading    = "**Upcoming LOAs**"
+	loaNeedsReviewHeading = "**Needs review**"
 )
 
-// loaNoneFormat answers a position none of whose members has an open or
-// upcoming LOA, with the position in place of %s.
-const loaNoneFormat = "No active or upcoming LOAs found for \"%s\"."
+// What a needs-review LOA's line says is wrong with it, one phrase for each
+// rule the 7Cav API names.
+const (
+	loaReviewDatesUnreadable = "dates can't be read"
+	loaReviewEndBeforeStart  = "ends before it starts"
+	loaReviewTooLong         = "runs more than 14 days"
+	// loaReviewOtherRule stands in for a rule with no phrase of its own,
+	// such as one the API added since, so /loa still lists the LOA and the
+	// leader reads its thread.
+	loaReviewOtherRule = "can't be taken as written"
+)
+
+// loaReviewProblems holds the phrase for each rule the 7Cav API names.
+var loaReviewProblems = map[string]string{
+	utils.LOAReviewReasonDatesUnreadable: loaReviewDatesUnreadable,
+	utils.LOAReviewReasonEndBeforeStart:  loaReviewEndBeforeStart,
+	utils.LOAReviewReasonTooLong:         loaReviewTooLong,
+}
+
+// loaReviewProblem says what is wrong with an LOA that tripped reason, or
+// gives loaReviewOtherRule for a rule with no phrase of its own.
+func loaReviewProblem(reason string) string {
+	if problem, ok := loaReviewProblems[reason]; ok {
+		return problem
+	}
+	return loaReviewOtherRule
+}
+
+// loaNoneFormat answers a position none of whose members has an open,
+// upcoming or needs-review LOA, with the position in place of %s.
+const loaNoneFormat = "No active, upcoming or needs-review LOAs found for \"%s\"."
 
 // loaUnavailableReply answers a run the LOAs couldn't be read for. It stands
 // in for the whole list, so an empty list never reads as "nobody is on
@@ -35,11 +66,20 @@ type LOAUser struct {
 	ThreadID  int64
 }
 
+// loaReview is a needs-review LOA as /loa lists it: its Subject, its thread
+// and what is wrong with it in plain words.
+type loaReview struct {
+	Username  string
+	MilpacUrl string
+	ThreadID  int64
+	Problem   string
+}
+
 func LOA() Command {
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
 			Name:        "loa",
-			Description: "Show active and upcoming LOAs for a position.",
+			Description: "Show active, upcoming and needs-review LOAs for a position.",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
@@ -98,9 +138,9 @@ func runLoa(r utils.InteractionResponder, now time.Time, i *discordgo.Interactio
 		return
 	}
 
-	activeLOAs, upcomingLOAs := loaUsersByState(roster, answer.loas.LOAs)
+	activeLOAs, upcomingLOAs, reviews := loaUsersByState(roster, answer.loas.LOAs)
 
-	if len(activeLOAs) == 0 && len(upcomingLOAs) == 0 {
+	if len(activeLOAs) == 0 && len(upcomingLOAs) == 0 && len(reviews) == 0 {
 		response := fmt.Sprintf(loaNoneFormat, position)
 		if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 			Content: &response,
@@ -119,17 +159,15 @@ func runLoa(r utils.InteractionResponder, now time.Time, i *discordgo.Interactio
 
 	var desc strings.Builder
 	writeLOASection(&desc, loaActiveHeading, activeLOAs)
-	if len(activeLOAs) > 0 && len(upcomingLOAs) > 0 {
-		desc.WriteString("\n")
-	}
 	writeLOASection(&desc, loaUpcomingHeading, upcomingLOAs)
+	writeLOAReviewSection(&desc, reviews)
 
 	embed := &discordgo.MessageEmbed{
 		Title:       fmt.Sprintf("LOAs for %s", position),
 		Description: desc.String(),
 		Color:       0xfbcc29,
 		Footer: &discordgo.MessageEmbedFooter{
-			Text: fmt.Sprintf("Active: %d | Upcoming: %d", len(activeLOAs), len(upcomingLOAs)),
+			Text: fmt.Sprintf("Active: %d | Upcoming: %d | Needs review: %d", len(activeLOAs), len(upcomingLOAs), len(reviews)),
 		},
 		Timestamp: now.Format(time.RFC3339),
 	}
@@ -148,37 +186,70 @@ func runLoa(r utils.InteractionResponder, now time.Time, i *discordgo.Interactio
 
 // writeLOASection writes heading and a line for each of users, linking the
 // trooper's milpac, when known, and the LOA's thread. It writes nothing for
-// no users.
+// no users, and a blank line before the heading when a section came before.
 func writeLOASection(desc *strings.Builder, heading string, users []LOAUser) {
 	if len(users) == 0 {
 		return
 	}
-	desc.WriteString(heading + "\n")
+	writeLOAHeading(desc, heading)
 	for _, u := range users {
-		threadTag := ""
-		if u.ThreadID != 0 {
-			threadTag = fmt.Sprintf(" [[Thread]](https://7cav.us/threads/%d/)", u.ThreadID)
-		}
-		name := u.Username
-		if u.MilpacUrl != "" {
-			name = fmt.Sprintf("[%s](%s)", u.Username, u.MilpacUrl)
-		}
 		_, _ = fmt.Fprintf(desc, "%s — %s → %s%s\n",
-			name,
+			loaTrooper(u.Username, u.MilpacUrl),
 			u.StartDate.Format("Jan 2, 2006"),
 			u.EndDate.Format("Jan 2, 2006"),
-			threadTag)
+			loaThreadTag(u.ThreadID))
 	}
 }
 
-// loaUsersByState lists each LOA the 7Cav API states open or upcoming under
-// the roster member whose forum user ID equals its Subject's, one entry per
-// LOA. Usernames are never compared, so an LOA filed for a trooper by
-// someone else, or before a rename, is listed for its Subject. A
-// needs-review or ended LOA is listed in neither, and so is an LOA whose
-// dates don't read or whose Subject is no member of the roster. A member
-// whose milpac link can't be built is still listed, by name.
-func loaUsersByState(roster *utils.LiteRosterResponse, loas []utils.LOA) (active, upcoming []LOAUser) {
+// writeLOAReviewSection writes the Needs review heading and a line for each
+// of reviews saying what is wrong with the LOA, linked as writeLOASection
+// links its lines. It writes nothing for no reviews.
+func writeLOAReviewSection(desc *strings.Builder, reviews []loaReview) {
+	if len(reviews) == 0 {
+		return
+	}
+	writeLOAHeading(desc, loaNeedsReviewHeading)
+	for _, r := range reviews {
+		_, _ = fmt.Fprintf(desc, "%s — %s%s\n",
+			loaTrooper(r.Username, r.MilpacUrl), r.Problem, loaThreadTag(r.ThreadID))
+	}
+}
+
+// writeLOAHeading writes heading on its own line, after a blank line when a
+// section came before it.
+func writeLOAHeading(desc *strings.Builder, heading string) {
+	if desc.Len() > 0 {
+		desc.WriteString("\n")
+	}
+	desc.WriteString(heading + "\n")
+}
+
+// loaTrooper is username linked to milpacURL, or username alone when the
+// link is unknown.
+func loaTrooper(username, milpacURL string) string {
+	if milpacURL == "" {
+		return username
+	}
+	return fmt.Sprintf("[%s](%s)", username, milpacURL)
+}
+
+// loaThreadTag links an LOA's thread, or is "" when its thread ID is unknown.
+func loaThreadTag(threadID int64) string {
+	if threadID == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" [[Thread]](https://7cav.us/threads/%d/)", threadID)
+}
+
+// loaUsersByState lists each LOA the 7Cav API states open, upcoming or
+// needs review under the roster member whose forum user ID equals its
+// Subject's, one entry per LOA. Usernames are never compared, so an LOA
+// filed for a trooper by someone else, or before a rename, is listed for its
+// Subject. An ended LOA is listed nowhere, and so is an open or upcoming LOA
+// whose dates don't read, or an LOA whose Subject is no member of the
+// roster. A member whose milpac link can't be built is still listed, by
+// name.
+func loaUsersByState(roster *utils.LiteRosterResponse, loas []utils.LOA) (active, upcoming []LOAUser, reviews []loaReview) {
 	membersByForumUserID := map[string]utils.LiteProfileResponse{}
 	for _, member := range roster.LiteProfiles {
 		membersByForumUserID[member.User.UserID] = member
@@ -186,37 +257,48 @@ func loaUsersByState(roster *utils.LiteRosterResponse, loas []utils.LOA) (active
 	// milpacURLs holds each listed member's milpac link by forum user ID, so
 	// a uniform URL that doesn't parse reaches Sentry once per member.
 	milpacURLs := map[string]string{}
-	for _, l := range loas {
-		if l.State != utils.LOAStateOpen && l.State != utils.LOAStateUpcoming {
-			continue
-		}
-		member, ok := membersByForumUserID[l.Subject.UserID]
-		if !ok {
-			continue
-		}
-		entry, ok := loaEntryOf(l)
-		if !ok {
-			continue
-		}
+	milpacURLOf := func(member utils.LiteProfileResponse) string {
 		milpacURL, read := milpacURLs[member.User.UserID]
 		if !read {
 			milpacURL = loaMilpacURL(member)
 			milpacURLs[member.User.UserID] = milpacURL
 		}
-		user := LOAUser{
-			Username:  member.User.Username,
-			MilpacUrl: milpacURL,
-			StartDate: entry.StartDate,
-			EndDate:   entry.EndDate,
-			ThreadID:  entry.ThreadID,
+		return milpacURL
+	}
+	for _, l := range loas {
+		member, ok := membersByForumUserID[l.Subject.UserID]
+		if !ok {
+			continue
 		}
-		if l.State == utils.LOAStateOpen {
-			active = append(active, user)
-		} else {
-			upcoming = append(upcoming, user)
+		switch l.State {
+		case utils.LOAStateNeedsReview:
+			threadID, _ := strconv.ParseInt(l.ThreadID, 10, 64)
+			reviews = append(reviews, loaReview{
+				Username:  member.User.Username,
+				MilpacUrl: milpacURLOf(member),
+				ThreadID:  threadID,
+				Problem:   loaReviewProblem(l.ReviewReason),
+			})
+		case utils.LOAStateOpen, utils.LOAStateUpcoming:
+			entry, ok := loaEntryOf(l)
+			if !ok {
+				continue
+			}
+			user := LOAUser{
+				Username:  member.User.Username,
+				MilpacUrl: milpacURLOf(member),
+				StartDate: entry.StartDate,
+				EndDate:   entry.EndDate,
+				ThreadID:  entry.ThreadID,
+			}
+			if l.State == utils.LOAStateOpen {
+				active = append(active, user)
+			} else {
+				upcoming = append(upcoming, user)
+			}
 		}
 	}
-	return active, upcoming
+	return active, upcoming, reviews
 }
 
 // loaMilpacURL builds member's milpac profile link from their uniform URL.

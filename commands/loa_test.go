@@ -27,7 +27,7 @@ func loaMember(username, forumUserID, milpacID string) utils.LiteProfileResponse
 }
 
 // loaHeadings are the section headings a /loa reply can carry.
-var loaHeadings = []string{loaActiveHeading, loaUpcomingHeading}
+var loaHeadings = []string{loaActiveHeading, loaUpcomingHeading, loaNeedsReviewHeading}
 
 // loaSection returns the lines under heading in the run's final edit: the
 // lines after the one holding heading and before the next heading. It
@@ -101,8 +101,8 @@ func TestRunLoaRosterFailureReachesSentryNotTheMember(t *testing.T) {
 	assertLookupFailed(t, f.Calls(), rec, "loa")
 }
 
-// A position whose members have no open or upcoming LOA gets the no-LOAs
-// reply naming the position.
+// A position whose members have no open, upcoming or needs-review LOA gets
+// the no-LOAs reply naming the position.
 func TestRunLoa_NoMatchingLOAsReportsNone(t *testing.T) {
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
@@ -239,6 +239,104 @@ func TestRunLoaNeverListsANeedsReviewLOAUnderActiveOrUpcoming(t *testing.T) {
 	for _, heading := range []string{loaActiveHeading, loaUpcomingHeading} {
 		if line := lineContaining(strings.Join(loaSection(t, f, heading), "\n"), "Review.R"); line != "" {
 			t.Fatalf("a needs-review LOA is listed under %s: %q", heading, line)
+		}
+	}
+}
+
+// Each needs-review LOA naming a member of the position gets a line under
+// Needs review that links its thread and says what is wrong in its reason's
+// own words, so a leader knows what to ask the trooper to correct.
+func TestRunLoaListsEachNeedsReviewLOAUnderNeedsReviewWithItsReason(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": loaMember("Unread.U", "51", "100"),
+			"200": loaMember("Backward.B", "52", "200"),
+			"300": loaMember("Long.L", "53", "300"),
+		},
+	}
+	serveCavAPI(t, loaRefDate, roster,
+		stubLOA{
+			threadID: "7201", postDate: loaRefDate.AddDate(0, 0, -2),
+			userID: "51", username: "Unread.U",
+			needsReview: true, reviewReason: "LOA_REVIEW_REASON_DATES_UNREADABLE",
+		},
+		stubLOA{
+			threadID: "7202", postDate: loaRefDate.AddDate(0, 0, -4),
+			userID: "52", username: "Backward.B",
+			start: "2026-06-10", end: "2026-06-01",
+			needsReview: true, reviewReason: "LOA_REVIEW_REASON_END_BEFORE_START",
+		},
+		stubLOA{
+			threadID: "7203", postDate: loaRefDate.AddDate(0, 0, -6),
+			userID: "53", username: "Long.L",
+			start: "2026-05-20", end: "2027-05-25",
+			needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
+		},
+	)
+	f := &fakeResponder{}
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+
+	section := strings.Join(loaSection(t, f, loaNeedsReviewHeading), "\n")
+	for _, want := range []struct{ name, threadID, reason string }{
+		{"Unread.U", "7201", loaReviewDatesUnreadable},
+		{"Backward.B", "7202", loaReviewEndBeforeStart},
+		{"Long.L", "7203", loaReviewTooLong},
+	} {
+		line := lineContaining(section, want.name)
+		if !lineLinksThread(line, want.threadID) || !strings.Contains(line, want.reason) {
+			t.Errorf("want a line under Needs review naming %s, linking thread %s and saying %q; Needs review holds %q",
+				want.name, want.threadID, want.reason, section)
+		}
+	}
+}
+
+// A needs-review LOA whose rule the bot has no phrase for, such as one the
+// 7Cav API added since, is still listed under Needs review with its thread,
+// saying only that it can't be taken as written.
+func TestRunLoaListsANeedsReviewLOAOfARuleWithNoPhraseUnderNeedsReview(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": loaMember("Novel.N", "55", "100"),
+		},
+	}
+	serveCavAPI(t, loaRefDate, roster, stubLOA{
+		threadID: "7205", postDate: loaRefDate.AddDate(0, 0, -2),
+		userID: "55", username: "Novel.N",
+		start: "2026-05-20", end: "2026-05-25",
+		needsReview: true, reviewReason: "LOA_REVIEW_REASON_NEW_RULE",
+	})
+	f := &fakeResponder{}
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+
+	section := strings.Join(loaSection(t, f, loaNeedsReviewHeading), "\n")
+	line := lineContaining(section, "Novel.N")
+	if !lineLinksThread(line, "7205") || !strings.Contains(line, loaReviewOtherRule) {
+		t.Fatalf("want a line under Needs review naming Novel.N, linking thread 7205 and saying %q; Needs review holds %q",
+			loaReviewOtherRule, section)
+	}
+}
+
+// A needs-review LOA whose Subject the API couldn't resolve, userId "0",
+// is listed in no section, even for a member whose username equals the
+// Subject's.
+func TestRunLoaListsANeedsReviewLOANamingNoMemberNowhere(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": loaMember("Same.S", "54", "100"),
+		},
+	}
+	serveCavAPI(t, loaRefDate, roster, stubLOA{
+		threadID: "7204", postDate: loaRefDate.AddDate(0, 0, -2),
+		userID: "0", username: "Same.S",
+		start: "2026-05-20", end: "2026-06-25",
+		needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
+	})
+	f := &fakeResponder{}
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+
+	for _, heading := range loaHeadings {
+		if line := lineContaining(strings.Join(loaSection(t, f, heading), "\n"), "Same.S"); line != "" {
+			t.Fatalf("an LOA naming no member is listed for Same.S under %s: %q", heading, line)
 		}
 	}
 }

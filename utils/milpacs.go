@@ -67,6 +67,9 @@ type LOA struct {
 	StartDate string     `json:"startDate"`
 	EndDate   string     `json:"endDate"`
 	State     string     `json:"state"`
+	// ReviewReason names the rule a needs-review LOA tripped, one of the
+	// LOAReviewReason values or a rule the API added since.
+	ReviewReason string `json:"reviewReason"`
 }
 
 // The states the 7Cav API gives an LOA it can take as written. An LOA is
@@ -78,6 +81,15 @@ const (
 	LOAStateUpcoming    = "LOA_STATE_UPCOMING"
 	LOAStateEnded       = "LOA_STATE_ENDED"
 	LOAStateNeedsReview = "LOA_STATE_NEEDS_REVIEW"
+)
+
+// The rules the 7Cav API names in a needs-review LOA's ReviewReason. An LOA
+// whose Subject is no member trips a rule of its own and carries Subject
+// userId "0", so only these can name a member.
+const (
+	LOAReviewReasonDatesUnreadable = "LOA_REVIEW_REASON_DATES_UNREADABLE"
+	LOAReviewReasonEndBeforeStart  = "LOA_REVIEW_REASON_END_BEFORE_START"
+	LOAReviewReasonTooLong         = "LOA_REVIEW_REASON_TOO_LONG"
 )
 
 // LOASubject is the trooper an LOA is for. UserID is their forum user ID.
