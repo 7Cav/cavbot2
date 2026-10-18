@@ -127,12 +127,10 @@ Not checked at startup, but each one silently disables something:
 
 | Variable | Effect if unset |
 |----------|-----------------|
-| `BEARER` | API token for `api.7cav.us`. Every milpac lookup fails with no startup error. Check this first if `/milpac`, `/awol` or `/afsm` come back empty. The startup rank ladder check also needs it and logs `Rank ladder check skipped, ranks fetch failed` once without it. |
+| `BEARER` | API token for `api.7cav.us`. Every milpac lookup fails with no startup error. Check this first if `/milpac`, `/awol` or `/afsm` come back empty. The startup rank ladder check also needs it and logs `Rank ladder check skipped, ranks fetch failed` once without it. `/awol` and `/loa` also need the token to hold the `read:loas` scope. Without it `/awol` reports raw inactivity with a warning that no LOA days were subtracted, and `/loa` says LOAs couldn't be read. |
 | `CAV_API_BASE_URL` | Lookups go to the public address, `https://api.7cav.us`. Set it to the 7Cav API's origin, meaning its scheme, host and optional port, to send them somewhere else. Production runs `http://7cav-api:11000`, the API's own container on the Docker network, so lookups never leave the host for Cloudflare. The bot adds `/api/v1` itself and drops a trailing slash. A value with a path, user info, a query or a fragment, a scheme other than `http` or `https`, no host, or one that doesn't parse leaves lookups on the public address. The bot then logs `CAV_API_BASE_URL rejected` with the value, sends one Sentry event, and keeps running. Every start logs the address in use as `7Cav API address`, which shows whether a value in `.env` reached the container. |
-| `FORUM_DB_DSN` | Nothing a member sees. `/awol` and `/loa` read LOAs from the 7Cav API, and only the old LOA cache, which no command reads, fills from this database. Left blank, the bot logs `FORUM_DB_DSN not set, LOA cache disabled` once at startup. `.env.example` ships a placeholder DSN that parses, so after `cp` you get `LOA cache refresh failed` once per node ID instead, at startup and every 15 minutes after. Both mean the same thing. The production host `xenforo-db` resolves only inside the `xenforo_internal` Docker network. |
-| `LOA_NODE_IDS` | The code default is `180` alone, though `.env.example` already sets the five nodes production scans (`180,400,540,178,369`), so a copied `.env` never falls back. |
 | `FOXHOLE_ROLE_BASE_NAME` | Defaults to `Verified Foxhole`, what the roles are named in Discord now. Every `/foxhole` subcommand composes its role names from this and matches Discord **exactly**, so a value that doesn't reproduce the role name character for character fails all of them with `role not found` and changes nothing. The resolved value is logged at startup as `Foxhole role base name resolved`. Until the cleanup release that drops the old command names, the bot also reads the old variable, `WARDEN_ROLE_BASE_NAME`, when this one is unset or empty, and logs a warning naming it at startup. |
-| `LOG_LEVEL` | Defaults to `INFO`. Accepts `DEBUG`, `INFO`, `WARN`, `ERROR` — **uppercase only**, anything else silently means `INFO` (including the `default` that `.env.example` ships). `DEBUG` shows per-post LOA parse failures. |
+| `LOG_LEVEL` | Defaults to `INFO`. Accepts `DEBUG`, `INFO`, `WARN`, `ERROR` — **uppercase only**, anything else silently means `INFO` (including the `default` that `.env.example` ships). |
 | `DISCORDGO_LOG_LEVEL` | Defaults to `ERROR`, so discordgo reports only its own failures. Accepts `ERROR`, `WARN`, `INFO`, `DEBUG`; anything else means `ERROR`. `WARN` adds the frame the gateway sent when startup fails with `Discord session unavailable`. `DEBUG` also needs `LOG_LEVEL=DEBUG`, and logs every gateway event discordgo does not recognise with its full payload. |
 | `SENTRY_DSN` | Sentry stays off; the bot logs `Sentry disabled (SENTRY_DSN not set)`. |
 | `BOT_DB_DSN` | The bot's own Postgres store (hubs, spawned channels and the change log for temporary voice channels, and the Foxhole page's notes, approvals and change log) stays off; the bot logs `BOT_DB_DSN not set, bot store disabled` once, every other command works as before, and `/voice-rename`, `/voice-lock`, `/voice-unlock` and `/record` refuse every invocation. `.env.example` leaves it empty on purpose. Set it and the bot pings the database with a short retry, runs its migrations, loads the hub rows for temporary voice channels (`Starting temp voice channels`), ends any Foxhole action the last run left running as stopped by a restart (`Foxhole action stopped by a restart`), and only then opens the Discord session; a database it cannot reach or migrate stops the bot with `Bot store unavailable`. With no hub rows the feature does nothing; rows arrive through the panel. Under compose the value is `postgres://cavbot:<POSTGRES_PASSWORD>@postgres:5432/cavbot?sslmode=disable`. |
@@ -178,8 +176,8 @@ docker network create xenforo_internal   # once, if you don't already have it
 docker compose up
 ```
 
-Only the real `xenforo_internal` network reaches the forum database. No command
-reads that database any more, so a network you created yourself works too.
+A network you created yourself works too. With `CAV_API_BASE_URL` unset, the bot
+calls nothing on it.
 
 Compose also starts a `postgres:18-alpine` service for the bot's own store,
 with its data in the `cavbot2_pgdata` volume. The bot waits for its healthcheck
@@ -187,10 +185,9 @@ before it starts. A Postgres minor update is a manual `docker compose pull
 postgres && docker compose up -d postgres`.
 
 A healthy startup logs, in order: `Logger initialized`, `Sentry disabled
-(SENTRY_DSN not set)`, `CavBot2 starting`, the LOA cache line for whichever
-`FORUM_DB_DSN` case you are in, either `BOT_DB_DSN not set, bot store disabled`
-or `Bot store configured` followed by `Bot database migrated`, then
-`RECORDER_TOKENS not set, recording off` or a `Recorder connected` line per
+(SENTRY_DSN not set)`, `CavBot2 starting`, either `BOT_DB_DSN not set, bot
+store disabled` or `Bot store configured` followed by `Bot database migrated`,
+then `RECORDER_TOKENS not set, recording off` or a `Recorder connected` line per
 recorder, then `Starting temp voice channels` when the store is configured,
 `Panel listening` when the panel is configured, `Registering commands`,
 `Commands registered`, `Starting Star Citizen joiner report scheduler`, and
@@ -248,7 +245,6 @@ Sunday, a real person gets your test output. Prefer a test guild.
 | `Found .env but could not load it` | The file exists but is malformed — usually an unquoted value containing `#`, or a stray line with no `=` |
 | `Error opening connection: websocket: close 4004` | Discord rejected the token. Re-copy `DISCORD_TOKEN` — a truncated paste or a token reset since you last copied it both land here |
 | `Error opening connection: websocket: close 4014` | Disallowed intent. Enable the Server Members Intent in the Developer Portal |
-| `FORUM_DB_DSN not set` at startup, or `LOA cache refresh failed` every 15 minutes | Expected without a reachable forum database. No command reads it, so members see no difference |
 | `Bot database not answering, retrying` nine times, then a panic `Bot store unavailable` | `BOT_DB_DSN` names a Postgres that is not there. The compose host `postgres` resolves only inside compose; for `go run .` blank the variable or point it at a local server |
 | Panic `Bot store unavailable: open bot database: the DSN does not parse` | `BOT_DB_DSN` is malformed. The value is not echoed because it carries a password; compare it against the form in `.env.example` |
 | A panic line ending `[recovered, repanicked]`, its stack trace starting in `StartWatch.ReportFailure` | Expected for a failed start with `SENTRY_DSN` set. The bot caught the panic to send it to Sentry, then let the same panic go on. The frames below `panic(...)` name the step that failed |

@@ -26,6 +26,15 @@ func rawAccountableDates(lastPost, now time.Time) int {
 	return int(today.Sub(start).Hours() / 24)
 }
 
+// LOAEntry is one LOA window: its Subject's username, its date range and the
+// forum thread it was filed in.
+type LOAEntry struct {
+	Username  string
+	StartDate time.Time
+	EndDate   time.Time
+	ThreadID  int64
+}
+
 // coveredByLOA reports whether a UTC date is covered by any LOA window. An LOA
 // covers the inclusive range [StartDate, EndDate]; a zero-width range
 // (StartDate == EndDate) is valid and covers exactly that one day. Only an
@@ -44,10 +53,10 @@ func coveredByLOA(date time.Time, windows []LOAEntry) bool {
 
 // validLOAWindows returns the windows whose UTC date range is well-formed: both
 // bounds set and EndDate not before StartDate. Backwards ranges and zero-date
-// entries are dropped and DEBUG-logged so one malformed forum post can't crash or
-// skew the count (ADR 0008). A zero-value entry is unreachable from production
-// (parseLOAPost only emits when both dates parse) but filtering it keeps the calc
-// from ever "covering" the epoch-zero UTC date.
+// entries are dropped and DEBUG-logged so one bad window can't crash or skew
+// the count (ADR 0008). A zero-value entry is unreachable from production (the
+// commands build an entry only when both dates read) but filtering it keeps the
+// calc from ever "covering" the epoch-zero UTC date.
 func validLOAWindows(windows []LOAEntry) []LOAEntry {
 	out := make([]LOAEntry, 0, len(windows))
 	for _, w := range windows {
@@ -128,14 +137,15 @@ func overage(accountable int) int {
 // overlap. The bool is false when no window is active. /awol uses this so the
 // On-LOA verdict, the days-AWOL calc, and the [[LOA]] thread link are all decided
 // against the SAME `now` — no boundary disagreement between selection and verdict
-// (PR #161 clock-skew item).
+// (PR #161 clock-skew item). A window is active from its StartDate through its
+// EndDate, both included.
 func ActiveWindow(windows []LOAEntry, now time.Time) (LOAEntry, bool) {
 	var (
 		best  LOAEntry
 		found bool
 	)
 	for _, w := range windows {
-		if !w.isActiveAt(now) {
+		if now.Before(w.StartDate) || now.After(w.EndDate) {
 			continue
 		}
 		if !found || w.EndDate.After(best.EndDate) {

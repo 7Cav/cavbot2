@@ -111,15 +111,13 @@ func missingKeys(vals map[string]string, keys []string) []string {
 
 // smokeOverrides is what a run changes from the env file. The panel listens
 // where the forum client's local redirect URI points, the bot's store is the
-// smoke Postgres, nothing reaches Sentry, and the forum database, which only
-// resolves on the production Docker network, is off. In fake mode the panel
-// signs in through the fake forum, whose personas carry these group IDs.
+// smoke Postgres, and nothing reaches Sentry. In fake mode the panel signs in
+// through the fake forum, whose personas carry these group IDs.
 func smokeOverrides(forum, dsn string) map[string]string {
 	o := map[string]string{
 		"PANEL_ADDR":     panelAddr,
 		"PANEL_BASE_URL": panelBaseURL,
 		"BOT_DB_DSN":     dsn,
-		"FORUM_DB_DSN":   "",
 		"SENTRY_DSN":     "",
 		"APP_ENV":        "smoke",
 	}

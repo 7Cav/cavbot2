@@ -1,10 +1,14 @@
-# ADR 0008: AWOL accountable-day model + LOA history store
+# ADR 0008: AWOL accountable-day model
 
 ## Status
 
 Accepted. Implemented across #158 (LOA history store) and #159 (`/awol`
 accountable-day count). Supersedes the original `/awol` behavior where the
 **On LOA** indicator was purely informative and never affected the flag.
+
+**Amended 2026-10-18** (#787): LOAs come from the 7Cav API on every command in
+place of the LOA history store, and a needs-review LOA covers none of its
+dates.
 
 ## Decision
 
@@ -23,17 +27,9 @@ accountable-day count). Supersedes the original `/awol` behavior where the
 - The displayed figure is **days AWOL = accountable − 7** (the overage past the
   requirement), so the number on screen means exactly what the word says.
 
-The **LOA cache becomes an LOA history store**:
+**LOAs come from the 7Cav API on every command** (#787).
 
-- Multiple windows per username, deduped by **`ThreadID`** (one thread is one
-  LOA; a second LOA is always a new thread).
-- **Retention** replaces prune-on-expiry: a window is kept until its `EndDate`
-  is older than the cold-start backfill horizon, sharing one constant with that
-  backfill so warm and cold-started caches hold the identical window.
-- New `GetEntries(username)`; `GetEntry`/`IsOnLOA`/`IsHealthy` unchanged so the
-  store's two consumers (`/awol`, `/loa`) keep working.
-
-**Degraded mode:** when the cache is unhealthy, `/awol` computes raw inactivity
+**Degraded mode:** when the LOA call fails, `/awol` computes raw inactivity
 with no LOA subtraction, still flags `> 7`, and reuses the #96 unknown/warning
 treatment — worded so staff know accountable-day adjustment was *skipped*. It
 never silently treats everyone as non-LOA.
@@ -45,11 +41,11 @@ approved LOA reads as "45 days AWOL" the instant the leave expires, and staff
 can action someone who was excused per SOP. Subtracting LOA-covered dates fixes
 this at the source.
 
-The history store is forced by the math: the previous cache kept **one** window
-per user and pruned it the day it ended, so it could neither represent multiple
-LOAs nor recall a recently-ended one — both of which the accountable count
-needs. Modeling coverage as a **set of dates** is what makes overlap/adjacency/
-future-LOA handling fall out for free instead of as bespoke merge logic.
+The count needs every LOA a trooper has, ended ones included. The original
+cache kept **one** window per user and pruned it the day it ended, so it could
+neither represent multiple LOAs nor recall a recently-ended one. Modeling
+coverage as a **set of dates** is what makes overlap/adjacency/future-LOA
+handling fall out for free instead of as bespoke merge logic.
 
 Showing the **overage** (days AWOL) rather than the total unexcused count keeps
 the label honest: "16 accountable days" invited the same "but it says 16!"
@@ -58,8 +54,8 @@ and severity glyphs (🔴 `>14` · 🟠 `>7` · 🟡 `>0` · ⚪ active LOA) wer
 against live Discord rendering before being locked.
 
 Degrading loudly rather than suppressing the report trades a rare, *visible*
-false positive for never blinding staff during a forum-DB blip — the right call
-for an accountability tool where humans are the safety net.
+false positive for never blinding staff during an API outage. That is the right
+call for an accountability tool where humans are the safety net.
 
 ## How to apply
 
@@ -70,9 +66,11 @@ for an accountability tool where humans are the safety net.
   practice because a self-filed LOA is itself a forum post that resets the
   clock. An LOA filed for the Subject by someone else (ADR 0010) is the
   Submitter's post, so it leaves the Subject's clock running.
-- When touching the LOA store, preserve the `GetEntry`/`IsOnLOA`/`IsHealthy`
-  contracts — `/loa` depends on them too, not just `/awol`'s LOA tag.
 - Keep the accountable-day math a pure function (dates + windows → days AWOL)
-  so every edge case is table-testable without Discord, the DB, or the clock.
-- A malformed LOA range (end before start) must cover no dates and be
-  DEBUG-logged — never crash or skew the count.
+  so every edge case is table-testable without Discord, the 7Cav API, or the
+  clock.
+- A needs-review LOA covers none of its dates. One LOA in the past year ran
+  7,683 days, and counting its dates would have hidden that trooper from
+  `/awol` for decades. If an LOA that ends before it starts reaches the count
+  anyway, it covers nothing and the bot DEBUG-logs it. It never crashes or
+  skews the count.
