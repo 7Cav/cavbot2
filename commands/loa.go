@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -77,17 +76,9 @@ func runLoa(r utils.InteractionResponder, now time.Time, i *discordgo.Interactio
 		return
 	}
 
-	// The LOA call runs alongside the roster call, so it adds no wait. If
-	// the run ends early, the buffered channel lets the call finish.
-	type loasAnswer struct {
-		loas *utils.LOAsResponse
-		err  error
-	}
-	loasCh := make(chan loasAnswer, 1)
-	go func() {
-		loas, err := utils.GetCurrentLOAs(ctx)
-		loasCh <- loasAnswer{loas, err}
-	}()
+	loasCh := callLOAsAlongside(func() (*utils.LOAsResponse, error) {
+		return utils.GetCurrentLOAs(ctx)
+	})
 
 	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, position)
 	if err != nil {
@@ -127,37 +118,11 @@ func runLoa(r utils.InteractionResponder, now time.Time, i *discordgo.Interactio
 	})
 
 	var desc strings.Builder
-	if len(activeLOAs) > 0 {
-		desc.WriteString(loaActiveHeading + "\n")
-		for _, u := range activeLOAs {
-			threadTag := ""
-			if u.ThreadID != 0 {
-				threadTag = fmt.Sprintf(" [[Thread]](https://7cav.us/threads/%d/)", u.ThreadID)
-			}
-			_, _ = fmt.Fprintf(&desc, "[%s](%s) — %s → %s%s\n",
-				u.Username, u.MilpacUrl,
-				u.StartDate.Format("Jan 2, 2006"),
-				u.EndDate.Format("Jan 2, 2006"),
-				threadTag)
-		}
+	writeLOASection(&desc, loaActiveHeading, activeLOAs)
+	if len(activeLOAs) > 0 && len(upcomingLOAs) > 0 {
+		desc.WriteString("\n")
 	}
-	if len(upcomingLOAs) > 0 {
-		if len(activeLOAs) > 0 {
-			desc.WriteString("\n")
-		}
-		desc.WriteString(loaUpcomingHeading + "\n")
-		for _, u := range upcomingLOAs {
-			threadTag := ""
-			if u.ThreadID != 0 {
-				threadTag = fmt.Sprintf(" [[Thread]](https://7cav.us/threads/%d/)", u.ThreadID)
-			}
-			_, _ = fmt.Fprintf(&desc, "[%s](%s) — %s → %s%s\n",
-				u.Username, u.MilpacUrl,
-				u.StartDate.Format("Jan 2, 2006"),
-				u.EndDate.Format("Jan 2, 2006"),
-				threadTag)
-		}
-	}
+	writeLOASection(&desc, loaUpcomingHeading, upcomingLOAs)
 
 	embed := &discordgo.MessageEmbed{
 		Title:       fmt.Sprintf("LOAs for %s", position),
@@ -181,17 +146,46 @@ func runLoa(r utils.InteractionResponder, now time.Time, i *discordgo.Interactio
 	utils.Info("✨ Done!", "command", "LOA")
 }
 
+// writeLOASection writes heading and a line for each of users, linking the
+// trooper's milpac, when known, and the LOA's thread. It writes nothing for
+// no users.
+func writeLOASection(desc *strings.Builder, heading string, users []LOAUser) {
+	if len(users) == 0 {
+		return
+	}
+	desc.WriteString(heading + "\n")
+	for _, u := range users {
+		threadTag := ""
+		if u.ThreadID != 0 {
+			threadTag = fmt.Sprintf(" [[Thread]](https://7cav.us/threads/%d/)", u.ThreadID)
+		}
+		name := u.Username
+		if u.MilpacUrl != "" {
+			name = fmt.Sprintf("[%s](%s)", u.Username, u.MilpacUrl)
+		}
+		_, _ = fmt.Fprintf(desc, "%s — %s → %s%s\n",
+			name,
+			u.StartDate.Format("Jan 2, 2006"),
+			u.EndDate.Format("Jan 2, 2006"),
+			threadTag)
+	}
+}
+
 // loaUsersByState lists each LOA the 7Cav API states open or upcoming under
 // the roster member whose forum user ID equals its Subject's, one entry per
 // LOA. Usernames are never compared, so an LOA filed for a trooper by
 // someone else, or before a rename, is listed for its Subject. A
 // needs-review or ended LOA is listed in neither, and so is an LOA whose
-// dates don't read or whose Subject is no member of the roster.
+// dates don't read or whose Subject is no member of the roster. A member
+// whose milpac link can't be built is still listed, by name.
 func loaUsersByState(roster *utils.LiteRosterResponse, loas []utils.LOA) (active, upcoming []LOAUser) {
 	membersByForumUserID := map[string]utils.LiteProfileResponse{}
 	for _, member := range roster.LiteProfiles {
 		membersByForumUserID[member.User.UserID] = member
 	}
+	// milpacURLs holds each listed member's milpac link by forum user ID, so
+	// a uniform URL that doesn't parse reaches Sentry once per member.
+	milpacURLs := map[string]string{}
 	for _, l := range loas {
 		if l.State != utils.LOAStateOpen && l.State != utils.LOAStateUpcoming {
 			continue
@@ -200,25 +194,21 @@ func loaUsersByState(roster *utils.LiteRosterResponse, loas []utils.LOA) (active
 		if !ok {
 			continue
 		}
-		milpacID, err := utils.ExtractMilpacIDFromUniformURL(member.UniformUrl)
-		if err != nil {
+		entry, ok := loaEntryOf(l)
+		if !ok {
 			continue
 		}
-		start, startErr := time.Parse(time.DateOnly, l.StartDate)
-		end, endErr := time.Parse(time.DateOnly, l.EndDate)
-		if startErr != nil || endErr != nil {
-			utils.Warn("LOA skipped: dates unreadable",
-				"thread_id", l.ThreadID, "start", l.StartDate, "end", l.EndDate)
-			continue
+		milpacURL, read := milpacURLs[member.User.UserID]
+		if !read {
+			milpacURL = loaMilpacURL(member)
+			milpacURLs[member.User.UserID] = milpacURL
 		}
-		// A thread ID that doesn't parse leaves the line without a thread link.
-		threadID, _ := strconv.ParseInt(l.ThreadID, 10, 64)
 		user := LOAUser{
 			Username:  member.User.Username,
-			MilpacUrl: fmt.Sprintf("https://7cav.us/rosters/profile/%s", milpacID),
-			StartDate: start,
-			EndDate:   end,
-			ThreadID:  threadID,
+			MilpacUrl: milpacURL,
+			StartDate: entry.StartDate,
+			EndDate:   entry.EndDate,
+			ThreadID:  entry.ThreadID,
 		}
 		if l.State == utils.LOAStateOpen {
 			active = append(active, user)
@@ -227,4 +217,21 @@ func loaUsersByState(roster *utils.LiteRosterResponse, loas []utils.LOA) (active
 		}
 	}
 	return active, upcoming
+}
+
+// loaMilpacURL builds member's milpac profile link from their uniform URL.
+// A uniform URL that doesn't parse is a bad roster record: it goes to
+// Sentry, and the link is "", so the trooper's LOA still shows by name.
+func loaMilpacURL(member utils.LiteProfileResponse) string {
+	milpacID, err := utils.ExtractMilpacIDFromUniformURL(member.UniformUrl)
+	if err != nil {
+		captureError("LOA listed without a milpac link: unparseable uniform URL", err,
+			"command", "loa",
+			"username", member.User.Username,
+			"discord_id", member.DiscordID,
+			"uniform_url", member.UniformUrl,
+		)
+		return ""
+	}
+	return fmt.Sprintf("https://7cav.us/rosters/profile/%s", milpacID)
 }

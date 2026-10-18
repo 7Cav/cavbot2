@@ -163,17 +163,9 @@ func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 		return
 	}
 
-	// The LOA call runs alongside the roster call, so it adds no wait. If
-	// the run ends early, the buffered channel lets the call finish.
-	type loasAnswer struct {
-		loas *utils.LOAsResponse
-		err  error
-	}
-	loasCh := make(chan loasAnswer, 1)
-	go func() {
-		loas, err := utils.GetLOAs(ctx, now.AddDate(0, 0, -awolLOAHistoryDays))
-		loasCh <- loasAnswer{loas, err}
-	}()
+	loasCh := callLOAsAlongside(func() (*utils.LOAsResponse, error) {
+		return utils.GetLOAs(ctx, now.AddDate(0, 0, -awolLOAHistoryDays))
+	})
 
 	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, position)
 	if err != nil {
@@ -518,21 +510,11 @@ func loaWindowsByForumUserID(loas []utils.LOA) map[string][]utils.LOAEntry {
 		default:
 			continue
 		}
-		start, startErr := time.Parse(time.DateOnly, l.StartDate)
-		end, endErr := time.Parse(time.DateOnly, l.EndDate)
-		if startErr != nil || endErr != nil {
-			utils.Warn("LOA skipped: dates unreadable",
-				"thread_id", l.ThreadID, "start", l.StartDate, "end", l.EndDate)
+		entry, ok := loaEntryOf(l)
+		if !ok {
 			continue
 		}
-		// A thread ID that doesn't parse leaves the row's [LOA] tag unlinked.
-		threadID, _ := strconv.ParseInt(l.ThreadID, 10, 64)
-		byID[l.Subject.UserID] = append(byID[l.Subject.UserID], utils.LOAEntry{
-			Username:  l.Subject.Username,
-			StartDate: start,
-			EndDate:   end,
-			ThreadID:  threadID,
-		})
+		byID[l.Subject.UserID] = append(byID[l.Subject.UserID], entry)
 	}
 	return byID
 }

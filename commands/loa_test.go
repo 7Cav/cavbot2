@@ -119,28 +119,15 @@ func TestRunLoa_NoMatchingLOAsReportsNone(t *testing.T) {
 	}
 }
 
+// A position search that finds nobody gets the format hint naming the
+// position, as an error reply.
 func TestRunLoa_EmptyRosterSurfacesFormatHint(t *testing.T) {
 	serveCavAPI(t, loaRefDate, utils.LiteRosterResponse{LiteProfiles: map[string]utils.LiteProfileResponse{}})
 
-	// Placeholder Respond succeeds; HandleError's Respond simulates "already
-	// acknowledged" so its Edit fallback fires with the empty-roster hint.
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	i := fakeAppCommandInteraction(stringOption("position", "Q/Z/9-9"))
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "Q/Z/9-9")))
 
-	runLoa(f, loaRefDate, i)
-
-	calls := f.Calls()
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 calls (placeholder + HandleError Respond + Edit fallback), got %d: %+v", len(calls), calls)
-	}
-	want := emptyRosterSearchMessage("Q/Z/9-9")
-	got := "<nil>"
-	if calls[2].Edit.Content != nil {
-		got = *calls[2].Edit.Content
-	}
-	if got != want {
-		t.Fatalf("Edit fallback content mismatch.\nwant: %q\ngot:  %q", want, got)
-	}
+	assertFixedReply(t, lastReply(t, f.Calls()), emptyRosterSearchMessage("Q/Z/9-9"), nil)
 }
 
 // A trooper with one open and one upcoming LOA gets a line for each, one
@@ -352,5 +339,32 @@ func TestRunLoaWaitsNoLongerThanTheSlowerOfTheRosterAndLOACalls(t *testing.T) {
 	}
 	if waited >= 2*d {
 		t.Fatalf("the listing took %v with each call taking %v; the calls ran one after the other", waited, d)
+	}
+}
+
+// A member whose uniform URL doesn't parse still has their LOA listed, with
+// no milpac link, so a leader never reads a position as having nobody on
+// leave because of a bad roster record. The bad URL reaches Sentry once.
+func TestRunLoaListsTheLOAOfAMemberWhoseUniformURLDoesNotParse(t *testing.T) {
+	member := loaMember("Trooper.N", "48", "100")
+	member.UniformUrl = "not-a-uniform-url"
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{"100": member},
+	}
+	serveCavAPI(t, loaRefDate, roster, stubLOA{
+		threadID: "7110", postDate: loaRefDate.AddDate(0, 0, -3),
+		userID: "48", username: "Trooper.N",
+		start: "2026-05-20", end: "2026-05-25",
+	})
+	rec := recordCaptures(t)
+
+	f := &fakeResponder{}
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+
+	if active := loaSection(t, f, loaActiveHeading); !hasLOALine(active, "Trooper.N", "7110") {
+		t.Fatalf("want a line under Active naming Trooper.N and linking thread 7110; Active holds %q", active)
+	}
+	if rec.count != 1 {
+		t.Fatalf("captures = %d, want 1", rec.count)
 	}
 }
