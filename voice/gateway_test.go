@@ -275,6 +275,9 @@ func (a *channelAPI) RoundTrip(r *http.Request) (*http.Response, error) {
 // rejects never answers: Open tells pending, then waits out its context. One
 // that reachable rejects can't be dialed, as when the host's resolver answers
 // "no such host" for its hostname: Open dials again as disgo's gateway does.
+// One that refusal names a close code for closes the connection before its
+// Ready with that code, and Open fails with the close, as disgo's gateway's
+// does.
 type answeringGateway struct {
 	disgovoice.Gateway
 	dave      godave.Session
@@ -284,6 +287,7 @@ type answeringGateway struct {
 	sent      func(disgovoice.Opcode)
 	answers   func(endpoint string) bool
 	reachable func(endpoint string) bool
+	refusal   func(token string) int
 	// daveVersion is the DAVE protocol version the voice server announces.
 	daveVersion uint16
 	// opening runs as an open at an endpoint completes, before Open
@@ -324,6 +328,10 @@ func (g *answeringGateway) Open(ctx context.Context, state disgovoice.State) err
 	}
 	if !g.holdsConn.CompareAndSwap(false, true) {
 		return discord.ErrGatewayAlreadyConnected
+	}
+	if code := g.refusal(state.Token); code != 0 {
+		g.holdsConn.Store(false)
+		return fmt.Errorf("failed to open voice gateway connection: %w", &websocket.CloseError{Code: code})
 	}
 	identified := g.opens.Add(1) == 1
 	if !g.answers(state.Endpoint) {
@@ -420,11 +428,12 @@ type callHarness struct {
 	// in an end-to-end encrypted call it holds every frame here: no voice
 	// server answers its setup.
 	transportOnly atomic.Bool
-	// answerDelay is how long Discord takes to answer a join, and
+	// answerDelay is how long Discord takes to answer a join, nameDelay
+	// how long after the voice state its answer names a voice server, and
 	// stateOnly has the answer carry the recorder's voice state alone, with
 	// no voice server.
-	answerDelay atomic.Int64
-	stateOnly   atomic.Bool
+	answerDelay, nameDelay atomic.Int64
+	stateOnly              atomic.Bool
 
 	opened chan gatewayOpen
 	// connected is the gateway the recorder is connected through.
@@ -436,10 +445,25 @@ type callHarness struct {
 	ops []disgovoice.Opcode
 	// serving is the voice server serving the call, which Discord names
 	// in its answer to a join, and left the one a 4022 moved it from,
-	// which answers no open since.
-	serving, left string
-	// unreachable is the voice servers the recorder can't dial.
+	// which answers no open since. named is the one Discord named last,
+	// and answerToken the token its answer to a join names a server with.
+	serving, left, named, answerToken string
+	// inChannel is whether Discord has the recorder in the call's
+	// channel: it answered a join and no leave has gone out since.
+	inChannel bool
+	// refused is the tokens every voice server refuses, with refusedWith,
+	// 4004 when zero. refusals is how many voice state updates had gone
+	// out at each refusal, and atRefusal, when set, runs at each.
+	refused     []string
+	refusedWith int
+	refusals    []int
+	atRefusal   func()
+	// atLeave, when set, runs as Discord receives each leave.
+	atLeave func()
+	// unreachable is the voice servers the recorder can't dial, and dials
+	// counts the dials of each voice server.
 	unreachable map[string]bool
+	dials       map[string]int
 	// whileOpening maps an endpoint to what happens once as an open there
 	// completes.
 	whileOpening map[string]func()
@@ -448,8 +472,8 @@ type callHarness struct {
 func newCallHarness(t *testing.T) *callHarness {
 	t.Helper()
 	h := &callHarness{t: t, s: recorderSession(t, &fakeManager{}), api: &channelAPI{t: t}, logs: captureLogs(t),
-		opened: make(chan gatewayOpen, 64), pending: make(chan struct{}, 64), serving: oldEndpoint,
-		unreachable: make(map[string]bool), whileOpening: make(map[string]func())}
+		opened: make(chan gatewayOpen, 64), pending: make(chan struct{}, 64), serving: oldEndpoint, answerToken: "token-2",
+		unreachable: make(map[string]bool), dials: make(map[string]int), whileOpening: make(map[string]func())}
 	h.s.dg.Client = &http.Client{Transport: h.api}
 	h.s.voice = h.voiceManager(h.newGateway, nil)
 	return h
@@ -472,7 +496,7 @@ func (h *callHarness) newGateway(dave godave.Session, onEvent disgovoice.EventHa
 		version = 0
 	}
 	return &answeringGateway{dave: dave, onEvent: onEvent, onClose: onClose, opened: h.opened, sent: h.sentOp,
-		answers: h.answersAt, reachable: h.reachable, daveVersion: version, opening: h.opening,
+		answers: h.answersAt, reachable: h.reachable, refusal: h.refusal, daveVersion: version, opening: h.opening,
 		describeLate: h.describeLate.Load(), pending: h.pending}
 }
 
@@ -493,12 +517,62 @@ func (h *callHarness) answersAt(endpoint string) bool {
 	return !h.silent.Load() && endpoint != h.left
 }
 
-// reachable reports whether the recorder can dial the voice server at
-// endpoint.
+// reachable counts a dial of the voice server at endpoint, and reports
+// whether it reaches the server.
 func (h *callHarness) reachable(endpoint string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.dials[endpoint]++
 	return !h.unreachable[endpoint]
+}
+
+// refusal is the close code the voice servers refuse token with, 0 when
+// they don't.
+func (h *callHarness) refusal(token string) int {
+	h.mu.Lock()
+	if !slices.Contains(h.refused, token) {
+		h.mu.Unlock()
+		return 0
+	}
+	h.refusals = append(h.refusals, len(h.updates))
+	code, atRefusal := h.refusedWith, h.atRefusal
+	h.mu.Unlock()
+	if atRefusal != nil {
+		atRefusal()
+	}
+	if code == 0 {
+		code = disgovoice.GatewayCloseEventCodeAuthenticationFailed.Code
+	}
+	return code
+}
+
+// refuse has every voice server refuse tokens from now on, with 4004.
+func (h *callHarness) refuse(tokens ...string) {
+	h.refuseWith(0, tokens...)
+}
+
+// refuseWith has every voice server refuse tokens from now on, closing
+// with code.
+func (h *callHarness) refuseWith(code int, tokens ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.refused, h.refusedWith = tokens, code
+}
+
+// answerWith has Discord name a voice server with token in its answers to a
+// join from now on.
+func (h *callHarness) answerWith(token string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.answerToken = token
+}
+
+// dialsOf is how many times the recorder has dialed the voice server at
+// endpoint.
+func (h *callHarness) dialsOf(endpoint string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.dials[endpoint]
 }
 
 // opening runs what was to happen as an open at endpoint completes, once.
@@ -528,9 +602,13 @@ func (h *callHarness) setReachable(endpoint string, ok bool) {
 	h.unreachable[endpoint] = !ok
 }
 
-// leftChannel is Discord taking the recorder out of the channel: its voice
-// state with no channel.
+// leftChannel is Discord taking the recorder out of the channel, or
+// answering its leave: its voice state with no channel. A leave's answer
+// comes before Discord answers any later join.
 func (h *callHarness) leftChannel() {
+	h.mu.Lock()
+	h.inChannel = false
+	h.mu.Unlock()
 	h.s.voice.HandleVoiceStateUpdate(gateway.EventVoiceStateUpdate{VoiceState: discord.VoiceState{
 		GuildID: callGuild, UserID: callRecorder, SessionID: "sess-1",
 	}})
@@ -575,10 +653,15 @@ func (h *callHarness) start() Conn {
 		h.t.Fatalf("Join: %v", err)
 	}
 	h.waitOpen()
-	h.mu.Lock()
-	h.updates = nil
-	h.mu.Unlock()
+	h.countFromNow()
 	return conn
+}
+
+// countFromNow has the voice state updates sent count from now.
+func (h *callHarness) countFromNow() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.updates = nil
 }
 
 // hangUp stops the recording on conn, as a member's stop does, and waits a
@@ -590,8 +673,8 @@ func (h *callHarness) hangUp(conn Conn) {
 }
 
 // updateVoiceState is the connection's voice state update: the recorder
-// session's own, which Discord receives while the recorder's gateway is up
-// and answers when it names a channel.
+// session's own, which Discord receives and answers while the recorder's
+// gateway is up.
 func (h *callHarness) updateVoiceState(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
 	h.mu.Lock()
 	h.updates = append(h.updates, voiceUpdate{channelID: channelID, selfMute: selfMute, selfDeaf: selfDeaf})
@@ -602,30 +685,72 @@ func (h *callHarness) updateVoiceState(ctx context.Context, guildID snowflake.ID
 	if h.down.Load() {
 		return err
 	}
-	if channelID != nil {
-		go h.answer(*channelID)
+	if channelID == nil {
+		h.mu.Lock()
+		atLeave := h.atLeave
+		h.mu.Unlock()
+		if atLeave != nil {
+			atLeave()
+		}
+		h.leftChannel()
+		return nil
 	}
+	go h.answer(*channelID)
 	return nil
 }
 
 // answer is Discord's answer to the recorder joining a channel, after
-// answerDelay: its voice state, then the voice server now serving the call
-// unless stateOnly.
+// answerDelay: its voice state, then, nameDelay later, the voice server now
+// serving the call, unless stateOnly. Discord has the recorder in the
+// channel already when it rejoins after a drop, and then names no server
+// unless the call moved off the one it named last, as #786's smoke pass saw.
 func (h *callHarness) answer(channelID snowflake.ID) {
 	time.Sleep(time.Duration(h.answerDelay.Load()))
 	h.mu.Lock()
-	serving := h.serving
+	serving, token := h.serving, h.answerToken
+	fresh := !h.inChannel || serving != h.named
+	h.inChannel = true
 	h.mu.Unlock()
 	h.s.voice.HandleVoiceStateUpdate(recorderVoiceState(channelID))
-	if !h.stateOnly.Load() {
-		h.name("token-2", serving)
+	if fresh && !h.stateOnly.Load() {
+		time.Sleep(time.Duration(h.nameDelay.Load()))
+		h.name(token, serving)
 	}
 }
 
 // name is Discord naming the voice server at endpoint for the call, with
 // token.
 func (h *callHarness) name(token, endpoint string) {
+	h.mu.Lock()
+	h.named = endpoint
+	h.mu.Unlock()
 	h.s.voice.HandleVoiceServerUpdate(voiceServer(token, endpoint))
+}
+
+// opensSince is every gateway open since the last one a test waited for or
+// read, in order.
+func (h *callHarness) opensSince() []gatewayOpen {
+	var out []gatewayOpen
+	for len(h.opened) > 0 {
+		out = append(out, <-h.opened)
+	}
+	return out
+}
+
+// leftAndJoinedAgain reports whether the recorder has left the channel
+// since the voice state updates last counted from, and joined after.
+func (h *callHarness) leftAndJoinedAgain() bool {
+	sent := h.sent()
+	leave := slices.IndexFunc(sent, voiceUpdate.leaves)
+	return leave != -1 && slices.ContainsFunc(sent[leave+1:], func(u voiceUpdate) bool { return !u.leaves() })
+}
+
+// identifiedAt reports whether one of opens identified at endpoint with
+// token.
+func identifiedAt(opens []gatewayOpen, endpoint, token string) bool {
+	return slices.ContainsFunc(opens, func(o gatewayOpen) bool {
+		return o.identified && o.state.Endpoint == endpoint && o.state.Token == token
+	})
 }
 
 // waitOpen waits for a gateway to open and returns the open. The recorder
@@ -736,6 +861,208 @@ func TestRecorderKeepsRecordingThroughACloseThatGetsAFreshConnection(t *testing.
 			}
 		})
 	}
+}
+
+// A drop that leaves the call on its voice server has Discord answer the
+// rejoin with the recorder's voice state alone, naming no server. After an
+// abrupt drop, whose refused resume hands the recorder the close, the
+// recorder identifies at the voice server Discord named last, with the
+// token Discord gave for it, and hears the channel again. It never leaves,
+// and the bot log says it reconnected with the token it held.
+func TestRecorderIdentifiesWithTheTokenItHeldAfterADropOnTheSameVoiceServer(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+
+		go h.endConnection(errResumeRefused)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted, gapEnded}) {
+			t.Errorf("gap events a minute after the drop = %v, want the gap started and ended", got)
+		}
+		if opens := h.opensSince(); !identifiedAt(opens, oldEndpoint, "token-2") {
+			t.Errorf("gateway opens after the drop = %+v, want an identify at %s with token-2", opens, oldEndpoint)
+		}
+		if left := slices.ContainsFunc(h.sent(), voiceUpdate.leaves); left {
+			t.Errorf("voice state updates = %v, want the recorder never to leave", h.sent())
+		}
+		if infos := h.logs.messagesAt(slog.LevelInfo); !slices.Contains(infos, heldTokenMessage) {
+			t.Errorf("bot log INFOs = %q, want %q", infos, heldTokenMessage)
+		}
+	})
+}
+
+// A voice server the recorder can't reach after a drop, as when its
+// hostname won't resolve, refuses nothing. The recorder keeps dialing it
+// past the 30 s disgo gives an open and stays in the channel, and once the
+// server is reachable it identifies there within 10 s, with the token it
+// held.
+func TestRecorderKeepsDialingAVoiceServerItCantReachAfterADrop(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		defer h.hangUp(conn)
+		h.setReachable(oldEndpoint, false)
+
+		go h.endConnection(errResumeRefused)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		if left := slices.ContainsFunc(h.sent(), voiceUpdate.leaves); left {
+			t.Fatalf("voice state updates a minute after the drop = %v, want the recorder never to leave", h.sent())
+		}
+
+		h.setReachable(oldEndpoint, true)
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+
+		if opens := h.opensSince(); !identifiedAt(opens, oldEndpoint, "token-2") {
+			t.Errorf("gateway opens 10 s after the server is reachable = %+v, want an identify at %s with token-2", opens, oldEndpoint)
+		}
+	})
+}
+
+// A voice server can close the identify before its Ready for a reason other
+// than the token, such as 4014 when a moderator kicks the recorder, and
+// Discord's voice state taking the recorder out can reach it after that
+// close. The recorder doesn't take the close for a refused token: it never
+// joins again after it, so the kick holds.
+func TestRecorderStaysOutWhenItsVoiceServerClosesForAKick(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		defer h.hangUp(conn)
+		h.refuseWith(disgovoice.GatewayCloseEventCodeDisconnected.Code, "token-2")
+		h.mu.Lock()
+		h.atRefusal = func() { time.AfterFunc(100*time.Millisecond, h.leftChannel) }
+		h.mu.Unlock()
+
+		go h.endConnection(errResumeRefused)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		h.mu.Lock()
+		refusals := slices.Clone(h.refusals)
+		h.mu.Unlock()
+		if len(refusals) == 0 {
+			t.Fatal("the voice server never closed the identify")
+		}
+		if after := h.sent()[refusals[0]:]; slices.ContainsFunc(after, func(u voiceUpdate) bool { return !u.leaves() }) {
+			t.Errorf("voice state updates after the 4014 = %v, want no join", after)
+		}
+	})
+}
+
+// The voice server can refuse the token the recorder held after a drop,
+// closing the connection before its Ready. The recorder then leaves the
+// channel and joins it again, and identifies with the token Discord's
+// answer to that fresh join names. It hears the channel again, Sentry hears
+// of no lost connection, and the bot log says the recorder left and joined
+// again.
+func TestRecorderLeavesAndJoinsAgainWhenTheVoiceServerRefusesTheTokenItHeld(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.refuse("token-2")
+		h.answerWith("token-4")
+
+		go h.endConnection(errResumeRefused)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if !h.leftAndJoinedAgain() {
+			t.Errorf("voice state updates after the drop = %v, want a leave and a join after it", h.sent())
+		}
+		if opens := h.opensSince(); !identifiedAt(opens, oldEndpoint, "token-4") {
+			t.Errorf("gateway opens after the drop = %+v, want an identify at %s with token-4", opens, oldEndpoint)
+		}
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted, gapEnded}) {
+			t.Errorf("gap events a minute after the drop = %v, want the gap started and ended", got)
+		}
+		if lost := slices.Contains(eventMessages(events.Events()), lostConnectionMessage); lost {
+			t.Errorf("Sentry events = %v, want no %q", eventMessages(events.Events()), lostConnectionMessage)
+		}
+		if warns := h.logs.messagesAt(slog.LevelWarn); !slices.Contains(warns, refusedTokenMessage) {
+			t.Errorf("bot log WARNs = %q, want %q", warns, refusedTokenMessage)
+		}
+	})
+}
+
+// The recorder leaves and joins again once for the token it held, and no
+// more, so the call hears no string of leaves and joins. That holds when
+// Discord names the voice server for the fresh join 400 ms after its voice
+// state, past the recorder's wait for one, and when the voice server
+// refuses the new token too.
+func TestRecorderLeavesOnlyOnceForARefusedToken(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		late    bool
+		refused []string
+	}{
+		{"server named late", true, []string{"token-2"}},
+		{"new token refused too", false, []string{"token-2", "token-4"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recordSentry(t)
+			synctest.Test(t, func(t *testing.T) {
+				h := newCallHarness(t)
+				conn := h.start()
+				defer h.hangUp(conn)
+				h.refuse(tc.refused...)
+				h.answerWith("token-4")
+				if tc.late {
+					h.nameDelay.Store(int64(400 * time.Millisecond))
+				}
+
+				go h.endConnection(errResumeRefused)
+				time.Sleep(time.Minute)
+				synctest.Wait()
+
+				if leaves := slices.DeleteFunc(h.sent(), func(u voiceUpdate) bool { return !u.leaves() }); len(leaves) != 1 {
+					t.Errorf("voice state updates in the minute after the drop = %v, want one leave", h.sent())
+				}
+			})
+		})
+	}
+}
+
+// The recording runs on while the recorder leaves the channel to join it
+// again, so the recorder's connection has counted that leave as its own by
+// the time Discord hears it.
+func TestRecorderCountsItsOwnLeaveBeforeDiscordHearsIt(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		defer h.hangUp(conn)
+		h.refuse("token-2")
+		h.answerWith("token-4")
+		var counted []int
+		h.mu.Lock()
+		h.atLeave = func() { counted = append(counted, conn.OwnLeaves()) }
+		h.mu.Unlock()
+
+		go h.endConnection(errResumeRefused)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		h.mu.Lock()
+		h.atLeave = nil
+		h.mu.Unlock()
+		if !slices.Equal(counted, []int{1}) {
+			t.Errorf("own leaves counted as Discord received each leave = %v, want 1", counted)
+		}
+	})
 }
 
 // The recorder's own gateway can be down when its voice connection drops,
@@ -855,6 +1182,31 @@ func TestRecorderFollowsAMoveWhoseServerDiscordNamedBeforeTheRejoin(t *testing.T
 			})
 		})
 	}
+}
+
+// Discord can answer the rejoin after a 4022 with the recorder's voice
+// state alone and name the server the call moved to only after, as when its
+// voice server update with no endpoint comes first. The call has left the
+// server it was on, so the recorder never dials that one.
+func TestRecorderNeverDialsTheServerAMovedCallLeft(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		defer h.hangUp(conn)
+		h.stateOnly.Store(true)
+		before := h.dialsOf(oldEndpoint)
+
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Second)
+		h.name("token-3", newEndpoint)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if n := h.dialsOf(oldEndpoint) - before; n != 0 {
+			t.Errorf("dials of %s, the server the call left, in the minute after the 4022 = %d, want none", oldEndpoint, n)
+		}
+	})
 }
 
 // Discord can name one voice server before the rejoin starts and another
@@ -1795,22 +2147,17 @@ func TestRecorderLogsAFailedDialOfTheVoiceServerAtWarn(t *testing.T) {
 // terminatingVoiceServer is a voice server that connects the recorder on
 // the first connection it accepts, as Discord's does, and then ends that
 // call with 4022. Each later connection it accepts and says nothing on.
-// rejoined closes once it has accepted a second.
 type terminatingVoiceServer struct {
 	*localVoiceServer
-	udp      *fakeVoiceServer
-	rejoined chan struct{}
+	udp *fakeVoiceServer
 }
 
 func newTerminatingVoiceServer(t *testing.T) *terminatingVoiceServer {
 	t.Helper()
-	s := &terminatingVoiceServer{udp: newFakeVoiceServer(t), rejoined: make(chan struct{})}
+	s := &terminatingVoiceServer{udp: newFakeVoiceServer(t)}
 	s.localVoiceServer = newLocalVoiceServer(t, func(n int32, conn *websocket.Conn) {
-		switch n {
-		case 1:
+		if n == 1 {
 			s.connectThenTerminate(t, conn)
-		case 2:
-			close(s.rejoined)
 		}
 	})
 	return s
@@ -1874,10 +2221,9 @@ func TestRecorderLogsACallItsVoiceServerEndedAtWarn(t *testing.T) {
 		t.Fatalf("Join: %v", err)
 	}
 	defer conn.Leave(context.Background())
+	h.countFromNow()
 
-	select {
-	case <-server.rejoined:
-	case <-time.After(waitFor):
+	if !within(time.Now(), waitFor, h.rejoined) {
 		t.Fatal("the recorder never rejoined after the 4022")
 	}
 

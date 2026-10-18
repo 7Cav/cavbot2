@@ -64,11 +64,13 @@ type joinHold struct {
 }
 
 // fakeVoiceConn is one recorder in one channel, until it leaves. listener is
-// what the runtime passed to Receive, nil before it does.
+// what the runtime passed to Receive, nil before it does. ownLeaves is
+// what OwnLeaves reports.
 type fakeVoiceConn struct {
 	v                     *fakeRecorderVoice
 	recorderID, channelID string
 	left                  bool
+	ownLeaves             int
 	listener              voice.Listener
 }
 
@@ -113,10 +115,28 @@ func (c *fakeVoiceConn) Leave(context.Context) {
 	c.left = true
 }
 
+func (c *fakeVoiceConn) OwnLeaves() int {
+	c.v.mu.Lock()
+	defer c.v.mu.Unlock()
+	return c.ownLeaves
+}
+
 func (c *fakeVoiceConn) Receive(l voice.Listener) {
 	c.v.mu.Lock()
 	defer c.v.mu.Unlock()
 	c.listener = l
+}
+
+// leaveToJoinAgain counts a leave of the recorder's own, as its connection
+// does just before the leave goes out.
+func (v *fakeRecorderVoice) leaveToJoinAgain(recorderID string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, c := range v.conns {
+		if c.recorderID == recorderID {
+			c.ownLeaves++
+		}
+	}
 }
 
 // joinCount is how many joins went out.
