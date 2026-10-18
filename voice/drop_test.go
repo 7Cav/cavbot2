@@ -41,8 +41,10 @@ const (
 // once the recording listens. Its Hello carries a sequence number, so
 // disgo's gateway would resume after the close rather than identify. A
 // later connection it answers with Resumed when it resumes, and refuses
-// with 4004 when it identifies, so nothing more dials. dropped hears when
-// it sent the 4015.
+// with 4004 when it identifies. The first it refuses holds the token the
+// recorder held, so the recorder leaves, joins again and identifies once
+// more, and nothing dials after that one's 4004. dropped hears when it sent
+// the 4015.
 type droppingVoiceServer struct {
 	*localVoiceServer
 	udp       *fakeVoiceServer
@@ -52,16 +54,18 @@ type droppingVoiceServer struct {
 	mu sync.Mutex
 	// opened is the first op each connection sent after Hello, in the
 	// order the connections arrived. played counts the connections whose
-	// script has ended, and greeted those given a Hello.
+	// script has ended, and greeted those given a Hello. changed is when
+	// either count last went up.
 	opened          []disgovoice.Opcode
 	greeted, played int
+	changed         time.Time
 }
 
 func newDroppingVoiceServer(t *testing.T) *droppingVoiceServer {
 	t.Helper()
 	s := &droppingVoiceServer{udp: newFakeVoiceServer(t), listening: make(chan struct{}), dropped: make(chan time.Time, 1)}
 	s.localVoiceServer = newLocalVoiceServer(t, func(n int32, conn *websocket.Conn) {
-		defer s.locked(func() { s.played++ })
+		defer s.locked(func() { s.played, s.changed = s.played+1, time.Now() })
 		s.play(t, n, conn)
 	})
 	return s
@@ -86,7 +90,7 @@ func (s *droppingVoiceServer) play(t *testing.T, n int32, conn *websocket.Conn) 
 			t.Errorf("voice server sending %d: %v", code, err)
 		}
 	}
-	s.locked(func() { s.greeted++ })
+	s.locked(func() { s.greeted, s.changed = s.greeted+1, time.Now() })
 	greeted := time.Now()
 	send(disgovoice.OpcodeHello, disgovoice.GatewayMessageDataHello{HeartbeatInterval: float64(dropHeartbeat.Milliseconds())}, 1)
 	op, ok := awaitOneOf(conn, disgovoice.OpcodeIdentify, disgovoice.OpcodeResume)
@@ -126,11 +130,12 @@ func (s *droppingVoiceServer) firstOps() []disgovoice.Opcode {
 	return slices.Clone(s.opened)
 }
 
-// settled reports whether every connection given a Hello has played out.
+// settled reports whether every connection given a Hello has played out,
+// and none has come for longer than one takes to dial after the last.
 func (s *droppingVoiceServer) settled() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.played >= s.greeted
+	return s.played >= s.greeted && time.Since(s.changed) > dropReadyAfter
 }
 
 // awaitOneOf reads what the recorder sends on conn until a message with one
@@ -168,7 +173,7 @@ func (s *droppingVoiceServer) dialerRefusingAfterFirst() *websocket.Dialer {
 // recordDropping starts a recording through disgo's own voice gateway at
 // server, dialing through dialer, and returns what its listener hears. The
 // voice state updates sent count from then. The recording ends with the
-// test, once every connection the server greeted has played out.
+// test, once the server has settled.
 func (h *callHarness) recordDropping(server *droppingVoiceServer, dialer *websocket.Dialer) *listener {
 	h.t.Helper()
 	h.serving = server.endpoint()
@@ -180,7 +185,7 @@ func (h *callHarness) recordDropping(server *droppingVoiceServer, dialer *websoc
 		h.t.Fatalf("Join: %v", err)
 	}
 	h.t.Cleanup(func() {
-		within(time.Now(), 2*dropReadyAfter, server.settled)
+		within(time.Now(), 2*waitFor, server.settled)
 		// The status takes the lock disgo's refused heartbeat took, which
 		// orders the close after it for the race detector.
 		_ = conn.(*disgoConn).conn.Gateway().Status()
@@ -282,5 +287,22 @@ func TestRecorderIdentifiesAfterACloseDisgoResumesFrom(t *testing.T) {
 	}
 	if slices.Contains(ops, disgovoice.OpcodeResume) {
 		t.Errorf("first ops after Hello = %v, want no Resume (op %d)", ops, disgovoice.OpcodeResume)
+	}
+}
+
+// After a drop, the voice server can refuse the token the recorder held by
+// closing its identify with 4004 before its Ready, as this one does. disgo's
+// gateway hands that close back from its open, and the recorder leaves the
+// channel, then joins it again.
+func TestRecorderLeavesAndJoinsAgainWhenAVoiceServerRefusesItsHeldToken(t *testing.T) {
+	recordSentry(t)
+	server := newDroppingVoiceServer(t)
+	h := newCallHarness(t)
+	h.recordDropping(server, server.dialer())
+
+	dropped := server.awaitDrop(t)
+
+	if !within(dropped, waitFor, h.leftAndJoinedAgain) {
+		t.Errorf("voice state updates after the 4015 = %v, want a leave and a join after it", h.sent())
 	}
 }

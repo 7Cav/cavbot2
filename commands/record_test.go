@@ -64,11 +64,12 @@ type joinHold struct {
 }
 
 // fakeVoiceConn is one recorder in one channel, until it leaves. listener is
-// what the runtime passed to Receive, nil before it does.
+// what the runtime passed to Receive, nil before it does. rejoining is what
+// Rejoining reports.
 type fakeVoiceConn struct {
 	v                     *fakeRecorderVoice
 	recorderID, channelID string
-	left                  bool
+	left, rejoining       bool
 	listener              voice.Listener
 }
 
@@ -113,10 +114,27 @@ func (c *fakeVoiceConn) Leave(context.Context) {
 	c.left = true
 }
 
+func (c *fakeVoiceConn) Rejoining() bool {
+	c.v.mu.Lock()
+	defer c.v.mu.Unlock()
+	return c.rejoining
+}
+
 func (c *fakeVoiceConn) Receive(l voice.Listener) {
 	c.v.mu.Lock()
 	defer c.v.mu.Unlock()
 	c.listener = l
+}
+
+// setRejoining sets what the recorder's connections report as Rejoining.
+func (v *fakeRecorderVoice) setRejoining(recorderID string, rejoining bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, c := range v.conns {
+		if c.recorderID == recorderID {
+			c.rejoining = rejoining
+		}
+	}
 }
 
 // joinCount is how many joins went out.

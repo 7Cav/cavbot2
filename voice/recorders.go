@@ -32,6 +32,10 @@ type Conn interface {
 	Receive(l Listener)
 	// Leave takes the recorder out of the channel.
 	Leave(ctx context.Context)
+	// Rejoining reports whether the recorder has left the channel on its
+	// own to join it again, and Discord hasn't let it back in yet. Its
+	// absence from the channel meanwhile isn't a leave.
+	Rejoining() bool
 }
 
 // Listener hears a call through its recorder (GLOSSARY.md, Gap). The voice

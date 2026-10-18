@@ -109,10 +109,15 @@ func (r *RecordingRuntime) checkChannels() {
 		}
 		// The cache can show the recorder in the channel only some time
 		// after its join returns, so it counts as leaving only once the
-		// cache has shown it there.
+		// cache has shown it there. A recorder out of the channel while it
+		// rejoins left on its own, and counts as leaving only once the
+		// cache has shown it back.
 		recorderIn := snap.channelOf(rec.row.RecorderID) == rec.row.ChannelID
-		if recorderIn {
+		switch {
+		case recorderIn:
 			rec.recorderSeen = true
+		case rec.conn.Rejoining():
+			rec.recorderSeen = false
 		}
 		switch {
 		case rec.recorderSeen && !recorderIn:
