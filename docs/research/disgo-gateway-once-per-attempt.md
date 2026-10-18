@@ -1,11 +1,11 @@
 # Does disgo's voice gateway hold up when used once per attempt
 
 Research for [Does disgo's voice gateway hold up when used once per attempt?][issue-813]
-on the [Wayfinder map: owned voice connection for recorders][issue-810] map.
+on [Wayfinder map: owned voice connection for recorders][issue-810].
 The map's spec builds a new voice gateway for each connection attempt, uses
-it until it closes, and never reopens or resumes it. The question: do disgo's
-known gateway defects still reach a recorder used that way, and what would a
-voice gateway client of our own cover, at what size?
+it until it closes, and never reopens or resumes it. This note asks whether
+disgo's known gateway defects still reach a recorder used that way, and what
+a voice gateway client of our own would cover, at what size.
 [Which voice gateway client does the replacement use?][issue-817] makes the
 choice. This note gives it the facts and makes no pick.
 
@@ -64,7 +64,7 @@ identifies. disgo sends Resume only from its own reconnect. That reconnect
 starts by itself after any drop past Ready, runs on a background context the
 caller can't cancel, and has no option to turn it off. The recorder's dialer
 refuses its dial, so disgo hands the close over at once. Without that dialer,
-every drop after Ready would resume inside the attempt for up to 15 s before
+every drop after Ready would resume inside the attempt for 15 s or more before
 the caller hears of it, and a discarded gateway could come back on its own.
 
 The `-race` reports still fire against a once-used gateway on real sockets.
@@ -151,7 +151,8 @@ What a leaked heartbeat does on a discarded gateway, from reading the code:
 It writes only if the status turns Ready after the close, which needs `listen`
 to be handling a Ready frame as the close lands
 ([gateway.go:565-571][dg-listen-ready], [gateway.go:249-251][dg-close-status]).
-The leak needs the close within about 400 µs of Hello, and a Ready from
+The leak needs the close within about 400 µs of the server accepting the
+socket, and a Ready from
 Discord needs a round trip after Identify. I infer the two windows don't meet
 against Discord. A local test server could answer that fast. Then the
 heartbeat's `Send` would pass, `send` would find no connection, and
@@ -247,9 +248,7 @@ These paths call `CloseWithCode` while another goroutine may be in `Send`:
   heartbeat's `Send` ([gateway.go:491-536][dg-listen-reconnect],
   [gateway.go:579-587][dg-listen-ack]);
 - the heartbeat, on a missed answer or a failed send, against `listen`'s
-  sends ([gateway.go:392-401][dg-hb-zombie], [gateway.go:406-426][dg-sendhb]);
-- `open`, when its context ends as Ready arrives and `listen` moves on to
-  Select Protocol ([gateway.go:209-220][dg-open-select]).
+  sends ([gateway.go:392-401][dg-hb-zombie], [gateway.go:406-426][dg-sendhb]).
 
 A once-used gateway still has its one close, and that close can land during a
 `Send`. So the deadlock can still reach it.
@@ -383,7 +382,7 @@ None of these has been seen. Each follows from the code.
   of its receiver first ([conn.go:998-1003][gw-nextreader]), so `listen`
   panics. The panic is in a disgo goroutine with no recover, so the process
   exits. ADR 0014 has the voice goroutines recover
-  ([0014:52-53][repo-adr14]), but the recorder can't wrap disgo's own.
+  ([0014:52-53][repo-adr14-recover]), but the recorder can't wrap disgo's own.
 - A close that lands while `listen` handles Ready can leave the status Ready
   on a gateway with no connection ([gateway.go:565-571][dg-listen-ready]).
   If `open` still waits, it reads that Ready and returns nil for a closed
@@ -419,9 +418,10 @@ needs a second open:
   A `CloseWithCode` with 1012 skips it.
 
 Reading the code turns up three more unguarded pairs between the heartbeat
-and `listen`. `lastNonce` is written at line 409 and read at 581,
-`lastHeartbeatReceived` written at 587 and read at 393, and the sequence
-number written at 546 and read at 415. A test that runs through a heartbeat
+and `listen`. `lastNonce` is written at [line 409][dg-sendhb] and read at
+[581][dg-listen-ack], `lastHeartbeatReceived` written at
+[587][dg-listen-ack] and read at [393][dg-hb-zombie], and the sequence number
+written at [546][dg-listen-seq] and read at [415][dg-sendhb]. A test that runs through a heartbeat
 and its answer would expose them, unless something else in the test orders
 them, such as a logger lock both goroutines take.
 [fix: guard gateway & voice shared state against data races][dg-pr-559]
@@ -703,7 +703,7 @@ These are my estimates from the shape of each fix:
   or at least `make(chan error, 1)` for Ready, so `listen` never blocks on a
   reader that left. The goroutine issue's triage tested the one-line version:
   0 of 100 cancelled Joins leaked. 1 to 30 lines.
-- One lock order, as the deadlock PR does with 16 lines added and 7 removed,
+- One lock order, as the deadlock PR does with 20 lines added and 6 removed,
   or one goroutine that owns all writes. 15 to 50 lines.
 - Read deadlines and Hello, Ready and Session Description timers that report
   to the state machine. Some of this may live in the state machine instead.
@@ -714,7 +714,7 @@ These are my estimates from the shape of each fix:
 
 That is about 80 to 190 lines added. Taking 491, adding 80 to 190 and
 trimming 30 to 60 lines of types gives about 500 to 650 lines, with disgo's
-message and opcode types imported. Copying the types instead adds about 390
+message and opcode types imported. Copying the types instead adds about 380
 lines of messages, after dropping Resume, Resumed and the decode cases for
 messages only a client sends, and about 200 to 245 of opcodes and close
 codes, for about 1,100 to 1,300 in all. Neither figure counts tests. disgo's
@@ -731,7 +731,7 @@ goroutines start only once code calls `NewGateway` and opens it, or
 `NewConn`, or `NewManager`. Its imports are `disgo/discord`, `disgo/gateway`,
 godave, `disgoorg/json`, snowflake and gorilla/websocket, all in `go.mod`
 already. Reuse keeps ADR 0014's master pin for those types
-([0014:5-16][repo-adr14]).
+([0014:5-16][repo-adr14-pin]).
 
 - The opcode constants are reusable as they are
   ([gateway_opcodes.go:3-52][dgo-opcodes]). `IsBinary` lists 21 by mistake,
@@ -874,18 +874,18 @@ already. Reuse keeps ADR 0014's master pin for those types
 [dd-ip]: https://github.com/discord/discord-api-docs/blob/f7416a2cf165455f72a31f5ea4e671a4f047f2f7/developers/topics/voice-connections.mdx#L582-L592
 [dd-opcodes]: https://github.com/discord/discord-api-docs/blob/f7416a2cf165455f72a31f5ea4e671a4f047f2f7/developers/topics/opcodes-and-status-codes.mdx#L56-L84
 [dd-closecodes]: https://github.com/discord/discord-api-docs/blob/f7416a2cf165455f72a31f5ea4e671a4f047f2f7/developers/topics/opcodes-and-status-codes.mdx#L86-L106
-[wp-proposal]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md#L164-L206
-[wp-member-add]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md#L218-L228
-[wp-opcodes]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md#L858-L862
-[wp-clients]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md#L892-L918
-[wp-21]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md#L920-L934
-[wp-22-24]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md#L936-L978
-[wp-25]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md#L980-L1003
-[wp-26]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md#L1005-L1018
-[wp-27]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md#L1020-L1048
-[wp-28]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md#L1050-L1068
-[wp-29-30]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md#L1070-L1098
-[wp-31]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md#L1100-L1112
+[wp-proposal]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md?plain=1#L164-L206
+[wp-member-add]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md?plain=1#L218-L228
+[wp-opcodes]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md?plain=1#L858-L862
+[wp-clients]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md?plain=1#L892-L918
+[wp-21]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md?plain=1#L920-L934
+[wp-22-24]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md?plain=1#L936-L978
+[wp-25]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md?plain=1#L980-L1003
+[wp-26]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md?plain=1#L1005-L1018
+[wp-27]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md?plain=1#L1020-L1048
+[wp-28]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md?plain=1#L1050-L1068
+[wp-29-30]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md?plain=1#L1070-L1098
+[wp-31]: https://github.com/discord/dave-protocol/blob/1b2b706ad4a562ede5c2ef901f9d77f6dbe79446/protocol.md?plain=1#L1100-L1112
 [repo-resume-note]: https://github.com/7Cav/cavbot2/blob/82c3df153f7e710c730c9d86abd150e6549a0432/voice/gateway.go#L120-L132
 [repo-owndials]: https://github.com/7Cav/cavbot2/blob/82c3df153f7e710c730c9d86abd150e6549a0432/voice/gateway.go#L120-L170
 [repo-refused-err]: https://github.com/7Cav/cavbot2/blob/82c3df153f7e710c730c9d86abd150e6549a0432/voice/gateway.go#L137-L140
@@ -910,4 +910,5 @@ already. Reuse keeps ADR 0014's master pin for those types
 [repo-recv-hold]: https://github.com/7Cav/cavbot2/blob/82c3df153f7e710c730c9d86abd150e6549a0432/voice/receiver.go#L215-L225
 [repo-recv-ssrc]: https://github.com/7Cav/cavbot2/blob/82c3df153f7e710c730c9d86abd150e6549a0432/voice/receiver.go#L286-L289
 [repo-recv-decrypt]: https://github.com/7Cav/cavbot2/blob/82c3df153f7e710c730c9d86abd150e6549a0432/voice/receiver.go#L323-L327
-[repo-adr14]: https://github.com/7Cav/cavbot2/blob/82c3df153f7e710c730c9d86abd150e6549a0432/docs/adr/0014-voice-on-disgo-and-dave-go.md
+[repo-adr14-pin]: https://github.com/7Cav/cavbot2/blob/82c3df153f7e710c730c9d86abd150e6549a0432/docs/adr/0014-voice-on-disgo-and-dave-go.md?plain=1#L5-L16
+[repo-adr14-recover]: https://github.com/7Cav/cavbot2/blob/82c3df153f7e710c730c9d86abd150e6549a0432/docs/adr/0014-voice-on-disgo-and-dave-go.md?plain=1#L52-L53
