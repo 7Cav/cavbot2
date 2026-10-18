@@ -166,19 +166,19 @@ container gets its configuration. If you export `DISCORD_TOKEN` and then wonder
 why editing `.env` changes nothing, that is why.
 
 **In Docker.** The repo's `docker-compose.yml` is for running the bot
-locally. Compose reads `.env` itself and injects the values, and `.dockerignore`
-keeps `.env` out of the image, so nothing secret is baked in. The service names
-an `image:` and has no `build:`, so Compose won't build the image. Build it
-first:
+locally. Compose reads `.env` itself and injects the values. `.dockerignore`
+keeps `.env` out of the image, so the image carries no secrets. The service
+names an `image:` and has no `build:`, so Compose won't build the image. Build
+it first:
 
 ```bash
 docker build -t cavbot2:latest .
 docker compose up
 ```
 
-The file joins no network you have to create. The bot and its Postgres share
-`cavbot2_internal`, which `docker compose up` creates and `docker compose down`
-removes.
+The file declares no external network, so there's no network to create first.
+The bot and its Postgres share `cavbot2_internal`, which `docker compose up`
+creates and `docker compose down` removes.
 
 Production doesn't run this file. Its stack lives on the production host, and
 the maintainer keeps it there. A deploy sends that host only a version tag, and
@@ -187,14 +187,13 @@ networks this file leaves out:
 
 | Network | What it carries for the bot |
 |---------|-----------------------------|
-| `edge` | Nginx Proxy Manager's requests to the panel on port 8080. The port isn't published on the host, so the proxy is the only way in. Also a route to the 7Cav API. |
+| `edge` | Nginx Proxy Manager's requests to the panel on port 8080. Production's stack doesn't publish the port, so the proxy is the only way in. Also a route to the 7Cav API. |
 | `xenforo_internal` | A route to the 7Cav API. It also carried the forum database connection until the bot stopped reading that database. |
 
 The 7Cav API's container, `7cav-api`, is on both networks, so
 `CAV_API_BASE_URL=http://7cav-api:11000` reaches the API over either one
 without leaving the host. Dropping `xenforo_internal` from production's stack
-leaves lookups working over `edge`. Dropping `edge` cuts the proxy off from the
-panel.
+leaves lookups working over `edge`.
 
 Compose also starts a `postgres:18-alpine` service for the bot's own store,
 with its data in the `cavbot2_pgdata` volume. The bot waits for its healthcheck

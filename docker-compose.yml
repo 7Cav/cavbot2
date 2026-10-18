@@ -38,7 +38,7 @@ services:
     volumes:
       - cavbot2_recordings:/recordings
     # Shared with the postgres service, so the bot reaches its store at
-    # postgres:5432. This file runs the bot locally and joins no external
+    # postgres:5432. This file runs the bot locally and declares no external
     # network. Production's stack lives on the production host, and README
     # step 4 names the networks the bot joins there.
     networks:
