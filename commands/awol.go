@@ -42,6 +42,17 @@ const awolLOAHistoryDays = 364
 // awolLOATag marks the row of a trooper with an LOA that includes today.
 const awolLOATag = "[LOA]"
 
+// awolAllClearFormat answers a position where nobody is AWOL, with the
+// position in place of %s.
+const awolAllClearFormat = "Search completed successfully: no users matching \"%s\" are AWOL."
+
+// The notes a report sent as a file carries, with the position in place of
+// %s: one for force_file_output, one for a report too large for embeds.
+const (
+	awolForcedFileFormat = "Force File Set True, AWOL report for %s generated as file:"
+	awolLargeFileFormat  = "Large AWOL report for %s generated as file:"
+)
+
 type AwolUser struct {
 	Username     string
 	MilpacUrl    string
@@ -139,7 +150,7 @@ func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 	}
 	loasCh := make(chan loasAnswer, 1)
 	go func() {
-		loas, err := utils.GetLOAs(ctx, now.UTC().AddDate(0, 0, -awolLOAHistoryDays).Format(time.DateOnly))
+		loas, err := utils.GetLOAs(ctx, now.AddDate(0, 0, -awolLOAHistoryDays))
 		loasCh <- loasAnswer{loas, err}
 	}()
 
@@ -249,7 +260,7 @@ func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 	})
 
 	if len(awolUsers) == 0 {
-		response := fmt.Sprintf("Search completed successfully: no users matching \"%s\" are AWOL.", position)
+		response := fmt.Sprintf(awolAllClearFormat, position)
 		if note := awolSkippedNote(skippedCount); note != "" {
 			// Issue #163: never a silent all-clear when records were skipped — a
 			// skipped member could have been the one who was AWOL.
@@ -387,14 +398,19 @@ func awolUserLine(u AwolUser) string {
 	} else if u.OnLOA() {
 		loaTag = awolLOATag + " "
 	}
-	return fmt.Sprintf("%s %s[%s](%s) — %dd AWOL · last post %dd\n",
+	return fmt.Sprintf("%s %s[%s](%s) — %s\n",
 		u.severityGlyph(),
 		loaTag,
 		u.Username,
 		u.MilpacUrl,
-		u.DaysAWOL,
-		u.RawDaysSincePost,
+		awolFigures(u.DaysAWOL, u.RawDaysSincePost),
 	)
+}
+
+// awolFigures renders a row's days AWOL and its raw days since the last
+// post, as both the embed and the file show them.
+func awolFigures(daysAWOL, rawDaysSincePost int) string {
+	return fmt.Sprintf("%dd AWOL · last post %dd", daysAWOL, rawDaysSincePost)
 }
 
 func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, awolUsers []AwolUser, position string, forceFile, loasRead bool, now time.Time, skippedCount int) {
@@ -418,11 +434,10 @@ func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, 
 		if user.OnLOA() {
 			loaTag = " " + awolLOATag
 		}
-		_, _ = fmt.Fprintf(&content, "%s%s — %dd AWOL · last post %dd\nMilpac: %s\n\n",
+		_, _ = fmt.Fprintf(&content, "%s%s — %s\nMilpac: %s\n\n",
 			user.Username,
 			loaTag,
-			user.DaysAWOL,
-			user.RawDaysSincePost,
+			awolFigures(user.DaysAWOL, user.RawDaysSincePost),
 			user.MilpacUrl)
 	}
 	if loasRead {
@@ -436,9 +451,9 @@ func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, 
 	}
 	var prefix string
 	if forceFile {
-		prefix = fmt.Sprintf("Force File Set True, AWOL report for %s generated as file:", position)
+		prefix = fmt.Sprintf(awolForcedFileFormat, position)
 	} else {
-		prefix = fmt.Sprintf("Large AWOL report for %s generated as file:", position)
+		prefix = fmt.Sprintf(awolLargeFileFormat, position)
 	}
 	if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: stringPtr(prefix),
@@ -469,6 +484,7 @@ func loaWindowsByForumUserID(loas []utils.LOA) map[string][]utils.LOAEntry {
 				"thread_id", l.ThreadID, "start", l.StartDate, "end", l.EndDate)
 			continue
 		}
+		// A thread ID that doesn't parse leaves the row's [LOA] tag unlinked.
 		threadID, _ := strconv.ParseInt(l.ThreadID, 10, 64)
 		byID[l.Subject.UserID] = append(byID[l.Subject.UserID], utils.LOAEntry{
 			Username:  l.Subject.Username,

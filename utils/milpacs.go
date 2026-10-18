@@ -295,11 +295,10 @@ func GetRanks(ctx context.Context) (*RanksResponse, error) {
 }
 
 // GetLOAs fetches every open and upcoming LOA, plus the LOAs that ended on
-// or after endedSince, a YYYY-MM-DD date the API refuses when it is more
-// than 365 days before its own UTC today. The API reads the LOA forums live,
-// so each answer is the whole set. Any error, ErrNotFound included, means
-// the LOAs couldn't be read: the API answers an empty window with an empty
-// list.
-func GetLOAs(ctx context.Context, endedSince string) (*LOAsResponse, error) {
-	return makeAPIRequest[LOAsResponse](ctx, "loas?endedSince="+url.QueryEscape(endedSince), "loas")
+// or after endedSince's UTC date. The API refuses a date more than 365 days
+// before its own UTC today. The API reads the LOA forums live, so each
+// answer is the whole set. Any error, ErrNotFound included, means the LOAs
+// couldn't be read: the API answers an empty window with an empty list.
+func GetLOAs(ctx context.Context, endedSince time.Time) (*LOAsResponse, error) {
+	return makeAPIRequest[LOAsResponse](ctx, "loas?endedSince="+endedSince.UTC().Format(time.DateOnly), "loas")
 }

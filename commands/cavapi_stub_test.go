@@ -155,23 +155,19 @@ func (a *stubCavAPI) serveLOAs(w http.ResponseWriter, r *http.Request) {
 	mine, partner := a.loasCall, a.rosterCall
 	a.mu.Unlock()
 	if !awaitPartner(mine, partner) {
-		writeStubJSON(w, http.StatusInternalServerError, map[string]any{"code": 13, "message": "error fetching LOAs", "details": []any{}})
+		writeStubError(w, http.StatusInternalServerError)
 		return
 	}
 	if status != 0 {
-		writeStubJSON(w, status, map[string]any{"code": 13, "message": "error fetching LOAs", "details": []any{}})
+		writeStubError(w, status)
 		return
 	}
 
 	var endedSince time.Time
-	raw := r.URL.Query().Get("endedSince")
-	if raw == "" {
-		raw = r.URL.Query().Get("ended_since")
-	}
-	if raw != "" {
+	if raw := r.URL.Query().Get("endedSince"); raw != "" {
 		parsed, err := time.Parse(time.DateOnly, raw)
 		if err != nil || today.Sub(parsed) > 365*24*time.Hour {
-			writeStubJSON(w, http.StatusBadRequest, map[string]any{"code": 3, "message": "bad ended_since", "details": []any{}})
+			writeStubError(w, http.StatusBadRequest)
 			return
 		}
 		endedSince = parsed
@@ -231,6 +227,11 @@ func (l stubLOA) state(today time.Time) string {
 	default:
 		return "LOA_STATE_OPEN"
 	}
+}
+
+// writeStubError answers status with the API's error body.
+func writeStubError(w http.ResponseWriter, status int) {
+	writeStubJSON(w, status, map[string]any{"code": 2, "message": "stub 7Cav API error", "details": []any{}})
 }
 
 func writeStubJSON(w http.ResponseWriter, status int, body any) {

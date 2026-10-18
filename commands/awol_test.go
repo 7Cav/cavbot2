@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -67,14 +66,25 @@ func forumMember(username, forumUserID, milpacID, lastForumPost string) utils.Li
 	return m
 }
 
+// finalEdit returns the run's last call as an edit, failing the test when
+// the run's last call wasn't one.
+func finalEdit(t *testing.T, f *fakeResponder) *discordgo.WebhookEdit {
+	t.Helper()
+	calls := f.Calls()
+	edit := calls[len(calls)-1].Edit
+	if edit == nil {
+		t.Fatalf("the run's last call isn't an edit; it last showed %q", lastReply(t, calls))
+	}
+	return edit
+}
+
 // awolReport returns the description of every embed in the run's final
 // edit, failing the test when the run sent no embeds.
 func awolReport(t *testing.T, f *fakeResponder) string {
 	t.Helper()
-	calls := f.Calls()
-	edit := calls[len(calls)-1].Edit
-	if edit == nil || edit.Embeds == nil || len(*edit.Embeds) == 0 {
-		t.Fatalf("expected a report in embeds; the run last showed %q", lastReply(t, calls))
+	edit := finalEdit(t, f)
+	if edit.Embeds == nil || len(*edit.Embeds) == 0 {
+		t.Fatalf("expected a report in embeds; the run last showed %q", lastReply(t, f.Calls()))
 	}
 	var desc strings.Builder
 	for _, e := range *edit.Embeds {
@@ -88,11 +98,7 @@ func awolReport(t *testing.T, f *fakeResponder) string {
 // its content, every embed's description and footer, and any file's body.
 func awolReplyText(t *testing.T, f *fakeResponder) string {
 	t.Helper()
-	calls := f.Calls()
-	edit := calls[len(calls)-1].Edit
-	if edit == nil {
-		t.Fatalf("the run never edited its reply; calls %+v", calls)
-	}
+	edit := finalEdit(t, f)
 	var text strings.Builder
 	if edit.Content != nil {
 		text.WriteString(*edit.Content + "\n")
@@ -113,17 +119,6 @@ func awolReplyText(t *testing.T, f *fakeResponder) string {
 		text.Write(body)
 	}
 	return text.String()
-}
-
-// daysAWOLOn reads the days AWOL figure off a trooper's report line.
-func daysAWOLOn(t *testing.T, line string) int {
-	t.Helper()
-	m := regexp.MustCompile(`(\d+)d AWOL`).FindStringSubmatch(line)
-	if m == nil {
-		t.Fatalf("no days AWOL figure on line %q", line)
-	}
-	n, _ := strconv.Atoi(m[1])
-	return n
 }
 
 func TestRunAwol_SmallResultRendersEmbedChunks(t *testing.T) {
@@ -169,10 +164,10 @@ func TestRunAwol_SmallResultRendersEmbedChunks(t *testing.T) {
 		}
 	}
 	// Title and footer match the agreed layout.
-	if embed.Title != "AWOL — 1-7" {
-		t.Fatalf("title = %q, want %q", embed.Title, "AWOL — 1-7")
+	if embed.Title != awolEmbedTitle("1-7", 0, 1) {
+		t.Fatalf("title = %q, want %q", embed.Title, awolEmbedTitle("1-7", 0, 1))
 	}
-	if !strings.Contains(desc, "2 flagged") {
+	if !strings.Contains(desc, awolSummaryLine(2)) {
 		t.Fatalf("summary line missing.\nGot:\n%s", desc)
 	}
 	if embed.Footer == nil || embed.Footer.Text != awolReportFooter {
@@ -182,9 +177,9 @@ func TestRunAwol_SmallResultRendersEmbedChunks(t *testing.T) {
 		}
 		t.Fatalf("footer = %q, want %q", got, awolReportFooter)
 	}
-	// Days-AWOL secondary context present.
-	if !strings.Contains(desc, "d AWOL · last post") {
-		t.Fatalf("rows should show 'Nd AWOL · last post Md'.\nGot:\n%s", desc)
+	// Trooper.A: (03-01, 05-15] is 75 dates, 68d AWOL.
+	if line := lineContaining(desc, "Trooper.A"); !strings.Contains(line, awolFigures(68, 75)) {
+		t.Fatalf("Trooper.A should read %q.\nGot line: %q", awolFigures(68, 75), line)
 	}
 }
 
@@ -214,8 +209,8 @@ func TestRunAwol_NoLOARegressionAndSortOrder(t *testing.T) {
 		t.Fatalf("expected Farther.F before Closer.C (worst-first).\nGot:\n%s", desc)
 	}
 	// Closer.C: 14 candidate dates, no LOA → 7d AWOL. Raw last post also 14d.
-	if !strings.Contains(desc, "Closer.C](") || !strings.Contains(desc, "— 7d AWOL · last post 14d") {
-		t.Fatalf("Closer.C should read '7d AWOL · last post 14d' (raw==accountable, no LOA).\nGot:\n%s", desc)
+	if line := lineContaining(desc, "Closer.C"); !strings.Contains(line, awolFigures(7, 14)) {
+		t.Fatalf("Closer.C should read %q (raw==accountable, no LOA).\nGot line: %q", awolFigures(7, 14), line)
 	}
 }
 
@@ -382,12 +377,12 @@ func TestRunAwol_LargeResultFallsBackToFile(t *testing.T) {
 	if edit.Embeds != nil && len(*edit.Embeds) > 0 {
 		t.Fatalf("expected no embeds on file-fallback path, got %d", len(*edit.Embeds))
 	}
-	if edit.Content == nil || !strings.Contains(*edit.Content, "Large AWOL report") {
+	if want := fmt.Sprintf(awolLargeFileFormat, "1-7"); edit.Content == nil || !strings.Contains(*edit.Content, want) {
 		got := "<nil>"
 		if edit.Content != nil {
 			got = *edit.Content
 		}
-		t.Fatalf("expected 'Large AWOL report' prefix on file path, got %q", got)
+		t.Fatalf("expected the large-report note %q on file path, got %q", want, got)
 	}
 	if edit.Files[0].Name != "awol_report_1-7.txt" {
 		t.Fatalf("file name = %q, want awol_report_1-7.txt", edit.Files[0].Name)
@@ -396,7 +391,7 @@ func TestRunAwol_LargeResultFallsBackToFile(t *testing.T) {
 
 func TestRunAwol_ForceFileOutputWithSmallResult(t *testing.T) {
 	// Two AWOL members — small enough to fit in embeds — but force_file_output
-	// flips the rendering to the file path with the "Force File Set True" prefix.
+	// flips the rendering to the file path with the forced-file note.
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
 			"100": awolMember("Trooper.A", "100", "2026-03-01 12:00:00"),
@@ -421,16 +416,16 @@ func TestRunAwol_ForceFileOutputWithSmallResult(t *testing.T) {
 	if len(edit.Files) != 1 {
 		t.Fatalf("expected exactly 1 file attachment, got %d", len(edit.Files))
 	}
-	if edit.Content == nil || !strings.Contains(*edit.Content, "Force File Set True") {
+	if want := fmt.Sprintf(awolForcedFileFormat, "1-7"); edit.Content == nil || !strings.Contains(*edit.Content, want) {
 		got := "<nil>"
 		if edit.Content != nil {
 			got = *edit.Content
 		}
-		t.Fatalf("expected 'Force File Set True' prefix, got %q", got)
+		t.Fatalf("expected the forced-file note %q, got %q", want, got)
 	}
 	raw, _ := io.ReadAll(edit.Files[0].Reader)
-	if !strings.Contains(string(raw), "d AWOL · last post") {
-		t.Fatalf("file should carry days-AWOL rows.\nGot:\n%s", string(raw))
+	if line := lineContaining(string(raw), "Trooper.A"); !strings.Contains(line, awolFigures(68, 75)) {
+		t.Fatalf("file should carry Trooper.A's figures %q.\nGot:\n%s", awolFigures(68, 75), string(raw))
 	}
 }
 
@@ -495,8 +490,8 @@ func TestRunAwolCreditsAnLOAToTheMemberWithItsSubjectsForumUserID(t *testing.T) 
 	runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	line := lineContaining(awolReport(t, f), "Renamed.R")
-	if got := daysAWOLOn(t, line); got != 13 {
-		t.Fatalf("days AWOL = %d, want 13 with the LOA counted.\nGot line: %q", got, line)
+	if !strings.Contains(line, awolFigures(13, 30)) {
+		t.Fatalf("want %q with the LOA counted.\nGot line: %q", awolFigures(13, 30), line)
 	}
 }
 
@@ -522,8 +517,8 @@ func TestRunAwolNeverCreditsAnLOAToAMemberWhoOnlySharesItsSubjectsUsername(t *te
 	if line == "" {
 		t.Fatalf("Shared.S must stay listed.\nGot:\n%s", report)
 	}
-	if got := daysAWOLOn(t, line); got != 23 {
-		t.Fatalf("days AWOL = %d, want the full 23.\nGot line: %q", got, line)
+	if !strings.Contains(line, awolFigures(23, 30)) {
+		t.Fatalf("want the full %q.\nGot line: %q", awolFigures(23, 30), line)
 	}
 }
 
@@ -547,8 +542,8 @@ func TestRunAwolSubtractsAnLOAThatEnded364DaysAgo(t *testing.T) {
 	runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	line := lineContaining(awolReport(t, f), "Silent.S")
-	if got := daysAWOLOn(t, line); got != 357 {
-		t.Fatalf("days AWOL = %d, want 357 with the ended LOA subtracted.\nGot line: %q", got, line)
+	if !strings.Contains(line, awolFigures(357, 369)) {
+		t.Fatalf("want %q with the ended LOA subtracted.\nGot line: %q", awolFigures(357, 369), line)
 	}
 }
 
@@ -595,8 +590,8 @@ func TestRunAwolNeedsReviewLOASubtractsNoneOfItsDays(t *testing.T) {
 	if line == "" {
 		t.Fatalf("Review.R must stay listed.\nGot:\n%s", report)
 	}
-	if got := daysAWOLOn(t, line); got != 23 {
-		t.Fatalf("days AWOL = %d, want the full 23.\nGot line: %q", got, line)
+	if !strings.Contains(line, awolFigures(23, 30)) {
+		t.Fatalf("want the full %q.\nGot line: %q", awolFigures(23, 30), line)
 	}
 }
 
@@ -622,8 +617,8 @@ func TestRunAwolLOACallAnswering404FallsBackToRawFiguresAndReachesSentry(t *test
 	runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	line := lineContaining(awolReport(t, f), "Trooper.A")
-	if got := daysAWOLOn(t, line); got != 7 {
-		t.Fatalf("days AWOL = %d, want the raw 7.\nGot line: %q", got, line)
+	if !strings.Contains(line, awolFigures(7, 14)) {
+		t.Fatalf("want the raw %q.\nGot line: %q", awolFigures(7, 14), line)
 	}
 	reply := awolReplyText(t, f)
 	if !strings.Contains(reply, awolDegradedFooter) {
@@ -654,15 +649,15 @@ func TestRunAwolStopsCountingADeletedLOAOnTheNextRun(t *testing.T) {
 	})
 	first := &fakeResponder{}
 	runAwol(first, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
-	if got := daysAWOLOn(t, lineContaining(awolReport(t, first), "Trooper.D")); got != 13 {
-		t.Fatalf("first run: days AWOL = %d, want 13 with the LOA counted", got)
+	if line := lineContaining(awolReport(t, first), "Trooper.D"); !strings.Contains(line, awolFigures(13, 30)) {
+		t.Fatalf("first run: want %q with the LOA counted.\nGot line: %q", awolFigures(13, 30), line)
 	}
 
 	api.setLOAs()
 	second := &fakeResponder{}
 	runAwol(second, awolRefDate.Add(time.Minute), fakeAppCommandInteraction(stringOption("position", "1-7")))
-	if got := daysAWOLOn(t, lineContaining(awolReport(t, second), "Trooper.D")); got != 23 {
-		t.Fatalf("second run: days AWOL = %d, want the full 23 once the LOA is deleted", got)
+	if line := lineContaining(awolReport(t, second), "Trooper.D"); !strings.Contains(line, awolFigures(23, 30)) {
+		t.Fatalf("second run: want the full %q once the LOA is deleted.\nGot line: %q", awolFigures(23, 30), line)
 	}
 }
 
@@ -716,8 +711,8 @@ func TestRunAwol_ActiveLOAStillAWOL(t *testing.T) {
 	if !strings.Contains(line, awolLOATag) || !lineLinksThread(line, "4242") {
 		t.Fatalf("active-LOA row must carry %s and link thread 4242.\nGot line: %q", awolLOATag, line)
 	}
-	if got := daysAWOLOn(t, line); got != 12 {
-		t.Fatalf("days AWOL = %d, want 12.\nGot line: %q", got, line)
+	if !strings.Contains(line, awolFigures(12, 25)) {
+		t.Fatalf("want %q.\nGot line: %q", awolFigures(12, 25), line)
 	}
 }
 
@@ -769,7 +764,7 @@ func TestRunAwol_ExpiredLOASubtractedNotTagged(t *testing.T) {
 	if strings.Index(desc, "Vasquez.A") > strings.Index(desc, "Tanner.K") {
 		t.Fatalf("no-LOA Vasquez.A should outrank LOA-subtracted Tanner.K.\nGot:\n%s", desc)
 	}
-	if !strings.Contains(desc, "2 flagged") {
+	if !strings.Contains(desc, awolSummaryLine(2)) {
 		t.Fatalf("summary line missing.\nGot:\n%s", desc)
 	}
 }
@@ -800,7 +795,7 @@ func TestRunAwol_FullyCoveredMemberNotListed(t *testing.T) {
 	if !strings.Contains(desc, "Bare.B") {
 		t.Fatalf("uncovered member must be listed.\nGot:\n%s", desc)
 	}
-	if !strings.Contains(desc, "1 flagged") {
+	if !strings.Contains(desc, awolSummaryLine(1)) {
 		t.Fatalf("summary should count only listed members.\nGot:\n%s", desc)
 	}
 }
@@ -833,7 +828,7 @@ func TestRunAwol_LOAsUnreadEmptyListWarns(t *testing.T) {
 	}
 }
 
-func TestRunAwol_HealthyCacheEmptyListAllClear(t *testing.T) {
+func TestRunAwol_EmptyListAllClear(t *testing.T) {
 	// LOAs read + empty result → the plain all-clear (no fallback warning).
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
@@ -850,7 +845,7 @@ func TestRunAwol_HealthyCacheEmptyListAllClear(t *testing.T) {
 	if edit := f.Calls()[1].Edit; edit.Content != nil {
 		got = *edit.Content
 	}
-	if !strings.Contains(got, "no users matching") || strings.Contains(got, awolDegradedFooter) {
+	if !strings.Contains(got, fmt.Sprintf(awolAllClearFormat, "1-7")) || strings.Contains(got, awolDegradedFooter) {
 		t.Fatalf("empty result should be the plain all-clear without the fallback warning.\nGot: %q", got)
 	}
 }
@@ -917,8 +912,8 @@ func TestRunAwol_MultipleWindowsMergedNoDoubleCount(t *testing.T) {
 	runAwol(f, awolRefDate, i)
 
 	line := lineContaining((*f.Calls()[1].Edit.Embeds)[0].Description, "Multi.M")
-	if !strings.Contains(line, "7d AWOL · last post 30d") {
-		t.Fatalf("overlapping windows must merge (7d AWOL, raw 30d).\nGot line: %q", line)
+	if !strings.Contains(line, awolFigures(7, 30)) {
+		t.Fatalf("overlapping windows must merge: want %q.\nGot line: %q", awolFigures(7, 30), line)
 	}
 }
 
@@ -956,7 +951,7 @@ func TestRunAwol_MalformedDateSkipsMemberNotReport(t *testing.T) {
 	if strings.Contains(desc, "Broken.B") {
 		t.Fatalf("skipped member must not render.\nGot:\n%s", desc)
 	}
-	if !strings.Contains(desc, "⚠️ 1 record skipped due to errors (reported)") {
+	if !strings.Contains(desc, awolSkippedNote(1)) {
 		t.Fatalf("report must carry the skipped-count note.\nGot:\n%s", desc)
 	}
 }
@@ -997,7 +992,7 @@ func TestRunAwol_MalformedUniformURLSkipsMemberNotReport(t *testing.T) {
 	if strings.Contains(desc, "Badjpg.B") {
 		t.Fatalf("skipped member must not render.\nGot:\n%s", desc)
 	}
-	if !strings.Contains(desc, "⚠️ 1 record skipped due to errors (reported)") {
+	if !strings.Contains(desc, awolSkippedNote(1)) {
 		t.Fatalf("report must carry the skipped-count note.\nGot:\n%s", desc)
 	}
 }
@@ -1030,7 +1025,7 @@ func TestRunAwol_BothMalformedRecordsSkippedTogether(t *testing.T) {
 			t.Fatalf("skipped member %q must not render.\nGot:\n%s", skipped, desc)
 		}
 	}
-	if !strings.Contains(desc, "⚠️ 2 records skipped due to errors (reported)") {
+	if !strings.Contains(desc, awolSkippedNote(2)) {
 		t.Fatalf("report must carry the plural skipped-count note.\nGot:\n%s", desc)
 	}
 }
@@ -1066,7 +1061,7 @@ func TestRunAwol_FileOutputCarriesSkippedNote(t *testing.T) {
 	if strings.Contains(body, "Baddate.D") {
 		t.Fatalf("skipped member must not render in file.\nGot:\n%s", body)
 	}
-	if !strings.Contains(body, "⚠️ 1 record skipped due to errors (reported)") {
+	if !strings.Contains(body, awolSkippedNote(1)) {
 		t.Fatalf("file report must carry the skipped-count note.\nGot:\n%s", body)
 	}
 }
@@ -1093,10 +1088,10 @@ func TestRunAwol_SkippedNoteOnNoAwolPath(t *testing.T) {
 	if edit.Content == nil {
 		t.Fatalf("expected text response on no-AWOL path")
 	}
-	if !strings.Contains(*edit.Content, "no users matching") {
+	if !strings.Contains(*edit.Content, fmt.Sprintf(awolAllClearFormat, "1-7")) {
 		t.Fatalf("expected no-AWOL message, got %q", *edit.Content)
 	}
-	if !strings.Contains(*edit.Content, "⚠️ 1 record skipped due to errors (reported)") {
+	if !strings.Contains(*edit.Content, awolSkippedNote(1)) {
 		t.Fatalf("no-AWOL response must carry the skipped-count note, got %q", *edit.Content)
 	}
 }
