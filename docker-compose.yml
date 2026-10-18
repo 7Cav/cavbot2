@@ -37,12 +37,12 @@ services:
       RECORDINGS_DIR: /recordings
     volumes:
       - cavbot2_recordings:/recordings
-    # edge is where Nginx Proxy Manager reaches the panel on port 8080. The
-    # port is not published on the host; the proxy is the only way in.
+    # Shared with the postgres service, so the bot reaches its store at
+    # postgres:5432. This file runs the bot locally and declares no external
+    # network. Production's stack lives on the production host, and README
+    # step 4 names the networks the bot joins there.
     networks:
-      - xenforo_internal
       - cavbot2_internal
-      - edge
 
   # The bot's own store (hubs, spawned channels). Pinned to a major because a
   # Postgres major changes the on-disk format, so a floating tag would one day
@@ -72,8 +72,4 @@ volumes:
   cavbot2_recordings:
 
 networks:
-  xenforo_internal:
-    external: true
-  edge:
-    external: true
   cavbot2_internal:
