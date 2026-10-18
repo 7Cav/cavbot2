@@ -185,9 +185,11 @@ type activeRecording struct {
 	// stopping is set once a stop has taken it, so a second stop doesn't.
 	stopping bool
 	// recorderSeen is set once the cache has shown the recorder in the
-	// channel, and cleared while it shows the recorder out of it
-	// rejoining.
-	recorderSeen bool
+	// channel, and cleared when it shows one of the recorder's own leaves.
+	// ownLeaves is the count of those the conn last reported, and
+	// ownLeavesDue how many of them the cache hasn't shown yet.
+	recorderSeen            bool
+	ownLeaves, ownLeavesDue int
 	// gap is the gap running now, nil while the recorder hears the
 	// channel, and gaps the gaps past 10 s that have ended, in order. The
 	// runtime's mutex guards both.

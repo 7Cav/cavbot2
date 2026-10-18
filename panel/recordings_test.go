@@ -208,7 +208,7 @@ type fakeVoiceConn struct {
 
 func (c *fakeVoiceConn) Leave(context.Context) {}
 
-func (c *fakeVoiceConn) Rejoining() bool { return false }
+func (c *fakeVoiceConn) OwnLeaves() int { return 0 }
 
 func (c *fakeVoiceConn) Receive(l voice.Listener) {
 	c.mu.Lock()

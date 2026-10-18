@@ -241,23 +241,36 @@ func TestRecordingGoesOnWhenTheStarterLeavesAndOthersStay(t *testing.T) {
 }
 
 // A recorder can leave the channel on its own to join it again, as when the
-// voice server refused the token it held after a drop. Its absence then
-// isn't the recorder leaving, and the recording goes on. Once the cache has
-// shown it back and it no longer rejoins, its leaving stops the recording.
+// voice server refused the token it held after a drop. That absence isn't
+// the recorder leaving, and the recording goes on, also when the bot's
+// cache shows the leave only after a voice event read the recorder still
+// in. Once the cache has shown it back, its leaving stops the recording.
 func TestRecordingGoesOnWhileItsRecorderLeavesToJoinAgain(t *testing.T) {
-	sc := newRecordScene(t, testRecorder)
-	sc.fake.setVoice(testRecorder, recordChannel)
-	sc.startIn(t, recStarter, recordChannel)
-	sc.voice.setRejoining(testRecorder, true)
+	for _, tc := range []struct {
+		name string
+		late bool
+	}{
+		{"leave shown at once", false},
+		{"leave shown late", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := newRecordScene(t, testRecorder)
+			sc.fake.setVoice(testRecorder, recordChannel)
+			sc.startIn(t, recStarter, recordChannel)
+			sc.voice.leaveToJoinAgain(testRecorder)
+			if tc.late {
+				sc.deliver(recOutsider.id, recordChannel)
+			}
 
-	sc.deliver(testRecorder, "")
-	sc.assertRunning(t, recordChannel)
+			sc.deliver(testRecorder, "")
+			sc.assertRunning(t, recordChannel)
 
-	sc.deliver(testRecorder, recordChannel)
-	sc.voice.setRejoining(testRecorder, false)
-	sc.deliver(testRecorder, "")
+			sc.deliver(testRecorder, recordChannel)
+			sc.deliver(testRecorder, "")
 
-	sc.assertStopped(t, recordChannel, store.RecordingEndRecorderLeft)
+			sc.assertStopped(t, recordChannel, store.RecordingEndRecorderLeft)
+		})
+	}
 }
 
 // The bot's cache can show the recorder in the channel only some time after

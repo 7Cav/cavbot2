@@ -275,8 +275,9 @@ func (a *channelAPI) RoundTrip(r *http.Request) (*http.Response, error) {
 // rejects never answers: Open tells pending, then waits out its context. One
 // that reachable rejects can't be dialed, as when the host's resolver answers
 // "no such host" for its hostname: Open dials again as disgo's gateway does.
-// One that refuses rejects a token closes the connection before its Ready,
-// and Open fails with the close, as disgo's gateway's does.
+// One that refusal names a close code for closes the connection before its
+// Ready with that code, and Open fails with the close, as disgo's gateway's
+// does.
 type answeringGateway struct {
 	disgovoice.Gateway
 	dave      godave.Session
@@ -286,7 +287,7 @@ type answeringGateway struct {
 	sent      func(disgovoice.Opcode)
 	answers   func(endpoint string) bool
 	reachable func(endpoint string) bool
-	refuses   func(token string) bool
+	refusal   func(token string) int
 	// daveVersion is the DAVE protocol version the voice server announces.
 	daveVersion uint16
 	// opening runs as an open at an endpoint completes, before Open
@@ -328,10 +329,9 @@ func (g *answeringGateway) Open(ctx context.Context, state disgovoice.State) err
 	if !g.holdsConn.CompareAndSwap(false, true) {
 		return discord.ErrGatewayAlreadyConnected
 	}
-	if g.refuses(state.Token) {
+	if code := g.refusal(state.Token); code != 0 {
 		g.holdsConn.Store(false)
-		return fmt.Errorf("failed to open voice gateway connection: %w",
-			&websocket.CloseError{Code: disgovoice.GatewayCloseEventCodeAuthenticationFailed.Code})
+		return fmt.Errorf("failed to open voice gateway connection: %w", &websocket.CloseError{Code: code})
 	}
 	identified := g.opens.Add(1) == 1
 	if !g.answers(state.Endpoint) {
@@ -451,8 +451,13 @@ type callHarness struct {
 	// inChannel is whether Discord has the recorder in the call's
 	// channel: it answered a join and no leave has gone out since.
 	inChannel bool
-	// refused is the tokens every voice server refuses.
-	refused []string
+	// refused is the tokens every voice server refuses, with refusedWith,
+	// 4004 when zero. refusals is how many voice state updates had gone
+	// out at each refusal, and atRefusal, when set, runs at each.
+	refused     []string
+	refusedWith int
+	refusals    []int
+	atRefusal   func()
 	// atLeave, when set, runs as Discord receives each leave.
 	atLeave func()
 	// unreachable is the voice servers the recorder can't dial, and dials
@@ -491,7 +496,7 @@ func (h *callHarness) newGateway(dave godave.Session, onEvent disgovoice.EventHa
 		version = 0
 	}
 	return &answeringGateway{dave: dave, onEvent: onEvent, onClose: onClose, opened: h.opened, sent: h.sentOp,
-		answers: h.answersAt, reachable: h.reachable, refuses: h.refuses, daveVersion: version, opening: h.opening,
+		answers: h.answersAt, reachable: h.reachable, refusal: h.refusal, daveVersion: version, opening: h.opening,
 		describeLate: h.describeLate.Load(), pending: h.pending}
 }
 
@@ -521,18 +526,37 @@ func (h *callHarness) reachable(endpoint string) bool {
 	return !h.unreachable[endpoint]
 }
 
-// refuses reports whether the voice servers refuse token.
-func (h *callHarness) refuses(token string) bool {
+// refusal is the close code the voice servers refuse token with, 0 when
+// they don't.
+func (h *callHarness) refusal(token string) int {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	return slices.Contains(h.refused, token)
+	if !slices.Contains(h.refused, token) {
+		h.mu.Unlock()
+		return 0
+	}
+	h.refusals = append(h.refusals, len(h.updates))
+	code, atRefusal := h.refusedWith, h.atRefusal
+	h.mu.Unlock()
+	if atRefusal != nil {
+		atRefusal()
+	}
+	if code == 0 {
+		code = disgovoice.GatewayCloseEventCodeAuthenticationFailed.Code
+	}
+	return code
 }
 
-// refuse has every voice server refuse tokens from now on.
+// refuse has every voice server refuse tokens from now on, with 4004.
 func (h *callHarness) refuse(tokens ...string) {
+	h.refuseWith(0, tokens...)
+}
+
+// refuseWith has every voice server refuse tokens from now on, closing
+// with code.
+func (h *callHarness) refuseWith(code int, tokens ...string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.refused = tokens
+	h.refused, h.refusedWith = tokens, code
 }
 
 // answerWith has Discord name a voice server with token in its answers to a
@@ -903,6 +927,38 @@ func TestRecorderKeepsDialingAVoiceServerItCantReachAfterADrop(t *testing.T) {
 	})
 }
 
+// A voice server can close the identify before its Ready for a reason other
+// than the token, such as 4014 when a moderator kicks the recorder, and
+// Discord's voice state taking the recorder out can reach it after that
+// close. The recorder doesn't take the close for a refused token: it never
+// joins again after it, so the kick holds.
+func TestRecorderStaysOutWhenItsVoiceServerClosesForAKick(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.start()
+		defer h.hangUp(conn)
+		h.refuseWith(disgovoice.GatewayCloseEventCodeDisconnected.Code, "token-2")
+		h.mu.Lock()
+		h.atRefusal = func() { time.AfterFunc(100*time.Millisecond, h.leftChannel) }
+		h.mu.Unlock()
+
+		go h.endConnection(errResumeRefused)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		h.mu.Lock()
+		refusals := slices.Clone(h.refusals)
+		h.mu.Unlock()
+		if len(refusals) == 0 {
+			t.Fatal("the voice server never closed the identify")
+		}
+		if after := h.sent()[refusals[0]:]; slices.ContainsFunc(after, func(u voiceUpdate) bool { return !u.leaves() }) {
+			t.Errorf("voice state updates after the 4014 = %v, want no join", after)
+		}
+	})
+}
+
 // The voice server can refuse the token the recorder held after a drop,
 // closing the connection before its Ready. The recorder then leaves the
 // channel and joins it again, and identifies with the token Discord's
@@ -981,26 +1037,19 @@ func TestRecorderLeavesOnlyOnceForARefusedToken(t *testing.T) {
 }
 
 // The recording runs on while the recorder leaves the channel to join it
-// again, so the recorder's connection says it is rejoining by the time
-// Discord hears that leave. Once Discord has let the recorder back in, its
-// connection no longer says so, and its next absence is a leave, though the
-// voice server Discord named can't be reached yet.
-func TestRecorderSaysItIsRejoiningWhileItLeavesToJoinAgain(t *testing.T) {
+// again, so the recorder's connection has counted that leave as its own by
+// the time Discord hears it.
+func TestRecorderCountsItsOwnLeaveBeforeDiscordHearsIt(t *testing.T) {
 	recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
 		h := newCallHarness(t)
-		h.transportOnly.Store(true)
-		l := listen(nil)
-		conn := h.record(l)
+		conn := h.start()
 		defer h.hangUp(conn)
 		h.refuse("token-2")
 		h.answerWith("token-4")
-		var rejoining []bool
+		var counted []int
 		h.mu.Lock()
-		h.atLeave = func() {
-			rejoining = append(rejoining, conn.Rejoining())
-			h.setReachable(oldEndpoint, false)
-		}
+		h.atLeave = func() { counted = append(counted, conn.OwnLeaves()) }
 		h.mu.Unlock()
 
 		go h.endConnection(errResumeRefused)
@@ -1009,16 +1058,9 @@ func TestRecorderSaysItIsRejoiningWhileItLeavesToJoinAgain(t *testing.T) {
 
 		h.mu.Lock()
 		h.atLeave = nil
-		back := h.inChannel
 		h.mu.Unlock()
-		if !slices.Equal(rejoining, []bool{true}) {
-			t.Errorf("Rejoining as Discord received each leave = %v, want true", rejoining)
-		}
-		if got := l.gapEvents(); !back || !slices.Equal(got, []string{gapStarted}) {
-			t.Fatalf("a minute after the drop: back in the channel = %v, gap events = %v, want back in and the gap still open", back, got)
-		}
-		if conn.Rejoining() {
-			t.Error("Rejoining once Discord let the recorder back in = true, want false")
+		if !slices.Equal(counted, []int{1}) {
+			t.Errorf("own leaves counted as Discord received each leave = %v, want 1", counted)
 		}
 	})
 }
