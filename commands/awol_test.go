@@ -567,8 +567,9 @@ func TestRunAwolJustBeforeUTCMidnightReportsWithoutTheFallbackWarning(t *testing
 }
 
 // A needs-review LOA subtracts none of its days, so its trooper keeps their
-// full days AWOL.
-func TestRunAwolNeedsReviewLOASubtractsNoneOfItsDays(t *testing.T) {
+// full days AWOL. Their row carries the needs-review tag linking the LOA's
+// thread, and its glyph still says how far past the limit they are.
+func TestRunAwolNeedsReviewLOAKeepsFullDaysAndTagsTheRow(t *testing.T) {
 	// Last post 2026-04-15: (04-15, 05-15] is 30 dates, 23d AWOL. The LOA's
 	// dates read and cover 04-16..05-05, but it runs more than 14 days.
 	roster := utils.LiteRosterResponse{
@@ -592,6 +593,51 @@ func TestRunAwolNeedsReviewLOASubtractsNoneOfItsDays(t *testing.T) {
 	}
 	if !strings.Contains(line, awolFigures(23, 30)) {
 		t.Fatalf("want the full %q.\nGot line: %q", awolFigures(23, 30), line)
+	}
+	if !strings.Contains(line, awolNeedsReviewTag) || !lineLinksThread(line, "7005") {
+		t.Fatalf("row must carry %s and link thread 7005.\nGot line: %q", awolNeedsReviewTag, line)
+	}
+	if !strings.HasPrefix(line, "🔴") {
+		t.Fatalf("23d AWOL must keep the 🔴 glyph.\nGot line: %q", line)
+	}
+}
+
+// A needs-review LOA tags the row only when it was posted no earlier than
+// 14 UTC dates before the trooper's last forum post, so months-old broken
+// threads stay off the report.
+func TestRunAwolTagsANeedsReviewLOAPostedUpTo14DaysBeforeTheLastPost(t *testing.T) {
+	cases := []struct {
+		name   string
+		posted string
+		tagged bool
+	}{
+		// 2026-03-31 is 15 dates before the 2026-04-15 last post.
+		{"15 days before", "2026-03-31 23:00:00", false},
+		// 2026-04-01 is 14 dates before, though more than 14×24 hours.
+		{"14 days before", "2026-04-01 09:00:00", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			roster := utils.LiteRosterResponse{
+				LiteProfiles: map[string]utils.LiteProfileResponse{
+					"100": forumMember("Early.E", "81", "100", "2026-04-15 12:00:00"),
+				},
+			}
+			serveCavAPI(t, awolRefDate, roster, stubLOA{
+				threadID: "7010", postDate: mustParseAwolDate(tc.posted),
+				userID: "81", username: "Early.E",
+				start: "2026-04-01", end: "2026-04-30",
+				needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
+			})
+			f := &fakeResponder{}
+			runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+
+			line := lineContaining(awolReport(t, f), "Early.E")
+			tagged := strings.Contains(line, awolNeedsReviewTag) && lineLinksThread(line, "7010")
+			if tagged != tc.tagged {
+				t.Fatalf("tagged = %v, want %v.\nGot line: %q", tagged, tc.tagged, line)
+			}
+		})
 	}
 }
 
@@ -713,6 +759,122 @@ func TestRunAwol_ActiveLOAStillAWOL(t *testing.T) {
 	}
 	if !strings.Contains(line, awolFigures(12, 25)) {
 		t.Fatalf("want %q.\nGot line: %q", awolFigures(12, 25), line)
+	}
+}
+
+// A trooper with an LOA that includes today and a needs-review LOA gets both
+// tags, each linking its own thread, and keeps the ⚪ glyph.
+func TestRunAwolRowCarriesBothTheLOATagAndTheNeedsReviewTag(t *testing.T) {
+	// Last post 2026-04-20; the open LOA covers 05-10..05-15 of the gap,
+	// leaving 12d AWOL.
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": forumMember("Both.B", "82", "100", "2026-04-20 12:00:00"),
+		},
+	}
+	serveCavAPI(t, awolRefDate, roster,
+		stubLOA{
+			threadID: "4300", postDate: mustParseAwolDate("2026-05-09 18:00:00"),
+			userID: "82", username: "Both.B",
+			start: "2026-05-10", end: "2026-05-31",
+		},
+		stubLOA{
+			threadID: "7020", postDate: mustParseAwolDate("2026-04-25 18:00:00"),
+			userID: "82", username: "Both.B",
+			start: "2026-04-21", end: "2026-05-09",
+			needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
+		},
+	)
+	f := &fakeResponder{}
+	runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+
+	line := lineContaining(awolReport(t, f), "Both.B")
+	if !strings.HasPrefix(line, "⚪") {
+		t.Fatalf("a trooper on LOA today keeps the ⚪ glyph.\nGot line: %q", line)
+	}
+	if !strings.Contains(line, awolLOATag) || !strings.Contains(line, awolNeedsReviewTag) {
+		t.Fatalf("row must carry both %s and %s.\nGot line: %q", awolLOATag, awolNeedsReviewTag, line)
+	}
+	if !lineLinksThread(line, "4300") || !lineLinksThread(line, "7020") {
+		t.Fatalf("row must link both threads 4300 and 7020.\nGot line: %q", line)
+	}
+}
+
+// A needs-review LOA whose Subject the API couldn't resolve, userId "0",
+// tags nobody, even a listed member whose username equals the Subject's.
+func TestRunAwolNeedsReviewLOANamingNoMemberTagsNobody(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": forumMember("Same.S", "88", "100", "2026-04-15 12:00:00"),
+		},
+	}
+	serveCavAPI(t, awolRefDate, roster, stubLOA{
+		threadID: "7040", postDate: mustParseAwolDate("2026-04-16 09:00:00"),
+		userID: "0", username: "Same.S",
+		start: "2026-04-16", end: "2026-05-05",
+		needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
+	})
+	f := &fakeResponder{}
+	runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+
+	report := awolReport(t, f)
+	line := lineContaining(report, "Same.S")
+	if line == "" {
+		t.Fatalf("Same.S must stay listed.\nGot:\n%s", report)
+	}
+	if strings.Contains(line, awolNeedsReviewTag) {
+		t.Fatalf("an LOA naming no member must tag nobody.\nGot line: %q", line)
+	}
+}
+
+// A report sent as a file carries the needs-review tag on the trooper's
+// entry, whether force_file_output asked for the file or the report was too
+// large for embeds.
+func TestRunAwolFileReportCarriesTheNeedsReviewTag(t *testing.T) {
+	cases := []struct {
+		name      string
+		others    int
+		forceFile bool
+	}{
+		{"force_file_output", 1, true},
+		// 1,000 rows of about 80 bytes overflow 10 embeds of 4,096.
+		{"too large for embeds", 1000, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			roster := utils.LiteRosterResponse{
+				LiteProfiles: map[string]utils.LiteProfileResponse{
+					"99": forumMember("Review.F", "83", "99", "2026-04-15 12:00:00"),
+				},
+			}
+			for n := range tc.others {
+				id := fmt.Sprintf("%d", 1000+n)
+				roster.LiteProfiles[id] = awolMember(fmt.Sprintf("M%04d", n), id, "2026-03-01 12:00:00")
+			}
+			serveCavAPI(t, awolRefDate, roster, stubLOA{
+				threadID: "7030", postDate: mustParseAwolDate("2026-04-16 09:00:00"),
+				userID: "83", username: "Review.F",
+				start: "2026-04-16", end: "2026-05-05",
+				needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
+			})
+			f := &fakeResponder{}
+			runAwol(f, awolRefDate, fakeAppCommandInteraction(
+				stringOption("position", "1-7"),
+				boolOption("force_file_output", tc.forceFile),
+			))
+
+			edit := finalEdit(t, f)
+			if len(edit.Files) != 1 {
+				t.Fatalf("want the report as one file; the run last showed %q", lastReply(t, f.Calls()))
+			}
+			body, err := io.ReadAll(edit.Files[0].Reader)
+			if err != nil {
+				t.Fatalf("reading file: %v", err)
+			}
+			if line := lineContaining(string(body), "Review.F"); !strings.Contains(line, awolNeedsReviewTag) {
+				t.Fatalf("Review.F's entry must carry %s.\nGot line: %q", awolNeedsReviewTag, line)
+			}
+		})
 	}
 }
 
