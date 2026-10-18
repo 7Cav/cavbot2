@@ -633,9 +633,11 @@ func TestRunAwolTagsANeedsReviewLOAPostedUpTo14DaysBeforeTheLastPost(t *testing.
 			runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 			line := lineContaining(awolReport(t, f), "Early.E")
-			tagged := strings.Contains(line, awolNeedsReviewTag) && lineLinksThread(line, "7010")
-			if tagged != tc.tagged {
+			if tagged := strings.Contains(line, awolNeedsReviewTag); tagged != tc.tagged {
 				t.Fatalf("tagged = %v, want %v.\nGot line: %q", tagged, tc.tagged, line)
+			}
+			if tc.tagged && !lineLinksThread(line, "7010") {
+				t.Fatalf("the tag must link thread 7010.\nGot line: %q", line)
 			}
 		})
 	}
