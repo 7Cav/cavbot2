@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -545,9 +544,8 @@ func needsReviewByForumUserID(loas []utils.LOA) map[string][]awolReview {
 		if l.State != utils.LOAStateNeedsReview {
 			continue
 		}
-		threadID, _ := strconv.ParseInt(l.ThreadID, 10, 64)
 		byID[l.Subject.UserID] = append(byID[l.Subject.UserID], awolReview{
-			threadID: threadID,
+			threadID: loaThreadID(l),
 			posted:   time.Unix(l.PostDate, 0),
 		})
 	}
