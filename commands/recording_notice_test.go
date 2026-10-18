@@ -241,32 +241,45 @@ func TestRecordingGoesOnWhenTheStarterLeavesAndOthersStay(t *testing.T) {
 }
 
 // A recorder can leave the channel on its own to join it again, as when the
-// voice server refused the token it held after a drop. That absence isn't
-// the recorder leaving, and the recording goes on, also when the bot's
-// cache shows the leave only after a voice event read the recorder still
-// in. Once the cache has shown it back, its leaving stops the recording.
+// voice server refused the token it held after a drop. For ownLeaveGrace
+// after the runtime learns of it, the recorder's absence isn't it leaving,
+// and the recording goes on, also when the bot's cache shows the leave only
+// after a voice event read the recorder still in. Past that, the recorder
+// out of the channel is the recorder leaving again, with or without another
+// voice event.
 func TestRecordingGoesOnWhileItsRecorderLeavesToJoinAgain(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		late bool
+		name  string
+		cause func(t *testing.T, sc *recordScene)
 	}{
-		{"leave shown at once", false},
-		{"leave shown late", true},
+		{"leave shown at once", func(t *testing.T, sc *recordScene) {
+			sc.deliver(testRecorder, "")
+			sc.assertRunning(t, recordChannel)
+			sc.deliver(testRecorder, recordChannel)
+			sc.clock.advance(ownLeaveGrace)
+			sc.deliver(testRecorder, "")
+		}},
+		{"leave shown late", func(t *testing.T, sc *recordScene) {
+			sc.deliver(recOutsider.id, recordChannel)
+			sc.deliver(testRecorder, "")
+			sc.assertRunning(t, recordChannel)
+			sc.deliver(testRecorder, recordChannel)
+			sc.clock.advance(ownLeaveGrace)
+			sc.deliver(testRecorder, "")
+		}},
+		{"out past the grace", func(t *testing.T, sc *recordScene) {
+			sc.deliver(testRecorder, "")
+			sc.assertRunning(t, recordChannel)
+			sc.clock.advance(ownLeaveGrace)
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sc := newRecordScene(t, testRecorder)
 			sc.fake.setVoice(testRecorder, recordChannel)
 			sc.startIn(t, recStarter, recordChannel)
 			sc.voice.leaveToJoinAgain(testRecorder)
-			if tc.late {
-				sc.deliver(recOutsider.id, recordChannel)
-			}
 
-			sc.deliver(testRecorder, "")
-			sc.assertRunning(t, recordChannel)
-
-			sc.deliver(testRecorder, recordChannel)
-			sc.deliver(testRecorder, "")
+			tc.cause(t, sc)
 
 			sc.assertStopped(t, recordChannel, store.RecordingEndRecorderLeft)
 		})

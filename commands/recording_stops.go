@@ -24,6 +24,10 @@ const recordingCap = 6 * time.Hour
 // its mix has room.
 const recordingMinFreeDisk uint64 = 1 << 30
 
+// ownLeaveGrace is how long after the runtime learns of one of the
+// recorder's own leaves the recorder out of the channel isn't it leaving.
+const ownLeaveGrace = 10 * time.Second
+
 // recordingDiskCheckInterval is how often a running recording reads the
 // free space.
 const recordingDiskCheckInterval = 30 * time.Second
@@ -110,23 +114,21 @@ func (r *RecordingRuntime) checkChannels() {
 		// The cache can show the recorder in the channel only some time
 		// after its join returns, so it counts as leaving only once the
 		// cache has shown it there. The recorder can leave on its own to
-		// join again, and the cache can show that leave late. Each such
-		// absence uses one up, and the recorder counts as leaving again only
-		// once the cache has shown it back.
+		// join again, and the cache shows that leave and the join after it
+		// a little after the recorder sends them, so for ownLeaveGrace
+		// after the runtime learns of the leave, its absence isn't it
+		// leaving. A check at the end of that judges the channel then.
 		recorderIn := snap.channelOf(rec.row.RecorderID) == rec.row.ChannelID
-		if n := rec.conn.OwnLeaves(); n > rec.ownLeaves {
-			rec.ownLeavesDue += n - rec.ownLeaves
-			rec.ownLeaves = n
-		}
-		switch {
-		case recorderIn:
+		if recorderIn {
 			rec.recorderSeen = true
-		case rec.recorderSeen && rec.ownLeavesDue > 0:
-			rec.ownLeavesDue--
-			rec.recorderSeen = false
 		}
+		if n := rec.conn.OwnLeaves(); n > rec.ownLeaves {
+			rec.ownLeaves, rec.ownLeaveAt = n, recordingNow()
+			recordingAfterFunc(ownLeaveGrace, r.recheckChannels)
+		}
+		leftOnItsOwn := !rec.ownLeaveAt.IsZero() && recordingNow().Sub(rec.ownLeaveAt) < ownLeaveGrace
 		switch {
-		case rec.recorderSeen && !recorderIn:
+		case rec.recorderSeen && !recorderIn && !leftOnItsOwn:
 			rec.stopping = true
 			stops = append(stops, taken{rec, store.RecordingEndRecorderLeft})
 		case !r.holdsHuman(snap, rec.row.ChannelID):
@@ -138,6 +140,12 @@ func (r *RecordingRuntime) checkChannels() {
 	for _, s := range stops {
 		r.finish(s.rec, s.end, "")
 	}
+}
+
+// recheckChannels is checkChannels on a timer's goroutine.
+func (r *RecordingRuntime) recheckChannels() {
+	defer utils.RecoverPanic("recording-own-leave-check")
+	r.checkChannels()
 }
 
 // HandleChannelDelete stops the recording of a channel deleted while it
