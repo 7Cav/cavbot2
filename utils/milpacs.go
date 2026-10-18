@@ -305,3 +305,11 @@ func GetRanks(ctx context.Context) (*RanksResponse, error) {
 func GetLOAs(ctx context.Context, endedSince time.Time) (*LOAsResponse, error) {
 	return makeAPIRequest[LOAsResponse](ctx, "loas?endedSince="+endedSince.UTC().Format(time.DateOnly), "loas")
 }
+
+// GetCurrentLOAs fetches every open and upcoming LOA, plus the needs-review
+// LOAs posted in the 14 days before the API's UTC today. Like GetLOAs, each
+// answer is the whole set, and any error, ErrNotFound included, means the
+// LOAs couldn't be read.
+func GetCurrentLOAs(ctx context.Context) (*LOAsResponse, error) {
+	return makeAPIRequest[LOAsResponse](ctx, "loas", "loas")
+}

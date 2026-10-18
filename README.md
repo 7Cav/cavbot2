@@ -129,7 +129,7 @@ Not checked at startup, but each one silently disables something:
 |----------|-----------------|
 | `BEARER` | API token for `api.7cav.us`. Every milpac lookup fails with no startup error. Check this first if `/milpac`, `/awol` or `/afsm` come back empty. The startup rank ladder check also needs it and logs `Rank ladder check skipped, ranks fetch failed` once without it. |
 | `CAV_API_BASE_URL` | Lookups go to the public address, `https://api.7cav.us`. Set it to the 7Cav API's origin, meaning its scheme, host and optional port, to send them somewhere else. Production runs `http://7cav-api:11000`, the API's own container on the Docker network, so lookups never leave the host for Cloudflare. The bot adds `/api/v1` itself and drops a trailing slash. A value with a path, user info, a query or a fragment, a scheme other than `http` or `https`, no host, or one that doesn't parse leaves lookups on the public address. The bot then logs `CAV_API_BASE_URL rejected` with the value, sends one Sentry event, and keeps running. Every start logs the address in use as `7Cav API address`, which shows whether a value in `.env` reached the container. |
-| `FORUM_DB_DSN` | LOA cache stays empty, so `/loa` returns nothing. Left blank the bot logs `FORUM_DB_DSN not set, LOA cache disabled` once at startup — but `.env.example` ships a placeholder DSN, which is syntactically valid, so after `cp` you instead get `LOA cache refresh failed` once per node ID, immediately at startup and every 15 minutes after. Both mean the same thing. The production host `xenforo-db` resolves only inside the `xenforo_internal` Docker network. |
+| `FORUM_DB_DSN` | Nothing a member sees. `/awol` and `/loa` read LOAs from the 7Cav API, and only the old LOA cache, which no command reads, fills from this database. Left blank, the bot logs `FORUM_DB_DSN not set, LOA cache disabled` once at startup. `.env.example` ships a placeholder DSN that parses, so after `cp` you get `LOA cache refresh failed` once per node ID instead, at startup and every 15 minutes after. Both mean the same thing. The production host `xenforo-db` resolves only inside the `xenforo_internal` Docker network. |
 | `LOA_NODE_IDS` | The code default is `180` alone, though `.env.example` already sets the five nodes production scans (`180,400,540,178,369`), so a copied `.env` never falls back. |
 | `FOXHOLE_ROLE_BASE_NAME` | Defaults to `Verified Foxhole`, what the roles are named in Discord now. Every `/foxhole` subcommand composes its role names from this and matches Discord **exactly**, so a value that doesn't reproduce the role name character for character fails all of them with `role not found` and changes nothing. The resolved value is logged at startup as `Foxhole role base name resolved`. Until the cleanup release that drops the old command names, the bot also reads the old variable, `WARDEN_ROLE_BASE_NAME`, when this one is unset or empty, and logs a warning naming it at startup. |
 | `LOG_LEVEL` | Defaults to `INFO`. Accepts `DEBUG`, `INFO`, `WARN`, `ERROR` — **uppercase only**, anything else silently means `INFO` (including the `default` that `.env.example` ships). `DEBUG` shows per-post LOA parse failures. |
@@ -178,8 +178,8 @@ docker network create xenforo_internal   # once, if you don't already have it
 docker compose up
 ```
 
-Only the real `xenforo_internal` network reaches the forum database; a network
-you created yourself gets the bot running, but `/loa` stays empty.
+Only the real `xenforo_internal` network reaches the forum database. No command
+reads that database any more, so a network you created yourself works too.
 
 Compose also starts a `postgres:18-alpine` service for the bot's own store,
 with its data in the `cavbot2_pgdata` volume. The bot waits for its healthcheck
@@ -248,7 +248,7 @@ Sunday, a real person gets your test output. Prefer a test guild.
 | `Found .env but could not load it` | The file exists but is malformed — usually an unquoted value containing `#`, or a stray line with no `=` |
 | `Error opening connection: websocket: close 4004` | Discord rejected the token. Re-copy `DISCORD_TOKEN` — a truncated paste or a token reset since you last copied it both land here |
 | `Error opening connection: websocket: close 4014` | Disallowed intent. Enable the Server Members Intent in the Developer Portal |
-| `FORUM_DB_DSN not set` at startup, or `LOA cache refresh failed` every 15 minutes | Expected without a reachable forum database; only affects `/loa` |
+| `FORUM_DB_DSN not set` at startup, or `LOA cache refresh failed` every 15 minutes | Expected without a reachable forum database. No command reads it, so members see no difference |
 | `Bot database not answering, retrying` nine times, then a panic `Bot store unavailable` | `BOT_DB_DSN` names a Postgres that is not there. The compose host `postgres` resolves only inside compose; for `go run .` blank the variable or point it at a local server |
 | Panic `Bot store unavailable: open bot database: the DSN does not parse` | `BOT_DB_DSN` is malformed. The value is not echoed because it carries a password; compare it against the form in `.env.example` |
 | A panic line ending `[recovered, repanicked]`, its stack trace starting in `StartWatch.ReportFailure` | Expected for a failed start with `SENTRY_DSN` set. The bot caught the panic to send it to Sentry, then let the same panic go on. The frames below `panic(...)` name the step that failed |
