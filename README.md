@@ -128,7 +128,7 @@ Not checked at startup, but each one silently disables something:
 | Variable | Effect if unset |
 |----------|-----------------|
 | `BEARER` | API token for `api.7cav.us`. Every milpac lookup fails with no startup error. Check this first if `/milpac`, `/awol` or `/afsm` come back empty. The startup rank ladder check also needs it and logs `Rank ladder check skipped, ranks fetch failed` once without it. `/awol` and `/loa` also need the token to hold the `read:loas` scope. Without it `/awol` reports raw inactivity with a warning that no LOA days were subtracted, and `/loa` says LOAs couldn't be read. |
-| `CAV_API_BASE_URL` | Lookups go to the public address, `https://api.7cav.us`. Set it to the 7Cav API's origin, meaning its scheme, host and optional port, to send them somewhere else. Production runs `http://7cav-api:11000`, the API's own container on the Docker network, so lookups never leave the host for Cloudflare. The bot adds `/api/v1` itself and drops a trailing slash. A value with a path, user info, a query or a fragment, a scheme other than `http` or `https`, no host, or one that doesn't parse leaves lookups on the public address. The bot then logs `CAV_API_BASE_URL rejected` with the value, sends one Sentry event, and keeps running. Every start logs the address in use as `7Cav API address`, which shows whether a value in `.env` reached the container. |
+| `CAV_API_BASE_URL` | Lookups go to the public address, `https://api.7cav.us`. Set it to the 7Cav API's origin, meaning its scheme, host and optional port, to send them somewhere else. Production's stack sets `http://7cav-api:11000`, the API's own container on the production host, so lookups never leave the host for Cloudflare. [Run](#4-run) names the networks that carry them. The bot adds `/api/v1` itself and drops a trailing slash. A value with a path, user info, a query or a fragment, a scheme other than `http` or `https`, no host, or one that doesn't parse leaves lookups on the public address. The bot then logs `CAV_API_BASE_URL rejected` with the value, sends one Sentry event, and keeps running. Every start logs the address in use as `7Cav API address`, which shows whether a value in `.env` reached the container. |
 | `FOXHOLE_ROLE_BASE_NAME` | Defaults to `Verified Foxhole`, what the roles are named in Discord now. Every `/foxhole` subcommand composes its role names from this and matches Discord **exactly**, so a value that doesn't reproduce the role name character for character fails all of them with `role not found` and changes nothing. The resolved value is logged at startup as `Foxhole role base name resolved`. Until the cleanup release that drops the old command names, the bot also reads the old variable, `WARDEN_ROLE_BASE_NAME`, when this one is unset or empty, and logs a warning naming it at startup. |
 | `LOG_LEVEL` | Defaults to `INFO`. Accepts `DEBUG`, `INFO`, `WARN`, `ERROR` — **uppercase only**, anything else silently means `INFO` (including the `default` that `.env.example` ships). |
 | `DISCORDGO_LOG_LEVEL` | Defaults to `ERROR`, so discordgo reports only its own failures. Accepts `ERROR`, `WARN`, `INFO`, `DEBUG`; anything else means `ERROR`. `WARN` adds the frame the gateway sent when startup fails with `Discord session unavailable`. `DEBUG` also needs `LOG_LEVEL=DEBUG`, and logs every gateway event discordgo does not recognise with its full payload. |
@@ -148,7 +148,7 @@ reaches the container.
 
 ### 4. Run
 
-**Locally** — the bot reads `.env` from the working directory at startup, so
+**Locally.** The bot reads `.env` from the working directory at startup, so
 having filled it in is enough:
 
 ```bash
@@ -165,19 +165,36 @@ Anything already exported in your shell wins over the file, which is how the
 container gets its configuration. If you export `DISCORD_TOKEN` and then wonder
 why editing `.env` changes nothing, that is why.
 
-**In Docker** — Compose reads `.env` itself and injects the values, and `.env`
-is excluded from the image by `.dockerignore`, so nothing secret is baked in.
-Compose does not build the image (the service declares `image:` with no
-`build:`), and the network is external, so make sure both exist before `up`:
+**In Docker.** The repo's `docker-compose.yml` is for running the bot
+locally. Compose reads `.env` itself and injects the values, and `.dockerignore`
+keeps `.env` out of the image, so nothing secret is baked in. The service names
+an `image:` and has no `build:`, so Compose won't build the image. Build it
+first:
 
 ```bash
 docker build -t cavbot2:latest .
-docker network create xenforo_internal   # once, if you don't already have it
 docker compose up
 ```
 
-A network you created yourself works too. With `CAV_API_BASE_URL` unset, the bot
-calls nothing on it.
+The file joins no network you have to create. The bot and its Postgres share
+`cavbot2_internal`, which `docker compose up` creates and `docker compose down`
+removes.
+
+Production doesn't run this file. Its stack lives on the production host, and
+the maintainer keeps it there. A deploy sends that host only a version tag, and
+the host pulls `7cav/cavbot2:<tag>` into its own stack. There the bot joins two
+networks this file leaves out:
+
+| Network | What it carries for the bot |
+|---------|-----------------------------|
+| `edge` | Nginx Proxy Manager's requests to the panel on port 8080. The port isn't published on the host, so the proxy is the only way in. Also a route to the 7Cav API. |
+| `xenforo_internal` | A route to the 7Cav API. It also carried the forum database connection until the bot stopped reading that database. |
+
+The 7Cav API's container, `7cav-api`, is on both networks, so
+`CAV_API_BASE_URL=http://7cav-api:11000` reaches the API over either one
+without leaving the host. Dropping `xenforo_internal` from production's stack
+leaves lookups working over `edge`. Dropping `edge` cuts the proxy off from the
+panel.
 
 Compose also starts a `postgres:18-alpine` service for the bot's own store,
 with its data in the `cavbot2_pgdata` volume. The bot waits for its healthcheck
@@ -272,7 +289,6 @@ Sunday, a real person gets your test output. Prefer a test guild.
 | `Bot member lacks Administrator` at startup, and a Sentry event when `SENTRY_DSN` is set | The bot's role on the guild lacks Administrator. Grant it; the bot keeps running but spawning, handover and `/foxhole` fail at the next call |
 | `Rank ladder drift` at startup, and a Sentry event when `SENTRY_DSN` is set | The abbreviations or order of `tempVCRankRoles` in `commands/temp_vc.go` differ from the milpacs ranks endpoint. The event lists the positions that differ |
 | Compose says `pull access denied` for `cavbot2:latest` | The image was never built locally — run `docker build -t cavbot2:latest .` |
-| Compose says network `xenforo_internal` not found | Create it, or join the host that has it |
 | golangci-lint stops with `used to build golangci-lint is lower than the targeted Go version` | Your golangci-lint was built with an older Go than the `toolchain` line in `go.mod`. Install a build made with a Go at least as new as that line. The `targeted Go version` in the message is the Go version golangci-lint needs |
 
 ## Testing
