@@ -25,6 +25,13 @@ func callLOAsAlongside(call func() (*utils.LOAsResponse, error)) <-chan loasAnsw
 	return answer
 }
 
+// loaThreadID reads an LOA's thread ID. One that doesn't parse reads as 0,
+// so the LOA shows with no thread link.
+func loaThreadID(l utils.LOA) int64 {
+	threadID, _ := strconv.ParseInt(l.ThreadID, 10, 64)
+	return threadID
+}
+
 // loaEntryOf reads an LOA's dates and thread, reporting false with a
 // warning when its dates don't read. A thread ID that doesn't parse leaves
 // ThreadID 0, so the LOA shows with no thread link.
@@ -36,11 +43,10 @@ func loaEntryOf(l utils.LOA) (utils.LOAEntry, bool) {
 			"thread_id", l.ThreadID, "start", l.StartDate, "end", l.EndDate)
 		return utils.LOAEntry{}, false
 	}
-	threadID, _ := strconv.ParseInt(l.ThreadID, 10, 64)
 	return utils.LOAEntry{
 		Username:  l.Subject.Username,
 		StartDate: start,
 		EndDate:   end,
-		ThreadID:  threadID,
+		ThreadID:  loaThreadID(l),
 	}, true
 }

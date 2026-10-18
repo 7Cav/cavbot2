@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -272,11 +271,10 @@ func loaUsersByState(roster *utils.LiteRosterResponse, loas []utils.LOA) (active
 		}
 		switch l.State {
 		case utils.LOAStateNeedsReview:
-			threadID, _ := strconv.ParseInt(l.ThreadID, 10, 64)
 			reviews = append(reviews, loaReview{
 				Username:  member.User.Username,
 				MilpacUrl: milpacURLOf(member),
-				ThreadID:  threadID,
+				ThreadID:  loaThreadID(l),
 				Problem:   loaReviewProblem(l.ReviewReason),
 			})
 		case utils.LOAStateOpen, utils.LOAStateUpcoming:
