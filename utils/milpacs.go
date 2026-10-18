@@ -60,7 +60,9 @@ type LOAsResponse struct {
 // LOA is one LOA as the 7Cav API serves it, one per LOA thread. StartDate
 // and EndDate are YYYY-MM-DD dates, or empty on a needs-review LOA.
 type LOA struct {
-	ThreadID  string     `json:"threadId"`
+	ThreadID string `json:"threadId"`
+	// PostDate is when the LOA's thread was posted, in unix seconds.
+	PostDate  int64      `json:"postDate"`
 	Subject   LOASubject `json:"subject"`
 	StartDate string     `json:"startDate"`
 	EndDate   string     `json:"endDate"`
@@ -70,11 +72,12 @@ type LOA struct {
 // The states the 7Cav API gives an LOA it can take as written. An LOA is
 // open from its start date through its end date in UTC calendar days,
 // upcoming before, and ended after. The API gives any other LOA the state
-// LOA_STATE_NEEDS_REVIEW.
+// LOAStateNeedsReview.
 const (
-	LOAStateOpen     = "LOA_STATE_OPEN"
-	LOAStateUpcoming = "LOA_STATE_UPCOMING"
-	LOAStateEnded    = "LOA_STATE_ENDED"
+	LOAStateOpen        = "LOA_STATE_OPEN"
+	LOAStateUpcoming    = "LOA_STATE_UPCOMING"
+	LOAStateEnded       = "LOA_STATE_ENDED"
+	LOAStateNeedsReview = "LOA_STATE_NEEDS_REVIEW"
 )
 
 // LOASubject is the trooper an LOA is for. UserID is their forum user ID.

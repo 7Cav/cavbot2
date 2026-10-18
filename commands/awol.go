@@ -39,8 +39,18 @@ const awolDegradedFooter = "⚠️ LOAs couldn't be read, so NO LOA days were su
 // clock running behind the API's across UTC midnight.
 const awolLOAHistoryDays = 364
 
+// awolReviewLookbackDays is how many UTC dates before a trooper's last forum
+// post a needs-review LOA may be posted and still tag their row. It keeps
+// months-old broken threads off the report, and still catches an LOA filed
+// just before a trooper's last post or by a leader while they were away.
+const awolReviewLookbackDays = 14
+
 // awolLOATag marks the row of a trooper with an LOA that includes today.
 const awolLOATag = "[LOA]"
+
+// awolNeedsReviewTag marks the row of a trooper with a needs-review LOA, so
+// a leader reads its thread before acting on the row.
+const awolNeedsReviewTag = "[LOA needs review]"
 
 // awolAllClearFormat answers a position where nobody is AWOL, with the
 // position in place of %s.
@@ -69,6 +79,17 @@ type AwolUser struct {
 	// (not a value + bool pair) so a caller can't read a meaningless zero window
 	// without the nil discriminator (PR #161 optional-field item).
 	loaWindow *utils.LOAEntry
+	// reviewLOA is the needs-review LOA this row is tagged for, or nil when
+	// there is none. It never changes the glyph.
+	reviewLOA *awolReview
+}
+
+// awolReview is a needs-review LOA as a row's tag needs it.
+type awolReview struct {
+	// threadID is the LOA's thread, or 0 when its ID doesn't parse, which
+	// leaves the tag unlinked.
+	threadID int64
+	posted   time.Time
 }
 
 // OnLOA reports whether the trooper is currently on an active LOA (which forces
@@ -172,8 +193,10 @@ func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 	answer := <-loasCh
 	loasRead := answer.err == nil
 	var windowsByForumUserID map[string][]utils.LOAEntry
+	var reviewsByForumUserID map[string][]awolReview
 	if loasRead {
 		windowsByForumUserID = loaWindowsByForumUserID(answer.loas.LOAs)
+		reviewsByForumUserID = needsReviewByForumUserID(answer.loas.LOAs)
 	} else {
 		captureError("LOAs unreadable, AWOL report shows raw inactivity", answer.err,
 			"command", "awol", "guild_id", i.GuildID, "position", position)
@@ -207,6 +230,7 @@ func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 
 		var daysAWOL int
 		var loaWindow *utils.LOAEntry
+		var reviewLOA *awolReview
 		if loasRead {
 			// Apply our injected `now` to both the accountable-day calc and
 			// active-window selection, so the flag, the figure, and the [[LOA]]
@@ -217,6 +241,7 @@ func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 				w := active
 				loaWindow = &w
 			}
+			reviewLOA = awolReviewLOA(reviewsByForumUserID[member.User.UserID], lastPostDate)
 		} else {
 			// Degraded: raw inactivity overage, no LOA subtraction, no LOA decoration.
 			daysAWOL = utils.RawDaysAWOL(lastPostDate, now)
@@ -242,6 +267,7 @@ func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 				DaysAWOL:         daysAWOL,
 				RawDaysSincePost: rawDays,
 				loaWindow:        loaWindow,
+				reviewLOA:        reviewLOA,
 			})
 		}
 	}
@@ -389,22 +415,34 @@ func awolSummaryLine(flagged int) string {
 //
 //	🔴 Snuffy.B — 16d AWOL · last post 23d
 //	⚪ [LOA] Reyes.J — 1d AWOL · last post 8d
+//	🔴 ⚠️ [LOA needs review] Kade.T — 23d AWOL · last post 30d
 //
-// The name links to the milpac; an active-LOA row prefixes a [LOA] thread link.
+// The name links to the milpac; an active-LOA row prefixes a [LOA] thread link,
+// and a needs-review row a ⚠️ [LOA needs review] thread link.
 func awolUserLine(u AwolUser) string {
-	loaTag := ""
-	if u.OnLOA() && u.loaWindow.ThreadID != 0 {
-		loaTag = fmt.Sprintf("[%s](https://7cav.us/threads/%d/) ", awolLOATag, u.loaWindow.ThreadID)
-	} else if u.OnLOA() {
-		loaTag = awolLOATag + " "
+	tags := ""
+	if u.OnLOA() {
+		tags = awolThreadTag(awolLOATag, u.loaWindow.ThreadID)
+	}
+	if u.reviewLOA != nil {
+		tags += "⚠️ " + awolThreadTag(awolNeedsReviewTag, u.reviewLOA.threadID)
 	}
 	return fmt.Sprintf("%s %s[%s](%s) — %s\n",
 		u.severityGlyph(),
-		loaTag,
+		tags,
 		u.Username,
 		u.MilpacUrl,
 		awolFigures(u.DaysAWOL, u.RawDaysSincePost),
 	)
+}
+
+// awolThreadTag renders a row tag as a link to its LOA thread, or bare when
+// the thread ID is unknown.
+func awolThreadTag(tag string, threadID int64) string {
+	if threadID == 0 {
+		return tag + " "
+	}
+	return fmt.Sprintf("[%s](https://7cav.us/threads/%d/) ", tag, threadID)
 }
 
 // awolFigures renders a row's days AWOL and its raw days since the last
@@ -430,13 +468,16 @@ func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, 
 	}
 
 	for _, user := range awolUsers {
-		loaTag := ""
+		tags := ""
 		if user.OnLOA() {
-			loaTag = " " + awolLOATag
+			tags = " " + awolLOATag
+		}
+		if user.reviewLOA != nil {
+			tags += " " + awolNeedsReviewTag
 		}
 		_, _ = fmt.Fprintf(&content, "%s%s — %s\nMilpac: %s\n\n",
 			user.Username,
-			loaTag,
+			tags,
 			awolFigures(user.DaysAWOL, user.RawDaysSincePost),
 			user.MilpacUrl)
 	}
@@ -491,6 +532,41 @@ func loaWindowsByForumUserID(loas []utils.LOA) map[string][]utils.LOAEntry {
 			StartDate: start,
 			EndDate:   end,
 			ThreadID:  threadID,
+		})
+	}
+	return byID
+}
+
+// awolReviewLOA picks the needs-review LOA that tags a trooper's row: the
+// latest of reviews posted no earlier than awolReviewLookbackDays UTC dates
+// before their last forum post, or nil when none was.
+func awolReviewLOA(reviews []awolReview, lastPost time.Time) *awolReview {
+	last := lastPost.UTC()
+	cutoff := time.Date(last.Year(), last.Month(), last.Day()-awolReviewLookbackDays, 0, 0, 0, 0, time.UTC)
+	var picked *awolReview
+	for i := range reviews {
+		if reviews[i].posted.Before(cutoff) {
+			continue
+		}
+		if picked == nil || reviews[i].posted.After(picked.posted) {
+			picked = &reviews[i]
+		}
+	}
+	return picked
+}
+
+// needsReviewByForumUserID files each needs-review LOA under its Subject's
+// forum user ID, as loaWindowsByForumUserID files the LOAs that count.
+func needsReviewByForumUserID(loas []utils.LOA) map[string][]awolReview {
+	byID := map[string][]awolReview{}
+	for _, l := range loas {
+		if l.State != utils.LOAStateNeedsReview {
+			continue
+		}
+		threadID, _ := strconv.ParseInt(l.ThreadID, 10, 64)
+		byID[l.Subject.UserID] = append(byID[l.Subject.UserID], awolReview{
+			threadID: threadID,
+			posted:   time.Unix(l.PostDate, 0),
 		})
 	}
 	return byID
