@@ -56,8 +56,10 @@ reviews:
 knowledge_base:
   code_guidelines:
     # CLAUDE.md is read by default. These add the Standards review's rules,
-    # the terms it looks up, and the decisions it says win.
+    # the terms it looks up, and the decisions it says win. A guideline
+    # applies only under its own directory, so the ADRs name the whole repo.
     filePatterns:
       - "CODING_STANDARDS.md"
       - "GLOSSARY.md"
-      - "docs/adr/*.md"
+      - files: "docs/adr/*.md"
+        applyTo: "**"
