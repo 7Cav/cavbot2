@@ -115,43 +115,22 @@ func loaEditInteraction(guildID, position string) *discordgo.InteractionCreate {
 	return appCommandInteractionWithGuild(guildID, stringOption("position", position))
 }
 
-// TestRunLoa_UnavailableEditFailure drives the unhealthy-cache edit site
-// (loa.go:108): the edit of the "cache unavailable" message fails.
-func TestRunLoa_UnavailableEditFailureCapturesOnceNoRetry(t *testing.T) {
-	rec := &captureRecorder{}
-	rec.install(t)
-
-	// Unhealthy cache → the unavailable-message edit site fires; tripwire API
-	// proves we never reach the roster fetch.
-	tripwireAPIServer(t)
-	cache := &fakeLOAView{healthy: false, lastRefresh: loaRefDate}
-	f := &fakeResponder{EditErrs: []error{errEditBoom}}
-
-	runLoa(f, cache, loaRefDate, loaEditInteraction("g-loa1", "1-7"))
-
-	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
-	if kv := kvToMap(rec.lastKV); kv["command"] != "loa" || kv["guild_id"] != "g-loa1" {
-		t.Fatalf("expected command=loa guild_id=g-loa1, got %v", kv)
-	}
-}
-
-// TestRunLoa_NoResultsEditFailure drives the "no active/upcoming" edit site
-// (loa.go:161): roster resolves but no member has an LOA entry.
+// TestRunLoa_NoResultsEditFailure drives the "no active/upcoming" edit site:
+// the roster resolves but no member has an LOA.
 func TestRunLoa_NoResultsEditFailureCapturesOnceNoRetry(t *testing.T) {
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
-			"100": loaMember("Trooper.NoLOA", "100"),
+			"100": loaMember("Trooper.NoLOA", "40", "100"),
 		},
 	}
-	serveAwolRoster(t, roster, http.StatusOK)
+	serveCavAPI(t, loaRefDate, roster)
 
 	rec := &captureRecorder{}
 	rec.install(t)
 
-	cache := healthyView(map[string]utils.LOAEntry{}) // no entries → no results
 	f := &fakeResponder{EditErrs: []error{errEditBoom}}
 
-	runLoa(f, cache, loaRefDate, loaEditInteraction("g-loa2", "1-7"))
+	runLoa(f, loaRefDate, loaEditInteraction("g-loa2", "1-7"))
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
 	if kv := kvToMap(rec.lastKV); kv["command"] != "loa" || kv["guild_id"] != "g-loa2" {
@@ -159,29 +138,26 @@ func TestRunLoa_NoResultsEditFailureCapturesOnceNoRetry(t *testing.T) {
 	}
 }
 
-// TestRunLoa_ResultsEmbedEditFailure drives the final embed-edit site
-// (loa.go:220): an active LOA renders, and the embed edit fails.
+// TestRunLoa_ResultsEmbedEditFailure drives the final embed-edit site: an
+// open LOA renders, and the embed edit fails.
 func TestRunLoa_ResultsEmbedEditFailureCapturesOnceNoRetry(t *testing.T) {
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
-			"100": loaMember("Trooper.Active", "100"),
+			"100": loaMember("Trooper.Active", "42", "100"),
 		},
 	}
-	serveAwolRoster(t, roster, http.StatusOK)
+	serveCavAPI(t, loaRefDate, roster, stubLOA{
+		threadID: "7100", postDate: loaRefDate.AddDate(0, 0, -6),
+		userID: "42", username: "Trooper.Active",
+		start: "2026-05-17", end: "2026-05-27",
+	})
 
 	rec := &captureRecorder{}
 	rec.install(t)
 
-	cache := healthyView(map[string]utils.LOAEntry{
-		"trooper.active": {
-			Username:  "Trooper.Active",
-			StartDate: loaRefDate.AddDate(0, 0, -5),
-			EndDate:   loaRefDate.AddDate(0, 0, 5),
-		},
-	})
 	f := &fakeResponder{EditErrs: []error{errEditBoom}}
 
-	runLoa(f, cache, loaRefDate, loaEditInteraction("g-loa3", "1-7"))
+	runLoa(f, loaRefDate, loaEditInteraction("g-loa3", "1-7"))
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
 	if kv := kvToMap(rec.lastKV); kv["command"] != "loa" || kv["guild_id"] != "g-loa3" {

@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -12,32 +11,21 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// loaCacheView is the minimal LOA-cache surface /loa consumes: per-member
-// entry lookup plus a health probe for the staleness guard. Production wires
-// *utils.LOACache (GlobalLOACache); tests substitute a fake with canned
-// entries and a forced health verdict so the handler stays deterministic
-// without touching the process-global singleton. /loa uses IsHealthy for the
-// staleness guard above. /awol reads its LOAs from the 7Cav API instead.
-type loaCacheView interface {
-	GetEntry(username string) (utils.LOAEntry, bool)
-	IsHealthy(maxAge time.Duration) (bool, time.Time)
-}
+// The headings /loa lists LOAs under: Active for the LOAs the 7Cav API
+// states open, Upcoming for the ones it states upcoming.
+const (
+	loaActiveHeading   = "**Active LOAs**"
+	loaUpcomingHeading = "**Upcoming LOAs**"
+)
 
-// loaCacheMaxAge is the staleness threshold for /loa's LOA cache health
-// probe. 2× the 15-min refresh interval: one missed refresh is tolerated, two
-// consecutive misses mark the cache unhealthy.
-const loaCacheMaxAge = 30 * time.Minute
+// loaNoneFormat answers a position none of whose members has an open or
+// upcoming LOA, with the position in place of %s.
+const loaNoneFormat = "No active or upcoming LOAs found for \"%s\"."
 
-// loaUnavailableMessage formats the user-facing string shown when GlobalLOACache
-// is unhealthy. lastRefresh is the cache's last successful refresh (zero == never);
-// now is passed in so callers can read time.Now() once and tests stay deterministic.
-func loaUnavailableMessage(lastRefresh, now time.Time) string {
-	if lastRefresh.IsZero() {
-		return "❌ LOA cache unavailable (never successfully refreshed). Try again shortly."
-	}
-	mins := int(now.Sub(lastRefresh).Minutes())
-	return fmt.Sprintf("❌ LOA cache unavailable (last refresh: %d minutes ago). Try again shortly.", mins)
-}
+// loaUnavailableReply answers a run the LOAs couldn't be read for. It stands
+// in for the whole list, so an empty list never reads as "nobody is on
+// leave".
+const loaUnavailableReply = "❌ LOAs couldn't be read from the 7Cav API, so they can't be listed right now. Try again in a few minutes."
 
 type LOAUser struct {
 	Username  string
@@ -45,7 +33,6 @@ type LOAUser struct {
 	StartDate time.Time
 	EndDate   time.Time
 	ThreadID  int64
-	Active    bool
 }
 
 func LOA() Command {
@@ -67,10 +54,10 @@ func LOA() Command {
 }
 
 func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	runLoa(utils.NewSessionResponder(s), utils.GlobalLOACache, time.Now(), i)
+	runLoa(utils.NewSessionResponder(s), time.Now(), i)
 }
 
-func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *discordgo.InteractionCreate) {
+func runLoa(r utils.InteractionResponder, now time.Time, i *discordgo.InteractionCreate) {
 	username, discordID := interactionUsernameAndID(i)
 	utils.Info("🚀 Starting LOA check", "command", "LOA", "username", username, "discord_id", discordID)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -89,22 +76,9 @@ func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *
 		return
 	}
 
-	healthy, lastRefresh := cache.IsHealthy(loaCacheMaxAge)
-	if !healthy {
-		msg := loaUnavailableMessage(lastRefresh, now)
-		utils.Debug("LOA command served unavailable message",
-			"command", "LOA",
-			"username", username,
-			"discord_id", discordID,
-			"last_success", lastRefresh,
-			"served_at", now,
-			"staleness", now.Sub(lastRefresh),
-		)
-		if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg}); err != nil {
-			captureDeferredEditFailure(i, "loa", err)
-		}
-		return
-	}
+	loasCh := callLOAsAlongside(func() (*utils.LOAsResponse, error) {
+		return utils.GetCurrentLOAs(ctx)
+	})
 
 	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, position)
 	if err != nil {
@@ -116,43 +90,18 @@ func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *
 		return
 	}
 
-	urlRe := regexp.MustCompile(`/\d+/(\d+)\.jpg`)
-	var activeLOAs, upcomingLOAs []LOAUser
-
-	for _, member := range roster.LiteProfiles {
-		// #158/S3: /loa renders exactly one window per user via the single-value
-		// GetEntry (most-relevant) contract, deliberately NOT iterating GetEntries.
-		// This preserves the pre-history-store rendering; pinned by
-		// TestGetEntry_SingleWindowContract_ForLoaRendering in utils.
-		entry, ok := cache.GetEntry(member.User.Username)
-		if !ok {
-			continue
-		}
-
-		matches := urlRe.FindStringSubmatch(member.UniformUrl)
-		if len(matches) < 2 {
-			continue
-		}
-		milpacUrl := fmt.Sprintf("https://7cav.us/rosters/profile/%s", matches[1])
-
-		user := LOAUser{
-			Username:  member.User.Username,
-			MilpacUrl: milpacUrl,
-			StartDate: entry.StartDate,
-			EndDate:   entry.EndDate,
-			ThreadID:  entry.ThreadID,
-		}
-
-		if !now.Before(entry.StartDate) && !now.After(entry.EndDate) {
-			user.Active = true
-			activeLOAs = append(activeLOAs, user)
-		} else if now.Before(entry.StartDate) {
-			upcomingLOAs = append(upcomingLOAs, user)
-		}
+	answer := <-loasCh
+	if answer.err != nil {
+		captureError("LOAs unreadable, /loa can't list them", answer.err,
+			"command", "loa", "guild_id", i.GuildID, "position", position)
+		replyError(r, i, loaUnavailableReply)
+		return
 	}
 
+	activeLOAs, upcomingLOAs := loaUsersByState(roster, answer.loas.LOAs)
+
 	if len(activeLOAs) == 0 && len(upcomingLOAs) == 0 {
-		response := fmt.Sprintf("No active or upcoming LOAs found for \"%s\".", position)
+		response := fmt.Sprintf(loaNoneFormat, position)
 		if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 			Content: &response,
 		}); err != nil {
@@ -169,37 +118,11 @@ func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *
 	})
 
 	var desc strings.Builder
-	if len(activeLOAs) > 0 {
-		desc.WriteString("**Active LOAs**\n")
-		for _, u := range activeLOAs {
-			threadTag := ""
-			if u.ThreadID != 0 {
-				threadTag = fmt.Sprintf(" [[Thread]](https://7cav.us/threads/%d/)", u.ThreadID)
-			}
-			_, _ = fmt.Fprintf(&desc, "[%s](%s) — %s → %s%s\n",
-				u.Username, u.MilpacUrl,
-				u.StartDate.Format("Jan 2, 2006"),
-				u.EndDate.Format("Jan 2, 2006"),
-				threadTag)
-		}
+	writeLOASection(&desc, loaActiveHeading, activeLOAs)
+	if len(activeLOAs) > 0 && len(upcomingLOAs) > 0 {
+		desc.WriteString("\n")
 	}
-	if len(upcomingLOAs) > 0 {
-		if len(activeLOAs) > 0 {
-			desc.WriteString("\n")
-		}
-		desc.WriteString("**Upcoming LOAs**\n")
-		for _, u := range upcomingLOAs {
-			threadTag := ""
-			if u.ThreadID != 0 {
-				threadTag = fmt.Sprintf(" [[Thread]](https://7cav.us/threads/%d/)", u.ThreadID)
-			}
-			_, _ = fmt.Fprintf(&desc, "[%s](%s) — %s → %s%s\n",
-				u.Username, u.MilpacUrl,
-				u.StartDate.Format("Jan 2, 2006"),
-				u.EndDate.Format("Jan 2, 2006"),
-				threadTag)
-		}
-	}
+	writeLOASection(&desc, loaUpcomingHeading, upcomingLOAs)
 
 	embed := &discordgo.MessageEmbed{
 		Title:       fmt.Sprintf("LOAs for %s", position),
@@ -221,4 +144,94 @@ func runLoa(r utils.InteractionResponder, cache loaCacheView, now time.Time, i *
 	}
 
 	utils.Info("✨ Done!", "command", "LOA")
+}
+
+// writeLOASection writes heading and a line for each of users, linking the
+// trooper's milpac, when known, and the LOA's thread. It writes nothing for
+// no users.
+func writeLOASection(desc *strings.Builder, heading string, users []LOAUser) {
+	if len(users) == 0 {
+		return
+	}
+	desc.WriteString(heading + "\n")
+	for _, u := range users {
+		threadTag := ""
+		if u.ThreadID != 0 {
+			threadTag = fmt.Sprintf(" [[Thread]](https://7cav.us/threads/%d/)", u.ThreadID)
+		}
+		name := u.Username
+		if u.MilpacUrl != "" {
+			name = fmt.Sprintf("[%s](%s)", u.Username, u.MilpacUrl)
+		}
+		_, _ = fmt.Fprintf(desc, "%s — %s → %s%s\n",
+			name,
+			u.StartDate.Format("Jan 2, 2006"),
+			u.EndDate.Format("Jan 2, 2006"),
+			threadTag)
+	}
+}
+
+// loaUsersByState lists each LOA the 7Cav API states open or upcoming under
+// the roster member whose forum user ID equals its Subject's, one entry per
+// LOA. Usernames are never compared, so an LOA filed for a trooper by
+// someone else, or before a rename, is listed for its Subject. A
+// needs-review or ended LOA is listed in neither, and so is an LOA whose
+// dates don't read or whose Subject is no member of the roster. A member
+// whose milpac link can't be built is still listed, by name.
+func loaUsersByState(roster *utils.LiteRosterResponse, loas []utils.LOA) (active, upcoming []LOAUser) {
+	membersByForumUserID := map[string]utils.LiteProfileResponse{}
+	for _, member := range roster.LiteProfiles {
+		membersByForumUserID[member.User.UserID] = member
+	}
+	// milpacURLs holds each listed member's milpac link by forum user ID, so
+	// a uniform URL that doesn't parse reaches Sentry once per member.
+	milpacURLs := map[string]string{}
+	for _, l := range loas {
+		if l.State != utils.LOAStateOpen && l.State != utils.LOAStateUpcoming {
+			continue
+		}
+		member, ok := membersByForumUserID[l.Subject.UserID]
+		if !ok {
+			continue
+		}
+		entry, ok := loaEntryOf(l)
+		if !ok {
+			continue
+		}
+		milpacURL, read := milpacURLs[member.User.UserID]
+		if !read {
+			milpacURL = loaMilpacURL(member)
+			milpacURLs[member.User.UserID] = milpacURL
+		}
+		user := LOAUser{
+			Username:  member.User.Username,
+			MilpacUrl: milpacURL,
+			StartDate: entry.StartDate,
+			EndDate:   entry.EndDate,
+			ThreadID:  entry.ThreadID,
+		}
+		if l.State == utils.LOAStateOpen {
+			active = append(active, user)
+		} else {
+			upcoming = append(upcoming, user)
+		}
+	}
+	return active, upcoming
+}
+
+// loaMilpacURL builds member's milpac profile link from their uniform URL.
+// A uniform URL that doesn't parse is a bad roster record: it goes to
+// Sentry, and the link is "", so the trooper's LOA still shows by name.
+func loaMilpacURL(member utils.LiteProfileResponse) string {
+	milpacID, err := utils.ExtractMilpacIDFromUniformURL(member.UniformUrl)
+	if err != nil {
+		captureError("LOA listed without a milpac link: unparseable uniform URL", err,
+			"command", "loa",
+			"username", member.User.Username,
+			"discord_id", member.DiscordID,
+			"uniform_url", member.UniformUrl,
+		)
+		return ""
+	}
+	return fmt.Sprintf("https://7cav.us/rosters/profile/%s", milpacID)
 }

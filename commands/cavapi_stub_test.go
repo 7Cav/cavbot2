@@ -37,6 +37,8 @@ type stubCavAPI struct {
 	loas         []stubLOA
 	loaStatus    int
 	today        time.Time
+	// delay holds back the answer to each roster and LOA call.
+	delay time.Duration
 	// rosterCall and loasCall pair the two calls when pairCalls has set them.
 	rosterCall, loasCall *stubArrival
 }
@@ -109,6 +111,14 @@ func (a *stubCavAPI) pairCalls() {
 	a.loasCall = &stubArrival{ch: make(chan struct{})}
 }
 
+// delayCalls makes the stub hold back its answer to each roster and LOA
+// call by d.
+func (a *stubCavAPI) delayCalls(d time.Duration) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.delay = d
+}
+
 // failRoster makes every position search answer status.
 func (a *stubCavAPI) failRoster(status int) {
 	a.mu.Lock()
@@ -117,6 +127,10 @@ func (a *stubCavAPI) failRoster(status int) {
 }
 
 func (a *stubCavAPI) serve(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	delay := a.delay
+	a.mu.Unlock()
+	time.Sleep(delay)
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/milpacs/position/search/"):
 		a.serveRoster(w)

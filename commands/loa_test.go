@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -9,71 +10,81 @@ import (
 	"github.com/7cav/cavbot2/utils"
 )
 
-// loaRefDate pins "now" for /loa tests. Active = StartDate ≤ now ≤ EndDate;
-// Upcoming = StartDate > now. Cache entries below straddle this date.
+// loaRefDate pins "now" for /loa tests at 2026-05-22 12:00 UTC. The stub
+// 7Cav API's UTC today is 2026-05-22 too, so it states an LOA open from its
+// start date through its end date and upcoming before.
 var loaRefDate = time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
 
-// fakeLOAView is a deterministic loaCacheView for /loa integration tests.
-// entries are keyed by lowercased username (matches the production cache's
-// case-folding). healthy/lastRefresh drive the IsHealthy staleness guard.
-type fakeLOAView struct {
-	entries     map[string]utils.LOAEntry
-	healthy     bool
-	lastRefresh time.Time
-}
-
-func (f *fakeLOAView) GetEntry(username string) (utils.LOAEntry, bool) {
-	e, ok := f.entries[strings.ToLower(username)]
-	return e, ok
-}
-
-func (f *fakeLOAView) IsHealthy(_ time.Duration) (bool, time.Time) {
-	return f.healthy, f.lastRefresh
-}
-
-// healthyView builds a healthy fakeLOAView from the given entries (keyed by
-// lowercased username), with lastRefresh pinned at loaRefDate.
-func healthyView(entries map[string]utils.LOAEntry) *fakeLOAView {
-	return &fakeLOAView{entries: entries, healthy: true, lastRefresh: loaRefDate}
-}
-
-// loaMember builds a roster-shape LiteProfileResponse for /loa tests. The
-// uniformUrl matches the /<n>/<milpacID>.jpg regex the handler parses to
-// build the milpac profile link.
-func loaMember(username, milpacID string) utils.LiteProfileResponse {
+// loaMember builds a roster-shape LiteProfileResponse for /loa tests, with
+// the forum user ID an LOA's Subject is matched on. The uniformUrl matches
+// the /<n>/<milpacID>.jpg shape the handler parses for the milpac link.
+func loaMember(username, forumUserID, milpacID string) utils.LiteProfileResponse {
 	return utils.LiteProfileResponse{
-		User:       utils.User{Username: username},
+		User:       utils.User{UserID: forumUserID, Username: username},
 		Rank:       utils.Rank{RankFull: "Specialist"},
 		UniformUrl: "https://7cav.us/data/roster_uniforms/0/" + milpacID + ".jpg",
 	}
 }
 
-// tripwireLOAView is a loaCacheView that fails the test if either method is
-// called. Used by the first-respond-fails test to prove runLoa bails before
-// touching the cache (the health probe / per-member lookups) as well as the API.
-type tripwireLOAView struct{ t *testing.T }
+// loaHeadings are the section headings a /loa reply can carry.
+var loaHeadings = []string{loaActiveHeading, loaUpcomingHeading}
 
-func (v tripwireLOAView) GetEntry(string) (utils.LOAEntry, bool) {
-	v.t.Errorf("cache.GetEntry must not be called after placeholder respond fails")
-	return utils.LOAEntry{}, false
+// loaSection returns the lines under heading in the run's final edit: the
+// lines after the one holding heading and before the next heading. It
+// returns nil when the reply has no such section.
+func loaSection(t *testing.T, f *fakeResponder, heading string) []string {
+	t.Helper()
+	edit := finalEdit(t, f)
+	if edit.Embeds == nil {
+		return nil
+	}
+	var lines []string
+	current := ""
+	for _, e := range *edit.Embeds {
+		for _, line := range strings.Split(e.Description, "\n") {
+			if h := loaHeadingOf(line); h != "" {
+				current = h
+				continue
+			}
+			if current == heading && strings.TrimSpace(line) != "" {
+				lines = append(lines, line)
+			}
+		}
+	}
+	return lines
 }
 
-func (v tripwireLOAView) IsHealthy(time.Duration) (bool, time.Time) {
-	v.t.Errorf("cache.IsHealthy must not be called after placeholder respond fails")
-	return false, time.Time{}
+// loaHeadingOf returns the heading line holds, or "" when it holds none.
+func loaHeadingOf(line string) string {
+	for _, h := range loaHeadings {
+		if strings.Contains(line, h) {
+			return h
+		}
+	}
+	return ""
 }
 
-// TestRunLoa_FirstRespondFails_BailsBeforeCacheAndAPI covers the early-bail
-// branch when the placeholder InteractionRespond fails: runLoa must call
-// HandleError once and return before probing the cache or fetching the roster
-// (both tripwires fail the test if touched).
-func TestRunLoa_FirstRespondFails_BailsBeforeCacheAndAPI(t *testing.T) {
+// hasLOALine reports whether one of lines names name and links threadID.
+func hasLOALine(lines []string, name, threadID string) bool {
+	for _, line := range lines {
+		if strings.Contains(line, name) && lineLinksThread(line, threadID) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestRunLoa_FirstRespondFails_BailsBeforeAPI covers the early-bail branch
+// when the placeholder InteractionRespond fails: runLoa must call
+// HandleError once and return before asking the 7Cav API for anything (the
+// tripwire server fails the test if touched).
+func TestRunLoa_FirstRespondFails_BailsBeforeAPI(t *testing.T) {
 	tripwireAPIServer(t)
 
 	f := &fakeResponder{RespondErrs: []error{errFirstRespond}}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
 
-	runLoa(f, tripwireLOAView{t: t}, loaRefDate, i)
+	runLoa(f, loaRefDate, i)
 
 	assertPlaceholderFailedBailout(t, f.Calls())
 }
@@ -81,285 +92,279 @@ func TestRunLoa_FirstRespondFails_BailsBeforeCacheAndAPI(t *testing.T) {
 // A roster fetch the 7Cav API fails tells the member to try again, and its
 // error goes to Sentry, not to the member.
 func TestRunLoaRosterFailureReachesSentryNotTheMember(t *testing.T) {
-	serveAwolRoster(t, utils.LiteRosterResponse{}, http.StatusInternalServerError)
+	serveCavAPI(t, loaRefDate, utils.LiteRosterResponse{}).failRoster(http.StatusInternalServerError)
 	rec := recordCaptures(t)
 
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	runLoa(f, healthyView(map[string]utils.LOAEntry{}), loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	assertLookupFailed(t, f.Calls(), rec, "loa")
 }
 
-func TestRunLoa_StaleCacheShortCircuitsWithUnavailable(t *testing.T) {
-	// An empty roster is served as a tripwire: if the staleness guard failed to
-	// short-circuit, the handler would reach the empty-roster path (3 calls,
-	// format-hint content) instead of the 2-call unavailable edit below.
-	serveAwolRoster(t, utils.LiteRosterResponse{LiteProfiles: map[string]utils.LiteProfileResponse{}}, http.StatusOK)
-
-	f := &fakeResponder{}
-	cache := &fakeLOAView{
-		entries:     map[string]utils.LOAEntry{},
-		healthy:     false,
-		lastRefresh: loaRefDate.Add(-45 * time.Minute),
-	}
-	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-
-	runLoa(f, cache, loaRefDate, i)
-
-	calls := f.Calls()
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 calls (placeholder + unavailable Edit), got %d: %+v", len(calls), calls)
-	}
-	got := "<nil>"
-	if calls[1].Edit.Content != nil {
-		got = *calls[1].Edit.Content
-	}
-	if !strings.Contains(got, "LOA cache unavailable") || !strings.Contains(got, "45 minutes ago") {
-		t.Fatalf("expected unavailable message with staleness; got %q", got)
-	}
-}
-
+// A position whose members have no open or upcoming LOA gets the no-LOAs
+// reply naming the position.
 func TestRunLoa_NoMatchingLOAsReportsNone(t *testing.T) {
-	// Roster has a member, but the cache holds no entry for them → neither
-	// active nor upcoming, so the handler edits with the "no LOAs" message.
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
-			"100": loaMember("Trooper.Present", "100"),
+			"100": loaMember("Trooper.Present", "40", "100"),
 		},
 	}
-	serveAwolRoster(t, roster, http.StatusOK)
+	serveCavAPI(t, loaRefDate, roster)
 
-	cache := healthyView(map[string]utils.LOAEntry{})
 	f := &fakeResponder{}
-	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	runLoa(f, cache, loaRefDate, i)
-
-	calls := f.Calls()
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 calls (placeholder + Edit), got %d: %+v", len(calls), calls)
-	}
-	edit := calls[1].Edit
-	if edit.Embeds != nil && len(*edit.Embeds) > 0 {
-		t.Fatalf("expected no embeds for no-LOA result, got %d", len(*edit.Embeds))
-	}
-	got := "<nil>"
-	if edit.Content != nil {
-		got = *edit.Content
-	}
-	if !strings.Contains(got, "No active or upcoming LOAs found") || !strings.Contains(got, "1-7") {
-		t.Fatalf("expected no-LOA message mentioning position; got %q", got)
+	if reply := lastReply(t, f.Calls()); !strings.Contains(reply, fmt.Sprintf(loaNoneFormat, "1-7")) {
+		t.Fatalf("want the no-LOAs reply for 1-7; got %q", reply)
 	}
 }
 
+// A position search that finds nobody gets the format hint naming the
+// position, as an error reply.
 func TestRunLoa_EmptyRosterSurfacesFormatHint(t *testing.T) {
-	serveAwolRoster(t, utils.LiteRosterResponse{LiteProfiles: map[string]utils.LiteProfileResponse{}}, http.StatusOK)
+	serveCavAPI(t, loaRefDate, utils.LiteRosterResponse{LiteProfiles: map[string]utils.LiteProfileResponse{}})
 
-	// Placeholder Respond succeeds; HandleError's Respond simulates "already
-	// acknowledged" so its Edit fallback fires with the empty-roster hint.
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	cache := healthyView(map[string]utils.LOAEntry{})
-	i := fakeAppCommandInteraction(stringOption("position", "Q/Z/9-9"))
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "Q/Z/9-9")))
 
-	runLoa(f, cache, loaRefDate, i)
-
-	calls := f.Calls()
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 calls (placeholder + HandleError Respond + Edit fallback), got %d: %+v", len(calls), calls)
-	}
-	want := emptyRosterSearchMessage("Q/Z/9-9")
-	got := "<nil>"
-	if calls[2].Edit.Content != nil {
-		got = *calls[2].Edit.Content
-	}
-	if got != want {
-		t.Fatalf("Edit fallback content mismatch.\nwant: %q\ngot:  %q", want, got)
-	}
+	assertFixedReply(t, lastReply(t, f.Calls()), emptyRosterSearchMessage("Q/Z/9-9"), nil)
 }
 
-func TestRunLoa_BothSectionsRenderActiveBeforeUpcoming(t *testing.T) {
+// A trooper with one open and one upcoming LOA gets a line for each, one
+// under Active and one under Upcoming, so a second, later LOA shows up when
+// a leader plans ahead.
+func TestRunLoaListsAnOpenAndAnUpcomingLOAOfOneTrooperOnTwoLines(t *testing.T) {
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
-			"100": loaMember("Trooper.Active", "100"),
-			"200": loaMember("Trooper.Soon", "200"),
+			"100": loaMember("Trooper.Two", "41", "100"),
 		},
 	}
-	serveAwolRoster(t, roster, http.StatusOK)
-
-	cache := healthyView(map[string]utils.LOAEntry{
-		"trooper.active": {
-			Username:  "Trooper.Active",
-			StartDate: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
-			EndDate:   time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+	serveCavAPI(t, loaRefDate, roster,
+		stubLOA{
+			threadID: "7101", postDate: loaRefDate.AddDate(0, 0, -3),
+			userID: "41", username: "Trooper.Two",
+			start: "2026-05-20", end: "2026-05-25",
 		},
-		"trooper.soon": {
-			Username:  "Trooper.Soon",
-			StartDate: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
-			EndDate:   time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+		stubLOA{
+			threadID: "7102", postDate: loaRefDate.AddDate(0, 0, -1),
+			userID: "41", username: "Trooper.Two",
+			start: "2026-06-10", end: "2026-06-20",
 		},
-	})
+	)
 	f := &fakeResponder{}
-	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	runLoa(f, cache, loaRefDate, i)
-
-	edit := f.Calls()[1].Edit
-	desc := (*edit.Embeds)[0].Description
-	activeIdx := strings.Index(desc, "**Active LOAs**")
-	upcomingIdx := strings.Index(desc, "**Upcoming LOAs**")
-	if activeIdx == -1 || upcomingIdx == -1 {
-		t.Fatalf("expected both sections.\nGot:\n%s", desc)
+	if active := loaSection(t, f, loaActiveHeading); !hasLOALine(active, "Trooper.Two", "7101") {
+		t.Fatalf("want a line under Active naming Trooper.Two and linking thread 7101; Active holds %q", active)
 	}
-	if activeIdx > upcomingIdx {
-		t.Fatalf("Active section must precede Upcoming.\nGot:\n%s", desc)
-	}
-	footer := (*edit.Embeds)[0].Footer
-	if footer == nil || !strings.Contains(footer.Text, "Active: 1 | Upcoming: 1") {
-		got := "<nil>"
-		if footer != nil {
-			got = footer.Text
-		}
-		t.Fatalf("footer should report Active: 1 | Upcoming: 1; got %q", got)
+	if upcoming := loaSection(t, f, loaUpcomingHeading); !hasLOALine(upcoming, "Trooper.Two", "7102") {
+		t.Fatalf("want a line under Upcoming naming Trooper.Two and linking thread 7102; Upcoming holds %q", upcoming)
 	}
 }
 
-func TestRunLoa_UpcomingOnlyRendersUpcomingSection(t *testing.T) {
+// A trooper on the last day of their leave is listed under Active for the
+// whole UTC day, as the 7Cav API states the LOA open.
+func TestRunLoaListsATrooperOnTheLastDayOfTheirLeaveUnderActive(t *testing.T) {
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
-			"200": loaMember("Trooper.Soon", "200"),
+			"100": loaMember("Trooper.Last", "43", "100"),
 		},
 	}
-	serveAwolRoster(t, roster, http.StatusOK)
-
-	cache := healthyView(map[string]utils.LOAEntry{
-		"trooper.soon": {
-			Username:  "Trooper.Soon",
-			StartDate: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
-			EndDate:   time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
-		},
+	serveCavAPI(t, loaRefDate, roster, stubLOA{
+		threadID: "7106", postDate: loaRefDate.AddDate(0, 0, -10),
+		userID: "43", username: "Trooper.Last",
+		start: "2026-05-12", end: "2026-05-22",
 	})
 	f := &fakeResponder{}
-	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	runLoa(f, cache, loaRefDate, i)
-
-	edit := f.Calls()[1].Edit
-	desc := (*edit.Embeds)[0].Description
-	if !strings.Contains(desc, "**Upcoming LOAs**") {
-		t.Fatalf("expected Upcoming LOAs section.\nGot:\n%s", desc)
-	}
-	if strings.Contains(desc, "**Active LOAs**") {
-		t.Fatalf("did not expect Active section for upcoming-only.\nGot:\n%s", desc)
-	}
-	footer := (*edit.Embeds)[0].Footer
-	if footer == nil || !strings.Contains(footer.Text, "Active: 0 | Upcoming: 1") {
-		got := "<nil>"
-		if footer != nil {
-			got = footer.Text
-		}
-		t.Fatalf("footer should report Active: 0 | Upcoming: 1; got %q", got)
+	if active := loaSection(t, f, loaActiveHeading); !hasLOALine(active, "Trooper.Last", "7106") {
+		t.Fatalf("want a line under Active naming Trooper.Last and linking thread 7106; Active holds %q", active)
 	}
 }
 
-func TestRunLoa_ActiveLOARendersActiveSection(t *testing.T) {
+// An LOA is listed for its Subject, the roster member with the Subject's
+// forum user ID, whatever username the Subject carries, as after a rename.
+// It is never listed for a member who only shares the Subject's username.
+func TestRunLoaListsAnLOAForTheMemberWithItsSubjectsForumUserIDOnly(t *testing.T) {
 	roster := utils.LiteRosterResponse{
 		LiteProfiles: map[string]utils.LiteProfileResponse{
-			"100": loaMember("Trooper.Active", "100"),
+			"100": loaMember("Renamed.R", "41", "100"),
+			"200": loaMember("Shared.S", "50", "200"),
 		},
 	}
-	serveAwolRoster(t, roster, http.StatusOK)
-
-	cache := healthyView(map[string]utils.LOAEntry{
-		"trooper.active": {
-			Username:  "Trooper.Active",
-			StartDate: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
-			EndDate:   time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
-			ThreadID:  4242,
+	serveCavAPI(t, loaRefDate, roster,
+		stubLOA{
+			threadID: "7103", postDate: loaRefDate.AddDate(0, 0, -3),
+			userID: "41", username: "OldName.R",
+			start: "2026-05-20", end: "2026-05-25",
 		},
-	})
+		stubLOA{
+			threadID: "7104", postDate: loaRefDate.AddDate(0, 0, -3),
+			userID: "51", username: "Shared.S",
+			start: "2026-05-20", end: "2026-05-25",
+		},
+	)
 	f := &fakeResponder{}
-	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	runLoa(f, cache, loaRefDate, i)
-
-	calls := f.Calls()
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 calls (placeholder Respond + Edit), got %d: %+v", len(calls), calls)
+	active := loaSection(t, f, loaActiveHeading)
+	if !hasLOALine(active, "Renamed.R", "7103") {
+		t.Fatalf("want a line under Active naming Renamed.R and linking thread 7103; Active holds %q", active)
 	}
-	if calls[0].Method != "Respond" {
-		t.Fatalf("calls[0]: expected Respond, got %q", calls[0].Method)
-	}
-	edit := calls[1].Edit
-	if edit.Embeds == nil || len(*edit.Embeds) == 0 {
-		t.Fatalf("expected embeds on Edit; got %+v", edit)
-	}
-	desc := (*edit.Embeds)[0].Description
-	if !strings.Contains(desc, "**Active LOAs**") {
-		t.Fatalf("expected Active LOAs section.\nGot:\n%s", desc)
-	}
-	if strings.Contains(desc, "**Upcoming LOAs**") {
-		t.Fatalf("did not expect Upcoming section for active-only.\nGot:\n%s", desc)
-	}
-	if !strings.Contains(desc, "Trooper.Active") {
-		t.Fatalf("expected member name in description.\nGot:\n%s", desc)
-	}
-	if !strings.Contains(desc, "[[Thread]](https://7cav.us/threads/4242/)") {
-		t.Fatalf("expected thread link for non-zero ThreadID.\nGot:\n%s", desc)
-	}
-	footer := (*edit.Embeds)[0].Footer
-	if footer == nil || !strings.Contains(footer.Text, "Active: 1 | Upcoming: 0") {
-		got := "<nil>"
-		if footer != nil {
-			got = footer.Text
+	for _, heading := range []string{loaActiveHeading, loaUpcomingHeading} {
+		if line := lineContaining(strings.Join(loaSection(t, f, heading), "\n"), "Shared.S"); line != "" {
+			t.Fatalf("Shared.S only shares the Subject's username, yet is listed: %q", line)
 		}
-		t.Fatalf("footer should report Active: 1 | Upcoming: 0; got %q", got)
 	}
 }
 
-func TestLOAUnavailableMessage(t *testing.T) {
-	now := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
-
-	tests := []struct {
-		name        string
-		lastRefresh time.Time
-		wantSubstr  string
-	}{
-		{
-			name:        "never refreshed reports never",
-			lastRefresh: time.Time{},
-			wantSubstr:  "never successfully refreshed",
-		},
-		{
-			name:        "31 minutes ago reports 31 minutes",
-			lastRefresh: now.Add(-31 * time.Minute),
-			wantSubstr:  "last refresh: 31 minutes ago",
-		},
-		{
-			name:        "90 minutes ago reports 90 minutes",
-			lastRefresh: now.Add(-90 * time.Minute),
-			wantSubstr:  "last refresh: 90 minutes ago",
-		},
-		{
-			name:        "exactly 30 minutes ago reports 30 minutes",
-			lastRefresh: now.Add(-30 * time.Minute),
-			wantSubstr:  "last refresh: 30 minutes ago",
+// A needs-review LOA is never listed under Active or Upcoming, even when its
+// dates read and cover today, so a broken LOA never reads as approved leave.
+func TestRunLoaNeverListsANeedsReviewLOAUnderActiveOrUpcoming(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": loaMember("Review.R", "44", "100"),
 		},
 	}
+	serveCavAPI(t, loaRefDate, roster, stubLOA{
+		threadID: "7107", postDate: loaRefDate.AddDate(0, 0, -1),
+		userID: "44", username: "Review.R",
+		start: "2026-05-20", end: "2026-06-25",
+		needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
+	})
+	f := &fakeResponder{}
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := loaUnavailableMessage(tt.lastRefresh, now)
-			if !strings.Contains(got, tt.wantSubstr) {
-				t.Fatalf("loaUnavailableMessage = %q, want substring %q", got, tt.wantSubstr)
-			}
-			if !strings.HasPrefix(got, "❌ LOA cache unavailable") {
-				t.Fatalf("loaUnavailableMessage = %q, want prefix %q",
-					got, "❌ LOA cache unavailable")
-			}
-			if !strings.HasSuffix(strings.TrimSpace(got), "Try again shortly.") {
-				t.Fatalf("loaUnavailableMessage = %q, want suffix %q",
-					got, "Try again shortly.")
-			}
-		})
+	for _, heading := range []string{loaActiveHeading, loaUpcomingHeading} {
+		if line := lineContaining(strings.Join(loaSection(t, f, heading), "\n"), "Review.R"); line != "" {
+			t.Fatalf("a needs-review LOA is listed under %s: %q", heading, line)
+		}
+	}
+}
+
+// An LOA edited or deleted a minute ago shows as it stands now on the next
+// run: /loa keeps no LOAs between runs.
+func TestRunLoaShowsAnEditedOrDeletedLOAAsItStandsOnTheNextRun(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": loaMember("Trooper.E", "45", "100"),
+		},
+	}
+	upcoming := stubLOA{
+		threadID: "7105", postDate: loaRefDate.AddDate(0, 0, -1),
+		userID: "45", username: "Trooper.E",
+		start: "2026-06-01", end: "2026-06-10",
+	}
+	api := serveCavAPI(t, loaRefDate, roster, upcoming)
+	run := func(now time.Time) *fakeResponder {
+		f := &fakeResponder{}
+		runLoa(f, now, fakeAppCommandInteraction(stringOption("position", "1-7")))
+		return f
+	}
+
+	first := run(loaRefDate)
+	if lines := loaSection(t, first, loaUpcomingHeading); !hasLOALine(lines, "Trooper.E", "7105") {
+		t.Fatalf("first run: want thread 7105 under Upcoming; Upcoming holds %q", lines)
+	}
+
+	edited := upcoming
+	edited.start = "2026-05-22"
+	api.setLOAs(edited)
+	second := run(loaRefDate.Add(time.Minute))
+	if lines := loaSection(t, second, loaActiveHeading); !hasLOALine(lines, "Trooper.E", "7105") {
+		t.Fatalf("second run: want the edited thread 7105 under Active; Active holds %q", lines)
+	}
+	if lines := loaSection(t, second, loaUpcomingHeading); hasLOALine(lines, "Trooper.E", "7105") {
+		t.Fatalf("second run: the edited thread 7105 is still under Upcoming: %q", lines)
+	}
+
+	api.setLOAs()
+	third := run(loaRefDate.Add(2 * time.Minute))
+	for _, heading := range []string{loaActiveHeading, loaUpcomingHeading} {
+		if line := lineContaining(strings.Join(loaSection(t, third, heading), "\n"), "Trooper.E"); line != "" {
+			t.Fatalf("third run: the deleted LOA is still listed under %s: %q", heading, line)
+		}
+	}
+}
+
+// When the LOA call answers 404, /loa says LOAs are unavailable and to try
+// again: the shared client's not-found answer is a failure here, never "no
+// LOAs". The failure reaches Sentry once and the reply carries none of it.
+func TestRunLoaLOACallAnswering404RepliesUnavailableAndReachesSentry(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": loaMember("Trooper.U", "46", "100"),
+		},
+	}
+	serveCavAPI(t, loaRefDate, roster, stubLOA{
+		threadID: "7108", postDate: loaRefDate.AddDate(0, 0, -3),
+		userID: "46", username: "Trooper.U",
+		start: "2026-05-20", end: "2026-05-25",
+	}).failLOAs(http.StatusNotFound)
+	rec := recordCaptures(t)
+
+	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+
+	if rec.count != 1 {
+		t.Fatalf("captures = %d, want 1", rec.count)
+	}
+	assertFixedReply(t, lastReply(t, f.Calls()), loaUnavailableReply, rec)
+}
+
+// A leader waits no longer for /loa than before: the LOA call adds no wait
+// to the roster call. With the stub taking D to answer each call, the
+// listing arrives in under 2D, which calls made one after the other can't.
+func TestRunLoaWaitsNoLongerThanTheSlowerOfTheRosterAndLOACalls(t *testing.T) {
+	const d = time.Second
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": loaMember("Trooper.W", "47", "100"),
+		},
+	}
+	serveCavAPI(t, loaRefDate, roster, stubLOA{
+		threadID: "7109", postDate: loaRefDate.AddDate(0, 0, -3),
+		userID: "47", username: "Trooper.W",
+		start: "2026-05-20", end: "2026-05-25",
+	}).delayCalls(d)
+
+	f := &fakeResponder{}
+	started := time.Now()
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	waited := time.Since(started)
+
+	if active := loaSection(t, f, loaActiveHeading); !hasLOALine(active, "Trooper.W", "7109") {
+		t.Fatalf("want a line under Active naming Trooper.W and linking thread 7109; Active holds %q", active)
+	}
+	if waited >= 2*d {
+		t.Fatalf("the listing took %v with each call taking %v; the calls ran one after the other", waited, d)
+	}
+}
+
+// A member whose uniform URL doesn't parse still has their LOA listed, with
+// no milpac link, so a leader never reads a position as having nobody on
+// leave because of a bad roster record. The bad URL reaches Sentry once.
+func TestRunLoaListsTheLOAOfAMemberWhoseUniformURLDoesNotParse(t *testing.T) {
+	member := loaMember("Trooper.N", "48", "100")
+	member.UniformUrl = "not-a-uniform-url"
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{"100": member},
+	}
+	serveCavAPI(t, loaRefDate, roster, stubLOA{
+		threadID: "7110", postDate: loaRefDate.AddDate(0, 0, -3),
+		userID: "48", username: "Trooper.N",
+		start: "2026-05-20", end: "2026-05-25",
+	})
+	rec := recordCaptures(t)
+
+	f := &fakeResponder{}
+	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+
+	if active := loaSection(t, f, loaActiveHeading); !hasLOALine(active, "Trooper.N", "7110") {
+		t.Fatalf("want a line under Active naming Trooper.N and linking thread 7110; Active holds %q", active)
+	}
+	if rec.count != 1 {
+		t.Fatalf("captures = %d, want 1", rec.count)
 	}
 }

@@ -77,7 +77,7 @@ func TestEntryLogsSurviveMemberlessInteraction(t *testing.T) {
 			name: "loa",
 			run: func(t *testing.T, i *discordgo.InteractionCreate) {
 				f := &fakeResponder{RespondErrs: []error{errStub}}
-				runLoa(f, healthyView(nil), time.Now(), i)
+				runLoa(f, time.Now(), i)
 			},
 		},
 		{
