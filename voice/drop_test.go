@@ -193,9 +193,7 @@ func (h *callHarness) recordDropping(server *droppingVoiceServer, dialer *websoc
 	})
 	l := listen(nil)
 	conn.Receive(l)
-	h.mu.Lock()
-	h.updates = nil
-	h.mu.Unlock()
+	h.countFromNow()
 	close(server.listening)
 	return l
 }

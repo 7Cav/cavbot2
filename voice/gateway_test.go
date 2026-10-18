@@ -629,10 +629,15 @@ func (h *callHarness) start() Conn {
 		h.t.Fatalf("Join: %v", err)
 	}
 	h.waitOpen()
-	h.mu.Lock()
-	h.updates = nil
-	h.mu.Unlock()
+	h.countFromNow()
 	return conn
+}
+
+// countFromNow has the voice state updates sent count from now.
+func (h *callHarness) countFromNow() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.updates = nil
 }
 
 // hangUp stops the recording on conn, as a member's stop does, and waits a
@@ -672,9 +677,9 @@ func (h *callHarness) updateVoiceState(ctx context.Context, guildID snowflake.ID
 
 // answer is Discord's answer to the recorder joining a channel, after
 // answerDelay: its voice state, then, nameDelay later, the voice server now
-// serving the call, unless stateOnly. Discord had the recorder in the channel already when it
-// rejoins after a drop, and then names no server unless the call moved off
-// the one it named last, as #786's smoke pass saw.
+// serving the call, unless stateOnly. Discord has the recorder in the
+// channel already when it rejoins after a drop, and then names no server
+// unless the call moved off the one it named last, as #786's smoke pass saw.
 func (h *callHarness) answer(channelID snowflake.ID) {
 	time.Sleep(time.Duration(h.answerDelay.Load()))
 	h.mu.Lock()
@@ -2174,9 +2179,7 @@ func TestRecorderLogsACallItsVoiceServerEndedAtWarn(t *testing.T) {
 		t.Fatalf("Join: %v", err)
 	}
 	defer conn.Leave(context.Background())
-	h.mu.Lock()
-	h.updates = nil
-	h.mu.Unlock()
+	h.countFromNow()
 
 	if !within(time.Now(), waitFor, h.rejoined) {
 		t.Fatal("the recorder never rejoined after the 4022")

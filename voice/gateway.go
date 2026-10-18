@@ -198,7 +198,10 @@ func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc, logger 
 		disgovoice.WithConnLogger(slog.New(errorsAsWarnings{next: logger.Handler()})),
 		disgovoice.WithUDPConnCreateFunc(droppableUDPConns(c.s.drops)),
 		disgovoice.WithConnGatewayCreateFunc(func(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, opts ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
-			g := &renewableGateway{named: c.namedLast, refused: func(state disgovoice.State, err error) { c.refused(state, err) }}
+			g := &renewableGateway{
+				named:   c.namedLast,
+				refused: func(state disgovoice.State, err error) { c.refused(state, err) },
+			}
 			g.onDrop = c.watchClose(g, onClose)
 			g.build = func() disgovoice.Gateway {
 				return newGateway(dave, g.watchEvents(onEvent), g.onDrop, opts...)
@@ -384,11 +387,19 @@ func (c *recorderConn) rejoin() bool {
 			}
 			continue
 		}
-		select {
-		case <-ctx.Done():
+		if !waitToRetry(ctx) {
 			return false
-		case <-time.After(rejoinRetry):
 		}
+	}
+}
+
+// waitToRetry waits rejoinRetry, and reports false when ctx ends first.
+func waitToRetry(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(rejoinRetry):
+		return true
 	}
 }
 
@@ -412,10 +423,8 @@ func (c *recorderConn) leaveToJoinAgain(ctx context.Context) bool {
 	}()
 	c.rejoining.Store(true)
 	for c.leave(ctx) != nil {
-		select {
-		case <-ctx.Done():
+		if !waitToRetry(ctx) {
 			return false
-		case <-time.After(rejoinRetry):
 		}
 	}
 	select {
