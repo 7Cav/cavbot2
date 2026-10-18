@@ -433,7 +433,16 @@ func awolThreadTag(tag string, threadID int64) string {
 	if threadID == 0 {
 		return tag + " "
 	}
-	return fmt.Sprintf("[%s](https://7cav.us/threads/%d/) ", tag, threadID)
+	return fmt.Sprintf("[%s](%s) ", tag, loaThreadURL(threadID))
+}
+
+// awolFileThreadLine renders a file entry's line giving a tag its LOA
+// thread, or "" when the thread ID is unknown and the tag stays bare.
+func awolFileThreadLine(tag string, threadID int64) string {
+	if threadID == 0 {
+		return ""
+	}
+	return tag + " " + loaThreadURL(threadID) + "\n"
 }
 
 // awolFigures renders a row's days AWOL and its raw days since the last
@@ -459,18 +468,21 @@ func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, 
 	}
 
 	for _, user := range awolUsers {
-		tags := ""
+		tags, threads := "", ""
 		if user.OnLOA() {
 			tags = " " + awolLOATag
+			threads = awolFileThreadLine(awolLOATag, user.loaWindow.ThreadID)
 		}
 		if user.reviewLOA != nil {
 			tags += " " + awolNeedsReviewTag
+			threads += awolFileThreadLine(awolNeedsReviewTag, user.reviewLOA.threadID)
 		}
-		_, _ = fmt.Fprintf(&content, "%s%s — %s\nMilpac: %s\n\n",
+		_, _ = fmt.Fprintf(&content, "%s%s — %s\nMilpac: %s\n%s\n",
 			user.Username,
 			tags,
 			awolFigures(user.DaysAWOL, user.RawDaysSincePost),
-			user.MilpacUrl)
+			user.MilpacUrl,
+			threads)
 	}
 	if loasRead {
 		_, _ = fmt.Fprintf(&content, "%s\n", awolReportFooter)

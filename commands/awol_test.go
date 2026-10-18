@@ -829,10 +829,11 @@ func TestRunAwolNeedsReviewLOANamingNoMemberTagsNobody(t *testing.T) {
 	}
 }
 
-// A report sent as a file carries the needs-review tag on the trooper's
-// entry, whether force_file_output asked for the file or the report was too
-// large for embeds.
-func TestRunAwolFileReportCarriesTheNeedsReviewTag(t *testing.T) {
+// A report sent as a file gives each LOA tag on a trooper's entry the thread
+// the embed row's tag links to, on a line that carries the tag, whether
+// force_file_output asked for the file or the report was too large for
+// embeds.
+func TestRunAwolFileReportGivesEachLOATagItsThread(t *testing.T) {
 	cases := []struct {
 		name      string
 		others    int
@@ -844,54 +845,175 @@ func TestRunAwolFileReportCarriesTheNeedsReviewTag(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Last post 2026-04-20; the open LOA covers 05-10..05-15 of the
+			// gap, leaving 12d AWOL.
 			roster := utils.LiteRosterResponse{
 				LiteProfiles: map[string]utils.LiteProfileResponse{
-					"99": forumMember("Review.F", "83", "99", "2026-04-15 12:00:00"),
+					"99": forumMember("Both.B", "82", "99", "2026-04-20 12:00:00"),
 				},
 			}
 			for n := range tc.others {
 				id := fmt.Sprintf("%d", 1000+n)
 				roster.LiteProfiles[id] = awolMember(fmt.Sprintf("M%04d", n), id, "2026-03-01 12:00:00")
 			}
-			serveCavAPI(t, awolRefDate, roster, stubLOA{
-				threadID: "7030", postDate: mustParseAwolDate("2026-04-16 09:00:00"),
-				userID: "83", username: "Review.F",
-				start: "2026-04-16", end: "2026-05-05",
-				needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
-			})
+			serveCavAPI(t, awolRefDate, roster,
+				stubLOA{
+					threadID: "4300", postDate: mustParseAwolDate("2026-05-09 18:00:00"),
+					userID: "82", username: "Both.B",
+					start: "2026-05-10", end: "2026-05-31",
+				},
+				stubLOA{
+					threadID: "7020", postDate: mustParseAwolDate("2026-04-25 18:00:00"),
+					userID: "82", username: "Both.B",
+					start: "2026-04-21", end: "2026-05-09",
+					needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
+				},
+			)
 			f := &fakeResponder{}
 			runAwol(f, awolRefDate, fakeAppCommandInteraction(
 				stringOption("position", "1-7"),
 				boolOption("force_file_output", tc.forceFile),
 			))
 
-			edit := finalEdit(t, f)
-			if len(edit.Files) != 1 {
-				t.Fatalf("want the report as one file; the run last showed %q", lastReply(t, f.Calls()))
-			}
-			body, err := io.ReadAll(edit.Files[0].Reader)
-			if err != nil {
-				t.Fatalf("reading file: %v", err)
-			}
-			if line := lineContaining(string(body), "Review.F"); !strings.Contains(line, awolNeedsReviewTag) {
-				t.Fatalf("Review.F's entry must carry %s.\nGot line: %q", awolNeedsReviewTag, line)
+			entry := fileEntry(awolFileBody(t, f), roster, "Both.B")
+			for _, want := range []struct{ tag, threadID string }{
+				{awolLOATag, "4300"},
+				{awolNeedsReviewTag, "7020"},
+			} {
+				if !entryPairsTagWithThread(entry, want.tag, want.threadID) {
+					t.Fatalf("Both.B's entry must have a line carrying %s and thread %s's address.\nGot entry:\n%s",
+						want.tag, want.threadID, strings.Join(entry, "\n"))
+				}
 			}
 		})
 	}
 }
 
+// A tag whose LOA thread ID is unknown stays on the file entry with no
+// thread address, as it stays unlinked on the embed row.
+func TestRunAwolFileReportLeavesATagWithAnUnknownThreadBare(t *testing.T) {
+	roster := utils.LiteRosterResponse{
+		LiteProfiles: map[string]utils.LiteProfileResponse{
+			"100": forumMember("Unlinked.U", "84", "100", "2026-04-20 12:00:00"),
+		},
+	}
+	serveCavAPI(t, awolRefDate, roster,
+		stubLOA{
+			threadID: "0", postDate: mustParseAwolDate("2026-05-09 18:00:00"),
+			userID: "84", username: "Unlinked.U",
+			start: "2026-05-10", end: "2026-05-31",
+		},
+		stubLOA{
+			threadID: "0", postDate: mustParseAwolDate("2026-04-25 18:00:00"),
+			userID: "84", username: "Unlinked.U",
+			start: "2026-04-21", end: "2026-05-09",
+			needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
+		},
+	)
+	f := &fakeResponder{}
+	runAwol(f, awolRefDate, fakeAppCommandInteraction(
+		stringOption("position", "1-7"),
+		boolOption("force_file_output", true),
+	))
+
+	entry := strings.Join(fileEntry(awolFileBody(t, f), roster, "Unlinked.U"), "\n")
+	if !strings.Contains(entry, awolLOATag) || !strings.Contains(entry, awolNeedsReviewTag) {
+		t.Fatalf("Unlinked.U's entry must carry both %s and %s.\nGot entry:\n%s", awolLOATag, awolNeedsReviewTag, entry)
+	}
+	if addr := threadAddressIn(entry); addr != "" {
+		t.Fatalf("a tag with no known thread must get no thread address, got %q.\nGot entry:\n%s", addr, entry)
+	}
+}
+
+// awolFileBody returns the body of the one file the run's final edit
+// attaches, failing the test when it attaches none or several.
+func awolFileBody(t *testing.T, f *fakeResponder) string {
+	t.Helper()
+	edit := finalEdit(t, f)
+	if len(edit.Files) != 1 {
+		t.Fatalf("want the report as one file; the run last showed %q", lastReply(t, f.Calls()))
+	}
+	body, err := io.ReadAll(edit.Files[0].Reader)
+	if err != nil {
+		t.Fatalf("reading file: %v", err)
+	}
+	return string(body)
+}
+
+// fileEntry returns the lines of name's entry in a file report: from the
+// first line naming name up to the line before the next line naming another
+// trooper on roster, or the end of the file.
+func fileEntry(body string, roster utils.LiteRosterResponse, name string) []string {
+	var entry []string
+	for _, ln := range strings.Split(body, "\n") {
+		if entry == nil {
+			if strings.Contains(ln, name) {
+				entry = []string{ln}
+			}
+			continue
+		}
+		for _, member := range roster.LiteProfiles {
+			if member.User.Username != name && strings.Contains(ln, member.User.Username) {
+				return entry
+			}
+		}
+		entry = append(entry, ln)
+	}
+	return entry
+}
+
+// entryPairsTagWithThread reports whether some line of entry carries tag
+// and a URL on 7cav.us whose path names threadID.
+func entryPairsTagWithThread(entry []string, tag, threadID string) bool {
+	for _, ln := range entry {
+		if !strings.Contains(ln, tag) {
+			continue
+		}
+		for _, raw := range bareURLPattern.FindAllString(ln, -1) {
+			if urlNamesThread(raw, threadID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// threadAddressIn returns the first URL in text that is a 7cav.us forum
+// thread address, or "" when there is none.
+func threadAddressIn(text string) string {
+	for _, raw := range bareURLPattern.FindAllString(text, -1) {
+		u, err := url.Parse(raw)
+		if err == nil && u.Host == "7cav.us" && strings.HasPrefix(u.Path, "/threads/") {
+			return raw
+		}
+	}
+	return ""
+}
+
+// bareURLPattern finds the URLs written out on a plain-text line.
+var bareURLPattern = regexp.MustCompile(`https?://\S+`)
+
 // lineLinksThread reports whether some link target on line is a URL on
 // 7cav.us whose path names threadID, with or without a trailing slash.
 func lineLinksThread(line, threadID string) bool {
 	for _, m := range regexp.MustCompile(`\]\(([^)\s]+)\)`).FindAllStringSubmatch(line, -1) {
-		u, err := url.Parse(m[1])
-		if err != nil || u.Host != "7cav.us" {
-			continue
+		if urlNamesThread(m[1], threadID) {
+			return true
 		}
-		for _, segment := range strings.Split(u.Path, "/") {
-			if segment == threadID {
-				return true
-			}
+	}
+	return false
+}
+
+// urlNamesThread reports whether raw is a URL on 7cav.us whose path names
+// threadID, with or without a trailing slash.
+func urlNamesThread(raw, threadID string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host != "7cav.us" {
+		return false
+	}
+	for _, segment := range strings.Split(u.Path, "/") {
+		if segment == threadID {
+			return true
 		}
 	}
 	return false
@@ -1047,6 +1169,9 @@ func TestRunAwol_LOAsUnreadFileOutputCarriesWarning(t *testing.T) {
 	body := string(raw)
 	if strings.Contains(body, awolLOATag) {
 		t.Fatalf("file must not carry %s with LOAs unread.\nGot:\n%s", awolLOATag, body)
+	}
+	if addr := threadAddressIn(body); addr != "" {
+		t.Fatalf("file must carry no thread address with LOAs unread, got %q.\nGot:\n%s", addr, body)
 	}
 	if !strings.Contains(body, awolDegradedFooter) {
 		t.Fatalf("file should carry the fallback warning.\nGot:\n%s", body)
