@@ -468,21 +468,21 @@ func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, 
 	}
 
 	for _, user := range awolUsers {
-		tags, threads := "", ""
+		tags, threadLines := "", ""
 		if user.OnLOA() {
 			tags = " " + awolLOATag
-			threads = awolFileThreadLine(awolLOATag, user.loaWindow.ThreadID)
+			threadLines = awolFileThreadLine(awolLOATag, user.loaWindow.ThreadID)
 		}
 		if user.reviewLOA != nil {
 			tags += " " + awolNeedsReviewTag
-			threads += awolFileThreadLine(awolNeedsReviewTag, user.reviewLOA.threadID)
+			threadLines += awolFileThreadLine(awolNeedsReviewTag, user.reviewLOA.threadID)
 		}
 		_, _ = fmt.Fprintf(&content, "%s%s — %s\nMilpac: %s\n%s\n",
 			user.Username,
 			tags,
 			awolFigures(user.DaysAWOL, user.RawDaysSincePost),
 			user.MilpacUrl,
-			threads)
+			threadLines)
 	}
 	if loasRead {
 		_, _ = fmt.Fprintf(&content, "%s\n", awolReportFooter)

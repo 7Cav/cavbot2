@@ -920,7 +920,7 @@ func TestRunAwolFileReportLeavesATagWithAnUnknownThreadBare(t *testing.T) {
 	if !strings.Contains(entry, awolLOATag) || !strings.Contains(entry, awolNeedsReviewTag) {
 		t.Fatalf("Unlinked.U's entry must carry both %s and %s.\nGot entry:\n%s", awolLOATag, awolNeedsReviewTag, entry)
 	}
-	if addr := threadAddressIn(entry); addr != "" {
+	if addr := urlNamingThreadIn(entry, "0"); addr != "" {
 		t.Fatalf("a tag with no known thread must get no thread address, got %q.\nGot entry:\n%s", addr, entry)
 	}
 }
@@ -966,24 +966,18 @@ func fileEntry(body string, roster utils.LiteRosterResponse, name string) []stri
 // and a URL on 7cav.us whose path names threadID.
 func entryPairsTagWithThread(entry []string, tag, threadID string) bool {
 	for _, ln := range entry {
-		if !strings.Contains(ln, tag) {
-			continue
-		}
-		for _, raw := range bareURLPattern.FindAllString(ln, -1) {
-			if urlNamesThread(raw, threadID) {
-				return true
-			}
+		if strings.Contains(ln, tag) && urlNamingThreadIn(ln, threadID) != "" {
+			return true
 		}
 	}
 	return false
 }
 
-// threadAddressIn returns the first URL in text that is a 7cav.us forum
-// thread address, or "" when there is none.
-func threadAddressIn(text string) string {
+// urlNamingThreadIn returns the first URL written out in text that is on
+// 7cav.us with a path naming threadID, or "" when there is none.
+func urlNamingThreadIn(text, threadID string) string {
 	for _, raw := range bareURLPattern.FindAllString(text, -1) {
-		u, err := url.Parse(raw)
-		if err == nil && u.Host == "7cav.us" && strings.HasPrefix(u.Path, "/threads/") {
+		if urlNamesThread(raw, threadID) {
 			return raw
 		}
 	}
@@ -1170,7 +1164,7 @@ func TestRunAwol_LOAsUnreadFileOutputCarriesWarning(t *testing.T) {
 	if strings.Contains(body, awolLOATag) {
 		t.Fatalf("file must not carry %s with LOAs unread.\nGot:\n%s", awolLOATag, body)
 	}
-	if addr := threadAddressIn(body); addr != "" {
+	if addr := urlNamingThreadIn(body, "4242"); addr != "" {
 		t.Fatalf("file must carry no thread address with LOAs unread, got %q.\nGot:\n%s", addr, body)
 	}
 	if !strings.Contains(body, awolDegradedFooter) {
