@@ -51,6 +51,38 @@ type LiteProfileResponse struct {
 	RecordDate        string     `json:"recordDate"`
 	LastForumPostDate string     `json:"lastForumPostDate"`
 }
+
+// LOAsResponse is the body of GET loas.
+type LOAsResponse struct {
+	LOAs []LOA `json:"loas"`
+}
+
+// LOA is one LOA as the 7Cav API serves it, one per LOA thread. StartDate
+// and EndDate are YYYY-MM-DD dates, or empty on a needs-review LOA.
+type LOA struct {
+	ThreadID  string     `json:"threadId"`
+	Subject   LOASubject `json:"subject"`
+	StartDate string     `json:"startDate"`
+	EndDate   string     `json:"endDate"`
+	State     string     `json:"state"`
+}
+
+// The states the 7Cav API gives an LOA it can take as written. An LOA is
+// open from its start date through its end date in UTC calendar days,
+// upcoming before, and ended after. The API gives any other LOA the state
+// LOA_STATE_NEEDS_REVIEW.
+const (
+	LOAStateOpen     = "LOA_STATE_OPEN"
+	LOAStateUpcoming = "LOA_STATE_UPCOMING"
+	LOAStateEnded    = "LOA_STATE_ENDED"
+)
+
+// LOASubject is the trooper an LOA is for. UserID is their forum user ID.
+type LOASubject struct {
+	UserID   string `json:"userId"`
+	Username string `json:"username"`
+}
+
 type Position struct {
 	PositionTitle string `json:"positionTitle"`
 	PositionID    string `json:"positionId"`
@@ -198,11 +230,13 @@ func makeAPIRequest[T any](ctx context.Context, path string, identifier string) 
 		SetResult(&result).
 		Get(fmt.Sprintf("%s/%s", apiBaseURL, path))
 
-	if response != nil {
-		Info("API Call Finished", "duration", time.Since(start), "status", response.StatusCode(), "path", strings.Split(path, "/")[0], "identifier", identifier)
-	}
+	// The first path segment, without any query, names the lookup in logs
+	// and errors.
+	pathPrefix, _, _ := strings.Cut(strings.Split(path, "/")[0], "?")
 
-	pathPrefix := strings.Split(path, "/")[0]
+	if response != nil {
+		Info("API Call Finished", "duration", time.Since(start), "status", response.StatusCode(), "path", pathPrefix, "identifier", identifier)
+	}
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch %s: %w", pathPrefix, err)
@@ -258,4 +292,14 @@ func GetUserByGamertag(ctx context.Context, gamertag string) (*ProfileResponse, 
 // reads it once per process start.
 func GetRanks(ctx context.Context) (*RanksResponse, error) {
 	return makeAPIRequest[RanksResponse](ctx, "milpacs/ranks", "ranks")
+}
+
+// GetLOAs fetches every open and upcoming LOA, plus the LOAs that ended on
+// or after endedSince, a YYYY-MM-DD date the API refuses when it is more
+// than 365 days before its own UTC today. The API reads the LOA forums live,
+// so each answer is the whole set. Any error, ErrNotFound included, means
+// the LOAs couldn't be read: the API answers an empty window with an empty
+// list.
+func GetLOAs(ctx context.Context, endedSince string) (*LOAsResponse, error) {
+	return makeAPIRequest[LOAsResponse](ctx, "loas?endedSince="+url.QueryEscape(endedSince), "loas")
 }

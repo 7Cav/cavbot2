@@ -15,7 +15,7 @@ func utcDate(t time.Time) time.Time {
 
 // rawAccountableDates is the count of candidate UTC dates in (lastPost, now] with
 // no LOA subtraction: the whole-date inactivity span. This is the figure the
-// degraded path flags on when the LOA store can't be trusted (ADR 0008).
+// degraded path flags on when the LOAs can't be read (ADR 0008).
 func rawAccountableDates(lastPost, now time.Time) int {
 	start := utcDate(lastPost)
 	today := utcDate(now)
@@ -102,7 +102,7 @@ func AccountableDaysAWOL(lastPost, now time.Time, windows []LOAEntry) int {
 
 // RawDaysAWOL is the degraded-mode figure: whole-date inactivity with NO LOA
 // subtraction, overage past the 7-day requirement, clamped at zero. Used when the
-// LOA store is unhealthy so the report degrades loudly rather than silently
+// LOAs can't be read so the report degrades loudly rather than silently
 // treating everyone as non-LOA (ADR 0008).
 func RawDaysAWOL(lastPost, now time.Time) int {
 	return overage(rawAccountableDates(lastPost, now))
@@ -128,7 +128,7 @@ func overage(accountable int) int {
 // overlap. The bool is false when no window is active. /awol uses this so the
 // On-LOA verdict, the days-AWOL calc, and the [[LOA]] thread link are all decided
 // against the SAME `now` — no boundary disagreement between selection and verdict
-// (PR #161 clock-skew item). Clock-free GetEntries supplies the windows.
+// (PR #161 clock-skew item).
 func ActiveWindow(windows []LOAEntry, now time.Time) (LOAEntry, bool) {
 	var (
 		best  LOAEntry

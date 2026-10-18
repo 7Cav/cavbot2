@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,30 +27,20 @@ const discordEmbedDescriptionLimit = 4096
 // LOA-covered days subtracted (ADR 0008). Rendered on the healthy path.
 const awolReportFooter = "AWOL days subtracts valid LOA days."
 
-// awolDegradedFooter is the loud degraded-mode warning (#96 machinery, reworded
-// for ADR 0008): staff must know the accountable-day adjustment was SKIPPED and
-// the figures are raw whole-date inactivity, not merely that a column is stale.
-// Never silently treats everyone as non-LOA.
-const awolDegradedFooter = "⚠️ LOA cache unavailable — accountable-day adjustment SKIPPED; figures are raw inactivity (LOA NOT subtracted)."
+// awolDegradedFooter is the loud warning on a report the LOAs couldn't be
+// read for (ADR 0008): staff must know no LOA days were subtracted and the
+// figures are raw whole-date inactivity. /awol never silently treats
+// everyone as non-LOA.
+const awolDegradedFooter = "⚠️ LOAs couldn't be read, so NO LOA days were subtracted. Figures are raw inactivity."
 
-// loaCacheReader is the LOA-cache surface /awol consumes. Production wires
-// *utils.LOACache (GlobalLOACache); tests substitute a fake. GetEntries returns
-// the full retained window history for a username (clock-free); /awol applies its
-// own injected `now` to that history for the accountable-day calc AND for active-
-// window selection, so selection and verdict can never disagree at a boundary
-// (PR #161 clock-skew item). IsHealthy gates degraded mode (#96): an unhealthy
-// cache is stale, so /awol falls back to raw inactivity with no LOA subtraction.
-//
-// This is intentionally a DIFFERENT surface from /loa's loaCacheView
-// ({GetEntry,IsHealthy}): both share IsHealthy, but /awol reads the full window
-// history via GetEntries (to subtract every LOA-covered date), whereas /loa reads
-// a single most-relevant window via GetEntry. It is not a superset of /loa's set —
-// the read methods differ (GetEntries vs GetEntry). Keeping the two interfaces
-// distinct scopes each command's dependency to exactly what it reads.
-type loaCacheReader interface {
-	GetEntries(username string) []utils.LOAEntry
-	IsHealthy(maxAge time.Duration) (bool, time.Time)
-}
+// awolLOAHistoryDays is how far back /awol asks the 7Cav API for ended
+// LOAs, in days before the bot's UTC today. The API refuses a date more
+// than 365 days before its own UTC today, and the spare day absorbs a bot
+// clock running behind the API's across UTC midnight.
+const awolLOAHistoryDays = 364
+
+// awolLOATag marks the row of a trooper with an LOA that includes today.
+const awolLOATag = "[LOA]"
 
 type AwolUser struct {
 	Username     string
@@ -114,10 +105,10 @@ func Awol() Command {
 }
 
 func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	runAwol(utils.NewSessionResponder(s), utils.GlobalLOACache, time.Now(), i)
+	runAwol(utils.NewSessionResponder(s), time.Now(), i)
 }
 
-func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, i *discordgo.InteractionCreate) {
+func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.InteractionCreate) {
 	username, discordID := interactionUsernameAndID(i)
 	utils.Info("🚀 Starting AWOL check", "command", "Awol", "username", username, "discord_id", discordID)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -140,23 +131,17 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 		return
 	}
 
-	// #96 / ADR 0008: probe cache health once per invocation. When unhealthy the
-	// LOA history can't be trusted, so we degrade LOUDLY — compute raw whole-date
-	// inactivity with NO LOA subtraction, still flag > 7, and warn that the
-	// accountable-day adjustment was skipped. We never abort (the last-forum-post
-	// signal is independent) and never silently treat everyone as non-LOA. No
-	// Sentry capture: operational degradation, not an internal error (ADR 0001).
-	cacheHealthy, lastRefresh := cache.IsHealthy(loaCacheMaxAge)
-	if !cacheHealthy {
-		utils.Debug("AWOL served with unhealthy LOA cache (accountable-day adjustment skipped)",
-			"command", "Awol",
-			"username", username,
-			"discord_id", discordID,
-			"last_success", lastRefresh,
-			"served_at", now,
-			"staleness", now.Sub(lastRefresh),
-		)
+	// The LOA call runs alongside the roster call, so it adds no wait. If
+	// the run ends early, the buffered channel lets the call finish.
+	type loasAnswer struct {
+		loas *utils.LOAsResponse
+		err  error
 	}
+	loasCh := make(chan loasAnswer, 1)
+	go func() {
+		loas, err := utils.GetLOAs(ctx, now.UTC().AddDate(0, 0, -awolLOAHistoryDays).Format(time.DateOnly))
+		loasCh <- loasAnswer{loas, err}
+	}()
 
 	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, position)
 	if err != nil {
@@ -166,6 +151,21 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 	if len(roster.LiteProfiles) == 0 {
 		replyError(r, i, emptyRosterSearchMessage(position))
 		return
+	}
+
+	// ADR 0008: when the LOAs can't be read, /awol degrades LOUDLY. It
+	// computes raw whole-date inactivity with NO LOA subtraction, still
+	// flags > 7, and warns that no LOA days were subtracted. It never aborts
+	// (the last-forum-post signal is independent) and never silently treats
+	// everyone as non-LOA.
+	answer := <-loasCh
+	loasRead := answer.err == nil
+	var windowsByForumUserID map[string][]utils.LOAEntry
+	if loasRead {
+		windowsByForumUserID = loaWindowsByForumUserID(answer.loas.LOAs)
+	} else {
+		captureError("LOAs unreadable, AWOL report shows raw inactivity", answer.err,
+			"command", "awol", "guild_id", i.GuildID, "position", position)
 	}
 
 	// Issue #163: a single unparseable record must not abort the whole report.
@@ -196,11 +196,11 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 
 		var daysAWOL int
 		var loaWindow *utils.LOAEntry
-		if cacheHealthy {
-			// Read the full retained history ONCE and apply our injected `now` to
-			// both the accountable-day calc and active-window selection, so the
-			// flag, the figure, and the [[LOA]] link can't disagree (PR #161).
-			windows := cache.GetEntries(member.User.Username)
+		if loasRead {
+			// Apply our injected `now` to both the accountable-day calc and
+			// active-window selection, so the flag, the figure, and the [[LOA]]
+			// link can't disagree (PR #161).
+			windows := windowsByForumUserID[member.User.UserID]
 			daysAWOL = utils.AccountableDaysAWOL(lastPostDate, now, windows)
 			if active, ok := utils.ActiveWindow(windows, now); ok {
 				w := active
@@ -255,10 +255,10 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 			// skipped member could have been the one who was AWOL.
 			response += "\n" + note
 		}
-		if !cacheHealthy {
+		if !loasRead {
 			// Never a silent all-clear while degraded: raw figures are >= the
 			// LOA-adjusted figure so no AWOL member is hidden, but staff must still
-			// know the cache was down and the accountable-day adjustment was skipped
+			// know the LOAs couldn't be read and no LOA days were subtracted
 			// (ADR 0008) — same wording as every other terminal degraded path.
 			response += "\n" + awolDegradedFooter
 		}
@@ -271,7 +271,7 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 	}
 
 	footerText := awolReportFooter
-	if !cacheHealthy {
+	if !loasRead {
 		footerText = awolDegradedFooter
 	}
 
@@ -305,12 +305,12 @@ func runAwol(r utils.InteractionResponder, cache loaCacheReader, now time.Time, 
 	utils.Info("Debug chunks info", "chunks_length", len(chunks), "max_embeds", maxEmbedsPerMsg)
 	if len(chunks) > maxEmbedsPerMsg {
 		utils.Info("⚠️ Too many AWOL users for embeds, falling back to file upload", "count", len(awolUsers))
-		sendAwolFile(r, i, awolUsers, position, forceFile, cacheHealthy, now, skippedCount)
+		sendAwolFile(r, i, awolUsers, position, forceFile, loasRead, now, skippedCount)
 		utils.Info("✨ Done!", "command", "Awol")
 		return
 	} else if forceFile {
 		utils.Info("⚠️ Force file output enabled, falling back to embeds", "count", len(awolUsers))
-		sendAwolFile(r, i, awolUsers, position, forceFile, cacheHealthy, now, skippedCount)
+		sendAwolFile(r, i, awolUsers, position, forceFile, loasRead, now, skippedCount)
 		utils.Info("✨ Done!", "command", "Awol")
 		return
 	}
@@ -383,9 +383,9 @@ func awolSummaryLine(flagged int) string {
 func awolUserLine(u AwolUser) string {
 	loaTag := ""
 	if u.OnLOA() && u.loaWindow.ThreadID != 0 {
-		loaTag = fmt.Sprintf("[[LOA]](https://7cav.us/threads/%d/) ", u.loaWindow.ThreadID)
+		loaTag = fmt.Sprintf("[%s](https://7cav.us/threads/%d/) ", awolLOATag, u.loaWindow.ThreadID)
 	} else if u.OnLOA() {
-		loaTag = "[LOA] "
+		loaTag = awolLOATag + " "
 	}
 	return fmt.Sprintf("%s %s[%s](%s) — %dd AWOL · last post %dd\n",
 		u.severityGlyph(),
@@ -397,7 +397,7 @@ func awolUserLine(u AwolUser) string {
 	)
 }
 
-func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, awolUsers []AwolUser, position string, forceFile, cacheHealthy bool, now time.Time, skippedCount int) {
+func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, awolUsers []AwolUser, position string, forceFile, loasRead bool, now time.Time, skippedCount int) {
 	var content strings.Builder
 	_, _ = fmt.Fprintf(&content, "AWOL Report for %s\nGenerated: %s\n%s\n\n",
 		position,
@@ -407,16 +407,16 @@ func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, 
 		// Issue #163: the file report must surface partial coverage too.
 		_, _ = fmt.Fprintf(&content, "%s\n\n", note)
 	}
-	if !cacheHealthy {
+	if !loasRead {
 		// ADR 0008: surface the degraded warning in the file too — same figures
-		// (raw) and the same "adjustment skipped" wording as the embed.
+		// (raw) and the same warning as the embed.
 		_, _ = fmt.Fprintf(&content, "%s\n\n", awolDegradedFooter)
 	}
 
 	for _, user := range awolUsers {
 		loaTag := ""
 		if user.OnLOA() {
-			loaTag = " [LOA]"
+			loaTag = " " + awolLOATag
 		}
 		_, _ = fmt.Fprintf(&content, "%s%s — %dd AWOL · last post %dd\nMilpac: %s\n\n",
 			user.Username,
@@ -425,7 +425,7 @@ func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, 
 			user.RawDaysSincePost,
 			user.MilpacUrl)
 	}
-	if cacheHealthy {
+	if loasRead {
 		_, _ = fmt.Fprintf(&content, "%s\n", awolReportFooter)
 	}
 
@@ -446,4 +446,36 @@ func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, 
 	}); err != nil {
 		captureDeferredEditFailure(i, "awol", err)
 	}
+}
+
+// loaWindowsByForumUserID files each open, upcoming and ended LOA under its
+// Subject's forum user ID, the only key /awol matches an LOA to a trooper
+// on. Usernames are never compared, so an LOA keeps counting for a trooper
+// who has renamed. A needs-review LOA covers none of its days, so a mistyped
+// LOA can't hide anyone (ADR 0008), and neither does an LOA in a state the
+// bot doesn't know. An LOA whose dates don't read is skipped.
+func loaWindowsByForumUserID(loas []utils.LOA) map[string][]utils.LOAEntry {
+	byID := map[string][]utils.LOAEntry{}
+	for _, l := range loas {
+		switch l.State {
+		case utils.LOAStateOpen, utils.LOAStateUpcoming, utils.LOAStateEnded:
+		default:
+			continue
+		}
+		start, startErr := time.Parse(time.DateOnly, l.StartDate)
+		end, endErr := time.Parse(time.DateOnly, l.EndDate)
+		if startErr != nil || endErr != nil {
+			utils.Warn("LOA skipped: dates unreadable",
+				"thread_id", l.ThreadID, "start", l.StartDate, "end", l.EndDate)
+			continue
+		}
+		threadID, _ := strconv.ParseInt(l.ThreadID, 10, 64)
+		byID[l.Subject.UserID] = append(byID[l.Subject.UserID], utils.LOAEntry{
+			Username:  l.Subject.Username,
+			StartDate: start,
+			EndDate:   end,
+			ThreadID:  threadID,
+		})
+	}
+	return byID
 }
