@@ -56,10 +56,8 @@ func TestSmokeOverridesPointThePanelAtTheRegisteredLocalCallback(t *testing.T) {
 		if o["BOT_DB_DSN"] != pgDSN {
 			t.Errorf("%s: BOT_DB_DSN = %q, want the smoke database", forum, o["BOT_DB_DSN"])
 		}
-		for _, off := range []string{"SENTRY_DSN", "FORUM_DB_DSN"} {
-			if v, set := o[off]; !set || v != "" {
-				t.Errorf("%s: %s must be set empty, got %q (set %v)", forum, off, v, set)
-			}
+		if v, set := o["SENTRY_DSN"]; !set || v != "" {
+			t.Errorf("%s: SENTRY_DSN must be set empty, got %q (set %v)", forum, v, set)
 		}
 	}
 }

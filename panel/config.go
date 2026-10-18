@@ -100,10 +100,9 @@ func ConfigFromEnv() (Config, error) {
 	return cfg, nil
 }
 
-// parseGroupIDs reads a comma-separated list of forum group IDs, the
-// LOA_NODE_IDS shape. Unlike that reader it refuses a value it cannot parse:
-// a typo in the admin groups would otherwise leave the panel with no admin in
-// silence.
+// parseGroupIDs reads a comma-separated list of forum group IDs. It refuses a
+// value it cannot parse: a typo in the admin groups would otherwise leave the
+// panel with no admin in silence.
 func parseGroupIDs(raw string) ([]int, error) {
 	var ids []int
 	for _, part := range strings.Split(raw, ",") {

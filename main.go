@@ -2,21 +2,16 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/7cav/cavbot2/utils"
-
-	_ "github.com/go-sql-driver/mysql"
-
 	"github.com/7cav/cavbot2/commands"
 	"github.com/7cav/cavbot2/panel"
 	"github.com/7cav/cavbot2/store"
+	"github.com/7cav/cavbot2/utils"
 	"github.com/7cav/cavbot2/voice"
 	"github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
@@ -78,43 +73,6 @@ func init() {
 	}
 
 	utils.InitLogger(LogLevel)
-}
-
-func initLOACache() {
-	dsn := os.Getenv("FORUM_DB_DSN")
-	if dsn == "" {
-		utils.Warn("FORUM_DB_DSN not set, LOA cache disabled")
-		return
-	}
-
-	nodeIDs := []int{180}
-	if s := os.Getenv("LOA_NODE_IDS"); s != "" {
-		nodeIDs = nil
-		for _, part := range strings.Split(s, ",") {
-			if id, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
-				nodeIDs = append(nodeIDs, id)
-			}
-		}
-	}
-
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		utils.Warn("Failed to open forum DB connection, LOA cache disabled", "error", err)
-		return
-	}
-	db.SetMaxOpenConns(2)
-	db.SetConnMaxIdleTime(30 * time.Second)
-
-	utils.GlobalLOACache.Refresh(db, nodeIDs)
-
-	go func() {
-		defer utils.RecoverPanic("loa-refresh")
-		ticker := time.NewTicker(15 * time.Minute)
-		defer ticker.Stop()
-		for range ticker.C {
-			utils.GlobalLOACache.Refresh(db, nodeIDs)
-		}
-	}()
 }
 
 // initBotStore opens the bot's own Postgres database and runs its migrations,
@@ -234,11 +192,6 @@ func main() {
 	utils.InitAPIBaseURL()
 
 	commands.LogFoxholeRoleBaseName()
-
-	initLOACache()
-	if shuttingDown() {
-		return
-	}
 
 	// Database and migrations come before the Discord session opens, so a
 	// failed migration never leaves a half-started bot on the gateway.

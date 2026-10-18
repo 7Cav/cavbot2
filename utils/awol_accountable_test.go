@@ -199,8 +199,8 @@ func TestAccountableDaysAWOL(t *testing.T) {
 
 // TestValidLOAWindows_DropsZeroValueEntry pins item 9: a zero-value LOAEntry
 // (both dates zero) is malformed and must be filtered, never treated as covering
-// the epoch-zero UTC date. Unreachable from production (parseLOAPost only emits
-// when both dates parse) but cheap to harden.
+// the epoch-zero UTC date. Unreachable from production (the commands build an
+// entry only when both dates read) but cheap to harden.
 func TestValidLOAWindows_DropsZeroValueEntry(t *testing.T) {
 	got := validLOAWindows([]LOAEntry{{}})
 	if len(got) != 0 {

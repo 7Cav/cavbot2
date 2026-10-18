@@ -5,7 +5,6 @@ go 1.26.0
 toolchain go1.27.1
 
 require (
-	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/disgoorg/disgo v0.19.7-0.20260923193941-995ee20fe0d6
 	github.com/disgoorg/godave v0.3.0
@@ -13,7 +12,6 @@ require (
 	github.com/getsentry/sentry-go v0.49.0
 	github.com/go-logfmt/logfmt v0.6.1
 	github.com/go-resty/resty/v2 v2.17.2
-	github.com/go-sql-driver/mysql v1.10.1
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/joho/godotenv v1.5.1
 	github.com/pressly/goose/v3 v3.28.0
@@ -24,7 +22,6 @@ require (
 )
 
 require (
-	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/disgoorg/json/v2 v2.0.0 // indirect
 	github.com/disgoorg/omit v1.0.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect

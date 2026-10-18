@@ -75,15 +75,19 @@ The regiment's Xenforo web forum. Members file PAFs there, and a post there
 is what keeps a trooper from going AWOL.
 
 **LOA**:
-Leave of absence: a trooper's notice, filed as a PAF in a forum thread of
-its own, that they will be away for a date range. It belongs to its Subject,
-and a second LOA is always a new thread.
+Leave of absence: a trooper's notice, filed as a PAF or posted by hand in
+its own thread in an LOA node, that they will be away for a date range. It
+belongs to its Subject, and a second LOA is always a new thread.
+
+**Needs-review LOA**:
+An LOA that can't be taken as written: its dates can't be read, it ends
+before it starts, it runs more than 14 days, or it names no member. It
+covers none of its days.
+_Avoid_: malformed LOA, invalid LOA.
 
 **PAF**:
 Personnel Action Form: the forum form a personnel action is filed on, such
-as an LOA request, which names a Submitter and a Subject. The bot reads a
-PAF by its field labels, so renaming one on the forum changes what the bot
-can read.
+as an LOA request, which names a Submitter and a Subject.
 
 **Subject**:
 The trooper an LOA is for, the one going on leave. The bot attributes the
@@ -98,11 +102,6 @@ _Avoid_: author, poster.
 
 **LOA node**:
 A forum section that holds LOA threads.
-
-**LOA cache**:
-The bot's copy of the forum's LOAs, each kept until a year after it ends and
-refreshed every 15 minutes. When it is unavailable, /awol counts days with
-no LOA subtracted and says so.
 
 ## Eligibility / tracker concepts
 
@@ -685,8 +684,8 @@ _Avoid_: reconnecting message, warning, alert.
 ## External systems
 
 **7Cav API**:
-The regiment's web API at api.7cav.us, where the bot reads milpacs and
-rosters.
+The regiment's web API at api.7cav.us, where the bot reads milpacs, rosters
+and LOAs.
 
 **Bot Postgres**:
 The bot's own database, and the only one it writes to.
