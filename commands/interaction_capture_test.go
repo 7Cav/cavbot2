@@ -208,7 +208,7 @@ func TestRunAwol_NoResultsEditFailureCapturesOnceNoRetry(t *testing.T) {
 	f := &fakeResponder{EditErrs: []error{errEditBoom}}
 	i := appCommandInteractionWithGuild("g-awol1", stringOption("position", "1-7"))
 
-	runAwol(f, healthyCache(nil), awolRefDate, i)
+	runAwol(f, awolRefDate, i)
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
 	if kv := kvToMap(rec.lastKV); kv["command"] != "awol" || kv["guild_id"] != "g-awol1" {
@@ -231,7 +231,7 @@ func TestRunAwol_EmbedEditFailureCapturesOnceNoRetry(t *testing.T) {
 	f := &fakeResponder{EditErrs: []error{errEditBoom}}
 	i := appCommandInteractionWithGuild("g-awol2", stringOption("position", "1-7"))
 
-	runAwol(f, healthyCache(nil), awolRefDate, i)
+	runAwol(f, awolRefDate, i)
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
 	if kv := kvToMap(rec.lastKV); kv["command"] != "awol" || kv["guild_id"] != "g-awol2" {
@@ -259,7 +259,7 @@ func TestRunAwol_FileSendFailureCapturesOnceNoRetry(t *testing.T) {
 		boolOption("force_file_output", true),
 	)
 
-	runAwol(f, healthyCache(nil), awolRefDate, i)
+	runAwol(f, awolRefDate, i)
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
 	if kv := kvToMap(rec.lastKV); kv["command"] != "awol" || kv["guild_id"] != "g-awol3" {

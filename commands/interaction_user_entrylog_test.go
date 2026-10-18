@@ -84,7 +84,7 @@ func TestEntryLogsSurviveMemberlessInteraction(t *testing.T) {
 			name: "awol",
 			run: func(t *testing.T, i *discordgo.InteractionCreate) {
 				f := &fakeResponder{RespondErrs: []error{errStub}}
-				runAwol(f, healthyCache(nil), time.Now(), i)
+				runAwol(f, time.Now(), i)
 			},
 		},
 	}
