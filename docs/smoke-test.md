@@ -122,6 +122,20 @@ connections abruptly, which the recorder notices at once. Connections made
 after the file appears stay up, so the recorder can rejoin. Only the file's
 appearance counts, so remove it before the next drop, and before `down`.
 
+**Reconnecting gateway sessions.** A recording check that needs a recorder's
+own gateway session to reconnect mid-recording starts the run with `go run
+./tools/smoke up --env SMOKE_GATEWAY_RECONNECT_FILE=/tmp/cavbot2-gateway-reconnect`.
+Each time that file appears, every recorder's gateway session closes its
+connection and logs in again, and the bot log gets a "Smoke hook reconnecting
+gateway session" WARN line for each. A file that says `identify` closes them
+with 1000, which ends each session at Discord, so the login after it
+identifies anew, as after a heartbeat Discord never acknowledged. Any other
+content closes them with 1012, as Discord's Op 7 does, and the login resumes
+the session. A duration
+after the word, such as `resume 30s`, keeps the sessions offline at least that
+long first. The bot's own session stays connected. Only the file's appearance
+counts, so remove it before the next reconnect, and before `down`.
+
 **Cav members.** The test guild has none of the rank roles the code holds for
 production, so no test account counts as a Cav member until a panel admin sets
 a rank role. A check that needs a Cav member, such as owning a spawned channel

@@ -2,6 +2,7 @@ package utils
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -49,6 +50,28 @@ type scriptedGateway struct {
 	script  func(login int) gatewayLogin
 	logins  int
 	settled chan struct{}
+	// sent is what the session sent on each login that got the upgrade, in
+	// the order they came.
+	sent []*sessionSent
+}
+
+// sessionSent is what the session sent on one login.
+type sessionSent struct {
+	// at is when the login's upgrade came.
+	at time.Time
+	// op is the opcode of the login's first frame: 2 for an identify, 6
+	// for a resume.
+	op int
+	// sessionID is the session a resume names.
+	sessionID string
+	// beat is set once the session sends a frame on a held connection after
+	// its answer: its first heartbeat.
+	beat bool
+	// closeCode is the code of the close frame the session sent on a held
+	// connection, and closedAt when it came. Both stay zero while it sends
+	// none.
+	closeCode int
+	closedAt  time.Time
 }
 
 // newScriptedGateway stands up a gateway that answers each login with what
@@ -80,7 +103,7 @@ func newScriptedGateway(t *testing.T, script func(login int) gatewayLogin) *scri
 			return
 		}
 		defer func() { _ = c.Close() }()
-		g.run(c, login, testOver)
+		g.run(c, login, g.newSent(), testOver)
 	})
 
 	prev := discordgo.EndpointGateway
@@ -100,6 +123,33 @@ func (g *scriptedGateway) login() gatewayLogin {
 		return gatewayLogin{answer: "RESUMED", heard: func() { close(settled) }}
 	}
 	return g.script(g.logins)
+}
+
+// newSent starts the record of what the session sends on a login.
+func (g *scriptedGateway) newSent() *sessionSent {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	s := &sessionSent{at: time.Now()}
+	g.sent = append(g.sent, s)
+	return s
+}
+
+// record updates s, a record newSent started, under the gateway's lock.
+func (g *scriptedGateway) record(s *sessionSent, update func(*sessionSent)) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	update(s)
+}
+
+// sentOn is what the session sent on the nth login that got the upgrade,
+// from 1, and false before that login came.
+func (g *scriptedGateway) sentOn(n int) (sessionSent, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if n < 1 || n > len(g.sent) {
+		return sessionSent{}, false
+	}
+	return *g.sent[n-1], true
 }
 
 // loginCount is how many logins the gateway has seen.
@@ -130,12 +180,22 @@ func (g *scriptedGateway) settle(t *testing.T, timeout time.Duration) {
 
 // run answers one login on c: Hello, then what login scripts, then the
 // close or the hold.
-func (g *scriptedGateway) run(c *websocket.Conn, login gatewayLogin, testOver <-chan struct{}) {
+func (g *scriptedGateway) run(c *websocket.Conn, login gatewayLogin, sent *sessionSent, testOver <-chan struct{}) {
 	if c.WriteMessage(websocket.TextMessage, []byte(helloFrame)) != nil {
 		return
 	}
-	if _, _, err := c.ReadMessage(); err != nil { // the identify or resume
+	_, first, err := c.ReadMessage() // the identify or resume
+	if err != nil {
 		return
+	}
+	var frame struct {
+		Op int `json:"op"`
+		D  struct {
+			SessionID string `json:"session_id"`
+		} `json:"d"`
+	}
+	if json.Unmarshal(first, &frame) == nil {
+		g.record(sent, func(s *sessionSent) { s.op, s.sessionID = frame.Op, frame.D.SessionID })
 	}
 	if login.invalid {
 		if !sendFrame(c, invalidSessionFrame) {
@@ -167,8 +227,13 @@ func (g *scriptedGateway) run(c *websocket.Conn, login gatewayLogin, testOver <-
 		defer close(done)
 		for heard := login.heard; ; heard = nil {
 			if _, _, err := c.ReadMessage(); err != nil {
+				var closeErr *websocket.CloseError
+				if errors.As(err, &closeErr) {
+					g.record(sent, func(s *sessionSent) { s.closeCode, s.closedAt = closeErr.Code, time.Now() })
+				}
 				return
 			}
+			g.record(sent, func(s *sessionSent) { s.beat = true })
 			if heard != nil {
 				heard()
 			}

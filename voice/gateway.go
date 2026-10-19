@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +35,12 @@ const closeTimeout = 5 * time.Second
 // lookupTimeout bounds the channel lookup a 4022 makes before the rejoin.
 const lookupTimeout = 5 * time.Second
 
+// smokeReconnectEnv names a file whose appearance makes every recorder's
+// gateway session reconnect, by resuming or by identifying anew, as
+// utils.WatchReconnects says. Only a smoke run sets it: the compose file's
+// environment block doesn't carry it.
+const smokeReconnectEnv = "SMOKE_GATEWAY_RECONNECT_FILE"
+
 // answerWait is how long a join's answer has to name a voice server after
 // the recorder's voice state. Discord sends the two together when it names
 // one, and discordgo hands each event to a goroutine of its own.
@@ -45,7 +52,8 @@ const answerWait = 250 * time.Millisecond
 // connection and its token logs in no more until the bot restarts.
 // The session is watched, so a recorder that drops off the gateway and stays
 // off reaches Sentry while the bot runs, and one whose token Discord refuses
-// stops logging in.
+// stops logging in. The smoke hook smokeReconnectEnv names is on when it
+// names a file.
 func OpenGateway(recorder int, token string) (GatewaySession, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
@@ -69,6 +77,9 @@ func OpenGateway(recorder int, token string) (GatewaySession, error) {
 		return nil, err
 	}
 	s.named(dg.State.User.ID)
+	if file := os.Getenv(smokeReconnectEnv); file != "" {
+		s.stopReconnects = utils.WatchReconnects(dg, file, "recorder", recorder, "user_id", s.userID)
+	}
 	// Closures rather than method values here and below: the gate's error
 	// data check follows a closure, and not a method value.
 	updateVoiceState := func(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
@@ -99,6 +110,9 @@ type discordgoSession struct {
 	// drops, when set, can drop the recorder's voice connections, as the
 	// smoke hook does.
 	drops *connDrops
+	// stopReconnects, when set, stops the smoke hook that reconnects the
+	// session.
+	stopReconnects func()
 }
 
 // connLoggerFunc builds the logger one voice connection logs through, and the
@@ -1153,10 +1167,13 @@ func (s *discordgoSession) UserID() string { return s.userID }
 
 // Close takes the recorder out of any voice channel it is still in, then
 // ends its session. The close is on purpose, so its watch stands down
-// first.
+// first, and the smoke hook stops, so it can't log the session in again.
 func (s *discordgoSession) Close() error {
 	if s.watch != nil {
 		s.watch.StandDown()
+	}
+	if s.stopReconnects != nil {
+		s.stopReconnects()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
 	defer cancel()
