@@ -1,0 +1,34 @@
+time=2026-10-19T18:48:32.063-04:00 level=WARN msg="Smoke hook reconnecting gateway session" recorder=1 user_id=<recorder-1> identify=true offline=0s
+time=2026-10-19T18:48:32.063-04:00 level=INFO msg=discordgo session=recorder-1 message="closing listening channel"
+time=2026-10-19T18:48:32.063-04:00 level=INFO msg=discordgo session=recorder-1 message="sending close frame"
+time=2026-10-19T18:48:32.094-04:00 level=WARN msg="Smoke hook reconnecting gateway session" recorder=2 user_id=<recorder-2> identify=true offline=0s
+time=2026-10-19T18:48:32.094-04:00 level=INFO msg=discordgo session=recorder-2 message="closing listening channel"
+time=2026-10-19T18:48:32.094-04:00 level=INFO msg=discordgo session=recorder-2 message="sending close frame"
+time=2026-10-19T18:48:32.329-04:00 level=DEBUG msg=discordgo session=bot op=0 seq=15 type=VOICE_STATE_UPDATE data={"guild_id":"<guild>","channel_id":null,"user_id":"<recorder-1>","session_id":"<session-1>","self_mute":true,"self_deaf":false,"mute":false,"deaf":false}
+time=2026-10-19T18:48:32.430-04:00 level=DEBUG msg="Removing voice conn" name=voice guild_id=<guild>
+time=2026-10-19T18:48:33.063-04:00 level=INFO msg=discordgo session=recorder-1 message="closing gateway websocket"
+time=2026-10-19T18:48:33.064-04:00 level=INFO msg=discordgo session=recorder-1 message="emit disconnect event"
+time=2026-10-19T18:48:33.064-04:00 level=INFO msg=discordgo session=recorder-1 message="connecting to gateway wss://gateway.discord.gg/?v=9&encoding=json"
+time=2026-10-19T18:48:33.094-04:00 level=INFO msg=discordgo session=recorder-2 message="closing gateway websocket"
+time=2026-10-19T18:48:33.095-04:00 level=INFO msg=discordgo session=recorder-2 message="emit disconnect event"
+time=2026-10-19T18:48:33.095-04:00 level=INFO msg=discordgo session=recorder-2 message="connecting to gateway wss://gateway.discord.gg/?v=9&encoding=json"
+time=2026-10-19T18:48:33.272-04:00 level=DEBUG msg=discordgo session=recorder-1 op=10 seq=0 type=- data={"heartbeat_interval":41250}
+time=2026-10-19T18:48:33.272-04:00 level=INFO msg=discordgo session=recorder-1 message="Op 10 Hello Packet received from Discord"
+time=2026-10-19T18:48:33.272-04:00 level=INFO msg=discordgo session=recorder-1 message="sending resume packet to gateway"
+time=2026-10-19T18:48:33.295-04:00 level=DEBUG msg=discordgo session=recorder-2 op=10 seq=0 type=- data={"heartbeat_interval":41250}
+time=2026-10-19T18:48:33.295-04:00 level=INFO msg=discordgo session=recorder-2 message="Op 10 Hello Packet received from Discord"
+time=2026-10-19T18:48:33.295-04:00 level=INFO msg=discordgo session=recorder-2 message="sending resume packet to gateway"
+time=2026-10-19T18:48:33.431-04:00 level=DEBUG msg=discordgo session=recorder-1 op=9 seq=0 type=- data=false
+time=2026-10-19T18:48:33.431-04:00 level=INFO msg=discordgo session=recorder-1 message="sending identify packet to gateway in response to Op9"
+time=2026-10-19T18:48:33.431-04:00 level=WARN msg=discordgo session=recorder-1 message="Expected READY/RESUMED, instead got op=9 seq=0 type=-"
+time=2026-10-19T18:48:33.431-04:00 level=INFO msg=discordgo session=recorder-1 message="We are now connected to Discord, emitting connect event"
+time=2026-10-19T18:48:33.454-04:00 level=DEBUG msg=discordgo session=recorder-2 op=9 seq=0 type=- data=false
+time=2026-10-19T18:48:33.454-04:00 level=INFO msg=discordgo session=recorder-2 message="sending identify packet to gateway in response to Op9"
+time=2026-10-19T18:48:33.454-04:00 level=WARN msg=discordgo session=recorder-2 message="Expected READY/RESUMED, instead got op=9 seq=0 type=-"
+time=2026-10-19T18:48:33.455-04:00 level=INFO msg=discordgo session=recorder-2 message="We are now connected to Discord, emitting connect event"
+time=2026-10-19T18:48:33.544-04:00 level=INFO msg="Recording stopped" recording_id=58 channel_id=<channel-A> recorder=<recorder-1> ended=recorder_left stopped_by=""
+time=2026-10-19T18:48:33.736-04:00 level=DEBUG msg=discordgo session=recorder-2 op=0 seq=1 type=READY data={"v":9,"session_id":"<session-2>","resume_gateway_url":"<resume-gateway-url>","user":{"id":"<recorder-2>"}}
+time=2026-10-19T18:48:33.749-04:00 level=DEBUG msg=discordgo session=recorder-1 op=0 seq=1 type=READY data={"v":9,"session_id":"<session-3>","resume_gateway_url":"<resume-gateway-url>","user":{"id":"<recorder-1>"}}
+time=2026-10-19T18:48:33.750-04:00 level=DEBUG msg=discordgo session=recorder-1|recorder-2 op=0 seq=2 type=GUILD_CREATE data={"id":"<guild>","voice_states":[{"channel_id":"<channel-A>","user_id":"<member-1>","session_id":"<session-4>","self_mute":false,"self_deaf":false,"mute":false,"deaf":false}]}
+time=2026-10-19T18:48:33.765-04:00 level=DEBUG msg=discordgo session=recorder-1|recorder-2 op=0 seq=2 type=GUILD_CREATE data={"id":"<guild>","voice_states":[{"channel_id":"<channel-A>","user_id":"<member-1>","session_id":"<session-4>","self_mute":false,"self_deaf":false,"mute":false,"deaf":false}]}
+time=2026-10-19T18:48:34.342-04:00 level=INFO msg="Recording mixed" recording_id=58 mix=ready

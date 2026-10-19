@@ -1,0 +1,40 @@
+time=2026-10-19T18:46:42.313-04:00 level=WARN msg="Smoke hook reconnecting gateway session" recorder=1 user_id=<recorder-1> identify=false offline=45s
+time=2026-10-19T18:46:42.313-04:00 level=INFO msg=discordgo session=recorder-1 message="closing listening channel"
+time=2026-10-19T18:46:42.313-04:00 level=INFO msg=discordgo session=recorder-1 message="sending close frame"
+time=2026-10-19T18:46:42.343-04:00 level=WARN msg="Smoke hook reconnecting gateway session" recorder=2 user_id=<recorder-2> identify=false offline=45s
+time=2026-10-19T18:46:42.344-04:00 level=INFO msg=discordgo session=recorder-2 message="closing listening channel"
+time=2026-10-19T18:46:42.344-04:00 level=INFO msg=discordgo session=recorder-2 message="sending close frame"
+time=2026-10-19T18:46:43.313-04:00 level=INFO msg=discordgo session=recorder-1 message="closing gateway websocket"
+time=2026-10-19T18:46:43.313-04:00 level=INFO msg=discordgo session=recorder-1 message="emit disconnect event"
+time=2026-10-19T18:46:43.345-04:00 level=INFO msg=discordgo session=recorder-2 message="closing gateway websocket"
+time=2026-10-19T18:46:43.345-04:00 level=INFO msg=discordgo session=recorder-2 message="emit disconnect event"
+time=2026-10-19T18:46:44.723-04:00 level=DEBUG msg="sending heartbeat" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T18:46:44.723-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":3,\"d\":{\"t\":1792450004723,\"seq_ack\":7}}"
+time=2026-10-19T18:46:44.834-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":6,\"d\":{\"t\":1792450004723}}"
+time=2026-10-19T18:46:58.473-04:00 level=DEBUG msg="sending heartbeat" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T18:46:58.473-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":3,\"d\":{\"t\":1792450018473,\"seq_ack\":7}}"
+time=2026-10-19T18:46:58.582-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":6,\"d\":{\"t\":1792450018473}}"
+time=2026-10-19T18:47:12.223-04:00 level=DEBUG msg="sending heartbeat" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T18:47:12.223-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":3,\"d\":{\"t\":1792450032223,\"seq_ack\":7}}"
+time=2026-10-19T18:47:12.334-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":6,\"d\":{\"t\":1792450032223}}"
+time=2026-10-19T18:47:25.972-04:00 level=DEBUG msg="sending heartbeat" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T18:47:25.972-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":3,\"d\":{\"t\":1792450045972,\"seq_ack\":7}}"
+time=2026-10-19T18:47:26.081-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":6,\"d\":{\"t\":1792450045972}}"
+time=2026-10-19T18:47:28.314-04:00 level=INFO msg=discordgo session=recorder-1 message="connecting to gateway wss://gateway.discord.gg/?v=9&encoding=json"
+time=2026-10-19T18:47:28.346-04:00 level=INFO msg=discordgo session=recorder-2 message="connecting to gateway wss://gateway.discord.gg/?v=9&encoding=json"
+time=2026-10-19T18:47:28.496-04:00 level=DEBUG msg=discordgo session=recorder-1 op=10 seq=0 type=- data={"heartbeat_interval":41250}
+time=2026-10-19T18:47:28.496-04:00 level=INFO msg=discordgo session=recorder-1 message="Op 10 Hello Packet received from Discord"
+time=2026-10-19T18:47:28.496-04:00 level=INFO msg=discordgo session=recorder-1 message="sending resume packet to gateway"
+time=2026-10-19T18:47:28.532-04:00 level=DEBUG msg=discordgo session=recorder-2 op=10 seq=0 type=- data={"heartbeat_interval":41250}
+time=2026-10-19T18:47:28.532-04:00 level=INFO msg=discordgo session=recorder-2 message="Op 10 Hello Packet received from Discord"
+time=2026-10-19T18:47:28.532-04:00 level=INFO msg=discordgo session=recorder-2 message="sending resume packet to gateway"
+time=2026-10-19T18:47:28.642-04:00 level=DEBUG msg=discordgo session=recorder-1 op=0 seq=9 type=RESUMED data={}
+time=2026-10-19T18:47:28.642-04:00 level=INFO msg=discordgo session=recorder-1 message="We are now connected to Discord, emitting connect event"
+time=2026-10-19T18:47:28.678-04:00 level=DEBUG msg=discordgo session=recorder-2 op=0 seq=8 type=RESUMED data={}
+time=2026-10-19T18:47:28.679-04:00 level=INFO msg=discordgo session=recorder-2 message="We are now connected to Discord, emitting connect event"
+time=2026-10-19T18:47:39.722-04:00 level=DEBUG msg="sending heartbeat" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T18:47:39.722-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":3,\"d\":{\"t\":1792450059722,\"seq_ack\":7}}"
+time=2026-10-19T18:47:39.833-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":6,\"d\":{\"t\":1792450059722}}"
+time=2026-10-19T18:47:53.473-04:00 level=DEBUG msg="sending heartbeat" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T18:47:53.473-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":3,\"d\":{\"t\":1792450073473,\"seq_ack\":7}}"
+time=2026-10-19T18:47:53.583-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":6,\"d\":{\"t\":1792450073473}}"

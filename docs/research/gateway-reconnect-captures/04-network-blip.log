@@ -1,0 +1,82 @@
+time=2026-10-19T18:48:07.222-04:00 level=DEBUG msg="sending heartbeat" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T18:48:07.222-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":3,\"d\":{\"t\":1792450087222,\"seq_ack\":7}}"
+time=2026-10-19T18:48:07.332-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":6,\"d\":{\"t\":1792450087222}}"
+time=2026-10-19T18:48:09.062-04:00 level=WARN msg="Smoke hook dropping voice connections" connections=0 silent=false
+time=2026-10-19T18:48:09.063-04:00 level=WARN msg="Smoke hook reconnecting gateway session" recorder=1 user_id=<recorder-1> identify=false offline=0s
+time=2026-10-19T18:48:09.063-04:00 level=INFO msg=discordgo session=recorder-1 message="closing listening channel"
+time=2026-10-19T18:48:09.063-04:00 level=INFO msg=discordgo session=recorder-1 message="sending close frame"
+time=2026-10-19T18:48:09.094-04:00 level=WARN msg="Smoke hook reconnecting gateway session" recorder=2 user_id=<recorder-2> identify=false offline=0s
+time=2026-10-19T18:48:09.094-04:00 level=INFO msg=discordgo session=recorder-2 message="closing listening channel"
+time=2026-10-19T18:48:09.094-04:00 level=INFO msg=discordgo session=recorder-2 message="sending close frame"
+time=2026-10-19T18:48:09.096-04:00 level=WARN msg="Smoke hook dropping voice connections" connections=2 silent=false
+time=2026-10-19T18:48:09.096-04:00 level=WARN msg="failed to read next message from voice gateway" name=voice_conn name=voice_conn_gateway err="read tcp: connection reset by peer"
+time=2026-10-19T18:48:09.096-04:00 level=DEBUG msg="closing heartbeat goroutine" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T18:48:09.096-04:00 level=DEBUG msg="closing voice gateway connection" name=voice_conn name=voice_conn_gateway code=1012 message=reconnecting
+time=2026-10-19T18:48:09.096-04:00 level=DEBUG msg="error writing close code" name=voice_conn name=voice_conn_gateway err="write tcp [<ip-3>]:59344->[<ip-4>]:2053: use of closed network connection"
+time=2026-10-19T18:48:09.096-04:00 level=DEBUG msg="exiting voice heartbeat goroutine" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T18:48:09.097-04:00 level=DEBUG msg="exiting listen goroutine" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T18:48:09.097-04:00 level=DEBUG msg="opening voice gateway connection" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T18:48:09.097-04:00 level=WARN msg="error connecting to the voice gateway" name=voice_conn name=voice_conn_gateway err="voice: the recorder rejoins rather than resumes: gateway is already connected" url="wss://<voice-server-1>:2053?v=8" body=""
+time=2026-10-19T18:48:09.097-04:00 level=WARN msg="failed to reopen voice gateway" name=voice_conn name=voice_conn_gateway err="voice: the recorder rejoins rather than resumes: gateway is already connected"
+time=2026-10-19T18:48:09.097-04:00 level=DEBUG msg="opening voice conn" name=voice_conn
+time=2026-10-19T18:48:10.063-04:00 level=INFO msg=discordgo session=recorder-1 message="closing gateway websocket"
+time=2026-10-19T18:48:10.064-04:00 level=INFO msg=discordgo session=recorder-1 message="emit disconnect event"
+time=2026-10-19T18:48:10.064-04:00 level=INFO msg=discordgo session=recorder-1 message="connecting to gateway wss://gateway.discord.gg/?v=9&encoding=json"
+time=2026-10-19T18:48:10.094-04:00 level=INFO msg=discordgo session=recorder-2 message="closing gateway websocket"
+time=2026-10-19T18:48:10.094-04:00 level=INFO msg=discordgo session=recorder-2 message="emit disconnect event"
+time=2026-10-19T18:48:10.094-04:00 level=INFO msg=discordgo session=recorder-2 message="connecting to gateway wss://gateway.discord.gg/?v=9&encoding=json"
+time=2026-10-19T18:48:10.264-04:00 level=DEBUG msg=discordgo session=recorder-1 op=10 seq=0 type=- data={"heartbeat_interval":41250}
+time=2026-10-19T18:48:10.264-04:00 level=INFO msg=discordgo session=recorder-1 message="Op 10 Hello Packet received from Discord"
+time=2026-10-19T18:48:10.264-04:00 level=INFO msg=discordgo session=recorder-1 message="sending resume packet to gateway"
+time=2026-10-19T18:48:10.294-04:00 level=DEBUG msg=discordgo session=recorder-2 op=10 seq=0 type=- data={"heartbeat_interval":41250}
+time=2026-10-19T18:48:10.295-04:00 level=INFO msg=discordgo session=recorder-2 message="Op 10 Hello Packet received from Discord"
+time=2026-10-19T18:48:10.295-04:00 level=INFO msg=discordgo session=recorder-2 message="sending resume packet to gateway"
+time=2026-10-19T18:48:10.424-04:00 level=DEBUG msg=discordgo session=recorder-1 op=0 seq=10 type=RESUMED data={}
+time=2026-10-19T18:48:10.425-04:00 level=INFO msg=discordgo session=recorder-1 message="We are now connected to Discord, emitting connect event"
+time=2026-10-19T18:48:10.454-04:00 level=DEBUG msg=discordgo session=recorder-2 op=0 seq=9 type=RESUMED data={}
+time=2026-10-19T18:48:10.454-04:00 level=INFO msg=discordgo session=recorder-2 message="We are now connected to Discord, emitting connect event"
+time=2026-10-19T18:48:11.065-04:00 level=DEBUG msg="opening voice conn" name=voice_conn
+time=2026-10-19T18:48:11.065-04:00 level=INFO msg=discordgo session=recorder-1 message=called
+time=2026-10-19T18:48:11.244-04:00 level=DEBUG msg=discordgo session=bot op=0 seq=13 type=VOICE_STATE_UPDATE data={"guild_id":"<guild>","channel_id":"<channel-A>","user_id":"<recorder-1>","session_id":"<session-1>","self_mute":true,"self_deaf":false,"mute":false,"deaf":false}
+time=2026-10-19T18:48:11.244-04:00 level=DEBUG msg=discordgo session=recorder-2 op=0 seq=10 type=VOICE_STATE_UPDATE data={"guild_id":"<guild>","channel_id":"<channel-A>","user_id":"<recorder-1>","session_id":"<session-1>","self_mute":true,"self_deaf":false,"mute":false,"deaf":false}
+time=2026-10-19T18:48:11.244-04:00 level=DEBUG msg="new VoiceStateUpdate" name=voice guild_id=<guild>
+time=2026-10-19T18:48:11.245-04:00 level=DEBUG msg=discordgo session=recorder-1 op=0 seq=11 type=VOICE_STATE_UPDATE data={"guild_id":"<guild>","channel_id":"<channel-A>","user_id":"<recorder-1>","session_id":"<session-1>","self_mute":true,"self_deaf":false,"mute":false,"deaf":false}
+time=2026-10-19T18:48:11.245-04:00 level=DEBUG msg="new VoiceStateUpdate" name=voice guild_id=<guild>
+time=2026-10-19T18:48:11.495-04:00 level=INFO msg="Recorder reconnecting with the voice server token it held" recorder=<recorder-1> voice_server=<voice-server-1>:2053
+time=2026-10-19T18:48:11.495-04:00 level=DEBUG msg="opening voice gateway connection" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T18:48:11.847-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":8,\"d\":{\"v\":8,\"heartbeat_interval\":13750}}"
+time=2026-10-19T18:48:11.847-04:00 level=DEBUG msg="sending Identify command" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T18:48:11.847-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":0,\"d\":{\"server_id\":\"<guild>\",\"user_id\":\"<recorder-1>\",\"session_id\":\"<session-1>\",\"token\":\"<token-1>\",\"max_dave_protocol_version\":1}}"
+time=2026-10-19T18:48:11.957-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":2,\"d\":{\"streams\":[{\"type\":\"video\",\"ssrc\":4003,\"rtx_ssrc\":4004,\"rid\":\"\",\"quality\":0,\"active\":false}],\"ssrc\":4002,\"port\":19308,\"modes\":[\"aead_aes256_gcm_rtpsize\",\"aead_xchacha20_poly1305_rtpsize\"],\"ip\":\"<ip-1>\",\"experiments\":[\"fixed_keyframe_interval\"]}}"
+time=2026-10-19T18:48:12.062-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":1,\"d\":{\"protocol\":\"udp\",\"data\":{\"address\":\"<ip-2>\",\"port\":38841,\"mode\":\"aead_aes256_gcm_rtpsize\"}}}"
+time=2026-10-19T18:48:12.062-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":0,\"op\":11,\"d\":{\"user_ids\":[\"<member-1>\"]}}"
+time=2026-10-19T18:48:12.062-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":1,\"op\":5,\"d\":{\"user_id\":\"<member-1>\",\"ssrc\":3992,\"speaking\":1}}"
+time=2026-10-19T18:48:12.062-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":2,\"op\":18,\"d\":{\"user_id\":\"<member-1>\",\"flags\":2}}"
+time=2026-10-19T18:48:12.062-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":3,\"op\":20,\"d\":{\"user_id\":\"<member-1>\",\"platform\":0}}"
+time=2026-10-19T18:48:12.182-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":4,\"d\":{\"video_codec\":\"H264\",\"secure_frames_version\":1,\"secret_key\":\"<secret-key>\",\"mode\":\"aead_aes256_gcm_rtpsize\",\"media_session_id\":\"<media-session-1>\",\"dave_protocol_version\":1,\"audio_codec\":\"opus\"}}"
+time=2026-10-19T18:48:12.183-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data=<binary op=26 len=396>
+time=2026-10-19T18:48:12.183-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":4,\"op\":15,\"d\":{\"any\":100}}"
+time=2026-10-19T18:48:12.183-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data=<binary seq=5 op=25 len=74>
+time=2026-10-19T18:48:12.183-04:00 level=INFO msg="mls group created" dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> group_id=<channel-A-hex>
+time=2026-10-19T18:48:12.183-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data=<binary seq=6 op=27 len=499>
+time=2026-10-19T18:48:12.183-04:00 level=DEBUG msg=OnDaveMLSProposals dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> size=496 group_id=<channel-A-hex> has_group=true
+time=2026-10-19T18:48:12.183-04:00 level=DEBUG msg=processProposalBatchLocked dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> operation_type=0 total_size=496
+time=2026-10-19T18:48:12.183-04:00 level=DEBUG msg="proposals vector parsed" dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> vec_len=493 header_size=2 payload_first_32=<hex len=32> vector_first_32=<hex len=32>
+time=2026-10-19T18:48:12.183-04:00 level=DEBUG msg="parsing proposal" dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> index=0 remaining_bytes=493 wire_hex=<hex len=64>
+time=2026-10-19T18:48:12.184-04:00 level=DEBUG msg="processProposalBatchLocked: all proposals processed successfully" dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A>
+time=2026-10-19T18:48:12.184-04:00 level=DEBUG msg="commitProposalsLocked: starting commit" dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> group_id=<channel-A-hex>
+time=2026-10-19T18:48:12.185-04:00 level=DEBUG msg="commitProposalsLocked: commit created" dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> commit_size=203 welcome_size=1041
+time=2026-10-19T18:48:12.185-04:00 level=DEBUG msg="commitProposalsLocked: commit hex" dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> commit_hex=<hex len=203>
+time=2026-10-19T18:48:12.186-04:00 level=DEBUG msg="commitProposalsLocked: pendingEpoch set" dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> epoch_id=1 sender_count=2 has_self=true
+time=2026-10-19T18:48:12.186-04:00 level=DEBUG msg="commitProposalsLocked: sending commit/welcome to gateway" dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> payload_size=1240
+time=2026-10-19T18:48:12.186-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data=<binary op=28 len=1241>
+time=2026-10-19T18:48:12.186-04:00 level=INFO msg="mls proposals processed and committed" dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> size=496 pending_epoch_set=true pending_epoch_id=1
+time=2026-10-19T18:48:12.292-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data=<binary seq=7 op=29 len=208>
+time=2026-10-19T18:48:12.292-04:00 level=DEBUG msg=OnDaveMLSPrepareCommitTransition dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> transition_id=0 commit_size=203 pending_epoch_set=true commit_hex_prefix=<hex len=32>
+time=2026-10-19T18:48:12.292-04:00 level=DEBUG msg="skipping commit re-processing: we were the committer" dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> transition_id=0
+time=2026-10-19T18:48:12.292-04:00 level=DEBUG msg="activating epoch immediately for initial transition (transitionID=0)" dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A>
+time=2026-10-19T18:48:12.292-04:00 level=DEBUG msg="activatePendingEpochLocked called" dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> pending_epoch_set=true active_epoch_set=false user_id=<recorder-1>
+time=2026-10-19T18:48:12.292-04:00 level=DEBUG msg="epoch activated" dave_session=804264ba user_id=<recorder-1> channel_id=<channel-A> epoch_id=1 sender_count=2
+time=2026-10-19T18:48:25.598-04:00 level=DEBUG msg="sending heartbeat" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T18:48:25.598-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":3,\"d\":{\"t\":1792450105598,\"seq_ack\":7}}"
+time=2026-10-19T18:48:25.705-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":6,\"d\":{\"t\":1792450105598}}"
