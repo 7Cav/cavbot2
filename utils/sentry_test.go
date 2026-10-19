@@ -64,8 +64,8 @@ func TestInitSentry_NoDSN_CaptureErrorSendsNothing(t *testing.T) {
 	InitSentry("v0.0.0-test")
 	CaptureError("test error", errors.New("oops"))
 
-	if sentry.CurrentHub().Client() != nil {
-		t.Fatal("expected no Sentry client when DSN is empty")
+	if sentry.CurrentHub().Client().IsEnabled() {
+		t.Fatal("expected Sentry disabled when DSN is empty")
 	}
 }
 
@@ -152,11 +152,11 @@ func TestCaptureError_SentryDisabled_NoPanic(t *testing.T) {
 	t.Setenv("SENTRY_DSN", "")
 	resetSentryHub(t)
 
-	// No sentry client bound — CaptureError must not panic.
+	// Sentry disabled — CaptureError must not panic.
 	CaptureError("safe error", errors.New("noop"))
 
-	if sentry.CurrentHub().Client() != nil {
-		t.Fatal("expected no Sentry client when DSN is empty")
+	if sentry.CurrentHub().Client().IsEnabled() {
+		t.Fatal("expected Sentry disabled when DSN is empty")
 	}
 }
 

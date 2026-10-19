@@ -78,7 +78,7 @@ func promoteCommandTag(scope *sentry.Scope, kv []any) {
 func CaptureError(msg string, err error, kv ...any) {
 	Logger.Error(msg, append([]any{"error", err}, kv...)...)
 
-	if sentry.CurrentHub().Client() == nil {
+	if !sentry.CurrentHub().Client().IsEnabled() {
 		return
 	}
 
@@ -110,7 +110,7 @@ func RecoverPanic(ctx string, kv ...any) {
 func ReportPanic(ctx string, r any, kv ...any) {
 	Error("panic recovered", append([]any{"context", ctx, "panic", r, "stack", string(debug.Stack())}, kv...)...)
 
-	if sentry.CurrentHub().Client() == nil {
+	if !sentry.CurrentHub().Client().IsEnabled() {
 		return
 	}
 
