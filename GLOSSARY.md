@@ -634,9 +634,15 @@ A stretch of a recording when the recorder could not hear the channel,
 because its connection to the voice server dropped, the call moved to a
 voice server it had not reached yet, or its encryption setup stalled. Every
 track is silent there, whether or not anyone spoke. One that passes 10
-seconds gets a gap notice and a line in the info file, and one that reaches
-10 minutes ends the recording.
+seconds gets a gap notice and a line in the info file.
 _Avoid_: dropout, outage, stall (one cause of a gap).
+
+**Reconnect**:
+The recorder getting its call back during a gap while it stays in the
+channel, so members see and hear nothing of it but the gap. When a reconnect
+can't work, the recorder leaves and joins again instead, which members hear
+as Discord's leave and join sounds.
+_Avoid_: rejoin (a speaker's leave and join), resume.
 
 **Mix**:
 One file of every track in a recording played together, built when the
