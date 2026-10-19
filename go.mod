@@ -15,7 +15,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/joho/godotenv v1.5.1
 	github.com/pressly/goose/v3 v3.28.0
-	github.com/thomas-vilte/dave-go v0.5.1
+	github.com/thomas-vilte/dave-go v0.5.2-0.20261014163830-89a4bbff7dd2
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/tools v0.51.0
