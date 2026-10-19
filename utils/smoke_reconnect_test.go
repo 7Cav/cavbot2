@@ -87,9 +87,12 @@ func TestSmokeReconnect_IdentifyEndsTheSessionAndLogsInAgain(t *testing.T) {
 
 	writeReconnectFile(t, file, "identify\n")
 
-	sentOnLogin(t, g, 2)
+	again := sentOnLogin(t, g, 2)
 	if first, _ := g.sentOn(1); !endsTheSession(first.closeCode) {
 		t.Errorf("the session closed its connection with %d, want a code that ends the session", first.closeCode)
+	}
+	if again.afterInvalid != 2 {
+		t.Errorf("the session answered Op 9 with op %d, want an identify (2)", again.afterInvalid)
 	}
 }
 
@@ -129,6 +132,31 @@ func TestSmokeReconnect_OnlyTheFilesAppearanceReconnects(t *testing.T) {
 	writeReconnectFile(t, file, "resume\n")
 
 	sentOnLogin(t, g, 3)
+}
+
+// A file the hook can't read for a while hasn't gone away, so it reconnects
+// nothing more once the hook can read it again.
+func TestSmokeReconnect_AFileItCantReadForAWhileDoesntReconnectAgain(t *testing.T) {
+	g, file := watchReconnectFile(t, gatewayLogin{answer: "RESUMED"})
+	writeReconnectFile(t, file, "resume\n")
+	sentOnLogin(t, g, 2)
+
+	if err := os.Chmod(file, 0); err != nil {
+		t.Fatalf("making the reconnect file unreadable: %v", err)
+	}
+	if _, err := os.ReadFile(file); err == nil {
+		_ = os.Chmod(file, 0o600)
+		t.Skip("this user reads a file whatever its mode")
+	}
+	time.Sleep(4 * reconnectCheckEvery)
+	if err := os.Chmod(file, 0o600); err != nil {
+		t.Fatalf("making the reconnect file readable: %v", err)
+	}
+	time.Sleep(8 * reconnectCheckEvery)
+
+	if n := g.loginCount(); n != 2 {
+		t.Errorf("the gateway saw %d logins, want 2", n)
+	}
 }
 
 // The hook says in the log which session it reconnects, and how, so a

@@ -2,6 +2,7 @@ package utils
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"strings"
 	"sync"
@@ -30,7 +31,8 @@ const smokeReconnectMessage = "Smoke hook reconnecting gateway session"
 // discordgo does on Discord's Op 7, which keeps the session, so the login
 // after it resumes. A duration after the word, such as "resume 30s", keeps
 // the session offline at least that long before it logs in. Only the file's
-// appearance counts, so a file left in place reconnects once. kv names the
+// appearance counts, so a file left in place reconnects once, and so does
+// one the hook can't read for a while. kv names the
 // session in the hook's log lines. It looks for file until stop, which
 // returns once a reconnect under way has ended and leaves the session as
 // that left it.
@@ -50,9 +52,14 @@ func WatchReconnects(dg *discordgo.Session, file string, kv ...any) (stop func()
 			case <-tick.C:
 			}
 			content, err := os.ReadFile(file)
-			appeared := err == nil && !present
-			present = err == nil
-			if appeared {
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
+				present = false
+			case err != nil:
+				// The file is there but can't be read yet, so whether it
+				// appeared waits until it can.
+			case !present:
+				present = true
 				parseReconnect(string(content)).run(dg, kv, done)
 			}
 		}

@@ -64,6 +64,9 @@ type sessionSent struct {
 	op int
 	// sessionID is the session a resume names.
 	sessionID string
+	// afterInvalid is the opcode of the frame the session sent in answer to
+	// Op 9, on a login scripted invalid.
+	afterInvalid int
 	// beat is set once the session sends a frame on a held connection after
 	// its answer: its first heartbeat.
 	beat bool
@@ -201,8 +204,15 @@ func (g *scriptedGateway) run(c *websocket.Conn, login gatewayLogin, sent *sessi
 		if !sendFrame(c, invalidSessionFrame) {
 			return
 		}
-		if _, _, err := c.ReadMessage(); err != nil { // the identify that answers it
+		_, answer, err := c.ReadMessage() // the identify that answers it
+		if err != nil {
 			return
+		}
+		var frame struct {
+			Op int `json:"op"`
+		}
+		if json.Unmarshal(answer, &frame) == nil {
+			g.record(sent, func(s *sessionSent) { s.afterInvalid = frame.Op })
 		}
 	}
 	switch login.answer {
