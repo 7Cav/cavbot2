@@ -1,0 +1,100 @@
+time=2026-10-19T13:59:17.954-04:00 level=WARN msg="Smoke hook dropping voice connections" connections=0 silent=false
+time=2026-10-19T13:59:18.075-04:00 level=WARN msg="Smoke hook dropping voice connections" connections=2 silent=false
+time=2026-10-19T13:59:18.075-04:00 level=WARN msg="failed to read next message from voice gateway" name=voice_conn name=voice_conn_gateway err="read tcp: connection reset by peer"
+time=2026-10-19T13:59:18.075-04:00 level=DEBUG msg="closing heartbeat goroutine" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T13:59:18.075-04:00 level=DEBUG msg="closing voice gateway connection" name=voice_conn name=voice_conn_gateway code=1012 message=reconnecting
+time=2026-10-19T13:59:18.075-04:00 level=DEBUG msg="exiting voice heartbeat goroutine" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T13:59:18.075-04:00 level=DEBUG msg="opening voice gateway connection" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T13:59:18.075-04:00 level=DEBUG msg="opening voice conn" name=voice_conn
+time=2026-10-19T13:59:18.075-04:00 level=INFO msg=discordgo message=called
+time=2026-10-19T13:59:18.239-04:00 level=DEBUG msg=discordgo session=recorder-1 op=0 seq=9 type=VOICE_STATE_UPDATE data="{\"guild_id\":\"<guild>\",\"channel_id\":\"<channel-A>\",\"user_id\":\"<recorder-1>\",\"session_id\":\"<session-1>\",\"deaf\":false,\"mute\":false,\"self_deaf\":false,\"self_mute\":true,\"self_video\":false,\"suppress\":false,\"request_to_speak_timestamp\":null}"
+time=2026-10-19T13:59:18.240-04:00 level=DEBUG msg="new VoiceStateUpdate" name=voice guild_id=<guild>
+time=2026-10-19T13:59:18.241-04:00 level=DEBUG msg=discordgo session=recorder-2 op=0 seq=8 type=VOICE_STATE_UPDATE data="{\"guild_id\":\"<guild>\",\"channel_id\":\"<channel-A>\",\"user_id\":\"<recorder-1>\",\"session_id\":\"<session-1>\",\"deaf\":false,\"mute\":false,\"self_deaf\":false,\"self_mute\":true,\"self_video\":false,\"suppress\":false,\"request_to_speak_timestamp\":null}"
+time=2026-10-19T13:59:18.241-04:00 level=DEBUG msg="new VoiceStateUpdate" name=voice guild_id=<guild>
+time=2026-10-19T13:59:18.242-04:00 level=DEBUG msg=discordgo session=bot op=0 seq=13 type=VOICE_STATE_UPDATE data="{\"guild_id\":\"<guild>\",\"channel_id\":\"<channel-A>\",\"user_id\":\"<recorder-1>\",\"session_id\":\"<session-1>\",\"deaf\":false,\"mute\":false,\"self_deaf\":false,\"self_mute\":true,\"self_video\":false,\"suppress\":false,\"request_to_speak_timestamp\":null}"
+time=2026-10-19T13:59:18.491-04:00 level=INFO msg="Recorder reconnecting with the voice server token it held" recorder=<recorder-1> voice_server=<voice-server-1>:8443
+time=2026-10-19T13:59:18.491-04:00 level=DEBUG msg="opening voice gateway connection" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T13:59:19.491-04:00 level=DEBUG msg="opening voice gateway connection" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T13:59:21.492-04:00 level=DEBUG msg="opening voice gateway connection" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T13:59:25.493-04:00 level=DEBUG msg="opening voice gateway connection" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T13:59:28.095-04:00 level=ERROR msg="Recorder can't hear the channel" error="voice: the recorder couldn't hear the channel for 10 s" recorder=<recorder-1> channel_id=<channel-A> voice_server=<voice-server-1>:8443
+time=2026-10-19T13:59:33.494-04:00 level=DEBUG msg="opening voice gateway connection" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T13:59:43.495-04:00 level=DEBUG msg="opening voice gateway connection" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T13:59:48.492-04:00 level=WARN msg="error opening voice gateway" name=voice_conn err="context deadline exceeded"
+time=2026-10-19T13:59:53.496-04:00 level=DEBUG msg="opening voice gateway connection" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T14:00:03.496-04:00 level=DEBUG msg="opening voice gateway connection" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T14:00:13.497-04:00 level=DEBUG msg="opening voice gateway connection" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T14:00:23.498-04:00 level=DEBUG msg="opening voice gateway connection" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T14:00:23.830-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":8,\"d\":{\"v\":8,\"heartbeat_interval\":13750}}"
+time=2026-10-19T14:00:23.830-04:00 level=DEBUG msg="sending Identify command" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T14:00:23.830-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":0,\"d\":{\"server_id\":\"<guild>\",\"user_id\":\"<recorder-1>\",\"session_id\":\"<session-1>\",\"token\":\"<token-1>\",\"max_dave_protocol_version\":1}}"
+time=2026-10-19T14:00:23.936-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":2,\"d\":{\"streams\":[{\"type\":\"video\",\"ssrc\":1469,\"rtx_ssrc\":1470,\"rid\":\"\",\"quality\":0,\"active\":false}],\"ssrc\":1468,\"port\":19335,\"modes\":[\"aead_aes256_gcm_rtpsize\",\"aead_xchacha20_poly1305_rtpsize\"],\"ip\":\"<ip-1>\",\"experiments\":[\"fixed_keyframe_interval\"]}}"
+time=2026-10-19T14:00:24.041-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":1,\"d\":{\"protocol\":\"udp\",\"data\":{\"address\":\"<ip-2>\",\"port\":34490,\"mode\":\"aead_aes256_gcm_rtpsize\"}}}"
+time=2026-10-19T14:00:24.041-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":0,\"op\":11,\"d\":{\"user_ids\":[\"<member-1>\"]}}"
+time=2026-10-19T14:00:24.041-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":1,\"op\":5,\"d\":{\"user_id\":\"<member-1>\",\"ssrc\":1458,\"speaking\":1}}"
+time=2026-10-19T14:00:24.041-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":2,\"op\":18,\"d\":{\"user_id\":\"<member-1>\",\"flags\":2}}"
+time=2026-10-19T14:00:24.041-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":3,\"op\":20,\"d\":{\"user_id\":\"<member-1>\",\"platform\":0}}"
+time=2026-10-19T14:00:24.146-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":4,\"d\":{\"video_codec\":\"H264\",\"secure_frames_version\":1,\"secret_key\":\"<secret-key>\",\"mode\":\"aead_aes256_gcm_rtpsize\",\"media_session_id\":\"a063402b3d1ec33255671da457aaf6d0\",\"dave_protocol_version\":1,\"audio_codec\":\"opus\"}}"
+time=2026-10-19T14:00:24.148-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="<binary op=26 len=397>"
+time=2026-10-19T14:00:24.148-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":4,\"op\":15,\"d\":{\"any\":100}}"
+time=2026-10-19T14:00:24.148-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="<binary seq=5 op=25 len=74>"
+time=2026-10-19T14:00:24.148-04:00 level=INFO msg="mls group created" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> group_id=<channel-A-hex>
+time=2026-10-19T14:00:24.148-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="<binary seq=6 op=27 len=502>"
+time=2026-10-19T14:00:24.148-04:00 level=DEBUG msg=OnDaveMLSProposals dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> size=499 group_id=<channel-A-hex> has_group=true
+time=2026-10-19T14:00:24.148-04:00 level=DEBUG msg=processProposalBatchLocked dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> operation_type=0 total_size=499
+time=2026-10-19T14:00:24.148-04:00 level=DEBUG msg="proposals vector parsed" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> vec_len=496 header_size=2 payload_first_32="<hex len=32>" vector_first_32="<hex len=32>"
+time=2026-10-19T14:00:24.148-04:00 level=DEBUG msg="parsing proposal" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> index=0 remaining_bytes=496 wire_hex="<hex len=64>"
+time=2026-10-19T14:00:24.149-04:00 level=DEBUG msg="processProposalBatchLocked: all proposals processed successfully" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A>
+time=2026-10-19T14:00:24.149-04:00 level=DEBUG msg="commitProposalsLocked: starting commit" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> group_id=<channel-A-hex>
+time=2026-10-19T14:00:24.151-04:00 level=DEBUG msg="commitProposalsLocked: commit created" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> commit_size=203 welcome_size=1041
+time=2026-10-19T14:00:24.151-04:00 level=DEBUG msg="commitProposalsLocked: commit hex" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> commit_hex="<hex len=203>"
+time=2026-10-19T14:00:24.152-04:00 level=DEBUG msg="commitProposalsLocked: pendingEpoch set" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> epoch_id=1 sender_count=2 has_self=true
+time=2026-10-19T14:00:24.152-04:00 level=DEBUG msg="commitProposalsLocked: sending commit/welcome to gateway" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> payload_size=1240
+time=2026-10-19T14:00:24.152-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="<binary op=28 len=1241>"
+time=2026-10-19T14:00:24.152-04:00 level=INFO msg="mls proposals processed and committed" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> size=499 pending_epoch_set=true pending_epoch_id=1
+time=2026-10-19T14:00:27.240-04:00 level=ERROR msg="DAVE setup stalled" error="voice: DAVE held every frame past the stall limit" recorder=<recorder-1> channel_id=<channel-A>
+time=2026-10-19T14:00:27.240-04:00 level=DEBUG msg="closing heartbeat goroutine" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T14:00:27.240-04:00 level=DEBUG msg="closing voice gateway connection" name=voice_conn name=voice_conn_gateway code=1012 message="starting DAVE over"
+time=2026-10-19T14:00:27.240-04:00 level=DEBUG msg="exiting voice heartbeat goroutine" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T14:00:27.240-04:00 level=DEBUG msg="opening voice gateway connection" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T14:00:27.579-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":8,\"d\":{\"v\":8,\"heartbeat_interval\":13750}}"
+time=2026-10-19T14:00:27.579-04:00 level=DEBUG msg="sending Identify command" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T14:00:27.579-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":0,\"d\":{\"server_id\":\"<guild>\",\"user_id\":\"<recorder-1>\",\"session_id\":\"<session-1>\",\"token\":\"<token-1>\",\"max_dave_protocol_version\":1}}"
+time=2026-10-19T14:00:27.687-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":2,\"d\":{\"streams\":[{\"type\":\"video\",\"ssrc\":1472,\"rtx_ssrc\":1473,\"rid\":\"\",\"quality\":0,\"active\":false}],\"ssrc\":1471,\"port\":19335,\"modes\":[\"aead_aes256_gcm_rtpsize\",\"aead_xchacha20_poly1305_rtpsize\"],\"ip\":\"<ip-1>\",\"experiments\":[\"fixed_keyframe_interval\"]}}"
+time=2026-10-19T14:00:27.794-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":1,\"d\":{\"protocol\":\"udp\",\"data\":{\"address\":\"<ip-2>\",\"port\":50594,\"mode\":\"aead_aes256_gcm_rtpsize\"}}}"
+time=2026-10-19T14:00:27.795-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":0,\"op\":11,\"d\":{\"user_ids\":[\"<member-1>\"]}}"
+time=2026-10-19T14:00:27.795-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":1,\"op\":5,\"d\":{\"user_id\":\"<member-1>\",\"ssrc\":1458,\"speaking\":1}}"
+time=2026-10-19T14:00:27.795-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":2,\"op\":18,\"d\":{\"user_id\":\"<member-1>\",\"flags\":2}}"
+time=2026-10-19T14:00:27.795-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":3,\"op\":20,\"d\":{\"user_id\":\"<member-1>\",\"platform\":0}}"
+time=2026-10-19T14:00:27.902-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":4,\"d\":{\"video_codec\":\"H264\",\"secure_frames_version\":1,\"secret_key\":\"<secret-key>\",\"mode\":\"aead_aes256_gcm_rtpsize\",\"media_session_id\":\"a063402b3d1ec33255671da457aaf6d0\",\"dave_protocol_version\":1,\"audio_codec\":\"opus\"}}"
+time=2026-10-19T14:00:27.902-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="<binary op=26 len=399>"
+time=2026-10-19T14:00:27.903-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"seq\":4,\"op\":15,\"d\":{\"any\":100}}"
+time=2026-10-19T14:00:27.903-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="<binary seq=5 op=25 len=74>"
+time=2026-10-19T14:00:27.903-04:00 level=INFO msg="mls group created" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> group_id=<channel-A-hex>
+time=2026-10-19T14:00:27.903-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="<binary seq=6 op=27 len=502>"
+time=2026-10-19T14:00:27.903-04:00 level=DEBUG msg=OnDaveMLSProposals dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> size=499 group_id=<channel-A-hex> has_group=true
+time=2026-10-19T14:00:27.903-04:00 level=DEBUG msg=processProposalBatchLocked dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> operation_type=0 total_size=499
+time=2026-10-19T14:00:27.903-04:00 level=DEBUG msg="proposals vector parsed" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> vec_len=496 header_size=2 payload_first_32="<hex len=32>" vector_first_32="<hex len=32>"
+time=2026-10-19T14:00:27.903-04:00 level=DEBUG msg="parsing proposal" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> index=0 remaining_bytes=496 wire_hex="<hex len=64>"
+time=2026-10-19T14:00:27.903-04:00 level=DEBUG msg="processProposalBatchLocked: all proposals processed successfully" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A>
+time=2026-10-19T14:00:27.903-04:00 level=DEBUG msg="commitProposalsLocked: starting commit" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> group_id=<channel-A-hex>
+time=2026-10-19T14:00:27.904-04:00 level=DEBUG msg="commitProposalsLocked: commit created" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> commit_size=204 welcome_size=1042
+time=2026-10-19T14:00:27.904-04:00 level=DEBUG msg="commitProposalsLocked: commit hex" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> commit_hex="<hex len=204>"
+time=2026-10-19T14:00:27.904-04:00 level=DEBUG msg="commitProposalsLocked: pendingEpoch set" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> epoch_id=1 sender_count=2 has_self=true
+time=2026-10-19T14:00:27.904-04:00 level=DEBUG msg="commitProposalsLocked: sending commit/welcome to gateway" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> payload_size=1242
+time=2026-10-19T14:00:27.904-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="<binary op=28 len=1243>"
+time=2026-10-19T14:00:27.904-04:00 level=INFO msg="mls proposals processed and committed" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> size=499 pending_epoch_set=true pending_epoch_id=1
+time=2026-10-19T14:00:28.011-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="<binary seq=7 op=29 len=209>"
+time=2026-10-19T14:00:28.011-04:00 level=DEBUG msg=OnDaveMLSPrepareCommitTransition dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> transition_id=0 commit_size=204 pending_epoch_set=true commit_hex_prefix="<hex len=32>"
+time=2026-10-19T14:00:28.011-04:00 level=DEBUG msg="skipping commit re-processing: we were the committer" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> transition_id=0
+time=2026-10-19T14:00:28.011-04:00 level=DEBUG msg="activating epoch immediately for initial transition (transitionID=0)" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A>
+time=2026-10-19T14:00:28.011-04:00 level=DEBUG msg="activatePendingEpochLocked called" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> pending_epoch_set=true active_epoch_set=false user_id=<recorder-1>
+time=2026-10-19T14:00:28.011-04:00 level=DEBUG msg="epoch activated" dave_session=896aea70 user_id=<recorder-1> channel_id=<channel-A> epoch_id=1 sender_count=2
+time=2026-10-19T14:00:28.026-04:00 level=INFO msg="Recording gap ended" recording_id=55 channel_id=<channel-A> recorder=<recorder-1> lasted=1m10s
+time=2026-10-19T14:00:28.026-04:00 level=INFO msg="DAVE setup recovered" recorder=<recorder-1> channel_id=<channel-A> unheard=3.790229482s
+time=2026-10-19T14:00:41.330-04:00 level=DEBUG msg="sending heartbeat" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T14:00:41.330-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":3,\"d\":{\"t\":1792432841330,\"seq_ack\":7}}"
+time=2026-10-19T14:00:41.438-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":6,\"d\":{\"t\":1792432841330}}"
+time=2026-10-19T14:00:55.080-04:00 level=DEBUG msg="sending heartbeat" name=voice_conn name=voice_conn_gateway
+time=2026-10-19T14:00:55.080-04:00 level=DEBUG msg="sending voice gateway command" name=voice_conn name=voice_conn_gateway data="{\"op\":3,\"d\":{\"t\":1792432855080,\"seq_ack\":7}}"
+time=2026-10-19T14:00:55.188-04:00 level=DEBUG msg="received voice gateway message" name=voice_conn name=voice_conn_gateway data="{\"op\":6,\"d\":{\"t\":1792432855080}}"
