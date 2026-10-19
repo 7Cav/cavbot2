@@ -163,15 +163,15 @@ func runLoa(r utils.InteractionResponder, now time.Time, i *discordgo.Interactio
 	// No layout has more pages than lines, so a title numbered with the
 	// line count is as long as any page's title can be.
 	pageOverhead := len(loaEmbedTitle(position, len(lines)-1, len(lines))) + len(footer)
-	messages := loaMessages(lines, pageOverhead)
+	pagesByMessage := loaMessages(lines, pageOverhead)
 	total := 0
-	for _, pages := range messages {
+	for _, pages := range pagesByMessage {
 		total += len(pages)
 	}
 
-	var parts [][]*discordgo.MessageEmbed
+	var embedsByMessage [][]*discordgo.MessageEmbed
 	idx := 0
-	for _, pages := range messages {
+	for _, pages := range pagesByMessage {
 		var embeds []*discordgo.MessageEmbed
 		for _, page := range pages {
 			embeds = append(embeds, &discordgo.MessageEmbed{
@@ -183,19 +183,19 @@ func runLoa(r utils.InteractionResponder, now time.Time, i *discordgo.Interactio
 			})
 			idx++
 		}
-		parts = append(parts, embeds)
+		embedsByMessage = append(embedsByMessage, embeds)
 	}
 
 	if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 		Content: stringPtr(""),
-		Embeds:  &parts[0],
+		Embeds:  &embedsByMessage[0],
 	}); err != nil {
 		captureDeferredEditFailure(i, "loa", err)
 		return
 	}
 	// A part Discord refuses ends the list there. The page numbers on the
 	// parts already sent show the member it stopped short.
-	for _, embeds := range parts[1:] {
+	for _, embeds := range embedsByMessage[1:] {
 		if err := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{Embeds: embeds}); err != nil {
 			captureError("Failed to deliver a /loa follow-up", err,
 				"command", "loa", "guild_id", i.GuildID, "position", position)
@@ -276,64 +276,66 @@ type loaLayout struct {
 	pages []string
 	used  int
 	page  strings.Builder
-	// heading is the one the open page's last line runs under.
+	// heading is the one the open page's last line runs under, or "" while
+	// the open page is empty.
 	heading string
 }
 
 // add puts l on the open page, or on a new page when it doesn't fit, which
 // starts a new message when the page doesn't fit the open one.
-func (p *loaLayout) add(l loaLine) {
-	text := loaPageText(p.page.Len(), p.heading, l)
-	if p.page.Len() > 0 && !p.fits(len(text)) {
-		p.closePage()
-		text = loaPageText(0, "", l)
+func (lay *loaLayout) add(l loaLine) {
+	text := loaPageText(lay.heading, l)
+	if lay.page.Len() > 0 && !lay.fits(len(text)) {
+		lay.closePage()
+		text = loaPageText(lay.heading, l)
 	}
-	if p.page.Len() == 0 && len(p.pages) > 0 && !p.fits(len(text)) {
-		p.closeMessage()
+	if lay.page.Len() == 0 && len(lay.pages) > 0 && !lay.fits(len(text)) {
+		lay.closeMessage()
 	}
-	p.page.WriteString(text)
-	p.heading = l.heading
+	lay.page.WriteString(text)
+	lay.heading = l.heading
 }
 
 // fits reports whether n more bytes fit on the open page within its
 // message.
-func (p *loaLayout) fits(n int) bool {
-	if p.page.Len() == 0 && len(p.pages) == maxEmbedsPerMsg {
+func (lay *loaLayout) fits(n int) bool {
+	if lay.page.Len() == 0 && len(lay.pages) == maxEmbedsPerMsg {
 		return false
 	}
-	pageLen := p.page.Len() + n
+	pageLen := lay.page.Len() + n
 	return pageLen <= discordEmbedDescriptionLimit &&
-		p.used+p.pageOverhead+pageLen <= discordMessageEmbedTextLimit
+		lay.used+lay.pageOverhead+pageLen <= discordMessageEmbedTextLimit
 }
 
-func (p *loaLayout) closePage() {
-	p.pages = append(p.pages, p.page.String())
-	p.used += p.pageOverhead + p.page.Len()
-	p.page.Reset()
+func (lay *loaLayout) closePage() {
+	lay.pages = append(lay.pages, lay.page.String())
+	lay.used += lay.pageOverhead + lay.page.Len()
+	lay.page.Reset()
+	lay.heading = ""
 }
 
-func (p *loaLayout) closeMessage() {
-	p.messages = append(p.messages, p.pages)
-	p.pages, p.used = nil, 0
+func (lay *loaLayout) closeMessage() {
+	lay.messages = append(lay.messages, lay.pages)
+	lay.pages, lay.used = nil, 0
 }
 
 // finish closes the open page and message and returns every message.
-func (p *loaLayout) finish() [][]string {
-	if p.page.Len() > 0 {
-		p.closePage()
+func (lay *loaLayout) finish() [][]string {
+	if lay.page.Len() > 0 {
+		lay.closePage()
 	}
-	if len(p.pages) > 0 {
-		p.closeMessage()
+	if len(lay.pages) > 0 {
+		lay.closeMessage()
 	}
-	return p.messages
+	return lay.messages
 }
 
-// loaPageText is what l adds to a page pageLen bytes long whose last line
-// ran under heading. It puts l's own heading first when l opens a section
-// there.
-func loaPageText(pageLen int, heading string, l loaLine) string {
+// loaPageText is what l adds to a page whose last line ran under heading,
+// or to an empty page when heading is "". It puts l's own heading first
+// when l opens a section there.
+func loaPageText(heading string, l loaLine) string {
 	switch {
-	case pageLen == 0:
+	case heading == "":
 		return l.heading + "\n" + l.text + "\n"
 	case l.heading != heading:
 		return "\n" + l.heading + "\n" + l.text + "\n"

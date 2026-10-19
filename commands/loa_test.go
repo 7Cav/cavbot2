@@ -35,6 +35,9 @@ func loaMember(username, forumUserID, milpacID string) utils.LiteProfileResponse
 // loaHeadings are the section headings a /loa reply can carry.
 var loaHeadings = []string{loaActiveHeading, loaUpcomingHeading, loaNeedsReviewHeading}
 
+// loaNumbers finds the numbers written in a title or footer.
+var loaNumbers = regexp.MustCompile(`\d+`)
+
 // loaSection returns the lines under heading across every embed the run
 // sent, in order: in each embed, the lines after the one holding heading
 // and before the next heading. Each embed is read on its own, as a member
@@ -44,7 +47,7 @@ var loaHeadings = []string{loaActiveHeading, loaUpcomingHeading, loaNeedsReviewH
 func loaSection(t *testing.T, f *fakeResponder, heading string) []string {
 	t.Helper()
 	var lines []string
-	for _, embeds := range loaParts(f) {
+	for _, embeds := range loaParts(t, f) {
 		for _, e := range embeds {
 			current := ""
 			for _, line := range strings.Split(e.Description, "\n") {
@@ -62,29 +65,41 @@ func loaSection(t *testing.T, f *fakeResponder, heading string) []string {
 }
 
 // loaParts returns the embeds of each message the run sent, in order: the
-// reply as its last edit left it, then each follow-up.
-func loaParts(f *fakeResponder) [][]*discordgo.MessageEmbed {
-	var reply []*discordgo.MessageEmbed
-	var followups [][]*discordgo.MessageEmbed
-	for _, c := range f.Calls() {
-		switch {
-		case c.Method == "Edit" && c.Edit != nil:
-			reply = nil
-			if c.Edit.Embeds != nil {
-				reply = *c.Edit.Embeds
-			}
-		case c.Method == "Followup" && c.Params != nil:
-			followups = append(followups, c.Params.Embeds)
+// reply as its last edit left it, then each follow-up after that edit. It
+// fails the test when the run never edited its reply, or made any call but
+// a follow-up after the edit.
+func loaParts(t *testing.T, f *fakeResponder) [][]*discordgo.MessageEmbed {
+	t.Helper()
+	calls := f.Calls()
+	last := -1
+	for k, c := range calls {
+		if c.Method == "Edit" && c.Edit != nil {
+			last = k
 		}
 	}
-	return append([][]*discordgo.MessageEmbed{reply}, followups...)
+	if last < 0 {
+		t.Fatalf("the run never edited its reply; it last showed %q", lastReply(t, calls))
+	}
+	var reply []*discordgo.MessageEmbed
+	if calls[last].Edit.Embeds != nil {
+		reply = *calls[last].Edit.Embeds
+	}
+	parts := [][]*discordgo.MessageEmbed{reply}
+	for _, c := range calls[last+1:] {
+		if c.Method != "Followup" || c.Params == nil {
+			t.Fatalf("the run's reply edit was followed by a %s call", c.Method)
+		}
+		parts = append(parts, c.Params.Embeds)
+	}
+	return parts
 }
 
 // loaEmbeds returns every embed the run sent, in the order a member reads
 // them.
-func loaEmbeds(f *fakeResponder) []*discordgo.MessageEmbed {
+func loaEmbeds(t *testing.T, f *fakeResponder) []*discordgo.MessageEmbed {
+	t.Helper()
 	var all []*discordgo.MessageEmbed
-	for _, embeds := range loaParts(f) {
+	for _, embeds := range loaParts(t, f) {
 		all = append(all, embeds...)
 	}
 	return all
@@ -614,7 +629,7 @@ func TestRunLoaSendsAListThatFitsOneEmbedAsOneEmbedTitledForThePosition(t *testi
 	f := &fakeResponder{}
 	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	parts := loaParts(f)
+	parts := loaParts(t, f)
 	if len(parts) != 1 || len(parts[0]) != 1 {
 		t.Fatalf("want one message of one embed; got %d messages, the reply holding %d embeds", len(parts), len(parts[0]))
 	}
@@ -630,7 +645,7 @@ func TestRunLoaListsEveryLOAOfAListPastOneEmbedOnceUnderItsHeadingInOrder(t *tes
 	f := &fakeResponder{}
 	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	assertWithinDiscordLimits(t, loaParts(f))
+	assertWithinDiscordLimits(t, loaParts(t, f))
 	for _, heading := range loaHeadings {
 		assertListedInOrder(t, heading, loaSection(t, f, heading), want[heading])
 	}
@@ -643,12 +658,12 @@ func TestRunLoaTitlesEachPageOfAListPastOneEmbedWithItsPlaceInTheList(t *testing
 	f := &fakeResponder{}
 	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	embeds := loaEmbeds(f)
+	embeds := loaEmbeds(t, f)
 	if len(embeds) < 2 {
 		t.Fatalf("want the list across several embeds; got %d", len(embeds))
 	}
 	for k, e := range embeds {
-		numbers := regexp.MustCompile(`\d+`).FindAllString(strings.Replace(e.Title, "1-7", "", 1), -1)
+		numbers := loaNumbers.FindAllString(strings.Replace(e.Title, "1-7", "", 1), -1)
 		want := []string{strconv.Itoa(k + 1), strconv.Itoa(len(embeds))}
 		if !strings.Contains(e.Title, "1-7") || !slices.Equal(numbers, want) {
 			t.Errorf("embed %d of %d is titled %q; want the position 1-7 and the numbers %v", k+1, len(embeds), e.Title, want)
@@ -663,7 +678,7 @@ func TestRunLoaSpreadsAListPastOneMessageOverFollowUpsDiscordAccepts(t *testing.
 	f := &fakeResponder{}
 	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	parts := loaParts(f)
+	parts := loaParts(t, f)
 	if len(parts) < 2 {
 		t.Fatalf("want the list across more than one message; got %d", len(parts))
 	}
@@ -678,7 +693,7 @@ func TestRunLoaOpensAPageThatContinuesASectionWithItsHeading(t *testing.T) {
 	f := &fakeResponder{}
 	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	embeds := loaEmbeds(f)
+	embeds := loaEmbeds(t, f)
 	continued := 0
 	for k := 1; k < len(embeds); k++ {
 		heading := loaListedUnder(firstLOALine(embeds[k].Description), want)
@@ -739,12 +754,12 @@ func TestRunLoaCountsTheWholeListOnAListPastOneEmbed(t *testing.T) {
 	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	shown := 0
-	for k, e := range loaEmbeds(f) {
+	for k, e := range loaEmbeds(t, f) {
 		if e.Footer == nil {
 			continue
 		}
 		shown++
-		counts := regexp.MustCompile(`\d+`).FindAllString(e.Footer.Text, -1)
+		counts := loaNumbers.FindAllString(e.Footer.Text, -1)
 		slices.Sort(counts)
 		if want := []string{"40", "50", "60"}; !slices.Equal(counts, want) {
 			t.Errorf("embed %d shows the counts %q; want 60, 50 and 40", k+1, e.Footer.Text)
@@ -757,10 +772,15 @@ func TestRunLoaCountsTheWholeListOnAListPastOneEmbed(t *testing.T) {
 
 // A follow-up Discord refuses reaches Sentry once, and no later part goes
 // out, so the page numbers already sent show the member the list stopped
-// short. The fixture's 19,000 characters need at least four messages of
-// Discord's 6000, so a part follows the refused one.
+// short.
 func TestRunLoaStopsAtARefusedFollowUpAndReportsItOnce(t *testing.T) {
 	serveLOAPosition(t, 60, 50, 40)
+	whole := &fakeResponder{}
+	runLoa(whole, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	if n := len(loaParts(t, whole)); n < 3 {
+		t.Fatalf("the fixture makes %d parts; the test needs one after the refused follow-up", n)
+	}
+
 	rec := recordCaptures(t)
 	refused := errors.New("HTTP 400 Bad Request")
 	f := &fakeResponder{FollowupErrs: []error{refused}}
