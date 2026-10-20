@@ -2,14 +2,17 @@
 // measures two things a silent-drop decision waits on: how fast the voice
 // server answers heartbeats sent more often than Hello asks, and whether it
 // echoes the recorder's 8-byte UDP keepalive. It backs "Measure voice
-// heartbeat answers and keepalive echoes on the test guild" (#830) and lives
-// only on its research branch.
+// heartbeat answers and keepalive echoes on the test guild" (#830), and "Do
+// the voice server's RTCP reports keep coming while members talk and without
+// the keepalive?" (#837). It lives only on its research branch.
 //
 // It identifies on the voice server the way the recorder does, DAVE
 // included, so the server treats it as a recorder. Then it sends opcode 3
 // every -slow-every for -slow-for, and if no close came, every -fast-every
 // for -fast-for. The whole time it sends the recorder's keepalive every
-// -keepalive on the UDP socket and logs every datagram that isn't RTP.
+// -keepalive on the UDP socket, or none with -keepalive 0, and logs every
+// datagram that isn't RTP. It counts the RTP, and tallies the UDP socket
+// every -tally.
 //
 // It holds the smoke run lock while it runs, since it logs in as a recorder a
 // smoke run would use. Its log on stdout names no token, session, user,
@@ -55,6 +58,7 @@ type options struct {
 	fastEvery time.Duration
 	fastFor   time.Duration
 	keepEvery time.Duration
+	tally     time.Duration
 }
 
 func main() {
@@ -65,8 +69,9 @@ func main() {
 	flag.DurationVar(&o.slowEvery, "slow-every", 5*time.Second, "heartbeat period, first phase")
 	flag.DurationVar(&o.slowFor, "slow-for", 30*time.Minute, "first phase length")
 	flag.DurationVar(&o.fastEvery, "fast-every", time.Second, "heartbeat period, second phase")
-	flag.DurationVar(&o.fastFor, "fast-for", 5*time.Minute, "second phase length")
-	flag.DurationVar(&o.keepEvery, "keepalive", 5*time.Second, "UDP keepalive period")
+	flag.DurationVar(&o.fastFor, "fast-for", 5*time.Minute, "second phase length, 0 for no second phase")
+	flag.DurationVar(&o.keepEvery, "keepalive", 5*time.Second, "UDP keepalive period, 0 for no keepalive")
+	flag.DurationVar(&o.tally, "tally", 10*time.Second, "how often to log what the UDP socket got since the last tally")
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{ReplaceAttr: utcMillis}))
@@ -327,10 +332,19 @@ type voice struct {
 	echoes   []time.Duration
 	rtp      atomic.Int64
 	rtcp     atomic.Int64
-	lastRTCP time.Time
-	rtcpGaps []time.Duration
 	other    map[int]int
 	omu      sync.Mutex
+	ssrcs    map[uint32]bool
+	byType   map[int]*rtcpType
+}
+
+// rtcpType follows one RTCP packet type: when the last one came, how much
+// RTP had come by then, and every gap between two of them.
+type rtcpType struct {
+	last      time.Time
+	rtpAtLast int64
+	gaps      []time.Duration
+	rtpGaps   []time.Duration // the gaps RTP arrived in
 }
 
 func (v *voice) run(state *discordgo.VoiceStateUpdate, server *discordgo.VoiceServerUpdate) error {
@@ -344,6 +358,8 @@ func (v *voice) run(state *discordgo.VoiceStateUpdate, server *discordgo.VoiceSe
 		return err
 	}
 	v.other = map[int]int{}
+	v.ssrcs = map[uint32]bool{}
+	v.byType = map[int]*rtcpType{}
 	v.dave = session.CreateFunc()(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
 		godave.UserID(state.UserID), v)
 	defer func() { _ = v.dave.Close() }()
@@ -377,12 +393,14 @@ func (v *voice) run(state *discordgo.VoiceStateUpdate, server *discordgo.VoiceSe
 		return errors.New("no Hello within 10 s")
 	}
 	log.Info("heartbeat plan", "hello_interval", interval, "slow_every", v.p.o.slowEvery, "slow_for", v.p.o.slowFor,
-		"fast_every", v.p.o.fastEvery, "fast_for", v.p.o.fastFor, "keepalive_every", v.p.o.keepEvery)
+		"fast_every", v.p.o.fastEvery, "fast_for", v.p.o.fastFor, "keepalive_every", v.p.o.keepEvery, "tally_every", v.p.o.tally)
 
 	go v.watchDave()
 
 	if v.beat("slow", v.p.o.slowEvery, v.p.o.slowFor) {
-		v.beat("fast", v.p.o.fastEvery, v.p.o.fastFor)
+		if v.p.o.fastFor > 0 {
+			v.beat("fast", v.p.o.fastEvery, v.p.o.fastFor)
+		}
 	} else {
 		log.Warn("skipping the fast phase, since the voice gateway closed", "why", v.closeWhy)
 	}
@@ -616,6 +634,9 @@ func (v *voice) handle(msg disgovoice.GatewayMessage, mt, size int, at time.Time
 		}
 		log.Info("voice gateway message", append(args, "users", users)...)
 
+	case disgovoice.GatewayMessageDataSpeaking:
+		log.Info("voice gateway message", append(args, "user", v.p.red.name("user", d.UserID.String()), "ssrc", d.SSRC, "speaking", int(d.Speaking))...)
+
 	case disgovoice.GatewayMessageDataClientDisconnect:
 		log.Info("voice gateway message", append(args, "user", v.p.red.name("user", d.UserID.String()))...)
 		v.dave.RemoveUser(godave.UserID(d.UserID.String()))
@@ -684,9 +705,18 @@ func (v *voice) openUDP(d disgovoice.GatewayMessageDataReady) {
 		log.Error("IP discovery failed", "error", err)
 		return
 	}
-	log.Info("IP discovery answered", "address", v.p.red.name("ip", addr), "port", port)
+	// A host address of its own needs no NAT mapping kept open, so a report
+	// that stops without the keepalive stopped at the voice server.
+	local, _ := conn.LocalAddr().(*net.UDPAddr)
+	log.Info("IP discovery answered", "address", v.p.red.name("ip", addr), "port", port,
+		"same_as_local_address", local != nil && local.IP.String() == addr)
 	go v.readUDP()
-	go v.keepalive()
+	go v.tallyUDP()
+	if v.p.o.keepEvery > 0 {
+		go v.keepalive()
+	} else {
+		log.Info("keepalive off")
+	}
 	mode, err := disgovoice.ChooseEncryptionMode(d.Modes)
 	if err != nil {
 		log.Error("no encryption mode", "error", err)
@@ -767,8 +797,14 @@ func (v *voice) readUDP() {
 		b := buf[:n]
 		switch {
 		case n >= 12 && b[0]&0xC0 == 0x80 && b[1]&0x7F == 0x78:
-			if v.rtp.Add(1) == 1 {
-				v.p.log.Info("first RTP datagram", "len", n)
+			count := v.rtp.Add(1)
+			ssrc := binary.BigEndian.Uint32(b[8:12])
+			v.omu.Lock()
+			first := !v.ssrcs[ssrc]
+			v.ssrcs[ssrc] = true
+			v.omu.Unlock()
+			if first {
+				v.p.log.Info("first RTP datagram", "ssrc", ssrc, "len", n, "rtp_so_far", count)
 			}
 			continue
 		case n == 8 && binary.LittleEndian.Uint32(b[4:8]) == 0:
@@ -786,17 +822,29 @@ func (v *voice) readUDP() {
 			}
 		case n >= 8 && b[0]&0xC0 == 0x80 && b[1] >= 200 && b[1] <= 204:
 			v.rtcp.Add(1)
+			typ := int(b[1])
+			rtpNow := v.rtp.Load()
 			v.omu.Lock()
 			v.other[n]++
-			since := "first"
-			if !v.lastRTCP.IsZero() {
-				gap := at.Sub(v.lastRTCP)
-				v.rtcpGaps = append(v.rtcpGaps, gap)
-				since = fmtMillis(gap)
+			t := v.byType[typ]
+			if t == nil {
+				t = &rtcpType{}
+				v.byType[typ] = t
 			}
-			v.lastRTCP = at
+			since, rtpSince := "first", rtpNow
+			if !t.last.IsZero() {
+				gap := at.Sub(t.last)
+				t.gaps = append(t.gaps, gap)
+				if rtpNow > t.rtpAtLast {
+					t.rtpGaps = append(t.rtpGaps, gap)
+				}
+				since = fmtMillis(gap)
+				rtpSince = rtpNow - t.rtpAtLast
+			}
+			t.last, t.rtpAtLast = at, rtpNow
 			v.omu.Unlock()
-			v.p.log.Info("non-RTP datagram", "len", n, "rtcp_type", int(b[1]), "since_last_rtcp_ms", since, "first_bytes", hex.EncodeToString(b[:min(n, 16)]))
+			v.p.log.Info("non-RTP datagram", "len", n, "rtcp_type", typ, "since_last_rtcp_ms", since,
+				"rtp_since_last_rtcp", rtpSince, "first_bytes", hex.EncodeToString(b[:min(n, 16)]))
 			continue
 		}
 		v.omu.Lock()
@@ -854,20 +902,68 @@ func (v *voice) summary() {
 	for n, c := range v.other {
 		lens = append(lens, fmt.Sprintf("%d:%d", n, c))
 	}
-	gaps := slices.Clone(v.rtcpGaps)
+	types := make([]int, 0, len(v.byType))
+	for typ := range v.byType {
+		types = append(types, typ)
+	}
+	slices.Sort(types)
+	for _, typ := range types {
+		t := v.byType[typ]
+		log.Info("RTCP gap summary", append([]any{"rtcp_type", typ, "gaps_counted", "all"}, gapArgs(t.gaps)...)...)
+		log.Info("RTCP gap summary", append([]any{"rtcp_type", typ, "gaps_counted", "with RTP in them"}, gapArgs(t.rtpGaps)...)...)
+	}
+	ssrcs := len(v.ssrcs)
 	v.omu.Unlock()
 	slices.Sort(lens)
-	log.Info("UDP summary", "rtp", v.rtp.Load(), "rtcp", v.rtcp.Load(), "non_rtp_by_len", strings.Join(lens, ","))
+	log.Info("UDP summary", "rtp", v.rtp.Load(), "rtp_ssrcs", ssrcs, "rtcp", v.rtcp.Load(), "non_rtp_by_len", strings.Join(lens, ","))
+}
+
+func gapArgs(gaps []time.Duration) []any {
+	if len(gaps) == 0 {
+		return []any{"gaps", 0}
+	}
+	gaps = slices.Clone(gaps)
 	slices.Sort(gaps)
-	if len(gaps) > 0 {
-		over := 0
-		for _, g := range gaps {
-			if g > 1500*time.Millisecond {
-				over++
+	over := 0
+	for _, g := range gaps {
+		if g > 1500*time.Millisecond {
+			over++
+		}
+	}
+	return []any{"gaps", len(gaps), "min_ms", fmtMillis(gaps[0]), "p50_ms", fmtMillis(pct(gaps, 50)),
+		"p99_ms", fmtMillis(pct(gaps, 99)), "max_ms", fmtMillis(gaps[len(gaps)-1]), "over_1500ms", over}
+}
+
+// tallyUDP logs, every -tally, what the UDP socket got since the tally
+// before, so a socket that goes quiet still leaves lines.
+func (v *voice) tallyUDP() {
+	if v.p.o.tally <= 0 {
+		return
+	}
+	t := time.NewTicker(v.p.o.tally)
+	defer t.Stop()
+	var rtp, rtcp int64
+	for {
+		select {
+		case <-v.closed:
+			return
+		case <-t.C:
+		}
+		r, c := v.rtp.Load(), v.rtcp.Load()
+		var last time.Time
+		v.omu.Lock()
+		for _, ty := range v.byType {
+			if ty.last.After(last) {
+				last = ty.last
 			}
 		}
-		log.Info("RTCP gap summary", "gaps", len(gaps), "min_ms", fmtMillis(gaps[0]), "p50_ms", fmtMillis(pct(gaps, 50)),
-			"p99_ms", fmtMillis(pct(gaps, 99)), "max_ms", fmtMillis(gaps[len(gaps)-1]), "over_1500ms", over)
+		v.omu.Unlock()
+		since := "none yet"
+		if !last.IsZero() {
+			since = fmtMillis(time.Since(last))
+		}
+		v.p.log.Info("UDP tally", "rtp", r-rtp, "rtcp", c-rtcp, "since_last_rtcp_ms", since)
+		rtp, rtcp = r, c
 	}
 }
 
