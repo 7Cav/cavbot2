@@ -1,0 +1,83 @@
+time=2026-10-19T23:33:50.175Z level=INFO msg="gateway READY" session=<session-1>
+time=2026-10-19T23:33:50.175Z level=INFO msg="sending opcode 4" channel=<channel-A> self_mute=true self_deaf=false
+time=2026-10-19T23:33:50.328Z level=INFO msg="gateway VOICE_STATE_UPDATE" user=<recorder> channel=<channel-A> session=<session-1>
+time=2026-10-19T23:33:50.799Z level=INFO msg="gateway VOICE_SERVER_UPDATE" endpoint=<voice-server-1> token=<token-1>
+time=2026-10-19T23:33:50.799Z level=INFO msg="opening voice gateway" endpoint=<voice-server-1> v=8
+time=2026-10-19T23:33:50.848Z level=INFO msg="voice gateway message" op=8 seq=0 kind=text len=47 heartbeat_interval_ms=13750
+time=2026-10-19T23:33:50.848Z level=INFO msg="voice gateway send" op=0 session=<session-1> token=<token-1> max_dave_protocol_version=1
+time=2026-10-19T23:33:50.848Z level=INFO msg="heartbeat plan" hello_interval=13.75s slow_every=5s slow_for=30s fast_every=1s fast_for=10s keepalive_every=5s
+time=2026-10-19T23:33:50.848Z level=INFO msg="heartbeat phase starts" phase=slow every=5s for=30s
+time=2026-10-19T23:33:50.852Z level=INFO msg="voice gateway message" op=2 seq=0 kind=text len=266 ssrc=3466 ip=<ip-1> port=19339 modes="[aead_aes256_gcm_rtpsize aead_xchacha20_poly1305_rtpsize]"
+time=2026-10-19T23:33:50.854Z level=INFO msg="IP discovery answered" address=<ip-2> port=59785
+time=2026-10-19T23:33:50.854Z level=INFO msg="voice gateway send" op=1 address=<ip-2> port=59785 mode=aead_aes256_gcm_rtpsize
+time=2026-10-19T23:33:50.858Z level=INFO msg="voice gateway message" op=4 seq=0 kind=text len=319 mode=aead_aes256_gcm_rtpsize secret_key=<secret-key> dave_protocol_version=1
+time=2026-10-19T23:33:50.859Z level=INFO msg="voice gateway send" op=26 len=394
+time=2026-10-19T23:33:50.859Z level=INFO msg="voice gateway message" op=15 seq=0 kind=text len=33
+time=2026-10-19T23:33:50.859Z level=INFO msg="voice gateway message" op=25 seq=1 kind=binary len=74
+time=2026-10-19T23:33:51.859Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8af76e71b47d0d6a10
+time=2026-10-19T23:33:52.860Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a9a14cfd22df292e0
+time=2026-10-19T23:33:53.864Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a3a1dc06a1b548740
+time=2026-10-19T23:33:54.863Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a42559da0fe3b1184
+time=2026-10-19T23:33:55.855Z level=INFO msg="heartbeat answered" phase=slow n=1 rtt_ms=5.3
+time=2026-10-19T23:33:55.863Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a67ba95cf4b9dbfed
+time=2026-10-19T23:33:56.865Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a5bffb6232d4f672e
+time=2026-10-19T23:33:57.866Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8afa71c33bb60b2a00
+time=2026-10-19T23:33:58.866Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a718f2b69e1a61b11
+time=2026-10-19T23:33:59.866Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8ada4552da7a5fe30c
+time=2026-10-19T23:34:00.852Z level=INFO msg="heartbeat answered" phase=slow n=2 rtt_ms=3.6
+time=2026-10-19T23:34:00.867Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a317bad2c46401c29
+time=2026-10-19T23:34:01.869Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a02407ba6a4a325ca
+time=2026-10-19T23:34:02.870Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8ae732b984306d9ef5
+time=2026-10-19T23:34:03.870Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a3804341a8c2a6802
+time=2026-10-19T23:34:04.871Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a1a855edf94be011f
+time=2026-10-19T23:34:05.853Z level=INFO msg="heartbeat answered" phase=slow n=3 rtt_ms=3.9
+time=2026-10-19T23:34:05.872Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a35793c542e7ab20c
+time=2026-10-19T23:34:06.874Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a2ba3dfedb3108ca5
+time=2026-10-19T23:34:07.875Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8abfbab2a6c916b21e
+time=2026-10-19T23:34:08.875Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a010680530a98f783
+time=2026-10-19T23:34:09.876Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8ad395add0202fda5f
+time=2026-10-19T23:34:10.852Z level=INFO msg="heartbeat answered" phase=slow n=4 rtt_ms=3.6
+time=2026-10-19T23:34:10.877Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a004ac3c146d35dfd
+time=2026-10-19T23:34:11.879Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a4b13c13fb52856a0
+time=2026-10-19T23:34:12.881Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a2573d560d26f6704
+time=2026-10-19T23:34:13.881Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a6c9bcab26cd8ce9d
+time=2026-10-19T23:34:14.883Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8ab4decc9a01acac83
+time=2026-10-19T23:34:15.852Z level=INFO msg="heartbeat answered" phase=slow n=5 rtt_ms=3.6
+time=2026-10-19T23:34:15.883Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a599712abaa823993
+time=2026-10-19T23:34:16.885Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8aff932bc515511463
+time=2026-10-19T23:34:17.884Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a08460e560fbcec39
+time=2026-10-19T23:34:18.886Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a229dcdda3ce08c81
+time=2026-10-19T23:34:19.887Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a5a50273d8da080a2
+time=2026-10-19T23:34:20.849Z level=INFO msg="heartbeat phase ends" phase=slow sent=5
+time=2026-10-19T23:34:20.849Z level=INFO msg="heartbeat phase starts" phase=fast every=1s for=10s
+time=2026-10-19T23:34:20.888Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a655f77fe94da1339
+time=2026-10-19T23:34:21.853Z level=INFO msg="heartbeat answered" phase=fast n=1 rtt_ms=3.6
+time=2026-10-19T23:34:21.888Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8abf6aae49db18b64a
+time=2026-10-19T23:34:22.854Z level=INFO msg="heartbeat answered" phase=fast n=2 rtt_ms=3.9
+time=2026-10-19T23:34:22.891Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a4f4ba00ef3135304
+time=2026-10-19T23:34:23.853Z level=INFO msg="heartbeat answered" phase=fast n=3 rtt_ms=3.8
+time=2026-10-19T23:34:23.892Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a2cb98395bbde29a9
+time=2026-10-19T23:34:24.853Z level=INFO msg="heartbeat answered" phase=fast n=4 rtt_ms=3.6
+time=2026-10-19T23:34:24.893Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a7b0151a373dee7ce
+time=2026-10-19T23:34:25.853Z level=INFO msg="heartbeat answered" phase=fast n=5 rtt_ms=3.5
+time=2026-10-19T23:34:25.894Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a27d30edf299bbd31
+time=2026-10-19T23:34:26.853Z level=INFO msg="heartbeat answered" phase=fast n=6 rtt_ms=3.5
+time=2026-10-19T23:34:26.896Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a1d5cb2d2fc1d3434
+time=2026-10-19T23:34:27.854Z level=INFO msg="heartbeat answered" phase=fast n=7 rtt_ms=3.9
+time=2026-10-19T23:34:27.896Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8ada5929aa69988479
+time=2026-10-19T23:34:28.854Z level=INFO msg="heartbeat answered" phase=fast n=8 rtt_ms=3.8
+time=2026-10-19T23:34:28.895Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a77d1d0ad037aa9f8
+time=2026-10-19T23:34:29.853Z level=INFO msg="heartbeat answered" phase=fast n=9 rtt_ms=3.9
+time=2026-10-19T23:34:29.898Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a5f520e0d4f828a51
+time=2026-10-19T23:34:30.849Z level=INFO msg="heartbeat phase ends" phase=fast sent=9
+time=2026-10-19T23:34:30.897Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a40e4b6ec33c24f6c
+time=2026-10-19T23:34:31.899Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8ae3649feab25b5afb
+time=2026-10-19T23:34:32.901Z level=INFO msg="non-RTP datagram" len=52 first_bytes=81c9000700000d8a06b938b4922a0451
+time=2026-10-19T23:34:33.850Z level=INFO msg="voice gateway closed by the probe" code=1000
+time=2026-10-19T23:34:33.850Z level=INFO msg="heartbeat summary" phase=slow sent=5 answered=5 unanswered=0 rtt_min_ms=3.6 rtt_p50_ms=3.6 rtt_p90_ms=3.9 rtt_p99_ms=3.9 rtt_max_ms=5.3
+time=2026-10-19T23:34:33.850Z level=INFO msg="heartbeat summary" phase=fast sent=9 answered=9 unanswered=0 rtt_min_ms=3.5 rtt_p50_ms=3.8 rtt_p90_ms=3.9 rtt_p99_ms=3.9 rtt_max_ms=3.9
+time=2026-10-19T23:34:33.850Z level=INFO msg="heartbeat answers with an unknown nonce" count=0
+time=2026-10-19T23:34:33.850Z level=INFO msg="keepalive summary" sent=9 echoed=0
+time=2026-10-19T23:34:33.850Z level=INFO msg="UDP summary" rtp=0 rtcp=42 non_rtp_by_len=52:42
+time=2026-10-19T23:34:33.850Z level=INFO msg="sending opcode 4" channel=<nil>
+time=2026-10-19T23:34:34.002Z level=INFO msg="gateway VOICE_STATE_UPDATE" user=<recorder> channel="" session=<session-1>
