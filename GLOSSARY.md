@@ -603,6 +603,12 @@ a time, so a recording starts only when a recorder is free. Temp VC never
 counts a recorder as an occupant. With none configured, nobody can record.
 _Avoid_: recording bot, Craig, the bot (for this account).
 
+**Offline recorder**:
+A recorder logged out of Discord and logging back in by itself, after a
+cut-short recording or since its first login at startup failed. A start that
+finds no free recorder online waits for one.
+_Avoid_: reconnecting recorder, restarting recorder.
+
 **Recording role**:
 A Discord role whose holders, if Cav members, may start a recording, and may
 stop one in a channel they are in. Set once for the guild in the panel. With
@@ -731,7 +737,8 @@ _Avoid_: crash, boot failure, startup panic.
 **Gateway outage**:
 The span from a gateway session, the bot's own or a recorder's, losing its
 connection to Discord, other than by a close on purpose as at shutdown,
-until Discord next answers the session with READY or RESUMED. One that lasts
-a minute sends one Sentry event however long it goes on, and one that ends
-sooner sends nothing.
+until Discord next answers the session with READY or RESUMED. An offline
+recorder is in one until it logs back in. One that lasts a minute sends one
+Sentry event however long it goes on, and one that ends sooner sends
+nothing.
 _Avoid_: disconnect (the moment it starts), downtime.
