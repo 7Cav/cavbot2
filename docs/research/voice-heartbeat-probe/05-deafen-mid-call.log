@@ -1,0 +1,835 @@
+time=2026-10-23T22:20:12.002Z level=INFO msg="sending opcode 4" channel=<channel-A> self_mute=true self_deaf=false
+time=2026-10-23T22:20:12.002Z level=INFO msg="gateway READY" session=<session-1>
+time=2026-10-23T22:20:12.155Z level=INFO msg="gateway VOICE_STATE_UPDATE" user=<recorder> channel=<channel-A> session=<session-1> deaf=false mute=false self_deaf=false self_mute=true suppress=false
+time=2026-10-23T22:20:12.200Z level=INFO msg="gateway VOICE_SERVER_UPDATE" endpoint=<voice-server-1> token=<token-1>
+time=2026-10-23T22:20:12.201Z level=INFO msg="opening voice gateway" endpoint=<voice-server-1> v=8
+time=2026-10-23T22:20:12.556Z level=INFO msg="voice gateway message" op=8 seq=0 kind=text len=47 heartbeat_interval_ms=13750
+time=2026-10-23T22:20:12.556Z level=INFO msg="voice gateway send" op=0 session=<session-1> token=<token-1> max_dave_protocol_version=1
+time=2026-10-23T22:20:12.556Z level=INFO msg="heartbeat plan" hello_interval=13.75s slow_every=5s slow_for=7m0s fast_every=1s fast_for=0s keepalive_every=5s tally_every=10s
+time=2026-10-23T22:20:12.556Z level=INFO msg="heartbeat phase starts" phase=slow every=5s for=7m0s
+time=2026-10-23T22:20:12.667Z level=INFO msg="voice gateway message" op=2 seq=0 kind=text len=265 ssrc=1582 ip=<ip-1> port=19312 modes="[aead_aes256_gcm_rtpsize aead_xchacha20_poly1305_rtpsize]"
+time=2026-10-23T22:20:12.667Z level=INFO msg="voice gateway message" op=11 seq=0 kind=text len=57 users=[<user-1>]
+time=2026-10-23T22:20:12.667Z level=INFO msg="voice gateway message" op=5 seq=1 kind=text len=78 user=<user-1> ssrc=1581 speaking=1
+time=2026-10-23T22:20:12.667Z level=INFO msg="voice gateway message" op=18 seq=2 kind=text len=64
+time=2026-10-23T22:20:12.667Z level=INFO msg="voice gateway message" op=20 seq=3 kind=text len=67
+time=2026-10-23T22:20:12.773Z level=INFO msg="IP discovery answered" address=<ip-2> port=56280 same_as_local_address=true
+time=2026-10-23T22:20:12.773Z level=INFO msg="voice gateway send" op=1 address=<ip-2> port=56280 mode=aead_aes256_gcm_rtpsize
+time=2026-10-23T22:20:12.884Z level=INFO msg="voice gateway message" op=4 seq=3 kind=text len=325 mode=aead_aes256_gcm_rtpsize secret_key=<secret-key> dave_protocol_version=1
+time=2026-10-23T22:20:12.885Z level=INFO msg="voice gateway send" op=26 len=398
+time=2026-10-23T22:20:12.885Z level=INFO msg="voice gateway message" op=15 seq=4 kind=text len=33
+time=2026-10-23T22:20:12.885Z level=INFO msg="voice gateway message" op=25 seq=5 kind=binary len=74
+time=2026-10-23T22:20:12.886Z level=INFO msg="voice gateway message" op=27 seq=6 kind=binary len=501
+time=2026-10-23T22:20:12.889Z level=INFO msg="voice gateway send" op=28 len=1241
+time=2026-10-23T22:20:13.000Z level=INFO msg="voice gateway message" op=29 seq=7 kind=binary len=207 transition_id=0
+time=2026-10-23T22:20:13.007Z level=INFO msg="DAVE session ready" since_open=451ms
+time=2026-10-23T22:20:13.076Z level=INFO msg="first RTP datagram" ssrc=1581 len=207 rtp_so_far=1
+time=2026-10-23T22:20:13.111Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=first rtp_since_last_rtcp=11 first_bytes=81c8000c0000062d9287327efe13dfe6
+time=2026-10-23T22:20:13.884Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=first rtp_since_last_rtcp=59 first_bytes=81c900070000062e622842d5e92d5f1e
+time=2026-10-23T22:20:14.113Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=60 first_bytes=81c8000c0000062d76cf7ec886908118
+time=2026-10-23T22:20:14.885Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062e8c0470fe6eb65605
+time=2026-10-23T22:20:15.113Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dd514a0226e210e24
+time=2026-10-23T22:20:15.886Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062ef4f0d44014b64be3
+time=2026-10-23T22:20:16.115Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.2 rtp_since_last_rtcp=49 first_bytes=81c8000c0000062d7616e80224cf14aa
+time=2026-10-23T22:20:16.888Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062ec23ac5e05e1dba39
+time=2026-10-23T22:20:17.115Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.3 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062d5eaf52ad1e6dad68
+time=2026-10-23T22:20:17.668Z level=INFO msg="heartbeat answered" phase=slow n=1 rtt_ms=110.8
+time=2026-10-23T22:20:17.888Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e3612dc6d85372e54
+time=2026-10-23T22:20:18.115Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d792fdc629d5ff1fb
+time=2026-10-23T22:20:18.888Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.7 rtp_since_last_rtcp=52 first_bytes=81c900070000062ec820090832966c3d
+time=2026-10-23T22:20:19.117Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.1 rtp_since_last_rtcp=52 first_bytes=81c8000c0000062df33101cd9e920e07
+time=2026-10-23T22:20:19.891Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062ee13cf62e52e963cc
+time=2026-10-23T22:20:20.117Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062da8bc70c0db30347a
+time=2026-10-23T22:20:20.890Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062eba5869e374065e07
+time=2026-10-23T22:20:21.119Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d316b411b2faa6727
+time=2026-10-23T22:20:21.892Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062e1816f4ff3790d76a
+time=2026-10-23T22:20:22.120Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d1b8a6a9341dfaf13
+time=2026-10-23T22:20:22.666Z level=INFO msg="heartbeat answered" phase=slow n=2 rtt_ms=109.8
+time=2026-10-23T22:20:22.774Z level=INFO msg="UDP tally" rtp=506 rtcp=19 since_last_rtcp_ms=654.5
+time=2026-10-23T22:20:22.894Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=51 first_bytes=81c900070000062ec1a2476fe3e53fc5
+time=2026-10-23T22:20:23.121Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d375eab2e930994ca
+time=2026-10-23T22:20:23.895Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=53 first_bytes=81c900070000062eb84723ac3a9a6eb9
+time=2026-10-23T22:20:24.122Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062dcdb3482af57dfb8a
+time=2026-10-23T22:20:24.895Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062ea78a96ce5107b7ff
+time=2026-10-23T22:20:25.123Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d463e7796e859987e
+time=2026-10-23T22:20:25.895Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062e6b384357fc65dec4
+time=2026-10-23T22:20:26.124Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d03887dc8ec3fc4d8
+time=2026-10-23T22:20:26.897Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062e5d316033f0c8bacb
+time=2026-10-23T22:20:27.125Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d9492b11aef00d4f9
+time=2026-10-23T22:20:27.667Z level=INFO msg="heartbeat answered" phase=slow n=3 rtt_ms=110.4
+time=2026-10-23T22:20:27.898Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062e184d75204af1a170
+time=2026-10-23T22:20:28.125Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062ddbf8be4aa820c541
+time=2026-10-23T22:20:28.899Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=53 first_bytes=81c900070000062e9e1284c45118444b
+time=2026-10-23T22:20:29.128Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.8 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d59ded003cea0416f
+time=2026-10-23T22:20:29.900Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c900070000062edd23436f97a7ccdb
+time=2026-10-23T22:20:30.128Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dc10027f459cc98ff
+time=2026-10-23T22:20:30.901Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062e5100a54d07564d27
+time=2026-10-23T22:20:31.129Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d0842431590085b50
+time=2026-10-23T22:20:31.903Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062e7b28997c3119da8c
+time=2026-10-23T22:20:32.129Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.9 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d3e442865323e978c
+time=2026-10-23T22:20:32.667Z level=INFO msg="heartbeat answered" phase=slow n=4 rtt_ms=109.8
+time=2026-10-23T22:20:32.774Z level=INFO msg="UDP tally" rtp=505 rtcp=20 since_last_rtcp_ms=645.0
+time=2026-10-23T22:20:32.903Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062e8ab903702a90a04e
+time=2026-10-23T22:20:33.131Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d5fb7aef981fd6a02
+time=2026-10-23T22:20:33.904Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=53 first_bytes=81c900070000062ec2faae8cc07156da
+time=2026-10-23T22:20:34.132Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d3d385fe35a31afa9
+time=2026-10-23T22:20:34.905Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=43 first_bytes=81c900070000062e1a3e2eb732e96ec6
+time=2026-10-23T22:20:35.133Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=43 first_bytes=81c8000c0000062d22fc44bc50f92ed3
+time=2026-10-23T22:20:35.908Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062e839fedc26adefd0f
+time=2026-10-23T22:20:36.134Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062d99057cc1b5eb7a0d
+time=2026-10-23T22:20:36.907Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=998.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062e0472456ac1e1ae20
+time=2026-10-23T22:20:37.135Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d3566c00069e94fa5
+time=2026-10-23T22:20:37.667Z level=INFO msg="heartbeat answered" phase=slow n=5 rtt_ms=109.7
+time=2026-10-23T22:20:37.909Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062ef4442552924452c2
+time=2026-10-23T22:20:38.136Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d6cd75b23a15438dd
+time=2026-10-23T22:20:38.911Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=46 first_bytes=81c900070000062ea4d4118c2c1cc1d4
+time=2026-10-23T22:20:39.137Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=45 first_bytes=81c8000c0000062d54223b1b62058547
+time=2026-10-23T22:20:39.912Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=49 first_bytes=81c900070000062e84d767d2f3dc01b1
+time=2026-10-23T22:20:40.137Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d357d68ecee620dbc
+time=2026-10-23T22:20:40.912Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062e530ceeff0714c4fe
+time=2026-10-23T22:20:41.139Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d861119093b02aa3e
+time=2026-10-23T22:20:41.914Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.1 rtp_since_last_rtcp=51 first_bytes=81c900070000062e979057fd6920a45d
+time=2026-10-23T22:20:42.140Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d513d2809b7e8fd13
+time=2026-10-23T22:20:42.666Z level=INFO msg="heartbeat answered" phase=slow n=6 rtt_ms=109.6
+time=2026-10-23T22:20:42.774Z level=INFO msg="UDP tally" rtp=491 rtcp=20 since_last_rtcp_ms=634.0
+time=2026-10-23T22:20:42.914Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=49 first_bytes=81c900070000062eece34a8d75326454
+time=2026-10-23T22:20:43.141Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d0809a2f163e7d5ba
+time=2026-10-23T22:20:43.916Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.0 rtp_since_last_rtcp=54 first_bytes=81c900070000062e0f73ce9d1276b6b8
+time=2026-10-23T22:20:44.141Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.8 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d5f04d6e78b070926
+time=2026-10-23T22:20:44.917Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062e308720edcc3d6ed7
+time=2026-10-23T22:20:45.143Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062de6c1d1de3bb7c063
+time=2026-10-23T22:20:45.919Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=50 first_bytes=81c900070000062e0b6dbeae4be1c27d
+time=2026-10-23T22:20:46.144Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d170158a68653b29c
+time=2026-10-23T22:20:46.920Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062e78bdb3be91c34208
+time=2026-10-23T22:20:47.146Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d17949b18dcb28a84
+time=2026-10-23T22:20:47.667Z level=INFO msg="heartbeat answered" phase=slow n=7 rtt_ms=110.3
+time=2026-10-23T22:20:47.919Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062e5e5f09b4224b1a06
+time=2026-10-23T22:20:48.147Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d056f1c2611a4e4f1
+time=2026-10-23T22:20:48.921Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=53 first_bytes=81c900070000062e61dd82b3be35acc5
+time=2026-10-23T22:20:49.148Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d697e257146cb481c
+time=2026-10-23T22:20:49.923Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062e94487f033a14378a
+time=2026-10-23T22:20:50.149Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dcc440b5962553f90
+time=2026-10-23T22:20:50.923Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062e7dbb0378eff82423
+time=2026-10-23T22:20:51.150Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d6d6a0ee3dc893d38
+time=2026-10-23T22:20:51.924Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062eb57fe03a401bf25e
+time=2026-10-23T22:20:52.151Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062daeccf966d2147c63
+time=2026-10-23T22:20:52.668Z level=INFO msg="heartbeat answered" phase=slow n=8 rtt_ms=110.4
+time=2026-10-23T22:20:52.774Z level=INFO msg="UDP tally" rtp=506 rtcp=20 since_last_rtcp_ms=622.8
+time=2026-10-23T22:20:52.925Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062e2ccd34f2f0c20446
+time=2026-10-23T22:20:53.153Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062def2b22a2d2fb880d
+time=2026-10-23T22:20:53.926Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=53 first_bytes=81c900070000062eb8e573ceedaeb9b1
+time=2026-10-23T22:20:54.152Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.3 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062dfc60c02a9bdd46bd
+time=2026-10-23T22:20:54.927Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062ef24680abb5f52669
+time=2026-10-23T22:20:55.155Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d3b7d84bb3090fa56
+time=2026-10-23T22:20:55.929Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062e7b375ba327a685b8
+time=2026-10-23T22:20:56.156Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062df2fa173e884c6eb4
+time=2026-10-23T22:20:56.930Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062edd96d04f889aecfc
+time=2026-10-23T22:20:57.156Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062def6f486cd14180d2
+time=2026-10-23T22:20:57.668Z level=INFO msg="heartbeat answered" phase=slow n=9 rtt_ms=110.8
+time=2026-10-23T22:20:57.931Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=50 first_bytes=81c900070000062ef1b4c2c87f36c829
+time=2026-10-23T22:20:58.157Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dd81ea232615fb57b
+time=2026-10-23T22:20:58.932Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=53 first_bytes=81c900070000062ea26946da4d877a67
+time=2026-10-23T22:20:59.158Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d1f0b64de5aa4a786
+time=2026-10-23T22:20:59.934Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=51 first_bytes=81c900070000062e89a8d31ef94dae18
+time=2026-10-23T22:21:00.160Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d8fcf69b6f528ff0d
+time=2026-10-23T22:21:00.934Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062ea93cc364efef2c66
+time=2026-10-23T22:21:01.160Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d14cdde33a8130632
+time=2026-10-23T22:21:01.937Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062e29210b60e045680d
+time=2026-10-23T22:21:02.160Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062df39a355f1b674b16
+time=2026-10-23T22:21:02.667Z level=INFO msg="heartbeat answered" phase=slow n=10 rtt_ms=109.9
+time=2026-10-23T22:21:02.774Z level=INFO msg="UDP tally" rtp=507 rtcp=20 since_last_rtcp_ms=614.5
+time=2026-10-23T22:21:02.938Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062eca70aea5a5826850
+time=2026-10-23T22:21:03.161Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d1de5e97ed03cb3c0
+time=2026-10-23T22:21:03.938Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.2 rtp_since_last_rtcp=52 first_bytes=81c900070000062e4251b41b5f125df8
+time=2026-10-23T22:21:04.163Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d7daa8f0a01d0a5f3
+time=2026-10-23T22:21:04.940Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=51 first_bytes=81c900070000062e05da06f129831d2a
+time=2026-10-23T22:21:05.163Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d06a31154df2bc650
+time=2026-10-23T22:21:05.941Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062e8272cd1816cb58c7
+time=2026-10-23T22:21:06.164Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d37cebf9bed7f7766
+time=2026-10-23T22:21:06.942Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062e291608c05cfc33cf
+time=2026-10-23T22:21:07.166Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.4 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d3169c608a1c79bc8
+time=2026-10-23T22:21:07.668Z level=INFO msg="heartbeat answered" phase=slow n=11 rtt_ms=110.4
+time=2026-10-23T22:21:07.943Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062e00274b477f551ff5
+time=2026-10-23T22:21:08.167Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d69b22a5105a69b95
+time=2026-10-23T22:21:08.944Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=53 first_bytes=81c900070000062e935ca3212029ec6d
+time=2026-10-23T22:21:09.168Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d7f7d09d06f1d40fc
+time=2026-10-23T22:21:09.944Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062ebbf9e6461d278f7c
+time=2026-10-23T22:21:10.171Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d21604ae60a4d66aa
+time=2026-10-23T22:21:10.945Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062e0c9336ddd609c96f
+time=2026-10-23T22:21:11.172Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062db0e8269dfdeae82a
+time=2026-10-23T22:21:11.947Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062eb24fdbb423c478c2
+time=2026-10-23T22:21:12.173Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d49950f7688e62a87
+time=2026-10-23T22:21:12.667Z level=INFO msg="heartbeat answered" phase=slow n=12 rtt_ms=110.3
+time=2026-10-23T22:21:12.774Z level=INFO msg="UDP tally" rtp=506 rtcp=20 since_last_rtcp_ms=601.3
+time=2026-10-23T22:21:12.948Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062e20d3c56416b622bd
+time=2026-10-23T22:21:13.175Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062df833b39237ecf6b4
+time=2026-10-23T22:21:13.949Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=53 first_bytes=81c900070000062eb650b16eae920828
+time=2026-10-23T22:21:14.175Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.2 rtp_since_last_rtcp=52 first_bytes=81c8000c0000062d8a2528bdfd9c9e83
+time=2026-10-23T22:21:14.950Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062e6b5fb22c96000b16
+time=2026-10-23T22:21:15.174Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d7541a3cb1fdcdf0a
+time=2026-10-23T22:21:15.950Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e118ae560385c5c09
+time=2026-10-23T22:21:16.177Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.2 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062dd77f4ee8040e0d81
+time=2026-10-23T22:21:16.952Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062ec9706ba2fc091440
+time=2026-10-23T22:21:17.177Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d586fbda56a5da1d5
+time=2026-10-23T22:21:17.666Z level=INFO msg="heartbeat answered" phase=slow n=13 rtt_ms=109.4
+time=2026-10-23T22:21:17.954Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.8 rtp_since_last_rtcp=50 first_bytes=81c900070000062ec96fa51341f5b37c
+time=2026-10-23T22:21:18.178Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dd4643c0213136c1a
+time=2026-10-23T22:21:18.956Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.7 rtp_since_last_rtcp=53 first_bytes=81c900070000062ec5780887eb0d9ad9
+time=2026-10-23T22:21:19.179Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d4344a0d60f5986e3
+time=2026-10-23T22:21:19.957Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=51 first_bytes=81c900070000062e65ae3e82c480e1e0
+time=2026-10-23T22:21:20.180Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d257dacaf9abcb32c
+time=2026-10-23T22:21:20.958Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=50 first_bytes=81c900070000062e322e5f9c19644eb4
+time=2026-10-23T22:21:21.180Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d16342a0a3f8b5ecf
+time=2026-10-23T22:21:21.961Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062ef4288dde44028642
+time=2026-10-23T22:21:22.183Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.4 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d918fcc559d7fc1a6
+time=2026-10-23T22:21:22.668Z level=INFO msg="heartbeat answered" phase=slow n=14 rtt_ms=110.3
+time=2026-10-23T22:21:22.774Z level=INFO msg="UDP tally" rtp=504 rtcp=20 since_last_rtcp_ms=591.4
+time=2026-10-23T22:21:22.962Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062e504e1383f58cf65a
+time=2026-10-23T22:21:23.184Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d6d196ee98877c08d
+time=2026-10-23T22:21:23.962Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.7 rtp_since_last_rtcp=53 first_bytes=81c900070000062e30017d5e0b7ed9f6
+time=2026-10-23T22:21:24.185Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062dac241e466252b763
+time=2026-10-23T22:21:24.961Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062ed258eea8a5581a89
+time=2026-10-23T22:21:25.186Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dd80fe061d336edee
+time=2026-10-23T22:21:25.962Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e9f2f939c90edbc0a
+time=2026-10-23T22:21:26.188Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.4 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062db311ceff253353df
+time=2026-10-23T22:21:26.964Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062ed8d404d9248a1494
+time=2026-10-23T22:21:27.189Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062ded18798eb6cd857c
+time=2026-10-23T22:21:27.668Z level=INFO msg="heartbeat answered" phase=slow n=15 rtt_ms=110.4
+time=2026-10-23T22:21:27.965Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062e0ac2479f07ebe74e
+time=2026-10-23T22:21:28.190Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d172d087f0dd6bf49
+time=2026-10-23T22:21:28.966Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=53 first_bytes=81c900070000062eeef62b58ef76bfec
+time=2026-10-23T22:21:29.191Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d605840567ab15527
+time=2026-10-23T22:21:29.968Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e694b0f14f3774aa0
+time=2026-10-23T22:21:30.191Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d7919854eb24b7c44
+time=2026-10-23T22:21:30.967Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062eeebeff961d62efeb
+time=2026-10-23T22:21:31.192Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d64aa866608707ea8
+time=2026-10-23T22:21:31.968Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062ec40547d93808c3e5
+time=2026-10-23T22:21:32.194Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.6 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062d089a80aa7f4014ba
+time=2026-10-23T22:21:32.667Z level=INFO msg="heartbeat answered" phase=slow n=16 rtt_ms=110.1
+time=2026-10-23T22:21:32.774Z level=INFO msg="UDP tally" rtp=508 rtcp=20 since_last_rtcp_ms=579.3
+time=2026-10-23T22:21:32.969Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062e9aa374b36ebc0794
+time=2026-10-23T22:21:33.194Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dac6a6b5cdbf672bc
+time=2026-10-23T22:21:33.972Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.4 rtp_since_last_rtcp=52 first_bytes=81c900070000062e0828335f58869a25
+time=2026-10-23T22:21:34.194Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.7 rtp_since_last_rtcp=52 first_bytes=81c8000c0000062db6453b5733670176
+time=2026-10-23T22:21:34.973Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062e331aa8b2f5c58185
+time=2026-10-23T22:21:35.196Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d2983136425a23d19
+time=2026-10-23T22:21:35.973Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062e0a7064a8a52eb43a
+time=2026-10-23T22:21:36.198Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=49 first_bytes=81c8000c0000062da69e67fb3f8f154b
+time=2026-10-23T22:21:36.975Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.6 rtp_since_last_rtcp=51 first_bytes=81c900070000062ef0df005de6501784
+time=2026-10-23T22:21:37.199Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062d44ffa314afba65f2
+time=2026-10-23T22:21:37.667Z level=INFO msg="heartbeat answered" phase=slow n=17 rtt_ms=110.3
+time=2026-10-23T22:21:37.976Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062eb20984cc1fd93a1f
+time=2026-10-23T22:21:38.199Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d6aa41736b127792a
+time=2026-10-23T22:21:38.978Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=53 first_bytes=81c900070000062ee146fe13be143af2
+time=2026-10-23T22:21:39.199Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.7 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062da3d12e4cd856b221
+time=2026-10-23T22:21:39.977Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062e6ad33d1a224b109e
+time=2026-10-23T22:21:40.201Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.4 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d6b9314b6a9e85cd5
+time=2026-10-23T22:21:40.979Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062e908668bf7f93bfa0
+time=2026-10-23T22:21:41.202Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d6ce123a464657dad
+time=2026-10-23T22:21:41.980Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062e9dbb98b99fbf6656
+time=2026-10-23T22:21:42.203Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062db8c84530de016ac0
+time=2026-10-23T22:21:42.667Z level=INFO msg="heartbeat answered" phase=slow n=18 rtt_ms=109.8
+time=2026-10-23T22:21:42.774Z level=INFO msg="UDP tally" rtp=504 rtcp=20 since_last_rtcp_ms=571.0
+time=2026-10-23T22:21:42.982Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=50 first_bytes=81c900070000062e6481664a35d90d38
+time=2026-10-23T22:21:43.204Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062ddefca6ec4cb24cdb
+time=2026-10-23T22:21:43.983Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=53 first_bytes=81c900070000062e67c2ebd6ddd0bf46
+time=2026-10-23T22:21:44.205Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d96e46769fe7c34c6
+time=2026-10-23T22:21:44.984Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=50 first_bytes=81c900070000062e8c4eb6cf47f30397
+time=2026-10-23T22:21:45.206Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d787632b80bf12490
+time=2026-10-23T22:21:45.985Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c900070000062e30f9487ab3d6b876
+time=2026-10-23T22:21:46.207Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d9da7a600bbcfcbda
+time=2026-10-23T22:21:46.984Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062e250746ef7b1723e7
+time=2026-10-23T22:21:47.209Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d25929c89f8f2439c
+time=2026-10-23T22:21:47.667Z level=INFO msg="heartbeat answered" phase=slow n=19 rtt_ms=109.7
+time=2026-10-23T22:21:47.986Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062edd0e756282ba1249
+time=2026-10-23T22:21:48.209Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062de451353161f6fe63
+time=2026-10-23T22:21:48.987Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=53 first_bytes=81c900070000062e6f5535203df48003
+time=2026-10-23T22:21:49.210Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d7f69b62d83719506
+time=2026-10-23T22:21:49.989Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062ec520f28c35b3aafd
+time=2026-10-23T22:21:50.210Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d1287595d5e7bb37b
+time=2026-10-23T22:21:50.989Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062ee3369bac4709f64c
+time=2026-10-23T22:21:51.212Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d0383bccd46a8bf8e
+time=2026-10-23T22:21:51.990Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062e221a3de75edd08f8
+time=2026-10-23T22:21:52.213Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d0e36ac442fe7262d
+time=2026-10-23T22:21:52.667Z level=INFO msg="heartbeat answered" phase=slow n=20 rtt_ms=109.6
+time=2026-10-23T22:21:52.774Z level=INFO msg="UDP tally" rtp=506 rtcp=20 since_last_rtcp_ms=561.3
+time=2026-10-23T22:21:52.990Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062ec6f56be3c196847a
+time=2026-10-23T22:21:53.214Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dbcbbf454985564f5
+time=2026-10-23T22:21:53.991Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=53 first_bytes=81c900070000062e63dc789e463129fe
+time=2026-10-23T22:21:54.213Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.7 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062da55425cc01e3ba05
+time=2026-10-23T22:21:54.993Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062e04f6c22a46ff9b24
+time=2026-10-23T22:21:55.214Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dec9b7be431fe5a8d
+time=2026-10-23T22:21:55.994Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=51 first_bytes=81c900070000062e2e0e532742a0a001
+time=2026-10-23T22:21:56.216Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.8 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062d132e73741ba7c236
+time=2026-10-23T22:21:56.995Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e4c4d304c0336fd2a
+time=2026-10-23T22:21:57.216Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dc71d290287630e91
+time=2026-10-23T22:21:57.667Z level=INFO msg="heartbeat answered" phase=slow n=21 rtt_ms=110.4
+time=2026-10-23T22:21:57.995Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062eb477da54de502a02
+time=2026-10-23T22:21:58.217Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062db62aaea49ce85787
+time=2026-10-23T22:21:58.997Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=53 first_bytes=81c900070000062ea66988393f0957b9
+time=2026-10-23T22:21:59.219Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.5 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062dd45efffa0fd7cbac
+time=2026-10-23T22:21:59.998Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062ef778dae84888b840
+time=2026-10-23T22:22:00.219Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d0d1dbb3acfbff9e1
+time=2026-10-23T22:22:00.999Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062e17743011716b903a
+time=2026-10-23T22:22:01.221Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d42eb6f59b8c9332c
+time=2026-10-23T22:22:01.999Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062ebc01ffc7e65b7b29
+time=2026-10-23T22:22:02.222Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dbad28b18bc217b5f
+time=2026-10-23T22:22:02.666Z level=INFO msg="heartbeat answered" phase=slow n=22 rtt_ms=109.3
+time=2026-10-23T22:22:02.774Z level=INFO msg="UDP tally" rtp=507 rtcp=20 since_last_rtcp_ms=552.4
+time=2026-10-23T22:22:03.000Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062e713a2e36e2d727f6
+time=2026-10-23T22:22:03.224Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062deaa2a4c09d45680c
+time=2026-10-23T22:22:04.002Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.5 rtp_since_last_rtcp=53 first_bytes=81c900070000062ea111399ec3a2b892
+time=2026-10-23T22:22:04.224Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d2ddb58287da8378c
+time=2026-10-23T22:22:05.003Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c900070000062e6ccc8c3997d60e7c
+time=2026-10-23T22:22:05.224Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d27a239bb5cb72b7f
+time=2026-10-23T22:22:06.004Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062e592fe82c34324d7b
+time=2026-10-23T22:22:06.226Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d3e19be6f95c41473
+time=2026-10-23T22:22:07.005Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062e965154d136df668f
+time=2026-10-23T22:22:07.226Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.9 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d3f888f78e8837e5e
+time=2026-10-23T22:22:07.667Z level=INFO msg="heartbeat answered" phase=slow n=23 rtt_ms=109.8
+time=2026-10-23T22:22:08.008Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1003.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062ee453cbbbae369135
+time=2026-10-23T22:22:08.226Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d3c8839f9669be01a
+time=2026-10-23T22:22:09.006Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=997.8 rtp_since_last_rtcp=53 first_bytes=81c900070000062e4e55d0d11bbc9755
+time=2026-10-23T22:22:09.227Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d26d313608d9bcb19
+time=2026-10-23T22:22:10.007Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062eba50cfd505689af8
+time=2026-10-23T22:22:10.230Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d57e323d94f007029
+time=2026-10-23T22:22:11.008Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062e08d45169952649d7
+time=2026-10-23T22:22:11.230Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d33365b2dd9651671
+time=2026-10-23T22:22:12.009Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062ed011aea308044fd7
+time=2026-10-23T22:22:12.231Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dd5e52767bc070c58
+time=2026-10-23T22:22:12.557Z level=INFO msg="sending server deafen" user=<recorder> deaf=true at=2m0s
+time=2026-10-23T22:22:12.668Z level=INFO msg="heartbeat answered" phase=slow n=24 rtt_ms=110.2
+time=2026-10-23T22:22:12.774Z level=INFO msg="UDP tally" rtp=505 rtcp=20 since_last_rtcp_ms=543.4
+time=2026-10-23T22:22:12.817Z level=INFO msg="gateway VOICE_STATE_UPDATE" user=<recorder> channel=<channel-A> session=<session-1> deaf=true mute=false self_deaf=false self_mute=true suppress=false
+time=2026-10-23T22:22:12.839Z level=INFO msg="server deafen answered" deaf=true status=200 rtt_ms=281.3
+time=2026-10-23T22:22:13.010Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=41 first_bytes=81c900070000062ee6bc17d8a9c37864
+time=2026-10-23T22:22:13.324Z level=INFO msg="RTP stopped" ssrc=1581 last_rtp=2026-10-23T22:22:12.817Z quiet_ms=507.4 rtp_so_far=6058
+time=2026-10-23T22:22:14.011Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=0 first_bytes=81c900070000062ea9d85f650ef298be
+time=2026-10-23T22:22:15.012Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062ef915dc3a71b8d343
+time=2026-10-23T22:22:16.013Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062e46904f0efaecbed7
+time=2026-10-23T22:22:17.014Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062eae5f396497917b64
+time=2026-10-23T22:22:17.668Z level=INFO msg="heartbeat answered" phase=slow n=25 rtt_ms=110.4
+time=2026-10-23T22:22:18.015Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=0 first_bytes=81c900070000062e61afc29a56503039
+time=2026-10-23T22:22:19.016Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062e3e77942501784b88
+time=2026-10-23T22:22:20.016Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.2 rtp_since_last_rtcp=0 first_bytes=81c900070000062e1104a65154843f7f
+time=2026-10-23T22:22:21.017Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e1fd52f1c7a12ad71
+time=2026-10-23T22:22:22.019Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062e2dcf7d4b60e5c9ed
+time=2026-10-23T22:22:22.667Z level=INFO msg="heartbeat answered" phase=slow n=26 rtt_ms=110.3
+time=2026-10-23T22:22:22.774Z level=INFO msg="UDP tally" rtp=3 rtcp=10 since_last_rtcp_ms=755.7
+time=2026-10-23T22:22:23.021Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.7 rtp_since_last_rtcp=0 first_bytes=81c900070000062e7a5832612ae69987
+time=2026-10-23T22:22:24.021Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.2 rtp_since_last_rtcp=0 first_bytes=81c900070000062ed02894aeae09318d
+time=2026-10-23T22:22:25.023Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e0f1e0c54192bb5d6
+time=2026-10-23T22:22:26.024Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e9fe361f8a3b1639a
+time=2026-10-23T22:22:27.024Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062ef4c6b2830d4782a6
+time=2026-10-23T22:22:27.667Z level=INFO msg="heartbeat answered" phase=slow n=27 rtt_ms=109.7
+time=2026-10-23T22:22:28.025Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062e6bce39c6320bc348
+time=2026-10-23T22:22:29.027Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e22a45c7667555de2
+time=2026-10-23T22:22:30.028Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062eaaa33ab2f2e43d80
+time=2026-10-23T22:22:31.029Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062edb30a50ee32aefde
+time=2026-10-23T22:22:32.030Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062eaa72cfeb1b8b4fb1
+time=2026-10-23T22:22:32.667Z level=INFO msg="heartbeat answered" phase=slow n=28 rtt_ms=110.0
+time=2026-10-23T22:22:32.774Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=744.0
+time=2026-10-23T22:22:33.031Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062e7affa86204cbd5c4
+time=2026-10-23T22:22:34.032Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=0 first_bytes=81c900070000062e487d4b4ad6365106
+time=2026-10-23T22:22:35.033Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e6e15aeeaf960f110
+time=2026-10-23T22:22:36.033Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e5934cae0938a83b6
+time=2026-10-23T22:22:37.034Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062edc3608ce8666db6c
+time=2026-10-23T22:22:37.667Z level=INFO msg="heartbeat answered" phase=slow n=29 rtt_ms=109.9
+time=2026-10-23T22:22:38.036Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062ef8291a22a9db8123
+time=2026-10-23T22:22:39.036Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e3fd91d4dbc885a7a
+time=2026-10-23T22:22:40.036Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062e7ae69175bfb931e1
+time=2026-10-23T22:22:41.038Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062ef6a8ddc54418a593
+time=2026-10-23T22:22:42.039Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062ebd7462f0ddc07b3e
+time=2026-10-23T22:22:42.667Z level=INFO msg="heartbeat answered" phase=slow n=30 rtt_ms=109.6
+time=2026-10-23T22:22:42.774Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=735.4
+time=2026-10-23T22:22:43.039Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e4e7763d0097790c8
+time=2026-10-23T22:22:44.041Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e69e12fc8e5c5f961
+time=2026-10-23T22:22:45.041Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e3e8fedf140955456
+time=2026-10-23T22:22:46.044Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1003.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062eb9065f9279e0a904
+time=2026-10-23T22:22:47.046Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=0 first_bytes=81c900070000062e5a40138d71e2360a
+time=2026-10-23T22:22:47.668Z level=INFO msg="heartbeat answered" phase=slow n=31 rtt_ms=110.7
+time=2026-10-23T22:22:48.047Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062e55fda43e8647eac1
+time=2026-10-23T22:22:49.047Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062e58a1c736de9291ef
+time=2026-10-23T22:22:50.049Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e4d8e446e06ac6ac8
+time=2026-10-23T22:22:51.049Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062e11863dba9222d48e
+time=2026-10-23T22:22:52.049Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062ea588ec013e9e7497
+time=2026-10-23T22:22:52.666Z level=INFO msg="heartbeat answered" phase=slow n=32 rtt_ms=109.2
+time=2026-10-23T22:22:52.774Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=724.9
+time=2026-10-23T22:22:53.052Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062e92e36940edffb7c1
+time=2026-10-23T22:22:54.053Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062efa336de0bfba898d
+time=2026-10-23T22:22:55.054Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e685d9bac32dac875
+time=2026-10-23T22:22:56.053Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.0 rtp_since_last_rtcp=0 first_bytes=81c900070000062e0a772f04628372fc
+time=2026-10-23T22:22:57.054Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062ea90aaf2ac4f1a8c7
+time=2026-10-23T22:22:57.668Z level=INFO msg="heartbeat answered" phase=slow n=33 rtt_ms=110.5
+time=2026-10-23T22:22:58.057Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062ed7ae06f0a7a56cbd
+time=2026-10-23T22:22:59.057Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062e4dca2fad7f522d67
+time=2026-10-23T22:23:00.058Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e5e636a9c97025c85
+time=2026-10-23T22:23:01.060Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=0 first_bytes=81c900070000062ea682a2326ac2d780
+time=2026-10-23T22:23:02.060Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062e1f5372038e0c409e
+time=2026-10-23T22:23:02.668Z level=INFO msg="heartbeat answered" phase=slow n=34 rtt_ms=111.1
+time=2026-10-23T22:23:02.774Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=713.9
+time=2026-10-23T22:23:03.063Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e7481701f3f2abfb2
+time=2026-10-23T22:23:04.063Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062ebf5e4ce90121f857
+time=2026-10-23T22:23:05.065Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062ec898488c242de930
+time=2026-10-23T22:23:06.065Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e13a430f498064341
+time=2026-10-23T22:23:07.066Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e342c457defd8d416
+time=2026-10-23T22:23:07.669Z level=INFO msg="heartbeat answered" phase=slow n=35 rtt_ms=112.5
+time=2026-10-23T22:23:08.068Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=0 first_bytes=81c900070000062e35dc647aa8c9bc34
+time=2026-10-23T22:23:09.069Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062e90dd09070d98c425
+time=2026-10-23T22:23:10.070Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062e6162e394fb1c79af
+time=2026-10-23T22:23:11.071Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062e06f0dd90c07ad96c
+time=2026-10-23T22:23:12.072Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062e32881c95890f3032
+time=2026-10-23T22:23:12.666Z level=INFO msg="heartbeat answered" phase=slow n=36 rtt_ms=109.7
+time=2026-10-23T22:23:12.773Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=701.2
+time=2026-10-23T22:23:13.073Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062eef3bf86501bfb4a0
+time=2026-10-23T22:23:14.075Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062eefac51574eefba5d
+time=2026-10-23T22:23:15.074Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e721f248bff77ac3a
+time=2026-10-23T22:23:16.075Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062e4e306b09b5b7508e
+time=2026-10-23T22:23:17.076Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062eb5c63c890330c4f3
+time=2026-10-23T22:23:17.667Z level=INFO msg="heartbeat answered" phase=slow n=37 rtt_ms=109.9
+time=2026-10-23T22:23:18.077Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e20821d82ebf75f0c
+time=2026-10-23T22:23:19.079Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062e711743379dd9b502
+time=2026-10-23T22:23:20.079Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062e755c2759ca1b1b46
+time=2026-10-23T22:23:21.079Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e7b16088d68e82201
+time=2026-10-23T22:23:22.081Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062e497a34d37a1f5199
+time=2026-10-23T22:23:22.667Z level=INFO msg="heartbeat answered" phase=slow n=38 rtt_ms=109.9
+time=2026-10-23T22:23:22.774Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=693.6
+time=2026-10-23T22:23:23.081Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062e9df87588a95090a8
+time=2026-10-23T22:23:24.082Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e68a26b572048321c
+time=2026-10-23T22:23:25.084Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062e250ec4e87da6a639
+time=2026-10-23T22:23:26.084Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e90615eb88502fb08
+time=2026-10-23T22:23:27.085Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=0 first_bytes=81c900070000062e01628c51e0727497
+time=2026-10-23T22:23:27.667Z level=INFO msg="heartbeat answered" phase=slow n=39 rtt_ms=109.5
+time=2026-10-23T22:23:28.086Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=0 first_bytes=81c900070000062ed6485f198c023219
+time=2026-10-23T22:23:29.088Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062eda3e783d768a1444
+time=2026-10-23T22:23:30.088Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e8d1b3e74cfb0310c
+time=2026-10-23T22:23:31.088Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062e080e59612743b88f
+time=2026-10-23T22:23:32.089Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062ea38ac424be1f81a4
+time=2026-10-23T22:23:32.667Z level=INFO msg="heartbeat answered" phase=slow n=40 rtt_ms=109.6
+time=2026-10-23T22:23:32.774Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=685.4
+time=2026-10-23T22:23:33.089Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062efe957f7a872fc2e0
+time=2026-10-23T22:23:34.091Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062ed07d6a8221bfc5ee
+time=2026-10-23T22:23:35.092Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=0 first_bytes=81c900070000062ecd6058e5d7868cdf
+time=2026-10-23T22:23:36.094Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=0 first_bytes=81c900070000062ec195633b6ca636fc
+time=2026-10-23T22:23:37.094Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062e8438b735e4fe918f
+time=2026-10-23T22:23:37.667Z level=INFO msg="heartbeat answered" phase=slow n=41 rtt_ms=110.3
+time=2026-10-23T22:23:38.095Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062e44f6969d378566a5
+time=2026-10-23T22:23:39.097Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062ef7e3c9c70ed62d3b
+time=2026-10-23T22:23:40.098Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=0 first_bytes=81c900070000062e6155e47efcdb7cde
+time=2026-10-23T22:23:41.099Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=0 first_bytes=81c900070000062e52e47d17f5887109
+time=2026-10-23T22:23:42.100Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e7985dba84c68c3b4
+time=2026-10-23T22:23:42.666Z level=INFO msg="heartbeat answered" phase=slow n=42 rtt_ms=109.3
+time=2026-10-23T22:23:42.774Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=674.0
+time=2026-10-23T22:23:43.100Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=0 first_bytes=81c900070000062e8f5ffabe6259533d
+time=2026-10-23T22:23:44.103Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062e5c59cfae0f85fbde
+time=2026-10-23T22:23:45.105Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062ef0755399efd977f7
+time=2026-10-23T22:23:46.105Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=0 first_bytes=81c900070000062e7961aa0382123ccb
+time=2026-10-23T22:23:47.105Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062e1499889229677a28
+time=2026-10-23T22:23:47.666Z level=INFO msg="heartbeat answered" phase=slow n=43 rtt_ms=109.8
+time=2026-10-23T22:23:48.106Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062e14727c5e27e92017
+time=2026-10-23T22:23:49.107Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062e6f1141b8bc684f92
+time=2026-10-23T22:23:50.108Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=0 first_bytes=81c900070000062ee51efb56d4eb263f
+time=2026-10-23T22:23:51.109Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e878f92ba04cfe171
+time=2026-10-23T22:23:52.111Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062e08ca46a5ddfcb84e
+time=2026-10-23T22:23:52.667Z level=INFO msg="heartbeat answered" phase=slow n=44 rtt_ms=109.6
+time=2026-10-23T22:23:52.773Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=662.3
+time=2026-10-23T22:23:53.111Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.7 rtp_since_last_rtcp=0 first_bytes=81c900070000062edcfb7440bbde71cf
+time=2026-10-23T22:23:54.112Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062e1f1281899509d11f
+time=2026-10-23T22:23:55.113Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e7d0f424156370632
+time=2026-10-23T22:23:56.115Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=0 first_bytes=81c900070000062eaabe1324b1619b6a
+time=2026-10-23T22:23:57.116Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=0 first_bytes=81c900070000062e0c79bbd98ff57d28
+time=2026-10-23T22:23:57.667Z level=INFO msg="heartbeat answered" phase=slow n=45 rtt_ms=110.1
+time=2026-10-23T22:23:58.117Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e0b107223699ec2c3
+time=2026-10-23T22:23:59.117Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062e2a46f052c8acbe41
+time=2026-10-23T22:24:00.118Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e42f65279c30ebb7d
+time=2026-10-23T22:24:01.118Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e2a36ca4e8e673be9
+time=2026-10-23T22:24:02.119Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=0 first_bytes=81c900070000062e98e44f4d0224a026
+time=2026-10-23T22:24:02.667Z level=INFO msg="heartbeat answered" phase=slow n=46 rtt_ms=109.8
+time=2026-10-23T22:24:02.773Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=654.2
+time=2026-10-23T22:24:03.120Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e0589722da79ec446
+time=2026-10-23T22:24:04.122Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e5c8b6c9023524de2
+time=2026-10-23T22:24:05.122Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e42a5721e8348830f
+time=2026-10-23T22:24:06.123Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=0 first_bytes=81c900070000062e50173b4e706c8f77
+time=2026-10-23T22:24:07.125Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062ea3222343a8d44891
+time=2026-10-23T22:24:07.667Z level=INFO msg="heartbeat answered" phase=slow n=47 rtt_ms=110.3
+time=2026-10-23T22:24:08.126Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e5060ff308c0855de
+time=2026-10-23T22:24:09.125Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.7 rtp_since_last_rtcp=0 first_bytes=81c900070000062e87e95b99b2e4fe27
+time=2026-10-23T22:24:10.127Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062e2cbd2e639e7c8a96
+time=2026-10-23T22:24:11.127Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e71ac7a05447347b9
+time=2026-10-23T22:24:12.128Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062eac9eed4740748d72
+time=2026-10-23T22:24:12.557Z level=INFO msg="sending server deafen" user=<recorder> deaf=false at=4m0s
+time=2026-10-23T22:24:12.668Z level=INFO msg="heartbeat answered" phase=slow n=48 rtt_ms=110.5
+time=2026-10-23T22:24:12.774Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=645.7
+time=2026-10-23T22:24:13.129Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e603b4a6d7d2204a9
+time=2026-10-23T22:24:14.130Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e6bedb644af375526
+time=2026-10-23T22:24:14.914Z level=INFO msg="RTP resumes" ssrc=1581 len=221 gap_ms=122096.9 rtp_so_far=6059
+time=2026-10-23T22:24:14.999Z level=INFO msg="server deafen answered" deaf=false status=200 rtt_ms=2441.8
+time=2026-10-23T22:24:15.131Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=11 first_bytes=81c900070000062e01696fc1621386a9
+time=2026-10-23T22:24:15.346Z level=INFO msg="gateway VOICE_STATE_UPDATE" user=<recorder> channel=<channel-A> session=<session-1> deaf=false mute=false self_deaf=false self_mute=true suppress=false
+time=2026-10-23T22:24:15.357Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=123125.9 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d98f71aab3a1ee3f5
+time=2026-10-23T22:24:16.132Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062e55d1bf4acc8dae71
+time=2026-10-23T22:24:16.359Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d0b60b934ed11c87a
+time=2026-10-23T22:24:17.134Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062ef4bedb9f34b95f7a
+time=2026-10-23T22:24:17.360Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d97e274d028289070
+time=2026-10-23T22:24:17.668Z level=INFO msg="heartbeat answered" phase=slow n=49 rtt_ms=110.3
+time=2026-10-23T22:24:18.135Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=51 first_bytes=81c900070000062e0f8d53c9b0a0e5e6
+time=2026-10-23T22:24:18.362Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d686e305265c44539
+time=2026-10-23T22:24:19.135Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062e87e7ce2265c8b4e7
+time=2026-10-23T22:24:19.362Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.9 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062defba70ee7c22594b
+time=2026-10-23T22:24:20.136Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=53 first_bytes=81c900070000062ef1c7dc4b25ba19e2
+time=2026-10-23T22:24:20.363Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d610d5ecd7387184b
+time=2026-10-23T22:24:21.137Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c900070000062ee462aa89dffa28f3
+time=2026-10-23T22:24:21.364Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d76312d2f505e0901
+time=2026-10-23T22:24:22.138Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062e1c02cacd443d6f58
+time=2026-10-23T22:24:22.367Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1003.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d0c9e74a04da73f2a
+time=2026-10-23T22:24:22.667Z level=INFO msg="heartbeat answered" phase=slow n=50 rtt_ms=110.6
+time=2026-10-23T22:24:22.774Z level=INFO msg="UDP tally" rtp=396 rtcp=18 since_last_rtcp_ms=406.8
+time=2026-10-23T22:24:23.140Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062e342f27dfb02863fc
+time=2026-10-23T22:24:23.367Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d008f2612ce8d6666
+time=2026-10-23T22:24:24.140Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062e73628755143e5837
+time=2026-10-23T22:24:24.368Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d7f91c98ceae2edf4
+time=2026-10-23T22:24:25.140Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.0 rtp_since_last_rtcp=53 first_bytes=81c900070000062ea9b6b1b3a808e2db
+time=2026-10-23T22:24:25.369Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d176b987bffed57e2
+time=2026-10-23T22:24:26.141Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062e3731adddcade210a
+time=2026-10-23T22:24:26.370Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dc171b865428e3385
+time=2026-10-23T22:24:27.142Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062e9701a79ccfafe7f7
+time=2026-10-23T22:24:27.372Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062de22f456d68e827b7
+time=2026-10-23T22:24:27.667Z level=INFO msg="heartbeat answered" phase=slow n=51 rtt_ms=109.7
+time=2026-10-23T22:24:28.143Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=50 first_bytes=81c900070000062eeaa7e7171011939d
+time=2026-10-23T22:24:28.373Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dba8e2309dea9c87c
+time=2026-10-23T22:24:29.145Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062e7e5bc537b0f85a33
+time=2026-10-23T22:24:29.372Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.4 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062da72cc75301428dec
+time=2026-10-23T22:24:30.146Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=53 first_bytes=81c900070000062e9a8c3d6606bd46ba
+time=2026-10-23T22:24:30.373Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d40b7e309c4208daf
+time=2026-10-23T22:24:31.147Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062e1aa860fc04ba50ca
+time=2026-10-23T22:24:31.376Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.8 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062dee7a124727aafe70
+time=2026-10-23T22:24:32.150Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.3 rtp_since_last_rtcp=50 first_bytes=81c900070000062e4f62de87b7dbe690
+time=2026-10-23T22:24:32.377Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d4c95c4bad6fac6cc
+time=2026-10-23T22:24:32.667Z level=INFO msg="heartbeat answered" phase=slow n=52 rtt_ms=109.8
+time=2026-10-23T22:24:32.774Z level=INFO msg="UDP tally" rtp=507 rtcp=20 since_last_rtcp_ms=396.6
+time=2026-10-23T22:24:33.150Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062e0f3ea2bc91f019c9
+time=2026-10-23T22:24:33.377Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062ddd64cd4ef60208a0
+time=2026-10-23T22:24:34.151Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e0f746d730129b50b
+time=2026-10-23T22:24:34.378Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d72db572e60910584
+time=2026-10-23T22:24:35.152Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=53 first_bytes=81c900070000062ea5283592d66db30f
+time=2026-10-23T22:24:35.379Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d34d1f07f6b5ffe9d
+time=2026-10-23T22:24:36.153Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062e35028919e2045e68
+time=2026-10-23T22:24:36.381Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062df677b123a43d55b2
+time=2026-10-23T22:24:37.154Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062e37c3bc4e3a65d706
+time=2026-10-23T22:24:37.380Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062df4a98cb2d05b43cc
+time=2026-10-23T22:24:37.669Z level=INFO msg="heartbeat answered" phase=slow n=53 rtt_ms=111.5
+time=2026-10-23T22:24:38.158Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1004.0 rtp_since_last_rtcp=51 first_bytes=81c900070000062e050bddf8af0c7e0c
+time=2026-10-23T22:24:38.381Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d906d73f31ac8ecff
+time=2026-10-23T22:24:39.156Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=998.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062ef9c7892ab6dd5717
+time=2026-10-23T22:24:39.381Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.9 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d6804a74cb67b7dc0
+time=2026-10-23T22:24:40.157Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=53 first_bytes=81c900070000062ec35d8c391621cc4b
+time=2026-10-23T22:24:40.383Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d90a1847a10c82987
+time=2026-10-23T22:24:41.159Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062ed6c7953747740c5e
+time=2026-10-23T22:24:41.384Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dad854413237db69d
+time=2026-10-23T22:24:42.159Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062eaff30cf935a75710
+time=2026-10-23T22:24:42.385Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dfea4870678e34ae4
+time=2026-10-23T22:24:42.667Z level=INFO msg="heartbeat answered" phase=slow n=54 rtt_ms=110.7
+time=2026-10-23T22:24:42.774Z level=INFO msg="UDP tally" rtp=505 rtcp=20 since_last_rtcp_ms=388.7
+time=2026-10-23T22:24:43.160Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c900070000062ef8c2a8b9d923c50c
+time=2026-10-23T22:24:43.386Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d92079d2bd7bfb03d
+time=2026-10-23T22:24:44.161Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062e530c86bfed9029b2
+time=2026-10-23T22:24:44.388Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062db57d305bd463dd17
+time=2026-10-23T22:24:45.162Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=53 first_bytes=81c900070000062ec1c9797fc19a2b79
+time=2026-10-23T22:24:45.388Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dfd7b8626ef0fcadd
+time=2026-10-23T22:24:46.165Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062e740a15beb0c94d8a
+time=2026-10-23T22:24:46.390Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d8559906a1a4267a9
+time=2026-10-23T22:24:47.164Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062e212c22ac1225ff47
+time=2026-10-23T22:24:47.391Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062db484c8929746956f
+time=2026-10-23T22:24:47.667Z level=INFO msg="heartbeat answered" phase=slow n=55 rtt_ms=109.5
+time=2026-10-23T22:24:48.165Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062ee403638affc2335c
+time=2026-10-23T22:24:48.394Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d0e9f27fc8724640d
+time=2026-10-23T22:24:49.167Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062e862bc5b3e872b9ea
+time=2026-10-23T22:24:49.394Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.9 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062da56572219c91ecbe
+time=2026-10-23T22:24:50.168Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=53 first_bytes=81c900070000062e33d8964d25d75b97
+time=2026-10-23T22:24:50.394Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d63552a35a028f698
+time=2026-10-23T22:24:51.170Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.8 rtp_since_last_rtcp=50 first_bytes=81c900070000062e6c9b1cbe4600c00e
+time=2026-10-23T22:24:51.396Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.1 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062df7509594aa86739b
+time=2026-10-23T22:24:52.169Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=998.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062e64494ab51957178b
+time=2026-10-23T22:24:52.397Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d219fb2c67423c1d8
+time=2026-10-23T22:24:52.667Z level=INFO msg="heartbeat answered" phase=slow n=56 rtt_ms=109.8
+time=2026-10-23T22:24:52.774Z level=INFO msg="UDP tally" rtp=506 rtcp=20 since_last_rtcp_ms=377.1
+time=2026-10-23T22:24:53.171Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062ef90492c81645fc7b
+time=2026-10-23T22:24:53.397Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d24d45f8361325381
+time=2026-10-23T22:24:54.172Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e1776050410222fbf
+time=2026-10-23T22:24:54.400Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.2 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062db9561cd59a7ca189
+time=2026-10-23T22:24:55.173Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=53 first_bytes=81c900070000062ec577a514b8fd5daa
+time=2026-10-23T22:24:55.400Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d4afd98510b57bcd3
+time=2026-10-23T22:24:56.174Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=50 first_bytes=81c900070000062e39a91441fd2616b9
+time=2026-10-23T22:24:56.400Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d3653b7660b63c9ed
+time=2026-10-23T22:24:57.175Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062eef30d918cb5755c8
+time=2026-10-23T22:24:57.402Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d06cc8343e0f5885e
+time=2026-10-23T22:24:57.666Z level=INFO msg="heartbeat answered" phase=slow n=57 rtt_ms=109.7
+time=2026-10-23T22:24:58.176Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=51 first_bytes=81c900070000062e3e927f0b8c014eaa
+time=2026-10-23T22:24:58.403Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dfbb2b675e7d9df9b
+time=2026-10-23T22:24:59.177Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062e5bd6901bb35b67ca
+time=2026-10-23T22:24:59.407Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1004.1 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d0e501a2fcc472dab
+time=2026-10-23T22:25:00.178Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=53 first_bytes=81c900070000062eb0b6f256026f9066
+time=2026-10-23T22:25:00.406Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d960ec9c413f483c5
+time=2026-10-23T22:25:01.179Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=48 first_bytes=81c900070000062e5087bd8bffb8cab2
+time=2026-10-23T22:25:01.407Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d3d18d01e84dd6b67
+time=2026-10-23T22:25:02.180Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=52 first_bytes=81c900070000062eaaa9e8b95707a6f4
+time=2026-10-23T22:25:02.409Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d9b4d0bdebd9b455d
+time=2026-10-23T22:25:02.666Z level=INFO msg="heartbeat answered" phase=slow n=58 rtt_ms=109.8
+time=2026-10-23T22:25:02.774Z level=INFO msg="UDP tally" rtp=506 rtcp=20 since_last_rtcp_ms=365.3
+time=2026-10-23T22:25:03.181Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062e67486bba03a42eab
+time=2026-10-23T22:25:03.410Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d2e612511062bd1c6
+time=2026-10-23T22:25:04.182Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062e890741ea2d5ca793
+time=2026-10-23T22:25:04.410Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d2e4d1c3b531f4363
+time=2026-10-23T22:25:05.184Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=53 first_bytes=81c900070000062e80163c28df42aab7
+time=2026-10-23T22:25:05.412Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062d1c43b1d080347feb
+time=2026-10-23T22:25:06.184Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c900070000062e075d560e5bf1f621
+time=2026-10-23T22:25:06.413Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062de1841beb91b78a80
+time=2026-10-23T22:25:07.186Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=50 first_bytes=81c900070000062e17d407f61c352907
+time=2026-10-23T22:25:07.414Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=49 first_bytes=81c8000c0000062d44114bf8886cb586
+time=2026-10-23T22:25:07.668Z level=INFO msg="heartbeat answered" phase=slow n=59 rtt_ms=110.1
+time=2026-10-23T22:25:08.186Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e0d64be6bc789cc28
+time=2026-10-23T22:25:08.415Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062db97d7646b65e2a08
+time=2026-10-23T22:25:09.187Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c900070000062e384ff0e6f0ef7fac
+time=2026-10-23T22:25:09.416Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d511763cb1295631e
+time=2026-10-23T22:25:10.188Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=53 first_bytes=81c900070000062e117c03dad19f8f0f
+time=2026-10-23T22:25:10.418Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.8 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062db3232a1441c9268a
+time=2026-10-23T22:25:11.189Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062e77ef39897890c964
+time=2026-10-23T22:25:11.418Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dccfc3be1fb22e760
+time=2026-10-23T22:25:12.190Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e1c8db958e17a5a85
+time=2026-10-23T22:25:12.419Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062ddb7d3c5fb50897c3
+time=2026-10-23T22:25:12.667Z level=INFO msg="heartbeat answered" phase=slow n=60 rtt_ms=110.0
+time=2026-10-23T22:25:12.774Z level=INFO msg="UDP tally" rtp=506 rtcp=20 since_last_rtcp_ms=354.5
+time=2026-10-23T22:25:13.191Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062e5412f3e183e9309b
+time=2026-10-23T22:25:13.420Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dd3864130aa06c6ec
+time=2026-10-23T22:25:14.192Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e1b63eff41bc68d52
+time=2026-10-23T22:25:14.422Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.2 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d0afc97aee491cf37
+time=2026-10-23T22:25:15.193Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=54 first_bytes=81c900070000062e60c861f88be5cd49
+time=2026-10-23T22:25:15.424Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062da2f2d8b4a076bcc5
+time=2026-10-23T22:25:16.195Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=49 first_bytes=81c900070000062ef9b7dd0423fc7b5a
+time=2026-10-23T22:25:16.423Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d84e6c859aec6c651
+time=2026-10-23T22:25:17.196Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=51 first_bytes=81c900070000062e98e64dbe0ce5a116
+time=2026-10-23T22:25:17.426Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1003.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d30e8ca6f764532fb
+time=2026-10-23T22:25:17.667Z level=INFO msg="heartbeat answered" phase=slow n=61 rtt_ms=109.9
+time=2026-10-23T22:25:18.196Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062e20d6e74b0e2165dc
+time=2026-10-23T22:25:18.427Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d60775354b8fb6dab
+time=2026-10-23T22:25:19.198Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062e093daf68bb1ae42d
+time=2026-10-23T22:25:19.427Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d0b21472203d673ce
+time=2026-10-23T22:25:20.198Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=53 first_bytes=81c900070000062ee9278c8973995f96
+time=2026-10-23T22:25:20.428Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d5c339d52e32be8c3
+time=2026-10-23T22:25:21.198Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062e28c5ef5ff9081efe
+time=2026-10-23T22:25:21.429Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=49 first_bytes=81c8000c0000062d1c04f667061387cf
+time=2026-10-23T22:25:22.201Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e3e02d2b65f2d1519
+time=2026-10-23T22:25:22.430Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062d0b9e66d096e262eb
+time=2026-10-23T22:25:22.667Z level=INFO msg="heartbeat answered" phase=slow n=62 rtt_ms=109.7
+time=2026-10-23T22:25:22.774Z level=INFO msg="UDP tally" rtp=506 rtcp=20 since_last_rtcp_ms=344.1
+time=2026-10-23T22:25:23.200Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062e0d63f95a23ef4fb7
+time=2026-10-23T22:25:23.432Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dc51c44b307469dd3
+time=2026-10-23T22:25:24.202Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062e9eef9a9c3cf2930d
+time=2026-10-23T22:25:24.432Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062dabf60fc59adb2b64
+time=2026-10-23T22:25:25.203Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=53 first_bytes=81c900070000062e1a7d8c77322efaed
+time=2026-10-23T22:25:25.434Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.7 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062d2cd1a44e8ad5040e
+time=2026-10-23T22:25:26.205Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062ec4e6e6213cea5641
+time=2026-10-23T22:25:26.435Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d7cbaf243791281a4
+time=2026-10-23T22:25:27.205Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e7878d6a12e942b34
+time=2026-10-23T22:25:27.437Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dbf74ded34bfe8c39
+time=2026-10-23T22:25:27.666Z level=INFO msg="heartbeat answered" phase=slow n=63 rtt_ms=109.8
+time=2026-10-23T22:25:28.207Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062ee56216856734f170
+time=2026-10-23T22:25:28.438Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062db0bfa1c16c964aed
+time=2026-10-23T22:25:29.207Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062eb422972dfe19649b
+time=2026-10-23T22:25:29.439Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d1c2c0b48c0030d37
+time=2026-10-23T22:25:30.207Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.9 rtp_since_last_rtcp=53 first_bytes=81c900070000062e2a066aa48a49287f
+time=2026-10-23T22:25:30.440Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d626250eb838248d9
+time=2026-10-23T22:25:31.209Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.8 rtp_since_last_rtcp=50 first_bytes=81c900070000062e74df82d469012786
+time=2026-10-23T22:25:31.440Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dfafaf994fcbca256
+time=2026-10-23T22:25:32.209Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062e0faa41e2a98b1f9a
+time=2026-10-23T22:25:32.443Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1003.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d41c68b7c14cd7f8c
+time=2026-10-23T22:25:32.667Z level=INFO msg="heartbeat answered" phase=slow n=64 rtt_ms=109.4
+time=2026-10-23T22:25:32.774Z level=INFO msg="UDP tally" rtp=506 rtcp=20 since_last_rtcp_ms=330.8
+time=2026-10-23T22:25:33.210Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=50 first_bytes=81c900070000062ea287e98db1219386
+time=2026-10-23T22:25:33.442Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dcc145d5e52041630
+time=2026-10-23T22:25:34.211Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062e41c9e7f188df3065
+time=2026-10-23T22:25:34.444Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.1 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062ddf4e385d79b252b5
+time=2026-10-23T22:25:35.212Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=53 first_bytes=81c900070000062efa23b0f042ed6a2b
+time=2026-10-23T22:25:35.445Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d102ff836faea7be8
+time=2026-10-23T22:25:36.213Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062ee997ff014f37602c
+time=2026-10-23T22:25:36.445Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dcf69eed5ef73aef8
+time=2026-10-23T22:25:37.214Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=51 first_bytes=81c900070000062e0a99d5dce26c4979
+time=2026-10-23T22:25:37.448Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062ddce52efe3e954d96
+time=2026-10-23T22:25:37.667Z level=INFO msg="heartbeat answered" phase=slow n=65 rtt_ms=109.5
+time=2026-10-23T22:25:38.216Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062ea6b4f3561ef2d154
+time=2026-10-23T22:25:38.448Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d35541ee626dc61f9
+time=2026-10-23T22:25:39.215Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=998.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062e196b495f413c8aff
+time=2026-10-23T22:25:39.449Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d5dc3d2065e5e8a51
+time=2026-10-23T22:25:40.220Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1005.2 rtp_since_last_rtcp=53 first_bytes=81c900070000062e2daf3f24f1f9180d
+time=2026-10-23T22:25:40.451Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062da3f9a70effbb443b
+time=2026-10-23T22:25:41.218Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=997.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062ecd5779d7de839016
+time=2026-10-23T22:25:41.451Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062de5980c564f16da29
+time=2026-10-23T22:25:42.219Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c900070000062e8cb6598a35cacd5e
+time=2026-10-23T22:25:42.452Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062d350f80fc15bfdcf4
+time=2026-10-23T22:25:42.667Z level=INFO msg="heartbeat answered" phase=slow n=66 rtt_ms=109.5
+time=2026-10-23T22:25:42.774Z level=INFO msg="UDP tally" rtp=507 rtcp=20 since_last_rtcp_ms=322.2
+time=2026-10-23T22:25:43.220Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e14559d02248b2480
+time=2026-10-23T22:25:43.454Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=49 first_bytes=81c8000c0000062d98d8cffd0fd2b92a
+time=2026-10-23T22:25:44.221Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=50 first_bytes=81c900070000062e9cc399466236f33a
+time=2026-10-23T22:25:44.455Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=54 first_bytes=81c8000c0000062de883640706486ea8
+time=2026-10-23T22:25:45.222Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=53 first_bytes=81c900070000062ec068968f53a9f9ff
+time=2026-10-23T22:25:45.456Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062da317e290c88a7e8f
+time=2026-10-23T22:25:46.222Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062edb414c459e38a5df
+time=2026-10-23T22:25:46.457Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d9ad44d310bc2bdae
+time=2026-10-23T22:25:47.223Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c900070000062e35d1792a80ef3093
+time=2026-10-23T22:25:47.458Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d2aac8c1267e346b5
+time=2026-10-23T22:25:47.667Z level=INFO msg="heartbeat answered" phase=slow n=67 rtt_ms=109.9
+time=2026-10-23T22:25:48.225Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062ee72ca27a31455dc0
+time=2026-10-23T22:25:48.460Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d5a5adb1dbe8fb153
+time=2026-10-23T22:25:49.226Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=50 first_bytes=81c900070000062efc91eb86a51fb34f
+time=2026-10-23T22:25:49.461Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d8cad4a8b534047fa
+time=2026-10-23T22:25:50.227Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=53 first_bytes=81c900070000062eac23ab563a390bcf
+time=2026-10-23T22:25:50.462Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062da1bb981b03146d45
+time=2026-10-23T22:25:51.229Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e512bc23052804447
+time=2026-10-23T22:25:51.464Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.3 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d32e9b79a6da0aa31
+time=2026-10-23T22:25:52.228Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062ef78f478ecb7f514f
+time=2026-10-23T22:25:52.465Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d69fbbf95de5936a6
+time=2026-10-23T22:25:52.668Z level=INFO msg="heartbeat answered" phase=slow n=68 rtt_ms=110.0
+time=2026-10-23T22:25:52.773Z level=INFO msg="UDP tally" rtp=505 rtcp=20 since_last_rtcp_ms=308.7
+time=2026-10-23T22:25:53.230Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062eb78ce556542c0ea0
+time=2026-10-23T22:25:53.465Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d5e6b2e5c1760e305
+time=2026-10-23T22:25:54.231Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062ec3e04e14ad65d00d
+time=2026-10-23T22:25:54.467Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=53 first_bytes=81c8000c0000062d8abdaa14c183ca5f
+time=2026-10-23T22:25:55.232Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=53 first_bytes=81c900070000062e228f10e97abd4cff
+time=2026-10-23T22:25:55.468Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d764809e6ecc3afa7
+time=2026-10-23T22:25:56.232Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=50 first_bytes=81c900070000062e19a328b8c9a27e02
+time=2026-10-23T22:25:56.469Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d8e139edbf3cf7ac2
+time=2026-10-23T22:25:57.234Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062e8be3ea0587f15a8d
+time=2026-10-23T22:25:57.470Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062daac8dd5e97416c01
+time=2026-10-23T22:25:57.667Z level=INFO msg="heartbeat answered" phase=slow n=69 rtt_ms=109.0
+time=2026-10-23T22:25:58.235Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=51 first_bytes=81c900070000062edfa4c16a23b1fe0e
+time=2026-10-23T22:25:58.471Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062ddc0dc910c0dea6ac
+time=2026-10-23T22:25:59.236Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=50 first_bytes=81c900070000062e0312d5cf6a5bf3b4
+time=2026-10-23T22:25:59.472Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.8 rtp_since_last_rtcp=54 first_bytes=81c8000c0000062d7d4ce59cb5222616
+time=2026-10-23T22:26:00.236Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=52 first_bytes=81c900070000062ec11f9f9df7cac44e
+time=2026-10-23T22:26:00.473Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062de19756813cc5f9e9
+time=2026-10-23T22:26:01.237Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=51 first_bytes=81c900070000062e3488336ec1d8abb0
+time=2026-10-23T22:26:01.475Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=49 first_bytes=81c8000c0000062d3231570474670b05
+time=2026-10-23T22:26:02.239Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062e9720a9347f62c709
+time=2026-10-23T22:26:02.475Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.9 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d3024b232b14e1ec0
+time=2026-10-23T22:26:02.667Z level=INFO msg="heartbeat answered" phase=slow n=70 rtt_ms=109.9
+time=2026-10-23T22:26:02.773Z level=INFO msg="UDP tally" rtp=506 rtcp=20 since_last_rtcp_ms=298.5
+time=2026-10-23T22:26:03.239Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.4 rtp_since_last_rtcp=49 first_bytes=81c900070000062ec44081c70d0cc0ea
+time=2026-10-23T22:26:03.477Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.1 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062d598c5aa8e47f8078
+time=2026-10-23T22:26:04.241Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.6 rtp_since_last_rtcp=51 first_bytes=81c900070000062e8f62a2b7f3585697
+time=2026-10-23T22:26:04.478Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=52 first_bytes=81c8000c0000062d5e1a6247c2c4e408
+time=2026-10-23T22:26:05.242Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=53 first_bytes=81c900070000062ee8a62a6a9994aeed
+time=2026-10-23T22:26:05.479Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062da94b85ada44022d6
+time=2026-10-23T22:26:06.243Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062e3ecb5c8591394dd5
+time=2026-10-23T22:26:06.480Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dea6d4d5458e7a347
+time=2026-10-23T22:26:07.244Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=50 first_bytes=81c900070000062e125119012cc2e852
+time=2026-10-23T22:26:07.481Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d42048681f66a0f85
+time=2026-10-23T22:26:07.667Z level=INFO msg="heartbeat answered" phase=slow n=71 rtt_ms=109.8
+time=2026-10-23T22:26:08.246Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.6 rtp_since_last_rtcp=50 first_bytes=81c900070000062e3a8703041dbd740e
+time=2026-10-23T22:26:08.482Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062dc460afdd66094d9e
+time=2026-10-23T22:26:09.247Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=50 first_bytes=81c900070000062e78597fc77cfe4705
+time=2026-10-23T22:26:09.483Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=52 first_bytes=81c8000c0000062d60719dd70ed6055f
+time=2026-10-23T22:26:10.249Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.8 rtp_since_last_rtcp=53 first_bytes=81c900070000062e5be68dabec0d2ca6
+time=2026-10-23T22:26:10.483Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=999.4 rtp_since_last_rtcp=51 first_bytes=81c8000c0000062de2324d435f3a43e3
+time=2026-10-23T22:26:11.250Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=50 first_bytes=81c900070000062eb1a7484d8eac30d4
+time=2026-10-23T22:26:11.485Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1002.2 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d70b0ccfb804f4d94
+time=2026-10-23T22:26:12.251Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=50 first_bytes=81c900070000062efddc91ccf490c2de
+time=2026-10-23T22:26:12.486Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d8ba011bfb6afe93a
+time=2026-10-23T22:26:12.557Z level=INFO msg="sending server deafen" user=<recorder> deaf=true at=6m0s
+time=2026-10-23T22:26:12.668Z level=INFO msg="heartbeat answered" phase=slow n=72 rtt_ms=111.7
+time=2026-10-23T22:26:12.774Z level=INFO msg="UDP tally" rtp=506 rtcp=20 since_last_rtcp_ms=288.4
+time=2026-10-23T22:26:13.252Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=50 first_bytes=81c900070000062ea36106f4941fc843
+time=2026-10-23T22:26:13.486Z level=INFO msg="non-RTP datagram" len=72 rtcp_type=200 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=50 first_bytes=81c8000c0000062d078c0e5ee2ae7e5b
+time=2026-10-23T22:26:13.515Z level=INFO msg="gateway VOICE_STATE_UPDATE" user=<recorder> channel=<channel-A> session=<session-1> deaf=true mute=false self_deaf=false self_mute=true suppress=false
+time=2026-10-23T22:26:13.569Z level=INFO msg="server deafen answered" deaf=true status=200 rtt_ms=1012.2
+time=2026-10-23T22:26:14.124Z level=INFO msg="RTP stopped" ssrc=1581 last_rtp=2026-10-23T22:26:13.579Z quiet_ms=545.6 rtp_so_far=12061
+time=2026-10-23T22:26:14.253Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.4 rtp_since_last_rtcp=17 first_bytes=81c900070000062ed0998609f339f6a0
+time=2026-10-23T22:26:15.255Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062ee914600e4c4d1ccc
+time=2026-10-23T22:26:16.255Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062e69f10e639366ba18
+time=2026-10-23T22:26:17.256Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e85a40ade6b1b5173
+time=2026-10-23T22:26:17.667Z level=INFO msg="heartbeat answered" phase=slow n=73 rtt_ms=110.1
+time=2026-10-23T22:26:18.257Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.0 rtp_since_last_rtcp=0 first_bytes=81c900070000062ec395a300ff5a711c
+time=2026-10-23T22:26:19.258Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062e7616a0be8539e89c
+time=2026-10-23T22:26:20.258Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e78cc6c9a255dc40b
+time=2026-10-23T22:26:21.260Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062e6348bbdf6579a819
+time=2026-10-23T22:26:22.260Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e392084a7c4f86e9e
+time=2026-10-23T22:26:22.667Z level=INFO msg="heartbeat answered" phase=slow n=74 rtt_ms=109.7
+time=2026-10-23T22:26:22.774Z level=INFO msg="UDP tally" rtp=41 rtcp=11 since_last_rtcp_ms=513.8
+time=2026-10-23T22:26:23.262Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.7 rtp_since_last_rtcp=0 first_bytes=81c900070000062ef66b22eee2107651
+time=2026-10-23T22:26:24.264Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062e3938ea23f920dbbb
+time=2026-10-23T22:26:25.264Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062ecdc7e8ecefd1d640
+time=2026-10-23T22:26:26.265Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062e666e1dc924e8b82c
+time=2026-10-23T22:26:27.266Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062e1739dbe21c1b7a6c
+time=2026-10-23T22:26:27.667Z level=INFO msg="heartbeat answered" phase=slow n=75 rtt_ms=109.8
+time=2026-10-23T22:26:28.267Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062ef9ba6009983a9a86
+time=2026-10-23T22:26:29.267Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062e7d1a3d6452754ba9
+time=2026-10-23T22:26:30.270Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e2f49f854e1679c2c
+time=2026-10-23T22:26:31.272Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e2cb466a3c0a4745b
+time=2026-10-23T22:26:32.273Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=0 first_bytes=81c900070000062e93d9c790f18206e0
+time=2026-10-23T22:26:32.667Z level=INFO msg="heartbeat answered" phase=slow n=76 rtt_ms=109.7
+time=2026-10-23T22:26:32.774Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=501.4
+time=2026-10-23T22:26:33.273Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e83a57a5a4f3b2f00
+time=2026-10-23T22:26:34.274Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062ed599dfa499e87e12
+time=2026-10-23T22:26:35.275Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062ec4550f0d81feeba7
+time=2026-10-23T22:26:36.276Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e4c5eb84de4df83ff
+time=2026-10-23T22:26:37.277Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e3a12e2c869a6b0df
+time=2026-10-23T22:26:37.666Z level=INFO msg="heartbeat answered" phase=slow n=77 rtt_ms=109.7
+time=2026-10-23T22:26:38.278Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e4a798637b952e463
+time=2026-10-23T22:26:39.280Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e18bd17017ff19a1b
+time=2026-10-23T22:26:40.281Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e1d01cfd0f9f2649a
+time=2026-10-23T22:26:41.281Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e59ef803037dc74d1
+time=2026-10-23T22:26:42.283Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.0 rtp_since_last_rtcp=0 first_bytes=81c900070000062e908a2e412343aa65
+time=2026-10-23T22:26:42.667Z level=INFO msg="heartbeat answered" phase=slow n=78 rtt_ms=110.2
+time=2026-10-23T22:26:42.774Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=490.5
+time=2026-10-23T22:26:43.284Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e326d33ae99a0dd27
+time=2026-10-23T22:26:44.285Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e030adcb1ee2b821c
+time=2026-10-23T22:26:45.286Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.2 rtp_since_last_rtcp=0 first_bytes=81c900070000062e5bcb6969572dfc92
+time=2026-10-23T22:26:46.287Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e4047b645f13b0bbf
+time=2026-10-23T22:26:47.288Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e6c5bccafdb7f103f
+time=2026-10-23T22:26:47.667Z level=INFO msg="heartbeat answered" phase=slow n=79 rtt_ms=109.3
+time=2026-10-23T22:26:48.291Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1003.2 rtp_since_last_rtcp=0 first_bytes=81c900070000062ee8ecf4de9f75b254
+time=2026-10-23T22:26:49.290Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=998.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062ef405511da47731f9
+time=2026-10-23T22:26:50.291Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062ee1549afdcaad3fd9
+time=2026-10-23T22:26:51.291Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e18c1e36681796d7b
+time=2026-10-23T22:26:52.293Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e82c5b32fc5232a53
+time=2026-10-23T22:26:52.667Z level=INFO msg="heartbeat answered" phase=slow n=80 rtt_ms=109.8
+time=2026-10-23T22:26:52.773Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=480.1
+time=2026-10-23T22:26:53.295Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062e4b6180b812c0e885
+time=2026-10-23T22:26:54.296Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e005d1fb147aba1e3
+time=2026-10-23T22:26:55.298Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062eed4c5e63e077f094
+time=2026-10-23T22:26:56.298Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e728c0b1b88552a93
+time=2026-10-23T22:26:57.299Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e96a8f66f47539b3d
+time=2026-10-23T22:26:57.667Z level=INFO msg="heartbeat answered" phase=slow n=81 rtt_ms=109.9
+time=2026-10-23T22:26:58.301Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.1 rtp_since_last_rtcp=0 first_bytes=81c900070000062e401553be3d4138e2
+time=2026-10-23T22:26:59.301Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062e23d66f624a6cfd51
+time=2026-10-23T22:27:00.303Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062e2146e99a4759037b
+time=2026-10-23T22:27:01.303Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=999.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062e26a0fad3fb41f65b
+time=2026-10-23T22:27:02.306Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.9 rtp_since_last_rtcp=0 first_bytes=81c900070000062ee100520d41809c3c
+time=2026-10-23T22:27:02.667Z level=INFO msg="heartbeat answered" phase=slow n=82 rtt_ms=110.0
+time=2026-10-23T22:27:02.774Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=468.3
+time=2026-10-23T22:27:03.306Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=0 first_bytes=81c900070000062e6905243803bd93ff
+time=2026-10-23T22:27:04.307Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.4 rtp_since_last_rtcp=0 first_bytes=81c900070000062e551cf0080ce71c78
+time=2026-10-23T22:27:05.307Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.5 rtp_since_last_rtcp=0 first_bytes=81c900070000062ef7207aef8c4d562a
+time=2026-10-23T22:27:06.309Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.0 rtp_since_last_rtcp=0 first_bytes=81c900070000062efeb940a778b3ac48
+time=2026-10-23T22:27:07.309Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.0 rtp_since_last_rtcp=0 first_bytes=81c900070000062ef0a537d2ea9bca20
+time=2026-10-23T22:27:07.667Z level=INFO msg="heartbeat answered" phase=slow n=83 rtt_ms=109.7
+time=2026-10-23T22:27:08.312Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.3 rtp_since_last_rtcp=0 first_bytes=81c900070000062eacc0c9ee34cae837
+time=2026-10-23T22:27:09.312Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.8 rtp_since_last_rtcp=0 first_bytes=81c900070000062eaf140f28b1de04d2
+time=2026-10-23T22:27:10.313Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e13d2305d7feec10c
+time=2026-10-23T22:27:11.314Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=0 first_bytes=81c900070000062ea3df368fa82a7503
+time=2026-10-23T22:27:12.315Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1001.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062ef813f9cc8178c362
+time=2026-10-23T22:27:12.556Z level=INFO msg="heartbeat phase ends" phase=slow sent=83
+time=2026-10-23T22:27:12.774Z level=INFO msg="UDP tally" rtp=0 rtcp=10 since_last_rtcp_ms=458.8
+time=2026-10-23T22:27:13.316Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.6 rtp_since_last_rtcp=0 first_bytes=81c900070000062e7ecda13cfcf91999
+time=2026-10-23T22:27:14.317Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1000.7 rtp_since_last_rtcp=0 first_bytes=81c900070000062efdd9ffcca15e8147
+time=2026-10-23T22:27:15.319Z level=INFO msg="non-RTP datagram" len=52 rtcp_type=201 since_last_rtcp_ms=1002.2 rtp_since_last_rtcp=0 first_bytes=81c900070000062ef22d913bcb7d3657
+time=2026-10-23T22:27:15.558Z level=INFO msg="voice gateway closed by the probe" code=1000
+time=2026-10-23T22:27:15.558Z level=INFO msg="heartbeat summary" phase=slow sent=83 answered=83 unanswered=0 rtt_min_ms=109.0 rtt_p50_ms=109.9 rtt_p90_ms=110.5 rtt_p99_ms=111.7 rtt_max_ms=112.5
+time=2026-10-23T22:27:15.558Z level=INFO msg="heartbeat answers with an unknown nonce" count=0
+time=2026-10-23T22:27:15.558Z level=INFO msg="keepalive summary" sent=85 echoed=0
+time=2026-10-23T22:27:15.558Z level=INFO msg="RTCP gap summary" rtcp_type=200 gaps_counted=all gaps=238 min_ms=999.1 p50_ms=1001.0 p99_ms=1003.1 max_ms=123125.9 over_1500ms=1
+time=2026-10-23T22:27:15.558Z level=INFO msg="RTCP gap summary" rtcp_type=200 gaps_counted="with RTP in them" gaps=238 min_ms=999.1 p50_ms=1001.0 p99_ms=1003.1 max_ms=123125.9 over_1500ms=1
+time=2026-10-23T22:27:15.558Z level=INFO msg="RTCP gap summary" rtcp_type=201 gaps_counted=all gaps=421 min_ms=997.8 p50_ms=1001.0 p99_ms=1002.9 max_ms=1005.2 over_1500ms=0
+time=2026-10-23T22:27:15.558Z level=INFO msg="RTCP gap summary" rtcp_type=201 gaps_counted="with RTP in them" gaps=239 min_ms=997.8 p50_ms=1001.1 p99_ms=1002.9 max_ms=1005.2 over_1500ms=0
+time=2026-10-23T22:27:15.558Z level=INFO msg="UDP summary" rtp=12061 rtp_ssrcs=1 rtcp=661 non_rtp_by_len=52:422,72:239
+time=2026-10-23T22:27:15.558Z level=INFO msg="sending opcode 4" channel=<nil>
+time=2026-10-23T22:27:15.703Z level=INFO msg="gateway VOICE_STATE_UPDATE" user=<recorder> channel="" session=<session-1> deaf=true mute=false self_deaf=false self_mute=true suppress=false
