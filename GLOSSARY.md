@@ -631,29 +631,12 @@ _Avoid_: missing track, failed track, broken track.
 
 **Gap**:
 A stretch of a recording when the recorder could not hear the channel,
-because its connection to the voice server dropped, Discord put it out of
-the call, the call moved to a voice server it had not reached yet, its
-encryption stalled at setup or when someone joined or left, or it started
-its call over because it could not decrypt someone. Every track is silent
-there, whether or not anyone spoke. One that passes 10 seconds gets a gap
-notice and a line in the info file.
+because its connection to the voice server dropped, the call moved to a
+voice server it had not reached yet, its encryption setup stalled, nothing
+came from the voice server, or nothing it received could be decrypted.
+Every track is silent there, whether or not anyone spoke. One that reaches
+10 seconds ends the recording as cut short.
 _Avoid_: dropout, outage, stall (one cause of a gap).
-
-**Reconnect**:
-The recorder getting its call back during a gap while it stays in the
-channel, so members see and hear nothing of it but the gap. When a reconnect
-can't work, the recorder leaves and joins again instead, which members hear
-as Discord's leave and join sounds.
-_Avoid_: rejoin (a speaker's leave and join), resume.
-
-**Taken out**:
-A person ending the recorder's place in the channel it records, by
-disconnecting it, moving it to another channel, deleting the channel or
-removing the recorder from the server, which stops the recording. Discord
-dropping the recorder from the call because the recorder's own connection to
-Discord ended is not being taken out, and the recorder joins again.
-_Avoid_: kicked (removing a member from the server), left (the recorder's
-own leave to join again), disconnected (one way of being taken out).
 
 **Mix**:
 One file of every track in a recording played together, built when the
@@ -668,7 +651,8 @@ lost track.
 _Avoid_: metadata, manifest, readme.
 
 **Cut-short recording**:
-A recording that ended because the bot shut down or crashed, not by a stop,
+A recording that ended because the bot shut down or crashed, or because the
+recorder could not hear the channel for 10 seconds, rather than by a stop,
 the time cap, or the last person leaving. What it captured up to then is
 kept.
 _Avoid_: failed recording, aborted recording, broken recording.
@@ -690,13 +674,6 @@ panel. The starter gets that link by DM as well when the channel is a
 spawned channel, since its hub's delete delay takes the notice away once
 everyone has left, and instead when the notice is gone by then.
 _Avoid_: recording panel (the panel is the web UI), banner, announcement.
-
-**Gap notice**:
-The bot message in the recorded channel's text chat that says the recorder
-can't hear the channel and since when. Posted once a gap passes 10 seconds,
-pinging nobody, and edited when the gap ends to say what the recording
-missed.
-_Avoid_: reconnecting message, warning, alert.
 
 ## External systems
 
