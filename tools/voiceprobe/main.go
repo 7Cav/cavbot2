@@ -2,17 +2,23 @@
 // measures two things a silent-drop decision waits on: how fast the voice
 // server answers heartbeats sent more often than Hello asks, and whether it
 // echoes the recorder's 8-byte UDP keepalive. It backs "Measure voice
-// heartbeat answers and keepalive echoes on the test guild" (#830), and "Do
-// the voice server's RTCP reports keep coming while members talk and without
-// the keepalive?" (#837). It lives only on its research branch.
+// heartbeat answers and keepalive echoes on the test guild" (#830), "Do the
+// voice server's RTCP reports keep coming while members talk and without the
+// keepalive?" (#837), and "Capture what a moderator's server deafen does to
+// the recorder's audio" (#844). It lives only on its research branch.
 //
 // It identifies on the voice server the way the recorder does, DAVE
 // included, so the server treats it as a recorder. Then it sends opcode 3
 // every -slow-every for -slow-for, and if no close came, every -fast-every
 // for -fast-for. The whole time it sends the recorder's keepalive every
 // -keepalive on the UDP socket, or none with -keepalive 0, and logs every
-// datagram that isn't RTP. It counts the RTP, and tallies the UDP socket
-// every -tally.
+// datagram that isn't RTP. It counts the RTP, logs when an SSRC's RTP stops
+// for -rtp-gap and when it comes back, and tallies the UDP socket every
+// -tally.
+//
+// -deafen sets the recorder's server deafen at given times after the first
+// heartbeat phase starts, as a moderator would: the bot, logged in with
+// DISCORD_TOKEN, sends PATCH /guilds/{guild}/members/{recorder} with "deaf".
 //
 // It holds the smoke run lock while it runs, since it logs in as a recorder a
 // smoke run would use. Its log on stdout names no token, session, user,
@@ -27,8 +33,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,6 +67,43 @@ type options struct {
 	fastFor   time.Duration
 	keepEvery time.Duration
 	tally     time.Duration
+	rtpGap    time.Duration
+	deafen    []deafenStep
+}
+
+// deafenStep is one server deafen change, at a time after the first
+// heartbeat phase starts.
+type deafenStep struct {
+	at   time.Duration
+	deaf bool
+}
+
+// parseDeafen reads -deafen: comma-separated at=deaf pairs in time order,
+// such as "1m=true,3m=false".
+func parseDeafen(s string) ([]deafenStep, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var steps []deafenStep
+	for _, part := range strings.Split(s, ",") {
+		at, deaf, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			return nil, fmt.Errorf("-deafen step %q has no =", part)
+		}
+		d, err := time.ParseDuration(at)
+		if err != nil {
+			return nil, fmt.Errorf("-deafen step %q: %w", part, err)
+		}
+		b, err := strconv.ParseBool(deaf)
+		if err != nil {
+			return nil, fmt.Errorf("-deafen step %q: %w", part, err)
+		}
+		if len(steps) > 0 && d <= steps[len(steps)-1].at {
+			return nil, fmt.Errorf("-deafen steps must run in time order, and %q doesn't", part)
+		}
+		steps = append(steps, deafenStep{at: d, deaf: b})
+	}
+	return steps, nil
 }
 
 func main() {
@@ -72,9 +117,17 @@ func main() {
 	flag.DurationVar(&o.fastFor, "fast-for", 5*time.Minute, "second phase length, 0 for no second phase")
 	flag.DurationVar(&o.keepEvery, "keepalive", 5*time.Second, "UDP keepalive period, 0 for no keepalive")
 	flag.DurationVar(&o.tally, "tally", 10*time.Second, "how often to log what the UDP socket got since the last tally")
+	flag.DurationVar(&o.rtpGap, "rtp-gap", 500*time.Millisecond, "how long an SSRC's RTP stops before the probe logs it, 0 for never")
+	deafen := flag.String("deafen", "", `server deafen changes after the first heartbeat phase starts, such as "1m=true,3m=false"`)
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{ReplaceAttr: utcMillis}))
+	steps, err := parseDeafen(*deafen)
+	if err != nil {
+		log.Error("probe failed", "error", err)
+		os.Exit(2)
+	}
+	o.deafen = steps
 	if err := run(o, log); err != nil {
 		log.Error("probe failed", "error", err)
 		os.Exit(1)
@@ -110,6 +163,15 @@ func run(o options, log *slog.Logger) error {
 		return fmt.Errorf("%s needs GUILD_ID and at least %d RECORDER_TOKENS", o.envFile, o.recorder)
 	}
 	token := strings.TrimSpace(tokens[o.recorder-1])
+	bot := &botAPI{token: env["DISCORD_TOKEN"], guild: guild}
+	if len(o.deafen) > 0 {
+		if bot.token == "" {
+			return fmt.Errorf("-deafen needs DISCORD_TOKEN in %s", o.envFile)
+		}
+		if err := bot.checkTestGuild(); err != nil {
+			return err
+		}
+	}
 
 	unlock, err := holdSmokeLock(filepath.Join(common, "cavbot2-smoke", "lock"))
 	if err != nil {
@@ -121,8 +183,58 @@ func run(o options, log *slog.Logger) error {
 	red.fix("guild", guild, "<guild>")
 	red.fix("channel", o.channel, "<channel-A>")
 
-	p := &probe{o: o, log: log, red: red, guild: guild}
+	p := &probe{o: o, log: log, red: red, guild: guild, bot: bot}
 	return p.run(token)
+}
+
+// botAPI is the bot's REST client, for the one change a moderator makes.
+type botAPI struct {
+	token string
+	guild string
+}
+
+// do sends one REST call as the bot and returns the status and the body.
+func (b *botAPI) do(method, path string, body []byte, reason string) (int, []byte, error) {
+	req, err := http.NewRequest(method, "https://discord.com/api/v10"+path, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Authorization", "Bot "+b.token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if reason != "" {
+		req.Header.Set("X-Audit-Log-Reason", reason)
+	}
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	out, err := io.ReadAll(resp.Body)
+	return resp.StatusCode, out, err
+}
+
+// checkTestGuild refuses a guild of more than 100 members, as `smoke api`
+// does before a change, so a deafen can't reach a real server.
+func (b *botAPI) checkTestGuild() error {
+	status, out, err := b.do(http.MethodGet, "/guilds/"+b.guild+"?with_counts=true", nil, "")
+	if err != nil {
+		return fmt.Errorf("guild check: %w", err)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("guild check: HTTP %d", status)
+	}
+	var g struct {
+		Members int `json:"approximate_member_count"`
+	}
+	if err := json.Unmarshal(out, &g); err != nil {
+		return fmt.Errorf("guild check: %w", err)
+	}
+	if g.Members > 100 {
+		return fmt.Errorf("GUILD_ID names a guild of %d members, so it isn't a test guild", g.Members)
+	}
+	return nil
 }
 
 func gitCommonDir() (string, error) {
@@ -189,6 +301,7 @@ type probe struct {
 	log   *slog.Logger
 	red   *redactor
 	guild string
+	bot   *botAPI
 	self  atomic.Value // string
 
 	states  chan *discordgo.VoiceStateUpdate
@@ -216,7 +329,8 @@ func (p *probe) run(token string) error {
 			return
 		}
 		p.log.Info("gateway VOICE_STATE_UPDATE", "user", "<recorder>",
-			"channel", p.red.name("channel", e.ChannelID), "session", p.red.name("session", e.SessionID))
+			"channel", p.red.name("channel", e.ChannelID), "session", p.red.name("session", e.SessionID),
+			"deaf", e.Deaf, "mute", e.Mute, "self_deaf", e.SelfDeaf, "self_mute", e.SelfMute, "suppress", e.Suppress)
 		select {
 		case p.states <- e:
 		default:
@@ -336,6 +450,8 @@ type voice struct {
 	omu      sync.Mutex
 	ssrcs    map[uint32]bool
 	byType   map[int]*rtcpType
+	lastRTP  map[uint32]time.Time
+	quiet    map[uint32]bool // the SSRCs whose RTP has stopped for -rtp-gap
 }
 
 // rtcpType follows one RTCP packet type: when the last one came, how much
@@ -360,6 +476,8 @@ func (v *voice) run(state *discordgo.VoiceStateUpdate, server *discordgo.VoiceSe
 	v.other = map[int]int{}
 	v.ssrcs = map[uint32]bool{}
 	v.byType = map[int]*rtcpType{}
+	v.lastRTP = map[uint32]time.Time{}
+	v.quiet = map[uint32]bool{}
 	v.dave = session.CreateFunc()(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
 		godave.UserID(state.UserID), v)
 	defer func() { _ = v.dave.Close() }()
@@ -396,6 +514,9 @@ func (v *voice) run(state *discordgo.VoiceStateUpdate, server *discordgo.VoiceSe
 		"fast_every", v.p.o.fastEvery, "fast_for", v.p.o.fastFor, "keepalive_every", v.p.o.keepEvery, "tally_every", v.p.o.tally)
 
 	go v.watchDave()
+	if len(v.p.o.deafen) > 0 {
+		go v.runDeafen(time.Now())
+	}
 
 	if v.beat("slow", v.p.o.slowEvery, v.p.o.slowFor) {
 		if v.p.o.fastFor > 0 {
@@ -674,6 +795,71 @@ func (v *voice) handle(msg disgovoice.GatewayMessage, mt, size int, at time.Time
 	}
 }
 
+// runDeafen sends each -deafen change at its time after start, and logs the
+// answer. A failed change leaves the rest of the run as it is.
+func (v *voice) runDeafen(start time.Time) {
+	self, _ := v.p.self.Load().(string)
+	for _, s := range v.p.o.deafen {
+		select {
+		case <-v.closed:
+			return
+		case <-time.After(time.Until(start.Add(s.at))):
+		}
+		body, _ := json.Marshal(map[string]bool{"deaf": s.deaf})
+		v.p.log.Info("sending server deafen", "user", "<recorder>", "deaf", s.deaf, "at", s.at)
+		sent := time.Now()
+		status, out, err := v.p.bot.do(http.MethodPatch, "/guilds/"+v.p.guild+"/members/"+self, body, "voice probe (#844)")
+		if err != nil {
+			v.p.log.Warn("server deafen not sent", "deaf", s.deaf, "error", err)
+			continue
+		}
+		args := []any{"deaf", s.deaf, "status", status, "rtt_ms", fmtMillis(time.Since(sent))}
+		if status >= 300 {
+			// Discord's error body is a code and a message, and names no ID.
+			var e struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			}
+			_ = json.Unmarshal(out, &e)
+			args = append(args, "code", e.Code, "message", e.Message)
+		}
+		v.p.log.Info("server deafen answered", args...)
+	}
+}
+
+// watchRTP logs when an SSRC's RTP has stopped for -rtp-gap, naming the
+// last datagram's time. readUDP logs when it comes back.
+func (v *voice) watchRTP() {
+	t := time.NewTicker(50 * time.Millisecond)
+	defer t.Stop()
+	for {
+		select {
+		case <-v.closed:
+			return
+		case <-t.C:
+		}
+		now := time.Now()
+		type stop struct {
+			ssrc uint32
+			last time.Time
+		}
+		var stops []stop
+		v.omu.Lock()
+		for ssrc, last := range v.lastRTP {
+			if !v.quiet[ssrc] && now.Sub(last) >= v.p.o.rtpGap {
+				v.quiet[ssrc] = true
+				stops = append(stops, stop{ssrc, last})
+			}
+		}
+		count := v.rtp.Load()
+		v.omu.Unlock()
+		for _, s := range stops {
+			v.p.log.Info("RTP stopped", "ssrc", s.ssrc, "last_rtp", s.last.UTC().Format("2006-01-02T15:04:05.000Z"),
+				"quiet_ms", fmtMillis(now.Sub(s.last)), "rtp_so_far", count)
+		}
+	}
+}
+
 // watchDave logs the moment the DAVE session first reports ready.
 func (v *voice) watchDave() {
 	t := time.NewTicker(50 * time.Millisecond)
@@ -712,6 +898,9 @@ func (v *voice) openUDP(d disgovoice.GatewayMessageDataReady) {
 		"same_as_local_address", local != nil && local.IP.String() == addr)
 	go v.readUDP()
 	go v.tallyUDP()
+	if v.p.o.rtpGap > 0 {
+		go v.watchRTP()
+	}
 	if v.p.o.keepEvery > 0 {
 		go v.keepalive()
 	} else {
@@ -802,9 +991,15 @@ func (v *voice) readUDP() {
 			v.omu.Lock()
 			first := !v.ssrcs[ssrc]
 			v.ssrcs[ssrc] = true
+			last, resumed := v.lastRTP[ssrc], v.quiet[ssrc]
+			v.lastRTP[ssrc] = at
+			delete(v.quiet, ssrc)
 			v.omu.Unlock()
 			if first {
 				v.p.log.Info("first RTP datagram", "ssrc", ssrc, "len", n, "rtp_so_far", count)
+			}
+			if resumed {
+				v.p.log.Info("RTP resumes", "ssrc", ssrc, "len", n, "gap_ms", fmtMillis(at.Sub(last)), "rtp_so_far", count)
 			}
 			continue
 		case n == 8 && binary.LittleEndian.Uint32(b[4:8]) == 0:
