@@ -48,13 +48,15 @@ var (
 // fakeRecorderVoice stands in for the voice adapter: the recorders
 // configured, and every voice connection they joined. joinErr, when set, is
 // what every join returns instead. hold, when set, holds the next join
-// (holdNextJoin).
+// (holdNextJoin). leaveTakes is how long each leave takes to return, none
+// until a test sets it.
 type fakeRecorderVoice struct {
-	mu        sync.Mutex
-	recorders []string
-	conns     []*fakeVoiceConn
-	joinErr   error
-	hold      *joinHold
+	mu         sync.Mutex
+	recorders  []string
+	conns      []*fakeVoiceConn
+	joinErr    error
+	hold       *joinHold
+	leaveTakes time.Duration
 }
 
 // joinHold keeps one join from returning: joined closes once it has gone
@@ -63,13 +65,13 @@ type joinHold struct {
 	joined, release chan struct{}
 }
 
-// fakeVoiceConn is one recorder in one channel, until it leaves. listener is
-// what the runtime passed to Receive, nil before it does. ownLeaves is
-// what OwnLeaves reports.
+// fakeVoiceConn is one recorder in one channel, until it leaves. leaving is
+// set while its leave runs. listener is what the runtime passed to Receive,
+// nil before it does. ownLeaves is what OwnLeaves reports.
 type fakeVoiceConn struct {
 	v                     *fakeRecorderVoice
 	recorderID, channelID string
-	left                  bool
+	left, leaving         bool
 	ownLeaves             int
 	listener              voice.Listener
 }
@@ -80,11 +82,21 @@ func (v *fakeRecorderVoice) UserIDs() []string {
 	return slices.Clone(v.recorders)
 }
 
+// errFakeConnClosed is the fake's join of a recorder whose leave still
+// runs, as the voice adapter hands that join the connection it is closing.
+var errFakeConnClosed = errors.New("voice: the recorder closed the connection")
+
 func (v *fakeRecorderVoice) Join(_ context.Context, recorderID, guildID, channelID string) (voice.Conn, error) {
 	v.mu.Lock()
 	if v.joinErr != nil {
 		v.mu.Unlock()
 		return nil, v.joinErr
+	}
+	for _, c := range v.conns {
+		if c.recorderID == recorderID && c.leaving {
+			v.mu.Unlock()
+			return nil, errFakeConnClosed
+		}
 	}
 	c := &fakeVoiceConn{v: v, recorderID: recorderID, channelID: channelID}
 	v.conns = append(v.conns, c)
@@ -109,10 +121,24 @@ func (v *fakeRecorderVoice) holdNextJoin() (joined <-chan struct{}, release func
 	return hold.joined, func() { close(hold.release) }
 }
 
+// setLeaveTakes makes every leave from now on take d to return.
+func (v *fakeRecorderVoice) setLeaveTakes(d time.Duration) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.leaveTakes = d
+}
+
+// Leave returns once leaveTakes has passed. It never reads its context, as
+// a leave frozen on disgo's voice gateway lock-order deadlock doesn't.
 func (c *fakeVoiceConn) Leave(context.Context) {
 	c.v.mu.Lock()
+	takes := c.v.leaveTakes
+	c.leaving = true
+	c.v.mu.Unlock()
+	time.Sleep(takes)
+	c.v.mu.Lock()
 	defer c.v.mu.Unlock()
-	c.left = true
+	c.left, c.leaving = true, false
 }
 
 func (c *fakeVoiceConn) OwnLeaves() int {
