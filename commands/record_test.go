@@ -111,6 +111,13 @@ func (v *fakeRecorderVoice) holdNextJoin() (joined <-chan struct{}, release func
 	return hold.joined, func() { close(hold.release) }
 }
 
+// setLeaveTakes makes every leave from now on take d to return.
+func (v *fakeRecorderVoice) setLeaveTakes(d time.Duration) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.leaveTakes = d
+}
+
 // Leave returns once leaveTakes has passed. It never reads its context, as
 // a leave frozen on disgo's voice gateway lock-order deadlock doesn't.
 func (c *fakeVoiceConn) Leave(context.Context) {

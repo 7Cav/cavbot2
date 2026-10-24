@@ -31,10 +31,11 @@ import (
 //
 // A recording's notice (recording_notice.go) is posted once its recorder is
 // in the channel, and its row written after that, with the notice's ID. A
-// start whose row isn't written removes the notice again. The row is closed with
-// its stop time and how it ended once the recorder has left, or its leave
-// has run out its deadline, and the notice edited to say it stopped. Its tracks (recording_tracks.go) take what the
-// recorder hears from the row write on, and end at the stop time. Besides
+// start whose row isn't written removes the notice again. The row is closed
+// with its stop time and how it ended once the recorder has left, or its
+// leave has run out its deadline, and the notice edited to say it stopped.
+// Its tracks (recording_tracks.go) take what the recorder hears from the
+// row write on, and end at the stop time. Besides
 // /record stop and the notice's button, a recording stops by itself
 // (recording_stops.go).
 
@@ -59,8 +60,8 @@ const recordingJoinTimeout = 30 * time.Second
 const recordingLeaveTimeout = 5 * time.Second
 
 // leaveTimedOutMessage is the WARN the runtime logs when a leave runs past
-// recordingLeaveTimeout. The stop goes on without it.
-const leaveTimedOutMessage = "Recorder leave timed out, the stop goes on"
+// recordingLeaveTimeout. The stop, or the failed start, goes on without it.
+const leaveTimedOutMessage = "Recorder leave timed out, going on without it"
 
 // recordingStoreTimeout bounds each store call the runtime makes.
 const recordingStoreTimeout = 5 * time.Second

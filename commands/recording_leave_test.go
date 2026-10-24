@@ -34,13 +34,6 @@ func newBubbleRecordScene(t *testing.T, recorders ...string) *recordScene {
 	return sc
 }
 
-// setLeaveTakes makes every leave from now on take d to return.
-func (v *fakeRecorderVoice) setLeaveTakes(d time.Duration) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	v.leaveTakes = d
-}
-
 // leaveTimeouts is the WARN records of a leave that ran past its bound.
 func leaveTimeouts(t *testing.T, logs *syncBuffer) []map[string]string {
 	t.Helper()
@@ -76,7 +69,7 @@ func TestRecordStopAnswersWithinTheLeaveBoundWhenTheLeaveHangs(t *testing.T) {
 }
 
 // A leave that returns inside its bound logs no leave timeout, read once
-// /record stop has answered.
+// /record stop has answered and the clock has passed the bound.
 func TestRecordStopLeaveInTimeLogsNoTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		sc := newBubbleRecordScene(t, testRecorder)
@@ -89,23 +82,27 @@ func TestRecordStopLeaveInTimeLogsNoTimeout(t *testing.T) {
 		if !strings.HasPrefix(reply, "✅") {
 			t.Fatalf("reply = %q, want a ✅ verdict", reply)
 		}
+		time.Sleep(recordingLeaveTimeout)
+		synctest.Wait()
 		if got := leaveTimeouts(t, logs); len(got) != 0 {
 			t.Errorf("leave timeout WARNs = %v, want none", got)
 		}
 	})
 }
 
-// A stop by the Stop button, the cap or the last person leaving finishes
-// within about 5 s when the recorder's leave hangs: by then the mixer has
-// been asked for the recording's mix, the stop's last step. A member speaks
-// one frame first, so the recording has a track to mix. A cause runs on a
-// goroutine of its own, so a stop held up by the leave can't hold up the
-// test's look at the mixer. The stop falls due stopsAfter from the start.
+// A stop by the Stop button, the cap, low disk or the last person leaving
+// finishes within about 5 s when the recorder's leave hangs: by then the
+// mixer has been asked for the recording's mix, the stop's last step. A
+// member speaks one frame first, so the recording has a track to mix. A
+// cause runs on a goroutine of its own, so a stop held up by the leave can't
+// hold up the test's look at the mixer. The stop falls due stopsAfter from
+// the start.
 func TestRecordingStopsFinishWithinTheLeaveBoundWhenTheLeaveHangs(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		// cause stops the recording, nil when the clock does. button is
-		// the recording notice's Stop button.
+		// cause stops the recording, or sets up what the clock stops it
+		// for, and is nil when the clock alone does. button is the
+		// recording notice's Stop button.
 		cause      func(sc *recordScene, button string)
 		stopsAfter time.Duration
 	}{
@@ -116,6 +113,11 @@ func TestRecordingStopsFinishWithinTheLeaveBoundWhenTheLeaveHangs(t *testing.T) 
 			},
 		},
 		{name: "the cap", stopsAfter: recordingCap},
+		{
+			name:       "free disk space below the threshold",
+			cause:      func(sc *recordScene, _ string) { sc.freeDisk.Store(recordingMinFreeDisk - 1) },
+			stopsAfter: recordingDiskCheckInterval,
+		},
 		{
 			name:  "the last person leaves",
 			cause: func(sc *recordScene, _ string) { sc.deliver(recStarter.id, "") },
