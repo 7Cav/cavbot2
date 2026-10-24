@@ -49,7 +49,7 @@ func NewStartWatch(now func() time.Time) *StartWatch {
 // or once the start has ended, it leaves the panic alone and Go prints it as
 // it always has.
 func (w *StartWatch) ReportFailure() {
-	if w.ended || sentry.CurrentHub().Client() == nil {
+	if w.ended || !sentry.CurrentHub().Client().IsEnabled() {
 		return
 	}
 	r := recover()

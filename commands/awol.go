@@ -22,6 +22,11 @@ const maxEmbedsPerMsg = 10
 // budget is this minus the prefix length (see runAwol) to keep the total ≤ limit.
 const discordEmbedDescriptionLimit = 4096
 
+// discordMessageEmbedTextLimit is Discord's cap on the text of all of a
+// message's embeds together: titles, descriptions, footers, author names,
+// and field names and values.
+const discordMessageEmbedTextLimit = 6000
+
 // awolReportFooter explains the displayed figure: days AWOL already has valid
 // LOA-covered days subtracted (ADR 0008). Rendered on the healthy path.
 const awolReportFooter = "AWOL days subtracts valid LOA days."
