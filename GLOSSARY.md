@@ -639,9 +639,9 @@ _Avoid_: missing track, failed track, broken track.
 A stretch of a recording when the recorder could not hear the channel,
 because its connection to the voice server dropped, the call moved to a
 voice server it had not reached yet, its encryption setup stalled, nothing
-came from the voice server, or nothing it received could be decrypted.
-Every track is silent there, whether or not anyone spoke. One that reaches
-10 seconds ends the recording as cut short.
+came from the voice server, nothing it received could be decrypted, or
+someone server-deafened it. Every track is silent there, whether or not
+anyone spoke. One that reaches 10 seconds ends the recording as cut short.
 _Avoid_: dropout, outage, stall (one cause of a gap).
 
 **Mix**:
