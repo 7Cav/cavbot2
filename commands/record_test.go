@@ -48,13 +48,15 @@ var (
 // fakeRecorderVoice stands in for the voice adapter: the recorders
 // configured, and every voice connection they joined. joinErr, when set, is
 // what every join returns instead. hold, when set, holds the next join
-// (holdNextJoin).
+// (holdNextJoin). leaveTakes is how long each leave takes to return, none
+// until a test sets it.
 type fakeRecorderVoice struct {
-	mu        sync.Mutex
-	recorders []string
-	conns     []*fakeVoiceConn
-	joinErr   error
-	hold      *joinHold
+	mu         sync.Mutex
+	recorders  []string
+	conns      []*fakeVoiceConn
+	joinErr    error
+	hold       *joinHold
+	leaveTakes time.Duration
 }
 
 // joinHold keeps one join from returning: joined closes once it has gone
@@ -109,7 +111,13 @@ func (v *fakeRecorderVoice) holdNextJoin() (joined <-chan struct{}, release func
 	return hold.joined, func() { close(hold.release) }
 }
 
+// Leave returns once leaveTakes has passed. It never reads its context, as
+// a leave frozen on disgo's voice gateway lock-order deadlock doesn't.
 func (c *fakeVoiceConn) Leave(context.Context) {
+	c.v.mu.Lock()
+	takes := c.v.leaveTakes
+	c.v.mu.Unlock()
+	time.Sleep(takes)
 	c.v.mu.Lock()
 	defer c.v.mu.Unlock()
 	c.left = true

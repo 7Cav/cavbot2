@@ -32,8 +32,8 @@ import (
 // A recording's notice (recording_notice.go) is posted once its recorder is
 // in the channel, and its row written after that, with the notice's ID. A
 // start whose row isn't written removes the notice again. The row is closed with
-// its stop time and how it ended once the recorder has left, and the notice
-// edited to say it stopped. Its tracks (recording_tracks.go) take what the
+// its stop time and how it ended once the recorder has left, or its leave
+// has run out its deadline, and the notice edited to say it stopped. Its tracks (recording_tracks.go) take what the
 // recorder hears from the row write on, and end at the stop time. Besides
 // /record stop and the notice's button, a recording stops by itself
 // (recording_stops.go).
@@ -54,8 +54,13 @@ var recordingAfterFunc = func(d time.Duration, f func()) (stop func()) {
 // its reply by then, so the member waits on it.
 const recordingJoinTimeout = 30 * time.Second
 
-// recordingLeaveTimeout bounds a recorder's leave.
+// recordingLeaveTimeout bounds a recorder's leave. A stop waits for the
+// leave no longer than that, so /record stop answers within about 5 s.
 const recordingLeaveTimeout = 5 * time.Second
+
+// leaveTimedOutMessage is the WARN the runtime logs when a leave runs past
+// recordingLeaveTimeout. The stop goes on without it.
+const leaveTimedOutMessage = "Recorder leave timed out, the stop goes on"
 
 // recordingStoreTimeout bounds each store call the runtime makes.
 const recordingStoreTimeout = 5 * time.Second
@@ -283,7 +288,7 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	// whose notice didn't post doesn't go on: the recorder leaves.
 	noticeID, err := r.postRecordingNotice(channelID, by.UserID, title)
 	if err != nil {
-		r.leave(conn)
+		r.leave(conn, recorderID, channelID)
 		r.release(recorderID)
 		captureError("Recording notice not posted", err, "recorder", recorderID, "channel_id", channelID)
 		return "", errRecordingFailed
@@ -305,7 +310,7 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 		// A recording with no row is one the panel and the deploy gate
 		// can't see, so the recorder leaves rather than record it, and the
 		// notice goes with it.
-		r.leave(conn)
+		r.leave(conn, recorderID, channelID)
 		r.release(recorderID)
 		r.removeRecordingNotice(channelID, noticeID)
 		captureError("Recording row not written at start", err, "recorder", recorderID, "channel_id", channelID)
@@ -422,7 +427,7 @@ func (r *RecordingRuntime) runningInLocked(channelID string) *activeRecording {
 func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEnd, stoppedBy string) {
 	recorderID := target.row.RecorderID
 	r.cancelTimers(target)
-	r.leave(target.conn)
+	r.leave(target.conn, recorderID, target.row.ChannelID)
 	stoppedAt := recordingNow()
 	gap := r.endGapAtStop(target, stoppedAt)
 	if err := target.tracks.close(stoppedAt); err != nil {
@@ -499,11 +504,27 @@ func (r *RecordingRuntime) reserveRecorder(channelID string) (string, error) {
 	return "", busy
 }
 
-// leave takes a recorder out of its channel, with a deadline of its own.
-func (r *RecordingRuntime) leave(conn voice.Conn) {
+// leave takes a recorder out of its channel, and waits no longer than
+// recordingLeaveTimeout, the deadline it hands the leave. When a leave runs
+// past it, as one frozen in the voice adapter does, leave logs a WARN and
+// returns to its caller. The leave finishes on its own goroutine, if ever.
+func (r *RecordingRuntime) leave(conn voice.Conn, recorderID, channelID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), recordingLeaveTimeout)
 	defer cancel()
-	conn.Leave(ctx)
+	left := make(chan struct{})
+	go func() {
+		defer close(left)
+		defer utils.RecoverPanic("recording-leave", "recorder", recorderID, "channel_id", channelID)
+		conn.Leave(ctx)
+	}()
+	select {
+	case <-left:
+		if ctx.Err() == nil {
+			return
+		}
+	case <-ctx.Done():
+	}
+	utils.Warn(leaveTimedOutMessage, "recorder", recorderID, "channel_id", channelID)
 }
 
 // release frees a recorder.
