@@ -651,9 +651,8 @@ _Avoid_: mixdown, combined track, merged audio.
 
 **Info file**:
 The text file kept with a recording, and in its zip, that names its title,
-channel, starter, start and stop times in Zulu, how it ended, each gap
-past 10 seconds, and each speaker's display name and Discord ID, marking a
-lost track.
+channel, starter, start and stop times in Zulu, how it ended, and each
+speaker's display name and Discord ID, marking a lost track.
 _Avoid_: metadata, manifest, readme.
 
 **Cut-short recording**:
