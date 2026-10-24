@@ -512,20 +512,29 @@ func (r *RecordingRuntime) reserveRecorder(channelID string) (string, error) {
 func (r *RecordingRuntime) leave(conn voice.Conn, recorderID, channelID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), recordingLeaveTimeout)
 	defer cancel()
-	left := make(chan struct{})
+	// left carries whether the leave ran past its deadline, judged the
+	// moment the leave returns rather than when this goroutine next runs.
+	left := make(chan bool, 1)
 	go func() {
-		defer close(left)
+		late := false
+		defer func() { left <- late }()
 		defer utils.RecoverPanic("recording-leave", "recorder", recorderID, "channel_id", channelID)
 		conn.Leave(ctx)
+		late = ctx.Err() != nil
 	}()
+	late := true
 	select {
-	case <-left:
-		if ctx.Err() == nil {
-			return
-		}
+	case late = <-left:
 	case <-ctx.Done():
+		// A leave that returned in time can still be waiting to be read.
+		select {
+		case late = <-left:
+		default:
+		}
 	}
-	utils.Warn(leaveTimedOutMessage, "recorder", recorderID, "channel_id", channelID)
+	if late {
+		utils.Warn(leaveTimedOutMessage, "recorder", recorderID, "channel_id", channelID)
+	}
 }
 
 // release frees a recorder.
