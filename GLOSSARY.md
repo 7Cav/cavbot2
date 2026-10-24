@@ -603,6 +603,12 @@ a time, so a recording starts only when a recorder is free. Temp VC never
 counts a recorder as an occupant. With none configured, nobody can record.
 _Avoid_: recording bot, Craig, the bot (for this account).
 
+**Offline recorder**:
+A recorder logged out of Discord and logging back in by itself, after a
+cut-short recording or since its first login at startup failed. A start that
+finds no free recorder online waits for one.
+_Avoid_: reconnecting recorder, restarting recorder.
+
 **Recording role**:
 A Discord role whose holders, if Cav members, may start a recording, and may
 stop one in a channel they are in. Set once for the guild in the panel. With
@@ -632,10 +638,10 @@ _Avoid_: missing track, failed track, broken track.
 **Gap**:
 A stretch of a recording when the recorder could not hear the channel,
 because its connection to the voice server dropped, the call moved to a
-voice server it had not reached yet, or its encryption setup stalled. Every
-track is silent there, whether or not anyone spoke. One that passes 10
-seconds gets a gap notice and a line in the info file, and one that reaches
-10 minutes ends the recording.
+voice server it had not reached yet, its encryption setup stalled, nothing
+came from the voice server, nothing it received could be decrypted, or
+someone server-deafened it. Every track is silent there, whether or not
+anyone spoke. One that reaches 10 seconds ends the recording as cut short.
 _Avoid_: dropout, outage, stall (one cause of a gap).
 
 **Mix**:
@@ -651,7 +657,8 @@ lost track.
 _Avoid_: metadata, manifest, readme.
 
 **Cut-short recording**:
-A recording that ended because the bot shut down or crashed, not by a stop,
+A recording that ended because the bot shut down or crashed, or because the
+recorder could not hear the channel for 10 seconds, rather than by a stop,
 the time cap, or the last person leaving. What it captured up to then is
 kept.
 _Avoid_: failed recording, aborted recording, broken recording.
@@ -673,13 +680,6 @@ panel. The starter gets that link by DM as well when the channel is a
 spawned channel, since its hub's delete delay takes the notice away once
 everyone has left, and instead when the notice is gone by then.
 _Avoid_: recording panel (the panel is the web UI), banner, announcement.
-
-**Gap notice**:
-The bot message in the recorded channel's text chat that says the recorder
-can't hear the channel and since when. Posted once a gap passes 10 seconds,
-pinging nobody, and edited when the gap ends to say what the recording
-missed.
-_Avoid_: reconnecting message, warning, alert.
 
 ## External systems
 
@@ -737,7 +737,8 @@ _Avoid_: crash, boot failure, startup panic.
 **Gateway outage**:
 The span from a gateway session, the bot's own or a recorder's, losing its
 connection to Discord, other than by a close on purpose as at shutdown,
-until Discord next answers the session with READY or RESUMED. One that lasts
-a minute sends one Sentry event however long it goes on, and one that ends
-sooner sends nothing.
+until Discord next answers the session with READY or RESUMED. An offline
+recorder is in one until it logs back in. One that lasts a minute sends one
+Sentry event however long it goes on, and one that ends sooner sends
+nothing.
 _Avoid_: disconnect (the moment it starts), downtime.
