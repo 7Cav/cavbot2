@@ -145,3 +145,27 @@ func TestRecordingStopsFinishWithinTheLeaveBoundWhenTheLeaveHangs(t *testing.T) 
 		})
 	}
 }
+
+// A stop whose leave hangs keeps its recorder busy until the leave returns,
+// since the voice adapter can't join a recorder whose connection it is
+// still closing. A start meanwhile takes the other recorder, and once the
+// leave returns the first one records again.
+func TestRecordStopWhoseLeaveHangsKeepsItsRecorderUntilTheLeaveReturns(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sc := newBubbleRecordScene(t, testRecorder, testSecondRecorder)
+		sc.startIn(t, recStarter, recordChannel)
+		sc.voice.setLeaveTakes(hungLeave)
+		recordAs(t, sc.rt, recStarter, "stop")
+		sc.voice.setLeaveTakes(0)
+
+		sc.fake.setVoice(recHolder.id, recordOtherChannel)
+		if reply := recordAs(t, sc.rt, recHolder, "start"); !strings.HasPrefix(reply, "✅") {
+			t.Errorf("start in %s while the leave hangs = %q, want a ✅ verdict", recordOtherChannel, reply)
+		}
+		time.Sleep(hungLeave)
+		synctest.Wait()
+		if reply := recordAs(t, sc.rt, recStarter, "start"); !strings.HasPrefix(reply, "✅") {
+			t.Errorf("start in %s once the leave returned = %q, want a ✅ verdict", recordChannel, reply)
+		}
+	})
+}
