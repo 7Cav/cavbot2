@@ -67,7 +67,7 @@ func TestMissedAcknowledgementIsReportedOnceWithItsTimings(t *testing.T) {
 	}
 	// main.go's dispatcher routes a press to /voice-lock's handler by its
 	// CustomID (ADR 0007).
-	lockHandler, _ := NewRegistry(nil, nil, nil).GetHandler(voiceLockCommandName)
+	lockHandler, _ := NewRegistry(nil, nil, nil, nil).GetHandler(voiceLockCommandName)
 	runs := append(registeredRuns(t), registeredRun{
 		label: "lock notice press", command: voiceLockCommandName, handler: lockHandler,
 		interaction: func(created time.Time) *discordgo.InteractionCreate {
@@ -173,6 +173,8 @@ func ackRunOptions() map[string][]*discordgo.ApplicationCommandInteractionDataOp
 		voiceLockCommandName:       nil,
 		voiceUnlockCommandName:     nil,
 		recordCommandName:          {{Name: "stop", Type: discordgo.ApplicationCommandOptionSubCommand}},
+		wingedAviatorCommandName: {{Name: "add", Type: discordgo.ApplicationCommandOptionSubCommand,
+			Options: []*discordgo.ApplicationCommandInteractionDataOption{userOption("member", "123456789012345678")}}},
 	}
 }
 
@@ -183,7 +185,7 @@ func refusalRuns(t *testing.T) []registeredRun {
 	t.Helper()
 	fx, hold := newPageRuntime(t)
 	holdPagePurge(t, fx, hold)
-	reg := NewRegistry(nil, fx, nil)
+	reg := NewRegistry(nil, fx, nil, nil)
 	// run is a refusal of command's run with opts, which got as far as
 	// subcommand when the command has one.
 	run := func(label, command, subcommand string, opts ...*discordgo.ApplicationCommandInteractionDataOption) registeredRun {
@@ -247,7 +249,7 @@ type registeredRun struct {
 // ackRunOptions fails t, so no command joins the registry without a case.
 func registeredRuns(t *testing.T) []registeredRun {
 	t.Helper()
-	reg := NewRegistry(nil, nil, nil)
+	reg := NewRegistry(nil, nil, nil, nil)
 	optionsByCommand := ackRunOptions()
 	var runs []registeredRun
 	for _, def := range reg.GetCommands() {
@@ -378,7 +380,7 @@ func TestRejectedRefusalIsReportedAsALostErrorReply(t *testing.T) {
 	api := &fakeDiscordAPI{answer: func(*http.Request, []byte) (int, []byte) {
 		return http.StatusInternalServerError, []byte(`{"message": "Internal Server Error", "code": 0}`)
 	}}
-	handler, _ := NewRegistry(nil, nil, nil).GetHandler("zulu")
+	handler, _ := NewRegistry(nil, nil, nil, nil).GetHandler("zulu")
 	i := slashAt("zulu", stringOption("time", "9999"))(time.Now())
 
 	handler(stateSession(t, api), i)

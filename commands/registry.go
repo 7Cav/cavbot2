@@ -14,16 +14,18 @@ type Registry struct {
 }
 
 // NewRegistry declares every command (ADR 0006). tempVC is the temporary
-// voice channel runtime, foxhole the Foxhole runtime and recording the
-// recording runtime, each nil on a host with no bot store. /voice-rename,
+// voice channel runtime, foxhole the Foxhole runtime, recording the
+// recording runtime and aviators the winged aviators runtime, each nil on a
+// host with no bot store, and aviators nil with no Winged Aviator role too. /voice-rename,
 // /voice-lock, /voice-unlock and /record are declared either way, and
 // /record whether recording is on or off: the startup sync deletes any
 // guild command the registry lacks, and Discord keys command permissions by
 // command ID, so a command that came and went with configuration would shed
 // its Server Settings restriction on every such start. With no runtime each
 // handler refuses. With no Foxhole runtime the Foxhole commands refuse
-// nothing: there is no Foxhole page to share the roles with.
-func NewRegistry(tempVC *TempVC, foxhole *FoxholeRuntime, recording *RecordingRuntime) *Registry {
+// nothing: there is no Foxhole page to share the roles with. So is
+// /winged-aviator, which refuses with no runtime.
+func NewRegistry(tempVC *TempVC, foxhole *FoxholeRuntime, recording *RecordingRuntime, aviators *WingedAviators) *Registry {
 	r := &Registry{}
 	r.RegisterCommands(
 		Milpac(),
@@ -44,6 +46,7 @@ func NewRegistry(tempVC *TempVC, foxhole *FoxholeRuntime, recording *RecordingRu
 		VoiceLock(tempVC),
 		VoiceUnlock(tempVC),
 		Record(recording),
+		WingedAviator(aviators),
 	)
 	return r
 }

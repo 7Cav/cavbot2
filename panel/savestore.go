@@ -255,3 +255,27 @@ func (b boundedStore) EndFoxholeReport(ctx context.Context, id int64, diff json.
 	defer cancel()
 	return b.store.EndFoxholeReport(ctx, id, diff)
 }
+
+func (b boundedStore) IsWingedAviator(ctx context.Context, guildID, userID string) (bool, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.IsWingedAviator(ctx, guildID, userID)
+}
+
+func (b boundedStore) ListWingedAviators(ctx context.Context, guildID string) ([]string, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.ListWingedAviators(ctx, guildID)
+}
+
+func (b boundedStore) AddWingedAviator(ctx context.Context, guildID, userID string) error {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.AddWingedAviator(ctx, guildID, userID)
+}
+
+func (b boundedStore) RemoveWingedAviator(ctx context.Context, guildID, userID string) error {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.RemoveWingedAviator(ctx, guildID, userID)
+}

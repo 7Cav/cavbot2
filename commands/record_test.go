@@ -996,7 +996,7 @@ func TestRegistryDeclaresRecordWhetherRecordingIsOnOrOff(t *testing.T) {
 	noRecorder := newRecordScene(t).rt
 	for name, rt := range map[string]*RecordingRuntime{"no bot store": nil, "no recorder token": noRecorder} {
 		t.Run(name, func(t *testing.T) {
-			if _, ok := NewRegistry(nil, nil, rt).GetHandler(recordCommandName); !ok {
+			if _, ok := NewRegistry(nil, nil, rt, nil).GetHandler(recordCommandName); !ok {
 				t.Errorf("%s is not registered", recordCommandName)
 			}
 		})

@@ -31,6 +31,7 @@ services:
       PANEL_GROUP_IDS: ${PANEL_GROUP_IDS}
       FOXHOLE_GROUP_ID: ${FOXHOLE_GROUP_ID}
       RECORDER_TOKENS: ${RECORDER_TOKENS}
+      WINGED_AVIATOR_ROLE_ID: ${WINGED_AVIATOR_ROLE_ID}
       # Where the recordings' tracks go: the recordings volume's mount point,
       # below. Fixed here rather than read from .env, so the tracks always
       # land on the volume and survive a redeploy.

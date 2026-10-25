@@ -145,7 +145,7 @@ func TestRegistrySync_StopWhileDiscordHoldsTheOverwriteReturnsAtOnce(t *testing.
 // /record's and no other.
 func TestRegistrySync_CutShortPingMentionsRecordStartByItsRegisteredID(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
-	registry := NewRegistry(nil, nil, sc.rt)
+	registry := NewRegistry(nil, nil, sc.rt, nil)
 	guild := &fakeGuildCommands{ids: map[string]string{}}
 	for i, def := range registry.GetCommands() {
 		guild.ids[def.Name] = strconv.Itoa(1300000000000000000 + i)
