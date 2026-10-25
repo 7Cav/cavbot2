@@ -367,7 +367,7 @@ func (f *fakeTempVCManager) ChannelMessageSendComplex(channelID string, data *di
 		// reply turns fail-if-not-exists off. Then it posts the message as
 		// no reply.
 		switch {
-		case f.holdsLocked(channelID, ref.MessageID):
+		case f.holdsLocked(channelID, ref.MessageID, false):
 			replyTo = ref.MessageID
 		case ref.FailIfNotExists == nil || *ref.FailIfNotExists:
 			return nil, restError(http.StatusBadRequest, discordgo.ErrCodeInvalidFormBody, rawBodyMarker)
@@ -378,11 +378,11 @@ func (f *fakeTempVCManager) ChannelMessageSendComplex(channelID string, data *di
 	return &discordgo.Message{ID: id, ChannelID: channelID, Content: data.Content}, nil
 }
 
-// holdsLocked reports whether a channel's chat holds a message the fake let
-// through, not deleted since. Caller holds mu.
-func (f *fakeTempVCManager) holdsLocked(channelID, messageID string) bool {
+// holdsLocked reports whether the fake let a message through to a channel's
+// chat and it is deleted since, or not. Caller holds mu.
+func (f *fakeTempVCManager) holdsLocked(channelID, messageID string, deleted bool) bool {
 	return slices.ContainsFunc(f.messages, func(m fakeMessage) bool {
-		return m.id == messageID && m.channelID == channelID && !m.deleted
+		return m.id == messageID && m.channelID == channelID && m.deleted == deleted
 	})
 }
 
@@ -541,9 +541,7 @@ func (f *fakeTempVCManager) ChannelMessageEditComplex(edit *discordgo.MessageEdi
 	if f.messageEditErr != nil {
 		return nil, f.messageEditErr
 	}
-	if slices.ContainsFunc(f.messages, func(m fakeMessage) bool {
-		return m.id == edit.ID && m.channelID == edit.Channel && m.deleted
-	}) {
+	if f.holdsLocked(edit.Channel, edit.ID, true) {
 		return nil, restError(http.StatusNotFound, discordgo.ErrCodeUnknownMessage, rawBodyMarker)
 	}
 	f.messageEdits = append(f.messageEdits, *edit)

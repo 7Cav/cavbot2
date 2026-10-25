@@ -70,18 +70,16 @@ func TestRecordingGapThatReaches10sStopsTheRecordingThen(t *testing.T) {
 	}
 }
 
-// cutShort starts a recording in which a speaker says one frame a minute
-// in, has the recorder stop hearing the channel two minutes in, and runs
-// the clock to that gap's 10 s mark. It returns the gap's start.
-func (sc *recordScene) cutShort(t *testing.T) time.Time {
+// recordUntilCutShort starts a recording in which a speaker says one frame
+// a minute in, has the recorder stop hearing the channel two minutes in,
+// and runs the clock to that gap's 10 s mark. It returns the gap's start.
+func (sc *recordScene) recordUntilCutShort(t *testing.T) time.Time {
 	t.Helper()
 	sc.startIn(t, recStarter, recordChannel)
 	sc.clock.advance(time.Minute)
 	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
 	sc.clock.advance(time.Minute)
-	start := sc.startGap(t, recordChannel)
-	sc.clock.advance(gapCutsShortAfter)
-	return start
+	return sc.cutShortAtTheMark(t, recordChannel)
 }
 
 // A recording a gap cuts short keeps what the recorder heard up to the
@@ -91,7 +89,7 @@ func (sc *recordScene) cutShort(t *testing.T) time.Time {
 func TestRecordingCutShortByAGapEndsAtTheGapsStart(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 
-	start := sc.cutShort(t)
+	start := sc.recordUntilCutShort(t)
 
 	rec := sc.onlyRecording(t)
 	if rec.Ended != store.RecordingEndGap || !rec.StoppedAt.Equal(start) {
@@ -294,7 +292,7 @@ func TestRecordingCutShortByAGapLogsItsStopAndNoGapLine(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 	logs := captureLogs(t)
 
-	sc.cutShort(t)
+	sc.recordUntilCutShort(t)
 
 	id := strconv.FormatInt(sc.onlyRecording(t).ID, 10)
 	stops := logRecordsWith(t, logs, "INFO", map[string]string{"msg": recordingStoppedMessage, "recording_id": id})
@@ -538,4 +536,39 @@ func TestRecordingEndedOtherwisePingsNobody(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The voice adapter goes on handing the runtime what the recorder hears
+// until its leave returns, which here hangs. A rejoin that finishes a second
+// after the 10 s mark says the gap ended, then hands over a speaker's frame
+// on the new connection. The cut-short recording keeps none of it: once the
+// leave's bound has passed, every track still ends at the gap's start.
+func TestRecordingCutShortByAGapKeepsNothingHeardAfterTheMark(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sc := newBubbleRecordScene(t, testRecorder)
+		sc.startIn(t, recStarter, recordChannel)
+		l := sc.listener(t, recordChannel)
+		time.Sleep(time.Minute)
+		l.Frame(frame(speakerA, 11, 5000, "a1"))
+		time.Sleep(time.Minute)
+		sc.voice.setLeaveTakes(hungLeave)
+		t.Cleanup(func() { time.Sleep(hungLeave) })
+		l.GapStarted(time.Now())
+
+		time.Sleep(gapCutsShortAfter + time.Second)
+		l.GapEnded()
+		l.Frame(frame(speakerA, 12, 90000, "a2"))
+		time.Sleep(recordingLeaveTimeout)
+		synctest.Wait()
+
+		// The gap starts two minutes in: 120 s of 48 kHz samples.
+		const gapStartSamples = 120 * 48000
+		tracks := sc.tracks(t)
+		if len(tracks) != 1 {
+			t.Fatalf("tracks = %d, want the speaker's one", len(tracks))
+		}
+		if tracks[0].granule != gapStartSamples {
+			t.Errorf("track ends at sample %d, want the gap's start, %d", tracks[0].granule, gapStartSamples)
+		}
+	})
 }

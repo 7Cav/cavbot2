@@ -189,10 +189,10 @@ type activeRecording struct {
 	// runtime's mutex, and only while the recording isn't stopping.
 	cancelCap, cancelDiskCheck func()
 	// stopping is set once a stop has taken it, so a second stop doesn't.
-	// cutShort is set as well when its gap reached recordingGapLimit: its
-	// channel is free to record again from then, while it finishes
+	// channelFree is set as well when its gap reached recordingGapLimit:
+	// its channel is free to record again from then, while it finishes
 	// stopping.
-	stopping, cutShort bool
+	stopping, channelFree bool
 	// recorderSeen is set once the cache has shown the recorder in the
 	// channel. ownLeaves is the count of the recorder's own leaves the conn
 	// last reported, and ownLeaveAt when the runtime read it go up, zero
@@ -430,20 +430,26 @@ func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEn
 	returned := r.leave(target.conn, target.row.RecorderID, target.row.ChannelID)
 	stoppedAt := recordingNow()
 	r.endGapAtStop(target, stoppedAt)
-	row := r.closeRecording(target, stoppedAt, end)
+	endTracks(target, stoppedAt)
+	row := r.closeRow(target, stoppedAt, end)
 	r.releaseWhenLeft(row.RecorderID, returned)
 	r.closeRecordingNotice(row)
 	logRecordingStopped(row, stoppedBy)
 	r.startMix(row)
 }
 
-// closeRecording ends a stopped recording's tracks at stoppedAt, writes its
-// info file, and closes its row with the stop time, how it ended and its
-// speakers. It returns the row as closed.
-func (r *RecordingRuntime) closeRecording(target *activeRecording, stoppedAt time.Time, end store.RecordingEnd) store.Recording {
+// endTracks ends a stopped recording's tracks at stoppedAt. Frames the
+// recorder hands over after are dropped.
+func endTracks(target *activeRecording, stoppedAt time.Time) {
 	if err := target.tracks.close(stoppedAt); err != nil {
 		captureError("Tracks not closed at stop", err, "recording_id", target.row.ID)
 	}
+}
+
+// closeRow writes the info file of a stopped recording whose tracks have
+// ended, and closes its row with the stop time, how it ended and the
+// speakers its tracks heard. It returns the row as closed.
+func (r *RecordingRuntime) closeRow(target *activeRecording, stoppedAt time.Time, end store.RecordingEnd) store.Recording {
 	row := target.row
 	members := r.mgr.MemberList(r.guildID)
 	row.StoppedAt, row.Ended, row.Speakers = stoppedAt, end, speakersOf(members, target.tracks.heard())
@@ -506,7 +512,7 @@ func (r *RecordingRuntime) reserveRecorder(channelID string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, rec := range r.running {
-		if rec.row.ChannelID == channelID && !rec.cutShort {
+		if rec.row.ChannelID == channelID && !rec.channelFree {
 			return "", errAlreadyRecorded
 		}
 	}

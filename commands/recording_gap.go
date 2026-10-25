@@ -11,11 +11,9 @@ import (
 )
 
 // A recording's gaps (#736, #856, GLOSSARY.md Gap): the stretches its
-// recorder can't hear the channel, because its connection to the voice
-// server dropped, the call moved to a voice server the recorder hasn't
-// reached yet, or its DAVE setup stalled. The voice adapter says when one
-// starts and ends, and can tell of a start only later (#769). One that
-// reaches recordingGapLimit cuts the recording short.
+// recorder can't hear the channel, whatever the cause. The voice adapter
+// says when one starts and ends, and can tell of a start only later (#769).
+// One that reaches recordingGapLimit cuts the recording short.
 
 // recordingGapLimit is the longest a gap runs before it cuts the recording
 // short. The ping tells the starter so in words.
@@ -87,29 +85,33 @@ func (r *RecordingRuntime) gapLimitReached(rec *activeRecording, g *recordingGap
 		r.mu.Unlock()
 		return
 	}
-	rec.stopping, rec.cutShort, rec.gap = true, true, nil
+	rec.stopping, rec.channelFree, rec.gap = true, true, nil
 	r.mu.Unlock()
 	r.cutShort(rec, g.start)
 }
 
 // cutShort ends a recording whose gap reached recordingGapLimit as a gap's
-// cut short, at the gap's start. The starter and the channel hear of it at
-// once, by the ping and the notice, without waiting on the recorder's leave.
-// The starter gets the link by DM as well when the chat may not reach them:
-// in a spawned channel, with the notice gone, or with the ping refused. One
-// DM at most, whichever holds. Then the recorder leaves, the tracks end and
-// the row stops at gapStart, the recorder is free again once its leave has
-// returned, and the mix starts.
+// cut short, at the gap's start. Its tracks end there at once: the recorder
+// goes on handing over what it hears until its leave returns, and none of
+// that is kept. The starter and the channel hear of it at once too, by the
+// ping and the notice, without waiting on the recorder's leave. The starter
+// gets the link by DM as well when the chat may not reach them: in a spawned
+// channel, with the notice gone, or with the ping refused. One DM at most,
+// whichever holds. Then the recorder leaves, the row stops at gapStart, the
+// recorder is free again once its leave has returned, and the mix starts.
 func (r *RecordingRuntime) cutShort(rec *activeRecording, gapStart time.Time) {
 	r.cancelTimers(rec)
-	told := rec.row
-	told.StoppedAt, told.Ended = gapStart, store.RecordingEndGap
-	pinged := r.pingStarter(told)
-	if gone := r.editRecordingNotice(told); gone || !pinged || r.tv.IsSpawned(told.ChannelID) {
-		r.sendRecordingLink(told)
+	endTracks(rec, gapStart)
+	// ended is the row as it ends, which the ping, the notice and the DM
+	// tell of before the store has it.
+	ended := rec.row
+	ended.StoppedAt, ended.Ended = gapStart, store.RecordingEndGap
+	pinged := r.pingStarter(ended)
+	if gone := r.editRecordingNotice(ended); gone || !pinged || r.tv.IsSpawned(ended.ChannelID) {
+		r.sendRecordingLink(ended)
 	}
 	returned := r.leave(rec.conn, rec.row.RecorderID, rec.row.ChannelID)
-	row := r.closeRecording(rec, gapStart, store.RecordingEndGap)
+	row := r.closeRow(rec, gapStart, store.RecordingEndGap)
 	r.releaseWhenLeft(row.RecorderID, returned)
 	logRecordingStopped(row, "")
 	r.startMix(row)
@@ -121,11 +123,11 @@ func (r *RecordingRuntime) cutShort(rec *activeRecording, gapStart time.Time) {
 // gives a ping with no reply rather than none. A post that fails is a WARN
 // line. It reports whether the ping posted.
 func (r *RecordingRuntime) pingStarter(row store.Recording) bool {
-	postIfNoticeGone := false
+	failIfNoticeGone := false
 	_, err := r.mgr.ChannelMessageSendComplex(row.ChannelID, &discordgo.MessageSend{
 		Content: fmt.Sprintf(recordingGapPing, row.StarterID, "/"+recordCommandName+" start"),
 		Reference: &discordgo.MessageReference{
-			MessageID: row.NoticeID, ChannelID: row.ChannelID, GuildID: row.GuildID, FailIfNotExists: &postIfNoticeGone,
+			MessageID: row.NoticeID, ChannelID: row.ChannelID, GuildID: row.GuildID, FailIfNotExists: &failIfNoticeGone,
 		},
 		AllowedMentions: &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}, Users: []string{row.StarterID}},
 	})
