@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"slices"
@@ -13,6 +15,7 @@ import (
 	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/voice"
 	"github.com/bwmarrin/discordgo"
+	"github.com/getsentry/sentry-go"
 )
 
 // A recording's gaps (#736, #856): the stretches its recorder can't hear the
@@ -576,4 +579,225 @@ func TestRecordingCutShortByAGapKeepsNothingHeardAfterTheMark(t *testing.T) {
 			t.Errorf("track ends at sample %d, want the gap's start, %d", tracks[0].granule, gapStartSamples)
 		}
 	})
+}
+
+// A gap's cut short sends Sentry one event, at the 10 s mark and not a
+// millisecond before. The fake clock runs the mark on the test's goroutine,
+// and Sentry hands the event to its transport inside the capture, so a send
+// any earlier would show by then.
+func TestRecordingCutShortByAGapSendsSentryOneEventAtTheMark(t *testing.T) {
+	events := recordSentry(t)
+	sc := newRecordScene(t, testRecorder)
+	sc.startIn(t, recStarter, recordChannel)
+	sc.clock.advance(time.Minute)
+	sc.startGap(t, recordChannel)
+
+	sc.clock.advance(gapCutsShortAfter - time.Millisecond)
+	sc.assertRunning(t, recordChannel)
+	if got := events.Events(); len(got) != 0 {
+		t.Fatalf("Sentry events before the 10 s mark = %d, want none", len(got))
+	}
+
+	sc.clock.advance(time.Millisecond)
+
+	if got := events.Events(); len(got) != 1 {
+		t.Errorf("Sentry events at the 10 s mark = %d, want one", len(got))
+	}
+}
+
+// cutShortBy records in the fixture's channel until a gap that cause
+// started cuts the recording short, with the voice adapter reporting rep
+// at the 10 s mark. The recorder is free again once it returns.
+func (sc *recordScene) cutShortBy(t *testing.T, cause voice.GapCause, rep voice.GapReport) {
+	t.Helper()
+	sc.startIn(t, recStarter, recordChannel)
+	sc.voice.setGapReport(rep)
+	sc.clock.advance(time.Minute)
+	sc.listener(t, recordChannel).GapStarted(sc.clock.read(), cause)
+	sc.clock.advance(gapCutsShortAfter)
+}
+
+// Every recording a gap cuts short reaches Sentry under one message tag,
+// whatever the cause, and with an error that opens as every cut short's
+// does, so the cut-short issues sort together. Each cause gets a Sentry
+// issue of its own, and two recordings the same cause cut short share one,
+// however much else differs between them: here their close codes, voice
+// servers and close texts.
+func TestRecordingCutShortEventsLandInAnIssuePerCause(t *testing.T) {
+	events := recordSentry(t)
+	sc := newRecordScene(t, testRecorder)
+
+	sc.cutShortBy(t, voice.GapVoiceGatewayClosed, voice.GapReport{CloseCode: "4006", VoiceServer: "c-dfw-1.discord.media:443",
+		Close: errors.New("websocket: close 4006: session is no longer valid")})
+	sc.cutShortBy(t, voice.GapVoiceGatewayClosed, voice.GapReport{CloseCode: "none", VoiceServer: "c-ord-2.discord.media:443",
+		Close: errors.New("read tcp 10.0.0.2:41000: connection reset by peer")})
+	sc.cutShortBy(t, voice.GapCallMoved, voice.GapReport{VoiceServer: "c-atl-3.discord.media:443"})
+
+	got := events.Events()
+	if len(got) != 3 {
+		t.Fatalf("Sentry events = %d, want one for each of the 3 cut shorts", len(got))
+	}
+	for i, e := range got {
+		if e.Tags["message"] != recordingCutShortMessage {
+			t.Errorf("event %d: message tag = %q, want %q", i, e.Tags["message"], recordingCutShortMessage)
+		}
+		if len(e.Exception) == 0 || !strings.HasPrefix(e.Exception[len(e.Exception)-1].Value, "voice: recording cut short:") {
+			t.Errorf("event %d: exceptions = %+v, want an error opening %q", i, e.Exception, "voice: recording cut short:")
+		}
+	}
+	if !slices.Equal(got[0].Fingerprint, got[1].Fingerprint) {
+		t.Errorf("fingerprints of two %s cut shorts = %v and %v, want the same issue", voice.GapVoiceGatewayClosed, got[0].Fingerprint, got[1].Fingerprint)
+	}
+	if slices.Equal(got[0].Fingerprint, got[2].Fingerprint) {
+		t.Errorf("fingerprints of a %s and a %s cut short = %v and %v, want issues of their own",
+			voice.GapVoiceGatewayClosed, voice.GapCallMoved, got[0].Fingerprint, got[2].Fingerprint)
+	}
+}
+
+// A server deafen's cut short goes to Sentry at warning level, which
+// cavbot2's high-priority issue alert skips: a person chose the deafen, and
+// no recovery work fixes it. Any other cause goes at error level, so the
+// first of a new cause opens a high-priority issue.
+func TestRecordingCutShortEventOfAServerDeafenIsAWarning(t *testing.T) {
+	for _, tc := range []struct {
+		cause voice.GapCause
+		want  sentry.Level
+	}{
+		{voice.GapServerDeafened, sentry.LevelWarning},
+		{voice.GapHeartbeatOverdue, sentry.LevelError},
+	} {
+		t.Run(string(tc.cause), func(t *testing.T) {
+			events := recordSentry(t)
+			sc := newRecordScene(t, testRecorder)
+
+			sc.cutShortBy(t, tc.cause, voice.GapReport{})
+
+			got := events.Events()
+			if len(got) != 1 || got[0].Level != tc.want {
+				t.Fatalf("Sentry events = %d, the first at level %v, want one at %v", len(got), levelOf(got), tc.want)
+			}
+		})
+	}
+}
+
+// levelOf is the first event's level, empty when there is none.
+func levelOf(events []*sentry.Event) sentry.Level {
+	if len(events) == 0 {
+		return ""
+	}
+	return events[0].Level
+}
+
+// A cut short's event tags what started the gap and the recorder, so
+// Sentry can cut its count by either, and the code of the voice gateway
+// close that started the gap when a close did. A gap no close started has
+// no close code to tag.
+func TestRecordingCutShortEventTagsTheCauseRecorderAndCloseCode(t *testing.T) {
+	events := recordSentry(t)
+	sc := newRecordScene(t, testRecorder)
+
+	sc.cutShortBy(t, voice.GapVoiceGatewayClosed, voice.GapReport{CloseCode: "4006",
+		Close: errors.New("websocket: close 4006: session is no longer valid")})
+	sc.cutShortBy(t, voice.GapDAVEStalled, voice.GapReport{})
+
+	got := events.Events()
+	if len(got) != 2 {
+		t.Fatalf("Sentry events = %d, want one for each of the 2 cut shorts", len(got))
+	}
+	for key, want := range map[string]string{
+		"gap_cause":  string(voice.GapVoiceGatewayClosed),
+		"recorder":   testRecorder,
+		"close_code": "4006",
+	} {
+		if tag := got[0].Tags[key]; tag != want {
+			t.Errorf("closed gateway's event: tag %s = %q, want %q", key, tag, want)
+		}
+	}
+	if tag, ok := got[1].Tags["close_code"]; ok {
+		t.Errorf("stall's event: tag close_code = %q, want none", tag)
+	}
+}
+
+// A cut short's event carries what a maintainer reads it by: the recording
+// and its channel, the voice server Discord named last, when the gap
+// started, how long the recording ran before it, whether the recorder's
+// gateway session was online, and the cause's own fields, passed through
+// from the voice adapter. Times read as RFC 3339 in UTC to the millisecond,
+// and lengths as Go duration text rounded to the millisecond, whatever zone
+// and precision the voice adapter hands over. Here the gap starts 0.3 ms
+// short of a minute in, told in a zone 5 hours behind UTC, and the cause's
+// field is 1.2346 s. The voice adapter hands the close that started the gap
+// over as an error, and the event carries its text.
+func TestRecordingCutShortEventCarriesTheGapsExtras(t *testing.T) {
+	events := recordSentry(t)
+	sc := newRecordScene(t, testRecorder)
+	sc.startIn(t, recStarter, recordChannel)
+	row := sc.onlyRecording(t)
+	const closeText = "websocket: close 4006: session is no longer valid"
+	sc.voice.setGapReport(voice.GapReport{VoiceServer: "c-dfw-1.discord.media:443", Close: errors.New(closeText),
+		Fields: []voice.GapField{{Key: "held_for", Value: 1234600 * time.Microsecond}}})
+	sc.clock.advance(time.Minute)
+	start := sc.clock.read().Add(-300 * time.Microsecond).In(time.FixedZone("UTC-5", -5*60*60))
+	sc.listener(t, recordChannel).GapStarted(start, voice.GapDAVEStalled)
+
+	sc.clock.advance(gapCutsShortAfter)
+
+	got := events.Events()
+	if len(got) != 1 {
+		t.Fatalf("Sentry events = %d, want one", len(got))
+	}
+	extras := got[0].Contexts["extra"]
+	for key, want := range map[string]any{
+		"recording_id":    row.ID,
+		"channel_id":      recordChannel,
+		"voice_server":    "c-dfw-1.discord.media:443",
+		"gateway_session": gatewaySessionOffline,
+		"close_error":     closeText,
+	} {
+		if extras[key] != want {
+			t.Errorf("extra %s = %v (%T), want %v (%T)", key, extras[key], extras[key], want, want)
+		}
+	}
+	at, err := time.Parse("2006-01-02T15:04:05.000Z", fmt.Sprint(extras["gap_started_at"]))
+	if err != nil || at.After(start) || start.Sub(at) >= time.Millisecond {
+		t.Errorf("extra gap_started_at = %v, want the gap's start, %v, in UTC to the millisecond", extras["gap_started_at"], start)
+	}
+	for key, want := range map[string]time.Duration{
+		"recorded_for": time.Minute,
+		"held_for":     1235 * time.Millisecond,
+	} {
+		text := fmt.Sprint(extras[key])
+		if d, err := time.ParseDuration(text); err != nil || d != want || text != want.String() {
+			t.Errorf("extra %s = %v, want %v as Go duration text", key, extras[key], want)
+		}
+	}
+}
+
+// A cut short's ERROR log line carries every field its Sentry event
+// carries, tags and extras alike, so the log alone tells what Sentry heard.
+func TestRecordingCutShortLogLineCarriesTheEventsFields(t *testing.T) {
+	events := recordSentry(t)
+	logs := captureLogs(t)
+	sc := newRecordScene(t, testRecorder)
+
+	sc.cutShortBy(t, voice.GapVoiceGatewayClosed, voice.GapReport{CloseCode: "4006", VoiceServer: "c-dfw-1.discord.media:443",
+		Fields: []voice.GapField{{Key: "closed_server", Value: "c-dfw-1.discord.media:443"}}})
+
+	got := events.Events()
+	lines := logRecordsWith(t, logs, "ERROR", map[string]string{"msg": recordingCutShortMessage})
+	if len(got) != 1 || len(lines) != 1 {
+		t.Fatalf("Sentry events = %d and ERROR lines = %d, want one of each", len(got), len(lines))
+	}
+	var keys []string
+	for key := range got[0].Tags {
+		keys = append(keys, key)
+	}
+	for key := range got[0].Contexts["extra"] {
+		keys = append(keys, key)
+	}
+	for _, key := range keys {
+		if _, ok := lines[0][key]; !ok && key != "message" {
+			t.Errorf("ERROR line %v has no %s, which the event carries", lines[0], key)
+		}
+	}
 }

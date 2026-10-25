@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -255,5 +256,28 @@ func TestRecoverPanic_TagsContextOnEvent(t *testing.T) {
 	}
 	if events[0].Tags["context"] != "test-goroutine" {
 		t.Errorf("tag context = %q, want %q", events[0].Tags["context"], "test-goroutine")
+	}
+}
+
+// A capture can name the Sentry issue its event lands in and send it at
+// warning level, for a site that reports several kinds of failure. A
+// capture that names neither keeps Sentry's own grouping, by the stack
+// trace, at error level, as every CaptureError always has.
+func TestCaptureErrorIn_FilesTheEventAsTheIssueSays(t *testing.T) {
+	tr := initSentryWithTransport(t)
+	fingerprint := []string{"recording cut short", "dave_stalled"}
+
+	CaptureErrorIn(SentryIssue{Fingerprint: fingerprint, Warning: true}, "cut short", errors.New("stalled"))
+	CaptureError("db query failed", errors.New("something broke"))
+
+	events := tr.Events()
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if got := events[0].Fingerprint; !slices.Equal(got, fingerprint) || events[0].Level != sentry.LevelWarning {
+		t.Errorf("filed event: fingerprint %v at level %v, want %v at %v", got, events[0].Level, fingerprint, sentry.LevelWarning)
+	}
+	if got := events[1].Fingerprint; len(got) != 0 || events[1].Level != sentry.LevelError {
+		t.Errorf("CaptureError's event: fingerprint %v at level %v, want none at %v", got, events[1].Level, sentry.LevelError)
 	}
 }

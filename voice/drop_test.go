@@ -171,10 +171,10 @@ func (s *droppingVoiceServer) dialerRefusingAfterFirst() *websocket.Dialer {
 }
 
 // recordDropping starts a recording through disgo's own voice gateway at
-// server, dialing through dialer, and returns what its listener hears. The
-// voice state updates sent count from then. The recording ends with the
-// test, once the server has settled.
-func (h *callHarness) recordDropping(server *droppingVoiceServer, dialer *websocket.Dialer) *listener {
+// server, dialing through dialer, and returns its connection and what its
+// listener hears. The voice state updates sent count from then. The
+// recording ends with the test, once the server has settled.
+func (h *callHarness) recordDropping(server *droppingVoiceServer, dialer *websocket.Dialer) (Conn, *listener) {
 	h.t.Helper()
 	h.serving = server.endpoint()
 	h.useDisgoGateway(dialer)
@@ -195,7 +195,7 @@ func (h *callHarness) recordDropping(server *droppingVoiceServer, dialer *websoc
 	conn.Receive(l)
 	h.countFromNow()
 	close(server.listening)
-	return l
+	return conn, l
 }
 
 // awaitDrop waits for the server to close the first connection, and returns
@@ -236,7 +236,9 @@ func (h *callHarness) rejoined() bool {
 // then refuses every connection or would take a resume. disgo would try to
 // resume for 15 s before telling the recorder. A server that refuses every
 // connection never answers again, and the recorder's rejoin goes out
-// within 1 s all the same.
+// within 1 s all the same. disgo hands the recorder that close as its own
+// refused resume, and the gap's report gives the close's code all the
+// same.
 func TestRecorderStartsAGapWithin1sOfACloseDisgoResumesFrom(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -253,12 +255,15 @@ func TestRecorderStartsAGapWithin1sOfACloseDisgoResumesFrom(t *testing.T) {
 				dialer = server.dialerRefusingAfterFirst()
 			}
 			h := newCallHarness(t)
-			l := h.recordDropping(server, dialer)
+			conn, l := h.recordDropping(server, dialer)
 
 			dropped := server.awaitDrop(t)
 
 			if !within(dropped, time.Second, func() bool { return len(l.gapStarts()) > 0 }) {
 				t.Errorf("gap events 1 s after the 4015 = %v, want a gap started", l.gapEvents())
+			}
+			if got, want := conn.GapReport().CloseCode, "4015"; got != want {
+				t.Errorf("gap report's close code = %q, want %q", got, want)
 			}
 			if tc.refuses && !within(dropped, time.Second, h.rejoined) {
 				t.Errorf("voice state updates 1 s after the 4015 = %v, want the recorder's rejoin", h.sent())

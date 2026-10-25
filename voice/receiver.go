@@ -5,12 +5,15 @@ import (
 	"errors"
 	"net"
 	"os"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/7cav/cavbot2/utils"
 	disgovoice "github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/godave"
 	"github.com/disgoorg/snowflake/v2"
+	"github.com/gorilla/websocket"
 )
 
 // The audio receiver replaces disgo's default one (ADR 0014), which spins a
@@ -37,6 +40,9 @@ type receiveConn interface {
 	// server is the voice server the recorder connects to: the one Discord
 	// named last for the call.
 	server() string
+	// sessionOnline reports whether the recorder's own gateway session is
+	// online, so that a rejoin could go out.
+	sessionOnline() bool
 	// reconnect opens a fresh voice connection in the call, which starts
 	// DAVE over, and returns once it has opened, or with ctx's error.
 	reconnect(ctx context.Context) error
@@ -76,16 +82,44 @@ const (
 // errDAVEStalled is the error a stall reaches Sentry with.
 var errDAVEStalled = errors.New("voice: DAVE held every frame past the stall limit")
 
-// gapMessage is what Sentry hears when a gap reaches GapReportedAfter, and
-// errGap the error it comes with.
-const gapMessage = "Recorder can't hear the channel"
-
-var errGap = errors.New("voice: the recorder couldn't hear the channel for 10 s")
-
-// gapStart is when and why the recorder stopped hearing the channel.
+// gapStart is when and why the recorder stopped hearing the channel, with
+// what the recorder knew of the cause then.
 type gapStart struct {
 	at    time.Time
 	cause GapCause
+	// close is the voice gateway close or failed read that started the
+	// gap, nil when neither did, and closedBy the disgo gateway whose close
+	// handler handed it over. server is the voice server the gateway last
+	// opened at.
+	close    error
+	closedBy disgovoice.Gateway
+	server   string
+	// interval is the heartbeat interval the voice server's Hello named,
+	// and sinceAnswer how long before the gap's start the server last
+	// answered a heartbeat, for a heartbeat answer overdue.
+	interval, sinceAnswer time.Duration
+}
+
+// fields are the cause's own fields of the gap that started as s, with
+// namedLast the voice server Discord has named last by now, and held how
+// long DAVE has held frames, or held them last. A call that moved moved to
+// namedLast, unless it is still the one the call left.
+func (s gapStart) fields(namedLast string, held time.Duration) []GapField {
+	switch s.cause {
+	case GapVoiceGatewayClosed:
+		return []GapField{{Key: "closed_server", Value: s.server}}
+	case GapHeartbeatOverdue:
+		return []GapField{{Key: "heartbeat_interval", Value: s.interval}, {Key: "last_answer", Value: s.sinceAnswer}}
+	case GapCallMoved:
+		movedTo := namedLast
+		if movedTo == s.server {
+			movedTo = ""
+		}
+		return []GapField{{Key: "moved_from", Value: s.server}, {Key: "moved_to", Value: movedTo}}
+	case GapDAVEStalled:
+		return []GapField{{Key: "held_for", Value: held}}
+	}
+	return nil
 }
 
 // causeNotKnown is the cause of a lost connection until it is known, as a
@@ -124,14 +158,21 @@ type receiver struct {
 	unheardSince time.Time
 	setupSince   time.Time
 	stalled      bool
-	// inGap is whether the listener was last told a gap started, at
-	// gapSince. gapReported is whether Sentry has heard of that gap. told is
+	// inGap is whether the listener was last told a gap started. told is
 	// how many of the connection's losses the receiver has told of, each as
 	// a gap or within one. Only the receiver's goroutine touches them.
-	inGap       bool
-	gapSince    time.Time
-	gapReported bool
-	told        int
+	inGap bool
+	told  int
+
+	// mu guards what the gap report reads: gap, the start of the gap the
+	// listener was last told of, gapLoss, the number of the connection's
+	// loss that started it, zero for a DAVE stall, and heldSince and
+	// heldUntil, when DAVE last started holding frames and stopped, zero
+	// while it holds them.
+	mu                   sync.Mutex
+	gap                  gapStart
+	gapLoss              int
+	heldSince, heldUntil time.Time
 }
 
 // newReceiver builds the receiver of a recorder's connection. It hands
@@ -185,7 +226,7 @@ func (r *receiver) step() {
 	if losses != r.told && lost.cause != causeNotKnown {
 		// A loss the receiver hasn't told of, which can be over already.
 		r.told = losses
-		r.startGap(lost)
+		r.startGap(lost, losses)
 	}
 	r.watchGap(connected && !holding)
 	if holding {
@@ -214,16 +255,9 @@ func (r *receiver) step() {
 
 // watchGap tells the listener when the recorder hears the channel again,
 // after a gap: one each loss of the connection starts, which the receiver
-// can learn of only later, or a DAVE stall. A gap that reaches
-// GapReportedAfter reaches Sentry once, with the voice server the recorder
-// is trying.
+// can learn of only later, or a DAVE stall.
 func (r *receiver) watchGap(hearing bool) {
-	switch {
-	case !hearing && r.inGap && !r.gapReported && time.Since(r.gapSince) >= GapReportedAfter:
-		r.gapReported = true
-		utils.CaptureError(gapMessage, errGap, "recorder", r.recorder, "channel_id", channelOf(r.conn),
-			"voice_server", r.conn.server())
-	case hearing && r.inGap:
+	if hearing && r.inGap {
 		r.inGap = false
 		r.listener.GapEnded()
 	}
@@ -231,13 +265,79 @@ func (r *receiver) watchGap(hearing bool) {
 
 // startGap tells the listener a gap started, as start says, unless one is
 // running already or start names no cause yet, as a dropped connection's
-// can take a lookup to. The gap keeps that cause until it ends.
-func (r *receiver) startGap(start gapStart) {
+// can take a lookup to. The gap keeps that cause until it ends. loss is
+// the number of the connection's loss start is, zero for none.
+func (r *receiver) startGap(start gapStart, loss int) {
 	if r.inGap || start.cause == causeNotKnown {
 		return
 	}
-	r.inGap, r.gapSince, r.gapReported = true, start.at, false
+	r.inGap = true
+	r.mu.Lock()
+	r.gap, r.gapLoss = start, loss
+	r.mu.Unlock()
 	r.listener.GapStarted(start.at, start.cause)
+}
+
+// report is what the recorder knows now of the gap the listener was last
+// told of, the cause's own fields measured now. A loss's close can reach
+// the connection after the receiver told of its gap (closeObserved), so a
+// gap whose loss is still the connection's latest reads it afresh.
+func (r *receiver) report() GapReport {
+	r.mu.Lock()
+	gap, loss, held := r.gap, r.gapLoss, r.heldUntil.Sub(r.heldSince)
+	if r.heldUntil.IsZero() {
+		held = time.Since(r.heldSince)
+	}
+	r.mu.Unlock()
+	if _, lost, losses := r.conn.connection(); loss != 0 && losses == loss {
+		gap = lost
+	}
+	namedLast := r.conn.server()
+	rep := GapReport{
+		CloseCode:            closeCode(gap.close),
+		VoiceServer:          namedLast,
+		GatewaySessionOnline: r.conn.sessionOnline(),
+		Fields:               gap.fields(namedLast, held),
+	}
+	if gap.cause == GapVoiceGatewayClosed {
+		rep.Close = gap.close
+	}
+	return rep
+}
+
+// closeCodes names each close code a voice gateway closes with by its
+// number: websocket's own and Discord's voice gateway codes. A gap's report
+// picks a close's code out of it, as the error data check passes (ADR
+// 0018).
+var closeCodes = func() map[int]string {
+	codes := make(map[int]string)
+	for code := websocket.CloseNormalClosure; code <= websocket.CloseTLSHandshake; code++ {
+		codes[code] = strconv.Itoa(code)
+	}
+	for code := range disgovoice.GatewayCloseEventCodes {
+		codes[code] = strconv.Itoa(code)
+	}
+	return codes
+}()
+
+// closeCodeOther is the close code of a close whose code closeCodes
+// doesn't name. The close's text still carries it.
+const closeCodeOther = "other"
+
+// closeCode is the close code of a gap's close: its code for a websocket
+// close, CloseCodeNone for a failed read, and empty with no close.
+func closeCode(close error) string {
+	var closeErr *websocket.CloseError
+	switch {
+	case close == nil:
+		return ""
+	case !errors.As(close, &closeErr):
+		return CloseCodeNone
+	}
+	if code, ok := closeCodes[closeErr.Code]; ok {
+		return code
+	}
+	return closeCodeOther
 }
 
 // holdFrames reports whether the DAVE session wants frames left unread: a
@@ -261,15 +361,17 @@ func (r *receiver) waitOrStartOver() {
 	now := time.Now()
 	if r.unheardSince.IsZero() {
 		r.unheardSince, r.setupSince = now, now
+		r.mu.Lock()
+		r.heldSince, r.heldUntil = now, time.Time{}
+		r.mu.Unlock()
 	}
 	if now.Sub(r.setupSince) <= stallAfter {
 		r.pause(notReadyPause)
 		return
 	}
 	if !r.stalled {
-		r.startGap(gapStart{at: r.unheardSince, cause: GapDAVEStalled})
-		// The stall's report is the gap's too: Sentry hears no more of it.
-		r.stalled, r.gapReported = true, true
+		r.startGap(gapStart{at: r.unheardSince, cause: GapDAVEStalled}, 0)
+		r.stalled = true
 		utils.CaptureError(stallMessage, errDAVEStalled, "recorder", r.recorder, "channel_id", channelOf(r.conn))
 	}
 	r.reconnect()
@@ -282,6 +384,11 @@ func (r *receiver) endStall() {
 	if r.stalled {
 		utils.Info(daveRecoveredMessage, "recorder", r.recorder, "channel_id", channelOf(r.conn),
 			"unheard", time.Since(r.unheardSince))
+	}
+	if !r.unheardSince.IsZero() {
+		r.mu.Lock()
+		r.heldUntil = time.Now()
+		r.mu.Unlock()
 	}
 	r.unheardSince, r.stalled = time.Time{}, false
 }
