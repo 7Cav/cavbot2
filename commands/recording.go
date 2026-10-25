@@ -250,6 +250,12 @@ func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guild
 	return r
 }
 
+// setRecordCommandID keeps /record's ID, which the startup sync hands over
+// once Discord has registered the commands.
+func (r *RecordingRuntime) setRecordCommandID(id string) {
+	r.recordCommandID.Store(id)
+}
+
 // Start starts a recording of the voice channel the invoker is in, with a
 // free recorder, and returns the channel. With recording off it refuses
 // before anything else, so the member learns that first.

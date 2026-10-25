@@ -140,8 +140,8 @@ func TestRegistrySync_StopWhileDiscordHoldsTheOverwriteReturnsAtOnce(t *testing.
 
 // Once the startup sync has registered the commands, the ping of a gap's cut
 // short carries Discord's command mention of /record start, with the ID
-// Discord answered the overwrite with for /record, so the starter records
-// again in one click. Every command gets an ID of its own, so the ping shows
+// Discord gave /record in the overwrite, so the starter records again in
+// one click. Every command gets an ID of its own, so the ping shows
 // /record's and no other.
 func TestRegistrySync_CutShortPingMentionsRecordStartByItsRegisteredID(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
@@ -155,13 +155,8 @@ func TestRegistrySync_CutShortPingMentionsRecordStartByItsRegisteredID(t *testin
 	}
 	sc.startIn(t, recStarter, recordChannel)
 
-	sc.cutShortAtTheMark(t, recordChannel)
+	content := sc.cutShortPing(t)
 
-	pings := pingsIn(sc.fake, recordChannel)
-	if len(pings) != 1 {
-		t.Fatalf("pings in %s at the cut short = %d, want one", recordChannel, len(pings))
-	}
-	content := pings[0].data.Content
 	if want := recordCommandName + " start:" + guild.ids[recordCommandName]; !slices.Contains(commandMentions(content), want) {
 		t.Errorf("ping = %q, want the command mention of %s", content, want)
 	}

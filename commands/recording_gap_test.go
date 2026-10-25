@@ -211,6 +211,18 @@ func TestRecordingCutShortByAGapPingsTheStarterInAReplyToTheNotice(t *testing.T)
 	}
 }
 
+// cutShortPing has a gap cut short the recording in recordChannel and
+// returns the content of the one ping it posts.
+func (sc *recordScene) cutShortPing(t *testing.T) string {
+	t.Helper()
+	sc.cutShortAtTheMark(t, recordChannel)
+	pings := pingsIn(sc.fake, recordChannel)
+	if len(pings) != 1 {
+		t.Fatalf("pings in %s at the cut short = %d, want one", recordChannel, len(pings))
+	}
+	return pings[0].data.Content
+}
+
 // Before the startup sync has registered the commands, the runtime doesn't
 // know /record's ID. The ping then names /record start as plain text and
 // mentions no command, so it still tells the starter what to run.
@@ -218,13 +230,8 @@ func TestRecordingCutShortPingBeforeTheCommandsRegisterNamesRecordStartPlain(t *
 	sc := newRecordScene(t, testRecorder)
 	sc.startIn(t, recStarter, recordChannel)
 
-	sc.cutShortAtTheMark(t, recordChannel)
+	content := sc.cutShortPing(t)
 
-	pings := pingsIn(sc.fake, recordChannel)
-	if len(pings) != 1 {
-		t.Fatalf("pings in %s at the cut short = %d, want one", recordChannel, len(pings))
-	}
-	content := pings[0].data.Content
 	if got := commandMentions(content); len(got) != 0 {
 		t.Errorf("ping = %q mentions the commands %v, want none before they're registered", content, got)
 	}

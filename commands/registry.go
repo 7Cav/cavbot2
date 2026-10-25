@@ -82,7 +82,7 @@ var errCommandSyncPanicked = errors.New("command sync panicked")
 // holds, even when the definition changed, so the permission overrides it
 // keys by that ID survive. It deletes the commands the registry no longer
 // declares, and the list beforehand only names them in the log. Each
-// command's Registered hook gets the ID the overwrite answers it with.
+// command's OnRegistered hook gets the ID Discord gave it in the overwrite.
 //
 // One request replaces the create-each loop that Discord paced to about a
 // minute (#470). The overwrite has its own rate limit. After two in quick
@@ -116,10 +116,8 @@ func (r *Registry) overwrite(api guildCommandAPI, appID, guildID string) error {
 		return fmt.Errorf("overwrite the guild's commands: %w", err)
 	}
 	for _, answered := range registered {
-		for _, cmd := range r.commands {
-			if cmd.Definition.Name == answered.Name && cmd.Registered != nil {
-				cmd.Registered(answered.ID)
-			}
+		if cmd, declared := r.command(answered.Name); declared && cmd.OnRegistered != nil {
+			cmd.OnRegistered(answered.ID)
 		}
 	}
 	for _, cmd := range existing {
@@ -131,10 +129,16 @@ func (r *Registry) overwrite(api guildCommandAPI, appID, guildID string) error {
 }
 
 func (r *Registry) GetHandler(name string) (CommandHandler, bool) {
+	cmd, declared := r.command(name)
+	return cmd.Handler, declared
+}
+
+// command is the registry's command named name.
+func (r *Registry) command(name string) (Command, bool) {
 	for _, cmd := range r.commands {
 		if cmd.Definition.Name == name {
-			return cmd.Handler, true
+			return cmd, true
 		}
 	}
-	return nil, false
+	return Command{}, false
 }

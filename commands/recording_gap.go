@@ -189,7 +189,7 @@ func cutShortLength(d time.Duration) string {
 func (r *RecordingRuntime) pingStarter(row store.Recording) bool {
 	failIfNoticeGone := false
 	_, err := r.mgr.ChannelMessageSendComplex(row.ChannelID, &discordgo.MessageSend{
-		Content: fmt.Sprintf(recordingGapPing, row.StarterID, r.recordStart()),
+		Content: fmt.Sprintf(recordingGapPing, row.StarterID, r.recordStartText()),
 		Reference: &discordgo.MessageReference{
 			MessageID: row.NoticeID, ChannelID: row.ChannelID, GuildID: row.GuildID, FailIfNotExists: &failIfNoticeGone,
 		},
@@ -202,20 +202,15 @@ func (r *RecordingRuntime) pingStarter(row store.Recording) bool {
 	return true
 }
 
-// setRecordCommandID keeps /record's ID, which the startup sync hands over
-// once Discord has registered the commands.
-func (r *RecordingRuntime) setRecordCommandID(id string) {
-	r.recordCommandID.Store(id)
-}
-
-// recordStart is how the ping names /record start. Once the runtime knows
-// /record's ID it is Discord's command mention, which fills the starter's
-// chat box when clicked. Before then it is plain text.
-func (r *RecordingRuntime) recordStart() string {
+// recordStartText is how the ping names /record start. Once the runtime
+// knows /record's ID it is Discord's command mention, which fills the chat
+// box of whoever clicks it. Before then it is plain text.
+func (r *RecordingRuntime) recordStartText() string {
+	run := recordCommandName + " start"
 	if id, _ := r.recordCommandID.Load().(string); id != "" {
-		return "</" + recordCommandName + " start:" + id + ">"
+		return "</" + run + ":" + id + ">"
 	}
-	return "/" + recordCommandName + " start"
+	return "/" + run
 }
 
 // endGapAtStop ends the gap running in a recording a stop has taken, at
