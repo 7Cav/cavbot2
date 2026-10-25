@@ -5,6 +5,7 @@ package gatewaytest
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -47,6 +48,20 @@ type Login struct {
 	// Heard, when set, runs when a connection kept open reads its first
 	// frame after the answer: the session's first heartbeat.
 	Heard func()
+	// Resume, when set, is how the gateway answers instead when the session
+	// resumes rather than identifies. Its Refuse and Heartbeat play no part,
+	// since the gateway has taken the upgrade and sent Hello before it reads
+	// which the session sends.
+	Resume *Login
+	// Heartbeat is the heartbeat interval Hello asks for. Zero asks for
+	// 45 s, which outlasts any test, so discordgo sends one heartbeat and
+	// waits. A connection kept open answers each heartbeat it reads.
+	Heartbeat time.Duration
+	// Beat, when set, runs for each heartbeat a connection kept open reads.
+	Beat func()
+	// Closed, when set, runs when the session closes a connection kept
+	// open, with the code of the close it sent.
+	Closed func(code int)
 }
 
 // Gateway is a fake Discord gateway whose test scripts its answer to each
@@ -193,11 +208,15 @@ func (g *Gateway) Settle(t testing.TB, timeout time.Duration) {
 // run answers one login on c: Hello, then what login scripts, then the
 // close or the hold.
 func (g *Gateway) run(c *websocket.Conn, login Login, testOver <-chan struct{}) {
-	if c.WriteMessage(websocket.TextMessage, []byte(helloFrame)) != nil {
+	if c.WriteMessage(websocket.TextMessage, helloFrame(login.Heartbeat)) != nil {
 		return
 	}
-	if _, _, err := c.ReadMessage(); err != nil { // the identify or resume
+	_, first, err := c.ReadMessage() // the identify or resume
+	if err != nil {
 		return
+	}
+	if login.Resume != nil && opOf(first) == opResume {
+		login = *login.Resume
 	}
 	if login.Invalid {
 		if !sendFrame(c, invalidSessionFrame) {
@@ -228,11 +247,25 @@ func (g *Gateway) run(c *websocket.Conn, login Login, testOver <-chan struct{}) 
 	go func() {
 		defer close(done)
 		for heard := login.Heard; ; heard = nil {
-			if _, _, err := c.ReadMessage(); err != nil {
+			_, m, err := c.ReadMessage()
+			var closeErr *websocket.CloseError
+			if errors.As(err, &closeErr) && login.Closed != nil {
+				login.Closed(closeErr.Code)
+			}
+			if err != nil {
 				return
 			}
 			if heard != nil {
 				heard()
+			}
+			if opOf(m) != opHeartbeat {
+				continue
+			}
+			if c.WriteMessage(websocket.TextMessage, []byte(heartbeatAckFrame)) != nil {
+				return
+			}
+			if login.Beat != nil {
+				login.Beat()
 			}
 		}
 	}()
@@ -248,10 +281,37 @@ func sendFrame(c *websocket.Conn, frame string) bool {
 	return c.WriteMessage(websocket.TextMessage, []byte(frame)) == nil
 }
 
+// The opcodes the gateway reads from a session.
+const (
+	opHeartbeat = 1
+	opResume    = 6
+)
+
+// opOf is the opcode of a frame the session sent, 0 when it has none.
+func opOf(frame []byte) int {
+	var f struct {
+		Op int `json:"op"`
+	}
+	_ = json.Unmarshal(frame, &f)
+	return f.Op
+}
+
+// defaultHeartbeat is the heartbeat interval Hello asks for when a login
+// names none.
+const defaultHeartbeat = 45 * time.Second
+
 // helloFrame is the Op 10 packet discordgo requires as the first frame of
-// the handshake; Open() rejects anything else outright. Its heartbeat
-// interval outlasts any test, so discordgo sends one heartbeat and waits.
-const helloFrame = `{"op":10,"d":{"heartbeat_interval":45000},"s":null,"t":null}`
+// the handshake; Open() rejects anything else outright. It asks for a
+// heartbeat every interval, or every defaultHeartbeat when interval is 0.
+func helloFrame(interval time.Duration) []byte {
+	if interval == 0 {
+		interval = defaultHeartbeat
+	}
+	return fmt.Appendf(nil, `{"op":10,"d":{"heartbeat_interval":%d},"s":null,"t":null}`, interval.Milliseconds())
+}
+
+// heartbeatAckFrame is Op 11, Discord's answer to a heartbeat.
+const heartbeatAckFrame = `{"op":11,"d":null,"s":null,"t":null}`
 
 // invalidSessionFrame is Op 9, which Discord sends in response to IDENTIFY
 // when it cannot start a session — an identify that is rate limited or over

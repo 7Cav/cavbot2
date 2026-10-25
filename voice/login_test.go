@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -211,5 +212,64 @@ func TestARecorderWhoseLoginDiscordRefusesWith4004IsOut(t *testing.T) {
 				t.Errorf("%d records say Discord refused the token, want 1", n)
 			}
 		})
+	}
+}
+
+// beatEvery is how often the new login in the old-login test heartbeats,
+// so its heartbeats are seen to go on within the test.
+const beatEvery = 100 * time.Millisecond
+
+// discordgo may be reconnecting a recorder's login when the recorder logs
+// out of it, and the logout doesn't stop that. So the old login is logged
+// out again with 1000 the moment it comes back, which ends discordgo's
+// reconnects and takes the recorder out of its old call. The new login is
+// a session of its own, which identifies, and stays up meanwhile.
+func TestARecorderLogsOutAnOldLoginThatComesBackAfterItsLogout(t *testing.T) {
+	var newLoginUp atomic.Bool
+	beats := make(chan struct{}, 1000)
+	oldClosed := make(chan int, 1)
+	g := gatewaytest.New(t, func(login int) gatewaytest.Login {
+		switch {
+		case login == 1:
+			// The old login, which the gateway drops, so discordgo
+			// reconnects it with Resume.
+			return gatewaytest.Login{Answer: "READY", Close: 4000}
+		case !newLoginUp.Load():
+			return gatewaytest.Login{
+				// The new login identifies, and stays up.
+				Answer: "READY", Heartbeat: beatEvery,
+				Beat: func() {
+					newLoginUp.Store(true)
+					beats <- struct{}{}
+				},
+				// The old login's resumes fail until the new login is up.
+				Resume: &gatewaytest.Login{Close: 4000},
+			}
+		}
+		return gatewaytest.Login{Resume: &gatewaytest.Login{Answer: "RESUMED", Closed: func(code int) { oldClosed <- code }}}
+	})
+	r := Connect("recorder-token", &Discord{offlineAfter: time.Hour})
+	defer r.Close()
+	waitUntil(t, "discordgo is reconnecting the old login", func() bool { return g.Logins() >= 2 })
+
+	r.TakeOffline(gatewaytest.UserID)()
+
+	select {
+	case code := <-oldClosed:
+		if code != 1000 {
+			t.Errorf("the old login came back and was closed with %d, want 1000", code)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the old login came back and was never closed")
+	}
+	for len(beats) > 0 {
+		<-beats
+	}
+	for n := range 2 {
+		select {
+		case <-beats:
+		case <-time.After(10 * beatEvery):
+			t.Fatalf("the new login sent %d heartbeats after the old login's close, want them to go on", n)
+		}
 	}
 }

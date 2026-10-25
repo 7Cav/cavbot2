@@ -127,6 +127,9 @@ func (d *Discord) Open(recorder int, token string) (GatewaySession, error) {
 	// recorder before its first join.
 	dg.AddHandler(func(_ *discordgo.Session, e *discordgo.VoiceStateUpdate) { s.onVoiceStateUpdate(e) })
 	dg.AddHandler(func(_ *discordgo.Session, e *discordgo.VoiceServerUpdate) { s.onVoiceServerUpdate(e) })
+	// discordgo may be reconnecting the login when the recorder logs out of
+	// it, and the logout doesn't stop that.
+	dg.AddHandler(func(_ *discordgo.Session, _ *discordgo.Connect) { s.cameBack() })
 	return s, nil
 }
 
@@ -154,6 +157,8 @@ type discordgoSession struct {
 	// drops, when set, can drop the recorder's voice connections, as the
 	// smoke hook does.
 	drops *connDrops
+	// loggedOut is set once the recorder has logged out of this login.
+	loggedOut atomic.Bool
 }
 
 // connLoggerFunc builds the logger one voice connection logs through, and the
@@ -1346,11 +1351,25 @@ func (s *discordgoSession) UserID() string { return s.userID }
 // LogOut logs the recorder out of this login, for a relogin. Its leave has
 // already taken it out of the call, so the logout waits on no voice
 // connection. The recorder is offline from now until a login's READY, and
-// in a gateway outage all that time, though the bot chose it.
+// in a gateway outage all that time, though the bot chose it. A login
+// discordgo brings back after the logout is logged out again at once.
 func (s *discordgoSession) LogOut() error {
+	s.loggedOut.Store(true)
 	s.watch.Offline()
 	_, err := s.watch.CloseSession()
 	return err
+}
+
+// cameBack logs a login that came back after its logout out again, with
+// 1000. discordgo had been reconnecting it, and its reconnects end once one
+// works, so this close ends them, and takes the recorder out of the call
+// the login was in. The logout turned discordgo's reconnects off, so none
+// follows this close.
+func (s *discordgoSession) cameBack() {
+	defer utils.RecoverPanic("recorder-logout", "recorder", s.userID)
+	if s.loggedOut.Load() {
+		_ = s.dg.Close()
+	}
 }
 
 // Close takes the recorder out of any voice channel it is still in, then
