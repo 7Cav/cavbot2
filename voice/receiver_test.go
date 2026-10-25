@@ -105,6 +105,8 @@ func (c *fakeReceiveConn) restore() {
 
 func (c *fakeReceiveConn) server() string { return "c-dfw-1.discord.media:443" }
 
+func (c *fakeReceiveConn) sessionOnline() bool { return true }
+
 func (c *fakeReceiveConn) reconnect(context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -495,6 +497,27 @@ func TestReceiverNamesTheGapOfAStalledDAVESetupFromWhenItStartedHolding(t *testi
 		}
 		if starts[0].Before(held) || !starts[0].Before(held.Add(stallAfter)) {
 			t.Errorf("gap started %v after DAVE started holding, want at it, inside the %v stall limit", starts[0].Sub(held), stallAfter)
+		}
+	})
+}
+
+// A stalled DAVE setup's gap report gives how long DAVE has held frames by
+// the time the report is read, here 7 s after DAVE started holding them.
+// The receiver notices the hold within one of its pauses.
+func TestReceiverReportsHowLongDAVEHasHeldFramesInAStall(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		r := startListening(t, conn, listen(nil))
+		time.Sleep(time.Second)
+
+		conn.holdFrames(true)
+		time.Sleep(7 * time.Second)
+		synctest.Wait()
+
+		got, _ := reportField(r.report(), "held_for")
+		if d, ok := got.(time.Duration); !ok || d > 7*time.Second || d < 7*time.Second-notReadyPause {
+			t.Errorf("gap report's held_for = %v, want 7s, how long DAVE has held frames", got)
 		}
 	})
 }

@@ -133,11 +133,6 @@ func (c GapCause) CutShortError() error {
 	return fmt.Errorf("voice: recording cut short: %s", c)
 }
 
-// GapReportedAfter is how long a gap lasts before Sentry hears of it. The
-// recording runtime cuts the recording short at the same mark, by a limit of
-// its own.
-const GapReportedAfter = 10 * time.Second
-
 // Frame is one Opus packet a speaker sent, as Discord delivered it, with
 // both encryptions taken off.
 type Frame struct {

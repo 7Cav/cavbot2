@@ -204,7 +204,10 @@ func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc, logger 
 			}
 			g.onDrop = c.watchClose(g, onClose)
 			g.build = func() disgovoice.Gateway {
-				return newGateway(dave, g.watchEvents(onEvent), g.onDrop, opts...)
+				var gw disgovoice.Gateway
+				observe := disgovoice.WithGatewayCloseObserver(func(err error) { g.closeObserved(gw, err) })
+				gw = newGateway(dave, g.watchEvents(onEvent), g.onDrop, append(opts[:len(opts):len(opts)], observe)...)
+				return gw
 			}
 			g.gw = g.build()
 			c.gateway = g
@@ -627,6 +630,10 @@ type renewableGateway struct {
 	connected bool
 	loss      gapStart
 	losses    int
+	// observed is the close or failed read a disgo gateway last saw, which
+	// disgo hands the close handler only as its refused resume when it
+	// would resume from it.
+	observed observedClose
 
 	// onDrop is the close handler of every gateway built, which a voice
 	// server gone silent reaches as a close.
@@ -636,6 +643,21 @@ type renewableGateway struct {
 	// times its timer was set.
 	heartbeat heartbeatWatch
 	watches   int
+}
+
+// observedClose is the close or failed read err that disgo gateway gw saw.
+type observedClose struct {
+	gw  disgovoice.Gateway
+	err error
+}
+
+// closeObserved notes the close or failed read disgo's gateway gw saw. disgo
+// hands it over here before the reconnect whose refused dial reaches the
+// close handler.
+func (g *renewableGateway) closeObserved(gw disgovoice.Gateway, err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.observed = observedClose{gw: gw, err: err}
 }
 
 // heartbeatWatch is what the recorder knows of a voice server's heartbeat on
@@ -693,21 +715,26 @@ func (g *renewableGateway) renewAfter(loss int, cause GapCause) {
 // loses the call for cause when the old one was connected. Caller holds mu.
 func (g *renewableGateway) renewLocked(cause GapCause) {
 	g.gw = g.build()
-	g.disconnectLocked(time.Now(), cause)
+	g.disconnectLocked(gapStart{at: time.Now(), cause: cause})
 	g.unwatchLocked()
 }
 
 // lost notes that the recorder lost its connection to the call at at, for
-// cause, when gw is the gateway it connects through, and reports whether it
-// is. It returns the loss's number too, which lostFor takes to name a cause
-// not known yet.
-func (g *renewableGateway) lost(gw disgovoice.Gateway, at time.Time, cause GapCause) (loss int, ok bool) {
+// cause, by close, the close or failed read gw handed over, when gw is the
+// gateway it connects through, and reports whether it is. When close is
+// disgo's refused resume, the loss keeps the close behind it that gw saw.
+// It returns the loss's number too, which lostFor takes to name a cause not
+// known yet.
+func (g *renewableGateway) lost(gw disgovoice.Gateway, at time.Time, cause GapCause, close error) (loss int, ok bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if gw != g.gw {
 		return 0, false
 	}
-	g.disconnectLocked(at, cause)
+	if errors.Is(close, errResumeRefused) && g.observed.gw == gw {
+		close = g.observed.err
+	}
+	g.disconnectLocked(gapStart{at: at, cause: cause, close: close})
 	return g.losses, true
 }
 
@@ -722,13 +749,15 @@ func (g *renewableGateway) lostFor(loss int, cause GapCause) {
 	}
 }
 
-// disconnectLocked notes the gateway not connected, from at when it was,
-// for cause, which can be causeNotKnown until it is known. A gateway that
-// never connected loses the call from at too: its join completed at a voice
-// server Discord has replaced since. Caller holds mu.
-func (g *renewableGateway) disconnectLocked(at time.Time, cause GapCause) {
+// disconnectLocked notes the gateway not connected, as start says, when it
+// was. Its cause can be causeNotKnown until it is known. A gateway that
+// never connected loses the call too: its join completed at a voice server
+// Discord has replaced since. The loss keeps the voice server the gateway
+// last opened at. Caller holds mu.
+func (g *renewableGateway) disconnectLocked(start gapStart) {
 	if g.connected || g.loss.at.IsZero() {
-		g.connected, g.loss = false, gapStart{at: at, cause: cause}
+		start.server = g.state.Endpoint
+		g.connected, g.loss = false, start
 		g.losses++
 	}
 }
@@ -819,7 +848,8 @@ func (g *renewableGateway) wentSilent(gw disgovoice.Gateway, watch int) {
 		g.mu.Unlock()
 		return
 	}
-	g.disconnectLocked(g.heartbeat.heard, GapHeartbeatOverdue)
+	w := g.heartbeat
+	g.disconnectLocked(gapStart{at: w.heard, cause: GapHeartbeatOverdue, interval: w.interval, sinceAnswer: w.heard.Sub(w.answered)})
 	g.unwatchLocked()
 	g.mu.Unlock()
 	gw.CloseWithCode(websocket.CloseServiceRestart, "heartbeat answer overdue")
@@ -840,7 +870,7 @@ func (g *renewableGateway) described(gw disgovoice.Gateway) {
 		g.connected = true
 		g.watchLocked(gw)
 	} else {
-		g.disconnectLocked(time.Now(), GapCallMoved)
+		g.disconnectLocked(gapStart{at: time.Now(), cause: GapCallMoved})
 	}
 	if g.describedDial != nil {
 		close(g.describedDial)
@@ -1009,12 +1039,12 @@ func (g *renewableGateway) startDial(state disgovoice.State, redial context.Canc
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.state, g.redial = state, redial
 	// A dial before the gateway ever connected is the join's own, and
-	// loses nothing.
+	// loses nothing. The loss keeps the server the call moved from.
 	if g.connected {
-		g.disconnectLocked(time.Now(), GapCallMoved)
+		g.disconnectLocked(gapStart{at: time.Now(), cause: GapCallMoved})
 	}
+	g.state, g.redial = state, redial
 	g.describedDial = make(chan struct{})
 	return g.gw, state, g.describedDial
 }
@@ -1114,7 +1144,7 @@ func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.Close
 		if terminated {
 			cause = causeNotKnown
 		}
-		loss, ok := gw.lost(g, time.Now(), cause)
+		loss, ok := gw.lost(g, time.Now(), cause, err)
 		if !ok {
 			return
 		}
@@ -1301,6 +1331,13 @@ func (c callConn) server() string {
 	return g.server()
 }
 
+// sessionOnline reports whether the recorder's own gateway session is
+// online, so that a voice state update could go out.
+func (c callConn) sessionOnline() bool {
+	rc, ok := c.Conn.(*recorderConn)
+	return ok && rc.s.online()
+}
+
 // reconnect opens a fresh voice connection where the call is, through the
 // gateway the recorder's connection options built.
 func (c callConn) reconnect(ctx context.Context) error {
@@ -1321,8 +1358,17 @@ func (c *disgoConn) OwnLeaves() int {
 	return int(rc.ownLeaves.Load())
 }
 
-// GapReport is what the recorder knows now of the gap it last told of.
-func (c *disgoConn) GapReport() GapReport { return GapReport{} }
+// GapReport is what the recorder knows now of the gap it last told of,
+// empty before the receiver starts.
+func (c *disgoConn) GapReport() GapReport {
+	c.mu.Lock()
+	rcv := c.rcv
+	c.mu.Unlock()
+	if rcv == nil {
+		return GapReport{}
+	}
+	return rcv.report()
+}
 
 // Leave stops the receiver, so no frame is handed over after it returns,
 // then sends the voice state update that takes the recorder out, and closes
@@ -1363,6 +1409,14 @@ func (s *discordgoSession) updateVoiceState(_ context.Context, guildID snowflake
 		return discordgo.ErrWSNotFound
 	}
 	return s.dg.ChannelVoiceJoinManual(guildID.String(), cid, selfMute, selfDeaf)
+}
+
+// online reports whether the session's gateway connection is up, which a
+// voice state update needs.
+func (s *discordgoSession) online() bool {
+	s.dg.RLock()
+	defer s.dg.RUnlock()
+	return s.dg.DataReady
 }
 
 // onVoiceStateUpdate hands a voice state to disgo. The session sees every

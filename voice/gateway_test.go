@@ -1428,60 +1428,6 @@ func TestRecorderIgnoresACloseFromAGatewayItLeftBehind(t *testing.T) {
 	})
 }
 
-// A gap that reaches 10 s reaches Sentry once, naming the recorder, the
-// channel and the voice server the recorder is trying to reach, while the
-// recording still runs. The bot log has it at ERROR.
-func TestRecorderReportsAGapThatReaches10s(t *testing.T) {
-	events := recordSentry(t)
-	synctest.Test(t, func(t *testing.T) {
-		h := newCallHarness(t)
-		h.transportOnly.Store(true)
-		conn := h.record(listen(nil))
-		defer h.hangUp(conn)
-		h.setReachable(newEndpoint, false)
-
-		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
-		time.Sleep(15 * time.Second)
-		synctest.Wait()
-
-		got := events.Events()
-		if len(got) != 1 || got[0].Tags["message"] != gapMessage {
-			t.Fatalf("Sentry events = %v, want one %q", eventMessages(got), gapMessage)
-		}
-		for _, want := range []string{callRecorder.String(), callChannel.String(), newEndpoint} {
-			if !eventMentions(got[0], want) {
-				t.Errorf("Sentry event %v doesn't name %s", eventTexts(got[0]), want)
-			}
-		}
-		if errs := h.logs.messagesAt(slog.LevelError); !slices.Contains(errs, gapMessage) {
-			t.Errorf("bot log ERRORs = %q, want %q", errs, gapMessage)
-		}
-	})
-}
-
-// A gap that ends before 10 s is no news for Sentry, however long the
-// recording goes on after it.
-func TestRecorderReportsNothingOfAGapUnder10s(t *testing.T) {
-	events := recordSentry(t)
-	synctest.Test(t, func(t *testing.T) {
-		h := newCallHarness(t)
-		h.transportOnly.Store(true)
-		conn := h.record(listen(nil))
-		defer h.hangUp(conn)
-		h.setReachable(newEndpoint, false)
-		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
-		time.Sleep(9 * time.Second)
-
-		h.name("token-3", laterEndpoint)
-		time.Sleep(time.Minute)
-		synctest.Wait()
-
-		if got := events.Events(); len(got) != 0 {
-			t.Errorf("Sentry events = %v, want none for a gap under 10 s", eventMessages(got))
-		}
-	})
-}
-
 // A stalled DAVE setup is a gap that has already reached Sentry, as a
 // stall. Past 10 s Sentry hears nothing more of it.
 func TestRecorderReportsAStallPast10sOnlyAsAStall(t *testing.T) {
@@ -1617,14 +1563,17 @@ func TestRecorderStartsTheGapOfAMovedCallAtTheClose(t *testing.T) {
 // named for the closed gateway: a close with a code, or a read that fails,
 // which reaches the recorder as disgo's refused resume. The call is
 // transport-only, so DAVE plays no part, and the voice server is out of
-// reach from then, so the gap lasts.
+// reach from then, so the gap lasts. The gap's report gives the close's
+// code, none for a failed read, and the voice server the closed gateway was
+// connected to, though Discord names a later one after the close.
 func TestRecorderNamesTheGapOfAClosedVoiceGateway(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		err  error
+		name      string
+		err       error
+		closeCode string
 	}{
-		{"a close", &websocket.CloseError{Code: 4006}},
-		{"a failed read", errResumeRefused},
+		{"a close", &websocket.CloseError{Code: 4006}, "4006"},
+		{"a failed read", errResumeRefused, CloseCodeNone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			recordSentry(t)
@@ -1635,22 +1584,44 @@ func TestRecorderNamesTheGapOfAClosedVoiceGateway(t *testing.T) {
 				conn := h.record(l)
 				defer h.hangUp(conn)
 				h.setReachable(oldEndpoint, false)
+				h.setReachable(laterEndpoint, false)
 
 				go h.endConnection(tc.err)
+				time.Sleep(time.Second)
+				h.name("token-3", laterEndpoint)
 				time.Sleep(time.Second)
 				synctest.Wait()
 
 				if got := l.gapCauses(); len(got) == 0 || got[0] != GapVoiceGatewayClosed {
 					t.Errorf("gap causes = %v, want the first %s", got, GapVoiceGatewayClosed)
 				}
+				rep := conn.GapReport()
+				if rep.CloseCode != tc.closeCode {
+					t.Errorf("gap report's close code = %q, want %q", rep.CloseCode, tc.closeCode)
+				}
+				if got, _ := reportField(rep, "closed_server"); got != oldEndpoint {
+					t.Errorf("gap report's closed_server = %v, want %s, the closed gateway's server", got, oldEndpoint)
+				}
 			})
 		})
 	}
 }
 
+// reportField is the value of a gap report's field with key, false when it
+// has none.
+func reportField(rep GapReport, key string) (any, bool) {
+	for _, f := range rep.Fields {
+		if f.Key == key {
+			return f.Value, true
+		}
+	}
+	return nil, false
+}
+
 // A voice server can stop answering heartbeats without closing the
 // connection. The gap the recorder's check starts once the answer is
-// overdue is named for it. The server is out of reach from then, so the gap
+// overdue is named for it, and its report gives the heartbeat interval the
+// server's Hello named. The server is out of reach from then, so the gap
 // lasts, and the test waits for it however long the check takes.
 func TestRecorderNamesTheGapOfAVoiceServerWhoseHeartbeatAnswerIsOverdue(t *testing.T) {
 	recordSentry(t)
@@ -1671,6 +1642,9 @@ func TestRecorderNamesTheGapOfAVoiceServerWhoseHeartbeatAnswerIsOverdue(t *testi
 		if got := l.gapCauses(); len(got) == 0 || got[0] != GapHeartbeatOverdue {
 			t.Errorf("gap causes = %v, want the first %s", got, GapHeartbeatOverdue)
 		}
+		if got, _ := reportField(conn.GapReport(), "heartbeat_interval"); got != time.Second {
+			t.Errorf("gap report's heartbeat_interval = %v, want the Hello's 1s", got)
+		}
 	})
 }
 
@@ -1678,7 +1652,9 @@ func TestRecorderNamesTheGapOfAVoiceServerWhoseHeartbeatAnswerIsOverdue(t *testi
 // API whether the channel is still there, which takes a second here. A
 // channel still there means the call moved to another voice server, and the
 // gap is named for the move. A channel gone means only that the voice
-// gateway closed.
+// gateway closed. Either way the gap's report gives the close's code. A
+// move's names the server the call left and the one Discord named for it
+// after, which is the server Discord named last.
 func TestRecorderNamesTheGapOfA4022ForWhatTheChannelLookupSays(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1706,6 +1682,21 @@ func TestRecorderNamesTheGapOfA4022ForWhatTheChannelLookupSays(t *testing.T) {
 
 				if got := l.gapCauses(); len(got) == 0 || got[0] != tc.want {
 					t.Errorf("gap causes = %v, want the first %s", got, tc.want)
+				}
+				rep := conn.GapReport()
+				if want := "4022"; rep.CloseCode != want {
+					t.Errorf("gap report's close code = %q, want %q", rep.CloseCode, want)
+				}
+				if tc.want != GapCallMoved {
+					return
+				}
+				for key, want := range map[string]string{"moved_from": oldEndpoint, "moved_to": newEndpoint} {
+					if got, _ := reportField(rep, key); got != want {
+						t.Errorf("gap report's %s = %v, want %s", key, got, want)
+					}
+				}
+				if rep.VoiceServer != newEndpoint {
+					t.Errorf("gap report's voice server = %q, want %s, the one Discord named last", rep.VoiceServer, newEndpoint)
 				}
 			})
 		})
