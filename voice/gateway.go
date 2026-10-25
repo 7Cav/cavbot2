@@ -42,11 +42,6 @@ const answerWait = 250 * time.Millisecond
 // Discord is the production Opener: Discord itself, through discordgo.
 type Discord struct{}
 
-// Open is one login of the recorder, OpenGateway's.
-func (Discord) Open(recorder int, token string) (GatewaySession, error) {
-	return OpenGateway(recorder, token)
-}
-
 // UserID reads the recorder account's user ID from GET /users/@me with its
 // token, which needs no gateway session.
 func (Discord) UserID(ctx context.Context, token string) (string, error) {
@@ -61,14 +56,14 @@ func (Discord) UserID(ctx context.Context, token string) (string, error) {
 	return u.ID, nil
 }
 
-// OpenGateway is one login of a recorder: a new discordgo session for the
+// Open is one login of a recorder: a new discordgo session for the
 // recorder account, open once READY has named it. A session that opened
 // without reaching READY is closed again for good, so a failed login holds
 // no connection, and the next login opens a session of its own.
 // The session is watched, so a recorder that drops off the gateway and stays
 // off reaches Sentry while the bot runs, and one whose token Discord refuses
 // stops logging in.
-func OpenGateway(recorder int, token string) (GatewaySession, error) {
+func (Discord) Open(recorder int, token string) (GatewaySession, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, err

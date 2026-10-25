@@ -94,8 +94,8 @@ var (
 	errRecorderComingBack = errors.New("recording: the recorder is still logging back in")
 )
 
-// recorderStillOfflineMessage is the WARN of a start refused because its
-// offline recorder didn't log back in in time. Sentry hears nothing: a
+// recorderStillOfflineMessage is the INFO line of a start refused because
+// its offline recorder didn't log back in in time. Sentry hears nothing: a
 // recorder logging back in isn't a fault.
 const recorderStillOfflineMessage = "Start refused, the recorder is still logging back in"
 
@@ -309,7 +309,7 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	conn, err := r.voice.Join(joinCtx, recorderID, r.guildID, channelID)
 	if errors.Is(err, voice.ErrRecorderOffline) {
 		r.release(recorderID)
-		utils.Warn(recorderStillOfflineMessage, "recorder", recorderID, "channel_id", channelID)
+		utils.Info(recorderStillOfflineMessage, "recorder", recorderID, "channel_id", channelID)
 		return "", errRecorderComingBack
 	}
 	if err != nil {

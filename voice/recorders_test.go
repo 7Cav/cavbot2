@@ -614,6 +614,9 @@ func TestAHungLogoutLetsTheNextLoginStartAtItsBound(t *testing.T) {
 		logs := captureLogs(t)
 		gw := newFakeGateway(map[string]string{"tok-a": "id-a"})
 		r := Connect("tok-a", gw)
+		// The bubble ends only once the hung logouts have returned, after
+		// Close has given up on its own.
+		defer time.Sleep(time.Hour)
 		defer r.Close()
 		gw.setLogoutTakes(time.Hour)
 
@@ -633,22 +636,40 @@ func TestAHungLogoutLetsTheNextLoginStartAtItsBound(t *testing.T) {
 }
 
 // Shutdown stops a recorder that is logging in: once Close has returned,
-// no login goes out however long the clock runs.
+// no login goes out however long the clock runs. That holds for one whose
+// first login failed at startup, and for one whose relogin after a cut
+// short comes only after Close.
 func TestCloseStopsARecorderLoggingIn(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		gw := newFakeGateway(map[string]string{"tok-a": "id-a"})
-		gw.setDown("tok-a", true)
-		r := Connect("tok-a", gw)
+	for _, tc := range []struct {
+		name            string
+		firstLoginFails bool
+		// close has the recorder logging in, or about to, and closes r.
+		close func(r *Recorders)
+	}{
+		{"after a failed first login", true, func(r *Recorders) { r.Close() }},
+		{"relogin after Close", false, func(r *Recorders) {
+			relogin := r.TakeOffline("id-a")
+			r.Close()
+			relogin()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				gw := newFakeGateway(map[string]string{"tok-a": "id-a"})
+				gw.setDown("tok-a", tc.firstLoginFails)
+				r := Connect("tok-a", gw)
 
-		r.Close()
-		tried := len(gw.triesOf("tok-a"))
-		time.Sleep(loginRetryMax)
-		synctest.Wait()
+				tc.close(r)
+				tried := len(gw.triesOf("tok-a"))
+				time.Sleep(loginRetryMax)
+				synctest.Wait()
 
-		if got := len(gw.triesOf("tok-a")); got != tried {
-			t.Errorf("logins after Close = %d, want none", got-tried)
-		}
-	})
+				if got := len(gw.triesOf("tok-a")); got != tried {
+					t.Errorf("logins after Close = %d, want none", got-tried)
+				}
+			})
+		})
+	}
 }
 
 // failingRelogin takes the recorder offline and logs it back in while

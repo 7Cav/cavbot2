@@ -33,7 +33,7 @@ import (
 )
 
 // The production recorder session, over a fake disgo voice manager. Only
-// OpenGateway needs Discord itself, and the smoke test covers it.
+// Discord's Open needs Discord itself, and the smoke test covers it.
 
 // fakeManager stands in for disgo's voice manager: it records the events
 // handed to it and whether it was closed, and creates conn for every join.

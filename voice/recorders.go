@@ -272,9 +272,9 @@ const loginRetryMax = 600 * time.Second
 // how long it waits before the next.
 const loginFailedMessage = "Recorder login failed, trying again"
 
-// nextLoginWait is how long a recorder waits after a failed login that it
-// tried wait after the one before: loginRetryFirst after its first, and
-// then each wait double the last, up to loginRetryMax.
+// nextLoginWait is how long a recorder waits after a failed login, given
+// the wait before that login: loginRetryFirst after the first failure, then
+// double the last wait each time, up to loginRetryMax.
 func nextLoginWait(wait time.Duration) time.Duration {
 	if wait == 0 {
 		return loginRetryFirst
@@ -297,12 +297,11 @@ const userIDReadTimeout = 5 * time.Second
 // out.
 type Recorders struct {
 	open Opener
-	// closed closes at shutdown, which stops every login.
+	// closed closes at shutdown, under mu, which stops every login.
 	closed chan struct{}
 
 	mu        sync.Mutex
 	recorders []*recorder
-	shutDown  bool
 	// changed closes, and is replaced, whenever a recorder comes online or
 	// goes out, which a join waiting on an offline one reads.
 	changed chan struct{}
@@ -348,7 +347,7 @@ func Connect(raw string, open Opener) *Recorders {
 		s, err := open.Open(rec.place, token)
 		if err == nil {
 			rec.userID, rec.state, rec.session = s.UserID(), RecorderOnline, s
-			utils.Info("Recorder connected", "recorder", rec.place, "user_id", rec.userID)
+			utils.Info("Recorder connected", rec.pairs()...)
 			r.recorders = append(r.recorders, rec)
 			continue
 		}
@@ -381,12 +380,17 @@ func (r *Recorders) logIn(rec *recorder, wait time.Duration) {
 			timer.Stop()
 			return
 		}
+		// A wait of zero and a shutdown can both be ready, and select
+		// picks either.
+		if r.isClosed() {
+			return
+		}
 		s, err := r.open.Open(rec.place, rec.token)
 		if errors.Is(err, ErrTokenRefused) {
 			r.mu.Lock()
 			r.setStateLocked(rec, RecorderOut, nil)
 			r.mu.Unlock()
-			utils.Warn(loginRefusedMessage, "recorder", rec.place, "user_id", rec.userID, "error", err)
+			utils.Warn(loginRefusedMessage, append(rec.pairs(), "error", err)...)
 			return
 		}
 		if err != nil {
@@ -395,15 +399,25 @@ func (r *Recorders) logIn(rec *recorder, wait time.Duration) {
 			continue
 		}
 		r.mu.Lock()
-		if r.shutDown {
+		if r.isClosed() {
 			r.mu.Unlock()
 			r.logOut(rec, s)
 			return
 		}
 		r.setStateLocked(rec, RecorderOnline, s)
 		r.mu.Unlock()
-		utils.Info("Recorder connected", "recorder", rec.place, "user_id", rec.userID)
+		utils.Info("Recorder connected", rec.pairs()...)
 		return
+	}
+}
+
+// isClosed reports whether shutdown has come.
+func (r *Recorders) isClosed() bool {
+	select {
+	case <-r.closed:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -457,7 +471,7 @@ func (r *Recorders) logOut(rec *recorder, s GatewaySession) {
 		defer close(done)
 		defer utils.RecoverPanic("recorder-logout", "recorder", rec.place)
 		if err := s.Close(); err != nil {
-			utils.Warn("Recorder did not close cleanly", "recorder", rec.place, "user_id", rec.userID, "error", err)
+			utils.Warn("Recorder did not close cleanly", append(rec.pairs(), "error", err)...)
 		}
 	}()
 	timer := time.NewTimer(logoutTimeout)
@@ -465,14 +479,20 @@ func (r *Recorders) logOut(rec *recorder, s GatewaySession) {
 	select {
 	case <-done:
 	case <-timer.C:
-		utils.Warn(logoutTimedOutMessage, "recorder", rec.place, "user_id", rec.userID)
+		utils.Warn(logoutTimedOutMessage, rec.pairs()...)
 	}
 }
 
 // loginFailed logs a failed login of the recorder, which tries again after
 // wait. The error goes to the log alone (ADR 0018).
 func (rec *recorder) loginFailed(wait time.Duration, err error) {
-	utils.Warn(loginFailedMessage, "recorder", rec.place, "user_id", rec.userID, "retry_in", wait, "error", err)
+	utils.Warn(loginFailedMessage, append(rec.pairs(), "retry_in", wait, "error", err)...)
+}
+
+// pairs names the recorder in a log line: its place in RECORDER_TOKENS and
+// its user ID, never its token.
+func (rec *recorder) pairs() []any {
+	return []any{"recorder", rec.place, "user_id", rec.userID}
 }
 
 // UserIDs returns the user ID of every recorder that has one, in
@@ -536,25 +556,21 @@ func (r *Recorders) Join(ctx context.Context, recorderID, guildID, channelID str
 	}
 }
 
-// Close stops every recorder logging in, and logs out every recorder that
-// is online, at shutdown.
+// Close stops every recorder logging in, and logs out every login that is
+// up, at shutdown. It waits for the logouts together, each no longer than
+// logoutTimeout.
 func (r *Recorders) Close() {
 	r.mu.Lock()
-	if !r.shutDown {
-		r.shutDown = true
+	if !r.isClosed() {
 		close(r.closed)
 	}
-	var sessions []GatewaySession
+	var wg sync.WaitGroup
 	for _, rec := range r.recorders {
-		if rec.session != nil {
-			sessions = append(sessions, rec.session)
+		if s := rec.session; s != nil {
 			rec.session = nil
+			wg.Go(func() { r.logOut(rec, s) })
 		}
 	}
 	r.mu.Unlock()
-	for _, s := range sessions {
-		if err := s.Close(); err != nil {
-			utils.Warn("Recorder did not close cleanly", "user_id", s.UserID(), "error", err)
-		}
-	}
+	wg.Wait()
 }
