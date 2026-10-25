@@ -1471,6 +1471,9 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 			t.Fatalf("StartRecording: %v", err)
 		}
 		running.ID = started.ID
+		if err := s.AddWingedAviator(live, "guild-1", "user-1"); err != nil {
+			t.Fatalf("AddWingedAviator: %v", err)
+		}
 
 		done, cancel := context.WithCancel(live)
 		cancel()
@@ -1516,6 +1519,13 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 			"ListRecordings":  func() error { _, err := s.ListRecordings(done, "guild-1"); return err },
 			"SetRecordingMix": func() error { return s.SetRecordingMix(done, started.ID, MixReady) },
 			"DeleteRecording": func() error { return s.DeleteRecording(done, started.ID) },
+			"IsWingedAviator": func() error { _, err := s.IsWingedAviator(done, "guild-1", "user-1"); return err },
+			"ListWingedAviators": func() error {
+				_, err := s.ListWingedAviators(done, "guild-1")
+				return err
+			},
+			"AddWingedAviator":    func() error { return s.AddWingedAviator(done, "guild-1", "user-2") },
+			"RemoveWingedAviator": func() error { return s.RemoveWingedAviator(done, "guild-1", "user-1") },
 		}
 		for name, call := range calls {
 			if err := call(); !errors.Is(err, context.Canceled) {
@@ -1554,6 +1564,9 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 		}
 		if got := listRecordings(t, s); len(got) != 1 || !sameRecording(got[0], running) {
 			t.Errorf("recordings after the done calls = %+v, want the seeded running one alone, %+v", got, running)
+		}
+		if got := wingedAviators(t, s, "guild-1"); !slices.Equal(got, []string{"user-1"}) {
+			t.Errorf("winged aviators after the done calls = %v, want [user-1] as seeded", got)
 		}
 	})
 }
