@@ -293,9 +293,10 @@ func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc, logger 
 		disgovoice.WithUDPConnCreateFunc(droppableUDPConns(c.s.drops)),
 		disgovoice.WithConnGatewayCreateFunc(func(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, opts ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
 			g := &renewableGateway{
-				named:   c.namedLast,
-				refused: func(state disgovoice.State, err error) { c.refused(state, err) },
-				steps:   &c.steps,
+				named:        c.namedLast,
+				refused:      func(state disgovoice.State, err error) { c.refused(state, err) },
+				steps:        &c.steps,
+				lastDatagram: func() time.Time { return datagramsOf(c).lastDatagram() },
 			}
 			g.onDrop = c.watchClose(g, onClose)
 			g.build = func() disgovoice.Gateway {
@@ -718,6 +719,9 @@ type renewableGateway struct {
 	// identify state carried.
 	named   func() *gateway.EventVoiceServerUpdate
 	refused func(state disgovoice.State, err error)
+	// lastDatagram is when the last datagram arrived on the call's UDP
+	// connection, zero before any has.
+	lastDatagram func() time.Time
 
 	mu sync.Mutex
 	gw disgovoice.Gateway
@@ -959,22 +963,58 @@ func (g *renewableGateway) unwatchLocked() {
 
 // wentSilent drops gw, whose voice server's heartbeat answer is overdue,
 // unless watch has given way to a later one or the gateway to a new one.
-// The recorder couldn't hear the call from the server's last message on.
-// The close is on purpose, so disgo's close handler hears nothing of it,
-// and the gateway's own takes the drop as it takes a close.
+// The recorder couldn't hear the call from the server's last message on,
+// or from the last datagram when one came after it: audio can go on
+// arriving on the UDP socket after the voice gateway goes quiet.
 func (g *renewableGateway) wentSilent(gw disgovoice.Gateway, watch int) {
 	defer utils.RecoverPanic("recorder-voice-silence")
+	lastDatagram := g.lastDatagram()
 	g.mu.Lock()
 	if gw != g.gw || watch != g.watches || !g.connected {
 		g.mu.Unlock()
 		return
 	}
 	w := g.heartbeat
-	g.disconnectLocked(gapStart{at: w.heard, cause: GapHeartbeatOverdue, interval: w.interval, sinceAnswer: w.heard.Sub(w.answered)})
+	at := w.heard
+	if lastDatagram.After(at) {
+		at = lastDatagram
+	}
+	g.disconnectLocked(gapStart{at: at, cause: GapHeartbeatOverdue, interval: w.interval, sinceAnswer: at.Sub(w.answered)})
 	g.unwatchLocked()
 	g.mu.Unlock()
-	gw.CloseWithCode(websocket.CloseServiceRestart, "heartbeat answer overdue")
-	g.onDrop(gw, errVoiceServerSilent)
+	g.drop(gw, "heartbeat answer overdue", errVoiceServerSilent)
+}
+
+// errNothingCame is the close a voice server that sent nothing on the
+// recorder's UDP socket for silentAfter reaches the gateway's close handler
+// with.
+var errNothingCame = fmt.Errorf("voice: nothing came from the voice server for %v", silentAfter)
+
+// nothingCame drops the gateway, when it is connected, since nothing has
+// come from the voice server on the UDP socket since last. The recorder
+// couldn't hear the call from then on. The drop runs on a goroutine of its
+// own, so the receiver that asked goes on reading.
+func (g *renewableGateway) nothingCame(last time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.connected {
+		return
+	}
+	g.disconnectLocked(gapStart{at: last, cause: GapVoiceServerSilent})
+	g.unwatchLocked()
+	go func(gw disgovoice.Gateway) {
+		defer utils.RecoverPanic("recorder-voice-media-silence")
+		g.drop(gw, "nothing from the voice server", errNothingCame)
+	}(g.gw)
+}
+
+// drop closes gw, which lost the call, and hands err to the gateway's close
+// handler, which takes the drop as it takes a close: the recorder rejoins.
+// The close is on purpose, so disgo's close handler hears nothing of it. It
+// carries the code disgo's gateway closes with before it reconnects.
+func (g *renewableGateway) drop(gw disgovoice.Gateway, reason string, err error) {
+	gw.CloseWithCode(websocket.CloseServiceRestart, reason)
+	g.onDrop(gw, err)
 }
 
 // described notes a session description on gw, which completes the dial in
@@ -1521,6 +1561,34 @@ func (c callConn) recovery() *recoveryLog {
 		return &rc.steps
 	}
 	return new(recoveryLog)
+}
+
+// datagrams is the connection's UDP connection.
+func (c callConn) datagrams() datagramReader { return datagramsOf(c.Conn) }
+
+// datagramsOf is conn's UDP connection: the recorder's own, and one that
+// never opens on a connection the recorder's connection options didn't
+// build.
+func datagramsOf(conn disgovoice.Conn) datagramReader {
+	if u, ok := conn.UDP().(*udpConn); ok {
+		return u
+	}
+	return unopened{}
+}
+
+// unopened is a UDP connection that never opens.
+type unopened struct{}
+
+func (unopened) readDatagram() (datagram, error) { return datagram{}, errUDPNotOpen }
+func (unopened) lastDatagram() time.Time         { return time.Time{} }
+
+// nothingCame drops the connection, through the gateway the recorder's
+// connection options built, since nothing came from the voice server since
+// last.
+func (c callConn) nothingCame(last time.Time) {
+	if g, ok := c.renewable(); ok {
+		g.nothingCame(last)
+	}
 }
 
 // reconnect opens a fresh voice connection where the call is, through the

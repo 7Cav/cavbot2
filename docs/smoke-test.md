@@ -119,12 +119,23 @@ and the bot log gets one "Smoke hook dropping voice connections" WARN line for
 each recorder, however many times it has logged in. The line names the
 recorder by its place in `RECORDER_TOKENS`. A file that says `silent` drops
 them silently, as a network that stops passing traffic, audio included. The
-recorder hears nothing more, and notices once the voice server has gone its
-heartbeat interval plus 3 s without answering a heartbeat. An empty file or
-any other content breaks the voice gateway connections abruptly, which the
-recorder notices at once. Connections made after the file appears stay up, so
-the recorder can rejoin. Only the file's appearance counts, so remove it
-before the next drop, and before `down`.
+recorder hears nothing more, and notices 3.5 s after the last datagram reached
+it, before its heartbeat check would. An empty file or any other content
+breaks the voice gateway connections abruptly, which the recorder notices at
+once. Connections made after the file appears stay up, so the recorder can
+rejoin. Only the file's appearance counts, so remove it before the next drop,
+and before `down`.
+
+**Cut UDP path.** A recording check that needs the recorder's audio cut off
+while its voice gateway stays up starts the run with `go run ./tools/smoke up
+--env SMOKE_VOICE_UDP_CUT_FILE=/tmp/cavbot2-voice-udp-cut`. Each time that
+file appears, every UDP socket the recorders hold then stops passing traffic
+both ways, and the bot log gets one "Smoke hook cutting voice UDP path" WARN
+line for each recorder. The voice gateway connections stay up, so the voice
+server keeps answering heartbeats. The recorder notices 3.5 s after the last
+datagram reached it, and rejoins on a new socket, which the cut leaves alone.
+Only the file's appearance counts, so remove it before the next cut, and
+before `down`.
 
 **Cav members.** The test guild has none of the rank roles the code holds for
 production, so no test account counts as a Cav member until a panel admin sets

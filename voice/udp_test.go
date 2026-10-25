@@ -49,16 +49,22 @@ func (s *fakeVoiceServer) answerDiscovery(t *testing.T) net.Addr {
 		t.Errorf("IP discovery request = %d bytes %x, %v, want a 74-byte request", n, req[:n], err)
 		return client
 	}
+	if _, err := s.conn.WriteTo(discoveryAnswer(req, client), client); err != nil {
+		t.Errorf("IP discovery response: %v", err)
+	}
+	return client
+}
+
+// discoveryAnswer is the voice server's answer to the IP discovery request
+// req from client.
+func discoveryAnswer(req []byte, client net.Addr) []byte {
 	resp := make([]byte, 74)
 	binary.BigEndian.PutUint16(resp[0:2], 2)
 	binary.BigEndian.PutUint16(resp[2:4], 70)
 	copy(resp[4:8], req[4:8])
 	copy(resp[8:], "127.0.0.1")
 	binary.BigEndian.PutUint16(resp[72:74], uint16(client.(*net.UDPAddr).Port))
-	if _, err := s.conn.WriteTo(resp, client); err != nil {
-		t.Errorf("IP discovery response: %v", err)
-	}
-	return client
+	return resp
 }
 
 // openUDPConn opens a recorder's UDP connection to server, which answers its

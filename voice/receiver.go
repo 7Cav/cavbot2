@@ -24,11 +24,15 @@ import (
 // DAVE encryption off itself as the speaker the SSRC maps to, and holds a
 // frame whose SSRC isn't mapped yet until it is. It also watches DAVE's
 // setup, which Discord can leave unanswered: a setup that stalls reaches
-// Sentry, and the recorder starts it over on a fresh voice connection.
+// Sentry, and the recorder starts it over on a fresh voice connection. And
+// it watches the UDP socket, whose path can die while the voice gateway
+// still answers: once the voice server's receiver reports have started, a
+// socket that goes quiet drops the connection, and the recorder rejoins.
 
 // receiveConn is a disgo voice connection as the receiver reads it.
 type receiveConn interface {
-	UDP() disgovoice.UDPConn
+	// datagrams is the connection's UDP connection.
+	datagrams() datagramReader
 	DAVE() godave.Session
 	UserIDBySSRC(ssrc uint32) snowflake.ID
 	// ChannelID is the call's channel, nil while there is none.
@@ -48,6 +52,19 @@ type receiveConn interface {
 	reconnect(ctx context.Context) error
 	// recovery is the log of the recovery steps the connection takes.
 	recovery() *recoveryLog
+	// nothingCame drops the connection, as the heartbeat check does for an
+	// overdue answer, since nothing has come from the voice server since
+	// last: the connection is lost from then, and the recorder rejoins the
+	// call. It returns at once, and does nothing to a connection that is
+	// lost already.
+	nothingCame(last time.Time)
+}
+
+// datagramReader is a UDP connection that tells of every datagram it reads,
+// as the recorder's own does (readDatagram), and of when the last arrived.
+type datagramReader interface {
+	readDatagram() (datagram, error)
+	lastDatagram() time.Time
 }
 
 const (
@@ -71,7 +88,23 @@ const (
 	stallAfter = 3 * time.Second
 	// reconnectTimeout bounds the open of one fresh voice connection.
 	reconnectTimeout = 5 * time.Second
+	// silentAfter is how long the media watch waits with no datagram at all
+	// before it counts the voice server gone quiet. The voice server sends a
+	// receiver report every second, so a quiet channel never waits this
+	// long.
+	silentAfter = 3500 * time.Millisecond
 )
+
+// mediaNeverArmedMessage is the WARN a connection logs once when its media
+// watch is still unarmed neverArmedAfter after it connected with DAVE ready
+// on its socket. Discord may have stopped sending receiver reports, and the
+// watch can't see a voice server gone quiet.
+const mediaNeverArmedMessage = "Voice media watch never armed"
+
+// neverArmedAfter is how long a connection with DAVE ready may wait for its
+// socket's first receiver report before it warns. The voice server sends
+// one every second.
+const neverArmedAfter = 5 * time.Second
 
 // stallMessage is what Sentry hears when DAVE stalls: the recorder hears
 // nobody in the channel. daveRecoveredMessage is the Info line once it
@@ -103,10 +136,11 @@ type gapStart struct {
 }
 
 // fields are the cause's own fields of the gap that started as s, with
-// namedLast the voice server Discord has named last by now, and held how
-// long DAVE has held frames, or held them last. A call that moved moved to
-// namedLast, unless it is still the one the call left.
-func (s gapStart) fields(namedLast string, held time.Duration) []GapField {
+// namedLast the voice server Discord has named last by now, held how long
+// DAVE has held frames, or held them last, and sinceDatagram how long ago
+// the last datagram came. A call that moved moved to namedLast, unless it is
+// still the one the call left.
+func (s gapStart) fields(namedLast string, held, sinceDatagram time.Duration) []GapField {
 	switch s.cause {
 	case GapVoiceGatewayClosed:
 		return []GapField{{Key: "closed_server", Value: s.server}}
@@ -120,6 +154,8 @@ func (s gapStart) fields(namedLast string, held time.Duration) []GapField {
 		return []GapField{{Key: "moved_from", Value: s.server}, {Key: "moved_to", Value: movedTo}}
 	case GapDAVEStalled:
 		return []GapField{{Key: "held_for", Value: held}}
+	case GapVoiceServerSilent:
+		return []GapField{{Key: "last_datagram", Value: sinceDatagram}}
 	}
 	return nil
 }
@@ -165,6 +201,8 @@ type receiver struct {
 	// a gap or within one. Only the receiver's goroutine touches them.
 	inGap bool
 	told  int
+	// media is the media watch. Only the receiver's goroutine touches it.
+	media mediaWatch
 
 	// mu guards what the gap report reads: gap, the start of the gap the
 	// listener was last told of, gapLoss, the number of the connection's
@@ -175,6 +213,73 @@ type receiver struct {
 	gap                  gapStart
 	gapLoss              int
 	heldSince, heldUntil time.Time
+}
+
+// mediaWatch is the receiver's watch of what arrives on one UDP socket,
+// which catches a voice server gone quiet while the voice gateway still
+// answers. Each reconnect opens a new socket, numbered socket, and the
+// watch starts over on it. armed is whether it watches: from the socket's
+// first receiver report on. A sender report or a member's audio stops when
+// members go quiet or leave, while a receiver report comes every second
+// regardless. fired is whether it has found the voice server quiet.
+//
+// heard is when its clock started: the socket's last datagram, or when
+// reading resumed after DAVE held frames, as what arrived meanwhile waits in
+// the socket unread. ready is when the recorder was first connected on the
+// socket with DAVE ready, zero before, and warned whether the watch has
+// warned it never armed.
+type mediaWatch struct {
+	socket       int
+	armed, fired bool
+	heard        time.Time
+	ready        time.Time
+	warned       bool
+}
+
+// on starts the watch over unarmed when socket is a new one.
+func (w *mediaWatch) on(socket int) {
+	if socket != w.socket {
+		*w = mediaWatch{socket: socket}
+	}
+}
+
+// arrived notes a datagram, whatever it is, which starts the clock over. A
+// receiver report arms the watch.
+func (w *mediaWatch) arrived(d datagram) {
+	w.heard = d.at
+	if d.rtcp == rtcpReceiverReport {
+		w.armed = true
+	}
+}
+
+// resumed starts the clock over at now, once reading resumes.
+func (w *mediaWatch) resumed(now time.Time) { w.heard = now }
+
+// quiet reports whether the armed watch has heard nothing for silentAfter
+// by now, once: the voice server has gone quiet.
+func (w *mediaWatch) quiet(now time.Time) bool {
+	if !w.armed || w.fired || now.Sub(w.heard) < silentAfter {
+		return false
+	}
+	w.fired = true
+	return true
+}
+
+// neverArmed reports, once, whether the watch is still unarmed
+// neverArmedAfter after the recorder was first connected on the socket with
+// DAVE ready. connected is whether it is now.
+func (w *mediaWatch) neverArmed(now time.Time, connected bool) bool {
+	if w.armed || w.warned || !connected {
+		return false
+	}
+	if w.ready.IsZero() {
+		w.ready = now
+	}
+	if now.Sub(w.ready) < neverArmedAfter {
+		return false
+	}
+	w.warned = true
+	return true
 }
 
 // newReceiver builds the receiver of a recorder's connection. It hands
@@ -237,21 +342,62 @@ func (r *receiver) step() {
 	}
 	r.endStall()
 	r.release()
-	p, err := r.conn.UDP().ReadPacket()
+	d, err := r.conn.datagrams().readDatagram()
+	r.media.on(d.socket)
 	switch {
 	case err == nil:
-		r.unreadable = 0
-		r.receive(p)
+		r.arrived(d)
 	case errors.Is(err, os.ErrDeadlineExceeded):
 		// Nothing arrived. The next step looks at the held frames again.
+		r.watchMedia()
 	case errors.Is(err, net.ErrClosed), errors.Is(err, errUDPNotOpen):
 		// A voice reconnect closes the socket, and disgo opens a new one.
 		r.pause(closedPause)
 	default:
-		r.unreadable++
-		if r.unreadable == failureBurst {
-			utils.CaptureError("Voice packets unreadable", err, "recorder", r.recorder, "packets", failureBurst)
-		}
+		r.unreadablePacket(err)
+	}
+	r.watchArming(connected)
+}
+
+// arrived takes in a datagram the UDP connection read: the media watch
+// counts it, whatever it is, and a voice packet in it is handed over.
+func (r *receiver) arrived(d datagram) {
+	r.media.arrived(d)
+	switch {
+	case d.err != nil:
+		r.unreadablePacket(d.err)
+	case d.packet != nil:
+		r.unreadable = 0
+		r.receive(d.packet)
+	}
+}
+
+// unreadablePacket counts a datagram the UDP connection couldn't read.
+// Sentry hears of a burst of them once.
+func (r *receiver) unreadablePacket(err error) {
+	r.unreadable++
+	if r.unreadable == failureBurst {
+		utils.CaptureError("Voice packets unreadable", err, "recorder", r.recorder, "packets", failureBurst)
+	}
+}
+
+// watchArming warns once when the socket's media watch is still unarmed
+// neverArmedAfter after the recorder was first connected on it with DAVE
+// ready, as it is whenever the receiver reads.
+func (r *receiver) watchArming(connected bool) {
+	if r.media.neverArmed(time.Now(), connected) {
+		utils.Warn(mediaNeverArmedMessage, "recorder", r.recorder, "channel_id", channelOf(r.conn), "voice_server", r.conn.server())
+	}
+}
+
+// watchMedia looks at the media watch after a read that came back empty.
+// Once it finds nothing at all from the voice server for silentAfter, it
+// asks for a drop: the voice server has gone quiet. The gap starts at the
+// last datagram, once the connection says it is lost. While another gap
+// runs, the watch asks for nothing, so that gap keeps its cause.
+func (r *receiver) watchMedia() {
+	if !r.inGap && r.media.quiet(time.Now()) {
+		r.conn.nothingCame(r.conn.datagrams().lastDatagram())
 	}
 }
 
@@ -294,6 +440,7 @@ func (r *receiver) report() GapReport {
 		held = time.Since(r.heldSince)
 	}
 	r.mu.Unlock()
+	sinceDatagram := time.Since(r.conn.datagrams().lastDatagram())
 	if _, lost, losses := r.conn.connection(); loss != 0 && losses == loss {
 		gap = lost
 	}
@@ -302,7 +449,7 @@ func (r *receiver) report() GapReport {
 		CloseCode:            closeCode(gap.close),
 		VoiceServer:          namedLast,
 		GatewaySessionOnline: r.conn.sessionOnline(),
-		Fields:               gap.fields(namedLast, held),
+		Fields:               gap.fields(namedLast, held, sinceDatagram),
 	}
 	rep.Steps, rep.EarlierSteps = r.conn.recovery().report(gap.at)
 	if gap.cause == GapVoiceGatewayClosed {
@@ -384,17 +531,20 @@ func (r *receiver) waitOrStartOver() {
 	r.setupSince = time.Now()
 }
 
-// endStall notes DAVE passing frames, which ends any stall. After one, the
-// log says how long the recorder couldn't hear.
+// endStall notes DAVE passing frames, which ends any stall, and starts the
+// media watch's clock over after a hold. After a stall, the log says how
+// long the recorder couldn't hear.
 func (r *receiver) endStall() {
 	if r.stalled {
 		utils.Info(daveRecoveredMessage, "recorder", r.recorder, "channel_id", channelOf(r.conn),
 			"unheard", time.Since(r.unheardSince))
 	}
 	if !r.unheardSince.IsZero() {
+		now := time.Now()
 		r.mu.Lock()
-		r.heldUntil = time.Now()
+		r.heldUntil = now
 		r.mu.Unlock()
+		r.media.resumed(now)
 	}
 	r.unheardSince, r.stalled = time.Time{}, false
 }
