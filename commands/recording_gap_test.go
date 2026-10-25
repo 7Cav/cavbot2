@@ -145,8 +145,8 @@ func wouldPing(content string, am *discordgo.MessageAllowedMentions) []string {
 // </name:id> or </name subcommand:id>, with any ID, an empty one included.
 var discordCommandMention = regexp.MustCompile(`</([^:<>]+):([^>]*)>`)
 
-// commandMentions is each slash command content mentions, as "name:id", in
-// order.
+// commandMentions lists the slash commands content mentions, each as
+// "name:id", in order.
 func commandMentions(content string) []string {
 	var out []string
 	for _, m := range discordCommandMention.FindAllStringSubmatch(content, -1) {
@@ -212,8 +212,8 @@ func TestRecordingCutShortByAGapPingsTheStarterInAReplyToTheNotice(t *testing.T)
 }
 
 // Before the startup sync has registered the commands, the runtime doesn't
-// know /record's ID, so the ping names /record start as plain text, which
-// still tells the starter what to run, and mentions no command.
+// know /record's ID. The ping then names /record start as plain text and
+// mentions no command, so it still tells the starter what to run.
 func TestRecordingCutShortPingBeforeTheCommandsRegisterNamesRecordStartPlain(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 	sc.startIn(t, recStarter, recordChannel)

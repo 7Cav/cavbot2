@@ -208,9 +208,9 @@ func (r *RecordingRuntime) setRecordCommandID(id string) {
 	r.recordCommandID.Store(id)
 }
 
-// recordStart is how the ping names /record start: Discord's command
-// mention once the runtime knows /record's ID, which fills the starter's
-// chat box when clicked, and plain text before then.
+// recordStart is how the ping names /record start. Once the runtime knows
+// /record's ID it is Discord's command mention, which fills the starter's
+// chat box when clicked. Before then it is plain text.
 func (r *RecordingRuntime) recordStart() string {
 	if id, _ := r.recordCommandID.Load().(string); id != "" {
 		return "</" + recordCommandName + " start:" + id + ">"
