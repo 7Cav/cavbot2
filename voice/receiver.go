@@ -88,10 +88,12 @@ type gapStart struct {
 	at    time.Time
 	cause GapCause
 	// close is the voice gateway close or failed read that started the
-	// gap, nil when neither did. server is the voice server the gateway
-	// last opened at.
-	close  error
-	server string
+	// gap, nil when neither did, and closedBy the disgo gateway whose close
+	// handler handed it over. server is the voice server the gateway last
+	// opened at.
+	close    error
+	closedBy disgovoice.Gateway
+	server   string
 	// interval is the heartbeat interval the voice server's Hello named,
 	// and sinceAnswer how long before the gap's start the server last
 	// answered a heartbeat, for a heartbeat answer overdue.
@@ -163,10 +165,13 @@ type receiver struct {
 	told  int
 
 	// mu guards what the gap report reads: gap, the start of the gap the
-	// listener was last told of, and heldSince and heldUntil, when DAVE
-	// last started holding frames and stopped, zero while it holds them.
+	// listener was last told of, gapLoss, the number of the connection's
+	// loss that started it, zero for a DAVE stall, and heldSince and
+	// heldUntil, when DAVE last started holding frames and stopped, zero
+	// while it holds them.
 	mu                   sync.Mutex
 	gap                  gapStart
+	gapLoss              int
 	heldSince, heldUntil time.Time
 }
 
@@ -221,7 +226,7 @@ func (r *receiver) step() {
 	if losses != r.told && lost.cause != causeNotKnown {
 		// A loss the receiver hasn't told of, which can be over already.
 		r.told = losses
-		r.startGap(lost)
+		r.startGap(lost, losses)
 	}
 	r.watchGap(connected && !holding)
 	if holding {
@@ -260,27 +265,33 @@ func (r *receiver) watchGap(hearing bool) {
 
 // startGap tells the listener a gap started, as start says, unless one is
 // running already or start names no cause yet, as a dropped connection's
-// can take a lookup to. The gap keeps that cause until it ends.
-func (r *receiver) startGap(start gapStart) {
+// can take a lookup to. The gap keeps that cause until it ends. loss is
+// the number of the connection's loss start is, zero for none.
+func (r *receiver) startGap(start gapStart, loss int) {
 	if r.inGap || start.cause == causeNotKnown {
 		return
 	}
 	r.inGap = true
 	r.mu.Lock()
-	r.gap = start
+	r.gap, r.gapLoss = start, loss
 	r.mu.Unlock()
 	r.listener.GapStarted(start.at, start.cause)
 }
 
 // report is what the recorder knows now of the gap the listener was last
-// told of, the cause's own fields measured now.
+// told of, the cause's own fields measured now. A loss's close can reach
+// the connection after the receiver told of its gap (closeObserved), so a
+// gap whose loss is still the connection's latest reads it afresh.
 func (r *receiver) report() GapReport {
 	r.mu.Lock()
-	gap, held := r.gap, r.heldUntil.Sub(r.heldSince)
+	gap, loss, held := r.gap, r.gapLoss, r.heldUntil.Sub(r.heldSince)
 	if r.heldUntil.IsZero() {
 		held = time.Since(r.heldSince)
 	}
 	r.mu.Unlock()
+	if _, lost, losses := r.conn.connection(); loss != 0 && losses == loss {
+		gap = lost
+	}
 	named := r.conn.server()
 	return GapReport{
 		CloseCode:            closeCode(gap.close),
@@ -356,7 +367,7 @@ func (r *receiver) waitOrStartOver() {
 		return
 	}
 	if !r.stalled {
-		r.startGap(gapStart{at: r.unheardSince, cause: GapDAVEStalled})
+		r.startGap(gapStart{at: r.unheardSince, cause: GapDAVEStalled}, 0)
 		r.stalled = true
 		utils.CaptureError(stallMessage, errDAVEStalled, "recorder", r.recorder, "channel_id", channelOf(r.conn))
 	}

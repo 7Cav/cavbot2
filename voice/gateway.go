@@ -651,13 +651,17 @@ type observedClose struct {
 	err error
 }
 
-// closeObserved notes the close or failed read disgo's gateway gw saw. disgo
-// hands it over here before the reconnect whose refused dial reaches the
-// close handler.
+// closeObserved notes the close or failed read disgo's gateway gw saw.
+// disgo starts its observer before the reconnect whose refused dial reaches
+// the close handler, and either can run first. A loss gw's close handler
+// handed over already as the refused resume takes err in its place.
 func (g *renewableGateway) closeObserved(gw disgovoice.Gateway, err error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.observed = observedClose{gw: gw, err: err}
+	if g.loss.closedBy == gw && errors.Is(g.loss.close, errResumeRefused) {
+		g.loss.close = err
+	}
 }
 
 // heartbeatWatch is what the recorder knows of a voice server's heartbeat on
@@ -734,7 +738,7 @@ func (g *renewableGateway) lost(gw disgovoice.Gateway, at time.Time, cause GapCa
 	if errors.Is(close, errResumeRefused) && g.observed.gw == gw {
 		close = g.observed.err
 	}
-	g.disconnectLocked(gapStart{at: at, cause: cause, close: close})
+	g.disconnectLocked(gapStart{at: at, cause: cause, close: close, closedBy: gw})
 	return g.losses, true
 }
 
