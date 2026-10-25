@@ -621,10 +621,11 @@ type renewableGateway struct {
 	describedDial chan struct{}
 	// connected is whether the gateway is connected in the call, at the
 	// voice server Discord named last: the session description that
-	// completes a connection arrived after its last dial started. lostAt is
-	// when it last stopped being connected, zero before it ever was.
+	// completes a connection arrived after its last dial started. loss is
+	// when and why it last stopped being connected, zero before it ever
+	// was.
 	connected bool
-	lostAt    time.Time
+	loss      gapStart
 
 	// onDrop is the close handler of every gateway built, which a voice
 	// server gone silent reaches as a close.
@@ -676,27 +677,38 @@ func (g *renewableGateway) renew() {
 // holds mu.
 func (g *renewableGateway) renewLocked() {
 	g.gw = g.build()
-	g.disconnectLocked(time.Now())
+	g.disconnectLocked(time.Now(), GapVoiceGatewayClosed)
 	g.unwatchLocked()
 }
 
 // lost notes that the recorder lost its connection to the call at at, when
-// gw is the gateway it connects through, and reports whether it is.
+// gw is the gateway it connects through, and reports whether it is. The
+// loss has no cause until lostFor names it.
 func (g *renewableGateway) lost(gw disgovoice.Gateway, at time.Time) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if gw != g.gw {
 		return false
 	}
-	g.disconnectLocked(at)
+	g.disconnectLocked(at, "")
 	return true
 }
 
-// disconnectLocked notes the gateway not connected, from at when it was.
-// Caller holds mu.
-func (g *renewableGateway) disconnectLocked(at time.Time) {
+// lostFor names cause as the cause of the loss lost noted on gw, unless the
+// loss has one already or gw has given way to a new gateway.
+func (g *renewableGateway) lostFor(gw disgovoice.Gateway, cause GapCause) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if gw == g.gw && !g.connected && g.loss.cause == "" {
+		g.loss.cause = cause
+	}
+}
+
+// disconnectLocked notes the gateway not connected, from at when it was,
+// for cause, which can be empty until it is known. Caller holds mu.
+func (g *renewableGateway) disconnectLocked(at time.Time, cause GapCause) {
 	if g.connected {
-		g.connected, g.lostAt = false, at
+		g.connected, g.loss = false, gapStart{at: at, cause: cause}
 	}
 }
 
@@ -786,7 +798,7 @@ func (g *renewableGateway) wentSilent(gw disgovoice.Gateway, watch int) {
 		g.mu.Unlock()
 		return
 	}
-	g.disconnectLocked(g.heartbeat.heard)
+	g.disconnectLocked(g.heartbeat.heard, GapHeartbeatOverdue)
 	g.unwatchLocked()
 	g.mu.Unlock()
 	gw.CloseWithCode(websocket.CloseServiceRestart, "heartbeat answer overdue")
@@ -807,7 +819,7 @@ func (g *renewableGateway) described(gw disgovoice.Gateway) {
 		g.connected = true
 		g.watchLocked(gw)
 	} else {
-		g.disconnectLocked(time.Now())
+		g.disconnectLocked(time.Now(), GapVoiceGatewayClosed)
 	}
 	if g.describedDial != nil {
 		close(g.describedDial)
@@ -831,12 +843,12 @@ func (g *renewableGateway) server() string {
 }
 
 // connection reports whether the gateway is connected in the call, at the
-// voice server Discord named last, and when it last stopped being
+// voice server Discord named last, and when and why it last stopped being
 // connected, zero before it ever was.
-func (g *renewableGateway) connection() (connected bool, lostAt time.Time) {
+func (g *renewableGateway) connection() (connected bool, lost gapStart) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.connected, g.lostAt
+	return g.connected, g.loss
 }
 
 // openedAt reports whether the gateway last opened at the voice server e
@@ -976,7 +988,7 @@ func (g *renewableGateway) startDial(state disgovoice.State, redial context.Canc
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.state, g.redial = state, redial
-	g.disconnectLocked(time.Now())
+	g.disconnectLocked(time.Now(), GapVoiceGatewayClosed)
 	g.describedDial = make(chan struct{})
 	return g.gw, state, g.describedDial
 }
@@ -1066,13 +1078,19 @@ func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.Close
 	return func(g disgovoice.Gateway, err error) {
 		defer utils.RecoverPanic("recorder-voice-close", "recorder", c.s.userID)
 		// The recorder can't hear the call from the close on, whatever the
-		// lookup below costs. A gateway the recorder left behind can still
+		// lookup below costs, and the lookup says whether the call moved,
+		// which names the gap. A gateway the recorder left behind can still
 		// hand over a close, as when disgo's heartbeat check fires on one
 		// the recorder is closing, and it changes nothing.
 		if !gw.lost(g, time.Now()) {
 			return
 		}
 		moved := closedWith(err, disgovoice.GatewayCloseEventCodeCallTerminated.Code) && c.s.channelExists(gw.channel())
+		cause := GapVoiceGatewayClosed
+		if moved {
+			cause = GapCallMoved
+		}
+		gw.lostFor(g, cause)
 		if !moved && !getsFreshConnection(err) {
 			c.gaveUp.Store(false)
 			onClose(g, err)
@@ -1227,12 +1245,12 @@ func (c callConn) renewable() (*renewableGateway, bool) {
 }
 
 // connection reports whether the recorder's gateway is connected in the
-// call, at the voice server Discord named last, and when it last stopped
-// being connected, zero before it ever was.
-func (c callConn) connection() (connected bool, lostAt time.Time) {
+// call, at the voice server Discord named last, and when and why it last
+// stopped being connected, zero before it ever was.
+func (c callConn) connection() (connected bool, lost gapStart) {
 	g, ok := c.renewable()
 	if !ok {
-		return false, time.Time{}
+		return false, gapStart{}
 	}
 	return g.connection()
 }
