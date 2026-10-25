@@ -1798,6 +1798,15 @@ func TestRecorderNamesTheGapOfAMovedCallWhoseGatewayIsReplacedDuringTheLookup(t 
 		h.api.during = func() {
 			h.s.voice.HandleVoiceStateUpdate(recorderVoiceState(callChannel))
 			h.name("token-3", newEndpoint)
+			// The open's session description has reached disgo once the open
+			// reports, which orders it before the rejoin's open after the
+			// lookup, as the race detector needs. The replace follows within
+			// the second.
+			select {
+			case <-h.opened:
+			case <-time.After(waitFor):
+				h.t.Error("no gateway opened at the server Discord named during the lookup")
+			}
 			time.Sleep(time.Second)
 			h.setReachable(newEndpoint, false)
 		}
