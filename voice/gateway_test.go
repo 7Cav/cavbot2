@@ -1429,7 +1429,8 @@ func TestRecorderIgnoresACloseFromAGatewayItLeftBehind(t *testing.T) {
 }
 
 // A stalled DAVE setup is a gap that has already reached Sentry, as a
-// stall. Past 10 s Sentry hears nothing more of it.
+// stall. Past 10 s the voice adapter sends nothing more of it. The
+// recording runtime's cut short is its own event.
 func TestRecorderReportsAStallPast10sOnlyAsAStall(t *testing.T) {
 	events := recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {

@@ -101,17 +101,17 @@ type gapStart struct {
 }
 
 // fields are the cause's own fields of the gap that started as s, with
-// named the voice server Discord has named last by now, and held how long
-// DAVE has held frames, or held them last. A call that moved moved to
-// named, unless it is still the one the call left.
-func (s gapStart) fields(named string, held time.Duration) []GapField {
+// namedLast the voice server Discord has named last by now, and held how
+// long DAVE has held frames, or held them last. A call that moved moved to
+// namedLast, unless it is still the one the call left.
+func (s gapStart) fields(namedLast string, held time.Duration) []GapField {
 	switch s.cause {
 	case GapVoiceGatewayClosed:
 		return []GapField{{Key: "closed_server", Value: s.server}}
 	case GapHeartbeatOverdue:
 		return []GapField{{Key: "heartbeat_interval", Value: s.interval}, {Key: "last_answer", Value: s.sinceAnswer}}
 	case GapCallMoved:
-		movedTo := named
+		movedTo := namedLast
 		if movedTo == s.server {
 			movedTo = ""
 		}
@@ -292,14 +292,17 @@ func (r *receiver) report() GapReport {
 	if _, lost, losses := r.conn.connection(); loss != 0 && losses == loss {
 		gap = lost
 	}
-	named := r.conn.server()
-	return GapReport{
+	namedLast := r.conn.server()
+	rep := GapReport{
 		CloseCode:            closeCode(gap.close),
-		Close:                gap.close,
-		VoiceServer:          named,
+		VoiceServer:          namedLast,
 		GatewaySessionOnline: r.conn.sessionOnline(),
-		Fields:               gap.fields(named, held),
+		Fields:               gap.fields(namedLast, held),
 	}
+	if gap.cause == GapVoiceGatewayClosed {
+		rep.Close = gap.close
+	}
+	return rep
 }
 
 // closeCodes names each close code a voice gateway closes with by its

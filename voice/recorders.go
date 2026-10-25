@@ -50,8 +50,9 @@ type GapReport struct {
 	// gap, CloseCodeNone for a read of the voice gateway that failed, and
 	// empty when the gap started some other way.
 	CloseCode string
-	// Close is that close or failed read, nil when the gap started some
-	// other way. Its data goes to the log and Sentry alone (ADR 0018).
+	// Close is that close or failed read when the cause is
+	// GapVoiceGatewayClosed, one of that cause's own fields, and nil
+	// otherwise. Its data goes to the log and Sentry alone (ADR 0018).
 	Close error
 	// VoiceServer is the voice server Discord named last for the call,
 	// empty before it named one.
@@ -113,15 +114,17 @@ const (
 	GapServerDeafened GapCause = "server_deafened"
 )
 
+// cutShortOpening opens the error of every cut short, so the cut-short
+// issues sort together in Sentry.
+const cutShortOpening = "voice: recording cut short: "
+
 // cutShortErrors is the error each cause's cut short reaches Sentry with.
-// Each opens with "voice: recording cut short:", so the cut-short issues
-// sort together.
 var cutShortErrors = map[GapCause]error{
-	GapVoiceGatewayClosed: errors.New("voice: recording cut short: the voice gateway closed"),
-	GapHeartbeatOverdue:   errors.New("voice: recording cut short: the voice server stopped answering heartbeats"),
-	GapCallMoved:          errors.New("voice: recording cut short: the call moved to another voice server"),
-	GapDAVEStalled:        errors.New("voice: recording cut short: the DAVE setup stalled"),
-	GapServerDeafened:     errors.New("voice: recording cut short: the recorder was server-deafened"),
+	GapVoiceGatewayClosed: errors.New(cutShortOpening + "the voice gateway closed"),
+	GapHeartbeatOverdue:   errors.New(cutShortOpening + "the voice server stopped answering heartbeats"),
+	GapCallMoved:          errors.New(cutShortOpening + "the call moved to another voice server"),
+	GapDAVEStalled:        errors.New(cutShortOpening + "the DAVE setup stalled"),
+	GapServerDeafened:     errors.New(cutShortOpening + "the recorder was server-deafened"),
 }
 
 // CutShortError is the error a recording that a gap of this cause cut short
@@ -130,7 +133,7 @@ func (c GapCause) CutShortError() error {
 	if err, ok := cutShortErrors[c]; ok {
 		return err
 	}
-	return fmt.Errorf("voice: recording cut short: %s", c)
+	return errors.New(cutShortOpening + string(c))
 }
 
 // Frame is one Opus packet a speaker sent, as Discord delivered it, with
