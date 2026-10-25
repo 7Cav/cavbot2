@@ -9,6 +9,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/7cav/cavbot2/utils"
@@ -52,6 +53,9 @@ type udpConn struct {
 	mu        sync.Mutex
 	conn      net.Conn
 	encrypter disgovoice.Encrypter
+	// sockets counts the sockets Open has opened. The one open now is
+	// socket number sockets.
+	sockets int
 	// stopKeepalive ends the keepalive of the socket open now, and
 	// keepaliveDone closes once it has returned.
 	stopKeepalive chan struct{}
@@ -59,6 +63,9 @@ type udpConn struct {
 
 	// buf is the receive buffer. Only the receiver reads.
 	buf []byte
+	// last is when the last datagram arrived, in Unix nanoseconds, zero
+	// before any has.
+	last atomic.Int64
 	// drops, when set, can drop each socket, as the smoke hook does.
 	drops *connDrops
 }
@@ -79,11 +86,12 @@ func droppableUDPConns(drops *connDrops) disgovoice.UDPConnCreateFunc {
 	}
 }
 
-// current is the socket and the transport encrypter in use now.
-func (u *udpConn) current() (net.Conn, disgovoice.Encrypter) {
+// current is the socket and the transport encrypter in use now, and the
+// socket's number.
+func (u *udpConn) current() (net.Conn, disgovoice.Encrypter, int) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return u.conn, u.encrypter
+	return u.conn, u.encrypter, u.sockets
 }
 
 // Open dials the voice server, runs IP discovery (Discord's voice docs, "IP
@@ -114,6 +122,7 @@ func (u *udpConn) Open(ctx context.Context, ip string, port int, ssrc uint32) (s
 		close(u.stopKeepalive)
 	}
 	u.conn, u.stopKeepalive, u.keepaliveDone = conn, stop, done
+	u.sockets++
 	u.mu.Unlock()
 	go keepalive(conn, stop, done)
 	return addr, ourPort, nil
@@ -179,30 +188,84 @@ func (u *udpConn) SetSecretKey(mode disgovoice.EncryptionMode, key []byte) error
 	return nil
 }
 
-// ReadPacket reads the next voice packet, with the transport encryption,
-// the header extension and any RTP padding off and DAVE's encryption still
-// on. It waits at most udpReadWait, then returns os.ErrDeadlineExceeded.
-// Before Open and SetSecretKey it returns errUDPNotOpen, and after Close
-// net.ErrClosed. The payload is the caller's to keep.
-func (u *udpConn) ReadPacket() (*disgovoice.Packet, error) {
-	conn, enc := u.current()
+// datagram is one datagram the UDP connection read: the socket it arrived
+// on, counted from 1 by Open, and when it arrived. rtcp is its RTCP packet
+// type when it is RTCP, zero otherwise. packet is the voice packet it
+// carried, nil when it carried none, and err why it couldn't be read, nil
+// when it could.
+type datagram struct {
+	socket int
+	at     time.Time
+	rtcp   byte
+	packet *disgovoice.Packet
+	err    error
+}
+
+// readDatagram reads the next datagram, of any kind, noting when it arrived
+// before it takes it apart. A voice packet comes with the transport
+// encryption, the header extension and any RTP padding off and DAVE's
+// encryption still on, its payload the caller's to keep. It waits at most
+// udpReadWait, then returns os.ErrDeadlineExceeded. Before Open and
+// SetSecretKey it returns errUDPNotOpen, and after Close net.ErrClosed. Its
+// datagram names the socket read even when nothing arrived.
+func (u *udpConn) readDatagram() (datagram, error) {
+	conn, enc, socket := u.current()
+	d := datagram{socket: socket}
 	if conn == nil || enc == nil {
-		return nil, errUDPNotOpen
+		return d, errUDPNotOpen
 	}
 	if err := conn.SetReadDeadline(time.Now().Add(udpReadWait)); err != nil {
-		return nil, err
+		return d, err
 	}
+	n, err := conn.Read(u.buf)
+	if err != nil {
+		return d, err
+	}
+	d.at = time.Now()
+	u.last.Store(d.at.UnixNano())
+	b := u.buf[:n]
+	if isRTCP(b) {
+		d.rtcp = b[1]
+		return d, nil
+	}
+	d.packet, _, d.err = readRTP(b, enc)
+	return d, nil
+}
+
+// lastDatagram is when the last datagram arrived on any of the connection's
+// sockets, zero before any has.
+func (u *udpConn) lastDatagram() time.Time {
+	if last := u.last.Load(); last != 0 {
+		return time.Unix(0, last)
+	}
+	return time.Time{}
+}
+
+// rtcpReceiverReport is the RTCP packet type of a receiver report (RFC
+// 3550). The voice server sends one every second, even to a recorder alone
+// in the channel.
+const rtcpReceiverReport = 201
+
+// isRTCP reports whether b is an RTCP datagram: version 2, with a packet
+// type in the range RTCP takes (RFC 5761, section 4). In the rtpsize modes
+// its first 8 bytes are in the clear.
+func isRTCP(b []byte) bool {
+	return len(b) >= 8 && b[0]>>6 == 2 && b[1] >= 192 && b[1] <= 223
+}
+
+// ReadPacket reads the next voice packet, as readDatagram reads it,
+// skipping datagrams that carry none. It waits at most udpReadWait for each
+// datagram.
+func (u *udpConn) ReadPacket() (*disgovoice.Packet, error) {
 	for {
-		n, err := conn.Read(u.buf)
-		if err != nil {
+		d, err := u.readDatagram()
+		switch {
+		case err != nil:
 			return nil, err
-		}
-		p, ok, err := readRTP(u.buf[:n], enc)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			return p, nil
+		case d.err != nil:
+			return nil, d.err
+		case d.packet != nil:
+			return d.packet, nil
 		}
 	}
 }
@@ -288,7 +351,7 @@ func (u *udpConn) Close() error {
 }
 
 func (u *udpConn) LocalAddr() net.Addr {
-	conn, _ := u.current()
+	conn, _, _ := u.current()
 	if conn == nil {
 		return nil
 	}
@@ -296,7 +359,7 @@ func (u *udpConn) LocalAddr() net.Addr {
 }
 
 func (u *udpConn) RemoteAddr() net.Addr {
-	conn, _ := u.current()
+	conn, _, _ := u.current()
 	if conn == nil {
 		return nil
 	}
@@ -304,7 +367,7 @@ func (u *udpConn) RemoteAddr() net.Addr {
 }
 
 func (u *udpConn) SetDeadline(t time.Time) error {
-	conn, _ := u.current()
+	conn, _, _ := u.current()
 	if conn == nil {
 		return errUDPNotOpen
 	}
@@ -312,7 +375,7 @@ func (u *udpConn) SetDeadline(t time.Time) error {
 }
 
 func (u *udpConn) SetReadDeadline(t time.Time) error {
-	conn, _ := u.current()
+	conn, _, _ := u.current()
 	if conn == nil {
 		return errUDPNotOpen
 	}
@@ -320,7 +383,7 @@ func (u *udpConn) SetReadDeadline(t time.Time) error {
 }
 
 func (u *udpConn) SetWriteDeadline(t time.Time) error {
-	conn, _ := u.current()
+	conn, _, _ := u.current()
 	if conn == nil {
 		return errUDPNotOpen
 	}

@@ -297,9 +297,13 @@ type answeringGateway struct {
 	// gateway does, with the session description following it 100 ms
 	// later.
 	describeLate bool
-	pending      chan<- struct{}
-	opens        atomic.Int32
-	holdsConn    atomic.Bool
+	// udpPort, when set, is the port of the voice server's UDP socket on
+	// localhost, which its Ready names. disgo's connection then opens the
+	// recorder's UDP connection there.
+	udpPort   int
+	pending   chan<- struct{}
+	opens     atomic.Int32
+	holdsConn atomic.Bool
 }
 
 // gatewayOpen is one gateway's Open: the state it opened with, and whether
@@ -340,6 +344,9 @@ func (g *answeringGateway) Open(ctx context.Context, state disgovoice.State) err
 		g.holdsConn.Store(false)
 		return ctx.Err()
 	}
+	if g.udpPort != 0 {
+		g.ready()
+	}
 	if g.describeLate {
 		go func() {
 			time.Sleep(100 * time.Millisecond)
@@ -363,6 +370,14 @@ func (g *answeringGateway) describe(state disgovoice.State, identified bool) {
 		DaveProtocolVersion: int(g.daveVersion),
 	})
 	g.opened <- gatewayOpen{gateway: g, state: state, identified: identified}
+}
+
+// ready is the voice server's Ready, naming its UDP socket. disgo's
+// connection opens the recorder's UDP connection there, with IP discovery,
+// before it selects the protocol.
+func (g *answeringGateway) ready() {
+	g.onEvent(g, disgovoice.OpcodeReady, 0, disgovoice.GatewayMessageDataReady{SSRC: 42, IP: "127.0.0.1", Port: g.udpPort,
+		Modes: []disgovoice.EncryptionMode{disgovoice.EncryptionModeAEADAES256GCMRTPSize}})
 }
 
 // nextDialDelay is disgo's wait before its gateway dials again, after it
@@ -438,6 +453,9 @@ type callHarness struct {
 	opened chan gatewayOpen
 	// connected is the gateway the recorder is connected through.
 	connected *answeringGateway
+	// peer, when set, is the voice server's UDP socket, which every gateway
+	// built from then on names in its Ready.
+	peer *voicePeer
 
 	mu      sync.Mutex
 	updates []voiceUpdate
@@ -495,9 +513,13 @@ func (h *callHarness) newGateway(dave godave.Session, onEvent disgovoice.EventHa
 	if h.transportOnly.Load() {
 		version = 0
 	}
-	return &answeringGateway{dave: dave, onEvent: onEvent, onClose: onClose, opened: h.opened, sent: h.sentOp,
+	g := &answeringGateway{dave: dave, onEvent: onEvent, onClose: onClose, opened: h.opened, sent: h.sentOp,
 		answers: h.answersAt, reachable: h.reachable, refusal: h.refusal, daveVersion: version, opening: h.opening,
 		describeLate: h.describeLate.Load(), pending: h.pending}
+	if h.peer != nil {
+		g.udpPort = h.peer.port()
+	}
+	return g
 }
 
 // newLogger stands in for utils.NewLogger, which the recorder's session hands

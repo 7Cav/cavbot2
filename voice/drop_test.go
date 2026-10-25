@@ -2,6 +2,7 @@ package voice
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -307,5 +308,171 @@ func TestRecorderLeavesAndJoinsAgainWhenAVoiceServerRefusesItsHeldToken(t *testi
 
 	if !within(dropped, waitFor, h.leftAndJoinedAgain) {
 		t.Errorf("voice state updates after the 4015 = %v, want a leave and a join after it", h.sent())
+	}
+}
+
+// voicePeer is a voice server's UDP socket on localhost. It answers every
+// IP discovery request, as a voice server answers each socket the recorder
+// opens, and sends what a test asks to the socket that asked last.
+type voicePeer struct {
+	*fakeVoiceServer
+
+	mu      sync.Mutex
+	client  net.Addr
+	counter uint32
+}
+
+func newVoicePeer(t *testing.T) *voicePeer {
+	t.Helper()
+	p := &voicePeer{fakeVoiceServer: newFakeVoiceServer(t)}
+	go p.answerDiscoveries()
+	return p
+}
+
+// answerDiscoveries answers each IP discovery request until the socket
+// closes, and notes who asked. Anything else, such as the recorder's
+// keepalive, it reads and drops.
+func (p *voicePeer) answerDiscoveries() {
+	buf := make([]byte, 1500)
+	for {
+		n, from, err := p.conn.ReadFrom(buf)
+		if err != nil {
+			return
+		}
+		if n != discoverySize || binary.BigEndian.Uint16(buf[0:2]) != 1 {
+			continue
+		}
+		p.mu.Lock()
+		p.client = from
+		p.mu.Unlock()
+		_, _ = p.conn.WriteTo(discoveryAnswer(buf[:n], from), from)
+	}
+}
+
+// sendTo sends b to the socket that asked for IP discovery last.
+func (p *voicePeer) sendTo(t *testing.T, b []byte) {
+	t.Helper()
+	p.mu.Lock()
+	client := p.client
+	p.mu.Unlock()
+	if client == nil {
+		t.Fatal("no socket has asked the voice server for IP discovery")
+	}
+	if _, err := p.conn.WriteTo(b, client); err != nil {
+		t.Fatalf("voice server sending a datagram: %v", err)
+	}
+}
+
+// sendReport sends an RTCP datagram of rtcpType, such as the receiver
+// report the voice server sends every second, its body left out.
+func (p *voicePeer) sendReport(t *testing.T, rtcpType byte) {
+	t.Helper()
+	p.sendTo(t, []byte{0x80, rtcpType, 0x00, 0x01, 0x00, 0x00, 0x00, 0x2A})
+}
+
+// sendFrame sends a voice packet on ssrc carrying payload, encrypted with
+// the all-zero key the scripted gateway's session description names.
+func (p *voicePeer) sendFrame(t *testing.T, ssrc uint32, payload []byte) {
+	t.Helper()
+	p.mu.Lock()
+	p.counter++
+	counter := p.counter
+	p.mu.Unlock()
+	p.sendTo(t, serverPacket(t, make([]byte, 32), ssrc, counter*960, counter, payload))
+}
+
+// answerHeartbeats has the voice server behind gw answer a heartbeat every
+// interval until the test ends, as it does while its voice gateway is up.
+func answerHeartbeats(t *testing.T, gw *answeringGateway, interval time.Duration) {
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				gw.answerHeartbeat()
+			}
+		}
+	}()
+	t.Cleanup(func() { close(stop); <-done })
+}
+
+// A voice server can stop sending anything on the recorder's UDP socket, as
+// a NAT or a media node dropping the path does, while its voice gateway
+// still answers every heartbeat. Once the server's receiver report has armed
+// the media watch, the recorder notices, starts a gap named for the quiet
+// voice server and rejoins the call. A frame the server sends on the
+// rejoined connection reaches the recording, and the gap ends.
+func TestRecorderRejoinsWhenNothingComesFromItsVoiceServer(t *testing.T) {
+	recordSentry(t)
+	peer := newVoicePeer(t)
+	h := newCallHarness(t)
+	h.transportOnly.Store(true)
+	h.peer = peer
+	frames := newHeard()
+	l := listen(frames.handle)
+	conn := h.record(l)
+	defer conn.Leave(context.Background())
+	h.connected.hello(time.Second)
+	answerHeartbeats(t, h.connected, time.Second)
+
+	peer.sendReport(t, rtcpReceiverReport)
+	quiet := time.Now()
+
+	if !within(quiet, silentAfter+waitFor, func() bool { return len(l.gapStarts()) > 0 }) {
+		t.Fatalf("gap events after the voice server went quiet = %v, want a gap started", l.gapEvents())
+	}
+	if got := l.gapCauses(); got[0] != GapVoiceServerSilent {
+		t.Errorf("gap cause = %s, want %s", got[0], GapVoiceServerSilent)
+	}
+	h.waitOpen().gateway.speaking()
+	peer.sendFrame(t, 7, []byte("back"))
+	if f := frames.next(t); f.UserID != "400" || string(f.Opus) != "back" {
+		t.Errorf("frame handed over after the rejoin = %+v (%q), want %q from 400", f, f.Opus, "back")
+	}
+	if !within(time.Now(), waitFor, func() bool { return slices.Equal(l.gapEvents(), []string{gapStarted, gapEnded}) }) {
+		t.Errorf("gap events after the rejoin = %v, want the gap started and ended", l.gapEvents())
+	}
+}
+
+// A voice gateway can go quiet, heartbeat answers and all, while datagrams
+// still arrive on the recorder's UDP socket, and the recorder hears the call
+// until the last of them. The heartbeat check finds the answer overdue
+// later, and the gap starts at the last datagram, not at the last websocket
+// message. Here the datagrams stop 1.5 s after the websocket goes quiet.
+// They are sender reports, which leave the media watch unarmed.
+func TestRecorderDatesAHeartbeatGapAtItsLastDatagram(t *testing.T) {
+	recordSentry(t)
+	peer := newVoicePeer(t)
+	h := newCallHarness(t)
+	h.transportOnly.Store(true)
+	h.peer = peer
+	l := listen(nil)
+	conn := h.record(l)
+	defer conn.Leave(context.Background())
+	const interval = 500 * time.Millisecond
+	h.connected.hello(interval)
+	h.connected.answerHeartbeat()
+	quiet := time.Now()
+
+	var last time.Time
+	for time.Since(quiet) < 1500*time.Millisecond {
+		peer.sendReport(t, rtcpSenderReport)
+		last = time.Now()
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if !within(quiet, interval+heartbeatMargin+waitFor, func() bool { return len(l.gapStarts()) > 0 }) {
+		t.Fatalf("gap events after the voice gateway went quiet = %v, want a gap started", l.gapEvents())
+	}
+	if got := l.gapCauses(); got[0] != GapHeartbeatOverdue {
+		t.Errorf("gap cause = %s, want %s", got[0], GapHeartbeatOverdue)
+	}
+	if d := l.gapStarts()[0].Sub(last); d.Abs() > 250*time.Millisecond {
+		t.Errorf("gap started %v after the last datagram, want at it", d)
 	}
 }

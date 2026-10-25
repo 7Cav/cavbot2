@@ -38,9 +38,10 @@ const testChannel = "200"
 
 // fakeReceiveConn is a voice connection as the receiver reads it, its DAVE
 // session the fake one unless a case gives it another. reconnects is when
-// the receiver asked for each fresh connection. down is whether the
-// connection is lost, as lost says, until it comes back, and losses counts
-// the drops.
+// the receiver asked for each fresh connection, and quietDrops when it asked
+// for each drop because nothing came from the voice server. down is whether
+// the connection is lost, as lost says, until it comes back, and losses
+// counts the drops.
 type fakeReceiveConn struct {
 	udp  *fakeVoiceUDP
 	dave godave.Session
@@ -48,6 +49,7 @@ type fakeReceiveConn struct {
 	mu         sync.Mutex
 	users      map[uint32]snowflake.ID
 	reconnects []time.Time
+	quietDrops []time.Time
 	down       bool
 	lost       gapStart
 	losses     int
@@ -55,15 +57,17 @@ type fakeReceiveConn struct {
 }
 
 func newFakeReceiveConn() *fakeReceiveConn {
+	udp := &fakeVoiceUDP{reads: make(chan udpRead, 64)}
+	udp.socket.Store(1)
 	return &fakeReceiveConn{
-		udp:   &fakeVoiceUDP{reads: make(chan udpRead, 64)},
+		udp:   udp,
 		dave:  &fakeDAVE{},
 		users: make(map[uint32]snowflake.ID),
 	}
 }
 
-func (c *fakeReceiveConn) UDP() disgovoice.UDPConn { return c.udp }
-func (c *fakeReceiveConn) DAVE() godave.Session    { return c.dave }
+func (c *fakeReceiveConn) datagrams() datagramReader { return c.udp }
+func (c *fakeReceiveConn) DAVE() godave.Session      { return c.dave }
 
 // holdFrames has the fake DAVE session hold frames, as one whose setup
 // hasn't finished does, or stop holding them.
@@ -104,6 +108,27 @@ func (c *fakeReceiveConn) restore() {
 	c.down = false
 }
 
+// nothingCame loses the connection, as the recorder's gateway does when the
+// receiver asks for a drop because nothing came from the voice server since
+// last, unless it is lost already. The fake notes when the receiver asked.
+func (c *fakeReceiveConn) nothingCame(last time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.quietDrops = append(c.quietDrops, time.Now())
+	if !c.down {
+		c.down, c.lost = true, gapStart{at: last, cause: GapVoiceServerSilent}
+		c.losses++
+	}
+}
+
+// quietDropTimes is when the receiver asked for each drop because nothing
+// came from the voice server.
+func (c *fakeReceiveConn) quietDropTimes() []time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.quietDrops)
+}
+
 func (c *fakeReceiveConn) server() string { return "c-dfw-1.discord.media:443" }
 
 func (c *fakeReceiveConn) sessionOnline() bool { return true }
@@ -140,28 +165,46 @@ func (c *fakeReceiveConn) sendUnreadable() {
 	c.udp.reads <- udpRead{err: errors.New("transport decrypt: cipher: message authentication failed")}
 }
 
-// udpRead is what one read of the UDP connection returns.
+// sendReport queues an RTCP datagram of rtcpType, such as the receiver
+// report the voice server sends every second.
+func (c *fakeReceiveConn) sendReport(rtcpType byte) {
+	c.udp.reads <- udpRead{rtcp: rtcpType}
+}
+
+// rtcpSenderReport is the RTCP packet type of a sender report (RFC 3550),
+// which the voice server sends for a member's audio.
+const rtcpSenderReport = 200
+
+// newSocket has the UDP connection open a new socket, as every reconnect
+// does.
+func (c *fakeReceiveConn) newSocket() { c.udp.socket.Add(1) }
+
+// udpRead is the datagram one read of the UDP connection returns: a voice
+// packet, an RTCP datagram of type rtcp, or one it couldn't read.
 type udpRead struct {
-	p   *disgovoice.Packet
-	err error
+	p    *disgovoice.Packet
+	rtcp byte
+	err  error
 }
 
 // fakeVoiceUDP is the UDP connection: each read returns the next queued
-// result, or a read timeout when none is waiting, as the adapter's own
-// connection does. taken counts the queued results read.
+// datagram, arriving as it is read, or a read timeout when none is waiting,
+// as the adapter's own connection does. socket is the socket open now, and
+// taken counts the queued datagrams read.
 type fakeVoiceUDP struct {
-	disgovoice.UDPConn
-	reads chan udpRead
-	taken atomic.Int32
+	reads  chan udpRead
+	socket atomic.Int32
+	taken  atomic.Int32
 }
 
-func (u *fakeVoiceUDP) ReadPacket() (*disgovoice.Packet, error) {
+func (u *fakeVoiceUDP) readDatagram() (datagram, error) {
+	socket := int(u.socket.Load())
 	select {
 	case r := <-u.reads:
 		u.taken.Add(1)
-		return r.p, r.err
+		return datagram{socket: socket, at: time.Now(), rtcp: r.rtcp, packet: r.p, err: r.err}, nil
 	case <-time.After(5 * time.Millisecond):
-		return nil, os.ErrDeadlineExceeded
+		return datagram{socket: socket}, os.ErrDeadlineExceeded
 	}
 }
 
@@ -667,6 +710,229 @@ func TestReceiverNeverCountsATransportOnlyCallAStall(t *testing.T) {
 		}
 		if n := len(events.Events()); n != 0 {
 			t.Errorf("Sentry events = %d, want none in a transport-only call", n)
+		}
+	})
+}
+
+// A voice server whose UDP path dies while its websocket stays up sends the
+// recorder nothing more. Once a receiver report has armed the media watch,
+// silentAfter with no datagram at all starts a gap named for the quiet
+// voice server, dated at the last datagram, and the receiver asks for a
+// drop, which rejoins the call. The gap's report gives how long before it
+// was read the last datagram came.
+func TestReceiverStartsAGapWhenNothingComesFromTheVoiceServer(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		conn.mapSSRC(testSpeakerSSRC, testSpeaker)
+		l := listen(nil)
+		r := startListening(t, conn, l)
+
+		conn.sendReport(rtcpReceiverReport)
+		time.Sleep(time.Second)
+		last := time.Now()
+		conn.send(testSpeakerSSRC, 1000, sealFor(testSpeaker, "last words"))
+		time.Sleep(silentAfter + time.Second)
+		synctest.Wait()
+
+		causes, starts := l.gapCauses(), l.gapStarts()
+		if len(causes) != 1 || causes[0] != GapVoiceServerSilent {
+			t.Fatalf("gap causes = %v, want one %s", causes, GapVoiceServerSilent)
+		}
+		if !starts[0].Equal(last) {
+			t.Errorf("gap started %v after the last datagram, want at it", starts[0].Sub(last))
+		}
+		if n := len(conn.quietDropTimes()); n != 1 {
+			t.Errorf("drops asked for = %d, want 1", n)
+		}
+		got, _ := reportField(r.report(), "last_datagram")
+		if want := time.Since(last); got != want {
+			t.Errorf("gap report's last_datagram = %v, want %v, how long ago the last datagram came", got, want)
+		}
+	})
+}
+
+// Only a receiver report arms the media watch. The voice server stops
+// sending a sender report, and a member's audio stops, once members go quiet
+// or leave, so neither says the path stays up. Here a sender report and a
+// member's audio arrive, then 10 s of nothing: the watch never armed, so no
+// gap starts and no drop is asked for.
+func TestReceiverMediaWatchArmsOnlyAtAReceiverReport(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		conn.mapSSRC(testSpeakerSSRC, testSpeaker)
+		h := newHeard()
+		l := listen(h.handle)
+		startListening(t, conn, l)
+
+		conn.sendReport(rtcpSenderReport)
+		conn.send(testSpeakerSSRC, 1000, sealFor(testSpeaker, "words"))
+		h.expectSpeaker(t, "words")
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+
+		if got := l.gapEvents(); len(got) != 0 {
+			t.Errorf("gap events = %v, want none from a watch no receiver report armed", got)
+		}
+		if n := len(conn.quietDropTimes()); n != 0 {
+			t.Errorf("drops asked for = %d, want none", n)
+		}
+	})
+}
+
+// Every reconnect opens a new UDP socket, and the media watch starts over
+// unarmed on it: a receiver report on the old socket says nothing of the
+// new one's path. Here a receiver report arms the watch on one socket, the
+// next socket gets only a member's audio, then 10 s of nothing: no gap
+// starts and no drop is asked for.
+func TestReceiverMediaWatchStartsUnarmedOnEachNewSocket(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		conn.mapSSRC(testSpeakerSSRC, testSpeaker)
+		h := newHeard()
+		l := listen(h.handle)
+		startListening(t, conn, l)
+
+		conn.sendReport(rtcpReceiverReport)
+		time.Sleep(time.Second)
+		conn.newSocket()
+		conn.send(testSpeakerSSRC, 1000, sealFor(testSpeaker, "words"))
+		h.expectSpeaker(t, "words")
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+
+		if got := l.gapEvents(); len(got) != 0 {
+			t.Errorf("gap events = %v, want none from a new socket no receiver report armed", got)
+		}
+		if n := len(conn.quietDropTimes()); n != 0 {
+			t.Errorf("drops asked for = %d, want none", n)
+		}
+	})
+}
+
+// A quiet channel is no quiet voice server: with nobody talking, the voice
+// server still sends a receiver report every second, which keeps the media
+// watch fed. 30 s of reports and nothing else start no gap and ask for no
+// drop.
+func TestReceiverMediaWatchLeavesAQuietChannelAlone(t *testing.T) {
+	recordSentry(t)
+	logs := captureLogs(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		l := listen(nil)
+		startListening(t, conn, l)
+
+		for range 30 {
+			conn.sendReport(rtcpReceiverReport)
+			time.Sleep(time.Second)
+		}
+		synctest.Wait()
+
+		if got := l.gapEvents(); len(got) != 0 {
+			t.Errorf("gap events = %v, want none in a quiet channel", got)
+		}
+		if n := len(conn.quietDropTimes()); n != 0 {
+			t.Errorf("drops asked for = %d, want none", n)
+		}
+		if n := logs.warnings(mediaNeverArmedMessage); n != 0 {
+			t.Errorf("%q WARNs = %d, want none once a receiver report armed the watch", mediaNeverArmedMessage, n)
+		}
+	})
+}
+
+// While DAVE holds frames the receiver leaves the socket unread, and what
+// arrives waits there, so the media watch stands still and starts its clock
+// over once reading resumes. Here DAVE holds frames for 5 s, long enough to
+// stall, from 1 s after the last receiver report. The frame that comes just
+// after the hold reaches the recording, the stall's gap ends, and no gap
+// starts for a quiet voice server.
+func TestReceiverMediaWatchStandsStillWhileDAVEHoldsFrames(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		conn.mapSSRC(testSpeakerSSRC, testSpeaker)
+		h := newHeard()
+		l := listen(h.handle)
+		startListening(t, conn, l)
+
+		conn.sendReport(rtcpReceiverReport)
+		time.Sleep(time.Second)
+		conn.holdFrames(true)
+		time.Sleep(5 * time.Second)
+		conn.holdFrames(false)
+		time.Sleep(500 * time.Millisecond)
+		conn.send(testSpeakerSSRC, 1000, sealFor(testSpeaker, "after the hold"))
+		h.expectSpeaker(t, "after the hold")
+		synctest.Wait()
+
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted, gapEnded}) {
+			t.Errorf("gap events = %v, want the stall's gap started and ended", got)
+		}
+		if got := l.gapCauses(); slices.Contains(got, GapVoiceServerSilent) {
+			t.Errorf("gap causes = %v, want no %s", got, GapVoiceServerSilent)
+		}
+		if n := len(conn.quietDropTimes()); n != 0 {
+			t.Errorf("drops asked for = %d, want none", n)
+		}
+	})
+}
+
+// The media watch starts no gap while another runs, so the gap keeps the
+// cause that started it. Here the voice gateway closes, and while the
+// recorder rejoins, the new socket gets a receiver report before the
+// connection completes, then nothing for 10 s: one gap, named for the
+// close, and no drop asked for.
+func TestReceiverMediaWatchStartsNoGapWhileAnotherRuns(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		l := listen(nil)
+		startListening(t, conn, l)
+		conn.sendReport(rtcpReceiverReport)
+		time.Sleep(time.Second)
+
+		conn.drop(GapVoiceGatewayClosed)
+		conn.newSocket()
+		conn.sendReport(rtcpReceiverReport)
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+
+		if got := l.gapCauses(); !slices.Equal(got, []GapCause{GapVoiceGatewayClosed}) {
+			t.Errorf("gap causes = %v, want one %s", got, GapVoiceGatewayClosed)
+		}
+		if n := len(conn.quietDropTimes()); n != 0 {
+			t.Errorf("drops asked for = %d, want none while a gap runs", n)
+		}
+	})
+}
+
+// Discord could stop sending receiver reports, and the media watch would go
+// blind. A connection still unarmed 5 s after it is connected with DAVE
+// ready logs one WARN naming the recorder, the channel and the voice
+// server. Here a member talks for 11 s with no receiver report.
+func TestReceiverWarnsOnceWhenTheMediaWatchNeverArms(t *testing.T) {
+	recordSentry(t)
+	logs := captureLogs(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		conn.mapSSRC(testSpeakerSSRC, testSpeaker)
+		startListening(t, conn, listen(nil))
+
+		for i := range 11 {
+			conn.send(testSpeakerSSRC, uint32(i*48000), sealFor(testSpeaker, "words"))
+			time.Sleep(time.Second)
+		}
+		synctest.Wait()
+
+		if n := logs.warnings(mediaNeverArmedMessage); n != 1 {
+			t.Fatalf("%q WARNs = %d, want 1", mediaNeverArmedMessage, n)
+		}
+		for key, want := range map[string]string{"recorder": "recorder-1", "channel_id": testChannel, "voice_server": conn.server()} {
+			if n := logs.linesSaying(slog.LevelWarn, mediaNeverArmedMessage, key, want); n != 1 {
+				t.Errorf("%q WARN with %s=%s: %d, want 1", mediaNeverArmedMessage, key, want, n)
+			}
 		}
 	})
 }

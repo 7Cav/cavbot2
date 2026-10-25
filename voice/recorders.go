@@ -183,6 +183,10 @@ const (
 	GapCallMoved GapCause = "call_moved"
 	// GapDAVEStalled is the DAVE setup holding frames past its stall limit.
 	GapDAVEStalled GapCause = "dave_stalled"
+	// GapVoiceServerSilent is nothing at all arriving on the recorder's UDP
+	// socket for a while, after the voice server's receiver reports had
+	// started.
+	GapVoiceServerSilent GapCause = "voice_server_silent"
 	// GapServerDeafened is the recorder's own voice state saying it is
 	// server-deafened.
 	GapServerDeafened GapCause = "server_deafened"
@@ -198,6 +202,7 @@ var cutShortErrors = map[GapCause]error{
 	GapHeartbeatOverdue:   errors.New(cutShortOpening + "the voice server stopped answering heartbeats"),
 	GapCallMoved:          errors.New(cutShortOpening + "the call moved to another voice server"),
 	GapDAVEStalled:        errors.New(cutShortOpening + "the DAVE setup stalled"),
+	GapVoiceServerSilent:  errors.New(cutShortOpening + "nothing came from the voice server"),
 	GapServerDeafened:     errors.New(cutShortOpening + "the recorder was server-deafened"),
 }
 

@@ -59,6 +59,12 @@ const smokeDNSFailEnv = "SMOKE_VOICE_DNS_FAIL_FILE"
 // sets it: the compose file's environment block doesn't carry it.
 const smokeDropEnv = "SMOKE_VOICE_DROP_FILE"
 
+// smokeUDPCutEnv names a file whose appearance cuts the UDP path of every
+// voice connection the recorders hold then, and leaves their voice gateways
+// up, as connDrops says. Only a smoke run sets it: the compose file's
+// environment block doesn't carry it.
+const smokeUDPCutEnv = "SMOKE_VOICE_UDP_CUT_FILE"
+
 // newVoiceDialer is the production voice gateway dialer: the host's
 // resolver, and the zone's nameservers reached through it. The smoke hook
 // that makes voice servers unreachable is on when smokeDNSFailEnv names a
@@ -74,15 +80,30 @@ func newVoiceDialer(drops *connDrops) *voiceDialer {
 	return d
 }
 
-// watchSmokeDrops starts the smoke drop hook's watch of its file for the
-// recorder at its place in RECORDER_TOKENS when smokeDropEnv names a file,
-// and is nil otherwise. A recorder takes one for its whole life, so each
-// appearance of the file drops it once, however many times it has logged in.
+// watchSmokeDrops starts the watch of the smoke drop hook's file, and of the
+// UDP cut hook's, for the recorder at its place in RECORDER_TOKENS, when
+// smokeDropEnv or smokeUDPCutEnv names one, and is nil when neither does. A
+// recorder takes one for its whole life, so each appearance of a file drops
+// or cuts it once, however many times it has logged in.
 func watchSmokeDrops(recorder int) *connDrops {
-	if dropFile := os.Getenv(smokeDropEnv); dropFile != "" {
-		return watchDrops(dropFile, recorder)
+	dropFile, cutFile := os.Getenv(smokeDropEnv), os.Getenv(smokeUDPCutEnv)
+	if dropFile == "" && cutFile == "" {
+		return nil
 	}
-	return nil
+	c := &connDrops{recorder: recorder, live: make(map[*droppableConn]struct{})}
+	if dropFile != "" {
+		go c.watch(dropFile, func(content string) {
+			mode := dropAbrupt
+			if strings.TrimSpace(content) == "silent" {
+				mode = dropSilent
+			}
+			c.dropAll(mode)
+		})
+	}
+	if cutFile != "" {
+		go c.watch(cutFile, func(string) { c.cutUDP() })
+	}
+	return c
 }
 
 // nameserverResolver is a resolver that sends every query to the nameserver
@@ -199,13 +220,14 @@ const (
 // errDropReset is the read error of a connection dropped abruptly.
 var errDropReset = &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
 
-// connDrops is the voice connections the smoke hook can drop: the voice
+// connDrops is the voice connections the smoke hooks can drop: the voice
 // gateway connections, and the UDP sockets audio arrives on. Each time the
 // drop file appears, every connection open then drops: silently when the
 // file says "silent", abruptly otherwise. An abrupt drop leaves the UDP
-// sockets alone, as a broken gateway connection does. A connection opened
-// while the file stays drops at its next appearance, so a recorder can
-// connect again after a drop.
+// sockets alone, as a broken gateway connection does. Each time the UDP cut
+// file appears, every UDP socket open then drops silently, and the voice
+// gateway connections stay up. A connection opened while a file stays drops
+// at its next appearance, so a recorder can connect again after a drop.
 type connDrops struct {
 	// recorder is the place in RECORDER_TOKENS of the recorder whose
 	// connections these are.
@@ -215,28 +237,18 @@ type connDrops struct {
 	live map[*droppableConn]struct{}
 }
 
-// watchDrops starts looking for file every dropCheckEvery, for as long as
-// the bot runs, to drop the connections of the recorder at its place in
-// RECORDER_TOKENS.
-func watchDrops(file string, recorder int) *connDrops {
-	c := &connDrops{recorder: recorder, live: make(map[*droppableConn]struct{})}
-	go func() {
-		defer utils.RecoverPanic("smoke-voice-drop")
-		present := false
-		for range time.Tick(dropCheckEvery) {
-			content, err := os.ReadFile(file)
-			appeared := err == nil && !present
-			present = err == nil
-			if appeared {
-				mode := dropAbrupt
-				if strings.TrimSpace(string(content)) == "silent" {
-					mode = dropSilent
-				}
-				c.dropAll(mode)
-			}
+// watch looks for file every dropCheckEvery, for as long as the bot runs,
+// and hands appeared the file's content each time it appears.
+func (c *connDrops) watch(file string, appeared func(content string)) {
+	defer utils.RecoverPanic("smoke-voice-drop")
+	present := false
+	for range time.Tick(dropCheckEvery) {
+		content, err := os.ReadFile(file)
+		if err == nil && !present {
+			appeared(string(content))
 		}
-	}()
-	return c
+		present = err == nil
+	}
 }
 
 // trackGateway hands back conn, a voice gateway connection, which the next
@@ -244,11 +256,11 @@ func watchDrops(file string, recorder int) *connDrops {
 func (c *connDrops) trackGateway(conn net.Conn) net.Conn { return c.track(conn, false) }
 
 // trackSocket hands back conn, a UDP socket audio arrives on, which the next
-// silent drop drops.
+// silent drop or UDP cut drops.
 func (c *connDrops) trackSocket(conn net.Conn) net.Conn { return c.track(conn, true) }
 
-func (c *connDrops) track(conn net.Conn, silentOnly bool) net.Conn {
-	dc := &droppableConn{Conn: conn, drops: c, silentOnly: silentOnly, closed: make(chan struct{})}
+func (c *connDrops) track(conn net.Conn, udp bool) net.Conn {
+	dc := &droppableConn{Conn: conn, drops: c, udp: udp, closed: make(chan struct{})}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.live[dc] = struct{}{}
@@ -269,18 +281,38 @@ func (c *connDrops) dropAll(mode dropMode) {
 	}
 }
 
+// smokeUDPCutMessage is the WARN the smoke hook logs each time it cuts a
+// recorder's UDP path.
+const smokeUDPCutMessage = "Smoke hook cutting voice UDP path"
+
+// cutUDP drops every UDP socket open now silently, as a NAT or a media node
+// that stops passing the recorder's traffic does, and leaves the voice
+// gateway connections up.
+func (c *connDrops) cutUDP() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	sockets := 0
+	for dc := range c.live {
+		if dc.udp {
+			dc.drop(dropSilent)
+			sockets++
+		}
+	}
+	utils.Warn(smokeUDPCutMessage, "recorder", c.recorder, "sockets", sockets)
+}
+
 func (c *connDrops) forget(dc *droppableConn) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.live, dc)
 }
 
-// droppableConn is a voice connection the smoke hook can drop. silentOnly
-// is a UDP socket, which only a silent drop drops.
+// droppableConn is a voice connection the smoke hooks can drop. udp is
+// whether it is a UDP socket, which only a silent drop or a UDP cut drops.
 type droppableConn struct {
 	net.Conn
-	drops      *connDrops
-	silentOnly bool
+	drops *connDrops
+	udp   bool
 	// dropped is how the connection dropped, zero while it hasn't.
 	dropped atomic.Int32
 	// closed closes once the recorder closes the connection.
@@ -291,7 +323,7 @@ type droppableConn struct {
 // drop drops the connection the way mode says. An abrupt drop closes the
 // socket underneath, which ends a read waiting on it.
 func (dc *droppableConn) drop(mode dropMode) {
-	if dc.silentOnly && mode != dropSilent {
+	if dc.udp && mode != dropSilent {
 		return
 	}
 	dc.dropped.Store(int32(mode))
