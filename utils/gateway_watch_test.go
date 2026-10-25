@@ -341,3 +341,73 @@ func TestGatewayWatch_CloseSessionSendsNothing(t *testing.T) {
 		t.Errorf("Sentry got %d events after CloseSession, want none", len(events))
 	}
 }
+
+// staleAnswerAfter is the stale-session test's outage delay: longer than
+// discordgo's close holds a dropped session before it resumes.
+const staleAnswerAfter = 2 * time.Second
+
+// watchedSession is a session w reads from now on. The test's end closes
+// it before the gateway lets go, so it logs in no more.
+func watchedSession(t *testing.T, w *GatewayWatch) *discordgo.Session {
+	t.Helper()
+	dg, err := discordgo.New("Bot fake-token-for-test")
+	if err != nil {
+		t.Fatalf("discordgo.New: %v", err)
+	}
+	w.Watch(dg)
+	t.Cleanup(func() {
+		w.StandDown()
+		dg.ShouldReconnectOnError = false
+		_ = dg.Close()
+	})
+	return dg
+}
+
+// Once the watch reads another session, a session it read before ends no
+// outage, however it comes back. So a recorder's old login that discordgo
+// brings back after the logout leaves the recorder offline. The old
+// session comes back while the outage is still unreported, so an answer
+// that ended it would leave Sentry with nothing.
+func TestGatewayWatch_ASessionReadBeforeEndsNoOutage(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		back gatewaytest.Login
+	}{
+		{"back with READY after an Op 9", gatewaytest.Login{Invalid: true, Answer: "READY"}},
+		{"back with RESUMED", gatewaytest.Login{Answer: "RESUMED"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := initSentryWithTransport(t)
+			eventsAtBack := make(chan int, 1)
+			back := tc.back
+			back.Heard = func() { eventsAtBack <- len(tr.Events()) }
+			gatewaytest.New(t, func(login int) gatewaytest.Login {
+				if login == 1 {
+					// Dropped, so discordgo resumes it.
+					return gatewaytest.Login{Answer: "READY", Close: 4000}
+				}
+				return back
+			})
+			w := NewGatewayWatch(staleAnswerAfter, "session", "recorder")
+			old := watchedSession(t, w)
+			if err := old.Open(); err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+
+			watchedSession(t, w)
+			w.Offline()
+
+			select {
+			case n := <-eventsAtBack:
+				if n != 0 {
+					t.Fatalf("the old session came back after Sentry heard of the outage, want it back before")
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("the old session never came back")
+			}
+			if events := waitForOutageEvents(t, tr, 1); len(events) != 1 {
+				t.Errorf("Sentry got %d events, want 1: the old session ended the outage", len(events))
+			}
+		})
+	}
+}
