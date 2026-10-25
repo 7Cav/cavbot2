@@ -193,7 +193,7 @@ func superviseStub(t *testing.T, scenario string, env []string) *supervisor {
 	watched := make(chan struct{})
 	go func() {
 		defer close(watched)
-		s.watchBot(ctx, ready)
+		_ = s.watchBot(ctx, ready)
 	}()
 	t.Cleanup(func() {
 		cancel()
