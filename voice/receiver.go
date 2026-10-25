@@ -63,9 +63,9 @@ type receiveConn interface {
 	// call. It returns at once, and does nothing to a connection that is
 	// lost already.
 	nothingCame(last time.Time)
-	// deafened is when the recorder's own voice state started saying it is
-	// server-deafened, zero while it doesn't.
-	deafened() time.Time
+	// deafenedSince is when the recorder's own voice state started saying
+	// it is server-deafened, zero while it doesn't.
+	deafenedSince() time.Time
 }
 
 // datagramReader is a UDP connection that tells of every datagram it reads,
@@ -443,7 +443,7 @@ func (r *receiver) step() {
 		r.told = losses
 		r.startGap(lost, losses)
 	}
-	deafened := r.conn.deafened()
+	deafened := r.conn.deafenedSince()
 	if !deafened.IsZero() {
 		r.startGap(gapStart{at: deafened, cause: GapServerDeafened}, 0)
 	}

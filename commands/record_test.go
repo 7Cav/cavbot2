@@ -293,7 +293,7 @@ func (c *fakeVoiceConn) Deafened() bool {
 	return c.undeafened != nil
 }
 
-func (c *fakeVoiceConn) Undeafened(ctx context.Context) error {
+func (c *fakeVoiceConn) WaitUndeafened(ctx context.Context) error {
 	c.v.mu.Lock()
 	undeafened := c.undeafened
 	c.v.mu.Unlock()

@@ -25,9 +25,9 @@ import (
 // second. The lift logs one Info line naming the recorder and the channel,
 // and Sentry hears nothing.
 func TestRecordStartLiftsTheDeafenItsRecorderJoinedWith(t *testing.T) {
+	events := recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
 		sc := newBubbleRecordScene(t, testRecorder)
-		captures := countCaptures(t)
 		logs := captureLogs(t)
 		sc.voice.joinDeafened()
 		sc.fake.setVoice(recStarter.id, recordChannel)
@@ -68,20 +68,18 @@ func TestRecordStartLiftsTheDeafenItsRecorderJoinedWith(t *testing.T) {
 		if lifts[0]["recorder"] != testRecorder || lifts[0]["channel_id"] != recordChannel {
 			t.Errorf("INFO record %q = %v, want recorder %s and channel_id %s", recorderJoinedDeafenedMessage, lifts[0], testRecorder, recordChannel)
 		}
-		if *captures != 0 {
-			t.Errorf("Sentry captures = %d, want none", *captures)
+		if got := events.Events(); len(got) != 0 {
+			t.Errorf("Sentry events = %d, want none", len(got))
 		}
 	})
 }
 
 // A start whose lift of its recorder's deafen fails fails the way a failed
-// join does, so the starter is never told a deaf recorder is recording.
-// Sentry hears of it, and the recorder leaves the channel, free for the
-// next start.
+// join does, so the starter is never told a deaf recorder is recording. The
+// recorder leaves the channel, free for the next start.
 func TestRecordStartWhoseDeafenLiftFailsFailsLikeAFailedJoin(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		sc := newBubbleRecordScene(t, testRecorder)
-		captures := countCaptures(t)
 		sc.voice.joinDeafened()
 		sc.fake.memberDeafenErr = restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, rawBodyMarker)
 		sc.fake.setVoice(recStarter.id, recordChannel)
@@ -90,9 +88,6 @@ func TestRecordStartWhoseDeafenLiftFailsFailsLikeAFailedJoin(t *testing.T) {
 
 		if reply != recordFailedReply {
 			t.Errorf("reply = %q, want %q", reply, recordFailedReply)
-		}
-		if *captures != 1 {
-			t.Errorf("Sentry captures = %d, want 1", *captures)
 		}
 		if got := sc.voice.inChannel(recordChannel); len(got) != 0 {
 			t.Errorf("recorders in %s after the failed lift = %v, want none", recordChannel, got)
@@ -123,6 +118,36 @@ func TestRecordStartWhoseRecorderStaysDeafenedFailsLikeAFailedJoin(t *testing.T)
 
 		if reply != recordFailedReply {
 			t.Errorf("reply = %q, want %q", reply, recordFailedReply)
+		}
+	})
+}
+
+// A start can fail to lift its recorder's deafen two ways: Discord refuses
+// the undeafen, or the recorder is still deafened when the start's 30 s run
+// out. Sentry hears of each start once, and files the two kinds in issues
+// of their own, so its issue list says which one keeps failing starts.
+func TestRecordStartDeafenLiftFailuresLandInAnIssueEach(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		sc := newBubbleRecordScene(t, testRecorder)
+		sc.voice.joinDeafened()
+		sc.fake.memberDeafenErr = restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, rawBodyMarker)
+		sc.fake.setVoice(recStarter.id, recordChannel)
+
+		recordAs(t, sc.rt, recStarter, "start")
+		if got := len(events.Events()); got != 1 {
+			t.Fatalf("Sentry events after the refused undeafen = %d, want 1", got)
+		}
+		sc.fake.memberDeafenErr = nil
+		recordAs(t, sc.rt, recStarter, "start")
+
+		got := events.Events()
+		if len(got) != 2 {
+			t.Fatalf("Sentry events after the start whose recorder stayed deafened = %d, want 2", len(got))
+		}
+		if slices.Equal(got[0].Fingerprint, got[1].Fingerprint) {
+			t.Errorf("fingerprints of a refused undeafen and a recorder still deafened = %v and %v, want issues of their own",
+				got[0].Fingerprint, got[1].Fingerprint)
 		}
 	})
 }

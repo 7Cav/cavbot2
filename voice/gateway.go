@@ -711,9 +711,9 @@ func (c *recorderConn) noteDeafenLocked(deaf bool) {
 	}
 }
 
-// deafened is when the recorder's own voice state started saying it is
-// server-deafened, zero while it doesn't.
-func (c *recorderConn) deafened() time.Time {
+// deafenedSince is when the recorder's own voice state started saying it
+// is server-deafened, zero while it doesn't.
+func (c *recorderConn) deafenedSince() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.deafenedAt
@@ -1608,12 +1608,12 @@ func (c callConn) recovery() *recoveryLog {
 	return new(recoveryLog)
 }
 
-// deafened is when the recorder's own voice state started saying it is
-// server-deafened, zero while it doesn't, and always on a connection the
-// recorder's connection options didn't build.
-func (c callConn) deafened() time.Time {
+// deafenedSince is when the recorder's own voice state started saying it
+// is server-deafened, zero while it doesn't, and always on a connection
+// the recorder's connection options didn't build.
+func (c callConn) deafenedSince() time.Time {
 	if rc, ok := c.Conn.(*recorderConn); ok {
-		return rc.deafened()
+		return rc.deafenedSince()
 	}
 	return time.Time{}
 }
@@ -1682,12 +1682,12 @@ func (c *disgoConn) GapReport() GapReport {
 // server-deafened now.
 func (c *disgoConn) Deafened() bool {
 	rc, ok := c.conn.(*recorderConn)
-	return ok && !rc.deafened().IsZero()
+	return ok && !rc.deafenedSince().IsZero()
 }
 
-// Undeafened returns once the recorder's own voice state no longer has it
-// server-deafened, or with ctx's error when ctx ends first.
-func (c *disgoConn) Undeafened(ctx context.Context) error {
+// WaitUndeafened returns once the recorder's own voice state no longer has
+// it server-deafened, or with ctx's error when ctx ends first.
+func (c *disgoConn) WaitUndeafened(ctx context.Context) error {
 	if rc, ok := c.conn.(*recorderConn); ok {
 		return rc.waitUndeafened(ctx)
 	}

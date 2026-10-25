@@ -105,6 +105,19 @@ const recorderStillOfflineMessage = "Start refused, the recorder is still loggin
 // is routine.
 const recorderJoinedDeafenedMessage = "Recorder joined deafened, lifting it"
 
+// recorderDeafenNotLiftedMessage is the Sentry event of a start that
+// couldn't lift the deafen its recorder joined with, so it failed. Each step
+// of the lift that can fail files in a Sentry issue of its own.
+const recorderDeafenNotLiftedMessage = "Recorder deafen not lifted"
+
+// The steps of a deafen's lift that can fail: Discord refusing the
+// undeafen, and the recorder still deafened when the start's join deadline
+// ends.
+const (
+	deafenLiftRefused  = "undeafen_refused"
+	deafenLiftTimedOut = "still_deafened"
+)
+
 // errRecordingFailed is a start or stop that failed after the checks passed,
 // such as a recorder that couldn't join. The runtime has reported the
 // cause to Sentry.
@@ -328,12 +341,9 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	}
 	// A recorder still deafened records silence, so the start fails as a
 	// failed join does rather than tell the starter it records.
-	if conn.Deafened() {
-		if err := r.liftDeafen(joinCtx, conn, recorderID, channelID); err != nil {
-			r.releaseWhenLeft(recorderID, r.leave(conn, recorderID, channelID))
-			captureError("Recorder deafen not lifted", err, "recorder", recorderID, "channel_id", channelID)
-			return "", errRecordingFailed
-		}
+	if conn.Deafened() && !r.liftDeafen(joinCtx, conn, recorderID, channelID) {
+		r.releaseWhenLeft(recorderID, r.leave(conn, recorderID, channelID))
+		return "", errRecordingFailed
 	}
 	// The notice is how the channel learns it is recorded, so a recording
 	// whose notice didn't post doesn't go on: the recorder leaves.
@@ -387,17 +397,25 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 }
 
 // liftDeafen lifts the server deafen a recorder joined with, through the
-// bot's own session, and returns once the recorder's connection says it is
-// undeafened, or with ctx's error. Discord keeps a moderator's deafen of a
+// bot's own session, and reports whether the recorder's connection said it
+// is undeafened before ctx ended. Discord keeps a moderator's deafen of a
 // recorder after it leaves, so a deafen from an earlier recording would have
 // this one record silence. The bot never lifts a deafen put on during a
-// recording, since a person chose it.
-func (r *RecordingRuntime) liftDeafen(ctx context.Context, conn voice.Conn, recorderID, channelID string) error {
+// recording, since a person chose it. A lift that fails goes to Sentry, in
+// the issue of the step that failed: Discord refusing the undeafen, or the
+// recorder still deafened at ctx's end.
+func (r *RecordingRuntime) liftDeafen(ctx context.Context, conn voice.Conn, recorderID, channelID string) bool {
 	utils.Info(recorderJoinedDeafenedMessage, "recorder", recorderID, "channel_id", channelID)
-	if err := r.mgr.GuildMemberDeafen(r.guildID, recorderID, false); err != nil {
-		return err
+	step, err := deafenLiftRefused, r.mgr.GuildMemberDeafen(r.guildID, recorderID, false)
+	if err == nil {
+		step, err = deafenLiftTimedOut, conn.WaitUndeafened(ctx)
 	}
-	return conn.Undeafened(ctx)
+	if err == nil {
+		return true
+	}
+	issue := utils.SentryIssue{Fingerprint: []string{recorderDeafenNotLiftedMessage, step}}
+	utils.CaptureErrorIn(issue, recorderDeafenNotLiftedMessage, err, "recorder", recorderID, "channel_id", channelID)
+	return false
 }
 
 // Stop stops a recording the invoker may stop, and returns its channel.

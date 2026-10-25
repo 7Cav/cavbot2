@@ -830,12 +830,11 @@ func (h *callHarness) sent() []voiceUpdate {
 	return slices.Clone(h.updates)
 }
 
-// recorderVoiceState is the recorder's voice state in a channel as Discord
-// sends it: self-muted and not self-deafened, as the recorder joins.
+// recorderVoiceState is the recorder's voice state in a channel as disgo gets
+// it from the recorder's session, not server-deafened.
 func recorderVoiceState(channelID snowflake.ID) gateway.EventVoiceStateUpdate {
-	return gateway.EventVoiceStateUpdate{VoiceState: discord.VoiceState{
-		GuildID: callGuild, ChannelID: &channelID, UserID: callRecorder, SessionID: "sess-1", SelfMute: true,
-	}}
+	e, _ := voiceStateEvent(recorderVoiceStateUpdate(channelID, false))
+	return e
 }
 
 // recorderVoiceStateUpdate is the recorder's voice state in a channel as

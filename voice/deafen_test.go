@@ -77,7 +77,7 @@ func TestRecorderJoinedDeafenedWaitsForTheUndeafen(t *testing.T) {
 			t.Fatal("the join Discord answered deafened returned a connection that says it isn't deafened")
 		}
 		waited := make(chan error, 1)
-		go func() { waited <- conn.Undeafened(context.Background()) }()
+		go func() { waited <- conn.WaitUndeafened(context.Background()) }()
 		time.Sleep(time.Second)
 		synctest.Wait()
 		select {
@@ -115,7 +115,7 @@ func TestRecorderWaitForTheUndeafenEndsWithItsContext(t *testing.T) {
 		defer cancel()
 
 		waited := make(chan error, 1)
-		go func() { waited <- conn.Undeafened(ctx) }()
+		go func() { waited <- conn.WaitUndeafened(ctx) }()
 		time.Sleep(2 * time.Second)
 		synctest.Wait()
 
