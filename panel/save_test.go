@@ -337,6 +337,26 @@ func (s hookedStore) FoxholeReport(ctx context.Context, id int64) (store.Foxhole
 	return s.st.FoxholeReport(ctx, id)
 }
 
+func (s hookedStore) IsWingedAviator(ctx context.Context, guildID, userID string) (bool, error) {
+	s.hook(ctx)
+	return s.st.IsWingedAviator(ctx, guildID, userID)
+}
+
+func (s hookedStore) ListWingedAviators(ctx context.Context, guildID string) ([]string, error) {
+	s.hook(ctx)
+	return s.st.ListWingedAviators(ctx, guildID)
+}
+
+func (s hookedStore) AddWingedAviator(ctx context.Context, guildID, userID string) error {
+	s.hook(ctx)
+	return s.st.AddWingedAviator(ctx, guildID, userID)
+}
+
+func (s hookedStore) RemoveWingedAviator(ctx context.Context, guildID, userID string) error {
+	s.hook(ctx)
+	return s.st.RemoveWingedAviator(ctx, guildID, userID)
+}
+
 // A save whose browser leaves as the save first calls the store still
 // takes effect, with exactly one change log entry recording it.
 func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {

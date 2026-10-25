@@ -242,6 +242,7 @@ func main() {
 		tempVC    *commands.TempVC
 		foxhole   *commands.FoxholeRuntime
 		recording *commands.RecordingRuntime
+		aviators  *commands.WingedAviators
 		webPanel  *panel.Panel
 	)
 	// Built before dg.Open(), so the Connect event tells it the gateway
@@ -272,6 +273,13 @@ func main() {
 		// Its voice events and channel deletes stop a recording by itself
 		// (#388): the last human leaving, or the recorder leaving.
 		recording.Listen(dg)
+		// Winged aviators (#869) keep their list in the store and check it
+		// against the member list. With WINGED_AVIATOR_ROLE_ID unset there is
+		// no runtime, and the bot tracks nobody.
+		aviators = commands.NewWingedAviators(commands.NewSessionGuildManager(dg), discordManager, botStore, GuildID, os.Getenv("WINGED_AVIATOR_ROLE_ID"))
+		// Its member events, registered before dg.Open() like the others, so
+		// none is missed: a role change or a rejoin moves the role.
+		aviators.Listen(dg)
 		// The panel's hub page saves through the runtime and reads the guild
 		// through the session, so it is built once both exist.
 		webPanel = initPanel(panelCfg, panel.Deps{
@@ -289,7 +297,7 @@ func main() {
 	// The registry takes the runtimes, so it is built after them. The
 	// Foxhole commands share the one-action-at-a-time rule with the
 	// Foxhole page through the Foxhole runtime.
-	registry := commands.NewRegistry(tempVC, foxhole, recording)
+	registry := commands.NewRegistry(tempVC, foxhole, recording, aviators)
 
 	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		// Backstop only. Registered slash-command handlers are wrapped with
@@ -351,6 +359,11 @@ func main() {
 		defer utils.RecoverPanic("startup-checks")
 		commands.RunStartupChecks(context.Background(), discordManager, GuildID, dg.State.User.ID, tempVC)
 	}()
+
+	// Winged aviators (#869): the startup pass runs once the member list
+	// is complete, then a pass every hour. Its own goroutine, so its
+	// milpac reads hold up nothing else.
+	go aviators.Start()
 
 	// Panel (spec #285): the web UI listens once the session is READY, since
 	// its later pages act through the Discord session, and before the

@@ -1,7 +1,8 @@
 // Package store is the bot's own database: the hubs the panel edits, the
 // spawned channels the runtime tracks across a restart, the change log of
 // every panel save, and the Foxhole page's notes and approvals, with a
-// change log of their own that also holds each Foxhole action's report. Postgres in production (postgres.go), an in-memory
+// change log of their own that also holds each Foxhole action's report, and
+// the winged aviators. Postgres in production (postgres.go), an in-memory
 // Fake for other packages' tests (fake.go).
 //
 // Migrations run at startup, and every one stays compatible with the previous
@@ -597,4 +598,17 @@ type Store interface {
 	// FoxholeReport returns the report with the ID given, running or not.
 	// ErrNotFound when no report has the ID, a save's entry among them.
 	FoxholeReport(ctx context.Context, id int64) (FoxholeReport, error)
+
+	// IsWingedAviator reports whether the member is one of the guild's
+	// winged aviators (GLOSSARY.md).
+	IsWingedAviator(ctx context.Context, guildID, userID string) (bool, error)
+	// ListWingedAviators returns the Discord user IDs of the guild's winged
+	// aviators, in no promised order.
+	ListWingedAviators(ctx context.Context, guildID string) ([]string, error)
+	// AddWingedAviator makes the member one of the guild's winged aviators.
+	// Adding one already listed is not an error.
+	AddWingedAviator(ctx context.Context, guildID, userID string) error
+	// RemoveWingedAviator ends the member's status as one of the guild's
+	// winged aviators. Removing one not listed is not an error.
+	RemoveWingedAviator(ctx context.Context, guildID, userID string) error
 }

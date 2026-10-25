@@ -55,6 +55,8 @@ type Fake struct {
 	// next start gets.
 	recordings      map[int64]Recording
 	nextRecordingID int64
+	// aviators holds each guild's winged aviators by Discord user ID.
+	aviators map[string]map[string]bool
 	// holdIn is the zone HoldTimesIn holds each change log entry's time
 	// in, and nil for the local zone time.Now gives.
 	holdIn *time.Location
@@ -82,6 +84,7 @@ func NewFake() *Fake {
 		reports:         make(map[int64]bool),
 		recordings:      make(map[int64]Recording),
 		nextRecordingID: 1,
+		aviators:        make(map[string]map[string]bool),
 	}
 }
 
@@ -832,4 +835,49 @@ func cloneHub(h Hub) Hub {
 		h.ModeratorRoleIDs = []string{}
 	}
 	return h
+}
+
+// IsWingedAviator implements Store.
+func (f *Fake) IsWingedAviator(ctx context.Context, guildID, userID string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.aviators[guildID][userID], nil
+}
+
+// ListWingedAviators implements Store.
+func (f *Fake) ListWingedAviators(ctx context.Context, guildID string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Collect(maps.Keys(f.aviators[guildID])), nil
+}
+
+// AddWingedAviator implements Store.
+func (f *Fake) AddWingedAviator(ctx context.Context, guildID, userID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.aviators[guildID] == nil {
+		f.aviators[guildID] = make(map[string]bool)
+	}
+	f.aviators[guildID][userID] = true
+	return nil
+}
+
+// RemoveWingedAviator implements Store.
+func (f *Fake) RemoveWingedAviator(ctx context.Context, guildID, userID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.aviators[guildID], userID)
+	return nil
 }

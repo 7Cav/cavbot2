@@ -1209,3 +1209,47 @@ func scanFoxholeReport(row *sql.Row) (FoxholeReport, error) {
 	e.Diff = json.RawMessage(diff)
 	return report, nil
 }
+
+// IsWingedAviator implements Store.
+func (p *Postgres) IsWingedAviator(ctx context.Context, guildID, userID string) (bool, error) {
+	var is bool
+	err := p.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM winged_aviators WHERE guild_id = $1 AND user_id = $2)`,
+		guildID, userID).Scan(&is)
+	if err != nil {
+		return false, fmt.Errorf("read winged aviator %q of guild %q: %w", userID, guildID, err)
+	}
+	return is, nil
+}
+
+// ListWingedAviators implements Store.
+func (p *Postgres) ListWingedAviators(ctx context.Context, guildID string) ([]string, error) {
+	ids, err := queryAll(ctx, p.db, func(row scanner) (string, error) {
+		var id string
+		err := row.Scan(&id)
+		return id, err
+	}, `SELECT user_id FROM winged_aviators WHERE guild_id = $1`, guildID)
+	if err != nil {
+		return nil, fmt.Errorf("list winged aviators of guild %q: %w", guildID, err)
+	}
+	return ids, nil
+}
+
+// AddWingedAviator implements Store.
+func (p *Postgres) AddWingedAviator(ctx context.Context, guildID, userID string) error {
+	if _, err := p.db.ExecContext(ctx,
+		`INSERT INTO winged_aviators (guild_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+		guildID, userID); err != nil {
+		return fmt.Errorf("add winged aviator %q of guild %q: %w", userID, guildID, err)
+	}
+	return nil
+}
+
+// RemoveWingedAviator implements Store.
+func (p *Postgres) RemoveWingedAviator(ctx context.Context, guildID, userID string) error {
+	if _, err := p.db.ExecContext(ctx,
+		`DELETE FROM winged_aviators WHERE guild_id = $1 AND user_id = $2`, guildID, userID); err != nil {
+		return fmt.Errorf("remove winged aviator %q of guild %q: %w", userID, guildID, err)
+	}
+	return nil
+}

@@ -86,7 +86,7 @@ func stopButton(t *testing.T, notice fakeMessage) string {
 func pressStop(t *testing.T, rt *RecordingRuntime, customID string, m permMember) string {
 	t.Helper()
 	prefix := strings.Split(customID, customIDSeparator)[0]
-	if _, ok := NewRegistry(nil, nil, nil).GetHandler(prefix); !ok {
+	if _, ok := NewRegistry(nil, nil, nil, nil).GetHandler(prefix); !ok {
 		t.Fatalf("CustomID %q routes to %q, which is not a registered command", customID, prefix)
 	}
 	if prefix != recordCommandName {
