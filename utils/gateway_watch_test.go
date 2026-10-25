@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/7cav/cavbot2/utils/gatewaytest"
 	"github.com/bwmarrin/discordgo"
 	"github.com/getsentry/sentry-go"
 )
@@ -80,11 +81,11 @@ func (r *logRecorder) linesSaying(msg, key, value string) int {
 func TestGatewayWatch_ARefusedTokenStopsTheLoginsAndSendsOneEvent(t *testing.T) {
 	logs := recordLogs(t)
 	tr := initSentryWithTransport(t)
-	g := newScriptedGateway(t, func(login int) gatewayLogin {
+	g := gatewaytest.New(t, func(login int) gatewaytest.Login {
 		if login == 1 {
-			return gatewayLogin{answer: "READY", close: 4004}
+			return gatewaytest.Login{Answer: "READY", Close: 4004}
 		}
-		return gatewayLogin{invalid: true, close: 4004}
+		return gatewaytest.Login{Invalid: true, Close: 4004}
 	})
 	openWatchedSession(t, gatewayWatchAfter)
 
@@ -96,7 +97,7 @@ func TestGatewayWatch_ARefusedTokenStopsTheLoginsAndSendsOneEvent(t *testing.T) 
 	if got := fmt.Sprint(events[0].Contexts["extra"]["session"]); got != "main" {
 		t.Errorf("event names session %q, want main", got)
 	}
-	if n := g.loginCount(); n != 1 {
+	if n := g.Logins(); n != 1 {
 		t.Errorf("the gateway saw %d logins, want 1: none after the 4004", n)
 	}
 	if n := logs.linesSaying(tokenRefusedMessage, "session", "main"); n != 1 {
@@ -132,10 +133,10 @@ func (r *dropRecorder) times() []time.Time {
 const handlerSlack = 500 * time.Millisecond
 
 // waitForLogins waits for the gateway to have seen at least n logins.
-func waitForLogins(t *testing.T, g *scriptedGateway, n int) {
+func waitForLogins(t *testing.T, g *gatewaytest.Gateway, n int) {
 	t.Helper()
-	waitUntil(func() bool { return g.loginCount() >= n })
-	if got := g.loginCount(); got < n {
+	waitUntil(func() bool { return g.Logins() >= n })
+	if got := g.Logins(); got < n {
 		t.Errorf("the gateway saw %d logins, want at least %d", got, n)
 	}
 }
@@ -147,17 +148,17 @@ func waitForLogins(t *testing.T, g *scriptedGateway, n int) {
 // drops, so a watch that restarted it on each drop would never report.
 func TestGatewayWatch_LoginsThatGetNoReadyStayOneOutage(t *testing.T) {
 	tr := initSentryWithTransport(t)
-	g := newScriptedGateway(t, func(login int) gatewayLogin {
+	g := gatewaytest.New(t, func(login int) gatewaytest.Login {
 		if login == 1 {
-			return gatewayLogin{answer: "READY", close: 4000}
+			return gatewaytest.Login{Answer: "READY", Close: 4000}
 		}
-		return gatewayLogin{invalid: true, close: 4000}
+		return gatewaytest.Login{Invalid: true, Close: 4000}
 	})
 	openWatchedSession(t, 2*time.Second)
-	t.Cleanup(func() { g.settle(t, 5*time.Second) })
+	t.Cleanup(func() { g.Settle(t, 5*time.Second) })
 
 	waitForSentry(tr, 1)
-	waitForLogins(t, g, g.loginCount()+3)
+	waitForLogins(t, g, g.Logins()+3)
 
 	if n := len(tr.Events()); n != 1 {
 		t.Errorf("Sentry got %d events, want 1", n)
@@ -168,11 +169,11 @@ func TestGatewayWatch_LoginsThatGetNoReadyStayOneOutage(t *testing.T) {
 // hears nothing of it.
 func TestGatewayWatch_AResumeWithinTheDelaySendsNothing(t *testing.T) {
 	tr := initSentryWithTransport(t)
-	g := newScriptedGateway(t, func(login int) gatewayLogin {
+	g := gatewaytest.New(t, func(login int) gatewaytest.Login {
 		if login == 1 {
-			return gatewayLogin{answer: "READY", close: 4000}
+			return gatewaytest.Login{Answer: "READY", Close: 4000}
 		}
-		return gatewayLogin{answer: "RESUMED"}
+		return gatewaytest.Login{Answer: "RESUMED"}
 	})
 	openWatchedSession(t, gatewayWatchAfter)
 
@@ -187,11 +188,11 @@ func TestGatewayWatch_AResumeWithinTheDelaySendsNothing(t *testing.T) {
 // is an ordinary reconnect: the session is back, and Sentry hears nothing.
 func TestGatewayWatch_AReadyAfterAnInvalidSessionSendsNothing(t *testing.T) {
 	tr := initSentryWithTransport(t)
-	g := newScriptedGateway(t, func(login int) gatewayLogin {
+	g := gatewaytest.New(t, func(login int) gatewaytest.Login {
 		if login == 1 {
-			return gatewayLogin{answer: "READY", close: 4000}
+			return gatewaytest.Login{Answer: "READY", Close: 4000}
 		}
-		return gatewayLogin{invalid: true, answer: "READY"}
+		return gatewaytest.Login{Invalid: true, Answer: "READY"}
 	})
 	openWatchedSession(t, gatewayWatchAfter)
 
@@ -208,14 +209,14 @@ func TestGatewayWatch_AReadyAfterAnInvalidSessionSendsNothing(t *testing.T) {
 func TestGatewayWatch_ASessionThatCantReachTheGatewayRetriesAndReportsOnce(t *testing.T) {
 	logs := recordLogs(t)
 	tr := initSentryWithTransport(t)
-	g := newScriptedGateway(t, func(login int) gatewayLogin {
+	g := gatewaytest.New(t, func(login int) gatewaytest.Login {
 		switch login {
 		case 1:
-			return gatewayLogin{answer: "READY", close: 4000}
+			return gatewaytest.Login{Answer: "READY", Close: 4000}
 		case 2:
-			return gatewayLogin{refuse: true}
+			return gatewaytest.Login{Refuse: true}
 		}
-		return gatewayLogin{answer: "RESUMED"}
+		return gatewaytest.Login{Answer: "RESUMED"}
 	})
 	openWatchedSession(t, gatewayWatchAfter)
 
@@ -234,16 +235,16 @@ func TestGatewayWatch_ASessionThatCantReachTheGatewayRetriesAndReportsOnce(t *te
 // for the whole delay sends a second event.
 func TestGatewayWatch_ALaterOutageSendsANewEvent(t *testing.T) {
 	tr := initSentryWithTransport(t)
-	newScriptedGateway(t, func(login int) gatewayLogin {
+	gatewaytest.New(t, func(login int) gatewaytest.Login {
 		switch login {
 		case 1:
-			return gatewayLogin{answer: "READY", close: 4000}
+			return gatewaytest.Login{Answer: "READY", Close: 4000}
 		case 2, 4:
-			return gatewayLogin{refuse: true}
+			return gatewaytest.Login{Refuse: true}
 		case 3:
-			return gatewayLogin{answer: "RESUMED", close: 4000}
+			return gatewaytest.Login{Answer: "RESUMED", Close: 4000}
 		}
-		return gatewayLogin{answer: "RESUMED"}
+		return gatewaytest.Login{Answer: "RESUMED"}
 	})
 	openWatchedSession(t, gatewayWatchAfter)
 
@@ -257,17 +258,17 @@ func TestGatewayWatch_ALaterOutageSendsANewEvent(t *testing.T) {
 func TestGatewayWatch_EachOutageGetsItsWholeDelay(t *testing.T) {
 	const after = 2 * time.Second
 	tr := initSentryWithTransport(t)
-	g := newScriptedGateway(t, func(login int) gatewayLogin {
+	g := gatewaytest.New(t, func(login int) gatewaytest.Login {
 		switch login {
 		case 1:
-			return gatewayLogin{answer: "READY", close: 4000}
+			return gatewaytest.Login{Answer: "READY", Close: 4000}
 		case 2:
-			return gatewayLogin{answer: "RESUMED", close: 4000}
+			return gatewaytest.Login{Answer: "RESUMED", Close: 4000}
 		}
-		return gatewayLogin{refuse: true}
+		return gatewaytest.Login{Refuse: true}
 	})
 	drops := recordDrops(openWatchedSession(t, after))
-	t.Cleanup(func() { g.settle(t, 10*time.Second) })
+	t.Cleanup(func() { g.Settle(t, 10*time.Second) })
 
 	events := waitForSentry(tr, 1)
 
@@ -306,7 +307,7 @@ const reloginSlack = 500 * time.Millisecond
 // identify with Op 9, is closed at once, before its first heartbeat. It logs
 // in no more, whichever of the close and its heartbeat ran first.
 func TestGatewayWatch_ASessionClosedAfterAFailedOpenLogsInNoMore(t *testing.T) {
-	g := newScriptedGateway(t, func(int) gatewayLogin { return gatewayLogin{invalid: true} })
+	g := gatewaytest.New(t, func(int) gatewaytest.Login { return gatewaytest.Login{Invalid: true} })
 	dg, err := discordgo.New("Bot fake-token-for-test")
 	if err != nil {
 		t.Fatalf("discordgo.New: %v", err)
@@ -319,7 +320,7 @@ func TestGatewayWatch_ASessionClosedAfterAFailedOpenLogsInNoMore(t *testing.T) {
 	_ = w.CloseSession()
 	time.Sleep(reloginSlack)
 
-	if n := g.loginCount(); n != 1 {
+	if n := g.Logins(); n != 1 {
 		t.Errorf("the gateway saw %d logins, want 1: none after the close", n)
 	}
 }

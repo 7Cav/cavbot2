@@ -1,4 +1,7 @@
-package utils
+// Package gatewaytest is a scripted Discord gateway: a fake gateway that
+// answers each login of a real discordgo session as its test scripts it.
+// Only tests import it.
+package gatewaytest
 
 import (
 	"encoding/json"
@@ -13,50 +16,53 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// gatewayLatency is how long the scripted gateway takes to answer a frame,
-// as a network round trip would. discordgo hands Disconnect and READY to
-// their handlers on goroutines of their own, and against Discord a login
-// takes long enough that they arrive in the order they happen.
-const gatewayLatency = 20 * time.Millisecond
+// Latency is how long the gateway takes to answer a frame, as a network
+// round trip would. discordgo hands Disconnect and READY to their handlers
+// on goroutines of their own, and against Discord a login takes long enough
+// that they arrive in the order they happen.
+const Latency = 20 * time.Millisecond
 
-// gatewayHold is how long an answered login stays open before the scripted
-// gateway closes it.
-const gatewayHold = 200 * time.Millisecond
+// Hold is how long an answered login stays open before the gateway closes
+// it.
+const Hold = 200 * time.Millisecond
 
-// gatewayLogin is how the scripted gateway answers one login.
-type gatewayLogin struct {
-	// refuse answers the upgrade with 503, so the session can't reach the
+// UserID is the user ID the gateway's READY names.
+const UserID = "999"
+
+// Login is how the gateway answers one login.
+type Login struct {
+	// Refuse answers the upgrade with 503, so the session can't reach the
 	// gateway.
-	refuse bool
-	// invalid answers the identify or resume with Op 9 Invalid Session
+	Refuse bool
+	// Invalid answers the identify or resume with Op 9 Invalid Session
 	// first. discordgo sends an identify in reply.
-	invalid bool
-	// answer answers the identify or resume: "READY", "RESUMED", or "" for
+	Invalid bool
+	// Answer answers the identify or resume: "READY", "RESUMED", or "" for
 	// neither.
-	answer string
-	// close is the code the gateway closes the connection with, gatewayHold
-	// after its answer. 0 keeps the connection open.
-	close int
-	// heard, when set, runs when a connection kept open reads its first
+	Answer string
+	// Close is the code the gateway closes the connection with, Hold after
+	// its answer. 0 keeps the connection open.
+	Close int
+	// Heard, when set, runs when a connection kept open reads its first
 	// frame after the answer: the session's first heartbeat.
-	heard func()
+	Heard func()
 }
 
-// scriptedGateway is a fake Discord gateway whose test scripts its answer
-// to each login.
-type scriptedGateway struct {
+// Gateway is a fake Discord gateway whose test scripts its answer to each
+// login.
+type Gateway struct {
 	mu      sync.Mutex
-	script  func(login int) gatewayLogin
+	script  func(login int) Login
 	logins  int
 	settled chan struct{}
 }
 
-// newScriptedGateway stands up a gateway that answers each login with what
-// script returns for its number, from 1, and points discordgo at it for the
-// length of the test. Every upgrade request is a login, refused or not.
-func newScriptedGateway(t *testing.T, script func(login int) gatewayLogin) *scriptedGateway {
+// New stands up a gateway that answers each login with what script returns
+// for its number, from 1, and points discordgo at it for the length of the
+// test. Every upgrade request is a login, refused or not.
+func New(t testing.TB, script func(login int) Login) *Gateway {
 	t.Helper()
-	g := &scriptedGateway{script: script}
+	g := &Gateway{script: script}
 
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
@@ -71,7 +77,7 @@ func newScriptedGateway(t *testing.T, script func(login int) gatewayLogin) *scri
 	})
 	mux.HandleFunc("/ws/", func(w http.ResponseWriter, r *http.Request) {
 		login := g.login()
-		if login.refuse {
+		if login.Refuse {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
@@ -90,32 +96,32 @@ func newScriptedGateway(t *testing.T, script func(login int) gatewayLogin) *scri
 }
 
 // login numbers a login and reads its answer from the script, or from
-// settle once the test has called it.
-func (g *scriptedGateway) login() gatewayLogin {
+// Settle once the test has called it.
+func (g *Gateway) login() Login {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.logins++
 	if settled := g.settled; settled != nil {
 		g.settled = nil
-		return gatewayLogin{answer: "RESUMED", heard: func() { close(settled) }}
+		return Login{Answer: "RESUMED", Heard: func() { close(settled) }}
 	}
 	return g.script(g.logins)
 }
 
-// loginCount is how many logins the gateway has seen.
-func (g *scriptedGateway) loginCount() int {
+// Logins is how many logins the gateway has seen.
+func (g *Gateway) Logins() int {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.logins
 }
 
-// settle answers the next login with RESUMED and keeps it open, and fails
+// Settle answers the next login with RESUMED and keeps it open, and fails
 // the test unless the session sends its first heartbeat on it within
 // timeout. A session that keeps logging in ends its test connected, so
 // closing it ends its reconnects. discordgo's heartbeat reconnects a
 // session whose connection closed before its first heartbeat went out, so
 // the close waits for that heartbeat.
-func (g *scriptedGateway) settle(t *testing.T, timeout time.Duration) {
+func (g *Gateway) Settle(t testing.TB, timeout time.Duration) {
 	t.Helper()
 	settled := make(chan struct{})
 	g.mu.Lock()
@@ -130,14 +136,14 @@ func (g *scriptedGateway) settle(t *testing.T, timeout time.Duration) {
 
 // run answers one login on c: Hello, then what login scripts, then the
 // close or the hold.
-func (g *scriptedGateway) run(c *websocket.Conn, login gatewayLogin, testOver <-chan struct{}) {
+func (g *Gateway) run(c *websocket.Conn, login Login, testOver <-chan struct{}) {
 	if c.WriteMessage(websocket.TextMessage, []byte(helloFrame)) != nil {
 		return
 	}
 	if _, _, err := c.ReadMessage(); err != nil { // the identify or resume
 		return
 	}
-	if login.invalid {
+	if login.Invalid {
 		if !sendFrame(c, invalidSessionFrame) {
 			return
 		}
@@ -145,7 +151,7 @@ func (g *scriptedGateway) run(c *websocket.Conn, login gatewayLogin, testOver <-
 			return
 		}
 	}
-	switch login.answer {
+	switch login.Answer {
 	case "READY":
 		if !sendFrame(c, paddedReadyFrame) || !sendFrame(c, paddedTypingFrame) {
 			return
@@ -155,9 +161,9 @@ func (g *scriptedGateway) run(c *websocket.Conn, login gatewayLogin, testOver <-
 			return
 		}
 	}
-	if login.close != 0 {
-		time.Sleep(gatewayHold)
-		_ = c.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(login.close, ""), time.Now().Add(time.Second))
+	if login.Close != 0 {
+		time.Sleep(Hold)
+		_ = c.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(login.Close, ""), time.Now().Add(time.Second))
 		return
 	}
 	// Held open: read until the session closes the connection or the test
@@ -165,7 +171,7 @@ func (g *scriptedGateway) run(c *websocket.Conn, login gatewayLogin, testOver <-
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for heard := login.heard; ; heard = nil {
+		for heard := login.Heard; ; heard = nil {
 			if _, _, err := c.ReadMessage(); err != nil {
 				return
 			}
@@ -182,7 +188,7 @@ func (g *scriptedGateway) run(c *websocket.Conn, login gatewayLogin, testOver <-
 
 // sendFrame writes frame to c a round trip after what it answers.
 func sendFrame(c *websocket.Conn, frame string) bool {
-	time.Sleep(gatewayLatency)
+	time.Sleep(Latency)
 	return c.WriteMessage(websocket.TextMessage, []byte(frame)) == nil
 }
 
@@ -210,6 +216,6 @@ const resumedFrame = `{"op":0,"s":2,"t":"RESUMED","d":{}}`
 // It is hand-built, not captured from a live gateway, so it pins discordgo's
 // handling of a READY-shaped frame, not Discord's actual READY schema.
 var (
-	paddedReadyFrame  = `{"op":0,"s":1,"t":"READY","d":{"v":10,"session_id":"sess","user":{"id":"999","username":"cavbot","bot":true},"guilds":[],"padding":"` + strings.Repeat("\x7f", 70_000) + `"}}`
+	paddedReadyFrame  = `{"op":0,"s":1,"t":"READY","d":{"v":10,"session_id":"sess","user":{"id":"` + UserID + `","username":"cavbot","bot":true},"guilds":[],"padding":"` + strings.Repeat("\x7f", 70_000) + `"}}`
 	paddedTypingFrame = `{"op":0,"s":2,"t":"TYPING_START","d":{"channel_id":"1","user_id":"2","padding":"` + strings.Repeat("\x7f", 1_000) + `"}}`
 )
