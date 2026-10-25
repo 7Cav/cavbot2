@@ -26,15 +26,15 @@ func testDiscord() *Discord {
 }
 
 // outageEvents waits for Sentry to have at least n events, then waits out
-// three more outage delays, so an event sent in them is counted too, and
-// returns those that report a gateway outage.
-func outageEvents(t *testing.T, events *sentryTransport, n int) []*sentry.Event {
+// three more of the recorders' outage delays, after, so an event sent in
+// them is counted too, and returns those that report a gateway outage.
+func outageEvents(t *testing.T, events *sentryTransport, n int, after time.Duration) []*sentry.Event {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for len(events.Events()) < n && time.Now().Before(deadline) {
-		time.Sleep(loginOutageAfter / 10)
+		time.Sleep(after / 10)
 	}
-	time.Sleep(3 * loginOutageAfter)
+	time.Sleep(3 * after)
 	var out []*sentry.Event
 	for _, e := range events.Events() {
 		if e.Tags["message"] == utils.GatewayOfflineMessage {
@@ -55,10 +55,15 @@ func TestARecorderWhoseFirstLoginFailsIsOfflineFromThatTry(t *testing.T) {
 		t.Fatal("Open of a login the gateway refused = nil error, want one")
 	}
 
-	if got := outageEvents(t, events, 1); len(got) != 1 {
+	if got := outageEvents(t, events, 1, loginOutageAfter); len(got) != 1 {
 		t.Errorf("Sentry got %d outage events, want 1", len(got))
 	}
 }
+
+// hungLoginOutageAfter is the outage delay of the hung-login test: longer
+// than the logout, which discordgo's close holds for a second, so the
+// relogin's login starts inside the delay.
+const hungLoginOutageAfter = 1500 * time.Millisecond
 
 // A cut-short recorder is offline from its logout until a login's READY,
 // so a relogin whose login hangs, and never fails, still reaches Sentry
@@ -75,12 +80,18 @@ func TestARecorderOfflineFromItsLogoutReachesSentryWhileItsLoginHangs(t *testing
 		return gatewaytest.Login{}
 	})
 	const token = "recorder-token-7f3a"
-	r := Connect(token, testDiscord())
+	r := Connect(token, &Discord{offlineAfter: hungLoginOutageAfter})
 	defer r.Close()
+	// discordgo hands READY to the watch on a goroutine of its own, so the
+	// first login's outage ends a moment after Connect returns.
+	time.Sleep(hungLoginOutageAfter + hungLoginOutageAfter/2)
+	if n := len(events.Events()); n != 0 {
+		t.Fatalf("Sentry got %d events before the logout, want none", n)
+	}
 
 	r.TakeOffline(gatewaytest.UserID)()
 
-	got := outageEvents(t, events, 1)
+	got := outageEvents(t, events, 1, hungLoginOutageAfter)
 	if len(got) != 1 {
 		t.Fatalf("Sentry got %d outage events, want 1", len(got))
 	}
@@ -147,7 +158,7 @@ func TestARecorderBackFromAnOutageSaysItIsBackOnline(t *testing.T) {
 	r.TakeOffline(gatewaytest.UserID)()
 	waitUntil(t, "the recorder is back online", func() bool { return r.State(gatewaytest.UserID) == RecorderOnline })
 
-	if got := outageEvents(t, events, 1); len(got) != 1 {
+	if got := outageEvents(t, events, 1, loginOutageAfter); len(got) != 1 {
 		t.Fatalf("Sentry got %d outage events, want 1", len(got))
 	}
 	if n := logs.linesSaying(slog.LevelInfo, utils.GatewayBackOnlineMessage, "recorder", "1"); n != 1 {
@@ -291,7 +302,7 @@ func TestShutdownSendsNoOutage(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the recorder never closed its login at shutdown")
 	}
-	if got := outageEvents(t, events, 0); len(got) != 0 {
+	if got := outageEvents(t, events, 0, loginOutageAfter); len(got) != 0 {
 		t.Errorf("Sentry got %d outage events after shutdown, want none", len(got))
 	}
 }
