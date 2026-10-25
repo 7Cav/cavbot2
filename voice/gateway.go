@@ -75,7 +75,7 @@ func (d *Discord) recorder(place int) *discordRecorder {
 		return rec
 	}
 	after := cmp.Or(d.offlineAfter, utils.GatewayOfflineAfter)
-	rec := &discordRecorder{watch: utils.NewGatewayWatch(after, "session", "recorder", "recorder", place), drops: smokeDrops()}
+	rec := &discordRecorder{watch: utils.NewGatewayWatch(after, "session", "recorder", "recorder", place), drops: watchSmokeDrops(place)}
 	rec.watch.Offline()
 	if d.recorders == nil {
 		d.recorders = map[int]*discordRecorder{}

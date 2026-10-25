@@ -329,14 +329,12 @@ func TestRunFileCountsARecorderThatConnectsAfterTheBotIsRunning(t *testing.T) {
 
 	want := recorderTally{Connected: 1}
 	var got recorderTally
-	for deadline := time.Now().Add(stubWait); ; time.Sleep(50 * time.Millisecond) {
+	if !eventually(stubWait, func() bool {
 		if st, ok := readRun(s.paths.runFile()); ok && st.Recording != nil {
-			if got = st.Recording.Recorders; reflect.DeepEqual(got, want) {
-				return
-			}
+			got = st.Recording.Recorders
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("run file's tally %+v after %s, want %+v", got, stubWait, want)
-		}
+		return reflect.DeepEqual(got, want)
+	}) {
+		t.Errorf("run file's tally %+v after %s, want %+v", got, stubWait, want)
 	}
 }

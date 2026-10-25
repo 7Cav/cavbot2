@@ -312,7 +312,7 @@ func TestSmokeDropFailsALiveConnectionsReadAsTheNetworkDoes(t *testing.T) {
 	dropFile := filepath.Join(t.TempDir(), "drop")
 	t.Setenv(smokeDropEnv, dropFile)
 	server := newQuietVoiceServer(t)
-	d := newVoiceDialer(smokeDrops()).websocket()
+	d := newVoiceDialer(watchSmokeDrops(1)).websocket()
 	d.TLSClientConfig = server.dialer().TLSClientConfig
 	ctx, cancel := context.WithTimeout(context.Background(), waitFor)
 	defer cancel()
@@ -347,7 +347,7 @@ func TestSmokeDNSFailMakesVoiceServersUnreachableWhileItsFileExists(t *testing.T
 	t.Setenv(smokeDNSFailEnv, failFile)
 	t.Setenv(smokeDropEnv, filepath.Join(t.TempDir(), "drop"))
 	server := newQuietVoiceServer(t)
-	d := newVoiceDialer(smokeDrops()).websocket()
+	d := newVoiceDialer(watchSmokeDrops(1)).websocket()
 	d.TLSClientConfig = server.dialer().TLSClientConfig
 	dialServer := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), waitFor)

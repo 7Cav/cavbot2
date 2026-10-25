@@ -353,8 +353,10 @@ func (s *supervisor) run(ctx context.Context) error {
 		s.save()
 		return errSilent
 	}
-	if ready != nil && !s.watchBot(ctx, ready) {
-		return errSilent
+	if ready != nil {
+		if err := s.watchBot(ctx, ready); err != nil {
+			return err
+		}
 	}
 	s.logf("stopping")
 	s.teardown()
@@ -367,9 +369,9 @@ func (s *supervisor) run(ctx context.Context) error {
 }
 
 // watchBot watches the bot start launched, with ready closing once it is
-// running, until the bot exits or a stop arrives. It returns false when the
-// bot exited during startup, once it has torn the run down.
-func (s *supervisor) watchBot(ctx context.Context, ready <-chan struct{}) bool {
+// running, until the bot exits or a stop arrives. When the bot exits during
+// startup, it tears the run down and returns errSilent.
+func (s *supervisor) watchBot(ctx context.Context, ready <-chan struct{}) error {
 	select {
 	case <-ready:
 		report := s.report
@@ -388,9 +390,9 @@ func (s *supervisor) watchBot(ctx context.Context, ready <-chan struct{}) bool {
 		printTail(os.Stdout, s.paths.botLog(), 30)
 		s.teardown()
 		s.save()
-		return false
+		return errSilent
 	case <-ctx.Done():
-		return true
+		return nil
 	}
 	for {
 		select {
@@ -401,9 +403,9 @@ func (s *supervisor) watchBot(ctx context.Context, ready <-chan struct{}) bool {
 			s.botExited = true
 			s.st.Detail = fmt.Sprintf("the bot exited on its own (%v)", exitText(err))
 			s.logf("%s; stopping the run", s.st.Detail)
-			return true
+			return nil
 		case <-ctx.Done():
-			return true
+			return nil
 		}
 	}
 }

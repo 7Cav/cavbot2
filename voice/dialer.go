@@ -74,13 +74,13 @@ func newVoiceDialer(drops *connDrops) *voiceDialer {
 	return d
 }
 
-// smokeDrops starts the smoke drop hook's watch of its file when
-// smokeDropEnv names one, and is nil otherwise. A recorder takes one for its
-// whole life, so each appearance of the file drops it once, however many
-// times it has logged in.
-func smokeDrops() *connDrops {
+// watchSmokeDrops starts the smoke drop hook's watch of its file for the
+// recorder at its place in RECORDER_TOKENS when smokeDropEnv names a file,
+// and is nil otherwise. A recorder takes one for its whole life, so each
+// appearance of the file drops it once, however many times it has logged in.
+func watchSmokeDrops(recorder int) *connDrops {
 	if dropFile := os.Getenv(smokeDropEnv); dropFile != "" {
-		return watchDrops(dropFile)
+		return watchDrops(dropFile, recorder)
 	}
 	return nil
 }
@@ -207,14 +207,19 @@ var errDropReset = &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
 // while the file stays drops at its next appearance, so a recorder can
 // connect again after a drop.
 type connDrops struct {
+	// recorder is the place in RECORDER_TOKENS of the recorder whose
+	// connections these are.
+	recorder int
+
 	mu   sync.Mutex
 	live map[*droppableConn]struct{}
 }
 
 // watchDrops starts looking for file every dropCheckEvery, for as long as
-// the bot runs.
-func watchDrops(file string) *connDrops {
-	c := &connDrops{live: make(map[*droppableConn]struct{})}
+// the bot runs, to drop the connections of the recorder at its place in
+// RECORDER_TOKENS.
+func watchDrops(file string, recorder int) *connDrops {
+	c := &connDrops{recorder: recorder, live: make(map[*droppableConn]struct{})}
 	go func() {
 		defer utils.RecoverPanic("smoke-voice-drop")
 		present := false
@@ -258,7 +263,7 @@ const smokeDropMessage = "Smoke hook dropping voice connections"
 func (c *connDrops) dropAll(mode dropMode) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	utils.Warn(smokeDropMessage, "connections", len(c.live), "silent", mode == dropSilent)
+	utils.Warn(smokeDropMessage, "recorder", c.recorder, "connections", len(c.live), "silent", mode == dropSilent)
 	for dc := range c.live {
 		dc.drop(mode)
 	}

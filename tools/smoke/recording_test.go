@@ -93,7 +93,7 @@ func tallyOf(lines []string) recorderTally {
 	for _, line := range lines {
 		r.read(line)
 	}
-	return r.tally
+	return r.snapshot()
 }
 
 func TestRecorderTallySaysRecordingIsOffWithNoToken(t *testing.T) {
@@ -126,16 +126,26 @@ func TestRecorderTallyCountsARecorderThatLogsBackInOnce(t *testing.T) {
 
 	r.TakeOffline(r.UserIDs()[0])()
 
-	lines := logged()
-	for deadline := time.Now().Add(10 * time.Second); linesSaying(lines, recorderConnectedLine) < 2; lines = logged() {
-		if time.Now().After(deadline) {
-			t.Fatalf("the recorder never logged back in:\n%s", strings.Join(lines, "\n"))
-		}
-		time.Sleep(10 * time.Millisecond)
+	var lines []string
+	if !eventually(stubWait, func() bool {
+		lines = logged()
+		return linesSaying(lines, recorderConnectedLine) == 2
+	}) {
+		t.Fatalf("the recorder never logged back in:\n%s", strings.Join(lines, "\n"))
 	}
 	if got, want := tallyOf(lines), (recorderTally{Connected: 1}); !reflect.DeepEqual(got, want) {
 		t.Errorf("tally %+v, want %+v", got, want)
 	}
+}
+
+// eventually reports whether done holds within d, trying it every 50 ms.
+func eventually(d time.Duration, done func() bool) bool {
+	for deadline := time.Now().Add(d); !done(); time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			return false
+		}
+	}
+	return true
 }
 
 // linesSaying counts the lines that say msg.

@@ -17,8 +17,8 @@ import (
 
 // recorderTally is what the bot's log says about its recorders: whether
 // recording is off, how many connected, and the place in RECORDER_TOKENS of
-// each one that failed. It holds no token, so a report
-// built from it can't print one.
+// each one that failed. It holds no token, so a report built from it can't
+// print one.
 type recorderTally struct {
 	Off       bool  `json:"off,omitempty"`
 	Connected int   `json:"connected"`

@@ -368,7 +368,7 @@ func TestARecorderThatFailsToConnectAtStartupReachesSentryOnce(t *testing.T) {
 
 // A smoke run's drop file drops a recorder's voice connections each time it
 // appears, however many times the recorder has logged in. So one appearance
-// logs one drop line for the recorder, after a relogin too.
+// logs one drop line naming the recorder, after a relogin too.
 func TestSmokeDropDropsARecorderOnceAcrossItsLogins(t *testing.T) {
 	logs := captureLogs(t)
 	dropFile := filepath.Join(t.TempDir(), "drop")
@@ -383,11 +383,12 @@ func TestSmokeDropDropsARecorderOnceAcrossItsLogins(t *testing.T) {
 		t.Fatalf("writing the drop file: %v", err)
 	}
 
-	waitUntil(t, "the drop logs", func() bool { return logs.warnings(smokeDropMessage) > 0 })
+	dropLines := func() int { return logs.linesSaying(slog.LevelWarn, smokeDropMessage, "recorder", "1") }
+	waitUntil(t, "the drop logs for recorder 1", func() bool { return dropLines() > 0 })
 	// Each look for the file is dropCheckEvery apart, so every other look
 	// at this appearance has come by then.
 	time.Sleep(2 * dropCheckEvery)
-	if n := logs.warnings(smokeDropMessage); n != 1 {
-		t.Errorf("one appearance of the drop file logged %d drop lines, want 1", n)
+	if n := dropLines(); n != 1 {
+		t.Errorf("one appearance of the drop file logged %d drop lines for recorder 1, want 1", n)
 	}
 }
