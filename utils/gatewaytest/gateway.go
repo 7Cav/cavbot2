@@ -5,6 +5,7 @@ package gatewaytest
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -51,10 +52,64 @@ type Login struct {
 // Gateway is a fake Discord gateway whose test scripts its answer to each
 // login.
 type Gateway struct {
+	// path is where the gateway takes its logins on the front server.
+	path string
+	// over closes when the test ends, which lets go of every connection the
+	// gateway holds.
+	over chan struct{}
+
 	mu      sync.Mutex
 	script  func(login int) Login
 	logins  int
 	settled chan struct{}
+}
+
+// front is the one server discordgo reaches the gateways through, for every
+// test in the process. discordgo reads its gateway endpoint from a package
+// variable, from the goroutines its sessions log in on, and a session can
+// still be logging in on one of them when its test ends. So the variable is
+// set once, never restored, and the front server hands each session the
+// gateway of the test running when it asks. A login that reaches the
+// gateway of a test that has ended is refused.
+var front struct {
+	once sync.Once
+	url  string
+
+	mu sync.Mutex
+	// gateways is each gateway whose test is still running, by its path.
+	// latest is the one New stood up last, nil once its test has ended.
+	gateways map[string]*Gateway
+	latest   *Gateway
+	stood    int
+}
+
+// startFront starts the front server and points discordgo at it.
+func startFront() {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	front.url = srv.URL
+	front.gateways = map[string]*Gateway{}
+	mux.HandleFunc("/gateway", func(w http.ResponseWriter, _ *http.Request) {
+		front.mu.Lock()
+		g := front.latest
+		front.mu.Unlock()
+		if g == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"url": "ws" + strings.TrimPrefix(front.url, "http") + g.path})
+	})
+	mux.HandleFunc("/ws/", func(w http.ResponseWriter, r *http.Request) {
+		front.mu.Lock()
+		g := front.gateways[r.URL.Path]
+		front.mu.Unlock()
+		if g == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		g.serve(w, r)
+	})
+	discordgo.EndpointGateway = srv.URL + "/gateway"
 }
 
 // New stands up a gateway that answers each login with what script returns
@@ -62,37 +117,38 @@ type Gateway struct {
 // test. Every upgrade request is a login, refused or not.
 func New(t testing.TB, script func(login int) Login) *Gateway {
 	t.Helper()
-	g := &Gateway{script: script}
-
-	mux := http.NewServeMux()
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	// Registered after srv.Close so it runs first (Cleanup is LIFO): a held
-	// connection must let go before the server shuts down.
-	testOver := make(chan struct{})
-	t.Cleanup(func() { close(testOver) })
-
-	mux.HandleFunc("/gateway", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"url": "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"})
-	})
-	mux.HandleFunc("/ws/", func(w http.ResponseWriter, r *http.Request) {
-		login := g.login()
-		if login.Refuse {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
+	front.once.Do(startFront)
+	front.mu.Lock()
+	front.stood++
+	g := &Gateway{path: fmt.Sprintf("/ws/%d/", front.stood), over: make(chan struct{}), script: script}
+	front.gateways[g.path] = g
+	front.latest = g
+	front.mu.Unlock()
+	t.Cleanup(func() {
+		front.mu.Lock()
+		delete(front.gateways, g.path)
+		if front.latest == g {
+			front.latest = nil
 		}
-		c, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		defer func() { _ = c.Close() }()
-		g.run(c, login, testOver)
+		front.mu.Unlock()
+		close(g.over)
 	})
-
-	prev := discordgo.EndpointGateway
-	discordgo.EndpointGateway = srv.URL + "/gateway"
-	t.Cleanup(func() { discordgo.EndpointGateway = prev })
 	return g
+}
+
+// serve takes one login.
+func (g *Gateway) serve(w http.ResponseWriter, r *http.Request) {
+	login := g.login()
+	if login.Refuse {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	c, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer func() { _ = c.Close() }()
+	g.run(c, login, g.over)
 }
 
 // login numbers a login and reads its answer from the script, or from

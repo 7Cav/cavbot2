@@ -100,7 +100,7 @@ func TestGatewayWatch_ARefusedTokenStopsTheLoginsAndSendsOneEvent(t *testing.T) 
 	if n := g.Logins(); n != 1 {
 		t.Errorf("the gateway saw %d logins, want 1: none after the 4004", n)
 	}
-	if n := logs.linesSaying(tokenRefusedMessage, "session", "main"); n != 1 {
+	if n := logs.linesSaying(TokenRefusedMessage, "session", "main"); n != 1 {
 		t.Errorf("%d lines say the token was refused for session main, want 1", n)
 	}
 }
@@ -317,7 +317,7 @@ func TestGatewayWatch_ASessionClosedAfterAFailedOpenLogsInNoMore(t *testing.T) {
 		t.Fatal("OpenSession reported success for a session that never became ready")
 	}
 
-	_ = w.CloseSession()
+	_, _ = w.CloseSession()
 	time.Sleep(reloginSlack)
 
 	if n := g.Logins(); n != 1 {
@@ -335,7 +335,7 @@ func TestGatewayWatch_CloseSessionSendsNothing(t *testing.T) {
 	}
 	w := WatchGateway(dg, gatewayWatchAfter, "session", "recorder")
 
-	_ = w.CloseSession()
+	_, _ = w.CloseSession()
 
 	if events := waitForOutageEvents(t, tr, 0); len(events) != 0 {
 		t.Errorf("Sentry got %d events after CloseSession, want none", len(events))

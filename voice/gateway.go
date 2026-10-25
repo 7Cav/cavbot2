@@ -106,13 +106,11 @@ func (d *Discord) Open(recorder int, token string) (GatewaySession, error) {
 	s.watch = d.watch(recorder)
 	s.watch.Watch(dg)
 	if err := utils.OpenSession(dg); err != nil {
-		_ = s.watch.CloseSession()
-		return nil, err
+		return nil, s.failedOpen(err)
 	}
 	userID, err := snowflake.Parse(dg.State.User.ID)
 	if err != nil {
-		_ = s.watch.CloseSession()
-		return nil, err
+		return nil, s.failedOpen(err)
 	}
 	s.named(dg.State.User.ID)
 	// Closures rather than method values here and below: the gate's error
@@ -130,6 +128,17 @@ func (d *Discord) Open(recorder int, token string) (GatewaySession, error) {
 	dg.AddHandler(func(_ *discordgo.Session, e *discordgo.VoiceStateUpdate) { s.onVoiceStateUpdate(e) })
 	dg.AddHandler(func(_ *discordgo.Session, e *discordgo.VoiceServerUpdate) { s.onVoiceServerUpdate(e) })
 	return s, nil
+}
+
+// failedOpen closes a session that failed to open, and returns err, the
+// open's failure. When Discord refused the recorder's token, that failure
+// is ErrTokenRefused, whether Discord closed the connection with 4004 during
+// the open or after the open had returned.
+func (s *discordgoSession) failedOpen(err error) error {
+	if refused, _ := s.watch.CloseSession(); refused {
+		return fmt.Errorf("%w: %w", ErrTokenRefused, err)
+	}
+	return err
 }
 
 // discordgoSession is a recorder's discordgo session, with the disgo voice
@@ -1340,7 +1349,8 @@ func (s *discordgoSession) UserID() string { return s.userID }
 // in a gateway outage all that time, though the bot chose it.
 func (s *discordgoSession) LogOut() error {
 	s.watch.Offline()
-	return s.watch.CloseSession()
+	_, err := s.watch.CloseSession()
+	return err
 }
 
 // Close takes the recorder out of any voice channel it is still in, then

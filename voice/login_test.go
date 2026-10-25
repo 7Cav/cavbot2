@@ -153,3 +153,63 @@ func TestARecorderBackFromAnOutageSaysItIsBackOnline(t *testing.T) {
 		t.Errorf("%d INFO lines say recorder 1 is back online, want 1", n)
 	}
 }
+
+// refusalLines counts the records, at any level, that say Discord refused
+// a token: the adapter's and the gateway outage watch's.
+func (l *logRecorder) refusalLines() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, r := range l.records {
+		if r.Message == loginRefusedMessage || r.Message == utils.TokenRefusedMessage {
+			n++
+		}
+	}
+	return n
+}
+
+// Discord closes a login whose token it refuses with 4004, whether it
+// answers the identify that way or answers it with Op 9 and the identify
+// after that with the 4004. Either way the relogin stops and the recorder
+// is out, and the bot logs the refusal once. A login closed with any other
+// code is a failed login, which the relogin tries again.
+func TestARecorderWhoseLoginDiscordRefusesWith4004IsOut(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		login gatewaytest.Login
+		out   bool
+	}{
+		{"4004 for the identify", gatewaytest.Login{Close: 4004}, true},
+		{"4004 after an Op 9", gatewaytest.Login{Invalid: true, Close: 4004}, true},
+		{"4000", gatewaytest.Login{Close: 4000}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureLogs(t)
+			g := gatewaytest.New(t, func(login int) gatewaytest.Login {
+				if login == 1 {
+					return gatewaytest.Login{Answer: "READY"}
+				}
+				return tc.login
+			})
+			// No outage reaches Sentry during the test.
+			r := Connect("recorder-token", &Discord{offlineAfter: time.Hour})
+			defer r.Close()
+
+			r.TakeOffline(gatewaytest.UserID)()
+
+			if !tc.out {
+				waitUntil(t, "the relogin tries again", func() bool { return g.Logins() >= 3 })
+				if state := r.State(gatewaytest.UserID); state == RecorderOut {
+					t.Errorf("recorder state after a login closed %d = %s, want it still logging in", tc.login.Close, state)
+				}
+				return
+			}
+			waitUntil(t, "the recorder is out and the log says why", func() bool {
+				return r.State(gatewaytest.UserID) == RecorderOut && logs.refusalLines() > 0
+			})
+			if n := logs.refusalLines(); n != 1 {
+				t.Errorf("%d records say Discord refused the token, want 1", n)
+			}
+		})
+	}
+}
