@@ -347,7 +347,8 @@ func TestGatewayWatch_CloseSessionSendsNothing(t *testing.T) {
 const staleAnswerAfter = 2 * time.Second
 
 // watchedSession is a session w reads from now on. The test's end closes
-// it before the gateway lets go, so it logs in no more.
+// it before the gateway lets go. The close drops the session's connection,
+// so its listener doesn't log in again.
 func watchedSession(t *testing.T, w *GatewayWatch) *discordgo.Session {
 	t.Helper()
 	dg, err := discordgo.New("Bot fake-token-for-test")
@@ -357,7 +358,6 @@ func watchedSession(t *testing.T, w *GatewayWatch) *discordgo.Session {
 	w.Watch(dg)
 	t.Cleanup(func() {
 		w.StandDown()
-		dg.ShouldReconnectOnError = false
 		_ = dg.Close()
 	})
 	return dg
