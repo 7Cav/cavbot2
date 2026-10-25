@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -51,14 +52,34 @@ var (
 // (holdNextJoin). leaveTakes is how long each leave takes to return, none
 // until a test sets it. report is the gap report every connection hands
 // over, empty until a test sets it.
+//
+// states is each recorder's state, online unless a test or a cut short
+// says otherwise. A join of an offline recorder waits for it to come back
+// online, as the voice adapter's does. logins counts each recorder's
+// logins after its first, and relogins is each relogin the runtime asked
+// for. A relogin brings its recorder back online at once, as a new login,
+// unless staysOffline is set.
 type fakeRecorderVoice struct {
-	mu         sync.Mutex
-	recorders  []string
-	conns      []*fakeVoiceConn
-	joinErr    error
-	hold       *joinHold
-	leaveTakes time.Duration
-	report     voice.GapReport
+	mu           sync.Mutex
+	recorders    []string
+	conns        []*fakeVoiceConn
+	joinErr      error
+	hold         *joinHold
+	leaveTakes   time.Duration
+	report       voice.GapReport
+	states       map[string]voice.RecorderState
+	changed      chan struct{}
+	logins       map[string]int
+	relogins     []fakeRelogin
+	staysOffline bool
+}
+
+// fakeRelogin is one relogin the runtime asked the fake voice adapter for:
+// the recorder, and whether each of its connections had left the channel
+// by then.
+type fakeRelogin struct {
+	recorderID string
+	afterLeave bool
 }
 
 // joinHold keeps one join from returning: joined closes once it has gone
@@ -73,9 +94,11 @@ type joinHold struct {
 type fakeVoiceConn struct {
 	v                     *fakeRecorderVoice
 	recorderID, channelID string
-	left, leaving         bool
-	ownLeaves             int
-	listener              voice.Listener
+	// login is the recorder's login the connection joined through.
+	login         int
+	left, leaving bool
+	ownLeaves     int
+	listener      voice.Listener
 }
 
 func (v *fakeRecorderVoice) UserIDs() []string {
@@ -88,19 +111,37 @@ func (v *fakeRecorderVoice) UserIDs() []string {
 // runs, as the voice adapter hands that join the connection it is closing.
 var errFakeConnClosed = errors.New("voice: the recorder closed the connection")
 
-func (v *fakeRecorderVoice) Join(_ context.Context, recorderID, guildID, channelID string) (voice.Conn, error) {
+// errFakeRecorderOut is the fake's join of a recorder that is out.
+var errFakeRecorderOut = errors.New("voice: the recorder is out until a restart")
+
+func (v *fakeRecorderVoice) Join(ctx context.Context, recorderID, guildID, channelID string) (voice.Conn, error) {
 	v.mu.Lock()
 	if v.joinErr != nil {
 		v.mu.Unlock()
 		return nil, v.joinErr
 	}
+	for v.stateLocked(recorderID) == voice.RecorderOffline {
+		changed := v.changedLocked()
+		v.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("recorder %s: %w", recorderID, voice.ErrRecorderOffline)
+		}
+		v.mu.Lock()
+	}
+	if v.stateLocked(recorderID) == voice.RecorderOut {
+		v.mu.Unlock()
+		return nil, errFakeRecorderOut
+	}
+	login := v.logins[recorderID]
 	for _, c := range v.conns {
-		if c.recorderID == recorderID && c.leaving {
+		if c.recorderID == recorderID && c.login == login && c.leaving {
 			v.mu.Unlock()
 			return nil, errFakeConnClosed
 		}
 	}
-	c := &fakeVoiceConn{v: v, recorderID: recorderID, channelID: channelID}
+	c := &fakeVoiceConn{v: v, recorderID: recorderID, channelID: channelID, login: login}
 	v.conns = append(v.conns, c)
 	hold := v.hold
 	v.hold = nil
@@ -110,6 +151,86 @@ func (v *fakeRecorderVoice) Join(_ context.Context, recorderID, guildID, channel
 		<-hold.release
 	}
 	return c, nil
+}
+
+func (v *fakeRecorderVoice) State(recorderID string) voice.RecorderState {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.stateLocked(recorderID)
+}
+
+// stateLocked is a recorder's state. Caller holds mu.
+func (v *fakeRecorderVoice) stateLocked(recorderID string) voice.RecorderState {
+	if st, ok := v.states[recorderID]; ok {
+		return st
+	}
+	return voice.RecorderOnline
+}
+
+// changedLocked is the channel that closes at the next change of state.
+// Caller holds mu.
+func (v *fakeRecorderVoice) changedLocked() chan struct{} {
+	if v.changed == nil {
+		v.changed = make(chan struct{})
+	}
+	return v.changed
+}
+
+// setState puts a recorder in a state, as the voice adapter does when it
+// logs in, out, or is refused, and wakes the joins waiting on it.
+func (v *fakeRecorderVoice) setState(recorderID string, st voice.RecorderState) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.setStateLocked(recorderID, st)
+}
+
+// setStateLocked is setState with mu held.
+func (v *fakeRecorderVoice) setStateLocked(recorderID string, st voice.RecorderState) {
+	if v.states == nil {
+		v.states = map[string]voice.RecorderState{}
+	}
+	v.states[recorderID] = st
+	close(v.changedLocked())
+	v.changed = nil
+}
+
+// TakeOffline counts the recorder offline. Its relogin records itself and,
+// unless staysOffline is set, brings the recorder back online as a new
+// login.
+func (v *fakeRecorderVoice) TakeOffline(recorderID string) (relogin func()) {
+	v.setState(recorderID, voice.RecorderOffline)
+	return func() {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		afterLeave := true
+		for _, c := range v.conns {
+			if c.recorderID == recorderID && c.login == v.logins[recorderID] && !c.left {
+				afterLeave = false
+			}
+		}
+		v.relogins = append(v.relogins, fakeRelogin{recorderID: recorderID, afterLeave: afterLeave})
+		if v.staysOffline {
+			return
+		}
+		if v.logins == nil {
+			v.logins = map[string]int{}
+		}
+		v.logins[recorderID]++
+		v.setStateLocked(recorderID, voice.RecorderOnline)
+	}
+}
+
+// reloginsOf is each relogin the runtime asked for of a recorder, in order.
+func (v *fakeRecorderVoice) reloginsOf(recorderID string) []fakeRelogin {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	var out []fakeRelogin
+	for _, r := range v.relogins {
+		if r.recorderID == recorderID {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // holdNextJoin keeps the next join from returning until release is called.
@@ -461,6 +582,17 @@ var recordRefusals = []recordRefusal{
 		},
 		carries: []string{recordingOffRefusal},
 		lacks:   []string{noFreeRecorderRefusal},
+	},
+	{
+		name:      "every recorder out",
+		recorders: []string{testRecorder, testSecondRecorder},
+		setup: func(_ *testing.T, sc *recordScene) permMember {
+			sc.voice.setState(testRecorder, voice.RecorderOut)
+			sc.voice.setState(testSecondRecorder, voice.RecorderOut)
+			sc.fake.setVoice(recStarter.id, recordChannel)
+			return recStarter
+		},
+		carries: []string{recordingOffRefusal},
 	},
 }
 

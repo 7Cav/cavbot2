@@ -176,6 +176,12 @@ type fakeRecorders struct {
 
 func (v *fakeRecorders) UserIDs() []string { return []string{testRecorder} }
 
+// State is online: the recorder never logs out in these tests.
+func (v *fakeRecorders) State(string) voice.RecorderState { return voice.RecorderOnline }
+
+// TakeOffline has no effect: no gap cuts a recording short in these tests.
+func (v *fakeRecorders) TakeOffline(string) func() { return func() {} }
+
 func (v *fakeRecorders) Join(context.Context, string, string, string) (voice.Conn, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()

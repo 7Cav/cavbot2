@@ -25,15 +25,30 @@ func (f fakeRecorder) Join(context.Context, string, string) (voice.Conn, error) 
 }
 func (f fakeRecorder) Close() error { return nil }
 
-// openRefusing opens a recorder for each token, with Discord refusing each
-// token refused picks.
-func openRefusing(refused func(token string) bool) voice.Opener {
-	return func(recorder int, token string) (voice.GatewaySession, error) {
-		if refused(token) {
-			return nil, errors.New("websocket: close 4004: Authentication failed.")
-		}
-		return fakeRecorder{id: strconv.Itoa(1000 + recorder)}, nil
+// refusingDiscord logs a recorder in for each token, with Discord refusing
+// each token refused picks, at its gateway and its REST API alike.
+type refusingDiscord struct {
+	refused func(token string) bool
+}
+
+func (d refusingDiscord) Open(recorder int, token string) (voice.GatewaySession, error) {
+	if d.refused(token) {
+		return nil, errors.New("websocket: close 4004: Authentication failed.")
 	}
+	return fakeRecorder{id: strconv.Itoa(1000 + recorder)}, nil
+}
+
+func (d refusingDiscord) UserID(_ context.Context, token string) (string, error) {
+	if d.refused(token) {
+		return "", errors.New("HTTP 401 Unauthorized")
+	}
+	return "", errors.New("not in this test")
+}
+
+// openRefusing logs a recorder in for each token, with Discord refusing
+// each token refused picks.
+func openRefusing(refused func(token string) bool) voice.Opener {
+	return refusingDiscord{refused: refused}
 }
 
 // recorderLog runs the bot's recorder connect on raw, a RECORDER_TOKENS

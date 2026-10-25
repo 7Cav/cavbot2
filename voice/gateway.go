@@ -39,14 +39,31 @@ const lookupTimeout = 5 * time.Second
 // one, and discordgo hands each event to a goroutine of its own.
 const answerWait = 250 * time.Millisecond
 
-// OpenGateway is the production Opener: a discordgo session for the recorder
-// account, open once READY has named it. A session that opened without
-// reaching READY is closed again for good, so a failed recorder holds no
-// connection and its token logs in no more until the bot restarts.
+// Discord is the production Opener: Discord itself, through discordgo.
+type Discord struct{}
+
+// UserID reads the recorder account's user ID from GET /users/@me with its
+// token, which needs no gateway session.
+func (Discord) UserID(ctx context.Context, token string) (string, error) {
+	dg, err := discordgo.New("Bot " + token)
+	if err != nil {
+		return "", err
+	}
+	u, err := dg.User("@me", discordgo.WithContext(ctx))
+	if err != nil {
+		return "", err
+	}
+	return u.ID, nil
+}
+
+// Open is one login of a recorder: a new discordgo session for the
+// recorder account, open once READY has named it. A session that opened
+// without reaching READY is closed again for good, so a failed login holds
+// no connection, and the next login opens a session of its own.
 // The session is watched, so a recorder that drops off the gateway and stays
 // off reaches Sentry while the bot runs, and one whose token Discord refuses
 // stops logging in.
-func OpenGateway(recorder int, token string) (GatewaySession, error) {
+func (Discord) Open(recorder int, token string) (GatewaySession, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, err

@@ -219,13 +219,15 @@ func main() {
 	// dg.Open() fails at runtime with no compile-time signal.
 	dg.Identify.Intents = discordgo.IntentsAllWithoutPrivileged | discordgo.IntentsGuildMembers
 
-	// Recorders (spec #381): one gateway session per token in
-	// RECORDER_TOKENS, opened before temp VC starts, since temp VC takes
-	// their user IDs before it registers a handler. With no token, recording
-	// is off and none connects. A token that fails goes to Sentry and costs
-	// only its own recorder. Deferred before the main session's close, so
-	// the recorders close after it.
-	recorders := voice.Connect(os.Getenv("RECORDER_TOKENS"), voice.OpenGateway)
+	// Recorders (spec #381): one login per token in RECORDER_TOKENS, made
+	// before temp VC starts, since temp VC takes their user IDs before it
+	// registers a handler. Startup waits only for each first login. A
+	// recorder whose first login fails logs in in the background, under the
+	// user ID Discord's REST API gives for its token. With no token,
+	// recording is off and none connects. A token that can't log in or be
+	// read goes to Sentry and costs only its own recorder. Deferred before
+	// the main session's close, so the recorders close after it.
+	recorders := voice.Connect(os.Getenv("RECORDER_TOKENS"), voice.Discord{})
 	defer recorders.Close()
 	if shuttingDown() {
 		return
