@@ -1613,6 +1613,255 @@ func TestRecorderStartsTheGapOfAMovedCallAtTheClose(t *testing.T) {
 	})
 }
 
+// A gap names what started it, and a voice gateway that closes starts one
+// named for the closed gateway: a close with a code, or a read that fails,
+// which reaches the recorder as disgo's refused resume. The call is
+// transport-only, so DAVE plays no part, and the voice server is out of
+// reach from then, so the gap lasts.
+func TestRecorderNamesTheGapOfAClosedVoiceGateway(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"a close", &websocket.CloseError{Code: 4006}},
+		{"a failed read", errResumeRefused},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recordSentry(t)
+			synctest.Test(t, func(t *testing.T) {
+				h := newCallHarness(t)
+				h.transportOnly.Store(true)
+				l := listen(nil)
+				conn := h.record(l)
+				defer h.hangUp(conn)
+				h.setReachable(oldEndpoint, false)
+
+				go h.endConnection(tc.err)
+				time.Sleep(time.Second)
+				synctest.Wait()
+
+				if got := l.gapCauses(); len(got) == 0 || got[0] != GapVoiceGatewayClosed {
+					t.Errorf("gap causes = %v, want the first %s", got, GapVoiceGatewayClosed)
+				}
+			})
+		})
+	}
+}
+
+// A voice server can stop answering heartbeats without closing the
+// connection. The gap the recorder's check starts once the answer is
+// overdue is named for it. The server is out of reach from then, so the gap
+// lasts, and the test waits for it however long the check takes.
+func TestRecorderNamesTheGapOfAVoiceServerWhoseHeartbeatAnswerIsOverdue(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.connected.hello(time.Second)
+		h.setReachable(oldEndpoint, false)
+
+		for waited := time.Duration(0); len(l.gapCauses()) == 0 && waited < time.Minute; waited += time.Second {
+			time.Sleep(time.Second)
+			synctest.Wait()
+		}
+
+		if got := l.gapCauses(); len(got) == 0 || got[0] != GapHeartbeatOverdue {
+			t.Errorf("gap causes = %v, want the first %s", got, GapHeartbeatOverdue)
+		}
+	})
+}
+
+// A 4022 ends the call at its voice server, and the recorder asks Discord's
+// API whether the channel is still there, which takes a second here. A
+// channel still there means the call moved to another voice server, and the
+// gap is named for the move. A channel gone means only that the voice
+// gateway closed.
+func TestRecorderNamesTheGapOfA4022ForWhatTheChannelLookupSays(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		gone bool
+		want GapCause
+	}{
+		{"channel still there", false, GapCallMoved},
+		{"channel gone", true, GapVoiceGatewayClosed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recordSentry(t)
+			synctest.Test(t, func(t *testing.T) {
+				h := newCallHarness(t)
+				h.transportOnly.Store(true)
+				l := listen(nil)
+				conn := h.record(l)
+				defer h.hangUp(conn)
+				h.api.gone.Store(tc.gone)
+				h.api.during = func() { time.Sleep(time.Second) }
+				h.setReachable(newEndpoint, false)
+
+				go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+				time.Sleep(time.Minute)
+				synctest.Wait()
+
+				if got := l.gapCauses(); len(got) == 0 || got[0] != tc.want {
+					t.Errorf("gap causes = %v, want the first %s", got, tc.want)
+				}
+			})
+		})
+	}
+}
+
+// Discord can name the voice server a call moved to before the 4022 that
+// ends the call where it was. Once the recorder's own voice state has
+// reached disgo since the join, as a moderator's server mute sends it,
+// disgo opens at the named server at once, and the recorder can't hear the
+// call from then on. The gap is named for the move. The server it moved to
+// is out of reach, so the gap lasts.
+func TestRecorderNamesTheGapOfAMoveDiscordNamesBeforeThe4022(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.setReachable(newEndpoint, false)
+
+		h.s.voice.HandleVoiceStateUpdate(recorderVoiceState(callChannel))
+		h.name("token-3", newEndpoint)
+		time.Sleep(time.Second)
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if got := l.gapCauses(); len(got) == 0 || got[0] != GapCallMoved {
+			t.Errorf("gap causes = %v, want the first %s", got, GapCallMoved)
+		}
+	})
+}
+
+// Discord can name a later voice server for the call just as the join's
+// connection completes at the one it named before: as the gateway opens,
+// or between the voice server's Ready and its session description. The
+// call isn't there anymore, and the later server is out of reach, so the
+// recording can't hear the call from its start, and the gap is named for
+// the move.
+func TestRecorderNamesTheGapOfAJoinWhoseCallMovedAsItConnected(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		describeLate bool
+	}{
+		{"named as the gateway opens", false},
+		{"named before the session description", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recordSentry(t)
+			synctest.Test(t, func(t *testing.T) {
+				h := newCallHarness(t)
+				h.transportOnly.Store(true)
+				h.describeLate.Store(tc.describeLate)
+				h.setReachable(laterEndpoint, false)
+				h.onOpening(oldEndpoint, func() { h.name("token-3", laterEndpoint) })
+				l := listen(nil)
+
+				conn := h.record(l)
+				defer h.hangUp(conn)
+				time.Sleep(time.Minute)
+				synctest.Wait()
+
+				if got := l.gapCauses(); len(got) == 0 || got[0] != GapCallMoved {
+					t.Errorf("gap causes = %v, want the first %s", got, GapCallMoved)
+				}
+			})
+		})
+	}
+}
+
+// A 4022's channel lookup takes a while, and Discord can name voice servers
+// for the call meanwhile: the one it moved to, which disgo opens at once
+// the recorder's own voice state has reached it, then a later one before
+// that open's session description, so the recorder replaces that gateway.
+// Both are out of reach after. The lookup says the channel is still there,
+// so the gap is named for the move.
+func TestRecorderNamesTheGapOfAMovedCallWhoseGatewayIsReplacedDuringTheLookup(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		h.describeLate.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.setReachable(laterEndpoint, false)
+		h.onOpening(newEndpoint, func() { h.name("token-4", laterEndpoint) })
+		h.api.during = func() {
+			h.s.voice.HandleVoiceStateUpdate(recorderVoiceState(callChannel))
+			h.name("token-3", newEndpoint)
+			// The open's session description has reached disgo once the open
+			// reports, which orders it before the rejoin's open after the
+			// lookup, as the race detector needs. The replace follows within
+			// the second.
+			select {
+			case <-h.opened:
+			case <-time.After(waitFor):
+				h.t.Error("no gateway opened at the server Discord named during the lookup")
+			}
+			time.Sleep(time.Second)
+			h.setReachable(newEndpoint, false)
+		}
+
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if got := l.gapCauses(); len(got) == 0 || got[0] != GapCallMoved {
+			t.Errorf("gap causes = %v, want the first %s", got, GapCallMoved)
+		}
+	})
+}
+
+// disgo can connect at the server a call moved to while a 4022's channel
+// lookup is still out, once Discord sends the recorder's voice state and
+// names that server. The recorder rejoins after the lookup all the same.
+// The recording couldn't hear the call from the close on, so its gap
+// starts there, named for the move, and not where the rejoin starts.
+func TestRecorderStartsTheGapAtTheCloseWhenDisgoConnectsDuringTheLookup(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.api.during = func() {
+			h.s.voice.HandleVoiceStateUpdate(recorderVoiceState(callChannel))
+			h.name("token-3", newEndpoint)
+			// The open reporting orders its session description before the
+			// rejoin's open, as the race detector needs.
+			select {
+			case <-h.opened:
+			case <-time.After(waitFor):
+				h.t.Error("no gateway opened at the server Discord named during the lookup")
+			}
+			time.Sleep(1100 * time.Millisecond)
+		}
+
+		closed := time.Now()
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		causes, starts := l.gapCauses(), l.gapStarts()
+		if len(causes) == 0 || causes[0] != GapCallMoved {
+			t.Fatalf("gap causes = %v, want the first %s", causes, GapCallMoved)
+		}
+		if !starts[0].Equal(closed) {
+			t.Errorf("gap started %v after the close, want at it", starts[0].Sub(closed))
+		}
+	})
+}
+
 // Discord can take the recorder out of the channel while the recorder asks
 // whether the channel is still there after a 4022. disgo then starts no
 // fresh connection, and the recorder is out as surely as after a rejoin

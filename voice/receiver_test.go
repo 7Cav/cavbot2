@@ -38,7 +38,9 @@ const testChannel = "200"
 
 // fakeReceiveConn is a voice connection as the receiver reads it, its DAVE
 // session the fake one unless a case gives it another. reconnects is when
-// the receiver asked for each fresh connection.
+// the receiver asked for each fresh connection. down is whether the
+// connection is lost, as lost says, until it comes back, and losses counts
+// the drops.
 type fakeReceiveConn struct {
 	udp  *fakeVoiceUDP
 	dave godave.Session
@@ -46,6 +48,9 @@ type fakeReceiveConn struct {
 	mu         sync.Mutex
 	users      map[uint32]snowflake.ID
 	reconnects []time.Time
+	down       bool
+	lost       gapStart
+	losses     int
 }
 
 func newFakeReceiveConn() *fakeReceiveConn {
@@ -75,10 +80,30 @@ func (c *fakeReceiveConn) ChannelID() *snowflake.ID {
 	return &id
 }
 
-// connection is always connected here: the call harness covers the
-// connection coming and going.
-func (c *fakeReceiveConn) connection() (bool, time.Time) { return true, time.Time{} }
-func (c *fakeReceiveConn) server() string                { return "c-dfw-1.discord.media:443" }
+// connection is connected until drop: the call harness covers what drops a
+// connection and brings it back.
+func (c *fakeReceiveConn) connection() (bool, gapStart, int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.down, c.lost, c.losses
+}
+
+// drop has the connection lost now, for cause, until restore.
+func (c *fakeReceiveConn) drop(cause GapCause) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.down, c.lost = true, gapStart{at: time.Now(), cause: cause}
+	c.losses++
+}
+
+// restore has the connection connected again.
+func (c *fakeReceiveConn) restore() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.down = false
+}
+
+func (c *fakeReceiveConn) server() string { return "c-dfw-1.discord.media:443" }
 
 func (c *fakeReceiveConn) reconnect(context.Context) error {
 	c.mu.Lock()
@@ -163,13 +188,14 @@ func sealFor(userID, plaintext string) []byte {
 }
 
 // listener is a Listener that hands each frame to frame, when set, and keeps
-// the gap events it hears in order, and when each gap started.
+// the gap events it hears in order, and when and why each gap started.
 type listener struct {
 	frame func(Frame)
 
 	mu     sync.Mutex
 	gaps   []string
 	starts []time.Time
+	causes []GapCause
 }
 
 // The gap events a listener keeps.
@@ -186,9 +212,10 @@ func (l *listener) Frame(f Frame) {
 	}
 }
 
-func (l *listener) GapStarted(since time.Time) {
+func (l *listener) GapStarted(since time.Time, cause GapCause) {
 	l.mu.Lock()
 	l.starts = append(l.starts, since)
+	l.causes = append(l.causes, cause)
 	l.mu.Unlock()
 	l.note(gapStarted)
 }
@@ -200,6 +227,13 @@ func (l *listener) gapStarts() []time.Time {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return slices.Clone(l.starts)
+}
+
+// gapCauses is what started each gap heard so far, in order.
+func (l *listener) gapCauses() []GapCause {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.causes)
 }
 
 func (l *listener) note(event string) {
@@ -412,9 +446,9 @@ func TestReceiverHearsTheSpeakerAgainOnceDAVESetsUpAfterAStall(t *testing.T) {
 	})
 }
 
-// DAVE holding every frame is a gap: the recorder hears nobody. The gap
-// ends once DAVE passes frames again, and the listener hears of it once
-// each way, however long DAVE held them.
+// DAVE holding every frame past its stall limit is a gap: the recorder
+// hears nobody. The gap ends once DAVE passes frames again, and the
+// listener hears of it once each way, however long DAVE held them.
 func TestReceiverToldOfAGapWhileDAVEHoldsFrames(t *testing.T) {
 	recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
@@ -435,6 +469,92 @@ func TestReceiverToldOfAGapWhileDAVEHoldsFrames(t *testing.T) {
 
 		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted, gapEnded}) {
 			t.Errorf("gap events once DAVE passes frames = %v, want the gap started and ended", got)
+		}
+	})
+}
+
+// DAVE holding every frame past its stall limit starts a gap named for the
+// stall. The recorder last heard the channel when DAVE started holding, so
+// the gap starts then, not at the limit.
+func TestReceiverNamesTheGapOfAStalledDAVESetupFromWhenItStartedHolding(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		l := listen(nil)
+		startListening(t, conn, l)
+		time.Sleep(time.Second)
+
+		held := time.Now()
+		conn.holdFrames(true)
+		time.Sleep(stallAfter + time.Second)
+		synctest.Wait()
+
+		causes, starts := l.gapCauses(), l.gapStarts()
+		if len(causes) != 1 || causes[0] != GapDAVEStalled {
+			t.Fatalf("gap causes = %v, want one %s", causes, GapDAVEStalled)
+		}
+		if starts[0].Before(held) || !starts[0].Before(held.Add(stallAfter)) {
+			t.Errorf("gap started %v after DAVE started holding, want at it, inside the %v stall limit", starts[0].Sub(held), stallAfter)
+		}
+	})
+}
+
+// A gap keeps the cause that started it, whatever trouble follows while
+// the recorder recovers. Here the voice server's heartbeat answer is
+// overdue, the rejoin's DAVE setup stalls, and the connection drops again
+// before DAVE sets up: all one gap, named for the overdue answer. It ends
+// once the recorder is connected with DAVE passing frames.
+func TestReceiverKeepsTheCauseThatStartedAGapThroughItsRecovery(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		l := listen(nil)
+		startListening(t, conn, l)
+		time.Sleep(time.Second)
+
+		conn.drop(GapHeartbeatOverdue)
+		time.Sleep(time.Second)
+		conn.holdFrames(true)
+		conn.restore()
+		time.Sleep(stallAfter + time.Second)
+		conn.drop(GapVoiceGatewayClosed)
+		time.Sleep(time.Second)
+		conn.restore()
+		conn.holdFrames(false)
+		time.Sleep(time.Second)
+		synctest.Wait()
+
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted, gapEnded}) {
+			t.Fatalf("gap events = %v, want one gap started and ended", got)
+		}
+		if got := l.gapCauses(); got[0] != GapHeartbeatOverdue {
+			t.Errorf("gap cause = %s, want %s, the trouble that started it", got[0], GapHeartbeatOverdue)
+		}
+	})
+}
+
+// A lost connection is a gap however briefly it lasts. Here it drops and
+// comes back before the receiver looks again, and the listener still hears
+// the gap start, dated at the drop, and end.
+func TestReceiverToldOfALossThatEndedBeforeItLooked(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		l := listen(nil)
+		startListening(t, conn, l)
+		time.Sleep(time.Second)
+
+		dropped := time.Now()
+		conn.drop(GapVoiceGatewayClosed)
+		conn.restore()
+		time.Sleep(time.Second)
+		synctest.Wait()
+
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted, gapEnded}) {
+			t.Fatalf("gap events = %v, want one gap started and ended", got)
+		}
+		if got := l.gapStarts(); !got[0].Equal(dropped) {
+			t.Errorf("gap started %v after the drop, want at it", got[0].Sub(dropped))
 		}
 	})
 }
@@ -473,16 +593,18 @@ func TestReceiverRetriesAStallAtMostEvery3sAndReportsItOnce(t *testing.T) {
 	})
 }
 
-// A DAVE setup that holds frames for under 2 s, as a join or a move's
-// does, is no stall: Sentry hears nothing and nothing starts over.
+// A DAVE setup that holds frames inside its stall limit, as a join or a
+// move's does, is no stall: Sentry hears nothing, nothing starts over, and
+// the recording hears of no gap.
 func TestReceiverLeavesAShortDAVESetupAlone(t *testing.T) {
 	events := recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
 		conn := newFakeReceiveConn()
 		conn.holdFrames(true)
-		startReceiver(t, conn, func(Frame) {})
+		l := listen(nil)
+		startListening(t, conn, l)
 
-		time.Sleep(1900 * time.Millisecond)
+		time.Sleep(stallAfter / 2)
 		conn.holdFrames(false)
 		time.Sleep(10 * time.Second)
 		synctest.Wait()
@@ -492,6 +614,9 @@ func TestReceiverLeavesAShortDAVESetupAlone(t *testing.T) {
 		}
 		if n := len(events.Events()); n != 0 {
 			t.Errorf("Sentry events = %d, want none for a setup that finished", n)
+		}
+		if got := l.gapEvents(); len(got) != 0 {
+			t.Errorf("gap events = %v, want none for a setup that finished", got)
 		}
 	})
 }

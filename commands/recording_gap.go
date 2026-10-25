@@ -21,7 +21,8 @@ const recordingGapLimit = 10 * time.Second
 
 // recordingGapEndedMessage is the INFO line of each gap that ends before
 // cutting its recording short, ended by the recorder hearing the channel
-// again or by a stop. It carries how long the gap lasted.
+// again or by a stop. It carries what started the gap and how long it
+// lasted.
 const recordingGapEndedMessage = "Recording gap ended"
 
 // recordingGapPing is the ping a gap's cut short posts in the recorded
@@ -33,9 +34,11 @@ const recordingGapPing = "❌ <@%s> Your recording stopped because the recorder 
 // The bot never posts it again, and the starter gets the link by DM.
 const recordingGapPingNotPostedMessage = "Cut-short ping not posted"
 
-// recordingGap is the gap running in a recording.
+// recordingGap is the gap running in a recording, which started at start
+// for cause.
 type recordingGap struct {
 	start time.Time
+	cause voice.GapCause
 	// cancelLimit cancels the cut short at recordingGapLimit. The runtime's
 	// mutex guards it.
 	cancelLimit func()
@@ -48,20 +51,22 @@ type recordingListener struct {
 	rec *activeRecording
 }
 
-func (l recordingListener) Frame(f voice.Frame)        { l.rec.tracks.write(f, recordingNow()) }
-func (l recordingListener) GapStarted(since time.Time) { l.r.gapStarted(l.rec, since) }
-func (l recordingListener) GapEnded()                  { l.r.gapEnded(l.rec) }
+func (l recordingListener) Frame(f voice.Frame) { l.rec.tracks.write(f, recordingNow()) }
+func (l recordingListener) GapStarted(since time.Time, cause voice.GapCause) {
+	l.r.gapStarted(l.rec, since, cause)
+}
+func (l recordingListener) GapEnded() { l.r.gapEnded(l.rec) }
 
-// gapStarted starts a gap in a recording no stop has taken, at since, and
-// times its limit from then. The voice adapter can tell of a gap only after
-// it started, as when a voice server went silent.
-func (r *RecordingRuntime) gapStarted(rec *activeRecording, since time.Time) {
+// gapStarted starts a gap in a recording no stop has taken, at since for
+// cause, and times its limit from then. The voice adapter can tell of a gap
+// only after it started, as when a voice server went silent.
+func (r *RecordingRuntime) gapStarted(rec *activeRecording, since time.Time, cause voice.GapCause) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if rec.stopping || rec.gap != nil {
 		return
 	}
-	g := &recordingGap{start: since}
+	g := &recordingGap{start: since, cause: cause}
 	rec.gap = g
 	g.cancelLimit = recordingAfterFunc(recordingGapLimit-recordingNow().Sub(since), func() { r.gapLimitReached(rec, g) })
 }
@@ -148,12 +153,13 @@ func (r *RecordingRuntime) endGapAtStop(rec *activeRecording, stoppedAt time.Tim
 	}
 }
 
-// closeGapLocked ends a recording's running gap at end, and logs how long it
-// lasted. Caller holds mu, and the recording has a gap.
+// closeGapLocked ends a recording's running gap at end, and logs what
+// started it and how long it lasted. Caller holds mu, and the recording has
+// a gap.
 func (r *RecordingRuntime) closeGapLocked(rec *activeRecording, end time.Time) {
 	g := rec.gap
 	rec.gap = nil
 	g.cancelLimit()
 	utils.Info(recordingGapEndedMessage, "recording_id", rec.row.ID, "channel_id", rec.row.ChannelID,
-		"recorder", rec.row.RecorderID, "lasted", end.Sub(g.start).Round(time.Millisecond))
+		"recorder", rec.row.RecorderID, "gap_cause", string(g.cause), "lasted", end.Sub(g.start).Round(time.Millisecond))
 }

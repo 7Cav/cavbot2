@@ -46,13 +46,33 @@ type Listener interface {
 	// Frame is one frame a speaker sent.
 	Frame(Frame)
 	// GapStarted is the recorder ceasing to hear the channel since then:
-	// its voice connection to the call dropped, or DAVE holds every frame.
-	// GapEnded is the recorder hearing it again, connected at the voice
-	// server Discord named last with DAVE passing frames. The two take
-	// turns, GapStarted first.
-	GapStarted(since time.Time)
+	// its voice connection to the call dropped, or DAVE held every frame
+	// past its stall limit. cause names what started the gap. GapEnded is
+	// the recorder hearing it again, connected at the voice server Discord
+	// named last with DAVE passing frames. The two take turns, GapStarted
+	// first.
+	GapStarted(since time.Time, cause GapCause)
 	GapEnded()
 }
+
+// GapCause names what started a gap (GLOSSARY.md, Gap). It never changes
+// for the rest of the gap, whatever trouble follows.
+type GapCause string
+
+// The causes the recorder notices.
+const (
+	// GapVoiceGatewayClosed is the voice gateway closing or failing a read.
+	GapVoiceGatewayClosed GapCause = "voice_gateway_closed"
+	// GapHeartbeatOverdue is the recorder's check finding the voice
+	// server's heartbeat answer overdue.
+	GapHeartbeatOverdue GapCause = "heartbeat_overdue"
+	// GapCallMoved is the call moving to another voice server: a 4022 for
+	// a channel that still exists, or Discord naming another server for
+	// the call.
+	GapCallMoved GapCause = "call_moved"
+	// GapDAVEStalled is the DAVE setup holding frames past its stall limit.
+	GapDAVEStalled GapCause = "dave_stalled"
+)
 
 // GapReportedAfter is how long a gap lasts before Sentry hears of it. The
 // recording runtime cuts the recording short at the same mark, by a limit of

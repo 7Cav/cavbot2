@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/7cav/cavbot2/store"
+	"github.com/7cav/cavbot2/voice"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -32,7 +33,7 @@ const gapCutsShortAfter = 10 * time.Second
 func (sc *recordScene) startGap(t *testing.T, channelID string) time.Time {
 	t.Helper()
 	start := sc.clock.read()
-	sc.listener(t, channelID).GapStarted(start)
+	sc.listener(t, channelID).GapStarted(start, voice.GapVoiceGatewayClosed)
 	return start
 }
 
@@ -53,7 +54,7 @@ func TestRecordingGapThatReaches10sStopsTheRecordingThen(t *testing.T) {
 			sc.startIn(t, recStarter, recordChannel)
 			sc.clock.advance(time.Minute)
 			start := sc.clock.read().Add(-tc.toldLate)
-			sc.listener(t, recordChannel).GapStarted(start)
+			sc.listener(t, recordChannel).GapStarted(start, voice.GapVoiceGatewayClosed)
 
 			sc.clock.advance(gapCutsShortAfter - tc.toldLate - time.Millisecond)
 			sc.assertRunning(t, recordChannel)
@@ -258,18 +259,19 @@ func lasted(t *testing.T, line map[string]string) time.Duration {
 	return d
 }
 
-// A gap that ends before 10 s logs one gap line with its length, and posts
-// nothing in the chat, read once the clock has passed the gap's 10 s mark:
-// the recording runs on.
-func TestRecordingGapUnder10sLogsItsLengthAndPostsNothing(t *testing.T) {
+// A gap that ends before 10 s logs one gap line with its length and the
+// cause the voice adapter gave at its start, and posts nothing in the chat,
+// read once the clock has passed the gap's 10 s mark: the recording runs on.
+func TestRecordingGapUnder10sLogsItsLengthAndCauseAndPostsNothing(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 	logs := captureLogs(t)
 	sc.startIn(t, recStarter, recordChannel)
 	notice := recordingNotice(t, sc.fake, recordChannel)
-	sc.startGap(t, recordChannel)
+	l := sc.listener(t, recordChannel)
+	l.GapStarted(sc.clock.read(), voice.GapCallMoved)
 	sc.clock.advance(9 * time.Second)
 
-	sc.listener(t, recordChannel).GapEnded()
+	l.GapEnded()
 	sc.clock.advance(gapCutsShortAfter + time.Minute)
 
 	lines := gapLines(t, logs)
@@ -278,6 +280,9 @@ func TestRecordingGapUnder10sLogsItsLengthAndPostsNothing(t *testing.T) {
 	}
 	if got := lasted(t, lines[0]); got != 9*time.Second {
 		t.Errorf("gap line says the gap lasted %v, want 9s", got)
+	}
+	if got := lines[0]["gap_cause"]; got != string(voice.GapCallMoved) {
+		t.Errorf("gap line's gap_cause = %q, want %q, the cause the gap started with", got, voice.GapCallMoved)
 	}
 	if posted := postedSince(sc.fake, recordChannel, notice); len(posted) != 0 {
 		t.Errorf("messages posted in %s after a 9 s gap = %d, want none", recordChannel, len(posted))
@@ -359,7 +364,7 @@ func TestRecordingCutShortByAGapDoesNotWaitOnTheLeave(t *testing.T) {
 		// bubble can exit.
 		t.Cleanup(func() { time.Sleep(hungLeave) })
 		start := time.Now()
-		sc.listener(t, recordChannel).GapStarted(start)
+		sc.listener(t, recordChannel).GapStarted(start, voice.GapVoiceGatewayClosed)
 
 		time.Sleep(gapCutsShortAfter)
 		synctest.Wait()
@@ -553,7 +558,7 @@ func TestRecordingCutShortByAGapKeepsNothingHeardAfterTheMark(t *testing.T) {
 		time.Sleep(time.Minute)
 		sc.voice.setLeaveTakes(hungLeave)
 		t.Cleanup(func() { time.Sleep(hungLeave) })
-		l.GapStarted(time.Now())
+		l.GapStarted(time.Now(), voice.GapVoiceGatewayClosed)
 
 		time.Sleep(gapCutsShortAfter + time.Second)
 		l.GapEnded()
