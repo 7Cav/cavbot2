@@ -58,7 +58,7 @@ var tagKeys = map[string]bool{"command": true, "gap_cause": true, "recorder": tr
 
 // promoteTags lifts the tagKeys key/values out of a capture's key/values and
 // onto the scope as tags. Sentry groups and filters on tags only, so this is
-// what makes per-command error rate answerable — the failure-side
+// what makes per-command error rate answerable, the failure-side
 // counterpart to the usage metrics, which deliberately carry no error signal
 // (ADR 0011). Promotion is additive: every capture still records the same
 // pairs in its extra context.
