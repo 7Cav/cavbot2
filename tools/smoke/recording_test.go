@@ -23,7 +23,8 @@ func (f fakeRecorder) UserID() string { return f.id }
 func (f fakeRecorder) Join(context.Context, string, string) (voice.Conn, error) {
 	return nil, errors.New("not in this test")
 }
-func (f fakeRecorder) Close() error { return nil }
+func (f fakeRecorder) LogOut() error { return nil }
+func (f fakeRecorder) Close() error  { return nil }
 
 // refusingDiscord logs a recorder in for each token, with Discord refusing
 // each token refused picks, at its gateway and its REST API alike.

@@ -167,8 +167,10 @@ type fakeSession struct {
 
 func (s *fakeSession) UserID() string { return s.userID }
 
-// Close is the session's logout, which returns once the gateway's
-// logoutTakes has passed.
+// LogOut is the session's logout for a relogin, and Close its logout at
+// shutdown. Each returns once the gateway's logoutTakes has passed.
+func (s *fakeSession) LogOut() error { return s.Close() }
+
 func (s *fakeSession) Close() error {
 	s.gw.mu.Lock()
 	takes := s.gw.logoutTakes

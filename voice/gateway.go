@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -40,11 +41,38 @@ const lookupTimeout = 5 * time.Second
 const answerWait = 250 * time.Millisecond
 
 // Discord is the production Opener: Discord itself, through discordgo.
-type Discord struct{}
+type Discord struct {
+	// offlineAfter is how long a recorder stays offline before Sentry
+	// hears of it, utils.GatewayOfflineAfter when zero.
+	offlineAfter time.Duration
+
+	mu sync.Mutex
+	// watches is each recorder's gateway outage watch, by its place in
+	// RECORDER_TOKENS. One watch reads each of a recorder's logins in turn.
+	watches map[int]*utils.GatewayWatch
+}
+
+// watch is the recorder's gateway outage watch. The recorder's first login
+// makes it, and the recorder is offline from then until a login's READY,
+// so a first login that fails or hangs is an outage from its start.
+func (d *Discord) watch(recorder int) *utils.GatewayWatch {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if w := d.watches[recorder]; w != nil {
+		return w
+	}
+	w := recorderWatch(recorder, cmp.Or(d.offlineAfter, utils.GatewayOfflineAfter))
+	w.Offline()
+	if d.watches == nil {
+		d.watches = map[int]*utils.GatewayWatch{}
+	}
+	d.watches[recorder] = w
+	return w
+}
 
 // UserID reads the recorder account's user ID from GET /users/@me with its
 // token, which needs no gateway session.
-func (Discord) UserID(ctx context.Context, token string) (string, error) {
+func (d *Discord) UserID(ctx context.Context, token string) (string, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return "", err
@@ -60,10 +88,10 @@ func (Discord) UserID(ctx context.Context, token string) (string, error) {
 // recorder account, open once READY has named it. A session that opened
 // without reaching READY is closed again for good, so a failed login holds
 // no connection, and the next login opens a session of its own.
-// The session is watched, so a recorder that drops off the gateway and stays
-// off reaches Sentry while the bot runs, and one whose token Discord refuses
-// stops logging in.
-func (Discord) Open(recorder int, token string) (GatewaySession, error) {
+// The recorder's watch reads the session, so a recorder that drops off the
+// gateway, or stays offline, reaches Sentry while the bot runs, and one
+// whose token Discord refuses stops logging in.
+func (d *Discord) Open(recorder int, token string) (GatewaySession, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, err
@@ -73,9 +101,10 @@ func (Discord) Open(recorder int, token string) (GatewaySession, error) {
 	dialer := newVoiceDialer()
 	s := &discordgoSession{dg: dg, drops: dialer.drops}
 	// Watched from before it opens, so the watch reads every close Discord
-	// sends the session. A failed open is a close on purpose, and sends
-	// nothing beyond its own report.
-	s.watchGateway(recorder, utils.GatewayOfflineAfter)
+	// sends the session. A failed open is a close on purpose, and the
+	// recorder stays offline.
+	s.watch = d.watch(recorder)
+	s.watch.Watch(dg)
 	if err := utils.OpenSession(dg); err != nil {
 		_ = s.watch.CloseSession()
 		return nil, err
@@ -1305,9 +1334,18 @@ func closedWith(err error, code int) bool {
 
 func (s *discordgoSession) UserID() string { return s.userID }
 
+// LogOut logs the recorder out of this login, for a relogin. Its leave has
+// already taken it out of the call, so the logout waits on no voice
+// connection. The recorder is offline from now until a login's READY, and
+// in a gateway outage all that time, though the bot chose it.
+func (s *discordgoSession) LogOut() error {
+	s.watch.Offline()
+	return s.watch.CloseSession()
+}
+
 // Close takes the recorder out of any voice channel it is still in, then
-// ends its session. The close is on purpose, so its watch stands down
-// first.
+// ends its session, at shutdown. The close is on purpose, so its watch
+// stands down first.
 func (s *discordgoSession) Close() error {
 	if s.watch != nil {
 		s.watch.StandDown()
@@ -1517,11 +1555,18 @@ func (s *discordgoSession) onVoiceServerUpdate(e *discordgo.VoiceServerUpdate) {
 	}
 }
 
+// recorderWatch is a gateway outage watch of the recorder at its place in
+// RECORDER_TOKENS, which reads none of its sessions yet.
+func recorderWatch(recorder int, after time.Duration) *utils.GatewayWatch {
+	return utils.NewGatewayWatch(after, "session", "recorder", "recorder", recorder)
+}
+
 // watchGateway watches the recorder's gateway session, so an outage that
 // lasts reaches Sentry by the recorder's place in RECORDER_TOKENS and,
 // once named, its user ID, never by its token.
 func (s *discordgoSession) watchGateway(recorder int, after time.Duration) {
-	s.watch = utils.WatchGateway(s.dg, after, "session", "recorder", "recorder", recorder)
+	s.watch = recorderWatch(recorder, after)
+	s.watch.Watch(s.dg)
 }
 
 // named records the recorder's user ID, which READY tells, and has the

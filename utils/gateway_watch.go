@@ -22,11 +22,21 @@ const closeAuthenticationFailed = 4004
 // logs, once.
 const tokenRefusedMessage = "Discord refused the gateway session's token"
 
+// GatewayOfflineMessage is the Sentry event of a gateway outage that lasts.
+const GatewayOfflineMessage = "Gateway session offline and can't reconnect"
+
+// GatewayBackOnlineMessage is the INFO line the READY or RESUMED that ends
+// an outage Sentry heard of logs.
+const GatewayBackOnlineMessage = "Gateway session back online"
+
 // errGatewayOffline is the error a gateway outage goes to Sentry with.
 var errGatewayOffline = errors.New("gateway session disconnected and not reconnected")
 
-// GatewayWatch watches one gateway session for a gateway outage (see
-// GLOSSARY.md). discordgo emits Disconnect when the session's gateway
+// GatewayWatch watches one account's gateway sessions, the bot's own or a
+// recorder's, for a gateway outage (see GLOSSARY.md). It reads one session
+// at a time. The bot keeps one session for the whole run, and a recorder
+// logs in with a new session each time, so one outage can span several of
+// its logins. discordgo emits Disconnect when a session's gateway
 // connection closes, then retries the connection forever, backing off to
 // 600 s between tries, and tells only its logger when a try fails. Sentry
 // hears of the outage from here, since no log line reaches it (ADR 0001).
@@ -40,39 +50,57 @@ var errGatewayOffline = errors.New("gateway session disconnected and not reconne
 // tests play that sequence against a scripted gateway, so a discordgo
 // upgrade that changes it fails them.
 type GatewayWatch struct {
-	dg    *discordgo.Session
 	after time.Duration
 
 	mu sync.Mutex
 	kv []any
-	// outage numbers the session's outages, so the report an ended one set
-	// finds itself stale. down is set from the Disconnect that starts an
-	// outage until the READY or RESUMED that ends it, and reported once
-	// Sentry has heard of it.
+	// session is the session the watch reads, nil while it reads none, as
+	// between a recorder's logins. What a session it read before does
+	// changes nothing.
+	session *discordgo.Session
+	// outage numbers the account's outages, so the report an ended one set
+	// finds itself stale. down is set from the start of an outage until the
+	// READY or RESUMED that ends it, and reported once Sentry has heard of
+	// it.
 	outage    uint64
 	down      bool
 	reported  bool
 	stoodDown bool
 }
 
-// WatchGateway watches the session whose events these are. When it has been
-// disconnected for after, Sentry gets one event carrying kv, the pairs that
-// name the session, and the READY or RESUMED that ends that outage logs an
-// INFO line with them. Watch a session before it opens, so the watch reads the
-// close of every connection it makes, and stand the watch down before
-// closing the session on purpose, since that close emits Disconnect too.
-// CloseSession does both, for a session that failed to open.
+// NewGatewayWatch watches an account, and reads none of its sessions until
+// Watch. When the account has been disconnected for after, Sentry gets one
+// event carrying kv, the pairs that name the account, and the READY or
+// RESUMED that ends that outage logs an INFO line with them.
+func NewGatewayWatch(after time.Duration, kv ...any) *GatewayWatch {
+	return &GatewayWatch{after: after, kv: kv}
+}
+
+// WatchGateway watches the account of dg, reading dg, as NewGatewayWatch
+// and Watch do.
 func WatchGateway(dg *discordgo.Session, after time.Duration, kv ...any) *GatewayWatch {
-	w := &GatewayWatch{dg: dg, after: after, kv: kv}
-	dg.Dialer = gatewayDialer(w.closed)
-	dg.AddHandler(func(_ *discordgo.Session, _ *discordgo.Ready) { w.online() })
-	dg.AddHandler(func(_ *discordgo.Session, _ *discordgo.Resumed) { w.online() })
-	dg.AddHandler(func(_ *discordgo.Session, _ *discordgo.Disconnect) { w.disconnected() })
+	w := NewGatewayWatch(after, kv...)
+	w.Watch(dg)
 	return w
 }
 
-// closed hears the code of a close Discord sent the session. After a 4004,
-// Discord has refused the session's token, so no login can succeed, and the
+// Watch reads dg from now on, in place of the session the watch read
+// before. Watch a session before it opens, so the watch reads the close of
+// every connection it makes. A close on purpose emits Disconnect too, so
+// close a session the watch reads with CloseSession, or stand the watch
+// down first.
+func (w *GatewayWatch) Watch(dg *discordgo.Session) {
+	dg.Dialer = gatewayDialer(func(code int) { w.closed(dg, code) })
+	dg.AddHandler(func(_ *discordgo.Session, _ *discordgo.Ready) { w.online(dg) })
+	dg.AddHandler(func(_ *discordgo.Session, _ *discordgo.Resumed) { w.online(dg) })
+	dg.AddHandler(func(_ *discordgo.Session, _ *discordgo.Disconnect) { w.disconnected(dg) })
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.session = dg
+}
+
+// closed hears the code of a close Discord sent dg. After a 4004, Discord
+// has refused the session's token, so no login can succeed, and the
 // session logs in no more. It runs on the goroutine that read the close.
 // For a session that was running, that is discordgo's listener. Discord
 // answers its resume with Op 9, discordgo sends the identify from inside
@@ -81,20 +109,36 @@ func WatchGateway(dg *discordgo.Session, after time.Duration, kv ...any) *Gatewa
 // A 4004 during the session's first Open fails its start instead.
 // discordgo's Open holds the session's lock while it reads, so closed takes
 // none of the session's locks.
-func (w *GatewayWatch) closed(code int) {
+func (w *GatewayWatch) closed(dg *discordgo.Session, code int) {
 	if code != closeAuthenticationFailed {
 		return
 	}
-	w.dg.ShouldReconnectOnError = false
+	dg.ShouldReconnectOnError = false
 	Warn(tokenRefusedMessage, w.pairs()...)
 }
 
-// disconnected starts an outage, and the report that fires after it. A
-// Disconnect during an outage changes nothing: the outage's delay runs from
-// its first, however many logins fail after it.
-func (w *GatewayWatch) disconnected() {
+// disconnected starts an outage when dg is the session the watch reads.
+func (w *GatewayWatch) disconnected(dg *discordgo.Session) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if dg == w.session {
+		w.startLocked()
+	}
+}
+
+// Offline starts an outage now, though the account went offline on
+// purpose, as a recorder does before its first login. The account is
+// offline until a session the watch reads next reaches READY.
+func (w *GatewayWatch) Offline() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.startLocked()
+}
+
+// startLocked starts an outage, and the report that fires after it. An
+// outage already under way goes on: its delay runs from its start, however
+// many logins fail after it. Caller holds mu.
+func (w *GatewayWatch) startLocked() {
 	if w.stoodDown || w.down {
 		return
 	}
@@ -116,18 +160,22 @@ func (w *GatewayWatch) fire(outage uint64) {
 	w.reported = true
 	kv := w.kv
 	w.mu.Unlock()
-	CaptureError("Gateway session offline and can't reconnect", errGatewayOffline, kv...)
+	CaptureError(GatewayOfflineMessage, errGatewayOffline, kv...)
 }
 
-// online ends an outage, since Discord started the session or resumed it,
-// and logs that the session is back when Sentry heard of the outage.
-func (w *GatewayWatch) online() {
+// online ends an outage when dg is the session the watch reads, since
+// Discord started the session or resumed it, and logs that the session is
+// back when Sentry heard of the outage.
+func (w *GatewayWatch) online(dg *discordgo.Session) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if dg != w.session {
+		return
+	}
 	w.down = false
 	if w.reported {
 		w.reported = false
-		Info("Gateway session back online", w.kv...)
+		Info(GatewayBackOnlineMessage, w.kv...)
 	}
 }
 
@@ -147,23 +195,32 @@ func (w *GatewayWatch) pairs() []any {
 	return w.kv
 }
 
-// StandDown stops the watch. Call it before closing the session on purpose.
-// The watch sends nothing after it, not even a report already set.
+// StandDown stops the watch, as at shutdown. Call it before closing the
+// session on purpose. The watch sends nothing after it, not even a report
+// already set.
 func (w *GatewayWatch) StandDown() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.stoodDown = true
 }
 
-// CloseSession stands the watch down and closes the session on purpose, and
-// the session logs in no more. Use it to close a session that failed to open.
+// CloseSession closes the session the watch reads on purpose, and the
+// session logs in no more. Use it to close a session that failed to open.
+// The watch reads it no more, and an outage under way goes on, so the
+// failed login of an offline recorder leaves it offline.
 // discordgo's Open starts the session's heartbeat, and a close right after
 // Open nearly always beats the heartbeat's first write. That write fails, so
 // the heartbeat closes the session again and reconnects, unless
 // ShouldReconnectOnError is off. The heartbeat's own close waits for the
 // lock this close holds, so the heartbeat sees the flag off.
 func (w *GatewayWatch) CloseSession() error {
-	w.StandDown()
-	w.dg.ShouldReconnectOnError = false
-	return w.dg.Close()
+	w.mu.Lock()
+	dg := w.session
+	w.session = nil
+	w.mu.Unlock()
+	if dg == nil {
+		return nil
+	}
+	dg.ShouldReconnectOnError = false
+	return dg.Close()
 }
