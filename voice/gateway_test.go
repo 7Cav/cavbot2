@@ -1666,10 +1666,11 @@ func TestRecorderTakenOutWhileItsGatewayIsDownStaysOut(t *testing.T) {
 	})
 }
 
-// With the recorder's own gateway down past the 10-minute gap limit, the
-// recorder goes on waiting for it, and neither leaves nor reports a lost
-// connection on its own. The recording ends at the limit, and its stop is
-// the last voice state update the recorder sends.
+// With the recorder's own gateway down, however long, the recorder goes on
+// waiting for it, and neither leaves nor reports a lost connection on its
+// own. The voice package keeps no gap limit: the recording runtime cuts the
+// recording short, and its stop is the last voice state update the recorder
+// sends.
 func TestRecorderWaitsForItsGatewayUntilTheRecordingStops(t *testing.T) {
 	events := recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
