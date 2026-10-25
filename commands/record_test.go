@@ -49,7 +49,8 @@ var (
 // configured, and every voice connection they joined. joinErr, when set, is
 // what every join returns instead. hold, when set, holds the next join
 // (holdNextJoin). leaveTakes is how long each leave takes to return, none
-// until a test sets it.
+// until a test sets it. report is the gap report every connection hands
+// over, empty until a test sets it.
 type fakeRecorderVoice struct {
 	mu         sync.Mutex
 	recorders  []string
@@ -57,6 +58,7 @@ type fakeRecorderVoice struct {
 	joinErr    error
 	hold       *joinHold
 	leaveTakes time.Duration
+	report     voice.GapReport
 }
 
 // joinHold keeps one join from returning: joined closes once it has gone
@@ -126,6 +128,20 @@ func (v *fakeRecorderVoice) setLeaveTakes(d time.Duration) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.leaveTakes = d
+}
+
+// setGapReport has every connection hand over rep as its gap report from
+// now on.
+func (v *fakeRecorderVoice) setGapReport(rep voice.GapReport) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.report = rep
+}
+
+func (c *fakeVoiceConn) GapReport() voice.GapReport {
+	c.v.mu.Lock()
+	defer c.v.mu.Unlock()
+	return c.v.report
 }
 
 // Leave returns once leaveTakes has passed. It never reads its context, as

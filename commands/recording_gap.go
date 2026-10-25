@@ -30,6 +30,22 @@ const recordingGapEndedMessage = "Recording gap ended"
 // mention, then the command that records again.
 const recordingGapPing = "❌ <@%s> Your recording stopped because the recorder couldn't hear this channel for 10 seconds. Run %s to record again."
 
+// recordingCutShortMessage is the Sentry message tag of every recording a
+// gap cut short, whatever the cause, so one search lists them all.
+const recordingCutShortMessage = "Recording cut short, the recorder couldn't hear the channel"
+
+// The gateway_session extra of a cut short's event: whether the recorder's
+// own gateway session was online at the 10 s mark, so that a rejoin could
+// go out.
+const (
+	gatewaySessionOnline  = "online"
+	gatewaySessionOffline = "offline"
+)
+
+// cutShortTimeLayout is RFC 3339 in UTC to the millisecond, how a cut
+// short's event gives its times.
+const cutShortTimeLayout = "2006-01-02T15:04:05.000Z07:00"
+
 // recordingGapPingNotPostedMessage is the WARN a ping Discord refused logs.
 // The bot never posts it again, and the starter gets the link by DM.
 const recordingGapPingNotPostedMessage = "Cut-short ping not posted"
@@ -92,7 +108,7 @@ func (r *RecordingRuntime) gapLimitReached(rec *activeRecording, g *recordingGap
 	}
 	rec.stopping, rec.channelFree, rec.gap = true, true, nil
 	r.mu.Unlock()
-	r.cutShort(rec, g.start)
+	r.cutShort(rec, g)
 }
 
 // cutShort ends a recording whose gap reached recordingGapLimit as a gap's
@@ -104,9 +120,11 @@ func (r *RecordingRuntime) gapLimitReached(rec *activeRecording, g *recordingGap
 // channel, with the notice gone, or with the ping refused. One DM at most,
 // whichever holds. Then the recorder leaves, the row stops at gapStart, the
 // recorder is free again once its leave has returned, and the mix starts.
-func (r *RecordingRuntime) cutShort(rec *activeRecording, gapStart time.Time) {
+func (r *RecordingRuntime) cutShort(rec *activeRecording, g *recordingGap) {
+	gapStart := g.start
 	r.cancelTimers(rec)
 	endTracks(rec, gapStart)
+	reportCutShort(rec.row, g, rec.conn)
 	// ended is the row as it ends, which the ping, the notice and the DM
 	// tell of before the store has it.
 	ended := rec.row
@@ -120,6 +138,47 @@ func (r *RecordingRuntime) cutShort(rec *activeRecording, gapStart time.Time) {
 	r.releaseWhenLeft(row.RecorderID, returned)
 	logRecordingStopped(row, "")
 	r.startMix(row)
+}
+
+// reportCutShort sends Sentry the one event of a recording gap g cut
+// short, in the Sentry issue of g's cause. A server deafen's goes at
+// warning level, which the high-priority issue alert skips: a person chose
+// the deafen, and no recovery work fixes it.
+func reportCutShort(row store.Recording, g *recordingGap, conn voice.Conn) {
+	issue := utils.SentryIssue{
+		Fingerprint: []string{recordingCutShortMessage, string(g.cause)},
+		Warning:     g.cause == voice.GapServerDeafened,
+	}
+	rep := conn.GapReport()
+	session := gatewaySessionOffline
+	if rep.GatewaySessionOnline {
+		session = gatewaySessionOnline
+	}
+	kv := []any{"recording_id", row.ID, "channel_id", row.ChannelID, "recorder", row.RecorderID,
+		"gap_cause", string(g.cause), "voice_server", rep.VoiceServer,
+		"gap_started_at", g.start.UTC().Format(cutShortTimeLayout),
+		"recorded_for", cutShortLength(g.start.Sub(row.StartedAt)), "gateway_session", session}
+	if rep.Close != nil {
+		// The close's text goes to the log and Sentry alone (ADR 0018).
+		kv = append(kv, "close_error", rep.Close.Error())
+	}
+	if rep.CloseCode != "" {
+		kv = append(kv, "close_code", rep.CloseCode)
+	}
+	for _, f := range rep.Fields {
+		value := f.Value
+		if d, ok := value.(time.Duration); ok {
+			value = cutShortLength(d)
+		}
+		kv = append(kv, f.Key, value)
+	}
+	utils.CaptureErrorIn(issue, recordingCutShortMessage, g.cause.CutShortError(), kv...)
+}
+
+// cutShortLength is how a cut short's event gives a length: Go duration
+// text, rounded to the millisecond.
+func cutShortLength(d time.Duration) string {
+	return d.Round(time.Millisecond).String()
 }
 
 // pingStarter posts the ping of a recording a gap cut short: a new message

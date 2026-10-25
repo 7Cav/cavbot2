@@ -175,7 +175,7 @@ func followUpErrorReply(r InteractionResponder, i *discordgo.InteractionCreate, 
 // alongside under its own key.
 //
 // The prefix, not the whole CustomID, is what goes under "command" because that
-// value is promoted to a Sentry tag (see promoteCommandTag), and tags are a
+// value is promoted to a Sentry tag (see promoteTags), and tags are a
 // bounded dimension. A CustomID's payload segment can embed free user input, so
 // tagging the whole thing would give the tag an unbounded value space and
 // scatter one command's failures across a new group per input. The separator

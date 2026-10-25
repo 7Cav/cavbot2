@@ -1321,6 +1321,9 @@ func (c *disgoConn) OwnLeaves() int {
 	return int(rc.ownLeaves.Load())
 }
 
+// GapReport is what the recorder knows now of the gap it last told of.
+func (c *disgoConn) GapReport() GapReport { return GapReport{} }
+
 // Leave stops the receiver, so no frame is handed over after it returns,
 // then sends the voice state update that takes the recorder out, and closes
 // the voice gateway, UDP and DAVE session.

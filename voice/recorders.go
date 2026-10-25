@@ -7,6 +7,7 @@ package voice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -37,7 +38,42 @@ type Conn interface {
 	// out. Each is an absence from the channel that isn't the recorder
 	// leaving. The count never goes down.
 	OwnLeaves() int
+	// GapReport is what the recorder knows now of the gap it last told of,
+	// for the recording runtime to read at the gap's 10 s mark.
+	GapReport() GapReport
 }
+
+// GapReport is what the voice adapter knows of a gap when the recording
+// runtime asks, at the 10 s mark that cuts the recording short.
+type GapReport struct {
+	// CloseCode is the code of the voice gateway close that started the
+	// gap, CloseCodeNone for a read of the voice gateway that failed, and
+	// empty when the gap started some other way.
+	CloseCode string
+	// Close is that close or failed read, nil when the gap started some
+	// other way. Its data goes to the log and Sentry alone (ADR 0018).
+	Close error
+	// VoiceServer is the voice server Discord named last for the call,
+	// empty before it named one.
+	VoiceServer string
+	// GatewaySessionOnline is whether the recorder's own gateway session
+	// is online, so that a rejoin could go out.
+	GatewaySessionOnline bool
+	// Fields are the cause's own, in a fixed order. A field the cause
+	// measures at the 10 s mark is measured when the report is read.
+	Fields []GapField
+}
+
+// GapField is one of a gap cause's own fields. Value is a string, an int
+// or a time.Duration.
+type GapField struct {
+	Key   string
+	Value any
+}
+
+// CloseCodeNone is a gap's close code when a read of the voice gateway
+// failed, rather than the voice server closing it.
+const CloseCodeNone = "none"
 
 // Listener hears a call through its recorder (GLOSSARY.md, Gap). The voice
 // adapter calls it from one goroutine, one call at a time, so a call that
@@ -59,7 +95,7 @@ type Listener interface {
 // for the rest of the gap, whatever trouble follows.
 type GapCause string
 
-// The causes the recorder notices.
+// The causes a gap can have.
 const (
 	// GapVoiceGatewayClosed is the voice gateway closing or failing a read.
 	GapVoiceGatewayClosed GapCause = "voice_gateway_closed"
@@ -72,7 +108,30 @@ const (
 	GapCallMoved GapCause = "call_moved"
 	// GapDAVEStalled is the DAVE setup holding frames past its stall limit.
 	GapDAVEStalled GapCause = "dave_stalled"
+	// GapServerDeafened is the recorder's own voice state saying it is
+	// server-deafened.
+	GapServerDeafened GapCause = "server_deafened"
 )
+
+// cutShortErrors is the error each cause's cut short reaches Sentry with.
+// Each opens with "voice: recording cut short:", so the cut-short issues
+// sort together.
+var cutShortErrors = map[GapCause]error{
+	GapVoiceGatewayClosed: errors.New("voice: recording cut short: the voice gateway closed"),
+	GapHeartbeatOverdue:   errors.New("voice: recording cut short: the voice server stopped answering heartbeats"),
+	GapCallMoved:          errors.New("voice: recording cut short: the call moved to another voice server"),
+	GapDAVEStalled:        errors.New("voice: recording cut short: the DAVE setup stalled"),
+	GapServerDeafened:     errors.New("voice: recording cut short: the recorder was server-deafened"),
+}
+
+// CutShortError is the error a recording that a gap of this cause cut short
+// reaches Sentry with.
+func (c GapCause) CutShortError() error {
+	if err, ok := cutShortErrors[c]; ok {
+		return err
+	}
+	return fmt.Errorf("voice: recording cut short: %s", c)
+}
 
 // GapReportedAfter is how long a gap lasts before Sentry hears of it. The
 // recording runtime cuts the recording short at the same mark, by a limit of
