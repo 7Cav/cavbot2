@@ -3,6 +3,7 @@ package voice
 import (
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -140,9 +141,30 @@ func (l *logRecorder) linesSaying(level slog.Level, msg, key, value string) int 
 	return n
 }
 
+// values is the value of every key attribute of the first record at level
+// with message msg.
+func (l *logRecorder) values(level slog.Level, msg, key string) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, r := range l.records {
+		if r.Level != level || r.Message != msg {
+			continue
+		}
+		var out []string
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == key {
+				out = append(out, a.Value.String())
+			}
+			return true
+		})
+		return out
+	}
+	return nil
+}
+
 // A recorder offline long enough for Sentry to hear of it says so in the
 // log once a login's READY ends the outage, as any gateway session back
-// from an outage does. Its relogin's logins fail until Sentry has heard.
+// from an outage does, naming the recorder by its place and its user ID. Its relogin's logins fail until Sentry has heard.
 func TestARecorderBackFromAnOutageSaysItIsBackOnline(t *testing.T) {
 	logs := captureLogs(t)
 	events := recordSentry(t)
@@ -163,6 +185,9 @@ func TestARecorderBackFromAnOutageSaysItIsBackOnline(t *testing.T) {
 	}
 	if n := logs.linesSaying(slog.LevelInfo, utils.GatewayBackOnlineMessage, "recorder", "1"); n != 1 {
 		t.Errorf("%d INFO lines say recorder 1 is back online, want 1", n)
+	}
+	if ids := logs.values(slog.LevelInfo, utils.GatewayBackOnlineMessage, "user_id"); !slices.Equal(ids, []string{gatewaytest.UserID}) {
+		t.Errorf("the back-online line names user IDs %q, want %s once", ids, gatewaytest.UserID)
 	}
 }
 
