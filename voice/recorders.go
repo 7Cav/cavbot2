@@ -47,6 +47,12 @@ type Conn interface {
 	// GapReport is what the recorder knows now of the gap it last told of,
 	// for the recording runtime to read at the gap's 10 s mark.
 	GapReport() GapReport
+	// Deafened reports whether the recorder's own voice state has it
+	// server-deafened now, which leaves it hearing nothing.
+	Deafened() bool
+	// WaitUndeafened returns once the recorder's own voice state no longer
+	// has it server-deafened, or with an error when ctx ends first.
+	WaitUndeafened(ctx context.Context) error
 }
 
 // GapReport is what the voice adapter knows of a gap when the recording

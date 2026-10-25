@@ -210,9 +210,11 @@ func (c *fakeConn) Leave(context.Context) {
 	c.left = true
 }
 
-func (c *fakeConn) Receive(Listener)     {}
-func (c *fakeConn) OwnLeaves() int       { return 0 }
-func (c *fakeConn) GapReport() GapReport { return GapReport{} }
+func (c *fakeConn) Receive(Listener)                     {}
+func (c *fakeConn) OwnLeaves() int                       { return 0 }
+func (c *fakeConn) GapReport() GapReport                 { return GapReport{} }
+func (c *fakeConn) Deafened() bool                       { return false }
+func (c *fakeConn) WaitUndeafened(context.Context) error { return nil }
 
 // errAuthenticationFailed is the fake gateway's answer to a token it does
 // not know, as Discord closes a session whose token is bad or revoked.

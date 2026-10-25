@@ -29,9 +29,10 @@ import (
 // it watches the UDP socket, whose path can die while the voice gateway
 // still answers: once the voice server's receiver reports have started, a
 // socket that goes quiet drops the connection, and the recorder rejoins.
-// Last, it counts what fails to decrypt: a run of failures with nothing
-// decrypted starts a gap, and the recorder starts DAVE over on a fresh voice
-// connection.
+// It counts what fails to decrypt. A run of failures with nothing decrypted
+// starts a gap, and the recorder starts DAVE over on a fresh voice
+// connection. Last, a server deafen is a gap from the deafen to the
+// undeafen, since Discord sends a deafened recorder no audio.
 
 // receiveConn is a disgo voice connection as the receiver reads it.
 type receiveConn interface {
@@ -62,6 +63,9 @@ type receiveConn interface {
 	// call. It returns at once, and does nothing to a connection that is
 	// lost already.
 	nothingCame(last time.Time)
+	// deafenedSince is when the recorder's own voice state started saying
+	// it is server-deafened, zero while it doesn't.
+	deafenedSince() time.Time
 }
 
 // datagramReader is a UDP connection that tells of every datagram it reads,
@@ -439,7 +443,11 @@ func (r *receiver) step() {
 		r.told = losses
 		r.startGap(lost, losses)
 	}
-	r.watchGap(connected && !holding)
+	deafened := r.conn.deafenedSince()
+	if !deafened.IsZero() {
+		r.startGap(gapStart{at: deafened, cause: GapServerDeafened}, 0)
+	}
+	r.watchGap(connected && !holding && deafened.IsZero())
 	if holding {
 		r.waitOrStartOver()
 		return
@@ -517,8 +525,8 @@ func (r *receiver) watchMedia() {
 
 // watchGap tells the listener when the recorder hears the channel again,
 // after a gap: one each loss of the connection starts, which the receiver
-// can learn of only later, or a DAVE stall. A gap a decrypt run started
-// ends only at a frame that decrypts.
+// can learn of only later, a DAVE stall, or a server deafen. A gap a decrypt
+// run started ends only at a frame that decrypts.
 func (r *receiver) watchGap(hearing bool) {
 	if hearing && r.inGap && !r.decryptGap {
 		r.endGap()

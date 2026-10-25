@@ -235,6 +235,11 @@ func (f *fakeDiscord) GuildMemberMove(_, _ string, _ *string) error {
 	return nil
 }
 
+func (f *fakeDiscord) GuildMemberDeafen(_, _ string, _ bool) error {
+	f.countWrite()
+	return nil
+}
+
 func (f *fakeDiscord) ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error) {
 	f.countWrite()
 	return &discordgo.Message{ChannelID: channelID, Content: data.Content}, nil

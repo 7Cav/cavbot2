@@ -139,6 +139,10 @@ func (c *fakeReceiveConn) server() string { return "c-dfw-1.discord.media:443" }
 
 func (c *fakeReceiveConn) sessionOnline() bool { return true }
 
+// deafenedSince is never set here, since the call harness plays a server
+// deafen.
+func (c *fakeReceiveConn) deafenedSince() time.Time { return time.Time{} }
+
 func (c *fakeReceiveConn) recovery() *recoveryLog { return &c.steps }
 
 func (c *fakeReceiveConn) reconnect(context.Context) error {

@@ -46,6 +46,11 @@ type fakeTempVCManager struct {
 	// replyErr, when set, is what every send that replies to a message
 	// returns instead.
 	replyErr error
+	// memberDeafens is every member deafen or undeafen the fake let
+	// through. memberDeafenErr, when set, is what every one returns
+	// instead.
+	memberDeafens   []fakeDeafen
+	memberDeafenErr error
 	// dmChannels maps each DM channel UserChannelCreate opened to the user
 	// it reaches. A message posted to one is a DM.
 	dmChannels map[string]string
@@ -350,6 +355,32 @@ func (f *fakeTempVCManager) GuildMemberMove(_ string, userID string, channelID *
 		delete(f.voice, userID)
 	}
 	return nil
+}
+
+// fakeDeafen is one member deafen or undeafen: the guild, the member, and
+// whether it deafens them.
+type fakeDeafen struct {
+	guildID, userID string
+	deaf            bool
+}
+
+// GuildMemberDeafen records a member deafen or undeafen.
+func (f *fakeTempVCManager) GuildMemberDeafen(guildID, userID string, deaf bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.memberDeafenErr != nil {
+		return f.memberDeafenErr
+	}
+	f.memberDeafens = append(f.memberDeafens, fakeDeafen{guildID: guildID, userID: userID, deaf: deaf})
+	return nil
+}
+
+// recordedDeafens lists every member deafen or undeafen the fake let
+// through, in order.
+func (f *fakeTempVCManager) recordedDeafens() []fakeDeafen {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.memberDeafens)
 }
 
 func (f *fakeTempVCManager) ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error) {
