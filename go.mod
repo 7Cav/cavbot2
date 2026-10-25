@@ -6,7 +6,7 @@ toolchain go1.27.1
 
 require (
 	github.com/bwmarrin/discordgo v0.29.0
-	github.com/disgoorg/disgo v0.19.7-0.20260923193941-995ee20fe0d6
+	github.com/disgoorg/disgo v0.19.7-0.20261023185300-5bf95ebe8a0d
 	github.com/disgoorg/godave v0.3.0
 	github.com/disgoorg/snowflake/v2 v2.0.3
 	github.com/getsentry/sentry-go v0.50.0

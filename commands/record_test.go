@@ -129,7 +129,7 @@ func (v *fakeRecorderVoice) setLeaveTakes(d time.Duration) {
 }
 
 // Leave returns once leaveTakes has passed. It never reads its context, as
-// a leave frozen on disgo's voice gateway lock-order deadlock doesn't.
+// the voice adapter's own leave doesn't.
 func (c *fakeVoiceConn) Leave(context.Context) {
 	c.v.mu.Lock()
 	takes := c.v.leaveTakes

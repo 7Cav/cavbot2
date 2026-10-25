@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// A stop's leave (#854). A recorder's leave can hang, frozen on disgo's
-// voice gateway deadlock, and the stop gives up on it after
+// A stop's leave (#854). A recorder's leave can hang in the voice adapter,
+// which never reads the leave's context. The stop gives up on it after
 // recordingLeaveTimeout. Every case runs the /record scene in a synctest
 // bubble with the runtime on the bubble's clock. The leave's deadline and
 // the runtime's own timers then pass on one clock, and a test reads the time
