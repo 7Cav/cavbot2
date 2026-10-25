@@ -273,3 +273,25 @@ func TestARecorderLogsOutAnOldLoginThatComesBackAfterItsLogout(t *testing.T) {
 		}
 	}
 }
+
+// Shutdown logs every recorder out on purpose, so Sentry hears of no
+// outage, however long the bot takes to exit.
+func TestShutdownSendsNoOutage(t *testing.T) {
+	events := recordSentry(t)
+	closed := make(chan int, 1)
+	gatewaytest.New(t, func(int) gatewaytest.Login {
+		return gatewaytest.Login{Answer: "READY", Closed: func(code int) { closed <- code }}
+	})
+	r := Connect("recorder-token", testDiscord())
+
+	r.Close()
+
+	select {
+	case <-closed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the recorder never closed its login at shutdown")
+	}
+	if got := outageEvents(t, events, 0); len(got) != 0 {
+		t.Errorf("Sentry got %d outage events after shutdown, want none", len(got))
+	}
+}

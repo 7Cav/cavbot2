@@ -2602,22 +2602,6 @@ func eventMentions(e *sentry.Event, want string) bool {
 	return slices.ContainsFunc(eventTexts(e), func(text string) bool { return strings.Contains(text, want) })
 }
 
-// recorderWatchAfter is how long the tests' recorder watches wait before
-// they report, short enough to wait out.
-const recorderWatchAfter = 50 * time.Millisecond
-
-// waitForEvents waits for Sentry to have at least n events, then waits out
-// several more delays, so a report sent after them is counted too.
-func waitForEvents(t *testing.T, events *sentryTransport, n int) []*sentry.Event {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for len(events.Events()) < n && time.Now().Before(deadline) {
-		time.Sleep(recorderWatchAfter / 5)
-	}
-	time.Sleep(4 * recorderWatchAfter)
-	return events.Events()
-}
-
 // eventTexts is the text a Sentry event carries where a capture's pairs
 // and error land: its extra context, its tags, its message and its
 // exceptions.
@@ -2633,18 +2617,4 @@ func eventTexts(e *sentry.Event) []string {
 		texts = append(texts, x.Value)
 	}
 	return texts
-}
-
-// Shutdown closes the recorder's session on purpose, and Sentry hears
-// nothing of the Disconnect that close emits.
-func TestRecorderCloseSendsNoOutage(t *testing.T) {
-	events := recordSentry(t)
-	s := recorderSession(t, &fakeManager{})
-	s.watchGateway(1, recorderWatchAfter)
-
-	_ = s.Close()
-
-	if got := waitForEvents(t, events, 0); len(got) != 0 {
-		t.Errorf("Sentry got %d events after the recorder closed, want none", len(got))
-	}
 }

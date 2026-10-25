@@ -1590,14 +1590,6 @@ func recorderWatch(recorder int, after time.Duration) *utils.GatewayWatch {
 	return utils.NewGatewayWatch(after, "session", "recorder", "recorder", recorder)
 }
 
-// watchGateway watches the recorder's gateway session, so an outage that
-// lasts reaches Sentry by the recorder's place in RECORDER_TOKENS and,
-// once named, its user ID, never by its token.
-func (s *discordgoSession) watchGateway(recorder int, after time.Duration) {
-	s.watch = recorderWatch(recorder, after)
-	s.watch.Watch(s.dg)
-}
-
 // named records the recorder's user ID, which READY tells, and has the
 // watch name the recorder by it.
 func (s *discordgoSession) named(userID string) {
