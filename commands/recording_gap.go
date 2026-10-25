@@ -141,7 +141,8 @@ func (r *RecordingRuntime) cutShort(rec *activeRecording, g *recordingGap) {
 }
 
 // reportCutShort sends Sentry the one event of a recording gap g cut
-// short, in the Sentry issue of g's cause. A server deafen's goes at
+// short, in the Sentry issue of g's cause, with the recovery steps the
+// recorder took since the gap's start. A server deafen's goes at
 // warning level, which the high-priority issue alert skips: a person chose
 // the deafen, and no recovery work fixes it.
 func reportCutShort(row store.Recording, g *recordingGap, conn voice.Conn) {
@@ -172,6 +173,10 @@ func reportCutShort(row store.Recording, g *recordingGap, conn voice.Conn) {
 		}
 		kv = append(kv, f.Key, value)
 	}
+	kv = append(kv, "attempts", cutShortAttempts(rep.Steps))
+	if rep.EarlierSteps > 0 {
+		kv = append(kv, "earlier_attempts", rep.EarlierSteps)
+	}
 	utils.CaptureErrorIn(issue, recordingCutShortMessage, g.cause.CutShortError(), kv...)
 }
 
@@ -179,6 +184,26 @@ func reportCutShort(row store.Recording, g *recordingGap, conn voice.Conn) {
 // text, rounded to the millisecond.
 func cutShortLength(d time.Duration) string {
 	return d.Round(time.Millisecond).String()
+}
+
+// cutShortAttempts is how a cut short's event lists the recovery steps the
+// recorder took, in the voice adapter's order: one entry for each, with its
+// kind, a dial's token, when it started from the gap's start, how it ended,
+// and the code of the voice gateway close that ended it when one did. An
+// empty list says the recorder tried nothing.
+func cutShortAttempts(steps []voice.RecoveryStep) []map[string]string {
+	attempts := make([]map[string]string, 0, len(steps))
+	for _, s := range steps {
+		attempt := map[string]string{"kind": string(s.Kind), "at": cutShortLength(s.At), "outcome": string(s.Outcome)}
+		if s.Token != "" {
+			attempt["token"] = string(s.Token)
+		}
+		if s.CloseCode != "" {
+			attempt["close_code"] = s.CloseCode
+		}
+		attempts = append(attempts, attempt)
+	}
+	return attempts
 }
 
 // pingStarter posts the ping of a recording a gap cut short: a new message
