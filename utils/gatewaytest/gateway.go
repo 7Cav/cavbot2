@@ -5,7 +5,6 @@ package gatewaytest
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -242,16 +241,20 @@ func (g *Gateway) run(c *websocket.Conn, login Login, testOver <-chan struct{}) 
 		return
 	}
 	// Held open: read until the session closes the connection or the test
-	// ends.
+	// ends. The close handler answers a close the session sends, as
+	// gorilla's own does, and hands its code to Closed.
+	if login.Closed != nil {
+		c.SetCloseHandler(func(code int, _ string) error {
+			login.Closed(code)
+			_ = c.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, ""), time.Now().Add(time.Second))
+			return nil
+		})
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for heard := login.Heard; ; heard = nil {
 			_, m, err := c.ReadMessage()
-			var closeErr *websocket.CloseError
-			if errors.As(err, &closeErr) && login.Closed != nil {
-				login.Closed(closeErr.Code)
-			}
 			if err != nil {
 				return
 			}
