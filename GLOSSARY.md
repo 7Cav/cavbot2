@@ -297,14 +297,14 @@ The Discord role that marks the regiment's winged aviators, and the
 own settings decide what the role unlocks.
 
 **Winged Aviator role**:
-The Discord role a winged aviator holds while their milpac shows no
-discharge.
+The Discord role a winged aviator holds while they are in the server and
+their milpac shows no discharge.
 _Avoid_: wings, aviator role.
 
 **Winged aviator**:
 A member someone gave the Winged Aviator role, with `/winged-aviator` or by
-hand. The status outlives a discharge and the member leaving the server, and
-ends only when a person takes the role away.
+hand. A discharge or leaving the server takes only the role off, and the
+status ends when a person removes the role.
 _Avoid_: pilot, approved aviator.
 
 **Aviation staff**:
