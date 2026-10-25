@@ -287,6 +287,8 @@ func (g *fakeGateway) Open(recorder int, token string) (GatewaySession, error) {
 	return s, nil
 }
 
+func (g *fakeGateway) FailedToConnect(int) {}
+
 func (g *fakeGateway) UserID(_ context.Context, token string) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()

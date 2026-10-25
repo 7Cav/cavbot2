@@ -83,7 +83,7 @@ func TestGatewayWatch_ARefusedTokenStopsTheLoginsAndSendsOneEvent(t *testing.T) 
 	tr := initSentryWithTransport(t)
 	g := gatewaytest.New(t, func(login int) gatewaytest.Login {
 		if login == 1 {
-			return gatewaytest.Login{Answer: "READY", Close: 4004}
+			return gatewaytest.Login{Answer: gatewaytest.Ready, Close: 4004}
 		}
 		return gatewaytest.Login{Invalid: true, Close: 4004}
 	})
@@ -150,7 +150,7 @@ func TestGatewayWatch_LoginsThatGetNoReadyStayOneOutage(t *testing.T) {
 	tr := initSentryWithTransport(t)
 	g := gatewaytest.New(t, func(login int) gatewaytest.Login {
 		if login == 1 {
-			return gatewaytest.Login{Answer: "READY", Close: 4000}
+			return gatewaytest.Login{Answer: gatewaytest.Ready, Close: 4000}
 		}
 		return gatewaytest.Login{Invalid: true, Close: 4000}
 	})
@@ -171,9 +171,9 @@ func TestGatewayWatch_AResumeWithinTheDelaySendsNothing(t *testing.T) {
 	tr := initSentryWithTransport(t)
 	g := gatewaytest.New(t, func(login int) gatewaytest.Login {
 		if login == 1 {
-			return gatewaytest.Login{Answer: "READY", Close: 4000}
+			return gatewaytest.Login{Answer: gatewaytest.Ready, Close: 4000}
 		}
-		return gatewaytest.Login{Answer: "RESUMED"}
+		return gatewaytest.Login{Answer: gatewaytest.Resumed}
 	})
 	openWatchedSession(t, gatewayWatchAfter)
 
@@ -190,9 +190,9 @@ func TestGatewayWatch_AReadyAfterAnInvalidSessionSendsNothing(t *testing.T) {
 	tr := initSentryWithTransport(t)
 	g := gatewaytest.New(t, func(login int) gatewaytest.Login {
 		if login == 1 {
-			return gatewaytest.Login{Answer: "READY", Close: 4000}
+			return gatewaytest.Login{Answer: gatewaytest.Ready, Close: 4000}
 		}
-		return gatewaytest.Login{Invalid: true, Answer: "READY"}
+		return gatewaytest.Login{Invalid: true, Answer: gatewaytest.Ready}
 	})
 	openWatchedSession(t, gatewayWatchAfter)
 
@@ -212,11 +212,11 @@ func TestGatewayWatch_ASessionThatCantReachTheGatewayRetriesAndReportsOnce(t *te
 	g := gatewaytest.New(t, func(login int) gatewaytest.Login {
 		switch login {
 		case 1:
-			return gatewaytest.Login{Answer: "READY", Close: 4000}
+			return gatewaytest.Login{Answer: gatewaytest.Ready, Close: 4000}
 		case 2:
 			return gatewaytest.Login{Refuse: true}
 		}
-		return gatewaytest.Login{Answer: "RESUMED"}
+		return gatewaytest.Login{Answer: gatewaytest.Resumed}
 	})
 	openWatchedSession(t, gatewayWatchAfter)
 
@@ -238,13 +238,13 @@ func TestGatewayWatch_ALaterOutageSendsANewEvent(t *testing.T) {
 	gatewaytest.New(t, func(login int) gatewaytest.Login {
 		switch login {
 		case 1:
-			return gatewaytest.Login{Answer: "READY", Close: 4000}
+			return gatewaytest.Login{Answer: gatewaytest.Ready, Close: 4000}
 		case 2, 4:
 			return gatewaytest.Login{Refuse: true}
 		case 3:
-			return gatewaytest.Login{Answer: "RESUMED", Close: 4000}
+			return gatewaytest.Login{Answer: gatewaytest.Resumed, Close: 4000}
 		}
-		return gatewaytest.Login{Answer: "RESUMED"}
+		return gatewaytest.Login{Answer: gatewaytest.Resumed}
 	})
 	openWatchedSession(t, gatewayWatchAfter)
 
@@ -261,9 +261,9 @@ func TestGatewayWatch_EachOutageGetsItsWholeDelay(t *testing.T) {
 	g := gatewaytest.New(t, func(login int) gatewaytest.Login {
 		switch login {
 		case 1:
-			return gatewaytest.Login{Answer: "READY", Close: 4000}
+			return gatewaytest.Login{Answer: gatewaytest.Ready, Close: 4000}
 		case 2:
-			return gatewaytest.Login{Answer: "RESUMED", Close: 4000}
+			return gatewaytest.Login{Answer: gatewaytest.Resumed, Close: 4000}
 		}
 		return gatewaytest.Login{Refuse: true}
 	})
@@ -373,8 +373,8 @@ func TestGatewayWatch_ASessionReadBeforeEndsNoOutage(t *testing.T) {
 		name string
 		back gatewaytest.Login
 	}{
-		{"back with READY after an Op 9", gatewaytest.Login{Invalid: true, Answer: "READY"}},
-		{"back with RESUMED", gatewaytest.Login{Answer: "RESUMED"}},
+		{"back with READY after an Op 9", gatewaytest.Login{Invalid: true, Answer: gatewaytest.Ready}},
+		{"back with RESUMED", gatewaytest.Login{Answer: gatewaytest.Resumed}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tr := initSentryWithTransport(t)
@@ -384,7 +384,7 @@ func TestGatewayWatch_ASessionReadBeforeEndsNoOutage(t *testing.T) {
 			gatewaytest.New(t, func(login int) gatewaytest.Login {
 				if login == 1 {
 					// Dropped, so discordgo resumes it.
-					return gatewaytest.Login{Answer: "READY", Close: 4000}
+					return gatewaytest.Login{Answer: gatewaytest.Ready, Close: 4000}
 				}
 				return back
 			})

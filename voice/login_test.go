@@ -26,23 +26,34 @@ func testDiscord() *Discord {
 	return &Discord{offlineAfter: loginOutageAfter}
 }
 
-// outageEvents waits for Sentry to have at least n events, then waits out
-// three more of the recorders' outage delays, after, so an event sent in
-// them is counted too, and returns those that report a gateway outage.
-func outageEvents(t *testing.T, events *sentryTransport, n int, after time.Duration) []*sentry.Event {
+// settledEvents waits for Sentry to have at least n events, then waits out
+// four more of the recorders' outage delays, after, so an event sent in
+// them is counted too, and returns every event.
+func settledEvents(t *testing.T, events *sentryTransport, n int, after time.Duration) []*sentry.Event {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for len(events.Events()) < n && time.Now().Before(deadline) {
 		time.Sleep(after / 10)
 	}
-	time.Sleep(3 * after)
+	time.Sleep(4 * after)
+	return events.Events()
+}
+
+// tagged is the events whose message tag is msg.
+func tagged(events []*sentry.Event, msg string) []*sentry.Event {
 	var out []*sentry.Event
-	for _, e := range events.Events() {
-		if e.Tags["message"] == utils.GatewayOfflineMessage {
+	for _, e := range events {
+		if e.Tags["message"] == msg {
 			out = append(out, e)
 		}
 	}
 	return out
+}
+
+// outageEvents is settledEvents' events that report a gateway outage.
+func outageEvents(t *testing.T, events *sentryTransport, n int, after time.Duration) []*sentry.Event {
+	t.Helper()
+	return tagged(settledEvents(t, events, n, after), utils.GatewayOfflineMessage)
 }
 
 // A recorder is offline from its first login on, so one whose first login
@@ -75,7 +86,7 @@ func TestARecorderOfflineFromItsLogoutReachesSentryWhileItsLoginHangs(t *testing
 	events := recordSentry(t)
 	gatewaytest.New(t, func(login int) gatewaytest.Login {
 		if login == 1 {
-			return gatewaytest.Login{Answer: "READY"}
+			return gatewaytest.Login{Answer: gatewaytest.Ready}
 		}
 		// Hello, and no answer to the identify.
 		return gatewaytest.Login{}
@@ -164,13 +175,14 @@ func (l *logRecorder) values(level slog.Level, msg, key string) []string {
 
 // A recorder offline long enough for Sentry to hear of it says so in the
 // log once a login's READY ends the outage, as any gateway session back
-// from an outage does, naming the recorder by its place and its user ID. Its relogin's logins fail until Sentry has heard.
+// from an outage does, naming the recorder by its place and its user ID.
+// The gateway refuses the relogin's logins until Sentry has heard.
 func TestARecorderBackFromAnOutageSaysItIsBackOnline(t *testing.T) {
 	logs := captureLogs(t)
 	events := recordSentry(t)
 	gatewaytest.New(t, func(login int) gatewaytest.Login {
 		if login == 1 || len(events.Events()) > 0 {
-			return gatewaytest.Login{Answer: "READY"}
+			return gatewaytest.Login{Answer: gatewaytest.Ready}
 		}
 		return gatewaytest.Login{Refuse: true}
 	})
@@ -191,14 +203,14 @@ func TestARecorderBackFromAnOutageSaysItIsBackOnline(t *testing.T) {
 	}
 }
 
-// refusalLines counts the records, at any level, that say Discord refused
-// a token: the adapter's and the gateway outage watch's.
+// refusalLines counts the WARN records that say Discord refused a token:
+// the adapter's and the gateway outage watch's.
 func (l *logRecorder) refusalLines() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	n := 0
 	for _, r := range l.records {
-		if r.Message == loginRefusedMessage || r.Message == utils.TokenRefusedMessage {
+		if r.Level == slog.LevelWarn && (r.Message == loginRefusedMessage || r.Message == utils.TokenRefusedMessage) {
 			n++
 		}
 	}
@@ -224,7 +236,7 @@ func TestARecorderWhoseLoginDiscordRefusesWith4004IsOut(t *testing.T) {
 			logs := captureLogs(t)
 			g := gatewaytest.New(t, func(login int) gatewaytest.Login {
 				if login == 1 {
-					return gatewaytest.Login{Answer: "READY"}
+					return gatewaytest.Login{Answer: gatewaytest.Ready}
 				}
 				return tc.login
 			})
@@ -269,11 +281,11 @@ func TestARecorderLogsOutAnOldLoginThatComesBackAfterItsLogout(t *testing.T) {
 		case login == 1:
 			// The old login, which the gateway drops, so discordgo
 			// reconnects it with Resume.
-			return gatewaytest.Login{Answer: "READY", Close: 4000}
+			return gatewaytest.Login{Answer: gatewaytest.Ready, Close: 4000}
 		case !newLoginUp.Load():
 			return gatewaytest.Login{
 				// The new login identifies, and stays up.
-				Answer: "READY", Heartbeat: beatEvery,
+				Answer: gatewaytest.Ready, Heartbeat: beatEvery,
 				Beat: func() {
 					newLoginUp.Store(true)
 					beats <- struct{}{}
@@ -282,7 +294,7 @@ func TestARecorderLogsOutAnOldLoginThatComesBackAfterItsLogout(t *testing.T) {
 				Resume: &gatewaytest.Login{Close: 4000},
 			}
 		}
-		return gatewaytest.Login{Resume: &gatewaytest.Login{Answer: "RESUMED", Closed: func(code int) { oldClosed <- code }}}
+		return gatewaytest.Login{Resume: &gatewaytest.Login{Answer: gatewaytest.Resumed, Closed: func(code int) { oldClosed <- code }}}
 	})
 	r := Connect("recorder-token", &Discord{offlineAfter: time.Hour})
 	defer r.Close()
@@ -316,18 +328,38 @@ func TestShutdownSendsNoOutage(t *testing.T) {
 	events := recordSentry(t)
 	closed := make(chan int, 1)
 	gatewaytest.New(t, func(int) gatewaytest.Login {
-		return gatewaytest.Login{Answer: "READY", Closed: func(code int) { closed <- code }}
+		return gatewaytest.Login{Answer: gatewaytest.Ready, Closed: func(code int) { closed <- code }}
 	})
 	r := Connect("recorder-token", testDiscord())
 
 	r.Close()
 
 	select {
-	case <-closed:
+	case code := <-closed:
+		if code != 1000 {
+			t.Errorf("the recorder closed its login at shutdown with %d, want 1000", code)
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the recorder never closed its login at shutdown")
 	}
-	if got := outageEvents(t, events, 0, loginOutageAfter); len(got) != 0 {
-		t.Errorf("Sentry got %d outage events after shutdown, want none", len(got))
+	if got := settledEvents(t, events, 0, loginOutageAfter); len(got) != 0 {
+		t.Errorf("Sentry got %d events after shutdown, want none", len(got))
+	}
+}
+
+// A recorder whose first login and user ID read both fail at startup is
+// out until a restart, and Sentry hears of it once, as "Recorder failed to
+// connect". The outage its first login started would only repeat that, so
+// no outage event follows.
+func TestARecorderThatFailsToConnectAtStartupReachesSentryOnce(t *testing.T) {
+	events := recordSentry(t)
+	gatewaytest.New(t, func(int) gatewaytest.Login { return gatewaytest.Login{Refuse: true} })
+
+	r := Connect("recorder-token", testDiscord())
+	defer r.Close()
+
+	got := settledEvents(t, events, 1, loginOutageAfter)
+	if n := len(tagged(got, recorderFailedToConnectMessage)); n != 1 || len(got) != 1 {
+		t.Errorf("Sentry got %d events, %d of them %q, want just that one", len(got), n, recorderFailedToConnectMessage)
 	}
 }

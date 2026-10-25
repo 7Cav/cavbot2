@@ -24,7 +24,7 @@ func newFakeSession(t *testing.T) *discordgo.Session {
 }
 
 func TestOpenSessionReadySessionIsUsable(t *testing.T) {
-	gatewaytest.New(t, func(int) gatewaytest.Login { return gatewaytest.Login{Answer: "READY"} })
+	gatewaytest.New(t, func(int) gatewaytest.Login { return gatewaytest.Login{Answer: gatewaytest.Ready} })
 	dg := newFakeSession(t)
 
 	if err := OpenSession(dg); err != nil {

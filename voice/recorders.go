@@ -234,6 +234,11 @@ type Opener interface {
 	// UserID reads the account's user ID from Discord's REST API, with no
 	// gateway session.
 	UserID(ctx context.Context, token string) (string, error)
+	// FailedToConnect tells the opener the recorder is out until a restart,
+	// since its first login and its user ID read both failed. Sentry has
+	// heard of it as "Recorder failed to connect", so nothing more of it
+	// need reach Sentry.
+	FailedToConnect(recorder int)
 }
 
 // RecorderState is whether a recorder can join a channel now (GLOSSARY.md,
@@ -361,6 +366,7 @@ func Connect(raw string, open Opener) *Recorders {
 		cancel()
 		if readErr != nil {
 			utils.CaptureError(recorderFailedToConnectMessage, fmt.Errorf("login: %w; user ID read: %w", err, readErr), "recorder", rec.place)
+			open.FailedToConnect(rec.place)
 			continue
 		}
 		rec.userID, rec.state = userID, RecorderOffline

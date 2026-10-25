@@ -1,6 +1,6 @@
 // Package gatewaytest is a scripted Discord gateway: a fake gateway that
 // answers each login of a real discordgo session as its test scripts it.
-// Only tests import it.
+// Its REST API refuses every token. Only tests import it.
 package gatewaytest
 
 import (
@@ -17,18 +17,27 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Latency is how long the gateway takes to answer a frame, as a network
+// latency is how long the gateway takes to answer a frame, as a network
 // round trip would. discordgo hands Disconnect and READY to their handlers
 // on goroutines of their own, and against Discord a login takes long enough
 // that they arrive in the order they happen.
-const Latency = 20 * time.Millisecond
+const latency = 20 * time.Millisecond
 
-// Hold is how long an answered login stays open before the gateway closes
+// hold is how long an answered login stays open before the gateway closes
 // it.
-const Hold = 200 * time.Millisecond
+const hold = 200 * time.Millisecond
 
 // UserID is the user ID the gateway's READY names.
 const UserID = "999"
+
+// Answer is how the gateway answers a login's identify or resume.
+type Answer string
+
+// The answers the gateway can give.
+const (
+	Ready   Answer = "READY"
+	Resumed Answer = "RESUMED"
+)
 
 // Login is how the gateway answers one login.
 type Login struct {
@@ -38,10 +47,10 @@ type Login struct {
 	// Invalid answers the identify or resume with Op 9 Invalid Session
 	// first. discordgo sends an identify in reply.
 	Invalid bool
-	// Answer answers the identify or resume: "READY", "RESUMED", or "" for
+	// Answer answers the identify or resume: Ready, Resumed, or "" for
 	// neither.
-	Answer string
-	// Close is the code the gateway closes the connection with, Hold after
+	Answer Answer
+	// Close is the code the gateway closes the connection with, hold after
 	// its answer. 0 keeps the connection open.
 	Close int
 	// Heard, when set, runs when a connection kept open reads its first
@@ -79,12 +88,12 @@ type Gateway struct {
 }
 
 // front is the one server discordgo reaches the gateways through, for every
-// test in the process. discordgo reads its gateway endpoint from a package
-// variable, from the goroutines its sessions log in on, and a session can
-// still be logging in on one of them when its test ends. So the variable is
-// set once, never restored, and the front server hands each session the
-// gateway of the test running when it asks. A login that reaches the
-// gateway of a test that has ended is refused.
+// test in the process, and its REST API. discordgo reads its endpoints from
+// package variables, from the goroutines its sessions log in on, and a
+// session can still be logging in on one of them when its test ends. So the
+// variables are set once, never restored, and the front server hands each
+// session the gateway of the test running when it asks. A login that reaches
+// the gateway of a test that has ended is refused.
 var front struct {
 	once sync.Once
 	url  string
@@ -92,9 +101,10 @@ var front struct {
 	mu sync.Mutex
 	// gateways is each gateway whose test is still running, by its path.
 	// latest is the one New stood up last, nil once its test has ended.
+	// made counts the gateways New has stood up, which number their paths.
 	gateways map[string]*Gateway
 	latest   *Gateway
-	stood    int
+	made     int
 }
 
 // startFront starts the front server and points discordgo at it.
@@ -123,8 +133,18 @@ func startFront() {
 		}
 		g.serve(w, r)
 	})
+	// GET users/, which reads the account a token belongs to.
+	mux.HandleFunc("/api/users/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(unauthorizedBody))
+	})
 	discordgo.EndpointGateway = srv.URL + "/gateway"
+	discordgo.EndpointUsers = srv.URL + "/api/users/"
 }
+
+// unauthorizedBody is Discord's answer to a REST call with a token it
+// refuses.
+const unauthorizedBody = `{"message": "401: Unauthorized", "code": 0}`
 
 // New stands up a gateway that answers each login with what script returns
 // for its number, from 1, and points discordgo at it for the length of the
@@ -133,8 +153,8 @@ func New(t testing.TB, script func(login int) Login) *Gateway {
 	t.Helper()
 	front.once.Do(startFront)
 	front.mu.Lock()
-	front.stood++
-	g := &Gateway{path: fmt.Sprintf("/ws/%d/", front.stood), over: make(chan struct{}), script: script}
+	front.made++
+	g := &Gateway{path: fmt.Sprintf("/ws/%d/", front.made), over: make(chan struct{}), script: script}
 	front.gateways[g.path] = g
 	front.latest = g
 	front.mu.Unlock()
@@ -162,7 +182,7 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = c.Close() }()
-	g.run(c, login, g.over)
+	g.run(c, login)
 }
 
 // login numbers a login and reads its answer from the script, or from
@@ -173,7 +193,7 @@ func (g *Gateway) login() Login {
 	g.logins++
 	if settled := g.settled; settled != nil {
 		g.settled = nil
-		return Login{Answer: "RESUMED", Heard: func() { close(settled) }}
+		return Login{Answer: Resumed, Heard: func() { close(settled) }}
 	}
 	return g.script(g.logins)
 }
@@ -206,7 +226,7 @@ func (g *Gateway) Settle(t testing.TB, timeout time.Duration) {
 
 // run answers one login on c: Hello, then what login scripts, then the
 // close or the hold.
-func (g *Gateway) run(c *websocket.Conn, login Login, testOver <-chan struct{}) {
+func (g *Gateway) run(c *websocket.Conn, login Login) {
 	if c.WriteMessage(websocket.TextMessage, helloFrame(login.Heartbeat)) != nil {
 		return
 	}
@@ -226,17 +246,17 @@ func (g *Gateway) run(c *websocket.Conn, login Login, testOver <-chan struct{}) 
 		}
 	}
 	switch login.Answer {
-	case "READY":
+	case Ready:
 		if !sendFrame(c, paddedReadyFrame) || !sendFrame(c, paddedTypingFrame) {
 			return
 		}
-	case "RESUMED":
+	case Resumed:
 		if !sendFrame(c, resumedFrame) {
 			return
 		}
 	}
 	if login.Close != 0 {
-		time.Sleep(Hold)
+		time.Sleep(hold)
 		_ = c.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(login.Close, ""), time.Now().Add(time.Second))
 		return
 	}
@@ -274,13 +294,13 @@ func (g *Gateway) run(c *websocket.Conn, login Login, testOver <-chan struct{}) 
 	}()
 	select {
 	case <-done:
-	case <-testOver:
+	case <-g.over:
 	}
 }
 
 // sendFrame writes frame to c a round trip after what it answers.
 func sendFrame(c *websocket.Conn, frame string) bool {
-	time.Sleep(Latency)
+	time.Sleep(latency)
 	return c.WriteMessage(websocket.TextMessage, []byte(frame)) == nil
 }
 

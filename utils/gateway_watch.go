@@ -78,9 +78,9 @@ type watched struct {
 }
 
 // NewGatewayWatch watches an account, and reads none of its sessions until
-// Watch. When the account has been disconnected for after, Sentry gets one
-// event carrying kv, the pairs that name the account, and the READY or
-// RESUMED that ends that outage logs an INFO line with them.
+// Watch. When the account has been in a gateway outage for after, Sentry
+// gets one event carrying kv, the pairs that name the account, and the
+// READY or RESUMED that ends that outage logs an INFO line with them.
 func NewGatewayWatch(after time.Duration, kv ...any) *GatewayWatch {
 	return &GatewayWatch{after: after, kv: kv}
 }
@@ -113,15 +113,15 @@ func (w *GatewayWatch) Watch(dg *discordgo.Session) {
 // 4004, Discord has refused the session's token, so no login can succeed,
 // and the session logs in no more. A session refused before it was ever up
 // failed to open, and the caller of its open tells of the refusal, so the
-// watch logs it only for a session that was up. It runs on the goroutine that read the close.
-// For a session that was running, that is discordgo's listener. Discord
-// answers its resume with Op 9, discordgo sends the identify from inside
-// Open, and the 4004 for that identify comes after Open has returned. The
-// listener reconnects next, and reads ShouldReconnectOnError as it starts.
-// A 4004 during the session's first Open fails its start instead.
-// discordgo's Open holds the session's lock while it reads, so closed takes
-// none of the session's locks. It writes ShouldReconnectOnError under the
-// watch's mutex, as CloseSession does.
+// watch logs it only for a session that was up. It runs on the goroutine
+// that read the close. For a session that was running, that is discordgo's
+// listener. Discord answers its resume with Op 9, discordgo sends the
+// identify from inside Open, and the 4004 for that identify comes after Open
+// has returned. The listener reconnects next, and reads
+// ShouldReconnectOnError as it starts. A 4004 during the session's first
+// Open fails its start instead. discordgo's Open holds the session's lock
+// while it reads, so closed takes none of the session's locks. It writes
+// ShouldReconnectOnError under the watch's mutex, as CloseSession does.
 func (w *GatewayWatch) closed(ws *watched, code int) {
 	if code != closeAuthenticationFailed {
 		return
@@ -214,9 +214,9 @@ func (w *GatewayWatch) pairs() []any {
 	return w.kv
 }
 
-// StandDown stops the watch, as at shutdown. Call it before closing the
-// session on purpose. The watch sends nothing after it, not even a report
-// already set.
+// StandDown stops the watch for good, as at shutdown. Call it before
+// closing the session on purpose for good. The watch sends nothing after
+// it, not even a report already set.
 func (w *GatewayWatch) StandDown() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -224,9 +224,10 @@ func (w *GatewayWatch) StandDown() {
 }
 
 // CloseSession closes the session the watch reads on purpose, and the
-// session logs in no more. Use it to close a session that failed to open.
-// The watch reads it no more, and an outage under way goes on, so the
-// failed login of an offline recorder leaves it offline.
+// session logs in no more. Use it to close a session that failed to open,
+// and at a recorder's logout, after Offline. The watch reads it no more,
+// and an outage under way goes on, so the failed login of an offline
+// recorder leaves it offline.
 // discordgo's Open starts the session's heartbeat, and a close right after
 // Open nearly always beats the heartbeat's first write. That write fails, so
 // the heartbeat closes the session again and reconnects, unless

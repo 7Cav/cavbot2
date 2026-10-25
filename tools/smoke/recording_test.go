@@ -39,6 +39,8 @@ func (d refusingDiscord) Open(recorder int, token string) (voice.GatewaySession,
 	return fakeRecorder{id: strconv.Itoa(1000 + recorder)}, nil
 }
 
+func (d refusingDiscord) FailedToConnect(int) {}
+
 func (d refusingDiscord) UserID(_ context.Context, token string) (string, error) {
 	if d.refused(token) {
 		return "", errors.New("HTTP 401 Unauthorized")
