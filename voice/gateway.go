@@ -154,7 +154,7 @@ func (d *Discord) Open(recorder int, token string) (GatewaySession, error) {
 	}
 	s.voice = s.voiceManager(updateVoiceState, userID, disgovoice.NewGateway, utils.NewLogger, dialer.websocket(),
 		disgovoice.WithLogger(utils.Logger),
-		disgovoice.WithDaveSessionCreateFunc(session.CreateFunc()),
+		disgovoice.WithDaveSessionCreateFunc(smokeDecryptFailures(session.CreateFunc())),
 		disgovoice.WithDaveSessionLogger(utils.Logger),
 	)
 	// Added after READY, once the manager exists: no voice event reaches a

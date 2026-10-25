@@ -137,6 +137,19 @@ datagram reached it, and rejoins on a new socket, which the cut leaves alone.
 Only the file's appearance counts, so remove it before the next cut, and
 before `down`.
 
+**Undecryptable voice frames.** A recording check that needs the recorder to
+get frames it can't decrypt starts the run with `go run ./tools/smoke up --env
+SMOKE_VOICE_DECRYPT_FAIL_FILE=/tmp/cavbot2-voice-decrypt-fail`. While that file
+exists, the recorders' end-to-end encryption refuses every frame. The bot log
+gets a "Smoke hook refusing to decrypt voice frames" WARN, naming the recorder
+by its user ID, at the first frame it refuses. Once a member has talked for
+about 3.5 s with the file there, the recorder opens a fresh voice connection
+and starts a `nothing_decrypted` gap, dated from when the member started
+talking. Leave the file in place, and the bot cuts the recording short 10 s
+after that. To see a short gap instead, remove the file about 5 s after the
+member starts talking, and have them keep talking. The first frame that
+decrypts ends the gap. Remove the file before `down` too.
+
 **Cav members.** The test guild has none of the rank roles the code holds for
 production, so no test account counts as a Cav member until a panel admin sets
 a rank role. A check that needs a Cav member, such as owning a spawned channel

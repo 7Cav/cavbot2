@@ -156,12 +156,12 @@ const CloseCodeNone = "none"
 type Listener interface {
 	// Frame is one frame a speaker sent.
 	Frame(Frame)
-	// GapStarted is the recorder ceasing to hear the channel since then:
-	// its voice connection to the call dropped, or DAVE held every frame
-	// past its stall limit. cause names what started the gap. GapEnded is
-	// the recorder hearing it again, connected at the voice server Discord
-	// named last with DAVE passing frames. The two take turns, GapStarted
-	// first.
+	// GapStarted is the recorder ceasing to hear the channel since then,
+	// and cause names what started the gap. GapEnded is the recorder
+	// hearing it again: connected at the voice server Discord named last
+	// with DAVE passing frames, or, for a gap that nothing decrypting
+	// started, the first frame that decrypts. The two take turns,
+	// GapStarted first.
 	GapStarted(since time.Time, cause GapCause)
 	GapEnded()
 }
@@ -187,6 +187,10 @@ const (
 	// socket for a while, after the voice server's receiver reports had
 	// started.
 	GapVoiceServerSilent GapCause = "voice_server_silent"
+	// GapNothingDecrypted is a run of failures to decrypt, with no frame
+	// decrypted: frames DAVE refused, and datagrams the transport
+	// decryption refused.
+	GapNothingDecrypted GapCause = "nothing_decrypted"
 	// GapServerDeafened is the recorder's own voice state saying it is
 	// server-deafened.
 	GapServerDeafened GapCause = "server_deafened"
@@ -203,6 +207,7 @@ var cutShortErrors = map[GapCause]error{
 	GapCallMoved:          errors.New(cutShortOpening + "the call moved to another voice server"),
 	GapDAVEStalled:        errors.New(cutShortOpening + "the DAVE setup stalled"),
 	GapVoiceServerSilent:  errors.New(cutShortOpening + "nothing came from the voice server"),
+	GapNothingDecrypted:   errors.New(cutShortOpening + "nothing the recorder received could be decrypted"),
 	GapServerDeafened:     errors.New(cutShortOpening + "the recorder was server-deafened"),
 }
 

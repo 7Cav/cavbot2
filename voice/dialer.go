@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/7cav/cavbot2/utils"
+	"github.com/disgoorg/godave"
 	"github.com/gorilla/websocket"
 )
 
@@ -64,6 +66,57 @@ const smokeDropEnv = "SMOKE_VOICE_DROP_FILE"
 // up, as connDrops says. Only a smoke run sets it: the compose file's
 // environment block doesn't carry it.
 const smokeUDPCutEnv = "SMOKE_VOICE_UDP_CUT_FILE"
+
+// smokeDecryptFailEnv names a file whose existence has every DAVE session
+// the recorders hold refuse every frame, as a session whose keys fell out of
+// step with the speakers' would. Only a smoke run sets it: the compose file's
+// environment block doesn't carry it.
+const smokeDecryptFailEnv = "SMOKE_VOICE_DECRYPT_FAIL_FILE"
+
+// smokeDecryptFailMessage is the WARN a DAVE session logs when it starts
+// refusing every frame for the smoke hook.
+const smokeDecryptFailMessage = "Smoke hook refusing to decrypt voice frames"
+
+// errSmokeDecryptFail is the refusal of a frame the smoke hook refuses.
+var errSmokeDecryptFail = errors.New("voice: the smoke hook refuses every frame")
+
+// smokeDecryptFailures is create, with each DAVE session it makes refusing
+// every frame while the file smokeDecryptFailEnv names exists, when it names
+// one.
+func smokeDecryptFailures(create godave.SessionCreateFunc) godave.SessionCreateFunc {
+	failFile := os.Getenv(smokeDecryptFailEnv)
+	if failFile == "" {
+		return create
+	}
+	return func(logger *slog.Logger, userID godave.UserID, callbacks godave.Callbacks) godave.Session {
+		return &refusingDAVE{Session: create(logger, userID, callbacks), recorder: userID, file: failFile}
+	}
+}
+
+// refusingDAVE is the recorder's DAVE session, refusing every frame while
+// file exists. refusing is whether it refused the last frame it was handed.
+type refusingDAVE struct {
+	godave.Session
+	recorder godave.UserID
+	file     string
+	refusing atomic.Bool
+}
+
+// Decrypt refuses the frame while the file exists, and warns once each time
+// it starts to.
+func (d *refusingDAVE) Decrypt(userID godave.UserID, frame, out []byte) (int, error) {
+	if _, err := os.Stat(d.file); err != nil {
+		d.refusing.Store(false)
+		return d.Session.Decrypt(userID, frame, out)
+	}
+	if !d.refusing.Swap(true) {
+		utils.Warn(smokeDecryptFailMessage, "recorder", string(d.recorder))
+	}
+	return 0, errSmokeDecryptFail
+}
+
+// ShouldHoldFrames is the session's own, as holdFrames reads it.
+func (d *refusingDAVE) ShouldHoldFrames() bool { return holdFrames(d.Session) }
 
 // newVoiceDialer is the production voice gateway dialer: the host's
 // resolver, and the zone's nameservers reached through it. The smoke hook
