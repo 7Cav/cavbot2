@@ -68,6 +68,11 @@ _Avoid_: linked Discord, Discord link, discordId.
 The troopers the milpacs list under a department or position group, such as
 everyone in S1 or in D/ACD.
 
+**Discharge**:
+A trooper's state while their milpac's position is Discharged or
+Dishonorably Discharged. A retirement is not one, and a re-enlistment ends one.
+_Avoid_: past member, separation. Retirees are past members too.
+
 ## Forum + LOA
 
 **Forum**:
@@ -284,6 +289,28 @@ did that the list alone doesn't show: the members an Approve skipped for
 holding no Foxhole role, or a cleared note that took its member off the page.
 _Avoid_: result note (a note is a Foxhole manager's text about a member),
 message.
+
+## Winged aviators
+
+The Discord role that marks the regiment's winged aviators, and the
+`/winged-aviator` command aviation staff use to give and take it. Discord's
+own settings decide what the role unlocks.
+
+**Winged Aviator role**:
+The Discord role a winged aviator holds while their milpac shows no
+discharge.
+_Avoid_: wings, aviator role.
+
+**Winged aviator**:
+A member someone gave the Winged Aviator role, with `/winged-aviator` or by
+hand. The status outlives a discharge and the member leaving the server, and
+ends only when a person takes the role away.
+_Avoid_: pilot, approved aviator.
+
+**Aviation staff**:
+A/1-7 Staff, A/ACD Staff and Foxhole Staff, who lead the winged aviators.
+Any of them can make or end any member's status as a winged aviator.
+_Avoid_: aviation leadership, aviation managers.
 
 ## Temporary voice channels
 
