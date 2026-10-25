@@ -19,10 +19,10 @@ func TestWingedAviatorsHearTheSessionsMemberEvents(t *testing.T) {
 	cases := []struct {
 		name   string
 		roleID string
-		want   []aviatorRoleCall
+		want   []roleChangeCall
 	}{
-		{"configured", aviatorRole, []aviatorRoleCall{
-			{op: "add", userID: "user-1", roleID: aviatorRole, reason: wingedAviatorRejoinReason},
+		{"configured", wingedAviatorRole, []roleChangeCall{
+			{op: "add", userID: "user-1", roleID: wingedAviatorRole, reason: wingedAviatorRejoinReason},
 		}},
 		{"no role configured", "", nil},
 	}

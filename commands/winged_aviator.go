@@ -35,10 +35,7 @@ const wingedAviatorStoreTimeout = 5 * time.Second
 // wingedAviatorAfterFunc schedules the runtime's waits: the poll for the
 // member list and the hourly pass. Each runtime takes it when it is built,
 // and the tests swap it to run the waits by hand.
-var wingedAviatorAfterFunc = func(d time.Duration, f func()) (stop func()) {
-	timer := time.AfterFunc(d, f)
-	return func() { timer.Stop() }
-}
+var wingedAviatorAfterFunc = func(d time.Duration, f func()) { time.AfterFunc(d, f) }
 
 // WingedAviatorGuild is the subset of GuildManager the runtime changes the
 // role through, with the audit log reason each change carries.
@@ -70,15 +67,15 @@ type WingedAviators struct {
 	store     WingedAviatorStore
 	guildID   string
 	roleID    string
-	afterFunc func(time.Duration, func()) func()
+	afterFunc func(time.Duration, func())
 
 	mu sync.Mutex
 	// locks holds one lock per member the runtime has decided about.
 	locks map[string]*sync.Mutex
-	// moving notes, per member, which way the bot's own last role change
-	// moved their role, true for a give, until the update it causes
-	// arrives. That update is the bot's, not a hand edit, so a removal for
-	// a discharge doesn't end the status.
+	// moving notes, per member, whether the bot's own last role change
+	// left them holding the role, until the update it causes arrives. That
+	// update is the bot's, not a hand edit, so a removal for a discharge
+	// doesn't end the status.
 	moving map[string]bool
 }
 
@@ -196,7 +193,7 @@ func (w *WingedAviators) pass(startup bool) {
 		}
 		func() {
 			defer w.lock(id)()
-			if w.isAviator(id) {
+			if w.isWingedAviator(id) {
 				w.check(id, slices.Contains(m.RoleIDs, w.roleID), giveReason)
 			}
 		}()
@@ -207,7 +204,7 @@ func (w *WingedAviators) pass(startup bool) {
 // doesn't list them.
 func (w *WingedAviators) recordHolder(userID string) {
 	defer w.lock(userID)()
-	if !w.isAviator(userID) {
+	if !w.isWingedAviator(userID) {
 		_ = w.record(userID)
 	}
 }
@@ -220,7 +217,7 @@ func (w *WingedAviators) memberJoined(e *discordgo.GuildMemberAdd) {
 	}
 	id := e.User.ID
 	defer w.lock(id)()
-	if !w.isAviator(id) {
+	if !w.isWingedAviator(id) {
 		return
 	}
 	w.check(id, slices.Contains(e.Roles, w.roleID), wingedAviatorRejoinReason)
@@ -236,46 +233,57 @@ func (w *WingedAviators) memberUpdated(e *discordgo.GuildMemberUpdate) {
 		return
 	}
 	id := e.User.ID
-	holds := slices.Contains(e.Roles, w.roleID)
-	held := e.BeforeUpdate != nil && slices.Contains(e.BeforeUpdate.Roles, w.roleID)
+	u := roleUpdate{holds: slices.Contains(e.Roles, w.roleID), known: e.BeforeUpdate != nil}
+	u.held = u.known && slices.Contains(e.BeforeUpdate.Roles, w.roleID)
 	defer w.lock(id)()
-	if w.ownChange(id, holds, e.BeforeUpdate != nil && held == holds, e.BeforeUpdate != nil) {
+	if w.ownChange(id, u) {
 		return
 	}
-	aviator := w.isAviator(id)
+	aviator := w.isWingedAviator(id)
 	switch {
-	case holds && !aviator:
+	case u.holds && !aviator:
 		if w.record(id) != nil {
 			return
 		}
 		aviator = true
-	case held && !holds && aviator:
+	case u.held && !u.holds && aviator:
 		_ = w.unrecord(id)
 		return
 	}
-	if !aviator || e.BeforeUpdate != nil && sameRoles(e.BeforeUpdate.Roles, e.Roles) {
+	if !aviator || u.known && sameRoles(e.BeforeUpdate.Roles, e.Roles) {
 		return
 	}
-	w.check(id, holds, wingedAviatorReEnlistReason)
+	w.check(id, u.holds, wingedAviatorReEnlistReason)
+}
+
+// roleUpdate is what a member's GUILD_MEMBER_UPDATE says about the Winged
+// Aviator role: whether they hold it after the update, and whether they
+// held it before, when the update says. discordgo knows the roles before
+// only for a member its cache held.
+type roleUpdate struct {
+	holds, held, known bool
+}
+
+// still reports whether the update surely left the role as it was.
+func (u roleUpdate) still() bool {
+	return u.known && u.held == u.holds
 }
 
 // ownChange reports whether the update is the one the bot's own last role
-// change caused, and forgets the note when it is. still is whether the
-// update leaves the role as it was, and known whether the update says what
-// the member held before. An update that moves the role the other way
-// forgets the note too: the change it noted never came. Caller holds the
-// member's lock.
-func (w *WingedAviators) ownChange(userID string, holds, still, known bool) bool {
+// change caused, and forgets the note when it is. An update that surely
+// moved the role the other way forgets the note too: the change it noted
+// never came. Caller holds the member's lock.
+func (w *WingedAviators) ownChange(userID string, u roleUpdate) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	giving, noted := w.moving[userID]
+	leftHolding, noted := w.moving[userID]
 	switch {
-	case !noted || still:
+	case !noted || u.still():
 		return false
-	case giving == holds:
+	case leftHolding == u.holds:
 		delete(w.moving, userID)
 		return true
-	case known:
+	case u.known:
 		delete(w.moving, userID)
 	}
 	return false
@@ -294,9 +302,9 @@ func sameRoles(a, b []string) bool {
 	return true
 }
 
-// isAviator reads the member's status from the store. A read that fails
+// isWingedAviator reads the member's status from the store. A read that fails
 // counts as no status, so the bot changes nothing for them.
-func (w *WingedAviators) isAviator(userID string) bool {
+func (w *WingedAviators) isWingedAviator(userID string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), wingedAviatorStoreTimeout)
 	defer cancel()
 	is, err := w.store.IsWingedAviator(ctx, w.guildID, userID)
@@ -351,7 +359,7 @@ func (w *WingedAviators) readMilpac(userID string) milpacRead {
 	case errors.Is(err, utils.ErrNotFound):
 		return milpacNone
 	case err != nil:
-		utils.Warn("Winged aviator milpac unreadable, role unchanged", "discord_id", userID, "error", err)
+		captureError("Winged aviator milpac unreadable, role unchanged", err, "discord_id", userID)
 		return milpacUnread
 	case isDischarge(milpac.Primary.PositionTitle):
 		return milpacDischarged
@@ -366,14 +374,14 @@ func isDischarge(position string) bool {
 	return position == "Discharged" || position == "Dishonorably Discharged"
 }
 
-// setRole gives the member the role, or takes it, for reason. Caller holds
-// the member's lock.
-func (w *WingedAviators) setRole(userID string, give bool, reason string) error {
+// setRole leaves the member holding the role, or not, for reason: it
+// gives the role or takes it. Caller holds the member's lock.
+func (w *WingedAviators) setRole(userID string, holds bool, reason string) error {
 	w.mu.Lock()
-	w.moving[userID] = give
+	w.moving[userID] = holds
 	w.mu.Unlock()
 	var err error
-	if give {
+	if holds {
 		err = w.guild.GuildMemberRoleAdd(w.guildID, userID, w.roleID, reason)
 	} else {
 		err = w.guild.GuildMemberRoleRemove(w.guildID, userID, w.roleID, reason)
@@ -382,11 +390,36 @@ func (w *WingedAviators) setRole(userID string, give bool, reason string) error 
 		w.mu.Lock()
 		delete(w.moving, userID)
 		w.mu.Unlock()
-		captureError("Winged Aviator role change failed", err, "discord_id", userID, "give", give, "reason", reason)
+		reportRoleFailure(userID, holds, reason, err)
 		return err
 	}
-	utils.Info("Winged Aviator role changed", "discord_id", userID, "give", give, "reason", reason)
+	utils.Info("Winged Aviator role changed", "discord_id", userID, "holds", holds, "reason", reason)
 	return nil
+}
+
+// reportRoleFailure files a role change Discord refused in the Sentry
+// issue of its kind, since every event from this one site shares a stack
+// trace. A member no longer in the server is no failure: a rejoin brings
+// the role back.
+func reportRoleFailure(userID string, holds bool, reason string, err error) {
+	kv := []any{"discord_id", userID, "holds", holds, "reason", reason}
+	class := classifyDiscordError(err)
+	var kind string
+	switch {
+	case class.NotFound:
+		utils.Info("Winged Aviator role unchanged, member not in the server", kv...)
+		return
+	case class.MissingPermissions:
+		kind = "missing-permissions"
+	case class.ConfigFault:
+		kind = "unknown-role"
+	case class.SystemFault:
+		kind = "discord-error"
+	default:
+		kind = "rejected"
+	}
+	utils.CaptureErrorIn(utils.SentryIssue{Fingerprint: []string{"winged-aviator-role-change", kind}},
+		"Winged Aviator role change failed", err, kv...)
 }
 
 // wingedAviatorCommandName is the name /winged-aviator registers under.
@@ -403,9 +436,9 @@ const (
 	aviatorRemovedPhrase    = "is no longer a winged aviator"
 	aviatorNeitherPhrase    = "isn't a winged aviator"
 	aviatorNotTakenPhrase   = "Couldn't take"
-	// aviatorRoleOnReEnlistPhrase ends the reply for a winged aviator
+	// aviatorReEnlistPhrase ends the reply for a winged aviator
 	// whose milpac shows a discharge.
-	aviatorRoleOnReEnlistPhrase = "The Winged Aviator role comes when they re-enlist."
+	aviatorReEnlistPhrase = "The Winged Aviator role comes when they re-enlist."
 )
 
 // wingedAviatorsOffRefusal answers /winged-aviator on a bot with no
@@ -485,15 +518,17 @@ func runWingedAviator(r utils.InteractionResponder, wa *WingedAviators, interact
 	by := Invoker{UserID: discordID, Username: username}
 	reason := "/" + wingedAviatorCommandName + " " + sub.Name + " by " + by.auditName()
 
+	// Discord's member picker resolves a member in the server with their
+	// roles.
+	holds := false
+	if data.Resolved != nil && data.Resolved.Members[target] != nil {
+		holds = slices.Contains(data.Resolved.Members[target].Roles, wa.roleID)
+	}
 	var reply aviatorReply
 	if sub.Name == "remove" {
-		holds := false
-		if data.Resolved != nil && data.Resolved.Members[target] != nil {
-			holds = slices.Contains(data.Resolved.Members[target].Roles, wa.roleID)
-		}
 		reply = wa.remove(target, holds, reason)
 	} else {
-		reply = wa.add(target, reason)
+		reply = wa.add(target, holds, reason)
 	}
 	switch reply.kind {
 	case aviatorRefused:
@@ -509,37 +544,49 @@ func runWingedAviator(r utils.InteractionResponder, wa *WingedAviators, interact
 
 // add makes the member a winged aviator, as /winged-aviator add, once
 // their milpac is read. A member with no discharge gets the role, and
-// becomes one only if Discord gives it.
-func (w *WingedAviators) add(userID, reason string) aviatorReply {
+// becomes one only if Discord gives it. One whose milpac shows a discharge
+// becomes one without it. holds is whether they hold the role as the
+// command resolved them.
+func (w *WingedAviators) add(userID string, holds bool, reason string) aviatorReply {
 	defer w.lock(userID)()
 	read := w.readMilpac(userID)
-	switch read {
-	case milpacNone:
-		return aviatorReply{kind: aviatorRefused, text: "❌ " + aviatorNoMilpacPhrase + " " + mention(userID) +
-			"'s Discord account, so nothing changed. Check you picked the right member."}
-	case milpacUnread:
+	if read == milpacUnread {
 		return aviatorReply{kind: aviatorFailed, text: "❌ " + aviatorReadFailedPhrase + " " + mention(userID) +
 			"'s milpac, so nothing changed. Try again in a moment."}
 	}
-	already := w.isAviator(userID)
+	already := w.isWingedAviator(userID)
+	// A winged aviator no milpac names, as one given the role by hand can
+	// be, has no discharge, so the command goes on for them.
+	if read == milpacNone && !already {
+		return aviatorReply{kind: aviatorRefused, text: "❌ " + aviatorNoMilpacPhrase + " " + mention(userID) +
+			"'s Discord account, so nothing changed. Check you picked the right member."}
+	}
 	status := aviatorAddedPhrase
 	if already {
 		status = aviatorAlreadyPhrase
 	}
 	if read == milpacDischarged {
+		if holds {
+			if err := w.setRole(userID, false, reason); err != nil {
+				return aviatorReply{kind: aviatorFailed, text: "❌ " + aviatorNotTakenPhrase + " the Winged Aviator role from " +
+					mention(userID) + ", whose milpac shows a discharge, so nothing changed. " + wingedAviatorRoleRefusal(err)}
+			}
+		}
 		if !already && w.record(userID) != nil {
 			return aviatorNotSaved(userID)
 		}
 		return aviatorReply{text: "⚠️ " + mention(userID) + " " + status +
-			", but their milpac shows a discharge. " + aviatorRoleOnReEnlistPhrase}
+			", but their milpac shows a discharge. " + aviatorReEnlistPhrase}
 	}
-	if err := w.setRole(userID, true, reason); err != nil {
-		outcome := "so they aren't a winged aviator."
-		if already {
-			outcome = "They're still a winged aviator."
+	if !holds {
+		if err := w.setRole(userID, true, reason); err != nil {
+			outcome := "so they aren't a winged aviator."
+			if already {
+				outcome = "They're still a winged aviator."
+			}
+			return aviatorReply{kind: aviatorFailed, text: "❌ " + aviatorNotGivenPhrase + " " + mention(userID) +
+				" the Winged Aviator role, " + outcome + " " + wingedAviatorRoleRefusal(err)}
 		}
-		return aviatorReply{kind: aviatorFailed, text: "❌ " + aviatorNotGivenPhrase + " " + mention(userID) +
-			" the Winged Aviator role, " + outcome + " " + aviatorRoleRefusal(err)}
 	}
 	if !already && w.record(userID) != nil {
 		return aviatorNotSaved(userID)
@@ -552,7 +599,7 @@ func (w *WingedAviators) add(userID, reason string) aviatorReply {
 // holds is whether they hold it as the command resolved them.
 func (w *WingedAviators) remove(userID string, holds bool, reason string) aviatorReply {
 	defer w.lock(userID)()
-	was := w.isAviator(userID)
+	was := w.isWingedAviator(userID)
 	if !was && !holds {
 		return aviatorReply{text: "⚠️ " + mention(userID) + " " + aviatorNeitherPhrase +
 			" and doesn't hold the Winged Aviator role, so nothing changed."}
@@ -560,7 +607,7 @@ func (w *WingedAviators) remove(userID string, holds bool, reason string) aviato
 	if holds {
 		if err := w.setRole(userID, false, reason); err != nil {
 			return aviatorReply{kind: aviatorFailed, text: "❌ " + aviatorNotTakenPhrase + " the Winged Aviator role from " +
-				mention(userID) + ", so nothing changed. " + aviatorRoleRefusal(err)}
+				mention(userID) + ", so nothing changed. " + wingedAviatorRoleRefusal(err)}
 		}
 	}
 	if was && w.unrecord(userID) != nil {
@@ -576,9 +623,9 @@ func aviatorNotSaved(userID string) aviatorReply {
 		"'s status as a winged aviator. Try again in a moment."}
 }
 
-// aviatorRoleRefusal says why Discord refused a role change, in words
+// wingedAviatorRoleRefusal says why Discord refused a role change, in words
 // staff can act on. It never carries Discord's own answer.
-func aviatorRoleRefusal(err error) string {
+func wingedAviatorRoleRefusal(err error) string {
 	class := classifyDiscordError(err)
 	switch {
 	case class.MissingPermissions:

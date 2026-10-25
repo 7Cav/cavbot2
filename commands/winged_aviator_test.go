@@ -20,10 +20,10 @@ import (
 // role calls, the member list and the timers stood in for.
 
 const (
-	aviatorGuild     = "guild-wa"
-	aviatorRole      = "role-wa"
-	aviatorRankRole  = "role-rank"
-	aviatorRankRole2 = "role-rank-2"
+	aviatorGuild      = "guild-wa"
+	wingedAviatorRole = "role-wa"
+	aviatorRankRole   = "role-rank"
+	aviatorRankRole2  = "role-rank-2"
 )
 
 // The primary positions the 7Cav API serves, as its milpacs by Discord ID
@@ -36,8 +36,8 @@ const (
 	aviatorRetired      = "Retired"
 )
 
-// aviatorRoleCall is one role change the runtime asked Discord for.
-type aviatorRoleCall struct {
+// roleChangeCall is one role change the runtime asked Discord for.
+type roleChangeCall struct {
 	op     string // "add" or "remove"
 	userID string
 	roleID string
@@ -48,7 +48,7 @@ type aviatorRoleCall struct {
 // and fails a member's adds or removals with the error set for them.
 type fakeAviatorGuild struct {
 	mu        sync.Mutex
-	calls     []aviatorRoleCall
+	calls     []roleChangeCall
 	addErrs   map[string]error
 	removeErr map[string]error
 }
@@ -56,20 +56,20 @@ type fakeAviatorGuild struct {
 func (g *fakeAviatorGuild) GuildMemberRoleAdd(_, userID, roleID, reason string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.calls = append(g.calls, aviatorRoleCall{op: "add", userID: userID, roleID: roleID, reason: reason})
+	g.calls = append(g.calls, roleChangeCall{op: "add", userID: userID, roleID: roleID, reason: reason})
 	return g.addErrs[userID]
 }
 
 func (g *fakeAviatorGuild) GuildMemberRoleRemove(_, userID, roleID, reason string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.calls = append(g.calls, aviatorRoleCall{op: "remove", userID: userID, roleID: roleID, reason: reason})
+	g.calls = append(g.calls, roleChangeCall{op: "remove", userID: userID, roleID: roleID, reason: reason})
 	return g.removeErr[userID]
 }
 
 // roleCalls returns every role change asked for so far, and forgets them,
 // so a test reads each step's calls on their own.
-func (g *fakeAviatorGuild) roleCalls() []aviatorRoleCall {
+func (g *fakeAviatorGuild) roleCalls() []roleChangeCall {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	calls := g.calls
@@ -146,11 +146,10 @@ type fakeAviatorTimers struct {
 	pending []func()
 }
 
-func (f *fakeAviatorTimers) afterFunc(_ time.Duration, fn func()) func() {
+func (f *fakeAviatorTimers) afterFunc(_ time.Duration, fn func()) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.pending = append(f.pending, fn)
-	return func() {}
 }
 
 // firePending runs each wait pending now, once, on the test's goroutine. A
@@ -191,7 +190,7 @@ func newAviatorScene(t *testing.T) *aviatorScene {
 	prev := wingedAviatorAfterFunc
 	wingedAviatorAfterFunc = sc.timers.afterFunc
 	t.Cleanup(func() { wingedAviatorAfterFunc = prev })
-	sc.wa = sc.build(aviatorRole)
+	sc.wa = sc.build(wingedAviatorRole)
 	return sc
 }
 
@@ -227,7 +226,7 @@ func aviatorMember(id string, roles ...string) *discordgo.Member {
 }
 
 // wantRoleCalls fails the test unless calls are exactly want, in order.
-func wantRoleCalls(t *testing.T, step string, calls []aviatorRoleCall, want ...aviatorRoleCall) {
+func wantRoleCalls(t *testing.T, step string, calls []roleChangeCall, want ...roleChangeCall) {
 	t.Helper()
 	if len(calls) != len(want) {
 		t.Fatalf("%s: role calls = %+v, want %+v", step, calls, want)
@@ -262,9 +261,9 @@ func TestWingedAviatorWhoRejoinsGetsTheRoleBackUnlessDischarged(t *testing.T) {
 
 			sc.rejoin("user-1")
 
-			var want []aviatorRoleCall
+			var want []roleChangeCall
 			if tc.given {
-				want = append(want, aviatorRoleCall{op: "add", userID: "user-1", roleID: aviatorRole, reason: wingedAviatorRejoinReason})
+				want = append(want, roleChangeCall{op: "add", userID: "user-1", roleID: wingedAviatorRole, reason: wingedAviatorRejoinReason})
 			}
 			wantRoleCalls(t, "rejoin", sc.guild.roleCalls(), want...)
 		})
@@ -324,12 +323,16 @@ func wantReply(t *testing.T, reply, verdict, memberID, phrase string) {
 	}
 }
 
-// wantCommandReason fails the test unless reason names the staff member
-// who ran the command.
-func wantCommandReason(t *testing.T, call aviatorRoleCall) {
+// wantCommandRoleCall fails the test unless calls are one op of the role
+// on the member, with an audit log reason naming the staff member who ran
+// the command.
+func wantCommandRoleCall(t *testing.T, calls []roleChangeCall, op, memberID string) {
 	t.Helper()
-	if !strings.Contains(call.reason, aviatorInvoker) {
-		t.Errorf("audit log reason = %q, want it to name the invoker %s", call.reason, aviatorInvoker)
+	if len(calls) != 1 || calls[0].op != op || calls[0].userID != memberID || calls[0].roleID != wingedAviatorRole {
+		t.Fatalf("role calls = %+v, want the role's %s for %s alone", calls, op, memberID)
+	}
+	if !strings.Contains(calls[0].reason, aviatorInvoker) {
+		t.Errorf("audit log reason = %q, want it to name the invoker %s", calls[0].reason, aviatorInvoker)
 	}
 }
 
@@ -343,15 +346,11 @@ func TestAddMakesAMemberWithNoDischargeAWingedAviatorWithTheRole(t *testing.T) {
 	reply := sc.run("add", "user-1", true, aviatorRankRole)
 
 	wantReply(t, reply, verdictDone, "user-1", aviatorAddedPhrase)
-	calls := sc.guild.roleCalls()
-	if len(calls) != 1 || calls[0].op != "add" || calls[0].userID != "user-1" || calls[0].roleID != aviatorRole {
-		t.Fatalf("role calls = %+v, want the role added to user-1", calls)
-	}
-	wantCommandReason(t, calls[0])
+	wantCommandRoleCall(t, sc.guild.roleCalls(), "add", "user-1")
 
 	sc.rejoin("user-1")
 	wantRoleCalls(t, "rejoin", sc.guild.roleCalls(),
-		aviatorRoleCall{op: "add", userID: "user-1", roleID: aviatorRole, reason: wingedAviatorRejoinReason})
+		roleChangeCall{op: "add", userID: "user-1", roleID: wingedAviatorRole, reason: wingedAviatorRejoinReason})
 }
 
 // add refuses a member no milpac names and changes nothing: no role, and
@@ -390,13 +389,13 @@ func TestAddMakesADischargedMemberAWingedAviatorWithoutTheRole(t *testing.T) {
 
 	reply := sc.run("add", "user-1", true)
 
-	wantReply(t, reply, verdictLeftOver, "user-1", aviatorRoleOnReEnlistPhrase)
+	wantReply(t, reply, verdictLeftOver, "user-1", aviatorReEnlistPhrase)
 	wantRoleCalls(t, "add", sc.guild.roleCalls())
 
 	sc.api.setPosition("user-1", aviatorActive)
 	sc.rolesChange("user-1", nil, []string{aviatorRankRole})
 	wantRoleCalls(t, "re-enlistment", sc.guild.roleCalls(),
-		aviatorRoleCall{op: "add", userID: "user-1", roleID: aviatorRole, reason: wingedAviatorReEnlistReason})
+		roleChangeCall{op: "add", userID: "user-1", roleID: wingedAviatorRole, reason: wingedAviatorReEnlistReason})
 }
 
 // add whose role Discord refuses says the role couldn't be given, and the
@@ -429,11 +428,7 @@ func TestAddOfAWingedAviatorSaysSoAndGivesTheRoleBack(t *testing.T) {
 	reply := sc.run("add", "user-1", true, aviatorRankRole)
 
 	wantReply(t, reply, verdictDone, "user-1", aviatorAlreadyPhrase)
-	calls := sc.guild.roleCalls()
-	if len(calls) != 1 || calls[0].op != "add" || calls[0].userID != "user-1" || calls[0].roleID != aviatorRole {
-		t.Fatalf("role calls = %+v, want the role added to user-1", calls)
-	}
-	wantCommandReason(t, calls[0])
+	wantCommandRoleCall(t, sc.guild.roleCalls(), "add", "user-1")
 }
 
 // remove takes the role, with a reason naming who ran it, and ends the
@@ -443,14 +438,10 @@ func TestRemoveTakesTheRoleAndEndsTheStatus(t *testing.T) {
 	sc.seedAviator("user-1")
 	sc.api.setPosition("user-1", aviatorActive)
 
-	reply := sc.run("remove", "user-1", true, aviatorRankRole, aviatorRole)
+	reply := sc.run("remove", "user-1", true, aviatorRankRole, wingedAviatorRole)
 
 	wantReply(t, reply, verdictDone, "user-1", aviatorRemovedPhrase)
-	calls := sc.guild.roleCalls()
-	if len(calls) != 1 || calls[0].op != "remove" || calls[0].userID != "user-1" || calls[0].roleID != aviatorRole {
-		t.Fatalf("role calls = %+v, want the role removed from user-1", calls)
-	}
-	wantCommandReason(t, calls[0])
+	wantCommandRoleCall(t, sc.guild.roleCalls(), "remove", "user-1")
 
 	sc.rolesChange("user-1", []string{aviatorRankRole}, []string{aviatorRankRole2})
 	wantRoleCalls(t, "re-enlistment", sc.guild.roleCalls())
@@ -478,16 +469,16 @@ func TestDischargeTakesTheRoleAndKeepsTheStatus(t *testing.T) {
 			sc.seedAviator("user-1")
 			sc.api.setPosition("user-1", position)
 
-			sc.rolesChange("user-1", []string{aviatorRankRole, aviatorRole}, []string{aviatorRole})
+			sc.rolesChange("user-1", []string{aviatorRankRole, wingedAviatorRole}, []string{wingedAviatorRole})
 			wantRoleCalls(t, "discharge", sc.guild.roleCalls(),
-				aviatorRoleCall{op: "remove", userID: "user-1", roleID: aviatorRole, reason: wingedAviatorDischargeReason})
-			sc.rolesChange("user-1", []string{aviatorRole}, nil)
+				roleChangeCall{op: "remove", userID: "user-1", roleID: wingedAviatorRole, reason: wingedAviatorDischargeReason})
+			sc.rolesChange("user-1", []string{wingedAviatorRole}, nil)
 			wantRoleCalls(t, "the bot's own removal", sc.guild.roleCalls())
 
 			sc.api.setPosition("user-1", aviatorActive)
 			sc.rolesChange("user-1", nil, []string{aviatorRankRole})
 			wantRoleCalls(t, "re-enlistment", sc.guild.roleCalls(),
-				aviatorRoleCall{op: "add", userID: "user-1", roleID: aviatorRole, reason: wingedAviatorReEnlistReason})
+				roleChangeCall{op: "add", userID: "user-1", roleID: wingedAviatorRole, reason: wingedAviatorReEnlistReason})
 		})
 	}
 }
@@ -499,7 +490,7 @@ func TestRetirementKeepsTheRole(t *testing.T) {
 	sc.seedAviator("user-1")
 	sc.api.setPosition("user-1", aviatorRetired)
 
-	sc.rolesChange("user-1", []string{aviatorRankRole, aviatorRole}, []string{aviatorRankRole2, aviatorRole})
+	sc.rolesChange("user-1", []string{aviatorRankRole, wingedAviatorRole}, []string{aviatorRankRole2, wingedAviatorRole})
 
 	wantRoleCalls(t, "retirement", sc.guild.roleCalls())
 }
@@ -515,7 +506,7 @@ func TestReEnlistmentGivesTheRoleBack(t *testing.T) {
 	sc.rolesChange("user-1", nil, []string{aviatorRankRole})
 
 	wantRoleCalls(t, "re-enlistment", sc.guild.roleCalls(),
-		aviatorRoleCall{op: "add", userID: "user-1", roleID: aviatorRole, reason: wingedAviatorReEnlistReason})
+		roleChangeCall{op: "add", userID: "user-1", roleID: wingedAviatorRole, reason: wingedAviatorReEnlistReason})
 }
 
 // A role change on a winged aviator whose milpac read fails changes
@@ -525,7 +516,7 @@ func TestRoleChangeWhoseMilpacReadFailsChangesNothing(t *testing.T) {
 	sc.seedAviator("user-1")
 	sc.api.failFor("user-1", http.StatusInternalServerError)
 
-	sc.rolesChange("user-1", []string{aviatorRankRole, aviatorRole}, []string{aviatorRankRole2, aviatorRole})
+	sc.rolesChange("user-1", []string{aviatorRankRole, wingedAviatorRole}, []string{aviatorRankRole2, wingedAviatorRole})
 
 	wantRoleCalls(t, "role change", sc.guild.roleCalls())
 }
@@ -536,13 +527,13 @@ func TestRoleGivenByHandMakesAWingedAviator(t *testing.T) {
 	sc := newAviatorScene(t)
 	sc.api.setPosition("user-1", aviatorActive)
 
-	sc.rolesChange("user-1", []string{aviatorRankRole}, []string{aviatorRankRole, aviatorRole})
+	sc.rolesChange("user-1", []string{aviatorRankRole}, []string{aviatorRankRole, wingedAviatorRole})
 	wantRoleCalls(t, "hand give", sc.guild.roleCalls())
 
 	sc.api.setPosition("user-1", aviatorDischarged)
-	sc.rolesChange("user-1", []string{aviatorRankRole, aviatorRole}, []string{aviatorRole})
+	sc.rolesChange("user-1", []string{aviatorRankRole, wingedAviatorRole}, []string{wingedAviatorRole})
 	wantRoleCalls(t, "discharge", sc.guild.roleCalls(),
-		aviatorRoleCall{op: "remove", userID: "user-1", roleID: aviatorRole, reason: wingedAviatorDischargeReason})
+		roleChangeCall{op: "remove", userID: "user-1", roleID: wingedAviatorRole, reason: wingedAviatorDischargeReason})
 }
 
 // A winged aviator someone takes the role from by hand is one no more: the
@@ -552,7 +543,7 @@ func TestRoleRemovedByHandEndsTheStatus(t *testing.T) {
 	sc.seedAviator("user-1")
 	sc.api.setPosition("user-1", aviatorActive)
 
-	sc.rolesChange("user-1", []string{aviatorRankRole, aviatorRole}, []string{aviatorRankRole})
+	sc.rolesChange("user-1", []string{aviatorRankRole, wingedAviatorRole}, []string{aviatorRankRole})
 	wantRoleCalls(t, "hand removal", sc.guild.roleCalls())
 
 	sc.rejoin("user-1")
@@ -570,7 +561,7 @@ func (sc *aviatorScene) listMember(id string, roles ...string) {
 // and one who left get nothing.
 func TestStartupRecordsEveryHolderAndGivesTheRoleBack(t *testing.T) {
 	sc := newAviatorScene(t)
-	sc.listMember("user-h", aviatorRankRole, aviatorRole)
+	sc.listMember("user-h", aviatorRankRole, wingedAviatorRole)
 	sc.api.setPosition("user-h", aviatorActive)
 	for _, id := range []string{"user-w", "user-d", "user-l"} {
 		sc.seedAviator(id)
@@ -583,23 +574,23 @@ func TestStartupRecordsEveryHolderAndGivesTheRoleBack(t *testing.T) {
 	sc.wa.Start()
 
 	wantRoleCalls(t, "startup", sc.guild.roleCalls(),
-		aviatorRoleCall{op: "add", userID: "user-w", roleID: aviatorRole, reason: wingedAviatorStartupReason})
+		roleChangeCall{op: "add", userID: "user-w", roleID: wingedAviatorRole, reason: wingedAviatorStartupReason})
 	sc.rejoin("user-h")
 	wantRoleCalls(t, "the holder's rejoin", sc.guild.roleCalls(),
-		aviatorRoleCall{op: "add", userID: "user-h", roleID: aviatorRole, reason: wingedAviatorRejoinReason})
+		roleChangeCall{op: "add", userID: "user-h", roleID: wingedAviatorRole, reason: wingedAviatorRejoinReason})
 }
 
 // On the first start, a holder whose milpac shows a discharge becomes a
 // winged aviator and loses the role, by the discharge reason.
 func TestStartupTakesTheRoleFromADischargedHolder(t *testing.T) {
 	sc := newAviatorScene(t)
-	sc.listMember("user-h", aviatorRole)
+	sc.listMember("user-h", wingedAviatorRole)
 	sc.api.setPosition("user-h", aviatorDischarged)
 
 	sc.wa.Start()
 
 	wantRoleCalls(t, "startup", sc.guild.roleCalls(),
-		aviatorRoleCall{op: "remove", userID: "user-h", roleID: aviatorRole, reason: wingedAviatorDischargeReason})
+		roleChangeCall{op: "remove", userID: "user-h", roleID: wingedAviatorRole, reason: wingedAviatorDischargeReason})
 }
 
 // A start while the member list is still arriving runs the startup pass
@@ -607,7 +598,7 @@ func TestStartupTakesTheRoleFromADischargedHolder(t *testing.T) {
 // aviator who lacks the role gets it by the startup reason.
 func TestStartupPassWaitsForTheWholeMemberList(t *testing.T) {
 	sc := newAviatorScene(t)
-	sc.listMember("user-h", aviatorRole)
+	sc.listMember("user-h", wingedAviatorRole)
 	sc.api.setPosition("user-h", aviatorActive)
 	sc.seedAviator("user-w")
 	sc.listMember("user-w")
@@ -619,10 +610,10 @@ func TestStartupPassWaitsForTheWholeMemberList(t *testing.T) {
 	sc.timers.firePending()
 
 	wantRoleCalls(t, "startup", sc.guild.roleCalls(),
-		aviatorRoleCall{op: "add", userID: "user-w", roleID: aviatorRole, reason: wingedAviatorStartupReason})
+		roleChangeCall{op: "add", userID: "user-w", roleID: wingedAviatorRole, reason: wingedAviatorStartupReason})
 	sc.rejoin("user-h")
 	wantRoleCalls(t, "the holder's rejoin", sc.guild.roleCalls(),
-		aviatorRoleCall{op: "add", userID: "user-h", roleID: aviatorRole, reason: wingedAviatorRejoinReason})
+		roleChangeCall{op: "add", userID: "user-h", roleID: wingedAviatorRole, reason: wingedAviatorRejoinReason})
 }
 
 // The hourly pass checks every winged aviator again: one whose milpac now
@@ -631,7 +622,7 @@ func TestStartupPassWaitsForTheWholeMemberList(t *testing.T) {
 func TestHourlyPassChecksEveryWingedAviator(t *testing.T) {
 	sc := newAviatorScene(t)
 	sc.seedAviator("user-w")
-	sc.listMember("user-w", aviatorRole)
+	sc.listMember("user-w", wingedAviatorRole)
 	sc.api.setPosition("user-w", aviatorActive)
 	sc.seedAviator("user-x")
 	sc.listMember("user-x")
@@ -644,7 +635,7 @@ func TestHourlyPassChecksEveryWingedAviator(t *testing.T) {
 	sc.timers.firePending()
 
 	wantRoleCalls(t, "hourly pass", sc.guild.roleCalls(),
-		aviatorRoleCall{op: "remove", userID: "user-w", roleID: aviatorRole, reason: wingedAviatorDischargeReason})
+		roleChangeCall{op: "remove", userID: "user-w", roleID: wingedAviatorRole, reason: wingedAviatorDischargeReason})
 }
 
 // With no Winged Aviator role configured, the command refuses as not set
@@ -653,7 +644,7 @@ func TestHourlyPassChecksEveryWingedAviator(t *testing.T) {
 func TestWithNoRoleConfiguredTheCommandRefusesAndNothingIsTracked(t *testing.T) {
 	sc := newAviatorScene(t)
 	off := sc.build("")
-	sc.listMember("user-h", aviatorRole)
+	sc.listMember("user-h", wingedAviatorRole)
 	sc.api.setPosition("user-h", aviatorActive)
 	sc.seedAviator("user-w")
 	sc.listMember("user-w")
@@ -684,4 +675,30 @@ func TestWingedAviatorCommandDeclaresNoDefaultMemberPermissions(t *testing.T) {
 		return
 	}
 	t.Fatalf("the registry declares no /%s", wingedAviatorCommandName)
+}
+
+// add of a winged aviator no milpac names, such as one given the role by
+// hand, says they already are one and gives the role they lack: no
+// discharge can reach them.
+func TestAddOfAWingedAviatorWithNoMilpacSaysSoAndGivesTheRole(t *testing.T) {
+	sc := newAviatorScene(t)
+	sc.seedAviator("user-1")
+
+	reply := sc.run("add", "user-1", true, aviatorRankRole)
+
+	wantReply(t, reply, verdictDone, "user-1", aviatorAlreadyPhrase)
+	wantCommandRoleCall(t, sc.guild.roleCalls(), "add", "user-1")
+}
+
+// add of a discharged member who holds the role makes them a winged
+// aviator without it: the command takes it, and the role comes when they
+// re-enlist.
+func TestAddOfADischargedHolderTakesTheRole(t *testing.T) {
+	sc := newAviatorScene(t)
+	sc.api.setPosition("user-1", aviatorDischarged)
+
+	reply := sc.run("add", "user-1", true, wingedAviatorRole)
+
+	wantReply(t, reply, verdictLeftOver, "user-1", aviatorReEnlistPhrase)
+	wantCommandRoleCall(t, sc.guild.roleCalls(), "remove", "user-1")
 }
