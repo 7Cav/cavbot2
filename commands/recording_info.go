@@ -90,6 +90,13 @@ func orNone(s string) string {
 	return s
 }
 
+// The info file's Ended line for each cut-short end (#853), saying what cut
+// the recording short.
+const (
+	infoEndedRestart = "cut short when the bot restarted; what reached the disk is kept"
+	infoEndedGap     = "cut short when the recorder stopped hearing the channel for 10 seconds; what it captured is kept"
+)
+
 // recordingEndPhrase says how a recording ended, for the info file.
 func recordingEndPhrase(end store.RecordingEnd) string {
 	switch end {
@@ -103,8 +110,10 @@ func recordingEndPhrase(end store.RecordingEnd) string {
 		return "disk space ran low"
 	case store.RecordingEndRecorderLeft:
 		return "the recorder left the channel"
-	case store.RecordingEndCutShort:
-		return "cut short when the bot restarted; what reached the disk is kept"
+	case store.RecordingEndRestart:
+		return infoEndedRestart
+	case store.RecordingEndGap:
+		return infoEndedGap
 	default:
 		return string(end)
 	}

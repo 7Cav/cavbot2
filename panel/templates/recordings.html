@@ -63,7 +63,7 @@
       <dt>Mix</dt><dd data-field="mix">{{template "mix-state" .}}</dd>
       <dt>Started</dt><dd><time data-field="started" datetime="{{.StartedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "recording-started" .}}</time></dd>
       <dt>Stopped</dt><dd><time data-field="stopped" datetime="{{.StoppedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "zulu" .StoppedAt}}</time></dd>
-      <dt>Length</dt><dd data-field="length">{{.Length}}{{if .CutShort}} <span class="tag tag--warn" data-field="cut-short">cut short by a restart</span>{{end}}</dd>
+      <dt>Length</dt><dd data-field="length">{{.Length}}{{with .CutShort}} <span class="tag tag--warn" data-field="cut-short">{{.}}</span>{{end}}</dd>
       <dt>Kept until</dt><dd><time data-field="deletes" datetime="{{.DeletesAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.DeletesAt.UTC.Format "2 Jan 2006"}}</time></dd>
       <dt>Speakers</dt><dd data-field="speakers">{{range $i, $s := .Speakers}}{{if $i}} {{end}}<span class="rec-speaker">{{$s.Name}}{{with $s.Marker}} {{.}}{{end}}{{if not $s.Last}},{{end}}</span>{{else}}<span class="off">none</span>{{end}}</dd>
       {{end}}

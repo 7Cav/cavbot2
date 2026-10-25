@@ -599,6 +599,35 @@ func infoLine(t *testing.T, info []byte, name string) string {
 	return found[0]
 }
 
+// A cut-short recording's info file says what cut it short, a restart or a
+// gap, when it is rendered from the row as well (#853).
+func TestRecordingInfoFileSaysWhatCutTheRecordingShort(t *testing.T) {
+	for end, want := range map[store.RecordingEnd]string{
+		store.RecordingEndRestart: infoEndedRestart,
+		store.RecordingEndGap:     infoEndedGap,
+	} {
+		t.Run(string(end), func(t *testing.T) {
+			sc := newRecordScene(t, testRecorder)
+			ctx := context.Background()
+			rec, err := sc.st.StartRecording(ctx, store.Recording{GuildID: testTempVCGuild, ChannelID: recordChannel,
+				ChannelName: recordChannelName, StarterID: recStarter.id, RecorderID: testRecorder, StartedAt: recordingNow()})
+			if err != nil {
+				t.Fatalf("StartRecording: %v", err)
+			}
+			if err := sc.st.StopRecording(ctx, rec.ID, rec.StartedAt.Add(time.Minute), end, nil); err != nil {
+				t.Fatalf("StopRecording: %v", err)
+			}
+
+			info, err := sc.lib.InfoFile(sc.onlyRecording(t))
+			if err != nil {
+				t.Fatalf("InfoFile: %v", err)
+			}
+
+			infoLine(t, info, want)
+		})
+	}
+}
+
 // The info file marks the speaker whose track was lost, after their name,
 // and leaves the other speaker unmarked.
 func TestRecordingInfoFileMarksALostTrack(t *testing.T) {

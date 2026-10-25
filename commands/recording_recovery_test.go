@@ -48,8 +48,8 @@ func (sc *recordScene) restart(t *testing.T, recorders ...string) {
 func (sc *recordScene) assertCutShort(t *testing.T) {
 	t.Helper()
 	recs := sc.recordings(t)
-	if len(recs) != 1 || recs[0].StoppedAt.IsZero() || recs[0].Ended != store.RecordingEndCutShort {
-		t.Errorf("recordings after recovery = %+v, want one stopped, ended %q", recs, store.RecordingEndCutShort)
+	if len(recs) != 1 || recs[0].StoppedAt.IsZero() || recs[0].Ended != store.RecordingEndRestart {
+		t.Errorf("recordings after recovery = %+v, want one stopped, ended %q", recs, store.RecordingEndRestart)
 	}
 }
 
@@ -384,8 +384,8 @@ func TestRecordingStartedBeforeRecoveryRunsKeepsRunning(t *testing.T) {
 	for _, rec := range sc.recordings(t) {
 		switch rec.ChannelID {
 		case recordChannel:
-			if rec.Ended != store.RecordingEndCutShort {
-				t.Errorf("the crashed recording ended %q, want %q", rec.Ended, store.RecordingEndCutShort)
+			if rec.Ended != store.RecordingEndRestart {
+				t.Errorf("the crashed recording ended %q, want %q", rec.Ended, store.RecordingEndRestart)
 			}
 		case recordOtherChannel:
 			if !rec.StoppedAt.IsZero() {

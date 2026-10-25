@@ -106,8 +106,8 @@ func (r *RecordingRuntime) recordingLink(id int64) string {
 	return r.panelURL + RecordingPath(id)
 }
 
-// recordingCutShort is what the notice and the DM say of a recording a
-// shutdown or a crash cut short, which sets them apart from a stop's.
+// recordingCutShort is what the notice and the DM say of a recording cut
+// short, which sets them apart from a stop's.
 const recordingCutShort = "was cut short when the bot restarted"
 
 // recordingNoticeCutShortLine is the notice's content once the recording
@@ -119,7 +119,7 @@ const recordingNoticeCutShortLine = "⏹️ This recording " + recordingCutShort
 // The angle brackets keep Discord from previewing the panel's sign-in page.
 func recordingNoticeStopped(end store.RecordingEnd, link string) string {
 	line := recordingNoticeStoppedLine
-	if end == store.RecordingEndCutShort {
+	if end.CutShort() {
 		line = recordingNoticeCutShortLine
 	}
 	if link == "" {
@@ -191,7 +191,7 @@ func (r *RecordingRuntime) sendRecordingLink(rec store.Recording) {
 // with its notice gone. The channel name is the one the recording started
 // in.
 func recordingLinkDM(end store.RecordingEnd, channelName, link string) string {
-	if end == store.RecordingEndCutShort {
+	if end.CutShort() {
 		return fmt.Sprintf("⏹️ Your recording of %s "+recordingCutShort+". Get what it captured in the panel: <%s>", orNone(channelName), link)
 	}
 	return fmt.Sprintf("⏹️ Your recording of %s has stopped. Get it in the panel: <%s>", orNone(channelName), link)
