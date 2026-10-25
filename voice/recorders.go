@@ -47,9 +47,10 @@ type Listener interface {
 	Frame(Frame)
 	// GapStarted is the recorder ceasing to hear the channel since then:
 	// its voice connection to the call dropped, or DAVE held every frame
-	// past its stall limit. cause names what started the gap. GapEnded is the recorder hearing it
-	// again, connected at the voice server Discord named last with DAVE
-	// passing frames. The two take turns, GapStarted first.
+	// past its stall limit. cause names what started the gap. GapEnded is
+	// the recorder hearing it again, connected at the voice server Discord
+	// named last with DAVE passing frames. The two take turns, GapStarted
+	// first.
 	GapStarted(since time.Time, cause GapCause)
 	GapEnded()
 }
@@ -65,8 +66,9 @@ const (
 	// GapHeartbeatOverdue is the recorder's check finding the voice
 	// server's heartbeat answer overdue.
 	GapHeartbeatOverdue GapCause = "heartbeat_overdue"
-	// GapCallMoved is a 4022 for a channel that still exists: the call
-	// moved to another voice server.
+	// GapCallMoved is the call moving to another voice server: a 4022 for
+	// a channel that still exists, or Discord naming another server for
+	// the call.
 	GapCallMoved GapCause = "call_moved"
 	// GapDAVEStalled is the DAVE setup holding frames past its stall limit.
 	GapDAVEStalled GapCause = "dave_stalled"

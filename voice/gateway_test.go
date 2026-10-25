@@ -1616,7 +1616,8 @@ func TestRecorderStartsTheGapOfAMovedCallAtTheClose(t *testing.T) {
 // A gap names what started it, and a voice gateway that closes starts one
 // named for the closed gateway: a close with a code, or a read that fails,
 // which reaches the recorder as disgo's refused resume. The call is
-// transport-only, so DAVE plays no part.
+// transport-only, so DAVE plays no part, and the voice server is out of
+// reach from then, so the gap lasts.
 func TestRecorderNamesTheGapOfAClosedVoiceGateway(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1633,6 +1634,7 @@ func TestRecorderNamesTheGapOfAClosedVoiceGateway(t *testing.T) {
 				l := listen(nil)
 				conn := h.record(l)
 				defer h.hangUp(conn)
+				h.setReachable(oldEndpoint, false)
 
 				go h.endConnection(tc.err)
 				time.Sleep(time.Second)
@@ -1708,6 +1710,106 @@ func TestRecorderNamesTheGapOfA4022ForWhatTheChannelLookupSays(t *testing.T) {
 			})
 		})
 	}
+}
+
+// Discord can name the voice server a call moved to before the 4022 that
+// ends the call where it was. Once the recorder's own voice state has
+// reached disgo since the join, as a moderator's server mute sends it,
+// disgo opens at the named server at once, and the recorder can't hear the
+// call from then on. The gap is named for the move. The server it moved to
+// is out of reach, so the gap lasts.
+func TestRecorderNamesTheGapOfAMoveDiscordNamesBeforeThe4022(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.setReachable(newEndpoint, false)
+
+		h.s.voice.HandleVoiceStateUpdate(recorderVoiceState(callChannel))
+		h.name("token-3", newEndpoint)
+		time.Sleep(time.Second)
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if got := l.gapCauses(); len(got) == 0 || got[0] != GapCallMoved {
+			t.Errorf("gap causes = %v, want the first %s", got, GapCallMoved)
+		}
+	})
+}
+
+// Discord can name a later voice server for the call just as the join's
+// connection completes at the one it named before: as the gateway opens,
+// or between the voice server's Ready and its session description. The
+// call isn't there anymore, and the later server is out of reach, so the
+// recording can't hear the call from its start, and the gap is named for
+// the move.
+func TestRecorderNamesTheGapOfAJoinWhoseCallMovedAsItConnected(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		describeLate bool
+	}{
+		{"named as the gateway opens", false},
+		{"named before the session description", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recordSentry(t)
+			synctest.Test(t, func(t *testing.T) {
+				h := newCallHarness(t)
+				h.transportOnly.Store(true)
+				h.describeLate.Store(tc.describeLate)
+				h.setReachable(laterEndpoint, false)
+				h.onOpening(oldEndpoint, func() { h.name("token-3", laterEndpoint) })
+				l := listen(nil)
+
+				conn := h.record(l)
+				defer h.hangUp(conn)
+				time.Sleep(time.Minute)
+				synctest.Wait()
+
+				if got := l.gapCauses(); len(got) == 0 || got[0] != GapCallMoved {
+					t.Errorf("gap causes = %v, want the first %s", got, GapCallMoved)
+				}
+			})
+		})
+	}
+}
+
+// A 4022's channel lookup takes a while, and Discord can name voice servers
+// for the call meanwhile: the one it moved to, which disgo opens at once
+// the recorder's own voice state has reached it, then a later one before
+// that open's session description, so the recorder replaces that gateway.
+// Both are out of reach after. The lookup says the channel is still there,
+// so the gap is named for the move.
+func TestRecorderNamesTheGapOfAMovedCallWhoseGatewayIsReplacedDuringTheLookup(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		h.describeLate.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.setReachable(laterEndpoint, false)
+		h.onOpening(newEndpoint, func() { h.name("token-4", laterEndpoint) })
+		h.api.during = func() {
+			h.s.voice.HandleVoiceStateUpdate(recorderVoiceState(callChannel))
+			h.name("token-3", newEndpoint)
+			time.Sleep(time.Second)
+			h.setReachable(newEndpoint, false)
+		}
+
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if got := l.gapCauses(); len(got) == 0 || got[0] != GapCallMoved {
+			t.Errorf("gap causes = %v, want the first %s", got, GapCallMoved)
+		}
+	})
 }
 
 // Discord can take the recorder out of the channel while the recorder asks

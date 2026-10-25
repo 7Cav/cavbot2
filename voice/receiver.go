@@ -88,6 +88,11 @@ type gapStart struct {
 	cause GapCause
 }
 
+// causeNotKnown is the cause of a lost connection until it is known, as a
+// 4022's is once its channel lookup answers. A gapStart with it starts no
+// gap, and neither does the zero gapStart of a connection still connected.
+const causeNotKnown GapCause = ""
+
 // receiver reads one voice connection's packets on a goroutine of its own
 // and hands each speaker's frames over, in the order they arrived. It tells
 // its listener when a gap starts and ends.
@@ -222,7 +227,7 @@ func (r *receiver) watchGap(hearing bool, start gapStart) {
 // running already or start names no cause yet, as a dropped connection's
 // can take a lookup to. The gap keeps that cause until it ends.
 func (r *receiver) startGap(start gapStart) {
-	if r.inGap || start.cause == "" {
+	if r.inGap || start.cause == causeNotKnown {
 		return
 	}
 	r.inGap, r.gapSince, r.gapReported = true, start.at, false
