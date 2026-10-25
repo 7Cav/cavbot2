@@ -60,20 +60,29 @@ const smokeDNSFailEnv = "SMOKE_VOICE_DNS_FAIL_FILE"
 const smokeDropEnv = "SMOKE_VOICE_DROP_FILE"
 
 // newVoiceDialer is the production voice gateway dialer: the host's
-// resolver, and the zone's nameservers reached through it. Each smoke hook
-// is on when its variable, smokeDNSFailEnv or smokeDropEnv, names a file.
-func newVoiceDialer() *voiceDialer {
-	d := &voiceDialer{host: net.DefaultResolver, atNameserver: nameserverResolver}
+// resolver, and the zone's nameservers reached through it. The smoke hook
+// that makes voice servers unreachable is on when smokeDNSFailEnv names a
+// file. drops is the smoke drop hook's, nil when it is off.
+func newVoiceDialer(drops *connDrops) *voiceDialer {
+	d := &voiceDialer{host: net.DefaultResolver, atNameserver: nameserverResolver, drops: drops}
 	if failFile := os.Getenv(smokeDNSFailEnv); failFile != "" {
 		d.unresolvable = func() bool {
 			_, err := os.Stat(failFile)
 			return err == nil
 		}
 	}
-	if dropFile := os.Getenv(smokeDropEnv); dropFile != "" {
-		d.drops = watchDrops(dropFile)
-	}
 	return d
+}
+
+// smokeDrops starts the smoke drop hook's watch of its file when
+// smokeDropEnv names one, and is nil otherwise. A recorder takes one for its
+// whole life, so each appearance of the file drops it once, however many
+// times it has logged in.
+func smokeDrops() *connDrops {
+	if dropFile := os.Getenv(smokeDropEnv); dropFile != "" {
+		return watchDrops(dropFile)
+	}
+	return nil
 }
 
 // nameserverResolver is a resolver that sends every query to the nameserver
@@ -241,11 +250,15 @@ func (c *connDrops) track(conn net.Conn, silentOnly bool) net.Conn {
 	return dc
 }
 
+// smokeDropMessage is the WARN the smoke hook logs each time it drops a
+// recorder's voice connections.
+const smokeDropMessage = "Smoke hook dropping voice connections"
+
 // dropAll drops every connection open now, the way mode says.
 func (c *connDrops) dropAll(mode dropMode) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	utils.Warn("Smoke hook dropping voice connections", "connections", len(c.live), "silent", mode == dropSilent)
+	utils.Warn(smokeDropMessage, "connections", len(c.live), "silent", mode == dropSilent)
 	for dc := range c.live {
 		dc.drop(mode)
 	}

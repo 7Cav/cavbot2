@@ -64,7 +64,9 @@ line says whether the bot can build a mix. When your list has a recording
 check and those lines say it can't run, set up what the first-run note under
 "When `up` fails" lists, then `down` and `up` again. If you can't,
 write the check down as unreachable, with the line as its reason.
-`go run ./tools/smoke status` shows the same lines while the run is up.
+`go run ./tools/smoke status` shows the same lines while the run is up, with
+the recorders counted so far. A recorder whose first login failed counts once
+it logs in, and one that logs back in after a cut short still counts once.
 
 Done when `up` prints `ready` and the build, such as `smoke-09dccef`, and
 every recording check on your list can run or has its reason.
@@ -113,11 +115,11 @@ too, so create the file only once the recording runs, then move the call with
 voice connection to drop mid-recording starts the run with `go run
 ./tools/smoke up --env SMOKE_VOICE_DROP_FILE=/tmp/cavbot2-voice-drop`. Each
 time that file appears, every voice connection the recorders hold then drops,
-and the bot log gets a "Smoke hook dropping voice connections" WARN line. A
-file that says `silent` drops them silently, as a network that stops passing
-traffic, audio included. The recorder hears nothing more, and notices once the
-voice server has gone its heartbeat interval plus 3 s without answering a
-heartbeat. An empty file or any other content breaks the voice gateway
+and the bot log gets one "Smoke hook dropping voice connections" WARN line for
+each recorder, however many times it has logged in. A file that says `silent`
+drops them silently, as a network that stops passing traffic, audio included.
+The recorder hears nothing more, and notices once the voice server has gone
+its heartbeat interval plus 3 s without answering a heartbeat. An empty file or any other content breaks the voice gateway
 connections abruptly, which the recorder notices at once. Connections made
 after the file appears stay up, so the recorder can rejoin. Only the file's
 appearance counts, so remove it before the next drop, and before `down`.

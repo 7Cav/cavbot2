@@ -3,6 +3,8 @@ package voice
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -361,5 +363,31 @@ func TestARecorderThatFailsToConnectAtStartupReachesSentryOnce(t *testing.T) {
 	got := settledEvents(t, events, 1, loginOutageAfter)
 	if n := len(tagged(got, recorderFailedToConnectMessage)); n != 1 || len(got) != 1 {
 		t.Errorf("Sentry got %d events, %d of them %q, want just that one", len(got), n, recorderFailedToConnectMessage)
+	}
+}
+
+// A smoke run's drop file drops a recorder's voice connections each time it
+// appears, however many times the recorder has logged in. So one appearance
+// logs one drop line for the recorder, after a relogin too.
+func TestSmokeDropDropsARecorderOnceAcrossItsLogins(t *testing.T) {
+	logs := captureLogs(t)
+	dropFile := filepath.Join(t.TempDir(), "drop")
+	t.Setenv(smokeDropEnv, dropFile)
+	gatewaytest.New(t, func(int) gatewaytest.Login { return gatewaytest.Login{Answer: gatewaytest.Ready} })
+	r := Connect("recorder-token", &Discord{offlineAfter: time.Hour})
+	defer r.Close()
+	r.TakeOffline(gatewaytest.UserID)()
+	waitUntil(t, "the recorder logs back in", func() bool { return r.State(gatewaytest.UserID) == RecorderOnline })
+
+	if err := os.WriteFile(dropFile, nil, 0o600); err != nil {
+		t.Fatalf("writing the drop file: %v", err)
+	}
+
+	waitUntil(t, "the drop logs", func() bool { return logs.warnings(smokeDropMessage) > 0 })
+	// Each look for the file is dropCheckEvery apart, so every other look
+	// at this appearance has come by then.
+	time.Sleep(2 * dropCheckEvery)
+	if n := logs.warnings(smokeDropMessage); n != 1 {
+		t.Errorf("one appearance of the drop file logged %d drop lines, want 1", n)
 	}
 }

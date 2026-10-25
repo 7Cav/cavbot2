@@ -58,6 +58,9 @@ type discordRecorder struct {
 	// watch is the recorder's gateway outage watch, which reads each of
 	// its logins in turn.
 	watch *utils.GatewayWatch
+	// drops, when set, can drop the voice connections of each of its
+	// logins, as the smoke hook does.
+	drops *connDrops
 	// named is set once the watch names the recorder by its user ID.
 	named bool
 }
@@ -72,7 +75,7 @@ func (d *Discord) recorder(place int) *discordRecorder {
 		return rec
 	}
 	after := cmp.Or(d.offlineAfter, utils.GatewayOfflineAfter)
-	rec := &discordRecorder{watch: utils.NewGatewayWatch(after, "session", "recorder", "recorder", place)}
+	rec := &discordRecorder{watch: utils.NewGatewayWatch(after, "session", "recorder", "recorder", place), drops: smokeDrops()}
 	rec.watch.Offline()
 	if d.recorders == nil {
 		d.recorders = map[int]*discordRecorder{}
@@ -127,12 +130,12 @@ func (d *Discord) Open(recorder int, token string) (GatewaySession, error) {
 	}
 	dg.LogLevel = utils.DiscordgoLogLevel()
 	dg.Identify.Intents = recorderIntents
-	dialer := newVoiceDialer()
-	s := &discordgoSession{dg: dg, drops: dialer.drops}
+	rec := d.recorder(recorder)
+	dialer := newVoiceDialer(rec.drops)
+	s := &discordgoSession{dg: dg, drops: rec.drops}
 	// Watched from before it opens, so the watch reads every close Discord
 	// sends the session. A failed open is a close on purpose, and the
 	// recorder stays offline.
-	rec := d.recorder(recorder)
 	s.watch = rec.watch
 	s.watch.Watch(dg)
 	if err := utils.OpenSession(dg); err != nil {
