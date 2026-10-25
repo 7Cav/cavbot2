@@ -1020,10 +1020,7 @@ func TestRecordingsPageTagsACutShortRecordingWithItsCause(t *testing.T) {
 	stopped := w.record(t, a.discordID)
 	restarted := w.startRecording(t, a.discordID)
 	w.restartRecorder(t)
-	gap := w.storeRunning(t, a.discordID, time.Now().Add(-time.Hour))
-	if err := w.store.StopRecording(context.Background(), gap, time.Now().Add(-30*time.Minute), store.RecordingEndGap, nil); err != nil {
-		t.Fatalf("StopRecording: %v", err)
-	}
+	gap := w.storeEnded(t, a.discordID, time.Now().Add(-time.Hour), time.Now().Add(-30*time.Minute), store.RecordingEndGap)
 	signInAs(t, w.forum, w.b, a.account)
 
 	rows := listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))

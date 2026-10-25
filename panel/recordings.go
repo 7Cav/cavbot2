@@ -127,9 +127,9 @@ const (
 const (
 	cutShortByRestartTag = "cut short by a restart"
 	cutShortByGapTag     = "cut short when the recorder couldn't hear"
-	// cutShortTagged is the tag of a cut-short end with no words of its
-	// own.
-	cutShortTagged = "cut short"
+	// cutShortTagFallback is the tag of a cut-short end with no words of
+	// its own.
+	cutShortTagFallback = "cut short"
 )
 
 // cutShortTag is the tag beside a recording's length naming what cut it
@@ -144,7 +144,7 @@ func cutShortTag(end store.RecordingEnd) string {
 	case end == store.RecordingEndGap:
 		return cutShortByGapTag
 	default:
-		return cutShortTagged
+		return cutShortTagFallback
 	}
 }
 
@@ -256,10 +256,10 @@ type recordingItem struct {
 	// disk, so its zip holds a track. One without offers its info file in
 	// the zip's place.
 	HasTrack bool
-	// CutShort is the tag naming what cut the recording short, empty for
-	// one that wasn't.
-	CutShort string
-	Mix      store.MixState
+	// CutShortTag is the tag naming what cut the recording short, empty
+	// for one that wasn't.
+	CutShortTag string
+	Mix         store.MixState
 	// StarterID is the starter's Discord ID, and Starter their display
 	// name, for a page that names the starter, which sets ShowStarter.
 	StarterID   string
@@ -704,7 +704,7 @@ func (p *Panel) recordingItems(recs []store.Recording) []recordingItem {
 	for _, rec := range recs {
 		page := commands.RecordingPath(rec.ID)
 		item := recordingItem{ID: rec.ID, Title: rec.Title, Channel: rec.ChannelName, StartedAt: rec.StartedAt, StoppedAt: rec.StoppedAt,
-			Running: rec.StoppedAt.IsZero(), CutShort: cutShortTag(rec.Ended), Mix: rec.Mix, StarterID: rec.StarterID,
+			Running: rec.StoppedAt.IsZero(), CutShortTag: cutShortTag(rec.Ended), Mix: rec.Mix, StarterID: rec.StarterID,
 			PageURL: page, MixURL: page + "/mix", ZipURL: page + "/zip", InfoURL: page + "/info",
 			DeleteURL: recordingDeletePath(rec.ID)}
 		if !item.Running {

@@ -24,10 +24,16 @@ var utcMinus5 = time.FixedZone("UTC-5", -5*60*60)
 // stopped at stop, with one speaker. It returns the recording's ID.
 func (w *testWorld) storeStopped(t *testing.T, discordID string, start, stop time.Time) int64 {
 	t.Helper()
+	return w.storeEnded(t, discordID, start, stop, store.RecordingEndStopped)
+}
+
+// storeEnded is storeStopped for a recording that ended as end.
+func (w *testWorld) storeEnded(t *testing.T, discordID string, start, stop time.Time, end store.RecordingEnd) int64 {
+	t.Helper()
 	ctx := context.Background()
 	id := w.storeRunning(t, discordID, start)
 	speakers := []store.Speaker{{ID: discordID, DisplayName: "Doe.J"}}
-	if err := w.store.StopRecording(ctx, id, stop, store.RecordingEndStopped, speakers); err != nil {
+	if err := w.store.StopRecording(ctx, id, stop, end, speakers); err != nil {
 		t.Fatalf("StopRecording: %v", err)
 	}
 	return id

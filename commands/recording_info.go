@@ -95,6 +95,9 @@ func orNone(s string) string {
 const (
 	infoEndedRestart = "cut short when the bot restarted; what reached the disk is kept"
 	infoEndedGap     = "cut short when the recorder stopped hearing the channel for 10 seconds; what it captured is kept"
+	// infoEndedCutShort is the Ended line of a cut-short end with no words
+	// of its own.
+	infoEndedCutShort = "cut short; what it captured is kept"
 )
 
 // recordingEndPhrase says how a recording ended, for the info file.
@@ -114,7 +117,9 @@ func recordingEndPhrase(end store.RecordingEnd) string {
 		return infoEndedRestart
 	case store.RecordingEndGap:
 		return infoEndedGap
-	default:
-		return string(end)
 	}
+	if end.CutShort() {
+		return infoEndedCutShort
+	}
+	return string(end)
 }

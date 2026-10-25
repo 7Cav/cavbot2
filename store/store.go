@@ -212,7 +212,8 @@ const (
 // CutShort reports whether a recording that ended this way was cut short
 // (GLOSSARY.md, Cut-short recording): by a restart or a gap, not by a stop.
 // Every reader that tells a cut short from a stop asks this, so a new
-// cut-short end changes only this check.
+// cut-short end added here reads as cut short everywhere. The panel's tag
+// and the info file name its cause once they have words for it.
 func (e RecordingEnd) CutShort() bool {
 	return e == RecordingEndRestart || e == RecordingEndGap
 }

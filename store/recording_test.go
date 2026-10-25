@@ -260,10 +260,10 @@ func TestRecordingEndCutShortForARestartOrAGapOnly(t *testing.T) {
 	}
 }
 
-// recordingEndRenameVersion is the last migration before the one that
+// beforeRecordingEndRename is the last migration before the one that
 // renames cut_short to restart (#853): the schema a release with cut_short
 // left.
-const recordingEndRenameVersion = 20261014134335
+const beforeRecordingEndRename = 20261014134335
 
 // insertStoppedRecording writes a stopped recording of guild-1 ended as end,
 // naming the columns an older release wrote, and returns its ID.
@@ -283,7 +283,7 @@ func insertStoppedRecording(t *testing.T, raw *sql.DB, end string) int64 {
 // as a restart's after the migration (#853), and a stopped one still reads
 // as stopped.
 func TestRecordingCutShortByARestartBeforeTheRenameReadsAsARestart(t *testing.T) {
-	raw := migratedTo(t, recordingEndRenameVersion)
+	raw := migratedTo(t, beforeRecordingEndRename)
 	want := map[int64]RecordingEnd{
 		insertStoppedRecording(t, raw, "cut_short"): RecordingEndRestart,
 		insertStoppedRecording(t, raw, "stopped"):   RecordingEndStopped,
@@ -305,19 +305,15 @@ func TestRecordingCutShortByARestartBeforeTheRenameReadsAsARestart(t *testing.T)
 // (#853): a restart's goes back to cut_short, and a gap's to recorder_left,
 // the end that release gives its own gap stop.
 func TestRecordingEndRenameDownLeavesOnlyEndsTheOlderReleaseKnows(t *testing.T) {
-	dsn, raw := resetTestDatabase(t)
-	s, err := Open(context.Background(), dsn)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
+	_, raw := resetTestDatabase(t)
+	s := openMigrated(t)
 	want := map[int64]string{
 		stoppedAs(t, s, RecordingEndRestart): "cut_short",
 		stoppedAs(t, s, RecordingEndGap):     "recorder_left",
 	}
 
-	if _, err := migrationProvider(t, raw).DownTo(context.Background(), recordingEndRenameVersion); err != nil {
-		t.Fatalf("migrate down to %d: %v", recordingEndRenameVersion, err)
+	if _, err := migrationProvider(t, raw).DownTo(context.Background(), beforeRecordingEndRename); err != nil {
+		t.Fatalf("migrate down to %d: %v", beforeRecordingEndRename, err)
 	}
 
 	for id, end := range want {

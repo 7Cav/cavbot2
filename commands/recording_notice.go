@@ -107,7 +107,8 @@ func (r *RecordingRuntime) recordingLink(id int64) string {
 }
 
 // recordingCutShort is what the notice and the DM say of a recording cut
-// short, which sets them apart from a stop's.
+// short, which sets them apart from a stop's. It names a restart, the one
+// cut short the runtime ends a recording with so far.
 const recordingCutShort = "was cut short when the bot restarted"
 
 // recordingNoticeCutShortLine is the notice's content once the recording
