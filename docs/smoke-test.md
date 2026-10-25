@@ -122,9 +122,9 @@ them silently, as a network that stops passing traffic, audio included. The
 recorder hears nothing more, and notices 3.5 s after the last datagram reached
 it, before its heartbeat check would. An empty file or any other content
 breaks the voice gateway connections abruptly, which the recorder notices at
-once. Connections made after the file appears stay up, so
-the recorder can rejoin. Only the file's appearance counts, so remove it
-before the next drop, and before `down`.
+once. Connections made after the file appears stay up, so the recorder can
+rejoin. Only the file's appearance counts, so remove it before the next drop,
+and before `down`.
 
 **Cut UDP path.** A recording check that needs the recorder's audio cut off
 while its voice gateway stays up starts the run with `go run ./tools/smoke up

@@ -61,9 +61,10 @@ type receiveConn interface {
 }
 
 // datagramReader is a UDP connection that tells of every datagram it reads,
-// as the recorder's own does (readDatagram).
+// as the recorder's own does (readDatagram), and of when the last arrived.
 type datagramReader interface {
 	readDatagram() (datagram, error)
+	lastDatagram() time.Time
 }
 
 const (
@@ -205,16 +206,13 @@ type receiver struct {
 
 	// mu guards what the gap report reads: gap, the start of the gap the
 	// listener was last told of, gapLoss, the number of the connection's
-	// loss that started it, zero for a DAVE stall, heldSince and heldUntil,
-	// when DAVE last started holding frames and stopped, zero while it
-	// holds them, and lastDatagram, when the last datagram arrived, zero
-	// before any has. Only the receiver's goroutine writes lastDatagram, so
-	// it reads it without mu.
+	// loss that started it, zero for a DAVE stall, and heldSince and
+	// heldUntil, when DAVE last started holding frames and stopped, zero
+	// while it holds them.
 	mu                   sync.Mutex
 	gap                  gapStart
 	gapLoss              int
 	heldSince, heldUntil time.Time
-	lastDatagram         time.Time
 }
 
 // mediaWatch is the receiver's watch of what arrives on one UDP socket,
@@ -223,18 +221,65 @@ type receiver struct {
 // watch starts over on it. armed is whether it watches: from the socket's
 // first receiver report on. A sender report or a member's audio stops when
 // members go quiet or leave, while a receiver report comes every second
-// regardless.
+// regardless. fired is whether it has found the voice server quiet.
+//
 // heard is when its clock started: the socket's last datagram, or when
 // reading resumed after DAVE held frames, as what arrived meanwhile waits in
 // the socket unread. ready is when the recorder was first connected on the
 // socket with DAVE ready, zero before, and warned whether the watch has
 // warned it never armed.
 type mediaWatch struct {
-	socket int
-	armed  bool
-	heard  time.Time
-	ready  time.Time
-	warned bool
+	socket       int
+	armed, fired bool
+	heard        time.Time
+	ready        time.Time
+	warned       bool
+}
+
+// on starts the watch over unarmed when socket is a new one.
+func (w *mediaWatch) on(socket int) {
+	if socket != w.socket {
+		*w = mediaWatch{socket: socket}
+	}
+}
+
+// arrived notes a datagram, whatever it is, which starts the clock over. A
+// receiver report arms the watch.
+func (w *mediaWatch) arrived(d datagram) {
+	w.heard = d.at
+	if d.rtcp == rtcpReceiverReport {
+		w.armed = true
+	}
+}
+
+// resumed starts the clock over at now, once reading resumes.
+func (w *mediaWatch) resumed(now time.Time) { w.heard = now }
+
+// quiet reports whether the armed watch has heard nothing for silentAfter
+// by now, once: the voice server has gone quiet.
+func (w *mediaWatch) quiet(now time.Time) bool {
+	if !w.armed || w.fired || now.Sub(w.heard) < silentAfter {
+		return false
+	}
+	w.fired = true
+	return true
+}
+
+// neverArmed reports, once, whether the watch is still unarmed
+// neverArmedAfter after the recorder was first connected on the socket with
+// DAVE ready. connected is whether it is now.
+func (w *mediaWatch) neverArmed(now time.Time, connected bool) bool {
+	if w.armed || w.warned || !connected {
+		return false
+	}
+	if w.ready.IsZero() {
+		w.ready = now
+	}
+	if now.Sub(w.ready) < neverArmedAfter {
+		return false
+	}
+	w.warned = true
+	return true
 }
 
 // newReceiver builds the receiver of a recorder's connection. It hands
@@ -298,9 +343,7 @@ func (r *receiver) step() {
 	r.endStall()
 	r.release()
 	d, err := r.conn.datagrams().readDatagram()
-	if d.socket != r.media.socket {
-		r.media = mediaWatch{socket: d.socket}
-	}
+	r.media.on(d.socket)
 	switch {
 	case err == nil:
 		r.arrived(d)
@@ -319,13 +362,7 @@ func (r *receiver) step() {
 // arrived takes in a datagram the UDP connection read: the media watch
 // counts it, whatever it is, and a voice packet in it is handed over.
 func (r *receiver) arrived(d datagram) {
-	r.mu.Lock()
-	r.lastDatagram = d.at
-	r.mu.Unlock()
-	r.media.heard = d.at
-	if d.rtcp == rtcpReceiverReport {
-		r.media.armed = true
-	}
+	r.media.arrived(d)
 	switch {
 	case d.err != nil:
 		r.unreadablePacket(d.err)
@@ -348,32 +385,20 @@ func (r *receiver) unreadablePacket(err error) {
 // neverArmedAfter after the recorder was first connected on it with DAVE
 // ready, as it is whenever the receiver reads.
 func (r *receiver) watchArming(connected bool) {
-	w := &r.media
-	if w.armed || w.warned || !connected {
-		return
+	if r.media.neverArmed(time.Now(), connected) {
+		utils.Warn(mediaNeverArmedMessage, "recorder", r.recorder, "channel_id", channelOf(r.conn), "voice_server", r.conn.server())
 	}
-	now := time.Now()
-	if w.ready.IsZero() {
-		w.ready = now
-	}
-	if now.Sub(w.ready) < neverArmedAfter {
-		return
-	}
-	w.warned = true
-	utils.Warn(mediaNeverArmedMessage, "recorder", r.recorder, "channel_id", channelOf(r.conn), "voice_server", r.conn.server())
 }
 
 // watchMedia looks at the media watch after a read that came back empty.
-// Armed, and with nothing at all from the voice server for silentAfter,
-// it asks for a drop: the voice server has gone quiet. The gap starts at the
+// Once it finds nothing at all from the voice server for silentAfter, it
+// asks for a drop: the voice server has gone quiet. The gap starts at the
 // last datagram, once the connection says it is lost. While another gap
 // runs, the watch asks for nothing, so that gap keeps its cause.
 func (r *receiver) watchMedia() {
-	if r.inGap || !r.media.armed || time.Since(r.media.heard) < silentAfter {
-		return
+	if !r.inGap && r.media.quiet(time.Now()) {
+		r.conn.nothingCame(r.conn.datagrams().lastDatagram())
 	}
-	r.media.armed = false
-	r.conn.nothingCame(r.lastDatagram)
 }
 
 // watchGap tells the listener when the recorder hears the channel again,
@@ -414,8 +439,8 @@ func (r *receiver) report() GapReport {
 	if r.heldUntil.IsZero() {
 		held = time.Since(r.heldSince)
 	}
-	sinceDatagram := time.Since(r.lastDatagram)
 	r.mu.Unlock()
+	sinceDatagram := time.Since(r.conn.datagrams().lastDatagram())
 	if _, lost, losses := r.conn.connection(); loss != 0 && losses == loss {
 		gap = lost
 	}
@@ -519,7 +544,7 @@ func (r *receiver) endStall() {
 		r.mu.Lock()
 		r.heldUntil = now
 		r.mu.Unlock()
-		r.media.heard = now
+		r.media.resumed(now)
 	}
 	r.unheardSince, r.stalled = time.Time{}, false
 }

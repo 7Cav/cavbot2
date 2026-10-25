@@ -296,7 +296,7 @@ func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc, logger 
 				named:        c.namedLast,
 				refused:      func(state disgovoice.State, err error) { c.refused(state, err) },
 				steps:        &c.steps,
-				lastDatagram: c.lastDatagram,
+				lastDatagram: func() time.Time { return datagramsOf(c).lastDatagram() },
 			}
 			g.onDrop = c.watchClose(g, onClose)
 			g.build = func() disgovoice.Gateway {
@@ -651,15 +651,6 @@ func (c *recorderConn) namedLast() *gateway.EventVoiceServerUpdate {
 	return c.lastServer
 }
 
-// lastDatagram is when the last datagram arrived on the connection's UDP
-// connection, zero before any has.
-func (c *recorderConn) lastDatagram() time.Time {
-	if u, ok := c.UDP().(*udpConn); ok {
-		return u.lastDatagram()
-	}
-	return time.Time{}
-}
-
 // HandleVoiceServerUpdate hands disgo a voice server Discord named, and
 // keeps it. disgo keeps it too, unless a join starts after.
 func (c *recorderConn) HandleVoiceServerUpdate(e gateway.EventVoiceServerUpdate) {
@@ -997,7 +988,7 @@ func (g *renewableGateway) wentSilent(gw disgovoice.Gateway, watch int) {
 // errNothingCame is the close a voice server that sent nothing on the
 // recorder's UDP socket for silentAfter reaches the gateway's close handler
 // with.
-var errNothingCame = errors.New("voice: nothing came from the voice server for 3.5 s")
+var errNothingCame = fmt.Errorf("voice: nothing came from the voice server for %v", silentAfter)
 
 // nothingCame drops the gateway, when it is connected, since nothing has
 // come from the voice server on the UDP socket since last. The recorder
@@ -1572,10 +1563,14 @@ func (c callConn) recovery() *recoveryLog {
 	return new(recoveryLog)
 }
 
-// datagrams is the recorder's own UDP connection, and one that never opens
-// on a connection the recorder's connection options didn't build.
-func (c callConn) datagrams() datagramReader {
-	if u, ok := c.UDP().(*udpConn); ok {
+// datagrams is the connection's UDP connection.
+func (c callConn) datagrams() datagramReader { return datagramsOf(c.Conn) }
+
+// datagramsOf is conn's UDP connection: the recorder's own, and one that
+// never opens on a connection the recorder's connection options didn't
+// build.
+func datagramsOf(conn disgovoice.Conn) datagramReader {
+	if u, ok := conn.UDP().(*udpConn); ok {
 		return u
 	}
 	return unopened{}
@@ -1585,6 +1580,7 @@ func (c callConn) datagrams() datagramReader {
 type unopened struct{}
 
 func (unopened) readDatagram() (datagram, error) { return datagram{}, errUDPNotOpen }
+func (unopened) lastDatagram() time.Time         { return time.Time{} }
 
 // nothingCame drops the connection, through the gateway the recorder's
 // connection options built, since nothing came from the voice server since

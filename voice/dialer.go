@@ -92,7 +92,7 @@ func watchSmokeDrops(recorder int) *connDrops {
 	}
 	c := &connDrops{recorder: recorder, live: make(map[*droppableConn]struct{})}
 	if dropFile != "" {
-		go c.watch(dropFile, func(content string) {
+		go c.watch(dropFile, "smoke-voice-drop", func(content string) {
 			mode := dropAbrupt
 			if strings.TrimSpace(content) == "silent" {
 				mode = dropSilent
@@ -101,7 +101,7 @@ func watchSmokeDrops(recorder int) *connDrops {
 		})
 	}
 	if cutFile != "" {
-		go c.watch(cutFile, func(string) { c.cutUDP() })
+		go c.watch(cutFile, "smoke-voice-udp-cut", func(string) { c.cutUDP() })
 	}
 	return c
 }
@@ -238,9 +238,10 @@ type connDrops struct {
 }
 
 // watch looks for file every dropCheckEvery, for as long as the bot runs,
-// and hands appeared the file's content each time it appears.
-func (c *connDrops) watch(file string, appeared func(content string)) {
-	defer utils.RecoverPanic("smoke-voice-drop")
+// and hands appeared the file's content each time it appears. A panic is
+// reported as the hook's, which hook names.
+func (c *connDrops) watch(file, hook string, appeared func(content string)) {
+	defer utils.RecoverPanic(hook)
 	present := false
 	for range time.Tick(dropCheckEvery) {
 		content, err := os.ReadFile(file)

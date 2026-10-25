@@ -430,9 +430,9 @@ func TestRecorderRejoinsWhenNothingComesFromItsVoiceServer(t *testing.T) {
 		t.Errorf("gap cause = %s, want %s", got[0], GapVoiceServerSilent)
 	}
 	h.waitOpen().gateway.speaking()
-	peer.sendFrame(t, 7, []byte("back"))
-	if f := frames.next(t); f.UserID != "400" || string(f.Opus) != "back" {
-		t.Errorf("frame handed over after the rejoin = %+v (%q), want %q from 400", f, f.Opus, "back")
+	peer.sendFrame(t, callSpeakerSSRC, []byte("back"))
+	if f := frames.next(t); f.UserID != callSpeaker.String() || string(f.Opus) != "back" {
+		t.Errorf("frame handed over after the rejoin = %+v (%q), want %q from %s", f, f.Opus, "back", callSpeaker)
 	}
 	if !within(time.Now(), waitFor, func() bool { return slices.Equal(l.gapEvents(), []string{gapStarted, gapEnded}) }) {
 		t.Errorf("gap events after the rejoin = %v, want the gap started and ended", l.gapEvents())

@@ -407,9 +407,15 @@ func (g *answeringGateway) answerHeartbeat() {
 	g.onEvent(g, disgovoice.OpcodeHeartbeatACK, 0, disgovoice.GatewayMessageDataHeartbeatACK{T: time.Now().UnixMilli()})
 }
 
-// speaking is the voice server naming a speaker's SSRC.
+// The member the voice server names as speaking, and the SSRC it names.
+const (
+	callSpeaker     = snowflake.ID(400)
+	callSpeakerSSRC = 7
+)
+
+// speaking is the voice server naming callSpeaker's SSRC.
 func (g *answeringGateway) speaking() {
-	g.onEvent(g, disgovoice.OpcodeSpeaking, 0, disgovoice.GatewayMessageDataSpeaking{SSRC: 7, UserID: 400})
+	g.onEvent(g, disgovoice.OpcodeSpeaking, 0, disgovoice.GatewayMessageDataSpeaking{SSRC: callSpeakerSSRC, UserID: callSpeaker})
 }
 
 func (g *answeringGateway) CloseWithCode(int, string) { g.Close() }
