@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"errors"
+	"maps"
 	"net"
 	"os"
 	"strconv"
@@ -23,11 +24,14 @@ import (
 // This one reads packets with only the transport encryption off, takes the
 // DAVE encryption off itself as the speaker the SSRC maps to, and holds a
 // frame whose SSRC isn't mapped yet until it is. It also watches DAVE's
-// setup, which Discord can leave unanswered: a setup that stalls reaches
-// Sentry, and the recorder starts it over on a fresh voice connection. And
+// setup, which Discord can leave unanswered: a setup that stalls starts a
+// gap, and the recorder starts it over on a fresh voice connection. And
 // it watches the UDP socket, whose path can die while the voice gateway
 // still answers: once the voice server's receiver reports have started, a
 // socket that goes quiet drops the connection, and the recorder rejoins.
+// Last, it counts what fails to decrypt: a run of failures with nothing
+// decrypted starts a gap, and the recorder starts DAVE over on a fresh voice
+// connection.
 
 // receiveConn is a disgo voice connection as the receiver reads it.
 type receiveConn interface {
@@ -77,10 +81,11 @@ const (
 	// heldPerSSRC caps the frames held for one SSRC while op 5 hasn't
 	// mapped it: 5 s of audio. The oldest goes first.
 	heldPerSSRC = 250
-	// failureBurst is how many failures in a row Sentry hears of once:
-	// datagrams the UDP connection can't read, or one speaker's frames DAVE
-	// can't decrypt. Half a second of one speaker's audio. A join or leave
-	// costs a frame or two at most.
+	// failureBurst is how many failures in a row are a burst: datagrams
+	// the UDP connection can't read, which the log warns of once, or one
+	// speaker's frames DAVE can't decrypt, which Sentry hears of once
+	// another speaker's frame decrypts. Half a second of one speaker's
+	// audio. A join or leave costs a frame or two at most.
 	failureBurst = 25
 	// stallAfter is how long one DAVE setup may hold frames before the
 	// recorder counts it a stall. Every setup seen on the test guild
@@ -93,6 +98,13 @@ const (
 	// receiver report every second, so a quiet channel never waits this
 	// long.
 	silentAfter = 3500 * time.Millisecond
+	// decryptRunLimit is how many failures to decrypt in a run, with no
+	// frame decrypted, start a gap: 3.5 s of one speaker's 20 ms frames,
+	// or about 1.75 s with two speakers failing.
+	decryptRunLimit = 175
+	// stretchBreak is how long with no failure to decrypt breaks a
+	// stretch of them.
+	stretchBreak = 200 * time.Millisecond
 )
 
 // mediaNeverArmedMessage is the WARN a connection logs once when its media
@@ -106,16 +118,14 @@ const mediaNeverArmedMessage = "Voice media watch never armed"
 // one every second.
 const neverArmedAfter = 5 * time.Second
 
-// stallMessage is what Sentry hears when DAVE stalls: the recorder hears
+// stallMessage is the WARN a DAVE stall logs once: the recorder hears
 // nobody in the channel. daveRecoveredMessage is the Info line once it
-// hears the channel again.
+// hears the channel again. A stall reaches Sentry only when its gap cuts
+// the recording short.
 const (
 	stallMessage         = "DAVE setup stalled"
 	daveRecoveredMessage = "DAVE setup recovered"
 )
-
-// errDAVEStalled is the error a stall reaches Sentry with.
-var errDAVEStalled = errors.New("voice: DAVE held every frame past the stall limit")
 
 // gapStart is when and why the recorder stopped hearing the channel, with
 // what the recorder knew of the cause then.
@@ -137,10 +147,11 @@ type gapStart struct {
 
 // fields are the cause's own fields of the gap that started as s, with
 // namedLast the voice server Discord has named last by now, held how long
-// DAVE has held frames, or held them last, and sinceDatagram how long ago
-// the last datagram came. A call that moved moved to namedLast, unless it is
-// still the one the call left.
-func (s gapStart) fields(namedLast string, held, sinceDatagram time.Duration) []GapField {
+// DAVE has held frames, or held them last, sinceDatagram how long ago the
+// last datagram came, and failed what has failed to decrypt since the run
+// that started a decrypt gap. A call that moved moved to namedLast, unless
+// it is still the one the call left.
+func (s gapStart) fields(namedLast string, held, sinceDatagram time.Duration, failed decryptTally) []GapField {
 	switch s.cause {
 	case GapVoiceGatewayClosed:
 		return []GapField{{Key: "closed_server", Value: s.server}}
@@ -156,6 +167,12 @@ func (s gapStart) fields(namedLast string, held, sinceDatagram time.Duration) []
 		return []GapField{{Key: "held_for", Value: held}}
 	case GapVoiceServerSilent:
 		return []GapField{{Key: "last_datagram", Value: sinceDatagram}}
+	case GapNothingDecrypted:
+		return []GapField{
+			{Key: "speakers_failing", Value: len(failed.speakers)},
+			{Key: "frames_failed", Value: failed.frames},
+			{Key: "unreadable_datagrams", Value: failed.unreadable},
+		}
 	}
 	return nil
 }
@@ -178,41 +195,121 @@ type receiver struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	// held is the frames read on each SSRC no user is mapped to yet, still
-	// DAVE-encrypted, since DAVE decrypts as a user. Only the receiver's
-	// goroutine touches it.
-	held map[uint32][]*disgovoice.Packet
-	// failing counts each speaker's frames DAVE has failed to decrypt
-	// since their last that decrypted, and unreadable the datagrams the
-	// UDP connection has failed to read since its last good one. Only the
-	// receiver's goroutine touches them.
-	failing    map[snowflake.ID]int
+	// held is the datagrams read on each SSRC no user is mapped to yet,
+	// their frames still DAVE-encrypted, since DAVE decrypts as a user.
+	// Only the receiver's goroutine touches it.
+	held map[uint32][]datagram
+	// failing is each speaker's run of frames DAVE has failed to decrypt
+	// since their last that decrypted, and unreadable counts the datagrams
+	// the UDP connection has failed to read since its last good one. Only
+	// the receiver's goroutine touches them.
+	failing    map[snowflake.ID]*speakerRun
 	unreadable int
 	// unheardSince is when DAVE started holding frames, zero while it
 	// holds none, and setupSince when the DAVE setup holding them now
 	// started: then, or at the last fresh connection. stalled is whether
-	// Sentry has heard of the stall. Only the receiver's goroutine touches
+	// the log has warned of the stall. Only the receiver's goroutine touches
 	// them.
 	unheardSince time.Time
 	setupSince   time.Time
 	stalled      bool
-	// inGap is whether the listener was last told a gap started. told is
-	// how many of the connection's losses the receiver has told of, each as
-	// a gap or within one. Only the receiver's goroutine touches them.
-	inGap bool
-	told  int
+	// inGap is whether the listener was last told a gap started, and
+	// decryptGap whether a decrypt run started it, which only a frame that
+	// decrypts ends. told is how many of the connection's losses the
+	// receiver has told of, each as a gap or within one. Only the
+	// receiver's goroutine touches them.
+	inGap      bool
+	decryptGap bool
+	told       int
+	// decryptRun is the failures to decrypt since the last frame that
+	// decrypted, which start a gap at decryptRunLimit. Only the receiver's
+	// goroutine touches it.
+	decryptRun decryptRun
 	// media is the media watch. Only the receiver's goroutine touches it.
 	media mediaWatch
 
 	// mu guards what the gap report reads: gap, the start of the gap the
 	// listener was last told of, gapLoss, the number of the connection's
-	// loss that started it, zero for a DAVE stall, and heldSince and
+	// loss that started it, zero for a DAVE stall, heldSince and
 	// heldUntil, when DAVE last started holding frames and stopped, zero
-	// while it holds them.
+	// while it holds them, and failed, the failures to decrypt from the
+	// first of the run that started a decrypt gap on.
 	mu                   sync.Mutex
 	gap                  gapStart
 	gapLoss              int
 	heldSince, heldUntil time.Time
+	failed               decryptTally
+}
+
+// speakerRun is one speaker's frames DAVE has failed to decrypt since their
+// last that decrypted, the last one's error, and whether Sentry has heard of
+// the run.
+type speakerRun struct {
+	frames   int
+	err      error
+	reported bool
+}
+
+// decryptTally counts failures to decrypt: the speakers whose frames DAVE
+// refused, those frames, and the datagrams the transport decryption
+// refused.
+type decryptTally struct {
+	speakers   map[snowflake.ID]struct{}
+	frames     int
+	unreadable int
+}
+
+// add counts a frame of speaker's that DAVE refused, or a datagram the
+// transport decryption refused when speaker is zero.
+func (t *decryptTally) add(speaker snowflake.ID) {
+	if speaker == 0 {
+		t.unreadable++
+		return
+	}
+	if t.speakers == nil {
+		t.speakers = make(map[snowflake.ID]struct{})
+	}
+	t.speakers[speaker] = struct{}{}
+	t.frames++
+}
+
+// failures is how many failures the tally counts.
+func (t *decryptTally) failures() int { return t.frames + t.unreadable }
+
+// clone is a copy of the tally that counts on alone.
+func (t *decryptTally) clone() decryptTally {
+	c := *t
+	c.speakers = maps.Clone(t.speakers)
+	return c
+}
+
+// decryptRun is the failures to decrypt since the last frame that
+// decrypted, on socket, and when its latest unbroken stretch of them
+// started: at the first failure stretchBreak or more after the one before.
+// A failure is dated when its datagram arrived, and last is the latest.
+type decryptRun struct {
+	decryptTally
+	socket        int
+	stretch, last time.Time
+}
+
+// on starts the run over when socket is a new one: a new attempt.
+func (r *decryptRun) on(socket int) {
+	if socket != r.socket {
+		*r = decryptRun{socket: socket}
+	}
+}
+
+// startOver starts the run over on the same socket.
+func (r *decryptRun) startOver() { *r = decryptRun{socket: r.socket} }
+
+// add counts a failure that arrived at at, as decryptTally's add does.
+func (r *decryptRun) add(at time.Time, speaker snowflake.ID) {
+	if r.failures() == 0 || at.Sub(r.last) >= stretchBreak {
+		r.stretch = at
+	}
+	r.last = at
+	r.decryptTally.add(speaker)
 }
 
 // mediaWatch is the receiver's watch of what arrives on one UDP socket,
@@ -299,8 +396,8 @@ func newReceiver(conn receiveConn, l Listener, recorderID string) *receiver {
 		ctx:      ctx,
 		cancel:   cancel,
 		done:     make(chan struct{}),
-		held:     make(map[uint32][]*disgovoice.Packet),
-		failing:  make(map[snowflake.ID]int),
+		held:     make(map[uint32][]datagram),
+		failing:  make(map[snowflake.ID]*speakerRun),
 	}
 }
 
@@ -344,6 +441,7 @@ func (r *receiver) step() {
 	r.release()
 	d, err := r.conn.datagrams().readDatagram()
 	r.media.on(d.socket)
+	r.decryptRun.on(d.socket)
 	switch {
 	case err == nil:
 		r.arrived(d)
@@ -366,18 +464,27 @@ func (r *receiver) arrived(d datagram) {
 	switch {
 	case d.err != nil:
 		r.unreadablePacket(d.err)
+		r.decryptFailed(d.at, 0)
 	case d.packet != nil:
 		r.unreadable = 0
-		r.receive(d.packet)
+		r.receive(d)
 	}
 }
 
-// unreadablePacket counts a datagram the UDP connection couldn't read.
-// Sentry hears of a burst of them once.
+// daveDecryptFailuresMessage is what Sentry hears of one speaker's run of
+// frames DAVE can't decrypt while another speaker's frames decrypt.
+const daveDecryptFailuresMessage = "DAVE decrypt failures"
+
+// unreadableMessage is the WARN a burst of datagrams the UDP connection
+// couldn't read logs once.
+const unreadableMessage = "Voice packets unreadable"
+
+// unreadablePacket counts a datagram the UDP connection couldn't read. The
+// log warns of a burst of them once.
 func (r *receiver) unreadablePacket(err error) {
 	r.unreadable++
 	if r.unreadable == failureBurst {
-		utils.CaptureError("Voice packets unreadable", err, "recorder", r.recorder, "packets", failureBurst)
+		utils.Warn(unreadableMessage, "recorder", r.recorder, "packets", failureBurst, "error", err)
 	}
 }
 
@@ -403,24 +510,31 @@ func (r *receiver) watchMedia() {
 
 // watchGap tells the listener when the recorder hears the channel again,
 // after a gap: one each loss of the connection starts, which the receiver
-// can learn of only later, or a DAVE stall.
+// can learn of only later, or a DAVE stall. A gap a decrypt run started
+// ends only at a frame that decrypts.
 func (r *receiver) watchGap(hearing bool) {
-	if hearing && r.inGap {
-		r.inGap = false
-		r.listener.GapEnded()
+	if hearing && r.inGap && !r.decryptGap {
+		r.endGap()
 	}
+}
+
+// endGap tells the listener the gap running has ended.
+func (r *receiver) endGap() {
+	r.inGap, r.decryptGap = false, false
+	r.listener.GapEnded()
 }
 
 // startGap tells the listener a gap started, as start says, unless one is
 // running already or start names no cause yet, as a dropped connection's
 // can take a lookup to. The gap keeps that cause until it ends, and its
-// report lists the recovery steps from its start on. loss is the number of
-// the connection's loss start is, zero for none.
+// report lists the recovery steps from its start on. The decrypt run starts
+// over. loss is the number of the connection's loss start is, zero for none.
 func (r *receiver) startGap(start gapStart, loss int) {
 	if r.inGap || start.cause == causeNotKnown {
 		return
 	}
 	r.inGap = true
+	r.decryptRun.startOver()
 	r.mu.Lock()
 	r.gap, r.gapLoss = start, loss
 	r.mu.Unlock()
@@ -435,7 +549,7 @@ func (r *receiver) startGap(start gapStart, loss int) {
 // latest reads it afresh.
 func (r *receiver) report() GapReport {
 	r.mu.Lock()
-	gap, loss, held := r.gap, r.gapLoss, r.heldUntil.Sub(r.heldSince)
+	gap, loss, held, failed := r.gap, r.gapLoss, r.heldUntil.Sub(r.heldSince), r.failed.clone()
 	if r.heldUntil.IsZero() {
 		held = time.Since(r.heldSince)
 	}
@@ -449,7 +563,7 @@ func (r *receiver) report() GapReport {
 		CloseCode:            closeCode(gap.close),
 		VoiceServer:          namedLast,
 		GatewaySessionOnline: r.conn.sessionOnline(),
-		Fields:               gap.fields(namedLast, held, sinceDatagram),
+		Fields:               gap.fields(namedLast, held, sinceDatagram, failed),
 	}
 	rep.Steps, rep.EarlierSteps = r.conn.recovery().report(gap.at)
 	if gap.cause == GapVoiceGatewayClosed {
@@ -506,8 +620,8 @@ func holdFrames(s godave.Session) bool {
 
 // waitOrStartOver pauses while DAVE holds frames. A setup that holds them
 // past stallAfter has stalled, and the recorder hears nobody: a gap starts
-// from when DAVE started holding them, unless one is running already,
-// Sentry hears of the stall once, and the recorder opens a fresh voice
+// from when DAVE started holding them, unless one is running already, the
+// log warns of the stall once, and the recorder opens a fresh voice
 // connection, whose session description starts DAVE over. That can take up
 // to reconnectTimeout.
 func (r *receiver) waitOrStartOver() {
@@ -525,7 +639,7 @@ func (r *receiver) waitOrStartOver() {
 	if !r.stalled {
 		r.startGap(gapStart{at: r.unheardSince, cause: GapDAVEStalled}, 0)
 		r.stalled = true
-		utils.CaptureError(stallMessage, errDAVEStalled, "recorder", r.recorder, "channel_id", channelOf(r.conn))
+		utils.Warn(stallMessage, "recorder", r.recorder, "channel_id", channelOf(r.conn))
 	}
 	r.reconnect()
 	r.setupSince = time.Now()
@@ -559,6 +673,47 @@ func (r *receiver) reconnect() {
 	}
 }
 
+// decryptFailed counts a failure to decrypt, whose datagram arrived at at,
+// toward the decrypt run: a frame of speaker's that DAVE refused, or a
+// datagram the transport decryption refused when speaker is zero. A run of
+// decryptRunLimit with no frame decrypted starts a gap at its latest
+// stretch, unless one is running already, and the recorder opens a fresh
+// voice connection, which starts DAVE over. The failures the gap's report
+// counts go on across it.
+func (r *receiver) decryptFailed(at time.Time, speaker snowflake.ID) {
+	r.decryptRun.add(at, speaker)
+	if r.decryptGap {
+		r.mu.Lock()
+		r.failed.add(speaker)
+		r.mu.Unlock()
+	}
+	if r.inGap || r.decryptRun.failures() < decryptRunLimit {
+		return
+	}
+	r.mu.Lock()
+	r.failed = r.decryptRun.clone()
+	r.mu.Unlock()
+	r.startGap(gapStart{at: r.decryptRun.stretch, cause: GapNothingDecrypted}, 0)
+	r.decryptGap = true
+	r.reconnect()
+}
+
+// reportFailing has Sentry hear, once a run, of each speaker whose frames
+// DAVE has failed to decrypt failureBurst times or more in a row, now that
+// another speaker's frame has decrypted: a speaker missing from a recording
+// that hears the rest of the channel. A run with nobody else decrypting is
+// the recorder hearing nobody, which a decrypt gap covers.
+func (r *receiver) reportFailing() {
+	for userID, run := range r.failing {
+		if run.frames < failureBurst || run.reported {
+			continue
+		}
+		run.reported = true
+		utils.CaptureError(daveDecryptFailuresMessage, run.err, "recorder", r.recorder,
+			"user_id", userID.String(), "frames", run.frames)
+	}
+}
+
 // channelOf is the ID of conn's channel, empty while it has none.
 func channelOf(conn receiveConn) string {
 	if id := conn.ChannelID(); id != nil {
@@ -575,20 +730,22 @@ func (r *receiver) pause(d time.Duration) {
 	}
 }
 
-// receive hands a packet over as the user its SSRC maps to, after any
-// frames held on that SSRC, or holds it while the SSRC maps to no one.
-func (r *receiver) receive(p *disgovoice.Packet) {
-	userID := r.conn.UserIDBySSRC(p.SSRC)
+// receive hands a datagram's packet over as the user its SSRC maps to,
+// after any frames held on that SSRC, or holds it while the SSRC maps to no
+// one.
+func (r *receiver) receive(d datagram) {
+	ssrc := d.packet.SSRC
+	userID := r.conn.UserIDBySSRC(ssrc)
 	if userID == 0 {
-		held := append(r.held[p.SSRC], p)
+		held := append(r.held[ssrc], d)
 		if len(held) > heldPerSSRC {
 			held = held[1:]
 		}
-		r.held[p.SSRC] = held
+		r.held[ssrc] = held
 		return
 	}
-	r.releaseSSRC(p.SSRC, userID)
-	r.deliver(userID, p)
+	r.releaseSSRC(ssrc, userID)
+	r.deliver(userID, d)
 }
 
 // release hands over the held frames of every SSRC mapped since they
@@ -606,29 +763,38 @@ func (r *receiver) release() {
 func (r *receiver) releaseSSRC(ssrc uint32, userID snowflake.ID) {
 	held := r.held[ssrc]
 	delete(r.held, ssrc)
-	for _, p := range held {
-		r.deliver(userID, p)
+	for _, d := range held {
+		r.deliver(userID, d)
 	}
 }
 
-// deliver takes the DAVE encryption off a packet as its speaker and hands
-// the frame over.
-func (r *receiver) deliver(userID snowflake.ID, p *disgovoice.Packet) {
+// deliver takes the DAVE encryption off a datagram's packet as its speaker
+// and hands the frame over.
+func (r *receiver) deliver(userID snowflake.ID, d datagram) {
+	p := d.packet
 	dave := r.conn.DAVE()
 	user := godave.UserID(userID.String())
 	out := make([]byte, dave.MaxDecryptedFrameSize(user, len(p.Opus)))
 	n, err := dave.Decrypt(user, p.Opus, out)
 	if err != nil {
-		r.failing[userID]++
-		if r.failing[userID] == failureBurst {
-			utils.CaptureError("DAVE decrypt failures", err, "recorder", r.recorder,
-				"user_id", userID.String(), "frames", failureBurst)
+		run := r.failing[userID]
+		if run == nil {
+			run = &speakerRun{}
+			r.failing[userID] = run
 		}
+		run.frames++
+		run.err = err
+		r.decryptFailed(d.at, userID)
 		return
 	}
-	if failed := r.failing[userID]; failed >= failureBurst {
-		utils.Info("DAVE decrypt recovered", "recorder", r.recorder, "user_id", userID.String(), "frames_lost", failed)
+	r.decryptRun.startOver()
+	if r.decryptGap {
+		r.endGap()
+	}
+	if run := r.failing[userID]; run != nil && run.frames >= failureBurst {
+		utils.Info("DAVE decrypt recovered", "recorder", r.recorder, "user_id", userID.String(), "frames_lost", run.frames)
 	}
 	delete(r.failing, userID)
+	r.reportFailing()
 	r.listener.Frame(Frame{UserID: userID.String(), SSRC: p.SSRC, Timestamp: p.Timestamp, Opus: out[:n]})
 }

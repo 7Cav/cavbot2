@@ -1456,25 +1456,6 @@ func TestRecorderIgnoresACloseFromAGatewayItLeftBehind(t *testing.T) {
 	})
 }
 
-// A stalled DAVE setup is a gap that has already reached Sentry, as a
-// stall. Past 10 s the voice adapter sends nothing more of it. The
-// recording runtime's cut short is its own event.
-func TestRecorderReportsAStallPast10sOnlyAsAStall(t *testing.T) {
-	events := recordSentry(t)
-	synctest.Test(t, func(t *testing.T) {
-		h := newCallHarness(t)
-		conn := h.record(listen(nil))
-		defer h.hangUp(conn)
-
-		time.Sleep(15 * time.Second)
-		synctest.Wait()
-
-		if got := events.Events(); len(got) != 1 || got[0].Tags["message"] != stallMessage {
-			t.Errorf("Sentry events = %v, want one %q", eventMessages(got), stallMessage)
-		}
-	})
-}
-
 // Once Discord has named a later voice server for the call, the recorder
 // never connects to an earlier one, even when the earlier one becomes
 // reachable while the later one still isn't: the call isn't there anymore.
@@ -2106,12 +2087,13 @@ func eventMessages(events []*sentry.Event) []string {
 // Discord can leave the recorder's DAVE setup unanswered, as it did once
 // when the recorder and a speaker raced to commit after a move: dave-go
 // then holds every frame, and the recorder hears nobody. Past 3 s that's a
-// stall. Sentry hears of it once, by recorder and channel, and the recorder
+// stall. The log warns of it by recorder and channel, and the recorder
 // starts DAVE over with a new key package without leaving the channel, so
 // the recording carries on. The voice server here answers the join with
 // DAVE and then says nothing more, as in the stall seen on the test guild.
 func TestRecorderStartsDAVEOverWhenItsSetupStalls(t *testing.T) {
-	events := recordSentry(t)
+	recordSentry(t)
+	logs := captureLogs(t)
 	synctest.Test(t, func(t *testing.T) {
 		h := newCallHarness(t)
 		conn := h.record(listen(nil))
@@ -2120,13 +2102,10 @@ func TestRecorderStartsDAVEOverWhenItsSetupStalls(t *testing.T) {
 		time.Sleep(3500 * time.Millisecond)
 		synctest.Wait()
 
-		got := events.Events()
-		if len(got) != 1 {
-			t.Fatalf("Sentry events = %d, want 1 for the stall", len(got))
-		}
-		if !eventMentions(got[0], callRecorder.String()) || !eventMentions(got[0], callChannel.String()) {
-			t.Errorf("Sentry event %v names neither or one of recorder %d and channel %d, want both",
-				eventTexts(got[0]), callRecorder, callChannel)
+		for key, want := range map[string]string{"recorder": callRecorder.String(), "channel_id": callChannel.String()} {
+			if n := logs.linesSaying(slog.LevelWarn, stallMessage, key, want); n == 0 {
+				t.Errorf("no %q WARN with %s=%s", stallMessage, key, want)
+			}
 		}
 		if n := h.keyPackagesSent(); n < 2 {
 			t.Errorf("DAVE key packages sent = %d, want a new one after the stall beside the join's", n)
@@ -2622,12 +2601,6 @@ func TestRecorderLeavesAFailedDialOutOfABotLogAtError(t *testing.T) {
 			t.Errorf("bot log WARNs = %q, want none in a bot log at ERROR", warns)
 		}
 	})
-}
-
-// eventMentions reports whether some text the Sentry event carries contains
-// want.
-func eventMentions(e *sentry.Event, want string) bool {
-	return slices.ContainsFunc(eventTexts(e), func(text string) bool { return strings.Contains(text, want) })
 }
 
 // eventTexts is the text a Sentry event carries where a capture's pairs
