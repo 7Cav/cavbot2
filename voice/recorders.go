@@ -54,9 +54,9 @@ type Listener interface {
 	GapEnded()
 }
 
-// GapReportedAfter is how long a gap lasts before it is reported: Sentry
-// hears of it, and the recording posts a gap notice and lists the gap in its
-// info file.
+// GapReportedAfter is how long a gap lasts before Sentry hears of it. The
+// recording runtime cuts the recording short at the same mark, by a limit of
+// its own.
 const GapReportedAfter = 10 * time.Second
 
 // Frame is one Opus packet a speaker sent, as Discord delivered it, with

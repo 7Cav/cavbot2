@@ -103,7 +103,7 @@ func (r *RecordingRuntime) recoverRecording(rec store.Recording, members MemberL
 	}
 	rec.StoppedAt = rec.StartedAt.Add(time.Duration(longest) * time.Second / opusSampleRate)
 	rec.Ended, rec.Speakers = store.RecordingEndRestart, speakersOf(members, heard)
-	if err := writeRecordingInfo(r.dir, rec, members.DisplayName(rec.StarterID), nil); err != nil {
+	if err := writeRecordingInfo(r.dir, rec, members.DisplayName(rec.StarterID)); err != nil {
 		captureError("Info file not written at recovery", err, "recording_id", rec.ID)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), recordingStoreTimeout)

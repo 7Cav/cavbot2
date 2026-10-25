@@ -106,21 +106,33 @@ func (r *RecordingRuntime) recordingLink(id int64) string {
 	return r.panelURL + RecordingPath(id)
 }
 
-// recordingCutShort is what the notice and the DM say of a recording cut
-// short, which sets them apart from a stop's. It names a restart, the one
-// cut short the runtime ends a recording with so far.
+// recordingCutShort is what the notice and the DM say of a recording a
+// restart cut short, which sets them apart from a stop's.
 const recordingCutShort = "was cut short when the bot restarted"
 
-// recordingNoticeCutShortLine is the notice's content once the recording
-// has been cut short.
+// recordingNoticeCutShortLine is the notice's content once a restart has
+// cut the recording short.
 const recordingNoticeCutShortLine = "⏹️ This recording " + recordingCutShort + ". What it captured up to then is kept."
 
+// recordingNoticeGapLine is the notice's content once a gap has cut the
+// recording short (#856), word for word as the issue gives it. The %d is the
+// gap's start in Unix seconds, which Discord shows in each reader's own time
+// zone.
+const recordingNoticeGapLine = "⏹️ This recording was cut short. The recorder couldn't hear this channel, so nothing after <t:%d:T> was recorded. What it captured up to then is kept."
+
 // recordingNoticeStopped is the notice's content once the recording has
-// ended as end says, with the link to it in the panel when there is one.
-// The angle brackets keep Discord from previewing the panel's sign-in page.
-func recordingNoticeStopped(end store.RecordingEnd, link string) string {
-	line := recordingNoticeStoppedLine
-	if end.CutShort() {
+// ended as its row says, with the link to it in the panel when there is
+// one. A gap's cut short stops the row at the gap's start, which the notice
+// names. The angle brackets keep Discord from previewing the panel's sign-in
+// page.
+func recordingNoticeStopped(rec store.Recording, link string) string {
+	var line string
+	switch {
+	case !rec.Ended.CutShort():
+		line = recordingNoticeStoppedLine
+	case rec.Ended == store.RecordingEndGap:
+		line = fmt.Sprintf(recordingNoticeGapLine, rec.StoppedAt.Unix())
+	default:
 		line = recordingNoticeCutShortLine
 	}
 	if link == "" {
@@ -137,7 +149,16 @@ func recordingNoticeStopped(end store.RecordingEnd, link string) string {
 // hub's delete delay takes the notice away once everyone has left, the
 // starter included (#620). One DM at most, whichever holds.
 func (r *RecordingRuntime) closeRecordingNotice(rec store.Recording) {
-	content := recordingNoticeStopped(rec.Ended, r.recordingLink(rec.ID))
+	if gone := r.editRecordingNotice(rec); gone || r.tv.IsSpawned(rec.ChannelID) {
+		r.sendRecordingLink(rec)
+	}
+}
+
+// editRecordingNotice edits an ended recording's notice as
+// closeRecordingNotice says, and reports whether the notice is gone. A
+// failed edit is a WARN line.
+func (r *RecordingRuntime) editRecordingNotice(rec store.Recording) (gone bool) {
+	content := recordingNoticeStopped(rec, r.recordingLink(rec.ID))
 	_, err := r.mgr.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		ID:              rec.NoticeID,
 		Channel:         rec.ChannelID,
@@ -149,9 +170,7 @@ func (r *RecordingRuntime) closeRecordingNotice(rec store.Recording) {
 		utils.Warn("Recording notice not edited at stop", "recording_id", rec.ID,
 			"channel_id", rec.ChannelID, "message_id", rec.NoticeID, "error", err)
 	}
-	if r.tv.IsSpawned(rec.ChannelID) || noticeGone(err) {
-		r.sendRecordingLink(rec)
-	}
+	return noticeGone(err)
 }
 
 // noticeGone reports whether a notice edit failed because the notice is
@@ -178,7 +197,7 @@ func (r *RecordingRuntime) sendRecordingLink(rec store.Recording) {
 	dm, err := r.mgr.UserChannelCreate(rec.StarterID)
 	if err == nil {
 		_, err = r.mgr.ChannelMessageSendComplex(dm.ID, &discordgo.MessageSend{
-			Content:         recordingLinkDM(rec.Ended, rec.ChannelName, link),
+			Content:         recordingLinkDM(rec, link),
 			AllowedMentions: noMentions(),
 		})
 	}
@@ -187,15 +206,26 @@ func (r *RecordingRuntime) sendRecordingLink(rec store.Recording) {
 	}
 }
 
+// recordingGapDM is the DM a starter gets when a gap cuts their recording
+// short (#856), word for word as the issue gives it: the channel's name, the
+// gap's start in Unix seconds, and the link.
+const recordingGapDM = "⏹️ Your recording of %s was cut short. The recorder couldn't hear the channel, so nothing after <t:%d:T> was recorded. Get what it captured in the panel: <%s>"
+
 // recordingLinkDM is the DM a starter gets when their recording ends, by a
-// stop or by the recovery of a recording cut short, in a spawned channel or
-// with its notice gone. The channel name is the one the recording started
-// in.
-func recordingLinkDM(end store.RecordingEnd, channelName, link string) string {
-	if end.CutShort() {
-		return fmt.Sprintf("⏹️ Your recording of %s "+recordingCutShort+". Get what it captured in the panel: <%s>", orNone(channelName), link)
+// stop, a gap's cut short or the recovery of a recording a restart cut
+// short, in a spawned channel or with its notice gone. The channel name is
+// the one the recording started in. A gap's cut short stops the row at the
+// gap's start, which the DM names.
+func recordingLinkDM(rec store.Recording, link string) string {
+	channel := orNone(rec.ChannelName)
+	switch {
+	case !rec.Ended.CutShort():
+		return fmt.Sprintf("⏹️ Your recording of %s has stopped. Get it in the panel: <%s>", channel, link)
+	case rec.Ended == store.RecordingEndGap:
+		return fmt.Sprintf(recordingGapDM, channel, rec.StoppedAt.Unix(), link)
+	default:
+		return fmt.Sprintf("⏹️ Your recording of %s "+recordingCutShort+". Get what it captured in the panel: <%s>", channel, link)
 	}
-	return fmt.Sprintf("⏹️ Your recording of %s has stopped. Get it in the panel: <%s>", orNone(channelName), link)
 }
 
 // runRecordingNoticeComponent answers a press on a recording notice's

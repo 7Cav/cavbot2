@@ -43,6 +43,9 @@ type fakeTempVCManager struct {
 	// messageDeleteErr, when set, is what every message delete returns
 	// instead.
 	messageDeleteErr error
+	// replyErr, when set, is what every send that replies to a message
+	// returns instead.
+	replyErr error
 	// dmChannels maps each DM channel UserChannelCreate opened to the user
 	// it reaches. A message posted to one is a DM.
 	dmChannels map[string]string
@@ -158,6 +161,10 @@ type fakeMessage struct {
 	// deleted is set once a delete has taken the message out of its
 	// channel's chat.
 	deleted bool
+	// replyTo is the ID of the message it replies to, as Discord shows it:
+	// empty for a message sent as no reply, and for a reply to a message
+	// gone by then that Discord posted anyway.
+	replyTo string
 }
 
 const (
@@ -351,9 +358,32 @@ func (f *fakeTempVCManager) ChannelMessageSendComplex(channelID string, data *di
 	if f.messageErr != nil {
 		return nil, f.messageErr
 	}
+	if f.replyErr != nil && data.Reference != nil {
+		return nil, f.replyErr
+	}
+	replyTo := ""
+	if ref := data.Reference; ref != nil {
+		// Discord refuses a reply to a message that is gone, unless the
+		// reply turns fail-if-not-exists off. Then it posts the message as
+		// no reply.
+		switch {
+		case f.holdsLocked(channelID, ref.MessageID):
+			replyTo = ref.MessageID
+		case ref.FailIfNotExists == nil || *ref.FailIfNotExists:
+			return nil, restError(http.StatusBadRequest, discordgo.ErrCodeInvalidFormBody, rawBodyMarker)
+		}
+	}
 	id := fmt.Sprintf("msg-%d", len(f.messages)+1)
-	f.messages = append(f.messages, fakeMessage{id: id, channelID: channelID, data: data})
+	f.messages = append(f.messages, fakeMessage{id: id, channelID: channelID, data: data, replyTo: replyTo})
 	return &discordgo.Message{ID: id, ChannelID: channelID, Content: data.Content}, nil
+}
+
+// holdsLocked reports whether a channel's chat holds a message the fake let
+// through, not deleted since. Caller holds mu.
+func (f *fakeTempVCManager) holdsLocked(channelID, messageID string) bool {
+	return slices.ContainsFunc(f.messages, func(m fakeMessage) bool {
+		return m.id == messageID && m.channelID == channelID && !m.deleted
+	})
 }
 
 // UserChannelCreate opens a DM channel with a user, one per user, as
@@ -503,12 +533,18 @@ func (f *fakeTempVCManager) ChannelPermissionSet(channelID, targetID string, tar
 }
 
 // ChannelMessageEditComplex records the edit as sent, or returns
-// messageEditErr and records nothing.
+// messageEditErr and records nothing. A message the fake let through and
+// deleted since is Unknown Message, as Discord answers.
 func (f *fakeTempVCManager) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.messageEditErr != nil {
 		return nil, f.messageEditErr
+	}
+	if slices.ContainsFunc(f.messages, func(m fakeMessage) bool {
+		return m.id == edit.ID && m.channelID == edit.Channel && m.deleted
+	}) {
+		return nil, restError(http.StatusNotFound, discordgo.ErrCodeUnknownMessage, rawBodyMarker)
 	}
 	f.messageEdits = append(f.messageEdits, *edit)
 	return &discordgo.Message{ID: edit.ID, ChannelID: edit.Channel}, nil

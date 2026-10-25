@@ -7,18 +7,193 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
-	"unicode"
 
 	"github.com/7cav/cavbot2/store"
 	"github.com/bwmarrin/discordgo"
 )
 
-// A recording's gaps (#736): the stretches its recorder can't hear the
+// A recording's gaps (#736, #856): the stretches its recorder can't hear the
 // channel. Every case runs the runtime over the /record scene, and the fake
 // voice adapter's connection tells the runtime when a gap starts and ends,
-// as the voice adapter does. A gap notice is read for its verdict marker
-// and the times it names, never its wording.
+// as the voice adapter does. A gap that reaches 10 s cuts the recording
+// short. What the runtime posts is read for its verdict marker, the times
+// it names, who it would ping and the production constants that tell cases
+// apart, never its wording.
+
+// gapCutsShortAfter is how long a gap runs before it cuts the recording
+// short. It is product contract, not tuning: the ping tells members "10
+// seconds".
+const gapCutsShortAfter = 10 * time.Second
+
+// startGap has the recorder in channelID stop hearing it now, as the voice
+// adapter tells the runtime, and returns when.
+func (sc *recordScene) startGap(t *testing.T, channelID string) time.Time {
+	t.Helper()
+	start := sc.clock.read()
+	sc.listener(t, channelID).GapStarted(start)
+	return start
+}
+
+// A gap that reaches 10 s stops the recording at that moment, and not a
+// millisecond before. The voice adapter can tell of a gap only after it
+// started, as when it notices a voice server went silent, so the 10 s count
+// from the start it gives, not from when it tells.
+func TestRecordingGapThatReaches10sStopsTheRecordingThen(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		toldLate time.Duration
+	}{
+		{"told at its start", 0},
+		{"told 4 s late", 4 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := newRecordScene(t, testRecorder)
+			sc.startIn(t, recStarter, recordChannel)
+			sc.clock.advance(time.Minute)
+			start := sc.clock.read().Add(-tc.toldLate)
+			sc.listener(t, recordChannel).GapStarted(start)
+
+			sc.clock.advance(gapCutsShortAfter - tc.toldLate - time.Millisecond)
+			sc.assertRunning(t, recordChannel)
+
+			sc.clock.advance(time.Millisecond)
+
+			if got := sc.voice.inChannel(recordChannel); len(got) != 0 {
+				t.Errorf("recorders in %s 10 s into the gap = %v, want none", recordChannel, got)
+			}
+			if rec := sc.onlyRecording(t); rec.StoppedAt.IsZero() {
+				t.Errorf("recording 10 s into the gap = %+v, want it stopped", rec)
+			}
+		})
+	}
+}
+
+// cutShort starts a recording in which a speaker says one frame a minute
+// in, has the recorder stop hearing the channel two minutes in, and runs
+// the clock to that gap's 10 s mark. It returns the gap's start.
+func (sc *recordScene) cutShort(t *testing.T) time.Time {
+	t.Helper()
+	sc.startIn(t, recStarter, recordChannel)
+	sc.clock.advance(time.Minute)
+	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
+	sc.clock.advance(time.Minute)
+	start := sc.startGap(t, recordChannel)
+	sc.clock.advance(gapCutsShortAfter)
+	return start
+}
+
+// A recording a gap cuts short keeps what the recorder heard up to the
+// gap's start, and ends there: the row the panel lists stops then, as a
+// gap's cut short, every track ends there rather than 10 s of silence
+// later, and the info file's Ended line names the gap.
+func TestRecordingCutShortByAGapEndsAtTheGapsStart(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+
+	start := sc.cutShort(t)
+
+	rec := sc.onlyRecording(t)
+	if rec.Ended != store.RecordingEndGap || !rec.StoppedAt.Equal(start) {
+		t.Errorf("recording ended %q at %v, want %q at the gap's start, %v", rec.Ended, rec.StoppedAt, store.RecordingEndGap, start)
+	}
+	// The gap starts two minutes in: 120 s of 48 kHz samples.
+	const gapStartSamples = 120 * 48000
+	tracks := sc.tracks(t)
+	if len(tracks) != 1 {
+		t.Fatalf("tracks = %d, want the speaker's one", len(tracks))
+	}
+	if tracks[0].granule != gapStartSamples {
+		t.Errorf("track ends at sample %d, want the gap's start, %d", tracks[0].granule, gapStartSamples)
+	}
+	infoLine(t, sc.zipEntries(t, rec)[infoFileName], infoEndedGap)
+}
+
+// discordMention matches a user mention, <@id> or <@!id>, or a role
+// mention, <@&id>, in a message's content.
+var discordMention = regexp.MustCompile(`<@([!&]?)(\d+|[\w-]+)>`)
+
+// wouldPing lists whom Discord notifies for a message with content and
+// allowed mentions am, in order: each user its content mentions, as their
+// ID, each role as "role:<id>", and @everyone or @here as written, when am
+// lets them through. Nil allowed mentions are Discord's default, under which
+// every mention pings.
+func wouldPing(content string, am *discordgo.MessageAllowedMentions) []string {
+	parses := func(kind discordgo.AllowedMentionType) bool {
+		return am == nil || slices.Contains(am.Parse, kind)
+	}
+	var out []string
+	for _, m := range discordMention.FindAllStringSubmatch(content, -1) {
+		switch id := m[2]; {
+		case m[1] == "&" && (parses(discordgo.AllowedMentionTypeRoles) || slices.Contains(am.Roles, id)):
+			out = append(out, "role:"+id)
+		case m[1] != "&" && (parses(discordgo.AllowedMentionTypeUsers) || slices.Contains(am.Users, id)):
+			out = append(out, id)
+		}
+	}
+	for _, everyone := range []string{"@everyone", "@here"} {
+		if strings.Contains(content, everyone) && parses(discordgo.AllowedMentionTypeEveryone) {
+			out = append(out, everyone)
+		}
+	}
+	return out
+}
+
+// postedSince is every message still up in a channel's chat that posted
+// after the one given, in order. Unlike noticesIn, it lets through messages
+// that ping.
+func postedSince(fake *fakeTempVCManager, channelID string, after fakeMessage) []fakeMessage {
+	var out []fakeMessage
+	seen := false
+	for _, m := range fake.recordedMessages() {
+		switch {
+		case m.id == after.id:
+			seen = true
+		case seen && m.channelID == channelID:
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// At the 10 s mark the starter hears of the cut short in the channel's
+// chat: one new message, a reply to the recording notice, that opens with
+// ❌, pings the starter alone, tells them to run /record start, and carries
+// no panel link. The starter has moved to another call and a recording-role
+// holder is still in the recorded one, so the ping finds the starter
+// wherever they are and pings nobody else in the call.
+func TestRecordingCutShortByAGapPingsTheStarterInAReplyToTheNotice(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.startIn(t, recStarter, recordChannel)
+	notice := recordingNotice(t, sc.fake, recordChannel)
+	sc.fake.setVoice(recHolder.id, recordChannel)
+	sc.fake.setVoice(recStarter.id, recordOtherChannel)
+	sc.startGap(t, recordChannel)
+
+	sc.clock.advance(gapCutsShortAfter)
+
+	posted := postedSince(sc.fake, recordChannel, notice)
+	if len(posted) != 1 {
+		t.Fatalf("messages posted in %s at the cut short = %d, want the ping alone", recordChannel, len(posted))
+	}
+	ping := posted[0]
+	content := ping.data.Content
+	if ping.replyTo != notice.id {
+		t.Errorf("ping replies to %q, want the recording notice %s", ping.replyTo, notice.id)
+	}
+	if !strings.HasPrefix(content, "❌") {
+		t.Errorf("ping = %q, want a ❌ verdict", content)
+	}
+	if got := wouldPing(content, ping.data.AllowedMentions); !slices.Equal(got, []string{recStarter.id}) {
+		t.Errorf("ping %q with allowed mentions %+v pings %v, want the starter %s alone", content, ping.data.AllowedMentions, got, recStarter.id)
+	}
+	if run := "/" + recordCommandName + " start"; !strings.Contains(content, run) {
+		t.Errorf("ping = %q, want it to tell the starter to run %s", content, run)
+	}
+	if strings.Contains(content, testPanelURL) {
+		t.Errorf("ping = %q, want no panel link", content)
+	}
+}
 
 // discordTimes is the Unix seconds of each Discord timestamp in content, in
 // order, whatever style each is shown in.
@@ -31,333 +206,336 @@ func discordTimes(content string) []int64 {
 	return out
 }
 
-// startGap has the recorder in channelID stop hearing it now, as the voice
-// adapter tells the runtime, and returns when.
-func (sc *recordScene) startGap(t *testing.T, channelID string) time.Time {
-	t.Helper()
-	start := sc.clock.read()
-	sc.listener(t, channelID).GapStarted(start)
-	return start
-}
-
-// gapNotices is the messages posted in channelID since the scene had
-// before of them: the gap notices, in a scene where only the recording
-// notice posts besides.
-func gapNotices(t *testing.T, sc *recordScene, channelID string, before int) []fakeMessage {
-	t.Helper()
-	return noticesIn(t, sc.fake, channelID)[before:]
-}
-
-// A gap that passes 10 s posts one gap notice in the recorded channel's
-// chat. It opens with ⚠️, pings nobody, and names when the gap started.
-func TestRecordingGapPast10sPostsAGapNotice(t *testing.T) {
+// At the 10 s mark the recording notice says the recording was cut short,
+// and from when: it opens with ⏹️, names one time, the gap's start, carries
+// the link into the panel, loses its Stop button and pings nobody. With the
+// notice edited and the ping posted, in a channel no hub spawned, the
+// starter gets no DM.
+func TestRecordingCutShortByAGapEditsTheNoticeWithTheGapsStart(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
 	sc.startIn(t, recStarter, recordChannel)
-	before := len(noticesIn(t, sc.fake, recordChannel))
+	notice := recordingNotice(t, sc.fake, recordChannel)
 	sc.clock.advance(time.Minute)
 	start := sc.startGap(t, recordChannel)
 
-	sc.clock.advance(11 * time.Second)
+	sc.clock.advance(gapCutsShortAfter)
 
-	// noticesIn fails the test for any message that could ping someone.
-	notices := gapNotices(t, sc, recordChannel, before)
-	if len(notices) != 1 {
-		t.Fatalf("messages posted 11 s into the gap = %d, want one gap notice", len(notices))
-	}
-	content := notices[0].data.Content
-	if !strings.HasPrefix(content, "⚠️") {
-		t.Errorf("gap notice = %q, want a ⚠️ verdict", content)
+	edit := noticeEdit(t, sc.fake, notice)
+	content := deref(edit.Content)
+	if !strings.HasPrefix(content, "⏹️") {
+		t.Errorf("notice edited to %q, want a ⏹️ verdict", content)
 	}
 	if got := discordTimes(content); !slices.Equal(got, []int64{start.Unix()}) {
-		t.Errorf("gap notice %q names times %v, want the gap's start, %d", content, got, start.Unix())
+		t.Errorf("notice edited to %q names times %v, want the gap's start, %d", content, got, start.Unix())
+	}
+	if !strings.Contains(content, testPanelURL) {
+		t.Errorf("notice edited to %q, want a link into the panel at %s", content, testPanelURL)
+	}
+	// A nil list leaves the button in place; an empty one removes it.
+	if edit.Components == nil || len(*edit.Components) != 0 {
+		t.Errorf("notice edit components = %v, want an empty list", edit.Components)
+	}
+	if got := wouldPing(content, edit.AllowedMentions); len(got) != 0 {
+		t.Errorf("notice edited to %q with allowed mentions %+v pings %v, want nobody", content, edit.AllowedMentions, got)
+	}
+	if dms := sc.fake.sentDMs(); len(dms) != 0 {
+		t.Errorf("DMs after the ping and the notice edit went through = %+v, want none", dms)
 	}
 }
 
-// endGap has the recorder in channelID hear it again, as the voice adapter
-// tells the runtime, and returns when.
-func (sc *recordScene) endGap(t *testing.T, channelID string) time.Time {
+// gapLines is the INFO records of gaps that ended before cutting their
+// recording short.
+func gapLines(t *testing.T, logs *syncBuffer) []map[string]string {
 	t.Helper()
-	sc.listener(t, channelID).GapEnded()
-	return sc.clock.read()
+	return logRecordsWith(t, logs, "INFO", map[string]string{"msg": recordingGapEndedMessage})
 }
 
-// infoGapLines is the Gap lines of the only recording's info file, as its
-// zip holds it.
-func (sc *recordScene) infoGapLines(t *testing.T) []string {
+// lasted reads a gap line's length back as a duration.
+func lasted(t *testing.T, line map[string]string) time.Duration {
 	t.Helper()
-	var out []string
-	for line := range strings.Lines(string(sc.zipEntries(t, sc.onlyRecording(t))[infoFileName])) {
-		if strings.HasPrefix(line, infoGapLabel) {
-			out = append(out, strings.TrimSpace(line))
+	d, err := time.ParseDuration(line["lasted"])
+	if err != nil {
+		t.Fatalf("gap line %v: lasted %q is no duration: %v", line, line["lasted"], err)
+	}
+	return d
+}
+
+// A gap that ends before 10 s logs one gap line with its length, and posts
+// nothing in the chat, read once the clock has passed the gap's 10 s mark:
+// the recording runs on.
+func TestRecordingGapUnder10sLogsItsLengthAndPostsNothing(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	logs := captureLogs(t)
+	sc.startIn(t, recStarter, recordChannel)
+	notice := recordingNotice(t, sc.fake, recordChannel)
+	sc.startGap(t, recordChannel)
+	sc.clock.advance(9 * time.Second)
+
+	sc.listener(t, recordChannel).GapEnded()
+	sc.clock.advance(gapCutsShortAfter + time.Minute)
+
+	lines := gapLines(t, logs)
+	if len(lines) != 1 {
+		t.Fatalf("gap lines = %v, want one", lines)
+	}
+	if got := lasted(t, lines[0]); got != 9*time.Second {
+		t.Errorf("gap line says the gap lasted %v, want 9s", got)
+	}
+	if posted := postedSince(sc.fake, recordChannel, notice); len(posted) != 0 {
+		t.Errorf("messages posted in %s after a 9 s gap = %d, want none", recordChannel, len(posted))
+	}
+	sc.assertRunning(t, recordChannel)
+}
+
+// A gap's cut short logs the recording's stop line with ended=gap, and no
+// gap line: the gap never ended, it cut the recording short. The stop line
+// is the positive signal that the cut short had its chance to log.
+func TestRecordingCutShortByAGapLogsItsStopAndNoGapLine(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	logs := captureLogs(t)
+
+	sc.cutShort(t)
+
+	id := strconv.FormatInt(sc.onlyRecording(t).ID, 10)
+	stops := logRecordsWith(t, logs, "INFO", map[string]string{"msg": recordingStoppedMessage, "recording_id": id})
+	if len(stops) != 1 || stops[0]["ended"] != string(store.RecordingEndGap) {
+		t.Fatalf("stop lines for recording %s = %v, want one with ended=%s", id, stops, store.RecordingEndGap)
+	}
+	if lines := gapLines(t, logs); len(lines) != 0 {
+		t.Errorf("gap lines at the cut short = %v, want none", lines)
+	}
+}
+
+// A stop during a gap shorter than 10 s stops the recording when it
+// happened, not at the gap's start, and the gap it ends logs its gap line,
+// lasting until the stop.
+func TestRecordingStopDuringAShortGapKeepsItsOwnTime(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	logs := captureLogs(t)
+	sc.startIn(t, recStarter, recordChannel)
+	sc.clock.advance(time.Minute)
+	sc.startGap(t, recordChannel)
+	sc.clock.advance(4 * time.Second)
+	stoppedAt := sc.clock.read()
+
+	sc.stopAsStarter(t)
+
+	if rec := sc.onlyRecording(t); !rec.StoppedAt.Equal(stoppedAt) {
+		t.Errorf("recording stopped at %v, want the stop's own time, %v", rec.StoppedAt, stoppedAt)
+	}
+	lines := gapLines(t, logs)
+	if len(lines) != 1 {
+		t.Fatalf("gap lines = %v, want one for the gap the stop ended", lines)
+	}
+	if got := lasted(t, lines[0]); got != 4*time.Second {
+		t.Errorf("gap line says the gap lasted %v, want 4s, until the stop", got)
+	}
+}
+
+// rowsRecordedBy is the store's recording rows whose recorder is the one
+// given.
+func (sc *recordScene) rowsRecordedBy(t *testing.T, recorderID string) []store.Recording {
+	t.Helper()
+	var out []store.Recording
+	for _, rec := range sc.recordings(t) {
+		if rec.RecorderID == recorderID {
+			out = append(out, rec)
 		}
 	}
 	return out
 }
 
-// The voice adapter can tell of a gap only after it started, as when the
-// recorder notices a voice server went silent. The gap starts when the
-// adapter says: its notice posts 10 s from then and names that start, and
-// the info file's Gap line starts there too. Here the start falls in the
-// minute before the adapter tells, which the info file's minutes show.
-func TestRecordingGapToldLateCountsFromItsStart(t *testing.T) {
-	sc := newRecordScene(t, testRecorder)
-	sc.startIn(t, recStarter, recordChannel)
-	before := len(noticesIn(t, sc.fake, recordChannel))
-	sc.clock.advance(2*time.Minute + 2*time.Second)
-	start := sc.clock.read().Add(-4 * time.Second)
-	sc.listener(t, recordChannel).GapStarted(start)
+// The 10 s mark doesn't wait on the recorder's leave, which here hangs far
+// past its 5 s bound. At the mark itself the ping has posted and the notice
+// says the recording was cut short. The channel is free to record again
+// from then: a start in it at the mark takes the other recorder and gets
+// ✅. Once the hung leave returns, the cut-short recording's cleanup has
+// left the new recording alone, and its starter stops it.
+func TestRecordingCutShortByAGapDoesNotWaitOnTheLeave(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sc := newBubbleRecordScene(t, testRecorder, testSecondRecorder)
+		sc.startIn(t, recStarter, recordChannel)
+		notice := recordingNotice(t, sc.fake, recordChannel)
+		sc.voice.setLeaveTakes(hungLeave)
+		// A failure before the end still lets the hung leave return, so the
+		// bubble can exit.
+		t.Cleanup(func() { time.Sleep(hungLeave) })
+		start := time.Now()
+		sc.listener(t, recordChannel).GapStarted(start)
 
-	sc.clock.advance(5 * time.Second)
-	if notices := gapNotices(t, sc, recordChannel, before); len(notices) != 0 {
-		t.Fatalf("messages posted 9 s into the gap = %d, want none", len(notices))
-	}
-	sc.clock.advance(time.Second)
+		time.Sleep(gapCutsShortAfter)
+		synctest.Wait()
 
-	notices := gapNotices(t, sc, recordChannel, before)
-	if len(notices) != 1 {
-		t.Fatalf("messages posted 10 s into the gap = %d, want one gap notice", len(notices))
-	}
-	if got := discordTimes(notices[0].data.Content); !slices.Equal(got, []int64{start.Unix()}) {
-		t.Errorf("gap notice %q names times %v, want the gap's start, %d", notices[0].data.Content, got, start.Unix())
-	}
-	recordAs(t, sc.rt, recStarter, "stop")
-	lines := sc.infoGapLines(t)
-	if len(lines) != 1 {
-		t.Fatalf("info file Gap lines = %q, want one", lines)
-	}
-	if got := parseGapLine(t, lines[0]); !got.start.Equal(start.Truncate(time.Minute)) {
-		t.Errorf("Gap line %q starts %v, want the gap's start, %v", lines[0], got.start, start.Truncate(time.Minute))
-	}
+		if posted := postedSince(sc.fake, recordChannel, notice); len(posted) != 1 {
+			t.Errorf("messages posted in %s at the mark = %d, want the ping", recordChannel, len(posted))
+		}
+		if got := discordTimes(deref(noticeEdit(t, sc.fake, notice).Content)); !slices.Equal(got, []int64{start.Unix()}) {
+			t.Errorf("notice at the mark names times %v, want the gap's start, %d", got, start.Unix())
+		}
+		sc.fake.setVoice(recHolder.id, recordChannel)
+		if reply := recordAs(t, sc.rt, recHolder, "start"); !strings.HasPrefix(reply, "✅") {
+			t.Fatalf("start in %s at the mark = %q, want a ✅ verdict", recordChannel, reply)
+		}
+		if got := sc.voice.inChannel(recordChannel); !slices.Contains(got, testSecondRecorder) {
+			t.Errorf("recorders in %s after the start at the mark = %v, want %s among them", recordChannel, got, testSecondRecorder)
+		}
+
+		time.Sleep(hungLeave)
+		synctest.Wait()
+
+		if rows := sc.rowsRecordedBy(t, testSecondRecorder); len(rows) != 1 || !rows[0].StoppedAt.IsZero() {
+			t.Fatalf("recordings by %s once the hung leave returned = %+v, want one still running", testSecondRecorder, rows)
+		}
+		sc.voice.setLeaveTakes(0)
+		if reply := recordAs(t, sc.rt, recHolder, "stop"); !strings.HasPrefix(reply, "✅") {
+			t.Errorf("stop of the new recording = %q, want a ✅ verdict", reply)
+		}
+		if rows := sc.rowsRecordedBy(t, testSecondRecorder); len(rows) != 1 || rows[0].StoppedAt.IsZero() {
+			t.Errorf("recordings by %s after its stop = %+v, want one stopped", testSecondRecorder, rows)
+		}
+	})
 }
 
-// A gap told late reaches the 10-minute limit 10 minutes from its start,
-// not from when the adapter told of it.
-func TestRecordingGapToldLateEndsTheRecording10MinutesFromItsStart(t *testing.T) {
-	sc := newRecordScene(t, testRecorder)
-	sc.startIn(t, recStarter, recordChannel)
-	start := sc.clock.read()
-	sc.clock.advance(4 * time.Second)
-	sc.listener(t, recordChannel).GapStarted(start)
-	sc.clock.advance(10*time.Minute - 5*time.Second)
-	sc.assertRunning(t, recordChannel)
-
-	sc.clock.advance(time.Second)
-
-	sc.assertStopped(t, recordChannel, store.RecordingEndRecorderLeft)
+// pingsIn is every message still up in a channel's chat that would ping
+// someone.
+func pingsIn(fake *fakeTempVCManager, channelID string) []fakeMessage {
+	var out []fakeMessage
+	for _, m := range fake.recordedMessages() {
+		if m.channelID == channelID && len(wouldPing(m.data.Content, m.data.AllowedMentions)) > 0 {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
-// A gap that ends before 10 s posts nothing, however long the recording
-// runs after it, and the info file written at the stop lists no gap.
-func TestRecordingGapUnder10sPostsNothing(t *testing.T) {
-	sc := newRecordScene(t, testRecorder)
-	sc.startIn(t, recStarter, recordChannel)
-	before := len(noticesIn(t, sc.fake, recordChannel))
-	sc.startGap(t, recordChannel)
-	sc.clock.advance(9 * time.Second)
-
-	sc.endGap(t, recordChannel)
-	sc.clock.advance(time.Minute)
-
-	if notices := gapNotices(t, sc, recordChannel, before); len(notices) != 0 {
-		t.Errorf("messages posted after a 9 s gap = %d, want none", len(notices))
-	}
-	recordAs(t, sc.rt, recStarter, "stop")
-	if lines := sc.infoGapLines(t); len(lines) != 0 {
-		t.Errorf("info file Gap lines = %q, want none for a 9 s gap", lines)
-	}
-}
-
-// When a gap ends, its notice is edited to say the recorder is back and
-// what it missed, from the gap's start to its end, and no other message
-// posts for it. Each gap gets its own notice: a second gap posts a new one,
-// and its end edits that one.
-func TestRecordingGapNoticeIsEditedWhenItsGapEnds(t *testing.T) {
-	sc := newRecordScene(t, testRecorder)
-	sc.startIn(t, recStarter, recordChannel)
-	before := len(noticesIn(t, sc.fake, recordChannel))
-	firstStart := sc.startGap(t, recordChannel)
-	sc.clock.advance(73 * time.Second)
-
-	firstEnd := sc.endGap(t, recordChannel)
-	sc.clock.advance(0)
-
-	notices := gapNotices(t, sc, recordChannel, before)
-	if len(notices) != 1 {
-		t.Fatalf("messages posted for the first gap = %d, want its notice alone", len(notices))
-	}
-	assertGapNoticeEdit(t, sc, notices[0], "✅", firstStart, firstEnd)
-
-	sc.clock.advance(5 * time.Minute)
-	secondStart := sc.startGap(t, recordChannel)
-	sc.clock.advance(20 * time.Second)
-	secondEnd := sc.endGap(t, recordChannel)
-	sc.clock.advance(0)
-
-	notices = gapNotices(t, sc, recordChannel, before)
-	if len(notices) != 2 {
-		t.Fatalf("messages posted for two gaps = %d, want a notice each", len(notices))
-	}
-	assertGapNoticeEdit(t, sc, notices[1], "✅", secondStart, secondEnd)
-}
-
-// assertGapNoticeEdit fails the test unless notice was last edited to open
-// with marker and name times, in order.
-func assertGapNoticeEdit(t *testing.T, sc *recordScene, notice fakeMessage, marker string, times ...time.Time) {
+// cutShortAtTheMark has the recorder in channelID stop hearing it now and
+// runs the clock to the gap's 10 s mark. It returns the gap's start.
+func (sc *recordScene) cutShortAtTheMark(t *testing.T, channelID string) time.Time {
 	t.Helper()
-	edit := noticeEdit(t, sc.fake, notice)
-	if edit.Content == nil {
-		t.Fatalf("gap notice %s edited with no content", notice.id)
-	}
-	content := *edit.Content
-	if !strings.HasPrefix(content, marker) {
-		t.Errorf("gap notice edited to %q, want a %s verdict", content, marker)
-	}
-	want := make([]int64, 0, len(times))
-	for _, at := range times {
-		want = append(want, at.Unix())
-	}
-	if got := discordTimes(content); !slices.Equal(got, want) {
-		t.Errorf("gap notice edited to %q names times %v, want %v", content, got, want)
-	}
+	start := sc.startGap(t, channelID)
+	sc.clock.advance(gapCutsShortAfter)
+	return start
 }
 
-// A recording that stops during a gap, whatever stops it, has the gap's
-// notice edited to say it stopped before the recorder got back, and what
-// it missed from when. A member's stop, the cap and an empty channel each
-// reach the stop their own way.
-func TestRecordingStopDuringAGapEditsItsNotice(t *testing.T) {
+// The starter gets the link to a recording a gap cut short by DM as well
+// when the chat may not reach them: in a spawned channel, whose hub takes
+// the chat away once everyone has left, when the notice is gone, and when
+// the ping didn't post. Each holds alone in its row, so each condition
+// shows on its own. The DM names the gap's start and links into the panel.
+func TestRecordingCutShortByAGapSendsTheStarterOneDM(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		stop func(t *testing.T, sc *recordScene)
+		// setup starts the recording as the row needs and returns its
+		// channel.
+		setup func(t *testing.T, sc *recordScene) string
+		// pinged is whether the ping posts.
+		pinged bool
 	}{
-		{"a member's stop", func(t *testing.T, sc *recordScene) { recordAs(t, sc.rt, recStarter, "stop") }},
-		{"the cap", func(_ *testing.T, sc *recordScene) { sc.clock.advance(time.Minute) }},
-		{"an empty channel", func(_ *testing.T, sc *recordScene) { sc.deliver(recStarter.id, "") }},
+		{
+			name: "in a spawned channel",
+			setup: func(t *testing.T, sc *recordScene) string {
+				sc.startInSpawned(t)
+				return recordSpawned
+			},
+			pinged: true,
+		},
+		{
+			name: "with the notice gone",
+			setup: func(t *testing.T, sc *recordScene) string {
+				sc.startIn(t, recStarter, recordChannel)
+				deleteMessage(t, sc.fake, recordingNotice(t, sc.fake, recordChannel))
+				return recordChannel
+			},
+			pinged: true,
+		},
+		{
+			name: "with the ping refused",
+			setup: func(t *testing.T, sc *recordScene) string {
+				sc.startIn(t, recStarter, recordChannel)
+				sc.fake.replyErr = restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, rawBodyMarker)
+				return recordChannel
+			},
+		},
+		{
+			name: "in a spawned channel, with the notice gone and the ping refused",
+			setup: func(t *testing.T, sc *recordScene) string {
+				deleteMessage(t, sc.fake, sc.startInSpawned(t))
+				sc.fake.replyErr = restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, rawBodyMarker)
+				return recordSpawned
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sc := newRecordScene(t, testRecorder)
-			sc.startIn(t, recStarter, recordChannel)
-			before := len(noticesIn(t, sc.fake, recordChannel))
-			sc.clock.advance(recordingCap - time.Minute)
-			start := sc.startGap(t, recordChannel)
-			sc.clock.advance(15 * time.Second)
+			channelID := tc.setup(t, sc)
+			before := len(sc.fake.sentDMs())
 
-			tc.stop(t, sc)
+			start := sc.cutShortAtTheMark(t, channelID)
 
-			notices := gapNotices(t, sc, recordChannel, before)
-			if len(notices) != 1 {
-				t.Fatalf("messages posted for the gap = %d, want its notice alone", len(notices))
+			if got, want := len(pingsIn(sc.fake, channelID)), map[bool]int{true: 1, false: 0}[tc.pinged]; got != want {
+				t.Errorf("pings in %s = %d, want %d", channelID, got, want)
 			}
-			assertGapNoticeEdit(t, sc, notices[0], "⏹️", start)
+			dms := sc.fake.sentDMs()[before:]
+			assertOneLinkDM(t, dms)
+			if got := discordTimes(dms[0].data.Content); !slices.Equal(got, []int64{start.Unix()}) {
+				t.Errorf("DM %q names times %v, want the gap's start, %d", dms[0].data.Content, got, start.Unix())
+			}
 		})
 	}
 }
 
-// A gap that reaches 10 minutes ends the recording as the recorder leaving
-// does: the recorder leaves, the row records it stopped then, and the
-// recording notice says it stopped. The gap notice says the recorder
-// couldn't get back, and what the recording missed from when.
-func TestRecordingGapThatReaches10MinutesEndsTheRecording(t *testing.T) {
-	sc := newRecordScene(t, testRecorder)
-	sc.startIn(t, recStarter, recordChannel)
-	before := len(noticesIn(t, sc.fake, recordChannel))
-	start := sc.startGap(t, recordChannel)
-	sc.clock.advance(10*time.Minute - time.Second)
-	sc.assertRunning(t, recordChannel)
-
-	sc.clock.advance(time.Second)
-
-	sc.assertStopped(t, recordChannel, store.RecordingEndRecorderLeft)
-	notices := gapNotices(t, sc, recordChannel, before)
-	if len(notices) != 1 {
-		t.Fatalf("messages posted for the gap = %d, want its notice alone", len(notices))
-	}
-	assertGapNoticeEdit(t, sc, notices[0], "❌", start)
-}
-
-// gapLine is one info file Gap line read back: the gap's start and end, to
-// the minute the info file's Zulu times give, and its length.
-type gapLine struct {
-	start, end time.Time
-	length     time.Duration
-}
-
-// zuluTime matches a time as the info file's Zulu layout writes it.
-var zuluTime = regexp.MustCompile(`\d{4}-\d{2}-\d{2} \d{4}z`)
-
-// parseGapLine reads an info file Gap line's values in order: the two times,
-// in the info file's Zulu layout, and the one word that reads as a length.
-func parseGapLine(t *testing.T, line string) gapLine {
+// deleteMessage takes a message out of its channel's chat, as a member
+// deleting it does.
+func deleteMessage(t *testing.T, fake *fakeTempVCManager, m fakeMessage) {
 	t.Helper()
-	times := zuluTime.FindAllString(line, -1)
-	if len(times) != 2 {
-		t.Fatalf("Gap line %q holds %d Zulu times, want a start and an end", line, len(times))
-	}
-	var got gapLine
-	for i, at := range []*time.Time{&got.start, &got.end} {
-		parsed, err := time.Parse(zuluLayout, times[i])
-		if err != nil {
-			t.Fatalf("Gap line %q time %q: %v", line, times[i], err)
-		}
-		*at = parsed
-	}
-	var lengths []time.Duration
-	for _, word := range strings.FieldsFunc(zuluTime.ReplaceAllString(line, ""), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '.'
-	}) {
-		if d, err := time.ParseDuration(word); err == nil {
-			lengths = append(lengths, d)
-		}
-	}
-	if len(lengths) != 1 {
-		t.Fatalf("Gap line %q holds lengths %v, want one", line, lengths)
-	}
-	got.length = lengths[0]
-	return got
-}
-
-// The info file lists each gap past 10 s, in order, with its start, end
-// and length. A gap still running at the stop runs to the stop time.
-func TestRecordingInfoFileListsEachGapPast10s(t *testing.T) {
-	sc := newRecordScene(t, testRecorder)
-	sc.startIn(t, recStarter, recordChannel)
-	sc.clock.advance(3 * time.Minute)
-	firstStart := sc.startGap(t, recordChannel)
-	sc.clock.advance(73 * time.Second)
-	firstEnd := sc.endGap(t, recordChannel)
-	sc.clock.advance(4 * time.Minute)
-	secondStart := sc.startGap(t, recordChannel)
-	sc.clock.advance(45 * time.Second)
-
-	stopped := sc.clock.read()
-	recordAs(t, sc.rt, recStarter, "stop")
-
-	lines := sc.infoGapLines(t)
-	want := []gapLine{
-		{start: firstStart, end: firstEnd, length: 73 * time.Second},
-		{start: secondStart, end: stopped, length: 45 * time.Second},
-	}
-	if len(lines) != len(want) {
-		t.Fatalf("info file Gap lines = %q, want %d", lines, len(want))
-	}
-	for i, line := range lines {
-		got, w := parseGapLine(t, line), want[i]
-		if !got.start.Equal(w.start.Truncate(time.Minute)) || !got.end.Equal(w.end.Truncate(time.Minute)) || got.length != w.length {
-			t.Errorf("Gap line %d = %q, want %v to %v (%v)", i+1, line, w.start, w.end, w.length)
-		}
+	if err := fake.ChannelMessageDelete(m.channelID, m.id); err != nil {
+		t.Fatalf("deleting %s in %s: %v", m.id, m.channelID, err)
 	}
 }
 
-// A gap notice Discord refuses changes nothing for the recording: the
-// recorder stays and the row stays open. Unlike the recording notice at
-// start, the channel was already told it is being recorded.
-func TestRecordingGoesOnWhenItsGapNoticeIsRefused(t *testing.T) {
+// A ping Discord refuses logs a WARN naming the recording.
+func TestRecordingCutShortPingThatFailsIsLogged(t *testing.T) {
 	sc := newRecordScene(t, testRecorder)
+	logs := captureLogs(t)
 	sc.startIn(t, recStarter, recordChannel)
-	sc.fake.messageErr = restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, rawBodyMarker)
-	sc.startGap(t, recordChannel)
+	sc.fake.replyErr = restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, rawBodyMarker)
 
-	sc.clock.advance(11 * time.Second)
+	sc.cutShortAtTheMark(t, recordChannel)
 
-	sc.assertRunning(t, recordChannel)
+	id := strconv.FormatInt(sc.onlyRecording(t).ID, 10)
+	fields := map[string]string{"msg": recordingGapPingNotPostedMessage, "recording_id": id}
+	if warns := logRecordsWith(t, logs, "WARN", fields); len(warns) != 1 {
+		t.Errorf("WARN records with %v = %v, want one", fields, warns)
+	}
+}
+
+// Only a gap's cut short pings. A restart's cut short and a stop at the cap
+// each end their recording, their notice edited as before, and post nothing
+// in the channel's chat that pings anyone.
+func TestRecordingEndedOtherwisePingsNobody(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		end  func(t *testing.T, sc *recordScene)
+	}{
+		{"a restart's cut short", func(t *testing.T, sc *recordScene) {
+			sc.recordFlushedFrame(t)
+			sc.restart(t, testRecorder)
+			sc.clock.advance(0)
+		}},
+		{"the cap", func(t *testing.T, sc *recordScene) {
+			sc.startIn(t, recStarter, recordChannel)
+			sc.clock.advance(recordingCap)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := newRecordScene(t, testRecorder)
+
+			tc.end(t, sc)
+
+			noticeEdit(t, sc.fake, fakeMessage{id: sc.onlyRecording(t).NoticeID, channelID: recordChannel})
+			if pings := pingsIn(sc.fake, recordChannel); len(pings) != 0 {
+				t.Errorf("messages in %s that ping someone = %+v, want none", recordChannel, pings)
+			}
+		})
+	}
 }
