@@ -60,20 +60,29 @@ const smokeDNSFailEnv = "SMOKE_VOICE_DNS_FAIL_FILE"
 const smokeDropEnv = "SMOKE_VOICE_DROP_FILE"
 
 // newVoiceDialer is the production voice gateway dialer: the host's
-// resolver, and the zone's nameservers reached through it. Each smoke hook
-// is on when its variable, smokeDNSFailEnv or smokeDropEnv, names a file.
-func newVoiceDialer() *voiceDialer {
-	d := &voiceDialer{host: net.DefaultResolver, atNameserver: nameserverResolver}
+// resolver, and the zone's nameservers reached through it. The smoke hook
+// that makes voice servers unreachable is on when smokeDNSFailEnv names a
+// file. drops is the smoke drop hook's, nil when it is off.
+func newVoiceDialer(drops *connDrops) *voiceDialer {
+	d := &voiceDialer{host: net.DefaultResolver, atNameserver: nameserverResolver, drops: drops}
 	if failFile := os.Getenv(smokeDNSFailEnv); failFile != "" {
 		d.unresolvable = func() bool {
 			_, err := os.Stat(failFile)
 			return err == nil
 		}
 	}
-	if dropFile := os.Getenv(smokeDropEnv); dropFile != "" {
-		d.drops = watchDrops(dropFile)
-	}
 	return d
+}
+
+// watchSmokeDrops starts the smoke drop hook's watch of its file for the
+// recorder at its place in RECORDER_TOKENS when smokeDropEnv names a file,
+// and is nil otherwise. A recorder takes one for its whole life, so each
+// appearance of the file drops it once, however many times it has logged in.
+func watchSmokeDrops(recorder int) *connDrops {
+	if dropFile := os.Getenv(smokeDropEnv); dropFile != "" {
+		return watchDrops(dropFile, recorder)
+	}
+	return nil
 }
 
 // nameserverResolver is a resolver that sends every query to the nameserver
@@ -198,14 +207,19 @@ var errDropReset = &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
 // while the file stays drops at its next appearance, so a recorder can
 // connect again after a drop.
 type connDrops struct {
+	// recorder is the place in RECORDER_TOKENS of the recorder whose
+	// connections these are.
+	recorder int
+
 	mu   sync.Mutex
 	live map[*droppableConn]struct{}
 }
 
 // watchDrops starts looking for file every dropCheckEvery, for as long as
-// the bot runs.
-func watchDrops(file string) *connDrops {
-	c := &connDrops{live: make(map[*droppableConn]struct{})}
+// the bot runs, to drop the connections of the recorder at its place in
+// RECORDER_TOKENS.
+func watchDrops(file string, recorder int) *connDrops {
+	c := &connDrops{recorder: recorder, live: make(map[*droppableConn]struct{})}
 	go func() {
 		defer utils.RecoverPanic("smoke-voice-drop")
 		present := false
@@ -241,11 +255,15 @@ func (c *connDrops) track(conn net.Conn, silentOnly bool) net.Conn {
 	return dc
 }
 
+// smokeDropMessage is the WARN the smoke hook logs each time it drops a
+// recorder's voice connections.
+const smokeDropMessage = "Smoke hook dropping voice connections"
+
 // dropAll drops every connection open now, the way mode says.
 func (c *connDrops) dropAll(mode dropMode) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	utils.Warn("Smoke hook dropping voice connections", "connections", len(c.live), "silent", mode == dropSilent)
+	utils.Warn(smokeDropMessage, "recorder", c.recorder, "connections", len(c.live), "silent", mode == dropSilent)
 	for dc := range c.live {
 		dc.drop(mode)
 	}

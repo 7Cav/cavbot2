@@ -3,12 +3,17 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -28,7 +33,13 @@ const (
 	stubNoPanel = "no-panel"
 	// stubCrash panics with stubCrashMessage before it is running.
 	stubCrash = "crash"
+	// stubLateLogin says what stubReady does, then stays up until SIGTERM,
+	// while each recorder whose first login failed logs in at a later try.
+	stubLateLogin = "late-login"
 )
+
+// stubWait bounds how long a test waits on the stub bot.
+const stubWait = 30 * time.Second
 
 const stubCrashMessage = "stub bot: start failed"
 
@@ -46,8 +57,9 @@ func TestMain(m *testing.M) {
 // runStubBot starts the way the bot does, as far as the supervisor reads it.
 // It sets up the bot's logger at LOG_LEVEL and logs a line of its own at each
 // level. It connects its recorders through voice.Connect, with Discord
-// refusing each token that starts with "refused". Then, as scenario says, it
-// logs the panel's line and the line that says the bot is running, and exits.
+// refusing each token that starts with "refused", and failing the first
+// login of each that starts with "late". Then, as scenario says, it logs the
+// panel's line and the line that says the bot is running, and exits.
 func runStubBot(scenario string) {
 	utils.InitLogger(os.Getenv("LOG_LEVEL"))
 	utils.Debug("Stub bot line")
@@ -55,14 +67,73 @@ func runStubBot(scenario string) {
 	utils.Warn("Stub bot line")
 	utils.Error("Stub bot line")
 	refused := func(token string) bool { return strings.HasPrefix(token, "refused") }
-	voice.Connect(os.Getenv("RECORDER_TOKENS"), openRefusing(refused)).Close()
+	recorders := voice.Connect(os.Getenv("RECORDER_TOKENS"), lateLogins(openRefusing(refused)))
+	defer recorders.Close()
 	if scenario == stubCrash {
 		panic(stubCrashMessage)
 	}
-	if scenario == stubReady {
+	if scenario == stubReady || scenario == stubLateLogin {
 		utils.Info("Panel listening", "addr", panelAddr)
 	}
 	utils.Info("Bot is now running. Press CTRL-C to exit")
+	if scenario == stubLateLogin {
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, syscall.SIGTERM)
+		<-stop
+	}
+}
+
+// lateDiscord fails the first login of each token that starts with "late",
+// though Discord reads its user ID, so its recorder logs in at a later try.
+// It hands every other call to Opener.
+type lateDiscord struct {
+	voice.Opener
+
+	mu    sync.Mutex
+	tried map[string]bool
+}
+
+func lateLogins(d voice.Opener) voice.Opener {
+	return &lateDiscord{Opener: d, tried: map[string]bool{}}
+}
+
+func (d *lateDiscord) Open(recorder int, token string) (voice.GatewaySession, error) {
+	d.mu.Lock()
+	first := !d.tried[token]
+	d.tried[token] = true
+	d.mu.Unlock()
+	if first && strings.HasPrefix(token, "late") {
+		return nil, errors.New("websocket: close 4000: Unknown error.")
+	}
+	return d.Opener.Open(recorder, token)
+}
+
+func (d *lateDiscord) UserID(ctx context.Context, token string) (string, error) {
+	if strings.HasPrefix(token, "late") {
+		return "2000", nil
+	}
+	return d.Opener.UserID(ctx, token)
+}
+
+// newStubSupervisor is a supervisor whose bot binary is this test binary.
+func newStubSupervisor(t *testing.T) *supervisor {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &supervisor{paths: statePaths{t.TempDir()}}
+	if err := os.Symlink(exe, s.paths.binary()); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// stubEnv makes a bot the supervisor launches the stub doing scenario.
+func stubEnv(scenario string) []string {
+	// Without atexit_sleep_ms=0, a stub built with -race waits a second as it
+	// exits.
+	return []string{stubBotScenario + "=" + scenario, "GORACE=atexit_sleep_ms=0"}
 }
 
 // launchStub runs the supervisor's bot launch on the stub bot doing scenario,
@@ -71,14 +142,7 @@ func runStubBot(scenario string) {
 // whether the bot got ready, and what the supervisor printed.
 func launchStub(t *testing.T, scenario string, env []string) (s *supervisor, ready bool, printed string) {
 	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	s = &supervisor{paths: statePaths{t.TempDir()}}
-	if err := os.Symlink(exe, s.paths.binary()); err != nil {
-		t.Fatal(err)
-	}
+	s = newStubSupervisor(t)
 	out, err := os.Create(filepath.Join(t.TempDir(), "supervisor.log"))
 	if err != nil {
 		t.Fatal(err)
@@ -87,16 +151,13 @@ func launchStub(t *testing.T, scenario string, env []string) (s *supervisor, rea
 
 	prevStdout := os.Stdout
 	os.Stdout = out
-	// Without atexit_sleep_ms=0, a stub built with -race waits a second as it
-	// exits.
-	stub := []string{stubBotScenario + "=" + scenario, "GORACE=atexit_sleep_ms=0"}
-	readyCh, err := s.startBot(append(stub, env...))
+	readyCh, err := s.startBot(append(stubEnv(scenario), env...))
 	if err == nil {
 		select {
 		case <-s.logDone:
-		case <-time.After(30 * time.Second):
+		case <-time.After(stubWait):
 			_ = s.bot.Process.Kill()
-			err = errors.New("the stub bot's output did not end within 30 s")
+			err = fmt.Errorf("the stub bot's output did not end within %s", stubWait)
 		}
 		<-s.botDone
 	}
@@ -115,6 +176,31 @@ func launchStub(t *testing.T, scenario string, env []string) (s *supervisor, rea
 		t.Fatal(err)
 	}
 	return s, ready, string(b)
+}
+
+// superviseStub launches the stub bot doing scenario, with env as a run
+// builds it, and watches it as the supervisor does once the bot has
+// started, until the test ends and stops the run. It returns the
+// supervisor, for the run file its watch keeps.
+func superviseStub(t *testing.T, scenario string, env []string) *supervisor {
+	t.Helper()
+	s := newStubSupervisor(t)
+	ready, err := s.startBot(append(stubEnv(scenario), env...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		_ = s.watchBot(ctx, ready)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-watched
+		s.teardown()
+	})
+	return s
 }
 
 func TestUpGetsReadyAtAQuietLogLevel(t *testing.T) {
@@ -232,5 +318,23 @@ func TestBotThatExitsBeforeReadyLeavesItsPanicInTheBotLog(t *testing.T) {
 				t.Errorf("bot log lacks the panic %q:\n%s", stubCrashMessage, b)
 			}
 		})
+	}
+}
+
+// A recorder whose first login failed is offline when the bot says it is
+// running, and logs in at a later try. The run file, which status prints
+// its recorders line from, counts it from then on, while the bot runs.
+func TestRunFileCountsARecorderThatConnectsAfterTheBotIsRunning(t *testing.T) {
+	s := superviseStub(t, stubLateLogin, []string{"RECORDER_TOKENS=late-a"})
+
+	want := recorderTally{Connected: 1}
+	var got recorderTally
+	if !eventually(stubWait, func() bool {
+		if st, ok := readRun(s.paths.runFile()); ok && st.Recording != nil {
+			got = st.Recording.Recorders
+		}
+		return reflect.DeepEqual(got, want)
+	}) {
+		t.Errorf("run file's tally %+v after %s, want %+v", got, stubWait, want)
 	}
 }
