@@ -11,7 +11,9 @@ import (
 // discordgo to disgo, which needs one to connect to the voice gateway. An
 // empty channel is the recorder leaving. disgo reopens a dropped voice
 // connection with the self mute and deafen the last one carried, so both go
-// across. false when an ID doesn't parse.
+// across. So does a moderator's server deafen, which the recorder's
+// connection reads (recorderConn.HandleVoiceStateUpdate). false when an ID
+// doesn't parse.
 func voiceStateEvent(e *discordgo.VoiceStateUpdate) (gateway.EventVoiceStateUpdate, bool) {
 	guildID, err := snowflake.Parse(e.GuildID)
 	if err != nil {
@@ -34,6 +36,7 @@ func voiceStateEvent(e *discordgo.VoiceStateUpdate) (gateway.EventVoiceStateUpda
 		ChannelID: channelID,
 		UserID:    userID,
 		SessionID: e.SessionID,
+		GuildDeaf: e.Deaf,
 		SelfMute:  e.SelfMute,
 		SelfDeaf:  e.SelfDeaf,
 	}}, true

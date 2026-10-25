@@ -218,6 +218,10 @@ func (c *fakeVoiceConn) OwnLeaves() int { return 0 }
 
 func (c *fakeVoiceConn) GapReport() voice.GapReport { return voice.GapReport{} }
 
+func (c *fakeVoiceConn) Deafened() bool { return false }
+
+func (c *fakeVoiceConn) Undeafened(context.Context) error { return nil }
+
 func (c *fakeVoiceConn) Receive(l voice.Listener) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

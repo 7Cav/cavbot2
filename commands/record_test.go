@@ -278,6 +278,10 @@ func (c *fakeVoiceConn) Leave(context.Context) {
 	c.left, c.leaving = true, false
 }
 
+func (c *fakeVoiceConn) Deafened() bool { return false }
+
+func (c *fakeVoiceConn) Undeafened(context.Context) error { return nil }
+
 func (c *fakeVoiceConn) OwnLeaves() int {
 	c.v.mu.Lock()
 	defer c.v.mu.Unlock()

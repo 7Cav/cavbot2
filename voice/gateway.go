@@ -403,6 +403,11 @@ type recorderConn struct {
 	// leaveAnswered closes once Discord answers the rejoin's own leave, nil
 	// while no such leave is out.
 	leaveAnswered chan struct{}
+	// deafenedAt is when the recorder's own voice state started saying it
+	// is server-deafened, zero while it doesn't, and undeafened closes once
+	// it stops, nil while it doesn't.
+	deafenedAt time.Time
+	undeafened chan struct{}
 }
 
 // errConnClosed is what disgo gets for a voice state update on a connection
@@ -663,10 +668,11 @@ func (c *recorderConn) HandleVoiceServerUpdate(e gateway.EventVoiceServerUpdate)
 	c.Conn.HandleVoiceServerUpdate(e)
 }
 
-// HandleVoiceStateUpdate hands disgo a voice state. When it is Discord's
-// answer to a join and disgo dropped the voice server, the answer may still
-// name another. If it names none within answerWait, disgo gets the dropped
-// server again and connects there.
+// HandleVoiceStateUpdate hands disgo a voice state, and notes whether the
+// recorder's own has it server-deafened. When it is Discord's answer to a
+// join and disgo dropped the voice server, the answer may still name
+// another. If it names none within answerWait, disgo gets the dropped server
+// again and connects there.
 func (c *recorderConn) HandleVoiceStateUpdate(e gateway.EventVoiceStateUpdate) {
 	c.Conn.HandleVoiceStateUpdate(e)
 	if e.GuildID != c.guildID || e.UserID != c.userID {
@@ -674,6 +680,7 @@ func (c *recorderConn) HandleVoiceStateUpdate(e gateway.EventVoiceStateUpdate) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.noteDeafenLocked(e.GuildDeaf)
 	if e.ChannelID == nil {
 		if c.leaveAnswered != nil {
 			// Discord's answer to the rejoin's own leave, which a join
@@ -688,6 +695,43 @@ func (c *recorderConn) HandleVoiceStateUpdate(e gateway.EventVoiceStateUpdate) {
 	}
 	if dropped := c.droppedServer; dropped != nil {
 		time.AfterFunc(answerWait, func() { c.redeliver(dropped) })
+	}
+}
+
+// noteDeafenLocked notes the server deafen the recorder's own voice state
+// carries: Discord sends a deafened recorder no audio. Caller holds mu.
+func (c *recorderConn) noteDeafenLocked(deaf bool) {
+	switch {
+	case deaf && c.undeafened == nil:
+		c.deafenedAt, c.undeafened = time.Now(), make(chan struct{})
+	case !deaf && c.undeafened != nil:
+		close(c.undeafened)
+		c.deafenedAt, c.undeafened = time.Time{}, nil
+	}
+}
+
+// deafened is when the recorder's own voice state started saying it is
+// server-deafened, zero while it doesn't.
+func (c *recorderConn) deafened() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.deafenedAt
+}
+
+// waitUndeafened returns once the recorder's own voice state no longer says
+// it is server-deafened, or with ctx's error when ctx ends first.
+func (c *recorderConn) waitUndeafened(ctx context.Context) error {
+	c.mu.Lock()
+	undeafened := c.undeafened
+	c.mu.Unlock()
+	if undeafened == nil {
+		return nil
+	}
+	select {
+	case <-undeafened:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -1563,6 +1607,16 @@ func (c callConn) recovery() *recoveryLog {
 	return new(recoveryLog)
 }
 
+// deafened is when the recorder's own voice state started saying it is
+// server-deafened, zero while it doesn't, and always on a connection the
+// recorder's connection options didn't build.
+func (c callConn) deafened() time.Time {
+	if rc, ok := c.Conn.(*recorderConn); ok {
+		return rc.deafened()
+	}
+	return time.Time{}
+}
+
 // datagrams is the connection's UDP connection.
 func (c callConn) datagrams() datagramReader { return datagramsOf(c.Conn) }
 
@@ -1621,6 +1675,22 @@ func (c *disgoConn) GapReport() GapReport {
 		return GapReport{}
 	}
 	return rcv.report()
+}
+
+// Deafened reports whether the recorder's own voice state has it
+// server-deafened now.
+func (c *disgoConn) Deafened() bool {
+	rc, ok := c.conn.(*recorderConn)
+	return ok && !rc.deafened().IsZero()
+}
+
+// Undeafened returns once the recorder's own voice state no longer has it
+// server-deafened, or with ctx's error when ctx ends first.
+func (c *disgoConn) Undeafened(ctx context.Context) error {
+	if rc, ok := c.conn.(*recorderConn); ok {
+		return rc.waitUndeafened(ctx)
+	}
+	return nil
 }
 
 // Leave stops the receiver, so no frame is handed over after it returns,

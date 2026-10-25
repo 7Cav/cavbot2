@@ -455,6 +455,10 @@ type callHarness struct {
 	// no voice server.
 	answerDelay, nameDelay atomic.Int64
 	stateOnly              atomic.Bool
+	// deafened has the recorder's voice state in Discord's answers to a
+	// join carry a server deafen, as a moderator's deafen in an earlier
+	// call leaves it.
+	deafened atomic.Bool
 
 	opened chan gatewayOpen
 	// connected is the gateway the recorder is connected through.
@@ -728,8 +732,9 @@ func (h *callHarness) updateVoiceState(ctx context.Context, guildID snowflake.ID
 }
 
 // answer is Discord's answer to the recorder joining a channel, after
-// answerDelay: its voice state, then, nameDelay later, the voice server now
-// serving the call, unless stateOnly. Discord has the recorder in the
+// answerDelay: its voice state, through the session's discordgo handler,
+// then, nameDelay later, the voice server now serving the call, unless
+// stateOnly. Discord has the recorder in the
 // channel already when it rejoins after a drop, and then names no server
 // unless the call moved off the one it named last, as #786's smoke pass saw.
 func (h *callHarness) answer(channelID snowflake.ID) {
@@ -739,7 +744,7 @@ func (h *callHarness) answer(channelID snowflake.ID) {
 	fresh := !h.inChannel || serving != h.named
 	h.inChannel = true
 	h.mu.Unlock()
-	h.s.voice.HandleVoiceStateUpdate(recorderVoiceState(channelID))
+	h.s.onVoiceStateUpdate(recorderVoiceStateUpdate(channelID, h.deafened.Load()))
 	if fresh && !h.stateOnly.Load() {
 		time.Sleep(time.Duration(h.nameDelay.Load()))
 		h.name(token, serving)
@@ -830,6 +835,16 @@ func (h *callHarness) sent() []voiceUpdate {
 func recorderVoiceState(channelID snowflake.ID) gateway.EventVoiceStateUpdate {
 	return gateway.EventVoiceStateUpdate{VoiceState: discord.VoiceState{
 		GuildID: callGuild, ChannelID: &channelID, UserID: callRecorder, SessionID: "sess-1", SelfMute: true,
+	}}
+}
+
+// recorderVoiceStateUpdate is the recorder's voice state in a channel as
+// discordgo hands it to the recorder's session: self-muted and not
+// self-deafened, as the recorder joins, and server-deafened when deaf.
+func recorderVoiceStateUpdate(channelID snowflake.ID, deaf bool) *discordgo.VoiceStateUpdate {
+	return &discordgo.VoiceStateUpdate{VoiceState: &discordgo.VoiceState{
+		GuildID: callGuild.String(), ChannelID: channelID.String(), UserID: callRecorder.String(),
+		SessionID: "sess-1", SelfMute: true, Deaf: deaf,
 	}}
 }
 
