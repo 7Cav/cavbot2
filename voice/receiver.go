@@ -46,6 +46,8 @@ type receiveConn interface {
 	// reconnect opens a fresh voice connection in the call, which starts
 	// DAVE over, and returns once it has opened, or with ctx's error.
 	reconnect(ctx context.Context) error
+	// recovery is the log of the recovery steps the connection takes.
+	recovery() *recoveryLog
 }
 
 const (
@@ -265,8 +267,9 @@ func (r *receiver) watchGap(hearing bool) {
 
 // startGap tells the listener a gap started, as start says, unless one is
 // running already or start names no cause yet, as a dropped connection's
-// can take a lookup to. The gap keeps that cause until it ends. loss is
-// the number of the connection's loss start is, zero for none.
+// can take a lookup to. The gap keeps that cause until it ends, and its
+// report lists the recovery steps from its start on. loss is the number of
+// the connection's loss start is, zero for none.
 func (r *receiver) startGap(start gapStart, loss int) {
 	if r.inGap || start.cause == causeNotKnown {
 		return
@@ -275,13 +278,15 @@ func (r *receiver) startGap(start gapStart, loss int) {
 	r.mu.Lock()
 	r.gap, r.gapLoss = start, loss
 	r.mu.Unlock()
+	r.conn.recovery().from(start.at)
 	r.listener.GapStarted(start.at, start.cause)
 }
 
 // report is what the recorder knows now of the gap the listener was last
-// told of, the cause's own fields measured now. A loss's close can reach
-// the connection after the receiver told of its gap (closeObserved), so a
-// gap whose loss is still the connection's latest reads it afresh.
+// told of, the cause's own fields measured now, and the recovery steps since
+// its start. A loss's close can reach the connection after the receiver told
+// of its gap (closeObserved), so a gap whose loss is still the connection's
+// latest reads it afresh.
 func (r *receiver) report() GapReport {
 	r.mu.Lock()
 	gap, loss, held := r.gap, r.gapLoss, r.heldUntil.Sub(r.heldSince)
@@ -299,6 +304,7 @@ func (r *receiver) report() GapReport {
 		GatewaySessionOnline: r.conn.sessionOnline(),
 		Fields:               gap.fields(namedLast, held),
 	}
+	rep.Steps, rep.EarlierSteps = r.conn.recovery().report(gap.at)
 	if gap.cause == GapVoiceGatewayClosed {
 		rep.Close = gap.close
 	}

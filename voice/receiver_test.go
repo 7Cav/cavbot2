@@ -51,6 +51,7 @@ type fakeReceiveConn struct {
 	down       bool
 	lost       gapStart
 	losses     int
+	steps      recoveryLog
 }
 
 func newFakeReceiveConn() *fakeReceiveConn {
@@ -106,6 +107,8 @@ func (c *fakeReceiveConn) restore() {
 func (c *fakeReceiveConn) server() string { return "c-dfw-1.discord.media:443" }
 
 func (c *fakeReceiveConn) sessionOnline() bool { return true }
+
+func (c *fakeReceiveConn) recovery() *recoveryLog { return &c.steps }
 
 func (c *fakeReceiveConn) reconnect(context.Context) error {
 	c.mu.Lock()

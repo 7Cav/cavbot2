@@ -201,6 +201,7 @@ func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc, logger 
 			g := &renewableGateway{
 				named:   c.namedLast,
 				refused: func(state disgovoice.State, err error) { c.refused(state, err) },
+				steps:   &c.steps,
 			}
 			g.onDrop = c.watchClose(g, onClose)
 			g.build = func() disgovoice.Gateway {
@@ -289,6 +290,8 @@ type recorderConn struct {
 	// ownLeaves counts the rejoin's own leaves, each from just before it
 	// goes out.
 	ownLeaves atomic.Int32
+	// steps is the recovery steps the connection has taken.
+	steps recoveryLog
 
 	mu sync.Mutex
 	// lastServer is the last voice server Discord named for the call.
@@ -348,7 +351,7 @@ var errHeldTokenRefused = errors.New("voice: the voice server refused the token 
 // rejoinRetry, so the recorder rejoins once its gateway is back. When the
 // voice server refuses the token the recorder held, the rejoin leaves the
 // channel and joins it again.
-func (c *recorderConn) rejoin() bool {
+func (c *recorderConn) rejoin() (rejoined bool) {
 	_ = c.UDP().Close()
 	channelID := c.ChannelID()
 	if channelID == nil {
@@ -364,6 +367,8 @@ func (c *recorderConn) rejoin() bool {
 	c.stopRejoin = cancel
 	c.mu.Unlock()
 	defer c.cancelRejoin()
+	step := c.steps.start(StepRejoin, "")
+	defer func() { c.steps.end(step, outcomeOf(rejoined), nil) }()
 	for {
 		attempt, refuse := context.WithCancelCause(ctx)
 		c.mu.Lock()
@@ -409,7 +414,9 @@ func waitToRetry(ctx context.Context) bool {
 // Discord answers with a voice server and a new token. It returns once
 // Discord has answered the leave, false when ctx ends first. A leave that
 // can't go out it sends again every rejoinRetry.
-func (c *recorderConn) leaveToJoinAgain(ctx context.Context) bool {
+func (c *recorderConn) leaveToJoinAgain(ctx context.Context) (left bool) {
+	step := c.steps.start(StepLeaveToJoinAgain, "")
+	defer func() { c.steps.end(step, outcomeOf(left), nil) }()
 	c.gateway.renew(GapVoiceGatewayClosed)
 	answered := make(chan struct{})
 	c.mu.Lock()
@@ -442,7 +449,18 @@ func (c *recorderConn) leave(ctx context.Context) error {
 	if c.closed.Load() {
 		return errConnClosed
 	}
-	return c.update(ctx, c.guildID, nil, false, false)
+	return c.sendVoiceState(ctx, c.guildID, nil, false, false)
+}
+
+// sendVoiceState sends a voice state update on the recorder's own session.
+// One that couldn't go out, as while the session is offline, is a recovery
+// step that failed.
+func (c *recorderConn) sendVoiceState(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
+	err := c.update(ctx, guildID, channelID, selfMute, selfDeaf)
+	if err != nil {
+		c.steps.failed(StepVoiceStateUpdate, err)
+	}
+	return err
 }
 
 // refused notes that a voice server closed the connection before its
@@ -493,7 +511,7 @@ func (c *recorderConn) updateVoiceState(ctx context.Context, guildID snowflake.I
 	default:
 		c.joinStarted()
 	}
-	return c.update(ctx, guildID, channelID, selfMute, selfDeaf)
+	return c.sendVoiceState(ctx, guildID, channelID, selfMute, selfDeaf)
 }
 
 // joinStarted notes disgo starting a join, which throws away the voice
@@ -634,6 +652,11 @@ type renewableGateway struct {
 	// disgo hands the close handler only as its refused resume when it
 	// would resume from it.
 	observed observedClose
+	// steps is the log each dial is noted in. connectedWith is the token
+	// the gateway last connected with: a dial with it dials with the token
+	// the recorder held.
+	steps         *recoveryLog
+	connectedWith string
 
 	// onDrop is the close handler of every gateway built, which a voice
 	// server gone silent reaches as a close.
@@ -871,7 +894,7 @@ func (g *renewableGateway) described(gw disgovoice.Gateway) {
 		return
 	}
 	if e == nil || dialedAt(g.state, *e) {
-		g.connected = true
+		g.connected, g.connectedWith = true, g.state.Token
 		g.watchLocked(gw)
 	} else {
 		g.disconnectLocked(gapStart{at: time.Now(), cause: GapCallMoved})
@@ -974,10 +997,13 @@ var errDialPanicked = errors.New("voice: opening the voice gateway panicked")
 // that gateway closes, and a new one dials the server named last. A voice
 // server that closes the connection before its Ready ends the dialing, and
 // one that closes it refusing the identify's token is heard of (refused).
+// Each dial is a recovery step, which only a connection at the server
+// Discord named last makes succeed.
 func (g *renewableGateway) dialUntilOpen(ctx context.Context, state disgovoice.State) error {
 	for {
 		dial, redial := context.WithCancel(ctx)
 		gw, at, described := g.startDial(state, redial)
+		step := g.steps.start(StepDial, g.dialTokenOf(at))
 		err := gw.Open(context.WithValue(dial, ownDial{}, true), at)
 		if err == nil {
 			select {
@@ -988,20 +1014,40 @@ func (g *renewableGateway) dialUntilOpen(ctx context.Context, state disgovoice.S
 		redialed := dial.Err() != nil && ctx.Err() == nil
 		g.dialEnded()
 		redial()
+		ended := func(outcome StepOutcome) { g.steps.end(step, outcome, err) }
 		switch {
 		case err == nil && ctx.Err() != nil:
+			ended(StepFailed)
 			return ctx.Err()
 		case err == nil && g.namedLastIs(at):
+			ended(StepSucceeded)
 			return nil
 		case err == nil:
+			ended(StepFailed)
 			g.replace(gw)
 		case !redialed:
 			if ctx.Err() == nil && refusesIdentify(err) {
+				ended(StepRefused)
 				g.refused(at, err)
+			} else {
+				ended(StepFailed)
 			}
 			return err
+		default:
+			ended(StepFailed)
 		}
 	}
+}
+
+// dialTokenOf says whether a dial of state dials with the token the gateway
+// last connected with.
+func (g *renewableGateway) dialTokenOf(state disgovoice.State) DialToken {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if state.Token == g.connectedWith {
+		return TokenHeld
+	}
+	return TokenNew
 }
 
 // namedLastIs reports whether state is at the voice server Discord named
@@ -1083,14 +1129,18 @@ func (g *renewableGateway) channel() snowflake.ID {
 // starts DAVE over. The close is on purpose, so disgo's close handler hears
 // nothing of it. It carries the code disgo's gateway closes with before it
 // reconnects, not 1000: on Discord's main gateway, a 1000 ends the session
-// the new connection identifies with.
+// the new connection identifies with. The fresh connection is a recovery
+// step.
 func (g *renewableGateway) reopen(ctx context.Context) error {
+	step := g.steps.start(StepFreshConnection, "")
 	g.mu.Lock()
 	old, state := g.gw, g.state
 	g.renewLocked(GapDAVEStalled)
 	g.mu.Unlock()
 	old.CloseWithCode(websocket.CloseServiceRestart, "starting DAVE over")
-	return g.Open(ctx, state)
+	err := g.Open(ctx, state)
+	g.steps.end(step, outcomeOf(err == nil), err)
+	return err
 }
 
 // Close ends any dialing, then closes the gateway: disgo closes it when the
@@ -1340,6 +1390,16 @@ func (c callConn) server() string {
 func (c callConn) sessionOnline() bool {
 	rc, ok := c.Conn.(*recorderConn)
 	return ok && rc.s.online()
+}
+
+// recovery is the log of the recorder connection's recovery steps, and an
+// empty one on a connection the recorder's connection options didn't
+// build.
+func (c callConn) recovery() *recoveryLog {
+	if rc, ok := c.Conn.(*recorderConn); ok {
+		return &rc.steps
+	}
+	return new(recoveryLog)
 }
 
 // reconnect opens a fresh voice connection where the call is, through the

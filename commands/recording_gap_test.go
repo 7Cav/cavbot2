@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -813,6 +814,51 @@ func TestRecordingCutShortEventCarriesTheGapsExtras(t *testing.T) {
 		if d, err := time.ParseDuration(text); err != nil || d != want || text != want.String() {
 			t.Errorf("extra %s = %v, want %v as Go duration text", key, extras[key], want)
 		}
+	}
+}
+
+// A cut short's event lists the recovery steps the voice adapter reports,
+// in its order, so the last still says what was under way at the 10 s mark.
+// Each entry gives the step's kind, a dial's token, when it started from
+// the gap's start, and how it ended, with the code of the voice gateway close that ended it
+// when one did. The entries are read as Sentry reads the event, in JSON.
+func TestRecordingCutShortEventListsTheRecoverySteps(t *testing.T) {
+	events := recordSentry(t)
+	sc := newRecordScene(t, testRecorder)
+	const dialAt = 1234600 * time.Microsecond
+
+	sc.cutShortBy(t, voice.GapVoiceGatewayClosed, voice.GapReport{Steps: []voice.RecoveryStep{
+		{Kind: voice.StepDial, Token: voice.TokenHeld, At: dialAt, Outcome: voice.StepRefused, CloseCode: "4004"},
+		{Kind: voice.StepRejoin, Outcome: voice.StepUnderWay},
+	}})
+
+	got := events.Events()
+	if len(got) != 1 {
+		t.Fatalf("Sentry events = %d, want one", len(got))
+	}
+	raw, err := json.Marshal(got[0].Contexts["extra"]["attempts"])
+	var attempts []map[string]any
+	if err == nil {
+		err = json.Unmarshal(raw, &attempts)
+	}
+	if err != nil || len(attempts) != 2 {
+		t.Fatalf("extra attempts = %s (%v), want the 2 steps the voice adapter reported", raw, err)
+	}
+	dial, rejoin := attempts[0], attempts[1]
+	if dial["kind"] != string(voice.StepDial) || dial["token"] != string(voice.TokenHeld) || dial["outcome"] != string(voice.StepRefused) {
+		t.Errorf("first attempt = %v, want the %s with the %s token that was %s", dial, voice.StepDial, voice.TokenHeld, voice.StepRefused)
+	}
+	if rejoin["kind"] != string(voice.StepRejoin) || rejoin["outcome"] != string(voice.StepUnderWay) {
+		t.Errorf("last attempt = %v, want the %s still %s", rejoin, voice.StepRejoin, voice.StepUnderWay)
+	}
+	if at, err := time.ParseDuration(fmt.Sprint(dial["at"])); err != nil || (at-dialAt).Abs() >= time.Millisecond {
+		t.Errorf("dial's at = %v, want %v from the gap's start as Go duration text", dial["at"], dialAt)
+	}
+	if code := fmt.Sprint(dial["close_code"]); code != "4004" {
+		t.Errorf("dial's close_code = %v, want 4004", dial["close_code"])
+	}
+	if code, ok := rejoin["close_code"]; ok {
+		t.Errorf("rejoin's close_code = %v, want none, since no close ended it", code)
 	}
 }
 
