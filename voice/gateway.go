@@ -50,6 +50,8 @@ type Discord struct {
 	// watches is each recorder's gateway outage watch, by its place in
 	// RECORDER_TOKENS. One watch reads each of a recorder's logins in turn.
 	watches map[int]*utils.GatewayWatch
+	// named is each recorder whose watch names it by its user ID.
+	named map[int]bool
 }
 
 // watch is the recorder's gateway outage watch. The recorder's first login
@@ -68,6 +70,21 @@ func (d *Discord) watch(recorder int) *utils.GatewayWatch {
 	}
 	d.watches[recorder] = w
 	return w
+}
+
+// name has the recorder's watch name it by its user ID, which READY tells,
+// once for all of its logins, since the ID is the account's.
+func (d *Discord) name(recorder int, userID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.named[recorder] {
+		return
+	}
+	if d.named == nil {
+		d.named = map[int]bool{}
+	}
+	d.named[recorder] = true
+	d.watches[recorder].AddPairs("user_id", userID)
 }
 
 // UserID reads the recorder account's user ID from GET /users/@me with its
@@ -112,7 +129,8 @@ func (d *Discord) Open(recorder int, token string) (GatewaySession, error) {
 	if err != nil {
 		return nil, s.failedOpen(err)
 	}
-	s.named(dg.State.User.ID)
+	s.userID = dg.State.User.ID
+	d.name(recorder, s.userID)
 	// Closures rather than method values here and below: the gate's error
 	// data check follows a closure, and not a method value.
 	updateVoiceState := func(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
@@ -1588,11 +1606,4 @@ func (s *discordgoSession) onVoiceServerUpdate(e *discordgo.VoiceServerUpdate) {
 // RECORDER_TOKENS, which reads none of its sessions yet.
 func recorderWatch(recorder int, after time.Duration) *utils.GatewayWatch {
 	return utils.NewGatewayWatch(after, "session", "recorder", "recorder", recorder)
-}
-
-// named records the recorder's user ID, which READY tells, and has the
-// watch name the recorder by it.
-func (s *discordgoSession) named(userID string) {
-	s.userID = userID
-	s.watch.AddPairs("user_id", userID)
 }

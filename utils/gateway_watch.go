@@ -2,7 +2,6 @@ package utils
 
 import (
 	"errors"
-	"slices"
 	"sync"
 	"time"
 
@@ -200,31 +199,12 @@ func (w *GatewayWatch) online(ws *watched) {
 }
 
 // AddPairs adds pairs that name the account, for what only READY tells,
-// such as a recorder's user ID. A key the pairs have already takes the new
-// value, so each of a recorder's logins names it once. It builds the pairs
-// anew, so those a report already read stay as they were.
+// such as a recorder's user ID. It builds the pairs anew, so those a report
+// already read stay as they were.
 func (w *GatewayWatch) AddPairs(kv ...any) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	pairs := slices.Clone(w.kv)
-	for i := 0; i+1 < len(kv); i += 2 {
-		if j := keyIndex(pairs, kv[i]); j >= 0 {
-			pairs[j+1] = kv[i+1]
-		} else {
-			pairs = append(pairs, kv[i], kv[i+1])
-		}
-	}
-	w.kv = pairs
-}
-
-// keyIndex is where key is in the pairs kv, -1 when it is in none of them.
-func keyIndex(kv []any, key any) int {
-	for j := 0; j+1 < len(kv); j += 2 {
-		if kv[j] == key {
-			return j
-		}
-	}
-	return -1
+	w.kv = append(w.kv[:len(w.kv):len(w.kv)], kv...)
 }
 
 // pairs is the pairs that name the session, as they stand.
