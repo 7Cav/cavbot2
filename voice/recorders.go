@@ -63,7 +63,75 @@ type GapReport struct {
 	// Fields are the cause's own, in a fixed order. A field the cause
 	// measures at the 10 s mark is measured when the report is read.
 	Fields []GapField
+	// Steps is the recovery steps the recorder took since the gap's start,
+	// the last stepsKept of them: those that ended, in the order they
+	// started, then those still under way, so the last says what was still
+	// under way when the report was read. EarlierSteps counts the steps
+	// before them.
+	Steps        []RecoveryStep
+	EarlierSteps int
 }
+
+// RecoveryStep is one step the recorder took during a gap to hear the
+// channel again.
+type RecoveryStep struct {
+	Kind StepKind
+	// Token is the voice server token a dial dialed with, empty for any
+	// other kind of step.
+	Token DialToken
+	// At is when the step started, from the gap's start.
+	At time.Duration
+	// Outcome is how the step ended, StepUnderWay while it hadn't.
+	Outcome StepOutcome
+	// CloseCode is the code of the voice gateway close that ended the
+	// step, empty when no close did.
+	CloseCode string
+}
+
+// StepKind names a kind of recovery step.
+type StepKind string
+
+// The kinds of recovery step.
+const (
+	// StepRejoin is a rejoin of the call's channel, after its voice
+	// connection dropped.
+	StepRejoin StepKind = "rejoin"
+	// StepVoiceStateUpdate is a voice state update that couldn't go out,
+	// as while the recorder's own gateway session is offline.
+	StepVoiceStateUpdate StepKind = "voice_state_update"
+	// StepDial is a dial of a voice server.
+	StepDial StepKind = "dial"
+	// StepLeaveToJoinAgain is the leave that follows a voice server
+	// refusing the token the recorder held, so that it joins again for a
+	// new one.
+	StepLeaveToJoinAgain StepKind = "leave_to_join_again"
+	// StepFreshConnection is a fresh voice connection, which starts DAVE
+	// over.
+	StepFreshConnection StepKind = "fresh_connection"
+)
+
+// DialToken says which voice server token a dial dialed with.
+type DialToken string
+
+const (
+	// TokenHeld is a token the recorder has connected with before, and
+	// TokenNew one it never has.
+	TokenHeld DialToken = "held"
+	TokenNew  DialToken = "new"
+)
+
+// StepOutcome is how a recovery step ended.
+type StepOutcome string
+
+// The outcomes of a recovery step.
+const (
+	StepSucceeded StepOutcome = "succeeded"
+	StepFailed    StepOutcome = "failed"
+	// StepRefused is a voice server refusing the token or session a dial
+	// identified with.
+	StepRefused  StepOutcome = "refused"
+	StepUnderWay StepOutcome = "under_way"
+)
 
 // GapField is one of a gap cause's own fields. Value is a string, an int
 // or a time.Duration.

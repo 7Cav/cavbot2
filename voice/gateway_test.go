@@ -1854,6 +1854,109 @@ func TestRecorderStartsTheGapAtTheCloseWhenDisgoConnectsDuringTheLookup(t *testi
 	})
 }
 
+// A gap's report lists the recovery steps the recorder took since the
+// gap's start, each with how it ended. Here a minute into the recording the
+// voice gateway drops, and Discord takes 2 s to answer each join. Its
+// answer to the rejoin names no voice server, so the recorder dials with
+// the token it held, which the voice server refuses with 4004. The
+// recorder leaves and joins again, and connects with the new token
+// Discord's answer names. Each step is timed from the gap's start, so the
+// held dial comes no sooner than Discord's answer, and the join's own dial,
+// a minute before the gap, isn't listed.
+func TestRecorderReportsTheRecoveryStepsAfterARefusedHeldToken(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		conn := h.record(listen(nil))
+		defer h.hangUp(conn)
+		time.Sleep(time.Minute)
+		const answerTakes = 2 * time.Second
+		h.answerDelay.Store(int64(answerTakes))
+		h.refuse("token-2")
+		h.answerWith("token-4")
+
+		go h.endConnection(errResumeRefused)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		steps := conn.GapReport().Steps
+		for _, want := range []RecoveryStep{
+			{Kind: StepRejoin, Outcome: StepSucceeded},
+			{Kind: StepDial, Token: TokenHeld, Outcome: StepRefused, CloseCode: "4004"},
+			{Kind: StepLeaveToJoinAgain, Outcome: StepSucceeded},
+			{Kind: StepDial, Token: TokenNew, Outcome: StepSucceeded},
+		} {
+			if !slices.ContainsFunc(steps, func(s RecoveryStep) bool { return sameStep(s, want) }) {
+				t.Errorf("recovery steps = %+v, want one %+v", steps, want)
+			}
+		}
+		held := slices.IndexFunc(steps, func(s RecoveryStep) bool { return s.Kind == StepDial && s.Token == TokenHeld })
+		if held != -1 && (steps[held].At < answerTakes || steps[held].At >= time.Minute) {
+			t.Errorf("held dial at %v from the gap's start, want after Discord's answer at %v", steps[held].At, answerTakes)
+		}
+		if slices.ContainsFunc(steps, func(s RecoveryStep) bool { return s.At < 0 }) {
+			t.Errorf("recovery steps = %+v, want none from before the gap's start", steps)
+		}
+	})
+}
+
+// While the recorder's own gateway session is offline, no voice state
+// update can go out, so the rejoin after a drop waits for it. The gap's
+// report at the 10 s mark lists the updates that couldn't go out, and its
+// last entry says the rejoin was still under way.
+func TestRecorderReportsTheRejoinStillUnderWayWhileItsGatewayIsDown(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		conn := h.record(listen(nil))
+		defer h.hangUp(conn)
+		h.down.Store(true)
+
+		go h.closeCall(4006)
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+
+		steps := conn.GapReport().Steps
+		unsent := RecoveryStep{Kind: StepVoiceStateUpdate, Outcome: StepFailed}
+		if !slices.ContainsFunc(steps, func(s RecoveryStep) bool { return sameStep(s, unsent) }) {
+			t.Errorf("recovery steps = %+v, want a %+v", steps, unsent)
+		}
+		rejoin := RecoveryStep{Kind: StepRejoin, Outcome: StepUnderWay}
+		if len(steps) == 0 || !sameStep(steps[len(steps)-1], rejoin) {
+			t.Errorf("recovery steps = %+v, want the last a %+v", steps, rejoin)
+		}
+	})
+}
+
+// A DAVE setup that stalls starts a gap, and the recorder opens a fresh
+// voice connection to start DAVE over. The gap's report lists it, and how
+// it ended.
+func TestRecorderReportsTheFreshConnectionAfterAStall(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		conn := h.record(listen(nil))
+		defer h.hangUp(conn)
+
+		time.Sleep(stallAfter + time.Second)
+		synctest.Wait()
+
+		steps := conn.GapReport().Steps
+		fresh := RecoveryStep{Kind: StepFreshConnection, Outcome: StepSucceeded}
+		if !slices.ContainsFunc(steps, func(s RecoveryStep) bool { return sameStep(s, fresh) }) {
+			t.Errorf("recovery steps = %+v, want a %+v", steps, fresh)
+		}
+	})
+}
+
+// sameStep reports whether got is the step want names, wherever it came.
+func sameStep(got, want RecoveryStep) bool {
+	got.At = want.At
+	return got == want
+}
+
 // Discord can take the recorder out of the channel while the recorder asks
 // whether the channel is still there after a 4022. disgo then starts no
 // fresh connection, and the recorder is out as surely as after a rejoin
