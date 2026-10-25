@@ -1012,8 +1012,8 @@ func (w *testWorld) restartRecorder(t *testing.T) {
 }
 
 // The Recordings page tags a cut-short recording with what cut it short: a
-// restart, or a gap (#853). A recording that stopped as usual carries no
-// tag.
+// restart, or a gap (#853), and the two tags read apart. A recording that
+// stopped as usual carries no tag.
 func TestRecordingsPageTagsACutShortRecordingWithItsCause(t *testing.T) {
 	w := newTestWorld(t)
 	a := w.addStarter(5001, "Able.A", "discord-a")
@@ -1025,6 +1025,7 @@ func TestRecordingsPageTagsACutShortRecordingWithItsCause(t *testing.T) {
 
 	rows := listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))
 
+	tags := make(map[int64]string)
 	for id, wantTag := range map[int64]string{restarted: cutShortByRestartTag, gap: cutShortByGapTag, stopped: ""} {
 		row, ok := rows[id]
 		if !ok {
@@ -1040,6 +1041,12 @@ func TestRecordingsPageTagsACutShortRecordingWithItsCause(t *testing.T) {
 		case wantTag != "" && !strings.Contains(textOf(tag), wantTag):
 			t.Errorf("recording %d is tagged %q, want %q", id, textOf(tag), wantTag)
 		}
+		if tag != nil {
+			tags[id] = textOf(tag)
+		}
+	}
+	if tags[restarted] != "" && tags[restarted] == tags[gap] {
+		t.Errorf("a restart's and a gap's recordings are both tagged %q, want tags that tell the causes apart", tags[gap])
 	}
 }
 

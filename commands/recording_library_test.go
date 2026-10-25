@@ -600,8 +600,10 @@ func infoLine(t *testing.T, info []byte, name string) string {
 }
 
 // A cut-short recording's info file says what cut it short, a restart or a
-// gap, when it is rendered from the row as well (#853).
+// gap, when it is rendered from the row as well (#853), and the two read
+// apart.
 func TestRecordingInfoFileSaysWhatCutTheRecordingShort(t *testing.T) {
+	lines := make(map[store.RecordingEnd]string)
 	for end, want := range map[store.RecordingEnd]string{
 		store.RecordingEndRestart: infoEndedRestart,
 		store.RecordingEndGap:     infoEndedGap,
@@ -623,8 +625,11 @@ func TestRecordingInfoFileSaysWhatCutTheRecordingShort(t *testing.T) {
 				t.Fatalf("InfoFile: %v", err)
 			}
 
-			infoLine(t, info, want)
+			lines[end] = infoLine(t, info, want)
 		})
+	}
+	if restart := lines[store.RecordingEndRestart]; restart != "" && restart == lines[store.RecordingEndGap] {
+		t.Errorf("a restart's and a gap's info files both read %q, want lines that tell the causes apart", restart)
 	}
 }
 
