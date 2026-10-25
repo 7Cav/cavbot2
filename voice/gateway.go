@@ -699,7 +699,8 @@ func (c *recorderConn) HandleVoiceStateUpdate(e gateway.EventVoiceStateUpdate) {
 }
 
 // noteDeafenLocked notes the server deafen the recorder's own voice state
-// carries: Discord sends a deafened recorder no audio. Caller holds mu.
+// carries, since Discord sends a deafened recorder no audio. Caller holds
+// mu.
 func (c *recorderConn) noteDeafenLocked(deaf bool) {
 	switch {
 	case deaf && c.undeafened == nil:

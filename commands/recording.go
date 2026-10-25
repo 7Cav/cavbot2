@@ -99,6 +99,12 @@ var (
 // recorder logging back in isn't a fault.
 const recorderStillOfflineMessage = "Start refused, the recorder is still logging back in"
 
+// recorderJoinedDeafenedMessage is the INFO line of a start whose recorder
+// joined server-deafened, which it lifts. Discord keeps a moderator's
+// deafen of a recorder after it leaves. Sentry hears nothing, since the lift
+// is routine.
+const recorderJoinedDeafenedMessage = "Recorder joined deafened, lifting it"
+
 // errRecordingFailed is a start or stop that failed after the checks passed,
 // such as a recorder that couldn't join. The runtime has reported the
 // cause to Sentry.
@@ -166,6 +172,9 @@ type RecordingManager interface {
 	// GuildMemberMove is TempVCManager's. With no channel it disconnects a
 	// recorder the last process left in voice.
 	GuildMemberMove(guildID, userID string, channelID *string) error
+	// GuildMemberDeafen is TempVCManager's. It lifts a server deafen a
+	// recorder joined with.
+	GuildMemberDeafen(guildID, userID string, deaf bool) error
 }
 
 // RecordingRuntime holds the recordings running now. Built on every host
@@ -317,6 +326,15 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 		captureError("Recorder failed to join", err, "recorder", recorderID, "channel_id", channelID)
 		return "", errRecordingFailed
 	}
+	// A recorder still deafened records silence, so the start fails as a
+	// failed join does rather than tell the starter it records.
+	if conn.Deafened() {
+		if err := r.liftDeafen(joinCtx, conn, recorderID, channelID); err != nil {
+			r.releaseWhenLeft(recorderID, r.leave(conn, recorderID, channelID))
+			captureError("Recorder deafen not lifted", err, "recorder", recorderID, "channel_id", channelID)
+			return "", errRecordingFailed
+		}
+	}
 	// The notice is how the channel learns it is recorded, so a recording
 	// whose notice didn't post doesn't go on: the recorder leaves.
 	noticeID, err := r.postRecordingNotice(channelID, by.UserID, title)
@@ -366,6 +384,20 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	// now: the cache's view of it then counts as seen.
 	r.checkChannels()
 	return channelID, nil
+}
+
+// liftDeafen lifts the server deafen a recorder joined with, through the
+// bot's own session, and returns once the recorder's connection says it is
+// undeafened, or with ctx's error. Discord keeps a moderator's deafen of a
+// recorder after it leaves, so a deafen from an earlier recording would have
+// this one record silence. The bot never lifts a deafen put on during a
+// recording, since a person chose it.
+func (r *RecordingRuntime) liftDeafen(ctx context.Context, conn voice.Conn, recorderID, channelID string) error {
+	utils.Info(recorderJoinedDeafenedMessage, "recorder", recorderID, "channel_id", channelID)
+	if err := r.mgr.GuildMemberDeafen(r.guildID, recorderID, false); err != nil {
+		return err
+	}
+	return conn.Undeafened(ctx)
 }
 
 // Stop stops a recording the invoker may stop, and returns its channel.

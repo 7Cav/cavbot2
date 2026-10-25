@@ -29,7 +29,7 @@ import (
 // it watches the UDP socket, whose path can die while the voice gateway
 // still answers: once the voice server's receiver reports have started, a
 // socket that goes quiet drops the connection, and the recorder rejoins.
-// It counts what fails to decrypt: a run of failures with nothing decrypted
+// It counts what fails to decrypt. A run of failures with nothing decrypted
 // starts a gap, and the recorder starts DAVE over on a fresh voice
 // connection. Last, a server deafen is a gap from the deafen to the
 // undeafen, since Discord sends a deafened recorder no audio.

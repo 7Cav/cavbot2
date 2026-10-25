@@ -839,7 +839,7 @@ func recorderVoiceState(channelID snowflake.ID) gateway.EventVoiceStateUpdate {
 }
 
 // recorderVoiceStateUpdate is the recorder's voice state in a channel as
-// discordgo hands it to the recorder's session: self-muted and not
+// discordgo hands it to the recorder's session. It is self-muted and not
 // self-deafened, as the recorder joins, and server-deafened when deaf.
 func recorderVoiceStateUpdate(channelID snowflake.ID, deaf bool) *discordgo.VoiceStateUpdate {
 	return &discordgo.VoiceStateUpdate{VoiceState: &discordgo.VoiceState{

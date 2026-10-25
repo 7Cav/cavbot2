@@ -59,6 +59,9 @@ var (
 // logins after its first, and relogins is each relogin the runtime asked
 // for. A relogin brings its recorder back online at once, as a new login,
 // unless staysOffline is set.
+//
+// deafJoins has every join return a recorder that is server-deafened, until
+// undeafen.
 type fakeRecorderVoice struct {
 	mu           sync.Mutex
 	recorders    []string
@@ -72,6 +75,7 @@ type fakeRecorderVoice struct {
 	logins       map[string]int
 	relogins     []fakeRelogin
 	staysOffline bool
+	deafJoins    bool
 }
 
 // fakeRelogin is one relogin the runtime asked the fake voice adapter for:
@@ -90,7 +94,8 @@ type joinHold struct {
 
 // fakeVoiceConn is one recorder in one channel, until it leaves. leaving is
 // set while its leave runs. listener is what the runtime passed to Receive,
-// nil before it does. ownLeaves is what OwnLeaves reports.
+// nil before it does. ownLeaves is what OwnLeaves reports. undeafened closes
+// once the recorder is no longer server-deafened, nil while it isn't.
 type fakeVoiceConn struct {
 	v                     *fakeRecorderVoice
 	recorderID, channelID string
@@ -99,6 +104,7 @@ type fakeVoiceConn struct {
 	left, leaving bool
 	ownLeaves     int
 	listener      voice.Listener
+	undeafened    chan struct{}
 }
 
 func (v *fakeRecorderVoice) UserIDs() []string {
@@ -142,6 +148,9 @@ func (v *fakeRecorderVoice) Join(ctx context.Context, recorderID, guildID, chann
 		}
 	}
 	c := &fakeVoiceConn{v: v, recorderID: recorderID, channelID: channelID, login: login}
+	if v.deafJoins {
+		c.undeafened = make(chan struct{})
+	}
 	v.conns = append(v.conns, c)
 	hold := v.hold
 	v.hold = nil
@@ -278,9 +287,61 @@ func (c *fakeVoiceConn) Leave(context.Context) {
 	c.left, c.leaving = true, false
 }
 
-func (c *fakeVoiceConn) Deafened() bool { return false }
+func (c *fakeVoiceConn) Deafened() bool {
+	c.v.mu.Lock()
+	defer c.v.mu.Unlock()
+	return c.undeafened != nil
+}
 
-func (c *fakeVoiceConn) Undeafened(context.Context) error { return nil }
+func (c *fakeVoiceConn) Undeafened(ctx context.Context) error {
+	c.v.mu.Lock()
+	undeafened := c.undeafened
+	c.v.mu.Unlock()
+	if undeafened == nil {
+		return nil
+	}
+	select {
+	case <-undeafened:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// joinDeafened has every join from now on return a recorder that is
+// server-deafened, as Discord keeps a moderator's deafen across recordings.
+func (v *fakeRecorderVoice) joinDeafened() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.deafJoins = true
+}
+
+// deafen server-deafens a recorder where it is now, as a moderator does.
+// Its connections say it is deafened until undeafen.
+func (v *fakeRecorderVoice) deafen(recorderID string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, c := range v.conns {
+		if c.recorderID == recorderID && !c.left && c.undeafened == nil {
+			c.undeafened = make(chan struct{})
+		}
+	}
+}
+
+// undeafen lifts a recorder's server deafen, as its voice state tells once
+// Discord has. Its connections stop saying it is deafened, and joins from
+// now on return it undeafened.
+func (v *fakeRecorderVoice) undeafen(recorderID string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.deafJoins = false
+	for _, c := range v.conns {
+		if c.recorderID == recorderID && c.undeafened != nil {
+			close(c.undeafened)
+			c.undeafened = nil
+		}
+	}
+}
 
 func (c *fakeVoiceConn) OwnLeaves() int {
 	c.v.mu.Lock()

@@ -288,6 +288,10 @@ type TempVCManager interface {
 	// GuildMemberMove moves a member between voice channels with no retry on
 	// rate limit.
 	GuildMemberMove(guildID, userID string, channelID *string) error
+	// GuildMemberDeafen server-deafens a member, or lifts their deafen,
+	// with no retry on rate limit. The recording runtime lifts a deafen a
+	// recorder joined with through it.
+	GuildMemberDeafen(guildID, userID string, deaf bool) error
 	// ChannelMessageSendComplex posts a message to a channel's text chat with
 	// no retry on rate limit. The allowed mentions travel in data, so a test
 	// can read who a message may ping.
@@ -559,6 +563,10 @@ func (m *sessionTempVCManager) ChannelOverwritesReplace(channelID string, overwr
 
 func (m *sessionTempVCManager) GuildMemberMove(guildID, userID string, channelID *string) error {
 	return m.s.GuildMemberMove(guildID, userID, channelID, discordgo.WithRetryOnRatelimit(false))
+}
+
+func (m *sessionTempVCManager) GuildMemberDeafen(guildID, userID string, deaf bool) error {
+	return m.s.GuildMemberDeafen(guildID, userID, deaf, discordgo.WithRetryOnRatelimit(false))
 }
 
 func (m *sessionTempVCManager) ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend) (*discordgo.Message, error) {

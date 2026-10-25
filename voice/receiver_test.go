@@ -139,7 +139,7 @@ func (c *fakeReceiveConn) server() string { return "c-dfw-1.discord.media:443" }
 
 func (c *fakeReceiveConn) sessionOnline() bool { return true }
 
-// deafened is never: the call harness plays a server deafen.
+// deafened is never set here, since the call harness plays a server deafen.
 func (c *fakeReceiveConn) deafened() time.Time { return time.Time{} }
 
 func (c *fakeReceiveConn) recovery() *recoveryLog { return &c.steps }
