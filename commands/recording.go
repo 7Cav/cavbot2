@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -175,6 +176,10 @@ type RecordingRuntime struct {
 	mu sync.Mutex
 	// running maps each busy recorder's user ID to its recording.
 	running map[string]*activeRecording
+
+	// recordCommandID is /record's ID, empty until the startup sync has
+	// registered the commands.
+	recordCommandID atomic.Value
 }
 
 // activeRecording is one recording a recorder is busy with. conn is nil
@@ -243,6 +248,12 @@ func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guild
 	recordingAfterFunc(0, r.sweepRetention)
 	recordingAfterFunc(0, r.recoverWhenListed)
 	return r
+}
+
+// setRecordCommandID keeps /record's ID, which the startup sync hands over
+// once Discord has registered the commands.
+func (r *RecordingRuntime) setRecordCommandID(id string) {
+	r.recordCommandID.Store(id)
 }
 
 // Start starts a recording of the voice channel the invoker is in, with a

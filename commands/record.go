@@ -28,9 +28,10 @@ const recordCommandName = "record"
 const recordTitleLimit = 100
 
 // Record declares /record over the recording runtime, nil on a host with no
-// bot store.
+// bot store. The startup sync hands the runtime /record's ID, and the ping
+// of a cut-short recording uses it to mention /record start.
 func Record(rt *RecordingRuntime) Command {
-	return Command{
+	cmd := Command{
 		Definition: &discordgo.ApplicationCommand{
 			Name:        recordCommandName,
 			Description: "Record the voice channel you are in",
@@ -57,6 +58,10 @@ func Record(rt *RecordingRuntime) Command {
 			runRecord(utils.NewSessionResponder(s), rt, i)
 		},
 	}
+	if rt != nil {
+		cmd.OnRegistered = rt.setRecordCommandID
+	}
+	return cmd
 }
 
 // runRecord is the /record handler behind the responder seam. It defers an
