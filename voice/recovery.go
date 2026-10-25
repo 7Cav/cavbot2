@@ -21,19 +21,17 @@ type recoveryLog struct {
 	earlier int
 }
 
-// recoveryStep is one step in the log, under way until it ends.
+// recoveryStep is one step in the log, which started at at, under way
+// until it ends. Its At is set when a report times it.
 type recoveryStep struct {
-	kind      StepKind
-	token     DialToken
-	at        time.Time
-	outcome   StepOutcome
-	closeCode string
+	step RecoveryStep
+	at   time.Time
 }
 
 // start notes a step of kind starting now, with token for a dial, and
 // returns it, under way until end.
 func (l *recoveryLog) start(kind StepKind, token DialToken) *recoveryStep {
-	s := &recoveryStep{kind: kind, token: token, at: time.Now(), outcome: StepUnderWay}
+	s := &recoveryStep{step: RecoveryStep{Kind: kind, Token: token, Outcome: StepUnderWay}, at: time.Now()}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.steps = append(l.steps, s)
@@ -47,16 +45,16 @@ func (l *recoveryLog) start(kind StepKind, token DialToken) *recoveryStep {
 }
 
 // ended reports whether the step has ended. The log's mutex guards it.
-func (s *recoveryStep) ended() bool { return s.outcome != StepUnderWay }
+func (s *recoveryStep) ended() bool { return s.step.Outcome != StepUnderWay }
 
 // end notes s ending with outcome, by err. A step a voice gateway close
 // ended keeps the close's code.
 func (l *recoveryLog) end(s *recoveryStep, outcome StepOutcome, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	s.outcome = outcome
+	s.step.Outcome = outcome
 	if code := closeCode(err); code != CloseCodeNone {
-		s.closeCode = code
+		s.step.CloseCode = code
 	}
 }
 
@@ -83,7 +81,8 @@ func (l *recoveryLog) report(since time.Time) (steps []RecoveryStep, earlier int
 	defer l.mu.Unlock()
 	var underWay []RecoveryStep
 	for _, s := range l.steps {
-		step := RecoveryStep{Kind: s.kind, Token: s.token, At: s.at.Sub(since), Outcome: s.outcome, CloseCode: s.closeCode}
+		step := s.step
+		step.At = s.at.Sub(since)
 		if s.ended() {
 			steps = append(steps, step)
 		} else {

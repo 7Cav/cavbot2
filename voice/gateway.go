@@ -449,13 +449,13 @@ func (c *recorderConn) leave(ctx context.Context) error {
 	if c.closed.Load() {
 		return errConnClosed
 	}
-	return c.send(ctx, c.guildID, nil, false, false)
+	return c.sendVoiceState(ctx, c.guildID, nil, false, false)
 }
 
-// send sends a voice state update on the recorder's own session. One that
-// couldn't go out, as while the session is offline, is a recovery step
-// that failed.
-func (c *recorderConn) send(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
+// sendVoiceState sends a voice state update on the recorder's own session.
+// One that couldn't go out, as while the session is offline, is a recovery
+// step that failed.
+func (c *recorderConn) sendVoiceState(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
 	err := c.update(ctx, guildID, channelID, selfMute, selfDeaf)
 	if err != nil {
 		c.steps.failed(StepVoiceStateUpdate, err)
@@ -511,7 +511,7 @@ func (c *recorderConn) updateVoiceState(ctx context.Context, guildID snowflake.I
 	default:
 		c.joinStarted()
 	}
-	return c.send(ctx, guildID, channelID, selfMute, selfDeaf)
+	return c.sendVoiceState(ctx, guildID, channelID, selfMute, selfDeaf)
 }
 
 // joinStarted notes disgo starting a join, which throws away the voice
@@ -1003,7 +1003,7 @@ func (g *renewableGateway) dialUntilOpen(ctx context.Context, state disgovoice.S
 	for {
 		dial, redial := context.WithCancel(ctx)
 		gw, at, described := g.startDial(state, redial)
-		step := g.steps.start(StepDial, g.tokenOf(at))
+		step := g.steps.start(StepDial, g.dialTokenOf(at))
 		err := gw.Open(context.WithValue(dial, ownDial{}, true), at)
 		if err == nil {
 			select {
@@ -1029,9 +1029,9 @@ func (g *renewableGateway) dialUntilOpen(ctx context.Context, state disgovoice.S
 			if ctx.Err() == nil && refusesIdentify(err) {
 				ended(StepRefused)
 				g.refused(at, err)
-				return err
+			} else {
+				ended(StepFailed)
 			}
-			ended(StepFailed)
 			return err
 		default:
 			ended(StepFailed)
@@ -1039,9 +1039,9 @@ func (g *renewableGateway) dialUntilOpen(ctx context.Context, state disgovoice.S
 	}
 }
 
-// tokenOf says whether a dial of state dials with the token the gateway
+// dialTokenOf says whether a dial of state dials with the token the gateway
 // last connected with.
-func (g *renewableGateway) tokenOf(state disgovoice.State) DialToken {
+func (g *renewableGateway) dialTokenOf(state disgovoice.State) DialToken {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if state.Token == g.connectedWith {
