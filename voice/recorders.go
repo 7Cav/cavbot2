@@ -390,7 +390,7 @@ func (r *Recorders) logIn(rec *recorder, wait time.Duration) {
 			r.mu.Lock()
 			r.setStateLocked(rec, RecorderOut, nil)
 			r.mu.Unlock()
-			utils.Warn(loginRefusedMessage, append(rec.pairs(), "error", err)...)
+			utils.Warn(loginRefusedMessage, "recorder", rec.place, "user_id", rec.userID, "error", err)
 			return
 		}
 		if err != nil {
@@ -471,7 +471,7 @@ func (r *Recorders) logOut(rec *recorder, s GatewaySession) {
 		defer close(done)
 		defer utils.RecoverPanic("recorder-logout", "recorder", rec.place)
 		if err := s.Close(); err != nil {
-			utils.Warn("Recorder did not close cleanly", append(rec.pairs(), "error", err)...)
+			utils.Warn("Recorder did not close cleanly", "recorder", rec.place, "user_id", rec.userID, "error", err)
 		}
 	}()
 	timer := time.NewTimer(logoutTimeout)
@@ -486,11 +486,13 @@ func (r *Recorders) logOut(rec *recorder, s GatewaySession) {
 // loginFailed logs a failed login of the recorder, which tries again after
 // wait. The error goes to the log alone (ADR 0018).
 func (rec *recorder) loginFailed(wait time.Duration, err error) {
-	utils.Warn(loginFailedMessage, append(rec.pairs(), "retry_in", wait, "error", err)...)
+	utils.Warn(loginFailedMessage, "recorder", rec.place, "user_id", rec.userID, "retry_in", wait, "error", err)
 }
 
 // pairs names the recorder in a log line: its place in RECORDER_TOKENS and
-// its user ID, never its token.
+// its user ID, never its token. A line that carries an error writes them
+// out beside it, since the gate's error data check reads only an error
+// handed to the log call itself (ADR 0018).
 func (rec *recorder) pairs() []any {
 	return []any{"recorder", rec.place, "user_id", rec.userID}
 }
