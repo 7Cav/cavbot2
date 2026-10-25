@@ -35,13 +35,22 @@ func (l *recoveryLog) start(kind StepKind, token DialToken) *recoveryStep {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.steps = append(l.steps, s)
-	if len(l.steps) > stepsKept {
-		if i := slices.IndexFunc(l.steps, (*recoveryStep).ended); i != -1 {
-			l.steps = slices.Delete(l.steps, i, i+1)
-			l.earlier++
-		}
-	}
+	l.keepLocked()
 	return s
+}
+
+// keepLocked drops the oldest steps that ended, counting each, until the
+// log holds stepsKept steps or every one left is still under way. Caller
+// holds mu.
+func (l *recoveryLog) keepLocked() {
+	for len(l.steps) > stepsKept {
+		i := slices.IndexFunc(l.steps, (*recoveryStep).ended)
+		if i == -1 {
+			return
+		}
+		l.steps = slices.Delete(l.steps, i, i+1)
+		l.earlier++
+	}
 }
 
 // ended reports whether the step has ended. The log's mutex guards it.
@@ -56,6 +65,7 @@ func (l *recoveryLog) end(s *recoveryStep, outcome StepOutcome, err error) {
 	if code := closeCode(err); code != CloseCodeNone {
 		s.step.CloseCode = code
 	}
+	l.keepLocked()
 }
 
 // failed notes a step of kind that failed now, by err.
