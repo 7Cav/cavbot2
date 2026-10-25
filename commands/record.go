@@ -134,7 +134,8 @@ func replyRecordError(r utils.InteractionResponder, interaction *discordgo.Inter
 // them, names the title cap, so it is built rather than constant.
 const (
 	// recordingOffRefusal answers /record on a host where recording is
-	// off: no recorder token, or no bot store.
+	// off: no recorder token, every recorder out until a restart, or no bot
+	// store.
 	recordingOffRefusal     = "❌ Recording is off on this bot."
 	recordNotInVoiceRefusal = "❌ Join the voice or stage channel you want to record, then run /record start again."
 	recordInHubRefusal      = "❌ Hubs can't be recorded. Start the recording in the channel you're moved to."
@@ -142,10 +143,13 @@ const (
 	notCavMemberRefusal     = "❌ Only Cav members can record."
 	// noFreeRecorderRefusal opens the refusal of a start when every
 	// recorder is recording. The channels they record follow it.
-	noFreeRecorderRefusal   = "❌ Every recorder is busy."
-	alreadyRecordedRefusal  = "❌ This channel is already being recorded."
-	nothingToStopRefusal    = "❌ There's no recording here for you to stop."
-	notAllowedToStopRefusal = "❌ Only the person who started this recording, or someone with a recording role, can stop it."
+	noFreeRecorderRefusal  = "❌ Every recorder is busy."
+	alreadyRecordedRefusal = "❌ This channel is already being recorded."
+	// recorderComingBackRefusal answers a start whose recorder was still
+	// logging back in, after a cut short, when its wait ran out.
+	recorderComingBackRefusal = "❌ The recorder is coming back online. Try /record start again in a minute."
+	nothingToStopRefusal      = "❌ There's no recording here for you to stop."
+	notAllowedToStopRefusal   = "❌ Only the person who started this recording, or someone with a recording role, can stop it."
 )
 
 // recordTitleTooLongRefusal answers a start whose title is over
@@ -172,6 +176,8 @@ func startRefusal(err error) (reply string, refused bool) {
 		return recordTitleTooLongRefusal, true
 	case errors.Is(err, errAlreadyRecorded):
 		return alreadyRecordedRefusal, true
+	case errors.Is(err, errRecorderComingBack):
+		return recorderComingBackRefusal, true
 	case errors.As(err, &busy):
 		mentions := make([]string, len(busy.ChannelIDs))
 		for i, id := range busy.ChannelIDs {

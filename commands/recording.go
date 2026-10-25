@@ -70,8 +70,9 @@ const recordingStoreTimeout = 5 * time.Second
 // The reasons a start is refused. The command turns each into the member's
 // reply.
 var (
-	// errRecordingOff: no recorder is configured, so nobody can record.
-	errRecordingOff = errors.New("recording: no recorder configured")
+	// errRecordingOff: no recorder is configured, or every one is out until
+	// a restart, so nobody can record.
+	errRecordingOff = errors.New("recording: no recorder can record")
 	// errRecordNotInVoice: the invoker is in no voice or stage channel.
 	errRecordNotInVoice = errors.New("recording: invoker is not in a voice channel")
 	// errRecordInHub: the invoker's channel is a hub, which nobody stays in.
@@ -88,7 +89,15 @@ var (
 	// errAlreadyRecorded: a recording of the invoker's channel is starting,
 	// running or stopping. A channel has one recording at a time.
 	errAlreadyRecorded = errors.New("recording: channel is already being recorded")
+	// errRecorderComingBack: the start took an offline recorder, which
+	// didn't log back in within the join's deadline.
+	errRecorderComingBack = errors.New("recording: the recorder is still logging back in")
 )
+
+// recorderStillOfflineMessage is the WARN of a start refused because its
+// offline recorder didn't log back in in time. Sentry hears nothing: a
+// recorder logging back in isn't a fault.
+const recorderStillOfflineMessage = "Start refused, the recorder is still logging back in"
 
 // errRecordingFailed is a start or stop that failed after the checks passed,
 // such as a recorder that couldn't join. The runtime has reported the
@@ -114,13 +123,22 @@ type noFreeRecorderError struct {
 func (e *noFreeRecorderError) Error() string { return "recording: no recorder is free" }
 
 // RecorderVoice is the voice adapter as the recording runtime sees it:
-// the recorders, each in one voice channel at a time. *voice.Recorders
-// implements it.
+// the recorders, each in one voice channel at a time, and each online,
+// offline or out. *voice.Recorders implements it.
 type RecorderVoice interface {
-	// UserIDs returns the recorders' user IDs. None means recording is off.
+	// UserIDs returns the recorders' user IDs, fixed from startup. None
+	// means recording is off.
 	UserIDs() []string
-	// Join connects the recorder to a voice channel of the guild.
+	// State says whether a recorder is online, offline or out.
+	State(recorderID string) voice.RecorderState
+	// Join connects the recorder to a voice channel of the guild. A join of
+	// an offline recorder waits for its login, and returns
+	// voice.ErrRecorderOffline when ctx ends first.
 	Join(ctx context.Context, recorderID, guildID, channelID string) (voice.Conn, error)
+	// TakeOffline counts a recorder a gap cut short offline from now. Once
+	// its leave has returned or given up, relogin has it log out and back
+	// in by itself.
+	TakeOffline(recorderID string) (relogin func())
 }
 
 // RecordingManager is the subset of the Discord session the recording
@@ -194,10 +212,7 @@ type activeRecording struct {
 	// runtime's mutex, and only while the recording isn't stopping.
 	cancelCap, cancelDiskCheck func()
 	// stopping is set once a stop has taken it, so a second stop doesn't.
-	// channelFree is set as well when its gap reached recordingGapLimit:
-	// its channel is free to record again from then, while it finishes
-	// stopping.
-	stopping, channelFree bool
+	stopping bool
 	// recorderSeen is set once the cache has shown the recorder in the
 	// channel. ownLeaves is the count of the recorder's own leaves the conn
 	// last reported, and ownLeaveAt when the runtime read it go up, zero
@@ -260,7 +275,7 @@ func (r *RecordingRuntime) setRecordCommandID(id string) {
 // free recorder, and returns the channel. With recording off it refuses
 // before anything else, so the member learns that first.
 func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, err error) {
-	if len(r.recorders) == 0 {
+	if r.recordingOff() {
 		return "", errRecordingOff
 	}
 	channelID = r.mgr.VoiceStates(r.guildID).channelOf(by.UserID)
@@ -292,6 +307,11 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	joinCtx, cancelJoin := context.WithTimeout(context.Background(), recordingJoinTimeout)
 	defer cancelJoin()
 	conn, err := r.voice.Join(joinCtx, recorderID, r.guildID, channelID)
+	if errors.Is(err, voice.ErrRecorderOffline) {
+		r.release(recorderID)
+		utils.Warn(recorderStillOfflineMessage, "recorder", recorderID, "channel_id", channelID)
+		return "", errRecorderComingBack
+	}
 	if err != nil {
 		r.release(recorderID)
 		captureError("Recorder failed to join", err, "recorder", recorderID, "channel_id", channelID)
@@ -510,33 +530,63 @@ func speakersOf(members MemberListSnapshot, heard []store.Speaker) []store.Speak
 	return out
 }
 
-// reserveRecorder marks the first free recorder, in configured order, busy
-// with a recording of the channel whose join is about to go out, and
-// returns it. A channel already being recorded is refused before any
-// recorder is looked at. A recording counts from its reservation until its
-// recorder is released at the end of its stop, its join in flight or not, so
-// two starts in one channel can't both pass. A stop whose leave ran past its
-// deadline releases the recorder only once that leave returns. A recording
-// a gap cut short stops counting for its channel at the cut short, and for
-// its recorder only once released.
+// recordingOff reports whether no recorder can record: none is configured,
+// or every one is out until a restart.
+func (r *RecordingRuntime) recordingOff() bool {
+	return !slices.ContainsFunc(r.recorders, func(id string) bool { return r.voice.State(id) != voice.RecorderOut })
+}
+
+// reserveRecorder marks a free recorder busy with a recording of the
+// channel whose join is about to go out, and returns it: the first free
+// online one in configured order, or else the first free offline one,
+// which the join waits for. Out recorders are skipped. A channel already
+// being recorded is refused before any recorder is looked at. A recording
+// counts from its reservation until its recorder is released at the end of
+// its stop, its join in flight or not, so two starts in one channel can't
+// both pass. A stop whose leave ran past its deadline releases the recorder
+// only once that leave returns. A recording a gap cut short stops counting
+// at the cut short, for its channel and its recorder both, and the recorder
+// is offline from then until it logs back in.
 func (r *RecordingRuntime) reserveRecorder(channelID string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, rec := range r.running {
-		if rec.row.ChannelID == channelID && !rec.channelFree {
+		if rec.row.ChannelID == channelID {
 			return "", errAlreadyRecorded
 		}
 	}
 	busy := &noFreeRecorderError{}
+	offline := ""
 	for _, id := range r.recorders {
-		rec, ok := r.running[id]
-		if !ok {
-			r.running[id] = &activeRecording{row: store.Recording{ChannelID: channelID}}
-			return id, nil
+		if rec, ok := r.running[id]; ok {
+			busy.ChannelIDs = append(busy.ChannelIDs, rec.row.ChannelID)
+			continue
 		}
-		busy.ChannelIDs = append(busy.ChannelIDs, rec.row.ChannelID)
+		switch r.voice.State(id) {
+		case voice.RecorderOnline:
+			r.reserveLocked(id, channelID)
+			return id, nil
+		case voice.RecorderOffline:
+			if offline == "" {
+				offline = id
+			}
+		}
+	}
+	switch {
+	case offline != "":
+		r.reserveLocked(offline, channelID)
+		return offline, nil
+	case len(busy.ChannelIDs) == 0:
+		// Every recorder went out since the start's first check.
+		return "", errRecordingOff
 	}
 	return "", busy
+}
+
+// reserveLocked marks a recorder busy with a recording of the channel whose
+// join is about to go out. Caller holds mu.
+func (r *RecordingRuntime) reserveLocked(recorderID, channelID string) {
+	r.running[recorderID] = &activeRecording{row: store.Recording{ChannelID: channelID}}
 }
 
 // leave takes a recorder out of its channel, and waits no longer than

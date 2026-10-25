@@ -1,6 +1,6 @@
 // Package voice is the voice adapter (spec #381, ADR 0014). It owns the
-// recorder sessions: one gateway session per recorder, in the bot process
-// beside the main one. A recorder joins a voice channel through disgo's voice
+// recorder sessions: one gateway session at a time per recorder, in the bot
+// process beside the main one. A recorder joins a voice channel through disgo's voice
 // package with a dave-go DAVE session, and none of disgo's types leave this
 // package.
 package voice
@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/7cav/cavbot2/utils"
@@ -22,7 +23,7 @@ type GatewaySession interface {
 	// Join connects the recorder to a voice channel of the guild, and
 	// returns once Discord has let it in, or with ctx's error.
 	Join(ctx context.Context, guildID, channelID string) (Conn, error)
-	// Close ends the session, and the recorder goes offline.
+	// Close ends the session: the recorder logs out of this login.
 	Close() error
 }
 
@@ -219,22 +220,117 @@ type Frame struct {
 	Opus []byte
 }
 
-// Opener opens one recorder's gateway session from its token. recorder is
-// the token's place in the list, from 1, which names the recorder in its
-// reports.
-type Opener func(recorder int, token string) (GatewaySession, error)
-
-// Recorders is the set of recorders connected at startup.
-type Recorders struct {
-	sessions []GatewaySession
+// Opener reaches Discord as a recorder account, by the account's token.
+type Opener interface {
+	// Open is one login: it opens a new gateway session for the recorder.
+	// recorder is the token's place in the list, from 1, which names the
+	// recorder in its reports.
+	Open(recorder int, token string) (GatewaySession, error)
+	// UserID reads the account's user ID from Discord's REST API, with no
+	// gateway session.
+	UserID(ctx context.Context, token string) (string, error)
 }
 
-// Connect opens one session per token in raw, the RECORDER_TOKENS value: a
+// RecorderState is whether a recorder can join a channel now (GLOSSARY.md,
+// Offline recorder).
+type RecorderState string
+
+// The states a recorder is in.
+const (
+	// RecorderOnline is logged in and ready.
+	RecorderOnline RecorderState = "online"
+	// RecorderOffline is logged out and logging back in by itself.
+	RecorderOffline RecorderState = "offline"
+	// RecorderOut is out until a restart: no login of its token can work.
+	RecorderOut RecorderState = "out"
+)
+
+// ErrTokenRefused is a login Discord refused the recorder's token for. No
+// login of that token can work until it is reset, and the bot restarted.
+var ErrTokenRefused = errors.New("voice: Discord refused the recorder's token")
+
+// ErrRecorderOffline is a join of an offline recorder whose context ended
+// before the recorder logged back in.
+var ErrRecorderOffline = errors.New("voice: the recorder is still logging back in")
+
+// loginRefusedMessage is the WARN a recorder logs once when Discord refuses
+// its token. It is out until a restart.
+const loginRefusedMessage = "Discord refused the recorder's token, recorder out until a restart"
+
+// recorderFailedToConnectMessage is the Sentry event of a recorder whose
+// first login and user ID read both failed at startup.
+const recorderFailedToConnectMessage = "Recorder failed to connect"
+
+// loginRetryFirst is how long a recorder waits after its first failed login
+// before it tries again.
+const loginRetryFirst = time.Second
+
+// loginRetryMax is the longest a recorder waits between two logins.
+const loginRetryMax = 600 * time.Second
+
+// loginFailedMessage is the WARN each failed login of a recorder logs, with
+// how long it waits before the next.
+const loginFailedMessage = "Recorder login failed, trying again"
+
+// nextLoginWait is how long a recorder waits after a failed login that it
+// tried wait after the one before: loginRetryFirst after its first, and
+// then each wait double the last, up to loginRetryMax.
+func nextLoginWait(wait time.Duration) time.Duration {
+	if wait == 0 {
+		return loginRetryFirst
+	}
+	return min(2*wait, loginRetryMax)
+}
+
+// logoutTimeout bounds the logout before a recorder logs back in. The login
+// waits for the logout no longer than that.
+const logoutTimeout = 5 * time.Second
+
+// logoutTimedOutMessage is the WARN a logout that runs past logoutTimeout
+// logs. The login goes on without it.
+const logoutTimedOutMessage = "Recorder logout timed out, logging in again without it"
+
+// userIDReadTimeout bounds the read of a recorder's user ID.
+const userIDReadTimeout = 5 * time.Second
+
+// Recorders is the recorders configured at startup, each online, offline or
+// out.
+type Recorders struct {
+	open Opener
+	// closed closes at shutdown, which stops every login.
+	closed chan struct{}
+
+	mu        sync.Mutex
+	recorders []*recorder
+	shutDown  bool
+	// changed closes, and is replaced, whenever a recorder comes online or
+	// goes out, which a join waiting on an offline one reads.
+	changed chan struct{}
+}
+
+// recorder is one recorder account. Recorders' mutex guards state and
+// session.
+type recorder struct {
+	place  int
+	token  string
+	userID string
+
+	state RecorderState
+	// session is the recorder's login: the one up while it is online, and
+	// the one it is about to log out of while it is offline before its
+	// relogin. Nil otherwise.
+	session GatewaySession
+}
+
+// Connect makes one login per token in raw, the RECORDER_TOKENS value: a
 // comma-separated list. With no token, recording is off and nothing is
-// opened. A token that fails to open goes to Sentry and is skipped, so a
-// bad or revoked token costs only its own recorder. The report names the
-// token by its position in the list, never by its text, since a token is
-// the recorder account.
+// opened. Connect waits for each recorder's first login alone. A recorder
+// whose first login fails is offline, under the user ID Discord's REST API
+// gives for its token, and goes on logging in in the background. One whose
+// user ID can't be read either is out, and goes to Sentry, so a bad or
+// revoked token costs only its own recorder. The report names the token by
+// its position in the list, never by its text, since a token is the
+// recorder account.
 func Connect(raw string, open Opener) *Recorders {
 	var tokens []string
 	for _, token := range strings.Split(raw, ",") {
@@ -242,47 +338,221 @@ func Connect(raw string, open Opener) *Recorders {
 			tokens = append(tokens, token)
 		}
 	}
-	r := &Recorders{}
+	r := &Recorders{open: open, closed: make(chan struct{}), changed: make(chan struct{})}
 	if len(tokens) == 0 {
 		utils.Warn("RECORDER_TOKENS not set, recording off")
 		return r
 	}
 	for i, token := range tokens {
-		s, err := open(i+1, token)
-		if err != nil {
-			utils.CaptureError("Recorder failed to connect", err, "recorder", i+1)
+		rec := &recorder{place: i + 1, token: token}
+		s, err := open.Open(rec.place, token)
+		if err == nil {
+			rec.userID, rec.state, rec.session = s.UserID(), RecorderOnline, s
+			utils.Info("Recorder connected", "recorder", rec.place, "user_id", rec.userID)
+			r.recorders = append(r.recorders, rec)
 			continue
 		}
-		utils.Info("Recorder connected", "recorder", i+1, "user_id", s.UserID())
-		r.sessions = append(r.sessions, s)
+		ctx, cancel := context.WithTimeout(context.Background(), userIDReadTimeout)
+		userID, readErr := open.UserID(ctx, token)
+		cancel()
+		if readErr != nil {
+			utils.CaptureError(recorderFailedToConnectMessage, fmt.Errorf("login: %w; user ID read: %w", err, readErr), "recorder", rec.place)
+			continue
+		}
+		rec.userID, rec.state = userID, RecorderOffline
+		r.recorders = append(r.recorders, rec)
+		wait := nextLoginWait(0)
+		rec.loginFailed(wait, err)
+		go r.logIn(rec, wait)
 	}
 	return r
 }
 
-// UserIDs returns the connected recorders' user IDs.
+// logIn logs an offline recorder in, trying first after wait and again
+// after each failed login, until shutdown. A login that goes through after
+// shutdown is logged out again.
+func (r *Recorders) logIn(rec *recorder, wait time.Duration) {
+	defer utils.RecoverPanic("recorder-login", "recorder", rec.place)
+	for {
+		timer := time.NewTimer(wait)
+		select {
+		case <-timer.C:
+		case <-r.closed:
+			timer.Stop()
+			return
+		}
+		s, err := r.open.Open(rec.place, rec.token)
+		if errors.Is(err, ErrTokenRefused) {
+			r.mu.Lock()
+			r.setStateLocked(rec, RecorderOut, nil)
+			r.mu.Unlock()
+			utils.Warn(loginRefusedMessage, "recorder", rec.place, "user_id", rec.userID, "error", err)
+			return
+		}
+		if err != nil {
+			wait = nextLoginWait(wait)
+			rec.loginFailed(wait, err)
+			continue
+		}
+		r.mu.Lock()
+		if r.shutDown {
+			r.mu.Unlock()
+			r.logOut(rec, s)
+			return
+		}
+		r.setStateLocked(rec, RecorderOnline, s)
+		r.mu.Unlock()
+		utils.Info("Recorder connected", "recorder", rec.place, "user_id", rec.userID)
+		return
+	}
+}
+
+// setStateLocked puts a recorder in state with its login s, and wakes every
+// join waiting on a change. Caller holds mu.
+func (r *Recorders) setStateLocked(rec *recorder, state RecorderState, s GatewaySession) {
+	rec.state, rec.session = state, s
+	close(r.changed)
+	r.changed = make(chan struct{})
+}
+
+// TakeOffline counts the recorder with the given user ID offline from now,
+// for a recording a gap cut short, so a join waits for its next login. The
+// caller calls relogin once the recorder's leave has returned or given up,
+// and the recorder then logs out and back in by itself. Only the first call
+// of relogin does anything.
+func (r *Recorders) TakeOffline(recorderID string) (relogin func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec := r.find(recorderID)
+	if rec == nil || rec.state != RecorderOnline {
+		return func() {}
+	}
+	rec.state = RecorderOffline
+	var once sync.Once
+	return func() {
+		once.Do(func() { go r.logBackIn(rec) })
+	}
+}
+
+// logBackIn logs a recorder TakeOffline took offline out of its old login,
+// unless shutdown has already, then in again.
+func (r *Recorders) logBackIn(rec *recorder) {
+	defer utils.RecoverPanic("recorder-relogin", "recorder", rec.place)
+	r.mu.Lock()
+	old := rec.session
+	rec.session = nil
+	r.mu.Unlock()
+	if old != nil {
+		r.logOut(rec, old)
+	}
+	r.logIn(rec, 0)
+}
+
+// logOut ends one of a recorder's logins, and waits for it no longer than
+// logoutTimeout. A logout that runs past it finishes on its own goroutine,
+// if ever.
+func (r *Recorders) logOut(rec *recorder, s GatewaySession) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer utils.RecoverPanic("recorder-logout", "recorder", rec.place)
+		if err := s.Close(); err != nil {
+			utils.Warn("Recorder did not close cleanly", "recorder", rec.place, "user_id", rec.userID, "error", err)
+		}
+	}()
+	timer := time.NewTimer(logoutTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		utils.Warn(logoutTimedOutMessage, "recorder", rec.place, "user_id", rec.userID)
+	}
+}
+
+// loginFailed logs a failed login of the recorder, which tries again after
+// wait. The error goes to the log alone (ADR 0018).
+func (rec *recorder) loginFailed(wait time.Duration, err error) {
+	utils.Warn(loginFailedMessage, "recorder", rec.place, "user_id", rec.userID, "retry_in", wait, "error", err)
+}
+
+// UserIDs returns the user ID of every recorder that has one, in
+// configured order. The list never changes after Connect.
 func (r *Recorders) UserIDs() []string {
-	ids := make([]string, 0, len(r.sessions))
-	for _, s := range r.sessions {
-		ids = append(ids, s.UserID())
+	ids := make([]string, 0, len(r.recorders))
+	for _, rec := range r.recorders {
+		ids = append(ids, rec.userID)
 	}
 	return ids
 }
 
-// Join connects the recorder with the given user ID to a voice channel of
-// the guild. A recorder is in one voice channel at a time, so the caller
-// joins one it isn't already recording with.
-func (r *Recorders) Join(ctx context.Context, recorderID, guildID, channelID string) (Conn, error) {
-	for _, s := range r.sessions {
-		if s.UserID() == recorderID {
-			return s.Join(ctx, guildID, channelID)
-		}
+// State says whether the recorder with the given user ID is online, offline
+// or out. One that isn't configured is out.
+func (r *Recorders) State(recorderID string) RecorderState {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if rec := r.find(recorderID); rec != nil {
+		return rec.state
 	}
-	return nil, fmt.Errorf("recorder %s is not connected", recorderID)
+	return RecorderOut
 }
 
-// Close ends every recorder's session, at shutdown.
+// find is the recorder with the given user ID, nil when none has it.
+func (r *Recorders) find(recorderID string) *recorder {
+	for _, rec := range r.recorders {
+		if rec.userID == recorderID {
+			return rec
+		}
+	}
+	return nil
+}
+
+// Join connects the recorder with the given user ID to a voice channel of
+// the guild. A recorder is in one voice channel at a time, so the caller
+// joins one it isn't already recording with. A join of an offline recorder
+// waits for its next login, and returns ErrRecorderOffline when ctx ends
+// first. A join of an out recorder fails at once.
+func (r *Recorders) Join(ctx context.Context, recorderID, guildID, channelID string) (Conn, error) {
+	for {
+		r.mu.Lock()
+		rec := r.find(recorderID)
+		if rec == nil || rec.state == RecorderOut {
+			r.mu.Unlock()
+			return nil, fmt.Errorf("recorder %s is out until a restart", recorderID)
+		}
+		if s := rec.session; rec.state == RecorderOnline {
+			r.mu.Unlock()
+			if s == nil {
+				return nil, fmt.Errorf("recorder %s logged out at shutdown", recorderID)
+			}
+			return s.Join(ctx, guildID, channelID)
+		}
+		changed := r.changed
+		r.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("recorder %s: %w", recorderID, ErrRecorderOffline)
+		}
+	}
+}
+
+// Close stops every recorder logging in, and logs out every recorder that
+// is online, at shutdown.
 func (r *Recorders) Close() {
-	for _, s := range r.sessions {
+	r.mu.Lock()
+	if !r.shutDown {
+		r.shutDown = true
+		close(r.closed)
+	}
+	var sessions []GatewaySession
+	for _, rec := range r.recorders {
+		if rec.session != nil {
+			sessions = append(sessions, rec.session)
+			rec.session = nil
+		}
+	}
+	r.mu.Unlock()
+	for _, s := range sessions {
 		if err := s.Close(); err != nil {
 			utils.Warn("Recorder did not close cleanly", "user_id", s.UserID(), "error", err)
 		}
