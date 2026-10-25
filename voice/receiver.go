@@ -31,9 +31,9 @@ type receiveConn interface {
 	// ChannelID is the call's channel, nil while there is none.
 	ChannelID() *snowflake.ID
 	// connection reports whether the recorder is connected in the call, at
-	// the voice server Discord named last, and when and why it last stopped
-	// being connected, zero before it ever was.
-	connection() (connected bool, lost gapStart)
+	// the voice server Discord named last, when and why it last stopped
+	// being connected, zero before it ever was, and how many times it has.
+	connection() (connected bool, lost gapStart, losses int)
 	// server is the voice server the recorder connects to: the one Discord
 	// named last for the call.
 	server() string
@@ -125,18 +125,26 @@ type receiver struct {
 	setupSince   time.Time
 	stalled      bool
 	// inGap is whether the listener was last told a gap started, at
-	// gapSince. gapReported is whether Sentry has heard of that gap. Only
-	// the receiver's goroutine touches them.
+	// gapSince. gapReported is whether Sentry has heard of that gap. told is
+	// how many of the connection's losses the receiver has told of, each as
+	// a gap or within one. Only the receiver's goroutine touches them.
 	inGap       bool
 	gapSince    time.Time
 	gapReported bool
+	told        int
 }
 
 // newReceiver builds the receiver of a recorder's connection. It hands
-// what it hears to l once open starts it.
+// what it hears to l once open starts it. Losses a connection that is
+// connected now had before are none of the recording's.
 func newReceiver(conn receiveConn, l Listener, recorderID string) *receiver {
 	ctx, cancel := context.WithCancel(context.Background())
+	told := 0
+	if connected, _, losses := conn.connection(); connected {
+		told = losses
+	}
 	return &receiver{
+		told:     told,
 		conn:     conn,
 		listener: l,
 		recorder: recorderID,
@@ -173,12 +181,13 @@ func (r *receiver) run() {
 func (r *receiver) step() {
 	defer utils.RecoverPanic("recorder-receive", "recorder", r.recorder)
 	holding := holdFrames(r.conn.DAVE())
-	connected, lost := r.conn.connection()
-	var start gapStart
-	if !connected {
-		start = lost
+	connected, lost, losses := r.conn.connection()
+	if losses != r.told && lost.cause != causeNotKnown {
+		// A loss the receiver hasn't told of, which can be over already.
+		r.told = losses
+		r.startGap(lost)
 	}
-	r.watchGap(connected && !holding, start)
+	r.watchGap(connected && !holding)
 	if holding {
 		r.waitOrStartOver()
 		return
@@ -203,17 +212,14 @@ func (r *receiver) step() {
 	}
 }
 
-// watchGap tells the listener when the recorder stops hearing the channel,
-// and when it hears it again. A gap starts as start says: when and why the
-// connection to the call dropped, which the receiver can learn of only
-// later. DAVE holding frames starts none until it stalls. A gap that
-// reaches GapReportedAfter reaches Sentry once, with the voice server the
-// recorder is trying.
-func (r *receiver) watchGap(hearing bool, start gapStart) {
+// watchGap tells the listener when the recorder hears the channel again,
+// after a gap: one each loss of the connection starts, which the receiver
+// can learn of only later, or a DAVE stall. A gap that reaches
+// GapReportedAfter reaches Sentry once, with the voice server the recorder
+// is trying.
+func (r *receiver) watchGap(hearing bool) {
 	switch {
-	case !hearing && !r.inGap:
-		r.startGap(start)
-	case !hearing && !r.gapReported && time.Since(r.gapSince) >= GapReportedAfter:
+	case !hearing && r.inGap && !r.gapReported && time.Since(r.gapSince) >= GapReportedAfter:
 		r.gapReported = true
 		utils.CaptureError(gapMessage, errGap, "recorder", r.recorder, "channel_id", channelOf(r.conn),
 			"voice_server", r.conn.server())

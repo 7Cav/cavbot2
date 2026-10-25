@@ -675,6 +675,20 @@ func (g *renewableGateway) renew(cause GapCause) {
 	g.renewLocked(cause)
 }
 
+// renewAfter swaps the gateway for a new one, as renew does, after it lost
+// the call to loss for cause. Connected again since, as disgo can connect it
+// while a 4022's lookup is out, it counts as lost to loss still, so the gap
+// starts at that loss and not at the renew, unless it has lost the call
+// again since.
+func (g *renewableGateway) renewAfter(loss int, cause GapCause) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if loss == g.losses {
+		g.connected = false
+	}
+	g.renewLocked(cause)
+}
+
 // renewLocked swaps the gateway for a new one, not connected yet, which
 // loses the call for cause when the old one was connected. Caller holds mu.
 func (g *renewableGateway) renewLocked(cause GapCause) {
@@ -850,12 +864,12 @@ func (g *renewableGateway) server() string {
 }
 
 // connection reports whether the gateway is connected in the call, at the
-// voice server Discord named last, and when and why it last stopped being
-// connected, zero before it ever was.
-func (g *renewableGateway) connection() (connected bool, lost gapStart) {
+// voice server Discord named last, when and why it last stopped being
+// connected, zero before it ever was, and how many times it has.
+func (g *renewableGateway) connection() (connected bool, lost gapStart, losses int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.connected, g.loss
+	return g.connected, g.loss, g.losses
 }
 
 // openedAt reports whether the gateway last opened at the voice server e
@@ -1123,7 +1137,7 @@ func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.Close
 		if moved {
 			c.callMoved()
 		}
-		gw.renew(cause)
+		gw.renewAfter(loss, cause)
 		if !c.rejoin() && !c.closed.Load() {
 			utils.CaptureError(lostConnectionMessage, err, "recorder", c.s.userID)
 		}
@@ -1266,12 +1280,13 @@ func (c callConn) renewable() (*renewableGateway, bool) {
 }
 
 // connection reports whether the recorder's gateway is connected in the
-// call, at the voice server Discord named last, and when and why it last
-// stopped being connected, zero before it ever was.
-func (c callConn) connection() (connected bool, lost gapStart) {
+// call, at the voice server Discord named last, when and why it last
+// stopped being connected, zero before it ever was, and how many times it
+// has.
+func (c callConn) connection() (connected bool, lost gapStart, losses int) {
 	g, ok := c.renewable()
 	if !ok {
-		return false, gapStart{}
+		return false, gapStart{}, 0
 	}
 	return g.connection()
 }

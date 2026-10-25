@@ -39,7 +39,8 @@ const testChannel = "200"
 // fakeReceiveConn is a voice connection as the receiver reads it, its DAVE
 // session the fake one unless a case gives it another. reconnects is when
 // the receiver asked for each fresh connection. down is whether the
-// connection is lost, as lost says, until it comes back.
+// connection is lost, as lost says, until it comes back, and losses counts
+// the drops.
 type fakeReceiveConn struct {
 	udp  *fakeVoiceUDP
 	dave godave.Session
@@ -49,6 +50,7 @@ type fakeReceiveConn struct {
 	reconnects []time.Time
 	down       bool
 	lost       gapStart
+	losses     int
 }
 
 func newFakeReceiveConn() *fakeReceiveConn {
@@ -80,10 +82,10 @@ func (c *fakeReceiveConn) ChannelID() *snowflake.ID {
 
 // connection is connected until drop: the call harness covers what drops a
 // connection and brings it back.
-func (c *fakeReceiveConn) connection() (bool, gapStart) {
+func (c *fakeReceiveConn) connection() (bool, gapStart, int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return !c.down, c.lost
+	return !c.down, c.lost, c.losses
 }
 
 // drop has the connection lost now, for cause, until restore.
@@ -91,6 +93,7 @@ func (c *fakeReceiveConn) drop(cause GapCause) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.down, c.lost = true, gapStart{at: time.Now(), cause: cause}
+	c.losses++
 }
 
 // restore has the connection connected again.
@@ -526,6 +529,32 @@ func TestReceiverKeepsTheCauseThatStartedAGapThroughItsRecovery(t *testing.T) {
 		}
 		if got := l.gapCauses(); got[0] != GapHeartbeatOverdue {
 			t.Errorf("gap cause = %s, want %s, the trouble that started it", got[0], GapHeartbeatOverdue)
+		}
+	})
+}
+
+// A lost connection is a gap however briefly it lasts. Here it drops and
+// comes back before the receiver looks again, and the listener still hears
+// the gap start, dated at the drop, and end.
+func TestReceiverToldOfALossThatEndedBeforeItLooked(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		l := listen(nil)
+		startListening(t, conn, l)
+		time.Sleep(time.Second)
+
+		dropped := time.Now()
+		conn.drop(GapVoiceGatewayClosed)
+		conn.restore()
+		time.Sleep(time.Second)
+		synctest.Wait()
+
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted, gapEnded}) {
+			t.Fatalf("gap events = %v, want one gap started and ended", got)
+		}
+		if got := l.gapStarts(); !got[0].Equal(dropped) {
+			t.Errorf("gap started %v after the drop, want at it", got[0].Sub(dropped))
 		}
 	})
 }
