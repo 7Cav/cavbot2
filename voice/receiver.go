@@ -232,13 +232,13 @@ type receiver struct {
 	// listener was last told of, gapLoss, the number of the connection's
 	// loss that started it, zero for a DAVE stall, heldSince and
 	// heldUntil, when DAVE last started holding frames and stopped, zero
-	// while it holds them, and failed, the failures to decrypt from the
-	// first of the run that started a decrypt gap on.
+	// while it holds them, and gapFailures, the failures to decrypt from
+	// the first of the run that started a decrypt gap on.
 	mu                   sync.Mutex
 	gap                  gapStart
 	gapLoss              int
 	heldSince, heldUntil time.Time
-	failed               decryptTally
+	gapFailures          decryptTally
 }
 
 // speakerRun is one speaker's frames DAVE has failed to decrypt since their
@@ -259,10 +259,14 @@ type decryptTally struct {
 	unreadable int
 }
 
+// noSpeaker is the speaker of a datagram the transport decryption refused,
+// which names none.
+const noSpeaker snowflake.ID = 0
+
 // add counts a frame of speaker's that DAVE refused, or a datagram the
-// transport decryption refused when speaker is zero.
+// transport decryption refused when speaker is noSpeaker.
 func (t *decryptTally) add(speaker snowflake.ID) {
-	if speaker == 0 {
+	if speaker == noSpeaker {
 		t.unreadable++
 		return
 	}
@@ -285,8 +289,9 @@ func (t *decryptTally) clone() decryptTally {
 
 // decryptRun is the failures to decrypt since the last frame that
 // decrypted, on socket, and when its latest unbroken stretch of them
-// started: at the first failure stretchBreak or more after the one before.
-// A failure is dated when its datagram arrived, and last is the latest.
+// started: at the first failure stretchBreak or more after the latest
+// before it. A failure is dated when its datagram arrived, so a frame held
+// for a late op 5 can come older than the latest, last.
 type decryptRun struct {
 	decryptTally
 	socket        int
@@ -308,7 +313,9 @@ func (r *decryptRun) add(at time.Time, speaker snowflake.ID) {
 	if r.failures() == 0 || at.Sub(r.last) >= stretchBreak {
 		r.stretch = at
 	}
-	r.last = at
+	if at.After(r.last) {
+		r.last = at
+	}
 	r.decryptTally.add(speaker)
 }
 
@@ -464,7 +471,7 @@ func (r *receiver) arrived(d datagram) {
 	switch {
 	case d.err != nil:
 		r.unreadablePacket(d.err)
-		r.decryptFailed(d.at, 0)
+		r.decryptFailed(d.at, noSpeaker)
 	case d.packet != nil:
 		r.unreadable = 0
 		r.receive(d)
@@ -549,7 +556,7 @@ func (r *receiver) startGap(start gapStart, loss int) {
 // latest reads it afresh.
 func (r *receiver) report() GapReport {
 	r.mu.Lock()
-	gap, loss, held, failed := r.gap, r.gapLoss, r.heldUntil.Sub(r.heldSince), r.failed.clone()
+	gap, loss, held, failed := r.gap, r.gapLoss, r.heldUntil.Sub(r.heldSince), r.gapFailures.clone()
 	if r.heldUntil.IsZero() {
 		held = time.Since(r.heldSince)
 	}
@@ -675,27 +682,45 @@ func (r *receiver) reconnect() {
 
 // decryptFailed counts a failure to decrypt, whose datagram arrived at at,
 // toward the decrypt run: a frame of speaker's that DAVE refused, or a
-// datagram the transport decryption refused when speaker is zero. A run of
+// datagram the transport decryption refused when speaker is noSpeaker. A run of
 // decryptRunLimit with no frame decrypted starts a gap at its latest
 // stretch, unless one is running already, and the recorder opens a fresh
 // voice connection, which starts DAVE over. The failures the gap's report
-// counts go on across it.
+// counts go on across it. Each speaker's run so far belongs to the gap, as
+// nobody decrypted, so it ends.
 func (r *receiver) decryptFailed(at time.Time, speaker snowflake.ID) {
 	r.decryptRun.add(at, speaker)
 	if r.decryptGap {
 		r.mu.Lock()
-		r.failed.add(speaker)
+		r.gapFailures.add(speaker)
 		r.mu.Unlock()
 	}
 	if r.inGap || r.decryptRun.failures() < decryptRunLimit {
 		return
 	}
 	r.mu.Lock()
-	r.failed = r.decryptRun.clone()
+	r.gapFailures = r.decryptRun.clone()
 	r.mu.Unlock()
 	r.startGap(gapStart{at: r.decryptRun.stretch, cause: GapNothingDecrypted}, 0)
 	r.decryptGap = true
+	clear(r.failing)
 	r.reconnect()
+}
+
+// speakerFailed counts a frame of speaker's DAVE refused, by err, toward
+// their run. While a decrypt gap runs nobody decrypts, so the frame belongs
+// to the gap and not to the run.
+func (r *receiver) speakerFailed(speaker snowflake.ID, err error) {
+	if r.decryptGap {
+		return
+	}
+	run := r.failing[speaker]
+	if run == nil {
+		run = &speakerRun{}
+		r.failing[speaker] = run
+	}
+	run.frames++
+	run.err = err
 }
 
 // reportFailing has Sentry hear, once a run, of each speaker whose frames
@@ -777,13 +802,7 @@ func (r *receiver) deliver(userID snowflake.ID, d datagram) {
 	out := make([]byte, dave.MaxDecryptedFrameSize(user, len(p.Opus)))
 	n, err := dave.Decrypt(user, p.Opus, out)
 	if err != nil {
-		run := r.failing[userID]
-		if run == nil {
-			run = &speakerRun{}
-			r.failing[userID] = run
-		}
-		run.frames++
-		run.err = err
+		r.speakerFailed(userID, err)
 		r.decryptFailed(d.at, userID)
 		return
 	}

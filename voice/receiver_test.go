@@ -30,6 +30,12 @@ const (
 	testSpeakerSSRC = 7
 )
 
+// A second speaker, for the cases that hear two, and the SSRC they send on.
+const (
+	otherSpeaker = "301"
+	otherSSRC    = 8
+)
+
 // waitFor is how long a case waits on the receiver's goroutine.
 const waitFor = 2 * time.Second
 
@@ -159,6 +165,18 @@ func (c *fakeReceiveConn) mapSSRC(ssrc uint32, userID string) {
 func (c *fakeReceiveConn) send(ssrc, timestamp uint32, payload []byte) {
 	c.udp.reads <- udpRead{p: &disgovoice.Packet{SSRC: ssrc, Timestamp: timestamp, Opus: payload}}
 }
+
+// sendRefused queues frames on the SSRC that DAVE refuses, sealed for a key
+// nobody in the call holds, one every 20 ms.
+func (c *fakeReceiveConn) sendRefused(ssrc uint32, frames int) {
+	for i := range frames {
+		c.send(ssrc, uint32(i*960), refusedFrame())
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// refusedFrame is a DAVE frame sealed for a key nobody in the call holds.
+func refusedFrame() []byte { return sealFor("999", "words") }
 
 // sendUnreadable queues a datagram the UDP connection can't read.
 func (c *fakeReceiveConn) sendUnreadable() {
@@ -396,7 +414,6 @@ func TestReceiverHoldsFramesUntilTheirSSRCMaps(t *testing.T) {
 // are handed over once their SSRC maps, with nothing more from that speaker
 // to carry them out.
 func TestReceiverHandsOverHeldFramesOnceTheSSRCMapsWithNothingAfter(t *testing.T) {
-	const otherSpeaker, otherSSRC = "301", 8
 	conn := newFakeReceiveConn()
 	conn.mapSSRC(otherSSRC, otherSpeaker)
 	h := newHeard()
@@ -438,17 +455,13 @@ func TestReceiverRecoversAPanicInTheFrameHandler(t *testing.T) {
 func TestReceiverReportsASpeakersDAVEFailuresOnceAnotherSpeakerIsHeard(t *testing.T) {
 	events := recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
-		const otherSpeaker, otherSSRC = "301", 8
 		conn := newFakeReceiveConn()
 		conn.mapSSRC(testSpeakerSSRC, testSpeaker)
 		conn.mapSSRC(otherSSRC, otherSpeaker)
 		h := newHeard()
 		startReceiver(t, conn, h.handle)
 
-		for i := range 2 * failureBurst {
-			conn.send(testSpeakerSSRC, uint32(i*960), sealFor("999", "words"))
-			time.Sleep(20 * time.Millisecond)
-		}
+		conn.sendRefused(testSpeakerSSRC, 2*failureBurst)
 		synctest.Wait()
 		if n := conn.udp.taken.Load(); n != 2*failureBurst {
 			t.Fatalf("datagrams read = %d, want all %d", n, 2*failureBurst)
@@ -476,6 +489,42 @@ func TestReceiverReportsASpeakersDAVEFailuresOnceAnotherSpeakerIsHeard(t *testin
 	})
 }
 
+// Failures that build up while nobody decrypts belong to the decrypt gap,
+// not to a speaker missing from a recording that hears the rest. Here two
+// speakers' frames fail together until a decrypt gap starts, and go on
+// failing well past its start. Then both decrypt on the fresh connection's
+// socket, and Sentry hears nothing.
+func TestReceiverReportsNoSpeakerWhoseFailuresBelongToADecryptGap(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		conn.mapSSRC(testSpeakerSSRC, testSpeaker)
+		conn.mapSSRC(otherSSRC, otherSpeaker)
+		h := newHeard()
+		l := listen(h.handle)
+		startListening(t, conn, l)
+
+		for i := range decryptRunLimit {
+			conn.send(testSpeakerSSRC, uint32(i*960), refusedFrame())
+			conn.send(otherSSRC, uint32(i*960), refusedFrame())
+			time.Sleep(20 * time.Millisecond)
+		}
+		synctest.Wait()
+		if got := l.gapCauses(); !slices.Equal(got, []GapCause{GapNothingDecrypted}) {
+			t.Fatalf("gap causes = %v, want one %s", got, GapNothingDecrypted)
+		}
+		conn.newSocket()
+		conn.send(testSpeakerSSRC, 0, sealFor(testSpeaker, "back"))
+		conn.send(otherSSRC, 0, sealFor(otherSpeaker, "back"))
+		h.next(t)
+		h.next(t)
+
+		if n := len(events.Events()); n != 0 {
+			t.Errorf("Sentry events = %d, want none for failures that belong to the gap", n)
+		}
+	})
+}
+
 // A recorder whose frames won't decrypt hears nobody. A run of
 // decryptRunLimit failures with no frame decrypted, frames DAVE refuses and
 // datagrams the UDP connection can't read alike, starts a gap named for it,
@@ -487,7 +536,6 @@ func TestReceiverReportsASpeakersDAVEFailuresOnceAnotherSpeakerIsHeard(t *testin
 func TestReceiverStartsAGapWhenNothingDecrypts(t *testing.T) {
 	recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
-		const otherSpeaker, otherSSRC = "301", 8
 		conn := newFakeReceiveConn()
 		conn.mapSSRC(testSpeakerSSRC, testSpeaker)
 		conn.mapSSRC(otherSSRC, otherSpeaker)
@@ -499,8 +547,8 @@ func TestReceiverStartsAGapWhenNothingDecrypts(t *testing.T) {
 		frames, unreadable := 0, 0
 		fail := func(rounds int) {
 			for i := range rounds {
-				conn.send(testSpeakerSSRC, uint32(i*960), sealFor("999", "words"))
-				conn.send(otherSSRC, uint32(i*960), sealFor("999", "words"))
+				conn.send(testSpeakerSSRC, uint32(i*960), refusedFrame())
+				conn.send(otherSSRC, uint32(i*960), refusedFrame())
 				frames += 2
 				if i%4 == 0 {
 					conn.sendUnreadable()
@@ -541,16 +589,12 @@ func TestReceiverDatesADecryptGapAtTheRunsLatestStretch(t *testing.T) {
 		l := listen(nil)
 		startListening(t, conn, l)
 
-		refused := sealFor("999", "words")
-		conn.send(testSpeakerSSRC, 0, refused)
+		conn.send(testSpeakerSSRC, 0, refusedFrame())
 		time.Sleep(20 * time.Second)
-		conn.send(testSpeakerSSRC, 960, refused)
+		conn.send(testSpeakerSSRC, 960, refusedFrame())
 		time.Sleep(time.Second)
 		stretch := time.Now()
-		for i := range decryptRunLimit {
-			conn.send(testSpeakerSSRC, uint32((i+2)*960), refused)
-			time.Sleep(20 * time.Millisecond)
-		}
+		conn.sendRefused(testSpeakerSSRC, decryptRunLimit)
 		synctest.Wait()
 
 		starts := l.gapStarts()
@@ -559,6 +603,44 @@ func TestReceiverDatesADecryptGapAtTheRunsLatestStretch(t *testing.T) {
 		}
 		if !starts[0].Equal(stretch) {
 			t.Errorf("gap started %v after the latest stretch's first failure, want at it", starts[0].Sub(stretch))
+		}
+	})
+}
+
+// A failure counts from when its datagram arrived, so frames held for a late
+// op 5 and tried later don't break the stretch they arrived in. Here one
+// speaker's frames fail every 20 ms, while a second speaker's arrive with
+// their SSRC unmapped for half a second. Op 5 names the second speaker a
+// second in, so their held frames are tried then. The first speaker's
+// failures go on, and the gap starts at the first of them.
+func TestReceiverDatesADecryptGapByWhenHeldFramesArrived(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		conn := newFakeReceiveConn()
+		conn.mapSSRC(testSpeakerSSRC, testSpeaker)
+		l := listen(nil)
+		startListening(t, conn, l)
+		time.Sleep(time.Second)
+
+		first := time.Now()
+		for i := range decryptRunLimit {
+			if i == 50 {
+				conn.mapSSRC(otherSSRC, otherSpeaker)
+			}
+			conn.send(testSpeakerSSRC, uint32(i*960), refusedFrame())
+			if i < 25 {
+				conn.send(otherSSRC, uint32(i*960), refusedFrame())
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		synctest.Wait()
+
+		starts := l.gapStarts()
+		if len(starts) != 1 {
+			t.Fatalf("gaps started = %d, want 1", len(starts))
+		}
+		if !starts[0].Equal(first) {
+			t.Errorf("gap started %v after the first failure, want at it", starts[0].Sub(first))
 		}
 	})
 }
@@ -579,10 +661,7 @@ func TestReceiverEndsADecryptGapAtTheFirstFrameThatDecrypts(t *testing.T) {
 		startListening(t, conn, l)
 
 		sent := decryptRunLimit + 50
-		for i := range sent {
-			conn.send(testSpeakerSSRC, uint32(i*960), sealFor("999", "words"))
-			time.Sleep(20 * time.Millisecond)
-		}
+		conn.sendRefused(testSpeakerSSRC, sent)
 		synctest.Wait()
 		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted}) {
 			t.Fatalf("gap events with frames still refused = %v, want the gap started and running", got)
@@ -633,10 +712,7 @@ func TestReceiverDecryptRunStartsNoGapWhileAnotherRuns(t *testing.T) {
 		time.Sleep(time.Second)
 
 		conn.drop(GapVoiceGatewayClosed)
-		for i := range 2 * decryptRunLimit {
-			conn.send(testSpeakerSSRC, uint32(i*960), sealFor("999", "words"))
-			time.Sleep(20 * time.Millisecond)
-		}
+		conn.sendRefused(testSpeakerSSRC, 2*decryptRunLimit)
 		synctest.Wait()
 
 		if got := l.gapCauses(); !slices.Equal(got, []GapCause{GapVoiceGatewayClosed}) {
@@ -850,10 +926,12 @@ func TestReceiverToldOfALossThatEndedBeforeItLooked(t *testing.T) {
 }
 
 // DAVE that never sets up is one stall, however long it lasts: the log
-// warns of it once, and the recorder keeps asking for a fresh connection, at
-// most once every 3 s, until the recording stops.
+// warns of it once, Sentry hears nothing of it, since a gap that cuts the
+// recording short reaches Sentry as the cut short alone, and the recorder
+// keeps asking for a fresh connection, at most once every 3 s, until the
+// recording stops.
 func TestReceiverRetriesAStallAtMostEvery3sAndWarnsOnce(t *testing.T) {
-	recordSentry(t)
+	events := recordSentry(t)
 	logs := captureLogs(t)
 	synctest.Test(t, func(t *testing.T) {
 		conn := newFakeReceiveConn()
@@ -880,6 +958,9 @@ func TestReceiverRetriesAStallAtMostEvery3sAndWarnsOnce(t *testing.T) {
 		}
 		if n := logs.warnings(stallMessage); n != 1 {
 			t.Errorf("%q WARNs = %d, want 1 for the whole stall", stallMessage, n)
+		}
+		if n := len(events.Events()); n != 0 {
+			t.Errorf("Sentry events = %d, want none for the stall", n)
 		}
 	})
 }
