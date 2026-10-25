@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"sort"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -14,11 +15,13 @@ import (
 
 // fakeGuildCommands is Discord's side of the startup sync for one guild: the
 // command names it holds, with a bulk overwrite leaving exactly the names it
-// was sent, as Discord does. With release set, an overwrite closes entered and
-// then waits for release to close, as Discord's rate limit can hold one.
+// was sent, as Discord does, and answering each with its ID in ids. With
+// release set, an overwrite closes entered and then waits for release to
+// close, as Discord's rate limit can hold one.
 type fakeGuildCommands struct {
 	mu           sync.Mutex
 	held         []string
+	ids          map[string]string
 	listErr      error
 	overwriteErr error
 	release      chan struct{}
@@ -49,10 +52,14 @@ func (f *fakeGuildCommands) ApplicationCommandBulkOverwrite(_, _ string, cmds []
 		return nil, f.overwriteErr
 	}
 	f.held = f.held[:0]
-	for _, c := range cmds {
+	answered := make([]*discordgo.ApplicationCommand, len(cmds))
+	for i, c := range cmds {
 		f.held = append(f.held, c.Name)
+		withID := *c
+		withID.ID = f.ids[c.Name]
+		answered[i] = &withID
 	}
-	return cmds, nil
+	return answered, nil
 }
 
 func (f *fakeGuildCommands) names() []string {
@@ -128,5 +135,34 @@ func TestRegistrySync_StopWhileDiscordHoldsTheOverwriteReturnsAtOnce(t *testing.
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Sync was still waiting on Discord 1 s after the stop")
+	}
+}
+
+// Once the startup sync has registered the commands, the ping of a gap's cut
+// short carries Discord's command mention of /record start, with the ID
+// Discord answered the overwrite with for /record, so the starter records
+// again in one click. Every command gets an ID of its own, so the ping shows
+// /record's and no other.
+func TestRegistrySync_CutShortPingMentionsRecordStartByItsRegisteredID(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	registry := NewRegistry(nil, nil, sc.rt)
+	guild := &fakeGuildCommands{ids: map[string]string{}}
+	for i, def := range registry.GetCommands() {
+		guild.ids[def.Name] = strconv.Itoa(1300000000000000000 + i)
+	}
+	if err := registry.Sync(context.Background(), guild, "app", testTempVCGuild); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	sc.startIn(t, recStarter, recordChannel)
+
+	sc.cutShortAtTheMark(t, recordChannel)
+
+	pings := pingsIn(sc.fake, recordChannel)
+	if len(pings) != 1 {
+		t.Fatalf("pings in %s at the cut short = %d, want one", recordChannel, len(pings))
+	}
+	content := pings[0].data.Content
+	if want := recordCommandName + " start:" + guild.ids[recordCommandName]; !slices.Contains(commandMentions(content), want) {
+		t.Errorf("ping = %q, want the command mention of %s", content, want)
 	}
 }

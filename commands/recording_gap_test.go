@@ -141,6 +141,20 @@ func wouldPing(content string, am *discordgo.MessageAllowedMentions) []string {
 	return out
 }
 
+// discordCommandMention matches Discord's mention of a slash command,
+// </name:id> or </name subcommand:id>, with any ID, an empty one included.
+var discordCommandMention = regexp.MustCompile(`</([^:<>]+):([^>]*)>`)
+
+// commandMentions is each slash command content mentions, as "name:id", in
+// order.
+func commandMentions(content string) []string {
+	var out []string
+	for _, m := range discordCommandMention.FindAllStringSubmatch(content, -1) {
+		out = append(out, m[1]+":"+m[2])
+	}
+	return out
+}
+
 // postedSince is every message still up in a channel's chat that posted
 // after the one given, in order. Unlike noticesIn, it lets through messages
 // that ping.
@@ -194,6 +208,28 @@ func TestRecordingCutShortByAGapPingsTheStarterInAReplyToTheNotice(t *testing.T)
 	}
 	if strings.Contains(content, testPanelURL) {
 		t.Errorf("ping = %q, want no panel link", content)
+	}
+}
+
+// Before the startup sync has registered the commands, the runtime doesn't
+// know /record's ID, so the ping names /record start as plain text, which
+// still tells the starter what to run, and mentions no command.
+func TestRecordingCutShortPingBeforeTheCommandsRegisterNamesRecordStartPlain(t *testing.T) {
+	sc := newRecordScene(t, testRecorder)
+	sc.startIn(t, recStarter, recordChannel)
+
+	sc.cutShortAtTheMark(t, recordChannel)
+
+	pings := pingsIn(sc.fake, recordChannel)
+	if len(pings) != 1 {
+		t.Fatalf("pings in %s at the cut short = %d, want one", recordChannel, len(pings))
+	}
+	content := pings[0].data.Content
+	if got := commandMentions(content); len(got) != 0 {
+		t.Errorf("ping = %q mentions the commands %v, want none before they're registered", content, got)
+	}
+	if run := "/" + recordCommandName + " start"; !strings.Contains(content, run) {
+		t.Errorf("ping = %q, want it to tell the starter to run %s", content, run)
 	}
 }
 

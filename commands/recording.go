@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -175,6 +176,10 @@ type RecordingRuntime struct {
 	mu sync.Mutex
 	// running maps each busy recorder's user ID to its recording.
 	running map[string]*activeRecording
+
+	// recordCommandID is /record's ID, empty until the startup sync has
+	// registered the commands.
+	recordCommandID atomic.Value
 }
 
 // activeRecording is one recording a recorder is busy with. conn is nil

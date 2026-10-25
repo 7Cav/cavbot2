@@ -81,7 +81,8 @@ var errCommandSyncPanicked = errors.New("command sync panicked")
 // overwrite. Discord keeps the ID of each command whose name it already
 // holds, even when the definition changed, so the permission overrides it
 // keys by that ID survive. It deletes the commands the registry no longer
-// declares, and the list beforehand only names them in the log.
+// declares, and the list beforehand only names them in the log. Each
+// command's Registered hook gets the ID the overwrite answers it with.
 //
 // One request replaces the create-each loop that Discord paced to about a
 // minute (#470). The overwrite has its own rate limit. After two in quick
@@ -110,8 +111,16 @@ func (r *Registry) overwrite(api guildCommandAPI, appID, guildID string) error {
 	if err != nil {
 		utils.Warn("Could not list the guild's commands, so removed ones go unnamed", "error", err)
 	}
-	if _, err := api.ApplicationCommandBulkOverwrite(appID, guildID, r.GetCommands()); err != nil {
+	registered, err := api.ApplicationCommandBulkOverwrite(appID, guildID, r.GetCommands())
+	if err != nil {
 		return fmt.Errorf("overwrite the guild's commands: %w", err)
+	}
+	for _, answered := range registered {
+		for _, cmd := range r.commands {
+			if cmd.Definition.Name == answered.Name && cmd.Registered != nil {
+				cmd.Registered(answered.ID)
+			}
+		}
 	}
 	for _, cmd := range existing {
 		if _, declared := r.GetHandler(cmd.Name); !declared {
