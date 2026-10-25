@@ -9,14 +9,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// recorderTally is what the bot's startup log says about its recorders:
-// whether recording is off, how many connected, and the place in
-// RECORDER_TOKENS of each one that failed. It holds no token, so a report
+// recorderTally is what the bot's log says about its recorders: whether
+// recording is off, how many connected, and the place in RECORDER_TOKENS of
+// each one that failed. It holds no token, so a report
 // built from it can't print one.
 type recorderTally struct {
 	Off       bool  `json:"off,omitempty"`
@@ -24,23 +25,65 @@ type recorderTally struct {
 	Failed    []int `json:"failed,omitempty"`
 }
 
+// The bot's recorder lines, as its voice adapter logs them.
+const (
+	recordingOffLine      = "RECORDER_TOKENS not set, recording off"
+	recorderConnectedLine = "Recorder connected"
+	recorderFailedLine    = "Recorder failed to connect"
+)
+
 // recorderPlace finds a recorder's place in a log line. A failure logs the
 // error first, so the last match is the bot's own.
 var recorderPlace = regexp.MustCompile(`\brecorder=(\d+)\b`)
 
-// count tallies line if it is one of the bot's recorder lines.
-func (r *recorderTally) count(line string) {
+// recorderLines reads the bot's recorder lines into a tally. A recorder
+// logs that it connected at each login, as when it logs back in after a cut
+// short, so the tally counts it once, by its place in RECORDER_TOKENS.
+type recorderLines struct {
+	tally     recorderTally
+	connected map[int]bool
+}
+
+// read tallies line if it is one of the bot's recorder lines, and reports
+// whether the tally changed.
+func (r *recorderLines) read(line string) bool {
 	switch {
-	case strings.Contains(line, "RECORDER_TOKENS not set, recording off"):
-		r.Off = true
-	case strings.Contains(line, "Recorder connected"):
-		r.Connected++
-	case strings.Contains(line, "Recorder failed to connect"):
-		if m := recorderPlace.FindAllStringSubmatch(line, -1); len(m) > 0 {
-			n, _ := strconv.Atoi(m[len(m)-1][1])
-			r.Failed = append(r.Failed, n)
+	case strings.Contains(line, recordingOffLine):
+		r.tally.Off = true
+		return true
+	case strings.Contains(line, recorderConnectedLine):
+		if n, ok := placeIn(line); ok && !r.connected[n] {
+			if r.connected == nil {
+				r.connected = map[int]bool{}
+			}
+			r.connected[n] = true
+			r.tally.Connected++
+			return true
+		}
+	case strings.Contains(line, recorderFailedLine):
+		if n, ok := placeIn(line); ok {
+			r.tally.Failed = append(r.tally.Failed, n)
+			return true
 		}
 	}
+	return false
+}
+
+// snapshot is the tally so far, which later lines leave as it is.
+func (r *recorderLines) snapshot() recorderTally {
+	t := r.tally
+	t.Failed = slices.Clone(t.Failed)
+	return t
+}
+
+// placeIn is the place of the recorder a log line names.
+func placeIn(line string) (int, bool) {
+	m := recorderPlace.FindAllStringSubmatch(line, -1)
+	if len(m) == 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[len(m)-1][1])
+	return n, err == nil
 }
 
 // mixVerdict is whether the bot can build a mix.
@@ -103,7 +146,7 @@ func lookPathIn(file, path string) (string, bool) {
 }
 
 // recordingReport says whether recording checks can run: the recorders the
-// bot connected at startup, and whether it can build a mix. up prints it in
+// bot has connected, and whether it can build a mix. up prints it in
 // the ready block and keeps it in the run file for status. It never stops a
 // run, since most passes never record.
 type recordingReport struct {

@@ -56,7 +56,8 @@ type runState struct {
 	PanelURL   string    `json:"panel_url"`
 	ForumURL   string    `json:"forum_url,omitempty"`
 	ManagedDB  bool      `json:"managed_db"`
-	// The supervisor sets Recording once the bot is ready.
+	// The supervisor sets Recording once the bot is ready, and keeps its
+	// recorder tally up to date while the bot runs.
 	Recording *recordingReport `json:"recording,omitempty"`
 }
 
@@ -289,6 +290,9 @@ type supervisor struct {
 	// report gets its mix verdict before the bot starts, and its recorders
 	// from the bot's output until the bot is ready.
 	report recordingReport
+	// tallies carries the recorder tally each time it changes after the bot
+	// is ready, holding the latest only.
+	tallies chan recorderTally
 }
 
 func (s *supervisor) logf(format string, args ...any) {
@@ -349,37 +353,8 @@ func (s *supervisor) run(ctx context.Context) error {
 		s.save()
 		return errSilent
 	}
-	if ready != nil {
-		select {
-		case <-ready:
-			report := s.report
-			s.st.Recording = &report
-			s.announce()
-			s.st.State = stateReady
-			s.save()
-		case err := <-s.botDone:
-			s.botExited = true
-			s.st.State, s.st.Detail = stateFailed, fmt.Sprintf("the bot exited during startup (%v)", exitText(err))
-			s.logf("%s. The end of its log:", s.st.Detail)
-			select {
-			case <-s.logDone:
-			case <-time.After(2 * time.Second):
-			}
-			printTail(os.Stdout, s.paths.botLog(), 30)
-			s.teardown()
-			s.save()
-			return errSilent
-		case <-ctx.Done():
-		}
-	}
-	if s.st.State == stateReady {
-		select {
-		case err := <-s.botDone:
-			s.botExited = true
-			s.st.Detail = fmt.Sprintf("the bot exited on its own (%v)", exitText(err))
-			s.logf("%s; stopping the run", s.st.Detail)
-		case <-ctx.Done():
-		}
+	if ready != nil && !s.watchBot(ctx, ready) {
+		return errSilent
 	}
 	s.logf("stopping")
 	s.teardown()
@@ -389,6 +364,48 @@ func (s *supervisor) run(ctx context.Context) error {
 	s.save()
 	s.logf("stopped")
 	return nil
+}
+
+// watchBot watches the bot start launched, with ready closing once it is
+// running, until the bot exits or a stop arrives. It returns false when the
+// bot exited during startup, once it has torn the run down.
+func (s *supervisor) watchBot(ctx context.Context, ready <-chan struct{}) bool {
+	select {
+	case <-ready:
+		report := s.report
+		s.st.Recording = &report
+		s.announce()
+		s.st.State = stateReady
+		s.save()
+	case err := <-s.botDone:
+		s.botExited = true
+		s.st.State, s.st.Detail = stateFailed, fmt.Sprintf("the bot exited during startup (%v)", exitText(err))
+		s.logf("%s. The end of its log:", s.st.Detail)
+		select {
+		case <-s.logDone:
+		case <-time.After(2 * time.Second):
+		}
+		printTail(os.Stdout, s.paths.botLog(), 30)
+		s.teardown()
+		s.save()
+		return false
+	case <-ctx.Done():
+		return true
+	}
+	for {
+		select {
+		case t := <-s.tallies:
+			s.st.Recording.Recorders = t
+			s.save()
+		case err := <-s.botDone:
+			s.botExited = true
+			s.st.Detail = fmt.Sprintf("the bot exited on its own (%v)", exitText(err))
+			s.logf("%s; stopping the run", s.st.Detail)
+			return true
+		case <-ctx.Done():
+			return true
+		}
+	}
 }
 
 // start runs every step up to the bot's launch and returns a channel that
@@ -485,8 +502,10 @@ const panelNotListening = "the bot is running but its panel is not listening"
 
 // startBot launches the built bot in the state directory, which has no .env,
 // so the environment is its whole configuration. Its output goes to the bot
-// log, and the returned channel closes at "Bot is now running". The bot
-// reports every recorder before that line, so the tally is whole by then.
+// log, and the returned channel closes at "Bot is now running". The report
+// has the recorders that connected by then. A recorder can connect later,
+// as one whose first login failed does, and log in again, as one does after
+// a cut short, so each change to the tally after that line goes to tallies.
 //
 // Most of the lines the run reads print at INFO, so a LOG_LEVEL above INFO
 // starts the bot at INFO. The bot log then leaves out the lines LOG_LEVEL
@@ -527,19 +546,21 @@ func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
 
 	ready := make(chan struct{})
 	s.logDone = make(chan struct{})
+	s.tallies = make(chan recorderTally, 1)
 	go func() {
 		defer close(s.logDone)
 		defer func() { _ = logFile.Close() }()
 		sc := bufio.NewScanner(pr)
 		sc.Buffer(make([]byte, 64*1024), 1<<20)
+		var recorders recorderLines
 		panel, closed := false, false
 		for sc.Scan() {
 			line := sc.Text()
 			if keptInBotLog(line, runLevel) {
 				_, _ = fmt.Fprintln(logFile, line)
 			}
-			if !closed {
-				s.report.Recorders.count(line)
+			if recorders.read(line) && closed {
+				s.publish(recorders.snapshot())
 			}
 			switch {
 			case strings.Contains(line, "Panel listening"):
@@ -548,6 +569,7 @@ func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
 				if !panel {
 					s.logf("%s; see %s", panelNotListening, s.paths.botLog())
 				}
+				s.report.Recorders = recorders.snapshot()
 				closed = true
 				close(ready)
 			}
@@ -555,6 +577,17 @@ func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
 		_, _ = io.Copy(logFile, pr)
 	}()
 	return ready, nil
+}
+
+// publish hands the bot watch tally in place of any tally it hasn't taken
+// yet. Only the goroutine reading the bot's output calls it, so the send
+// never waits.
+func (s *supervisor) publish(tally recorderTally) {
+	select {
+	case <-s.tallies:
+	default:
+	}
+	s.tallies <- tally
 }
 
 // botLineLevel finds the level of a line the bot's logger wrote.

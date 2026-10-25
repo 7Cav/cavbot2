@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/7cav/cavbot2/utils"
 	"github.com/7cav/cavbot2/voice"
@@ -54,37 +55,45 @@ func openRefusing(refused func(token string) bool) voice.Opener {
 	return refusingDiscord{refused: refused}
 }
 
-// recorderLog runs the bot's recorder connect on raw, a RECORDER_TOKENS
-// value, with Discord refusing the tokens in refused, and returns what the
-// bot logs, written by the logger the bot sets up for itself.
-func recorderLog(t *testing.T, raw string, refused ...string) []string {
+// botLog sets up the logger the bot sets up for itself, writing to a file,
+// and returns a read of the lines it has logged so far.
+func botLog(t *testing.T) func() []string {
 	t.Helper()
 	out, err := os.Create(t.TempDir() + "/bot.log")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = out.Close() }()
+	t.Cleanup(func() { _ = out.Close() })
 	prevLogger, prevStdout := utils.Logger, os.Stdout
 	t.Cleanup(func() { utils.Logger = prevLogger })
 	os.Stdout = out
 	utils.InitLogger("INFO")
 	os.Stdout = prevStdout
-
-	voice.Connect(raw, openRefusing(func(token string) bool { return slices.Contains(refused, token) })).Close()
-
-	b, err := os.ReadFile(out.Name())
-	if err != nil {
-		t.Fatal(err)
+	return func() []string {
+		b, err := os.ReadFile(out.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Split(strings.TrimSpace(string(b)), "\n")
 	}
-	return strings.Split(strings.TrimSpace(string(b)), "\n")
+}
+
+// recorderLog runs the bot's recorder connect on raw, a RECORDER_TOKENS
+// value, with Discord refusing the tokens in refused, and returns what the
+// bot logs.
+func recorderLog(t *testing.T, raw string, refused ...string) []string {
+	t.Helper()
+	logged := botLog(t)
+	voice.Connect(raw, openRefusing(func(token string) bool { return slices.Contains(refused, token) })).Close()
+	return logged()
 }
 
 func tallyOf(lines []string) recorderTally {
-	var r recorderTally
+	var r recorderLines
 	for _, line := range lines {
-		r.count(line)
+		r.read(line)
 	}
-	return r
+	return r.tally
 }
 
 func TestRecorderTallySaysRecordingIsOffWithNoToken(t *testing.T) {
@@ -106,6 +115,38 @@ func TestRecorderTallyNamesARefusedTokenByItsPlaceInTheList(t *testing.T) {
 	if want := (recorderTally{Connected: 2, Failed: []int{2}}); !reflect.DeepEqual(got, want) {
 		t.Errorf("tally %+v, want %+v", got, want)
 	}
+}
+
+// A recorder that a cut short took offline logs out and back in, and logs
+// that it connected a second time. The tally counts it once.
+func TestRecorderTallyCountsARecorderThatLogsBackInOnce(t *testing.T) {
+	logged := botLog(t)
+	r := voice.Connect("tok-a", openRefusing(func(string) bool { return false }))
+	defer r.Close()
+
+	r.TakeOffline(r.UserIDs()[0])()
+
+	lines := logged()
+	for deadline := time.Now().Add(10 * time.Second); linesSaying(lines, recorderConnectedLine) < 2; lines = logged() {
+		if time.Now().After(deadline) {
+			t.Fatalf("the recorder never logged back in:\n%s", strings.Join(lines, "\n"))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got, want := tallyOf(lines), (recorderTally{Connected: 1}); !reflect.DeepEqual(got, want) {
+		t.Errorf("tally %+v, want %+v", got, want)
+	}
+}
+
+// linesSaying counts the lines that say msg.
+func linesSaying(lines []string, msg string) int {
+	n := 0
+	for _, line := range lines {
+		if strings.Contains(line, msg) {
+			n++
+		}
+	}
+	return n
 }
 
 // Encoder lists as ffmpeg -hide_banner -encoders prints them, cut to the
