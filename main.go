@@ -227,7 +227,7 @@ func main() {
 	// recording is off and none connects. A token that can't log in or be
 	// read goes to Sentry and costs only its own recorder. Deferred before
 	// the main session's close, so the recorders close after it.
-	recorders := voice.Connect(os.Getenv("RECORDER_TOKENS"), voice.Discord{})
+	recorders := voice.Connect(os.Getenv("RECORDER_TOKENS"), &voice.Discord{})
 	defer recorders.Close()
 	if shuttingDown() {
 		return

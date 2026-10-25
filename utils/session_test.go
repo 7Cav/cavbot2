@@ -3,6 +3,7 @@ package utils
 import (
 	"testing"
 
+	"github.com/7cav/cavbot2/utils/gatewaytest"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -23,7 +24,7 @@ func newFakeSession(t *testing.T) *discordgo.Session {
 }
 
 func TestOpenSessionReadySessionIsUsable(t *testing.T) {
-	newScriptedGateway(t, func(int) gatewayLogin { return gatewayLogin{answer: "READY"} })
+	gatewaytest.New(t, func(int) gatewaytest.Login { return gatewaytest.Login{Answer: gatewaytest.Ready} })
 	dg := newFakeSession(t)
 
 	if err := OpenSession(dg); err != nil {
@@ -39,7 +40,7 @@ func TestOpenSessionReadySessionIsUsable(t *testing.T) {
 // treats a non-READY second frame as non-fatal (wsapi.go:178-182) and Open()
 // returns nil, leaving State.User unpopulated for the caller to walk into.
 func TestOpenSessionRejectsSessionThatNeverBecameReady(t *testing.T) {
-	newScriptedGateway(t, func(int) gatewayLogin { return gatewayLogin{invalid: true} })
+	gatewaytest.New(t, func(int) gatewaytest.Login { return gatewaytest.Login{Invalid: true} })
 	dg := newFakeSession(t)
 
 	if err := OpenSession(dg); err == nil {

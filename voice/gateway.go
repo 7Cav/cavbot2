@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -40,11 +41,67 @@ const lookupTimeout = 5 * time.Second
 const answerWait = 250 * time.Millisecond
 
 // Discord is the production Opener: Discord itself, through discordgo.
-type Discord struct{}
+type Discord struct {
+	// offlineAfter is how long a recorder stays offline before Sentry
+	// hears of it, utils.GatewayOfflineAfter when zero.
+	offlineAfter time.Duration
+
+	mu sync.Mutex
+	// recorders is each recorder the opener has logged in, by its place in
+	// RECORDER_TOKENS.
+	recorders map[int]*discordRecorder
+}
+
+// discordRecorder is a recorder as the opener knows it, across its logins.
+// The opener's mutex guards named.
+type discordRecorder struct {
+	// watch is the recorder's gateway outage watch, which reads each of
+	// its logins in turn.
+	watch *utils.GatewayWatch
+	// named is set once the watch names the recorder by its user ID.
+	named bool
+}
+
+// recorder is the recorder at its place in RECORDER_TOKENS. Its first login
+// makes it, with a watch whose outage starts then, which a login's READY
+// ends, so a first login that fails is an outage from its try.
+func (d *Discord) recorder(place int) *discordRecorder {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if rec := d.recorders[place]; rec != nil {
+		return rec
+	}
+	after := cmp.Or(d.offlineAfter, utils.GatewayOfflineAfter)
+	rec := &discordRecorder{watch: utils.NewGatewayWatch(after, "session", "recorder", "recorder", place)}
+	rec.watch.Offline()
+	if d.recorders == nil {
+		d.recorders = map[int]*discordRecorder{}
+	}
+	d.recorders[place] = rec
+	return rec
+}
+
+// name has the recorder's watch name it by its user ID, which READY tells,
+// once for all of its logins, since the ID is the account's.
+func (d *Discord) name(rec *discordRecorder, userID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !rec.named {
+		rec.named = true
+		rec.watch.AddPairs("user_id", userID)
+	}
+}
+
+// FailedToConnect stands the recorder's watch down. The recorder is out
+// until a restart, and Sentry has heard of it as "Recorder failed to
+// connect", which the outage of its first login would only repeat.
+func (d *Discord) FailedToConnect(place int) {
+	d.recorder(place).watch.StandDown()
+}
 
 // UserID reads the recorder account's user ID from GET /users/@me with its
 // token, which needs no gateway session.
-func (Discord) UserID(ctx context.Context, token string) (string, error) {
+func (d *Discord) UserID(ctx context.Context, token string) (string, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return "", err
@@ -60,10 +117,10 @@ func (Discord) UserID(ctx context.Context, token string) (string, error) {
 // recorder account, open once READY has named it. A session that opened
 // without reaching READY is closed again for good, so a failed login holds
 // no connection, and the next login opens a session of its own.
-// The session is watched, so a recorder that drops off the gateway and stays
-// off reaches Sentry while the bot runs, and one whose token Discord refuses
-// stops logging in.
-func (Discord) Open(recorder int, token string) (GatewaySession, error) {
+// The recorder's watch reads the session, so a recorder that drops off the
+// gateway, or stays offline, reaches Sentry while the bot runs, and one
+// whose token Discord refuses stops logging in.
+func (d *Discord) Open(recorder int, token string) (GatewaySession, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, err
@@ -73,19 +130,20 @@ func (Discord) Open(recorder int, token string) (GatewaySession, error) {
 	dialer := newVoiceDialer()
 	s := &discordgoSession{dg: dg, drops: dialer.drops}
 	// Watched from before it opens, so the watch reads every close Discord
-	// sends the session. A failed open is a close on purpose, and sends
-	// nothing beyond its own report.
-	s.watchGateway(recorder, utils.GatewayOfflineAfter)
+	// sends the session. A failed open is a close on purpose, and the
+	// recorder stays offline.
+	rec := d.recorder(recorder)
+	s.watch = rec.watch
+	s.watch.Watch(dg)
 	if err := utils.OpenSession(dg); err != nil {
-		_ = s.watch.CloseSession()
-		return nil, err
+		return nil, s.failedOpen(err)
 	}
 	userID, err := snowflake.Parse(dg.State.User.ID)
 	if err != nil {
-		_ = s.watch.CloseSession()
-		return nil, err
+		return nil, s.failedOpen(err)
 	}
-	s.named(dg.State.User.ID)
+	s.userID = dg.State.User.ID
+	d.name(rec, s.userID)
 	// Closures rather than method values here and below: the gate's error
 	// data check follows a closure, and not a method value.
 	updateVoiceState := func(ctx context.Context, guildID snowflake.ID, channelID *snowflake.ID, selfMute, selfDeaf bool) error {
@@ -100,7 +158,21 @@ func (Discord) Open(recorder int, token string) (GatewaySession, error) {
 	// recorder before its first join.
 	dg.AddHandler(func(_ *discordgo.Session, e *discordgo.VoiceStateUpdate) { s.onVoiceStateUpdate(e) })
 	dg.AddHandler(func(_ *discordgo.Session, e *discordgo.VoiceServerUpdate) { s.onVoiceServerUpdate(e) })
+	// discordgo may be reconnecting the login when the recorder logs out of
+	// it, and the logout doesn't stop that.
+	dg.AddHandler(func(_ *discordgo.Session, _ *discordgo.Connect) { s.cameBack() })
 	return s, nil
+}
+
+// failedOpen closes a session that failed to open, and returns err, the
+// open's failure. When Discord refused the recorder's token, that failure
+// is ErrTokenRefused, whether Discord closed the connection with 4004 during
+// the open or after the open had returned.
+func (s *discordgoSession) failedOpen(err error) error {
+	if refused, _ := s.watch.CloseSession(); refused {
+		return fmt.Errorf("%w: %w", ErrTokenRefused, err)
+	}
+	return err
 }
 
 // discordgoSession is a recorder's discordgo session, with the disgo voice
@@ -116,6 +188,8 @@ type discordgoSession struct {
 	// drops, when set, can drop the recorder's voice connections, as the
 	// smoke hook does.
 	drops *connDrops
+	// loggedOut is set once the recorder has logged out of this login.
+	loggedOut atomic.Bool
 }
 
 // connLoggerFunc builds the logger one voice connection logs through, and the
@@ -1305,9 +1379,36 @@ func closedWith(err error, code int) bool {
 
 func (s *discordgoSession) UserID() string { return s.userID }
 
+// LogOut logs the recorder out of this login, for a relogin. Its leave has
+// already taken it out of the call, so the logout waits on no voice
+// connection. The recorder is offline from now until a login's READY, and
+// in a gateway outage all that time, though the bot chose it. A login
+// discordgo brings back after the logout is logged out again at once.
+func (s *discordgoSession) LogOut() error {
+	s.loggedOut.Store(true)
+	s.watch.Offline()
+	_, err := s.watch.CloseSession()
+	return err
+}
+
+// cameBack logs a login that came back after its logout out again, with
+// 1000. discordgo had been reconnecting it, and its reconnects end once one
+// works, so this close ends them, and takes the recorder out of the call
+// the login was in. The logout turned discordgo's reconnects off, so none
+// follows this close.
+func (s *discordgoSession) cameBack() {
+	defer utils.RecoverPanic("recorder-logout", "recorder", s.userID)
+	if !s.loggedOut.Load() {
+		return
+	}
+	if err := s.dg.Close(); err != nil {
+		utils.Warn("Recorder did not close cleanly", "user_id", s.userID, "error", err)
+	}
+}
+
 // Close takes the recorder out of any voice channel it is still in, then
-// ends its session. The close is on purpose, so its watch stands down
-// first.
+// ends its session, at shutdown. The close is on purpose, so its watch
+// stands down first.
 func (s *discordgoSession) Close() error {
 	if s.watch != nil {
 		s.watch.StandDown()
@@ -1515,18 +1616,4 @@ func (s *discordgoSession) onVoiceServerUpdate(e *discordgo.VoiceServerUpdate) {
 	if ev, ok := voiceServerEvent(e); ok {
 		s.voice.HandleVoiceServerUpdate(ev)
 	}
-}
-
-// watchGateway watches the recorder's gateway session, so an outage that
-// lasts reaches Sentry by the recorder's place in RECORDER_TOKENS and,
-// once named, its user ID, never by its token.
-func (s *discordgoSession) watchGateway(recorder int, after time.Duration) {
-	s.watch = utils.WatchGateway(s.dg, after, "session", "recorder", "recorder", recorder)
-}
-
-// named records the recorder's user ID, which READY tells, and has the
-// watch name the recorder by it.
-func (s *discordgoSession) named(userID string) {
-	s.userID = userID
-	s.watch.AddPairs("user_id", userID)
 }

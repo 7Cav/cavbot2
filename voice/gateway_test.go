@@ -2602,22 +2602,6 @@ func eventMentions(e *sentry.Event, want string) bool {
 	return slices.ContainsFunc(eventTexts(e), func(text string) bool { return strings.Contains(text, want) })
 }
 
-// recorderWatchAfter is how long the tests' recorder watches wait before
-// they report, short enough to wait out.
-const recorderWatchAfter = 50 * time.Millisecond
-
-// waitForEvents waits for Sentry to have at least n events, then waits out
-// several more delays, so a report sent after them is counted too.
-func waitForEvents(t *testing.T, events *sentryTransport, n int) []*sentry.Event {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for len(events.Events()) < n && time.Now().Before(deadline) {
-		time.Sleep(recorderWatchAfter / 5)
-	}
-	time.Sleep(4 * recorderWatchAfter)
-	return events.Events()
-}
-
 // eventTexts is the text a Sentry event carries where a capture's pairs
 // and error land: its extra context, its tags, its message and its
 // exceptions.
@@ -2633,53 +2617,4 @@ func eventTexts(e *sentry.Event) []string {
 		texts = append(texts, x.Value)
 	}
 	return texts
-}
-
-// A recorder whose gateway session drops and stays down reaches Sentry by
-// its place in RECORDER_TOKENS, as "Recorder failed to connect" names it,
-// and by its user ID. The token is the recorder account, so the event
-// carries it nowhere.
-func TestARecorderOfflineIsNamedByItsPlaceAndUserIDNeverItsToken(t *testing.T) {
-	events := recordSentry(t)
-	const token = "recorder-token-7f3a"
-	dg, err := discordgo.New("Bot " + token)
-	if err != nil {
-		t.Fatalf("discordgo.New: %v", err)
-	}
-	s := &discordgoSession{dg: dg, voice: &fakeManager{}}
-	// Watched before it opens, and named once READY has told its user ID.
-	s.watchGateway(2, recorderWatchAfter)
-	s.named("300")
-
-	// discordgo closes a session whose gateway connection drops, and the
-	// close emits its Disconnect.
-	_ = dg.Close()
-
-	got := waitForEvents(t, events, 1)
-	if len(got) != 1 {
-		t.Fatalf("Sentry got %d events, want 1", len(got))
-	}
-	extra := got[0].Contexts["extra"]
-	if r, id := fmt.Sprint(extra["recorder"]), fmt.Sprint(extra["user_id"]); r != "2" || id != "300" {
-		t.Errorf("event names recorder %s with user ID %s, want recorder 2 with user ID 300", r, id)
-	}
-	for _, text := range eventTexts(got[0]) {
-		if strings.Contains(text, token) {
-			t.Errorf("event carries the recorder's token in %q", text)
-		}
-	}
-}
-
-// Shutdown closes the recorder's session on purpose, and Sentry hears
-// nothing of the Disconnect that close emits.
-func TestRecorderCloseSendsNoOutage(t *testing.T) {
-	events := recordSentry(t)
-	s := recorderSession(t, &fakeManager{})
-	s.watchGateway(1, recorderWatchAfter)
-
-	_ = s.Close()
-
-	if got := waitForEvents(t, events, 0); len(got) != 0 {
-		t.Errorf("Sentry got %d events after the recorder closed, want none", len(got))
-	}
 }

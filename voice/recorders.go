@@ -23,7 +23,12 @@ type GatewaySession interface {
 	// Join connects the recorder to a voice channel of the guild, and
 	// returns once Discord has let it in, or with ctx's error.
 	Join(ctx context.Context, guildID, channelID string) (Conn, error)
-	// Close ends the session: the recorder logs out of this login.
+	// LogOut ends the session for a relogin: the recorder logs out of this
+	// login, and is offline until its next login is up. The recorder has
+	// left every voice channel already.
+	LogOut() error
+	// Close ends the session at shutdown: the recorder leaves any voice
+	// channel it is still in, and logs out of this login.
 	Close() error
 }
 
@@ -229,6 +234,11 @@ type Opener interface {
 	// UserID reads the account's user ID from Discord's REST API, with no
 	// gateway session.
 	UserID(ctx context.Context, token string) (string, error)
+	// FailedToConnect tells the opener the recorder is out until a restart,
+	// since its first login and its user ID read both failed. Sentry has
+	// heard of it as "Recorder failed to connect", so nothing more of it
+	// need reach Sentry.
+	FailedToConnect(recorder int)
 }
 
 // RecorderState is whether a recorder can join a channel now (GLOSSARY.md,
@@ -356,6 +366,7 @@ func Connect(raw string, open Opener) *Recorders {
 		cancel()
 		if readErr != nil {
 			utils.CaptureError(recorderFailedToConnectMessage, fmt.Errorf("login: %w; user ID read: %w", err, readErr), "recorder", rec.place)
+			open.FailedToConnect(rec.place)
 			continue
 		}
 		rec.userID, rec.state = userID, RecorderOffline
@@ -401,7 +412,7 @@ func (r *Recorders) logIn(rec *recorder, wait time.Duration) {
 		r.mu.Lock()
 		if r.isClosed() {
 			r.mu.Unlock()
-			r.logOut(rec, s)
+			r.logOut(rec, s.Close)
 			return
 		}
 		r.setStateLocked(rec, RecorderOnline, s)
@@ -457,20 +468,20 @@ func (r *Recorders) logBackIn(rec *recorder) {
 	rec.session = nil
 	r.mu.Unlock()
 	if old != nil {
-		r.logOut(rec, old)
+		r.logOut(rec, old.LogOut)
 	}
 	r.logIn(rec, 0)
 }
 
-// logOut ends one of a recorder's logins, and waits for it no longer than
-// logoutTimeout. A logout that runs past it finishes on its own goroutine,
-// if ever.
-func (r *Recorders) logOut(rec *recorder, s GatewaySession) {
+// logOut ends one of a recorder's logins with end, the login's LogOut or
+// its Close, and waits for it no longer than logoutTimeout. A logout that
+// runs past it finishes on its own goroutine, if ever.
+func (r *Recorders) logOut(rec *recorder, end func() error) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		defer utils.RecoverPanic("recorder-logout", "recorder", rec.place)
-		if err := s.Close(); err != nil {
+		if err := end(); err != nil {
 			utils.Warn("Recorder did not close cleanly", "recorder", rec.place, "user_id", rec.userID, "error", err)
 		}
 	}()
@@ -570,7 +581,7 @@ func (r *Recorders) Close() {
 	for _, rec := range r.recorders {
 		if s := rec.session; s != nil {
 			rec.session = nil
-			wg.Go(func() { r.logOut(rec, s) })
+			wg.Go(func() { r.logOut(rec, s.Close) })
 		}
 	}
 	r.mu.Unlock()
