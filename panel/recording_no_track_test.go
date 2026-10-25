@@ -52,7 +52,7 @@ func (w *testWorld) recordCutShortWithNothingOnDisk(t *testing.T, discordID stri
 	w.putTrack(t, id, discordID, nil)
 	w.restartRecorder(t)
 	rec := newestRecordingOf(t, w.store, discordID)
-	if rec.ID != id || rec.Ended != store.RecordingEndCutShort || rec.Mix != store.MixFailed ||
+	if rec.ID != id || rec.Ended != store.RecordingEndRestart || rec.Mix != store.MixFailed ||
 		len(rec.Speakers) != 1 || !rec.Speakers[0].TrackLost {
 		t.Fatalf("recording %d after recovery = %+v, want it cut short with its one speaker's track lost and its mix failed", id, rec)
 	}

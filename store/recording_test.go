@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"reflect"
 	"slices"
@@ -238,6 +239,118 @@ func TestRecordingDeleteRemovesThatRecordingOnly(t *testing.T) {
 			t.Errorf("recordings after deleting %d = %+v, want only %d", gone.ID, got, kept.ID)
 		}
 	})
+}
+
+// A recording was cut short when a restart or a gap of 10 s ended it, and
+// by no other end (#853): the one check every reader of a recording's end
+// asks.
+func TestRecordingEndCutShortForARestartOrAGapOnly(t *testing.T) {
+	for end, want := range map[RecordingEnd]bool{
+		RecordingEndRestart:      true,
+		RecordingEndGap:          true,
+		RecordingEndStopped:      false,
+		RecordingEndCap:          false,
+		RecordingEndEmpty:        false,
+		RecordingEndDisk:         false,
+		RecordingEndRecorderLeft: false,
+	} {
+		if got := end.CutShort(); got != want {
+			t.Errorf("RecordingEnd(%q).CutShort() = %t, want %t", end, got, want)
+		}
+	}
+}
+
+// beforeRecordingEndRename is the last migration before the one that
+// renames cut_short to restart (#853): the schema a release with cut_short
+// left.
+const beforeRecordingEndRename = 20261014134335
+
+// insertStoppedRecording writes a stopped recording of guild-1 ended as end,
+// naming the columns an older release wrote, and returns its ID.
+func insertStoppedRecording(t *testing.T, raw *sql.DB, end string) int64 {
+	t.Helper()
+	var id int64
+	if err := raw.QueryRowContext(context.Background(), `
+		INSERT INTO recordings (guild_id, channel_id, channel_name, starter_id, title, recorder_id, started_at, stopped_at, ended, mix)
+		VALUES ('guild-1', 'vc-1', 'Briefing Room', 'user-s', '', 'user-recorder', now() - interval '1 hour', now(), $1, 'ready')
+		RETURNING id`, end).Scan(&id); err != nil {
+		t.Fatalf("insert a recording ended %s: %v", end, err)
+	}
+	return id
+}
+
+// A recording a restart cut short before the end was renamed reads back
+// as a restart's after the migration (#853), and a stopped one still reads
+// as stopped.
+func TestRecordingCutShortByARestartBeforeTheRenameReadsAsARestart(t *testing.T) {
+	raw := migratedTo(t, beforeRecordingEndRename)
+	want := map[int64]RecordingEnd{
+		insertStoppedRecording(t, raw, "cut_short"): RecordingEndRestart,
+		insertStoppedRecording(t, raw, "stopped"):   RecordingEndStopped,
+	}
+
+	recs := listRecordings(t, openMigrated(t))
+
+	if len(recs) != len(want) {
+		t.Fatalf("recordings after the migration = %+v, want %d", recs, len(want))
+	}
+	for _, rec := range recs {
+		if rec.Ended != want[rec.ID] {
+			t.Errorf("recording %d ended %q after the migration, want %q", rec.ID, rec.Ended, want[rec.ID])
+		}
+	}
+}
+
+// A rollback past the rename leaves only ends the older release knows
+// (#853): a restart's goes back to cut_short, and a gap's to recorder_left,
+// the end that release gives its own gap stop.
+func TestRecordingEndRenameDownLeavesOnlyEndsTheOlderReleaseKnows(t *testing.T) {
+	_, raw := resetTestDatabase(t)
+	s := openMigrated(t)
+	want := map[int64]string{
+		stoppedAs(t, s, RecordingEndRestart): "cut_short",
+		stoppedAs(t, s, RecordingEndGap):     "recorder_left",
+	}
+
+	if _, err := migrationProvider(t, raw).DownTo(context.Background(), beforeRecordingEndRename); err != nil {
+		t.Fatalf("migrate down to %d: %v", beforeRecordingEndRename, err)
+	}
+
+	for id, end := range want {
+		var got string
+		if err := raw.QueryRowContext(context.Background(), `SELECT ended FROM recordings WHERE id = $1`, id).Scan(&got); err != nil {
+			t.Fatalf("read recording %d's end: %v", id, err)
+		}
+		if got != end {
+			t.Errorf("recording %d ended %q after the rollback, want %q", id, got, end)
+		}
+	}
+}
+
+// A recording a gap cut short reads back ended as a gap (#853).
+func TestRecordingCutShortByAGapReadsBackAsAGap(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		stoppedAs(t, s, RecordingEndGap)
+
+		if got := listRecordings(t, s); len(got) != 1 || got[0].Ended != RecordingEndGap {
+			t.Errorf("recordings after a gap's stop = %+v, want one ended %q", got, RecordingEndGap)
+		}
+	})
+}
+
+// stoppedAs starts a recording and stops it ended as end, and returns its
+// ID.
+func stoppedAs(t *testing.T, s Store, end RecordingEnd) int64 {
+	t.Helper()
+	ctx := context.Background()
+	started, err := s.StartRecording(ctx, sampleRecording())
+	if err != nil {
+		t.Fatalf("StartRecording: %v", err)
+	}
+	if err := s.StopRecording(ctx, started.ID, started.StartedAt.Add(time.Hour), end, nil); err != nil {
+		t.Fatalf("StopRecording: %v", err)
+	}
+	return started.ID
 }
 
 // sameRecording compares two recordings field by field, times by instant,

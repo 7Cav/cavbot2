@@ -202,10 +202,21 @@ const (
 	// RecordingEndRecorderLeft: the recorder left the channel, moved out,
 	// disconnected, or with the channel deleted.
 	RecordingEndRecorderLeft RecordingEnd = "recorder_left"
-	// RecordingEndCutShort: the bot shut down or crashed while it ran, and
+	// RecordingEndRestart: the bot shut down or crashed while it ran, and
 	// the next process closed it.
-	RecordingEndCutShort RecordingEnd = "cut_short"
+	RecordingEndRestart RecordingEnd = "restart"
+	// RecordingEndGap: its recorder couldn't hear the channel for 10 s.
+	RecordingEndGap RecordingEnd = "gap"
 )
+
+// CutShort reports whether a recording that ended this way was cut short
+// (GLOSSARY.md, Cut-short recording): by a restart or a gap, not by a stop.
+// Every reader that tells a cut short from a stop asks this, so a new
+// cut-short end added here reads as cut short everywhere. The panel's tag
+// and the info file name its cause once they have words for it.
+func (e RecordingEnd) CutShort() bool {
+	return e == RecordingEndRestart || e == RecordingEndGap
+}
 
 // SpawnedChannel is one row of the spawned channels table, written at create
 // and at every handover so the restart sweep can restore number and owner.

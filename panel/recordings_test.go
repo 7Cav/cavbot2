@@ -1011,27 +1011,42 @@ func (w *testWorld) restartRecorder(t *testing.T) {
 	}
 }
 
-// The Recordings page marks a recording a restart cut short, and leaves a
-// recording that stopped as usual unmarked.
-func TestRecordingsPageMarksARecordingCutShort(t *testing.T) {
+// The Recordings page tags a cut-short recording with what cut it short: a
+// restart, or a gap (#853), and the two tags read apart. A recording that
+// stopped as usual carries no tag.
+func TestRecordingsPageTagsACutShortRecordingWithItsCause(t *testing.T) {
 	w := newTestWorld(t)
 	a := w.addStarter(5001, "Able.A", "discord-a")
 	stopped := w.record(t, a.discordID)
-	cut := w.startRecording(t, a.discordID)
+	restarted := w.startRecording(t, a.discordID)
 	w.restartRecorder(t)
+	gap := w.storeEnded(t, a.discordID, time.Now().Add(-time.Hour), time.Now().Add(-30*time.Minute), store.RecordingEndGap)
 	signInAs(t, w.forum, w.b, a.account)
 
 	rows := listedRecordings(t, parseHTML(t, w.b.get(recordingsPath)))
 
-	for id, wantMark := range map[int64]bool{cut: true, stopped: false} {
+	tags := make(map[int64]string)
+	for id, wantTag := range map[int64]string{restarted: cutShortByRestartTag, gap: cutShortByGapTag, stopped: ""} {
 		row, ok := rows[id]
 		if !ok {
 			t.Errorf("the page doesn't list recording %d", id)
 			continue
 		}
-		if marked := findElement(row, "", "data-field", "cut-short") != nil; marked != wantMark {
-			t.Errorf("recording %d marked cut short = %t, want %t", id, marked, wantMark)
+		tag := findElement(row, "", "data-field", "cut-short")
+		switch {
+		case wantTag == "" && tag != nil:
+			t.Errorf("recording %d is tagged %q, want no cut-short tag", id, textOf(tag))
+		case wantTag != "" && tag == nil:
+			t.Errorf("recording %d has no cut-short tag, want %q", id, wantTag)
+		case wantTag != "" && !strings.Contains(textOf(tag), wantTag):
+			t.Errorf("recording %d is tagged %q, want %q", id, textOf(tag), wantTag)
 		}
+		if tag != nil {
+			tags[id] = textOf(tag)
+		}
+	}
+	if tags[restarted] != "" && tags[restarted] == tags[gap] {
+		t.Errorf("a restart's and a gap's recordings are both tagged %q, want tags that tell the causes apart", tags[gap])
 	}
 }
 
