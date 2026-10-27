@@ -68,22 +68,28 @@ func DefaultRankLadder() RankLadder {
 }
 
 // NewRankLadder is the ladder with the rank roles given, keyed by rank
-// abbreviation. A rank the map leaves out, or maps to empty, has none.
-func NewRankLadder(roles map[string]string) RankLadder {
-	return newRankLadder(func(rr rankRole) string { return roles[rr.abbrev] })
+// abbreviation, and the Discharged role given, empty for none. A rank the
+// map leaves out, or maps to empty, has none.
+func NewRankLadder(roles map[string]string, discharged string) RankLadder {
+	l := newRankLadder(func(rr rankRole) string { return roles[rr.abbrev] })
+	l.discharged = discharged
+	return l
 }
 
 // RankLadderOf is the ladder a guild's stored rank roles give. While
 // nothing is saved, at version 0, that is the role IDs in code. From the
 // first save on it is the saved roles, and the code's IDs never apply to
-// that guild again. The Discharged role is the forum's.
+// that guild again. The Discharged role is the forum's until a save
+// writes it, which rank roles saved before #893 never did.
 func RankLadderOf(saved store.RankRoles) RankLadder {
 	if saved.Version == 0 {
 		return DefaultRankLadder()
 	}
-	l := NewRankLadder(saved.Roles)
-	l.discharged = defaultDischargedRole
-	return l
+	discharged := defaultDischargedRole
+	if saved.DischargedRoleID != nil {
+		discharged = *saved.DischargedRoleID
+	}
+	return NewRankLadder(saved.Roles, discharged)
 }
 
 // Ranks returns the ladder's ranks, most senior first.
@@ -99,6 +105,11 @@ func (l RankLadder) Roles() map[string]string {
 		roles[r.Abbrev] = r.RoleID
 	}
 	return roles
+}
+
+// DischargedRole returns the Discharged role's ID, empty for none.
+func (l RankLadder) DischargedRole() string {
+	return l.discharged
 }
 
 // seniority is the member's place on the ladder: the place of the most

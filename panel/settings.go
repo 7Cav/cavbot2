@@ -58,8 +58,11 @@ type rankRolesPage struct {
 	// Preview is the preview a save waits on, shown above the form as
 	// posted, nil for none.
 	Preview *rankRolesPreviewView
+	// Discharged is the Discharged role's row, below the ranks'.
+	Discharged dischargedRow
 	// Options are the eligible roles, highest position first, which each
-	// rank's picker offers from the list under OptionsID.
+	// rank's picker and the Discharged role's offer from the list under
+	// OptionsID.
 	Options   []pickerItem
 	OptionsID string
 	// Changes are the section's last entries, newest first.
@@ -101,6 +104,17 @@ type rankRow struct {
 	Holders string
 }
 
+// dischargedRow is the Discharged role's row: a picker holding the role as
+// the one tag or none, and how many members hold it, as a rank's row has.
+type dischargedRow struct {
+	Picker  pickerView
+	HasRole bool
+	Holders string
+}
+
+// HoldersKnown reports whether the row's holder count is a number.
+func (r dischargedRow) HoldersKnown() bool { return r.Holders != holdersUnknown }
+
 // holdersUnknown is a row's holder count while the member list has not
 // loaded, never 0.
 const holdersUnknown = "unknown"
@@ -138,6 +152,10 @@ const rankRoleFieldPrefix = "rank_role_"
 
 // rankRoleField is the form field a rank's rank role posts under.
 func rankRoleField(abbrev string) string { return rankRoleFieldPrefix + abbrev }
+
+// fieldDischargedRole is the form field the Discharged role posts under, in
+// the Rank roles section's form, and its field in a rank roles save's diff.
+const fieldDischargedRole = "discharged_role"
 
 // The names the Settings page's store reads' errors carry, as the hub
 // page's do.
@@ -261,7 +279,8 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 		page.Version, page.Posted = postedBackVersion(stored.Version, posted.Version, req.staleFor(formRankRoles)), true
 	}
 	holders := roleHolders(s.deps.Manager.MemberList(s.deps.GuildID))
-	for _, rank := range commands.RankLadderOf(stored).Ranks() {
+	ladder := commands.RankLadderOf(stored)
+	for _, rank := range ladder.Ranks() {
 		roles, selected := rankRoleSet(rank.RoleID), rankRoleSet(rank.RoleID)
 		if posted != nil {
 			selected = rankRoleSet(posted.Roles[rank.Abbrev])
@@ -274,6 +293,7 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 		}
 		page.Rows = append(page.Rows, row)
 	}
+	page.Discharged = dischargedRowOf(ladder.DischargedRole(), guild, holders)
 	page.Options = rolePicker("", "", guild, nil, nil).Candidates
 	entries, err := s.deps.Store.ListRankRoleChanges(ctx, changeLogLimit)
 	if err != nil {
@@ -284,7 +304,7 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 	if req.LoadsRankRolesPreview && posted != nil {
 		// The preview's address shows the preview whatever the counts are
 		// now, none dropped included, so a reload of it never saves.
-		counts := s.rankRolesCounts(commands.RankLadderOf(stored), commands.NewRankLadder(posted.Roles))
+		counts := s.rankRolesCounts(ladder, commands.NewRankLadder(posted.Roles, posted.Discharged))
 		preview = &counts
 	}
 	if preview != nil && posted != nil {
@@ -299,15 +319,30 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 	return page, nil
 }
 
+// dischargedRowOf is the Discharged role's row with the stored role, id,
+// and its holders, as the member list counts them, unknown while it has
+// not loaded.
+func dischargedRowOf(id string, guild guildInfo, holders map[string]int) dischargedRow {
+	picker := rolePicker(fieldDischargedRole, "the Discharged role", guild, rankRoleSet(id), rankRoleSet(id))
+	picker.Single, picker.AddLabel, picker.Candidates, picker.OptionsFrom = true, "Choose a role", nil, rankRoleOptions
+	row := dischargedRow{Picker: picker, HasRole: id != "", Holders: holdersUnknown}
+	if holders != nil {
+		row.Holders = strconv.Itoa(holders[id])
+	}
+	return row
+}
+
 // rankRolesInput is the Rank roles section's form as posted. It carries the
-// ladder's version when the section loaded and each rank's role, empty for
-// none. Confirmed marks the post of a preview's Confirm, and Shown is the
+// ladder's version when the section loaded, each rank's role and the
+// Discharged role, empty for none. Confirmed marks the post of a preview's Confirm, and Shown is the
 // counts that preview showed.
 type rankRolesInput struct {
-	Version   string
-	Roles     map[string]string
-	Confirmed bool
-	Shown     string
+	Version string
+	Roles   map[string]string
+	// Discharged is the Discharged role posted, empty for none.
+	Discharged string
+	Confirmed  bool
+	Shown      string
 }
 
 // errStaleRankRoles is the refusal a save from a stale Rank roles form
@@ -377,7 +412,8 @@ const formRankRoles = "rank-roles"
 // of the ladder.
 func rankRolesInputOf(form url.Values) rankRolesInput {
 	in := rankRolesInput{Version: form.Get(fieldVersion), Roles: map[string]string{},
-		Confirmed: form.Get(fieldConfirm) != "", Shown: form.Get(fieldShown)}
+		Discharged: strings.TrimSpace(form.Get(fieldDischargedRole)),
+		Confirmed:  form.Get(fieldConfirm) != "", Shown: form.Get(fieldShown)}
 	for _, rank := range commands.DefaultRankLadder().Ranks() {
 		in.Roles[rank.Abbrev] = strings.TrimSpace(form.Get(rankRoleField(rank.Abbrev)))
 	}
@@ -446,11 +482,11 @@ func (s *hubService) setRankRoles(ctx context.Context, in rankRolesInput, by act
 		return store.RankRoles{}, nil, err
 	}
 	before := commands.RankLadderOf(stored)
-	after, err := acceptedRankRoles(in.Roles, guild.info, before)
+	after, err := acceptedRankRoles(in, guild.info, before)
 	if err != nil {
 		return store.RankRoles{}, nil, err
 	}
-	if maps.Equal(after.Roles(), before.Roles()) {
+	if maps.Equal(after.Roles(), before.Roles()) && after.DischargedRole() == before.DischargedRole() {
 		return store.RankRoles{}, nil, errRankRolesUnchanged
 	}
 	if preview := s.rankRolesPreviewOf(before, after); preview != nil {
@@ -465,7 +501,7 @@ func (s *hubService) setRankRoles(ctx context.Context, in rankRolesInput, by act
 	if err != nil {
 		return store.RankRoles{}, nil, err
 	}
-	saved := store.RankRoles{Roles: after.Roles(), Version: stored.Version}
+	saved := store.RankRoles{Roles: after.Roles(), DischargedRoleID: new(after.DischargedRole()), Version: stored.Version}
 	err = s.deps.Store.SaveRankRoles(ctx, s.deps.GuildID, saved, entry)
 	if errors.Is(err, store.ErrStale) {
 		// Another process saved the rank roles after this save's read.
@@ -518,11 +554,11 @@ func (s *hubService) rankRolesCounts(before, after commands.RankLadder) rankRole
 // on its rank and never adds one to another (ADR 0012). And a role may be
 // the rank role of one rank only. A refusal is a *fieldError naming the
 // rank's field.
-func acceptedRankRoles(posted map[string]string, guild guildInfo, stored commands.RankLadder) (commands.RankLadder, error) {
+func acceptedRankRoles(in rankRolesInput, guild guildInfo, stored commands.RankLadder) (commands.RankLadder, error) {
 	was := stored.Roles()
 	rankOf := map[string]string{}
 	for _, rank := range stored.Ranks() {
-		id := posted[rank.Abbrev]
+		id := in.Roles[rank.Abbrev]
 		if id == "" {
 			continue
 		}
@@ -536,7 +572,7 @@ func acceptedRankRoles(posted map[string]string, guild guildInfo, stored command
 		}
 		rankOf[id] = rank.Abbrev
 	}
-	return commands.NewRankLadder(posted), nil
+	return commands.NewRankLadder(in.Roles, in.Discharged), nil
 }
 
 // diffRankRoles is a rank roles save's diff. It holds each rank whose role

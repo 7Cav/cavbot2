@@ -417,6 +417,9 @@ func (f *Fake) GetRankRoles(ctx context.Context, guildID string) (RankRoles, err
 	defer f.mu.Unlock()
 	roles := f.rankRoles[guildID]
 	roles.Roles = maps.Clone(roles.Roles)
+	if roles.DischargedRoleID != nil {
+		roles.DischargedRoleID = new(*roles.DischargedRoleID)
+	}
 	return roles, nil
 }
 
@@ -432,7 +435,11 @@ func (f *Fake) SaveRankRoles(ctx context.Context, guildID string, roles RankRole
 		if saved == nil {
 			saved = map[string]string{}
 		}
-		f.rankRoles[guildID] = RankRoles{Roles: saved, Version: current.Version + 1}
+		var discharged *string
+		if roles.DischargedRoleID != nil {
+			discharged = new(*roles.DischargedRoleID)
+		}
+		f.rankRoles[guildID] = RankRoles{Roles: saved, DischargedRoleID: discharged, Version: current.Version + 1}
 		return 0, nil
 	})
 }

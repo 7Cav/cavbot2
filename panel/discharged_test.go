@@ -66,3 +66,42 @@ func TestAddPreviewOfInternalFlagsADischargedMember(t *testing.T) {
 		t.Errorf("the add preview of Internal flags %s %v, want [discharged]", memberVance.Username, got)
 	}
 }
+
+// With nothing saved, the Rank roles section's Discharged role picker holds
+// the forum's Discharged role. The test guild lacks it, so the picker marks
+// it deleted and still posts it, and a save of the rank roles keeps it.
+func TestRankRolesSectionShowsTheForumsDischargedRoleWithNothingSaved(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+
+	sec := rankRolesSection(t, parseHTML(t, w.b.get(settingsPath)))
+
+	inputs := postedInputs(sec, fieldDischargedRole)
+	if len(inputs) != 1 {
+		t.Fatalf("the section posts %d Discharged roles, want the forum's one", len(inputs))
+	}
+	if got, _ := attrValue(inputs[0], "value"); got != testDischargedRole {
+		t.Errorf("the section posts Discharged role %q, want %s", got, testDischargedRole)
+	}
+	if got, _ := attrValue(inputs[0], "data-unavailable"); got != string(unavailableDeleted) {
+		t.Errorf("the Discharged role is marked data-unavailable=%q, want %s", got, unavailableDeleted)
+	}
+}
+
+// A save that clears the Discharged role stops nobody counting as a Cav
+// member, so it saves with no preview, even with the member list not loaded,
+// and the store holds none.
+func TestRankRolesSaveClearingTheDischargedRoleSavesWithNoPreview(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	w.discord.setListStatus(commands.MemberListArriving, true)
+	form := loadedForm(t, w.b, settingsPath, "/rank-roles")
+	form.Del(fieldDischargedRole)
+
+	res := w.b.postForm("/rank-roles", form)
+
+	assertRedirect(t, res, settingsPath)
+	if got := storedRankRoles(t, w.st).DischargedRoleID; got == nil || *got != "" {
+		t.Errorf("the stored Discharged role = %v, want none saved", got)
+	}
+}

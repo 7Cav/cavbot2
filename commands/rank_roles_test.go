@@ -59,7 +59,8 @@ func TestTempVCStartedOverSavedRankRolesRanksJoinersByThem(t *testing.T) {
 }
 
 // ladderWithout is the ladder with the role IDs in code, but with no rank
-// role for the ranks given, as a save that cleared them leaves it.
+// role for the ranks given, as a save that cleared them leaves it. The
+// Discharged role stays the forum's.
 func ladderWithout(abbrevs ...string) RankLadder {
 	roles := make(map[string]string, len(tempVCRankRoles))
 	for _, rr := range tempVCRankRoles {
@@ -68,7 +69,7 @@ func ladderWithout(abbrevs ...string) RankLadder {
 	for _, a := range abbrevs {
 		delete(roles, a)
 	}
-	return NewRankLadder(roles)
+	return NewRankLadder(roles, testDischargedRole)
 }
 
 // A save that clears SGT hands each channel an SGT owns over at once, by
@@ -129,7 +130,7 @@ func TestTempVCSaveSettingARankGivesAnOwnerlessChannelToItsHolder(t *testing.T) 
 	fake.setCachedRoles("recruit-c", testRoleSavedSGT)
 	before := len(noticesIn(t, fake, "chan-c"))
 
-	tv.ApplyRankRoles(NewRankLadder(map[string]string{"SGT": testRoleSavedSGT}))
+	tv.ApplyRankRoles(NewRankLadder(map[string]string{"SGT": testRoleSavedSGT}, ""))
 
 	if owner, _ := tv.Owner("chan-c"); owner != "recruit-c" {
 		t.Errorf("Owner(chan-c) = %q, want recruit-c, who holds the role saved for SGT", owner)
@@ -235,7 +236,7 @@ func TestRecordStartReadsTheSavedRankRoles(t *testing.T) {
 		t.Fatalf("reply before the save = %q, want the not-a-Cav-member refusal", reply)
 	}
 
-	sc.tv.ApplyRankRoles(NewRankLadder(map[string]string{"SGT": testRoleSavedSGT}))
+	sc.tv.ApplyRankRoles(NewRankLadder(map[string]string{"SGT": testRoleSavedSGT}, ""))
 
 	reply := recordAs(t, sc.rt, holder, "start")
 	if strings.Contains(reply, notCavMemberRefusal) {

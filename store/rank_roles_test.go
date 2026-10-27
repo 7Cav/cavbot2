@@ -81,3 +81,52 @@ func TestRankRolesRoundTripAndStaleSave(t *testing.T) {
 		}
 	})
 }
+
+// The Discharged role (#893) saves with the rank roles. A guild with
+// nothing saved reads back no Discharged role saved, nil, so the forum's
+// applies. A save writes the role, and a save of none reads back as empty,
+// not as never saved.
+func TestRankRolesSaveTheDischargedRole(t *testing.T) {
+	forEachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		if got := storedRankRoles(t, s).DischargedRoleID; got != nil {
+			t.Errorf("Discharged role with nothing saved = %q, want nil", *got)
+		}
+
+		roles := map[string]string{"SGT": "role-sgt"}
+		if err := s.SaveRankRoles(ctx, "guild-1", RankRoles{Roles: roles, DischargedRoleID: new("role-discharged")}, rankRolesEntry(1)); err != nil {
+			t.Fatalf("SaveRankRoles: %v", err)
+		}
+		saved := storedRankRoles(t, s)
+		if saved.DischargedRoleID == nil || *saved.DischargedRoleID != "role-discharged" {
+			t.Errorf("Discharged role after its save = %v, want role-discharged", saved.DischargedRoleID)
+		}
+
+		if err := s.SaveRankRoles(ctx, "guild-1", RankRoles{Roles: roles, DischargedRoleID: new(""), Version: saved.Version}, rankRolesEntry(2)); err != nil {
+			t.Fatalf("SaveRankRoles of none: %v", err)
+		}
+		if got := storedRankRoles(t, s).DischargedRoleID; got == nil || *got != "" {
+			t.Errorf("Discharged role after a save of none = %v, want empty, saved as none", got)
+		}
+	})
+}
+
+// A rank roles row saved before the Discharged role came reads back with
+// its roles and no Discharged role saved, nil, so the guild keeps the
+// forum's rather than having none.
+func TestRankRolesSavedBeforeTheDischargedRoleHaveNoneSaved(t *testing.T) {
+	raw := migratedTo(t, 20261025183726)
+	if _, err := raw.ExecContext(context.Background(), `
+		INSERT INTO rank_roles (guild_id, roles, version) VALUES ('guild-1', '{"SGT": "role-sgt"}', 1)`); err != nil {
+		t.Fatalf("insert a rank roles row as the previous release wrote it: %v", err)
+	}
+
+	got := storedRankRoles(t, openMigrated(t))
+
+	if got.Roles["SGT"] != "role-sgt" || got.Version != 1 {
+		t.Errorf("GetRankRoles = %+v, want SGT's role-sgt at version 1", got)
+	}
+	if got.DischargedRoleID != nil {
+		t.Errorf("Discharged role of a row saved before it = %q, want nil", *got.DischargedRoleID)
+	}
+}
