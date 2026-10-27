@@ -24,12 +24,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
 
-      # Lints on the toolchain go.mod pins, with the module cache, as Build
-      # does. The image builds on that toolchain too.
+      # Lints on the Go the Dockerfile's golang tag names, with the module
+      # cache, as Build does. The image builds on that Go too. setup-go reads a
+      # version only from go.mod and its kin, so a step reads the tag first.
+      - name: Read the Go from the Dockerfile
+        id: go
+        run: |
+          version=$(.github/scripts/check-image-go.sh Dockerfile go.mod)
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
       - name: Set up Go
         uses: actions/setup-go@v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: ${{ steps.go.outputs.version }}
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9.3.0
@@ -49,10 +56,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
 
+      # The gate runs on the Go the Dockerfile's golang tag names, so install
+      # that one rather than have Go download it again.
+      - name: Read the Go from the Dockerfile
+        id: go
+        run: |
+          version=$(.github/scripts/check-image-go.sh Dockerfile go.mod)
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
       - name: Set up Go
         uses: actions/setup-go@v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: ${{ steps.go.outputs.version }}
 
       # gate.sh runs golangci-lint itself. setup-go's problem matcher reads its
       # output, so lint findings still annotate the diff.

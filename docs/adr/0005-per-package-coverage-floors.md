@@ -6,7 +6,9 @@ Accepted (0.7.6 / PR #75). **Amended 2026-10-07**: the rule for raising a
 floor changed; see *Amendment: floors track coverage, not each PR's gain*.
 **Amended 2026-10-08**: a tested package with no floor fails the check.
 **Amended 2026-10-08**: floors come from the toolchain `go.mod` pins.
-Per-package floors are unchanged.
+*Superseded by the 2026-10-27 amendment.*
+**Amended 2026-10-27**: floors come from the Go the `Dockerfile`'s `golang`
+tag names. Per-package floors are unchanged.
 
 ## Decision
 
@@ -99,4 +101,33 @@ image's builder all run on it, so floors come from coverage on that toolchain.
 The `go` directive stays at 1.26.0, because it also sets the binary's GODEBUG
 defaults. A PR that moves to a new Go changes the `toolchain` line and the
 Dockerfile's `golang` tag together, and sets the floors its RAISE lines name
-(#483).
+(#483). *Superseded by the 2026-10-27 amendment.*
+
+## Amendment: the `Dockerfile`'s `golang` tag names the Go (2026-10-27)
+
+The builder stage's `golang:X.Y.Z` tag in the `Dockerfile` names the one Go
+that CI's Lint and Build jobs, the gate and the image run on, so floors come
+from coverage on that Go. A PR that moves to a new Go changes that tag alone.
+`go.mod` keeps its `go 1.26.0` line for the GODEBUG defaults and has no
+`toolchain` line. The gate fails when one appears (#899).
+
+The tag is the only line Dependabot can bump. Its `docker` updates move the
+tag and nothing else, and it has no way to move a `toolchain` line
+(https://redirect.github.com/dependabot/dependabot-core/issues/13520). With
+both lines, every golang bump failed `Build` until someone moved the
+`toolchain` line by hand, as on #897. Now a golang bump merges through
+auto-merge on its own unless the new Go puts a package under its floor, and
+then the maintainer sets that floor by hand.
+
+`go get` writes the `toolchain` line back when it raises the `go` line, as a
+Dependabot `gomod` update can. The gate fails that update on purpose. Raising
+the `go` line also moves the GODEBUG defaults, so a person should look at it.
+
+### Considered options
+
+- Keep both lines, with a workflow that moves the `toolchain` line on
+  Dependabot's PR. A commit pushed with `GITHUB_TOKEN` waits for a person to
+  approve its CI run, and a `workflow_dispatch` run can't satisfy a required
+  check, so the workflow would need a GitHub App token. The maintainer turned
+  the App down. Auto-merge is there to cut the PRs they handle, not to ship
+  sooner, and setting a floor by hand now and then is fine.
