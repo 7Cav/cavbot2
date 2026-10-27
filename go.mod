@@ -2,8 +2,6 @@ module github.com/7cav/cavbot2
 
 go 1.26.0
 
-toolchain go1.27.2
-
 require (
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/disgoorg/disgo v0.19.7-0.20261023185300-5bf95ebe8a0d

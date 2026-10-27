@@ -1,6 +1,7 @@
-# The Go that builds the image, which must be the toolchain go.mod pins: CI's
-# tests run on that one. The gate's image Go step fails when they differ, so a
-# Dependabot bump of this tag needs go.mod's toolchain line moved with it.
+# This tag names the Go that CI, the gate and the image run on (ADR 0005), so
+# moving to a new Go, by hand or by a Dependabot update, changes this line
+# alone. Keep it one exact release. The gate fails a floating tag such as
+# golang:1.27, and fails a toolchain line in go.mod.
 FROM golang:1.27.2 AS builder
 
 ARG VERSION=dev

@@ -6,10 +6,10 @@
 # the migration check: CI fetches develop first, while a local run reads this
 # worktree's origin/develop as it stands, so fetch before you trust a local pass.
 #
-# Steps, in order: the glossary's entry format, lint, the error data check,
-# module tidiness, the image's Go, the tests of the scripts in this directory,
-# the migrations against develop's, the test suite with -race and coverage
-# against a throwaway Postgres, the coverage floors, the build.
+# Steps, in order: the Go to run on, the glossary's entry format, lint, the
+# error data check, module tidiness, the tests of the scripts in this
+# directory, the migrations against develop's, the test suite with -race and
+# coverage against a throwaway Postgres, the coverage floors, the build.
 #
 # Runs in several worktrees at once without interference. Each run starts its
 # own Postgres through test-db.sh and removes only that container on exit, and
@@ -22,16 +22,26 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 scripts=.github/scripts
 
-# Run on the toolchain go.mod pins with its toolchain line. CI's setup-go
-# installs that one and the image builds on it, so the gate tests the Go
-# production runs. Coverage moves with the toolchain, so another local Go would
-# pass floors CI fails. Go fetches the pinned toolchain on first use.
-GOTOOLCHAIN=$(awk '$1 == "toolchain" { print $2 }' go.mod)
-if [[ -z "$GOTOOLCHAIN" ]]; then
-    echo "go.mod has no toolchain line. CI, this gate and the image all build on it." >&2
-    exit 1
+step() { printf '\n==> %s\n' "$*"; }
+
+# What this run tests, read before any step so a commit made mid-run cannot
+# change the summary.
+commit=$(git rev-parse --short HEAD)
+if [[ -z "$(git status --porcelain)" ]]; then
+    tree="working tree clean"
+else
+    tree="working tree has uncommitted changes"
 fi
-export GOTOOLCHAIN
+
+step "the Go the Dockerfile's golang tag names"
+# Run on the Go the builder stage's golang tag names. CI's setup-go installs
+# that one and the image builds on it, so the gate tests the Go production runs.
+# Coverage moves with the Go, so another local Go would pass floors CI fails.
+# Go fetches that release on first use. The check fails when the tag isn't one
+# exact release, or when go.mod has a toolchain line naming a Go of its own.
+go_version=$("$scripts/check-image-go.sh" Dockerfile go.mod)
+export GOTOOLCHAIN=go$go_version
+echo "$GOTOOLCHAIN"
 
 work=$(mktemp -d)
 worktree=$(basename "$PWD")
@@ -44,17 +54,6 @@ trap cleanup EXIT
 # Turn Ctrl-C and SIGTERM into an exit so the EXIT trap removes the container.
 trap 'exit 130' INT
 trap 'exit 143' TERM
-
-step() { printf '\n==> %s\n' "$*"; }
-
-# What this run tests, read before any step so a commit made mid-run cannot
-# change the summary.
-commit=$(git rev-parse --short HEAD)
-if [[ -z "$(git status --porcelain)" ]]; then
-    tree="working tree clean"
-else
-    tree="working tree has uncommitted changes"
-fi
 
 step "glossary entry format"
 # Each GLOSSARY.md entry is a bare `**Term**:` line with its definition below.
@@ -88,9 +87,6 @@ go run ./tools/errorreply -test=false "${bot_packages[@]}"
 
 step "go.mod and go.sum are tidy"
 go mod tidy -diff
-
-step "the image builds on the Go this gate tests"
-"$scripts/check-image-go.sh" "$GOTOOLCHAIN" Dockerfile
 
 step "script tests"
 for t in "$scripts"/*_test.sh; do

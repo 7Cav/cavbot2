@@ -7,12 +7,13 @@ A Discord bot built for the 7th Cavalry Gaming Regiment using Go and DiscordGo, 
 
 ## Prerequisites
 
-- Go 1.21 or later. The `toolchain` line in `go.mod` pins the Go that CI, the
-  gate and the image build on, and Go downloads it on first use.
+- Go 1.21 or later. The `golang` tag of the `Dockerfile`'s builder stage names
+  the Go that CI, the gate and the image run on, and the gate has Go download
+  it on first use. A plain `go build` or `go test` runs on the Go you have, or
+  on 1.26.0 if yours is older.
 - [golangci-lint](https://golangci-lint.run/) at the version CI pins in
-  `GOLANGCI_LINT_VERSION` (`.github/workflows/build_test.yml`). It must be built
-  with a Go at least as new as the `toolchain` line in `go.mod`, or it refuses
-  to run.
+  `GOLANGCI_LINT_VERSION` (`.github/workflows/build_test.yml`), built with a Go
+  at least as new as the one the `Dockerfile`'s `golang` tag names.
 - A C compiler (gcc/clang) if you want to run the tests with `-race`
 - ffmpeg on `PATH`, built with libopus, to build a recording's mix. The Docker
   image installs it. Without it the mixer's contract test skips, except in
@@ -297,7 +298,7 @@ Sunday, a real person gets your test output. Prefer a test guild.
 | `Bot member lacks Administrator` at startup, and a Sentry event when `SENTRY_DSN` is set | The bot's role on the guild lacks Administrator. Grant it; the bot keeps running but spawning, handover and `/foxhole` fail at the next call |
 | `Rank ladder drift` at startup, and a Sentry event when `SENTRY_DSN` is set | The abbreviations or order of `tempVCRankRoles` in `commands/temp_vc.go` differ from the milpacs ranks endpoint. The event lists the positions that differ |
 | Compose says `pull access denied` for `cavbot2:latest` | The image was never built locally — run `docker build -t cavbot2:latest .` |
-| golangci-lint stops with `used to build golangci-lint is lower than the targeted Go version` | Your golangci-lint was built with an older Go than the `toolchain` line in `go.mod`. Install a build made with a Go at least as new as that line. The `targeted Go version` in the message is the Go version golangci-lint needs |
+| golangci-lint stops with `used to build golangci-lint is lower than the targeted Go version` | Your golangci-lint was built with a Go older than the `go` line in `go.mod`, which the message calls the `targeted Go version`. Install a build made with a Go at least as new as the one the `Dockerfile`'s `golang` tag names, since the gate runs golangci-lint on that Go |
 
 ## Testing
 
@@ -318,12 +319,13 @@ It lints, checks that `go.mod` and `go.sum` are tidy, runs the suite with
 `-race` and coverage, checks the coverage floors and builds. The `store`
 package's tests need a real Postgres, so the gate starts a throwaway one of
 its own and removes it on exit. Several checkouts can run the gate at once.
-It runs on the toolchain `go.mod` pins in its `toolchain` line, whatever Go
-you have installed, because coverage differs between Go versions. CI and the
-image's builder use the same toolchain, so the image production runs is built
-by the Go the tests ran on. One gate step fails when the Dockerfile's `golang`
-tag names another version. To move to a new Go, change the `toolchain` line
-and that tag in the same PR.
+It runs on the Go the `Dockerfile`'s `golang` tag names, whatever Go you have
+installed, because coverage differs between Go versions. CI and the image's
+builder run on that Go too, so the image production runs is built by the Go
+the tests ran on. To move to a new Go, change that tag, which is all a
+Dependabot golang update does. The gate fails when the tag isn't one exact
+release such as `golang:1.27.2`, or when `go.mod` has a `toolchain` line,
+which would name a second Go.
 
 CI enforces per-package coverage floors, listed in
 `.github/coverage-floors.tsv`. A floor stays within 3 points of its package's
