@@ -43,8 +43,9 @@ type receiveConn interface {
 	// ChannelID is the call's channel, nil while there is none.
 	ChannelID() *snowflake.ID
 	// connection reports whether the recorder is connected in the call, at
-	// the voice server Discord named last, when and why it last stopped
-	// being connected, zero before it ever was, and how many times it has.
+	// the voice server Discord had named last as it connected, when and why
+	// it last stopped being connected, zero before it ever was, and how many
+	// times it has.
 	connection() (connected bool, lost gapStart, losses int)
 	// server is the voice server the recorder connects to: the one Discord
 	// named last for the call.
@@ -138,11 +139,11 @@ type gapStart struct {
 	cause GapCause
 	// close is the voice gateway close or failed read that started the
 	// gap, nil when neither did, and closedBy the disgo gateway whose close
-	// handler handed it over. server is the voice server the gateway last
-	// opened at.
+	// handler handed it over. opened is the voice state the gateway last
+	// opened with, which names the voice server and its token.
 	close    error
 	closedBy disgovoice.Gateway
-	server   string
+	opened   disgovoice.State
 	// interval is the heartbeat interval the voice server's Hello named,
 	// and sinceAnswer how long before the gap's start the server last
 	// answered a heartbeat, for a heartbeat answer overdue.
@@ -158,15 +159,15 @@ type gapStart struct {
 func (s gapStart) fields(namedLast string, held, sinceDatagram time.Duration, failed decryptTally) []GapField {
 	switch s.cause {
 	case GapVoiceGatewayClosed:
-		return []GapField{{Key: "closed_server", Value: s.server}}
+		return []GapField{{Key: "closed_server", Value: s.opened.Endpoint}}
 	case GapHeartbeatOverdue:
 		return []GapField{{Key: "heartbeat_interval", Value: s.interval}, {Key: "last_answer", Value: s.sinceAnswer}}
 	case GapCallMoved:
 		movedTo := namedLast
-		if movedTo == s.server {
+		if movedTo == s.opened.Endpoint {
 			movedTo = ""
 		}
-		return []GapField{{Key: "moved_from", Value: s.server}, {Key: "moved_to", Value: movedTo}}
+		return []GapField{{Key: "moved_from", Value: s.opened.Endpoint}, {Key: "moved_to", Value: movedTo}}
 	case GapDAVEStalled:
 		return []GapField{{Key: "held_for", Value: held}}
 	case GapVoiceServerSilent:

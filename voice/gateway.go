@@ -627,13 +627,16 @@ func (c *recorderConn) joinStarted() {
 	}
 }
 
-// callMoved notes that the call left the voice server the gateway last
-// opened at, which the recorder shuns from then on. Discord can have named
-// the server the call moved to already.
-func (c *recorderConn) callMoved() {
+// callMoved notes that the call left the voice server the gateway had
+// opened at when it lost the call to the 4022, which start keeps. When
+// Discord named that server last, the recorder shuns it from then on.
+// Discord can have named the server the call moved to already, and disgo
+// can have opened there by itself during the channel lookup. So the server
+// the gateway last opened at can be the one the call moved to.
+func (c *recorderConn) callMoved(start gapStart) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.lastServer != nil && c.gateway.openedAt(*c.lastServer) {
+	if c.lastServer != nil && dialedAt(start.opened, *c.lastServer) {
 		c.shunned = c.lastServer
 	}
 }
@@ -784,10 +787,12 @@ type renewableGateway struct {
 	redial        context.CancelFunc
 	describedDial chan struct{}
 	// connected is whether the gateway is connected in the call, at the
-	// voice server Discord named last: the session description that
-	// completes a connection arrived after its last dial started. loss is
-	// when and why it last stopped being connected, zero before it ever
-	// was, and losses counts the times it has.
+	// voice server Discord had named last as it connected. It connects once
+	// the session description that completes a connection arrives after its
+	// last dial started. Discord naming another server with a voice server
+	// update alone leaves it connected where it was. loss is when and why it
+	// last stopped being connected, zero before it ever was, and losses
+	// counts the times it has.
 	connected bool
 	loss      gapStart
 	losses    int
@@ -868,10 +873,10 @@ func (g *renewableGateway) renew(cause GapCause) {
 }
 
 // renewAfter swaps the gateway for a new one, as renew does, after it lost
-// the call to loss for cause. Connected again since, as disgo can connect it
-// while a 4022's lookup is out, it counts as lost to loss still, so the gap
-// starts at that loss and not at the renew, unless it has lost the call
-// again since.
+// the call to loss for cause. disgo can connect it again while a 4022's
+// lookup is out, at a server the call has moved on from. It still counts as
+// lost to loss then, so the gap starts at that loss and not at the renew,
+// unless it has lost the call again since.
 func (g *renewableGateway) renewAfter(loss int, cause GapCause) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -894,18 +899,21 @@ func (g *renewableGateway) renewLocked(cause GapCause) {
 // gateway it connects through, and reports whether it is. When close is
 // disgo's refused resume, the loss keeps the close behind it that gw saw.
 // It returns the loss's number too, which lostFor takes to name a cause not
-// known yet.
-func (g *renewableGateway) lost(gw disgovoice.Gateway, at time.Time, cause GapCause, close error) (loss int, ok bool) {
+// known yet. It returns the loss's start as well, which keeps the voice
+// state the gateway had opened with. When the gateway had lost the call
+// already, as when Discord named the server a call moved to before the
+// close, both are that earlier loss's.
+func (g *renewableGateway) lost(gw disgovoice.Gateway, at time.Time, cause GapCause, close error) (loss int, start gapStart, ok bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if gw != g.gw {
-		return 0, false
+		return 0, gapStart{}, false
 	}
 	if errors.Is(close, errResumeRefused) && g.observed.gw == gw {
 		close = g.observed.err
 	}
 	g.disconnectLocked(gapStart{at: at, cause: cause, close: close, closedBy: gw})
-	return g.losses, true
+	return g.losses, g.loss, true
 }
 
 // lostFor names cause as the cause of loss, unless loss has one already or
@@ -923,10 +931,10 @@ func (g *renewableGateway) lostFor(loss int, cause GapCause) {
 // was. Its cause can be causeNotKnown until it is known. A gateway that
 // never connected loses the call too: its join completed at a voice server
 // Discord has replaced since. The loss keeps the voice server the gateway
-// last opened at. Caller holds mu.
+// last opened at, with its token. Caller holds mu.
 func (g *renewableGateway) disconnectLocked(start gapStart) {
 	if g.connected || g.loss.at.IsZero() {
-		start.server = g.state.Endpoint
+		start.opened = g.state
 		g.connected, g.loss = false, start
 		g.losses++
 	}
@@ -1100,20 +1108,24 @@ func (g *renewableGateway) server() string {
 }
 
 // connection reports whether the gateway is connected in the call, at the
-// voice server Discord named last, when and why it last stopped being
-// connected, zero before it ever was, and how many times it has.
+// voice server Discord had named last as it connected, when and why it last
+// stopped being connected, zero before it ever was, and how many times it
+// has.
 func (g *renewableGateway) connection() (connected bool, lost gapStart, losses int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.connected, g.loss, g.losses
 }
 
-// openedAt reports whether the gateway last opened at the voice server e
-// names, with its token.
-func (g *renewableGateway) openedAt(e gateway.EventVoiceServerUpdate) bool {
+// connectedAtNamedLast reports whether the gateway is connected in the call
+// at the voice server Discord named last, with its token. Discord can name
+// another with a voice server update alone, and disgo then stays connected
+// where it was, though the call isn't there anymore.
+func (g *renewableGateway) connectedAtNamedLast() bool {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	return dialedAt(g.state, e)
+	connected, state := g.connected, g.state
+	g.mu.Unlock()
+	return connected && g.namedLastIs(state)
 }
 
 func (g *renewableGateway) SSRC() uint32 { return g.current().SSRC() }
@@ -1360,9 +1372,11 @@ const lostConnectionMessage = "Voice connection lost mid-recording"
 // gets a fresh connection too, unless its channel is gone. Otherwise disgo
 // takes the recorder out of the channel itself: the voice connection is
 // lost mid-recording, and Sentry hears of it with the close that started
-// it. So does Discord taking the recorder out before it is back. A
-// connection the recorder closed meanwhile ended with its recording, and
-// lost nothing.
+// it. So does Discord taking the recorder out before it is back. A moved
+// call needs no fresh connection when disgo connected at the server Discord
+// named last while the recorder looked the channel up. The recorder hears
+// the call there already, and keeps that connection. A connection the
+// recorder closed meanwhile ended with its recording, and lost nothing.
 func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.CloseHandlerFunc) disgovoice.CloseHandlerFunc {
 	return func(g disgovoice.Gateway, err error) {
 		defer utils.RecoverPanic("recorder-voice-close", "recorder", c.s.userID)
@@ -1377,7 +1391,7 @@ func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.Close
 		if terminated {
 			cause = causeNotKnown
 		}
-		loss, ok := gw.lost(g, time.Now(), cause, err)
+		loss, start, ok := gw.lost(g, time.Now(), cause, err)
 		if !ok {
 			return
 		}
@@ -1398,7 +1412,10 @@ func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.Close
 			return
 		}
 		if moved {
-			c.callMoved()
+			c.callMoved(start)
+			if gw.connectedAtNamedLast() {
+				return
+			}
 		}
 		gw.renewAfter(loss, cause)
 		if !c.rejoin() && !c.closed.Load() {
@@ -1570,9 +1587,9 @@ func (c callConn) renewable() (*renewableGateway, bool) {
 }
 
 // connection reports whether the recorder's gateway is connected in the
-// call, at the voice server Discord named last, when and why it last
-// stopped being connected, zero before it ever was, and how many times it
-// has.
+// call, at the voice server Discord had named last as it connected, when
+// and why it last stopped being connected, zero before it ever was, and how
+// many times it has.
 func (c callConn) connection() (connected bool, lost gapStart, losses int) {
 	g, ok := c.renewable()
 	if !ok {

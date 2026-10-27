@@ -1838,9 +1838,9 @@ func TestRecorderNamesTheGapOfAMovedCallWhoseGatewayIsReplacedDuringTheLookup(t 
 
 // disgo can connect at the server a call moved to while a 4022's channel
 // lookup is still out, once Discord sends the recorder's voice state and
-// names that server. The recorder rejoins after the lookup all the same.
-// The recording couldn't hear the call from the close on, so its gap
-// starts there, named for the move, and not where the rejoin starts.
+// names that server. The recording couldn't hear the call from the close
+// until then, so its gap starts at the close, named for the move, and not
+// where the lookup answers.
 func TestRecorderStartsTheGapAtTheCloseWhenDisgoConnectsDuringTheLookup(t *testing.T) {
 	recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
@@ -1849,18 +1849,7 @@ func TestRecorderStartsTheGapAtTheCloseWhenDisgoConnectsDuringTheLookup(t *testi
 		l := listen(nil)
 		conn := h.record(l)
 		defer h.hangUp(conn)
-		h.api.during = func() {
-			h.s.voice.HandleVoiceStateUpdate(recorderVoiceState(callChannel))
-			h.name("token-3", newEndpoint)
-			// The open reporting orders its session description before the
-			// rejoin's open, as the race detector needs.
-			select {
-			case <-h.opened:
-			case <-time.After(waitFor):
-				h.t.Error("no gateway opened at the server Discord named during the lookup")
-			}
-			time.Sleep(1100 * time.Millisecond)
-		}
+		h.connectDuringTheLookup(nil)
 
 		closed := time.Now()
 		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
@@ -1873,6 +1862,149 @@ func TestRecorderStartsTheGapAtTheCloseWhenDisgoConnectsDuringTheLookup(t *testi
 		}
 		if !starts[0].Equal(closed) {
 			t.Errorf("gap started %v after the close, want at it", starts[0].Sub(closed))
+		}
+	})
+}
+
+// connectDuringTheLookup has Discord send the recorder's voice state and
+// name newEndpoint with token-3 while a 4022's channel lookup is out, so
+// disgo connects there by itself. The lookup answers 1.1 s after that
+// connection completes. beforeAnswer, when set, runs just before it
+// answers.
+func (h *callHarness) connectDuringTheLookup(beforeAnswer func()) {
+	h.api.during = func() {
+		h.s.voice.HandleVoiceStateUpdate(recorderVoiceState(callChannel))
+		h.name("token-3", newEndpoint)
+		// The open reporting orders its session description before what the
+		// recorder does once the lookup answers, as the race detector needs.
+		select {
+		case o := <-h.opened:
+			h.connected = o.gateway
+		case <-time.After(waitFor):
+			h.t.Error("no gateway opened at the server Discord named during the lookup")
+		}
+		time.Sleep(1100 * time.Millisecond)
+		if beforeAnswer != nil {
+			beforeAnswer()
+		}
+	}
+}
+
+// moveTo is Discord moving the call to the voice server at endpoint and
+// naming it with token, with a voice server update alone. Discord serves
+// the call there from then on.
+func (h *callHarness) moveTo(token, endpoint string) {
+	h.mu.Lock()
+	h.serving = endpoint
+	h.mu.Unlock()
+	h.name(token, endpoint)
+}
+
+// disgo can connect at the server a call moved to while a 4022's channel
+// lookup is out. The recorder hears the call again from then on, so the gap
+// ends inside the 10 s that would cut the recording short.
+func TestRecorderHearsAMovedCallAgainWhenDisgoConnectsDuringTheLookup(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.connectDuringTheLookup(nil)
+
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(10*time.Second - time.Millisecond)
+		synctest.Wait()
+
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted, gapEnded}) {
+			t.Errorf("gap events just under 10 s after the 4022 = %v, want the gap started and ended", got)
+		}
+	})
+}
+
+// The connection disgo made at the server a call moved to, while a 4022's
+// channel lookup was out, is where the call is, so the recorder keeps it.
+// No rejoin goes out once the lookup answers.
+func TestRecorderSendsNoRejoinWhenDisgoConnectsDuringTheLookup(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		conn := h.record(listen(nil))
+		defer h.hangUp(conn)
+		h.connectDuringTheLookup(h.countFromNow)
+
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if got := h.sent(); len(got) != 0 {
+			t.Errorf("voice state updates in the minute after the lookup answered = %v, want none", got)
+		}
+	})
+}
+
+// The server disgo reached during a 4022's channel lookup is the one the
+// call moved to, so the recorder never shuns it. A later drop there that the
+// recorder rejoins after, such as a 4006 close, ends with the recorder
+// connected there again, and the recording hears the call.
+func TestRecorderRejoinsTheServerDisgoReachedDuringTheLookupAfterALaterDrop(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.connectDuringTheLookup(nil)
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted, gapEnded}) {
+			t.Fatalf("gap events a minute after the 4022 = %v, want the gap started and ended", got)
+		}
+		// The recorder is connected through the gateway that opened last, and
+		// only the opens after the 4006 count below.
+		for _, o := range h.opensSince() {
+			h.connected = o.gateway
+		}
+
+		go h.closeCall(disgovoice.GatewayCloseEventCodeSessionNoLongerValid.Code)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted, gapEnded, gapStarted, gapEnded}) {
+			t.Errorf("gap events a minute after the 4006 = %v, want a second gap started and ended", got)
+		}
+		if opens := h.opensSince(); !slices.ContainsFunc(opens, func(o gatewayOpen) bool { return o.state.Endpoint == newEndpoint }) {
+			t.Errorf("gateway opens after the 4006 = %+v, want one at %s", opens, newEndpoint)
+		}
+	})
+}
+
+// Once disgo has connected at the server a call moved to during a 4022's
+// channel lookup, the call can move on before the lookup answers. Discord
+// names a later server with a voice server update alone, and disgo stays
+// where it is. The call isn't there anymore, so the recorder doesn't keep
+// that connection. The later server is out of reach, so the gap lasts.
+func TestRecorderLeavesBehindTheConnectionDisgoMadeDuringTheLookupWhenTheCallMovesOn(t *testing.T) {
+	recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		l := listen(nil)
+		conn := h.record(l)
+		defer h.hangUp(conn)
+		h.setReachable(laterEndpoint, false)
+		h.connectDuringTheLookup(func() { h.moveTo("token-4", laterEndpoint) })
+
+		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if got := l.gapEvents(); !slices.Equal(got, []string{gapStarted}) {
+			t.Errorf("gap events a minute after the 4022 = %v, want the gap started and still running", got)
 		}
 	})
 }
