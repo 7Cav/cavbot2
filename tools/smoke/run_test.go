@@ -57,8 +57,8 @@ func TestMain(m *testing.M) {
 // runStubBot starts the way the bot does, as far as the supervisor reads it.
 // It sets up the bot's logger at LOG_LEVEL and logs a line of its own at each
 // level. It connects its recorders through voice.Connect, with Discord
-// refusing each token that starts with "refused", and failing the first
-// login of each that starts with "late". Then, as scenario says, it logs the
+// refusing each token that has "refused" in it, and failing the first login
+// of each that starts with "late". Then, as scenario says, it logs the
 // panel's line and the line that says the bot is running, and exits.
 func runStubBot(scenario string) {
 	utils.InitLogger(os.Getenv("LOG_LEVEL"))
@@ -66,7 +66,7 @@ func runStubBot(scenario string) {
 	utils.Info("Stub bot line")
 	utils.Warn("Stub bot line")
 	utils.Error("Stub bot line")
-	refused := func(token string) bool { return strings.HasPrefix(token, "refused") }
+	refused := func(token string) bool { return strings.Contains(token, "refused") }
 	recorders := voice.Connect(os.Getenv("RECORDER_TOKENS"), lateLogins(openRefusing(refused)))
 	defer recorders.Close()
 	if scenario == stubCrash {
@@ -336,5 +336,26 @@ func TestRunFileCountsARecorderThatConnectsAfterTheBotIsRunning(t *testing.T) {
 		return reflect.DeepEqual(got, want)
 	}) {
 		t.Errorf("run file's tally %+v after %s, want %+v", got, stubWait, want)
+	}
+}
+
+// A recorder whose first login failed is offline when the bot says it is
+// running, and Discord refuses its token at a later try. The run file, which
+// status prints its recorders line from, stops counting it and holds it as
+// out.
+func TestRunFileHoldsARecorderDiscordRefusesAfterTheBotIsRunning(t *testing.T) {
+	s := superviseStub(t, stubLateLogin, []string{"RECORDER_TOKENS=late-refused-a"})
+
+	var got recorderTally
+	if !eventually(stubWait, func() bool {
+		if st, ok := readRun(s.paths.runFile()); ok && st.Recording != nil {
+			got = st.Recording.Recorders
+		}
+		return len(got.Out) > 0
+	}) {
+		t.Fatalf("run file's tally %+v after %s has no recorder out", got, stubWait)
+	}
+	if got.Connected != 0 || !slices.Equal(got.Out, []int{1}) {
+		t.Errorf("run file has %d connected and %v out, want 0 connected and [1] out", got.Connected, got.Out)
 	}
 }

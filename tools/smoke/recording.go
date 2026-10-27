@@ -16,13 +16,14 @@ import (
 )
 
 // recorderTally is what the bot's log says about its recorders: whether
-// recording is off, how many connected, and the place in RECORDER_TOKENS of
-// each one that failed. It holds no token, so a report built from it can't
-// print one.
+// recording is off, how many are connected, and the place in RECORDER_TOKENS
+// of each one that failed and each one that is out. It holds no token, so a
+// report built from it can't print one.
 type recorderTally struct {
 	Off       bool  `json:"off,omitempty"`
 	Connected int   `json:"connected"`
 	Failed    []int `json:"failed,omitempty"`
+	Out       []int `json:"out,omitempty"`
 }
 
 // The bot's recorder lines, as its voice adapter logs them.
@@ -30,6 +31,7 @@ const (
 	recordingOffLine      = "RECORDER_TOKENS not set, recording off"
 	recorderConnectedLine = "Recorder connected"
 	recorderFailedLine    = "Recorder failed to connect"
+	recorderRefusedLine   = "Discord refused the recorder's token, recorder out until a restart"
 )
 
 // recorderPlace finds a recorder's place in a log line. A failure logs the
@@ -38,7 +40,9 @@ var recorderPlace = regexp.MustCompile(`\brecorder=(\d+)\b`)
 
 // recorderLines reads the bot's recorder lines into a tally. A recorder
 // logs that it connected at each login, as when it logs back in after a cut
-// short, so the tally counts it once, by its place in RECORDER_TOKENS.
+// short, so the tally counts it once, by its place in RECORDER_TOKENS. One
+// Discord refuses as it logs in again is out until the bot restarts, so the
+// tally stops counting it.
 type recorderLines struct {
 	tally     recorderTally
 	connected map[int]bool
@@ -65,6 +69,15 @@ func (r *recorderLines) read(line string) bool {
 			r.tally.Failed = append(r.tally.Failed, n)
 			return true
 		}
+	case strings.Contains(line, recorderRefusedLine):
+		if n, ok := placeIn(line); ok {
+			if r.connected[n] {
+				delete(r.connected, n)
+				r.tally.Connected--
+			}
+			r.tally.Out = append(r.tally.Out, n)
+			return true
+		}
 	}
 	return false
 }
@@ -73,6 +86,7 @@ func (r *recorderLines) read(line string) bool {
 func (r *recorderLines) snapshot() recorderTally {
 	t := r.tally
 	t.Failed = slices.Clone(t.Failed)
+	t.Out = slices.Clone(t.Out)
 	return t
 }
 
@@ -154,28 +168,44 @@ type recordingReport struct {
 	Mix       mixVerdict    `json:"mix"`
 }
 
-// line is the report's line on the recorders. It names a failed one by its
-// place in RECORDER_TOKENS, as the bot's log does.
+// The phrases of the report's line on the recorders that tell its cases
+// apart.
+const (
+	noRecordingCheck  = "No recording check can run"
+	outBecauseRefused = "out because Discord refused"
+)
+
+// line is the report's line on the recorders. It names a failed or out one
+// by its place in RECORDER_TOKENS, as the bot's log does.
 func (t recorderTally) line() string {
 	if t.Off {
 		return "none, and recording is off because RECORDER_TOKENS is empty"
 	}
 	text := fmt.Sprintf("%d connected", t.Connected)
+	if len(t.Out) == 1 {
+		text += fmt.Sprintf(", %s %s its token", recorderNames(t.Out), outBecauseRefused)
+	} else if len(t.Out) > 1 {
+		text += fmt.Sprintf(", %s %s their tokens", recorderNames(t.Out), outBecauseRefused)
+	}
 	if len(t.Failed) > 0 {
-		places := make([]string, len(t.Failed))
-		for i, n := range t.Failed {
-			places[i] = strconv.Itoa(n)
-		}
-		named := "recorder " + places[0]
-		if len(places) > 1 {
-			named = "recorders " + strings.Join(places[:len(places)-1], ", ") + " and " + places[len(places)-1]
-		}
-		text += fmt.Sprintf(", %d failed. The bot log says why %s in RECORDER_TOKENS failed", len(t.Failed), named)
+		text += fmt.Sprintf(", %d failed. The bot log says why %s in RECORDER_TOKENS failed", len(t.Failed), recorderNames(t.Failed))
 	}
 	if t.Connected == 0 {
-		text += ". No recording check can run"
+		text += ". " + noRecordingCheck
 	}
 	return text
+}
+
+// recorderNames names recorders by their places in RECORDER_TOKENS.
+func recorderNames(places []int) string {
+	named := make([]string, len(places))
+	for i, n := range places {
+		named[i] = strconv.Itoa(n)
+	}
+	if len(named) == 1 {
+		return "recorder " + named[0]
+	}
+	return "recorders " + strings.Join(named[:len(named)-1], ", ") + " and " + named[len(named)-1]
 }
 
 // line is the report's line on building a mix.
