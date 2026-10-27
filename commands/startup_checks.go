@@ -13,8 +13,9 @@ import (
 // Startup checks (spec #285). After READY the bot tells on-call, through
 // Sentry, when the guild has changed under it. The rank ladder in code no
 // longer matches the milpacs API, the bot's own member has lost
-// Administrator, or a rank role is gone from the guild (#680). Each one
-// breaks spawning or handover with no other signal. A check that cannot fetch what it needs is a WARN line and no
+// Administrator, or a rank role or the Discharged role is gone from the
+// guild (#680, #893). Each one breaks spawning or handover with no other
+// signal. A check that cannot fetch what it needs is a WARN line and no
 // capture (ADR 0001), and each check runs whether or not the other could.
 
 // startupCheckTimeout bounds the rank ladder fetch. The checks run in their
@@ -37,6 +38,16 @@ var errAdministratorMissing = errors.New("bot member does not hold Administrator
 // Sentry. Holders of a rank whose role is gone count as Cav members no
 // longer, until a panel admin saves another role for the rank.
 var errRankRolesMissing = errors.New("rank roles missing from the guild")
+
+// errDischargedRoleMissing is the identity of a missing Discharged role
+// event in Sentry, filed in an issue of its own
+// (dischargedRoleMissingIssue). Every discharged trooper counts as a Cav
+// member again, until a panel admin saves another Discharged role.
+var errDischargedRoleMissing = errors.New("the Discharged role is missing from the guild")
+
+// dischargedRoleMissingIssue files a missing Discharged role apart from
+// missing rank roles, which the same check reports.
+var dischargedRoleMissingIssue = utils.SentryIssue{Fingerprint: []string{"discharged-role-missing"}}
 
 // rankDrift is one position where the ladder in code and the API disagree.
 // An empty side means that list ended first.
@@ -63,7 +74,9 @@ func RunStartupChecks(ctx context.Context, mgr TempVCManager, guildID, botUserID
 // the bot was down, which the role delete handler never saw. A rank with no
 // rank role is not missing. On a guild that never saved its rank roles the
 // check reads the ladder's role IDs in code, so the test guild captures at
-// every start until an admin clears the ranks it lacks.
+// every start until an admin clears the ranks it lacks. A Discharged role
+// the guild lacks is captured too, in an issue of its own (#893), and the
+// forum's in code is missing from the test guild the same way.
 func checkRankRoles(mgr TempVCManager, guildID string, ladder RankLadder) {
 	guild, err := mgr.Guild(guildID)
 	if err != nil {
@@ -73,6 +86,12 @@ func checkRankRoles(mgr TempVCManager, guildID string, ladder RankLadder) {
 	live := make(map[string]struct{}, len(guild.Roles))
 	for _, r := range guild.Roles {
 		live[r.ID] = struct{}{}
+	}
+	if id := ladder.DischargedRole(); id != "" {
+		if _, ok := live[id]; !ok {
+			utils.CaptureErrorIn(dischargedRoleMissingIssue, "Discharged role missing from the guild", errDischargedRoleMissing,
+				"guild_id", guildID, "role_id", id)
+		}
 	}
 	var missing []Rank
 	for _, r := range ladder.Ranks() {

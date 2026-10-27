@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/7cav/cavbot2/store"
+	"github.com/7cav/cavbot2/utils"
 )
 
 // The rank ladder and its rank roles (GLOSSARY.md, #680). The ranks and
@@ -18,6 +19,16 @@ import (
 // Sentry. Every member holding it stops counting as a Cav member, and only a
 // panel admin's save of the rank roles brings the rank back (ADR 0012).
 var errRankRoleDeleted = errors.New("a rank role was deleted in Discord")
+
+// errDischargedRoleDeleted is the identity of a deleted Discharged role's
+// event in Sentry, filed in an issue of its own (dischargedRoleDeletedIssue).
+// Every discharged trooper counts as a Cav member again, until a panel
+// admin saves another Discharged role (ADR 0012, amended by #893).
+var errDischargedRoleDeleted = errors.New("the Discharged role was deleted in Discord")
+
+// dischargedRoleDeletedIssue files a deleted Discharged role apart from a
+// deleted rank role, which the same handler reports.
+var dischargedRoleDeletedIssue = utils.SentryIssue{Fingerprint: []string{"discharged-role-deleted"}}
 
 // defaultDischargedRole is the forum's Discharged role (GLOSSARY.md,
 // Discharged role, #893), the one a guild has until a panel admin saves

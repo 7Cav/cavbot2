@@ -1,10 +1,13 @@
 package commands
 
 import (
+	"context"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/7cav/cavbot2/store"
+	"github.com/bwmarrin/discordgo"
 )
 
 // The Discharged role (#893, GLOSSARY.md): a member holding it is no Cav
@@ -126,5 +129,58 @@ func TestRetiredRankHolderStartsARecording(t *testing.T) {
 	}
 	if got := sc.voice.inChannel(recordChannel); len(got) != 1 {
 		t.Errorf("recorders in %s = %v, want one", recordChannel, got)
+	}
+}
+
+// Discord deleting the Discharged role reaches Sentry once, in an issue of
+// its own: every discharged trooper counts as a Cav member again, which is
+// not what a deleted rank role does.
+func TestDeletedDischargedRoleReachesSentryInAnIssueOfItsOwn(t *testing.T) {
+	events := recordSentry(t)
+	tv := newTestTempVC(t, newFakeTempVCManager(), seedStore(t, testHub()))
+	tv.handleRoleDelete(&discordgo.GuildRoleDelete{GuildID: testTempVCGuild, RoleID: testRankSGT})
+
+	tv.handleRoleDelete(&discordgo.GuildRoleDelete{GuildID: testTempVCGuild, RoleID: testDischargedRole})
+
+	got := events.Events()
+	if len(got) != 2 {
+		t.Fatalf("Sentry events after deleting a rank role and the Discharged role = %d, want 2", len(got))
+	}
+	if slices.Equal(got[0].Fingerprint, got[1].Fingerprint) {
+		t.Errorf("fingerprints of a deleted rank role and a deleted Discharged role = %v and %v, want issues of their own",
+			got[0].Fingerprint, got[1].Fingerprint)
+	}
+}
+
+// A startup reaches Sentry when the Discharged role is not in the guild,
+// which catches a role deleted while the bot was down, in an issue apart
+// from the missing rank roles'. Once the guild has the Discharged role, the
+// startup reports only the missing rank role.
+func TestStartupChecksReportAMissingDischargedRoleInAnIssueOfItsOwn(t *testing.T) {
+	serveRanks(t, apiRanks())
+	mgr := healthyManager()
+	st := seedStore(t)
+	saveRankRoles(t, st, map[string]string{"SGT": "role-sgt", "GEN": "role-gen"})
+	mgr.guild.Roles = append(mgr.guild.Roles, &discordgo.Role{ID: "role-sgt"})
+	tv := newTestTempVC(t, mgr, st)
+
+	events := recordSentry(t)
+	RunStartupChecks(context.Background(), mgr, testTempVCGuild, testBotUserID, tv)
+
+	got := events.Events()
+	if len(got) != 2 {
+		t.Fatalf("Sentry events at a startup missing GEN's rank role and the Discharged role = %d, want 2", len(got))
+	}
+	if slices.Equal(got[0].Fingerprint, got[1].Fingerprint) {
+		t.Errorf("fingerprints of the missing rank roles and the missing Discharged role = %v and %v, want issues of their own",
+			got[0].Fingerprint, got[1].Fingerprint)
+	}
+
+	mgr.guild.Roles = append(mgr.guild.Roles, &discordgo.Role{ID: testDischargedRole})
+	events = recordSentry(t)
+	RunStartupChecks(context.Background(), mgr, testTempVCGuild, testBotUserID, tv)
+
+	if n := len(events.Events()); n != 1 {
+		t.Errorf("Sentry events at a startup with the Discharged role in the guild = %d, want 1, the missing rank role's", n)
 	}
 }

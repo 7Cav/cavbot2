@@ -1186,14 +1186,20 @@ func StartTempVC(dg *discordgo.Session, mgr TempVCManager, guildID string, st st
 // stops counting as a Cav member at once, and nothing else would say so
 // until a member asked why they lost their channel. The rank keeps the
 // deleted role until a panel admin saves another, and the Settings page
-// shows it as not in the server.
+// shows it as not in the server. Deleting the Discharged role reaches
+// on-call too, in an issue of its own, since every discharged trooper
+// counts as a Cav member again (#893).
 func (t *TempVC) handleRoleDelete(r *discordgo.GuildRoleDelete) {
 	if r == nil || r.GuildID != t.guildID {
 		return
 	}
 	t.mu.Lock()
 	rank, ok := t.ladder.RankOf(r.RoleID)
+	discharged := t.ladder.DischargedRole() == r.RoleID
 	t.mu.Unlock()
+	if discharged {
+		utils.CaptureErrorIn(dischargedRoleDeletedIssue, "Discharged role deleted", errDischargedRoleDeleted, "role_id", r.RoleID)
+	}
 	if !ok {
 		return
 	}
