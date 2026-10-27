@@ -9,8 +9,8 @@ not by listing settings (#568).
 on-call, when it is deleted and at startup (#680). Every other unavailable
 reference shows on the panel only.
 **Amended 2026-10-27**: a Discharged role that is not in the guild reaches
-on-call the same way, since every discharged trooper would count as a Cav
-member again (#893).
+on-call the same way. The bot tells a discharge by that role, so without it
+every discharged trooper counts as a Cav member again (#893).
 
 ## Scope
 

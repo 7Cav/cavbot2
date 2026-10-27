@@ -349,9 +349,9 @@ The bot giving ownership of a spawned channel to an occupant. When the owner
 leaves, the highest-ranked occupant who is a Cav member takes over, ties
 broken by lowest user ID; with no such occupant the channel has no owner.
 When a Cav member joins a channel with no owner, they take over. A save of
-the rank roles applies the rule to every spawned channel at once. An owner
-who is no longer a Cav member hands over, and a channel with no owner goes
-to its highest-ranked occupant who is one. A handover is final: a
+the rank roles applies the rule to every spawned channel at once. At that
+save, an owner who is no longer a Cav member hands over, and a channel with
+no owner goes to its highest-ranked occupant who is one. A handover is final: a
 returning creator is an ordinary occupant.
 _Avoid_: hand off, hand back, succession, transfer, loan.
 
