@@ -404,7 +404,7 @@
           <td class="fx-check"><input type="checkbox" name="member" value="{{.ID}}" form="fx-selection" aria-label="Select {{.DisplayName}}" data-select{{if .Selected}} checked{{end}}></td>
           {{template "member-cell" .}}
           <td class="fx-nowrap">{{if .Internal}}<span class="tag fx-role" data-role="internal">Internal</span> {{end}}{{if .External}}<span class="tag fx-role" data-role="external">External</span>{{end}}</td>
-          <td class="fx-nowrap">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else if .NoRankRole}}<span class="tag tag--warn" data-flag="no-rank-role">no rank role</span>{{else}}<span class="off">none</span>{{end}}</td>
+          <td class="fx-nowrap">{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else if .NoRankRole}}<span class="tag tag--warn" data-flag="no-rank-role">no rank role</span>{{else if not .Discharged}}<span class="off">none</span>{{end}}{{template "discharged-flag" .}}</td>
           {{template "note-cell" .}}
           <td class="fx-nowrap">{{with .ApprovedRoles}}<span class="tag tag--approved">Approved: {{range $i, $r := .}}{{if $i}}, {{end}}<span data-approved="{{$r}}">{{$r.Label}}</span>{{end}}</span>{{end}}</td>
         </tr>{{end}}
@@ -470,8 +470,11 @@
   <span class="fx-addinfo">{{template "preview-rank" .}}
   {{- if .Internal}} <span class="tag fx-role" data-role="internal">Internal</span>{{end}}{{if .External}} <span class="tag fx-role" data-role="external">External</span>{{end}}</span>{{end}}
 
-{{- /* A previewed member's rank role, or, when they have none, the holder list's flag if the action leaves them holding Internal. */}}
-{{define "preview-rank"}}{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else if .NoRankRole}}<span class="tag tag--warn" data-flag="no-rank-role">no rank role</span>{{else}}<span class="off">no rank role</span>{{end}}{{end}}
+{{- /* A previewed member's rank role, or, when they have none, the holder list's flag if the action leaves them holding Internal. A discharged member's rank role carries the holder list's "discharged" flag the same way. */}}
+{{define "preview-rank"}}{{if .RankRole}}<span class="fx-rank" data-field="rank_role">{{.RankRole}}</span>{{else if .NoRankRole}}<span class="tag tag--warn" data-flag="no-rank-role">no rank role</span>{{else if not .Discharged}}<span class="off">no rank role</span>{{end}}{{template "discharged-flag" .}}{{end}}
+
+{{- /* The "discharged" flag, after the rank role it leaves in place. */}}
+{{define "discharged-flag"}}{{if .Discharged}}{{if .RankRole}} {{end}}<span class="tag tag--warn" data-flag="discharged">discharged</span>{{end}}{{end}}
 
 {{define "add-member"}}<span class="fx-name" data-field="display_name">{{.DisplayName}}</span> <span class="fx-user">@<span data-field="username">{{.Username}}</span></span>
   <span class="fx-matched">matched by {{.MatchedLabel}}</span>
