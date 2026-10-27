@@ -8,6 +8,9 @@ not by listing settings (#568).
 **Amended 2026-10-13**: a rank role that is not in the guild reaches
 on-call, when it is deleted and at startup (#680). Every other unavailable
 reference shows on the panel only.
+**Amended 2026-10-27**: a Discharged role that is not in the guild reaches
+on-call the same way. The bot tells a discharge by that role, so without it
+every discharged trooper counts as a Cav member again (#893).
 
 ## Scope
 
@@ -65,5 +68,6 @@ kept through a save, and it grants authority meanwhile.
 - A validator accepts an ineligible ID only from the stored set of the exact
   record being saved, read in the same request before validation.
 - Never add a cleanup that removes such a reference without a person's save.
-- Only a rank role that is not in the guild reaches on-call (#680). To
-  report any other unavailable reference, write a separate decision.
+- Only a rank role (#680) or the Discharged role (#893) that is not in the
+  guild reaches on-call. To report any other unavailable reference, write a
+  separate decision.
