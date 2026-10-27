@@ -156,11 +156,11 @@ func refusedOnRelogin(revoked ...string) func(token string) bool {
 	}
 }
 
-// reloginRefused runs the bot's recorder connect on raw, a RECORDER_TOKENS
-// value, then takes the recorder at place offline as a cut short does, with
-// Discord refusing its token as it logs back in. It returns the tally of what
-// the bot logged once the tally has a recorder out.
-func reloginRefused(t *testing.T, raw string, place int) recorderTally {
+// tallyAfterReloginRefused runs the bot's recorder connect on raw, a
+// RECORDER_TOKENS value, then takes the recorder at place offline as a cut
+// short does, with Discord refusing its token as it logs back in. It returns
+// the tally of what the bot logged once the tally has a recorder out.
+func tallyAfterReloginRefused(t *testing.T, raw string, place int) recorderTally {
 	t.Helper()
 	logged := botLog(t)
 	tokens := strings.Split(raw, ",")
@@ -190,7 +190,7 @@ func tallyOnceOut(t *testing.T, logged func() []string) recorderTally {
 // A recorder Discord refuses as it logs back in is out until a restart, so
 // no recording check can use it.
 func TestRecorderTallyTakesOutARecorderDiscordRefusesAsItLogsBackIn(t *testing.T) {
-	got := reloginRefused(t, "tok-a", 1)
+	got := tallyAfterReloginRefused(t, "tok-a", 1)
 	if got.Connected != 0 || !slices.Equal(got.Out, []int{1}) {
 		t.Errorf("%d connected and %v out, want 0 connected and [1] out", got.Connected, got.Out)
 	}
@@ -206,7 +206,7 @@ func TestRecorderTallyTakesOutARecorderDiscordRefusesAsItLogsBackIn(t *testing.T
 // Discord refusing one of two recorders as it logs back in leaves the other
 // counted.
 func TestRecorderTallyKeepsCountingTheRecorderDiscordDidNotRefuse(t *testing.T) {
-	got := reloginRefused(t, "tok-a,tok-b", 2)
+	got := tallyAfterReloginRefused(t, "tok-a,tok-b", 2)
 	if got.Connected != 1 || !slices.Equal(got.Out, []int{2}) {
 		t.Errorf("%d connected and %v out, want 1 connected and [2] out", got.Connected, got.Out)
 	}

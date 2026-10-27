@@ -182,10 +182,12 @@ func (t recorderTally) line() string {
 		return "none, and recording is off because RECORDER_TOKENS is empty"
 	}
 	text := fmt.Sprintf("%d connected", t.Connected)
-	if len(t.Out) == 1 {
-		text += fmt.Sprintf(", %s %s its token", recorderNames(t.Out), outBecauseRefused)
-	} else if len(t.Out) > 1 {
-		text += fmt.Sprintf(", %s %s their tokens", recorderNames(t.Out), outBecauseRefused)
+	if len(t.Out) > 0 {
+		tokens := "its token"
+		if len(t.Out) > 1 {
+			tokens = "their tokens"
+		}
+		text += fmt.Sprintf(", %s %s %s", recorderNames(t.Out), outBecauseRefused, tokens)
 	}
 	if len(t.Failed) > 0 {
 		text += fmt.Sprintf(", %d failed. The bot log says why %s in RECORDER_TOKENS failed", len(t.Failed), recorderNames(t.Failed))
