@@ -49,7 +49,7 @@ Leave the PR's smoke checks to a later pass, since the smoke tool runs one bot a
 
 Once you have opened the PR, label it `factory` and turn on squash auto-merge with `gh pr merge <pr> --auto --squash`. Auto-merge waits until Lint and Build pass, every review thread is resolved, and CodeRabbit approves the head commit. A PR's author can't approve it, so CodeRabbit gives the one approving review `develop` requires. An unattended run has no Auto-fix, so watch the PR yourself until it merges:
 
-1. Run `gh pr checks <pr> --watch`, which returns once every check on the head commit finishes. That includes `CodeRabbit`, which finishes as CodeRabbit posts its review of the commit.
+1. Run `timeout 30m gh pr checks <pr> --watch`, which returns once every check on the head commit finishes, or after 30 minutes. That includes `CodeRabbit`, which finishes as CodeRabbit posts its review of the commit.
 2. Read `gh pr view <pr> --json state,mergeStateStatus` and the unresolved review threads, which this command lists with each one's last commenter:
 
    ```bash
