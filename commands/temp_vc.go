@@ -167,14 +167,15 @@ type SpawnFailure struct {
 	Cause SpawnFailureCause
 }
 
-// Ownership follows the handover rule in GLOSSARY.md. The owner always holds
-// a rank role, or the channel has no owner: the creator at create if they
-// hold one, and when the owner leaves, the highest-ranked occupant with a
-// rank role, ties to the lowest user ID. A rank holder who joins a channel
-// with no owner takes it. A handover is final, so a returning creator is an
-// ordinary occupant. Ranks are read from the roles the gateway payloads
-// carry, against the ladder below, most senior first; a member holding none
-// of its roles is never a candidate. No API call per create or handover.
+// Ownership follows the handover rule in GLOSSARY.md. The owner was a Cav
+// member when they took the channel, or the channel has no owner: the
+// creator at create if they are one, and when the owner leaves, the
+// highest-ranked occupant who is a Cav member, ties to the lowest user ID.
+// A Cav member who joins a channel with no owner takes it. A handover is
+// final, so a returning creator is an ordinary occupant. Ranks are read from
+// the roles the gateway payloads carry, against the ladder below, most
+// senior first; a member holding none of its roles, or holding the
+// Discharged role, is never a candidate. No API call per create or handover.
 
 // rankRole pairs a rank abbreviation with its Discord role ID. The abbreviation
 // is documentation only; the roleID is what the election matches against a
@@ -221,8 +222,8 @@ var tempVCRankRoles = []rankRole{
 	{"RCT", "899328824871882752"},
 }
 
-// noRankIndex sorts after every real entry, so a member holding no rank role is
-// the lowest priority. (A slice length is not a constant expression, so this is
+// noRankIndex sorts after every real entry, so a member who is no Cav member
+// is the lowest priority. (A slice length is not a constant expression, so this is
 // a var.)
 var noRankIndex = len(tempVCRankRoles)
 
@@ -962,9 +963,9 @@ func (t *TempVC) ApplyGuildModeratorRoles(roleIDs []string) {
 // panel's service layer calls it after its store write succeeds, the same
 // arrangement as ApplyGuildModeratorRoles, so every handover ranks by the
 // saved roles from then on. The save applies the handover rule to every
-// spawned channel at once (GLOSSARY.md, Handover). An owner who no longer
-// holds a rank role hands over, and a channel with no owner goes to its
-// highest-ranked occupant who holds one. Each handover's row write and
+// spawned channel at once (GLOSSARY.md, Handover). An owner who is no
+// longer a Cav member hands over, and a channel with no owner goes to its
+// highest-ranked occupant who is one. Each handover's row write and
 // ownership notice go out before it returns.
 //
 // A member may have taken or lost a role in Discord since their last voice
@@ -1650,7 +1651,7 @@ func (t *TempVC) rememberMemberLocked(userID string, m *discordgo.Member) {
 }
 
 // rankLocked returns a member's place on the rank ladder as it stands now,
-// from their cached roles, or noRankIndex when they hold no rank role or no
+// from their cached roles, or noRankIndex when they are no Cav member or no
 // gateway payload has carried their member object, so an occupant of
 // unknown rank is never a candidate. Caller holds mu.
 func (t *TempVC) rankLocked(userID string) int {
@@ -1661,11 +1662,11 @@ func (t *TempVC) rankLocked(userID string) int {
 // occupancy just changed. When the owner changed it returns the channel's
 // row with the new owner, empty for none, for the caller to write off-lock
 // with the notice. A present owner keeps the channel. Otherwise the
-// highest-ranked occupant with a rank role takes over, ties to the lowest
-// user ID, and with no such occupant the channel has no owner. The election
-// runs over the recorded occupants a fresh snapshot of the cache confirms
-// are inside: a successor whose own leave handler has not run yet is not
-// handed a channel they already left. An untracked channel changes nothing,
+// highest-ranked occupant who is a Cav member takes over, ties to the
+// lowest user ID, and with no such occupant the channel has no owner. The
+// election runs over the recorded occupants a fresh snapshot of the cache
+// confirms are inside: a successor whose own leave handler has not run yet
+// is not handed a channel they already left. An untracked channel changes nothing,
 // and neither does an empty one about to be deleted. An empty channel
 // waiting out its hub's delete delay is not about to go: its owner has left
 // with nobody to take over, so it has no owner. Caller holds mu.
@@ -1737,7 +1738,7 @@ func (t *TempVC) electPresentOwnerLocked(channelID string, snap VoiceSnapshot, r
 
 // electOwner picks the occupant the handover rule names. That is the
 // highest rank on the ladder, as rankOf gives it, then the lowest user ID.
-// An occupant holding no rank role, or whose roles no payload has carried,
+// An occupant who is no Cav member, or whose roles no payload has carried,
 // is not a candidate. Empty means there is none.
 func electOwner(occ map[string]struct{}, rankOf func(userID string) int) string {
 	best, bestRank := "", noRankIndex
@@ -2065,11 +2066,11 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		return
 	}
 
-	// The creator owns the channel only when they hold a rank role; a channel
-	// a member with no rank role created starts with no owner, and the first
-	// rank holder to join takes it. The creator counts as an occupant from
+	// The creator owns the channel only when they are a Cav member; a
+	// channel any other member created starts with no owner, and the first
+	// Cav member to join takes it. The creator counts as an occupant from
 	// here: the bot is about to move them in, and their own voice state event
-	// lands a moment after the move, so a rank holder who joins in that window
+	// lands a moment after the move, so a Cav member who joins in that window
 	// must not find the owner absent and take the channel for good.
 	t.mu.Lock()
 	owner := ""

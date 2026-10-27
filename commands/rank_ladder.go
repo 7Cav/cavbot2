@@ -11,9 +11,11 @@ import (
 // The rank ladder and its rank roles (GLOSSARY.md, #680). The ranks and
 // their order live in code, tempVCRankRoles. The role that counts as each
 // rank is a panel admin's to set on the Settings page, and a guild with
-// nothing saved uses the role IDs in code. Everything that asks whether a
-// member is a Cav member, or how senior, reads one RankLadder. The
-// handover rule, /record start and the panel's Foxhole page all do.
+// nothing saved uses the role IDs in code. So is the Discharged role
+// (#893), whose holder is no Cav member whatever rank role they hold.
+// Everything that asks whether a member is a Cav member, or how senior,
+// reads one RankLadder. The handover rule, /record start, the panel's
+// Foxhole page and the rank roles preview all do.
 
 // errRankRoleDeleted is the identity of a deleted rank role's event in
 // Sentry. Every member holding it stops counting as a Cav member, and only a

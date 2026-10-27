@@ -159,7 +159,12 @@ roles show as not in the server, then save. Give the test account that role
 with `smoke api`, and write the grant down as a fixture. The smoke database
 keeps the rank roles between runs, so look at the Settings page before you set
 them again. Until you clear those ranks, every start logs a "Rank roles
-missing from the guild" capture. Expect it on the test guild.
+missing from the guild" capture. Expect it on the test guild. The Discharged
+role on the same page starts as the forum's, which the test guild lacks too,
+so every start also logs a "Discharged role missing from the guild" capture
+until you clear it or choose a test guild role. A check on a discharged
+member needs that role chosen and given to a test account that is a Cav
+member.
 
 **Slash commands.** A slash command runs from a person's Discord account. Ask
 the person once per run to let you post as them, then use Claude in Chrome,
