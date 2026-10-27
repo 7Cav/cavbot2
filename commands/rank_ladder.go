@@ -2,6 +2,7 @@ package commands
 
 import (
 	"errors"
+	"maps"
 	"slices"
 
 	"github.com/7cav/cavbot2/store"
@@ -120,6 +121,13 @@ func (l RankLadder) Roles() map[string]string {
 	return roles
 }
 
+// Equal reports whether the ladder gives every rank the rank role other
+// does and has the same Discharged role, so a save from one to the other
+// changes nothing.
+func (l RankLadder) Equal(other RankLadder) bool {
+	return maps.Equal(l.Roles(), other.Roles()) && l.discharged == other.discharged
+}
+
 // DischargedRole returns the Discharged role's ID, empty for none.
 func (l RankLadder) DischargedRole() string {
 	return l.discharged
@@ -132,12 +140,13 @@ func (l RankLadder) seniority(roleIDs []string) int {
 	if l.Discharged(roleIDs) {
 		return noRankIndex
 	}
-	return l.place(roleIDs)
+	return l.rankRolePlace(roleIDs)
 }
 
-// place is the ladder place of the most senior rank role among the role
-// IDs, or noRankIndex when none of them is a rank role.
-func (l RankLadder) place(roleIDs []string) int {
+// rankRolePlace is the ladder place of the most senior rank role among the
+// role IDs, the Discharged role or not, or noRankIndex when none of them is
+// a rank role.
+func (l RankLadder) rankRolePlace(roleIDs []string) int {
 	best := noRankIndex
 	for _, id := range roleIDs {
 		if i, ok := l.position[id]; ok && i < best {
@@ -163,7 +172,7 @@ func (l RankLadder) Discharged(roleIDs []string) bool {
 // false when none of them is a rank role. A discharged member keeps
 // theirs, though they are no Cav member.
 func (l RankLadder) SeniorRankRole(roleIDs []string) (string, bool) {
-	i := l.place(roleIDs)
+	i := l.rankRolePlace(roleIDs)
 	if i == noRankIndex {
 		return "", false
 	}

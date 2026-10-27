@@ -279,10 +279,10 @@ type holderRow struct {
 	// role, in place of "no rank role". RankRole still names their rank.
 	// Display only.
 	Discharged bool
-	// holdsDischarged is whether the member holds the Discharged role,
+	// holdsDischargedRole is whether the member holds the Discharged role,
 	// flagged or not, so a preview can flag them as an add of Internal
 	// will.
-	holdsDischarged bool
+	holdsDischargedRole bool
 	// NotInServer is the "not in the server" flag: a member the member list
 	// doesn't hold, shown under the names the panel last saw.
 	NotInServer bool
@@ -830,10 +830,8 @@ func (g foxholeGuild) rowOf(mem commands.ListedMember, rec store.FoxholeRecord) 
 	if rank, ok := g.ladder.SeniorRankRole(mem.RoleIDs); ok {
 		row.RankRole = cmp.Or(g.roleNames[rank], rank)
 	}
-	internal := row.Internal || row.Approved.Internal
-	row.holdsDischarged = g.ladder.Discharged(mem.RoleIDs)
-	row.Discharged = internal && row.holdsDischarged
-	row.NoRankRole = internal && row.RankRole == "" && !row.Discharged
+	row.holdsDischargedRole = g.ladder.Discharged(mem.RoleIDs)
+	row = row.withRankFlags(row.Internal || row.Approved.Internal)
 	row.ApprovedNoInternal = row.Approved.Internal && !row.Internal
 	row.ApprovedNoExternal = row.Approved.External && !row.External
 	return row
@@ -857,9 +855,18 @@ func (h holderRow) holdsRole(role commands.FoxholeRole) bool {
 // add.
 func (h holderRow) adding(role commands.FoxholeRole) holderRow {
 	if role == commands.FoxholeInternal {
-		h.Discharged = h.holdsDischarged
-		h.NoRankRole = h.RankRole == "" && !h.Discharged
+		return h.withRankFlags(true)
 	}
+	return h
+}
+
+// withRankFlags is the row with its "discharged" and "no rank role" flags
+// set as the holder list sets them, given whether its member holds
+// Internal or has an Internal approval: "discharged" for one holding the
+// Discharged role, else "no rank role" for one holding no rank role.
+func (h holderRow) withRankFlags(internal bool) holderRow {
+	h.Discharged = internal && h.holdsDischargedRole
+	h.NoRankRole = internal && h.RankRole == "" && !h.Discharged
 	return h
 }
 

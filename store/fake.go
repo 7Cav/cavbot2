@@ -417,9 +417,7 @@ func (f *Fake) GetRankRoles(ctx context.Context, guildID string) (RankRoles, err
 	defer f.mu.Unlock()
 	roles := f.rankRoles[guildID]
 	roles.Roles = maps.Clone(roles.Roles)
-	if roles.DischargedRoleID != nil {
-		roles.DischargedRoleID = new(*roles.DischargedRoleID)
-	}
+	roles.DischargedRoleID = cloneRoleID(roles.DischargedRoleID)
 	return roles, nil
 }
 
@@ -435,13 +433,18 @@ func (f *Fake) SaveRankRoles(ctx context.Context, guildID string, roles RankRole
 		if saved == nil {
 			saved = map[string]string{}
 		}
-		var discharged *string
-		if roles.DischargedRoleID != nil {
-			discharged = new(*roles.DischargedRoleID)
-		}
-		f.rankRoles[guildID] = RankRoles{Roles: saved, DischargedRoleID: discharged, Version: current.Version + 1}
+		f.rankRoles[guildID] = RankRoles{Roles: saved, DischargedRoleID: cloneRoleID(roles.DischargedRoleID), Version: current.Version + 1}
 		return 0, nil
 	})
+}
+
+// cloneRoleID is a copy of a role ID that may be nil, so the fake and its
+// caller never share one.
+func cloneRoleID(id *string) *string {
+	if id == nil {
+		return nil
+	}
+	return new(*id)
 }
 
 // AppendChangeLog adds one entry under the caller's HubID with nothing else
