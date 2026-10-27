@@ -133,6 +133,14 @@ alone, never from the milpac.
 A UTC calendar date after a trooper's last forum post, up to and including
 today, that none of their LOAs covers.
 
+**LOA tag**:
+The [LOA] or [LOA needs review] mark on a trooper's /awol row, linked to the
+LOA's thread when the bot knows it. [LOA] marks an LOA that includes today,
+and [LOA needs review] marks a needs-review LOA that a leader reads before
+acting on the row.
+_Avoid_: tag on its own, which is a picker's selected item; flag, a holder
+list row's mark; badge.
+
 **Accuracy disclaimer**:
 The warning at the top of every /afsm reply, with or without names, that the
 list may be wrong because milpac records are typed by hand.
