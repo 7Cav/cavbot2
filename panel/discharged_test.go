@@ -1,7 +1,11 @@
 package panel
 
 import (
+	"context"
+	"reflect"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/7cav/cavbot2/commands"
@@ -103,5 +107,153 @@ func TestRankRolesSaveClearingTheDischargedRoleSavesWithNoPreview(t *testing.T) 
 	assertRedirect(t, res, settingsPath)
 	if got := storedRankRoles(t, w.st).DischargedRoleID; got == nil || *got != "" {
 		t.Errorf("the stored Discharged role = %v, want none saved", got)
+	}
+}
+
+// withDischargeableSergeant is the test world with an SGT who also holds
+// role-hq, and a PVT, in the member list. The SGT owns spawn-1, which their
+// hub join spawned and where the PVT sits with them.
+func withDischargeableSergeant(t *testing.T) *testWorld {
+	t.Helper()
+	w := newTestWorld(t, testHub())
+	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
+		Members: []commands.ListedMember{testBotMember,
+			{ID: "user-sgt", Username: "sgt", RoleIDs: []string{testRankSGT, "role-hq"}},
+			{ID: "user-pvt", Username: "pvt", RoleIDs: []string{testRankPVT}}}})
+	w.joinAs("user-sgt", "hub-1", testRankSGT, "role-hq")
+	w.joinAs("user-sgt", "spawn-1", testRankSGT, "role-hq")
+	w.joinAs("user-pvt", "spawn-1", testRankPVT)
+	signIn(t, w.forum, w.b)
+	return w
+}
+
+// A save that changes the Discharged role to role-hq stops the SGT who
+// holds it counting as a Cav member, so it shows a preview counting one
+// member and the one channel they own, and changes nothing. Its Confirm
+// saves the role, the PVT takes the SGT's channel, and the section's change
+// log lists the save with the Discharged role's change.
+func TestRankRolesSaveChangingTheDischargedRoleWaitsOnItsPreview(t *testing.T) {
+	w := withDischargeableSergeant(t)
+	before := readSavedState(t, w.st)
+	form := loadedForm(t, w.b, settingsPath, "/rank-roles")
+	form.Set(fieldDischargedRole, "role-hq")
+
+	res := follow(t, w.b, w.b.postForm("/rank-roles", form))
+
+	preview := previewIn(t, parseHTML(t, res))
+	if preview == nil {
+		t.Fatalf("status %d with no preview in the Rank roles section, want the preview", res.StatusCode)
+	}
+	if dropped, channels := previewCounts(t, preview); dropped != "1" || channels != "1" {
+		t.Errorf("preview counts %s members and %s channels, want 1 and 1", dropped, channels)
+	}
+	if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
+		t.Errorf("the store after the preview = %+v, want it as before, %+v", after, before)
+	}
+	if owner, _ := w.runtime.Owner("spawn-1"); owner != "user-sgt" {
+		t.Errorf("Owner(spawn-1) after the preview = %q, want user-sgt still", owner)
+	}
+
+	assertRedirect(t, w.b.postForm("/rank-roles", formPosts(t, preview, "/rank-roles")), settingsPath)
+
+	if got := storedRankRoles(t, w.st).DischargedRoleID; got == nil || *got != "role-hq" {
+		t.Errorf("the stored Discharged role after Confirm = %v, want role-hq", got)
+	}
+	if owner, _ := w.runtime.Owner("spawn-1"); owner != "user-pvt" {
+		t.Errorf("Owner(spawn-1) after Confirm = %q, want user-pvt", owner)
+	}
+	entries, err := w.st.ListRankRoleChanges(context.Background(), 10)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("ListRankRoleChanges = %d entries, %v, want the Confirm's one", len(entries), err)
+	}
+	entry := findElement(rankRolesSection(t, parseHTML(t, w.b.get(settingsPath))), "", "data-entry", strconv.FormatInt(entries[0].ID, 10))
+	if entry == nil {
+		t.Fatal("the Rank roles section does not list the save's entry")
+	}
+	if got := valuesOf(entry, "data-change"); !slices.Equal(got, []string{fieldDischargedRole}) {
+		t.Errorf("the listed entry shows changes %v, want the Discharged role's alone", got)
+	}
+}
+
+// A save that names as the Discharged role a role the same save gives a
+// rank is refused, with the refusal on the Discharged role saying that
+// role is a rank role, and saves nothing.
+func TestRankRolesSaveRefusesARankRoleAsTheDischargedRole(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	before := readSavedState(t, w.st)
+	form := loadedForm(t, w.b, settingsPath, "/rank-roles")
+	form.Set(rankRoleField("SGT"), "role-hq")
+	form.Set(fieldDischargedRole, "role-hq")
+
+	res := w.b.postForm("/rank-roles", form)
+
+	if !isClientError(res.StatusCode) {
+		t.Errorf("status = %d, want 4xx", res.StatusCode)
+	}
+	refusal := findElement(rankRolesSection(t, parseHTML(t, res)), "", "data-error", fieldDischargedRole)
+	if refusal == nil {
+		t.Fatal("the Rank roles section carries no refusal on the Discharged role")
+	}
+	if got := textOf(refusal); !strings.Contains(got, rankRoleAsDischargedRefusal) {
+		t.Errorf("the refusal says %q, want it to carry %q", got, rankRoleAsDischargedRefusal)
+	}
+	if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
+		t.Errorf("the store after the refused save = %+v, want it as before, %+v", after, before)
+	}
+}
+
+// With the member list not loaded, a save that sets the Discharged role
+// previews with the member count unknown, since nothing can rule a drop
+// out.
+func TestRankRolesSaveSettingTheDischargedRoleBeforeTheListLoadsPreviews(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	w.discord.setListStatus(commands.MemberListArriving, true)
+	form := loadedForm(t, w.b, settingsPath, "/rank-roles")
+	form.Set(fieldDischargedRole, "role-hq")
+
+	res := follow(t, w.b, w.b.postForm("/rank-roles", form))
+
+	preview := previewIn(t, parseHTML(t, res))
+	if preview == nil {
+		t.Fatalf("status %d with no preview, want the preview while the member list loads", res.StatusCode)
+	}
+	if dropped, _ := previewCounts(t, preview); dropped != "unknown" {
+		t.Errorf("preview's member count = %q, want unknown", dropped)
+	}
+}
+
+// A save that changes a rank keeps the stored Discharged role though the
+// guild lacks it, as it keeps a rank's unavailable role (ADR 0012). The
+// test guild lacks the forum's Discharged role, stored while nothing is
+// saved. A save naming a role an integration manages as the Discharged
+// role is refused and saves nothing.
+func TestRankRolesSaveKeepsAnUnavailableDischargedRoleAndRefusesANewOne(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	form := loadedForm(t, w.b, settingsPath, "/rank-roles")
+	form.Set(rankRoleField("SGT"), "role-hq")
+
+	assertRedirect(t, w.b.postForm("/rank-roles", form), settingsPath)
+
+	if got := storedRankRoles(t, w.st).DischargedRoleID; got == nil || *got != testDischargedRole {
+		t.Errorf("the stored Discharged role after a save of SGT = %v, want %s, kept though the guild lacks it", got, testDischargedRole)
+	}
+
+	before := readSavedState(t, w.st)
+	form = loadedForm(t, w.b, settingsPath, "/rank-roles")
+	form.Set(fieldDischargedRole, "role-bot")
+
+	res := w.b.postForm("/rank-roles", form)
+
+	if !isClientError(res.StatusCode) {
+		t.Errorf("status of a save naming a managed role = %d, want 4xx", res.StatusCode)
+	}
+	if findElement(rankRolesSection(t, parseHTML(t, res)), "", "data-error", fieldDischargedRole) == nil {
+		t.Error("the Rank roles section carries no refusal on the Discharged role")
+	}
+	if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
+		t.Errorf("the store after the refused save = %+v, want it as before, %+v", after, before)
 	}
 }

@@ -65,7 +65,7 @@
     {{with .Refusal}}{{template "refusal" .}}{{end}}
     <div class="block-row">
       {{- if .Counted}}<span data-dropped="{{.DroppedValue}}">{{.Dropped}}</span> {{if eq .Dropped 1}}member stops{{else}}members stop{{end}} counting as a Cav member.
-      {{- else}}<span data-dropped="{{.DroppedValue}}">Cavbot2 hasn't loaded the server's member list yet, so it can't say how many members stop counting as Cav members.</span> This save takes a role off the rank ladder, so some may.{{end}}
+      {{- else}}<span data-dropped="{{.DroppedValue}}">Cavbot2 hasn't loaded the server's member list yet, so it can't say how many members stop counting as Cav members.</span> This save takes a role off the rank ladder or sets the Discharged role, so some may.{{end}}
       <span data-channels="{{.Channels}}">{{.Channels}}</span> spawned {{if eq .Channels 1}}channel changes{{else}}channels change{{end}} owner. An owner who loses a channel doesn't get it back if you save again.
     </div>
     <form method="post" action="/rank-roles#rank-roles" class="submit-row">

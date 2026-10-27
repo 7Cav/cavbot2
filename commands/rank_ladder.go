@@ -164,10 +164,14 @@ func (l RankLadder) Drops(next RankLadder, roleIDs []string) bool {
 	return l.CavMember(roleIDs) && !next.CavMember(roleIDs)
 }
 
-// TakesARoleOff reports whether a role that counts for a rank on this
-// ladder counts for none on the ladder next, so a save from this ladder to
-// next may stop some member counting as a Cav member.
-func (l RankLadder) TakesARoleOff(next RankLadder) bool {
+// MayDrop reports whether a save from this ladder to next may stop some
+// member counting as a Cav member: a role that counts for a rank on this
+// ladder counts for none on next, or next sets a Discharged role this
+// ladder doesn't have.
+func (l RankLadder) MayDrop(next RankLadder) bool {
+	if next.discharged != "" && next.discharged != l.discharged {
+		return true
+	}
 	for _, r := range l.ranks {
 		if _, still := next.position[r.RoleID]; r.RoleID != "" && !still {
 			return true
