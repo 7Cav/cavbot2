@@ -627,17 +627,16 @@ func (c *recorderConn) joinStarted() {
 	}
 }
 
-// callMoved notes that the call left the voice server the gateway was on
-// at loss, the loss the 4022 counts as. When Discord named that server
-// last, the recorder shuns it from then on. Discord can have named the
-// server the call moved to already, and disgo can have opened there by
-// itself during the channel lookup. So the server the gateway last opened
-// at can be the one the call moved to.
-func (c *recorderConn) callMoved(loss gapStart) {
+// callMoved notes that the call left the voice server the gateway had
+// opened at when it lost the call to the 4022, which start keeps. When
+// Discord named that server last, the recorder shuns it from then on.
+// Discord can have named the server the call moved to already, and disgo
+// can have opened there by itself during the channel lookup. So the server
+// the gateway last opened at can be the one the call moved to.
+func (c *recorderConn) callMoved(start gapStart) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	left := disgovoice.State{Endpoint: loss.server, Token: loss.token}
-	if c.lastServer != nil && dialedAt(left, *c.lastServer) {
+	if c.lastServer != nil && dialedAt(start.opened, *c.lastServer) {
 		c.shunned = c.lastServer
 	}
 }
@@ -788,12 +787,12 @@ type renewableGateway struct {
 	redial        context.CancelFunc
 	describedDial chan struct{}
 	// connected is whether the gateway is connected in the call, at the
-	// voice server Discord had named last as it connected: the session
-	// description that completes a connection arrived after its last dial
-	// started. A server Discord names after with a voice server update
-	// alone leaves it connected. loss is
-	// when and why it last stopped being connected, zero before it ever
-	// was, and losses counts the times it has.
+	// voice server Discord had named last as it connected. It connects once
+	// the session description that completes a connection arrives after its
+	// last dial started. Discord naming another server with a voice server
+	// update alone leaves it connected where it was. loss is when and why it
+	// last stopped being connected, zero before it ever was, and losses
+	// counts the times it has.
 	connected bool
 	loss      gapStart
 	losses    int
@@ -900,10 +899,10 @@ func (g *renewableGateway) renewLocked(cause GapCause) {
 // gateway it connects through, and reports whether it is. When close is
 // disgo's refused resume, the loss keeps the close behind it that gw saw.
 // It returns the loss's number too, which lostFor takes to name a cause not
-// known yet, and the loss, which keeps the voice server the gateway was on
-// when it lost the call. That is an earlier loss when the gateway had lost
-// the call already, as when Discord named the server a call moved to before
-// the close.
+// known yet. It returns the loss's start as well, which keeps the voice
+// state the gateway had opened with. When the gateway had lost the call
+// already, as when Discord named the server a call moved to before the
+// close, both are that earlier loss's.
 func (g *renewableGateway) lost(gw disgovoice.Gateway, at time.Time, cause GapCause, close error) (loss int, start gapStart, ok bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -935,7 +934,7 @@ func (g *renewableGateway) lostFor(loss int, cause GapCause) {
 // last opened at, with its token. Caller holds mu.
 func (g *renewableGateway) disconnectLocked(start gapStart) {
 	if g.connected || g.loss.at.IsZero() {
-		start.server, start.token = g.state.Endpoint, g.state.Token
+		start.opened = g.state
 		g.connected, g.loss = false, start
 		g.losses++
 	}
@@ -1123,10 +1122,10 @@ func (g *renewableGateway) connection() (connected bool, lost gapStart, losses i
 // another with a voice server update alone, and disgo then stays connected
 // where it was, though the call isn't there anymore.
 func (g *renewableGateway) connectedAtNamedLast() bool {
-	e := g.named()
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.connected && (e == nil || dialedAt(g.state, *e))
+	connected, state := g.connected, g.state
+	g.mu.Unlock()
+	return connected && g.namedLastIs(state)
 }
 
 func (g *renewableGateway) SSRC() uint32 { return g.current().SSRC() }

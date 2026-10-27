@@ -1869,8 +1869,9 @@ func TestRecorderStartsTheGapAtTheCloseWhenDisgoConnectsDuringTheLookup(t *testi
 // connectDuringTheLookup has Discord send the recorder's voice state and
 // name newEndpoint with token-3 while a 4022's channel lookup is out, so
 // disgo connects there by itself. The lookup answers 1.1 s after that
-// connection completes, once then has run, when set.
-func (h *callHarness) connectDuringTheLookup(then func()) {
+// connection completes. beforeAnswer, when set, runs just before it
+// answers.
+func (h *callHarness) connectDuringTheLookup(beforeAnswer func()) {
 	h.api.during = func() {
 		h.s.voice.HandleVoiceStateUpdate(recorderVoiceState(callChannel))
 		h.name("token-3", newEndpoint)
@@ -1883,10 +1884,20 @@ func (h *callHarness) connectDuringTheLookup(then func()) {
 			h.t.Error("no gateway opened at the server Discord named during the lookup")
 		}
 		time.Sleep(1100 * time.Millisecond)
-		if then != nil {
-			then()
+		if beforeAnswer != nil {
+			beforeAnswer()
 		}
 	}
+}
+
+// moveTo is Discord moving the call to the voice server at endpoint and
+// naming it with token, with a voice server update alone. Discord serves
+// the call there from then on.
+func (h *callHarness) moveTo(token, endpoint string) {
+	h.mu.Lock()
+	h.serving = endpoint
+	h.mu.Unlock()
+	h.name(token, endpoint)
 }
 
 // disgo can connect at the server a call moved to while a 4022's channel
@@ -1986,12 +1997,7 @@ func TestRecorderLeavesBehindTheConnectionDisgoMadeDuringTheLookupWhenTheCallMov
 		conn := h.record(l)
 		defer h.hangUp(conn)
 		h.setReachable(laterEndpoint, false)
-		h.connectDuringTheLookup(func() {
-			h.mu.Lock()
-			h.serving = laterEndpoint
-			h.mu.Unlock()
-			h.name("token-4", laterEndpoint)
-		})
+		h.connectDuringTheLookup(func() { h.moveTo("token-4", laterEndpoint) })
 
 		go h.closeCall(disgovoice.GatewayCloseEventCodeCallTerminated.Code)
 		time.Sleep(time.Minute)
