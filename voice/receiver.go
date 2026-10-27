@@ -43,8 +43,9 @@ type receiveConn interface {
 	// ChannelID is the call's channel, nil while there is none.
 	ChannelID() *snowflake.ID
 	// connection reports whether the recorder is connected in the call, at
-	// the voice server Discord named last, when and why it last stopped
-	// being connected, zero before it ever was, and how many times it has.
+	// the voice server Discord had named last as it connected, when and why
+	// it last stopped being connected, zero before it ever was, and how many
+	// times it has.
 	connection() (connected bool, lost gapStart, losses int)
 	// server is the voice server the recorder connects to: the one Discord
 	// named last for the call.
@@ -139,10 +140,10 @@ type gapStart struct {
 	// close is the voice gateway close or failed read that started the
 	// gap, nil when neither did, and closedBy the disgo gateway whose close
 	// handler handed it over. server is the voice server the gateway last
-	// opened at.
-	close    error
-	closedBy disgovoice.Gateway
-	server   string
+	// opened at, and token the token it opened there with.
+	close         error
+	closedBy      disgovoice.Gateway
+	server, token string
 	// interval is the heartbeat interval the voice server's Hello named,
 	// and sinceAnswer how long before the gap's start the server last
 	// answered a heartbeat, for a heartbeat answer overdue.
