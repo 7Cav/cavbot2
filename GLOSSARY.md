@@ -11,10 +11,8 @@ wiki at https://wiki.7cav.us/ is the member-facing reference for the
 regiment's structure and terms.
 
 **Cav member**:
-A Discord member who holds a rank role. The two descriptions name one set:
-every Cav member holds a rank role, and every rank-role holder is a Cav
-member. Member-facing copy says "Cav member". The handover rule and the code
-say "rank role", the test the bot applies.
+A Discord member who holds a rank role and whose milpac shows no discharge.
+A retiree is one. Member-facing copy says "Cav member".
 _Avoid_: rank holder (in copy), trooper (in copy), verified member, Cav.
 
 **Rank ladder**:
@@ -24,8 +22,14 @@ _Avoid_: rank list, rank table, seniority list, role ladder.
 
 **Rank role**:
 The Discord role that counts as one rank on the rank ladder, set by a panel
-admin. A rank has one or none, and a role counts for one rank at most.
+admin. A rank has one or none, and a role counts for one rank at most. A
+discharged trooper keeps theirs.
 _Avoid_: Cav role, member role, rank (for the role).
+
+**Discharged role**:
+The Discord role the forum gives a trooper while their milpac's position is
+Discharged, set by a panel admin. A dishonorable discharge brings none.
+_Avoid_: discharge role, past member role.
 
 **Department**:
 One of the twelve parts of the regiment /afsm checks: S1 (Personnel), S2
@@ -244,8 +248,9 @@ _Avoid_: holder list (nobody in it holds a Foxhole role).
 
 **Flag**:
 A display-only mark on a holder list row that points a Foxhole manager at a
-member worth a second look. The marks are "no rank role" on an Internal
-holder or a member with an Internal approval, "not in the server", and
+member worth a second look. The marks are "no rank role" and "discharged"
+on an Internal holder or a member with an Internal approval who holds no
+rank role or holds the Discharged role, "not in the server", and
 "approved, doesn't hold Internal" or "approved, doesn't hold External".
 _Avoid_: warning, alert, issue.
 
@@ -333,20 +338,20 @@ _Avoid_: temp channel, temp VC, temporary channel, personal channel.
 **Owner**:
 The occupant a spawned channel belongs to, or nobody. Owning is what lets a
 member rename or lock it, as far as its hub allows each; a moderator role
-does both without owning. The owner held a rank role when they took the
-channel, and losing it in Discord later does not end the ownership. The
-creator at first, if they hold one; after a handover, whoever the handover
-named. A bot-internal marker that grants no Discord permission.
+does both without owning. The owner was a Cav member when they took the
+channel, and ceasing to be one in Discord later does not end the ownership.
+The creator at first, if they are one; after a handover, whoever the
+handover named. A bot-internal marker that grants no Discord permission.
 _Avoid_: interim controller, controller, creator (for the current owner).
 
 **Handover**:
 The bot giving ownership of a spawned channel to an occupant. When the owner
-leaves, the highest-ranked occupant with a rank role takes over, ties broken
-by lowest user ID; with no such occupant the channel has no owner. When a
-rank-role holder joins a channel with no owner, they take over. A save of
+leaves, the highest-ranked occupant who is a Cav member takes over, ties
+broken by lowest user ID; with no such occupant the channel has no owner.
+When a Cav member joins a channel with no owner, they take over. A save of
 the rank roles applies the rule to every spawned channel at once. An owner
-who no longer holds a rank role hands over, and a channel with no owner goes
-to its highest-ranked occupant who holds one. A handover is final: a
+who is no longer a Cav member hands over, and a channel with no owner goes
+to its highest-ranked occupant who is one. A handover is final: a
 returning creator is an ordinary occupant.
 _Avoid_: hand off, hand back, succession, transfer, loan.
 
