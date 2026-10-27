@@ -117,6 +117,11 @@ type RankRoles struct {
 	// Roles maps each rank's abbreviation to its rank role's ID, empty for a
 	// rank with none.
 	Roles map[string]string
+	// DischargedRoleID is the Discharged role's ID (GLOSSARY.md, #893),
+	// empty for none. It is nil while no save has written it, as in a
+	// guild with no row or a row saved before #893, and then the role ID
+	// in code applies.
+	DischargedRoleID *string
 	// Version counts the saves of the rank roles that took effect, as
 	// RecordingRoles.Version does. A guild with no row is at version 0: no
 	// panel admin has saved them, so the rank ladder's role IDs in code
@@ -505,8 +510,9 @@ type Store interface {
 	// GetRankRoles returns the rank roles with their version. A guild with
 	// no row reads back as no roles at version 0, with no error.
 	GetRankRoles(ctx context.Context, guildID string) (RankRoles, error)
-	// SaveRankRoles replaces the rank roles with roles.Roles and appends the
-	// save's change log entry together, only while the guild's row is at
+	// SaveRankRoles replaces the rank roles with roles.Roles, and the
+	// Discharged role with roles.DischargedRoleID, and appends the save's
+	// change log entry together, only while the guild's row is at
 	// roles.Version, 0 meaning no row, and the row ends one version on.
 	// ErrStale when it is at another version. The entry references no hub,
 	// whatever HubID the caller set.

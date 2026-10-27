@@ -49,11 +49,12 @@ var rankRoleFields = func() []string {
 
 // shownFields are every field a diff can carry, in the form's order: a
 // hub's fields, then the recording roles, the one field of their section's
-// diffs, then the rank roles.
-var shownFields = slices.Concat([]string{fieldChannelName}, diffFields, []string{fieldRecordingRoles}, rankRoleFields)
+// diffs, then the rank roles and the Discharged role.
+var shownFields = slices.Concat([]string{fieldChannelName}, diffFields, []string{fieldRecordingRoles}, rankRoleFields,
+	[]string{fieldDischargedRole})
 
 // roleFields are the fields whose values are role IDs, shown by name.
-var roleFields = slices.Concat([]string{fieldModeratorRoles, fieldRecordingRoles}, rankRoleFields)
+var roleFields = slices.Concat([]string{fieldModeratorRoles, fieldRecordingRoles}, rankRoleFields, []string{fieldDischargedRole})
 
 // fieldLabels name the fields a diff can carry as the change log shows
 // them: in the words of the form's label for each, as the Foxhole page's
@@ -71,6 +72,7 @@ var fieldLabels = map[string]string{
 	fieldRenamingAllowed:  "renaming allowed",
 	fieldLockingAllowed:   "locking allowed",
 	fieldRecordingRoles:   "recording roles",
+	fieldDischargedRole:   "Discharged role",
 }
 
 // permissionSourceNames are the permission source's stored values as the

@@ -79,10 +79,10 @@ var (
 	errRecordInHub = errors.New("recording: channel is a hub")
 	// errNoRecordingRole: the invoker holds none of the recording roles.
 	errNoRecordingRole = errors.New("recording: invoker holds no recording role")
-	// errNotCavMember: the invoker holds a recording role and no rank role,
-	// so isn't a Cav member, and the panel couldn't find the recording for
-	// them.
-	errNotCavMember = errors.New("recording: invoker holds no rank role")
+	// errNotCavMember: the invoker holds a recording role but no rank role,
+	// or holds the Discharged role, so isn't a Cav member, and the panel
+	// couldn't find the recording for them.
+	errNotCavMember = errors.New("recording: invoker is no Cav member")
 	// errRecordTitleTooLong: the title is over recordTitleLimit characters,
 	// which would push the recording notice past Discord's message limit.
 	errRecordTitleTooLong = errors.New("recording: title is too long")
@@ -314,7 +314,7 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	if !holds {
 		return "", errNoRecordingRole
 	}
-	if _, ok := r.tv.RankLadder().SeniorRankRole(by.Roles); !ok {
+	if !r.tv.RankLadder().CavMember(by.Roles) {
 		return "", errNotCavMember
 	}
 	if utf8.RuneCountInString(title) > recordTitleLimit {

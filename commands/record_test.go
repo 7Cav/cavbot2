@@ -597,6 +597,16 @@ var recordRefusals = []recordRefusal{
 		carries: []string{notCavMemberRefusal},
 	},
 	{
+		name:      "recording role and rank role but discharged",
+		recorders: []string{testRecorder},
+		setup: func(_ *testing.T, sc *recordScene) permMember {
+			applicant := permMember{id: "user-a", roles: []string{testRecordingRole, testRankSGT, testDischargedRole}}
+			sc.fake.setVoice(applicant.id, recordChannel)
+			return applicant
+		},
+		carries: []string{notCavMemberRefusal},
+	},
+	{
 		name:      "no recorder free",
 		recorders: []string{testRecorder},
 		setup: func(t *testing.T, sc *recordScene) permMember {

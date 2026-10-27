@@ -36,6 +36,13 @@
       {{end}}
       </tbody>
     </table></div>
+    <div class="block-row">
+      <div class="field" role="group" aria-labelledby="discharged-role-label" aria-describedby="discharged-role-hint">
+        <span class="field-label" id="discharged-role-label">Discharged role</span>
+        <div class="rank-role"><span class="off rank-role-none"{{if .Discharged.Tags}} hidden{{end}}>No role</span>{{template "picker" .Discharged}}</div>
+        <span class="field-hint" id="discharged-role-hint">A member holding this role is not a Cav member, whatever rank role they hold. The forum gives it to a member while their milpac's position is Discharged.</span>
+      </div>
+    </div>
     <template id="{{.OptionsID}}">{{range .Options}}{{template "picker-option" .}}{{end}}</template>
     <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save<span class="visually-hidden"> the rank roles</span></button></div>
     {{end}}
@@ -56,7 +63,7 @@
     {{with .Refusal}}{{template "refusal" .}}{{end}}
     <div class="block-row">
       {{- if .Counted}}<span data-dropped="{{.DroppedValue}}">{{.Dropped}}</span> {{if eq .Dropped 1}}member stops{{else}}members stop{{end}} counting as a Cav member.
-      {{- else}}<span data-dropped="{{.DroppedValue}}">Cavbot2 hasn't loaded the server's member list yet, so it can't say how many members stop counting as Cav members.</span> This save takes a role off the rank ladder, so some may.{{end}}
+      {{- else}}<span data-dropped="{{.DroppedValue}}">Cavbot2 hasn't loaded the server's member list yet, so it can't say how many members stop counting as Cav members.</span> This save takes a role off the rank ladder or sets the Discharged role, so some may.{{end}}
       <span data-channels="{{.Channels}}">{{.Channels}}</span> spawned {{if eq .Channels 1}}channel changes{{else}}channels change{{end}} owner. An owner who loses a channel doesn't get it back if you save again.
     </div>
     <form method="post" action="/rank-roles#rank-roles" class="submit-row">

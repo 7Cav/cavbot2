@@ -623,7 +623,7 @@ func (p *Postgres) GetRankRoles(ctx context.Context, guildID string) (RankRoles,
 		out RankRoles
 	)
 	err := p.db.QueryRowContext(ctx,
-		`SELECT roles, version FROM rank_roles WHERE guild_id = $1`, guildID).Scan(&raw, &out.Version)
+		`SELECT roles, discharged_role_id, version FROM rank_roles WHERE guild_id = $1`, guildID).Scan(&raw, &out.DischargedRoleID, &out.Version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RankRoles{}, nil
 	}
@@ -662,15 +662,15 @@ func setRankRoles(ctx context.Context, tx *sql.Tx, guildID string, roles RankRol
 	var res sql.Result
 	if roles.Version == 0 {
 		res, err = tx.ExecContext(ctx, `
-			INSERT INTO rank_roles (guild_id, roles, version)
-			VALUES ($1, $2, 1)
+			INSERT INTO rank_roles (guild_id, roles, discharged_role_id, version)
+			VALUES ($1, $2, $3, 1)
 			ON CONFLICT (guild_id) DO NOTHING`,
-			guildID, rolesJSON)
+			guildID, rolesJSON, roles.DischargedRoleID)
 	} else {
 		res, err = tx.ExecContext(ctx, `
-			UPDATE rank_roles SET roles = $2, version = version + 1
-			WHERE guild_id = $1 AND version = $3`,
-			guildID, rolesJSON, roles.Version)
+			UPDATE rank_roles SET roles = $2, discharged_role_id = $3, version = version + 1
+			WHERE guild_id = $1 AND version = $4`,
+			guildID, rolesJSON, roles.DischargedRoleID, roles.Version)
 	}
 	if err != nil {
 		return err

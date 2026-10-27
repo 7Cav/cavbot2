@@ -274,6 +274,15 @@ type holderRow struct {
 	// member in the server with an Internal approval, with no rank role.
 	// Display only; the bot acts on no flag.
 	NoRankRole bool
+	// Discharged is the "discharged" flag: an Internal holder, or a member
+	// in the server with an Internal approval, who holds the Discharged
+	// role, in place of "no rank role". RankRole still names their rank.
+	// Display only.
+	Discharged bool
+	// holdsDischargedRole is whether the member holds the Discharged role,
+	// flagged or not, so a preview can flag them as an add of Internal
+	// will.
+	holdsDischargedRole bool
 	// NotInServer is the "not in the server" flag: a member the member list
 	// doesn't hold, shown under the names the panel last saw.
 	NotInServer bool
@@ -769,7 +778,7 @@ func (p *Panel) saveApprovals(w http.ResponseWriter, r *http.Request, sess sessi
 
 // flagged reports whether the holder carries a flag.
 func (h holderRow) flagged() bool {
-	return h.NoRankRole || h.NotInServer || h.ApprovedNoInternal || h.ApprovedNoExternal
+	return h.NoRankRole || h.Discharged || h.NotInServer || h.ApprovedNoInternal || h.ApprovedNoExternal
 }
 
 // matches reports whether the holder's display name, username, Discord ID
@@ -821,7 +830,8 @@ func (g foxholeGuild) rowOf(mem commands.ListedMember, rec store.FoxholeRecord) 
 	if rank, ok := g.ladder.SeniorRankRole(mem.RoleIDs); ok {
 		row.RankRole = cmp.Or(g.roleNames[rank], rank)
 	}
-	row.NoRankRole = (row.Internal || row.Approved.Internal) && row.RankRole == ""
+	row.holdsDischargedRole = g.ladder.Discharged(mem.RoleIDs)
+	row = row.withRankFlags(row.Internal || row.Approved.Internal)
 	row.ApprovedNoInternal = row.Approved.Internal && !row.Internal
 	row.ApprovedNoExternal = row.Approved.External && !row.External
 	return row
@@ -839,13 +849,24 @@ func (h holderRow) holdsRole(role commands.FoxholeRole) bool {
 	return (role == commands.FoxholeInternal && h.Internal) || (role == commands.FoxholeExternal && h.External)
 }
 
-// adding is the row with the "no rank role" flag the holder list gives the
-// member once they hold the role too. A preview shows a member under the
-// roles they hold now, flagged as they will be after the add.
+// adding is the row with the "no rank role" or "discharged" flag the
+// holder list gives the member once they hold the role too. A preview shows
+// a member under the roles they hold now, flagged as they will be after the
+// add.
 func (h holderRow) adding(role commands.FoxholeRole) holderRow {
-	if role == commands.FoxholeInternal && h.RankRole == "" {
-		h.NoRankRole = true
+	if role == commands.FoxholeInternal {
+		return h.withRankFlags(true)
 	}
+	return h
+}
+
+// withRankFlags is the row with its "discharged" and "no rank role" flags
+// set as the holder list sets them, given whether its member holds
+// Internal or has an Internal approval: "discharged" for one holding the
+// Discharged role, else "no rank role" for one holding no rank role.
+func (h holderRow) withRankFlags(internal bool) holderRow {
+	h.Discharged = internal && h.holdsDischargedRole
+	h.NoRankRole = internal && h.RankRole == "" && !h.Discharged
 	return h
 }
 

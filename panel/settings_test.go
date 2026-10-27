@@ -148,12 +148,16 @@ func storedRankRoles(t *testing.T, st store.Store) store.RankRoles {
 // rankRolesForm is the Rank roles section's form as a page loaded now posts
 // it, with the changes given made. Each rank posts its role as the stored
 // ladder gives it, a changed rank posts its change's role, and a change to
-// empty posts no role.
+// empty posts no role. The Discharged role posts as stored.
 func rankRolesForm(t *testing.T, st store.Store, changes map[string]string) url.Values {
 	t.Helper()
 	stored := storedRankRoles(t, st)
 	form := url.Values{"version": {strconv.FormatInt(stored.Version, 10)}}
-	for _, rank := range commands.RankLadderOf(stored).Ranks() {
+	ladder := commands.RankLadderOf(stored)
+	if id := ladder.DischargedRole(); id != "" {
+		form.Set(fieldDischargedRole, id)
+	}
+	for _, rank := range ladder.Ranks() {
 		id := rank.RoleID
 		if changed, ok := changes[rank.Abbrev]; ok {
 			id = changed
