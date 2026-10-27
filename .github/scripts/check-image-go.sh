@@ -2,10 +2,10 @@
 # .github/scripts/check-image-go.sh <Dockerfile> <go.mod>
 #
 # Prints the version in the golang tag of the Dockerfile's builder stage, the
-# stage named `builder`, such as 1.27.2. That tag names the Go CI, the gate and
-# the image run on (ADR 0005). gate.sh sets GOTOOLCHAIN from it, and CI's
-# setup-go steps install it. The golang image builds with the Go it ships (its
-# GOTOOLCHAIN is local), so the tag is the image's Go.
+# stage named `builder`, such as 1.27.2. That tag names the Go that CI, the gate
+# and the image run on (ADR 0005). gate.sh sets GOTOOLCHAIN from it, and CI's
+# setup-go steps install it. The golang image sets GOTOOLCHAIN to local and
+# builds with the Go it ships, so the tag is the image's Go.
 #
 # Fails (exit 1) when the builder's image isn't golang:X.Y.Z, since a floating
 # tag or a digest names no one release, or when go.mod has a toolchain line,
@@ -26,10 +26,10 @@ EOF
     exit 1
 fi
 
-toolchain=$(awk '$1 == "toolchain"' "$gomod")
-if [[ -n "$toolchain" ]]; then
+toolchain_line=$(awk '$1 == "toolchain"' "$gomod")
+if [[ -n "$toolchain_line" ]]; then
     cat >&2 <<EOF
-FAIL: $gomod has a toolchain line, "$toolchain". The golang tag of the
+FAIL: $gomod has a toolchain line, "$toolchain_line". The golang tag of the
 builder stage in $dockerfile names the Go that CI, the gate and the image run
 on, so remove the line. go get adds it when it raises the go line, which also
 moves the binary's GODEBUG defaults, so check that change too.

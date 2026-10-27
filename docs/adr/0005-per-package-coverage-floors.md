@@ -107,10 +107,9 @@ Dockerfile's `golang` tag together, and sets the floors its RAISE lines name
 
 The builder stage's `golang:X.Y.Z` tag in the `Dockerfile` names the one Go
 that CI's Lint and Build jobs, the gate and the image run on, so floors come
-from coverage on that Go. A PR that moves to a new Go changes that tag alone,
-and sets the floors its RAISE lines name. `go.mod` keeps its `go 1.26.0` line
-for the GODEBUG defaults and has no `toolchain` line. The gate fails when one
-appears (#899).
+from coverage on that Go. A PR that moves to a new Go changes that tag alone.
+`go.mod` keeps its `go 1.26.0` line for the GODEBUG defaults and has no
+`toolchain` line. The gate fails when one appears (#899).
 
 The tag is the only line Dependabot can bump. Its `docker` updates move the
 tag and nothing else, and it has no way to move a `toolchain` line

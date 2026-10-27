@@ -62,7 +62,8 @@ case_name="a toolchain line in go.mod fails"
 run_check golang:1.27.3 'toolchain go1.27.3'
 [[ $code -eq 1 ]] || fail "exit $code, want 1"
 
-# A floating tag names no one Go: the image's would move under the tests.
+# A floating tag names no one release, so the image's Go could move away from
+# the Go the tests ran on.
 case_name="a builder tag without an exact version fails and names the tag"
 run_check golang:1.27
 [[ $code -eq 1 ]] || fail "exit $code, want 1"

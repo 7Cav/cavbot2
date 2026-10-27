@@ -321,8 +321,8 @@ package's tests need a real Postgres, so the gate starts a throwaway one of
 its own and removes it on exit. Several checkouts can run the gate at once.
 It runs on the Go the `Dockerfile`'s `golang` tag names, whatever Go you have
 installed, because coverage differs between Go versions. CI and the image's
-builder run on that Go too, so the image production runs is built by the Go
-the tests ran on. To move to a new Go, change that tag, which is all a
+builder run on that Go too, so the Go the tests ran on builds the image
+production runs. To move to a new Go, change that tag, which is all a
 Dependabot golang update does. The gate fails when the tag isn't one exact
 release such as `golang:1.27.2`, or when `go.mod` has a `toolchain` line,
 which would name a second Go.
