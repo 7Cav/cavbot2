@@ -835,6 +835,18 @@ func (g *renewableGateway) closeObserved(gw disgovoice.Gateway, err error) {
 	}
 }
 
+// closeSeen is err, the close or failed read gw's close handler handed
+// over, or the one behind it that gw's close observer saw when err is
+// disgo's refused resume.
+func (g *renewableGateway) closeSeen(gw disgovoice.Gateway, err error) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if errors.Is(err, errResumeRefused) && g.observed.gw == gw {
+		return g.observed.err
+	}
+	return err
+}
+
 // heartbeatWatch is what the recorder knows of a voice server's heartbeat on
 // one gateway: the interval the server's Hello named, when the gateway last
 // heard that Hello or a heartbeat answer, and when it last heard anything
@@ -1419,7 +1431,7 @@ func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.Close
 		}
 		gw.renewAfter(loss, cause)
 		if !c.rejoin() && !c.closed.Load() {
-			utils.CaptureError(lostConnectionMessage, err, "recorder", c.s.userID)
+			utils.CaptureError(lostConnectionMessage, gw.closeSeen(g, err), "recorder", c.s.userID)
 		}
 	}
 }

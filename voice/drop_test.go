@@ -2,11 +2,13 @@ package voice
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	disgovoice "github.com/disgoorg/disgo/voice"
+	"github.com/getsentry/sentry-go"
 	"github.com/gorilla/websocket"
 )
 
@@ -38,17 +41,18 @@ const (
 )
 
 // droppingVoiceServer is a voice server that connects the recorder on the
-// first connection it accepts, as Discord's does, then closes it with 4015
-// once the recording listens. Its Hello carries a sequence number, so
-// disgo's gateway would resume after the close rather than identify. A
-// later connection it answers with Resumed when it resumes, and refuses
-// with 4004 when it identifies. The first it refuses holds the token the
-// recorder held, so the recorder leaves, joins again and identifies once
-// more, and nothing dials after that one's 4004. dropped hears when it sent
-// the 4015.
+// first connection it accepts, as Discord's does, then ends it as end says
+// once the recording listens, by default closing it with 4015. Its Hello
+// carries a sequence number, so disgo's gateway would resume after a 4015
+// rather than identify. A later connection it answers with Resumed when it
+// resumes, and refuses with 4004 when it identifies. The first it refuses
+// holds the token the recorder held, so the recorder leaves, joins again
+// and identifies once more, and nothing dials after that one's 4004.
+// dropped hears when it ended the first connection.
 type droppingVoiceServer struct {
 	*localVoiceServer
 	udp       *fakeVoiceServer
+	end       connEnd
 	listening chan struct{}
 	dropped   chan time.Time
 
@@ -64,12 +68,43 @@ type droppingVoiceServer struct {
 
 func newDroppingVoiceServer(t *testing.T) *droppingVoiceServer {
 	t.Helper()
-	s := &droppingVoiceServer{udp: newFakeVoiceServer(t), listening: make(chan struct{}), dropped: make(chan time.Time, 1)}
+	return newDroppingVoiceServerEnding(t, closingWith(disgovoice.GatewayCloseEventCodeVoiceServerCrash.Code))
+}
+
+// newDroppingVoiceServerEnding is a dropping voice server that ends the
+// first connection as end does.
+func newDroppingVoiceServerEnding(t *testing.T, end connEnd) *droppingVoiceServer {
+	t.Helper()
+	s := &droppingVoiceServer{udp: newFakeVoiceServer(t), end: end, listening: make(chan struct{}), dropped: make(chan time.Time, 1)}
 	s.localVoiceServer = newLocalVoiceServer(t, func(n int32, conn *websocket.Conn) {
 		defer s.locked(func() { s.played, s.changed = s.played+1, time.Now() })
 		s.play(t, n, conn)
 	})
 	return s
+}
+
+// connEnd is how a voice server ends a connection.
+type connEnd func(t *testing.T, conn *websocket.Conn)
+
+// closingWith ends a connection with a close carrying code.
+func closingWith(code int) connEnd {
+	return func(t *testing.T, conn *websocket.Conn) {
+		if err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(code, "")); err != nil {
+			t.Errorf("voice server sending %d: %v", code, err)
+		}
+	}
+}
+
+// resetting ends a connection with a TCP reset and no close, so the
+// recorder's next read of it fails.
+func resetting(t *testing.T, conn *websocket.Conn) {
+	tcp := conn.NetConn().(*tls.Conn).NetConn().(*net.TCPConn)
+	if err := tcp.SetLinger(0); err != nil {
+		t.Errorf("voice server setting no linger: %v", err)
+	}
+	if err := tcp.Close(); err != nil {
+		t.Errorf("voice server resetting its connection: %v", err)
+	}
 }
 
 // locked runs f holding the server's lock.
@@ -86,11 +121,6 @@ func (s *droppingVoiceServer) play(t *testing.T, n int32, conn *websocket.Conn) 
 			t.Errorf("voice server sending op %d: %v", op, err)
 		}
 	}
-	closeWith := func(code int) {
-		if err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(code, "")); err != nil {
-			t.Errorf("voice server sending %d: %v", code, err)
-		}
-	}
 	s.locked(func() { s.greeted, s.changed = s.greeted+1, time.Now() })
 	greeted := time.Now()
 	send(disgovoice.OpcodeHello, disgovoice.GatewayMessageDataHello{HeartbeatInterval: float64(dropHeartbeat.Milliseconds())}, 1)
@@ -105,7 +135,7 @@ func (s *droppingVoiceServer) play(t *testing.T, n int32, conn *websocket.Conn) 
 		send(disgovoice.OpcodeResumed, disgovoice.GatewayMessageDataResumed{}, 0)
 		return
 	case n > 1:
-		closeWith(disgovoice.GatewayCloseEventCodeAuthenticationFailed.Code)
+		closingWith(disgovoice.GatewayCloseEventCodeAuthenticationFailed.Code)(t, conn)
 		return
 	}
 	go s.udp.answerDiscovery(t)
@@ -120,7 +150,7 @@ func (s *droppingVoiceServer) play(t *testing.T, n int32, conn *websocket.Conn) 
 		t.Error("the recording never listened")
 		return
 	}
-	closeWith(disgovoice.GatewayCloseEventCodeVoiceServerCrash.Code)
+	s.end(t, conn)
 	s.dropped <- time.Now()
 }
 
@@ -271,6 +301,103 @@ func TestRecorderStartsAGapWithin1sOfACloseDisgoResumesFrom(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Discord can take the recorder out of the channel while its rejoin after a
+// drop is still trying, here at a voice server that refuses every dial. The
+// recorder is out, and Sentry hears of the lost connection once, with the
+// close that started the drop, not the resume the recorder refused.
+func TestRecorderReportsTheCloseBehindAConnectionItCouldNotRejoin(t *testing.T) {
+	crash := disgovoice.GatewayCloseEventCodeVoiceServerCrash.Code
+	for _, tc := range []struct {
+		name string
+		end  connEnd
+		want string
+	}{
+		{"4015", closingWith(crash), (&websocket.CloseError{Code: crash}).Error()},
+		{"a failed read", resetting, syscall.ECONNRESET.Error()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := recordSentry(t)
+			server := newDroppingVoiceServerEnding(t, tc.end)
+			h := newCallHarness(t)
+			h.recordDropping(server, server.dialerRefusingAfterFirst())
+
+			dropped := server.awaitDrop(t)
+			if !within(dropped, waitFor, h.rejoined) {
+				t.Fatalf("voice state updates after the drop = %v, want the recorder's rejoin", h.sent())
+			}
+			h.leftChannel()
+
+			got := awaitLostConnection(t, events)
+			if len(got) != 1 {
+				t.Fatalf("Sentry got %d %q events, want 1", len(got), lostConnectionMessage)
+			}
+			values := exceptionValues(got[0])
+			if !slices.Contains(values, tc.want) {
+				t.Errorf("event's error = %q, want %q in it", values, tc.want)
+			}
+			if slices.ContainsFunc(values, func(v string) bool { return strings.Contains(v, errResumeRefused.Error()) }) {
+				t.Errorf("event's error = %q, want no refused resume in it", values)
+			}
+		})
+	}
+}
+
+// A voice server can close a recording's connection with a code disgo
+// neither resumes from nor answers with a fresh connection, such as 4014
+// when a moderator disconnects the recorder. disgo takes the recorder out
+// itself, and Sentry hears of the lost connection with that close.
+func TestRecorderReportsACloseDisgoTakesItOutFor(t *testing.T) {
+	events := recordSentry(t)
+	disconnected := disgovoice.GatewayCloseEventCodeDisconnected.Code
+	server := newDroppingVoiceServerEnding(t, closingWith(disconnected))
+	h := newCallHarness(t)
+	h.recordDropping(server, server.dialer())
+
+	server.awaitDrop(t)
+
+	want := (&websocket.CloseError{Code: disconnected}).Error()
+	for _, e := range awaitLostConnection(t, events) {
+		if values := exceptionValues(e); !slices.Contains(values, want) {
+			t.Errorf("event's error = %q, want %q in it", values, want)
+		}
+	}
+}
+
+// lostQuiet is how long after Sentry first hears of a lost connection a test
+// waits for any more such events.
+const lostQuiet = 500 * time.Millisecond
+
+// awaitLostConnection waits for Sentry to hear of a connection lost
+// mid-recording, then lostQuiet more, and returns every such event it has
+// by then.
+func awaitLostConnection(t *testing.T, events *sentryTransport) []*sentry.Event {
+	t.Helper()
+	lost := func() []*sentry.Event {
+		var out []*sentry.Event
+		for _, e := range events.Events() {
+			if e.Tags["message"] == lostConnectionMessage {
+				out = append(out, e)
+			}
+		}
+		return out
+	}
+	if !within(time.Now(), waitFor, func() bool { return len(lost()) > 0 }) {
+		t.Fatalf("Sentry events = %v, want a %q", eventMessages(events.Events()), lostConnectionMessage)
+	}
+	time.Sleep(lostQuiet)
+	return lost()
+}
+
+// exceptionValues is the text of each error a Sentry event carries: the
+// captured one and each it wraps.
+func exceptionValues(e *sentry.Event) []string {
+	out := make([]string, 0, len(e.Exception))
+	for _, x := range e.Exception {
+		out = append(out, x.Value)
+	}
+	return out
 }
 
 // After a 4015 the recorder's next open at a voice server identifies, and no
