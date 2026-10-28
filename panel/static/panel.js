@@ -315,7 +315,8 @@
     // the search open, and then no focusout comes. The contextmenu comes as
     // the menu opens. That is after the mousedown on Linux and macOS and
     // after the mouseup on Windows, and a Control+click on macOS sends one
-    // too (#804).
+    // too (#804). A close the picker left waiting stays waiting. Run once
+    // the search is closed, it moves nothing and closes the search again.
     document.addEventListener('contextmenu', function (e) {
       if (!root.contains(e.target)) { close(); }
     }, true);
