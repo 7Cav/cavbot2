@@ -307,6 +307,42 @@ func TestARecorderWhoseSessionDiscordRefusesWhileUpIsOut(t *testing.T) {
 	}
 }
 
+// reloginWait is long enough for a relogin to reach the scripted gateway:
+// it logs out at once, and logs in again with no wait.
+const reloginWait = 1500 * time.Millisecond
+
+// A cut short of a recorder that went out while its session was up doesn't
+// log it back in, since no login of its token can work.
+func TestACutShortOfARecorderRefusedWhileUpLogsItInNoMore(t *testing.T) {
+	g := upAndRefused(t)
+	r := Connect("recorder-token", &Discord{offlineAfter: time.Hour})
+	defer r.Close()
+	waitUntil(t, "the recorder is out", func() bool { return r.State(gatewaytest.UserID) == RecorderOut })
+
+	r.TakeOffline(gatewaytest.UserID)()
+
+	time.Sleep(reloginWait)
+	if n := g.Logins(); n != 1 {
+		t.Errorf("the gateway saw %d logins, want 1: none after the cut short", n)
+	}
+}
+
+// A recorder session Discord closes with any code but 4004 reconnects, and
+// the recorder stays online.
+func TestARecorderSessionClosedWith4000AfterReadyStaysOnline(t *testing.T) {
+	g := gatewaytest.New(t, func(int) gatewaytest.Login {
+		return gatewaytest.Login{Answer: gatewaytest.Ready, Close: 4000}
+	})
+	r := Connect("recorder-token", &Discord{offlineAfter: time.Hour})
+	defer r.Close()
+
+	g.Settle(t, 10*time.Second)
+
+	if state := r.State(gatewaytest.UserID); state != RecorderOnline {
+		t.Errorf("recorder state after its session closed with 4000 and came back = %s, want %s", state, RecorderOnline)
+	}
+}
+
 // beatEvery is how often the new login in the old-login test heartbeats,
 // so its heartbeats are seen to go on within the test.
 const beatEvery = 100 * time.Millisecond

@@ -730,6 +730,23 @@ func TestRecordStartInARecordedChannelLeavesItsRecordingAndTheFreeRecorder(t *te
 	}
 }
 
+// A start skips a recorder that is out until a restart, as one whose token
+// Discord refused, and records with the next recorder.
+func TestRecordStartSkipsAnOutRecorder(t *testing.T) {
+	sc := newRecordScene(t, testRecorder, testSecondRecorder)
+	sc.voice.setState(testRecorder, voice.RecorderOut)
+	sc.fake.setVoice(recStarter.id, recordChannel)
+
+	reply := recordAs(t, sc.rt, recStarter, "start")
+
+	if !strings.HasPrefix(reply, "✅") {
+		t.Errorf("reply = %q, want a ✅ verdict", reply)
+	}
+	if got := sc.voice.inChannel(recordChannel); !slices.Equal(got, []string{testSecondRecorder}) {
+		t.Errorf("recorders in %s = %v, want [%s]", recordChannel, got, testSecondRecorder)
+	}
+}
+
 // Two starts in one channel can't both record it: a second start while the
 // first one's recorder is still joining is refused, and no second join goes
 // out.
