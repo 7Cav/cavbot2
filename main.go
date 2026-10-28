@@ -280,6 +280,9 @@ func main() {
 		// Its member events, registered before dg.Open() like the others, so
 		// none is missed: a role change or a rejoin moves the role.
 		aviators.Listen(dg)
+		// The pages /loa and /awol save for a long list (#824) last 30
+		// days, and the sweep deletes them after that.
+		commands.StartPagedListSweep(botStore)
 		// The panel's hub page saves through the runtime and reads the guild
 		// through the session, so it is built once both exist.
 		webPanel = initPanel(panelCfg, panel.Deps{

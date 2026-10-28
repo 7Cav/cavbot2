@@ -7,36 +7,6 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// replyMessages returns the embeds of each message the run sent, in order: the
-// reply as its last edit left it, then each follow-up after that edit. It
-// fails the test when the run never edited its reply, or made any call but
-// a follow-up after the edit.
-func replyMessages(t *testing.T, f *fakeResponder) [][]*discordgo.MessageEmbed {
-	t.Helper()
-	calls := f.Calls()
-	last := -1
-	for k, c := range calls {
-		if c.Method == "Edit" && c.Edit != nil {
-			last = k
-		}
-	}
-	if last < 0 {
-		t.Fatalf("the run never edited its reply; it last showed %q", lastReply(t, calls))
-	}
-	var reply []*discordgo.MessageEmbed
-	if calls[last].Edit.Embeds != nil {
-		reply = *calls[last].Edit.Embeds
-	}
-	parts := [][]*discordgo.MessageEmbed{reply}
-	for _, c := range calls[last+1:] {
-		if c.Method != "Followup" || c.Params == nil {
-			t.Fatalf("the run's reply edit was followed by a %s call", c.Method)
-		}
-		parts = append(parts, c.Params.Embeds)
-	}
-	return parts
-}
-
 // assertWithinDiscordLimits fails for each message Discord would refuse
 // for its embeds: more than 10 embeds, a description over 4096
 // characters, or over 6000 characters of embed text in all. The limits are

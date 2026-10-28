@@ -217,7 +217,8 @@ const (
 func runPagedListPress(r utils.InteractionResponder, st store.Store, now time.Time, i *discordgo.InteractionCreate) {
 	customID := i.MessageComponentData().CustomID
 	username, discordID := interactionUsernameAndID(i)
-	command, action, key, idx, ok := parsePageArrowCustomID(customID)
+	command, _, _ := strings.Cut(customID, customIDSeparator)
+	action, key, idx, ok := parsePageArrowCustomID(customID)
 	utils.Info("🚀 Starting page turn", "command", command, "username", username, "discord_id", discordID, "custom_id", customID)
 
 	if !ok || st == nil {
@@ -277,21 +278,21 @@ func answerPress(r utils.InteractionResponder, i *discordgo.InteractionCreate, c
 	}
 }
 
-// parsePageArrowCustomID reads a page arrow's command, action, list key
-// and page back out of its CustomID. ok is false for any CustomID
-// pageArrowCustomID could not have built.
-func parsePageArrowCustomID(customID string) (command, action, key string, idx int, ok bool) {
+// parsePageArrowCustomID reads a page arrow's action, list key and page
+// back out of its CustomID. ok is false for any CustomID pageArrowCustomID
+// could not have built.
+func parsePageArrowCustomID(customID string) (action, key string, idx int, ok bool) {
 	parts := strings.Split(customID, customIDSeparator)
-	if len(parts) != 3 {
-		return "", "", "", 0, false
+	if len(parts) != 3 || (parts[1] != pageArrowsOnList && parts[1] != pageArrowsOnCopy) {
+		return "", "", 0, false
 	}
 	key, page, found := strings.Cut(parts[2], ":")
 	if !found {
-		return "", "", "", 0, false
+		return "", "", 0, false
 	}
 	idx, err := strconv.Atoi(page)
 	if err != nil {
-		return "", "", "", 0, false
+		return "", "", 0, false
 	}
-	return parts[0], parts[1], key, idx, true
+	return parts[1], key, idx, true
 }

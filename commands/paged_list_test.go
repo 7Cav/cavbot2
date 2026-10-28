@@ -622,3 +622,36 @@ func TestNoTwoButtonsOnAMessageShareACustomID(t *testing.T) {
 		})
 	}
 }
+
+// After the sweep runs more than 30 days after a run, the store holds none
+// of that run's pages. A run under 30 days old keeps its pages through the
+// sweep. The sweep starts with no list old enough, so only a later pass
+// can delete one.
+func TestTheSweepDeletesTheListsOfRunsPastThirtyDays(t *testing.T) {
+	clock := installFakeClock(t)
+	st := store.NewFake()
+	StartPagedListSweep(st)
+	clock.advance(0)
+
+	ctx := context.Background()
+	pages := []store.ListPage{{Title: "page 1"}, {Title: "page 2"}}
+	old, err := st.SavePagedList(ctx, store.PagedList{RunnerID: runner, RanAt: clock.read(), Pages: pages})
+	if err != nil {
+		t.Fatalf("SavePagedList: %v", err)
+	}
+	clock.advance(20 * 24 * time.Hour)
+	recent, err := st.SavePagedList(ctx, store.PagedList{RunnerID: runner, RanAt: clock.read(), Pages: pages})
+	if err != nil {
+		t.Fatalf("SavePagedList: %v", err)
+	}
+	clock.advance(10*24*time.Hour + 2*time.Hour)
+
+	for idx := range pages {
+		if _, err := st.PagedListPage(ctx, old, idx); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("page %d of the run 30 days and 2 hours old reads back %v, want it deleted", idx+1, err)
+		}
+		if _, err := st.PagedListPage(ctx, recent, idx); err != nil {
+			t.Errorf("page %d of the run 10 days old reads back %v, want it kept", idx+1, err)
+		}
+	}
+}

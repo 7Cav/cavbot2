@@ -17,8 +17,9 @@ import (
 // runs on a fake clock, so no test waits real minutes, and judges a channel
 // by whether the fake manager was asked to delete it. ---
 
-// fakeClock stands in for the runtimes' clocks and timers: tempVCNow and
-// recordingNow read its time and tempVCAfterFunc schedules on it. advance
+// fakeClock stands in for the runtimes' clocks and timers: tempVCNow,
+// recordingNow and pagedListNow read its time and tempVCAfterFunc,
+// recordingAfterFunc and pagedListAfterFunc schedule on it. advance
 // moves time forward and runs each timer that falls due, earliest first, on
 // the test's own goroutine, so a wait ends in step with the test and the
 // suite needs no lock around what the runtime does when it does.
@@ -42,9 +43,12 @@ func installFakeClock(t *testing.T) *fakeClock {
 	t.Helper()
 	c := &fakeClock{now: time.Date(2026, time.September, 27, 18, 0, 0, 0, time.UTC)}
 	prevNow, prevAfter, prevRecordingNow, prevRecordingAfter := tempVCNow, tempVCAfterFunc, recordingNow, recordingAfterFunc
+	prevListNow, prevListAfter := pagedListNow, pagedListAfterFunc
 	tempVCNow, tempVCAfterFunc, recordingNow, recordingAfterFunc = c.read, c.afterFunc, c.read, c.afterFunc
+	pagedListNow, pagedListAfterFunc = c.read, c.afterFunc
 	t.Cleanup(func() {
 		tempVCNow, tempVCAfterFunc, recordingNow, recordingAfterFunc = prevNow, prevAfter, prevRecordingNow, prevRecordingAfter
+		pagedListNow, pagedListAfterFunc = prevListNow, prevListAfter
 	})
 	return c
 }

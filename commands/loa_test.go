@@ -36,41 +36,12 @@ var loaHeadings = []string{loaActiveHeading, loaUpcomingHeading, loaNeedsReviewH
 // loaNumbers finds the numbers written in a title or footer.
 var loaNumbers = regexp.MustCompile(`\d+`)
 
-// loaSection returns the lines under heading across every embed the run
-// sent, in order: in each embed, the lines after the one holding heading
-// and before the next heading. Each embed is read on its own, as a member
-// reads one page, so a line is under heading only when heading comes
-// before it in the same embed. It returns nil when no embed has such a
-// section.
+// loaSection returns the lines under heading across every embed the run's
+// reply shows, in order, as loaPagedSection reads pages. It returns nil
+// when no embed has such a section.
 func loaSection(t *testing.T, f *fakeResponder, heading string) []string {
 	t.Helper()
-	var lines []string
-	for _, embeds := range replyMessages(t, f) {
-		for _, e := range embeds {
-			current := ""
-			for _, line := range strings.Split(e.Description, "\n") {
-				if h := loaHeadingOf(line); h != "" {
-					current = h
-					continue
-				}
-				if current == heading && strings.TrimSpace(line) != "" {
-					lines = append(lines, line)
-				}
-			}
-		}
-	}
-	return lines
-}
-
-// loaEmbeds returns every embed the run sent, in the order a member reads
-// them.
-func loaEmbeds(t *testing.T, f *fakeResponder) []*discordgo.MessageEmbed {
-	t.Helper()
-	var all []*discordgo.MessageEmbed
-	for _, embeds := range replyMessages(t, f) {
-		all = append(all, embeds...)
-	}
-	return all
+	return loaPagedSection(replyView(t, f).embeds, heading)
 }
 
 // loaListed is one LOA as /loa should list it: its Subject's name and its
