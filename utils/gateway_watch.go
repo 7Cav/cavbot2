@@ -106,12 +106,12 @@ func (w *GatewayWatch) Watch(dg *discordgo.Session) {
 }
 
 // WatchWithRefusal reads dg as Watch does, and when Discord refuses dg's
-// token once dg was up, calls refused in place of logging
+// token once dg was up, calls onRefused in place of logging
 // TokenRefusedMessage, so the caller tells of the refusal in its own words.
-// refused runs once, on the goroutine that read the close, with no lock of
+// onRefused runs once, on the goroutine that read the close, with no lock of
 // the watch held.
-func (w *GatewayWatch) WatchWithRefusal(dg *discordgo.Session, refused func()) {
-	w.watch(&watched{dg: dg, onRefused: refused})
+func (w *GatewayWatch) WatchWithRefusal(dg *discordgo.Session, onRefused func()) {
+	w.watch(&watched{dg: dg, onRefused: onRefused})
 }
 
 // watch reads ws from now on, in place of the session the watch read
@@ -152,13 +152,14 @@ func (w *GatewayWatch) closed(ws *watched, code int) {
 	ws.refused = true
 	kv := w.kv
 	w.mu.Unlock()
-	switch {
-	case !tell:
-	case ws.onRefused != nil:
-		ws.onRefused()
-	default:
-		Warn(TokenRefusedMessage, kv...)
+	if !tell {
+		return
 	}
+	if ws.onRefused != nil {
+		ws.onRefused()
+		return
+	}
+	Warn(TokenRefusedMessage, kv...)
 }
 
 // disconnected starts an outage when ws is the session the watch reads.

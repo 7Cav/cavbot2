@@ -375,7 +375,7 @@ func Connect(raw string, open Opener) *Recorders {
 	}
 	for i, token := range tokens {
 		rec := &recorder{place: i + 1, token: token}
-		s, err := open.Open(rec.place, token, r.refusedFunc(rec))
+		s, err := open.Open(rec.place, token, r.onTokenRefused(rec))
 		if err == nil {
 			r.mu.Lock()
 			rec.userID = s.UserID()
@@ -383,6 +383,10 @@ func Connect(raw string, open Opener) *Recorders {
 			r.mu.Unlock()
 			if online {
 				utils.Info("Recorder connected", rec.pairs()...)
+			} else {
+				// Discord refused the login before its user ID was known
+				// here, so its refusal waited for it.
+				utils.Warn(loginRefusedMessage, rec.pairs()...)
 			}
 			r.recorders = append(r.recorders, rec)
 			continue
@@ -422,7 +426,16 @@ func (r *Recorders) logIn(rec *recorder, wait time.Duration) {
 		if r.isClosed() {
 			return
 		}
-		s, err := r.open.Open(rec.place, rec.token, r.refusedFunc(rec))
+		// Discord can refuse the token of the login a cut short took the
+		// recorder offline from before its relogin starts, and no login of
+		// that token can work.
+		r.mu.Lock()
+		out := rec.state == RecorderOut
+		r.mu.Unlock()
+		if out {
+			return
+		}
+		s, err := r.open.Open(rec.place, rec.token, r.onTokenRefused(rec))
 		if errors.Is(err, ErrTokenRefused) {
 			if r.goOut(rec) {
 				utils.Warn(loginRefusedMessage, "recorder", rec.place, "user_id", rec.userID, "error", err)
@@ -462,27 +475,34 @@ func (r *Recorders) loggedInLocked(rec *recorder, s GatewaySession) (online bool
 	return true
 }
 
-// refusedFunc is what a login of the recorder calls when Discord refuses
+// onTokenRefused is what a login of the recorder calls when Discord refuses
 // its token after the login came up. The recorder is out until a restart.
 // The login stays its session: a call it is in goes on until its stop or a
-// cut short, and shutdown logs it out.
-func (r *Recorders) refusedFunc(rec *recorder) func() {
+// cut short, and shutdown logs it out. A refusal of a first login that
+// comes before Connect has its user ID leaves the line to Connect.
+func (r *Recorders) onTokenRefused(rec *recorder) func() {
 	return func() {
-		if r.goOut(rec) {
-			r.mu.Lock()
-			pairs := rec.pairs()
-			r.mu.Unlock()
+		r.mu.Lock()
+		wentOut := r.goOutLocked(rec)
+		pairs, named := rec.pairs(), rec.userID != ""
+		r.mu.Unlock()
+		if wentOut && named {
 			utils.Warn(loginRefusedMessage, pairs...)
 		}
 	}
 }
 
-// goOut puts the recorder out until a restart, and reports whether it
-// wasn't out already, so that a refusal both a login and its relogin hear
-// of is logged once.
+// goOut puts the recorder out until a restart, as goOutLocked does.
 func (r *Recorders) goOut(rec *recorder) (wentOut bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.goOutLocked(rec)
+}
+
+// goOutLocked puts the recorder out until a restart, and reports whether it
+// wasn't out already, so that a refusal both a login and its relogin hear
+// of is logged once. Caller holds mu.
+func (r *Recorders) goOutLocked(rec *recorder) (wentOut bool) {
 	if rec.state == RecorderOut {
 		return false
 	}
