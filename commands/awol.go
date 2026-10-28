@@ -167,9 +167,10 @@ func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 		return
 	}
 
-	loasCh := callLOAsAlongside(func() (*utils.LOAsResponse, error) {
+	loas := callLOAsAlongside(ctx, func(ctx context.Context) (*utils.LOAsResponse, error) {
 		return utils.GetLOAs(ctx, now.AddDate(0, 0, -awolLOAHistoryDays))
 	})
+	defer loas.stop()
 
 	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, position)
 	if err != nil {
@@ -186,7 +187,7 @@ func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 	// flags > 7, and warns that no LOA days were subtracted. It never aborts
 	// (the last-forum-post signal is independent) and never silently treats
 	// everyone as non-LOA.
-	answer := <-loasCh
+	answer := loas.wait()
 	loasRead := answer.err == nil
 	var windowsByForumUserID map[string][]utils.LOAEntry
 	var reviewsByForumUserID map[string][]awolReview

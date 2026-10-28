@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"time"
@@ -14,16 +15,37 @@ type loasAnswer struct {
 	err  error
 }
 
-// callLOAsAlongside starts call and returns the channel its answer arrives
-// on, so the LOA call runs alongside the roster call and adds no wait. The
-// channel is buffered, so the call can finish after a run that ends early.
-func callLOAsAlongside(call func() (*utils.LOAsResponse, error)) <-chan loasAnswer {
-	answer := make(chan loasAnswer, 1)
+// loasCall is an LOA call running alongside the roster call.
+type loasCall struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+	answer loasAnswer
+}
+
+// callLOAsAlongside starts call under a context of its own beneath ctx, so
+// the LOA call runs alongside the roster call and adds no wait. The run
+// that starts it defers stop.
+func callLOAsAlongside(ctx context.Context, call func(context.Context) (*utils.LOAsResponse, error)) *loasCall {
+	ctx, cancel := context.WithCancel(ctx)
+	c := &loasCall{cancel: cancel, done: make(chan struct{})}
 	go func() {
-		loas, err := call()
-		answer <- loasAnswer{loas, err}
+		defer close(c.done)
+		c.answer.loas, c.answer.err = call(ctx)
 	}()
-	return answer
+	return c
+}
+
+// wait returns the call's answer once it arrives.
+func (c *loasCall) wait() loasAnswer {
+	<-c.done
+	return c.answer
+}
+
+// stop cancels the call and returns once it has ended, so a run that ends
+// before it reads the answer leaves no call running past it.
+func (c *loasCall) stop() {
+	c.cancel()
+	<-c.done
 }
 
 // loaThreadID reads an LOA's thread ID. One that doesn't parse reads as 0,
