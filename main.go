@@ -296,8 +296,14 @@ func main() {
 
 	// The registry takes the runtimes, so it is built after them. The
 	// Foxhole commands share the one-action-at-a-time rule with the
-	// Foxhole page through the Foxhole runtime.
-	registry := commands.NewRegistry(tempVC, foxhole, recording, aviators)
+	// Foxhole page through the Foxhole runtime. /loa and /awol keep the
+	// pages of a long list in the store, a nil interface with none, not a
+	// nil *store.Postgres.
+	var lists store.Store
+	if botStore != nil {
+		lists = botStore
+	}
+	registry := commands.NewRegistry(tempVC, foxhole, recording, aviators, lists)
 
 	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		// Backstop only. Registered slash-command handlers are wrapped with

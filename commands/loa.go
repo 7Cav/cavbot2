@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 )
@@ -73,7 +74,9 @@ type loaReview struct {
 	Problem   string
 }
 
-func LOA() Command {
+// LOA declares /loa over the bot store, nil on a host with no store, where
+// a long list shows its first page alone.
+func LOA(st store.Store) Command {
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
 			Name:        "loa",
@@ -87,15 +90,20 @@ func LOA() Command {
 				},
 			},
 		},
-		Handler: handleLOACommand,
+		Handler: func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			runLoa(utils.NewSessionResponder(s), st, time.Now(), i)
+		},
 	}
 }
 
-func handleLOACommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	runLoa(utils.NewSessionResponder(s), time.Now(), i)
-}
-
-func runLoa(r utils.InteractionResponder, now time.Time, i *discordgo.InteractionCreate) {
+func runLoa(r utils.InteractionResponder, st store.Store, now time.Time, i *discordgo.InteractionCreate) {
+	// A press on a long list's arrow reaches the same handler (ADR 0007),
+	// and goes to its own path before anything below reads it as a slash
+	// command.
+	if i.Type == discordgo.InteractionMessageComponent {
+		runPagedListPress(r, st, now, i)
+		return
+	}
 	username, discordID := interactionUsernameAndID(i)
 	utils.Info("🚀 Starting LOA check", "command", "LOA", "username", username, "discord_id", discordID)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -158,7 +166,7 @@ func runLoa(r utils.InteractionResponder, now time.Time, i *discordgo.Interactio
 	lines = append(lines, loaReviewLines(reviews)...)
 
 	footer := fmt.Sprintf("Active: %d | Upcoming: %d | Needs review: %d", len(activeLOAs), len(upcomingLOAs), len(reviews))
-	if !sendPagedList(r, i, now, pagedList{
+	if !sendPagedList(r, st, i, now, pagedList{
 		command:  "loa",
 		position: position,
 		lines:    lines,

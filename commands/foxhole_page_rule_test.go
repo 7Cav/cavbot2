@@ -429,7 +429,7 @@ func TestRegisteredFoxholeCommandsAreRefusedWhileAPageActionRuns(t *testing.T) {
 			serveRoleCommandRoster(t)
 			fx, hold := newPageRuntime(t)
 			holdPagePurge(t, fx, hold)
-			handler, ok := NewRegistry(nil, fx, nil, nil).GetHandler(name)
+			handler, ok := NewRegistry(nil, fx, nil, nil, nil).GetHandler(name)
 			if !ok {
 				t.Fatalf("no handler registered for /%s", name)
 			}

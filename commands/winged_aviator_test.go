@@ -665,7 +665,7 @@ func TestWithNoRoleConfiguredTheCommandRefusesAndNothingIsTracked(t *testing.T) 
 // /winged-aviator sets no default member permissions: like every command
 // here, Server Settings decides who may run it.
 func TestWingedAviatorCommandDeclaresNoDefaultMemberPermissions(t *testing.T) {
-	for _, def := range NewRegistry(nil, nil, nil, nil).GetCommands() {
+	for _, def := range NewRegistry(nil, nil, nil, nil, nil).GetCommands() {
 		if def.Name != wingedAviatorCommandName {
 			continue
 		}

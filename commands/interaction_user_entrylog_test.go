@@ -77,14 +77,14 @@ func TestEntryLogsSurviveMemberlessInteraction(t *testing.T) {
 			name: "loa",
 			run: func(t *testing.T, i *discordgo.InteractionCreate) {
 				f := &fakeResponder{RespondErrs: []error{errStub}}
-				runLoa(f, time.Now(), i)
+				runLoa(f, nil, time.Now(), i)
 			},
 		},
 		{
 			name: "awol",
 			run: func(t *testing.T, i *discordgo.InteractionCreate) {
 				f := &fakeResponder{RespondErrs: []error{errStub}}
-				runAwol(f, time.Now(), i)
+				runAwol(f, nil, time.Now(), i)
 			},
 		},
 	}

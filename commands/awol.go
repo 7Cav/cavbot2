@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 )
@@ -116,7 +117,9 @@ func (u AwolUser) severityGlyph() string {
 	}
 }
 
-func Awol() Command {
+// Awol declares /awol over the bot store, nil on a host with no store,
+// where a long list shows its first page alone.
+func Awol(st store.Store) Command {
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
 			Name:        "awol",
@@ -136,15 +139,20 @@ func Awol() Command {
 				},
 			},
 		},
-		Handler: handleAwolCommand,
+		Handler: func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			runAwol(utils.NewSessionResponder(s), st, time.Now(), i)
+		},
 	}
 }
 
-func handleAwolCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	runAwol(utils.NewSessionResponder(s), time.Now(), i)
-}
-
-func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.InteractionCreate) {
+func runAwol(r utils.InteractionResponder, st store.Store, now time.Time, i *discordgo.InteractionCreate) {
+	// A press on a long list's arrow reaches the same handler (ADR 0007),
+	// and goes to its own path before anything below reads it as a slash
+	// command.
+	if i.Type == discordgo.InteractionMessageComponent {
+		runPagedListPress(r, st, now, i)
+		return
+	}
 	username, discordID := interactionUsernameAndID(i)
 	utils.Info("🚀 Starting AWOL check", "command", "Awol", "username", username, "discord_id", discordID)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -330,7 +338,7 @@ func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 		return
 	}
 
-	if !sendPagedList(r, i, now, pagedList{
+	if !sendPagedList(r, st, i, now, pagedList{
 		command:  "awol",
 		position: position,
 		lines:    lines,

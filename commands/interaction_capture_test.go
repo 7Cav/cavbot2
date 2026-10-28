@@ -130,7 +130,7 @@ func TestRunLoa_NoResultsEditFailureCapturesOnceNoRetry(t *testing.T) {
 
 	f := &fakeResponder{EditErrs: []error{errEditBoom}}
 
-	runLoa(f, loaRefDate, loaEditInteraction("g-loa2", "1-7"))
+	runLoa(f, nil, loaRefDate, loaEditInteraction("g-loa2", "1-7"))
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
 	if kv := kvToMap(rec.lastKV); kv["command"] != "loa" || kv["guild_id"] != "g-loa2" {
@@ -157,7 +157,7 @@ func TestRunLoa_ResultsEmbedEditFailureCapturesOnceNoRetry(t *testing.T) {
 
 	f := &fakeResponder{EditErrs: []error{errEditBoom}}
 
-	runLoa(f, loaRefDate, loaEditInteraction("g-loa3", "1-7"))
+	runLoa(f, nil, loaRefDate, loaEditInteraction("g-loa3", "1-7"))
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
 	if kv := kvToMap(rec.lastKV); kv["command"] != "loa" || kv["guild_id"] != "g-loa3" {
@@ -184,7 +184,7 @@ func TestRunAwol_NoResultsEditFailureCapturesOnceNoRetry(t *testing.T) {
 	f := &fakeResponder{EditErrs: []error{errEditBoom}}
 	i := appCommandInteractionWithGuild("g-awol1", stringOption("position", "1-7"))
 
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
 	if kv := kvToMap(rec.lastKV); kv["command"] != "awol" || kv["guild_id"] != "g-awol1" {
@@ -207,7 +207,7 @@ func TestRunAwol_EmbedEditFailureCapturesOnceNoRetry(t *testing.T) {
 	f := &fakeResponder{EditErrs: []error{errEditBoom}}
 	i := appCommandInteractionWithGuild("g-awol2", stringOption("position", "1-7"))
 
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
 	if kv := kvToMap(rec.lastKV); kv["command"] != "awol" || kv["guild_id"] != "g-awol2" {
@@ -235,7 +235,7 @@ func TestRunAwol_FileSendFailureCapturesOnceNoRetry(t *testing.T) {
 		boolOption("force_file_output", true),
 	)
 
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	assertSingleCaptureNoRetry(t, f.Calls(), rec.count, 1)
 	if kv := kvToMap(rec.lastKV); kv["command"] != "awol" || kv["guild_id"] != "g-awol3" {
