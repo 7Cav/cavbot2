@@ -2489,10 +2489,11 @@ func awaitReady(t *testing.T, ready <-chan *readyOnlyGateway) *readyOnlyGateway 
 
 // A rejoin's new gateway can close after its voice server's Ready, before
 // the session description. The recorder joins again through a fresh
-// gateway and hears the call there, with one rejoin under way at a time.
-// Once it is back, no rejoin is left under way, and the stop ends
-// everything the recording ran. Sentry hears of no lost connection, and
-// the stop's leave is the last voice state update.
+// gateway and connects there, with one rejoin under way at a time. Once it
+// is back, no rejoin is left under way, and the stop ends everything the
+// recording ran: synctest fails the test when a goroutine is still blocked
+// as the bubble exits. Sentry hears of no lost connection, and the stop's
+// leave is the last voice state update.
 func TestRecorderClosedDuringARejoinRejoinsOnce(t *testing.T) {
 	events := recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {
@@ -2531,7 +2532,8 @@ func TestRecorderClosedDuringARejoinRejoinsOnce(t *testing.T) {
 
 // A member can stop the recording while the recorder joins again after a
 // rejoin's new gateway closed, before it is back. The stop ends that join
-// too, and Sentry hears of no lost connection.
+// too, so the synctest bubble exits with nothing blocked, and Sentry hears
+// of no lost connection.
 func TestRecorderStoppedWhileJoiningAgainAfterARejoinsGatewayClosedEndsIt(t *testing.T) {
 	events := recordSentry(t)
 	synctest.Test(t, func(t *testing.T) {

@@ -397,12 +397,12 @@ type recorderConn struct {
 	// again, since the call left it or it refused the recorder's token.
 	lastServer, droppedServer, held, shunned *gateway.EventVoiceServerUpdate
 	// stopRejoin ends the rejoin under way, nil while there is none, and
-	// refuseAttempt ends its wait for a connection when the voice server
+	// endAttempt ends its wait for a connection when the voice server
 	// refuses the token the recorder held or the gateway it waits on
 	// closes. Whatever ends a rejoin calls stopRejoin and clears it, so a
 	// rejoin that ends can't end a later one.
-	stopRejoin    context.CancelFunc
-	refuseAttempt context.CancelCauseFunc
+	stopRejoin context.CancelFunc
+	endAttempt context.CancelCauseFunc
 	// leaveAnswered closes once Discord answers the rejoin's own leave, nil
 	// while no such leave is out.
 	leaveAnswered chan struct{}
@@ -444,9 +444,10 @@ const rejoinRetry = time.Second
 // server refuses the token the recorder held.
 var errHeldTokenRefused = errors.New("voice: the voice server refused the token the recorder held")
 
-// errGatewayRenewed ends a rejoin's wait for a connection when the gateway
-// it waits on closes, and the rejoin joins again through a new one.
-var errGatewayRenewed = errors.New("voice: the gateway a rejoin waited on closed")
+// errRejoinGatewayClosed ends a rejoin's wait for a connection when the
+// gateway it waits on closes, and the rejoin joins again through a new
+// one.
+var errRejoinGatewayClosed = errors.New("voice: the gateway a rejoin waited on closed")
 
 // rejoin opens a fresh voice connection in the call's channel, as disgo's
 // close handler does, and reports whether the recorder is connected there
@@ -458,7 +459,7 @@ var errGatewayRenewed = errors.New("voice: the gateway a rejoin waited on closed
 // rejoinRetry, so the recorder rejoins once its gateway is back. When the
 // voice server refuses the token the recorder held, the rejoin leaves the
 // channel and joins it again. When the gateway it waits on closes, it joins
-// again through the new one (renewRejoin).
+// again through the new one (handCloseToRejoin).
 func (c *recorderConn) rejoin() (rejoined bool) {
 	_ = c.UDP().Close()
 	channelID := c.ChannelID()
@@ -480,19 +481,20 @@ func (c *recorderConn) rejoin() (rejoined bool) {
 	for {
 		attempt, refuse := context.WithCancelCause(ctx)
 		c.mu.Lock()
-		c.refuseAttempt = refuse
+		c.endAttempt = refuse
 		c.mu.Unlock()
 		// Open fails before ctx ends only when its voice state update
 		// couldn't go out, the voice server refused the held token, or the
 		// gateway it waited on closed.
 		err := c.Open(attempt, *channelID, selfMute, selfDeaf)
 		c.mu.Lock()
-		c.refuseAttempt = nil
+		c.endAttempt = nil
 		cause := context.Cause(attempt)
 		// A gateway that closed after its session description leaves the
 		// recorder out again. Once the rejoin ends here, a close starts a
 		// rejoin of its own.
-		connected := err == nil && !errors.Is(cause, errGatewayRenewed)
+		gatewayClosed := errors.Is(cause, errRejoinGatewayClosed)
+		connected := err == nil && !gatewayClosed
 		if connected {
 			c.endRejoinLocked(ctx)
 		}
@@ -504,7 +506,7 @@ func (c *recorderConn) rejoin() (rejoined bool) {
 			return true
 		case ctx.Err() != nil:
 			return false
-		case errors.Is(cause, errGatewayRenewed):
+		case gatewayClosed:
 			continue
 		case refused:
 			if !c.leaveToJoinAgain(ctx) {
@@ -590,26 +592,26 @@ func (c *recorderConn) sendVoiceState(ctx context.Context, guildID snowflake.ID,
 func (c *recorderConn) refused(state disgovoice.State, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.held == nil || !dialedAt(state, *c.held) || c.refuseAttempt == nil {
+	if c.held == nil || !dialedAt(state, *c.held) || c.endAttempt == nil {
 		return
 	}
 	utils.Warn(refusedTokenMessage, "recorder", c.s.userID, "voice_server", state.Endpoint, "error", err)
 	c.shunned, c.held = c.held, nil
-	c.refuseAttempt(errHeldTokenRefused)
+	c.endAttempt(errHeldTokenRefused)
 }
 
-// renewRejoin hands a close of the gateway that the rejoin under way waits
-// on to that rejoin, which joins again through the new gateway. It reports
-// whether a rejoin was under way. A second rejoin would take over disgo's
-// wait for a connection, and the first could then never end.
-func (c *recorderConn) renewRejoin() bool {
+// handCloseToRejoin hands a close of the gateway that the rejoin under way
+// waits on to that rejoin, which joins again through the new gateway. It
+// reports whether a rejoin was under way. A second rejoin would take over
+// disgo's wait for a connection, and the first could then never end.
+func (c *recorderConn) handCloseToRejoin() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.stopRejoin == nil {
 		return false
 	}
-	if c.refuseAttempt != nil {
-		c.refuseAttempt(errGatewayRenewed)
+	if c.endAttempt != nil {
+		c.endAttempt(errRejoinGatewayClosed)
 	}
 	return true
 }
@@ -1439,12 +1441,12 @@ const lostConnectionMessage = "Voice connection lost mid-recording"
 // rejoin takes that over, through a new gateway, which identifies. The old
 // one would resume the voice session, which the rejoin keeps, and a resume
 // gets no answer that opens audio (ownDialsOnly). A close while a rejoin is
-// under way goes to that rejoin (renewRejoin). Discord ends a call with
-// 4022, "Call terminated", when its channel is deleted or the call moves to
-// another voice server, as a region change makes it do. A call that moved
-// gets a fresh connection too, unless its channel is gone. Otherwise disgo
-// takes the recorder out of the channel itself: the voice connection is
-// lost mid-recording, and Sentry hears of it with the close that started
+// under way goes to that rejoin (handCloseToRejoin). Discord ends a call
+// with 4022, "Call terminated", when its channel is deleted or the call
+// moves to another voice server, as a region change makes it do. A call that
+// moved gets a fresh connection too, unless its channel is gone. Otherwise
+// disgo takes the recorder out of the channel itself: the voice connection
+// is lost mid-recording, and Sentry hears of it with the close that started
 // it. So does Discord taking the recorder out before it is back. A moved
 // call needs no fresh connection when disgo connected at the server Discord
 // named last while the recorder looked the channel up. The recorder hears
@@ -1491,7 +1493,7 @@ func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.Close
 			}
 		}
 		gw.renewAfter(loss, cause)
-		if c.renewRejoin() {
+		if c.handCloseToRejoin() {
 			return
 		}
 		if !c.rejoin() && !c.closed.Load() {
