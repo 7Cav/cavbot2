@@ -357,6 +357,21 @@ func (s hookedStore) RemoveWingedAviator(ctx context.Context, guildID, userID st
 	return s.st.RemoveWingedAviator(ctx, guildID, userID)
 }
 
+func (s hookedStore) SavePagedList(ctx context.Context, list store.PagedList) (string, error) {
+	s.hook(ctx)
+	return s.st.SavePagedList(ctx, list)
+}
+
+func (s hookedStore) PagedListPage(ctx context.Context, key string, idx int) (store.SavedPage, error) {
+	s.hook(ctx)
+	return s.st.PagedListPage(ctx, key, idx)
+}
+
+func (s hookedStore) DeletePagedListsBefore(ctx context.Context, cutoff time.Time) error {
+	s.hook(ctx)
+	return s.st.DeletePagedListsBefore(ctx, cutoff)
+}
+
 // A save whose browser leaves as the save first calls the store still
 // takes effect, with exactly one change log entry recording it.
 func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {

@@ -1,8 +1,9 @@
 // Package store is the bot's own database: the hubs the panel edits, the
 // spawned channels the runtime tracks across a restart, the change log of
 // every panel save, and the Foxhole page's notes and approvals, with a
-// change log of their own that also holds each Foxhole action's report, and
-// the winged aviators. Postgres in production (postgres.go), an in-memory
+// change log of their own that also holds each Foxhole action's report, the
+// winged aviators, and the saved pages of each long /loa or /awol list for
+// 30 days. Postgres in production (postgres.go), an in-memory
 // Fake for other packages' tests (fake.go).
 //
 // Migrations run at startup, and every one stays compatible with the previous
@@ -13,6 +14,7 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"time"
@@ -617,4 +619,45 @@ type Store interface {
 	// RemoveWingedAviator ends the member's status as one of the guild's
 	// winged aviators. Removing one not listed is not an error.
 	RemoveWingedAviator(ctx context.Context, guildID, userID string) error
+
+	// SavePagedList saves a run's pages and returns the key that reads them
+	// back. The key is random, so no one can guess another run's.
+	SavePagedList(ctx context.Context, list PagedList) (key string, err error)
+	// PagedListPage returns page idx, counted from 0, of the list saved
+	// under key, with the run it came from. ErrNotFound when no list has
+	// the key.
+	PagedListPage(ctx context.Context, key string, idx int) (SavedPage, error)
+	// DeletePagedListsBefore deletes every list run before cutoff.
+	DeletePagedListsBefore(ctx context.Context, cutoff time.Time) error
+}
+
+// newPagedListKey is a random key for a saved list, 26 base32 characters,
+// which keeps every button's CustomID inside Discord's 100.
+func newPagedListKey() string {
+	return rand.Text()
+}
+
+// PagedList is one run of a long /loa or /awol list (#824, ADR 0020): who
+// ran it, when, and every page it showed, so a press on its arrows reads
+// the run's page without calling the 7Cav API.
+type PagedList struct {
+	RunnerID string
+	RanAt    time.Time
+	Pages    []ListPage
+}
+
+// ListPage is one page of a saved list: its embed's text.
+type ListPage struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Footer      string `json:"footer"`
+}
+
+// SavedPage is one page of a saved list as a press reads it, with the run
+// it came from and how many pages the run has.
+type SavedPage struct {
+	RunnerID string
+	RanAt    time.Time
+	Total    int
+	Page     ListPage
 }
