@@ -4,6 +4,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	disgovoice "github.com/disgoorg/disgo/voice"
 )
 
 // stepsKept is how many recovery steps a gap's report lists, the last
@@ -22,16 +24,28 @@ type recoveryLog struct {
 }
 
 // recoveryStep is one step in the log, which started at at, under way
-// until it ends. Its At is set when a report times it.
+// until it ends. Its At is set when a report times it. A dial's step keeps
+// the disgo gateway it dialed through as via.
 type recoveryStep struct {
 	step RecoveryStep
 	at   time.Time
+	via  disgovoice.Gateway
 }
 
 // start notes a step of kind starting now, with token for a dial, and
 // returns it, under way until end.
 func (l *recoveryLog) start(kind StepKind, token DialToken) *recoveryStep {
-	s := &recoveryStep{step: RecoveryStep{Kind: kind, Token: token, Outcome: StepUnderWay}, at: time.Now()}
+	return l.add(&recoveryStep{step: RecoveryStep{Kind: kind, Token: token, Outcome: StepUnderWay}, at: time.Now()})
+}
+
+// dial notes a dial starting now with token, through the disgo gateway via,
+// and returns its step, under way until end.
+func (l *recoveryLog) dial(token DialToken, via disgovoice.Gateway) *recoveryStep {
+	return l.add(&recoveryStep{step: RecoveryStep{Kind: StepDial, Token: token, Outcome: StepUnderWay}, at: time.Now(), via: via})
+}
+
+// add notes s, a step starting now, and returns it.
+func (l *recoveryLog) add(s *recoveryStep) *recoveryStep {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.steps = append(l.steps, s)
@@ -62,25 +76,31 @@ func (l *recoveryLog) end(s *recoveryStep, outcome StepOutcome, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	s.step.Outcome = outcome
-	s.closedByLocked(err)
+	s.keepCloseCodeLocked(err)
 	l.keepLocked()
 }
 
-// closed notes err, a close of the voice gateway s dialed through, as the
-// close that ended s. A step that succeeded keeps no code. The close can
-// reach the recorder after s has ended.
-func (l *recoveryLog) closed(s *recoveryStep, err error) {
+// closedThrough notes err, a close of the disgo gateway gw, as the close
+// that ended the last dial through gw, unless that dial succeeded. The
+// close can reach the recorder after the dial has ended, and after later
+// dials through other gateways have started.
+func (l *recoveryLog) closedThrough(gw disgovoice.Gateway, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if s.step.Outcome != StepSucceeded {
-		s.closedByLocked(err)
+	for _, s := range slices.Backward(l.steps) {
+		if s.via == gw {
+			if s.step.Outcome != StepSucceeded {
+				s.keepCloseCodeLocked(err)
+			}
+			return
+		}
 	}
 }
 
-// closedByLocked keeps the code of err on s, when err is a voice gateway
-// close. A step that ends with no close keeps any code noted on it
+// keepCloseCodeLocked keeps the code of err on s, when err is a voice
+// gateway close. A step that ends with no close keeps any code noted on it
 // earlier. Caller holds the log's mutex.
-func (s *recoveryStep) closedByLocked(err error) {
+func (s *recoveryStep) keepCloseCodeLocked(err error) {
 	if code := closeCode(err); code != "" && code != CloseCodeNone {
 		s.step.CloseCode = code
 	}
