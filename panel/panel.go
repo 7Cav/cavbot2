@@ -472,12 +472,16 @@ const forumUnavailableTitle = "The forum did not answer"
 
 // forumUnavailable renders the error page with the 502 the forum outage
 // earns to a signed-in visitor. The page keeps the rail's identity and says
-// the session is kept. A page answering a save names Try again's address,
-// whose GET meets the same outage until the forum answers again.
+// the session is kept. A page load's Try again opens the page it asked
+// for. The gate answers before any handler, so it can't tell which page a
+// form was sent from. Its answer to a form names the landing as its
+// address and Try again's, and the page script puts that page in their
+// place (#803). Either GET meets the same outage until the forum answers
+// again.
 func (p *Panel) forumUnavailable(w http.ResponseWriter, r *http.Request, sess session) {
 	data := sess.page(forumUnavailableTitle)
 	data.Message = "Cavbot2 could not reach the forum. Nothing changed and you are still signed in."
-	data.Retry, data.Address = "/", "/"
+	data.Retry, data.Address = returnPath(returnAddressOf(r)), "/"
 	data.Failure = failureForum
 	p.render(w, r, http.StatusBadGateway, "error", data)
 }

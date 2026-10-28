@@ -318,8 +318,10 @@
    place of the form's history entry as the page loads. It adds no entry,
    so one Back still leaves the page. A reload, a Back or a Forward that
    loads the page again then loads that address by GET: it sends nothing
-   and shows no refusal note. Without script the tab keeps the form's
-   address, and a reload sends the form again after the browser asks. */
+   and shows no refusal note. The forum's 502 names the landing, and the
+   unsaved-edit block puts the page the form was sent from in its place
+   (issue #803). Without script the tab keeps the form's address, and a
+   reload sends the form again after the browser asks. */
 (function () {
   'use strict';
 
@@ -346,14 +348,17 @@
    A reload, a Back or a Forward brings each edit back into its form on the
    page. So does the page a failed save's Try again opens, the page a
    sign-in returns to when a save or a reload met that sign-in, and the page
-   the Foxhole member list notice reloads. The form shows a line saying the
-   edit is not saved yet. Its link opens the form as stored, from the form's
-   data-stored address or else the page again, and drops the edit. Any other
-   load of a page that shows the form as stored drops the edit, a save's own
-   included. So does a page a save redirects to that doesn't show its form.
-   Closing the tab drops every edit. Another forum user signed in on the tab
-   never sees one. Without session storage, or without script, the page
-   goes on and the edit is lost. */
+   the Foxhole member list notice reloads. Once the forum answers again
+   after its 502 met a form, that page's reload and its Try again open the
+   page the form was sent from, which brings the edit back too (issue
+   #803). The form shows a line saying the edit is not saved yet. Its link
+   opens the form as stored, from the form's data-stored address or else
+   the page again, and drops the edit. Any other load of a page that shows
+   the form as stored drops the edit, a save's own included. So does a page
+   a save redirects to that doesn't show its form. Closing the tab drops
+   every edit. Another forum user signed in on the tab never sees one.
+   Without session storage, or without script, the page goes on and the
+   edit is lost. */
 var unsavedEdits = (function () {
   'use strict';
 
@@ -361,8 +366,9 @@ var unsavedEdits = (function () {
   // edits. It holds the forum user they belong to and each edit by name,
   // with the values its form posts, the names of its form's fields and the
   // address it was typed at. It also holds the edit whose form was sent
-  // last, until the page that answers it loads, and whether the next page
-  // brings the edits back.
+  // last and the address of the page any form was sent from, each until
+  // the page that answers it loads, and whether the next page brings the
+  // edits back.
   var storageKey = 'panel-unsaved-edits';
 
   // signedInAs is the forum user the rail names, empty on a page with no
@@ -487,14 +493,26 @@ var unsavedEdits = (function () {
     if (name && live[name] === form) { keep(name, form); }
   }
 
-  // A form sent the page's way keeps its edit from that moment. One the
-  // script sends itself, as a Foxhole row's note form, cancels the submit.
+  // sentFrom is the address of the page a form is sent from, the path and
+  // query the tab shows. It opens at the block the form's action names, or
+  // else where the tab is.
+  function sentFrom(form) {
+    var action = new URL(form.getAttribute('action') || '', location.href);
+    return location.pathname + location.search + (action.hash || location.hash);
+  }
+
+  // Every form sent the page's way notes the page it was sent from, and a
+  // form whose edit is kept keeps it from that moment. One the script
+  // sends itself, as a Foxhole row's note form, cancels the submit.
   document.addEventListener('submit', function (e) {
     var form = e.target;
-    if (e.defaultPrevented || !form.matches('form[data-edit]')) { return; }
-    var name = form.getAttribute('data-edit');
-    keep(name, form);
-    state.sent = name;
+    if (e.defaultPrevented) { return; }
+    state.from = sentFrom(form);
+    if (form.matches('form[data-edit]')) {
+      var name = form.getAttribute('data-edit');
+      keep(name, form);
+      state.sent = name;
+    }
     write();
   });
 
@@ -504,9 +522,24 @@ var unsavedEdits = (function () {
     write();
   }
 
-  // Try again on a failed save's error page brings the edits back.
+  // loadAgain makes the press e of the link load its address when the tab
+  // shows that page already, where the link would only scroll. A press
+  // with a modifier key, as one that opens a new tab, goes the browser's
+  // way.
+  function loadAgain(e, link) {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || !shows(link.href)) { return; }
+    e.preventDefault();
+    history.replaceState(history.state, '', link.href);
+    location.reload();
+  }
+
+  // Try again on a failed save's error page brings the edits back. One that
+  // opens the page the tab shows loads it again.
   document.addEventListener('click', function (e) {
-    if (e.target.closest('a[data-retry]')) { restoreNext(); }
+    var retry = e.target.closest('a[data-retry]');
+    if (!retry) { return; }
+    restoreNext();
+    loadAgain(e, retry);
   });
 
   // headingOf is the heading of the block the form sits in.
@@ -536,11 +569,7 @@ var unsavedEdits = (function () {
     link.addEventListener('click', function (e) {
       drop(name);
       delete live[name];
-      if (shows(link.href)) {
-        e.preventDefault();
-        history.replaceState(history.state, '', link.href);
-        location.reload();
-      }
+      loadAgain(e, link);
     });
     return link;
   }
@@ -580,8 +609,19 @@ var unsavedEdits = (function () {
   if (signedInAs) {
     var answers = document.querySelector('main[data-address]') !== null;
     var sent = state.sent;
+    var from = state.from;
     delete state.sent;
+    delete state.from;
     delete state.restore;
+    // The forum's 502 to a posted form names the landing, since the panel
+    // answers it before learning which page the form was sent from. That page goes
+    // in the tab in its place. On any of the forum's 502s, Try again opens
+    // the page the tab shows, at its block, so the first reload or Try
+    // again once the forum answers shows the form again.
+    var outage = document.querySelector('main[data-failure="forum"]');
+    var retry = outage && outage.querySelector('a[data-retry]');
+    if (outage && answers && from) { history.replaceState(history.state, '', from); }
+    if (retry) { retry.href = here(); }
     document.querySelectorAll('form[data-edit]').forEach(function (form) {
       var name = form.getAttribute('data-edit');
       if (placed[name]) { return; }
