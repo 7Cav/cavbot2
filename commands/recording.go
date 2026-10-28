@@ -501,16 +501,28 @@ func (r *RecordingRuntime) runningInLocked(channelID string) *activeRecording {
 	return nil
 }
 
-// finish ends a recording a stop took at stoppedAt: the tracks end at the
-// stop time, so nothing the recorder hands over after is kept, then the
-// recorder leaves, the row records the stop time, how it ended and its
-// speakers, the recorder is free again once its leave has returned, the
-// notice says it stopped, and the mix starts. stoppedBy is the member who
+// finish ends a recording a stop took at stoppedAt: its capture ends at
+// the stop time, then finishEnded finishes it. stoppedBy is the member who
 // stopped it, empty when it stopped by itself.
 func (r *RecordingRuntime) finish(target *activeRecording, end store.RecordingEnd, stoppedBy string, stoppedAt time.Time) {
+	r.endCapture(target, stoppedAt)
+	r.finishEnded(target, end, stoppedBy, stoppedAt)
+}
+
+// endCapture ends the capture of a recording a stop took at stoppedAt: its
+// timers stop, and its gap and tracks end at the stop time, so nothing the
+// recorder hands over after is kept.
+func (r *RecordingRuntime) endCapture(target *activeRecording, stoppedAt time.Time) {
 	r.cancelTimers(target)
 	r.endGapAtStop(target, stoppedAt)
 	endTracks(target, stoppedAt)
+}
+
+// finishEnded finishes a stopped recording whose capture ended at
+// stoppedAt: the recorder leaves, the row records the stop time, how it
+// ended and its speakers, the recorder is free again once its leave has
+// returned, the notice says it stopped, and the mix starts.
+func (r *RecordingRuntime) finishEnded(target *activeRecording, end store.RecordingEnd, stoppedBy string, stoppedAt time.Time) {
 	returned := r.leave(target.conn, target.row.RecorderID, target.row.ChannelID)
 	row := r.closeRow(target, stoppedAt, end)
 	r.releaseWhenLeft(row.RecorderID, returned)

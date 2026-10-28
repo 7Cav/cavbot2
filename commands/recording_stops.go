@@ -140,8 +140,13 @@ func (r *RecordingRuntime) checkChannels() {
 		}
 	}
 	r.mu.Unlock()
+	// Every capture ends before any recorder leaves, so nothing a recorder
+	// hands over during another's leave is kept.
 	for _, s := range stops {
-		r.finish(s.rec, s.end, "", now)
+		r.endCapture(s.rec, now)
+	}
+	for _, s := range stops {
+		r.finishEnded(s.rec, s.end, "", now)
 	}
 }
 
