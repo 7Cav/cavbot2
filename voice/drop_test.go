@@ -98,7 +98,14 @@ func closingWith(code int) connEnd {
 // resetting ends a connection with a TCP reset and no close, so the
 // recorder's next read of it fails.
 func resetting(t *testing.T, conn *websocket.Conn) {
-	tcp := conn.NetConn().(*tls.Conn).NetConn().(*net.TCPConn)
+	var tcp *net.TCPConn
+	if tlsConn, ok := conn.NetConn().(*tls.Conn); ok {
+		tcp, _ = tlsConn.NetConn().(*net.TCPConn)
+	}
+	if tcp == nil {
+		t.Errorf("voice server's connection = %T, want TCP under TLS", conn.NetConn())
+		return
+	}
 	if err := tcp.SetLinger(0); err != nil {
 		t.Errorf("voice server setting no linger: %v", err)
 	}
@@ -374,20 +381,12 @@ const lostQuiet = 500 * time.Millisecond
 // by then.
 func awaitLostConnection(t *testing.T, events *sentryTransport) []*sentry.Event {
 	t.Helper()
-	lost := func() []*sentry.Event {
-		var out []*sentry.Event
-		for _, e := range events.Events() {
-			if e.Tags["message"] == lostConnectionMessage {
-				out = append(out, e)
-			}
-		}
-		return out
-	}
-	if !within(time.Now(), waitFor, func() bool { return len(lost()) > 0 }) {
+	heard := func() bool { return len(tagged(events.Events(), lostConnectionMessage)) > 0 }
+	if !within(time.Now(), waitFor, heard) {
 		t.Fatalf("Sentry events = %v, want a %q", eventMessages(events.Events()), lostConnectionMessage)
 	}
 	time.Sleep(lostQuiet)
-	return lost()
+	return tagged(events.Events(), lostConnectionMessage)
 }
 
 // exceptionValues is the text of each error a Sentry event carries: the
