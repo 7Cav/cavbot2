@@ -392,6 +392,9 @@ h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
    sits beside Approve and Clear approval, and wraps whole onto the bar's
    second line at phone width. */
 .fx-selbar .fx-hint { flex-basis: auto; }
+/* The line saying a press of Approve or Clear approval wasn't sent takes
+   the bar's first line to itself, over the count and the buttons. */
+.fx-selbar > .note { flex-basis: 100%; margin: 0; }
 /* A control in the list that takes focus scrolls clear of the bar, as one
    reached by Shift+Tab up the list would otherwise sit under it. 6rem
    clears the bar on one line and wrapped onto two. */
