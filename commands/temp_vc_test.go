@@ -1880,7 +1880,7 @@ func TestTempVCMoveIntoFailureMessagesOnlyAMemberStillInTheHub(t *testing.T) {
 
 	t.Run("member left the hub during the move", func(t *testing.T) {
 		fake := newFakeTempVCManager()
-		fake.moveErr = restError(http.StatusBadRequest, discordgo.ErrCodeTargetIsNotConnectedToVoice, "Target user is not connected to voice")
+		fake.moveErr = restError(http.StatusInternalServerError, 0, "Internal Server Error")
 		tv := newSeededTempVC(t, fake)
 		countCaptures(t)
 		fake.moveHook = func() {
@@ -1896,6 +1896,46 @@ func TestTempVCMoveIntoFailureMessagesOnlyAMemberStillInTheHub(t *testing.T) {
 			t.Errorf("messages = %+v, want none: the member is gone", msgs)
 		}
 	})
+}
+
+// Discord can hear of a leave before the cache does. A move-into it refuses
+// because the member is gone ends as a leave the cache caught. The channel
+// goes, and nothing counts as a spawn failure, though the cache still shows
+// the member in the hub.
+func TestTempVCMoveIntoRefusedForAMemberWhoLeftIsNoSpawnFailure(t *testing.T) {
+	// The refusals that mean the member left voice or the guild before
+	// Discord got the move, per #841.
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"40032", restError(http.StatusBadRequest, discordgo.ErrCodeTargetIsNotConnectedToVoice, "Target user is not connected to voice")},
+		{"10007", restError(http.StatusNotFound, discordgo.ErrCodeUnknownMember, "Unknown Member")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeTempVCManager()
+			fake.moveErr = tc.err
+			st := seedStore(t, testHub())
+			tv := newTestTempVC(t, fake, st)
+			captures := countCaptures(t)
+
+			fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+
+			if ids := fake.deletedIDs(); len(ids) != 1 || ids[0] != "new-chan" {
+				t.Errorf("deleted = %v, want the new channel", ids)
+			}
+			if *captures != 0 {
+				t.Errorf("captures = %d, want 0: the member left", *captures)
+			}
+			if got, ok := tv.LastSpawnFailure(storedHubID(t, st)); ok {
+				t.Errorf("LastSpawnFailure = %+v, want none: the member left", got)
+			}
+			if msgs := fake.recordedMessages(); len(msgs) != 0 {
+				t.Errorf("messages = %+v, want none: the member left", msgs)
+			}
+		})
+	}
 }
 
 // pinClock fixes the runtime's clock at a known instant for the test.
@@ -2007,6 +2047,61 @@ func TestTempVCSpawnFailuresCaptureOncePerStreakPerHub(t *testing.T) {
 	})
 }
 
+// setMoveErr changes what the next move-intos return, under the fake's lock.
+func (f *fakeTempVCManager) setMoveErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.moveErr = err
+}
+
+// A member who left is no spawn failure, so it neither opens a hub's streak
+// nor ends one, per #841.
+func TestTempVCMemberWhoLeftLeavesTheStreakAsItWas(t *testing.T) {
+	forbidden := restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, "Missing Permissions")
+	left := restError(http.StatusBadRequest, discordgo.ErrCodeTargetIsNotConnectedToVoice, "Target user is not connected to voice")
+
+	t.Run("it opens no streak", func(t *testing.T) {
+		fake := newFakeTempVCManager()
+		fake.moveErr = left
+		tv := newSeededTempVC(t, fake)
+		captures := countCaptures(t)
+
+		fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+		before := *captures
+		fake.setCreateErr(forbidden)
+		fake.deliver(tv, voiceEvent("user-2", testTempVCHub, member("B")))
+
+		if got := *captures - before; got != 1 {
+			t.Errorf("captures from the 403 = %d, want 1: the leave before it opened no streak", got)
+		}
+	})
+
+	t.Run("it ends no streak", func(t *testing.T) {
+		fake := newFakeTempVCManager()
+		fake.createErr = forbidden
+		st := seedStore(t, testHub())
+		tv := newTestTempVC(t, fake, st)
+		hubID := storedHubID(t, st)
+		captures := countCaptures(t)
+
+		fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+		fake.setCreateErr(nil)
+		fake.setMoveErr(left)
+		fake.deliver(tv, voiceEvent("user-2", testTempVCHub, member("B")))
+
+		if got, ok := tv.LastSpawnFailure(hubID); !ok || got.Cause != SpawnFailureForbidden {
+			t.Errorf("LastSpawnFailure = %+v (present %v), want the 403's cause %q kept", got, ok, SpawnFailureForbidden)
+		}
+
+		fake.setCreateErr(forbidden)
+		fake.deliver(tv, voiceEvent("user-3", testTempVCHub, member("C")))
+
+		if *captures != 1 {
+			t.Errorf("captures = %d, want 1: the streak the first 403 opened is still open", *captures)
+		}
+	})
+}
+
 // A member told the error has been reported to S6 can count on S6 finding it
 // in Sentry (#675): a failure Discord returns on the create or the move-into
 // captures on the first join of the hub's streak, whatever its status.
@@ -2021,9 +2116,7 @@ func TestTempVCReportedSpawnFailureHasACapture(t *testing.T) {
 		{"create 429", createFails(rateLimitError(4 * time.Minute))},
 		{"create 500", createFails(restError(http.StatusInternalServerError, 0, "Internal Server Error"))},
 		{"create transport", createFails(errors.New("dial tcp: connection refused"))},
-		// The cache still shows the member in the hub, so a 40032 here is not
-		// a member who left.
-		{"move-into 40032", moveFails(restError(http.StatusBadRequest, discordgo.ErrCodeTargetIsNotConnectedToVoice, "Target user is not connected to voice"))},
+		{"move-into 400 with no code", moveFails(restError(http.StatusBadRequest, 0, "Bad Request"))},
 		{"move-into 403", moveFails(restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, "Missing Permissions"))},
 		{"move-into 429", moveFails(rateLimitError(4 * time.Minute))},
 		{"move-into 500", moveFails(restError(http.StatusInternalServerError, 0, "Internal Server Error"))},
@@ -2040,6 +2133,22 @@ func TestTempVCReportedSpawnFailureHasACapture(t *testing.T) {
 				t.Errorf("captures = %d, want 1: the member was told S6 has the error", captures)
 			}
 		})
+	}
+}
+
+// A move-into Discord refuses for any reason but a member who left is a spawn
+// failure the panel shows. A bare 400 is the refusal nearest to a leave.
+func TestTempVCMoveIntoRefusedWithNoCodeRecordsMoveFailed(t *testing.T) {
+	fake := newFakeTempVCManager()
+	fake.moveErr = restError(http.StatusBadRequest, 0, "Bad Request")
+	st := seedStore(t, testHub())
+	tv := newTestTempVC(t, fake, st)
+	countCaptures(t)
+
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+
+	if got, ok := tv.LastSpawnFailure(storedHubID(t, st)); !ok || got.Cause != SpawnFailureMove {
+		t.Errorf("LastSpawnFailure = %+v (present %v), want cause %q", got, ok, SpawnFailureMove)
 	}
 }
 

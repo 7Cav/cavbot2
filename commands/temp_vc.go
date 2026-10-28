@@ -2099,13 +2099,22 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 		return
 	}
 	if err := t.mgr.GuildMemberMove(t.guildID, vs.UserID, &channel.ID); err != nil {
-		// The member vanished (disconnected mid-create) or the move was
-		// refused. A create that succeeds and a move-into that fails is one
-		// spawn failure: the new channel goes through the compensating
-		// delete, and the member hears about it only when the cache still
-		// shows them in the hub. A member who left needs no ping about a
-		// channel that never was. A member still waiting hears about it
-		// whatever the delete did: the channel is not theirs either way.
+		// Discord can hear of a leave before the cache does. A member who
+		// left voice or the guild after the check above makes it refuse the
+		// move, and that ends as the leave the check catches, whatever the
+		// cache still shows. #841 settled it.
+		if classifySpawnedChannelError(err).memberGone {
+			utils.Info("Temp VC move-into abandoned, Discord says the member left",
+				"user_id", vs.UserID, "channel_id", channel.ID, "hub_channel_id", hub.HubChannelID, "error", err)
+			t.abandonSpawn(channel.ID, hub, vs.UserID)
+			return
+		}
+		// Any other refusal, or a move that never got an answer, is a spawn
+		// failure. The new channel goes through the compensating delete, and
+		// the member hears about it only when the cache still shows them in
+		// the hub. A member who left needs no ping about a channel that never
+		// was. A member still waiting hears about it whatever the delete did,
+		// since the channel is not theirs either way.
 		t.recordSpawnFailure(hub.ID, SpawnFailureMove)
 		utils.Warn("Temp VC move-into failed, deleting channel",
 			"user_id", vs.UserID, "channel_id", channel.ID, "hub_channel_id", hub.HubChannelID, "error", err)
