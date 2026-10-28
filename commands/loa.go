@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/7cav/cavbot2/utils"
@@ -159,47 +158,14 @@ func runLoa(r utils.InteractionResponder, now time.Time, i *discordgo.Interactio
 	lines = append(lines, loaReviewLines(reviews)...)
 
 	footer := fmt.Sprintf("Active: %d | Upcoming: %d | Needs review: %d", len(activeLOAs), len(upcomingLOAs), len(reviews))
-	// No layout has more pages than lines, so a title numbered with the
-	// line count is as long as any page's title can be.
-	pageOverhead := len(loaEmbedTitle(position, len(lines)-1, len(lines))) + len(footer)
-	pagesByMessage := loaMessages(lines, pageOverhead)
-	total := 0
-	for _, pages := range pagesByMessage {
-		total += len(pages)
-	}
-
-	var embedsByMessage [][]*discordgo.MessageEmbed
-	idx := 0
-	for _, pages := range pagesByMessage {
-		var embeds []*discordgo.MessageEmbed
-		for _, page := range pages {
-			embeds = append(embeds, &discordgo.MessageEmbed{
-				Title:       loaEmbedTitle(position, idx, total),
-				Description: page,
-				Color:       0xfbcc29,
-				Footer:      &discordgo.MessageEmbedFooter{Text: footer},
-				Timestamp:   now.Format(time.RFC3339),
-			})
-			idx++
-		}
-		embedsByMessage = append(embedsByMessage, embeds)
-	}
-
-	if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-		Content: stringPtr(""),
-		Embeds:  &embedsByMessage[0],
-	}); err != nil {
-		captureDeferredEditFailure(i, "loa", err)
+	if !sendPagedList(r, i, now, pagedList{
+		command:  "loa",
+		position: position,
+		lines:    lines,
+		title:    func(idx, total int) string { return loaEmbedTitle(position, idx, total) },
+		footer:   footer,
+	}) {
 		return
-	}
-	// A part Discord refuses ends the list there. The page numbers on the
-	// parts already sent show the member it stopped short.
-	for _, embeds := range embedsByMessage[1:] {
-		if err := r.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{Embeds: embeds}); err != nil {
-			captureError("Failed to deliver a /loa follow-up", err,
-				"command", "loa", "guild_id", i.GuildID, "position", position)
-			return
-		}
 	}
 
 	utils.Info("✨ Done!", "command", "LOA")
@@ -214,19 +180,12 @@ func loaEmbedTitle(position string, idx, total int) string {
 	return fmt.Sprintf("LOAs for %s (Page %d/%d)", position, idx+1, total)
 }
 
-// loaLine is one LOA's line in the /loa list and the heading it runs
-// under.
-type loaLine struct {
-	heading string
-	text    string
-}
-
 // loaUserLines lists a line under heading for each of users, linking the
 // trooper's milpac, when known, and the LOA's thread.
-func loaUserLines(heading string, users []LOAUser) []loaLine {
-	var lines []loaLine
+func loaUserLines(heading string, users []LOAUser) []pagedLine {
+	var lines []pagedLine
 	for _, u := range users {
-		lines = append(lines, loaLine{heading, fmt.Sprintf("%s — %s → %s%s",
+		lines = append(lines, pagedLine{heading, fmt.Sprintf("%s — %s → %s%s",
 			loaTrooper(u.Username, u.MilpacUrl),
 			u.StartDate.Format("Jan 2, 2006"),
 			u.EndDate.Format("Jan 2, 2006"),
@@ -238,109 +197,13 @@ func loaUserLines(heading string, users []LOAUser) []loaLine {
 // loaReviewLines lists a line under the Needs review heading for each of
 // reviews saying what is wrong with the LOA, linked as loaUserLines links
 // its lines.
-func loaReviewLines(reviews []loaReview) []loaLine {
-	var lines []loaLine
+func loaReviewLines(reviews []loaReview) []pagedLine {
+	var lines []pagedLine
 	for _, r := range reviews {
-		lines = append(lines, loaLine{loaNeedsReviewHeading, fmt.Sprintf("%s — %s%s",
+		lines = append(lines, pagedLine{loaNeedsReviewHeading, fmt.Sprintf("%s — %s%s",
 			loaTrooper(r.Username, r.MilpacUrl), r.Problem, loaThreadTag(r.ThreadID))})
 	}
 	return lines
-}
-
-// loaMessages lays lines out, in order and each whole, as pages, and the
-// pages as messages Discord accepts. A page is one embed's description, of
-// at most discordEmbedDescriptionLimit bytes. A message holds at most
-// maxEmbedsPerMsg pages, whose descriptions, with pageOverhead bytes of
-// title and footer for each, come to at most discordMessageEmbedTextLimit
-// bytes. Bytes never undercount the characters Discord counts.
-//
-// Each section opens with its heading, after a blank line when another
-// section came before it on the page. A page that continues a section
-// opens with that section's heading too, so each page reads on its own.
-func loaMessages(lines []loaLine, pageOverhead int) [][]string {
-	layout := loaLayout{pageOverhead: pageOverhead}
-	for _, l := range lines {
-		layout.add(l)
-	}
-	return layout.finish()
-}
-
-// loaLayout holds loaMessages' work in progress. It keeps the messages it
-// has filled and the message and page it is filling.
-type loaLayout struct {
-	pageOverhead int
-	messages     [][]string
-	// pages are the open message's full pages, and used the bytes they
-	// take of it.
-	pages []string
-	used  int
-	page  strings.Builder
-	// heading is the one the open page's last line runs under, or "" while
-	// the open page is empty.
-	heading string
-}
-
-// add puts l on the open page, or on a new page when it doesn't fit, which
-// starts a new message when the page doesn't fit the open one.
-func (lay *loaLayout) add(l loaLine) {
-	text := loaPageText(lay.heading, l)
-	if lay.page.Len() > 0 && !lay.fits(len(text)) {
-		lay.closePage()
-		text = loaPageText(lay.heading, l)
-	}
-	if lay.page.Len() == 0 && len(lay.pages) > 0 && !lay.fits(len(text)) {
-		lay.closeMessage()
-	}
-	lay.page.WriteString(text)
-	lay.heading = l.heading
-}
-
-// fits reports whether n more bytes fit on the open page within its
-// message.
-func (lay *loaLayout) fits(n int) bool {
-	if lay.page.Len() == 0 && len(lay.pages) == maxEmbedsPerMsg {
-		return false
-	}
-	pageLen := lay.page.Len() + n
-	return pageLen <= discordEmbedDescriptionLimit &&
-		lay.used+lay.pageOverhead+pageLen <= discordMessageEmbedTextLimit
-}
-
-func (lay *loaLayout) closePage() {
-	lay.pages = append(lay.pages, lay.page.String())
-	lay.used += lay.pageOverhead + lay.page.Len()
-	lay.page.Reset()
-	lay.heading = ""
-}
-
-func (lay *loaLayout) closeMessage() {
-	lay.messages = append(lay.messages, lay.pages)
-	lay.pages, lay.used = nil, 0
-}
-
-// finish closes the open page and message and returns every message.
-func (lay *loaLayout) finish() [][]string {
-	if lay.page.Len() > 0 {
-		lay.closePage()
-	}
-	if len(lay.pages) > 0 {
-		lay.closeMessage()
-	}
-	return lay.messages
-}
-
-// loaPageText is what l adds to a page whose last line ran under heading,
-// or to an empty page when heading is "". It puts l's own heading first
-// when l opens a section there.
-func loaPageText(heading string, l loaLine) string {
-	switch {
-	case heading == "":
-		return l.heading + "\n" + l.text + "\n"
-	case l.heading != heading:
-		return "\n" + l.heading + "\n" + l.text + "\n"
-	default:
-		return l.text + "\n"
-	}
 }
 
 // loaTrooper is username linked to milpacURL, or username alone when the

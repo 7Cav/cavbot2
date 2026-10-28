@@ -309,70 +309,57 @@ func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 		footerText = awolDegradedFooter
 	}
 
-	// Discord caps an embed description at 4096 chars. The final description is
-	// the summary block + "\n\n" + chunk, so the chunk budget must reserve room
-	// for that rendered prefix — otherwise a near-4096 chunk overflows once the
-	// summary is prepended (Discord 400). Reserve the longest prefix any embed
-	// could carry. The block includes the skipped-records note when present
-	// (issue #163) so staff see the report is partial.
+	// Every page opens with the summary block, which includes the
+	// skipped-records note when present (issue #163) so staff see the report
+	// is partial.
 	summaryBlock := awolSummaryLine(len(awolUsers))
 	if note := awolSkippedNote(skippedCount); note != "" {
 		summaryBlock += "\n" + note
 	}
-	descPrefix := summaryBlock + "\n\n"
-	chunkBudget := discordEmbedDescriptionLimit - len(descPrefix)
+	// The summary block is the heading of the list's one section, with a
+	// blank line after it.
+	lines := make([]pagedLine, len(awolUsers))
+	for k, user := range awolUsers {
+		lines[k] = pagedLine{heading: summaryBlock + "\n", text: awolUserLine(user)}
+	}
 
-	var chunks []string
-	currentChunk := ""
-	for _, user := range awolUsers {
-		userLine := awolUserLine(user)
-		if currentChunk != "" && len(currentChunk)+len(userLine) > chunkBudget {
-			chunks = append(chunks, currentChunk)
-			currentChunk = userLine
-		} else {
-			currentChunk += userLine
-		}
-	}
-	if currentChunk != "" {
-		chunks = append(chunks, currentChunk)
-	}
-	utils.Info("Debug chunks info", "chunks_length", len(chunks), "max_embeds", maxEmbedsPerMsg)
-	if len(chunks) > maxEmbedsPerMsg {
-		utils.Info("⚠️ Too many AWOL users for embeds, falling back to file upload", "count", len(awolUsers))
-		sendAwolFile(r, i, awolUsers, position, forceFile, loasRead, now, skippedCount)
-		utils.Info("✨ Done!", "command", "Awol")
-		return
-	} else if forceFile {
-		utils.Info("⚠️ Force file output enabled, falling back to embeds", "count", len(awolUsers))
+	if forceFile || awolDescriptionsNeeded(summaryBlock, lines) > maxEmbedsPerMsg {
+		utils.Info("📄 Sending AWOL report as a file", "count", len(awolUsers), "force_file_output", forceFile)
 		sendAwolFile(r, i, awolUsers, position, forceFile, loasRead, now, skippedCount)
 		utils.Info("✨ Done!", "command", "Awol")
 		return
 	}
 
-	var embeds []*discordgo.MessageEmbed
-	for idx, chunk := range chunks {
-		title := awolEmbedTitle(position, idx, len(chunks))
-		embed := &discordgo.MessageEmbed{
-			Title:       title,
-			Description: summaryBlock + "\n\n" + chunk,
-			Color:       0xfbcc29,
-			Footer: &discordgo.MessageEmbedFooter{
-				Text: footerText,
-			},
-			Timestamp: now.Format(time.RFC3339),
-		}
-		embeds = append(embeds, embed)
-	}
-
-	if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-		Content: nil,
-		Embeds:  &embeds,
-	}); err != nil {
-		captureDeferredEditFailure(i, "awol", err)
+	if !sendPagedList(r, i, now, pagedList{
+		command:  "awol",
+		position: position,
+		lines:    lines,
+		title:    func(idx, total int) string { return awolEmbedTitle(position, idx, total) },
+		footer:   footerText,
+	}) {
 		return
 	}
 
 	utils.Info("✨ Done!", "command", "Awol")
+}
+
+// awolDescriptionsNeeded counts the descriptions lines would take when each
+// opens with summaryBlock and holds at most discordEmbedDescriptionLimit
+// bytes. More than maxEmbedsPerMsg of them sends the report as a file. The
+// count predates /awol's follow-ups, and keeping it keeps the file going to
+// the lists that got it before.
+func awolDescriptionsNeeded(summaryBlock string, lines []pagedLine) int {
+	budget := discordEmbedDescriptionLimit - len(summaryBlock+"\n\n")
+	count, used := 0, 0
+	for _, l := range lines {
+		n := len(l.text) + len("\n")
+		if count == 0 || used+n > budget {
+			count++
+			used = 0
+		}
+		used += n
+	}
+	return count
 }
 
 // awolEmbedTitle renders the "AWOL — <position>" heading, paginated only when the
@@ -424,7 +411,7 @@ func awolUserLine(u AwolUser) string {
 	if u.reviewLOA != nil {
 		tags += "⚠️ " + awolThreadTag(awolNeedsReviewTag, u.reviewLOA.threadID)
 	}
-	return fmt.Sprintf("%s %s[%s](%s) — %s\n",
+	return fmt.Sprintf("%s %s[%s](%s) — %s",
 		u.severityGlyph(),
 		tags,
 		u.Username,

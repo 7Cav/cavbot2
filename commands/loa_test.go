@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
@@ -47,7 +46,7 @@ var loaNumbers = regexp.MustCompile(`\d+`)
 func loaSection(t *testing.T, f *fakeResponder, heading string) []string {
 	t.Helper()
 	var lines []string
-	for _, embeds := range loaParts(t, f) {
+	for _, embeds := range replyMessages(t, f) {
 		for _, e := range embeds {
 			current := ""
 			for _, line := range strings.Split(e.Description, "\n") {
@@ -64,85 +63,15 @@ func loaSection(t *testing.T, f *fakeResponder, heading string) []string {
 	return lines
 }
 
-// loaParts returns the embeds of each message the run sent, in order: the
-// reply as its last edit left it, then each follow-up after that edit. It
-// fails the test when the run never edited its reply, or made any call but
-// a follow-up after the edit.
-func loaParts(t *testing.T, f *fakeResponder) [][]*discordgo.MessageEmbed {
-	t.Helper()
-	calls := f.Calls()
-	last := -1
-	for k, c := range calls {
-		if c.Method == "Edit" && c.Edit != nil {
-			last = k
-		}
-	}
-	if last < 0 {
-		t.Fatalf("the run never edited its reply; it last showed %q", lastReply(t, calls))
-	}
-	var reply []*discordgo.MessageEmbed
-	if calls[last].Edit.Embeds != nil {
-		reply = *calls[last].Edit.Embeds
-	}
-	parts := [][]*discordgo.MessageEmbed{reply}
-	for _, c := range calls[last+1:] {
-		if c.Method != "Followup" || c.Params == nil {
-			t.Fatalf("the run's reply edit was followed by a %s call", c.Method)
-		}
-		parts = append(parts, c.Params.Embeds)
-	}
-	return parts
-}
-
 // loaEmbeds returns every embed the run sent, in the order a member reads
 // them.
 func loaEmbeds(t *testing.T, f *fakeResponder) []*discordgo.MessageEmbed {
 	t.Helper()
 	var all []*discordgo.MessageEmbed
-	for _, embeds := range loaParts(t, f) {
+	for _, embeds := range replyMessages(t, f) {
 		all = append(all, embeds...)
 	}
 	return all
-}
-
-// assertWithinDiscordLimits fails for each message Discord would refuse
-// for its embeds: more than 10 embeds, a description over 4096
-// characters, or over 6000 characters of embed text in all. The limits are
-// Discord's, at
-// https://docs.discord.com/developers/resources/message#embed-object-embed-limits.
-func assertWithinDiscordLimits(t *testing.T, parts [][]*discordgo.MessageEmbed) {
-	t.Helper()
-	for p, embeds := range parts {
-		if len(embeds) > 10 {
-			t.Errorf("message %d holds %d embeds, over Discord's 10", p+1, len(embeds))
-		}
-		total := 0
-		for e, embed := range embeds {
-			if n := utf8.RuneCountInString(embed.Description); n > 4096 {
-				t.Errorf("message %d embed %d has a %d-character description, over Discord's 4096", p+1, e+1, n)
-			}
-			total += embedTextChars(embed)
-		}
-		if total > 6000 {
-			t.Errorf("message %d holds %d characters of embed text, over Discord's 6000", p+1, total)
-		}
-	}
-}
-
-// embedTextChars counts the characters of e that Discord holds to a
-// message's 6000: its title, description, footer, author name and fields.
-func embedTextChars(e *discordgo.MessageEmbed) int {
-	n := utf8.RuneCountInString(e.Title) + utf8.RuneCountInString(e.Description)
-	if e.Footer != nil {
-		n += utf8.RuneCountInString(e.Footer.Text)
-	}
-	if e.Author != nil {
-		n += utf8.RuneCountInString(e.Author.Name)
-	}
-	for _, field := range e.Fields {
-		n += utf8.RuneCountInString(field.Name) + utf8.RuneCountInString(field.Value)
-	}
-	return n
 }
 
 // loaListed is one LOA as /loa should list it: its Subject's name and its
@@ -658,7 +587,7 @@ func TestRunLoaSendsAListThatFitsOneEmbedAsOneEmbedTitledForThePosition(t *testi
 	f := &fakeResponder{}
 	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	parts := loaParts(t, f)
+	parts := replyMessages(t, f)
 	if len(parts) != 1 || len(parts[0]) != 1 {
 		t.Fatalf("want one message of one embed; got %d messages, the reply holding %d embeds", len(parts), len(parts[0]))
 	}
@@ -674,7 +603,7 @@ func TestRunLoaListsEveryLOAOfAListPastOneEmbedOnceUnderItsHeadingInOrder(t *tes
 	f := &fakeResponder{}
 	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	assertWithinDiscordLimits(t, loaParts(t, f))
+	assertWithinDiscordLimits(t, replyMessages(t, f))
 	for _, heading := range loaHeadings {
 		assertListedInOrder(t, heading, loaSection(t, f, heading), want[heading])
 	}
@@ -707,7 +636,7 @@ func TestRunLoaSpreadsAListPastOneMessageOverFollowUpsDiscordAccepts(t *testing.
 	f := &fakeResponder{}
 	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	parts := loaParts(t, f)
+	parts := replyMessages(t, f)
 	if len(parts) < 2 {
 		t.Fatalf("want the list across more than one message; got %d", len(parts))
 	}
@@ -806,7 +735,7 @@ func TestRunLoaStopsAtARefusedFollowUpAndReportsItOnce(t *testing.T) {
 	serveLOAPosition(t, 60, 50, 40)
 	whole := &fakeResponder{}
 	runLoa(whole, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
-	if n := len(loaParts(t, whole)); n < 3 {
+	if n := len(replyMessages(t, whole)); n < 3 {
 		t.Fatalf("the fixture makes %d parts; the test needs one after the refused follow-up", n)
 	}
 
