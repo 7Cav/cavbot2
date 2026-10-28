@@ -75,6 +75,9 @@ type watched struct {
 	// up is set once READY or RESUMED has come on one of the session's
 	// connections, and refused once Discord has closed one with 4004.
 	up, refused bool
+	// onRefused, when set, hears of the refusal of the session once it was
+	// up, in place of the watch's own line.
+	onRefused func()
 }
 
 // NewGatewayWatch watches an account, and reads none of its sessions until
@@ -99,7 +102,22 @@ func WatchGateway(dg *discordgo.Session, after time.Duration, kv ...any) *Gatewa
 // close a session the watch reads with CloseSession, or stand the watch
 // down first.
 func (w *GatewayWatch) Watch(dg *discordgo.Session) {
-	ws := &watched{dg: dg}
+	w.watch(&watched{dg: dg})
+}
+
+// WatchWithRefusal reads dg as Watch does, and when Discord refuses dg's
+// token once dg was up, calls refused in place of logging
+// TokenRefusedMessage, so the caller tells of the refusal in its own words.
+// refused runs once, on the goroutine that read the close, with no lock of
+// the watch held.
+func (w *GatewayWatch) WatchWithRefusal(dg *discordgo.Session, refused func()) {
+	w.watch(&watched{dg: dg, onRefused: refused})
+}
+
+// watch reads ws from now on, in place of the session the watch read
+// before.
+func (w *GatewayWatch) watch(ws *watched) {
+	dg := ws.dg
 	dg.Dialer = gatewayDialer(func(code int) { w.closed(ws, code) })
 	dg.AddHandler(func(_ *discordgo.Session, _ *discordgo.Ready) { w.online(ws) })
 	dg.AddHandler(func(_ *discordgo.Session, _ *discordgo.Resumed) { w.online(ws) })
@@ -113,7 +131,8 @@ func (w *GatewayWatch) Watch(dg *discordgo.Session) {
 // 4004, Discord has refused the session's token, so no login can succeed,
 // and the session logs in no more. A session refused before it was ever up
 // failed to open, and the caller of its open tells of the refusal, so the
-// watch logs it only for a session that was up. It runs on the goroutine
+// watch tells of it only for a session that was up, once: to the session's
+// onRefused when it has one, else in the log. It runs on the goroutine
 // that read the close. For a session that was running, that is discordgo's
 // listener. Discord answers its resume with Op 9, discordgo sends the
 // identify from inside Open, and the 4004 for that identify comes after Open
@@ -121,17 +140,24 @@ func (w *GatewayWatch) Watch(dg *discordgo.Session) {
 // ShouldReconnectOnError as it starts. A 4004 during the session's first
 // Open fails its start instead. discordgo's Open holds the session's lock
 // while it reads, so closed takes none of the session's locks. It writes
-// ShouldReconnectOnError under the watch's mutex, as CloseSession does.
+// ShouldReconnectOnError under the watch's mutex, as CloseSession does, and
+// tells of the refusal after letting go of it.
 func (w *GatewayWatch) closed(ws *watched, code int) {
 	if code != closeAuthenticationFailed {
 		return
 	}
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	ws.dg.ShouldReconnectOnError = false
+	tell := !ws.refused && ws == w.session && ws.up
 	ws.refused = true
-	if ws == w.session && ws.up {
-		Warn(TokenRefusedMessage, w.kv...)
+	kv := w.kv
+	w.mu.Unlock()
+	switch {
+	case !tell:
+	case ws.onRefused != nil:
+		ws.onRefused()
+	default:
+		Warn(TokenRefusedMessage, kv...)
 	}
 }
 

@@ -269,7 +269,7 @@ func newFakeGateway(accounts map[string]string) *fakeGateway {
 	return &fakeGateway{accounts: accounts, down: map[string]bool{}, refused: map[string]bool{}, places: map[string]int{}}
 }
 
-func (g *fakeGateway) Open(recorder int, token string) (GatewaySession, error) {
+func (g *fakeGateway) Open(recorder int, token string, _ func()) (GatewaySession, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.tries = append(g.tries, loginTry{token: token, at: time.Now()})

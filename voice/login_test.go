@@ -65,7 +65,7 @@ func TestARecorderWhoseFirstLoginFailsIsOfflineFromThatTry(t *testing.T) {
 	events := recordSentry(t)
 	gatewaytest.New(t, func(int) gatewaytest.Login { return gatewaytest.Login{Refuse: true} })
 
-	if _, err := testDiscord().Open(1, "recorder-token"); err == nil {
+	if _, err := testDiscord().Open(1, "recorder-token", func() {}); err == nil {
 		t.Fatal("Open of a login the gateway refused = nil error, want one")
 	}
 
@@ -262,6 +262,48 @@ func TestARecorderWhoseLoginDiscordRefusesWith4004IsOut(t *testing.T) {
 				t.Errorf("%d records say Discord refused the token, want 1", n)
 			}
 		})
+	}
+}
+
+// upAndRefused is a gateway whose first login is up, then closed with 4004,
+// as Discord closes a session whose token was reset in the Developer
+// Portal. Any later login is refused the same way.
+func upAndRefused(t *testing.T) *gatewaytest.Gateway {
+	return gatewaytest.New(t, func(login int) gatewaytest.Login {
+		if login == 1 {
+			return gatewaytest.Login{Answer: gatewaytest.Ready, Close: 4004}
+		}
+		return gatewaytest.Login{Invalid: true, Close: 4004}
+	})
+}
+
+// A recorder whose token Discord refuses while its session is up is out
+// until a restart, as one refused at a relogin is. It logs in no more, the
+// bot log says so once in the recorder's words, and Sentry hears of the
+// outage once.
+func TestARecorderWhoseSessionDiscordRefusesWhileUpIsOut(t *testing.T) {
+	logs := captureLogs(t)
+	events := recordSentry(t)
+	g := upAndRefused(t)
+	r := Connect("recorder-token", testDiscord())
+	defer r.Close()
+
+	waitUntil(t, "the recorder is out", func() bool { return r.State(gatewaytest.UserID) == RecorderOut })
+
+	if got := outageEvents(t, events, 1, loginOutageAfter); len(got) != 1 {
+		t.Errorf("Sentry got %d outage events, want 1", len(got))
+	}
+	if n := g.Logins(); n != 1 {
+		t.Errorf("the gateway saw %d logins, want 1: none after the 4004", n)
+	}
+	if n := logs.linesSaying(slog.LevelWarn, loginRefusedMessage, "recorder", "1"); n != 1 {
+		t.Errorf("%d WARN lines say recorder 1's token was refused, want 1", n)
+	}
+	if ids := logs.values(slog.LevelWarn, loginRefusedMessage, "user_id"); !slices.Equal(ids, []string{gatewaytest.UserID}) {
+		t.Errorf("the refusal line names user IDs %q, want %s once", ids, gatewaytest.UserID)
+	}
+	if n := countOf(logs.messagesAt(slog.LevelWarn), utils.TokenRefusedMessage); n != 0 {
+		t.Errorf("%d lines say the gateway session's token was refused, want none beside the recorder's", n)
 	}
 }
 

@@ -122,8 +122,9 @@ func (d *Discord) UserID(ctx context.Context, token string) (string, error) {
 // no connection, and the next login opens a session of its own.
 // The recorder's watch reads the session, so a recorder that drops off the
 // gateway, or stays offline, reaches Sentry while the bot runs, and one
-// whose token Discord refuses stops logging in.
-func (d *Discord) Open(recorder int, token string) (GatewaySession, error) {
+// whose token Discord refuses stops logging in, and tells refused once the
+// session was up.
+func (d *Discord) Open(recorder int, token string, refused func()) (GatewaySession, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, err
@@ -137,7 +138,7 @@ func (d *Discord) Open(recorder int, token string) (GatewaySession, error) {
 	// sends the session. A failed open is a close on purpose, and the
 	// recorder stays offline.
 	s.watch = rec.watch
-	s.watch.Watch(dg)
+	s.watch.WatchWithRefusal(dg, refused)
 	if err := utils.OpenSession(dg); err != nil {
 		return nil, s.failedOpen(err)
 	}
