@@ -154,9 +154,9 @@ type RecorderVoice interface {
 	// an offline recorder waits for its login, and returns
 	// voice.ErrRecorderOffline when ctx ends first.
 	Join(ctx context.Context, recorderID, guildID, channelID string) (voice.Conn, error)
-	// TakeOffline counts a recorder a gap cut short offline from now. Once
-	// its leave has returned or given up, relogin has it log out and back
-	// in by itself.
+	// TakeOffline counts a recorder offline from now: one a gap cut short,
+	// or one whose leave ran past its deadline. Once its leave has returned
+	// or given up, relogin has it log out and back in by itself.
 	TakeOffline(recorderID string) (relogin func())
 }
 
@@ -342,14 +342,14 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	// A recorder still deafened records silence, so the start fails as a
 	// failed join does rather than tell the starter it records.
 	if conn.Deafened() && !r.liftDeafen(joinCtx, conn, recorderID, channelID) {
-		r.releaseWhenLeft(recorderID, r.leave(conn, recorderID, channelID))
+		r.releaseAfterLeave(recorderID, r.leave(conn, recorderID, channelID))
 		return "", errRecordingFailed
 	}
 	// The notice is how the channel learns it is recorded, so a recording
 	// whose notice didn't post doesn't go on: the recorder leaves.
 	noticeID, err := r.postRecordingNotice(channelID, by.UserID, title)
 	if err != nil {
-		r.releaseWhenLeft(recorderID, r.leave(conn, recorderID, channelID))
+		r.releaseAfterLeave(recorderID, r.leave(conn, recorderID, channelID))
 		captureError("Recording notice not posted", err, "recorder", recorderID, "channel_id", channelID)
 		return "", errRecordingFailed
 	}
@@ -370,7 +370,7 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 		// A recording with no row is one the panel and the deploy gate
 		// can't see, so the recorder leaves rather than record it, and the
 		// notice goes with it.
-		r.releaseWhenLeft(recorderID, r.leave(conn, recorderID, channelID))
+		r.releaseAfterLeave(recorderID, r.leave(conn, recorderID, channelID))
 		r.removeRecordingNotice(channelID, noticeID)
 		captureError("Recording row not written at start", err, "recorder", recorderID, "channel_id", channelID)
 		return "", errRecordingFailed
@@ -521,11 +521,11 @@ func (r *RecordingRuntime) endCapture(target *activeRecording, stoppedAt time.Ti
 // finishEnded finishes a stopped recording whose capture ended at
 // stoppedAt: the recorder leaves, the row records the stop time, how it
 // ended and its speakers, the recorder is free again once its leave has
-// returned, the notice says it stopped, and the mix starts.
+// returned or given up, the notice says it stopped, and the mix starts.
 func (r *RecordingRuntime) finishEnded(target *activeRecording, end store.RecordingEnd, stoppedBy string, stoppedAt time.Time) {
-	returned := r.leave(target.conn, target.row.RecorderID, target.row.ChannelID)
+	late := r.leave(target.conn, target.row.RecorderID, target.row.ChannelID)
 	row := r.closeRow(target, stoppedAt, end)
-	r.releaseWhenLeft(row.RecorderID, returned)
+	r.releaseAfterLeave(row.RecorderID, late)
 	r.closeRecordingNotice(row)
 	logRecordingStopped(row, stoppedBy)
 	r.startMix(row)
@@ -605,10 +605,11 @@ func (r *RecordingRuntime) recordingOff() bool {
 // being recorded is refused before any recorder is looked at. A recording
 // counts from its reservation until its recorder is released at the end of
 // its stop, its join in flight or not, so two starts in one channel can't
-// both pass. A stop whose leave ran past its deadline releases the recorder
-// only once that leave returns. A recording a gap cut short stops counting
-// at the cut short, for its channel and its recorder both, and the recorder
-// is offline from then until it logs back in.
+// both pass. A stop, or a start that failed after its join, whose leave ran
+// past its deadline releases the recorder once the leave gives up, and the
+// recorder is offline from then until it logs back in. A recording a gap
+// cut short stops counting at the cut short, for its channel and its
+// recorder both, and the recorder is offline from then too.
 func (r *RecordingRuntime) reserveRecorder(channelID string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -654,26 +655,22 @@ func (r *RecordingRuntime) reserveLocked(recorderID, channelID string) {
 // leave takes a recorder out of its channel, and waits no longer than
 // recordingLeaveTimeout, the deadline it hands the leave. When a leave runs
 // past it, as one frozen in the voice adapter does, leave logs a WARN and
-// returns to its caller. The leave finishes on its own goroutine, if ever,
-// and returned closes once it has.
-func (r *RecordingRuntime) leave(conn voice.Conn, recorderID, channelID string) (returned <-chan struct{}) {
+// returns to its caller. The leave finishes on its own goroutine, if ever.
+// leave reports whether the leave ran past its deadline.
+func (r *RecordingRuntime) leave(conn voice.Conn, recorderID, channelID string) (late bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), recordingLeaveTimeout)
 	defer cancel()
-	done := make(chan struct{})
 	// left carries whether the leave ran past its deadline, judged the
 	// moment the leave returns rather than when this goroutine next runs.
 	left := make(chan bool, 1)
 	go func() {
-		late := false
-		// done closes before the verdict goes out, so a caller that has
-		// read a leave in time finds its recorder free to release.
-		defer func() { left <- late }()
-		defer close(done)
+		ranLate := false
+		defer func() { left <- ranLate }()
 		defer utils.RecoverPanic("recording-leave", "recorder", recorderID, "channel_id", channelID)
 		conn.Leave(ctx)
-		late = ctx.Err() != nil
+		ranLate = ctx.Err() != nil
 	}()
-	late := true
+	late = true
 	select {
 	case late = <-left:
 	case <-ctx.Done():
@@ -686,7 +683,7 @@ func (r *RecordingRuntime) leave(conn voice.Conn, recorderID, channelID string) 
 	if late {
 		utils.Warn(leaveTimedOutMessage, "recorder", recorderID, "channel_id", channelID)
 	}
-	return done
+	return late
 }
 
 // release frees a recorder.
@@ -696,20 +693,21 @@ func (r *RecordingRuntime) release(recorderID string) {
 	delete(r.running, recorderID)
 }
 
-// releaseWhenLeft frees a recorder once its leave has returned: at once
-// after a leave in time, and later after one that ran past its deadline.
-// Until then the recorder stays busy, since the voice adapter can't join it
-// again while it is still closing its connection.
-func (r *RecordingRuntime) releaseWhenLeft(recorderID string, returned <-chan struct{}) {
-	select {
-	case <-returned:
-		r.release(recorderID)
-	default:
-		go func() {
-			<-returned
-			r.release(recorderID)
-		}()
+// releaseAfterLeave frees a recorder whose leave has returned or given up.
+// After a leave in time it is free at once. After one that ran past its
+// deadline, the voice adapter would hand the recorder's next join the
+// connection it is still closing, so the recorder goes offline as after a
+// cut short, and logs out and back in. A start meanwhile waits for its new
+// login. Whenever the hung leave returns, it touches no later recording.
+func (r *RecordingRuntime) releaseAfterLeave(recorderID string, late bool) {
+	r.mu.Lock()
+	delete(r.running, recorderID)
+	relogin := func() {}
+	if late {
+		relogin = r.voice.TakeOffline(recorderID)
 	}
+	r.mu.Unlock()
+	relogin()
 }
 
 // holdsRecordingRole reports whether the invoker holds a recording role,

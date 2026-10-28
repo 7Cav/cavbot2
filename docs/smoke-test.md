@@ -154,6 +154,15 @@ after that. To see a short gap instead, remove the file about 5 s after the
 member starts talking, and have them keep talking. The first frame that
 decrypts ends the gap. Remove the file before `down` too.
 
+**Hung recorder leaves.** A recording check that needs a recorder's leave to
+hang starts the run with `go run ./tools/smoke up --env
+SMOKE_VOICE_LEAVE_HANG_FILE=/tmp/cavbot2-voice-leave-hang`. While that file
+exists, every recorder leave waits instead of taking the recorder out of the
+call. A stop gives up on the leave after 5 s, the bot log gets a "Recorder
+leave timed out, going on without it" WARN, and the recorder logs out and back
+in. Joins never wait on the file, so a start during the hang waits only for
+that login. Remove the file to let held leaves go on, and before `down`.
+
 **Cav members.** The test guild has none of the rank roles the code holds for
 production, so no test account counts as a Cav member until a panel admin sets
 a rank role. A check that needs a Cav member, such as owning a spawned channel

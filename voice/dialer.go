@@ -73,6 +73,36 @@ const smokeUDPCutEnv = "SMOKE_VOICE_UDP_CUT_FILE"
 // environment block doesn't carry it.
 const smokeDecryptFailEnv = "SMOKE_VOICE_DECRYPT_FAIL_FILE"
 
+// smokeLeaveHangEnv names a file whose existence holds every recorder leave,
+// as a leave frozen in the voice adapter hangs, until the file is gone. Only
+// a smoke run sets it: the compose file's environment block doesn't carry
+// it.
+const smokeLeaveHangEnv = "SMOKE_VOICE_LEAVE_HANG_FILE"
+
+// smokeLeaveHangPoll is how often a held leave looks for the file
+// smokeLeaveHangEnv names.
+const smokeLeaveHangPoll = 250 * time.Millisecond
+
+// hangingLeaveConn is a recorder's voice connection whose leave waits while
+// file exists before it starts. The wait ignores the leave's context, as a
+// leave frozen in the voice adapter does.
+type hangingLeaveConn struct {
+	Conn
+	file string
+}
+
+// Leave waits while the file exists, looking again every
+// smokeLeaveHangPoll, then leaves.
+func (c *hangingLeaveConn) Leave(ctx context.Context) {
+	for {
+		if _, err := os.Stat(c.file); err != nil {
+			break
+		}
+		time.Sleep(smokeLeaveHangPoll)
+	}
+	c.Conn.Leave(ctx)
+}
+
 // smokeDecryptFailMessage is the WARN a DAVE session logs when it starts
 // refusing every frame for the smoke hook.
 const smokeDecryptFailMessage = "Smoke hook refusing to decrypt voice frames"

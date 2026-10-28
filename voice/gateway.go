@@ -1563,7 +1563,7 @@ func closedWith(err error, code int) bool {
 func (s *discordgoSession) UserID() string { return s.userID }
 
 // LogOut logs the recorder out of this login, for a relogin. Its leave has
-// already taken it out of the call, so the logout waits on no voice
+// returned or given up by then, so the logout waits on no voice
 // connection. The recorder is offline from now until a login's READY, and
 // in a gateway outage all that time, though the bot chose it. A login
 // discordgo brings back after the logout is logged out again at once.

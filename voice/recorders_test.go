@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -565,6 +567,53 @@ func TestJoinGoesThroughTheNamedRecorder(t *testing.T) {
 	if !b.conns[0].left {
 		t.Error("recorder id-b still in vc-1 after Leave")
 	}
+}
+
+// A smoke run holds every recorder leave through the file
+// SMOKE_VOICE_LEAVE_HANG_FILE names (docs/smoke-test.md), as a leave frozen
+// in the voice adapter would hang. While the file exists a leave doesn't
+// return and the recorder stays in the channel, and once the file is gone
+// the leave goes on.
+func TestSmokeLeaveHangHoldsEveryLeaveWhileItsFileExists(t *testing.T) {
+	hangFile := filepath.Join(t.TempDir(), "leave-hang")
+	t.Setenv(smokeLeaveHangEnv, hangFile)
+	synctest.Test(t, func(t *testing.T) {
+		gw := newFakeGateway(map[string]string{"tok-a": "id-a"})
+		r := Connect("tok-a", gw)
+		defer r.Close()
+		conn, err := r.Join(context.Background(), "id-a", "guild-1", "vc-1")
+		if err != nil {
+			t.Fatalf("Join: %v", err)
+		}
+		if err := os.WriteFile(hangFile, nil, 0o600); err != nil {
+			t.Fatalf("writing the leave hang file: %v", err)
+		}
+
+		left := func() bool {
+			gw.mu.Lock()
+			defer gw.mu.Unlock()
+			return gw.opened[0].conns[0].left
+		}
+		var returned atomic.Bool
+		go func() {
+			conn.Leave(context.Background())
+			returned.Store(true)
+		}()
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if returned.Load() || left() {
+			t.Fatal("leave returned with the leave hang file in place, want it held")
+		}
+		if err := os.Remove(hangFile); err != nil {
+			t.Fatalf("removing the leave hang file: %v", err)
+		}
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		if !returned.Load() || !left() {
+			t.Error("leave still held once the leave hang file is gone")
+		}
+	})
 }
 
 // Each recorder opens as its token's place in RECORDER_TOKENS, from 1, the
