@@ -20,4 +20,4 @@ This repo adds a sixth state role, `blocked`. A factory run that [hands an issue
 
 - **Show what needs attention.** List `blocked` issues as a fourth bucket, after `needs-info`.
 - **Gather context.** Read the hand-back comment as prior triage notes. Each reason it gives for stopping is an outstanding question for the maintainer.
-- **Apply the outcome.** A `ready-for-agent` brief answers every outstanding question from the hand-back. When the hand-back names a pull request, the factory waits on it until it merges or closes, so ask the maintainer which.
+- **Apply the outcome.** A `ready-for-agent` brief answers every outstanding question from the hand-back. When the hand-back names an open pull request, the factory waits on it until it merges or closes, so ask the maintainer which.
