@@ -14,7 +14,7 @@ only when staff set force_file_output.
 
 When the command runs, the bot saves the run's pages in its Postgres, and each
 press reads its page from that saved copy. Every page then comes from the run
-the title's timestamp names. A press answers without waiting on the 7Cav API,
+the embed's timestamp names. A press answers without waiting on the 7Cav API,
 and the arrows keep working through a deploy or restart. The buttons name the
 saved copy, so a free-text position never has to fit in the 100 characters
 ADR 0007 allows a CustomID.
@@ -50,7 +50,7 @@ same once #823 ships, and /awol sends its file for a list over 10 pages.
   waits on the roster and LOA lookups, and the list can shift between presses.
   A trooper who posts while a leader reads page 2 drops off the list, and page
   3 skips someone. /awol's day figures also change at UTC midnight while the
-  title's timestamp stays put.
+  embed's timestamp stays put.
 - **Keep the pages in the bot's memory.** The cheapest option, but every reply
   posted before a deploy or restart ends up with dead arrows.
 - **Any press flips the public message.** Two readers would keep moving the
