@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,12 +48,14 @@ const (
 // rather than identify. A later connection it answers with Resumed when it
 // resumes, and refuses with 4004 when it identifies. The first it refuses
 // holds the token the recorder held, so the recorder leaves, joins again
-// and identifies once more, and nothing dials after that one's 4004.
-// dropped hears when it ended the first connection.
+// and identifies once more, and nothing dials after that one's 4004. A
+// later connection plays as later says instead, when it is set. dropped
+// hears when it ended the first connection.
 type droppingVoiceServer struct {
 	*localVoiceServer
 	udp       *fakeVoiceServer
 	end       connEnd
+	later     laterConn
 	listening chan struct{}
 	dropped   chan time.Time
 
@@ -75,7 +78,14 @@ func newDroppingVoiceServer(t *testing.T) *droppingVoiceServer {
 // first connection as end does.
 func newDroppingVoiceServerEnding(t *testing.T, end connEnd) *droppingVoiceServer {
 	t.Helper()
-	s := &droppingVoiceServer{udp: newFakeVoiceServer(t), end: end, listening: make(chan struct{}), dropped: make(chan time.Time, 1)}
+	return newDroppingVoiceServerPlaying(t, end, nil)
+}
+
+// newDroppingVoiceServerPlaying is a dropping voice server that ends the
+// first connection as end does, and plays each later one as later does.
+func newDroppingVoiceServerPlaying(t *testing.T, end connEnd, later laterConn) *droppingVoiceServer {
+	t.Helper()
+	s := &droppingVoiceServer{udp: newFakeVoiceServer(t), end: end, later: later, listening: make(chan struct{}), dropped: make(chan time.Time, 1)}
 	s.localVoiceServer = newLocalVoiceServer(t, func(n int32, conn *websocket.Conn) {
 		defer s.locked(func() { s.played, s.changed = s.played+1, time.Now() })
 		s.play(t, n, conn)
@@ -85,6 +95,10 @@ func newDroppingVoiceServerEnding(t *testing.T, end connEnd) *droppingVoiceServe
 
 // connEnd is how a voice server ends a connection.
 type connEnd func(t *testing.T, conn *websocket.Conn)
+
+// laterConn is how a dropping voice server s plays the nth connection it
+// accepts, after the first.
+type laterConn func(s *droppingVoiceServer, t *testing.T, n int32, conn *websocket.Conn)
 
 // closingWith ends a connection with a close carrying code.
 func closingWith(code int) connEnd {
@@ -123,33 +137,24 @@ func (s *droppingVoiceServer) locked(f func()) {
 
 // play plays the voice server for the nth connection.
 func (s *droppingVoiceServer) play(t *testing.T, n int32, conn *websocket.Conn) {
-	send := func(op disgovoice.Opcode, d disgovoice.GatewayMessageData, seq int) {
-		if err := conn.WriteJSON(disgovoice.GatewayMessage{Op: op, D: d, Seq: seq}); err != nil {
-			t.Errorf("voice server sending op %d: %v", op, err)
-		}
+	if n > 1 && s.later != nil {
+		s.later(s, t, n, conn)
+		return
 	}
-	s.locked(func() { s.greeted, s.changed = s.greeted+1, time.Now() })
-	greeted := time.Now()
-	send(disgovoice.OpcodeHello, disgovoice.GatewayMessageDataHello{HeartbeatInterval: float64(dropHeartbeat.Milliseconds())}, 1)
-	op, ok := awaitOneOf(conn, disgovoice.OpcodeIdentify, disgovoice.OpcodeResume)
+	op, ok := s.greet(t, conn)
 	if !ok {
 		return
 	}
-	s.locked(func() { s.opened = append(s.opened, op) })
-	time.Sleep(time.Until(greeted.Add(dropReadyAfter)))
 	switch {
 	case op == disgovoice.OpcodeResume:
-		send(disgovoice.OpcodeResumed, disgovoice.GatewayMessageDataResumed{}, 0)
+		sendOp(t, conn, disgovoice.OpcodeResumed, disgovoice.GatewayMessageDataResumed{}, 0)
 		return
 	case n > 1:
 		closingWith(disgovoice.GatewayCloseEventCodeAuthenticationFailed.Code)(t, conn)
 		return
 	}
-	go s.udp.answerDiscovery(t)
-	send(disgovoice.OpcodeReady, disgovoice.GatewayMessageDataReady{SSRC: 42, IP: "127.0.0.1", Port: s.udp.port(),
-		Modes: []disgovoice.EncryptionMode{disgovoice.EncryptionModeAEADAES256GCMRTPSize}}, 0)
-	awaitOp(t, conn, disgovoice.OpcodeSelectProtocol)
-	send(disgovoice.OpcodeSessionDescription, disgovoice.GatewayMessageDataSessionDescription{
+	ready(t, conn, s.udp)
+	sendOp(t, conn, disgovoice.OpcodeSessionDescription, disgovoice.GatewayMessageDataSessionDescription{
 		Mode: disgovoice.EncryptionModeAEADAES256GCMRTPSize, SecretKey: make([]byte, 32)}, 0)
 	select {
 	case <-s.listening:
@@ -159,6 +164,39 @@ func (s *droppingVoiceServer) play(t *testing.T, n int32, conn *websocket.Conn) 
 	}
 	s.end(t, conn)
 	s.dropped <- time.Now()
+}
+
+// greet sends conn the server's Hello, reads the recorder's identify or
+// resume, and returns its op once Ready is due. false when the connection
+// ended first.
+func (s *droppingVoiceServer) greet(t *testing.T, conn *websocket.Conn) (disgovoice.Opcode, bool) {
+	s.locked(func() { s.greeted, s.changed = s.greeted+1, time.Now() })
+	greeted := time.Now()
+	sendOp(t, conn, disgovoice.OpcodeHello, disgovoice.GatewayMessageDataHello{HeartbeatInterval: float64(dropHeartbeat.Milliseconds())}, 1)
+	op, ok := awaitOneOf(conn, disgovoice.OpcodeIdentify, disgovoice.OpcodeResume)
+	if !ok {
+		return 0, false
+	}
+	s.locked(func() { s.opened = append(s.opened, op) })
+	time.Sleep(time.Until(greeted.Add(dropReadyAfter)))
+	return op, true
+}
+
+// ready sends conn the server's Ready, naming udp as its UDP socket, which
+// answers the recorder's IP discovery, and waits for the recorder's Select
+// Protocol.
+func ready(t *testing.T, conn *websocket.Conn, udp *fakeVoiceServer) {
+	go udp.answerDiscovery(t)
+	sendOp(t, conn, disgovoice.OpcodeReady, disgovoice.GatewayMessageDataReady{SSRC: 42, IP: "127.0.0.1", Port: udp.port(),
+		Modes: []disgovoice.EncryptionMode{disgovoice.EncryptionModeAEADAES256GCMRTPSize}}, 0)
+	awaitOp(t, conn, disgovoice.OpcodeSelectProtocol)
+}
+
+// sendOp sends a voice gateway message on conn.
+func sendOp(t *testing.T, conn *websocket.Conn, op disgovoice.Opcode, d disgovoice.GatewayMessageData, seq int) {
+	if err := conn.WriteJSON(disgovoice.GatewayMessage{Op: op, D: d, Seq: seq}); err != nil {
+		t.Errorf("voice server sending op %d: %v", op, err)
+	}
 }
 
 // firstOps is the first op each connection sent after Hello.
@@ -434,6 +472,46 @@ func TestRecorderLeavesAndJoinsAgainWhenAVoiceServerRefusesItsHeldToken(t *testi
 
 	if !within(dropped, waitFor, h.leftAndJoinedAgain) {
 		t.Errorf("voice state updates after the 4015 = %v, want a leave and a join after it", h.sent())
+	}
+}
+
+// A voice server can close the recorder's dial after its Ready, before the
+// session description that would complete the connection, as this one does
+// on the rejoin's dial after a drop. The gap's report lists that dial with
+// the close's code, whether disgo would resume from the close, as from
+// 4015, or hands it straight over, as 4006. The drop itself is a failed
+// read with no code, so the dial's code can only be its own close's.
+func TestRecorderReportsTheCloseOfADialItsVoiceServerClosedAfterReady(t *testing.T) {
+	for _, code := range []int{
+		disgovoice.GatewayCloseEventCodeVoiceServerCrash.Code,
+		disgovoice.GatewayCloseEventCodeSessionNoLongerValid.Code,
+	} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			recordSentry(t)
+			udp := newFakeVoiceServer(t)
+			server := newDroppingVoiceServerPlaying(t, resetting, func(s *droppingVoiceServer, t *testing.T, n int32, conn *websocket.Conn) {
+				if n > 2 {
+					return
+				}
+				if _, ok := s.greet(t, conn); !ok {
+					return
+				}
+				ready(t, conn, udp)
+				closingWith(code)(t, conn)
+			})
+			h := newCallHarness(t)
+			conn, _ := h.recordDropping(server, server.dialer())
+
+			dropped := server.awaitDrop(t)
+
+			want := RecoveryStep{Kind: StepDial, Token: TokenHeld, Outcome: StepFailed, CloseCode: strconv.Itoa(code)}
+			hasDial := func() bool {
+				return slices.ContainsFunc(conn.GapReport().Steps, func(s RecoveryStep) bool { return sameStep(s, want) })
+			}
+			if !within(dropped, waitFor, hasDial) {
+				t.Errorf("recovery steps = %+v, want one %+v", conn.GapReport().Steps, want)
+			}
+		})
 	}
 }
 

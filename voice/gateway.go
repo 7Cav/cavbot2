@@ -826,7 +826,12 @@ type observedClose struct {
 // closeObserved notes the close or failed read disgo's gateway gw saw.
 // disgo starts its observer before the reconnect whose refused dial reaches
 // the close handler, and either can run first. A loss gw's close handler
-// handed over already as the refused resume takes err in its place.
+// handed over already as the refused resume takes err in its place. disgo
+// observes a close only on a connection past its Ready that the recorder
+// hasn't closed itself. So a close of gw ended the last dial through gw,
+// and that dial keeps the close's code unless it succeeded. The dial can
+// have ended by then, and a rejoin dialed again through a new gateway, as
+// when the close handler ran first.
 func (g *renewableGateway) closeObserved(gw disgovoice.Gateway, err error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -834,6 +839,7 @@ func (g *renewableGateway) closeObserved(gw disgovoice.Gateway, err error) {
 	if g.loss.closedBy == gw && errors.Is(g.loss.close, errResumeRefused) {
 		g.loss.close = err
 	}
+	g.steps.closedThrough(gw, err)
 }
 
 // closeBehind is err, the close or failed read gw's close handler handed
@@ -1209,7 +1215,7 @@ func (g *renewableGateway) dialUntilOpen(ctx context.Context, state disgovoice.S
 	for {
 		dial, redial := context.WithCancel(ctx)
 		gw, at, described := g.startDial(state, redial)
-		step := g.steps.start(StepDial, g.dialTokenOf(at))
+		step := g.steps.dial(g.dialTokenOf(at), gw)
 		err := gw.Open(context.WithValue(dial, ownDial{}, true), at)
 		if err == nil {
 			select {
