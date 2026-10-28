@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1057,6 +1058,53 @@ func TestGroupCheckUnavailableKeepsSession(t *testing.T) {
 			if again.StatusCode != http.StatusOK {
 				t.Errorf("after the outage GET / status = %d, want 200", again.StatusCode)
 			}
+		})
+	}
+}
+
+// Try again on the forum's 502 that a page load met opens the page asked
+// for once the forum answers again, not the landing (#803). A hub's edit
+// form keeps its query, which names the hub.
+func TestTryAgainOnTheForumPageAPageLoadMetOpensThatPage(t *testing.T) {
+	cases := []struct {
+		name string
+		// page is the address loaded while the forum doesn't answer, for
+		// the stored hub's ID.
+		page func(id int64) string
+		// check reads the page Try again lands on.
+		check func(t *testing.T, doc *html.Node, id int64)
+	}{
+		{"the Settings page", func(int64) string { return settingsPath }, func(t *testing.T, doc *html.Node, _ int64) {
+			if got := pageOf(t, doc); got != pageSettings {
+				t.Errorf("Try again lands on page %q, want %q", got, pageSettings)
+			}
+		}},
+		{"a hub's edit form", func(id int64) string { return "/?hub=" + strconv.FormatInt(id, 10) }, func(t *testing.T, doc *html.Node, id int64) {
+			if got := pageOf(t, doc); got != pageHubs {
+				t.Fatalf("Try again lands on page %q, want %q", got, pageHubs)
+			}
+			pageFormIn(t, doc, hubAddress(id), "")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			id := storedHubID(t, w.st, "hub-1")
+			w.forum.setUserinfoDrop(true)
+
+			res := w.b.get(tc.page(id))
+
+			if res.StatusCode != http.StatusBadGateway {
+				t.Fatalf("GET %s status = %d, want 502", tc.page(id), res.StatusCode)
+			}
+			retry := retryOf(t, parseHTML(t, res))
+			w.forum.setUserinfoDrop(false)
+			landed, _ := arrive(t, w.b, retry, w.b.get(retry))
+			if landed.StatusCode != http.StatusOK {
+				t.Fatalf("Try again (%s) status = %d, want 200", retry, landed.StatusCode)
+			}
+			tc.check(t, parseHTML(t, landed), id)
 		})
 	}
 }
