@@ -256,6 +256,35 @@ func TestRunLoaRosterFailureReachesSentryNotTheMember(t *testing.T) {
 	assertLookupFailed(t, f.Calls(), rec, "loa")
 }
 
+// /loa leaves no LOA call running once it has answered a failed roster
+// call, even when the LOA call starts late. A call left running would read
+// the API address after the run, while a later test sets it.
+func TestRunLoaLeavesNoLOACallRunningAfterAFailedRosterCall(t *testing.T) {
+	serveCavAPI(t, loaRefDate, utils.LiteRosterResponse{}).failRoster(http.StatusInternalServerError)
+	outlived := startLOACallsLate(t, 20*time.Millisecond)
+
+	runLoa(&fakeResponder{}, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+
+	if outlived() {
+		t.Fatal("an LOA call returned after the run did")
+	}
+}
+
+// /loa answers a failed roster call without waiting out an LOA call the
+// 7Cav API never answers.
+func TestRunLoaDoesNotWaitOutAnUnansweredLOACallAfterAFailedRosterCall(t *testing.T) {
+	api := serveCavAPI(t, loaRefDate, utils.LiteRosterResponse{})
+	api.failRoster(http.StatusInternalServerError)
+	api.neverAnswerLOAs()
+
+	started := time.Now()
+	runLoa(&fakeResponder{}, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+
+	if took := time.Since(started); took >= time.Second {
+		t.Fatalf("the run returned %v after it started; it waited out the LOA call", took)
+	}
+}
+
 // A position whose members have no open, upcoming or needs-review LOA gets
 // the no-LOAs reply naming the position.
 func TestRunLoa_NoMatchingLOAsReportsNone(t *testing.T) {

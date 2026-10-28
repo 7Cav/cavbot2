@@ -470,6 +470,35 @@ func TestRunAwolRosterFailureReachesSentryNotTheMember(t *testing.T) {
 	assertLookupFailed(t, f.Calls(), rec, "awol")
 }
 
+// /awol leaves no LOA call running once it has answered a failed roster
+// call, even when the LOA call starts late. A call left running would read
+// the API address after the run, while a later test sets it.
+func TestRunAwolLeavesNoLOACallRunningAfterAFailedRosterCall(t *testing.T) {
+	serveAwolRoster(t, utils.LiteRosterResponse{}, http.StatusInternalServerError)
+	outlived := startLOACallsLate(t, 20*time.Millisecond)
+
+	runAwol(&fakeResponder{}, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+
+	if outlived() {
+		t.Fatal("an LOA call returned after the run did")
+	}
+}
+
+// /awol answers a failed roster call without waiting out an LOA call the
+// 7Cav API never answers.
+func TestRunAwolDoesNotWaitOutAnUnansweredLOACallAfterAFailedRosterCall(t *testing.T) {
+	api := serveCavAPI(t, awolRefDate, utils.LiteRosterResponse{})
+	api.failRoster(http.StatusInternalServerError)
+	api.neverAnswerLOAs()
+
+	started := time.Now()
+	runAwol(&fakeResponder{}, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+
+	if took := time.Since(started); took >= time.Second {
+		t.Fatalf("the run returned %v after it started; it waited out the LOA call", took)
+	}
+}
+
 // An LOA counts for the roster member whose forum user ID matches its
 // Subject's, even when the member's username differs from the Subject's, as
 // after a rename.

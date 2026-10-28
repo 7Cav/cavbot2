@@ -39,6 +39,8 @@ type stubCavAPI struct {
 	today        time.Time
 	// delay holds back the answer to each roster and LOA call.
 	delay time.Duration
+	// loasNeverAnswer holds every LOA call until the caller hangs up.
+	loasNeverAnswer bool
 	// rosterCall and loasCall pair the two calls when pairCalls has set them.
 	rosterCall, loasCall *stubArrival
 }
@@ -98,6 +100,14 @@ func (a *stubCavAPI) failLOAs(status int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.loaStatus = status
+}
+
+// neverAnswerLOAs makes GET /loas hold every call until the caller hangs
+// up.
+func (a *stubCavAPI) neverAnswerLOAs() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.loasNeverAnswer = true
 }
 
 // pairCalls makes the roster call and the LOA call each wait until the other
@@ -164,12 +174,16 @@ func (a *stubCavAPI) serveRoster(w http.ResponseWriter) {
 // a date more than 365 days before today.
 func (a *stubCavAPI) serveLOAs(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
-	status, today := a.loaStatus, a.today
+	status, today, neverAnswer := a.loaStatus, a.today, a.loasNeverAnswer
 	loas := append([]stubLOA(nil), a.loas...)
 	mine, partner := a.loasCall, a.rosterCall
 	a.mu.Unlock()
 	if !awaitPartner(mine, partner) {
 		writeStubError(w, http.StatusInternalServerError)
+		return
+	}
+	if neverAnswer {
+		<-r.Context().Done()
 		return
 	}
 	if status != 0 {
