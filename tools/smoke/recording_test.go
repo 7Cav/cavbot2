@@ -5,11 +5,13 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,14 +30,15 @@ func (f fakeRecorder) LogOut() error { return nil }
 func (f fakeRecorder) Close() error  { return nil }
 
 // refusingDiscord logs a recorder in for each token, with Discord refusing
-// each token refused picks, at its gateway and its REST API alike.
+// each token refused picks, at its gateway and its REST API alike. A
+// refused login is voice.ErrTokenRefused, as the bot's gateway reports it.
 type refusingDiscord struct {
 	refused func(token string) bool
 }
 
 func (d refusingDiscord) Open(recorder int, token string) (voice.GatewaySession, error) {
 	if d.refused(token) {
-		return nil, errors.New("websocket: close 4004: Authentication failed.")
+		return nil, fmt.Errorf("%w: %w", voice.ErrTokenRefused, errors.New("websocket: close 4004: Authentication failed."))
 	}
 	return fakeRecorder{id: strconv.Itoa(1000 + recorder)}, nil
 }
@@ -135,6 +138,90 @@ func TestRecorderTallyCountsARecorderThatLogsBackInOnce(t *testing.T) {
 	}
 	if got, want := tallyOf(lines), (recorderTally{Connected: 1}); !reflect.DeepEqual(got, want) {
 		t.Errorf("tally %+v, want %+v", got, want)
+	}
+}
+
+// refusedOnRelogin lets each token's first login through, and refuses each
+// later login of a token in revoked, as Discord does once a recorder's token
+// is reset while it is logged in.
+func refusedOnRelogin(revoked ...string) func(token string) bool {
+	var mu sync.Mutex
+	tried := map[string]bool{}
+	return func(token string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		again := tried[token]
+		tried[token] = true
+		return again && slices.Contains(revoked, token)
+	}
+}
+
+// tallyAfterReloginRefused runs the bot's recorder connect on raw, a
+// RECORDER_TOKENS value, then takes the recorder at place offline as a cut
+// short does, with Discord refusing its token as it logs back in. It returns
+// the tally of what the bot logged once the tally has a recorder out.
+func tallyAfterReloginRefused(t *testing.T, raw string, place int) recorderTally {
+	t.Helper()
+	logged := botLog(t)
+	tokens := strings.Split(raw, ",")
+	r := voice.Connect(raw, openRefusing(refusedOnRelogin(tokens[place-1])))
+	defer r.Close()
+
+	r.TakeOffline(r.UserIDs()[place-1])()
+	return tallyOnceOut(t, logged)
+}
+
+// tallyOnceOut waits until the tally of what the bot has logged has a
+// recorder out, and returns it.
+func tallyOnceOut(t *testing.T, logged func() []string) recorderTally {
+	t.Helper()
+	var lines []string
+	var got recorderTally
+	if !eventually(stubWait, func() bool {
+		lines = logged()
+		got = tallyOf(lines)
+		return len(got.Out) > 0
+	}) {
+		t.Fatalf("tally %+v never had a recorder out, from:\n%s", got, strings.Join(lines, "\n"))
+	}
+	return got
+}
+
+// A recorder Discord refuses as it logs back in is out until a restart, so
+// no recording check can use it.
+func TestRecorderTallyTakesOutARecorderDiscordRefusesAsItLogsBackIn(t *testing.T) {
+	got := tallyAfterReloginRefused(t, "tok-a", 1)
+	if got.Connected != 0 || !slices.Equal(got.Out, []int{1}) {
+		t.Errorf("%d connected and %v out, want 0 connected and [1] out", got.Connected, got.Out)
+	}
+	line := got.line()
+	if !strings.Contains(line, noRecordingCheck) {
+		t.Errorf("recorders line %q does not say %q", line, noRecordingCheck)
+	}
+	if !strings.Contains(line, "recorder 1") || !strings.Contains(line, outBecauseRefused) {
+		t.Errorf("recorders line %q does not name recorder 1 as %q", line, outBecauseRefused)
+	}
+}
+
+// Discord refusing one of two recorders as it logs back in leaves the other
+// counted.
+func TestRecorderTallyKeepsCountingTheRecorderDiscordDidNotRefuse(t *testing.T) {
+	got := tallyAfterReloginRefused(t, "tok-a,tok-b", 2)
+	if got.Connected != 1 || !slices.Equal(got.Out, []int{2}) {
+		t.Errorf("%d connected and %v out, want 1 connected and [2] out", got.Connected, got.Out)
+	}
+}
+
+// A recorder whose first login failed was never counted, so Discord
+// refusing its token at a later try leaves the count as it was.
+func TestRecorderTallyLeavesTheCountWhenDiscordRefusesARecorderNeverCounted(t *testing.T) {
+	logged := botLog(t)
+	r := voice.Connect("tok-a,late-b", lateLogins(openRefusing(func(token string) bool { return token == "late-b" })))
+	defer r.Close()
+
+	got := tallyOnceOut(t, logged)
+	if got.Connected != 1 || !slices.Equal(got.Out, []int{2}) {
+		t.Errorf("%d connected and %v out, want 1 connected and [2] out", got.Connected, got.Out)
 	}
 }
 

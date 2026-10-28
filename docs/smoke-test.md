@@ -67,6 +67,10 @@ write the check down as unreachable, with the line as its reason.
 `go run ./tools/smoke status` shows the same lines while the run is up, with
 the recorders counted so far. A recorder whose first login failed counts once
 it logs in, and one that logs back in after a cut short still counts once.
+`status` stops counting a recorder once Discord refuses its token as it logs
+back in, and names it as out. It stays out until you reset the token and run
+`down` and `up`. The README's troubleshooting row for
+`Discord refused the recorder's token` says how to reset it.
 
 Done when `up` prints `ready` and the build, such as `smoke-09dccef`, and
 every recording check on your list can run or has its reason.
