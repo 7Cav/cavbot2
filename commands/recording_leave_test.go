@@ -116,12 +116,12 @@ func TestRecordStopKeepsNothingHeardDuringTheLeave(t *testing.T) {
 
 		go recordAs(t, sc.rt, recStarter, "stop")
 		time.Sleep(2 * time.Second)
-		l.Frame(frame(speakerA, 11, 5000+32*48000, "late"))
+		l.Frame(frame(speakerA, 11, uint32(5000+samplesIn(32*time.Second)), "late"))
 		time.Sleep(slowLeave)
 		synctest.Wait()
 
-		// The stop comes a minute in: 60 s of 48 kHz samples.
-		const stopSamples = 60 * 48000
+		// The stop comes a minute in.
+		stopSamples := uint64(samplesIn(time.Minute))
 		tracks := sc.tracks(t)
 		if len(tracks) != 1 {
 			t.Fatalf("tracks = %d, want the speaker's one", len(tracks))
