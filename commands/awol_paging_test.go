@@ -83,44 +83,49 @@ func TestRunAwolPagesShowEveryTrooperOnceWorstFirst(t *testing.T) {
 	}
 }
 
-// 441 flagged troopers, one past the file line, arrive as the file with the
-// large-report note, and nothing follows it.
-func TestRunAwolSendsAListPastTheFileLineAsAFile(t *testing.T) {
+// /awol without force_file_output on 441 flagged troopers with
+// 17-character usernames, 3-digit milpac IDs and two-digit day figures,
+// which #823 sent as a file, sends paged embeds and no file.
+func TestRunAwolPagesAListPastTheOldFileLine(t *testing.T) {
 	serveAwolFlagged(t, 441)
 	f := &fakeResponder{}
-	runAwol(f, nil, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(f, store.NewFake(), awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
-	edit := finalEdit(t, f)
-	if len(edit.Files) != 1 {
-		t.Fatalf("want the report as one file; got %d files", len(edit.Files))
+	for _, c := range f.Calls() {
+		if c.Edit != nil && len(c.Edit.Files) != 0 {
+			t.Fatalf("441 troopers went out as a file")
+		}
 	}
-	if want := fmt.Sprintf(awolLargeFileFormat, "1-7"); edit.Content == nil || !strings.Contains(*edit.Content, want) {
-		t.Fatalf("want the large-report note %q; got %v", want, edit.Content)
-	}
-	if n := len(followups(f.Calls())); n != 0 {
-		t.Fatalf("follow-ups = %d, want none", n)
+	v := replyView(t, f)
+	if n, m := pageMarker(t, v.page(t).Title); n != 1 || m < 2 {
+		t.Fatalf("the reply shows page %d of %d, want page 1 of more than 1", n, m)
 	}
 }
 
-// force_file_output sends a list past one message as the file with the
-// forced-file note, and nothing follows it.
-func TestRunAwolForcedFileSendsAListPastOneMessageAsTheFileAlone(t *testing.T) {
-	serveAwolFlagged(t, 100)
-	f := &fakeResponder{}
-	runAwol(f, nil, awolRefDate, fakeAppCommandInteraction(
-		stringOption("position", "1-7"),
-		boolOption("force_file_output", true),
-	))
+// /awol with force_file_output, on 2 flagged troopers and on 100, sends
+// the file with the forced-file note and no buttons.
+func TestRunAwolForcedFileSendsTheFileAlone(t *testing.T) {
+	for _, n := range []int{2, 100} {
+		t.Run(fmt.Sprintf("%d troopers", n), func(t *testing.T) {
+			serveAwolFlagged(t, n)
+			f := &fakeResponder{}
+			runAwol(f, store.NewFake(), awolRefDate, fakeAppCommandInteraction(
+				stringOption("position", "1-7"),
+				boolOption("force_file_output", true),
+			))
 
-	edit := finalEdit(t, f)
-	if len(edit.Files) != 1 {
-		t.Fatalf("want the report as one file; got %d files", len(edit.Files))
-	}
-	if want := fmt.Sprintf(awolForcedFileFormat, "1-7"); edit.Content == nil || !strings.Contains(*edit.Content, want) {
-		t.Fatalf("want the forced-file note %q; got %v", want, edit.Content)
-	}
-	if n := len(followups(f.Calls())); n != 0 {
-		t.Fatalf("follow-ups = %d, want none", n)
+			v := replyView(t, f)
+			edit := finalEdit(t, f)
+			if len(edit.Files) != 1 {
+				t.Fatalf("want the report as one file; got %d files", len(edit.Files))
+			}
+			if want := fmt.Sprintf(awolForcedFileFormat, "1-7"); !strings.Contains(v.content, want) {
+				t.Fatalf("want the forced-file note %q; got %q", want, v.content)
+			}
+			if len(v.buttons) != 0 {
+				t.Fatalf("the file carries %d buttons, want none", len(v.buttons))
+			}
+		})
 	}
 }
 

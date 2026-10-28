@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -231,6 +232,11 @@ func pressList(t *testing.T, cmd listCommand, st store.Store, now time.Time, b d
 	t.Helper()
 	if b.Disabled {
 		t.Fatalf("pressed the disabled %s button", b.Label)
+	}
+	// main.go's dispatcher routes a press by the CustomID's first segment
+	// (ADR 0007).
+	if prefix, _, _ := strings.Cut(b.CustomID, customIDSeparator); prefix != cmd.name {
+		t.Fatalf("CustomID %q routes to %q, want %q", b.CustomID, prefix, cmd.name)
 	}
 	f := &fakeResponder{}
 	cmd.run(f, st, now, pressInteraction(b.CustomID, permMember{id: member}))
@@ -502,6 +508,117 @@ func TestALongListOnAHostWithNoStoreShowsPageOneAlone(t *testing.T) {
 			if rec.count != 0 {
 				t.Errorf("captures = %d, want none: %v", rec.count, rec.msgs)
 			}
+		})
+	}
+}
+
+// After the 7Cav API changes its answer or starts failing, a press still
+// shows the run's page with the run's timestamp.
+func TestAPressShowsTheRunsPageWhateverTheAPISaysSince(t *testing.T) {
+	changes := map[string]func(t *testing.T){
+		"changes its answer": func(t *testing.T) {
+			serveCavAPI(t, loaRefDate, utils.LiteRosterResponse{})
+		},
+		"starts failing": func(t *testing.T) {
+			api := serveCavAPI(t, loaRefDate, utils.LiteRosterResponse{})
+			api.failRoster(http.StatusInternalServerError)
+			api.failLOAs(http.StatusInternalServerError)
+		},
+	}
+	for _, cmd := range listCommands {
+		for name, change := range changes {
+			t.Run(cmd.name+" when the API "+name, func(t *testing.T) {
+				cmd.long(t)
+				st := store.NewFake()
+				v := runList(t, cmd, st, loaRefDate)
+				before := pressList(t, cmd, st, loaRefDate, v.arrow(t, "▶"), runner).view.page(t)
+
+				change(t)
+				after := pressList(t, cmd, st, loaRefDate.Add(time.Hour), v.arrow(t, "▶"), runner).view.page(t)
+				if after.Description != before.Description || after.Title != before.Title {
+					t.Errorf("page 2 reads %q now, want the run's %q", after.Title, before.Title)
+				}
+				if want := loaRefDate.Format(time.RFC3339); after.Timestamp != want {
+					t.Errorf("page 2 is stamped %q, want the run's %q", after.Timestamp, want)
+				}
+			})
+		}
+	}
+}
+
+// To stand in for a restart, a press goes to a newly built command over
+// the same store, and it still flips the page. The press reaches the
+// handler with nothing of the run but the store and the button.
+func TestAPressFlipsThePageAfterARestart(t *testing.T) {
+	for _, cmd := range listCommands {
+		t.Run(cmd.name, func(t *testing.T) {
+			cmd.long(t)
+			st := store.NewFake()
+			v := runList(t, cmd, st, loaRefDate)
+
+			restarted := listCommand{name: cmd.name, run: cmd.run}
+			a := pressList(t, restarted, st, loaRefDate, v.arrow(t, "▶"), runner)
+			if n, _ := pageMarker(t, a.view.page(t).Title); !a.updated || n != 2 {
+				t.Errorf("after a restart the press shows page %d (updated %v), want the list flipped to page 2", n, a.updated)
+			}
+		})
+	}
+}
+
+// For a typed position of 100 characters, every button's CustomID is at
+// most 100 characters, and the runner's press on ▶ flips to page 2.
+func TestALongPositionsButtonsFitDiscordsCustomIDCap(t *testing.T) {
+	position := strings.Repeat("P", 100)
+	for _, cmd := range listCommands {
+		t.Run(cmd.name, func(t *testing.T) {
+			cmd.long(t)
+			st := store.NewFake()
+			f := &fakeResponder{}
+			cmd.run(f, st, loaRefDate, fakeAppCommandInteraction(stringOption("position", position)))
+			v := replyView(t, f)
+
+			for _, b := range v.buttons {
+				if n := len(b.CustomID); n > 100 {
+					t.Errorf("the %s button's CustomID is %d characters, over Discord's 100", b.Label, n)
+				}
+			}
+			a := pressList(t, cmd, st, loaRefDate, v.arrow(t, "▶"), runner)
+			if n, _ := pageMarker(t, a.view.page(t).Title); n != 2 {
+				t.Errorf("the press shows page %d, want 2", n)
+			}
+		})
+	}
+}
+
+// assertDistinctCustomIDs fails the test when two of v's buttons share a
+// CustomID, which Discord refuses.
+func assertDistinctCustomIDs(t *testing.T, where string, v listView) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, b := range v.buttons {
+		if seen[b.CustomID] {
+			t.Errorf("%s: two buttons share the CustomID %q", where, b.CustomID)
+		}
+		seen[b.CustomID] = true
+	}
+}
+
+// No two buttons on one message share a CustomID: on page 1, a middle page
+// and page m, on a private copy, and on the reply whose pages couldn't be
+// saved.
+func TestNoTwoButtonsOnAMessageShareACustomID(t *testing.T) {
+	for _, cmd := range listCommands {
+		t.Run(cmd.name, func(t *testing.T) {
+			cmd.long(t)
+			st := store.NewFake()
+			v := runList(t, cmd, st, loaRefDate)
+			assertDistinctCustomIDs(t, "page 1", v)
+			middle := pressList(t, cmd, st, loaRefDate, v.arrow(t, "▶"), runner).view
+			assertDistinctCustomIDs(t, "page 2", middle)
+			_, last := pageThrough(t, cmd, st, loaRefDate)
+			assertDistinctCustomIDs(t, "page m", last)
+			assertDistinctCustomIDs(t, "a private copy", pressList(t, cmd, st, loaRefDate, v.arrow(t, "▶"), otherMember).view)
+			assertDistinctCustomIDs(t, "the unsaved reply", runList(t, cmd, nil, loaRefDate))
 		})
 	}
 }

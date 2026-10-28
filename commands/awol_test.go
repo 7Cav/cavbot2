@@ -336,53 +336,6 @@ func TestRunAwol_EmbedDescriptionWithinDiscordLimit(t *testing.T) {
 	}
 }
 
-func TestRunAwol_LargeResultFallsBackToFile(t *testing.T) {
-	// Inflate per-user line length with long padded usernames so a single user
-	// line saturates a chunk (~2.5KB each, threshold 4096). 11 such users yield
-	// 11 chunks, exceeding maxEmbedsPerMsg=10 and forcing the file fallback.
-	const padded = 2500
-	pad := strings.Repeat("x", padded)
-	roster := utils.LiteRosterResponse{
-		LiteProfiles: map[string]utils.LiteProfileResponse{},
-	}
-	for n := range 11 {
-		id := fmt.Sprintf("%d", 1000+n)
-		name := fmt.Sprintf("U%d_%s", n, pad)
-		roster.LiteProfiles[id] = awolMember(name, id, "2026-03-01 12:00:00")
-	}
-	serveAwolRoster(t, roster, http.StatusOK)
-
-	f := &fakeResponder{}
-	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-
-	runAwol(f, nil, awolRefDate, i)
-
-	calls := f.Calls()
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 calls, got %d: %+v", len(calls), calls)
-	}
-	edit := calls[1].Edit
-	if edit == nil {
-		t.Fatalf("calls[1].Edit is nil")
-	}
-	if len(edit.Files) != 1 {
-		t.Fatalf("expected exactly 1 file attachment, got %d", len(edit.Files))
-	}
-	if edit.Embeds != nil && len(*edit.Embeds) > 0 {
-		t.Fatalf("expected no embeds on file-fallback path, got %d", len(*edit.Embeds))
-	}
-	if want := fmt.Sprintf(awolLargeFileFormat, "1-7"); edit.Content == nil || !strings.Contains(*edit.Content, want) {
-		got := "<nil>"
-		if edit.Content != nil {
-			got = *edit.Content
-		}
-		t.Fatalf("expected the large-report note %q on file path, got %q", want, got)
-	}
-	if edit.Files[0].Name != "awol_report_1-7.txt" {
-		t.Fatalf("file name = %q, want awol_report_1-7.txt", edit.Files[0].Name)
-	}
-}
-
 func TestRunAwol_ForceFileOutputWithSmallResult(t *testing.T) {
 	// Two AWOL members — small enough to fit in embeds — but force_file_output
 	// flips the rendering to the file path with the forced-file note.
@@ -853,9 +806,7 @@ func TestRunAwolNeedsReviewLOANamingNoMemberTagsNobody(t *testing.T) {
 }
 
 // A report sent as a file gives each LOA tag on a trooper's entry the thread
-// the embed row's tag links to, on a line that carries the tag, whether
-// force_file_output asked for the file or the report was too large for
-// embeds.
+// the embed row's tag links to, on a line that carries the tag.
 func TestRunAwolFileReportGivesEachLOATagItsThread(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -863,8 +814,6 @@ func TestRunAwolFileReportGivesEachLOATagItsThread(t *testing.T) {
 		forceFile bool
 	}{
 		{"force_file_output", 1, true},
-		// 1,000 rows of about 80 bytes overflow 10 embeds of 4,096.
-		{"too large for embeds", 1000, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

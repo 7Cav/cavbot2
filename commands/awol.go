@@ -16,11 +16,9 @@ func stringPtr(s string) *string {
 	return &s
 }
 
-const maxEmbedsPerMsg = 10
-
-// discordEmbedDescriptionLimit is Discord's hard cap on an embed description.
-// The rendered description is summaryLine + separator + chunk, so the per-chunk
-// budget is this minus the prefix length (see runAwol) to keep the total ≤ limit.
+// discordEmbedDescriptionLimit is Discord's hard cap on an embed
+// description. A page's description includes its section heading, such as
+// /awol's summary block, so the layout counts the heading against it.
 const discordEmbedDescriptionLimit = 4096
 
 // discordMessageEmbedTextLimit is Discord's cap on the text of all of a
@@ -61,12 +59,9 @@ const awolNeedsReviewTag = "[LOA needs review]"
 // position in place of %s.
 const awolAllClearFormat = "Search completed successfully: no users matching \"%s\" are AWOL."
 
-// The notes a report sent as a file carries, with the position in place of
-// %s: one for force_file_output, one for a report too large for embeds.
-const (
-	awolForcedFileFormat = "Force File Set True, AWOL report for %s generated as file:"
-	awolLargeFileFormat  = "Large AWOL report for %s generated as file:"
-)
+// awolForcedFileFormat is the note on a report force_file_output sends as
+// a file, with the position in place of %s.
+const awolForcedFileFormat = "Force File Set True, AWOL report for %s generated as file:"
 
 type AwolUser struct {
 	Username     string
@@ -331,9 +326,9 @@ func runAwol(r utils.InteractionResponder, st store.Store, now time.Time, i *dis
 		lines[k] = pagedLine{heading: summaryBlock + "\n", text: awolUserLine(user)}
 	}
 
-	if forceFile || awolDescriptionsNeeded(summaryBlock, lines) > maxEmbedsPerMsg {
+	if forceFile {
 		utils.Info("📄 Sending AWOL report as a file", "count", len(awolUsers), "force_file_output", forceFile)
-		sendAwolFile(r, i, awolUsers, position, forceFile, loasRead, now, skippedCount)
+		sendAwolFile(r, i, awolUsers, position, loasRead, now, skippedCount)
 		utils.Info("✨ Done!", "command", "Awol")
 		return
 	}
@@ -349,25 +344,6 @@ func runAwol(r utils.InteractionResponder, st store.Store, now time.Time, i *dis
 	}
 
 	utils.Info("✨ Done!", "command", "Awol")
-}
-
-// awolDescriptionsNeeded counts the descriptions lines would take when each
-// opens with summaryBlock and holds at most discordEmbedDescriptionLimit
-// bytes. More than maxEmbedsPerMsg of them sends the report as a file. The
-// count predates /awol's follow-ups, and keeping it keeps the file going to
-// the lists that got it before.
-func awolDescriptionsNeeded(summaryBlock string, lines []pagedLine) int {
-	budget := discordEmbedDescriptionLimit - len(summaryBlock+"\n\n")
-	count, used := 0, 0
-	for _, l := range lines {
-		n := len(l.text) + len("\n")
-		if count == 0 || used+n > budget {
-			count++
-			used = 0
-		}
-		used += n
-	}
-	return count
 }
 
 // awolEmbedTitle renders the "AWOL — <position>" heading, paginated only when the
@@ -452,7 +428,9 @@ func awolFigures(daysAWOL, rawDaysSincePost int) string {
 	return fmt.Sprintf("%dd AWOL · last post %dd", daysAWOL, rawDaysSincePost)
 }
 
-func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, awolUsers []AwolUser, position string, forceFile, loasRead bool, now time.Time, skippedCount int) {
+// sendAwolFile sends the report as the text file force_file_output asks
+// for.
+func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, awolUsers []AwolUser, position string, loasRead bool, now time.Time, skippedCount int) {
 	var content strings.Builder
 	_, _ = fmt.Fprintf(&content, "AWOL Report for %s\nGenerated: %s\n%s\n\n",
 		position,
@@ -494,14 +472,8 @@ func sendAwolFile(r utils.InteractionResponder, i *discordgo.InteractionCreate, 
 		ContentType: "text/plain",
 		Reader:      strings.NewReader(content.String()),
 	}
-	var prefix string
-	if forceFile {
-		prefix = fmt.Sprintf(awolForcedFileFormat, position)
-	} else {
-		prefix = fmt.Sprintf(awolLargeFileFormat, position)
-	}
 	if err := r.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-		Content: stringPtr(prefix),
+		Content: stringPtr(fmt.Sprintf(awolForcedFileFormat, position)),
 		Files:   []*discordgo.File{file},
 	}); err != nil {
 		captureDeferredEditFailure(i, "awol", err)

@@ -80,12 +80,25 @@ func savePagedList(st store.Store, i *discordgo.InteractionCreate, list pagedLis
 	ctx, cancel := context.WithTimeout(context.Background(), pagedListStoreTimeout)
 	defer cancel()
 	key, err := st.SavePagedList(ctx, pages)
+	if err == nil {
+		err = checkPageArrowCustomIDs(list.command, key, len(pages.Pages))
+	}
 	if err != nil {
 		captureError(fmt.Sprintf("Pages of a long /%s list not saved", list.command), err,
 			"command", list.command, "guild_id", i.GuildID, "position", list.position)
 		return "", false
 	}
 	return key, true
+}
+
+// checkPageArrowCustomIDs refuses a key whose arrows' CustomIDs would run
+// past Discord's cap, since a truncated ID misroutes (ADR 0007). The
+// longest is ▶'s on the last page, and a private copy's are as long.
+func checkPageArrowCustomIDs(command, key string, total int) error {
+	if id := pageArrowCustomID(command, pageArrowsOnList, key, total); len(id) > discordCustomIDLimit {
+		return fmt.Errorf("page arrow CustomID %q is %d characters, over Discord's %d", id, len(id), discordCustomIDLimit)
+	}
+	return nil
 }
 
 // pageEmbed is a saved page as its embed shows it, stamped with the time
