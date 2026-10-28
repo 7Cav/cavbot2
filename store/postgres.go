@@ -1271,6 +1271,10 @@ func (p *Postgres) SavePagedList(ctx context.Context, list PagedList) (string, e
 
 // PagedListPage implements Store.
 func (p *Postgres) PagedListPage(ctx context.Context, key string, idx int) (SavedPage, error) {
+	// A negative index would count from the end of the JSON array.
+	if idx < 0 {
+		return SavedPage{}, ErrNotFound
+	}
 	var (
 		saved SavedPage
 		page  []byte

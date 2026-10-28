@@ -185,7 +185,7 @@ func loaEmbedTitle(position string, idx, total int) string {
 	if total <= 1 {
 		return fmt.Sprintf("LOAs for %s", position)
 	}
-	return fmt.Sprintf("LOAs for %s (Page %d/%d)", position, idx+1, total)
+	return fmt.Sprintf("LOAs for %s "+pageMarkerFormat, position, idx+1, total)
 }
 
 // loaUserLines lists a line under heading for each of users, linking the

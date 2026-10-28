@@ -302,11 +302,11 @@ func main() {
 	// Foxhole page through the Foxhole runtime. /loa and /awol keep the
 	// pages of a long list in the store, a nil interface with none, not a
 	// nil *store.Postgres.
-	var lists store.Store
+	var commandStore store.Store
 	if botStore != nil {
-		lists = botStore
+		commandStore = botStore
 	}
-	registry := commands.NewRegistry(tempVC, foxhole, recording, aviators, lists)
+	registry := commands.NewRegistry(tempVC, foxhole, recording, aviators, commandStore)
 
 	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		// Backstop only. Registered slash-command handlers are wrapped with

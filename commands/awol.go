@@ -352,7 +352,7 @@ func awolEmbedTitle(position string, idx, total int) string {
 	if total <= 1 {
 		return fmt.Sprintf("AWOL — %s", position)
 	}
-	return fmt.Sprintf("AWOL — %s (Page %d/%d)", position, idx+1, total)
+	return fmt.Sprintf("AWOL — %s "+pageMarkerFormat, position, idx+1, total)
 }
 
 // awolSkippedNote renders the visible partial-coverage annotation for the report

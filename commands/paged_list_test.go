@@ -134,8 +134,8 @@ func TestAListThatFitsOneEmbedArrivesAsOneEmbedWithNoArrows(t *testing.T) {
 				if len(v.embeds) != 1 {
 					t.Fatalf("want one embed; got %d", len(v.embeds))
 				}
-				if title := v.embeds[0].Title; strings.Contains(title, "Page") {
-					t.Errorf("title = %q, want no page marker", title)
+				if _, _, marked := readPageMarker(v.embeds[0].Title); marked {
+					t.Errorf("title = %q, want no page marker", v.embeds[0].Title)
 				}
 				if len(v.buttons) != 0 {
 					t.Errorf("the reply carries %d buttons, want none", len(v.buttons))
@@ -177,16 +177,24 @@ func (v listView) page(t *testing.T) *discordgo.MessageEmbed {
 	return v.embeds[0]
 }
 
-// pageMarker reads the n and m of a title's (Page n/m), failing the test
+// readPageMarker reads the n and m of a title's page marker, reporting
+// false when it has none.
+func readPageMarker(title string) (n, m int, ok bool) {
+	at := strings.LastIndex(title, "(")
+	if at < 0 {
+		return 0, 0, false
+	}
+	_, err := fmt.Sscanf(title[at:], pageMarkerFormat, &n, &m)
+	return n, m, err == nil
+}
+
+// pageMarker reads the n and m of a title's page marker, failing the test
 // when it has none.
 func pageMarker(t *testing.T, title string) (n, m int) {
 	t.Helper()
-	at := strings.LastIndex(title, "(Page ")
-	if at < 0 {
+	n, m, ok := readPageMarker(title)
+	if !ok {
 		t.Fatalf("title %q carries no page marker", title)
-	}
-	if _, err := fmt.Sscanf(title[at:], "(Page %d/%d)", &n, &m); err != nil {
-		t.Fatalf("title %q: %v", title, err)
 	}
 	return n, m
 }

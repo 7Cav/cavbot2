@@ -17,6 +17,10 @@ import (
 // be saved, which shows page 1 alone.
 const pagedListUnsavedLine = "⚠️ The other pages couldn't be kept. Run the command again to see them."
 
+// pageMarkerFormat ends the title of each page of a list of more than one,
+// with the page's number and the page count in place of the %ds.
+const pageMarkerFormat = "(Page %d/%d)"
+
 // pagedList is a list a command sends as pages of one embed each, as /loa
 // and /awol send theirs (ADR 0020).
 type pagedList struct {
@@ -57,6 +61,13 @@ func sendPagedList(r utils.InteractionResponder, st store.Store, i *discordgo.In
 	if len(pages) > 1 {
 		_, discordID := interactionUsernameAndID(i)
 		key, saved := savePagedList(st, i, list, store.PagedList{RunnerID: discordID, RanAt: now, Pages: pages})
+		if saved {
+			if err := checkPageArrowCustomIDs(list.command, key, len(pages)); err != nil {
+				captureError(fmt.Sprintf("Arrows of a long /%s list too long for Discord", list.command), err,
+					"command", list.command, "guild_id", i.GuildID, "position", list.position)
+				key, saved = "", false
+			}
+		}
 		if !saved {
 			edit.Content = stringPtr(pagedListUnsavedLine)
 		}
@@ -80,9 +91,6 @@ func savePagedList(st store.Store, i *discordgo.InteractionCreate, list pagedLis
 	ctx, cancel := context.WithTimeout(context.Background(), pagedListStoreTimeout)
 	defer cancel()
 	key, err := st.SavePagedList(ctx, pages)
-	if err == nil {
-		err = checkPageArrowCustomIDs(list.command, key, len(pages.Pages))
-	}
 	if err != nil {
 		captureError(fmt.Sprintf("Pages of a long /%s list not saved", list.command), err,
 			"command", list.command, "guild_id", i.GuildID, "position", list.position)
@@ -228,15 +236,12 @@ func runPagedListPress(r utils.InteractionResponder, st store.Store, now time.Ti
 	ctx, cancel := context.WithTimeout(context.Background(), pagedListReadTimeout)
 	saved, err := st.PagedListPage(ctx, key, idx)
 	cancel()
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		answerPress(r, i, command, notePress(pagedListExpiredNote))
-		return
-	case err != nil:
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		captureError("Saved list page unreadable", err, "command", command, "custom_id", customID, "guild_id", i.GuildID)
 		answerPress(r, i, command, notePress(pagedListUnreadableNote))
 		return
-	case now.Sub(saved.RanAt) >= pagedListRetention:
+	}
+	if err != nil || now.Sub(saved.RanAt) >= pagedListRetention {
 		answerPress(r, i, command, notePress(pagedListExpiredNote))
 		return
 	}
@@ -290,8 +295,10 @@ func parsePageArrowCustomID(customID string) (action, key string, idx int, ok bo
 	if !found {
 		return "", "", 0, false
 	}
+	// A disabled ◀ on page 1 points at page -1, which no press reaches
+	// from a Discord client.
 	idx, err := strconv.Atoi(page)
-	if err != nil {
+	if err != nil || idx < 0 {
 		return "", "", 0, false
 	}
 	return parts[1], key, idx, true

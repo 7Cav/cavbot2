@@ -21,8 +21,9 @@ import (
 )
 
 // ErrNotFound is returned by GetHub, SaveHub and RemoveHub when no hub has
-// the requested ID, and by SetSpawnedChannelLock when no row has the
-// channel. Compare with errors.Is.
+// the requested ID, by SetSpawnedChannelLock when no row has the channel,
+// and by PagedListPage when no list has the key or no page the index.
+// Compare with errors.Is.
 var ErrNotFound = errors.New("store: not found")
 
 // ErrStale is returned by a combined write whose record is not as the
@@ -625,7 +626,7 @@ type Store interface {
 	SavePagedList(ctx context.Context, list PagedList) (key string, err error)
 	// PagedListPage returns page idx, counted from 0, of the list saved
 	// under key, with the run it came from. ErrNotFound when no list has
-	// the key.
+	// the key, or the list no page idx.
 	PagedListPage(ctx context.Context, key string, idx int) (SavedPage, error)
 	// DeletePagedListsBefore deletes every list run before cutoff.
 	DeletePagedListsBefore(ctx context.Context, cutoff time.Time) error
