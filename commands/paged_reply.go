@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -36,8 +37,9 @@ const pagedListStoreTimeout = 5 * time.Second
 // reply to show the first, clearing the reply's text. A list of one page
 // shows it alone. A longer list's pages are saved in st, under the member
 // who ran the command, before the reply shows page 1 with ◀ and ▶, which
-// read the rest back from st (runPagedListPress). It reports whether the
-// reply went out.
+// read the rest back from st (runPagedListPress). When the pages can't be
+// saved, page 1 shows with both arrows disabled and pagedListUnsavedLine,
+// and a failed save goes to Sentry. It reports whether the reply went out.
 func sendPagedList(r utils.InteractionResponder, st store.Store, i *discordgo.InteractionCreate, now time.Time, list pagedList) bool {
 	// No layout has more pages than lines, so a title numbered with the
 	// line count is as long as any page's title can be.
@@ -54,7 +56,10 @@ func sendPagedList(r utils.InteractionResponder, st store.Store, i *discordgo.In
 	}
 	if len(pages) > 1 {
 		_, discordID := interactionUsernameAndID(i)
-		key := savePagedList(st, store.PagedList{RunnerID: discordID, RanAt: now, Pages: pages})
+		key, saved := savePagedList(st, i, list, store.PagedList{RunnerID: discordID, RanAt: now, Pages: pages})
+		if !saved {
+			edit.Content = stringPtr(pagedListUnsavedLine)
+		}
 		arrows := pageArrows(list.command, pageArrowsOnList, key, 0, len(pages))
 		edit.Components = &arrows
 	}
@@ -65,12 +70,22 @@ func sendPagedList(r utils.InteractionResponder, st store.Store, i *discordgo.In
 	return true
 }
 
-// savePagedList saves a run's pages in st and returns their key.
-func savePagedList(st store.Store, list store.PagedList) string {
+// savePagedList saves the pages of a run of list in st and returns their
+// key. saved is false with no store, or when the save failed, which goes to
+// Sentry.
+func savePagedList(st store.Store, i *discordgo.InteractionCreate, list pagedList, pages store.PagedList) (key string, saved bool) {
+	if st == nil {
+		return "", false
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), pagedListStoreTimeout)
 	defer cancel()
-	key, _ := st.SavePagedList(ctx, list)
-	return key
+	key, err := st.SavePagedList(ctx, pages)
+	if err != nil {
+		captureError(fmt.Sprintf("Pages of a long /%s list not saved", list.command), err,
+			"command", list.command, "guild_id", i.GuildID, "position", list.position)
+		return "", false
+	}
+	return key, true
 }
 
 // pageEmbed is a saved page as its embed shows it, stamped with the time
@@ -93,12 +108,13 @@ const (
 )
 
 // pageArrows is the ◀ ▶ row of page idx of total pages saved under key.
-// ◀ is disabled on the first page and ▶ on the last.
+// ◀ is disabled on the first page and ▶ on the last. With no key the pages
+// weren't saved, and both are disabled.
 func pageArrows(command, action, key string, idx, total int) []discordgo.MessageComponent {
 	back := discordgo.Button{Label: "◀", Style: discordgo.SecondaryButton,
-		CustomID: pageArrowCustomID(command, action, key, idx-1), Disabled: idx == 0}
+		CustomID: pageArrowCustomID(command, action, key, idx-1), Disabled: key == "" || idx == 0}
 	next := discordgo.Button{Label: "▶", Style: discordgo.SecondaryButton,
-		CustomID: pageArrowCustomID(command, action, key, idx+1), Disabled: idx == total-1}
+		CustomID: pageArrowCustomID(command, action, key, idx+1), Disabled: key == "" || idx == total-1}
 	return []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{back, next}}}
 }
 
@@ -168,27 +184,84 @@ func pageText(heading string, l pagedLine) string {
 // answered within 3 seconds.
 const pagedListReadTimeout = 2 * time.Second
 
+// pagedListRetention is how long a run's saved pages last, the window
+// recordings use (ADR 0020).
+const pagedListRetention = RecordingRetention
+
+// The private notes a press gets in place of a page. Each is a new message
+// only the presser sees, so the message pressed stays as it was.
+const (
+	// pagedListExpiredNote answers a press on a list whose saved pages are
+	// gone or 30 days old, or on a host with no store.
+	pagedListExpiredNote = "❌ This list has expired. Run the command again to see it."
+	// pagedListUnreadableNote answers a press whose page the store couldn't
+	// read.
+	pagedListUnreadableNote = "❌ This page couldn't be shown. Try again in a moment."
+)
+
 // runPagedListPress answers a press on a list's arrow with the page the
 // arrow points to, read from the run's saved pages (ADR 0020).
 func runPagedListPress(r utils.InteractionResponder, st store.Store, now time.Time, i *discordgo.InteractionCreate) {
 	customID := i.MessageComponentData().CustomID
 	username, discordID := interactionUsernameAndID(i)
-	command, action, key, idx, _ := parsePageArrowCustomID(customID)
+	command, action, key, idx, ok := parsePageArrowCustomID(customID)
 	utils.Info("🚀 Starting page turn", "command", command, "username", username, "discord_id", discordID, "custom_id", customID)
 
+	if !ok || st == nil {
+		answerPress(r, i, command, notePress(pagedListExpiredNote))
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), pagedListReadTimeout)
-	saved, _ := st.PagedListPage(ctx, key, idx)
+	saved, err := st.PagedListPage(ctx, key, idx)
 	cancel()
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		answerPress(r, i, command, notePress(pagedListExpiredNote))
+		return
+	case err != nil:
+		captureError("Saved list page unreadable", err, "command", command, "custom_id", customID, "guild_id", i.GuildID)
+		answerPress(r, i, command, notePress(pagedListUnreadableNote))
+		return
+	case now.Sub(saved.RanAt) >= pagedListRetention:
+		answerPress(r, i, command, notePress(pagedListExpiredNote))
+		return
+	}
 
-	arrows := pageArrows(command, action, key, idx, saved.Total)
-	_ = acknowledge(r, i, &discordgo.InteractionResponse{
+	// The runner flips the message the command posted, and anyone else
+	// gets a private copy at the page they asked for, which they flip in
+	// place.
+	resp := &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseUpdateMessage,
 		Data: &discordgo.InteractionResponseData{
 			Embeds:     []*discordgo.MessageEmbed{pageEmbed(saved.Page, saved.RanAt)},
-			Components: arrows,
+			Components: pageArrows(command, action, key, idx, saved.Total),
 		},
-	})
+	}
+	if action == pageArrowsOnList && discordID != saved.RunnerID {
+		resp.Type = discordgo.InteractionResponseChannelMessageWithSource
+		resp.Data.Flags = discordgo.MessageFlagsEphemeral
+		resp.Data.Components = pageArrows(command, pageArrowsOnCopy, key, idx, saved.Total)
+	}
+	answerPress(r, i, command, resp)
 	utils.Info("✨ Done!", "command", command)
+}
+
+// notePress is a press's answer of note, a new message only the presser
+// sees.
+func notePress(note string) *discordgo.InteractionResponse {
+	return &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{Content: note, Flags: discordgo.MessageFlagsEphemeral},
+	}
+}
+
+// answerPress sends a press's answer. One Discord refuses goes to Sentry
+// under command.
+func answerPress(r utils.InteractionResponder, i *discordgo.InteractionCreate, command string, resp *discordgo.InteractionResponse) {
+	if err := acknowledge(r, i, resp); err != nil {
+		captureAckFailure("Failed to answer a page turn", err,
+			"command", command, "custom_id", i.MessageComponentData().CustomID, "guild_id", i.GuildID)
+	}
 }
 
 // parsePageArrowCustomID reads a page arrow's command, action, list key

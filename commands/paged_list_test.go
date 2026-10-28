@@ -338,3 +338,170 @@ func TestEveryPageAPressShowsFitsOneEmbed(t *testing.T) {
 		})
 	}
 }
+
+// otherMember is a member who didn't run the command.
+const otherMember = "4242"
+
+// When another member presses ▶ on page 1 of the public message, they get
+// a new ephemeral message showing page 2 with its own arrows, and the
+// public message doesn't update.
+func TestAnotherMembersPressOpensAPrivateCopyAtTheirPage(t *testing.T) {
+	for _, cmd := range listCommands {
+		t.Run(cmd.name, func(t *testing.T) {
+			cmd.long(t)
+			st := store.NewFake()
+			v := runList(t, cmd, st, loaRefDate)
+
+			a := pressList(t, cmd, st, loaRefDate, v.arrow(t, "▶"), otherMember)
+			if !a.private {
+				t.Fatalf("another member's press updated the public message, want a private copy")
+			}
+			if n, _ := pageMarker(t, a.view.page(t).Title); n != 2 {
+				t.Errorf("the private copy shows page %d, want 2", n)
+			}
+			a.view.arrow(t, "◀")
+			a.view.arrow(t, "▶")
+		})
+	}
+}
+
+// On a list of 3 or more pages, when another member presses ▶ on page 2 of
+// their private copy, the copy updates to page 3 and no new message opens.
+func TestAPressOnAPrivateCopyFlipsTheCopy(t *testing.T) {
+	for _, cmd := range listCommands {
+		t.Run(cmd.name, func(t *testing.T) {
+			cmd.long(t)
+			st := store.NewFake()
+			v := runList(t, cmd, st, loaRefDate)
+			if _, m := pageMarker(t, v.page(t).Title); m < 3 {
+				t.Fatalf("the fixture makes %d pages; the test needs 3 or more", m)
+			}
+			copy2 := pressList(t, cmd, st, loaRefDate, v.arrow(t, "▶"), otherMember)
+
+			a := pressList(t, cmd, st, loaRefDate, copy2.view.arrow(t, "▶"), otherMember)
+			if !a.updated {
+				t.Fatalf("a press on the private copy opened a new message, want the copy updated")
+			}
+			if n, _ := pageMarker(t, a.view.page(t).Title); n != 3 {
+				t.Errorf("the copy shows page %d, want 3", n)
+			}
+		})
+	}
+}
+
+// assertPrivateNote fails the test unless a is a new message only the
+// presser sees, carrying note and no page, so the message pressed stays as
+// it was.
+func assertPrivateNote(t *testing.T, a pressAnswer, note string) {
+	t.Helper()
+	if !a.private {
+		t.Fatalf("the press updated the message pressed, want a private note")
+	}
+	if !strings.Contains(a.view.content, note) {
+		t.Errorf("the note says %q, want %q", a.view.content, note)
+	}
+	if len(a.view.embeds) != 0 || len(a.view.buttons) != 0 {
+		t.Errorf("the note carries %d embeds and %d buttons, want neither", len(a.view.embeds), len(a.view.buttons))
+	}
+}
+
+// A press 30 days after the run gets a private note carrying the
+// expired-list constant, and the message pressed doesn't update. A press
+// 29 days after the run flips the page.
+func TestAPressThirtyDaysAfterTheRunFindsTheListExpired(t *testing.T) {
+	for _, cmd := range listCommands {
+		t.Run(cmd.name, func(t *testing.T) {
+			cmd.long(t)
+			st := store.NewFake()
+			v := runList(t, cmd, st, loaRefDate)
+
+			a := pressList(t, cmd, st, loaRefDate.AddDate(0, 0, 30), v.arrow(t, "▶"), runner)
+			assertPrivateNote(t, a, pagedListExpiredNote)
+
+			if a := pressList(t, cmd, st, loaRefDate.AddDate(0, 0, 29), v.arrow(t, "▶"), runner); !a.updated {
+				t.Errorf("a press 29 days after the run didn't flip the page")
+			}
+		})
+	}
+}
+
+// When an arrow from a run that had a store reaches a newly built command
+// with no store configured, the presser gets the expired-list note as a
+// new ephemeral message, and the message pressed stays as it was.
+func TestAPressOnAHostWithNoStoreFindsTheListExpired(t *testing.T) {
+	for _, cmd := range listCommands {
+		t.Run(cmd.name, func(t *testing.T) {
+			cmd.long(t)
+			v := runList(t, cmd, store.NewFake(), loaRefDate)
+
+			assertPrivateNote(t, pressList(t, cmd, nil, loaRefDate, v.arrow(t, "▶"), runner), pagedListExpiredNote)
+		})
+	}
+}
+
+// When a press's store read fails, the presser gets the couldn't-show note
+// as a new ephemeral message, Sentry gets one event, and the message
+// pressed stays as it was.
+func TestAPressWhoseReadFailsGetsTheCouldntShowNote(t *testing.T) {
+	for _, cmd := range listCommands {
+		t.Run(cmd.name, func(t *testing.T) {
+			cmd.long(t)
+			st := store.NewFake()
+			v := runList(t, cmd, st, loaRefDate)
+			rec := recordCaptures(t)
+			down := errors.New("connection refused")
+
+			a := pressList(t, cmd, failingListStore{Store: st, readErr: down}, loaRefDate, v.arrow(t, "▶"), runner)
+			assertPrivateNote(t, a, pagedListUnreadableNote)
+			assertCaptureNames(t, singleCapture(t, rec, down), map[string]string{"command": cmd.name})
+		})
+	}
+}
+
+// assertUnsavedReply fails the test unless v shows page 1 of a long list
+// with both arrows disabled and the unsaved-pages line.
+func assertUnsavedReply(t *testing.T, v listView) {
+	t.Helper()
+	if n, m := pageMarker(t, v.page(t).Title); n != 1 || m < 2 {
+		t.Errorf("the reply shows page %d of %d, want page 1 of more than 1", n, m)
+	}
+	if !v.arrow(t, "◀").Disabled || !v.arrow(t, "▶").Disabled {
+		t.Errorf("the reply has an enabled arrow, want both disabled")
+	}
+	if !strings.Contains(v.content, pagedListUnsavedLine) {
+		t.Errorf("the reply says %q, want the unsaved-pages line", v.content)
+	}
+}
+
+// When the store's save fails, a long list's reply shows page 1 with both
+// arrows disabled and the unsaved-pages line. It sends no follow-up, and
+// Sentry gets one event whose command is the command's name.
+func TestALongListWhoseSaveFailsShowsPageOneAlone(t *testing.T) {
+	for _, cmd := range listCommands {
+		t.Run(cmd.name, func(t *testing.T) {
+			cmd.long(t)
+			rec := recordCaptures(t)
+			down := errors.New("connection refused")
+
+			assertUnsavedReply(t, runList(t, cmd, failingListStore{Store: store.NewFake(), saveErr: down}, loaRefDate))
+			assertCaptureNames(t, singleCapture(t, rec, down), map[string]string{"command": cmd.name})
+		})
+	}
+}
+
+// With no store configured, a long list's reply shows page 1 with both
+// arrows disabled and the unsaved-pages line. It sends no follow-up and
+// nothing to Sentry.
+func TestALongListOnAHostWithNoStoreShowsPageOneAlone(t *testing.T) {
+	for _, cmd := range listCommands {
+		t.Run(cmd.name, func(t *testing.T) {
+			cmd.long(t)
+			rec := recordCaptures(t)
+
+			assertUnsavedReply(t, runList(t, cmd, nil, loaRefDate))
+			if rec.count != 0 {
+				t.Errorf("captures = %d, want none: %v", rec.count, rec.msgs)
+			}
+		})
+	}
+}
