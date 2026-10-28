@@ -279,3 +279,21 @@ func (b boundedStore) RemoveWingedAviator(ctx context.Context, guildID, userID s
 	defer cancel()
 	return b.store.RemoveWingedAviator(ctx, guildID, userID)
 }
+
+func (b boundedStore) SavePagedList(ctx context.Context, list store.PagedList) (string, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.SavePagedList(ctx, list)
+}
+
+func (b boundedStore) PagedListPage(ctx context.Context, key string, idx int) (store.SavedPage, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.PagedListPage(ctx, key, idx)
+}
+
+func (b boundedStore) DeletePagedListsBefore(ctx context.Context, cutoff time.Time) error {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.DeletePagedListsBefore(ctx, cutoff)
+}

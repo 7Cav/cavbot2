@@ -280,6 +280,9 @@ func main() {
 		// Its member events, registered before dg.Open() like the others, so
 		// none is missed: a role change or a rejoin moves the role.
 		aviators.Listen(dg)
+		// The pages /loa and /awol save for a long list (#824) last 30
+		// days, and the sweep deletes them after that.
+		commands.StartPagedListSweep(botStore)
 		// The panel's hub page saves through the runtime and reads the guild
 		// through the session, so it is built once both exist.
 		webPanel = initPanel(panelCfg, panel.Deps{
@@ -296,8 +299,14 @@ func main() {
 
 	// The registry takes the runtimes, so it is built after them. The
 	// Foxhole commands share the one-action-at-a-time rule with the
-	// Foxhole page through the Foxhole runtime.
-	registry := commands.NewRegistry(tempVC, foxhole, recording, aviators)
+	// Foxhole page through the Foxhole runtime. /loa and /awol keep the
+	// pages of a long list in the store, a nil interface with none, not a
+	// nil *store.Postgres.
+	var commandStore store.Store
+	if botStore != nil {
+		commandStore = botStore
+	}
+	registry := commands.NewRegistry(tempVC, foxhole, recording, aviators, commandStore)
 
 	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		// Backstop only. Registered slash-command handlers are wrapped with

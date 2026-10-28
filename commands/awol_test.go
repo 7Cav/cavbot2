@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 )
@@ -134,7 +135,7 @@ func TestRunAwol_SmallResultRendersEmbedChunks(t *testing.T) {
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
 
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	calls := f.Calls()
 	if len(calls) != 2 {
@@ -199,7 +200,7 @@ func TestRunAwol_NoLOARegressionAndSortOrder(t *testing.T) {
 
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	desc := (*f.Calls()[1].Edit.Embeds)[0].Description
 	// Farther.F (worse) must appear before Closer.C.
@@ -230,7 +231,7 @@ func TestRunAwol_SeverityGlyphs(t *testing.T) {
 
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	desc := (*f.Calls()[1].Edit.Embeds)[0].Description
 	checks := []struct{ glyph, name string }{
@@ -308,8 +309,7 @@ func lineContaining(s, sub string) string {
 //   - 45 rows = 4095 raw bytes. The buggy budget (4096) packs all 45 into one
 //     chunk; description = 12 + 4095 = 4107 > 4096 → FAILS pre-fix.
 //   - The fixed budget (4096 − 12 = 4084) flushes after 44 rows = 4004 bytes;
-//     description = 12 + 4004 = 4016 ≤ 4096 → PASSES. (2 chunks ≤ maxEmbedsPerMsg
-//     so we stay on the embed path, not the file fallback.)
+//     description = 12 + 4004 = 4016 ≤ 4096 → PASSES.
 const (
 	embedLimitTestUsers = 45
 	embedLimitTestPad   = 12 // → 91-byte rows; see sizing math above
@@ -324,68 +324,15 @@ func TestRunAwol_EmbedDescriptionWithinDiscordLimit(t *testing.T) {
 	}
 	serveAwolRoster(t, roster, http.StatusOK)
 
-	f := &fakeResponder{}
-	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-	runAwol(f, awolRefDate, i)
+	pages, _ := pageThrough(t, awolList, store.NewFake(), awolRefDate)
 
-	edit := f.Calls()[1].Edit
-	if edit.Embeds == nil {
-		t.Fatalf("expected embeds on Edit (stay on embed path); got %+v", edit)
-	}
-	// Assert on bytes across EVERY emitted embed — the overflow can land in any
-	// chunk, and production budgets on bytes (len), not runes.
-	for idx, e := range *edit.Embeds {
+	// Assert on bytes across EVERY page — the overflow can land in any
+	// page, and production budgets on bytes (len), not runes.
+	for idx, e := range pages {
 		if n := len(e.Description); n > discordEmbedDescriptionLimit {
 			t.Fatalf("embed[%d] description = %d bytes, exceeds Discord %d-byte limit",
 				idx, n, discordEmbedDescriptionLimit)
 		}
-	}
-}
-
-func TestRunAwol_LargeResultFallsBackToFile(t *testing.T) {
-	// Inflate per-user line length with long padded usernames so a single user
-	// line saturates a chunk (~2.5KB each, threshold 4096). 11 such users yield
-	// 11 chunks, exceeding maxEmbedsPerMsg=10 and forcing the file fallback.
-	const padded = 2500
-	pad := strings.Repeat("x", padded)
-	roster := utils.LiteRosterResponse{
-		LiteProfiles: map[string]utils.LiteProfileResponse{},
-	}
-	for n := range 11 {
-		id := fmt.Sprintf("%d", 1000+n)
-		name := fmt.Sprintf("U%d_%s", n, pad)
-		roster.LiteProfiles[id] = awolMember(name, id, "2026-03-01 12:00:00")
-	}
-	serveAwolRoster(t, roster, http.StatusOK)
-
-	f := &fakeResponder{}
-	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-
-	runAwol(f, awolRefDate, i)
-
-	calls := f.Calls()
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 calls, got %d: %+v", len(calls), calls)
-	}
-	edit := calls[1].Edit
-	if edit == nil {
-		t.Fatalf("calls[1].Edit is nil")
-	}
-	if len(edit.Files) != 1 {
-		t.Fatalf("expected exactly 1 file attachment, got %d", len(edit.Files))
-	}
-	if edit.Embeds != nil && len(*edit.Embeds) > 0 {
-		t.Fatalf("expected no embeds on file-fallback path, got %d", len(*edit.Embeds))
-	}
-	if want := fmt.Sprintf(awolLargeFileFormat, "1-7"); edit.Content == nil || !strings.Contains(*edit.Content, want) {
-		got := "<nil>"
-		if edit.Content != nil {
-			got = *edit.Content
-		}
-		t.Fatalf("expected the large-report note %q on file path, got %q", want, got)
-	}
-	if edit.Files[0].Name != "awol_report_1-7.txt" {
-		t.Fatalf("file name = %q, want awol_report_1-7.txt", edit.Files[0].Name)
 	}
 }
 
@@ -406,7 +353,7 @@ func TestRunAwol_ForceFileOutputWithSmallResult(t *testing.T) {
 		boolOption("force_file_output", true),
 	)
 
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	calls := f.Calls()
 	if len(calls) != 2 {
@@ -439,7 +386,7 @@ func TestRunAwol_EmptyRosterSurfacesFormatHint(t *testing.T) {
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
 	i := fakeAppCommandInteraction(stringOption("position", "Q/Z/9-9"))
 
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	calls := f.Calls()
 	if len(calls) != 3 {
@@ -465,7 +412,7 @@ func TestRunAwolRosterFailureReachesSentryNotTheMember(t *testing.T) {
 	rec := recordCaptures(t)
 
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(f, nil, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	assertLookupFailed(t, f.Calls(), rec, "awol")
 }
@@ -477,7 +424,7 @@ func TestRunAwolLeavesNoLOACallRunningAfterAFailedRosterCall(t *testing.T) {
 	serveAwolRoster(t, utils.LiteRosterResponse{}, http.StatusInternalServerError)
 	outlived := startLOACallsLate(t, 20*time.Millisecond)
 
-	runAwol(&fakeResponder{}, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(&fakeResponder{}, nil, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	if outlived() {
 		t.Fatal("an LOA call returned after the run did")
@@ -492,7 +439,7 @@ func TestRunAwolDoesNotWaitOutAnUnansweredLOACallAfterAFailedRosterCall(t *testi
 	api.neverAnswerLOAs()
 
 	started := time.Now()
-	runAwol(&fakeResponder{}, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(&fakeResponder{}, nil, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	if took := time.Since(started); took >= time.Second {
 		t.Fatalf("the run returned %v after it started; it waited out the LOA call", took)
@@ -516,7 +463,7 @@ func TestRunAwolCreditsAnLOAToTheMemberWithItsSubjectsForumUserID(t *testing.T) 
 		start: "2026-05-06", end: "2026-05-20",
 	})
 	f := &fakeResponder{}
-	runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(f, nil, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	line := lineContaining(awolReport(t, f), "Renamed.R")
 	if !strings.Contains(line, awolFigures(13, 30)) {
@@ -539,7 +486,7 @@ func TestRunAwolNeverCreditsAnLOAToAMemberWhoOnlySharesItsSubjectsUsername(t *te
 		start: "2026-04-16", end: "2026-05-20",
 	})
 	f := &fakeResponder{}
-	runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(f, nil, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	report := awolReport(t, f)
 	line := lineContaining(report, "Shared.S")
@@ -568,7 +515,7 @@ func TestRunAwolSubtractsAnLOAThatEnded364DaysAgo(t *testing.T) {
 		start: "2025-05-12", end: "2025-05-16",
 	})
 	f := &fakeResponder{}
-	runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(f, nil, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	line := lineContaining(awolReport(t, f), "Silent.S")
 	if !strings.Contains(line, awolFigures(357, 369)) {
@@ -588,7 +535,7 @@ func TestRunAwolJustBeforeUTCMidnightReportsWithoutTheFallbackWarning(t *testing
 	api := serveCavAPI(t, now, roster)
 	api.setToday(mustParseAwolDate("2026-05-16 00:00:00"))
 	f := &fakeResponder{}
-	runAwol(f, now, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(f, nil, now, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	if reply := awolReplyText(t, f); strings.Contains(reply, awolDegradedFooter) || !strings.Contains(reply, "Trooper.A") {
 		t.Fatalf("want Trooper.A reported with no fallback warning.\nGot:\n%s", reply)
@@ -613,7 +560,7 @@ func TestRunAwolNeedsReviewLOAKeepsFullDaysAndTagsTheRow(t *testing.T) {
 		needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
 	})
 	f := &fakeResponder{}
-	runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(f, nil, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	report := awolReport(t, f)
 	line := lineContaining(report, "Review.R")
@@ -659,7 +606,7 @@ func TestRunAwolTagsANeedsReviewLOAPostedUpTo14DaysBeforeTheLastPost(t *testing.
 				needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
 			})
 			f := &fakeResponder{}
-			runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+			runAwol(f, nil, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 			line := lineContaining(awolReport(t, f), "Early.E")
 			if tagged := strings.Contains(line, awolNeedsReviewTag); tagged != tc.tagged {
@@ -691,7 +638,7 @@ func TestRunAwolLOACallAnswering404FallsBackToRawFiguresAndReachesSentry(t *test
 	}).failLOAs(http.StatusNotFound)
 	rec := recordCaptures(t)
 	f := &fakeResponder{}
-	runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(f, nil, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	line := lineContaining(awolReport(t, f), "Trooper.A")
 	if !strings.Contains(line, awolFigures(7, 14)) {
@@ -725,14 +672,14 @@ func TestRunAwolStopsCountingADeletedLOAOnTheNextRun(t *testing.T) {
 		start: "2026-05-06", end: "2026-05-20",
 	})
 	first := &fakeResponder{}
-	runAwol(first, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(first, nil, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 	if line := lineContaining(awolReport(t, first), "Trooper.D"); !strings.Contains(line, awolFigures(13, 30)) {
 		t.Fatalf("first run: want %q with the LOA counted.\nGot line: %q", awolFigures(13, 30), line)
 	}
 
 	api.setLOAs()
 	second := &fakeResponder{}
-	runAwol(second, awolRefDate.Add(time.Minute), fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(second, nil, awolRefDate.Add(time.Minute), fakeAppCommandInteraction(stringOption("position", "1-7")))
 	if line := lineContaining(awolReport(t, second), "Trooper.D"); !strings.Contains(line, awolFigures(23, 30)) {
 		t.Fatalf("second run: want the full %q once the LOA is deleted.\nGot line: %q", awolFigures(23, 30), line)
 	}
@@ -749,7 +696,7 @@ func TestRunAwolAsksForTheRosterAndTheLOAsAtTheSameTime(t *testing.T) {
 	serveCavAPI(t, awolRefDate, roster).pairCalls()
 	rec := recordCaptures(t)
 	f := &fakeResponder{}
-	runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(f, nil, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	report := awolReport(t, f)
 	if !strings.Contains(report, "Trooper.A") {
@@ -779,7 +726,7 @@ func TestRunAwol_ActiveLOAStillAWOL(t *testing.T) {
 	})
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	line := lineContaining((*f.Calls()[1].Edit.Embeds)[0].Description, "Reyes.J")
 	if !strings.HasPrefix(line, "⚪") {
@@ -817,7 +764,7 @@ func TestRunAwolRowCarriesBothTheLOATagAndTheNeedsReviewTag(t *testing.T) {
 		},
 	)
 	f := &fakeResponder{}
-	runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(f, nil, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	line := lineContaining(awolReport(t, f), "Both.B")
 	if !strings.HasPrefix(line, "⚪") {
@@ -846,7 +793,7 @@ func TestRunAwolNeedsReviewLOANamingNoMemberTagsNobody(t *testing.T) {
 		needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
 	})
 	f := &fakeResponder{}
-	runAwol(f, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runAwol(f, nil, awolRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	report := awolReport(t, f)
 	line := lineContaining(report, "Same.S")
@@ -859,9 +806,7 @@ func TestRunAwolNeedsReviewLOANamingNoMemberTagsNobody(t *testing.T) {
 }
 
 // A report sent as a file gives each LOA tag on a trooper's entry the thread
-// the embed row's tag links to, on a line that carries the tag, whether
-// force_file_output asked for the file or the report was too large for
-// embeds.
+// the embed row's tag links to, on a line that carries the tag.
 func TestRunAwolFileReportGivesEachLOATagItsThread(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -869,8 +814,6 @@ func TestRunAwolFileReportGivesEachLOATagItsThread(t *testing.T) {
 		forceFile bool
 	}{
 		{"force_file_output", 1, true},
-		// 1,000 rows of about 80 bytes overflow 10 embeds of 4,096.
-		{"too large for embeds", 1000, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -899,7 +842,7 @@ func TestRunAwolFileReportGivesEachLOATagItsThread(t *testing.T) {
 				},
 			)
 			f := &fakeResponder{}
-			runAwol(f, awolRefDate, fakeAppCommandInteraction(
+			runAwol(f, nil, awolRefDate, fakeAppCommandInteraction(
 				stringOption("position", "1-7"),
 				boolOption("force_file_output", tc.forceFile),
 			))
@@ -940,7 +883,7 @@ func TestRunAwolFileReportLeavesATagWithAnUnknownThreadBare(t *testing.T) {
 		},
 	)
 	f := &fakeResponder{}
-	runAwol(f, awolRefDate, fakeAppCommandInteraction(
+	runAwol(f, nil, awolRefDate, fakeAppCommandInteraction(
 		stringOption("position", "1-7"),
 		boolOption("force_file_output", true),
 	))
@@ -1061,7 +1004,7 @@ func TestRunAwol_ExpiredLOASubtractedNotTagged(t *testing.T) {
 	})
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	desc := (*f.Calls()[1].Edit.Embeds)[0].Description
 	tanner := lineContaining(desc, "Tanner.K")
@@ -1095,7 +1038,7 @@ func TestRunAwol_FullyCoveredMemberNotListed(t *testing.T) {
 	})
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	desc := (*f.Calls()[1].Edit.Embeds)[0].Description
 	if strings.Contains(desc, "Covered.C") {
@@ -1125,7 +1068,7 @@ func TestRunAwol_LOAsUnreadEmptyListWarns(t *testing.T) {
 
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	edit := f.Calls()[1].Edit
 	got := "<nil>"
@@ -1148,7 +1091,7 @@ func TestRunAwol_EmptyListAllClear(t *testing.T) {
 
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	got := "<nil>"
 	if edit := f.Calls()[1].Edit; edit.Content != nil {
@@ -1179,7 +1122,7 @@ func TestRunAwol_LOAsUnreadFileOutputCarriesWarning(t *testing.T) {
 		stringOption("position", "1-7"),
 		boolOption("force_file_output", true),
 	)
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	edit := f.Calls()[1].Edit
 	if len(edit.Files) != 1 {
@@ -1221,7 +1164,7 @@ func TestRunAwol_MultipleWindowsMergedNoDoubleCount(t *testing.T) {
 	)
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	line := lineContaining((*f.Calls()[1].Edit.Embeds)[0].Description, "Multi.M")
 	if !strings.Contains(line, awolFigures(7, 30)) {
@@ -1244,7 +1187,7 @@ func TestRunAwol_MalformedDateSkipsMemberNotReport(t *testing.T) {
 
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	calls := f.Calls()
 	if len(calls) != 2 {
@@ -1285,7 +1228,7 @@ func TestRunAwol_MalformedUniformURLSkipsMemberNotReport(t *testing.T) {
 
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	calls := f.Calls()
 	if len(calls) != 2 {
@@ -1326,7 +1269,7 @@ func TestRunAwol_BothMalformedRecordsSkippedTogether(t *testing.T) {
 
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	desc := (*f.Calls()[1].Edit.Embeds)[0].Description
 	if !strings.Contains(desc, "Trooper.A") {
@@ -1359,7 +1302,7 @@ func TestRunAwol_FileOutputCarriesSkippedNote(t *testing.T) {
 		stringOption("position", "1-7"),
 		boolOption("force_file_output", true),
 	)
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	edit := f.Calls()[1].Edit
 	if len(edit.Files) != 1 {
@@ -1394,7 +1337,7 @@ func TestRunAwol_SkippedNoteOnNoAwolPath(t *testing.T) {
 
 	f := &fakeResponder{}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
-	runAwol(f, awolRefDate, i)
+	runAwol(f, nil, awolRefDate, i)
 
 	edit := f.Calls()[1].Edit
 	if edit.Content == nil {

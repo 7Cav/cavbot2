@@ -57,6 +57,8 @@ type Fake struct {
 	nextRecordingID int64
 	// aviators holds each guild's winged aviators by Discord user ID.
 	aviators map[string]map[string]bool
+	// pagedLists holds each saved list by its key.
+	pagedLists map[string]PagedList
 	// holdIn is the zone HoldTimesIn holds each change log entry's time
 	// in, and nil for the local zone time.Now gives.
 	holdIn *time.Location
@@ -85,6 +87,7 @@ func NewFake() *Fake {
 		recordings:      make(map[int64]Recording),
 		nextRecordingID: 1,
 		aviators:        make(map[string]map[string]bool),
+		pagedLists:      make(map[string]PagedList),
 	}
 }
 
@@ -889,5 +892,45 @@ func (f *Fake) RemoveWingedAviator(ctx context.Context, guildID, userID string) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.aviators[guildID], userID)
+	return nil
+}
+
+// SavePagedList implements Store.
+func (f *Fake) SavePagedList(ctx context.Context, list PagedList) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := newPagedListKey()
+	list.Pages = slices.Clone(list.Pages)
+	f.pagedLists[key] = list
+	return key, nil
+}
+
+// PagedListPage implements Store.
+func (f *Fake) PagedListPage(ctx context.Context, key string, idx int) (SavedPage, error) {
+	if err := ctx.Err(); err != nil {
+		return SavedPage{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	list, ok := f.pagedLists[key]
+	if !ok || idx < 0 || idx >= len(list.Pages) {
+		return SavedPage{}, ErrNotFound
+	}
+	return SavedPage{RunnerID: list.RunnerID, RanAt: list.RanAt, Total: len(list.Pages), Page: list.Pages[idx]}, nil
+}
+
+// DeletePagedListsBefore implements Store.
+func (f *Fake) DeletePagedListsBefore(ctx context.Context, cutoff time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	maps.DeleteFunc(f.pagedLists, func(_ string, list PagedList) bool {
+		return list.RanAt.Before(cutoff)
+	})
 	return nil
 }

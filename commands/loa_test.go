@@ -1,16 +1,15 @@
 package commands
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 )
@@ -37,41 +36,12 @@ var loaHeadings = []string{loaActiveHeading, loaUpcomingHeading, loaNeedsReviewH
 // loaNumbers finds the numbers written in a title or footer.
 var loaNumbers = regexp.MustCompile(`\d+`)
 
-// loaSection returns the lines under heading across every embed the run
-// sent, in order: in each embed, the lines after the one holding heading
-// and before the next heading. Each embed is read on its own, as a member
-// reads one page, so a line is under heading only when heading comes
-// before it in the same embed. It returns nil when no embed has such a
-// section.
+// loaSection returns the lines under heading across every embed the run's
+// reply shows, in order, as loaPagedSection reads pages. It returns nil
+// when no embed has such a section.
 func loaSection(t *testing.T, f *fakeResponder, heading string) []string {
 	t.Helper()
-	var lines []string
-	for _, embeds := range replyMessages(t, f) {
-		for _, e := range embeds {
-			current := ""
-			for _, line := range strings.Split(e.Description, "\n") {
-				if h := loaHeadingOf(line); h != "" {
-					current = h
-					continue
-				}
-				if current == heading && strings.TrimSpace(line) != "" {
-					lines = append(lines, line)
-				}
-			}
-		}
-	}
-	return lines
-}
-
-// loaEmbeds returns every embed the run sent, in the order a member reads
-// them.
-func loaEmbeds(t *testing.T, f *fakeResponder) []*discordgo.MessageEmbed {
-	t.Helper()
-	var all []*discordgo.MessageEmbed
-	for _, embeds := range replyMessages(t, f) {
-		all = append(all, embeds...)
-	}
-	return all
+	return loaPagedSection(replyView(t, f).embeds, heading)
 }
 
 // loaListed is one LOA as /loa should list it: its Subject's name and its
@@ -168,7 +138,7 @@ func TestRunLoa_FirstRespondFails_BailsBeforeAPI(t *testing.T) {
 	f := &fakeResponder{RespondErrs: []error{errFirstRespond}}
 	i := fakeAppCommandInteraction(stringOption("position", "1-7"))
 
-	runLoa(f, loaRefDate, i)
+	runLoa(f, nil, loaRefDate, i)
 
 	assertPlaceholderFailedBailout(t, f.Calls())
 }
@@ -180,7 +150,7 @@ func TestRunLoaRosterFailureReachesSentryNotTheMember(t *testing.T) {
 	rec := recordCaptures(t)
 
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(f, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	assertLookupFailed(t, f.Calls(), rec, "loa")
 }
@@ -192,7 +162,7 @@ func TestRunLoaLeavesNoLOACallRunningAfterAFailedRosterCall(t *testing.T) {
 	serveCavAPI(t, loaRefDate, utils.LiteRosterResponse{}).failRoster(http.StatusInternalServerError)
 	outlived := startLOACallsLate(t, 20*time.Millisecond)
 
-	runLoa(&fakeResponder{}, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(&fakeResponder{}, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	if outlived() {
 		t.Fatal("an LOA call returned after the run did")
@@ -207,7 +177,7 @@ func TestRunLoaDoesNotWaitOutAnUnansweredLOACallAfterAFailedRosterCall(t *testin
 	api.neverAnswerLOAs()
 
 	started := time.Now()
-	runLoa(&fakeResponder{}, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(&fakeResponder{}, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	if took := time.Since(started); took >= time.Second {
 		t.Fatalf("the run returned %v after it started; it waited out the LOA call", took)
@@ -225,7 +195,7 @@ func TestRunLoa_NoMatchingLOAsReportsNone(t *testing.T) {
 	serveCavAPI(t, loaRefDate, roster)
 
 	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(f, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	if reply := lastReply(t, f.Calls()); !strings.Contains(reply, fmt.Sprintf(loaNoneFormat, "1-7")) {
 		t.Fatalf("want the no-LOAs reply for 1-7; got %q", reply)
@@ -238,7 +208,7 @@ func TestRunLoa_EmptyRosterSurfacesFormatHint(t *testing.T) {
 	serveCavAPI(t, loaRefDate, utils.LiteRosterResponse{LiteProfiles: map[string]utils.LiteProfileResponse{}})
 
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "Q/Z/9-9")))
+	runLoa(f, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "Q/Z/9-9")))
 
 	assertFixedReply(t, lastReply(t, f.Calls()), emptyRosterSearchMessage("Q/Z/9-9"), nil)
 }
@@ -265,7 +235,7 @@ func TestRunLoaListsAnOpenAndAnUpcomingLOAOfOneTrooperOnTwoLines(t *testing.T) {
 		},
 	)
 	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(f, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	if active := loaSection(t, f, loaActiveHeading); !hasLOALine(active, "Trooper.Two", "7101") {
 		t.Fatalf("want a line under Active naming Trooper.Two and linking thread 7101; Active holds %q", active)
@@ -289,7 +259,7 @@ func TestRunLoaListsATrooperOnTheLastDayOfTheirLeaveUnderActive(t *testing.T) {
 		start: "2026-05-12", end: "2026-05-22",
 	})
 	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(f, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	if active := loaSection(t, f, loaActiveHeading); !hasLOALine(active, "Trooper.Last", "7106") {
 		t.Fatalf("want a line under Active naming Trooper.Last and linking thread 7106; Active holds %q", active)
@@ -319,7 +289,7 @@ func TestRunLoaListsAnLOAForTheMemberWithItsSubjectsForumUserIDOnly(t *testing.T
 		},
 	)
 	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(f, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	active := loaSection(t, f, loaActiveHeading)
 	if !hasLOALine(active, "Renamed.R", "7103") {
@@ -347,7 +317,7 @@ func TestRunLoaNeverListsANeedsReviewLOAUnderActiveOrUpcoming(t *testing.T) {
 		needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
 	})
 	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(f, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	for _, heading := range []string{loaActiveHeading, loaUpcomingHeading} {
 		if line := lineContaining(strings.Join(loaSection(t, f, heading), "\n"), "Review.R"); line != "" {
@@ -387,7 +357,7 @@ func TestRunLoaListsEachNeedsReviewLOAUnderNeedsReviewWithItsReason(t *testing.T
 		},
 	)
 	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(f, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	section := strings.Join(loaSection(t, f, loaNeedsReviewHeading), "\n")
 	for _, want := range []struct{ name, threadID, reason string }{
@@ -419,7 +389,7 @@ func TestRunLoaListsANeedsReviewLOAOfARuleWithNoPhraseUnderNeedsReview(t *testin
 		needsReview: true, reviewReason: "LOA_REVIEW_REASON_NEW_RULE",
 	})
 	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(f, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	section := strings.Join(loaSection(t, f, loaNeedsReviewHeading), "\n")
 	line := lineContaining(section, "Novel.N")
@@ -445,7 +415,7 @@ func TestRunLoaListsANeedsReviewLOANamingNoMemberNowhere(t *testing.T) {
 		needsReview: true, reviewReason: "LOA_REVIEW_REASON_TOO_LONG",
 	})
 	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(f, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	for _, heading := range loaHeadings {
 		if line := lineContaining(strings.Join(loaSection(t, f, heading), "\n"), "Same.S"); line != "" {
@@ -470,7 +440,7 @@ func TestRunLoaShowsAnEditedOrDeletedLOAAsItStandsOnTheNextRun(t *testing.T) {
 	api := serveCavAPI(t, loaRefDate, roster, upcoming)
 	run := func(now time.Time) *fakeResponder {
 		f := &fakeResponder{}
-		runLoa(f, now, fakeAppCommandInteraction(stringOption("position", "1-7")))
+		runLoa(f, nil, now, fakeAppCommandInteraction(stringOption("position", "1-7")))
 		return f
 	}
 
@@ -516,7 +486,7 @@ func TestRunLoaLOACallAnswering404RepliesUnavailableAndReachesSentry(t *testing.
 	rec := recordCaptures(t)
 
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(f, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	if rec.count != 1 {
 		t.Fatalf("captures = %d, want 1", rec.count)
@@ -542,7 +512,7 @@ func TestRunLoaWaitsNoLongerThanTheSlowerOfTheRosterAndLOACalls(t *testing.T) {
 
 	f := &fakeResponder{}
 	started := time.Now()
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(f, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 	waited := time.Since(started)
 
 	if active := loaSection(t, f, loaActiveHeading); !hasLOALine(active, "Trooper.W", "7109") {
@@ -570,7 +540,7 @@ func TestRunLoaListsTheLOAOfAMemberWhoseUniformURLDoesNotParse(t *testing.T) {
 	rec := recordCaptures(t)
 
 	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	runLoa(f, nil, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
 
 	if active := loaSection(t, f, loaActiveHeading); !hasLOALine(active, "Trooper.N", "7110") {
 		t.Fatalf("want a line under Active naming Trooper.N and linking thread 7110; Active holds %q", active)
@@ -580,92 +550,58 @@ func TestRunLoaListsTheLOAOfAMemberWhoseUniformURLDoesNotParse(t *testing.T) {
 	}
 }
 
-// A position whose LOAs fit one embed gets them as before: one embed
-// titled for the position, and no follow-up.
-func TestRunLoaSendsAListThatFitsOneEmbedAsOneEmbedTitledForThePosition(t *testing.T) {
-	serveLOAPosition(t, 1, 1, 1)
-	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
-
-	parts := replyMessages(t, f)
-	if len(parts) != 1 || len(parts[0]) != 1 {
-		t.Fatalf("want one message of one embed; got %d messages, the reply holding %d embeds", len(parts), len(parts[0]))
-	}
-	if title := parts[0][0].Title; title != "LOAs for 1-7" {
-		t.Fatalf("title = %q, want %q", title, "LOAs for 1-7")
-	}
-}
-
-// A position whose LOAs run past one embed still gets every LOA once,
-// under its own heading and in /loa's order, in messages Discord accepts.
-func TestRunLoaListsEveryLOAOfAListPastOneEmbedOnceUnderItsHeadingInOrder(t *testing.T) {
-	want := serveLOAPosition(t, 15, 15, 10)
-	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
-
-	assertWithinDiscordLimits(t, replyMessages(t, f))
-	for _, heading := range loaHeadings {
-		assertListedInOrder(t, heading, loaSection(t, f, heading), want[heading])
-	}
-}
-
-// Each page of a list past one embed names the position and its place in
-// the list in its title, so a member can tell when a list stopped short.
-func TestRunLoaTitlesEachPageOfAListPastOneEmbedWithItsPlaceInTheList(t *testing.T) {
-	serveLOAPosition(t, 60, 50, 40)
-	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
-
-	embeds := loaEmbeds(t, f)
-	if len(embeds) < 2 {
-		t.Fatalf("want the list across several embeds; got %d", len(embeds))
-	}
-	for k, e := range embeds {
-		numbers := loaNumbers.FindAllString(strings.Replace(e.Title, "1-7", "", 1), -1)
-		want := []string{strconv.Itoa(k + 1), strconv.Itoa(len(embeds))}
-		if !strings.Contains(e.Title, "1-7") || !slices.Equal(numbers, want) {
-			t.Errorf("embed %d of %d is titled %q; want the position 1-7 and the numbers %v", k+1, len(embeds), e.Title, want)
+// loaPagedSection returns the lines under heading across pages, in order,
+// reading each page on its own as loaSection reads each embed.
+func loaPagedSection(pages []*discordgo.MessageEmbed, heading string) []string {
+	var lines []string
+	for _, e := range pages {
+		current := ""
+		for _, line := range strings.Split(e.Description, "\n") {
+			if h := loaHeadingOf(line); h != "" {
+				current = h
+				continue
+			}
+			if current == heading && strings.TrimSpace(line) != "" {
+				lines = append(lines, line)
+			}
 		}
 	}
+	return lines
 }
 
-// A position with LOAs enough for several messages gets them across the
-// reply and follow-ups, each message within what Discord accepts.
-func TestRunLoaSpreadsAListPastOneMessageOverFollowUpsDiscordAccepts(t *testing.T) {
-	serveLOAPosition(t, 60, 50, 40)
-	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+// When the runner pages a list of about 150 LOAs with ▶ from page 1 to
+// page m, the pages show every LOA exactly once, under its own heading and
+// in the run's order.
+func TestRunLoaPagesShowEveryLOAOnceUnderItsHeadingInOrder(t *testing.T) {
+	want := serveLOAPosition(t, 60, 50, 40)
+	pages, _ := pageThrough(t, loaList, store.NewFake(), loaRefDate)
 
-	parts := replyMessages(t, f)
-	if len(parts) < 2 {
-		t.Fatalf("want the list across more than one message; got %d", len(parts))
+	for _, heading := range loaHeadings {
+		assertListedInOrder(t, heading, loaPagedSection(pages, heading), want[heading])
 	}
-	assertWithinDiscordLimits(t, parts)
 }
 
 // A page that carries on a section from the page before opens with that
 // section's heading, so a member reading any page knows what its lines
-// are, even on a follow-up.
+// are.
 func TestRunLoaOpensAPageThatContinuesASectionWithItsHeading(t *testing.T) {
 	want := serveLOAPosition(t, 60, 50, 40)
-	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	pages, _ := pageThrough(t, loaList, store.NewFake(), loaRefDate)
 
-	embeds := loaEmbeds(t, f)
 	continued := 0
-	for k := 1; k < len(embeds); k++ {
-		heading := loaListedUnder(firstLOALine(embeds[k].Description), want)
-		if heading == "" || heading != lastLOAHeading(embeds[k-1].Description) {
+	for k := 1; k < len(pages); k++ {
+		heading := loaListedUnder(firstLOALine(pages[k].Description), want)
+		if heading == "" || heading != lastLOAHeading(pages[k-1].Description) {
 			continue
 		}
 		continued++
-		if !strings.HasPrefix(embeds[k].Description, heading) {
-			t.Errorf("embed %d carries on %s from the embed before but opens with %q",
-				k+1, heading, strings.SplitN(embeds[k].Description, "\n", 2)[0])
+		if !strings.HasPrefix(pages[k].Description, heading) {
+			t.Errorf("page %d carries on %s from the page before but opens with %q",
+				k+1, heading, strings.SplitN(pages[k].Description, "\n", 2)[0])
 		}
 	}
 	if continued == 0 {
-		t.Fatalf("no embed carries on a section from the one before; the fixture no longer tests this")
+		t.Fatalf("no page carries on a section from the one before; the fixture no longer tests this")
 	}
 }
 
@@ -704,54 +640,21 @@ func loaListedUnder(line string, want map[string][]loaListed) string {
 	return ""
 }
 
-// The Active, Upcoming and Needs review counts a list past one embed shows
-// count the whole list, not the page they sit on.
-func TestRunLoaCountsTheWholeListOnAListPastOneEmbed(t *testing.T) {
+// Every page a press shows carries the Active, Upcoming and Needs review
+// counts of the whole list, not of the page they sit on.
+func TestRunLoaCountsTheWholeListOnEveryPage(t *testing.T) {
 	serveLOAPosition(t, 60, 50, 40)
-	f := &fakeResponder{}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
+	pages, _ := pageThrough(t, loaList, store.NewFake(), loaRefDate)
 
-	shown := 0
-	for k, e := range loaEmbeds(t, f) {
+	for k, e := range pages {
 		if e.Footer == nil {
+			t.Errorf("page %d shows no counts", k+1)
 			continue
 		}
-		shown++
 		counts := loaNumbers.FindAllString(e.Footer.Text, -1)
 		slices.Sort(counts)
 		if want := []string{"40", "50", "60"}; !slices.Equal(counts, want) {
-			t.Errorf("embed %d shows the counts %q; want 60, 50 and 40", k+1, e.Footer.Text)
+			t.Errorf("page %d shows the counts %q; want 60, 50 and 40", k+1, e.Footer.Text)
 		}
-	}
-	if shown == 0 {
-		t.Fatalf("no embed shows the counts")
-	}
-}
-
-// A follow-up Discord refuses reaches Sentry once, and no later part goes
-// out, so the page numbers already sent show the member the list stopped
-// short.
-func TestRunLoaStopsAtARefusedFollowUpAndReportsItOnce(t *testing.T) {
-	serveLOAPosition(t, 60, 50, 40)
-	whole := &fakeResponder{}
-	runLoa(whole, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
-	if n := len(replyMessages(t, whole)); n < 3 {
-		t.Fatalf("the fixture makes %d parts; the test needs one after the refused follow-up", n)
-	}
-
-	rec := recordCaptures(t)
-	refused := errors.New("HTTP 400 Bad Request")
-	f := &fakeResponder{FollowupErrs: []error{refused}}
-	runLoa(f, loaRefDate, fakeAppCommandInteraction(stringOption("position", "1-7")))
-
-	assertCaptureNames(t, singleCapture(t, rec, refused), map[string]string{"command": "loa"})
-	followups := 0
-	for _, c := range f.Calls() {
-		if c.Method == "Followup" {
-			followups++
-		}
-	}
-	if followups != 1 {
-		t.Fatalf("follow-ups = %d, want only the refused one", followups)
 	}
 }

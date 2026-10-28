@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
 	"github.com/bwmarrin/discordgo"
 )
@@ -17,6 +18,8 @@ type Registry struct {
 // voice channel runtime, foxhole the Foxhole runtime, recording the
 // recording runtime and aviators the winged aviators runtime, each nil on a
 // host with no bot store, and aviators nil with no Winged Aviator role too.
+// st is the bot store, nil on a host without one, where /loa and /awol
+// keep the pages of a long list.
 // /voice-rename, /voice-lock, /voice-unlock, /record and /winged-aviator are
 // declared either way, and /record whether recording is on or off: the
 // startup sync deletes any guild command the registry lacks, and Discord
@@ -25,7 +28,7 @@ type Registry struct {
 // such start. With no runtime each of them refuses. With no Foxhole runtime
 // the Foxhole commands refuse nothing: there is no Foxhole page to share
 // the roles with.
-func NewRegistry(tempVC *TempVC, foxhole *FoxholeRuntime, recording *RecordingRuntime, aviators *WingedAviators) *Registry {
+func NewRegistry(tempVC *TempVC, foxhole *FoxholeRuntime, recording *RecordingRuntime, aviators *WingedAviators, st store.Store) *Registry {
 	r := &Registry{}
 	r.RegisterCommands(
 		Milpac(),
@@ -36,8 +39,8 @@ func NewRegistry(tempVC *TempVC, foxhole *FoxholeRuntime, recording *RecordingRu
 		WardenBulkAddInternal(foxhole),
 		Zulu(),
 		S6ITCheck(),
-		Awol(),
-		LOA(),
+		Awol(st),
+		LOA(st),
 		AFSM(),
 		GamertagSearch(),
 		S3AARDisabled(),

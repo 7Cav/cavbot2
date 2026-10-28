@@ -1253,3 +1253,53 @@ func (p *Postgres) RemoveWingedAviator(ctx context.Context, guildID, userID stri
 	}
 	return nil
 }
+
+// SavePagedList implements Store.
+func (p *Postgres) SavePagedList(ctx context.Context, list PagedList) (string, error) {
+	pages, err := json.Marshal(list.Pages)
+	if err != nil {
+		return "", fmt.Errorf("encode the pages of a list run by %q: %w", list.RunnerID, err)
+	}
+	key := newPagedListKey()
+	if _, err := p.db.ExecContext(ctx,
+		`INSERT INTO paged_lists (key, runner_id, ran_at, pages) VALUES ($1, $2, $3, $4)`,
+		key, list.RunnerID, list.RanAt, pages); err != nil {
+		return "", fmt.Errorf("save a list run by %q: %w", list.RunnerID, err)
+	}
+	return key, nil
+}
+
+// PagedListPage implements Store.
+func (p *Postgres) PagedListPage(ctx context.Context, key string, idx int) (SavedPage, error) {
+	// A negative index would count from the end of the JSON array.
+	if idx < 0 {
+		return SavedPage{}, ErrNotFound
+	}
+	var (
+		saved SavedPage
+		page  []byte
+	)
+	err := p.db.QueryRowContext(ctx,
+		`SELECT runner_id, ran_at, jsonb_array_length(pages), pages -> $2::int FROM paged_lists WHERE key = $1`,
+		key, idx).Scan(&saved.RunnerID, &saved.RanAt, &saved.Total, &page)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return SavedPage{}, ErrNotFound
+	case err != nil:
+		return SavedPage{}, fmt.Errorf("read page %d of list %q: %w", idx, key, err)
+	case page == nil:
+		return SavedPage{}, ErrNotFound
+	}
+	if err := json.Unmarshal(page, &saved.Page); err != nil {
+		return SavedPage{}, fmt.Errorf("decode page %d of list %q: %w", idx, key, err)
+	}
+	return saved, nil
+}
+
+// DeletePagedListsBefore implements Store.
+func (p *Postgres) DeletePagedListsBefore(ctx context.Context, cutoff time.Time) error {
+	if _, err := p.db.ExecContext(ctx, `DELETE FROM paged_lists WHERE ran_at < $1`, cutoff); err != nil {
+		return fmt.Errorf("delete lists run before %v: %w", cutoff, err)
+	}
+	return nil
+}
