@@ -9,8 +9,8 @@ import (
 	"github.com/7cav/cavbot2/utils"
 )
 
-// getLOAs and getCurrentLOAs are the 7Cav API's LOA calls the runs make.
-// Tests wrap them to start an LOA call late.
+// getLOAs and getCurrentLOAs are the 7Cav API's LOA calls /awol and /loa
+// make. Tests wrap them to start an LOA call late.
 var (
 	getLOAs        = utils.GetLOAs
 	getCurrentLOAs = utils.GetCurrentLOAs
@@ -22,8 +22,8 @@ type loasAnswer struct {
 	err  error
 }
 
-// loasCall is an LOA call running alongside the roster call.
-type loasCall struct {
+// loaCallAlongside is an LOA call running alongside the roster call.
+type loaCallAlongside struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	answer loasAnswer
@@ -32,9 +32,9 @@ type loasCall struct {
 // callLOAsAlongside starts call under a context drawn from ctx, so the LOA
 // call runs alongside the roster call and adds no wait. The run that starts
 // it defers stop.
-func callLOAsAlongside(ctx context.Context, call func(context.Context) (*utils.LOAsResponse, error)) *loasCall {
+func callLOAsAlongside(ctx context.Context, call func(context.Context) (*utils.LOAsResponse, error)) *loaCallAlongside {
 	ctx, cancel := context.WithCancel(ctx)
-	c := &loasCall{cancel: cancel, done: make(chan struct{})}
+	c := &loaCallAlongside{cancel: cancel, done: make(chan struct{})}
 	go func() {
 		defer close(c.done)
 		c.answer.loas, c.answer.err = call(ctx)
@@ -43,7 +43,7 @@ func callLOAsAlongside(ctx context.Context, call func(context.Context) (*utils.L
 }
 
 // wait returns the call's answer once the call has returned.
-func (c *loasCall) wait() loasAnswer {
+func (c *loaCallAlongside) wait() loasAnswer {
 	<-c.done
 	return c.answer
 }
@@ -51,7 +51,7 @@ func (c *loasCall) wait() loasAnswer {
 // stop cancels the call and returns once it has returned. A run that ends
 // without the call's answer leaves no call behind, and a slow LOA endpoint
 // doesn't hold it up.
-func (c *loasCall) stop() {
+func (c *loaCallAlongside) stop() {
 	c.cancel()
 	<-c.done
 }
