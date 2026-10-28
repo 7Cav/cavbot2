@@ -366,8 +366,9 @@ var unsavedEdits = (function () {
   // edits. It holds the forum user they belong to and each edit by name,
   // with the values its form posts, the names of its form's fields and the
   // address it was typed at. It also holds the edit whose form was sent
-  // last, the address of the page any form was sent from and the press it
-  // carried, each until the next signed-in page loads, and whether the next
+  // last, the address of the page any form was sent from, the press it
+  // carried and that press once a sign-in shows the session turned it
+  // away, each until the next signed-in page loads, and whether the next
   // page brings the edits back.
   var storageKey = 'panel-unsaved-edits';
 
@@ -655,10 +656,11 @@ var unsavedEdits = (function () {
     var from = state.from;
     // A press's line shows on the page the press was sent from, when its
     // sign-in brings that page back.
-    if (state.restore === true && state.press && from && shows(from)) { notSent = state.press; }
+    if (state.restore === true && state.unsent && from && shows(from)) { notSent = state.unsent; }
     delete state.sent;
     delete state.from;
     delete state.press;
+    delete state.unsent;
     delete state.restore;
     // The forum's 502 to a posted form names the landing, since the panel
     // answers it before learning which page the form was sent from. That page goes
@@ -696,11 +698,18 @@ var unsavedEdits = (function () {
   // form's visitor to sign in with no page to come back to. When the form
   // kept an edit, or its button was a press marked data-press, the sign-in
   // form names the page the form was sent from instead. The page the
-  // sign-in comes back to brings the edits back.
+  // sign-in comes back to brings the edits back. A sign-in the panel
+  // names a page for is a page load's, so a press noted before it went
+  // through, as a Re-add whose answer met the ended session does. Only a
+  // sign-in with no page named holds a press the session turned away, and
+  // a sign-in that takes a second try keeps it.
   var signin = document.querySelector('main form[action="/auth/start"]');
   if (!signedInAs && signin) {
-    var sentBack = Boolean(state.from && (state.press || (state.sent && state.edits[state.sent])));
-    if (sentBack && !signin.querySelector('input[name="next"]')) {
+    var named = signin.querySelector('input[name="next"]') !== null;
+    if (state.press && !named) { state.unsent = state.press; }
+    delete state.press;
+    var sentBack = Boolean(state.from && (state.unsent || (state.sent && state.edits[state.sent])));
+    if (sentBack && !named) {
       var next = document.createElement('input');
       next.type = 'hidden';
       next.name = 'next';
@@ -713,6 +722,7 @@ var unsavedEdits = (function () {
         restoreNext();
       });
     }
+    write();
   }
 
   return {
