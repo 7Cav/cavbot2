@@ -491,7 +491,9 @@ _Avoid_: deleted hub, former hub, archived hub, old hub.
 **Spawn failure**:
 A join to an enabled hub that ends with no spawned channel for the member.
 Two kinds: a failure Discord returned on the create or the move-into, and a
-refusal the bot decided itself, which only a broken hub causes.
+refusal the bot decided itself, which only a broken hub causes. A join that
+ends because the member left the hub is not one, however the bot learns of
+the leave.
 _Avoid_: create failure, failed create, failed join, refused join.
 
 **Preview**:
