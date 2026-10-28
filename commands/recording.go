@@ -664,11 +664,11 @@ func (r *RecordingRuntime) leave(conn voice.Conn, recorderID, channelID string) 
 	// moment the leave returns rather than when this goroutine next runs.
 	left := make(chan bool, 1)
 	go func() {
-		late := false
-		defer func() { left <- late }()
+		ranLate := false
+		defer func() { left <- ranLate }()
 		defer utils.RecoverPanic("recording-leave", "recorder", recorderID, "channel_id", channelID)
 		conn.Leave(ctx)
-		late = ctx.Err() != nil
+		ranLate = ctx.Err() != nil
 	}()
 	late = true
 	select {

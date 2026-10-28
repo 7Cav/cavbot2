@@ -91,6 +91,8 @@ type hangingLeaveConn struct {
 	file string
 }
 
+// Leave waits while the file exists, looking again every
+// smokeLeaveHangPoll, then leaves.
 func (c *hangingLeaveConn) Leave(ctx context.Context) {
 	for {
 		if _, err := os.Stat(c.file); err != nil {

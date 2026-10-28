@@ -25,8 +25,8 @@ type GatewaySession interface {
 	// returns once Discord has let it in, or with ctx's error.
 	Join(ctx context.Context, guildID, channelID string) (Conn, error)
 	// LogOut ends the session for a relogin: the recorder logs out of this
-	// login, and is offline until its next login is up. The recorder has
-	// left every voice channel already.
+	// login, and is offline until its next login is up. Its leave of any
+	// voice channel has returned or given up by then.
 	LogOut() error
 	// Close ends the session at shutdown: the recorder leaves any voice
 	// channel it is still in, and logs out of this login.
