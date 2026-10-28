@@ -58,6 +58,7 @@ Once you have opened the PR, label it `factory` and turn on squash auto-merge wi
 
    A reply to a thread goes to `repos/{owner}/{repo}/pulls/<pr>/comments/<id>/replies`. Act on the first case that matches:
    - `MERGED`: done.
+   - `CLOSED`: someone closed the PR without merging it. Leave the PR as they left it and hand back now. It can also close while you work on another case, so read `state` again before each push or post to the PR.
    - `BEHIND`: `develop` merges only branches that are up to date, so run `gh pr update-branch <pr>` and go back to 1.
    - `DIRTY`, or a required check failed: fix it and go back to 1. For a conflict, merge `origin/develop` in. For a failed check, read its log with `gh run view <run> --log-failed`. Run `.github/scripts/gate.sh` before you push.
    - A thread whose last comment is CodeRabbit's: it waits on you. Reply in the thread with the commit that fixes the finding, or with why you decline it. Push your fixes and go back to 1. CodeRabbit resolves its own thread once your commit or reply satisfies it, so leave the resolving to it. If CodeRabbit answers a decline by pressing the finding, fix the finding when its reply persuades you, or hand back.
@@ -67,9 +68,9 @@ Fix failing checks and conflicts up to two rounds in all, and answer up to three
 
 ## Hand back
 
-Hand the issue back when the run can't finish it: missing context, a decision the requirements leave open, a dependency outside the repo such as a Discord or forum setting, checks still failing after two rounds, a finding CodeRabbit presses that you still decline, or CodeRabbit's approval still missing once Finish's rounds or wait run out.
+Hand the issue back when the run can't finish it: missing context, a decision the requirements leave open, a dependency outside the repo such as a Discord or forum setting, checks still failing after two rounds, a finding CodeRabbit presses that you still decline, CodeRabbit's approval still missing once Finish's rounds or wait run out, or a PR someone closed without merging.
 
-Comment on the issue with what stopped the run and the branch or PR it reached. For each decision or context the requirements lack, name the terms it turns on and the spec sections and glossary entries you searched for it. Then turn off the PR's auto-merge (`gh pr merge <pr> --disable-auto`), and leave the PR open with its `factory` label. Release the claim as you swap `ready-for-agent` for `blocked`:
+Comment on the issue with what stopped the run and the branch or PR it reached. For each decision or context the requirements lack, name the terms it turns on and the spec sections and glossary entries you searched for it. Then, while the PR is open, turn off its auto-merge with `gh pr merge <pr> --disable-auto` and leave it open with its `factory` label. Release the claim as you swap `ready-for-agent` for `blocked`:
 
 ```bash
 gh issue edit <n> --remove-assignee @me --remove-label ready-for-agent --add-label blocked
