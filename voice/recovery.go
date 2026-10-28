@@ -76,6 +76,11 @@ func (l *recoveryLog) end(s *recoveryStep, outcome StepOutcome, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	s.step.Outcome = outcome
+	if outcome == StepSucceeded {
+		// A close noted while the step was still under way came after it
+		// succeeded, and didn't end it.
+		s.step.CloseCode = ""
+	}
 	s.keepCloseCodeLocked(err)
 	l.keepLocked()
 }
