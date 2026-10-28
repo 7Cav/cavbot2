@@ -623,8 +623,8 @@ var unsavedEdits = (function () {
   }
 
   // notSent is the data-press of the button pressed once the session had
-  // ended, only on the load that press's sign-in brings back, and null
-  // once its line is placed.
+  // ended, only on the first signed-in load after that press's sign-in
+  // page, and null once its line is placed.
   var notSent = null;
 
   // markNotSent puts the line saying the press wasn't sent at the top of
@@ -654,9 +654,9 @@ var unsavedEdits = (function () {
     var answers = document.querySelector('main[data-address]') !== null;
     var sent = state.sent;
     var from = state.from;
-    // A press's line shows on the page the press was sent from, when its
-    // sign-in brings that page back.
-    if (state.restore === true && state.unsent && from && shows(from)) { notSent = state.unsent; }
+    // A press the session turned away gets its line on the page it was sent
+    // from, when the next signed-in page to load is that page.
+    if (state.unsent && from && shows(from)) { notSent = state.unsent; }
     delete state.sent;
     delete state.from;
     delete state.press;
