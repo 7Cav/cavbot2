@@ -36,11 +36,13 @@ the store off. So a list whose pages can't be saved gets a short reply, not a
 second way to send the list. Whether the save fails or no database is
 configured, the reply shows page 1 with both arrows greyed out and a line
 saying the other pages couldn't be kept and to run the command again. A failed
-save goes to Sentry. #823's follow-up messages go once the arrows land.
-/awol's force_file_output still sends the whole list, because the file needs no
-database.
+save goes to Sentry. The change that adds the arrows removes the follow-up
+messages from both commands. /awol's force_file_output still sends the whole
+list, because the file needs no database.
 
-Decided in the triage of #824.
+Decided in the triage of #824, before its implementation. Until #824 ships,
+/loa sends a long list over its reply and public follow-ups, /awol does the
+same once #823 ships, and /awol sends its file for a list over 10 pages.
 
 ## Considered options
 
