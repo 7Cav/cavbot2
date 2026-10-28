@@ -67,7 +67,7 @@ func (r *RecordingRuntime) autoStop(rec *activeRecording, end store.RecordingEnd
 	}
 	rec.stopping = true
 	r.mu.Unlock()
-	r.finish(rec, end, "")
+	r.finish(rec, end, "", recordingNow())
 }
 
 // Listen registers the runtime's gateway handlers on the main session: its
@@ -106,6 +106,9 @@ func (r *RecordingRuntime) checkChannels() {
 		end store.RecordingEnd
 	}
 	var stops []taken
+	// The check judges every channel at one moment, and every recording it
+	// stops stops then, however long the leaves of those before it take.
+	now := recordingNow()
 	r.mu.Lock()
 	for _, rec := range r.running {
 		if !rec.live() {
@@ -123,10 +126,10 @@ func (r *RecordingRuntime) checkChannels() {
 			rec.recorderSeen = true
 		}
 		if n := rec.conn.OwnLeaves(); n > rec.ownLeaves {
-			rec.ownLeaves, rec.ownLeaveAt = n, recordingNow()
+			rec.ownLeaves, rec.ownLeaveAt = n, now
 			recordingAfterFunc(ownLeaveGrace, r.recheckChannels)
 		}
-		leftOnItsOwn := !rec.ownLeaveAt.IsZero() && recordingNow().Sub(rec.ownLeaveAt) < ownLeaveGrace
+		leftOnItsOwn := !rec.ownLeaveAt.IsZero() && now.Sub(rec.ownLeaveAt) < ownLeaveGrace
 		switch {
 		case rec.recorderSeen && !recorderIn && !leftOnItsOwn:
 			rec.stopping = true
@@ -137,8 +140,13 @@ func (r *RecordingRuntime) checkChannels() {
 		}
 	}
 	r.mu.Unlock()
+	// Every capture ends before any recorder leaves, so nothing a recorder
+	// hands over during another's leave is kept.
 	for _, s := range stops {
-		r.finish(s.rec, s.end, "")
+		r.endCapture(s.rec, now)
+	}
+	for _, s := range stops {
+		r.finishEnded(s.rec, s.end, "", now)
 	}
 }
 
