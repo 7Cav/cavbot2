@@ -652,9 +652,9 @@ finds no free recorder online waits for one.
 _Avoid_: reconnecting recorder, restarting recorder.
 
 **Recording role**:
-A Discord role whose holders, if Cav members, may start a recording, and may
-stop one in a channel they are in. Set once for the guild in the panel. With
-none set, nobody can record.
+A Discord role, set once for the guild in the panel, whose holders may stop a
+recording in a channel they are in, and start one if they are Cav members.
+With none set, nobody can record.
 _Avoid_: recorder role, record permission, recording permission.
 
 **Track**:
