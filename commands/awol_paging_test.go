@@ -60,8 +60,9 @@ func TestRunAwolWarnsOnEveryPageOfADegradedListPastOneMessage(t *testing.T) {
 	}
 }
 
-// awolRowName finds the trooper a report row names.
-var awolRowName = regexp.MustCompile(`\[([A-Z]\d{3}_x+)\]`)
+// awolRowName finds the troopers these tests flag, by the usernames they
+// give them.
+var awolRowName = regexp.MustCompile(`[A-Z]\d{3}_x{12}`)
 
 // Across the reply and its follow-ups, a list past one message names each
 // flagged trooper once, worst first, and by username among troopers AWOL as
@@ -96,9 +97,7 @@ func TestRunAwolListsEveryTrooperOfAListPastOneMessageOnceWorstFirst(t *testing.
 	var got []string
 	for _, embeds := range messages {
 		for _, e := range embeds {
-			for _, m := range awolRowName.FindAllStringSubmatch(e.Description, -1) {
-				got = append(got, m[1])
-			}
+			got = append(got, awolRowName.FindAllString(e.Description, -1)...)
 		}
 	}
 	if !slices.Equal(got, want) {
@@ -279,7 +278,10 @@ func TestRunAwolOpensEveryPageOfAListPastOneMessageWithTheWholeListsSummary(t *t
 		t.Fatalf("want the list across more than one message; got %d", n)
 	}
 	for k, page := range awolPages(t, f) {
-		opening := strings.SplitN(page.Description, "\n\n", 2)[0]
+		opening := page.Description
+		if row := awolRowName.FindStringIndex(opening); row != nil {
+			opening = opening[:row[0]]
+		}
 		for _, want := range []string{awolSummaryLine(100), awolSkippedNote(1)} {
 			if !strings.Contains(opening, want) {
 				t.Errorf("page %d opens with %q, want it to carry %q", k+1, opening, want)

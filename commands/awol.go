@@ -316,30 +316,20 @@ func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 	if note := awolSkippedNote(skippedCount); note != "" {
 		summaryBlock += "\n" + note
 	}
-	rows := make([]string, len(awolUsers))
-	for k, user := range awolUsers {
-		rows[k] = strings.TrimSuffix(awolUserLine(user), "\n")
-	}
-
-	if forceFile {
-		utils.Info("⚠️ Force file output enabled, falling back to embeds", "count", len(awolUsers))
-		sendAwolFile(r, i, awolUsers, position, forceFile, loasRead, now, skippedCount)
-		utils.Info("✨ Done!", "command", "Awol")
-		return
-	}
-	if awolDescriptionsNeeded(summaryBlock, rows) > maxEmbedsPerMsg {
-		utils.Info("⚠️ Too many AWOL users for embeds, falling back to file upload", "count", len(awolUsers))
-		sendAwolFile(r, i, awolUsers, position, forceFile, loasRead, now, skippedCount)
-		utils.Info("✨ Done!", "command", "Awol")
-		return
-	}
-
 	// The summary block is the heading of the list's one section, with a
-	// blank line after it, so every page opens with it.
-	lines := make([]pagedLine, len(rows))
-	for k, row := range rows {
-		lines[k] = pagedLine{heading: summaryBlock + "\n", text: row}
+	// blank line after it.
+	lines := make([]pagedLine, len(awolUsers))
+	for k, user := range awolUsers {
+		lines[k] = pagedLine{heading: summaryBlock + "\n", text: awolUserLine(user)}
 	}
+
+	if forceFile || awolDescriptionsNeeded(summaryBlock, lines) > maxEmbedsPerMsg {
+		utils.Info("📄 Sending AWOL report as a file", "count", len(awolUsers), "force_file_output", forceFile)
+		sendAwolFile(r, i, awolUsers, position, forceFile, loasRead, now, skippedCount)
+		utils.Info("✨ Done!", "command", "Awol")
+		return
+	}
+
 	if !sendPagedList(r, i, now, pagedList{
 		command:  "awol",
 		position: position,
@@ -353,16 +343,16 @@ func runAwol(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 	utils.Info("✨ Done!", "command", "Awol")
 }
 
-// awolDescriptionsNeeded counts the descriptions rows would take when each
+// awolDescriptionsNeeded counts the descriptions lines would take when each
 // opens with summaryBlock and holds at most discordEmbedDescriptionLimit
 // bytes. More than maxEmbedsPerMsg of them sends the report as a file. The
 // count predates /awol's follow-ups, and keeping it keeps the file going to
 // the lists that got it before.
-func awolDescriptionsNeeded(summaryBlock string, rows []string) int {
+func awolDescriptionsNeeded(summaryBlock string, lines []pagedLine) int {
 	budget := discordEmbedDescriptionLimit - len(summaryBlock+"\n\n")
 	count, used := 0, 0
-	for _, row := range rows {
-		n := len(row) + len("\n")
+	for _, l := range lines {
+		n := len(l.text) + len("\n")
 		if count == 0 || used+n > budget {
 			count++
 			used = 0
@@ -421,7 +411,7 @@ func awolUserLine(u AwolUser) string {
 	if u.reviewLOA != nil {
 		tags += "⚠️ " + awolThreadTag(awolNeedsReviewTag, u.reviewLOA.threadID)
 	}
-	return fmt.Sprintf("%s %s[%s](%s) — %s\n",
+	return fmt.Sprintf("%s %s[%s](%s) — %s",
 		u.severityGlyph(),
 		tags,
 		u.Username,
