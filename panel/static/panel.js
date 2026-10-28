@@ -275,8 +275,9 @@
     // search stays open, so a second press there lands too. A right-click
     // makes no click, so nothing has to stay under the pointer. It closes
     // the search at once, unless it began inside the picker, as on a tag.
-    // Then the search stays open through the menu, and the next press
-    // closes it as a left press would (#718). A Control+click on macOS
+    // Then the search stays open through the menu. The next left press
+    // closes it as any left press would (#718), and a right-click outside
+    // the picker closes it at once (#804, below). A Control+click on macOS
     // goes by the same rule. Its mousedown reports the left button, so the
     // rule waits for its contextmenu (#771).
     root.addEventListener('focusout', function (e) {
@@ -307,6 +308,18 @@
         if (!moved) { close(); }
       };
     });
+
+    // A right-click outside the picker closes the search at once, whatever
+    // press came before it. Focus may have left the picker already. A
+    // right-click on a tag moves it out, and so does a left press that kept
+    // the search open, and then no focusout comes. The contextmenu comes as
+    // the menu opens. That is after the mousedown on Linux and macOS and
+    // after the mouseup on Windows, and a Control+click on macOS sends one
+    // too (#804). A close the picker left waiting stays waiting. Run once
+    // the search is closed, it moves nothing and closes the search again.
+    document.addEventListener('contextmenu', function (e) {
+      if (!root.contains(e.target)) { close(); }
+    }, true);
   }
 
   roots.forEach(setUp);
