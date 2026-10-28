@@ -806,6 +806,9 @@ type renewableGateway struct {
 	// the recorder held.
 	steps         *recoveryLog
 	connectedWith string
+	// dialing is the last dial's step and the gateway it dialed through,
+	// zero before the first dial.
+	dialing gatewayDial
 
 	// onDrop is the close handler of every gateway built, which a voice
 	// server gone silent reaches as a close.
@@ -817,6 +820,12 @@ type renewableGateway struct {
 	watches   int
 }
 
+// gatewayDial is a dial's step and the disgo gateway it dialed through.
+type gatewayDial struct {
+	gw   disgovoice.Gateway
+	step *recoveryStep
+}
+
 // observedClose is the close or failed read err that disgo gateway gw saw.
 type observedClose struct {
 	gw  disgovoice.Gateway
@@ -826,13 +835,21 @@ type observedClose struct {
 // closeObserved notes the close or failed read disgo's gateway gw saw.
 // disgo starts its observer before the reconnect whose refused dial reaches
 // the close handler, and either can run first. A loss gw's close handler
-// handed over already as the refused resume takes err in its place.
+// handed over already as the refused resume takes err in its place. disgo
+// observes a close only on a connection past its Ready that the recorder
+// hasn't closed itself. So a close of the gateway the last dial went
+// through ended that dial, and the dial keeps the close's code unless it
+// succeeded. The dial can have ended by then, as when the close handler ran
+// first and its rejoin dialed again.
 func (g *renewableGateway) closeObserved(gw disgovoice.Gateway, err error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.observed = observedClose{gw: gw, err: err}
 	if g.loss.closedBy == gw && errors.Is(g.loss.close, errResumeRefused) {
 		g.loss.close = err
+	}
+	if g.dialing.gw == gw {
+		g.steps.closed(g.dialing.step, err)
 	}
 }
 
@@ -1210,6 +1227,7 @@ func (g *renewableGateway) dialUntilOpen(ctx context.Context, state disgovoice.S
 		dial, redial := context.WithCancel(ctx)
 		gw, at, described := g.startDial(state, redial)
 		step := g.steps.start(StepDial, g.dialTokenOf(at))
+		g.dialedThrough(gw, step)
 		err := gw.Open(context.WithValue(dial, ownDial{}, true), at)
 		if err == nil {
 			select {
@@ -1254,6 +1272,13 @@ func (g *renewableGateway) dialTokenOf(state disgovoice.State) DialToken {
 		return TokenHeld
 	}
 	return TokenNew
+}
+
+// dialedThrough notes step as the last dial, through gw.
+func (g *renewableGateway) dialedThrough(gw disgovoice.Gateway, step *recoveryStep) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.dialing = gatewayDial{gw: gw, step: step}
 }
 
 // namedLastIs reports whether state is at the voice server Discord named

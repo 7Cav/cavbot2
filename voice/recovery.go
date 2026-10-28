@@ -62,10 +62,28 @@ func (l *recoveryLog) end(s *recoveryStep, outcome StepOutcome, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	s.step.Outcome = outcome
-	if code := closeCode(err); code != CloseCodeNone {
+	s.closedByLocked(err)
+	l.keepLocked()
+}
+
+// closed notes err, a close of the voice gateway s dialed through, as the
+// close that ended s. A step that succeeded keeps no code. The close can
+// reach the recorder after s has ended.
+func (l *recoveryLog) closed(s *recoveryStep, err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if s.step.Outcome != StepSucceeded {
+		s.closedByLocked(err)
+	}
+}
+
+// closedByLocked keeps the code of err on s, when err is a voice gateway
+// close. A step that ends with no close keeps any code noted on it
+// earlier. Caller holds the log's mutex.
+func (s *recoveryStep) closedByLocked(err error) {
+	if code := closeCode(err); code != "" && code != CloseCodeNone {
 		s.step.CloseCode = code
 	}
-	l.keepLocked()
 }
 
 // failed notes a step of kind that failed now, by err.
