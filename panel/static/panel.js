@@ -31,7 +31,7 @@
   // lets the menu take the mouseup (#718). pressed is the element the
   // press began on, and null between presses. rightPress is whether the
   // right button made the press, and false between presses. Each picker
-  // puts a function in pressEnds, and each runs as a left press ends, with
+  // puts a function in onPressEnd, and each runs as a left press ends, with
   // the element the press began on. That comes before the click, whose
   // target the press has already fixed. A right-click makes no click and
   // runs none. On macOS a Control+click opens the menu too, but Chrome and
@@ -40,7 +40,7 @@
   // contextmenu ends runs none either.
   var pressed = null;
   var rightPress = false;
-  var pressEnds = [];
+  var onPressEnd = [];
   // keyed is whether a key, not a press, came last. A press's click can
   // move focus too, as a press on a label focuses its field.
   var keyed = false;
@@ -54,7 +54,7 @@
       return;
     }
     if (e.type === 'contextmenu') { return; }
-    pressEnds.forEach(function (run) { run(target); });
+    onPressEnd.forEach(function (run) { run(target); });
   }
 
   document.addEventListener('mousedown', function (e) {
@@ -271,12 +271,13 @@
     });
 
     // A left press closes the search once it ends, whatever came before
-    // it. Closing at the mousedown would move what sits below the list up
-    // before the mouseup, and the press would make no click (#682). So the
-    // search stays open when closing would move what the press was on, as
-    // it would a row or the search box, and a second press there lands
-    // too. A press on the add control leaves the search to its click.
-    pressEnds.push(function (target) {
+    // it (#918). Closing at the mousedown would move what sits below the
+    // list up before the mouseup, and the press would make no click
+    // (#682). So the search stays open when closing would move what the
+    // press was on, as it would a row or the search box, and a second
+    // press there lands too. A press on the add control leaves the search
+    // to its click (#917).
+    onPressEnd.push(function (target) {
       if (search.hidden || add.contains(target)) { return; }
       // Hiding the search to measure can clamp the page's scroll, so the
       // scroll goes back too. Nothing paints between the hide and the
@@ -302,8 +303,8 @@
     });
 
     // A key that moves focus to an element outside the picker closes the
-    // search at once, wherever focus was. A press goes by the rule above,
-    // and its click may move focus once the press is over.
+    // search at once, wherever focus was (#918). A press goes by the rule
+    // above, and its click may move focus once the press is over.
     document.addEventListener('focusin', function (e) {
       if (!search.hidden && keyed && !root.contains(e.target)) { close(); }
     });
