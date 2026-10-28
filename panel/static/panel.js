@@ -522,18 +522,24 @@ var unsavedEdits = (function () {
     write();
   }
 
+  // loadAgain makes the press e of the link load its address when the tab
+  // shows that page already, where the link would only scroll. A press
+  // with a modifier key, as one that opens a new tab, goes the browser's
+  // way.
+  function loadAgain(e, link) {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || !shows(link.href)) { return; }
+    e.preventDefault();
+    history.replaceState(history.state, '', link.href);
+    location.reload();
+  }
+
   // Try again on a failed save's error page brings the edits back. One that
-  // opens the page the tab shows loads it again, where a link would only
-  // scroll.
+  // opens the page the tab shows loads it again.
   document.addEventListener('click', function (e) {
     var retry = e.target.closest('a[data-retry]');
     if (!retry) { return; }
     restoreNext();
-    if (shows(retry.href)) {
-      e.preventDefault();
-      history.replaceState(history.state, '', retry.href);
-      location.reload();
-    }
+    loadAgain(e, retry);
   });
 
   // headingOf is the heading of the block the form sits in.
@@ -563,11 +569,7 @@ var unsavedEdits = (function () {
     link.addEventListener('click', function (e) {
       drop(name);
       delete live[name];
-      if (shows(link.href)) {
-        e.preventDefault();
-        history.replaceState(history.state, '', link.href);
-        location.reload();
-      }
+      loadAgain(e, link);
     });
     return link;
   }
@@ -611,8 +613,8 @@ var unsavedEdits = (function () {
     delete state.sent;
     delete state.from;
     delete state.restore;
-    // The forum's 502 to a form names the landing, since the panel answers
-    // it before learning which page the form was sent from. That page goes
+    // The forum's 502 to a posted form names the landing, since the panel
+    // answers it before learning which page the form was sent from. That page goes
     // in the tab in its place. On any of the forum's 502s, Try again opens
     // the page the tab shows, at its block, so the first reload or Try
     // again once the forum answers shows the form again.
