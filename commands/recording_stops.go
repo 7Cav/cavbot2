@@ -67,7 +67,7 @@ func (r *RecordingRuntime) autoStop(rec *activeRecording, end store.RecordingEnd
 	}
 	rec.stopping = true
 	r.mu.Unlock()
-	r.finish(rec, end, "")
+	r.finish(rec, end, "", recordingNow())
 }
 
 // Listen registers the runtime's gateway handlers on the main session: its
@@ -106,6 +106,9 @@ func (r *RecordingRuntime) checkChannels() {
 		end store.RecordingEnd
 	}
 	var stops []taken
+	// Every recording the check stops, it stops now, however long the
+	// leaves of those before it take.
+	now := recordingNow()
 	r.mu.Lock()
 	for _, rec := range r.running {
 		if !rec.live() {
@@ -138,7 +141,7 @@ func (r *RecordingRuntime) checkChannels() {
 	}
 	r.mu.Unlock()
 	for _, s := range stops {
-		r.finish(s.rec, s.end, "")
+		r.finish(s.rec, s.end, "", now)
 	}
 }
 
