@@ -347,8 +347,8 @@
 
    A reload, a Back or a Forward brings each edit back into its form on the
    page. So does the page a failed save's Try again opens, the page a
-   sign-in returns to when a save or a reload met that sign-in, and the page
-   the Foxhole member list notice reloads. Once the forum answers again
+   sign-in returns to when a save, a press or a reload met that sign-in, and
+   the page the Foxhole member list notice reloads. Once the forum answers again
    after its 502 met a form, that page's reload and its Try again open the
    page the form was sent from, which brings the edit back too (issue
    #803). The form shows a line saying the edit is not saved yet. Its link
@@ -366,9 +366,9 @@ var unsavedEdits = (function () {
   // edits. It holds the forum user they belong to and each edit by name,
   // with the values its form posts, the names of its form's fields and the
   // address it was typed at. It also holds the edit whose form was sent
-  // last and the address of the page any form was sent from, each until
-  // the page that answers it loads, and whether the next page brings the
-  // edits back.
+  // last, the address of the page any form was sent from and the press it
+  // carried, each until the next signed-in page loads, and whether the next
+  // page brings the edits back.
   var storageKey = 'panel-unsaved-edits';
 
   // signedInAs is the forum user the rail names, empty on a page with no
@@ -499,9 +499,7 @@ var unsavedEdits = (function () {
   // has an ID, else where the tab is.
   function sentFrom(form) {
     var action = new URL(form.getAttribute('action') || '', location.href);
-    var heading = headingOf(form);
-    var block = action.hash || (heading && heading.id ? '#' + heading.id : location.hash);
-    return location.pathname + location.search + block;
+    return location.pathname + location.search + (action.hash || headingFragment(form) || location.hash);
   }
 
   // Every form sent the page's way from a signed-in page notes the page it
@@ -560,13 +558,26 @@ var unsavedEdits = (function () {
     return block && block.querySelector('h2');
   }
 
+  // headingFragment is the fragment that opens a page at the heading of
+  // the block the form sits in, empty when that heading has no ID.
+  function headingFragment(form) {
+    var heading = headingOf(form);
+    return heading && heading.id ? '#' + heading.id : '';
+  }
+
+  // describedFirst names the line first in the description of the
+  // heading, so a screen reader reads it out as focus lands there.
+  function describedFirst(heading, line) {
+    var described = heading.getAttribute('aria-describedby');
+    heading.setAttribute('aria-describedby', described ? line.id + ' ' + described : line.id);
+  }
+
   // storedAddress is the address that opens the form as stored: the
   // form's data-stored, or this page, opened at the form's heading. A
   // reload of this page shows a form as stored once its edit is dropped.
   function storedAddress(form) {
     if (form.hasAttribute('data-stored')) { return form.getAttribute('data-stored'); }
-    var heading = headingOf(form);
-    return location.pathname + location.search + (heading && heading.id ? '#' + heading.id : '');
+    return location.pathname + location.search + headingFragment(form);
   }
 
   // storedLink is the link, labelled label, that opens the form of the
@@ -606,27 +617,23 @@ var unsavedEdits = (function () {
     } else {
       form.prepend(line);
     }
-    if (heading) {
-      var described = heading.getAttribute('aria-describedby');
-      heading.setAttribute('aria-describedby', described ? line.id + ' ' + described : line.id);
-    }
+    if (heading) { describedFirst(heading, line); }
     return line;
   }
 
-  // pressed is the press a sign-in comes back to, the data-press of the
-  // button pressed when the session had ended, on the load that sign-in
-  // brings back alone. It is null once its line is placed.
-  var pressed = null;
+  // notSent is the data-press of the button pressed once the session had
+  // ended, only on the load that press's sign-in brings back, and null
+  // once its line is placed.
+  var notSent = null;
 
-  // markPressed puts the line saying the press wasn't sent at the top of
+  // markNotSent puts the line saying the press wasn't sent at the top of
   // the pressed button's row, when root holds the button, and names it
-  // first in the description of the block's heading. A screen reader reads
-  // it out as focus lands on the heading. The line names the button by its
-  // label, since Approve and Clear approval share one form.
-  function markPressed(root) {
-    var button = pressed && root.querySelector('[data-press="' + CSS.escape(pressed) + '"]');
+  // first in the description of the block's heading. The line names the
+  // button by its label, since Approve and Clear approval share one form.
+  function markNotSent(root) {
+    var button = notSent && root.querySelector('[data-press="' + CSS.escape(notSent) + '"]');
     if (!button) { return; }
-    pressed = null;
+    notSent = null;
     var line = document.createElement('div');
     line.id = 'not-sent';
     line.className = 'note note--neutral';
@@ -634,10 +641,7 @@ var unsavedEdits = (function () {
     line.textContent = 'Your session ended, so ' + button.textContent.replace(/\s+/g, ' ').trim() + ' was not sent. Press it again.';
     button.closest('.submit-row, form').prepend(line);
     var heading = headingOf(button.form);
-    if (heading) {
-      var described = heading.getAttribute('aria-describedby');
-      heading.setAttribute('aria-describedby', described ? line.id + ' ' + described : line.id);
-    }
+    if (heading) { describedFirst(heading, line); }
   }
 
   // placed is each form on the page whose edit is kept, by the name of its
@@ -649,7 +653,9 @@ var unsavedEdits = (function () {
     var answers = document.querySelector('main[data-address]') !== null;
     var sent = state.sent;
     var from = state.from;
-    if (state.restore === true && state.press) { pressed = state.press; }
+    // A press's line shows on the page the press was sent from, when its
+    // sign-in brings that page back.
+    if (state.restore === true && state.press && from && shows(from)) { notSent = state.press; }
     delete state.sent;
     delete state.from;
     delete state.press;
@@ -722,7 +728,7 @@ var unsavedEdits = (function () {
     storedLink: storedLink,
     storedAddress: storedAddress,
     restoreNext: restoreNext,
-    markPressed: markPressed,
+    markNotSent: markNotSent,
     // placed reports whether a form on the page took the edit named as
     // the page loaded.
     placed: function (name) { return Boolean(placed[name]); },
@@ -755,7 +761,7 @@ var unsavedEdits = (function () {
 (function () {
   'use strict';
 
-  unsavedEdits.markPressed(document);
+  unsavedEdits.markNotSent(document);
 })();
 
 /* Inline note edit on the Foxhole page (spec #434, ADR 0013). A row's Edit
@@ -1441,7 +1447,7 @@ var unsavedEdits = (function () {
     form.reset();
     var box = preview.querySelector('[data-field="add-form"]');
     if (box) { unsavedEdits.follow('add', box); }
-    unsavedEdits.markPressed(preview);
+    unsavedEdits.markNotSent(preview);
     if (location.hash === '#add-preview') { preview.querySelector('#add-preview').focus(); }
   }
 
@@ -1718,13 +1724,13 @@ var unsavedEdits = (function () {
    puts that fragment on next, so the sign-in comes back to the block. The
    landing's sign-in page has no next, and gets one. A save or a press sent
    with no session comes back from its sign-in to the page it was sent
-   from, which the unsaved-edit block names. Any other form
+   from, since the sign-in form names that page as next. Any other form
    sent with no session comes back to the landing, at the block its form's
-   action names when the landing has one. Without script, the sign-in comes
-   back to the top of the page. The Foxhole page's Sign in
-   again for kept notes sends its form with submit(), which fires no submit
-   event, so this script never sees it. That sign-in comes back to the view
-   with no fragment, and a kept note can take focus. */
+   action names when the landing has one. Without script, the sign-in
+   comes back to the top of the page. The Foxhole page's Sign in again for
+   kept notes sends its form with submit(), which fires no submit event, so
+   this script never sees it. That sign-in comes back to the view with no
+   fragment, and a kept note can take focus. */
 (function () {
   'use strict';
 
