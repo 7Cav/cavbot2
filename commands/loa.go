@@ -115,9 +115,8 @@ func runLoa(r utils.InteractionResponder, now time.Time, i *discordgo.Interactio
 		return
 	}
 
-	loasCh := callLOAsAlongside(func() (*utils.LOAsResponse, error) {
-		return utils.GetCurrentLOAs(ctx)
-	})
+	loaCall := callLOAsAlongside(ctx, getCurrentLOAs)
+	defer loaCall.stop()
 
 	roster, err := utils.GetRosterByFuzzyPositionSearch(ctx, position)
 	if err != nil {
@@ -129,7 +128,7 @@ func runLoa(r utils.InteractionResponder, now time.Time, i *discordgo.Interactio
 		return
 	}
 
-	answer := <-loasCh
+	answer := loaCall.wait()
 	if answer.err != nil {
 		captureError("LOAs unreadable, /loa can't list them", answer.err,
 			"command", "loa", "guild_id", i.GuildID, "position", position)

@@ -1,11 +1,19 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/7cav/cavbot2/utils"
+)
+
+// getLOAs and getCurrentLOAs are the 7Cav API's LOA calls /awol and /loa
+// make. Tests wrap them to start an LOA call late.
+var (
+	getLOAs        = utils.GetLOAs
+	getCurrentLOAs = utils.GetCurrentLOAs
 )
 
 // loasAnswer is the 7Cav API's answer to an LOA call.
@@ -14,16 +22,38 @@ type loasAnswer struct {
 	err  error
 }
 
-// callLOAsAlongside starts call and returns the channel its answer arrives
-// on, so the LOA call runs alongside the roster call and adds no wait. The
-// channel is buffered, so the call can finish after a run that ends early.
-func callLOAsAlongside(call func() (*utils.LOAsResponse, error)) <-chan loasAnswer {
-	answer := make(chan loasAnswer, 1)
+// loaCallAlongside is an LOA call running alongside the roster call.
+type loaCallAlongside struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+	answer loasAnswer
+}
+
+// callLOAsAlongside starts call under a context drawn from ctx, so the LOA
+// call runs alongside the roster call and adds no wait. The run that starts
+// it defers stop.
+func callLOAsAlongside(ctx context.Context, call func(context.Context) (*utils.LOAsResponse, error)) *loaCallAlongside {
+	ctx, cancel := context.WithCancel(ctx)
+	c := &loaCallAlongside{cancel: cancel, done: make(chan struct{})}
 	go func() {
-		loas, err := call()
-		answer <- loasAnswer{loas, err}
+		defer close(c.done)
+		c.answer.loas, c.answer.err = call(ctx)
 	}()
-	return answer
+	return c
+}
+
+// wait returns the call's answer once the call has returned.
+func (c *loaCallAlongside) wait() loasAnswer {
+	<-c.done
+	return c.answer
+}
+
+// stop cancels the call and returns once it has returned. A run that ends
+// without the call's answer leaves no call behind, and a slow LOA endpoint
+// doesn't hold it up.
+func (c *loaCallAlongside) stop() {
+	c.cancel()
+	<-c.done
 }
 
 // loaThreadID reads an LOA's thread ID. One that doesn't parse reads as 0,
