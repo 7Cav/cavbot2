@@ -42,9 +42,9 @@ type spawnedChannelFault struct {
 	// hardFault is a 403, a 5xx, or no HTTP response at all (transport):
 	// the faults that reach Sentry on every spawned channel path.
 	hardFault bool
-	// memberGone is code 40032, Target user is not connected to voice, or
-	// 10007, Unknown Member. The member a move names has left voice or the
-	// guild.
+	// memberGone is Target user is not connected to voice, code 40032, or
+	// Unknown Member, code 10007. Either way the member a move names has
+	// left voice or the guild.
 	memberGone bool
 }
 

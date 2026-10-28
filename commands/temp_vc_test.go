@@ -1898,22 +1898,21 @@ func TestTempVCMoveIntoFailureMessagesOnlyAMemberStillInTheHub(t *testing.T) {
 	})
 }
 
-// moveIntoMemberGoneErrors are the move-into refusals that mean the member
-// left voice or the guild before Discord got the move, per #841.
-var moveIntoMemberGoneErrors = []struct {
-	name string
-	err  error
-}{
-	{"40032", restError(http.StatusBadRequest, discordgo.ErrCodeTargetIsNotConnectedToVoice, "Target user is not connected to voice")},
-	{"10007", restError(http.StatusNotFound, discordgo.ErrCodeUnknownMember, "Unknown Member")},
-}
-
 // Discord can hear of a leave before the cache does. A move-into it refuses
 // because the member is gone ends as a leave the cache caught. The channel
 // goes, and nothing counts as a spawn failure, though the cache still shows
 // the member in the hub.
 func TestTempVCMoveIntoRefusedForAMemberWhoLeftIsNoSpawnFailure(t *testing.T) {
-	for _, tc := range moveIntoMemberGoneErrors {
+	// The refusals that mean the member left voice or the guild before
+	// Discord got the move, per #841.
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"40032", restError(http.StatusBadRequest, discordgo.ErrCodeTargetIsNotConnectedToVoice, "Target user is not connected to voice")},
+		{"10007", restError(http.StatusNotFound, discordgo.ErrCodeUnknownMember, "Unknown Member")},
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := newFakeTempVCManager()
 			fake.moveErr = tc.err
