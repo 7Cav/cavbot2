@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -336,6 +337,9 @@ type Recorders struct {
 	// changed closes, and is replaced, whenever a recorder comes online or
 	// goes out, which a join waiting on an offline one reads.
 	changed chan struct{}
+	// leaveHangFile is the file smokeLeaveHangEnv names, empty when a smoke
+	// run hasn't set it.
+	leaveHangFile string
 }
 
 // recorder is one recorder account. Recorders' mutex guards state and
@@ -368,7 +372,7 @@ func Connect(raw string, open Opener) *Recorders {
 			tokens = append(tokens, token)
 		}
 	}
-	r := &Recorders{open: open, closed: make(chan struct{}), changed: make(chan struct{})}
+	r := &Recorders{open: open, closed: make(chan struct{}), changed: make(chan struct{}), leaveHangFile: os.Getenv(smokeLeaveHangEnv)}
 	if len(tokens) == 0 {
 		utils.Warn("RECORDER_TOKENS not set, recording off")
 		return r
@@ -529,10 +533,10 @@ func (r *Recorders) setStateLocked(rec *recorder, state RecorderState, s Gateway
 }
 
 // TakeOffline counts the recorder with the given user ID offline from now,
-// for a recording a gap cut short, so a join waits for its next login. The
-// caller calls relogin once the recorder's leave has returned or given up,
-// and the recorder then logs out and back in by itself. Only the first call
-// of relogin does anything.
+// for a recording a gap cut short or a leave that ran past its deadline, so
+// a join waits for its next login. The caller calls relogin once the
+// recorder's leave has returned or given up, and the recorder then logs out
+// and back in by itself. Only the first call of relogin does anything.
 func (r *Recorders) TakeOffline(recorderID string) (relogin func()) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -645,7 +649,11 @@ func (r *Recorders) Join(ctx context.Context, recorderID, guildID, channelID str
 			if s == nil {
 				return nil, fmt.Errorf("recorder %s logged out at shutdown", recorderID)
 			}
-			return s.Join(ctx, guildID, channelID)
+			conn, err := s.Join(ctx, guildID, channelID)
+			if err != nil || r.leaveHangFile == "" {
+				return conn, err
+			}
+			return &hangingLeaveConn{Conn: conn, file: r.leaveHangFile}, nil
 		}
 		changed := r.changed
 		r.mu.Unlock()

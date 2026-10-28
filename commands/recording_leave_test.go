@@ -2,12 +2,16 @@ package commands
 
 import (
 	"bytes"
+	"errors"
+	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/7cav/cavbot2/voice"
+	"github.com/bwmarrin/discordgo"
 )
 
 // A stop's leave (#854). A recorder's leave can hang in the voice adapter,
@@ -314,26 +318,240 @@ func TestRecordingStopsFinishWithinTheLeaveBoundWhenTheLeaveHangs(t *testing.T) 
 	}
 }
 
-// A stop whose leave hangs keeps its recorder busy until the leave returns,
-// since the voice adapter can't join a recorder whose connection it is
-// still closing. A start meanwhile takes the other recorder, and once the
-// leave returns the first one records again.
-func TestRecordStopWhoseLeaveHangsKeepsItsRecorderUntilTheLeaveReturns(t *testing.T) {
+// hangLeaves makes every leave from now on hang. Before the bubble ends,
+// the runtime shuts down, so no recording a test left running fires a timer
+// once the scene is gone, and the hung leaves return.
+func (sc *recordScene) hangLeaves(t *testing.T) {
+	t.Helper()
+	sc.voice.setLeaveTakes(hungLeave)
+	t.Cleanup(func() {
+		sc.rt.Shutdown()
+		time.Sleep(hungLeave)
+	})
+}
+
+// With two recorders, a stop whose leave hangs leaves its channel free for
+// the other recorder while the first one is still logging back in (#888): a
+// start in the stopped channel records with the second.
+func TestRecordStartInAChannelWhoseStopsLeaveHangsTakesAFreeRecorder(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		sc := newBubbleRecordScene(t, testRecorder, testSecondRecorder)
 		sc.startIn(t, recStarter, recordChannel)
-		sc.voice.setLeaveTakes(hungLeave)
+		sc.hangLeaves(t)
+		sc.voice.staysOffline = true
 		recordAs(t, sc.rt, recStarter, "stop")
 		sc.voice.setLeaveTakes(0)
 
-		sc.fake.setVoice(recHolder.id, recordOtherChannel)
-		if reply := recordAs(t, sc.rt, recHolder, "start"); !strings.HasPrefix(reply, "✅") {
-			t.Errorf("start in %s while the leave hangs = %q, want a ✅ verdict", recordOtherChannel, reply)
-		}
-		time.Sleep(hungLeave)
-		synctest.Wait()
 		if reply := recordAs(t, sc.rt, recStarter, "start"); !strings.HasPrefix(reply, "✅") {
-			t.Errorf("start in %s once the leave returned = %q, want a ✅ verdict", recordChannel, reply)
+			t.Fatalf("start in %s while its stopped recording's leave hangs = %q, want a ✅ verdict", recordChannel, reply)
+		}
+		var open []string
+		for _, rec := range sc.recordings(t) {
+			if rec.StoppedAt.IsZero() {
+				open = append(open, rec.RecorderID)
+			}
+		}
+		if !slices.Equal(open, []string{testSecondRecorder}) {
+			t.Errorf("recorders of the running recordings = %v, want [%s]", open, testSecondRecorder)
 		}
 	})
+}
+
+// With one recorder, a start after a stop whose leave hangs waits for the
+// recorder's relogin, and when the relogin is still running at the end of
+// the start's 30 s, the starter is told the recorder is coming back (#888).
+func TestRecordStartAfterAStopWhoseLeaveHangsWaitsOutTheRelogin(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sc := newBubbleRecordScene(t, testRecorder)
+		sc.startIn(t, recStarter, recordChannel)
+		sc.hangLeaves(t)
+		sc.voice.staysOffline = true
+		recordAs(t, sc.rt, recStarter, "stop")
+
+		reply := recordAs(t, sc.rt, recStarter, "start")
+
+		if !strings.HasPrefix(reply, "❌") || !strings.Contains(reply, recorderComingBackRefusal) {
+			t.Errorf("reply = %q, want a ❌ verdict carrying %q", reply, recorderComingBackRefusal)
+		}
+	})
+}
+
+// A hung leave that returns once a new recording has its recorder leaves
+// that recording running (#888): its starter stops it, and no row is left
+// open.
+func TestRecordStopsHungLeaveReturningLeavesTheNextRecordingRunning(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sc := newBubbleRecordScene(t, testRecorder)
+		sc.startIn(t, recStarter, recordChannel)
+		sc.hangLeaves(t)
+		recordAs(t, sc.rt, recStarter, "stop")
+		sc.voice.setLeaveTakes(0)
+		if reply := recordAs(t, sc.rt, recStarter, "start"); !strings.HasPrefix(reply, "✅") {
+			t.Fatalf("start while the leave hangs = %q, want a ✅ verdict", reply)
+		}
+
+		time.Sleep(hungLeave)
+		synctest.Wait()
+
+		if reply := recordAs(t, sc.rt, recStarter, "stop"); !strings.HasPrefix(reply, "✅") {
+			t.Errorf("stop of the new recording once the hung leave returned = %q, want a ✅ verdict", reply)
+		}
+		for _, rec := range sc.recordings(t) {
+			if rec.StoppedAt.IsZero() {
+				t.Errorf("recording %d still open after the new one's stop", rec.ID)
+			}
+		}
+	})
+}
+
+// A stop whose leave is slow but in time frees its recorder with no relogin
+// (#888), and the next start records.
+func TestRecordStopWhoseLeaveIsInTimeAsksForNoRelogin(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sc := newBubbleRecordScene(t, testRecorder)
+		sc.startIn(t, recStarter, recordChannel)
+		sc.voice.setLeaveTakes(slowLeave)
+		recordAs(t, sc.rt, recStarter, "stop")
+
+		if reply := recordAs(t, sc.rt, recStarter, "start"); !strings.HasPrefix(reply, "✅") {
+			t.Errorf("start after the stop = %q, want a ✅ verdict", reply)
+		}
+		if got := sc.voice.reloginsOf(testRecorder); len(got) != 0 {
+			t.Errorf("relogins of the recorder = %d, want none", len(got))
+		}
+	})
+}
+
+// A stop whose leave hangs frees its channel and its recorder once
+// /record stop has answered (#888). The recorder goes offline and logs back
+// in, as after a cut short, since the voice adapter would hand its next join
+// on the old login the connection it is still closing. A start in the
+// stopped channel, or in another, waits for the new login and records,
+// while the leave still hangs.
+func TestRecordStartAfterAStopWhoseLeaveHangsRecords(t *testing.T) {
+	for _, channelID := range []string{recordChannel, recordOtherChannel} {
+		t.Run(channelID, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				sc := newBubbleRecordScene(t, testRecorder)
+				sc.startIn(t, recStarter, recordChannel)
+				sc.hangLeaves(t)
+				if reply := recordAs(t, sc.rt, recStarter, "stop"); !strings.HasPrefix(reply, "✅") {
+					t.Fatalf("stop = %q, want a ✅ verdict", reply)
+				}
+				sc.voice.setLeaveTakes(0)
+
+				sc.fake.setVoice(recHolder.id, channelID)
+				if reply := recordAs(t, sc.rt, recHolder, "start"); !strings.HasPrefix(reply, "✅") {
+					t.Errorf("start in %s while the stopped recording's leave hangs = %q, want a ✅ verdict", channelID, reply)
+				}
+				if got := sc.voice.reloginsOf(testRecorder); len(got) != 1 {
+					t.Errorf("relogins of the recorder = %d, want one once its leave gave up", len(got))
+				}
+			})
+		})
+	}
+}
+
+// A stop by the Stop button, the cap, low disk or the last person leaving
+// frees its recorder when its leave hangs, as /record stop's does (#888):
+// a start in the channel records while the leave still hangs. The stop
+// falls due stopsAfter from the start.
+func TestRecordingStopsWhoseLeaveHangsFreeTheirRecorder(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// cause stops the recording, or sets up what the clock stops it
+		// for, and is nil when the clock alone does. button is the
+		// recording notice's Stop button.
+		cause      func(sc *recordScene, button string)
+		stopsAfter time.Duration
+	}{
+		{
+			name: "the Stop button",
+			cause: func(sc *recordScene, button string) {
+				runRecord(&fakeResponder{}, sc.rt, pressInteraction(button, recStarter))
+			},
+		},
+		{name: "the cap", stopsAfter: recordingCap},
+		{
+			name:       "free disk space below the threshold",
+			cause:      func(sc *recordScene, _ string) { sc.freeDisk.Store(recordingMinFreeDisk - 1) },
+			stopsAfter: recordingDiskCheckInterval,
+		},
+		{
+			name:  "the last person leaves",
+			cause: func(sc *recordScene, _ string) { sc.deliver(recStarter.id, "") },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				sc := newBubbleRecordScene(t, testRecorder)
+				sc.startIn(t, recStarter, recordChannel)
+				button := stopButton(t, recordingNotice(t, sc.fake, recordChannel))
+				sc.hangLeaves(t)
+
+				if tc.cause != nil {
+					go tc.cause(sc, button)
+				}
+				time.Sleep(tc.stopsAfter + recordingLeaveTimeout)
+				synctest.Wait()
+				sc.voice.setLeaveTakes(0)
+				sc.freeDisk.Store(1 << 40)
+
+				sc.fake.setVoice(recHolder.id, recordChannel)
+				if reply := recordAs(t, sc.rt, recHolder, "start"); !strings.HasPrefix(reply, "✅") {
+					t.Errorf("start while the stopped recording's leave hangs = %q, want a ✅ verdict", reply)
+				}
+			})
+		})
+	}
+}
+
+// A start that fails after its recorder joined, because the deafen wasn't
+// lifted, the notice didn't post or the row wasn't written, frees its
+// recorder when the leave hangs (#888): once the cause is gone, the next
+// start records while the leave still hangs.
+func TestRecordStartThatFailsAfterItsJoinFreesItsRecorderWhenTheLeaveHangs(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		fail, repair func(sc *recordScene)
+	}{
+		{
+			name: "the deafen not lifted",
+			fail: func(sc *recordScene) {
+				sc.voice.joinDeafened()
+				sc.fake.memberDeafenErr = restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, rawBodyMarker)
+			},
+			repair: func(sc *recordScene) { sc.voice.undeafen(testRecorder) },
+		},
+		{
+			name: "the notice not posted",
+			fail: func(sc *recordScene) {
+				sc.fake.messageErr = restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, rawBodyMarker)
+			},
+			repair: func(sc *recordScene) { sc.fake.messageErr = nil },
+		},
+		{
+			name:   "the row not written",
+			fail:   func(sc *recordScene) { sc.faults.startRecordingErr = errors.New("connection refused") },
+			repair: func(sc *recordScene) { sc.faults.startRecordingErr = nil },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				sc := newBubbleRecordScene(t, testRecorder)
+				sc.hangLeaves(t)
+				sc.fake.setVoice(recStarter.id, recordChannel)
+				tc.fail(sc)
+				if reply := recordAs(t, sc.rt, recStarter, "start"); reply != recordFailedReply {
+					t.Fatalf("failing start = %q, want %q", reply, recordFailedReply)
+				}
+				tc.repair(sc)
+				sc.voice.setLeaveTakes(0)
+
+				if reply := recordAs(t, sc.rt, recStarter, "start"); !strings.HasPrefix(reply, "✅") {
+					t.Errorf("next start while the failed start's leave hangs = %q, want a ✅ verdict", reply)
+				}
+			})
+		})
+	}
 }
