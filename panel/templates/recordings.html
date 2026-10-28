@@ -103,7 +103,7 @@
     <div class="block-row rec-downloads">{{template "recording-downloads" .}}</div>
     <form method="post" action="{{.DeleteURL}}" class="submit-row" data-field="delete-confirm">
       {{with .From}}<input type="hidden" name="from" value="{{.}}">{{end}}
-      <button type="submit" class="btn btn--danger-filled" data-field="confirm">Delete the recording</button>
+      <button type="submit" class="btn btn--danger-filled" data-field="confirm" data-press="delete-recording">Delete the recording</button>
       <a class="btn" href="{{.CancelURL}}" data-field="cancel">Cancel</a>
     </form>
   </section>

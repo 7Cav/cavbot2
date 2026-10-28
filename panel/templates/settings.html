@@ -71,7 +71,7 @@
       <input type="hidden" name="confirm" value="1">
       <input type="hidden" name="shown" value="{{.Shown}}">
       {{- range .Fields}}<input type="hidden" name="{{.Field}}" value="{{.RoleID}}">{{end}}
-      <button type="submit" class="btn btn--danger-filled" data-field="confirm">Save the rank roles</button>
+      <button type="submit" class="btn btn--danger-filled" data-field="confirm" data-press="rank-roles">Save the rank roles</button>
       <a class="btn" href="/settings#rank-roles" data-field="cancel">Cancel<span class="visually-hidden"> saving the rank roles</span></a>
     </form>
   </div>
