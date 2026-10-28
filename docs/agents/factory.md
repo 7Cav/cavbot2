@@ -53,7 +53,7 @@ Once you have opened the PR, label it `factory` and turn on squash auto-merge wi
 2. Read `gh pr view <pr> --json state,mergeStateStatus` and the unresolved review threads, which this command lists with each one's last commenter and that comment's text:
 
    ```bash
-   gh api graphql -F owner='{owner}' -F repo='{repo}' -F pr=<pr> -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{id isResolved path comments(first:100){nodes{databaseId author{login} body}}}}}}}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | {path, id: .comments.nodes[0].databaseId, thread: .id, last: .comments.nodes[-1].author.login, body: (.comments.nodes[-1].body | gsub("<!--[\\s\\S]*?-->"; ""))}'
+   gh api graphql -F owner='{owner}' -F repo='{repo}' -F pr=<pr> -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{id isResolved path root:comments(first:1){nodes{databaseId}} final:comments(last:1){nodes{author{login} body}}}}}}}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | {path, id: .root.nodes[0].databaseId, thread: .id, last: .final.nodes[0].author.login, body: (.final.nodes[0].body | gsub("<!--[\\s\\S]*?-->"; ""))}'
    ```
 
    A reply to a thread goes to `repos/{owner}/{repo}/pulls/<pr>/comments/<id>/replies`, and this resolves the thread:
