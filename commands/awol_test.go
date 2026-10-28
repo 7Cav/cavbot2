@@ -806,7 +806,7 @@ func TestRunAwolNeedsReviewLOANamingNoMemberTagsNobody(t *testing.T) {
 }
 
 // A report sent as a file gives each LOA tag on a trooper's entry the thread
-// the embed row's tag links to, on a line that carries the tag.
+// the embed row's LOA tag links to, on a line that carries the tag.
 func TestRunAwolFileReportGivesEachLOATagItsThread(t *testing.T) {
 	cases := []struct {
 		name      string

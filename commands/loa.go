@@ -197,7 +197,7 @@ func loaUserLines(heading string, users []LOAUser) []pagedLine {
 			loaTrooper(u.Username, u.MilpacUrl),
 			u.StartDate.Format("Jan 2, 2006"),
 			u.EndDate.Format("Jan 2, 2006"),
-			loaThreadTag(u.ThreadID))})
+			loaThreadLink(u.ThreadID))})
 	}
 	return lines
 }
@@ -209,7 +209,7 @@ func loaReviewLines(reviews []loaReview) []pagedLine {
 	var lines []pagedLine
 	for _, r := range reviews {
 		lines = append(lines, pagedLine{loaNeedsReviewHeading, fmt.Sprintf("%s — %s%s",
-			loaTrooper(r.Username, r.MilpacUrl), r.Problem, loaThreadTag(r.ThreadID))})
+			loaTrooper(r.Username, r.MilpacUrl), r.Problem, loaThreadLink(r.ThreadID))})
 	}
 	return lines
 }
@@ -223,8 +223,8 @@ func loaTrooper(username, milpacURL string) string {
 	return fmt.Sprintf("[%s](%s)", username, milpacURL)
 }
 
-// loaThreadTag links an LOA's thread, or is "" when its thread ID is unknown.
-func loaThreadTag(threadID int64) string {
+// loaThreadLink links an LOA's thread, or is "" when its thread ID is unknown.
+func loaThreadLink(threadID int64) string {
 	if threadID == 0 {
 		return ""
 	}
