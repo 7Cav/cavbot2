@@ -50,10 +50,10 @@ Leave the PR's smoke checks to a later pass, since the smoke tool runs one bot a
 Once you have opened the PR, label it `factory` and turn on squash auto-merge with `gh pr merge <pr> --auto --squash`. Auto-merge waits until Lint and Build pass, every review thread is resolved, and CodeRabbit approves the head commit. A PR's author can't approve it, so CodeRabbit gives the one approving review `develop` requires. An unattended run has no Auto-fix, so watch the PR yourself until it merges:
 
 1. Run `timeout 30m gh pr checks <pr> --watch`, which returns once every check on the head commit finishes, or after 30 minutes. That includes `CodeRabbit`, which finishes as CodeRabbit posts its review of the commit.
-2. Read `gh pr view <pr> --json state,mergeStateStatus` and the unresolved review threads, which this command lists with each one's last commenter:
+2. Read `gh pr view <pr> --json state,mergeStateStatus` and the unresolved review threads, which this command lists with each one's last commenter and that comment's text:
 
    ```bash
-   gh api graphql -F owner='{owner}' -F repo='{repo}' -F pr=<pr> -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{id isResolved path comments(first:100){nodes{databaseId author{login}}}}}}}}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | {path, id: .comments.nodes[0].databaseId, thread: .id, last: .comments.nodes[-1].author.login}'
+   gh api graphql -F owner='{owner}' -F repo='{repo}' -F pr=<pr> -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{id isResolved path comments(first:100){nodes{databaseId author{login} body}}}}}}}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | {path, id: .comments.nodes[0].databaseId, thread: .id, last: .comments.nodes[-1].author.login, body: (.comments.nodes[-1].body | gsub("<!--[\\s\\S]*?-->"; ""))}'
    ```
 
    A reply to a thread goes to `repos/{owner}/{repo}/pulls/<pr>/comments/<id>/replies`, and this resolves the thread:
