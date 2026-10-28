@@ -36,7 +36,7 @@ type refusingDiscord struct {
 	refused func(token string) bool
 }
 
-func (d refusingDiscord) Open(recorder int, token string) (voice.GatewaySession, error) {
+func (d refusingDiscord) Open(recorder int, token string, _ func()) (voice.GatewaySession, error) {
 	if d.refused(token) {
 		return nil, fmt.Errorf("%w: %w", voice.ErrTokenRefused, errors.New("websocket: close 4004: Authentication failed."))
 	}

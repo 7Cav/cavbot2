@@ -157,18 +157,22 @@ func (l *logRecorder) duration(level slog.Level, msg string) (time.Duration, boo
 
 // fakeSession is one recorder's login as the fake gateway opens it. conns is
 // every voice connection it joined, in order. The gateway's mutex guards
-// both.
+// both. onRefused is what the login calls when Discord refuses its token
+// while it is up.
 type fakeSession struct {
-	gw     *fakeGateway
-	userID string
-	closed bool
-	conns  []*fakeConn
+	gw        *fakeGateway
+	userID    string
+	closed    bool
+	conns     []*fakeConn
+	onRefused func()
 }
 
 func (s *fakeSession) UserID() string { return s.userID }
 
 // LogOut is the session's logout for a relogin, and Close its logout at
-// shutdown. Each returns once the gateway's logoutTakes has passed.
+// shutdown. Each returns once the gateway's logoutTakes has passed, with the
+// recorder out of every call the session joined, as ending its login takes
+// it out of them.
 func (s *fakeSession) LogOut() error { return s.Close() }
 
 func (s *fakeSession) Close() error {
@@ -179,6 +183,9 @@ func (s *fakeSession) Close() error {
 	s.gw.mu.Lock()
 	defer s.gw.mu.Unlock()
 	s.closed = true
+	for _, c := range s.conns {
+		c.left = true
+	}
 	s.gw.history = append(s.gw.history, gatewayLogout)
 	return nil
 }
@@ -269,7 +276,7 @@ func newFakeGateway(accounts map[string]string) *fakeGateway {
 	return &fakeGateway{accounts: accounts, down: map[string]bool{}, refused: map[string]bool{}, places: map[string]int{}}
 }
 
-func (g *fakeGateway) Open(recorder int, token string) (GatewaySession, error) {
+func (g *fakeGateway) Open(recorder int, token string, onRefused func()) (GatewaySession, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.tries = append(g.tries, loginTry{token: token, at: time.Now()})
@@ -284,7 +291,7 @@ func (g *fakeGateway) Open(recorder int, token string) (GatewaySession, error) {
 	case g.down[token]:
 		return nil, errGatewayDown
 	}
-	s := &fakeSession{gw: g, userID: userID}
+	s := &fakeSession{gw: g, userID: userID, onRefused: onRefused}
 	g.opened = append(g.opened, s)
 	return s, nil
 }
@@ -766,6 +773,53 @@ func TestARefusedTokenTakesTheRecorderOut(t *testing.T) {
 		}
 		if got := logs.warnings(loginRefusedMessage); got != 1 {
 			t.Errorf("WARN records %q = %d, want 1", loginRefusedMessage, got)
+		}
+	})
+}
+
+// A recorder whose token Discord refuses while it is in a call is out, and
+// stays in the call: the refusal ends none of its voice connections.
+func TestARecorderRefusedWhileInACallStaysInIt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		gw := newFakeGateway(map[string]string{"tok-a": "id-a"})
+		r := Connect("tok-a", gw)
+		defer r.Close()
+		if _, err := r.Join(context.Background(), "id-a", "guild-1", "vc-1"); err != nil {
+			t.Fatalf("Join: %v", err)
+		}
+
+		gw.opened[0].onRefused()
+		synctest.Wait()
+
+		if got := r.State("id-a"); got != RecorderOut {
+			t.Errorf("recorder after its token was refused = %v, want %v", got, RecorderOut)
+		}
+		gw.mu.Lock()
+		defer gw.mu.Unlock()
+		if gw.opened[0].conns[0].left {
+			t.Error("recorder id-a left vc-1 when Discord refused its token, want it still in the call")
+		}
+	})
+}
+
+// A recorder Discord refuses while a cut short's relogin is still pending
+// is out, and the relogin logs it in no more.
+func TestARecorderRefusedBeforeItsReloginLogsInNoMore(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		gw := newFakeGateway(map[string]string{"tok-a": "id-a"})
+		r := Connect("tok-a", gw)
+		defer r.Close()
+		relogin := r.TakeOffline("id-a")
+
+		gw.opened[0].onRefused()
+		relogin()
+		synctest.Wait()
+
+		if tries := gw.triesOf("tok-a"); len(tries) != 1 {
+			t.Errorf("logins = %d, want only the startup's", len(tries))
+		}
+		if got := r.State("id-a"); got != RecorderOut {
+			t.Errorf("recorder after its token was refused = %v, want %v", got, RecorderOut)
 		}
 	})
 }

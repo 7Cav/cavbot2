@@ -97,7 +97,7 @@ func lateLogins(d voice.Opener) voice.Opener {
 	return &lateDiscord{Opener: d, tried: map[string]bool{}}
 }
 
-func (d *lateDiscord) Open(recorder int, token string) (voice.GatewaySession, error) {
+func (d *lateDiscord) Open(recorder int, token string, refused func()) (voice.GatewaySession, error) {
 	d.mu.Lock()
 	first := !d.tried[token]
 	d.tried[token] = true
@@ -105,7 +105,7 @@ func (d *lateDiscord) Open(recorder int, token string) (voice.GatewaySession, er
 	if first && strings.HasPrefix(token, "late") {
 		return nil, errors.New("websocket: close 4000: Unknown error.")
 	}
-	return d.Opener.Open(recorder, token)
+	return d.Opener.Open(recorder, token, refused)
 }
 
 func (d *lateDiscord) UserID(ctx context.Context, token string) (string, error) {
