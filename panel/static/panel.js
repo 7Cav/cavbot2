@@ -28,17 +28,16 @@
   // A press is a mousedown and the mouseup that ends it, or the dragend
   // when the press drags something. A contextmenu ends a press too. A
   // browser that opens its menu at the mousedown, as Chrome on Linux does,
-  // lets the menu take the mouseup (#718). Windows opens its menu at the
-  // mouseup, which ends a right-button press before the contextmenu comes.
-  // pressed is the element the press began on, and null between presses.
-  // rightPress is whether the right button made the press, and false
-  // between presses. afterPress, when set, runs as the press ends and is
-  // called with that element, and with whether the press opened the menu.
-  // A press the right button made opens it, and so does one a contextmenu
-  // ended. That comes before the click, whose target the press has already
-  // fixed. On macOS a Control+click opens the menu too, but Chrome and
-  // Safari report its mousedown as the left button. Only the contextmenu
-  // shows that the press was a right-click (#771).
+  // lets the menu take the mouseup (#718). pressed is the element the
+  // press began on, and null between presses. rightPress is whether the
+  // right button made the press, and false between presses. afterPress,
+  // when set, runs as the press ends and is called with that element, and
+  // with whether a contextmenu ended it. That comes before the click, whose
+  // target the press has already fixed. A right-click makes no click, so
+  // afterPress waits for the next press to end instead. On macOS a
+  // Control+click opens the menu too, but Chrome and Safari report its
+  // mousedown as the left button. Only the contextmenu shows that the
+  // press was a right-click (#771).
   var pressed = null;
   var rightPress = false;
   var afterPress = null;
@@ -46,12 +45,14 @@
   function endPress(e) {
     var target = pressed;
     var run = afterPress;
-    var byMenu = rightPress || e.type === 'contextmenu';
     if (!target) { return; }
     pressed = null;
-    rightPress = false;
+    if (rightPress) {
+      rightPress = false;
+      return;
+    }
     afterPress = null;
-    if (run) { run(target, byMenu); }
+    if (run) { run(target, e.type === 'contextmenu'); }
   }
 
   document.addEventListener('mousedown', function (e) {
@@ -274,14 +275,11 @@
     // search stays open, so a second press there lands too. A right-click
     // makes no click, so nothing has to stay under the pointer. It closes
     // the search at once, unless it began inside the picker, as on a tag.
-    // Then the search stays open through the menu, and the close waits for
-    // the next press (#718). A tag can't take focus, so focus has already
-    // left the picker, and no later press makes it leave again. A
-    // right-click that begins outside the picker then closes the search at
-    // once, one inside it keeps the close waiting, and a left press closes
-    // it as any left press would (#804). A Control+click on macOS goes by
-    // the same rule. Its mousedown reports the left button, so the rule
-    // waits for its contextmenu (#771).
+    // Then the search stays open through the menu. The next left press
+    // closes it as any left press would (#718), and a right-click outside
+    // the picker closes it at once (#804, below). A Control+click on macOS
+    // goes by the same rule. Its mousedown reports the left button, so the
+    // rule waits for its contextmenu (#771).
     root.addEventListener('focusout', function (e) {
       if (search.hidden || root.contains(e.relatedTarget)) { return; }
       if (!pressed || (rightPress && !root.contains(pressed))) {
@@ -310,6 +308,17 @@
         if (!moved) { close(); }
       };
     });
+
+    // A right-click outside the picker closes the search at once, whatever
+    // press came before it. Focus may have left the picker already. A
+    // right-click on a tag moves it out, and so does a left press that kept
+    // the search open, and then no focusout comes. The contextmenu comes as
+    // the menu opens. That is after the mousedown on Linux and macOS and
+    // after the mouseup on Windows, and a Control+click on macOS sends one
+    // too (#804).
+    document.addEventListener('contextmenu', function (e) {
+      if (!root.contains(e.target)) { close(); }
+    }, true);
   }
 
   roots.forEach(setUp);
