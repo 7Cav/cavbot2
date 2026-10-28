@@ -2440,6 +2440,124 @@ func assertStoppedQuietly(t *testing.T, h *callHarness, events *sentryTransport,
 	}
 }
 
+// readyOnlyGateway is an answering gateway whose voice server reaches its
+// Ready and never sends the session description, so disgo's connection
+// waits on it. ready hears each one as its open returns.
+type readyOnlyGateway struct {
+	*answeringGateway
+	ready chan<- *readyOnlyGateway
+}
+
+func (g *readyOnlyGateway) Open(context.Context, disgovoice.State) error {
+	g.holdsConn.Store(true)
+	g.ready <- g
+	return nil
+}
+
+// closeWith hands the gateway's close handler a close with code, as disgo's
+// gateway does once it has dropped its connection.
+func (g *readyOnlyGateway) closeWith(code int) {
+	g.holdsConn.Store(false)
+	g.onClose(g, &websocket.CloseError{Code: code})
+}
+
+// stallAtReady has gateways built while stall is set stop at their voice
+// server's Ready, and returns where each one's open is heard.
+func (h *callHarness) stallAtReady(stall *atomic.Bool) <-chan *readyOnlyGateway {
+	ready := make(chan *readyOnlyGateway, 8)
+	h.s.voice = h.voiceManager(func(dave godave.Session, onEvent disgovoice.EventHandlerFunc, onClose disgovoice.CloseHandlerFunc, opts ...disgovoice.GatewayConfigOpt) disgovoice.Gateway {
+		g := h.newGateway(dave, onEvent, onClose, opts...).(*answeringGateway)
+		if !stall.Load() {
+			return g
+		}
+		return &readyOnlyGateway{answeringGateway: g, ready: ready}
+	}, nil)
+	return ready
+}
+
+// awaitReady waits for a gateway that stalls at its Ready to open.
+func awaitReady(t *testing.T, ready <-chan *readyOnlyGateway) *readyOnlyGateway {
+	t.Helper()
+	select {
+	case g := <-ready:
+		return g
+	case <-time.After(waitFor):
+		t.Fatal("no voice gateway reached its Ready")
+		return nil
+	}
+}
+
+// A rejoin's new gateway can close after its voice server's Ready, before
+// the session description. The recorder joins again through a fresh
+// gateway and connects there, with one rejoin under way at a time. Once it
+// is back, no rejoin is left under way, and the stop ends everything the
+// recording ran: synctest fails the test when a goroutine is still blocked
+// as the bubble exits. Sentry hears of no lost connection, and the stop's
+// leave is the last voice state update.
+func TestRecorderClosedDuringARejoinRejoinsOnce(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		var stall atomic.Bool
+		ready := h.stallAtReady(&stall)
+		h.transportOnly.Store(true)
+		conn := h.record(listen(nil))
+		stall.Store(true)
+
+		go h.closeCall(disgovoice.GatewayCloseEventCodeSessionNoLongerValid.Code)
+		stalled := awaitReady(t, ready)
+		stall.Store(false)
+		go stalled.closeWith(disgovoice.GatewayCloseEventCodeSessionNoLongerValid.Code)
+		h.waitOpen()
+		synctest.Wait()
+
+		steps := conn.GapReport().Steps
+		if slices.ContainsFunc(steps, func(s RecoveryStep) bool { return s.Kind == StepRejoin && s.Outcome == StepUnderWay }) {
+			t.Errorf("recovery steps once reconnected = %+v, want no %s still %s", steps, StepRejoin, StepUnderWay)
+		}
+
+		conn.Leave(context.Background())
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		sent := h.sent()
+		if len(sent) == 0 || !sent[len(sent)-1].leaves() {
+			t.Errorf("voice state updates = %v, want the stop's leave last", sent)
+		}
+		if got := tagged(events.Events(), lostConnectionMessage); len(got) != 0 {
+			t.Errorf("Sentry %q events = %d, want none", lostConnectionMessage, len(got))
+		}
+	})
+}
+
+// A member can stop the recording while the recorder joins again after a
+// rejoin's new gateway closed, before it is back. The stop ends that join
+// too, so the synctest bubble exits with nothing blocked, and Sentry hears
+// of no lost connection.
+func TestRecorderStoppedWhileJoiningAgainAfterARejoinsGatewayClosedEndsIt(t *testing.T) {
+	events := recordSentry(t)
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		var stall atomic.Bool
+		ready := h.stallAtReady(&stall)
+		conn := h.start()
+		stall.Store(true)
+
+		go h.closeCall(disgovoice.GatewayCloseEventCodeSessionNoLongerValid.Code)
+		stalled := awaitReady(t, ready)
+		go stalled.closeWith(disgovoice.GatewayCloseEventCodeSessionNoLongerValid.Code)
+		awaitReady(t, ready)
+
+		conn.Leave(context.Background())
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		if got := tagged(events.Events(), lostConnectionMessage); len(got) != 0 {
+			t.Errorf("Sentry %q events = %d, want none", lostConnectionMessage, len(got))
+		}
+	})
+}
+
 // A member can stop the recording just after Discord answers a rejoin with
 // the voice state alone, having named the server before the rejoin. The
 // recorder opens no voice gateway after the stop, at that server or
