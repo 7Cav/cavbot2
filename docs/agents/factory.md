@@ -50,18 +50,24 @@ Leave the PR's smoke checks to a later pass, since the smoke tool runs one bot a
 Once you have opened the PR, label it `factory` and turn on squash auto-merge with `gh pr merge <pr> --auto --squash`. Auto-merge waits until Lint and Build pass, every review thread is resolved, and CodeRabbit approves the head commit. A PR's author can't approve it, so CodeRabbit gives the one approving review `develop` requires. An unattended run has no Auto-fix, so watch the PR yourself until it merges:
 
 1. Run `timeout 30m gh pr checks <pr> --watch`, which returns once every check on the head commit finishes, or after 30 minutes. That includes `CodeRabbit`, which finishes as CodeRabbit posts its review of the commit.
-2. Read `gh pr view <pr> --json state,mergeStateStatus` and the unresolved review threads, which this command lists with each one's last commenter:
+2. Read `gh pr view <pr> --json state,mergeStateStatus` and the unresolved review threads, which this command lists with each one's last commenter and that comment's text:
 
    ```bash
-   gh api graphql -F owner='{owner}' -F repo='{repo}' -F pr=<pr> -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{isResolved path comments(first:100){nodes{databaseId author{login}}}}}}}}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | {path, id: .comments.nodes[0].databaseId, last: .comments.nodes[-1].author.login}'
+   gh api graphql -F owner='{owner}' -F repo='{repo}' -F pr=<pr> -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{id isResolved path root:comments(first:1){nodes{databaseId}} final:comments(last:1){nodes{author{login} body}}}}}}}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | {path, id: .root.nodes[0].databaseId, thread: .id, last: .final.nodes[0].author.login, body: (.final.nodes[0].body | gsub("<!--[\\s\\S]*?-->"; ""))}'
    ```
 
-   A reply to a thread goes to `repos/{owner}/{repo}/pulls/<pr>/comments/<id>/replies`. Act on the first case that matches:
+   A reply to a thread goes to `repos/{owner}/{repo}/pulls/<pr>/comments/<id>/replies`, and this resolves the thread:
+
+   ```bash
+   gh api graphql -f thread=<thread> -f query='mutation($thread:ID!){resolveReviewThread(input:{threadId:$thread}){thread{isResolved}}}'
+   ```
+
+   Act on the first case that matches:
    - `MERGED`: done.
    - `CLOSED`: someone closed the PR without merging it. Leave the PR as they left it and hand back now. It can also close while you work on another case, so read `state` again before each push or post to the PR.
    - `BEHIND`: `develop` merges only branches that are up to date, so run `gh pr update-branch <pr>` and go back to 1.
    - `DIRTY`, or a required check failed: fix it and go back to 1. For a conflict, merge `origin/develop` in. For a failed check, read its log with `gh run view <run> --log-failed`. Run `.github/scripts/gate.sh` before you push.
-   - A thread whose last comment is CodeRabbit's: it waits on you. Reply in the thread with the commit that fixes the finding, or with why you decline it. Push your fixes and go back to 1. CodeRabbit resolves its own thread once your commit or reply satisfies it, so leave the resolving to it. If CodeRabbit answers a decline by pressing the finding, fix the finding when its reply persuades you, or hand back.
+   - A thread whose last comment is CodeRabbit's: it waits on you. Reply in the thread with the commit that fixes the finding, or with why you decline it. Push your fixes and go back to 1. When CodeRabbit's reply accepts your fix or your decline, resolve the thread and go back to 1, since CodeRabbit approves only once every thread is resolved. If CodeRabbit answers a decline by pressing the finding, fix the finding when its reply persuades you, or hand back.
    - Nothing waits on you: CodeRabbit or auto-merge acts next. Read again each minute until another case matches. CodeRabbit can take 15 minutes to answer a reply. After 30 minutes in this case, post `@coderabbitai review` once, since CodeRabbit pauses its reviews of new pushes after five reviewed commits. Hand back if 30 more minutes pass.
 
 Fix failing checks and conflicts up to two rounds in all, and answer up to three CodeRabbit reviews that request changes. Done when the PR has merged; end the run with its URL.
