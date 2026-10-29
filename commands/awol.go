@@ -84,7 +84,7 @@ type AwolUser struct {
 	reviewLOA *awolReview
 }
 
-// awolReview is a needs-review LOA as a row's tag needs it.
+// awolReview is a needs-review LOA as a row's LOA tag needs it.
 type awolReview struct {
 	// threadID is the LOA's thread, or 0 when its ID doesn't parse, which
 	// leaves the tag unlinked.
@@ -404,7 +404,7 @@ func awolUserLine(u AwolUser) string {
 	)
 }
 
-// awolThreadTag renders a row tag as a link to its LOA thread, or bare when
+// awolThreadTag renders an LOA tag as a link to the LOA's thread, or bare when
 // the thread ID is unknown.
 func awolThreadTag(tag string, threadID int64) string {
 	if threadID == 0 {
