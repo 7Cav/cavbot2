@@ -404,7 +404,7 @@ func awolUserLine(u AwolUser) string {
 	)
 }
 
-// awolThreadTag renders an LOA tag as a link to its LOA thread, or bare when
+// awolThreadTag renders an LOA tag as a link to the LOA's thread, or bare when
 // the thread ID is unknown.
 func awolThreadTag(tag string, threadID int64) string {
 	if threadID == 0 {
