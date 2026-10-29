@@ -4,7 +4,7 @@ Nobody watches the run, so answer from the requirements and the repo wherever th
 
 ## Pick
 
-`.github/scripts/factory-eligible.sh` prints `waiting` and `queue`. End the run with the script's error if it fails, with `waiting on #<pr>` when `waiting` names a PR, or with `nothing to do` when `queue` is empty.
+`.github/scripts/factory-eligible.sh` prints `waiting` and `queue`. End the run with the script's error if it fails, with `waiting on` and every PR `waiting` names, as in `waiting on #901, #905`, or with `nothing to do` when `queue` is empty.
 
 Take one issue from `queue` in this order, lowest number first within a bucket:
 
