@@ -171,6 +171,22 @@ func setMilpacState(p statePaths, args []string) error {
 	return nil
 }
 
+// cavAPIOrigin is the origin the bot sends its lookups to with
+// CAV_API_BASE_URL set to raw, by the rule utils.InitAPIBaseURL applies: an
+// http or https origin with any trailing slash dropped, or else the public
+// address. ok is false when raw is set but not such an origin.
+func cavAPIOrigin(raw string) (origin string, ok bool) {
+	if raw == "" {
+		return publicCavAPI, true
+	}
+	u, err := url.Parse(strings.TrimRight(raw, "/"))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" ||
+		u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return publicCavAPI, false
+	}
+	return u.Scheme + "://" + u.Host, true
+}
+
 // startCavAPI starts the stand-in for the run on a free loopback port,
 // unless --env names the 7Cav API's origin. It forwards to the API the bot
 // would reach without it: the env file's CAV_API_BASE_URL, or the public
@@ -180,9 +196,9 @@ func (s *supervisor) startCavAPI(file map[string]string) error {
 		s.logf("7Cav API at %s from --env, with no stand-in", origin)
 		return nil
 	}
-	upstream := strings.TrimRight(file["CAV_API_BASE_URL"], "/")
-	if upstream == "" {
-		upstream = publicCavAPI
+	upstream, ok := cavAPIOrigin(file["CAV_API_BASE_URL"])
+	if !ok {
+		s.logf("the env file's CAV_API_BASE_URL is not an http or https origin, so the stand-in forwards to %s, as the bot would", publicCavAPI)
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
