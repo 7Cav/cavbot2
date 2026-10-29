@@ -59,6 +59,9 @@ type rankRolesPage struct {
 	Preview *rankRolesPreviewView
 	// Discharged is the Discharged role's picker, below the ranks' rows.
 	Discharged pickerView
+	// DischargedHolders counts the members holding the stored Discharged
+	// role, whatever the picker shows.
+	DischargedHolders holderCount
 	// Options are the eligible roles, highest position first, which each
 	// rank's picker and the Discharged role's offer from the list under
 	// OptionsID.
@@ -97,21 +100,36 @@ type rankRoleFieldValue struct {
 type rankRow struct {
 	Abbrev string
 	Picker pickerView
-	// HasRole is whether the rank has a rank role stored, whose holders
-	// Holders counts.
+	holderCount
+}
+
+// holderCount is how many members hold a stored role of the Rank roles
+// section, a rank's or the Discharged role.
+type holderCount struct {
+	// HasRole is whether a role is stored, whose holders Holders counts.
 	HasRole bool
-	// Holders is the count of the members holding the rank's stored role,
-	// from the member list, or unknown while the list has not loaded.
+	// Holders is the count of the members holding the stored role, from
+	// the member list, or unknown while the list has not loaded.
 	Holders string
 }
 
-// holdersUnknown is a row's holder count while the member list has not
-// loaded, never 0.
+// holdersUnknown is a holder count while the member list has not loaded,
+// never 0.
 const holdersUnknown = "unknown"
 
-// HoldersKnown reports whether the row's holder count is a number, which it
-// is once the member list has loaded.
-func (r rankRow) HoldersKnown() bool { return r.Holders != holdersUnknown }
+// HoldersKnown reports whether the holder count is a number, which it is
+// once the member list has loaded.
+func (c holderCount) HoldersKnown() bool { return c.Holders != holdersUnknown }
+
+// holderCountOf is the holder count of the stored role id, empty for none,
+// from the counts roleHolders gives, nil while the list has not loaded.
+func holderCountOf(holders map[string]int, id string) holderCount {
+	count := holderCount{HasRole: id != "", Holders: holdersUnknown}
+	if holders != nil {
+		count.Holders = strconv.Itoa(holders[id])
+	}
+	return count
+}
 
 // roleHolders counts the members of a complete member list holding each
 // role, by role ID. It is nil while the list has not loaded.
@@ -274,17 +292,14 @@ func (s *hubService) rankRolesSection(ctx context.Context, guild guildInfo, req 
 			selected = posted.Roles[rank.Abbrev]
 		}
 		picker := oneRolePicker(rankRoleField(rank.Abbrev), "the "+rank.Abbrev+" rank", guild, rank.RoleID, selected)
-		row := rankRow{Abbrev: rank.Abbrev, Picker: picker, HasRole: rank.RoleID != "", Holders: holdersUnknown}
-		if holders != nil {
-			row.Holders = strconv.Itoa(holders[rank.RoleID])
-		}
-		page.Rows = append(page.Rows, row)
+		page.Rows = append(page.Rows, rankRow{Abbrev: rank.Abbrev, Picker: picker, holderCount: holderCountOf(holders, rank.RoleID)})
 	}
 	discharged := ladder.DischargedRole()
 	if posted != nil {
 		discharged = posted.Discharged
 	}
 	page.Discharged = oneRolePicker(fieldDischargedRole, "the Discharged role", guild, ladder.DischargedRole(), discharged)
+	page.DischargedHolders = holderCountOf(holders, ladder.DischargedRole())
 	page.Options = rolePicker("", "", guild, nil, nil).Candidates
 	entries, err := s.deps.Store.ListRankRoleChanges(ctx, changeLogLimit)
 	if err != nil {

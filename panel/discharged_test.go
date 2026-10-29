@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/7cav/cavbot2/commands"
+	"golang.org/x/net/html"
 )
 
 // The Discharged role (#893, GLOSSARY.md): a member holding it is no Cav
@@ -255,5 +256,143 @@ func TestRankRolesSaveKeepsAnUnavailableDischargedRoleAndRefusesANewOne(t *testi
 	}
 	if after := readSavedState(t, w.st); !reflect.DeepEqual(after, before) {
 		t.Errorf("the store after the refused save = %+v, want it as before, %+v", after, before)
+	}
+}
+
+// dischargedHoldersOf reads the holder count the Rank roles section's
+// Discharged role field carries in data-holders, and whether it carries
+// one.
+func dischargedHoldersOf(t *testing.T, doc *html.Node) (string, bool) {
+	t.Helper()
+	field := findElement(rankRolesSection(t, doc), "", "aria-labelledby", "discharged-role-label")
+	if field == nil {
+		t.Fatal("the Rank roles section has no Discharged role field")
+	}
+	var holders string
+	found := false
+	eachElement(field, func(n *html.Node) {
+		if v, ok := attrValue(n, "data-holders"); ok {
+			holders, found = v, true
+		}
+	})
+	return holders, found
+}
+
+// saveDischargedRole saves the Discharged role as id, none when empty,
+// through the Rank roles form, confirming its preview when it shows one.
+func saveDischargedRole(t *testing.T, w *testWorld, id string) {
+	t.Helper()
+	form := loadedForm(t, w.b, settingsPath, "/rank-roles")
+	if id == "" {
+		form.Del(fieldDischargedRole)
+	} else {
+		form.Set(fieldDischargedRole, id)
+	}
+	res := follow(t, w.b, w.b.postForm("/rank-roles", form))
+	if preview := previewIn(t, parseHTML(t, res)); preview != nil {
+		follow(t, w.b, w.b.postForm("/rank-roles", formPosts(t, preview, "/rank-roles")))
+	}
+	if got := storedRankRoles(t, w.st).DischargedRoleID; got == nil || *got != id {
+		t.Fatalf("the stored Discharged role after the save = %v, want %q", got, id)
+	}
+}
+
+// The Discharged role field counts every member holding the saved
+// Discharged role, from the member list, whether or not they hold a rank
+// role (#920). A saved role nobody holds counts 0.
+func TestRankRolesSectionCountsTheDischargedRolesHolders(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
+		Members: []commands.ListedMember{testBotMember,
+			{ID: "user-1", Username: "one", RoleIDs: []string{testRankSGT, "role-mp"}},
+			{ID: "user-2", Username: "two", RoleIDs: []string{"role-mp"}}}})
+	signIn(t, w.forum, w.b)
+
+	saveDischargedRole(t, w, "role-mp")
+
+	if got, _ := dischargedHoldersOf(t, parseHTML(t, w.b.get(settingsPath))); got != "2" {
+		t.Errorf("the Discharged role's holders = %q, want 2", got)
+	}
+
+	saveDischargedRole(t, w, "role-hq")
+
+	if got, _ := dischargedHoldersOf(t, parseHTML(t, w.b.get(settingsPath))); got != "0" {
+		t.Errorf("the Discharged role's holders with nobody holding it = %q, want 0", got)
+	}
+}
+
+// With nothing saved, the Discharged role field counts the members holding
+// the forum's Discharged role, though the test guild lacks it and the
+// picker marks it deleted (ADR 0012).
+func TestRankRolesSectionCountsTheForumsDischargedRolesHoldersWithNothingSaved(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
+		Members: []commands.ListedMember{testBotMember,
+			{ID: "user-1", Username: "one", RoleIDs: []string{testDischargedRole}},
+			{ID: "user-2", Username: "two", RoleIDs: []string{testRankSGT}}}})
+	signIn(t, w.forum, w.b)
+
+	if got, _ := dischargedHoldersOf(t, parseHTML(t, w.b.get(settingsPath))); got != "1" {
+		t.Errorf("the forum's Discharged role's holders = %q, want 1", got)
+	}
+}
+
+// With the Discharged role saved as none, its field shows no count.
+func TestRankRolesSectionShowsNoDischargedCountWithTheRoleSavedAsNone(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+
+	saveDischargedRole(t, w, "")
+
+	if got, ok := dischargedHoldersOf(t, parseHTML(t, w.b.get(settingsPath))); ok {
+		t.Errorf("the Discharged role saved as none shows holders %q, want no count", got)
+	}
+}
+
+// While the member list has not loaded, the Discharged role's count is
+// unknown, never 0.
+func TestRankRolesSectionDischargedCountIsUnknownWhileTheListLoads(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	signIn(t, w.forum, w.b)
+	w.discord.setListStatus(commands.MemberListArriving, true)
+
+	if got, _ := dischargedHoldersOf(t, parseHTML(t, w.b.get(settingsPath))); got != holdersUnknown {
+		t.Errorf("the Discharged role's holders while the member list loads = %q, want %s", got, holdersUnknown)
+	}
+}
+
+// The Discharged role's count is the saved role's. When a preview or a
+// refusal shows the form as posted, with another role in the Discharged
+// role's picker, the count stays the saved role's. Saved role-hq has one
+// holder and the posted role-mp two.
+func TestRankRolesSectionCountsTheSavedDischargedRoleWhenTheFormShowsAnother(t *testing.T) {
+	w := newTestWorld(t, testHub())
+	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
+		Members: []commands.ListedMember{testBotMember,
+			{ID: "user-1", Username: "one", RoleIDs: []string{testRankSGT, "role-mp"}},
+			{ID: "user-2", Username: "two", RoleIDs: []string{"role-mp"}},
+			{ID: "user-3", Username: "three", RoleIDs: []string{testRankPVT, "role-hq"}}}})
+	signIn(t, w.forum, w.b)
+	saveDischargedRole(t, w, "role-hq")
+	form := loadedForm(t, w.b, settingsPath, "/rank-roles")
+	form.Set(fieldDischargedRole, "role-mp")
+
+	doc := parseHTML(t, follow(t, w.b, w.b.postForm("/rank-roles", form)))
+
+	if previewIn(t, doc) == nil {
+		t.Fatal("the save shows no preview")
+	}
+	if got, _ := dischargedHoldersOf(t, doc); got != "1" {
+		t.Errorf("the Discharged role's holders beside the preview = %q, want 1, the saved role's", got)
+	}
+
+	form.Set(rankRoleField("SGT"), "role-mp")
+	res := w.b.postForm("/rank-roles", form)
+
+	if !isClientError(res.StatusCode) {
+		t.Fatalf("status of a save naming a rank role as the Discharged role = %d, want 4xx", res.StatusCode)
+	}
+	if got, _ := dischargedHoldersOf(t, parseHTML(t, res)); got != "1" {
+		t.Errorf("the Discharged role's holders beside the refusal = %q, want 1, the saved role's", got)
 	}
 }
