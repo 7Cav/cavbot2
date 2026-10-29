@@ -127,7 +127,7 @@ type meBody struct {
 // Each persona must come out of the bot's group check as its label says,
 // given the group IDs a fake-forum run hands the bot.
 func TestFakeForumSignsInEachPersonaWithTheAccessTheBotIsConfiguredFor(t *testing.T) {
-	overrides := smokeOverrides(forumFake, pgDSN)
+	overrides := smokeOverrides(forumFake, pgDSN, "")
 	adminGroup, _ := strconv.Atoi(overrides["PANEL_GROUP_IDS"])
 	foxholeGroup, _ := strconv.Atoi(overrides["FOXHOLE_GROUP_ID"])
 	in := func(groups []int, id int) bool { return slices.Contains(groups, id) }

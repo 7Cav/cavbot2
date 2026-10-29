@@ -49,7 +49,7 @@ func TestBotEnvLayersWinInOrderShellFileSmokeFlags(t *testing.T) {
 
 func TestSmokeOverridesPointThePanelAtTheRegisteredLocalCallback(t *testing.T) {
 	for _, forum := range []string{forumFake, forumReal} {
-		o := smokeOverrides(forum, pgDSN)
+		o := smokeOverrides(forum, pgDSN, "")
 		if got := o["PANEL_BASE_URL"] + "/auth/callback"; got != "http://localhost:8080/auth/callback" {
 			t.Errorf("%s: redirect URI %q is not the forum client's local one", forum, got)
 		}
@@ -63,7 +63,7 @@ func TestSmokeOverridesPointThePanelAtTheRegisteredLocalCallback(t *testing.T) {
 }
 
 func TestSmokeOverridesSendSignInToTheFakeOnlyInFakeMode(t *testing.T) {
-	fake := smokeOverrides(forumFake, pgDSN)
+	fake := smokeOverrides(forumFake, pgDSN, "")
 	if !strings.HasPrefix(fake["PANEL_OAUTH_AUTHORIZE_URL"], forumBrowserURL) ||
 		!strings.HasPrefix(fake["PANEL_OAUTH_TOKEN_URL"], forumServerURL) ||
 		!strings.HasPrefix(fake["PANEL_OAUTH_USERINFO_URL"], forumServerURL) {
@@ -73,7 +73,7 @@ func TestSmokeOverridesSendSignInToTheFakeOnlyInFakeMode(t *testing.T) {
 		t.Errorf("fake mode's client is not the one the fake forum accepts")
 	}
 
-	realMode := smokeOverrides(forumReal, pgDSN)
+	realMode := smokeOverrides(forumReal, pgDSN, "")
 	for _, key := range append(requiredRealKeys, "PANEL_GROUP_IDS", "FOXHOLE_GROUP_ID") {
 		if _, set := realMode[key]; set {
 			t.Errorf("real mode overrides %s; the env file's value must stand", key)

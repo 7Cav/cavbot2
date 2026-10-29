@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -55,7 +56,12 @@ type runState struct {
 	BotBinary  string    `json:"bot_binary,omitempty"`
 	PanelURL   string    `json:"panel_url"`
 	ForumURL   string    `json:"forum_url,omitempty"`
-	ManagedDB  bool      `json:"managed_db"`
+	// CavAPIURL is the 7Cav API stand-in's origin, empty when --env named
+	// the API's.
+	CavAPIURL string `json:"cav_api_url,omitempty"`
+	// Milpacs maps each Discord ID `smoke milpac` has set to its state.
+	Milpacs   map[string]string `json:"milpacs,omitempty"`
+	ManagedDB bool              `json:"managed_db"`
 	// The supervisor sets Recording once the bot is ready, and keeps its
 	// recorder tally up to date while the bot runs.
 	Recording *recordingReport `json:"recording,omitempty"`
@@ -273,15 +279,17 @@ func relay(path string, offset int64) int64 {
 }
 
 // supervisor owns one run: it holds the lock, starts Postgres, the fake
-// forum and the bot, and stops them all on SIGTERM, SIGINT or the bot's exit.
+// forum, the 7Cav API stand-in and the bot, and stops them all on SIGTERM,
+// SIGINT or the bot's exit.
 type supervisor struct {
 	opts  upOptions
 	git   gitPaths
 	paths statePaths
 	st    runState
 
-	forum *http.Server
-	bot   *exec.Cmd
+	forum  *http.Server
+	cavAPI *http.Server
+	bot    *exec.Cmd
 	// botDone yields the bot's exit once; botExited records that it has.
 	botDone   chan error
 	botExited bool
@@ -293,6 +301,10 @@ type supervisor struct {
 	// tallies carries the recorder tally each time it changes after the bot
 	// is ready, holding the latest only.
 	tallies chan recorderTally
+	// milpacs carries the 7Cav API stand-in's set states each time they
+	// change, holding the latest only. It is nil when the run has no
+	// stand-in.
+	milpacs chan map[string]string
 }
 
 func (s *supervisor) logf(format string, args ...any) {
@@ -399,6 +411,9 @@ func (s *supervisor) watchBot(ctx context.Context, ready <-chan struct{}) error 
 		case t := <-s.tallies:
 			s.st.Recording.Recorders = t
 			s.save()
+		case m := <-s.milpacs:
+			s.st.Milpacs = m
+			s.save()
 		case err := <-s.botDone:
 			s.botExited = true
 			s.st.Detail = fmt.Sprintf("the bot exited on its own (%v)", exitText(err))
@@ -490,7 +505,10 @@ func (s *supervisor) start(ctx context.Context) (<-chan struct{}, error) {
 		go func() { _ = s.forum.Serve(ln) }()
 		s.logf("fake forum listening on %s", forumBrowserURL)
 	}
-	env := botEnv(os.Environ(), vals, smokeOverrides(s.opts.forum, dsn), s.opts.extra)
+	if err := s.startCavAPI(vals); err != nil {
+		return nil, err
+	}
+	env := botEnv(os.Environ(), vals, smokeOverrides(s.opts.forum, dsn, s.st.CavAPIURL), s.opts.extra)
 	s.report.Mix = checkMix(ctx, env)
 	if ctx.Err() != nil {
 		return nil, nil
@@ -562,7 +580,7 @@ func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
 				_, _ = fmt.Fprintln(logFile, line)
 			}
 			if recorders.read(line) && closed {
-				s.publish(recorders.snapshot())
+				sendLatest(s.tallies, recorders.snapshot())
 			}
 			switch {
 			case strings.Contains(line, "Panel listening"):
@@ -581,15 +599,16 @@ func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
 	return ready, nil
 }
 
-// publish hands the bot watch tally in place of any tally it hasn't taken
-// yet. Only the goroutine reading the bot's output calls it, so the send
-// never waits.
-func (s *supervisor) publish(tally recorderTally) {
+// sendLatest puts v on ch, a channel of one slot, in place of any value
+// nobody has taken yet. The send never waits while one goroutine at a time
+// sends: the goroutine reading the bot's output for the recorder tally, and
+// the 7Cav API stand-in, under its lock, for its set states.
+func sendLatest[T any](ch chan T, v T) {
 	select {
-	case <-s.tallies:
+	case <-ch:
 	default:
 	}
-	s.tallies <- tally
+	ch <- v
 }
 
 // botLineLevel finds the level of a line the bot's logger wrote.
@@ -618,6 +637,9 @@ func (s *supervisor) announce() {
 	} else {
 		s.logf("  sign-in     the 7cav.us forum")
 	}
+	if s.st.CavAPIURL != "" {
+		s.logf("  7Cav API    stand-in at %s; set a milpac with go run ./tools/smoke milpac <discord-id> <state>", s.st.CavAPIURL)
+	}
 	s.logf("  recorders   %s", s.st.Recording.Recorders.line())
 	s.logf("  mixes       %s", s.st.Recording.Mix.line())
 	s.logf("  bot log     %s", s.paths.botLog())
@@ -625,7 +647,8 @@ func (s *supervisor) announce() {
 }
 
 // teardown stops whatever start got running: the bot with SIGTERM and a
-// grace period, the fake forum, and the smoke Postgres, whose volume stays.
+// grace period, the fake forum, the 7Cav API stand-in, and the smoke
+// Postgres, whose volume stays.
 func (s *supervisor) teardown() {
 	if s.bot != nil && !s.botExited {
 		_ = s.bot.Process.Signal(syscall.SIGTERM)
@@ -638,9 +661,12 @@ func (s *supervisor) teardown() {
 		}
 		s.botExited = true
 	}
-	if s.forum != nil {
+	for _, srv := range []*http.Server{s.forum, s.cavAPI} {
+		if srv == nil {
+			continue
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = s.forum.Shutdown(ctx)
+		_ = srv.Shutdown(ctx)
 		cancel()
 	}
 	if s.st.ManagedDB {
@@ -857,34 +883,44 @@ func cmdStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	p := statePaths{g.stateDir()}
+	return printStatus(os.Stdout, statePaths{g.stateDir()})
+}
+
+// printStatus writes to w whether a run is up in p, and what it is.
+func printStatus(w io.Writer, p statePaths) error {
 	st, hasRun := readRun(p.runFile())
 	held, err := runHeld(p)
 	if err != nil {
 		return err
 	}
 	if !held {
-		fmt.Println("no smoke run is up")
+		_, _ = fmt.Fprintln(w, "no smoke run is up")
 		if hasRun {
-			fmt.Printf("last run: %s, from %s (%s), started %s\n", st.State, st.Worktree, st.Branch, st.Started.Local().Format(time.DateTime))
+			_, _ = fmt.Fprintf(w, "last run: %s, from %s (%s), started %s\n", st.State, st.Worktree, st.Branch, st.Started.Local().Format(time.DateTime))
 			if st.Detail != "" {
-				fmt.Printf("  %s\n", st.Detail)
+				_, _ = fmt.Fprintf(w, "  %s\n", st.Detail)
 			}
-			fmt.Printf("  bot log %s\n", p.botLog())
+			_, _ = fmt.Fprintf(w, "  bot log %s\n", p.botLog())
 		}
 		return nil
 	}
-	fmt.Printf("%s: %s from %s (%s), forum %s, started %s\n", st.State, st.Version, st.Worktree, st.Branch, st.Forum, st.Started.Local().Format(time.DateTime))
-	fmt.Printf("  panel          %s\n", st.PanelURL)
+	_, _ = fmt.Fprintf(w, "%s: %s from %s (%s), forum %s, started %s\n", st.State, st.Version, st.Worktree, st.Branch, st.Forum, st.Started.Local().Format(time.DateTime))
+	_, _ = fmt.Fprintf(w, "  panel          %s\n", st.PanelURL)
 	if st.ForumURL != "" {
-		fmt.Printf("  fake forum     %s\n", st.ForumURL)
+		_, _ = fmt.Fprintf(w, "  fake forum     %s\n", st.ForumURL)
 	}
 	if st.Recording != nil {
-		fmt.Printf("  recorders      %s\n", st.Recording.Recorders.line())
-		fmt.Printf("  mixes          %s\n", st.Recording.Mix.line())
+		_, _ = fmt.Fprintf(w, "  recorders      %s\n", st.Recording.Recorders.line())
+		_, _ = fmt.Fprintf(w, "  mixes          %s\n", st.Recording.Mix.line())
 	}
-	fmt.Printf("  bot log        %s\n", p.botLog())
-	fmt.Printf("  supervisor log %s\n", p.supervisorLog())
+	if st.CavAPIURL != "" {
+		_, _ = fmt.Fprintf(w, "  7Cav API       stand-in at %s\n", st.CavAPIURL)
+	}
+	for _, id := range slices.Sorted(maps.Keys(st.Milpacs)) {
+		_, _ = fmt.Fprintf(w, "  milpac         %s %s\n", id, st.Milpacs[id])
+	}
+	_, _ = fmt.Fprintf(w, "  bot log        %s\n", p.botLog())
+	_, _ = fmt.Fprintf(w, "  supervisor log %s\n", p.supervisorLog())
 	return nil
 }
 
@@ -926,15 +962,26 @@ func cmdForum(args []string) error {
 	if held, _ := runHeld(p); !held || st.Forum != forumFake {
 		return fmt.Errorf("no run with the fake forum is up")
 	}
-	res, err := http.PostForm(forumServerURL+"/smoke/mode", url.Values{"mode": {args[0]}})
+	body, err := postControl("fake forum", forumServerURL+"/smoke/mode", url.Values{"mode": {args[0]}})
 	if err != nil {
 		return err
+	}
+	fmt.Printf("fake forum mode: %s", body)
+	return nil
+}
+
+// postControl posts form to the control endpoint at endpoint, on a server
+// the run started, and returns the body of its 200. name says which server
+// answered otherwise.
+func postControl(name, endpoint string, form url.Values) ([]byte, error) {
+	res, err := http.PostForm(endpoint, form)
+	if err != nil {
+		return nil, err
 	}
 	defer func() { _ = res.Body.Close() }()
 	body, _ := io.ReadAll(res.Body)
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("fake forum answered %d: %s", res.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("%s answered %d: %s", name, res.StatusCode, strings.TrimSpace(string(body)))
 	}
-	fmt.Printf("fake forum mode: %s", body)
-	return nil
+	return body, nil
 }
