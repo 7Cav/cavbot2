@@ -289,7 +289,7 @@ func saveDischargedRole(t *testing.T, w *testWorld, id string) {
 	}
 	res := follow(t, w.b, w.b.postForm("/rank-roles", form))
 	if preview := previewIn(t, parseHTML(t, res)); preview != nil {
-		res = follow(t, w.b, w.b.postForm("/rank-roles", formPosts(t, preview, "/rank-roles")))
+		follow(t, w.b, w.b.postForm("/rank-roles", formPosts(t, preview, "/rank-roles")))
 	}
 	if got := storedRankRoles(t, w.st).DischargedRoleID; got == nil || *got != id {
 		t.Fatalf("the stored Discharged role after the save = %v, want %q", got, id)
