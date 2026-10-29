@@ -73,7 +73,7 @@ Fix failing checks and conflicts up to two rounds in all, and answer up to three
 
 Hand the issue back wherever Finish says to, and when the run can't finish it for missing context, a decision the requirements leave open, or a dependency outside the repo such as a Discord or forum setting.
 
-Comment on the issue with what stopped the run and the branch or PR it reached. For each decision or context the requirements lack, name the terms it turns on and the spec sections and glossary entries you searched for it. Any PR the run opened stays open with its `factory` label. Release the claim as you swap `ready-for-agent` for `blocked`:
+Comment on the issue with what stopped the run and the branch or PR it reached. For each decision or context the requirements lack, name the terms it turns on and the spec sections and glossary entries you searched for it. Leave any PR the run opened as it stands, with its `factory` label. Release the claim as you swap `ready-for-agent` for `blocked`:
 
 ```bash
 gh issue edit <n> --remove-assignee @me --remove-label ready-for-agent --add-label blocked
