@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -261,5 +264,165 @@ func TestStandInForwardsEveryOtherLookupForASetAccountToo(t *testing.T) {
 		if err != nil || got != "upstream" {
 			t.Errorf("%s lookup read %q (%v), want the upstream's answer", tc.lookup, got, err)
 		}
+	}
+}
+
+func TestSmokeMilpacFailsWhenNoRunIsUp(t *testing.T) {
+	p := statePaths{t.TempDir()}
+	if err := setMilpacState(p, []string{"111", "discharged"}); !errors.Is(err, errNoRun) {
+		t.Errorf("smoke milpac with no run up gave %v, want %v", err, errNoRun)
+	}
+}
+
+func TestSmokeMilpacListsTheValidStatesForAnUnknownOne(t *testing.T) {
+	p := statePaths{t.TempDir()}
+	err := setMilpacState(p, []string{"111", "gone"})
+	if !errors.Is(err, errUnknownMilpacState) {
+		t.Fatalf("smoke milpac with an unknown state gave %v, want %v", err, errUnknownMilpacState)
+	}
+	for _, state := range []string{"active", "discharged", "dishonorably-discharged", "retired", "none", "unreadable", "real"} {
+		if !strings.Contains(err.Error(), state) {
+			t.Errorf("%q does not list the state %s", err, state)
+		}
+	}
+}
+
+// holdRunLock holds the run lock in p for the test, as a run's supervisor
+// does for its whole life.
+func holdRunLock(t *testing.T, p statePaths) {
+	t.Helper()
+	lock, ok, err := tryLock(p.lock())
+	if err != nil || !ok {
+		t.Fatalf("take the run lock: ok %v, %v", ok, err)
+	}
+	t.Cleanup(func() { _ = lock.Close() })
+}
+
+// startedSupervisor is a run's supervisor, holding the run lock, that has
+// started the 7Cav API stand-in as up does with these --env flags and env
+// file. The test's end stops the run.
+func startedSupervisor(t *testing.T, extra []string, file map[string]string) *supervisor {
+	t.Helper()
+	s := &supervisor{opts: upOptions{extra: extra}, paths: statePaths{t.TempDir()}}
+	holdRunLock(t, s.paths)
+	s.save()
+	if err := s.startCavAPI(file); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.teardown)
+	return s
+}
+
+func TestSmokeMilpacFailsOnARunWhoseEnvNamesThe7CavAPI(t *testing.T) {
+	s := startedSupervisor(t, []string{"CAV_API_BASE_URL=http://127.0.0.1:1"}, nil)
+	if err := setMilpacState(s.paths, []string{"111", "discharged"}); !errors.Is(err, errNoStandIn) {
+		t.Errorf("smoke milpac gave %v, want %v", err, errNoStandIn)
+	}
+}
+
+// standInOrigin is the stand-in's origin as the run file records it for
+// `smoke milpac` and the bot's environment.
+func standInOrigin(t *testing.T, s *supervisor) string {
+	t.Helper()
+	st, ok := readRun(s.paths.runFile())
+	if !ok || st.CavAPIURL == "" {
+		t.Fatalf("the run file names no stand-in: %+v", st)
+	}
+	return st.CavAPIURL
+}
+
+// The stand-in forwards to the API the bot would have reached without it,
+// which the env file can name.
+func TestStandInForwardsToTheEnvFiles7CavAPI(t *testing.T) {
+	up := newFakeUpstream(t)
+	s := startedSupervisor(t, nil, map[string]string{"CAV_API_BASE_URL": up.srv.URL + "/"})
+	pointBotAt(t, standInOrigin(t, s))
+
+	milpac, err := utils.GetMilpacByDiscordID(context.Background(), "111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if milpac.Primary.PositionTitle != upstreamTrooper {
+		t.Errorf("read position %q, want the env file's API's milpac", milpac.Primary.PositionTitle)
+	}
+}
+
+func TestStandInListensOnLoopbackOnly(t *testing.T) {
+	s := startedSupervisor(t, nil, nil)
+	origin, err := url.Parse(standInOrigin(t, s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := origin.Port()
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", port), time.Second)
+	if err != nil {
+		t.Fatalf("the stand-in is not reachable on loopback: %v", err)
+	}
+	_ = conn.Close()
+
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tried := 0
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok || ipnet.IP.IsLoopback() || ipnet.IP.IsLinkLocalUnicast() {
+			continue
+		}
+		tried++
+		if conn, err := net.DialTimeout("tcp", net.JoinHostPort(ipnet.IP.String(), port), time.Second); err == nil {
+			_ = conn.Close()
+			t.Errorf("the stand-in answers on %s", ipnet.IP)
+		}
+	}
+	if tried == 0 {
+		t.Skip("this host has no address off loopback to try")
+	}
+}
+
+// statusHasLine reports whether some line of status output names every
+// one of words.
+func statusHasLine(out string, words ...string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		all := true
+		for _, w := range words {
+			all = all && slices.Contains(fields, w)
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}
+
+func TestStatusListsEachSetMilpacStateWhileTheRunIsUp(t *testing.T) {
+	s := newStubSupervisor(t)
+	holdRunLock(t, s.paths)
+	s.save()
+	if err := s.startCavAPI(nil); err != nil {
+		t.Fatal(err)
+	}
+	watchStub(t, s, stubLateLogin, nil)
+	for _, set := range [][]string{{"111", "discharged"}, {"222", "none"}, {"333", "retired"}, {"333", "real"}} {
+		if err := setMilpacState(s.paths, set); err != nil {
+			t.Fatalf("smoke milpac %v: %v", set, err)
+		}
+	}
+
+	var out strings.Builder
+	listed := eventually(stubWait, func() bool {
+		out.Reset()
+		if err := printStatus(&out, s.paths); err != nil {
+			t.Fatal(err)
+		}
+		return statusHasLine(out.String(), "111", "discharged") && statusHasLine(out.String(), "222", "none")
+	})
+	if !listed {
+		t.Errorf("status does not list 111 discharged and 222 none:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "333") {
+		t.Errorf("status lists 333, which is back to real:\n%s", out.String())
 	}
 }

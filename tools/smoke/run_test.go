@@ -179,12 +179,20 @@ func launchStub(t *testing.T, scenario string, env []string) (s *supervisor, rea
 }
 
 // superviseStub launches the stub bot doing scenario, with env as a run
-// builds it, and watches it as the supervisor does once the bot has
-// started, until the test ends and stops the run. It returns the
-// supervisor, for the run file its watch keeps.
+// builds it, and watches it as watchStub does. It returns the supervisor,
+// for the run file its watch keeps.
 func superviseStub(t *testing.T, scenario string, env []string) *supervisor {
 	t.Helper()
 	s := newStubSupervisor(t)
+	watchStub(t, s, scenario, env)
+	return s
+}
+
+// watchStub launches the stub bot doing scenario on s, with env as a run
+// builds it, and watches it as the supervisor does once the bot has
+// started, until the test ends and stops the run.
+func watchStub(t *testing.T, s *supervisor, scenario string, env []string) {
+	t.Helper()
 	ready, err := s.startBot(append(stubEnv(scenario), env...))
 	if err != nil {
 		t.Fatal(err)
@@ -200,7 +208,6 @@ func superviseStub(t *testing.T, scenario string, env []string) *supervisor {
 		<-watched
 		s.teardown()
 	})
-	return s
 }
 
 func TestUpGetsReadyAtAQuietLogLevel(t *testing.T) {

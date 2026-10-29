@@ -111,15 +111,19 @@ func missingKeys(vals map[string]string, keys []string) []string {
 
 // smokeOverrides is what a run changes from the env file. The panel listens
 // where the forum client's local redirect URI points, the bot's store is the
-// smoke Postgres, and nothing reaches Sentry. In fake mode the panel signs in
-// through the fake forum, whose personas carry these group IDs.
-func smokeOverrides(forum, dsn string) map[string]string {
+// smoke Postgres, and nothing reaches Sentry. The bot's 7Cav API lookups go
+// to the stand-in at cavAPI, when the run has one. In fake mode the panel
+// signs in through the fake forum, whose personas carry these group IDs.
+func smokeOverrides(forum, dsn, cavAPI string) map[string]string {
 	o := map[string]string{
 		"PANEL_ADDR":     panelAddr,
 		"PANEL_BASE_URL": panelBaseURL,
 		"BOT_DB_DSN":     dsn,
 		"SENTRY_DSN":     "",
 		"APP_ENV":        "smoke",
+	}
+	if cavAPI != "" {
+		o["CAV_API_BASE_URL"] = cavAPI
 	}
 	if forum == forumFake {
 		o["PANEL_OAUTH_CLIENT_ID"] = fakeClientID

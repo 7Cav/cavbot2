@@ -4,14 +4,24 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"maps"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
+
+// publicCavAPI is the 7Cav API's public origin, which the bot uses when
+// CAV_API_BASE_URL is unset.
+const publicCavAPI = "https://api.7cav.us"
 
 // The milpac states `smoke milpac` sets for an account. Each but
 // milpacReal sets what the account's Discord ID lookup answers.
@@ -42,6 +52,9 @@ var smokePositions = map[string]string{
 type cavAPIStandIn struct {
 	upstream string
 	logf     func(format string, args ...any)
+	// changed, when set, gets the set states each time they change. It
+	// runs with mu held, so it gets them in order, and must not wait.
+	changed func(states map[string]string)
 
 	mu     sync.Mutex
 	states map[string]string
@@ -112,7 +125,94 @@ func (c *cavAPIStandIn) setState(w http.ResponseWriter, r *http.Request) {
 	} else {
 		c.states[id] = state
 	}
+	if c.changed != nil {
+		c.changed(maps.Clone(c.states))
+	}
 	c.mu.Unlock()
 	c.logf("7Cav API stand-in: milpac for %s set to %s", id, state)
 	_, _ = fmt.Fprintln(w, state)
+}
+
+// What `smoke milpac` fails with, besides a failed request.
+var (
+	errNoRun              = errors.New("no smoke run is up")
+	errNoStandIn          = errors.New("the run has no 7Cav API stand-in, since --env CAV_API_BASE_URL sent its lookups elsewhere")
+	errUnknownMilpacState = fmt.Errorf("the state must be one of %s", strings.Join(milpacStates, ", "))
+)
+
+func cmdMilpac(args []string) error {
+	g, err := findGitPaths()
+	if err != nil {
+		return err
+	}
+	return setMilpacState(statePaths{g.stateDir()}, args)
+}
+
+// setMilpacState sets what the run's stand-in answers for a Discord ID's
+// milpac, from args: the ID and a state.
+func setMilpacState(p statePaths, args []string) error {
+	if len(args) != 2 {
+		fmt.Fprintf(os.Stderr, "usage: go run ./tools/smoke milpac <discord-id> %s\n", strings.Join(milpacStates, "|"))
+		return errUsage
+	}
+	if !slices.Contains(milpacStates, args[1]) {
+		return fmt.Errorf("%q: %w", args[1], errUnknownMilpacState)
+	}
+	if held, _ := runHeld(p); !held {
+		return errNoRun
+	}
+	st, _ := readRun(p.runFile())
+	if st.CavAPIURL == "" {
+		return errNoStandIn
+	}
+	res, err := http.PostForm(st.CavAPIURL+"/smoke/milpac", url.Values{"id": {args[0]}, "state": {args[1]}})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = res.Body.Close() }()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("the 7Cav API stand-in answered %d: %s", res.StatusCode, strings.TrimSpace(string(body)))
+	}
+	fmt.Printf("milpac for %s: %s", args[0], body)
+	return nil
+}
+
+// startCavAPI starts the stand-in for the run on a free loopback port,
+// unless --env names the 7Cav API's origin. It forwards to the API the bot
+// would reach without it: the env file's CAV_API_BASE_URL, or the public
+// address.
+func (s *supervisor) startCavAPI(file map[string]string) error {
+	if origin, own := envValue(s.opts.extra, "CAV_API_BASE_URL"); own {
+		s.logf("7Cav API at %s from --env, with no stand-in", origin)
+		return nil
+	}
+	upstream := strings.TrimRight(file["CAV_API_BASE_URL"], "/")
+	if upstream == "" {
+		upstream = publicCavAPI
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return fmt.Errorf("7Cav API stand-in: %w", err)
+	}
+	standIn := newCavAPIStandIn(upstream, s.logf)
+	s.milpacs = make(chan map[string]string, 1)
+	standIn.changed = s.publishMilpacs
+	s.cavAPI = &http.Server{Handler: standIn.handler(), ReadHeaderTimeout: 10 * time.Second}
+	go func() { _ = s.cavAPI.Serve(ln) }()
+	s.st.CavAPIURL = "http://" + ln.Addr().String()
+	s.save()
+	s.logf("7Cav API stand-in on %s, forwarding to %s", s.st.CavAPIURL, upstream)
+	return nil
+}
+
+// publishMilpacs hands the bot watch the stand-in's set states in place of
+// any it hasn't taken yet. The stand-in calls it with its lock held, so the
+// send never waits.
+func (s *supervisor) publishMilpacs(states map[string]string) {
+	select {
+	case <-s.milpacs:
+	default:
+	}
+	s.milpacs <- states
 }

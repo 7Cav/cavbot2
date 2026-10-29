@@ -2,7 +2,8 @@
 
 // Command smoke runs a checkout's bot on the test guild for a smoke test:
 // the bot, the panel on http://localhost:8080, the bot's Postgres, and a fake
-// forum that signs the panel in as a chosen persona. docs/smoke-test.md says
+// forum that signs the panel in as a chosen persona, and a stand-in for the
+// 7Cav API that answers the milpac states a pass sets. docs/smoke-test.md says
 // when to run one and what to report. It reads the test guild's credentials
 // from the gitignored .env at the main checkout's root and never prints them.
 package main
@@ -28,6 +29,7 @@ var commands = map[string]func([]string) error{
 	"logs":      cmdLogs,
 	"forum":     cmdForum,
 	"api":       cmdAPI,
+	"milpac":    cmdMilpac,
 	"supervise": cmdSupervise,
 }
 
@@ -43,6 +45,9 @@ usage: go run ./tools/smoke <command> [flags]
   logs    print the end of the bot's log
   forum   set what the fake forum answers: ok, expired, refused or down
   api     call the Discord API as the bot
+  milpac  set the milpac the bot reads for a Discord ID: active, discharged,
+          dishonorably-discharged, retired, none, unreadable, or real to read
+          the 7Cav API's again
 
 go run ./tools/smoke <command> -h lists a command's flags.
 `
