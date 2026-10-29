@@ -23,7 +23,10 @@ A check is an action and the result you expect, such as "Foxhole manager
 presses Purge External, and the preview lists every External holder." Note how
 you will drive each check: the panel, `smoke api`, or a slash command. When a
 live run cannot reach a check, such as a state only a unit test can force,
-write the reason next to it.
+write the reason next to it. A milpac in a given state is not such a reason.
+`smoke milpac` sets the milpac the bot reads for any test account, as step
+3's **Milpac states** says, so discharge, retirement and re-enlistment
+checks run live.
 
 Put the list in the PR body under a **Smoke checks** heading and add the
 `needs-smoke` label. Whoever runs the pass may come to it days later with only
@@ -93,6 +96,38 @@ Sign out from the rail to switch persona. `go run ./tools/smoke forum
 expired`, `refused` or `down` makes the forum answer the next group check with
 a 401, a 403 or nothing, which brings up the session-ended, refused and
 forum-unavailable pages. `forum ok` restores it.
+
+**Milpac states.** Every run puts a stand-in for the 7Cav API between the
+bot and the real one. It passes each lookup through unchanged, except a
+milpac lookup by Discord ID for an account you set. Set one with `go run
+./tools/smoke milpac <discord-id> <state>`:
+
+| State | The bot reads |
+|-------|---------------|
+| `active` | A milpac at position 2/B/1-7, so no discharge |
+| `discharged` | A milpac at position Discharged |
+| `dishonorably-discharged` | A milpac at position Dishonorably Discharged |
+| `retired` | A milpac at position Retired, which is no discharge |
+| `none` | No milpac, as for an account with none |
+| `unreadable` | A failed read, as when the API is down |
+| `real` | The real API's answer again |
+
+A set milpac has a placeholder name and rank, and the bot reads it even when
+the account has a real milpac. Username, gamertag, roster, LOA and rank
+lookups always get the real API's answer.
+
+Setting a state doesn't make the bot read the milpac. In production the
+forum's role sync changes a member's roles after a milpac edit, and the bot
+reads the milpac then. So after you set a state, change one of the account's
+roles with `smoke api`, such as giving it a fixture role. A discharge check
+then runs as: set `discharged`, give the fixture role, and read the
+account's roles with `smoke api`. For a re-enlistment, set `active` and
+remove the fixture role.
+
+`status` lists the states in force. They last until `down`, and the next
+`up` starts with none. A run started with `--env CAV_API_BASE_URL=<origin>`
+sends lookups to that origin with no stand-in, and `smoke milpac` fails on
+it.
 
 **Sign-in itself.** When the change touches the auth handlers in
 `panel/panel.go`, `panel/forum.go` or the OAuth settings, start the run with
