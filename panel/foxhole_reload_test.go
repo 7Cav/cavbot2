@@ -236,22 +236,20 @@ func TestRosterPreviewReloadReadsTheRosterAgain(t *testing.T) {
 	}
 }
 
-// A tab loaded before the roster preview became a GET still posts Preview
-// roster to its old address. For one release that address answers with a
-// redirect to the roster preview's own, so the tab still previews.
-func TestOldRosterPreviewAddressRedirectsToThePreview(t *testing.T) {
+// The panel no longer serves the address Preview roster posted to before it
+// became a GET. A Foxhole manager's post there gets the answer of any
+// address the panel doesn't serve.
+func TestOldRosterPreviewAddressIsServedNoMore(t *testing.T) {
 	w := newFoxholeWorld(t)
-	serveRoster(t, trooperVance)
+	form := url.Values{fieldUnit: {"D/ACD"}}
 
-	res := w.b.postForm(foxholeRosterPreviewPath, url.Values{fieldUnit: {"D/ACD"}})
+	res := w.b.postForm("/foxhole/roster/preview", form)
 
-	if res.StatusCode != http.StatusSeeOther {
-		t.Fatalf("status = %d, want %d", res.StatusCode, http.StatusSeeOther)
+	if want := w.b.postForm("/foxhole/nothing-here", form).StatusCode; res.StatusCode != want {
+		t.Errorf("a post to the old address answers %d, want %d, the answer of an address the panel doesn't serve", res.StatusCode, want)
 	}
-	doc, fragment := landing(t, w.b, foxholeRosterPreviewPath, res)
-	_, preview := landedOnBlock(t, doc, fragment, "roster-preview")
-	if got := attrOf(preview, "data-unit"); got != "D/ACD" {
-		t.Errorf("the redirect opens the roster preview of %q, want D/ACD", got)
+	if got := res.Header.Get("Location"); got != "" {
+		t.Errorf("a post to the old address sends the browser to %q, want it sent nowhere", got)
 	}
 }
 

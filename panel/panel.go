@@ -225,9 +225,6 @@ func (p *Panel) routes() []route {
 		{"POST " + foxholePurgePath, p.withFoxholePage(p.startPurge)},
 		{"POST " + foxholeAddPreviewPath, p.withFoxholePage(p.previewAdd)},
 		{"POST " + foxholeAddPath, p.withFoxholePage(p.startAdd)},
-		// Preview roster's address before it became a GET, kept one release
-		// for tabs loaded before then.
-		{"POST " + foxholeRosterPreviewPath, p.withFoxholePage(p.previewRoster)},
 		{"POST " + foxholeRosterPath, p.withFoxholePage(p.startRosterAdd)},
 		{"POST " + foxholeRemovePath, p.withFoxholePage(p.startRemoval)},
 		{"POST " + foxholeReAddPath, p.withFoxholePage(p.startReAdd)},

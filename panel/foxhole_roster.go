@@ -21,13 +21,9 @@ import (
 // registry the roster add command's picker offers (ADR 0009), and a unit's
 // roster comes from the 7Cav API through the unit's registry row alone.
 
-// The roster block's addresses: the one its Preview roster posted to before
-// it became a GET of the Foxhole page, and the roster add the roster
-// preview's Confirm starts.
-const (
-	foxholeRosterPreviewPath = "/foxhole/roster/preview"
-	foxholeRosterPath        = "/foxhole/roster"
-)
+// foxholeRosterPath is the address of the roster add the roster preview's
+// Confirm starts.
+const foxholeRosterPath = "/foxhole/roster"
 
 // fieldUnit is the roster block's field: the value of the validated
 // internal unit picked, which Preview roster puts in the page's address.
@@ -315,22 +311,4 @@ func (p *Panel) startRosterAdd(w http.ResponseWriter, r *http.Request, sess sess
 		}
 		return p.foxhole.actions.RosterAdd(ctx, unit, troopers, by)
 	}, kv...)
-}
-
-// previewRoster is POST /foxhole/roster/preview, where the roster block's
-// Preview roster posted before it became a GET of the Foxhole page (ADR
-// 0019). A tab loaded before then still posts here, so for one release it
-// redirects to the roster preview's address, which previews. A value
-// outside the registry is refused before any roster fetch.
-func (p *Panel) previewRoster(w http.ResponseWriter, r *http.Request, _ session) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "the form could not be read", http.StatusBadRequest)
-		return
-	}
-	unit, ok := commands.LookupValidatedInternalUnit(r.PostForm.Get(fieldUnit))
-	if !ok {
-		http.Error(w, "the form names no validated internal unit, so nothing changed", http.StatusBadRequest)
-		return
-	}
-	http.Redirect(w, r, foxholeRequest{Filter: filterAll, Roster: &rosterRequest{Unit: unit}}.address(), http.StatusSeeOther)
 }
