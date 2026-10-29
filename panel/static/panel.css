@@ -247,7 +247,7 @@ h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
 .rank-role .search { flex-basis: 100%; margin-top: 0; }
 .rank-role:has(.tags > li) > .rank-role-none { display: none; }
 .rank-role:not(:has(.tags > li)) > .rank-role-none { display: inline; }
-.discharged-holders { display: block; margin-top: 6px; }
+.discharged-holders { display: block; margin-top: 6px; font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
 .tag--pick { display: inline-flex; align-items: center; padding: 3px 2px 3px 8px; font-size: 14px; color: var(--text-hi); background: var(--surface-3); }
 .tag--pick .off { margin-left: 4px; }
 .tag-remove {

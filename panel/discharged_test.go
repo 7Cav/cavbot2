@@ -283,9 +283,10 @@ func dischargedHoldersOf(t *testing.T, doc *html.Node) (string, bool) {
 func saveDischargedRole(t *testing.T, w *testWorld, id string) {
 	t.Helper()
 	form := loadedForm(t, w.b, settingsPath, "/rank-roles")
-	form.Set(fieldDischargedRole, id)
 	if id == "" {
 		form.Del(fieldDischargedRole)
+	} else {
+		form.Set(fieldDischargedRole, id)
 	}
 	res := follow(t, w.b, w.b.postForm("/rank-roles", form))
 	if preview := previewIn(t, parseHTML(t, res)); preview != nil {
