@@ -580,7 +580,7 @@ func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
 				_, _ = fmt.Fprintln(logFile, line)
 			}
 			if recorders.read(line) && closed {
-				s.publish(recorders.snapshot())
+				sendLatest(s.tallies, recorders.snapshot())
 			}
 			switch {
 			case strings.Contains(line, "Panel listening"):
@@ -599,15 +599,16 @@ func (s *supervisor) startBot(env []string) (<-chan struct{}, error) {
 	return ready, nil
 }
 
-// publish hands the bot watch tally in place of any tally it hasn't taken
-// yet. Only the goroutine reading the bot's output calls it, so the send
-// never waits.
-func (s *supervisor) publish(tally recorderTally) {
+// sendLatest puts v on ch, a channel of one slot, in place of any value
+// nobody has taken yet. The send never waits while one goroutine at a time
+// sends: the goroutine reading the bot's output for the recorder tally, and
+// the 7Cav API stand-in, under its lock, for its set states.
+func sendLatest[T any](ch chan T, v T) {
 	select {
-	case <-s.tallies:
+	case <-ch:
 	default:
 	}
-	s.tallies <- tally
+	ch <- v
 }
 
 // botLineLevel finds the level of a line the bot's logger wrote.
@@ -961,15 +962,26 @@ func cmdForum(args []string) error {
 	if held, _ := runHeld(p); !held || st.Forum != forumFake {
 		return fmt.Errorf("no run with the fake forum is up")
 	}
-	res, err := http.PostForm(forumServerURL+"/smoke/mode", url.Values{"mode": {args[0]}})
+	body, err := postControl("fake forum", forumServerURL+"/smoke/mode", url.Values{"mode": {args[0]}})
 	if err != nil {
 		return err
+	}
+	fmt.Printf("fake forum mode: %s", body)
+	return nil
+}
+
+// postControl posts form to the control endpoint at endpoint, on a server
+// the run started, and returns the body of its 200. name says which server
+// answered otherwise.
+func postControl(name, endpoint string, form url.Values) ([]byte, error) {
+	res, err := http.PostForm(endpoint, form)
+	if err != nil {
+		return nil, err
 	}
 	defer func() { _ = res.Body.Close() }()
 	body, _ := io.ReadAll(res.Body)
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("fake forum answered %d: %s", res.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("%s answered %d: %s", name, res.StatusCode, strings.TrimSpace(string(body)))
 	}
-	fmt.Printf("fake forum mode: %s", body)
-	return nil
+	return body, nil
 }

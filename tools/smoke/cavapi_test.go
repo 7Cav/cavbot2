@@ -96,7 +96,7 @@ func pointBotAt(t *testing.T, origin string) {
 func newStandInUnderTest(t *testing.T) (*httptest.Server, *fakeUpstream) {
 	t.Helper()
 	up := newFakeUpstream(t)
-	srv := httptest.NewServer(newCavAPIStandIn(up.srv.URL, t.Logf).handler())
+	srv := httptest.NewServer(newCavAPIStandIn(up.srv.URL, t.Logf, func(map[string]string) {}).handler())
 	t.Cleanup(srv.Close)
 	pointBotAt(t, srv.URL)
 	return srv, up
