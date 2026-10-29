@@ -51,7 +51,7 @@ Once you have opened the PR, label it `factory`. CodeRabbit's approval skips the
 2. Run `pr-ready open <pr>`, then `pr-ready check <pr>`, and act on its verdict:
    - `merged`: done.
    - `closed`: someone closed the PR without merging it. Leave the PR as they left it and hand back now. It can also close while you work on an entry, so run `pr-ready check <pr>` again before each push or post to the PR.
-   - `ready`: merge with `gh pr merge <pr> --squash --match-head-commit <head>`, then go back to 2. When a push has moved the head since `check` read it, the merge fails, so go back to 1.
+   - `ready`: merge with `gh pr merge <pr> --squash --match-head-commit <head>`, where `<head>` is the `head` that `check` printed, then go back to 2. When a push has moved the head since `check` read it, the merge fails, so go back to 1.
    - `act`: each entry in `act` waits on you. Clear every one, then go back to 1. Run `.github/scripts/gate.sh` before you push.
      - `behind`: `develop` merges only branches that are up to date, so run `gh pr update-branch <pr>`.
      - `conflict`: merge `origin/develop` in.
