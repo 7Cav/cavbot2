@@ -23,7 +23,7 @@
     {{if .RankRoles.Saved}}{{template "saved"}}{{end}}
     {{with .RankRoles}}
     <input type="hidden" name="version" value="{{.Version}}">
-    <div class="block-row field-hint" id="rank-roles-hint">A member holding a rank's role counts as a Cav member of that rank. Each rank has one role or none, and a role counts for one rank at most. Members is how many members hold each rank's saved role.</div>
+    <div class="block-row field-hint" id="rank-roles-hint">A member holding a rank's role counts as a Cav member of that rank. Each rank has one role or none, and a role counts for one rank at most. Members is how many members hold each rank's saved role. The Members count under the Discharged role is how many hold the saved Discharged role.</div>
     <div class="scroll"><table class="hublist ranklist" aria-describedby="rank-roles-hint">
       <thead><tr><th>Rank</th><th>Rank role</th><th class="num">Members</th></tr></thead>
       <tbody>
@@ -31,7 +31,7 @@
         <tr data-rank="{{.Abbrev}}">
           <th scope="row" class="rank">{{.Abbrev}}</th>
           <td><div class="rank-role"><span class="off rank-role-none" data-field="no-role"{{if .Picker.Tags}} hidden{{end}}>No role</span>{{template "picker" .Picker}}</div></td>
-          <td class="num">{{if .HasRole}}<span data-holders="{{.Holders}}">{{if .HoldersKnown}}{{.Holders}}{{else}}<span class="off">unknown</span>{{end}}</span>{{end}}</td>
+          <td class="num">{{template "holders" .}}</td>
         </tr>
       {{end}}
       </tbody>
@@ -40,6 +40,7 @@
       <div class="field" role="group" aria-labelledby="discharged-role-label" aria-describedby="discharged-role-hint">
         <span class="field-label" id="discharged-role-label">Discharged role</span>
         <div class="rank-role"><span class="off rank-role-none"{{if .Discharged.Tags}} hidden{{end}}>No role</span>{{template "picker" .Discharged}}</div>
+        {{if .DischargedHolders.HasRole}}<span class="discharged-holders">Members: {{template "holders" .DischargedHolders}}</span>{{end}}
         <span class="field-hint" id="discharged-role-hint">A member holding this role is not a Cav member, whatever rank role they hold. The forum gives it to a member while their milpac's position is Discharged.</span>
       </div>
     </div>
@@ -52,6 +53,11 @@
   </div>
   </section>
 {{end}}
+
+{{- /* How many members hold a Rank roles section's stored role, a rank's
+     or the Discharged role, or unknown while the member list loads.
+     Nothing while no role is stored. */}}
+{{define "holders"}}{{if .HasRole}}<span data-holders="{{.Holders}}">{{if .HoldersKnown}}{{.Holders}}{{else}}<span class="off">unknown</span>{{end}}</span>{{end}}{{end}}
 
 {{- /* A rank roles save that may stop members counting as Cav members
      waits on this (GLOSSARY.md, Preview). It carries the section's heading
