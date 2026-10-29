@@ -4,9 +4,7 @@ Nobody watches the run, so answer from the requirements and the repo wherever th
 
 ## Pick
 
-`.github/scripts/factory-eligible.sh` prints `waiting` and `queue`. End the run with the script's error if it fails, or with `nothing to do` when both are empty.
-
-A PR in `waiting` holds the factory until it merges or closes. Read it with `gh pr view <pr> --json mergeStateStatus,autoMergeRequest`. `develop` merges only branches that are up to date, so when auto-merge is on and the state is `BEHIND`, run `gh pr update-branch <pr>` and end the run with `updated #<pr>`. Otherwise end it with `waiting on #<pr>`.
+`.github/scripts/factory-eligible.sh` prints `waiting` and `queue`. End the run with the script's error if it fails, with `waiting on` and every PR `waiting` names, as in `waiting on #901, #905`, or with `nothing to do` when `queue` is empty.
 
 Take one issue from `queue` in this order, lowest number first within a bucket:
 
@@ -47,36 +45,36 @@ Arm Auto-fix on the PR. Done when the PR's status shows Auto-fix on, or, in an u
 
 Leave the PR's smoke checks to a later pass, since the smoke tool runs one bot across all worktrees and the maintainer's own sessions need it.
 
-Once you have opened the PR, label it `factory` and turn on squash auto-merge with `gh pr merge <pr> --auto --squash`. Auto-merge waits until Lint and Build pass, every review thread is resolved, and CodeRabbit approves the head commit. A PR's author can't approve it, so CodeRabbit gives the one approving review `develop` requires. An unattended run has no Auto-fix, so watch the PR yourself until it merges:
+Once you have opened the PR, label it `factory`. CodeRabbit's approval skips the findings it writes outside the diff, so you merge on `pr-ready check`'s verdict. An unattended run has no Auto-fix, so watch the PR yourself until it merges:
 
 1. Run `timeout 30m gh pr checks <pr> --watch`, which returns once every check on the head commit finishes, or after 30 minutes. That includes `CodeRabbit`, which finishes as CodeRabbit posts its review of the commit.
-2. Read `gh pr view <pr> --json state,mergeStateStatus` and the unresolved review threads, which this command lists with each one's last commenter and that comment's text:
+2. Run `pr-ready open <pr>`, then `pr-ready check <pr>`, and act on its verdict:
+   - `merged`: done.
+   - `closed`: someone closed the PR without merging it. Leave the PR as they left it and hand back now. It can also close while you work on an entry, so run `pr-ready check <pr>` again before each push or post to the PR.
+   - `ready`: merge with `gh pr merge <pr> --squash --match-head-commit <head>`, where `<head>` is the `head` that `check` printed, then go back to 2. When a push has moved the head since `check` read it, the merge fails, so go back to 1.
+   - `act`: each entry in `act` waits on you. Clear every one, then go back to 1. Run `.github/scripts/gate.sh` before you push.
+     - `behind`: `develop` merges only branches that are up to date, so run `gh pr update-branch <pr>`.
+     - `draft`: someone marked the PR a draft to hold it, so hand back.
+     - `conflict`: merge `origin/develop` in.
+     - `check_failed`: read its log with `gh run view <run> --log-failed`, taking `<run>` from its `url`, and fix it.
+     - `thread`: its `body` is the thread's last comment. Answer a finding with the commit that fixes it, or with why you decline it, in a reply to `repos/{owner}/{repo}/pulls/<pr>/comments/<reply_to>/replies`. Start every reply with `@coderabbitai`, so CodeRabbit answers in threads it didn't open. When CodeRabbit's reply accepts your fix or your decline, resolve the thread, since the merge waits on every thread:
 
-   ```bash
-   gh api graphql -F owner='{owner}' -F repo='{repo}' -F pr=<pr> -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{id isResolved path root:comments(first:1){nodes{databaseId}} final:comments(last:1){nodes{author{login} body}}}}}}}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | {path, id: .root.nodes[0].databaseId, thread: .id, last: .final.nodes[0].author.login, body: (.final.nodes[0].body | gsub("<!--[\\s\\S]*?-->"; ""))}'
-   ```
+       ```bash
+       gh api graphql -f thread=<thread> -f query='mutation($thread:ID!){resolveReviewThread(input:{threadId:$thread}){thread{isResolved}}}'
+       ```
 
-   A reply to a thread goes to `repos/{owner}/{repo}/pulls/<pr>/comments/<id>/replies`, and this resolves the thread:
+       If CodeRabbit answers a decline by pressing the finding, fix the finding when its reply persuades you, or hand back.
+     - `finding_unthreaded` or `review_unreadable`: CodeRabbit reviewed again after `open` ran, so run `pr-ready open <pr>` again.
+   - `wait`: CodeRabbit or a check acts next. Go back to 2 each minute until the verdict changes. CodeRabbit can take 15 minutes to answer a reply. After 30 straight minutes of `wait`, post `@coderabbitai review` once, since CodeRabbit pauses its reviews of new pushes after five reviewed commits. Hand back if 30 more minutes pass.
+   - An error from `pr-ready`: hand back with it.
 
-   ```bash
-   gh api graphql -f thread=<thread> -f query='mutation($thread:ID!){resolveReviewThread(input:{threadId:$thread}){thread{isResolved}}}'
-   ```
-
-   Act on the first case that matches:
-   - `MERGED`: done.
-   - `CLOSED`: someone closed the PR without merging it. Leave the PR as they left it and hand back now. It can also close while you work on another case, so read `state` again before each push or post to the PR.
-   - `BEHIND`: `develop` merges only branches that are up to date, so run `gh pr update-branch <pr>` and go back to 1.
-   - `DIRTY`, or a required check failed: fix it and go back to 1. For a conflict, merge `origin/develop` in. For a failed check, read its log with `gh run view <run> --log-failed`. Run `.github/scripts/gate.sh` before you push.
-   - A thread whose last comment is CodeRabbit's: it waits on you. Reply in the thread with the commit that fixes the finding, or with why you decline it. Push your fixes and go back to 1. When CodeRabbit's reply accepts your fix or your decline, resolve the thread and go back to 1, since CodeRabbit approves only once every thread is resolved. If CodeRabbit answers a decline by pressing the finding, fix the finding when its reply persuades you, or hand back.
-   - Nothing waits on you: CodeRabbit or auto-merge acts next. Read again each minute until another case matches. CodeRabbit can take 15 minutes to answer a reply. After 30 minutes in this case, post `@coderabbitai review` once, since CodeRabbit pauses its reviews of new pushes after five reviewed commits. Hand back if 30 more minutes pass.
-
-Fix failing checks and conflicts up to two rounds in all, and answer up to three CodeRabbit reviews that request changes. Done when the PR has merged; end the run with its URL.
+Fix failing checks and conflicts up to two rounds in all, and answer up to three CodeRabbit reviews that request changes. Hand back once either runs out. Done when the PR has merged; end the run with its URL.
 
 ## Hand back
 
-Hand the issue back when the run can't finish it: missing context, a decision the requirements leave open, a dependency outside the repo such as a Discord or forum setting, checks still failing after two rounds, a finding CodeRabbit presses that you still decline, CodeRabbit's approval still missing once Finish's rounds or wait run out, or a PR someone closed without merging.
+Hand the issue back wherever Finish says to, and when the run can't finish it for missing context, a decision the requirements leave open, or a dependency outside the repo such as a Discord or forum setting.
 
-Comment on the issue with what stopped the run and the branch or PR it reached. For each decision or context the requirements lack, name the terms it turns on and the spec sections and glossary entries you searched for it. Then, while the PR is open, turn off its auto-merge with `gh pr merge <pr> --disable-auto` and leave it open with its `factory` label. Release the claim as you swap `ready-for-agent` for `blocked`:
+Comment on the issue with what stopped the run and the branch or PR it reached. For each decision or context the requirements lack, name the terms it turns on and the spec sections and glossary entries you searched for it. Leave any PR the run opened as it stands, with its `factory` label. Release the claim as you swap `ready-for-agent` for `blocked`:
 
 ```bash
 gh issue edit <n> --remove-assignee @me --remove-label ready-for-agent --add-label blocked
