@@ -54,6 +54,7 @@ Once you have opened the PR, label it `factory`. CodeRabbit's approval skips the
    - `ready`: merge with `gh pr merge <pr> --squash --match-head-commit <head>`, where `<head>` is the `head` that `check` printed, then go back to 2. When a push has moved the head since `check` read it, the merge fails, so go back to 1.
    - `act`: each entry in `act` waits on you. Clear every one, then go back to 1. Run `.github/scripts/gate.sh` before you push.
      - `behind`: `develop` merges only branches that are up to date, so run `gh pr update-branch <pr>`.
+     - `draft`: someone marked the PR a draft to hold it, so hand back.
      - `conflict`: merge `origin/develop` in.
      - `check_failed`: read its log with `gh run view <run> --log-failed`, taking `<run>` from its `url`, and fix it.
      - `thread`: its `body` is the thread's last comment. Answer a finding with the commit that fixes it, or with why you decline it, in a reply to `repos/{owner}/{repo}/pulls/<pr>/comments/<reply_to>/replies`. Start every reply with `@coderabbitai`, so CodeRabbit answers in threads it didn't open. When CodeRabbit's reply accepts your fix or your decline, resolve the thread, since the merge waits on every thread:
