@@ -607,7 +607,7 @@ var gatelessPosts = []string{"POST " + recordingsPath + "/{id}/delete"}
 // redirectOnlyPosts are the routes behind a gate whose own answers are all
 // redirects, or plain text for a form that can't be read, so the gate's
 // pages are the only pages they answer with.
-var redirectOnlyPosts = []string{"POST " + foxholeStopPath, "POST " + foxholeRosterPreviewPath}
+var redirectOnlyPosts = []string{"POST " + foxholeStopPath}
 
 // postRoutes is the pattern of every route the panel serves that takes a
 // POST.
