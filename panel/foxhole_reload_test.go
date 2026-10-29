@@ -241,13 +241,15 @@ func TestRosterPreviewReloadReadsTheRosterAgain(t *testing.T) {
 // address the panel doesn't serve.
 func TestOldRosterPreviewAddressIsServedNoMore(t *testing.T) {
 	w := newFoxholeWorld(t)
-	serveRoster(t, trooperVance)
 	form := url.Values{fieldUnit: {"D/ACD"}}
 
-	got := w.b.postForm("/foxhole/roster/preview", form).StatusCode
+	res := w.b.postForm("/foxhole/roster/preview", form)
 
-	if want := w.b.postForm("/foxhole/nothing-here", form).StatusCode; got != want {
-		t.Errorf("a post to the old address answers %d, want %d, the answer of an address the panel doesn't serve", got, want)
+	if want := w.b.postForm("/foxhole/nothing-here", form).StatusCode; res.StatusCode != want {
+		t.Errorf("a post to the old address answers %d, want %d, the answer of an address the panel doesn't serve", res.StatusCode, want)
+	}
+	if got := res.Header.Get("Location"); got != "" {
+		t.Errorf("a post to the old address sends the browser to %q, want it sent nowhere", got)
 	}
 }
 
