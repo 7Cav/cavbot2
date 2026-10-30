@@ -281,7 +281,12 @@ h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
    it. */
 .search-list li.is-active { outline: 2px solid var(--gold); outline-offset: -2px; }
 .search-list li[hidden] { display: none; }
-.search-none { padding: 6px 10px; font-size: 13px; }
+/* "No match." and "Nothing left to add." close the list's box, since the
+   search draws over the page. */
+.search-none {
+  padding: 6px 10px; font-size: 13px;
+  background: var(--surface-2); border: 1px solid var(--line-strong); border-top: 0; border-radius: 0 0 var(--radius) var(--radius);
+}
 
 /* The guild-wide moderator section, the rank roles section and the
    recording roles section: each form beside its change log. A rank roles
