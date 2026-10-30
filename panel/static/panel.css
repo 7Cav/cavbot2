@@ -214,7 +214,11 @@ h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
 /* Tag pickers (spec #343): the selected set as tags, and a search list the
    add control opens. Ten rows show at once; the rest scroll inside the
    list. A picker's height follows its selected set, never the guild's
-   role count. */
+   role count. The search box and its list hang below the add control and
+   draw over what sits there, so opening or closing them moves nothing else
+   on the page (#937). Each picker is a positioned box, and the search's
+   z-index lifts it over the pickers that follow. */
+.picker { position: relative; }
 .tags { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .tags:empty { margin: 0; }
 /* The Rank roles table on the Settings page (#680, #737) is the hub list's
@@ -228,8 +232,8 @@ h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
 .ranklist tbody tr:last-child th { border-bottom: 0; }
 .ranklist .rank, .ranklist .num { width: 1%; white-space: nowrap; }
 /* A rank's role and the button that changes it share one line, and the
-   search opens on the line below. The picker's own box steps aside, so its
-   parts line up with "No role". The buttons line up down the right of the
+   search hangs below that line. The picker's own box steps aside, so its
+   parts line up with "No role", and the search hangs from the rank's. The buttons line up down the right of the
    column whatever each role's name, and the rank and its count sit on the
    role's line, open search or not. A rank reads "No role" whenever its
    picker holds no tag, after × too (#756). On a rank that loads with a
@@ -237,14 +241,14 @@ h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
    the tag goes. A browser without :has shows each rank's text as the page
    loaded it. A role the server lacks shows as its ID, which breaks where it
    must, so the list still fits a phone. */
-.rank-role { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.rank-role { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .rank-role > .picker { display: contents; }
 .rank-role [data-add] { margin-left: auto; }
 .rank-role .tags { margin: 0; min-width: 0; }
 .rank-role .tag--pick { min-width: 0; }
 .rank-role .tag--pick [data-label] { overflow-wrap: anywhere; }
 .rank-role .tags:empty { display: none; }
-.rank-role .search { flex-basis: 100%; margin-top: 0; }
+.rank-role .search { margin-top: 6px; }
 .rank-role:has(.tags > li) > .rank-role-none { display: none; }
 .rank-role:not(:has(.tags > li)) > .rank-role-none { display: inline; }
 .discharged-holders { display: block; margin-top: 6px; font-size: 13px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
@@ -259,7 +263,7 @@ h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
 .tag-remove:focus-visible { outline: 2px solid var(--gold); outline-offset: 0; }
 .dot { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; flex: none; vertical-align: middle; }
 .dot--none { background: var(--line-hi); }
-.search { margin-top: 8px; max-width: 420px; }
+.search { position: absolute; z-index: 1; top: 100%; left: 0; width: 100%; max-width: 420px; margin-top: 8px; }
 .search-input {
   display: block; width: 100%; padding: 12px; font: inherit; color: var(--text);
   background: var(--field); border: 1px solid var(--line-strong); border-radius: var(--radius) var(--radius) 0 0;
