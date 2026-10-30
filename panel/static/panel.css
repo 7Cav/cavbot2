@@ -233,14 +233,15 @@ h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
 .ranklist .rank, .ranklist .num { width: 1%; white-space: nowrap; }
 /* A rank's role and the button that changes it share one line, and the
    search hangs below that line. The picker's own box steps aside, so its
-   parts line up with "No role", and the search hangs from the rank's. The buttons line up down the right of the
-   column whatever each role's name, and the rank and its count sit on the
-   role's line, open search or not. A rank reads "No role" whenever its
-   picker holds no tag, after × too (#756). On a rank that loads with a
-   role, the text starts hidden, and the :not(:has()) rule shows it once
-   the tag goes. A browser without :has shows each rank's text as the page
-   loaded it. A role the server lacks shows as its ID, which breaks where it
-   must, so the list still fits a phone. */
+   parts line up with "No role", and the search hangs from the rank's role
+   line instead. The buttons line up down the right of the column whatever
+   each role's name, and the rank and its count sit on the role's line,
+   open search or not. A rank reads "No role" whenever its picker holds no
+   tag, after × too (#756). On a rank that loads with a role, the text
+   starts hidden, and the :not(:has()) rule shows it once the tag goes. A
+   browser without :has shows each rank's text as the page loaded it. A
+   role the server lacks shows as its ID, which breaks where it must, so
+   the list still fits a phone. */
 .rank-role { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .rank-role > .picker { display: contents; }
 .rank-role [data-add] { margin-left: auto; }

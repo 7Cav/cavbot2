@@ -151,7 +151,12 @@
     }
 
     add.addEventListener('click', function () {
-      if (search.hidden) { open(); } else { close(); }
+      if (search.hidden) {
+        open();
+      } else {
+        close();
+        add.focus();
+      }
     });
 
     input.addEventListener('input', function () {
@@ -220,10 +225,9 @@
       refresh();
     });
 
-    // The search draws over the page, so closing it moves nothing else,
-    // and nothing waits for a press to end (#937). Focus leaving the picker
-    // closes it at once, whatever moved focus: a press, Tab, or a native
-    // dropdown, whose popup takes the press's mouseup.
+    // The search draws over the page, so closing it moves nothing a press
+    // could land on (#937). Focus leaving the picker closes it, whatever
+    // moved focus: a press, Tab, or a native dropdown.
     root.addEventListener('focusout', function (e) {
       if (!search.hidden && !root.contains(e.relatedTarget)) { close(); }
     });
@@ -235,16 +239,20 @@
       if (!search.hidden && !root.contains(e.target)) { close(); }
     }, true);
 
-    // Two kinds of press inside the picker would move focus out of it, so
-    // each keeps focus where it is. A press in the search on neither a row
-    // nor the search box, as on the list's scrollbar, leaves focus in the
-    // search box (#717). A right-click on a tag keeps the search open while
-    // its menu shows (#804). On macOS a Control+click opens the menu too,
-    // and reports the left button (#771).
+    // Some presses inside the picker would move focus out of it, and each
+    // keeps focus where it is. A press in the search on neither a row nor
+    // the search box, as on the list's scrollbar, leaves focus in the search
+    // box (#717). A right-click on a tag keeps the search open while its
+    // menu shows (#804). On macOS a Control+click opens the menu too, and
+    // reports the left button (#771). Safari focuses no button a press
+    // lands on, so a press on the add control would take focus out and
+    // close the search, and the click would open it again. Its click closes
+    // the search instead (#917).
     root.addEventListener('mousedown', function (e) {
-      var offRow = search.contains(e.target) && e.target !== input && !e.target.closest('[data-option]');
-      var menuOnTag = (e.button === 2 || e.ctrlKey) && tags.contains(e.target);
-      if (offRow || menuOnTag) { e.preventDefault(); }
+      var besideRows = search.contains(e.target) && e.target !== input && !e.target.closest('[data-option]');
+      var tagMenu = (e.button === 2 || e.ctrlKey) && tags.contains(e.target);
+      var addWhileOpen = !search.hidden && add.contains(e.target);
+      if (besideRows || tagMenu || addWhileOpen) { e.preventDefault(); }
     });
   }
 
