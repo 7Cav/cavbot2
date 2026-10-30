@@ -25,48 +25,6 @@
 
   var pickers = 0;
 
-  // A press is a mousedown and the mouseup that ends it, or the dragend
-  // when the press drags something. A contextmenu ends a press too. A
-  // browser that opens its menu at the mousedown, as Chrome on Linux does,
-  // lets the menu take the mouseup (#718). pressed is the element the
-  // press began on, and null between presses. rightPress is whether the
-  // right button made the press, and false between presses. Each picker
-  // puts a function in onPressEnd, and each runs as a left press ends, with
-  // the element the press began on. That comes before the click, whose
-  // target the press has already fixed. A right-click makes no click and
-  // runs none. On macOS a Control+click opens the menu too, but Chrome and
-  // Safari report its mousedown as the left button. Only the contextmenu
-  // shows that the press was a right-click (#771), so a press a
-  // contextmenu ends runs none either.
-  var pressed = null;
-  var rightPress = false;
-  var onPressEnd = [];
-  // keyed is whether a key, not a press, came last. A press's click can
-  // move focus too, as a press on a label focuses its field.
-  var keyed = false;
-
-  function endPress(e) {
-    var target = pressed;
-    if (!target) { return; }
-    pressed = null;
-    if (rightPress) {
-      rightPress = false;
-      return;
-    }
-    if (e.type === 'contextmenu') { return; }
-    onPressEnd.forEach(function (run) { run(target); });
-  }
-
-  document.addEventListener('mousedown', function (e) {
-    pressed = e.target;
-    rightPress = e.button === 2;
-    keyed = false;
-  }, true);
-  document.addEventListener('keydown', function () { keyed = true; }, true);
-  document.addEventListener('mouseup', endPress, true);
-  document.addEventListener('dragend', endPress, true);
-  document.addEventListener('contextmenu', endPress, true);
-
   function setUp(root) {
     var single = root.hasAttribute('data-single');
     var tags = root.querySelector('[data-tags]');
@@ -136,6 +94,9 @@
       active = 0;
       refresh();
       input.focus();
+      // The search hangs below the add control. Where it would run past the
+      // bottom of the window, the page scrolls just far enough to show it.
+      search.scrollIntoView({ block: 'nearest' });
     }
 
     function close() {
@@ -190,7 +151,12 @@
     }
 
     add.addEventListener('click', function () {
-      if (search.hidden) { open(); } else { close(); }
+      if (search.hidden) {
+        open();
+      } else {
+        close();
+        add.focus();
+      }
     });
 
     input.addEventListener('input', function () {
@@ -234,17 +200,6 @@
       if (row && !row.hidden) { choose(row); }
     });
 
-    // The list's tabindex keeps it out of the Tab order, but it also lets a
-    // press on the list's scrollbar focus it. There typing filters nothing
-    // and the arrow keys only scroll, so focus goes back to the search box.
-    // Only focus from a press goes back. If the list were ever a Tab stop
-    // again, sending Tab's focus back would trap Tab in the search box. A
-    // press on a row focuses the row, not the list, so the row's click
-    // still chooses it (#717).
-    list.addEventListener('focus', function () {
-      if (pressed) { input.focus(); }
-    });
-
     tags.addEventListener('click', function (e) {
       var remove = e.target.closest('[data-remove]');
       if (!remove) { return; }
@@ -270,55 +225,35 @@
       refresh();
     });
 
-    // A left press closes the search once it ends, whatever came before
-    // it (#918). Closing at the mousedown would move what sits below the
-    // list up before the mouseup, and the press would make no click
-    // (#682). So the search stays open when closing would move what the
-    // press was on, as it would a row or the search box, and a second
-    // press there lands too. A press on the add control leaves the search
-    // to its click (#917).
-    onPressEnd.push(function (target) {
-      if (search.hidden || add.contains(target)) { return; }
-      // Hiding the search to measure can clamp the page's scroll, so the
-      // scroll goes back too. Nothing paints between the hide and the
-      // show.
-      var x = window.scrollX;
-      var y = window.scrollY;
-      var top = target.getBoundingClientRect().top;
-      search.hidden = true;
-      var moved = target.getBoundingClientRect().top !== top;
-      search.hidden = false;
-      window.scrollTo(x, y);
-      if (!moved) { close(); }
-    });
-
-    // Focus leaving the picker other than by a press closes the search at
-    // once. A right-click makes no click, so nothing has to stay under the
-    // pointer. It closes the search at once, unless it began inside the
-    // picker, as on a tag. Then the search stays open through the menu,
-    // and a right-click outside the picker closes it (#718, #804, below).
+    // The search draws over the page, so closing it moves nothing a press
+    // could land on (#937). Focus leaving the picker closes it, whatever
+    // moved focus: a press, Tab, or a native dropdown.
     root.addEventListener('focusout', function (e) {
-      if (search.hidden || root.contains(e.relatedTarget)) { return; }
-      if (!pressed || (rightPress && !root.contains(pressed))) { close(); }
+      if (!search.hidden && !root.contains(e.relatedTarget)) { close(); }
     });
 
-    // A key that moves focus to an element outside the picker closes the
-    // search at once, wherever focus was (#918). A press goes by the rule
-    // above, and its click may move focus once the press is over.
-    document.addEventListener('focusin', function (e) {
-      if (!search.hidden && keyed && !root.contains(e.target)) { close(); }
-    });
-
-    // A right-click outside the picker closes the search at once, whatever
-    // press came before it. Focus may have left the picker already. A
-    // right-click on a tag moves it out, and so does a left press that kept
-    // the search open, and then no focusout comes. The contextmenu comes as
-    // the menu opens. That is after the mousedown on Linux and macOS and
-    // after the mouseup on Windows, and a Control+click on macOS sends one
-    // too (#804).
-    document.addEventListener('contextmenu', function (e) {
-      if (!root.contains(e.target)) { close(); }
+    // A press that starts outside the picker, with any button, closes the
+    // search as it starts, even where the press leaves focus in the search
+    // box.
+    document.addEventListener('mousedown', function (e) {
+      if (!search.hidden && !root.contains(e.target)) { close(); }
     }, true);
+
+    // Some presses inside the picker would move focus out of it, and each
+    // keeps focus where it is. A press in the search on neither a row nor
+    // the search box, as on the list's scrollbar, leaves focus in the search
+    // box (#717). A right-click on a tag keeps the search open while its
+    // menu shows (#804). On macOS a Control+click opens the menu too, and
+    // reports the left button (#771). Safari focuses no button a press
+    // lands on, so a press on the add control would take focus out and
+    // close the search, and the click would open it again. Its click closes
+    // the search instead (#917).
+    root.addEventListener('mousedown', function (e) {
+      var besideRows = search.contains(e.target) && e.target !== input && !e.target.closest('[data-option]');
+      var tagMenu = (e.button === 2 || e.ctrlKey) && tags.contains(e.target);
+      var addWhileOpen = !search.hidden && add.contains(e.target);
+      if (besideRows || tagMenu || addWhileOpen) { e.preventDefault(); }
+    });
   }
 
   roots.forEach(setUp);

@@ -24,7 +24,9 @@
     {{with .RankRoles}}
     <input type="hidden" name="version" value="{{.Version}}">
     <div class="block-row field-hint" id="rank-roles-hint">A member holding a rank's role counts as a Cav member of that rank. Each rank has one role or none, and a role counts for one rank at most. Members is how many members hold each rank's saved role. The Members count under the Discharged role is how many hold the saved Discharged role.</div>
-    <div class="scroll"><table class="hublist ranklist" aria-describedby="rank-roles-hint">
+    {{- /* The table fits a phone with no scroll box, and a scroll box
+         would clip a rank's search list (#937). */}}
+    <table class="hublist ranklist" aria-describedby="rank-roles-hint">
       <thead><tr><th>Rank</th><th>Rank role</th><th class="num">Members</th></tr></thead>
       <tbody>
       {{range .Rows}}
@@ -35,7 +37,7 @@
         </tr>
       {{end}}
       </tbody>
-    </table></div>
+    </table>
     <div class="block-row">
       <div class="field" role="group" aria-labelledby="discharged-role-label" aria-describedby="discharged-role-hint">
         <span class="field-label" id="discharged-role-label">Discharged role</span>
