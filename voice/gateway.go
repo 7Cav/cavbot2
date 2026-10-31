@@ -1452,10 +1452,10 @@ const lostConnectionMessage = "Voice connection lost mid-recording"
 // named last while the recorder looked the channel up. The recorder hears
 // the call there already, and keeps that connection. A connection the
 // recorder closed meanwhile ended with its recording, and lost nothing. So
-// did one whose recorder logged out for its relogin. Only a stop whose
-// leave hung or a cut short leads to a logout, and the recording has ended
-// by then. A leave that hung before closing the connection leaves it open,
-// and Discord closes its voice gateway with 4014 at the logout.
+// did one whose recorder logged out for its relogin. Only a cut-short
+// recording or a stop whose leave hung leads to a logout, and the recording
+// has ended by then. A leave that hung before closing the connection leaves
+// it open, and Discord closes its voice gateway with 4014 at the logout.
 func (c *recorderConn) watchClose(gw *renewableGateway, onClose disgovoice.CloseHandlerFunc) disgovoice.CloseHandlerFunc {
 	return func(g disgovoice.Gateway, err error) {
 		defer utils.RecoverPanic("recorder-voice-close", "recorder", c.s.userID)
