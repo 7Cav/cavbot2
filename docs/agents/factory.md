@@ -45,30 +45,11 @@ Arm Auto-fix on the PR. Done when the PR's status shows Auto-fix on, or, in an u
 
 Leave the PR's smoke checks to a later pass, since the smoke tool runs one bot across all worktrees and the maintainer's own sessions need it.
 
-Once you have opened the PR, label it `factory`. CodeRabbit's approval skips the findings it writes outside the diff, so you merge on `pr-ready check`'s verdict. An unattended run has no Auto-fix, so watch the PR yourself until it merges:
+Once you have opened the PR, label it `factory`. An unattended run has no Auto-fix, so load the `babysit-pr` skill and follow it until the PR merges. This run is your go-ahead to merge. Where the skill says to stop and report, hand back instead. This run gets no Monitor wake-ups, so wait for the PR as the skill says to without Monitor.
 
-1. Run `timeout 30m gh pr checks <pr> --watch`, which returns once every check on the head commit finishes, or after 30 minutes. That includes `CodeRabbit`, which finishes as CodeRabbit posts its review of the commit.
-2. Run `pr-ready open <pr>`, then `pr-ready check <pr>`, and act on its verdict:
-   - `merged`: done.
-   - `closed`: someone closed the PR without merging it. Leave the PR as they left it and hand back now. It can also close while you work on an entry, so run `pr-ready check <pr>` again before each push or post to the PR.
-   - `ready`: merge with `gh pr merge <pr> --squash --match-head-commit <head>`, where `<head>` is the `head` that `check` printed, then go back to 2. When a push has moved the head since `check` read it, the merge fails, so go back to 1.
-   - `act`: each entry in `act` waits on you. Clear every one, then go back to 1. Run `.github/scripts/gate.sh` before you push.
-     - `behind`: `develop` merges only branches that are up to date, so run `gh pr update-branch <pr>`.
-     - `draft`: someone marked the PR a draft to hold it, so hand back.
-     - `conflict`: merge `origin/develop` in.
-     - `check_failed`: read its log with `gh run view <run> --log-failed`, taking `<run>` from its `url`, and fix it.
-     - `thread`: its `body` is the thread's last comment. Answer a finding with the commit that fixes it, or with why you decline it, in a reply to `repos/{owner}/{repo}/pulls/<pr>/comments/<reply_to>/replies`. Start every reply with `@coderabbitai`, so CodeRabbit answers in threads it didn't open. When CodeRabbit's reply accepts your fix or your decline, resolve the thread, since the merge waits on every thread:
+`develop` merges only branches that are up to date, so update a branch that is behind with `gh pr update-branch <pr>`, and one that conflicts by merging `origin/develop` in. Run `.github/scripts/gate.sh` before you push.
 
-       ```bash
-       gh api graphql -f thread=<thread> -f query='mutation($thread:ID!){resolveReviewThread(input:{threadId:$thread}){thread{isResolved}}}'
-       ```
-
-       If CodeRabbit answers a decline by pressing the finding, fix the finding when its reply persuades you, or hand back.
-     - `finding_unthreaded` or `review_unreadable`: CodeRabbit reviewed again after `open` ran, so run `pr-ready open <pr>` again.
-   - `wait`: CodeRabbit or a check acts next. Go back to 2 each minute until the verdict changes. CodeRabbit can take 15 minutes to answer a reply. After 30 straight minutes of `wait`, post `@coderabbitai review` once, since CodeRabbit pauses its reviews of new pushes after five reviewed commits. Hand back if 30 more minutes pass.
-   - An error from `pr-ready`: hand back with it.
-
-Fix failing checks and conflicts up to two rounds in all, and answer up to three CodeRabbit reviews that request changes. Hand back once either runs out. Done when the PR has merged; end the run with its URL.
+Fix failing checks and conflicts up to two rounds in all, and answer CodeRabbit's findings from up to three of its reviews. Hand back once either runs out. Done when the PR has merged; end the run with its URL.
 
 ## Hand back
 
