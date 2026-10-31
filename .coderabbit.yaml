@@ -3,12 +3,6 @@
 # exists, settings made in the CodeRabbit web app do not apply to this repo.
 
 reviews:
-  # A review with actionable comments requests changes, which holds the PR
-  # until CodeRabbit approves. It approves once it has reviewed the latest
-  # commit, every thread is resolved and no pre-merge check fails.
-  auto_approvals:
-    enabled: true
-
   # Leaves the PR description as written. The summary opens CodeRabbit's
   # walkthrough comment instead. A factory run writes its Follow-ups into the
   # description, and factory-eligible.sh reads closing keywords there.
