@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/7cav/cavbot2/utils"
 	disgovoice "github.com/disgoorg/disgo/voice"
 	"github.com/getsentry/sentry-go"
 	"github.com/gorilla/websocket"
@@ -392,7 +395,7 @@ func TestRecorderReportsTheCloseBehindAConnectionItCouldNotRejoin(t *testing.T) 
 // A voice server can close a recording's connection with a code disgo
 // neither resumes from nor answers with a fresh connection, such as 4014
 // when a moderator disconnects the recorder. disgo takes the recorder out
-// itself, and Sentry hears of the lost connection with that close.
+// itself, and Sentry hears of the lost connection once, with that close.
 func TestRecorderReportsACloseDisgoTakesItOutFor(t *testing.T) {
 	events := recordSentry(t)
 	disconnected := disgovoice.GatewayCloseEventCodeDisconnected.Code
@@ -402,11 +405,65 @@ func TestRecorderReportsACloseDisgoTakesItOutFor(t *testing.T) {
 
 	server.awaitDrop(t)
 
+	got := awaitLostConnection(t, events)
+	if len(got) != 1 {
+		t.Fatalf("Sentry got %d %q events, want 1", len(got), lostConnectionMessage)
+	}
 	want := (&websocket.CloseError{Code: disconnected}).Error()
-	for _, e := range awaitLostConnection(t, events) {
-		if values := exceptionValues(e); !slices.Contains(values, want) {
-			t.Errorf("event's error = %q, want %q in it", values, want)
+	if values := exceptionValues(got[0]); !slices.Contains(values, want) {
+		t.Errorf("event's error = %q, want %q in it", values, want)
+	}
+}
+
+// A stop's leave can hang before it starts, as the smoke hook holds it, and
+// the recorder then logs out for its relogin. Discord answers the logout by
+// closing the recording's voice gateway with 4014, which disgo takes the
+// recorder out for. The stop had ended the recording, so Sentry hears of no
+// connection lost mid-recording.
+func TestRecorderReportsNoLostConnectionForACloseItsLogoutCaused(t *testing.T) {
+	events := recordSentry(t)
+	loggedOut := make(chan struct{})
+	disconnected := disgovoice.GatewayCloseEventCodeDisconnected.Code
+	server := newDroppingVoiceServerEnding(t, func(t *testing.T, conn *websocket.Conn) {
+		select {
+		case <-loggedOut:
+		case <-time.After(waitFor):
+			t.Error("the recorder never logged out")
 		}
+		closingWith(disconnected)(t, conn)
+	})
+	h := newCallHarness(t)
+	h.s.watch = utils.NewGatewayWatch(time.Hour)
+	conn, _ := h.recordDropping(server, server.dialer())
+
+	hangFile := filepath.Join(t.TempDir(), "leave-hang")
+	if err := os.WriteFile(hangFile, nil, 0o600); err != nil {
+		t.Fatalf("writing the leave hang file: %v", err)
+	}
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		(&hangingLeaveConn{Conn: conn, file: hangFile}).Leave(context.Background())
+	}()
+	t.Cleanup(func() {
+		_ = os.Remove(hangFile)
+		<-stopped
+	})
+	if err := h.s.LogOut(); err != nil {
+		t.Fatalf("LogOut: %v", err)
+	}
+	close(loggedOut)
+	server.awaitDrop(t)
+
+	// The stop's leave is still held, so any leave now is disgo taking the
+	// recorder out. A report of a lost connection would follow it at once.
+	disgoLeft := func() bool { return slices.ContainsFunc(h.sent(), voiceUpdate.leaves) }
+	if !within(time.Now(), waitFor, disgoLeft) {
+		t.Fatalf("voice state updates after the 4014 = %v, want disgo's leave", h.sent())
+	}
+	time.Sleep(lostQuiet)
+	if got := tagged(events.Events(), lostConnectionMessage); len(got) != 0 {
+		t.Errorf("Sentry got %d %q events, want none", len(got), lostConnectionMessage)
 	}
 }
 
