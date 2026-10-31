@@ -47,7 +47,7 @@ Leave the PR's smoke checks to a later pass, since the smoke tool runs one bot a
 
 Once you have opened the PR, label it `factory`. An unattended run has no Auto-fix, so load the `babysit-pr` skill and follow it until the PR merges. This run is your go-ahead to merge. Where the skill says to stop and report, hand back instead. This run gets no Monitor wake-ups, so wait for the PR as the skill says to without Monitor.
 
-`develop` merges only branches that are up to date, so update a branch that is behind with `gh pr update-branch <pr>`, and one that conflicts by merging `origin/develop` in. Run `.github/scripts/gate.sh` before you push.
+The base merges only branches that are up to date. Update a branch that is behind or conflicts by merging the base from `origin` in locally, then run `.github/scripts/gate.sh` before you push.
 
 Fix failing checks and conflicts up to two rounds in all, and answer CodeRabbit's findings from up to three of its reviews. Hand back once either runs out. Done when the PR has merged; end the run with its URL.
 
