@@ -26,9 +26,8 @@ const recordingGapLimit = 10 * time.Second
 const recordingGapEndedMessage = "Recording gap ended"
 
 // recordingGapPing is the ping a gap's cut short posts in the recorded
-// channel's chat, word for word as the issue gives it: the starter's
-// mention, then the command that records again.
-const recordingGapPing = "❌ <@%s> Your recording stopped because the recorder couldn't hear this channel for 10 seconds. Run %s to record again."
+// channel's chat: the starter's mention, then the command that records again.
+const recordingGapPing = "❌ <@%s> Your recording stopped because the recorder couldn't hear the channel for 10 seconds. Run %s to record again."
 
 // recordingCutShortMessage is the Sentry message tag of every recording a
 // gap cut short, whatever the cause, so one search lists them all.

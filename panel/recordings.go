@@ -126,7 +126,7 @@ const (
 // (#853).
 const (
 	cutShortByRestartTag = "cut short by a restart"
-	cutShortByGapTag     = "cut short when the recorder couldn't hear"
+	cutShortByGapTag     = "cut short when the recorder couldn't hear the channel"
 	// cutShortTagFallback is the tag of a cut-short end with no words of
 	// its own.
 	cutShortTagFallback = "cut short"
