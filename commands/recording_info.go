@@ -74,7 +74,7 @@ func orNone(s string) string {
 // the recording short.
 const (
 	infoEndedRestart = "cut short when the bot restarted; what reached the disk is kept"
-	infoEndedGap     = "cut short when the recorder stopped hearing the channel for 10 seconds; what it captured is kept"
+	infoEndedGap     = "cut short when the recorder couldn't hear the channel for 10 seconds; what it captured is kept"
 	// infoEndedCutShort is the Ended line of a cut-short end with no words
 	// of its own.
 	infoEndedCutShort = "cut short; what it captured is kept"

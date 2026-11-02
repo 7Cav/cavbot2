@@ -115,10 +115,9 @@ const recordingCutShort = "was cut short when the bot restarted"
 const recordingNoticeCutShortLine = "⏹️ This recording " + recordingCutShort + ". What it captured up to then is kept."
 
 // recordingNoticeGapLine is the notice's content once a gap has cut the
-// recording short (#856), word for word as the issue gives it. The %d is the
-// gap's start in Unix seconds, which Discord shows in each reader's own time
-// zone.
-const recordingNoticeGapLine = "⏹️ This recording was cut short. The recorder couldn't hear this channel, so nothing after <t:%d:T> was recorded. What it captured up to then is kept."
+// recording short (#856). The %d is the gap's start in Unix seconds, which
+// Discord shows in each reader's own time zone.
+const recordingNoticeGapLine = "⏹️ This recording was cut short. The recorder couldn't hear the channel, so nothing after <t:%d:T> was recorded. What it captured up to then is kept."
 
 // recordingNoticeStopped is the notice's content once the recording has
 // ended as its row says, with the link to it in the panel when there is
@@ -207,8 +206,8 @@ func (r *RecordingRuntime) sendRecordingLink(rec store.Recording) {
 }
 
 // recordingGapDM is the DM a starter gets when a gap cuts their recording
-// short (#856), word for word as the issue gives it: the channel's name, the
-// gap's start in Unix seconds, and the link.
+// short (#856): the channel's name, the gap's start in Unix seconds, and
+// the link.
 const recordingGapDM = "⏹️ Your recording of %s was cut short. The recorder couldn't hear the channel, so nothing after <t:%d:T> was recorded. Get what it captured in the panel: <%s>"
 
 // recordingLinkDM is the DM a starter gets when their recording ends, by a
