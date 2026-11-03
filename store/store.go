@@ -608,18 +608,18 @@ type Store interface {
 	// ErrNotFound when no report has the ID, a save's entry among them.
 	FoxholeReport(ctx context.Context, id int64) (FoxholeReport, error)
 
-	// IsWingedAviator reports whether the member is one of the guild's
-	// winged aviators (GLOSSARY.md).
-	IsWingedAviator(ctx context.Context, guildID, userID string) (bool, error)
-	// ListWingedAviators returns the Discord user IDs of the guild's winged
-	// aviators, in no promised order.
-	ListWingedAviators(ctx context.Context, guildID string) ([]string, error)
-	// AddWingedAviator makes the member one of the guild's winged aviators.
-	// Adding one already listed is not an error.
-	AddWingedAviator(ctx context.Context, guildID, userID string) error
-	// RemoveWingedAviator ends the member's status as one of the guild's
-	// winged aviators. Removing one not listed is not an error.
-	RemoveWingedAviator(ctx context.Context, guildID, userID string) error
+	// IsWingedAviator reports whether the member is one of the winged
+	// aviators of the guild's role (GLOSSARY.md).
+	IsWingedAviator(ctx context.Context, guildID, roleID, userID string) (bool, error)
+	// ListWingedAviators returns the Discord user IDs of the winged aviators
+	// of the guild's role, in no promised order.
+	ListWingedAviators(ctx context.Context, guildID, roleID string) ([]string, error)
+	// AddWingedAviator makes the member one of the winged aviators of the
+	// guild's role. Adding one already listed is not an error.
+	AddWingedAviator(ctx context.Context, guildID, roleID, userID string) error
+	// RemoveWingedAviator ends the member's status for the guild's role.
+	// Removing one not listed is not an error.
+	RemoveWingedAviator(ctx context.Context, guildID, roleID, userID string) error
 
 	// SavePagedList saves a run's pages and returns the key that reads them
 	// back. The key is random, so no one can guess another run's.

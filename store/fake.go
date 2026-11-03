@@ -55,8 +55,9 @@ type Fake struct {
 	// next start gets.
 	recordings      map[int64]Recording
 	nextRecordingID int64
-	// aviators holds each guild's winged aviators by Discord user ID.
-	aviators map[string]map[string]bool
+	// aviators holds the winged aviators of each guild's role by Discord
+	// user ID.
+	aviators map[aviatorRole]map[string]bool
 	// pagedLists holds each saved list by its key.
 	pagedLists map[string]PagedList
 	// holdIn is the zone HoldTimesIn holds each change log entry's time
@@ -86,7 +87,7 @@ func NewFake() *Fake {
 		reports:         make(map[int64]bool),
 		recordings:      make(map[int64]Recording),
 		nextRecordingID: 1,
-		aviators:        make(map[string]map[string]bool),
+		aviators:        make(map[aviatorRole]map[string]bool),
 		pagedLists:      make(map[string]PagedList),
 	}
 }
@@ -850,48 +851,52 @@ func cloneHub(h Hub) Hub {
 	return h
 }
 
+// aviatorRole is one guild's Winged Aviator role.
+type aviatorRole struct{ guildID, roleID string }
+
 // IsWingedAviator implements Store.
-func (f *Fake) IsWingedAviator(ctx context.Context, guildID, userID string) (bool, error) {
+func (f *Fake) IsWingedAviator(ctx context.Context, guildID, roleID, userID string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.aviators[guildID][userID], nil
+	return f.aviators[aviatorRole{guildID, roleID}][userID], nil
 }
 
 // ListWingedAviators implements Store.
-func (f *Fake) ListWingedAviators(ctx context.Context, guildID string) ([]string, error) {
+func (f *Fake) ListWingedAviators(ctx context.Context, guildID, roleID string) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return slices.Collect(maps.Keys(f.aviators[guildID])), nil
+	return slices.Collect(maps.Keys(f.aviators[aviatorRole{guildID, roleID}])), nil
 }
 
 // AddWingedAviator implements Store.
-func (f *Fake) AddWingedAviator(ctx context.Context, guildID, userID string) error {
+func (f *Fake) AddWingedAviator(ctx context.Context, guildID, roleID, userID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.aviators[guildID] == nil {
-		f.aviators[guildID] = make(map[string]bool)
+	role := aviatorRole{guildID, roleID}
+	if f.aviators[role] == nil {
+		f.aviators[role] = make(map[string]bool)
 	}
-	f.aviators[guildID][userID] = true
+	f.aviators[role][userID] = true
 	return nil
 }
 
 // RemoveWingedAviator implements Store.
-func (f *Fake) RemoveWingedAviator(ctx context.Context, guildID, userID string) error {
+func (f *Fake) RemoveWingedAviator(ctx context.Context, guildID, roleID, userID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	delete(f.aviators[guildID], userID)
+	delete(f.aviators[aviatorRole{guildID, roleID}], userID)
 	return nil
 }
 

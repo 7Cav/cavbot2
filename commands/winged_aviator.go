@@ -11,11 +11,23 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// The winged aviators (#869, GLOSSARY.md): the Winged Aviator role follows
-// each winged aviator's milpac. The bot takes the role on a discharge and
+// The winged aviators (#869, GLOSSARY.md): each Winged Aviator role follows
+// its winged aviators' milpacs. The bot takes the role on a discharge and
 // gives it back when the discharge ends, and the status lasts until a person
-// removes the role. The store holds the list, and every decision reads it
-// there.
+// removes the role. The store holds a list per role, and every decision reads
+// it there.
+
+// wingedAviatorGame is a game with a Winged Aviator role of its own: the
+// choice /winged-aviator offers, the role's name in Discord, and the
+// environment variable that holds its ID.
+type wingedAviatorGame struct {
+	name, roleName, roleEnv string
+}
+
+var wingedAviatorGames = []wingedAviatorGame{
+	{name: "Arma", roleName: "Winged Aviator - Arma", roleEnv: "WINGED_AVIATOR_ARMA_ROLE_ID"},
+	{name: "DCS", roleName: "Winged Aviator - DCS", roleEnv: "WINGED_AVIATOR_DCS_ROLE_ID"},
+}
 
 // The audit log reasons of the role changes the bot makes by itself, one
 // per trigger. A change /winged-aviator makes names who ran it instead.
@@ -37,19 +49,19 @@ const wingedAviatorStoreTimeout = 5 * time.Second
 // and the tests swap it to run the waits by hand.
 var wingedAviatorAfterFunc = func(d time.Duration, f func()) { time.AfterFunc(d, f) }
 
-// WingedAviatorGuild is the subset of GuildManager the runtime changes the
+// WingedAviatorGuild is the subset of GuildManager the runtime changes a
 // role through, with the audit log reason each change carries.
 type WingedAviatorGuild interface {
 	GuildMemberRoleAdd(guildID, userID, roleID, auditReason string) error
 	GuildMemberRoleRemove(guildID, userID, roleID, auditReason string) error
 }
 
-// WingedAviatorStore is the subset of the bot store that holds the list.
+// WingedAviatorStore is the subset of the bot store that holds the lists.
 type WingedAviatorStore interface {
-	IsWingedAviator(ctx context.Context, guildID, userID string) (bool, error)
-	ListWingedAviators(ctx context.Context, guildID string) ([]string, error)
-	AddWingedAviator(ctx context.Context, guildID, userID string) error
-	RemoveWingedAviator(ctx context.Context, guildID, userID string) error
+	IsWingedAviator(ctx context.Context, guildID, roleID, userID string) (bool, error)
+	ListWingedAviators(ctx context.Context, guildID, roleID string) ([]string, error)
+	AddWingedAviator(ctx context.Context, guildID, roleID, userID string) error
+	RemoveWingedAviator(ctx context.Context, guildID, roleID, userID string) error
 }
 
 // WingedAviatorMembers reads the member list, which the passes check the
@@ -58,14 +70,44 @@ type WingedAviatorMembers interface {
 	MemberList(guildID string) MemberListSnapshot
 }
 
-// WingedAviators is the runtime that keeps the Winged Aviator role on the
-// winged aviators. It handles one member at a time, so a command run, a
+// WingedAviatorRoles holds each game's runtime by the game's name. A game
+// with no role configured has a nil runtime, so a lookup of any name gives
+// one that does nothing, and a nil WingedAviatorRoles tracks nobody.
+type WingedAviatorRoles map[string]*WingedAviators
+
+// NewWingedAviatorRoles builds each game's runtime over the bot store, with
+// the role ID env reads for the game.
+func NewWingedAviatorRoles(guild WingedAviatorGuild, members WingedAviatorMembers, st WingedAviatorStore, guildID string, env func(string) string) WingedAviatorRoles {
+	roles := make(WingedAviatorRoles, len(wingedAviatorGames))
+	for _, game := range wingedAviatorGames {
+		roles[game.name] = newWingedAviators(guild, members, st, guildID, game, env(game.roleEnv))
+	}
+	return roles
+}
+
+// Listen hears the session's member events for every game.
+func (r WingedAviatorRoles) Listen(dg *discordgo.Session) {
+	for _, game := range wingedAviatorGames {
+		r[game.name].Listen(dg)
+	}
+}
+
+// Start runs every game's startup pass, one after another.
+func (r WingedAviatorRoles) Start() {
+	for _, game := range wingedAviatorGames {
+		r[game.name].Start()
+	}
+}
+
+// WingedAviators is the runtime that keeps one game's Winged Aviator role on
+// its winged aviators. It handles one member at a time, so a command run, a
 // gateway event and a pass never decide about the same member at once.
 type WingedAviators struct {
 	guild     WingedAviatorGuild
 	members   WingedAviatorMembers
 	store     WingedAviatorStore
 	guildID   string
+	game      wingedAviatorGame
 	roleID    string
 	afterFunc func(time.Duration, func())
 
@@ -79,12 +121,12 @@ type WingedAviators struct {
 	moving map[string]bool
 }
 
-// NewWingedAviators builds the runtime over the bot store, or returns nil
-// when roleID is empty, and logs that winged aviators are off. Every method
-// of a nil runtime does nothing, and /winged-aviator refuses.
-func NewWingedAviators(guild WingedAviatorGuild, members WingedAviatorMembers, st WingedAviatorStore, guildID, roleID string) *WingedAviators {
+// newWingedAviators builds the game's runtime over the bot store, or returns
+// nil when roleID is empty, and logs that the game's winged aviators are off.
+// Every method of a nil runtime does nothing, and /winged-aviator refuses.
+func newWingedAviators(guild WingedAviatorGuild, members WingedAviatorMembers, st WingedAviatorStore, guildID string, game wingedAviatorGame, roleID string) *WingedAviators {
 	if roleID == "" {
-		utils.Warn("WINGED_AVIATOR_ROLE_ID not set, winged aviators off")
+		utils.Warn(game.roleEnv + " not set, " + game.name + " winged aviators off")
 		return nil
 	}
 	return &WingedAviators{
@@ -92,6 +134,7 @@ func NewWingedAviators(guild WingedAviatorGuild, members WingedAviatorMembers, s
 		members:   members,
 		store:     st,
 		guildID:   guildID,
+		game:      game,
 		roleID:    roleID,
 		afterFunc: wingedAviatorAfterFunc,
 		locks:     map[string]*sync.Mutex{},
@@ -180,7 +223,7 @@ func (w *WingedAviators) pass(startup bool) {
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), wingedAviatorStoreTimeout)
-	ids, err := w.store.ListWingedAviators(ctx, w.guildID)
+	ids, err := w.store.ListWingedAviators(ctx, w.guildID, w.roleID)
 	cancel()
 	if err != nil {
 		captureError("Winged aviators unreadable for a pass", err, "startup", startup)
@@ -307,7 +350,7 @@ func sameRoles(a, b []string) bool {
 func (w *WingedAviators) isWingedAviator(userID string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), wingedAviatorStoreTimeout)
 	defer cancel()
-	is, err := w.store.IsWingedAviator(ctx, w.guildID, userID)
+	is, err := w.store.IsWingedAviator(ctx, w.guildID, w.roleID, userID)
 	if err != nil {
 		captureError("Winged aviator status unreadable", err, "discord_id", userID)
 		return false
@@ -390,10 +433,10 @@ func (w *WingedAviators) setRole(userID string, holds bool, reason string) error
 		w.mu.Lock()
 		delete(w.moving, userID)
 		w.mu.Unlock()
-		reportRoleFailure(userID, holds, reason, err)
+		reportRoleFailure(userID, w.game.roleName, holds, reason, err)
 		return err
 	}
-	utils.Info("Winged Aviator role changed", "discord_id", userID, "holds", holds, "reason", reason)
+	utils.Info("Winged Aviator role changed", "discord_id", userID, "role", w.game.roleName, "holds", holds, "reason", reason)
 	return nil
 }
 
@@ -401,8 +444,8 @@ func (w *WingedAviators) setRole(userID string, holds bool, reason string) error
 // issue of its kind, since every event from this one site shares a stack
 // trace. A member no longer in the server is no failure: a rejoin brings
 // the role back.
-func reportRoleFailure(userID string, holds bool, reason string, err error) {
-	kv := []any{"discord_id", userID, "holds", holds, "reason", reason}
+func reportRoleFailure(userID, role string, holds bool, reason string, err error) {
+	kv := []any{"discord_id", userID, "role", role, "holds", holds, "reason", reason}
 	class := classifyDiscordError(err)
 	var kind string
 	switch {
@@ -438,12 +481,11 @@ const (
 	aviatorNotTakenPhrase   = "Couldn't take"
 	// aviatorReEnlistPhrase ends the reply for a winged aviator
 	// whose milpac shows a discharge.
-	aviatorReEnlistPhrase = "The Winged Aviator role comes when they re-enlist."
+	aviatorReEnlistPhrase = "The role comes when they re-enlist."
+	// aviatorsOffPhrase answers /winged-aviator for a game with no role
+	// configured, or on a bot with no bot store.
+	aviatorsOffPhrase = "aren't set up"
 )
-
-// wingedAviatorsOffRefusal answers /winged-aviator on a bot with no
-// Winged Aviator role configured, or no bot store.
-const wingedAviatorsOffRefusal = "❌ Winged aviators aren't set up on this bot."
 
 // aviatorReply is one /winged-aviator outcome: what the invoker reads, and
 // how it goes out.
@@ -461,37 +503,50 @@ const (
 	aviatorFailed
 )
 
-// WingedAviator declares /winged-aviator over the runtime, nil when winged
-// aviators are off. It sets no default member permissions: Discord's
-// Server Settings open it to the aviation staff.
-func WingedAviator(wa *WingedAviators) Command {
-	member := []*discordgo.ApplicationCommandOption{{
-		Type:        discordgo.ApplicationCommandOptionUser,
-		Name:        "member",
-		Description: "The member",
-		Required:    true,
-	}}
+// WingedAviator declares /winged-aviator over each game's runtime. It sets
+// no default member permissions: Discord's Server Settings open it to the
+// aviation staff.
+func WingedAviator(aviators WingedAviatorRoles) Command {
+	games := make([]string, 0, len(wingedAviatorGames))
+	for _, game := range wingedAviatorGames {
+		games = append(games, game.name)
+	}
+	options := []*discordgo.ApplicationCommandOption{
+		{
+			Type:        discordgo.ApplicationCommandOptionUser,
+			Name:        "member",
+			Description: "The member",
+			Required:    true,
+		},
+		{
+			Type:        discordgo.ApplicationCommandOptionString,
+			Name:        "role",
+			Description: "The game whose Winged Aviator role this is",
+			Required:    true,
+			Choices:     stringChoices(games),
+		},
+	}
 	return Command{
 		Definition: &discordgo.ApplicationCommand{
 			Name:        wingedAviatorCommandName,
-			Description: "Give or take the Winged Aviator role",
+			Description: "Give or take a Winged Aviator role",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "add",
-					Description: "Make a member a winged aviator and give them the Winged Aviator role",
-					Options:     member,
+					Description: "Make a member a winged aviator and give them the role",
+					Options:     options,
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "remove",
-					Description: "End a member's status as a winged aviator and take the Winged Aviator role",
-					Options:     member,
+					Description: "End a member's status as a winged aviator and take the role",
+					Options:     options,
 				},
 			},
 		},
 		Handler: func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-			runWingedAviator(utils.NewSessionResponder(s), wa, i)
+			runWingedAviator(utils.NewSessionResponder(s), aviators, i)
 		},
 	}
 }
@@ -499,7 +554,7 @@ func WingedAviator(wa *WingedAviators) Command {
 // runWingedAviator is the /winged-aviator handler behind the responder
 // seam. It defers a reply only the invoker sees, so every outcome edits
 // that one reply.
-func runWingedAviator(r utils.InteractionResponder, wa *WingedAviators, interaction *discordgo.InteractionCreate) {
+func runWingedAviator(r utils.InteractionResponder, aviators WingedAviatorRoles, interaction *discordgo.InteractionCreate) {
 	if err := deferEphemeral(r, interaction); err != nil {
 		replyAckFailed(r, interaction, err)
 		return
@@ -507,14 +562,23 @@ func runWingedAviator(r utils.InteractionResponder, wa *WingedAviators, interact
 	username, discordID := interactionUsernameAndID(interaction)
 	utils.Info("🚀 Starting Winged Aviator", "command", wingedAviatorCommandName, "username", username, "discord_id", discordID)
 
-	if wa == nil {
-		utils.Warn("Winged Aviator refused, winged aviators off", "command", wingedAviatorCommandName, "discord_id", discordID)
-		refuse(r, interaction, wingedAviatorsOffRefusal)
-		return
-	}
 	data := interaction.ApplicationCommandData()
 	sub := data.Options[0]
-	target := sub.Options[0].UserValue(nil).ID
+	var target, game string
+	for _, o := range sub.Options {
+		switch o.Name {
+		case "member":
+			target = o.UserValue(nil).ID
+		case "role":
+			game = o.StringValue()
+		}
+	}
+	wa := aviators[game]
+	if wa == nil {
+		utils.Warn("Winged Aviator refused, winged aviators off", "command", wingedAviatorCommandName, "discord_id", discordID, "game", game)
+		refuse(r, interaction, "❌ Winged aviators for "+game+" "+aviatorsOffPhrase+" on this bot.")
+		return
+	}
 	by := Invoker{UserID: discordID, Username: username}
 	reason := "/" + wingedAviatorCommandName + " " + sub.Name + " by " + by.auditName()
 
@@ -542,8 +606,8 @@ func runWingedAviator(r utils.InteractionResponder, wa *WingedAviators, interact
 	utils.Info("✨ Done!", "command", wingedAviatorCommandName)
 }
 
-// add makes the member a winged aviator, as /winged-aviator add, once
-// their milpac is read. A member with no discharge gets the role, and
+// add makes the member a winged aviator of this game's role, as
+// /winged-aviator add, once their milpac is read. A member with no discharge gets the role, and
 // becomes one only if Discord gives it. One whose milpac shows a discharge
 // becomes one without it. holds is whether they hold the role as the
 // command resolved them.
@@ -565,102 +629,103 @@ func (w *WingedAviators) add(userID string, holds bool, reason string) aviatorRe
 	if already {
 		status = aviatorAlreadyPhrase
 	}
+	status += " for " + w.game.name
 	if read == milpacDischarged {
 		if holds {
 			if err := w.setRole(userID, false, reason); err != nil {
-				return aviatorReply{kind: aviatorFailed, text: "❌ " + aviatorNotTakenPhrase + " the Winged Aviator role from " +
-					mention(userID) + ", whose milpac shows a discharge, so nothing changed. " + wingedAviatorRoleRefusal(err)}
+				return aviatorReply{kind: aviatorFailed, text: "❌ " + aviatorNotTakenPhrase + " the " + w.game.roleName + " role from " +
+					mention(userID) + ", whose milpac shows a discharge, so nothing changed. " + w.roleRefusal(err)}
 			}
 		}
 		if !already && w.record(userID) != nil {
-			return aviatorNotSaved(userID)
+			return w.notSaved(userID)
 		}
 		return aviatorReply{text: "⚠️ " + mention(userID) + " " + status +
 			", but their milpac shows a discharge. " + aviatorReEnlistPhrase}
 	}
 	if !holds {
 		if err := w.setRole(userID, true, reason); err != nil {
-			outcome := "so they aren't a winged aviator."
+			outcome := "so they aren't a winged aviator for " + w.game.name + "."
 			if already {
-				outcome = "They're still a winged aviator."
+				outcome = "They're still a winged aviator for " + w.game.name + "."
 			}
 			return aviatorReply{kind: aviatorFailed, text: "❌ " + aviatorNotGivenPhrase + " " + mention(userID) +
-				" the Winged Aviator role, " + outcome + " " + wingedAviatorRoleRefusal(err)}
+				" the " + w.game.roleName + " role, " + outcome + " " + w.roleRefusal(err)}
 		}
 	}
 	if !already && w.record(userID) != nil {
-		return aviatorNotSaved(userID)
+		return w.notSaved(userID)
 	}
-	return aviatorReply{text: "✅ " + mention(userID) + " " + status + ", with the Winged Aviator role."}
+	return aviatorReply{text: "✅ " + mention(userID) + " " + status + ", with the " + w.game.roleName + " role."}
 }
 
-// remove ends the member's status, as /winged-aviator remove, and takes
-// the role when they hold it, so a later re-enlistment gives nothing back.
+// remove ends the member's status for this game's role, as /winged-aviator
+// remove, and takes the role when they hold it, so a later re-enlistment gives nothing back.
 // holds is whether they hold it as the command resolved them.
 func (w *WingedAviators) remove(userID string, holds bool, reason string) aviatorReply {
 	defer w.lock(userID)()
 	was := w.isWingedAviator(userID)
 	if !was && !holds {
-		return aviatorReply{text: "⚠️ " + mention(userID) + " " + aviatorNeitherPhrase +
-			" and doesn't hold the Winged Aviator role, so nothing changed."}
+		return aviatorReply{text: "⚠️ " + mention(userID) + " " + aviatorNeitherPhrase + " for " + w.game.name +
+			" and doesn't hold the " + w.game.roleName + " role, so nothing changed."}
 	}
 	if holds {
 		if err := w.setRole(userID, false, reason); err != nil {
-			return aviatorReply{kind: aviatorFailed, text: "❌ " + aviatorNotTakenPhrase + " the Winged Aviator role from " +
-				mention(userID) + ", so nothing changed. " + wingedAviatorRoleRefusal(err)}
+			return aviatorReply{kind: aviatorFailed, text: "❌ " + aviatorNotTakenPhrase + " the " + w.game.roleName + " role from " +
+				mention(userID) + ", so nothing changed. " + w.roleRefusal(err)}
 		}
 	}
 	if was && w.unrecord(userID) != nil {
-		return aviatorNotSaved(userID)
+		return w.notSaved(userID)
 	}
-	return aviatorReply{text: "✅ " + mention(userID) + " " + aviatorRemovedPhrase + "."}
+	return aviatorReply{text: "✅ " + mention(userID) + " " + aviatorRemovedPhrase + " for " + w.game.name + "."}
 }
 
-// aviatorNotSaved answers a command whose store write failed. The write
-// has gone to Sentry.
-func aviatorNotSaved(userID string) aviatorReply {
+// notSaved answers a command whose store write failed. The write has gone
+// to Sentry.
+func (w *WingedAviators) notSaved(userID string) aviatorReply {
 	return aviatorReply{kind: aviatorFailed, text: "❌ " + aviatorNotSavedPhrase + " " + mention(userID) +
-		"'s status as a winged aviator. Try again in a moment."}
+		"'s status as a winged aviator for " + w.game.name + ". Try again in a moment."}
 }
 
-// wingedAviatorRoleRefusal says why Discord refused a role change, in words
-// staff can act on. It never carries Discord's own answer.
-func wingedAviatorRoleRefusal(err error) string {
+// roleRefusal says why Discord refused a role change, in words staff can act
+// on. It never carries Discord's own answer.
+func (w *WingedAviators) roleRefusal(err error) string {
 	class := classifyDiscordError(err)
 	switch {
 	case class.MissingPermissions:
-		return "The bot needs Manage Roles, and its highest role above Winged Aviator."
+		return "The bot needs Manage Roles, and its highest role above " + w.game.roleName + "."
 	case class.NotFound:
 		return "Discord says they aren't in this server."
 	case class.ConfigFault:
-		return "Discord doesn't know the role, so WINGED_AVIATOR_ROLE_ID may name a deleted one."
+		return "Discord doesn't know the role, so " + w.game.roleEnv + " may name a deleted one."
 	case class.SystemFault:
 		return "Discord had a problem. Try again in a moment."
 	}
 	return "Discord rejected the change."
 }
 
-// record makes the member a winged aviator in the store.
+// record makes the member a winged aviator of this role in the store.
 func (w *WingedAviators) record(userID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), wingedAviatorStoreTimeout)
 	defer cancel()
-	if err := w.store.AddWingedAviator(ctx, w.guildID, userID); err != nil {
-		captureError("Winged aviator not recorded", err, "discord_id", userID)
+	if err := w.store.AddWingedAviator(ctx, w.guildID, w.roleID, userID); err != nil {
+		captureError("Winged aviator not recorded", err, "discord_id", userID, "role", w.game.roleName)
 		return err
 	}
-	utils.Info("Winged aviator recorded", "discord_id", userID)
+	utils.Info("Winged aviator recorded", "discord_id", userID, "role", w.game.roleName)
 	return nil
 }
 
-// unrecord ends the member's status in the store.
+// unrecord ends the member's status for this role in the store.
 func (w *WingedAviators) unrecord(userID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), wingedAviatorStoreTimeout)
 	defer cancel()
-	if err := w.store.RemoveWingedAviator(ctx, w.guildID, userID); err != nil {
-		captureError("Winged aviator status not ended", err, "discord_id", userID)
+	if err := w.store.RemoveWingedAviator(ctx, w.guildID, w.roleID, userID); err != nil {
+		captureError("Winged aviator status not ended", err, "discord_id", userID, "role", w.game.roleName)
 		return err
 	}
-	utils.Info("Winged aviator status ended", "discord_id", userID)
+	utils.Info("Winged aviator status ended", "discord_id", userID, "role", w.game.roleName)
 	return nil
 }
 

@@ -256,28 +256,28 @@ func (b boundedStore) EndFoxholeReport(ctx context.Context, id int64, diff json.
 	return b.store.EndFoxholeReport(ctx, id, diff)
 }
 
-func (b boundedStore) IsWingedAviator(ctx context.Context, guildID, userID string) (bool, error) {
+func (b boundedStore) IsWingedAviator(ctx context.Context, guildID, roleID, userID string) (bool, error) {
 	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
 	defer cancel()
-	return b.store.IsWingedAviator(ctx, guildID, userID)
+	return b.store.IsWingedAviator(ctx, guildID, roleID, userID)
 }
 
-func (b boundedStore) ListWingedAviators(ctx context.Context, guildID string) ([]string, error) {
+func (b boundedStore) ListWingedAviators(ctx context.Context, guildID, roleID string) ([]string, error) {
 	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
 	defer cancel()
-	return b.store.ListWingedAviators(ctx, guildID)
+	return b.store.ListWingedAviators(ctx, guildID, roleID)
 }
 
-func (b boundedStore) AddWingedAviator(ctx context.Context, guildID, userID string) error {
+func (b boundedStore) AddWingedAviator(ctx context.Context, guildID, roleID, userID string) error {
 	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
 	defer cancel()
-	return b.store.AddWingedAviator(ctx, guildID, userID)
+	return b.store.AddWingedAviator(ctx, guildID, roleID, userID)
 }
 
-func (b boundedStore) RemoveWingedAviator(ctx context.Context, guildID, userID string) error {
+func (b boundedStore) RemoveWingedAviator(ctx context.Context, guildID, roleID, userID string) error {
 	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
 	defer cancel()
-	return b.store.RemoveWingedAviator(ctx, guildID, userID)
+	return b.store.RemoveWingedAviator(ctx, guildID, roleID, userID)
 }
 
 func (b boundedStore) SavePagedList(ctx context.Context, list store.PagedList) (string, error) {

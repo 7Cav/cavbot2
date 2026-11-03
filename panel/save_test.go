@@ -337,24 +337,24 @@ func (s hookedStore) FoxholeReport(ctx context.Context, id int64) (store.Foxhole
 	return s.st.FoxholeReport(ctx, id)
 }
 
-func (s hookedStore) IsWingedAviator(ctx context.Context, guildID, userID string) (bool, error) {
+func (s hookedStore) IsWingedAviator(ctx context.Context, guildID, roleID, userID string) (bool, error) {
 	s.hook(ctx)
-	return s.st.IsWingedAviator(ctx, guildID, userID)
+	return s.st.IsWingedAviator(ctx, guildID, roleID, userID)
 }
 
-func (s hookedStore) ListWingedAviators(ctx context.Context, guildID string) ([]string, error) {
+func (s hookedStore) ListWingedAviators(ctx context.Context, guildID, roleID string) ([]string, error) {
 	s.hook(ctx)
-	return s.st.ListWingedAviators(ctx, guildID)
+	return s.st.ListWingedAviators(ctx, guildID, roleID)
 }
 
-func (s hookedStore) AddWingedAviator(ctx context.Context, guildID, userID string) error {
+func (s hookedStore) AddWingedAviator(ctx context.Context, guildID, roleID, userID string) error {
 	s.hook(ctx)
-	return s.st.AddWingedAviator(ctx, guildID, userID)
+	return s.st.AddWingedAviator(ctx, guildID, roleID, userID)
 }
 
-func (s hookedStore) RemoveWingedAviator(ctx context.Context, guildID, userID string) error {
+func (s hookedStore) RemoveWingedAviator(ctx context.Context, guildID, roleID, userID string) error {
 	s.hook(ctx)
-	return s.st.RemoveWingedAviator(ctx, guildID, userID)
+	return s.st.RemoveWingedAviator(ctx, guildID, roleID, userID)
 }
 
 func (s hookedStore) SavePagedList(ctx context.Context, list store.PagedList) (string, error) {

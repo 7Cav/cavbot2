@@ -14,17 +14,21 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// The winged aviators (#869, GLOSSARY.md): the Winged Aviator role follows
-// each winged aviator's milpac. These tests drive the runtime through its
+// The winged aviators (#869, GLOSSARY.md): each Winged Aviator role follows
+// its winged aviators' milpacs. These tests drive the runtime through its
 // command, its gateway handlers and its passes, with the 7Cav API, Discord's
 // role calls, the member list and the timers stood in for.
 
 const (
 	aviatorGuild      = "guild-wa"
 	wingedAviatorRole = "role-wa"
+	dcsAviatorRole    = "role-wa-dcs"
 	aviatorRankRole   = "role-rank"
 	aviatorRankRole2  = "role-rank-2"
 )
+
+// The two games: most tests run Arma's runtime alone.
+var armaGame, dcsGame = wingedAviatorGames[0], wingedAviatorGames[1]
 
 // The primary positions the 7Cav API serves, as its milpacs by Discord ID
 // answered them on 2026-10-25. A trooper on a roster other than Past
@@ -194,15 +198,22 @@ func newAviatorScene(t *testing.T) *aviatorScene {
 	return sc
 }
 
-// build makes a runtime over the scene's fakes with roleID configured.
+// build makes Arma's runtime over the scene's fakes with roleID configured.
 func (sc *aviatorScene) build(roleID string) *WingedAviators {
-	return NewWingedAviators(sc.guild, sc.list, sc.store, aviatorGuild, roleID)
+	return newWingedAviators(sc.guild, sc.list, sc.store, aviatorGuild, armaGame, roleID)
 }
 
-// seedAviator makes the member a winged aviator in the store.
+// buildRoles makes every game's runtime over the scene's fakes, the way main
+// does, with these role IDs in the environment.
+func (sc *aviatorScene) buildRoles(armaRoleID, dcsRoleID string) WingedAviatorRoles {
+	env := map[string]string{armaGame.roleEnv: armaRoleID, dcsGame.roleEnv: dcsRoleID}
+	return NewWingedAviatorRoles(sc.guild, sc.list, sc.store, aviatorGuild, func(key string) string { return env[key] })
+}
+
+// seedAviator makes the member a winged aviator of Arma's role in the store.
 func (sc *aviatorScene) seedAviator(id string) {
 	sc.t.Helper()
-	if err := sc.store.AddWingedAviator(context.Background(), aviatorGuild, id); err != nil {
+	if err := sc.store.AddWingedAviator(context.Background(), aviatorGuild, wingedAviatorRole, id); err != nil {
 		sc.t.Fatalf("seed winged aviator %s: %v", id, err)
 	}
 }
@@ -273,16 +284,18 @@ func TestWingedAviatorWhoRejoinsGetsTheRoleBackUnlessDischarged(t *testing.T) {
 // aviatorInvoker is the staff member who runs /winged-aviator in the tests.
 const aviatorInvoker = "999"
 
-// run runs /winged-aviator sub on target as aviatorInvoker, answered the
-// way Discord answers, and returns the reply only the invoker sees. A
+// run runs /winged-aviator sub for Arma on target as aviatorInvoker, answered
+// the way Discord answers, and returns the reply only the invoker sees. A
 // target in the server comes resolved with roles, as Discord's member
 // picker sends them, and one who isn't comes as a user alone.
 func (sc *aviatorScene) run(sub, target string, inServer bool, roles ...string) string {
 	sc.t.Helper()
-	return runAviatorCommand(sc.t, sc.wa, sub, target, inServer, roles...)
+	return runAviatorCommand(sc.t, WingedAviatorRoles{armaGame.name: sc.wa}, armaGame.name, sub, target, inServer, roles...)
 }
 
-func runAviatorCommand(t *testing.T, wa *WingedAviators, sub, target string, inServer bool, roles ...string) string {
+// runAviatorCommand sends role before member: Discord sends options in the
+// order the invoker filled them, whatever order the command declares.
+func runAviatorCommand(t *testing.T, aviators WingedAviatorRoles, game, sub, target string, inServer bool, roles ...string) string {
 	t.Helper()
 	resolved := &discordgo.ApplicationCommandInteractionDataResolved{
 		Users: map[string]*discordgo.User{target: {ID: target, Username: "name-" + target}},
@@ -298,13 +311,13 @@ func runAviatorCommand(t *testing.T, wa *WingedAviators, sub, target string, inS
 			Name: wingedAviatorCommandName,
 			Options: []*discordgo.ApplicationCommandInteractionDataOption{{
 				Name: sub, Type: discordgo.ApplicationCommandOptionSubCommand,
-				Options: []*discordgo.ApplicationCommandInteractionDataOption{userOption("member", target)},
+				Options: []*discordgo.ApplicationCommandInteractionDataOption{stringOption("role", game), userOption("member", target)},
 			}},
 			Resolved: resolved,
 		},
 	}}
 	f := &fakeResponder{RespondErrs: []error{nil, errAlreadyAcked}}
-	runWingedAviator(f, wa, interaction)
+	runWingedAviator(f, aviators, interaction)
 	return ephemeralRecordReply(t, f)
 }
 
@@ -638,7 +651,7 @@ func TestHourlyPassChecksEveryWingedAviator(t *testing.T) {
 		roleChangeCall{op: "remove", userID: "user-w", roleID: wingedAviatorRole, reason: wingedAviatorDischargeReason})
 }
 
-// With no Winged Aviator role configured, the command refuses as not set
+// With no role configured for a game, the command refuses as not set
 // up, and the bot tracks nobody: its startup pass records no holder and
 // gives no winged aviator the role.
 func TestWithNoRoleConfiguredTheCommandRefusesAndNothingIsTracked(t *testing.T) {
@@ -651,8 +664,9 @@ func TestWithNoRoleConfiguredTheCommandRefusesAndNothingIsTracked(t *testing.T) 
 	sc.api.setPosition("user-w", aviatorActive)
 	sc.api.setPosition("user-1", aviatorActive)
 
-	if reply := runAviatorCommand(t, off, "add", "user-1", true); reply != wingedAviatorsOffRefusal {
-		t.Errorf("reply = %q, want %q", reply, wingedAviatorsOffRefusal)
+	reply := runAviatorCommand(t, WingedAviatorRoles{armaGame.name: off}, armaGame.name, "add", "user-1", true)
+	if !strings.HasPrefix(reply, verdictFailed) || !strings.Contains(reply, aviatorsOffPhrase) {
+		t.Errorf("reply = %q, want a %s verdict saying %q", reply, verdictFailed, aviatorsOffPhrase)
 	}
 	off.Start()
 	sc.timers.firePending()
@@ -701,4 +715,83 @@ func TestAddOfADischargedHolderTakesTheRole(t *testing.T) {
 
 	wantReply(t, reply, verdictLeftOver, "user-1", aviatorReEnlistPhrase)
 	wantCommandRoleCall(t, sc.guild.roleCalls(), "remove", "user-1")
+}
+
+// Each game's role has its own winged aviators. add moves only the role the
+// command chose, and a hand removal of one role leaves the status for the
+// other, so a rejoin gives that one back.
+func TestEachGamesRoleHasItsOwnWingedAviators(t *testing.T) {
+	sc := newAviatorScene(t)
+	sc.api.setPosition("user-1", aviatorActive)
+	aviators := sc.buildRoles(wingedAviatorRole, dcsAviatorRole)
+
+	reply := runAviatorCommand(t, aviators, dcsGame.name, "add", "user-1", true, wingedAviatorRole)
+
+	wantReply(t, reply, verdictDone, "user-1", aviatorAddedPhrase)
+	if !strings.Contains(reply, dcsGame.roleName) {
+		t.Errorf("reply = %q, want it to name %q", reply, dcsGame.roleName)
+	}
+	calls := sc.guild.roleCalls()
+	if len(calls) != 1 || calls[0].op != "add" || calls[0].roleID != dcsAviatorRole {
+		t.Fatalf("role calls = %+v, want the DCS role's add alone", calls)
+	}
+
+	both := []string{wingedAviatorRole, dcsAviatorRole}
+	if reply := runAviatorCommand(t, aviators, armaGame.name, "add", "user-1", true, both...); !strings.Contains(reply, aviatorAddedPhrase) {
+		t.Fatalf("reply = %q, want Arma's add to say %q though they hold both roles", reply, aviatorAddedPhrase)
+	}
+	wantRoleCalls(t, "add of a role they hold", sc.guild.roleCalls())
+
+	for _, w := range aviators {
+		w.memberUpdated(&discordgo.GuildMemberUpdate{
+			Member:       aviatorMember("user-1", dcsAviatorRole),
+			BeforeUpdate: aviatorMember("user-1", both...),
+		})
+	}
+	wantRoleCalls(t, "hand removal of Arma's role", sc.guild.roleCalls())
+
+	for _, w := range aviators {
+		w.memberJoined(&discordgo.GuildMemberAdd{Member: aviatorMember("user-1")})
+	}
+	wantRoleCalls(t, "rejoin", sc.guild.roleCalls(),
+		roleChangeCall{op: "add", userID: "user-1", roleID: dcsAviatorRole, reason: wingedAviatorRejoinReason})
+}
+
+// The startup pass records each holder under the role they hold, and a
+// discharge takes every role of a member who holds both.
+func TestStartupChecksEachGamesRole(t *testing.T) {
+	sc := newAviatorScene(t)
+	sc.listMember("user-d", wingedAviatorRole, dcsAviatorRole)
+	sc.api.setPosition("user-d", aviatorDischarged)
+	sc.listMember("user-a", dcsAviatorRole)
+	sc.api.setPosition("user-a", aviatorActive)
+	aviators := sc.buildRoles(wingedAviatorRole, dcsAviatorRole)
+
+	aviators.Start()
+
+	wantRoleCalls(t, "startup", sc.guild.roleCalls(),
+		roleChangeCall{op: "remove", userID: "user-d", roleID: wingedAviatorRole, reason: wingedAviatorDischargeReason},
+		roleChangeCall{op: "remove", userID: "user-d", roleID: dcsAviatorRole, reason: wingedAviatorDischargeReason})
+
+	for _, w := range aviators {
+		w.memberJoined(&discordgo.GuildMemberAdd{Member: aviatorMember("user-a")})
+	}
+	wantRoleCalls(t, "the DCS holder's rejoin", sc.guild.roleCalls(),
+		roleChangeCall{op: "add", userID: "user-a", roleID: dcsAviatorRole, reason: wingedAviatorRejoinReason})
+}
+
+// A game with no role configured refuses alone: the other game's role works.
+func TestOneGameWithNoRoleConfiguredLeavesTheOtherWorking(t *testing.T) {
+	sc := newAviatorScene(t)
+	sc.api.setPosition("user-1", aviatorActive)
+	aviators := sc.buildRoles("", dcsAviatorRole)
+
+	reply := runAviatorCommand(t, aviators, armaGame.name, "add", "user-1", true)
+	if !strings.HasPrefix(reply, verdictFailed) || !strings.Contains(reply, aviatorsOffPhrase) {
+		t.Errorf("Arma's reply = %q, want a %s verdict saying %q", reply, verdictFailed, aviatorsOffPhrase)
+	}
+	wantRoleCalls(t, "Arma's add", sc.guild.roleCalls())
+
+	reply = runAviatorCommand(t, aviators, dcsGame.name, "add", "user-1", true)
+	wantReply(t, reply, verdictDone, "user-1", aviatorAddedPhrase)
 }
