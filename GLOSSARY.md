@@ -305,18 +305,20 @@ message.
 
 ## Winged aviators
 
-The Discord role that marks the regiment's winged aviators, and the
-`/winged-aviator` command aviation staff use to give and take it. Discord's
-own settings decide what the role unlocks.
+The Discord roles that mark the regiment's winged aviators, one for Arma and
+one for DCS, and the `/winged-aviator` command aviation staff use to give and
+take them. Discord's own settings decide what each role unlocks.
 
 **Winged Aviator role**:
-The Discord role a winged aviator holds while they are in the server and
-their milpac shows no discharge.
+Winged Aviator - Arma or Winged Aviator - DCS, the Discord role a winged
+aviator of that game holds while they are in the server and their milpac
+shows no discharge.
 _Avoid_: wings, aviator role.
 
 **Winged aviator**:
-A member someone gave the Winged Aviator role, with `/winged-aviator` or by
-hand. A discharge or leaving the server takes only the role off, and the
+A member someone gave a Winged Aviator role, with `/winged-aviator` or by
+hand. The status belongs to that role, so a member can have it for both
+games. A discharge or leaving the server takes only the role off, and the
 status ends when a person removes the role.
 _Avoid_: pilot, approved aviator.
 

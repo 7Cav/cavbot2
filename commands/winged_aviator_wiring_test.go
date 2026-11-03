@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
@@ -17,21 +18,26 @@ import (
 // on the path main takes.
 func TestWingedAviatorsHearTheSessionsMemberEvents(t *testing.T) {
 	cases := []struct {
-		name   string
-		roleID string
-		want   []roleChangeCall
+		name     string
+		armaRole string
+		dcsRole  string
+		want     []roleChangeCall
 	}{
-		{"configured", wingedAviatorRole, []roleChangeCall{
+		{"configured", wingedAviatorRole, dcsAviatorRole, []roleChangeCall{
 			{op: "add", userID: "user-1", roleID: wingedAviatorRole, reason: wingedAviatorRejoinReason},
+			{op: "add", userID: "user-1", roleID: dcsAviatorRole, reason: wingedAviatorRejoinReason},
 		}},
-		{"no role configured", "", nil},
+		{"no role configured", "", "", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			sc := newAviatorScene(t)
 			sc.seedAviator("user-1")
+			if err := sc.store.AddWingedAviator(context.Background(), aviatorGuild, dcsAviatorRole, "user-1"); err != nil {
+				t.Fatalf("seed the DCS winged aviator: %v", err)
+			}
 			sc.api.setPosition("user-1", aviatorActive)
-			wa := sc.build(tc.roleID)
+			aviators := sc.buildRoles(tc.armaRole, tc.dcsRole)
 
 			gw := newFakeGateway(t)
 			api := &fakeDiscordAPI{answer: func(r *http.Request, _ []byte) (int, []byte) {
@@ -45,7 +51,7 @@ func TestWingedAviatorsHearTheSessionsMemberEvents(t *testing.T) {
 			// Handlers run one after another on the event loop, in the order
 			// they were added, so heard closes once the runtime's are done.
 			dg.SyncEvents = true
-			wa.Listen(dg)
+			aviators.Listen(dg)
 			heard := make(chan struct{})
 			dg.AddHandler(func(_ *discordgo.Session, _ *discordgo.GuildMemberAdd) { close(heard) })
 

@@ -242,7 +242,7 @@ func main() {
 		tempVC    *commands.TempVC
 		foxhole   *commands.FoxholeRuntime
 		recording *commands.RecordingRuntime
-		aviators  *commands.WingedAviators
+		aviators  commands.WingedAviatorRoles
 		webPanel  *panel.Panel
 	)
 	// Built before dg.Open(), so the Connect event tells it the gateway
@@ -273,10 +273,10 @@ func main() {
 		// Its voice events and channel deletes stop a recording by itself
 		// (#388): the last human leaving, or the recorder leaving.
 		recording.Listen(dg)
-		// Winged aviators (#869) keep their list in the store and check it
-		// against the member list. With WINGED_AVIATOR_ROLE_ID unset there is
-		// no runtime, and the bot tracks nobody.
-		aviators = commands.NewWingedAviators(commands.NewSessionGuildManager(dg), discordManager, botStore, GuildID, os.Getenv("WINGED_AVIATOR_ROLE_ID"))
+		// Winged aviators (#869) keep a list per game's role in the store and
+		// check it against the member list. A game with its role ID unset has
+		// no runtime, and the bot tracks nobody for it.
+		aviators = commands.NewWingedAviatorRoles(commands.NewSessionGuildManager(dg), discordManager, botStore, GuildID, os.Getenv)
 		// Its member events, registered before dg.Open() like the others, so
 		// none is missed: a role change or a rejoin moves the role.
 		aviators.Listen(dg)
