@@ -741,6 +741,9 @@ func TestEachGamesRoleHasItsOwnWingedAviators(t *testing.T) {
 		t.Fatalf("reply = %q, want Arma's add to say %q though they hold both roles", reply, aviatorAddedPhrase)
 	}
 	wantRoleCalls(t, "add of a role they hold", sc.guild.roleCalls())
+	if is, err := sc.store.IsWingedAviator(context.Background(), aviatorGuild, wingedAviatorRole, "user-1"); err != nil || !is {
+		t.Fatalf("Arma status = %v, %v, want it recorded though they already hold the role", is, err)
+	}
 
 	for _, w := range aviators {
 		w.memberUpdated(&discordgo.GuildMemberUpdate{
