@@ -10,7 +10,7 @@ require (
 	github.com/getsentry/sentry-go v0.50.0
 	github.com/go-logfmt/logfmt v0.6.1
 	github.com/go-resty/resty/v2 v2.17.2
-	github.com/jackc/pgx/v5 v5.11.0
+	github.com/jackc/pgx/v5 v5.12.0
 	github.com/joho/godotenv v1.5.1
 	github.com/pressly/goose/v3 v3.29.0
 	github.com/thomas-vilte/dave-go v0.5.1
@@ -37,7 +37,7 @@ require (
 require (
 	github.com/gorilla/websocket v1.5.3
 	golang.org/x/crypto v0.58.0 // indirect
-	golang.org/x/net v0.61.0
+	golang.org/x/net v0.62.0
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0
 )
