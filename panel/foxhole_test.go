@@ -263,7 +263,6 @@ func newFoxholeWorld(t *testing.T) *testWorld {
 func newFoxholeWorldWith(t *testing.T, wrap func(store.Store) store.Store) *testWorld {
 	t.Helper()
 	t.Setenv("FOXHOLE_ROLE_BASE_NAME", "")
-	t.Setenv("WARDEN_ROLE_BASE_NAME", "")
 	fake := store.NewFake()
 	watch := endWatch{Store: wrap(fake), ended: make(chan struct{}, 16)}
 	pause := installPauseClock(t)

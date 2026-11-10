@@ -157,10 +157,8 @@ func ackRunOptions() map[string][]*discordgo.ApplicationCommandInteractionDataOp
 	return map[string][]*discordgo.ApplicationCommandInteractionDataOption{
 		"milpac":                   {userOption("user", "123456789012345678")},
 		"foxhole":                  foxhole,
-		"warden":                   foxhole,
 		"enlist":                   nil,
 		"foxhole-bulkadd-internal": roster,
-		"warden-bulkadd-internal":  roster,
 		"zulu":                     nil,
 		"s6-it-check":              nil,
 		"awol":                     {stringOption("position", "S1")},
@@ -198,7 +196,7 @@ func refusalRuns(t *testing.T) []registeredRun {
 		run("bad date", "zulu", "", stringOption("time", "2300"), stringOption("date", "BADDATE")),
 		run("bad time", "zulu", "", stringOption("time", "9999")),
 	}
-	for _, name := range []string{"foxhole", "warden"} {
+	for _, name := range []string{"foxhole"} {
 		dm := run("outside a guild", name, "",
 			stringOption("command", "add"), stringOption("flag", "internal"), stringOption("discordname", "someone"))
 		dm.interaction = outsideGuild(dm.interaction)
@@ -213,7 +211,7 @@ func refusalRuns(t *testing.T) []registeredRun {
 				stringOption("command", "add"), stringOption("flag", "internal"), stringOption("discordname", "someone")),
 		)
 	}
-	for _, name := range []string{"foxhole-bulkadd-internal", "warden-bulkadd-internal"} {
+	for _, name := range []string{"foxhole-bulkadd-internal"} {
 		dm := run("outside a guild", name, "", stringOption("unit", validatedInternalUnits[0].Value))
 		dm.interaction = outsideGuild(dm.interaction)
 		runs = append(runs, dm,

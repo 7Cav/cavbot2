@@ -129,14 +129,11 @@ func replyAckFailed(r utils.InteractionResponder, interaction *discordgo.Interac
 // member sees, sent through utils.HandleError as the interaction's first
 // response. That response acknowledges the interaction, so refuse sends it
 // through acknowledge. A 10062 is then a missed acknowledgement: refuse
-// reports it as captureMissedAck does, with any further context in kv, and
-// returns true, so the caller sends nothing more on the interaction.
+// reports it as captureMissedAck does, with any further context in kv.
 // HandleError handles any other error, which reaches it as Discord's own
 // error.
-func refuse(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, message string, kv ...any) (missedAck bool) {
-	responder := &errorReplyResponder{InteractionResponder: r, interaction: interaction, kv: kv}
-	utils.HandleError(responder, interaction, message)
-	return responder.missedAck
+func refuse(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, message string, kv ...any) {
+	utils.HandleError(&errorReplyResponder{InteractionResponder: r, interaction: interaction, kv: kv}, interaction, message)
 }
 
 // replyError sends message as a slash command's error reply when the reply
@@ -151,13 +148,12 @@ func replyError(r utils.InteractionResponder, interaction *discordgo.Interaction
 
 // errorReplyResponder sends an error reply from refuse or replyError
 // through acknowledge. It reports a 10062 as a missed acknowledgement, with
-// refuse's kv, and sets missedAck, rather than hand it to HandleError, which
+// refuse's kv, rather than hand it to HandleError, which
 // would report it as an error reply that never arrived.
 type errorReplyResponder struct {
 	utils.InteractionResponder
 	interaction *discordgo.InteractionCreate
 	kv          []any
-	missedAck   bool
 }
 
 func (rr *errorReplyResponder) InteractionRespond(_ *discordgo.Interaction, resp *discordgo.InteractionResponse) error {
@@ -167,7 +163,6 @@ func (rr *errorReplyResponder) InteractionRespond(_ *discordgo.Interaction, resp
 		return nil
 	case isUnknownInteraction(err):
 		captureMissedAck(rr.interaction, err, rr.kv...)
-		rr.missedAck = true
 		return nil
 	default:
 		return errors.Unwrap(err)

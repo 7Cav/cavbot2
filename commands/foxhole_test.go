@@ -1,7 +1,12 @@
 package commands
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -676,4 +681,256 @@ func TestRunFoxhole_AddNameQueryLengthLimit(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The commands carry the options managers type.
+func TestFoxholeCommandsRegisterWithTheirOptions(t *testing.T) {
+	defs := registeredDefinitions()
+
+	for name, options := range map[string][]string{
+		"foxhole":                  {"command", "flag", "discordname"},
+		"foxhole-bulkadd-internal": {"unit"},
+	} {
+		def, ok := defs[name]
+		if !ok {
+			t.Errorf("/%s is not registered", name)
+			continue
+		}
+		for _, option := range options {
+			if !slices.ContainsFunc(def.Options, func(opt *discordgo.ApplicationCommandOption) bool { return opt.Name == option }) {
+				t.Errorf("/%s has no %q option", name, option)
+			}
+		}
+	}
+}
+
+// registeredDefinitions returns the production registry's definitions by name.
+func registeredDefinitions() map[string]*discordgo.ApplicationCommand {
+	defs := map[string]*discordgo.ApplicationCommand{}
+	for _, def := range NewRegistry(nil, nil, nil, nil, nil).GetCommands() {
+		defs[def.Name] = def
+	}
+	return defs
+}
+
+// foxholeGuildAPI answers the REST calls a Foxhole command makes over a real
+// session: the guild holds the default Internal role, and one member.
+func foxholeGuildAPI(t *testing.T) *fakeDiscordAPI {
+	t.Helper()
+	roles, err := json.Marshal([]*discordgo.Role{guildRole("r-int", defaultInternalRoleName)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := json.Marshal(&discordgo.Member{User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &fakeDiscordAPI{answer: func(r *http.Request, _ []byte) (int, []byte) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/roles"):
+			return http.StatusOK, roles
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/members/"):
+			return http.StatusOK, member
+		case r.Method == http.MethodPatch:
+			return http.StatusOK, []byte(`{"id":"message-1"}`)
+		default:
+			return http.StatusNoContent, nil
+		}
+	}}
+}
+
+// sessionSlash is a slash command interaction as Discord delivers it to the
+// dispatcher, under the given registered name.
+func sessionSlash(name string, opts ...*discordgo.ApplicationCommandInteractionDataOption) *discordgo.InteractionCreate {
+	return &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
+		ID:      "1",
+		AppID:   "app-1",
+		Token:   "token-1",
+		Type:    discordgo.InteractionApplicationCommand,
+		GuildID: "guild-1",
+		Member:  &discordgo.Member{User: &discordgo.User{ID: "999", Username: "tester"}},
+		Data:    discordgo.ApplicationCommandInteractionData{Name: name, Options: opts},
+	}}
+}
+
+// roleGrants returns the member role grants a fake API received, as
+// guild/member/role path suffixes.
+func roleGrants(api *fakeDiscordAPI) []string {
+	var grants []string
+	for _, req := range api.received() {
+		if req.method != http.MethodPut {
+			continue
+		}
+		if at := strings.Index(req.path, "/guilds/"); at >= 0 {
+			grants = append(grants, req.path[at:])
+		}
+	}
+	return grants
+}
+
+// Each command dispatches the way main.go's dispatcher reaches every
+// command, by its registered name, grants the roles it names, and logs one
+// telemetry line under that name.
+//
+// Regression pin for #453: the registry here has no Foxhole runtime, as on
+// a host with no bot store, and the commands refuse nothing.
+func TestRegisteredFoxholeCommandsGrantTheirRoles(t *testing.T) {
+	serveRosterAndProfiles(t, liteRoster(
+		liteMember("Trooper.A", "111111111111111111"),
+		liteMember("Trooper.B", "222222222222222222"),
+	), http.StatusOK, nil)
+
+	cases := []struct {
+		name       string
+		options    []*discordgo.ApplicationCommandInteractionDataOption
+		wantGrants []string
+	}{
+		{
+			name: "foxhole",
+			options: []*discordgo.ApplicationCommandInteractionDataOption{
+				stringOption("command", "add"),
+				stringOption("flag", "internal"),
+				stringOption("discordname", "123456789012345678"),
+			},
+			wantGrants: []string{"/guilds/guild-1/members/123456789012345678/roles/r-int"},
+		},
+		{
+			name:    "foxhole-bulkadd-internal",
+			options: []*discordgo.ApplicationCommandInteractionDataOption{stringOption("unit", "D/ACD")},
+			wantGrants: []string{
+				"/guilds/guild-1/members/111111111111111111/roles/r-int",
+				"/guilds/guild-1/members/222222222222222222/roles/r-int",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, ok := NewRegistry(nil, nil, nil, nil, nil).GetHandler(tc.name)
+			if !ok {
+				t.Fatalf("no handler registered for /%s", tc.name)
+			}
+			api := foxholeGuildAPI(t)
+			lines := captureTelemetryLines(t)
+
+			handler(stateSession(t, api), sessionSlash(tc.name, tc.options...))
+
+			grants := roleGrants(api)
+			slices.Sort(grants)
+			if !reflect.DeepEqual(grants, tc.wantGrants) {
+				t.Errorf("/%s granted %v, want %v", tc.name, grants, tc.wantGrants)
+			}
+			if telemetry := lines(); len(telemetry) != 1 || telemetry[0]["command"] != tc.name {
+				t.Errorf("/%s telemetry records = %v, want one with command=%s", tc.name, telemetry, tc.name)
+			}
+		})
+	}
+}
+
+// slashNamed builds a guild interaction registered under name, the way the
+// dispatcher hands it to a run function.
+func slashNamed(name string, opts ...*discordgo.ApplicationCommandInteractionDataOption) *discordgo.InteractionCreate {
+	i := foxholeInteraction("guild-1", opts...)
+	i.Data = discordgo.ApplicationCommandInteractionData{Name: name, Options: opts}
+	return i
+}
+
+// trooperGuild is a guild with the default Internal role and one member
+// reachable by ID.
+func trooperGuild() *fakeGuildManager {
+	return &fakeGuildManager{
+		roles:       []*discordgo.Role{guildRole("r-int", defaultInternalRoleName)},
+		membersByID: map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
+		searchResults: map[string][]*discordgo.Member{
+			"good": {{User: &discordgo.User{ID: "111", Username: "good"}}},
+		},
+	}
+}
+
+// unsetEnv unsets key for the rest of the test and restores it afterwards.
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	t.Setenv(key, "")
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// liveRoleGuild holds the Internal role under the live name and under the
+// name it had before the rename, and one member reachable by ID.
+func liveRoleGuild() *fakeGuildManager {
+	return &fakeGuildManager{
+		roles: []*discordgo.Role{
+			guildRole("r-old-default", "Verified Warden Internal"),
+			guildRole("r-live", "Verified Foxhole Internal"),
+		},
+		membersByID: map[string]*discordgo.Member{"123456789012345678": {User: &discordgo.User{ID: "123456789012345678", Username: "trooper"}}},
+	}
+}
+
+// grantedRoleIDs runs /foxhole add internal against gm and returns the role
+// IDs the member was granted.
+func grantedRoleIDs(t *testing.T, gm *fakeGuildManager) []string {
+	t.Helper()
+	runFoxhole(&fakeResponder{}, gm, nil, slashNamed("foxhole",
+		stringOption("command", "add"), stringOption("flag", "internal"),
+		stringOption("discordname", "123456789012345678")))
+
+	var ids []string
+	for _, add := range gm.roleAddCalls() {
+		ids = append(ids, add.roleID)
+	}
+	return ids
+}
+
+// The host never receives the repo's compose file, so a host that passes no
+// base name runs on the default, which matches the live roles.
+func TestFoxholeRoleBaseNameDefaultsToTheLiveRoleNames(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(t *testing.T)
+	}{
+		{"unset", func(t *testing.T) { unsetEnv(t, "FOXHOLE_ROLE_BASE_NAME") }},
+		{"empty", func(t *testing.T) { t.Setenv("FOXHOLE_ROLE_BASE_NAME", "") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.set(t)
+
+			if got := grantedRoleIDs(t, liveRoleGuild()); !reflect.DeepEqual(got, []string{"r-live"}) {
+				t.Errorf("granted %v, want [r-live], the role named Verified Foxhole Internal", got)
+			}
+		})
+	}
+}
+
+// Sentry promotes a capture's command to a tag, and per-command error rate
+// reads it, so a Foxhole capture names its registered command.
+func TestFoxholeCapturesNameTheirCommand(t *testing.T) {
+	add := []*discordgo.ApplicationCommandInteractionDataOption{
+		stringOption("command", "add"), stringOption("flag", "internal"),
+		stringOption("discordname", "123456789012345678"),
+	}
+	name := "foxhole"
+	t.Run(name+" role lookup fault", func(t *testing.T) {
+		rec := &captureRecorder{}
+		rec.install(t)
+		gm := trooperGuild()
+		gm.RolesErrs = []error{restError(http.StatusInternalServerError, 0, rawBodyMarker)}
+
+		runFoxhole(&fakeResponder{}, gm, nil, slashNamed(name, add...))
+
+		if got, _ := kvValue(rec.lastKV, "command"); rec.count != 1 || got != name {
+			t.Errorf("captures = %d, command = %v; want one capture with command=%s", rec.count, got, name)
+		}
+	})
+	t.Run(name+" lost reply", func(t *testing.T) {
+		rec := &captureRecorder{}
+		rec.install(t)
+		f := &fakeResponder{EditErrs: []error{errors.New("503 service unavailable")}}
+
+		runFoxhole(f, trooperGuild(), nil, slashNamed(name, add...))
+
+		if got, _ := kvValue(rec.lastKV, "command"); rec.count != 1 || got != name {
+			t.Errorf("captures = %d, command = %v; want one capture with command=%s", rec.count, got, name)
+		}
+	})
 }

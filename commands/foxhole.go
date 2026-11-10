@@ -25,45 +25,16 @@ const foxholeRoleBaseNameDefault = "Verified Foxhole"
 // composed from.
 const foxholeRoleBaseNameEnv = "FOXHOLE_ROLE_BASE_NAME"
 
-// foxholeRoleBaseNameOldEnv is foxholeRoleBaseNameEnv's name before the
-// rename. A host that still passes it keeps working until the cleanup in
-// #455 drops it.
-const foxholeRoleBaseNameOldEnv = "WARDEN_ROLE_BASE_NAME"
-
 // foxholeRoleBaseName returns the configured base name, or the default when
-// neither variable is set. Read at the point of use, as s3aar.go reads
+// the variable is unset or empty. Read at the point of use, as s3aar.go reads
 // BM_TOKEN.
 func foxholeRoleBaseName() string {
-	name, _ := resolveFoxholeRoleBaseName()
-	return name
+	return cmp.Or(os.Getenv(foxholeRoleBaseNameEnv), foxholeRoleBaseNameDefault)
 }
 
-// resolveFoxholeRoleBaseName returns the base name and whether it came from
-// the old variable. The new variable wins when set; unset and empty both
-// fall through.
-func resolveFoxholeRoleBaseName() (name string, fromOldEnv bool) {
-	if configured := os.Getenv(foxholeRoleBaseNameEnv); configured != "" {
-		return configured, false
-	}
-	if configured := os.Getenv(foxholeRoleBaseNameOldEnv); configured != "" {
-		return configured, true
-	}
-	return foxholeRoleBaseNameDefault, false
-}
-
-// LogFoxholeRoleBaseName logs the resolved base name, once, at startup. When
-// the name came from the old variable it warns first, naming the variable to
-// rename before the cleanup drops it. Commands resolve the name on every run
-// and never warn, so the warning shows once per start.
+// LogFoxholeRoleBaseName logs the resolved base name, once, at startup.
 func LogFoxholeRoleBaseName() {
-	name, fromOldEnv := resolveFoxholeRoleBaseName()
-	if fromOldEnv {
-		utils.Warn("Foxhole role base name read from the old variable; rename it",
-			"variable", foxholeRoleBaseNameOldEnv,
-			"rename_to", foxholeRoleBaseNameEnv,
-			"cleanup_on_or_after", foxholeRenameCutoff.Format(time.DateOnly))
-	}
-	utils.Info("Foxhole role base name resolved", "base_name", name)
+	utils.Info("Foxhole role base name resolved", "base_name", foxholeRoleBaseName())
 }
 
 // maxBulkAddEntries caps how many comma-separated entries a single /foxhole
@@ -135,17 +106,12 @@ func runFoxhole(
 	interaction *discordgo.InteractionCreate,
 ) {
 	// A purge runs on in the background, so it gives the one-action-at-a-time
-	// rule back and sends its own note once its summary is out. A missed
-	// acknowledgement leaves no interaction to send the note on.
-	purging, missedAck := false, false
+	// rule back itself.
+	purging := false
 	end := func() {}
 	defer func() {
-		if purging {
-			return
-		}
-		end()
-		if !missedAck {
-			sendRenameNote(r, interaction, "warden", "foxhole")
+		if !purging {
+			end()
 		}
 	}()
 
@@ -157,7 +123,7 @@ func runFoxhole(
 	// otherwise hit (#177).
 	guildID := interaction.GuildID
 	if guildID == "" {
-		missedAck = refuse(r, interaction, "❌ This command can only be used in a server (guild).")
+		refuse(r, interaction, "❌ This command can only be used in a server (guild).")
 		return
 	}
 
@@ -170,7 +136,7 @@ func runFoxhole(
 
 	subcommand, ok := getOptionString(commandData, "command")
 	if !ok || !slices.Contains(foxholeSubcommands, subcommand) {
-		missedAck = refuse(
+		refuse(
 			r,
 			interaction,
 			"❌ Invalid /"+commandNameOf(interaction)+" command; must be "+strings.Join(foxholeSubcommands, ", "),
@@ -180,7 +146,7 @@ func runFoxhole(
 
 	roleScope, ok := getOptionString(commandData, "flag")
 	if !ok || !slices.Contains(foxholeRoleScopes, roleScope) {
-		missedAck = refuse(
+		refuse(
 			r,
 			interaction,
 			"❌ Missing or invalid flag argument; must be 'internal', 'external', or 'both'",
@@ -197,7 +163,7 @@ func runFoxhole(
 	query = strings.TrimSpace(query)
 
 	if subcommand != "purge" && query == "" {
-		missedAck = refuse(r, interaction, "❌ Missing discordname argument for this command", "subcommand", subcommand)
+		refuse(r, interaction, "❌ Missing discordname argument for this command", "subcommand", subcommand)
 		return
 	}
 
@@ -208,13 +174,12 @@ func runFoxhole(
 	run := foxholeCommandRun(interaction, subcommand)
 	var refused *RunningAction
 	if end, refused = fx.startCommand(run); refused != nil {
-		missedAck = refuseForPageAction(r, interaction, run, *refused, "subcommand", subcommand)
+		refuseForPageAction(r, interaction, run, *refused, "subcommand", subcommand)
 		return
 	}
 
 	// Every subcommand answers in one reply only its member sees.
 	if err := deferEphemeral(r, interaction); err != nil {
-		missedAck = isUnknownInteraction(err)
 		replyAckFailed(r, interaction, err, "subcommand", subcommand)
 		return
 	}
@@ -240,11 +205,11 @@ func runFoxhole(
 // while a Foxhole action started on the Foxhole page runs, with a reply only
 // its member sees naming the action, who started it and how far it has
 // got. The command changes nothing. The reply goes through refuse, with
-// kv, and refuseForPageAction returns what refuse returns.
-func refuseForPageAction(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, run CommandRun, action RunningAction, kv ...any) (missedAck bool) {
+// kv.
+func refuseForPageAction(r utils.InteractionResponder, interaction *discordgo.InteractionCreate, run CommandRun, action RunningAction, kv ...any) {
 	utils.Info("Foxhole command refused: a page action is running", "command", commandNameOf(interaction),
 		"typed", run.Command, "action", action.Name, "started_by", action.StartedBy)
-	return refuse(r, interaction, fmt.Sprintf(
+	refuse(r, interaction, fmt.Sprintf(
 		"❌ A Foxhole action is running on the Foxhole page: %s, started by %s, %d of %d done. Nothing changed. Try again when it ends.",
 		action.Name, action.StartedBy, action.Done, action.Total), kv...)
 }
@@ -469,7 +434,6 @@ func handleFoxholePurge(
 		defer utils.RecoverPanic("foxhole-purge")
 		defer end()
 		runFoxholePurge(r, gm, interaction, guildID, roleScope)
-		sendRenameNote(r, interaction, "warden", "foxhole")
 	}()
 }
 
