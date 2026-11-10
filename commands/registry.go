@@ -34,10 +34,8 @@ func NewRegistry(tempVC *TempVC, foxhole *FoxholeRuntime, recording *RecordingRu
 	r.RegisterCommands(
 		Milpac(),
 		Foxhole(foxhole),
-		Warden(foxhole),
 		Enlist(),
 		FoxholeBulkAddInternal(foxhole),
-		WardenBulkAddInternal(foxhole),
 		Zulu(),
 		S6ITCheck(),
 		Awol(st),

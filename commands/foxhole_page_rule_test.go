@@ -124,7 +124,6 @@ func newPageRuntimeOver(t *testing.T, st store.Store) (*FoxholeRuntime, *pageHol
 func newPageRuntimeWith(t *testing.T, st store.Store, wrap func(*pageHold) FoxholeRoleWriter) (*FoxholeRuntime, *pageHold) {
 	t.Helper()
 	t.Setenv(foxholeRoleBaseNameEnv, "")
-	t.Setenv(foxholeRoleBaseNameOldEnv, "")
 	hold := &pageHold{entered: make(chan string, 16), release: make(chan struct{}), free: make(chan struct{})}
 	t.Cleanup(hold.open)
 	fx, err := NewFoxholeRuntime(pageGuild{}, wrap(hold), st, "guild-1")
@@ -415,7 +414,7 @@ func heldAddGuild(t *testing.T) (GuildManager, chan struct{}, chan struct{}) {
 }
 
 // The registry hands the Foxhole runtime to each Foxhole command it
-// registers, under the new names and the old ones: dispatched the way
+// registers: dispatched the way
 // main.go's dispatcher reaches them, each is refused while a page action
 // runs, and no role grant reaches Discord.
 func TestRegisteredFoxholeCommandsAreRefusedWhileAPageActionRuns(t *testing.T) {
@@ -423,7 +422,7 @@ func TestRegisteredFoxholeCommandsAreRefusedWhileAPageActionRuns(t *testing.T) {
 		stringOption("flag", "internal"), stringOption("discordname", "123456789012345678")}
 	roster := []*discordgo.ApplicationCommandInteractionDataOption{stringOption("unit", "D/ACD")}
 	for name, opts := range map[string][]*discordgo.ApplicationCommandInteractionDataOption{
-		"foxhole": add, "warden": add, "foxhole-bulkadd-internal": roster, "warden-bulkadd-internal": roster,
+		"foxhole": add, "foxhole-bulkadd-internal": roster,
 	} {
 		t.Run(name, func(t *testing.T) {
 			serveRoleCommandRoster(t)

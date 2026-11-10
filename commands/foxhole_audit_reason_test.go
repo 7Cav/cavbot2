@@ -34,7 +34,7 @@ func assertReasonNames(t *testing.T, write guildWrite, names ...string) {
 }
 
 // Each role change an add, a removal or a bulkadd makes names the command
-// as typed, under whichever name it ran, and the member who ran it.
+// as typed and the member who ran it.
 func TestFoxholeRoleChangesNameTheCommandAndWhoRanIt(t *testing.T) {
 	cases := []struct {
 		name, command, subcommand, discordname string
@@ -43,7 +43,6 @@ func TestFoxholeRoleChangesNameTheCommandAndWhoRanIt(t *testing.T) {
 		{"add", "foxhole", "add", "123456789012345678", "/foxhole add"},
 		{"remove", "foxhole", "remove", "123456789012345678", "/foxhole remove"},
 		{"bulkadd", "foxhole", "bulkadd", "good", "/foxhole bulkadd"},
-		{"add under the old name", "warden", "add", "123456789012345678", "/warden add"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -140,29 +139,28 @@ func TestFoxholePurgeUndoingAFailedRecreateSaysSo(t *testing.T) {
 	}
 }
 
-// Each role add a roster bulk add makes names the command as typed, under
-// whichever name it ran, the unit, and the member who ran it.
+// Each role add a roster bulk add makes names the command as typed, the
+// unit, and the member who ran it.
 func TestFoxholeRosterAddNamesTheCommandUnitAndWhoRanIt(t *testing.T) {
-	for _, command := range []string{"foxhole-bulkadd-internal", "warden-bulkadd-internal"} {
-		t.Run(command, func(t *testing.T) {
-			serveRosterAndProfiles(t, liteRoster(
-				liteMember("Trooper.A", "111111111111111111"),
-				liteMember("Trooper.B", "222222222222222222"),
-			), http.StatusOK, nil)
-			gm := internalRoleGM()
-			interaction := ranBy(slashNamed(command, stringOption("unit", "D/ACD")), reasonInvoker)
+	command := "foxhole-bulkadd-internal"
+	t.Run(command, func(t *testing.T) {
+		serveRosterAndProfiles(t, liteRoster(
+			liteMember("Trooper.A", "111111111111111111"),
+			liteMember("Trooper.B", "222222222222222222"),
+		), http.StatusOK, nil)
+		gm := internalRoleGM()
+		interaction := ranBy(slashNamed(command, stringOption("unit", "D/ACD")), reasonInvoker)
 
-			runFoxholeBulkAddInternal(&fakeResponder{}, gm, nil, interaction)
+		runFoxholeBulkAddInternal(&fakeResponder{}, gm, nil, interaction)
 
-			writes := gm.guildWrites()
-			if len(writes) == 0 {
-				t.Fatalf("the run changed nothing; calls %v", gm.Calls())
-			}
-			for _, write := range writes {
-				assertReasonNames(t, write, "/"+command, "D/ACD", reasonInvoker.Username, reasonInvoker.ID)
-			}
-		})
-	}
+		writes := gm.guildWrites()
+		if len(writes) == 0 {
+			t.Fatalf("the run changed nothing; calls %v", gm.Calls())
+		}
+		for _, write := range writes {
+			assertReasonNames(t, write, "/"+command, "D/ACD", reasonInvoker.Username, reasonInvoker.ID)
+		}
+	})
 }
 
 // assertReadsAsWritten fails unless header, the audit log reason header a

@@ -368,7 +368,6 @@ func TestNoteSaveByAnOutsiderIsRefusedAndAPanelAdminsSaves(t *testing.T) {
 // a 503, still signed in, and reports the failure to Sentry once.
 func TestFoxholePageWhoseStoreReadFailsShowsTheCouldNotLoadPage(t *testing.T) {
 	t.Setenv("FOXHOLE_ROLE_BASE_NAME", "")
-	t.Setenv("WARDEN_ROLE_BASE_NAME", "")
 	w, st := newCtxWorld(t)
 	w.discord.addRoles(foxholeGuildRoles...)
 	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,
@@ -456,7 +455,6 @@ func typedNote(t *testing.T, doc *html.Node) string {
 // reports the failure to Sentry once.
 func TestFoxholePageWhoseNameRefreshFailsStillShowsTheHolderList(t *testing.T) {
 	t.Setenv("FOXHOLE_ROLE_BASE_NAME", "")
-	t.Setenv("WARDEN_ROLE_BASE_NAME", "")
 	w, st := newCtxWorld(t)
 	w.discord.addRoles(foxholeGuildRoles...)
 	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true,

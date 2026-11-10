@@ -58,20 +58,12 @@ func runFoxholeBulkAddInternal(
 	fx *FoxholeRuntime,
 	interaction *discordgo.InteractionCreate,
 ) {
-	// A missed acknowledgement leaves no interaction to send the note on.
-	missedAck := false
-	defer func() {
-		if !missedAck {
-			sendRenameNote(r, interaction, "warden-bulkadd-internal", "foxhole-bulkadd-internal")
-		}
-	}()
-
 	// Guild-context guard first: Foxhole commands require guild context. Rejecting
 	// on an empty GuildID here gives a clear server-only message and guarantees a
 	// non-empty guildID for every downstream Discord role call.
 	guildID := interaction.GuildID
 	if guildID == "" {
-		missedAck = refuse(r, interaction, "❌ This command can only be used in a server (guild).")
+		refuse(r, interaction, "❌ This command can only be used in a server (guild).")
 		return
 	}
 
@@ -82,7 +74,7 @@ func runFoxholeBulkAddInternal(
 	commandData := interaction.ApplicationCommandData()
 	unitValue, ok := getOptionString(commandData, "unit")
 	if !ok {
-		missedAck = refuse(r, interaction, "❌ Missing unit argument.")
+		refuse(r, interaction, "❌ Missing unit argument.")
 		return
 	}
 	// The picker only ever emits a registered value, but validate against the
@@ -90,20 +82,19 @@ func runFoxholeBulkAddInternal(
 	// not be able to express a query the registry never authorized.
 	unit, ok := LookupValidatedInternalUnit(unitValue)
 	if !ok {
-		missedAck = refuse(r, interaction, fmt.Sprintf("❌ Unknown unit %q; pick one from the list.", unitValue))
+		refuse(r, interaction, fmt.Sprintf("❌ Unknown unit %q; pick one from the list.", unitValue))
 		return
 	}
 
 	run := foxholeCommandRun(interaction, unit.Label)
 	end, refused := fx.startCommand(run)
 	if refused != nil {
-		missedAck = refuseForPageAction(r, interaction, run, *refused)
+		refuseForPageAction(r, interaction, run, *refused)
 		return
 	}
 	defer end()
 
 	if err := deferEphemeral(r, interaction); err != nil {
-		missedAck = isUnknownInteraction(err)
 		replyAckFailed(r, interaction, err)
 		return
 	}
