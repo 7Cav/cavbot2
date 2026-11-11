@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Discord activity is kept in the bot store as IDs and times, and shown to panel admins as group totals
