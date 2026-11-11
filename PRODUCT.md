@@ -47,6 +47,7 @@ Shipped:
 - The Recordings page (#390): a starter's own recordings with their mix and zip downloads and deletion dates, each recording's own page that the recording notice links to, and a panel admin's switch to every recording.
 - The 30-day retention (#392): within an hour of its deletion date, a recording leaves the Recordings page and its files leave the disk, whether or not recording is on.
 - Deleting a recording early (#391): its starter or a panel admin deletes it whole, files and row, through a danger confirm on its own page. A log line names the recording and the forum user who deleted it.
+- The Metrics page (#949): Discord activity in group totals, for panel admins.
 
 Planned, not built:
 - Turning recording on in the live guild (#564).

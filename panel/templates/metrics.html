@@ -1,0 +1,85 @@
+{{define "content"}}
+<main class="body mx" data-page="{{.Page}}">
+  <h1 class="title">Metrics</h1>
+  {{with .Metrics}}
+  <p class="desc">Discord activity in group totals, in Zulu. {{if .Since.IsZero}}Counting has not started yet.{{else}}Counting since <time datetime="{{.Since.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "zulu" .Since}}</time>. A figure reads - until enough has been counted.{{end}}</p>
+
+  <div class="block"><dl class="mx-stats">
+    {{range .Stats}}<div class="mx-stat"><dt>{{.Label}}</dt><dd class="mx-value">{{.Value}}</dd>{{with .Detail}}<dd>{{.}}</dd>{{end}}</div>{{end}}
+  </dl></div>
+
+  <section class="block">
+    <h2 class="block-header">This week <small>{{.Week}}, against the 4 weeks before</small></h2>
+    <ul class="block-row mx-brief">
+      {{range .Brief}}<li{{if not .Lead}} class="mx-quiet"{{end}}>{{with .Lead}}<b>{{.}}</b>: {{end}}{{.Text}}</li>{{end}}
+    </ul>
+  </section>
+
+  <section class="block">
+    <h2 class="block-header">Sections <small>{{.Week}}, change against the 4 weeks before</small></h2>
+    <div class="scroll">
+    <table class="hublist mx-table">
+      <thead><tr><th>Section</th><th class="num">Messages</th><th class="num">Voice hours</th><th class="num">Active people</th><th class="num">Voice h per person</th><th>Active, 12 weeks</th></tr></thead>
+      <tbody>
+      {{range .Sections}}
+        <tr data-category="{{.CategoryID}}">
+          <th scope="row">{{.Name}}</th>
+          {{range .Cells}}<td class="num">{{.Value}} <span class="mx-change">{{.Change}}</span></td>{{end}}
+          <td>{{with .Spark}}<svg class="mx-spark" width="96" height="22" viewBox="0 0 96 22" role="img" aria-label="{{.Label}}"><title>{{.Label}}</title>{{if .Points}}<polyline points="{{.Points}}"/>{{end}}{{if .HasLast}}<circle cx="{{.LastX}}" cy="{{.LastY}}" r="2.5"/>{{end}}</svg>{{end}}</td>
+        </tr>
+      {{else}}
+        <tr><td colspan="6">The server has no channel categories.</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <div class="mx-grid">
+    <section class="block">
+      <h2 class="block-header">Voice, average users <small>last 12 weeks, Zulu</small></h2>
+      <div class="block-row">{{with .Heatmap}}
+        <svg class="mx-chart" viewBox="0 0 400 {{.Height}}" role="img" aria-label="Average users in voice by weekday and hour, Zulu, over the last 12 weeks">
+          {{range .Days}}<text x="{{.X}}" y="{{.Y}}" text-anchor="end">{{.Text}}</text>{{end}}
+          {{range .Cells}}<rect x="{{.X}}" y="{{.Y}}" width="{{$.Metrics.Heatmap.CellW}}" height="13" rx="2"{{if .Empty}} class="mx-empty"{{else}} class="mx-heat" fill-opacity="{{.Opacity}}"{{end}}><title>{{.Title}}</title></rect>{{end}}
+          {{range .Hours}}<text x="{{.X}}" y="{{.Y}}" text-anchor="middle">{{.Text}}</text>{{end}}
+        </svg>{{end}}
+      </div>
+    </section>
+    <section class="block">
+      <h2 class="block-header">New members <small>joined 5 to 8 weeks ago</small></h2>
+      <table class="mx-funnel">
+        <tbody>
+        {{range .Funnel}}<tr><th scope="row">{{.Label}}</th><td class="mx-bar"><svg width="100%" height="14" role="img" aria-label="{{.Label}}: {{.Count}}, {{.Share}} of joins"><rect width="{{.Width}}" height="14" rx="2"><title>{{.Label}}: {{.Count}}, {{.Share}} of joins</title></rect></svg></td><td class="num">{{.Count}}</td><td class="num">{{.Share}}</td></tr>{{end}}
+        </tbody>
+      </table>
+      <div class="block-row mx-note">{{.Reply}} Talked: sent a message or was in voice.</div>
+    </section>
+  </div>
+
+  <div class="mx-grid">
+    <section class="block">
+      <h2 class="block-header">Active people, 28 days <small>weekly, last 12 weeks</small></h2>
+      <div class="block-row">{{with .Trend}}
+        <svg class="mx-chart" viewBox="0 0 400 162" role="img" aria-label="{{.Label}}">
+          <line class="mx-axis" x1="40" x2="400" y1="140" y2="140"/>
+          {{range .Grid}}<line class="mx-gridline" x1="40" x2="400" y1="{{.Y}}" y2="{{.Y}}"/><text x="{{.X}}" y="{{.Y}}" dy="4" text-anchor="end">{{.Text}}</text>{{end}}
+          {{if .Points}}<polyline class="mx-line" points="{{.Points}}"/>{{end}}
+          {{with .Last}}<circle class="mx-last" cx="{{.X}}" cy="{{.Y}}" r="4"/>{{end}}
+          {{range .Hovers}}<rect class="mx-hover" x="{{.X}}" y="0" width="{{.W}}" height="140"><title>{{.Title}}</title></rect>{{end}}
+          {{range $i, $l := .Labels}}<text x="{{$l.X}}" y="{{$l.Y}}"{{if $i}} text-anchor="end"{{end}}>{{$l.Text}}</text>{{end}}
+        </svg>{{end}}
+      </div>
+    </section>
+    <section class="block">
+      <h2 class="block-header">Monthly change</h2>
+      <table class="hublist mx-table">
+        <thead><tr><th>Month</th><th class="num">New</th><th class="num">Returned</th><th class="num">Went quiet</th></tr></thead>
+        <tbody>{{range .Months}}<tr><th scope="row">{{.Name}}</th><td class="num">{{.New}}</td><td class="num">{{.Returned}}</td><td class="num">{{.Quiet}}</td></tr>{{end}}</tbody>
+      </table>
+      <div class="block-row mx-note">Went quiet: active the month before, not active this month. Returned: no activity for 60 days or more, then active.</div>
+    </section>
+  </div>
+  {{end}}
+</main>
+{{end}}

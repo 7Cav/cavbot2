@@ -11,7 +11,8 @@
 // approved Foxholers through the Foxhole runtime and shows its progress
 // and report, and keeps its own change log of saves and reports. The
 // Settings page is the rank roles and the recording roles, each with its
-// change log.
+// change log. The Metrics page shows panel admins the server's Discord
+// activity in group totals.
 package panel
 
 import (
@@ -81,8 +82,8 @@ const storeTimeout = 5 * time.Second
 // never at a request. Every field of deps is required: the hub page reads the
 // store, the guild and the runtime on every load.
 func New(cfg Config, version string, deps Deps) (*Panel, error) {
-	if deps.Store == nil || deps.Runtime == nil || deps.Manager == nil || deps.Foxhole == nil || deps.Recordings == nil || deps.GuildID == "" {
-		return nil, fmt.Errorf("panel needs a store, a runtime, a manager, a Foxhole runtime, a recording library and a guild ID")
+	if deps.Store == nil || deps.Runtime == nil || deps.Manager == nil || deps.Foxhole == nil || deps.Recordings == nil || deps.Metrics == nil || deps.GuildID == "" {
+		return nil, fmt.Errorf("panel needs a store, a runtime, a manager, a Foxhole runtime, a recording library, a metrics reader and a guild ID")
 	}
 	pg, err := parsePages()
 	if err != nil {
@@ -204,7 +205,8 @@ func (p *Panel) routes() []route {
 		{"POST /hubs/{id}/remove", p.withPanelAdmin(p.removeHub)},
 		{"POST /moderators", p.withPanelAdmin(p.saveModerators)},
 		{"POST /recording-roles", p.withPanelAdmin(p.saveRecordingRoles)},
-		{"GET " + settingsPath, p.withSettingsPage(p.settingsPage)},
+		{"GET " + settingsPath, p.withAdminPage(settingsPath, p.settingsPage)},
+		{"GET " + metricsPath, p.withAdminPage(metricsPath, p.metricsPage)},
 		{"POST /rank-roles", p.withPanelAdmin(p.saveRankRoles)},
 		{"GET " + recordingsPath, p.withSession(p.recordingsPage)},
 		{"GET " + recordingsPath + "/{id}", p.withSession(p.recordingPage)},
@@ -575,13 +577,14 @@ func (p *Panel) withPanelAdmin(next func(http.ResponseWriter, *http.Request, ses
 	return p.withAccess(func(a access) bool { return a.panelAdmin }, p.refuse, next)
 }
 
-// withSettingsPage is the gate the Settings page sits behind. This
-// request's group check must find a panel admin. Anyone else gets the
-// no-access page at the page's address, a page load included, where the
-// hub page sends them on to the page they land on.
-func (p *Panel) withSettingsPage(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
+// withAdminPage is the gate a page for panel admins alone sits behind, at
+// path: the Settings page and the Metrics page. This request's group check
+// must find a panel admin. Anyone else gets the no-access page at the
+// page's address, a page load included, where the hub page sends them on
+// to the page they land on.
+func (p *Panel) withAdminPage(path string, next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
 	return p.withAccess(func(a access) bool { return a.panelAdmin }, func(w http.ResponseWriter, r *http.Request, sess session) {
-		p.noAccess(w, r, sess, noAccessRefused, settingsPath)
+		p.noAccess(w, r, sess, noAccessRefused, path)
 	}, next)
 }
 

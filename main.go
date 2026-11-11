@@ -301,6 +301,7 @@ func main() {
 			// The Recordings page lists and downloads through the library,
 			// recording on or off.
 			Recordings: commands.NewRecordingLibrary(botStore, GuildID, recordingsDir()),
+			Metrics:    botStore,
 			GuildID:    GuildID,
 		})
 	}
