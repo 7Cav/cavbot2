@@ -119,13 +119,18 @@ func TestMetricsBackfill(t *testing.T) {
 			"news-thread-100": {historyMessage("second-page-thread", after)},
 			"news":            {historyMessage("after-failure", after)},
 		},
-		active:  []*discordgo.Channel{{ID: "thread", ParentID: "general", Type: discordgo.ChannelTypeGuildPublicThread}},
+		active: []*discordgo.Channel{
+			{ID: "thread", ParentID: "general", Type: discordgo.ChannelTypeGuildPublicThread},
+			{ID: "deleted", ParentID: "general", Type: discordgo.ChannelTypeGuildPublicThread},
+		},
 		public:  map[string][]*discordgo.Channel{"general": {archivedThread("archived", "general", after)}, "news": newsArchive, "forum": {archivedThread("forum-post", "forum", after)}},
 		private: map[string][]*discordgo.Channel{"general": {archivedThread("private", "general", after)}},
-		// afk fails as in an outage, and the bot can't read loose.
+		// afk fails as in an outage, the bot can't read loose, and deleted
+		// is deleted after the listing.
 		fail: map[string]error{
-			"afk":   errors.New("discord down"),
-			"loose": restError(http.StatusForbidden, discordgo.ErrCodeMissingAccess, "Missing Access"),
+			"afk":     errors.New("discord down"),
+			"loose":   restError(http.StatusForbidden, discordgo.ErrCodeMissingAccess, "Missing Access"),
+			"deleted": restError(http.StatusNotFound, discordgo.ErrCodeUnknownChannel, "Unknown Channel"),
 		},
 	}
 	events := recordSentry(t)
@@ -168,15 +173,15 @@ func TestMetricsBackfill(t *testing.T) {
 	if !slices.Equal(captured, []any{"afk"}) {
 		t.Errorf("captured failures of channels %v, want only afk", captured)
 	}
-	if !st.backfilledAt.IsZero() {
-		t.Error("backfill marked finished after afk failed")
+	if !st.backfilledAt.Equal(metricsTestNow) {
+		t.Errorf("backfilled at %v after afk failed, want %v", st.backfilledAt, metricsTestNow)
 	}
 	if st.prunedBefore.IsZero() {
 		t.Error("hourly job did not start after the backfill")
 	}
 }
 
-func TestMetricsBackfillMarkedOnlyAfterFullRead(t *testing.T) {
+func TestMetricsBackfillMarked(t *testing.T) {
 	t.Run("guild unavailable at the first GUILD_CREATE", func(t *testing.T) {
 		st := newFakeMetricsStore()
 		guild := metricsTestGuild()
@@ -204,37 +209,22 @@ func TestMetricsBackfillMarkedOnlyAfterFullRead(t *testing.T) {
 		}
 	})
 
-	t.Run("active thread listing failed", func(t *testing.T) {
+	t.Run("thread listings failed", func(t *testing.T) {
 		st := newFakeMetricsStore()
-		c, _, _ := newTestMetricsCollector(t, metricsTestGuild(), st, &fakeHistory{failActive: true})
-
-		c.collectHistory()
-
-		if !st.backfilledAt.IsZero() {
-			t.Error("backfill marked finished without the active threads")
+		history := &fakeHistory{
+			messages:     map[string][]*discordgo.Message{"general": {historyMessage("m1", metricsTestNow)}},
+			failActive:   true,
+			failArchived: true,
 		}
-	})
-
-	t.Run("only a channel the bot can't read failed", func(t *testing.T) {
-		st := newFakeMetricsStore()
-		history := &fakeHistory{fail: map[string]error{"general": restError(http.StatusForbidden, discordgo.ErrCodeMissingAccess, "Missing Access")}}
 		c, _, _ := newTestMetricsCollector(t, metricsTestGuild(), st, history)
 
 		c.collectHistory()
 
+		if _, ok := st.messages["m1"]; !ok {
+			t.Error("channel not read after the thread listings failed")
+		}
 		if !st.backfilledAt.Equal(metricsTestNow) {
 			t.Errorf("backfilled at %v, want %v", st.backfilledAt, metricsTestNow)
-		}
-	})
-
-	t.Run("archived thread listing failed", func(t *testing.T) {
-		st := newFakeMetricsStore()
-		c, _, _ := newTestMetricsCollector(t, metricsTestGuild(), st, &fakeHistory{failArchived: true})
-
-		c.collectHistory()
-
-		if !st.backfilledAt.IsZero() {
-			t.Error("backfill marked finished without the archived threads")
 		}
 	})
 }
