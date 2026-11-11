@@ -36,9 +36,10 @@ import (
 var migrationFiles embed.FS
 
 const (
-	// maxOpenConns keeps the pool as small as the forum pool: a handful of hub
-	// rows and one write per spawn is no load.
-	maxOpenConns = 2
+	// maxOpenConns keeps the pool small: live Discord metrics writes, the
+	// hourly metrics rollup (about a second) and panel reads share it with
+	// temp VC, which writes once per spawn.
+	maxOpenConns = 4
 	// pingAttempts and pingInterval bound the startup wait for a Postgres that
 	// is restarting at the moment the bot comes up. Compose already waits for
 	// the healthcheck, so this covers only a recreate that overlaps a database

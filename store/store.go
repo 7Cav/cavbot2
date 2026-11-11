@@ -6,6 +6,11 @@
 // 30 days. Postgres in production (postgres.go), an in-memory
 // Fake for other packages' tests (fake.go).
 //
+// The Discord metrics rows and weekly totals (metrics.go) are methods on
+// *Postgres alone, outside Store and the Fake, so the Fake never
+// reimplements their SQL aggregates. Each consumer declares the narrow
+// interface it reads or writes through.
+//
 // Migrations run at startup, and every one stays compatible with the previous
 // release, since a rollback runs the older image against the newer schema:
 // additive in the release that introduces it, drops and renames one release
