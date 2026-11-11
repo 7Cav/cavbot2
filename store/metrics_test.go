@@ -191,7 +191,7 @@ func TestSyncVoicePresence(t *testing.T) {
 // One fixture covers the rollup's attribution rules: role sections count
 // voice in any channel, a session counts on each role's row, a section
 // without roles counts its own channels, a session across Sunday midnight
-// splits by seconds, active is by channel and distinct, the server row holds
+// splits by seconds, an open session counts to the week's end, active is by channel and distinct, the server row holds
 // everything, and a recompute replaces only the weeks in its range.
 func TestRollUpMetricWeeks(t *testing.T) {
 	p := openMetricsStore(t)
@@ -208,6 +208,7 @@ func TestRollUpMetricWeeks(t *testing.T) {
 	voiceSession(t, p, metrics.VoicePresence{UserID: "u1", ChannelID: "ops", CategoryID: "cat-ops", RoleIDs: []string{"r-a", "r-b"}}, day(1, 20, 0), day(1, 21, 0))
 	voiceSession(t, p, metrics.VoicePresence{UserID: "u2", ChannelID: "a", CategoryID: "cat-a"}, day(2, 20, 0), day(2, 20, 30))
 	voiceSession(t, p, metrics.VoicePresence{UserID: "u3", ChannelID: "ops", CategoryID: "cat-ops"}, day(6, 23, 0), day(7, 1, 0))
+	openVoice(t, p, metrics.VoicePresence{UserID: "u5", ChannelID: "ops", CategoryID: "cat-ops"}, day(13, 23, 0))
 	recordMessages(t, p,
 		metrics.Message{ID: "m1", UserID: "u1", CategoryID: "cat-a", SentAt: day(0, 9, 0)},
 		metrics.Message{ID: "m2", UserID: "u1", CategoryID: "cat-a", SentAt: day(3, 9, 0)},
@@ -237,9 +238,9 @@ func TestRollUpMetricWeeks(t *testing.T) {
 		`2026-10-05 "cat-a" messages 3 voice 3600s people 1 active 2`,
 		`2026-10-05 "cat-b" messages 0 voice 3600s people 1 active 0`,
 		`2026-10-05 "cat-ops" messages 0 voice 7200s people 2 active 2`,
-		`2026-10-12 "" messages 1 voice 3600s people 1 active 2`,
+		`2026-10-12 "" messages 1 voice 7200s people 2 active 3`,
 		`2026-10-12 "cat-b" messages 1 voice 0s people 0 active 1`,
-		`2026-10-12 "cat-ops" messages 0 voice 3600s people 1 active 1`,
+		`2026-10-12 "cat-ops" messages 0 voice 7200s people 2 active 2`,
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("weeks =\n%v\nwant\n%v", got, want)
@@ -247,13 +248,15 @@ func TestRollUpMetricWeeks(t *testing.T) {
 }
 
 // Active days come from messages and from every day a session overlaps,
-// with an open session running to now, from from's day on.
+// with an open session running to now and one ending at midnight adding
+// no day after it, from from's day on.
 func TestActiveDays(t *testing.T) {
 	p := openMetricsStore(t)
 	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
 	from := time.Date(2026, 10, 7, 15, 0, 0, 0, time.UTC)
 	voiceSession(t, p, metrics.VoicePresence{UserID: "u1", ChannelID: "ch"}, time.Date(2026, 10, 7, 23, 0, 0, 0, time.UTC), time.Date(2026, 10, 8, 1, 0, 0, 0, time.UTC))
 	openVoice(t, p, metrics.VoicePresence{UserID: "u2", ChannelID: "ch"}, time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC))
+	voiceSession(t, p, metrics.VoicePresence{UserID: "u5", ChannelID: "ch"}, time.Date(2026, 10, 8, 22, 0, 0, 0, time.UTC), time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC))
 	recordMessages(t, p,
 		metrics.Message{ID: "m1", UserID: "u3", SentAt: time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)},
 		metrics.Message{ID: "m2", UserID: "u4", SentAt: time.Date(2026, 10, 6, 23, 0, 0, 0, time.UTC)},
@@ -267,7 +270,7 @@ func TestActiveDays(t *testing.T) {
 	for _, d := range days {
 		got = append(got, d.Day.Format(time.DateOnly)+" "+d.UserID)
 	}
-	want := []string{"2026-10-07 u1", "2026-10-07 u3", "2026-10-08 u1", "2026-10-08 u2", "2026-10-09 u2", "2026-10-10 u2"}
+	want := []string{"2026-10-07 u1", "2026-10-07 u3", "2026-10-08 u1", "2026-10-08 u2", "2026-10-08 u5", "2026-10-09 u2", "2026-10-10 u2"}
 	if !slices.Equal(got, want) {
 		t.Errorf("active days = %v, want %v", got, want)
 	}

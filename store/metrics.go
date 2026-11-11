@@ -81,7 +81,7 @@ func (p *Postgres) SetVoicePresence(ctx context.Context, vp metrics.VoicePresenc
 	err := p.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE metric_voice_sessions SET ended_at = GREATEST(started_at, $3)
-			WHERE user_id = $1 AND ended_at IS NULL AND (channel_id <> $2 OR $2 = '')`,
+			WHERE user_id = $1 AND ended_at IS NULL AND channel_id <> $2`,
 			vp.UserID, vp.ChannelID, at); err != nil {
 			return err
 		}
@@ -266,7 +266,7 @@ func (p *Postgres) ActiveDays(ctx context.Context, from, now time.Time) ([]metri
 		SELECT v.user_id, d::date FROM metric_voice_sessions v,
 			generate_series(
 				date_trunc('day', GREATEST(v.started_at, $1) AT TIME ZONE 'UTC'),
-				LEAST(COALESCE(v.ended_at, $2), $2) AT TIME ZONE 'UTC',
+				(LEAST(COALESCE(v.ended_at, $2), $2) - interval '1 microsecond') AT TIME ZONE 'UTC',
 				interval '1 day') AS d
 		WHERE v.started_at <= $2 AND COALESCE(v.ended_at, $2) >= $1
 		ORDER BY 2, 1`, fromDay, now)
