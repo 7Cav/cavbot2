@@ -72,45 +72,12 @@ func (f *fakeMetrics) FirstReplies(context.Context, time.Time, time.Time) ([]met
 	return f.rows().Replies, nil
 }
 
-// busyServer is 12 weeks of activity in the category given, collected for
-// 200 days, with the report week busier than the weeks before, a join each
-// week, and voice in the report week.
-func busyServer(now time.Time, category string) metrics.Input {
-	w0 := metrics.WeekStart(now).AddDate(0, 0, -7)
-	today := now.UTC().Truncate(24 * time.Hour)
-	in := metrics.Input{State: metrics.State{StartedAt: now.AddDate(0, 0, -200), BackfilledAt: now.AddDate(0, 0, -199)}}
-	for k := -11; k <= 0; k++ {
-		n := 10
-		if k == 0 {
-			n = 30
-		}
-		for _, c := range []string{"", category} {
-			in.Weeks = append(in.Weeks, metrics.WeekTotal{Week: w0.AddDate(0, 0, 7*k), CategoryID: c,
-				Messages: 100 * n, VoiceSeconds: int64(n) * 3600, VoicePeople: 3, Active: n})
-		}
-		joined := w0.AddDate(0, 0, 7*k).Add(time.Hour)
-		user := fmt.Sprintf("j%d", -k)
-		in.Members = append(in.Members, metrics.MemberEvent{UserID: user, Kind: metrics.MemberJoined, At: joined})
-		in.Days = append(in.Days, metrics.ActiveDay{UserID: user, Day: joined.Truncate(24 * time.Hour)},
-			metrics.ActiveDay{UserID: user, Day: joined.Truncate(24*time.Hour).AddDate(0, 0, 25)})
-		in.Replies = append(in.Replies, metrics.FirstReply{UserID: user, JoinedAt: joined, FirstMessageAt: joined.Add(time.Hour),
-			RepliedAt: joined.Add(time.Duration(2-k%2) * time.Hour)})
-	}
-	in.Members = append(in.Members, metrics.MemberEvent{UserID: "j1", Kind: metrics.MemberLeft, At: w0.Add(-6 * 24 * time.Hour)})
-	for d := range 60 {
-		in.Days = append(in.Days, metrics.ActiveDay{UserID: fmt.Sprintf("u%d", d%7), Day: today.AddDate(0, 0, -d)})
-	}
-	for range 2 {
-		in.Spans = append(in.Spans, metrics.Span{Start: w0.Add(45 * time.Hour), End: w0.Add(47*time.Hour + 30*time.Minute)})
-	}
-	return in
-}
-
-// A panel admin sees one row per category that holds a channel, in
-// Discord's category order.
+// A panel admin opens the Metrics page from the rail and sees one row per
+// category that holds a channel, in Discord's category order.
 func TestMetricsPageListsSectionsInCategoryOrder(t *testing.T) {
 	w := newTestWorld(t, testHub())
-	w.metrics.set(busyServer(w.clock.Now(), "cat-2"))
+	started := w.clock.Now().AddDate(0, 0, -200)
+	w.metrics.set(metrics.Input{State: metrics.State{StartedAt: started, BackfilledAt: started}})
 	w.discord.mu.Lock()
 	w.discord.channels[0].Position = 2
 	w.discord.channels = append(w.discord.channels,
@@ -118,13 +85,16 @@ func TestMetricsPageListsSectionsInCategoryOrder(t *testing.T) {
 		&discordgo.Channel{ID: "text-2", Name: "chat", Type: discordgo.ChannelTypeGuildText, ParentID: "cat-2"},
 		&discordgo.Channel{ID: "cat-empty", Name: "Empty", Type: discordgo.ChannelTypeGuildCategory})
 	w.discord.mu.Unlock()
-	signIn(t, w.forum, w.b)
+	href, ok := railLinks(t, parseHTML(t, follow(t, w.b, signIn(t, w.forum, w.b))))[pageMetrics]
+	if !ok {
+		t.Fatal("the panel admin's rail has no Metrics link")
+	}
 
-	res := w.b.get(metricsPath)
+	res := w.b.get(href)
 
 	doc := parseHTML(t, res)
 	if got := pageOf(t, doc); res.StatusCode != http.StatusOK || got != pageMetrics {
-		t.Fatalf("GET %s answers page %q with status %d, want metrics with 200", metricsPath, got, res.StatusCode)
+		t.Fatalf("GET %s answers page %q with status %d, want metrics with 200", href, got, res.StatusCode)
 	}
 	if got, want := valuesOf(doc, "data-category"), []string{"cat-2", "cat-1"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("section rows = %v, want %v", got, want)

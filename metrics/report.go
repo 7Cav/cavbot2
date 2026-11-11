@@ -16,6 +16,8 @@ const (
 	// line: a change of 30% or more, with this week or the average at 10 or more.
 	moveShare = 0.30
 	moveFloor = 10
+	// quietSpan is how long a member who returned had no activity.
+	quietSpan = 60 * day
 	eps       = 1e-9
 )
 
@@ -57,7 +59,7 @@ type Ranges struct {
 func ReadRanges(now time.Time) Ranges {
 	w0 := WeekStart(now).Add(-week)
 	members := w0.Add(-8 * week)
-	if m := monthStart(now).AddDate(0, -len(Report{}.Months), 0); m.Before(members) {
+	if m := monthStart(now).AddDate(0, -len(Report{}.Months), 0).Add(-quietSpan); m.Before(members) {
 		members = m
 	}
 	return Ranges{
@@ -226,16 +228,15 @@ type builder struct {
 	w0        time.Time
 	msg, live time.Time
 	weeks     map[weekKey]WeekTotal
-	// days holds each user's active days, sorted.
-	days      map[string][]time.Time
-	firstJoin map[string]time.Time
-	leaves    map[string][]time.Time
-	replies   map[joinKey]FirstReply
+	// days and joins hold each user's active days and join times, sorted.
+	days, joins map[string][]time.Time
+	leaves      map[string][]time.Time
+	replies     map[joinKey]FirstReply
 }
 
 func newBuilder(in Input) *builder {
 	b := &builder{in: in, w0: WeekStart(in.Now).Add(-week), msg: in.State.StartedAt, live: in.State.StartedAt,
-		weeks: map[weekKey]WeekTotal{}, days: map[string][]time.Time{}, firstJoin: map[string]time.Time{},
+		weeks: map[weekKey]WeekTotal{}, days: map[string][]time.Time{}, joins: map[string][]time.Time{},
 		leaves: map[string][]time.Time{}, replies: map[joinKey]FirstReply{}}
 	if !in.State.BackfilledAt.IsZero() {
 		b.msg = b.msg.Add(-BackfillSpan)
@@ -246,17 +247,17 @@ func newBuilder(in Input) *builder {
 	for _, d := range in.Days {
 		b.days[d.UserID] = append(b.days[d.UserID], d.Day)
 	}
-	for _, ds := range b.days {
-		slices.SortFunc(ds, time.Time.Compare)
-	}
 	for _, e := range in.Members {
 		switch e.Kind {
 		case MemberJoined:
-			if first, ok := b.firstJoin[e.UserID]; !ok || e.At.Before(first) {
-				b.firstJoin[e.UserID] = e.At
-			}
+			b.joins[e.UserID] = append(b.joins[e.UserID], e.At)
 		case MemberLeft:
 			b.leaves[e.UserID] = append(b.leaves[e.UserID], e.At)
+		}
+	}
+	for _, m := range []map[string][]time.Time{b.days, b.joins} {
+		for _, ts := range m {
+			slices.SortFunc(ts, time.Time.Compare)
 		}
 	}
 	for _, r := range in.Replies {
@@ -382,7 +383,7 @@ func (b *builder) summary() Summary {
 }
 
 func (b *builder) newMembers() NewMembers {
-	joined, last, before := b.joiners(b.w0, b.at(1)), b.joiners(b.at(-1), b.w0), b.joiners(b.at(-5), b.at(-1))
+	joined, last, before := b.joinedIn(b.w0, b.at(1)), b.joiners(b.at(-1), b.w0), b.joiners(b.at(-5), b.at(-1))
 	ok := b.known(b.w0, b.live)
 	return NewMembers{
 		Joined:       maybe(len(joined), ok),
@@ -484,25 +485,23 @@ func (b *builder) cohort() Cohort {
 
 func (b *builder) month(start time.Time) Month {
 	end, prev := start.AddDate(0, 1, 0), start.AddDate(0, -1, 0)
-	joined := map[string]bool{}
-	for _, e := range b.in.Members {
-		if e.Kind == MemberJoined && !e.At.Before(start) && e.At.Before(end) {
-			joined[e.UserID] = true
-		}
-	}
 	var quiet, returned int
 	for u := range b.days {
 		if b.activeOn(u, prev, start) && !b.activeOn(u, start, end) {
 			quiet++
 		}
-		if first, ok := b.firstDay(u, start, end); ok && !b.activeOn(u, first.Add(-60*day), first) {
+		first, ok := firstIn(b.days[u], start, end)
+		if !ok || b.activeOn(u, first.Add(-quietSpan), first) {
+			continue
+		}
+		if _, joined := firstIn(b.joins[u], first.Add(-quietSpan), first.Add(day)); !joined {
 			returned++
 		}
 	}
 	return Month{
 		Start:    start,
-		New:      maybe(len(joined), b.known(start, b.live)),
-		Returned: maybe(returned, b.known(start.Add(-60*day), b.live)),
+		New:      maybe(len(b.joinedIn(start, end)), b.known(start, b.live)),
+		Returned: maybe(returned, b.known(start.Add(-quietSpan), b.live)),
 		Quiet:    maybe(quiet, b.known(prev, b.live)),
 	}
 }
@@ -510,8 +509,19 @@ func (b *builder) month(start time.Time) Month {
 // joiners are the users whose first join falls in [from, to).
 func (b *builder) joiners(from, to time.Time) []joiner {
 	var out []joiner
-	for u, at := range b.firstJoin {
-		if !at.Before(from) && at.Before(to) {
+	for u, js := range b.joins {
+		if !js[0].Before(from) && js[0].Before(to) {
+			out = append(out, joiner{u, js[0]})
+		}
+	}
+	return out
+}
+
+// joinedIn are the users with a join in [from, to), each at their first one there.
+func (b *builder) joinedIn(from, to time.Time) []joiner {
+	var out []joiner
+	for u, js := range b.joins {
+		if at, ok := firstIn(js, from, to); ok {
 			out = append(out, joiner{u, at})
 		}
 	}
@@ -549,18 +559,17 @@ func (b *builder) replyWaits(js []joiner) (messaged int, waits []time.Duration) 
 	return messaged, waits
 }
 
-// firstDay is the user's first active day in [from, to).
-func (b *builder) firstDay(user string, from, to time.Time) (time.Time, bool) {
-	ds := b.days[user]
-	i, _ := slices.BinarySearchFunc(ds, from, time.Time.Compare)
-	if i < len(ds) && ds[i].Before(to) {
-		return ds[i], true
+// firstIn is the first of the sorted times ts in [from, to).
+func firstIn(ts []time.Time, from, to time.Time) (time.Time, bool) {
+	i, _ := slices.BinarySearchFunc(ts, from, time.Time.Compare)
+	if i < len(ts) && ts[i].Before(to) {
+		return ts[i], true
 	}
 	return time.Time{}, false
 }
 
 func (b *builder) activeOn(user string, from, to time.Time) bool {
-	_, ok := b.firstDay(user, from, to)
+	_, ok := firstIn(b.days[user], from, to)
 	return ok
 }
 

@@ -205,8 +205,8 @@ func (p *Panel) routes() []route {
 		{"POST /hubs/{id}/remove", p.withPanelAdmin(p.removeHub)},
 		{"POST /moderators", p.withPanelAdmin(p.saveModerators)},
 		{"POST /recording-roles", p.withPanelAdmin(p.saveRecordingRoles)},
-		{"GET " + settingsPath, p.withAdminPage(settingsPath, p.settingsPage)},
-		{"GET " + metricsPath, p.withAdminPage(metricsPath, p.metricsPage)},
+		{"GET " + settingsPath, p.withAdminPage(p.settingsPage)},
+		{"GET " + metricsPath, p.withAdminPage(p.metricsPage)},
 		{"POST /rank-roles", p.withPanelAdmin(p.saveRankRoles)},
 		{"GET " + recordingsPath, p.withSession(p.recordingsPage)},
 		{"GET " + recordingsPath + "/{id}", p.withSession(p.recordingPage)},
@@ -577,14 +577,14 @@ func (p *Panel) withPanelAdmin(next func(http.ResponseWriter, *http.Request, ses
 	return p.withAccess(func(a access) bool { return a.panelAdmin }, p.refuse, next)
 }
 
-// withAdminPage is the gate a page for panel admins alone sits behind, at
-// path: the Settings page and the Metrics page. This request's group check
+// withAdminPage is the gate a page for panel admins alone sits behind: the
+// Settings page and the Metrics page. This request's group check
 // must find a panel admin. Anyone else gets the no-access page at the
 // page's address, a page load included, where the hub page sends them on
 // to the page they land on.
-func (p *Panel) withAdminPage(path string, next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
+func (p *Panel) withAdminPage(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
 	return p.withAccess(func(a access) bool { return a.panelAdmin }, func(w http.ResponseWriter, r *http.Request, sess session) {
-		p.noAccess(w, r, sess, noAccessRefused, path)
+		p.noAccess(w, r, sess, noAccessRefused, r.URL.Path)
 	}, next)
 }
 

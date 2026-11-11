@@ -130,13 +130,16 @@ func TestSectionFigures(t *testing.T) {
 
 func TestSectionsFollowTheirOrderWithZeroRows(t *testing.T) {
 	sections := []Section{{CategoryID: "b", Name: "B"}, {CategoryID: "a", Name: "A"}}
-	r := Build(Input{Now: now, State: collecting, Sections: sections, Weeks: weeksOf("a", WeekTotal{Messages: 4}, WeekTotal{Messages: 4})})
+	r := Build(Input{Now: now, State: collecting, Sections: sections, Weeks: weeksOf("a", WeekTotal{Messages: 4, Active: 3}, WeekTotal{Messages: 4})})
 
 	if len(r.Sections) != 2 || r.Sections[0].Name != "B" || r.Sections[1].Name != "A" {
 		t.Fatalf("rows = %+v, want B then A", r.Sections)
 	}
 	if got := r.Sections[0].Messages.Now; got != known(0.0) {
 		t.Errorf("a section with no activity reads %+v, want a known 0", got)
+	}
+	if got := r.Sections[1].Trend[TrendWeeks-1]; got != known(3) {
+		t.Errorf("the trend's report week = %+v, want the week's 3 active", got)
 	}
 }
 
@@ -185,15 +188,22 @@ func TestSummaryActive(t *testing.T) {
 		name          string
 		state         State
 		a28, a7, chng Maybe[int]
+		// trend is the 28 days to the end of the report week, Sunday 8 Nov.
+		trend Maybe[int]
 	}{
-		{"distinct users over 28 and 7 days, today included", collecting, known(2), known(1), known(100)},
-		{"unknown while collection is younger than the window", State{StartedAt: today.AddDate(0, 0, -10)}, Maybe[int]{}, known(1), Maybe[int]{}},
+		{"distinct users over 28 and 7 days, today included", collecting, known(2), known(1), known(100), known(2)},
+		{"the change is unknown while the 28 days before are", State{StartedAt: today.AddDate(0, 0, -27)}, known(2), known(1), Maybe[int]{}, Maybe[int]{}},
+		{"unknown while collection is younger than the window", State{StartedAt: today.AddDate(0, 0, -10)}, Maybe[int]{}, known(1), Maybe[int]{}, Maybe[int]{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := Build(Input{Now: now, State: tc.state, Days: days}).Summary
+			r := Build(Input{Now: now, State: tc.state, Days: days})
+			s := r.Summary
 			if s.Active28 != tc.a28 || s.Active7 != tc.a7 || s.Active28Change != tc.chng {
 				t.Errorf("active 28 = %+v, 7 = %+v, change = %+v; want %+v, %+v, %+v", s.Active28, s.Active7, s.Active28Change, tc.a28, tc.a7, tc.chng)
+			}
+			if got := r.Trend[TrendWeeks-1].Active; got != tc.trend {
+				t.Errorf("the trend's report week = %+v, want %+v", got, tc.trend)
 			}
 		})
 	}
@@ -205,18 +215,23 @@ func TestSummaryJoins(t *testing.T) {
 	members := []MemberEvent{
 		join("j1", wk(-1, time.Hour)), leave("j1", wk(-1, 25*time.Hour)), join("j1", wk(0)),
 		join("j2", wk(0, 2*time.Hour)), leave("j2", wk(0, 26*time.Hour+time.Second)),
+		join("j3", wk(0, 3*time.Hour)), leave("j3", wk(0, 4*time.Hour)),
 		join("old", wk(-4)),
 		join("t1", wk(-2)), join("t2", wk(-3)),
 	}
 	days := []ActiveDay{{UserID: "t1", Day: wk(-2)}}
 
-	s := Build(Input{Now: now, State: collecting, Members: members, Days: days}).Summary
+	r := Build(Input{Now: now, State: collecting, Members: members, Days: days})
+	s, nm := r.Summary, r.Brief.NewMembers
 
-	if s.Joined != known(4) {
-		t.Errorf("joined over 4 weeks = %+v, want 4: a rejoin counts once, and W-4 is outside", s.Joined)
+	if s.Joined != known(5) {
+		t.Errorf("joined over 4 weeks = %+v, want 5: a rejoin counts once, and W-4 is outside", s.Joined)
 	}
-	if s.LeftShare != known(0.25) {
-		t.Errorf("left within 24 h = %+v, want 0.25: exactly 24 h counts, a second more doesn't", s.LeftShare)
+	if s.LeftShare != known(0.4) {
+		t.Errorf("left within 24 h = %+v, want 0.4: exactly 24 h counts, a second more doesn't", s.LeftShare)
+	}
+	if nm.Joined != known(3) || nm.Left != known(1) {
+		t.Errorf("the brief's joins this week = %+v, left %+v; want 3, a rejoin included, and 1", nm.Joined, nm.Left)
 	}
 	if s.TalkedShare != known(1.0/3) {
 		t.Errorf("talked within 7 days = %+v, want 1 of old, t1 and t2, who stayed", s.TalkedShare)
@@ -258,8 +273,9 @@ func TestCohortFunnel(t *testing.T) {
 	}
 }
 
+// Each wait is also a W-1 joiner's, doubled, for the brief's first reply.
 func TestCohortMedianReply(t *testing.T) {
-	joined := wk(-5)
+	joined, lastWeek := wk(-5), wk(-1)
 	tests := []struct {
 		name              string
 		waits             []time.Duration // a negative wait is a message with no reply
@@ -276,17 +292,27 @@ func TestCohortMedianReply(t *testing.T) {
 			var members []MemberEvent
 			var replies []FirstReply
 			for i, w := range tc.waits {
-				u := string(rune('a' + i))
-				members = append(members, MemberEvent{UserID: u, Kind: MemberJoined, At: joined})
-				r := FirstReply{UserID: u, JoinedAt: joined, FirstMessageAt: joined.Add(time.Hour)}
-				if w >= 0 {
-					r.RepliedAt = r.FirstMessageAt.Add(w)
+				for _, j := range []struct {
+					u    string
+					at   time.Time
+					wait time.Duration
+				}{{string(rune('a' + i)), joined, w}, {string(rune('A' + i)), lastWeek, 2 * w}} {
+					members = append(members, MemberEvent{UserID: j.u, Kind: MemberJoined, At: j.at})
+					r := FirstReply{UserID: j.u, JoinedAt: j.at, FirstMessageAt: j.at.Add(time.Hour)}
+					if w >= 0 {
+						r.RepliedAt = r.FirstMessageAt.Add(j.wait)
+					}
+					replies = append(replies, r)
 				}
-				replies = append(replies, r)
 			}
-			c := Build(Input{Now: now, State: collecting, Members: members, Replies: replies}).Cohort
+			r := Build(Input{Now: now, State: collecting, Members: members, Replies: replies})
+			c, fr := r.Cohort, r.Brief.FirstReply
 			if c.Messaged != tc.messaged || c.Replied != tc.replied || c.MedianReply != tc.median {
 				t.Errorf("messaged %d, replied %d, median %+v; want %d, %d, %+v", c.Messaged, c.Replied, c.MedianReply, tc.messaged, tc.replied, tc.median)
+			}
+			lastMedian := Maybe[time.Duration]{V: 2 * tc.median.V, Known: tc.median.Known}
+			if fr.Median != lastMedian || fr.Before != tc.median {
+				t.Errorf("the brief's first reply = %+v against %+v; want %+v against %+v", fr.Median, fr.Before, lastMedian, tc.median)
 			}
 		})
 	}
@@ -299,6 +325,7 @@ func TestMonths(t *testing.T) {
 		{UserID: "quiet", Day: sep},
 		{UserID: "back", Day: oct}, {UserID: "back", Day: oct.AddDate(0, 0, -61)},
 		{UserID: "stayed", Day: oct}, {UserID: "stayed", Day: oct.AddDate(0, 0, -60)},
+		{UserID: "n1", Day: oct}, {UserID: "n2", Day: oct},
 	}
 	members := []MemberEvent{
 		{UserID: "n1", Kind: MemberJoined, At: oct}, {UserID: "n1", Kind: MemberJoined, At: oct.Add(time.Hour)},
@@ -309,7 +336,7 @@ func TestMonths(t *testing.T) {
 		state State
 		want  Month
 	}{
-		{"new, returned after 60 quiet days, went quiet", collecting,
+		{"new, returned after 60 quiet days and not new, went quiet", collecting,
 			Month{Start: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), New: known(1), Returned: known(1), Quiet: known(1)}},
 		{"unknown where the month or its lookback starts before collection", State{StartedAt: time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)},
 			Month{Start: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), New: known(1)}},
@@ -362,5 +389,70 @@ func TestVoicePeakIsFromTheReportWeekAlone(t *testing.T) {
 
 	if want := known(Peak{Day: time.Tuesday, Hour: 10, Average: 1}); peak != want {
 		t.Errorf("voice peak = %+v, want %+v", peak, want)
+	}
+}
+
+// readOver is in read as the store reads it over rg.
+func readOver(in Input, rg Ranges) Input {
+	inWeeks := func(t time.Time) bool { return !t.Before(rg.Weeks.Start) && t.Before(rg.Weeks.End) }
+	out := Input{Now: in.Now, State: in.State, Sections: in.Sections}
+	for _, w := range in.Weeks {
+		if inWeeks(w.Week) {
+			out.Weeks = append(out.Weeks, w)
+		}
+	}
+	for _, d := range in.Days {
+		if !d.Day.Before(dayOf(rg.DaysFrom)) && !d.Day.After(in.Now) {
+			out.Days = append(out.Days, d)
+		}
+	}
+	for _, e := range in.Members {
+		if !e.At.Before(rg.MembersFrom) {
+			out.Members = append(out.Members, e)
+		}
+	}
+	for _, s := range in.Spans {
+		if s.Start.Before(rg.Weeks.End) && s.End.After(rg.Weeks.Start) {
+			if rg.Weeks.End.Before(s.End) {
+				s.End = rg.Weeks.End
+			}
+			out.Spans = append(out.Spans, Span{Start: later(s.Start, rg.Weeks.Start), End: s.End})
+		}
+	}
+	for _, r := range in.Replies {
+		if !r.JoinedAt.Before(rg.Joins.Start) && r.JoinedAt.Before(rg.Joins.End) {
+			out.Replies = append(out.Replies, r)
+		}
+	}
+	return out
+}
+
+// A report over the rows ReadRanges names is the report over every row.
+func TestReadRangesHoldEveryRowTheReportUses(t *testing.T) {
+	in := Input{Now: now, State: collecting, Sections: []Section{{CategoryID: "c"}}}
+	for k := -20; k <= 0; k++ {
+		for _, c := range []string{"", "c"} {
+			in.Weeks = append(in.Weeks, WeekTotal{Week: wk(k), CategoryID: c, Messages: 50 - k, VoiceSeconds: int64(3600 * (12 - k)), VoicePeople: 3, Active: 20 - k})
+		}
+	}
+	// A member joins every day over 250 days, some leave within the hour,
+	// and each first talks 0 to 70 days after joining.
+	for i := range 250 {
+		u, joined := string(rune(0x100+i)), now.Add(-time.Duration(i)*day-time.Duration(i%24)*time.Hour)
+		in.Members = append(in.Members, MemberEvent{UserID: u, Kind: MemberJoined, At: joined})
+		if i%5 == 0 {
+			in.Members = append(in.Members, MemberEvent{UserID: u, Kind: MemberLeft, At: joined.Add(time.Hour)})
+		}
+		for _, d := range []int{i % 71, i%71 + 20 + i%13} {
+			if at := dayOf(joined).AddDate(0, 0, d); !at.After(now) {
+				in.Days = append(in.Days, ActiveDay{UserID: u, Day: at})
+			}
+		}
+		in.Replies = append(in.Replies, FirstReply{UserID: u, JoinedAt: joined, FirstMessageAt: joined.Add(time.Hour), RepliedAt: joined.Add(time.Duration(60+i) * time.Minute)})
+		in.Spans = append(in.Spans, Span{Start: joined, End: joined.Add(time.Duration(30+i%90) * time.Minute)})
+	}
+
+	if got, want := Build(readOver(in, ReadRanges(now))), Build(in); !reflect.DeepEqual(got, want) {
+		t.Errorf("report over the read ranges = %+v\nwant %+v", got, want)
 	}
 }
