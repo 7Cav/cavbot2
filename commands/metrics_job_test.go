@@ -66,3 +66,16 @@ func TestMetricsJobSchedulesNextPassAfterPanic(t *testing.T) {
 		t.Errorf("%d next passes scheduled, want 1", len(*scheduled))
 	}
 }
+
+func TestMetricsJobCutShortByStopReportsNothing(t *testing.T) {
+	events := recordSentry(t)
+	c, _, _ := newTestMetricsCollector(t, metricsTestGuild(), downMetricsStore{newFakeMetricsStore()}, nil)
+
+	// SIGTERM cancels the context before Shutdown marks the collector stopped.
+	c.cancel()
+	c.runJob()
+
+	if n := len(events.Events()); n != 0 {
+		t.Errorf("%d Sentry events from a pass a stop cut short, want none", n)
+	}
+}

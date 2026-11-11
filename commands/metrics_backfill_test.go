@@ -3,6 +3,7 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"testing"
 	"time"
@@ -18,15 +19,17 @@ type fakeHistory struct {
 	active   []*discordgo.Channel
 	public   map[string][]*discordgo.Channel
 	private  map[string][]*discordgo.Channel
-	fail     map[string]bool
+	fail     map[string]error
+	// failActive fails the active thread listing.
+	failActive bool
 	// read lists every channel whose messages were read, once per page.
 	read []string
 }
 
 func (h *fakeHistory) ChannelMessages(channelID string, limit int, beforeID, _, _ string, _ ...discordgo.RequestOption) ([]*discordgo.Message, error) {
 	h.read = append(h.read, channelID)
-	if h.fail[channelID] {
-		return nil, errors.New("missing access")
+	if err := h.fail[channelID]; err != nil {
+		return nil, err
 	}
 	msgs := h.messages[channelID]
 	if beforeID != "" {
@@ -37,6 +40,9 @@ func (h *fakeHistory) ChannelMessages(channelID string, limit int, beforeID, _, 
 }
 
 func (h *fakeHistory) GuildThreadsActive(string, ...discordgo.RequestOption) (*discordgo.ThreadsList, error) {
+	if h.failActive {
+		return nil, errors.New("discord down")
+	}
 	return &discordgo.ThreadsList{Threads: h.active}, nil
 }
 
@@ -107,13 +113,18 @@ func TestMetricsBackfill(t *testing.T) {
 			"private":         {historyMessage("private-thread", after)},
 			"forum-post":      {historyMessage("forum-post", after)},
 			"news-thread-100": {historyMessage("second-page-thread", after)},
-			"vc-ops":          {historyMessage("after-failure", after)},
+			"news":            {historyMessage("after-failure", after)},
 		},
 		active:  []*discordgo.Channel{{ID: "thread", ParentID: "general", Type: discordgo.ChannelTypeGuildPublicThread}},
 		public:  map[string][]*discordgo.Channel{"general": {archivedThread("archived", "general", after)}, "news": newsArchive, "forum": {archivedThread("forum-post", "forum", after)}},
 		private: map[string][]*discordgo.Channel{"general": {archivedThread("private", "general", after)}},
-		fail:    map[string]bool{"loose": true},
+		// afk fails as in an outage, and the bot can't read loose.
+		fail: map[string]error{
+			"afk":   errors.New("discord down"),
+			"loose": restError(http.StatusForbidden, discordgo.ErrCodeMissingAccess, "Missing Access"),
+		},
 	}
+	events := recordSentry(t)
 	st := newFakeMetricsStore()
 	c, _, _ := newTestMetricsCollector(t, guild, st, history)
 
@@ -146,12 +157,59 @@ func TestMetricsBackfill(t *testing.T) {
 	if n := countOf(history.read, "general"); n != 2 {
 		t.Errorf("read %d pages of general, want 2", n)
 	}
+	var captured []any
+	for _, e := range events.Events() {
+		captured = append(captured, e.Contexts["extra"]["channel_id"])
+	}
+	if !slices.Equal(captured, []any{"afk"}) {
+		t.Errorf("captured failures of channels %v, want only afk", captured)
+	}
 	if !st.backfilledAt.Equal(metricsTestNow) {
 		t.Errorf("backfilled at %v, want %v", st.backfilledAt, metricsTestNow)
 	}
 	if st.prunedBefore.IsZero() {
 		t.Error("hourly job did not start after the backfill")
 	}
+}
+
+func TestMetricsBackfillMarkedOnlyAfterFullRead(t *testing.T) {
+	t.Run("guild unavailable at the first GUILD_CREATE", func(t *testing.T) {
+		st := newFakeMetricsStore()
+		guild := metricsTestGuild()
+		guild.Unavailable = true
+		c, state, scheduled := newTestMetricsCollector(t, guild, st, &fakeHistory{})
+		guildCreate := func() {
+			c.handleGuildCreate(&discordgo.GuildCreate{Guild: &discordgo.Guild{ID: testMetricsGuild}})
+			for _, f := range *scheduled {
+				f()
+			}
+			*scheduled = nil
+		}
+
+		guildCreate()
+		if !st.backfilledAt.IsZero() {
+			t.Fatal("backfill marked finished while the guild was unavailable")
+		}
+
+		if err := state.GuildAdd(metricsTestGuild()); err != nil {
+			t.Fatal(err)
+		}
+		guildCreate()
+		if !st.backfilledAt.Equal(metricsTestNow) {
+			t.Errorf("backfilled at %v once the guild was available, want %v", st.backfilledAt, metricsTestNow)
+		}
+	})
+
+	t.Run("active thread listing failed", func(t *testing.T) {
+		st := newFakeMetricsStore()
+		c, _, _ := newTestMetricsCollector(t, metricsTestGuild(), st, &fakeHistory{failActive: true})
+
+		c.collectHistory()
+
+		if !st.backfilledAt.IsZero() {
+			t.Error("backfill marked finished without the active threads")
+		}
+	})
 }
 
 func TestMetricsBackfillRunsOnce(t *testing.T) {

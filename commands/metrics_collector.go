@@ -66,7 +66,7 @@ type MetricsCollector struct {
 }
 
 // StartMetrics calls StartMetrics on the store and registers the gateway handlers.
-// The first GUILD_CREATE starts the backfill (when not yet done) and then the hourly job.
+// The first GUILD_CREATE with the guild available starts the backfill (when not yet done) and then the hourly job.
 func StartMetrics(ctx context.Context, dg *discordgo.Session, st MetricsStore, guildID string) (*MetricsCollector, error) {
 	c, err := newMetricsCollector(ctx, dg.State, dg, st, guildID)
 	if err != nil {
@@ -121,22 +121,23 @@ func (c *MetricsCollector) Shutdown() {
 
 // handleGuildCreate makes the open voice sessions match the guild as it is
 // now, since events in a gap between gateway sessions are lost. The first
-// one starts the history work.
+// one with the guild available starts the history work.
 func (c *MetricsCollector) handleGuildCreate(g *discordgo.GuildCreate) {
 	if g.ID != c.guildID {
 		return
 	}
 	c.mu.Lock()
-	if !c.stopped.Load() {
-		var present []metrics.VoicePresence
-		if c.withGuild(func(g *discordgo.Guild) { present = presentInVoice(g) }) {
-			storeWrite(metricsVoiceIssue, "Voice sessions not synced", func(ctx context.Context) error {
-				return c.st.SyncVoicePresence(ctx, present, metricsNow())
-			})
-		}
+	var present []metrics.VoicePresence
+	available := c.withGuild(func(g *discordgo.Guild) { present = presentInVoice(g) })
+	if available && !c.stopped.Load() {
+		storeWrite(metricsVoiceIssue, "Voice sessions not synced", func(ctx context.Context) error {
+			return c.st.SyncVoicePresence(ctx, present, metricsNow())
+		})
 	}
 	c.mu.Unlock()
-	c.once.Do(func() { metricsAfterFunc(0, c.collectHistory) })
+	if available {
+		c.once.Do(func() { metricsAfterFunc(0, c.collectHistory) })
+	}
 }
 
 func (c *MetricsCollector) handleVoiceStateUpdate(vs *discordgo.VoiceStateUpdate) {

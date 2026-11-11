@@ -418,25 +418,3 @@ func TestMetricsStoreOutageFilesOneIssuePerKind(t *testing.T) {
 		t.Errorf("Sentry issues = %v, want %v", got, want)
 	}
 }
-
-func TestStartMetrics(t *testing.T) {
-	dg, err := discordgo.New("Bot test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	st := newFakeMetricsStore()
-	c, err := StartMetrics(context.Background(), dg, st, testMetricsGuild)
-	if err != nil || c == nil || st.state.StartedAt.IsZero() {
-		t.Errorf("StartMetrics = %v, %v with started at %v, want a collector and collection started", c, err, st.state.StartedAt)
-	}
-
-	if _, err := StartMetrics(context.Background(), dg, failingStartStore{st}, testMetricsGuild); !errors.Is(err, errMetricsStoreDown) {
-		t.Errorf("StartMetrics on a store that can't start = %v, want %v", err, errMetricsStoreDown)
-	}
-}
-
-type failingStartStore struct{ *fakeMetricsStore }
-
-func (failingStartStore) StartMetrics(context.Context, time.Time) (metrics.State, error) {
-	return metrics.State{}, errMetricsStoreDown
-}

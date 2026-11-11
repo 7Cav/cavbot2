@@ -2,6 +2,8 @@ package commands
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"time"
 
 	"github.com/7cav/cavbot2/metrics"
@@ -43,13 +45,14 @@ func (c *MetricsCollector) collectHistory() {
 }
 
 // backfill stores the history of every channel and thread, and marks the
-// backfill finished unless a stop cut it short. A channel that fails is
-// captured and skipped.
+// backfill finished once it listed them all and no stop cut it short. A
+// channel that fails is skipped, and its failure captured unless the bot
+// can't read it.
 func (c *MetricsCollector) backfill() {
 	defer utils.RecoverPanic("metrics-backfill")
 	cutoff := c.started.StartedAt.Add(-metrics.BackfillSpan)
 	utils.Info("Metrics backfill starting", "since", cutoff)
-	channels := c.historyChannels(cutoff)
+	channels, listed := c.historyChannels(cutoff)
 	stored := 0
 	for _, ch := range channels {
 		if c.ctx.Err() != nil {
@@ -57,11 +60,19 @@ func (c *MetricsCollector) backfill() {
 		}
 		n, err := c.backfillChannel(ch, cutoff)
 		stored += n
-		if err != nil && c.ctx.Err() == nil {
+		switch {
+		case err == nil || c.ctx.Err() != nil:
+		case missingAccess(err):
+			utils.Warn("Metrics backfill can't read a channel", "channel_id", ch.id)
+		default:
 			utils.CaptureErrorIn(metricsBackfillIssue, "Metrics backfill skipped a channel", err, "channel_id", ch.id)
 		}
 	}
 	if c.ctx.Err() != nil {
+		return
+	}
+	if !listed {
+		utils.Warn("Metrics backfill unfinished, reruns at the next start", "channels", len(channels), "messages", stored)
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, metricsStoreTimeout)
@@ -76,12 +87,13 @@ func (c *MetricsCollector) backfill() {
 // historyChannels is every channel with message history: the text, news,
 // voice and stage channels in the state, and the active threads and the
 // threads archived since cutoff. Forum and media channels hold threads
-// only. A thread counts for its parent's category.
-func (c *MetricsCollector) historyChannels(cutoff time.Time) []historyChannel {
+// only. A thread counts for its parent's category. It is false when the
+// guild isn't in the state or the active thread listing failed.
+func (c *MetricsCollector) historyChannels(cutoff time.Time) ([]historyChannel, bool) {
 	categories := map[string]string{}
 	var channels []historyChannel
 	var public, private []string
-	c.withGuild(func(g *discordgo.Guild) {
+	inState := c.withGuild(func(g *discordgo.Guild) {
 		for _, ch := range g.Channels {
 			categories[ch.ID] = ch.ParentID
 			switch ch.Type {
@@ -121,7 +133,16 @@ func (c *MetricsCollector) historyChannels(cutoff time.Time) []historyChannel {
 	for _, id := range private {
 		addThreads(c.archivedThreads(c.history.ThreadsPrivateArchived, id, cutoff))
 	}
-	return channels
+	return channels, inState && err == nil
+}
+
+// missingAccess reports whether Discord refused a read as forbidden or 50001
+// Missing Access.
+func missingAccess(err error) bool {
+	var restErr *discordgo.RESTError
+	return errors.As(err, &restErr) &&
+		((restErr.Response != nil && restErr.Response.StatusCode == http.StatusForbidden) ||
+			(restErr.Message != nil && restErr.Message.Code == discordgo.ErrCodeMissingAccess))
 }
 
 // archivedThreads pages one archive listing, newest archive time first,

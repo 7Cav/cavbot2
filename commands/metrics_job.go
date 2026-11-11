@@ -29,14 +29,14 @@ func (c *MetricsCollector) runJob() {
 	cutoff := now.Add(-metrics.RawRetention)
 	ctx, cancel := context.WithTimeout(c.ctx, metricsJobTimeout)
 	defer cancel()
-	if err := c.st.PruneMetrics(ctx, cutoff); err != nil {
+	if err := c.st.PruneMetrics(ctx, cutoff); err != nil && c.ctx.Err() == nil {
 		utils.CaptureErrorIn(metricsJobIssue, "Metrics not pruned", err)
 	}
 	var sections []metrics.Section
 	if !c.withGuild(func(g *discordgo.Guild) { sections = metrics.Sections(g.Channels, g.Roles) }) {
 		return
 	}
-	if err := c.st.RollUpMetricWeeks(ctx, firstMondayOnOrAfter(cutoff), metrics.WeekStart(now), sections); err != nil {
+	if err := c.st.RollUpMetricWeeks(ctx, firstMondayOnOrAfter(cutoff), metrics.WeekStart(now), sections); err != nil && c.ctx.Err() == nil {
 		utils.CaptureErrorIn(metricsJobIssue, "Metric weeks not rolled up", err)
 	}
 }
