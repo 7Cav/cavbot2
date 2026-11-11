@@ -21,7 +21,8 @@ type fakeHistory struct {
 	private  map[string][]*discordgo.Channel
 	fail     map[string]error
 	// failActive fails the active thread listing.
-	failActive bool
+	failActive   bool
+	failArchived bool
 	// read lists every channel whose messages were read, once per page.
 	read []string
 }
@@ -47,6 +48,9 @@ func (h *fakeHistory) GuildThreadsActive(string, ...discordgo.RequestOption) (*d
 }
 
 func (h *fakeHistory) ThreadsArchived(channelID string, before *time.Time, limit int, _ ...discordgo.RequestOption) (*discordgo.ThreadsList, error) {
+	if h.failArchived {
+		return nil, errors.New("discord down")
+	}
 	return archivedPage(h.public[channelID], before, limit), nil
 }
 
@@ -208,6 +212,17 @@ func TestMetricsBackfillMarkedOnlyAfterFullRead(t *testing.T) {
 
 		if !st.backfilledAt.IsZero() {
 			t.Error("backfill marked finished without the active threads")
+		}
+	})
+
+	t.Run("archived thread listing failed", func(t *testing.T) {
+		st := newFakeMetricsStore()
+		c, _, _ := newTestMetricsCollector(t, metricsTestGuild(), st, &fakeHistory{failArchived: true})
+
+		c.collectHistory()
+
+		if !st.backfilledAt.IsZero() {
+			t.Error("backfill marked finished without the archived threads")
 		}
 	})
 }

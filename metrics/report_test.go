@@ -451,6 +451,13 @@ func TestReadRangesHoldEveryRowTheReportUses(t *testing.T) {
 		in.Replies = append(in.Replies, FirstReply{UserID: u, JoinedAt: joined, FirstMessageAt: joined.Add(time.Hour), RepliedAt: joined.Add(time.Duration(60+i) * time.Minute)})
 		in.Spans = append(in.Spans, Span{Start: joined, End: joined.Add(time.Duration(30+i%90) * time.Minute)})
 	}
+	// A member who first joined near the retention edge rejoins in the
+	// cohort weeks, so the report must still see the first join.
+	in.Members = append(in.Members,
+		MemberEvent{UserID: "rejoiner", Kind: MemberJoined, At: now.Add(-170 * day)},
+		MemberEvent{UserID: "rejoiner", Kind: MemberLeft, At: now.Add(-169 * day)},
+		MemberEvent{UserID: "rejoiner", Kind: MemberJoined, At: now.Add(-6 * week)},
+	)
 
 	if got, want := Build(readOver(in, ReadRanges(now))), Build(in); !reflect.DeepEqual(got, want) {
 		t.Errorf("report over the read ranges = %+v\nwant %+v", got, want)

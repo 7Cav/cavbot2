@@ -127,13 +127,18 @@ func (c *MetricsCollector) historyChannels(cutoff time.Time) ([]historyChannel, 
 	} else {
 		addThreads(active.Threads)
 	}
+	listed := inState && err == nil
 	for _, id := range public {
-		addThreads(c.archivedThreads(c.history.ThreadsArchived, id, cutoff))
+		threads, ok := c.archivedThreads(c.history.ThreadsArchived, id, cutoff)
+		addThreads(threads)
+		listed = listed && ok
 	}
 	for _, id := range private {
-		addThreads(c.archivedThreads(c.history.ThreadsPrivateArchived, id, cutoff))
+		threads, ok := c.archivedThreads(c.history.ThreadsPrivateArchived, id, cutoff)
+		addThreads(threads)
+		listed = listed && ok
 	}
-	return channels, inState && err == nil
+	return channels, listed
 }
 
 // missingAccess reports whether Discord refused a read as forbidden or 50001
@@ -147,29 +152,29 @@ func missingAccess(err error) bool {
 
 // archivedThreads pages one archive listing, newest archive time first,
 // up to the first thread archived before cutoff, which holds no later
-// message.
-func (c *MetricsCollector) archivedThreads(list func(string, *time.Time, int, ...discordgo.RequestOption) (*discordgo.ThreadsList, error), channelID string, cutoff time.Time) []*discordgo.Channel {
+// message. It reports false when the listing failed or was stopped.
+func (c *MetricsCollector) archivedThreads(list func(string, *time.Time, int, ...discordgo.RequestOption) (*discordgo.ThreadsList, error), channelID string, cutoff time.Time) ([]*discordgo.Channel, bool) {
 	var threads []*discordgo.Channel
 	var before *time.Time
 	for c.ctx.Err() == nil {
 		page, err := list(channelID, before, historyPage, discordgo.WithContext(c.ctx))
 		if err != nil {
 			c.captureListing("Metrics backfill could not list archived threads", err, channelID)
-			return threads
+			return threads, false
 		}
 		for _, t := range page.Threads {
 			if t.ThreadMetadata == nil || t.ThreadMetadata.ArchiveTimestamp.Before(cutoff) {
-				return threads
+				return threads, true
 			}
 			threads = append(threads, t)
 		}
 		if !page.HasMore || len(page.Threads) == 0 {
-			return threads
+			return threads, true
 		}
 		last := page.Threads[len(page.Threads)-1].ThreadMetadata.ArchiveTimestamp
 		before = &last
 	}
-	return threads
+	return threads, false
 }
 
 // captureListing captures a thread listing that failed, unless a stop

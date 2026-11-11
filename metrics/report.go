@@ -58,14 +58,10 @@ type Ranges struct {
 // ReadRanges is what to read for a report at now.
 func ReadRanges(now time.Time) Ranges {
 	w0 := WeekStart(now).Add(-week)
-	members := w0.Add(-8 * week)
-	if m := monthStart(now).AddDate(0, -len(Report{}.Months), 0).Add(-quietSpan); m.Before(members) {
-		members = m
-	}
 	return Ranges{
 		Weeks:       Span{Start: w0.Add(-(TrendWeeks - 1) * week), End: w0.Add(week)},
 		DaysFrom:    now.Add(-RawRetention),
-		MembersFrom: members,
+		MembersFrom: now.Add(-RawRetention),
 		Joins:       Span{Start: w0.Add(-7 * week), End: w0},
 	}
 }
