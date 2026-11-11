@@ -44,15 +44,15 @@ func (c *MetricsCollector) collectHistory() {
 	c.runJob()
 }
 
-// backfill stores the history of every channel and thread, and marks the
-// backfill finished once it listed and read them all and no stop cut it
-// short. A channel the bot can't read counts as read. Any other failure
-// is captured and leaves the backfill to rerun at the next start.
+// backfill stores the history of every channel and thread, then marks it
+// finished unless a stop cut it short or the guild wasn't in the state.
+// A failed listing or channel only leaves its messages out, since the
+// report shows no backfilled history before the mark.
 func (c *MetricsCollector) backfill() {
 	defer utils.RecoverPanic("metrics-backfill")
 	cutoff := c.started.StartedAt.Add(-metrics.BackfillSpan)
 	utils.Info("Metrics backfill starting", "since", cutoff)
-	channels, listed := c.historyChannels(cutoff)
+	channels, inState := c.historyChannels(cutoff)
 	stored := 0
 	for _, ch := range channels {
 		if c.ctx.Err() != nil {
@@ -62,17 +62,16 @@ func (c *MetricsCollector) backfill() {
 		stored += n
 		switch {
 		case err == nil || c.ctx.Err() != nil:
-		case missingAccess(err):
+		case unreadable(err):
 			utils.Warn("Metrics backfill can't read a channel", "channel_id", ch.id)
 		default:
 			utils.CaptureErrorIn(metricsBackfillIssue, "Metrics backfill skipped a channel", err, "channel_id", ch.id)
-			listed = false
 		}
 	}
 	if c.ctx.Err() != nil {
 		return
 	}
-	if !listed {
+	if !inState {
 		utils.Warn("Metrics backfill unfinished, reruns at the next start", "channels", len(channels), "messages", stored)
 		return
 	}
@@ -89,7 +88,7 @@ func (c *MetricsCollector) backfill() {
 // voice and stage channels in the state, and the active threads and the
 // threads archived since cutoff. Forum and media channels hold threads
 // only. A thread counts for its parent's category. It is false when the
-// guild isn't in the state or the active thread listing failed.
+// guild isn't in the state.
 func (c *MetricsCollector) historyChannels(cutoff time.Time) ([]historyChannel, bool) {
 	categories := map[string]string{}
 	var channels []historyChannel
@@ -128,54 +127,55 @@ func (c *MetricsCollector) historyChannels(cutoff time.Time) ([]historyChannel, 
 	} else {
 		addThreads(active.Threads)
 	}
-	listed := inState && err == nil
 	for _, id := range public {
-		threads, ok := c.archivedThreads(c.history.ThreadsArchived, id, cutoff)
-		addThreads(threads)
-		listed = listed && ok
+		addThreads(c.archivedThreads(c.history.ThreadsArchived, id, cutoff))
 	}
 	for _, id := range private {
-		threads, ok := c.archivedThreads(c.history.ThreadsPrivateArchived, id, cutoff)
-		addThreads(threads)
-		listed = listed && ok
+		addThreads(c.archivedThreads(c.history.ThreadsPrivateArchived, id, cutoff))
 	}
-	return channels, listed
+	return channels, inState
 }
 
-// missingAccess reports whether Discord refused a read as forbidden or 50001
-// Missing Access.
-func missingAccess(err error) bool {
+// unreadable reports whether Discord refused a read as forbidden or 50001
+// Missing Access, or found the channel gone (10003 Unknown Channel), as
+// when a thread is deleted during the backfill.
+func unreadable(err error) bool {
 	var restErr *discordgo.RESTError
-	return errors.As(err, &restErr) &&
-		((restErr.Response != nil && restErr.Response.StatusCode == http.StatusForbidden) ||
-			(restErr.Message != nil && restErr.Message.Code == discordgo.ErrCodeMissingAccess))
+	if !errors.As(err, &restErr) {
+		return false
+	}
+	if restErr.Response != nil && restErr.Response.StatusCode == http.StatusForbidden {
+		return true
+	}
+	return restErr.Message != nil &&
+		(restErr.Message.Code == discordgo.ErrCodeMissingAccess || restErr.Message.Code == discordgo.ErrCodeUnknownChannel)
 }
 
 // archivedThreads pages one archive listing, newest archive time first,
 // up to the first thread archived before cutoff, which holds no later
-// message. It reports false when the listing failed or was stopped.
-func (c *MetricsCollector) archivedThreads(list func(string, *time.Time, int, ...discordgo.RequestOption) (*discordgo.ThreadsList, error), channelID string, cutoff time.Time) ([]*discordgo.Channel, bool) {
+// message. A failed listing keeps the threads already paged.
+func (c *MetricsCollector) archivedThreads(list func(string, *time.Time, int, ...discordgo.RequestOption) (*discordgo.ThreadsList, error), channelID string, cutoff time.Time) []*discordgo.Channel {
 	var threads []*discordgo.Channel
 	var before *time.Time
 	for c.ctx.Err() == nil {
 		page, err := list(channelID, before, historyPage, discordgo.WithContext(c.ctx))
 		if err != nil {
 			c.captureListing("Metrics backfill could not list archived threads", err, channelID)
-			return threads, false
+			return threads
 		}
 		for _, t := range page.Threads {
 			if t.ThreadMetadata == nil || t.ThreadMetadata.ArchiveTimestamp.Before(cutoff) {
-				return threads, true
+				return threads
 			}
 			threads = append(threads, t)
 		}
 		if !page.HasMore || len(page.Threads) == 0 {
-			return threads, true
+			return threads
 		}
 		last := page.Threads[len(page.Threads)-1].ThreadMetadata.ArchiveTimestamp
 		before = &last
 	}
-	return threads, false
+	return threads
 }
 
 // captureListing captures a thread listing that failed, unless a stop
