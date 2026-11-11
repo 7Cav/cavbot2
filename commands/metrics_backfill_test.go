@@ -168,8 +168,8 @@ func TestMetricsBackfill(t *testing.T) {
 	if !slices.Equal(captured, []any{"afk"}) {
 		t.Errorf("captured failures of channels %v, want only afk", captured)
 	}
-	if !st.backfilledAt.Equal(metricsTestNow) {
-		t.Errorf("backfilled at %v, want %v", st.backfilledAt, metricsTestNow)
+	if !st.backfilledAt.IsZero() {
+		t.Error("backfill marked finished after afk failed")
 	}
 	if st.prunedBefore.IsZero() {
 		t.Error("hourly job did not start after the backfill")
@@ -212,6 +212,18 @@ func TestMetricsBackfillMarkedOnlyAfterFullRead(t *testing.T) {
 
 		if !st.backfilledAt.IsZero() {
 			t.Error("backfill marked finished without the active threads")
+		}
+	})
+
+	t.Run("only a channel the bot can't read failed", func(t *testing.T) {
+		st := newFakeMetricsStore()
+		history := &fakeHistory{fail: map[string]error{"general": restError(http.StatusForbidden, discordgo.ErrCodeMissingAccess, "Missing Access")}}
+		c, _, _ := newTestMetricsCollector(t, metricsTestGuild(), st, history)
+
+		c.collectHistory()
+
+		if !st.backfilledAt.Equal(metricsTestNow) {
+			t.Errorf("backfilled at %v, want %v", st.backfilledAt, metricsTestNow)
 		}
 	})
 

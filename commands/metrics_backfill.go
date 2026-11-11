@@ -45,9 +45,9 @@ func (c *MetricsCollector) collectHistory() {
 }
 
 // backfill stores the history of every channel and thread, and marks the
-// backfill finished once it listed them all and no stop cut it short. A
-// channel that fails is skipped, and its failure captured unless the bot
-// can't read it.
+// backfill finished once it listed and read them all and no stop cut it
+// short. A channel the bot can't read counts as read. Any other failure
+// is captured and leaves the backfill to rerun at the next start.
 func (c *MetricsCollector) backfill() {
 	defer utils.RecoverPanic("metrics-backfill")
 	cutoff := c.started.StartedAt.Add(-metrics.BackfillSpan)
@@ -66,6 +66,7 @@ func (c *MetricsCollector) backfill() {
 			utils.Warn("Metrics backfill can't read a channel", "channel_id", ch.id)
 		default:
 			utils.CaptureErrorIn(metricsBackfillIssue, "Metrics backfill skipped a channel", err, "channel_id", ch.id)
+			listed = false
 		}
 	}
 	if c.ctx.Err() != nil {
