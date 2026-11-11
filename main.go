@@ -239,11 +239,12 @@ func main() {
 	// feature stays inert: no runtime, no panel, and /voice-rename,
 	// /voice-lock and /voice-unlock refuse.
 	var (
-		tempVC    *commands.TempVC
-		foxhole   *commands.FoxholeRuntime
-		recording *commands.RecordingRuntime
-		aviators  commands.WingedAviatorRoles
-		webPanel  *panel.Panel
+		tempVC           *commands.TempVC
+		foxhole          *commands.FoxholeRuntime
+		recording        *commands.RecordingRuntime
+		aviators         commands.WingedAviatorRoles
+		webPanel         *panel.Panel
+		metricsCollector *commands.MetricsCollector
 	)
 	// Built before dg.Open(), so the Connect event tells it the gateway
 	// connection is up, and the guild's GUILD_CREATE makes it ask for the
@@ -273,6 +274,13 @@ func main() {
 		// Its voice events and channel deletes stop a recording by itself
 		// (#388): the last human leaving, or the recorder leaving.
 		recording.Listen(dg)
+		// Discord metrics (#949) count voice, messages, joins and leaves.
+		// The first GUILD_CREATE starts the one-time message backfill, then
+		// the hourly rollup.
+		metricsCollector, err = commands.StartMetrics(ctx, dg, botStore, GuildID)
+		if err != nil {
+			panic(&startFailure{"Bot store unavailable", err})
+		}
 		// Winged aviators (#869) keep a list per game's role in the store and
 		// check it against the member list. A game with its role ID unset has
 		// no runtime, and the bot tracks nobody for it.
@@ -391,6 +399,12 @@ func main() {
 				utils.Warn("Panel did not stop cleanly", "error", err)
 			}
 		}()
+	}
+
+	// Discord metrics end every open voice session at the stop, after the
+	// recordings flush and before the session closes.
+	if metricsCollector != nil {
+		defer metricsCollector.Shutdown()
 	}
 
 	// Recording (#393): a stop closes every running recording's tracks
