@@ -191,8 +191,9 @@ func TestSyncVoicePresence(t *testing.T) {
 // One fixture covers the rollup's attribution rules: role sections count
 // voice in any channel, a session counts on each role's row, a section
 // without roles counts its own channels, a session across Sunday midnight
-// splits by seconds, an open session counts to the week's end, active is by channel and distinct, the server row holds
-// everything, and a recompute replaces only the weeks in its range.
+// splits by seconds, an open session counts to the week's end, active is by
+// channel and distinct, the server row holds everything, and a recompute
+// replaces only the weeks in its range and keeps a gone section's totals.
 func TestRollUpMetricWeeks(t *testing.T) {
 	p := openMetricsStore(t)
 	ctx := context.Background()
@@ -237,6 +238,7 @@ func TestRollUpMetricWeeks(t *testing.T) {
 		`2026-10-05 "" messages 4 voice 9000s people 3 active 4`,
 		`2026-10-05 "cat-a" messages 3 voice 3600s people 1 active 2`,
 		`2026-10-05 "cat-b" messages 0 voice 3600s people 1 active 0`,
+		`2026-10-05 "cat-gone" messages 5 voice 5s people 5 active 5`,
 		`2026-10-05 "cat-ops" messages 0 voice 7200s people 2 active 2`,
 		`2026-10-12 "" messages 1 voice 7200s people 2 active 3`,
 		`2026-10-12 "cat-b" messages 1 voice 0s people 0 active 1`,

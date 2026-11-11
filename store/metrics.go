@@ -196,7 +196,8 @@ SELECT (start AT TIME ZONE 'UTC')::date, category_id,
 FROM counted c FULL JOIN voiced v USING (start, category_id)`
 
 // RollUpMetricWeeks recomputes the weekly totals from the raw rows for the
-// weeks in [from, to), both Mondays, replacing what those weeks held.
+// weeks in [from, to), both Mondays, replacing what those weeks held for
+// the server and these sections. A gone section keeps its totals.
 func (p *Postgres) RollUpMetricWeeks(ctx context.Context, from, to time.Time, sections []metrics.Section) error {
 	var categories, roleCategories, roles []string
 	for _, s := range sections {
@@ -208,8 +209,9 @@ func (p *Postgres) RollUpMetricWeeks(ctx context.Context, from, to time.Time, se
 	err := p.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM metric_weeks
-			WHERE week >= ($1::timestamptz AT TIME ZONE 'UTC')::date AND week < ($2::timestamptz AT TIME ZONE 'UTC')::date`,
-			from, to); err != nil {
+			WHERE week >= ($1::timestamptz AT TIME ZONE 'UTC')::date AND week < ($2::timestamptz AT TIME ZONE 'UTC')::date
+				AND (category_id = '' OR category_id = ANY($3::text[]))`,
+			from, to, categories); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, rollUpWeeks, from, to, categories, roleCategories, roles)
