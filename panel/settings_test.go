@@ -52,10 +52,10 @@ func TestPanelAdminOpensTheSettingsPageFromTheRail(t *testing.T) {
 	}
 }
 
-// A Foxhole manager and an outsider find no Settings link in the rail of
-// the page they land on, and the page's address answers them with the
-// no-access page.
-func TestSettingsPageIsForPanelAdminsAlone(t *testing.T) {
+// A Foxhole manager and an outsider find no link to the Settings page or
+// the Metrics page in the rail of the page they land on, and each page's
+// address answers them with the no-access page.
+func TestAdminPagesAreForPanelAdminsAlone(t *testing.T) {
 	visitors := []struct {
 		name string
 		add  func(f *fakeForum) *forumAccount
@@ -63,21 +63,24 @@ func TestSettingsPageIsForPanelAdminsAlone(t *testing.T) {
 		{"Foxhole manager", addFoxholeManager},
 		{"outsider", addOutsider},
 	}
+	pages := []struct{ page, path string }{{pageSettings, settingsPath}, {pageMetrics, metricsPath}}
 	for _, v := range visitors {
-		t.Run(v.name, func(t *testing.T) {
-			w := newTestWorld(t, testHub())
-			landed := follow(t, w.b, signInAs(t, w.forum, w.b, v.add(w.forum)))
-			if settingsLink(parseHTML(t, landed)) != nil {
-				t.Error("the rail links to the Settings page")
-			}
+		for _, pg := range pages {
+			t.Run(v.name+"/"+pg.page, func(t *testing.T) {
+				w := newTestWorld(t, testHub())
+				landed := follow(t, w.b, signInAs(t, w.forum, w.b, v.add(w.forum)))
+				if _, ok := railLinks(t, parseHTML(t, landed))[pg.page]; ok {
+					t.Errorf("the rail links to the %s page", pg.page)
+				}
 
-			res := w.b.get(settingsPath)
+				res := w.b.get(pg.path)
 
-			if res.StatusCode != http.StatusForbidden {
-				t.Errorf("GET %s status = %d, want 403", settingsPath, res.StatusCode)
-			}
-			assertNoAccessSays(t, parseHTML(t, res), noAccessRefused)
-		})
+				if res.StatusCode != http.StatusForbidden {
+					t.Errorf("GET %s status = %d, want 403", pg.path, res.StatusCode)
+				}
+				assertNoAccessSays(t, parseHTML(t, res), noAccessRefused)
+			})
+		}
 	}
 }
 

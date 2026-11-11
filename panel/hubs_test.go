@@ -749,6 +749,8 @@ type testWorld struct {
 	recordingsDir string
 	// rig is the recording runtime, built the first time a test records.
 	rig *recordingRig
+	// metrics answers the Metrics page's reads.
+	metrics *fakeMetrics
 }
 
 // newTestWorld builds the panel over a store holding the given hubs. The
@@ -794,14 +796,15 @@ func newTestWorldConfigured(t *testing.T, st store.Store, f *fakeForum, cfg Conf
 	}
 	milpacs := serveMilpacs(t)
 	recordingsDir := t.TempDir()
+	metricsReader := &fakeMetrics{}
 	p, err := New(cfg, testVersion, Deps{Store: st, Runtime: runtime, Manager: discord, Foxhole: foxhole,
-		Recordings: commands.NewRecordingLibrary(st, testGuildID, recordingsDir), GuildID: testGuildID})
+		Recordings: commands.NewRecordingLibrary(st, testGuildID, recordingsDir), Metrics: metricsReader, GuildID: testGuildID})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	fake, _ := st.(*store.Fake)
 	return &testWorld{forum: f, st: fake, discord: discord, runtime: runtime, foxhole: foxhole, p: p, b: newBrowser(t, p), clock: clock,
-		store: st, milpacs: milpacs, recordingsDir: recordingsDir}
+		store: st, milpacs: milpacs, recordingsDir: recordingsDir, metrics: metricsReader}
 }
 
 // testHub is a stored hub on hub-1 with the defaults a register writes.

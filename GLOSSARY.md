@@ -725,6 +725,32 @@ spawned channel, since its hub's delete delay takes the notice away once
 everyone has left, and instead when the notice is gone by then.
 _Avoid_: recording panel (the panel is the web UI), banner, announcement.
 
+## Discord metrics
+
+How the Discord server is used, counted in group totals and never per member
+(ADR 0021).
+
+**Metrics page**:
+The panel page that shows panel admins the server's Discord activity in
+group totals.
+_Avoid_: dashboard, analytics, stats.
+
+**Section**:
+A Discord channel category holding at least one channel, as the Metrics page
+counts it. A company or department section counts voice by its role. Not a
+page unit, which is a block.
+_Avoid_: category (for the row), unit.
+
+**Active**:
+Sent a message, or was in voice outside the AFK channel and not
+self-deafened, in the window. "Talked" means the same for a new member.
+_Avoid_: engaged, online.
+
+**Report week**:
+The latest complete Monday to Sunday week in Zulu, the week the Metrics page
+reports on.
+_Avoid_: current week (the one still running).
+
 ## External systems
 
 **7Cav API**:

@@ -33,7 +33,9 @@ type Deps struct {
 	// Recordings is the recording library the Recordings page lists and
 	// downloads through.
 	Recordings *commands.RecordingLibrary
-	GuildID    string
+	// Metrics is what the Metrics page reads.
+	Metrics MetricsReader
+	GuildID string
 }
 
 // hubService is the service layer under the hub page's handlers: validation,
