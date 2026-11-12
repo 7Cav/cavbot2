@@ -3,6 +3,7 @@ package panel
 import (
 	"net/http"
 	"net/url"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -308,6 +309,30 @@ func TestSigninWithAnOverlongAddressLandsOnTheLanding(t *testing.T) {
 
 	if got := res.Header.Get("Location"); got != "/" {
 		t.Errorf("the sign-in comes back to %.40q, want /", got)
+	}
+}
+
+// A pending sign-in holds its address and not the rest of the form that
+// posted it, however large.
+func TestPendingSigninHoldsNoMoreThanItsAddress(t *testing.T) {
+	p := newTestPanel(t, newFakeForum(t))
+	const starts, padding = 40, maxRequestBody - 1024
+	form := "next=/foxhole&padding=" + strings.Repeat("a", padding)
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+
+	for range starts {
+		res := newBrowser(t, p).do(http.MethodPost, "/auth/start",
+			http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}, strings.NewReader(form))
+		assertRedirect(t, res, "/oauth2/authorize")
+	}
+
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	runtime.KeepAlive(p)
+	if held := int64(after.HeapAlloc) - int64(before.HeapAlloc); held > starts*padding/4 {
+		t.Errorf("%d pending sign-ins hold %d bytes, want far less than their %d bytes of form", starts, held, starts*padding)
 	}
 }
 
