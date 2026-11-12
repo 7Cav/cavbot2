@@ -238,6 +238,10 @@ func (p *Panel) routes() []route {
 	}
 }
 
+// maxRequestBody bounds what any route reads of a request body. The largest
+// form, a Foxhole selection of every member, is far smaller.
+const maxRequestBody = 1 << 20
+
 // Handler is the panel's routes behind Go's cross-origin protection, which
 // refuses a state-changing request a browser sends from another origin. The
 // panel therefore carries no form token, and every state change is a POST.
@@ -262,6 +266,7 @@ func (p *Panel) Handler() http.Handler {
 				http.Error(w, serverErrorText, http.StatusInternalServerError)
 			}
 		}()
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 		protected.ServeHTTP(w, r)
 	})
 }
@@ -291,8 +296,12 @@ func (p *Panel) signinPage(w http.ResponseWriter, r *http.Request) {
 // fragment comes back after them when it holds idChars alone. returnPath
 // drops any other fragment, since with no query http.Redirect cleans the
 // fragment as part of the path, and "/foxhole#/../\host" would leave as
-// "/\host".
+// "/\host". A raw longer than maxNextLength comes back to "/" too, since
+// anyone can make the panel hold it.
 func returnPath(raw string) string {
+	if len(raw) > maxNextLength {
+		return "/"
+	}
 	pathAndQuery, fragment, _ := strings.Cut(raw, "#")
 	if pathAndQuery == "" || pathAndQuery[0] != '/' || len(pathAndQuery) > 1 && pathAndQuery[1] == '/' || strings.Contains(pathAndQuery, `\`) {
 		return "/"
@@ -326,6 +335,12 @@ func (p *Panel) authStart(w http.ResponseWriter, r *http.Request) {
 	}
 	verifier := oauth2.GenerateVerifier()
 	id, err := p.sessions.addPending(pendingSignin{state: state, verifier: verifier, started: panelClock.Now(), next: next})
+	if errors.Is(err, errTooManyPending) {
+		// A flood, not a fault, so no Sentry event per request.
+		utils.Warn("Panel sign-in refused", "error", err)
+		http.Error(w, "too many sign-ins in progress, try again in a few minutes", http.StatusServiceUnavailable)
+		return
+	}
 	if err != nil {
 		p.serverError(w, r, nil, "sign-in start", signinURL(causeNone, next), err)
 		return

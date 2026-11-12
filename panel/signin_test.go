@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -294,6 +295,37 @@ func TestSigninNeverComesBackOffThePanel(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The panel holds each pending sign-in's address until the callback, so an
+// address longer than any page's lands on the landing instead.
+func TestSigninWithAnOverlongAddressLandsOnTheLanding(t *testing.T) {
+	w := newTestWorld(t)
+	next := "/foxhole?filter=" + strings.Repeat("a", maxNextLength)
+	state := startSigninWith(t, w.forum, w.b, url.Values{"next": {next}})
+
+	res := forumSendsBack(w.b, state)
+
+	if got := res.Header.Get("Location"); got != "/" {
+		t.Errorf("the sign-in comes back to %.40q, want /", got)
+	}
+}
+
+// The panel holds at most maxPendingSignins sign-ins at once, since anyone
+// can start one. A start past that is refused until the oldest expire.
+func TestSigninStartsPastTheCapAreRefusedUntilTheyExpire(t *testing.T) {
+	clock := installClock(t)
+	p := newTestPanel(t, newFakeForum(t))
+	for range maxPendingSignins {
+		assertRedirect(t, newBrowser(t, p).post("/auth/start"), "/oauth2/authorize")
+	}
+
+	if res := newBrowser(t, p).post("/auth/start"); res.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("start past the cap: status = %d, want 503", res.StatusCode)
+	}
+
+	clock.advance(pendingLifetime)
+	assertRedirect(t, newBrowser(t, p).post("/auth/start"), "/oauth2/authorize")
 }
 
 // A sign-in comes back to the path and query of the address its form

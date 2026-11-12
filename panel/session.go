@@ -3,7 +3,9 @@ package panel
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"sync"
 	"time"
@@ -23,6 +25,13 @@ const (
 	// pruneInterval is how often the timer drops what has expired. Expiry is
 	// checked on every request as well, so the timer only bounds memory.
 	pruneInterval = time.Minute
+	// maxPendingSignins bounds the pending sign-ins held at once, since
+	// anyone can start one without a session.
+	maxPendingSignins = 1000
+	// maxNextLength is the longest address a pending sign-in holds to come
+	// back to: nginx's default request line limit, so the proxy in front of
+	// the panel lets no longer address reach a page.
+	maxNextLength = 8 << 10
 )
 
 // pendingSignin is one sign-in between the redirect to the forum and the
@@ -149,6 +158,12 @@ func newID() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 
+// errTooManyPending is addPending refusing a sign-in while maxPendingSignins
+// unexpired ones are held.
+var errTooManyPending = errors.New("too many pending sign-ins")
+
+// addPending keeps p under a fresh ID. At the cap it first drops the expired,
+// so a refusal outlasts a flood by no more than pendingLifetime.
 func (s *sessions) addPending(p pendingSignin) (string, error) {
 	id, err := newID()
 	if err != nil {
@@ -156,6 +171,12 @@ func (s *sessions) addPending(p pendingSignin) (string, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(s.pending) >= maxPendingSignins {
+		maps.DeleteFunc(s.pending, func(_ string, q pendingSignin) bool { return q.expired(p.started) })
+	}
+	if len(s.pending) >= maxPendingSignins {
+		return "", errTooManyPending
+	}
 	s.pending[id] = p
 	return id, nil
 }

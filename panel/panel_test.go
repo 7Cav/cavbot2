@@ -1169,6 +1169,31 @@ func TestCrossOriginPostIsRefused(t *testing.T) {
 	}
 }
 
+// countingReader is an endless request body that counts what the panel reads.
+type countingReader struct{ n int64 }
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'a'
+	}
+	c.n += int64(len(p))
+	return len(p), nil
+}
+
+// No route reads more of a request body than maxRequestBody, even one
+// anyone can send without a session.
+func TestPanelReadsNoMoreOfABodyThanTheCap(t *testing.T) {
+	b := newBrowser(t, newTestPanel(t, newFakeForum(t)))
+	body := &countingReader{}
+
+	b.do(http.MethodPost, "/auth/start", http.Header{"Content-Type": {"application/x-www-form-urlencoded"}},
+		io.MultiReader(strings.NewReader("next=/"), body))
+
+	if body.n > maxRequestBody+1 {
+		t.Errorf("the panel read %d bytes of the body, want at most %d", body.n, maxRequestBody)
+	}
+}
+
 func TestPendingSigninDroppedAfterFiveMinutes(t *testing.T) {
 	clock := installClock(t)
 	f := newFakeForum(t)
