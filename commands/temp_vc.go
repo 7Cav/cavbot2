@@ -796,10 +796,10 @@ type TempVC struct {
 	// this two members joining one hub at the same moment would both take the
 	// smallest unused number.
 	pending map[int64]map[int]struct{}
-	// memberSpawns holds each member whose hub join has a create or
-	// move-into in flight. Their further hub joins are ignored, so quick
-	// rejoins cannot queue creates on the guild's channel create bucket.
-	memberSpawns map[string]struct{}
+	// memberSpawns holds each member and hub whose hub join has a create or
+	// move-into in flight. Their further joins of that hub are ignored, so
+	// quick rejoins cannot queue creates on the guild's channel create bucket.
+	memberSpawns map[memberSpawn]struct{}
 	// renames holds, per spawned channel, the times of its renames inside the
 	// last ten minutes, oldest first. Discord allows two per channel per ten
 	// minutes; the runtime refuses the third itself so a 429 never sleeps a
@@ -868,6 +868,11 @@ type TempVC struct {
 	recorders map[string]struct{}
 }
 
+type memberSpawn struct {
+	userID string
+	hubID  int64
+}
+
 // NewTempVC builds the runtime state around a manager and a store and loads
 // the guild's hubs, guild-wide moderator roles and rank roles from the
 // store. A store that cannot read them is an error, since the bot must not
@@ -886,7 +891,7 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		channelHub:     make(map[string]int64),
 		channelIndex:   make(map[string]int),
 		pending:        make(map[int64]map[int]struct{}),
-		memberSpawns:   make(map[string]struct{}),
+		memberSpawns:   make(map[memberSpawn]struct{}),
 		deleting:       make(map[string]struct{}),
 		renames:        make(map[string][]time.Time),
 		memberRoles:    make(map[string][]string),
@@ -2042,16 +2047,16 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	// lower-numbered channel is deleted. The number is reserved here and
 	// released on every exit below.
 	t.mu.Lock()
-	if _, busy := t.memberSpawns[vs.UserID]; busy {
+	if _, busy := t.memberSpawns[memberSpawn{vs.UserID, hub.ID}]; busy {
 		t.mu.Unlock()
 		return
 	}
-	t.memberSpawns[vs.UserID] = struct{}{}
+	t.memberSpawns[memberSpawn{vs.UserID, hub.ID}] = struct{}{}
 	index := t.reserveChannelIndexLocked(hub.ID)
 	t.mu.Unlock()
 	spawnDone := func() {
 		t.mu.Lock()
-		delete(t.memberSpawns, vs.UserID)
+		delete(t.memberSpawns, memberSpawn{vs.UserID, hub.ID})
 		t.mu.Unlock()
 	}
 	name := nameWithIndex(hub.BaseString, index)
@@ -2069,7 +2074,7 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	if err != nil {
 		t.mu.Lock()
 		t.releaseChannelIndexLocked(hub.ID, index)
-		delete(t.memberSpawns, vs.UserID)
+		delete(t.memberSpawns, memberSpawn{vs.UserID, hub.ID})
 		t.mu.Unlock()
 		fault := classifySpawnedChannelError(err)
 		cause := fault.cause()
