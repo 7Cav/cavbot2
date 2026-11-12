@@ -22,9 +22,9 @@ keeps it current as boxes change. A reload shows the page as it stands then,
 without the refusal note. The roster preview is a GET of the Foxhole page with
 the unit in its address.
 
-The add preview's paste stays out of its address. The paste box has no line
-cap, so a whole allied regiment goes in one add, and nginx in front of the
-panel turns away a request line over 8KB by default. The tab's session storage
+The add preview's paste stays out of its address. The paste box takes up to
+2,000 lines, so a whole allied regiment goes in one add, and nginx in front of
+the panel turns away a request line over 8KB by default. The tab's session storage
 keeps the paste, the way it keeps a typed note through a sign-in, and the
 script loads the preview again in the background. A refused note save keeps
 its typed text the same way.

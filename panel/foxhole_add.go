@@ -217,8 +217,7 @@ type matchedLine struct {
 }
 
 // matchLines reads the paste box's lines against a complete member list.
-// A blank line is no member, though it counts in the numbering. There is no
-// cap on how many lines.
+// A blank line is no member, though it counts in the numbering.
 func matchLines(list commands.MemberListSnapshot, text string) []matchedLine {
 	var lines []matchedLine
 	for i, raw := range strings.Split(text, "\n") {
@@ -435,6 +434,30 @@ func picksOf(form url.Values) map[int]string {
 	return picks
 }
 
+// maxPasteLines is the most non-blank lines an add takes, room for a whole
+// allied regiment, since each line is matched against every member.
+const maxPasteLines = 2000
+
+// tooManyLines reports whether a paste has more than maxPasteLines
+// non-blank lines.
+func tooManyLines(text string) bool {
+	n := 0
+	for line := range strings.Lines(text) {
+		if strings.TrimSpace(line) != "" {
+			if n++; n > maxPasteLines {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// errTooManyLines refuses an add's Preview or Confirm whose paste has more
+// than maxPasteLines lines, before any line is matched.
+var errTooManyLines = &saveRefusal{Kind: "too-many-lines", status: http.StatusUnprocessableEntity,
+	log:     "Panel action refused: paste has too many lines",
+	Message: fmt.Sprintf("The paste box takes at most %d lines, so nothing was matched. Nothing changed. Split the paste and add it in parts.", maxPasteLines)}
+
 // errAddChanged refuses an add's Confirm when a line names other members
 // than the preview showed, as when a username changed hands since, so an
 // add never gives the role to someone the manager didn't see. The page
@@ -498,6 +521,9 @@ func (p *Panel) startAdd(w http.ResponseWriter, r *http.Request, sess session) {
 // commands.ErrMemberListPartial. Its lines must name the members named
 // records, as the preview's Named, else errAddChanged.
 func (s foxholeService) confirmedAdd(ctx context.Context, paste pasteBox, picks map[int]string, named string) (*addPreview, error) {
+	if tooManyLines(paste.Text) {
+		return nil, errTooManyLines
+	}
 	records, err := s.records(ctx)
 	if err != nil {
 		return nil, err

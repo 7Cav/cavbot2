@@ -164,9 +164,10 @@ const apiVersionPath = "/api/v1"
 
 var apiBaseURL = defaultAPIOrigin + apiVersionPath
 
-// newAPIClient builds the client for one 7Cav API call. Every call gets a
-// fresh one.
-var newAPIClient = resty.New
+var apiClient = resty.New().SetTimeout(15 * time.Second)
+
+// newAPIClient returns the client a 7Cav API call uses. Tests swap it.
+var newAPIClient = func() *resty.Client { return apiClient }
 
 // InitAPIBaseURL points every 7Cav API lookup at the origin CAV_API_BASE_URL
 // holds, plus /api/v1, and logs the address in use. main calls it once at
@@ -281,25 +282,25 @@ func makeAPIRequest[T any](ctx context.Context, path string, identifier string) 
 
 func GetMilpacByUsername(ctx context.Context, username string) (*ProfileResponse, error) {
 	return makeAPIRequest[ProfileResponse](ctx,
-		fmt.Sprintf("milpacs/profile/username/%s", username),
+		fmt.Sprintf("milpacs/profile/username/%s", url.PathEscape(username)),
 		username)
 }
 
 func GetMilpacByDiscordID(ctx context.Context, discordID string) (*ProfileResponse, error) {
 	return makeAPIRequest[ProfileResponse](ctx,
-		fmt.Sprintf("milpac/discord/%s", discordID),
+		fmt.Sprintf("milpac/discord/%s", url.PathEscape(discordID)),
 		discordID)
 }
 
 func GetRosterByFuzzyPositionSearch(ctx context.Context, position string) (*LiteRosterResponse, error) {
 	return makeAPIRequest[LiteRosterResponse](ctx,
-		fmt.Sprintf("milpacs/position/search/%s", position),
+		fmt.Sprintf("milpacs/position/search/%s", url.PathEscape(position)),
 		position)
 }
 
 func GetUserByGamertag(ctx context.Context, gamertag string) (*ProfileResponse, error) {
 	return makeAPIRequest[ProfileResponse](ctx,
-		fmt.Sprintf("milpac/gamertag/%s", gamertag),
+		fmt.Sprintf("milpac/gamertag/%s", url.PathEscape(gamertag)),
 		gamertag)
 }
 

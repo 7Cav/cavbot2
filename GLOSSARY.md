@@ -649,8 +649,8 @@ _Avoid_: recording bot, Craig, the bot (for this account).
 
 **Offline recorder**:
 A recorder logged out of Discord and logging back in by itself, after a
-cut-short recording or a leave of its channel that hung, or since its first
-login at startup failed. A start that finds no free recorder online waits for
+recording cut short for any reason but a server deafen, after a leave of its
+channel that hung, or since its first login at startup failed. A start that finds no free recorder online waits for
 one.
 _Avoid_: reconnecting recorder, restarting recorder.
 

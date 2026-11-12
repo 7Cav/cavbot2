@@ -391,3 +391,55 @@ func TestFailedStart_PanicAfterAStopSendsNothing(t *testing.T) {
 		t.Errorf("Sentry got %d events, want none: %+v", len(got), got)
 	}
 }
+
+// Docker restarts a failed start at once, and each start after a login
+// spends one of the token's daily logins, so the process stays up until it
+// has run minUptimeAfterLogin.
+func TestFailedStart_AfterALoginWaitsOutTheMinimumUptime(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	listenAsSentry(t, "1.2.3")
+	const left = 500 * time.Millisecond
+	at := firstFailure
+	w := NewStartWatch(func() time.Time { return at })
+	w.LoggingIn(context.Background())
+	at = firstFailure.Add(minUptimeAfterLogin - left)
+
+	began := time.Now()
+	failStart(w, "Discord session unavailable: no READY within 30s")
+
+	if waited := time.Since(began); waited < left {
+		t.Errorf("the failed start exited after %v, want at least %v", waited, left)
+	}
+}
+
+// A failed start before any login spent none, and a stop such as docker
+// stop's SIGTERM ends the wait, so neither holds the exit.
+func TestFailedStart_ExitsAtOnceBeforeALoginOrAfterAStop(t *testing.T) {
+	stopped, cancel := context.WithCancel(context.Background())
+	cancel()
+	for name, loggingIn := range map[string]func(*StartWatch){
+		"before a login":      func(*StartWatch) {},
+		"stopped after login": func(w *StartWatch) { w.LoggingIn(stopped) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("TMPDIR", t.TempDir())
+			listenAsSentry(t, "1.2.3")
+			at := firstFailure
+			w := NewStartWatch(func() time.Time { return at })
+			loggingIn(w)
+			at = firstFailure.Add(time.Second)
+
+			exited := make(chan struct{})
+			go func() {
+				defer close(exited)
+				failStart(w, "Bot store unavailable: ping bot database after 10 attempts: connection refused")
+			}()
+
+			select {
+			case <-exited:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the failed start was still waiting 10 s later")
+			}
+		})
+	}
+}

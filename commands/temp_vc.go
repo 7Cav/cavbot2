@@ -796,6 +796,10 @@ type TempVC struct {
 	// this two members joining one hub at the same moment would both take the
 	// smallest unused number.
 	pending map[int64]map[int]struct{}
+	// memberSpawns holds each member whose hub join has a create or
+	// move-into in flight. Their further hub joins are ignored, so quick
+	// rejoins cannot queue creates on the guild's channel create bucket.
+	memberSpawns map[string]struct{}
 	// renames holds, per spawned channel, the times of its renames inside the
 	// last ten minutes, oldest first. Discord allows two per channel per ten
 	// minutes; the runtime refuses the third itself so a 429 never sleeps a
@@ -882,6 +886,7 @@ func NewTempVC(mgr TempVCManager, st store.Store, guildID string) (*TempVC, erro
 		channelHub:     make(map[string]int64),
 		channelIndex:   make(map[string]int),
 		pending:        make(map[int64]map[int]struct{}),
+		memberSpawns:   make(map[string]struct{}),
 		deleting:       make(map[string]struct{}),
 		renames:        make(map[string][]time.Time),
 		memberRoles:    make(map[string][]string),
@@ -2037,8 +2042,18 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	// lower-numbered channel is deleted. The number is reserved here and
 	// released on every exit below.
 	t.mu.Lock()
+	if _, busy := t.memberSpawns[vs.UserID]; busy {
+		t.mu.Unlock()
+		return
+	}
+	t.memberSpawns[vs.UserID] = struct{}{}
 	index := t.reserveChannelIndexLocked(hub.ID)
 	t.mu.Unlock()
+	spawnDone := func() {
+		t.mu.Lock()
+		delete(t.memberSpawns, vs.UserID)
+		t.mu.Unlock()
+	}
 	name := nameWithIndex(hub.BaseString, index)
 
 	data := discordgo.GuildChannelCreateData{
@@ -2054,6 +2069,7 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	if err != nil {
 		t.mu.Lock()
 		t.releaseChannelIndexLocked(hub.ID, index)
+		delete(t.memberSpawns, vs.UserID)
 		t.mu.Unlock()
 		fault := classifySpawnedChannelError(err)
 		cause := fault.cause()
@@ -2095,10 +2111,13 @@ func (t *TempVC) handleHubJoin(vs *discordgo.VoiceStateUpdate, hub store.Hub) {
 	if !t.stillInHub(vs.UserID, hub.HubChannelID) {
 		utils.Info("Temp VC move-into abandoned, member no longer in the hub",
 			"user_id", vs.UserID, "channel_id", channel.ID, "hub_channel_id", hub.HubChannelID)
+		spawnDone()
 		t.abandonSpawn(channel.ID, hub, vs.UserID)
 		return
 	}
-	if err := t.mgr.GuildMemberMove(t.guildID, vs.UserID, &channel.ID); err != nil {
+	err = t.mgr.GuildMemberMove(t.guildID, vs.UserID, &channel.ID)
+	spawnDone()
+	if err != nil {
 		// Discord can hear of a leave before the cache does. A member who
 		// left voice or the guild after the check above makes it refuse the
 		// move, and that ends as the leave the check catches, whatever the

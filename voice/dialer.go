@@ -148,6 +148,77 @@ func (d *refusingDAVE) Decrypt(userID godave.UserID, frame, out []byte) (int, er
 // ShouldHoldFrames is the session's own, as holdFrames reads it.
 func (d *refusingDAVE) ShouldHoldFrames() bool { return holdFrames(d.Session) }
 
+// recoverDAVEPanics is create, with each DAVE session it makes recovering a
+// panic in the handlers disgo's voice gateway calls from its read loop,
+// which recovers none and would take the bot down with it.
+func recoverDAVEPanics(create godave.SessionCreateFunc) godave.SessionCreateFunc {
+	return func(logger *slog.Logger, userID godave.UserID, callbacks godave.Callbacks) godave.Session {
+		return &recoveringDAVE{Session: create(logger, userID, callbacks)}
+	}
+}
+
+// recoveringDAVE is a DAVE session whose gateway handlers recover their
+// panics. A session a panic left broken fails or holds frames, and the
+// receiver's gap reconnects.
+type recoveringDAVE struct {
+	godave.Session
+}
+
+const daveHandlerPanic = "voice-dave-handler"
+
+func (d *recoveringDAVE) AddUser(userID godave.UserID) {
+	defer utils.RecoverPanic(daveHandlerPanic, "method", "AddUser")
+	d.Session.AddUser(userID)
+}
+
+func (d *recoveringDAVE) RemoveUser(userID godave.UserID) {
+	defer utils.RecoverPanic(daveHandlerPanic, "method", "RemoveUser")
+	d.Session.RemoveUser(userID)
+}
+
+func (d *recoveringDAVE) OnSelectProtocolAck(protocolVersion uint16) {
+	defer utils.RecoverPanic(daveHandlerPanic, "method", "OnSelectProtocolAck")
+	d.Session.OnSelectProtocolAck(protocolVersion)
+}
+
+func (d *recoveringDAVE) OnDavePrepareTransition(transitionID, protocolVersion uint16) {
+	defer utils.RecoverPanic(daveHandlerPanic, "method", "OnDavePrepareTransition")
+	d.Session.OnDavePrepareTransition(transitionID, protocolVersion)
+}
+
+func (d *recoveringDAVE) OnDaveExecuteTransition(protocolVersion uint16) {
+	defer utils.RecoverPanic(daveHandlerPanic, "method", "OnDaveExecuteTransition")
+	d.Session.OnDaveExecuteTransition(protocolVersion)
+}
+
+func (d *recoveringDAVE) OnDavePrepareEpoch(epoch int, protocolVersion uint16) {
+	defer utils.RecoverPanic(daveHandlerPanic, "method", "OnDavePrepareEpoch")
+	d.Session.OnDavePrepareEpoch(epoch, protocolVersion)
+}
+
+func (d *recoveringDAVE) OnDaveMLSExternalSenderPackage(externalSenderPackage []byte) {
+	defer utils.RecoverPanic(daveHandlerPanic, "method", "OnDaveMLSExternalSenderPackage")
+	d.Session.OnDaveMLSExternalSenderPackage(externalSenderPackage)
+}
+
+func (d *recoveringDAVE) OnDaveMLSProposals(proposals []byte) {
+	defer utils.RecoverPanic(daveHandlerPanic, "method", "OnDaveMLSProposals")
+	d.Session.OnDaveMLSProposals(proposals)
+}
+
+func (d *recoveringDAVE) OnDaveMLSPrepareCommitTransition(transitionID uint16, commitMessage []byte) {
+	defer utils.RecoverPanic(daveHandlerPanic, "method", "OnDaveMLSPrepareCommitTransition")
+	d.Session.OnDaveMLSPrepareCommitTransition(transitionID, commitMessage)
+}
+
+func (d *recoveringDAVE) OnDaveMLSWelcome(transitionID uint16, welcomeMessage []byte) {
+	defer utils.RecoverPanic(daveHandlerPanic, "method", "OnDaveMLSWelcome")
+	d.Session.OnDaveMLSWelcome(transitionID, welcomeMessage)
+}
+
+// ShouldHoldFrames is the session's own, as holdFrames reads it.
+func (d *recoveringDAVE) ShouldHoldFrames() bool { return holdFrames(d.Session) }
+
 // newVoiceDialer is the production voice gateway dialer: the host's
 // resolver, and the zone's nameservers reached through it. The smoke hook
 // that makes voice servers unreachable is on when smokeDNSFailEnv names a

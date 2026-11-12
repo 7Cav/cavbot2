@@ -143,8 +143,9 @@ const (
 	notCavMemberRefusal     = "❌ Only Cav members can record."
 	// noFreeRecorderRefusal opens the refusal of a start when every
 	// recorder is recording. The channels they record follow it.
-	noFreeRecorderRefusal  = "❌ Every recorder is busy."
-	alreadyRecordedRefusal = "❌ This channel is already being recorded."
+	noFreeRecorderRefusal   = "❌ Every recorder is busy."
+	alreadyRecordedRefusal  = "❌ This channel is already being recorded."
+	starterRecordingRefusal = "❌ You already have a recording running. Stop it with /record stop before starting another."
 	// recorderComingBackRefusal answers a start whose recorder was still
 	// logging back in, after a cut short, when its wait ran out.
 	recorderComingBackRefusal = "❌ The recorder is coming back online. Try /record start again in a minute."
@@ -176,6 +177,8 @@ func startRefusal(err error) (reply string, refused bool) {
 		return recordTitleTooLongRefusal, true
 	case errors.Is(err, errAlreadyRecorded):
 		return alreadyRecordedRefusal, true
+	case errors.Is(err, errStarterAlreadyRecording):
+		return starterRecordingRefusal, true
 	case errors.Is(err, errRecorderComingBack):
 		return recorderComingBackRefusal, true
 	case errors.As(err, &busy):

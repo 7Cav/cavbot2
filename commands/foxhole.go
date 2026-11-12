@@ -177,6 +177,15 @@ func runFoxhole(
 		refuseForPageAction(r, interaction, run, *refused, "subcommand", subcommand)
 		return
 	}
+	if subcommand == "purge" {
+		endPurge, ok := fx.startPurge()
+		if !ok {
+			refuse(r, interaction, "❌ "+purgeRunning+". Nothing changed. Try again when it ends.", "subcommand", subcommand)
+			return
+		}
+		endCommand := end
+		end = func() { endPurge(); endCommand() }
+	}
 
 	// Every subcommand answers in one reply only its member sees.
 	if err := deferEphemeral(r, interaction); err != nil {
@@ -200,6 +209,9 @@ func runFoxhole(
 
 	utils.Info("✨ Done!", "command", commandNameOf(interaction))
 }
+
+// purgeRunning is why a /foxhole purge sent while another runs is refused.
+const purgeRunning = "Another Foxhole purge is running"
 
 // refuseForPageAction answers a role-changing Foxhole command run sent
 // while a Foxhole action started on the Foxhole page runs, with a reply only

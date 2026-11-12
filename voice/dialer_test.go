@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/disgoorg/godave"
 	"github.com/gorilla/websocket"
 	"golang.org/x/net/dns/dnsmessage"
 )
@@ -371,5 +373,40 @@ func TestSmokeDNSFailMakesVoiceServersUnreachableWhileItsFileExists(t *testing.T
 	}
 	if err := dialServer(); err != nil {
 		t.Errorf("dial once the DNS fail file is gone = %v, want it to connect", err)
+	}
+}
+
+// A panic in a DAVE handler disgo's voice gateway calls stays in the
+// handler, and the session still answers whether to hold frames.
+func TestDAVEGatewayHandlersRecoverTheirPanics(t *testing.T) {
+	inner := &fakeDAVE{}
+	inner.holding.Store(true)
+	// fakeDAVE embeds a nil session, so each handler it doesn't override panics.
+	s := recoverDAVEPanics(func(*slog.Logger, godave.UserID, godave.Callbacks) godave.Session { return inner })(nil, "1", nil)
+
+	handlers := map[string]func(){
+		"AddUser":                          func() { s.AddUser("2") },
+		"RemoveUser":                       func() { s.RemoveUser("2") },
+		"OnSelectProtocolAck":              func() { s.OnSelectProtocolAck(1) },
+		"OnDavePrepareTransition":          func() { s.OnDavePrepareTransition(1, 1) },
+		"OnDaveExecuteTransition":          func() { s.OnDaveExecuteTransition(1) },
+		"OnDavePrepareEpoch":               func() { s.OnDavePrepareEpoch(1, 1) },
+		"OnDaveMLSExternalSenderPackage":   func() { s.OnDaveMLSExternalSenderPackage(nil) },
+		"OnDaveMLSProposals":               func() { s.OnDaveMLSProposals(nil) },
+		"OnDaveMLSPrepareCommitTransition": func() { s.OnDaveMLSPrepareCommitTransition(1, nil) },
+		"OnDaveMLSWelcome":                 func() { s.OnDaveMLSWelcome(1, nil) },
+	}
+	for name, call := range handlers {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("%s panicked out of the session: %v", name, r)
+				}
+			}()
+			call()
+		})
+	}
+	if !holdFrames(s) {
+		t.Error("holdFrames = false through the recovering session, want the inner session's true")
 	}
 }
