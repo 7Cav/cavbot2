@@ -1181,16 +1181,20 @@ func (c *countingReader) Read(p []byte) (int, error) {
 }
 
 // No route reads more of a request body than maxRequestBody, even one
-// anyone can send without a session.
+// anyone can send without a session, and a sign-in start over it starts
+// nothing.
 func TestPanelReadsNoMoreOfABodyThanTheCap(t *testing.T) {
 	b := newBrowser(t, newTestPanel(t, newFakeForum(t)))
 	body := &countingReader{}
 
-	b.do(http.MethodPost, "/auth/start", http.Header{"Content-Type": {"application/x-www-form-urlencoded"}},
+	res := b.do(http.MethodPost, "/auth/start", http.Header{"Content-Type": {"application/x-www-form-urlencoded"}},
 		io.MultiReader(strings.NewReader("next=/"), body))
 
 	if body.n > maxRequestBody+1 {
 		t.Errorf("the panel read %d bytes of the body, want at most %d", body.n, maxRequestBody)
+	}
+	if res.StatusCode != http.StatusBadRequest {
+		t.Errorf("oversized sign-in start: status = %d, want 400", res.StatusCode)
 	}
 }
 

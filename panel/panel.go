@@ -327,9 +327,14 @@ const idChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-
 // confidential client sends PKCE S256 anyway; the forum verifies it when
 // present.
 func (p *Panel) authStart(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		utils.Warn("Panel sign-in form unreadable", "error", err)
+		http.Error(w, "the form could not be read", http.StatusBadRequest)
+		return
+	}
 	// An unescaped form value shares the whole body's memory, and the
 	// pending sign-in holds next for minutes.
-	next := strings.Clone(returnPath(r.PostFormValue(paramNext)))
+	next := strings.Clone(returnPath(r.PostForm.Get(paramNext)))
 	state, err := newID()
 	if err != nil {
 		p.serverError(w, r, nil, "sign-in start", signinURL(causeNone, next), err)
