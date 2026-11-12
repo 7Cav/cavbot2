@@ -221,6 +221,24 @@ func TestTypedWrappers_RequestPaths(t *testing.T) {
 			},
 		},
 		{
+			name:     "GetMilpacByUsername keeps a question mark in the name",
+			arg:      "Victim.B?",
+			wantPath: "/milpacs/profile/username/Victim.B%3F",
+			call: func(ctx context.Context, arg string) error {
+				_, err := GetMilpacByUsername(ctx, arg)
+				return err
+			},
+		},
+		{
+			name:     "GetMilpacByUsername keeps a slash in the name",
+			arg:      "a/b",
+			wantPath: "/milpacs/profile/username/a%2Fb",
+			call: func(ctx context.Context, arg string) error {
+				_, err := GetMilpacByUsername(ctx, arg)
+				return err
+			},
+		},
+		{
 			name:     "GetMilpacByDiscordID",
 			arg:      "123456789",
 			wantPath: "/milpac/discord/123456789",
@@ -253,7 +271,7 @@ func TestTypedWrappers_RequestPaths(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var gotPath string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				gotPath = r.URL.Path
+				gotPath = r.URL.EscapedPath()
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
 				_, _ = io.WriteString(w, `{}`)

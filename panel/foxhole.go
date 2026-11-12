@@ -914,10 +914,13 @@ func (s foxholeService) view(ctx context.Context, req foxholeRequest) (foxholeVi
 			view.RemovePreview = s.removePreviewOf(list, records, req.Remove, req.Selection, req.selectionAddress(), req.removeAddress())
 			view.RemovePreview.Selection = &removeSelection{Query: req.Query, Filter: req.Filter, Members: req.Selection}
 		}
-		if req.Paste != nil {
+		view.Paste.Role = req.AddRole
+		switch {
+		case req.Paste != nil && tooManyLines(req.Paste.Text):
+			view.Paste, view.ActionRefusal = *req.Paste, errTooManyLines
+		case req.Paste != nil:
 			view.AddPreview = s.addPreviewOf(list, records, *req.Paste, nil)
 		}
-		view.Paste.Role = req.AddRole
 		if req.Roster != nil {
 			troopers := req.Roster.Troopers
 			var err error
@@ -1044,9 +1047,9 @@ func (req foxholeRequest) tryAgainAddress() string {
 // any other refused Foxhole action the top of the page. The refusal and the
 // typed note came with the POST, so they don't come back. An add preview's,
 // a refused add's included, names the role and the preview's heading but no
-// pasted line, since the paste box has no line cap and the proxy in front
-// of the panel turns away a long address. The page script keeps the paste
-// in the tab and opens the preview again there.
+// pasted line, since a paste can run to thousands of lines and the proxy in
+// front of the panel turns away a long address. The page script keeps the
+// paste in the tab and opens the preview again there.
 func (req foxholeRequest) address() string {
 	anchor := req.landingAnchor()
 	if req.Paste != nil {

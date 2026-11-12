@@ -1365,8 +1365,8 @@ var unsavedEdits = (function () {
 /* Keeping the add preview's paste, issues #770 and #775 under ADR 0019. The
    paste box's Preview answers with the add preview, which names the address
    that shows it: /foxhole with the role picked, at the preview's heading,
-   and no pasted line. The paste box has no line cap, and the proxy in front
-   of the panel turns away an address over 8KB. So the paste is an unsaved
+   and no pasted line. The paste box takes up to 2,000 lines, and the proxy
+   in front of the panel turns away an address over 8KB. So the paste is an unsaved
    edit the tab keeps, as every form's is. When a load of an add preview's
    address brings it back into the paste box, the script loads the preview
    again in the background through the address the Preview posts to. The

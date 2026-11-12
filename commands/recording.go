@@ -89,6 +89,10 @@ var (
 	// errAlreadyRecorded: a recording of the invoker's channel is starting,
 	// running or stopping. A channel has one recording at a time.
 	errAlreadyRecorded = errors.New("recording: channel is already being recorded")
+	// errStarterAlreadyRecording: the invoker started a recording that is
+	// starting or running. A member has one recording at a time, so one
+	// person can't hold every recorder.
+	errStarterAlreadyRecording = errors.New("recording: invoker already has a recording")
 	// errRecorderComingBack: the start took an offline recorder, which
 	// didn't log back in within the join's deadline.
 	errRecorderComingBack = errors.New("recording: the recorder is still logging back in")
@@ -321,7 +325,7 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 		return "", errRecordTitleTooLong
 	}
 
-	recorderID, err := r.reserveRecorder(channelID)
+	recorderID, err := r.reserveRecorder(channelID, by.UserID)
 	if err != nil {
 		return "", err
 	}
@@ -602,20 +606,27 @@ func (r *RecordingRuntime) recordingOff() bool {
 // channel whose join is about to go out, and returns it: the first free
 // online one in configured order, or else the first free offline one,
 // which the join waits for. Out recorders are skipped. A channel already
-// being recorded is refused before any recorder is looked at. A recording
-// counts from its reservation until its recorder is released at the end of
-// its stop, its join in flight or not, so two starts in one channel can't
-// both pass. A stop, or a start that failed after its join, whose leave ran
-// past its deadline releases the recorder once the leave gives up, and the
-// recorder is offline from then until it logs back in. A recording a gap
-// cut short stops counting at the cut short, for its channel and its
-// recorder both, and the recorder is offline from then too.
-func (r *RecordingRuntime) reserveRecorder(channelID string) (string, error) {
+// being recorded is refused before any recorder is looked at, and then a
+// starter with a recording no stop has taken. A recording counts from its
+// reservation until its recorder is released at the end of its stop, its
+// join in flight or not, so two starts in one channel can't both pass. A
+// stop, or a start that failed after its join, whose leave ran past its
+// deadline releases the recorder once the leave gives up, and the recorder
+// is offline from then until it logs back in. A recording a gap cut short
+// stops counting at the cut short, for its channel and its recorder both,
+// and the recorder is offline from then too. A server deafen's cut short
+// counts as a stop does instead, since its recorder stays logged in.
+func (r *RecordingRuntime) reserveRecorder(channelID, starterID string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, rec := range r.running {
 		if rec.row.ChannelID == channelID {
 			return "", errAlreadyRecorded
+		}
+	}
+	for _, rec := range r.running {
+		if rec.row.StarterID == starterID && !rec.stopping {
+			return "", errStarterAlreadyRecording
 		}
 	}
 	busy := &noFreeRecorderError{}
@@ -627,7 +638,7 @@ func (r *RecordingRuntime) reserveRecorder(channelID string) (string, error) {
 		}
 		switch r.voice.State(id) {
 		case voice.RecorderOnline:
-			r.reserveLocked(id, channelID)
+			r.reserveLocked(id, channelID, starterID)
 			return id, nil
 		case voice.RecorderOffline:
 			if offline == "" {
@@ -637,7 +648,7 @@ func (r *RecordingRuntime) reserveRecorder(channelID string) (string, error) {
 	}
 	switch {
 	case offline != "":
-		r.reserveLocked(offline, channelID)
+		r.reserveLocked(offline, channelID, starterID)
 		return offline, nil
 	case len(busy.ChannelIDs) == 0:
 		// Every recorder went out since the start's first check.
@@ -646,10 +657,10 @@ func (r *RecordingRuntime) reserveRecorder(channelID string) (string, error) {
 	return "", busy
 }
 
-// reserveLocked marks a recorder busy with a recording of the channel whose
-// join is about to go out. Caller holds mu.
-func (r *RecordingRuntime) reserveLocked(recorderID, channelID string) {
-	r.running[recorderID] = &activeRecording{row: store.Recording{ChannelID: channelID}}
+// reserveLocked marks a recorder busy with a starter's recording of the
+// channel whose join is about to go out. Caller holds mu.
+func (r *RecordingRuntime) reserveLocked(recorderID, channelID, starterID string) {
+	r.running[recorderID] = &activeRecording{row: store.Recording{ChannelID: channelID, StarterID: starterID}}
 }
 
 // leave takes a recorder out of its channel, and waits no longer than

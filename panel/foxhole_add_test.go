@@ -481,21 +481,56 @@ func TestAddPressedWhileTheMemberListIsPartialIsRefusedKeepingThePaste(t *testin
 	}
 }
 
-// A regression pin, green from the paste box's first build: the paste box
-// has no line cap, so a whole allied regiment goes in one action. A paste
-// of more lines than /foxhole bulkadd's 50-entry cap previews a row for
-// every line.
-func TestAddPreviewHasNoLineCap(t *testing.T) {
-	w := newFoxholeWorld(t)
-	var lines []string
-	for i := range 51 {
-		lines = append(lines, fmt.Sprintf("ally_%d", i+1))
+// A paste of up to maxPasteLines non-blank lines previews a row for each,
+// room for a whole allied regiment. One line more is refused at Preview and
+// at Confirm before any line is matched: the page says so, opens no add
+// preview, and no add starts.
+func TestAddPasteOverTheLineLimitIsRefused(t *testing.T) {
+	lines := []string{"rvance"}
+	for i := range maxPasteLines - 1 {
+		lines = append(lines, fmt.Sprintf("ally_%d", i+1), "")
 	}
+	atLimit := strings.Join(lines, "\n")
+	overLimit := atLimit + "\nally_extra"
 
-	rows := addRows(pastePreview(t, w, "external", strings.Join(lines, "\n")))
+	t.Run("at the limit", func(t *testing.T) {
+		w := newFoxholeWorld(t)
+		if rows := addRows(pastePreview(t, w, "external", atLimit)); len(rows) != maxPasteLines {
+			t.Errorf("the preview has %d rows, want one for each of the %d lines", len(rows), maxPasteLines)
+		}
+	})
+	cases := []struct {
+		name  string
+		press func(t *testing.T, w *testWorld) *http.Response
+	}{
+		{"preview", func(t *testing.T, w *testWorld) *http.Response {
+			page := parseHTML(t, w.b.get(foxholePath))
+			return previewPaste(t, w.b, page, addForm(t, page), "external", overLimit)
+		}},
+		{"confirm", func(t *testing.T, w *testWorld) *http.Response {
+			page := parseHTML(t, w.b.get(foxholePath))
+			doc := parseHTML(t, previewPaste(t, w.b, page, addForm(t, page), "external", "rvance"))
+			fields := formPosts(t, doc, foxholeAddPath)
+			fields.Set(fieldLines, overLimit)
+			return w.b.postForm(foxholeAddPath, fields)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFoxholeWorld(t)
 
-	if len(rows) != len(lines) {
-		t.Errorf("the preview has %d rows, want one for each of the %d lines", len(rows), len(lines))
+			doc := parseHTML(t, tc.press(t, w))
+
+			if findLive(doc, "", "data-error", "too-many-lines") == nil {
+				t.Error("the page doesn't say the paste has too many lines")
+			}
+			if findElement(doc, "", "data-field", "add-preview") != nil {
+				t.Error("the page opens an add preview of a paste over the line limit")
+			}
+			if entries := changeEntries(t, parseHTML(t, w.b.get(foxholePath)), "add"); len(entries) != 0 {
+				t.Errorf("the change log holds %d add entries, want none", len(entries))
+			}
+		})
 	}
 }
 

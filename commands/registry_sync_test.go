@@ -17,13 +17,15 @@ import (
 // command names it holds, with a bulk overwrite leaving exactly the names it
 // was sent, as Discord does, and answering each with its ID in ids. With
 // release set, an overwrite closes entered and then waits for release to
-// close, as Discord's rate limit can hold one.
+// close, as Discord's rate limit can hold one. The first unavailable
+// overwrites fail as a Discord outage does.
 type fakeGuildCommands struct {
 	mu           sync.Mutex
 	held         []string
 	ids          map[string]string
 	listErr      error
 	overwriteErr error
+	unavailable  int
 	release      chan struct{}
 	entered      chan struct{}
 }
@@ -50,6 +52,10 @@ func (f *fakeGuildCommands) ApplicationCommandBulkOverwrite(_, _ string, cmds []
 	defer f.mu.Unlock()
 	if f.overwriteErr != nil {
 		return nil, f.overwriteErr
+	}
+	if f.unavailable > 0 {
+		f.unavailable--
+		return nil, errors.New("HTTP 503 Service Unavailable")
 	}
 	f.held = f.held[:0]
 	answered := make([]*discordgo.ApplicationCommand, len(cmds))
@@ -107,6 +113,20 @@ func TestRegistrySync_UnlistableGuildStillGetsTheRegistrysCommands(t *testing.T)
 	if err := registryOf("alpha").Sync(context.Background(), guild, "app", "guild"); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
+
+	if got, want := guild.names(), []string{"alpha"}; !slices.Equal(got, want) {
+		t.Fatalf("guild holds %v, want %v", got, want)
+	}
+}
+
+// A start whose sync failed runs on the commands Discord kept, and the retry
+// makes them the registry's once Discord takes the overwrite.
+func TestRegistrySync_RetryRegistersOnceDiscordTakesTheOverwrite(t *testing.T) {
+	guild := &fakeGuildCommands{held: []string{"stale"}, unavailable: 2}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	registryOf("alpha").RetrySync(ctx, guild, "app", "guild", time.Millisecond, 4*time.Millisecond)
 
 	if got, want := guild.names(), []string{"alpha"}; !slices.Equal(got, want) {
 		t.Fatalf("guild holds %v, want %v", got, want)

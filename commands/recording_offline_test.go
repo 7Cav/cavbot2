@@ -137,25 +137,40 @@ func TestRecordStartAtTheMarkWaitsForTheSameRecorder(t *testing.T) {
 
 // The runtime has a cut-short recorder log back in only once its leave of
 // the recording's channel has returned, here 2 s after the 10 s mark, so
-// the logout never lands while the recorder is still in the call.
+// the logout never lands while the recorder is still in the call. A server
+// deafen leaves the recorder's login healthy, and each login spends one of
+// the token's daily session starts, so its cut short logs nothing back in.
 func TestRecordingCutShortLogsTheRecorderBackInAfterItsLeave(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		sc := newBubbleRecordScene(t, testRecorder)
-		sc.startIn(t, recStarter, recordChannel)
-		sc.voice.setLeaveTakes(2 * time.Second)
-		sc.listener(t, recordChannel).GapStarted(time.Now(), voice.GapVoiceGatewayClosed)
+	for _, tc := range []struct {
+		cause   voice.GapCause
+		relogin bool
+	}{
+		{voice.GapVoiceGatewayClosed, true},
+		{voice.GapServerDeafened, false},
+	} {
+		t.Run(string(tc.cause), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				sc := newBubbleRecordScene(t, testRecorder)
+				sc.startIn(t, recStarter, recordChannel)
+				sc.voice.setLeaveTakes(2 * time.Second)
+				sc.listener(t, recordChannel).GapStarted(time.Now(), tc.cause)
 
-		time.Sleep(gapCutsShortAfter + recordingLeaveTimeout)
-		synctest.Wait()
+				time.Sleep(gapCutsShortAfter + recordingLeaveTimeout)
+				synctest.Wait()
 
-		relogins := sc.voice.reloginsOf(testRecorder)
-		if len(relogins) == 0 {
-			t.Fatal("the cut-short recorder was never logged back in")
-		}
-		for _, rl := range relogins {
-			if !rl.afterLeave {
-				t.Error("the cut-short recorder was logged back in before its leave returned")
-			}
-		}
-	})
+				if rec := sc.onlyRecording(t); rec.Ended != store.RecordingEndGap {
+					t.Errorf("recording ended %q, want %q", rec.Ended, store.RecordingEndGap)
+				}
+				relogins := sc.voice.reloginsOf(testRecorder)
+				if got := len(relogins) > 0; got != tc.relogin {
+					t.Fatalf("cut-short recorder logged back in = %v, want %v", got, tc.relogin)
+				}
+				for _, rl := range relogins {
+					if !rl.afterLeave {
+						t.Error("the cut-short recorder was logged back in before its leave returned")
+					}
+				}
+			})
+		})
+	}
 }

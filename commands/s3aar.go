@@ -165,7 +165,7 @@ func fetchBattleMetricsSessions(serverID string, start, stop time.Time, minAtten
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -197,7 +197,6 @@ func fetchBattleMetricsSessions(serverID string, start, stop time.Time, minAtten
 	}
 
 	var sessions []PlayerSession
-	ctx := context.Background()
 
 	for name, duration := range playtimeMap {
 		minutes := int(duration.Minutes())
@@ -207,7 +206,9 @@ func fetchBattleMetricsSessions(serverID string, start, stop time.Time, minAtten
 			// GAMERTAG fallback receives the UNCLEANED raw in-game tag (#151). The
 			// cleaned form is still computed here only for the failure log line.
 			cleaned := cleanName(name)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			cavName, link, searchString, roster, rankID, enrichErr := enrichPlayer(ctx, name)
+			cancel()
 			if enrichErr != nil {
 				// A real combatant whose enrichment fails would otherwise vanish
 				// from the combat roster with no signal. Mark the failure explicitly

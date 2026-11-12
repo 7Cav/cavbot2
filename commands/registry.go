@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/7cav/cavbot2/store"
 	"github.com/7cav/cavbot2/utils"
@@ -108,6 +109,30 @@ func (r *Registry) Sync(ctx context.Context, api guildCommandAPI, appID, guildID
 		return err
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+// RetrySync runs Sync until it succeeds or ctx ends, as after a start whose
+// sync failed. Discord keeps the commands it last held meanwhile, so the bot
+// answers them. It waits wait before the first try and doubles the wait after
+// each failed one, up to most.
+func (r *Registry) RetrySync(ctx context.Context, api guildCommandAPI, appID, guildID string, wait, most time.Duration) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		err := r.Sync(ctx, api, appID, guildID)
+		if err == nil {
+			utils.Info("Commands registered", "count", len(r.commands))
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		wait = min(2*wait, most)
+		utils.Warn("Cannot register commands, will retry", "error", err, "retry_in", wait)
 	}
 }
 

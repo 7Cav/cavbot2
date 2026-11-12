@@ -13,10 +13,12 @@ import (
 // still off after a minute is a gateway outage worth hearing of.
 const GatewayOfflineAfter = time.Minute
 
-// closeAuthenticationFailed is the close code Discord ends a session with
-// when it refuses the session's token. Discord says not to reconnect after
-// it.
-const closeAuthenticationFailed = 4004
+// fatalClose reports whether Discord says not to reconnect after a close
+// with code: 4004 for a refused token, and 4010 to 4014 for a shard, API
+// version or intents it refuses.
+func fatalClose(code int) bool {
+	return code == 4004 || (code >= 4010 && code <= 4014)
+}
 
 // TokenRefusedMessage is the line a session whose token Discord refused
 // logs, once.
@@ -46,9 +48,9 @@ var errGatewayOffline = errors.New("gateway session disconnected and not reconne
 // success, so it logs in again at once when the connection closes. Discord
 // does that to a session whose token it refused: Op 9, then a 4004 close
 // after the identify. discordgo tells no handler of the close code, so the
-// watch reads the session's closes itself, and a 4004 stops the logins. Its
-// tests play that sequence against a scripted gateway, so a discordgo
-// upgrade that changes it fails them.
+// watch reads the session's closes itself, and a 4004, or any fatalClose,
+// stops the logins. Its tests play that sequence against a scripted gateway,
+// so a discordgo upgrade that changes it fails them.
 type GatewayWatch struct {
 	after time.Duration
 
@@ -73,7 +75,8 @@ type GatewayWatch struct {
 type watched struct {
 	dg *discordgo.Session
 	// up is set once READY or RESUMED has come on one of the session's
-	// connections, and refused once Discord has closed one with 4004.
+	// connections, and refused once Discord has closed one with a
+	// fatalClose code.
 	up, refused bool
 	// onRefused, when set, hears of the refusal of the session once it was
 	// up, in place of the watch's own line.
@@ -128,7 +131,7 @@ func (w *GatewayWatch) watch(ws *watched) {
 }
 
 // closed hears the code of a close Discord sent the session ws. After a
-// 4004, Discord has refused the session's token, so no login can succeed,
+// fatalClose code, such as a 4004 for a refused token, no login can succeed,
 // and the session logs in no more. A session refused before it was ever up
 // failed to open, and the caller of its open tells of the refusal, so the
 // watch tells of it only for a session that was up, once: to the session's
@@ -143,7 +146,7 @@ func (w *GatewayWatch) watch(ws *watched) {
 // ShouldReconnectOnError under the watch's mutex, as CloseSession does, and
 // tells of the refusal after letting go of it.
 func (w *GatewayWatch) closed(ws *watched, code int) {
-	if code != closeAuthenticationFailed {
+	if !fatalClose(code) {
 		return
 	}
 	w.mu.Lock()
@@ -159,7 +162,7 @@ func (w *GatewayWatch) closed(ws *watched, code int) {
 		ws.onRefused()
 		return
 	}
-	Warn(TokenRefusedMessage, kv...)
+	Warn(TokenRefusedMessage, append(kv[:len(kv):len(kv)], "close_code", code)...)
 }
 
 // disconnected starts an outage when ws is the session the watch reads.

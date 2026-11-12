@@ -227,7 +227,11 @@ func main() {
 	// recording is off and none connects. A token that can't log in or be
 	// read goes to Sentry and costs only its own recorder. Deferred before
 	// the main session's close, so the recorders close after it.
-	recorders := voice.Connect(os.Getenv("RECORDER_TOKENS"), &voice.Discord{})
+	recorderTokens := os.Getenv("RECORDER_TOKENS")
+	if recorderTokens != "" {
+		start.LoggingIn(ctx)
+	}
+	recorders := voice.Connect(recorderTokens, &voice.Discord{})
 	defer recorders.Close()
 	if shuttingDown() {
 		return
@@ -352,7 +356,11 @@ func main() {
 
 	// Not dg.Open() directly: a session can open without ever reaching READY,
 	// which leaves dg.State.User nil for the command registration below.
+	start.LoggingIn(ctx)
 	if err := utils.OpenSession(dg); err != nil {
+		// A session up with no READY would log in again while the failed
+		// start waits.
+		_, _ = watch.CloseSession()
 		panic(&startFailure{"Discord session unavailable", err})
 	}
 	defer func() {
@@ -417,16 +425,19 @@ func main() {
 	}
 
 	// The startup sync (ADR 0006). A stop while Discord holds it ends startup
-	// here. Any other failure, such as a command Discord rejects, stops the
-	// bot, and the deferred shutdown still runs.
+	// here. Any other failure, such as a Discord 5xx or a command it rejects,
+	// goes to Sentry and the sync retries in the background, while Discord
+	// keeps the commands it last held.
 	utils.Info("Registering commands")
 	if err := registry.Sync(ctx, dg, dg.State.User.ID, GuildID); err != nil {
 		if shuttingDown() {
 			return
 		}
-		panic(&startFailure{"Cannot register commands", err})
+		utils.CaptureError("Cannot register commands", err)
+		go registry.RetrySync(ctx, dg, dg.State.User.ID, GuildID, time.Minute, 30*time.Minute)
+	} else {
+		utils.Info("Commands registered", "count", len(registry.GetCommands()))
 	}
-	utils.Info("Commands registered", "count", len(registry.GetCommands()))
 
 	commands.StartJoinerReportScheduler(dg, GuildID)
 

@@ -1668,6 +1668,62 @@ func TestTempVCConcurrentJoinsGetDistinctNumbers(t *testing.T) {
 	}
 }
 
+// A member who leaves and rejoins the hub while their create is in flight
+// starts no second create: creates queue behind one another on the guild's
+// channel create bucket. The first spawn moves them in, and once it has
+// ended a hub join creates again.
+func TestTempVCHubRejoinDuringCreateStartsNoSecondCreate(t *testing.T) {
+	fake := newFakeTempVCManager()
+	tv := newSeededTempVC(t, fake)
+	fake.createHook = func() {
+		fake.createHook = nil
+		fake.deliver(tv, voiceEvent("user-1", "", member("A")))
+		fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+	}
+
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+
+	if n := len(fake.recordedCreates()); n != 1 {
+		t.Fatalf("creates = %d, want 1: the rejoin came while the first create was in flight", n)
+	}
+	if moves := fake.recordedMoves(); len(moves) != 1 || *moves[0].channelID != "new-chan" {
+		t.Fatalf("moves = %+v, want the member moved into new-chan", moves)
+	}
+
+	fake.deliver(tv, voiceEvent("user-1", "new-chan", member("A")))
+	fake.setNextChannel("chan-2")
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+
+	if n := len(fake.recordedCreates()); n != 2 {
+		t.Errorf("creates = %d, want 2: a hub join after the first spawn ended creates", n)
+	}
+}
+
+func TestTempVCJoinOfAnotherHubDuringCreateSpawnsThere(t *testing.T) {
+	fake := newFakeTempVCManager()
+	fake.channels["hub-2"] = &discordgo.Channel{ID: "hub-2", ParentID: "cat-2", Type: discordgo.ChannelTypeGuildVoice}
+	second := store.Hub{
+		GuildID: testTempVCGuild, HubChannelID: "hub-2", BaseString: "Briefing",
+		PermissionSource: store.PermissionCategory, Enabled: true,
+	}
+	tv := newTestTempVC(t, fake, seedStore(t, testHub(), second))
+	fake.createHook = func() {
+		fake.createHook = nil
+		fake.setNextChannel("chan-b")
+		fake.deliver(tv, voiceEvent("user-1", "hub-2", member("A")))
+	}
+
+	fake.deliver(tv, voiceEvent("user-1", testTempVCHub, member("A")))
+
+	if n := len(fake.recordedCreates()); n != 2 {
+		t.Fatalf("creates = %d, want 2: the second hub's join came while the first hub's create was in flight", n)
+	}
+	moves := fake.recordedMoves()
+	if len(moves) != 1 || *moves[0].channelID != "chan-b" {
+		t.Errorf("moves = %+v, want the member moved into chan-b", moves)
+	}
+}
+
 // unknownChannelErr is the error discordgo returns when a channel is already
 // gone: HTTP 404 with Discord code 10003. restError lives in
 // foxhole_resterror_test.go.

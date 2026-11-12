@@ -100,7 +100,10 @@ func (r *RecordingRuntime) gapEnded(rec *activeRecording) {
 // recordingGapLimit, unless a stop has taken it first or the gap has ended.
 // From then the recording no longer counts as running, so its channel and
 // its recorder are free for a start, and the voice adapter counts the
-// recorder offline, so that start waits for its next login.
+// recorder offline, so that start waits for its next login. A server
+// deafen leaves the recorder's login healthy, and each new login spends one
+// of the token's daily session starts, so a deafened recorder stays logged
+// in and is held until its leave returns, as a stop's is.
 func (r *RecordingRuntime) gapLimitReached(rec *activeRecording, g *recordingGap) {
 	defer utils.RecoverPanic("recording-gap-limit", "recording_id", rec.row.ID)
 	r.mu.Lock()
@@ -109,10 +112,14 @@ func (r *RecordingRuntime) gapLimitReached(rec *activeRecording, g *recordingGap
 		return
 	}
 	rec.stopping, rec.gap = true, nil
-	delete(r.running, rec.row.RecorderID)
-	relogin := r.voice.TakeOffline(rec.row.RecorderID)
+	afterLeave := func(late bool) { r.releaseAfterLeave(rec.row.RecorderID, late) }
+	if g.cause != voice.GapServerDeafened {
+		delete(r.running, rec.row.RecorderID)
+		relogin := r.voice.TakeOffline(rec.row.RecorderID)
+		afterLeave = func(bool) { relogin() }
+	}
 	r.mu.Unlock()
-	r.cutShort(rec, g, relogin)
+	r.cutShort(rec, g, afterLeave)
 }
 
 // cutShort ends a recording whose gap reached recordingGapLimit as a gap's
@@ -122,11 +129,11 @@ func (r *RecordingRuntime) gapLimitReached(rec *activeRecording, g *recordingGap
 // ping and the notice, without waiting on the recorder's leave. The starter
 // gets the link by DM as well when the chat may not reach them: in a spawned
 // channel, with the notice gone, or with the ping refused. One DM at most,
-// whichever holds. Then the recorder leaves, and once its leave has
-// returned or given up, relogin has it log out and back in. The row stops
+// whichever holds. Then the recorder leaves, and afterLeave runs once its
+// leave has returned or given up, told whether it ran late. The row stops
 // at gapStart, and the mix starts. None of it touches a later recording of
 // the same channel or recorder.
-func (r *RecordingRuntime) cutShort(rec *activeRecording, g *recordingGap, relogin func()) {
+func (r *RecordingRuntime) cutShort(rec *activeRecording, g *recordingGap, afterLeave func(late bool)) {
 	gapStart := g.start
 	r.cancelTimers(rec)
 	endTracks(rec, gapStart)
@@ -139,8 +146,7 @@ func (r *RecordingRuntime) cutShort(rec *activeRecording, g *recordingGap, relog
 	if gone := r.editRecordingNotice(ended); gone || !pinged || r.tv.IsSpawned(ended.ChannelID) {
 		r.sendRecordingLink(ended)
 	}
-	r.leave(rec.conn, rec.row.RecorderID, rec.row.ChannelID)
-	relogin()
+	afterLeave(r.leave(rec.conn, rec.row.RecorderID, rec.row.ChannelID))
 	row := r.closeRow(rec, gapStart, store.RecordingEndGap)
 	logRecordingStopped(row, "")
 	r.startMix(row)

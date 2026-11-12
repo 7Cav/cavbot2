@@ -618,6 +618,16 @@ var recordRefusals = []recordRefusal{
 		carries: []string{noFreeRecorderRefusal, "<#" + recordChannel + ">"},
 	},
 	{
+		name:      "starter already recording another channel, another recorder free",
+		recorders: []string{testRecorder, testSecondRecorder},
+		setup: func(t *testing.T, sc *recordScene) permMember {
+			sc.startIn(t, recStarter, recordChannel)
+			sc.fake.setVoice(recStarter.id, recordOtherChannel)
+			return recStarter
+		},
+		carries: []string{starterRecordingRefusal},
+	},
+	{
 		name:      "channel already recorded, another recorder free",
 		recorders: []string{testRecorder, testSecondRecorder},
 		setup: func(t *testing.T, sc *recordScene) permMember {

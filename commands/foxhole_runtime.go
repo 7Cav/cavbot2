@@ -463,6 +463,9 @@ type FoxholeRuntime struct {
 	// against another command.
 	commands    map[int]CommandRun
 	nextCommand int
+	// purging is a /foxhole purge running. Two at once would each recreate
+	// the role and leave both copies.
+	purging bool
 }
 
 // CommandRun is a role-changing Foxhole command running, as the Foxhole
@@ -602,6 +605,26 @@ func (r *FoxholeRuntime) startCommand(run CommandRun) (end func(), refused *Runn
 		defer r.mu.Unlock()
 		delete(r.commands, key)
 	}, nil
+}
+
+// startPurge takes the one-at-a-time rule for /foxhole purge and returns
+// the call that gives it back, or false while another purge holds it. On a
+// host with no bot store, r is nil and it refuses nothing.
+func (r *FoxholeRuntime) startPurge() (end func(), ok bool) {
+	if r == nil {
+		return func() {}, true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.purging {
+		return nil, false
+	}
+	r.purging = true
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.purging = false
+	}, true
 }
 
 // RunningCommands are the role-changing Foxhole commands running now, the

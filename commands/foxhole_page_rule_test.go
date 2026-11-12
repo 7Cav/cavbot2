@@ -342,6 +342,40 @@ func TestTwoRoleCommandsRunTogether(t *testing.T) {
 	}
 }
 
+// A /foxhole purge sent while another runs is refused with a reply only its
+// member sees and changes nothing, since each would recreate the role. Once
+// the first purge has run, the next one starts.
+func TestPurgeIsRefusedWhileAnotherPurgeRuns(t *testing.T) {
+	noOverwriteDelay(t)
+	fx, _ := newPageRuntime(t)
+	purge := func() *discordgo.InteractionCreate {
+		return slashNamed("foxhole", stringOption("command", "purge"), stringOption("flag", "internal"))
+	}
+	first := heldPurgeCreate{trooperGuild(), newWriteGate(t)}
+	runFoxhole(&fakeResponder{}, first, fx, purge())
+	awaitSignal(t, first.entered, "the first purge's role create")
+	second := trooperGuild()
+	f := &fakeResponder{}
+
+	runFoxhole(f, second, fx, purge())
+
+	assertVerdict(t, memberReply(t, f.Calls()), purgeRunning, verdictFailed)
+	if writes := second.guildWrites(); len(writes) != 0 {
+		t.Errorf("the second purge changed the guild: %+v", writes)
+	}
+	close(first.release)
+	deadline := time.Now().Add(5 * time.Second)
+	for fx.Busy() {
+		if time.Now().After(deadline) {
+			t.Fatal("the first purge never ended")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	third := heldPurgeCreate{trooperGuild(), newWriteGate(t)}
+	runFoxhole(&fakeResponder{}, third, fx, purge())
+	awaitSignal(t, third.entered, "the purge after the first ended")
+}
+
 // startsOnceFree calls start, which starts a page action as the Foxhole
 // page does, again while another Foxhole action holds the rule, the way a
 // manager would, and fails the test unless it starts within 5 seconds.

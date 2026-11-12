@@ -77,31 +77,36 @@ func (r *logRecorder) linesSaying(msg, key, value string) int {
 // Discord closes the session with 4004, Authentication failed, then answers
 // every resume with Op 9 and closes again with 4004 after the identify. The
 // session logs in no more after the first close, says why in the log, and
-// Sentry hears of the outage once.
-func TestGatewayWatch_ARefusedTokenStopsTheLoginsAndSendsOneEvent(t *testing.T) {
-	logs := recordLogs(t)
-	tr := initSentryWithTransport(t)
-	g := gatewaytest.New(t, func(login int) gatewaytest.Login {
-		if login == 1 {
-			return gatewaytest.Login{Answer: gatewaytest.Ready, Close: 4004}
-		}
-		return gatewaytest.Login{Invalid: true, Close: 4004}
-	})
-	openWatchedSession(t, gatewayWatchAfter)
+// Sentry hears of the outage once. Discord says not to reconnect after 4010
+// to 4014 either, such as 4014 for a disallowed intent.
+func TestGatewayWatch_AFatalCloseStopsTheLoginsAndSendsOneEvent(t *testing.T) {
+	for _, code := range []int{4004, 4010, 4011, 4012, 4013, 4014} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			logs := recordLogs(t)
+			tr := initSentryWithTransport(t)
+			g := gatewaytest.New(t, func(login int) gatewaytest.Login {
+				if login == 1 {
+					return gatewaytest.Login{Answer: gatewaytest.Ready, Close: code}
+				}
+				return gatewaytest.Login{Invalid: true, Close: code}
+			})
+			openWatchedSession(t, gatewayWatchAfter)
 
-	events := waitForOutageEvents(t, tr, 1)
+			events := waitForOutageEvents(t, tr, 1)
 
-	if len(events) != 1 {
-		t.Fatalf("Sentry got %d events, want 1", len(events))
-	}
-	if got := fmt.Sprint(events[0].Contexts["extra"]["session"]); got != "main" {
-		t.Errorf("event names session %q, want main", got)
-	}
-	if n := g.Logins(); n != 1 {
-		t.Errorf("the gateway saw %d logins, want 1: none after the 4004", n)
-	}
-	if n := logs.linesSaying(TokenRefusedMessage, "session", "main"); n != 1 {
-		t.Errorf("%d lines say the token was refused for session main, want 1", n)
+			if len(events) != 1 {
+				t.Fatalf("Sentry got %d events, want 1", len(events))
+			}
+			if got := fmt.Sprint(events[0].Contexts["extra"]["session"]); got != "main" {
+				t.Errorf("event names session %q, want main", got)
+			}
+			if n := g.Logins(); n != 1 {
+				t.Errorf("the gateway saw %d logins, want 1: none after the %d", n, code)
+			}
+			if n := logs.linesSaying(TokenRefusedMessage, "session", "main"); n != 1 {
+				t.Errorf("%d lines say the session was refused for session main, want 1", n)
+			}
+		})
 	}
 }
 
