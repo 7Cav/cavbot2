@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/bwmarrin/discordgo v0.29.0
-	github.com/disgoorg/disgo v0.19.7-0.20261023185300-5bf95ebe8a0d
+	github.com/disgoorg/disgo v0.20.0
 	github.com/disgoorg/godave v0.3.0
 	github.com/disgoorg/snowflake/v2 v2.0.3
 	github.com/getsentry/sentry-go v0.50.0
@@ -14,8 +14,8 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/pressly/goose/v3 v3.29.0
 	github.com/thomas-vilte/dave-go v0.5.1
-	golang.org/x/oauth2 v0.37.0
-	golang.org/x/sync v0.24.0
+	golang.org/x/oauth2 v0.38.0
+	golang.org/x/sync v0.25.0
 	golang.org/x/tools v0.52.0
 )
 
