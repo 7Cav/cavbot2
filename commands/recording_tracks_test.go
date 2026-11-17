@@ -301,8 +301,8 @@ func TestRecordingPlacesARejoiningSpeakerByTheClockInTheirTrack(t *testing.T) {
 // When a frame's RTP timestamp disagrees with the clock by more than 2 s,
 // the clock wins: here the timestamp jumps 5 s, forward or back, while the
 // clock moves 1 s, and the frame lands at the time it arrived. The frame
-// after it, by RTP, lands directly after it: the track follows the stream's
-// new timestamps.
+// after it by RTP arrives 300 ms late and still lands directly after it:
+// the track follows the stream's new timestamps.
 func TestRecordingPlacesAnRTPJumpPastTwoSecondsByTheClock(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -321,7 +321,7 @@ func TestRecordingPlacesAnRTPJumpPastTwoSecondsByTheClock(t *testing.T) {
 			sc.clock.advance(time.Second)
 			jumped := uint32(base + opusFrameSamples + tc.jump)
 			sc.hear(t, recordChannel, frame(speakerA, 11, jumped, "a2"))
-			sc.clock.advance(20 * time.Millisecond)
+			sc.clock.advance(20*time.Millisecond + 300*time.Millisecond)
 			sc.hear(t, recordChannel, frame(speakerA, 11, jumped+opusFrameSamples, "a3"))
 			recordAs(t, sc.rt, recStarter, "stop")
 
