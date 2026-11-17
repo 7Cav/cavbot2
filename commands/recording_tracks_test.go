@@ -299,19 +299,37 @@ func TestRecordingPlacesARejoiningSpeakerByTheClockInTheirTrack(t *testing.T) {
 }
 
 // When a frame's RTP timestamp disagrees with the clock by more than 2 s,
-// the clock wins: here the timestamp jumps 5 s while the clock moves 1 s,
-// and the frame lands at the time it arrived.
+// the clock wins: here the timestamp jumps 5 s, forward or back, while the
+// clock moves 1 s, and the frame lands at the time it arrived. The frame
+// after it by RTP arrives 300 ms late and still lands directly after it:
+// the track follows the stream's new timestamps.
 func TestRecordingPlacesAnRTPJumpPastTwoSecondsByTheClock(t *testing.T) {
-	sc := newRecordScene(t, testRecorder)
-	sc.startIn(t, recStarter, recordChannel)
+	for _, tc := range []struct {
+		name string
+		jump int
+	}{
+		{name: "forward", jump: samplesIn(5 * time.Second)},
+		{name: "back", jump: -samplesIn(5 * time.Second)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := newRecordScene(t, testRecorder)
+			sc.startIn(t, recStarter, recordChannel)
 
-	sc.clock.advance(time.Second)
-	sc.hear(t, recordChannel, frame(speakerA, 11, 5000, "a1"))
-	sc.clock.advance(time.Second)
-	sc.hear(t, recordChannel, frame(speakerA, 11, uint32(5000+opusFrameSamples+samplesIn(5*time.Second)), "a2"))
-	recordAs(t, sc.rt, recStarter, "stop")
+			const base = 1_000_000
+			sc.clock.advance(time.Second)
+			sc.hear(t, recordChannel, frame(speakerA, 11, base, "a1"))
+			sc.clock.advance(time.Second)
+			jumped := uint32(base + opusFrameSamples + tc.jump)
+			sc.hear(t, recordChannel, frame(speakerA, 11, jumped, "a2"))
+			sc.clock.advance(20*time.Millisecond + 300*time.Millisecond)
+			sc.hear(t, recordChannel, frame(speakerA, 11, jumped+opusFrameSamples, "a3"))
+			recordAs(t, sc.rt, recStarter, "stop")
 
-	assertAt(t, sc.tracks(t), "a2", samplesIn(2*time.Second))
+			tracks := sc.tracks(t)
+			assertAt(t, tracks, "a2", samplesIn(2*time.Second))
+			assertAt(t, tracks, "a3", placed(t, tracks, "a2")+opusFrameSamples)
+		})
+	}
 }
 
 // A track runs to the end of the recording and no further: its final
